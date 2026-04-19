@@ -2,7 +2,7 @@ EXILE   := dune exec --no-print-directory exile-lang --
 CC      := cc
 CFLAGS  := -ansi -pedantic -Wall
 
-EXAMPLES_SRC := $(wildcard examples/*.exl)
+EXAMPLES_SRC := $(filter-out examples/error_%.exl, $(wildcard examples/*.exl))
 EXAMPLES_BIN := $(EXAMPLES_SRC:.exl=)
 
 .PHONY: all build test clean run hello examples
