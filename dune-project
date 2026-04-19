@@ -5,22 +5,22 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github damroth/exile-lang))
 
-(authors "Author Name <author@example.com>")
+(authors "Damroth <damroth@df0.cc>")
 
-(maintainers "Maintainer Name <maintainer@example.com>")
+(maintainers "Damroth <damroth@df0.cc>")
 
 (license LICENSE)
 
-(documentation https://url/to/documentation)
-
 (package
  (name exile-lang)
- (synopsis "A short synopsis")
- (description "A longer description")
- (depends ocaml)
+ (synopsis "A toy language that compiles to C, targeting Amiga m68k")
+ (description
+  "exile-lang is a work-in-progress programming language with a transpiler to C89, \
+   designed to run on Amiga 500 (Kickstart 1.3). The transpiler is written in OCaml.")
+ (depends ocaml dune)
  (tags
-  ("add topics" "to describe" your project)))
+  (compiler language amiga m68k ocaml)))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html
