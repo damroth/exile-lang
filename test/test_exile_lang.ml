@@ -33,4 +33,16 @@ let () =
 
   check "multi-function call"
     "fn add(a: int, b: int) -> int {\n    return a + b;\n}\n\nfn main() {\n    let x = add(3, 4);\n    print(x);\n}\n"
-    "#include <stdio.h>\n\nint add(int a, int b);\n\nint add(int a, int b) {\n    return a + b;\n}\n\nint main(void) {\n    int x;\n    x = add(3, 4);\n    printf(\"%d\\n\", x);\n    return 0;\n}\n"
+    "#include <stdio.h>\n\nint add(int a, int b);\n\nint add(int a, int b) {\n    return a + b;\n}\n\nint main(void) {\n    int x;\n    x = add(3, 4);\n    printf(\"%d\\n\", x);\n    return 0;\n}\n";
+
+  check "assignment"
+    "fn main() {\n    let x = 1;\n    x = x + 41;\n    print(x);\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int x;\n    x = 1;\n    x = x + 41;\n    printf(\"%d\\n\", x);\n    return 0;\n}\n";
+
+  check "while loop"
+    "fn main() {\n    let i = 0;\n    while i < 3 {\n        print(i);\n        i = i + 1;\n    }\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int i;\n    i = 0;\n    while (i < 3) {\n        printf(\"%d\\n\", i);\n        i = i + 1;\n    }\n    return 0;\n}\n";
+
+  check "while with hoisted inner let"
+    "fn main() {\n    let i = 0;\n    while i < 2 {\n        let doubled = i * 2;\n        print(doubled);\n        i = i + 1;\n    }\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int i;\n    int doubled;\n    i = 0;\n    while (i < 2) {\n        doubled = i * 2;\n        printf(\"%d\\n\", doubled);\n        i = i + 1;\n    }\n    return 0;\n}\n"

@@ -7,6 +7,11 @@ let make_state tokens = { tokens; last_pos = Pos.zero }
 
 let peek s = match s.tokens with [] -> Token.Eof | (t, _) :: _ -> t
 
+let peek2 s =
+  match s.tokens with
+  | _ :: (t, _) :: _ -> t
+  | _ -> Token.Eof
+
 let peek_pos s =
   match s.tokens with (_, p) :: _ -> p | [] -> s.last_pos
 
@@ -162,6 +167,17 @@ and parse_stmt s =
         | _ -> []
       in
       Ast.If { cond; then_body; else_body }
+  | Token.While ->
+      ignore (advance s);
+      let cond = parse_expr s in
+      let body = parse_block s in
+      Ast.While { cond; body }
+  | Token.Ident name when peek2 s = Token.Eq ->
+      ignore (advance s);
+      ignore (advance s);
+      let value = parse_expr s in
+      expect s Token.Semicolon;
+      Ast.Assign { name; value }
   | _ ->
       let e = parse_expr s in
       expect s Token.Semicolon;

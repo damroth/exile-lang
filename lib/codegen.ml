@@ -116,6 +116,11 @@ let rec gen_stmt buf fn_table env indent = function
       Buffer.add_string buf (name ^ " = ");
       gen_expr buf fn_table env value;
       Buffer.add_string buf ";\n"
+  | Ast.Assign { name; value } ->
+      Buffer.add_string buf indent;
+      Buffer.add_string buf (name ^ " = ");
+      gen_expr buf fn_table env value;
+      Buffer.add_string buf ";\n"
   | Ast.Return expr ->
       Buffer.add_string buf indent;
       Buffer.add_string buf "return ";
@@ -140,11 +145,19 @@ let rec gen_stmt buf fn_table env indent = function
            List.iter (gen_stmt buf fn_table env (indent ^ "    ")) else_body;
            Buffer.add_string buf indent;
            Buffer.add_string buf "}\n")
+  | Ast.While { cond; body } ->
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "while (";
+      gen_expr buf fn_table env cond;
+      Buffer.add_string buf ") {\n";
+      List.iter (gen_stmt buf fn_table env (indent ^ "    ")) body;
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "}\n"
 
 (* Walk all stmts recursively, collecting let-bound (name, type) pairs. *)
 let collect_lets fn_table param_env stmts =
   let rec walk env acc = function
-    | [] -> (env, List.rev acc)
+    | [] -> (env, acc)
     | Ast.Let { name; value } :: rest ->
         let t = type_of fn_table env value in
         walk (env @ [ (name, t) ]) ((name, t) :: acc) rest
@@ -152,9 +165,12 @@ let collect_lets fn_table param_env stmts =
         let (env1, acc1) = walk env acc then_body in
         let (env2, acc2) = walk env1 acc1 else_body in
         walk env2 acc2 rest
+    | Ast.While { body; _ } :: rest ->
+        let (env1, acc1) = walk env acc body in
+        walk env1 acc1 rest
     | _ :: rest -> walk env acc rest
   in
-  snd (walk param_env [] stmts)
+  List.rev (snd (walk param_env [] stmts))
 
 let emit_fn_sig buf (Ast.Function f) =
   if f.name = "main" then

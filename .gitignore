@@ -1,15 +1,9 @@
 # dune build artifacts
 _build/
 
-# generated C files (transpiler output)
-examples/*.c
-
-# compiled example binaries
-examples/hello
-examples/add
-examples/abs
-examples/let_arith
-examples/error_missing_semi
+# everything in examples/ except .exl sources (generated .c + binaries)
+examples/*
+!examples/*.exl
 
 # opam
 *.install

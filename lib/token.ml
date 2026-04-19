@@ -4,6 +4,7 @@ type t =
   | Return
   | If
   | Else
+  | While
   | LParen
   | RParen
   | LBrace
@@ -30,7 +31,7 @@ type t =
 
 let pp = function
   | Fn -> "'fn'" | Let -> "'let'" | Return -> "'return'"
-  | If -> "'if'" | Else -> "'else'"
+  | If -> "'if'" | Else -> "'else'" | While -> "'while'"
   | LParen -> "'('" | RParen -> "')'"
   | LBrace -> "'{'" | RBrace -> "'}'"
   | Semicolon -> "';'" | Comma -> "','" | Colon -> "':'"
