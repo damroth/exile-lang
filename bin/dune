@@ -1,0 +1,4 @@
+(executable
+ (public_name exile-lang)
+ (name main)
+ (libraries exile_lang))

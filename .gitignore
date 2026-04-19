@@ -1,0 +1,23 @@
+# dune build artifacts
+_build/
+
+# generated C files (transpiler output)
+examples/*.c
+
+# compiled example binaries
+examples/hello
+examples/add
+examples/abs
+examples/let_arith
+examples/error_missing_semi
+
+# opam
+*.install
+.opam-switch/
+
+# internal worklog
+WORKLOG.md
+
+# editor
+.merlin
+*.annot
