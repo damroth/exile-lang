@@ -24,6 +24,8 @@ type t =
   | Minus
   | Star
   | Slash
+  | True
+  | False
   | Ident of string
   | Int of int
   | String of string
@@ -38,6 +40,7 @@ let pp = function
   | Arrow -> "'->'" | Eq -> "'='" | EqEq -> "'=='" | NotEq -> "'!='"
   | Lt -> "'<'" | Gt -> "'>'" | LtEq -> "'<='" | GtEq -> "'>='"
   | Plus -> "'+'" | Minus -> "'-'" | Star -> "'*'" | Slash -> "'/'"
+  | True -> "'true'" | False -> "'false'"
   | Ident s -> Printf.sprintf "identifier '%s'" s
   | Int n -> Printf.sprintf "integer %d" n
   | String s -> Printf.sprintf "string \"%s\"" s

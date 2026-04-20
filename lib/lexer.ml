@@ -9,6 +9,8 @@ let keyword_or_ident = function
   | "if" -> Token.If
   | "else" -> Token.Else
   | "while" -> Token.While
+  | "true" -> Token.True
+  | "false" -> Token.False
   | s -> Token.Ident s
 
 let tokenize src =

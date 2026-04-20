@@ -1,4 +1,4 @@
-type type_ann = TyInt | TyStr
+type type_ann = TyInt | TyStr | TyBool
 
 type binop =
   | Add | Sub | Mul | Div
@@ -6,6 +6,7 @@ type binop =
 
 type expr =
   | IntLit of int
+  | BoolLit of bool
   | StringLit of string
   | Var of string
   | Neg of expr

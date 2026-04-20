@@ -1,4 +1,4 @@
-type typ = TInt | TString
+type typ = TInt | TBool | TString
 
 type fn_sig = {
   param_tys : typ list;
@@ -18,9 +18,9 @@ let escape_c s =
     s;
   Buffer.contents buf
 
-let type_of_ann = function Ast.TyInt -> TInt | Ast.TyStr -> TString
+let type_of_ann = function Ast.TyInt -> TInt | Ast.TyStr -> TString | Ast.TyBool -> TBool
 
-let c_type_prefix = function TInt -> "int " | TString -> "const char *"
+let c_type_prefix = function TInt | TBool -> "int " | TString -> "const char *"
 
 let c_decl t name = c_type_prefix t ^ name
 
@@ -28,6 +28,7 @@ let c_param p = c_decl (type_of_ann p.Ast.pty) p.Ast.pname
 
 let rec type_of fn_table env = function
   | Ast.IntLit _ -> TInt
+  | Ast.BoolLit _ -> TBool
   | Ast.StringLit _ -> TString
   | Ast.BinOp _ -> TInt
   | Ast.Neg _ -> TInt
@@ -50,6 +51,7 @@ let prec = function
 
 let rec gen_expr buf fn_table env = function
   | Ast.IntLit n -> Buffer.add_string buf (string_of_int n)
+  | Ast.BoolLit b -> Buffer.add_string buf (if b then "1" else "0")
   | Ast.StringLit s ->
       Buffer.add_char buf '"';
       Buffer.add_string buf (escape_c s);
@@ -85,7 +87,7 @@ let rec gen_expr buf fn_table env = function
        | _ -> gen_expr buf fn_table env r)
   | Ast.Call ("print", [ arg ]) ->
       (match type_of fn_table env arg with
-       | TInt ->
+       | TInt | TBool ->
            Buffer.add_string buf "printf(\"%d\\n\", ";
            gen_expr buf fn_table env arg;
            Buffer.add_char buf ')'

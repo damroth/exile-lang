@@ -32,7 +32,8 @@ let parse_type s =
   match advance s with
   | (Token.Ident "int", _) -> Ast.TyInt
   | (Token.Ident "str", _) -> Ast.TyStr
-  | (t, p) -> Error.failf p "expected type ('int' or 'str'), got %s" (Token.pp t)
+  | (Token.Ident "bool", _) -> Ast.TyBool
+  | (t, p) -> Error.failf p "expected type ('int', 'str' or 'bool'), got %s" (Token.pp t)
 
 let parse_param s =
   let name =
@@ -67,6 +68,8 @@ let rec parse_primary s =
   let (t, p) = advance s in
   match t with
   | Token.Int n -> Ast.IntLit n
+  | Token.True -> Ast.BoolLit true
+  | Token.False -> Ast.BoolLit false
   | Token.String str -> Ast.StringLit str
   | Token.Minus -> Ast.Neg (parse_primary s)
   | Token.Ident name ->
@@ -148,6 +151,7 @@ and parse_stmt s =
         | (Token.Ident n, _) -> n
         | (t, p) -> Error.failf p "expected variable name after 'let', got %s" (Token.pp t)
       in
+      if peek s = Token.Colon then (ignore (advance s); ignore (parse_type s));
       expect s Token.Eq;
       let value = parse_expr s in
       expect s Token.Semicolon;
