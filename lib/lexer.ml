@@ -34,6 +34,19 @@ let tokenize src =
       | ':' -> loop (i + 1) ((Token.Colon, p) :: acc)
       | '+' -> loop (i + 1) ((Token.Plus, p) :: acc)
       | '*' -> loop (i + 1) ((Token.Star, p) :: acc)
+      | '/' when i + 1 < len && src.[i + 1] = '/' ->
+          let rec skip j =
+            if j >= len || src.[j] = '\n' then j else (adv src.[j]; skip (j + 1))
+          in
+          loop (skip (i + 1)) acc
+      | '/' when i + 1 < len && src.[i + 1] = '*' ->
+          adv '*';
+          let rec skip j =
+            if j + 1 >= len then Error.raise_ p "unterminated block comment"
+            else if src.[j] = '*' && src.[j + 1] = '/' then (adv '*'; adv '/'; j + 2)
+            else (adv src.[j]; skip (j + 1))
+          in
+          loop (skip (i + 2)) acc
       | '/' -> loop (i + 1) ((Token.Slash, p) :: acc)
       | '-' when i + 1 < len && src.[i + 1] = '>' ->
           adv '>'; loop (i + 2) ((Token.Arrow, p) :: acc)
