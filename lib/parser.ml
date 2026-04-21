@@ -45,19 +45,23 @@ let parse_param s =
   let ty = parse_type s in
   Ast.{ pname = name; pty = ty }
 
+(* Parse comma-separated items until `close`. Opener must already be consumed. *)
+let parse_comma_list ~close ~item s =
+  if peek s = close then (ignore (advance s); [])
+  else
+    let first = item s in
+    let rec rest acc =
+      match peek s with
+      | t when t = close -> ignore (advance s); List.rev acc
+      | Token.Comma -> ignore (advance s); rest (item s :: acc)
+      | _ ->
+          Error.failf (peek_pos s) "expected ',' or %s" (Token.pp close)
+    in
+    rest [ first ]
+
 let parse_params s =
   expect s Token.LParen;
-  match peek s with
-  | Token.RParen -> ignore (advance s); []
-  | _ ->
-      let first = parse_param s in
-      let rec rest acc =
-        match peek s with
-        | Token.RParen -> ignore (advance s); List.rev acc
-        | Token.Comma -> ignore (advance s); rest (parse_param s :: acc)
-        | _ -> Error.raise_ (peek_pos s) "expected ',' or ')' in parameter list"
-      in
-      rest [ first ]
+  parse_comma_list ~close:Token.RParen ~item:parse_param s
 
 let parse_ret_ty s =
   match peek s with
@@ -123,18 +127,7 @@ and parse_expr s =
   | None -> left
   | Some op -> ignore (advance s); Ast.BinOp (op, left, parse_add s)
 
-and parse_args s =
-  match peek s with
-  | Token.RParen -> ignore (advance s); []
-  | _ ->
-      let first = parse_expr s in
-      let rec rest acc =
-        match peek s with
-        | Token.RParen -> ignore (advance s); List.rev acc
-        | Token.Comma -> ignore (advance s); rest (parse_expr s :: acc)
-        | _ -> Error.raise_ (peek_pos s) "expected ',' or ')'"
-      in
-      rest [ first ]
+and parse_args s = parse_comma_list ~close:Token.RParen ~item:parse_expr s
 
 let rec parse_block s =
   expect s Token.LBrace;
