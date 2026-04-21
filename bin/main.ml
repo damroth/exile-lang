@@ -2,8 +2,8 @@ let usage () =
   prerr_endline "usage: exile-lang <file.exl>";
   exit 1
 
-let show_error src (pos : Exile_lang.Pos.t) msg =
-  Printf.eprintf "%s:%d:%d: error: %s\n" "(input)" pos.line pos.col msg;
+let show_error file src (pos : Exile_lang.Pos.t) msg =
+  Printf.eprintf "%s:%d:%d: error: %s\n" file pos.line pos.col msg;
   let lines = String.split_on_char '\n' src in
   match List.nth_opt lines (pos.line - 1) with
   | Some line ->
@@ -22,7 +22,7 @@ let () =
          Printf.printf "wrote %s\n" output
        with
        | Exile_lang.Error.Compile_error { pos; msg } ->
-           show_error src pos msg;
+           show_error input src pos msg;
            exit 1
        | Failure msg ->
            Printf.eprintf "error: %s\n" msg;
