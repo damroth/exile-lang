@@ -167,7 +167,11 @@ and parse_stmt s =
       let then_body = parse_block s in
       let else_body =
         match peek s with
-        | Token.Else -> ignore (advance s); parse_block s
+        | Token.Else ->
+            ignore (advance s);
+            (match peek s with
+             | Token.If -> [ parse_stmt s ]
+             | _ -> parse_block s)
         | _ -> []
       in
       Ast.If { cond; then_body; else_body }

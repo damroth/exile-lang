@@ -112,7 +112,25 @@ let rec gen_expr buf fn_table env = function
         args;
       Buffer.add_char buf ')'
 
-let rec gen_stmt buf fn_table env indent = function
+let rec gen_if buf fn_table env indent cond then_body else_body =
+  Buffer.add_string buf "if (";
+  gen_expr buf fn_table env cond;
+  Buffer.add_string buf ") {\n";
+  List.iter (gen_stmt buf fn_table env (indent ^ "    ")) then_body;
+  Buffer.add_string buf indent;
+  Buffer.add_char buf '}';
+  (match else_body with
+   | [] -> Buffer.add_char buf '\n'
+   | [ Ast.If { cond = ec; then_body = et; else_body = ee } ] ->
+       Buffer.add_string buf " else ";
+       gen_if buf fn_table env indent ec et ee
+   | _ ->
+       Buffer.add_string buf " else {\n";
+       List.iter (gen_stmt buf fn_table env (indent ^ "    ")) else_body;
+       Buffer.add_string buf indent;
+       Buffer.add_string buf "}\n")
+
+and gen_stmt buf fn_table env indent = function
   | Ast.Let { name; value } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf (name ^ " = ");
@@ -134,19 +152,7 @@ let rec gen_stmt buf fn_table env indent = function
       Buffer.add_string buf ";\n"
   | Ast.If { cond; then_body; else_body } ->
       Buffer.add_string buf indent;
-      Buffer.add_string buf "if (";
-      gen_expr buf fn_table env cond;
-      Buffer.add_string buf ") {\n";
-      List.iter (gen_stmt buf fn_table env (indent ^ "    ")) then_body;
-      Buffer.add_string buf indent;
-      Buffer.add_char buf '}';
-      (match else_body with
-       | [] -> Buffer.add_char buf '\n'
-       | _ ->
-           Buffer.add_string buf " else {\n";
-           List.iter (gen_stmt buf fn_table env (indent ^ "    ")) else_body;
-           Buffer.add_string buf indent;
-           Buffer.add_string buf "}\n")
+      gen_if buf fn_table env indent cond then_body else_body
   | Ast.While { cond; body } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf "while (";
