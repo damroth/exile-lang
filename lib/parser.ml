@@ -89,30 +89,26 @@ let rec parse_primary s =
   | _ -> Error.raise_ p "expected expression"
 
 and parse_mul s =
-  let left = ref (parse_primary s) in
-  let go = ref true in
-  while !go do
+  let rec loop left =
     match peek s with
     | Token.Star ->
-        ignore (advance s); left := Ast.BinOp (Ast.Mul, !left, parse_primary s)
+        ignore (advance s); loop (Ast.BinOp (Ast.Mul, left, parse_primary s))
     | Token.Slash ->
-        ignore (advance s); left := Ast.BinOp (Ast.Div, !left, parse_primary s)
-    | _ -> go := false
-  done;
-  !left
+        ignore (advance s); loop (Ast.BinOp (Ast.Div, left, parse_primary s))
+    | _ -> left
+  in
+  loop (parse_primary s)
 
 and parse_add s =
-  let left = ref (parse_mul s) in
-  let go = ref true in
-  while !go do
+  let rec loop left =
     match peek s with
     | Token.Plus ->
-        ignore (advance s); left := Ast.BinOp (Ast.Add, !left, parse_mul s)
+        ignore (advance s); loop (Ast.BinOp (Ast.Add, left, parse_mul s))
     | Token.Minus ->
-        ignore (advance s); left := Ast.BinOp (Ast.Sub, !left, parse_mul s)
-    | _ -> go := false
-  done;
-  !left
+        ignore (advance s); loop (Ast.BinOp (Ast.Sub, left, parse_mul s))
+    | _ -> left
+  in
+  loop (parse_mul s)
 
 (* comparison binds looser than arithmetic; only one comparison per expression *)
 and parse_expr s =
