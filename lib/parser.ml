@@ -199,13 +199,17 @@ and parse_stmts s acc =
 
 let parse_function s =
   expect s Token.Fn;
-  let name =
+  let (name, name_pos) =
     match advance s with
-    | (Token.Ident n, _) -> n
+    | (Token.Ident n, p) -> (n, p)
     | (_, p) -> Error.raise_ p "expected function name after 'fn'"
   in
   let params = parse_params s in
   let ret_ty = parse_ret_ty s in
+  if name = "main" && params <> [] then
+    Error.raise_ name_pos "'main' must take no parameters";
+  if name = "main" && ret_ty <> None then
+    Error.raise_ name_pos "'main' must not declare a return type";
   expect s Token.LBrace;
   let body = parse_stmts s [] in
   expect s Token.RBrace;
