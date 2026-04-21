@@ -20,6 +20,8 @@ let escape_c s =
 
 let type_of_ann = function Ast.TyInt -> TInt | Ast.TyStr -> TString | Ast.TyBool -> TBool
 
+let typ_name = function TInt -> "int" | TBool -> "bool" | TString -> "str"
+
 let c_type_prefix = function TInt | TBool -> "int " | TString -> "const char *"
 
 let c_decl t name = c_type_prefix t ^ name
@@ -157,23 +159,41 @@ and gen_stmt buf fn_table env indent = function
       Buffer.add_string buf indent;
       Buffer.add_string buf "}\n"
 
-(* Walk all stmts recursively, collecting let-bound (name, type) pairs. *)
+(* Collect let-bound (name, type) pairs for C89 function-top hoisting.
+   Type resolution uses block-scoped env (then/else branches start from
+   the same pre-if env — no leak). Accumulation is function-scoped:
+   one name per function, no shadowing of parameters. *)
 let collect_lets fn_table param_env stmts =
-  let rec walk env acc = function
-    | [] -> (env, acc)
-    | Ast.Let { name; value } :: rest ->
-        let t = type_of fn_table env value in
-        walk (env @ [ (name, t) ]) ((name, t) :: acc) rest
-    | Ast.If { then_body; else_body; _ } :: rest ->
-        let (env1, acc1) = walk env acc then_body in
-        let (env2, acc2) = walk env1 acc1 else_body in
-        walk env2 acc2 rest
-    | Ast.While { body; _ } :: rest ->
-        let (env1, acc1) = walk env acc body in
-        walk env1 acc1 rest
-    | _ :: rest -> walk env acc rest
+  let decls = ref [] in
+  let add_decl name t pos =
+    if List.mem_assoc name param_env then
+      Error.failf pos "variable '%s' shadows a parameter" name;
+    if List.mem_assoc name !decls then
+      Error.failf pos "variable '%s' already declared in this function" name;
+    decls := (name, t) :: !decls
   in
-  List.rev (snd (walk param_env [] stmts))
+  let rec walk env = function
+    | [] -> env
+    | Ast.Let { name; value; ty_ann; pos } :: rest ->
+        let t = type_of fn_table env value in
+        (match ty_ann with
+         | Some ann when type_of_ann ann <> t ->
+             Error.failf pos "variable '%s' declared as %s but initializer has type %s"
+               name (typ_name (type_of_ann ann)) (typ_name t)
+         | _ -> ());
+        add_decl name t pos;
+        walk ((name, t) :: env) rest
+    | Ast.If { then_body; else_body; _ } :: rest ->
+        let _ = walk env then_body in
+        let _ = walk env else_body in
+        walk (param_env @ List.rev !decls) rest
+    | Ast.While { body; _ } :: rest ->
+        let _ = walk env body in
+        walk (param_env @ List.rev !decls) rest
+    | _ :: rest -> walk env rest
+  in
+  let _ = walk param_env stmts in
+  List.rev !decls
 
 let emit_fn_sig buf (Ast.Function f) =
   if f.name = "main" then

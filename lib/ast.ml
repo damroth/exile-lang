@@ -16,8 +16,8 @@ type expr =
 type param = { pname : string; pty : type_ann }
 
 type stmt =
-  | Let of { name : string; value : expr }
-  | Assign of { name : string; value : expr }
+  | Let of { name : string; value : expr; ty_ann : type_ann option; pos : Pos.t }
+  | Assign of { name : string; value : expr; pos : Pos.t }
   | Return of expr
   | ExprStmt of expr
   | If of { cond : expr; then_body : stmt list; else_body : stmt list }

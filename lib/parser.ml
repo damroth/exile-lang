@@ -135,16 +135,19 @@ and parse_stmt s =
   match peek s with
   | Token.Let ->
       ignore (advance s);
-      let name =
+      let (name, pos) =
         match advance s with
-        | (Token.Ident n, _) -> n
+        | (Token.Ident n, p) -> (n, p)
         | (t, p) -> Error.failf p "expected variable name after 'let', got %s" (Token.pp t)
       in
-      if peek s = Token.Colon then (ignore (advance s); ignore (parse_type s));
+      let ty_ann =
+        if peek s = Token.Colon then (ignore (advance s); Some (parse_type s))
+        else None
+      in
       expect s Token.Eq;
       let value = parse_expr s in
       expect s Token.Semicolon;
-      Ast.Let { name; value }
+      Ast.Let { name; value; ty_ann; pos }
   | Token.Return ->
       ignore (advance s);
       let e = parse_expr s in
@@ -170,11 +173,12 @@ and parse_stmt s =
       let body = parse_block s in
       Ast.While { cond; body }
   | Token.Ident name when peek2 s = Token.Eq ->
+      let pos = peek_pos s in
       ignore (advance s);
       ignore (advance s);
       let value = parse_expr s in
       expect s Token.Semicolon;
-      Ast.Assign { name; value }
+      Ast.Assign { name; value; pos }
   | _ ->
       let e = parse_expr s in
       expect s Token.Semicolon;
