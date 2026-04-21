@@ -131,12 +131,7 @@ let rec gen_if buf fn_table env indent cond then_body else_body =
        Buffer.add_string buf "}\n")
 
 and gen_stmt buf fn_table env indent = function
-  | Ast.Let { name; value } ->
-      Buffer.add_string buf indent;
-      Buffer.add_string buf (name ^ " = ");
-      gen_expr buf fn_table env value;
-      Buffer.add_string buf ";\n"
-  | Ast.Assign { name; value } ->
+  | Ast.Let { name; value } | Ast.Assign { name; value } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf (name ^ " = ");
       gen_expr buf fn_table env value;
