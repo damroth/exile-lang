@@ -45,4 +45,24 @@ let () =
 
   check "while with hoisted inner let"
     "fn main() {\n    let i = 0;\n    while i < 2 {\n        let doubled = i * 2;\n        print(doubled);\n        i = i + 1;\n    }\n}\n"
-    "#include <stdio.h>\n\nint main(void) {\n    int i;\n    int doubled;\n    i = 0;\n    while (i < 2) {\n        doubled = i * 2;\n        printf(\"%d\\n\", doubled);\n        i = i + 1;\n    }\n    return 0;\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int i;\n    int doubled;\n    i = 0;\n    while (i < 2) {\n        doubled = i * 2;\n        printf(\"%d\\n\", doubled);\n        i = i + 1;\n    }\n    return 0;\n}\n";
+
+  check "bool literals"
+    "fn main() {\n    let x = true;\n    let y = false;\n    print(x);\n    print(y);\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int x;\n    int y;\n    x = 1;\n    y = 0;\n    printf(\"%d\\n\", x);\n    printf(\"%d\\n\", y);\n    return 0;\n}\n";
+
+  check "else if chain"
+    "fn main() {\n    let x = 2;\n    if x < 1 {\n        print(1);\n    } else if x < 3 {\n        print(2);\n    } else {\n        print(3);\n    }\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int x;\n    x = 2;\n    if (x < 1) {\n        printf(\"%d\\n\", 1);\n    } else if (x < 3) {\n        printf(\"%d\\n\", 2);\n    } else {\n        printf(\"%d\\n\", 3);\n    }\n    return 0;\n}\n";
+
+  check "line and block comments"
+    "// top comment\nfn main() {\n    /* block\n       comment */\n    let x = 1; // trailing\n    print(x);\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int x;\n    x = 1;\n    printf(\"%d\\n\", x);\n    return 0;\n}\n";
+
+  check "all comparison operators"
+    "fn main() {\n    let a = 5;\n    if a == 5 {\n        print(1);\n    }\n    if a != 0 {\n        print(2);\n    }\n    if a <= 5 {\n        print(3);\n    }\n    if a >= 5 {\n        print(4);\n    }\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int a;\n    a = 5;\n    if (a == 5) {\n        printf(\"%d\\n\", 1);\n    }\n    if (a != 0) {\n        printf(\"%d\\n\", 2);\n    }\n    if (a <= 5) {\n        printf(\"%d\\n\", 3);\n    }\n    if (a >= 5) {\n        printf(\"%d\\n\", 4);\n    }\n    return 0;\n}\n";
+
+  check "unary minus on literal var and call"
+    "fn id(x: int) -> int {\n    return x;\n}\nfn main() {\n    let a = -5;\n    let b = -a;\n    print(-id(7));\n}\n"
+    "#include <stdio.h>\n\nint id(int x);\n\nint id(int x) {\n    return x;\n}\n\nint main(void) {\n    int a;\n    int b;\n    a = -5;\n    b = -a;\n    printf(\"%d\\n\", -(id(7)));\n    return 0;\n}\n"
