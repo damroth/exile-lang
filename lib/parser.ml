@@ -217,7 +217,7 @@ let parse_function s seen_fns =
   expect s Token.LBrace;
   let body = parse_stmts s [] in
   expect s Token.RBrace;
-  (name, Ast.Function { name; params; ret_ty; body })
+  (name, Ast.{ name; params; ret_ty; body })
 
 let parse_program tokens =
   let s = make_state tokens in

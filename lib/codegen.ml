@@ -230,7 +230,7 @@ let collect_lets fn_table param_env stmts =
   let _ = walk param_env stmts in
   List.rev !decls
 
-let emit_fn_sig buf (Ast.Function f) =
+let emit_fn_sig buf (f : Ast.func) =
   if f.name = "main" then
     Buffer.add_string buf "int main(void)"
   else begin
@@ -246,8 +246,8 @@ let emit_fn_sig buf (Ast.Function f) =
     Buffer.add_char buf ')'
   end
 
-let gen_function buf fn_table (Ast.Function f) =
-  emit_fn_sig buf (Ast.Function f);
+let gen_function buf fn_table (f : Ast.func) =
+  emit_fn_sig buf f;
   Buffer.add_string buf " {\n";
   let param_env = List.map (fun p -> (p.Ast.pname, type_of_ann p.Ast.pty)) f.params in
   let lets = collect_lets fn_table param_env f.body in
@@ -262,14 +262,13 @@ let gen_function buf fn_table (Ast.Function f) =
 
 let build_fn_table program =
   List.filter_map
-    (function
-      | Ast.Function f when f.name <> "main" ->
-          let s =
-            { param_tys = List.map (fun p -> type_of_ann p.Ast.pty) f.params;
-              ret_ty = Option.map type_of_ann f.ret_ty }
-          in
-          Some (f.name, s)
-      | _ -> None)
+    (fun (f : Ast.func) ->
+      if f.name = "main" then None
+      else
+        Some
+          (f.name,
+           { param_tys = List.map (fun p -> type_of_ann p.Ast.pty) f.params;
+             ret_ty = Option.map type_of_ann f.ret_ty }))
     program
 
 let gen_program program =
@@ -277,7 +276,7 @@ let gen_program program =
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
   let non_main =
-    List.filter (function Ast.Function f -> f.name <> "main") program
+    List.filter (fun (f : Ast.func) -> f.name <> "main") program
   in
   if non_main <> [] then begin
     Buffer.add_char buf '\n';

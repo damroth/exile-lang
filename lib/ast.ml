@@ -30,6 +30,4 @@ type func = {
   body : stmt list;
 }
 
-type item = Function of func
-
-type program = item list
+type program = func list
