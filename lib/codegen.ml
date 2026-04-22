@@ -16,7 +16,10 @@ let escape_c s =
     (fun c ->
       match c with
       | '\n' -> Buffer.add_string buf "\\n"
+      | '\r' -> Buffer.add_string buf "\\r"
       | '\t' -> Buffer.add_string buf "\\t"
+      | '\b' -> Buffer.add_string buf "\\b"
+      | '\000' -> Buffer.add_string buf "\\0"
       | '\\' -> Buffer.add_string buf "\\\\"
       | '"' -> Buffer.add_string buf "\\\""
       | c -> Buffer.add_char buf c)

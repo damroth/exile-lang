@@ -74,12 +74,15 @@ let tokenize src =
               match sc with
               | '"' -> adv sc; j + 1
               | '\\' when j + 1 < len ->
+                  let esc_pos = here () in
                   adv sc;
                   let ec = src.[j + 1] in
                   let esc =
                     match ec with
-                    | 'n' -> '\n' | 't' -> '\t' | '\\' -> '\\' | '"' -> '"'
-                    | c -> Error.failf p "unknown escape \\%c" c
+                    | 'n' -> '\n' | 't' -> '\t' | 'r' -> '\r'
+                    | 'b' -> '\b' | '0' -> '\000'
+                    | '\\' -> '\\' | '"' -> '"'
+                    | c -> Error.failf esc_pos "unknown escape \\%c" c
                   in
                   adv ec;
                   Buffer.add_char buf esc;
