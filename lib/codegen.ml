@@ -40,10 +40,12 @@ let rec type_of fn_table env = function
   | Ast.IntLit _ -> TInt
   | Ast.BoolLit _ -> TBool
   | Ast.StringLit _ -> TString
-  | Ast.BinOp (_, l, r) ->
+  | Ast.BinOp (op, l, r) ->
       let _ = type_of fn_table env l in
       let _ = type_of fn_table env r in
-      TInt
+      (match op with
+       | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> TInt
+       | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> TBool)
   | Ast.Neg e ->
       let _ = type_of fn_table env e in
       TInt
