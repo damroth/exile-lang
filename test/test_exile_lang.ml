@@ -9,7 +9,7 @@ let check label src expected =
 let () =
   check "hello world"
     "fn main() {\n    print(\"Hello, World!\");\n}\n"
-    "#include <stdio.h>\n\nint main(void) {\n    printf(\"Hello, World!\\n\");\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%s\\n\", \"Hello, World!\");\n    return 0;\n}\n";
 
   check "let int + print"
     "fn main() {\n    let x = 6 * 7;\n    print(x);\n}\n"

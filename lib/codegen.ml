@@ -5,6 +5,11 @@ type fn_sig = {
   ret_ty : typ option;
 }
 
+let add_separated buf sep f xs =
+  List.iteri
+    (fun i x -> if i > 0 then Buffer.add_string buf sep; f x)
+    xs
+
 let escape_c s =
   let buf = Buffer.create (String.length s) in
   String.iter
@@ -32,19 +37,40 @@ let rec type_of fn_table env = function
   | Ast.IntLit _ -> TInt
   | Ast.BoolLit _ -> TBool
   | Ast.StringLit _ -> TString
-  | Ast.BinOp _ -> TInt
-  | Ast.Neg _ -> TInt
-  | Ast.Var name ->
+  | Ast.BinOp (_, l, r) ->
+      let _ = type_of fn_table env l in
+      let _ = type_of fn_table env r in
+      TInt
+  | Ast.Neg e ->
+      let _ = type_of fn_table env e in
+      TInt
+  | Ast.Var (name, pos) ->
       (match List.assoc_opt name env with
        | Some t -> t
-       | None -> failwith (Printf.sprintf "undefined variable '%s'" name))
-  | Ast.Call ("print", _) -> TInt
-  | Ast.Call (name, _) ->
+       | None -> Error.failf pos "undefined variable '%s'" name)
+  | Ast.Call ("print", args, _) ->
+      List.iter (fun a -> ignore (type_of fn_table env a)) args;
+      TInt
+  | Ast.Call (name, args, pos) ->
+      let arg_tys = List.map (type_of fn_table env) args in
       (match List.assoc_opt name fn_table with
-       | Some { ret_ty = Some t; _ } -> t
-       | Some { ret_ty = None; _ } ->
-           failwith (Printf.sprintf "'%s' returns void, cannot use as a value" name)
-       | None -> failwith (Printf.sprintf "unknown function '%s'" name))
+       | None -> Error.failf pos "unknown function '%s'" name
+       | Some { param_tys; ret_ty } ->
+           let expected = List.length param_tys in
+           let got = List.length args in
+           if expected <> got then
+             Error.failf pos "function '%s' expects %d argument(s), got %d"
+               name expected got;
+           List.iteri
+             (fun i (exp, act) ->
+               if exp <> act then
+                 Error.failf pos
+                   "argument %d of '%s': expected %s, got %s"
+                   (i + 1) name (typ_name exp) (typ_name act))
+             (List.combine param_tys arg_tys);
+           (match ret_ty with
+            | Some t -> t
+            | None -> Error.failf pos "'%s' returns void, cannot use as a value" name))
 
 let prec = function
   | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> 0
@@ -58,7 +84,7 @@ let rec gen_expr buf fn_table env = function
       Buffer.add_char buf '"';
       Buffer.add_string buf (escape_c s);
       Buffer.add_char buf '"'
-  | Ast.Var name -> Buffer.add_string buf name
+  | Ast.Var (name, _) -> Buffer.add_string buf name
   | Ast.Neg e ->
       Buffer.add_char buf '-';
       (match e with
@@ -87,31 +113,23 @@ let rec gen_expr buf fn_table env = function
          when prec rop < p || (prec rop = p && (op = Ast.Sub || op = Ast.Div)) ->
            Buffer.add_char buf '('; gen_expr buf fn_table env r; Buffer.add_char buf ')'
        | _ -> gen_expr buf fn_table env r)
-  | Ast.Call ("print", [ arg ]) ->
-      (match type_of fn_table env arg with
-       | TInt | TBool ->
-           Buffer.add_string buf "printf(\"%d\\n\", ";
-           gen_expr buf fn_table env arg;
-           Buffer.add_char buf ')'
-       | TString ->
-           (match arg with
-            | Ast.StringLit s ->
-                Buffer.add_string buf "printf(\"";
-                Buffer.add_string buf (escape_c s);
-                Buffer.add_string buf "\\n\")"
-            | _ ->
-                Buffer.add_string buf "printf(\"%s\\n\", ";
-                gen_expr buf fn_table env arg;
-                Buffer.add_char buf ')'))
-  | Ast.Call ("print", _) -> failwith "print() takes exactly one argument"
-  | Ast.Call (name, args) ->
+  | Ast.Call ("print", [ arg ], _) ->
+      let fmt =
+        match type_of fn_table env arg with
+        | TInt | TBool -> "\"%d\\n\""
+        | TString -> "\"%s\\n\""
+      in
+      Buffer.add_string buf "printf(";
+      Buffer.add_string buf fmt;
+      Buffer.add_string buf ", ";
+      gen_expr buf fn_table env arg;
+      Buffer.add_char buf ')'
+  | Ast.Call ("print", _, pos) ->
+      Error.failf pos "print() takes exactly one argument"
+  | Ast.Call (name, args, _) ->
       Buffer.add_string buf name;
       Buffer.add_char buf '(';
-      List.iteri
-        (fun i arg ->
-          if i > 0 then Buffer.add_string buf ", ";
-          gen_expr buf fn_table env arg)
-        args;
+      add_separated buf ", " (gen_expr buf fn_table env) args;
       Buffer.add_char buf ')'
 
 let rec gen_if buf fn_table env indent cond then_body else_body =
@@ -183,14 +201,26 @@ let collect_lets fn_table param_env stmts =
          | _ -> ());
         add_decl name t pos;
         walk ((name, t) :: env) rest
-    | Ast.If { then_body; else_body; _ } :: rest ->
+    | Ast.Assign { name; value; pos } :: rest ->
+        if not (List.mem_assoc name env) then
+          Error.failf pos "assignment to undefined variable '%s'" name;
+        let _ = type_of fn_table env value in
+        walk env rest
+    | Ast.Return e :: rest ->
+        let _ = type_of fn_table env e in
+        walk env rest
+    | Ast.ExprStmt e :: rest ->
+        let _ = type_of fn_table env e in
+        walk env rest
+    | Ast.If { cond; then_body; else_body } :: rest ->
+        let _ = type_of fn_table env cond in
         let _ = walk env then_body in
         let _ = walk env else_body in
         walk (param_env @ List.rev !decls) rest
-    | Ast.While { body; _ } :: rest ->
+    | Ast.While { cond; body } :: rest ->
+        let _ = type_of fn_table env cond in
         let _ = walk env body in
         walk (param_env @ List.rev !decls) rest
-    | _ :: rest -> walk env rest
   in
   let _ = walk param_env stmts in
   List.rev !decls
@@ -207,11 +237,7 @@ let emit_fn_sig buf (Ast.Function f) =
     Buffer.add_string buf ret;
     Buffer.add_string buf f.name;
     Buffer.add_char buf '(';
-    List.iteri
-      (fun i p ->
-        if i > 0 then Buffer.add_string buf ", ";
-        Buffer.add_string buf (c_param p))
-      f.params;
+    add_separated buf ", " (fun p -> Buffer.add_string buf (c_param p)) f.params;
     Buffer.add_char buf ')'
   end
 

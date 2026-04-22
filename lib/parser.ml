@@ -79,9 +79,9 @@ let rec parse_primary s =
   | Token.Ident name ->
       if peek s = Token.LParen then begin
         ignore (advance s);
-        Ast.Call (name, parse_args s)
+        Ast.Call (name, parse_args s, p)
       end else
-        Ast.Var name
+        Ast.Var (name, p)
   | Token.LParen ->
       let e = parse_expr s in
       expect s Token.RParen;
@@ -190,14 +190,25 @@ and parse_stmts s acc =
   | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
   | _ -> parse_stmts s (parse_stmt s :: acc)
 
-let parse_function s =
+let parse_function s seen_fns =
   expect s Token.Fn;
   let (name, name_pos) =
     match advance s with
     | (Token.Ident n, p) -> (n, p)
     | (_, p) -> Error.raise_ p "expected function name after 'fn'"
   in
+  if List.mem name seen_fns then
+    Error.failf name_pos "function '%s' already defined" name;
   let params = parse_params s in
+  let rec check_dup_params = function
+    | [] -> ()
+    | p :: rest ->
+        if List.exists (fun q -> q.Ast.pname = p.Ast.pname) rest then
+          Error.failf name_pos "duplicate parameter '%s' in function '%s'"
+            p.Ast.pname name;
+        check_dup_params rest
+  in
+  check_dup_params params;
   let ret_ty = parse_ret_ty s in
   if name = "main" && params <> [] then
     Error.raise_ name_pos "'main' must take no parameters";
@@ -206,13 +217,15 @@ let parse_function s =
   expect s Token.LBrace;
   let body = parse_stmts s [] in
   expect s Token.RBrace;
-  Ast.Function { name; params; ret_ty; body }
+  (name, Ast.Function { name; params; ret_ty; body })
 
 let parse_program tokens =
   let s = make_state tokens in
-  let rec loop acc =
+  let rec loop seen acc =
     match peek s with
     | Token.Eof -> List.rev acc
-    | _ -> loop (parse_function s :: acc)
+    | _ ->
+        let (name, fn) = parse_function s seen in
+        loop (name :: seen) (fn :: acc)
   in
-  loop []
+  loop [] []

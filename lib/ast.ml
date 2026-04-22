@@ -8,10 +8,10 @@ type expr =
   | IntLit of int
   | BoolLit of bool
   | StringLit of string
-  | Var of string
+  | Var of string * Pos.t
   | Neg of expr
   | BinOp of binop * expr * expr
-  | Call of string * expr list
+  | Call of string * expr list * Pos.t
 
 type param = { pname : string; pty : type_ann }
 
