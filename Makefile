@@ -1,4 +1,4 @@
-EXILE   := dune exec --no-print-directory exile-lang --
+EXILE   := dune exec --no-print-directory exilc --
 CC      := cc
 CFLAGS  := -ansi -pedantic -Wall
 

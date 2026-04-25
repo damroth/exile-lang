@@ -1,4 +1,4 @@
 (executable
- (public_name exile-lang)
+ (public_name exilc)
  (name main)
  (libraries exile_lang))
