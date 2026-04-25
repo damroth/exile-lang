@@ -1,0 +1,3 @@
+[submodule "tools/amiga-gcc"]
+	path = tools/amiga-gcc
+	url = https://codeberg.org/bebbo/amiga-gcc.git
