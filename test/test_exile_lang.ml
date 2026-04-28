@@ -115,7 +115,7 @@ let () =
 
   check_error "let annotation mismatch"
     "fn main() {\n    let x: str = 5;\n    print(x);\n}\n"
-    "variable 'x' declared as str but initializer has type int";
+    "variable 'x' declared as str but initializer has type i32";
 
   check_error "wrong arg count"
     "fn add(a: int, b: int) -> int {\n    return a + b;\n}\nfn main() {\n    print(add(1));\n}\n"
@@ -123,7 +123,7 @@ let () =
 
   check_error "wrong arg type"
     "fn greet(name: str) {\n    print(name);\n}\nfn main() {\n    greet(42);\n}\n"
-    "argument 1 of 'greet': expected str, got int";
+    "argument 1 of 'greet': expected str, got i32";
 
   check_error "void used as value"
     "fn greet(name: str) {\n    print(name);\n}\nfn main() {\n    let x = greet(\"hi\");\n    print(x);\n}\n"

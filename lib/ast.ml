@@ -1,4 +1,9 @@
-type type_ann = TyInt | TyStr | TyBool
+type int_width = W8 | W16 | W32
+
+type type_ann =
+  | TyInt of { signed : bool; width : int_width }
+  | TyStr
+  | TyBool
 
 type binop =
   | Add | Sub | Mul | Div

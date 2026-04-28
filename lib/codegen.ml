@@ -1,4 +1,23 @@
-type typ = TInt | TBool | TString
+type typ =
+  | TInt of { signed : bool; width : Ast.int_width }
+  | TBool
+  | TString
+
+(* Default integer type — what `int` and bare integer literals reduce to. *)
+let t_i32 = TInt { signed = true; width = Ast.W32 }
+
+(* Does literal value [n] fit into an integer type of given signedness/width?
+   OCaml's int is 63-bit on a 64-bit host, so all our ranges fit safely. *)
+let int_fits n typ =
+  match typ with
+  | TInt { signed = true; width = Ast.W8 } -> n >= -128 && n <= 127
+  | TInt { signed = false; width = Ast.W8 } -> n >= 0 && n <= 255
+  | TInt { signed = true; width = Ast.W16 } -> n >= -32768 && n <= 32767
+  | TInt { signed = false; width = Ast.W16 } -> n >= 0 && n <= 65535
+  | TInt { signed = true; width = Ast.W32 } ->
+      n >= -2147483648 && n <= 2147483647
+  | TInt { signed = false; width = Ast.W32 } -> n >= 0 && n <= 4294967295
+  | _ -> false
 
 type fn_sig = {
   param_tys : typ list;
@@ -59,11 +78,37 @@ let escape_c s =
     s;
   Buffer.contents buf
 
-let type_of_ann = function Ast.TyInt -> TInt | Ast.TyStr -> TString | Ast.TyBool -> TBool
+let type_of_ann = function
+  | Ast.TyInt { signed; width } -> TInt { signed; width }
+  | Ast.TyStr -> TString
+  | Ast.TyBool -> TBool
 
-let typ_name = function TInt -> "int" | TBool -> "bool" | TString -> "str"
+let int_typ_name signed width =
+  let prefix = if signed then "i" else "u" in
+  let bits = match width with Ast.W8 -> "8" | Ast.W16 -> "16" | Ast.W32 -> "32" in
+  prefix ^ bits
 
-let c_type_prefix = function TInt | TBool -> "int " | TString -> "const char *"
+let typ_name = function
+  | TInt { signed; width } -> int_typ_name signed width
+  | TBool -> "bool"
+  | TString -> "str"
+
+let c_type_prefix = function
+  | TInt { signed; width } ->
+      let s = if signed then "" else "unsigned " in
+      let core = match width with
+        | Ast.W8 -> "char"
+        | Ast.W16 -> "short"
+        | Ast.W32 -> "int"
+      in
+      (* "signed char" is needed because C89 leaves plain `char` signedness
+         implementation-defined; for i8 we must be explicit. *)
+      let signed_core =
+        if signed && width = Ast.W8 then "signed char " else core ^ " "
+      in
+      s ^ signed_core
+  | TBool -> "int "
+  | TString -> "const char *"
 
 let c_decl t name = c_type_prefix t ^ name
 
@@ -77,25 +122,25 @@ let c_param p = c_decl (type_of_ann p.Ast.pty) p.Ast.pname
    default — sub-expressions of arithmetic, conditions, print args, function
    args, etc. always need a real value. *)
 let rec type_of ?(allow_void = false) ctx env = function
-  | Ast.IntLit _ -> TInt
+  | Ast.IntLit _ -> t_i32
   | Ast.BoolLit _ -> TBool
   | Ast.StringLit _ -> TString
   | Ast.BinOp (op, l, r) ->
       let _ = type_of ctx env l in
       let _ = type_of ctx env r in
       (match op with
-       | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> TInt
+       | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> t_i32
        | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> TBool)
   | Ast.Neg e ->
       let _ = type_of ctx env e in
-      TInt
+      t_i32
   | Ast.Var (name, pos) ->
       (match List.assoc_opt name env with
        | Some t -> t
        | None -> Error.failf pos "undefined variable '%s'" name)
   | Ast.Call ([ "print" ], args, _) ->
       List.iter (fun a -> ignore (type_of ctx env a)) args;
-      TInt
+      t_i32
   | Ast.Call (path, args, pos) ->
       let arg_tys = List.map (type_of ctx env) args in
       let display = String.concat "::" path in
@@ -125,7 +170,7 @@ let rec type_of ?(allow_void = false) ctx env = function
              (List.combine param_tys arg_tys);
            (match ret_ty with
             | Some t -> t
-            | None when allow_void -> TInt   (* placeholder, caller discards *)
+            | None when allow_void -> t_i32   (* placeholder, caller discards *)
             | None ->
                 Error.failf pos "'%s' returns void, cannot use as a value" display))
 
@@ -171,9 +216,14 @@ let rec gen_expr buf ctx env = function
            Buffer.add_char buf '('; gen_expr buf ctx env r; Buffer.add_char buf ')'
        | _ -> gen_expr buf ctx env r)
   | Ast.Call ([ "print" ], [ arg ], _) ->
+      (* %d for signed (and bool), %u for unsigned.  Varargs default-promote
+         smaller widths up to (un)signed int, so a single specifier per
+         signedness works for all widths. *)
       let fmt =
         match type_of ctx env arg with
-        | TInt | TBool -> "\"%d\\n\""
+        | TBool -> "\"%d\\n\""
+        | TInt { signed = true; _ } -> "\"%d\\n\""
+        | TInt { signed = false; _ } -> "\"%u\\n\""
         | TString -> "\"%s\\n\""
       in
       Buffer.add_string buf "printf(";
@@ -256,14 +306,32 @@ let collect_lets ctx param_env stmts =
   let rec walk env = function
     | [] -> env
     | Ast.Let { name; value; ty_ann; pos } :: rest ->
-        let t = type_of ctx env value in
-        (match ty_ann with
-         | Some ann when type_of_ann ann <> t ->
-             Error.failf pos "variable '%s' declared as %s but initializer has type %s"
-               name (typ_name (type_of_ann ann)) (typ_name t)
-         | _ -> ());
-        add_decl name t pos;
-        walk ((name, t) :: env) rest
+        let t_inferred = type_of ctx env value in
+        let t_actual =
+          match ty_ann, value with
+          | Some ann, Ast.IntLit n ->
+              let t_ann = type_of_ann ann in
+              (match t_ann with
+               | TInt _ when int_fits n t_ann -> t_ann
+               | TInt _ ->
+                   Error.failf pos
+                     "literal %d does not fit in %s" n (typ_name t_ann)
+               | _ when t_ann = t_inferred -> t_ann
+               | _ ->
+                   Error.failf pos
+                     "variable '%s' declared as %s but initializer has type %s"
+                     name (typ_name t_ann) (typ_name t_inferred))
+          | Some ann, _ ->
+              let t_ann = type_of_ann ann in
+              if t_ann = t_inferred then t_ann
+              else
+                Error.failf pos
+                  "variable '%s' declared as %s but initializer has type %s"
+                  name (typ_name t_ann) (typ_name t_inferred)
+          | None, _ -> t_inferred
+        in
+        add_decl name t_actual pos;
+        walk ((name, t_actual) :: env) rest
     | Ast.Assign { name; value; pos } :: rest ->
         if not (List.mem_assoc name env) then
           Error.failf pos "assignment to undefined variable '%s'" name;

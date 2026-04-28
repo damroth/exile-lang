@@ -29,11 +29,21 @@ let expect s tok =
     Error.failf p "expected %s, got %s" (Token.pp tok) (Token.pp t)
 
 let parse_type s =
+  let ti signed width = Ast.TyInt { signed; width } in
   match advance s with
-  | (Token.Ident "int", _) -> Ast.TyInt
+  | (Token.Ident "int", _) -> ti true Ast.W32     (* alias for i32 *)
+  | (Token.Ident "i8",  _) -> ti true Ast.W8
+  | (Token.Ident "i16", _) -> ti true Ast.W16
+  | (Token.Ident "i32", _) -> ti true Ast.W32
+  | (Token.Ident "u8",  _) -> ti false Ast.W8
+  | (Token.Ident "u16", _) -> ti false Ast.W16
+  | (Token.Ident "u32", _) -> ti false Ast.W32
   | (Token.Ident "str", _) -> Ast.TyStr
   | (Token.Ident "bool", _) -> Ast.TyBool
-  | (t, p) -> Error.failf p "expected type ('int', 'str' or 'bool'), got %s" (Token.pp t)
+  | (t, p) ->
+      Error.failf p
+        "expected type (int, i8/i16/i32, u8/u16/u32, str, bool), got %s"
+        (Token.pp t)
 
 let parse_param s =
   let name =
