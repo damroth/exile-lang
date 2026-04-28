@@ -34,6 +34,7 @@ type func = {
 type item =
   | Function of func
   | Module of module_decl
+  | Use of { path : string list; pos : Pos.t }
 and module_decl = {
   mname : string;
   mitems : item list;

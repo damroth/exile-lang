@@ -11,6 +11,7 @@ let keyword_or_ident = function
   | "while" -> Token.While
   | "mod" -> Token.Mod
   | "pub" -> Token.Pub
+  | "use" -> Token.Use
   | "true" -> Token.True
   | "false" -> Token.False
   | s -> Token.Ident s

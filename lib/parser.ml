@@ -240,9 +240,38 @@ let parse_function s seen_fns ~is_pub =
   expect s Token.RBrace;
   (name, Ast.{ name; params; ret_ty; body; is_pub })
 
-(* parse_item handles both `fn` and `mod` at any nesting level, with an
-   optional `pub` prefix.  Names share a namespace within each scope
-   (function and module names cannot collide). *)
+(* Parse a `use foo;` declaration.  Multi-segment paths (`use foo::bar;`) are
+   not yet supported in MVP — returns a single-element path. *)
+let parse_use s =
+  expect s Token.Use;
+  let (first, p) =
+    match advance s with
+    | (Token.Ident n, p) -> (n, p)
+    | (_, pp) -> Error.raise_ pp "expected module name after 'use'"
+  in
+  let rec collect_path acc =
+    if peek s = Token.DoubleColon then begin
+      ignore (advance s);
+      match advance s with
+      | (Token.Ident n, _) -> collect_path (n :: acc)
+      | (t, p2) ->
+          Error.failf p2 "expected identifier after '::', got %s" (Token.pp t)
+    end else
+      List.rev acc
+  in
+  let path = collect_path [first] in
+  expect s Token.Semicolon;
+  (match path with
+   | [_] -> ()
+   | _ ->
+       Error.failf p
+         "multi-segment 'use' is not yet supported (only `use foo;`); got '%s'"
+         (String.concat "::" path));
+  (path, p)
+
+(* parse_item handles `fn`, `mod`, and `use` at any nesting level, with an
+   optional `pub` prefix where it makes sense.  Names share a namespace within
+   each scope. *)
 let rec parse_item s seen =
   let is_pub = peek s = Token.Pub in
   if is_pub then ignore (advance s);
@@ -255,8 +284,17 @@ let rec parse_item s seen =
         Error.failf (peek_pos s) "'pub mod' is not yet supported";
       let (name, m) = parse_module s seen in
       (name, Ast.Module m)
+  | Token.Use ->
+      if is_pub then
+        Error.failf (peek_pos s) "'pub use' is not yet supported";
+      let (path, pos) = parse_use s in
+      (* Single-segment only in MVP, so the name to dedup against is just
+         the lone identifier. *)
+      let name = List.hd path in
+      (name, Ast.Use { path; pos })
   | _ ->
-      Error.failf (peek_pos s) "expected 'fn' or 'mod', got %s" (Token.pp (peek s))
+      Error.failf (peek_pos s) "expected 'fn', 'mod' or 'use', got %s"
+        (Token.pp (peek s))
 
 and parse_module s seen =
   expect s Token.Mod;

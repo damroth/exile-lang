@@ -84,7 +84,7 @@ let () =
   in
   let src = In_channel.with_open_text input In_channel.input_all in
   try
-    let c_code = Exile_lang.Compiler.compile src in
+    let c_code = Exile_lang.Compiler.compile_file input in
     let c_path = Filename.remove_extension input ^ ".c" in
     Out_channel.with_open_text c_path (fun oc ->
         Out_channel.output_string oc c_code);

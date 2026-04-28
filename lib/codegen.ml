@@ -69,7 +69,14 @@ let c_decl t name = c_type_prefix t ^ name
 
 let c_param p = c_decl (type_of_ann p.Ast.pty) p.Ast.pname
 
-let rec type_of ctx env = function
+(* type_of returns the type of an expression.  The optional [allow_void] flag
+   controls what happens when the outermost expression is a call to a void
+   function: with [allow_void:true] (used by ExprStmt) the call is accepted
+   and a placeholder type is returned (it will be discarded); otherwise the
+   void result is rejected.  Recursive calls into operands always use the
+   default — sub-expressions of arithmetic, conditions, print args, function
+   args, etc. always need a real value. *)
+let rec type_of ?(allow_void = false) ctx env = function
   | Ast.IntLit _ -> TInt
   | Ast.BoolLit _ -> TBool
   | Ast.StringLit _ -> TString
@@ -118,6 +125,7 @@ let rec type_of ctx env = function
              (List.combine param_tys arg_tys);
            (match ret_ty with
             | Some t -> t
+            | None when allow_void -> TInt   (* placeholder, caller discards *)
             | None ->
                 Error.failf pos "'%s' returns void, cannot use as a value" display))
 
@@ -265,7 +273,8 @@ let collect_lets ctx param_env stmts =
         let _ = type_of ctx env e in
         walk env rest
     | Ast.ExprStmt e :: rest ->
-        let _ = type_of ctx env e in
+        (* ExprStmt discards the result, so void calls are allowed here. *)
+        let _ = type_of ~allow_void:true ctx env e in
         walk env rest
     | Ast.If { cond; then_body; else_body } :: rest ->
         let _ = type_of ctx env cond in
@@ -325,7 +334,11 @@ let flatten_funcs program =
             let m = if f.name = "main" then "main" else mangle path f.name in
             (path, f, m) :: acc
         | Ast.Module m ->
-            walk (path @ [m.Ast.mname]) acc m.Ast.mitems)
+            walk (path @ [m.Ast.mname]) acc m.Ast.mitems
+        | Ast.Use { pos; _ } ->
+            Error.failf pos
+              "internal: 'use' declaration reached codegen unresolved \
+               (loader pass missing?)")
       acc items
   in
   List.rev (walk [] [] program)
