@@ -4,6 +4,7 @@ type fn_sig = {
   param_tys : typ list;
   ret_ty : typ option;
   mangled : string;            (* C-level name (e.g. "foo__bar" or "main") *)
+  fn_pub : bool;
 }
 
 (* Resolution context: every function in the program (keyed by module path
@@ -93,7 +94,16 @@ let rec type_of ctx env = function
       let display = String.concat "::" path in
       (match lookup_fn ctx path with
        | None -> Error.failf pos "unknown function '%s'" display
-       | Some { param_tys; ret_ty; _ } ->
+       | Some { param_tys; ret_ty; fn_pub; _ } ->
+           (* visibility: qualified call (path > 1) to a non-pub function
+              from outside its defining module is forbidden. *)
+           (match path with
+            | [_] -> ()
+            | _ ->
+                let mod_path = List.rev (List.tl (List.rev path)) in
+                if (not fn_pub) && ctx.scope <> mod_path then
+                  Error.failf pos "function '%s' is private to module '%s'"
+                    display (String.concat "::" mod_path));
            let expected = List.length param_tys in
            let got = List.length args in
            if expected <> got then
@@ -271,11 +281,14 @@ let collect_lets ctx param_env stmts =
   List.rev !decls
 
 (* Emit a function signature using a mangled C-level name (or "main" for the
-   entry point — main() is special and not mangled). *)
+   entry point — main() is special and not mangled).  Non-pub functions get
+   a "static" linkage prefix so they are invisible across translation units
+   (and act as documentation that they are module-internal). *)
 let emit_fn_sig buf (f : Ast.func) mangled =
   if f.name = "main" then
     Buffer.add_string buf "int main(void)"
   else begin
+    if not f.is_pub then Buffer.add_string buf "static ";
     let ret =
       match f.ret_ty with
       | None -> "void "
@@ -328,7 +341,8 @@ let build_global_index flat =
           (p, f.name,
            { param_tys = List.map (fun p -> type_of_ann p.Ast.pty) f.params;
              ret_ty = Option.map type_of_ann f.ret_ty;
-             mangled }))
+             mangled;
+             fn_pub = f.is_pub }))
     flat
 
 let gen_program program =

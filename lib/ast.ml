@@ -28,6 +28,7 @@ type func = {
   params : param list;
   ret_ty : type_ann option;
   body : stmt list;
+  is_pub : bool;
 }
 
 type item =

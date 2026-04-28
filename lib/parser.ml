@@ -209,7 +209,7 @@ and parse_stmts s acc =
   | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
   | _ -> parse_stmts s (parse_stmt s :: acc)
 
-let parse_function s seen_fns =
+let parse_function s seen_fns ~is_pub =
   expect s Token.Fn;
   let (name, name_pos) =
     match advance s with
@@ -233,20 +233,26 @@ let parse_function s seen_fns =
     Error.raise_ name_pos "'main' must take no parameters";
   if name = "main" && ret_ty <> None then
     Error.raise_ name_pos "'main' must not declare a return type";
+  if name = "main" && is_pub then
+    Error.raise_ name_pos "'pub' has no meaning on 'main'";
   expect s Token.LBrace;
   let body = parse_stmts s [] in
   expect s Token.RBrace;
-  (name, Ast.{ name; params; ret_ty; body })
+  (name, Ast.{ name; params; ret_ty; body; is_pub })
 
-(* parse_item handles both `fn` and `mod` at any nesting level.
-   Returns (name_for_dup_check, ast_item).  Names share a namespace within
-   each scope (function and module names cannot collide). *)
+(* parse_item handles both `fn` and `mod` at any nesting level, with an
+   optional `pub` prefix.  Names share a namespace within each scope
+   (function and module names cannot collide). *)
 let rec parse_item s seen =
+  let is_pub = peek s = Token.Pub in
+  if is_pub then ignore (advance s);
   match peek s with
   | Token.Fn ->
-      let (name, fn) = parse_function s seen in
+      let (name, fn) = parse_function s seen ~is_pub in
       (name, Ast.Function fn)
   | Token.Mod ->
+      if is_pub then
+        Error.failf (peek_pos s) "'pub mod' is not yet supported";
       let (name, m) = parse_module s seen in
       (name, Ast.Module m)
   | _ ->

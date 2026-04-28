@@ -67,7 +67,7 @@ let () =
 
   check "multi-function call"
     "fn add(a: int, b: int) -> int {\n    return a + b;\n}\n\nfn main() {\n    let x = add(3, 4);\n    print(x);\n}\n"
-    "#include <stdio.h>\n\nint add(int a, int b);\n\nint add(int a, int b) {\n    return a + b;\n}\n\nint main(void) {\n    int x;\n    x = add(3, 4);\n    printf(\"%d\\n\", x);\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nstatic int add(int a, int b);\n\nstatic int add(int a, int b) {\n    return a + b;\n}\n\nint main(void) {\n    int x;\n    x = add(3, 4);\n    printf(\"%d\\n\", x);\n    return 0;\n}\n";
 
   check "assignment"
     "fn main() {\n    let x = 1;\n    x = x + 41;\n    print(x);\n}\n"
@@ -99,7 +99,7 @@ let () =
 
   check "unary minus on literal var and call"
     "fn id(x: int) -> int {\n    return x;\n}\nfn main() {\n    let a = -5;\n    let b = -a;\n    print(b);\n    print(-id(7));\n}\n"
-    "#include <stdio.h>\n\nint id(int x);\n\nint id(int x) {\n    return x;\n}\n\nint main(void) {\n    int a;\n    int b;\n    a = -5;\n    b = -a;\n    printf(\"%d\\n\", b);\n    printf(\"%d\\n\", -(id(7)));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nstatic int id(int x);\n\nstatic int id(int x) {\n    return x;\n}\n\nint main(void) {\n    int a;\n    int b;\n    a = -5;\n    b = -a;\n    printf(\"%d\\n\", b);\n    printf(\"%d\\n\", -(id(7)));\n    return 0;\n}\n";
 
   check_error "undefined variable in if cond"
     "fn main() {\n    if nope > 0 {\n        print(1);\n    }\n}\n"
