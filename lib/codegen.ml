@@ -6,6 +6,28 @@ type fn_sig = {
   mangled : string;            (* C-level name (e.g. "foo__bar" or "main") *)
 }
 
+(* Resolution context: every function in the program (keyed by module path
+   and name) plus the path of the function we are currently emitting code
+   for.  Local calls (path = [name]) resolve within the current scope;
+   qualified calls (path > 1) resolve absolutely from the root. *)
+type fn_ctx = {
+  global : (string list * string * fn_sig) list;
+  scope : string list;
+}
+
+let lookup_fn ctx (path : string list) =
+  let (mod_path, name) =
+    match path with
+    | [] -> failwith "empty call path"
+    | [n] -> (ctx.scope, n)
+    | p ->
+        let rev = List.rev p in
+        (List.rev (List.tl rev), List.hd rev)
+  in
+  List.find_map
+    (fun (p, n, s) -> if p = mod_path && n = name then Some s else None)
+    ctx.global
+
 (* Mangle a function name with its module path.  Top-level (path = []) keeps
    the bare name.  Inside a module, names join with "__".  C99 reserves
    double-underscores for the implementation, but we accept the risk for
@@ -46,53 +68,55 @@ let c_decl t name = c_type_prefix t ^ name
 
 let c_param p = c_decl (type_of_ann p.Ast.pty) p.Ast.pname
 
-let rec type_of fn_table env = function
+let rec type_of ctx env = function
   | Ast.IntLit _ -> TInt
   | Ast.BoolLit _ -> TBool
   | Ast.StringLit _ -> TString
   | Ast.BinOp (op, l, r) ->
-      let _ = type_of fn_table env l in
-      let _ = type_of fn_table env r in
+      let _ = type_of ctx env l in
+      let _ = type_of ctx env r in
       (match op with
        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> TInt
        | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> TBool)
   | Ast.Neg e ->
-      let _ = type_of fn_table env e in
+      let _ = type_of ctx env e in
       TInt
   | Ast.Var (name, pos) ->
       (match List.assoc_opt name env with
        | Some t -> t
        | None -> Error.failf pos "undefined variable '%s'" name)
-  | Ast.Call ("print", args, _) ->
-      List.iter (fun a -> ignore (type_of fn_table env a)) args;
+  | Ast.Call ([ "print" ], args, _) ->
+      List.iter (fun a -> ignore (type_of ctx env a)) args;
       TInt
-  | Ast.Call (name, args, pos) ->
-      let arg_tys = List.map (type_of fn_table env) args in
-      (match List.assoc_opt name fn_table with
-       | None -> Error.failf pos "unknown function '%s'" name
-       | Some { param_tys; ret_ty } ->
+  | Ast.Call (path, args, pos) ->
+      let arg_tys = List.map (type_of ctx env) args in
+      let display = String.concat "::" path in
+      (match lookup_fn ctx path with
+       | None -> Error.failf pos "unknown function '%s'" display
+       | Some { param_tys; ret_ty; _ } ->
            let expected = List.length param_tys in
            let got = List.length args in
            if expected <> got then
              Error.failf pos "function '%s' expects %d argument(s), got %d"
-               name expected got;
+               display expected got;
            List.iteri
              (fun i (exp, act) ->
                if exp <> act then
                  Error.failf pos
                    "argument %d of '%s': expected %s, got %s"
-                   (i + 1) name (typ_name exp) (typ_name act))
+                   (i + 1) display (typ_name exp) (typ_name act))
              (List.combine param_tys arg_tys);
            (match ret_ty with
             | Some t -> t
-            | None -> Error.failf pos "'%s' returns void, cannot use as a value" name))
+            | None ->
+                Error.failf pos "'%s' returns void, cannot use as a value" display))
 
 let prec = function
   | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> 0
   | Ast.Add | Ast.Sub -> 1
   | Ast.Mul | Ast.Div -> 2
 
-let rec gen_expr buf fn_table env = function
+let rec gen_expr buf ctx env = function
   | Ast.IntLit n -> Buffer.add_string buf (string_of_int n)
   | Ast.BoolLit b -> Buffer.add_string buf (if b then "1" else "0")
   | Ast.StringLit s ->
@@ -103,10 +127,10 @@ let rec gen_expr buf fn_table env = function
   | Ast.Neg e ->
       Buffer.add_char buf '-';
       (match e with
-       | Ast.IntLit _ | Ast.Var _ -> gen_expr buf fn_table env e
+       | Ast.IntLit _ | Ast.Var _ -> gen_expr buf ctx env e
        | _ ->
            Buffer.add_char buf '(';
-           gen_expr buf fn_table env e;
+           gen_expr buf ctx env e;
            Buffer.add_char buf ')')
   | Ast.BinOp (op, l, r) ->
       let op_str =
@@ -120,80 +144,81 @@ let rec gen_expr buf fn_table env = function
       let p = prec op in
       (match l with
        | Ast.BinOp (lop, _, _) when prec lop < p ->
-           Buffer.add_char buf '('; gen_expr buf fn_table env l; Buffer.add_char buf ')'
-       | _ -> gen_expr buf fn_table env l);
+           Buffer.add_char buf '('; gen_expr buf ctx env l; Buffer.add_char buf ')'
+       | _ -> gen_expr buf ctx env l);
       Buffer.add_string buf op_str;
       (match r with
        | Ast.BinOp (rop, _, _)
          when prec rop < p || (prec rop = p && (op = Ast.Sub || op = Ast.Div)) ->
-           Buffer.add_char buf '('; gen_expr buf fn_table env r; Buffer.add_char buf ')'
-       | _ -> gen_expr buf fn_table env r)
-  | Ast.Call ("print", [ arg ], _) ->
+           Buffer.add_char buf '('; gen_expr buf ctx env r; Buffer.add_char buf ')'
+       | _ -> gen_expr buf ctx env r)
+  | Ast.Call ([ "print" ], [ arg ], _) ->
       let fmt =
-        match type_of fn_table env arg with
+        match type_of ctx env arg with
         | TInt | TBool -> "\"%d\\n\""
         | TString -> "\"%s\\n\""
       in
       Buffer.add_string buf "printf(";
       Buffer.add_string buf fmt;
       Buffer.add_string buf ", ";
-      gen_expr buf fn_table env arg;
+      gen_expr buf ctx env arg;
       Buffer.add_char buf ')'
-  | Ast.Call ("print", _, pos) ->
+  | Ast.Call ([ "print" ], _, pos) ->
       Error.failf pos "print() takes exactly one argument"
-  | Ast.Call (name, args, pos) ->
+  | Ast.Call (path, args, pos) ->
       let mangled =
-        match List.assoc_opt name fn_table with
+        match lookup_fn ctx path with
         | Some s -> s.mangled
-        | None -> Error.failf pos "unknown function '%s'" name
+        | None ->
+            Error.failf pos "unknown function '%s'" (String.concat "::" path)
       in
       Buffer.add_string buf mangled;
       Buffer.add_char buf '(';
-      add_separated buf ", " (gen_expr buf fn_table env) args;
+      add_separated buf ", " (gen_expr buf ctx env) args;
       Buffer.add_char buf ')'
 
-let rec gen_if buf fn_table env indent cond then_body else_body =
+let rec gen_if buf ctx env indent cond then_body else_body =
   Buffer.add_string buf "if (";
-  gen_expr buf fn_table env cond;
+  gen_expr buf ctx env cond;
   Buffer.add_string buf ") {\n";
-  List.iter (gen_stmt buf fn_table env (indent ^ "    ")) then_body;
+  List.iter (gen_stmt buf ctx env (indent ^ "    ")) then_body;
   Buffer.add_string buf indent;
   Buffer.add_char buf '}';
   (match else_body with
    | [] -> Buffer.add_char buf '\n'
    | [ Ast.If { cond = ec; then_body = et; else_body = ee } ] ->
        Buffer.add_string buf " else ";
-       gen_if buf fn_table env indent ec et ee
+       gen_if buf ctx env indent ec et ee
    | _ ->
        Buffer.add_string buf " else {\n";
-       List.iter (gen_stmt buf fn_table env (indent ^ "    ")) else_body;
+       List.iter (gen_stmt buf ctx env (indent ^ "    ")) else_body;
        Buffer.add_string buf indent;
        Buffer.add_string buf "}\n")
 
-and gen_stmt buf fn_table env indent = function
+and gen_stmt buf ctx env indent = function
   | Ast.Let { name; value } | Ast.Assign { name; value } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf (name ^ " = ");
-      gen_expr buf fn_table env value;
+      gen_expr buf ctx env value;
       Buffer.add_string buf ";\n"
   | Ast.Return expr ->
       Buffer.add_string buf indent;
       Buffer.add_string buf "return ";
-      gen_expr buf fn_table env expr;
+      gen_expr buf ctx env expr;
       Buffer.add_string buf ";\n"
   | Ast.ExprStmt e ->
       Buffer.add_string buf indent;
-      gen_expr buf fn_table env e;
+      gen_expr buf ctx env e;
       Buffer.add_string buf ";\n"
   | Ast.If { cond; then_body; else_body } ->
       Buffer.add_string buf indent;
-      gen_if buf fn_table env indent cond then_body else_body
+      gen_if buf ctx env indent cond then_body else_body
   | Ast.While { cond; body } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf "while (";
-      gen_expr buf fn_table env cond;
+      gen_expr buf ctx env cond;
       Buffer.add_string buf ") {\n";
-      List.iter (gen_stmt buf fn_table env (indent ^ "    ")) body;
+      List.iter (gen_stmt buf ctx env (indent ^ "    ")) body;
       Buffer.add_string buf indent;
       Buffer.add_string buf "}\n"
 
@@ -201,7 +226,7 @@ and gen_stmt buf fn_table env indent = function
    Type resolution uses block-scoped env (then/else branches start from
    the same pre-if env — no leak). Accumulation is function-scoped:
    one name per function, no shadowing of parameters. *)
-let collect_lets fn_table param_env stmts =
+let collect_lets ctx param_env stmts =
   let decls = ref [] in
   let add_decl name t pos =
     if List.mem_assoc name param_env then
@@ -213,7 +238,7 @@ let collect_lets fn_table param_env stmts =
   let rec walk env = function
     | [] -> env
     | Ast.Let { name; value; ty_ann; pos } :: rest ->
-        let t = type_of fn_table env value in
+        let t = type_of ctx env value in
         (match ty_ann with
          | Some ann when type_of_ann ann <> t ->
              Error.failf pos "variable '%s' declared as %s but initializer has type %s"
@@ -224,21 +249,21 @@ let collect_lets fn_table param_env stmts =
     | Ast.Assign { name; value; pos } :: rest ->
         if not (List.mem_assoc name env) then
           Error.failf pos "assignment to undefined variable '%s'" name;
-        let _ = type_of fn_table env value in
+        let _ = type_of ctx env value in
         walk env rest
     | Ast.Return e :: rest ->
-        let _ = type_of fn_table env e in
+        let _ = type_of ctx env e in
         walk env rest
     | Ast.ExprStmt e :: rest ->
-        let _ = type_of fn_table env e in
+        let _ = type_of ctx env e in
         walk env rest
     | Ast.If { cond; then_body; else_body } :: rest ->
-        let _ = type_of fn_table env cond in
+        let _ = type_of ctx env cond in
         let _ = walk env then_body in
         let _ = walk env else_body in
         walk (param_env @ List.rev !decls) rest
     | Ast.While { cond; body } :: rest ->
-        let _ = type_of fn_table env cond in
+        let _ = type_of ctx env cond in
         let _ = walk env body in
         walk (param_env @ List.rev !decls) rest
   in
@@ -263,17 +288,17 @@ let emit_fn_sig buf (f : Ast.func) mangled =
     Buffer.add_char buf ')'
   end
 
-let gen_function buf fn_table (f : Ast.func) mangled =
+let gen_function buf ctx (f : Ast.func) mangled =
   emit_fn_sig buf f mangled;
   Buffer.add_string buf " {\n";
   let param_env = List.map (fun p -> (p.Ast.pname, type_of_ann p.Ast.pty)) f.params in
-  let lets = collect_lets fn_table param_env f.body in
+  let lets = collect_lets ctx param_env f.body in
   let full_env = param_env @ lets in
   List.iter
     (fun (name, t) ->
       Buffer.add_string buf (Printf.sprintf "    %s;\n" (c_decl t name)))
     lets;
-  List.iter (gen_stmt buf fn_table full_env "    ") f.body;
+  List.iter (gen_stmt buf ctx full_env "    ") f.body;
   if f.name = "main" then Buffer.add_string buf "    return 0;\n";
   Buffer.add_string buf "}\n"
 
@@ -292,19 +317,18 @@ let flatten_funcs program =
   in
   List.rev (walk [] [] program)
 
-(* Build a fn_table visible from the given module path: only sibling functions
-   in the SAME path are reachable today (no `::` resolution yet, that comes
-   in step 3).  main() is excluded — it is not callable. *)
-let local_fn_table flat path =
+(* Build the global function index: every function with its module path,
+   exile-side name, and signature.  main() is excluded — it is not callable. *)
+let build_global_index flat =
   List.filter_map
-    (fun (p, f, mangled) ->
-      if p = path && f.Ast.name <> "main" then
+    (fun (p, (f : Ast.func), mangled) ->
+      if f.name = "main" then None
+      else
         Some
-          (f.Ast.name,
+          (p, f.name,
            { param_tys = List.map (fun p -> type_of_ann p.Ast.pty) f.params;
              ret_ty = Option.map type_of_ann f.ret_ty;
-             mangled })
-      else None)
+             mangled }))
     flat
 
 let gen_program program =
@@ -315,6 +339,7 @@ let gen_program program =
       if f.Ast.name = "main" && path <> [] then
         Error.raise_ Pos.zero "'main' must be at top level, not inside a module")
     flat;
+  let global = build_global_index flat in
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
   let non_main = List.filter (fun (_, f, _) -> f.Ast.name <> "main") flat in
@@ -330,8 +355,8 @@ let gen_program program =
   let last = List.length flat - 1 in
   List.iteri
     (fun i (path, f, mangled) ->
-      let fn_table = local_fn_table flat path in
-      gen_function buf fn_table f mangled;
+      let ctx = { global; scope = path } in
+      gen_function buf ctx f mangled;
       if i < last then Buffer.add_char buf '\n')
     flat;
   Buffer.contents buf

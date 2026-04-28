@@ -77,11 +77,30 @@ let rec parse_primary s =
   | Token.String str -> Ast.StringLit str
   | Token.Minus -> Ast.Neg (parse_primary s)
   | Token.Ident name ->
+      (* Path-qualified identifiers: foo::bar::baz(...).  Build the full
+         path, then decide if it ends in a call or a bare value. *)
+      let rec collect_path acc =
+        if peek s = Token.DoubleColon then begin
+          ignore (advance s);
+          match advance s with
+          | (Token.Ident n, _) -> collect_path (n :: acc)
+          | (t, p2) ->
+              Error.failf p2 "expected identifier after '::', got %s" (Token.pp t)
+        end else
+          List.rev acc
+      in
+      let path = collect_path [name] in
       if peek s = Token.LParen then begin
         ignore (advance s);
-        Ast.Call (name, parse_args s, p)
-      end else
-        Ast.Var (name, p)
+        Ast.Call (path, parse_args s, p)
+      end else begin
+        match path with
+        | [single] -> Ast.Var (single, p)
+        | _ ->
+            Error.failf p
+              "qualified path '%s' is only valid as a function call"
+              (String.concat "::" path)
+      end
   | Token.LParen ->
       let e = parse_expr s in
       expect s Token.RParen;
