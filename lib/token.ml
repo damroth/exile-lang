@@ -5,6 +5,8 @@ type t =
   | If
   | Else
   | While
+  | Mod
+  | Pub
   | LParen
   | RParen
   | LBrace
@@ -12,6 +14,7 @@ type t =
   | Semicolon
   | Comma
   | Colon
+  | DoubleColon
   | Arrow
   | Eq
   | EqEq
@@ -34,9 +37,11 @@ type t =
 let pp = function
   | Fn -> "'fn'" | Let -> "'let'" | Return -> "'return'"
   | If -> "'if'" | Else -> "'else'" | While -> "'while'"
+  | Mod -> "'mod'" | Pub -> "'pub'"
   | LParen -> "'('" | RParen -> "')'"
   | LBrace -> "'{'" | RBrace -> "'}'"
   | Semicolon -> "';'" | Comma -> "','" | Colon -> "':'"
+  | DoubleColon -> "'::'"
   | Arrow -> "'->'" | Eq -> "'='" | EqEq -> "'=='" | NotEq -> "'!='"
   | Lt -> "'<'" | Gt -> "'>'" | LtEq -> "'<='" | GtEq -> "'>='"
   | Plus -> "'+'" | Minus -> "'-'" | Star -> "'*'" | Slash -> "'/'"

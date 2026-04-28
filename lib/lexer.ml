@@ -9,6 +9,8 @@ let keyword_or_ident = function
   | "if" -> Token.If
   | "else" -> Token.Else
   | "while" -> Token.While
+  | "mod" -> Token.Mod
+  | "pub" -> Token.Pub
   | "true" -> Token.True
   | "false" -> Token.False
   | s -> Token.Ident s
@@ -33,6 +35,8 @@ let tokenize src =
       | '}' -> loop (i + 1) ((Token.RBrace, p) :: acc)
       | ';' -> loop (i + 1) ((Token.Semicolon, p) :: acc)
       | ',' -> loop (i + 1) ((Token.Comma, p) :: acc)
+      | ':' when i + 1 < len && src.[i + 1] = ':' ->
+          adv ':'; loop (i + 2) ((Token.DoubleColon, p) :: acc)
       | ':' -> loop (i + 1) ((Token.Colon, p) :: acc)
       | '+' -> loop (i + 1) ((Token.Plus, p) :: acc)
       | '*' -> loop (i + 1) ((Token.Star, p) :: acc)
