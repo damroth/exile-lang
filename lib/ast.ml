@@ -30,4 +30,13 @@ type func = {
   body : stmt list;
 }
 
-type program = func list
+type item =
+  | Function of func
+  | Module of module_decl
+and module_decl = {
+  mname : string;
+  mitems : item list;
+  mpos : Pos.t;
+}
+
+type program = item list

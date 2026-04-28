@@ -219,13 +219,48 @@ let parse_function s seen_fns =
   expect s Token.RBrace;
   (name, Ast.{ name; params; ret_ty; body })
 
+(* parse_item handles both `fn` and `mod` at any nesting level.
+   Returns (name_for_dup_check, ast_item).  Names share a namespace within
+   each scope (function and module names cannot collide). *)
+let rec parse_item s seen =
+  match peek s with
+  | Token.Fn ->
+      let (name, fn) = parse_function s seen in
+      (name, Ast.Function fn)
+  | Token.Mod ->
+      let (name, m) = parse_module s seen in
+      (name, Ast.Module m)
+  | _ ->
+      Error.failf (peek_pos s) "expected 'fn' or 'mod', got %s" (Token.pp (peek s))
+
+and parse_module s seen =
+  expect s Token.Mod;
+  let (name, name_pos) =
+    match advance s with
+    | (Token.Ident n, p) -> (n, p)
+    | (_, p) -> Error.raise_ p "expected module name after 'mod'"
+  in
+  if List.mem name seen then
+    Error.failf name_pos "module '%s' already defined in this scope" name;
+  expect s Token.LBrace;
+  let rec loop inner_seen acc =
+    match peek s with
+    | Token.RBrace -> ignore (advance s); List.rev acc
+    | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
+    | _ ->
+        let (item_name, item) = parse_item s inner_seen in
+        loop (item_name :: inner_seen) (item :: acc)
+  in
+  let items = loop [] [] in
+  (name, Ast.{ mname = name; mitems = items; mpos = name_pos })
+
 let parse_program tokens =
   let s = make_state tokens in
   let rec loop seen acc =
     match peek s with
     | Token.Eof -> List.rev acc
     | _ ->
-        let (name, fn) = parse_function s seen in
-        loop (name :: seen) (fn :: acc)
+        let (name, item) = parse_item s seen in
+        loop (name :: seen) (item :: acc)
   in
   loop [] []

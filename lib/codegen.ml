@@ -3,7 +3,17 @@ type typ = TInt | TBool | TString
 type fn_sig = {
   param_tys : typ list;
   ret_ty : typ option;
+  mangled : string;            (* C-level name (e.g. "foo__bar" or "main") *)
 }
+
+(* Mangle a function name with its module path.  Top-level (path = []) keeps
+   the bare name.  Inside a module, names join with "__".  C99 reserves
+   double-underscores for the implementation, but we accept the risk for
+   simplicity — collisions only happen if a user writes "__" in identifiers. *)
+let mangle path name =
+  match path with
+  | [] -> name
+  | _ -> String.concat "__" path ^ "__" ^ name
 
 let add_separated buf sep f xs =
   List.iteri
@@ -131,8 +141,13 @@ let rec gen_expr buf fn_table env = function
       Buffer.add_char buf ')'
   | Ast.Call ("print", _, pos) ->
       Error.failf pos "print() takes exactly one argument"
-  | Ast.Call (name, args, _) ->
-      Buffer.add_string buf name;
+  | Ast.Call (name, args, pos) ->
+      let mangled =
+        match List.assoc_opt name fn_table with
+        | Some s -> s.mangled
+        | None -> Error.failf pos "unknown function '%s'" name
+      in
+      Buffer.add_string buf mangled;
       Buffer.add_char buf '(';
       add_separated buf ", " (gen_expr buf fn_table env) args;
       Buffer.add_char buf ')'
@@ -230,7 +245,9 @@ let collect_lets fn_table param_env stmts =
   let _ = walk param_env stmts in
   List.rev !decls
 
-let emit_fn_sig buf (f : Ast.func) =
+(* Emit a function signature using a mangled C-level name (or "main" for the
+   entry point — main() is special and not mangled). *)
+let emit_fn_sig buf (f : Ast.func) mangled =
   if f.name = "main" then
     Buffer.add_string buf "int main(void)"
   else begin
@@ -240,14 +257,14 @@ let emit_fn_sig buf (f : Ast.func) =
       | Some ty -> c_type_prefix (type_of_ann ty)
     in
     Buffer.add_string buf ret;
-    Buffer.add_string buf f.name;
+    Buffer.add_string buf mangled;
     Buffer.add_char buf '(';
     add_separated buf ", " (fun p -> Buffer.add_string buf (c_param p)) f.params;
     Buffer.add_char buf ')'
   end
 
-let gen_function buf fn_table (f : Ast.func) =
-  emit_fn_sig buf f;
+let gen_function buf fn_table (f : Ast.func) mangled =
+  emit_fn_sig buf f mangled;
   Buffer.add_string buf " {\n";
   let param_env = List.map (fun p -> (p.Ast.pname, type_of_ann p.Ast.pty)) f.params in
   let lets = collect_lets fn_table param_env f.body in
@@ -260,33 +277,61 @@ let gen_function buf fn_table (f : Ast.func) =
   if f.name = "main" then Buffer.add_string buf "    return 0;\n";
   Buffer.add_string buf "}\n"
 
-let build_fn_table program =
+(* Walk the program tree and produce a flat list of every function with its
+   module path and mangled C name.  Recurses into nested modules. *)
+let flatten_funcs program =
+  let rec walk path acc items =
+    List.fold_left
+      (fun acc item -> match item with
+        | Ast.Function f ->
+            let m = if f.name = "main" then "main" else mangle path f.name in
+            (path, f, m) :: acc
+        | Ast.Module m ->
+            walk (path @ [m.Ast.mname]) acc m.Ast.mitems)
+      acc items
+  in
+  List.rev (walk [] [] program)
+
+(* Build a fn_table visible from the given module path: only sibling functions
+   in the SAME path are reachable today (no `::` resolution yet, that comes
+   in step 3).  main() is excluded — it is not callable. *)
+let local_fn_table flat path =
   List.filter_map
-    (fun (f : Ast.func) ->
-      if f.name = "main" then None
-      else
+    (fun (p, f, mangled) ->
+      if p = path && f.Ast.name <> "main" then
         Some
-          (f.name,
+          (f.Ast.name,
            { param_tys = List.map (fun p -> type_of_ann p.Ast.pty) f.params;
-             ret_ty = Option.map type_of_ann f.ret_ty }))
-    program
+             ret_ty = Option.map type_of_ann f.ret_ty;
+             mangled })
+      else None)
+    flat
 
 let gen_program program =
-  let fn_table = build_fn_table program in
+  let flat = flatten_funcs program in
+  (* main() must be at top level, not inside a module. *)
+  List.iter
+    (fun (path, f, _) ->
+      if f.Ast.name = "main" && path <> [] then
+        Error.raise_ Pos.zero "'main' must be at top level, not inside a module")
+    flat;
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
-  let non_main =
-    List.filter (fun (f : Ast.func) -> f.name <> "main") program
-  in
+  let non_main = List.filter (fun (_, f, _) -> f.Ast.name <> "main") flat in
   if non_main <> [] then begin
     Buffer.add_char buf '\n';
-    List.iter (fun fn -> emit_fn_sig buf fn; Buffer.add_string buf ";\n") non_main
+    List.iter
+      (fun (_, f, mangled) ->
+        emit_fn_sig buf f mangled;
+        Buffer.add_string buf ";\n")
+      non_main
   end;
   Buffer.add_char buf '\n';
-  let last = List.length program - 1 in
+  let last = List.length flat - 1 in
   List.iteri
-    (fun i fn ->
-      gen_function buf fn_table fn;
+    (fun i (path, f, mangled) ->
+      let fn_table = local_fn_table flat path in
+      gen_function buf fn_table f mangled;
       if i < last then Buffer.add_char buf '\n')
-    program;
+    flat;
   Buffer.contents buf
