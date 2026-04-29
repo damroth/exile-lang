@@ -47,15 +47,10 @@ and expand_item ~from_file ~loaded ~stack item =
         expand_items ~from_file ~loaded ~stack m.Ast.mitems
       in
       [ Ast.Module { m with mitems = mitems' } ]
-  | Ast.Use { path; pos } ->
-      (* Module name introduced into the importing scope is the last
-         segment of the path (Rust-like). *)
-      let name =
-        match List.rev path with
-        | n :: _ -> n
-        | [] -> Error.failf pos "internal: empty 'use' path"
+  | Ast.Use { path; is_wildcard; pos } ->
+      let display =
+        String.concat "::" path ^ (if is_wildcard then "::*" else "")
       in
-      let display = String.concat "::" path in
       let dep_path = resolve_use ~from_file path in
       if List.mem dep_path stack then
         Error.failf pos
@@ -71,8 +66,27 @@ and expand_item ~from_file ~loaded ~stack item =
         let inner =
           expand_items ~from_file:dep_path ~loaded ~stack:stack' items
         in
-        [ Ast.Module { mname = name; mitems = inner; mpos = pos;
-                       mis_pub = true } ]
+        if is_wildcard then
+          (* Wildcard import: drop the module wrapper and inline all public
+             items directly into the importing scope.  Private items stay
+             behind in the source file. *)
+          List.filter
+            (function
+              | Ast.Function f -> f.Ast.is_pub
+              | Ast.Module m -> m.Ast.mis_pub
+              | Ast.Use _ -> false)
+            inner
+        else begin
+          (* Non-wildcard `use`: introduce the file as a module whose name is
+             the last segment of the path (Rust-like). *)
+          let name =
+            match List.rev path with
+            | n :: _ -> n
+            | [] -> Error.failf pos "internal: empty 'use' path"
+          in
+          [ Ast.Module { mname = name; mitems = inner; mpos = pos;
+                         mis_pub = true } ]
+        end
       end
 
 let load entry_path =

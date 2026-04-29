@@ -262,17 +262,19 @@ let parse_function s seen_fns ~is_pub =
   expect s Token.RBrace;
   (name, Ast.{ name; params; ret_ty; body; is_pub; pos = name_pos })
 
-(* Parse a `use` declaration and return one or more `(name, Use item)` pairs.
+(* Parse a `use` declaration and return one or more `(name option, Use item)`
+   pairs.  Wildcard imports introduce no name into the surrounding scope so
+   they pair with `None`.
    Forms supported:
-     use foo;                  -> [("foo", Use {[foo]})]
-     use foo::bar;             -> [("bar", Use {[foo;bar]})]
-     use foo::{a, b};          -> [("a", Use {[foo;a]}); ("b", Use {[foo;b]})]
-   The introduced name is the last segment of each resulting path. *)
+     use foo;                  -> [(Some "foo", Use {[foo]})]
+     use foo::bar;             -> [(Some "bar", Use {[foo;bar]})]
+     use foo::{a, b};          -> [(Some "a", Use {[foo;a]}); (Some "b", Use {[foo;b]})]
+     use foo::*;               -> [(None, Use {[foo]; is_wildcard=true})] *)
 let parse_use_items s =
   let p = peek_pos s in
   expect s Token.Use;
-  (* Parse `ident (:: ident)*` until we hit `;` or `:: {`.  The accumulator
-     holds the path in reverse. *)
+  (* Parse `ident (:: ident)*` until we hit `;`, `:: {`, or `:: *`.  The
+     accumulator holds the path in reverse. *)
   let rec collect_segments acc =
     match advance s with
     | (Token.Ident n, _) ->
@@ -280,11 +282,10 @@ let parse_use_items s =
         (match peek s with
          | Token.DoubleColon ->
              ignore (advance s);
-             if peek s = Token.LBrace then begin
-               ignore (advance s);
-               (List.rev acc, `Group)
-             end else
-               collect_segments acc
+             (match peek s with
+              | Token.LBrace -> ignore (advance s); (List.rev acc, `Group)
+              | Token.Star -> ignore (advance s); (List.rev acc, `Wildcard)
+              | _ -> collect_segments acc)
          | _ -> (List.rev acc, `Single))
     | (t, pp) ->
         Error.failf pp "expected identifier in 'use', got %s" (Token.pp t)
@@ -294,13 +295,18 @@ let parse_use_items s =
   | `Single ->
       expect s Token.Semicolon;
       let name = List.hd (List.rev prefix) in
-      [ (name, Ast.Use { path = prefix; pos = p }) ]
+      [ (Some name, Ast.Use { path = prefix; is_wildcard = false; pos = p }) ]
+  | `Wildcard ->
+      expect s Token.Semicolon;
+      [ (None, Ast.Use { path = prefix; is_wildcard = true; pos = p }) ]
   | `Group ->
       let rec collect_names acc =
         match advance s with
         | (Token.Ident n, _) ->
             let path = prefix @ [n] in
-            let acc = (n, Ast.Use { path; pos = p }) :: acc in
+            let acc =
+              (Some n, Ast.Use { path; is_wildcard = false; pos = p }) :: acc
+            in
             (match peek s with
              | Token.RBrace -> ignore (advance s); List.rev acc
              | Token.Comma ->
@@ -323,10 +329,11 @@ let parse_use_items s =
       (* Reject duplicates within the group itself. *)
       let rec check_internal_dups = function
         | [] -> ()
-        | (n, _) :: rest ->
-            if List.exists (fun (m, _) -> m = n) rest then
+        | (Some n, _) :: rest ->
+            if List.exists (fun (m, _) -> m = Some n) rest then
               Error.failf p "duplicate name '%s' in 'use' group" n;
             check_internal_dups rest
+        | (None, _) :: rest -> check_internal_dups rest
       in
       check_internal_dups items;
       items
@@ -340,25 +347,29 @@ let rec parse_item s seen =
   match peek s with
   | Token.Fn ->
       let (name, fn) = parse_function s seen ~is_pub in
-      [ (name, Ast.Function fn) ]
+      [ (Some name, Ast.Function fn) ]
   | Token.Mod ->
       let (name, m) = parse_module s seen ~is_pub in
-      [ (name, Ast.Module m) ]
+      [ (Some name, Ast.Module m) ]
   | Token.Use ->
       if is_pub then
         Error.failf (peek_pos s) "'pub use' is not yet supported";
       let items = parse_use_items s in
-      (* Each item gets dedup-checked against the surrounding scope using
-         the position stored in its Use AST node. *)
+      (* Each named item gets dedup-checked against the surrounding scope.
+         Wildcards introduce no name and are skipped here; the loader handles
+         file-level deduplication. *)
       List.iter
-        (fun (n, item) ->
-          let p =
-            match item with
-            | Ast.Use { pos; _ } -> pos
-            | _ -> Pos.zero
-          in
-          if List.mem n seen then
-            Error.failf p "name '%s' already used in this scope" n)
+        (fun (name_opt, item) ->
+          match name_opt with
+          | None -> ()
+          | Some n ->
+              let p =
+                match item with
+                | Ast.Use { pos; _ } -> pos
+                | _ -> Pos.zero
+              in
+              if List.mem n seen then
+                Error.failf p "name '%s' already used in this scope" n)
         items;
       items
   | _ ->
@@ -381,7 +392,7 @@ and parse_module s seen ~is_pub =
     | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
     | _ ->
         let new_pairs = parse_item s inner_seen in
-        let new_names = List.map fst new_pairs in
+        let new_names = List.filter_map fst new_pairs in
         let new_items = List.map snd new_pairs in
         loop (List.rev_append new_names inner_seen)
              (List.rev_append new_items acc)
@@ -397,7 +408,7 @@ let parse_program tokens =
     | Token.Eof -> List.rev acc
     | _ ->
         let new_pairs = parse_item s seen in
-        let new_names = List.map fst new_pairs in
+        let new_names = List.filter_map fst new_pairs in
         let new_items = List.map snd new_pairs in
         loop (List.rev_append new_names seen)
              (List.rev_append new_items acc)

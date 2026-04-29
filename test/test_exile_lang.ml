@@ -27,6 +27,31 @@ let check label src expected =
   cc_check label actual;
   Printf.printf "ok: %s\n" label
 
+let check_multi label files entry_relpath expected =
+  let dir = Filename.temp_file "exile_multi_" "" in
+  Sys.remove dir;
+  let _ = Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote dir)) in
+  List.iter (fun (relpath, content) ->
+    let full = Filename.concat dir relpath in
+    let parent = Filename.dirname full in
+    let _ = Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote parent)) in
+    Out_channel.with_open_text full (fun oc ->
+      Out_channel.output_string oc content)) files;
+  let entry = Filename.concat dir entry_relpath in
+  let actual = Exile_lang.Compiler.compile_file entry in
+  let cleanup () =
+    ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir)))
+  in
+  if actual <> expected then begin
+    Printf.eprintf "FAIL: %s\n--- expected ---\n%s--- got ---\n%s"
+      label expected actual;
+    cleanup ();
+    exit 1
+  end;
+  cc_check label actual;
+  cleanup ();
+  Printf.printf "ok: %s\n" label
+
 let check_error label src expected_msg =
   match Exile_lang.Compiler.compile src with
   | exception Exile_lang.Error.Compile_error { msg; _ } when msg = expected_msg ->
@@ -175,4 +200,13 @@ let () =
 
   check "C keyword as function name inside module"
     "mod m {\n    pub fn unsigned() -> int {\n        return 7;\n    }\n}\nfn main() {\n    print(m::unsigned());\n}\n"
-    "#include <stdio.h>\n\nint m__unsigned(void);\n\nint m__unsigned(void) {\n    return 7;\n}\n\nint main(void) {\n    printf(\"%d\\n\", m__unsigned());\n    return 0;\n}\n"
+    "#include <stdio.h>\n\nint m__unsigned(void);\n\nint m__unsigned(void) {\n    return 7;\n}\n\nint main(void) {\n    printf(\"%d\\n\", m__unsigned());\n    return 0;\n}\n";
+
+  check_multi "wildcard import inlines pub items, hides private"
+    [ ("lib.exl",
+       "pub fn hello() -> int {\n    return 42;\n}\n\
+        fn priv() -> int {\n    return 99;\n}\n");
+      ("main.exl",
+       "use lib::*;\n\nfn main() {\n    print(hello());\n}\n") ]
+    "main.exl"
+    "#include <stdio.h>\n\nint hello(void);\n\nint hello(void) {\n    return 42;\n}\n\nint main(void) {\n    printf(\"%d\\n\", hello());\n    return 0;\n}\n"
