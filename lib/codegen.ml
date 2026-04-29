@@ -1,10 +1,14 @@
+type int_kind = { signed : bool; width : Ast.int_width }
+
 type typ =
-  | TInt of { signed : bool; width : Ast.int_width }
+  | TInt of int_kind
   | TBool
   | TString
 
 (* Default integer type — what `int` and bare integer literals reduce to. *)
 let t_i32 = TInt { signed = true; width = Ast.W32 }
+
+let int_width_bits = function Ast.W8 -> 8 | Ast.W16 -> 16 | Ast.W32 -> 32
 
 (* Does literal value [n] fit into an integer type of given signedness/width?
    OCaml's int is 63-bit on a 64-bit host, so all our ranges fit safely. *)
@@ -153,10 +157,17 @@ let rec type_of ?(allow_void = false) ctx env = function
   | Ast.BoolLit _ -> TBool
   | Ast.StringLit _ -> TString
   | Ast.BinOp (op, l, r) ->
-      let _ = type_of ctx env l in
-      let _ = type_of ctx env r in
+      let (lt, rt) = binop_operand_types ctx env l r in
+      let result_t =
+        match lt, rt with
+        | TInt a, TInt b when a = b -> TInt a
+        | TInt a, TInt b when a.signed = b.signed ->
+            if int_width_bits a.width >= int_width_bits b.width
+            then TInt a else TInt b
+        | _ -> t_i32
+      in
       (match op with
-       | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> t_i32
+       | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> result_t
        | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> TBool)
   | Ast.Neg e ->
       let _ = type_of ctx env e in
@@ -230,6 +241,30 @@ let rec type_of ?(allow_void = false) ctx env = function
             | None when allow_void -> t_i32   (* placeholder, caller discards *)
             | None ->
                 Error.failf pos "'%s' returns void, cannot use as a value" display))
+
+(* Resolve operand types for a BinOp.  An integer literal on either side
+   adopts the other operand's int type if it fits, so `x + 5` keeps x's
+   width without forcing a cast. *)
+and binop_operand_types ctx env l r =
+  match l, r with
+  | Ast.IntLit n, _ ->
+      let rt = type_of ctx env r in
+      let lt =
+        match rt with
+        | TInt _ when int_fits n rt -> rt
+        | _ -> type_of ctx env l
+      in
+      (lt, rt)
+  | _, Ast.IntLit n ->
+      let lt = type_of ctx env l in
+      let rt =
+        match lt with
+        | TInt _ when int_fits n lt -> lt
+        | _ -> type_of ctx env r
+      in
+      (lt, rt)
+  | _ ->
+      (type_of ctx env l, type_of ctx env r)
 
 let prec = function
   | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> 0
