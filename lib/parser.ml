@@ -248,7 +248,7 @@ let parse_function s seen_fns ~is_pub =
   expect s Token.LBrace;
   let body = parse_stmts s [] in
   expect s Token.RBrace;
-  (name, Ast.{ name; params; ret_ty; body; is_pub })
+  (name, Ast.{ name; params; ret_ty; body; is_pub; pos = name_pos })
 
 (* Parse a `use foo;` declaration.  Multi-segment paths (`use foo::bar;`) are
    not yet supported in MVP — returns a single-element path. *)

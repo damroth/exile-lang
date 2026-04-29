@@ -34,6 +34,7 @@ type func = {
   ret_ty : type_ann option;
   body : stmt list;
   is_pub : bool;
+  pos : Pos.t;
 }
 
 type item =

@@ -432,7 +432,8 @@ let gen_program program =
   List.iter
     (fun (path, f, _) ->
       if f.Ast.name = "main" && path <> [] then
-        Error.raise_ Pos.zero "'main' must be at top level, not inside a module")
+        Error.raise_ f.Ast.pos
+          "'main' must be at top level, not inside a module")
     flat;
   let global = build_global_index flat in
   let buf = Buffer.create 256 in
