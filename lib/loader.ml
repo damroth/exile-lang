@@ -71,7 +71,8 @@ and expand_item ~from_file ~loaded ~stack item =
         let inner =
           expand_items ~from_file:dep_path ~loaded ~stack:stack' items
         in
-        [ Ast.Module { mname = name; mitems = inner; mpos = pos } ]
+        [ Ast.Module { mname = name; mitems = inner; mpos = pos;
+                       mis_pub = true } ]
       end
 
 let load entry_path =

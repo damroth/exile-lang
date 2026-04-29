@@ -45,6 +45,7 @@ and module_decl = {
   mname : string;
   mitems : item list;
   mpos : Pos.t;
+  mis_pub : bool;
 }
 
 type program = item list

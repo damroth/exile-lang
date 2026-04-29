@@ -27,26 +27,53 @@ type fn_sig = {
 }
 
 (* Resolution context: every function in the program (keyed by module path
-   and name) plus the path of the function we are currently emitting code
-   for.  Local calls (path = [name]) resolve within the current scope;
-   qualified calls (path > 1) resolve absolutely from the root. *)
+   and name), plus a flat list of every module with its pub flag, plus the
+   path of the function we are currently emitting code for.  Local calls
+   (path = [name]) resolve within the current scope; qualified calls
+   (path > 1) resolve absolutely from the root and are visibility-checked
+   per segment. *)
 type fn_ctx = {
   global : (string list * string * fn_sig) list;
+  modules : (string list * bool) list;   (* full path -> is_pub *)
   scope : string list;
 }
 
-let lookup_fn ctx (path : string list) =
-  let (mod_path, name) =
-    match path with
-    | [] -> failwith "empty call path"
-    | [n] -> (ctx.scope, n)
-    | p ->
-        let rev = List.rev p in
-        (List.rev (List.tl rev), List.hd rev)
-  in
+(* Is xs a prefix of ys? *)
+let rec is_prefix xs ys =
+  match xs, ys with
+  | [], _ -> true
+  | _, [] -> false
+  | x :: xs', y :: ys' -> x = y && is_prefix xs' ys'
+
+(* Try to find a function in [global] at exactly [(mod_path, name)].
+   Returns the resolved (mod_path, sig) when found, so callers can do
+   visibility checks against the actual location. *)
+let try_resolve ctx mod_path name =
   List.find_map
-    (fun (p, n, s) -> if p = mod_path && n = name then Some s else None)
+    (fun (p, n, s) ->
+      if p = mod_path && n = name then Some (mod_path, s) else None)
     ctx.global
+
+(* Resolve a call path to a function.  We walk the current scope from the
+   deepest ancestor down to the root, trying [prefix @ suggested_mod] at
+   each level.  Local function names (path=[name]) thus shadow outer
+   definitions; multi-segment paths likewise try the most specific match
+   first and fall back to absolute (root) lookup. *)
+let lookup_fn ctx (path : string list) =
+  let (suggested_mod, name) =
+    match List.rev path with
+    | [] -> failwith "empty call path"
+    | n :: rest -> (List.rev rest, n)
+  in
+  let rec walk prefix =
+    match try_resolve ctx (prefix @ suggested_mod) name with
+    | Some r -> Some r
+    | None ->
+        (match prefix with
+         | [] -> None
+         | _ -> walk (List.rev (List.tl (List.rev prefix))))
+  in
+  walk ctx.scope
 
 (* Mangle a function name with its module path.  Top-level (path = []) keeps
    the bare name.  Inside a module, names join with "__".  C99 reserves
@@ -146,16 +173,37 @@ let rec type_of ?(allow_void = false) ctx env = function
       let display = String.concat "::" path in
       (match lookup_fn ctx path with
        | None -> Error.failf pos "unknown function '%s'" display
-       | Some { param_tys; ret_ty; fn_pub; _ } ->
-           (* visibility: qualified call (path > 1) to a non-pub function
-              from outside its defining module is forbidden. *)
+       | Some (resolved_mod, { param_tys; ret_ty; fn_pub; _ }) ->
+           (* Qualified call (path > 1): each module segment must be visible
+              from the current scope.  We walk the resolved fn's module path
+              (resolved_mod), since that's where we actually found the
+              function — relative or absolute. *)
            (match path with
             | [_] -> ()
             | _ ->
-                let mod_path = List.rev (List.tl (List.rev path)) in
-                if (not fn_pub) && ctx.scope <> mod_path then
+                let rec walk_segments parent = function
+                  | [] -> ()
+                  | seg :: rest ->
+                      let mod_path = parent @ [seg] in
+                      let pub =
+                        match List.assoc_opt mod_path ctx.modules with
+                        | Some b -> b
+                        | None ->
+                            Error.failf pos "unknown module '%s'"
+                              (String.concat "::" mod_path)
+                      in
+                      if (not pub) && not (is_prefix parent ctx.scope) then
+                        Error.failf pos
+                          "module '%s' is private (not visible from '%s')"
+                          (String.concat "::" mod_path)
+                          (if ctx.scope = [] then "<root>"
+                           else String.concat "::" ctx.scope);
+                      walk_segments mod_path rest
+                in
+                walk_segments [] resolved_mod;
+                if (not fn_pub) && ctx.scope <> resolved_mod then
                   Error.failf pos "function '%s' is private to module '%s'"
-                    display (String.concat "::" mod_path));
+                    display (String.concat "::" resolved_mod));
            let expected = List.length param_tys in
            let got = List.length args in
            if expected <> got then
@@ -236,7 +284,7 @@ let rec gen_expr buf ctx env = function
   | Ast.Call (path, args, pos) ->
       let mangled =
         match lookup_fn ctx path with
-        | Some s -> s.mangled
+        | Some (_, s) -> s.mangled
         | None ->
             Error.failf pos "unknown function '%s'" (String.concat "::" path)
       in
@@ -411,6 +459,21 @@ let flatten_funcs program =
   in
   List.rev (walk [] [] program)
 
+(* Walk the program tree and produce a flat list of every module with its
+   absolute path and pub flag.  Used for visibility checks on qualified calls. *)
+let flatten_modules program =
+  let rec walk path acc items =
+    List.fold_left
+      (fun acc item -> match item with
+        | Ast.Function _ -> acc
+        | Ast.Module m ->
+            let mod_path = path @ [m.Ast.mname] in
+            walk mod_path ((mod_path, m.Ast.mis_pub) :: acc) m.Ast.mitems
+        | Ast.Use _ -> acc)
+      acc items
+  in
+  List.rev (walk [] [] program)
+
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
 let build_global_index flat =
@@ -436,6 +499,7 @@ let gen_program program =
           "'main' must be at top level, not inside a module")
     flat;
   let global = build_global_index flat in
+  let modules = flatten_modules program in
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
   let non_main = List.filter (fun (_, f, _) -> f.Ast.name <> "main") flat in
@@ -451,7 +515,7 @@ let gen_program program =
   let last = List.length flat - 1 in
   List.iteri
     (fun i (path, f, mangled) ->
-      let ctx = { global; scope = path } in
+      let ctx = { global; modules; scope = path } in
       gen_function buf ctx f mangled;
       if i < last then Buffer.add_char buf '\n')
     flat;

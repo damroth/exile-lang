@@ -284,9 +284,7 @@ let rec parse_item s seen =
       let (name, fn) = parse_function s seen ~is_pub in
       (name, Ast.Function fn)
   | Token.Mod ->
-      if is_pub then
-        Error.failf (peek_pos s) "'pub mod' is not yet supported";
-      let (name, m) = parse_module s seen in
+      let (name, m) = parse_module s seen ~is_pub in
       (name, Ast.Module m)
   | Token.Use ->
       if is_pub then
@@ -300,7 +298,7 @@ let rec parse_item s seen =
       Error.failf (peek_pos s) "expected 'fn', 'mod' or 'use', got %s"
         (Token.pp (peek s))
 
-and parse_module s seen =
+and parse_module s seen ~is_pub =
   expect s Token.Mod;
   let (name, name_pos) =
     match advance s with
@@ -319,7 +317,8 @@ and parse_module s seen =
         loop (item_name :: inner_seen) (item :: acc)
   in
   let items = loop [] [] in
-  (name, Ast.{ mname = name; mitems = items; mpos = name_pos })
+  (name,
+   Ast.{ mname = name; mitems = items; mpos = name_pos; mis_pub = is_pub })
 
 let parse_program tokens =
   let s = make_state tokens in
