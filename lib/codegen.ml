@@ -114,6 +114,13 @@ let type_of_ann = function
   | Ast.TyStr -> TString
   | Ast.TyBool -> TBool
 
+(* Recognise an integer literal expression — bare or negated — for type-fitting
+   checks at let-binding sites. *)
+let expr_int_lit = function
+  | Ast.IntLit n -> Some n
+  | Ast.Neg (Ast.IntLit n) -> Some (-n)
+  | _ -> None
+
 let int_typ_name signed width =
   let prefix = if signed then "i" else "u" in
   let bits = match width with Ast.W8 -> "8" | Ast.W16 -> "16" | Ast.W32 -> "32" in
@@ -412,27 +419,24 @@ let collect_lets ctx param_env stmts =
     | Ast.Let { name; value; ty_ann; pos } :: rest ->
         let t_inferred = type_of ctx env value in
         let t_actual =
-          match ty_ann, value with
-          | Some ann, Ast.IntLit n ->
+          match ty_ann with
+          | None -> t_inferred
+          | Some ann ->
               let t_ann = type_of_ann ann in
-              (match t_ann with
-               | TInt _ when int_fits n t_ann -> t_ann
-               | TInt _ ->
+              (match expr_int_lit value, t_ann with
+               | Some n, TInt _ when int_fits n t_ann -> t_ann
+               | Some n, TInt { signed = false; _ } when n < 0 ->
+                   Error.failf pos
+                     "negative literal %d cannot fit in %s" n (typ_name t_ann)
+               | Some n, TInt _ ->
                    Error.failf pos
                      "literal %d does not fit in %s" n (typ_name t_ann)
-               | _ when t_ann = t_inferred -> t_ann
                | _ ->
-                   Error.failf pos
-                     "variable '%s' declared as %s but initializer has type %s"
-                     name (typ_name t_ann) (typ_name t_inferred))
-          | Some ann, _ ->
-              let t_ann = type_of_ann ann in
-              if t_ann = t_inferred then t_ann
-              else
-                Error.failf pos
-                  "variable '%s' declared as %s but initializer has type %s"
-                  name (typ_name t_ann) (typ_name t_inferred)
-          | None, _ -> t_inferred
+                   if t_ann = t_inferred then t_ann
+                   else
+                     Error.failf pos
+                       "variable '%s' declared as %s but initializer has type %s"
+                       name (typ_name t_ann) (typ_name t_inferred))
         in
         add_decl name t_actual pos;
         walk ((name, t_actual) :: env) rest

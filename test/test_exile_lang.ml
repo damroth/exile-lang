@@ -147,4 +147,16 @@ let () =
 
   check_error "unknown escape"
     "fn main() {\n    print(\"hi \\q there\");\n}\n"
-    "unknown escape \\q"
+    "unknown escape \\q";
+
+  check_error "negative literal in unsigned"
+    "fn main() {\n    let x: u8 = -1;\n    print(x);\n}\n"
+    "negative literal -1 cannot fit in u8";
+
+  check_error "negative literal out of signed range"
+    "fn main() {\n    let x: i8 = -200;\n    print(x);\n}\n"
+    "literal -200 does not fit in i8";
+
+  check "negative literal fits in signed"
+    "fn main() {\n    let x: i8 = -1;\n    print(x);\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    signed char x;\n    x = -1;\n    printf(\"%d\\n\", x);\n    return 0;\n}\n"
