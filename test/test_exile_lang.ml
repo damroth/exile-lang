@@ -159,4 +159,20 @@ let () =
 
   check "negative literal fits in signed"
     "fn main() {\n    let x: i8 = -1;\n    print(x);\n}\n"
-    "#include <stdio.h>\n\nint main(void) {\n    signed char x;\n    x = -1;\n    printf(\"%d\\n\", x);\n    return 0;\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    signed char x;\n    x = -1;\n    printf(\"%d\\n\", x);\n    return 0;\n}\n";
+
+  check_error "C keyword as variable name"
+    "fn main() {\n    let unsigned: u32 = 5;\n    print(unsigned);\n}\n"
+    "variable 'unsigned' is a reserved C keyword";
+
+  check_error "C keyword as parameter name"
+    "fn foo(static: int) -> int {\n    return static;\n}\nfn main() {\n    print(foo(1));\n}\n"
+    "parameter 'static' is a reserved C keyword";
+
+  check_error "C keyword as top-level function name"
+    "fn signed() -> int {\n    return 1;\n}\nfn main() {\n    print(signed());\n}\n"
+    "function 'signed' is a reserved C keyword";
+
+  check "C keyword as function name inside module"
+    "mod m {\n    pub fn unsigned() -> int {\n        return 7;\n    }\n}\nfn main() {\n    print(m::unsigned());\n}\n"
+    "#include <stdio.h>\n\nint m__unsigned();\n\nint m__unsigned() {\n    return 7;\n}\n\nint main(void) {\n    printf(\"%d\\n\", m__unsigned());\n    return 0;\n}\n"

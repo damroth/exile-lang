@@ -121,6 +121,21 @@ let expr_int_lit = function
   | Ast.Neg (Ast.IntLit n) -> Some (-n)
   | _ -> None
 
+(* C89 reserved words.  Exile identifiers that survive into the generated C
+   without mangling (locals, parameters, top-level function names) must not
+   collide. *)
+let c_keywords = [
+  "auto"; "break"; "case"; "char"; "const"; "continue"; "default"; "do";
+  "double"; "else"; "enum"; "extern"; "float"; "for"; "goto"; "if";
+  "int"; "long"; "register"; "return"; "short"; "signed"; "sizeof";
+  "static"; "struct"; "switch"; "typedef"; "union"; "unsigned"; "void";
+  "volatile"; "while"
+]
+
+let check_c_ident pos kind name =
+  if List.mem name c_keywords then
+    Error.failf pos "%s '%s' is a reserved C keyword" kind name
+
 let int_typ_name signed width =
   let prefix = if signed then "i" else "u" in
   let bits = match width with Ast.W8 -> "8" | Ast.W16 -> "16" | Ast.W32 -> "32" in
@@ -408,6 +423,7 @@ and gen_stmt buf ctx env indent = function
 let collect_lets ctx param_env stmts =
   let decls = ref [] in
   let add_decl name t pos =
+    check_c_ident pos "variable" name;
     if List.mem_assoc name param_env then
       Error.failf pos "variable '%s' shadows a parameter" name;
     if List.mem_assoc name !decls then
@@ -487,6 +503,7 @@ let emit_fn_sig buf (f : Ast.func) mangled =
   end
 
 let gen_function buf ctx (f : Ast.func) mangled =
+  List.iter (fun p -> check_c_ident f.pos "parameter" p.Ast.pname) f.params;
   emit_fn_sig buf f mangled;
   Buffer.add_string buf " {\n";
   let param_env = List.map (fun p -> (p.Ast.pname, type_of_ann p.Ast.pty)) f.params in
@@ -557,6 +574,12 @@ let gen_program program =
       if f.Ast.name = "main" && path <> [] then
         Error.raise_ f.Ast.pos
           "'main' must be at top level, not inside a module")
+    flat;
+  (* Top-level function names land in C unmangled, so they must not collide
+     with C keywords. Names inside modules get a "mod__" prefix and are safe. *)
+  List.iter
+    (fun (path, f, _) ->
+      if path = [] then check_c_ident f.Ast.pos "function" f.Ast.name)
     flat;
   let global = build_global_index flat in
   let modules = flatten_modules program in
