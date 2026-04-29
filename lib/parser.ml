@@ -271,12 +271,6 @@ let parse_use s =
   in
   let path = collect_path [first] in
   expect s Token.Semicolon;
-  (match path with
-   | [_] -> ()
-   | _ ->
-       Error.failf p
-         "multi-segment 'use' is not yet supported (only `use foo;`); got '%s'"
-         (String.concat "::" path));
   (path, p)
 
 (* parse_item handles `fn`, `mod`, and `use` at any nesting level, with an

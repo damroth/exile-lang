@@ -1,11 +1,15 @@
-(* Multi-file loader.  Walks the entry file's AST, replaces each `use foo;`
-   item with a top-level `mod foo { ... }` whose contents come from
-   `<dir>/foo.exl` next to the importing file.  Each file is loaded at most
-   once; cycles are rejected.
+(* Multi-file loader.  Walks the entry file's AST, replaces each `use` item
+   with a top-level `mod NAME { ... }` whose contents come from a sibling
+   `.exl` file (or a directory containing `mod.exl`).  Each resolved file is
+   loaded at most once; cycles are rejected.
 
-   MVP scope: single-segment `use foo;` only, sibling files in the same
-   directory.  Subdirectory hierarchies (`foo/mod.exl`, `foo/bar.exl`) and
-   multi-segment paths are follow-up work. *)
+   Resolution rules:
+   - `use foo;` looks for `<dir>/foo.exl`, falling back to `<dir>/foo/mod.exl`.
+   - `use foo::bar;` looks for `<dir>/foo/bar.exl`, falling back to
+     `<dir>/foo/bar/mod.exl`.
+   - The module name introduced into the using scope is the last segment of
+     the path (matches the Rust-like `use` semantics: `use string::ascii;`
+     gives access to `ascii::...`, not `string::ascii::...`). *)
 
 let read_file path =
   In_channel.with_open_text path In_channel.input_all
@@ -16,11 +20,18 @@ let parse_file path =
   let src = read_file path in
   Lexer.tokenize src |> Parser.parse_program
 
-(* Resolve `use NAME;` declared in `from_file` to a path on disk.
-   Sibling-file model: same directory as the importing file. *)
-let resolve_use ~from_file name =
+(* Resolve a `use` path declared in `from_file` to a file on disk.
+   For path `[a; b; c]` we try `<dir>/a/b/c.exl` first, then
+   `<dir>/a/b/c/mod.exl`.  When the path has only one segment, this collapses
+   to `<dir>/foo.exl` then `<dir>/foo/mod.exl`. *)
+let resolve_use ~from_file path =
   let dir = Filename.dirname from_file in
-  Filename.concat dir (name ^ ".exl")
+  let joined = List.fold_left Filename.concat dir path in
+  let direct = joined ^ ".exl" in
+  let mod_file = Filename.concat joined "mod.exl" in
+  if Sys.file_exists direct then direct
+  else if Sys.file_exists mod_file then mod_file
+  else direct  (* fall back to the .exl form for the error message *)
 
 (* Recursively expand `Use` items in a list of items.  `loaded` is the set
    of file paths already inlined; `stack` is the current load chain (for
@@ -37,27 +48,24 @@ and expand_item ~from_file ~loaded ~stack item =
       in
       [ Ast.Module { m with mitems = mitems' } ]
   | Ast.Use { path; pos } ->
+      (* Module name introduced into the importing scope is the last
+         segment of the path (Rust-like). *)
       let name =
-        match path with
-        | [n] -> n
-        | _ ->
-            Error.failf pos
-              "multi-segment 'use' is not yet supported (only `use foo;`)"
+        match List.rev path with
+        | n :: _ -> n
+        | [] -> Error.failf pos "internal: empty 'use' path"
       in
-      let dep_path = resolve_use ~from_file name in
+      let display = String.concat "::" path in
+      let dep_path = resolve_use ~from_file path in
       if List.mem dep_path stack then
         Error.failf pos
-          "circular import: '%s' is already being loaded" name;
-      if List.mem dep_path !loaded then
-        (* Already loaded by another importer — `use` here is a no-op, the
-           module has already been inlined elsewhere.  Each file appears
-           in the final program at most once. *)
-        []
+          "circular import: '%s' is already being loaded" display;
+      if List.mem dep_path !loaded then []
       else begin
         loaded := dep_path :: !loaded;
         if not (Sys.file_exists dep_path) then
           Error.failf pos "cannot find module '%s' (looked for %s)"
-            name dep_path;
+            display dep_path;
         let items = parse_file dep_path in
         let stack' = dep_path :: stack in
         let inner =
