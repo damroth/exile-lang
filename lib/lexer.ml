@@ -80,8 +80,8 @@ let tokenize ~file src =
               match sc with
               | '"' -> adv sc; j + 1
               | '\\' when j + 1 < len ->
-                  let esc_pos = here () in
                   adv sc;
+                  let esc_pos = here () in
                   let ec = src.[j + 1] in
                   let esc =
                     match ec with
