@@ -250,50 +250,105 @@ let parse_function s seen_fns ~is_pub =
   expect s Token.RBrace;
   (name, Ast.{ name; params; ret_ty; body; is_pub; pos = name_pos })
 
-(* Parse a `use foo;` declaration.  Multi-segment paths (`use foo::bar;`) are
-   not yet supported in MVP — returns a single-element path. *)
-let parse_use s =
+(* Parse a `use` declaration and return one or more `(name, Use item)` pairs.
+   Forms supported:
+     use foo;                  -> [("foo", Use {[foo]})]
+     use foo::bar;             -> [("bar", Use {[foo;bar]})]
+     use foo::{a, b};          -> [("a", Use {[foo;a]}); ("b", Use {[foo;b]})]
+   The introduced name is the last segment of each resulting path. *)
+let parse_use_items s =
+  let p = peek_pos s in
   expect s Token.Use;
-  let (first, p) =
+  (* Parse `ident (:: ident)*` until we hit `;` or `:: {`.  The accumulator
+     holds the path in reverse. *)
+  let rec collect_segments acc =
     match advance s with
-    | (Token.Ident n, p) -> (n, p)
-    | (_, pp) -> Error.raise_ pp "expected module name after 'use'"
+    | (Token.Ident n, _) ->
+        let acc = n :: acc in
+        (match peek s with
+         | Token.DoubleColon ->
+             ignore (advance s);
+             if peek s = Token.LBrace then begin
+               ignore (advance s);
+               (List.rev acc, `Group)
+             end else
+               collect_segments acc
+         | _ -> (List.rev acc, `Single))
+    | (t, pp) ->
+        Error.failf pp "expected identifier in 'use', got %s" (Token.pp t)
   in
-  let rec collect_path acc =
-    if peek s = Token.DoubleColon then begin
-      ignore (advance s);
-      match advance s with
-      | (Token.Ident n, _) -> collect_path (n :: acc)
-      | (t, p2) ->
-          Error.failf p2 "expected identifier after '::', got %s" (Token.pp t)
-    end else
-      List.rev acc
-  in
-  let path = collect_path [first] in
-  expect s Token.Semicolon;
-  (path, p)
+  let (prefix, kind) = collect_segments [] in
+  match kind with
+  | `Single ->
+      expect s Token.Semicolon;
+      let name = List.hd (List.rev prefix) in
+      [ (name, Ast.Use { path = prefix; pos = p }) ]
+  | `Group ->
+      let rec collect_names acc =
+        match advance s with
+        | (Token.Ident n, _) ->
+            let path = prefix @ [n] in
+            let acc = (n, Ast.Use { path; pos = p }) :: acc in
+            (match peek s with
+             | Token.RBrace -> ignore (advance s); List.rev acc
+             | Token.Comma ->
+                 ignore (advance s);
+                 if peek s = Token.RBrace then begin
+                   (* trailing comma: `use foo::{a, b,};` *)
+                   ignore (advance s);
+                   List.rev acc
+                 end else
+                   collect_names acc
+             | _ ->
+                 Error.failf (peek_pos s)
+                   "expected ',' or '}' in 'use' group")
+        | (t, pp) ->
+            Error.failf pp "expected identifier in 'use' group, got %s"
+              (Token.pp t)
+      in
+      let items = collect_names [] in
+      expect s Token.Semicolon;
+      (* Reject duplicates within the group itself. *)
+      let rec check_internal_dups = function
+        | [] -> ()
+        | (n, _) :: rest ->
+            if List.exists (fun (m, _) -> m = n) rest then
+              Error.failf p "duplicate name '%s' in 'use' group" n;
+            check_internal_dups rest
+      in
+      check_internal_dups items;
+      items
 
 (* parse_item handles `fn`, `mod`, and `use` at any nesting level, with an
-   optional `pub` prefix where it makes sense.  Names share a namespace within
-   each scope. *)
+   optional `pub` prefix where it makes sense.  Returns a list because a
+   single `use foo::{a, b}` declaration introduces multiple bindings. *)
 let rec parse_item s seen =
   let is_pub = peek s = Token.Pub in
   if is_pub then ignore (advance s);
   match peek s with
   | Token.Fn ->
       let (name, fn) = parse_function s seen ~is_pub in
-      (name, Ast.Function fn)
+      [ (name, Ast.Function fn) ]
   | Token.Mod ->
       let (name, m) = parse_module s seen ~is_pub in
-      (name, Ast.Module m)
+      [ (name, Ast.Module m) ]
   | Token.Use ->
       if is_pub then
         Error.failf (peek_pos s) "'pub use' is not yet supported";
-      let (path, pos) = parse_use s in
-      (* Single-segment only in MVP, so the name to dedup against is just
-         the lone identifier. *)
-      let name = List.hd path in
-      (name, Ast.Use { path; pos })
+      let items = parse_use_items s in
+      (* Each item gets dedup-checked against the surrounding scope using
+         the position stored in its Use AST node. *)
+      List.iter
+        (fun (n, item) ->
+          let p =
+            match item with
+            | Ast.Use { pos; _ } -> pos
+            | _ -> Pos.zero
+          in
+          if List.mem n seen then
+            Error.failf p "name '%s' already used in this scope" n)
+        items;
+      items
   | _ ->
       Error.failf (peek_pos s) "expected 'fn', 'mod' or 'use', got %s"
         (Token.pp (peek s))
@@ -313,8 +368,11 @@ and parse_module s seen ~is_pub =
     | Token.RBrace -> ignore (advance s); List.rev acc
     | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
     | _ ->
-        let (item_name, item) = parse_item s inner_seen in
-        loop (item_name :: inner_seen) (item :: acc)
+        let new_pairs = parse_item s inner_seen in
+        let new_names = List.map fst new_pairs in
+        let new_items = List.map snd new_pairs in
+        loop (List.rev_append new_names inner_seen)
+             (List.rev_append new_items acc)
   in
   let items = loop [] [] in
   (name,
@@ -326,7 +384,10 @@ let parse_program tokens =
     match peek s with
     | Token.Eof -> List.rev acc
     | _ ->
-        let (name, item) = parse_item s seen in
-        loop (name :: seen) (item :: acc)
+        let new_pairs = parse_item s seen in
+        let new_names = List.map fst new_pairs in
+        let new_items = List.map snd new_pairs in
+        loop (List.rev_append new_names seen)
+             (List.rev_append new_items acc)
   in
   loop [] []
