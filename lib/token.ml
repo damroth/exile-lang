@@ -8,6 +8,7 @@ type t =
   | Mod
   | Pub
   | Use
+  | As
   | LParen
   | RParen
   | LBrace
@@ -38,7 +39,7 @@ type t =
 let pp = function
   | Fn -> "'fn'" | Let -> "'let'" | Return -> "'return'"
   | If -> "'if'" | Else -> "'else'" | While -> "'while'"
-  | Mod -> "'mod'" | Pub -> "'pub'" | Use -> "'use'"
+  | Mod -> "'mod'" | Pub -> "'pub'" | Use -> "'use'" | As -> "'as'"
   | LParen -> "'('" | RParen -> "')'"
   | LBrace -> "'{'" | RBrace -> "'}'"
   | Semicolon -> "';'" | Comma -> "','" | Colon -> "':'"

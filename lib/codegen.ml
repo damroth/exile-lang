@@ -161,6 +161,15 @@ let rec type_of ?(allow_void = false) ctx env = function
   | Ast.Neg e ->
       let _ = type_of ctx env e in
       t_i32
+  | Ast.Cast (e, ann, pos) ->
+      let src = type_of ctx env e in
+      let tgt = type_of_ann ann in
+      (match src, tgt with
+       | TInt _, TInt _ -> tgt
+       | _ ->
+           Error.failf pos
+             "cannot cast %s to %s (only integer-to-integer casts supported)"
+             (typ_name src) (typ_name tgt))
   | Ast.Var (name, pos) ->
       (match List.assoc_opt name env with
        | Some t -> t
@@ -243,6 +252,18 @@ let rec gen_expr buf ctx env = function
            Buffer.add_char buf '(';
            gen_expr buf ctx env e;
            Buffer.add_char buf ')')
+  | Ast.Cast (e, ann, _) ->
+      let prefix = c_type_prefix (type_of_ann ann) in
+      let trimmed =
+        if String.length prefix > 0 && prefix.[String.length prefix - 1] = ' '
+        then String.sub prefix 0 (String.length prefix - 1)
+        else prefix
+      in
+      Buffer.add_string buf "((";
+      Buffer.add_string buf trimmed;
+      Buffer.add_string buf ")";
+      gen_expr buf ctx env e;
+      Buffer.add_char buf ')'
   | Ast.BinOp (op, l, r) ->
       let op_str =
         match op with

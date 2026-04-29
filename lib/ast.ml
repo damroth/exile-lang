@@ -17,6 +17,7 @@ type expr =
   | Neg of expr
   | BinOp of binop * expr * expr
   | Call of string list * expr list * Pos.t
+  | Cast of expr * type_ann * Pos.t
 
 type param = { pname : string; pty : type_ann }
 

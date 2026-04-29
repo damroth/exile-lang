@@ -117,16 +117,28 @@ let rec parse_primary s =
       e
   | _ -> Error.raise_ p "expected expression"
 
+and parse_cast s =
+  let rec loop left =
+    if peek s = Token.As then begin
+      let p = peek_pos s in
+      ignore (advance s);
+      let ty = parse_type s in
+      loop (Ast.Cast (left, ty, p))
+    end else
+      left
+  in
+  loop (parse_primary s)
+
 and parse_mul s =
   let rec loop left =
     match peek s with
     | Token.Star ->
-        ignore (advance s); loop (Ast.BinOp (Ast.Mul, left, parse_primary s))
+        ignore (advance s); loop (Ast.BinOp (Ast.Mul, left, parse_cast s))
     | Token.Slash ->
-        ignore (advance s); loop (Ast.BinOp (Ast.Div, left, parse_primary s))
+        ignore (advance s); loop (Ast.BinOp (Ast.Div, left, parse_cast s))
     | _ -> left
   in
-  loop (parse_primary s)
+  loop (parse_cast s)
 
 and parse_add s =
   let rec loop left =
