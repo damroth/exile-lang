@@ -498,7 +498,10 @@ let emit_fn_sig buf (f : Ast.func) mangled =
     Buffer.add_string buf ret;
     Buffer.add_string buf mangled;
     Buffer.add_char buf '(';
-    add_separated buf ", " (fun p -> Buffer.add_string buf (c_param p)) f.params;
+    (match f.params with
+     | [] -> Buffer.add_string buf "void"
+     | _ ->
+         add_separated buf ", " (fun p -> Buffer.add_string buf (c_param p)) f.params);
     Buffer.add_char buf ')'
   end
 

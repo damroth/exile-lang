@@ -175,4 +175,4 @@ let () =
 
   check "C keyword as function name inside module"
     "mod m {\n    pub fn unsigned() -> int {\n        return 7;\n    }\n}\nfn main() {\n    print(m::unsigned());\n}\n"
-    "#include <stdio.h>\n\nint m__unsigned();\n\nint m__unsigned() {\n    return 7;\n}\n\nint main(void) {\n    printf(\"%d\\n\", m__unsigned());\n    return 0;\n}\n"
+    "#include <stdio.h>\n\nint m__unsigned(void);\n\nint m__unsigned(void) {\n    return 7;\n}\n\nint main(void) {\n    printf(\"%d\\n\", m__unsigned());\n    return 0;\n}\n"
