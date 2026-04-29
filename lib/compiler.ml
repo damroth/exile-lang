@@ -1,14 +1,10 @@
-(* Compile a single source string with no filesystem access.  Used by the
-   test harness; rejects `use` declarations because they need a file path
-   to resolve. *)
+(* String-only entry point used by tests; `use` is rejected. *)
 let compile src =
   src
-  |> Lexer.tokenize
+  |> Lexer.tokenize ~file:"<input>"
   |> Parser.parse_program
   |> Codegen.gen_program
 
-(* Compile starting from an entry .exl file.  Resolves `use` declarations
-   relative to the entry file (and subsequent imports relative to wherever
-   they appear). *)
+(* File-based entry point that resolves `use` via the loader. *)
 let compile_file path =
   Loader.load path |> Codegen.gen_program

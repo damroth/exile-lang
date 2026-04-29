@@ -18,7 +18,7 @@ let parse_file path =
   if not (Sys.file_exists path) then
     Error.raise_ Pos.zero (Printf.sprintf "cannot read file: %s" path);
   let src = read_file path in
-  Lexer.tokenize src |> Parser.parse_program
+  Lexer.tokenize ~file:path src |> Parser.parse_program
 
 (* Resolve a `use` path declared in `from_file` to a file on disk.
    For path `[a; b; c]` we try `<dir>/a/b/c.exl` first, then

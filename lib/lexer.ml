@@ -16,11 +16,11 @@ let keyword_or_ident = function
   | "false" -> Token.False
   | s -> Token.Ident s
 
-let tokenize src =
+let tokenize ~file src =
   let len = String.length src in
   let buf = Buffer.create 16 in
   let ln = ref 1 and co = ref 1 in
-  let here () = Pos.{ line = !ln; col = !co } in
+  let here () = Pos.{ line = !ln; col = !co; file } in
   let adv c = if c = '\n' then (incr ln; co := 1) else incr co in
   let rec loop i acc =
     if i >= len then List.rev ((Token.Eof, here ()) :: acc)

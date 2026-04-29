@@ -1,5 +1,7 @@
-type t = { line : int; col : int }
+type t = { line : int; col : int; file : string }
 
-let to_string p = Printf.sprintf "line %d, col %d" p.line p.col
+let to_string p = Printf.sprintf "%s:%d:%d" p.file p.line p.col
 
-let zero = { line = 1; col = 1 }
+(* Synthetic position used when no real source location is available
+   (e.g. internal compiler errors generated during AST post-processing). *)
+let zero = { line = 1; col = 1; file = "<unknown>" }

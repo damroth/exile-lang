@@ -4,13 +4,18 @@ let usage () =
   prerr_endline "usage: exilc [--target c|host|amiga] [-o <output>] <file.exl>";
   exit 1
 
-let show_error file src (pos : Exile_lang.Pos.t) msg =
-  Printf.eprintf "%s:%d:%d: error: %s\n" file pos.line pos.col msg;
-  let lines = String.split_on_char '\n' src in
-  match List.nth_opt lines (pos.line - 1) with
-  | Some line ->
-      Printf.eprintf "%s\n%s^\n" line (String.make (max 0 (pos.col - 1)) ' ')
-  | None -> ()
+let show_error (pos : Exile_lang.Pos.t) msg =
+  Printf.eprintf "%s:%d:%d: error: %s\n" pos.file pos.line pos.col msg;
+  let src =
+    try In_channel.with_open_text pos.file In_channel.input_all
+    with _ -> ""
+  in
+  if src <> "" then
+    let lines = String.split_on_char '\n' src in
+    match List.nth_opt lines (pos.line - 1) with
+    | Some line ->
+        Printf.eprintf "%s\n%s^\n" line (String.make (max 0 (pos.col - 1)) ' ')
+    | None -> ()
 
 let parse_target = function
   | "c" -> Target_c
@@ -82,7 +87,6 @@ let () =
   let (target, output, input) =
     parse_args (List.tl (Array.to_list Sys.argv))
   in
-  let src = In_channel.with_open_text input In_channel.input_all in
   try
     let c_code = Exile_lang.Compiler.compile_file input in
     let c_path = Filename.remove_extension input ^ ".c" in
@@ -99,7 +103,7 @@ let () =
         compile_amiga c_path out
   with
   | Exile_lang.Error.Compile_error { pos; msg } ->
-      show_error input src pos msg;
+      show_error pos msg;
       exit 1
   | Failure msg ->
       Printf.eprintf "error: %s\n" msg;
