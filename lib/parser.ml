@@ -190,10 +190,24 @@ and parse_stmt s =
       expect s Token.Semicolon;
       Ast.Let { name; value; ty_ann; pos }
   | Token.Return ->
+      let pos = peek_pos s in
       ignore (advance s);
       let e = parse_expr s in
       expect s Token.Semicolon;
-      Ast.Return e
+      Ast.Return (e, pos)
+  | Token.Defer ->
+      let pos = peek_pos s in
+      ignore (advance s);
+      let body =
+        match peek s with
+        | Token.LBrace ->
+            ignore (advance s);
+            let stmts = parse_stmts s [] in
+            expect s Token.RBrace;
+            stmts
+        | _ -> [ parse_stmt s ]
+      in
+      Ast.Defer { body; pos }
   | Token.If ->
       ignore (advance s);
       let cond = parse_expr s in

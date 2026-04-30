@@ -401,34 +401,26 @@ let rec gen_expr buf ctx env = function
            add_separated buf ", " (gen_expr buf ctx env) args;
            Buffer.add_char buf ')')
 
-let rec gen_if buf ctx env indent cond then_body else_body =
-  Buffer.add_string buf "if (";
-  gen_expr buf ctx env cond;
-  Buffer.add_string buf ") {\n";
-  List.iter (gen_stmt buf ctx env (indent ^ "    ")) then_body;
-  Buffer.add_string buf indent;
-  Buffer.add_char buf '}';
-  (match else_body with
-   | [] -> Buffer.add_char buf '\n'
-   | [ Ast.If { cond = ec; then_body = et; else_body = ee } ] ->
-       Buffer.add_string buf " else ";
-       gen_if buf ctx env indent ec et ee
-   | _ ->
-       Buffer.add_string buf " else {\n";
-       List.iter (gen_stmt buf ctx env (indent ^ "    ")) else_body;
-       Buffer.add_string buf indent;
-       Buffer.add_string buf "}\n")
+(* Statement emission with `defer` support.  `outer_scopes` is the list of
+   defer-stack snapshots for each block enclosing this one (innermost first);
+   inside the emitted block we accumulate `my_defers` as we walk statements
+   and on every exit point we emit cleanups in LIFO order across declarations
+   and in source order within each defer body.
 
-and gen_stmt buf ctx env indent = function
-  | Ast.Let { name; value } | Ast.Assign { name; value } ->
+   On fall-through end of block: emit only this block's cleanups.
+   On `return` from inside the block: emit this block's cleanups AND every
+   outer scope's cleanups, then return the value.  When defers are active
+   the return value is captured into a fresh `__exile_ret` temp inside a
+   new C block so cleanups can run before the actual `return` instruction.
+
+   A `defer` body is a leaf — it must not contain another `defer` or
+   `return`; both are rejected by `emit_simple_stmt`. *)
+let rec emit_simple_stmt buf ctx env indent stmt =
+  match stmt with
+  | Ast.Let { name; value; _ } | Ast.Assign { name; value; _ } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf (name ^ " = ");
       gen_expr buf ctx env value;
-      Buffer.add_string buf ";\n"
-  | Ast.Return expr ->
-      Buffer.add_string buf indent;
-      Buffer.add_string buf "return ";
-      gen_expr buf ctx env expr;
       Buffer.add_string buf ";\n"
   | Ast.ExprStmt e ->
       Buffer.add_string buf indent;
@@ -436,15 +428,114 @@ and gen_stmt buf ctx env indent = function
       Buffer.add_string buf ";\n"
   | Ast.If { cond; then_body; else_body } ->
       Buffer.add_string buf indent;
-      gen_if buf ctx env indent cond then_body else_body
+      Buffer.add_string buf "if (";
+      gen_expr buf ctx env cond;
+      Buffer.add_string buf ") {\n";
+      List.iter (emit_simple_stmt buf ctx env (indent ^ "    ")) then_body;
+      Buffer.add_string buf indent;
+      Buffer.add_char buf '}';
+      (match else_body with
+       | [] -> Buffer.add_char buf '\n'
+       | _ ->
+           Buffer.add_string buf " else {\n";
+           List.iter (emit_simple_stmt buf ctx env (indent ^ "    ")) else_body;
+           Buffer.add_string buf indent;
+           Buffer.add_string buf "}\n")
   | Ast.While { cond; body } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf "while (";
       gen_expr buf ctx env cond;
       Buffer.add_string buf ") {\n";
-      List.iter (gen_stmt buf ctx env (indent ^ "    ")) body;
+      List.iter (emit_simple_stmt buf ctx env (indent ^ "    ")) body;
       Buffer.add_string buf indent;
       Buffer.add_string buf "}\n"
+  | Ast.Defer { pos; _ } ->
+      Error.failf pos "'defer' inside a defer body is not supported"
+  | Ast.Return (_, pos) ->
+      Error.failf pos "'return' inside a defer body is not supported"
+
+let emit_cleanups buf ctx env indent defers =
+  List.iter
+    (fun body ->
+      List.iter (fun s -> emit_simple_stmt buf ctx env indent s) body)
+    defers
+
+let rec gen_if buf ctx env indent outer_scopes my_defers
+    cond then_body else_body =
+  Buffer.add_string buf "if (";
+  gen_expr buf ctx env cond;
+  Buffer.add_string buf ") {\n";
+  gen_block buf ctx env (indent ^ "    ")
+    (my_defers :: outer_scopes) then_body;
+  Buffer.add_string buf indent;
+  Buffer.add_char buf '}';
+  (match else_body with
+   | [] -> Buffer.add_char buf '\n'
+   | [ Ast.If { cond = ec; then_body = et; else_body = ee } ] ->
+       Buffer.add_string buf " else ";
+       gen_if buf ctx env indent outer_scopes my_defers ec et ee
+   | _ ->
+       Buffer.add_string buf " else {\n";
+       gen_block buf ctx env (indent ^ "    ")
+         (my_defers :: outer_scopes) else_body;
+       Buffer.add_string buf indent;
+       Buffer.add_string buf "}\n")
+
+and gen_block buf ctx env indent outer_scopes stmts =
+  let rec loop my_defers = function
+    | [] ->
+        emit_cleanups buf ctx env indent my_defers
+    | Ast.Defer { body; _ } :: rest ->
+        loop (body :: my_defers) rest
+    | Ast.Return (e, _) :: _ ->
+        let all = List.flatten (my_defers :: outer_scopes) in
+        if all = [] then begin
+          Buffer.add_string buf indent;
+          Buffer.add_string buf "return ";
+          gen_expr buf ctx env e;
+          Buffer.add_string buf ";\n"
+        end else begin
+          let ret_typ = type_of ctx env e in
+          let prefix = c_type_prefix ret_typ in
+          let trimmed =
+            if String.length prefix > 0
+               && prefix.[String.length prefix - 1] = ' '
+            then String.sub prefix 0 (String.length prefix - 1)
+            else prefix
+          in
+          Buffer.add_string buf indent;
+          Buffer.add_string buf "{\n";
+          Buffer.add_string buf (indent ^ "    ");
+          Buffer.add_string buf trimmed;
+          Buffer.add_string buf " __exile_ret = ";
+          gen_expr buf ctx env e;
+          Buffer.add_string buf ";\n";
+          emit_cleanups buf ctx env (indent ^ "    ") all;
+          Buffer.add_string buf (indent ^ "    ");
+          Buffer.add_string buf "return __exile_ret;\n";
+          Buffer.add_string buf indent;
+          Buffer.add_string buf "}\n"
+        end
+    | (Ast.Let _ | Ast.Assign _ | Ast.ExprStmt _) as s :: rest ->
+        emit_simple_stmt buf ctx env indent s;
+        loop my_defers rest
+    | Ast.If { cond; then_body; else_body } :: rest ->
+        Buffer.add_string buf indent;
+        gen_if buf ctx env indent outer_scopes my_defers
+          cond then_body else_body;
+        loop my_defers rest
+    | Ast.While { cond; body } :: rest ->
+        Buffer.add_string buf indent;
+        Buffer.add_string buf "while (";
+        gen_expr buf ctx env cond;
+        Buffer.add_string buf ") {\n";
+        gen_block buf ctx env (indent ^ "    ")
+          (my_defers :: outer_scopes) body;
+        Buffer.add_string buf indent;
+        Buffer.add_string buf "}\n";
+        loop my_defers rest
+  in
+  loop [] stmts
 
 (* Collect let-bound (name, type) pairs for C89 function-top hoisting.
    Type resolution uses block-scoped env (then/else branches start from
@@ -491,7 +582,7 @@ let collect_lets ctx param_env stmts =
           Error.failf pos "assignment to undefined variable '%s'" name;
         let _ = type_of ctx env value in
         walk env rest
-    | Ast.Return e :: rest ->
+    | Ast.Return (e, _) :: rest ->
         let _ = type_of ctx env e in
         walk env rest
     | Ast.ExprStmt e :: rest ->
@@ -507,6 +598,11 @@ let collect_lets ctx param_env stmts =
         let _ = type_of ctx env cond in
         let _ = walk env body in
         walk (param_env @ List.rev !decls) rest
+    | Ast.Defer { body; _ } :: rest ->
+        (* Defer body type-checks like the surrounding scope's stmts but
+           introduces no new env bindings to the caller. *)
+        let _ = walk env body in
+        walk env rest
   in
   let _ = walk param_env stmts in
   List.rev !decls
@@ -546,7 +642,7 @@ let gen_function buf ctx (f : Ast.func) mangled =
     (fun (name, t) ->
       Buffer.add_string buf (Printf.sprintf "    %s;\n" (c_decl t name)))
     lets;
-  List.iter (gen_stmt buf ctx full_env "    ") f.body;
+  gen_block buf ctx full_env "    " [] f.body;
   if f.name = "main" then Buffer.add_string buf "    return 0;\n";
   Buffer.add_string buf "}\n"
 

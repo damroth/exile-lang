@@ -13,6 +13,7 @@ let keyword_or_ident = function
   | "pub" -> Token.Pub
   | "use" -> Token.Use
   | "as" -> Token.As
+  | "defer" -> Token.Defer
   | "true" -> Token.True
   | "false" -> Token.False
   | s -> Token.Ident s

@@ -210,6 +210,34 @@ let () =
     "fn main() {\n    print(1, 2);\n}\n"
     "print() takes exactly one argument, got 2";
 
+  check "defer LIFO at fall-through"
+    "fn main() {\n    defer print(\"A\");\n    defer print(\"B\");\n    print(\"body\");\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%s\\n\", \"body\");\n    printf(\"%s\\n\", \"B\");\n    printf(\"%s\\n\", \"A\");\n    return 0;\n}\n";
+
+  check "defer with explicit return uses temp"
+    "fn compute() -> int {\n    defer print(\"cleanup\");\n    return 42;\n}\nfn main() {\n    print(compute());\n}\n"
+    "#include <stdio.h>\n\nstatic int compute(void);\n\nstatic int compute(void) {\n    {\n        int __exile_ret = 42;\n        printf(\"%s\\n\", \"cleanup\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%d\\n\", compute());\n    return 0;\n}\n";
+
+  check "defer block fires its stmts in source order"
+    "fn main() {\n    defer { print(\"a\"); print(\"b\"); }\n    defer print(\"c\");\n    print(\"body\");\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%s\\n\", \"body\");\n    printf(\"%s\\n\", \"c\");\n    printf(\"%s\\n\", \"a\");\n    printf(\"%s\\n\", \"b\");\n    return 0;\n}\n";
+
+  check "defer in if branch chains outer cleanup on return"
+    "fn process(n: int) -> int {\n    defer print(\"outer\");\n    if n > 0 {\n        defer print(\"inner\");\n        return n;\n    }\n    return 0;\n}\nfn main() {\n    print(process(5));\n}\n"
+    "#include <stdio.h>\n\nstatic int process(int n);\n\nstatic int process(int n) {\n    if (n > 0) {\n        {\n            int __exile_ret = n;\n            printf(\"%s\\n\", \"inner\");\n            printf(\"%s\\n\", \"outer\");\n            return __exile_ret;\n        }\n    }\n    {\n        int __exile_ret = 0;\n        printf(\"%s\\n\", \"outer\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%d\\n\", process(5));\n    return 0;\n}\n";
+
+  check "defer in while fires per iteration"
+    "fn main() {\n    let i = 0;\n    while i < 2 {\n        defer print(\"end\");\n        print(i);\n        i = i + 1;\n    }\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int i;\n    i = 0;\n    while (i < 2) {\n        printf(\"%d\\n\", i);\n        i = i + 1;\n        printf(\"%s\\n\", \"end\");\n    }\n    return 0;\n}\n";
+
+  check_error "return inside defer body rejected"
+    "fn foo() -> int {\n    defer { return 5; }\n    return 10;\n}\nfn main() {\n    print(foo());\n}\n"
+    "'return' inside a defer body is not supported";
+
+  check_error "defer inside defer body rejected"
+    "fn main() {\n    defer { defer print(\"x\"); }\n}\n"
+    "'defer' inside a defer body is not supported";
+
   check_multi "wildcard import inlines pub items, hides private"
     [ ("lib.exl",
        "pub fn hello() -> int {\n    return 42;\n}\n\

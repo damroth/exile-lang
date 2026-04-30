@@ -4,6 +4,9 @@ _build/
 # everything in examples/ except .exl sources (generated .c + binaries)
 examples/*
 !examples/*.exl
+!examples/multi_file/
+examples/multi_file/*
+!examples/multi_file/*.exl
 
 # opam
 *.install

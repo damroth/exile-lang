@@ -9,6 +9,7 @@ type t =
   | Pub
   | Use
   | As
+  | Defer
   | LParen
   | RParen
   | LBrace
@@ -40,6 +41,7 @@ let pp = function
   | Fn -> "'fn'" | Let -> "'let'" | Return -> "'return'"
   | If -> "'if'" | Else -> "'else'" | While -> "'while'"
   | Mod -> "'mod'" | Pub -> "'pub'" | Use -> "'use'" | As -> "'as'"
+  | Defer -> "'defer'"
   | LParen -> "'('" | RParen -> "')'"
   | LBrace -> "'{'" | RBrace -> "'}'"
   | Semicolon -> "';'" | Comma -> "','" | Colon -> "':'"
