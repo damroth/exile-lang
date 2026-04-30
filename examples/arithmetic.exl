@@ -1,0 +1,13 @@
+fn main() {
+    let sum     = 6 + 4;
+    let diff    = 100 - 42;
+    let product = 6 * 7;
+    let quot    = 84 / 2;
+    let mixed   = 1 + 2 * 3;
+
+    print(sum);
+    print(diff);
+    print(product);
+    print(quot);
+    print(mixed);
+}
