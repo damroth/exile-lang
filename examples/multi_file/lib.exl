@@ -1,0 +1,11 @@
+pub fn greet(name: str) {
+    print(name);
+}
+
+pub fn shout() {
+    print("HEY!");
+}
+
+fn private_helper() {
+    print("you cannot see me");
+}

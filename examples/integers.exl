@@ -1,0 +1,24 @@
+fn main() {
+    let a: i8  = -42;
+    let b: i16 = -1000;
+    let c: i32 = -1000000;
+
+    let x: u8  = 200;
+    let y: u16 = 50000;
+    let z: u32 = 3000000000;
+
+    print(a);
+    print(b);
+    print(c);
+    print(x);
+    print(y);
+    print(z);
+
+    let big: i32 = 1000;
+    let narrowed: i8 = big as i8;
+    print(narrowed);
+
+    let small: i8 = 5;
+    let widened: i32 = small as i32;
+    print(widened);
+}

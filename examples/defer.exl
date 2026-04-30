@@ -1,0 +1,30 @@
+fn lifo() {
+    defer print("third");
+    defer print("second");
+    defer print("first");
+    print("body");
+}
+
+fn block_defer() {
+    defer { print("a"); print("b"); print("c"); }
+    print("body");
+}
+
+fn early_exit(n: int) -> int {
+    defer print("outer cleanup");
+    if n > 0 {
+        defer print("inner cleanup");
+        return n * 2;
+    }
+    return 0;
+}
+
+fn main() {
+    lifo();
+    print("---");
+    block_defer();
+    print("---");
+    print(early_exit(5));
+    print("---");
+    print(early_exit(-3));
+}

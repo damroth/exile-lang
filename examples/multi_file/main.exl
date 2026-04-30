@@ -1,0 +1,6 @@
+use lib::*;
+
+fn main() {
+    greet("hello from multi-file");
+    shout();
+}

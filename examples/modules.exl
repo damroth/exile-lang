@@ -1,0 +1,25 @@
+mod math {
+    pub fn double(n: int) -> int {
+        return n * 2;
+    }
+
+    fn bump(n: int) -> int {
+        return n + 1;
+    }
+
+    pub fn double_then_bump(n: int) -> int {
+        return bump(double(n));
+    }
+}
+
+mod greet {
+    pub fn hi(name: str) {
+        print(name);
+    }
+}
+
+fn main() {
+    print(math::double(21));
+    print(math::double_then_bump(10));
+    greet::hi("hello from modules");
+}
