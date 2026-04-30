@@ -167,6 +167,49 @@ let c_decl t name = c_type_prefix t ^ name
 
 let c_param p = c_decl (type_of_ann p.Ast.pty) p.Ast.pname
 
+(* Compile-time builtins.  Each entry owns its own arity/type validation
+   (`bcheck`) and C emission (`bemit`).  Polymorphism in args is handled
+   per-builtin (e.g. print picks a printf format from the arg type).
+   Builtins are looked up only by single-segment call paths — no module
+   qualification.  Future entries: malloc/free (for defer), puts, etc. *)
+type builtin = {
+  bname : string;
+  bcheck : Pos.t -> typ list -> typ;
+  bemit  : Buffer.t -> typ list -> Ast.expr list ->
+           (Ast.expr -> unit) -> unit;
+}
+
+let builtin_print = {
+  bname = "print";
+  bcheck = (fun pos arg_tys ->
+    match arg_tys with
+    | [_] -> t_i32
+    | tys ->
+        Error.failf pos "print() takes exactly one argument, got %d"
+          (List.length tys));
+  bemit = (fun buf arg_tys args emit_arg ->
+    (* %d for signed (and bool), %u for unsigned.  Varargs default-promote
+       smaller widths up to (un)signed int, so a single specifier per
+       signedness works for all widths. *)
+    let fmt = match List.hd arg_tys with
+      | TBool -> "\"%d\\n\""
+      | TInt { signed = true; _ } -> "\"%d\\n\""
+      | TInt { signed = false; _ } -> "\"%u\\n\""
+      | TString -> "\"%s\\n\""
+    in
+    Buffer.add_string buf "printf(";
+    Buffer.add_string buf fmt;
+    Buffer.add_string buf ", ";
+    emit_arg (List.hd args);
+    Buffer.add_char buf ')');
+}
+
+let builtins = [ builtin_print ]
+
+let lookup_builtin = function
+  | [ name ] -> List.find_opt (fun b -> b.bname = name) builtins
+  | _ -> None
+
 (* type_of returns the type of an expression.  The optional [allow_void] flag
    controls what happens when the outermost expression is a call to a void
    function: with [allow_void:true] (used by ExprStmt) the call is accepted
@@ -207,11 +250,11 @@ let rec type_of ?(allow_void = false) ctx env = function
       (match List.assoc_opt name env with
        | Some t -> t
        | None -> Error.failf pos "undefined variable '%s'" name)
-  | Ast.Call ([ "print" ], args, _) ->
-      List.iter (fun a -> ignore (type_of ctx env a)) args;
-      t_i32
   | Ast.Call (path, args, pos) ->
       let arg_tys = List.map (type_of ctx env) args in
+      (match lookup_builtin path with
+       | Some b -> b.bcheck pos arg_tys
+       | None ->
       let display = String.concat "::" path in
       (match lookup_fn ctx path with
        | None -> Error.failf pos "unknown function '%s'" display
@@ -262,7 +305,7 @@ let rec type_of ?(allow_void = false) ctx env = function
             | Some t -> t
             | None when allow_void -> t_i32   (* placeholder, caller discards *)
             | None ->
-                Error.failf pos "'%s' returns void, cannot use as a value" display))
+                Error.failf pos "'%s' returns void, cannot use as a value" display)))
 
 (* Resolve operand types for a BinOp.  An integer literal on either side
    adopts the other operand's int type if it fits, so `x + 5` keeps x's
@@ -341,35 +384,22 @@ let rec gen_expr buf ctx env = function
          when prec rop < p || (prec rop = p && (op = Ast.Sub || op = Ast.Div)) ->
            Buffer.add_char buf '('; gen_expr buf ctx env r; Buffer.add_char buf ')'
        | _ -> gen_expr buf ctx env r)
-  | Ast.Call ([ "print" ], [ arg ], _) ->
-      (* %d for signed (and bool), %u for unsigned.  Varargs default-promote
-         smaller widths up to (un)signed int, so a single specifier per
-         signedness works for all widths. *)
-      let fmt =
-        match type_of ctx env arg with
-        | TBool -> "\"%d\\n\""
-        | TInt { signed = true; _ } -> "\"%d\\n\""
-        | TInt { signed = false; _ } -> "\"%u\\n\""
-        | TString -> "\"%s\\n\""
-      in
-      Buffer.add_string buf "printf(";
-      Buffer.add_string buf fmt;
-      Buffer.add_string buf ", ";
-      gen_expr buf ctx env arg;
-      Buffer.add_char buf ')'
-  | Ast.Call ([ "print" ], _, pos) ->
-      Error.failf pos "print() takes exactly one argument"
   | Ast.Call (path, args, pos) ->
-      let mangled =
-        match lookup_fn ctx path with
-        | Some (_, s) -> s.mangled
-        | None ->
-            Error.failf pos "unknown function '%s'" (String.concat "::" path)
-      in
-      Buffer.add_string buf mangled;
-      Buffer.add_char buf '(';
-      add_separated buf ", " (gen_expr buf ctx env) args;
-      Buffer.add_char buf ')'
+      (match lookup_builtin path with
+       | Some b ->
+           let arg_tys = List.map (type_of ctx env) args in
+           b.bemit buf arg_tys args (fun e -> gen_expr buf ctx env e)
+       | None ->
+           let mangled =
+             match lookup_fn ctx path with
+             | Some (_, s) -> s.mangled
+             | None ->
+                 Error.failf pos "unknown function '%s'" (String.concat "::" path)
+           in
+           Buffer.add_string buf mangled;
+           Buffer.add_char buf '(';
+           add_separated buf ", " (gen_expr buf ctx env) args;
+           Buffer.add_char buf ')')
 
 let rec gen_if buf ctx env indent cond then_body else_body =
   Buffer.add_string buf "if (";
