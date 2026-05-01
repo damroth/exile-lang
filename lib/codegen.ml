@@ -79,13 +79,14 @@ let lookup_fn ctx (path : string list) =
   in
   walk ctx.scope
 
-(* Mangle a function name with its module path.  Top-level (path = []) keeps
-   the bare name.  Inside a module, names join with "__".  C99 reserves
-   double-underscores for the implementation, but we accept the risk for
-   simplicity — collisions only happen if a user writes "__" in identifiers. *)
+(* Mangle a function name with its module path.  Top-level (path = []) gets
+   the `ex_` prefix so emitted symbols never collide with C stdlib builtins
+   (gcc warns about builtin-declaration-mismatch even when our top-level
+   fn is `static`).  Inside a module, names join with "__"; the module
+   prefix already keeps mod-internal symbols away from stdlib names. *)
 let mangle path name =
   match path with
-  | [] -> name
+  | [] -> "ex_" ^ name
   | _ -> String.concat "__" path ^ "__" ^ name
 
 let add_separated buf sep f xs =
@@ -704,8 +705,8 @@ let gen_program program =
         Error.raise_ f.Ast.pos
           "'main' must be at top level, not inside a module")
     flat;
-  (* Top-level function names land in C unmangled, so they must not collide
-     with C keywords. Names inside modules get a "mod__" prefix and are safe. *)
+  (* Top-level function names also need the C-keyword check; module fns
+     are protected by the `mod__` prefix from mangling. *)
   List.iter
     (fun (path, f, _) ->
       if path = [] then check_c_ident f.Ast.pos "function" f.Ast.name)

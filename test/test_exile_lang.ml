@@ -92,7 +92,7 @@ let () =
 
   check "multi-function call"
     "fn add(a: int, b: int) -> int {\n    return a + b;\n}\n\nfn main() {\n    let x = add(3, 4);\n    print(x);\n}\n"
-    "#include <stdio.h>\n\nstatic int add(int a, int b);\n\nstatic int add(int a, int b) {\n    return a + b;\n}\n\nint main(void) {\n    int x;\n    x = add(3, 4);\n    printf(\"%d\\n\", x);\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nstatic int ex_add(int a, int b);\n\nstatic int ex_add(int a, int b) {\n    return a + b;\n}\n\nint main(void) {\n    int x;\n    x = ex_add(3, 4);\n    printf(\"%d\\n\", x);\n    return 0;\n}\n";
 
   check "assignment"
     "fn main() {\n    let x = 1;\n    x = x + 41;\n    print(x);\n}\n"
@@ -124,7 +124,7 @@ let () =
 
   check "unary minus on literal var and call"
     "fn id(x: int) -> int {\n    return x;\n}\nfn main() {\n    let a = -5;\n    let b = -a;\n    print(b);\n    print(-id(7));\n}\n"
-    "#include <stdio.h>\n\nstatic int id(int x);\n\nstatic int id(int x) {\n    return x;\n}\n\nint main(void) {\n    int a;\n    int b;\n    a = -5;\n    b = -a;\n    printf(\"%d\\n\", b);\n    printf(\"%d\\n\", -(id(7)));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nstatic int ex_id(int x);\n\nstatic int ex_id(int x) {\n    return x;\n}\n\nint main(void) {\n    int a;\n    int b;\n    a = -5;\n    b = -a;\n    printf(\"%d\\n\", b);\n    printf(\"%d\\n\", -(ex_id(7)));\n    return 0;\n}\n";
 
   check_error "undefined variable in if cond"
     "fn main() {\n    if nope > 0 {\n        print(1);\n    }\n}\n"
@@ -216,7 +216,7 @@ let () =
 
   check "defer with explicit return uses temp"
     "fn compute() -> int {\n    defer print(\"cleanup\");\n    return 42;\n}\nfn main() {\n    print(compute());\n}\n"
-    "#include <stdio.h>\n\nstatic int compute(void);\n\nstatic int compute(void) {\n    {\n        int __exile_ret = 42;\n        printf(\"%s\\n\", \"cleanup\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%d\\n\", compute());\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nstatic int ex_compute(void);\n\nstatic int ex_compute(void) {\n    {\n        int __exile_ret = 42;\n        printf(\"%s\\n\", \"cleanup\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%d\\n\", ex_compute());\n    return 0;\n}\n";
 
   check "defer block fires its stmts in source order"
     "fn main() {\n    defer { print(\"a\"); print(\"b\"); }\n    defer print(\"c\");\n    print(\"body\");\n}\n"
@@ -224,7 +224,7 @@ let () =
 
   check "defer in if branch chains outer cleanup on return"
     "fn process(n: int) -> int {\n    defer print(\"outer\");\n    if n > 0 {\n        defer print(\"inner\");\n        return n;\n    }\n    return 0;\n}\nfn main() {\n    print(process(5));\n}\n"
-    "#include <stdio.h>\n\nstatic int process(int n);\n\nstatic int process(int n) {\n    if (n > 0) {\n        {\n            int __exile_ret = n;\n            printf(\"%s\\n\", \"inner\");\n            printf(\"%s\\n\", \"outer\");\n            return __exile_ret;\n        }\n    }\n    {\n        int __exile_ret = 0;\n        printf(\"%s\\n\", \"outer\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%d\\n\", process(5));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nstatic int ex_process(int n);\n\nstatic int ex_process(int n) {\n    if (n > 0) {\n        {\n            int __exile_ret = n;\n            printf(\"%s\\n\", \"inner\");\n            printf(\"%s\\n\", \"outer\");\n            return __exile_ret;\n        }\n    }\n    {\n        int __exile_ret = 0;\n        printf(\"%s\\n\", \"outer\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%d\\n\", ex_process(5));\n    return 0;\n}\n";
 
   check "defer in while fires per iteration"
     "fn main() {\n    let i = 0;\n    while i < 2 {\n        defer print(\"end\");\n        print(i);\n        i = i + 1;\n    }\n}\n"
@@ -238,6 +238,10 @@ let () =
     "fn main() {\n    defer { defer print(\"x\"); }\n}\n"
     "'defer' inside a defer body is not supported";
 
+  check "top-level fn name like a C stdlib symbol still works (ex_ prefix)"
+    "fn pow(base: int, exp: int) -> int {\n    return base * exp;\n}\nfn main() {\n    print(pow(2, 3));\n}\n"
+    "#include <stdio.h>\n\nstatic int ex_pow(int base, int exp);\n\nstatic int ex_pow(int base, int exp) {\n    return base * exp;\n}\n\nint main(void) {\n    printf(\"%d\\n\", ex_pow(2, 3));\n    return 0;\n}\n";
+
   check_multi "wildcard import inlines pub items, hides private"
     [ ("lib.exl",
        "pub fn hello() -> int {\n    return 42;\n}\n\
@@ -245,4 +249,4 @@ let () =
       ("main.exl",
        "use lib::*;\n\nfn main() {\n    print(hello());\n}\n") ]
     "main.exl"
-    "#include <stdio.h>\n\nint hello(void);\n\nint hello(void) {\n    return 42;\n}\n\nint main(void) {\n    printf(\"%d\\n\", hello());\n    return 0;\n}\n"
+    "#include <stdio.h>\n\nint ex_hello(void);\n\nint ex_hello(void) {\n    return 42;\n}\n\nint main(void) {\n    printf(\"%d\\n\", ex_hello());\n    return 0;\n}\n"
