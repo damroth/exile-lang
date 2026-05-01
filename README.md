@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/damroth/exile-lang/actions/workflows/ci.yml/badge.svg" />
+  <img src="https://github.com/damroth/exile-lang/actions/workflows/ci.yml/badge.svg?branch=master" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" />
   <img src="https://img.shields.io/badge/status-WIP-orange" />
   <img src="https://img.shields.io/badge/version-0.0.0-blue" />
