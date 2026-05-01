@@ -1,0 +1,39 @@
+fn split(n: int) -> (int, int) {
+    return (n * 2, n * 3);
+}
+
+fn min_max(a: int, b: int) -> (int, int) {
+    if a < b {
+        return (a, b);
+    } else {
+        return (b, a);
+    }
+}
+
+fn label_score(score: int) -> (str, int) {
+    if score >= 90 {
+        return ("A", score);
+    } else if score >= 70 {
+        return ("B", score);
+    } else {
+        return ("C", score);
+    }
+}
+
+fn main() {
+    let (a, b) = split(5);
+    print(a);
+    print(b);
+
+    let (lo, hi) = min_max(7, 3);
+    print(lo);
+    print(hi);
+
+    let (grade, points) = label_score(85);
+    print(grade);
+    print(points);
+
+    let (x, y) = (10, 20);
+    print(x);
+    print(y);
+}
