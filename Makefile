@@ -33,7 +33,7 @@ toolchain-clean:
 	rm -rf $(TOOLCHAIN_PREFIX)
 	$(MAKE) -C tools/amiga-gcc clean
 
-# Compile a .exl file to .c via the exile transpiler
+# Compile a .exl file to .c via the exile compiler
 %.c: %.exl build
 	$(EXILE) $<
 

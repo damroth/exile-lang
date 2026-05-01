@@ -21,11 +21,11 @@ jobs:
     - name: Install dependencies
       run: opam install . --deps-only --with-test
 
-    - name: Build transpiler
+    - name: Build compiler
       run: opam exec -- make build
 
     - name: Run tests
       run: opam exec -- make test
 
-    - name: Build examples (transpile + cc -ansi -pedantic -Wall)
+    - name: Build examples (compile to C + cc -ansi -pedantic -Wall)
       run: opam exec -- make examples

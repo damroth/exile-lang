@@ -2,6 +2,8 @@
 
 (name exile-lang)
 
+(version 0.1.0)
+
 (generate_opam_files true)
 
 (source
@@ -17,8 +19,8 @@
  (name exile-lang)
  (synopsis "A toy language that compiles to C, targeting Amiga m68k")
  (description
-  "exile-lang is a work-in-progress programming language with a transpiler to C89, \
-   designed to run on Amiga 500 (Kickstart 1.3). The transpiler is written in OCaml.")
+  "exile-lang is a work-in-progress programming language with a compiler targeting C89, \
+   designed to run on Amiga 500 (Kickstart 1.3). The compiler is written in OCaml.")
  (depends ocaml dune)
  (tags
   (compiler language amiga m68k ocaml)))
