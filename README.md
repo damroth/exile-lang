@@ -1,3 +1,11 @@
+<p align="center">
+  ![Build](https://github.com/damroth/exile-lang/actions/workflows/build.yml/badge.svg)
+  <img src="https://img.shields.io/badge/License-MIT-yellow.svg" />
+  <img src="https://img.shields.io/badge/status-WIP-orange" />
+  <img src="https://img.shields.io/badge/version-0.0.0-blue" />
+
+</p>
+
 # exile-lang
 
 A toy programming language that compiles to C, targeting Amiga m68k.
