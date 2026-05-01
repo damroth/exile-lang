@@ -28,7 +28,25 @@ let expect s tok =
   if t <> tok then
     Error.failf p "expected %s, got %s" (Token.pp tok) (Token.pp t)
 
-let parse_type s =
+(* Parse comma-separated items until `close`. Opener must already be consumed.
+   Trailing comma allowed before `close`. *)
+let parse_comma_list ~close ~item s =
+  if peek s = close then (ignore (advance s); [])
+  else
+    let first = item s in
+    let rec rest acc =
+      match peek s with
+      | t when t = close -> ignore (advance s); List.rev acc
+      | Token.Comma ->
+          ignore (advance s);
+          if peek s = close then (ignore (advance s); List.rev acc)
+          else rest (item s :: acc)
+      | _ ->
+          Error.failf (peek_pos s) "expected ',' or %s" (Token.pp close)
+    in
+    rest [ first ]
+
+let rec parse_type s =
   let ti signed width = Ast.TyInt { signed; width } in
   match advance s with
   | (Token.Ident "int", _) -> ti true Ast.W32     (* alias for i32 *)
@@ -40,9 +58,18 @@ let parse_type s =
   | (Token.Ident "u32", _) -> ti false Ast.W32
   | (Token.Ident "str", _) -> Ast.TyStr
   | (Token.Ident "bool", _) -> Ast.TyBool
+  | (Token.LParen, p) ->
+      (* Tuple type `(T1, T2, ...)`.  Single-element parens unwrap to the
+         underlying type (parens act as grouping); 0 elements is rejected. *)
+      let tys = parse_comma_list ~close:Token.RParen ~item:parse_type s in
+      (match tys with
+       | [] -> Error.failf p "empty tuple type '()' is not supported"
+       | [ t ] -> t
+       | _ -> Ast.TyTuple tys)
   | (t, p) ->
       Error.failf p
-        "expected type (int, i8/i16/i32, u8/u16/u32, str, bool), got %s"
+        "expected type (int, i8/i16/i32, u8/u16/u32, str, bool, (T,...)), \
+         got %s"
         (Token.pp t)
 
 let parse_param s =
@@ -54,20 +81,6 @@ let parse_param s =
   expect s Token.Colon;
   let ty = parse_type s in
   Ast.{ pname = name; pty = ty }
-
-(* Parse comma-separated items until `close`. Opener must already be consumed. *)
-let parse_comma_list ~close ~item s =
-  if peek s = close then (ignore (advance s); [])
-  else
-    let first = item s in
-    let rec rest acc =
-      match peek s with
-      | t when t = close -> ignore (advance s); List.rev acc
-      | Token.Comma -> ignore (advance s); rest (item s :: acc)
-      | _ ->
-          Error.failf (peek_pos s) "expected ',' or %s" (Token.pp close)
-    in
-    rest [ first ]
 
 let parse_params s =
   expect s Token.LParen;
@@ -112,9 +125,23 @@ let rec parse_primary s =
               (String.concat "::" path)
       end
   | Token.LParen ->
-      let e = parse_expr s in
-      expect s Token.RParen;
-      e
+      (* Grouping `(e)` for a single expression, tuple literal `(e1, e2, ...)`
+         for two or more. *)
+      let first = parse_expr s in
+      (match peek s with
+       | Token.Comma ->
+           ignore (advance s);
+           if peek s = Token.RParen then begin
+             (* trailing comma after a single expr — still grouping, not a 1-tuple *)
+             ignore (advance s);
+             first
+           end else begin
+             let rest = parse_comma_list ~close:Token.RParen ~item:parse_expr s in
+             Ast.TupleLit (first :: rest, p)
+           end
+       | _ ->
+           expect s Token.RParen;
+           first)
   | _ -> Error.raise_ p "expected expression"
 
 and parse_cast s =
@@ -175,20 +202,46 @@ let rec parse_block s =
 and parse_stmt s =
   match peek s with
   | Token.Let ->
+      let pos = peek_pos s in
       ignore (advance s);
-      let (name, pos) =
-        match advance s with
-        | (Token.Ident n, p) -> (n, p)
-        | (t, p) -> Error.failf p "expected variable name after 'let', got %s" (Token.pp t)
-      in
-      let ty_ann =
-        if peek s = Token.Colon then (ignore (advance s); Some (parse_type s))
-        else None
-      in
-      expect s Token.Eq;
-      let value = parse_expr s in
-      expect s Token.Semicolon;
-      Ast.Let { name; value; ty_ann; pos }
+      (match peek s with
+       | Token.LParen ->
+           (* Destructuring binding `let (a, b, ...) = expr;` — names only,
+              no per-name type annotation. *)
+           ignore (advance s);
+           let names =
+             parse_comma_list ~close:Token.RParen
+               ~item:(fun s ->
+                 match advance s with
+                 | (Token.Ident n, _) -> n
+                 | (t, p) ->
+                     Error.failf p
+                       "expected name in 'let (...)', got %s" (Token.pp t))
+               s
+           in
+           if List.length names < 2 then
+             Error.failf pos
+               "destructuring 'let (...)' needs at least two names";
+           expect s Token.Eq;
+           let value = parse_expr s in
+           expect s Token.Semicolon;
+           Ast.LetTuple { names; value; pos }
+       | _ ->
+           let (name, name_pos) =
+             match advance s with
+             | (Token.Ident n, p) -> (n, p)
+             | (t, p) ->
+                 Error.failf p "expected variable name after 'let', got %s"
+                   (Token.pp t)
+           in
+           let ty_ann =
+             if peek s = Token.Colon then (ignore (advance s); Some (parse_type s))
+             else None
+           in
+           expect s Token.Eq;
+           let value = parse_expr s in
+           expect s Token.Semicolon;
+           Ast.Let { name; value; ty_ann; pos = name_pos })
   | Token.Return ->
       let pos = peek_pos s in
       ignore (advance s);

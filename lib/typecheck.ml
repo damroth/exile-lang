@@ -9,6 +9,7 @@ type typ =
   | TInt of int_kind
   | TBool
   | TString
+  | TTuple of typ list
 
 (* Default integer type — what `int` and bare integer literals reduce to. *)
 let t_i32 = TInt { signed = true; width = Ast.W32 }
@@ -91,10 +92,11 @@ let mangle path name =
   | [] -> "ex_" ^ name
   | _ -> String.concat "__" path ^ "__" ^ name
 
-let type_of_ann = function
+let rec type_of_ann = function
   | Ast.TyInt { signed; width } -> TInt { signed; width }
   | Ast.TyStr -> TString
   | Ast.TyBool -> TBool
+  | Ast.TyTuple ts -> TTuple (List.map type_of_ann ts)
 
 (* Recognise an integer literal expression — bare or negated — for type-fitting
    checks at let-binding sites. *)
@@ -124,10 +126,11 @@ let int_typ_name signed width =
   let bits = match width with Ast.W8 -> "8" | Ast.W16 -> "16" | Ast.W32 -> "32" in
   prefix ^ bits
 
-let typ_name = function
+let rec typ_name = function
   | TInt { signed; width } -> int_typ_name signed width
   | TBool -> "bool"
   | TString -> "str"
+  | TTuple ts -> "(" ^ String.concat ", " (List.map typ_name ts) ^ ")"
 
 (* Compile-time builtin signatures.  The codegen layer carries a parallel
    table of emitters keyed by name; this module owns only the type-checking
@@ -142,6 +145,9 @@ let builtin_print = {
   bname = "print";
   bcheck = (fun pos arg_tys ->
     match arg_tys with
+    | [ TTuple _ ] ->
+        Error.failf pos
+          "cannot print a tuple; destructure with 'let (...)' first"
     | [_] -> t_i32
     | tys ->
         Error.failf pos "print() takes exactly one argument, got %d"
@@ -194,6 +200,8 @@ let rec type_of ?(allow_void = false) ctx env = function
       (match List.assoc_opt name env with
        | Some t -> t
        | None -> Error.failf pos "undefined variable '%s'" name)
+  | Ast.TupleLit (es, _) ->
+      TTuple (List.map (type_of ctx env) es)
   | Ast.Call (path, args, pos) ->
       let arg_tys = List.map (type_of ctx env) args in
       (match lookup_builtin path with
@@ -293,6 +301,12 @@ let collect_lets ctx param_env stmts =
     | [] -> env
     | Ast.Let { name; value; ty_ann; pos } :: rest ->
         let t_inferred = type_of ctx env value in
+        (match t_inferred with
+         | TTuple _ ->
+             Error.failf pos
+               "tuple value must be destructured: use 'let (...) = ...' \
+                instead of 'let %s = ...'" name
+         | _ -> ());
         let t_actual =
           match ty_ann with
           | None -> t_inferred
@@ -315,6 +329,35 @@ let collect_lets ctx param_env stmts =
         in
         add_decl name t_actual pos;
         walk ((name, t_actual) :: env) rest
+    | Ast.LetTuple { names; value; pos } :: rest ->
+        let t = type_of ctx env value in
+        let elem_tys =
+          match t with
+          | TTuple ts -> ts
+          | _ ->
+              Error.failf pos
+                "destructuring 'let (...)' expects a tuple value, got %s"
+                (typ_name t)
+        in
+        let n_names = List.length names in
+        let n_elems = List.length elem_tys in
+        if n_names <> n_elems then
+          Error.failf pos
+            "destructuring 'let (...)' has %d names but value is a %d-tuple"
+            n_names n_elems;
+        let pairs = List.combine names elem_tys in
+        (* Reject in-tuple duplicates up front for a clearer message. *)
+        let rec check_dups = function
+          | [] -> ()
+          | (n, _) :: rest_pairs ->
+              if List.exists (fun (m, _) -> m = n) rest_pairs then
+                Error.failf pos
+                  "duplicate name '%s' in 'let (...)'" n;
+              check_dups rest_pairs
+        in
+        check_dups pairs;
+        List.iter (fun (n, ty) -> add_decl n ty pos) pairs;
+        walk (List.rev_append pairs env) rest
     | Ast.Assign { name; value; pos } :: rest ->
         if not (List.mem_assoc name env) then
           Error.failf pos "assignment to undefined variable '%s'" name;

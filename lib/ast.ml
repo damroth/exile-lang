@@ -4,6 +4,7 @@ type type_ann =
   | TyInt of { signed : bool; width : int_width }
   | TyStr
   | TyBool
+  | TyTuple of type_ann list
 
 type binop =
   | Add | Sub | Mul | Div
@@ -18,11 +19,13 @@ type expr =
   | BinOp of binop * expr * expr
   | Call of string list * expr list * Pos.t
   | Cast of expr * type_ann * Pos.t
+  | TupleLit of expr list * Pos.t
 
 type param = { pname : string; pty : type_ann }
 
 type stmt =
   | Let of { name : string; value : expr; ty_ann : type_ann option; pos : Pos.t }
+  | LetTuple of { names : string list; value : expr; pos : Pos.t }
   | Assign of { name : string; value : expr; pos : Pos.t }
   | Return of expr * Pos.t
   | ExprStmt of expr

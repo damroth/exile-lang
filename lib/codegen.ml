@@ -25,7 +25,19 @@ let escape_c s =
     s;
   Buffer.contents buf
 
-let c_type_prefix = function
+(* Mangle a type to a C-identifier-safe string used both for the tuple
+   struct name and as a unique key in the codegen-side dedup table. *)
+let rec mangle_typ = function
+  | TInt { signed; width } -> int_typ_name signed width
+  | TBool -> "bool"
+  | TString -> "str"
+  | TTuple ts ->
+      Printf.sprintf "tup%d_%s" (List.length ts)
+        (String.concat "_" (List.map mangle_typ ts))
+
+let tuple_struct_name ts = "ex_" ^ mangle_typ (TTuple ts)
+
+let rec c_type_prefix = function
   | TInt { signed; width } ->
       let s = if signed then "" else "unsigned " in
       let core = match width with
@@ -41,6 +53,12 @@ let c_type_prefix = function
       s ^ signed_core
   | TBool -> "int "
   | TString -> "const char *"
+  | TTuple ts -> "struct " ^ tuple_struct_name ts ^ " "
+
+let strip_trailing_space s =
+  if String.length s > 0 && s.[String.length s - 1] = ' '
+  then String.sub s 0 (String.length s - 1)
+  else s
 
 let c_decl t name = c_type_prefix t ^ name
 
@@ -62,6 +80,7 @@ let emit_print : builtin_emit =
       | TInt { signed = true; _ } -> "\"%d\\n\""
       | TInt { signed = false; _ } -> "\"%u\\n\""
       | TString -> "\"%s\\n\""
+      | TTuple _ -> assert false  (* typecheck rejected this earlier *)
     in
     Buffer.add_string buf "printf(";
     Buffer.add_string buf fmt;
@@ -99,12 +118,7 @@ let rec gen_expr buf ctx env = function
            gen_expr buf ctx env e;
            Buffer.add_char buf ')')
   | Ast.Cast (e, ann, _) ->
-      let prefix = c_type_prefix (type_of_ann ann) in
-      let trimmed =
-        if String.length prefix > 0 && prefix.[String.length prefix - 1] = ' '
-        then String.sub prefix 0 (String.length prefix - 1)
-        else prefix
-      in
+      let trimmed = strip_trailing_space (c_type_prefix (type_of_ann ann)) in
       Buffer.add_string buf "((";
       Buffer.add_string buf trimmed;
       Buffer.add_string buf ")";
@@ -146,6 +160,33 @@ let rec gen_expr buf ctx env = function
            Buffer.add_char buf '(';
            add_separated buf ", " (gen_expr buf ctx env) args;
            Buffer.add_char buf ')')
+  | Ast.TupleLit (_, pos) ->
+      Error.failf pos
+        "tuple literal can only appear in 'return (...)' or as the RHS of \
+         'let (...) = ...'"
+
+(* Initialise an already-declared temp from an expression.  Tuple literals
+   become field-by-field assignments (`__t._0 = e0; __t._1 = e1; ...`); any
+   other RHS uses a single struct- or scalar-assignment (`__t = expr;`).
+   Both forms are strict C89 — brace initializers with non-constant
+   elements are a C99 relaxation that `-ansi -pedantic` rejects. *)
+and emit_value_into_temp buf ctx env indent temp_name value =
+  match value with
+  | Ast.TupleLit (es, _) ->
+      List.iteri
+        (fun i e ->
+          Buffer.add_string buf indent;
+          Buffer.add_string buf temp_name;
+          Buffer.add_string buf (Printf.sprintf "._%d = " i);
+          gen_expr buf ctx env e;
+          Buffer.add_string buf ";\n")
+        es
+  | _ ->
+      Buffer.add_string buf indent;
+      Buffer.add_string buf temp_name;
+      Buffer.add_string buf " = ";
+      gen_expr buf ctx env value;
+      Buffer.add_string buf ";\n"
 
 (* Statement emission with `defer` support.  `outer_scopes` is the list of
    defer-stack snapshots for each block enclosing this one (innermost first);
@@ -168,6 +209,8 @@ let rec emit_simple_stmt buf ctx env indent stmt =
       Buffer.add_string buf (name ^ " = ");
       gen_expr buf ctx env value;
       Buffer.add_string buf ";\n"
+  | Ast.LetTuple { names; value; _ } ->
+      emit_let_tuple buf ctx env indent names value
   | Ast.ExprStmt e ->
       Buffer.add_string buf indent;
       gen_expr buf ctx env e;
@@ -199,6 +242,26 @@ let rec emit_simple_stmt buf ctx env indent stmt =
       Error.failf pos "'defer' inside a defer body is not supported"
   | Ast.Return (_, pos) ->
       Error.failf pos "'return' inside a defer body is not supported"
+
+(* Destructuring binding: introduce an inner C block, declare a `__t` temp
+   of the tuple struct type, fill it from the RHS, then assign each hoisted
+   name from the temp's numbered field. *)
+and emit_let_tuple buf ctx env indent names value =
+  let t = type_of ctx env value in
+  let trimmed = strip_trailing_space (c_type_prefix t) in
+  Buffer.add_string buf indent;
+  Buffer.add_string buf "{\n";
+  Buffer.add_string buf (indent ^ "    ");
+  Buffer.add_string buf trimmed;
+  Buffer.add_string buf " __t;\n";
+  emit_value_into_temp buf ctx env (indent ^ "    ") "__t" value;
+  List.iteri
+    (fun i name ->
+      Buffer.add_string buf (indent ^ "    ");
+      Buffer.add_string buf (Printf.sprintf "%s = __t._%d;\n" name i))
+    names;
+  Buffer.add_string buf indent;
+  Buffer.add_string buf "}\n"
 
 let emit_cleanups buf ctx env indent defers =
   List.iter
@@ -235,27 +298,24 @@ and gen_block buf ctx env indent outer_scopes stmts =
         loop (body :: my_defers) rest
     | Ast.Return (e, _) :: _ ->
         let all = List.flatten (my_defers :: outer_scopes) in
-        if all = [] then begin
+        let needs_block =
+          all <> [] || (match e with Ast.TupleLit _ -> true | _ -> false)
+        in
+        if not needs_block then begin
           Buffer.add_string buf indent;
           Buffer.add_string buf "return ";
           gen_expr buf ctx env e;
           Buffer.add_string buf ";\n"
         end else begin
-          let ret_typ = type_of ctx env e in
-          let prefix = c_type_prefix ret_typ in
           let trimmed =
-            if String.length prefix > 0
-               && prefix.[String.length prefix - 1] = ' '
-            then String.sub prefix 0 (String.length prefix - 1)
-            else prefix
+            strip_trailing_space (c_type_prefix (type_of ctx env e))
           in
           Buffer.add_string buf indent;
           Buffer.add_string buf "{\n";
           Buffer.add_string buf (indent ^ "    ");
           Buffer.add_string buf trimmed;
-          Buffer.add_string buf " __exile_ret = ";
-          gen_expr buf ctx env e;
-          Buffer.add_string buf ";\n";
+          Buffer.add_string buf " __exile_ret;\n";
+          emit_value_into_temp buf ctx env (indent ^ "    ") "__exile_ret" e;
           emit_cleanups buf ctx env (indent ^ "    ") all;
           Buffer.add_string buf (indent ^ "    ");
           Buffer.add_string buf "return __exile_ret;\n";
@@ -264,6 +324,9 @@ and gen_block buf ctx env indent outer_scopes stmts =
         end
     | (Ast.Let _ | Ast.Assign _ | Ast.ExprStmt _) as s :: rest ->
         emit_simple_stmt buf ctx env indent s;
+        loop my_defers rest
+    | Ast.LetTuple { names; value; _ } :: rest ->
+        emit_let_tuple buf ctx env indent names value;
         loop my_defers rest
     | Ast.If { cond; then_body; else_body } :: rest ->
         Buffer.add_string buf indent;
@@ -322,6 +385,78 @@ let gen_function buf ctx (f : Ast.func) mangled =
   if f.name = "main" then Buffer.add_string buf "    return 0;\n";
   Buffer.add_string buf "}\n"
 
+(* Walk every function body looking for tuple types in use.  We collect
+   them deduplicated by mangled name and emit one C struct per unique tuple
+   shape.  Sources of tuples: fn signatures (ret_ty, params) and any
+   `TupleLit` expression in code (typed via `type_of`). *)
+let collect_tuple_types flat global modules =
+  let seen = ref [] in
+  let add t =
+    let name = mangle_typ t in
+    if not (List.exists (fun (n, _) -> n = name) !seen) then
+      seen := (name, t) :: !seen
+  in
+  let rec walk_typ t =
+    match t with
+    | TTuple ts -> add t; List.iter walk_typ ts
+    | _ -> ()
+  in
+  let walk_typ_ann ann = walk_typ (type_of_ann ann) in
+  let rec walk_expr ctx env e =
+    (match e with
+     | Ast.TupleLit (es, _) ->
+         walk_typ (type_of ctx env e);
+         List.iter (walk_expr ctx env) es
+     | Ast.Cast (sub, _, _) -> walk_expr ctx env sub
+     | Ast.Neg sub -> walk_expr ctx env sub
+     | Ast.BinOp (_, l, r) -> walk_expr ctx env l; walk_expr ctx env r
+     | Ast.Call (_, args, _) -> List.iter (walk_expr ctx env) args
+     | _ -> ())
+  in
+  let rec walk_stmt ctx env = function
+    | Ast.Let { value; _ } -> walk_expr ctx env value
+    | Ast.LetTuple { value; _ } -> walk_expr ctx env value
+    | Ast.Assign { value; _ } -> walk_expr ctx env value
+    | Ast.Return (e, _) -> walk_expr ctx env e
+    | Ast.ExprStmt e -> walk_expr ctx env e
+    | Ast.If { cond; then_body; else_body } ->
+        walk_expr ctx env cond;
+        List.iter (walk_stmt ctx env) then_body;
+        List.iter (walk_stmt ctx env) else_body
+    | Ast.While { cond; body } ->
+        walk_expr ctx env cond;
+        List.iter (walk_stmt ctx env) body
+    | Ast.Defer { body; _ } ->
+        List.iter (walk_stmt ctx env) body
+  in
+  List.iter
+    (fun (path, (f : Ast.func), _) ->
+      Option.iter walk_typ_ann f.ret_ty;
+      List.iter (fun (p : Ast.param) -> walk_typ_ann p.pty) f.params;
+      let ctx = { global; modules; scope = path } in
+      let param_env =
+        List.map (fun (p : Ast.param) ->
+          (p.pname, type_of_ann p.pty)) f.params
+      in
+      let lets = collect_lets ctx param_env f.body in
+      let env = param_env @ lets in
+      List.iter (walk_stmt ctx env) f.body)
+    flat;
+  List.rev !seen
+
+let emit_tuple_struct buf (_, t) =
+  match t with
+  | TTuple ts ->
+      Buffer.add_string buf (Printf.sprintf "struct %s {" (tuple_struct_name ts));
+      List.iteri
+        (fun i ty ->
+          Buffer.add_char buf ' ';
+          Buffer.add_string buf (c_decl ty (Printf.sprintf "_%d" i));
+          Buffer.add_char buf ';')
+        ts;
+      Buffer.add_string buf " };\n"
+  | _ -> ()
+
 let gen_program program =
   let flat = flatten_funcs program in
   (* main() must be at top level, not inside a module. *)
@@ -339,8 +474,13 @@ let gen_program program =
     flat;
   let global = build_global_index flat in
   let modules = flatten_modules program in
+  let tuples = collect_tuple_types flat global modules in
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
+  if tuples <> [] then begin
+    Buffer.add_char buf '\n';
+    List.iter (emit_tuple_struct buf) tuples
+  end;
   let non_main = List.filter (fun (_, f, _) -> f.Ast.name <> "main") flat in
   if non_main <> [] then begin
     Buffer.add_char buf '\n';

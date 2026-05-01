@@ -216,7 +216,7 @@ let () =
 
   check "defer with explicit return uses temp"
     "fn compute() -> int {\n    defer print(\"cleanup\");\n    return 42;\n}\nfn main() {\n    print(compute());\n}\n"
-    "#include <stdio.h>\n\nstatic int ex_compute(void);\n\nstatic int ex_compute(void) {\n    {\n        int __exile_ret = 42;\n        printf(\"%s\\n\", \"cleanup\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%d\\n\", ex_compute());\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nstatic int ex_compute(void);\n\nstatic int ex_compute(void) {\n    {\n        int __exile_ret;\n        __exile_ret = 42;\n        printf(\"%s\\n\", \"cleanup\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%d\\n\", ex_compute());\n    return 0;\n}\n";
 
   check "defer block fires its stmts in source order"
     "fn main() {\n    defer { print(\"a\"); print(\"b\"); }\n    defer print(\"c\");\n    print(\"body\");\n}\n"
@@ -224,7 +224,7 @@ let () =
 
   check "defer in if branch chains outer cleanup on return"
     "fn process(n: int) -> int {\n    defer print(\"outer\");\n    if n > 0 {\n        defer print(\"inner\");\n        return n;\n    }\n    return 0;\n}\nfn main() {\n    print(process(5));\n}\n"
-    "#include <stdio.h>\n\nstatic int ex_process(int n);\n\nstatic int ex_process(int n) {\n    if (n > 0) {\n        {\n            int __exile_ret = n;\n            printf(\"%s\\n\", \"inner\");\n            printf(\"%s\\n\", \"outer\");\n            return __exile_ret;\n        }\n    }\n    {\n        int __exile_ret = 0;\n        printf(\"%s\\n\", \"outer\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%d\\n\", ex_process(5));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nstatic int ex_process(int n);\n\nstatic int ex_process(int n) {\n    if (n > 0) {\n        {\n            int __exile_ret;\n            __exile_ret = n;\n            printf(\"%s\\n\", \"inner\");\n            printf(\"%s\\n\", \"outer\");\n            return __exile_ret;\n        }\n    }\n    {\n        int __exile_ret;\n        __exile_ret = 0;\n        printf(\"%s\\n\", \"outer\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%d\\n\", ex_process(5));\n    return 0;\n}\n";
 
   check "defer in while fires per iteration"
     "fn main() {\n    let i = 0;\n    while i < 2 {\n        defer print(\"end\");\n        print(i);\n        i = i + 1;\n    }\n}\n"
@@ -241,6 +241,42 @@ let () =
   check "top-level fn name like a C stdlib symbol still works (ex_ prefix)"
     "fn pow(base: int, exp: int) -> int {\n    return base * exp;\n}\nfn main() {\n    print(pow(2, 3));\n}\n"
     "#include <stdio.h>\n\nstatic int ex_pow(int base, int exp);\n\nstatic int ex_pow(int base, int exp) {\n    return base * exp;\n}\n\nint main(void) {\n    printf(\"%d\\n\", ex_pow(2, 3));\n    return 0;\n}\n";
+
+  check "tuple return + destructuring (homogeneous)"
+    "fn split(n: int) -> (int, int) {\n    return (n * 2, n * 3);\n}\nfn main() {\n    let (a, b) = split(5);\n    print(a);\n    print(b);\n}\n"
+    "#include <stdio.h>\n\nstruct ex_tup2_i32_i32 { int _0; int _1; };\n\nstatic struct ex_tup2_i32_i32 ex_split(int n);\n\nstatic struct ex_tup2_i32_i32 ex_split(int n) {\n    {\n        struct ex_tup2_i32_i32 __exile_ret;\n        __exile_ret._0 = n * 2;\n        __exile_ret._1 = n * 3;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    int a;\n    int b;\n    {\n        struct ex_tup2_i32_i32 __t;\n        __t = ex_split(5);\n        a = __t._0;\n        b = __t._1;\n    }\n    printf(\"%d\\n\", a);\n    printf(\"%d\\n\", b);\n    return 0;\n}\n";
+
+  check "tuple literal RHS in destructuring"
+    "fn main() {\n    let (x, y) = (10, 20);\n    print(x);\n    print(y);\n}\n"
+    "#include <stdio.h>\n\nstruct ex_tup2_i32_i32 { int _0; int _1; };\n\nint main(void) {\n    int x;\n    int y;\n    {\n        struct ex_tup2_i32_i32 __t;\n        __t._0 = 10;\n        __t._1 = 20;\n        x = __t._0;\n        y = __t._1;\n    }\n    printf(\"%d\\n\", x);\n    printf(\"%d\\n\", y);\n    return 0;\n}\n";
+
+  check_error "naked tuple-typed let rejected"
+    "fn main() {\n    let x = (1, 2);\n    print(x);\n}\n"
+    "tuple value must be destructured: use 'let (...) = ...' instead of 'let x = ...'";
+
+  check_error "empty tuple type rejected"
+    "fn foo() -> () {\n    return (1, 2);\n}\nfn main() {\n    foo();\n}\n"
+    "empty tuple type '()' is not supported";
+
+  check_error "destructuring arity mismatch"
+    "fn split() -> (int, int) {\n    return (1, 2);\n}\nfn main() {\n    let (a, b, c) = split();\n    print(a);\n}\n"
+    "destructuring 'let (...)' has 3 names but value is a 2-tuple";
+
+  check_error "destructuring non-tuple value"
+    "fn main() {\n    let (a, b) = 5;\n    print(a);\n}\n"
+    "destructuring 'let (...)' expects a tuple value, got i32";
+
+  check_error "destructuring single name rejected"
+    "fn main() {\n    let (a) = (1, 2);\n    print(a);\n}\n"
+    "destructuring 'let (...)' needs at least two names";
+
+  check_error "duplicate name in destructuring"
+    "fn split() -> (int, int) {\n    return (1, 2);\n}\nfn main() {\n    let (a, a) = split();\n    print(a);\n}\n"
+    "duplicate name 'a' in 'let (...)'";
+
+  check_error "tuple cannot be printed"
+    "fn split() -> (int, int) {\n    return (1, 2);\n}\nfn main() {\n    print(split());\n}\n"
+    "cannot print a tuple; destructure with 'let (...)' first";
 
   check_multi "wildcard import inlines pub items, hides private"
     [ ("lib.exl",
