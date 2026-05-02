@@ -1,9 +1,13 @@
 type state = {
   mutable tokens : (Token.t * Pos.t) list;
   mutable last_pos : Pos.t;
+  (* Suppresses `Ident { ... }` parsing as a struct literal in positions
+     where `{` opens a block (the condition of an if/while). *)
+  mutable allow_struct_lit : bool;
 }
 
-let make_state tokens = { tokens; last_pos = Pos.zero }
+let make_state tokens =
+  { tokens; last_pos = Pos.zero; allow_struct_lit = true }
 
 let peek s = match s.tokens with [] -> Token.Eof | (t, _) :: _ -> t
 
@@ -49,6 +53,7 @@ let parse_comma_list ~close ~item s =
 let rec parse_type s =
   let ti signed width = Ast.TyInt { signed; width } in
   match advance s with
+  | (Token.Star, _) -> Ast.TyPtr (parse_type s)
   | (Token.Ident "int", _) -> ti true Ast.W32     (* alias for i32 *)
   | (Token.Ident "i8",  _) -> ti true Ast.W8
   | (Token.Ident "i16", _) -> ti true Ast.W16
@@ -58,6 +63,19 @@ let rec parse_type s =
   | (Token.Ident "u32", _) -> ti false Ast.W32
   | (Token.Ident "str", _) -> Ast.TyStr
   | (Token.Ident "bool", _) -> Ast.TyBool
+  | (Token.Ident n, _) ->
+      (* Any other identifier is a struct path, possibly qualified
+         (`mod::Inner::Point`). *)
+      let rec collect acc =
+        if peek s = Token.DoubleColon then begin
+          ignore (advance s);
+          match advance s with
+          | (Token.Ident n2, _) -> collect (n2 :: acc)
+          | (t, p) ->
+              Error.failf p "expected identifier after '::', got %s" (Token.pp t)
+        end else List.rev acc
+      in
+      Ast.TyStruct (collect [n])
   | (Token.LParen, p) ->
       (* Tuple type `(T1, T2, ...)`.  Single-element parens unwrap to the
          underlying type (parens act as grouping); 0 elements is rejected. *)
@@ -68,8 +86,8 @@ let rec parse_type s =
        | _ -> Ast.TyTuple tys)
   | (t, p) ->
       Error.failf p
-        "expected type (int, i8/i16/i32, u8/u16/u32, str, bool, (T,...)), \
-         got %s"
+        "expected type (int, i8/i16/i32, u8/u16/u32, str, bool, struct \
+         name, (T,...)), got %s"
         (Token.pp t)
 
 let parse_param s =
@@ -99,9 +117,40 @@ let rec parse_primary s =
   | Token.False -> Ast.BoolLit false
   | Token.String str -> Ast.StringLit str
   | Token.Minus -> Ast.Neg (parse_primary s)
+  | Token.Amp -> Ast.Ref (parse_postfix s (parse_primary s), p)
+  | Token.Star -> Ast.Deref (parse_postfix s (parse_primary s), p)
+  | Token.New ->
+      (* `new Path { f1: e1, ... }` — heap-allocate struct + init.
+         The struct path is required; the brace body is mandatory and
+         allowed even in cond positions (no ambiguity since `new` is a
+         dedicated keyword). *)
+      let rec collect_path acc =
+        if peek s = Token.DoubleColon then begin
+          ignore (advance s);
+          match advance s with
+          | (Token.Ident n, _) -> collect_path (n :: acc)
+          | (t, p2) ->
+              Error.failf p2 "expected identifier after '::', got %s" (Token.pp t)
+        end else List.rev acc
+      in
+      let first =
+        match advance s with
+        | (Token.Ident n, _) -> n
+        | (t, p2) ->
+            Error.failf p2 "expected struct name after 'new', got %s"
+              (Token.pp t)
+      in
+      let path = collect_path [first] in
+      expect s Token.LBrace;
+      let fields =
+        parse_comma_list ~close:Token.RBrace
+          ~item:parse_struct_lit_field s
+      in
+      Ast.New { tname = path; fields; pos = p }
   | Token.Ident name ->
       (* Path-qualified identifiers: foo::bar::baz(...).  Build the full
-         path, then decide if it ends in a call or a bare value. *)
+         path, then decide if it ends in a call, a struct literal, or a
+         bare value. *)
       let rec collect_path acc =
         if peek s = Token.DoubleColon then begin
           ignore (advance s);
@@ -113,17 +162,24 @@ let rec parse_primary s =
           List.rev acc
       in
       let path = collect_path [name] in
-      if peek s = Token.LParen then begin
-        ignore (advance s);
-        Ast.Call (path, parse_args s, p)
-      end else begin
-        match path with
-        | [single] -> Ast.Var (single, p)
-        | _ ->
-            Error.failf p
-              "qualified path '%s' is only valid as a function call"
-              (String.concat "::" path)
-      end
+      (match peek s with
+       | Token.LParen ->
+           ignore (advance s);
+           Ast.Call (path, parse_args s, p)
+       | Token.LBrace when s.allow_struct_lit ->
+           ignore (advance s);
+           let fields =
+             parse_comma_list ~close:Token.RBrace
+               ~item:parse_struct_lit_field s
+           in
+           Ast.StructLit { tname = path; fields; pos = p }
+       | _ ->
+           (match path with
+            | [single] -> Ast.Var (single, p)
+            | _ ->
+                Error.failf p
+                  "qualified path '%s' must be followed by '(' or '{'"
+                  (String.concat "::" path)))
   | Token.LParen ->
       (* Grouping `(e)` for a single expression, tuple literal `(e1, e2, ...)`
          for two or more. *)
@@ -144,6 +200,31 @@ let rec parse_primary s =
            first)
   | _ -> Error.raise_ p "expected expression"
 
+and parse_struct_lit_field s =
+  let n =
+    match advance s with
+    | (Token.Ident n, _) -> n
+    | (t, p) ->
+        Error.failf p "expected field name in struct literal, got %s"
+          (Token.pp t)
+  in
+  expect s Token.Colon;
+  (n, parse_expr s)
+
+(* Chain `.field` accesses onto an already-parsed primary. *)
+and parse_postfix s base =
+  let rec loop e =
+    if peek s = Token.Dot then begin
+      let p = peek_pos s in
+      ignore (advance s);
+      match advance s with
+      | (Token.Ident n, _) -> loop (Ast.FieldAccess (e, n, p))
+      | (t, pp) ->
+          Error.failf pp "expected field name after '.', got %s" (Token.pp t)
+    end else e
+  in
+  loop base
+
 and parse_cast s =
   let rec loop left =
     if peek s = Token.As then begin
@@ -154,7 +235,7 @@ and parse_cast s =
     end else
       left
   in
-  loop (parse_primary s)
+  loop (parse_postfix s (parse_primary s))
 
 and parse_mul s =
   let rec loop left =
@@ -263,7 +344,10 @@ and parse_stmt s =
       Ast.Defer { body; pos }
   | Token.If ->
       ignore (advance s);
+      let prev = s.allow_struct_lit in
+      s.allow_struct_lit <- false;
       let cond = parse_expr s in
+      s.allow_struct_lit <- prev;
       let then_body = parse_block s in
       let else_body =
         match peek s with
@@ -277,20 +361,36 @@ and parse_stmt s =
       Ast.If { cond; then_body; else_body }
   | Token.While ->
       ignore (advance s);
+      let prev = s.allow_struct_lit in
+      s.allow_struct_lit <- false;
       let cond = parse_expr s in
+      s.allow_struct_lit <- prev;
       let body = parse_block s in
       Ast.While { cond; body }
-  | Token.Ident name when peek2 s = Token.Eq ->
-      let pos = peek_pos s in
-      ignore (advance s);
-      ignore (advance s);
-      let value = parse_expr s in
-      expect s Token.Semicolon;
-      Ast.Assign { name; value; pos }
   | _ ->
+      (* General statement: parse an expression, then dispatch on what
+         follows.  An `=` makes it an assignment whose target is either a
+         bare variable (`x = ...;`) or a field path (`p.x = ...;`); a `;`
+         keeps it as an expression statement. *)
       let e = parse_expr s in
-      expect s Token.Semicolon;
-      Ast.ExprStmt e
+      (match peek s with
+       | Token.Eq ->
+           let pos = peek_pos s in
+           ignore (advance s);
+           let value = parse_expr s in
+           expect s Token.Semicolon;
+           (match e with
+            | Ast.Var (name, vp) ->
+                Ast.Assign { name; value; pos = vp }
+            | Ast.FieldAccess (target, field, fp) ->
+                Ast.AssignField { target; field; value; pos = fp }
+            | Ast.Deref (target, dp) ->
+                Ast.AssignDeref { target; value; pos = dp }
+            | _ ->
+                Error.failf pos "invalid assignment target")
+       | _ ->
+           expect s Token.Semicolon;
+           Ast.ExprStmt e)
 
 and parse_stmts s acc =
   match peek s with
@@ -418,6 +518,12 @@ let rec parse_item s seen =
   | Token.Mod ->
       let (name, m) = parse_module s seen ~is_pub in
       [ (Some name, Ast.Module m) ]
+  | Token.Struct ->
+      let sd = parse_struct_decl s ~is_pub in
+      if List.mem sd.Ast.sname seen then
+        Error.failf sd.Ast.spos
+          "name '%s' already used in this scope" sd.Ast.sname;
+      [ (Some sd.Ast.sname, Ast.Struct sd) ]
   | Token.Use ->
       if is_pub then
         Error.failf (peek_pos s) "'pub use' is not yet supported";
@@ -440,8 +546,42 @@ let rec parse_item s seen =
         items;
       items
   | _ ->
-      Error.failf (peek_pos s) "expected 'fn', 'mod' or 'use', got %s"
+      Error.failf (peek_pos s) "expected 'fn', 'mod', 'use' or 'struct', got %s"
         (Token.pp (peek s))
+
+and parse_struct_decl s ~is_pub =
+  expect s Token.Struct;
+  let (name, name_pos) =
+    match advance s with
+    | (Token.Ident n, p) -> (n, p)
+    | (_, p) -> Error.raise_ p "expected struct name after 'struct'"
+  in
+  expect s Token.LBrace;
+  let parse_field s =
+    let fname =
+      match advance s with
+      | (Token.Ident n, _) -> n
+      | (t, p) ->
+          Error.failf p "expected field name in struct, got %s" (Token.pp t)
+    in
+    expect s Token.Colon;
+    let ty = parse_type s in
+    (fname, ty)
+  in
+  let fields =
+    parse_comma_list ~close:Token.RBrace ~item:parse_field s
+  in
+  (* Reject in-struct duplicate field names. *)
+  let rec check_dups = function
+    | [] -> ()
+    | (n, _) :: rest ->
+        if List.exists (fun (m, _) -> m = n) rest then
+          Error.failf name_pos
+            "duplicate field '%s' in struct '%s'" n name;
+        check_dups rest
+  in
+  check_dups fields;
+  Ast.{ sname = name; sfields = fields; spos = name_pos; sis_pub = is_pub }
 
 and parse_module s seen ~is_pub =
   expect s Token.Mod;

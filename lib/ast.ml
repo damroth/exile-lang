@@ -5,6 +5,8 @@ type type_ann =
   | TyStr
   | TyBool
   | TyTuple of type_ann list
+  | TyStruct of string list           (* qualified path: e.g. ["foo"; "Point"] *)
+  | TyPtr of type_ann                  (* `*T` *)
 
 type binop =
   | Add | Sub | Mul | Div
@@ -20,6 +22,12 @@ type expr =
   | Call of string list * expr list * Pos.t
   | Cast of expr * type_ann * Pos.t
   | TupleLit of expr list * Pos.t
+  | StructLit of { tname : string list; fields : (string * expr) list; pos : Pos.t }
+  | FieldAccess of expr * string * Pos.t
+  | Ref of expr * Pos.t                (* `&expr` — take address *)
+  | Deref of expr * Pos.t              (* `*expr` — load through pointer *)
+  | New of { tname : string list; fields : (string * expr) list; pos : Pos.t }
+                                        (* `new T { f: e }` — heap-alloc + init *)
 
 type param = { pname : string; pty : type_ann }
 
@@ -27,6 +35,8 @@ type stmt =
   | Let of { name : string; value : expr; ty_ann : type_ann option; pos : Pos.t }
   | LetTuple of { names : string list; value : expr; pos : Pos.t }
   | Assign of { name : string; value : expr; pos : Pos.t }
+  | AssignField of { target : expr; field : string; value : expr; pos : Pos.t }
+  | AssignDeref of { target : expr; value : expr; pos : Pos.t }
   | Return of expr * Pos.t
   | ExprStmt of expr
   | If of { cond : expr; then_body : stmt list; else_body : stmt list }
@@ -42,10 +52,18 @@ type func = {
   pos : Pos.t;
 }
 
+type struct_decl = {
+  sname : string;
+  sfields : (string * type_ann) list;
+  spos : Pos.t;
+  sis_pub : bool;
+}
+
 type item =
   | Function of func
   | Module of module_decl
   | Use of { path : string list; is_wildcard : bool; pos : Pos.t }
+  | Struct of struct_decl
 and module_decl = {
   mname : string;
   mitems : item list;

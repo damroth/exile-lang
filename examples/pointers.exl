@@ -1,0 +1,41 @@
+struct Point {
+    x: int,
+    y: int,
+}
+
+fn shift(p: *Point, dx: int, dy: int) {
+    p.x = p.x + dx;
+    p.y = p.y + dy;
+}
+
+fn deref_int(pn: *int) -> int {
+    return *pn;
+}
+
+fn set_via_ptr(pn: *int, v: int) {
+    *pn = v;
+}
+
+fn swap(a: *int, b: *int) {
+    let tmp = *a;
+    *a = *b;
+    *b = tmp;
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 };
+    shift(&p, 10, 20);
+    print(p.x);
+    print(p.y);
+
+    let n = 5;
+    print(deref_int(&n));
+    set_via_ptr(&n, 99);
+    print(n);
+
+    let x = 1;
+    let y = 2;
+    swap(&x, &y);
+    print(x);
+    print(y);
+}

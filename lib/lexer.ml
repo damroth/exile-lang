@@ -14,6 +14,8 @@ let keyword_or_ident = function
   | "use" -> Token.Use
   | "as" -> Token.As
   | "defer" -> Token.Defer
+  | "struct" -> Token.Struct
+  | "new" -> Token.New
   | "true" -> Token.True
   | "false" -> Token.False
   | s -> Token.Ident s
@@ -38,6 +40,8 @@ let tokenize ~file src =
       | '}' -> loop (i + 1) ((Token.RBrace, p) :: acc)
       | ';' -> loop (i + 1) ((Token.Semicolon, p) :: acc)
       | ',' -> loop (i + 1) ((Token.Comma, p) :: acc)
+      | '.' -> loop (i + 1) ((Token.Dot, p) :: acc)
+      | '&' -> loop (i + 1) ((Token.Amp, p) :: acc)
       | ':' when i + 1 < len && src.[i + 1] = ':' ->
           adv ':'; loop (i + 2) ((Token.DoubleColon, p) :: acc)
       | ':' -> loop (i + 1) ((Token.Colon, p) :: acc)

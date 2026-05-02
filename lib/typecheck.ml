@@ -10,6 +10,8 @@ type typ =
   | TBool
   | TString
   | TTuple of typ list
+  | TStruct of string list             (* absolute path: e.g. ["foo"; "Point"] *)
+  | TPtr of typ                        (* `*T` *)
 
 (* Default integer type — what `int` and bare integer literals reduce to. *)
 let t_i32 = TInt { signed = true; width = Ast.W32 }
@@ -36,14 +38,23 @@ type fn_sig = {
   fn_pub : bool;
 }
 
-(* Resolution context: every function in the program (keyed by module path
-   and name), plus a flat list of every module with its pub flag, plus the
-   path of the function we are currently emitting code for.  Local calls
-   (path = [name]) resolve within the current scope; qualified calls
-   (path > 1) resolve absolutely from the root and are visibility-checked
-   per segment. *)
+(* Struct signatures share the same module-aware resolution as functions —
+   the registered path is the struct's absolute location. *)
+type struct_sig = {
+  sname_path : string list;     (* full path including struct name, e.g. ["foo"; "Point"] *)
+  sfields_ty : (string * typ) list;
+  sis_pub : bool;
+}
+
+(* Resolution context: every function and every struct in the program
+   (keyed by module path and name), plus a flat list of every module with
+   its pub flag, plus the path of the function we are currently emitting
+   code for.  Local references (path = [name]) resolve within the current
+   scope; qualified ones (path > 1) resolve from the root with per-segment
+   visibility checks. *)
 type fn_ctx = {
   global : (string list * string * fn_sig) list;
+  structs : struct_sig list;
   modules : (string list * bool) list;   (* full path -> is_pub *)
   scope : string list;
 }
@@ -82,6 +93,28 @@ let lookup_fn ctx (path : string list) =
   in
   walk ctx.scope
 
+(* Same ancestor walk-up as functions, but for struct names. *)
+let try_resolve_struct ctx mod_path name =
+  List.find_opt
+    (fun s -> s.sname_path = mod_path @ [name])
+    ctx.structs
+
+let lookup_struct ctx (path : string list) =
+  let (suggested_mod, name) =
+    match List.rev path with
+    | [] -> failwith "empty struct path"
+    | n :: rest -> (List.rev rest, n)
+  in
+  let rec walk prefix =
+    match try_resolve_struct ctx (prefix @ suggested_mod) name with
+    | Some r -> Some r
+    | None ->
+        (match prefix with
+         | [] -> None
+         | _ -> walk (List.rev (List.tl (List.rev prefix))))
+  in
+  walk ctx.scope
+
 (* Mangle a function name with its module path.  Top-level (path = []) gets
    the `ex_` prefix so emitted symbols never collide with C stdlib builtins
    (gcc warns about builtin-declaration-mismatch even when our top-level
@@ -97,6 +130,8 @@ let rec type_of_ann = function
   | Ast.TyStr -> TString
   | Ast.TyBool -> TBool
   | Ast.TyTuple ts -> TTuple (List.map type_of_ann ts)
+  | Ast.TyStruct path -> TStruct path
+  | Ast.TyPtr t -> TPtr (type_of_ann t)
 
 (* Recognise an integer literal expression — bare or negated — for type-fitting
    checks at let-binding sites. *)
@@ -131,6 +166,8 @@ let rec typ_name = function
   | TBool -> "bool"
   | TString -> "str"
   | TTuple ts -> "(" ^ String.concat ", " (List.map typ_name ts) ^ ")"
+  | TStruct path -> String.concat "::" path
+  | TPtr t -> "*" ^ typ_name t
 
 (* Compile-time builtin signatures.  The codegen layer carries a parallel
    table of emitters keyed by name; this module owns only the type-checking
@@ -138,23 +175,45 @@ let rec typ_name = function
    qualification. *)
 type builtin_sig = {
   bname : string;
-  bcheck : Pos.t -> typ list -> typ;
+  bcheck : pos:Pos.t -> arg_tys:typ list -> allow_void:bool -> typ;
 }
 
 let builtin_print = {
   bname = "print";
-  bcheck = (fun pos arg_tys ->
+  bcheck = (fun ~pos ~arg_tys ~allow_void:_ ->
     match arg_tys with
     | [ TTuple _ ] ->
         Error.failf pos
           "cannot print a tuple; destructure with 'let (...)' first"
+    | [ TStruct path ] ->
+        Error.failf pos
+          "cannot print a struct value (%s); print individual fields instead"
+          (String.concat "::" path)
+    | [ TPtr _ as t ] ->
+        Error.failf pos
+          "cannot print a pointer value (%s); deref or print a field"
+          (typ_name t)
     | [_] -> t_i32
     | tys ->
         Error.failf pos "print() takes exactly one argument, got %d"
           (List.length tys));
 }
 
-let builtins = [ builtin_print ]
+let builtin_free = {
+  bname = "free";
+  bcheck = (fun ~pos ~arg_tys ~allow_void ->
+    match arg_tys with
+    | [ TPtr _ ] when allow_void -> t_i32  (* placeholder, caller discards *)
+    | [ TPtr _ ] ->
+        Error.failf pos "'free' returns void, cannot use as a value"
+    | [ other ] ->
+        Error.failf pos "'free' expects a pointer, got %s" (typ_name other)
+    | tys ->
+        Error.failf pos "free() takes exactly one argument, got %d"
+          (List.length tys));
+}
+
+let builtins = [ builtin_print; builtin_free ]
 
 let lookup_builtin = function
   | [ name ] -> List.find_opt (fun b -> b.bname = name) builtins
@@ -202,10 +261,50 @@ let rec type_of ?(allow_void = false) ctx env = function
        | None -> Error.failf pos "undefined variable '%s'" name)
   | Ast.TupleLit (es, _) ->
       TTuple (List.map (type_of ctx env) es)
+  | Ast.StructLit { tname; fields; pos } ->
+      let s = validate_struct_lit ctx env ~tname ~fields ~pos in
+      TStruct s.sname_path
+  | Ast.New { tname; fields; pos } ->
+      let s = validate_struct_lit ctx env ~tname ~fields ~pos in
+      TPtr (TStruct s.sname_path)
+  | Ast.FieldAccess (target, fname, pos) ->
+      let tt = type_of ctx env target in
+      (* `.field` auto-derefs one level of pointer-to-struct.  Codegen
+         emits `target->field` in that case (vs `target.field`). *)
+      let path =
+        match tt with
+        | TStruct p -> p
+        | TPtr (TStruct p) -> p
+        | _ ->
+            Error.failf pos
+              "field access '.%s' requires a struct value or pointer to \
+               struct, got %s"
+              fname (typ_name tt)
+      in
+      let s =
+        match lookup_struct ctx path with
+        | Some s -> s
+        | None ->
+            Error.failf pos "unknown struct '%s'"
+              (String.concat "::" path)
+      in
+      (match List.assoc_opt fname s.sfields_ty with
+       | Some t -> t
+       | None ->
+           Error.failf pos "struct '%s' has no field '%s'"
+             (String.concat "::" path) fname)
+  | Ast.Ref (e, _) ->
+      TPtr (type_of ctx env e)
+  | Ast.Deref (e, pos) ->
+      (match type_of ctx env e with
+       | TPtr t -> t
+       | other ->
+           Error.failf pos "deref '*' requires a pointer, got %s"
+             (typ_name other))
   | Ast.Call (path, args, pos) ->
       let arg_tys = List.map (type_of ctx env) args in
       (match lookup_builtin path with
-       | Some b -> b.bcheck pos arg_tys
+       | Some b -> b.bcheck ~pos ~arg_tys ~allow_void
        | None ->
       let display = String.concat "::" path in
       (match lookup_fn ctx path with
@@ -282,6 +381,58 @@ and binop_operand_types ctx env l r =
       (lt, rt)
   | _ ->
       (type_of ctx env l, type_of ctx env r)
+
+(* Shared validation for struct literals (used by both `Foo { ... }` and
+   `new Foo { ... }`).  Returns the struct signature so callers can build
+   the right result type (TStruct vs TPtr TStruct). *)
+and validate_struct_lit ctx env ~tname ~fields ~pos =
+  let display = String.concat "::" tname in
+  let s =
+    match lookup_struct ctx tname with
+    | Some s -> s
+    | None -> Error.failf pos "unknown struct '%s'" display
+  in
+  if (not s.sis_pub) && not (is_prefix
+                               (List.rev (List.tl (List.rev s.sname_path)))
+                               ctx.scope) then
+    Error.failf pos "struct '%s' is private to module '%s'"
+      display
+      (let parent = List.rev (List.tl (List.rev s.sname_path)) in
+       if parent = [] then "<root>" else String.concat "::" parent);
+  let rec dups = function
+    | [] -> ()
+    | (n, _) :: rest ->
+        if List.exists (fun (m, _) -> m = n) rest then
+          Error.failf pos
+            "duplicate field '%s' in struct literal '%s'" n display;
+        dups rest
+  in
+  dups fields;
+  let provided = List.map fst fields in
+  let expected = List.map fst s.sfields_ty in
+  let missing = List.filter (fun n -> not (List.mem n provided)) expected in
+  let extra = List.filter (fun n -> not (List.mem n expected)) provided in
+  if missing <> [] then
+    Error.failf pos "struct literal '%s' missing field(s): %s"
+      display (String.concat ", " missing);
+  if extra <> [] then
+    Error.failf pos "struct literal '%s' has unknown field(s): %s"
+      display (String.concat ", " extra);
+  List.iter
+    (fun (fn, fe) ->
+      let fty = List.assoc fn s.sfields_ty in
+      let act = type_of ctx env fe in
+      let lit_match =
+        match expr_int_lit fe, fty with
+        | Some n, TInt _ -> int_fits n fty
+        | _ -> false
+      in
+      if act <> fty && not lit_match then
+        Error.failf pos
+          "field '%s' of struct '%s': expected %s, got %s"
+          fn display (typ_name fty) (typ_name act))
+    fields;
+  s
 
 (* Collect let-bound (name, type) pairs for C89 function-top hoisting.
    Type resolution uses block-scoped env (then/else branches start from
@@ -363,6 +514,64 @@ let collect_lets ctx param_env stmts =
           Error.failf pos "assignment to undefined variable '%s'" name;
         let _ = type_of ctx env value in
         walk env rest
+    | Ast.AssignField { target; field; value; pos } :: rest ->
+        let tt = type_of ctx env target in
+        let path =
+          match tt with
+          | TStruct p -> p
+          | TPtr (TStruct p) -> p   (* auto-deref pointer-to-struct LHS *)
+          | _ ->
+              Error.failf pos
+                "assignment to field '.%s' requires a struct value or \
+                 pointer to struct, got %s"
+                field (typ_name tt)
+        in
+        let s =
+          match lookup_struct ctx path with
+          | Some s -> s
+          | None ->
+              Error.failf pos "unknown struct '%s'"
+                (String.concat "::" path)
+        in
+        let fty =
+          match List.assoc_opt field s.sfields_ty with
+          | Some t -> t
+          | None ->
+              Error.failf pos "struct '%s' has no field '%s'"
+                (String.concat "::" path) field
+        in
+        let act = type_of ctx env value in
+        let lit_match =
+          match expr_int_lit value, fty with
+          | Some n, TInt _ -> int_fits n fty
+          | _ -> false
+        in
+        if act <> fty && not lit_match then
+          Error.failf pos
+            "field '%s' of struct '%s': expected %s, got %s"
+            field (String.concat "::" path) (typ_name fty) (typ_name act);
+        walk env rest
+    | Ast.AssignDeref { target; value; pos } :: rest ->
+        let tt = type_of ctx env target in
+        let inner =
+          match tt with
+          | TPtr t -> t
+          | _ ->
+              Error.failf pos
+                "assignment through '*' requires a pointer, got %s"
+                (typ_name tt)
+        in
+        let act = type_of ctx env value in
+        let lit_match =
+          match expr_int_lit value, inner with
+          | Some n, TInt _ -> int_fits n inner
+          | _ -> false
+        in
+        if act <> inner && not lit_match then
+          Error.failf pos
+            "deref assignment: expected %s, got %s"
+            (typ_name inner) (typ_name act);
+        walk env rest
     | Ast.Return (e, _) :: rest ->
         let _ = type_of ctx env e in
         walk env rest
@@ -399,10 +608,25 @@ let flatten_funcs program =
             (path, f, m) :: acc
         | Ast.Module m ->
             walk (path @ [m.Ast.mname]) acc m.Ast.mitems
+        | Ast.Struct _ -> acc
         | Ast.Use { pos; _ } ->
             Error.failf pos
               "internal: 'use' declaration reached codegen unresolved \
                (loader pass missing?)")
+      acc items
+  in
+  List.rev (walk [] [] program)
+
+(* Walk the program tree and produce a flat list of every struct with its
+   module path; the C name for each is `mangle path name` (so it lives in
+   the same naming convention as functions). *)
+let flatten_structs program =
+  let rec walk path acc items =
+    List.fold_left
+      (fun acc item -> match item with
+        | Ast.Struct s -> (path, s) :: acc
+        | Ast.Module m -> walk (path @ [m.Ast.mname]) acc m.Ast.mitems
+        | Ast.Function _ | Ast.Use _ -> acc)
       acc items
   in
   List.rev (walk [] [] program)
@@ -413,7 +637,7 @@ let flatten_modules program =
   let rec walk path acc items =
     List.fold_left
       (fun acc item -> match item with
-        | Ast.Function _ -> acc
+        | Ast.Function _ | Ast.Struct _ -> acc
         | Ast.Module m ->
             let mod_path = path @ [m.Ast.mname] in
             walk mod_path ((mod_path, m.Ast.mis_pub) :: acc) m.Ast.mitems
@@ -436,3 +660,12 @@ let build_global_index flat =
              mangled;
              fn_pub = f.is_pub }))
     flat
+
+(* Build the struct registry from the flattened struct declarations. *)
+let build_struct_index struct_flat =
+  List.map
+    (fun (p, (s : Ast.struct_decl)) ->
+      { sname_path = p @ [s.sname];
+        sfields_ty = List.map (fun (n, t) -> (n, type_of_ann t)) s.sfields;
+        sis_pub = s.sis_pub })
+    struct_flat
