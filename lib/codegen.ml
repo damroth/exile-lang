@@ -56,6 +56,10 @@ let rec c_type_prefix = function
       (* Pointer types render as `<base> *` with no trailing space, so
          `c_decl t name` produces `<base> *name`. *)
       strip_trailing_space (c_type_prefix inner) ^ " *"
+  | TNullPtr ->
+      (* TNullPtr never owns a declaration — it is the type of the literal
+         `null`, always consumed under a concrete TPtr context. *)
+      failwith "TNullPtr should never reach c_type_prefix"
 
 let c_decl t name = c_type_prefix t ^ name
 
@@ -83,7 +87,8 @@ let emit_print : builtin_emit =
       | TInt { signed = true; _ } -> "\"%d\\n\""
       | TInt { signed = false; _ } -> "\"%u\\n\""
       | TString -> "\"%s\\n\""
-      | TTuple _ | TStruct _ | TPtr _ -> assert false  (* typecheck rejected this earlier *)
+      | TTuple _ | TStruct _ | TPtr _ | TNullPtr ->
+          assert false  (* typecheck rejected this earlier *)
     in
     let cast =
       match arg_ty with
@@ -126,6 +131,7 @@ let prec = function
 let rec gen_expr buf ctx env = function
   | Ast.IntLit n -> Buffer.add_string buf (string_of_int n)
   | Ast.BoolLit b -> Buffer.add_string buf (if b then "1" else "0")
+  | Ast.NullLit _ -> Buffer.add_string buf "((void *)0)"
   | Ast.StringLit s ->
       Buffer.add_char buf '"';
       Buffer.add_string buf (escape_c s);

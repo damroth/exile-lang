@@ -27,6 +27,7 @@ type expr =
   | FieldAccess of expr * string * Pos.t
   | Ref of expr * Pos.t                (* `&expr` — take address *)
   | Deref of expr * Pos.t              (* `*expr` — load through pointer *)
+  | NullLit of Pos.t                   (* `null` — typeless pointer literal *)
   | New of { tname : string list; fields : (string * expr) list;
              base : expr option; pos : Pos.t }
                                         (* `new T { f: e }` — heap-alloc + init *)

@@ -12,6 +12,9 @@ type typ =
   | TTuple of typ list
   | TStruct of string list             (* absolute path: e.g. ["foo"; "Point"] *)
   | TPtr of typ                        (* `*T` *)
+  | TNullPtr                           (* type of `null` literal — compatible
+                                          with any TPtr; never reaches codegen
+                                          as a declaration type *)
 
 (* Default integer type — what `int` and bare integer literals reduce to. *)
 let t_i32 = TInt { signed = true; width = Ast.W32 }
@@ -168,6 +171,19 @@ let rec typ_name = function
   | TTuple ts -> "(" ^ String.concat ", " (List.map typ_name ts) ^ ")"
   | TStruct path -> String.concat "::" path
   | TPtr t -> "*" ^ typ_name t
+  | TNullPtr -> "*<null>"
+
+(* Equality used for type-match decisions in let/return/arg/field/assign
+   sites.  Plain `=` would reject `TNullPtr` against any concrete `TPtr T`;
+   here we treat the null literal as polymorphic over pointer types. *)
+let rec typ_eq a b =
+  match a, b with
+  | TNullPtr, TPtr _ | TPtr _, TNullPtr -> true
+  | TNullPtr, TNullPtr -> true
+  | TPtr a, TPtr b -> typ_eq a b
+  | TTuple xs, TTuple ys ->
+      List.length xs = List.length ys && List.for_all2 typ_eq xs ys
+  | _ -> a = b
 
 (* Mangle a type to a C-identifier-safe string used as a unique key for
    tuple-struct dedup and as the C type name for named structs.  Tuples are
@@ -185,6 +201,7 @@ let rec mangle_typ = function
        | [] -> failwith "empty struct path"
        | n :: rest -> mangle (List.rev rest) n)
   | TPtr t -> "ptr_" ^ mangle_typ t
+  | TNullPtr -> failwith "TNullPtr should never be mangled"
 
 let tuple_struct_name ts = "ex_" ^ mangle_typ (TTuple ts)
 
@@ -212,6 +229,8 @@ let builtin_print = {
         Error.failf pos
           "cannot print a pointer value (%s); deref or print a field"
           (typ_name t)
+    | [ TNullPtr ] ->
+        Error.failf pos "cannot print 'null'"
     | [_] -> t_i32
     | tys ->
         Error.failf pos "print() takes exactly one argument, got %d"
@@ -317,9 +336,12 @@ let rec type_of ?(allow_void = false) ctx env = function
   | Ast.Deref (e, pos) ->
       (match type_of ctx env e with
        | TPtr t -> t
+       | TNullPtr ->
+           Error.failf pos "cannot deref 'null'"
        | other ->
            Error.failf pos "deref '*' requires a pointer, got %s"
              (typ_name other))
+  | Ast.NullLit _ -> TNullPtr
   | Ast.Call (path, args, pos) ->
       let arg_tys = List.map (type_of ctx env) args in
       (match lookup_builtin path with
@@ -366,7 +388,7 @@ let rec type_of ?(allow_void = false) ctx env = function
                display expected got;
            List.iteri
              (fun i (exp, act) ->
-               if exp <> act then
+               if not (typ_eq exp act) then
                  Error.failf pos
                    "argument %d of '%s': expected %s, got %s"
                    (i + 1) display (typ_name exp) (typ_name act))
@@ -460,7 +482,7 @@ and validate_struct_lit ctx env ~tname ~fields ~base ~pos =
         | Some n, TInt _ -> int_fits n fty
         | _ -> false
       in
-      if act <> fty && not lit_match then
+      if not (typ_eq act fty) && not lit_match then
         Error.failf pos
           "field '%s' of struct '%s': expected %s, got %s"
           fn display (typ_name fty) (typ_name act))
@@ -493,7 +515,13 @@ let collect_lets ctx param_env stmts =
          | _ -> ());
         let t_actual =
           match ty_ann with
-          | None -> t_inferred
+          | None ->
+              (match t_inferred with
+               | TNullPtr ->
+                   Error.failf pos
+                     "cannot infer pointer type for 'null'; add a type \
+                      annotation like 'let %s: *T = null;'" name
+               | _ -> t_inferred)
           | Some ann ->
               let t_ann = type_of_ann ann in
               (match expr_int_lit value, t_ann with
@@ -505,7 +533,7 @@ let collect_lets ctx param_env stmts =
                    Error.failf pos
                      "literal %d does not fit in %s" n (typ_name t_ann)
                | _ ->
-                   if t_ann = t_inferred then t_ann
+                   if typ_eq t_ann t_inferred then t_ann
                    else
                      Error.failf pos
                        "variable '%s' declared as %s but initializer has type %s"
@@ -579,7 +607,7 @@ let collect_lets ctx param_env stmts =
           | Some n, TInt _ -> int_fits n fty
           | _ -> false
         in
-        if act <> fty && not lit_match then
+        if not (typ_eq act fty) && not lit_match then
           Error.failf pos
             "field '%s' of struct '%s': expected %s, got %s"
             field (String.concat "::" path) (typ_name fty) (typ_name act);
@@ -600,7 +628,7 @@ let collect_lets ctx param_env stmts =
           | Some n, TInt _ -> int_fits n inner
           | _ -> false
         in
-        if act <> inner && not lit_match then
+        if not (typ_eq act inner) && not lit_match then
           Error.failf pos
             "deref assignment: expected %s, got %s"
             (typ_name inner) (typ_name act);

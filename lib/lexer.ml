@@ -16,6 +16,7 @@ let keyword_or_ident = function
   | "defer" -> Token.Defer
   | "struct" -> Token.Struct
   | "new" -> Token.New
+  | "null" -> Token.Null
   | "true" -> Token.True
   | "false" -> Token.False
   | s -> Token.Ident s

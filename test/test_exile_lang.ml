@@ -374,6 +374,26 @@ let () =
     "struct Point { x: int, y: int, }\nstruct Other { z: int, }\nfn main() {\n    let o = Other { z: 7 };\n    let p = Point { x: 1, ..o };\n    print(p.x);\n}\n"
     "'..base' in struct literal 'Point' expects a value of type Point, got Other";
 
+  check "null literal in struct field + equality check"
+    "struct Node { value: int, next: *Node, }\nfn main() {\n    let n = new Node { value: 5, next: null };\n    defer free(n);\n    if n.next == null {\n        print(n.value);\n    }\n}\n"
+    "#include <stdio.h>\n#include <stdlib.h>\n\nstruct ex_Node { long value; struct ex_Node *next; };\n\nint main(void) {\n    struct ex_Node *n;\n    n = malloc(sizeof(struct ex_Node));\n    n->value = 5;\n    n->next = ((void *)0);\n    if (n->next == ((void *)0)) {\n        printf(\"%ld\\n\", (long)(n->value));\n    }\n    free(n);\n    return 0;\n}\n";
+
+  check "null with typed let binding"
+    "struct Point { x: int, y: int, }\nfn main() {\n    let p: *Point = null;\n    if p == null {\n        print(42);\n    }\n}\n"
+    "#include <stdio.h>\n\nstruct ex_Point { long x; long y; };\n\nint main(void) {\n    struct ex_Point *p;\n    p = ((void *)0);\n    if (p == ((void *)0)) {\n        printf(\"%ld\\n\", (long)(42));\n    }\n    return 0;\n}\n";
+
+  check_error "naked null without type ann rejected"
+    "fn main() {\n    let p = null;\n    print(p);\n}\n"
+    "cannot infer pointer type for 'null'; add a type annotation like 'let p: *T = null;'";
+
+  check_error "deref of null rejected"
+    "fn main() {\n    let x = *null;\n    print(x);\n}\n"
+    "cannot deref 'null'";
+
+  check_error "print of null rejected"
+    "fn main() {\n    print(null);\n}\n"
+    "cannot print 'null'";
+
   check_multi "wildcard import inlines pub items, hides private"
     [ ("lib.exl",
        "pub fn hello() -> int {\n    return 42;\n}\n\

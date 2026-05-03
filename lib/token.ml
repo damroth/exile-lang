@@ -15,6 +15,7 @@ type t =
   | DotDot
   | Amp
   | New
+  | Null
   | LParen
   | RParen
   | LBrace
@@ -48,7 +49,7 @@ let pp = function
   | Mod -> "'mod'" | Pub -> "'pub'" | Use -> "'use'" | As -> "'as'"
   | Defer -> "'defer'"
   | Struct -> "'struct'" | Dot -> "'.'" | DotDot -> "'..'"
-  | Amp -> "'&'" | New -> "'new'"
+  | Amp -> "'&'" | New -> "'new'" | Null -> "'null'"
   | LParen -> "'('" | RParen -> "')'"
   | LBrace -> "'{'" | RBrace -> "'}'"
   | Semicolon -> "';'" | Comma -> "','" | Colon -> "':'"

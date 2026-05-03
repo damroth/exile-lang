@@ -115,6 +115,7 @@ let rec parse_primary s =
   | Token.Int n -> Ast.IntLit n
   | Token.True -> Ast.BoolLit true
   | Token.False -> Ast.BoolLit false
+  | Token.Null -> Ast.NullLit p
   | Token.String str -> Ast.StringLit str
   | Token.Minus -> Ast.Neg (parse_primary s)
   | Token.Amp -> Ast.Ref (parse_postfix s (parse_primary s), p)
