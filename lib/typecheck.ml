@@ -280,11 +280,11 @@ let rec type_of ?(allow_void = false) ctx env = function
        | None -> Error.failf pos "undefined variable '%s'" name)
   | Ast.TupleLit (es, _) ->
       TTuple (List.map (type_of ctx env) es)
-  | Ast.StructLit { tname; fields; pos } ->
-      let s = validate_struct_lit ctx env ~tname ~fields ~pos in
+  | Ast.StructLit { tname; fields; base; pos } ->
+      let s = validate_struct_lit ctx env ~tname ~fields ~base ~pos in
       TStruct s.sname_path
-  | Ast.New { tname; fields; pos } ->
-      let s = validate_struct_lit ctx env ~tname ~fields ~pos in
+  | Ast.New { tname; fields; base; pos } ->
+      let s = validate_struct_lit ctx env ~tname ~fields ~base ~pos in
       TPtr (TStruct s.sname_path)
   | Ast.FieldAccess (target, fname, pos) ->
       let tt = type_of ctx env target in
@@ -404,7 +404,7 @@ and binop_operand_types ctx env l r =
 (* Shared validation for struct literals (used by both `Foo { ... }` and
    `new Foo { ... }`).  Returns the struct signature so callers can build
    the right result type (TStruct vs TPtr TStruct). *)
-and validate_struct_lit ctx env ~tname ~fields ~pos =
+and validate_struct_lit ctx env ~tname ~fields ~base ~pos =
   let display = String.concat "::" tname in
   let s =
     match lookup_struct ctx tname with
@@ -431,9 +431,23 @@ and validate_struct_lit ctx env ~tname ~fields ~pos =
   let expected = List.map fst s.sfields_ty in
   let missing = List.filter (fun n -> not (List.mem n provided)) expected in
   let extra = List.filter (fun n -> not (List.mem n expected)) provided in
-  if missing <> [] then
-    Error.failf pos "struct literal '%s' missing field(s): %s"
-      display (String.concat ", " missing);
+  (* `..base` (functional update) fills any unspecified fields, so
+     missing-field check is skipped when a base is present.  The base
+     itself must be of the same struct type. *)
+  (match base with
+   | None ->
+       if missing <> [] then
+         Error.failf pos "struct literal '%s' missing field(s): %s"
+           display (String.concat ", " missing)
+   | Some be ->
+       let bt = type_of ctx env be in
+       (match bt with
+        | TStruct path when path = s.sname_path -> ()
+        | _ ->
+            Error.failf pos
+              "'..base' in struct literal '%s' expects a value of \
+               type %s, got %s"
+              display display (typ_name bt)));
   if extra <> [] then
     Error.failf pos "struct literal '%s' has unknown field(s): %s"
       display (String.concat ", " extra);

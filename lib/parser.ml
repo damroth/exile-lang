@@ -142,11 +142,8 @@ let rec parse_primary s =
       in
       let path = collect_path [first] in
       expect s Token.LBrace;
-      let fields =
-        parse_comma_list ~close:Token.RBrace
-          ~item:parse_struct_lit_field s
-      in
-      Ast.New { tname = path; fields; pos = p }
+      let (fields, base) = parse_struct_lit_body s in
+      Ast.New { tname = path; fields; base; pos = p }
   | Token.Ident name ->
       (* Path-qualified identifiers: foo::bar::baz(...).  Build the full
          path, then decide if it ends in a call, a struct literal, or a
@@ -168,11 +165,8 @@ let rec parse_primary s =
            Ast.Call (path, parse_args s, p)
        | Token.LBrace when s.allow_struct_lit ->
            ignore (advance s);
-           let fields =
-             parse_comma_list ~close:Token.RBrace
-               ~item:parse_struct_lit_field s
-           in
-           Ast.StructLit { tname = path; fields; pos = p }
+           let (fields, base) = parse_struct_lit_body s in
+           Ast.StructLit { tname = path; fields; base; pos = p }
        | _ ->
            (match path with
             | [single] -> Ast.Var (single, p)
@@ -210,6 +204,36 @@ and parse_struct_lit_field s =
   in
   expect s Token.Colon;
   (n, parse_expr s)
+
+(* Parse the body of a struct literal — `f1: e1, f2: e2, ..base }` — after
+   the opening `{` has been consumed.  `..base` (functional update) is
+   optional and must come last; only one base is allowed. *)
+and parse_struct_lit_body s =
+  let rec loop fields_acc =
+    match peek s with
+    | Token.RBrace -> ignore (advance s); (List.rev fields_acc, None)
+    | Token.DotDot ->
+        ignore (advance s);
+        let base = parse_expr s in
+        (* Allow optional trailing comma after `..base`. *)
+        (match peek s with
+         | Token.Comma ->
+             ignore (advance s);
+             expect s Token.RBrace
+         | _ -> expect s Token.RBrace);
+        (List.rev fields_acc, Some base)
+    | _ ->
+        let f = parse_struct_lit_field s in
+        (match peek s with
+         | Token.RBrace -> ignore (advance s); (List.rev (f :: fields_acc), None)
+         | Token.Comma ->
+             ignore (advance s);
+             loop (f :: fields_acc)
+         | _ ->
+             Error.failf (peek_pos s)
+               "expected ',' or '}' in struct literal")
+  in
+  loop []
 
 (* Chain `.field` accesses onto an already-parsed primary. *)
 and parse_postfix s base =

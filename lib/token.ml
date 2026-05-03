@@ -12,6 +12,7 @@ type t =
   | Defer
   | Struct
   | Dot
+  | DotDot
   | Amp
   | New
   | LParen
@@ -46,7 +47,8 @@ let pp = function
   | If -> "'if'" | Else -> "'else'" | While -> "'while'"
   | Mod -> "'mod'" | Pub -> "'pub'" | Use -> "'use'" | As -> "'as'"
   | Defer -> "'defer'"
-  | Struct -> "'struct'" | Dot -> "'.'" | Amp -> "'&'" | New -> "'new'"
+  | Struct -> "'struct'" | Dot -> "'.'" | DotDot -> "'..'"
+  | Amp -> "'&'" | New -> "'new'"
   | LParen -> "'('" | RParen -> "')'"
   | LBrace -> "'{'" | RBrace -> "'}'"
   | Semicolon -> "';'" | Comma -> "','" | Colon -> "':'"

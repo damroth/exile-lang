@@ -40,6 +40,8 @@ let tokenize ~file src =
       | '}' -> loop (i + 1) ((Token.RBrace, p) :: acc)
       | ';' -> loop (i + 1) ((Token.Semicolon, p) :: acc)
       | ',' -> loop (i + 1) ((Token.Comma, p) :: acc)
+      | '.' when i + 1 < len && src.[i + 1] = '.' ->
+          adv '.'; loop (i + 2) ((Token.DotDot, p) :: acc)
       | '.' -> loop (i + 1) ((Token.Dot, p) :: acc)
       | '&' -> loop (i + 1) ((Token.Amp, p) :: acc)
       | ':' when i + 1 < len && src.[i + 1] = ':' ->

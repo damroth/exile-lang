@@ -22,11 +22,13 @@ type expr =
   | Call of string list * expr list * Pos.t
   | Cast of expr * type_ann * Pos.t
   | TupleLit of expr list * Pos.t
-  | StructLit of { tname : string list; fields : (string * expr) list; pos : Pos.t }
+  | StructLit of { tname : string list; fields : (string * expr) list;
+                   base : expr option; pos : Pos.t }
   | FieldAccess of expr * string * Pos.t
   | Ref of expr * Pos.t                (* `&expr` — take address *)
   | Deref of expr * Pos.t              (* `*expr` — load through pointer *)
-  | New of { tname : string list; fields : (string * expr) list; pos : Pos.t }
+  | New of { tname : string list; fields : (string * expr) list;
+             base : expr option; pos : Pos.t }
                                         (* `new T { f: e }` — heap-alloc + init *)
 
 type param = { pname : string; pty : type_ann }

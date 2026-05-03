@@ -362,6 +362,18 @@ let () =
     "fn main() {\n    let p = new Foo { x: 1 };\n    print(p.x);\n}\n"
     "unknown struct 'Foo'";
 
+  check "functional update copies base then overrides"
+    "struct Point { x: int, y: int, z: int, }\nfn main() {\n    let p = Point { x: 1, y: 2, z: 3 };\n    let q = Point { x: 99, ..p };\n    print(q.x);\n    print(q.y);\n    print(q.z);\n}\n"
+    "#include <stdio.h>\n\nstruct ex_Point { long x; long y; long z; };\n\nint main(void) {\n    struct ex_Point p;\n    struct ex_Point q;\n    p.x = 1;\n    p.y = 2;\n    p.z = 3;\n    q = p;\n    q.x = 99;\n    printf(\"%ld\\n\", (long)(q.x));\n    printf(\"%ld\\n\", (long)(q.y));\n    printf(\"%ld\\n\", (long)(q.z));\n    return 0;\n}\n";
+
+  check "functional update with new copies through deref"
+    "struct Point { x: int, y: int, }\nfn main() {\n    let p = Point { x: 1, y: 2 };\n    let r = new Point { y: 50, ..p };\n    defer free(r);\n    print(r.x);\n    print(r.y);\n}\n"
+    "#include <stdio.h>\n#include <stdlib.h>\n\nstruct ex_Point { long x; long y; };\n\nint main(void) {\n    struct ex_Point p;\n    struct ex_Point *r;\n    p.x = 1;\n    p.y = 2;\n    r = malloc(sizeof(struct ex_Point));\n    *r = p;\n    r->y = 50;\n    printf(\"%ld\\n\", (long)(r->x));\n    printf(\"%ld\\n\", (long)(r->y));\n    free(r);\n    return 0;\n}\n";
+
+  check_error "functional update with mismatched base type"
+    "struct Point { x: int, y: int, }\nstruct Other { z: int, }\nfn main() {\n    let o = Other { z: 7 };\n    let p = Point { x: 1, ..o };\n    print(p.x);\n}\n"
+    "'..base' in struct literal 'Point' expects a value of type Point, got Other";
+
   check_multi "wildcard import inlines pub items, hides private"
     [ ("lib.exl",
        "pub fn hello() -> int {\n    return 42;\n}\n\

@@ -237,7 +237,18 @@ and emit_value_into_temp buf ctx env indent temp_name value =
           gen_expr buf ctx env e;
           Buffer.add_string buf ";\n")
         es
-  | Ast.StructLit { fields; _ } ->
+  | Ast.StructLit { fields; base; _ } ->
+      (* `..base` (functional update): copy base via struct assignment
+         first, then apply explicit field overrides.  C89 supports
+         `temp = expr;` for struct-typed values. *)
+      (match base with
+       | Some be ->
+           Buffer.add_string buf indent;
+           Buffer.add_string buf temp_name;
+           Buffer.add_string buf " = ";
+           gen_expr buf ctx env be;
+           Buffer.add_string buf ";\n"
+       | None -> ());
       List.iter
         (fun (fname, fe) ->
           Buffer.add_string buf indent;
@@ -248,7 +259,7 @@ and emit_value_into_temp buf ctx env indent temp_name value =
           gen_expr buf ctx env fe;
           Buffer.add_string buf ";\n")
         fields
-  | Ast.New { tname; fields; pos } ->
+  | Ast.New { tname; fields; base; pos } ->
       let s =
         match lookup_struct ctx tname with
         | Some s -> s
@@ -259,6 +270,18 @@ and emit_value_into_temp buf ctx env indent temp_name value =
       Buffer.add_string buf indent;
       Buffer.add_string buf temp_name;
       Buffer.add_string buf (" = malloc(sizeof(" ^ cname ^ "));\n");
+      (* `..base` for heap allocation: deref-assign the whole struct from
+         the value-typed base, then override individual fields through
+         the `->` arrow. *)
+      (match base with
+       | Some be ->
+           Buffer.add_string buf indent;
+           Buffer.add_char buf '*';
+           Buffer.add_string buf temp_name;
+           Buffer.add_string buf " = ";
+           gen_expr buf ctx env be;
+           Buffer.add_string buf ";\n"
+       | None -> ());
       List.iter
         (fun (fname, fe) ->
           Buffer.add_string buf indent;
