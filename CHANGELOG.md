@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-05-03
+
+Internal refactor: type checking moved into its own pass.
+
+### Changed
+- Type checking is now a dedicated `Typecheck` module that produces a
+  `checked_program` consumed by codegen. Codegen no longer re-derives types
+  while emitting C, shrinking it considerably and clearing the way for
+  swappable backends.
+
 ## [0.2.0] - 2026-05-02
 
 Adds aggregate data types and manual memory management: structs, pointers, and
@@ -41,4 +51,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.2.0]: https://github.com/damroth/exile-lang/releases/tag/v0.2.0
+[0.2.1]: https://github.com/damroth/exile-lang/releases/tag/v0.2.1
