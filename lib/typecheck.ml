@@ -169,6 +169,25 @@ let rec typ_name = function
   | TStruct path -> String.concat "::" path
   | TPtr t -> "*" ^ typ_name t
 
+(* Mangle a type to a C-identifier-safe string used as a unique key for
+   tuple-struct dedup and as the C type name for named structs.  Tuples are
+   anonymous (`tup<n>_T1_T2`); `tuple_struct_name` adds the `ex_` prefix so
+   the emitted C struct sits in the same namespace as user fns/structs. *)
+let rec mangle_typ = function
+  | TInt { signed; width } -> int_typ_name signed width
+  | TBool -> "bool"
+  | TString -> "str"
+  | TTuple ts ->
+      Printf.sprintf "tup%d_%s" (List.length ts)
+        (String.concat "_" (List.map mangle_typ ts))
+  | TStruct path ->
+      (match List.rev path with
+       | [] -> failwith "empty struct path"
+       | n :: rest -> mangle (List.rev rest) n)
+  | TPtr t -> "ptr_" ^ mangle_typ t
+
+let tuple_struct_name ts = "ex_" ^ mangle_typ (TTuple ts)
+
 (* Compile-time builtin signatures.  The codegen layer carries a parallel
    table of emitters keyed by name; this module owns only the type-checking
    side.  Builtins are looked up by single-segment paths — no module
@@ -669,3 +688,183 @@ let build_struct_index struct_flat =
         sfields_ty = List.map (fun (n, t) -> (n, type_of_ann t)) s.sfields;
         sis_pub = s.sis_pub })
     struct_flat
+
+(* Walk every function body looking for tuple types in use.  We collect
+   them deduplicated by mangled name; codegen later emits one C struct per
+   unique tuple shape.  Sources of tuples: fn signatures (ret_ty, params)
+   and any `TupleLit` expression in code (typed via `type_of`). *)
+let collect_tuple_types flat global structs modules =
+  let seen = ref [] in
+  let add t =
+    let name = mangle_typ t in
+    if not (List.exists (fun (n, _) -> n = name) !seen) then
+      seen := (name, t) :: !seen
+  in
+  let rec walk_typ t =
+    match t with
+    | TTuple ts -> add t; List.iter walk_typ ts
+    | _ -> ()
+  in
+  let walk_typ_ann ann = walk_typ (type_of_ann ann) in
+  let rec walk_expr ctx env e =
+    (match e with
+     | Ast.TupleLit (es, _) ->
+         walk_typ (type_of ctx env e);
+         List.iter (walk_expr ctx env) es
+     | Ast.StructLit { fields; _ } ->
+         List.iter (fun (_, fe) -> walk_expr ctx env fe) fields
+     | Ast.FieldAccess (target, _, _) -> walk_expr ctx env target
+     | Ast.Ref (sub, _) | Ast.Deref (sub, _) -> walk_expr ctx env sub
+     | Ast.Cast (sub, _, _) -> walk_expr ctx env sub
+     | Ast.Neg sub -> walk_expr ctx env sub
+     | Ast.BinOp (_, l, r) -> walk_expr ctx env l; walk_expr ctx env r
+     | Ast.Call (_, args, _) -> List.iter (walk_expr ctx env) args
+     | _ -> ())
+  in
+  let rec walk_stmt ctx env = function
+    | Ast.Let { value; _ } -> walk_expr ctx env value
+    | Ast.LetTuple { value; _ } -> walk_expr ctx env value
+    | Ast.Assign { value; _ } -> walk_expr ctx env value
+    | Ast.AssignField { target; value; _ } ->
+        walk_expr ctx env target; walk_expr ctx env value
+    | Ast.AssignDeref { target; value; _ } ->
+        walk_expr ctx env target; walk_expr ctx env value
+    | Ast.Return (e, _) -> walk_expr ctx env e
+    | Ast.ExprStmt e -> walk_expr ctx env e
+    | Ast.If { cond; then_body; else_body } ->
+        walk_expr ctx env cond;
+        List.iter (walk_stmt ctx env) then_body;
+        List.iter (walk_stmt ctx env) else_body
+    | Ast.While { cond; body } ->
+        walk_expr ctx env cond;
+        List.iter (walk_stmt ctx env) body
+    | Ast.Defer { body; _ } ->
+        List.iter (walk_stmt ctx env) body
+  in
+  List.iter
+    (fun (path, (f : Ast.func), _) ->
+      Option.iter walk_typ_ann f.ret_ty;
+      List.iter (fun (p : Ast.param) -> walk_typ_ann p.pty) f.params;
+      let ctx = { global; structs; modules; scope = path } in
+      let param_env =
+        List.map (fun (p : Ast.param) ->
+          (p.pname, type_of_ann p.pty)) f.params
+      in
+      let lets = collect_lets ctx param_env f.body in
+      let env = param_env @ lets in
+      List.iter (walk_stmt ctx env) f.body)
+    flat;
+  List.rev !seen
+
+(* Detect any heap usage in the program — `new ...` expressions or `free(p)`
+   calls — so codegen can conditionally include `<stdlib.h>` for malloc/free. *)
+let uses_heap flat =
+  let rec walk_expr = function
+    | Ast.New _ -> true
+    | Ast.Call (["free"], _, _) -> true
+    | Ast.Ref (e, _) | Ast.Deref (e, _) | Ast.Cast (e, _, _) | Ast.Neg e ->
+        walk_expr e
+    | Ast.BinOp (_, l, r) -> walk_expr l || walk_expr r
+    | Ast.Call (_, args, _) -> List.exists walk_expr args
+    | Ast.TupleLit (es, _) -> List.exists walk_expr es
+    | Ast.StructLit { fields; _ } ->
+        List.exists (fun (_, e) -> walk_expr e) fields
+    | Ast.FieldAccess (target, _, _) -> walk_expr target
+    | _ -> false
+  in
+  let rec walk_stmt = function
+    | Ast.Let { value; _ } | Ast.LetTuple { value; _ }
+    | Ast.Assign { value; _ } | Ast.Return (value, _)
+    | Ast.ExprStmt value -> walk_expr value
+    | Ast.AssignField { target; value; _ }
+    | Ast.AssignDeref { target; value; _ } ->
+        walk_expr target || walk_expr value
+    | Ast.If { cond; then_body; else_body } ->
+        walk_expr cond
+        || List.exists walk_stmt then_body
+        || List.exists walk_stmt else_body
+    | Ast.While { cond; body } ->
+        walk_expr cond || List.exists walk_stmt body
+    | Ast.Defer { body; _ } -> List.exists walk_stmt body
+  in
+  List.exists
+    (fun (_, (f : Ast.func), _) -> List.exists walk_stmt f.body)
+    flat
+
+(* Result of one validation pass over the whole program.  Codegen consumes
+   this without re-running validation: typecheck guarantees that every
+   function's body has been type-checked, every let has a recorded type
+   for hoisting, and the struct/module/global indexes are ready for
+   resolution. *)
+type checked_func = {
+  cf_path : string list;
+  cf_func : Ast.func;
+  cf_mangled : string;
+  cf_lets : (string * typ) list;
+}
+
+type checked_program = {
+  cp_funcs : checked_func list;
+  cp_struct_decls : (string list * Ast.struct_decl) list;
+  cp_struct_index : struct_sig list;
+  cp_global : (string list * string * fn_sig) list;
+  cp_modules : (string list * bool) list;
+  cp_uses_heap : bool;
+  cp_tuple_types : (string * typ) list;
+}
+
+let check_program program =
+  let flat = flatten_funcs program in
+  (* main() must be at top level, not inside a module. *)
+  List.iter
+    (fun (path, (f : Ast.func), _) ->
+      if f.name = "main" && path <> [] then
+        Error.raise_ f.pos
+          "'main' must be at top level, not inside a module")
+    flat;
+  (* Top-level function names land in C unmangled (modulo the `ex_`
+     prefix), so they must not collide with C keywords.  Mod-internal fns
+     get a `mod__` prefix and are safe. *)
+  List.iter
+    (fun (path, (f : Ast.func), _) ->
+      if path = [] then check_c_ident f.pos "function" f.name)
+    flat;
+  (* Param names are emitted unprefixed in C parameter lists, so they
+     also need the keyword check.  (Local lets are checked inside
+     collect_lets.) *)
+  List.iter
+    (fun (_, (f : Ast.func), _) ->
+      List.iter
+        (fun (p : Ast.param) -> check_c_ident f.pos "parameter" p.pname)
+        f.params)
+    flat;
+  let global = build_global_index flat in
+  let struct_decls = flatten_structs program in
+  let struct_index = build_struct_index struct_decls in
+  let modules = flatten_modules program in
+  (* Per-fn validation: collect_lets type-checks the body and returns the
+     hoisted let-decl list.  Codegen will use cf_lets directly without
+     repeating the walk. *)
+  let cp_funcs =
+    List.map
+      (fun (path, (f : Ast.func), mangled) ->
+        let ctx = { global; structs = struct_index; modules; scope = path } in
+        let param_env =
+          List.map (fun (p : Ast.param) -> (p.pname, type_of_ann p.pty))
+            f.params
+        in
+        let lets = collect_lets ctx param_env f.body in
+        { cf_path = path; cf_func = f; cf_mangled = mangled; cf_lets = lets })
+      flat
+  in
+  let cp_tuple_types =
+    collect_tuple_types flat global struct_index modules
+  in
+  let cp_uses_heap = uses_heap flat in
+  { cp_funcs;
+    cp_struct_decls = struct_decls;
+    cp_struct_index = struct_index;
+    cp_global = global;
+    cp_modules = modules;
+    cp_uses_heap;
+    cp_tuple_types }

@@ -25,27 +25,6 @@ let escape_c s =
     s;
   Buffer.contents buf
 
-(* Mangle a type to a C-identifier-safe string used as a unique key in the
-   codegen-side dedup table.  For named structs the path is run through
-   `mangle` (so a top-level `Point` becomes `ex_Point` and a `mod foo`
-   struct becomes `foo__Point`); tuples are anonymous, so `mangle_typ`
-   produces just `tup<n>_T1_T2`, and `tuple_struct_name` adds the `ex_`
-   prefix so the emitted C struct sits in the same namespace. *)
-let rec mangle_typ = function
-  | TInt { signed; width } -> int_typ_name signed width
-  | TBool -> "bool"
-  | TString -> "str"
-  | TTuple ts ->
-      Printf.sprintf "tup%d_%s" (List.length ts)
-        (String.concat "_" (List.map mangle_typ ts))
-  | TStruct path ->
-      (match List.rev path with
-       | [] -> failwith "empty struct path"
-       | n :: rest -> mangle (List.rev rest) n)
-  | TPtr t -> "ptr_" ^ mangle_typ t
-
-let tuple_struct_name ts = "ex_" ^ mangle_typ (TTuple ts)
-
 let strip_trailing_space s =
   if String.length s > 0 && s.[String.length s - 1] = ' '
   then String.sub s 0 (String.length s - 1)
@@ -507,87 +486,24 @@ let emit_fn_sig buf (f : Ast.func) mangled =
     Buffer.add_char buf ')'
   end
 
-let gen_function buf ctx (f : Ast.func) mangled =
-  List.iter (fun p -> check_c_ident f.pos "parameter" p.Ast.pname) f.params;
-  emit_fn_sig buf f mangled;
+(* Emit one already-validated function.  cf carries the resolved metadata
+   (path, mangled name, hoisted lets) computed by Typecheck.check_program;
+   ctx is built from the program-wide indexes. *)
+let gen_function buf ctx (cf : checked_func) =
+  let f = cf.cf_func in
+  emit_fn_sig buf f cf.cf_mangled;
   Buffer.add_string buf " {\n";
-  let param_env = List.map (fun p -> (p.Ast.pname, type_of_ann p.Ast.pty)) f.params in
-  let lets = collect_lets ctx param_env f.body in
-  let full_env = param_env @ lets in
+  let param_env =
+    List.map (fun p -> (p.Ast.pname, type_of_ann p.Ast.pty)) f.params
+  in
+  let full_env = param_env @ cf.cf_lets in
   List.iter
     (fun (name, t) ->
       Buffer.add_string buf (Printf.sprintf "    %s;\n" (c_decl t name)))
-    lets;
+    cf.cf_lets;
   gen_block buf ctx full_env "    " [] f.body;
   if f.name = "main" then Buffer.add_string buf "    return 0;\n";
   Buffer.add_string buf "}\n"
-
-(* Walk every function body looking for tuple types in use.  We collect
-   them deduplicated by mangled name and emit one C struct per unique tuple
-   shape.  Sources of tuples: fn signatures (ret_ty, params) and any
-   `TupleLit` expression in code (typed via `type_of`). *)
-let collect_tuple_types flat global structs modules =
-  let seen = ref [] in
-  let add t =
-    let name = mangle_typ t in
-    if not (List.exists (fun (n, _) -> n = name) !seen) then
-      seen := (name, t) :: !seen
-  in
-  let rec walk_typ t =
-    match t with
-    | TTuple ts -> add t; List.iter walk_typ ts
-    | _ -> ()
-  in
-  let walk_typ_ann ann = walk_typ (type_of_ann ann) in
-  let rec walk_expr ctx env e =
-    (match e with
-     | Ast.TupleLit (es, _) ->
-         walk_typ (type_of ctx env e);
-         List.iter (walk_expr ctx env) es
-     | Ast.StructLit { fields; _ } ->
-         List.iter (fun (_, fe) -> walk_expr ctx env fe) fields
-     | Ast.FieldAccess (target, _, _) -> walk_expr ctx env target
-     | Ast.Ref (sub, _) | Ast.Deref (sub, _) -> walk_expr ctx env sub
-     | Ast.Cast (sub, _, _) -> walk_expr ctx env sub
-     | Ast.Neg sub -> walk_expr ctx env sub
-     | Ast.BinOp (_, l, r) -> walk_expr ctx env l; walk_expr ctx env r
-     | Ast.Call (_, args, _) -> List.iter (walk_expr ctx env) args
-     | _ -> ())
-  in
-  let rec walk_stmt ctx env = function
-    | Ast.Let { value; _ } -> walk_expr ctx env value
-    | Ast.LetTuple { value; _ } -> walk_expr ctx env value
-    | Ast.Assign { value; _ } -> walk_expr ctx env value
-    | Ast.AssignField { target; value; _ } ->
-        walk_expr ctx env target; walk_expr ctx env value
-    | Ast.AssignDeref { target; value; _ } ->
-        walk_expr ctx env target; walk_expr ctx env value
-    | Ast.Return (e, _) -> walk_expr ctx env e
-    | Ast.ExprStmt e -> walk_expr ctx env e
-    | Ast.If { cond; then_body; else_body } ->
-        walk_expr ctx env cond;
-        List.iter (walk_stmt ctx env) then_body;
-        List.iter (walk_stmt ctx env) else_body
-    | Ast.While { cond; body } ->
-        walk_expr ctx env cond;
-        List.iter (walk_stmt ctx env) body
-    | Ast.Defer { body; _ } ->
-        List.iter (walk_stmt ctx env) body
-  in
-  List.iter
-    (fun (path, (f : Ast.func), _) ->
-      Option.iter walk_typ_ann f.ret_ty;
-      List.iter (fun (p : Ast.param) -> walk_typ_ann p.pty) f.params;
-      let ctx = { global; structs; modules; scope = path } in
-      let param_env =
-        List.map (fun (p : Ast.param) ->
-          (p.pname, type_of_ann p.pty)) f.params
-      in
-      let lets = collect_lets ctx param_env f.body in
-      let env = param_env @ lets in
-      List.iter (walk_stmt ctx env) f.body)
-    flat;
-  List.rev !seen
 
 (* Emit a `struct ex_Foo { int x; int y; };` for one user-declared struct.
    The C struct name is the mangled path-qualified form, identical to what
@@ -616,92 +532,44 @@ let emit_tuple_struct buf (_, t) =
       Buffer.add_string buf " };\n"
   | _ -> ()
 
-(* Detect any heap usage in the program — `new ...` expressions or `free(p)`
-   calls — so we can conditionally include `<stdlib.h>` (for `malloc`/`free`). *)
-let uses_heap program flat =
-  let rec walk_expr = function
-    | Ast.New _ -> true
-    | Ast.Call (["free"], _, _) -> true
-    | Ast.Ref (e, _) | Ast.Deref (e, _) | Ast.Cast (e, _, _) | Ast.Neg e ->
-        walk_expr e
-    | Ast.BinOp (_, l, r) -> walk_expr l || walk_expr r
-    | Ast.Call (_, args, _) -> List.exists walk_expr args
-    | Ast.TupleLit (es, _) -> List.exists walk_expr es
-    | Ast.StructLit { fields; _ } ->
-        List.exists (fun (_, e) -> walk_expr e) fields
-    | Ast.FieldAccess (target, _, _) -> walk_expr target
-    | _ -> false
-  in
-  let rec walk_stmt = function
-    | Ast.Let { value; _ } | Ast.LetTuple { value; _ }
-    | Ast.Assign { value; _ } | Ast.Return (value, _)
-    | Ast.ExprStmt value -> walk_expr value
-    | Ast.AssignField { target; value; _ }
-    | Ast.AssignDeref { target; value; _ } ->
-        walk_expr target || walk_expr value
-    | Ast.If { cond; then_body; else_body } ->
-        walk_expr cond
-        || List.exists walk_stmt then_body
-        || List.exists walk_stmt else_body
-    | Ast.While { cond; body } ->
-        walk_expr cond || List.exists walk_stmt body
-    | Ast.Defer { body; _ } -> List.exists walk_stmt body
-  in
-  let _ = program in  (* in case future passes need it *)
-  List.exists
-    (fun (_, (f : Ast.func), _) -> List.exists walk_stmt f.body)
-    flat
-
-let gen_program program =
-  let flat = flatten_funcs program in
-  (* main() must be at top level, not inside a module. *)
-  List.iter
-    (fun (path, f, _) ->
-      if f.Ast.name = "main" && path <> [] then
-        Error.raise_ f.Ast.pos
-          "'main' must be at top level, not inside a module")
-    flat;
-  (* Top-level function names also need the C-keyword check; module fns
-     are protected by the `mod__` prefix from mangling. *)
-  List.iter
-    (fun (path, f, _) ->
-      if path = [] then check_c_ident f.Ast.pos "function" f.Ast.name)
-    flat;
-  let global = build_global_index flat in
-  let struct_flat = flatten_structs program in
-  let structs = build_struct_index struct_flat in
-  let modules = flatten_modules program in
-  let tuples = collect_tuple_types flat global structs modules in
+let gen_program (cp : checked_program) =
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
-  if uses_heap program flat then
+  if cp.cp_uses_heap then
     Buffer.add_string buf "#include <stdlib.h>\n";
   (* Named structs first, in source order — typically their fields refer
      to types declared earlier.  Tuple structs after, so any tuple whose
      elements include a named struct type sees it complete. *)
-  if struct_flat <> [] then begin
+  if cp.cp_struct_decls <> [] then begin
     Buffer.add_char buf '\n';
-    List.iter (emit_named_struct buf) struct_flat
+    List.iter (emit_named_struct buf) cp.cp_struct_decls
   end;
-  if tuples <> [] then begin
+  if cp.cp_tuple_types <> [] then begin
     Buffer.add_char buf '\n';
-    List.iter (emit_tuple_struct buf) tuples
+    List.iter (emit_tuple_struct buf) cp.cp_tuple_types
   end;
-  let non_main = List.filter (fun (_, f, _) -> f.Ast.name <> "main") flat in
+  let non_main =
+    List.filter (fun cf -> cf.cf_func.Ast.name <> "main") cp.cp_funcs
+  in
   if non_main <> [] then begin
     Buffer.add_char buf '\n';
     List.iter
-      (fun (_, f, mangled) ->
-        emit_fn_sig buf f mangled;
+      (fun cf ->
+        emit_fn_sig buf cf.cf_func cf.cf_mangled;
         Buffer.add_string buf ";\n")
       non_main
   end;
   Buffer.add_char buf '\n';
-  let last = List.length flat - 1 in
+  let last = List.length cp.cp_funcs - 1 in
   List.iteri
-    (fun i (path, f, mangled) ->
-      let ctx = { global; structs; modules; scope = path } in
-      gen_function buf ctx f mangled;
+    (fun i cf ->
+      let ctx = {
+        global = cp.cp_global;
+        structs = cp.cp_struct_index;
+        modules = cp.cp_modules;
+        scope = cf.cf_path;
+      } in
+      gen_function buf ctx cf;
       if i < last then Buffer.add_char buf '\n')
-    flat;
+    cp.cp_funcs;
   Buffer.contents buf
