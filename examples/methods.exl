@@ -1,0 +1,41 @@
+// Methods on structs via `impl` blocks.  A method's first parameter is
+// `self`, typed as the struct (`Self`) or a pointer to it (`*Self`).
+// Calls work both ways: `p.method(args)` (dot form, with auto-ref or
+// auto-deref to match `self`'s shape) and `Type::method(p, args)` (UFCS).
+// Methods without `self` are static — invoked only via `Type::name(...)`.
+
+struct Point {
+    x: int,
+    y: int,
+}
+
+impl Point {
+    // Static method: a constructor-style helper.  No `self` parameter,
+    // callable as `Point::origin()`.
+    pub fn origin() -> Point {
+        return Point { x: 0, y: 0 };
+    }
+
+    // By-value method: receiver passed as `Point` (struct copy).
+    pub fn area(self: Point) -> int {
+        return self.x * self.y;
+    }
+
+    // Pointer-self method: receiver passed as `*Point` so writes mutate
+    // the caller's struct.  Dot-form call auto-refs a value receiver.
+    pub fn shift(self: *Point, dx: int, dy: int) {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
+    }
+}
+
+fn main() {
+    let p = Point::origin();
+    p.shift(3, 4);
+    print(p.area());            // 12
+
+    let q: *Point = &p;
+    print(q.area());            // auto-deref: same 12
+
+    print(Point::area(p));      // UFCS form
+}

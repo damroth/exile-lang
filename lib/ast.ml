@@ -31,6 +31,12 @@ type expr =
   | New of { tname : string list; fields : (string * expr) list;
              base : expr option; pos : Pos.t }
                                         (* `new T { f: e }` — heap-alloc + init *)
+  | MethodCall of { receiver : expr; name : string;
+                    args : expr list; pos : Pos.t }
+                                        (* `recv.name(args)` — dot-form method
+                                           call.  Elaboration resolves the
+                                           method on receiver's struct and
+                                           lowers it to an ordinary call. *)
 
 let expr_pos = function
   | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
@@ -38,7 +44,8 @@ let expr_pos = function
   | Call (_, _, p) | Cast (_, _, p) | TupleLit (_, p)
   | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)
   | NullLit p -> p
-  | StructLit { pos; _ } | New { pos; _ } -> pos
+  | StructLit { pos; _ } | New { pos; _ }
+  | MethodCall { pos; _ } -> pos
 
 type param = { pname : string; pty : type_ann }
 
@@ -75,11 +82,17 @@ type item =
   | Module of module_decl
   | Use of { path : string list; is_wildcard : bool; pos : Pos.t }
   | Struct of struct_decl
+  | Impl of impl_block
 and module_decl = {
   mname : string;
   mitems : item list;
   mpos : Pos.t;
   mis_pub : bool;
+}
+and impl_block = {
+  itarget : string list;     (* path written by user, may be relative *)
+  iitems : func list;
+  ipos : Pos.t;
 }
 
 type program = item list

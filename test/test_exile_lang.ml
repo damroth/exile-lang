@@ -401,4 +401,77 @@ let () =
       ("main.exl",
        "use lib::*;\n\nfn main() {\n    print(hello());\n}\n") ]
     "main.exl"
-    "#include <stdio.h>\n\nlong ex_hello(void);\n\nlong ex_hello(void) {\n    return 42;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_hello()));\n    return 0;\n}\n"
+    "#include <stdio.h>\n\nlong ex_hello(void);\n\nlong ex_hello(void) {\n    return 42;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_hello()));\n    return 0;\n}\n";
+
+  check "by-value method called via dot form"
+    "struct Point { x: int, y: int }\n\
+     impl Point {\n\
+    \    pub fn area(self: Point) -> int { return self.x * self.y; }\n\
+     }\n\
+     fn main() {\n\
+    \    let p = Point { x: 3, y: 4 };\n\
+    \    print(p.area());\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Point { long x; long y; };\n\nlong Point__area(struct ex_Point self);\n\nint main(void) {\n    struct ex_Point p;\n    p.x = 3;\n    p.y = 4;\n    printf(\"%ld\\n\", (long)(Point__area(p)));\n    return 0;\n}\n\nlong Point__area(struct ex_Point self) {\n    return self.x * self.y;\n}\n";
+
+  check "ptr-self method auto-refs receiver, mutates fields"
+    "struct Point { x: int, y: int }\n\
+     impl Point {\n\
+    \    pub fn shift(self: *Point, dx: int) { self.x = self.x + dx; }\n\
+     }\n\
+     fn main() {\n\
+    \    let p = Point { x: 1, y: 2 };\n\
+    \    p.shift(10);\n\
+    \    print(p.x);\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Point { long x; long y; };\n\nvoid Point__shift(struct ex_Point *self, long dx);\n\nint main(void) {\n    struct ex_Point p;\n    p.x = 1;\n    p.y = 2;\n    Point__shift(&p, 10);\n    printf(\"%ld\\n\", (long)(p.x));\n    return 0;\n}\n\nvoid Point__shift(struct ex_Point *self, long dx) {\n    self->x = self->x + dx;\n}\n";
+
+  check "UFCS call + auto-deref via ptr receiver to value-self method"
+    "struct P { x: int }\n\
+     impl P { pub fn get(self: P) -> int { return self.x; } }\n\
+     fn main() {\n\
+    \    let p = P { x: 7 };\n\
+    \    let q: *P = &p;\n\
+    \    print(P::get(p));\n\
+    \    print(q.get());\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_P { long x; };\n\nlong P__get(struct ex_P self);\n\nint main(void) {\n    struct ex_P p;\n    struct ex_P *q;\n    p.x = 7;\n    q = &p;\n    printf(\"%ld\\n\", (long)(P__get(p)));\n    printf(\"%ld\\n\", (long)(P__get(*q)));\n    return 0;\n}\n\nlong P__get(struct ex_P self) {\n    return self.x;\n}\n";
+
+  check "static method (no self) invoked as Foo::name(...)"
+    "struct P { x: int }\n\
+     impl P {\n\
+    \    pub fn make(v: int) -> P { return P { x: v }; }\n\
+     }\n\
+     fn main() {\n\
+    \    let p = P::make(42);\n\
+    \    print(p.x);\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_P { long x; };\n\nstruct ex_P P__make(long v);\n\nint main(void) {\n    struct ex_P p;\n    p = P__make(42);\n    printf(\"%ld\\n\", (long)(p.x));\n    return 0;\n}\n\nstruct ex_P P__make(long v) {\n    {\n        struct ex_P __exile_ret;\n        __exile_ret.x = v;\n        return __exile_ret;\n    }\n}\n";
+
+  check_error "method on unknown struct rejected"
+    "impl Nope { fn x(self: Nope) {} }\nfn main() {}\n"
+    "unknown struct 'Nope' in 'impl' block";
+
+  check_error "method 'self' must have struct type"
+    "struct P { x: int }\nimpl P { fn foo(self: int) {} }\nfn main() {}\n"
+    "first parameter 'self' must have type 'P' or '*P', got i32";
+
+  check_error "method name clashes with field rejected"
+    "struct P { v: int }\nimpl P { fn v(self: P) -> int { return self.v; } }\nfn main() {}\n"
+    "method name 'v' clashes with a field on 'P'";
+
+  check_error "duplicate method across impl blocks rejected"
+    "struct P { x: int }\nimpl P { fn foo(self: P) {} }\nimpl P { fn foo(self: P) {} }\nfn main() {}\n"
+    "method 'foo' on 'P' already defined in another 'impl' block";
+
+  check_error "method call on non-struct rejected"
+    "fn main() { let x: int = 5; print(x.foo()); }\n"
+    "method call '.foo()' requires a struct value or pointer to struct, got i32";
+
+  check_error "unknown method rejected"
+    "struct P { x: int }\nimpl P { pub fn foo(self: P) -> int { return self.x; } }\nfn main() { let p = P { x: 1 }; print(p.bar()); }\n"
+    "no method 'bar' on type 'P'";
+
+  check_error "private method called from outside rejected"
+    "struct P { x: int }\nimpl P { fn priv(self: P) -> int { return self.x; } }\nfn main() { let p = P { x: 1 }; print(p.priv()); }\n"
+    "method 'priv' is private to 'P'"

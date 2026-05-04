@@ -305,6 +305,71 @@ let rec type_of ?(allow_void = false) ctx env = function
             | None when allow_void -> t_i32   (* placeholder, caller discards *)
             | None ->
                 Error.failf pos "'%s' returns void, cannot use as a value" display)))
+  | Ast.MethodCall { receiver; name; args; pos } ->
+      (* Method call `recv.name(args)`: resolve the method on receiver's
+         struct (which lives in the global fn index under the struct's
+         absolute path), validate visibility, arity, and arg types.  The
+         receiver consumes one parameter slot — `args` corresponds to
+         param_tys[1..]. *)
+      let recv_ty = type_of ctx env receiver in
+      let struct_path =
+        match recv_ty with
+        | TStruct p -> p
+        | TPtr (TStruct p) -> p
+        | _ ->
+            Error.failf pos
+              "method call '.%s()' requires a struct value or pointer to \
+               struct, got %s"
+              name (typ_name recv_ty)
+      in
+      let mpath = struct_path @ [name] in
+      let display = String.concat "::" mpath in
+      let arg_tys = List.map (type_of ctx env) args in
+      (match lookup_fn ctx mpath with
+       | None ->
+           Error.failf pos "no method '%s' on type '%s'"
+             name (String.concat "::" struct_path)
+       | Some (resolved_mod, { param_tys; ret_ty; fn_pub; _ }) ->
+           let rec walk_segments parent = function
+             | [] -> ()
+             | seg :: rest ->
+                 let mod_path = parent @ [seg] in
+                 (match List.assoc_opt mod_path ctx.modules with
+                  | Some pub ->
+                      if (not pub) && not (is_prefix parent ctx.scope) then
+                        Error.failf pos
+                          "type '%s' is private (not visible from '%s')"
+                          (String.concat "::" mod_path)
+                          (if ctx.scope = [] then "<root>"
+                           else String.concat "::" ctx.scope)
+                  | None -> ());
+                 walk_segments mod_path rest
+           in
+           walk_segments [] resolved_mod;
+           if (not fn_pub) && ctx.scope <> resolved_mod then
+             Error.failf pos "method '%s' is private to '%s'"
+               name (String.concat "::" resolved_mod);
+           let expected_args = List.length param_tys - 1 in
+           let got_args = List.length args in
+           if expected_args <> got_args then
+             Error.failf pos
+               "method '%s' takes %d argument(s), got %d"
+               display expected_args got_args;
+           (match param_tys with
+            | _self :: rest_params ->
+                List.iteri
+                  (fun i (exp, act) ->
+                    if not (typ_eq exp act) then
+                      Error.failf pos
+                        "argument %d of '%s': expected %s, got %s"
+                        (i + 1) display (typ_name exp) (typ_name act))
+                  (List.combine rest_params arg_tys)
+            | [] -> assert false (* methods always have self in registry *));
+           (match ret_ty with
+            | Some t -> t
+            | None when allow_void -> t_i32
+            | None ->
+                Error.failf pos "'%s' returns void, cannot use as a value" display))
 
 (* Resolve operand types for a BinOp.  An integer literal on either side
    adopts the other operand's int type if it fits, so `x + 5` keeps x's
@@ -443,6 +508,36 @@ let rec elab_expr ?(allow_void = false) ctx env e : texpr =
                | None -> assert false   (* validated upstream *)
              in
              TCall { mangled; args = targs })
+    | Ast.MethodCall { receiver; name; args; _ } ->
+        let trecv = elab_expr ctx env receiver in
+        let struct_path =
+          match trecv.ty with
+          | TStruct p -> p
+          | TPtr (TStruct p) -> p
+          | _ -> assert false   (* validated by type_of *)
+        in
+        let mpath = struct_path @ [name] in
+        let (mangled, self_ty) =
+          match lookup_fn ctx mpath with
+          | Some (_, { mangled; param_tys = self_t :: _; _ }) ->
+              (mangled, self_t)
+          | _ -> assert false
+        in
+        (* Auto-ref / auto-deref: align receiver shape with the method's
+           self-param shape.  Both directions: `Foo` → `*Foo` via TRef,
+           `*Foo` → `Foo` via TDeref. *)
+        let trecv_adj =
+          match self_ty, trecv.ty with
+          | TStruct _, TStruct _ -> trecv
+          | TPtr _, TPtr _ -> trecv
+          | TPtr _ as pt, TStruct _ ->
+              { e = TRef trecv; ty = pt; pos = trecv.pos }
+          | TStruct _ as st, TPtr _ ->
+              { e = TDeref trecv; ty = st; pos = trecv.pos }
+          | _ -> assert false
+        in
+        let targs = List.map (elab_expr ctx env) args in
+        TCall { mangled; args = trecv_adj :: targs }
   in
   { e = node; ty; pos }
 
@@ -611,12 +706,17 @@ type flat = {
   funcs : (string list * Ast.func * string) list;
   structs : (string list * Ast.struct_decl) list;
   modules : (string list * bool) list;
+  (* Each `impl` block keeps its enclosing module path; target struct
+     resolution (relative-to-scope, ancestor walk-up) happens later
+     once the struct index is built. *)
+  impls : (string list * Ast.impl_block) list;
 }
 
 let flatten_items program =
   let funcs = ref [] in
   let structs = ref [] in
   let modules = ref [] in
+  let impls = ref [] in
   let rec walk path items =
     List.iter
       (fun item -> match item with
@@ -629,6 +729,8 @@ let flatten_items program =
             let mod_path = path @ [m.Ast.mname] in
             modules := (mod_path, m.Ast.mis_pub) :: !modules;
             walk mod_path m.Ast.mitems
+        | Ast.Impl ib ->
+            impls := (path, ib) :: !impls
         | Ast.Use { pos; _ } ->
             Error.failf pos
               "internal: 'use' declaration reached codegen unresolved \
@@ -638,7 +740,8 @@ let flatten_items program =
   walk [] program;
   { funcs = List.rev !funcs;
     structs = List.rev !structs;
-    modules = List.rev !modules }
+    modules = List.rev !modules;
+    impls = List.rev !impls }
 
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
@@ -753,6 +856,103 @@ let uses_heap_of tfuncs =
   in
   List.exists (fun tf -> List.exists walk_tstmt tf.tf_body) tfuncs
 
+(* Resolve `impl` blocks against the struct registry, validate each method
+   (self-param shape, name clash with fields, dup methods across blocks),
+   and lower them to ordinary fn entries plus virtual-module entries.
+
+   Lowering: a method on `Foo` becomes a regular fn in the global index
+   under path = absolute struct path, with mangled name `Foo__method`
+   (or `mod__Foo__method` for `Foo` inside a module).  The struct's
+   absolute path is registered as a virtual module so qualified call
+   visibility walks (`Foo::method(p, ...)`) resolve naturally. *)
+let expand_impls flat struct_index modules =
+  let resolved =
+    List.map
+      (fun (parent_path, ib) ->
+        let ctx = {
+          global = []; structs = struct_index;
+          modules; scope = parent_path;
+        } in
+        let s =
+          match lookup_struct ctx ib.Ast.itarget with
+          | Some s -> s
+          | None ->
+              Error.failf ib.Ast.ipos
+                "unknown struct '%s' in 'impl' block"
+                (String.concat "::" ib.Ast.itarget)
+        in
+        let target_path = s.sname_path in
+        let field_names = List.map fst s.sfields_ty in
+        let in_block_seen = ref [] in
+        List.iter
+          (fun (m : Ast.func) ->
+            if List.mem m.name field_names then
+              Error.failf m.pos
+                "method name '%s' clashes with a field on '%s'"
+                m.name (String.concat "::" target_path);
+            if List.mem m.name !in_block_seen then
+              Error.failf m.pos
+                "method '%s' already defined in this 'impl' block" m.name;
+            in_block_seen := m.name :: !in_block_seen;
+            (* When the first param is named `self`, its annotation must
+               match `Self` or `*Self`; any other type is a configuration
+               error.  Other names for the receiver are allowed (and the
+               method becomes a static method — no auto-ref/-deref later). *)
+            (match m.params with
+             | { pname = "self"; pty = ann } :: _ ->
+                 let self_t = type_of_ann ann in
+                 (match self_t with
+                  | TStruct p when p = target_path -> ()
+                  | TPtr (TStruct p) when p = target_path -> ()
+                  | _ ->
+                      Error.failf m.pos
+                        "first parameter 'self' must have type '%s' or '*%s', \
+                         got %s"
+                        (String.concat "::" target_path)
+                        (String.concat "::" target_path)
+                        (typ_name self_t))
+             | _ -> ()))
+          ib.Ast.iitems;
+        (target_path, s.sis_pub, ib.Ast.iitems))
+      flat.impls
+  in
+  (* Cross-block dup check: same method name on the same struct in two
+     different impl blocks. *)
+  let seen_methods = Hashtbl.create 16 in
+  List.iter
+    (fun (target_path, _, methods) ->
+      List.iter
+        (fun (m : Ast.func) ->
+          let key = (target_path, m.name) in
+          match Hashtbl.find_opt seen_methods key with
+          | Some _ ->
+              Error.failf m.pos
+                "method '%s' on '%s' already defined in another 'impl' block"
+                m.name (String.concat "::" target_path)
+          | None -> Hashtbl.add seen_methods key m.pos)
+        methods)
+    resolved;
+  let virtual_modules =
+    let seen = ref [] in
+    List.filter_map
+      (fun (target_path, sis_pub, _) ->
+        if List.mem target_path !seen then None
+        else (seen := target_path :: !seen;
+              Some (target_path, sis_pub)))
+      resolved
+  in
+  let impl_funcs =
+    List.concat_map
+      (fun (target_path, _, methods) ->
+        List.map
+          (fun (m : Ast.func) ->
+            let mangled = mangle target_path m.name in
+            (target_path, m, mangled))
+          methods)
+      resolved
+  in
+  (impl_funcs, virtual_modules)
+
 let check_program program : tprogram =
   let flat = flatten_items program in
   (* main() must be at top level, not inside a module. *)
@@ -778,12 +978,21 @@ let check_program program : tprogram =
         (fun (p : Ast.param) -> check_c_ident f.pos "parameter" p.pname)
         f.params)
     flat.funcs;
-  let global = build_global_index flat.funcs in
   let struct_index = build_struct_index flat.structs in
-  let modules = flat.modules in
-  (* Per-fn elaboration: a single walk validates and produces both the
-     hoisted let-decl list and the typed body.  Codegen reads tf_lets and
-     tf_body directly. *)
+  let (impl_funcs, virtual_modules) =
+    expand_impls flat struct_index flat.modules
+  in
+  let modules = flat.modules @ virtual_modules in
+  let all_funcs = flat.funcs @ impl_funcs in
+  (* Method param names also need the C-keyword check (their first param
+     is `self`, which is fine; rest are user-chosen). *)
+  List.iter
+    (fun (_, (f : Ast.func), _) ->
+      List.iter
+        (fun (p : Ast.param) -> check_c_ident f.pos "parameter" p.pname)
+        f.params)
+    impl_funcs;
+  let global = build_global_index all_funcs in
   let tp_funcs =
     List.map
       (fun (path, (f : Ast.func), mangled) ->
@@ -795,7 +1004,7 @@ let check_program program : tprogram =
         let (lets, tbody) = elab_body ctx param_env f.body in
         { tf_path = path; tf_func = f; tf_mangled = mangled;
           tf_body = tbody; tf_lets = lets })
-      flat.funcs
+      all_funcs
   in
   let tp_tuple_types = collect_tuple_types_of tp_funcs in
   let tp_uses_heap = uses_heap_of tp_funcs in

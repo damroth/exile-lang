@@ -206,14 +206,20 @@ and parse_struct_lit_body s =
   in
   loop []
 
-(* Chain `.field` accesses onto an already-parsed primary. *)
+(* Chain `.field` accesses or `.name(args)` method calls onto an already-parsed
+   primary.  Disambiguation is by lookahead on the token after the name. *)
 and parse_postfix s base =
   let rec loop e =
     if peek s = Token.Dot then begin
       let p = peek_pos s in
       ignore (advance s);
-      let (n, _) = expect_ident s ~what:"field name after '.'" in
-      loop (Ast.FieldAccess (e, n, p))
+      let (n, _) = expect_ident s ~what:"field or method name after '.'" in
+      if peek s = Token.LParen then begin
+        ignore (advance s);
+        let args = parse_args s in
+        loop (Ast.MethodCall { receiver = e; name = n; args; pos = p })
+      end else
+        loop (Ast.FieldAccess (e, n, p))
     end else e
   in
   loop base
@@ -512,6 +518,14 @@ let rec parse_item s seen =
         Error.failf sd.Ast.spos
           "name '%s' already used in this scope" sd.Ast.sname;
       [ (Some sd.Ast.sname, Ast.Struct sd) ]
+  | Token.Impl ->
+      if is_pub then
+        Error.failf (peek_pos s)
+          "'pub' has no meaning on 'impl' (set visibility per method)";
+      let ib = parse_impl_block s in
+      (* impl blocks introduce no name into the surrounding scope — their
+         methods are looked up via the target struct, not by a free name. *)
+      [ (None, Ast.Impl ib) ]
   | Token.Use ->
       if is_pub then
         Error.failf (peek_pos s) "'pub use' is not yet supported";
@@ -565,6 +579,40 @@ and parse_struct_decl s ~is_pub =
   in
   check_dups fields;
   Ast.{ sname = name; sfields = fields; spos = name_pos; sis_pub = is_pub }
+
+(* `impl <Path> { fn ... fn ... }` — methods get registered against the
+   target struct, not into the surrounding scope.  Each method is parsed
+   like a free-standing function (with optional `pub`), with a per-impl
+   duplicate-name check.  Cross-block dup checks against earlier `impl`
+   blocks for the same target happen later in typecheck. *)
+and parse_impl_block s =
+  expect s Token.Impl;
+  let pos = s.last_pos in
+  let (head, _) = expect_ident s ~what:"struct name after 'impl'" in
+  let target = head :: parse_path_tail s [] in
+  let target =
+    match target with
+    | first :: rest -> first :: rest  (* already-rev'd by parse_path_tail *)
+    | [] -> Error.failf pos "empty 'impl' target"
+  in
+  expect s Token.LBrace;
+  let rec loop seen acc =
+    match peek s with
+    | Token.RBrace -> ignore (advance s); List.rev acc
+    | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
+    | _ ->
+        let is_pub = peek s = Token.Pub in
+        if is_pub then ignore (advance s);
+        (match peek s with
+         | Token.Fn ->
+             let (name, fn) = parse_function s seen ~is_pub in
+             loop (name :: seen) (fn :: acc)
+         | t ->
+             Error.failf (peek_pos s)
+               "expected 'fn' inside 'impl' block, got %s" (Token.pp t))
+  in
+  let methods = loop [] [] in
+  Ast.{ itarget = target; iitems = methods; ipos = pos }
 
 and parse_module s seen ~is_pub =
   expect s Token.Mod;

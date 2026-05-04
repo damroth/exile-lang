@@ -41,7 +41,7 @@ let rec expand_items ~from_file ~loaded ~stack items =
 
 and expand_item ~from_file ~loaded ~stack item =
   match item with
-  | Ast.Function _ | Ast.Struct _ -> [ item ]
+  | Ast.Function _ | Ast.Struct _ | Ast.Impl _ -> [ item ]
   | Ast.Module m ->
       let mitems' =
         expand_items ~from_file ~loaded ~stack m.Ast.mitems
@@ -75,6 +75,7 @@ and expand_item ~from_file ~loaded ~stack item =
               | Ast.Function f -> f.Ast.is_pub
               | Ast.Module m -> m.Ast.mis_pub
               | Ast.Struct s -> s.Ast.sis_pub
+              | Ast.Impl _ -> true   (* impls follow their target struct's visibility *)
               | Ast.Use _ -> false)
             inner
         else begin
