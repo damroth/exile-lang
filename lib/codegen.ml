@@ -1,8 +1,8 @@
-(* C89 emission.  Consumes the typed view (`tprogram`) exposed by Typecheck:
+(* C89 emission.  Consumes the typed IR (`tprogram`) produced by Typecheck:
    every expression carries its computed type in `.ty`, so this module only
    pattern-matches on shape and emits — it does not reconstruct types. *)
 
-open Typecheck
+open Ir
 
 (* When set, gen_program prepends `/* file:line:col */` markers above each
    emitted top-level statement and function signature.  Off by default;
