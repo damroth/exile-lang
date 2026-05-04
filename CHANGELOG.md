@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-05-04
+
+Adds three small language conveniences and a debug-friendly codegen flag.
+
+### Added
+- `--annotate` flag emits C output with source-line comments, mapping each
+  generated chunk back to its `.exl` origin
+- `let x = some_tuple()` now binds the whole tuple to a single name (in
+  addition to the existing `let (a, b) = ...` destructuring)
+- `null` pointer literal, usable wherever a pointer is expected
+- Functional update syntax for struct literals: `Point { x: 1, ..base }`
+  copies remaining fields from `base` (Rust-style)
+
 ## [0.2.1] - 2026-05-03
 
 Internal refactor: type checking moved into its own pass.
@@ -51,4 +64,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.2.1]: https://github.com/damroth/exile-lang/releases/tag/v0.2.1
+[0.2.2]: https://github.com/damroth/exile-lang/releases/tag/v0.2.2
