@@ -4,6 +4,44 @@
 
 open Typecheck
 
+(* When set, gen_program prepends `/* file:line:col */` markers above each
+   emitted top-level statement and function signature.  Off by default;
+   the CLI flips it via `--annotate` for debug builds where mapping the
+   emitted C back to exile source matters (e.g. when defer cleanups or
+   tuple-temp blocks make the layout less obvious). *)
+let annotate_mode = ref false
+
+let emit_ann buf indent (pos : Pos.t) =
+  if !annotate_mode then begin
+    Buffer.add_string buf indent;
+    Buffer.add_string buf
+      (Printf.sprintf "/* %s:%d:%d */\n" pos.file pos.line pos.col)
+  end
+
+(* Best-effort source position for a statement — most carry one explicitly,
+   ExprStmt borrows from the underlying expression when one is positioned. *)
+let rec expr_pos_opt = function
+  | Ast.Var (_, p) | Ast.Call (_, _, p) | Ast.Cast (_, _, p)
+  | Ast.TupleLit (_, p) | Ast.FieldAccess (_, _, p)
+  | Ast.Ref (_, p) | Ast.Deref (_, p) | Ast.NullLit p -> Some p
+  | Ast.StructLit { pos; _ } | Ast.New { pos; _ } -> Some pos
+  | Ast.Neg e -> expr_pos_opt e
+  | Ast.BinOp (_, l, _) -> expr_pos_opt l
+  | Ast.IntLit _ | Ast.BoolLit _ | Ast.StringLit _ -> None
+
+let stmt_pos_opt = function
+  | Ast.Let { pos; _ } | Ast.LetTuple { pos; _ }
+  | Ast.Assign { pos; _ } | Ast.AssignField { pos; _ }
+  | Ast.AssignDeref { pos; _ } | Ast.Defer { pos; _ } -> Some pos
+  | Ast.Return (_, pos) -> Some pos
+  | Ast.ExprStmt e -> expr_pos_opt e
+  | Ast.If { cond; _ } | Ast.While { cond; _ } -> expr_pos_opt cond
+
+let emit_stmt_ann buf indent stmt =
+  match stmt_pos_opt stmt with
+  | Some p -> emit_ann buf indent p
+  | None -> ()
+
 let add_separated buf sep f xs =
   List.iteri
     (fun i x -> if i > 0 then Buffer.add_string buf sep; f x)
@@ -436,9 +474,11 @@ and gen_block buf ctx env indent outer_scopes stmts =
   let rec loop my_defers = function
     | [] ->
         emit_cleanups buf ctx env indent my_defers
-    | Ast.Defer { body; _ } :: rest ->
+    | (Ast.Defer { body; _ } as s) :: rest ->
+        emit_stmt_ann buf indent s;
         loop (body :: my_defers) rest
-    | Ast.Return (e, _) :: _ ->
+    | (Ast.Return (e, _) as s) :: _ ->
+        emit_stmt_ann buf indent s;
         let all = List.flatten (my_defers :: outer_scopes) in
         let needs_block =
           all <> [] ||
@@ -468,17 +508,21 @@ and gen_block buf ctx env indent outer_scopes stmts =
           Buffer.add_string buf "}\n"
         end
     | (Ast.Let _ | Ast.Assign _ | Ast.AssignField _ | Ast.AssignDeref _ | Ast.ExprStmt _) as s :: rest ->
+        emit_stmt_ann buf indent s;
         emit_simple_stmt buf ctx env indent s;
         loop my_defers rest
-    | Ast.LetTuple { names; value; _ } :: rest ->
+    | (Ast.LetTuple { names; value; _ } as s) :: rest ->
+        emit_stmt_ann buf indent s;
         emit_let_tuple buf ctx env indent names value;
         loop my_defers rest
-    | Ast.If { cond; then_body; else_body } :: rest ->
+    | (Ast.If { cond; then_body; else_body } as s) :: rest ->
+        emit_stmt_ann buf indent s;
         Buffer.add_string buf indent;
         gen_if buf ctx env indent outer_scopes my_defers
           cond then_body else_body;
         loop my_defers rest
-    | Ast.While { cond; body } :: rest ->
+    | (Ast.While { cond; body } as s) :: rest ->
+        emit_stmt_ann buf indent s;
         Buffer.add_string buf indent;
         Buffer.add_string buf "while (";
         gen_expr buf ctx env cond;
@@ -520,6 +564,7 @@ let emit_fn_sig buf (f : Ast.func) mangled =
    ctx is built from the program-wide indexes. *)
 let gen_function buf ctx (cf : checked_func) =
   let f = cf.cf_func in
+  emit_ann buf "" f.pos;
   emit_fn_sig buf f cf.cf_mangled;
   Buffer.add_string buf " {\n";
   let param_env =
@@ -561,7 +606,8 @@ let emit_tuple_struct buf (_, t) =
       Buffer.add_string buf " };\n"
   | _ -> ()
 
-let gen_program (cp : checked_program) =
+let gen_program ?(annotate = false) (cp : checked_program) =
+  annotate_mode := annotate;
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
   if cp.cp_uses_heap then

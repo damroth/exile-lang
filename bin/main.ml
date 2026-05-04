@@ -1,7 +1,8 @@
 type target = Target_c | Target_host | Target_amiga
 
 let usage () =
-  prerr_endline "usage: exilc [--target c|host|amiga] [-o <output>] <file.exl>";
+  prerr_endline
+    "usage: exilc [--target c|host|amiga] [-o <output>] [--annotate] <file.exl>";
   exit 1
 
 let show_error (pos : Exile_lang.Pos.t) msg =
@@ -29,10 +30,12 @@ let parse_args argv =
   let target = ref Target_c in
   let output = ref None in
   let input = ref None in
+  let annotate = ref false in
   let rec loop = function
     | [] -> ()
     | "--target" :: t :: rest -> target := parse_target t; loop rest
     | "-o" :: o :: rest -> output := Some o; loop rest
+    | "--annotate" :: rest -> annotate := true; loop rest
     | "--help" :: _ | "-h" :: _ -> usage ()
     | f :: rest when String.length f > 0 && f.[0] <> '-' ->
         if !input <> None then begin
@@ -48,7 +51,7 @@ let parse_args argv =
   loop argv;
   match !input with
   | None -> usage ()
-  | Some i -> (!target, !output, i)
+  | Some i -> (!target, !output, !annotate, i)
 
 let toolchain_path () =
   try Sys.getenv "EXILE_TOOLCHAIN"
@@ -84,11 +87,11 @@ let default_output_for input =
   Filename.remove_extension input
 
 let () =
-  let (target, output, input) =
+  let (target, output, annotate, input) =
     parse_args (List.tl (Array.to_list Sys.argv))
   in
   try
-    let c_code = Exile_lang.Compiler.compile_file input in
+    let c_code = Exile_lang.Compiler.compile_file ~annotate input in
     let c_path = Filename.remove_extension input ^ ".c" in
     Out_channel.with_open_text c_path (fun oc ->
         Out_channel.output_string oc c_code);
