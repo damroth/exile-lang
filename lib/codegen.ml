@@ -190,8 +190,8 @@ let rec gen_expr buf ctx env = function
            Buffer.add_char buf ')')
   | Ast.TupleLit (_, pos) ->
       Error.failf pos
-        "tuple literal can only appear in 'return (...)' or as the RHS of \
-         'let (...) = ...'"
+        "tuple literal cannot be used inline; bind it first with \
+         'let t = (...)' (then pass t) or 'let (a, b) = (...)'"
   | Ast.StructLit { pos; _ } ->
       Error.failf pos
         "struct literal can only appear in 'return ...', as the RHS of \

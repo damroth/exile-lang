@@ -250,9 +250,9 @@ let () =
     "fn main() {\n    let (x, y) = (10, 20);\n    print(x);\n    print(y);\n}\n"
     "#include <stdio.h>\n\nstruct ex_tup2_i32_i32 { long _0; long _1; };\n\nint main(void) {\n    long x;\n    long y;\n    {\n        struct ex_tup2_i32_i32 __t;\n        __t._0 = 10;\n        __t._1 = 20;\n        x = __t._0;\n        y = __t._1;\n    }\n    printf(\"%ld\\n\", (long)(x));\n    printf(\"%ld\\n\", (long)(y));\n    return 0;\n}\n";
 
-  check_error "naked tuple-typed let rejected"
-    "fn main() {\n    let x = (1, 2);\n    print(x);\n}\n"
-    "tuple value must be destructured: use 'let (...) = ...' instead of 'let x = ...'";
+  check "tuple variable bound from literal, passed as fn arg"
+    "fn show(t: (int, int)) {\n    let (a, b) = t;\n    print(a);\n    print(b);\n}\nfn main() {\n    let t = (10, 20);\n    show(t);\n}\n"
+    "#include <stdio.h>\n\nstruct ex_tup2_i32_i32 { long _0; long _1; };\n\nstatic void ex_show(struct ex_tup2_i32_i32 t);\n\nstatic void ex_show(struct ex_tup2_i32_i32 t) {\n    long a;\n    long b;\n    {\n        struct ex_tup2_i32_i32 __t;\n        __t = t;\n        a = __t._0;\n        b = __t._1;\n    }\n    printf(\"%ld\\n\", (long)(a));\n    printf(\"%ld\\n\", (long)(b));\n}\n\nint main(void) {\n    struct ex_tup2_i32_i32 t;\n    t._0 = 10;\n    t._1 = 20;\n    ex_show(t);\n    return 0;\n}\n";
 
   check_error "empty tuple type rejected"
     "fn foo() -> () {\n    return (1, 2);\n}\nfn main() {\n    foo();\n}\n"

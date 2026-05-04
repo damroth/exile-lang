@@ -507,12 +507,6 @@ let collect_lets ctx param_env stmts =
     | [] -> env
     | Ast.Let { name; value; ty_ann; pos } :: rest ->
         let t_inferred = type_of ctx env value in
-        (match t_inferred with
-         | TTuple _ ->
-             Error.failf pos
-               "tuple value must be destructured: use 'let (...) = ...' \
-                instead of 'let %s = ...'" name
-         | _ -> ());
         let t_actual =
           match ty_ann with
           | None ->
