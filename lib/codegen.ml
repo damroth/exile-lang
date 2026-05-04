@@ -152,6 +152,21 @@ let prec = function
   | Ast.Add | Ast.Sub -> 1
   | Ast.Mul | Ast.Div -> 2
 
+(* Forms that don't need parens after a unary `&`/`*` prefix because they
+   already bind tighter than (or equal to) the prefix. *)
+let lvalue_like = function
+  | Ast.Var _ | Ast.FieldAccess _ | Ast.Deref _ -> true
+  | _ -> false
+
+(* `<indent><lhs> = <rhs>;\n` — captures the four-line pattern that
+   peppers emit_value_into_temp and the assignment statements. *)
+let emit_assign_line buf indent ~lhs ~emit_rhs =
+  Buffer.add_string buf indent;
+  Buffer.add_string buf lhs;
+  Buffer.add_string buf " = ";
+  emit_rhs ();
+  Buffer.add_string buf ";\n"
+
 let rec gen_expr buf ctx env = function
   | Ast.IntLit (n, _) -> Buffer.add_string buf (string_of_int n)
   | Ast.BoolLit (b, _) -> Buffer.add_string buf (if b then "1" else "0")
@@ -162,13 +177,8 @@ let rec gen_expr buf ctx env = function
       Buffer.add_char buf '"'
   | Ast.Var (name, _) -> Buffer.add_string buf name
   | Ast.Neg (e, _) ->
-      Buffer.add_char buf '-';
-      (match e with
-       | Ast.IntLit _ | Ast.Var _ -> gen_expr buf ctx env e
-       | _ ->
-           Buffer.add_char buf '(';
-           gen_expr buf ctx env e;
-           Buffer.add_char buf ')')
+      emit_unary buf ctx env '-' e
+        ~simple:(function Ast.IntLit _ | Ast.Var _ -> true | _ -> false)
   | Ast.Cast (e, ann, _) ->
       let trimmed = strip_trailing_space (c_type_prefix (type_of_ann ann)) in
       Buffer.add_string buf "((";
@@ -234,22 +244,17 @@ let rec gen_expr buf ctx env = function
       gen_expr buf ctx env target;
       Buffer.add_string buf sep;
       Buffer.add_string buf fname
-  | Ast.Ref (e, _) ->
-      Buffer.add_char buf '&';
-      (match e with
-       | Ast.Var _ | Ast.FieldAccess _ | Ast.Deref _ -> gen_expr buf ctx env e
-       | _ ->
-           Buffer.add_char buf '(';
-           gen_expr buf ctx env e;
-           Buffer.add_char buf ')')
-  | Ast.Deref (e, _) ->
-      Buffer.add_char buf '*';
-      (match e with
-       | Ast.Var _ | Ast.FieldAccess _ | Ast.Deref _ -> gen_expr buf ctx env e
-       | _ ->
-           Buffer.add_char buf '(';
-           gen_expr buf ctx env e;
-           Buffer.add_char buf ')')
+  | Ast.Ref (e, _) -> emit_unary buf ctx env '&' e ~simple:lvalue_like
+  | Ast.Deref (e, _) -> emit_unary buf ctx env '*' e ~simple:lvalue_like
+
+and emit_unary buf ctx env prefix ~simple e =
+  Buffer.add_char buf prefix;
+  if simple e then gen_expr buf ctx env e
+  else begin
+    Buffer.add_char buf '(';
+    gen_expr buf ctx env e;
+    Buffer.add_char buf ')'
+  end
 
 (* Initialise an already-declared temp from an expression.  Tuple/struct
    literals become field-by-field assignments; any other RHS uses a single
@@ -257,37 +262,21 @@ let rec gen_expr buf ctx env = function
    non-constant elements are a C99 relaxation that `-ansi -pedantic`
    rejects, so we always go through declare-then-assign. *)
 and emit_value_into_temp buf ctx env indent temp_name value =
+  let assign ~lhs e =
+    emit_assign_line buf indent ~lhs
+      ~emit_rhs:(fun () -> gen_expr buf ctx env e)
+  in
   match value with
   | Ast.TupleLit (es, _) ->
       List.iteri
-        (fun i e ->
-          Buffer.add_string buf indent;
-          Buffer.add_string buf temp_name;
-          Buffer.add_string buf (Printf.sprintf "._%d = " i);
-          gen_expr buf ctx env e;
-          Buffer.add_string buf ";\n")
+        (fun i e -> assign ~lhs:(temp_name ^ "._" ^ string_of_int i) e)
         es
   | Ast.StructLit { fields; base; _ } ->
       (* `..base` (functional update): copy base via struct assignment
          first, then apply explicit field overrides.  C89 supports
          `temp = expr;` for struct-typed values. *)
-      (match base with
-       | Some be ->
-           Buffer.add_string buf indent;
-           Buffer.add_string buf temp_name;
-           Buffer.add_string buf " = ";
-           gen_expr buf ctx env be;
-           Buffer.add_string buf ";\n"
-       | None -> ());
-      List.iter
-        (fun (fname, fe) ->
-          Buffer.add_string buf indent;
-          Buffer.add_string buf temp_name;
-          Buffer.add_char buf '.';
-          Buffer.add_string buf fname;
-          Buffer.add_string buf " = ";
-          gen_expr buf ctx env fe;
-          Buffer.add_string buf ";\n")
+      Option.iter (assign ~lhs:temp_name) base;
+      List.iter (fun (fname, fe) -> assign ~lhs:(temp_name ^ "." ^ fname) fe)
         fields
   | Ast.New { tname; fields; base; pos } ->
       let s =
@@ -297,37 +286,18 @@ and emit_value_into_temp buf ctx env indent temp_name value =
             Error.failf pos "unknown struct '%s'" (String.concat "::" tname)
       in
       let cname = "struct " ^ mangle_typ (TStruct s.sname_path) in
-      Buffer.add_string buf indent;
-      Buffer.add_string buf temp_name;
-      Buffer.add_string buf (" = malloc(sizeof(" ^ cname ^ "));\n");
+      emit_assign_line buf indent ~lhs:temp_name
+        ~emit_rhs:(fun () ->
+          Buffer.add_string buf "malloc(sizeof(";
+          Buffer.add_string buf cname;
+          Buffer.add_string buf "))");
       (* `..base` for heap allocation: deref-assign the whole struct from
          the value-typed base, then override individual fields through
          the `->` arrow. *)
-      (match base with
-       | Some be ->
-           Buffer.add_string buf indent;
-           Buffer.add_char buf '*';
-           Buffer.add_string buf temp_name;
-           Buffer.add_string buf " = ";
-           gen_expr buf ctx env be;
-           Buffer.add_string buf ";\n"
-       | None -> ());
-      List.iter
-        (fun (fname, fe) ->
-          Buffer.add_string buf indent;
-          Buffer.add_string buf temp_name;
-          Buffer.add_string buf "->";
-          Buffer.add_string buf fname;
-          Buffer.add_string buf " = ";
-          gen_expr buf ctx env fe;
-          Buffer.add_string buf ";\n")
+      Option.iter (assign ~lhs:("*" ^ temp_name)) base;
+      List.iter (fun (fname, fe) -> assign ~lhs:(temp_name ^ "->" ^ fname) fe)
         fields
-  | _ ->
-      Buffer.add_string buf indent;
-      Buffer.add_string buf temp_name;
-      Buffer.add_string buf " = ";
-      gen_expr buf ctx env value;
-      Buffer.add_string buf ";\n"
+  | _ -> assign ~lhs:temp_name value
 
 (* Statement emission with `defer` support.  `outer_scopes` is the list of
    defer-stack snapshots for each block enclosing this one (innermost first);
@@ -367,13 +337,8 @@ let rec emit_simple_stmt buf ctx env indent stmt =
       Buffer.add_string buf ";\n"
   | Ast.AssignDeref { target; value; _ } ->
       Buffer.add_string buf indent;
-      Buffer.add_char buf '*';
-      (match target with
-       | Ast.Var _ | Ast.FieldAccess _ -> gen_expr buf ctx env target
-       | _ ->
-           Buffer.add_char buf '(';
-           gen_expr buf ctx env target;
-           Buffer.add_char buf ')');
+      emit_unary buf ctx env '*' target
+        ~simple:(function Ast.Var _ | Ast.FieldAccess _ -> true | _ -> false);
       Buffer.add_string buf " = ";
       gen_expr buf ctx env value;
       Buffer.add_string buf ";\n"
