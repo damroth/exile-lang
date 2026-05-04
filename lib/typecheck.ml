@@ -490,11 +490,144 @@ and validate_struct_lit ctx env ~tname ~fields ~base ~pos =
     fields;
   s
 
-(* Collect let-bound (name, type) pairs for C89 function-top hoisting.
-   Type resolution uses block-scoped env (then/else branches start from
-   the same pre-if env — no leak). Accumulation is function-scoped:
-   one name per function, no shadowing of parameters. *)
-let collect_lets ctx param_env stmts =
+(* === Typed AST (Tast) ====================================================
+   Mirror of Ast.expr/stmt with a `.ty` field on each expression node so
+   codegen can read types without re-running `type_of`.  Lives here (rather
+   than a separate Tast module) to break the dependency cycle Tast→Typecheck
+   for `typ` / `Typecheck`→Tast for elaboration.  Builtin calls are split
+   out from user calls during elaboration so codegen doesn't repeat the
+   `lookup_builtin_emit` dispatch on every call site. *)
+type texpr_node =
+  | TIntLit of int
+  | TBoolLit of bool
+  | TNullLit
+  | TStringLit of string
+  | TVar of string
+  | TNeg of texpr
+  | TBinOp of Ast.binop * texpr * texpr
+  | TCall of { mangled : string; args : texpr list }
+  | TBuiltinCall of { name : string; args : texpr list }
+  | TCast of texpr * Ast.type_ann
+  | TTupleLit of texpr list
+  | TStructLit of { sname_path : string list;
+                    fields : (string * texpr) list;
+                    base : texpr option }
+  | TFieldAccess of { target : texpr; field : string }
+  | TRef of texpr
+  | TDeref of texpr
+  | TNew of { sname_path : string list;
+              fields : (string * texpr) list;
+              base : texpr option }
+
+and texpr = {
+  e : texpr_node;
+  ty : typ;
+  pos : Pos.t;
+}
+
+type tstmt =
+  | TLet of { name : string; value : texpr; pos : Pos.t }
+  | TLetTuple of { names : string list; value : texpr; pos : Pos.t }
+  | TAssign of { name : string; value : texpr; pos : Pos.t }
+  | TAssignField of { target : texpr; field : string; value : texpr;
+                      pos : Pos.t }
+  | TAssignDeref of { target : texpr; value : texpr; pos : Pos.t }
+  | TReturn of { value : texpr; pos : Pos.t }
+  | TExprStmt of texpr
+  | TIf of { cond : texpr; then_body : tstmt list; else_body : tstmt list }
+  | TWhile of { cond : texpr; body : tstmt list }
+  | TDefer of { body : tstmt list; pos : Pos.t }
+
+(* Per-function payload that codegen consumes — original Ast.func for the
+   signature emission (params, ret_ty, name, pos), the resolved C name,
+   the elaborated body, and the hoisted let-decl list. *)
+type tfunc = {
+  tf_path : string list;
+  tf_func : Ast.func;
+  tf_mangled : string;
+  tf_body : tstmt list;
+  tf_lets : (string * typ) list;
+}
+
+(* Whole-program checked + elaborated view that codegen consumes. *)
+type tprogram = {
+  tp_funcs : tfunc list;
+  tp_struct_decls : (string list * Ast.struct_decl) list;
+  tp_struct_index : struct_sig list;
+  tp_global : (string list * string * fn_sig) list;
+  tp_modules : (string list * bool) list;
+  tp_uses_heap : bool;
+  tp_tuple_types : (string * typ) list;
+}
+
+(* Elaborate Ast.expr → texpr.  Each typed node carries the result of
+   `type_of` in `.ty`, so codegen never has to re-run typing.  Validation
+   (already done by the time we reach elab_expr from elab_body / external
+   callers) is invariant — we still call type_of internally to produce the
+   ty field; on an already-validated tree it succeeds without raising. *)
+let rec elab_expr ?(allow_void = false) ctx env e : texpr =
+  let ty = type_of ~allow_void ctx env e in
+  let pos = Ast.expr_pos e in
+  let node : texpr_node =
+    match e with
+    | Ast.IntLit (n, _) -> TIntLit n
+    | Ast.BoolLit (b, _) -> TBoolLit b
+    | Ast.NullLit _ -> TNullLit
+    | Ast.StringLit (s, _) -> TStringLit s
+    | Ast.Var (n, _) -> TVar n
+    | Ast.Neg (sub, _) -> TNeg (elab_expr ctx env sub)
+    | Ast.BinOp (op, l, r, _) ->
+        TBinOp (op, elab_expr ctx env l, elab_expr ctx env r)
+    | Ast.Cast (sub, ann, _) -> TCast (elab_expr ctx env sub, ann)
+    | Ast.TupleLit (es, _) -> TTupleLit (List.map (elab_expr ctx env) es)
+    | Ast.StructLit { tname; fields; base; _ } ->
+        let s =
+          match lookup_struct ctx tname with
+          | Some s -> s
+          | None -> assert false   (* validated upstream *)
+        in
+        TStructLit {
+          sname_path = s.sname_path;
+          fields = List.map (fun (n, fe) -> (n, elab_expr ctx env fe)) fields;
+          base = Option.map (elab_expr ctx env) base;
+        }
+    | Ast.New { tname; fields; base; _ } ->
+        let s =
+          match lookup_struct ctx tname with
+          | Some s -> s
+          | None -> assert false
+        in
+        TNew {
+          sname_path = s.sname_path;
+          fields = List.map (fun (n, fe) -> (n, elab_expr ctx env fe)) fields;
+          base = Option.map (elab_expr ctx env) base;
+        }
+    | Ast.FieldAccess (target, field, _) ->
+        TFieldAccess { target = elab_expr ctx env target; field }
+    | Ast.Ref (sub, _) -> TRef (elab_expr ctx env sub)
+    | Ast.Deref (sub, _) -> TDeref (elab_expr ctx env sub)
+    | Ast.Call (path, args, _) ->
+        let targs = List.map (elab_expr ctx env) args in
+        (match lookup_builtin path with
+         | Some _ ->
+             let name = match path with [n] -> n | _ -> assert false in
+             TBuiltinCall { name; args = targs }
+         | None ->
+             let mangled =
+               match lookup_fn ctx path with
+               | Some (_, s) -> s.mangled
+               | None -> assert false   (* validated upstream *)
+             in
+             TCall { mangled; args = targs })
+  in
+  { e = node; ty; pos }
+
+(* Single-walk variant of the old `collect_lets`: it both validates the
+   body (mirroring the per-stmt type checks that lived there) and produces
+   the elaborated `tstmt list`, alongside the hoisted let-decl list
+   that the function-top declarations need.  Replaces `collect_lets` —
+   `check_program` calls this once per function. *)
+let elab_body ctx param_env stmts : (string * typ) list * tstmt list =
   let decls = ref [] in
   let add_decl name t pos =
     check_c_ident pos "variable" name;
@@ -505,9 +638,16 @@ let collect_lets ctx param_env stmts =
     decls := (name, t) :: !decls
   in
   let rec walk env = function
-    | [] -> env
-    | Ast.Let { name; value; ty_ann; pos } :: rest ->
-        let t_inferred = type_of ctx env value in
+    | [] -> (env, [])
+    | s :: rest ->
+        let (env', ts) = walk_stmt env s in
+        let (final_env, rest_ts) = walk env' rest in
+        (final_env, ts :: rest_ts)
+  and walk_stmt env stmt : (string * typ) list * tstmt =
+    match stmt with
+    | Ast.Let { name; value; ty_ann; pos } ->
+        let tvalue = elab_expr ctx env value in
+        let t_inferred = tvalue.ty in
         let t_actual =
           match ty_ann with
           | None ->
@@ -535,16 +675,16 @@ let collect_lets ctx param_env stmts =
                        name (typ_name t_ann) (typ_name t_inferred))
         in
         add_decl name t_actual pos;
-        walk ((name, t_actual) :: env) rest
-    | Ast.LetTuple { names; value; pos } :: rest ->
-        let t = type_of ctx env value in
+        ((name, t_actual) :: env, TLet { name; value = tvalue; pos })
+    | Ast.LetTuple { names; value; pos } ->
+        let tvalue = elab_expr ctx env value in
         let elem_tys =
-          match t with
+          match tvalue.ty with
           | TTuple ts -> ts
-          | _ ->
+          | other ->
               Error.failf pos
                 "destructuring 'let (...)' expects a tuple value, got %s"
-                (typ_name t)
+                (typ_name other)
         in
         let n_names = List.length names in
         let n_elems = List.length elem_tys in
@@ -557,23 +697,24 @@ let collect_lets ctx param_env stmts =
          | Some n -> Error.failf pos "duplicate name '%s' in 'let (...)'" n
          | None -> ());
         List.iter (fun (n, ty) -> add_decl n ty pos) pairs;
-        walk (List.rev_append pairs env) rest
-    | Ast.Assign { name; value; pos } :: rest ->
+        (List.rev_append pairs env,
+         TLetTuple { names; value = tvalue; pos })
+    | Ast.Assign { name; value; pos } ->
         if not (List.mem_assoc name env) then
           Error.failf pos "assignment to undefined variable '%s'" name;
-        let _ = type_of ctx env value in
-        walk env rest
-    | Ast.AssignField { target; field; value; pos } :: rest ->
-        let tt = type_of ctx env target in
+        let tvalue = elab_expr ctx env value in
+        (env, TAssign { name; value = tvalue; pos })
+    | Ast.AssignField { target; field; value; pos } ->
+        let ttarget = elab_expr ctx env target in
         let path =
-          match tt with
+          match ttarget.ty with
           | TStruct p -> p
-          | TPtr (TStruct p) -> p   (* auto-deref pointer-to-struct LHS *)
-          | _ ->
+          | TPtr (TStruct p) -> p
+          | other ->
               Error.failf pos
                 "assignment to field '.%s' requires a struct value or \
                  pointer to struct, got %s"
-                field (typ_name tt)
+                field (typ_name other)
         in
         let s =
           match lookup_struct ctx path with
@@ -589,52 +730,53 @@ let collect_lets ctx param_env stmts =
               Error.failf pos "struct '%s' has no field '%s'"
                 (String.concat "::" path) field
         in
-        let act = type_of ctx env value in
-        if not (typ_eq act fty) && not (int_lit_fits value fty) then
+        let tvalue = elab_expr ctx env value in
+        if not (typ_eq tvalue.ty fty) && not (int_lit_fits value fty) then
           Error.failf pos
             "field '%s' of struct '%s': expected %s, got %s"
-            field (String.concat "::" path) (typ_name fty) (typ_name act);
-        walk env rest
-    | Ast.AssignDeref { target; value; pos } :: rest ->
-        let tt = type_of ctx env target in
+            field (String.concat "::" path) (typ_name fty)
+            (typ_name tvalue.ty);
+        (env, TAssignField { target = ttarget; field;
+                                  value = tvalue; pos })
+    | Ast.AssignDeref { target; value; pos } ->
+        let ttarget = elab_expr ctx env target in
         let inner =
-          match tt with
+          match ttarget.ty with
           | TPtr t -> t
-          | _ ->
+          | other ->
               Error.failf pos
                 "assignment through '*' requires a pointer, got %s"
-                (typ_name tt)
+                (typ_name other)
         in
-        let act = type_of ctx env value in
-        if not (typ_eq act inner) && not (int_lit_fits value inner) then
+        let tvalue = elab_expr ctx env value in
+        if not (typ_eq tvalue.ty inner) && not (int_lit_fits value inner) then
           Error.failf pos
             "deref assignment: expected %s, got %s"
-            (typ_name inner) (typ_name act);
-        walk env rest
-    | Ast.Return (e, _) :: rest ->
-        let _ = type_of ctx env e in
-        walk env rest
-    | Ast.ExprStmt e :: rest ->
-        (* ExprStmt discards the result, so void calls are allowed here. *)
-        let _ = type_of ~allow_void:true ctx env e in
-        walk env rest
-    | Ast.If { cond; then_body; else_body } :: rest ->
-        let _ = type_of ctx env cond in
-        let _ = walk env then_body in
-        let _ = walk env else_body in
-        walk (param_env @ List.rev !decls) rest
-    | Ast.While { cond; body } :: rest ->
-        let _ = type_of ctx env cond in
-        let _ = walk env body in
-        walk (param_env @ List.rev !decls) rest
-    | Ast.Defer { body; _ } :: rest ->
-        (* Defer body type-checks like the surrounding scope's stmts but
-           introduces no new env bindings to the caller. *)
-        let _ = walk env body in
-        walk env rest
+            (typ_name inner) (typ_name tvalue.ty);
+        (env, TAssignDeref { target = ttarget; value = tvalue; pos })
+    | Ast.Return (e, pos) ->
+        let tvalue = elab_expr ctx env e in
+        (env, TReturn { value = tvalue; pos })
+    | Ast.ExprStmt e ->
+        let tvalue = elab_expr ~allow_void:true ctx env e in
+        (env, TExprStmt tvalue)
+    | Ast.If { cond; then_body; else_body } ->
+        let tcond = elab_expr ctx env cond in
+        let (_, t_then) = walk env then_body in
+        let (_, t_else) = walk env else_body in
+        (param_env @ List.rev !decls,
+         TIf { cond = tcond; then_body = t_then; else_body = t_else })
+    | Ast.While { cond; body } ->
+        let tcond = elab_expr ctx env cond in
+        let (_, tbody) = walk env body in
+        (param_env @ List.rev !decls,
+         TWhile { cond = tcond; body = tbody })
+    | Ast.Defer { body; pos } ->
+        let (_, tbody) = walk env body in
+        (env, TDefer { body = tbody; pos })
   in
-  let _ = walk param_env stmts in
-  List.rev !decls
+  let (_, tstmts) = walk param_env stmts in
+  (List.rev !decls, tstmts)
 
 (* Result of one walk over the program tree: every function (with its
    absolute module path and mangled C name), every struct, and every
@@ -698,11 +840,11 @@ let build_struct_index struct_flat =
         sis_pub = s.sis_pub })
     struct_flat
 
-(* Walk every function body looking for tuple types in use.  We collect
-   them deduplicated by mangled name; codegen later emits one C struct per
-   unique tuple shape.  Sources of tuples: fn signatures (ret_ty, params)
-   and any `TupleLit` expression in code (typed via `type_of`). *)
-let collect_tuple_types flat global structs modules =
+(* Walk a typed function body looking for tuple types in use, deduplicating
+   by mangled name; codegen later emits one C struct per unique shape.
+   Reads the `.ty` field on each typed expression — no `type_of` dispatch
+   needed. *)
+let collect_tuple_types_of tfuncs =
   let seen = ref [] in
   let add t =
     let name = mangle_typ t in
@@ -715,114 +857,79 @@ let collect_tuple_types flat global structs modules =
     | _ -> ()
   in
   let walk_typ_ann ann = walk_typ (type_of_ann ann) in
-  let rec walk_expr ctx env e =
-    (match e with
-     | Ast.TupleLit (es, _) ->
-         walk_typ (type_of ctx env e);
-         List.iter (walk_expr ctx env) es
-     | Ast.StructLit { fields; _ } ->
-         List.iter (fun (_, fe) -> walk_expr ctx env fe) fields
-     | Ast.FieldAccess (target, _, _) -> walk_expr ctx env target
-     | Ast.Ref (sub, _) | Ast.Deref (sub, _) -> walk_expr ctx env sub
-     | Ast.Cast (sub, _, _) -> walk_expr ctx env sub
-     | Ast.Neg (sub, _) -> walk_expr ctx env sub
-     | Ast.BinOp (_, l, r, _) -> walk_expr ctx env l; walk_expr ctx env r
-     | Ast.Call (_, args, _) -> List.iter (walk_expr ctx env) args
-     | _ -> ())
+  let rec walk_texpr (te : texpr) =
+    walk_typ te.ty;
+    match te.e with
+    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _ -> ()
+    | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> walk_texpr sub
+    | TBinOp (_, l, r) -> walk_texpr l; walk_texpr r
+    | TCall { args; _ } | TBuiltinCall { args; _ } -> List.iter walk_texpr args
+    | TTupleLit es -> List.iter walk_texpr es
+    | TStructLit { fields; base; _ } | TNew { fields; base; _ } ->
+        List.iter (fun (_, fe) -> walk_texpr fe) fields;
+        Option.iter walk_texpr base
+    | TFieldAccess { target; _ } -> walk_texpr target
   in
-  let rec walk_stmt ctx env = function
-    | Ast.Let { value; _ } -> walk_expr ctx env value
-    | Ast.LetTuple { value; _ } -> walk_expr ctx env value
-    | Ast.Assign { value; _ } -> walk_expr ctx env value
-    | Ast.AssignField { target; value; _ } ->
-        walk_expr ctx env target; walk_expr ctx env value
-    | Ast.AssignDeref { target; value; _ } ->
-        walk_expr ctx env target; walk_expr ctx env value
-    | Ast.Return (e, _) -> walk_expr ctx env e
-    | Ast.ExprStmt e -> walk_expr ctx env e
-    | Ast.If { cond; then_body; else_body } ->
-        walk_expr ctx env cond;
-        List.iter (walk_stmt ctx env) then_body;
-        List.iter (walk_stmt ctx env) else_body
-    | Ast.While { cond; body } ->
-        walk_expr ctx env cond;
-        List.iter (walk_stmt ctx env) body
-    | Ast.Defer { body; _ } ->
-        List.iter (walk_stmt ctx env) body
+  let rec walk_tstmt = function
+    | TLet { value; _ } | TLetTuple { value; _ }
+    | TAssign { value; _ } | TReturn { value; _ }
+    | TExprStmt value -> walk_texpr value
+    | TAssignField { target; value; _ }
+    | TAssignDeref { target; value; _ } ->
+        walk_texpr target; walk_texpr value
+    | TIf { cond; then_body; else_body } ->
+        walk_texpr cond;
+        List.iter walk_tstmt then_body;
+        List.iter walk_tstmt else_body
+    | TWhile { cond; body } ->
+        walk_texpr cond; List.iter walk_tstmt body
+    | TDefer { body; _ } -> List.iter walk_tstmt body
   in
   List.iter
-    (fun (path, (f : Ast.func), _) ->
-      Option.iter walk_typ_ann f.ret_ty;
-      List.iter (fun (p : Ast.param) -> walk_typ_ann p.pty) f.params;
-      let ctx = { global; structs; modules; scope = path } in
-      let param_env =
-        List.map (fun (p : Ast.param) ->
-          (p.pname, type_of_ann p.pty)) f.params
-      in
-      let lets = collect_lets ctx param_env f.body in
-      let env = param_env @ lets in
-      List.iter (walk_stmt ctx env) f.body)
-    flat;
+    (fun tf ->
+      Option.iter walk_typ_ann tf.tf_func.Ast.ret_ty;
+      List.iter (fun (p : Ast.param) -> walk_typ_ann p.pty) tf.tf_func.params;
+      List.iter walk_tstmt tf.tf_body)
+    tfuncs;
   List.rev !seen
 
-(* Detect any heap usage in the program — `new ...` expressions or `free(p)`
-   calls — so codegen can conditionally include `<stdlib.h>` for malloc/free. *)
-let uses_heap flat =
-  let rec walk_expr = function
-    | Ast.New _ -> true
-    | Ast.Call (["free"], _, _) -> true
-    | Ast.Ref (e, _) | Ast.Deref (e, _) | Ast.Cast (e, _, _) | Ast.Neg (e, _) ->
-        walk_expr e
-    | Ast.BinOp (_, l, r, _) -> walk_expr l || walk_expr r
-    | Ast.Call (_, args, _) -> List.exists walk_expr args
-    | Ast.TupleLit (es, _) -> List.exists walk_expr es
-    | Ast.StructLit { fields; _ } ->
-        List.exists (fun (_, e) -> walk_expr e) fields
-    | Ast.FieldAccess (target, _, _) -> walk_expr target
-    | _ -> false
+(* Detect heap usage by scanning the typed bodies for `TNew` expressions or
+   builtin `free(p)` calls — both are emitted in C only when one of them is
+   present, so codegen can conditionally include `<stdlib.h>`. *)
+let uses_heap_of tfuncs =
+  let rec walk_texpr (te : texpr) =
+    match te.e with
+    | TNew _ -> true
+    | TBuiltinCall { name = "free"; _ } -> true
+    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _ -> false
+    | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> walk_texpr sub
+    | TBinOp (_, l, r) -> walk_texpr l || walk_texpr r
+    | TCall { args; _ } | TBuiltinCall { args; _ } ->
+        List.exists walk_texpr args
+    | TTupleLit es -> List.exists walk_texpr es
+    | TStructLit { fields; base; _ } ->
+        List.exists (fun (_, fe) -> walk_texpr fe) fields
+        || (match base with Some b -> walk_texpr b | None -> false)
+    | TFieldAccess { target; _ } -> walk_texpr target
   in
-  let rec walk_stmt = function
-    | Ast.Let { value; _ } | Ast.LetTuple { value; _ }
-    | Ast.Assign { value; _ } | Ast.Return (value, _)
-    | Ast.ExprStmt value -> walk_expr value
-    | Ast.AssignField { target; value; _ }
-    | Ast.AssignDeref { target; value; _ } ->
-        walk_expr target || walk_expr value
-    | Ast.If { cond; then_body; else_body } ->
-        walk_expr cond
-        || List.exists walk_stmt then_body
-        || List.exists walk_stmt else_body
-    | Ast.While { cond; body } ->
-        walk_expr cond || List.exists walk_stmt body
-    | Ast.Defer { body; _ } -> List.exists walk_stmt body
+  let rec walk_tstmt = function
+    | TLet { value; _ } | TLetTuple { value; _ }
+    | TAssign { value; _ } | TReturn { value; _ }
+    | TExprStmt value -> walk_texpr value
+    | TAssignField { target; value; _ }
+    | TAssignDeref { target; value; _ } ->
+        walk_texpr target || walk_texpr value
+    | TIf { cond; then_body; else_body } ->
+        walk_texpr cond
+        || List.exists walk_tstmt then_body
+        || List.exists walk_tstmt else_body
+    | TWhile { cond; body } ->
+        walk_texpr cond || List.exists walk_tstmt body
+    | TDefer { body; _ } -> List.exists walk_tstmt body
   in
-  List.exists
-    (fun (_, (f : Ast.func), _) -> List.exists walk_stmt f.body)
-    flat
+  List.exists (fun tf -> List.exists walk_tstmt tf.tf_body) tfuncs
 
-(* Result of one validation pass over the whole program.  Codegen consumes
-   this without re-running validation: typecheck guarantees that every
-   function's body has been type-checked, every let has a recorded type
-   for hoisting, and the struct/module/global indexes are ready for
-   resolution. *)
-type checked_func = {
-  cf_path : string list;
-  cf_func : Ast.func;
-  cf_mangled : string;
-  cf_lets : (string * typ) list;
-}
-
-type checked_program = {
-  cp_funcs : checked_func list;
-  cp_struct_decls : (string list * Ast.struct_decl) list;
-  cp_struct_index : struct_sig list;
-  cp_global : (string list * string * fn_sig) list;
-  cp_modules : (string list * bool) list;
-  cp_uses_heap : bool;
-  cp_tuple_types : (string * typ) list;
-}
-
-let check_program program =
+let check_program program : tprogram =
   let flat = flatten_items program in
   (* main() must be at top level, not inside a module. *)
   List.iter
@@ -840,7 +947,7 @@ let check_program program =
     flat.funcs;
   (* Param names are emitted unprefixed in C parameter lists, so they
      also need the keyword check.  (Local lets are checked inside
-     collect_lets.) *)
+     elab_body.) *)
   List.iter
     (fun (_, (f : Ast.func), _) ->
       List.iter
@@ -850,10 +957,10 @@ let check_program program =
   let global = build_global_index flat.funcs in
   let struct_index = build_struct_index flat.structs in
   let modules = flat.modules in
-  (* Per-fn validation: collect_lets type-checks the body and returns the
-     hoisted let-decl list.  Codegen will use cf_lets directly without
-     repeating the walk. *)
-  let cp_funcs =
+  (* Per-fn elaboration: a single walk validates and produces both the
+     hoisted let-decl list and the typed body.  Codegen reads tf_lets and
+     tf_body directly. *)
+  let tp_funcs =
     List.map
       (fun (path, (f : Ast.func), mangled) ->
         let ctx = { global; structs = struct_index; modules; scope = path } in
@@ -861,18 +968,17 @@ let check_program program =
           List.map (fun (p : Ast.param) -> (p.pname, type_of_ann p.pty))
             f.params
         in
-        let lets = collect_lets ctx param_env f.body in
-        { cf_path = path; cf_func = f; cf_mangled = mangled; cf_lets = lets })
+        let (lets, tbody) = elab_body ctx param_env f.body in
+        { tf_path = path; tf_func = f; tf_mangled = mangled;
+          tf_body = tbody; tf_lets = lets })
       flat.funcs
   in
-  let cp_tuple_types =
-    collect_tuple_types flat.funcs global struct_index modules
-  in
-  let cp_uses_heap = uses_heap flat.funcs in
-  { cp_funcs;
-    cp_struct_decls = flat.structs;
-    cp_struct_index = struct_index;
-    cp_global = global;
-    cp_modules = modules;
-    cp_uses_heap;
-    cp_tuple_types }
+  let tp_tuple_types = collect_tuple_types_of tp_funcs in
+  let tp_uses_heap = uses_heap_of tp_funcs in
+  { tp_funcs;
+    tp_struct_decls = flat.structs;
+    tp_struct_index = struct_index;
+    tp_global = global;
+    tp_modules = modules;
+    tp_uses_heap;
+    tp_tuple_types }

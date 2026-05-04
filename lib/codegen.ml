@@ -1,6 +1,6 @@
-(* C89 emission.  Consumes the typed view exposed by Typecheck — every
-   type, lookup, and validation lives there.  This module owns only the
-   shape of the emitted text. *)
+(* C89 emission.  Consumes the typed view (`tprogram`) exposed by Typecheck:
+   every expression carries its computed type in `.ty`, so this module only
+   pattern-matches on shape and emits — it does not reconstruct types. *)
 
 open Typecheck
 
@@ -18,15 +18,15 @@ let emit_ann buf indent (pos : Pos.t) =
       (Printf.sprintf "/* %s:%d:%d */\n" pos.file pos.line pos.col)
   end
 
-let stmt_pos = function
-  | Ast.Let { pos; _ } | Ast.LetTuple { pos; _ }
-  | Ast.Assign { pos; _ } | Ast.AssignField { pos; _ }
-  | Ast.AssignDeref { pos; _ } | Ast.Defer { pos; _ } -> pos
-  | Ast.Return (_, pos) -> pos
-  | Ast.ExprStmt e -> Ast.expr_pos e
-  | Ast.If { cond; _ } | Ast.While { cond; _ } -> Ast.expr_pos cond
+let tstmt_pos = function
+  | TLet { pos; _ } | TLetTuple { pos; _ }
+  | TAssign { pos; _ } | TAssignField { pos; _ }
+  | TAssignDeref { pos; _ } | TDefer { pos; _ }
+  | TReturn { pos; _ } -> pos
+  | TExprStmt te -> te.pos
+  | TIf { cond; _ } | TWhile { cond; _ } -> cond.pos
 
-let emit_stmt_ann buf indent stmt = emit_ann buf indent (stmt_pos stmt)
+let emit_tstmt_ann buf indent stmt = emit_ann buf indent (tstmt_pos stmt)
 
 let add_separated buf sep f xs =
   List.iteri
@@ -89,22 +89,21 @@ let c_decl t name = c_type_prefix t ^ name
 
 let c_param p = c_decl (type_of_ann p.Ast.pty) p.Ast.pname
 
-(* Builtin emitters keyed by name.  Typecheck owns the bcheck side; this
-   table covers only emission.  Adding a new builtin means a typecheck-side
-   `builtin_sig` plus an emitter here. *)
+(* Builtin emitters keyed by name.  Codegen-side companion to the typecheck
+   `builtin_sig.bcheck` table.  Adding a new builtin needs an entry in both. *)
 type builtin_emit =
-  Buffer.t -> typ list -> Ast.expr list -> (Ast.expr -> unit) -> unit
+  Buffer.t -> texpr list -> (texpr -> unit) -> unit
 
 let emit_print : builtin_emit =
-  fun buf arg_tys args emit_arg ->
+  fun buf args emit_arg ->
     (* Varargs promote i8/i16 to int, so `%d`/`%u` cover them with no cast.
        i32/u32 are emitted as `long`/`unsigned long` (for cross-C-compiler
        width stability) and need `%ld`/`%lu`.  Because `printf` is variadic
        it does not auto-promote `int` to `long` — an int literal like `0`
        passed under `%ld` is ill-formed under `-Wformat`.  We force the
        cast on the call site. *)
-    let arg_ty = List.hd arg_tys in
-    let fmt = match arg_ty with
+    let arg = List.hd args in
+    let fmt = match arg.ty with
       | TBool -> "\"%d\\n\""
       | TInt { signed = true; width = Ast.W32 } -> "\"%ld\\n\""
       | TInt { signed = false; width = Ast.W32 } -> "\"%lu\\n\""
@@ -115,7 +114,7 @@ let emit_print : builtin_emit =
           assert false  (* typecheck rejected this earlier *)
     in
     let cast =
-      match arg_ty with
+      match arg.ty with
       | TInt { signed = true; width = Ast.W32 } -> Some "(long)"
       | TInt { signed = false; width = Ast.W32 } -> Some "(unsigned long)"
       | _ -> None
@@ -127,13 +126,13 @@ let emit_print : builtin_emit =
      | Some c ->
          Buffer.add_string buf c;
          Buffer.add_char buf '(';
-         emit_arg (List.hd args);
+         emit_arg arg;
          Buffer.add_char buf ')'
-     | None -> emit_arg (List.hd args));
+     | None -> emit_arg arg);
     Buffer.add_char buf ')'
 
 let emit_free : builtin_emit =
-  fun buf _arg_tys args emit_arg ->
+  fun buf args emit_arg ->
     Buffer.add_string buf "free(";
     emit_arg (List.hd args);
     Buffer.add_char buf ')'
@@ -143,9 +142,7 @@ let builtin_emitters : (string * builtin_emit) list = [
   ("free", emit_free);
 ]
 
-let lookup_builtin_emit = function
-  | [ name ] -> List.assoc_opt name builtin_emitters
-  | _ -> None
+let lookup_builtin_emit name = List.assoc_opt name builtin_emitters
 
 let prec = function
   | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> 0
@@ -155,11 +152,10 @@ let prec = function
 (* Forms that don't need parens after a unary `&`/`*` prefix because they
    already bind tighter than (or equal to) the prefix. *)
 let lvalue_like = function
-  | Ast.Var _ | Ast.FieldAccess _ | Ast.Deref _ -> true
+  | TVar _ | TFieldAccess _ | TDeref _ -> true
   | _ -> false
 
-(* `<indent><lhs> = <rhs>;\n` — captures the four-line pattern that
-   peppers emit_value_into_temp and the assignment statements. *)
+(* `<indent><lhs> = <rhs>;\n` — captures the assignment-line pattern. *)
 let emit_assign_line buf indent ~lhs ~emit_rhs =
   Buffer.add_string buf indent;
   Buffer.add_string buf lhs;
@@ -167,26 +163,27 @@ let emit_assign_line buf indent ~lhs ~emit_rhs =
   emit_rhs ();
   Buffer.add_string buf ";\n"
 
-let rec gen_expr buf ctx env = function
-  | Ast.IntLit (n, _) -> Buffer.add_string buf (string_of_int n)
-  | Ast.BoolLit (b, _) -> Buffer.add_string buf (if b then "1" else "0")
-  | Ast.NullLit _ -> Buffer.add_string buf "((void *)0)"
-  | Ast.StringLit (s, _) ->
+let rec gen_expr buf (te : texpr) =
+  match te.e with
+  | TIntLit n -> Buffer.add_string buf (string_of_int n)
+  | TBoolLit b -> Buffer.add_string buf (if b then "1" else "0")
+  | TNullLit -> Buffer.add_string buf "((void *)0)"
+  | TStringLit s ->
       Buffer.add_char buf '"';
       Buffer.add_string buf (escape_c s);
       Buffer.add_char buf '"'
-  | Ast.Var (name, _) -> Buffer.add_string buf name
-  | Ast.Neg (e, _) ->
-      emit_unary buf ctx env '-' e
-        ~simple:(function Ast.IntLit _ | Ast.Var _ -> true | _ -> false)
-  | Ast.Cast (e, ann, _) ->
+  | TVar name -> Buffer.add_string buf name
+  | TNeg sub ->
+      emit_unary buf '-' sub
+        ~simple:(function TIntLit _ | TVar _ -> true | _ -> false)
+  | TCast (sub, ann) ->
       let trimmed = strip_trailing_space (c_type_prefix (type_of_ann ann)) in
       Buffer.add_string buf "((";
       Buffer.add_string buf trimmed;
       Buffer.add_string buf ")";
-      gen_expr buf ctx env e;
+      gen_expr buf sub;
       Buffer.add_char buf ')'
-  | Ast.BinOp (op, l, r, _) ->
+  | TBinOp (op, l, r) ->
       let op_str =
         match op with
         | Ast.Add -> " + " | Ast.Sub -> " - "
@@ -196,96 +193,82 @@ let rec gen_expr buf ctx env = function
         | Ast.EqEq -> " == " | Ast.NotEq -> " != "
       in
       let p = prec op in
-      (match l with
-       | Ast.BinOp (lop, _, _, _) when prec lop < p ->
-           Buffer.add_char buf '('; gen_expr buf ctx env l; Buffer.add_char buf ')'
-       | _ -> gen_expr buf ctx env l);
+      (match l.e with
+       | TBinOp (lop, _, _) when prec lop < p ->
+           Buffer.add_char buf '('; gen_expr buf l; Buffer.add_char buf ')'
+       | _ -> gen_expr buf l);
       Buffer.add_string buf op_str;
-      (match r with
-       | Ast.BinOp (rop, _, _, _)
+      (match r.e with
+       | TBinOp (rop, _, _)
          when prec rop < p || (prec rop = p && (op = Ast.Sub || op = Ast.Div)) ->
-           Buffer.add_char buf '('; gen_expr buf ctx env r; Buffer.add_char buf ')'
-       | _ -> gen_expr buf ctx env r)
-  | Ast.Call (path, args, pos) ->
-      (match lookup_builtin_emit path with
-       | Some emit ->
-           let arg_tys = List.map (type_of ctx env) args in
-           emit buf arg_tys args (fun e -> gen_expr buf ctx env e)
-       | None ->
-           let mangled =
-             match lookup_fn ctx path with
-             | Some (_, s) -> s.mangled
-             | None ->
-                 Error.failf pos "unknown function '%s'" (String.concat "::" path)
-           in
-           Buffer.add_string buf mangled;
-           Buffer.add_char buf '(';
-           add_separated buf ", " (gen_expr buf ctx env) args;
-           Buffer.add_char buf ')')
-  | Ast.TupleLit (_, pos) ->
-      Error.failf pos
+           Buffer.add_char buf '('; gen_expr buf r; Buffer.add_char buf ')'
+       | _ -> gen_expr buf r)
+  | TBuiltinCall { name; args } ->
+      let emit =
+        match lookup_builtin_emit name with
+        | Some emit -> emit
+        | None -> assert false   (* typecheck dispatched a known builtin *)
+      in
+      emit buf args (fun te -> gen_expr buf te)
+  | TCall { mangled; args } ->
+      Buffer.add_string buf mangled;
+      Buffer.add_char buf '(';
+      add_separated buf ", " (gen_expr buf) args;
+      Buffer.add_char buf ')'
+  | TTupleLit _ ->
+      Error.failf te.pos
         "tuple literal cannot be used inline; bind it first with \
          'let t = (...)' (then pass t) or 'let (a, b) = (...)'"
-  | Ast.StructLit { pos; _ } ->
-      Error.failf pos
+  | TStructLit _ ->
+      Error.failf te.pos
         "struct literal can only appear in 'return ...', as the RHS of \
          'let x = ...', or in a field assignment"
-  | Ast.New { pos; _ } ->
-      Error.failf pos
+  | TNew _ ->
+      Error.failf te.pos
         "'new ...' can only appear as the RHS of 'let x = ...' or \
          in 'return ...'"
-  | Ast.FieldAccess (target, fname, _) ->
+  | TFieldAccess { target; field } ->
       (* Auto-deref pointer-to-struct via `->`; otherwise plain `.`. *)
-      let sep =
-        match type_of ctx env target with
-        | TPtr _ -> "->"
-        | _ -> "."
-      in
-      gen_expr buf ctx env target;
+      let sep = match target.ty with TPtr _ -> "->" | _ -> "." in
+      gen_expr buf target;
       Buffer.add_string buf sep;
-      Buffer.add_string buf fname
-  | Ast.Ref (e, _) -> emit_unary buf ctx env '&' e ~simple:lvalue_like
-  | Ast.Deref (e, _) -> emit_unary buf ctx env '*' e ~simple:lvalue_like
+      Buffer.add_string buf field
+  | TRef sub -> emit_unary buf '&' sub ~simple:(fun n -> lvalue_like n)
+  | TDeref sub -> emit_unary buf '*' sub ~simple:(fun n -> lvalue_like n)
 
-and emit_unary buf ctx env prefix ~simple e =
+and emit_unary buf prefix ~simple (te : texpr) =
   Buffer.add_char buf prefix;
-  if simple e then gen_expr buf ctx env e
+  if simple te.e then gen_expr buf te
   else begin
     Buffer.add_char buf '(';
-    gen_expr buf ctx env e;
+    gen_expr buf te;
     Buffer.add_char buf ')'
   end
 
-(* Initialise an already-declared temp from an expression.  Tuple/struct
-   literals become field-by-field assignments; any other RHS uses a single
-   struct- or scalar-assignment (`__t = expr;`).  Brace initializers with
-   non-constant elements are a C99 relaxation that `-ansi -pedantic`
-   rejects, so we always go through declare-then-assign. *)
-and emit_value_into_temp buf ctx env indent temp_name value =
-  let assign ~lhs e =
+(* Initialise an already-declared temp from a typed expression.  Tuple/struct
+   literals become field-by-field assignments; other RHS values use a single
+   struct- or scalar-assignment.  Brace initializers with non-constant
+   elements are a C99 relaxation that `-ansi -pedantic` rejects, so we
+   always go through declare-then-assign. *)
+let rec emit_value_into_temp buf indent temp_name (value : texpr) =
+  let assign ~lhs (e : texpr) =
     emit_assign_line buf indent ~lhs
-      ~emit_rhs:(fun () -> gen_expr buf ctx env e)
+      ~emit_rhs:(fun () -> gen_expr buf e)
   in
-  match value with
-  | Ast.TupleLit (es, _) ->
+  match value.e with
+  | TTupleLit es ->
       List.iteri
         (fun i e -> assign ~lhs:(temp_name ^ "._" ^ string_of_int i) e)
         es
-  | Ast.StructLit { fields; base; _ } ->
+  | TStructLit { fields; base; _ } ->
       (* `..base` (functional update): copy base via struct assignment
          first, then apply explicit field overrides.  C89 supports
          `temp = expr;` for struct-typed values. *)
       Option.iter (assign ~lhs:temp_name) base;
       List.iter (fun (fname, fe) -> assign ~lhs:(temp_name ^ "." ^ fname) fe)
         fields
-  | Ast.New { tname; fields; base; pos } ->
-      let s =
-        match lookup_struct ctx tname with
-        | Some s -> s
-        | None ->
-            Error.failf pos "unknown struct '%s'" (String.concat "::" tname)
-      in
-      let cname = "struct " ^ mangle_typ (TStruct s.sname_path) in
+  | TNew { sname_path; fields; base } ->
+      let cname = "struct " ^ mangle_typ (TStruct sname_path) in
       emit_assign_line buf indent ~lhs:temp_name
         ~emit_rhs:(fun () ->
           Buffer.add_string buf "malloc(sizeof(";
@@ -313,79 +296,72 @@ and emit_value_into_temp buf ctx env indent temp_name value =
 
    A `defer` body is a leaf — it must not contain another `defer` or
    `return`; both are rejected by `emit_simple_stmt`. *)
-let rec emit_simple_stmt buf ctx env indent stmt =
+let rec emit_simple_stmt buf indent stmt =
   match stmt with
-  | Ast.Let { name; value; _ } | Ast.Assign { name; value; _ } ->
-      (* Reuse the temp-init pattern with `name` as the destination — this
-         covers scalars (simple assignment), struct literals (field-by-field),
-         and `new` expressions (malloc + field-by-field via `->`). *)
-      emit_value_into_temp buf ctx env indent name value
-  | Ast.LetTuple { names; value; _ } ->
-      emit_let_tuple buf ctx env indent names value
-  | Ast.AssignField { target; field; value; _ } ->
-      let sep =
-        match type_of ctx env target with
-        | TPtr _ -> "->"
-        | _ -> "."
-      in
+  | TLet { name; value; _ } | TAssign { name; value; _ } ->
+      emit_value_into_temp buf indent name value
+  | TLetTuple { names; value; _ } ->
+      emit_let_tuple buf indent names value
+  | TAssignField { target; field; value; _ } ->
+      let sep = match target.ty with TPtr _ -> "->" | _ -> "." in
       Buffer.add_string buf indent;
-      gen_expr buf ctx env target;
+      gen_expr buf target;
       Buffer.add_string buf sep;
       Buffer.add_string buf field;
       Buffer.add_string buf " = ";
-      gen_expr buf ctx env value;
+      gen_expr buf value;
       Buffer.add_string buf ";\n"
-  | Ast.AssignDeref { target; value; _ } ->
+  | TAssignDeref { target; value; _ } ->
       Buffer.add_string buf indent;
-      emit_unary buf ctx env '*' target
-        ~simple:(function Ast.Var _ | Ast.FieldAccess _ -> true | _ -> false);
+      emit_unary buf '*' target
+        ~simple:(function TVar _ | TFieldAccess _ -> true | _ -> false);
       Buffer.add_string buf " = ";
-      gen_expr buf ctx env value;
+      gen_expr buf value;
       Buffer.add_string buf ";\n"
-  | Ast.ExprStmt e ->
+  | TExprStmt e ->
       Buffer.add_string buf indent;
-      gen_expr buf ctx env e;
+      gen_expr buf e;
       Buffer.add_string buf ";\n"
-  | Ast.If { cond; then_body; else_body } ->
+  | TIf { cond; then_body; else_body } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf "if (";
-      gen_expr buf ctx env cond;
+      gen_expr buf cond;
       Buffer.add_string buf ") {\n";
-      List.iter (emit_simple_stmt buf ctx env (indent ^ "    ")) then_body;
+      List.iter (emit_simple_stmt buf (indent ^ "    ")) then_body;
       Buffer.add_string buf indent;
       Buffer.add_char buf '}';
       (match else_body with
        | [] -> Buffer.add_char buf '\n'
        | _ ->
            Buffer.add_string buf " else {\n";
-           List.iter (emit_simple_stmt buf ctx env (indent ^ "    ")) else_body;
+           List.iter (emit_simple_stmt buf (indent ^ "    ")) else_body;
            Buffer.add_string buf indent;
            Buffer.add_string buf "}\n")
-  | Ast.While { cond; body } ->
+  | TWhile { cond; body } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf "while (";
-      gen_expr buf ctx env cond;
+      gen_expr buf cond;
       Buffer.add_string buf ") {\n";
-      List.iter (emit_simple_stmt buf ctx env (indent ^ "    ")) body;
+      List.iter (emit_simple_stmt buf (indent ^ "    ")) body;
       Buffer.add_string buf indent;
       Buffer.add_string buf "}\n"
-  | Ast.Defer { pos; _ } ->
+  | TDefer { pos; _ } ->
       Error.failf pos "'defer' inside a defer body is not supported"
-  | Ast.Return (_, pos) ->
+  | TReturn { pos; _ } ->
       Error.failf pos "'return' inside a defer body is not supported"
 
 (* Destructuring binding: introduce an inner C block, declare a `__t` temp
    of the tuple struct type, fill it from the RHS, then assign each hoisted
    name from the temp's numbered field. *)
-and emit_let_tuple buf ctx env indent names value =
+and emit_let_tuple buf indent names (value : texpr) =
   let inner = indent ^ "    " in
-  let trimmed = strip_trailing_space (c_type_prefix (type_of ctx env value)) in
+  let trimmed = strip_trailing_space (c_type_prefix value.ty) in
   Buffer.add_string buf indent;
   Buffer.add_string buf "{\n";
   Buffer.add_string buf inner;
   Buffer.add_string buf trimmed;
   Buffer.add_string buf " __t;\n";
-  emit_value_into_temp buf ctx env inner "__t" value;
+  emit_value_into_temp buf inner "__t" value;
   List.iteri
     (fun i name ->
       emit_assign_line buf inner ~lhs:name ~emit_rhs:(fun () ->
@@ -395,91 +371,89 @@ and emit_let_tuple buf ctx env indent names value =
   Buffer.add_string buf indent;
   Buffer.add_string buf "}\n"
 
-let emit_cleanups buf ctx env indent defers =
+let emit_cleanups buf indent defers =
   List.iter
     (fun body ->
-      List.iter (fun s -> emit_simple_stmt buf ctx env indent s) body)
+      List.iter (fun s -> emit_simple_stmt buf indent s) body)
     defers
 
-let rec gen_if buf ctx env indent outer_scopes my_defers
+let rec gen_if buf indent outer_scopes my_defers
     cond then_body else_body =
   Buffer.add_string buf "if (";
-  gen_expr buf ctx env cond;
+  gen_expr buf cond;
   Buffer.add_string buf ") {\n";
-  gen_block buf ctx env (indent ^ "    ")
+  gen_block buf (indent ^ "    ")
     (my_defers :: outer_scopes) then_body;
   Buffer.add_string buf indent;
   Buffer.add_char buf '}';
   (match else_body with
    | [] -> Buffer.add_char buf '\n'
-   | [ Ast.If { cond = ec; then_body = et; else_body = ee } ] ->
+   | [ TIf { cond = ec; then_body = et; else_body = ee } ] ->
        Buffer.add_string buf " else ";
-       gen_if buf ctx env indent outer_scopes my_defers ec et ee
+       gen_if buf indent outer_scopes my_defers ec et ee
    | _ ->
        Buffer.add_string buf " else {\n";
-       gen_block buf ctx env (indent ^ "    ")
+       gen_block buf (indent ^ "    ")
          (my_defers :: outer_scopes) else_body;
        Buffer.add_string buf indent;
        Buffer.add_string buf "}\n")
 
-and gen_block buf ctx env indent outer_scopes stmts =
+and gen_block buf indent outer_scopes stmts =
   let rec loop my_defers = function
     | [] ->
-        emit_cleanups buf ctx env indent my_defers
-    | (Ast.Defer { body; _ } as s) :: rest ->
-        emit_stmt_ann buf indent s;
+        emit_cleanups buf indent my_defers
+    | (TDefer { body; _ } as s) :: rest ->
+        emit_tstmt_ann buf indent s;
         loop (body :: my_defers) rest
-    | (Ast.Return (e, _) as s) :: _ ->
-        emit_stmt_ann buf indent s;
+    | (TReturn { value; _ } as s) :: _ ->
+        emit_tstmt_ann buf indent s;
         let all = List.flatten (my_defers :: outer_scopes) in
         let needs_block =
           all <> [] ||
-          (match e with
-           | Ast.TupleLit _ | Ast.StructLit _ | Ast.New _ -> true
+          (match value.e with
+           | TTupleLit _ | TStructLit _ | TNew _ -> true
            | _ -> false)
         in
         if not needs_block then begin
           Buffer.add_string buf indent;
           Buffer.add_string buf "return ";
-          gen_expr buf ctx env e;
+          gen_expr buf value;
           Buffer.add_string buf ";\n"
         end else begin
-          let trimmed =
-            strip_trailing_space (c_type_prefix (type_of ctx env e))
-          in
+          let trimmed = strip_trailing_space (c_type_prefix value.ty) in
           Buffer.add_string buf indent;
           Buffer.add_string buf "{\n";
           Buffer.add_string buf (indent ^ "    ");
           Buffer.add_string buf trimmed;
           Buffer.add_string buf " __exile_ret;\n";
-          emit_value_into_temp buf ctx env (indent ^ "    ") "__exile_ret" e;
-          emit_cleanups buf ctx env (indent ^ "    ") all;
+          emit_value_into_temp buf (indent ^ "    ") "__exile_ret" value;
+          emit_cleanups buf (indent ^ "    ") all;
           Buffer.add_string buf (indent ^ "    ");
           Buffer.add_string buf "return __exile_ret;\n";
           Buffer.add_string buf indent;
           Buffer.add_string buf "}\n"
         end
-    | (Ast.Let _ | Ast.Assign _ | Ast.AssignField _ | Ast.AssignDeref _ | Ast.ExprStmt _) as s :: rest ->
-        emit_stmt_ann buf indent s;
-        emit_simple_stmt buf ctx env indent s;
+    | (TLet _ | TAssign _ | TAssignField _ | TAssignDeref _ | TExprStmt _) as s :: rest ->
+        emit_tstmt_ann buf indent s;
+        emit_simple_stmt buf indent s;
         loop my_defers rest
-    | (Ast.LetTuple { names; value; _ } as s) :: rest ->
-        emit_stmt_ann buf indent s;
-        emit_let_tuple buf ctx env indent names value;
+    | (TLetTuple { names; value; _ } as s) :: rest ->
+        emit_tstmt_ann buf indent s;
+        emit_let_tuple buf indent names value;
         loop my_defers rest
-    | (Ast.If { cond; then_body; else_body } as s) :: rest ->
-        emit_stmt_ann buf indent s;
+    | (TIf { cond; then_body; else_body } as s) :: rest ->
+        emit_tstmt_ann buf indent s;
         Buffer.add_string buf indent;
-        gen_if buf ctx env indent outer_scopes my_defers
+        gen_if buf indent outer_scopes my_defers
           cond then_body else_body;
         loop my_defers rest
-    | (Ast.While { cond; body } as s) :: rest ->
-        emit_stmt_ann buf indent s;
+    | (TWhile { cond; body } as s) :: rest ->
+        emit_tstmt_ann buf indent s;
         Buffer.add_string buf indent;
         Buffer.add_string buf "while (";
-        gen_expr buf ctx env cond;
+        gen_expr buf cond;
         Buffer.add_string buf ") {\n";
-        gen_block buf ctx env (indent ^ "    ")
+        gen_block buf (indent ^ "    ")
           (my_defers :: outer_scopes) body;
         Buffer.add_string buf indent;
         Buffer.add_string buf "}\n";
@@ -511,23 +485,18 @@ let emit_fn_sig buf (f : Ast.func) mangled =
     Buffer.add_char buf ')'
   end
 
-(* Emit one already-validated function.  cf carries the resolved metadata
-   (path, mangled name, hoisted lets) computed by Typecheck.check_program;
-   ctx is built from the program-wide indexes. *)
-let gen_function buf ctx (cf : checked_func) =
-  let f = cf.cf_func in
+(* Emit one already-elaborated function.  tf carries the typed body, the
+   resolved C name, and the hoisted let-decl list. *)
+let gen_function buf (tf : tfunc) =
+  let f = tf.tf_func in
   emit_ann buf "" f.pos;
-  emit_fn_sig buf f cf.cf_mangled;
+  emit_fn_sig buf f tf.tf_mangled;
   Buffer.add_string buf " {\n";
-  let param_env =
-    List.map (fun p -> (p.Ast.pname, type_of_ann p.Ast.pty)) f.params
-  in
-  let full_env = param_env @ cf.cf_lets in
   List.iter
     (fun (name, t) ->
       Buffer.add_string buf (Printf.sprintf "    %s;\n" (c_decl t name)))
-    cf.cf_lets;
-  gen_block buf ctx full_env "    " [] f.body;
+    tf.tf_lets;
+  gen_block buf "    " [] tf.tf_body;
   if f.name = "main" then Buffer.add_string buf "    return 0;\n";
   Buffer.add_string buf "}\n"
 
@@ -557,45 +526,39 @@ let emit_tuple_struct buf (_, t) =
       emit_struct_decl buf (tuple_struct_name ts) fields
   | _ -> ()
 
-let gen_program ?(annotate = false) (cp : checked_program) =
+let gen_program ?(annotate = false) (tp : tprogram) =
   annotate_mode := annotate;
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
-  if cp.cp_uses_heap then
+  if tp.tp_uses_heap then
     Buffer.add_string buf "#include <stdlib.h>\n";
   (* Named structs first, in source order — typically their fields refer
      to types declared earlier.  Tuple structs after, so any tuple whose
      elements include a named struct type sees it complete. *)
-  if cp.cp_struct_decls <> [] then begin
+  if tp.tp_struct_decls <> [] then begin
     Buffer.add_char buf '\n';
-    List.iter (emit_named_struct buf) cp.cp_struct_decls
+    List.iter (emit_named_struct buf) tp.tp_struct_decls
   end;
-  if cp.cp_tuple_types <> [] then begin
+  if tp.tp_tuple_types <> [] then begin
     Buffer.add_char buf '\n';
-    List.iter (emit_tuple_struct buf) cp.cp_tuple_types
+    List.iter (emit_tuple_struct buf) tp.tp_tuple_types
   end;
   let non_main =
-    List.filter (fun cf -> cf.cf_func.Ast.name <> "main") cp.cp_funcs
+    List.filter (fun tf -> tf.tf_func.Ast.name <> "main") tp.tp_funcs
   in
   if non_main <> [] then begin
     Buffer.add_char buf '\n';
     List.iter
-      (fun cf ->
-        emit_fn_sig buf cf.cf_func cf.cf_mangled;
+      (fun tf ->
+        emit_fn_sig buf tf.tf_func tf.tf_mangled;
         Buffer.add_string buf ";\n")
       non_main
   end;
   Buffer.add_char buf '\n';
-  let last = List.length cp.cp_funcs - 1 in
+  let last = List.length tp.tp_funcs - 1 in
   List.iteri
-    (fun i cf ->
-      let ctx = {
-        global = cp.cp_global;
-        structs = cp.cp_struct_index;
-        modules = cp.cp_modules;
-        scope = cf.cf_path;
-      } in
-      gen_function buf ctx cf;
+    (fun i tf ->
+      gen_function buf tf;
       if i < last then Buffer.add_char buf '\n')
-    cp.cp_funcs;
+    tp.tp_funcs;
   Buffer.contents buf
