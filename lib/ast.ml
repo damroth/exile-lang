@@ -13,12 +13,12 @@ type binop =
   | Lt | Gt | LtEq | GtEq | EqEq | NotEq
 
 type expr =
-  | IntLit of int
-  | BoolLit of bool
-  | StringLit of string
+  | IntLit of int * Pos.t
+  | BoolLit of bool * Pos.t
+  | StringLit of string * Pos.t
   | Var of string * Pos.t
-  | Neg of expr
-  | BinOp of binop * expr * expr
+  | Neg of expr * Pos.t
+  | BinOp of binop * expr * expr * Pos.t
   | Call of string list * expr list * Pos.t
   | Cast of expr * type_ann * Pos.t
   | TupleLit of expr list * Pos.t
@@ -31,6 +31,14 @@ type expr =
   | New of { tname : string list; fields : (string * expr) list;
              base : expr option; pos : Pos.t }
                                         (* `new T { f: e }` — heap-alloc + init *)
+
+let expr_pos = function
+  | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
+  | Var (_, p) | Neg (_, p) | BinOp (_, _, _, p)
+  | Call (_, _, p) | Cast (_, _, p) | TupleLit (_, p)
+  | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)
+  | NullLit p -> p
+  | StructLit { pos; _ } | New { pos; _ } -> pos
 
 type param = { pname : string; pty : type_ann }
 

@@ -32,6 +32,20 @@ let expect s tok =
   if t <> tok then
     Error.failf p "expected %s, got %s" (Token.pp tok) (Token.pp t)
 
+let expect_ident s ~what =
+  match advance s with
+  | (Token.Ident n, p) -> (n, p)
+  | (t, p) -> Error.failf p "expected %s, got %s" what (Token.pp t)
+
+(* Continue parsing `:: ident :: ident ...` segments after [head] is already
+   parsed.  Returns the full path (head plus any tail segments). *)
+let rec parse_path_tail s acc =
+  if peek s = Token.DoubleColon then begin
+    ignore (advance s);
+    let (n, _) = expect_ident s ~what:"identifier after '::'" in
+    parse_path_tail s (n :: acc)
+  end else List.rev acc
+
 (* Parse comma-separated items until `close`. Opener must already be consumed.
    Trailing comma allowed before `close`. *)
 let parse_comma_list ~close ~item s =
@@ -66,16 +80,7 @@ let rec parse_type s =
   | (Token.Ident n, _) ->
       (* Any other identifier is a struct path, possibly qualified
          (`mod::Inner::Point`). *)
-      let rec collect acc =
-        if peek s = Token.DoubleColon then begin
-          ignore (advance s);
-          match advance s with
-          | (Token.Ident n2, _) -> collect (n2 :: acc)
-          | (t, p) ->
-              Error.failf p "expected identifier after '::', got %s" (Token.pp t)
-        end else List.rev acc
-      in
-      Ast.TyStruct (collect [n])
+      Ast.TyStruct (parse_path_tail s [n])
   | (Token.LParen, p) ->
       (* Tuple type `(T1, T2, ...)`.  Single-element parens unwrap to the
          underlying type (parens act as grouping); 0 elements is rejected. *)
@@ -91,11 +96,7 @@ let rec parse_type s =
         (Token.pp t)
 
 let parse_param s =
-  let name =
-    match advance s with
-    | (Token.Ident n, _) -> n
-    | (t, p) -> Error.failf p "expected parameter name, got %s" (Token.pp t)
-  in
+  let (name, _) = expect_ident s ~what:"parameter name" in
   expect s Token.Colon;
   let ty = parse_type s in
   Ast.{ pname = name; pty = ty }
@@ -112,12 +113,12 @@ let parse_ret_ty s =
 let rec parse_primary s =
   let (t, p) = advance s in
   match t with
-  | Token.Int n -> Ast.IntLit n
-  | Token.True -> Ast.BoolLit true
-  | Token.False -> Ast.BoolLit false
+  | Token.Int n -> Ast.IntLit (n, p)
+  | Token.True -> Ast.BoolLit (true, p)
+  | Token.False -> Ast.BoolLit (false, p)
   | Token.Null -> Ast.NullLit p
-  | Token.String str -> Ast.StringLit str
-  | Token.Minus -> Ast.Neg (parse_primary s)
+  | Token.String str -> Ast.StringLit (str, p)
+  | Token.Minus -> Ast.Neg (parse_primary s, p)
   | Token.Amp -> Ast.Ref (parse_postfix s (parse_primary s), p)
   | Token.Star -> Ast.Deref (parse_postfix s (parse_primary s), p)
   | Token.New ->
@@ -125,23 +126,8 @@ let rec parse_primary s =
          The struct path is required; the brace body is mandatory and
          allowed even in cond positions (no ambiguity since `new` is a
          dedicated keyword). *)
-      let rec collect_path acc =
-        if peek s = Token.DoubleColon then begin
-          ignore (advance s);
-          match advance s with
-          | (Token.Ident n, _) -> collect_path (n :: acc)
-          | (t, p2) ->
-              Error.failf p2 "expected identifier after '::', got %s" (Token.pp t)
-        end else List.rev acc
-      in
-      let first =
-        match advance s with
-        | (Token.Ident n, _) -> n
-        | (t, p2) ->
-            Error.failf p2 "expected struct name after 'new', got %s"
-              (Token.pp t)
-      in
-      let path = collect_path [first] in
+      let (first, _) = expect_ident s ~what:"struct name after 'new'" in
+      let path = parse_path_tail s [first] in
       expect s Token.LBrace;
       let (fields, base) = parse_struct_lit_body s in
       Ast.New { tname = path; fields; base; pos = p }
@@ -149,17 +135,7 @@ let rec parse_primary s =
       (* Path-qualified identifiers: foo::bar::baz(...).  Build the full
          path, then decide if it ends in a call, a struct literal, or a
          bare value. *)
-      let rec collect_path acc =
-        if peek s = Token.DoubleColon then begin
-          ignore (advance s);
-          match advance s with
-          | (Token.Ident n, _) -> collect_path (n :: acc)
-          | (t, p2) ->
-              Error.failf p2 "expected identifier after '::', got %s" (Token.pp t)
-        end else
-          List.rev acc
-      in
-      let path = collect_path [name] in
+      let path = parse_path_tail s [name] in
       (match peek s with
        | Token.LParen ->
            ignore (advance s);
@@ -196,13 +172,7 @@ let rec parse_primary s =
   | _ -> Error.raise_ p "expected expression"
 
 and parse_struct_lit_field s =
-  let n =
-    match advance s with
-    | (Token.Ident n, _) -> n
-    | (t, p) ->
-        Error.failf p "expected field name in struct literal, got %s"
-          (Token.pp t)
-  in
+  let (n, _) = expect_ident s ~what:"field name in struct literal" in
   expect s Token.Colon;
   (n, parse_expr s)
 
@@ -242,10 +212,8 @@ and parse_postfix s base =
     if peek s = Token.Dot then begin
       let p = peek_pos s in
       ignore (advance s);
-      match advance s with
-      | (Token.Ident n, _) -> loop (Ast.FieldAccess (e, n, p))
-      | (t, pp) ->
-          Error.failf pp "expected field name after '.', got %s" (Token.pp t)
+      let (n, _) = expect_ident s ~what:"field name after '.'" in
+      loop (Ast.FieldAccess (e, n, p))
     end else e
   in
   loop base
@@ -266,9 +234,11 @@ and parse_mul s =
   let rec loop left =
     match peek s with
     | Token.Star ->
-        ignore (advance s); loop (Ast.BinOp (Ast.Mul, left, parse_cast s))
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.Mul, left, parse_cast s, p))
     | Token.Slash ->
-        ignore (advance s); loop (Ast.BinOp (Ast.Div, left, parse_cast s))
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.Div, left, parse_cast s, p))
     | _ -> left
   in
   loop (parse_cast s)
@@ -277,9 +247,11 @@ and parse_add s =
   let rec loop left =
     match peek s with
     | Token.Plus ->
-        ignore (advance s); loop (Ast.BinOp (Ast.Add, left, parse_mul s))
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.Add, left, parse_mul s, p))
     | Token.Minus ->
-        ignore (advance s); loop (Ast.BinOp (Ast.Sub, left, parse_mul s))
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.Sub, left, parse_mul s, p))
     | _ -> left
   in
   loop (parse_mul s)
@@ -295,7 +267,9 @@ and parse_expr s =
   in
   match cmp_op with
   | None -> left
-  | Some op -> ignore (advance s); Ast.BinOp (op, left, parse_add s)
+  | Some op ->
+      let p = peek_pos s in
+      ignore (advance s); Ast.BinOp (op, left, parse_add s, p)
 
 and parse_args s = parse_comma_list ~close:Token.RParen ~item:parse_expr s
 
@@ -318,11 +292,8 @@ and parse_stmt s =
            let names =
              parse_comma_list ~close:Token.RParen
                ~item:(fun s ->
-                 match advance s with
-                 | (Token.Ident n, _) -> n
-                 | (t, p) ->
-                     Error.failf p
-                       "expected name in 'let (...)', got %s" (Token.pp t))
+                 let (n, _) = expect_ident s ~what:"name in 'let (...)'" in
+                 n)
                s
            in
            if List.length names < 2 then
@@ -334,11 +305,7 @@ and parse_stmt s =
            Ast.LetTuple { names; value; pos }
        | _ ->
            let (name, name_pos) =
-             match advance s with
-             | (Token.Ident n, p) -> (n, p)
-             | (t, p) ->
-                 Error.failf p "expected variable name after 'let', got %s"
-                   (Token.pp t)
+             expect_ident s ~what:"variable name after 'let'"
            in
            let ty_ann =
              if peek s = Token.Colon then (ignore (advance s); Some (parse_type s))
@@ -425,11 +392,7 @@ and parse_stmts s acc =
 
 let parse_function s seen_fns ~is_pub =
   expect s Token.Fn;
-  let (name, name_pos) =
-    match advance s with
-    | (Token.Ident n, p) -> (n, p)
-    | (_, p) -> Error.raise_ p "expected function name after 'fn'"
-  in
+  let (name, name_pos) = expect_ident s ~what:"function name after 'fn'" in
   if List.mem name seen_fns then
     Error.failf name_pos "function '%s' already defined" name;
   let params = parse_params s in
@@ -583,12 +546,7 @@ and parse_struct_decl s ~is_pub =
   in
   expect s Token.LBrace;
   let parse_field s =
-    let fname =
-      match advance s with
-      | (Token.Ident n, _) -> n
-      | (t, p) ->
-          Error.failf p "expected field name in struct, got %s" (Token.pp t)
-    in
+    let (fname, _) = expect_ident s ~what:"field name in struct" in
     expect s Token.Colon;
     let ty = parse_type s in
     (fname, ty)

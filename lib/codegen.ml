@@ -18,29 +18,15 @@ let emit_ann buf indent (pos : Pos.t) =
       (Printf.sprintf "/* %s:%d:%d */\n" pos.file pos.line pos.col)
   end
 
-(* Best-effort source position for a statement — most carry one explicitly,
-   ExprStmt borrows from the underlying expression when one is positioned. *)
-let rec expr_pos_opt = function
-  | Ast.Var (_, p) | Ast.Call (_, _, p) | Ast.Cast (_, _, p)
-  | Ast.TupleLit (_, p) | Ast.FieldAccess (_, _, p)
-  | Ast.Ref (_, p) | Ast.Deref (_, p) | Ast.NullLit p -> Some p
-  | Ast.StructLit { pos; _ } | Ast.New { pos; _ } -> Some pos
-  | Ast.Neg e -> expr_pos_opt e
-  | Ast.BinOp (_, l, _) -> expr_pos_opt l
-  | Ast.IntLit _ | Ast.BoolLit _ | Ast.StringLit _ -> None
-
-let stmt_pos_opt = function
+let stmt_pos = function
   | Ast.Let { pos; _ } | Ast.LetTuple { pos; _ }
   | Ast.Assign { pos; _ } | Ast.AssignField { pos; _ }
-  | Ast.AssignDeref { pos; _ } | Ast.Defer { pos; _ } -> Some pos
-  | Ast.Return (_, pos) -> Some pos
-  | Ast.ExprStmt e -> expr_pos_opt e
-  | Ast.If { cond; _ } | Ast.While { cond; _ } -> expr_pos_opt cond
+  | Ast.AssignDeref { pos; _ } | Ast.Defer { pos; _ } -> pos
+  | Ast.Return (_, pos) -> pos
+  | Ast.ExprStmt e -> Ast.expr_pos e
+  | Ast.If { cond; _ } | Ast.While { cond; _ } -> Ast.expr_pos cond
 
-let emit_stmt_ann buf indent stmt =
-  match stmt_pos_opt stmt with
-  | Some p -> emit_ann buf indent p
-  | None -> ()
+let emit_stmt_ann buf indent stmt = emit_ann buf indent (stmt_pos stmt)
 
 let add_separated buf sep f xs =
   List.iteri
@@ -167,15 +153,15 @@ let prec = function
   | Ast.Mul | Ast.Div -> 2
 
 let rec gen_expr buf ctx env = function
-  | Ast.IntLit n -> Buffer.add_string buf (string_of_int n)
-  | Ast.BoolLit b -> Buffer.add_string buf (if b then "1" else "0")
+  | Ast.IntLit (n, _) -> Buffer.add_string buf (string_of_int n)
+  | Ast.BoolLit (b, _) -> Buffer.add_string buf (if b then "1" else "0")
   | Ast.NullLit _ -> Buffer.add_string buf "((void *)0)"
-  | Ast.StringLit s ->
+  | Ast.StringLit (s, _) ->
       Buffer.add_char buf '"';
       Buffer.add_string buf (escape_c s);
       Buffer.add_char buf '"'
   | Ast.Var (name, _) -> Buffer.add_string buf name
-  | Ast.Neg e ->
+  | Ast.Neg (e, _) ->
       Buffer.add_char buf '-';
       (match e with
        | Ast.IntLit _ | Ast.Var _ -> gen_expr buf ctx env e
@@ -190,7 +176,7 @@ let rec gen_expr buf ctx env = function
       Buffer.add_string buf ")";
       gen_expr buf ctx env e;
       Buffer.add_char buf ')'
-  | Ast.BinOp (op, l, r) ->
+  | Ast.BinOp (op, l, r, _) ->
       let op_str =
         match op with
         | Ast.Add -> " + " | Ast.Sub -> " - "
@@ -201,12 +187,12 @@ let rec gen_expr buf ctx env = function
       in
       let p = prec op in
       (match l with
-       | Ast.BinOp (lop, _, _) when prec lop < p ->
+       | Ast.BinOp (lop, _, _, _) when prec lop < p ->
            Buffer.add_char buf '('; gen_expr buf ctx env l; Buffer.add_char buf ')'
        | _ -> gen_expr buf ctx env l);
       Buffer.add_string buf op_str;
       (match r with
-       | Ast.BinOp (rop, _, _)
+       | Ast.BinOp (rop, _, _, _)
          when prec rop < p || (prec rop = p && (op = Ast.Sub || op = Ast.Div)) ->
            Buffer.add_char buf '('; gen_expr buf ctx env r; Buffer.add_char buf ')'
        | _ -> gen_expr buf ctx env r)

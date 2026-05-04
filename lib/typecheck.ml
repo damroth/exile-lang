@@ -139,9 +139,28 @@ let rec type_of_ann = function
 (* Recognise an integer literal expression — bare or negated — for type-fitting
    checks at let-binding sites. *)
 let expr_int_lit = function
-  | Ast.IntLit n -> Some n
-  | Ast.Neg (Ast.IntLit n) -> Some (-n)
+  | Ast.IntLit (n, _) -> Some n
+  | Ast.Neg (Ast.IntLit (n, _), _) -> Some (-n)
   | _ -> None
+
+(* True when [expr] is an integer literal that fits into [target] (a TInt).
+   Used at assignment / field-init sites to allow `let x: i8 = 5;` even
+   though `5` is `i32` by default. *)
+let int_lit_fits expr target =
+  match expr_int_lit expr, target with
+  | Some n, TInt _ -> int_fits n target
+  | _ -> false
+
+(* First duplicate key in [xs] under [key], or None.  Replaces the
+   ad-hoc O(n²) `List.exists` loops scattered around the typechecker. *)
+let find_dup ~key xs =
+  let rec loop seen = function
+    | [] -> None
+    | x :: rest ->
+        let k = key x in
+        if List.mem k seen then Some k else loop (k :: seen) rest
+  in
+  loop [] xs
 
 (* C89 reserved words.  Exile identifiers that survive into the generated C
    without mangling (locals, parameters) must not collide.  Top-level fn
@@ -268,7 +287,7 @@ let rec type_of ?(allow_void = false) ctx env = function
   | Ast.IntLit _ -> t_i32
   | Ast.BoolLit _ -> TBool
   | Ast.StringLit _ -> TString
-  | Ast.BinOp (op, l, r) ->
+  | Ast.BinOp (op, l, r, _) ->
       let (lt, rt) = binop_operand_types ctx env l r in
       let result_t =
         match lt, rt with
@@ -281,9 +300,12 @@ let rec type_of ?(allow_void = false) ctx env = function
       (match op with
        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> result_t
        | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> TBool)
-  | Ast.Neg e ->
-      let _ = type_of ctx env e in
-      t_i32
+  | Ast.Neg (e, pos) ->
+      (match type_of ctx env e with
+       | TInt _ as t -> t
+       | other ->
+           Error.failf pos "negation '-' requires an integer, got %s"
+             (typ_name other))
   | Ast.Cast (e, ann, pos) ->
       let src = type_of ctx env e in
       let tgt = type_of_ann ann in
@@ -404,7 +426,7 @@ let rec type_of ?(allow_void = false) ctx env = function
    width without forcing a cast. *)
 and binop_operand_types ctx env l r =
   match l, r with
-  | Ast.IntLit n, _ ->
+  | Ast.IntLit (n, _), _ ->
       let rt = type_of ctx env r in
       let lt =
         match rt with
@@ -412,7 +434,7 @@ and binop_operand_types ctx env l r =
         | _ -> type_of ctx env l
       in
       (lt, rt)
-  | _, Ast.IntLit n ->
+  | _, Ast.IntLit (n, _) ->
       let lt = type_of ctx env l in
       let rt =
         match lt with
@@ -440,15 +462,10 @@ and validate_struct_lit ctx env ~tname ~fields ~base ~pos =
       display
       (let parent = List.rev (List.tl (List.rev s.sname_path)) in
        if parent = [] then "<root>" else String.concat "::" parent);
-  let rec dups = function
-    | [] -> ()
-    | (n, _) :: rest ->
-        if List.exists (fun (m, _) -> m = n) rest then
-          Error.failf pos
-            "duplicate field '%s' in struct literal '%s'" n display;
-        dups rest
-  in
-  dups fields;
+  (match find_dup ~key:fst fields with
+   | Some n ->
+       Error.failf pos "duplicate field '%s' in struct literal '%s'" n display
+   | None -> ());
   let provided = List.map fst fields in
   let expected = List.map fst s.sfields_ty in
   let missing = List.filter (fun n -> not (List.mem n provided)) expected in
@@ -477,12 +494,7 @@ and validate_struct_lit ctx env ~tname ~fields ~base ~pos =
     (fun (fn, fe) ->
       let fty = List.assoc fn s.sfields_ty in
       let act = type_of ctx env fe in
-      let lit_match =
-        match expr_int_lit fe, fty with
-        | Some n, TInt _ -> int_fits n fty
-        | _ -> false
-      in
-      if not (typ_eq act fty) && not lit_match then
+      if not (typ_eq act fty) && not (int_lit_fits fe fty) then
         Error.failf pos
           "field '%s' of struct '%s': expected %s, got %s"
           fn display (typ_name fty) (typ_name act))
@@ -552,16 +564,9 @@ let collect_lets ctx param_env stmts =
             "destructuring 'let (...)' has %d names but value is a %d-tuple"
             n_names n_elems;
         let pairs = List.combine names elem_tys in
-        (* Reject in-tuple duplicates up front for a clearer message. *)
-        let rec check_dups = function
-          | [] -> ()
-          | (n, _) :: rest_pairs ->
-              if List.exists (fun (m, _) -> m = n) rest_pairs then
-                Error.failf pos
-                  "duplicate name '%s' in 'let (...)'" n;
-              check_dups rest_pairs
-        in
-        check_dups pairs;
+        (match find_dup ~key:fst pairs with
+         | Some n -> Error.failf pos "duplicate name '%s' in 'let (...)'" n
+         | None -> ());
         List.iter (fun (n, ty) -> add_decl n ty pos) pairs;
         walk (List.rev_append pairs env) rest
     | Ast.Assign { name; value; pos } :: rest ->
@@ -596,12 +601,7 @@ let collect_lets ctx param_env stmts =
                 (String.concat "::" path) field
         in
         let act = type_of ctx env value in
-        let lit_match =
-          match expr_int_lit value, fty with
-          | Some n, TInt _ -> int_fits n fty
-          | _ -> false
-        in
-        if not (typ_eq act fty) && not lit_match then
+        if not (typ_eq act fty) && not (int_lit_fits value fty) then
           Error.failf pos
             "field '%s' of struct '%s': expected %s, got %s"
             field (String.concat "::" path) (typ_name fty) (typ_name act);
@@ -617,12 +617,7 @@ let collect_lets ctx param_env stmts =
                 (typ_name tt)
         in
         let act = type_of ctx env value in
-        let lit_match =
-          match expr_int_lit value, inner with
-          | Some n, TInt _ -> int_fits n inner
-          | _ -> false
-        in
-        if not (typ_eq act inner) && not lit_match then
+        if not (typ_eq act inner) && not (int_lit_fits value inner) then
           Error.failf pos
             "deref assignment: expected %s, got %s"
             (typ_name inner) (typ_name act);
@@ -652,54 +647,43 @@ let collect_lets ctx param_env stmts =
   let _ = walk param_env stmts in
   List.rev !decls
 
-(* Walk the program tree and produce a flat list of every function with its
-   module path and mangled C name.  Recurses into nested modules. *)
-let flatten_funcs program =
-  let rec walk path acc items =
-    List.fold_left
-      (fun acc item -> match item with
-        | Ast.Function f ->
+(* Result of one walk over the program tree: every function (with its
+   absolute module path and mangled C name), every struct, and every
+   module (with its pub flag).  Order matches source order at each
+   nesting level — preserves the user-visible declaration order in the
+   emitted C. *)
+type flat = {
+  funcs : (string list * Ast.func * string) list;
+  structs : (string list * Ast.struct_decl) list;
+  modules : (string list * bool) list;
+}
+
+let flatten_items program =
+  let funcs = ref [] in
+  let structs = ref [] in
+  let modules = ref [] in
+  let rec walk path items =
+    List.iter
+      (fun item -> match item with
+        | Ast.Function (f : Ast.func) ->
             let m = if f.name = "main" then "main" else mangle path f.name in
-            (path, f, m) :: acc
+            funcs := (path, f, m) :: !funcs
+        | Ast.Struct s ->
+            structs := (path, s) :: !structs
         | Ast.Module m ->
-            walk (path @ [m.Ast.mname]) acc m.Ast.mitems
-        | Ast.Struct _ -> acc
+            let mod_path = path @ [m.Ast.mname] in
+            modules := (mod_path, m.Ast.mis_pub) :: !modules;
+            walk mod_path m.Ast.mitems
         | Ast.Use { pos; _ } ->
             Error.failf pos
               "internal: 'use' declaration reached codegen unresolved \
                (loader pass missing?)")
-      acc items
+      items
   in
-  List.rev (walk [] [] program)
-
-(* Walk the program tree and produce a flat list of every struct with its
-   module path; the C name for each is `mangle path name` (so it lives in
-   the same naming convention as functions). *)
-let flatten_structs program =
-  let rec walk path acc items =
-    List.fold_left
-      (fun acc item -> match item with
-        | Ast.Struct s -> (path, s) :: acc
-        | Ast.Module m -> walk (path @ [m.Ast.mname]) acc m.Ast.mitems
-        | Ast.Function _ | Ast.Use _ -> acc)
-      acc items
-  in
-  List.rev (walk [] [] program)
-
-(* Walk the program tree and produce a flat list of every module with its
-   absolute path and pub flag.  Used for visibility checks on qualified calls. *)
-let flatten_modules program =
-  let rec walk path acc items =
-    List.fold_left
-      (fun acc item -> match item with
-        | Ast.Function _ | Ast.Struct _ -> acc
-        | Ast.Module m ->
-            let mod_path = path @ [m.Ast.mname] in
-            walk mod_path ((mod_path, m.Ast.mis_pub) :: acc) m.Ast.mitems
-        | Ast.Use _ -> acc)
-      acc items
-  in
-  List.rev (walk [] [] program)
+  walk [] program;
+  { funcs = List.rev !funcs;
+    structs = List.rev !structs;
+    modules = List.rev !modules }
 
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
@@ -752,8 +736,8 @@ let collect_tuple_types flat global structs modules =
      | Ast.FieldAccess (target, _, _) -> walk_expr ctx env target
      | Ast.Ref (sub, _) | Ast.Deref (sub, _) -> walk_expr ctx env sub
      | Ast.Cast (sub, _, _) -> walk_expr ctx env sub
-     | Ast.Neg sub -> walk_expr ctx env sub
-     | Ast.BinOp (_, l, r) -> walk_expr ctx env l; walk_expr ctx env r
+     | Ast.Neg (sub, _) -> walk_expr ctx env sub
+     | Ast.BinOp (_, l, r, _) -> walk_expr ctx env l; walk_expr ctx env r
      | Ast.Call (_, args, _) -> List.iter (walk_expr ctx env) args
      | _ -> ())
   in
@@ -798,9 +782,9 @@ let uses_heap flat =
   let rec walk_expr = function
     | Ast.New _ -> true
     | Ast.Call (["free"], _, _) -> true
-    | Ast.Ref (e, _) | Ast.Deref (e, _) | Ast.Cast (e, _, _) | Ast.Neg e ->
+    | Ast.Ref (e, _) | Ast.Deref (e, _) | Ast.Cast (e, _, _) | Ast.Neg (e, _) ->
         walk_expr e
-    | Ast.BinOp (_, l, r) -> walk_expr l || walk_expr r
+    | Ast.BinOp (_, l, r, _) -> walk_expr l || walk_expr r
     | Ast.Call (_, args, _) -> List.exists walk_expr args
     | Ast.TupleLit (es, _) -> List.exists walk_expr es
     | Ast.StructLit { fields; _ } ->
@@ -850,21 +834,21 @@ type checked_program = {
 }
 
 let check_program program =
-  let flat = flatten_funcs program in
+  let flat = flatten_items program in
   (* main() must be at top level, not inside a module. *)
   List.iter
     (fun (path, (f : Ast.func), _) ->
       if f.name = "main" && path <> [] then
         Error.raise_ f.pos
           "'main' must be at top level, not inside a module")
-    flat;
+    flat.funcs;
   (* Top-level function names land in C unmangled (modulo the `ex_`
      prefix), so they must not collide with C keywords.  Mod-internal fns
      get a `mod__` prefix and are safe. *)
   List.iter
     (fun (path, (f : Ast.func), _) ->
       if path = [] then check_c_ident f.pos "function" f.name)
-    flat;
+    flat.funcs;
   (* Param names are emitted unprefixed in C parameter lists, so they
      also need the keyword check.  (Local lets are checked inside
      collect_lets.) *)
@@ -873,11 +857,10 @@ let check_program program =
       List.iter
         (fun (p : Ast.param) -> check_c_ident f.pos "parameter" p.pname)
         f.params)
-    flat;
-  let global = build_global_index flat in
-  let struct_decls = flatten_structs program in
-  let struct_index = build_struct_index struct_decls in
-  let modules = flatten_modules program in
+    flat.funcs;
+  let global = build_global_index flat.funcs in
+  let struct_index = build_struct_index flat.structs in
+  let modules = flat.modules in
   (* Per-fn validation: collect_lets type-checks the body and returns the
      hoisted let-decl list.  Codegen will use cf_lets directly without
      repeating the walk. *)
@@ -891,14 +874,14 @@ let check_program program =
         in
         let lets = collect_lets ctx param_env f.body in
         { cf_path = path; cf_func = f; cf_mangled = mangled; cf_lets = lets })
-      flat
+      flat.funcs
   in
   let cp_tuple_types =
-    collect_tuple_types flat global struct_index modules
+    collect_tuple_types flat.funcs global struct_index modules
   in
-  let cp_uses_heap = uses_heap flat in
+  let cp_uses_heap = uses_heap flat.funcs in
   { cp_funcs;
-    cp_struct_decls = struct_decls;
+    cp_struct_decls = flat.structs;
     cp_struct_index = struct_index;
     cp_global = global;
     cp_modules = modules;
