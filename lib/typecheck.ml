@@ -68,55 +68,46 @@ let rec is_prefix xs ys =
   | _, [] -> false
   | x :: xs', y :: ys' -> x = y && is_prefix xs' ys'
 
-(* Try to find a function in [global] at exactly [(mod_path, name)].
-   Returns the resolved (mod_path, sig) when found, so callers can do
-   visibility checks against the actual location. *)
-let try_resolve ctx mod_path name =
-  List.find_map
-    (fun (p, n, s) ->
-      if p = mod_path && n = name then Some (mod_path, s) else None)
-    ctx.global
+(* Drop the last segment of a module path; [] -> []. *)
+let parent_path = function
+  | [] -> []
+  | xs -> List.rev (List.tl (List.rev xs))
+
+(* Walk up the current scope, trying [resolve] at each ancestor level.
+   [path] is split into a relative [(mod_path, name)] pair; for each
+   prefix we try [resolve (prefix @ mod_path) name].  Used by both fn
+   and struct lookup, which only differ in [resolve]. *)
+let walk_scope_up ~resolve ctx (path : string list) =
+  let (suggested_mod, name) =
+    match List.rev path with
+    | [] -> failwith "empty path"
+    | n :: rest -> (List.rev rest, n)
+  in
+  let rec walk prefix =
+    match resolve (prefix @ suggested_mod) name with
+    | Some r -> Some r
+    | None ->
+        (match prefix with
+         | [] -> None
+         | _ -> walk (parent_path prefix))
+  in
+  walk ctx.scope
 
 (* Resolve a call path to a function.  Walks the current scope from the
    deepest ancestor down to the root, trying [prefix @ suggested_mod] at
    each level. *)
-let lookup_fn ctx (path : string list) =
-  let (suggested_mod, name) =
-    match List.rev path with
-    | [] -> failwith "empty call path"
-    | n :: rest -> (List.rev rest, n)
-  in
-  let rec walk prefix =
-    match try_resolve ctx (prefix @ suggested_mod) name with
-    | Some r -> Some r
-    | None ->
-        (match prefix with
-         | [] -> None
-         | _ -> walk (List.rev (List.tl (List.rev prefix))))
-  in
-  walk ctx.scope
+let lookup_fn ctx path =
+  walk_scope_up ctx path ~resolve:(fun mod_path name ->
+    List.find_map
+      (fun (p, n, s) ->
+        if p = mod_path && n = name then Some (mod_path, s) else None)
+      ctx.global)
 
-(* Same ancestor walk-up as functions, but for struct names. *)
-let try_resolve_struct ctx mod_path name =
-  List.find_opt
-    (fun s -> s.sname_path = mod_path @ [name])
-    ctx.structs
-
-let lookup_struct ctx (path : string list) =
-  let (suggested_mod, name) =
-    match List.rev path with
-    | [] -> failwith "empty struct path"
-    | n :: rest -> (List.rev rest, n)
-  in
-  let rec walk prefix =
-    match try_resolve_struct ctx (prefix @ suggested_mod) name with
-    | Some r -> Some r
-    | None ->
-        (match prefix with
-         | [] -> None
-         | _ -> walk (List.rev (List.tl (List.rev prefix))))
-  in
-  walk ctx.scope
+let lookup_struct ctx path =
+  walk_scope_up ctx path ~resolve:(fun mod_path name ->
+    List.find_opt
+      (fun s -> s.sname_path = mod_path @ [name])
+      ctx.structs)
 
 (* Mangle a function name with its module path.  Top-level (path = []) gets
    the `ex_` prefix so emitted symbols never collide with C stdlib builtins
@@ -455,13 +446,11 @@ and validate_struct_lit ctx env ~tname ~fields ~base ~pos =
     | Some s -> s
     | None -> Error.failf pos "unknown struct '%s'" display
   in
-  if (not s.sis_pub) && not (is_prefix
-                               (List.rev (List.tl (List.rev s.sname_path)))
-                               ctx.scope) then
+  let parent = parent_path s.sname_path in
+  if (not s.sis_pub) && not (is_prefix parent ctx.scope) then
     Error.failf pos "struct '%s' is private to module '%s'"
       display
-      (let parent = List.rev (List.tl (List.rev s.sname_path)) in
-       if parent = [] then "<root>" else String.concat "::" parent);
+      (if parent = [] then "<root>" else String.concat "::" parent);
   (match find_dup ~key:fst fields with
    | Some n ->
        Error.failf pos "duplicate field '%s' in struct literal '%s'" n display
