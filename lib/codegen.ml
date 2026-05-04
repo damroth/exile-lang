@@ -378,18 +378,19 @@ let rec emit_simple_stmt buf ctx env indent stmt =
    of the tuple struct type, fill it from the RHS, then assign each hoisted
    name from the temp's numbered field. *)
 and emit_let_tuple buf ctx env indent names value =
-  let t = type_of ctx env value in
-  let trimmed = strip_trailing_space (c_type_prefix t) in
+  let inner = indent ^ "    " in
+  let trimmed = strip_trailing_space (c_type_prefix (type_of ctx env value)) in
   Buffer.add_string buf indent;
   Buffer.add_string buf "{\n";
-  Buffer.add_string buf (indent ^ "    ");
+  Buffer.add_string buf inner;
   Buffer.add_string buf trimmed;
   Buffer.add_string buf " __t;\n";
-  emit_value_into_temp buf ctx env (indent ^ "    ") "__t" value;
+  emit_value_into_temp buf ctx env inner "__t" value;
   List.iteri
     (fun i name ->
-      Buffer.add_string buf (indent ^ "    ");
-      Buffer.add_string buf (Printf.sprintf "%s = __t._%d;\n" name i))
+      emit_assign_line buf inner ~lhs:name ~emit_rhs:(fun () ->
+        Buffer.add_string buf "__t._";
+        Buffer.add_string buf (string_of_int i)))
     names;
   Buffer.add_string buf indent;
   Buffer.add_string buf "}\n"
@@ -530,31 +531,30 @@ let gen_function buf ctx (cf : checked_func) =
   if f.name = "main" then Buffer.add_string buf "    return 0;\n";
   Buffer.add_string buf "}\n"
 
-(* Emit a `struct ex_Foo { int x; int y; };` for one user-declared struct.
-   The C struct name is the mangled path-qualified form, identical to what
-   `mangle_typ (TStruct path)` produces. *)
-let emit_named_struct buf (path, (s : Ast.struct_decl)) =
-  let cname = mangle (path : string list) s.sname in
-  Buffer.add_string buf (Printf.sprintf "struct %s {" cname);
+(* Shared shape for both user-declared and tuple structs:
+   `struct NAME { f1; f2; ... };\n`. *)
+let emit_struct_decl buf cname fields =
+  Buffer.add_string buf "struct ";
+  Buffer.add_string buf cname;
+  Buffer.add_string buf " {";
   List.iter
-    (fun (fname, ann) ->
+    (fun (ty, fname) ->
       Buffer.add_char buf ' ';
-      Buffer.add_string buf (c_decl (type_of_ann ann) fname);
+      Buffer.add_string buf (c_decl ty fname);
       Buffer.add_char buf ';')
-    s.sfields;
+    fields;
   Buffer.add_string buf " };\n"
+
+let emit_named_struct buf (path, (s : Ast.struct_decl)) =
+  let cname = mangle path s.sname in
+  let fields = List.map (fun (fname, ann) -> (type_of_ann ann, fname)) s.sfields in
+  emit_struct_decl buf cname fields
 
 let emit_tuple_struct buf (_, t) =
   match t with
   | TTuple ts ->
-      Buffer.add_string buf (Printf.sprintf "struct %s {" (tuple_struct_name ts));
-      List.iteri
-        (fun i ty ->
-          Buffer.add_char buf ' ';
-          Buffer.add_string buf (c_decl ty (Printf.sprintf "_%d" i));
-          Buffer.add_char buf ';')
-        ts;
-      Buffer.add_string buf " };\n"
+      let fields = List.mapi (fun i ty -> (ty, "_" ^ string_of_int i)) ts in
+      emit_struct_decl buf (tuple_struct_name ts) fields
   | _ -> ()
 
 let gen_program ?(annotate = false) (cp : checked_program) =
