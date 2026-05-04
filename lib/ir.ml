@@ -164,13 +164,17 @@ type tstmt =
   | TWhile of { cond : texpr; body : tstmt list }
   | TDefer of { body : tstmt list; pos : Pos.t }
 
-(* Per-function payload that codegen consumes — original Ast.func for the
-   signature emission (params, ret_ty, name, pos), the resolved C name,
+(* Per-function payload that codegen consumes — original Ast.func for
+   the user-side trivia (param names, fn name, pos), the resolved C
+   name, parameter and return types pre-resolved against the surrounding
+   scope (so mod-local struct names round-trip to absolute paths in C),
    the elaborated body, and the hoisted let-decl list. *)
 type tfunc = {
   tf_path : string list;
   tf_func : Ast.func;
   tf_mangled : string;
+  tf_param_tys : typ list;          (* one per tf_func.params, scope-resolved *)
+  tf_ret_ty : typ option;           (* mirrors tf_func.ret_ty, scope-resolved *)
   tf_body : tstmt list;
   tf_lets : (string * typ) list;
 }

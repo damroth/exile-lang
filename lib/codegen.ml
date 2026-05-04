@@ -87,8 +87,6 @@ let rec c_type_prefix = function
 
 let c_decl t name = c_type_prefix t ^ name
 
-let c_param p = c_decl (type_of_ann p.Ast.pty) p.Ast.pname
-
 (* Builtin emitters keyed by name.  Codegen-side companion to the typecheck
    `builtin_sig.bcheck` table.  Adding a new builtin needs an entry in both. *)
 type builtin_emit =
@@ -176,8 +174,11 @@ let rec gen_expr buf (te : texpr) =
   | TNeg sub ->
       emit_unary buf '-' sub
         ~simple:(function TIntLit _ | TVar _ -> true | _ -> false)
-  | TCast (sub, ann) ->
-      let trimmed = strip_trailing_space (c_type_prefix (type_of_ann ann)) in
+  | TCast (sub, _ann) ->
+      (* Cast result type is already in `te.ty` (elab ran resolve_type_ann
+         on the annotation); reading it here keeps the C output independent
+         of the raw Ast.type_ann the elaborator stashed. *)
+      let trimmed = strip_trailing_space (c_type_prefix te.ty) in
       Buffer.add_string buf "((";
       Buffer.add_string buf trimmed;
       Buffer.add_string buf ")";
@@ -465,23 +466,28 @@ and gen_block buf indent outer_scopes stmts =
    entry point — main() is special and not mangled).  Non-pub functions get
    a "static" linkage prefix so they are invisible across translation units
    (and act as documentation that they are module-internal). *)
-let emit_fn_sig buf (f : Ast.func) mangled =
+let emit_fn_sig buf (tf : tfunc) =
+  let f = tf.tf_func in
   if f.name = "main" then
     Buffer.add_string buf "int main(void)"
   else begin
     if not f.is_pub then Buffer.add_string buf "static ";
     let ret =
-      match f.ret_ty with
+      match tf.tf_ret_ty with
       | None -> "void "
-      | Some ty -> c_type_prefix (type_of_ann ty)
+      | Some ty -> c_type_prefix ty
     in
     Buffer.add_string buf ret;
-    Buffer.add_string buf mangled;
+    Buffer.add_string buf tf.tf_mangled;
     Buffer.add_char buf '(';
-    (match f.params with
-     | [] -> Buffer.add_string buf "void"
-     | _ ->
-         add_separated buf ", " (fun p -> Buffer.add_string buf (c_param p)) f.params);
+    (match f.params, tf.tf_param_tys with
+     | [], _ -> Buffer.add_string buf "void"
+     | params, tys ->
+         let zipped = List.combine params tys in
+         add_separated buf ", "
+           (fun ((p : Ast.param), t) ->
+             Buffer.add_string buf (c_decl t p.pname))
+           zipped);
     Buffer.add_char buf ')'
   end
 
@@ -490,7 +496,7 @@ let emit_fn_sig buf (f : Ast.func) mangled =
 let gen_function buf (tf : tfunc) =
   let f = tf.tf_func in
   emit_ann buf "" f.pos;
-  emit_fn_sig buf f tf.tf_mangled;
+  emit_fn_sig buf tf;
   Buffer.add_string buf " {\n";
   List.iter
     (fun (name, t) ->
@@ -514,9 +520,13 @@ let emit_struct_decl buf cname fields =
     fields;
   Buffer.add_string buf " };\n"
 
-let emit_named_struct buf (path, (s : Ast.struct_decl)) =
-  let cname = mangle path s.sname in
-  let fields = List.map (fun (fname, ann) -> (type_of_ann ann, fname)) s.sfields in
+let emit_named_struct buf (s : struct_sig) =
+  (* Field types come pre-resolved from the typecheck pass — relative
+     `TyStruct` paths in the source were rewritten to absolute, so the
+     C name we synthesize here matches what `c_type_prefix` produces
+     for values of the same struct elsewhere. *)
+  let cname = mangle_typ (TStruct s.sname_path) in
+  let fields = List.map (fun (fname, ty) -> (ty, fname)) s.sfields_ty in
   emit_struct_decl buf cname fields
 
 let emit_tuple_struct buf (_, t) =
@@ -535,9 +545,9 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   (* Named structs first, in source order — typically their fields refer
      to types declared earlier.  Tuple structs after, so any tuple whose
      elements include a named struct type sees it complete. *)
-  if tp.tp_struct_decls <> [] then begin
+  if tp.tp_struct_index <> [] then begin
     Buffer.add_char buf '\n';
-    List.iter (emit_named_struct buf) tp.tp_struct_decls
+    List.iter (emit_named_struct buf) tp.tp_struct_index
   end;
   if tp.tp_tuple_types <> [] then begin
     Buffer.add_char buf '\n';
@@ -550,7 +560,7 @@ let gen_program ?(annotate = false) (tp : tprogram) =
     Buffer.add_char buf '\n';
     List.iter
       (fun tf ->
-        emit_fn_sig buf tf.tf_func tf.tf_mangled;
+        emit_fn_sig buf tf;
         Buffer.add_string buf ";\n")
       non_main
   end;

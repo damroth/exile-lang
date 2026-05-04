@@ -67,6 +67,29 @@ let lookup_struct ctx path =
       (fun s -> s.sname_path = mod_path @ [name])
       ctx.structs)
 
+(* Scope-aware analogue of `Ir.type_of_ann`: rewrites `TyStruct path`
+   so the resulting `TStruct` carries the *absolute* struct path,
+   resolved against the surrounding scope.  Without this, a fn or
+   field declared as `: Point` inside `mod foo` would carry the
+   relative path `["Point"]`, while values of the same type carry
+   the absolute `["foo"; "Point"]` — and `typ_eq` would reject the
+   match.
+
+   On unresolved struct names we fall back to the raw path: downstream
+   checks (lookup at use site, or the `typ_eq` mismatch) emit a clearer
+   contextual error than we could here without a `Pos.t`. *)
+let rec resolve_type_ann ctx ann =
+  match ann with
+  | Ast.TyInt { signed; width } -> TInt { signed; width }
+  | Ast.TyStr -> TString
+  | Ast.TyBool -> TBool
+  | Ast.TyTuple ts -> TTuple (List.map (resolve_type_ann ctx) ts)
+  | Ast.TyPtr t -> TPtr (resolve_type_ann ctx t)
+  | Ast.TyStruct path ->
+      (match lookup_struct ctx path with
+       | Some s -> TStruct s.sname_path
+       | None -> TStruct path)
+
 (* Recognise an integer literal expression — bare or negated — for type-fitting
    checks at let-binding sites. *)
 let expr_int_lit = function
@@ -193,7 +216,7 @@ let rec type_of ?(allow_void = false) ctx env = function
              (typ_name other))
   | Ast.Cast (e, ann, pos) ->
       let src = type_of ctx env e in
-      let tgt = type_of_ann ann in
+      let tgt = resolve_type_ann ctx ann in
       (match src, tgt with
        | TInt _, TInt _ -> tgt
        | _ ->
@@ -577,7 +600,7 @@ let elab_body ctx param_env stmts : (string * typ) list * tstmt list =
                       annotation like 'let %s: *T = null;'" name
                | _ -> t_inferred)
           | Some ann ->
-              let t_ann = type_of_ann ann in
+              let t_ann = resolve_type_ann ctx ann in
               (match expr_int_lit value, t_ann with
                | Some n, TInt _ when int_fits n t_ann -> t_ann
                | Some n, TInt { signed = false; _ } when n < 0 ->
@@ -745,27 +768,49 @@ let flatten_items program =
 
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
-let build_global_index flat =
+let build_global_index ~struct_index ~modules flat =
   List.filter_map
     (fun (p, (f : Ast.func), mangled) ->
       if f.name = "main" then None
       else
+        let ctx = {
+          global = []; structs = struct_index;
+          modules; scope = p
+        } in
         Some
           (p, f.name,
-           { param_tys = List.map (fun p -> type_of_ann p.Ast.pty) f.params;
-             ret_ty = Option.map type_of_ann f.ret_ty;
+           { param_tys =
+               List.map (fun pp -> resolve_type_ann ctx pp.Ast.pty) f.params;
+             ret_ty = Option.map (resolve_type_ann ctx) f.ret_ty;
              mangled;
              fn_pub = f.is_pub }))
     flat
 
-(* Build the struct registry from the flattened struct declarations. *)
-let build_struct_index struct_flat =
-  List.map
-    (fun (p, (s : Ast.struct_decl)) ->
-      { sname_path = p @ [s.sname];
-        sfields_ty = List.map (fun (n, t) -> (n, type_of_ann t)) s.sfields;
-        sis_pub = s.sis_pub })
-    struct_flat
+(* Build the struct registry from the flattened struct declarations.
+   Two-pass: first collect every struct's absolute path with empty
+   fields, then resolve each declaration's field types against that
+   skeleton.  Two passes are necessary because field types can refer
+   to other structs declared in any order, and `resolve_type_ann`
+   needs to see them all to rewrite relative paths to absolute. *)
+let build_struct_index ~modules struct_flat =
+  let skeleton =
+    List.map
+      (fun (p, (s : Ast.struct_decl)) ->
+        { sname_path = p @ [s.sname];
+          sfields_ty = [];
+          sis_pub = s.sis_pub })
+      struct_flat
+  in
+  List.map2
+    (fun (p, (s : Ast.struct_decl)) skel ->
+      let ctx = {
+        global = []; structs = skeleton;
+        modules; scope = p
+      } in
+      { skel with
+        sfields_ty =
+          List.map (fun (n, t) -> (n, resolve_type_ann ctx t)) s.sfields })
+    struct_flat skeleton
 
 (* Walk a typed function body looking for tuple types in use, deduplicating
    by mangled name; codegen later emits one C struct per unique shape.
@@ -900,7 +945,7 @@ let expand_impls flat struct_index modules =
                method becomes a static method — no auto-ref/-deref later). *)
             (match m.params with
              | { pname = "self"; pty = ann } :: _ ->
-                 let self_t = type_of_ann ann in
+                 let self_t = resolve_type_ann ctx ann in
                  (match self_t with
                   | TStruct p when p = target_path -> ()
                   | TPtr (TStruct p) when p = target_path -> ()
@@ -978,7 +1023,7 @@ let check_program program : tprogram =
         (fun (p : Ast.param) -> check_c_ident f.pos "parameter" p.pname)
         f.params)
     flat.funcs;
-  let struct_index = build_struct_index flat.structs in
+  let struct_index = build_struct_index ~modules:flat.modules flat.structs in
   let (impl_funcs, virtual_modules) =
     expand_impls flat struct_index flat.modules
   in
@@ -992,17 +1037,22 @@ let check_program program : tprogram =
         (fun (p : Ast.param) -> check_c_ident f.pos "parameter" p.pname)
         f.params)
     impl_funcs;
-  let global = build_global_index all_funcs in
+  let global = build_global_index ~struct_index ~modules all_funcs in
   let tp_funcs =
     List.map
       (fun (path, (f : Ast.func), mangled) ->
         let ctx = { global; structs = struct_index; modules; scope = path } in
+        let param_tys =
+          List.map (fun (p : Ast.param) -> resolve_type_ann ctx p.pty) f.params
+        in
+        let ret_ty = Option.map (resolve_type_ann ctx) f.ret_ty in
         let param_env =
-          List.map (fun (p : Ast.param) -> (p.pname, type_of_ann p.pty))
-            f.params
+          List.combine (List.map (fun (p : Ast.param) -> p.pname) f.params)
+            param_tys
         in
         let (lets, tbody) = elab_body ctx param_env f.body in
         { tf_path = path; tf_func = f; tf_mangled = mangled;
+          tf_param_tys = param_tys; tf_ret_ty = ret_ty;
           tf_body = tbody; tf_lets = lets })
       all_funcs
   in

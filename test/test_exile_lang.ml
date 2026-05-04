@@ -474,4 +474,19 @@ let () =
 
   check_error "private method called from outside rejected"
     "struct P { x: int }\nimpl P { fn priv(self: P) -> int { return self.x; } }\nfn main() { let p = P { x: 1 }; print(p.priv()); }\n"
-    "method 'priv' is private to 'P'"
+    "method 'priv' is private to 'P'";
+
+  check "mod-local struct as fn param and self resolves to absolute path"
+    "mod geom {\n\
+    \    pub struct Point { x: int, y: int }\n\
+    \    pub fn area(p: Point) -> int { return p.x * p.y; }\n\
+    \    impl Point {\n\
+    \        pub fn sum(self: Point) -> int { return self.x + self.y; }\n\
+    \    }\n\
+     }\n\
+     fn main() {\n\
+    \    let p = geom::Point { x: 3, y: 4 };\n\
+    \    print(geom::area(p));\n\
+    \    print(p.sum());\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct geom__Point { long x; long y; };\n\nlong geom__area(struct geom__Point p);\nlong geom__Point__sum(struct geom__Point self);\n\nlong geom__area(struct geom__Point p) {\n    return p.x * p.y;\n}\n\nint main(void) {\n    struct geom__Point p;\n    p.x = 3;\n    p.y = 4;\n    printf(\"%ld\\n\", (long)(geom__area(p)));\n    printf(\"%ld\\n\", (long)(geom__Point__sum(p)));\n    return 0;\n}\n\nlong geom__Point__sum(struct geom__Point self) {\n    return self.x + self.y;\n}\n"
