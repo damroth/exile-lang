@@ -16,6 +16,7 @@ open Ir
 type fn_ctx = {
   global : (string list * string * fn_sig) list;
   structs : struct_sig list;
+  enums : enum_sig list;
   modules : (string list * bool) list;   (* full path -> is_pub *)
   scope : string list;
 }
@@ -67,6 +68,12 @@ let lookup_struct ctx path =
       (fun s -> s.sname_path = mod_path @ [name])
       ctx.structs)
 
+let lookup_enum ctx path =
+  walk_scope_up ctx path ~resolve:(fun mod_path name ->
+    List.find_opt
+      (fun e -> e.ename_path = mod_path @ [name])
+      ctx.enums)
+
 (* Scope-aware analogue of `Ir.type_of_ann`: rewrites `TyStruct path`
    so the resulting `TStruct` carries the *absolute* struct path,
    resolved against the surrounding scope.  Without this, a fn or
@@ -86,9 +93,16 @@ let rec resolve_type_ann ctx ann =
   | Ast.TyTuple ts -> TTuple (List.map (resolve_type_ann ctx) ts)
   | Ast.TyPtr t -> TPtr (resolve_type_ann ctx t)
   | Ast.TyStruct path ->
+      (* The parser produces `TyStruct` for any user-named type; here we
+         decide whether the path resolves to a struct or an enum.  Falls
+         back to a relative struct for unknowns so downstream errors stay
+         on the call site rather than guessing here without a Pos.t. *)
       (match lookup_struct ctx path with
        | Some s -> TStruct s.sname_path
-       | None -> TStruct path)
+       | None ->
+           (match lookup_enum ctx path with
+            | Some e -> TEnum e.ename_path
+            | None -> TStruct path))
 
 (* Recognise an integer literal expression — bare or negated — for type-fitting
    checks at let-binding sites. *)
@@ -158,6 +172,10 @@ let builtin_print = {
           (typ_name t)
     | [ TNullPtr ] ->
         Error.failf pos "cannot print 'null'"
+    | [ TEnum path ] ->
+        Error.failf pos
+          "cannot print an enum value (%s); match on it and print per variant"
+          (String.concat "::" path)
     | [_] -> t_i32
     | tys ->
         Error.failf pos "print() takes exactly one argument, got %d"
@@ -393,6 +411,129 @@ let rec type_of ?(allow_void = false) ctx env = function
             | None when allow_void -> t_i32
             | None ->
                 Error.failf pos "'%s' returns void, cannot use as a value" display))
+  | Ast.EnumLit { tname; variant; args; pos } ->
+      (* Resolve enum + variant.  Phase A: only unit variants — both
+         the variant declaration and the call site must have zero args.
+         Phase B will type-check args against `vsfields_ty`. *)
+      let e =
+        match lookup_enum ctx tname with
+        | Some e -> e
+        | None ->
+            Error.failf pos "unknown enum '%s'"
+              (String.concat "::" tname)
+      in
+      let v =
+        match List.find_opt (fun (vs : variant_sig) -> vs.vsname = variant)
+                e.evariants with
+        | Some v -> v
+        | None ->
+            Error.failf pos "enum '%s' has no variant '%s'"
+              (String.concat "::" e.ename_path) variant
+      in
+      let expected = List.length v.vsfields_ty in
+      let got = List.length args in
+      if expected <> got then
+        Error.failf pos
+          "variant '%s::%s' takes %d argument(s), got %d"
+          (String.concat "::" e.ename_path) variant expected got;
+      TEnum e.ename_path
+  | Ast.Match { scrutinee; arms; pos } ->
+      let scrut_ty = type_of ctx env scrutinee in
+      let ename_path =
+        match scrut_ty with
+        | TEnum p -> p
+        | other ->
+            Error.failf pos
+              "'match' requires an enum value, got %s" (typ_name other)
+      in
+      if arms = [] then
+        Error.failf pos "'match' must have at least one arm";
+      let e =
+        match lookup_enum ctx ename_path with
+        | Some e -> e
+        | None ->
+            Error.failf pos "internal: enum '%s' missing from index"
+              (String.concat "::" ename_path)
+      in
+      (* Per-arm: validate pattern matches the scrutinee's enum, then
+         type the arm body and require all bodies share a type. *)
+      let arm_tys =
+        List.map (fun (a : Ast.match_arm) ->
+          (match a.pat with
+           | Ast.PWildcard _ | Ast.PVar _ -> ()
+           | Ast.PVariant { tname; variant; binds; pos = ppos } ->
+               let resolved =
+                 match lookup_enum ctx tname with
+                 | Some e' -> e'.ename_path
+                 | None ->
+                     Error.failf ppos "unknown enum '%s' in pattern"
+                       (String.concat "::" tname)
+               in
+               if resolved <> ename_path then
+                 Error.failf ppos
+                   "pattern matches '%s' but scrutinee has type '%s'"
+                   (String.concat "::" resolved)
+                   (String.concat "::" ename_path);
+               let v =
+                 match List.find_opt
+                         (fun (vs : variant_sig) -> vs.vsname = variant)
+                         e.evariants with
+                 | Some v -> v
+                 | None ->
+                     Error.failf ppos "enum '%s' has no variant '%s'"
+                       (String.concat "::" ename_path) variant
+               in
+               let expected_binds = List.length v.vsfields_ty in
+               let got_binds = List.length binds in
+               if expected_binds <> got_binds then
+                 Error.failf ppos
+                   "variant '%s' has %d field(s), pattern binds %d"
+                   variant expected_binds got_binds);
+          type_of ~allow_void ctx env a.body)
+          arms
+      in
+      (* Exhaustiveness: every variant must be reached.  A wildcard
+         pattern (or a bare bind, which is equivalent here — both match
+         anything) covers all remaining variants. *)
+      let has_catchall =
+        List.exists (fun (a : Ast.match_arm) ->
+          match a.pat with
+          | Ast.PWildcard _ | Ast.PVar _ -> true
+          | _ -> false)
+          arms
+      in
+      if not has_catchall then begin
+        let covered =
+          List.filter_map (fun (a : Ast.match_arm) ->
+            match a.pat with
+            | Ast.PVariant { variant; _ } -> Some variant
+            | _ -> None)
+            arms
+        in
+        let missing =
+          List.filter
+            (fun (vs : variant_sig) -> not (List.mem vs.vsname covered))
+            e.evariants
+        in
+        if missing <> [] then
+          Error.failf pos
+            "non-exhaustive 'match': variant(s) %s not covered (add an arm \
+             or '_')"
+            (String.concat ", "
+               (List.map (fun (vs : variant_sig) -> vs.vsname) missing))
+      end;
+      (* All arm bodies must agree on a type — pick the first as the
+         witness and require the rest to match it. *)
+      (match arm_tys with
+       | [] -> assert false
+       | t0 :: rest ->
+           List.iter (fun t ->
+             if not (typ_eq t t0) then
+               Error.failf pos
+                 "match arms have inconsistent types: %s vs %s"
+                 (typ_name t0) (typ_name t))
+             rest;
+           t0)
 
 (* Resolve operand types for a BinOp.  An integer literal on either side
    adopts the other operand's int type if it fits, so `x + 5` keeps x's
@@ -561,6 +702,57 @@ let rec elab_expr ?(allow_void = false) ctx env e : texpr =
         in
         let targs = List.map (elab_expr ctx env) args in
         TCall { mangled; args = trecv_adj :: targs }
+    | Ast.EnumLit { tname; variant; args; _ } ->
+        let e =
+          match lookup_enum ctx tname with
+          | Some e -> e
+          | None -> assert false
+        in
+        let tag =
+          let rec find i = function
+            | [] -> assert false
+            | (vs : variant_sig) :: _ when vs.vsname = variant -> i
+            | _ :: rest -> find (i + 1) rest
+          in
+          find 0 e.evariants
+        in
+        let targs = List.map (elab_expr ctx env) args in
+        TEnumLit { ename_path = e.ename_path; variant; tag; args = targs }
+    | Ast.Match { scrutinee; arms; _ } ->
+        let tscrut = elab_expr ctx env scrutinee in
+        let ename_path =
+          match tscrut.ty with
+          | TEnum p -> p
+          | _ -> assert false
+        in
+        let e =
+          match lookup_enum ctx ename_path with
+          | Some e -> e
+          | None -> assert false
+        in
+        let tarms =
+          List.map (fun (a : Ast.match_arm) ->
+            let tpat =
+              match a.pat with
+              | Ast.PWildcard _ -> TPWildcard
+              | Ast.PVar (n, _) -> TPVar n
+              | Ast.PVariant { variant; binds; _ } ->
+                  let tag =
+                    let rec find i = function
+                      | [] -> assert false
+                      | (vs : variant_sig) :: _ when vs.vsname = variant -> i
+                      | _ :: rest -> find (i + 1) rest
+                    in
+                    find 0 e.evariants
+                  in
+                  let _ = binds in
+                  TPVariant { variant; tag; binds = [] }
+            in
+            let tbody = elab_expr ~allow_void ctx env a.body in
+            { tpat; tbody; tarm_pos = a.arm_pos })
+            arms
+        in
+        TMatch { scrutinee = tscrut; ename_path; arms = tarms }
   in
   { e = node; ty; pos }
 
@@ -728,6 +920,7 @@ let elab_body ctx param_env stmts : (string * typ) list * tstmt list =
 type flat = {
   funcs : (string list * Ast.func * string) list;
   structs : (string list * Ast.struct_decl) list;
+  enums : (string list * Ast.enum_decl) list;
   modules : (string list * bool) list;
   (* Each `impl` block keeps its enclosing module path; target struct
      resolution (relative-to-scope, ancestor walk-up) happens later
@@ -738,6 +931,7 @@ type flat = {
 let flatten_items program =
   let funcs = ref [] in
   let structs = ref [] in
+  let enums = ref [] in
   let modules = ref [] in
   let impls = ref [] in
   let rec walk path items =
@@ -748,6 +942,8 @@ let flatten_items program =
             funcs := (path, f, m) :: !funcs
         | Ast.Struct s ->
             structs := (path, s) :: !structs
+        | Ast.Enum e ->
+            enums := (path, e) :: !enums
         | Ast.Module m ->
             let mod_path = path @ [m.Ast.mname] in
             modules := (mod_path, m.Ast.mis_pub) :: !modules;
@@ -763,18 +959,19 @@ let flatten_items program =
   walk [] program;
   { funcs = List.rev !funcs;
     structs = List.rev !structs;
+    enums = List.rev !enums;
     modules = List.rev !modules;
     impls = List.rev !impls }
 
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
-let build_global_index ~struct_index ~modules flat =
+let build_global_index ~struct_index ~enum_index ~modules flat =
   List.filter_map
     (fun (p, (f : Ast.func), mangled) ->
       if f.name = "main" then None
       else
         let ctx = {
-          global = []; structs = struct_index;
+          global = []; structs = struct_index; enums = enum_index;
           modules; scope = p
         } in
         Some
@@ -789,10 +986,11 @@ let build_global_index ~struct_index ~modules flat =
 (* Build the struct registry from the flattened struct declarations.
    Two-pass: first collect every struct's absolute path with empty
    fields, then resolve each declaration's field types against that
-   skeleton.  Two passes are necessary because field types can refer
-   to other structs declared in any order, and `resolve_type_ann`
-   needs to see them all to rewrite relative paths to absolute. *)
-let build_struct_index ~modules struct_flat =
+   skeleton (and against the enum index, which has no struct deps).
+   Two passes are necessary because field types can refer to other
+   structs declared in any order, and `resolve_type_ann` needs to see
+   them all to rewrite relative paths to absolute. *)
+let build_struct_index ~modules ~enums struct_flat =
   let skeleton =
     List.map
       (fun (p, (s : Ast.struct_decl)) ->
@@ -804,13 +1002,36 @@ let build_struct_index ~modules struct_flat =
   List.map2
     (fun (p, (s : Ast.struct_decl)) skel ->
       let ctx = {
-        global = []; structs = skeleton;
+        global = []; structs = skeleton; enums;
         modules; scope = p
       } in
       { skel with
         sfields_ty =
           List.map (fun (n, t) -> (n, resolve_type_ann ctx t)) s.sfields })
     struct_flat skeleton
+
+(* Build the enum registry.  Variant payload types are not resolved
+   in Phase A (all variants are unit-typed in practice; the parser
+   accepts tuple variants but typecheck rejects them until Phase B).
+   Phase B will resolve each `vfields` against the same struct/enum
+   index used elsewhere. *)
+let build_enum_index enum_flat =
+  List.map
+    (fun (p, (e : Ast.enum_decl)) ->
+      let variants =
+        List.map (fun (v : Ast.enum_variant) ->
+          (* Phase A: reject tuple variants here so users get a clear
+             error rather than half-working codegen. *)
+          if v.vfields <> [] then
+            Error.failf v.vpos
+              "tuple variants like '%s(...)' are not yet supported \
+               (Phase B); use a unit variant for now" v.vname;
+          { vsname = v.vname; vsfields_ty = [] })
+          e.evariants
+      in
+      { ename_path = p @ [e.ename]; evariants = variants;
+        eis_pub = e.eis_pub })
+    enum_flat
 
 (* Walk a typed function body looking for tuple types in use, deduplicating
    by mangled name; codegen later emits one C struct per unique shape.
@@ -841,6 +1062,10 @@ let collect_tuple_types_of tfuncs =
         List.iter (fun (_, fe) -> walk_texpr fe) fields;
         Option.iter walk_texpr base
     | TFieldAccess { target; _ } -> walk_texpr target
+    | TEnumLit { args; _ } -> List.iter walk_texpr args
+    | TMatch { scrutinee; arms; _ } ->
+        walk_texpr scrutinee;
+        List.iter (fun a -> walk_texpr a.tbody) arms
   in
   let rec walk_tstmt = function
     | TLet { value; _ } | TLetTuple { value; _ }
@@ -883,6 +1108,10 @@ let uses_heap_of tfuncs =
         List.exists (fun (_, fe) -> walk_texpr fe) fields
         || (match base with Some b -> walk_texpr b | None -> false)
     | TFieldAccess { target; _ } -> walk_texpr target
+    | TEnumLit { args; _ } -> List.exists walk_texpr args
+    | TMatch { scrutinee; arms; _ } ->
+        walk_texpr scrutinee
+        || List.exists (fun a -> walk_texpr a.tbody) arms
   in
   let rec walk_tstmt = function
     | TLet { value; _ } | TLetTuple { value; _ }
@@ -910,12 +1139,12 @@ let uses_heap_of tfuncs =
    (or `mod__Foo__method` for `Foo` inside a module).  The struct's
    absolute path is registered as a virtual module so qualified call
    visibility walks (`Foo::method(p, ...)`) resolve naturally. *)
-let expand_impls flat struct_index modules =
+let expand_impls flat struct_index enum_index modules =
   let resolved =
     List.map
       (fun (parent_path, ib) ->
         let ctx = {
-          global = []; structs = struct_index;
+          global = []; structs = struct_index; enums = enum_index;
           modules; scope = parent_path;
         } in
         let s =
@@ -1023,9 +1252,12 @@ let check_program program : tprogram =
         (fun (p : Ast.param) -> check_c_ident f.pos "parameter" p.pname)
         f.params)
     flat.funcs;
-  let struct_index = build_struct_index ~modules:flat.modules flat.structs in
+  let enum_index = build_enum_index flat.enums in
+  let struct_index =
+    build_struct_index ~modules:flat.modules ~enums:enum_index flat.structs
+  in
   let (impl_funcs, virtual_modules) =
-    expand_impls flat struct_index flat.modules
+    expand_impls flat struct_index enum_index flat.modules
   in
   let modules = flat.modules @ virtual_modules in
   let all_funcs = flat.funcs @ impl_funcs in
@@ -1037,11 +1269,16 @@ let check_program program : tprogram =
         (fun (p : Ast.param) -> check_c_ident f.pos "parameter" p.pname)
         f.params)
     impl_funcs;
-  let global = build_global_index ~struct_index ~modules all_funcs in
+  let global =
+    build_global_index ~struct_index ~enum_index ~modules all_funcs
+  in
   let tp_funcs =
     List.map
       (fun (path, (f : Ast.func), mangled) ->
-        let ctx = { global; structs = struct_index; modules; scope = path } in
+        let ctx = {
+          global; structs = struct_index; enums = enum_index;
+          modules; scope = path
+        } in
         let param_tys =
           List.map (fun (p : Ast.param) -> resolve_type_ann ctx p.pty) f.params
         in
@@ -1061,6 +1298,7 @@ let check_program program : tprogram =
   { tp_funcs;
     tp_struct_decls = flat.structs;
     tp_struct_index = struct_index;
+    tp_enum_index = enum_index;
     tp_global = global;
     tp_modules = modules;
     tp_uses_heap;

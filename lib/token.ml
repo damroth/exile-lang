@@ -12,6 +12,10 @@ type t =
   | Defer
   | Struct
   | Impl
+  | Enum
+  | Match
+  | FatArrow
+  | Pipe
   | Dot
   | DotDot
   | Amp
@@ -50,6 +54,8 @@ let pp = function
   | Mod -> "'mod'" | Pub -> "'pub'" | Use -> "'use'" | As -> "'as'"
   | Defer -> "'defer'"
   | Struct -> "'struct'" | Impl -> "'impl'"
+  | Enum -> "'enum'" | Match -> "'match'" | FatArrow -> "'=>'"
+  | Pipe -> "'|'"
   | Dot -> "'.'" | DotDot -> "'..'"
   | Amp -> "'&'" | New -> "'new'" | Null -> "'null'"
   | LParen -> "'('" | RParen -> "')'"

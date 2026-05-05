@@ -16,6 +16,8 @@ let keyword_or_ident = function
   | "defer" -> Token.Defer
   | "struct" -> Token.Struct
   | "impl" -> Token.Impl
+  | "enum" -> Token.Enum
+  | "match" -> Token.Match
   | "new" -> Token.New
   | "null" -> Token.Null
   | "true" -> Token.True
@@ -76,10 +78,13 @@ let tokenize ~file src =
       | '>' -> loop (i + 1) ((Token.Gt, p) :: acc)
       | '=' when i + 1 < len && src.[i + 1] = '=' ->
           adv '='; loop (i + 2) ((Token.EqEq, p) :: acc)
+      | '=' when i + 1 < len && src.[i + 1] = '>' ->
+          adv '>'; loop (i + 2) ((Token.FatArrow, p) :: acc)
       | '=' -> loop (i + 1) ((Token.Eq, p) :: acc)
       | '!' when i + 1 < len && src.[i + 1] = '=' ->
           adv '='; loop (i + 2) ((Token.NotEq, p) :: acc)
       | '!' -> Error.failf p "unexpected '!'; did you mean '!='"
+      | '|' -> loop (i + 1) ((Token.Pipe, p) :: acc)
       | '"' ->
           Buffer.clear buf;
           let rec str j =

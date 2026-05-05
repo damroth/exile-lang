@@ -131,10 +131,23 @@ let rec parse_primary s =
       expect s Token.LBrace;
       let (fields, base) = parse_struct_lit_body s in
       Ast.New { tname = path; fields; base; pos = p }
+  | Token.Match ->
+      (* `match scrutinee { | pat => expr | pat => expr }` — leading `|`
+         on every arm (OCaml/F# style; differs from Rust's trailing `,`).
+         The scrutinee is parsed in `allow_struct_lit = false` mode so
+         the opening `{` always begins the match body, never a struct
+         literal. *)
+      let prev = s.allow_struct_lit in
+      s.allow_struct_lit <- false;
+      let scrutinee = parse_expr s in
+      s.allow_struct_lit <- prev;
+      expect s Token.LBrace;
+      let arms = parse_match_arms s [] in
+      Ast.Match { scrutinee; arms; pos = p }
   | Token.Ident name ->
       (* Path-qualified identifiers: foo::bar::baz(...).  Build the full
-         path, then decide if it ends in a call, a struct literal, or a
-         bare value. *)
+         path, then decide if it ends in a call, a struct literal, an
+         enum unit-variant constructor, or a bare value. *)
       let path = parse_path_tail s [name] in
       (match peek s with
        | Token.LParen ->
@@ -148,9 +161,18 @@ let rec parse_primary s =
            (match path with
             | [single] -> Ast.Var (single, p)
             | _ ->
-                Error.failf p
-                  "qualified path '%s' must be followed by '(' or '{'"
-                  (String.concat "::" path)))
+                (* Bare qualified path with no parens / braces — the
+                   only legal use is constructing a unit enum variant
+                   (`Foo::A`).  Elab dispatches the path; if it doesn't
+                   resolve to an enum variant we get a clearer error
+                   there than guessing at the parse level. *)
+                let (init, last) =
+                  match List.rev path with
+                  | [] -> assert false
+                  | n :: rest -> (List.rev rest, n)
+                in
+                Ast.EnumLit { tname = init; variant = last;
+                              args = []; pos = p }))
   | Token.LParen ->
       (* Grouping `(e)` for a single expression, tuple literal `(e1, e2, ...)`
          for two or more. *)
@@ -279,6 +301,61 @@ and parse_expr s =
 
 and parse_args s = parse_comma_list ~close:Token.RParen ~item:parse_expr s
 
+(* Pattern grammar (Phase A):
+     `_`                          → wildcard
+     `<ident>`                    → bind (single segment, no `::`)
+     `<Path>::<Variant>`          → unit variant
+     `<Path>::<Variant>(p, ...)`  → tuple variant (Phase B uses binds)
+
+   Distinguishing bind from unit-variant relies on the path having more
+   than one segment for variants — bare `name` is always a binding. *)
+and parse_pattern s =
+  let p = peek_pos s in
+  match peek s with
+  | Token.Ident "_" ->
+      ignore (advance s); Ast.PWildcard p
+  | Token.Ident name ->
+      ignore (advance s);
+      let path = parse_path_tail s [name] in
+      (match path with
+       | [single] -> Ast.PVar (single, p)
+       | _ ->
+           let (init, last) =
+             match List.rev path with
+             | [] -> assert false
+             | n :: rest -> (List.rev rest, n)
+           in
+           let binds =
+             if peek s = Token.LParen then begin
+               ignore (advance s);
+               parse_comma_list ~close:Token.RParen ~item:parse_pattern s
+             end else []
+           in
+           Ast.PVariant { tname = init; variant = last; binds; pos = p })
+  | t ->
+      Error.failf p "expected pattern, got %s" (Token.pp t)
+
+(* Parse `| pat => expr | pat => expr ... }` after the opening `{` has
+   been consumed.  Each arm starts with `|`; allowing the first arm to
+   omit it would save a character but breaks the visual symmetry that
+   makes diffs clean (every arm line starts the same way).  `}` is
+   consumed on exit. *)
+and parse_match_arms s acc =
+  match peek s with
+  | Token.RBrace -> ignore (advance s); List.rev acc
+  | Token.Eof ->
+      Error.raise_ s.last_pos "unexpected end of file inside 'match'"
+  | Token.Pipe ->
+      let arm_pos = peek_pos s in
+      ignore (advance s);
+      let pat = parse_pattern s in
+      expect s Token.FatArrow;
+      let body = parse_expr s in
+      parse_match_arms s (Ast.{ pat; body; arm_pos } :: acc)
+  | t ->
+      Error.failf (peek_pos s)
+        "expected '|' before match arm, got %s" (Token.pp t)
+
 let rec parse_block s =
   expect s Token.LBrace;
   let body = parse_stmts s [] in
@@ -365,6 +442,13 @@ and parse_stmt s =
       s.allow_struct_lit <- prev;
       let body = parse_block s in
       Ast.While { cond; body }
+  | Token.Match ->
+      (* `match` is parsed as an expression but its statement form
+         needs no trailing `;` — block-shaped, like `if`/`while`.
+         We delegate to parse_primary so the same parser handles
+         match-as-expression in Phase C. *)
+      let e = parse_primary s in
+      Ast.ExprStmt e
   | _ ->
       (* General statement: parse an expression, then dispatch on what
          follows.  An `=` makes it an assignment whose target is either a
@@ -518,6 +602,12 @@ let rec parse_item s seen =
         Error.failf sd.Ast.spos
           "name '%s' already used in this scope" sd.Ast.sname;
       [ (Some sd.Ast.sname, Ast.Struct sd) ]
+  | Token.Enum ->
+      let ed = parse_enum_decl s ~is_pub in
+      if List.mem ed.Ast.ename seen then
+        Error.failf ed.Ast.epos
+          "name '%s' already used in this scope" ed.Ast.ename;
+      [ (Some ed.Ast.ename, Ast.Enum ed) ]
   | Token.Impl ->
       if is_pub then
         Error.failf (peek_pos s)
@@ -548,7 +638,8 @@ let rec parse_item s seen =
         items;
       items
   | _ ->
-      Error.failf (peek_pos s) "expected 'fn', 'mod', 'use' or 'struct', got %s"
+      Error.failf (peek_pos s)
+        "expected 'fn', 'mod', 'use', 'struct', 'enum' or 'impl', got %s"
         (Token.pp (peek s))
 
 and parse_struct_decl s ~is_pub =
@@ -579,6 +670,53 @@ and parse_struct_decl s ~is_pub =
   in
   check_dups fields;
   Ast.{ sname = name; sfields = fields; spos = name_pos; sis_pub = is_pub }
+
+(* `enum Foo { | A | B(int) | C(int, str) }` — leading `|` per variant
+   (OCaml/F# style; differs from Rust's trailing comma).  Each variant
+   is `Name` (unit) or `Name(T1, T2, ...)` (tuple — accepted by the
+   parser; Phase A's typecheck rejects non-unit until Phase B lands). *)
+and parse_enum_decl s ~is_pub =
+  expect s Token.Enum;
+  let (name, name_pos) =
+    match advance s with
+    | (Token.Ident n, p) -> (n, p)
+    | (_, p) -> Error.raise_ p "expected enum name after 'enum'"
+  in
+  expect s Token.LBrace;
+  let rec loop acc =
+    match peek s with
+    | Token.RBrace -> ignore (advance s); List.rev acc
+    | Token.Eof ->
+        Error.raise_ s.last_pos "unexpected end of file inside 'enum'"
+    | Token.Pipe ->
+        ignore (advance s);
+        let (vname, vpos) = expect_ident s ~what:"variant name after '|'" in
+        let vfields =
+          if peek s = Token.LParen then begin
+            ignore (advance s);
+            parse_comma_list ~close:Token.RParen ~item:parse_type s
+          end else []
+        in
+        loop (Ast.{ vname; vfields; vpos } :: acc)
+    | t ->
+        Error.failf (peek_pos s)
+          "expected '|' before enum variant, got %s" (Token.pp t)
+  in
+  let variants = loop [] in
+  if variants = [] then
+    Error.failf name_pos "enum '%s' must declare at least one variant" name;
+  let rec check_dups = function
+    | [] -> ()
+    | (v : Ast.enum_variant) :: rest ->
+        if List.exists (fun (w : Ast.enum_variant) -> w.vname = v.vname) rest
+        then
+          Error.failf v.vpos
+            "duplicate variant '%s' in enum '%s'" v.vname name;
+        check_dups rest
+  in
+  check_dups variants;
+  Ast.{ ename = name; evariants = variants; epos = name_pos;
+        eis_pub = is_pub }
 
 (* `impl <Path> { fn ... fn ... }` — methods get registered against the
    target struct, not into the surrounding scope.  Each method is parsed

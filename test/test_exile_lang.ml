@@ -476,6 +476,65 @@ let () =
     "struct P { x: int }\nimpl P { fn priv(self: P) -> int { return self.x; } }\nfn main() { let p = P { x: 1 }; print(p.priv()); }\n"
     "method 'priv' is private to 'P'";
 
+  check "enum unit variants + match with explicit arms"
+    "enum Color {\n\
+    \    | Red\n\
+    \    | Green\n\
+    \    | Blue\n\
+     }\n\
+     fn main() {\n\
+    \    let c = Color::Green;\n\
+    \    match c {\n\
+    \        | Color::Red => print(\"r\")\n\
+    \        | Color::Green => print(\"g\")\n\
+    \        | Color::Blue => print(\"b\")\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Color_tag { ex_Color_Red, ex_Color_Green, ex_Color_Blue };\nstruct ex_Color { enum ex_Color_tag tag; };\n\nint main(void) {\n    struct ex_Color c;\n    c.tag = ex_Color_Green;\n    {\n        struct ex_Color __m;\n        __m = c;\n        switch (__m.tag) {\n        case ex_Color_Red:\n            printf(\"%s\\n\", \"r\");\n            break;\n        case ex_Color_Green:\n            printf(\"%s\\n\", \"g\");\n            break;\n        case ex_Color_Blue:\n            printf(\"%s\\n\", \"b\");\n            break;\n        }\n    }\n    return 0;\n}\n";
+
+  check "match with wildcard arm covers remaining variants"
+    "enum E { | A | B | C }\n\
+     fn main() {\n\
+    \    let e = E::A;\n\
+    \    match e {\n\
+    \        | E::A => print(\"a\")\n\
+    \        | _ => print(\"other\")\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B, ex_E_C };\nstruct ex_E { enum ex_E_tag tag; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_A;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            printf(\"%s\\n\", \"a\");\n            break;\n        default:\n            printf(\"%s\\n\", \"other\");\n            break;\n        }\n    }\n    return 0;\n}\n";
+
+  check_error "non-exhaustive match rejected"
+    "enum E { | A | B }\nfn main() { let e = E::A; match e { | E::A => print(\"a\") } }\n"
+    "non-exhaustive 'match': variant(s) B not covered (add an arm or '_')";
+
+  check_error "unknown variant in constructor rejected"
+    "enum E { | A }\nfn main() { let e = E::Nope; }\n"
+    "enum 'E' has no variant 'Nope'";
+
+  check_error "unknown enum in constructor rejected"
+    "fn main() { let e = Nope::A; }\n"
+    "unknown enum 'Nope'";
+
+  check_error "duplicate variant in enum decl rejected"
+    "enum E { | A | A }\nfn main() {}\n"
+    "duplicate variant 'A' in enum 'E'";
+
+  check_error "tuple variant rejected in Phase A"
+    "enum E { | A(int) }\nfn main() {}\n"
+    "tuple variants like 'A(...)' are not yet supported (Phase B); use a unit variant for now";
+
+  check_error "match on non-enum rejected"
+    "fn main() { let x = 5; match x { | _ => print(\"x\") } }\n"
+    "'match' requires an enum value, got i32";
+
+  check_error "pattern enum mismatch with scrutinee rejected"
+    "enum A { | X }\nenum B { | Y }\nfn main() { let a = A::X; match a { | B::Y => print(\"b\") } }\n"
+    "pattern matches 'B' but scrutinee has type 'A'";
+
+  check_error "print of enum value rejected"
+    "enum E { | A }\nfn main() { let e = E::A; print(e); }\n"
+    "cannot print an enum value (E); match on it and print per variant";
+
   check "mod-local struct as fn param and self resolves to absolute path"
     "mod geom {\n\
     \    pub struct Point { x: int, y: int }\n\

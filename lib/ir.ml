@@ -18,6 +18,7 @@ type typ =
   | TString
   | TTuple of typ list
   | TStruct of string list             (* absolute path: e.g. ["foo"; "Point"] *)
+  | TEnum of string list               (* absolute path: e.g. ["geom"; "Shape"] *)
   | TPtr of typ                        (* `*T` *)
   | TNullPtr                           (* type of `null` literal — compatible
                                           with any TPtr; never reaches codegen
@@ -56,6 +57,20 @@ type struct_sig = {
   sis_pub : bool;
 }
 
+(* Enum signatures: variant order is preserved to give each variant a
+   stable C tag value (Phase A: tag = list index).  Phase B will add
+   payload types via `vfields_ty`. *)
+type variant_sig = {
+  vsname : string;
+  vsfields_ty : typ list;       (* empty for unit variants; populated in Phase B *)
+}
+
+type enum_sig = {
+  ename_path : string list;     (* absolute path: e.g. ["geom"; "Shape"] *)
+  evariants : variant_sig list;
+  eis_pub : bool;
+}
+
 (* Mangle a function name with its module path.  Top-level (path = []) gets
    the `ex_` prefix so emitted symbols never collide with C stdlib builtins
    (gcc warns about builtin-declaration-mismatch even when our top-level
@@ -85,6 +100,7 @@ let rec typ_name = function
   | TString -> "str"
   | TTuple ts -> "(" ^ String.concat ", " (List.map typ_name ts) ^ ")"
   | TStruct path -> String.concat "::" path
+  | TEnum path -> String.concat "::" path
   | TPtr t -> "*" ^ typ_name t
   | TNullPtr -> "*<null>"
 
@@ -111,9 +127,9 @@ let rec mangle_typ = function
   | TTuple ts ->
       Printf.sprintf "tup%d_%s" (List.length ts)
         (String.concat "_" (List.map mangle_typ ts))
-  | TStruct path ->
+  | TStruct path | TEnum path ->
       (match List.rev path with
-       | [] -> failwith "empty struct path"
+       | [] -> failwith "empty named-type path"
        | n :: rest -> mangle (List.rev rest) n)
   | TPtr t -> "ptr_" ^ mangle_typ t
   | TNullPtr -> failwith "TNullPtr should never be mangled"
@@ -144,6 +160,24 @@ type texpr_node =
   | TNew of { sname_path : string list;
               fields : (string * texpr) list;
               base : texpr option }
+  | TEnumLit of { ename_path : string list;
+                  variant : string;
+                  tag : int;            (* index in the enum's variant list *)
+                  args : texpr list }   (* empty for unit variants *)
+  | TMatch of { scrutinee : texpr;
+                ename_path : string list;
+                arms : tmatch_arm list }
+
+and tmatch_arm = {
+  tpat : tpattern;
+  tbody : texpr;
+  tarm_pos : Pos.t;
+}
+
+and tpattern =
+  | TPWildcard
+  | TPVar of string
+  | TPVariant of { variant : string; tag : int; binds : tpattern list }
 
 and texpr = {
   e : texpr_node;
@@ -184,6 +218,7 @@ type tprogram = {
   tp_funcs : tfunc list;
   tp_struct_decls : (string list * Ast.struct_decl) list;
   tp_struct_index : struct_sig list;
+  tp_enum_index : enum_sig list;
   tp_global : (string list * string * fn_sig) list;
   tp_modules : (string list * bool) list;
   tp_uses_heap : bool;

@@ -37,6 +37,28 @@ type expr =
                                            call.  Elaboration resolves the
                                            method on receiver's struct and
                                            lowers it to an ordinary call. *)
+  | EnumLit of { tname : string list; variant : string;
+                 args : expr list; pos : Pos.t }
+                                        (* `Foo::Variant(args)` for tuple
+                                           variants, `Foo::Variant` (with
+                                           args=[]) for unit variants. *)
+  | Match of { scrutinee : expr; arms : match_arm list; pos : Pos.t }
+                                        (* `match e { | pat => expr | ... }` —
+                                           always an expression in the AST;
+                                           Phase A only allows it in
+                                           ExprStmt position (effective
+                                           statement form), Phase C adds
+                                           let-RHS / return lowering. *)
+
+and match_arm = { pat : pattern; body : expr; arm_pos : Pos.t }
+
+and pattern =
+  | PWildcard of Pos.t
+  | PVar of string * Pos.t           (* binds the scrutinee to the name *)
+  | PVariant of { tname : string list; variant : string;
+                  binds : pattern list; pos : Pos.t }
+                                        (* `Foo::Variant(p1, p2, ...)`; for
+                                           unit variants `binds=[]`. *)
 
 let expr_pos = function
   | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
@@ -45,7 +67,7 @@ let expr_pos = function
   | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)
   | NullLit p -> p
   | StructLit { pos; _ } | New { pos; _ }
-  | MethodCall { pos; _ } -> pos
+  | MethodCall { pos; _ } | EnumLit { pos; _ } | Match { pos; _ } -> pos
 
 type param = { pname : string; pty : type_ann }
 
@@ -77,11 +99,27 @@ type struct_decl = {
   sis_pub : bool;
 }
 
+(* `enum Foo { | A | B(int, str) }` — Phase A supports unit variants only
+   (vfields = []); Phase B will populate vfields for tuple variants. *)
+type enum_variant = {
+  vname : string;
+  vfields : type_ann list;
+  vpos : Pos.t;
+}
+
+type enum_decl = {
+  ename : string;
+  evariants : enum_variant list;
+  epos : Pos.t;
+  eis_pub : bool;
+}
+
 type item =
   | Function of func
   | Module of module_decl
   | Use of { path : string list; is_wildcard : bool; pos : Pos.t }
   | Struct of struct_decl
+  | Enum of enum_decl
   | Impl of impl_block
 and module_decl = {
   mname : string;

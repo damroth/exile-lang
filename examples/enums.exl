@@ -1,0 +1,34 @@
+// Algebraic data types — Phase A: unit variants only.
+//
+// Declaration uses leading `|` per variant (OCaml/F# style; differs
+// from Rust's trailing `,`).  Construction is qualified: `Color::Red`.
+// `match` is exhaustive — every variant must be reached, either via an
+// explicit arm or a wildcard `_`.
+//
+// Phase B will add tuple variants (`Circle(int)`) and pattern bindings;
+// Phase C lets `match` produce a value (currently it's a statement).
+
+pub enum Direction {
+    | North
+    | South
+    | East
+    | West
+}
+
+fn describe(d: Direction) {
+    match d {
+        | Direction::North => print("up")
+        | Direction::South => print("down")
+        | _ => print("sideways")           // East and West together
+    }
+}
+
+fn main() {
+    let d = Direction::East;
+    describe(d);                            // "sideways"
+
+    // Inline construction passed via a let binding (Phase A: enum
+    // constructors are not yet allowed as a sub-expression).
+    let n = Direction::North;
+    describe(n);                            // "up"
+}

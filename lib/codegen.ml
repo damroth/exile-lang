@@ -76,6 +76,7 @@ let rec c_type_prefix = function
   | TString -> "const char *"
   | TTuple ts -> "struct " ^ tuple_struct_name ts ^ " "
   | TStruct _ as t -> "struct " ^ mangle_typ t ^ " "
+  | TEnum _ as t -> "struct " ^ mangle_typ t ^ " "
   | TPtr inner ->
       (* Pointer types render as `<base> *` with no trailing space, so
          `c_decl t name` produces `<base> *name`. *)
@@ -108,7 +109,7 @@ let emit_print : builtin_emit =
       | TInt { signed = true; _ } -> "\"%d\\n\""
       | TInt { signed = false; _ } -> "\"%u\\n\""
       | TString -> "\"%s\\n\""
-      | TTuple _ | TStruct _ | TPtr _ | TNullPtr ->
+      | TTuple _ | TStruct _ | TEnum _ | TPtr _ | TNullPtr ->
           assert false  (* typecheck rejected this earlier *)
     in
     let cast =
@@ -236,6 +237,18 @@ let rec gen_expr buf (te : texpr) =
       Buffer.add_string buf field
   | TRef sub -> emit_unary buf '&' sub ~simple:(fun n -> lvalue_like n)
   | TDeref sub -> emit_unary buf '*' sub ~simple:(fun n -> lvalue_like n)
+  | TEnumLit _ ->
+      (* Phase A: enum constructors only land in let-RHS, return, or as a
+         match scrutinee (all routed through emit_value_into_temp).
+         Using one as a sub-expression (e.g. `print(Foo::A)`) requires a
+         temp-and-block lowering — that comes with Phase C. *)
+      Error.failf te.pos
+        "enum constructor in expression position not yet supported \
+         (bind it to a let first)"
+  | TMatch _ ->
+      Error.failf te.pos
+        "'match' as an expression is not yet supported in this position \
+         (Phase C); use it as a statement"
 
 and emit_unary buf prefix ~simple (te : texpr) =
   Buffer.add_char buf prefix;
@@ -281,6 +294,19 @@ let rec emit_value_into_temp buf indent temp_name (value : texpr) =
       Option.iter (assign ~lhs:("*" ^ temp_name)) base;
       List.iter (fun (fname, fe) -> assign ~lhs:(temp_name ^ "->" ^ fname) fe)
         fields
+  | TEnumLit { ename_path; variant; args = []; _ } ->
+      (* Phase A: unit variants only.  The enum value is a struct holding
+         just a tag — set it.  Phase B will add per-variant payload
+         assignments through `temp.data.<variant>._<i> = ...`. *)
+      let cname = mangle_typ (TEnum ename_path) in
+      emit_assign_line buf indent ~lhs:(temp_name ^ ".tag")
+        ~emit_rhs:(fun () ->
+          Buffer.add_string buf cname;
+          Buffer.add_char buf '_';
+          Buffer.add_string buf variant)
+  | TEnumLit { args; _ } ->
+      let _ = args in
+      failwith "tuple-variant codegen lands in Phase B"
   | _ -> assign ~lhs:temp_name value
 
 (* Statement emission with `defer` support.  `outer_scopes` is the list of
@@ -320,9 +346,12 @@ let rec emit_simple_stmt buf indent stmt =
       gen_expr buf value;
       Buffer.add_string buf ";\n"
   | TExprStmt e ->
-      Buffer.add_string buf indent;
-      gen_expr buf e;
-      Buffer.add_string buf ";\n"
+      (match e.e with
+       | TMatch _ -> emit_match_stmt buf indent e
+       | _ ->
+           Buffer.add_string buf indent;
+           gen_expr buf e;
+           Buffer.add_string buf ";\n")
   | TIf { cond; then_body; else_body } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf "if (";
@@ -350,6 +379,46 @@ let rec emit_simple_stmt buf indent stmt =
       Error.failf pos "'defer' inside a defer body is not supported"
   | TReturn { pos; _ } ->
       Error.failf pos "'return' inside a defer body is not supported"
+
+(* `match` as statement: hoist the scrutinee into a fresh `__m` temp in
+   a new C block and dispatch on its tag.  Each variant arm becomes a
+   `case`; a wildcard or bare-bind pattern becomes `default:`.  Phase A
+   only produces unit variants, so each arm body is just an
+   expression-statement (often a void call); Phase B will add bind
+   declarations for tuple payloads. *)
+and emit_match_stmt buf indent (m_expr : texpr) =
+  match m_expr.e with
+  | TMatch { scrutinee; ename_path; arms } ->
+      let inner = indent ^ "    " in
+      let case_indent = inner ^ "    " in
+      let cname = mangle_typ (TEnum ename_path) in
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "{\n";
+      Buffer.add_string buf inner;
+      Buffer.add_string buf (Printf.sprintf "struct %s __m;\n" cname);
+      emit_value_into_temp buf inner "__m" scrutinee;
+      Buffer.add_string buf inner;
+      Buffer.add_string buf "switch (__m.tag) {\n";
+      List.iter
+        (fun (a : tmatch_arm) ->
+          Buffer.add_string buf inner;
+          (match a.tpat with
+           | TPVariant { variant; _ } ->
+               Buffer.add_string buf (Printf.sprintf "case %s_%s:\n"
+                                        cname variant)
+           | TPWildcard | TPVar _ ->
+               Buffer.add_string buf "default:\n");
+          Buffer.add_string buf case_indent;
+          gen_expr buf a.tbody;
+          Buffer.add_string buf ";\n";
+          Buffer.add_string buf case_indent;
+          Buffer.add_string buf "break;\n")
+        arms;
+      Buffer.add_string buf inner;
+      Buffer.add_string buf "}\n";
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "}\n"
+  | _ -> assert false
 
 (* Destructuring binding: introduce an inner C block, declare a `__t` temp
    of the tuple struct type, fill it from the RHS, then assign each hoisted
@@ -536,6 +605,25 @@ let emit_tuple_struct buf (_, t) =
       emit_struct_decl buf (tuple_struct_name ts) fields
   | _ -> ()
 
+(* Phase A enum lowering: an enum becomes a tag-only struct.  Tag values
+   take their name from `<cname>_<variant>` so they live in the same
+   global C namespace as user functions/structs and stay unique across
+   enums.  Phase B will add a payload union as a second struct field. *)
+let emit_named_enum buf (e : enum_sig) =
+  let cname = mangle_typ (TEnum e.ename_path) in
+  Buffer.add_string buf (Printf.sprintf "enum %s_tag {" cname);
+  List.iteri
+    (fun i (vs : variant_sig) ->
+      if i > 0 then Buffer.add_char buf ',';
+      Buffer.add_char buf ' ';
+      Buffer.add_string buf cname;
+      Buffer.add_char buf '_';
+      Buffer.add_string buf vs.vsname)
+    e.evariants;
+  Buffer.add_string buf " };\n";
+  Buffer.add_string buf
+    (Printf.sprintf "struct %s { enum %s_tag tag; };\n" cname cname)
+
 let gen_program ?(annotate = false) (tp : tprogram) =
   annotate_mode := annotate;
   let buf = Buffer.create 256 in
@@ -548,6 +636,10 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   if tp.tp_struct_index <> [] then begin
     Buffer.add_char buf '\n';
     List.iter (emit_named_struct buf) tp.tp_struct_index
+  end;
+  if tp.tp_enum_index <> [] then begin
+    Buffer.add_char buf '\n';
+    List.iter (emit_named_enum buf) tp.tp_enum_index
   end;
   if tp.tp_tuple_types <> [] then begin
     Buffer.add_char buf '\n';
