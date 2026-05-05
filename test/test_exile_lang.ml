@@ -535,6 +535,36 @@ let () =
     "enum E { | A(int, int) }\nfn main() { let e = E::A(1, 2); match e { | E::A(x, x) => print(x) } }\n"
     "duplicate bind name 'x' in pattern";
 
+  check "match as expression in let RHS"
+    "enum E { | A | B(int) }\n\
+     fn main() {\n\
+    \    let e = E::B(7);\n\
+    \    let v = match e {\n\
+    \        | E::A => 0\n\
+    \        | E::B(n) => n + 1\n\
+    \    };\n\
+    \    print(v);\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long v;\n    e.tag = ex_E_B;\n    e.data.B._0 = 7;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                v = 0;\n                break;\n            }\n        case ex_E_B:\n            {\n                long n = __m.data.B._0;\n                v = n + 1;\n                break;\n            }\n        }\n    }\n    printf(\"%ld\\n\", (long)(v));\n    return 0;\n}\n";
+
+  check "match as expression in return position"
+    "enum E { | A | B(int) }\n\
+     fn classify(e: E) -> int {\n\
+    \    return match e {\n\
+    \        | E::A => 0\n\
+    \        | E::B(n) => n\n\
+    \    };\n\
+     }\n\
+     fn main() {\n\
+    \    let e = E::B(42);\n\
+    \    print(classify(e));\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nstatic long ex_classify(struct ex_E e);\n\nstatic long ex_classify(struct ex_E e) {\n    {\n        long __exile_ret;\n        {\n            struct ex_E __m;\n            __m = e;\n            switch (__m.tag) {\n            case ex_E_A:\n                {\n                    __exile_ret = 0;\n                    break;\n                }\n            case ex_E_B:\n                {\n                    long n = __m.data.B._0;\n                    __exile_ret = n;\n                    break;\n                }\n            }\n        }\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_B;\n    e.data.B._0 = 42;\n    printf(\"%ld\\n\", (long)(ex_classify(e)));\n    return 0;\n}\n";
+
+  check_error "match arms with inconsistent types rejected"
+    "enum E { | A | B }\nfn main() { let v = match E::A { | E::A => 1 | E::B => true }; print(v); }\n"
+    "match arms have inconsistent types: i32 vs bool";
+
   check_error "non-exhaustive match rejected"
     "enum E { | A | B }\nfn main() { let e = E::A; match e { | E::A => print(\"a\") } }\n"
     "non-exhaustive 'match': variant(s) B not covered (add an arm or '_')";

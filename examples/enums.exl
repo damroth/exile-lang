@@ -1,4 +1,4 @@
-// Algebraic data types — Phases A and B.
+// Algebraic data types — Phases A, B, C.
 //
 // Declaration uses leading `|` per variant (OCaml/F# style; differs
 // from Rust's trailing `,`).  Three variant forms are designed; this
@@ -10,7 +10,9 @@
 // an explicit arm or a wildcard `_`.  Tuple-variant patterns can bind
 // the payload (`Shape::Rect(w, h)`); `_` skips a payload field.
 //
-// Phase C will let `match` produce a value (it's currently a statement).
+// `match` is an expression: it can sit on a let RHS or in `return`,
+// with each arm supplying a value of the common arm type.  As a
+// statement (the Phase A form) it just dispatches side effects.
 
 pub enum Direction {
     | North
@@ -41,10 +43,18 @@ fn describe_shape(s: Shape) {
     }
 }
 
+// Phase C: match returns a value used in `return`.
+fn area(s: Shape) -> int {
+    return match s {
+        | Shape::Square => 1
+        | Shape::Circle(r) => r * r * 3             // ~pi*r*r, ints only
+        | Shape::Rect(w, h) => w * h
+    };
+}
+
 fn main() {
-    // Enum constructors are bound to a let first; using them directly
-    // as a fn-arg (or other sub-expression position) needs the
-    // temp-and-block lowering that lands with Phase C.
+    // Enum constructors still need a let binding when used as an arg
+    // (sub-expression position is queued for a later iteration).
     let d = Direction::East;
     describe_dir(d);                        // "sideways"
 
@@ -54,4 +64,16 @@ fn main() {
     describe_shape(sq);                     // "a square"
     describe_shape(c);                      // 7
     describe_shape(r);                      // 10
+
+    // Phase C: match-as-expression on a let RHS.
+    let a = match r {
+        | Shape::Square => 0
+        | Shape::Circle(rad) => rad
+        | Shape::Rect(w, h) => w + h
+    };
+    print(a);                               // 30
+
+    print(area(sq));                        // 1
+    print(area(c));                         // 147 (7 * 7 * 3)
+    print(area(r));                         // 200 (10 * 20)
 }

@@ -316,6 +316,11 @@ let rec emit_value_into_temp buf indent temp_name (value : texpr) =
             ~lhs:(Printf.sprintf "%s.data.%s._%d" temp_name variant i)
             arg)
         args
+  | TMatch _ ->
+      (* Phase C: match used as a value (let-RHS, return, ...) lowers
+         to a switch whose every case assigns its arm result to the
+         same temp.  See emit_match_stmt's `assign_to` mode. *)
+      emit_match_stmt ~assign_to:temp_name buf indent value
   | _ -> assign ~lhs:temp_name value
 
 (* Statement emission with `defer` support.  `outer_scopes` is the list of
@@ -332,7 +337,7 @@ let rec emit_value_into_temp buf indent temp_name (value : texpr) =
 
    A `defer` body is a leaf — it must not contain another `defer` or
    `return`; both are rejected by `emit_simple_stmt`. *)
-let rec emit_simple_stmt buf indent stmt =
+and emit_simple_stmt buf indent stmt =
   match stmt with
   | TLet { name; value; _ } | TAssign { name; value; _ } ->
       emit_value_into_temp buf indent name value
@@ -395,7 +400,13 @@ let rec emit_simple_stmt buf indent stmt =
    only produces unit variants, so each arm body is just an
    expression-statement (often a void call); Phase B will add bind
    declarations for tuple payloads. *)
-and emit_match_stmt buf indent (m_expr : texpr) =
+(* Lower a TMatch.  When `assign_to = None` (the Phase A statement
+   form), each arm body is emitted as an expression-statement.  When
+   `Some lhs` (Phase C: let-RHS or `__exile_ret`), each arm body
+   becomes `lhs = <body>;` so the surrounding context picks up the
+   match's value.  Nested match in an arm body lowers recursively
+   under the same `assign_to`. *)
+and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
   match m_expr.e with
   | TMatch { scrutinee; ename_path; arms } ->
       let inner = indent ^ "    " in
@@ -451,9 +462,16 @@ and emit_match_stmt buf indent (m_expr : texpr) =
                    | _ -> ())
                  (List.combine binds v.vsfields_ty)
            | TPWildcard -> ());
-          Buffer.add_string buf body_indent;
-          gen_expr buf a.tbody;
-          Buffer.add_string buf ";\n";
+          (match assign_to, a.tbody.e with
+           | Some lhs, TMatch _ ->
+               emit_match_stmt ~assign_to:lhs buf body_indent a.tbody
+           | Some lhs, _ ->
+               emit_assign_line buf body_indent ~lhs
+                 ~emit_rhs:(fun () -> gen_expr buf a.tbody)
+           | None, _ ->
+               Buffer.add_string buf body_indent;
+               gen_expr buf a.tbody;
+               Buffer.add_string buf ";\n");
           Buffer.add_string buf body_indent;
           Buffer.add_string buf "break;\n";
           Buffer.add_string buf case_indent;
@@ -526,7 +544,7 @@ and gen_block buf indent outer_scopes stmts =
         let needs_block =
           all <> [] ||
           (match value.e with
-           | TTupleLit _ | TStructLit _ | TNew _ -> true
+           | TTupleLit _ | TStructLit _ | TNew _ | TMatch _ -> true
            | _ -> false)
         in
         if not needs_block then begin
