@@ -38,10 +38,13 @@ type expr =
                                            method on receiver's struct and
                                            lowers it to an ordinary call. *)
   | EnumLit of { tname : string list; variant : string;
-                 args : expr list; pos : Pos.t }
-                                        (* `Foo::Variant(args)` for tuple
-                                           variants, `Foo::Variant` (with
-                                           args=[]) for unit variants. *)
+                 args : enum_lit_args; pos : Pos.t }
+                                        (* `Foo::Variant` (unit), `Foo::V(e1)`
+                                           (tuple), `Foo::V { f: e }` (struct).
+                                           Parser emits EATuple for unit and
+                                           tuple forms; struct-variant ctor
+                                           parses as StructLit and is rewritten
+                                           to EnumLit-EAStruct in elab. *)
   | Match of { scrutinee : expr; arms : match_arm list; pos : Pos.t }
                                         (* `match e { | pat => expr | ... }` —
                                            always an expression in the AST;
@@ -52,13 +55,25 @@ type expr =
 
 and match_arm = { pat : pattern; body : expr; arm_pos : Pos.t }
 
+and enum_lit_args =
+  | EATuple of expr list                (* unit ctor uses EATuple [] *)
+  | EAStruct of (string * expr) list
+
 and pattern =
   | PWildcard of Pos.t
-  | PVar of string * Pos.t           (* binds the scrutinee to the name *)
+  | PVar of string * Pos.t              (* binds the scrutinee to the name *)
   | PVariant of { tname : string list; variant : string;
-                  binds : pattern list; pos : Pos.t }
-                                        (* `Foo::Variant(p1, p2, ...)`; for
-                                           unit variants `binds=[]`. *)
+                  binds : pat_binds; pos : Pos.t }
+                                        (* tuple form: `Foo::V(p1, p2)`,
+                                           struct form: `Foo::V { f: p }` or
+                                           shorthand `Foo::V { f }`.  Unit
+                                           variants use `PBTuple []`. *)
+
+and pat_binds =
+  | PBTuple of pattern list
+  | PBStruct of (string * pattern) list  (* may include shorthand binds:
+                                            shorthand `f` desugars at parse
+                                            time to `("f", PVar "f")`. *)
 
 let expr_pos = function
   | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
@@ -99,11 +114,17 @@ type struct_decl = {
   sis_pub : bool;
 }
 
-(* `enum Foo { | A | B(int, str) }` — Phase A supports unit variants only
-   (vfields = []); Phase B will populate vfields for tuple variants. *)
+(* `enum Foo { | A | B(int, str) | C { f: T } }` — three variant forms.
+   Tuple and struct kinds carry their fields in `vkind`; unit variants
+   use `VUnit` and have no payload. *)
+type variant_kind =
+  | VUnit
+  | VTuple of type_ann list
+  | VStruct of (string * type_ann) list
+
 type enum_variant = {
   vname : string;
-  vfields : type_ann list;
+  vkind : variant_kind;
   vpos : Pos.t;
 }
 

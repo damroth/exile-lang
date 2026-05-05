@@ -1,18 +1,17 @@
-// Algebraic data types — Phases A, B, C.
+// Algebraic data types — all three variant forms.
 //
 // Declaration uses leading `|` per variant (OCaml/F# style; differs
-// from Rust's trailing `,`).  Three variant forms are designed; this
-// example uses unit and tuple variants (struct-like variants land
-// later).
+// from Rust's trailing `,`).  A variant is one of:
+//   | Name                              // unit
+//   | Name(T1, T2)                      // tuple — positional payload
+//   | Name { field: T, ... }            // struct — named payload
 //
-// Construction is qualified: `Direction::North`, `Shape::Circle(5)`.
-// `match` is exhaustive — every variant must be reached, either via
-// an explicit arm or a wildcard `_`.  Tuple-variant patterns can bind
-// the payload (`Shape::Rect(w, h)`); `_` skips a payload field.
-//
-// `match` is an expression: it can sit on a let RHS or in `return`,
-// with each arm supplying a value of the common arm type.  As a
-// statement (the Phase A form) it just dispatches side effects.
+// Construction is qualified — `Direction::North`, `Shape::Circle(5)`,
+// `Shape::Triangle { base: 3, height: 4 }`.  `match` is exhaustive,
+// runs every arm only when its pattern fires, and is an expression
+// (let-RHS or `return`).  Patterns may bind by position, by name, or
+// shorthand: `Triangle { base, height }` ≡ `Triangle { base: base,
+// height: height }`.
 
 pub enum Direction {
     | North
@@ -25,6 +24,7 @@ pub enum Shape {
     | Square
     | Circle(int)
     | Rect(int, int)
+    | Triangle { base: int, height: int }
 }
 
 fn describe_dir(d: Direction) {
@@ -40,15 +40,17 @@ fn describe_shape(s: Shape) {
         | Shape::Square => print("a square")
         | Shape::Circle(r) => print(r)              // r : int
         | Shape::Rect(w, _) => print(w)             // height ignored
+        | Shape::Triangle { base, height: h } => print(base + h)
+                                                    // shorthand + rename
     }
 }
 
-// Phase C: match returns a value used in `return`.
 fn area(s: Shape) -> int {
     return match s {
         | Shape::Square => 1
         | Shape::Circle(r) => r * r * 3             // ~pi*r*r, ints only
         | Shape::Rect(w, h) => w * h
+        | Shape::Triangle { base, height } => base * height / 2
     };
 }
 
@@ -65,6 +67,8 @@ fn main() {
 
     print(area(Shape::Circle(5)));          // 75 (5 * 5 * 3)
     print(area(Shape::Rect(3, 4)));         // 12
+    print(area(Shape::Triangle { base: 6, height: 8 }));  // 24
+    describe_shape(Shape::Triangle { base: 1, height: 2 }); // 3
 
     // match-as-expression on a let RHS, with another match nested in
     // an arm.  Each variant runs only its arm — lift doesn't change
@@ -73,6 +77,7 @@ fn main() {
         | Shape::Square => 0
         | Shape::Circle(r) => r
         | Shape::Rect(w, h) => w + h
+        | Shape::Triangle { base, height } => base + height
     };
     print(total);                           // 3
 }

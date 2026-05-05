@@ -590,6 +590,44 @@ let () =
      }\n"
     "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long total;\n    long __lift_0;\n    e.tag = ex_E_B;\n    e.data.B._0 = 2;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                __lift_0 = 0;\n                break;\n            }\n        case ex_E_B:\n            {\n                long n = __m.data.B._0;\n                __lift_0 = n;\n                break;\n            }\n        }\n    }\n    total = 1 + __lift_0;\n    printf(\"%ld\\n\", (long)(total));\n    return 0;\n}\n";
 
+  check "struct-like variant: shorthand bind in pattern"
+    "enum E {\n\
+    \    | A\n\
+    \    | B { x: int, y: int }\n\
+     }\n\
+     fn main() {\n\
+    \    let e = E::B { x: 3, y: 4 };\n\
+    \    match e {\n\
+    \        | E::A => print(0)\n\
+    \        | E::B { x, y } => print(x + y)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long x; long y; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_B;\n    e.data.B.x = 3;\n    e.data.B.y = 4;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_E_B:\n            {\n                long x = __m.data.B.x;\n                long y = __m.data.B.y;\n                printf(\"%ld\\n\", (long)(x + y));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check_error "struct-syntax for tuple variant rejected"
+    "enum E { | A(int) }\nfn main() { let e = E::A { x: 1 }; }\n"
+    "variant 'E::A' is a tuple variant; construct it with '(...)', not with '{ field: ... }'";
+
+  check_error "tuple-syntax for struct variant rejected"
+    "enum E { | A { x: int } }\nfn main() { let e = E::A(1); }\n"
+    "variant 'E::A' is a struct variant; construct it with '{ field: ... }', not with '(...)'";
+
+  check_error "missing field in struct variant ctor rejected"
+    "enum E { | A { x: int, y: int } }\nfn main() { let e = E::A { x: 1 }; }\n"
+    "missing field 'y' in 'E::A' construction";
+
+  check_error "extra field in struct variant ctor rejected"
+    "enum E { | A { x: int } }\nfn main() { let e = E::A { x: 1, y: 2 }; }\n"
+    "variant 'E::A' has no field 'y'";
+
+  check_error "tuple pattern on struct variant rejected"
+    "enum E { | A { x: int } }\nfn main() { let e = E::A { x: 1 }; match e { | E::A(x) => print(x) } }\n"
+    "variant 'A' is a struct variant; match it with '{ field: pat }', not '(...)'";
+
+  check_error "unknown field in variant pattern rejected"
+    "enum E { | A { x: int } }\nfn main() { let e = E::A { x: 1 }; match e { | E::A { y } => print(y) } }\n"
+    "variant 'A' has no field 'y'";
+
   check "StructLit as fn arg lifts to __lift_N"
     "struct P { x: int, y: int }\n\
      fn sum(p: P) -> int { return p.x + p.y; }\n\

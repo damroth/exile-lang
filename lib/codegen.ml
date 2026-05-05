@@ -296,12 +296,14 @@ let rec emit_value_into_temp buf indent temp_name (value : texpr) =
           Buffer.add_string buf cname;
           Buffer.add_char buf '_';
           Buffer.add_string buf variant);
-      (* For tuple variants, fill in the per-variant union member's
-         numbered fields.  Unit variants emit just the tag. *)
-      List.iteri
-        (fun i arg ->
+      (* Each (field_name, value) pair writes through the per-variant
+         union member.  Tuple variants carry synthetic `_0`/`_1`/...
+         names; struct variants carry the user-given names — emission
+         is uniform. *)
+      List.iter
+        (fun (fname, arg) ->
           assign
-            ~lhs:(Printf.sprintf "%s.data.%s._%d" temp_name variant i)
+            ~lhs:(Printf.sprintf "%s.data.%s.%s" temp_name variant fname)
             arg)
         args
   | TMatch _ ->
@@ -438,17 +440,18 @@ and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
                       (fun (es : enum_sig) -> es.ename_path = ename_path)
                       !enum_index_ref).evariants
                in
-               List.iteri
-                 (fun i (bp, ft) ->
+               List.iter
+                 (fun (fname, bp) ->
                    match bp with
                    | TPVar n ->
+                       let ft = List.assoc fname v.vsfields in
                        Buffer.add_string buf body_indent;
                        Buffer.add_string buf (c_decl ft n);
                        Buffer.add_string buf
-                         (Printf.sprintf " = __m.data.%s._%d;\n"
-                            variant i)
+                         (Printf.sprintf " = __m.data.%s.%s;\n"
+                            variant fname)
                    | _ -> ())
-                 (List.combine binds v.vsfields_ty)
+                 binds
            | TPWildcard -> ());
           (match assign_to, a.tbody.e with
            | Some lhs, TMatch _ ->
@@ -674,7 +677,7 @@ let emit_named_enum buf (e : enum_sig) =
     e.evariants;
   Buffer.add_string buf " };\n";
   let has_payload =
-    List.exists (fun (vs : variant_sig) -> vs.vsfields_ty <> []) e.evariants
+    List.exists (fun (vs : variant_sig) -> vs.vsfields <> []) e.evariants
   in
   Buffer.add_string buf
     (Printf.sprintf "struct %s { enum %s_tag tag;" cname cname);
@@ -682,15 +685,14 @@ let emit_named_enum buf (e : enum_sig) =
     Buffer.add_string buf " union {";
     List.iter
       (fun (vs : variant_sig) ->
-        if vs.vsfields_ty <> [] then begin
+        if vs.vsfields <> [] then begin
           Buffer.add_string buf " struct {";
-          List.iteri
-            (fun i ty ->
+          List.iter
+            (fun (fname, ty) ->
               Buffer.add_char buf ' ';
-              Buffer.add_string buf
-                (c_decl ty ("_" ^ string_of_int i));
+              Buffer.add_string buf (c_decl ty fname);
               Buffer.add_char buf ';')
-            vs.vsfields_ty;
+            vs.vsfields;
           Buffer.add_string buf " } ";
           Buffer.add_string buf vs.vsname;
           Buffer.add_char buf ';'

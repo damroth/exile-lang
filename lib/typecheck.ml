@@ -222,7 +222,31 @@ let rewrite_call_as_enum_lit ctx path args pos =
       in
       (match lookup_enum ctx init with
        | Some _ ->
-           Some (Ast.EnumLit { tname = init; variant = last; args; pos })
+           Some (Ast.EnumLit { tname = init; variant = last;
+                               args = Ast.EATuple args; pos })
+       | None -> None)
+  | _ -> None
+
+(* Mirror of `rewrite_call_as_enum_lit` for struct-variant construction:
+   `Foo::Triangle { base: 1, height: 2 }` parses as a `StructLit` (the
+   parser can't tell a struct from an enum struct-variant); typecheck
+   redirects to `EnumLit (EAStruct fields)` when the path resolves to
+   an enum + variant.  Functional update (`..base`) on enum variants
+   isn't supported — error if base is set. *)
+let rewrite_struct_lit_as_enum_lit ctx tname fields base pos =
+  match tname with
+  | _ :: _ :: _ ->
+      let (init, last) =
+        let rev = List.rev tname in
+        (List.rev (List.tl rev), List.hd rev)
+      in
+      (match lookup_enum ctx init with
+       | Some _ ->
+           if base <> None then
+             Error.failf pos
+               "'..base' functional update is not supported on enum variants";
+           Some (Ast.EnumLit { tname = init; variant = last;
+                               args = Ast.EAStruct fields; pos })
        | None -> None)
   | _ -> None
 
@@ -265,8 +289,14 @@ let rec type_of ?(allow_void = false) ctx env = function
   | Ast.TupleLit (es, _) ->
       TTuple (List.map (type_of ctx env) es)
   | Ast.StructLit { tname; fields; base; pos } ->
-      let s = validate_struct_lit ctx env ~tname ~fields ~base ~pos in
-      TStruct s.sname_path
+      (* `Foo::V { f: e }` parses as a StructLit; if the path resolves
+         to an enum variant, redirect to the EnumLit branch with
+         struct-form args. *)
+      (match rewrite_struct_lit_as_enum_lit ctx tname fields base pos with
+       | Some e -> type_of ~allow_void ctx env e
+       | None ->
+           let s = validate_struct_lit ctx env ~tname ~fields ~base ~pos in
+           TStruct s.sname_path)
   | Ast.New { tname; fields; base; pos } ->
       let s = validate_struct_lit ctx env ~tname ~fields ~base ~pos in
       TPtr (TStruct s.sname_path)
@@ -447,22 +477,57 @@ let rec type_of ?(allow_void = false) ctx env = function
             Error.failf pos "enum '%s' has no variant '%s'"
               (String.concat "::" e.ename_path) variant
       in
-      let expected = List.length v.vsfields_ty in
-      let got = List.length args in
-      if expected <> got then
-        Error.failf pos
-          "variant '%s::%s' takes %d argument(s), got %d"
-          (String.concat "::" e.ename_path) variant expected got;
-      let arg_tys = List.map (type_of ctx env) args in
-      List.iteri
-        (fun i (exp, act) ->
-          if not (typ_eq exp act) && not (int_lit_fits (List.nth args i) exp)
-          then
-            Error.failf pos
-              "argument %d of '%s::%s': expected %s, got %s"
-              (i + 1) (String.concat "::" e.ename_path) variant
-              (typ_name exp) (typ_name act))
-        (List.combine v.vsfields_ty arg_tys);
+      let display = String.concat "::" e.ename_path ^ "::" ^ variant in
+      (match args with
+       | Ast.EATuple es ->
+           if v.vsis_struct then
+             Error.failf pos
+               "variant '%s' is a struct variant; construct it with \
+                '{ field: ... }', not with '(...)'" display;
+           let expected = List.length v.vsfields in
+           let got = List.length es in
+           if expected <> got then
+             Error.failf pos
+               "variant '%s' takes %d argument(s), got %d"
+               display expected got;
+           let arg_tys = List.map (type_of ctx env) es in
+           List.iteri
+             (fun i ((_, exp), act) ->
+               if not (typ_eq exp act)
+                  && not (int_lit_fits (List.nth es i) exp)
+               then
+                 Error.failf pos
+                   "argument %d of '%s': expected %s, got %s"
+                   (i + 1) display (typ_name exp) (typ_name act))
+             (List.combine v.vsfields arg_tys)
+       | Ast.EAStruct fs ->
+           if not v.vsis_struct then
+             Error.failf pos
+               "variant '%s' is a tuple variant; construct it with \
+                '(...)', not with '{ field: ... }'" display;
+           let expected_names = List.map fst v.vsfields in
+           let got_names = List.map fst fs in
+           (match find_dup ~key:Fun.id got_names with
+            | Some n ->
+                Error.failf pos
+                  "duplicate field '%s' in '%s' construction" n display
+            | None -> ());
+           List.iter (fun (n, _) ->
+             if not (List.mem n expected_names) then
+               Error.failf pos
+                 "variant '%s' has no field '%s'" display n) fs;
+           List.iter (fun n ->
+             if not (List.mem_assoc n fs) then
+               Error.failf pos
+                 "missing field '%s' in '%s' construction" n display)
+             expected_names;
+           List.iter (fun (n, e) ->
+             let exp = List.assoc n v.vsfields in
+             let act = type_of ctx env e in
+             if not (typ_eq exp act) && not (int_lit_fits e exp) then
+               Error.failf pos
+                 "field '%s' of '%s': expected %s, got %s"
+                 n display (typ_name exp) (typ_name act)) fs);
       TEnum e.ename_path
   | Ast.Match { scrutinee; arms; pos } ->
       let scrut_ty = type_of ctx env scrutinee in
@@ -515,24 +580,55 @@ let rec type_of ?(allow_void = false) ctx env = function
                       Error.failf ppos "enum '%s' has no variant '%s'"
                         (String.concat "::" ename_path) variant
                 in
-                let expected_binds = List.length v.vsfields_ty in
-                let got_binds = List.length binds in
-                if expected_binds <> got_binds then
-                  Error.failf ppos
-                    "variant '%s' has %d field(s), pattern binds %d"
-                    variant expected_binds got_binds;
-                (* Each bind extends the env with (name, field_ty).
-                   Reject nested variant patterns and duplicate names
-                   within this pattern. *)
+                (* Match construction syntax against the variant's
+                   declared kind, then collect (name, sub_pattern)
+                   pairs in field-order before reading binds. *)
+                let ordered_binds =
+                  match binds, v.vsis_struct with
+                  | Ast.PBTuple ps, false ->
+                      let expected = List.length v.vsfields in
+                      let got = List.length ps in
+                      if expected <> got then
+                        Error.failf ppos
+                          "variant '%s' has %d field(s), pattern binds %d"
+                          variant expected got;
+                      List.map2 (fun (n, _) p -> (n, p)) v.vsfields ps
+                  | Ast.PBStruct entries, true ->
+                      let expected_names = List.map fst v.vsfields in
+                      let got_names = List.map fst entries in
+                      (match find_dup ~key:Fun.id got_names with
+                       | Some n ->
+                           Error.failf ppos
+                             "duplicate field '%s' in pattern" n
+                       | None -> ());
+                      List.iter (fun (n, _) ->
+                        if not (List.mem n expected_names) then
+                          Error.failf ppos
+                            "variant '%s' has no field '%s'" variant n)
+                        entries;
+                      List.map (fun n ->
+                        match List.assoc_opt n entries with
+                        | Some p -> (n, p)
+                        | None -> (n, Ast.PWildcard ppos))
+                        expected_names
+                  | Ast.PBTuple _, true ->
+                      Error.failf ppos
+                        "variant '%s' is a struct variant; \
+                         match it with '{ field: pat }', not '(...)'" variant
+                  | Ast.PBStruct _, false ->
+                      Error.failf ppos
+                        "variant '%s' is a tuple variant; \
+                         match it with '(...)', not '{ field: pat }'" variant
+                in
                 let pairs =
-                  List.map2 (fun (bp : Ast.pattern) ft ->
+                  List.map2 (fun (_, bp) (_, ft) ->
                     match bp with
                     | Ast.PWildcard _ -> None
                     | Ast.PVar (n, _) -> Some (n, ft)
                     | Ast.PVariant { pos = bpos; _ } ->
                         Error.failf bpos
                           "nested variant patterns are not yet supported")
-                    binds v.vsfields_ty
+                    ordered_binds v.vsfields
                 in
                 let names = List.filter_map (Option.map fst) pairs in
                 (match find_dup ~key:Fun.id names with
@@ -688,17 +784,23 @@ let rec elab_expr ?(allow_void = false) ctx env e : texpr =
         TBinOp (op, elab_expr ctx env l, elab_expr ctx env r)
     | Ast.Cast (sub, ann, _) -> TCast (elab_expr ctx env sub, ann)
     | Ast.TupleLit (es, _) -> TTupleLit (List.map (elab_expr ctx env) es)
-    | Ast.StructLit { tname; fields; base; _ } ->
-        let s =
-          match lookup_struct ctx tname with
-          | Some s -> s
-          | None -> assert false   (* validated upstream *)
-        in
-        TStructLit {
-          sname_path = s.sname_path;
-          fields = List.map (fun (n, fe) -> (n, elab_expr ctx env fe)) fields;
-          base = Option.map (elab_expr ctx env) base;
-        }
+    | Ast.StructLit { tname; fields; base; pos } ->
+        (* Same dispatch as in `type_of`: enum struct-variant ctor
+           lowers through the EnumLit elab branch. *)
+        (match rewrite_struct_lit_as_enum_lit ctx tname fields base pos with
+         | Some e -> (elab_expr ~allow_void ctx env e).e
+         | None ->
+             let s =
+               match lookup_struct ctx tname with
+               | Some s -> s
+               | None -> assert false   (* validated upstream *)
+             in
+             TStructLit {
+               sname_path = s.sname_path;
+               fields = List.map (fun (n, fe) -> (n, elab_expr ctx env fe))
+                          fields;
+               base = Option.map (elab_expr ctx env) base;
+             })
     | Ast.New { tname; fields; base; _ } ->
         let s =
           match lookup_struct ctx tname with
@@ -769,15 +871,29 @@ let rec elab_expr ?(allow_void = false) ctx env e : texpr =
           | Some e -> e
           | None -> assert false
         in
-        let tag =
+        let (tag, vsig) =
           let rec find i = function
             | [] -> assert false
-            | (vs : variant_sig) :: _ when vs.vsname = variant -> i
+            | (vs : variant_sig) :: _ when vs.vsname = variant -> (i, vs)
             | _ :: rest -> find (i + 1) rest
           in
           find 0 e.evariants
         in
-        let targs = List.map (elab_expr ctx env) args in
+        (* Pair each arg with its target field name, in field order:
+           tuple form takes synthetic `_0`/`_1`/... from `vsfields`;
+           struct form looks each entry up by name (typecheck has
+           already validated names cover the variant exactly). *)
+        let targs =
+          match args with
+          | Ast.EATuple es ->
+              List.map2 (fun (n, _) e -> (n, elab_expr ctx env e))
+                vsig.vsfields es
+          | Ast.EAStruct fs ->
+              List.map (fun (n, _) ->
+                let e = List.assoc n fs in
+                (n, elab_expr ctx env e))
+                vsig.vsfields
+        in
         TEnumLit { ename_path = e.ename_path; variant; tag; args = targs }
     | Ast.Match { scrutinee; arms; _ } ->
         let tscrut = elab_expr ctx env scrutinee in
@@ -813,13 +929,31 @@ let rec elab_expr ?(allow_void = false) ctx env e : texpr =
                     in
                     find 0 e.evariants
                   in
-                  let tbinds = List.map lower_subpat binds in
+                  (* Reduce both bind forms to a list of (field_name,
+                     sub_pattern) in field-order — type_of has already
+                     checked that struct/tuple syntax matches the
+                     variant kind and that names line up. *)
+                  let ordered_binds =
+                    match binds with
+                    | Ast.PBTuple ps ->
+                        List.map2 (fun (n, _) p -> (n, p)) vsig.vsfields ps
+                    | Ast.PBStruct entries ->
+                        List.map (fun (n, _) ->
+                          match List.assoc_opt n entries with
+                          | Some p -> (n, p)
+                          | None -> (n, Ast.PWildcard a.arm_pos))
+                          vsig.vsfields
+                  in
+                  let tbinds =
+                    List.map (fun (n, p) -> (n, lower_subpat p))
+                      ordered_binds
+                  in
                   let env' =
-                    List.fold_left2 (fun acc (bp : Ast.pattern) ft ->
+                    List.fold_left2 (fun acc (_, bp) (_, ft) ->
                       match bp with
                       | Ast.PVar (n, _) -> (n, ft) :: acc
                       | _ -> acc)
-                      env binds vsig.vsfields_ty
+                      env ordered_binds vsig.vsfields
                   in
                   (TPVariant { variant; tag; binds = tbinds }, env')
             in
@@ -1074,7 +1208,7 @@ let elab_body ctx param_env stmts : (string * typ) list * tstmt list =
         ({ te with e = TNew { sname_path; fields = fields';
                               base = base' } }, pf @ pb)
     | TEnumLit { ename_path; variant; tag; args } ->
-        let (args', p) = map_args args in
+        let (args', p) = map_fields args in
         ({ te with e = TEnumLit { ename_path; variant; tag;
                                   args = args' } }, p)
     | TMatch { scrutinee; ename_path; arms } ->
@@ -1228,15 +1362,17 @@ let build_struct_index ~modules ~enums struct_flat =
    first collect every enum's absolute path with empty variants (so
    payload types in any enum can refer to any other enum), then
    resolve each variant's `vfields` against the struct + enum
-   skeleton.  Tuple variants land in Phase B; unit variants keep
-   `vsfields_ty = []`. *)
+   skeleton.  Tuple variants synthesise `_0`/`_1`/... names so all
+   three forms look the same to codegen; struct variants keep their
+   user-given names.  `vsis_struct` lets the constructor type-check
+   reject `Foo::V(args)` for a struct variant and vice versa. *)
 let build_enum_index ~modules ~struct_index enum_flat =
   let skeleton =
     List.map
       (fun (p, (e : Ast.enum_decl)) ->
         let variants =
           List.map (fun (v : Ast.enum_variant) ->
-            { vsname = v.vname; vsfields_ty = [] })
+            { vsname = v.vname; vsfields = []; vsis_struct = false })
             e.evariants
         in
         { ename_path = p @ [e.ename]; evariants = variants;
@@ -1251,8 +1387,18 @@ let build_enum_index ~modules ~struct_index enum_flat =
       } in
       let variants =
         List.map (fun (v : Ast.enum_variant) ->
-          { vsname = v.vname;
-            vsfields_ty = List.map (resolve_type_ann ctx) v.vfields })
+          let (vsfields, vsis_struct) =
+            match v.vkind with
+            | Ast.VUnit -> ([], false)
+            | Ast.VTuple tys ->
+                (List.mapi (fun i t ->
+                   ("_" ^ string_of_int i, resolve_type_ann ctx t)) tys,
+                 false)
+            | Ast.VStruct fs ->
+                (List.map (fun (n, t) -> (n, resolve_type_ann ctx t)) fs,
+                 true)
+          in
+          { vsname = v.vname; vsfields; vsis_struct })
           e.evariants
       in
       { skel with evariants = variants })
@@ -1287,7 +1433,8 @@ let collect_tuple_types_of tfuncs =
         List.iter (fun (_, fe) -> walk_texpr fe) fields;
         Option.iter walk_texpr base
     | TFieldAccess { target; _ } -> walk_texpr target
-    | TEnumLit { args; _ } -> List.iter walk_texpr args
+    | TEnumLit { args; _ } ->
+        List.iter (fun (_, fe) -> walk_texpr fe) args
     | TMatch { scrutinee; arms; _ } ->
         walk_texpr scrutinee;
         List.iter (fun a -> walk_texpr a.tbody) arms
@@ -1333,7 +1480,8 @@ let uses_heap_of tfuncs =
         List.exists (fun (_, fe) -> walk_texpr fe) fields
         || (match base with Some b -> walk_texpr b | None -> false)
     | TFieldAccess { target; _ } -> walk_texpr target
-    | TEnumLit { args; _ } -> List.exists walk_texpr args
+    | TEnumLit { args; _ } ->
+        List.exists (fun (_, fe) -> walk_texpr fe) args
     | TMatch { scrutinee; arms; _ } ->
         walk_texpr scrutinee
         || List.exists (fun a -> walk_texpr a.tbody) arms
@@ -1486,7 +1634,7 @@ let check_program program : tprogram =
     List.map (fun (p, (e : Ast.enum_decl)) ->
       let variants =
         List.map (fun (v : Ast.enum_variant) ->
-          { vsname = v.vname; vsfields_ty = [] })
+          { vsname = v.vname; vsfields = []; vsis_struct = false })
           e.evariants
       in
       { ename_path = p @ [e.ename]; evariants = variants;

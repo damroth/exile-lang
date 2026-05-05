@@ -58,11 +58,16 @@ type struct_sig = {
 }
 
 (* Enum signatures: variant order is preserved to give each variant a
-   stable C tag value (Phase A: tag = list index).  Phase B will add
-   payload types via `vfields_ty`. *)
+   stable C tag value (tag = list index in `evariants`).  Field
+   payload — empty for unit variants, synthetic `_0`/`_1`/... names
+   for tuple variants, user-given names for struct variants.  Codegen
+   reads `vsfields` directly so the same emission path serves all
+   three forms; `vsis_struct` is kept only for type-checking the
+   construction syntax (struct vs tuple). *)
 type variant_sig = {
   vsname : string;
-  vsfields_ty : typ list;       (* empty for unit variants; populated in Phase B *)
+  vsfields : (string * typ) list;
+  vsis_struct : bool;
 }
 
 type enum_sig = {
@@ -163,7 +168,11 @@ type texpr_node =
   | TEnumLit of { ename_path : string list;
                   variant : string;
                   tag : int;            (* index in the enum's variant list *)
-                  args : texpr list }   (* empty for unit variants *)
+                  args : (string * texpr) list }
+                                        (* empty for unit; field names
+                                           come from variant_sig.vsfields,
+                                           so codegen emits
+                                           `data.<variant>.<name> = e` *)
   | TMatch of { scrutinee : texpr;
                 ename_path : string list;
                 arms : tmatch_arm list }
@@ -177,7 +186,11 @@ and tmatch_arm = {
 and tpattern =
   | TPWildcard
   | TPVar of string
-  | TPVariant of { variant : string; tag : int; binds : tpattern list }
+  | TPVariant of { variant : string; tag : int;
+                   binds : (string * tpattern) list }
+                                        (* field name + sub-pattern;
+                                           tuple form uses synthetic
+                                           `_0`/`_1`/... names *)
 
 and texpr = {
   e : texpr_node;

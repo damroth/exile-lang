@@ -172,7 +172,7 @@ let rec parse_primary s =
                   | n :: rest -> (List.rev rest, n)
                 in
                 Ast.EnumLit { tname = init; variant = last;
-                              args = []; pos = p }))
+                              args = Ast.EATuple []; pos = p }))
   | Token.LParen ->
       (* Grouping `(e)` for a single expression, tuple literal `(e1, e2, ...)`
          for two or more. *)
@@ -326,10 +326,32 @@ and parse_pattern s =
              | n :: rest -> (List.rev rest, n)
            in
            let binds =
-             if peek s = Token.LParen then begin
-               ignore (advance s);
-               parse_comma_list ~close:Token.RParen ~item:parse_pattern s
-             end else []
+             match peek s with
+             | Token.LParen ->
+                 ignore (advance s);
+                 Ast.PBTuple
+                   (parse_comma_list ~close:Token.RParen
+                      ~item:parse_pattern s)
+             | Token.LBrace ->
+                 ignore (advance s);
+                 (* Struct-variant pattern.  Each entry is `field: pat`,
+                    or shorthand `field` (desugars to `field: PVar field`).
+                    Order matches the field order; missing/extra checked
+                    later in typecheck. *)
+                 let parse_struct_pat_field s =
+                   let (fname, fpos) =
+                     expect_ident s ~what:"field name in variant pattern"
+                   in
+                   if peek s = Token.Colon then begin
+                     ignore (advance s);
+                     (fname, parse_pattern s)
+                   end else
+                     (fname, Ast.PVar (fname, fpos))
+                 in
+                 Ast.PBStruct
+                   (parse_comma_list ~close:Token.RBrace
+                      ~item:parse_struct_pat_field s)
+             | _ -> Ast.PBTuple []
            in
            Ast.PVariant { tname = init; variant = last; binds; pos = p })
   | t ->
@@ -691,13 +713,26 @@ and parse_enum_decl s ~is_pub =
     | Token.Pipe ->
         ignore (advance s);
         let (vname, vpos) = expect_ident s ~what:"variant name after '|'" in
-        let vfields =
-          if peek s = Token.LParen then begin
-            ignore (advance s);
-            parse_comma_list ~close:Token.RParen ~item:parse_type s
-          end else []
+        let vkind =
+          match peek s with
+          | Token.LParen ->
+              ignore (advance s);
+              let tys = parse_comma_list ~close:Token.RParen
+                          ~item:parse_type s in
+              Ast.VTuple tys
+          | Token.LBrace ->
+              ignore (advance s);
+              let parse_field s =
+                let (fname, _) = expect_ident s ~what:"field name in variant" in
+                expect s Token.Colon;
+                (fname, parse_type s)
+              in
+              let fields = parse_comma_list ~close:Token.RBrace
+                             ~item:parse_field s in
+              Ast.VStruct fields
+          | _ -> Ast.VUnit
         in
-        loop (Ast.{ vname; vfields; vpos } :: acc)
+        loop (Ast.{ vname; vkind; vpos } :: acc)
     | t ->
         Error.failf (peek_pos s)
           "expected '|' before enum variant, got %s" (Token.pp t)
