@@ -565,6 +565,39 @@ let () =
     "enum E { | A | B }\nfn main() { let v = match E::A { | E::A => 1 | E::B => true }; print(v); }\n"
     "match arms have inconsistent types: i32 vs bool";
 
+  check "EnumLit as fn arg lifts via __lift_N temp"
+    "enum E { | A | B(int) }\n\
+     fn show(e: E) {\n\
+    \    match e {\n\
+    \        | E::A => print(0)\n\
+    \        | E::B(n) => print(n)\n\
+    \    }\n\
+     }\n\
+     fn main() {\n\
+    \    show(E::B(7));\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nstatic void ex_show(struct ex_E e);\n\nstatic void ex_show(struct ex_E e) {\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_E_B:\n            {\n                long n = __m.data.B._0;\n                printf(\"%ld\\n\", (long)(n));\n                break;\n            }\n        }\n    }\n}\n\nint main(void) {\n    struct ex_E __lift_0;\n    __lift_0.tag = ex_E_B;\n    __lift_0.data.B._0 = 7;\n    ex_show(__lift_0);\n    return 0;\n}\n";
+
+  check "Match as sub-expression in BinOp lifts to __lift_N"
+    "enum E { | A | B(int) }\n\
+     fn main() {\n\
+    \    let e = E::B(2);\n\
+    \    let total = 1 + match e {\n\
+    \        | E::A => 0\n\
+    \        | E::B(n) => n\n\
+    \    };\n\
+    \    print(total);\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long total;\n    long __lift_0;\n    e.tag = ex_E_B;\n    e.data.B._0 = 2;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                __lift_0 = 0;\n                break;\n            }\n        case ex_E_B:\n            {\n                long n = __m.data.B._0;\n                __lift_0 = n;\n                break;\n            }\n        }\n    }\n    total = 1 + __lift_0;\n    printf(\"%ld\\n\", (long)(total));\n    return 0;\n}\n";
+
+  check "StructLit as fn arg lifts to __lift_N"
+    "struct P { x: int, y: int }\n\
+     fn sum(p: P) -> int { return p.x + p.y; }\n\
+     fn main() {\n\
+    \    print(sum(P { x: 3, y: 4 }));\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nstatic long ex_sum(struct ex_P p);\n\nstatic long ex_sum(struct ex_P p) {\n    return p.x + p.y;\n}\n\nint main(void) {\n    struct ex_P __lift_0;\n    __lift_0.x = 3;\n    __lift_0.y = 4;\n    printf(\"%ld\\n\", (long)(ex_sum(__lift_0)));\n    return 0;\n}\n";
+
   check_error "non-exhaustive match rejected"
     "enum E { | A | B }\nfn main() { let e = E::A; match e { | E::A => print(\"a\") } }\n"
     "non-exhaustive 'match': variant(s) B not covered (add an arm or '_')";

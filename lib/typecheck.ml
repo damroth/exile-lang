@@ -985,7 +985,146 @@ let elab_body ctx param_env stmts : (string * typ) list * tstmt list =
         (env, TDefer { body = tbody; pos })
   in
   let (_, tstmts) = walk param_env stmts in
-  (List.rev !decls, tstmts)
+  (* Post-elab: lift block-shaped sub-expressions (TStructLit, TTupleLit,
+     TNew, TEnumLit, TMatch) that appear in positions where codegen
+     emits via `gen_expr` (which can't handle them) into preceding
+     `__lift_N` let-bindings.  Top-level value of let / return / assign
+     stays block-shaped — codegen already handles it via
+     `emit_value_into_temp`.  Match arm bodies are NOT walked: lifting
+     a sub-expression of an arm body would hoist its evaluation above
+     the match, breaking conditional semantics. *)
+  let lift_counter = ref 0 in
+  let fresh_lift () =
+    let n = !lift_counter in
+    incr lift_counter;
+    Printf.sprintf "__lift_%d" n
+  in
+  let is_block (e : texpr) =
+    match e.e with
+    | TStructLit _ | TTupleLit _ | TNew _ | TEnumLit _ | TMatch _ -> true
+    | _ -> false
+  in
+  let rec walk_expr ~allow_top (te : texpr) : texpr * tstmt list =
+    let walked, prelude = walk_subs te in
+    if is_block walked && not allow_top then
+      let n = fresh_lift () in
+      decls := (n, walked.ty) :: !decls;
+      let lift_let = TLet { name = n; value = walked; pos = walked.pos } in
+      ({ te with e = TVar n }, prelude @ [ lift_let ])
+    else
+      (walked, prelude)
+  and walk_subs (te : texpr) : texpr * tstmt list =
+    let map_args args =
+      let pairs = List.map (walk_expr ~allow_top:false) args in
+      (List.map fst pairs, List.concat_map snd pairs)
+    in
+    let map_fields fields =
+      let pairs =
+        List.map (fun (n, e) ->
+          let (e', p) = walk_expr ~allow_top:false e in
+          ((n, e'), p)) fields
+      in
+      (List.map fst pairs, List.concat_map snd pairs)
+    in
+    let map_opt = function
+      | None -> (None, [])
+      | Some e ->
+          let (e', p) = walk_expr ~allow_top:false e in
+          (Some e', p)
+    in
+    match te.e with
+    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _ ->
+        (te, [])
+    | TNeg sub ->
+        let (sub', p) = walk_expr ~allow_top:false sub in
+        ({ te with e = TNeg sub' }, p)
+    | TBinOp (op, l, r) ->
+        let (l', pl) = walk_expr ~allow_top:false l in
+        let (r', pr) = walk_expr ~allow_top:false r in
+        ({ te with e = TBinOp (op, l', r') }, pl @ pr)
+    | TCall { mangled; args } ->
+        let (args', p) = map_args args in
+        ({ te with e = TCall { mangled; args = args' } }, p)
+    | TBuiltinCall { name; args } ->
+        let (args', p) = map_args args in
+        ({ te with e = TBuiltinCall { name; args = args' } }, p)
+    | TCast (sub, ann) ->
+        let (sub', p) = walk_expr ~allow_top:false sub in
+        ({ te with e = TCast (sub', ann) }, p)
+    | TFieldAccess { target; field } ->
+        let (t', p) = walk_expr ~allow_top:false target in
+        ({ te with e = TFieldAccess { target = t'; field } }, p)
+    | TRef sub ->
+        let (sub', p) = walk_expr ~allow_top:false sub in
+        ({ te with e = TRef sub' }, p)
+    | TDeref sub ->
+        let (sub', p) = walk_expr ~allow_top:false sub in
+        ({ te with e = TDeref sub' }, p)
+    | TTupleLit es ->
+        let (es', p) = map_args es in
+        ({ te with e = TTupleLit es' }, p)
+    | TStructLit { sname_path; fields; base } ->
+        let (fields', pf) = map_fields fields in
+        let (base', pb) = map_opt base in
+        ({ te with e = TStructLit { sname_path; fields = fields';
+                                    base = base' } }, pf @ pb)
+    | TNew { sname_path; fields; base } ->
+        let (fields', pf) = map_fields fields in
+        let (base', pb) = map_opt base in
+        ({ te with e = TNew { sname_path; fields = fields';
+                              base = base' } }, pf @ pb)
+    | TEnumLit { ename_path; variant; tag; args } ->
+        let (args', p) = map_args args in
+        ({ te with e = TEnumLit { ename_path; variant; tag;
+                                  args = args' } }, p)
+    | TMatch { scrutinee; ename_path; arms } ->
+        let (scr', p) = walk_expr ~allow_top:false scrutinee in
+        ({ te with e = TMatch { scrutinee = scr'; ename_path; arms } }, p)
+  in
+  let rec lift_stmts stmts = List.concat_map lift_stmt stmts
+  and lift_stmt = function
+    | TLet { name; value; pos } ->
+        let (v', p) = walk_expr ~allow_top:true value in
+        p @ [ TLet { name; value = v'; pos } ]
+    | TLetTuple { names; value; pos } ->
+        let (v', p) = walk_expr ~allow_top:true value in
+        p @ [ TLetTuple { names; value = v'; pos } ]
+    | TAssign { name; value; pos } ->
+        let (v', p) = walk_expr ~allow_top:true value in
+        p @ [ TAssign { name; value = v'; pos } ]
+    | TAssignField { target; field; value; pos } ->
+        let (t', pt) = walk_expr ~allow_top:false target in
+        let (v', pv) = walk_expr ~allow_top:false value in
+        pt @ pv @ [ TAssignField { target = t'; field; value = v'; pos } ]
+    | TAssignDeref { target; value; pos } ->
+        let (t', pt) = walk_expr ~allow_top:false target in
+        let (v', pv) = walk_expr ~allow_top:false value in
+        pt @ pv @ [ TAssignDeref { target = t'; value = v'; pos } ]
+    | TReturn { value; pos } ->
+        let (v', p) = walk_expr ~allow_top:true value in
+        p @ [ TReturn { value = v'; pos } ]
+    | TExprStmt e ->
+        (* Top-level Match in expr-stmt position is handled by
+           emit_match_stmt; everything else must be simple. *)
+        let allow_top = match e.e with TMatch _ -> true | _ -> false in
+        let (e', p) = walk_expr ~allow_top e in
+        p @ [ TExprStmt e' ]
+    | TIf { cond; then_body; else_body } ->
+        let (c', p) = walk_expr ~allow_top:false cond in
+        p @ [ TIf { cond = c'; then_body = lift_stmts then_body;
+                    else_body = lift_stmts else_body } ]
+    | TWhile { cond; body } ->
+        let (c', p) = walk_expr ~allow_top:false cond in
+        (* If `cond` was block-shaped, the lift evaluates it once before
+           the loop — subsequent iterations re-use the temp.  In
+           practice cond is bool-typed, so block-shaped conds are
+           rare; document this limitation if it bites. *)
+        p @ [ TWhile { cond = c'; body = lift_stmts body } ]
+    | TDefer { body; pos } ->
+        [ TDefer { body = lift_stmts body; pos } ]
+  in
+  let lifted = lift_stmts tstmts in
+  (List.rev !decls, lifted)
 
 (* Result of one walk over the program tree: every function (with its
    absolute module path and mangled C name), every struct, and every

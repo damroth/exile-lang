@@ -224,18 +224,14 @@ let rec gen_expr buf (te : texpr) =
       Buffer.add_char buf '(';
       add_separated buf ", " (gen_expr buf) args;
       Buffer.add_char buf ')'
-  | TTupleLit _ ->
-      Error.failf te.pos
-        "tuple literal cannot be used inline; bind it first with \
-         'let t = (...)' (then pass t) or 'let (a, b) = (...)'"
-  | TStructLit _ ->
-      Error.failf te.pos
-        "struct literal can only appear in 'return ...', as the RHS of \
-         'let x = ...', or in a field assignment"
-  | TNew _ ->
-      Error.failf te.pos
-        "'new ...' can only appear as the RHS of 'let x = ...' or \
-         in 'return ...'"
+  | TTupleLit _ | TStructLit _ | TNew _ ->
+      (* The `lift_block_exprs` pass in typecheck rewrites every
+         block-shaped expression (tuple/struct/new/enum lit, match)
+         that appears in a sub-expression position into a `__lift_N`
+         temp + preceding `TLet`, so by the time codegen runs no such
+         node reaches `gen_expr`.  Top-level uses (let RHS, return,
+         assign) are routed through `emit_value_into_temp`. *)
+      assert false
   | TFieldAccess { target; field } ->
       (* Auto-deref pointer-to-struct via `->`; otherwise plain `.`. *)
       let sep = match target.ty with TPtr _ -> "->" | _ -> "." in
@@ -244,18 +240,10 @@ let rec gen_expr buf (te : texpr) =
       Buffer.add_string buf field
   | TRef sub -> emit_unary buf '&' sub ~simple:(fun n -> lvalue_like n)
   | TDeref sub -> emit_unary buf '*' sub ~simple:(fun n -> lvalue_like n)
-  | TEnumLit _ ->
-      (* Phase A: enum constructors only land in let-RHS, return, or as a
-         match scrutinee (all routed through emit_value_into_temp).
-         Using one as a sub-expression (e.g. `print(Foo::A)`) requires a
-         temp-and-block lowering — that comes with Phase C. *)
-      Error.failf te.pos
-        "enum constructor in expression position not yet supported \
-         (bind it to a let first)"
-  | TMatch _ ->
-      Error.failf te.pos
-        "'match' as an expression is not yet supported in this position \
-         (Phase C); use it as a statement"
+  | TEnumLit _ | TMatch _ ->
+      (* Same as the block-shaped lit cases above — `lift_block_exprs`
+         hoists these to `__lift_N` temps before codegen sees them. *)
+      assert false
 
 and emit_unary buf prefix ~simple (te : texpr) =
   Buffer.add_char buf prefix;

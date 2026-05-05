@@ -53,27 +53,26 @@ fn area(s: Shape) -> int {
 }
 
 fn main() {
-    // Enum constructors still need a let binding when used as an arg
-    // (sub-expression position is queued for a later iteration).
     let d = Direction::East;
     describe_dir(d);                        // "sideways"
 
-    let sq = Shape::Square;
-    let c = Shape::Circle(7);
-    let r = Shape::Rect(10, 20);
-    describe_shape(sq);                     // "a square"
-    describe_shape(c);                      // 7
-    describe_shape(r);                      // 10
+    // Enum constructors and `match` work in arbitrary sub-expression
+    // positions — the compiler hoists each into an internal `__lift_N`
+    // temp before the surrounding statement so C89 stays simple.
+    describe_shape(Shape::Square);          // "a square"
+    describe_shape(Shape::Circle(7));       // 7
+    describe_shape(Shape::Rect(10, 20));    // 10
 
-    // Phase C: match-as-expression on a let RHS.
-    let a = match r {
+    print(area(Shape::Circle(5)));          // 75 (5 * 5 * 3)
+    print(area(Shape::Rect(3, 4)));         // 12
+
+    // match-as-expression on a let RHS, with another match nested in
+    // an arm.  Each variant runs only its arm — lift doesn't change
+    // that.
+    let total = 1 + match Shape::Circle(2) {
         | Shape::Square => 0
-        | Shape::Circle(rad) => rad
+        | Shape::Circle(r) => r
         | Shape::Rect(w, h) => w + h
     };
-    print(a);                               // 30
-
-    print(area(sq));                        // 1
-    print(area(c));                         // 147 (7 * 7 * 3)
-    print(area(r));                         // 200 (10 * 20)
+    print(total);                           // 3
 }
