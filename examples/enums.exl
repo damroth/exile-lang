@@ -1,12 +1,16 @@
-// Algebraic data types — Phase A: unit variants only.
+// Algebraic data types — Phases A and B.
 //
 // Declaration uses leading `|` per variant (OCaml/F# style; differs
-// from Rust's trailing `,`).  Construction is qualified: `Color::Red`.
-// `match` is exhaustive — every variant must be reached, either via an
-// explicit arm or a wildcard `_`.
+// from Rust's trailing `,`).  Three variant forms are designed; this
+// example uses unit and tuple variants (struct-like variants land
+// later).
 //
-// Phase B will add tuple variants (`Circle(int)`) and pattern bindings;
-// Phase C lets `match` produce a value (currently it's a statement).
+// Construction is qualified: `Direction::North`, `Shape::Circle(5)`.
+// `match` is exhaustive — every variant must be reached, either via
+// an explicit arm or a wildcard `_`.  Tuple-variant patterns can bind
+// the payload (`Shape::Rect(w, h)`); `_` skips a payload field.
+//
+// Phase C will let `match` produce a value (it's currently a statement).
 
 pub enum Direction {
     | North
@@ -15,7 +19,13 @@ pub enum Direction {
     | West
 }
 
-fn describe(d: Direction) {
+pub enum Shape {
+    | Square
+    | Circle(int)
+    | Rect(int, int)
+}
+
+fn describe_dir(d: Direction) {
     match d {
         | Direction::North => print("up")
         | Direction::South => print("down")
@@ -23,12 +33,25 @@ fn describe(d: Direction) {
     }
 }
 
-fn main() {
-    let d = Direction::East;
-    describe(d);                            // "sideways"
+fn describe_shape(s: Shape) {
+    match s {
+        | Shape::Square => print("a square")
+        | Shape::Circle(r) => print(r)              // r : int
+        | Shape::Rect(w, _) => print(w)             // height ignored
+    }
+}
 
-    // Inline construction passed via a let binding (Phase A: enum
-    // constructors are not yet allowed as a sub-expression).
-    let n = Direction::North;
-    describe(n);                            // "up"
+fn main() {
+    // Enum constructors are bound to a let first; using them directly
+    // as a fn-arg (or other sub-expression position) needs the
+    // temp-and-block lowering that lands with Phase C.
+    let d = Direction::East;
+    describe_dir(d);                        // "sideways"
+
+    let sq = Shape::Square;
+    let c = Shape::Circle(7);
+    let r = Shape::Rect(10, 20);
+    describe_shape(sq);                     // "a square"
+    describe_shape(c);                      // 7
+    describe_shape(r);                      // 10
 }

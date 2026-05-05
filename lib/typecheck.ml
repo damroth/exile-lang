@@ -209,6 +209,23 @@ let lookup_builtin = function
    void result is rejected.  Recursive calls into operands always use the
    default — sub-expressions of arithmetic, conditions, print args, function
    args, etc. always need a real value. *)
+(* `Foo::Bar(args)` parses as `Call(["Foo"; "Bar"], args)` — the parser
+   can't tell a fn call from an enum constructor.  Both `type_of` and
+   `elab_expr` use this helper to rewrite Call into EnumLit when the
+   path resolves to an enum + variant. *)
+let rewrite_call_as_enum_lit ctx path args pos =
+  match path with
+  | _ :: _ :: _ ->
+      let (init, last) =
+        let rev = List.rev path in
+        (List.rev (List.tl rev), List.hd rev)
+      in
+      (match lookup_enum ctx init with
+       | Some _ ->
+           Some (Ast.EnumLit { tname = init; variant = last; args; pos })
+       | None -> None)
+  | _ -> None
+
 let rec type_of ?(allow_void = false) ctx env = function
   | Ast.IntLit _ -> t_i32
   | Ast.BoolLit _ -> TBool
@@ -291,6 +308,9 @@ let rec type_of ?(allow_void = false) ctx env = function
              (typ_name other))
   | Ast.NullLit _ -> TNullPtr
   | Ast.Call (path, args, pos) ->
+      (match rewrite_call_as_enum_lit ctx path args pos with
+       | Some e -> type_of ~allow_void ctx env e
+       | None ->
       let arg_tys = List.map (type_of ctx env) args in
       (match lookup_builtin path with
        | Some b -> b.bcheck ~pos ~arg_tys ~allow_void
@@ -345,7 +365,7 @@ let rec type_of ?(allow_void = false) ctx env = function
             | Some t -> t
             | None when allow_void -> t_i32   (* placeholder, caller discards *)
             | None ->
-                Error.failf pos "'%s' returns void, cannot use as a value" display)))
+                Error.failf pos "'%s' returns void, cannot use as a value" display))))
   | Ast.MethodCall { receiver; name; args; pos } ->
       (* Method call `recv.name(args)`: resolve the method on receiver's
          struct (which lives in the global fn index under the struct's
@@ -412,9 +432,6 @@ let rec type_of ?(allow_void = false) ctx env = function
             | None ->
                 Error.failf pos "'%s' returns void, cannot use as a value" display))
   | Ast.EnumLit { tname; variant; args; pos } ->
-      (* Resolve enum + variant.  Phase A: only unit variants — both
-         the variant declaration and the call site must have zero args.
-         Phase B will type-check args against `vsfields_ty`. *)
       let e =
         match lookup_enum ctx tname with
         | Some e -> e
@@ -436,6 +453,16 @@ let rec type_of ?(allow_void = false) ctx env = function
         Error.failf pos
           "variant '%s::%s' takes %d argument(s), got %d"
           (String.concat "::" e.ename_path) variant expected got;
+      let arg_tys = List.map (type_of ctx env) args in
+      List.iteri
+        (fun i (exp, act) ->
+          if not (typ_eq exp act) && not (int_lit_fits (List.nth args i) exp)
+          then
+            Error.failf pos
+              "argument %d of '%s::%s': expected %s, got %s"
+              (i + 1) (String.concat "::" e.ename_path) variant
+              (typ_name exp) (typ_name act))
+        (List.combine v.vsfields_ty arg_tys);
       TEnum e.ename_path
   | Ast.Match { scrutinee; arms; pos } ->
       let scrut_ty = type_of ctx env scrutinee in
@@ -455,41 +482,69 @@ let rec type_of ?(allow_void = false) ctx env = function
             Error.failf pos "internal: enum '%s' missing from index"
               (String.concat "::" ename_path)
       in
-      (* Per-arm: validate pattern matches the scrutinee's enum, then
-         type the arm body and require all bodies share a type. *)
+      (* Per-arm: validate pattern matches the scrutinee's enum, collect
+         bind names (with their inferred types) into an extended env,
+         and type the arm body under that env.  Phase B handles top-level
+         PVar/PWildcard sub-patterns inside PVariant; nested variant
+         patterns land later. *)
       let arm_tys =
         List.map (fun (a : Ast.match_arm) ->
-          (match a.pat with
-           | Ast.PWildcard _ | Ast.PVar _ -> ()
-           | Ast.PVariant { tname; variant; binds; pos = ppos } ->
-               let resolved =
-                 match lookup_enum ctx tname with
-                 | Some e' -> e'.ename_path
-                 | None ->
-                     Error.failf ppos "unknown enum '%s' in pattern"
-                       (String.concat "::" tname)
-               in
-               if resolved <> ename_path then
-                 Error.failf ppos
-                   "pattern matches '%s' but scrutinee has type '%s'"
-                   (String.concat "::" resolved)
-                   (String.concat "::" ename_path);
-               let v =
-                 match List.find_opt
-                         (fun (vs : variant_sig) -> vs.vsname = variant)
-                         e.evariants with
-                 | Some v -> v
-                 | None ->
-                     Error.failf ppos "enum '%s' has no variant '%s'"
-                       (String.concat "::" ename_path) variant
-               in
-               let expected_binds = List.length v.vsfields_ty in
-               let got_binds = List.length binds in
-               if expected_binds <> got_binds then
-                 Error.failf ppos
-                   "variant '%s' has %d field(s), pattern binds %d"
-                   variant expected_binds got_binds);
-          type_of ~allow_void ctx env a.body)
+          let arm_env =
+            match a.pat with
+            | Ast.PWildcard _ -> env
+            | Ast.PVar (n, _) -> (n, scrut_ty) :: env
+            | Ast.PVariant { tname; variant; binds; pos = ppos } ->
+                let resolved =
+                  match lookup_enum ctx tname with
+                  | Some e' -> e'.ename_path
+                  | None ->
+                      Error.failf ppos "unknown enum '%s' in pattern"
+                        (String.concat "::" tname)
+                in
+                if resolved <> ename_path then
+                  Error.failf ppos
+                    "pattern matches '%s' but scrutinee has type '%s'"
+                    (String.concat "::" resolved)
+                    (String.concat "::" ename_path);
+                let v =
+                  match List.find_opt
+                          (fun (vs : variant_sig) -> vs.vsname = variant)
+                          e.evariants with
+                  | Some v -> v
+                  | None ->
+                      Error.failf ppos "enum '%s' has no variant '%s'"
+                        (String.concat "::" ename_path) variant
+                in
+                let expected_binds = List.length v.vsfields_ty in
+                let got_binds = List.length binds in
+                if expected_binds <> got_binds then
+                  Error.failf ppos
+                    "variant '%s' has %d field(s), pattern binds %d"
+                    variant expected_binds got_binds;
+                (* Each bind extends the env with (name, field_ty).
+                   Reject nested variant patterns and duplicate names
+                   within this pattern. *)
+                let pairs =
+                  List.map2 (fun (bp : Ast.pattern) ft ->
+                    match bp with
+                    | Ast.PWildcard _ -> None
+                    | Ast.PVar (n, _) -> Some (n, ft)
+                    | Ast.PVariant { pos = bpos; _ } ->
+                        Error.failf bpos
+                          "nested variant patterns are not yet supported")
+                    binds v.vsfields_ty
+                in
+                let names = List.filter_map (Option.map fst) pairs in
+                (match find_dup ~key:Fun.id names with
+                 | Some n ->
+                     Error.failf ppos
+                       "duplicate bind name '%s' in pattern" n
+                 | None -> ());
+                List.fold_left (fun acc -> function
+                  | Some pair -> pair :: acc
+                  | None -> acc) env pairs
+          in
+          type_of ~allow_void ctx arm_env a.body)
           arms
       in
       (* Exhaustiveness: every variant must be reached.  A wildcard
@@ -659,7 +714,13 @@ let rec elab_expr ?(allow_void = false) ctx env e : texpr =
         TFieldAccess { target = elab_expr ctx env target; field }
     | Ast.Ref (sub, _) -> TRef (elab_expr ctx env sub)
     | Ast.Deref (sub, _) -> TDeref (elab_expr ctx env sub)
-    | Ast.Call (path, args, _) ->
+    | Ast.Call (path, args, pos) ->
+        (match rewrite_call_as_enum_lit ctx path args pos with
+         | Some e ->
+             (* Recurse so the EnumLit branch handles arg elaboration
+                and tag lookup uniformly with the no-args case. *)
+             (elab_expr ~allow_void ctx env e).e
+         | None ->
         let targs = List.map (elab_expr ctx env) args in
         (match lookup_builtin path with
          | Some _ ->
@@ -671,7 +732,7 @@ let rec elab_expr ?(allow_void = false) ctx env e : texpr =
                | Some (_, s) -> s.mangled
                | None -> assert false   (* validated upstream *)
              in
-             TCall { mangled; args = targs })
+             TCall { mangled; args = targs }))
     | Ast.MethodCall { receiver; name; args; _ } ->
         let trecv = elab_expr ctx env receiver in
         let struct_path =
@@ -720,8 +781,9 @@ let rec elab_expr ?(allow_void = false) ctx env e : texpr =
         TEnumLit { ename_path = e.ename_path; variant; tag; args = targs }
     | Ast.Match { scrutinee; arms; _ } ->
         let tscrut = elab_expr ctx env scrutinee in
+        let scrut_ty = tscrut.ty in
         let ename_path =
-          match tscrut.ty with
+          match scrut_ty with
           | TEnum p -> p
           | _ -> assert false
         in
@@ -730,25 +792,38 @@ let rec elab_expr ?(allow_void = false) ctx env e : texpr =
           | Some e -> e
           | None -> assert false
         in
+        let lower_subpat = function
+          | Ast.PWildcard _ -> TPWildcard
+          | Ast.PVar (n, _) -> TPVar n
+          | Ast.PVariant _ -> assert false (* validated upstream *)
+        in
         let tarms =
           List.map (fun (a : Ast.match_arm) ->
-            let tpat =
+            let (tpat, arm_env) =
               match a.pat with
-              | Ast.PWildcard _ -> TPWildcard
-              | Ast.PVar (n, _) -> TPVar n
+              | Ast.PWildcard _ -> (TPWildcard, env)
+              | Ast.PVar (n, _) -> (TPVar n, (n, scrut_ty) :: env)
               | Ast.PVariant { variant; binds; _ } ->
-                  let tag =
+                  let (tag, vsig) =
                     let rec find i = function
                       | [] -> assert false
-                      | (vs : variant_sig) :: _ when vs.vsname = variant -> i
+                      | (vs : variant_sig) :: _ when vs.vsname = variant ->
+                          (i, vs)
                       | _ :: rest -> find (i + 1) rest
                     in
                     find 0 e.evariants
                   in
-                  let _ = binds in
-                  TPVariant { variant; tag; binds = [] }
+                  let tbinds = List.map lower_subpat binds in
+                  let env' =
+                    List.fold_left2 (fun acc (bp : Ast.pattern) ft ->
+                      match bp with
+                      | Ast.PVar (n, _) -> (n, ft) :: acc
+                      | _ -> acc)
+                      env binds vsig.vsfields_ty
+                  in
+                  (TPVariant { variant; tag; binds = tbinds }, env')
             in
-            let tbody = elab_expr ~allow_void ctx env a.body in
+            let tbody = elab_expr ~allow_void ctx arm_env a.body in
             { tpat; tbody; tarm_pos = a.arm_pos })
             arms
         in
@@ -1010,28 +1085,39 @@ let build_struct_index ~modules ~enums struct_flat =
           List.map (fun (n, t) -> (n, resolve_type_ann ctx t)) s.sfields })
     struct_flat skeleton
 
-(* Build the enum registry.  Variant payload types are not resolved
-   in Phase A (all variants are unit-typed in practice; the parser
-   accepts tuple variants but typecheck rejects them until Phase B).
-   Phase B will resolve each `vfields` against the same struct/enum
-   index used elsewhere. *)
-let build_enum_index enum_flat =
-  List.map
-    (fun (p, (e : Ast.enum_decl)) ->
+(* Build the enum registry.  Like `build_struct_index` we go two-pass:
+   first collect every enum's absolute path with empty variants (so
+   payload types in any enum can refer to any other enum), then
+   resolve each variant's `vfields` against the struct + enum
+   skeleton.  Tuple variants land in Phase B; unit variants keep
+   `vsfields_ty = []`. *)
+let build_enum_index ~modules ~struct_index enum_flat =
+  let skeleton =
+    List.map
+      (fun (p, (e : Ast.enum_decl)) ->
+        let variants =
+          List.map (fun (v : Ast.enum_variant) ->
+            { vsname = v.vname; vsfields_ty = [] })
+            e.evariants
+        in
+        { ename_path = p @ [e.ename]; evariants = variants;
+          eis_pub = e.eis_pub })
+      enum_flat
+  in
+  List.map2
+    (fun (p, (e : Ast.enum_decl)) skel ->
+      let ctx = {
+        global = []; structs = struct_index; enums = skeleton;
+        modules; scope = p
+      } in
       let variants =
         List.map (fun (v : Ast.enum_variant) ->
-          (* Phase A: reject tuple variants here so users get a clear
-             error rather than half-working codegen. *)
-          if v.vfields <> [] then
-            Error.failf v.vpos
-              "tuple variants like '%s(...)' are not yet supported \
-               (Phase B); use a unit variant for now" v.vname;
-          { vsname = v.vname; vsfields_ty = [] })
+          { vsname = v.vname;
+            vsfields_ty = List.map (resolve_type_ann ctx) v.vfields })
           e.evariants
       in
-      { ename_path = p @ [e.ename]; evariants = variants;
-        eis_pub = e.eis_pub })
-    enum_flat
+      { skel with evariants = variants })
+    enum_flat skeleton
 
 (* Walk a typed function body looking for tuple types in use, deduplicating
    by mangled name; codegen later emits one C struct per unique shape.
@@ -1252,9 +1338,27 @@ let check_program program : tprogram =
         (fun (p : Ast.param) -> check_c_ident f.pos "parameter" p.pname)
         f.params)
     flat.funcs;
-  let enum_index = build_enum_index flat.enums in
+  (* Order: structs need an enum skeleton (struct fields can mention
+     enums); enums need a struct skeleton (variant payloads can mention
+     structs).  Build a placeholder enum skeleton (paths only) first,
+     pass it to build_struct_index, then build the full enum_index
+     against the now-resolved struct_index. *)
+  let enum_skeleton =
+    List.map (fun (p, (e : Ast.enum_decl)) ->
+      let variants =
+        List.map (fun (v : Ast.enum_variant) ->
+          { vsname = v.vname; vsfields_ty = [] })
+          e.evariants
+      in
+      { ename_path = p @ [e.ename]; evariants = variants;
+        eis_pub = e.eis_pub })
+      flat.enums
+  in
   let struct_index =
-    build_struct_index ~modules:flat.modules ~enums:enum_index flat.structs
+    build_struct_index ~modules:flat.modules ~enums:enum_skeleton flat.structs
+  in
+  let enum_index =
+    build_enum_index ~modules:flat.modules ~struct_index flat.enums
   in
   let (impl_funcs, virtual_modules) =
     expand_impls flat struct_index enum_index flat.modules

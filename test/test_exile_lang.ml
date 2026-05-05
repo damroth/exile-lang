@@ -490,7 +490,7 @@ let () =
     \        | Color::Blue => print(\"b\")\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Color_tag { ex_Color_Red, ex_Color_Green, ex_Color_Blue };\nstruct ex_Color { enum ex_Color_tag tag; };\n\nint main(void) {\n    struct ex_Color c;\n    c.tag = ex_Color_Green;\n    {\n        struct ex_Color __m;\n        __m = c;\n        switch (__m.tag) {\n        case ex_Color_Red:\n            printf(\"%s\\n\", \"r\");\n            break;\n        case ex_Color_Green:\n            printf(\"%s\\n\", \"g\");\n            break;\n        case ex_Color_Blue:\n            printf(\"%s\\n\", \"b\");\n            break;\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Color_tag { ex_Color_Red, ex_Color_Green, ex_Color_Blue };\nstruct ex_Color { enum ex_Color_tag tag; };\n\nint main(void) {\n    struct ex_Color c;\n    c.tag = ex_Color_Green;\n    {\n        struct ex_Color __m;\n        __m = c;\n        switch (__m.tag) {\n        case ex_Color_Red:\n            {\n                printf(\"%s\\n\", \"r\");\n                break;\n            }\n        case ex_Color_Green:\n            {\n                printf(\"%s\\n\", \"g\");\n                break;\n            }\n        case ex_Color_Blue:\n            {\n                printf(\"%s\\n\", \"b\");\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "match with wildcard arm covers remaining variants"
     "enum E { | A | B | C }\n\
@@ -501,7 +501,39 @@ let () =
     \        | _ => print(\"other\")\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B, ex_E_C };\nstruct ex_E { enum ex_E_tag tag; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_A;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            printf(\"%s\\n\", \"a\");\n            break;\n        default:\n            printf(\"%s\\n\", \"other\");\n            break;\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B, ex_E_C };\nstruct ex_E { enum ex_E_tag tag; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_A;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                printf(\"%s\\n\", \"a\");\n                break;\n            }\n        default:\n            {\n                printf(\"%s\\n\", \"other\");\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check "tuple variants + match with bind patterns"
+    "enum Shape {\n\
+    \    | Square\n\
+    \    | Circle(int)\n\
+    \    | Rect(int, int)\n\
+     }\n\
+     fn main() {\n\
+    \    let s = Shape::Rect(3, 4);\n\
+    \    match s {\n\
+    \        | Shape::Square => print(\"sq\")\n\
+    \        | Shape::Circle(r) => print(r)\n\
+    \        | Shape::Rect(w, h) => print(w + h)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Shape_tag { ex_Shape_Square, ex_Shape_Circle, ex_Shape_Rect };\nstruct ex_Shape { enum ex_Shape_tag tag; union { struct { long _0; } Circle; struct { long _0; long _1; } Rect; } data; };\n\nint main(void) {\n    struct ex_Shape s;\n    s.tag = ex_Shape_Rect;\n    s.data.Rect._0 = 3;\n    s.data.Rect._1 = 4;\n    {\n        struct ex_Shape __m;\n        __m = s;\n        switch (__m.tag) {\n        case ex_Shape_Square:\n            {\n                printf(\"%s\\n\", \"sq\");\n                break;\n            }\n        case ex_Shape_Circle:\n            {\n                long r = __m.data.Circle._0;\n                printf(\"%ld\\n\", (long)(r));\n                break;\n            }\n        case ex_Shape_Rect:\n            {\n                long w = __m.data.Rect._0;\n                long h = __m.data.Rect._1;\n                printf(\"%ld\\n\", (long)(w + h));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check_error "wrong arg count for tuple variant rejected"
+    "enum E { | A(int) }\nfn main() { let e = E::A(1, 2); }\n"
+    "variant 'E::A' takes 1 argument(s), got 2";
+
+  check_error "wrong arg type for tuple variant rejected"
+    "enum E { | A(str) }\nfn main() { let e = E::A(5); }\n"
+    "argument 1 of 'E::A': expected str, got i32";
+
+  check_error "wrong bind count in pattern rejected"
+    "enum E { | A(int, int) }\nfn main() { let e = E::A(1, 2); match e { | E::A(x) => print(x) } }\n"
+    "variant 'A' has 2 field(s), pattern binds 1";
+
+  check_error "duplicate bind name in pattern rejected"
+    "enum E { | A(int, int) }\nfn main() { let e = E::A(1, 2); match e { | E::A(x, x) => print(x) } }\n"
+    "duplicate bind name 'x' in pattern";
 
   check_error "non-exhaustive match rejected"
     "enum E { | A | B }\nfn main() { let e = E::A; match e { | E::A => print(\"a\") } }\n"
@@ -518,10 +550,6 @@ let () =
   check_error "duplicate variant in enum decl rejected"
     "enum E { | A | A }\nfn main() {}\n"
     "duplicate variant 'A' in enum 'E'";
-
-  check_error "tuple variant rejected in Phase A"
-    "enum E { | A(int) }\nfn main() {}\n"
-    "tuple variants like 'A(...)' are not yet supported (Phase B); use a unit variant for now";
 
   check_error "match on non-enum rejected"
     "fn main() { let x = 5; match x { | _ => print(\"x\") } }\n"

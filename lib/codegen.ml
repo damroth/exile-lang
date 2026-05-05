@@ -11,6 +11,13 @@ open Ir
    tuple-temp blocks make the layout less obvious). *)
 let annotate_mode = ref false
 
+(* Match-arm bind decls need each variant's payload types to declare
+   the right C type for each bound name.  The typed AST carries the
+   variant tag and bind sub-patterns but not the payload types — we
+   stash the program-level enum index here so `emit_match_stmt` can
+   look them up.  Set by `gen_program` at the start of every run. *)
+let enum_index_ref : enum_sig list ref = ref []
+
 let emit_ann buf indent (pos : Pos.t) =
   if !annotate_mode then begin
     Buffer.add_string buf indent;
@@ -294,19 +301,21 @@ let rec emit_value_into_temp buf indent temp_name (value : texpr) =
       Option.iter (assign ~lhs:("*" ^ temp_name)) base;
       List.iter (fun (fname, fe) -> assign ~lhs:(temp_name ^ "->" ^ fname) fe)
         fields
-  | TEnumLit { ename_path; variant; args = []; _ } ->
-      (* Phase A: unit variants only.  The enum value is a struct holding
-         just a tag — set it.  Phase B will add per-variant payload
-         assignments through `temp.data.<variant>._<i> = ...`. *)
+  | TEnumLit { ename_path; variant; args; _ } ->
       let cname = mangle_typ (TEnum ename_path) in
       emit_assign_line buf indent ~lhs:(temp_name ^ ".tag")
         ~emit_rhs:(fun () ->
           Buffer.add_string buf cname;
           Buffer.add_char buf '_';
-          Buffer.add_string buf variant)
-  | TEnumLit { args; _ } ->
-      let _ = args in
-      failwith "tuple-variant codegen lands in Phase B"
+          Buffer.add_string buf variant);
+      (* For tuple variants, fill in the per-variant union member's
+         numbered fields.  Unit variants emit just the tag. *)
+      List.iteri
+        (fun i arg ->
+          assign
+            ~lhs:(Printf.sprintf "%s.data.%s._%d" temp_name variant i)
+            arg)
+        args
   | _ -> assign ~lhs:temp_name value
 
 (* Statement emission with `defer` support.  `outer_scopes` is the list of
@@ -391,6 +400,7 @@ and emit_match_stmt buf indent (m_expr : texpr) =
   | TMatch { scrutinee; ename_path; arms } ->
       let inner = indent ^ "    " in
       let case_indent = inner ^ "    " in
+      let body_indent = case_indent ^ "    " in
       let cname = mangle_typ (TEnum ename_path) in
       Buffer.add_string buf indent;
       Buffer.add_string buf "{\n";
@@ -408,11 +418,46 @@ and emit_match_stmt buf indent (m_expr : texpr) =
                                         cname variant)
            | TPWildcard | TPVar _ ->
                Buffer.add_string buf "default:\n");
+          (* Each arm body lives in its own `{}` block so bind decls
+             stay scoped to the case (and so we don't leak C variable
+             names across cases). *)
           Buffer.add_string buf case_indent;
+          Buffer.add_string buf "{\n";
+          (* Emit binds: PVar at top level binds the whole __m;
+             PVariant binds extract from data.<variant>._<i>. *)
+          (* C89 requires decls at the top of a block — emit each
+             bind as a single decl-with-init line. *)
+          (match a.tpat with
+           | TPVar n ->
+               Buffer.add_string buf body_indent;
+               Buffer.add_string buf (c_decl m_expr.ty n);
+               Buffer.add_string buf " = __m;\n"
+           | TPVariant { variant; binds; _ } ->
+               let v =
+                 List.find (fun (vs : variant_sig) -> vs.vsname = variant)
+                   (List.find
+                      (fun (es : enum_sig) -> es.ename_path = ename_path)
+                      !enum_index_ref).evariants
+               in
+               List.iteri
+                 (fun i (bp, ft) ->
+                   match bp with
+                   | TPVar n ->
+                       Buffer.add_string buf body_indent;
+                       Buffer.add_string buf (c_decl ft n);
+                       Buffer.add_string buf
+                         (Printf.sprintf " = __m.data.%s._%d;\n"
+                            variant i)
+                   | _ -> ())
+                 (List.combine binds v.vsfields_ty)
+           | TPWildcard -> ());
+          Buffer.add_string buf body_indent;
           gen_expr buf a.tbody;
           Buffer.add_string buf ";\n";
+          Buffer.add_string buf body_indent;
+          Buffer.add_string buf "break;\n";
           Buffer.add_string buf case_indent;
-          Buffer.add_string buf "break;\n")
+          Buffer.add_string buf "}\n")
         arms;
       Buffer.add_string buf inner;
       Buffer.add_string buf "}\n";
@@ -605,10 +650,11 @@ let emit_tuple_struct buf (_, t) =
       emit_struct_decl buf (tuple_struct_name ts) fields
   | _ -> ()
 
-(* Phase A enum lowering: an enum becomes a tag-only struct.  Tag values
-   take their name from `<cname>_<variant>` so they live in the same
-   global C namespace as user functions/structs and stay unique across
-   enums.  Phase B will add a payload union as a second struct field. *)
+(* Enum lowering.  Tag enum + a wrapper struct.  When at least one
+   variant carries payload, the struct also gets a `union data` whose
+   members are per-variant inner structs (`struct { T _0; T _1; } V`).
+   Unit variants don't appear in the union — C89 forbids empty
+   structs.  When all variants are unit, no `data` field is emitted. *)
 let emit_named_enum buf (e : enum_sig) =
   let cname = mangle_typ (TEnum e.ename_path) in
   Buffer.add_string buf (Printf.sprintf "enum %s_tag {" cname);
@@ -621,11 +667,36 @@ let emit_named_enum buf (e : enum_sig) =
       Buffer.add_string buf vs.vsname)
     e.evariants;
   Buffer.add_string buf " };\n";
+  let has_payload =
+    List.exists (fun (vs : variant_sig) -> vs.vsfields_ty <> []) e.evariants
+  in
   Buffer.add_string buf
-    (Printf.sprintf "struct %s { enum %s_tag tag; };\n" cname cname)
+    (Printf.sprintf "struct %s { enum %s_tag tag;" cname cname);
+  if has_payload then begin
+    Buffer.add_string buf " union {";
+    List.iter
+      (fun (vs : variant_sig) ->
+        if vs.vsfields_ty <> [] then begin
+          Buffer.add_string buf " struct {";
+          List.iteri
+            (fun i ty ->
+              Buffer.add_char buf ' ';
+              Buffer.add_string buf
+                (c_decl ty ("_" ^ string_of_int i));
+              Buffer.add_char buf ';')
+            vs.vsfields_ty;
+          Buffer.add_string buf " } ";
+          Buffer.add_string buf vs.vsname;
+          Buffer.add_char buf ';'
+        end)
+      e.evariants;
+    Buffer.add_string buf " } data;"
+  end;
+  Buffer.add_string buf " };\n"
 
 let gen_program ?(annotate = false) (tp : tprogram) =
   annotate_mode := annotate;
+  enum_index_ref := tp.tp_enum_index;
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
   if tp.tp_uses_heap then
