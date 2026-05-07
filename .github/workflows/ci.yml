@@ -9,17 +9,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/exile-lang-ci:latest
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up OCaml
-      uses: ocaml/setup-ocaml@v3
-      with:
-        ocaml-compiler: "5"
-
-    - name: Install dependencies
-      run: opam install . --deps-only --with-test
+    - name: Sync OCaml deps (incremental over baked switch)
+      run: opam install . --deps-only --with-test --yes
 
     - name: Build compiler
       run: opam exec -- make build
@@ -29,3 +26,23 @@ jobs:
 
     - name: Build examples (compile to C + cc -ansi -pedantic -Wall)
       run: opam exec -- make examples
+
+    - name: Verify host stdout snapshots
+      run: opam exec -- make verify-host
+
+  amiga-verify:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/exile-lang-ci:latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Sync OCaml deps (incremental over baked switch)
+      run: opam install . --deps-only --with-test --yes
+
+    - name: Build compiler
+      run: opam exec -- make build
+
+    - name: Cross-compile examples + verify under vamos
+      run: opam exec -- make verify-amiga

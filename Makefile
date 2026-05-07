@@ -7,8 +7,10 @@ EXILE   := dune exec --no-print-directory exilc --
 CC      := cc
 CFLAGS  := -ansi -pedantic -Wall
 
-TOOLCHAIN_PREFIX := $(CURDIR)/_build/toolchain
-AMIGA_GCC        := $(TOOLCHAIN_PREFIX)/bin/m68k-amigaos-gcc
+# `?=` so a CI image (or anyone with the toolchain elsewhere) can
+# point at /opt/amiga-gcc without editing the Makefile.
+TOOLCHAIN_PREFIX ?= $(CURDIR)/_build/toolchain
+AMIGA_GCC        ?= $(TOOLCHAIN_PREFIX)/bin/m68k-amigaos-gcc
 
 # Out-of-tree build artefacts.  `_build/` is already gitignored (dune
 # owns it), so generated C and per-target binaries live under it too.
