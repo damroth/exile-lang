@@ -48,7 +48,8 @@ COPY --from=vamos-builder /opt/pipx /opt/pipx
 
 ENV PATH="/opt/amiga-gcc/bin:/opt/pipx/bin:${PATH}" \
     TOOLCHAIN_PREFIX=/opt/amiga-gcc \
-    OPAMROOT=/home/opam/.opam
+    OPAMROOT=/home/opam/.opam \
+    OPAMROOTISOK=1
 
 USER opam
 WORKDIR /home/opam

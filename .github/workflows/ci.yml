@@ -10,11 +10,15 @@ permissions:
   contents: read
   packages: read
 
+env:
+  OPAMROOTISOK: "1"
+
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/exile-lang-ci:latest
+      options: --user 0:0
 
     steps:
     - uses: actions/checkout@v4
@@ -38,6 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/${{ github.repository_owner }}/exile-lang-ci:latest
+      options: --user 0:0
 
     steps:
     - uses: actions/checkout@v4
