@@ -1,3 +1,8 @@
+# `verify-*` targets use process substitution (<(...)) to feed
+# expected/actual into diff without temp files; that's a bashism, so
+# pin the recipe shell to bash explicitly.
+SHELL   := /bin/bash
+
 EXILE   := dune exec --no-print-directory exilc --
 CC      := cc
 CFLAGS  := -ansi -pedantic -Wall
@@ -21,6 +26,8 @@ AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(EXAMPLE_NAMES))
 .PHONY: all build test clean toolchain toolchain-clean
 .PHONY: host amiga examples
 .PHONY: host-% amiga-% run-% run-host-% c-%
+.PHONY: verify verify-host verify-amiga verify-host-% verify-amiga-%
+.PHONY: rebaseline-host rebaseline-host-%
 
 all: build
 
@@ -73,9 +80,60 @@ host:  $(EXAMPLE_NAMES:%=host-%)
 amiga: $(EXAMPLE_NAMES:%=amiga-%)
 examples: host
 
+# Compare a binary's stdout against examples/NAME.expected.  Two
+# variants — host runs the locally-built ELF, amiga runs the m68k
+# binary under vamos — diff against the same expected file, so any
+# divergence between the two targets shows up as a failure on the
+# amiga side.  `verify-host` / `verify-amiga` aggregate over every
+# example.  Missing .expected file is a failure (run rebaseline-host
+# first when adding a new example).
+verify-host-%: host-%
+	@if [ ! -f examples/$*.expected ]; then \
+		echo "verify-host-$*: missing examples/$*.expected (run 'make rebaseline-host-$*')"; \
+		exit 1; \
+	fi
+	@actual=$$($(HOST_OUT)/$*); \
+	expected=$$(cat examples/$*.expected); \
+	if [ "$$actual" = "$$expected" ]; then \
+		echo "verify-host-$*: ok"; \
+	else \
+		echo "verify-host-$*: FAIL"; \
+		diff <(echo "$$expected") <(echo "$$actual"); \
+		exit 1; \
+	fi
+
+verify-amiga-%: amiga-%
+	@if [ ! -f examples/$*.expected ]; then \
+		echo "verify-amiga-$*: missing examples/$*.expected"; \
+		exit 1; \
+	fi
+	@actual=$$(vamos $(AMIGA_OUT)/$* 2>/dev/null); \
+	expected=$$(cat examples/$*.expected); \
+	if [ "$$actual" = "$$expected" ]; then \
+		echo "verify-amiga-$*: ok"; \
+	else \
+		echo "verify-amiga-$*: FAIL"; \
+		diff <(echo "$$expected") <(echo "$$actual"); \
+		exit 1; \
+	fi
+
+verify-host:  $(EXAMPLE_NAMES:%=verify-host-%)
+verify-amiga: $(EXAMPLE_NAMES:%=verify-amiga-%)
+verify: verify-host verify-amiga
+
+# Capture current host stdout into examples/NAME.expected.  Use when
+# adding a new example or after an *intentional* output change; CI
+# verify will fail on accidental drift.
+rebaseline-host-%: host-%
+	@$(HOST_OUT)/$* > examples/$*.expected
+	@echo "rebaselined examples/$*.expected ($$(wc -l < examples/$*.expected) lines)"
+
+rebaseline-host: $(EXAMPLE_NAMES:%=rebaseline-host-%)
+
 clean:
 	dune clean
 	rm -rf $(OUT)
 	rm -f examples/*.c
 
-# Note: `clean` does NOT touch the toolchain. Use `toolchain-clean` for that.
+# Note: `clean` does NOT touch the toolchain or examples/*.expected.
+# Use `toolchain-clean` for the cross-compiler.

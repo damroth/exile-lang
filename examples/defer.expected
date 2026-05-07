@@ -1,0 +1,16 @@
+body
+first
+second
+third
+---
+body
+a
+b
+c
+---
+inner cleanup
+outer cleanup
+10
+---
+outer cleanup
+0

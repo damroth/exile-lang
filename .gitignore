@@ -1,12 +1,15 @@
 # dune build artifacts
 _build/
 
-# everything in examples/ except .exl sources (generated .c + binaries)
+# everything in examples/ except .exl sources and .expected stdout
+# snapshots (generated .c + binaries excluded)
 examples/*
 !examples/*.exl
+!examples/*.expected
 !examples/multi_file/
 examples/multi_file/*
 !examples/multi_file/*.exl
+!examples/multi_file/*.expected
 
 # opam
 *.install
