@@ -12,6 +12,7 @@ permissions:
 
 env:
   OPAMROOTISOK: "1"
+  EXILE_TOOLCHAIN: /opt/amiga-gcc
 
 jobs:
   build:
