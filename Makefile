@@ -22,6 +22,9 @@ AMIGA_OUT:= $(OUT)/amiga
 EXAMPLES_SRC := $(filter-out examples/error_%.exl, $(wildcard examples/*.exl))
 EXAMPLE_NAMES:= $(notdir $(EXAMPLES_SRC:.exl=))
 
+GHCR_OWNER ?= damroth
+CI_IMAGE   ?= ghcr.io/$(GHCR_OWNER)/exile-lang-ci:latest
+
 HOST_BINS  := $(addprefix $(HOST_OUT)/,$(EXAMPLE_NAMES))
 AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(EXAMPLE_NAMES))
 
@@ -30,6 +33,7 @@ AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(EXAMPLE_NAMES))
 .PHONY: host-% amiga-% run-% run-host-% c-%
 .PHONY: verify verify-host verify-amiga verify-host-% verify-amiga-%
 .PHONY: rebaseline-host rebaseline-host-%
+.PHONY: build-image
 
 all: build
 
@@ -131,6 +135,13 @@ rebaseline-host-%: host-%
 	@echo "rebaselined examples/$*.expected ($$(wc -l < examples/$*.expected) lines)"
 
 rebaseline-host: $(EXAMPLE_NAMES:%=rebaseline-host-%)
+
+# Build CI image locally and push to GHCR.  Requires
+# `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io
+# -u <user> --password-stdin`).  Override owner/tag via env, e.g.
+# `GHCR_OWNER=foo make build-image` or `CI_IMAGE=... make build-image`.
+build-image:
+	docker buildx build -f Dockerfile.ci -t $(CI_IMAGE) --push .
 
 clean:
 	dune clean

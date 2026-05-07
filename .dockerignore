@@ -1,0 +1,14 @@
+.git/
+.claude/
+
+_build/
+examples/*.c
+
+tools/amiga-gcc/build*
+tools/amiga-gcc/projects
+tools/amiga-gcc/download
+tools/amiga-gcc/log
+tools/amiga-gcc/Output
+tools/amiga-gcc/.lock
+tools/amiga-gcc/.state
+tools/amiga-gcc/.repos*
