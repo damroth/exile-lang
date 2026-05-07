@@ -23,6 +23,11 @@ type typ =
   | TNullPtr                           (* type of `null` literal — compatible
                                           with any TPtr; never reaches codegen
                                           as a declaration type *)
+  | TVar of string                     (* generic type parameter (`T`, `U`).
+                                          Lives until monomorphization, then
+                                          is substituted with a concrete typ.
+                                          Codegen never sees TVar — anything
+                                          generic is monomorphized first. *)
 
 (* Default integer type — what `int` and bare integer literals reduce to. *)
 let t_i32 = TInt { signed = true; width = Ast.W32 }
@@ -47,6 +52,7 @@ type fn_sig = {
   ret_ty : typ option;
   mangled : string;            (* C-level name (e.g. "ex_foo" or "foo__bar") *)
   fn_pub : bool;
+  fn_tparams : string list;     (* generic type parameters; [] for mono *)
 }
 
 (* Struct signatures share the same module-aware resolution as functions —
@@ -55,6 +61,13 @@ type struct_sig = {
   sname_path : string list;     (* full path including struct name, e.g. ["foo"; "Point"] *)
   sfields_ty : (string * typ) list;
   sis_pub : bool;
+  stparams : string list;       (* generic type parameters; [] for mono *)
+  sinstance_args : typ list option;
+                                 (* None for skeletons; Some args for
+                                    monomorphic instances generated at
+                                    use sites.  Used by bidirectional
+                                    typing to recover bindings from
+                                    an expected `TStruct inst_path`. *)
 }
 
 (* Enum signatures: variant order is preserved to give each variant a
@@ -74,6 +87,10 @@ type enum_sig = {
   ename_path : string list;     (* absolute path: e.g. ["geom"; "Shape"] *)
   evariants : variant_sig list;
   eis_pub : bool;
+  etparams : string list;       (* generic type parameters; [] for mono *)
+  einstance_args : typ list option;
+                                 (* None for skeletons; Some args for
+                                    monomorphic instances. *)
 }
 
 (* Mangle a function name with its module path.  Top-level (path = []) gets
@@ -91,7 +108,7 @@ let rec type_of_ann = function
   | Ast.TyStr -> TString
   | Ast.TyBool -> TBool
   | Ast.TyTuple ts -> TTuple (List.map type_of_ann ts)
-  | Ast.TyStruct path -> TStruct path
+  | Ast.TyStruct { path; args = _ } -> TStruct path
   | Ast.TyPtr t -> TPtr (type_of_ann t)
 
 let int_typ_name signed width =
@@ -108,6 +125,7 @@ let rec typ_name = function
   | TEnum path -> String.concat "::" path
   | TPtr t -> "*" ^ typ_name t
   | TNullPtr -> "*<null>"
+  | TVar n -> n
 
 (* Equality used for type-match decisions in let/return/arg/field/assign
    sites.  Plain `=` would reject `TNullPtr` against any concrete `TPtr T`;
@@ -137,9 +155,37 @@ let rec mangle_typ = function
        | [] -> failwith "empty named-type path"
        | n :: rest -> mangle (List.rev rest) n)
   | TPtr t -> "ptr_" ^ mangle_typ t
+  | TVar n ->
+      (* TVar should be substituted away by monomorphization before any
+         consumer asks for a C name.  If we see one here it's a compiler
+         bug, not user error. *)
+      failwith ("internal: TVar '" ^ n ^ "' reached mangle_typ — \
+                 monomorphization missed an instantiation")
   | TNullPtr -> failwith "TNullPtr should never be mangled"
 
 let tuple_struct_name ts = "ex_" ^ mangle_typ (TTuple ts)
+
+(* Substitute every `TVar n` in [ty] using the [bindings] association.
+   Variables not present in [bindings] are left as-is — partial
+   substitution is the common case for nested generic decls. *)
+let rec subst_typ bindings = function
+  | TVar n as t ->
+      (match List.assoc_opt n bindings with
+       | Some replacement -> replacement
+       | None -> t)
+  | TPtr inner -> TPtr (subst_typ bindings inner)
+  | TTuple ts -> TTuple (List.map (subst_typ bindings) ts)
+  | (TInt _ | TBool | TString | TStruct _ | TEnum _ | TNullPtr) as t -> t
+
+(* True when [ty] is monomorphic — no `TVar` anywhere in the tree.
+   Codegen filters generic decls (those containing TVar) out of the
+   per-program emission until the monomorphizer materialises concrete
+   instantiations. *)
+let rec is_concrete = function
+  | TVar _ -> false
+  | TPtr inner -> is_concrete inner
+  | TTuple ts -> List.for_all is_concrete ts
+  | TInt _ | TBool | TString | TStruct _ | TEnum _ | TNullPtr -> true
 
 (* Typed AST — mirrors Ast.expr/stmt but every node carries the type
    computed by elaboration in `.ty`.  Codegen reads the type directly,
@@ -180,6 +226,13 @@ type texpr_node =
 and tmatch_arm = {
   tpat : tpattern;
   tbody : texpr;
+  tdiverges : bool;             (* if true, codegen emits `return tbody;`
+                                   instead of assigning to the match's
+                                   `__exile_ret` slot.  Used by the `try`
+                                   desugar to early-return Err/None from
+                                   the enclosing fn.  Diverging arms are
+                                   skipped when computing the match's
+                                   overall result type. *)
   tarm_pos : Pos.t;
 }
 

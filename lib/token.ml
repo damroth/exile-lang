@@ -43,6 +43,9 @@ type t =
   | Slash
   | True
   | False
+  | Question
+  | Orelse
+  | Try
   | Ident of string
   | Int of int
   | String of string
@@ -66,6 +69,7 @@ let pp = function
   | Lt -> "'<'" | Gt -> "'>'" | LtEq -> "'<='" | GtEq -> "'>='"
   | Plus -> "'+'" | Minus -> "'-'" | Star -> "'*'" | Slash -> "'/'"
   | True -> "'true'" | False -> "'false'"
+  | Question -> "'?'" | Orelse -> "'orelse'" | Try -> "'try'"
   | Ident s -> Printf.sprintf "identifier '%s'" s
   | Int n -> Printf.sprintf "integer %d" n
   | String s -> Printf.sprintf "string \"%s\"" s

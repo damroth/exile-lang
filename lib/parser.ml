@@ -68,6 +68,10 @@ let rec parse_type s =
   let ti signed width = Ast.TyInt { signed; width } in
   match advance s with
   | (Token.Star, _) -> Ast.TyPtr (parse_type s)
+  | (Token.Question, _) ->
+      (* `?T` is sugar for `Option<T>` — the prelude's optional-value
+         enum.  Resolves at typecheck like any other generic application. *)
+      Ast.TyStruct { path = ["Option"]; args = [ parse_type s ] }
   | (Token.Ident "int", _) -> ti true Ast.W32     (* alias for i32 *)
   | (Token.Ident "i8",  _) -> ti true Ast.W8
   | (Token.Ident "i16", _) -> ti true Ast.W16
@@ -79,8 +83,25 @@ let rec parse_type s =
   | (Token.Ident "bool", _) -> Ast.TyBool
   | (Token.Ident n, _) ->
       (* Any other identifier is a struct path, possibly qualified
-         (`mod::Inner::Point`). *)
-      Ast.TyStruct (parse_path_tail s [n])
+         (`mod::Inner::Point`).  An optional generic argument list may
+         follow: `Option<int>`, `Pair<A, B>`.  Single-segment unknown
+         paths can also be type-parameter references inside a generic
+         decl body (`T` in `Some(T)` for `enum Option<T>`); typecheck
+         later disambiguates struct path vs type-param binding. *)
+      let path = parse_path_tail s [n] in
+      let args =
+        if peek s = Token.Lt then begin
+          ignore (advance s);
+          let tys =
+            parse_comma_list ~close:Token.Gt ~item:parse_type s
+          in
+          if tys = [] then
+            Error.failf (peek_pos s)
+              "empty generic argument list <>";
+          tys
+        end else []
+      in
+      Ast.TyStruct { path; args }
   | (Token.LParen, p) ->
       (* Tuple type `(T1, T2, ...)`.  Single-element parens unwrap to the
          underlying type (parens act as grouping); 0 elements is rejected. *)
@@ -119,6 +140,12 @@ let rec parse_primary s =
   | Token.Null -> Ast.NullLit p
   | Token.String str -> Ast.StringLit (str, p)
   | Token.Minus -> Ast.Neg (parse_primary s, p)
+  | Token.Try ->
+      (* `try expr` — unwrap-or-early-return.  Postfix-tight, like
+         Rust's `?`: the operand is a primary plus its postfix chain,
+         so `try foo().bar` = `try (foo().bar)`, but `try a + b` =
+         `(try a) + b`.  Wrap in parens for the latter shape. *)
+      Ast.Try (parse_postfix s (parse_primary s), p)
   | Token.Amp -> Ast.Ref (parse_postfix s (parse_primary s), p)
   | Token.Star -> Ast.Deref (parse_postfix s (parse_primary s), p)
   | Token.New ->
@@ -285,7 +312,7 @@ and parse_add s =
   loop (parse_mul s)
 
 (* comparison binds looser than arithmetic; only one comparison per expression *)
-and parse_expr s =
+and parse_cmp s =
   let left = parse_add s in
   let cmp_op = match peek s with
     | Token.Lt -> Some Ast.Lt   | Token.Gt -> Some Ast.Gt
@@ -299,13 +326,26 @@ and parse_expr s =
       let p = peek_pos s in
       ignore (advance s); Ast.BinOp (op, left, parse_add s, p)
 
+(* `orelse` has the lowest precedence — `a == b orelse default` parses as
+   `(a == b) orelse default` (the comparison happens first, then the
+   whole thing is the scrutinee).  Right-associative: `a orelse b orelse
+   c` = `a orelse (b orelse c)`. *)
+and parse_expr s =
+  let left = parse_cmp s in
+  if peek s = Token.Orelse then begin
+    let p = peek_pos s in
+    ignore (advance s);
+    Ast.Orelse (left, parse_expr s, p)
+  end else left
+
 and parse_args s = parse_comma_list ~close:Token.RParen ~item:parse_expr s
 
-(* Pattern grammar (Phase A):
-     `_`                          → wildcard
-     `<ident>`                    → bind (single segment, no `::`)
-     `<Path>::<Variant>`          → unit variant
-     `<Path>::<Variant>(p, ...)`  → tuple variant (Phase B uses binds)
+(* Pattern grammar:
+     `_`                              → wildcard
+     `<ident>`                        → bind (single segment, no `::`)
+     `<Path>::<Variant>`              → unit variant
+     `<Path>::<Variant>(p, ...)`      → tuple variant
+     `<Path>::<Variant> { f: p, ... }`→ struct variant (shorthand `f` ok)
 
    Distinguishing bind from unit-variant relies on the path having more
    than one segment for variants — bare `name` is always a binding. *)
@@ -468,7 +508,7 @@ and parse_stmt s =
       (* `match` is parsed as an expression but its statement form
          needs no trailing `;` — block-shaped, like `if`/`while`.
          We delegate to parse_primary so the same parser handles
-         match-as-expression in Phase C. *)
+         both statement and let-RHS / return positions. *)
       let e = parse_primary s in
       Ast.ExprStmt e
   | _ ->
@@ -502,11 +542,38 @@ and parse_stmts s acc =
   | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
   | _ -> parse_stmts s (parse_stmt s :: acc)
 
+(* `<T>` / `<T, U>` after a struct/enum/fn name — generic type
+   parameter list.  Returns names in source order; rejects empty `<>`
+   and duplicate names within the list. *)
+let parse_tparams s =
+  if peek s <> Token.Lt then []
+  else begin
+    ignore (advance s);
+    let names =
+      parse_comma_list ~close:Token.Gt
+        ~item:(fun s ->
+          let (n, _) = expect_ident s ~what:"type parameter name" in n)
+        s
+    in
+    if names = [] then
+      Error.failf (peek_pos s) "empty type parameter list <>";
+    let rec check_dups = function
+      | [] -> ()
+      | n :: rest ->
+          if List.mem n rest then
+            Error.failf (peek_pos s) "duplicate type parameter '%s'" n;
+          check_dups rest
+    in
+    check_dups names;
+    names
+  end
+
 let parse_function s seen_fns ~is_pub =
   expect s Token.Fn;
   let (name, name_pos) = expect_ident s ~what:"function name after 'fn'" in
   if List.mem name seen_fns then
     Error.failf name_pos "function '%s' already defined" name;
+  let tparams = parse_tparams s in
   let params = parse_params s in
   let rec check_dup_params = function
     | [] -> ()
@@ -527,7 +594,7 @@ let parse_function s seen_fns ~is_pub =
   expect s Token.LBrace;
   let body = parse_stmts s [] in
   expect s Token.RBrace;
-  (name, Ast.{ name; params; ret_ty; body; is_pub; pos = name_pos })
+  (name, Ast.{ name; tparams; params; ret_ty; body; is_pub; pos = name_pos })
 
 (* Parse a `use` declaration and return one or more `(name option, Use item)`
    pairs.  Wildcard imports introduce no name into the surrounding scope so
@@ -671,6 +738,7 @@ and parse_struct_decl s ~is_pub =
     | (Token.Ident n, p) -> (n, p)
     | (_, p) -> Error.raise_ p "expected struct name after 'struct'"
   in
+  let stparams = parse_tparams s in
   expect s Token.LBrace;
   let parse_field s =
     let (fname, _) = expect_ident s ~what:"field name in struct" in
@@ -691,12 +759,14 @@ and parse_struct_decl s ~is_pub =
         check_dups rest
   in
   check_dups fields;
-  Ast.{ sname = name; sfields = fields; spos = name_pos; sis_pub = is_pub }
+  Ast.{ sname = name; stparams; sfields = fields;
+        spos = name_pos; sis_pub = is_pub }
 
-(* `enum Foo { | A | B(int) | C(int, str) }` — leading `|` per variant
-   (OCaml/F# style; differs from Rust's trailing comma).  Each variant
-   is `Name` (unit) or `Name(T1, T2, ...)` (tuple — accepted by the
-   parser; Phase A's typecheck rejects non-unit until Phase B lands). *)
+(* `enum Foo { | A | B(int) | C { f: T, ... } }` — leading `|` per
+   variant (OCaml/F# style; differs from Rust's trailing comma).
+   Each variant is `Name` (unit), `Name(T1, T2, ...)` (tuple), or
+   `Name { f: T, ... }` (struct).  Generic params on the enum head:
+   `enum Option<T> { | None | Some(T) }`. *)
 and parse_enum_decl s ~is_pub =
   expect s Token.Enum;
   let (name, name_pos) =
@@ -704,6 +774,7 @@ and parse_enum_decl s ~is_pub =
     | (Token.Ident n, p) -> (n, p)
     | (_, p) -> Error.raise_ p "expected enum name after 'enum'"
   in
+  let etparams = parse_tparams s in
   expect s Token.LBrace;
   let rec loop acc =
     match peek s with
@@ -750,8 +821,8 @@ and parse_enum_decl s ~is_pub =
         check_dups rest
   in
   check_dups variants;
-  Ast.{ ename = name; evariants = variants; epos = name_pos;
-        eis_pub = is_pub }
+  Ast.{ ename = name; etparams; evariants = variants;
+        epos = name_pos; eis_pub = is_pub }
 
 (* `impl <Path> { fn ... fn ... }` — methods get registered against the
    target struct, not into the surrounding scope.  Each method is parsed

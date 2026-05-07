@@ -5,7 +5,16 @@ type type_ann =
   | TyStr
   | TyBool
   | TyTuple of type_ann list
-  | TyStruct of string list           (* qualified path: e.g. ["foo"; "Point"] *)
+  | TyStruct of { path : string list; args : type_ann list }
+                                       (* qualified path + optional generic
+                                          arguments.  `Foo` is `args=[]`,
+                                          `Option<int>` is `path=["Option"]`,
+                                          `args=[TyInt{signed=true;width=W32}]`.
+                                          Generic param references inside a
+                                          decl body (e.g. `T` in `Some(T)`)
+                                          appear as `TyStruct { path=["T"];
+                                          args=[] }` until typecheck binds
+                                          them as type variables. *)
   | TyPtr of type_ann                  (* `*T` *)
 
 type binop =
@@ -47,11 +56,21 @@ type expr =
                                            to EnumLit-EAStruct in elab. *)
   | Match of { scrutinee : expr; arms : match_arm list; pos : Pos.t }
                                         (* `match e { | pat => expr | ... }` —
-                                           always an expression in the AST;
-                                           Phase A only allows it in
-                                           ExprStmt position (effective
-                                           statement form), Phase C adds
-                                           let-RHS / return lowering. *)
+                                           always an expression: usable as
+                                           a let-RHS or return value, or
+                                           as a stmt (its value is then
+                                           dropped). *)
+  | Orelse of expr * expr * Pos.t       (* `value orelse default` — yields
+                                           the unwrapped payload of `value`
+                                           (Result<T, _> or Option<T>) on
+                                           Ok/Some, [default] on Err/None.
+                                           Lowered to `match` in elab. *)
+  | Try of expr * Pos.t                 (* `try value` — unwraps Ok/Some,
+                                           early-returns Err/None from the
+                                           enclosing fn.  Inner enum and
+                                           outer ret type must agree
+                                           (both Result with same E, or
+                                           both Option). *)
 
 and match_arm = { pat : pattern; body : expr; arm_pos : Pos.t }
 
@@ -78,6 +97,7 @@ and pat_binds =
 let expr_pos = function
   | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
   | Var (_, p) | Neg (_, p) | BinOp (_, _, _, p)
+  | Orelse (_, _, p) | Try (_, p)
   | Call (_, _, p) | Cast (_, _, p) | TupleLit (_, p)
   | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)
   | NullLit p -> p
@@ -100,6 +120,7 @@ type stmt =
 
 type func = {
   name : string;
+  tparams : string list;             (* generic type parameters: [] for mono *)
   params : param list;
   ret_ty : type_ann option;
   body : stmt list;
@@ -109,6 +130,7 @@ type func = {
 
 type struct_decl = {
   sname : string;
+  stparams : string list;            (* [] for mono structs *)
   sfields : (string * type_ann) list;
   spos : Pos.t;
   sis_pub : bool;
@@ -130,6 +152,7 @@ type enum_variant = {
 
 type enum_decl = {
   ename : string;
+  etparams : string list;            (* [] for mono enums *)
   evariants : enum_variant list;
   epos : Pos.t;
   eis_pub : bool;

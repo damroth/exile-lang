@@ -1,0 +1,96 @@
+// Generics — type parameters on structs and enums, monomorphized
+// eagerly at every concrete use site.
+//
+// Type parameters ride on the declaration head:
+//   struct Pair<A, B> { fst: A, snd: B }
+//   enum Tree<T> { | Leaf | Node(T, Tree<T>, Tree<T>) }
+//
+// Construction infers type arguments from payload values
+// ("bottom-up"), and a `let`/return type annotation can pin args
+// that the payload alone can't reach ("bidirectional").  No turbofish.
+//
+// `Option<T>` and `Result<T, E>` are predeclared in the prelude — no
+// `use`, no explicit `enum` line.  Codegen emits a unique C struct
+// per (enum, type-args) tuple: `Option<int>` → `ex_Option_i32`.
+
+struct Pair<A, B> {
+    fst: A,
+    snd: B
+}
+
+// Re-declaring `Option`/`Result` is allowed — the user definition
+// wins over the prelude.  Here we rely on the prelude.
+
+// `?T` is sugar for `Option<T>`.  `orelse default` unwraps the
+// payload on Some/Ok or evaluates `default` on None/Err.  `try expr`
+// unwraps Ok/Some too — but on Err/None it early-returns the same
+// variant from the enclosing fn, so callers compose error paths
+// without ladders of `match`.
+
+fn first_int_or(d: int, opt: ?int) -> int {
+    return opt orelse d;
+}
+
+// `try` requires the enclosing fn to return the same Option/Result
+// shape.  Here both `o` and `incr_opt`'s ret are `?int`, so `try o`
+// unwraps Some(v) into `v` and propagates None up unchanged.
+fn incr_opt(o: ?int) -> ?int {
+    let v = try o;
+    return Option::Some(v + 1);
+}
+
+enum IoErr { | NotFound | Denied }
+
+fn read_count(ok: bool) -> Result<int, IoErr> {
+    if ok {
+        return Result::Ok(42);
+    }
+    return Result::Err(IoErr::NotFound);
+}
+
+// `try` on Result: same E in inner and outer; T may differ.  On
+// Err, the early return is `Result::Err(e)` of `read_doubled`'s
+// own ret instance — bidirectional typing picks the right T.
+fn read_doubled(ok: bool) -> Result<int, IoErr> {
+    let v = try read_count(ok);
+    return Result::Ok(v * 2);
+}
+
+fn describe(r: Result<int, IoErr>) {
+    match r {
+        | Result::Ok(v)  => print(v)
+        | Result::Err(_) => print(0)              // payload ignored
+    }
+}
+
+fn main() {
+    // Generic struct: A = int, B = str inferred from field values.
+    let p = Pair { fst: 5, snd: "hi" };
+    print(p.fst);                                  // 5
+
+    // Prelude Option<T>: T = int from the payload.
+    let some = Option::Some(7);
+    let none: Option<int> = Option::None;          // T pinned by ann
+    print(first_int_or(99, some));                 // 7
+    print(first_int_or(99, none));                 // 99
+
+    // Prelude Result<T, E>: T from payload, E from return type
+    // (bidirectional propagation through `return`).
+    describe(read_count(true));                    // 42
+    describe(read_count(false));                   // 0
+
+    // `try` chains: incr_opt(Some 7) → Some 8;  incr_opt(None) → None.
+    match incr_opt(some) {
+        | Option::Some(x) => print(x)              // 8
+        | Option::None    => print(-1)
+    }
+    match incr_opt(none) {
+        | Option::Some(x) => print(x)
+        | Option::None    => print(-1)             // -1
+    }
+
+    // `try` on Result: read_doubled(true) doubles the Ok payload;
+    // read_doubled(false) propagates Err unchanged.
+    describe(read_doubled(true));                  // 84
+    describe(read_doubled(false));                 // 0
+}

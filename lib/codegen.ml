@@ -92,6 +92,10 @@ let rec c_type_prefix = function
       (* TNullPtr never owns a declaration — it is the type of the literal
          `null`, always consumed under a concrete TPtr context. *)
       failwith "TNullPtr should never reach c_type_prefix"
+  | TVar n ->
+      failwith
+        ("internal: TVar '" ^ n ^ "' reached c_type_prefix — \
+          monomorphization missed an instantiation")
 
 let c_decl t name = c_type_prefix t ^ name
 
@@ -116,7 +120,7 @@ let emit_print : builtin_emit =
       | TInt { signed = true; _ } -> "\"%d\\n\""
       | TInt { signed = false; _ } -> "\"%u\\n\""
       | TString -> "\"%s\\n\""
-      | TTuple _ | TStruct _ | TEnum _ | TPtr _ | TNullPtr ->
+      | TTuple _ | TStruct _ | TEnum _ | TPtr _ | TNullPtr | TVar _ ->
           assert false  (* typecheck rejected this earlier *)
     in
     let cast =
@@ -307,9 +311,9 @@ let rec emit_value_into_temp buf indent temp_name (value : texpr) =
             arg)
         args
   | TMatch _ ->
-      (* Phase C: match used as a value (let-RHS, return, ...) lowers
-         to a switch whose every case assigns its arm result to the
-         same temp.  See emit_match_stmt's `assign_to` mode. *)
+      (* Match used as a value (let-RHS, return, ...) lowers to a
+         switch whose every case assigns its arm result to the same
+         temp.  See emit_match_stmt's `assign_to` mode. *)
       emit_match_stmt ~assign_to:temp_name buf indent value
   | _ -> assign ~lhs:temp_name value
 
@@ -384,18 +388,19 @@ and emit_simple_stmt buf indent stmt =
   | TReturn { pos; _ } ->
       Error.failf pos "'return' inside a defer body is not supported"
 
-(* `match` as statement: hoist the scrutinee into a fresh `__m` temp in
-   a new C block and dispatch on its tag.  Each variant arm becomes a
-   `case`; a wildcard or bare-bind pattern becomes `default:`.  Phase A
-   only produces unit variants, so each arm body is just an
-   expression-statement (often a void call); Phase B will add bind
-   declarations for tuple payloads. *)
-(* Lower a TMatch.  When `assign_to = None` (the Phase A statement
-   form), each arm body is emitted as an expression-statement.  When
-   `Some lhs` (Phase C: let-RHS or `__exile_ret`), each arm body
-   becomes `lhs = <body>;` so the surrounding context picks up the
-   match's value.  Nested match in an arm body lowers recursively
-   under the same `assign_to`. *)
+(* Lower a TMatch.  Hoists the scrutinee into a fresh `__m` temp in a
+   new C block and dispatches on its tag.  Each variant arm becomes a
+   `case`; a wildcard or bare-bind pattern becomes `default:`; tuple
+   and struct payloads bind via decls at the top of the case block.
+   When `assign_to = None` each arm body is emitted as an
+   expression-statement (the match's value is dropped); when
+   `Some lhs` each arm body becomes `lhs = <body>;` so the surrounding
+   context picks up the match's value.  Nested match in an arm body
+   lowers recursively under the same `assign_to`.  An arm with
+   `tdiverges = true` (produced by the `try` desugar) emits
+   `return tbody;` instead of assign+break and ignores `assign_to` —
+   the body is, by elab construction, a TEnumLit on the enclosing
+   fn's return-type instance. *)
 and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
   match m_expr.e with
   | TMatch { scrutinee; ename_path; arms } ->
@@ -453,18 +458,48 @@ and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
                    | _ -> ())
                  binds
            | TPWildcard -> ());
-          (match assign_to, a.tbody.e with
-           | Some lhs, TMatch _ ->
-               emit_match_stmt ~assign_to:lhs buf body_indent a.tbody
-           | Some lhs, _ ->
-               emit_assign_line buf body_indent ~lhs
-                 ~emit_rhs:(fun () -> gen_expr buf a.tbody)
-           | None, _ ->
-               Buffer.add_string buf body_indent;
-               gen_expr buf a.tbody;
-               Buffer.add_string buf ";\n");
-          Buffer.add_string buf body_indent;
-          Buffer.add_string buf "break;\n";
+          if a.tdiverges then begin
+            (* `try` desugar's Err/None arm: early-return the body
+               from the enclosing fn.  By elab construction the body
+               is a TEnumLit on the outer fn's ret-type instance — we
+               assert that here so any future caller of `tdiverges`
+               with a different shape (TMatch, TVar, etc) breaks
+               loudly rather than emitting subtly broken C (mixing
+               decls and stmts in the same case block, or skipping
+               an `assign_to` assignment).
+               Defer integration is intentionally absent: defers
+               active above a `try` site will NOT run on the early-
+               return path.  Programs that mix the two compile but
+               leak whatever the defer would have cleaned up.  No
+               check fires today; revisit when a real use case for
+               `defer` + `try` together shows up. *)
+            (match a.tbody.e with
+             | TEnumLit _ -> ()
+             | _ ->
+                 failwith
+                   "internal: tdiverges arm body must be a TEnumLit \
+                    (only `try` desugar produces diverging arms today)");
+            let trimmed = strip_trailing_space (c_type_prefix a.tbody.ty) in
+            Buffer.add_string buf body_indent;
+            Buffer.add_string buf trimmed;
+            Buffer.add_string buf " __try_ret;\n";
+            emit_value_into_temp buf body_indent "__try_ret" a.tbody;
+            Buffer.add_string buf body_indent;
+            Buffer.add_string buf "return __try_ret;\n"
+          end else begin
+            (match assign_to, a.tbody.e with
+             | Some lhs, TMatch _ ->
+                 emit_match_stmt ~assign_to:lhs buf body_indent a.tbody
+             | Some lhs, _ ->
+                 emit_assign_line buf body_indent ~lhs
+                   ~emit_rhs:(fun () -> gen_expr buf a.tbody)
+             | None, _ ->
+                 Buffer.add_string buf body_indent;
+                 gen_expr buf a.tbody;
+                 Buffer.add_string buf ";\n");
+            Buffer.add_string buf body_indent;
+            Buffer.add_string buf "break;\n"
+          end;
           Buffer.add_string buf case_indent;
           Buffer.add_string buf "}\n")
         arms;
@@ -535,7 +570,8 @@ and gen_block buf indent outer_scopes stmts =
         let needs_block =
           all <> [] ||
           (match value.e with
-           | TTupleLit _ | TStructLit _ | TNew _ | TMatch _ -> true
+           | TTupleLit _ | TStructLit _ | TNew _ | TMatch _ | TEnumLit _ ->
+               true
            | _ -> false)
         in
         if not needs_block then begin
@@ -711,21 +747,48 @@ let gen_program ?(annotate = false) (tp : tprogram) =
     Buffer.add_string buf "#include <stdlib.h>\n";
   (* Named structs first, in source order — typically their fields refer
      to types declared earlier.  Tuple structs after, so any tuple whose
-     elements include a named struct type sees it complete. *)
-  if tp.tp_struct_index <> [] then begin
+     elements include a named struct type sees it complete.
+     Generic decls (those carrying TVar in any field) are skipped here:
+     the monomorphizer is responsible for substituting concrete types
+     into a fresh decl per use, and only those concrete instances are
+     emitted. *)
+  let concrete_structs =
+    List.filter (fun s ->
+      List.for_all (fun (_, ty) -> is_concrete ty) s.sfields_ty)
+      tp.tp_struct_index
+  in
+  let concrete_enums =
+    List.filter (fun e ->
+      List.for_all (fun vs ->
+        List.for_all (fun (_, ty) -> is_concrete ty) vs.vsfields)
+        e.evariants)
+      tp.tp_enum_index
+  in
+  if concrete_structs <> [] then begin
     Buffer.add_char buf '\n';
-    List.iter (emit_named_struct buf) tp.tp_struct_index
+    List.iter (emit_named_struct buf) concrete_structs
   end;
-  if tp.tp_enum_index <> [] then begin
+  if concrete_enums <> [] then begin
     Buffer.add_char buf '\n';
-    List.iter (emit_named_enum buf) tp.tp_enum_index
+    List.iter (emit_named_enum buf) concrete_enums
   end;
   if tp.tp_tuple_types <> [] then begin
     Buffer.add_char buf '\n';
     List.iter (emit_tuple_struct buf) tp.tp_tuple_types
   end;
+  (* Generic fns (with TVar in their resolved signature) skip codegen
+     for the same reason as generic struct/enum decls — the
+     monomorphizer materialises concrete instantiations later. *)
+  let concrete_funcs =
+    List.filter (fun tf ->
+      List.for_all is_concrete tf.tf_param_tys
+      && (match tf.tf_ret_ty with
+          | Some t -> is_concrete t
+          | None -> true))
+      tp.tp_funcs
+  in
   let non_main =
-    List.filter (fun tf -> tf.tf_func.Ast.name <> "main") tp.tp_funcs
+    List.filter (fun tf -> tf.tf_func.Ast.name <> "main") concrete_funcs
   in
   if non_main <> [] then begin
     Buffer.add_char buf '\n';
@@ -736,10 +799,10 @@ let gen_program ?(annotate = false) (tp : tprogram) =
       non_main
   end;
   Buffer.add_char buf '\n';
-  let last = List.length tp.tp_funcs - 1 in
+  let last = List.length concrete_funcs - 1 in
   List.iteri
     (fun i tf ->
       gen_function buf tf;
       if i < last then Buffer.add_char buf '\n')
-    tp.tp_funcs;
+    concrete_funcs;
   Buffer.contents buf

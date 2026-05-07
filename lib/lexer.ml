@@ -18,6 +18,8 @@ let keyword_or_ident = function
   | "impl" -> Token.Impl
   | "enum" -> Token.Enum
   | "match" -> Token.Match
+  | "orelse" -> Token.Orelse
+  | "try" -> Token.Try
   | "new" -> Token.New
   | "null" -> Token.Null
   | "true" -> Token.True
@@ -85,6 +87,7 @@ let tokenize ~file src =
           adv '='; loop (i + 2) ((Token.NotEq, p) :: acc)
       | '!' -> Error.failf p "unexpected '!'; did you mean '!='"
       | '|' -> loop (i + 1) ((Token.Pipe, p) :: acc)
+      | '?' -> loop (i + 1) ((Token.Question, p) :: acc)
       | '"' ->
           Buffer.clear buf;
           let rec str j =

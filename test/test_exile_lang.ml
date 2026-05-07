@@ -664,6 +664,154 @@ let () =
     "enum E { | A }\nfn main() { let e = E::A; print(e); }\n"
     "cannot print an enum value (E); match on it and print per variant";
 
+  check_error "unknown generic type rejected"
+    "fn main() { let x: Box<int> = 0; }\n"
+    "unknown generic type 'Box'";
+
+  check "generic decls without instantiation emit nothing"
+    "enum Option<T> { | None | Some(T) }\n\
+     struct Pair<A, B> { fst: A, snd: B }\n\
+     fn id<T>(x: T) -> T { return x; }\n\
+     fn main() {}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    return 0;\n}\n";
+
+  check "generic struct construction infers type args from fields"
+    "struct Pair<A, B> { fst: A, snd: B }\n\
+     fn main() {\n\
+    \    let p = Pair { fst: 5, snd: \"hi\" };\n\
+    \    print(p.fst);\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Pair_i32_str { long fst; const char *snd; };\n\nint main(void) {\n    struct ex_Pair_i32_str p;\n    p.fst = 5;\n    p.snd = \"hi\";\n    printf(\"%ld\\n\", (long)(p.fst));\n    return 0;\n}\n";
+
+  check "Result<T, E>: bidirectional typing infers E from return type"
+    "enum Result<T, E> { | Ok(T) | Err(E) }\n\
+     enum IoErr { | NotFound }\n\
+     fn make() -> Result<int, IoErr> { return Result::Ok(42); }\n\
+     fn main() {\n\
+    \    let r = make();\n\
+    \    match r {\n\
+    \        | Result::Ok(v) => print(v)\n\
+    \        | Result::Err(_) => print(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_IoErr_tag { ex_IoErr_NotFound };\nstruct ex_IoErr { enum ex_IoErr_tag tag; };\nenum ex_Result_i32_ex_IoErr_tag { ex_Result_i32_ex_IoErr_Ok, ex_Result_i32_ex_IoErr_Err };\nstruct ex_Result_i32_ex_IoErr { enum ex_Result_i32_ex_IoErr_tag tag; union { struct { long _0; } Ok; struct { struct ex_IoErr _0; } Err; } data; };\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void);\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void) {\n    {\n        struct ex_Result_i32_ex_IoErr __exile_ret;\n        __exile_ret.tag = ex_Result_i32_ex_IoErr_Ok;\n        __exile_ret.data.Ok._0 = 42;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Result_i32_ex_IoErr r;\n    r = ex_make();\n    {\n        struct ex_Result_i32_ex_IoErr __m;\n        __m = r;\n        switch (__m.tag) {\n        case ex_Result_i32_ex_IoErr_Ok:\n            {\n                long v = __m.data.Ok._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Result_i32_ex_IoErr_Err:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check "Option::None: type-ann pins T when payload doesn't"
+    "enum Option<T> { | None | Some(T) }\n\
+     fn main() {\n\
+    \    let o: Option<int> = Option::None;\n\
+    \    match o {\n\
+    \        | Option::None => print(0)\n\
+    \        | Option::Some(x) => print(x)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_None;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check "generic enum: tuple ctor infers payload + match destructures"
+    "enum Option<T> { | None | Some(T) }\n\
+     fn main() {\n\
+    \    let o = Option::Some(42);\n\
+    \    match o {\n\
+    \        | Option::Some(x) => print(x)\n\
+    \        | Option::None => print(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Some;\n    o.data.Some._0 = 42;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check "?T sugar: ?int parses as Option<int>"
+    "fn main() {\n\
+    \    let o: ?int = Option::Some(5);\n\
+    \    match o {\n\
+    \        | Option::Some(x) => print(x)\n\
+    \        | Option::None    => print(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Some;\n    o.data.Some._0 = 5;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check "orelse: Option<T> orelse default unwraps Some, falls back on None"
+    "fn first_or(o: ?int, d: int) -> int {\n\
+    \    return o orelse d;\n\
+     }\n\
+     fn main() {\n\
+    \    let some = Option::Some(7);\n\
+    \    let none: ?int = Option::None;\n\
+    \    print(first_or(some, 99));\n\
+    \    print(first_or(none, 99));\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstatic long ex_first_or(struct ex_Option_i32 o, long d);\n\nstatic long ex_first_or(struct ex_Option_i32 o, long d) {\n    {\n        long __exile_ret;\n        {\n            struct ex_Option_i32 __m;\n            __m = o;\n            switch (__m.tag) {\n            case ex_Option_i32_Some:\n                {\n                    long __orelse_v = __m.data.Some._0;\n                    __exile_ret = __orelse_v;\n                    break;\n                }\n            case ex_Option_i32_None:\n                {\n                    __exile_ret = d;\n                    break;\n                }\n            }\n        }\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Option_i32 some;\n    struct ex_Option_i32 none;\n    some.tag = ex_Option_i32_Some;\n    some.data.Some._0 = 7;\n    none.tag = ex_Option_i32_None;\n    printf(\"%ld\\n\", (long)(ex_first_or(some, 99)));\n    printf(\"%ld\\n\", (long)(ex_first_or(none, 99)));\n    return 0;\n}\n";
+
+  check_error "orelse on non-enum rejected"
+    "fn main() { let x = 5 orelse 0; print(x); }\n"
+    "'orelse' requires an Option or Result value, got i32";
+
+  check "try: Option<T> early-returns None from enclosing fn"
+    "fn incr(o: ?int) -> ?int {\n\
+    \    let v = try o;\n\
+    \    return Option::Some(v + 1);\n\
+     }\n\
+     fn main() {\n\
+    \    let some = Option::Some(7);\n\
+    \    let none: ?int = Option::None;\n\
+    \    match incr(some) {\n\
+    \        | Option::Some(x) => print(x)\n\
+    \        | Option::None    => print(0)\n\
+    \    }\n\
+    \    match incr(none) {\n\
+    \        | Option::Some(x) => print(x)\n\
+    \        | Option::None    => print(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstatic struct ex_Option_i32 ex_incr(struct ex_Option_i32 o);\n\nstatic struct ex_Option_i32 ex_incr(struct ex_Option_i32 o) {\n    long v;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long __try_v = __m.data.Some._0;\n                v = __try_v;\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                struct ex_Option_i32 __try_ret;\n                __try_ret.tag = ex_Option_i32_None;\n                return __try_ret;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v + 1;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Option_i32 some;\n    struct ex_Option_i32 none;\n    some.tag = ex_Option_i32_Some;\n    some.data.Some._0 = 7;\n    none.tag = ex_Option_i32_None;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_incr(some);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_incr(none);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check_error "try outside Option/Result-returning fn rejected"
+    "fn main() {\n\
+    \    let v = try Option::Some(5);\n\
+    \    print(v);\n\
+     }\n"
+    "'try' is only allowed in fns that return Option or Result (this fn has no return type)";
+
+  check_error "try shape mismatch (Option in Result-returning fn)"
+    "fn f() -> Result<int, int> {\n\
+    \    let v = try Option::Some(5);\n\
+    \    return Result::Ok(v);\n\
+     }\n\
+     fn main() { match f() { | Result::Ok(_) => print(1) | Result::Err(_) => print(0) } }\n"
+    "'try' on Option_i32 value but enclosing fn returns Result_i32_i32 \
+     — they must share the same Option/Result shape";
+
+  check "prelude: Option<T> usable without explicit declaration"
+    "fn main() {\n\
+    \    let o = Option::Some(42);\n\
+    \    match o {\n\
+    \        | Option::Some(x) => print(x)\n\
+    \        | Option::None => print(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Some;\n    o.data.Some._0 = 42;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check "prelude: Result<T, E> usable without explicit declaration"
+    "enum IoErr { | NotFound }\n\
+     fn make() -> Result<int, IoErr> { return Result::Ok(42); }\n\
+     fn main() {\n\
+    \    let r = make();\n\
+    \    match r {\n\
+    \        | Result::Ok(v) => print(v)\n\
+    \        | Result::Err(_) => print(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_IoErr_tag { ex_IoErr_NotFound };\nstruct ex_IoErr { enum ex_IoErr_tag tag; };\nenum ex_Result_i32_ex_IoErr_tag { ex_Result_i32_ex_IoErr_Ok, ex_Result_i32_ex_IoErr_Err };\nstruct ex_Result_i32_ex_IoErr { enum ex_Result_i32_ex_IoErr_tag tag; union { struct { long _0; } Ok; struct { struct ex_IoErr _0; } Err; } data; };\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void);\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void) {\n    {\n        struct ex_Result_i32_ex_IoErr __exile_ret;\n        __exile_ret.tag = ex_Result_i32_ex_IoErr_Ok;\n        __exile_ret.data.Ok._0 = 42;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Result_i32_ex_IoErr r;\n    r = ex_make();\n    {\n        struct ex_Result_i32_ex_IoErr __m;\n        __m = r;\n        switch (__m.tag) {\n        case ex_Result_i32_ex_IoErr_Ok:\n            {\n                long v = __m.data.Ok._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Result_i32_ex_IoErr_Err:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check "prelude: user-declared Option<T> overrides built-in"
+    "enum Option<T> { | Empty | Full(T) }\n\
+     fn main() {\n\
+    \    let o = Option::Full(7);\n\
+    \    match o {\n\
+    \        | Option::Full(x) => print(x)\n\
+    \        | Option::Empty => print(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_Empty, ex_Option_i32_Full };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Full; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Full;\n    o.data.Full._0 = 7;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Full:\n            {\n                long x = __m.data.Full._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_Empty:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
   check "mod-local struct as fn param and self resolves to absolute path"
     "mod geom {\n\
     \    pub struct Point { x: int, y: int }\n\
