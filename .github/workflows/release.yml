@@ -7,20 +7,19 @@ on:
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/exile-lang-ci:latest
+      options: --user 0:0
+    env:
+      OPAMROOTISOK: "1"
+
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up OCaml
-        uses: ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: "5"
-
-      - name: Install dependencies
-        run: opam install . --deps-only --with-test
 
       - name: Build compiler
         run: opam exec -- make build
