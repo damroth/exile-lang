@@ -16,7 +16,7 @@ COPY tools/amiga-gcc /src/amiga-gcc
 RUN cd /src/amiga-gcc && make min PREFIX=/opt/amiga-gcc
 
 # ---------- Stage 2: vamos (amitools, gita HEAD) ----------
-FROM debian:bookworm-slim AS vamos-builder
+FROM debian:trixie-slim AS vamos-builder
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
