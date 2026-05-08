@@ -3,7 +3,7 @@ type target = Target_c | Target_host | Target_amiga
 let usage () =
   prerr_endline
     "usage: exilc [--target c|host|amiga] [-o <output>] [--c-out <path>] \
-     [--annotate] <file.exl>";
+     [--link <c-stub>]... [--annotate] <file.exl>";
   exit 1
 
 let show_error (pos : Exile_lang.Pos.t) msg =
@@ -31,6 +31,7 @@ let parse_args argv =
   let target = ref Target_c in
   let output = ref None in
   let c_out = ref None in
+  let link_files = ref [] in
   let input = ref None in
   let annotate = ref false in
   let rec loop = function
@@ -38,6 +39,7 @@ let parse_args argv =
     | "--target" :: t :: rest -> target := parse_target t; loop rest
     | "-o" :: o :: rest -> output := Some o; loop rest
     | "--c-out" :: p :: rest -> c_out := Some p; loop rest
+    | "--link" :: p :: rest -> link_files := p :: !link_files; loop rest
     | "--annotate" :: rest -> annotate := true; loop rest
     | "--help" :: _ | "-h" :: _ -> usage ()
     | f :: rest when String.length f > 0 && f.[0] <> '-' ->
@@ -54,7 +56,7 @@ let parse_args argv =
   loop argv;
   match !input with
   | None -> usage ()
-  | Some i -> (!target, !output, !c_out, !annotate, i)
+  | Some i -> (!target, !output, !c_out, List.rev !link_files, !annotate, i)
 
 let toolchain_path () =
   try Sys.getenv "EXILE_TOOLCHAIN"
@@ -75,15 +77,30 @@ let run_cmd cmd =
     exit 1
   end
 
-let compile_host c_path output =
-  run_cmd (Printf.sprintf "cc -ansi -pedantic -Wall -o %s %s"
-    (Filename.quote output) (Filename.quote c_path));
+let quote_paths paths =
+  String.concat " " (List.map Filename.quote paths)
+
+(* Headers referenced by `@c_include("local.h")` are conventionally
+   placed next to the .exl source.  Auto-add the source directory as
+   an `-I` path so quoted-include resolution finds them.  External
+   stubs supplied via `--link` are usually in the same dir. *)
+let include_flag input =
+  let dir = Filename.dirname input in
+  if dir = "" || dir = "." then ""
+  else Printf.sprintf "-I %s" (Filename.quote dir)
+
+let compile_host c_path link_files input output =
+  run_cmd (Printf.sprintf "cc -ansi -pedantic -Wall %s -o %s %s %s"
+    (include_flag input)
+    (Filename.quote output) (Filename.quote c_path) (quote_paths link_files));
   Printf.printf "built host binary: %s\n" output
 
-let compile_amiga c_path output =
+let compile_amiga c_path link_files input output =
   let gcc = amiga_gcc () in
-  run_cmd (Printf.sprintf "%s -noixemul -o %s %s"
-    (Filename.quote gcc) (Filename.quote output) (Filename.quote c_path));
+  run_cmd (Printf.sprintf "%s -noixemul %s -o %s %s %s"
+    (Filename.quote gcc) (include_flag input)
+    (Filename.quote output) (Filename.quote c_path)
+    (quote_paths link_files));
   Printf.printf "built amiga binary: %s\n" output
 
 let default_output_for input =
@@ -99,7 +116,7 @@ let ensure_dir path =
     end
 
 let () =
-  let (target, output, c_out, annotate, input) =
+  let (target, output, c_out, link_files, annotate, input) =
     parse_args (List.tl (Array.to_list Sys.argv))
   in
   try
@@ -118,11 +135,11 @@ let () =
     | Target_host ->
         let out = Option.value output ~default:(default_output_for input) in
         ensure_dir out;
-        compile_host c_path out
+        compile_host c_path link_files input out
     | Target_amiga ->
         let out = Option.value output ~default:(default_output_for input) in
         ensure_dir out;
-        compile_amiga c_path out
+        compile_amiga c_path link_files input out
   with
   | Exile_lang.Error.Compile_error { pos; msg } ->
       show_error pos msg;

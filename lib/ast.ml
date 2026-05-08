@@ -2,6 +2,13 @@ type int_width = W8 | W16 | W32
 
 type type_ann =
   | TyInt of { signed : bool; width : int_width }
+  | TyCInt of { signed : bool }        (* c_int / c_uint — native C int *)
+  | TyCShort of { signed : bool }      (* c_short / c_ushort *)
+  | TyCLong of { signed : bool }       (* c_long / c_ulong *)
+  | TyCChar                            (* c_char — implementation-defined *)
+  | TyCSChar                           (* c_schar — explicitly signed *)
+  | TyCUChar                           (* c_uchar *)
+  | TyCVoid                            (* c_void — only legal under TyPtr *)
   | TyStr
   | TyBool
   | TyTuple of type_ann list
@@ -120,11 +127,28 @@ type stmt =
 
 type func = {
   name : string;
+  c_name : string;                   (* C-side symbol name.  Equals [name]
+                                        unless an `as` rename is present
+                                        on an extern fn:
+                                          `extern fn alloc_mem as AllocMem(...)`
+                                        → name = "alloc_mem", c_name =
+                                        "AllocMem".  typecheck uses this
+                                        for the mangled C identifier of
+                                        extern fns, so the linker pulls
+                                        the right C symbol. *)
   tparams : string list;             (* generic type parameters: [] for mono *)
   params : param list;
   ret_ty : type_ann option;
-  body : stmt list;
+  body : stmt list;                  (* empty when is_extern = true *)
   is_pub : bool;
+  is_extern : bool;                  (* `extern fn name(...) -> T;` —
+                                        forward decl only, no body, no
+                                        ex_/mod__ name mangling *)
+  is_variadic : bool;                (* `extern fn printf(fmt: str, ...);` —
+                                        accepts any number of extra args
+                                        after [params]; arg types past
+                                        [params] not type-checked.  Only
+                                        legal on extern fns. *)
   pos : Pos.t;
 }
 
@@ -158,13 +182,44 @@ type enum_decl = {
   eis_pub : bool;
 }
 
+type extern_struct = {
+  esname : string;
+  espos : Pos.t;
+}
+
+(* `xt*` prefix (eXternType) to avoid collision with `et*` on
+   enum_decl (etparams).  ec*/es* don't collide today but keep the
+   "xt" mnemonic consistent if more extern-* records appear. *)
+type extern_type = {
+  xtname : string;
+  xtpos : Pos.t;
+}
+
+type extern_const = {
+  ecname : string;
+  ecty : type_ann;
+  ecpos : Pos.t;
+}
+
 type item =
   | Function of func
   | Module of module_decl
   | Use of { path : string list; is_wildcard : bool; pos : Pos.t }
   | Struct of struct_decl
+  | ExternStruct of extern_struct
+  | ExternType of extern_type           (* `extern type LONG;` — raw C
+                                           type alias visible in exile.
+                                           Top-level only. *)
+  | ExternConst of extern_const         (* `extern const FOO: c_uint;`
+                                           — global value resolved by
+                                           the linker.  Top-level only. *)
   | Enum of enum_decl
   | Impl of impl_block
+  | CInclude of { path : string; pos : Pos.t }
+                                        (* `@c_include("path/to/header.h")`
+                                           — emitted as `#include "..."` in
+                                           the generated C, on top.  Only
+                                           legal at top level. *)
 and module_decl = {
   mname : string;
   mitems : item list;

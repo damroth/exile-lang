@@ -1,0 +1,22 @@
+// FFI: declare C-side symbols with `extern fn`, link a matching C
+// stub.  exilc never generates a body for an extern fn — it only
+// emits a forward declaration and uses the raw name at call sites
+// (no `ex_` prefix), so the linker can resolve it against any C
+// object compiled and passed via `--link`.
+//
+// Type mapping caveat: exile `int` / `i32` / `u32` map to C `long`
+// for cross-compiler width stability (Amiga SAS/C historically had
+// 16-bit `int`).  On a 64-bit host that means `long` is 64 bits, so
+// FFI to libc's 32-bit `int` signatures collides — for now stick to
+// `long`-typed C stubs we own.  A `c_int` alias mapping to host's
+// native `int` is on the roadmap.
+
+extern fn add(a: int, b: int) -> int;
+extern fn square(x: int) -> int;
+extern fn shout();
+
+fn main() {
+    print(add(40, 2));        // 42
+    print(square(7));         // 49
+    shout();                  // "HEY"
+}

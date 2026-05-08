@@ -79,6 +79,16 @@ let rec parse_type s =
   | (Token.Ident "u8",  _) -> ti false Ast.W8
   | (Token.Ident "u16", _) -> ti false Ast.W16
   | (Token.Ident "u32", _) -> ti false Ast.W32
+  | (Token.Ident "c_int", _) -> Ast.TyCInt { signed = true }
+  | (Token.Ident "c_uint", _) -> Ast.TyCInt { signed = false }
+  | (Token.Ident "c_short", _) -> Ast.TyCShort { signed = true }
+  | (Token.Ident "c_ushort", _) -> Ast.TyCShort { signed = false }
+  | (Token.Ident "c_long", _) -> Ast.TyCLong { signed = true }
+  | (Token.Ident "c_ulong", _) -> Ast.TyCLong { signed = false }
+  | (Token.Ident "c_char", _) -> Ast.TyCChar
+  | (Token.Ident "c_schar", _) -> Ast.TyCSChar
+  | (Token.Ident "c_uchar", _) -> Ast.TyCUChar
+  | (Token.Ident "c_void", _) -> Ast.TyCVoid
   | (Token.Ident "str", _) -> Ast.TyStr
   | (Token.Ident "bool", _) -> Ast.TyBool
   | (Token.Ident n, _) ->
@@ -568,7 +578,7 @@ let parse_tparams s =
     names
   end
 
-let parse_function s seen_fns ~is_pub =
+let rec parse_function s seen_fns ~is_pub =
   expect s Token.Fn;
   let (name, name_pos) = expect_ident s ~what:"function name after 'fn'" in
   if List.mem name seen_fns then
@@ -594,7 +604,176 @@ let parse_function s seen_fns ~is_pub =
   expect s Token.LBrace;
   let body = parse_stmts s [] in
   expect s Token.RBrace;
-  (name, Ast.{ name; tparams; params; ret_ty; body; is_pub; pos = name_pos })
+  (name, Ast.{ name; c_name = name; tparams; params; ret_ty; body; is_pub;
+               is_extern = false; is_variadic = false;
+               pos = name_pos })
+
+(* `extern fn name(args) -> T;` — forward decl for a C-side symbol.
+   Same param/return grammar as a regular fn, but body is replaced by
+   `;`.  Generic params, `pub`, and a body block are all rejected at
+   parse time so the parsed `Ast.Function` is always well-formed.
+   The `extern` keyword is consumed by the caller (parse_item). *)
+and parse_extern_fn_after_keyword s seen_fns =
+  expect s Token.Fn;
+  let (name, name_pos) =
+    expect_ident s ~what:"function name after 'extern fn'"
+  in
+  if List.mem name seen_fns then
+    Error.failf name_pos "function '%s' already defined" name;
+  (* Optional `as <C-symbol>` rename.  When present, [name] is the
+     exile-side identifier used at call sites and [c_name] is the
+     symbol the linker resolves against.  Matches use cases like
+     `extern fn alloc_mem as AllocMem(...)` where exile prefers
+     snake_case but the C library exposes CamelCase. *)
+  let c_name =
+    if peek s = Token.As then begin
+      ignore (advance s);
+      let (cn, _) =
+        expect_ident s ~what:"C symbol name after 'as'"
+      in
+      cn
+    end else name
+  in
+  if peek s = Token.Lt then
+    Error.failf name_pos
+      "'extern fn %s' cannot have generic parameters — C signatures \
+       must be concrete" name;
+  let (params, is_variadic) = parse_extern_params s ~name in
+  let rec check_dup_params = function
+    | [] -> ()
+    | p :: rest ->
+        if List.exists (fun q -> q.Ast.pname = p.Ast.pname) rest then
+          Error.failf name_pos
+            "duplicate parameter '%s' in extern fn '%s'" p.Ast.pname name;
+        check_dup_params rest
+  in
+  check_dup_params params;
+  let ret_ty = parse_ret_ty s in
+  (match peek s with
+   | Token.Semicolon -> ignore (advance s)
+   | Token.LBrace ->
+       Error.failf (peek_pos s)
+         "'extern fn %s' must end with ';', not a body — extern \
+          declares an existing C symbol" name
+   | t ->
+       Error.failf (peek_pos s)
+         "expected ';' after 'extern fn %s' signature, got %s"
+         name (Token.pp t));
+  (name, Ast.{ name; c_name; tparams = []; params; ret_ty; body = [];
+               is_pub = false; is_extern = true; is_variadic;
+               pos = name_pos })
+
+(* Like parse_params but accepts a trailing `, ...` to mark the fn as
+   C-style variadic.  `(...)` alone (no fixed params before ellipsis)
+   is rejected — C requires at least one fixed param so the callee
+   has somewhere to call `va_start` from. *)
+and parse_extern_params s ~name =
+  expect s Token.LParen;
+  match peek s with
+  | Token.RParen ->
+      ignore (advance s);
+      ([], false)
+  | Token.Ellipsis ->
+      Error.failf (peek_pos s)
+        "'extern fn %s' variadic '...' must come after at least one \
+         fixed parameter (e.g. `(fmt: str, ...)`)" name
+  | _ ->
+      let rec loop acc =
+        let p = parse_param s in
+        match peek s with
+        | Token.Comma ->
+            ignore (advance s);
+            (match peek s with
+             | Token.Ellipsis ->
+                 ignore (advance s);
+                 expect s Token.RParen;
+                 (List.rev (p :: acc), true)
+             | _ -> loop (p :: acc))
+        | Token.RParen ->
+            ignore (advance s);
+            (List.rev (p :: acc), false)
+        | t ->
+            Error.failf (peek_pos s)
+              "expected ',' or ')' in 'extern fn %s' parameter list, got %s"
+              name (Token.pp t)
+      in
+      loop []
+
+(* `extern struct Name;` — declares an opaque C struct.  The type can
+   only be used through `*Name` pointer types; field access, struct
+   literals, and `new Name { ... }` are all rejected by typecheck.
+   Caller consumed the `extern` keyword. *)
+and parse_extern_struct_after_keyword s seen =
+  expect s Token.Struct;
+  let (name, name_pos) =
+    expect_ident s ~what:"struct name after 'extern struct'"
+  in
+  if List.mem name seen then
+    Error.failf name_pos "name '%s' already used in this scope" name;
+  if peek s = Token.Lt then
+    Error.failf name_pos
+      "'extern struct %s' cannot have generic parameters — opaque \
+       types live on the C side" name;
+  (match peek s with
+   | Token.Semicolon -> ignore (advance s)
+   | Token.LBrace ->
+       Error.failf (peek_pos s)
+         "'extern struct %s' must end with ';', not a body — extern \
+          declares an opaque type with no fields visible to exile" name
+   | t ->
+       Error.failf (peek_pos s)
+         "expected ';' after 'extern struct %s', got %s"
+         name (Token.pp t));
+  Ast.{ esname = name; espos = name_pos }
+
+(* `extern type T;` — raw C type alias.  Different from extern struct:
+   no `struct` prefix on the C side, used directly as a typedef'd name
+   (LONG, APTR, ULONG, etc).  Caller consumed the `extern` keyword. *)
+and parse_extern_type_after_keyword s seen =
+  expect s Token.Type;
+  let (name, name_pos) =
+    expect_ident s ~what:"type name after 'extern type'"
+  in
+  if List.mem name seen then
+    Error.failf name_pos "name '%s' already used in this scope" name;
+  if peek s = Token.Lt then
+    Error.failf name_pos
+      "'extern type %s' cannot have generic parameters" name;
+  (match peek s with
+   | Token.Semicolon -> ignore (advance s)
+   | t ->
+       Error.failf (peek_pos s)
+         "expected ';' after 'extern type %s', got %s" name (Token.pp t));
+  Ast.{ xtname = name; xtpos = name_pos }
+
+(* `extern const NAME: T;` — top-level value declared on the C side.
+   Resolved by the linker; exile uses [name] in expression positions
+   wherever a value of type T is expected.  Common case: importing
+   `#define` constants via a companion C-stub or via a header. *)
+and parse_extern_const_after_keyword s seen =
+  expect s Token.Const;
+  let (name, name_pos) =
+    expect_ident s ~what:"const name after 'extern const'"
+  in
+  if List.mem name seen then
+    Error.failf name_pos "name '%s' already used in this scope" name;
+  if peek s = Token.Lt then
+    Error.failf name_pos
+      "'extern const %s' cannot have generic parameters" name;
+  (match peek s with
+   | Token.Colon -> ignore (advance s)
+   | t ->
+       Error.failf (peek_pos s)
+         "'extern const %s' must declare its type with `: T`, got %s"
+         name (Token.pp t));
+  let ty = parse_type s in
+  (match peek s with
+   | Token.Semicolon -> ignore (advance s)
+   | t ->
+       Error.failf (peek_pos s)
+         "expected ';' after 'extern const %s: ...', got %s"
+         name (Token.pp t));
+  Ast.{ ecname = name; ecty = ty; ecpos = name_pos }
 
 (* Parse a `use` declaration and return one or more `(name option, Use item)`
    pairs.  Wildcard imports introduce no name into the surrounding scope so
@@ -682,6 +861,32 @@ let rec parse_item s seen =
   | Token.Fn ->
       let (name, fn) = parse_function s seen ~is_pub in
       [ (Some name, Ast.Function fn) ]
+  | Token.Extern ->
+      if is_pub then
+        Error.failf (peek_pos s)
+          "'pub' is redundant on 'extern' — extern items are always \
+           callable / referenceable";
+      (* `extern` is a shared prefix: fn for forward fn-decl, struct
+         for opaque type decl.  Decide on the next token. *)
+      ignore (advance s);  (* consume `extern` *)
+      (match peek s with
+       | Token.Fn ->
+           let (name, fn) = parse_extern_fn_after_keyword s seen in
+           [ (Some name, Ast.Function fn) ]
+       | Token.Struct ->
+           let es = parse_extern_struct_after_keyword s seen in
+           [ (Some es.Ast.esname, Ast.ExternStruct es) ]
+       | Token.Type ->
+           let et = parse_extern_type_after_keyword s seen in
+           [ (Some et.Ast.xtname, Ast.ExternType et) ]
+       | Token.Const ->
+           let ec = parse_extern_const_after_keyword s seen in
+           [ (Some ec.Ast.ecname, Ast.ExternConst ec) ]
+       | t ->
+           Error.failf (peek_pos s)
+             "expected 'fn', 'struct', 'type' or 'const' after 'extern', \
+              got %s"
+             (Token.pp t))
   | Token.Mod ->
       let (name, m) = parse_module s seen ~is_pub in
       [ (Some name, Ast.Module m) ]
@@ -726,9 +931,33 @@ let rec parse_item s seen =
                 Error.failf p "name '%s' already used in this scope" n)
         items;
       items
+  | Token.At ->
+      if is_pub then
+        Error.failf (peek_pos s) "'pub' has no meaning on '@' attributes";
+      let at_pos = peek_pos s in
+      ignore (advance s);
+      let (attr_name, _) = expect_ident s ~what:"attribute name after '@'" in
+      (match attr_name with
+       | "c_include" ->
+           expect s Token.LParen;
+           let path =
+             match advance s with
+             | (Token.String p, _) -> p
+             | (t, p) ->
+                 Error.failf p
+                   "expected string literal in '@c_include(\"...\")', got %s"
+                   (Token.pp t)
+           in
+           expect s Token.RParen;
+           [ (None, Ast.CInclude { path; pos = at_pos }) ]
+       | other ->
+           Error.failf at_pos
+             "unknown attribute '@%s' (only '@c_include' is supported)"
+             other)
   | _ ->
       Error.failf (peek_pos s)
-        "expected 'fn', 'mod', 'use', 'struct', 'enum' or 'impl', got %s"
+        "expected 'fn', 'extern fn', 'mod', 'use', 'struct', 'enum', \
+         'impl' or '@c_include', got %s"
         (Token.pp (peek s))
 
 and parse_struct_decl s ~is_pub =

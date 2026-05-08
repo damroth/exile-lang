@@ -1,0 +1,17 @@
+// `extern struct Foo;` declares an opaque type — exile knows the
+// name but not the layout, so the only legal shape is `*Foo`.  This
+// matches how AmigaOS APIs hand out `struct Library *`, `struct
+// Window *`, `struct MsgPort *` etc.: you receive an opaque pointer
+// from a constructor, pass it around, hand it back to a destructor.
+
+extern struct Library;
+
+extern fn lib_open() -> *Library;
+extern fn lib_use(lib: *Library) -> int;
+extern fn lib_close(lib: *Library);
+
+fn main() {
+    let lib: *Library = lib_open();
+    print(lib_use(lib));      // 100
+    lib_close(lib);
+}

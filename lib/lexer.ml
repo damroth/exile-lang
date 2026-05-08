@@ -20,6 +20,9 @@ let keyword_or_ident = function
   | "match" -> Token.Match
   | "orelse" -> Token.Orelse
   | "try" -> Token.Try
+  | "extern" -> Token.Extern
+  | "type" -> Token.Type
+  | "const" -> Token.Const
   | "new" -> Token.New
   | "null" -> Token.Null
   | "true" -> Token.True
@@ -46,6 +49,8 @@ let tokenize ~file src =
       | '}' -> loop (i + 1) ((Token.RBrace, p) :: acc)
       | ';' -> loop (i + 1) ((Token.Semicolon, p) :: acc)
       | ',' -> loop (i + 1) ((Token.Comma, p) :: acc)
+      | '.' when i + 2 < len && src.[i + 1] = '.' && src.[i + 2] = '.' ->
+          adv '.'; adv '.'; loop (i + 3) ((Token.Ellipsis, p) :: acc)
       | '.' when i + 1 < len && src.[i + 1] = '.' ->
           adv '.'; loop (i + 2) ((Token.DotDot, p) :: acc)
       | '.' -> loop (i + 1) ((Token.Dot, p) :: acc)
@@ -88,6 +93,7 @@ let tokenize ~file src =
       | '!' -> Error.failf p "unexpected '!'; did you mean '!='"
       | '|' -> loop (i + 1) ((Token.Pipe, p) :: acc)
       | '?' -> loop (i + 1) ((Token.Question, p) :: acc)
+      | '@' -> loop (i + 1) ((Token.At, p) :: acc)
       | '"' ->
           Buffer.clear buf;
           let rec str j =

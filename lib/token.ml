@@ -46,6 +46,11 @@ type t =
   | Question
   | Orelse
   | Try
+  | Extern
+  | Ellipsis
+  | At
+  | Type
+  | Const
   | Ident of string
   | Int of int
   | String of string
@@ -70,6 +75,8 @@ let pp = function
   | Plus -> "'+'" | Minus -> "'-'" | Star -> "'*'" | Slash -> "'/'"
   | True -> "'true'" | False -> "'false'"
   | Question -> "'?'" | Orelse -> "'orelse'" | Try -> "'try'"
+  | Extern -> "'extern'" | Ellipsis -> "'...'" | At -> "'@'"
+  | Type -> "'type'" | Const -> "'const'"
   | Ident s -> Printf.sprintf "identifier '%s'" s
   | Int n -> Printf.sprintf "integer %d" n
   | String s -> Printf.sprintf "string \"%s\"" s

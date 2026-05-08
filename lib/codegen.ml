@@ -61,7 +61,27 @@ let strip_trailing_space s =
   then String.sub s 0 (String.length s - 1)
   else s
 
+(* The c_* family is intentionally width-variable: each maps to the
+   target C compiler's native type (`int` / `short` / `long` / ...).
+   On amiga-gcc m68k all of int/long are 32-bit; on a 64-bit Linux
+   host `long` is 64-bit, `int` is 32-bit.  This is the whole point —
+   `c_long` matches the platform's `long`, just like `long` in C
+   means.  For fixed widths regardless of target use `i32`/`u32`
+   etc. — those map to a guaranteed-≥32-bit type with consistent
+   value semantics across targets. *)
 let rec c_type_prefix = function
+  | TCInt { signed = true } -> "int "
+  | TCInt { signed = false } -> "unsigned int "
+  | TCShort { signed = true } -> "short "
+  | TCShort { signed = false } -> "unsigned short "
+  | TCLong { signed = true } -> "long "
+  | TCLong { signed = false } -> "unsigned long "
+  | TCChar -> "char "
+  | TCSChar -> "signed char "
+  | TCUChar -> "unsigned char "
+  | TCVoid ->
+      failwith "internal: naked c_void reached c_type_prefix — only \
+                *c_void is allowed; typecheck should have caught this"
   | TInt { signed; width } ->
       let s = if signed then "" else "unsigned " in
       let core = match width with
@@ -83,7 +103,10 @@ let rec c_type_prefix = function
   | TString -> "const char *"
   | TTuple ts -> "struct " ^ tuple_struct_name ts ^ " "
   | TStruct _ as t -> "struct " ^ mangle_typ t ^ " "
+  | TExtStruct n -> "struct " ^ n ^ " "
+  | TExtAlias n -> n ^ " "
   | TEnum _ as t -> "struct " ^ mangle_typ t ^ " "
+  | TPtr TCVoid -> "void *"
   | TPtr inner ->
       (* Pointer types render as `<base> *` with no trailing space, so
          `c_decl t name` produces `<base> *name`. *)
@@ -119,8 +142,13 @@ let emit_print : builtin_emit =
       | TInt { signed = false; width = Ast.W32 } -> "\"%lu\\n\""
       | TInt { signed = true; _ } -> "\"%d\\n\""
       | TInt { signed = false; _ } -> "\"%u\\n\""
+      | TCInt { signed = true } -> "\"%d\\n\""
+      | TCInt { signed = false } -> "\"%u\\n\""
+      | TCShort _ | TCLong _ | TCChar | TCSChar | TCUChar | TCVoid ->
+          assert false  (* typecheck rejects print on these *)
       | TString -> "\"%s\\n\""
-      | TTuple _ | TStruct _ | TEnum _ | TPtr _ | TNullPtr | TVar _ ->
+      | TTuple _ | TStruct _ | TExtStruct _ | TExtAlias _ | TEnum _
+      | TPtr _ | TNullPtr | TVar _ ->
           assert false  (* typecheck rejected this earlier *)
     in
     let cast =
@@ -630,7 +658,8 @@ let emit_fn_sig buf (tf : tfunc) =
   if f.name = "main" then
     Buffer.add_string buf "int main(void)"
   else begin
-    if not f.is_pub then Buffer.add_string buf "static ";
+    if f.is_extern then Buffer.add_string buf "extern "
+    else if not f.is_pub then Buffer.add_string buf "static ";
     let ret =
       match tf.tf_ret_ty with
       | None -> "void "
@@ -647,6 +676,7 @@ let emit_fn_sig buf (tf : tfunc) =
            (fun ((p : Ast.param), t) ->
              Buffer.add_string buf (c_decl t p.pname))
            zipped);
+    if f.is_variadic then Buffer.add_string buf ", ...";
     Buffer.add_char buf ')'
   end
 
@@ -745,6 +775,23 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   Buffer.add_string buf "#include <stdio.h>\n";
   if tp.tp_uses_heap then
     Buffer.add_string buf "#include <stdlib.h>\n";
+  (* User-supplied `@c_include("...")` lines.  Quoted form so paths
+     with `/` work (`exec/exec.h`, `proto/intuition.h`).  C accepts
+     redeclaration of stdio symbols already declared via stdio.h, so
+     order vs our forward decls doesn't matter as long as types match. *)
+  List.iter (fun path ->
+    Buffer.add_string buf "#include \"";
+    Buffer.add_string buf path;
+    Buffer.add_string buf "\"\n")
+    tp.tp_c_includes;
+  if tp.tp_ext_consts <> [] then begin
+    Buffer.add_char buf '\n';
+    List.iter (fun (name, t) ->
+      Buffer.add_string buf "extern const ";
+      Buffer.add_string buf (c_decl t name);
+      Buffer.add_string buf ";\n")
+      tp.tp_ext_consts
+  end;
   (* Named structs first, in source order — typically their fields refer
      to types declared earlier.  Tuple structs after, so any tuple whose
      elements include a named struct type sees it complete.
@@ -799,10 +846,12 @@ let gen_program ?(annotate = false) (tp : tprogram) =
       non_main
   end;
   Buffer.add_char buf '\n';
-  let last = List.length concrete_funcs - 1 in
+  (* extern fn has no body — fwd-decl above is the entire emission. *)
+  let definable = List.filter (fun tf -> not tf.tf_func.Ast.is_extern) concrete_funcs in
+  let last = List.length definable - 1 in
   List.iteri
     (fun i tf ->
       gen_function buf tf;
       if i < last then Buffer.add_char buf '\n')
-    concrete_funcs;
+    definable;
   Buffer.contents buf

@@ -1,0 +1,28 @@
+// Full FFI feature pack — `@c_include` + `extern type` + `extern const`
+// + the earlier extern fn / extern struct / variadic / name mapping.
+// Demonstrates the AmigaOS-style binding pattern: header provides
+// types and #define constants, exile imports them by name, linker
+// resolves against the C-side stub (or system library when present).
+//
+// The companion stub `ffi_full_stub.c` mocks an AmigaOS-style mini
+// "pretend lib" with a Library opaque type, OpenLibrary/CloseLibrary
+// constructors/destructors, and a couple of #define-style flags.
+
+@c_include("ffi_full_stub.h")
+
+extern type ULONG;
+extern struct Library;
+
+extern const PRETEND_VERSION: ULONG;
+extern const PRETEND_FLAGS: ULONG;
+
+extern fn open_lib as PretendOpenLibrary(name: str, version: ULONG) -> *Library;
+extern fn close_lib as PretendCloseLibrary(lib: *Library);
+extern fn lib_id as PretendLibraryID(lib: *Library) -> ULONG;
+
+fn main() {
+    let lib: *Library = open_lib("pretend.library", PRETEND_VERSION);
+    print(lib_id(lib) as int);          // 0xCAFE = 51966
+    print(PRETEND_FLAGS as int);        // 0x03 = 3
+    close_lib(lib);
+}

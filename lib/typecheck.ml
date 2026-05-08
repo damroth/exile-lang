@@ -27,6 +27,18 @@ type fn_ctx = {
                                             ["T"; "U"] inside a generic
                                             decl's body, [] otherwise *)
   instances : Mono.state;
+  ext_structs : string list;             (* names of `extern struct Foo;`
+                                            decls — resolve_type_ann uses
+                                            this to map a single-segment
+                                            path to TExtStruct *)
+  ext_types : string list;               (* names of `extern type Foo;`
+                                            aliases — resolve_type_ann
+                                            maps a single-segment path
+                                            to TExtAlias *)
+  ext_consts : (string * typ) list;      (* `extern const NAME: T;` —
+                                            looked up in Var expr after
+                                            local env miss; codegen
+                                            emits raw NAME at use sites *)
   ret_ty : typ option;                   (* enclosing fn's return type;
                                             None for void.  Used by `try`
                                             to validate / construct the
@@ -101,6 +113,24 @@ let resolve_enum_by_path ctx path =
   | None ->
       List.find_opt (fun e -> e.ename_path = path) ctx.enums
 
+(* `extern struct Foo;` is opaque — exile knows the name but not the
+   layout, so the only legal shape is a pointer.  Same goes for the
+   `c_void` type: there is no value of type `void` in C, only `void
+   *`.  This walks a resolved type and rejects bare `TExtStruct` /
+   `TCVoid` outside any `TPtr` wrapper.  Anywhere under `TPtr` is
+   fine; tuples are recursed into. *)
+let rec forbid_naked_opaque pos = function
+  | TExtStruct n ->
+      Error.failf pos
+        "opaque type '%s' can only be used through a pointer (`*%s`) — \
+         exile doesn't know its layout" n n
+  | TCVoid ->
+      Error.failf pos
+        "'c_void' has no values — only `*c_void` is usable as a type"
+  | TPtr _ -> ()
+  | TTuple ts -> List.iter (forbid_naked_opaque pos) ts
+  | _ -> ()
+
 (* Find a variant by name in an enum's variant list, returning its
    (tag, variant_sig).  Tag is the index — codegen reads positions
    from the same list, so this is the canonical numbering. *)
@@ -126,14 +156,24 @@ let find_variant (e : enum_sig) name : (int * variant_sig) option =
 let rec resolve_type_ann ctx ann =
   match ann with
   | Ast.TyInt { signed; width } -> TInt { signed; width }
+  | Ast.TyCInt { signed } -> TCInt { signed }
+  | Ast.TyCShort { signed } -> TCShort { signed }
+  | Ast.TyCLong { signed } -> TCLong { signed }
+  | Ast.TyCChar -> TCChar
+  | Ast.TyCSChar -> TCSChar
+  | Ast.TyCUChar -> TCUChar
+  | Ast.TyCVoid -> TCVoid
   | Ast.TyStr -> TString
   | Ast.TyBool -> TBool
   | Ast.TyTuple ts -> TTuple (List.map (resolve_type_ann ctx) ts)
   | Ast.TyPtr t -> TPtr (resolve_type_ann ctx t)
   | Ast.TyStruct { path; args = [] } ->
-      (* Non-generic case: tparam reference / struct / enum / fallback. *)
+      (* Non-generic case: tparam reference / extern type / extern
+         struct / struct / enum / fallback. *)
       (match path with
        | [n] when List.mem n ctx.tparams -> TVar n
+       | [n] when List.mem n ctx.ext_types -> TExtAlias n
+       | [n] when List.mem n ctx.ext_structs -> TExtStruct n
        | _ ->
            (match lookup_struct ctx path with
             | Some s -> TStruct s.sname_path
@@ -195,8 +235,8 @@ let expr_int_lit = function
    Used at assignment / field-init sites to allow `let x: i8 = 5;` even
    though `5` is `i32` by default. *)
 let int_lit_fits expr target =
-  match expr_int_lit expr, target with
-  | Some n, TInt _ -> int_fits n target
+  match expr_int_lit expr with
+  | Some n when is_int_like target -> int_fits n target
   | _ -> false
 
 (* First duplicate key in [xs] under [key], or None.  Replaces the
@@ -256,6 +296,18 @@ let builtin_print = {
         Error.failf pos
           "cannot print an enum value (%s); match on it and print per variant"
           (String.concat "::" path)
+    | [ TExtAlias n ] ->
+        Error.failf pos
+          "cannot print an 'extern type' value (%s); cast to a known \
+           type first (e.g. `as int`)" n
+    | [ TExtStruct n ] ->
+        Error.failf pos
+          "cannot print an 'extern struct' value (%s); only pointers \
+           to opaque types are usable" n
+    | [ (TCShort _ | TCLong _ | TCChar | TCSChar | TCUChar) as t ] ->
+        Error.failf pos
+          "cannot directly print a %s value; cast to a known type \
+           first (e.g. `as int`)" (typ_name t)
     | [_] -> t_i32
     | tys ->
         Error.failf pos "print() takes exactly one argument, got %d"
@@ -395,16 +447,20 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
   | Ast.Cast (e, ann, pos) ->
       let src = type_of ctx env e in
       let tgt = resolve_type_ann ctx ann in
-      (match src, tgt with
-       | TInt _, TInt _ -> tgt
-       | _ ->
-           Error.failf pos
-             "cannot cast %s to %s (only integer-to-integer casts supported)"
-             (typ_name src) (typ_name tgt))
+      if is_int_like src && is_int_like tgt then tgt
+      else
+        Error.failf pos
+          "cannot cast %s to %s (only integer-to-integer casts supported)"
+          (typ_name src) (typ_name tgt)
   | Ast.Var (name, pos) ->
       (match List.assoc_opt name env with
        | Some t -> t
-       | None -> Error.failf pos "undefined variable '%s'" name)
+       | None ->
+           (* Fall through to globals: `extern const NAME: T;` lives in
+              the same name namespace as locals at use sites. *)
+           (match List.assoc_opt name ctx.ext_consts with
+            | Some t -> t
+            | None -> Error.failf pos "undefined variable '%s'" name))
   | Ast.TupleLit (es, _) ->
       TTuple (List.map (type_of ctx env) es)
   | Ast.StructLit { tname; fields; base; pos } ->
@@ -467,7 +523,7 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
       let display = String.concat "::" path in
       (match lookup_fn ctx path with
        | None -> Error.failf pos "unknown function '%s'" display
-       | Some (resolved_mod, { param_tys; ret_ty; fn_pub; _ }) ->
+       | Some (resolved_mod, { param_tys; ret_ty; fn_pub; fn_variadic; _ }) ->
            (* Qualified call (path > 1): each module segment must be visible
               from the current scope.  We walk the resolved fn's module path
               (resolved_mod), since that's where we actually found the
@@ -500,16 +556,37 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
                     display (String.concat "::" resolved_mod));
            let expected = List.length param_tys in
            let got = List.length args in
-           if expected <> got then
-             Error.failf pos "function '%s' expects %d argument(s), got %d"
+           let arity_ok =
+             if fn_variadic then got >= expected
+             else got = expected
+           in
+           if not arity_ok then
+             Error.failf pos
+               (if fn_variadic
+                then "function '%s' expects at least %d argument(s), got %d"
+                else "function '%s' expects %d argument(s), got %d")
                display expected got;
+           (* Type-check only the fixed prefix; variadic extras pass
+              through unchecked, mirroring C semantics — caller is
+              responsible for matching the format string. *)
+           let fixed_arg_tys =
+             let rec take n xs =
+               if n <= 0 then []
+               else match xs with
+                 | [] -> []
+                 | x :: rest -> x :: take (n - 1) rest
+             in
+             take expected arg_tys
+           in
            List.iteri
              (fun i (exp, act) ->
-               if not (typ_eq exp act) then
+               if not (typ_eq exp act)
+                  && not (int_lit_fits (List.nth args i) exp)
+               then
                  Error.failf pos
                    "argument %d of '%s': expected %s, got %s"
                    (i + 1) display (typ_name exp) (typ_name act))
-             (List.combine param_tys arg_tys);
+             (List.combine param_tys fixed_arg_tys);
            (match ret_ty with
             | Some t -> t
             | None when allow_void -> t_i32   (* placeholder, caller discards *)
@@ -569,7 +646,9 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
             | _self :: rest_params ->
                 List.iteri
                   (fun i (exp, act) ->
-                    if not (typ_eq exp act) then
+                    if not (typ_eq exp act)
+                       && not (int_lit_fits (List.nth args i) exp)
+                    then
                       Error.failf pos
                         "argument %d of '%s': expected %s, got %s"
                         (i + 1) display (typ_name exp) (typ_name act))
@@ -1368,6 +1447,7 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
           | Some ann -> Some (resolve_type_ann ctx ann)
           | None -> None
         in
+        Option.iter (forbid_naked_opaque pos) expected;
         let tvalue = elab_expr ?expected ctx env value in
         let t_inferred = tvalue.ty in
         let t_actual =
@@ -1646,8 +1726,12 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
 type flat = {
   funcs : (string list * Ast.func * string) list;
   structs : (string list * Ast.struct_decl) list;
+  ext_structs : Ast.extern_struct list;   (* always top-level, raw C names *)
+  ext_types : Ast.extern_type list;       (* `extern type Foo;` aliases *)
+  ext_consts : Ast.extern_const list;     (* `extern const NAME: T;` *)
   enums : (string list * Ast.enum_decl) list;
   modules : (string list * bool) list;
+  c_includes : string list;               (* `@c_include("...")` paths *)
   (* Each `impl` block keeps its enclosing module path; target struct
      resolution (relative-to-scope, ancestor walk-up) happens later
      once the struct index is built. *)
@@ -1657,17 +1741,53 @@ type flat = {
 let flatten_items program =
   let funcs = ref [] in
   let structs = ref [] in
+  let ext_structs = ref [] in
+  let ext_types = ref [] in
+  let ext_consts = ref [] in
   let enums = ref [] in
   let modules = ref [] in
   let impls = ref [] in
+  let c_includes = ref [] in
+  (* Uniform "must be at top level" reject — `extern struct/type/const`
+     and `@c_include` all share the same constraint with the same
+     wording.  Path captured by walk and threaded in. *)
+  let top_only ~current_path ~kind ~name ~pos =
+    if current_path <> [] then
+      Error.failf pos
+        "'extern %s %s' must be at top level, not inside a module"
+        kind name
+  in
   let rec walk path items =
     List.iter
       (fun item -> match item with
         | Ast.Function (f : Ast.func) ->
-            let m = if f.name = "main" then "main" else mangle path f.name in
+            if f.is_extern && path <> [] then
+              Error.failf f.pos
+                "'extern fn %s' must be at top level, not inside a module"
+                f.name;
+            (* extern fn uses its C-side name (set via `as` rename or
+               default to f.name); main stays unprefixed; everything
+               else gets ex_/mod__. *)
+            let m =
+              if f.is_extern then f.c_name
+              else if f.name = "main" then "main"
+              else mangle path f.name
+            in
             funcs := (path, f, m) :: !funcs
         | Ast.Struct s ->
             structs := (path, s) :: !structs
+        | Ast.ExternStruct es ->
+            top_only ~current_path:path ~kind:"struct"
+              ~name:es.Ast.esname ~pos:es.Ast.espos;
+            ext_structs := es :: !ext_structs
+        | Ast.ExternType et ->
+            top_only ~current_path:path ~kind:"type"
+              ~name:et.Ast.xtname ~pos:et.Ast.xtpos;
+            ext_types := et :: !ext_types
+        | Ast.ExternConst ec ->
+            top_only ~current_path:path ~kind:"const"
+              ~name:ec.Ast.ecname ~pos:ec.Ast.ecpos;
+            ext_consts := ec :: !ext_consts
         | Ast.Enum e ->
             enums := (path, e) :: !enums
         | Ast.Module m ->
@@ -1676,6 +1796,11 @@ let flatten_items program =
             walk mod_path m.Ast.mitems
         | Ast.Impl ib ->
             impls := (path, ib) :: !impls
+        | Ast.CInclude { path = inc_path; pos } ->
+            if path <> [] then
+              Error.failf pos
+                "'@c_include' must be at top level, not inside a module";
+            c_includes := inc_path :: !c_includes
         | Ast.Use { pos; _ } ->
             Error.failf pos
               "internal: 'use' declaration reached codegen unresolved \
@@ -1685,13 +1810,17 @@ let flatten_items program =
   walk [] program;
   { funcs = List.rev !funcs;
     structs = List.rev !structs;
+    ext_structs = List.rev !ext_structs;
+    ext_types = List.rev !ext_types;
+    ext_consts = List.rev !ext_consts;
+    c_includes = List.rev !c_includes;
     enums = List.rev !enums;
     modules = List.rev !modules;
     impls = List.rev !impls }
 
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
-let build_global_index ~instances ~struct_index ~enum_index ~modules flat =
+let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~struct_index ~enum_index ~modules flat =
   List.filter_map
     (fun (p, (f : Ast.func), mangled) ->
       if f.name = "main" then None
@@ -1699,7 +1828,7 @@ let build_global_index ~instances ~struct_index ~enum_index ~modules flat =
         let ctx = {
           global = []; structs = struct_index; enums = enum_index;
           modules; scope = p; tparams = f.tparams;
-          instances; ret_ty = None;
+          instances; ext_structs; ext_types; ext_consts; ret_ty = None;
         } in
         Some
           (p, f.name,
@@ -1708,7 +1837,8 @@ let build_global_index ~instances ~struct_index ~enum_index ~modules flat =
              ret_ty = Option.map (resolve_type_ann ctx) f.ret_ty;
              mangled;
              fn_pub = f.is_pub;
-             fn_tparams = f.tparams }))
+             fn_tparams = f.tparams;
+             fn_variadic = f.is_variadic }))
     flat
 
 (* Build the struct registry from the flattened struct declarations.
@@ -1718,7 +1848,7 @@ let build_global_index ~instances ~struct_index ~enum_index ~modules flat =
    Two passes are necessary because field types can refer to other
    structs declared in any order, and `resolve_type_ann` needs to see
    them all to rewrite relative paths to absolute. *)
-let build_struct_index ~instances ~modules ~enums struct_flat =
+let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~enums struct_flat =
   let skeleton =
     List.map
       (fun (p, (s : Ast.struct_decl)) ->
@@ -1734,7 +1864,7 @@ let build_struct_index ~instances ~modules ~enums struct_flat =
       let ctx = {
         global = []; structs = skeleton; enums;
         modules; scope = p; tparams = s.stparams;
-        instances; ret_ty = None;
+        instances; ext_structs; ext_types; ext_consts; ret_ty = None;
       } in
       { skel with
         sfields_ty =
@@ -1749,7 +1879,7 @@ let build_struct_index ~instances ~modules ~enums struct_flat =
    three forms look the same to codegen; struct variants keep their
    user-given names.  `vsis_struct` lets the constructor type-check
    reject `Foo::V(args)` for a struct variant and vice versa. *)
-let build_enum_index ~instances ~modules ~struct_index enum_flat =
+let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~struct_index enum_flat =
   let skeleton =
     List.map
       (fun (p, (e : Ast.enum_decl)) ->
@@ -1768,7 +1898,7 @@ let build_enum_index ~instances ~modules ~struct_index enum_flat =
       let ctx = {
         global = []; structs = struct_index; enums = skeleton;
         modules; scope = p; tparams = e.etparams;
-        instances; ret_ty = None;
+        instances; ext_structs; ext_types; ext_consts; ret_ty = None;
       } in
       let variants =
         List.map (fun (v : Ast.enum_variant) ->
@@ -1897,14 +2027,14 @@ let uses_heap_of tfuncs =
    (or `mod__Foo__method` for `Foo` inside a module).  The struct's
    absolute path is registered as a virtual module so qualified call
    visibility walks (`Foo::method(p, ...)`) resolve naturally. *)
-let expand_impls ~instances flat struct_index enum_index modules =
+let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_index enum_index modules =
   let resolved =
     List.map
       (fun (parent_path, ib) ->
         let ctx = {
           global = []; structs = struct_index; enums = enum_index;
           modules; scope = parent_path; tparams = [];
-          instances; ret_ty = None;
+          instances; ext_structs; ext_types; ext_consts; ret_ty = None;
         } in
         let s =
           match lookup_struct ctx ib.Ast.itarget with
@@ -2080,16 +2210,34 @@ let check_program program : tprogram =
         einstance_args = None })
       flat.enums
   in
+  let ext_structs =
+    List.map (fun (es : Ast.extern_struct) -> es.esname) flat.ext_structs
+  in
+  let ext_types =
+    List.map (fun (et : Ast.extern_type) -> et.xtname) flat.ext_types
+  in
+  let ext_consts =
+    List.map (fun (ec : Ast.extern_const) ->
+        let ctx_for_ann = {
+          global = []; structs = []; enums = []; modules = flat.modules;
+          scope = []; tparams = []; instances = mono_state;
+          ext_structs; ext_types; ext_consts = [];
+          ret_ty = None;
+        } in
+        (ec.ecname, resolve_type_ann ctx_for_ann ec.ecty))
+      flat.ext_consts
+  in
   let struct_index =
-    build_struct_index ~instances:mono_state
+    build_struct_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~modules:flat.modules ~enums:enum_skeleton flat.structs
   in
   let enum_index =
-    build_enum_index ~instances:mono_state
+    build_enum_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~modules:flat.modules ~struct_index flat.enums
   in
   let (impl_funcs, virtual_modules) =
-    expand_impls ~instances:mono_state flat struct_index enum_index flat.modules
+    expand_impls ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
+      flat struct_index enum_index flat.modules
   in
   let modules = flat.modules @ virtual_modules in
   let all_funcs = flat.funcs @ impl_funcs in
@@ -2102,7 +2250,7 @@ let check_program program : tprogram =
         f.params)
     impl_funcs;
   let global =
-    build_global_index ~instances:mono_state
+    build_global_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~struct_index ~enum_index ~modules all_funcs
   in
   let tp_funcs =
@@ -2111,18 +2259,24 @@ let check_program program : tprogram =
         let ctx0 = {
           global; structs = struct_index; enums = enum_index;
           modules; scope = path; tparams = f.tparams;
-          instances = mono_state; ret_ty = None;
+          instances = mono_state; ext_structs; ext_types; ext_consts;
+          ret_ty = None;
         } in
         let param_tys =
           List.map (fun (p : Ast.param) -> resolve_type_ann ctx0 p.pty) f.params
         in
+        List.iter (forbid_naked_opaque f.pos) param_tys;
         let ret_ty = Option.map (resolve_type_ann ctx0) f.ret_ty in
+        Option.iter (forbid_naked_opaque f.pos) ret_ty;
         let ctx = { ctx0 with ret_ty } in
         let param_env =
           List.combine (List.map (fun (p : Ast.param) -> p.pname) f.params)
             param_tys
         in
-        let (lets, tbody) = elab_body ~ret_ty ctx param_env f.body in
+        let (lets, tbody) =
+          if f.is_extern then ([], [])
+          else elab_body ~ret_ty ctx param_env f.body
+        in
         { tf_path = path; tf_func = f; tf_mangled = mangled;
           tf_param_tys = param_tys; tf_ret_ty = ret_ty;
           tf_body = tbody; tf_lets = lets })
@@ -2144,4 +2298,6 @@ let check_program program : tprogram =
     tp_global = global;
     tp_modules = modules;
     tp_uses_heap;
-    tp_tuple_types }
+    tp_tuple_types;
+    tp_c_includes = flat.c_includes;
+    tp_ext_consts = ext_consts }

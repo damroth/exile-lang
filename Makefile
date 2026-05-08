@@ -57,17 +57,23 @@ toolchain-clean:
 	rm -rf $(TOOLCHAIN_PREFIX)
 	$(MAKE) -C tools/amiga-gcc clean
 
+# If `examples/NAME_stub.c` exists alongside `examples/NAME.exl`, link
+# it in too — convention for FFI examples (extern fn declarations on
+# the exile side, definitions in the C stub).
+stub_for = $(wildcard examples/$(1)_stub.c)
+link_args = $(if $(call stub_for,$(1)),--link $(call stub_for,$(1)))
+
 # `make host-NAME`  → build host binary for examples/NAME.exl
-host-%: examples/%.exl build
-	$(EXILE) --target host --c-out $(C_OUT)/$*.c -o $(HOST_OUT)/$* $<
+host-%: examples/%.exl $(call stub_for,%) build
+	$(EXILE) --target host --c-out $(C_OUT)/$*.c $(call link_args,$*) -o $(HOST_OUT)/$* $<
 
 # `make amiga-NAME` → build m68k Amiga binary
-amiga-%: examples/%.exl build
+amiga-%: examples/%.exl $(call stub_for,%) build
 	@if [ ! -x $(AMIGA_GCC) ]; then \
 		echo "amiga-gcc missing — run 'make toolchain' first"; \
 		exit 1; \
 	fi
-	$(EXILE) --target amiga --c-out $(C_OUT)/$*.c -o $(AMIGA_OUT)/$* $<
+	$(EXILE) --target amiga --c-out $(C_OUT)/$*.c $(call link_args,$*) -o $(AMIGA_OUT)/$* $<
 
 # `make c-NAME` → just emit C, no native binary
 c-%: examples/%.exl build

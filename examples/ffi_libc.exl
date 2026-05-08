@@ -1,0 +1,25 @@
+// FFI to libc.  Native C `int` is `c_int` in exile; without it,
+// libc signatures collide with our default `int → long` mapping
+// on 64-bit hosts.  No `_stub.c` needed — the linker pulls these
+// from the platform's libc directly.
+//
+// `, ...` after a fixed parameter declares a C-style variadic fn.
+// The variadic tail is type-erased — caller is responsible for
+// matching the format string to the args it passes.
+//
+// `as <C-name>` renames the symbol: exile-side `print_f` calls the
+// C-side `printf`.  Useful when wrapping libraries whose naming
+// convention (here: lowercase, often CamelCase on AmigaOS) doesn't
+// match exile's snake_case style.
+
+extern fn putchar(c: c_int) -> c_int;
+extern fn print_f as printf(fmt: str, ...) -> c_int;
+
+fn main() {
+    putchar(72);                                 // 'H'
+    putchar(105);                                // 'i'
+    putchar(33);                                 // '!'
+    putchar(10);                                 // newline
+    print_f("answer: %d\n", 42);
+    print_f("two ints: %d %d\n", 7, 13);
+}
