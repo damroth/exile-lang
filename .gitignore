@@ -1,11 +1,14 @@
 # dune build artifacts
 _build/
 
-# everything in examples/ except .exl sources and .expected stdout
-# snapshots (generated .c + binaries excluded)
+# everything in examples/ except .exl sources, .expected stdout
+# snapshots, and FFI stub C files (`_stub.c` / `_stub.h`).  Generated
+# .c and per-target binaries stay excluded.
 examples/*
 !examples/*.exl
 !examples/*.expected
+!examples/*_stub.c
+!examples/*_stub.h
 !examples/multi_file/
 examples/multi_file/*
 !examples/multi_file/*.exl
