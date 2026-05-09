@@ -14,12 +14,28 @@
 
 open Ir
 
+(* Generic-fn instance work item drained after the main elab loop:
+   the AST body is re-elaborated under a context where every TVar
+   resolves to its concrete binding, producing a fully monomorphic
+   tfunc that codegen treats like any other. *)
+type pending_fn_job = {
+  pj_path : string list;             (* parent module path of the fn *)
+  pj_func : Ast.func;                 (* original (still-generic) AST *)
+  pj_bindings : (string * typ) list;  (* tparam name → concrete typ *)
+  pj_mangled : string;                (* C-side instance name *)
+  pj_param_tys : typ list;            (* substituted *)
+  pj_ret_ty : typ option;             (* substituted *)
+}
+
 type state = {
   mutable inst_structs : struct_sig list;
   mutable inst_enums : enum_sig list;
+  mutable inst_funcs : fn_sig list;
+  mutable pending_fn_jobs : pending_fn_job list;
 }
 
-let new_state () = { inst_structs = []; inst_enums = [] }
+let new_state () =
+  { inst_structs = []; inst_enums = []; inst_funcs = []; pending_fn_jobs = [] }
 
 (* Path of a monomorphic instance: take the decl's absolute path and
    tack a `_<arg-mangle>...` suffix onto the last segment.
@@ -135,3 +151,48 @@ let instantiate_enum state skel args =
       let inst = make_enum_instance skel args in
       state.inst_enums <- inst :: state.inst_enums;
       inst
+
+(* Mangled name of a generic-fn instance: skeleton's mangled name plus
+   `_<arg-mangle>...` in tparam declaration order.  The skeleton already
+   carries the C-level prefix (`ex_alloc`, `Foo__push`, ...), so the
+   arg suffix is all we need to keep instances unique. *)
+let fn_instance_mangled skel_mangled args =
+  skel_mangled ^ "_" ^ String.concat "_" (List.map mangle_typ args)
+
+let find_fn state mangled =
+  List.find_opt (fun s -> s.mangled = mangled) state.inst_funcs
+
+(* Idempotent fn-instance creation.  Returns the cached instance if a
+   prior call already built one for the same skeleton + args; otherwise
+   substitutes the bindings into the skeleton's signature, registers
+   the resulting `fn_sig`, and queues a job so the body gets re-elaborated
+   under the substituted types after the main typecheck loop finishes. *)
+let instantiate_fn state ~path ~func ~skel ~bindings =
+  let inst_args = List.map snd bindings in
+  let inst_mangled = fn_instance_mangled skel.mangled inst_args in
+  match find_fn state inst_mangled with
+  | Some s -> s
+  | None ->
+      let inst_param_tys = List.map (subst_typ bindings) skel.param_tys in
+      let inst_ret_ty = Option.map (subst_typ bindings) skel.ret_ty in
+      let s = {
+        param_tys = inst_param_tys;
+        ret_ty = inst_ret_ty;
+        mangled = inst_mangled;
+        fn_pub = skel.fn_pub;
+        fn_tparams = [];
+        fn_variadic = skel.fn_variadic;
+      } in
+      state.inst_funcs <- s :: state.inst_funcs;
+      state.pending_fn_jobs <- {
+        pj_path = path; pj_func = func; pj_bindings = bindings;
+        pj_mangled = inst_mangled;
+        pj_param_tys = inst_param_tys;
+        pj_ret_ty = inst_ret_ty;
+      } :: state.pending_fn_jobs;
+      s
+
+let take_pending_fn_jobs state =
+  let jobs = List.rev state.pending_fn_jobs in
+  state.pending_fn_jobs <- [];
+  jobs

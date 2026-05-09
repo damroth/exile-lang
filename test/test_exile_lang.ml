@@ -1036,6 +1036,60 @@ let () =
      }\n"
     "#include <stdio.h>\n\nstruct geom__Point { long x; long y; };\n\nlong geom__area(struct geom__Point p);\nlong geom__Point__sum(struct geom__Point self);\n\nlong geom__area(struct geom__Point p) {\n    return p.x * p.y;\n}\n\nint main(void) {\n    struct geom__Point p;\n    p.x = 3;\n    p.y = 4;\n    printf(\"%ld\\n\", (long)(geom__area(p)));\n    printf(\"%ld\\n\", (long)(geom__Point__sum(p)));\n    return 0;\n}\n\nlong geom__Point__sum(struct geom__Point self) {\n    return self.x + self.y;\n}\n";
 
+  check "generic free fn: T inferred from positional arg, one instance per T"
+    "fn id<T>(x: T) -> T {\n\
+    \    return x;\n\
+     }\n\
+     fn main() {\n\
+    \    print(id(42));\n\
+    \    print(id(7));\n\
+     }\n"
+    "#include <stdio.h>\n\nstatic long ex_id_i32(long x);\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_id_i32(42)));\n    printf(\"%ld\\n\", (long)(ex_id_i32(7)));\n    return 0;\n}\n\nstatic long ex_id_i32(long x) {\n    return x;\n}\n";
+
+  check "generic free fn: distinct T values produce distinct instances"
+    "fn id<T>(x: T) -> T {\n\
+    \    return x;\n\
+     }\n\
+     fn main() {\n\
+    \    print(id(42));\n\
+    \    print(id(true));\n\
+     }\n"
+    "#include <stdio.h>\n\nstatic long ex_id_i32(long x);\nstatic int ex_id_bool(int x);\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_id_i32(42)));\n    printf(\"%d\\n\", ex_id_bool(1));\n    return 0;\n}\n\nstatic long ex_id_i32(long x) {\n    return x;\n}\n\nstatic int ex_id_bool(int x) {\n    return x;\n}\n";
+
+  check "generic free fn: T inferred bidirectionally from let annotation"
+    "fn make<T>() -> *T {\n\
+    \    return null;\n\
+     }\n\
+     fn main() {\n\
+    \    let p: *int = make();\n\
+    \    if p == null { print(1); } else { print(0); }\n\
+     }\n"
+    "#include <stdio.h>\n\nstatic long *ex_make_i32(void);\n\nint main(void) {\n    long *p;\n    p = ex_make_i32();\n    if (p == ((void *)0)) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    return 0;\n}\n\nstatic long *ex_make_i32(void) {\n    return ((void *)0);\n}\n";
+
+  check_error "generic free fn: under-determined T errors with hint"
+    "fn make<T>() -> *T {\n\
+    \    return null;\n\
+     }\n\
+     fn main() {\n\
+    \    let p = make();\n\
+    \    if p == null { print(1); } else { print(0); }\n\
+     }\n"
+    "could not infer type parameter 'T' from arguments (add a type annotation on the surrounding let / return)";
+
+  check "generic method: tparam on method of mono struct, two instances"
+    "struct Box { value: int }\n\
+     impl Box {\n\
+    \    pub fn first<T>(self: Box, x: T) -> T {\n\
+    \        return x;\n\
+    \    }\n\
+     }\n\
+     fn main() {\n\
+    \    let b = Box { value: 99 };\n\
+    \    print(b.first(42));\n\
+    \    print(b.first(true));\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Box { long value; };\n\nlong Box__first_i32(struct ex_Box self, long x);\nint Box__first_bool(struct ex_Box self, int x);\n\nint main(void) {\n    struct ex_Box b;\n    b.value = 99;\n    printf(\"%ld\\n\", (long)(Box__first_i32(b, 42)));\n    printf(\"%d\\n\", Box__first_bool(b, 1));\n    return 0;\n}\n\nlong Box__first_i32(struct ex_Box self, long x) {\n    return x;\n}\n\nint Box__first_bool(struct ex_Box self, int x) {\n    return x;\n}\n";
+
   check_assert "Profile.of_string round-trip"
     (Exile_lang.Profile.of_string "core" = Some Exile_lang.Profile.Core
      && Exile_lang.Profile.of_string "standard" = Some Exile_lang.Profile.Standard

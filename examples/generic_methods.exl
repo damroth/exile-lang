@@ -1,0 +1,55 @@
+// Generic methods and free fns — type parameters bound at the call
+// site, monomorphized eagerly.  Each distinct (T₁, …, Tₙ) tuple
+// produces one instance in the emitted C; calls with the same shape
+// share one definition.
+//
+// Inference is bottom-up from positional args first, then
+// bidirectional from the surrounding expected type (`let`/return)
+// for tparams that aren't reachable through arguments.  An
+// under-determined tparam errors with a hint to add an annotation.
+
+fn id<T>(x: T) -> T {
+    return x;
+}
+
+// Bidirectional case: `T` doesn't appear in any param, so the
+// caller's let-ann or return type pins it.
+fn make_null<T>() -> *T {
+    return null;
+}
+
+struct Box { value: int }
+
+impl Box {
+    // Generic method on a mono struct.  `self` participates in
+    // tparam inference like any other arg, but here T is constrained
+    // by `x` only.
+    pub fn first<T>(self: Box, x: T) -> T {
+        return x;
+    }
+
+    pub fn value_of(self: Box) -> int {
+        return self.value;
+    }
+}
+
+fn main() {
+    // Two instances of `id`: ex_id_i32 and ex_id_bool.  Repeated
+    // calls of the same shape reuse the cached instance.
+    print(id(42));                              // 42
+    print(id(7));                               // 7
+    if id(true) { print(1); } else { print(0); }  // 1
+
+    // Bidirectional: `T = int` inferred from the let annotation.
+    let p: *int = make_null();
+    if p == null { print(100); } else { print(0); }   // 100
+
+    // Generic method dispatch through `.`-syntax.  Two instances of
+    // first: Box__first_i32 and Box__first_bool.
+    let b = Box { value: 99 };
+    print(b.first(11));                         // 11
+    if b.first(false) { print(1); } else { print(0); }  // 0
+
+    // Mixed in with a non-generic method on the same impl block.
+    print(b.value_of());                        // 99
+}

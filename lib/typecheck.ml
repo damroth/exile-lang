@@ -26,6 +26,16 @@ type fn_ctx = {
   tparams : string list;                 (* generic type params in scope:
                                             ["T"; "U"] inside a generic
                                             decl's body, [] otherwise *)
+  tvar_bindings : (string * typ) list;   (* substitute these into every
+                                            type produced by resolve_type_ann.
+                                            Empty for skeleton elab; populated
+                                            with concrete bindings when
+                                            re-elaborating a generic fn
+                                            instance.  TVars matching keys
+                                            in here are replaced after
+                                            resolve so body code mentioning
+                                            T sees the instance's concrete
+                                            type. *)
   instances : Mono.state;
   ext_structs : string list;             (* names of `extern struct Foo;`
                                             decls — resolve_type_ann uses
@@ -43,6 +53,12 @@ type fn_ctx = {
                                             None for void.  Used by `try`
                                             to validate / construct the
                                             early-return Err/None value. *)
+  fn_asts : (string * (string list * Ast.func)) list;
+                                          (* mangled C name → (parent path,
+                                             original AST).  Lets generic
+                                             fn-instance bodies be re-elaborated
+                                             from the source AST after
+                                             monomorphization picks args. *)
 }
 
 let rec is_prefix xs ys =
@@ -153,7 +169,7 @@ let find_variant (e : enum_sig) name : (int * variant_sig) option =
    On unresolved struct names we fall back to the raw path: downstream
    checks (lookup at use site, or the `typ_eq` mismatch) emit a clearer
    contextual error than we could here without a `Pos.t`. *)
-let rec resolve_type_ann ctx ann =
+let rec resolve_type_ann_raw ctx ann =
   match ann with
   | Ast.TyInt { signed; width } -> TInt { signed; width }
   | Ast.TyCInt { signed } -> TCInt { signed }
@@ -165,11 +181,11 @@ let rec resolve_type_ann ctx ann =
   | Ast.TyCVoid -> TCVoid
   | Ast.TyStr -> TString
   | Ast.TyBool -> TBool
-  | Ast.TyTuple ts -> TTuple (List.map (resolve_type_ann ctx) ts)
-  | Ast.TyPtr t -> TPtr (resolve_type_ann ctx t)
+  | Ast.TyTuple ts -> TTuple (List.map (resolve_type_ann_raw ctx) ts)
+  | Ast.TyPtr t -> TPtr (resolve_type_ann_raw ctx t)
   | Ast.TyFnPtr { params; ret } ->
-      TFnPtr { params = List.map (resolve_type_ann ctx) params;
-               ret = Option.map (resolve_type_ann ctx) ret }
+      TFnPtr { params = List.map (resolve_type_ann_raw ctx) params;
+               ret = Option.map (resolve_type_ann_raw ctx) ret }
   | Ast.TyStruct { path; args = [] } ->
       (* Non-generic case: tparam reference / extern type / extern
          struct / struct / enum / fallback. *)
@@ -190,7 +206,7 @@ let rec resolve_type_ann ctx ann =
          and register a monomorphic instance under a mangled path.
          Subsequent uses of the same `Foo<T1, T2>` find the cached
          instance instead of re-substituting. *)
-      let resolved_args = List.map (resolve_type_ann ctx) args in
+      let resolved_args = List.map (resolve_type_ann_raw ctx) args in
       (* Reject substitutions that still contain TVars from the caller
          scope — a properly monomorphic instance has no free type
          variables.  When we eventually add generic fns / inference
@@ -226,6 +242,14 @@ let rec resolve_type_ann ctx ann =
                 Error.failf Pos.zero
                   "unknown generic type '%s'"
                   (String.concat "::" path)))
+
+(* Public entry point.  Wraps `resolve_type_ann_raw` with a final
+   `subst_typ ctx.tvar_bindings` step so generic-instance bodies see
+   concrete types where the source mentions the fn's type parameters.
+   Skeleton elaboration (`tvar_bindings = []`) leaves the result
+   unchanged. *)
+let resolve_type_ann ctx ann =
+  subst_typ ctx.tvar_bindings (resolve_type_ann_raw ctx ann)
 
 (* Recognise an integer literal expression — bare or negated — for type-fitting
    checks at let-binding sites. *)
@@ -424,6 +448,54 @@ let desugar_orelse ~scrutinee_ty value default pos =
   } in
   Ast.Match { scrutinee = value; arms = [ ok_arm; err_arm ]; pos }
 
+(* Generic-call dispatch: if the resolved fn is generic, infer its
+   tparams from the actual arg types (and from the surrounding expected
+   type via a bidirectional seed pair `(skel.ret_ty, expected)`),
+   instantiate, and return the instance's mangled name + concrete sig.
+   For mono fns returns the skeleton's mangled name + sig unchanged.
+
+   Caller is responsible for visibility + arity + arg-type checks; this
+   helper owns only the inference / instantiation step.  When
+   inference fails (under-determined T), `Mono.infer_tparams` raises
+   with a hint to add a let / return type annotation. *)
+let resolve_call_dispatch ~pos ~expected ctx ~resolved_mod ~arg_tys
+    (skel : fn_sig) : string * typ list * typ option =
+  if skel.fn_tparams = [] then
+    (skel.mangled, skel.param_tys, skel.ret_ty)
+  else begin
+    let n_fixed = List.length skel.param_tys in
+    let take n xs =
+      let rec loop n acc = function
+        | _ when n <= 0 -> List.rev acc
+        | [] -> List.rev acc
+        | x :: rest -> loop (n - 1) (x :: acc) rest
+      in
+      loop n [] xs
+    in
+    let inf_pairs = List.combine skel.param_tys (take n_fixed arg_tys) in
+    let seed_pairs =
+      match expected, skel.ret_ty with
+      | Some exp, Some r -> [(r, exp)]
+      | _ -> []
+    in
+    let inferred =
+      Mono.infer_tparams ~pos skel.fn_tparams (seed_pairs @ inf_pairs)
+    in
+    let bindings = List.combine skel.fn_tparams inferred in
+    let func =
+      match List.assoc_opt skel.mangled ctx.fn_asts with
+      | Some (_, f) -> f
+      | None ->
+          Error.failf pos
+            "internal: missing AST for generic fn '%s'" skel.mangled
+    in
+    let inst =
+      Mono.instantiate_fn ctx.instances
+        ~path:resolved_mod ~func ~skel ~bindings
+    in
+    (inst.mangled, inst.param_tys, inst.ret_ty)
+  end
+
 let rec type_of ?(allow_void = false) ?expected ctx env = function
   | Ast.IntLit _ -> t_i32
   | Ast.BoolLit _ -> TBool
@@ -569,7 +641,11 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
       let display = String.concat "::" path in
       (match lookup_fn ctx path with
        | None -> Error.failf pos "unknown function '%s'" display
-       | Some (resolved_mod, { param_tys; ret_ty; fn_pub; fn_variadic; _ }) ->
+       | Some (resolved_mod, ({ fn_pub; fn_variadic; _ } as skel)) ->
+           let (_, param_tys, ret_ty) =
+             resolve_call_dispatch ~pos ~expected ctx
+               ~resolved_mod ~arg_tys skel
+           in
            (* Qualified call (path > 1): each module segment must be visible
               from the current scope.  We walk the resolved fn's module path
               (resolved_mod), since that's where we actually found the
@@ -662,7 +738,7 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
        | None ->
            Error.failf pos "no method '%s' on type '%s'"
              name (String.concat "::" struct_path)
-       | Some (resolved_mod, { param_tys; ret_ty; fn_pub; _ }) ->
+       | Some (resolved_mod, ({ fn_pub; _ } as skel)) ->
            let rec walk_segments parent = function
              | [] -> ()
              | seg :: rest ->
@@ -682,6 +758,15 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
            if (not fn_pub) && ctx.scope <> resolved_mod then
              Error.failf pos "method '%s' is private to '%s'"
                name (String.concat "::" resolved_mod);
+           (* Generic method: prepend self's type to arg_tys so the
+              receiver participates in tparam inference (lets the
+              method's tparams flow from `self : Foo<T>`).  For mono
+              methods this is a no-op. *)
+           let arg_tys_for_dispatch = recv_ty :: arg_tys in
+           let (_, param_tys, ret_ty) =
+             resolve_call_dispatch ~pos ~expected ctx
+               ~resolved_mod ~arg_tys:arg_tys_for_dispatch skel
+           in
            let expected_args = List.length param_tys - 1 in
            let got_args = List.length args in
            if expected_args <> got_args then
@@ -1215,7 +1300,13 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
               | None ->
                   let mangled =
                     match lookup_fn ctx path with
-                    | Some (_, s) -> s.mangled
+                    | Some (resolved_mod, skel) ->
+                        let arg_tys = List.map (fun a -> a.ty) targs in
+                        let (m, _, _) =
+                          resolve_call_dispatch ~pos ~expected ctx
+                            ~resolved_mod ~arg_tys skel
+                        in
+                        m
                     | None -> assert false   (* validated upstream *)
                   in
                   TCall { mangled; args = targs })))
@@ -1228,10 +1319,21 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           | _ -> assert false   (* validated by type_of *)
         in
         let mpath = struct_path @ [name] in
+        let targs = List.map (elab_expr ctx env) args in
         let (mangled, self_ty) =
           match lookup_fn ctx mpath with
-          | Some (_, { mangled; param_tys = self_t :: _; _ }) ->
-              (mangled, self_t)
+          | Some (resolved_mod, ({ param_tys = skel_self :: _; _ } as skel)) ->
+              let arg_tys = trecv.ty :: List.map (fun a -> a.ty) targs in
+              let (m, inst_param_tys, _) =
+                resolve_call_dispatch ~pos ~expected ctx
+                  ~resolved_mod ~arg_tys skel
+              in
+              let self_t =
+                match inst_param_tys with
+                | self_t :: _ -> self_t
+                | [] -> skel_self
+              in
+              (m, self_t)
           | _ -> assert false
         in
         (* Auto-ref / auto-deref: align receiver shape with the method's
@@ -1247,7 +1349,6 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
               { e = TDeref trecv; ty = st; pos = trecv.pos }
           | _ -> assert false
         in
-        let targs = List.map (elab_expr ctx env) args in
         TCall { mangled; args = trecv_adj :: targs }
     | Ast.EnumLit { tname = _; variant; args; _ } ->
         (* type_of (called above into `ty`) already instantiated any
@@ -1902,6 +2003,7 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~struct_in
         let ctx = {
           global = []; structs = struct_index; enums = enum_index;
           modules; scope = p; tparams = f.tparams;
+          tvar_bindings = []; fn_asts = [];
           instances; ext_structs; ext_types; ext_consts; ret_ty = None;
         } in
         Some
@@ -1938,6 +2040,7 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~
       let ctx = {
         global = []; structs = skeleton; enums;
         modules; scope = p; tparams = s.stparams;
+        tvar_bindings = []; fn_asts = [];
         instances; ext_structs; ext_types; ext_consts; ret_ty = None;
       } in
       { skel with
@@ -1972,6 +2075,7 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
       let ctx = {
         global = []; structs = struct_index; enums = skeleton;
         modules; scope = p; tparams = e.etparams;
+        tvar_bindings = []; fn_asts = [];
         instances; ext_structs; ext_types; ext_consts; ret_ty = None;
       } in
       let variants =
@@ -2121,6 +2225,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
         let ctx = {
           global = []; structs = struct_index; enums = enum_index;
           modules; scope = parent_path; tparams = [];
+          tvar_bindings = []; fn_asts = [];
           instances; ext_structs; ext_types; ext_consts; ret_ty = None;
         } in
         let s =
@@ -2307,7 +2412,8 @@ let check_program program : tprogram =
     List.map (fun (ec : Ast.extern_const) ->
         let ctx_for_ann = {
           global = []; structs = []; enums = []; modules = flat.modules;
-          scope = []; tparams = []; instances = mono_state;
+          scope = []; tparams = []; tvar_bindings = []; fn_asts = [];
+          instances = mono_state;
           ext_structs; ext_types; ext_consts = [];
           ret_ty = None;
         } in
@@ -2340,35 +2446,73 @@ let check_program program : tprogram =
     build_global_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~struct_index ~enum_index ~modules all_funcs
   in
-  let tp_funcs =
-    List.map
-      (fun (path, (f : Ast.func), mangled) ->
-        let ctx0 = {
-          global; structs = struct_index; enums = enum_index;
-          modules; scope = path; tparams = f.tparams;
-          instances = mono_state; ext_structs; ext_types; ext_consts;
-          ret_ty = None;
-        } in
-        let param_tys =
-          List.map (fun (p : Ast.param) -> resolve_type_ann ctx0 p.pty) f.params
-        in
-        List.iter (forbid_naked_opaque f.pos) param_tys;
-        let ret_ty = Option.map (resolve_type_ann ctx0) f.ret_ty in
-        Option.iter (forbid_naked_opaque f.pos) ret_ty;
-        let ctx = { ctx0 with ret_ty } in
-        let param_env =
-          List.combine (List.map (fun (p : Ast.param) -> p.pname) f.params)
-            param_tys
-        in
-        let (lets, tbody) =
-          if f.is_extern then ([], [])
-          else elab_body ~ret_ty ctx param_env f.body
-        in
-        { tf_path = path; tf_func = f; tf_mangled = mangled;
-          tf_param_tys = param_tys; tf_ret_ty = ret_ty;
-          tf_body = tbody; tf_lets = lets })
-      all_funcs
+  (* Side-table for re-elaborating generic fn instances after the main
+     loop: keyed by skeleton mangled name, value is (parent path, AST). *)
+  let fn_asts =
+    List.map (fun (p, (f : Ast.func), mangled) -> (mangled, (p, f))) all_funcs
   in
+  (* Build a tfunc from one fn occurrence (skeleton or instance).  For
+     generic fns at the top level we still produce a tfunc carrying
+     the resolved (TVar-bearing) param/ret types but skip body elab —
+     skeleton bodies can contain operations (BinOp, comparisons,
+     field access) that aren't well-defined on free TVars.  Codegen
+     filters the skeletons out via [is_concrete]; only the instance
+     tfuncs (built later from pending jobs) carry real bodies. *)
+  let elab_one_fn ~tvar_bindings (path, (f : Ast.func), mangled) =
+    let ctx0 = {
+      global; structs = struct_index; enums = enum_index;
+      modules; scope = path; tparams = f.tparams;
+      tvar_bindings; fn_asts;
+      instances = mono_state; ext_structs; ext_types; ext_consts;
+      ret_ty = None;
+    } in
+    let param_tys =
+      List.map (fun (p : Ast.param) -> resolve_type_ann ctx0 p.pty) f.params
+    in
+    List.iter (forbid_naked_opaque f.pos) param_tys;
+    let ret_ty = Option.map (resolve_type_ann ctx0) f.ret_ty in
+    Option.iter (forbid_naked_opaque f.pos) ret_ty;
+    let ctx = { ctx0 with ret_ty } in
+    let param_env =
+      List.combine (List.map (fun (p : Ast.param) -> p.pname) f.params)
+        param_tys
+    in
+    let is_skeleton = f.tparams <> [] && tvar_bindings = [] in
+    let (lets, tbody) =
+      if f.is_extern || is_skeleton then ([], [])
+      else elab_body ~ret_ty ctx param_env f.body
+    in
+    { tf_path = path; tf_func = f; tf_mangled = mangled;
+      tf_param_tys = param_tys; tf_ret_ty = ret_ty;
+      tf_body = tbody; tf_lets = lets }
+  in
+  let skeleton_tfuncs =
+    List.map (elab_one_fn ~tvar_bindings:[]) all_funcs
+  in
+  (* Drain pending fn-instance jobs accumulated during skeleton elab.
+     Each job re-runs body elaboration under a context where the fn's
+     tparams substitute to concrete types.  New jobs may be queued
+     during this drain (recursive generic calls); loop until the queue
+     stays empty.  Mangled name on the instance tfunc is the instance's
+     C-side name, set by [Mono.instantiate_fn]. *)
+  let rec drain acc =
+    match Mono.take_pending_fn_jobs mono_state with
+    | [] -> List.rev acc
+    | jobs ->
+        let new_tfuncs =
+          List.map (fun (job : Mono.pending_fn_job) ->
+            let tf = elab_one_fn ~tvar_bindings:job.pj_bindings
+              (job.pj_path, job.pj_func, job.pj_mangled)
+            in
+            { tf with
+              tf_param_tys = job.pj_param_tys;
+              tf_ret_ty = job.pj_ret_ty })
+            jobs
+        in
+        drain (List.rev_append new_tfuncs acc)
+  in
+  let instance_tfuncs = drain [] in
+  let tp_funcs = skeleton_tfuncs @ instance_tfuncs in
   let (tp_tuple_types, tp_fnptr_types) = collect_tuple_types_of tp_funcs in
   let tp_uses_heap = uses_heap_of tp_funcs in
   (* Drain monomorphic instances accumulated during resolve_type_ann
@@ -2378,6 +2522,11 @@ let check_program program : tprogram =
      non-generic decls. *)
   let mono_structs = List.rev mono_state.inst_structs in
   let mono_enums = List.rev mono_state.inst_enums in
+  let mono_inst_funcs = List.rev mono_state.inst_funcs in
+  let _ = mono_inst_funcs in   (* registered fn-instance signatures live
+                                  on the instance tfuncs; the global index
+                                  doesn't need them since callers already
+                                  emit instance mangled names directly. *)
   { tp_funcs;
     tp_struct_decls = flat.structs;
     tp_struct_index = struct_index @ mono_structs;
