@@ -83,6 +83,14 @@ type expr =
                                            outer ret type must agree
                                            (both Result with same E, or
                                            both Option). *)
+  | SizeOf of type_ann * Pos.t          (* `size_of(T)` — yields the C
+                                           `sizeof(T)` byte count as a
+                                           c_uint.  Argument is a type
+                                           annotation, not an expression;
+                                           parser dispatches on the
+                                           SizeOf keyword.  Resolves to
+                                           a constant after monomorphization
+                                           even when T is a tparam. *)
 
 and match_arm = { pat : pattern; body : expr; arm_pos : Pos.t }
 
@@ -109,7 +117,7 @@ and pat_binds =
 let expr_pos = function
   | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
   | Var (_, p) | Neg (_, p) | BinOp (_, _, _, p)
-  | Orelse (_, _, p) | Try (_, p)
+  | Orelse (_, _, p) | Try (_, p) | SizeOf (_, p)
   | Call (_, _, p) | Cast (_, _, p) | TupleLit (_, p)
   | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)
   | NullLit p -> p

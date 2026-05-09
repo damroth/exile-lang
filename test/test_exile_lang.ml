@@ -1090,6 +1090,51 @@ let () =
      }\n"
     "#include <stdio.h>\n\nstruct ex_Box { long value; };\n\nlong Box__first_i32(struct ex_Box self, long x);\nint Box__first_bool(struct ex_Box self, int x);\n\nint main(void) {\n    struct ex_Box b;\n    b.value = 99;\n    printf(\"%ld\\n\", (long)(Box__first_i32(b, 42)));\n    printf(\"%d\\n\", Box__first_bool(b, 1));\n    return 0;\n}\n\nlong Box__first_i32(struct ex_Box self, long x) {\n    return x;\n}\n\nint Box__first_bool(struct ex_Box self, int x) {\n    return x;\n}\n";
 
+  check "size_of yields a c_uint via C sizeof"
+    "fn main() {\n\
+    \    print(size_of(int) as int);\n\
+    \    print(size_of(*int) as int);\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(((long)sizeof(long))));\n    printf(\"%ld\\n\", (long)(((long)sizeof(long *))));\n    return 0;\n}\n";
+
+  check "size_of substitutes T per generic instance"
+    "fn sz<T>(_p: *T) -> c_uint { return size_of(T); }\n\
+     fn main() {\n\
+    \    let p: *int = null;\n\
+    \    let q: *bool = null;\n\
+    \    print(sz(p) as int);\n\
+    \    print(sz(q) as int);\n\
+     }\n"
+    "#include <stdio.h>\n\nstatic unsigned int ex_sz_i32(long *_p);\nstatic unsigned int ex_sz_bool(int *_p);\n\nint main(void) {\n    long *p;\n    int *q;\n    p = ((void *)0);\n    q = ((void *)0);\n    printf(\"%ld\\n\", (long)(((long)ex_sz_i32(p))));\n    printf(\"%ld\\n\", (long)(((long)ex_sz_bool(q))));\n    return 0;\n}\n\nstatic unsigned int ex_sz_i32(long *_p) {\n    return sizeof(long);\n}\n\nstatic unsigned int ex_sz_bool(int *_p) {\n    return sizeof(int);\n}\n";
+
+  check "pointer-to-pointer cast with `as` accepted"
+    "fn main() {\n\
+    \    let p: *c_void = null;\n\
+    \    let q: *int = p as *int;\n\
+    \    if q == null { print(1); } else { print(0); }\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    void *p;\n    long *q;\n    p = ((void *)0);\n    q = ((long *)p);\n    if (q == ((void *)0)) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    return 0;\n}\n";
+
+  check_error "non-pointer-non-int cast still rejected"
+    "fn main() {\n\
+    \    let b = true;\n\
+    \    let _ = b as *int;\n\
+     }\n"
+    "cannot cast bool to *i32 (only integer-to-integer or pointer-to-pointer casts supported)";
+
+  check "prelude Allocator: dropped from emitted C when unused"
+    "fn main() { print(1); }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(1));\n    return 0;\n}\n";
+
+  check "user `mod Allocator { fn ... }` not confused with prelude impl"
+    "mod Allocator {\n\
+    \    pub fn helper() -> int { return 1; }\n\
+     }\n\
+     fn main() {\n\
+    \    print(Allocator::helper());\n\
+     }\n"
+    "#include <stdio.h>\n\nlong Allocator__helper(void);\n\nlong Allocator__helper(void) {\n    return 1;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(Allocator__helper()));\n    return 0;\n}\n";
+
   check_assert "Profile.of_string round-trip"
     (Exile_lang.Profile.of_string "core" = Some Exile_lang.Profile.Core
      && Exile_lang.Profile.of_string "standard" = Some Exile_lang.Profile.Standard

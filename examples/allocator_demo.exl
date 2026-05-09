@@ -1,0 +1,46 @@
+// Allocator API — uniform pluggable memory interface in the
+// prelude.  Allows code to be parameterised over *how* it allocates
+// (libc, AmigaOS Exec, arena, pool) without changing call sites.
+//
+// The built-in `Allocator` is a struct with a state pointer plus
+// two function pointers (alloc + free).  Generic methods
+// `alloc::<T>()` and `free(p)` use `size_of(T)` and a typed cast to
+// give the user a strongly-typed allocation surface.  Each concrete
+// T spawns one monomorphic instance (`Allocator__alloc_i32` etc) —
+// no runtime polymorphism, no vtable, the C compiler can inline.
+//
+// Wiring to a real backing allocator happens C-side via a stub
+// (`make_c_allocator` here) — keeps platform-specific things like
+// libc's `size_t` width out of the exile signature space.  Switch
+// stubs to drop in AmigaOS `AllocMem`/`FreeMem` without touching
+// exile call sites.
+
+extern fn make_c_allocator() -> Allocator;
+
+fn main() {
+    let a = make_c_allocator();
+
+    // Typed allocation: `alloc::<int>()` reduces to a sized
+    // request + cast.  Bidirectional inference picks T from the
+    // let annotation since the call has no constraining args.
+    let p: *int = a.alloc();
+    if p == null {
+        print(-1);
+    } else {
+        // Store and read back through the pointer to confirm the
+        // memory is real and writable.
+        *p = 42;
+        print(*p);                          // 42
+
+        a.free(p);
+    }
+
+    // Different T → different instance.  Both `Allocator__alloc_i32`
+    // and `Allocator__alloc_bool` end up in the emitted C.
+    let q: *bool = a.alloc();
+    if q != null {
+        *q = true;
+        if *q { print(1); } else { print(0); }   // 1
+        a.free(q);
+    }
+}

@@ -523,9 +523,11 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
       let src = type_of ctx env e in
       let tgt = resolve_type_ann ctx ann in
       if is_int_like src && is_int_like tgt then tgt
+      else if is_ptr src && is_ptr tgt then tgt
       else
         Error.failf pos
-          "cannot cast %s to %s (only integer-to-integer casts supported)"
+          "cannot cast %s to %s (only integer-to-integer or pointer-to-pointer \
+           casts supported)"
           (typ_name src) (typ_name tgt)
   | Ast.Var (name, pos) ->
       (match List.assoc_opt name env with
@@ -1100,6 +1102,12 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
        | None ->
            Error.failf pos
              "internal: enum '%s' missing" (String.concat "::" p))
+  | Ast.SizeOf (_, _) ->
+      (* `size_of(T)` always yields C's `sizeof` result, which is a
+         `size_t` — closest exile-side equivalent is `c_uint`.  The
+         type argument is validated implicitly by `resolve_type_ann`
+         when the elab pass runs (it rejects unknown types there). *)
+      TCInt { signed = false }
 
 (* Resolve operand types for a BinOp.  An integer literal on either side
    adopts the other operand's int type if it fits, so `x + 5` keeps x's
@@ -1584,6 +1592,11 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           ename_path = inner_path;
           arms = [ ok_arm; err_arm ];
         }
+    | Ast.SizeOf (ann, _) ->
+        (* Resolve the type once at elab time — for generic-fn instances
+           this lets `tvar_bindings` substitute T with the concrete typ,
+           so codegen sees a fully-monomorphic `sizeof(<T>)`. *)
+        TSizeOf (resolve_type_ann ctx ann)
   in
   { e = node; ty; pos }
 
@@ -1800,7 +1813,7 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
     in
     match te.e with
     | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _
-    | TFnRef _ ->
+    | TFnRef _ | TSizeOf _ ->
         (te, [])
     | TNeg sub ->
         let (sub', p) = walk_expr ~allow_top:false sub in
@@ -2130,6 +2143,7 @@ let collect_tuple_types_of tfuncs =
     match te.e with
     | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _
     | TFnRef _ -> ()
+    | TSizeOf t -> walk_typ t
     | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> walk_texpr sub
     | TBinOp (_, l, r) -> walk_texpr l; walk_texpr r
     | TCall { args; _ } | TBuiltinCall { args; _ } -> List.iter walk_texpr args
@@ -2176,7 +2190,7 @@ let uses_heap_of tfuncs =
     | TNew _ -> true
     | TBuiltinCall { name = "free"; _ } -> true
     | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _
-    | TFnRef _ -> false
+    | TFnRef _ | TSizeOf _ -> false
     | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> walk_texpr sub
     | TBinOp (_, l, r) -> walk_texpr l || walk_texpr r
     | TCall { args; _ } | TBuiltinCall { args; _ } ->
@@ -2315,6 +2329,13 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
    at top level we skip our copy — the user's definition wins. *)
 let prelude_pos = { Pos.line = 0; col = 0; file = "<prelude>" }
 
+(* Mono structs synthesised by `prelude_items`.  Listed here so the
+   post-typecheck DCE pass in `check_program` can drop them when no
+   user code mentions the type — keeps unrelated programs (hello_world,
+   etc.) from carrying an unused `struct ex_Allocator` decl.  Add a
+   name when introducing a new mono prelude struct. *)
+let prelude_mono_struct_names = ["Allocator"]
+
 let prelude_items () =
   let mk_unit name = {
     Ast.vname = name; vkind = Ast.VUnit; vpos = prelude_pos;
@@ -2337,10 +2358,84 @@ let prelude_items () =
     epos = prelude_pos;
     eis_pub = true;
   } in
-  [ Ast.Enum option_decl; Ast.Enum result_decl ]
+  (* Allocator — uniform pluggable memory interface.  `state` rides on
+     every call so allocators with backing data (arenas, pools) can
+     reach it; stateless ones (libc) ignore.  Generic methods alloc/
+     free are monomorphized per T at call site, so the typed cast +
+     `size_of(T)` expand to compile-time constants in the emitted C.
+     User code prefers `alloc.alloc::<Foo>()` over raw pointer maths. *)
+  let cvoid_ptr = Ast.TyPtr Ast.TyCVoid in
+  let cuint = Ast.TyCInt { signed = false } in
+  let alloc_struct = {
+    Ast.sname = "Allocator";
+    stparams = [];
+    sfields = [
+      ("state", cvoid_ptr);
+      ("alloc_fn",
+       Ast.TyFnPtr { params = [cvoid_ptr; cuint]; ret = Some cvoid_ptr });
+      ("free_fn",
+       Ast.TyFnPtr { params = [cvoid_ptr; cvoid_ptr]; ret = None });
+    ];
+    spos = prelude_pos;
+    sis_pub = true;
+  } in
+  (* Bodies for the two methods are constructed AST-side: an indirect
+     call through a fn-ptr field requires copying the field to a local
+     first (today's `recv.field(args)` parses as MethodCall and looks
+     for a method, not a fn-ptr field).  Keeping the prelude bodies
+     small and free of those workarounds. *)
+  let pos = prelude_pos in
+  let var n = Ast.Var (n, pos) in
+  let field e f = Ast.FieldAccess (e, f, pos) in
+  let alloc_body = [
+    (* let af = self.alloc_fn; *)
+    Ast.Let { name = "af"; ty_ann = None;
+              value = field (var "self") "alloc_fn"; pos };
+    (* let raw = af(self.state, size_of(T)); *)
+    Ast.Let { name = "raw"; ty_ann = None;
+              value = Ast.Call (["af"],
+                [ field (var "self") "state";
+                  Ast.SizeOf (tvar "T", pos) ], pos);
+              pos };
+    (* return raw as *T; *)
+    Ast.Return (Ast.Cast (var "raw", Ast.TyPtr (tvar "T"), pos), pos);
+  ] in
+  let free_body = [
+    (* let ff = self.free_fn; *)
+    Ast.Let { name = "ff"; ty_ann = None;
+              value = field (var "self") "free_fn"; pos };
+    (* ff(self.state, p as *c_void); *)
+    Ast.ExprStmt (Ast.Call (["ff"],
+      [ field (var "self") "state";
+        Ast.Cast (var "p", cvoid_ptr, pos) ], pos));
+  ] in
+  let mk_method name tparams params ret body = {
+    Ast.name; c_name = name; tparams; params; ret_ty = ret; body;
+    is_pub = true; is_extern = false; is_variadic = false; pos;
+  } in
+  let self_param =
+    { Ast.pname = "self"; pty = Ast.TyStruct { path = ["Allocator"]; args = [] } }
+  in
+  let alloc_method =
+    mk_method "alloc" ["T"] [self_param]
+      (Some (Ast.TyPtr (tvar "T"))) alloc_body
+  in
+  let free_method =
+    mk_method "free" ["T"]
+      [ self_param; { Ast.pname = "p"; pty = Ast.TyPtr (tvar "T") } ]
+      None free_body
+  in
+  let alloc_impl = {
+    Ast.itarget = ["Allocator"];
+    iitems = [alloc_method; free_method];
+    ipos = pos;
+  } in
+  [ Ast.Enum option_decl; Ast.Enum result_decl;
+    Ast.Struct alloc_struct; Ast.Impl alloc_impl ]
 
 (* Skip prelude items whose names collide with a user-declared top-level
-   enum.  Matches by name only (top-level path = []). *)
+   enum or struct (and skip the matching `impl` block in that case).
+   Matches by name only (top-level path = []). *)
 let prepend_prelude (program : Ast.program) : Ast.program =
   let user_top_enum_names =
     List.filter_map
@@ -2349,10 +2444,22 @@ let prepend_prelude (program : Ast.program) : Ast.program =
         | _ -> None)
       program
   in
+  let user_top_struct_names =
+    List.filter_map
+      (fun item -> match item with
+        | Ast.Struct s -> Some s.sname
+        | _ -> None)
+      program
+  in
   let kept =
     List.filter
       (fun item -> match item with
         | Ast.Enum e -> not (List.mem e.ename user_top_enum_names)
+        | Ast.Struct s -> not (List.mem s.sname user_top_struct_names)
+        | Ast.Impl ib ->
+            (match ib.itarget with
+             | [n] -> not (List.mem n user_top_struct_names)
+             | _ -> true)
         | _ -> true)
       (prelude_items ())
   in
@@ -2527,6 +2634,56 @@ let check_program program : tprogram =
                                   on the instance tfuncs; the global index
                                   doesn't need them since callers already
                                   emit instance mangled names directly. *)
+  (* DCE for prelude mono structs.  Walk every mono tfunc's signature
+     and let-types looking for `TStruct ["Allocator"]`; if no such
+     reference exists, drop the struct decl AND the impl methods that
+     came from the prelude.  Generic skeletons (`alloc<T>`/`free<T>`)
+     mention `Allocator` in `self` only as a definition site, so they
+     are excluded from the walk; their concrete instances carry the
+     reference instead and ARE walked.  Prelude origin is identified
+     by `tf_func.pos.file = "<prelude>"`, which is essential: a user's
+     `mod Allocator { fn helper() }` registers `tf_path = ["Allocator"]`
+     identical to the prelude impl methods, but its origin file differs. *)
+  let rec typ_mentions target = function
+    | TStruct p -> p = target
+    | TPtr inner -> typ_mentions target inner
+    | TTuple ts -> List.exists (typ_mentions target) ts
+    | TFnPtr { params; ret } ->
+        List.exists (typ_mentions target) params
+        || (match ret with Some t -> typ_mentions target t | None -> false)
+    | _ -> false
+  in
+  let tfunc_mentions target tf =
+    List.exists (typ_mentions target) tf.tf_param_tys
+    || (match tf.tf_ret_ty with Some t -> typ_mentions target t | None -> false)
+    || List.exists (fun (_, t) -> typ_mentions target t) tf.tf_lets
+  in
+  let used_in_user_code path =
+    List.exists
+      (fun tf -> tf.tf_func.Ast.tparams = [] && tfunc_mentions path tf)
+      tp_funcs
+  in
+  let is_from_prelude tf = tf.tf_func.Ast.pos.file = "<prelude>" in
+  let struct_drop_set =
+    List.filter
+      (fun n -> not (used_in_user_code [n]))
+      prelude_mono_struct_names
+  in
+  let struct_index =
+    List.filter (fun s ->
+      match s.sname_path with
+      | [n] when List.mem n struct_drop_set -> false
+      | _ -> true)
+      struct_index
+  in
+  let tp_funcs =
+    List.filter (fun tf ->
+      not (is_from_prelude tf
+           && match tf.tf_path with
+              | [n] when List.mem n struct_drop_set -> true
+              | _ -> false))
+      tp_funcs
+  in
   { tp_funcs;
     tp_struct_decls = flat.structs;
     tp_struct_index = struct_index @ mono_structs;

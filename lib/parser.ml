@@ -168,6 +168,14 @@ let rec parse_primary s =
          so `try foo().bar` = `try (foo().bar)`, but `try a + b` =
          `(try a) + b`.  Wrap in parens for the latter shape. *)
       Ast.Try (parse_postfix s (parse_primary s), p)
+  | Token.SizeOf ->
+      (* `size_of(T)` — yields C `sizeof(T)` as c_uint.  The argument
+         is a type annotation, not an expression: parser dispatches on
+         the SizeOf keyword and consumes a parenthesised type. *)
+      expect s Token.LParen;
+      let ty = parse_type s in
+      expect s Token.RParen;
+      Ast.SizeOf (ty, p)
   | Token.Amp -> Ast.Ref (parse_postfix s (parse_primary s), p)
   | Token.Star -> Ast.Deref (parse_postfix s (parse_primary s), p)
   | Token.New ->

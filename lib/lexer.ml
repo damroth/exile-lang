@@ -23,6 +23,7 @@ let keyword_or_ident = function
   | "extern" -> Token.Extern
   | "type" -> Token.Type
   | "const" -> Token.Const
+  | "size_of" -> Token.SizeOf
   | "new" -> Token.New
   | "null" -> Token.Null
   | "true" -> Token.True

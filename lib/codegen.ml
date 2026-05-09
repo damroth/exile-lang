@@ -288,6 +288,10 @@ let rec gen_expr buf (te : texpr) =
       Buffer.add_string buf field
   | TRef sub -> emit_unary buf '&' sub ~simple:(fun n -> lvalue_like n)
   | TDeref sub -> emit_unary buf '*' sub ~simple:(fun n -> lvalue_like n)
+  | TSizeOf t ->
+      Buffer.add_string buf "sizeof(";
+      Buffer.add_string buf (strip_trailing_space (c_type_prefix t));
+      Buffer.add_char buf ')'
   | TEnumLit _ | TMatch _ ->
       (* Same as the block-shaped lit cases above — `lift_block_exprs`
          hoists these to `__lift_N` temps before codegen sees them. *)
@@ -828,22 +832,11 @@ let gen_program ?(annotate = false) (tp : tprogram) =
         e.evariants)
       tp.tp_enum_index
   in
-  if concrete_structs <> [] then begin
-    Buffer.add_char buf '\n';
-    List.iter (emit_named_struct buf) concrete_structs
-  end;
-  if concrete_enums <> [] then begin
-    Buffer.add_char buf '\n';
-    List.iter (emit_named_enum buf) concrete_enums
-  end;
-  if tp.tp_tuple_types <> [] then begin
-    Buffer.add_char buf '\n';
-    List.iter (emit_tuple_struct buf) tp.tp_tuple_types
-  end;
   (* Typedef aliases for every fn-pointer type used in the program.
-     Use sites then refer to the alias name, sidestepping C's
-     awkward fn-ptr declaration syntax (especially nasty when
-     fn-ptr is itself a return type). *)
+     Emitted before struct decls so a struct field of fn-ptr type
+     (e.g. `Allocator.alloc_fn`) sees the alias.  Use sites refer
+     to the alias name, sidestepping C's awkward fn-ptr declaration
+     syntax (especially nasty when fn-ptr is itself a return type). *)
   if tp.tp_fnptr_types <> [] then begin
     Buffer.add_char buf '\n';
     List.iter (fun (name, t) ->
@@ -863,6 +856,18 @@ let gen_program ?(annotate = false) (tp : tprogram) =
             (Printf.sprintf "typedef %s(*%s)(%s);\n" r name ps)
       | _ -> assert false)
       tp.tp_fnptr_types
+  end;
+  if concrete_structs <> [] then begin
+    Buffer.add_char buf '\n';
+    List.iter (emit_named_struct buf) concrete_structs
+  end;
+  if concrete_enums <> [] then begin
+    Buffer.add_char buf '\n';
+    List.iter (emit_named_enum buf) concrete_enums
+  end;
+  if tp.tp_tuple_types <> [] then begin
+    Buffer.add_char buf '\n';
+    List.iter (emit_tuple_struct buf) tp.tp_tuple_types
   end;
   (* Generic fns (with TVar in their resolved signature) skip codegen
      for the same reason as generic struct/enum decls — the

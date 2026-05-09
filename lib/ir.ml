@@ -86,6 +86,13 @@ let is_int_like = function
   | TCChar | TCSChar | TCUChar | TExtAlias _ -> true
   | _ -> false
 
+(* Pointer-shaped types — `*T` and the polymorphic null literal.  Used
+   by `as`-cast validation to allow ptr↔ptr casts on top of the int↔int
+   ones, mirroring `is_int_like`'s role for integer types. *)
+let is_ptr = function
+  | TPtr _ | TNullPtr -> true
+  | _ -> false
+
 let int_fits n typ =
   match typ with
   | TInt { signed = true; width = Ast.W8 } -> n >= -128 && n <= 127
@@ -356,6 +363,11 @@ type texpr_node =
   | TMatch of { scrutinee : texpr;
                 ename_path : string list;
                 arms : tmatch_arm list }
+  | TSizeOf of typ                      (* `size_of(T)` — codegen emits
+                                           `sizeof(<c_type_prefix t>)`.
+                                           For instances of generic fns
+                                           the typ here is concrete after
+                                           subst_typ runs in resolve_type_ann. *)
 
 and tmatch_arm = {
   tpat : tpattern;
