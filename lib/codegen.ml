@@ -18,6 +18,13 @@ let annotate_mode = ref false
    look them up.  Set by `gen_program` at the start of every run. *)
 let enum_index_ref : enum_sig list ref = ref []
 
+(* Per-function byte counts collected during gen_program.  Reset at each
+   run; CLI reads via [last_bloat] when --bloat-report is set.  Each
+   entry is (mangled_c_name, bytes_emitted_for_body_and_signature). *)
+let bloat_acc : (string * int) list ref = ref []
+
+let last_bloat () = List.rev !bloat_acc
+
 let emit_ann buf indent (pos : Pos.t) =
   if !annotate_mode then begin
     Buffer.add_string buf indent;
@@ -780,6 +787,7 @@ let emit_named_enum buf (e : enum_sig) =
 let gen_program ?(annotate = false) (tp : tprogram) =
   annotate_mode := annotate;
   enum_index_ref := tp.tp_enum_index;
+  bloat_acc := [];
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
   if tp.tp_uses_heap then
@@ -884,7 +892,10 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   let last = List.length definable - 1 in
   List.iteri
     (fun i tf ->
+      let before = Buffer.length buf in
       gen_function buf tf;
+      let after = Buffer.length buf in
+      bloat_acc := (tf.tf_mangled, after - before) :: !bloat_acc;
       if i < last then Buffer.add_char buf '\n')
     definable;
   Buffer.contents buf

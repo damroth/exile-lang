@@ -77,6 +77,13 @@ let check_error label src expected_msg =
         label expected_msg;
       exit 1
 
+let check_assert label cond =
+  if cond then Printf.printf "ok: %s\n" label
+  else begin
+    Printf.eprintf "FAIL: %s\n" label;
+    exit 1
+  end
+
 let () =
   check "hello world"
     "fn main() {\n    print(\"Hello, World!\");\n}\n"
@@ -1027,4 +1034,30 @@ let () =
     \    print(geom::area(p));\n\
     \    print(p.sum());\n\
      }\n"
-    "#include <stdio.h>\n\nstruct geom__Point { long x; long y; };\n\nlong geom__area(struct geom__Point p);\nlong geom__Point__sum(struct geom__Point self);\n\nlong geom__area(struct geom__Point p) {\n    return p.x * p.y;\n}\n\nint main(void) {\n    struct geom__Point p;\n    p.x = 3;\n    p.y = 4;\n    printf(\"%ld\\n\", (long)(geom__area(p)));\n    printf(\"%ld\\n\", (long)(geom__Point__sum(p)));\n    return 0;\n}\n\nlong geom__Point__sum(struct geom__Point self) {\n    return self.x + self.y;\n}\n"
+    "#include <stdio.h>\n\nstruct geom__Point { long x; long y; };\n\nlong geom__area(struct geom__Point p);\nlong geom__Point__sum(struct geom__Point self);\n\nlong geom__area(struct geom__Point p) {\n    return p.x * p.y;\n}\n\nint main(void) {\n    struct geom__Point p;\n    p.x = 3;\n    p.y = 4;\n    printf(\"%ld\\n\", (long)(geom__area(p)));\n    printf(\"%ld\\n\", (long)(geom__Point__sum(p)));\n    return 0;\n}\n\nlong geom__Point__sum(struct geom__Point self) {\n    return self.x + self.y;\n}\n";
+
+  check_assert "Profile.of_string round-trip"
+    (Exile_lang.Profile.of_string "core" = Some Exile_lang.Profile.Core
+     && Exile_lang.Profile.of_string "standard" = Some Exile_lang.Profile.Standard
+     && Exile_lang.Profile.of_string "full" = Some Exile_lang.Profile.Full
+     && Exile_lang.Profile.of_string "bogus" = None);
+
+  check_assert "Profile.to_string canonical names"
+    (Exile_lang.Profile.to_string Exile_lang.Profile.Core = "core"
+     && Exile_lang.Profile.to_string Exile_lang.Profile.Standard = "standard"
+     && Exile_lang.Profile.to_string Exile_lang.Profile.Full = "full");
+
+  (* Bloat report must populate after a successful compile, with one
+     entry per defined fn (extern fns excluded — they have no body). *)
+  let _ = Exile_lang.Compiler.compile
+    "fn helper() -> int { return 7; }\n\
+     fn main() { print(helper()); }\n"
+  in
+  let bloat = Exile_lang.Codegen.last_bloat () in
+  check_assert "bloat report: one entry per defined fn"
+    (List.length bloat = 2);
+  check_assert "bloat report: entries are mangled names"
+    (List.exists (fun (n, _) -> n = "ex_helper") bloat
+     && List.exists (fun (n, _) -> n = "main") bloat);
+  check_assert "bloat report: byte counts are positive"
+    (List.for_all (fun (_, b) -> b > 0) bloat)

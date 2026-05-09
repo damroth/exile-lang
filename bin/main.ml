@@ -2,8 +2,9 @@ type target = Target_c | Target_host | Target_amiga
 
 let usage () =
   prerr_endline
-    "usage: exilc [--target c|host|amiga] [-o <output>] [--c-out <path>] \
-     [--link <c-stub>]... [--annotate] <file.exl>";
+    "usage: exilc [--target c|host|amiga] [--profile core|standard|full] \
+     [-o <output>] [--c-out <path>] [--link <c-stub>]... [--annotate] \
+     [--bloat-report] <file.exl>";
   exit 1
 
 let show_error (pos : Exile_lang.Pos.t) msg =
@@ -27,20 +28,51 @@ let parse_target = function
       Printf.eprintf "unknown target '%s' (expected: c, host, amiga)\n" t;
       exit 1
 
+let parse_profile s =
+  match Exile_lang.Profile.of_string s with
+  | Some p -> p
+  | None ->
+      Printf.eprintf
+        "unknown profile '%s' (expected: core, standard, full)\n" s;
+      exit 1
+
+(* Default profile per target — overridable via --profile.  host (modern
+   dev) and target=c (backend-only) both default to full because there's
+   no platform budget pressure; amiga defaults to standard since the
+   typical AmigaOS app has a few-MB envelope. *)
+let default_profile_for_target = function
+  | Target_c | Target_host -> Exile_lang.Profile.Full
+  | Target_amiga -> Exile_lang.Profile.Standard
+
+type args = {
+  target : target;
+  profile : Exile_lang.Profile.t;
+  output : string option;
+  c_out : string option;
+  link_files : string list;
+  annotate : bool;
+  bloat_report : bool;
+  input : string;
+}
+
 let parse_args argv =
   let target = ref Target_c in
+  let profile = ref None in
   let output = ref None in
   let c_out = ref None in
   let link_files = ref [] in
   let input = ref None in
   let annotate = ref false in
+  let bloat_report = ref false in
   let rec loop = function
     | [] -> ()
     | "--target" :: t :: rest -> target := parse_target t; loop rest
+    | "--profile" :: p :: rest -> profile := Some (parse_profile p); loop rest
     | "-o" :: o :: rest -> output := Some o; loop rest
     | "--c-out" :: p :: rest -> c_out := Some p; loop rest
     | "--link" :: p :: rest -> link_files := p :: !link_files; loop rest
     | "--annotate" :: rest -> annotate := true; loop rest
+    | "--bloat-report" :: rest -> bloat_report := true; loop rest
     | "--help" :: _ | "-h" :: _ -> usage ()
     | f :: rest when String.length f > 0 && f.[0] <> '-' ->
         if !input <> None then begin
@@ -56,7 +88,18 @@ let parse_args argv =
   loop argv;
   match !input with
   | None -> usage ()
-  | Some i -> (!target, !output, !c_out, List.rev !link_files, !annotate, i)
+  | Some i ->
+      let profile =
+        match !profile with
+        | Some p -> p
+        | None -> default_profile_for_target !target
+      in
+      { target = !target; profile;
+        output = !output; c_out = !c_out;
+        link_files = List.rev !link_files;
+        annotate = !annotate;
+        bloat_report = !bloat_report;
+        input = i }
 
 let toolchain_path () =
   try Sys.getenv "EXILE_TOOLCHAIN"
@@ -115,31 +158,50 @@ let ensure_dir path =
       exit 1
     end
 
-let () =
-  let (target, output, c_out, link_files, annotate, input) =
-    parse_args (List.tl (Array.to_list Sys.argv))
+let print_bloat_report () =
+  let entries = Exile_lang.Codegen.last_bloat () in
+  let sorted =
+    List.sort (fun (_, a) (_, b) -> compare b a) entries
   in
+  let total = List.fold_left (fun acc (_, n) -> acc + n) 0 entries in
+  let count = List.length entries in
+  Printf.eprintf "\nbloat report (%d fns, %d B total):\n" count total;
+  let top_n = 20 in
+  let shown = ref 0 in
+  List.iter (fun (name, bytes) ->
+    if !shown < top_n then begin
+      Printf.eprintf "  %6d B  %s\n" bytes name;
+      incr shown
+    end)
+    sorted;
+  if count > top_n then
+    Printf.eprintf "  ... %d more\n" (count - top_n)
+
+let () =
+  let a = parse_args (List.tl (Array.to_list Sys.argv)) in
   try
-    let c_code = Exile_lang.Compiler.compile_file ~annotate input in
+    let c_code = Exile_lang.Compiler.compile_file ~annotate:a.annotate a.input in
     let c_path =
-      match c_out with
+      match a.c_out with
       | Some p -> p
-      | None -> Filename.remove_extension input ^ ".c"
+      | None -> Filename.remove_extension a.input ^ ".c"
     in
     ensure_dir c_path;
     Out_channel.with_open_text c_path (fun oc ->
         Out_channel.output_string oc c_code);
-    Printf.printf "wrote %s\n" c_path;
-    match target with
+    Printf.printf "wrote %s [profile=%s]\n"
+      c_path (Exile_lang.Profile.to_string a.profile);
+    if a.bloat_report then print_bloat_report ();
+    match a.target with
     | Target_c -> ()
     | Target_host ->
-        let out = Option.value output ~default:(default_output_for input) in
+        let out = Option.value a.output ~default:(default_output_for a.input) in
         ensure_dir out;
-        compile_host c_path link_files input out
+        compile_host c_path a.link_files a.input out
     | Target_amiga ->
-        let out = Option.value output ~default:(default_output_for input) in
+        let out = Option.value a.output ~default:(default_output_for a.input) in
         ensure_dir out;
-        compile_amiga c_path link_files input out
+        compile_amiga c_path a.link_files a.input out
   with
   | Exile_lang.Error.Compile_error { pos; msg } ->
       show_error pos msg;
