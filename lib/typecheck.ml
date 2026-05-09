@@ -167,6 +167,9 @@ let rec resolve_type_ann ctx ann =
   | Ast.TyBool -> TBool
   | Ast.TyTuple ts -> TTuple (List.map (resolve_type_ann ctx) ts)
   | Ast.TyPtr t -> TPtr (resolve_type_ann ctx t)
+  | Ast.TyFnPtr { params; ret } ->
+      TFnPtr { params = List.map (resolve_type_ann ctx) params;
+               ret = Option.map (resolve_type_ann ctx) ret }
   | Ast.TyStruct { path; args = [] } ->
       (* Non-generic case: tparam reference / extern type / extern
          struct / struct / enum / fallback. *)
@@ -439,11 +442,11 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> result_t
        | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> TBool)
   | Ast.Neg (e, pos) ->
-      (match type_of ctx env e with
-       | TInt _ as t -> t
-       | other ->
-           Error.failf pos "negation '-' requires an integer, got %s"
-             (typ_name other))
+      let t = type_of ctx env e in
+      if is_int_like t then t
+      else
+        Error.failf pos "negation '-' requires an integer, got %s"
+          (typ_name t)
   | Ast.Cast (e, ann, pos) ->
       let src = type_of ctx env e in
       let tgt = resolve_type_ann ctx ann in
@@ -460,7 +463,14 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
               the same name namespace as locals at use sites. *)
            (match List.assoc_opt name ctx.ext_consts with
             | Some t -> t
-            | None -> Error.failf pos "undefined variable '%s'" name))
+            | None ->
+                (* Bare function name in expression position becomes a
+                   function pointer.  Top-level only — qualified paths
+                   (`mod::fn`) aren't supported as values yet. *)
+                (match lookup_fn ctx [name] with
+                 | Some (_, { param_tys; ret_ty; _ }) ->
+                     TFnPtr { params = param_tys; ret = ret_ty }
+                 | None -> Error.failf pos "undefined variable '%s'" name)))
   | Ast.TupleLit (es, _) ->
       TTuple (List.map (type_of ctx env) es)
   | Ast.StructLit { tname; fields; base; pos } ->
@@ -519,6 +529,42 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
       let arg_tys = List.map (type_of ctx env) args in
       (match lookup_builtin path with
        | Some b -> b.bcheck ~pos ~arg_tys ~allow_void
+       | None ->
+      (* Indirect call through a function-pointer value (local var
+         or extern const).  Single-segment path only — qualified
+         indirect calls aren't supported. *)
+      let fnptr_local =
+        match path with
+        | [n] ->
+            (match List.assoc_opt n env with
+             | Some (TFnPtr { params; ret }) -> Some (n, params, ret)
+             | _ ->
+                 (match List.assoc_opt n ctx.ext_consts with
+                  | Some (TFnPtr { params; ret }) -> Some (n, params, ret)
+                  | _ -> None))
+        | _ -> None
+      in
+      (match fnptr_local with
+       | Some (n, params, ret) ->
+           let expected_n = List.length params in
+           let got = List.length args in
+           if expected_n <> got then
+             Error.failf pos "function pointer '%s' expects %d argument(s), got %d"
+               n expected_n got;
+           List.iteri
+             (fun i (exp, act) ->
+               if not (typ_eq exp act)
+                  && not (int_lit_fits (List.nth args i) exp)
+               then
+                 Error.failf pos
+                   "argument %d of '%s': expected %s, got %s"
+                   (i + 1) n (typ_name exp) (typ_name act))
+             (List.combine params arg_tys);
+           (match ret with
+            | Some t -> t
+            | None when allow_void -> t_i32
+            | None ->
+                Error.failf pos "'%s' returns void, cannot use as a value" n)
        | None ->
       let display = String.concat "::" path in
       (match lookup_fn ctx path with
@@ -591,7 +637,7 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
             | Some t -> t
             | None when allow_void -> t_i32   (* placeholder, caller discards *)
             | None ->
-                Error.failf pos "'%s' returns void, cannot use as a value" display))))
+                Error.failf pos "'%s' returns void, cannot use as a value" display)))))
   | Ast.MethodCall { receiver; name; args; pos } ->
       (* Method call `recv.name(args)`: resolve the method on receiver's
          struct (which lives in the global fn index under the struct's
@@ -1089,7 +1135,16 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
     | Ast.BoolLit (b, _) -> TBoolLit b
     | Ast.NullLit _ -> TNullLit
     | Ast.StringLit (s, _) -> TStringLit s
-    | Ast.Var (n, _) -> TVar n
+    | Ast.Var (n, _) ->
+        (* Disambiguate a bare name: local / extern const → TVar,
+           top-level fn name → TFnRef (codegen emits raw mangled
+           identifier; C autoconverts to fn pointer). *)
+        if List.mem_assoc n env || List.mem_assoc n ctx.ext_consts then
+          TVar n
+        else
+          (match lookup_fn ctx [n] with
+           | Some (_, { mangled; _ }) -> TFnRef mangled
+           | None -> TVar n)   (* will fail in type_of upstream *)
     | Ast.Neg (sub, _) -> TNeg (elab_expr ctx env sub)
     | Ast.BinOp (op, l, r, _) ->
         TBinOp (op, elab_expr ctx env l, elab_expr ctx env r)
@@ -1140,12 +1195,30 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
              let name = match path with [n] -> n | _ -> assert false in
              TBuiltinCall { name; args = targs }
          | None ->
-             let mangled =
-               match lookup_fn ctx path with
-               | Some (_, s) -> s.mangled
-               | None -> assert false   (* validated upstream *)
+             (* Indirect call through a fn-ptr local / extern const
+                takes precedence over the global fn lookup so
+                shadowing works as expected. *)
+             let fnptr_local =
+               match path with
+               | [n] when List.mem_assoc n env
+                          && (match List.assoc n env with
+                              | TFnPtr _ -> true | _ -> false) ->
+                   Some n
+               | [n] when List.mem_assoc n ctx.ext_consts
+                          && (match List.assoc n ctx.ext_consts with
+                              | TFnPtr _ -> true | _ -> false) ->
+                   Some n
+               | _ -> None
              in
-             TCall { mangled; args = targs }))
+             (match fnptr_local with
+              | Some n -> TCall { mangled = n; args = targs }
+              | None ->
+                  let mangled =
+                    match lookup_fn ctx path with
+                    | Some (_, s) -> s.mangled
+                    | None -> assert false   (* validated upstream *)
+                  in
+                  TCall { mangled; args = targs })))
     | Ast.MethodCall { receiver; name; args; _ } ->
         let trecv = elab_expr ctx env receiver in
         let struct_path =
@@ -1625,7 +1698,8 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
           (Some e', p)
     in
     match te.e with
-    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _ ->
+    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _
+    | TFnRef _ ->
         (te, [])
     | TNeg sub ->
         let (sub', p) = walk_expr ~allow_top:false sub in
@@ -1924,22 +1998,34 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
    Reads the `.ty` field on each typed expression — no `type_of` dispatch
    needed. *)
 let collect_tuple_types_of tfuncs =
-  let seen = ref [] in
-  let add t =
+  let tup_seen = ref [] in
+  let fnptr_seen = ref [] in
+  let add_tuple t =
     let name = mangle_typ t in
-    if not (List.exists (fun (n, _) -> n = name) !seen) then
-      seen := (name, t) :: !seen
+    if not (List.exists (fun (n, _) -> n = name) !tup_seen) then
+      tup_seen := (name, t) :: !tup_seen
+  in
+  let add_fnptr t =
+    let name = mangle_typ t in
+    if not (List.exists (fun (n, _) -> n = name) !fnptr_seen) then
+      fnptr_seen := (name, t) :: !fnptr_seen
   in
   let rec walk_typ t =
     match t with
-    | TTuple ts -> add t; List.iter walk_typ ts
+    | TTuple ts -> add_tuple t; List.iter walk_typ ts
+    | TFnPtr { params; ret } ->
+        add_fnptr t;
+        List.iter walk_typ params;
+        Option.iter walk_typ ret
+    | TPtr inner -> walk_typ inner
     | _ -> ()
   in
   let walk_typ_ann ann = walk_typ (type_of_ann ann) in
   let rec walk_texpr (te : texpr) =
     walk_typ te.ty;
     match te.e with
-    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _ -> ()
+    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _
+    | TFnRef _ -> ()
     | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> walk_texpr sub
     | TBinOp (_, l, r) -> walk_texpr l; walk_texpr r
     | TCall { args; _ } | TBuiltinCall { args; _ } -> List.iter walk_texpr args
@@ -1975,7 +2061,7 @@ let collect_tuple_types_of tfuncs =
       List.iter (fun (p : Ast.param) -> walk_typ_ann p.pty) tf.tf_func.params;
       List.iter walk_tstmt tf.tf_body)
     tfuncs;
-  List.rev !seen
+  (List.rev !tup_seen, List.rev !fnptr_seen)
 
 (* Detect heap usage by scanning the typed bodies for `TNew` expressions or
    builtin `free(p)` calls — both are emitted in C only when one of them is
@@ -1985,7 +2071,8 @@ let uses_heap_of tfuncs =
     match te.e with
     | TNew _ -> true
     | TBuiltinCall { name = "free"; _ } -> true
-    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _ -> false
+    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _
+    | TFnRef _ -> false
     | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> walk_texpr sub
     | TBinOp (_, l, r) -> walk_texpr l || walk_texpr r
     | TCall { args; _ } | TBuiltinCall { args; _ } ->
@@ -2282,7 +2369,7 @@ let check_program program : tprogram =
           tf_body = tbody; tf_lets = lets })
       all_funcs
   in
-  let tp_tuple_types = collect_tuple_types_of tp_funcs in
+  let (tp_tuple_types, tp_fnptr_types) = collect_tuple_types_of tp_funcs in
   let tp_uses_heap = uses_heap_of tp_funcs in
   (* Drain monomorphic instances accumulated during resolve_type_ann
      into the program's indexes.  Instances accumulate in reverse
@@ -2299,5 +2386,6 @@ let check_program program : tprogram =
     tp_modules = modules;
     tp_uses_heap;
     tp_tuple_types;
+    tp_fnptr_types;
     tp_c_includes = flat.c_includes;
     tp_ext_consts = ext_consts }

@@ -23,6 +23,11 @@ type type_ann =
                                           args=[] }` until typecheck binds
                                           them as type variables. *)
   | TyPtr of type_ann                  (* `*T` *)
+  | TyFnPtr of { params : type_ann list; ret : type_ann option }
+                                       (* `fn(T1, T2) -> R` as a type.
+                                          C-side maps to a function
+                                          pointer.  No variadic in this
+                                          form yet. *)
 
 type binop =
   | Add | Sub | Mul | Div

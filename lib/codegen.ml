@@ -111,6 +111,11 @@ let rec c_type_prefix = function
       (* Pointer types render as `<base> *` with no trailing space, so
          `c_decl t name` produces `<base> *name`. *)
       strip_trailing_space (c_type_prefix inner) ^ " *"
+  | TFnPtr _ as t ->
+      (* Reference fn-ptr types by typedef alias (emitted up top by
+         gen_program).  Avoids the awkward C "function returning
+         function pointer" syntax at every use site. *)
+      mangle_typ t ^ " "
   | TNullPtr ->
       (* TNullPtr never owns a declaration — it is the type of the literal
          `null`, always consumed under a concrete TPtr context. *)
@@ -148,7 +153,7 @@ let emit_print : builtin_emit =
           assert false  (* typecheck rejects print on these *)
       | TString -> "\"%s\\n\""
       | TTuple _ | TStruct _ | TExtStruct _ | TExtAlias _ | TEnum _
-      | TPtr _ | TNullPtr | TVar _ ->
+      | TPtr _ | TFnPtr _ | TNullPtr | TVar _ ->
           assert false  (* typecheck rejected this earlier *)
     in
     let cast =
@@ -211,6 +216,10 @@ let rec gen_expr buf (te : texpr) =
       Buffer.add_string buf (escape_c s);
       Buffer.add_char buf '"'
   | TVar name -> Buffer.add_string buf name
+  | TFnRef name ->
+      (* Bare function name in expression context — C autoconverts
+         to function pointer, no `&` needed. *)
+      Buffer.add_string buf name
   | TNeg sub ->
       emit_unary buf '-' sub
         ~simple:(function TIntLit _ | TVar _ -> true | _ -> false)
@@ -822,6 +831,30 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   if tp.tp_tuple_types <> [] then begin
     Buffer.add_char buf '\n';
     List.iter (emit_tuple_struct buf) tp.tp_tuple_types
+  end;
+  (* Typedef aliases for every fn-pointer type used in the program.
+     Use sites then refer to the alias name, sidestepping C's
+     awkward fn-ptr declaration syntax (especially nasty when
+     fn-ptr is itself a return type). *)
+  if tp.tp_fnptr_types <> [] then begin
+    Buffer.add_char buf '\n';
+    List.iter (fun (name, t) ->
+      match t with
+      | TFnPtr { params; ret } ->
+          let r = match ret with
+            | None -> "void "
+            | Some t -> c_type_prefix t
+          in
+          let ps = match params with
+            | [] -> "void"
+            | _ -> String.concat ", "
+                     (List.map (fun t ->
+                        strip_trailing_space (c_type_prefix t)) params)
+          in
+          Buffer.add_string buf
+            (Printf.sprintf "typedef %s(*%s)(%s);\n" r name ps)
+      | _ -> assert false)
+      tp.tp_fnptr_types
   end;
   (* Generic fns (with TVar in their resolved signature) skip codegen
      for the same reason as generic struct/enum decls — the

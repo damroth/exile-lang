@@ -72,6 +72,18 @@ let rec parse_type s =
       (* `?T` is sugar for `Option<T>` — the prelude's optional-value
          enum.  Resolves at typecheck like any other generic application. *)
       Ast.TyStruct { path = ["Option"]; args = [ parse_type s ] }
+  | (Token.Fn, _) ->
+      (* `fn(T1, T2) -> R` — function pointer type.  No variadic on
+         this form for now; come back when there's a real use case. *)
+      expect s Token.LParen;
+      let params =
+        if peek s = Token.RParen then begin
+          ignore (advance s); []
+        end else
+          parse_comma_list ~close:Token.RParen ~item:parse_type s
+      in
+      let ret = parse_ret_ty s in
+      Ast.TyFnPtr { params; ret }
   | (Token.Ident "int", _) -> ti true Ast.W32     (* alias for i32 *)
   | (Token.Ident "i8",  _) -> ti true Ast.W8
   | (Token.Ident "i16", _) -> ti true Ast.W16
@@ -126,6 +138,11 @@ let rec parse_type s =
          name, (T,...)), got %s"
         (Token.pp t)
 
+and parse_ret_ty s =
+  match peek s with
+  | Token.Arrow -> ignore (advance s); Some (parse_type s)
+  | _ -> None
+
 let parse_param s =
   let (name, _) = expect_ident s ~what:"parameter name" in
   expect s Token.Colon;
@@ -135,11 +152,6 @@ let parse_param s =
 let parse_params s =
   expect s Token.LParen;
   parse_comma_list ~close:Token.RParen ~item:parse_param s
-
-let parse_ret_ty s =
-  match peek s with
-  | Token.Arrow -> ignore (advance s); Some (parse_type s)
-  | _ -> None
 
 let rec parse_primary s =
   let (t, p) = advance s in

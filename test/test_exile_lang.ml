@@ -877,6 +877,30 @@ let () =
      }\n"
     "#include <stdio.h>\n\nextern int putchar(int c);\n\nint main(void) {\n    putchar(72);\n    return 0;\n}\n";
 
+  check "fn pointer as type: typedef + bare-name reference + indirect call"
+    "fn add(a: c_int, b: c_int) -> c_int { return a + b; }\n\
+     fn main() {\n\
+    \    let f: fn(c_int, c_int) -> c_int = add;\n\
+    \    print(f(40, 2) as int);\n\
+     }\n"
+    "#include <stdio.h>\n\ntypedef int (*fn2_cint_cint_to_cint)(int, int);\n\nstatic int ex_add(int a, int b);\n\nstatic int ex_add(int a, int b) {\n    return a + b;\n}\n\nint main(void) {\n    fn2_cint_cint_to_cint f;\n    f = ex_add;\n    printf(\"%ld\\n\", (long)(((long)f(40, 2))));\n    return 0;\n}\n";
+
+  check_no_cc "fn pointer as extern fn parameter: signal-style callback"
+    "extern fn signal(sig: c_int, handler: fn(c_int)) -> fn(c_int);\n\
+     fn my_handler(s: c_int) { print(s as int); }\n\
+     fn main() {\n\
+    \    let prev: fn(c_int) = signal(2, my_handler);\n\
+     }\n"
+    "#include <stdio.h>\n\ntypedef void (*fn1_cint_to_void)(int);\n\nextern fn1_cint_to_void signal(int sig, fn1_cint_to_void handler);\nstatic void ex_my_handler(int s);\n\nstatic void ex_my_handler(int s) {\n    printf(\"%ld\\n\", (long)(((long)s)));\n}\n\nint main(void) {\n    fn1_cint_to_void prev;\n    prev = signal(2, ex_my_handler);\n    return 0;\n}\n";
+
+  check_error "fn pointer call with wrong arity rejected"
+    "fn add(a: c_int, b: c_int) -> c_int { return a + b; }\n\
+     fn main() {\n\
+    \    let f: fn(c_int, c_int) -> c_int = add;\n\
+    \    let _ = f(1);\n\
+     }\n"
+    "function pointer 'f' expects 2 argument(s), got 1";
+
   check "extern fn variadic: trailing `, ...` emits C-style varargs"
     "extern fn printf(fmt: str, ...) -> c_int;\n\
      fn main() {\n\

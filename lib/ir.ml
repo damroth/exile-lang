@@ -52,6 +52,14 @@ type typ =
                                           on the C side. *)
   | TEnum of string list               (* absolute path: e.g. ["geom"; "Shape"] *)
   | TPtr of typ                        (* `*T` *)
+  | TFnPtr of { params : typ list; ret : typ option }
+                                       (* `fn(T1, T2) -> R` — function
+                                          pointer.  None ret = void.
+                                          Codegen emits the awkward C
+                                          fn-ptr form (ret followed by
+                                          parenthesised name) via a
+                                          dedicated helper that knows
+                                          the binder name. *)
   | TNullPtr                           (* type of `null` literal — compatible
                                           with any TPtr; never reaches codegen
                                           as a declaration type *)
@@ -184,6 +192,9 @@ let rec type_of_ann = function
   | Ast.TyTuple ts -> TTuple (List.map type_of_ann ts)
   | Ast.TyStruct { path; args = _ } -> TStruct path
   | Ast.TyPtr t -> TPtr (type_of_ann t)
+  | Ast.TyFnPtr { params; ret } ->
+      TFnPtr { params = List.map type_of_ann params;
+               ret = Option.map type_of_ann ret }
 
 let int_typ_name signed width =
   let prefix = if signed then "i" else "u" in
@@ -210,6 +221,10 @@ let rec typ_name = function
   | TExtAlias n -> n
   | TEnum path -> String.concat "::" path
   | TPtr t -> "*" ^ typ_name t
+  | TFnPtr { params; ret } ->
+      let ps = String.concat ", " (List.map typ_name params) in
+      let r = match ret with None -> "" | Some t -> " -> " ^ typ_name t in
+      "fn(" ^ ps ^ ")" ^ r
   | TNullPtr -> "*<null>"
   | TVar n -> n
 
@@ -253,6 +268,10 @@ let rec mangle_typ = function
   | TExtStruct n -> n              (* raw — opaque struct lives in C namespace *)
   | TExtAlias n -> n               (* raw — opaque type alias lives in C namespace *)
   | TPtr t -> "ptr_" ^ mangle_typ t
+  | TFnPtr { params; ret } ->
+      let ps = String.concat "_" (List.map mangle_typ params) in
+      let r = match ret with None -> "void" | Some t -> mangle_typ t in
+      Printf.sprintf "fn%d_%s_to_%s" (List.length params) ps r
   | TVar n ->
       (* TVar should be substituted away by monomorphization before any
          consumer asks for a C name.  If we see one here it's a compiler
@@ -273,6 +292,9 @@ let rec subst_typ bindings = function
        | None -> t)
   | TPtr inner -> TPtr (subst_typ bindings inner)
   | TTuple ts -> TTuple (List.map (subst_typ bindings) ts)
+  | TFnPtr { params; ret } ->
+      TFnPtr { params = List.map (subst_typ bindings) params;
+               ret = Option.map (subst_typ bindings) ret }
   | (TInt _ | TCInt _ | TCShort _ | TCLong _
     | TCChar | TCSChar | TCUChar | TCVoid
     | TBool | TString | TStruct _ | TExtStruct _
@@ -286,6 +308,9 @@ let rec is_concrete = function
   | TVar _ -> false
   | TPtr inner -> is_concrete inner
   | TTuple ts -> List.for_all is_concrete ts
+  | TFnPtr { params; ret } ->
+      List.for_all is_concrete params
+      && (match ret with Some t -> is_concrete t | None -> true)
   | TInt _ | TCInt _ | TCShort _ | TCLong _
   | TCChar | TCSChar | TCUChar | TCVoid
   | TBool | TString | TStruct _ | TExtStruct _
@@ -300,6 +325,11 @@ type texpr_node =
   | TNullLit
   | TStringLit of string
   | TVar of string
+  | TFnRef of string                    (* reference to a fn by C-side
+                                           name — codegen emits the
+                                           raw identifier in expression
+                                           position; C autoconverts to
+                                           function pointer. *)
   | TNeg of texpr
   | TBinOp of Ast.binop * texpr * texpr
   | TCall of { mangled : string; args : texpr list }
@@ -393,6 +423,13 @@ type tprogram = {
   tp_modules : (string list * bool) list;
   tp_uses_heap : bool;
   tp_tuple_types : (string * typ) list;
+  tp_fnptr_types : (string * typ) list;  (* unique TFnPtr types used
+                                            in the program; codegen
+                                            emits one `typedef` per
+                                            entry so use-sites can
+                                            reference an alias name
+                                            instead of inlining the
+                                            awkward C fn-ptr syntax *)
   tp_c_includes : string list;        (* `@c_include("...")` paths in
                                          source order *)
   tp_ext_consts : (string * typ) list; (* `extern const NAME: T;` —

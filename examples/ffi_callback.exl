@@ -1,0 +1,34 @@
+// Function pointer types — `fn(T1, T2) -> R` as a value-level type.
+// Codegen emits a `typedef` for each unique fn-ptr shape used in
+// the program, then references the alias everywhere — sidestepping
+// C's awkward declaration syntax for fn-pointer return types.
+//
+// A bare exile fn name in expression position autoconverts to its
+// fn-ptr (no `&` prefix), matching C semantics.  An indirect call
+// through a fn-ptr local just uses the variable name like any
+// other call site — codegen emits `f(args)` and C dereferences
+// automatically.
+//
+// The companion stub mirrors a qsort-style "apply" callback: takes
+// an int and a function-pointer, returns the result of applying
+// the function to the int (so we can demo both call directions
+// across the FFI).
+
+extern fn apply_int as ffi_apply_int(x: c_int, f: fn(c_int) -> c_int) -> c_int;
+
+fn double_it(x: c_int) -> c_int {
+    return x + x;
+}
+
+fn negate(x: c_int) -> c_int {
+    return -x;
+}
+
+fn main() {
+    print(apply_int(21, double_it) as int);     // 42
+    print(apply_int(7, negate) as int);         // -7
+
+    // Function pointer as a let-bound value, called indirectly.
+    let f: fn(c_int) -> c_int = double_it;
+    print(f(50) as int);                        // 100
+}
