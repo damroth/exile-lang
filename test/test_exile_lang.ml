@@ -1216,6 +1216,31 @@ let () =
      }\n"
     "#include <stdio.h>\n\nlong Allocator__helper(void);\n\nlong Allocator__helper(void) {\n    return 1;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(Allocator__helper()));\n    return 0;\n}\n";
 
+  check "pub use: struct re-export — Inner visible without raw:: prefix"
+    "pub mod raw { pub struct Inner { x: int } }\n\
+     pub use raw::Inner;\n\
+     fn make() -> Inner { return Inner { x: 42 }; }\n\
+     fn main() { print(make().x); }\n"
+    "#include <stdio.h>\n\nstruct raw__Inner { long x; };\n\nstatic struct raw__Inner ex_make(void);\n\nstatic struct raw__Inner ex_make(void) {\n    {\n        struct raw__Inner __exile_ret;\n        __exile_ret.x = 42;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_make().x));\n    return 0;\n}\n";
+
+  check "pub use: fn re-export — helper visible without raw:: prefix"
+    "pub mod raw { pub fn helper() -> int { return 7; } }\n\
+     pub use raw::helper;\n\
+     fn main() { print(helper()); }\n"
+    "#include <stdio.h>\n\nlong raw__helper(void);\n\nlong raw__helper(void) {\n    return 7;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(raw__helper()));\n    return 0;\n}\n";
+
+  check_error "pub use of unknown name rejected at use site"
+    "pub mod raw { pub fn helper() -> int { return 7; } }\n\
+     pub use raw::nonexistent;\n\
+     fn main() { print(nonexistent()); }\n"
+    "unknown function 'nonexistent'";
+
+  check_error "pub use wildcard rejected"
+    "pub mod raw { pub fn a() {} pub fn b() {} }\n\
+     pub use raw::*;\n\
+     fn main() {}\n"
+    "'pub use foo::*;' wildcard re-export not supported (re-export individual names)";
+
   check "fn-ptr field call: recv.field(args) routes through TIndirectCall"
     "struct Op { f: fn(int) -> int }\n\
      fn id(x: int) -> int { return x; }\n\

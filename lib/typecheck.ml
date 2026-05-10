@@ -59,6 +59,12 @@ type fn_ctx = {
                                              fn-instance bodies be re-elaborated
                                              from the source AST after
                                              monomorphization picks args. *)
+  aliases : (string list * string * string list) list;
+                                          (* `pub use foo::bar;` re-exports.
+                                             Each: (scope, local_name, target).
+                                             Lookup at scope for local_name
+                                             redirects to target path resolved
+                                             against the same scope. *)
 }
 
 let rec is_prefix xs ys =
@@ -75,20 +81,60 @@ let parent_path = function
 (* Walk up the current scope, trying [resolve] at each ancestor level.
    [path] is split into a relative [(mod_path, name)] pair; for each
    prefix we try [resolve (prefix @ mod_path) name].  Used by both fn
-   and struct lookup, which only differ in [resolve]. *)
+   and struct lookup, which only differ in [resolve].
+
+   Re-exports (`pub use foo::bar;`) are checked at each ancestor too:
+   if the lookup name matches an alias declared in this scope, retry
+   the resolution with the alias's target path.  Cycles through aliases
+   are guarded by a visited-paths set. *)
 let walk_scope_up ~resolve ctx (path : string list) =
   let (suggested_mod, name) =
     match List.rev path with
     | [] -> failwith "empty path"
     | n :: rest -> (List.rev rest, n)
   in
+  let try_alias prefix lookup_name =
+    (* Single-segment lookups (e.g. `Window`) at scope `prefix` may
+       redirect through `pub use foo::bar;` declared at `prefix`.
+       Returns target path if matched. *)
+    if suggested_mod <> [] then None
+    else
+      List.find_map (fun (alias_scope, local_name, target_path) ->
+        if alias_scope = prefix && local_name = lookup_name
+        then Some target_path
+        else None)
+        ctx.aliases
+  in
+  let visited = ref [] in
   let rec walk prefix =
-    match resolve (prefix @ suggested_mod) name with
-    | Some r -> Some r
-    | None ->
-        (match prefix with
-         | [] -> None
-         | _ -> walk (parent_path prefix))
+    let key = (prefix, suggested_mod, name) in
+    if List.mem key !visited then None
+    else begin
+      visited := key :: !visited;
+      match resolve (prefix @ suggested_mod) name with
+      | Some r -> Some r
+      | None ->
+          (match try_alias prefix name with
+           | Some target ->
+               (* Recurse with the alias target as the new path; keep
+                  walking from the same prefix so the target resolves
+                  against scopes visible from the alias declaration. *)
+               let (alias_mod, alias_name) =
+                 match List.rev target with
+                 | n :: rest -> (List.rev rest, n)
+                 | [] -> ([], "")
+               in
+               (match resolve (prefix @ alias_mod) alias_name with
+                | Some r -> Some r
+                | None ->
+                    (match prefix with
+                     | [] -> None
+                     | _ -> walk (parent_path prefix)))
+           | None ->
+               (match prefix with
+                | [] -> None
+                | _ -> walk (parent_path prefix)))
+    end
   in
   walk ctx.scope
 
@@ -1982,6 +2028,12 @@ type flat = {
      resolution (relative-to-scope, ancestor walk-up) happens later
      once the struct index is built. *)
   impls : (string list * Ast.impl_block) list;
+  (* `pub use foo::bar;` re-exports.  Each entry is
+     (scope, local_name, target_relative_path).  Lookup at `scope` for
+     `local_name` redirects to `target_relative_path` resolved against
+     the same scope.  Multi-segment local_name not supported (the parser
+     only emits single-segment Use names today). *)
+  aliases : (string list * string * string list) list;
 }
 
 let flatten_items program =
@@ -2009,6 +2061,7 @@ let flatten_items program =
          `raw::%s` or import via `use raw::*;`"
         kind name name
   in
+  let aliases = ref [] in
   let rec walk path items =
     List.iter
       (fun item -> match item with
@@ -2052,6 +2105,18 @@ let flatten_items program =
               Error.failf pos
                 "'@c_include' must be at top level, not inside a module";
             c_includes := inc_path :: !c_includes
+        | Ast.Use { path = use_path; is_pub; pos; is_wildcard = false }
+            when is_pub ->
+            (* `pub use foo::bar;` — single-name re-export.  Record as
+               (scope = current walk path, local_name = last segment of
+               use_path, target = full use_path).  Lookup at this scope
+               for `local_name` will redirect to `use_path` resolved
+               against the same scope. *)
+            (match List.rev use_path with
+             | local_name :: _ ->
+                 aliases := (path, local_name, use_path, pos) :: !aliases
+             | [] ->
+                 Error.failf pos "internal: empty 'pub use' path")
         | Ast.Use { pos; _ } ->
             Error.failf pos
               "internal: 'use' declaration reached codegen unresolved \
@@ -2059,6 +2124,7 @@ let flatten_items program =
       items
   in
   walk [] program;
+  let drop_pos = List.map (fun (s, n, t, _) -> (s, n, t)) in
   { funcs = List.rev !funcs;
     structs = List.rev !structs;
     ext_structs = List.rev !ext_structs;
@@ -2067,11 +2133,12 @@ let flatten_items program =
     c_includes = List.rev !c_includes;
     enums = List.rev !enums;
     modules = List.rev !modules;
-    impls = List.rev !impls }
+    impls = List.rev !impls;
+    aliases = drop_pos (List.rev !aliases) }
 
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
-let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~struct_index ~enum_index ~modules flat =
+let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~struct_index ~enum_index ~modules ~aliases flat =
   List.filter_map
     (fun (p, (f : Ast.func), mangled) ->
       if f.name = "main" then None
@@ -2079,7 +2146,7 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~struct_in
         let ctx = {
           global = []; structs = struct_index; enums = enum_index;
           modules; scope = p; tparams = f.tparams;
-          tvar_bindings = []; fn_asts = [];
+          tvar_bindings = []; fn_asts = []; aliases;
           instances; ext_structs; ext_types; ext_consts; ret_ty = None;
         } in
         Some
@@ -2116,7 +2183,7 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~
       let ctx = {
         global = []; structs = skeleton; enums;
         modules; scope = p; tparams = s.stparams;
-        tvar_bindings = []; fn_asts = [];
+        tvar_bindings = []; fn_asts = []; aliases = [];
         instances; ext_structs; ext_types; ext_consts; ret_ty = None;
       } in
       { skel with
@@ -2151,7 +2218,7 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
       let ctx = {
         global = []; structs = struct_index; enums = skeleton;
         modules; scope = p; tparams = e.etparams;
-        tvar_bindings = []; fn_asts = [];
+        tvar_bindings = []; fn_asts = []; aliases = [];
         instances; ext_structs; ext_types; ext_consts; ret_ty = None;
       } in
       let variants =
@@ -2306,7 +2373,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
         let ctx = {
           global = []; structs = struct_index; enums = enum_index;
           modules; scope = parent_path; tparams = [];
-          tvar_bindings = []; fn_asts = [];
+          tvar_bindings = []; fn_asts = []; aliases = [];
           instances; ext_structs; ext_types; ext_consts; ret_ty = None;
         } in
         let s =
@@ -2588,6 +2655,7 @@ let check_program program : tprogram =
         let ctx_for_ann = {
           global = []; structs = []; enums = []; modules = flat.modules;
           scope = []; tparams = []; tvar_bindings = []; fn_asts = [];
+          aliases = [];
           instances = mono_state;
           ext_structs; ext_types; ext_consts = [];
           ret_ty = None;
@@ -2619,7 +2687,7 @@ let check_program program : tprogram =
     impl_funcs;
   let global =
     build_global_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
-      ~struct_index ~enum_index ~modules all_funcs
+      ~struct_index ~enum_index ~modules ~aliases:flat.aliases all_funcs
   in
   (* Side-table for re-elaborating generic fn instances after the main
      loop: keyed by skeleton mangled name, value is (parent path, AST). *)
@@ -2637,7 +2705,7 @@ let check_program program : tprogram =
     let ctx0 = {
       global; structs = struct_index; enums = enum_index;
       modules; scope = path; tparams = f.tparams;
-      tvar_bindings; fn_asts;
+      tvar_bindings; fn_asts; aliases = flat.aliases;
       instances = mono_state; ext_structs; ext_types; ext_consts;
       ret_ty = None;
     } in

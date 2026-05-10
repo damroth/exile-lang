@@ -48,7 +48,12 @@ and expand_item ~from_file ~loaded ~stack item =
         expand_items ~from_file ~loaded ~stack m.Ast.mitems
       in
       [ Ast.Module { m with mitems = mitems' } ]
-  | Ast.Use { path; is_wildcard; pos } ->
+  | Ast.Use ({ path; is_wildcard; is_pub; pos } as u) ->
+      (* `pub use foo::bar;` is a re-export — handled entirely by typecheck
+         via its alias table, never crosses file boundaries.  Pass through
+         unchanged so flatten_items sees it. *)
+      if is_pub then [ Ast.Use u ]
+      else
       let display =
         String.concat "::" path ^ (if is_wildcard then "::*" else "")
       in

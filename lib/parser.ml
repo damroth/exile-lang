@@ -831,17 +831,20 @@ let parse_use_items s =
   | `Single ->
       expect s Token.Semicolon;
       let name = List.hd (List.rev prefix) in
-      [ (Some name, Ast.Use { path = prefix; is_wildcard = false; pos = p }) ]
+      [ (Some name, Ast.Use { path = prefix; is_wildcard = false;
+                               is_pub = false; pos = p }) ]
   | `Wildcard ->
       expect s Token.Semicolon;
-      [ (None, Ast.Use { path = prefix; is_wildcard = true; pos = p }) ]
+      [ (None, Ast.Use { path = prefix; is_wildcard = true;
+                         is_pub = false; pos = p }) ]
   | `Group ->
       let rec collect_names acc =
         match advance s with
         | (Token.Ident n, _) ->
             let path = prefix @ [n] in
             let acc =
-              (Some n, Ast.Use { path; is_wildcard = false; pos = p }) :: acc
+              (Some n, Ast.Use { path; is_wildcard = false;
+                                 is_pub = false; pos = p }) :: acc
             in
             (match peek s with
              | Token.RBrace -> ignore (advance s); List.rev acc
@@ -934,9 +937,21 @@ let rec parse_item s seen =
          methods are looked up via the target struct, not by a free name. *)
       [ (None, Ast.Impl ib) ]
   | Token.Use ->
-      if is_pub then
-        Error.failf (peek_pos s) "'pub use' is not yet supported";
       let items = parse_use_items s in
+      let items =
+        if is_pub then
+          List.map (fun (name_opt, item) ->
+            match item with
+            | Ast.Use u ->
+                if u.is_wildcard then
+                  Error.failf u.pos
+                    "'pub use foo::*;' wildcard re-export not supported \
+                     (re-export individual names)";
+                (name_opt, Ast.Use { u with is_pub = true })
+            | other -> (name_opt, other))
+            items
+        else items
+      in
       (* Each named item gets dedup-checked against the surrounding scope.
          Wildcards introduce no name and are skipped here; the loader handles
          file-level deduplication. *)

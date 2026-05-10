@@ -225,7 +225,13 @@ type extern_const = {
 type item =
   | Function of func
   | Module of module_decl
-  | Use of { path : string list; is_wildcard : bool; pos : Pos.t }
+  | Use of { path : string list; is_wildcard : bool;
+             is_pub : bool; pos : Pos.t }
+                                          (* `pub use foo::bar;` re-exports
+                                             `bar` from this scope under
+                                             the same name.  Resolution
+                                             redirects single-segment
+                                             lookups of `bar` to `foo::bar`. *)
   | Struct of struct_decl
   | ExternStruct of extern_struct
   | ExternType of extern_type           (* `extern type LONG;` — raw C
