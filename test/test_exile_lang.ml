@@ -932,6 +932,61 @@ let () =
      "
     "'extern const FOO' must declare its type with `: T`, got ';'";
 
+  check_no_cc "extern var: declared as mutable global, read+write via raw::"
+    "pub mod raw {\n\
+    \    extern struct Library;\n\
+    \    extern var DOSBase: *Library;\n\
+    \    extern fn lib_open() -> *Library;\n\
+     }\n\
+     fn main() {\n\
+    \    raw::DOSBase = raw::lib_open();\n\
+    \    if raw::DOSBase == null { print(0); } else { print(1); }\n\
+     }\n"
+    "#include <stdio.h>\n\nextern struct Library *DOSBase;\n\nextern struct Library *lib_open(void);\n\nint main(void) {\n    DOSBase = lib_open();\n    if (DOSBase == ((void *)0)) {\n        printf(\"%ld\\n\", (long)(0));\n    } else {\n        printf(\"%ld\\n\", (long)(1));\n    }\n    return 0;\n}\n";
+
+  check_error "extern var rejects assignment to extern const"
+    "pub mod raw { extern const FOO: c_int; }\n\
+     fn main() { raw::FOO = 5; }\n"
+    "cannot assign to 'raw::FOO' — it's an `extern const` (use `extern var` for mutable globals)";
+
+  check_error "extern var requires type annotation"
+    "pub mod raw { extern var X; }\n\
+     fn main() {}\n"
+    "'extern var X' must declare its type with `: T`, got ';'";
+
+  check_error "extern var must live in mod raw"
+    "extern var DOSBase: c_int;\n\
+     fn main() {}\n"
+    "'extern var DOSBase' must live inside a `mod raw { ... }` block (FFI hygiene rule); wrap with `mod raw { ... }` and call as `raw::DOSBase` or import via `use raw::*;`";
+
+  check_no_cc "register-pinned extern fn: @reg(...) emits __reg(\"...\") prefix"
+    "pub mod raw {\n\
+    \    extern struct Library;\n\
+    \    @amiga_lib(SysBase)\n\
+    \    extern fn open_library as OpenLibrary(\n\
+    \        @reg(a1) name: *c_char,\n\
+    \        @reg(d0) version: c_uint\n\
+    \    ) -> *Library;\n\
+     }\n\
+     fn main() { print(0); }\n"
+    "#include <stdio.h>\n\nextern struct Library *OpenLibrary(__reg(\"a1\") char *name, __reg(\"d0\") unsigned int version);\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(0));\n    return 0;\n}\n";
+
+  check_error "@reg(...) rejected on non-extern fn"
+    "fn bad(@reg(d0) x: int) -> int { return x; }\n\
+     fn main() { print(0); }\n"
+    "'@reg(...)' on parameter 'x' is only allowed on `extern fn`";
+
+  check_error "@reg(...) rejects invalid m68k register name"
+    "pub mod raw { extern fn foo(@reg(zzz) x: c_int); }\n\
+     fn main() {}\n"
+    "invalid m68k register 'zzz' in '@reg(zzz)' on parameter 'x' — expected one of d0..d7 or a0..a6";
+
+  check_error "@amiga_lib rejected on non-extern fn"
+    "@amiga_lib(SysBase)\n\
+     fn bad() -> int { return 0; }\n\
+     fn main() {}\n"
+    "'@amiga_lib' can only decorate `extern fn` declarations";
+
   check "extern fn name mapping: `as <C-name>` decouples exile and C names"
     "pub mod raw { extern fn put_char as putchar(c: c_int) -> c_int; }\n\
      fn main() {\n\

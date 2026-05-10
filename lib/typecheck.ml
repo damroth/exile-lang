@@ -49,6 +49,12 @@ type fn_ctx = {
                                             looked up in Var expr after
                                             local env miss; codegen
                                             emits raw NAME at use sites *)
+  ext_vars : (string * typ) list;        (* `extern var NAME: T;` —
+                                            mutable global counterpart of
+                                            ext_consts.  Looked up in Var
+                                            expr (read) and in Assign
+                                            (write).  Codegen emits raw
+                                            NAME at use sites. *)
   ret_ty : typ option;                   (* enclosing fn's return type;
                                             None for void.  Used by `try`
                                             to validate / construct the
@@ -579,18 +585,21 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
       (match List.assoc_opt name env with
        | Some t -> t
        | None ->
-           (* Fall through to globals: `extern const NAME: T;` lives in
+           (* Fall through to globals: extern const / extern var live in
               the same name namespace as locals at use sites. *)
            (match List.assoc_opt name ctx.ext_consts with
             | Some t -> t
             | None ->
-                (* Bare function name in expression position becomes a
-                   function pointer.  Top-level only — qualified paths
-                   (`mod::fn`) aren't supported as values yet. *)
-                (match lookup_fn ctx [name] with
-                 | Some (_, { param_tys; ret_ty; _ }) ->
-                     TFnPtr { params = param_tys; ret = ret_ty }
-                 | None -> Error.failf pos "undefined variable '%s'" name)))
+                (match List.assoc_opt name ctx.ext_vars with
+                 | Some t -> t
+                 | None ->
+                     (* Bare function name in expression position becomes a
+                        function pointer.  Top-level only — qualified paths
+                        (`mod::fn`) aren't supported as values yet. *)
+                     (match lookup_fn ctx [name] with
+                      | Some (_, { param_tys; ret_ty; _ }) ->
+                          TFnPtr { params = param_tys; ret = ret_ty }
+                      | None -> Error.failf pos "undefined variable '%s'" name))))
   | Ast.TupleLit (es, _) ->
       TTuple (List.map (type_of ctx env) es)
   | Ast.StructLit { tname; fields; base; pos } ->
@@ -661,7 +670,10 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
              | _ ->
                  (match List.assoc_opt n ctx.ext_consts with
                   | Some (TFnPtr { params; ret }) -> Some (n, params, ret)
-                  | _ -> None))
+                  | _ ->
+                      (match List.assoc_opt n ctx.ext_vars with
+                       | Some (TFnPtr { params; ret }) -> Some (n, params, ret)
+                       | _ -> None)))
         | _ -> None
       in
       (match fnptr_local with
@@ -876,6 +888,21 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
             | None ->
                 Error.failf pos "'%s' returns void, cannot use as a value" display))
   | Ast.EnumLit { tname; variant; args; pos } ->
+      (* Fall-back BEFORE enum lookup: qualified path with no payload
+         may be a reference to an `extern var`/`extern const` (e.g.
+         `raw::DOSBase`).  Last segment is the C symbol name; ext_*
+         tables are flat.  When tname is empty (bare `Variant`) the
+         normal enum path takes over. *)
+      let extern_global = match args with
+        | Ast.EATuple [] when tname <> [] ->
+            (match List.assoc_opt variant ctx.ext_vars with
+             | Some t -> Some t
+             | None -> List.assoc_opt variant ctx.ext_consts)
+        | _ -> None
+      in
+      (match extern_global with
+       | Some t -> t
+       | None ->
       let e =
         match lookup_enum ctx tname with
         | Some e -> e
@@ -992,7 +1019,7 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
                Error.failf pos
                  "field '%s' of '%s': expected %s, got %s"
                  n display (typ_name exp) (typ_name act)) fs);
-      TEnum result_path
+      TEnum result_path)
   | Ast.Match { scrutinee; arms; pos } ->
       let scrut_ty = type_of ctx env scrutinee in
       let ename_path =
@@ -1312,10 +1339,12 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
     | Ast.NullLit _ -> TNullLit
     | Ast.StringLit (s, _) -> TStringLit s
     | Ast.Var (n, _) ->
-        (* Disambiguate a bare name: local / extern const → TVar,
-           top-level fn name → TFnRef (codegen emits raw mangled
+        (* Disambiguate a bare name: local / extern const / extern var
+           → TVar, top-level fn name → TFnRef (codegen emits raw mangled
            identifier; C autoconverts to fn pointer). *)
-        if List.mem_assoc n env || List.mem_assoc n ctx.ext_consts then
+        if List.mem_assoc n env
+           || List.mem_assoc n ctx.ext_consts
+           || List.mem_assoc n ctx.ext_vars then
           TVar n
         else
           (match lookup_fn ctx [n] with
@@ -1382,6 +1411,10 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                    Some n
                | [n] when List.mem_assoc n ctx.ext_consts
                           && (match List.assoc n ctx.ext_consts with
+                              | TFnPtr _ -> true | _ -> false) ->
+                   Some n
+               | [n] when List.mem_assoc n ctx.ext_vars
+                          && (match List.assoc n ctx.ext_vars with
                               | TFnPtr _ -> true | _ -> false) ->
                    Some n
                | _ -> None
@@ -1457,6 +1490,15 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
              in
              TCall { mangled; args = trecv_adj :: targs }
          | Some (_, { param_tys = []; _ }) -> assert false)
+    | Ast.EnumLit { tname; variant; args; _ }
+        when args = Ast.EATuple [] && tname <> []
+             && (List.mem_assoc variant ctx.ext_vars
+                 || List.mem_assoc variant ctx.ext_consts) ->
+        (* Fall-back path mirroring type_of: qualified `raw::DOSBase`
+           with no payload is a reference to an extern var/const.
+           Codegen emits the raw C symbol (last segment), same as
+           regular extern lookup. *)
+        TVar variant
     | Ast.EnumLit { tname = _; variant; args; _ } ->
         (* type_of (called above into `ty`) already instantiated any
            generic enum, so `ty = TEnum inst_path` points at the
@@ -1786,11 +1828,41 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
         List.iter (fun (n, ty) -> add_decl n ty pos) pairs;
         (List.rev_append pairs env,
          TLetTuple { names; value = tvalue; pos })
-    | Ast.Assign { name; value; pos } ->
-        if not (List.mem_assoc name env) then
-          Error.failf pos "assignment to undefined variable '%s'" name;
+    | Ast.Assign { path; value; pos } ->
+        let display = String.concat "::" path in
+        let target_ty =
+          match path with
+          | [name] ->
+              (match List.assoc_opt name env with
+               | Some t -> Some t
+               | None ->
+                   (* Single-segment can also be an unqualified extern var
+                      (e.g. when bare `DOSBase` is in scope through the
+                      flat ext_vars list). *)
+                   List.assoc_opt name ctx.ext_vars)
+          | _ ->
+              (* Qualified path: must resolve to an extern var.  Today
+                 ext_vars is flat (last segment is the C symbol name);
+                 require the last segment to match an entry. *)
+              (match List.rev path with
+               | last :: _ -> List.assoc_opt last ctx.ext_vars
+               | [] -> None)
+        in
+        (match target_ty with
+         | None ->
+             let last_name = match List.rev path with
+               | n :: _ -> n
+               | [] -> ""
+             in
+             if List.mem_assoc last_name ctx.ext_consts then
+               Error.failf pos
+                 "cannot assign to '%s' — it's an `extern const` (use \
+                  `extern var` for mutable globals)" display
+             else
+               Error.failf pos "assignment to undefined variable '%s'" display
+         | Some _ -> ());
         let tvalue = elab_expr ctx env value in
-        (env, TAssign { name; value = tvalue; pos })
+        (env, TAssign { path; value = tvalue; pos })
     | Ast.AssignField { target; field; value; pos } ->
         let ttarget = elab_expr ctx env target in
         let path =
@@ -1973,9 +2045,9 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
     | TLetTuple { names; value; pos } ->
         let (v', p) = walk_expr ~allow_top:true value in
         p @ [ TLetTuple { names; value = v'; pos } ]
-    | TAssign { name; value; pos } ->
+    | TAssign { path; value; pos } ->
         let (v', p) = walk_expr ~allow_top:true value in
-        p @ [ TAssign { name; value = v'; pos } ]
+        p @ [ TAssign { path; value = v'; pos } ]
     | TAssignField { target; field; value; pos } ->
         let (t', pt) = walk_expr ~allow_top:false target in
         let (v', pv) = walk_expr ~allow_top:false value in
@@ -2021,6 +2093,8 @@ type flat = {
   ext_structs : Ast.extern_struct list;   (* always top-level, raw C names *)
   ext_types : Ast.extern_type list;       (* `extern type Foo;` aliases *)
   ext_consts : Ast.extern_const list;     (* `extern const NAME: T;` *)
+  ext_vars : Ast.extern_var list;         (* `extern var NAME: T;` —
+                                             mutable global, l-value *)
   enums : (string list * Ast.enum_decl) list;
   modules : (string list * bool) list;
   c_includes : string list;               (* `@c_include("...")` paths *)
@@ -2042,6 +2116,7 @@ let flatten_items program =
   let ext_structs = ref [] in
   let ext_types = ref [] in
   let ext_consts = ref [] in
+  let ext_vars = ref [] in
   let enums = ref [] in
   let modules = ref [] in
   let impls = ref [] in
@@ -2092,6 +2167,10 @@ let flatten_items program =
             require_raw ~current_path:path ~kind:"const"
               ~name:ec.Ast.ecname ~pos:ec.Ast.ecpos;
             ext_consts := ec :: !ext_consts
+        | Ast.ExternVar ev ->
+            require_raw ~current_path:path ~kind:"var"
+              ~name:ev.Ast.evname ~pos:ev.Ast.evpos;
+            ext_vars := ev :: !ext_vars
         | Ast.Enum e ->
             enums := (path, e) :: !enums
         | Ast.Module m ->
@@ -2130,6 +2209,7 @@ let flatten_items program =
     ext_structs = List.rev !ext_structs;
     ext_types = List.rev !ext_types;
     ext_consts = List.rev !ext_consts;
+    ext_vars = List.rev !ext_vars;
     c_includes = List.rev !c_includes;
     enums = List.rev !enums;
     modules = List.rev !modules;
@@ -2147,6 +2227,7 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~struct_in
           global = []; structs = struct_index; enums = enum_index;
           modules; scope = p; tparams = f.tparams;
           tvar_bindings = []; fn_asts = []; aliases;
+          ext_vars = [];
           instances; ext_structs; ext_types; ext_consts; ret_ty = None;
         } in
         Some
@@ -2184,6 +2265,7 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~
         global = []; structs = skeleton; enums;
         modules; scope = p; tparams = s.stparams;
         tvar_bindings = []; fn_asts = []; aliases = [];
+        ext_vars = [];
         instances; ext_structs; ext_types; ext_consts; ret_ty = None;
       } in
       { skel with
@@ -2219,6 +2301,7 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
         global = []; structs = struct_index; enums = skeleton;
         modules; scope = p; tparams = e.etparams;
         tvar_bindings = []; fn_asts = []; aliases = [];
+        ext_vars = [];
         instances; ext_structs; ext_types; ext_consts; ret_ty = None;
       } in
       let variants =
@@ -2374,6 +2457,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
           global = []; structs = struct_index; enums = enum_index;
           modules; scope = parent_path; tparams = [];
           tvar_bindings = []; fn_asts = []; aliases = [];
+          ext_vars = [];
           instances; ext_structs; ext_types; ext_consts; ret_ty = None;
         } in
         let s =
@@ -2546,10 +2630,12 @@ let prelude_items () =
   let mk_method name tparams params ret body = {
     Ast.name; c_name = name; tparams; params; ret_ty = ret; body;
     is_pub = true; is_extern = false; is_variadic = false;
-    tier_hint = Some "full"; pos;
+    tier_hint = Some "full"; amiga_lib = None; pos;
   } in
   let self_param =
-    { Ast.pname = "self"; pty = Ast.TyStruct { path = ["Allocator"]; args = [] } }
+    { Ast.pname = "self";
+      pty = Ast.TyStruct { path = ["Allocator"]; args = [] };
+      preg = None }
   in
   let alloc_method =
     mk_method "alloc" ["T"] [self_param]
@@ -2557,7 +2643,8 @@ let prelude_items () =
   in
   let free_method =
     mk_method "free" ["T"]
-      [ self_param; { Ast.pname = "p"; pty = Ast.TyPtr (tvar "T") } ]
+      [ self_param;
+        { Ast.pname = "p"; pty = Ast.TyPtr (tvar "T"); preg = None } ]
       None free_body
   in
   let alloc_impl = {
@@ -2650,18 +2737,24 @@ let check_program program : tprogram =
   let ext_types =
     List.map (fun (et : Ast.extern_type) -> et.xtname) flat.ext_types
   in
+  let ann_only_ctx = {
+    global = []; structs = []; enums = []; modules = flat.modules;
+    scope = []; tparams = []; tvar_bindings = []; fn_asts = [];
+    aliases = [];
+    ext_vars = [];
+    instances = mono_state;
+    ext_structs; ext_types; ext_consts = [];
+    ret_ty = None;
+  } in
   let ext_consts =
     List.map (fun (ec : Ast.extern_const) ->
-        let ctx_for_ann = {
-          global = []; structs = []; enums = []; modules = flat.modules;
-          scope = []; tparams = []; tvar_bindings = []; fn_asts = [];
-          aliases = [];
-          instances = mono_state;
-          ext_structs; ext_types; ext_consts = [];
-          ret_ty = None;
-        } in
-        (ec.ecname, resolve_type_ann ctx_for_ann ec.ecty))
+        (ec.ecname, resolve_type_ann ann_only_ctx ec.ecty))
       flat.ext_consts
+  in
+  let ext_vars =
+    List.map (fun (ev : Ast.extern_var) ->
+        (ev.evname, resolve_type_ann ann_only_ctx ev.evty))
+      flat.ext_vars
   in
   let struct_index =
     build_struct_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
@@ -2706,6 +2799,7 @@ let check_program program : tprogram =
       global; structs = struct_index; enums = enum_index;
       modules; scope = path; tparams = f.tparams;
       tvar_bindings; fn_asts; aliases = flat.aliases;
+      ext_vars;
       instances = mono_state; ext_structs; ext_types; ext_consts;
       ret_ty = None;
     } in
@@ -2832,4 +2926,5 @@ let check_program program : tprogram =
     tp_tuple_types;
     tp_fnptr_types;
     tp_c_includes = flat.c_includes;
-    tp_ext_consts = ext_consts }
+    tp_ext_consts = ext_consts;
+    tp_ext_vars = ext_vars }

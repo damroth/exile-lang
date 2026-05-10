@@ -397,8 +397,17 @@ let rec emit_value_into_temp buf indent temp_name (value : texpr) =
    `return`; both are rejected by `emit_simple_stmt`. *)
 and emit_simple_stmt buf indent stmt =
   match stmt with
-  | TLet { name; value; _ } | TAssign { name; value; _ } ->
+  | TLet { name; value; _ } ->
       emit_value_into_temp buf indent name value
+  | TAssign { path; value; _ } ->
+      (* Single-segment path → bare local name; multi-segment qualifies
+         an `extern var` whose C symbol is the LAST segment (extern uses
+         raw c_name regardless of module path). *)
+      let lhs = match List.rev path with
+        | n :: _ -> n
+        | [] -> assert false
+      in
+      emit_value_into_temp buf indent lhs value
   | TLetTuple { names; value; _ } ->
       emit_let_tuple buf indent names value
   | TAssignField { target; field; value; _ } ->
@@ -718,6 +727,14 @@ let emit_fn_sig buf (tf : tfunc) =
          let zipped = List.combine params tys in
          add_separated buf ", "
            (fun ((p : Ast.param), t) ->
+             (* `@reg(X)` on an extern fn param: emit `__reg("X")`
+                before the C type so Bebbo amiga-gcc places the
+                argument in that m68k register at the call site. *)
+             (match p.preg with
+              | Some r ->
+                  Buffer.add_string buf
+                    (Printf.sprintf "__reg(\"%s\") " r)
+              | None -> ());
              Buffer.add_string buf (c_decl t p.pname))
            zipped);
     if f.is_variadic then Buffer.add_string buf ", ...";
@@ -837,6 +854,14 @@ let gen_program ?(annotate = false) (tp : tprogram) =
       Buffer.add_string buf (c_decl t name);
       Buffer.add_string buf ";\n")
       tp.tp_ext_consts
+  end;
+  if tp.tp_ext_vars <> [] then begin
+    Buffer.add_char buf '\n';
+    List.iter (fun (name, t) ->
+      Buffer.add_string buf "extern ";
+      Buffer.add_string buf (c_decl t name);
+      Buffer.add_string buf ";\n")
+      tp.tp_ext_vars
   end;
   (* Named structs first, in source order — typically their fields refer
      to types declared earlier.  Tuple structs after, so any tuple whose

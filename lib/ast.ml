@@ -124,12 +124,26 @@ let expr_pos = function
   | StructLit { pos; _ } | New { pos; _ }
   | MethodCall { pos; _ } | EnumLit { pos; _ } | Match { pos; _ } -> pos
 
-type param = { pname : string; pty : type_ann }
+type param = {
+  pname : string;
+  pty : type_ann;
+  preg : string option;              (* `@reg(d0)` AmigaOS register pin.
+                                        Validated against m68k register
+                                        names (d0..d7, a0..a6).  Codegen
+                                        emits `__reg("X")` before the
+                                        param C type.  Only legal on
+                                        extern fn params. *)
+}
 
 type stmt =
   | Let of { name : string; value : expr; ty_ann : type_ann option; pos : Pos.t }
   | LetTuple of { names : string list; value : expr; pos : Pos.t }
-  | Assign of { name : string; value : expr; pos : Pos.t }
+  | Assign of { path : string list; value : expr; pos : Pos.t }
+                                          (* Single-segment path = local
+                                             variable assignment; multi-
+                                             segment = qualified ref to an
+                                             `extern var` (e.g.
+                                             `raw::DOSBase = ...`). *)
   | AssignField of { target : expr; field : string; value : expr; pos : Pos.t }
   | AssignDeref of { target : expr; value : expr; pos : Pos.t }
   | Return of expr * Pos.t
@@ -162,6 +176,14 @@ type func = {
                                         after [params]; arg types past
                                         [params] not type-checked.  Only
                                         legal on extern fns. *)
+  amiga_lib : string option;         (* `@amiga_lib(SysBase)` — marks an
+                                        extern fn as an AmigaOS ROM library
+                                        call whose base register lives at
+                                        the named global.  Metadata for
+                                        bindings hygiene; the actual
+                                        register glue comes from Bebbo's
+                                        amiga.lib stubs (linker pulls them
+                                        in given the matching prototype). *)
   tier_hint : string option;         (* `@tier(core|standard|full)` attribute
                                         on the decl, raw string at parse
                                         time; typecheck validates and feeds
@@ -222,6 +244,17 @@ type extern_const = {
   ecpos : Pos.t;
 }
 
+(* `extern var DOSBase: *Library;` — globalna zmienna nie-funkcyjna,
+   ustawiana przez kod C-strony (np. AmigaOS `OpenLibrary` zapisuje do
+   `DOSBase`).  Identyczna struktura jak [extern_const] — różnica
+   wyłącznie w semantyce (var jest l-value: można przypisać; const
+   nie) i w codegenie (brak `const` w C deklaracji). *)
+type extern_var = {
+  evname : string;
+  evty : type_ann;
+  evpos : Pos.t;
+}
+
 type item =
   | Function of func
   | Module of module_decl
@@ -240,6 +273,10 @@ type item =
   | ExternConst of extern_const         (* `extern const FOO: c_uint;`
                                            — global value resolved by
                                            the linker.  Top-level only. *)
+  | ExternVar of extern_var             (* `extern var DOSBase: *Library;`
+                                           — global mutable variable
+                                           resolved by the linker.  Like
+                                           ExternConst but assignable. *)
   | Enum of enum_decl
   | Impl of impl_block
   | CInclude of { path : string; pos : Pos.t }

@@ -51,6 +51,7 @@ type t =
   | At
   | Type
   | Const
+  | Var
   | SizeOf
   | Ident of string
   | Int of int
@@ -77,7 +78,7 @@ let pp = function
   | True -> "'true'" | False -> "'false'"
   | Question -> "'?'" | Orelse -> "'orelse'" | Try -> "'try'"
   | Extern -> "'extern'" | Ellipsis -> "'...'" | At -> "'@'"
-  | Type -> "'type'" | Const -> "'const'"
+  | Type -> "'type'" | Const -> "'const'" | Var -> "'var'"
   | SizeOf -> "'size_of'"
   | Ident s -> Printf.sprintf "identifier '%s'" s
   | Int n -> Printf.sprintf "integer %d" n

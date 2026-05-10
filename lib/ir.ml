@@ -411,7 +411,10 @@ and texpr = {
 type tstmt =
   | TLet of { name : string; value : texpr; pos : Pos.t }
   | TLetTuple of { names : string list; value : texpr; pos : Pos.t }
-  | TAssign of { name : string; value : texpr; pos : Pos.t }
+  | TAssign of { path : string list; value : texpr; pos : Pos.t }
+                                          (* Single-segment path = local
+                                             variable; multi-segment = qualified
+                                             reference to an `extern var`. *)
   | TAssignField of { target : texpr; field : string; value : texpr;
                       pos : Pos.t }
   | TAssignDeref of { target : texpr; value : texpr; pos : Pos.t }
@@ -461,6 +464,10 @@ type tprogram = {
                                          source order *)
   tp_ext_consts : (string * typ) list; (* `extern const NAME: T;` —
                                          resolved-type pairs.  Codegen
-                                         emits `extern <type> NAME;` in
-                                         the forward-decl block. *)
+                                         emits `extern const <type> NAME;`
+                                         in the forward-decl block. *)
+  tp_ext_vars : (string * typ) list;   (* `extern var NAME: T;` —
+                                         mutable global counterpart of
+                                         tp_ext_consts.  Codegen emits
+                                         `extern <type> NAME;` (no const). *)
 }

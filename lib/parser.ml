@@ -143,11 +143,32 @@ and parse_ret_ty s =
   | Token.Arrow -> ignore (advance s); Some (parse_type s)
   | _ -> None
 
+(* `@reg(d0)` attribute on a parameter pins it to an m68k register in
+   the emitted C declaration.  Only legal on extern fns (validated
+   later by typecheck); accepted in the regular [parse_param] grammar
+   here for syntactic uniformity, then rejected if misused. *)
+let parse_param_reg_attr s =
+  match peek s with
+  | Token.At ->
+      let at_pos = peek_pos s in
+      ignore (advance s);
+      let (attr_name, _) = expect_ident s ~what:"attribute name after '@'" in
+      if attr_name <> "reg" then
+        Error.failf at_pos
+          "only '@reg(<m68k-register>)' is supported on parameters, \
+           got '@%s'" attr_name;
+      expect s Token.LParen;
+      let (reg_name, reg_pos) = expect_ident s ~what:"m68k register name" in
+      expect s Token.RParen;
+      Some (reg_name, reg_pos)
+  | _ -> None
+
 let parse_param s =
+  let reg = parse_param_reg_attr s in
   let (name, _) = expect_ident s ~what:"parameter name" in
   expect s Token.Colon;
   let ty = parse_type s in
-  Ast.{ pname = name; pty = ty }
+  Ast.{ pname = name; pty = ty; preg = Option.map fst reg }
 
 let parse_params s =
   expect s Token.LParen;
@@ -555,7 +576,12 @@ and parse_stmt s =
            expect s Token.Semicolon;
            (match e with
             | Ast.Var (name, vp) ->
-                Ast.Assign { name; value; pos = vp }
+                Ast.Assign { path = [name]; value; pos = vp }
+            | Ast.EnumLit { tname; variant; args = Ast.EATuple []; pos = ep } ->
+                (* `raw::DOSBase = ...` parses LHS as EnumLit (qualified
+                   path with no parens).  Lower to a path-assign — typecheck
+                   resolves the path to an `extern var`. *)
+                Ast.Assign { path = tname @ [variant]; value; pos = ep }
             | Ast.FieldAccess (target, field, fp) ->
                 Ast.AssignField { target; field; value; pos = fp }
             | Ast.Deref (target, dp) ->
@@ -614,6 +640,17 @@ let rec parse_function s seen_fns ~is_pub =
         check_dup_params rest
   in
   check_dup_params params;
+  (* `@reg(...)` makes sense only on extern fn params (it pins the
+     param to an m68k register in the emitted C declaration).  Regular
+     fns don't get a calling convention from us — reject up front. *)
+  List.iter (fun (p : Ast.param) ->
+    match p.preg with
+    | Some _ ->
+        Error.failf name_pos
+          "'@reg(...)' on parameter '%s' is only allowed on `extern fn`"
+          p.pname
+    | None -> ())
+    params;
   let ret_ty = parse_ret_ty s in
   if name = "main" && params <> [] then
     Error.raise_ name_pos "'main' must take no parameters";
@@ -626,7 +663,7 @@ let rec parse_function s seen_fns ~is_pub =
   expect s Token.RBrace;
   (name, Ast.{ name; c_name = name; tparams; params; ret_ty; body; is_pub;
                is_extern = false; is_variadic = false;
-               tier_hint = None; pos = name_pos })
+               tier_hint = None; amiga_lib = None; pos = name_pos })
 
 (* `extern fn name(args) -> T;` — forward decl for a C-side symbol.
    Same param/return grammar as a regular fn, but body is replaced by
@@ -668,6 +705,21 @@ and parse_extern_fn_after_keyword s seen_fns =
         check_dup_params rest
   in
   check_dup_params params;
+  (* Validate `@reg(...)` register names.  m68k has d0-d7 + a0-a6 (a7
+     is the stack pointer and isn't user-addressable).  Reject invalid
+     names early — Bebbo gcc would otherwise emit obscure C errors. *)
+  let valid_regs =
+    [ "d0"; "d1"; "d2"; "d3"; "d4"; "d5"; "d6"; "d7";
+      "a0"; "a1"; "a2"; "a3"; "a4"; "a5"; "a6" ]
+  in
+  List.iter (fun (p : Ast.param) ->
+    match p.preg with
+    | Some r when not (List.mem r valid_regs) ->
+        Error.failf name_pos
+          "invalid m68k register '%s' in '@reg(%s)' on parameter '%s' \
+           — expected one of d0..d7 or a0..a6" r r p.pname
+    | _ -> ())
+    params;
   let ret_ty = parse_ret_ty s in
   (match peek s with
    | Token.Semicolon -> ignore (advance s)
@@ -684,7 +736,7 @@ and parse_extern_fn_after_keyword s seen_fns =
                   by FFI hygiene rule, and the whole point is for the
                   surrounding stdlib / wrappers to call them. *)
                is_pub = true; is_extern = true; is_variadic;
-               tier_hint = None; pos = name_pos })
+               tier_hint = None; amiga_lib = None; pos = name_pos })
 
 (* Like parse_params but accepts a trailing `, ...` to mark the fn as
    C-style variadic.  `(...)` alone (no fixed params before ellipsis)
@@ -798,6 +850,35 @@ and parse_extern_const_after_keyword s seen =
          name (Token.pp t));
   Ast.{ ecname = name; ecty = ty; ecpos = name_pos }
 
+(* `extern var NAME: T;` — top-level mutable global declared on the C
+   side.  Like extern const but assignable; codegen omits the `const`
+   qualifier.  Used for AmigaOS library bases (DOSBase, SysBase, ...)
+   that get set by `OpenLibrary()` at runtime. *)
+and parse_extern_var_after_keyword s seen =
+  expect s Token.Var;
+  let (name, name_pos) =
+    expect_ident s ~what:"variable name after 'extern var'"
+  in
+  if List.mem name seen then
+    Error.failf name_pos "name '%s' already used in this scope" name;
+  if peek s = Token.Lt then
+    Error.failf name_pos
+      "'extern var %s' cannot have generic parameters" name;
+  (match peek s with
+   | Token.Colon -> ignore (advance s)
+   | t ->
+       Error.failf (peek_pos s)
+         "'extern var %s' must declare its type with `: T`, got %s"
+         name (Token.pp t));
+  let ty = parse_type s in
+  (match peek s with
+   | Token.Semicolon -> ignore (advance s)
+   | t ->
+       Error.failf (peek_pos s)
+         "expected ';' after 'extern var %s: ...', got %s"
+         name (Token.pp t));
+  Ast.{ evname = name; evty = ty; evpos = name_pos }
+
 (* Parse a `use` declaration and return one or more `(name option, Use item)`
    pairs.  Wildcard imports introduce no name into the surrounding scope so
    they pair with `None`.
@@ -908,10 +989,13 @@ let rec parse_item s seen =
        | Token.Const ->
            let ec = parse_extern_const_after_keyword s seen in
            [ (Some ec.Ast.ecname, Ast.ExternConst ec) ]
+       | Token.Var ->
+           let ev = parse_extern_var_after_keyword s seen in
+           [ (Some ev.Ast.evname, Ast.ExternVar ev) ]
        | t ->
            Error.failf (peek_pos s)
-             "expected 'fn', 'struct', 'type' or 'const' after 'extern', \
-              got %s"
+             "expected 'fn', 'struct', 'type', 'const' or 'var' after \
+              'extern', got %s"
              (Token.pp t))
   | Token.Mod ->
       let (name, m) = parse_module s seen ~is_pub in
@@ -1022,9 +1106,29 @@ let rec parse_item s seen =
              in
              (name_opt, item'))
              next_items
+       | "amiga_lib" ->
+           expect s Token.LParen;
+           let (base_name, _) =
+             expect_ident s ~what:"library base name after '@amiga_lib('"
+           in
+           expect s Token.RParen;
+           let next_items = parse_item s seen in
+           List.map (fun (name_opt, item) ->
+             let item' = match item with
+               | Ast.Function f when f.is_extern ->
+                   Ast.Function { f with amiga_lib = Some base_name }
+               | Ast.Function _ ->
+                   Error.failf at_pos
+                     "'@amiga_lib' can only decorate `extern fn` declarations"
+               | _ ->
+                   Error.failf at_pos
+                     "'@amiga_lib' can only decorate `extern fn` declarations"
+             in
+             (name_opt, item'))
+             next_items
        | other ->
            Error.failf at_pos
-             "unknown attribute '@%s' (only '@c_include' and '@tier' are \
+             "unknown attribute '@%s' (only '@c_include', '@tier' and '@amiga_lib' are \
               supported)"
              other)
   | _ ->
