@@ -840,28 +840,32 @@ let () =
      — they must share the same Option/Result shape";
 
   check "extern fn: forward decl + raw call site name (no ex_ prefix)"
-    "extern fn my_add(a: int, b: int) -> int;\n\
+    "pub mod raw { extern fn my_add(a: int, b: int) -> int; }\n\
      fn main() {\n\
-    \    print(my_add(2, 3));\n\
-     }\n"
+         print(raw::my_add(2, 3));\n\
+     }\n\
+     "
     "#include <stdio.h>\n\nextern long my_add(long a, long b);\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(my_add(2, 3)));\n    return 0;\n}\n";
 
   check "extern fn: void return (no -> T)"
-    "extern fn my_init();\n\
+    "pub mod raw { extern fn my_init(); }\n\
      fn main() {\n\
-    \    my_init();\n\
-     }\n"
+         raw::my_init();\n\
+     }\n\
+     "
     "#include <stdio.h>\n\nextern void my_init(void);\n\nint main(void) {\n    my_init();\n    return 0;\n}\n";
 
   check_error "extern fn rejects body block"
-    "extern fn foo() { print(1); }\n\
-     fn main() {}\n"
+    "pub mod raw { extern fn foo() { print(1); } }\n\
+     fn main() {}\n\
+     "
     "'extern fn foo' must end with ';', not a body — extern declares an \
      existing C symbol";
 
   check_error "extern fn rejects generic params"
-    "extern fn map<T>(x: T) -> T;\n\
-     fn main() {}\n"
+    "pub mod raw { extern fn map<T>(x: T) -> T; }\n\
+     fn main() {}\n\
+     "
     "'extern fn map' cannot have generic parameters — C signatures must \
      be concrete";
 
@@ -872,21 +876,25 @@ let () =
      referenceable";
 
   check_no_cc "c_short / c_long / c_char / c_void: full int alias suite"
-    "extern fn alloc(n: c_ulong) -> *c_void;\n\
-     extern fn free_p(p: *c_void);\n\
-     extern fn read_byte(p: *c_void) -> c_uchar;\n\
-     extern fn small(x: c_short, y: c_ushort) -> c_long;\n\
+    "pub mod raw {\n\
+         extern fn alloc(n: c_ulong) -> *c_void;\n\
+         extern fn free_p(p: *c_void);\n\
+         extern fn read_byte(p: *c_void) -> c_uchar;\n\
+         extern fn small(x: c_short, y: c_ushort) -> c_long;\n\
+     }\n\
      fn main() {\n\
-    \    let buf: *c_void = alloc(1024);\n\
-    \    let _b: c_uchar = read_byte(buf);\n\
-    \    let _r: c_long = small(-100, 200);\n\
-    \    free_p(buf);\n\
-     }\n"
+         let buf: *c_void = raw::alloc(1024);\n\
+         let _b: c_uchar = raw::read_byte(buf);\n\
+         let _r: c_long = raw::small(-100, 200);\n\
+         raw::free_p(buf);\n\
+     }\n\
+     "
     "#include <stdio.h>\n\nextern void *alloc(unsigned long n);\nextern void free_p(void *p);\nextern unsigned char read_byte(void *p);\nextern long small(short x, unsigned short y);\n\nint main(void) {\n    void *buf;\n    unsigned char _b;\n    long _r;\n    buf = alloc(1024);\n    _b = read_byte(buf);\n    _r = small(-100, 200);\n    free_p(buf);\n    return 0;\n}\n";
 
   check_error "c_void cannot be used as a value type"
-    "extern fn weird() -> c_void;\n\
-     fn main() {}\n"
+    "pub mod raw { extern fn weird() -> c_void; }\n\
+     fn main() {}\n\
+     "
     "'c_void' has no values — only `*c_void` is usable as a type";
 
   check "@c_include emits #include line in generated C"
@@ -895,34 +903,41 @@ let () =
     "#include <stdio.h>\n#include \"stdio.h\"\n\nint main(void) {\n    return 0;\n}\n";
 
   check_no_cc "extern type T: alias visible as a name in fn signatures"
-    "extern type LONG;\n\
-     extern fn add(a: LONG, b: LONG) -> LONG;\n\
+    "pub mod raw {\n\
+         extern type LONG;\n\
+         extern fn add(a: LONG, b: LONG) -> LONG;\n\
+     }\n\
      fn main() {\n\
-    \    let r: LONG = add(40, 2);\n\
-    \    print(r as int);\n\
-     }\n"
+         let r: LONG = raw::add(40, 2);\n\
+         print(r as int);\n\
+     }\n\
+     "
     "#include <stdio.h>\n\nextern LONG add(LONG a, LONG b);\n\nint main(void) {\n    LONG r;\n    r = add(40, 2);\n    printf(\"%ld\\n\", (long)(((long)r)));\n    return 0;\n}\n";
 
   check_error "extern type rejects bare (non-pointer-or-by-value) misuse... actually allowed"
-    "extern type LONG;\n\
-     fn main() { print(LONG); }\n"
+    "pub mod raw { extern type LONG; }\n\
+     fn main() { print(LONG); }\n\
+     "
     "undefined variable 'LONG'";
 
   check_no_cc "extern const NAME: T — value resolved by linker"
-    "extern const VERSION: c_int;\n\
-     fn main() { print(VERSION as int); }\n"
+    "pub mod raw { extern const VERSION: c_int; }\n\
+     fn main() { print(VERSION as int); }\n\
+     "
     "#include <stdio.h>\n\nextern const int VERSION;\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(((long)VERSION)));\n    return 0;\n}\n";
 
   check_error "extern const requires explicit type annotation"
-    "extern const FOO;\n\
-     fn main() {}\n"
+    "pub mod raw { extern const FOO; }\n\
+     fn main() {}\n\
+     "
     "'extern const FOO' must declare its type with `: T`, got ';'";
 
   check "extern fn name mapping: `as <C-name>` decouples exile and C names"
-    "extern fn put_char as putchar(c: c_int) -> c_int;\n\
+    "pub mod raw { extern fn put_char as putchar(c: c_int) -> c_int; }\n\
      fn main() {\n\
-    \    put_char(72);\n\
-     }\n"
+         raw::put_char(72);\n\
+     }\n\
+     "
     "#include <stdio.h>\n\nextern int putchar(int c);\n\nint main(void) {\n    putchar(72);\n    return 0;\n}\n";
 
   check "fn pointer as type: typedef + bare-name reference + indirect call"
@@ -934,11 +949,12 @@ let () =
     "#include <stdio.h>\n\ntypedef int (*fn2_cint_cint_to_cint)(int, int);\n\nstatic int ex_add(int a, int b);\n\nstatic int ex_add(int a, int b) {\n    return a + b;\n}\n\nint main(void) {\n    fn2_cint_cint_to_cint f;\n    f = ex_add;\n    printf(\"%ld\\n\", (long)(((long)f(40, 2))));\n    return 0;\n}\n";
 
   check_no_cc "fn pointer as extern fn parameter: signal-style callback"
-    "extern fn signal(sig: c_int, handler: fn(c_int)) -> fn(c_int);\n\
+    "pub mod raw { extern fn signal(sig: c_int, handler: fn(c_int)) -> fn(c_int); }\n\
      fn my_handler(s: c_int) { print(s as int); }\n\
      fn main() {\n\
-    \    let prev: fn(c_int) = signal(2, my_handler);\n\
-     }\n"
+         let prev: fn(c_int) = raw::signal(2, my_handler);\n\
+     }\n\
+     "
     "#include <stdio.h>\n\ntypedef void (*fn1_cint_to_void)(int);\n\nextern fn1_cint_to_void signal(int sig, fn1_cint_to_void handler);\nstatic void ex_my_handler(int s);\n\nstatic void ex_my_handler(int s) {\n    printf(\"%ld\\n\", (long)(((long)s)));\n}\n\nint main(void) {\n    fn1_cint_to_void prev;\n    prev = signal(2, ex_my_handler);\n    return 0;\n}\n";
 
   check_error "fn pointer call with wrong arity rejected"
@@ -950,84 +966,108 @@ let () =
     "function pointer 'f' expects 2 argument(s), got 1";
 
   check "extern fn variadic: trailing `, ...` emits C-style varargs"
-    "extern fn printf(fmt: str, ...) -> c_int;\n\
+    "pub mod raw { extern fn printf(fmt: str, ...) -> c_int; }\n\
      fn main() {\n\
-    \    printf(\"x = %d\\n\", 42);\n\
-    \    printf(\"two: %d %d\\n\", 7, 13);\n\
-    \    printf(\"no args\\n\");\n\
-     }\n"
+         raw::printf(\"x = %d\\n\", 42);\n\
+         raw::printf(\"two: %d %d\\n\", 7, 13);\n\
+         raw::printf(\"no args\\n\");\n\
+     }\n\
+     "
     "#include <stdio.h>\n\nextern int printf(const char *fmt, ...);\n\nint main(void) {\n    printf(\"x = %d\\n\", 42);\n    printf(\"two: %d %d\\n\", 7, 13);\n    printf(\"no args\\n\");\n    return 0;\n}\n";
 
   check_error "variadic call: too few args (below fixed-param count) rejected"
-    "extern fn printf(fmt: str, ...) -> c_int;\n\
-     fn main() { printf(); }\n"
-    "function 'printf' expects at least 1 argument(s), got 0";
+    "pub mod raw { extern fn printf(fmt: str, ...) -> c_int; }\n\
+     fn main() { raw::printf(); }\n\
+     "
+    "function 'raw::printf' expects at least 1 argument(s), got 0";
 
   check_error "variadic '...' as only param rejected"
-    "extern fn weird(...);\n\
-     fn main() {}\n"
+    "pub mod raw { extern fn weird(...); }\n\
+     fn main() {}\n\
+     "
     "'extern fn weird' variadic '...' must come after at least one fixed \
      parameter (e.g. `(fmt: str, ...)`)";
 
   check "c_int / c_uint: extern fn signature emits raw `int` / `unsigned int`"
-    "extern fn putchar(c: c_int) -> c_int;\n\
-     extern fn rand_seed(s: c_uint);\n\
+    "pub mod raw {\n\
+         extern fn putchar(c: c_int) -> c_int;\n\
+         extern fn rand_seed(s: c_uint);\n\
+     }\n\
      fn main() {\n\
-    \    putchar(72);\n\
-    \    rand_seed(42);\n\
-     }\n"
+         raw::putchar(72);\n\
+         raw::rand_seed(42);\n\
+     }\n\
+     "
     "#include <stdio.h>\n\nextern int putchar(int c);\nextern void rand_seed(unsigned int s);\n\nint main(void) {\n    putchar(72);\n    rand_seed(42);\n    return 0;\n}\n";
 
   check_error "c_int does not implicitly convert to int"
-    "extern fn need_cint(x: c_int);\n\
+    "pub mod raw { extern fn need_cint(x: c_int); }\n\
      fn main() {\n\
-    \    let n: int = 5;\n\
-    \    need_cint(n);\n\
-     }\n"
-    "argument 1 of 'need_cint': expected c_int, got i32";
+         let n: int = 5;\n\
+         raw::need_cint(n);\n\
+     }\n\
+     "
+    "argument 1 of 'raw::need_cint': expected c_int, got i32";
 
   check "extern struct: opaque, used through pointer in extern fn signatures"
-    "extern struct Library;\n\
-     extern fn lib_open() -> *Library;\n\
-     extern fn lib_close(lib: *Library);\n\
+    "pub mod raw {\n\
+         extern struct Library;\n\
+         extern fn lib_open() -> *Library;\n\
+         extern fn lib_close(lib: *Library);\n\
+     }\n\
      fn main() {\n\
-    \    let lib: *Library = lib_open();\n\
-    \    lib_close(lib);\n\
-     }\n"
+         let lib: *Library = raw::lib_open();\n\
+         raw::lib_close(lib);\n\
+     }\n\
+     "
     "#include <stdio.h>\n\nextern struct Library *lib_open(void);\nextern void lib_close(struct Library *lib);\n\nint main(void) {\n    struct Library *lib;\n    lib = lib_open();\n    lib_close(lib);\n    return 0;\n}\n";
 
   check_error "extern struct: bare (non-pointer) use rejected"
-    "extern struct Library;\n\
+    "pub mod raw { extern struct Library; }\n\
      fn take(_l: Library) {}\n\
-     fn main() {}\n"
+     fn main() {}\n\
+     "
     "opaque type 'Library' can only be used through a pointer (`*Library`) \
      — exile doesn't know its layout";
 
   check_error "extern struct rejects body block"
-    "extern struct Library { x: int }\n\
-     fn main() {}\n"
+    "pub mod raw { extern struct Library { x: int } }\n\
+     fn main() {}\n\
+     "
     "'extern struct Library' must end with ';', not a body — extern \
      declares an opaque type with no fields visible to exile";
 
   check_error "extern struct rejects generic params"
-    "extern struct Pair<T>;\n\
-     fn main() {}\n"
+    "pub mod raw { extern struct Pair<T>; }\n\
+     fn main() {}\n\
+     "
     "'extern struct Pair' cannot have generic parameters — opaque types \
      live on the C side";
 
-  check_error "extern struct rejects placement inside module"
+  check_error "extern struct outside `mod raw` rejected"
     "mod m {\n\
     \    extern struct Library;\n\
      }\n\
      fn main() {}\n"
-    "'extern struct Library' must be at top level, not inside a module";
+    "'extern struct Library' must live inside a `mod raw { ... }` block \
+     (FFI hygiene rule); wrap with `mod raw { ... }` and call as \
+     `raw::Library` or import via `use raw::*;`";
 
-  check_error "extern fn rejects placement inside module"
+  check_error "extern fn outside `mod raw` rejected (top-level)"
+    "extern fn foo();\n\
+     fn main() {}\n"
+    "'extern fn foo' must live inside a `mod raw { ... }` block \
+     (FFI hygiene rule); wrap with `mod raw { ... }` and call as \
+     `raw::foo` or import via `use raw::*;`";
+
+  check_error "extern fn inside non-raw module rejected"
     "mod m {\n\
     \    extern fn foo();\n\
      }\n\
      fn main() {}\n"
-    "'extern fn foo' must be at top level, not inside a module";
+    "'extern fn foo' must live inside a `mod raw { ... }` block \
+     (FFI hygiene rule); wrap with `mod raw { ... }` and call as \
+     `raw::foo` or import via `use raw::*;`";
 
   check "prelude: Option<T> usable without explicit declaration"
     "fn main() {\n\
@@ -1175,6 +1215,53 @@ let () =
     \    print(Allocator::helper());\n\
      }\n"
     "#include <stdio.h>\n\nlong Allocator__helper(void);\n\nlong Allocator__helper(void) {\n    return 1;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(Allocator__helper()));\n    return 0;\n}\n";
+
+  check "fn-ptr field call: recv.field(args) routes through TIndirectCall"
+    "struct Op { f: fn(int) -> int }\n\
+     fn id(x: int) -> int { return x; }\n\
+     fn dbl(x: int) -> int { return x + x; }\n\
+     fn main() {\n\
+    \    let a = Op { f: id };\n\
+    \    let b = Op { f: dbl };\n\
+    \    print(a.f(7));\n\
+    \    print(b.f(21));\n\
+     }\n"
+    "#include <stdio.h>\n\ntypedef long (*fn1_i32_to_i32)(long);\n\nstruct ex_Op { fn1_i32_to_i32 f; };\n\nstatic long ex_id(long x);\nstatic long ex_dbl(long x);\n\nstatic long ex_id(long x) {\n    return x;\n}\n\nstatic long ex_dbl(long x) {\n    return x + x;\n}\n\nint main(void) {\n    struct ex_Op a;\n    struct ex_Op b;\n    a.f = ex_id;\n    b.f = ex_dbl;\n    printf(\"%ld\\n\", (long)((a.f)(7)));\n    printf(\"%ld\\n\", (long)((b.f)(21)));\n    return 0;\n}\n";
+
+  check "defer fires on `try` early-return path"
+    "fn maybe(ok: bool) -> ?int {\n\
+    \    if ok { return Option::Some(42); }\n\
+    \    return Option::None;\n\
+     }\n\
+     fn run(ok: bool) -> ?int {\n\
+    \    defer print(-1);\n\
+    \    let v = try maybe(ok);\n\
+    \    return Option::Some(v + 1);\n\
+     }\n\
+     fn main() {\n\
+    \    match run(false) {\n\
+    \        | Option::Some(x) => print(x)\n\
+    \        | Option::None    => print(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstatic struct ex_Option_i32 ex_maybe(int ok);\nstatic struct ex_Option_i32 ex_run(int ok);\n\nstatic struct ex_Option_i32 ex_maybe(int ok) {\n    if (ok) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_Some;\n            __exile_ret.data.Some._0 = 42;\n            return __exile_ret;\n        }\n    }\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_None;\n        return __exile_ret;\n    }\n}\n\nstatic struct ex_Option_i32 ex_run(int ok) {\n    long v;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_maybe(ok);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long __try_v = __m.data.Some._0;\n                v = __try_v;\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                struct ex_Option_i32 __try_ret;\n                __try_ret.tag = ex_Option_i32_None;\n                printf(\"%ld\\n\", (long)(-1));\n                return __try_ret;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v + 1;\n        printf(\"%ld\\n\", (long)(-1));\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_run(0);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check_lint "lint: per-call-site origin pos (not prelude decl pos)"
+    "fn id<T>(x: T) -> T { return x; }\n\
+     fn main() { print(id(42)); }\n"
+    ~profile:Exile_lang.Profile.Core
+    ["generic fn 'id'"];
+
+  check_assert "lint origin pos points to call site, not skeleton decl"
+    (let ws = lint_warnings ~profile:Exile_lang.Profile.Core
+       "fn id<T>(x: T) -> T { return x; }\n\
+        fn main() { print(id(42)); }\n"
+     in
+     match ws with
+     | [w] ->
+         w.Exile_lang.Lint.pos.line = 2
+         && w.Exile_lang.Lint.pos.file = "<input>"
+     | _ -> false);
 
   check_assert "Profile.of_string round-trip"
     (Exile_lang.Profile.of_string "core" = Some Exile_lang.Profile.Core

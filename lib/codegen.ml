@@ -25,6 +25,16 @@ let bloat_acc : (string * int) list ref = ref []
 
 let last_bloat () = List.rev !bloat_acc
 
+(* Active defer chain (innermost block first, then enclosing scopes)
+   at the current emission point.  Each scope is itself a list of
+   per-defer bodies (a defer's body is a `tstmt list`), so the chain
+   has type `tstmt list list list`.  `gen_block` updates this before
+   handing off to per-stmt emitters so the diverging arm of `try` /
+   tdiverges can flush cleanups before its early return.  Module-
+   scoped ref avoids threading the chain through every emit_* helper.
+   Reset to [] at the start of every fn body. *)
+let active_defer_chain : tstmt list list list ref = ref []
+
 let emit_ann buf indent (pos : Pos.t) =
   if !annotate_mode then begin
     Buffer.add_string buf indent;
@@ -272,6 +282,12 @@ let rec gen_expr buf (te : texpr) =
       Buffer.add_char buf '(';
       add_separated buf ", " (gen_expr buf) args;
       Buffer.add_char buf ')'
+  | TIndirectCall { fn_expr; args } ->
+      Buffer.add_char buf '(';
+      gen_expr buf fn_expr;
+      Buffer.add_string buf ")(";
+      add_separated buf ", " (gen_expr buf) args;
+      Buffer.add_char buf ')'
   | TTupleLit _ | TStructLit _ | TNew _ ->
       (* The `lift_block_exprs` pass in typecheck rewrites every
          block-shaped expression (tuple/struct/new/enum lit, match)
@@ -512,15 +528,7 @@ and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
                is a TEnumLit on the outer fn's ret-type instance — we
                assert that here so any future caller of `tdiverges`
                with a different shape (TMatch, TVar, etc) breaks
-               loudly rather than emitting subtly broken C (mixing
-               decls and stmts in the same case block, or skipping
-               an `assign_to` assignment).
-               Defer integration is intentionally absent: defers
-               active above a `try` site will NOT run on the early-
-               return path.  Programs that mix the two compile but
-               leak whatever the defer would have cleaned up.  No
-               check fires today; revisit when a real use case for
-               `defer` + `try` together shows up. *)
+               loudly rather than emitting subtly broken C. *)
             (match a.tbody.e with
              | TEnumLit _ -> ()
              | _ ->
@@ -532,6 +540,11 @@ and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
             Buffer.add_string buf trimmed;
             Buffer.add_string buf " __try_ret;\n";
             emit_value_into_temp buf body_indent "__try_ret" a.tbody;
+            (* Flush every active defer scope before the early return
+               so resources opened above the `try` site get cleaned up
+               on the Err/None path the same as on a normal return. *)
+            let cleanups = List.flatten !active_defer_chain in
+            emit_cleanups buf body_indent cleanups;
             Buffer.add_string buf body_indent;
             Buffer.add_string buf "return __try_ret;\n"
           end else begin
@@ -578,13 +591,13 @@ and emit_let_tuple buf indent names (value : texpr) =
   Buffer.add_string buf indent;
   Buffer.add_string buf "}\n"
 
-let emit_cleanups buf indent defers =
+and emit_cleanups buf indent defers =
   List.iter
     (fun body ->
       List.iter (fun s -> emit_simple_stmt buf indent s) body)
     defers
 
-let rec gen_if buf indent outer_scopes my_defers
+and gen_if buf indent outer_scopes my_defers
     cond then_body else_body =
   Buffer.add_string buf "if (";
   gen_expr buf cond;
@@ -606,13 +619,19 @@ let rec gen_if buf indent outer_scopes my_defers
        Buffer.add_string buf "}\n")
 
 and gen_block buf indent outer_scopes stmts =
+  let saved_chain = !active_defer_chain in
+  let update_chain my_defers =
+    active_defer_chain := my_defers :: outer_scopes
+  in
   let rec loop my_defers = function
     | [] ->
+        update_chain my_defers;
         emit_cleanups buf indent my_defers
     | (TDefer { body; _ } as s) :: rest ->
         emit_tstmt_ann buf indent s;
         loop (body :: my_defers) rest
     | (TReturn { value; _ } as s) :: _ ->
+        update_chain my_defers;
         emit_tstmt_ann buf indent s;
         let all = List.flatten (my_defers :: outer_scopes) in
         let needs_block =
@@ -642,20 +661,24 @@ and gen_block buf indent outer_scopes stmts =
           Buffer.add_string buf "}\n"
         end
     | (TLet _ | TAssign _ | TAssignField _ | TAssignDeref _ | TExprStmt _) as s :: rest ->
+        update_chain my_defers;
         emit_tstmt_ann buf indent s;
         emit_simple_stmt buf indent s;
         loop my_defers rest
     | (TLetTuple { names; value; _ } as s) :: rest ->
+        update_chain my_defers;
         emit_tstmt_ann buf indent s;
         emit_let_tuple buf indent names value;
         loop my_defers rest
     | (TIf { cond; then_body; else_body } as s) :: rest ->
+        update_chain my_defers;
         emit_tstmt_ann buf indent s;
         Buffer.add_string buf indent;
         gen_if buf indent outer_scopes my_defers
           cond then_body else_body;
         loop my_defers rest
     | (TWhile { cond; body } as s) :: rest ->
+        update_chain my_defers;
         emit_tstmt_ann buf indent s;
         Buffer.add_string buf indent;
         Buffer.add_string buf "while (";
@@ -667,7 +690,8 @@ and gen_block buf indent outer_scopes stmts =
         Buffer.add_string buf "}\n";
         loop my_defers rest
   in
-  loop [] stmts
+  loop [] stmts;
+  active_defer_chain := saved_chain
 
 (* Emit a function signature using a mangled C-level name (or "main" for the
    entry point — main() is special and not mangled).  Non-pub functions get
@@ -792,6 +816,7 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   annotate_mode := annotate;
   enum_index_ref := tp.tp_enum_index;
   bloat_acc := [];
+  active_defer_chain := [];
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
   if tp.tp_uses_heap then

@@ -491,7 +491,7 @@ let resolve_call_dispatch ~pos ~expected ctx ~resolved_mod ~arg_tys
     in
     let inst =
       Mono.instantiate_fn ctx.instances
-        ~path:resolved_mod ~func ~skel ~bindings
+        ~path:resolved_mod ~func ~skel ~bindings ~origin_pos:pos
     in
     (inst.mangled, inst.param_tys, inst.ret_ty)
   end
@@ -736,10 +736,47 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
       let mpath = struct_path @ [name] in
       let display = String.concat "::" mpath in
       let arg_tys = List.map (type_of ctx env) args in
+      let fnptr_field =
+        (* When no method is registered, fall back to fn-ptr field
+           dispatch: `recv.f(args)` calls the field if its type is
+           `fn(...) -> R`.  Returns the field's signature. *)
+        match resolve_struct_by_path ctx struct_path with
+        | Some s ->
+            (match List.assoc_opt name s.sfields_ty with
+             | Some (TFnPtr { params; ret }) -> Some (params, ret)
+             | _ -> None)
+        | None -> None
+      in
       (match lookup_fn ctx mpath with
        | None ->
-           Error.failf pos "no method '%s' on type '%s'"
-             name (String.concat "::" struct_path)
+           (match fnptr_field with
+            | Some (params, ret) ->
+                let expected_n = List.length params in
+                let got = List.length args in
+                if expected_n <> got then
+                  Error.failf pos
+                    "fn-pointer field '%s.%s' expects %d argument(s), got %d"
+                    (String.concat "::" struct_path) name expected_n got;
+                List.iteri
+                  (fun i (exp, act) ->
+                    if not (typ_eq exp act)
+                       && not (int_lit_fits (List.nth args i) exp)
+                    then
+                      Error.failf pos
+                        "argument %d of '%s.%s': expected %s, got %s"
+                        (i + 1) (String.concat "::" struct_path) name
+                        (typ_name exp) (typ_name act))
+                  (List.combine params arg_tys);
+                (match ret with
+                 | Some t -> t
+                 | None when allow_void -> t_i32
+                 | None ->
+                     Error.failf pos
+                       "'%s.%s' returns void, cannot use as a value"
+                       (String.concat "::" struct_path) name)
+            | None ->
+                Error.failf pos "no method '%s' on type '%s'"
+                  name (String.concat "::" struct_path))
        | Some (resolved_mod, ({ fn_pub; _ } as skel)) ->
            let rec walk_segments parent = function
              | [] -> ()
@@ -1328,36 +1365,52 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         in
         let mpath = struct_path @ [name] in
         let targs = List.map (elab_expr ctx env) args in
-        let (mangled, self_ty) =
-          match lookup_fn ctx mpath with
-          | Some (resolved_mod, ({ param_tys = skel_self :: _; _ } as skel)) ->
-              let arg_tys = trecv.ty :: List.map (fun a -> a.ty) targs in
-              let (m, inst_param_tys, _) =
-                resolve_call_dispatch ~pos ~expected ctx
-                  ~resolved_mod ~arg_tys skel
-              in
-              let self_t =
-                match inst_param_tys with
-                | self_t :: _ -> self_t
-                | [] -> skel_self
-              in
-              (m, self_t)
-          | _ -> assert false
-        in
-        (* Auto-ref / auto-deref: align receiver shape with the method's
-           self-param shape.  Both directions: `Foo` → `*Foo` via TRef,
-           `*Foo` → `Foo` via TDeref. *)
-        let trecv_adj =
-          match self_ty, trecv.ty with
-          | TStruct _, TStruct _ -> trecv
-          | TPtr _, TPtr _ -> trecv
-          | TPtr _ as pt, TStruct _ ->
-              { e = TRef trecv; ty = pt; pos = trecv.pos }
-          | TStruct _ as st, TPtr _ ->
-              { e = TDeref trecv; ty = st; pos = trecv.pos }
-          | _ -> assert false
-        in
-        TCall { mangled; args = trecv_adj :: targs }
+        (match lookup_fn ctx mpath with
+         | None ->
+             (* Fall back to fn-ptr field dispatch.  Construct a
+                TFieldAccess on the receiver and route the call through
+                TIndirectCall.  type_of already validated arity / arg types
+                and the field's TFnPtr shape. *)
+             let field_ty =
+               match resolve_struct_by_path ctx struct_path with
+               | Some s ->
+                   (match List.assoc_opt name s.sfields_ty with
+                    | Some t -> t
+                    | None -> assert false)
+               | None -> assert false
+             in
+             let fn_expr = {
+               e = TFieldAccess { target = trecv; field = name };
+               ty = field_ty;
+               pos = trecv.pos;
+             } in
+             TIndirectCall { fn_expr; args = targs }
+         | Some (resolved_mod, ({ param_tys = skel_self :: _; _ } as skel)) ->
+             let arg_tys = trecv.ty :: List.map (fun a -> a.ty) targs in
+             let (mangled, inst_param_tys, _) =
+               resolve_call_dispatch ~pos ~expected ctx
+                 ~resolved_mod ~arg_tys skel
+             in
+             let self_ty =
+               match inst_param_tys with
+               | self_t :: _ -> self_t
+               | [] -> skel_self
+             in
+             (* Auto-ref / auto-deref: align receiver shape with the method's
+                self-param shape.  Both directions: `Foo` → `*Foo` via TRef,
+                `*Foo` → `Foo` via TDeref. *)
+             let trecv_adj =
+               match self_ty, trecv.ty with
+               | TStruct _, TStruct _ -> trecv
+               | TPtr _, TPtr _ -> trecv
+               | TPtr _ as pt, TStruct _ ->
+                   { e = TRef trecv; ty = pt; pos = trecv.pos }
+               | TStruct _ as st, TPtr _ ->
+                   { e = TDeref trecv; ty = st; pos = trecv.pos }
+               | _ -> assert false
+             in
+             TCall { mangled; args = trecv_adj :: targs }
+         | Some (_, { param_tys = []; _ }) -> assert false)
     | Ast.EnumLit { tname = _; variant; args; _ } ->
         (* type_of (called above into `ty`) already instantiated any
            generic enum, so `ty = TEnum inst_path` points at the
@@ -1828,6 +1881,11 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
     | TBuiltinCall { name; args } ->
         let (args', p) = map_args args in
         ({ te with e = TBuiltinCall { name; args = args' } }, p)
+    | TIndirectCall { fn_expr; args } ->
+        let (fn_expr', pf) = walk_expr ~allow_top:false fn_expr in
+        let (args', pa) = map_args args in
+        ({ te with e = TIndirectCall { fn_expr = fn_expr'; args = args' } },
+         pf @ pa)
     | TCast (sub, ann) ->
         let (sub', p) = walk_expr ~allow_top:false sub in
         ({ te with e = TCast (sub', ann) }, p)
@@ -1939,20 +1997,25 @@ let flatten_items program =
   (* Uniform "must be at top level" reject — `extern struct/type/const`
      and `@c_include` all share the same constraint with the same
      wording.  Path captured by walk and threaded in. *)
-  let top_only ~current_path ~kind ~name ~pos =
-    if current_path <> [] then
+  let in_raw_module path = match List.rev path with
+    | "raw" :: _ -> true
+    | _ -> false
+  in
+  let require_raw ~current_path ~kind ~name ~pos =
+    if not (in_raw_module current_path) then
       Error.failf pos
-        "'extern %s %s' must be at top level, not inside a module"
-        kind name
+        "'extern %s %s' must live inside a `mod raw { ... }` block \
+         (FFI hygiene rule); wrap with `mod raw { ... }` and call as \
+         `raw::%s` or import via `use raw::*;`"
+        kind name name
   in
   let rec walk path items =
     List.iter
       (fun item -> match item with
         | Ast.Function (f : Ast.func) ->
-            if f.is_extern && path <> [] then
-              Error.failf f.pos
-                "'extern fn %s' must be at top level, not inside a module"
-                f.name;
+            if f.is_extern then
+              require_raw ~current_path:path ~kind:"fn"
+                ~name:f.name ~pos:f.pos;
             (* extern fn uses its C-side name (set via `as` rename or
                default to f.name); main stays unprefixed; everything
                else gets ex_/mod__. *)
@@ -1965,15 +2028,15 @@ let flatten_items program =
         | Ast.Struct s ->
             structs := (path, s) :: !structs
         | Ast.ExternStruct es ->
-            top_only ~current_path:path ~kind:"struct"
+            require_raw ~current_path:path ~kind:"struct"
               ~name:es.Ast.esname ~pos:es.Ast.espos;
             ext_structs := es :: !ext_structs
         | Ast.ExternType et ->
-            top_only ~current_path:path ~kind:"type"
+            require_raw ~current_path:path ~kind:"type"
               ~name:et.Ast.xtname ~pos:et.Ast.xtpos;
             ext_types := et :: !ext_types
         | Ast.ExternConst ec ->
-            top_only ~current_path:path ~kind:"const"
+            require_raw ~current_path:path ~kind:"const"
               ~name:ec.Ast.ecname ~pos:ec.Ast.ecpos;
             ext_consts := ec :: !ext_consts
         | Ast.Enum e ->
@@ -2147,6 +2210,8 @@ let collect_tuple_types_of tfuncs =
     | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> walk_texpr sub
     | TBinOp (_, l, r) -> walk_texpr l; walk_texpr r
     | TCall { args; _ } | TBuiltinCall { args; _ } -> List.iter walk_texpr args
+    | TIndirectCall { fn_expr; args } ->
+        walk_texpr fn_expr; List.iter walk_texpr args
     | TTupleLit es -> List.iter walk_texpr es
     | TStructLit { fields; base; _ } | TNew { fields; base; _ } ->
         List.iter (fun (_, fe) -> walk_texpr fe) fields;
@@ -2195,6 +2260,8 @@ let uses_heap_of tfuncs =
     | TBinOp (_, l, r) -> walk_texpr l || walk_texpr r
     | TCall { args; _ } | TBuiltinCall { args; _ } ->
         List.exists walk_texpr args
+    | TIndirectCall { fn_expr; args } ->
+        walk_texpr fn_expr || List.exists walk_texpr args
     | TTupleLit es -> List.exists walk_texpr es
     | TStructLit { fields; base; _ } ->
         List.exists (fun (_, fe) -> walk_texpr fe) fields
@@ -2382,35 +2449,32 @@ let prelude_items () =
     sis_pub = true;
     stier_hint = Some "core";
   } in
-  (* Bodies for the two methods are constructed AST-side: an indirect
-     call through a fn-ptr field requires copying the field to a local
-     first (today's `recv.field(args)` parses as MethodCall and looks
-     for a method, not a fn-ptr field).  Keeping the prelude bodies
-     small and free of those workarounds. *)
+  (* Method bodies use the fn-ptr-field call syntax (`self.alloc_fn(...)`)
+     directly — typecheck routes it through TIndirectCall when the
+     receiver's matching field is a TFnPtr. *)
   let pos = prelude_pos in
   let var n = Ast.Var (n, pos) in
-  let field e f = Ast.FieldAccess (e, f, pos) in
   let alloc_body = [
-    (* let af = self.alloc_fn; *)
-    Ast.Let { name = "af"; ty_ann = None;
-              value = field (var "self") "alloc_fn"; pos };
-    (* let raw = af(self.state, size_of(T)); *)
-    Ast.Let { name = "raw"; ty_ann = None;
-              value = Ast.Call (["af"],
-                [ field (var "self") "state";
-                  Ast.SizeOf (tvar "T", pos) ], pos);
-              pos };
-    (* return raw as *T; *)
-    Ast.Return (Ast.Cast (var "raw", Ast.TyPtr (tvar "T"), pos), pos);
+    (* return (self.alloc_fn(self.state, size_of(T))) as *T; *)
+    Ast.Return (
+      Ast.Cast (
+        Ast.MethodCall {
+          receiver = var "self"; name = "alloc_fn";
+          args = [ Ast.FieldAccess (var "self", "state", pos);
+                   Ast.SizeOf (tvar "T", pos) ];
+          pos;
+        },
+        Ast.TyPtr (tvar "T"), pos),
+      pos);
   ] in
   let free_body = [
-    (* let ff = self.free_fn; *)
-    Ast.Let { name = "ff"; ty_ann = None;
-              value = field (var "self") "free_fn"; pos };
-    (* ff(self.state, p as *c_void); *)
-    Ast.ExprStmt (Ast.Call (["ff"],
-      [ field (var "self") "state";
-        Ast.Cast (var "p", cvoid_ptr, pos) ], pos));
+    (* self.free_fn(self.state, p as *c_void); *)
+    Ast.ExprStmt (Ast.MethodCall {
+      receiver = var "self"; name = "free_fn";
+      args = [ Ast.FieldAccess (var "self", "state", pos);
+               Ast.Cast (var "p", cvoid_ptr, pos) ];
+      pos;
+    });
   ] in
   let mk_method name tparams params ret body = {
     Ast.name; c_name = name; tparams; params; ret_ty = ret; body;
@@ -2595,7 +2659,8 @@ let check_program program : tprogram =
     in
     { tf_path = path; tf_func = f; tf_mangled = mangled;
       tf_param_tys = param_tys; tf_ret_ty = ret_ty;
-      tf_body = tbody; tf_lets = lets }
+      tf_body = tbody; tf_lets = lets;
+      tf_origin_pos = None }
   in
   let skeleton_tfuncs =
     List.map (elab_one_fn ~tvar_bindings:[]) all_funcs
@@ -2617,7 +2682,8 @@ let check_program program : tprogram =
             in
             { tf with
               tf_param_tys = job.pj_param_tys;
-              tf_ret_ty = job.pj_ret_ty })
+              tf_ret_ty = job.pj_ret_ty;
+              tf_origin_pos = Some job.pj_origin_pos })
             jobs
         in
         drain (List.rev_append new_tfuncs acc)

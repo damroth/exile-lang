@@ -680,7 +680,10 @@ and parse_extern_fn_after_keyword s seen_fns =
          "expected ';' after 'extern fn %s' signature, got %s"
          name (Token.pp t));
   (name, Ast.{ name; c_name; tparams = []; params; ret_ty; body = [];
-               is_pub = false; is_extern = true; is_variadic;
+               (* extern items are implicitly pub: they live in `mod raw`
+                  by FFI hygiene rule, and the whole point is for the
+                  surrounding stdlib / wrappers to call them. *)
+               is_pub = true; is_extern = true; is_variadic;
                tier_hint = None; pos = name_pos })
 
 (* Like parse_params but accepts a trailing `, ...` to mark the fn as

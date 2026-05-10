@@ -43,17 +43,23 @@ type warning = { pos : Pos.t; msg : string }
    touching stderr.  Tests compare the list directly; CLI prints via
    [emit_warnings]. *)
 let collect ~(profile : Profile.t) (tp : tprogram) : warning list =
-  (* Dedupe by the originating fn's source position so multiple
-     instances of one generic fn produce a single message. *)
+  (* Dedupe by call-site (origin_pos when available, fallback to decl
+     pos) so each unique site warns once.  Origin pos points at the
+     actual `.alloc()` / `id(42)` rather than the prelude/decl, which
+     is far more useful for finding what to refactor. *)
   let seen = Hashtbl.create 16 in
   let acc = ref [] in
   List.iter (fun tf ->
     let f = tf.tf_func in
     if f.tparams <> [] && is_concrete_instance tf then begin
       let item_tier = fn_effective_tier f in
+      let warn_pos = match tf.tf_origin_pos with
+        | Some p -> p
+        | None -> f.pos
+      in
       if Tier.exceeds ~profile ~item_tier
-         && not (Hashtbl.mem seen f.pos) then begin
-        Hashtbl.add seen f.pos ();
+         && not (Hashtbl.mem seen warn_pos) then begin
+        Hashtbl.add seen warn_pos ();
         let msg =
           Printf.sprintf
             "generic fn '%s' is tier=%s but compiled under \
@@ -65,7 +71,7 @@ let collect ~(profile : Profile.t) (tp : tprogram) : warning list =
             (Profile.to_string profile)
             (Tier.to_string item_tier)
         in
-        acc := { pos = f.pos; msg } :: !acc
+        acc := { pos = warn_pos; msg } :: !acc
       end
     end)
     tp.tp_funcs;

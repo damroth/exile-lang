@@ -341,6 +341,17 @@ type texpr_node =
   | TBinOp of Ast.binop * texpr * texpr
   | TCall of { mangled : string; args : texpr list }
   | TBuiltinCall of { name : string; args : texpr list }
+  | TIndirectCall of { fn_expr : texpr; args : texpr list }
+                                        (* call through an arbitrary fn-ptr
+                                           expression — used when `recv.field`
+                                           is a fn-ptr field rather than a
+                                           method.  Codegen emits
+                                           `(<fn_expr>)(args)`; C resolves
+                                           the call through the auto-deref'd
+                                           pointer.  Direct fn-ptr-local
+                                           calls still go through TCall (the
+                                           local name doubles as the call
+                                           target). *)
   | TCast of texpr * Ast.type_ann
   | TTupleLit of texpr list
   | TStructLit of { sname_path : string list;
@@ -423,6 +434,10 @@ type tfunc = {
   tf_ret_ty : typ option;           (* mirrors tf_func.ret_ty, scope-resolved *)
   tf_body : tstmt list;
   tf_lets : (string * typ) list;
+  tf_origin_pos : Pos.t option;     (* call site that triggered this instance,
+                                       for generic-fn instances only.  None
+                                       for skeleton tfuncs and originally-mono
+                                       fns (lint falls back to tf_func.pos). *)
 }
 
 (* Whole-program checked + elaborated view that codegen consumes. *)

@@ -10,19 +10,21 @@
 
 @c_include("ffi_full_stub.h")
 
-extern type ULONG;
-extern struct Library;
+pub mod raw {
+    extern type ULONG;
+    extern struct Library;
 
-extern const PRETEND_VERSION: ULONG;
-extern const PRETEND_FLAGS: ULONG;
+    extern const PRETEND_VERSION: ULONG;
+    extern const PRETEND_FLAGS: ULONG;
 
-extern fn open_lib as PretendOpenLibrary(name: str, version: ULONG) -> *Library;
-extern fn close_lib as PretendCloseLibrary(lib: *Library);
-extern fn lib_id as PretendLibraryID(lib: *Library) -> ULONG;
+    extern fn open_lib as PretendOpenLibrary(name: str, version: ULONG) -> *Library;
+    extern fn close_lib as PretendCloseLibrary(lib: *Library);
+    extern fn lib_id as PretendLibraryID(lib: *Library) -> ULONG;
+}
 
 fn main() {
-    let lib: *Library = open_lib("pretend.library", PRETEND_VERSION);
-    print(lib_id(lib) as int);          // 0xCAFE = 51966
-    print(PRETEND_FLAGS as int);        // 0x03 = 3
-    close_lib(lib);
+    let lib: *Library = raw::open_lib("pretend.library", PRETEND_VERSION);
+    print(raw::lib_id(lib) as int);          // 0xCAFE = 51966
+    print(PRETEND_FLAGS as int);             // 0x03 = 3
+    raw::close_lib(lib);
 }

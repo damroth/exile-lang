@@ -12,14 +12,16 @@
 // convention (here: lowercase, often CamelCase on AmigaOS) doesn't
 // match exile's snake_case style.
 
-extern fn putchar(c: c_int) -> c_int;
-extern fn print_f as printf(fmt: str, ...) -> c_int;
+pub mod raw {
+    extern fn putchar(c: c_int) -> c_int;
+    extern fn print_f as printf(fmt: str, ...) -> c_int;
+}
 
 fn main() {
-    putchar(72);                                 // 'H'
-    putchar(105);                                // 'i'
-    putchar(33);                                 // '!'
-    putchar(10);                                 // newline
-    print_f("answer: %d\n", 42);
-    print_f("two ints: %d %d\n", 7, 13);
+    raw::putchar(72);                                 // 'H'
+    raw::putchar(105);                                // 'i'
+    raw::putchar(33);                                 // '!'
+    raw::putchar(10);                                 // newline
+    raw::print_f("answer: %d\n", 42);
+    raw::print_f("two ints: %d %d\n", 7, 13);
 }

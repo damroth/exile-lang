@@ -4,14 +4,16 @@
 // Window *`, `struct MsgPort *` etc.: you receive an opaque pointer
 // from a constructor, pass it around, hand it back to a destructor.
 
-extern struct Library;
+pub mod raw {
+    extern struct Library;
 
-extern fn lib_open() -> *Library;
-extern fn lib_use(lib: *Library) -> int;
-extern fn lib_close(lib: *Library);
+    extern fn lib_open() -> *Library;
+    extern fn lib_use(lib: *Library) -> int;
+    extern fn lib_close(lib: *Library);
+}
 
 fn main() {
-    let lib: *Library = lib_open();
-    print(lib_use(lib));      // 100
-    lib_close(lib);
+    let lib: *Library = raw::lib_open();
+    print(raw::lib_use(lib));      // 100
+    raw::lib_close(lib);
 }

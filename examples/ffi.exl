@@ -11,12 +11,14 @@
 // `long`-typed C stubs we own.  A `c_int` alias mapping to host's
 // native `int` is on the roadmap.
 
-extern fn add(a: int, b: int) -> int;
-extern fn square(x: int) -> int;
-extern fn shout();
+pub mod raw {
+    extern fn add(a: int, b: int) -> int;
+    extern fn square(x: int) -> int;
+    extern fn shout();
+}
 
 fn main() {
-    print(add(40, 2));        // 42
-    print(square(7));         // 49
-    shout();                  // "HEY"
+    print(raw::add(40, 2));        // 42
+    print(raw::square(7));         // 49
+    raw::shout();                  // "HEY"
 }

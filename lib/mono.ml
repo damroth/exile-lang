@@ -25,6 +25,13 @@ type pending_fn_job = {
   pj_mangled : string;                (* C-side instance name *)
   pj_param_tys : typ list;            (* substituted *)
   pj_ret_ty : typ option;             (* substituted *)
+  pj_origin_pos : Pos.t;              (* call site that first triggered
+                                         instantiation; subsequent calls of
+                                         the same shape are deduped, so this
+                                         is "first observed".  Used by the
+                                         linter for tier warnings — better
+                                         than the skeleton decl pos which
+                                         can be `<prelude>:0:0` *)
 }
 
 type state = {
@@ -167,7 +174,7 @@ let find_fn state mangled =
    substitutes the bindings into the skeleton's signature, registers
    the resulting `fn_sig`, and queues a job so the body gets re-elaborated
    under the substituted types after the main typecheck loop finishes. *)
-let instantiate_fn state ~path ~func ~skel ~bindings =
+let instantiate_fn state ~path ~func ~skel ~bindings ~origin_pos =
   let inst_args = List.map snd bindings in
   let inst_mangled = fn_instance_mangled skel.mangled inst_args in
   match find_fn state inst_mangled with
@@ -189,6 +196,7 @@ let instantiate_fn state ~path ~func ~skel ~bindings =
         pj_mangled = inst_mangled;
         pj_param_tys = inst_param_tys;
         pj_ret_ty = inst_ret_ty;
+        pj_origin_pos = origin_pos;
       } :: state.pending_fn_jobs;
       s
 
