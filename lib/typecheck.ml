@@ -2350,6 +2350,7 @@ let prelude_items () =
     evariants = [ mk_unit "None"; mk_tuple "Some" [tvar "T"] ];
     epos = prelude_pos;
     eis_pub = true;
+    etier_hint = Some "core";
   } in
   let result_decl = {
     Ast.ename = "Result";
@@ -2357,6 +2358,7 @@ let prelude_items () =
     evariants = [ mk_tuple "Ok" [tvar "T"]; mk_tuple "Err" [tvar "E"] ];
     epos = prelude_pos;
     eis_pub = true;
+    etier_hint = Some "core";
   } in
   (* Allocator — uniform pluggable memory interface.  `state` rides on
      every call so allocators with backing data (arenas, pools) can
@@ -2378,6 +2380,7 @@ let prelude_items () =
     ];
     spos = prelude_pos;
     sis_pub = true;
+    stier_hint = Some "core";
   } in
   (* Bodies for the two methods are constructed AST-side: an indirect
      call through a fn-ptr field requires copying the field to a local
@@ -2411,7 +2414,8 @@ let prelude_items () =
   ] in
   let mk_method name tparams params ret body = {
     Ast.name; c_name = name; tparams; params; ret_ty = ret; body;
-    is_pub = true; is_extern = false; is_variadic = false; pos;
+    is_pub = true; is_extern = false; is_variadic = false;
+    tier_hint = Some "full"; pos;
   } in
   let self_param =
     { Ast.pname = "self"; pty = Ast.TyStruct { path = ["Allocator"]; args = [] } }

@@ -626,7 +626,7 @@ let rec parse_function s seen_fns ~is_pub =
   expect s Token.RBrace;
   (name, Ast.{ name; c_name = name; tparams; params; ret_ty; body; is_pub;
                is_extern = false; is_variadic = false;
-               pos = name_pos })
+               tier_hint = None; pos = name_pos })
 
 (* `extern fn name(args) -> T;` — forward decl for a C-side symbol.
    Same param/return grammar as a regular fn, but body is replaced by
@@ -681,7 +681,7 @@ and parse_extern_fn_after_keyword s seen_fns =
          name (Token.pp t));
   (name, Ast.{ name; c_name; tparams = []; params; ret_ty; body = [];
                is_pub = false; is_extern = true; is_variadic;
-               pos = name_pos })
+               tier_hint = None; pos = name_pos })
 
 (* Like parse_params but accepts a trailing `, ...` to mark the fn as
    C-style variadic.  `(...)` alone (no fixed params before ellipsis)
@@ -970,9 +970,44 @@ let rec parse_item s seen =
            in
            expect s Token.RParen;
            [ (None, Ast.CInclude { path; pos = at_pos }) ]
+       | "tier" ->
+           expect s Token.LParen;
+           let (tier_name, tier_pos) =
+             match advance s with
+             | (Token.Ident n, p) -> (n, p)
+             | (t, p) ->
+                 Error.failf p
+                   "expected tier name (core|standard|full) after \
+                    '@tier(', got %s"
+                   (Token.pp t)
+           in
+           if not (List.mem tier_name ["core"; "standard"; "full"]) then
+             Error.failf tier_pos
+               "unknown tier '%s' (expected: core, standard, full)" tier_name;
+           expect s Token.RParen;
+           (* Decorate the next item with the tier hint.  Recurse into
+              parse_item to consume it, then inject the hint into
+              fn/struct/enum.  Reject on items where tier doesn't make
+              sense (use, impl, c_include, mod). *)
+           let next_items = parse_item s seen in
+           List.map (fun (name_opt, item) ->
+             let item' = match item with
+               | Ast.Function f ->
+                   Ast.Function { f with tier_hint = Some tier_name }
+               | Ast.Struct s ->
+                   Ast.Struct { s with stier_hint = Some tier_name }
+               | Ast.Enum e ->
+                   Ast.Enum { e with etier_hint = Some tier_name }
+               | _ ->
+                   Error.failf at_pos
+                     "'@tier' can only decorate fn / struct / enum decls"
+             in
+             (name_opt, item'))
+             next_items
        | other ->
            Error.failf at_pos
-             "unknown attribute '@%s' (only '@c_include' is supported)"
+             "unknown attribute '@%s' (only '@c_include' and '@tier' are \
+              supported)"
              other)
   | _ ->
       Error.failf (peek_pos s)
@@ -1009,7 +1044,7 @@ and parse_struct_decl s ~is_pub =
   in
   check_dups fields;
   Ast.{ sname = name; stparams; sfields = fields;
-        spos = name_pos; sis_pub = is_pub }
+        spos = name_pos; sis_pub = is_pub; stier_hint = None }
 
 (* `enum Foo { | A | B(int) | C { f: T, ... } }` — leading `|` per
    variant (OCaml/F# style; differs from Rust's trailing comma).
@@ -1071,7 +1106,7 @@ and parse_enum_decl s ~is_pub =
   in
   check_dups variants;
   Ast.{ ename = name; etparams; evariants = variants;
-        epos = name_pos; eis_pub = is_pub }
+        epos = name_pos; eis_pub = is_pub; etier_hint = None }
 
 (* `impl <Path> { fn ... fn ... }` — methods get registered against the
    target struct, not into the surrounding scope.  Each method is parsed

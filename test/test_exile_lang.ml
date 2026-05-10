@@ -84,6 +84,47 @@ let check_assert label cond =
     exit 1
   end
 
+(* Run the front end up to typecheck and return the linter's warnings
+   for the given profile.  Pure — does not touch stderr. *)
+let lint_warnings ~profile src =
+  src
+  |> Exile_lang.Lexer.tokenize ~file:"<input>"
+  |> Exile_lang.Parser.parse_program
+  |> Exile_lang.Typecheck.check_program
+  |> Exile_lang.Lint.collect ~profile
+
+let check_lint label src ~profile expected_msg_substrs =
+  let ws = lint_warnings ~profile src in
+  let msgs = List.map (fun w -> w.Exile_lang.Lint.msg) ws in
+  let n_expected = List.length expected_msg_substrs in
+  let n_got = List.length msgs in
+  if n_got <> n_expected then begin
+    Printf.eprintf
+      "FAIL: %s\n--- expected %d warning(s) ---\n%s\n--- got %d ---\n%s\n"
+      label n_expected
+      (String.concat "\n" expected_msg_substrs)
+      n_got (String.concat "\n" msgs);
+    exit 1
+  end;
+  List.iter2 (fun expected actual ->
+    let contains s sub =
+      let ls = String.length s and lsub = String.length sub in
+      let rec loop i =
+        if i + lsub > ls then false
+        else if String.sub s i lsub = sub then true
+        else loop (i + 1)
+      in
+      loop 0
+    in
+    if not (contains actual expected) then begin
+      Printf.eprintf
+        "FAIL: %s\n--- expected substring ---\n%s\n--- actual ---\n%s\n"
+        label expected actual;
+      exit 1
+    end)
+    expected_msg_substrs msgs;
+  Printf.printf "ok: %s\n" label
+
 let () =
   check "hello world"
     "fn main() {\n    print(\"Hello, World!\");\n}\n"
@@ -1159,4 +1200,63 @@ let () =
     (List.exists (fun (n, _) -> n = "ex_helper") bloat
      && List.exists (fun (n, _) -> n = "main") bloat);
   check_assert "bloat report: byte counts are positive"
-    (List.for_all (fun (_, b) -> b > 0) bloat)
+    (List.for_all (fun (_, b) -> b > 0) bloat);
+
+  check_assert "Tier.of_string round-trip + ord"
+    (Exile_lang.Tier.of_string "core" = Some Exile_lang.Tier.Core
+     && Exile_lang.Tier.of_string "standard" = Some Exile_lang.Tier.Standard
+     && Exile_lang.Tier.of_string "full" = Some Exile_lang.Tier.Full
+     && Exile_lang.Tier.to_int Exile_lang.Tier.Core
+        < Exile_lang.Tier.to_int Exile_lang.Tier.Standard
+     && Exile_lang.Tier.to_int Exile_lang.Tier.Standard
+        < Exile_lang.Tier.to_int Exile_lang.Tier.Full);
+
+  check_lint "lint: generic fn under --profile=full is silent"
+    "fn id<T>(x: T) -> T { return x; }\n\
+     fn main() { print(id(42)); }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: generic fn under --profile=core warns once per fn"
+    "fn id<T>(x: T) -> T { return x; }\n\
+     fn main() { print(id(42)); print(id(7)); }\n"
+    ~profile:Exile_lang.Profile.Core
+    ["generic fn 'id' is tier=full but compiled under --profile=core"];
+
+  check_lint "lint: @tier(core) override silences warning under core"
+    "@tier(core)\n\
+     fn id<T>(x: T) -> T { return x; }\n\
+     fn main() { print(id(42)); }\n"
+    ~profile:Exile_lang.Profile.Core
+    [];
+
+  check_lint "lint: @tier(standard) warns under core but not standard"
+    "@tier(standard)\n\
+     fn id<T>(x: T) -> T { return x; }\n\
+     fn main() { print(id(42)); }\n"
+    ~profile:Exile_lang.Profile.Core
+    ["generic fn 'id' is tier=standard"];
+
+  check_lint "lint: mono fn never warns regardless of profile"
+    "fn add(a: int, b: int) -> int { return a + b; }\n\
+     fn main() { print(add(1, 2)); }\n"
+    ~profile:Exile_lang.Profile.Core
+    [];
+
+  check_lint "lint: unused generic fn does not warn (no instances)"
+    "fn id<T>(x: T) -> T { return x; }\n\
+     fn main() { print(1); }\n"
+    ~profile:Exile_lang.Profile.Core
+    [];
+
+  check_error "@tier rejects unknown tier name"
+    "@tier(bogus)\n\
+     fn foo() -> int { return 1; }\n\
+     fn main() { print(foo()); }\n"
+    "unknown tier 'bogus' (expected: core, standard, full)";
+
+  check_error "@tier rejects placement on non-decoratable items"
+    "@tier(core)\n\
+     impl Allocator { }\n\
+     fn main() { print(1); }\n"
+    "'@tier' can only decorate fn / struct / enum decls"

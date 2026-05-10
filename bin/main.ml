@@ -180,7 +180,10 @@ let print_bloat_report () =
 let () =
   let a = parse_args (List.tl (Array.to_list Sys.argv)) in
   try
-    let c_code = Exile_lang.Compiler.compile_file ~annotate:a.annotate a.input in
+    let c_code =
+      Exile_lang.Compiler.compile_file
+        ~annotate:a.annotate ~profile:a.profile a.input
+    in
     let c_path =
       match a.c_out with
       | Some p -> p

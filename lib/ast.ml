@@ -162,6 +162,11 @@ type func = {
                                         after [params]; arg types past
                                         [params] not type-checked.  Only
                                         legal on extern fns. *)
+  tier_hint : string option;         (* `@tier(core|standard|full)` attribute
+                                        on the decl, raw string at parse
+                                        time; typecheck validates and feeds
+                                        to the linter as a Tier.t override
+                                        of the inferred default. *)
   pos : Pos.t;
 }
 
@@ -171,6 +176,8 @@ type struct_decl = {
   sfields : (string * type_ann) list;
   spos : Pos.t;
   sis_pub : bool;
+  stier_hint : string option;        (* `@tier(...)` raw attribute; see
+                                        [func.tier_hint] for semantics *)
 }
 
 (* `enum Foo { | A | B(int, str) | C { f: T } }` — three variant forms.
@@ -193,6 +200,7 @@ type enum_decl = {
   evariants : enum_variant list;
   epos : Pos.t;
   eis_pub : bool;
+  etier_hint : string option;        (* `@tier(...)` raw attribute *)
 }
 
 type extern_struct = {
