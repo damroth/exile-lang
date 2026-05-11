@@ -22,6 +22,14 @@ AMIGA_OUT:= $(OUT)/amiga
 EXAMPLES_SRC := $(filter-out examples/error_%.exl, $(wildcard examples/*.exl))
 EXAMPLE_NAMES:= $(notdir $(EXAMPLES_SRC:.exl=))
 
+# `amiga_*.exl` examples link against AmigaOS-only libraries
+# (dos.library, intuition.library etc.) — they have no meaningful host
+# build because the C declarations reference functions that don't
+# exist outside of m68k-amigaos.  Filter them out of the host
+# pipelines; the amiga pipelines still pick them up.
+AMIGA_ONLY    := $(filter amiga_%, $(EXAMPLE_NAMES))
+HOST_EXAMPLES := $(filter-out $(AMIGA_ONLY), $(EXAMPLE_NAMES))
+
 GHCR_OWNER ?= damroth
 CI_IMAGE   ?= ghcr.io/$(GHCR_OWNER)/exile-lang-ci:latest
 
@@ -87,8 +95,9 @@ run-%: amiga-%
 run-host-%: host-%
 	$(HOST_OUT)/$*
 
-# Build everything for one target.
-host:  $(EXAMPLE_NAMES:%=host-%)
+# Build everything for one target.  `host` only builds examples that
+# can plausibly link against libnix (skips amiga-only ones).
+host:  $(HOST_EXAMPLES:%=host-%)
 amiga: $(EXAMPLE_NAMES:%=amiga-%)
 examples: host
 
@@ -129,7 +138,7 @@ verify-amiga-%: amiga-%
 		exit 1; \
 	fi
 
-verify-host:  $(EXAMPLE_NAMES:%=verify-host-%)
+verify-host:  $(HOST_EXAMPLES:%=verify-host-%)
 verify-amiga: $(EXAMPLE_NAMES:%=verify-amiga-%)
 verify: verify-host verify-amiga
 
@@ -140,7 +149,7 @@ rebaseline-host-%: host-%
 	@$(HOST_OUT)/$* > examples/$*.expected
 	@echo "rebaselined examples/$*.expected ($$(wc -l < examples/$*.expected) lines)"
 
-rebaseline-host: $(EXAMPLE_NAMES:%=rebaseline-host-%)
+rebaseline-host: $(HOST_EXAMPLES:%=rebaseline-host-%)
 
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io

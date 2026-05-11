@@ -86,11 +86,13 @@ let is_int_like = function
   | TCChar | TCSChar | TCUChar | TExtAlias _ -> true
   | _ -> false
 
-(* Pointer-shaped types — `*T` and the polymorphic null literal.  Used
-   by `as`-cast validation to allow ptr↔ptr casts on top of the int↔int
-   ones, mirroring `is_int_like`'s role for integer types. *)
+(* Pointer-shaped types — `*T`, the polymorphic null literal, and
+   `str` (which is `const char *` in C).  Used by `as`-cast validation
+   to allow ptr↔ptr casts on top of the int↔int ones; including TString
+   makes FFI to AmigaOS-style `APTR`/`*c_char` ergonomic ("hello" cast
+   to *c_uchar etc.). *)
 let is_ptr = function
-  | TPtr _ | TNullPtr -> true
+  | TPtr _ | TNullPtr | TString -> true
   | _ -> false
 
 let int_fits n typ =

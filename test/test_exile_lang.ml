@@ -959,7 +959,12 @@ let () =
      fn main() {}\n"
     "'extern var DOSBase' must live inside a `mod raw { ... }` block (FFI hygiene rule); wrap with `mod raw { ... }` and call as `raw::DOSBase` or import via `use raw::*;`";
 
-  check_no_cc "register-pinned extern fn: @reg(...) emits __reg(\"...\") prefix"
+  check_no_cc "@reg / @amiga_lib parse + validate, emitted prototype stays plain"
+    (* The annotations are documentation; Bebbo's amiga.lib stubs do
+       the register loading at the stub level (read args off the
+       stack, load into registers, JSR through SysBase/DOSBase).
+       Emitting `register T x __asm("X")` on the prototype would
+       short-circuit the stack convention and break the stub call. *)
     "pub mod raw {\n\
     \    extern struct Library;\n\
     \    @amiga_lib(SysBase)\n\
@@ -969,7 +974,7 @@ let () =
     \    ) -> *Library;\n\
      }\n\
      fn main() { print(0); }\n"
-    "#include <stdio.h>\n\nextern struct Library *OpenLibrary(__reg(\"a1\") char *name, __reg(\"d0\") unsigned int version);\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(0));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nextern struct Library *OpenLibrary(char *name, unsigned int version);\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(0));\n    return 0;\n}\n";
 
   check_error "@reg(...) rejected on non-extern fn"
     "fn bad(@reg(d0) x: int) -> int { return x; }\n\

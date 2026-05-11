@@ -1,0 +1,81 @@
+// First end-to-end AmigaOS-native binding: write to the program's
+// default DOS output handle via `dos.library/Write`.  Demonstrates the
+// MVP-FFI stack assembled in earlier sessions:
+//
+//   - `extern var SysBase / DOSBase: *Library` — library bases pinned
+//     to AmigaOS conventions (SysBase set by libnix on startup, DOSBase
+//     populated by our OpenLibrary call).
+//   - `@reg(...)` per parameter — m68k register pinning for ROM calls.
+//   - `@amiga_lib(...)` decorator — documents which base register the
+//     library lives behind (Bebbo's amiga.lib stubs do the JSR offset).
+//   - `pub mod raw { extern ... }` — FFI hygiene rule keeps all
+//     AmigaOS surface scoped to one module.
+//
+// Runtime: under vamos m68k, dos.library/Write reaches the AmigaOS
+// shim and prints to stdout.  No libnix printf in sight.
+
+// Pull in AmigaOS type definitions (LONG, ULONG, BPTR, APTR,
+// struct Library) so the emitted C compiles against Bebbo's
+// amiga-gcc headers.  We declare the entry points ourselves below;
+// proto/exec.h would redeclare them with matching signatures.
+@c_include("exec/types.h")
+@c_include("exec/libraries.h")
+@c_include("dos/dos.h")
+
+pub mod raw {
+    // Opaque types — exile only needs to hand around pointers; layout
+    // lives in <exec/types.h> / <dos/dos.h> on the C side.
+    extern struct Library;
+
+    // AmigaOS aliases.  ULONG = u32, BPTR = "BCPL pointer" (typically
+    // long with a >>2 shift relative to memory), APTR = void*.  We keep
+    // them opaque on the exile side; the C compiler matches against the
+    // header definitions when amiga.lib stubs are linked in.
+    extern type ULONG;
+    extern type BPTR;
+    extern type APTR;
+    extern type LONG;
+
+    // Library bases.  SysBase is provided by libnix runtime (set up
+    // before main()); DOSBase we populate via OpenLibrary.
+    extern var SysBase: *Library;
+    extern var DOSBase: *Library;
+
+    // exec.library/OpenLibrary — version 0 = any version.
+    @amiga_lib(SysBase)
+    extern fn open_library as OpenLibrary(
+        @reg(a1) name: *c_char,
+        @reg(d0) version: ULONG
+    ) -> *Library;
+
+    @amiga_lib(SysBase)
+    extern fn close_library as CloseLibrary(
+        @reg(a1) library: *Library
+    );
+
+    // dos.library/Output — returns the program's default output handle
+    // (BPTR to a FileHandle), set by the shell on launch.
+    @amiga_lib(DOSBase)
+    extern fn dos_output as Output() -> BPTR;
+
+    // dos.library/Write — writes raw bytes to a file handle.  We pass
+    // a `*c_char` (cast from `str`) as the buffer; the API treats it
+    // as opaque bytes so signedness/const doesn't matter at runtime.
+    @amiga_lib(DOSBase)
+    extern fn dos_write as Write(
+        @reg(d1) file: BPTR,
+        @reg(d2) buffer: *c_char,
+        @reg(d3) length: LONG
+    ) -> LONG;
+}
+
+fn main() {
+    let dos_name: *c_char = "dos.library" as *c_char;
+    raw::DOSBase = raw::open_library(dos_name, 0 as raw::ULONG);
+    if raw::DOSBase != null {
+        let msg: *c_char = "Hello, AmigaOS!\n" as *c_char;
+        let out = raw::dos_output();
+        raw::dos_write(out, msg, 16 as raw::LONG);
+        raw::close_library(raw::DOSBase);
+    }
+}

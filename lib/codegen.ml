@@ -727,14 +727,18 @@ let emit_fn_sig buf (tf : tfunc) =
          let zipped = List.combine params tys in
          add_separated buf ", "
            (fun ((p : Ast.param), t) ->
-             (* `@reg(X)` on an extern fn param: emit `__reg("X")`
-                before the C type so Bebbo amiga-gcc places the
-                argument in that m68k register at the call site. *)
-             (match p.preg with
-              | Some r ->
-                  Buffer.add_string buf
-                    (Printf.sprintf "__reg(\"%s\") " r)
-              | None -> ());
+             (* `@reg(X)` and `@amiga_lib(...)` are accepted on the
+                exile side as documentation of the AmigaOS calling
+                convention, but the EMIT stays plain.  Bebbo's
+                amiga.lib provides per-function stubs (`_OpenLibrary`
+                etc.) that read args off the stack via the normal C
+                calling convention and load them into the right
+                registers before the ROM JSR.  Emitting
+                `register T name __asm("X")` on the prototype WOULD
+                bypass the stack convention and the stub would read
+                garbage — exactly what bit us when we tried.  Leaving
+                the C declaration plain keeps the amiga.lib stub path
+                happy. *)
              Buffer.add_string buf (c_decl t p.pname))
            zipped);
     if f.is_variadic then Buffer.add_string buf ", ...";

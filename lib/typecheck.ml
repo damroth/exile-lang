@@ -240,11 +240,15 @@ let rec resolve_type_ann_raw ctx ann =
                ret = Option.map (resolve_type_ann_raw ctx) ret }
   | Ast.TyStruct { path; args = [] } ->
       (* Non-generic case: tparam reference / extern type / extern
-         struct / struct / enum / fallback. *)
+         struct / struct / enum / fallback.  ext_types / ext_structs
+         are flat (single C symbol name); qualified paths like
+         `raw::ULONG` accept the path as long as the last segment
+         matches.  Tparam ref is single-segment only. *)
+      let last = match List.rev path with n :: _ -> n | [] -> "" in
       (match path with
        | [n] when List.mem n ctx.tparams -> TVar n
-       | [n] when List.mem n ctx.ext_types -> TExtAlias n
-       | [n] when List.mem n ctx.ext_structs -> TExtStruct n
+       | _ when List.mem last ctx.ext_types -> TExtAlias last
+       | _ when List.mem last ctx.ext_structs -> TExtStruct last
        | _ ->
            (match lookup_struct ctx path with
             | Some s -> TStruct s.sname_path
