@@ -18,8 +18,15 @@ mod greet {
     }
 }
 
+// `pub use foo::bar;` re-exports `bar` into the enclosing scope, so
+// callers can use the short name without the module qualifier.
+// Wildcard re-export (`pub use foo::*;`) is not supported — list names
+// one at a time.
+pub use math::double;
+
 fn main() {
     print(math::double(21));
     print(math::double_then_bump(10));
+    print(double(15));                       // 30 — same fn, no `math::`
     greet::hi("hello from modules");
 }
