@@ -1012,10 +1012,10 @@ let () =
     "pub mod raw { extern fn signal(sig: c_int, handler: fn(c_int)) -> fn(c_int); }\n\
      fn my_handler(s: c_int) { print(s as int); }\n\
      fn main() {\n\
-         let prev: fn(c_int) = raw::signal(2, my_handler);\n\
+         let _prev: fn(c_int) = raw::signal(2, my_handler);\n\
      }\n\
      "
-    "#include <stdio.h>\n\ntypedef void (*fn1_cint_to_void)(int);\n\nextern fn1_cint_to_void signal(int sig, fn1_cint_to_void handler);\nstatic void ex_my_handler(int s);\n\nstatic void ex_my_handler(int s) {\n    printf(\"%ld\\n\", (long)(((long)s)));\n}\n\nint main(void) {\n    fn1_cint_to_void prev;\n    prev = signal(2, ex_my_handler);\n    return 0;\n}\n";
+    "#include <stdio.h>\n\ntypedef void (*fn1_cint_to_void)(int);\n\nextern fn1_cint_to_void signal(int sig, fn1_cint_to_void handler);\nstatic void ex_my_handler(int s);\n\nstatic void ex_my_handler(int s) {\n    printf(\"%ld\\n\", (long)(((long)s)));\n}\n\nint main(void) {\n    fn1_cint_to_void _prev;\n    _prev = signal(2, ex_my_handler);\n    return 0;\n}\n";
 
   check_error "fn pointer call with wrong arity rejected"
     "fn add(a: c_int, b: c_int) -> c_int { return a + b; }\n\
@@ -1489,4 +1489,35 @@ let () =
     "@tier(core)\n\
      impl Allocator { }\n\
      fn main() { print(1); }\n"
-    "'@tier' can only decorate fn / struct / enum decls"
+    "'@tier' can only decorate fn / struct / enum decls";
+
+  check_lint "lint: unused let warns once per binding"
+    "fn main() {\n\
+    \    let a: int = 1;\n\
+    \    let b: int = 2;\n\
+    \    print(a);\n\
+     }\n"
+    ~profile:Exile_lang.Profile.Full
+    ["unused variable 'b'"];
+
+  check_lint "lint: '_' prefix silences unused-let warning"
+    "fn main() {\n\
+    \    let _scratch: int = 99;\n\
+    \    print(1);\n\
+     }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: fn-ptr local called via TCall counts as used"
+    "fn add(a: c_int, b: c_int) -> c_int { return a + b; }\n\
+     fn main() {\n\
+    \    let f: fn(c_int, c_int) -> c_int = add;\n\
+    \    print(f(1, 2) as int);\n\
+     }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: prelude code doesn't emit unused-let warnings"
+    "fn main() { print(1); }\n"
+    ~profile:Exile_lang.Profile.Full
+    []

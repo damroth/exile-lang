@@ -39,6 +39,99 @@ let is_concrete_instance (tf : tfunc) : bool =
 
 type warning = { pos : Pos.t; msg : string }
 
+(* Names starting with '_' are an explicit "I know this is unused" tag —
+   mirrors Rust/OCaml convention.  Bare '_' also exempt (binding-as-throwaway
+   in destructure patterns, though parser doesn't currently emit it as a
+   let name). *)
+let is_silenced_name n =
+  String.length n > 0 && n.[0] = '_'
+
+(* Walk a texpr collecting every name that appears in a reading position
+   (TVar).  Writes (LHS of TAssign) are not collected here — they don't
+   count as "use" for the unused-let check. *)
+let rec reads_in_expr acc (e : texpr) =
+  match e.e with
+  | TVar n -> n :: acc
+  | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _
+  | TFnRef _ | TSizeOf _ -> acc
+  | TNeg x | TCast (x, _) | TRef x | TDeref x -> reads_in_expr acc x
+  | TBinOp (_, a, b) -> reads_in_expr (reads_in_expr acc a) b
+  | TCall { mangled; args } ->
+      (* Local fn-ptr vars are called via TCall with `mangled` = the
+         local's name (see Ir.texpr_node note on TIndirectCall).  Count
+         it as a read so `let f = add; f(40, 2)` doesn't warn.  Global
+         fn names (`ex_add`, `mod__foo`) won't collide with let names
+         so the extra entries are harmless noise. *)
+      List.fold_left reads_in_expr (mangled :: acc) args
+  | TBuiltinCall { args; _ } ->
+      List.fold_left reads_in_expr acc args
+  | TIndirectCall { fn_expr; args } ->
+      List.fold_left reads_in_expr (reads_in_expr acc fn_expr) args
+  | TTupleLit xs -> List.fold_left reads_in_expr acc xs
+  | TStructLit { fields; base; _ } | TNew { fields; base; _ } ->
+      let acc = List.fold_left (fun a (_, x) -> reads_in_expr a x) acc fields in
+      (match base with Some b -> reads_in_expr acc b | None -> acc)
+  | TFieldAccess { target; _ } -> reads_in_expr acc target
+  | TEnumLit { args; _ } ->
+      List.fold_left (fun a (_, x) -> reads_in_expr a x) acc args
+  | TMatch { scrutinee; arms; _ } ->
+      let acc = reads_in_expr acc scrutinee in
+      List.fold_left (fun a arm -> reads_in_expr a arm.tbody) acc arms
+
+let rec reads_in_stmts acc stmts = List.fold_left reads_in_stmt acc stmts
+and reads_in_stmt acc s =
+  match s with
+  | TLet { value; _ } | TLetTuple { value; _ }
+  | TAssign { value; _ } -> reads_in_expr acc value
+  | TAssignField { target; value; _ } | TAssignDeref { target; value; _ } ->
+      reads_in_expr (reads_in_expr acc target) value
+  | TReturn { value; _ } -> reads_in_expr acc value
+  | TExprStmt e -> reads_in_expr acc e
+  | TIf { cond; then_body; else_body } ->
+      let acc = reads_in_expr acc cond in
+      reads_in_stmts (reads_in_stmts acc then_body) else_body
+  | TWhile { cond; body } -> reads_in_stmts (reads_in_expr acc cond) body
+  | TDefer { body; _ } -> reads_in_stmts acc body
+
+(* Collect (name, pos) for every TLet / TLetTuple binding in the tree.
+   Names starting with '_' are skipped at collection time so they never
+   show up in the unused list. *)
+let rec lets_in_stmts acc stmts = List.fold_left let_in_stmt acc stmts
+and let_in_stmt acc s =
+  match s with
+  | TLet { name; pos; _ } ->
+      if is_silenced_name name then acc else (name, pos) :: acc
+  | TLetTuple { names; pos; _ } ->
+      List.fold_left (fun a n ->
+        if is_silenced_name n then a else (n, pos) :: a) acc names
+  | TIf { then_body; else_body; _ } ->
+      lets_in_stmts (lets_in_stmts acc then_body) else_body
+  | TWhile { body; _ } -> lets_in_stmts acc body
+  | TDefer { body; _ } -> lets_in_stmts acc body
+  | TAssign _ | TAssignField _ | TAssignDeref _
+  | TReturn _ | TExprStmt _ -> acc
+
+(* Per-function unused-let check.  Builds the set of names read anywhere
+   in the body, then flags any let-binding whose name doesn't appear.
+   Shadowing is rare in practice and harmless here: if any of the
+   shadow chain is read, none of them warn (false negative we accept). *)
+let unused_lets_for (tf : tfunc) : warning list =
+  let lets = List.rev (lets_in_stmts [] tf.tf_body) in
+  if lets = [] then []
+  else begin
+    let reads = reads_in_stmts [] tf.tf_body in
+    let read_set = Hashtbl.create (List.length reads) in
+    List.iter (fun n -> Hashtbl.replace read_set n ()) reads;
+    List.filter_map (fun (name, pos) ->
+      if Hashtbl.mem read_set name then None
+      else
+        let msg = Printf.sprintf
+          "unused variable '%s' (prefix name with '_' to silence)" name
+        in
+        Some { pos; msg })
+      lets
+  end
+
 (* Pure analysis: returns the warnings the linter would emit, without
    touching stderr.  Tests compare the list directly; CLI prints via
    [emit_warnings]. *)
@@ -75,7 +168,23 @@ let collect ~(profile : Profile.t) (tp : tprogram) : warning list =
       end
     end)
     tp.tp_funcs;
-  List.rev !acc
+  let tier_warnings = List.rev !acc in
+  (* Unused-let warnings: walk each source-level fn once.  tp_funcs
+     contains both generic skeletons and their concrete instances; we
+     walk the skeleton (it has the original let-names and positions)
+     and skip the instance.  Prelude code is library territory — never
+     warn the user about it. *)
+  let is_prelude tf = tf.tf_func.pos.file = "<prelude>" in
+  let is_generic_instance tf =
+    tf.tf_func.tparams <> [] && is_concrete_instance tf
+  in
+  let unused =
+    List.concat_map (fun tf ->
+      if is_prelude tf || is_generic_instance tf then []
+      else unused_lets_for tf)
+      tp.tp_funcs
+  in
+  tier_warnings @ unused
 
 let emit_warnings (ws : warning list) : unit =
   List.iter (fun w ->

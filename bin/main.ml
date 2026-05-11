@@ -4,7 +4,7 @@ let usage () =
   prerr_endline
     "usage: exilc [--target c|host|amiga] [--profile core|standard|full] \
      [-o <output>] [--c-out <path>] [--link <c-stub>]... [--annotate] \
-     [--bloat-report] <file.exl>";
+     [--bloat-report] [--show-cc-warnings] <file.exl>";
   exit 1
 
 let show_error (pos : Exile_lang.Pos.t) msg =
@@ -52,6 +52,7 @@ type args = {
   link_files : string list;
   annotate : bool;
   bloat_report : bool;
+  show_cc_warnings : bool;
   input : string;
 }
 
@@ -64,6 +65,7 @@ let parse_args argv =
   let input = ref None in
   let annotate = ref false in
   let bloat_report = ref false in
+  let show_cc_warnings = ref false in
   let rec loop = function
     | [] -> ()
     | "--target" :: t :: rest -> target := parse_target t; loop rest
@@ -73,6 +75,7 @@ let parse_args argv =
     | "--link" :: p :: rest -> link_files := p :: !link_files; loop rest
     | "--annotate" :: rest -> annotate := true; loop rest
     | "--bloat-report" :: rest -> bloat_report := true; loop rest
+    | "--show-cc-warnings" :: rest -> show_cc_warnings := true; loop rest
     | "--help" :: _ | "-h" :: _ -> usage ()
     | f :: rest when String.length f > 0 && f.[0] <> '-' ->
         if !input <> None then begin
@@ -99,6 +102,7 @@ let parse_args argv =
         link_files = List.rev !link_files;
         annotate = !annotate;
         bloat_report = !bloat_report;
+        show_cc_warnings = !show_cc_warnings;
         input = i }
 
 let toolchain_path () =
@@ -132,16 +136,25 @@ let include_flag input =
   if dir = "" || dir = "." then ""
   else Printf.sprintf "-I %s" (Filename.quote dir)
 
-let compile_host c_path link_files input output =
-  run_cmd (Printf.sprintf "cc -ansi -pedantic -Wall %s -o %s %s %s"
+(* Exilc itself emits unused-variable warnings via Lint; suppress cc's
+   equivalent so the same finding doesn't surface twice in different
+   wording.  `--show-cc-warnings` opts back in for compiler dev. *)
+let cc_warn_suppress show_cc_warnings =
+  if show_cc_warnings then ""
+  else "-Wno-unused-variable -Wno-unused-but-set-variable"
+
+let compile_host ~show_cc_warnings c_path link_files input output =
+  run_cmd (Printf.sprintf "cc -ansi -pedantic -Wall %s %s -o %s %s %s"
+    (cc_warn_suppress show_cc_warnings)
     (include_flag input)
     (Filename.quote output) (Filename.quote c_path) (quote_paths link_files));
   Printf.printf "built host binary: %s\n" output
 
-let compile_amiga c_path link_files input output =
+let compile_amiga ~show_cc_warnings c_path link_files input output =
   let gcc = amiga_gcc () in
-  run_cmd (Printf.sprintf "%s -noixemul %s -o %s %s %s"
-    (Filename.quote gcc) (include_flag input)
+  run_cmd (Printf.sprintf "%s -noixemul %s %s -o %s %s %s"
+    (Filename.quote gcc) (cc_warn_suppress show_cc_warnings)
+    (include_flag input)
     (Filename.quote output) (Filename.quote c_path)
     (quote_paths link_files));
   Printf.printf "built amiga binary: %s\n" output
@@ -200,11 +213,13 @@ let () =
     | Target_host ->
         let out = Option.value a.output ~default:(default_output_for a.input) in
         ensure_dir out;
-        compile_host c_path a.link_files a.input out
+        compile_host ~show_cc_warnings:a.show_cc_warnings
+          c_path a.link_files a.input out
     | Target_amiga ->
         let out = Option.value a.output ~default:(default_output_for a.input) in
         ensure_dir out;
-        compile_amiga c_path a.link_files a.input out
+        compile_amiga ~show_cc_warnings:a.show_cc_warnings
+          c_path a.link_files a.input out
   with
   | Exile_lang.Error.Compile_error { pos; msg } ->
       show_error pos msg;
