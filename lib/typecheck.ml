@@ -37,10 +37,22 @@ type fn_ctx = {
                                             T sees the instance's concrete
                                             type. *)
   instances : Mono.state;
-  ext_structs : string list;             (* names of `extern struct Foo;`
-                                            decls — resolve_type_ann uses
-                                            this to map a single-segment
-                                            path to TExtStruct *)
+  ext_structs : string list;             (* names of `extern struct Foo`
+                                            decls (opaque or exposed) —
+                                            resolve_type_ann uses this to
+                                            map a single-segment path to
+                                            TExtStruct.  Field lookup goes
+                                            through ext_struct_fields. *)
+  ext_struct_fields : (string * (string * typ) list) list;
+                                          (* For exposed extern struct
+                                             decls (`extern struct Foo { f:
+                                             T, ... }`): name → resolved
+                                             fields.  Opaque structs are
+                                             absent from this list.
+                                             FieldAccess on a TExtStruct
+                                             consults this for field
+                                             types; absence = opaque
+                                             access rejected. *)
   ext_types : string list;               (* names of `extern type Foo;`
                                             aliases — resolve_type_ann
                                             maps a single-segment path
@@ -187,16 +199,22 @@ let resolve_enum_by_path ctx path =
    *`.  This walks a resolved type and rejects bare `TExtStruct` /
    `TCVoid` outside any `TPtr` wrapper.  Anywhere under `TPtr` is
    fine; tuples are recursed into. *)
-let rec forbid_naked_opaque pos = function
-  | TExtStruct n ->
+(* Walk a resolved type and reject bare `TExtStruct` (opaque) / `TCVoid`
+   outside any `TPtr` wrapper.  Exposed extern struct names live in
+   [~exposed]; they're treated as ordinary value types with a known
+   layout (matching the C header pulled in via @c_include). *)
+let rec forbid_naked_opaque ?(exposed = []) pos = function
+  | TExtStruct n when not (List.mem n exposed) ->
       Error.failf pos
         "opaque type '%s' can only be used through a pointer (`*%s`) — \
-         exile doesn't know its layout" n n
+         exile doesn't know its layout (use `extern struct %s { ... }` \
+         to expose fields)" n n n
+  | TExtStruct _ -> ()
   | TCVoid ->
       Error.failf pos
         "'c_void' has no values — only `*c_void` is usable as a type"
   | TPtr _ -> ()
-  | TTuple ts -> List.iter (forbid_naked_opaque pos) ts
+  | TTuple ts -> List.iter (forbid_naked_opaque ~exposed pos) ts
   | _ -> ()
 
 (* Find a variant by name in an enum's variant list, returning its
@@ -621,29 +639,50 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
   | Ast.FieldAccess (target, fname, pos) ->
       let tt = type_of ctx env target in
       (* `.field` auto-derefs one level of pointer-to-struct.  Codegen
-         emits `target->field` in that case (vs `target.field`). *)
-      let path =
-        match tt with
-        | TStruct p -> p
-        | TPtr (TStruct p) -> p
-        | _ ->
-            Error.failf pos
-              "field access '.%s' requires a struct value or pointer to \
-               struct, got %s"
-              fname (typ_name tt)
-      in
-      let s =
-        match resolve_struct_by_path ctx path with
-        | Some s -> s
-        | None ->
-            Error.failf pos "unknown struct '%s'"
-              (String.concat "::" path)
-      in
-      (match List.assoc_opt fname s.sfields_ty with
-       | Some t -> t
-       | None ->
-           Error.failf pos "struct '%s' has no field '%s'"
-             (String.concat "::" path) fname)
+         emits `target->field` in that case (vs `target.field`).
+         Works for ordinary structs (consulting struct_index) and for
+         exposed extern structs (consulting ext_struct_fields). *)
+      (match tt with
+       | TStruct p ->
+           let s = match resolve_struct_by_path ctx p with
+             | Some s -> s
+             | None -> Error.failf pos "unknown struct '%s'"
+                         (String.concat "::" p)
+           in
+           (match List.assoc_opt fname s.sfields_ty with
+            | Some t -> t
+            | None ->
+                Error.failf pos "struct '%s' has no field '%s'"
+                  (String.concat "::" p) fname)
+       | TPtr (TStruct p) ->
+           let s = match resolve_struct_by_path ctx p with
+             | Some s -> s
+             | None -> Error.failf pos "unknown struct '%s'"
+                         (String.concat "::" p)
+           in
+           (match List.assoc_opt fname s.sfields_ty with
+            | Some t -> t
+            | None ->
+                Error.failf pos "struct '%s' has no field '%s'"
+                  (String.concat "::" p) fname)
+       | TExtStruct n | TPtr (TExtStruct n) ->
+           (match List.assoc_opt n ctx.ext_struct_fields with
+            | None ->
+                Error.failf pos
+                  "field access '.%s' on opaque type '%s' — declare \
+                   fields with `extern struct %s { ... }` to access them"
+                  fname n n
+            | Some fs ->
+                (match List.assoc_opt fname fs with
+                 | Some t -> t
+                 | None ->
+                     Error.failf pos "extern struct '%s' has no field '%s'"
+                       n fname))
+       | _ ->
+           Error.failf pos
+             "field access '.%s' requires a struct value or pointer to \
+              struct, got %s"
+             fname (typ_name tt))
   | Ast.Ref (e, _) ->
       TPtr (type_of ctx env e)
   | Ast.Deref (e, pos) ->
@@ -1779,7 +1818,9 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
           | Some ann -> Some (resolve_type_ann ctx ann)
           | None -> None
         in
-        Option.iter (forbid_naked_opaque pos) expected;
+        Option.iter
+          (forbid_naked_opaque ~exposed:(List.map fst ctx.ext_struct_fields) pos)
+          expected;
         let tvalue = elab_expr ?expected ctx env value in
         let t_inferred = tvalue.ty in
         let t_actual =
@@ -1869,36 +1910,45 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
         (env, TAssign { path; value = tvalue; pos })
     | Ast.AssignField { target; field; value; pos } ->
         let ttarget = elab_expr ctx env target in
-        let path =
+        let fty =
           match ttarget.ty with
-          | TStruct p -> p
-          | TPtr (TStruct p) -> p
+          | TStruct p | TPtr (TStruct p) ->
+              let s = match resolve_struct_by_path ctx p with
+                | Some s -> s
+                | None ->
+                    Error.failf pos "unknown struct '%s'"
+                      (String.concat "::" p)
+              in
+              (match List.assoc_opt field s.sfields_ty with
+               | Some t -> t
+               | None ->
+                   Error.failf pos "struct '%s' has no field '%s'"
+                     (String.concat "::" p) field)
+          | TExtStruct n | TPtr (TExtStruct n) ->
+              (match List.assoc_opt n ctx.ext_struct_fields with
+               | None ->
+                   Error.failf pos
+                     "assignment to '.%s' on opaque type '%s' — \
+                      declare fields with `extern struct %s { ... }`"
+                     field n n
+               | Some fs ->
+                   (match List.assoc_opt field fs with
+                    | Some t -> t
+                    | None ->
+                        Error.failf pos
+                          "extern struct '%s' has no field '%s'"
+                          n field))
           | other ->
               Error.failf pos
                 "assignment to field '.%s' requires a struct value or \
                  pointer to struct, got %s"
                 field (typ_name other)
         in
-        let s =
-          match resolve_struct_by_path ctx path with
-          | Some s -> s
-          | None ->
-              Error.failf pos "unknown struct '%s'"
-                (String.concat "::" path)
-        in
-        let fty =
-          match List.assoc_opt field s.sfields_ty with
-          | Some t -> t
-          | None ->
-              Error.failf pos "struct '%s' has no field '%s'"
-                (String.concat "::" path) field
-        in
         let tvalue = elab_expr ctx env value in
         if not (typ_eq tvalue.ty fty) && not (int_lit_fits value fty) then
           Error.failf pos
-            "field '%s' of struct '%s': expected %s, got %s"
-            field (String.concat "::" path) (typ_name fty)
-            (typ_name tvalue.ty);
+            "field '%s': expected %s, got %s"
+            field (typ_name fty) (typ_name tvalue.ty);
         (env, TAssignField { target = ttarget; field;
                                   value = tvalue; pos })
     | Ast.AssignDeref { target; value; pos } ->
@@ -2222,7 +2272,7 @@ let flatten_items program =
 
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
-let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~struct_index ~enum_index ~modules ~aliases flat =
+let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~ext_struct_fields ~struct_index ~enum_index ~modules ~aliases flat =
   List.filter_map
     (fun (p, (f : Ast.func), mangled) ->
       if f.name = "main" then None
@@ -2231,7 +2281,7 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~struct_in
           global = []; structs = struct_index; enums = enum_index;
           modules; scope = p; tparams = f.tparams;
           tvar_bindings = []; fn_asts = []; aliases;
-          ext_vars = [];
+          ext_vars = []; ext_struct_fields;
           instances; ext_structs; ext_types; ext_consts; ret_ty = None;
         } in
         Some
@@ -2269,7 +2319,7 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~
         global = []; structs = skeleton; enums;
         modules; scope = p; tparams = s.stparams;
         tvar_bindings = []; fn_asts = []; aliases = [];
-        ext_vars = [];
+        ext_vars = []; ext_struct_fields = [];
         instances; ext_structs; ext_types; ext_consts; ret_ty = None;
       } in
       { skel with
@@ -2305,7 +2355,7 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
         global = []; structs = struct_index; enums = skeleton;
         modules; scope = p; tparams = e.etparams;
         tvar_bindings = []; fn_asts = []; aliases = [];
-        ext_vars = [];
+        ext_vars = []; ext_struct_fields = [];
         instances; ext_structs; ext_types; ext_consts; ret_ty = None;
       } in
       let variants =
@@ -2461,7 +2511,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
           global = []; structs = struct_index; enums = enum_index;
           modules; scope = parent_path; tparams = [];
           tvar_bindings = []; fn_asts = []; aliases = [];
-          ext_vars = [];
+          ext_vars = []; ext_struct_fields = [];
           instances; ext_structs; ext_types; ext_consts; ret_ty = None;
         } in
         let s =
@@ -2745,7 +2795,7 @@ let check_program program : tprogram =
     global = []; structs = []; enums = []; modules = flat.modules;
     scope = []; tparams = []; tvar_bindings = []; fn_asts = [];
     aliases = [];
-    ext_vars = [];
+    ext_vars = []; ext_struct_fields = [];
     instances = mono_state;
     ext_structs; ext_types; ext_consts = [];
     ret_ty = None;
@@ -2759,6 +2809,16 @@ let check_program program : tprogram =
     List.map (fun (ev : Ast.extern_var) ->
         (ev.evname, resolve_type_ann ann_only_ctx ev.evty))
       flat.ext_vars
+  in
+  let ext_struct_fields =
+    List.filter_map (fun (es : Ast.extern_struct) ->
+        match es.esfields with
+        | None -> None
+        | Some fs ->
+            Some (es.esname,
+                  List.map (fun (n, t) ->
+                      (n, resolve_type_ann ann_only_ctx t)) fs))
+      flat.ext_structs
   in
   let struct_index =
     build_struct_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
@@ -2784,6 +2844,7 @@ let check_program program : tprogram =
     impl_funcs;
   let global =
     build_global_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
+      ~ext_struct_fields
       ~struct_index ~enum_index ~modules ~aliases:flat.aliases all_funcs
   in
   (* Side-table for re-elaborating generic fn instances after the main
@@ -2803,16 +2864,19 @@ let check_program program : tprogram =
       global; structs = struct_index; enums = enum_index;
       modules; scope = path; tparams = f.tparams;
       tvar_bindings; fn_asts; aliases = flat.aliases;
-      ext_vars;
+      ext_vars; ext_struct_fields;
       instances = mono_state; ext_structs; ext_types; ext_consts;
       ret_ty = None;
     } in
     let param_tys =
       List.map (fun (p : Ast.param) -> resolve_type_ann ctx0 p.pty) f.params
     in
-    List.iter (forbid_naked_opaque f.pos) param_tys;
+    let exposed_extern = List.map fst ext_struct_fields in
+    List.iter
+      (forbid_naked_opaque ~exposed:exposed_extern f.pos)
+      param_tys;
     let ret_ty = Option.map (resolve_type_ann ctx0) f.ret_ty in
-    Option.iter (forbid_naked_opaque f.pos) ret_ty;
+    Option.iter (forbid_naked_opaque ~exposed:exposed_extern f.pos) ret_ty;
     let ctx = { ctx0 with ret_ty } in
     let param_env =
       List.combine (List.map (fun (p : Ast.param) -> p.pname) f.params)

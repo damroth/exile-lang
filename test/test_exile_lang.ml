@@ -1088,20 +1088,78 @@ let () =
      fn main() {}\n\
      "
     "opaque type 'Library' can only be used through a pointer (`*Library`) \
-     — exile doesn't know its layout";
+     — exile doesn't know its layout (use `extern struct Library { ... }` \
+     to expose fields)";
 
-  check_error "extern struct rejects body block"
-    "pub mod raw { extern struct Library { x: int } }\n\
+  check_no_cc "extern struct Foo { fields }: field read through pointer"
+    "pub mod raw {\n\
+    \    extern struct Library { lib_OpenCnt: c_uint, lib_Version: c_uint }\n\
+    \    extern fn open_lib() -> *Library;\n\
+     }\n\
+     fn main() {\n\
+    \    let lib: *Library = raw::open_lib();\n\
+    \    if lib != null {\n\
+    \        print(lib.lib_OpenCnt as int);\n\
+    \        print(lib.lib_Version as int);\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nextern struct Library *open_lib(void);\n\nint main(void) {\n    struct Library *lib;\n    lib = open_lib();\n    if (lib != ((void *)0)) {\n        printf(\"%ld\\n\", (long)(((long)lib->lib_OpenCnt)));\n        printf(\"%ld\\n\", (long)(((long)lib->lib_Version)));\n    }\n    return 0;\n}\n";
+
+  check_no_cc "extern struct: by-value type allowed when fields exposed"
+    "pub mod raw {\n\
+    \    extern struct Point { x: c_int, y: c_int }\n\
+    \    extern fn make_pt() -> Point;\n\
+     }\n\
+     fn main() {\n\
+    \    let p: Point = raw::make_pt();\n\
+    \    print(p.x as int);\n\
+     }\n"
+    "#include <stdio.h>\n\nextern struct Point make_pt(void);\n\nint main(void) {\n    struct Point p;\n    p = make_pt();\n    printf(\"%ld\\n\", (long)(((long)p.x)));\n    return 0;\n}\n";
+
+  check_no_cc "extern struct: field write through pointer"
+    "pub mod raw {\n\
+    \    extern struct Cfg { count: c_int }\n\
+    \    extern fn get_cfg() -> *Cfg;\n\
+     }\n\
+     fn main() {\n\
+    \    let c: *Cfg = raw::get_cfg();\n\
+    \    c.count = 42 as c_int;\n\
+     }\n"
+    "#include <stdio.h>\n\nextern struct Cfg *get_cfg(void);\n\nint main(void) {\n    struct Cfg *c;\n    c = get_cfg();\n    c->count = ((int)42);\n    return 0;\n}\n";
+
+  check_error "extern struct opaque rejects field access"
+    "pub mod raw {\n\
+    \    extern struct Library;\n\
+    \    extern fn open_lib() -> *Library;\n\
+     }\n\
+     fn main() {\n\
+    \    let lib: *Library = raw::open_lib();\n\
+    \    print(lib.lib_Version as int);\n\
+     }\n"
+    "field access '.lib_Version' on opaque type 'Library' — declare fields with `extern struct Library { ... }` to access them";
+
+  check_error "extern struct: unknown field rejected"
+    "pub mod raw {\n\
+    \    extern struct Lib { x: c_int }\n\
+    \    extern fn open_lib() -> *Lib;\n\
+     }\n\
+     fn main() {\n\
+    \    let l: *Lib = raw::open_lib();\n\
+    \    print(l.y as int);\n\
+     }\n"
+    "extern struct 'Lib' has no field 'y'";
+
+  check_error "extern struct empty body { } rejected"
+    "pub mod raw { extern struct Library { } }\n\
      fn main() {}\n\
      "
-    "'extern struct Library' must end with ';', not a body — extern \
-     declares an opaque type with no fields visible to exile";
+    "'extern struct Library {}' is empty — use `extern struct Library;` for opaque types";
 
   check_error "extern struct rejects generic params"
     "pub mod raw { extern struct Pair<T>; }\n\
      fn main() {}\n\
      "
-    "'extern struct Pair' cannot have generic parameters — opaque types \
+    "'extern struct Pair' cannot have generic parameters — extern types \
      live on the C side";
 
   check_error "extern struct outside `mod raw` rejected"

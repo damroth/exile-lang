@@ -774,10 +774,12 @@ and parse_extern_params s ~name =
       in
       loop []
 
-(* `extern struct Name;` — declares an opaque C struct.  The type can
-   only be used through `*Name` pointer types; field access, struct
-   literals, and `new Name { ... }` are all rejected by typecheck.
-   Caller consumed the `extern` keyword. *)
+(* `extern struct Name;` — opaque C struct (legal use: `*Name`).
+   `extern struct Name { f: T, ... }` — exposed: fields readable /
+   writable from exile.  Layout / size live on the C side (typically
+   via `@c_include("...")`); exile trusts the declaration to match.
+   Generic params, `pub`, and methods are rejected.  Caller consumed
+   the `extern` keyword. *)
 and parse_extern_struct_after_keyword s seen =
   expect s Token.Struct;
   let (name, name_pos) =
@@ -787,19 +789,43 @@ and parse_extern_struct_after_keyword s seen =
     Error.failf name_pos "name '%s' already used in this scope" name;
   if peek s = Token.Lt then
     Error.failf name_pos
-      "'extern struct %s' cannot have generic parameters — opaque \
+      "'extern struct %s' cannot have generic parameters — extern \
        types live on the C side" name;
-  (match peek s with
-   | Token.Semicolon -> ignore (advance s)
-   | Token.LBrace ->
-       Error.failf (peek_pos s)
-         "'extern struct %s' must end with ';', not a body — extern \
-          declares an opaque type with no fields visible to exile" name
-   | t ->
-       Error.failf (peek_pos s)
-         "expected ';' after 'extern struct %s', got %s"
-         name (Token.pp t));
-  Ast.{ esname = name; espos = name_pos }
+  let esfields = match peek s with
+    | Token.Semicolon -> ignore (advance s); None
+    | Token.LBrace ->
+        ignore (advance s);
+        let parse_field s =
+          let (fname, _) = expect_ident s ~what:"field name in extern struct" in
+          expect s Token.Colon;
+          let ty = parse_type s in
+          (fname, ty)
+        in
+        let fields =
+          parse_comma_list ~close:Token.RBrace ~item:parse_field s
+        in
+        let rec check_dups = function
+          | [] -> ()
+          | (n, _) :: rest ->
+              if List.exists (fun (m, _) -> m = n) rest then
+                Error.failf name_pos
+                  "duplicate field '%s' in extern struct '%s'" n name;
+              check_dups rest
+        in
+        check_dups fields;
+        if fields = [] then
+          Error.failf name_pos
+            "'extern struct %s {}' is empty — use `extern struct %s;` \
+             for opaque types"
+            name name;
+        Some fields
+    | t ->
+        Error.failf (peek_pos s)
+          "expected ';' (opaque) or '{ ... }' (with fields) after \
+           'extern struct %s', got %s"
+          name (Token.pp t)
+  in
+  Ast.{ esname = name; esfields; espos = name_pos }
 
 (* `extern type T;` — raw C type alias.  Different from extern struct:
    no `struct` prefix on the C side, used directly as a typedef'd name

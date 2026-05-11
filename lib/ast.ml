@@ -227,6 +227,15 @@ type enum_decl = {
 
 type extern_struct = {
   esname : string;
+  esfields : (string * type_ann) list option;
+                                     (* None = opaque (`extern struct
+                                        Foo;`); only legal use is via
+                                        `*Foo`.  Some fs = exposed with
+                                        fields (`extern struct Foo { ...
+                                        }`); user-supplied layout must
+                                        match the C header pulled in
+                                        via @c_include — exile trusts
+                                        the declaration. *)
   espos : Pos.t;
 }
 
