@@ -21,6 +21,12 @@ fn area(r: Rect) -> int {
     return r.width * r.height;
 }
 
+// Functional update: `..base` copies the remaining fields from `base`.
+// Useful when only one or two fields change — no need to retype the rest.
+fn taller(r: Rect, by: int) -> Rect {
+    return Rect { height: r.height + by, ..r };
+}
+
 fn main() {
     let p = make_point(3, 4);
     print(p.x);
@@ -39,4 +45,7 @@ fn main() {
 
     r.width = 10;
     print(area(r));
+
+    let r2 = taller(r, 3);
+    print(area(r2));            // width 10 * height 8 = 80
 }
