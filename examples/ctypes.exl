@@ -1,0 +1,44 @@
+// Every C primitive type has an exile-side alias so extern signatures
+// can match the C side byte-for-byte across compilers.  Mapping:
+//
+//   c_short  / c_ushort         → C `short` / `unsigned short`
+//   c_int    / c_uint           → C `int`   / `unsigned int`
+//   c_long   / c_ulong          → C `long`  / `unsigned long`
+//   c_char                      → C `char` (impl-defined signedness)
+//   c_schar  / c_uchar          → C `signed char` / `unsigned char`
+//   c_void                      → C `void` (only legal under `*c_void`)
+//
+// Aliases are pass-through to C — no widening or truncation in the
+// emitted code.  Casts (`expr as c_short`) at the FFI boundary make the
+// type narrowing explicit; `expr as int` on the way back lets `print()`
+// (which takes `int`) accept the c_* result.
+//
+// `c_int` and `c_char` are covered in ffi_libc.exl; this file rounds
+// out the rest, including the opaque `*c_void` round-trip used as a
+// stand-in for `void *`.
+
+pub mod raw {
+    extern fn s_neg(x: c_short) -> c_short;
+    extern fn us_double(x: c_ushort) -> c_ushort;
+    extern fn l_add(a: c_long, b: c_long) -> c_long;
+    extern fn ul_inc(x: c_ulong) -> c_ulong;
+    extern fn ui_double(x: c_uint) -> c_uint;
+    extern fn sc_neg(x: c_schar) -> c_schar;
+    extern fn uc_id(x: c_uchar) -> c_uchar;
+
+    extern fn vp_id(p: *c_void) -> *c_void;
+}
+
+fn main() {
+    print(raw::s_neg(42 as c_short) as int);                       // -42
+    print(raw::us_double(123 as c_ushort) as int);                 // 246
+    print(raw::l_add(1000 as c_long, 234 as c_long) as int);       // 1234
+    print(raw::ul_inc(5677 as c_ulong) as int);                    // 5678
+    print(raw::ui_double(150 as c_uint) as int);                   // 300
+    print(raw::sc_neg(7 as c_schar) as int);                       // -7
+    print(raw::uc_id(99 as c_uchar) as int);                       // 99
+
+    let p: *c_void = null;
+    let back = raw::vp_id(p);
+    if back == null { print(0); } else { print(1); }               // 0
+}
