@@ -77,11 +77,12 @@ type fn_ctx = {
                                              fn-instance bodies be re-elaborated
                                              from the source AST after
                                              monomorphization picks args. *)
-  aliases : (string list * string * string list) list;
+  aliases : (string list * string * string list * Pos.t) list;
                                           (* `pub use foo::bar;` re-exports.
-                                             Each: (scope, local_name, target).
-                                             Lookup at scope for local_name
-                                             redirects to target path resolved
+                                             Each: (scope, local_name, target,
+                                             decl_pos).  Lookup at scope for
+                                             local_name redirects to target
+                                             path resolved
                                              against the same scope. *)
 }
 
@@ -117,7 +118,7 @@ let walk_scope_up ~resolve ctx (path : string list) =
        Returns target path if matched. *)
     if suggested_mod <> [] then None
     else
-      List.find_map (fun (alias_scope, local_name, target_path) ->
+      List.find_map (fun (alias_scope, local_name, target_path, _) ->
         if alias_scope = prefix && local_name = lookup_name
         then Some target_path
         else None)
@@ -435,17 +436,10 @@ let lookup_builtin = function
   | [ name ] -> List.find_opt (fun b -> b.bname = name) builtins
   | _ -> None
 
-(* type_of returns the type of an expression.  The optional [allow_void] flag
-   controls what happens when the outermost expression is a call to a void
-   function: with [allow_void:true] (used by ExprStmt) the call is accepted
-   and a placeholder type is returned (it will be discarded); otherwise the
-   void result is rejected.  Recursive calls into operands always use the
-   default — sub-expressions of arithmetic, conditions, print args, function
-   args, etc. always need a real value. *)
 (* `Foo::Bar(args)` parses as `Call(["Foo"; "Bar"], args)` — the parser
-   can't tell a fn call from an enum constructor.  Both `type_of` and
-   `elab_expr` use this helper to rewrite Call into EnumLit when the
-   path resolves to an enum + variant. *)
+   can't tell a fn call from an enum constructor.  `elab_expr` uses this
+   helper to rewrite Call into EnumLit when the path resolves to an
+   enum + variant. *)
 let rewrite_call_as_enum_lit ctx path args pos =
   match path with
   | _ :: _ :: _ ->
@@ -482,45 +476,6 @@ let rewrite_struct_lit_as_enum_lit ctx tname fields base pos =
                                args = Ast.EAStruct fields; pos })
        | None -> None)
   | _ -> None
-
-(* Desugar `value orelse default` into a `match` over Option<_> / Result<_, _>:
-     match value {
-       | Some(__orelse_v) => __orelse_v
-       | None             => default
-     }
-   (and `Ok(__orelse_v) / Err(_)` for Result).  The scrutinee's enum is
-   detected by checking its concrete instance against the prelude
-   skeleton paths.  Caller passes the typechecked scrutinee type so we
-   don't typecheck `value` twice — but for the AST-level desugar we can
-   afford one extra `type_of`; instantiation is idempotent. *)
-let desugar_orelse ~scrutinee_ty value default pos =
-  let (tname, ok_v, err_v, err_binds) =
-    match scrutinee_ty with
-    | TEnum p when Mono.is_instance_of ["Option"] p ->
-        (["Option"], "Some", "None", Ast.PBTuple [])
-    | TEnum p when Mono.is_instance_of ["Result"] p ->
-        (["Result"], "Ok", "Err", Ast.PBTuple [ Ast.PWildcard pos ])
-    | _ ->
-        Error.failf pos
-          "'orelse' requires an Option or Result value, got %s"
-          (typ_name scrutinee_ty)
-  in
-  let bind_name = "__orelse_v" in
-  let ok_arm = {
-    Ast.pat = Ast.PVariant {
-      tname; variant = ok_v;
-      binds = Ast.PBTuple [ Ast.PVar (bind_name, pos) ];
-      pos };
-    body = Ast.Var (bind_name, pos);
-    arm_pos = pos;
-  } in
-  let err_arm = {
-    Ast.pat = Ast.PVariant {
-      tname; variant = err_v; binds = err_binds; pos };
-    body = default;
-    arm_pos = pos;
-  } in
-  Ast.Match { scrutinee = value; arms = [ ok_arm; err_arm ]; pos }
 
 (* Generic-call dispatch: if the resolved fn is generic, infer its
    tparams from the actual arg types (and from the surrounding expected
@@ -570,529 +525,228 @@ let resolve_call_dispatch ~pos ~expected ctx ~resolved_mod ~arg_tys
     (inst.mangled, inst.param_tys, inst.ret_ty)
   end
 
-let rec type_of ?(allow_void = false) ?expected ctx env = function
-  | Ast.IntLit _ -> t_i32
-  | Ast.BoolLit _ -> TBool
-  | Ast.StringLit _ -> TString
+
+(* Elaborate Ast.expr → texpr.  Each typed node carries its type in
+   `.ty`, so codegen never has to re-run typing.  Single source of
+   truth for both type computation and tree elaboration — used to
+   coexist with a separate `type_of` function which produced
+   O(N²) elab cost on deeply-nested expressions; that function and
+   its helpers (binop_operand_types, validate_struct_lit, desugar_orelse)
+   are gone, with their validation logic inlined per-case here. *)
+let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
+  let pos = Ast.expr_pos e in
+  match e with
+  | Ast.IntLit (n, _) -> { e = TIntLit n; ty = t_i32; pos }
+  | Ast.BoolLit (b, _) -> { e = TBoolLit b; ty = TBool; pos }
+  | Ast.NullLit _ -> { e = TNullLit; ty = TNullPtr; pos }
+  | Ast.StringLit (s, _) -> { e = TStringLit s; ty = TString; pos }
+  | Ast.Neg (sub, neg_pos) ->
+      let sub' = elab_expr ctx env sub in
+      if not (is_int_like sub'.ty) then
+        Error.failf neg_pos "negation '-' requires an integer, got %s"
+          (typ_name sub'.ty);
+      { e = TNeg sub'; ty = sub'.ty; pos }
   | Ast.BinOp (op, l, r, _) ->
-      let (lt, rt) = binop_operand_types ctx env l r in
+      (* Smart literal coercion: when one operand is an integer
+         literal, elab the other first so the literal can adopt a
+         matching TInt width.  Without this, `let x: i16 = 5 + y`
+         (y: i16) would build the literal as t_i32 and fail the
+         later equality check. *)
+      let elab_lit n other_ty other_pos =
+        let lit_ty =
+          match other_ty with
+          | TInt _ when int_fits n other_ty -> other_ty
+          | _ -> t_i32
+        in
+        { e = TIntLit n; ty = lit_ty; pos = other_pos }
+      in
+      let (l', r') =
+        match l, r with
+        | Ast.IntLit (n, lp), _ ->
+            let r' = elab_expr ctx env r in
+            (elab_lit n r'.ty lp, r')
+        | _, Ast.IntLit (n, rp) ->
+            let l' = elab_expr ctx env l in
+            (l', elab_lit n l'.ty rp)
+        | _ -> (elab_expr ctx env l, elab_expr ctx env r)
+      in
       let result_t =
-        match lt, rt with
-        | TInt a, TInt b when a = b -> TInt a
-        | TInt a, TInt b when a.signed = b.signed ->
-            if int_width_bits a.width >= int_width_bits b.width
-            then TInt a else TInt b
-        | _ -> t_i32
+        match op with
+        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div ->
+            (match l'.ty, r'.ty with
+             | TInt a, TInt b when a = b -> TInt a
+             | TInt a, TInt b when a.signed = b.signed ->
+                 if int_width_bits a.width >= int_width_bits b.width
+                 then TInt a else TInt b
+             | _ -> t_i32)
+        | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq ->
+            TBool
       in
-      (match op with
-       | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div -> result_t
-       | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> TBool)
-  | Ast.Neg (e, pos) ->
-      let t = type_of ctx env e in
-      if is_int_like t then t
-      else
-        Error.failf pos "negation '-' requires an integer, got %s"
-          (typ_name t)
-  | Ast.Cast (e, ann, pos) ->
-      let src = type_of ctx env e in
+      { e = TBinOp (op, l', r'); ty = result_t; pos }
+  | Ast.Cast (sub, ann, cast_pos) ->
+      let sub' = elab_expr ctx env sub in
       let tgt = resolve_type_ann ctx ann in
-      if is_int_like src && is_int_like tgt then tgt
-      else if is_ptr src && is_ptr tgt then tgt
+      if is_int_like sub'.ty && is_int_like tgt then ()
+      else if is_ptr sub'.ty && is_ptr tgt then ()
       else
-        Error.failf pos
-          "cannot cast %s to %s (only integer-to-integer or pointer-to-pointer \
-           casts supported)"
-          (typ_name src) (typ_name tgt)
-  | Ast.Var (name, pos) ->
-      (match List.assoc_opt name env with
-       | Some t -> t
-       | None ->
-           (* Fall through to globals: extern const / extern var live in
-              the same name namespace as locals at use sites. *)
-           (match List.assoc_opt name ctx.ext_consts with
-            | Some t -> t
-            | None ->
-                (match List.assoc_opt name ctx.ext_vars with
-                 | Some t -> t
-                 | None ->
-                     (* Bare function name in expression position becomes a
-                        function pointer.  Top-level only — qualified paths
-                        (`mod::fn`) aren't supported as values yet. *)
-                     (match lookup_fn ctx [name] with
-                      | Some (_, { param_tys; ret_ty; _ }) ->
-                          TFnPtr { params = param_tys; ret = ret_ty }
-                      | None -> Error.failf pos "undefined variable '%s'" name))))
+        Error.failf cast_pos
+          "cannot cast %s to %s (only integer-to-integer or \
+           pointer-to-pointer casts supported)"
+          (typ_name sub'.ty) (typ_name tgt);
+      { e = TCast (sub', ann); ty = tgt; pos }
+  | Ast.Ref (sub, _) ->
+      let sub' = elab_expr ctx env sub in
+      { e = TRef sub'; ty = TPtr sub'.ty; pos }
+  | Ast.Deref (sub, deref_pos) ->
+      let sub' = elab_expr ctx env sub in
+      let ty =
+        match sub'.ty with
+        | TPtr t -> t
+        | TNullPtr -> Error.failf deref_pos "cannot deref 'null'"
+        | other ->
+            Error.failf deref_pos "deref '*' requires a pointer, got %s"
+              (typ_name other)
+      in
+      { e = TDeref sub'; ty; pos }
   | Ast.TupleLit (es, _) ->
-      TTuple (List.map (type_of ctx env) es)
-  | Ast.StructLit { tname; fields; base; pos } ->
-      (* `Foo::V { f: e }` parses as a StructLit; if the path resolves
-         to an enum variant, redirect to the EnumLit branch with
-         struct-form args. *)
-      (match rewrite_struct_lit_as_enum_lit ctx tname fields base pos with
-       | Some e -> type_of ~allow_void ?expected ctx env e
+      let es' = List.map (elab_expr ctx env) es in
+      let ty = TTuple (List.map (fun (e : texpr) -> e.ty) es') in
+      { e = TTupleLit es'; ty; pos }
+  | Ast.SizeOf (ann, _) ->
+      (* `size_of(T)` yields a c_uint constant. *)
+      let t = resolve_type_ann ctx ann in
+      { e = TSizeOf t; ty = TCInt { signed = false }; pos }
+  | Ast.Var (n, var_pos) ->
+      (* Local / extern const / extern var → TVar; top-level fn name →
+         TFnRef (auto-converts to fn-ptr in C).  Matches the lookup order
+         used by type_of's Var case for consistency. *)
+      (match List.assoc_opt n env with
+       | Some t -> { e = TVar n; ty = t; pos }
        | None ->
-           let s = validate_struct_lit ctx env ~tname ~fields ~base ~pos in
-           TStruct s.sname_path)
-  | Ast.New { tname; fields; base; pos } ->
-      let s = validate_struct_lit ctx env ~tname ~fields ~base ~pos in
-      TPtr (TStruct s.sname_path)
-  | Ast.FieldAccess (target, fname, pos) ->
-      let tt = type_of ctx env target in
-      (* `.field` auto-derefs one level of pointer-to-struct.  Codegen
-         emits `target->field` in that case (vs `target.field`).
-         Works for ordinary structs (consulting struct_index) and for
-         exposed extern structs (consulting ext_struct_fields). *)
-      (match tt with
-       | TStruct p ->
-           let s = match resolve_struct_by_path ctx p with
-             | Some s -> s
-             | None -> Error.failf pos "unknown struct '%s'"
-                         (String.concat "::" p)
-           in
-           (match List.assoc_opt fname s.sfields_ty with
-            | Some t -> t
+           (match List.assoc_opt n ctx.ext_consts with
+            | Some t -> { e = TVar n; ty = t; pos }
             | None ->
-                Error.failf pos "struct '%s' has no field '%s'"
-                  (String.concat "::" p) fname)
-       | TPtr (TStruct p) ->
-           let s = match resolve_struct_by_path ctx p with
-             | Some s -> s
-             | None -> Error.failf pos "unknown struct '%s'"
-                         (String.concat "::" p)
-           in
-           (match List.assoc_opt fname s.sfields_ty with
-            | Some t -> t
-            | None ->
-                Error.failf pos "struct '%s' has no field '%s'"
-                  (String.concat "::" p) fname)
-       | TExtStruct n | TPtr (TExtStruct n) ->
-           (match List.assoc_opt n ctx.ext_struct_fields with
-            | None ->
-                Error.failf pos
-                  "field access '.%s' on opaque type '%s' — declare \
-                   fields with `extern struct %s { ... }` to access them"
-                  fname n n
-            | Some fs ->
-                (match List.assoc_opt fname fs with
-                 | Some t -> t
+                (match List.assoc_opt n ctx.ext_vars with
+                 | Some t -> { e = TVar n; ty = t; pos }
                  | None ->
-                     Error.failf pos "extern struct '%s' has no field '%s'"
-                       n fname))
-       | _ ->
-           Error.failf pos
-             "field access '.%s' requires a struct value or pointer to \
-              struct, got %s"
-             fname (typ_name tt))
-  | Ast.Ref (e, _) ->
-      TPtr (type_of ctx env e)
-  | Ast.Deref (e, pos) ->
-      (match type_of ctx env e with
-       | TPtr t -> t
-       | TNullPtr ->
-           Error.failf pos "cannot deref 'null'"
-       | other ->
-           Error.failf pos "deref '*' requires a pointer, got %s"
-             (typ_name other))
-  | Ast.NullLit _ -> TNullPtr
-  | Ast.Call (path, args, pos) ->
-      (match rewrite_call_as_enum_lit ctx path args pos with
-       | Some e -> type_of ~allow_void ?expected ctx env e
-       | None ->
-      let arg_tys = List.map (type_of ctx env) args in
-      (match lookup_builtin path with
-       | Some b -> b.bcheck ~pos ~arg_tys ~allow_void
-       | None ->
-      (* Indirect call through a function-pointer value (local var
-         or extern const).  Single-segment path only — qualified
-         indirect calls aren't supported. *)
-      let fnptr_local =
-        match path with
-        | [n] ->
-            (match List.assoc_opt n env with
-             | Some (TFnPtr { params; ret }) -> Some (n, params, ret)
-             | _ ->
-                 (match List.assoc_opt n ctx.ext_consts with
-                  | Some (TFnPtr { params; ret }) -> Some (n, params, ret)
-                  | _ ->
-                      (match List.assoc_opt n ctx.ext_vars with
-                       | Some (TFnPtr { params; ret }) -> Some (n, params, ret)
-                       | _ -> None)))
-        | _ -> None
+                     (match lookup_fn ctx [n] with
+                      | Some (_, { mangled; param_tys; ret_ty; _ }) ->
+                          { e = TFnRef mangled;
+                            ty = TFnPtr { params = param_tys; ret = ret_ty };
+                            pos }
+                      | None ->
+                          Error.failf var_pos "undefined variable '%s'" n))))
+  | Ast.Orelse (value, default, or_pos) ->
+      (* `value orelse default` is a 2-arm match over Option/Result.
+         We build the TMatch directly from elab'd children to avoid
+         a desugar→re-elab roundtrip (which used to be a second
+         traversal of `value`). *)
+      let tvalue = elab_expr ctx env value in
+      let (ename_path, ok_name, err_name, err_binds) =
+        match tvalue.ty with
+        | TEnum p when Mono.is_instance_of ["Option"] p ->
+            (p, "Some", "None", [])
+        | TEnum p when Mono.is_instance_of ["Result"] p ->
+            (p, "Ok", "Err", [ ("_0", TPWildcard) ])
+        | other ->
+            Error.failf or_pos
+              "'orelse' requires an Option or Result value, got %s"
+              (typ_name other)
       in
-      (match fnptr_local with
-       | Some (n, params, ret) ->
-           let expected_n = List.length params in
-           let got = List.length args in
-           if expected_n <> got then
-             Error.failf pos "function pointer '%s' expects %d argument(s), got %d"
-               n expected_n got;
-           List.iteri
-             (fun i (exp, act) ->
-               if not (typ_eq exp act)
-                  && not (int_lit_fits (List.nth args i) exp)
-               then
-                 Error.failf pos
-                   "argument %d of '%s': expected %s, got %s"
-                   (i + 1) n (typ_name exp) (typ_name act))
-             (List.combine params arg_tys);
-           (match ret with
-            | Some t -> t
-            | None when allow_void -> t_i32
-            | None ->
-                Error.failf pos "'%s' returns void, cannot use as a value" n)
-       | None ->
-      let display = String.concat "::" path in
-      (match lookup_fn ctx path with
-       | None -> Error.failf pos "unknown function '%s'" display
-       | Some (resolved_mod, ({ fn_pub; fn_variadic; _ } as skel)) ->
-           let (_, param_tys, ret_ty) =
-             resolve_call_dispatch ~pos ~expected ctx
-               ~resolved_mod ~arg_tys skel
-           in
-           (* Qualified call (path > 1): each module segment must be visible
-              from the current scope.  We walk the resolved fn's module path
-              (resolved_mod), since that's where we actually found the
-              function — relative or absolute. *)
-           (match path with
-            | [_] -> ()
-            | _ ->
-                let rec walk_segments parent = function
-                  | [] -> ()
-                  | seg :: rest ->
-                      let mod_path = parent @ [seg] in
-                      let pub =
-                        match List.assoc_opt mod_path ctx.modules with
-                        | Some b -> b
-                        | None ->
-                            Error.failf pos "unknown module '%s'"
-                              (String.concat "::" mod_path)
-                      in
-                      if (not pub) && not (is_prefix parent ctx.scope) then
-                        Error.failf pos
-                          "module '%s' is private (not visible from '%s')"
-                          (String.concat "::" mod_path)
-                          (if ctx.scope = [] then "<root>"
-                           else String.concat "::" ctx.scope);
-                      walk_segments mod_path rest
-                in
-                walk_segments [] resolved_mod;
-                if (not fn_pub) && ctx.scope <> resolved_mod then
-                  Error.failf pos "function '%s' is private to module '%s'"
-                    display (String.concat "::" resolved_mod));
-           let expected = List.length param_tys in
-           let got = List.length args in
-           let arity_ok =
-             if fn_variadic then got >= expected
-             else got = expected
-           in
-           if not arity_ok then
-             Error.failf pos
-               (if fn_variadic
-                then "function '%s' expects at least %d argument(s), got %d"
-                else "function '%s' expects %d argument(s), got %d")
-               display expected got;
-           (* Type-check only the fixed prefix; variadic extras pass
-              through unchecked, mirroring C semantics — caller is
-              responsible for matching the format string. *)
-           let fixed_arg_tys =
-             let rec take n xs =
-               if n <= 0 then []
-               else match xs with
-                 | [] -> []
-                 | x :: rest -> x :: take (n - 1) rest
-             in
-             take expected arg_tys
-           in
-           List.iteri
-             (fun i (exp, act) ->
-               if not (typ_eq exp act)
-                  && not (int_lit_fits (List.nth args i) exp)
-               then
-                 Error.failf pos
-                   "argument %d of '%s': expected %s, got %s"
-                   (i + 1) display (typ_name exp) (typ_name act))
-             (List.combine param_tys fixed_arg_tys);
-           (match ret_ty with
-            | Some t -> t
-            | None when allow_void -> t_i32   (* placeholder, caller discards *)
-            | None ->
-                Error.failf pos "'%s' returns void, cannot use as a value" display)))))
-  | Ast.MethodCall { receiver; name; args; pos } ->
-      (* Method call `recv.name(args)`: resolve the method on receiver's
-         struct (which lives in the global fn index under the struct's
-         absolute path), validate visibility, arity, and arg types.  The
-         receiver consumes one parameter slot — `args` corresponds to
-         param_tys[1..]. *)
-      let recv_ty = type_of ctx env receiver in
-      let struct_path =
-        match recv_ty with
-        | TStruct p -> p
-        | TPtr (TStruct p) -> p
-        | _ ->
-            Error.failf pos
-              "method call '.%s()' requires a struct value or pointer to \
-               struct, got %s"
-              name (typ_name recv_ty)
-      in
-      let mpath = struct_path @ [name] in
-      let display = String.concat "::" mpath in
-      let arg_tys = List.map (type_of ctx env) args in
-      let fnptr_field =
-        (* When no method is registered, fall back to fn-ptr field
-           dispatch: `recv.f(args)` calls the field if its type is
-           `fn(...) -> R`.  Returns the field's signature. *)
-        match resolve_struct_by_path ctx struct_path with
-        | Some s ->
-            (match List.assoc_opt name s.sfields_ty with
-             | Some (TFnPtr { params; ret }) -> Some (params, ret)
-             | _ -> None)
-        | None -> None
-      in
-      (match lookup_fn ctx mpath with
-       | None ->
-           (match fnptr_field with
-            | Some (params, ret) ->
-                let expected_n = List.length params in
-                let got = List.length args in
-                if expected_n <> got then
-                  Error.failf pos
-                    "fn-pointer field '%s.%s' expects %d argument(s), got %d"
-                    (String.concat "::" struct_path) name expected_n got;
-                List.iteri
-                  (fun i (exp, act) ->
-                    if not (typ_eq exp act)
-                       && not (int_lit_fits (List.nth args i) exp)
-                    then
-                      Error.failf pos
-                        "argument %d of '%s.%s': expected %s, got %s"
-                        (i + 1) (String.concat "::" struct_path) name
-                        (typ_name exp) (typ_name act))
-                  (List.combine params arg_tys);
-                (match ret with
-                 | Some t -> t
-                 | None when allow_void -> t_i32
-                 | None ->
-                     Error.failf pos
-                       "'%s.%s' returns void, cannot use as a value"
-                       (String.concat "::" struct_path) name)
-            | None ->
-                Error.failf pos "no method '%s' on type '%s'"
-                  name (String.concat "::" struct_path))
-       | Some (resolved_mod, ({ fn_pub; _ } as skel)) ->
-           let rec walk_segments parent = function
-             | [] -> ()
-             | seg :: rest ->
-                 let mod_path = parent @ [seg] in
-                 (match List.assoc_opt mod_path ctx.modules with
-                  | Some pub ->
-                      if (not pub) && not (is_prefix parent ctx.scope) then
-                        Error.failf pos
-                          "type '%s' is private (not visible from '%s')"
-                          (String.concat "::" mod_path)
-                          (if ctx.scope = [] then "<root>"
-                           else String.concat "::" ctx.scope)
-                  | None -> ());
-                 walk_segments mod_path rest
-           in
-           walk_segments [] resolved_mod;
-           if (not fn_pub) && ctx.scope <> resolved_mod then
-             Error.failf pos "method '%s' is private to '%s'"
-               name (String.concat "::" resolved_mod);
-           (* Generic method: prepend self's type to arg_tys so the
-              receiver participates in tparam inference (lets the
-              method's tparams flow from `self : Foo<T>`).  For mono
-              methods this is a no-op. *)
-           let arg_tys_for_dispatch = recv_ty :: arg_tys in
-           let (_, param_tys, ret_ty) =
-             resolve_call_dispatch ~pos ~expected ctx
-               ~resolved_mod ~arg_tys:arg_tys_for_dispatch skel
-           in
-           let expected_args = List.length param_tys - 1 in
-           let got_args = List.length args in
-           if expected_args <> got_args then
-             Error.failf pos
-               "method '%s' takes %d argument(s), got %d"
-               display expected_args got_args;
-           (match param_tys with
-            | _self :: rest_params ->
-                List.iteri
-                  (fun i (exp, act) ->
-                    if not (typ_eq exp act)
-                       && not (int_lit_fits (List.nth args i) exp)
-                    then
-                      Error.failf pos
-                        "argument %d of '%s': expected %s, got %s"
-                        (i + 1) display (typ_name exp) (typ_name act))
-                  (List.combine rest_params arg_tys)
-            | [] -> assert false (* methods always have self in registry *));
-           (match ret_ty with
-            | Some t -> t
-            | None when allow_void -> t_i32
-            | None ->
-                Error.failf pos "'%s' returns void, cannot use as a value" display))
-  | Ast.EnumLit { tname; variant; args; pos } ->
-      (* Fall-back BEFORE enum lookup: qualified path with no payload
-         may be a reference to an `extern var`/`extern const` (e.g.
-         `raw::DOSBase`).  Last segment is the C symbol name; ext_*
-         tables are flat.  When tname is empty (bare `Variant`) the
-         normal enum path takes over. *)
-      let extern_global = match args with
-        | Ast.EATuple [] when tname <> [] ->
-            (match List.assoc_opt variant ctx.ext_vars with
-             | Some t -> Some t
-             | None -> List.assoc_opt variant ctx.ext_consts)
-        | _ -> None
-      in
-      (match extern_global with
-       | Some t -> t
-       | None ->
-      let e =
-        match lookup_enum ctx tname with
+      let e_sig =
+        match resolve_enum_by_path ctx ename_path with
         | Some e -> e
-        | None ->
-            Error.failf pos "unknown enum '%s'"
-              (String.concat "::" tname)
+        | None -> Error.failf or_pos
+                    "internal: Option/Result instance missing"
       in
-      let v =
-        match List.find_opt (fun (vs : variant_sig) -> vs.vsname = variant)
-                e.evariants with
-        | Some v -> v
-        | None ->
-            Error.failf pos "enum '%s' has no variant '%s'"
-              (String.concat "::" e.ename_path) variant
+      let (ok_tag, ok_vsig) =
+        match find_variant e_sig ok_name with
+        | Some r -> r
+        | None -> Error.failf or_pos
+                    "internal: '%s' missing on '%s'"
+                    ok_name (String.concat "::" ename_path)
       in
-      let display = String.concat "::" e.ename_path ^ "::" ^ variant in
-      (* Generic enum: infer type args from the ctor's payload, then
-         instantiate.  Unit variants of a generic enum cannot be
-         inferred (no payload to read T from) — reject with a hint
-         that turbofish / let-ann would be needed. *)
-      let (v_used, result_path) =
-        if e.etparams = [] then (v, e.ename_path)
-        else begin
-          let pairs =
-            match args with
-            | Ast.EATuple es when not v.vsis_struct ->
-                if List.length es <> List.length v.vsfields then []
-                else
-                  List.map2 (fun (_, decl_t) e ->
-                    (decl_t, type_of ctx env e))
-                    v.vsfields es
-            | Ast.EAStruct fs when v.vsis_struct ->
-                List.filter_map (fun (n, e) ->
-                  match List.assoc_opt n v.vsfields with
-                  | Some decl_t -> Some (decl_t, type_of ctx env e)
-                  | None -> None)
-                  fs
-            | _ -> []
-          in
-          (* Bidirectional seed: if the surrounding context expects
-             a specific instance of THIS enum (`is_instance_of`),
-             pull its tparam bindings from the instance's recorded
-             args.  Lets ctors like `Result::Ok(n)` and unit
-             variants like `Option::None` pin all tparams even when
-             the payload alone can't determine them. *)
-          let seed =
-            match expected with
-            | Some (TEnum exp_path)
-              when Mono.is_instance_of e.ename_path exp_path ->
-                (match resolve_enum_by_path ctx exp_path with
-                 | Some exp_inst ->
-                     (match exp_inst.einstance_args with
-                      | Some args -> List.combine e.etparams args
-                      | None -> [])
-                 | None -> [])
-            | _ -> []
-          in
-          let inferred = Mono.infer_tparams ~pos ~seed e.etparams pairs in
-          let inst = Mono.instantiate_enum ctx.instances e inferred in
-          let inst_v =
-            List.find (fun (vs : variant_sig) -> vs.vsname = variant)
-              inst.evariants
-          in
-          (inst_v, inst.ename_path)
-        end
+      let (err_tag, _) =
+        match find_variant e_sig err_name with
+        | Some r -> r
+        | None -> Error.failf or_pos
+                    "internal: '%s' missing on '%s'"
+                    err_name (String.concat "::" ename_path)
       in
-      (match args with
-       | Ast.EATuple es ->
-           if v_used.vsis_struct then
-             Error.failf pos
-               "variant '%s' is a struct variant; construct it with \
-                '{ field: ... }', not with '(...)'" display;
-           let expected = List.length v_used.vsfields in
-           let got = List.length es in
-           if expected <> got then
-             Error.failf pos
-               "variant '%s' takes %d argument(s), got %d"
-               display expected got;
-           let arg_tys = List.map (type_of ctx env) es in
-           List.iteri
-             (fun i ((_, exp), act) ->
-               if not (typ_eq exp act)
-                  && not (int_lit_fits (List.nth es i) exp)
-               then
-                 Error.failf pos
-                   "argument %d of '%s': expected %s, got %s"
-                   (i + 1) display (typ_name exp) (typ_name act))
-             (List.combine v_used.vsfields arg_tys)
-       | Ast.EAStruct fs ->
-           if not v_used.vsis_struct then
-             Error.failf pos
-               "variant '%s' is a tuple variant; construct it with \
-                '(...)', not with '{ field: ... }'" display;
-           let expected_names = List.map fst v_used.vsfields in
-           let got_names = List.map fst fs in
-           (match find_dup ~key:Fun.id got_names with
-            | Some n ->
-                Error.failf pos
-                  "duplicate field '%s' in '%s' construction" n display
-            | None -> ());
-           List.iter (fun (n, _) ->
-             if not (List.mem n expected_names) then
-               Error.failf pos
-                 "variant '%s' has no field '%s'" display n) fs;
-           List.iter (fun n ->
-             if not (List.mem_assoc n fs) then
-               Error.failf pos
-                 "missing field '%s' in '%s' construction" n display)
-             expected_names;
-           List.iter (fun (n, e) ->
-             let exp = List.assoc n v_used.vsfields in
-             let act = type_of ctx env e in
-             if not (typ_eq exp act) && not (int_lit_fits e exp) then
-               Error.failf pos
-                 "field '%s' of '%s': expected %s, got %s"
-                 n display (typ_name exp) (typ_name act)) fs);
-      TEnum result_path)
-  | Ast.Match { scrutinee; arms; pos } ->
-      let scrut_ty = type_of ctx env scrutinee in
+      let ok_payload_ty =
+        match ok_vsig.vsfields with
+        | [(_, t)] -> t
+        | _ -> Error.failf or_pos
+                 "internal: Ok/Some payload shape"
+      in
+      let bind_name = "__orelse_v" in
+      let ok_arm = {
+        tpat = TPVariant {
+          variant = ok_name; tag = ok_tag;
+          binds = [ ("_0", TPVar bind_name) ];
+        };
+        tbody = { e = TVar bind_name; ty = ok_payload_ty; pos = or_pos };
+        tdiverges = false;
+        tarm_pos = or_pos;
+      } in
+      let default_env = (bind_name, ok_payload_ty) :: env in
+      let _ = default_env in
+      let tdefault =
+        elab_expr ~allow_void ?expected ctx env default
+      in
+      if not (typ_eq tdefault.ty ok_payload_ty)
+         && not (int_lit_fits default ok_payload_ty)
+      then
+        Error.failf or_pos
+          "orelse arms have inconsistent types: %s vs %s"
+          (typ_name ok_payload_ty) (typ_name tdefault.ty);
+      let err_arm = {
+        tpat = TPVariant {
+          variant = err_name; tag = err_tag; binds = err_binds;
+        };
+        tbody = tdefault;
+        tdiverges = false;
+        tarm_pos = or_pos;
+      } in
+      { e = TMatch {
+          scrutinee = tvalue; ename_path; arms = [ ok_arm; err_arm ];
+        };
+        ty = ok_payload_ty; pos }
+  | Ast.Match { scrutinee; arms; pos = match_pos } ->
+      if arms = [] then
+        Error.failf match_pos "'match' must have at least one arm";
+      let tscrut = elab_expr ctx env scrutinee in
       let ename_path =
-        match scrut_ty with
+        match tscrut.ty with
         | TEnum p -> p
         | other ->
-            Error.failf pos
+            Error.failf match_pos
               "'match' requires an enum value, got %s" (typ_name other)
       in
-      if arms = [] then
-        Error.failf pos "'match' must have at least one arm";
-      let e =
+      let e_sig =
         match resolve_enum_by_path ctx ename_path with
         | Some e -> e
         | None ->
-            Error.failf pos "internal: enum '%s' missing from index"
+            Error.failf match_pos
+              "internal: enum '%s' missing from index"
               (String.concat "::" ename_path)
       in
-      (* Per-arm: validate pattern matches the scrutinee's enum, collect
-         bind names (with their inferred types) into an extended env,
-         and type the arm body under that env.  Sub-patterns inside
-         PVariant are limited to PVar / PWildcard; nested variant
-         patterns are not yet supported. *)
-      let arm_tys =
+      let lower_subpat = function
+        | Ast.PWildcard _ -> TPWildcard
+        | Ast.PVar (n, _) -> TPVar n
+        | Ast.PVariant { pos = ppos; _ } ->
+            Error.failf ppos
+              "nested variant patterns are not yet supported"
+      in
+      let tarms =
         List.map (fun (a : Ast.match_arm) ->
-          let arm_env =
+          let (tpat, arm_env) =
             match a.pat with
-            | Ast.PWildcard _ -> env
-            | Ast.PVar (n, _) -> (n, scrut_ty) :: env
+            | Ast.PWildcard _ -> (TPWildcard, env)
+            | Ast.PVar (n, _) -> (TPVar n, (n, tscrut.ty) :: env)
             | Ast.PVariant { tname; variant; binds; pos = ppos } ->
+                (* Pattern's enum must match (or be an instance of) the
+                   scrutinee's enum. *)
                 let resolved =
                   match lookup_enum ctx tname with
                   | Some e' -> e'.ename_path
@@ -1105,30 +759,27 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
                     "pattern matches '%s' but scrutinee has type '%s'"
                     (String.concat "::" resolved)
                     (String.concat "::" ename_path);
-                let v =
-                  match List.find_opt
-                          (fun (vs : variant_sig) -> vs.vsname = variant)
-                          e.evariants with
-                  | Some v -> v
+                let (tag, vsig) =
+                  match find_variant e_sig variant with
+                  | Some r -> r
                   | None ->
                       Error.failf ppos "enum '%s' has no variant '%s'"
                         (String.concat "::" ename_path) variant
                 in
-                (* Match construction syntax against the variant's
-                   declared kind, then collect (name, sub_pattern)
-                   pairs in field-order before reading binds. *)
+                (* Validate bind syntax against variant kind, then build
+                   ordered (name, sub-pattern) pairs. *)
                 let ordered_binds =
-                  match binds, v.vsis_struct with
+                  match binds, vsig.vsis_struct with
                   | Ast.PBTuple ps, false ->
-                      let expected = List.length v.vsfields in
+                      let expected_n = List.length vsig.vsfields in
                       let got = List.length ps in
-                      if expected <> got then
+                      if expected_n <> got then
                         Error.failf ppos
                           "variant '%s' has %d field(s), pattern binds %d"
-                          variant expected got;
-                      List.map2 (fun (n, _) p -> (n, p)) v.vsfields ps
+                          variant expected_n got;
+                      List.map2 (fun (n, _) p -> (n, p)) vsig.vsfields ps
                   | Ast.PBStruct entries, true ->
-                      let expected_names = List.map fst v.vsfields in
+                      let expected_names = List.map fst vsig.vsfields in
                       let got_names = List.map fst entries in
                       (match find_dup ~key:Fun.id got_names with
                        | Some n ->
@@ -1148,38 +799,44 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
                   | Ast.PBTuple _, true ->
                       Error.failf ppos
                         "variant '%s' is a struct variant; \
-                         match it with '{ field: pat }', not '(...)'" variant
+                         match it with '{ field: pat }', not '(...)'"
+                        variant
                   | Ast.PBStruct _, false ->
                       Error.failf ppos
                         "variant '%s' is a tuple variant; \
-                         match it with '(...)', not '{ field: pat }'" variant
+                         match it with '(...)', not '{ field: pat }'"
+                        variant
                 in
-                let pairs =
-                  List.map2 (fun (_, bp) (_, ft) ->
-                    match bp with
-                    | Ast.PWildcard _ -> None
-                    | Ast.PVar (n, _) -> Some (n, ft)
-                    | Ast.PVariant { pos = bpos; _ } ->
-                        Error.failf bpos
-                          "nested variant patterns are not yet supported")
-                    ordered_binds v.vsfields
+                let tbinds =
+                  List.map (fun (n, p) -> (n, lower_subpat p))
+                    ordered_binds
                 in
-                let names = List.filter_map (Option.map fst) pairs in
-                (match find_dup ~key:Fun.id names with
+                (* Duplicate bind name check across the pattern. *)
+                let bind_names =
+                  List.filter_map (fun (_, p) ->
+                    match p with Ast.PVar (n, _) -> Some n | _ -> None)
+                    ordered_binds
+                in
+                (match find_dup ~key:Fun.id bind_names with
                  | Some n ->
                      Error.failf ppos
                        "duplicate bind name '%s' in pattern" n
                  | None -> ());
-                List.fold_left (fun acc -> function
-                  | Some pair -> pair :: acc
-                  | None -> acc) env pairs
+                let env' =
+                  List.fold_left2 (fun acc (_, bp) (_, ft) ->
+                    match bp with
+                    | Ast.PVar (n, _) -> (n, ft) :: acc
+                    | _ -> acc)
+                    env ordered_binds vsig.vsfields
+                in
+                (TPVariant { variant; tag; binds = tbinds }, env')
           in
-          type_of ~allow_void ctx arm_env a.body)
+          let tbody = elab_expr ~allow_void ctx arm_env a.body in
+          { tpat; tbody; tdiverges = false; tarm_pos = a.arm_pos })
           arms
       in
-      (* Exhaustiveness: every variant must be reached.  A wildcard
-         pattern (or a bare bind, which is equivalent here — both match
-         anything) covers all remaining variants. *)
+      (* Exhaustiveness: every variant must be reached.  A wildcard or
+         bare-bind pattern covers all remaining variants. *)
       let has_catchall =
         List.exists (fun (a : Ast.match_arm) ->
           match a.pat with
@@ -1198,591 +855,750 @@ let rec type_of ?(allow_void = false) ?expected ctx env = function
         let missing =
           List.filter
             (fun (vs : variant_sig) -> not (List.mem vs.vsname covered))
-            e.evariants
+            e_sig.evariants
         in
         if missing <> [] then
-          Error.failf pos
-            "non-exhaustive 'match': variant(s) %s not covered (add an arm \
-             or '_')"
+          Error.failf match_pos
+            "non-exhaustive 'match': variant(s) %s not covered \
+             (add an arm or '_')"
             (String.concat ", "
                (List.map (fun (vs : variant_sig) -> vs.vsname) missing))
       end;
-      (* All arm bodies must agree on a type — pick the first as the
-         witness and require the rest to match it. *)
-      (match arm_tys with
-       | [] -> assert false
-       | t0 :: rest ->
-           List.iter (fun t ->
-             if not (typ_eq t t0) then
-               Error.failf pos
-                 "match arms have inconsistent types: %s vs %s"
-                 (typ_name t0) (typ_name t))
-             rest;
-           t0)
-  | Ast.Orelse (value, default, pos) ->
-      let scrutinee_ty = type_of ctx env value in
-      let lowered = desugar_orelse ~scrutinee_ty value default pos in
-      type_of ~allow_void ?expected ctx env lowered
-  | Ast.Try (value, pos) ->
-      (* type_of returns the unwrapped payload type — same as the Ok/Some
-         arm of the match `try` desugars to.  Outer ret-type validation
-         happens in elab_expr; here we just need the value's type so
-         callers using type_of for inference (e.g. let-RHS) see T, not
-         the outer Result/Option. *)
-      let inner_ty = type_of ctx env value in
-      let p = match inner_ty with
+      (* All non-diverging arm bodies must agree on a type — pick the
+         first as the witness. *)
+      let non_div =
+        List.filter_map (fun (a : tmatch_arm) ->
+          if a.tdiverges then None else Some a.tbody)
+          tarms
+      in
+      let result_ty =
+        match non_div with
+        | [] -> t_i32   (* all diverge — placeholder; outer caller discards *)
+        | b0 :: rest ->
+            List.iter (fun (b : texpr) ->
+              if not (typ_eq b.ty b0.ty) then
+                Error.failf match_pos
+                  "match arms have inconsistent types: %s vs %s"
+                  (typ_name b0.ty) (typ_name b.ty))
+              rest;
+            b0.ty
+      in
+      { e = TMatch { scrutinee = tscrut; ename_path; arms = tarms };
+        ty = result_ty; pos }
+  | Ast.Try (value, try_pos) ->
+      (* Lower to a TMatch with one yielding Ok/Some arm and one
+         diverging Err/None arm.  The diverging arm carries the
+         early-return value (an EnumLit on the *outer* fn's ret
+         instance); codegen emits `return tbody;` for it.  ret_ty
+         must be set and match the inner enum (Option↔Option,
+         Result with same E↔Result with same E). *)
+      let tinner = elab_expr ctx env value in
+      let inner_path =
+        match tinner.ty with
         | TEnum p -> p
         | _ ->
-            Error.failf pos
-              "'try' requires Option or Result, got %s" (typ_name inner_ty)
-      in
-      let ok_name =
-        if Mono.is_instance_of ["Option"] p then "Some"
-        else if Mono.is_instance_of ["Result"] p then "Ok"
-        else
-          Error.failf pos
-            "'try' requires Option or Result, got %s" (typ_name inner_ty)
-      in
-      (match resolve_enum_by_path ctx p with
-       | Some e ->
-           (match List.find_opt
-                    (fun (vs : variant_sig) -> vs.vsname = ok_name)
-                    e.evariants with
-            | Some { vsfields = [(_, t)]; _ } -> t
-            | _ ->
-                Error.failf pos
-                  "internal: '%s' variant missing one-field payload" ok_name)
-       | None ->
-           Error.failf pos
-             "internal: enum '%s' missing" (String.concat "::" p))
-  | Ast.SizeOf (_, _) ->
-      (* `size_of(T)` always yields C's `sizeof` result, which is a
-         `size_t` — closest exile-side equivalent is `c_uint`.  The
-         type argument is validated implicitly by `resolve_type_ann`
-         when the elab pass runs (it rejects unknown types there). *)
-      TCInt { signed = false }
-
-(* Resolve operand types for a BinOp.  An integer literal on either side
-   adopts the other operand's int type if it fits, so `x + 5` keeps x's
-   width without forcing a cast. *)
-and binop_operand_types ctx env l r =
-  match l, r with
-  | Ast.IntLit (n, _), _ ->
-      let rt = type_of ctx env r in
-      let lt =
-        match rt with
-        | TInt _ when int_fits n rt -> rt
-        | _ -> type_of ctx env l
-      in
-      (lt, rt)
-  | _, Ast.IntLit (n, _) ->
-      let lt = type_of ctx env l in
-      let rt =
-        match lt with
-        | TInt _ when int_fits n lt -> lt
-        | _ -> type_of ctx env r
-      in
-      (lt, rt)
-  | _ ->
-      (type_of ctx env l, type_of ctx env r)
-
-(* Shared validation for struct literals (used by both `Foo { ... }` and
-   `new Foo { ... }`).  Returns the struct signature so callers can build
-   the right result type (TStruct vs TPtr TStruct). *)
-and validate_struct_lit ctx env ~tname ~fields ~base ~pos =
-  let display = String.concat "::" tname in
-  let s =
-    match lookup_struct ctx tname with
-    | Some s -> s
-    | None -> Error.failf pos "unknown struct '%s'" display
-  in
-  let parent = parent_path s.sname_path in
-  if (not s.sis_pub) && not (is_prefix parent ctx.scope) then
-    Error.failf pos "struct '%s' is private to module '%s'"
-      display
-      (if parent = [] then "<root>" else String.concat "::" parent);
-  (match find_dup ~key:fst fields with
-   | Some n ->
-       Error.failf pos "duplicate field '%s' in struct literal '%s'" n display
-   | None -> ());
-  let provided = List.map fst fields in
-  let expected = List.map fst s.sfields_ty in
-  let missing = List.filter (fun n -> not (List.mem n provided)) expected in
-  let extra = List.filter (fun n -> not (List.mem n expected)) provided in
-  if extra <> [] then
-    Error.failf pos "struct literal '%s' has unknown field(s): %s"
-      display (String.concat ", " extra);
-  (* Generic decl: infer type args from field values, instantiate
-     a fresh monomorphic struct_sig, and validate against that.
-     Functional update `..base` on a generic struct is rejected here
-     for now — without explicit type args we'd need to derive them
-     from the base's type. *)
-  let s_concrete =
-    if s.stparams = [] then s
-    else begin
-      if base <> None then
-        Error.failf pos
-          "'..base' on a generic struct '%s' is not yet supported \
-           (annotate the value's type and re-create the literal)"
-          display;
-      if missing <> [] then
-        Error.failf pos "struct literal '%s' missing field(s): %s"
-          display (String.concat ", " missing);
-      let pairs =
-        List.map (fun (fn, fe) ->
-          let decl_t = List.assoc fn s.sfields_ty in
-          let act_t = type_of ctx env fe in
-          (decl_t, act_t))
-          fields
-      in
-      let inferred_args = Mono.infer_tparams ~pos s.stparams pairs in
-      Mono.instantiate_struct ctx.instances s inferred_args
-    end
-  in
-  (* For the mono case (and after instantiation for the generic case),
-     proceed with the regular field-typing checks against the
-     concrete struct_sig. *)
-  (match base with
-   | None ->
-       if missing <> [] && s.stparams = [] then
-         Error.failf pos "struct literal '%s' missing field(s): %s"
-           display (String.concat ", " missing)
-   | Some be ->
-       let bt = type_of ctx env be in
-       (match bt with
-        | TStruct path when path = s_concrete.sname_path -> ()
-        | _ ->
-            Error.failf pos
-              "'..base' in struct literal '%s' expects a value of \
-               type %s, got %s"
-              display display (typ_name bt)));
-  List.iter
-    (fun (fn, fe) ->
-      let fty = List.assoc fn s_concrete.sfields_ty in
-      let act = type_of ctx env fe in
-      if not (typ_eq act fty) && not (int_lit_fits fe fty) then
-        Error.failf pos
-          "field '%s' of struct '%s': expected %s, got %s"
-          fn display (typ_name fty) (typ_name act))
-    fields;
-  s_concrete
-
-(* Elaborate Ast.expr → texpr.  Each typed node carries the result of
-   `type_of` in `.ty`, so codegen never has to re-run typing.  Validation
-   (already done by the time we reach elab_expr from elab_body / external
-   callers) is invariant — we still call type_of internally to produce the
-   ty field; on an already-validated tree it succeeds without raising. *)
-let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
-  let ty = type_of ~allow_void ?expected ctx env e in
-  let pos = Ast.expr_pos e in
-  let node : texpr_node =
-    match e with
-    | Ast.IntLit (n, _) -> TIntLit n
-    | Ast.BoolLit (b, _) -> TBoolLit b
-    | Ast.NullLit _ -> TNullLit
-    | Ast.StringLit (s, _) -> TStringLit s
-    | Ast.Var (n, _) ->
-        (* Disambiguate a bare name: local / extern const / extern var
-           → TVar, top-level fn name → TFnRef (codegen emits raw mangled
-           identifier; C autoconverts to fn pointer). *)
-        if List.mem_assoc n env
-           || List.mem_assoc n ctx.ext_consts
-           || List.mem_assoc n ctx.ext_vars then
-          TVar n
-        else
-          (match lookup_fn ctx [n] with
-           | Some (_, { mangled; _ }) -> TFnRef mangled
-           | None -> TVar n)   (* will fail in type_of upstream *)
-    | Ast.Neg (sub, _) -> TNeg (elab_expr ctx env sub)
-    | Ast.BinOp (op, l, r, _) ->
-        TBinOp (op, elab_expr ctx env l, elab_expr ctx env r)
-    | Ast.Cast (sub, ann, _) -> TCast (elab_expr ctx env sub, ann)
-    | Ast.TupleLit (es, _) -> TTupleLit (List.map (elab_expr ctx env) es)
-    | Ast.StructLit { tname; fields; base; pos } ->
-        (* Same dispatch as in `type_of`: enum struct-variant ctor
-           lowers through the EnumLit elab branch. *)
-        (match rewrite_struct_lit_as_enum_lit ctx tname fields base pos with
-         | Some e -> (elab_expr ~allow_void ?expected ctx env e).e
-         | None ->
-             let s =
-               match lookup_struct ctx tname with
-               | Some s -> s
-               | None -> assert false   (* validated upstream *)
-             in
-             TStructLit {
-               sname_path = s.sname_path;
-               fields = List.map (fun (n, fe) -> (n, elab_expr ctx env fe))
-                          fields;
-               base = Option.map (elab_expr ctx env) base;
-             })
-    | Ast.New { tname; fields; base; _ } ->
-        let s =
-          match lookup_struct ctx tname with
-          | Some s -> s
-          | None -> assert false
-        in
-        TNew {
-          sname_path = s.sname_path;
-          fields = List.map (fun (n, fe) -> (n, elab_expr ctx env fe)) fields;
-          base = Option.map (elab_expr ctx env) base;
-        }
-    | Ast.FieldAccess (target, field, _) ->
-        TFieldAccess { target = elab_expr ctx env target; field }
-    | Ast.Ref (sub, _) -> TRef (elab_expr ctx env sub)
-    | Ast.Deref (sub, _) -> TDeref (elab_expr ctx env sub)
-    | Ast.Call (path, args, pos) ->
-        (match rewrite_call_as_enum_lit ctx path args pos with
-         | Some e ->
-             (* Recurse so the EnumLit branch handles arg elaboration
-                and tag lookup uniformly with the no-args case. *)
-             (elab_expr ~allow_void ?expected ctx env e).e
-         | None ->
-        let targs = List.map (elab_expr ctx env) args in
-        (match lookup_builtin path with
-         | Some _ ->
-             let name = match path with [n] -> n | _ -> assert false in
-             TBuiltinCall { name; args = targs }
-         | None ->
-             (* Indirect call through a fn-ptr local / extern const
-                takes precedence over the global fn lookup so
-                shadowing works as expected. *)
-             let fnptr_local =
-               match path with
-               | [n] when List.mem_assoc n env
-                          && (match List.assoc n env with
-                              | TFnPtr _ -> true | _ -> false) ->
-                   Some n
-               | [n] when List.mem_assoc n ctx.ext_consts
-                          && (match List.assoc n ctx.ext_consts with
-                              | TFnPtr _ -> true | _ -> false) ->
-                   Some n
-               | [n] when List.mem_assoc n ctx.ext_vars
-                          && (match List.assoc n ctx.ext_vars with
-                              | TFnPtr _ -> true | _ -> false) ->
-                   Some n
-               | _ -> None
-             in
-             (match fnptr_local with
-              | Some n -> TCall { mangled = n; args = targs }
-              | None ->
-                  let mangled =
-                    match lookup_fn ctx path with
-                    | Some (resolved_mod, skel) ->
-                        let arg_tys = List.map (fun a -> a.ty) targs in
-                        let (m, _, _) =
-                          resolve_call_dispatch ~pos ~expected ctx
-                            ~resolved_mod ~arg_tys skel
-                        in
-                        m
-                    | None -> assert false   (* validated upstream *)
-                  in
-                  TCall { mangled; args = targs })))
-    | Ast.MethodCall { receiver; name; args; _ } ->
-        let trecv = elab_expr ctx env receiver in
-        let struct_path =
-          match trecv.ty with
-          | TStruct p -> p
-          | TPtr (TStruct p) -> p
-          | _ -> assert false   (* validated by type_of *)
-        in
-        let mpath = struct_path @ [name] in
-        let targs = List.map (elab_expr ctx env) args in
-        (match lookup_fn ctx mpath with
-         | None ->
-             (* Fall back to fn-ptr field dispatch.  Construct a
-                TFieldAccess on the receiver and route the call through
-                TIndirectCall.  type_of already validated arity / arg types
-                and the field's TFnPtr shape. *)
-             let field_ty =
-               match resolve_struct_by_path ctx struct_path with
-               | Some s ->
-                   (match List.assoc_opt name s.sfields_ty with
-                    | Some t -> t
-                    | None -> assert false)
-               | None -> assert false
-             in
-             let fn_expr = {
-               e = TFieldAccess { target = trecv; field = name };
-               ty = field_ty;
-               pos = trecv.pos;
-             } in
-             TIndirectCall { fn_expr; args = targs }
-         | Some (resolved_mod, ({ param_tys = skel_self :: _; _ } as skel)) ->
-             let arg_tys = trecv.ty :: List.map (fun a -> a.ty) targs in
-             let (mangled, inst_param_tys, _) =
-               resolve_call_dispatch ~pos ~expected ctx
-                 ~resolved_mod ~arg_tys skel
-             in
-             let self_ty =
-               match inst_param_tys with
-               | self_t :: _ -> self_t
-               | [] -> skel_self
-             in
-             (* Auto-ref / auto-deref: align receiver shape with the method's
-                self-param shape.  Both directions: `Foo` → `*Foo` via TRef,
-                `*Foo` → `Foo` via TDeref. *)
-             let trecv_adj =
-               match self_ty, trecv.ty with
-               | TStruct _, TStruct _ -> trecv
-               | TPtr _, TPtr _ -> trecv
-               | TPtr _ as pt, TStruct _ ->
-                   { e = TRef trecv; ty = pt; pos = trecv.pos }
-               | TStruct _ as st, TPtr _ ->
-                   { e = TDeref trecv; ty = st; pos = trecv.pos }
-               | _ -> assert false
-             in
-             TCall { mangled; args = trecv_adj :: targs }
-         | Some (_, { param_tys = []; _ }) -> assert false)
-    | Ast.EnumLit { tname; variant; args; _ }
-        when args = Ast.EATuple [] && tname <> []
-             && (List.mem_assoc variant ctx.ext_vars
-                 || List.mem_assoc variant ctx.ext_consts) ->
-        (* Fall-back path mirroring type_of: qualified `raw::DOSBase`
-           with no payload is a reference to an extern var/const.
-           Codegen emits the raw C symbol (last segment), same as
-           regular extern lookup. *)
-        TVar variant
-    | Ast.EnumLit { tname = _; variant; args; _ } ->
-        (* type_of (called above into `ty`) already instantiated any
-           generic enum, so `ty = TEnum inst_path` points at the
-           concrete monomorphic version.  Look up that instance to
-           resolve the variant by name; field types are already
-           substituted to concrete values there. *)
-        let ename_path =
-          match ty with TEnum p -> p | _ -> assert false
-        in
-        let e =
-          match resolve_enum_by_path ctx ename_path with
-          | Some e -> e
-          | None -> assert false
-        in
-        let (tag, vsig) =
-          match find_variant e variant with
-          | Some r -> r
-          | None -> assert false   (* validated upstream by type_of *)
-        in
-        let targs =
-          match args with
-          | Ast.EATuple es ->
-              List.map2 (fun (n, _) e -> (n, elab_expr ctx env e))
-                vsig.vsfields es
-          | Ast.EAStruct fs ->
-              List.map (fun (n, _) ->
-                let e = List.assoc n fs in
-                (n, elab_expr ctx env e))
-                vsig.vsfields
-        in
-        TEnumLit { ename_path; variant; tag; args = targs }
-    | Ast.Match { scrutinee; arms; _ } ->
-        let tscrut = elab_expr ctx env scrutinee in
-        let scrut_ty = tscrut.ty in
-        let ename_path =
-          match scrut_ty with
-          | TEnum p -> p
-          | _ -> assert false
-        in
-        let e =
-          match resolve_enum_by_path ctx ename_path with
-          | Some e -> e
-          | None -> assert false
-        in
-        let lower_subpat = function
-          | Ast.PWildcard _ -> TPWildcard
-          | Ast.PVar (n, _) -> TPVar n
-          | Ast.PVariant _ -> assert false (* validated upstream *)
-        in
-        let tarms =
-          List.map (fun (a : Ast.match_arm) ->
-            let (tpat, arm_env) =
-              match a.pat with
-              | Ast.PWildcard _ -> (TPWildcard, env)
-              | Ast.PVar (n, _) -> (TPVar n, (n, scrut_ty) :: env)
-              | Ast.PVariant { variant; binds; _ } ->
-                  let (tag, vsig) =
-                    match find_variant e variant with
-                    | Some r -> r
-                    | None -> assert false   (* validated upstream *)
-                  in
-                  (* Reduce both bind forms to a list of (field_name,
-                     sub_pattern) in field-order — type_of has already
-                     checked that struct/tuple syntax matches the
-                     variant kind and that names line up. *)
-                  let ordered_binds =
-                    match binds with
-                    | Ast.PBTuple ps ->
-                        List.map2 (fun (n, _) p -> (n, p)) vsig.vsfields ps
-                    | Ast.PBStruct entries ->
-                        List.map (fun (n, _) ->
-                          match List.assoc_opt n entries with
-                          | Some p -> (n, p)
-                          | None -> (n, Ast.PWildcard a.arm_pos))
-                          vsig.vsfields
-                  in
-                  let tbinds =
-                    List.map (fun (n, p) -> (n, lower_subpat p))
-                      ordered_binds
-                  in
-                  let env' =
-                    List.fold_left2 (fun acc (_, bp) (_, ft) ->
-                      match bp with
-                      | Ast.PVar (n, _) -> (n, ft) :: acc
-                      | _ -> acc)
-                      env ordered_binds vsig.vsfields
-                  in
-                  (TPVariant { variant; tag; binds = tbinds }, env')
-            in
-            let tbody = elab_expr ~allow_void ctx arm_env a.body in
-            { tpat; tbody; tdiverges = false; tarm_pos = a.arm_pos })
-            arms
-        in
-        TMatch { scrutinee = tscrut; ename_path; arms = tarms }
-    | Ast.Orelse (value, default, pos) ->
-        let scrutinee_ty = type_of ctx env value in
-        let lowered = desugar_orelse ~scrutinee_ty value default pos in
-        let lifted = elab_expr ~allow_void ?expected ctx env lowered in
-        lifted.e
-    | Ast.Try (value, pos) ->
-        (* Lower to a TMatch with one yielding Ok/Some arm and one
-           diverging Err/None arm.  The diverging arm carries the
-           early-return value (an EnumLit on the *outer* fn's ret
-           instance); codegen emits `return tbody;` for it.  ret_ty
-           must be set and match the inner enum (Option↔Option,
-           Result with same E↔Result with same E). *)
-        let tinner = elab_expr ctx env value in
-        let inner_path =
-          match tinner.ty with
-          | TEnum p -> p
-          | _ ->
-              Error.failf pos
-                "'try' requires Option or Result, got %s" (typ_name tinner.ty)
-        in
-        let inner_skel =
-          if Mono.is_instance_of ["Option"] inner_path then ["Option"]
-          else if Mono.is_instance_of ["Result"] inner_path then ["Result"]
-          else
-            Error.failf pos
+            Error.failf try_pos
               "'try' requires Option or Result, got %s" (typ_name tinner.ty)
-        in
-        let outer_path =
-          match ctx.ret_ty with
-          | Some (TEnum p) when Mono.is_instance_of inner_skel p -> p
-          | Some other ->
-              Error.failf pos
-                "'try' on %s value but enclosing fn returns %s — they must \
-                 share the same Option/Result shape"
-                (typ_name tinner.ty) (typ_name other)
-          | None ->
-              Error.failf pos
-                "'try' is only allowed in fns that return Option or Result \
-                 (this fn has no return type)"
-        in
-        let inner_e =
-          match resolve_enum_by_path ctx inner_path with
-          | Some e -> e
-          | None -> Error.failf pos "internal: inner enum missing"
-        in
-        let outer_e =
-          match resolve_enum_by_path ctx outer_path with
-          | Some e -> e
-          | None -> Error.failf pos "internal: outer enum missing"
-        in
-        let find_v e name =
-          match find_variant e name with
-          | Some r -> r
-          | None -> Error.failf pos "internal: variant '%s' missing" name
-        in
-        let (ok_name, err_name) =
-          if inner_skel = ["Option"] then ("Some", "None")
-          else ("Ok", "Err")
-        in
-        let (ok_tag, ok_vs) = find_v inner_e ok_name in
-        let (err_tag_in, err_vs_in) = find_v inner_e err_name in
-        let (outer_err_tag, outer_err_vs) = find_v outer_e err_name in
-        (* Verify Err payload types align between inner and outer.  For
-           Option both have empty payloads; for Result both have a single
-           field of the same E type. *)
-        let payload_compat (in_fs : (string * typ) list) (out_fs : (string * typ) list) =
-          List.length in_fs = List.length out_fs
-          && List.for_all2 (fun (_, a) (_, b) -> typ_eq a b) in_fs out_fs
-        in
-        if not (payload_compat err_vs_in.vsfields outer_err_vs.vsfields) then
-          Error.failf pos
-            "'try' Err/None payload mismatch: inner %s vs outer %s"
-            (typ_name (TEnum inner_path)) (typ_name (TEnum outer_path));
-        let ok_payload_ty =
-          match ok_vs.vsfields with
-          | [(_, t)] -> t
-          | _ -> Error.failf pos "internal: Ok/Some payload shape"
-        in
-        (* Yielding arm: bind Ok/Some _0 to __try_v, body is `__try_v`. *)
-        let try_bind = "__try_v" in
-        let ok_arm_pat =
-          TPVariant {
-            variant = ok_name;
-            tag = ok_tag;
-            binds = [ ("_0", TPVar try_bind) ];
-          }
-        in
-        let ok_body = {
-          e = TVar try_bind;
-          ty = ok_payload_ty;
-          pos;
-        } in
-        let ok_arm = {
-          tpat = ok_arm_pat;
-          tbody = ok_body;
-          tdiverges = false;
-          tarm_pos = pos;
-        } in
-        (* Diverging arm: bind Err _0 to __try_e (Result) or no binds
-           (Option); body is `Outer::Err(__try_e)` / `Outer::None` of
-           the outer fn's instance.  Codegen emits `return tbody;`. *)
-        let try_err_bind = "__try_e" in
-        let (err_arm_pat, outer_err_args) =
-          if inner_skel = ["Option"] then
-            (TPVariant { variant = err_name; tag = err_tag_in; binds = [] },
-             [])
-          else
-            (TPVariant {
-                variant = err_name;
-                tag = err_tag_in;
-                binds = [ ("_0", TPVar try_err_bind) ];
-              },
-             let e_ty =
-               match err_vs_in.vsfields with
-               | [(_, t)] -> t
-               | _ -> Error.failf pos "internal: Err payload shape"
-             in
-             [ ("_0", { e = TVar try_err_bind; ty = e_ty; pos }) ])
-        in
-        let err_body = {
-          e = TEnumLit {
-            ename_path = outer_path;
-            variant = err_name;
-            tag = outer_err_tag;
-            args = outer_err_args;
-          };
-          ty = TEnum outer_path;
-          pos;
-        } in
-        let err_arm = {
-          tpat = err_arm_pat;
-          tbody = err_body;
-          tdiverges = true;
-          tarm_pos = pos;
-        } in
-        TMatch {
-          scrutinee = tinner;
-          ename_path = inner_path;
-          arms = [ ok_arm; err_arm ];
+      in
+      let inner_skel =
+        if Mono.is_instance_of ["Option"] inner_path then ["Option"]
+        else if Mono.is_instance_of ["Result"] inner_path then ["Result"]
+        else
+          Error.failf try_pos
+            "'try' requires Option or Result, got %s" (typ_name tinner.ty)
+      in
+      let outer_path =
+        match ctx.ret_ty with
+        | Some (TEnum p) when Mono.is_instance_of inner_skel p -> p
+        | Some other ->
+            Error.failf try_pos
+              "'try' on %s value but enclosing fn returns %s — they must \
+               share the same Option/Result shape"
+              (typ_name tinner.ty) (typ_name other)
+        | None ->
+            Error.failf try_pos
+              "'try' is only allowed in fns that return Option or Result \
+               (this fn has no return type)"
+      in
+      let inner_e =
+        match resolve_enum_by_path ctx inner_path with
+        | Some e -> e
+        | None -> Error.failf try_pos "internal: inner enum missing"
+      in
+      let outer_e =
+        match resolve_enum_by_path ctx outer_path with
+        | Some e -> e
+        | None -> Error.failf try_pos "internal: outer enum missing"
+      in
+      let find_v e name =
+        match find_variant e name with
+        | Some r -> r
+        | None -> Error.failf try_pos "internal: variant '%s' missing" name
+      in
+      let (ok_name, err_name) =
+        if inner_skel = ["Option"] then ("Some", "None")
+        else ("Ok", "Err")
+      in
+      let (ok_tag, ok_vs) = find_v inner_e ok_name in
+      let (err_tag_in, err_vs_in) = find_v inner_e err_name in
+      let (outer_err_tag, outer_err_vs) = find_v outer_e err_name in
+      let payload_compat (in_fs : (string * typ) list)
+                         (out_fs : (string * typ) list) =
+        List.length in_fs = List.length out_fs
+        && List.for_all2 (fun (_, a) (_, b) -> typ_eq a b) in_fs out_fs
+      in
+      if not (payload_compat err_vs_in.vsfields outer_err_vs.vsfields) then
+        Error.failf try_pos
+          "'try' Err/None payload mismatch: inner %s vs outer %s"
+          (typ_name (TEnum inner_path)) (typ_name (TEnum outer_path));
+      let ok_payload_ty =
+        match ok_vs.vsfields with
+        | [(_, t)] -> t
+        | _ -> Error.failf try_pos "internal: Ok/Some payload shape"
+      in
+      let try_bind = "__try_v" in
+      let ok_arm_pat =
+        TPVariant {
+          variant = ok_name;
+          tag = ok_tag;
+          binds = [ ("_0", TPVar try_bind) ];
         }
-    | Ast.SizeOf (ann, _) ->
-        (* Resolve the type once at elab time — for generic-fn instances
-           this lets `tvar_bindings` substitute T with the concrete typ,
-           so codegen sees a fully-monomorphic `sizeof(<T>)`. *)
-        TSizeOf (resolve_type_ann ctx ann)
-  in
-  { e = node; ty; pos }
+      in
+      let ok_body = { e = TVar try_bind; ty = ok_payload_ty; pos = try_pos } in
+      let ok_arm = {
+        tpat = ok_arm_pat; tbody = ok_body;
+        tdiverges = false; tarm_pos = try_pos;
+      } in
+      let try_err_bind = "__try_e" in
+      let (err_arm_pat, outer_err_args) =
+        if inner_skel = ["Option"] then
+          (TPVariant { variant = err_name; tag = err_tag_in; binds = [] }, [])
+        else
+          (TPVariant {
+              variant = err_name;
+              tag = err_tag_in;
+              binds = [ ("_0", TPVar try_err_bind) ];
+            },
+           let e_ty =
+             match err_vs_in.vsfields with
+             | [(_, t)] -> t
+             | _ -> Error.failf try_pos "internal: Err payload shape"
+           in
+           [ ("_0", { e = TVar try_err_bind; ty = e_ty; pos = try_pos }) ])
+      in
+      let err_body = {
+        e = TEnumLit {
+          ename_path = outer_path;
+          variant = err_name;
+          tag = outer_err_tag;
+          args = outer_err_args;
+        };
+        ty = TEnum outer_path;
+        pos = try_pos;
+      } in
+      let err_arm = {
+        tpat = err_arm_pat; tbody = err_body;
+        tdiverges = true; tarm_pos = try_pos;
+      } in
+      let node = TMatch {
+        scrutinee = tinner;
+        ename_path = inner_path;
+        arms = [ ok_arm; err_arm ];
+      } in
+      { e = node; ty = ok_payload_ty; pos }
+  | (Ast.StructLit { tname; fields; base; pos = lit_pos } as raw_lit)
+  | (Ast.New { tname; fields; base; pos = lit_pos } as raw_lit) ->
+      (* Enum struct-variant ctor: parser emits StructLit for
+         `Foo::V { f: e }`; if the path resolves to an enum variant,
+         re-elab via the EnumLit branch. *)
+      let as_struct_lit = match raw_lit with
+        | Ast.StructLit _ -> true | _ -> false
+      in
+      (match if as_struct_lit
+             then rewrite_struct_lit_as_enum_lit ctx tname fields base lit_pos
+             else None with
+       | Some e -> elab_expr ~allow_void ?expected ctx env e
+       | None ->
+           let display = String.concat "::" tname in
+           let s = match lookup_struct ctx tname with
+             | Some s -> s
+             | None -> Error.failf lit_pos "unknown struct '%s'" display
+           in
+           let parent = parent_path s.sname_path in
+           if (not s.sis_pub) && not (is_prefix parent ctx.scope) then
+             Error.failf lit_pos "struct '%s' is private to module '%s'"
+               display
+               (if parent = [] then "<root>"
+                else String.concat "::" parent);
+           (match find_dup ~key:fst fields with
+            | Some n ->
+                Error.failf lit_pos
+                  "duplicate field '%s' in struct literal '%s'" n display
+            | None -> ());
+           let provided = List.map fst fields in
+           let expected_names = List.map fst s.sfields_ty in
+           let missing =
+             List.filter (fun n -> not (List.mem n provided)) expected_names
+           in
+           let extra =
+             List.filter (fun n -> not (List.mem n expected_names)) provided
+           in
+           if extra <> [] then
+             Error.failf lit_pos
+               "struct literal '%s' has unknown field(s): %s"
+               display (String.concat ", " extra);
+           (* Elab fields (preserve source order) and optional base. *)
+           let tfields =
+             List.map (fun (fn, fe) -> (fn, elab_expr ctx env fe)) fields
+           in
+           let tbase = Option.map (elab_expr ctx env) base in
+           (* Generic struct instantiation: infer tparams from elab'd
+              field types, build a fresh monomorphic struct_sig. *)
+           let s_concrete =
+             if s.stparams = [] then s
+             else begin
+               if tbase <> None then
+                 Error.failf lit_pos
+                   "'..base' on a generic struct '%s' is not yet supported \
+                    (annotate the value's type and re-create the literal)"
+                   display;
+               if missing <> [] then
+                 Error.failf lit_pos
+                   "struct literal '%s' missing field(s): %s"
+                   display (String.concat ", " missing);
+               let pairs =
+                 List.map (fun (fn, (fe : texpr)) ->
+                   let decl_t = List.assoc fn s.sfields_ty in
+                   (decl_t, fe.ty))
+                   tfields
+               in
+               let inferred =
+                 Mono.infer_tparams ~pos:lit_pos s.stparams pairs
+               in
+               Mono.instantiate_struct ctx.instances s inferred
+             end
+           in
+           (match tbase with
+            | None ->
+                if missing <> [] && s.stparams = [] then
+                  Error.failf lit_pos
+                    "struct literal '%s' missing field(s): %s"
+                    display (String.concat ", " missing)
+            | Some be ->
+                (match be.ty with
+                 | TStruct path when path = s_concrete.sname_path -> ()
+                 | _ ->
+                     Error.failf lit_pos
+                       "'..base' in struct literal '%s' expects a value \
+                        of type %s, got %s"
+                       display display (typ_name be.ty)));
+           (* Per-field type check against the concrete struct_sig.
+              int_lit_fits stays on the original Ast literal so the
+              compatibility check matches the existing behavior. *)
+           List.iter2 (fun (fn, fe) (fn', (te : texpr)) ->
+             assert (fn = fn');
+             let fty = List.assoc fn s_concrete.sfields_ty in
+             if not (typ_eq te.ty fty) && not (int_lit_fits fe fty) then
+               Error.failf lit_pos
+                 "field '%s' of struct '%s': expected %s, got %s"
+                 fn display (typ_name fty) (typ_name te.ty))
+             fields tfields;
+           let sname_path = s_concrete.sname_path in
+           let result_node =
+             if as_struct_lit
+             then TStructLit { sname_path; fields = tfields; base = tbase }
+             else TNew { sname_path; fields = tfields; base = tbase }
+           in
+           let result_ty =
+             let st = TStruct sname_path in
+             if as_struct_lit then st else TPtr st
+           in
+           { e = result_node; ty = result_ty; pos })
+  | Ast.EnumLit { tname; variant; args; pos = lit_pos } ->
+      (* Fall-back BEFORE enum lookup: qualified `raw::DOSBase` with no
+         payload is a reference to an extern var/const, not a unit
+         variant.  Last segment is the C symbol name; ext_* tables are
+         flat. *)
+      let extern_global = match args with
+        | Ast.EATuple [] when tname <> [] ->
+            (match List.assoc_opt variant ctx.ext_vars with
+             | Some t -> Some t
+             | None -> List.assoc_opt variant ctx.ext_consts)
+        | _ -> None
+      in
+      (match extern_global with
+       | Some t -> { e = TVar variant; ty = t; pos }
+       | None ->
+           let e_sig = match lookup_enum ctx tname with
+             | Some e -> e
+             | None ->
+                 Error.failf lit_pos "unknown enum '%s'"
+                   (String.concat "::" tname)
+           in
+           let v = match List.find_opt
+                     (fun (vs : variant_sig) -> vs.vsname = variant)
+                     e_sig.evariants with
+             | Some v -> v
+             | None ->
+                 Error.failf lit_pos "enum '%s' has no variant '%s'"
+                   (String.concat "::" e_sig.ename_path) variant
+           in
+           let display =
+             String.concat "::" e_sig.ename_path ^ "::" ^ variant
+           in
+           (* Pre-elab args once; subsequent generic inference and
+              type-checking read .ty directly. *)
+           let elab_args =
+             match args with
+             | Ast.EATuple es -> `Tuple (List.map (elab_expr ctx env) es, es)
+             | Ast.EAStruct fs ->
+                 `Struct (List.map (fun (n, e) ->
+                            (n, elab_expr ctx env e, e)) fs)
+           in
+           (* Generic enum: infer tparams from elab'd payload types,
+              instantiate, then validate against the concrete shape. *)
+           let final_enum =
+             if e_sig.etparams = [] then e_sig
+             else begin
+               let pairs =
+                 match elab_args with
+                 | `Tuple (telabs, _) when not v.vsis_struct ->
+                     if List.length telabs <> List.length v.vsfields then []
+                     else
+                       List.map2 (fun (_, decl_t) (te : texpr) ->
+                         (decl_t, te.ty))
+                         v.vsfields telabs
+                 | `Struct fs when v.vsis_struct ->
+                     List.filter_map (fun (n, (te : texpr), _) ->
+                       match List.assoc_opt n v.vsfields with
+                       | Some decl_t -> Some (decl_t, te.ty)
+                       | None -> None)
+                       fs
+                 | _ -> []
+               in
+               let seed =
+                 match expected with
+                 | Some (TEnum exp_path)
+                   when Mono.is_instance_of e_sig.ename_path exp_path ->
+                     (match resolve_enum_by_path ctx exp_path with
+                      | Some exp_inst ->
+                          (match exp_inst.einstance_args with
+                           | Some inst_args ->
+                               List.combine e_sig.etparams inst_args
+                           | None -> [])
+                      | None -> [])
+                 | _ -> []
+               in
+               let inferred =
+                 Mono.infer_tparams ~pos:lit_pos ~seed e_sig.etparams pairs
+               in
+               Mono.instantiate_enum ctx.instances e_sig inferred
+             end
+           in
+           let (tag, v_used) =
+             match find_variant final_enum variant with
+             | Some r -> r
+             | None ->
+                 Error.failf lit_pos
+                   "internal: variant '%s' missing from enum '%s' \
+                    after instantiation"
+                   variant (String.concat "::" final_enum.ename_path)
+           in
+           let result_path = final_enum.ename_path in
+           (* Validate args against the concrete v_used + build TEnumLit
+              args list. *)
+           let targs =
+             match elab_args with
+             | `Tuple (telabs, raws) ->
+                 if v_used.vsis_struct then
+                   Error.failf lit_pos
+                     "variant '%s' is a struct variant; construct it \
+                      with '{ field: ... }', not with '(...)'" display;
+                 let expected_n = List.length v_used.vsfields in
+                 let got = List.length telabs in
+                 if expected_n <> got then
+                   Error.failf lit_pos
+                     "variant '%s' takes %d argument(s), got %d"
+                     display expected_n got;
+                 List.iteri (fun i ((_, exp), (te : texpr)) ->
+                   if not (typ_eq exp te.ty)
+                      && not (int_lit_fits (List.nth raws i) exp)
+                   then
+                     Error.failf lit_pos
+                       "argument %d of '%s': expected %s, got %s"
+                       (i + 1) display (typ_name exp) (typ_name te.ty))
+                   (List.combine v_used.vsfields telabs);
+                 List.map2 (fun (n, _) te -> (n, te))
+                   v_used.vsfields telabs
+             | `Struct fs ->
+                 if not v_used.vsis_struct then
+                   Error.failf lit_pos
+                     "variant '%s' is a tuple variant; construct it \
+                      with '(...)', not with '{ field: ... }'" display;
+                 let expected_names = List.map fst v_used.vsfields in
+                 let got_names = List.map (fun (n, _, _) -> n) fs in
+                 (match find_dup ~key:Fun.id got_names with
+                  | Some n ->
+                      Error.failf lit_pos
+                        "duplicate field '%s' in '%s' construction"
+                        n display
+                  | None -> ());
+                 List.iter (fun (n, _, _) ->
+                   if not (List.mem n expected_names) then
+                     Error.failf lit_pos
+                       "variant '%s' has no field '%s'" display n) fs;
+                 List.iter (fun n ->
+                   if not (List.exists (fun (m, _, _) -> m = n) fs) then
+                     Error.failf lit_pos
+                       "missing field '%s' in '%s' construction" n display)
+                   expected_names;
+                 List.iter (fun (n, (te : texpr), raw) ->
+                   let exp = List.assoc n v_used.vsfields in
+                   if not (typ_eq exp te.ty) && not (int_lit_fits raw exp)
+                   then
+                     Error.failf lit_pos
+                       "field '%s' of '%s': expected %s, got %s"
+                       n display (typ_name exp) (typ_name te.ty)) fs;
+                 (* Emit args in variant's field-declaration order. *)
+                 List.map (fun (n, _) ->
+                   let (_, te, _) =
+                     List.find (fun (m, _, _) -> m = n) fs
+                   in
+                   (n, te))
+                   v_used.vsfields
+           in
+           { e = TEnumLit { ename_path = result_path; variant; tag;
+                            args = targs };
+             ty = TEnum result_path; pos })
+  | Ast.Call (path, args, call_pos) ->
+      (* Enum-ctor dispatch first: a Call whose path resolves to an
+         enum variant is rewritten to an EnumLit and elab'd again. *)
+      (match rewrite_call_as_enum_lit ctx path args call_pos with
+       | Some lowered -> elab_expr ~allow_void ?expected ctx env lowered
+       | None ->
+           let targs = List.map (elab_expr ctx env) args in
+           let arg_tys = List.map (fun (a : texpr) -> a.ty) targs in
+           (match lookup_builtin path with
+            | Some b ->
+                let result_ty =
+                  b.bcheck ~pos:call_pos ~arg_tys ~allow_void
+                in
+                let name =
+                  match path with [n] -> n | _ -> assert false
+                in
+                { e = TBuiltinCall { name; args = targs };
+                  ty = result_ty; pos }
+            | None ->
+                (* Indirect call through a fn-ptr value (local / extern
+                   const / extern var).  Single-segment path only. *)
+                let fnptr_local =
+                  match path with
+                  | [n] ->
+                      (match List.assoc_opt n env with
+                       | Some (TFnPtr { params; ret }) ->
+                           Some (n, params, ret)
+                       | _ ->
+                           (match List.assoc_opt n ctx.ext_consts with
+                            | Some (TFnPtr { params; ret }) ->
+                                Some (n, params, ret)
+                            | _ ->
+                                (match List.assoc_opt n ctx.ext_vars with
+                                 | Some (TFnPtr { params; ret }) ->
+                                     Some (n, params, ret)
+                                 | _ -> None)))
+                  | _ -> None
+                in
+                (match fnptr_local with
+                 | Some (n, params, ret) ->
+                     let expected_n = List.length params in
+                     let got = List.length args in
+                     if expected_n <> got then
+                       Error.failf call_pos
+                         "function pointer '%s' expects %d argument(s), \
+                          got %d"
+                         n expected_n got;
+                     List.iteri (fun i (exp, act) ->
+                       if not (typ_eq exp act)
+                          && not (int_lit_fits (List.nth args i) exp)
+                       then
+                         Error.failf call_pos
+                           "argument %d of '%s': expected %s, got %s"
+                           (i + 1) n (typ_name exp) (typ_name act))
+                       (List.combine params arg_tys);
+                     let result_ty =
+                       match ret with
+                       | Some t -> t
+                       | None when allow_void -> t_i32
+                       | None ->
+                           Error.failf call_pos
+                             "'%s' returns void, cannot use as a value" n
+                     in
+                     { e = TCall { mangled = n; args = targs };
+                       ty = result_ty; pos }
+                 | None ->
+                     let display = String.concat "::" path in
+                     (match lookup_fn ctx path with
+                      | None ->
+                          Error.failf call_pos "unknown function '%s'" display
+                      | Some (resolved_mod,
+                              ({ fn_pub; fn_variadic; _ } as skel)) ->
+                          let (mangled, param_tys, ret_ty) =
+                            resolve_call_dispatch ~pos:call_pos ~expected ctx
+                              ~resolved_mod ~arg_tys skel
+                          in
+                          (* Qualified call: each module segment must be
+                             visible from the current scope.  Walks the
+                             resolved fn's module path (where we actually
+                             found the fn). *)
+                          (match path with
+                           | [_] -> ()
+                           | _ ->
+                               let rec walk_segments parent = function
+                                 | [] -> ()
+                                 | seg :: rest ->
+                                     let mod_path = parent @ [seg] in
+                                     let pub =
+                                       match List.assoc_opt mod_path
+                                               ctx.modules with
+                                       | Some b -> b
+                                       | None ->
+                                           Error.failf call_pos
+                                             "unknown module '%s'"
+                                             (String.concat "::" mod_path)
+                                     in
+                                     if (not pub)
+                                        && not (is_prefix parent ctx.scope)
+                                     then
+                                       Error.failf call_pos
+                                         "module '%s' is private (not \
+                                          visible from '%s')"
+                                         (String.concat "::" mod_path)
+                                         (if ctx.scope = [] then "<root>"
+                                          else String.concat "::" ctx.scope);
+                                     walk_segments mod_path rest
+                               in
+                               walk_segments [] resolved_mod;
+                               if (not fn_pub) && ctx.scope <> resolved_mod
+                               then
+                                 Error.failf call_pos
+                                   "function '%s' is private to module '%s'"
+                                   display
+                                   (String.concat "::" resolved_mod));
+                          let expected_n = List.length param_tys in
+                          let got = List.length args in
+                          let arity_ok =
+                            if fn_variadic then got >= expected_n
+                            else got = expected_n
+                          in
+                          if not arity_ok then
+                            Error.failf call_pos
+                              (if fn_variadic
+                               then "function '%s' expects at least %d \
+                                     argument(s), got %d"
+                               else "function '%s' expects %d argument(s), \
+                                     got %d")
+                              display expected_n got;
+                          (* Variadic extras pass unchecked. *)
+                          let fixed_arg_tys =
+                            let rec take n xs =
+                              if n <= 0 then []
+                              else match xs with
+                                | [] -> []
+                                | x :: rest -> x :: take (n - 1) rest
+                            in
+                            take expected_n arg_tys
+                          in
+                          List.iteri (fun i (exp, act) ->
+                            if not (typ_eq exp act)
+                               && not (int_lit_fits (List.nth args i) exp)
+                            then
+                              Error.failf call_pos
+                                "argument %d of '%s': expected %s, got %s"
+                                (i + 1) display (typ_name exp) (typ_name act))
+                            (List.combine param_tys fixed_arg_tys);
+                          let result_ty =
+                            match ret_ty with
+                            | Some t -> t
+                            | None when allow_void -> t_i32
+                            | None ->
+                                Error.failf call_pos
+                                  "'%s' returns void, cannot use as a value"
+                                  display
+                          in
+                          { e = TCall { mangled; args = targs };
+                            ty = result_ty; pos }))))
+  | Ast.MethodCall { receiver; name; args; pos = mc_pos } ->
+      let trecv = elab_expr ctx env receiver in
+      let struct_path =
+        match trecv.ty with
+        | TStruct p -> p
+        | TPtr (TStruct p) -> p
+        | other ->
+            Error.failf mc_pos
+              "method call '.%s()' requires a struct value or pointer to \
+               struct, got %s"
+              name (typ_name other)
+      in
+      let mpath = struct_path @ [name] in
+      let display = String.concat "::" mpath in
+      let targs = List.map (elab_expr ctx env) args in
+      let arg_tys = List.map (fun (a : texpr) -> a.ty) targs in
+      let fnptr_field =
+        match resolve_struct_by_path ctx struct_path with
+        | Some s ->
+            (match List.assoc_opt name s.sfields_ty with
+             | Some (TFnPtr { params; ret }) -> Some (params, ret)
+             | _ -> None)
+        | None -> None
+      in
+      (match lookup_fn ctx mpath with
+       | None ->
+           (match fnptr_field with
+            | Some (params, ret) ->
+                let expected_n = List.length params in
+                let got = List.length args in
+                if expected_n <> got then
+                  Error.failf mc_pos
+                    "fn-pointer field '%s.%s' expects %d argument(s), got %d"
+                    (String.concat "::" struct_path) name expected_n got;
+                List.iteri (fun i (exp, act) ->
+                  if not (typ_eq exp act)
+                     && not (int_lit_fits (List.nth args i) exp)
+                  then
+                    Error.failf mc_pos
+                      "argument %d of '%s.%s': expected %s, got %s"
+                      (i + 1) (String.concat "::" struct_path) name
+                      (typ_name exp) (typ_name act))
+                  (List.combine params arg_tys);
+                let result_ty =
+                  match ret with
+                  | Some t -> t
+                  | None when allow_void -> t_i32
+                  | None ->
+                      Error.failf mc_pos
+                        "'%s.%s' returns void, cannot use as a value"
+                        (String.concat "::" struct_path) name
+                in
+                let field_ty =
+                  match resolve_struct_by_path ctx struct_path with
+                  | Some s ->
+                      (match List.assoc_opt name s.sfields_ty with
+                       | Some t -> t
+                       | None -> assert false)
+                  | None -> assert false
+                in
+                let fn_expr = {
+                  e = TFieldAccess { target = trecv; field = name };
+                  ty = field_ty; pos = trecv.pos;
+                } in
+                { e = TIndirectCall { fn_expr; args = targs };
+                  ty = result_ty; pos }
+            | None ->
+                Error.failf mc_pos "no method '%s' on type '%s'"
+                  name (String.concat "::" struct_path))
+       | Some (resolved_mod, ({ fn_pub; _ } as skel)) ->
+           let rec walk_segments parent = function
+             | [] -> ()
+             | seg :: rest ->
+                 let mod_path = parent @ [seg] in
+                 (match List.assoc_opt mod_path ctx.modules with
+                  | Some pub ->
+                      if (not pub) && not (is_prefix parent ctx.scope) then
+                        Error.failf mc_pos
+                          "type '%s' is private (not visible from '%s')"
+                          (String.concat "::" mod_path)
+                          (if ctx.scope = [] then "<root>"
+                           else String.concat "::" ctx.scope)
+                  | None -> ());
+                 walk_segments mod_path rest
+           in
+           walk_segments [] resolved_mod;
+           if (not fn_pub) && ctx.scope <> resolved_mod then
+             Error.failf mc_pos "method '%s' is private to '%s'"
+               name (String.concat "::" resolved_mod);
+           let arg_tys_for_dispatch = trecv.ty :: arg_tys in
+           let (mangled, inst_param_tys, ret_ty) =
+             resolve_call_dispatch ~pos:mc_pos ~expected ctx
+               ~resolved_mod ~arg_tys:arg_tys_for_dispatch skel
+           in
+           let expected_args = List.length inst_param_tys - 1 in
+           let got_args = List.length args in
+           if expected_args <> got_args then
+             Error.failf mc_pos
+               "method '%s' takes %d argument(s), got %d"
+               display expected_args got_args;
+           (match inst_param_tys with
+            | self_ty :: rest_params ->
+                List.iteri (fun i (exp, act) ->
+                  if not (typ_eq exp act)
+                     && not (int_lit_fits (List.nth args i) exp)
+                  then
+                    Error.failf mc_pos
+                      "argument %d of '%s': expected %s, got %s"
+                      (i + 1) display (typ_name exp) (typ_name act))
+                  (List.combine rest_params arg_tys);
+                let result_ty =
+                  match ret_ty with
+                  | Some t -> t
+                  | None when allow_void -> t_i32
+                  | None ->
+                      Error.failf mc_pos
+                        "'%s' returns void, cannot use as a value" display
+                in
+                (* Auto-ref / auto-deref: align receiver shape with the
+                   method's self-param shape. *)
+                let trecv_adj =
+                  match self_ty, trecv.ty with
+                  | TStruct _, TStruct _ -> trecv
+                  | TPtr _, TPtr _ -> trecv
+                  | TPtr _ as pt, TStruct _ ->
+                      { e = TRef trecv; ty = pt; pos = trecv.pos }
+                  | TStruct _ as st, TPtr _ ->
+                      { e = TDeref trecv; ty = st; pos = trecv.pos }
+                  | _ -> assert false
+                in
+                { e = TCall { mangled; args = trecv_adj :: targs };
+                  ty = result_ty; pos }
+            | [] -> assert false   (* methods always have self in registry *)))
+  | Ast.FieldAccess (target, fname, fa_pos) ->
+      (* `.field` auto-derefs one level of pointer-to-struct.  Works
+         for ordinary structs (consulting struct_index) and for exposed
+         extern structs (consulting ext_struct_fields). *)
+      let target' = elab_expr ctx env target in
+      let field_ty =
+        match target'.ty with
+        | TStruct p | TPtr (TStruct p) ->
+            let s = match resolve_struct_by_path ctx p with
+              | Some s -> s
+              | None -> Error.failf fa_pos "unknown struct '%s'"
+                          (String.concat "::" p)
+            in
+            (match List.assoc_opt fname s.sfields_ty with
+             | Some t -> t
+             | None ->
+                 Error.failf fa_pos "struct '%s' has no field '%s'"
+                   (String.concat "::" p) fname)
+        | TExtStruct n | TPtr (TExtStruct n) ->
+            (match List.assoc_opt n ctx.ext_struct_fields with
+             | None ->
+                 Error.failf fa_pos
+                   "field access '.%s' on opaque type '%s' — declare \
+                    fields with `extern struct %s { ... }` to access them"
+                   fname n n
+             | Some fs ->
+                 (match List.assoc_opt fname fs with
+                  | Some t -> t
+                  | None ->
+                      Error.failf fa_pos "extern struct '%s' has no field '%s'"
+                        n fname))
+        | other ->
+            Error.failf fa_pos
+              "field access '.%s' requires a struct value or pointer to \
+               struct, got %s"
+              fname (typ_name other)
+      in
+      { e = TFieldAccess { target = target'; field = fname };
+        ty = field_ty; pos }
 
 (* Single-walk variant of the old `collect_lets`: it both validates the
    body (mirroring the per-stmt type checks that lived there) and produces
@@ -2157,11 +1973,14 @@ type flat = {
      once the struct index is built. *)
   impls : (string list * Ast.impl_block) list;
   (* `pub use foo::bar;` re-exports.  Each entry is
-     (scope, local_name, target_relative_path).  Lookup at `scope` for
-     `local_name` redirects to `target_relative_path` resolved against
-     the same scope.  Multi-segment local_name not supported (the parser
-     only emits single-segment Use names today). *)
-  aliases : (string list * string * string list) list;
+     (scope, local_name, target_relative_path, decl_pos).  Lookup at
+     `scope` for `local_name` redirects to `target_relative_path`
+     resolved against the same scope; `decl_pos` points at the `pub
+     use` statement and is used by `validate_aliases` to anchor
+     unresolved-target errors at the decl site rather than at first
+     usage.  Multi-segment local_name not supported (the parser only
+     emits single-segment Use names today). *)
+  aliases : (string list * string * string list * Pos.t) list;
 }
 
 let flatten_items program =
@@ -2257,7 +2076,6 @@ let flatten_items program =
       items
   in
   walk [] program;
-  let drop_pos = List.map (fun (s, n, t, _) -> (s, n, t)) in
   { funcs = List.rev !funcs;
     structs = List.rev !structs;
     ext_structs = List.rev !ext_structs;
@@ -2268,7 +2086,7 @@ let flatten_items program =
     enums = List.rev !enums;
     modules = List.rev !modules;
     impls = List.rev !impls;
-    aliases = drop_pos (List.rev !aliases) }
+    aliases = List.rev !aliases }
 
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
@@ -2599,7 +2417,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
    declaration.  Both live at top level (path = []) so users write
    `Option::None`, `Result::Ok(x)` directly.  If a user redeclares one
    at top level we skip our copy — the user's definition wins. *)
-let prelude_pos = { Pos.line = 0; col = 0; file = "<prelude>" }
+let prelude_pos = { Pos.zero with file = "<prelude>" }
 
 (* Mono structs synthesised by `prelude_items`.  Listed here so the
    post-typecheck DCE pass in `check_program` can drop them when no
@@ -2847,6 +2665,33 @@ let check_program program : tprogram =
       ~ext_struct_fields
       ~struct_index ~enum_index ~modules ~aliases:flat.aliases all_funcs
   in
+  (* `pub use foo::bar;` validation.  Building the global index just
+     above means every fn/struct/enum has its absolute path on file;
+     we can now check each alias's target resolves from the alias's
+     own scope and emit a precise error at the alias decl site
+     (rather than waiting for the broken short name to surface at
+     a call site, where the error confusingly says "unknown function
+     'bar'" with no pointer to the bad `pub use`). *)
+  List.iter (fun (scope, _local_name, target_path, decl_pos) ->
+    let probe_ctx = {
+      global; structs = struct_index; enums = enum_index;
+      modules; scope; tparams = [];
+      tvar_bindings = []; fn_asts = []; aliases = flat.aliases;
+      ext_vars; ext_struct_fields;
+      instances = mono_state; ext_structs; ext_types; ext_consts;
+      ret_ty = None;
+    } in
+    let resolves =
+      lookup_fn probe_ctx target_path <> None
+      || lookup_struct probe_ctx target_path <> None
+      || lookup_enum probe_ctx target_path <> None
+    in
+    if not resolves then
+      Error.failf decl_pos
+        "'pub use %s' refers to unknown item — no fn, struct, or enum \
+         with that path is visible from this scope"
+        (String.concat "::" target_path))
+    flat.aliases;
   (* Side-table for re-elaborating generic fn instances after the main
      loop: keyed by skeleton mangled name, value is (parent path, AST). *)
   let fn_asts =

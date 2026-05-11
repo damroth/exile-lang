@@ -46,6 +46,15 @@ let rec parse_path_tail s acc =
     parse_path_tail s (n :: acc)
   end else List.rev acc
 
+(* Parse a qualified path `ident (:: ident)*` from the current position.
+   Combines `expect_ident` + `parse_path_tail`; use this when an ident
+   is syntactically required to start the path (decl head, type ref,
+   pattern head).  Use `parse_path_tail` directly when the head ident
+   was already consumed by the surrounding `match advance s with`. *)
+let parse_path s ~what =
+  let (head, _) = expect_ident s ~what in
+  parse_path_tail s [head]
+
 (* Parse comma-separated items until `close`. Opener must already be consumed.
    Trailing comma allowed before `close`. *)
 let parse_comma_list ~close ~item s =
@@ -204,8 +213,7 @@ let rec parse_primary s =
          The struct path is required; the brace body is mandatory and
          allowed even in cond positions (no ambiguity since `new` is a
          dedicated keyword). *)
-      let (first, _) = expect_ident s ~what:"struct name after 'new'" in
-      let path = parse_path_tail s [first] in
+      let path = parse_path s ~what:"struct name after 'new'" in
       expect s Token.LBrace;
       let (fields, base) = parse_struct_lit_body s in
       Ast.New { tname = path; fields; base; pos = p }
@@ -598,6 +606,22 @@ and parse_stmts s acc =
   | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
   | _ -> parse_stmts s (parse_stmt s :: acc)
 
+(* Reject duplicate parameter names within a single fn / extern fn
+   parameter list.  [kind] tags the decl shape in the error message
+   ("function" / "extern fn"), [name_pos] points at the fn name so
+   the user can navigate from the report to the offending decl. *)
+let check_dup_params params ~kind ~name ~name_pos =
+  let rec loop = function
+    | [] -> ()
+    | p :: rest ->
+        if List.exists (fun (q : Ast.param) -> q.pname = p.Ast.pname) rest
+        then
+          Error.failf name_pos "duplicate parameter '%s' in %s '%s'"
+            p.Ast.pname kind name;
+        loop rest
+  in
+  loop params
+
 (* `<T>` / `<T, U>` after a struct/enum/fn name — generic type
    parameter list.  Returns names in source order; rejects empty `<>`
    and duplicate names within the list. *)
@@ -631,15 +655,7 @@ let rec parse_function s seen_fns ~is_pub =
     Error.failf name_pos "function '%s' already defined" name;
   let tparams = parse_tparams s in
   let params = parse_params s in
-  let rec check_dup_params = function
-    | [] -> ()
-    | p :: rest ->
-        if List.exists (fun q -> q.Ast.pname = p.Ast.pname) rest then
-          Error.failf name_pos "duplicate parameter '%s' in function '%s'"
-            p.Ast.pname name;
-        check_dup_params rest
-  in
-  check_dup_params params;
+  check_dup_params params ~kind:"function" ~name ~name_pos;
   (* `@reg(...)` makes sense only on extern fn params (it pins the
      param to an m68k register in the emitted C declaration).  Regular
      fns don't get a calling convention from us — reject up front. *)
@@ -696,15 +712,7 @@ and parse_extern_fn_after_keyword s seen_fns =
       "'extern fn %s' cannot have generic parameters — C signatures \
        must be concrete" name;
   let (params, is_variadic) = parse_extern_params s ~name in
-  let rec check_dup_params = function
-    | [] -> ()
-    | p :: rest ->
-        if List.exists (fun q -> q.Ast.pname = p.Ast.pname) rest then
-          Error.failf name_pos
-            "duplicate parameter '%s' in extern fn '%s'" p.Ast.pname name;
-        check_dup_params rest
-  in
-  check_dup_params params;
+  check_dup_params params ~kind:"extern fn" ~name ~name_pos;
   (* Validate `@reg(...)` register names.  m68k has d0-d7 + a0-a6 (a7
      is the stack pointer and isn't user-addressable).  Reject invalid
      names early — Bebbo gcc would otherwise emit obscure C errors. *)
@@ -827,19 +835,51 @@ and parse_extern_struct_after_keyword s seen =
   in
   Ast.{ esname = name; esfields; espos = name_pos }
 
-(* `extern type T;` — raw C type alias.  Different from extern struct:
-   no `struct` prefix on the C side, used directly as a typedef'd name
-   (LONG, APTR, ULONG, etc).  Caller consumed the `extern` keyword. *)
-and parse_extern_type_after_keyword s seen =
-  expect s Token.Type;
+(* Shared head for `extern <kw> NAME ...` decls (type / const / var):
+   consume the keyword, expect an ident, reject duplicates against
+   the surrounding scope, reject a generic-param list.  The tail
+   (just `;` for type, `: T;` for const/var) is parsed by the caller.
+   [label] names the decl kind for error messages tying to the source
+   syntax ("type" / "const" / "var"); [ident_label] names the
+   identifier ("type name" / "const name" / "variable name") for the
+   "expected X, got Y" prompt. *)
+and parse_extern_decl_head s seen ~keyword ~label ~ident_label =
+  expect s keyword;
   let (name, name_pos) =
-    expect_ident s ~what:"type name after 'extern type'"
+    expect_ident s ~what:(ident_label ^ " after 'extern " ^ label ^ "'")
   in
   if List.mem name seen then
     Error.failf name_pos "name '%s' already used in this scope" name;
   if peek s = Token.Lt then
     Error.failf name_pos
-      "'extern type %s' cannot have generic parameters" name;
+      "'extern %s %s' cannot have generic parameters" label name;
+  (name, name_pos)
+
+(* Shared tail for typed extern decls (const / var): `: T ;`. *)
+and parse_typed_extern_tail s ~label ~name =
+  (match peek s with
+   | Token.Colon -> ignore (advance s)
+   | t ->
+       Error.failf (peek_pos s)
+         "'extern %s %s' must declare its type with `: T`, got %s"
+         label name (Token.pp t));
+  let ty = parse_type s in
+  (match peek s with
+   | Token.Semicolon -> ignore (advance s)
+   | t ->
+       Error.failf (peek_pos s)
+         "expected ';' after 'extern %s %s: ...', got %s"
+         label name (Token.pp t));
+  ty
+
+(* `extern type T;` — raw C type alias.  Different from extern struct:
+   no `struct` prefix on the C side, used directly as a typedef'd name
+   (LONG, APTR, ULONG, etc).  Caller consumed the `extern` keyword. *)
+and parse_extern_type_after_keyword s seen =
+  let (name, name_pos) =
+    parse_extern_decl_head s seen ~keyword:Token.Type ~label:"type"
+      ~ident_label:"type name"
+  in
   (match peek s with
    | Token.Semicolon -> ignore (advance s)
    | t ->
@@ -852,28 +892,11 @@ and parse_extern_type_after_keyword s seen =
    wherever a value of type T is expected.  Common case: importing
    `#define` constants via a companion C-stub or via a header. *)
 and parse_extern_const_after_keyword s seen =
-  expect s Token.Const;
   let (name, name_pos) =
-    expect_ident s ~what:"const name after 'extern const'"
+    parse_extern_decl_head s seen ~keyword:Token.Const ~label:"const"
+      ~ident_label:"const name"
   in
-  if List.mem name seen then
-    Error.failf name_pos "name '%s' already used in this scope" name;
-  if peek s = Token.Lt then
-    Error.failf name_pos
-      "'extern const %s' cannot have generic parameters" name;
-  (match peek s with
-   | Token.Colon -> ignore (advance s)
-   | t ->
-       Error.failf (peek_pos s)
-         "'extern const %s' must declare its type with `: T`, got %s"
-         name (Token.pp t));
-  let ty = parse_type s in
-  (match peek s with
-   | Token.Semicolon -> ignore (advance s)
-   | t ->
-       Error.failf (peek_pos s)
-         "expected ';' after 'extern const %s: ...', got %s"
-         name (Token.pp t));
+  let ty = parse_typed_extern_tail s ~label:"const" ~name in
   Ast.{ ecname = name; ecty = ty; ecpos = name_pos }
 
 (* `extern var NAME: T;` — top-level mutable global declared on the C
@@ -881,28 +904,11 @@ and parse_extern_const_after_keyword s seen =
    qualifier.  Used for AmigaOS library bases (DOSBase, SysBase, ...)
    that get set by `OpenLibrary()` at runtime. *)
 and parse_extern_var_after_keyword s seen =
-  expect s Token.Var;
   let (name, name_pos) =
-    expect_ident s ~what:"variable name after 'extern var'"
+    parse_extern_decl_head s seen ~keyword:Token.Var ~label:"var"
+      ~ident_label:"variable name"
   in
-  if List.mem name seen then
-    Error.failf name_pos "name '%s' already used in this scope" name;
-  if peek s = Token.Lt then
-    Error.failf name_pos
-      "'extern var %s' cannot have generic parameters" name;
-  (match peek s with
-   | Token.Colon -> ignore (advance s)
-   | t ->
-       Error.failf (peek_pos s)
-         "'extern var %s' must declare its type with `: T`, got %s"
-         name (Token.pp t));
-  let ty = parse_type s in
-  (match peek s with
-   | Token.Semicolon -> ignore (advance s)
-   | t ->
-       Error.failf (peek_pos s)
-         "expected ';' after 'extern var %s: ...', got %s"
-         name (Token.pp t));
+  let ty = parse_typed_extern_tail s ~label:"var" ~name in
   Ast.{ evname = name; evty = ty; evpos = name_pos }
 
 (* Parse a `use` declaration and return one or more `(name option, Use item)`
@@ -1264,13 +1270,7 @@ and parse_enum_decl s ~is_pub =
 and parse_impl_block s =
   expect s Token.Impl;
   let pos = s.last_pos in
-  let (head, _) = expect_ident s ~what:"struct name after 'impl'" in
-  let target = head :: parse_path_tail s [] in
-  let target =
-    match target with
-    | first :: rest -> first :: rest  (* already-rev'd by parse_path_tail *)
-    | [] -> Error.failf pos "empty 'impl' target"
-  in
+  let target = parse_path s ~what:"struct name after 'impl'" in
   expect s Token.LBrace;
   let rec loop seen acc =
     match peek s with

@@ -4,39 +4,45 @@
 
 open Ir
 
-(* When set, gen_program prepends `/* file:line:col */` markers above each
-   emitted top-level statement and function signature.  Off by default;
-   the CLI flips it via `--annotate` for debug builds where mapping the
-   emitted C back to exile source matters (e.g. when defer cleanups or
-   tuple-temp blocks make the layout less obvious). *)
-let annotate_mode = ref false
+(* Per-run codegen context.  Threaded through every emit/gen function
+   as the first argument; replaces what used to be a set of module-
+   level `ref`s holding "annotate?", "enum index", "active defer
+   chain" and "bloat accumulator".  Two scopes:
 
-(* Match-arm bind decls need each variant's payload types to declare
-   the right C type for each bound name.  The typed AST carries the
-   variant tag and bind sub-patterns but not the payload types — we
-   stash the program-level enum index here so `emit_match_stmt` can
-   look them up.  Set by `gen_program` at the start of every run. *)
-let enum_index_ref : enum_sig list ref = ref []
+   - Immutable inputs: [annotate] (flips file:line:col markers above
+     emitted stmts) and [enum_index] (variant payload types needed
+     by match-arm bind decls).  Set once at gen_program entry.
+   - Mutable in-flight state: [defer_chain] (innermost block first,
+     then enclosing scopes — gen_block push/pops as it walks; the
+     diverging arm of `try` reads it to flush cleanups before its
+     early return) and [bloat] (per-function byte counts collected
+     by gen_function).
 
-(* Per-function byte counts collected during gen_program.  Reset at each
-   run; CLI reads via [last_bloat] when --bloat-report is set.  Each
-   entry is (mangled_c_name, bytes_emitted_for_body_and_signature). *)
-let bloat_acc : (string * int) list ref = ref []
+   Per-call lifetime kills the cross-test state-leak the global refs
+   had.  [last_bloat] still reads from a tiny module cache populated
+   at gen_program exit, for API compat with the CLI's
+   `--bloat-report`. *)
+type gen_ctx = {
+  annotate : bool;
+  enum_index : enum_sig list;
+  mutable defer_chain : tstmt list list list;
+  mutable bloat : (string * int) list;
+}
 
-let last_bloat () = List.rev !bloat_acc
+let new_gen_ctx ~annotate ~enum_index =
+  { annotate; enum_index; defer_chain = []; bloat = [] }
 
-(* Active defer chain (innermost block first, then enclosing scopes)
-   at the current emission point.  Each scope is itself a list of
-   per-defer bodies (a defer's body is a `tstmt list`), so the chain
-   has type `tstmt list list list`.  `gen_block` updates this before
-   handing off to per-stmt emitters so the diverging arm of `try` /
-   tdiverges can flush cleanups before its early return.  Module-
-   scoped ref avoids threading the chain through every emit_* helper.
-   Reset to [] at the start of every fn body. *)
-let active_defer_chain : tstmt list list list ref = ref []
+(* Bloat snapshot from the most recent gen_program run.  Read by
+   bin/main.ml when `--bloat-report` is set, and by tests.  Persisted
+   in a module ref purely because [gen_program] returns just the
+   string; if the API ever changes to return a result record this
+   cache can go. *)
+let last_bloat_cache : (string * int) list ref = ref []
 
-let emit_ann buf indent (pos : Pos.t) =
-  if !annotate_mode then begin
+let last_bloat () = List.rev !last_bloat_cache
+
+let emit_ann ctx buf indent (pos : Pos.t) =
+  if ctx.annotate then begin
     Buffer.add_string buf indent;
     Buffer.add_string buf
       (Printf.sprintf "/* %s:%d:%d */\n" pos.file pos.line pos.col)
@@ -50,7 +56,7 @@ let tstmt_pos = function
   | TExprStmt te -> te.pos
   | TIf { cond; _ } | TWhile { cond; _ } -> cond.pos
 
-let emit_tstmt_ann buf indent stmt = emit_ann buf indent (tstmt_pos stmt)
+let emit_tstmt_ann ctx buf indent stmt = emit_ann ctx buf indent (tstmt_pos stmt)
 
 let add_separated buf sep f xs =
   List.iteri
@@ -327,7 +333,7 @@ and emit_unary buf prefix ~simple (te : texpr) =
    struct- or scalar-assignment.  Brace initializers with non-constant
    elements are a C99 relaxation that `-ansi -pedantic` rejects, so we
    always go through declare-then-assign. *)
-let rec emit_value_into_temp buf indent temp_name (value : texpr) =
+let rec emit_value_into_temp ctx buf indent temp_name (value : texpr) =
   let assign ~lhs (e : texpr) =
     emit_assign_line buf indent ~lhs
       ~emit_rhs:(fun () -> gen_expr buf e)
@@ -378,7 +384,7 @@ let rec emit_value_into_temp buf indent temp_name (value : texpr) =
       (* Match used as a value (let-RHS, return, ...) lowers to a
          switch whose every case assigns its arm result to the same
          temp.  See emit_match_stmt's `assign_to` mode. *)
-      emit_match_stmt ~assign_to:temp_name buf indent value
+      emit_match_stmt ctx ~assign_to:temp_name buf indent value
   | _ -> assign ~lhs:temp_name value
 
 (* Statement emission with `defer` support.  `outer_scopes` is the list of
@@ -395,10 +401,10 @@ let rec emit_value_into_temp buf indent temp_name (value : texpr) =
 
    A `defer` body is a leaf — it must not contain another `defer` or
    `return`; both are rejected by `emit_simple_stmt`. *)
-and emit_simple_stmt buf indent stmt =
+and emit_simple_stmt ctx buf indent stmt =
   match stmt with
   | TLet { name; value; _ } ->
-      emit_value_into_temp buf indent name value
+      emit_value_into_temp ctx buf indent name value
   | TAssign { path; value; _ } ->
       (* Single-segment path → bare local name; multi-segment qualifies
          an `extern var` whose C symbol is the LAST segment (extern uses
@@ -407,9 +413,9 @@ and emit_simple_stmt buf indent stmt =
         | n :: _ -> n
         | [] -> assert false
       in
-      emit_value_into_temp buf indent lhs value
+      emit_value_into_temp ctx buf indent lhs value
   | TLetTuple { names; value; _ } ->
-      emit_let_tuple buf indent names value
+      emit_let_tuple ctx buf indent names value
   | TAssignField { target; field; value; _ } ->
       let sep = match target.ty with TPtr _ -> "->" | _ -> "." in
       Buffer.add_string buf indent;
@@ -428,7 +434,7 @@ and emit_simple_stmt buf indent stmt =
       Buffer.add_string buf ";\n"
   | TExprStmt e ->
       (match e.e with
-       | TMatch _ -> emit_match_stmt buf indent e
+       | TMatch _ -> emit_match_stmt ctx buf indent e
        | _ ->
            Buffer.add_string buf indent;
            gen_expr buf e;
@@ -438,14 +444,14 @@ and emit_simple_stmt buf indent stmt =
       Buffer.add_string buf "if (";
       gen_expr buf cond;
       Buffer.add_string buf ") {\n";
-      List.iter (emit_simple_stmt buf (indent ^ "    ")) then_body;
+      List.iter (emit_simple_stmt ctx buf (indent ^ "    ")) then_body;
       Buffer.add_string buf indent;
       Buffer.add_char buf '}';
       (match else_body with
        | [] -> Buffer.add_char buf '\n'
        | _ ->
            Buffer.add_string buf " else {\n";
-           List.iter (emit_simple_stmt buf (indent ^ "    ")) else_body;
+           List.iter (emit_simple_stmt ctx buf (indent ^ "    ")) else_body;
            Buffer.add_string buf indent;
            Buffer.add_string buf "}\n")
   | TWhile { cond; body } ->
@@ -453,7 +459,7 @@ and emit_simple_stmt buf indent stmt =
       Buffer.add_string buf "while (";
       gen_expr buf cond;
       Buffer.add_string buf ") {\n";
-      List.iter (emit_simple_stmt buf (indent ^ "    ")) body;
+      List.iter (emit_simple_stmt ctx buf (indent ^ "    ")) body;
       Buffer.add_string buf indent;
       Buffer.add_string buf "}\n"
   | TDefer { pos; _ } ->
@@ -474,7 +480,7 @@ and emit_simple_stmt buf indent stmt =
    `return tbody;` instead of assign+break and ignores `assign_to` —
    the body is, by elab construction, a TEnumLit on the enclosing
    fn's return-type instance. *)
-and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
+and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
   match m_expr.e with
   | TMatch { scrutinee; ename_path; arms } ->
       let inner = indent ^ "    " in
@@ -485,7 +491,7 @@ and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
       Buffer.add_string buf "{\n";
       Buffer.add_string buf inner;
       Buffer.add_string buf (Printf.sprintf "struct %s __m;\n" cname);
-      emit_value_into_temp buf inner "__m" scrutinee;
+      emit_value_into_temp ctx buf inner "__m" scrutinee;
       Buffer.add_string buf inner;
       Buffer.add_string buf "switch (__m.tag) {\n";
       List.iter
@@ -516,7 +522,7 @@ and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
                  List.find (fun (vs : variant_sig) -> vs.vsname = variant)
                    (List.find
                       (fun (es : enum_sig) -> es.ename_path = ename_path)
-                      !enum_index_ref).evariants
+                      ctx.enum_index).evariants
                in
                List.iter
                  (fun (fname, bp) ->
@@ -548,18 +554,18 @@ and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
             Buffer.add_string buf body_indent;
             Buffer.add_string buf trimmed;
             Buffer.add_string buf " __try_ret;\n";
-            emit_value_into_temp buf body_indent "__try_ret" a.tbody;
+            emit_value_into_temp ctx buf body_indent "__try_ret" a.tbody;
             (* Flush every active defer scope before the early return
                so resources opened above the `try` site get cleaned up
                on the Err/None path the same as on a normal return. *)
-            let cleanups = List.flatten !active_defer_chain in
-            emit_cleanups buf body_indent cleanups;
+            let cleanups = List.flatten ctx.defer_chain in
+            emit_cleanups ctx buf body_indent cleanups;
             Buffer.add_string buf body_indent;
             Buffer.add_string buf "return __try_ret;\n"
           end else begin
             (match assign_to, a.tbody.e with
              | Some lhs, TMatch _ ->
-                 emit_match_stmt ~assign_to:lhs buf body_indent a.tbody
+                 emit_match_stmt ctx ~assign_to:lhs buf body_indent a.tbody
              | Some lhs, _ ->
                  emit_assign_line buf body_indent ~lhs
                    ~emit_rhs:(fun () -> gen_expr buf a.tbody)
@@ -582,7 +588,7 @@ and emit_match_stmt ?assign_to buf indent (m_expr : texpr) =
 (* Destructuring binding: introduce an inner C block, declare a `__t` temp
    of the tuple struct type, fill it from the RHS, then assign each hoisted
    name from the temp's numbered field. *)
-and emit_let_tuple buf indent names (value : texpr) =
+and emit_let_tuple ctx buf indent names (value : texpr) =
   let inner = indent ^ "    " in
   let trimmed = strip_trailing_space (c_type_prefix value.ty) in
   Buffer.add_string buf indent;
@@ -590,7 +596,7 @@ and emit_let_tuple buf indent names (value : texpr) =
   Buffer.add_string buf inner;
   Buffer.add_string buf trimmed;
   Buffer.add_string buf " __t;\n";
-  emit_value_into_temp buf inner "__t" value;
+  emit_value_into_temp ctx buf inner "__t" value;
   List.iteri
     (fun i name ->
       emit_assign_line buf inner ~lhs:name ~emit_rhs:(fun () ->
@@ -600,18 +606,18 @@ and emit_let_tuple buf indent names (value : texpr) =
   Buffer.add_string buf indent;
   Buffer.add_string buf "}\n"
 
-and emit_cleanups buf indent defers =
+and emit_cleanups ctx buf indent defers =
   List.iter
     (fun body ->
-      List.iter (fun s -> emit_simple_stmt buf indent s) body)
+      List.iter (fun s -> emit_simple_stmt ctx buf indent s) body)
     defers
 
-and gen_if buf indent outer_scopes my_defers
+and gen_if ctx buf indent outer_scopes my_defers
     cond then_body else_body =
   Buffer.add_string buf "if (";
   gen_expr buf cond;
   Buffer.add_string buf ") {\n";
-  gen_block buf (indent ^ "    ")
+  gen_block ctx buf (indent ^ "    ")
     (my_defers :: outer_scopes) then_body;
   Buffer.add_string buf indent;
   Buffer.add_char buf '}';
@@ -619,29 +625,29 @@ and gen_if buf indent outer_scopes my_defers
    | [] -> Buffer.add_char buf '\n'
    | [ TIf { cond = ec; then_body = et; else_body = ee } ] ->
        Buffer.add_string buf " else ";
-       gen_if buf indent outer_scopes my_defers ec et ee
+       gen_if ctx buf indent outer_scopes my_defers ec et ee
    | _ ->
        Buffer.add_string buf " else {\n";
-       gen_block buf (indent ^ "    ")
+       gen_block ctx buf (indent ^ "    ")
          (my_defers :: outer_scopes) else_body;
        Buffer.add_string buf indent;
        Buffer.add_string buf "}\n")
 
-and gen_block buf indent outer_scopes stmts =
-  let saved_chain = !active_defer_chain in
+and gen_block ctx buf indent outer_scopes stmts =
+  let saved_chain = ctx.defer_chain in
   let update_chain my_defers =
-    active_defer_chain := my_defers :: outer_scopes
+    ctx.defer_chain <- my_defers :: outer_scopes
   in
   let rec loop my_defers = function
     | [] ->
         update_chain my_defers;
-        emit_cleanups buf indent my_defers
+        emit_cleanups ctx buf indent my_defers
     | (TDefer { body; _ } as s) :: rest ->
-        emit_tstmt_ann buf indent s;
+        emit_tstmt_ann ctx buf indent s;
         loop (body :: my_defers) rest
     | (TReturn { value; _ } as s) :: _ ->
         update_chain my_defers;
-        emit_tstmt_ann buf indent s;
+        emit_tstmt_ann ctx buf indent s;
         let all = List.flatten (my_defers :: outer_scopes) in
         let needs_block =
           all <> [] ||
@@ -662,8 +668,8 @@ and gen_block buf indent outer_scopes stmts =
           Buffer.add_string buf (indent ^ "    ");
           Buffer.add_string buf trimmed;
           Buffer.add_string buf " __exile_ret;\n";
-          emit_value_into_temp buf (indent ^ "    ") "__exile_ret" value;
-          emit_cleanups buf (indent ^ "    ") all;
+          emit_value_into_temp ctx buf (indent ^ "    ") "__exile_ret" value;
+          emit_cleanups ctx buf (indent ^ "    ") all;
           Buffer.add_string buf (indent ^ "    ");
           Buffer.add_string buf "return __exile_ret;\n";
           Buffer.add_string buf indent;
@@ -671,36 +677,36 @@ and gen_block buf indent outer_scopes stmts =
         end
     | (TLet _ | TAssign _ | TAssignField _ | TAssignDeref _ | TExprStmt _) as s :: rest ->
         update_chain my_defers;
-        emit_tstmt_ann buf indent s;
-        emit_simple_stmt buf indent s;
+        emit_tstmt_ann ctx buf indent s;
+        emit_simple_stmt ctx buf indent s;
         loop my_defers rest
     | (TLetTuple { names; value; _ } as s) :: rest ->
         update_chain my_defers;
-        emit_tstmt_ann buf indent s;
-        emit_let_tuple buf indent names value;
+        emit_tstmt_ann ctx buf indent s;
+        emit_let_tuple ctx buf indent names value;
         loop my_defers rest
     | (TIf { cond; then_body; else_body } as s) :: rest ->
         update_chain my_defers;
-        emit_tstmt_ann buf indent s;
+        emit_tstmt_ann ctx buf indent s;
         Buffer.add_string buf indent;
-        gen_if buf indent outer_scopes my_defers
+        gen_if ctx buf indent outer_scopes my_defers
           cond then_body else_body;
         loop my_defers rest
     | (TWhile { cond; body } as s) :: rest ->
         update_chain my_defers;
-        emit_tstmt_ann buf indent s;
+        emit_tstmt_ann ctx buf indent s;
         Buffer.add_string buf indent;
         Buffer.add_string buf "while (";
         gen_expr buf cond;
         Buffer.add_string buf ") {\n";
-        gen_block buf (indent ^ "    ")
+        gen_block ctx buf (indent ^ "    ")
           (my_defers :: outer_scopes) body;
         Buffer.add_string buf indent;
         Buffer.add_string buf "}\n";
         loop my_defers rest
   in
   loop [] stmts;
-  active_defer_chain := saved_chain
+  ctx.defer_chain <- saved_chain
 
 (* Emit a function signature using a mangled C-level name (or "main" for the
    entry point — main() is special and not mangled).  Non-pub functions get
@@ -747,16 +753,17 @@ let emit_fn_sig buf (tf : tfunc) =
 
 (* Emit one already-elaborated function.  tf carries the typed body, the
    resolved C name, and the hoisted let-decl list. *)
-let gen_function buf (tf : tfunc) =
+let gen_function ctx buf (tf : tfunc) =
   let f = tf.tf_func in
-  emit_ann buf "" f.pos;
+  emit_ann ctx buf "" f.pos;
   emit_fn_sig buf tf;
   Buffer.add_string buf " {\n";
   List.iter
     (fun (name, t) ->
       Buffer.add_string buf (Printf.sprintf "    %s;\n" (c_decl t name)))
     tf.tf_lets;
-  gen_block buf "    " [] tf.tf_body;
+  ctx.defer_chain <- [];
+  gen_block ctx buf "    " [] tf.tf_body;
   if f.name = "main" then Buffer.add_string buf "    return 0;\n";
   Buffer.add_string buf "}\n"
 
@@ -834,10 +841,7 @@ let emit_named_enum buf (e : enum_sig) =
   Buffer.add_string buf " };\n"
 
 let gen_program ?(annotate = false) (tp : tprogram) =
-  annotate_mode := annotate;
-  enum_index_ref := tp.tp_enum_index;
-  bloat_acc := [];
-  active_defer_chain := [];
+  let ctx = new_gen_ctx ~annotate ~enum_index:tp.tp_enum_index in
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
   if tp.tp_uses_heap then
@@ -952,9 +956,10 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   List.iteri
     (fun i tf ->
       let before = Buffer.length buf in
-      gen_function buf tf;
+      gen_function ctx buf tf;
       let after = Buffer.length buf in
-      bloat_acc := (tf.tf_mangled, after - before) :: !bloat_acc;
+      ctx.bloat <- (tf.tf_mangled, after - before) :: ctx.bloat;
       if i < last then Buffer.add_char buf '\n')
     definable;
+  last_bloat_cache := ctx.bloat;
   Buffer.contents buf

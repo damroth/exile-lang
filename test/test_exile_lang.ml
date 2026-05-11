@@ -1347,11 +1347,11 @@ let () =
      fn main() { print(helper()); }\n"
     "#include <stdio.h>\n\nlong raw__helper(void);\n\nlong raw__helper(void) {\n    return 7;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(raw__helper()));\n    return 0;\n}\n";
 
-  check_error "pub use of unknown name rejected at use site"
+  check_error "pub use of unknown name rejected at decl site"
     "pub mod raw { pub fn helper() -> int { return 7; } }\n\
      pub use raw::nonexistent;\n\
      fn main() { print(nonexistent()); }\n"
-    "unknown function 'nonexistent'";
+    "'pub use raw::nonexistent' refers to unknown item — no fn, struct, or enum with that path is visible from this scope";
 
   check_error "pub use wildcard rejected"
     "pub mod raw { pub fn a() {} pub fn b() {} }\n\

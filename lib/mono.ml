@@ -31,7 +31,7 @@ type pending_fn_job = {
                                          is "first observed".  Used by the
                                          linter for tier warnings — better
                                          than the skeleton decl pos which
-                                         can be `<prelude>:0:0` *)
+                                         can be `<prelude>:1:1` *)
 }
 
 type state = {

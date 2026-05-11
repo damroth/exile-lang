@@ -210,6 +210,10 @@ let int_typ_name signed width =
   let bits = match width with Ast.W8 -> "8" | Ast.W16 -> "16" | Ast.W32 -> "32" in
   prefix ^ bits
 
+(* User-facing rendering of a type — used in error messages and bug
+   reports.  Reproduces the source syntax: `c_int`, `*T`, `(T1, T2)`,
+   `fn(T) -> R`, etc.  See `mangle_typ` for the C-identifier-safe form
+   used to build emitted C symbol names. *)
 let rec typ_name = function
   | TInt { signed; width } -> int_typ_name signed width
   | TCInt { signed = true } -> "c_int"
@@ -252,7 +256,13 @@ let rec typ_eq a b =
 (* Mangle a type to a C-identifier-safe string used as a unique key for
    tuple-struct dedup and as the C type name for named structs.  Tuples are
    anonymous (`tup<n>_T1_T2`); `tuple_struct_name` adds the `ex_` prefix so
-   the emitted C struct sits in the same namespace as user fns/structs. *)
+   the emitted C struct sits in the same namespace as user fns/structs.
+
+   Distinct from `typ_name`: this drops underscores from C primitive
+   names (`cint` not `c_int`), prefixes pointers (`ptr_T`), and
+   serialises fn-ptrs/tuples as identifier-safe shapes — none of the
+   `*`/`::`/`,`/`->` punctuation `typ_name` emits would be legal in
+   a C identifier. *)
 let rec mangle_typ = function
   | TInt { signed; width } -> int_typ_name signed width
   | TCInt { signed = true } -> "cint"
@@ -291,39 +301,49 @@ let rec mangle_typ = function
 
 let tuple_struct_name ts = "ex_" ^ mangle_typ (TTuple ts)
 
+(* Bottom-up tree rebuilder: structural constructors (TPtr / TTuple /
+   TFnPtr) recurse internally; [f] is applied at every leaf type and
+   returns its replacement.  Use this when a transformation only
+   touches leaves and leaves the shape intact — see `subst_typ` for
+   the canonical instance.  Adding a new structural constructor in
+   the future requires extending this helper (and `type_for_all`)
+   only — single editing point for the whole pipeline. *)
+let rec type_map ~f = function
+  | TPtr inner -> TPtr (type_map ~f inner)
+  | TTuple ts -> TTuple (List.map (type_map ~f) ts)
+  | TFnPtr { params; ret } ->
+      TFnPtr { params = List.map (type_map ~f) params;
+               ret = Option.map (type_map ~f) ret }
+  | leaf -> f leaf
+
+(* Conjunction fold over a type tree: [f] runs on each leaf, structural
+   constructors short-circuit through &&.  Use for predicate questions
+   like "is this type concrete" or "does this type mention X". *)
+let rec type_for_all ~f = function
+  | TPtr inner -> type_for_all ~f inner
+  | TTuple ts -> List.for_all (type_for_all ~f) ts
+  | TFnPtr { params; ret } ->
+      List.for_all (type_for_all ~f) params
+      && (match ret with Some t -> type_for_all ~f t | None -> true)
+  | leaf -> f leaf
+
 (* Substitute every `TVar n` in [ty] using the [bindings] association.
    Variables not present in [bindings] are left as-is — partial
    substitution is the common case for nested generic decls. *)
-let rec subst_typ bindings = function
-  | TVar n as t ->
-      (match List.assoc_opt n bindings with
-       | Some replacement -> replacement
-       | None -> t)
-  | TPtr inner -> TPtr (subst_typ bindings inner)
-  | TTuple ts -> TTuple (List.map (subst_typ bindings) ts)
-  | TFnPtr { params; ret } ->
-      TFnPtr { params = List.map (subst_typ bindings) params;
-               ret = Option.map (subst_typ bindings) ret }
-  | (TInt _ | TCInt _ | TCShort _ | TCLong _
-    | TCChar | TCSChar | TCUChar | TCVoid
-    | TBool | TString | TStruct _ | TExtStruct _
-    | TExtAlias _ | TEnum _ | TNullPtr) as t -> t
+let subst_typ bindings =
+  type_map ~f:(function
+    | TVar n as t ->
+        (match List.assoc_opt n bindings with
+         | Some replacement -> replacement
+         | None -> t)
+    | t -> t)
 
 (* True when [ty] is monomorphic — no `TVar` anywhere in the tree.
    Codegen filters generic decls (those containing TVar) out of the
    per-program emission until the monomorphizer materialises concrete
    instantiations. *)
-let rec is_concrete = function
-  | TVar _ -> false
-  | TPtr inner -> is_concrete inner
-  | TTuple ts -> List.for_all is_concrete ts
-  | TFnPtr { params; ret } ->
-      List.for_all is_concrete params
-      && (match ret with Some t -> is_concrete t | None -> true)
-  | TInt _ | TCInt _ | TCShort _ | TCLong _
-  | TCChar | TCSChar | TCUChar | TCVoid
-  | TBool | TString | TStruct _ | TExtStruct _
-  | TExtAlias _ | TEnum _ | TNullPtr -> true
+let is_concrete =
+  type_for_all ~f:(function TVar _ -> false | _ -> true)
 
 (* Typed AST — mirrors Ast.expr/stmt but every node carries the type
    computed by elaboration in `.ty`.  Codegen reads the type directly,

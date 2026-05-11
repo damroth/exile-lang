@@ -14,9 +14,31 @@
 let read_file path =
   In_channel.with_open_text path In_channel.input_all
 
+(* Wildcard-import visibility policy.  When `use foo::*;` inlines the
+   contents of `foo` into the using scope, only items reachable from
+   outside the source file ride along.  `pub` flags gate user-level
+   decls; extern items (struct / type / const / var) and @c_include
+   are always visible — their whole point is to expose a C-side
+   symbol to anything that imports the module.  `impl` blocks track
+   the visibility of their target struct (handled at typecheck), so
+   passing them through wildcard is safe.  `use` items never
+   propagate — they're scope-local. *)
+let item_visible_in_wildcard = function
+  | Ast.Function f -> f.Ast.is_pub
+  | Ast.Module m -> m.Ast.mis_pub
+  | Ast.Struct s -> s.Ast.sis_pub
+  | Ast.Enum e -> e.Ast.eis_pub
+  | Ast.ExternStruct _
+  | Ast.ExternType _
+  | Ast.ExternConst _
+  | Ast.ExternVar _
+  | Ast.Impl _
+  | Ast.CInclude _ -> true
+  | Ast.Use _ -> false
+
 let parse_file path =
   if not (Sys.file_exists path) then
-    Error.raise_ Pos.zero (Printf.sprintf "cannot read file: %s" path);
+    Error.failf Pos.zero "cannot read file: %s" path;
   let src = read_file path in
   Lexer.tokenize ~file:path src |> Parser.parse_program
 
@@ -77,20 +99,7 @@ and expand_item ~from_file ~loaded ~stack item =
           (* Wildcard import: drop the module wrapper and inline all public
              items directly into the importing scope.  Private items stay
              behind in the source file. *)
-          List.filter
-            (function
-              | Ast.Function f -> f.Ast.is_pub
-              | Ast.Module m -> m.Ast.mis_pub
-              | Ast.Struct s -> s.Ast.sis_pub
-              | Ast.ExternStruct _ -> true  (* extern struct is always visible *)
-              | Ast.ExternType _ -> true   (* extern type is always visible *)
-              | Ast.ExternConst _ -> true  (* extern const is always visible *)
-              | Ast.ExternVar _ -> true   (* extern var is always visible *)
-              | Ast.Enum e -> e.Ast.eis_pub
-              | Ast.Impl _ -> true   (* impls follow their target struct's visibility *)
-              | Ast.CInclude _ -> true  (* @c_include is always visible *)
-              | Ast.Use _ -> false)
-            inner
+          List.filter item_visible_in_wildcard inner
         else begin
           (* Non-wildcard `use`: introduce the file as a module whose name is
              the last segment of the path (Rust-like). *)

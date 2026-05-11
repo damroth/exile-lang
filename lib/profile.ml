@@ -1,6 +1,6 @@
-(* Comfort/budget tier the program is being compiled under.  Orthogonal
-   to --target (which picks the toolchain).  Drives lint thresholds,
-   default optimisation choices, and warnings on heavy features.
+(* Compilation profile: the comfort/budget tier the *program* is being
+   compiled under.  Orthogonal to --target (which picks the toolchain).
+   Drives lint thresholds and warnings on heavy features.
 
    - Core:     bare-metal, kernels, drivers, perf-critical paths,
                256K-class Amiga.  Generic instantiations and ADT-heavy
@@ -11,18 +11,12 @@
    - Full:     host development, Amiga with accelerator + plenty of
                RAM.  No bloat warnings; comfort first.
 
-   Defaults derived from the chosen target — see [default_for_target].
-   The user may override via --profile. *)
+   Structurally identical to [Tier.t] (a per-item version of the same
+   scale) — the manifest type below re-exports the constructors so
+   `Profile.Core` and `Tier.Core` are the same value, and
+   [Tier.exceeds] can compare them without a conversion. *)
 
-type t = Core | Standard | Full
+type t = Tier.t = Core | Standard | Full
 
-let to_string = function
-  | Core -> "core"
-  | Standard -> "standard"
-  | Full -> "full"
-
-let of_string = function
-  | "core" -> Some Core
-  | "standard" -> Some Standard
-  | "full" -> Some Full
-  | _ -> None
+let to_string = Tier.to_string
+let of_string = Tier.of_string
