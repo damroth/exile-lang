@@ -38,6 +38,7 @@ type t =
   | LtEq
   | GtEq
   | Plus
+  | PlusPlus
   | Minus
   | Star
   | Slash
@@ -74,7 +75,8 @@ let pp = function
   | DoubleColon -> "'::'"
   | Arrow -> "'->'" | Eq -> "'='" | EqEq -> "'=='" | NotEq -> "'!='"
   | Lt -> "'<'" | Gt -> "'>'" | LtEq -> "'<='" | GtEq -> "'>='"
-  | Plus -> "'+'" | Minus -> "'-'" | Star -> "'*'" | Slash -> "'/'"
+  | Plus -> "'+'" | PlusPlus -> "'++'"
+  | Minus -> "'-'" | Star -> "'*'" | Slash -> "'/'"
   | True -> "'true'" | False -> "'false'"
   | Question -> "'?'" | Orelse -> "'orelse'" | Try -> "'try'"
   | Extern -> "'extern'" | Ellipsis -> "'...'" | At -> "'@'"

@@ -32,11 +32,15 @@ type type_ann =
 type binop =
   | Add | Sub | Mul | Div
   | Lt | Gt | LtEq | GtEq | EqEq | NotEq
+  | Concat                              (* `++` — compile-time string concat;
+                                           both operands must reduce to a
+                                           string literal at typecheck time. *)
 
 let binop_name = function
   | Add -> "+" | Sub -> "-" | Mul -> "*" | Div -> "/"
   | Lt -> "<" | Gt -> ">" | LtEq -> "<=" | GtEq -> ">="
   | EqEq -> "==" | NotEq -> "!="
+  | Concat -> "++"
 
 type expr =
   | IntLit of int * Pos.t

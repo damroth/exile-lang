@@ -228,6 +228,10 @@ let prec = function
   | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> 0
   | Ast.Add | Ast.Sub -> 1
   | Ast.Mul | Ast.Div -> 2
+  | Ast.Concat ->
+      (* Folded to a TStringLit during typecheck — no TBinOp(Concat) ever
+         reaches codegen. *)
+      assert false
 
 (* Forms that don't need parens after a unary `&`/`*` prefix because they
    already bind tighter than (or equal to) the prefix. *)
@@ -278,6 +282,7 @@ let rec gen_expr buf (te : texpr) =
         | Ast.Lt -> " < " | Ast.Gt -> " > "
         | Ast.LtEq -> " <= " | Ast.GtEq -> " >= "
         | Ast.EqEq -> " == " | Ast.NotEq -> " != "
+        | Ast.Concat -> assert false   (* folded at typecheck time *)
       in
       let p = prec op in
       (match l.e with

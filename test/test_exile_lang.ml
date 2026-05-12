@@ -1650,6 +1650,33 @@ let () =
      fn main() { let p = Plain { x: 1 }; print(p); }\n"
     "cannot print a struct value (Plain); print individual fields, or mark the struct with `@debug`";
 
+  check "string ++ literal concat: folded to single rodata"
+    "fn main() {\n\
+    \    let g: str = \"Hello, \" ++ \"World\" ++ \"!\";\n\
+    \    print(g);\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    const char *g;\n    g = \"Hello, World!\";\n    printf(\"%s\\n\", g);\n    return 0;\n}\n";
+
+  check_error "string ++ rejects runtime str on left"
+    "fn main() {\n\
+    \    let name: str = \"Bob\";\n\
+    \    let g: str = name ++ \"!\";\n\
+    \    print(g);\n\
+     }\n"
+    "'++' requires a compile-time string literal on both sides; got str on the left (for runtime concat use an Allocator method)";
+
+  check_error "string ++ rejects runtime str on right"
+    "fn main() {\n\
+    \    let name: str = \"Bob\";\n\
+    \    let g: str = \"Hi \" ++ name;\n\
+    \    print(g);\n\
+     }\n"
+    "'++' requires a compile-time string literal on both sides; got str on the right (for runtime concat use an Allocator method)";
+
+  check_error "++ between non-string operands rejected"
+    "fn main() { let x = 1 ++ 2; print(x); }\n"
+    "'++' requires a compile-time string literal on both sides; got i32 on the left (for runtime concat use an Allocator method)";
+
   check "print of @debug struct: emits __debug call"
     "@debug\n\
      struct Point { x: int, y: int }\n\

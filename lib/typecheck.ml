@@ -559,6 +559,31 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         Error.failf neg_pos "negation '-' requires an integer, got %s"
           (typ_name sub'.ty);
       { e = TNeg sub'; ty = sub'.ty; pos }
+  | Ast.BinOp (Ast.Concat, l, r, _) ->
+      (* Compile-time string concat: both sides must reduce to a string
+         literal at elab time.  Recursion folds bottom-up so a chain like
+         `"a" ++ "b" ++ "c"` collapses to a single `TStringLit "abc"`.
+         For runtime concat use an Allocator method (`@must_use` Result
+         return), which is intentionally separate so the alloc cost is
+         visible at the call site. *)
+      let l' = elab_expr ctx env l in
+      let r' = elab_expr ctx env r in
+      let extract (e : texpr) =
+        match e.e with TStringLit s -> Some s | _ -> None
+      in
+      (match extract l', extract r' with
+       | Some sl, Some sr ->
+           { e = TStringLit (sl ^ sr); ty = TString; pos }
+       | None, _ ->
+           Error.failf l'.pos
+             "'++' requires a compile-time string literal on both sides; \
+              got %s on the left (for runtime concat use an Allocator method)"
+             (typ_name l'.ty)
+       | _, None ->
+           Error.failf r'.pos
+             "'++' requires a compile-time string literal on both sides; \
+              got %s on the right (for runtime concat use an Allocator method)"
+             (typ_name r'.ty))
   | Ast.BinOp (op, l, r, _) ->
       (* Smart literal coercion: when one operand is an integer
          literal, elab the other first so the literal can adopt a
@@ -622,6 +647,8 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 "equality '%s' between incompatible types %s and %s"
                 name (typ_name l'.ty) (typ_name r'.ty);
             TBool
+        | Ast.Concat ->
+            assert false   (* handled by the outer Ast.Concat arm *)
       in
       { e = TBinOp (op, l', r'); ty = result_t; pos }
   | Ast.Cast (sub, ann, cast_pos) ->

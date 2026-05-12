@@ -366,6 +366,9 @@ and parse_add s =
     | Token.Minus ->
         let p = peek_pos s in
         ignore (advance s); loop (Ast.BinOp (Ast.Sub, left, parse_mul s, p))
+    | Token.PlusPlus ->
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.Concat, left, parse_mul s, p))
     | _ -> left
   in
   loop (parse_mul s)

@@ -60,6 +60,8 @@ let tokenize ~file src =
       | ':' when i + 1 < len && src.[i + 1] = ':' ->
           adv ':'; loop (i + 2) ((Token.DoubleColon, p) :: acc)
       | ':' -> loop (i + 1) ((Token.Colon, p) :: acc)
+      | '+' when i + 1 < len && src.[i + 1] = '+' ->
+          adv '+'; loop (i + 2) ((Token.PlusPlus, p) :: acc)
       | '+' -> loop (i + 1) ((Token.Plus, p) :: acc)
       | '*' -> loop (i + 1) ((Token.Star, p) :: acc)
       | '/' when i + 1 < len && src.[i + 1] = '/' ->

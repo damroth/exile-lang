@@ -1,0 +1,26 @@
+// `++` is a compile-time string concat operator.  Both sides must be
+// string literals (or chains of literals) — the compiler folds them
+// into a single constant in the emitted C, with zero runtime cost.
+//
+// Runtime concat is intentionally a separate facility going through
+// an explicit `Allocator` (post-MVP), so the alloc cost is visible at
+// the call site.  Discipline matches the Amiga 256K budget: any
+// allocation is a deliberate user choice, not a hidden side effect
+// of operator syntax.
+//
+// `^` is reserved for bitwise XOR (matching C / Rust / m68k `eor`).
+
+fn main() {
+    // Two-piece concat.
+    let greeting: str = "Hello, " ++ "World!";
+    print(greeting);                                // Hello, World!
+
+    // Chain of pieces — folded left-to-right at compile time into one
+    // string constant.
+    let banner: str = "===" ++ " exile-lang " ++ "===";
+    print(banner);                                  // === exile-lang ===
+
+    // Useful for version strings, path prefixes, etc.
+    let version: str = "v" ++ "0" ++ "." ++ "4" ++ "." ++ "0";
+    print(version);                                 // v0.4.0
+}
