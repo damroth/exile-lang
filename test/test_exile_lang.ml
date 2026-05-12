@@ -1650,6 +1650,25 @@ let () =
      fn main() { let p = Plain { x: 1 }; print(p); }\n"
     "cannot print a struct value (Plain); print individual fields, or mark the struct with `@debug`";
 
+  check "type_name(expr): scalar types rendered at compile time"
+    "fn main() {\n\
+    \    let a: i8 = 5;\n\
+    \    let b: u16 = 100;\n\
+    \    print(type_name(a));\n\
+    \    print(type_name(b));\n\
+    \    print(type_name(\"hi\"));\n\
+    \    print(type_name(42));\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    signed char a;\n    unsigned short b;\n    a = 5;\n    b = 100;\n    printf(\"%s\\n\", ((void)sizeof(a), \"i8\"));\n    printf(\"%s\\n\", ((void)sizeof(b), \"u16\"));\n    printf(\"%s\\n\", ((void)sizeof(\"hi\"), \"str\"));\n    printf(\"%s\\n\", ((void)sizeof(42), \"i32\"));\n    return 0;\n}\n";
+
+  check_error "type_name rejects null literal"
+    "fn main() { print(type_name(null)); }\n"
+    "type_name() needs a typed expression — 'null' has no statically-known target type";
+
+  check_error "type_name rejects wrong arity"
+    "fn main() { print(type_name(1, 2)); }\n"
+    "type_name() takes exactly one argument, got 2";
+
   check "string ++ literal concat: folded to single rodata"
     "fn main() {\n\
     \    let g: str = \"Hello, \" ++ \"World\" ++ \"!\";\n\

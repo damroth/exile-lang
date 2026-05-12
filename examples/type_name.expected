@@ -1,0 +1,14 @@
+i8
+u16
+i32
+str
+i32
+Point
+*Point
+Result<i32, str>
+v1:
+i32
+v2:
+str
+v3:
+Point

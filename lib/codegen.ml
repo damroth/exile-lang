@@ -155,10 +155,10 @@ let c_decl t name = c_type_prefix t ^ name
 (* Builtin emitters keyed by name.  Codegen-side companion to the typecheck
    `builtin_sig.bcheck` table.  Adding a new builtin needs an entry in both. *)
 type builtin_emit =
-  Buffer.t -> texpr list -> (texpr -> unit) -> unit
+  gen_ctx -> Buffer.t -> texpr list -> (texpr -> unit) -> unit
 
 let emit_print : builtin_emit =
-  fun buf args emit_arg ->
+  fun _ctx buf args emit_arg ->
     (* Varargs promote i8/i16 to int, so `%d`/`%u` cover them with no cast.
        i32/u32 are emitted as `long`/`unsigned long` (for cross-C-compiler
        width stability) and need `%ld`/`%lu`.  Because `printf` is variadic
@@ -212,14 +212,70 @@ let emit_print : builtin_emit =
       Buffer.add_char buf ')'
 
 let emit_free : builtin_emit =
-  fun buf args emit_arg ->
+  fun _ctx buf args emit_arg ->
     Buffer.add_string buf "free(";
     emit_arg (List.hd args);
     Buffer.add_char buf ')'
 
+(* Render a typ user-facing.  Delegates to `Ir.typ_name` for everything
+   except generic enum/struct instances, which `typ_name` shows in
+   mangled form (`Result_i32_str`); here we consult the indexes for the
+   matching sig and produce `Result<i32, str>` via the saved
+   `einstance_args` / `sinstance_args`. *)
+let rec render_typ_user_facing ctx t =
+  match t with
+  | TEnum path ->
+      (match List.find_opt (fun (e : enum_sig) -> e.ename_path = path)
+               ctx.enum_index with
+       | Some { einstance_args = Some args; _ } when args <> [] ->
+           render_named_with_args ctx path args
+       | _ -> typ_name t)
+  | TStruct path ->
+      (match List.find_opt (fun (s : struct_sig) -> s.sname_path = path)
+               ctx.struct_index with
+       | Some { sinstance_args = Some args; _ } when args <> [] ->
+           render_named_with_args ctx path args
+       | _ -> typ_name t)
+  | TPtr inner -> "*" ^ render_typ_user_facing ctx inner
+  | TTuple ts ->
+      "(" ^ String.concat ", " (List.map (render_typ_user_facing ctx) ts) ^ ")"
+  | _ -> typ_name t
+and render_named_with_args ctx path args =
+  let last = List.nth path (List.length path - 1) in
+  let suffix = "_" ^ String.concat "_" (List.map mangle_typ args) in
+  let last_len = String.length last in
+  let suf_len = String.length suffix in
+  let base =
+    if last_len > suf_len
+       && String.sub last (last_len - suf_len) suf_len = suffix
+    then String.sub last 0 (last_len - suf_len)
+    else last
+  in
+  let prefix =
+    let rec init = function [] | [_] -> [] | x :: rest -> x :: init rest in
+    init path
+  in
+  let qualified = String.concat "::" (prefix @ [base]) in
+  let arg_strs = List.map (render_typ_user_facing ctx) args in
+  qualified ^ "<" ^ String.concat ", " arg_strs ^ ">"
+
+(* `type_name(expr)` lowers to a `const char *` string literal of the
+   arg's user-facing type name.  The arg's value is not consumed —
+   `sizeof` references it without evaluating (no side effects in C89,
+   no VLAs in our backend) so cc still counts every variable as used. *)
+let emit_type_name : builtin_emit =
+  fun ctx buf args emit_arg ->
+    let arg = List.hd args in
+    Buffer.add_string buf "((void)sizeof(";
+    emit_arg arg;
+    Buffer.add_string buf "), \"";
+    Buffer.add_string buf (escape_c (render_typ_user_facing ctx arg.ty));
+    Buffer.add_string buf "\")"
+
 let builtin_emitters : (string * builtin_emit) list = [
   ("print", emit_print);
   ("free", emit_free);
+  ("type_name", emit_type_name);
 ]
 
 let lookup_builtin_emit name = List.assoc_opt name builtin_emitters
@@ -247,7 +303,7 @@ let emit_assign_line buf indent ~lhs ~emit_rhs =
   emit_rhs ();
   Buffer.add_string buf ";\n"
 
-let rec gen_expr buf (te : texpr) =
+let rec gen_expr ctx buf (te : texpr) =
   match te.e with
   | TIntLit n -> Buffer.add_string buf (string_of_int n)
   | TBoolLit b -> Buffer.add_string buf (if b then "1" else "0")
@@ -262,7 +318,7 @@ let rec gen_expr buf (te : texpr) =
          to function pointer, no `&` needed. *)
       Buffer.add_string buf name
   | TNeg sub ->
-      emit_unary buf '-' sub
+      emit_unary ctx buf '-' sub
         ~simple:(function TIntLit _ | TVar _ -> true | _ -> false)
   | TCast (sub, _ann) ->
       (* Cast result type is already in `te.ty` (elab ran resolve_type_ann
@@ -272,7 +328,7 @@ let rec gen_expr buf (te : texpr) =
       Buffer.add_string buf "((";
       Buffer.add_string buf trimmed;
       Buffer.add_string buf ")";
-      gen_expr buf sub;
+      gen_expr ctx buf sub;
       Buffer.add_char buf ')'
   | TBinOp (op, l, r) ->
       let op_str =
@@ -287,31 +343,31 @@ let rec gen_expr buf (te : texpr) =
       let p = prec op in
       (match l.e with
        | TBinOp (lop, _, _) when prec lop < p ->
-           Buffer.add_char buf '('; gen_expr buf l; Buffer.add_char buf ')'
-       | _ -> gen_expr buf l);
+           Buffer.add_char buf '('; gen_expr ctx buf l; Buffer.add_char buf ')'
+       | _ -> gen_expr ctx buf l);
       Buffer.add_string buf op_str;
       (match r.e with
        | TBinOp (rop, _, _)
          when prec rop < p || (prec rop = p && (op = Ast.Sub || op = Ast.Div)) ->
-           Buffer.add_char buf '('; gen_expr buf r; Buffer.add_char buf ')'
-       | _ -> gen_expr buf r)
+           Buffer.add_char buf '('; gen_expr ctx buf r; Buffer.add_char buf ')'
+       | _ -> gen_expr ctx buf r)
   | TBuiltinCall { name; args } ->
       let emit =
         match lookup_builtin_emit name with
         | Some emit -> emit
         | None -> assert false   (* typecheck dispatched a known builtin *)
       in
-      emit buf args (fun te -> gen_expr buf te)
+      emit ctx buf args (fun te -> gen_expr ctx buf te)
   | TCall { mangled; args } ->
       Buffer.add_string buf mangled;
       Buffer.add_char buf '(';
-      add_separated buf ", " (gen_expr buf) args;
+      add_separated buf ", " (gen_expr ctx buf) args;
       Buffer.add_char buf ')'
   | TIndirectCall { fn_expr; args } ->
       Buffer.add_char buf '(';
-      gen_expr buf fn_expr;
+      gen_expr ctx buf fn_expr;
       Buffer.add_string buf ")(";
-      add_separated buf ", " (gen_expr buf) args;
+      add_separated buf ", " (gen_expr ctx buf) args;
       Buffer.add_char buf ')'
   | TTupleLit _ | TStructLit _ | TNew _ ->
       (* The `lift_block_exprs` pass in typecheck rewrites every
@@ -324,11 +380,11 @@ let rec gen_expr buf (te : texpr) =
   | TFieldAccess { target; field } ->
       (* Auto-deref pointer-to-struct via `->`; otherwise plain `.`. *)
       let sep = match target.ty with TPtr _ -> "->" | _ -> "." in
-      gen_expr buf target;
+      gen_expr ctx buf target;
       Buffer.add_string buf sep;
       Buffer.add_string buf field
-  | TRef sub -> emit_unary buf '&' sub ~simple:(fun n -> lvalue_like n)
-  | TDeref sub -> emit_unary buf '*' sub ~simple:(fun n -> lvalue_like n)
+  | TRef sub -> emit_unary ctx buf '&' sub ~simple:(fun n -> lvalue_like n)
+  | TDeref sub -> emit_unary ctx buf '*' sub ~simple:(fun n -> lvalue_like n)
   | TSizeOf t ->
       Buffer.add_string buf "sizeof(";
       Buffer.add_string buf (strip_trailing_space (c_type_prefix t));
@@ -338,12 +394,12 @@ let rec gen_expr buf (te : texpr) =
          hoists these to `__lift_N` temps before codegen sees them. *)
       assert false
 
-and emit_unary buf prefix ~simple (te : texpr) =
+and emit_unary ctx buf prefix ~simple (te : texpr) =
   Buffer.add_char buf prefix;
-  if simple te.e then gen_expr buf te
+  if simple te.e then gen_expr ctx buf te
   else begin
     Buffer.add_char buf '(';
-    gen_expr buf te;
+    gen_expr ctx buf te;
     Buffer.add_char buf ')'
   end
 
@@ -355,7 +411,7 @@ and emit_unary buf prefix ~simple (te : texpr) =
 let rec emit_value_into_temp ctx buf indent temp_name (value : texpr) =
   let assign ~lhs (e : texpr) =
     emit_assign_line buf indent ~lhs
-      ~emit_rhs:(fun () -> gen_expr buf e)
+      ~emit_rhs:(fun () -> gen_expr ctx buf e)
   in
   match value.e with
   | TTupleLit es ->
@@ -438,30 +494,30 @@ and emit_simple_stmt ctx buf indent stmt =
   | TAssignField { target; field; value; _ } ->
       let sep = match target.ty with TPtr _ -> "->" | _ -> "." in
       Buffer.add_string buf indent;
-      gen_expr buf target;
+      gen_expr ctx buf target;
       Buffer.add_string buf sep;
       Buffer.add_string buf field;
       Buffer.add_string buf " = ";
-      gen_expr buf value;
+      gen_expr ctx buf value;
       Buffer.add_string buf ";\n"
   | TAssignDeref { target; value; _ } ->
       Buffer.add_string buf indent;
-      emit_unary buf '*' target
+      emit_unary ctx buf '*' target
         ~simple:(function TVar _ | TFieldAccess _ -> true | _ -> false);
       Buffer.add_string buf " = ";
-      gen_expr buf value;
+      gen_expr ctx buf value;
       Buffer.add_string buf ";\n"
   | TExprStmt e ->
       (match e.e with
        | TMatch _ -> emit_match_stmt ctx buf indent e
        | _ ->
            Buffer.add_string buf indent;
-           gen_expr buf e;
+           gen_expr ctx buf e;
            Buffer.add_string buf ";\n")
   | TIf { cond; then_body; else_body } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf "if (";
-      gen_expr buf cond;
+      gen_expr ctx buf cond;
       Buffer.add_string buf ") {\n";
       List.iter (emit_simple_stmt ctx buf (indent ^ "    ")) then_body;
       Buffer.add_string buf indent;
@@ -476,7 +532,7 @@ and emit_simple_stmt ctx buf indent stmt =
   | TWhile { cond; body } ->
       Buffer.add_string buf indent;
       Buffer.add_string buf "while (";
-      gen_expr buf cond;
+      gen_expr ctx buf cond;
       Buffer.add_string buf ") {\n";
       List.iter (emit_simple_stmt ctx buf (indent ^ "    ")) body;
       Buffer.add_string buf indent;
@@ -587,10 +643,10 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
                  emit_match_stmt ctx ~assign_to:lhs buf body_indent a.tbody
              | Some lhs, _ ->
                  emit_assign_line buf body_indent ~lhs
-                   ~emit_rhs:(fun () -> gen_expr buf a.tbody)
+                   ~emit_rhs:(fun () -> gen_expr ctx buf a.tbody)
              | None, _ ->
                  Buffer.add_string buf body_indent;
-                 gen_expr buf a.tbody;
+                 gen_expr ctx buf a.tbody;
                  Buffer.add_string buf ";\n");
             Buffer.add_string buf body_indent;
             Buffer.add_string buf "break;\n"
@@ -634,7 +690,7 @@ and emit_cleanups ctx buf indent defers =
 and gen_if ctx buf indent outer_scopes my_defers
     cond then_body else_body =
   Buffer.add_string buf "if (";
-  gen_expr buf cond;
+  gen_expr ctx buf cond;
   Buffer.add_string buf ") {\n";
   gen_block ctx buf (indent ^ "    ")
     (my_defers :: outer_scopes) then_body;
@@ -678,7 +734,7 @@ and gen_block ctx buf indent outer_scopes stmts =
         if not needs_block then begin
           Buffer.add_string buf indent;
           Buffer.add_string buf "return ";
-          gen_expr buf value;
+          gen_expr ctx buf value;
           Buffer.add_string buf ";\n"
         end else begin
           let trimmed = strip_trailing_space (c_type_prefix value.ty) in
@@ -716,7 +772,7 @@ and gen_block ctx buf indent outer_scopes stmts =
         emit_tstmt_ann ctx buf indent s;
         Buffer.add_string buf indent;
         Buffer.add_string buf "while (";
-        gen_expr buf cond;
+        gen_expr ctx buf cond;
         Buffer.add_string buf ") {\n";
         gen_block ctx buf (indent ^ "    ")
           (my_defers :: outer_scopes) body;

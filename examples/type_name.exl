@@ -1,0 +1,41 @@
+// `type_name(expr)` yields a `str` with the Rust-style name of the
+// expression's compile-time type.  The lookup is purely structural —
+// the expression is never evaluated, only its `.ty` is consulted —
+// and the result is baked into the emitted C as a string literal in
+// `.rodata`.  Zero runtime cost, zero RTTI metadata in the binary.
+//
+// Inside a generic fn, each monomorphic instance bakes its own concrete
+// name: `id(7)` prints "i32", `id("hi")` prints "str".
+
+struct Point { x: int, y: int }
+
+fn dbg<T>(label: str, x: T) -> T {
+    print(label);
+    print(type_name(x));
+    return x;
+}
+
+fn main() {
+    let a: i8 = 5;
+    let b: u16 = 100;
+    let c: int = -1;
+    let s: str = "hi";
+
+    print(type_name(a));                            // i8
+    print(type_name(b));                            // u16
+    print(type_name(c));                            // i32
+    print(type_name(s));                            // str
+    print(type_name(42));                           // i32 (literal default)
+
+    let p = Point { x: 1, y: 2 };
+    print(type_name(p));                            // Point
+    print(type_name(&p));                           // *Point
+
+    let r: Result<int, str> = Result::Ok(7);
+    print(type_name(r));                            // Result<i32, str>
+
+    // Generic fn: each instance carries its concrete name.
+    let _v1: int = dbg("v1:", 42);                  // v1: \n i32
+    let _v2: str = dbg("v2:", "text");              // v2: \n str
+    let _v3: Point = dbg("v3:", p);                 // v3: \n Point
+}

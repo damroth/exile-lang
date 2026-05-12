@@ -443,7 +443,27 @@ let builtin_free = {
           (List.length tys));
 }
 
-let builtins = [ builtin_print; builtin_free ]
+(* `type_name(expr)` yields a `str` with the Rust-style name of the
+   expression's type ("i32", "*Point", "Result<i32, str>", ...).
+   Compile-time only: codegen emits the name as a literal in `.rodata`,
+   no runtime metadata.  Inside a generic fn body, the arg's type is
+   substituted per monomorphic instance, so each instance bakes its own
+   concrete name. *)
+let builtin_type_name = {
+  bname = "type_name";
+  bcheck = (fun ~ctx:_ ~pos ~arg_tys ~allow_void:_ ->
+    match arg_tys with
+    | [ TNullPtr ] ->
+        Error.failf pos
+          "type_name() needs a typed expression — 'null' has no \
+           statically-known target type"
+    | [_] -> TString
+    | tys ->
+        Error.failf pos "type_name() takes exactly one argument, got %d"
+          (List.length tys));
+}
+
+let builtins = [ builtin_print; builtin_free; builtin_type_name ]
 
 let lookup_builtin = function
   | [ name ] -> List.find_opt (fun b -> b.bname = name) builtins
