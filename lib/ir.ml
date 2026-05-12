@@ -152,6 +152,10 @@ type struct_sig = {
                                     use sites.  Used by bidirectional
                                     typing to recover bindings from
                                     an expected `TStruct inst_path`. *)
+  sis_debug : bool;             (* `@debug` — codegen synthesizes a
+                                   Rust-Debug-style printer for this type
+                                   and `print(v: TStruct path)` dispatches
+                                   to it.  MVP: only mono structs. *)
 }
 
 (* Enum signatures: variant order is preserved to give each variant a
@@ -179,6 +183,10 @@ type enum_sig = {
                                    to monomorphic instances so the linter
                                    flags discarded values of
                                    `Result<int, str>` etc. *)
+  eis_debug : bool;             (* `@debug` — codegen synthesizes a
+                                   Rust-Debug-style printer that switches
+                                   on the tag and renders each variant.
+                                   MVP: only mono enums. *)
 }
 
 (* Mangle a function name with its module path.  Top-level (path = []) gets

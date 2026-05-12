@@ -25,12 +25,14 @@ open Ir
 type gen_ctx = {
   annotate : bool;
   enum_index : enum_sig list;
+  struct_index : struct_sig list;
   mutable defer_chain : tstmt list list list;
   mutable bloat : (string * int) list;
 }
 
-let new_gen_ctx ~annotate ~enum_index =
-  { annotate; enum_index; defer_chain = []; bloat = [] }
+let new_gen_ctx ~annotate ~enum_index ~struct_index =
+  { annotate; enum_index; struct_index;
+    defer_chain = []; bloat = [] }
 
 (* Bloat snapshot from the most recent gen_program run.  Read by
    bin/main.ml when `--bloat-report` is set, and by tests.  Persisted
@@ -164,38 +166,50 @@ let emit_print : builtin_emit =
        passed under `%ld` is ill-formed under `-Wformat`.  We force the
        cast on the call site. *)
     let arg = List.hd args in
-    let fmt = match arg.ty with
-      | TBool -> "\"%d\\n\""
-      | TInt { signed = true; width = Ast.W32 } -> "\"%ld\\n\""
-      | TInt { signed = false; width = Ast.W32 } -> "\"%lu\\n\""
-      | TInt { signed = true; _ } -> "\"%d\\n\""
-      | TInt { signed = false; _ } -> "\"%u\\n\""
-      | TCInt { signed = true } -> "\"%d\\n\""
-      | TCInt { signed = false } -> "\"%u\\n\""
-      | TCShort _ | TCLong _ | TCChar | TCSChar | TCUChar | TCVoid ->
-          assert false  (* typecheck rejects print on these *)
-      | TString -> "\"%s\\n\""
-      | TTuple _ | TStruct _ | TExtStruct _ | TExtAlias _ | TEnum _
-      | TPtr _ | TFnPtr _ | TNullPtr | TVar _ ->
-          assert false  (* typecheck rejected this earlier *)
-    in
-    let cast =
-      match arg.ty with
-      | TInt { signed = true; width = Ast.W32 } -> Some "(long)"
-      | TInt { signed = false; width = Ast.W32 } -> Some "(unsigned long)"
-      | _ -> None
-    in
-    Buffer.add_string buf "printf(";
-    Buffer.add_string buf fmt;
-    Buffer.add_string buf ", ";
-    (match cast with
-     | Some c ->
-         Buffer.add_string buf c;
-         Buffer.add_char buf '(';
-         emit_arg arg;
-         Buffer.add_char buf ')'
-     | None -> emit_arg arg);
-    Buffer.add_char buf ')'
+    match arg.ty with
+    | TStruct _ | TEnum _ ->
+        (* `@debug` aggregate — call the synthesized printer.  Typecheck
+           rejects non-debug aggregates so anything reaching here has
+           had its printer emitted up top.  Trailing newline matches the
+           scalar-print contract. *)
+        let fn = mangle_typ arg.ty ^ "__debug" in
+        Buffer.add_string buf fn;
+        Buffer.add_char buf '(';
+        emit_arg arg;
+        Buffer.add_string buf "); printf(\"\\n\")"
+    | _ ->
+      let fmt = match arg.ty with
+        | TBool -> "\"%d\\n\""
+        | TInt { signed = true; width = Ast.W32 } -> "\"%ld\\n\""
+        | TInt { signed = false; width = Ast.W32 } -> "\"%lu\\n\""
+        | TInt { signed = true; _ } -> "\"%d\\n\""
+        | TInt { signed = false; _ } -> "\"%u\\n\""
+        | TCInt { signed = true } -> "\"%d\\n\""
+        | TCInt { signed = false } -> "\"%u\\n\""
+        | TCShort _ | TCLong _ | TCChar | TCSChar | TCUChar | TCVoid ->
+            assert false  (* typecheck rejects print on these *)
+        | TString -> "\"%s\\n\""
+        | TTuple _ | TStruct _ | TExtStruct _ | TExtAlias _ | TEnum _
+        | TPtr _ | TFnPtr _ | TNullPtr | TVar _ ->
+            assert false  (* typecheck rejected this earlier *)
+      in
+      let cast =
+        match arg.ty with
+        | TInt { signed = true; width = Ast.W32 } -> Some "(long)"
+        | TInt { signed = false; width = Ast.W32 } -> Some "(unsigned long)"
+        | _ -> None
+      in
+      Buffer.add_string buf "printf(";
+      Buffer.add_string buf fmt;
+      Buffer.add_string buf ", ";
+      (match cast with
+       | Some c ->
+           Buffer.add_string buf c;
+           Buffer.add_char buf '(';
+           emit_arg arg;
+           Buffer.add_char buf ')'
+       | None -> emit_arg arg);
+      Buffer.add_char buf ')'
 
 let emit_free : builtin_emit =
   fun buf args emit_arg ->
@@ -840,8 +854,108 @@ let emit_named_enum buf (e : enum_sig) =
   end;
   Buffer.add_string buf " };\n"
 
+(* Emit a single printf-style fragment that renders [access] (a C l-value
+   of type [ty]) Rust-Debug style, with no trailing newline.  Nested
+   `@debug` aggregates call their own __debug printer (recursion via the
+   forward decls emitted up top). *)
+let rec emit_field_debug buf ty access =
+  match ty with
+  | TBool ->
+      Printf.bprintf buf
+        "printf(\"%%s\", (%s) ? \"true\" : \"false\")" access
+  | TInt { signed = true; width = Ast.W32 } ->
+      Printf.bprintf buf "printf(\"%%ld\", (long)(%s))" access
+  | TInt { signed = false; width = Ast.W32 } ->
+      Printf.bprintf buf "printf(\"%%lu\", (unsigned long)(%s))" access
+  | TInt { signed = true; _ } -> Printf.bprintf buf "printf(\"%%d\", %s)" access
+  | TInt { signed = false; _ } -> Printf.bprintf buf "printf(\"%%u\", %s)" access
+  | TCInt { signed = true } -> Printf.bprintf buf "printf(\"%%d\", %s)" access
+  | TCInt { signed = false } -> Printf.bprintf buf "printf(\"%%u\", %s)" access
+  | TString ->
+      (* Quoted output, no runtime escape — user knows the content; for
+         strings with embedded quotes/newlines the rendering is lossy. *)
+      Printf.bprintf buf "printf(\"\\\"%%s\\\"\", %s)" access
+  | TPtr _ -> Printf.bprintf buf "printf(\"%%p\", (void*)(%s))" access
+  | TStruct _ | TEnum _ ->
+      let fn = mangle_typ ty ^ "__debug" in
+      Printf.bprintf buf "%s(%s)" fn access
+  | TTuple _ | TCShort _ | TCLong _ | TCChar | TCSChar | TCUChar
+  | TCVoid | TExtStruct _ | TExtAlias _ | TFnPtr _ | TNullPtr | TVar _ ->
+      assert false   (* typecheck @debug-validation rejected these *)
+
+(* Last segment of a path — the user-facing type name to embed in the
+   rendered debug output (e.g., `Point`, `Result`). *)
+let last_segment path = List.nth path (List.length path - 1)
+
+let emit_struct_debug_fwddecl buf (s : struct_sig) =
+  if s.sis_debug then
+    let cname = mangle_typ (TStruct s.sname_path) in
+    Printf.bprintf buf "static void %s__debug(struct %s self);\n" cname cname
+
+let emit_enum_debug_fwddecl buf (e : enum_sig) =
+  if e.eis_debug then
+    let cname = mangle_typ (TEnum e.ename_path) in
+    Printf.bprintf buf "static void %s__debug(struct %s self);\n" cname cname
+
+let emit_struct_debug_def buf (s : struct_sig) =
+  if s.sis_debug then begin
+    let cname = mangle_typ (TStruct s.sname_path) in
+    let name = last_segment s.sname_path in
+    Printf.bprintf buf "static void %s__debug(struct %s self) {\n" cname cname;
+    Printf.bprintf buf "    printf(\"%s { \");\n" name;
+    List.iteri (fun i (fname, fty) ->
+      if i > 0 then Buffer.add_string buf "    printf(\", \");\n";
+      Printf.bprintf buf "    printf(\"%s: \");\n" fname;
+      Buffer.add_string buf "    ";
+      emit_field_debug buf fty ("self." ^ fname);
+      Buffer.add_string buf ";\n")
+      s.sfields_ty;
+    Buffer.add_string buf "    printf(\" }\");\n";
+    Buffer.add_string buf "}\n"
+  end
+
+let emit_enum_debug_def buf (e : enum_sig) =
+  if e.eis_debug then begin
+    let cname = mangle_typ (TEnum e.ename_path) in
+    let name = last_segment e.ename_path in
+    Printf.bprintf buf "static void %s__debug(struct %s self) {\n" cname cname;
+    Buffer.add_string buf "    switch (self.tag) {\n";
+    List.iter (fun (vs : variant_sig) ->
+      Printf.bprintf buf "    case %s_%s:\n" cname vs.vsname;
+      if vs.vsfields = [] then
+        Printf.bprintf buf "        printf(\"%s::%s\");\n" name vs.vsname
+      else if vs.vsis_struct then begin
+        Printf.bprintf buf "        printf(\"%s::%s { \");\n" name vs.vsname;
+        List.iteri (fun i (fname, fty) ->
+          if i > 0 then Buffer.add_string buf "        printf(\", \");\n";
+          Printf.bprintf buf "        printf(\"%s: \");\n" fname;
+          Buffer.add_string buf "        ";
+          emit_field_debug buf fty
+            (Printf.sprintf "self.data.%s.%s" vs.vsname fname);
+          Buffer.add_string buf ";\n")
+          vs.vsfields;
+        Buffer.add_string buf "        printf(\" }\");\n"
+      end else begin
+        Printf.bprintf buf "        printf(\"%s::%s(\");\n" name vs.vsname;
+        List.iteri (fun i (fname, fty) ->
+          if i > 0 then Buffer.add_string buf "        printf(\", \");\n";
+          Buffer.add_string buf "        ";
+          emit_field_debug buf fty
+            (Printf.sprintf "self.data.%s.%s" vs.vsname fname);
+          Buffer.add_string buf ";\n")
+          vs.vsfields;
+        Buffer.add_string buf "        printf(\")\");\n"
+      end;
+      Buffer.add_string buf "        break;\n")
+      e.evariants;
+    Buffer.add_string buf "    }\n";
+    Buffer.add_string buf "}\n"
+  end
+
 let gen_program ?(annotate = false) (tp : tprogram) =
-  let ctx = new_gen_ctx ~annotate ~enum_index:tp.tp_enum_index in
+  let ctx = new_gen_ctx ~annotate
+    ~enum_index:tp.tp_enum_index
+    ~struct_index:tp.tp_struct_index in
   let buf = Buffer.create 256 in
   Buffer.add_string buf "#include <stdio.h>\n";
   if tp.tp_uses_heap then
@@ -926,6 +1040,23 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   if tp.tp_tuple_types <> [] then begin
     Buffer.add_char buf '\n';
     List.iter (emit_tuple_struct buf) tp.tp_tuple_types
+  end;
+  (* `@debug` printers — synthesized one per marked struct/enum.  Forward
+     decls first so a printer body can call another printer regardless
+     of source declaration order; bodies come right after. *)
+  let debug_structs =
+    List.filter (fun s -> s.sis_debug) concrete_structs in
+  let debug_enums =
+    List.filter (fun e -> e.eis_debug) concrete_enums in
+  if debug_structs <> [] || debug_enums <> [] then begin
+    Buffer.add_char buf '\n';
+    List.iter (emit_struct_debug_fwddecl buf) debug_structs;
+    List.iter (emit_enum_debug_fwddecl buf) debug_enums;
+    Buffer.add_char buf '\n';
+    List.iter (fun s -> emit_struct_debug_def buf s; Buffer.add_char buf '\n')
+      debug_structs;
+    List.iter (fun e -> emit_enum_debug_def buf e; Buffer.add_char buf '\n')
+      debug_enums
   end;
   (* Generic fns (with TVar in their resolved signature) skip codegen
      for the same reason as generic struct/enum decls — the

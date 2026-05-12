@@ -403,7 +403,7 @@ let () =
 
   check_error "print of struct rejected"
     "struct Point { x: int, y: int, }\nfn main() {\n    let p = Point { x: 1, y: 2 };\n    print(p);\n}\n"
-    "cannot print a struct value (Point); print individual fields instead";
+    "cannot print a struct value (Point); print individual fields, or mark the struct with `@debug`";
 
   check "pointer to struct: ref + auto-deref field access + assign"
     "struct Point { x: int, y: int, }\nfn shift(p: *Point, dx: int) {\n    p.x = p.x + dx;\n}\nfn main() {\n    let p = Point { x: 0, y: 0 };\n    shift(&p, 10);\n    print(p.x);\n}\n"
@@ -745,7 +745,7 @@ let () =
 
   check_error "print of enum value rejected"
     "enum E { | A }\nfn main() { let e = E::A; print(e); }\n"
-    "cannot print an enum value (E); match on it and print per variant";
+    "cannot print an enum value (E); match on it and print per variant, or mark the enum with `@debug`";
 
   check_error "unknown generic type rejected"
     "fn main() { let x: Box<int> = 0; }\n"
@@ -1618,4 +1618,43 @@ let () =
     "@must_use\n\
      impl Allocator { }\n\
      fn main() { print(1); }\n"
-    "'@must_use' can only decorate fn / enum decls"
+    "'@must_use' can only decorate fn / enum decls";
+
+  check_error "@debug rejected on generic struct (MVP limitation)"
+    "@debug\n\
+     struct Box<T> { v: T }\n\
+     fn main() { print(1); }\n"
+    "'@debug' not yet supported for generic struct 'Box' (T-bound system needed first)";
+
+  check_error "@debug rejected on generic enum (MVP limitation)"
+    "@debug\n\
+     enum Maybe<T> { | Some(T) | None }\n\
+     fn main() { print(1); }\n"
+    "'@debug' not yet supported for generic enum 'Maybe' (T-bound system needed first)";
+
+  check_error "@debug rejects field of non-debug-able type"
+    "@debug\n\
+     struct Bad { cb: fn(int) -> int }\n\
+     fn main() { print(1); }\n"
+    "'@debug' struct 'Bad': field 'cb' of type fn(i32) -> i32 is not debug-able (mark the type `@debug`, or remove `@debug` from the struct)";
+
+  check_error "@debug rejects field whose type is not @debug"
+    "struct Plain { x: int }\n\
+     @debug\n\
+     struct Outer { inner: Plain }\n\
+     fn main() { print(1); }\n"
+    "'@debug' struct 'Outer': field 'inner' of type Plain is not debug-able (mark the type `@debug`, or remove `@debug` from the struct)";
+
+  check_error "non-@debug struct still rejects print"
+    "struct Plain { x: int }\n\
+     fn main() { let p = Plain { x: 1 }; print(p); }\n"
+    "cannot print a struct value (Plain); print individual fields, or mark the struct with `@debug`";
+
+  check "print of @debug struct: emits __debug call"
+    "@debug\n\
+     struct Point { x: int, y: int }\n\
+     fn main() {\n\
+    \    let p = Point { x: 3, y: 4 };\n\
+    \    print(p);\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Point { long x; long y; };\n\nstatic void ex_Point__debug(struct ex_Point self);\n\nstatic void ex_Point__debug(struct ex_Point self) {\n    printf(\"Point { \");\n    printf(\"x: \");\n    printf(\"%ld\", (long)(self.x));\n    printf(\", \");\n    printf(\"y: \");\n    printf(\"%ld\", (long)(self.y));\n    printf(\" }\");\n}\n\n\nint main(void) {\n    struct ex_Point p;\n    p.x = 3;\n    p.y = 4;\n    ex_Point__debug(p); printf(\"\\n\");\n    return 0;\n}\n"

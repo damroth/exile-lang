@@ -209,6 +209,10 @@ type struct_decl = {
   sis_pub : bool;
   stier_hint : string option;        (* `@tier(...)` raw attribute; see
                                         [func.tier_hint] for semantics *)
+  sis_debug : bool;                  (* `@debug` — synthesize a one-line
+                                        Rust-Debug-style printer for values
+                                        of this struct.  MVP: legal only
+                                        on non-generic struct decls. *)
 }
 
 (* `enum Foo { | A | B(int, str) | C { f: T } }` — three variant forms.
@@ -238,6 +242,11 @@ type enum_decl = {
                                         flagged.  Carries the spirit of
                                         Rust's `#[must_use]` applied to
                                         `Result`/`Option`. *)
+  eis_debug : bool;                  (* `@debug` — synthesize a one-line
+                                        Rust-Debug-style printer for values
+                                        of this enum, so `print(v)` works.
+                                        MVP: legal only on non-generic
+                                        enum decls. *)
 }
 
 type extern_struct = {

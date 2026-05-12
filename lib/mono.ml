@@ -122,7 +122,8 @@ let make_struct_instance (skel : struct_sig) (args : typ list) : struct_sig =
       List.map (fun (n, t) -> (n, subst_typ bindings t)) skel.sfields_ty;
     sis_pub = skel.sis_pub;
     stparams = [];
-    sinstance_args = Some args }
+    sinstance_args = Some args;
+    sis_debug = skel.sis_debug }
 
 let make_enum_instance (skel : enum_sig) (args : typ list) : enum_sig =
   let bindings = List.combine skel.etparams args in
@@ -137,7 +138,8 @@ let make_enum_instance (skel : enum_sig) (args : typ list) : enum_sig =
     eis_pub = skel.eis_pub;
     etparams = [];
     einstance_args = Some args;
-    eis_must_use = skel.eis_must_use }
+    eis_must_use = skel.eis_must_use;
+    eis_debug = skel.eis_debug }
 
 (* Idempotent instantiation: returns the cached instance if one is
    already registered for the same (decl path, args), otherwise

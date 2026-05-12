@@ -1,0 +1,5 @@
+Point { x: 3, y: 4 }
+Rect { origin: Point { x: 3, y: 4 }, width: 100, height: 50 }
+Shape::Circle(7)
+Shape::Rectangle { w: 80, h: 20 }
+Shape::None

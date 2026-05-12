@@ -1140,6 +1140,29 @@ let rec parse_item s seen =
              in
              (name_opt, item'))
              next_items
+       | "debug" ->
+           (* Bare attribute — no parens, no args.  Decorates a non-generic
+              struct or enum; the codegen synthesizes a Rust-Debug-style
+              one-line printer for values of that type so `print(v)` works. *)
+           let next_items = parse_item s seen in
+           List.map (fun (name_opt, item) ->
+             let item' = match item with
+               | Ast.Struct s when s.stparams <> [] ->
+                   Error.failf at_pos
+                     "'@debug' not yet supported for generic struct '%s' \
+                      (T-bound system needed first)" s.sname
+               | Ast.Enum e when e.etparams <> [] ->
+                   Error.failf at_pos
+                     "'@debug' not yet supported for generic enum '%s' \
+                      (T-bound system needed first)" e.ename
+               | Ast.Struct s -> Ast.Struct { s with sis_debug = true }
+               | Ast.Enum e -> Ast.Enum { e with eis_debug = true }
+               | _ ->
+                   Error.failf at_pos
+                     "'@debug' can only decorate struct / enum decls"
+             in
+             (name_opt, item'))
+             next_items
        | "must_use" ->
            (* Bare attribute — no parens, no args.  Decorates fn (return
               value must be consumed) or enum (any value of this type
@@ -1181,7 +1204,7 @@ let rec parse_item s seen =
        | other ->
            Error.failf at_pos
              "unknown attribute '@%s' (only '@c_include', '@tier', \
-              '@must_use' and '@amiga_lib' are supported)"
+              '@must_use', '@debug' and '@amiga_lib' are supported)"
              other)
   | _ ->
       Error.failf (peek_pos s)
@@ -1218,7 +1241,8 @@ and parse_struct_decl s ~is_pub =
   in
   check_dups fields;
   Ast.{ sname = name; stparams; sfields = fields;
-        spos = name_pos; sis_pub = is_pub; stier_hint = None }
+        spos = name_pos; sis_pub = is_pub;
+        stier_hint = None; sis_debug = false }
 
 (* `enum Foo { | A | B(int) | C { f: T, ... } }` — leading `|` per
    variant (OCaml/F# style; differs from Rust's trailing comma).
@@ -1281,7 +1305,7 @@ and parse_enum_decl s ~is_pub =
   check_dups variants;
   Ast.{ ename = name; etparams; evariants = variants;
         epos = name_pos; eis_pub = is_pub;
-        etier_hint = None; emust_use = false }
+        etier_hint = None; emust_use = false; eis_debug = false }
 
 (* `impl <Path> { fn ... fn ... }` — methods get registered against the
    target struct, not into the surrounding scope.  Each method is parsed

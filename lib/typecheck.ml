@@ -374,19 +374,30 @@ let check_c_ident pos kind name =
    qualification. *)
 type builtin_sig = {
   bname : string;
-  bcheck : pos:Pos.t -> arg_tys:typ list -> allow_void:bool -> typ;
+  bcheck : ctx:fn_ctx -> pos:Pos.t -> arg_tys:typ list -> allow_void:bool -> typ;
 }
+
+(* True when [path] names a struct/enum whose `@debug` printer the codegen
+   will synthesize.  Drives the `print(v)` dispatch on aggregate types. *)
+let struct_is_debug (ctx : fn_ctx) path =
+  List.exists (fun (s : struct_sig) ->
+    s.sname_path = path && s.sis_debug) ctx.structs
+let enum_is_debug (ctx : fn_ctx) path =
+  List.exists (fun (e : enum_sig) ->
+    e.ename_path = path && e.eis_debug) ctx.enums
 
 let builtin_print = {
   bname = "print";
-  bcheck = (fun ~pos ~arg_tys ~allow_void:_ ->
+  bcheck = (fun ~ctx ~pos ~arg_tys ~allow_void:_ ->
     match arg_tys with
     | [ TTuple _ ] ->
         Error.failf pos
           "cannot print a tuple; destructure with 'let (...)' first"
+    | [ TStruct path ] when struct_is_debug ctx path -> t_i32
     | [ TStruct path ] ->
         Error.failf pos
-          "cannot print a struct value (%s); print individual fields instead"
+          "cannot print a struct value (%s); print individual fields, \
+           or mark the struct with `@debug`"
           (String.concat "::" path)
     | [ TPtr _ as t ] ->
         Error.failf pos
@@ -394,9 +405,11 @@ let builtin_print = {
           (typ_name t)
     | [ TNullPtr ] ->
         Error.failf pos "cannot print 'null'"
+    | [ TEnum path ] when enum_is_debug ctx path -> t_i32
     | [ TEnum path ] ->
         Error.failf pos
-          "cannot print an enum value (%s); match on it and print per variant"
+          "cannot print an enum value (%s); match on it and print per variant, \
+           or mark the enum with `@debug`"
           (String.concat "::" path)
     | [ TExtAlias n ] ->
         Error.failf pos
@@ -418,7 +431,7 @@ let builtin_print = {
 
 let builtin_free = {
   bname = "free";
-  bcheck = (fun ~pos ~arg_tys ~allow_void ->
+  bcheck = (fun ~ctx:_ ~pos ~arg_tys ~allow_void ->
     match arg_tys with
     | [ TPtr _ ] when allow_void -> t_i32  (* placeholder, caller discards *)
     | [ TPtr _ ] ->
@@ -1309,7 +1322,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
            (match lookup_builtin path with
             | Some b ->
                 let result_ty =
-                  b.bcheck ~pos:call_pos ~arg_tys ~allow_void
+                  b.bcheck ~ctx ~pos:call_pos ~arg_tys ~allow_void
                 in
                 let name =
                   match path with [n] -> n | _ -> assert false
@@ -2167,7 +2180,8 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~
           sfields_ty = [];
           sis_pub = s.sis_pub;
           stparams = s.stparams;
-          sinstance_args = None })
+          sinstance_args = None;
+          sis_debug = s.sis_debug })
       struct_flat
   in
   List.map2
@@ -2204,7 +2218,8 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
         { ename_path = p @ [e.ename]; evariants = variants;
           eis_pub = e.eis_pub; etparams = e.etparams;
           einstance_args = None;
-          eis_must_use = e.emust_use })
+          eis_must_use = e.emust_use;
+          eis_debug = e.eis_debug })
       enum_flat
   in
   List.map2
@@ -2482,6 +2497,7 @@ let prelude_items () =
     eis_pub = true;
     etier_hint = Some "core";
     emust_use = true;
+    eis_debug = false;
   } in
   let result_decl = {
     Ast.ename = "Result";
@@ -2491,6 +2507,7 @@ let prelude_items () =
     eis_pub = true;
     etier_hint = Some "core";
     emust_use = true;
+    eis_debug = false;
   } in
   (* Allocator — uniform pluggable memory interface.  `state` rides on
      every call so allocators with backing data (arenas, pools) can
@@ -2513,6 +2530,7 @@ let prelude_items () =
     spos = prelude_pos;
     sis_pub = true;
     stier_hint = Some "core";
+    sis_debug = false;
   } in
   (* Method bodies use the fn-ptr-field call syntax (`self.alloc_fn(...)`)
      directly — typecheck routes it through TIndirectCall when the
@@ -2643,7 +2661,8 @@ let check_program program : tprogram =
       { ename_path = p @ [e.ename]; evariants = variants;
         eis_pub = e.eis_pub; etparams = e.etparams;
         einstance_args = None;
-        eis_must_use = e.emust_use })
+        eis_must_use = e.emust_use;
+        eis_debug = e.eis_debug })
       flat.enums
   in
   let ext_structs =
@@ -2872,10 +2891,67 @@ let check_program program : tprogram =
               | _ -> false))
       tp_funcs
   in
+  (* `@debug` field-type validation.  Every field of a `@debug` struct
+     (or every payload of a `@debug` enum variant) must itself be
+     printable — primitive int-like, bool, str, pointer (printed as
+     address), or another `@debug` aggregate.  Catches the user trying
+     to debug a type that references an opaque C handle or an
+     un-debug-able aggregate. *)
+  let all_structs = struct_index @ mono_structs in
+  let all_enums = enum_index @ mono_enums in
+  let struct_is_debug path =
+    List.exists (fun s -> s.sname_path = path && s.sis_debug) all_structs
+  in
+  let enum_is_debug path =
+    List.exists (fun e -> e.ename_path = path && e.eis_debug) all_enums
+  in
+  let rec field_ty_ok = function
+    | TInt _ | TCInt _ | TCShort _ | TCLong _
+    | TCChar | TCSChar | TCUChar | TBool | TString | TPtr _ -> true
+    | TStruct p -> struct_is_debug p
+    | TEnum p -> enum_is_debug p
+    | TTuple ts -> List.for_all field_ty_ok ts
+    | TCVoid | TExtStruct _ | TExtAlias _
+    | TFnPtr _ | TNullPtr | TVar _ -> false
+  in
+  List.iter (fun (s : struct_sig) ->
+    if s.sis_debug then
+      List.iter (fun (fname, fty) ->
+        if not (field_ty_ok fty) then
+          let pos =
+            try (List.find (fun (p, (d : Ast.struct_decl)) ->
+                   p @ [d.sname] = s.sname_path) flat.structs
+                 |> snd).spos
+            with Not_found -> Pos.zero
+          in
+          Error.failf pos
+            "'@debug' struct '%s': field '%s' of type %s is not debug-able \
+             (mark the type `@debug`, or remove `@debug` from the struct)"
+            (String.concat "::" s.sname_path) fname (typ_name fty))
+        s.sfields_ty)
+    all_structs;
+  List.iter (fun (e : enum_sig) ->
+    if e.eis_debug then
+      List.iter (fun (vs : variant_sig) ->
+        List.iter (fun (fname, fty) ->
+          if not (field_ty_ok fty) then
+            let pos =
+              try (List.find (fun (p, (d : Ast.enum_decl)) ->
+                     p @ [d.ename] = e.ename_path) flat.enums
+                   |> snd).epos
+              with Not_found -> Pos.zero
+            in
+            Error.failf pos
+              "'@debug' enum '%s': variant '%s' payload '%s' of type %s \
+               is not debug-able"
+              (String.concat "::" e.ename_path) vs.vsname fname (typ_name fty))
+          vs.vsfields)
+        e.evariants)
+    all_enums;
   { tp_funcs;
     tp_struct_decls = flat.structs;
-    tp_struct_index = struct_index @ mono_structs;
-    tp_enum_index = enum_index @ mono_enums;
+    tp_struct_index = all_structs;
+    tp_enum_index = all_enums;
     tp_global = global;
     tp_modules = modules;
     tp_uses_heap;
