@@ -679,7 +679,8 @@ let rec parse_function s seen_fns ~is_pub =
   expect s Token.RBrace;
   (name, Ast.{ name; c_name = name; tparams; params; ret_ty; body; is_pub;
                is_extern = false; is_variadic = false;
-               tier_hint = None; amiga_lib = None; pos = name_pos })
+               tier_hint = None; amiga_lib = None; must_use = false;
+               pos = name_pos })
 
 (* `extern fn name(args) -> T;` — forward decl for a C-side symbol.
    Same param/return grammar as a regular fn, but body is replaced by
@@ -744,7 +745,8 @@ and parse_extern_fn_after_keyword s seen_fns =
                   by FFI hygiene rule, and the whole point is for the
                   surrounding stdlib / wrappers to call them. *)
                is_pub = true; is_extern = true; is_variadic;
-               tier_hint = None; amiga_lib = None; pos = name_pos })
+               tier_hint = None; amiga_lib = None; must_use = false;
+               pos = name_pos })
 
 (* Like parse_params but accepts a trailing `, ...` to mark the fn as
    C-style variadic.  `(...)` alone (no fixed params before ellipsis)
@@ -1138,6 +1140,24 @@ let rec parse_item s seen =
              in
              (name_opt, item'))
              next_items
+       | "must_use" ->
+           (* Bare attribute — no parens, no args.  Decorates fn (return
+              value must be consumed) or enum (any value of this type
+              must be consumed).  Rejected on struct / use / impl /
+              c_include / mod where the semantics don't apply. *)
+           let next_items = parse_item s seen in
+           List.map (fun (name_opt, item) ->
+             let item' = match item with
+               | Ast.Function f ->
+                   Ast.Function { f with must_use = true }
+               | Ast.Enum e ->
+                   Ast.Enum { e with emust_use = true }
+               | _ ->
+                   Error.failf at_pos
+                     "'@must_use' can only decorate fn / enum decls"
+             in
+             (name_opt, item'))
+             next_items
        | "amiga_lib" ->
            expect s Token.LParen;
            let (base_name, _) =
@@ -1160,8 +1180,8 @@ let rec parse_item s seen =
              next_items
        | other ->
            Error.failf at_pos
-             "unknown attribute '@%s' (only '@c_include', '@tier' and '@amiga_lib' are \
-              supported)"
+             "unknown attribute '@%s' (only '@c_include', '@tier', \
+              '@must_use' and '@amiga_lib' are supported)"
              other)
   | _ ->
       Error.failf (peek_pos s)
@@ -1260,7 +1280,8 @@ and parse_enum_decl s ~is_pub =
   in
   check_dups variants;
   Ast.{ ename = name; etparams; evariants = variants;
-        epos = name_pos; eis_pub = is_pub; etier_hint = None }
+        epos = name_pos; eis_pub = is_pub;
+        etier_hint = None; emust_use = false }
 
 (* `impl <Path> { fn ... fn ... }` — methods get registered against the
    target struct, not into the surrounding scope.  Each method is parsed

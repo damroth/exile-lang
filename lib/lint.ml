@@ -116,6 +116,86 @@ and let_in_stmt acc s =
   | TAssign _ | TAssignField _ | TAssignDeref _
   | TReturn _ | TExprStmt _ -> acc
 
+(* Must-use detection.  Walks every fn body for TExprStmt — statement-
+   position expressions whose value is dropped.  If the expression is
+   a call whose callee is `@must_use`, or whose result type is an enum
+   marked `@must_use` (Result/Option from the prelude), warn.
+
+   Mirrors Rust's `#[must_use]`: opt-in via attribute, prelude marks
+   the obvious culprits so `divide(a, b);` discarding a `Result` warns
+   out of the box.  Caller can opt out with `let _ = call();` since
+   `_`-prefixed lets are silenced by the unused-let pass already. *)
+let must_use_warnings (tp : tprogram) : warning list =
+  let mu_fns = Hashtbl.create 16 in
+  List.iter (fun tf ->
+    if tf.tf_func.must_use then Hashtbl.replace mu_fns tf.tf_mangled ())
+    tp.tp_funcs;
+  let mu_enums = Hashtbl.create 8 in
+  List.iter (fun (e : enum_sig) ->
+    if e.eis_must_use then Hashtbl.replace mu_enums e.ename_path e)
+    tp.tp_enum_index;
+  (* Render a generic-instance enum name as `Result<int, str>` instead
+     of the mangled `Result_i32_str` — strips the `_arg1_arg2` suffix
+     using [mangle_typ] (the same encoder Mono.instance_path used to
+     build it), so the round-trip is exact. *)
+  let render_enum_name (e : enum_sig) =
+    let last = List.nth e.ename_path (List.length e.ename_path - 1) in
+    let prefix =
+      let rec init = function
+        | [] | [_] -> [] | x :: rest -> x :: init rest
+      in init e.ename_path
+    in
+    match e.einstance_args with
+    | None | Some [] -> String.concat "::" e.ename_path
+    | Some args ->
+        let suffix =
+          "_" ^ String.concat "_" (List.map mangle_typ args)
+        in
+        let last_len = String.length last in
+        let suf_len = String.length suffix in
+        let base =
+          if last_len > suf_len
+             && String.sub last (last_len - suf_len) suf_len = suffix
+          then String.sub last 0 (last_len - suf_len)
+          else last
+        in
+        let base_path = String.concat "::" (prefix @ [base]) in
+        base_path ^ "<" ^ String.concat ", " (List.map typ_name args) ^ ">"
+  in
+  let expr_must_use_reason (e : texpr) =
+    match e.e with
+    | TCall { mangled; _ } when Hashtbl.mem mu_fns mangled ->
+        Some (Printf.sprintf
+                "call result is `@must_use`; bind it or use `let _ = ...`")
+    | _ ->
+        (match e.ty with
+         | TEnum path when Hashtbl.mem mu_enums path ->
+             let e_sig = Hashtbl.find mu_enums path in
+             Some (Printf.sprintf
+                     "unused '%s' value (marked `@must_use`); \
+                      bind it or use `let _ = ...`"
+                     (render_enum_name e_sig))
+         | _ -> None)
+  in
+  let rec walk_stmts acc stmts = List.fold_left walk_stmt acc stmts
+  and walk_stmt acc s =
+    match s with
+    | TExprStmt e ->
+        (match expr_must_use_reason e with
+         | Some msg -> { pos = e.pos; msg } :: acc
+         | None -> acc)
+    | TIf { then_body; else_body; _ } ->
+        walk_stmts (walk_stmts acc then_body) else_body
+    | TWhile { body; _ } | TDefer { body; _ } -> walk_stmts acc body
+    | TLet _ | TLetTuple _ | TAssign _ | TAssignField _
+    | TAssignDeref _ | TReturn _ -> acc
+  in
+  List.fold_left (fun acc tf ->
+    if tf.tf_func.pos.file = "<prelude>" then acc
+    else List.rev_append (walk_stmts [] tf.tf_body) acc)
+    [] tp.tp_funcs
+  |> List.rev
+
 (* Per-function unused-let check.  Builds the set of names read anywhere
    in the body, then flags any let-binding whose name doesn't appear.
    Shadowing is rare in practice and harmless here: if any of the
@@ -226,7 +306,8 @@ let collect ~(profile : Profile.t) (tp : tprogram) : warning list =
         Some { pos = tf.tf_func.pos; msg })
       tp.tp_funcs
   in
-  tier_warnings @ unused_let_warnings @ unused_fn_warnings
+  let must_use = must_use_warnings tp in
+  tier_warnings @ unused_let_warnings @ unused_fn_warnings @ must_use
 
 let emit_warnings (ws : warning list) : unit =
   List.iter (fun w ->

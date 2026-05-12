@@ -2164,7 +2164,8 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
         in
         { ename_path = p @ [e.ename]; evariants = variants;
           eis_pub = e.eis_pub; etparams = e.etparams;
-          einstance_args = None })
+          einstance_args = None;
+          eis_must_use = e.emust_use })
       enum_flat
   in
   List.map2
@@ -2441,6 +2442,7 @@ let prelude_items () =
     epos = prelude_pos;
     eis_pub = true;
     etier_hint = Some "core";
+    emust_use = true;
   } in
   let result_decl = {
     Ast.ename = "Result";
@@ -2449,6 +2451,7 @@ let prelude_items () =
     epos = prelude_pos;
     eis_pub = true;
     etier_hint = Some "core";
+    emust_use = true;
   } in
   (* Allocator — uniform pluggable memory interface.  `state` rides on
      every call so allocators with backing data (arenas, pools) can
@@ -2502,7 +2505,7 @@ let prelude_items () =
   let mk_method name tparams params ret body = {
     Ast.name; c_name = name; tparams; params; ret_ty = ret; body;
     is_pub = true; is_extern = false; is_variadic = false;
-    tier_hint = Some "full"; amiga_lib = None; pos;
+    tier_hint = Some "full"; amiga_lib = None; must_use = false; pos;
   } in
   let self_param =
     { Ast.pname = "self";
@@ -2600,7 +2603,8 @@ let check_program program : tprogram =
       in
       { ename_path = p @ [e.ename]; evariants = variants;
         eis_pub = e.eis_pub; etparams = e.etparams;
-        einstance_args = None })
+        einstance_args = None;
+        eis_must_use = e.emust_use })
       flat.enums
   in
   let ext_structs =

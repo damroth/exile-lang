@@ -189,6 +189,10 @@ type func = {
                                         time; typecheck validates and feeds
                                         to the linter as a Tier.t override
                                         of the inferred default. *)
+  must_use : bool;                   (* `@must_use` attribute — discarding
+                                        the return value (call in statement
+                                        position with nobody binding it) is
+                                        flagged by the linter. *)
   pos : Pos.t;
 }
 
@@ -223,6 +227,12 @@ type enum_decl = {
   epos : Pos.t;
   eis_pub : bool;
   etier_hint : string option;        (* `@tier(...)` raw attribute *)
+  emust_use : bool;                  (* `@must_use` — discarding a value of
+                                        this enum in statement position
+                                        (e.g. via a call returning it) is
+                                        flagged.  Carries the spirit of
+                                        Rust's `#[must_use]` applied to
+                                        `Result`/`Option`. *)
 }
 
 type extern_struct = {

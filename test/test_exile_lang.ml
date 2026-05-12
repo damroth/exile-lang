@@ -1553,4 +1553,46 @@ let () =
     \    print(1);\n\
      }\n"
     ~profile:Exile_lang.Profile.Full
-    []
+    [];
+
+  check_lint "lint: @must_use fn discarded in statement position warns"
+    "@must_use\n\
+     fn classify(n: int) -> int { return n; }\n\
+     fn main() { classify(19); }\n"
+    ~profile:Exile_lang.Profile.Full
+    ["call result is `@must_use`"];
+
+  check_lint "lint: @must_use fn captured in let does not warn"
+    "@must_use\n\
+     fn classify(n: int) -> int { return n; }\n\
+     fn main() { let r: int = classify(19); print(r); }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: `let _ = ...` silences must_use"
+    "@must_use\n\
+     fn classify(n: int) -> int { return n; }\n\
+     fn main() { let _ignored: int = classify(19); print(1); }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: plain fn discarded in statement position does not warn"
+    "fn classify(n: int) -> int { return n; }\n\
+     fn main() { classify(19); print(classify(20)); }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: discarded Result<T,E> from prelude warns (type-level must_use)"
+    "fn try_div(n: int, d: int) -> Result<int, str> {\n\
+    \    if d == 0 { return Result::Err(\"div by zero\"); }\n\
+    \    return Result::Ok(n / d);\n\
+     }\n\
+     fn main() { try_div(10, 0); }\n"
+    ~profile:Exile_lang.Profile.Full
+    ["unused 'Result<i32, str>' value"];
+
+  check_error "@must_use rejects placement on non-decoratable items"
+    "@must_use\n\
+     impl Allocator { }\n\
+     fn main() { print(1); }\n"
+    "'@must_use' can only decorate fn / enum decls"

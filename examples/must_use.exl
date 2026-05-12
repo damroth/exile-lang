@@ -1,0 +1,42 @@
+// `@must_use` marks a fn or enum whose return value (or values of that
+// enum type) shouldn't silently be discarded.  Mirrors Rust's
+// `#[must_use]`: opt-in via attribute, no effect on emitted C, just a
+// linter warning when a call appears in statement position and nobody
+// binds the result.
+//
+// Result<T, E> and Option<T> from the prelude are `@must_use` by
+// default — forgetting to handle an error is the canonical case.
+//
+// Caller opts out with `let _ = call();` — `_`-prefixed bindings are
+// already silenced by the unused-let pass, so the two features compose.
+
+@must_use
+fn checksum(payload: int) -> int {
+    return payload * 31 + 7;
+}
+
+fn try_div(n: int, d: int) -> Result<int, str> {
+    if d == 0 {
+        return Result::Err("div by zero");
+    }
+    return Result::Ok(n / d);
+}
+
+fn main() {
+    // Captured — no warning.
+    let c: int = checksum(42);
+    print(c);                                       // 1309
+
+    // Explicit discard — `_` opts out of must_use.
+    let _ignored: int = checksum(99);
+
+    // Result handled via `match` — used, no warning.
+    match try_div(10, 2) {
+        | Result::Ok(q)  => print(q)                // 5
+        | Result::Err(_) => print(-1)
+    }
+
+    // Uncomment any of these to see the linter fire:
+    //   checksum(13);                              // call result is `@must_use`
+    //   try_div(10, 0);                            // unused 'Result<i32, str>' value
+}

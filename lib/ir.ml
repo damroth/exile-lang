@@ -175,6 +175,10 @@ type enum_sig = {
   einstance_args : typ list option;
                                  (* None for skeletons; Some args for
                                     monomorphic instances. *)
+  eis_must_use : bool;          (* `@must_use` on the enum decl — propagates
+                                   to monomorphic instances so the linter
+                                   flags discarded values of
+                                   `Result<int, str>` etc. *)
 }
 
 (* Mangle a function name with its module path.  Top-level (path = []) gets

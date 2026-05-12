@@ -136,7 +136,8 @@ let make_enum_instance (skel : enum_sig) (args : typ list) : enum_sig =
         skel.evariants;
     eis_pub = skel.eis_pub;
     etparams = [];
-    einstance_args = Some args }
+    einstance_args = Some args;
+    eis_must_use = skel.eis_must_use }
 
 (* Idempotent instantiation: returns the cached instance if one is
    already registered for the same (decl path, args), otherwise
