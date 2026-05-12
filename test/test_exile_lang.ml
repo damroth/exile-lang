@@ -1520,4 +1520,37 @@ let () =
   check_lint "lint: prelude code doesn't emit unused-let warnings"
     "fn main() { print(1); }\n"
     ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: unused mono fn warns at decl pos"
+    "fn dead() -> int { return 1; }\n\
+     fn main() { print(2); }\n"
+    ~profile:Exile_lang.Profile.Full
+    ["unused function 'dead'"];
+
+  check_lint "lint: called mono fn does not warn"
+    "fn helper() -> int { return 7; }\n\
+     fn main() { print(helper()); }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: pub fn never warns (may be called by importer)"
+    "pub fn api() -> int { return 1; }\n\
+     fn main() { print(2); }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: self-recursive but otherwise unused fn still warns"
+    "fn loop_self(n: int) -> int { return loop_self(n); }\n\
+     fn main() { print(1); }\n"
+    ~profile:Exile_lang.Profile.Full
+    ["unused function 'loop_self'"];
+
+  check_lint "lint: fn referenced via TFnRef (taken as fn-ptr) counts as used"
+    "fn cb(s: c_int) { print(s as int); }\n\
+     fn main() {\n\
+    \    let _h: fn(c_int) = cb;\n\
+    \    print(1);\n\
+     }\n"
+    ~profile:Exile_lang.Profile.Full
     []

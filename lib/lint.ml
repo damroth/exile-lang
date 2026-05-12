@@ -46,14 +46,19 @@ type warning = { pos : Pos.t; msg : string }
 let is_silenced_name n =
   String.length n > 0 && n.[0] = '_'
 
-(* Walk a texpr collecting every name that appears in a reading position
-   (TVar).  Writes (LHS of TAssign) are not collected here — they don't
-   count as "use" for the unused-let check. *)
+(* Walk a texpr collecting every name that could refer to either a local
+   binding (TVar), a globally-visible fn (TFnRef, TCall.mangled), or — for
+   the fn-ptr-local case — a let-bound fn pointer (also TCall.mangled).
+   Writes (LHS of TAssign) are not collected.  One pass serves both the
+   unused-let check (matches let-names against this set) and the
+   unused-fn check (matches mangled fn names against this set, scoped
+   per fn). *)
 let rec reads_in_expr acc (e : texpr) =
   match e.e with
   | TVar n -> n :: acc
+  | TFnRef n -> n :: acc
   | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _
-  | TFnRef _ | TSizeOf _ -> acc
+  | TSizeOf _ -> acc
   | TNeg x | TCast (x, _) | TRef x | TDeref x -> reads_in_expr acc x
   | TBinOp (_, a, b) -> reads_in_expr (reads_in_expr acc a) b
   | TCall { mangled; args } ->
@@ -178,13 +183,50 @@ let collect ~(profile : Profile.t) (tp : tprogram) : warning list =
   let is_generic_instance tf =
     tf.tf_func.tparams <> [] && is_concrete_instance tf
   in
-  let unused =
+  let unused_let_warnings =
     List.concat_map (fun tf ->
       if is_prelude tf || is_generic_instance tf then []
       else unused_lets_for tf)
       tp.tp_funcs
   in
-  tier_warnings @ unused
+  (* Unused-fn warnings: for each mono user fn, check if its mangled
+     C name is referenced anywhere in any OTHER fn body (across the
+     whole program, including the prelude — prelude impls of a struct
+     can reach out into user code, but the reverse is what we care
+     about: did anyone call this).  Excluding self prevents
+     self-recursive but otherwise unreachable fns from masking
+     themselves — matches gcc's `-Wunused-function` behaviour. *)
+  let refs_per_fn =
+    List.map (fun tf -> (tf, reads_in_stmts [] tf.tf_body)) tp.tp_funcs
+  in
+  let referenced_outside tf =
+    List.exists (fun (other, refs) ->
+      other.tf_mangled <> tf.tf_mangled && List.mem tf.tf_mangled refs)
+      refs_per_fn
+  in
+  let is_fn_warn_candidate tf =
+    let f = tf.tf_func in
+    f.name <> "main"
+    && not f.is_pub
+    && not f.is_extern
+    && not (is_prelude tf)
+    && f.tparams = []        (* skip generic skeletons (gcc never sees
+                                them) and instances (always have a
+                                call by construction) *)
+  in
+  let unused_fn_warnings =
+    List.filter_map (fun tf ->
+      if not (is_fn_warn_candidate tf) then None
+      else if referenced_outside tf then None
+      else
+        let msg = Printf.sprintf
+          "unused function '%s' (mark `pub` if intended for external use)"
+          tf.tf_func.name
+        in
+        Some { pos = tf.tf_func.pos; msg })
+      tp.tp_funcs
+  in
+  tier_warnings @ unused_let_warnings @ unused_fn_warnings
 
 let emit_warnings (ws : warning list) : unit =
   List.iter (fun w ->

@@ -56,8 +56,11 @@ type args = {
   input : string;
 }
 
+(* Default target is `host` — the common case is "build me a binary I
+   can run".  `--target c` opts out for pure transpile (e.g. inspecting
+   the generated source, or feeding it into a separate toolchain). *)
 let parse_args argv =
-  let target = ref Target_c in
+  let target = ref Target_host in
   let profile = ref None in
   let output = ref None in
   let c_out = ref None in
@@ -136,12 +139,12 @@ let include_flag input =
   if dir = "" || dir = "." then ""
   else Printf.sprintf "-I %s" (Filename.quote dir)
 
-(* Exilc itself emits unused-variable warnings via Lint; suppress cc's
-   equivalent so the same finding doesn't surface twice in different
-   wording.  `--show-cc-warnings` opts back in for compiler dev. *)
+(* Exilc itself emits unused-variable / unused-function warnings via Lint;
+   suppress cc's equivalents so the same finding doesn't surface twice in
+   different wording.  `--show-cc-warnings` opts back in for compiler dev. *)
 let cc_warn_suppress show_cc_warnings =
   if show_cc_warnings then ""
-  else "-Wno-unused-variable -Wno-unused-but-set-variable"
+  else "-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function"
 
 let compile_host ~show_cc_warnings c_path link_files input output =
   run_cmd (Printf.sprintf "cc -ansi -pedantic -Wall %s %s -o %s %s %s"
@@ -205,8 +208,13 @@ let () =
     ensure_dir c_path;
     Out_channel.with_open_text c_path (fun oc ->
         Out_channel.output_string oc c_code);
-    Printf.printf "wrote %s [profile=%s]\n"
-      c_path (Exile_lang.Profile.to_string a.profile);
+    let target_name = match a.target with
+      | Target_c -> "c"
+      | Target_host -> "host"
+      | Target_amiga -> "amiga"
+    in
+    Printf.printf "wrote %s [profile=%s, target=%s]\n"
+      c_path (Exile_lang.Profile.to_string a.profile) target_name;
     if a.bloat_report then print_bloat_report ();
     match a.target with
     | Target_c -> ()
