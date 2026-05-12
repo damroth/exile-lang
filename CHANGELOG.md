@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-05-12
+
+Polish release on top of the MVP: two new opt-in lints, a printable
+`@debug` attribute, a stricter type checker, and a friendlier CLI
+default.
+
+### Added
+- `@debug` attribute on structs and enums, generating a Rust-Debug-style
+  printable form usable from `print`
+- `@must_use` attribute and matching lint that warns when a non-`unit`
+  return value is discarded (Rust-style, opt-in)
+- Linter detects unused `let` bindings; the equivalent `cc` warning is
+  silenced to avoid duplication
+
+### Changed
+- CLI now defaults `--target` to the host, and the "wrote" status line
+  reports which target was used
+
+### Fixed
+- Type checker now enforces operand types in binary operators and
+  matches function return values against the declared return type;
+  previously these were under-checked
+
 ## [0.4.0] - 2026-05-11
 
 The MVP-closing release. exile-lang can now drive a typical AmigaOS
@@ -149,4 +172,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.4.0]: https://github.com/damroth/exile-lang/releases/tag/v0.4.0
+[0.4.1]: https://github.com/damroth/exile-lang/releases/tag/v0.4.1
