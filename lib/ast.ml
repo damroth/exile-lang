@@ -33,6 +33,11 @@ type binop =
   | Add | Sub | Mul | Div
   | Lt | Gt | LtEq | GtEq | EqEq | NotEq
 
+let binop_name = function
+  | Add -> "+" | Sub -> "-" | Mul -> "*" | Div -> "/"
+  | Lt -> "<" | Gt -> ">" | LtEq -> "<=" | GtEq -> ">="
+  | EqEq -> "==" | NotEq -> "!="
+
 type expr =
   | IntLit of int * Pos.t
   | BoolLit of bool * Pos.t

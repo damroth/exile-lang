@@ -190,6 +190,29 @@ let () =
     "fn main() {\n    if nope > 0 {\n        print(1);\n    }\n}\n"
     "undefined variable 'nope'";
 
+  check_error "comparison '<' between str and int rejected"
+    "fn cmp(a: str, b: int) -> bool { return a < b; }\n\
+     fn main() { print(1); }\n"
+    "operator '<' requires integer operands, got str and i32";
+
+  check_error "equality '==' between str and int rejected"
+    "fn main() { if \"x\" == 5 { print(1); } }\n"
+    "equality '==' between incompatible types str and i32";
+
+  check_error "arithmetic '+' between str and int rejected"
+    "fn main() { let x = \"x\" + 5; print(1); }\n"
+    "operator '+' requires integer operands, got str and i32";
+
+  check_error "return: tuple element type mismatch rejected"
+    "fn pair(a: int, b: str) -> (int, int) { return (a, b); }\n\
+     fn main() { print(1); }\n"
+    "return: expected (i32, i32), got (i32, str)";
+
+  check_error "return: scalar type mismatch rejected"
+    "fn id(x: int) -> str { return x; }\n\
+     fn main() { print(1); }\n"
+    "return: expected str, got i32";
+
   check_error "duplicate let"
     "fn main() {\n    let x = 1;\n    let x = 2;\n    print(x);\n}\n"
     "variable 'x' already declared in this function";

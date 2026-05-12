@@ -570,16 +570,44 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
             (l', elab_lit n l'.ty rp)
         | _ -> (elab_expr ctx env l, elab_expr ctx env r)
       in
+      let name = Ast.binop_name op in
+      let need_int_operands () =
+        if not (is_int_like l'.ty && is_int_like r'.ty) then
+          Error.failf pos
+            "operator '%s' requires integer operands, got %s and %s"
+            name (typ_name l'.ty) (typ_name r'.ty)
+      in
+      (* For TInt × TInt with same signedness but mixed width, the
+         result takes the wider operand's type (C-style promotion).
+         Any other type combination is rejected — `as` casts are the
+         only way to cross sign or kind boundaries (c_int ↔ TInt,
+         signed ↔ unsigned). *)
+      let promote_int_widen () =
+        match l'.ty, r'.ty with
+        | TInt a, TInt b when a.signed = b.signed ->
+            if int_width_bits a.width >= int_width_bits b.width
+            then TInt a else TInt b
+        | _ ->
+            Error.failf pos
+              "operator '%s' between incompatible types %s and %s"
+              name (typ_name l'.ty) (typ_name r'.ty)
+      in
       let result_t =
         match op with
         | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div ->
-            (match l'.ty, r'.ty with
-             | TInt a, TInt b when a = b -> TInt a
-             | TInt a, TInt b when a.signed = b.signed ->
-                 if int_width_bits a.width >= int_width_bits b.width
-                 then TInt a else TInt b
-             | _ -> t_i32)
-        | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq ->
+            need_int_operands ();
+            if typ_eq l'.ty r'.ty then l'.ty
+            else promote_int_widen ()
+        | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq ->
+            need_int_operands ();
+            (if not (typ_eq l'.ty r'.ty) then
+               ignore (promote_int_widen ()));
+            TBool
+        | Ast.EqEq | Ast.NotEq ->
+            if not (typ_eq l'.ty r'.ty) then
+              Error.failf pos
+                "equality '%s' between incompatible types %s and %s"
+                name (typ_name l'.ty) (typ_name r'.ty);
             TBool
       in
       { e = TBinOp (op, l', r'); ty = result_t; pos }
@@ -1785,6 +1813,17 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
         (env, TAssignDeref { target = ttarget; value = tvalue; pos })
     | Ast.Return (e, pos) ->
         let tvalue = elab_expr ?expected:ret_ty ctx env e in
+        (* The bidirectional `expected` seeds inner inference (literal
+           widths, generic params, tuple/struct shape) but does not
+           constrain the result — the equality check enforces the
+           contract at the source pos. *)
+        (match ret_ty with
+         | Some expected_ty ->
+             if not (typ_eq tvalue.ty expected_ty) then
+               Error.failf pos
+                 "return: expected %s, got %s"
+                 (typ_name expected_ty) (typ_name tvalue.ty)
+         | None -> ());
         (env, TReturn { value = tvalue; pos })
     | Ast.ExprStmt e ->
         let tvalue = elab_expr ~allow_void:true ctx env e in

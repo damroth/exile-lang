@@ -139,28 +139,30 @@ let include_flag input =
   if dir = "" || dir = "." then ""
   else Printf.sprintf "-I %s" (Filename.quote dir)
 
-(* Exilc itself emits unused-variable / unused-function warnings via Lint;
-   suppress cc's equivalents so the same finding doesn't surface twice in
-   different wording.  `--show-cc-warnings` opts back in for compiler dev. *)
+(* Mask the cc warnings that exilc's own Lint already covers, so a
+   single finding doesn't get reported twice in two wordings.
+   `--show-cc-warnings` lifts the mask for compiler dev. *)
 let cc_warn_suppress show_cc_warnings =
   if show_cc_warnings then ""
   else "-Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function"
 
-let compile_host ~show_cc_warnings c_path link_files input output =
+let compile_host ~show_cc_warnings ~profile c_path link_files input output =
   run_cmd (Printf.sprintf "cc -ansi -pedantic -Wall %s %s -o %s %s %s"
     (cc_warn_suppress show_cc_warnings)
     (include_flag input)
     (Filename.quote output) (Filename.quote c_path) (quote_paths link_files));
-  Printf.printf "built host binary: %s\n" output
+  Printf.printf "built host binary: %s [profile=%s, target=host]\n"
+    output (Exile_lang.Profile.to_string profile)
 
-let compile_amiga ~show_cc_warnings c_path link_files input output =
+let compile_amiga ~show_cc_warnings ~profile c_path link_files input output =
   let gcc = amiga_gcc () in
   run_cmd (Printf.sprintf "%s -noixemul %s %s -o %s %s %s"
     (Filename.quote gcc) (cc_warn_suppress show_cc_warnings)
     (include_flag input)
     (Filename.quote output) (Filename.quote c_path)
     (quote_paths link_files));
-  Printf.printf "built amiga binary: %s\n" output
+  Printf.printf "built amiga binary: %s [profile=%s, target=amiga]\n"
+    output (Exile_lang.Profile.to_string profile)
 
 let default_output_for input =
   Filename.remove_extension input
@@ -213,20 +215,25 @@ let () =
       | Target_host -> "host"
       | Target_amiga -> "amiga"
     in
-    Printf.printf "wrote %s [profile=%s, target=%s]\n"
-      c_path (Exile_lang.Profile.to_string a.profile) target_name;
     if a.bloat_report then print_bloat_report ();
+    (* Success line goes out only after cc succeeds (it `exit 1`s on
+       failure).  target=c stops at the transpile and reports `wrote
+       ...`; host/amiga delegate the success message to
+       compile_host/_amiga, whose `built ... binary` line covers both
+       the .c emission and the cc build. *)
     match a.target with
-    | Target_c -> ()
+    | Target_c ->
+        Printf.printf "wrote %s [profile=%s, target=%s]\n"
+          c_path (Exile_lang.Profile.to_string a.profile) target_name
     | Target_host ->
         let out = Option.value a.output ~default:(default_output_for a.input) in
         ensure_dir out;
-        compile_host ~show_cc_warnings:a.show_cc_warnings
+        compile_host ~show_cc_warnings:a.show_cc_warnings ~profile:a.profile
           c_path a.link_files a.input out
     | Target_amiga ->
         let out = Option.value a.output ~default:(default_output_for a.input) in
         ensure_dir out;
-        compile_amiga ~show_cc_warnings:a.show_cc_warnings
+        compile_amiga ~show_cc_warnings:a.show_cc_warnings ~profile:a.profile
           c_path a.link_files a.input out
   with
   | Exile_lang.Error.Compile_error { pos; msg } ->
