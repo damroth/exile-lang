@@ -374,7 +374,7 @@ let check_c_ident pos kind name =
    qualification. *)
 type builtin_sig = {
   bname : string;
-  bcheck : ctx:fn_ctx -> pos:Pos.t -> arg_tys:typ list -> allow_void:bool -> typ;
+  bcheck : ctx:fn_ctx -> pos:Pos.t -> args:texpr list -> allow_void:bool -> typ;
 }
 
 (* True when [path] names a struct/enum whose `@debug` printer the codegen
@@ -388,8 +388,8 @@ let enum_is_debug (ctx : fn_ctx) path =
 
 let builtin_print = {
   bname = "print";
-  bcheck = (fun ~ctx ~pos ~arg_tys ~allow_void:_ ->
-    match arg_tys with
+  bcheck = (fun ~ctx ~pos ~args ~allow_void:_ ->
+    match List.map (fun (a : texpr) -> a.ty) args with
     | [ TTuple _ ] ->
         Error.failf pos
           "cannot print a tuple; destructure with 'let (...)' first"
@@ -431,16 +431,26 @@ let builtin_print = {
 
 let builtin_free = {
   bname = "free";
-  bcheck = (fun ~ctx:_ ~pos ~arg_tys ~allow_void ->
-    match arg_tys with
-    | [ TPtr _ ] when allow_void -> t_i32  (* placeholder, caller discards *)
-    | [ TPtr _ ] ->
+  bcheck = (fun ~ctx:_ ~pos ~args ~allow_void ->
+    match args with
+    | [ { e = TRef _; _ } ] ->
+        (* Syntactic guard: `free(&...)` is always wrong — `&` produces
+           a stack-or-field address, never a heap pointer.  Calling free
+           on it would corrupt the allocator's bookkeeping.  Real heap
+           pointers come from `new T { ... }` (or are propagated through
+           bindings from a `new`-let). *)
+        Error.failf pos
+          "'free' expects a heap-allocated pointer (from 'new'); got \
+           '&...' which is a stack or field address — this would \
+           corrupt the allocator"
+    | [ { ty = TPtr _; _ } ] when allow_void -> t_i32
+    | [ { ty = TPtr _; _ } ] ->
         Error.failf pos "'free' returns void, cannot use as a value"
-    | [ other ] ->
+    | [ { ty = other; _ } ] ->
         Error.failf pos "'free' expects a pointer, got %s" (typ_name other)
-    | tys ->
+    | xs ->
         Error.failf pos "free() takes exactly one argument, got %d"
-          (List.length tys));
+          (List.length xs));
 }
 
 (* `type_name(expr)` yields a `str` with the Rust-style name of the
@@ -451,8 +461,8 @@ let builtin_free = {
    concrete name. *)
 let builtin_type_name = {
   bname = "type_name";
-  bcheck = (fun ~ctx:_ ~pos ~arg_tys ~allow_void:_ ->
-    match arg_tys with
+  bcheck = (fun ~ctx:_ ~pos ~args ~allow_void:_ ->
+    match List.map (fun (a : texpr) -> a.ty) args with
     | [ TNullPtr ] ->
         Error.failf pos
           "type_name() needs a typed expression — 'null' has no \
@@ -1369,7 +1379,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
            (match lookup_builtin path with
             | Some b ->
                 let result_ty =
-                  b.bcheck ~ctx ~pos:call_pos ~arg_tys ~allow_void
+                  b.bcheck ~ctx ~pos:call_pos ~args:targs ~allow_void
                 in
                 let name =
                   match path with [n] -> n | _ -> assert false

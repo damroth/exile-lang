@@ -1669,6 +1669,22 @@ let () =
     "fn main() { print(type_name(1, 2)); }\n"
     "type_name() takes exactly one argument, got 2";
 
+  check_error "free(&local) rejected at typecheck (would corrupt allocator)"
+    "fn main() {\n\
+    \    let x = 20;\n\
+    \    defer free(&x);\n\
+    \    print(x);\n\
+     }\n"
+    "'free' expects a heap-allocated pointer (from 'new'); got '&...' which is a stack or field address — this would corrupt the allocator";
+
+  check_error "free(&field) rejected (same rule applies to field address)"
+    "struct P { x: int }\n\
+     fn main() {\n\
+    \    let p = P { x: 1 };\n\
+    \    free(&p.x);\n\
+     }\n"
+    "'free' expects a heap-allocated pointer (from 'new'); got '&...' which is a stack or field address — this would corrupt the allocator";
+
   check "string ++ literal concat: folded to single rodata"
     "fn main() {\n\
     \    let g: str = \"Hello, \" ++ \"World\" ++ \"!\";\n\
