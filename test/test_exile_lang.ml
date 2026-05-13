@@ -1677,6 +1677,34 @@ let () =
      }\n"
     "'free' expects a heap-allocated pointer (from 'new'); got '&...' which is a stack or field address — this would corrupt the allocator";
 
+  check_error "missing return on if-without-else path rejected"
+    "fn early_exit(n: int) -> int {\n\
+    \    if n > 0 { return n * 2; }\n\
+     }\n\
+     fn main() { print(early_exit(5)); }\n"
+    "function 'early_exit' declared with return type i32, but not every control-flow path ends in `return`";
+
+  check_error "missing return when no return at end of body"
+    "fn f(n: int) -> int {\n\
+    \    let x: int = n;\n\
+     }\n\
+     fn main() { print(f(5)); }\n"
+    "function 'f' declared with return type i32, but not every control-flow path ends in `return`";
+
+  check_error "if-else where only one branch returns rejected"
+    "fn f(n: int) -> int {\n\
+    \    if n > 0 { return 1; } else { let x: int = 0; }\n\
+     }\n\
+     fn main() { print(f(5)); }\n"
+    "function 'f' declared with return type i32, but not every control-flow path ends in `return`";
+
+  check "if-else where both branches return: accepted"
+    "fn f(n: int) -> int {\n\
+    \    if n > 0 { return 1; } else { return 0; }\n\
+     }\n\
+     fn main() { print(f(5)); }\n"
+    "#include <stdio.h>\n\nstatic long ex_f(long n);\n\nstatic long ex_f(long n) {\n    if (n > 0) {\n        return 1;\n    } else {\n        return 0;\n    }\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_f(5)));\n    return 0;\n}\n";
+
   check_error "free(&field) rejected (same rule applies to field address)"
     "struct P { x: int }\n\
      fn main() {\n\

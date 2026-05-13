@@ -2676,6 +2676,27 @@ let prepend_prelude (program : Ast.program) : Ast.program =
   in
   kept @ program
 
+(* True when a `tstmt list` (typically a fn body) ends in a `return` on
+   every control-flow path that reaches its end.  Used to enforce that
+   value-returning fns can't fall off the end with an undefined result.
+
+   Only the *last* statement of the list matters for fall-through; earlier
+   statements may also `return` but if they do, code after them is dead
+   and won't reach the end anyway.  Branching forms (`if`) require both
+   arms to return; `while` never qualifies (the body may never run, or
+   may exit normally).  `defer` registers cleanup but does not redirect
+   control flow. *)
+let rec always_returns (stmts : tstmt list) : bool =
+  match List.rev stmts with
+  | [] -> false
+  | last :: _ -> stmt_returns last
+and stmt_returns = function
+  | TReturn _ -> true
+  | TIf { then_body; else_body; _ } ->
+      always_returns then_body && always_returns else_body
+  | TLet _ | TLetTuple _ | TAssign _ | TAssignField _
+  | TAssignDeref _ | TWhile _ | TDefer _ | TExprStmt _ -> false
+
 let check_program program : tprogram =
   let mono_state = Mono.new_state () in
   let program = prepend_prelude program in
@@ -2851,6 +2872,20 @@ let check_program program : tprogram =
       if f.is_extern || is_skeleton then ([], [])
       else elab_body ~ret_ty ctx param_env f.body
     in
+    (* Exhaustive-return check.  A value-returning fn must have a
+       `return` on every control-flow path.  Without this, a non-
+       returning path falls off the end and the caller sees whatever
+       the C compiler left in the result register — UB.  Void fns and
+       extern fns are skipped; skeletons too (they have no body to
+       analyse — their concrete instances get checked individually). *)
+    if not f.is_extern && not is_skeleton then
+      (match ret_ty with
+       | Some t when not (always_returns tbody) ->
+           Error.failf f.pos
+             "function '%s' declared with return type %s, but not \
+              every control-flow path ends in `return`"
+             f.name (typ_name t)
+       | _ -> ());
     { tf_path = path; tf_func = f; tf_mangled = mangled;
       tf_param_tys = param_tys; tf_ret_ty = ret_ty;
       tf_body = tbody; tf_lets = lets;
