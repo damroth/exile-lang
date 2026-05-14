@@ -1893,7 +1893,15 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
                Error.failf pos
                  "return: expected %s, got %s"
                  (typ_name expected_ty) (typ_name tvalue.ty)
-         | None -> ());
+         | None ->
+             (* No declared return type = void fn (and `main` is given an
+                effective `int` ret_ty earlier, so it never lands here).
+                A void fn returns nothing — `return <expr>;` has no slot
+                for the value. *)
+             Error.failf pos
+               "cannot return a value from a function with no return \
+                type (declare `-> %s` if the value is intended)"
+               (typ_name tvalue.ty));
         (env, TReturn { value = tvalue; pos })
     | Ast.ExprStmt e ->
         let tvalue = elab_expr ~allow_void:true ctx env e in
@@ -2862,7 +2870,16 @@ let check_program program : tprogram =
       param_tys;
     let ret_ty = Option.map (resolve_type_ann ctx0) f.ret_ty in
     Option.iter (forbid_naked_opaque ~exposed:exposed_extern f.pos) ret_ty;
-    let ctx = { ctx0 with ret_ty } in
+    (* `main` carries no user-declared return type, but a `return` inside
+       it sets the process exit code, so the body type-checks against
+       `int` (codegen wraps it as C's `int main(void)`).  Unlike a normal
+       value fn, main may still fall through — codegen appends a default
+       `return 0;` — so it is exempt from the exhaustive-return check
+       below. *)
+    let effective_ret_ty =
+      if f.name = "main" then Some t_i32 else ret_ty
+    in
+    let ctx = { ctx0 with ret_ty = effective_ret_ty } in
     let param_env =
       List.combine (List.map (fun (p : Ast.param) -> p.pname) f.params)
         param_tys
@@ -2870,7 +2887,7 @@ let check_program program : tprogram =
     let is_skeleton = f.tparams <> [] && tvar_bindings = [] in
     let (lets, tbody) =
       if f.is_extern || is_skeleton then ([], [])
-      else elab_body ~ret_ty ctx param_env f.body
+      else elab_body ~ret_ty:effective_ret_ty ctx param_env f.body
     in
     (* Exhaustive-return check.  A value-returning fn must have a
        `return` on every control-flow path.  Without this, a non-

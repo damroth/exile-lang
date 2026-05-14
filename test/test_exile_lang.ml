@@ -846,11 +846,19 @@ let () =
      }\n"
     "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstatic struct ex_Option_i32 ex_incr(struct ex_Option_i32 o);\n\nstatic struct ex_Option_i32 ex_incr(struct ex_Option_i32 o) {\n    long v;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long __try_v = __m.data.Some._0;\n                v = __try_v;\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                struct ex_Option_i32 __try_ret;\n                __try_ret.tag = ex_Option_i32_None;\n                return __try_ret;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v + 1;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Option_i32 some;\n    struct ex_Option_i32 none;\n    some.tag = ex_Option_i32_Some;\n    some.data.Some._0 = 7;\n    none.tag = ex_Option_i32_None;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_incr(some);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_incr(none);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
-  check_error "try outside Option/Result-returning fn rejected"
+  check_error "try inside main rejected (main returns an int exit code)"
     "fn main() {\n\
     \    let v = try Option::Some(5);\n\
     \    print(v);\n\
      }\n"
+    "'try' on Option_i32 value but enclosing fn returns i32 — they must share the same Option/Result shape";
+
+  check_error "try outside Option/Result-returning fn rejected"
+    "fn helper() {\n\
+    \    let v = try Option::Some(5);\n\
+    \    print(v);\n\
+     }\n\
+     fn main() { helper(); }\n"
     "'try' is only allowed in fns that return Option or Result (this fn has no return type)";
 
   check_error "try shape mismatch (Option in Result-returning fn)"
@@ -1704,6 +1712,28 @@ let () =
      }\n\
      fn main() { print(f(5)); }\n"
     "#include <stdio.h>\n\nstatic long ex_f(long n);\n\nstatic long ex_f(long n) {\n    if (n > 0) {\n        return 1;\n    } else {\n        return 0;\n    }\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_f(5)));\n    return 0;\n}\n";
+
+  check_error "return non-int from main rejected"
+    "fn main() {\n\
+    \    print(1);\n\
+    \    return \"lol\";\n\
+     }\n"
+    "return: expected i32, got str";
+
+  check "return int from main: accepted as exit code"
+    "fn main() {\n\
+    \    print(1);\n\
+    \    return 5;\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(1));\n    return 5;\n    return 0;\n}\n";
+
+  check_error "return value from non-main void fn rejected"
+    "fn helper() {\n\
+    \    print(1);\n\
+    \    return 5;\n\
+     }\n\
+     fn main() { helper(); }\n"
+    "cannot return a value from a function with no return type (declare `-> i32` if the value is intended)";
 
   check_error "free(&field) rejected (same rule applies to field address)"
     "struct P { x: int }\n\
