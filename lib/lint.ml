@@ -217,6 +217,33 @@ let unused_lets_for (tf : tfunc) : warning list =
       lets
   end
 
+(* Per-function unused-parameter check.  A parameter never read in the
+   body is flagged, with the same `_`-prefix escape hatch as unused
+   `let`s.  `self` is exempt — a method may keep the receiver in its
+   signature for shape consistency even when a given body doesn't touch
+   it (mirrors Rust, which never warns on unused `self`).  Caller
+   restricts this to mono fns: generic skeletons carry an empty
+   `tf_body`, which would flag every parameter as unused. *)
+let unused_params_for (tf : tfunc) : warning list =
+  let params = tf.tf_func.params in
+  if params = [] then []
+  else begin
+    let reads = reads_in_stmts [] tf.tf_body in
+    let read_set = Hashtbl.create (List.length reads) in
+    List.iter (fun n -> Hashtbl.replace read_set n ()) reads;
+    List.filter_map (fun (p : Ast.param) ->
+      if p.pname = "self"
+         || is_silenced_name p.pname
+         || Hashtbl.mem read_set p.pname
+      then None
+      else
+        let msg = Printf.sprintf
+          "unused parameter '%s' (prefix name with '_' to silence)" p.pname
+        in
+        Some { pos = tf.tf_func.pos; msg })
+      params
+  end
+
 (* Pure analysis: returns the warnings the linter would emit, without
    touching stderr.  Tests compare the list directly; CLI prints via
    [emit_warnings]. *)
@@ -269,6 +296,19 @@ let collect ~(profile : Profile.t) (tp : tprogram) : warning list =
       else unused_lets_for tf)
       tp.tp_funcs
   in
+  (* Unused-parameter warnings: mono user fns only.  Generic fns are
+     skipped entirely — the skeleton has an empty body (can't analyse)
+     and the instances would each re-flag the same source param.
+     `extern fn`s have no body either. *)
+  let unused_param_warnings =
+    List.concat_map (fun tf ->
+      if is_prelude tf
+         || tf.tf_func.is_extern
+         || tf.tf_func.tparams <> []
+      then []
+      else unused_params_for tf)
+      tp.tp_funcs
+  in
   (* Unused-fn warnings: for each mono user fn, check if its mangled
      C name is referenced anywhere in any OTHER fn body (across the
      whole program, including the prelude — prelude impls of a struct
@@ -307,7 +347,8 @@ let collect ~(profile : Profile.t) (tp : tprogram) : warning list =
       tp.tp_funcs
   in
   let must_use = must_use_warnings tp in
-  tier_warnings @ unused_let_warnings @ unused_fn_warnings @ must_use
+  tier_warnings @ unused_let_warnings @ unused_param_warnings
+  @ unused_fn_warnings @ must_use
 
 let emit_warnings (ws : warning list) : unit =
   List.iter (fun w ->

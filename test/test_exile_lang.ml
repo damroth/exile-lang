@@ -1553,6 +1553,33 @@ let () =
     ~profile:Exile_lang.Profile.Full
     [];
 
+  check_lint "lint: unused parameter warns"
+    "pub fn printt(s: str) { print(\"hi\"); }\n\
+     fn main() { printt(\"lol\"); }\n"
+    ~profile:Exile_lang.Profile.Full
+    ["unused parameter 's'"];
+
+  check_lint "lint: used parameter does not warn"
+    "fn dbl(n: int) -> int { return n + n; }\n\
+     fn main() { print(dbl(21)); }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: '_' prefix silences unused-parameter warning"
+    "fn cb(_event: int) { print(1); }\n\
+     fn main() { cb(99); }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  check_lint "lint: unused 'self' receiver is exempt"
+    "struct P { x: int }\n\
+     impl P {\n\
+    \    pub fn kind(self: P) -> int { return 7; }\n\
+     }\n\
+     fn main() { let p = P { x: 1 }; print(p.kind()); }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
   check_lint "lint: unused mono fn warns at decl pos"
     "fn dead() -> int { return 1; }\n\
      fn main() { print(2); }\n"
