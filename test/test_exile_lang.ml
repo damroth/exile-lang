@@ -249,6 +249,21 @@ let () =
     "fn foo() -> int {\n    return 1;\n}\nfn foo() -> int {\n    return 2;\n}\nfn main() {\n    print(foo());\n}\n"
     "function 'foo' already defined";
 
+  check_error "top-level fn shadowing builtin 'print' rejected"
+    "fn print(s: str) { }\n\
+     fn main() { print(\"x\"); }\n"
+    "'print' is a compiler builtin and cannot be redefined as a top-level function — pick a different name";
+
+  check_error "top-level fn shadowing builtin 'free' rejected"
+    "fn free(p: *int) { }\n\
+     fn main() { print(1); }\n"
+    "'free' is a compiler builtin and cannot be redefined as a top-level function — pick a different name";
+
+  check "module fn named like a builtin is allowed (qualified path)"
+    "mod m { pub fn print(_s: str) { } }\n\
+     fn main() { m::print(\"x\"); }\n"
+    "#include <stdio.h>\n\nvoid m__print(const char *_s);\n\nvoid m__print(const char *_s) {\n}\n\nint main(void) {\n    m__print(\"x\");\n    return 0;\n}\n";
+
   check_error "duplicate parameter"
     "fn add(x: int, x: int) -> int {\n    return x;\n}\nfn main() {\n    print(add(1, 2));\n}\n"
     "duplicate parameter 'x' in function 'add'";

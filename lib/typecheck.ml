@@ -2800,6 +2800,20 @@ let check_program program : tprogram =
   in
   let modules = flat.modules @ virtual_modules in
   let all_funcs = flat.funcs @ impl_funcs in
+  (* A top-level user fn may not shadow a compiler builtin (`print`,
+     `free`, `type_name`).  Builtins are looked up by single-segment
+     path, so a top-level `fn print` is silently outranked at every
+     call site and becomes dead code.  Methods (`impl X { fn free }`)
+     and module fns are reached by qualified paths and don't collide —
+     the prelude's `Allocator::free` is exactly such a case. *)
+  List.iter
+    (fun (path, (f : Ast.func), _) ->
+       if path = []
+          && List.exists (fun b -> b.bname = f.name) builtins then
+         Error.failf f.pos
+           "'%s' is a compiler builtin and cannot be redefined as a \
+            top-level function — pick a different name" f.name)
+    all_funcs;
   (* Method param names also need the C-keyword check (their first param
      is `self`, which is fine; rest are user-chosen). *)
   List.iter
