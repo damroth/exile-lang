@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-05-15
+
+Small polish release on top of 0.4.1: two new compile-time builtins
+(`++` for string concat, `type_name` for type introspection), broader
+lint coverage, and stricter return-type enforcement.
+
+### Added
+- `++` compile-time string concat operator on `str` literals
+- `type_name(expr)` compile-time builtin returning the expression's
+  type as a `str`
+- Linter warns on unused function parameters
+- Linter rejects `free(&x)` — the `&` operator never produces a heap
+  pointer
+- New examples: `string_concat.exl`, `type_name.exl`
+
+### Fixed
+- Typecheck now enforces exhaustive return on value-returning
+  functions
+- Typecheck verifies the return-value type for `main` and for
+  `void`-returning functions
+- Top-level functions can no longer shadow a compiler builtin
+
 ## [0.4.1] - 2026-05-12
 
 Polish release on top of the MVP: two new opt-in lints, a printable
@@ -172,4 +194,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.4.1]: https://github.com/damroth/exile-lang/releases/tag/v0.4.1
+[0.4.2]: https://github.com/damroth/exile-lang/releases/tag/v0.4.2
