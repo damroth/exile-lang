@@ -249,6 +249,19 @@ let () =
     "fn foo() -> int {\n    return 1;\n}\nfn foo() -> int {\n    return 2;\n}\nfn main() {\n    print(foo());\n}\n"
     "function 'foo' already defined";
 
+  check_error "stray ';' after if block reported clearly"
+    "fn main() {\n\
+    \    if true { print(1); };\n\
+     }\n"
+    "stray ';' — `if`/`while`/`match` and inner blocks are self-terminating, no trailing semicolon needed";
+
+  check_error "stray ';' after while block reported clearly"
+    "fn main() {\n\
+    \    let i = 0;\n\
+    \    while i > 0 { i = i - 1; };\n\
+     }\n"
+    "stray ';' — `if`/`while`/`match` and inner blocks are self-terminating, no trailing semicolon needed";
+
   check_error "top-level fn shadowing builtin 'print' rejected"
     "fn print(s: str) { }\n\
      fn main() { print(\"x\"); }\n"

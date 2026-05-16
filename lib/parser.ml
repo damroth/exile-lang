@@ -607,6 +607,16 @@ and parse_stmts s acc =
   match peek s with
   | Token.RBrace -> List.rev acc
   | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
+  | Token.Semicolon ->
+      (* A `;` in statement-start position is almost always a stray
+         semicolon after a self-terminating block (`if`/`while`/
+         `match`/inner `{ ... }`).  Without this dedicated case the
+         parser would fall through to `parse_stmt` -> `parse_expr` and
+         die on the generic "expected expression", pointing at the `;`
+         with no hint about why it's wrong. *)
+      Error.raise_ (peek_pos s)
+        "stray ';' — `if`/`while`/`match` and inner blocks are \
+         self-terminating, no trailing semicolon needed"
   | _ -> parse_stmts s (parse_stmt s :: acc)
 
 (* Reject duplicate parameter names within a single fn / extern fn
