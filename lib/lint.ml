@@ -52,69 +52,39 @@ let is_silenced_name n =
    Writes (LHS of TAssign) are not collected.  One pass serves both the
    unused-let check (matches let-names against this set) and the
    unused-fn check (matches mangled fn names against this set, scoped
-   per fn). *)
-let rec reads_in_expr acc (e : texpr) =
-  match e.e with
-  | TVar n -> n :: acc
-  | TFnRef n -> n :: acc
-  | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _
-  | TSizeOf _ -> acc
-  | TNeg x | TCast (x, _) | TRef x | TDeref x -> reads_in_expr acc x
-  | TBinOp (_, a, b) -> reads_in_expr (reads_in_expr acc a) b
-  | TCall { mangled; args } ->
-      (* Local fn-ptr vars are called via TCall with `mangled` = the
-         local's name (see Ir.texpr_node note on TIndirectCall).  Count
-         it as a read so `let f = add; f(40, 2)` doesn't warn.  Global
-         fn names (`ex_add`, `mod__foo`) won't collide with let names
-         so the extra entries are harmless noise. *)
-      List.fold_left reads_in_expr (mangled :: acc) args
-  | TBuiltinCall { args; _ } ->
-      List.fold_left reads_in_expr acc args
-  | TIndirectCall { fn_expr; args } ->
-      List.fold_left reads_in_expr (reads_in_expr acc fn_expr) args
-  | TTupleLit xs -> List.fold_left reads_in_expr acc xs
-  | TStructLit { fields; base; _ } | TNew { fields; base; _ } ->
-      let acc = List.fold_left (fun a (_, x) -> reads_in_expr a x) acc fields in
-      (match base with Some b -> reads_in_expr acc b | None -> acc)
-  | TFieldAccess { target; _ } -> reads_in_expr acc target
-  | TEnumLit { args; _ } ->
-      List.fold_left (fun a (_, x) -> reads_in_expr a x) acc args
-  | TMatch { scrutinee; arms; _ } ->
-      let acc = reads_in_expr acc scrutinee in
-      List.fold_left (fun a arm -> reads_in_expr a arm.tbody) acc arms
+   per fn).
 
-let rec reads_in_stmts acc stmts = List.fold_left reads_in_stmt acc stmts
-and reads_in_stmt acc s =
-  match s with
-  | TLet { value; _ } | TLetTuple { value; _ }
-  | TAssign { value; _ } -> reads_in_expr acc value
-  | TAssignField { target; value; _ } | TAssignDeref { target; value; _ } ->
-      reads_in_expr (reads_in_expr acc target) value
-  | TReturn { value; _ } -> reads_in_expr acc value
-  | TExprStmt e -> reads_in_expr acc e
-  | TIf { cond; then_body; else_body } ->
-      let acc = reads_in_expr acc cond in
-      reads_in_stmts (reads_in_stmts acc then_body) else_body
-  | TWhile { cond; body } -> reads_in_stmts (reads_in_expr acc cond) body
-  | TDefer { body; _ } -> reads_in_stmts acc body
+   Local fn-ptr vars are called via TCall with `mangled` = the local's
+   name (see Ir.texpr_node note on TIndirectCall), so we count TCall.mangled
+   as a read — `let f = add; f(40, 2)` shouldn't warn.  Global fn names
+   (`ex_add`, `mod__foo`) won't collide with let names so the extra
+   entries are harmless noise. *)
+let reads_in_expr acc (e : texpr) =
+  fold_texpr (fun acc te ->
+    match te.e with
+    | TVar n | TFnRef n -> n :: acc
+    | TCall { mangled; _ } -> mangled :: acc
+    | _ -> acc)
+    acc e
+
+let reads_in_stmts acc stmts =
+  List.fold_left (fold_tstmt (fun acc s ->
+    List.fold_left reads_in_expr acc (tstmt_own_exprs s)))
+    acc stmts
 
 (* Collect (name, pos) for every TLet / TLetTuple binding in the tree.
    Names starting with '_' are skipped at collection time so they never
    show up in the unused list. *)
-let rec lets_in_stmts acc stmts = List.fold_left let_in_stmt acc stmts
-and let_in_stmt acc s =
-  match s with
-  | TLet { name; pos; _ } ->
-      if is_silenced_name name then acc else (name, pos) :: acc
-  | TLetTuple { names; pos; _ } ->
-      List.fold_left (fun a n ->
-        if is_silenced_name n then a else (n, pos) :: a) acc names
-  | TIf { then_body; else_body; _ } ->
-      lets_in_stmts (lets_in_stmts acc then_body) else_body
-  | TWhile { body; _ } -> lets_in_stmts acc body
-  | TDefer { body; _ } -> lets_in_stmts acc body
-  | TAssign _ | TAssignField _ | TAssignDeref _
-  | TReturn _ | TExprStmt _ -> acc
+let lets_in_stmts acc stmts =
+  List.fold_left (fold_tstmt (fun acc s ->
+    match s with
+    | TLet { name; pos; _ } ->
+        if is_silenced_name name then acc else (name, pos) :: acc
+    | TLetTuple { names; pos; _ } ->
+        List.fold_left (fun a n ->
+          if is_silenced_name n then a else (n, pos) :: a) acc names
+    | _ -> acc))
+    acc stmts
 
 (* Must-use detection.  Walks every fn body for TExprStmt — statement-
    position expressions whose value is dropped.  If the expression is
@@ -177,18 +147,15 @@ let must_use_warnings (tp : tprogram) : warning list =
                      (render_enum_name e_sig))
          | _ -> None)
   in
-  let rec walk_stmts acc stmts = List.fold_left walk_stmt acc stmts
-  and walk_stmt acc s =
-    match s with
-    | TExprStmt e ->
-        (match expr_must_use_reason e with
-         | Some msg -> { pos = e.pos; msg } :: acc
-         | None -> acc)
-    | TIf { then_body; else_body; _ } ->
-        walk_stmts (walk_stmts acc then_body) else_body
-    | TWhile { body; _ } | TDefer { body; _ } -> walk_stmts acc body
-    | TLet _ | TLetTuple _ | TAssign _ | TAssignField _
-    | TAssignDeref _ | TReturn _ -> acc
+  let walk_stmts acc stmts =
+    List.fold_left (fold_tstmt (fun acc s ->
+      match s with
+      | TExprStmt e ->
+          (match expr_must_use_reason e with
+           | Some msg -> { pos = e.pos; msg } :: acc
+           | None -> acc)
+      | _ -> acc))
+      acc stmts
   in
   List.fold_left (fun acc tf ->
     if tf.tf_func.pos.file = "<prelude>" then acc
@@ -316,13 +283,17 @@ let collect ~(profile : Profile.t) (tp : tprogram) : warning list =
      about: did anyone call this).  Excluding self prevents
      self-recursive but otherwise unreachable fns from masking
      themselves — matches gcc's `-Wunused-function` behaviour. *)
-  let refs_per_fn =
-    List.map (fun tf -> (tf, reads_in_stmts [] tf.tf_body)) tp.tp_funcs
-  in
+  (* Inverse call-graph: callee_mangled -> caller_mangled, one entry per
+     read.  Build it once in O(total_reads); each `referenced_outside`
+     check is then O(in-degree) instead of O(fns * avg_reads). *)
+  let callers_of : (string, string) Hashtbl.t = Hashtbl.create 64 in
+  List.iter (fun tf ->
+    List.iter (fun r -> Hashtbl.add callers_of r tf.tf_mangled)
+      (reads_in_stmts [] tf.tf_body))
+    tp.tp_funcs;
   let referenced_outside tf =
-    List.exists (fun (other, refs) ->
-      other.tf_mangled <> tf.tf_mangled && List.mem tf.tf_mangled refs)
-      refs_per_fn
+    List.exists (fun caller -> caller <> tf.tf_mangled)
+      (Hashtbl.find_all callers_of tf.tf_mangled)
   in
   let is_fn_warn_candidate tf =
     let f = tf.tf_func in

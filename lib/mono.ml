@@ -66,9 +66,7 @@ let is_instance_of skeleton instance =
   || (match List.rev skeleton, List.rev instance with
       | s_last :: s_init, i_last :: i_init ->
           s_init = i_init
-          && String.length i_last > String.length s_last
-          && String.sub i_last 0 (String.length s_last) = s_last
-          && i_last.[String.length s_last] = '_'
+          && String.starts_with ~prefix:(s_last ^ "_") i_last
       | _ -> false)
 
 (* Infer values for [tparams] from [pairs] — a list of (declared

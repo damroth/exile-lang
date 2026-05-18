@@ -157,14 +157,27 @@ let c_decl t name = c_type_prefix t ^ name
 type builtin_emit =
   gen_ctx -> Buffer.t -> texpr list -> (texpr -> unit) -> unit
 
+(* Shared printf encoding for the integer family.  Variadic printf
+   promotes i8/i16 to int, so `%d`/`%u` cover them with no cast.  i32/u32
+   are emitted as `long`/`unsigned long` for cross-C-compiler width
+   stability — variadic printf does *not* auto-promote int→long, so
+   `%ld` needs the explicit cast at the call site (otherwise `-Wformat`
+   fires on literals like `0`).
+
+   Returns (format-spec, optional cast type-name) for int-printable types,
+   None otherwise.  Used by both `emit_print` (top-level print) and
+   `emit_field_debug` (nested @debug fields). *)
+let printf_int_spec = function
+  | TInt { signed = true; width = Ast.W32 } -> Some ("%ld", Some "long")
+  | TInt { signed = false; width = Ast.W32 } -> Some ("%lu", Some "unsigned long")
+  | TInt { signed = true; _ } -> Some ("%d", None)
+  | TInt { signed = false; _ } -> Some ("%u", None)
+  | TCInt { signed = true } -> Some ("%d", None)
+  | TCInt { signed = false } -> Some ("%u", None)
+  | _ -> None
+
 let emit_print : builtin_emit =
   fun _ctx buf args emit_arg ->
-    (* Varargs promote i8/i16 to int, so `%d`/`%u` cover them with no cast.
-       i32/u32 are emitted as `long`/`unsigned long` (for cross-C-compiler
-       width stability) and need `%ld`/`%lu`.  Because `printf` is variadic
-       it does not auto-promote `int` to `long` — an int literal like `0`
-       passed under `%ld` is ill-formed under `-Wformat`.  We force the
-       cast on the call site. *)
     let arg = List.hd args in
     match arg.ty with
     | TStruct _ | TEnum _ ->
@@ -178,34 +191,18 @@ let emit_print : builtin_emit =
         emit_arg arg;
         Buffer.add_string buf "); printf(\"\\n\")"
     | _ ->
-      let fmt = match arg.ty with
-        | TBool -> "\"%d\\n\""
-        | TInt { signed = true; width = Ast.W32 } -> "\"%ld\\n\""
-        | TInt { signed = false; width = Ast.W32 } -> "\"%lu\\n\""
-        | TInt { signed = true; _ } -> "\"%d\\n\""
-        | TInt { signed = false; _ } -> "\"%u\\n\""
-        | TCInt { signed = true } -> "\"%d\\n\""
-        | TCInt { signed = false } -> "\"%u\\n\""
-        | TCShort _ | TCLong _ | TCChar | TCSChar | TCUChar | TCVoid ->
-            assert false  (* typecheck rejects print on these *)
-        | TString -> "\"%s\\n\""
-        | TTuple _ | TStruct _ | TExtStruct _ | TExtAlias _ | TEnum _
-        | TPtr _ | TFnPtr _ | TNullPtr | TVar _ ->
-            assert false  (* typecheck rejected this earlier *)
+      let (fmt, cast) = match arg.ty with
+        | TBool -> ("%d", None)
+        | TString -> ("%s", None)
+        | _ ->
+            (match printf_int_spec arg.ty with
+             | Some spec -> spec
+             | None -> assert false  (* typecheck rejected this earlier *))
       in
-      let cast =
-        match arg.ty with
-        | TInt { signed = true; width = Ast.W32 } -> Some "(long)"
-        | TInt { signed = false; width = Ast.W32 } -> Some "(unsigned long)"
-        | _ -> None
-      in
-      Buffer.add_string buf "printf(";
-      Buffer.add_string buf fmt;
-      Buffer.add_string buf ", ";
+      Printf.bprintf buf "printf(\"%s\\n\", " fmt;
       (match cast with
        | Some c ->
-           Buffer.add_string buf c;
-           Buffer.add_char buf '(';
+           Printf.bprintf buf "(%s)(" c;
            emit_arg arg;
            Buffer.add_char buf ')'
        | None -> emit_arg arg);
@@ -924,14 +921,6 @@ let rec emit_field_debug buf ty access =
   | TBool ->
       Printf.bprintf buf
         "printf(\"%%s\", (%s) ? \"true\" : \"false\")" access
-  | TInt { signed = true; width = Ast.W32 } ->
-      Printf.bprintf buf "printf(\"%%ld\", (long)(%s))" access
-  | TInt { signed = false; width = Ast.W32 } ->
-      Printf.bprintf buf "printf(\"%%lu\", (unsigned long)(%s))" access
-  | TInt { signed = true; _ } -> Printf.bprintf buf "printf(\"%%d\", %s)" access
-  | TInt { signed = false; _ } -> Printf.bprintf buf "printf(\"%%u\", %s)" access
-  | TCInt { signed = true } -> Printf.bprintf buf "printf(\"%%d\", %s)" access
-  | TCInt { signed = false } -> Printf.bprintf buf "printf(\"%%u\", %s)" access
   | TString ->
       (* Quoted output, no runtime escape — user knows the content; for
          strings with embedded quotes/newlines the rendering is lossy. *)
@@ -940,9 +929,13 @@ let rec emit_field_debug buf ty access =
   | TStruct _ | TEnum _ ->
       let fn = mangle_typ ty ^ "__debug" in
       Printf.bprintf buf "%s(%s)" fn access
-  | TTuple _ | TCShort _ | TCLong _ | TCChar | TCSChar | TCUChar
-  | TCVoid | TExtStruct _ | TExtAlias _ | TFnPtr _ | TNullPtr | TVar _ ->
-      assert false   (* typecheck @debug-validation rejected these *)
+  | _ ->
+      (match printf_int_spec ty with
+       | Some (spec, Some c) ->
+           Printf.bprintf buf "printf(\"%s\", (%s)(%s))" spec c access
+       | Some (spec, None) ->
+           Printf.bprintf buf "printf(\"%s\", %s)" spec access
+       | None -> assert false  (* typecheck @debug-validation rejected these *))
 
 (* Last segment of a path — the user-facing type name to embed in the
    rendered debug output (e.g., `Point`, `Result`). *)
@@ -1013,6 +1006,18 @@ let emit_enum_debug_def buf (e : enum_sig) =
     Buffer.add_string buf "}\n"
   end
 
+(* Skip empty sections so the emitted C doesn't accumulate stray
+   blank lines; when the section is non-empty, prepend a `\n` so it
+   visually separates from the previous block.  Used by every "list of
+   declarations" group in gen_program (extern consts, fnptr typedefs,
+   struct decls, fn forward decls, ...).  Adding a new declaration
+   category needs only one call here, not three lines of guard. *)
+let emit_section buf items ~emit =
+  if items <> [] then begin
+    Buffer.add_char buf '\n';
+    List.iter emit items
+  end
+
 let gen_program ?(annotate = false) (tp : tprogram) =
   let ctx = new_gen_ctx ~annotate
     ~enum_index:tp.tp_enum_index
@@ -1030,22 +1035,14 @@ let gen_program ?(annotate = false) (tp : tprogram) =
     Buffer.add_string buf path;
     Buffer.add_string buf "\"\n")
     tp.tp_c_includes;
-  if tp.tp_ext_consts <> [] then begin
-    Buffer.add_char buf '\n';
-    List.iter (fun (name, t) ->
-      Buffer.add_string buf "extern const ";
-      Buffer.add_string buf (c_decl t name);
-      Buffer.add_string buf ";\n")
-      tp.tp_ext_consts
-  end;
-  if tp.tp_ext_vars <> [] then begin
-    Buffer.add_char buf '\n';
-    List.iter (fun (name, t) ->
-      Buffer.add_string buf "extern ";
-      Buffer.add_string buf (c_decl t name);
-      Buffer.add_string buf ";\n")
-      tp.tp_ext_vars
-  end;
+  emit_section buf tp.tp_ext_consts ~emit:(fun (name, t) ->
+    Buffer.add_string buf "extern const ";
+    Buffer.add_string buf (c_decl t name);
+    Buffer.add_string buf ";\n");
+  emit_section buf tp.tp_ext_vars ~emit:(fun (name, t) ->
+    Buffer.add_string buf "extern ";
+    Buffer.add_string buf (c_decl t name);
+    Buffer.add_string buf ";\n");
   (* Named structs first, in source order — typically their fields refer
      to types declared earlier.  Tuple structs after, so any tuple whose
      elements include a named struct type sees it complete.
@@ -1070,38 +1067,25 @@ let gen_program ?(annotate = false) (tp : tprogram) =
      (e.g. `Allocator.alloc_fn`) sees the alias.  Use sites refer
      to the alias name, sidestepping C's awkward fn-ptr declaration
      syntax (especially nasty when fn-ptr is itself a return type). *)
-  if tp.tp_fnptr_types <> [] then begin
-    Buffer.add_char buf '\n';
-    List.iter (fun (name, t) ->
-      match t with
-      | TFnPtr { params; ret } ->
-          let r = match ret with
-            | None -> "void "
-            | Some t -> c_type_prefix t
-          in
-          let ps = match params with
-            | [] -> "void"
-            | _ -> String.concat ", "
-                     (List.map (fun t ->
-                        strip_trailing_space (c_type_prefix t)) params)
-          in
-          Buffer.add_string buf
-            (Printf.sprintf "typedef %s(*%s)(%s);\n" r name ps)
-      | _ -> assert false)
-      tp.tp_fnptr_types
-  end;
-  if concrete_structs <> [] then begin
-    Buffer.add_char buf '\n';
-    List.iter (emit_named_struct buf) concrete_structs
-  end;
-  if concrete_enums <> [] then begin
-    Buffer.add_char buf '\n';
-    List.iter (emit_named_enum buf) concrete_enums
-  end;
-  if tp.tp_tuple_types <> [] then begin
-    Buffer.add_char buf '\n';
-    List.iter (emit_tuple_struct buf) tp.tp_tuple_types
-  end;
+  emit_section buf tp.tp_fnptr_types ~emit:(fun (name, t) ->
+    match t with
+    | TFnPtr { params; ret } ->
+        let r = match ret with
+          | None -> "void "
+          | Some t -> c_type_prefix t
+        in
+        let ps = match params with
+          | [] -> "void"
+          | _ -> String.concat ", "
+                   (List.map (fun t ->
+                      strip_trailing_space (c_type_prefix t)) params)
+        in
+        Buffer.add_string buf
+          (Printf.sprintf "typedef %s(*%s)(%s);\n" r name ps)
+    | _ -> assert false);
+  emit_section buf concrete_structs ~emit:(emit_named_struct buf);
+  emit_section buf concrete_enums ~emit:(emit_named_enum buf);
+  emit_section buf tp.tp_tuple_types ~emit:(emit_tuple_struct buf);
   (* `@debug` printers — synthesized one per marked struct/enum.  Forward
      decls first so a printer body can call another printer regardless
      of source declaration order; bodies come right after. *)
@@ -1133,14 +1117,9 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   let non_main =
     List.filter (fun tf -> tf.tf_func.Ast.name <> "main") concrete_funcs
   in
-  if non_main <> [] then begin
-    Buffer.add_char buf '\n';
-    List.iter
-      (fun tf ->
-        emit_fn_sig buf tf;
-        Buffer.add_string buf ";\n")
-      non_main
-  end;
+  emit_section buf non_main ~emit:(fun tf ->
+    emit_fn_sig buf tf;
+    Buffer.add_string buf ";\n");
   Buffer.add_char buf '\n';
   (* extern fn has no body — fwd-decl above is the entire emission. *)
   let definable = List.filter (fun tf -> not tf.tf_func.Ast.is_extern) concrete_funcs in

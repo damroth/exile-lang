@@ -86,6 +86,20 @@ type fn_ctx = {
                                              against the same scope. *)
 }
 
+(* Skeleton ctx with every list field defaulted to [] and ret_ty None.
+   [instances] is required because Mono.state has no zero value (it
+   carries the mutable mono-job queue and visited set).  Use as
+   `{ (empty_ctx ~instances) with structs = ...; modules; scope; ... }`
+   — each callsite lists only its non-default fields, and adding a new
+   field to fn_ctx requires editing this constant only. *)
+let empty_ctx ~instances = {
+  global = []; structs = []; enums = []; modules = [];
+  scope = []; tparams = []; tvar_bindings = []; fn_asts = [];
+  aliases = []; ext_vars = []; ext_struct_fields = [];
+  ext_structs = []; ext_types = []; ext_consts = [];
+  instances; ret_ty = None;
+}
+
 let rec is_prefix xs ys =
   match xs, ys with
   | [], _ -> true
@@ -263,7 +277,10 @@ let rec resolve_type_ann_raw ctx ann =
          are flat (single C symbol name); qualified paths like
          `raw::ULONG` accept the path as long as the last segment
          matches.  Tparam ref is single-segment only. *)
-      let last = match List.rev path with n :: _ -> n | [] -> "" in
+      let last = match List.rev path with
+        | n :: _ -> n
+        | [] -> failwith "internal: resolve_type_ann_raw got empty path"
+      in
       (match path with
        | [n] when List.mem n ctx.tparams -> TVar n
        | _ when List.mem last ctx.ext_types -> TExtAlias last
@@ -520,6 +537,49 @@ let rewrite_struct_lit_as_enum_lit ctx tname fields base pos =
        | None -> None)
   | _ -> None
 
+(* Common arity + per-arg type + result-shape check shared by every
+   call form (top-level fn, fn-pointer local, fn-pointer field, method).
+   The four sites used to copy ~30 lines apiece varying only the
+   human-readable [kind] / [name] / [variadic] / [param_tys] / [ret_ty];
+   collapsing them into one helper means a new int-promotion or display
+   tweak lands in one place.
+
+   Error wording: arity uses "<kind> '<name>' expects N argument(s), got
+   M" (variadic: "at least N").  Method/fn-pointer-field sites used to
+   say "takes"; unified to "expects" — no test asserted on the old
+   wording.  Arg/void diagnostics retain "'<name>' …" exactly as before
+   (and the "got X" half of every message is preserved verbatim). *)
+let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
+                    ~raw_args ~targs ~ret_ty ~allow_void () : typ =
+  let expected_n = List.length param_tys in
+  let got = List.length raw_args in
+  let arity_ok = if variadic then got >= expected_n else got = expected_n in
+  if not arity_ok then
+    Error.failf pos
+      (if variadic
+       then "%s '%s' expects at least %d argument(s), got %d"
+       else "%s '%s' expects %d argument(s), got %d")
+      kind name expected_n got;
+  let arg_tys = List.map (fun (a : texpr) -> a.ty) targs in
+  let rec take n xs =
+    if n <= 0 then [] else match xs with
+      | [] -> [] | x :: rest -> x :: take (n - 1) rest
+  in
+  let fixed_arg_tys = take expected_n arg_tys in
+  List.iteri (fun i (exp, act) ->
+    if not (typ_eq exp act)
+       && not (int_lit_fits (List.nth raw_args i) exp)
+    then
+      Error.failf pos
+        "argument %d of '%s': expected %s, got %s"
+        (i + 1) name (typ_name exp) (typ_name act))
+    (List.combine param_tys fixed_arg_tys);
+  match ret_ty with
+  | Some t -> t
+  | None when allow_void -> t_i32
+  | None ->
+      Error.failf pos "'%s' returns void, cannot use as a value" name
+
 (* Generic-call dispatch: if the resolved fn is generic, infer its
    tparams from the actual arg types (and from the surrounding expected
    type via a bidirectional seed pair `(skel.ret_ty, expected)`),
@@ -678,7 +738,9 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 name (typ_name l'.ty) (typ_name r'.ty);
             TBool
         | Ast.Concat ->
-            assert false   (* handled by the outer Ast.Concat arm *)
+            failwith "internal: Concat reached scalar BinOp dispatch; \
+                      the outer Concat arm in elab_expr should have \
+                      caught it"
       in
       { e = TBinOp (op, l', r'); ty = result_t; pos }
   | Ast.Cast (sub, ann, cast_pos) ->
@@ -787,8 +849,6 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         tdiverges = false;
         tarm_pos = or_pos;
       } in
-      let default_env = (bind_name, ok_payload_ty) :: env in
-      let _ = default_env in
       let tdefault =
         elab_expr ~allow_void ?expected ctx env default
       in
@@ -1382,7 +1442,13 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                   b.bcheck ~ctx ~pos:call_pos ~args:targs ~allow_void
                 in
                 let name =
-                  match path with [n] -> n | _ -> assert false
+                  match path with
+                  | [n] -> n
+                  | _ ->
+                      failwith ("internal: builtin call resolved to \
+                                 multi-segment path " ^ String.concat "::" path
+                                ^ " — lookup_builtin should only match \
+                                   single-segment names")
                 in
                 { e = TBuiltinCall { name; args = targs };
                   ty = result_ty; pos }
@@ -1408,28 +1474,11 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 in
                 (match fnptr_local with
                  | Some (n, params, ret) ->
-                     let expected_n = List.length params in
-                     let got = List.length args in
-                     if expected_n <> got then
-                       Error.failf call_pos
-                         "function pointer '%s' expects %d argument(s), \
-                          got %d"
-                         n expected_n got;
-                     List.iteri (fun i (exp, act) ->
-                       if not (typ_eq exp act)
-                          && not (int_lit_fits (List.nth args i) exp)
-                       then
-                         Error.failf call_pos
-                           "argument %d of '%s': expected %s, got %s"
-                           (i + 1) n (typ_name exp) (typ_name act))
-                       (List.combine params arg_tys);
                      let result_ty =
-                       match ret with
-                       | Some t -> t
-                       | None when allow_void -> t_i32
-                       | None ->
-                           Error.failf call_pos
-                             "'%s' returns void, cannot use as a value" n
+                       check_call_args ~pos:call_pos
+                         ~kind:"function pointer" ~name:n
+                         ~param_tys:params ~raw_args:args ~targs
+                         ~ret_ty:ret ~allow_void ()
                      in
                      { e = TCall { mangled = n; args = targs };
                        ty = result_ty; pos }
@@ -1482,46 +1531,11 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                                    "function '%s' is private to module '%s'"
                                    display
                                    (String.concat "::" resolved_mod));
-                          let expected_n = List.length param_tys in
-                          let got = List.length args in
-                          let arity_ok =
-                            if fn_variadic then got >= expected_n
-                            else got = expected_n
-                          in
-                          if not arity_ok then
-                            Error.failf call_pos
-                              (if fn_variadic
-                               then "function '%s' expects at least %d \
-                                     argument(s), got %d"
-                               else "function '%s' expects %d argument(s), \
-                                     got %d")
-                              display expected_n got;
-                          (* Variadic extras pass unchecked. *)
-                          let fixed_arg_tys =
-                            let rec take n xs =
-                              if n <= 0 then []
-                              else match xs with
-                                | [] -> []
-                                | x :: rest -> x :: take (n - 1) rest
-                            in
-                            take expected_n arg_tys
-                          in
-                          List.iteri (fun i (exp, act) ->
-                            if not (typ_eq exp act)
-                               && not (int_lit_fits (List.nth args i) exp)
-                            then
-                              Error.failf call_pos
-                                "argument %d of '%s': expected %s, got %s"
-                                (i + 1) display (typ_name exp) (typ_name act))
-                            (List.combine param_tys fixed_arg_tys);
                           let result_ty =
-                            match ret_ty with
-                            | Some t -> t
-                            | None when allow_void -> t_i32
-                            | None ->
-                                Error.failf call_pos
-                                  "'%s' returns void, cannot use as a value"
-                                  display
+                            check_call_args ~pos:call_pos
+                              ~kind:"function" ~name:display
+                              ~variadic:fn_variadic ~param_tys
+                              ~raw_args:args ~targs ~ret_ty ~allow_void ()
                           in
                           { e = TCall { mangled; args = targs };
                             ty = result_ty; pos }))))
@@ -1553,37 +1567,29 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
        | None ->
            (match fnptr_field with
             | Some (params, ret) ->
-                let expected_n = List.length params in
-                let got = List.length args in
-                if expected_n <> got then
-                  Error.failf mc_pos
-                    "fn-pointer field '%s.%s' expects %d argument(s), got %d"
-                    (String.concat "::" struct_path) name expected_n got;
-                List.iteri (fun i (exp, act) ->
-                  if not (typ_eq exp act)
-                     && not (int_lit_fits (List.nth args i) exp)
-                  then
-                    Error.failf mc_pos
-                      "argument %d of '%s.%s': expected %s, got %s"
-                      (i + 1) (String.concat "::" struct_path) name
-                      (typ_name exp) (typ_name act))
-                  (List.combine params arg_tys);
+                let display = String.concat "::" struct_path ^ "." ^ name in
                 let result_ty =
-                  match ret with
-                  | Some t -> t
-                  | None when allow_void -> t_i32
-                  | None ->
-                      Error.failf mc_pos
-                        "'%s.%s' returns void, cannot use as a value"
-                        (String.concat "::" struct_path) name
+                  check_call_args ~pos:mc_pos
+                    ~kind:"fn-pointer field" ~name:display
+                    ~param_tys:params ~raw_args:args ~targs
+                    ~ret_ty:ret ~allow_void ()
                 in
                 let field_ty =
                   match resolve_struct_by_path ctx struct_path with
                   | Some s ->
                       (match List.assoc_opt name s.sfields_ty with
                        | Some t -> t
-                       | None -> assert false)
-                  | None -> assert false
+                       | None ->
+                           failwith ("internal: struct '"
+                                     ^ String.concat "::" struct_path
+                                     ^ "' lost field '" ^ name
+                                     ^ "' between fnptr_field probe and \
+                                        re-lookup"))
+                  | None ->
+                      failwith ("internal: struct '"
+                                ^ String.concat "::" struct_path
+                                ^ "' vanished from index after fnptr_field \
+                                   probe succeeded")
                 in
                 let fn_expr = {
                   e = TFieldAccess { target = trecv; field = name };
@@ -1619,29 +1625,13 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
              resolve_call_dispatch ~pos:mc_pos ~expected ctx
                ~resolved_mod ~arg_tys:arg_tys_for_dispatch skel
            in
-           let expected_args = List.length inst_param_tys - 1 in
-           let got_args = List.length args in
-           if expected_args <> got_args then
-             Error.failf mc_pos
-               "method '%s' takes %d argument(s), got %d"
-               display expected_args got_args;
            (match inst_param_tys with
             | self_ty :: rest_params ->
-                List.iteri (fun i (exp, act) ->
-                  if not (typ_eq exp act)
-                     && not (int_lit_fits (List.nth args i) exp)
-                  then
-                    Error.failf mc_pos
-                      "argument %d of '%s': expected %s, got %s"
-                      (i + 1) display (typ_name exp) (typ_name act))
-                  (List.combine rest_params arg_tys);
                 let result_ty =
-                  match ret_ty with
-                  | Some t -> t
-                  | None when allow_void -> t_i32
-                  | None ->
-                      Error.failf mc_pos
-                        "'%s' returns void, cannot use as a value" display
+                  check_call_args ~pos:mc_pos
+                    ~kind:"method" ~name:display
+                    ~param_tys:rest_params ~raw_args:args ~targs
+                    ~ret_ty ~allow_void ()
                 in
                 (* Auto-ref / auto-deref: align receiver shape with the
                    method's self-param shape. *)
@@ -1653,11 +1643,19 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                       { e = TRef trecv; ty = pt; pos = trecv.pos }
                   | TStruct _ as st, TPtr _ ->
                       { e = TDeref trecv; ty = st; pos = trecv.pos }
-                  | _ -> assert false
+                  | _ ->
+                      failwith
+                        (Printf.sprintf
+                           "internal: auto-ref/deref shape mismatch for \
+                            method '%s' — self_ty=%s, receiver=%s"
+                           display (typ_name self_ty) (typ_name trecv.ty))
                 in
                 { e = TCall { mangled; args = trecv_adj :: targs };
                   ty = result_ty; pos }
-            | [] -> assert false   (* methods always have self in registry *)))
+            | [] ->
+                failwith ("internal: method '" ^ display
+                          ^ "' has empty inst_param_tys — typecheck should \
+                             have rejected the impl without a self param")))
   | Ast.FieldAccess (target, fname, fa_pos) ->
       (* `.field` auto-derefs one level of pointer-to-struct.  Works
          for ordinary structs (consulting struct_index) and for exposed
@@ -2212,12 +2210,11 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~ext_struc
     (fun (p, (f : Ast.func), mangled) ->
       if f.name = "main" then None
       else
-        let ctx = {
-          global = []; structs = struct_index; enums = enum_index;
+        let ctx = { (empty_ctx ~instances) with
+          structs = struct_index; enums = enum_index;
           modules; scope = p; tparams = f.tparams;
-          tvar_bindings = []; fn_asts = []; aliases;
-          ext_vars = []; ext_struct_fields;
-          instances; ext_structs; ext_types; ext_consts; ret_ty = None;
+          aliases; ext_struct_fields;
+          ext_structs; ext_types; ext_consts;
         } in
         Some
           (p, f.name,
@@ -2251,12 +2248,10 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~
   in
   List.map2
     (fun (p, (s : Ast.struct_decl)) skel ->
-      let ctx = {
-        global = []; structs = skeleton; enums;
+      let ctx = { (empty_ctx ~instances) with
+        structs = skeleton; enums;
         modules; scope = p; tparams = s.stparams;
-        tvar_bindings = []; fn_asts = []; aliases = [];
-        ext_vars = []; ext_struct_fields = [];
-        instances; ext_structs; ext_types; ext_consts; ret_ty = None;
+        ext_structs; ext_types; ext_consts;
       } in
       { skel with
         sfields_ty =
@@ -2289,12 +2284,10 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
   in
   List.map2
     (fun (p, (e : Ast.enum_decl)) skel ->
-      let ctx = {
-        global = []; structs = struct_index; enums = skeleton;
+      let ctx = { (empty_ctx ~instances) with
+        structs = struct_index; enums = skeleton;
         modules; scope = p; tparams = e.etparams;
-        tvar_bindings = []; fn_asts = []; aliases = [];
-        ext_vars = []; ext_struct_fields = [];
-        instances; ext_structs; ext_types; ext_consts; ret_ty = None;
+        ext_structs; ext_types; ext_consts;
       } in
       let variants =
         List.map (fun (v : Ast.enum_variant) ->
@@ -2343,48 +2336,18 @@ let collect_tuple_types_of tfuncs =
     | _ -> ()
   in
   let walk_typ_ann ann = walk_typ (type_of_ann ann) in
-  let rec walk_texpr (te : texpr) =
+  let visit_expr (te : texpr) =
     walk_typ te.ty;
-    match te.e with
-    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _
-    | TFnRef _ -> ()
-    | TSizeOf t -> walk_typ t
-    | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> walk_texpr sub
-    | TBinOp (_, l, r) -> walk_texpr l; walk_texpr r
-    | TCall { args; _ } | TBuiltinCall { args; _ } -> List.iter walk_texpr args
-    | TIndirectCall { fn_expr; args } ->
-        walk_texpr fn_expr; List.iter walk_texpr args
-    | TTupleLit es -> List.iter walk_texpr es
-    | TStructLit { fields; base; _ } | TNew { fields; base; _ } ->
-        List.iter (fun (_, fe) -> walk_texpr fe) fields;
-        Option.iter walk_texpr base
-    | TFieldAccess { target; _ } -> walk_texpr target
-    | TEnumLit { args; _ } ->
-        List.iter (fun (_, fe) -> walk_texpr fe) args
-    | TMatch { scrutinee; arms; _ } ->
-        walk_texpr scrutinee;
-        List.iter (fun a -> walk_texpr a.tbody) arms
+    match te.e with TSizeOf t -> walk_typ t | _ -> ()
   in
-  let rec walk_tstmt = function
-    | TLet { value; _ } | TLetTuple { value; _ }
-    | TAssign { value; _ } | TReturn { value; _ }
-    | TExprStmt value -> walk_texpr value
-    | TAssignField { target; value; _ }
-    | TAssignDeref { target; value; _ } ->
-        walk_texpr target; walk_texpr value
-    | TIf { cond; then_body; else_body } ->
-        walk_texpr cond;
-        List.iter walk_tstmt then_body;
-        List.iter walk_tstmt else_body
-    | TWhile { cond; body } ->
-        walk_texpr cond; List.iter walk_tstmt body
-    | TDefer { body; _ } -> List.iter walk_tstmt body
+  let visit_stmt s =
+    List.iter (iter_texpr visit_expr) (tstmt_own_exprs s)
   in
   List.iter
     (fun tf ->
       Option.iter walk_typ_ann tf.tf_func.Ast.ret_ty;
       List.iter (fun (p : Ast.param) -> walk_typ_ann p.pty) tf.tf_func.params;
-      List.iter walk_tstmt tf.tf_body)
+      List.iter (iter_tstmt visit_stmt) tf.tf_body)
     tfuncs;
   (List.rev !tup_seen, List.rev !fnptr_seen)
 
@@ -2392,45 +2355,17 @@ let collect_tuple_types_of tfuncs =
    builtin `free(p)` calls — both are emitted in C only when one of them is
    present, so codegen can conditionally include `<stdlib.h>`. *)
 let uses_heap_of tfuncs =
-  let rec walk_texpr (te : texpr) =
-    match te.e with
+  let expr_is_heap (te : texpr) = match te.e with
     | TNew _ -> true
     | TBuiltinCall { name = "free"; _ } -> true
-    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _
-    | TFnRef _ | TSizeOf _ -> false
-    | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> walk_texpr sub
-    | TBinOp (_, l, r) -> walk_texpr l || walk_texpr r
-    | TCall { args; _ } | TBuiltinCall { args; _ } ->
-        List.exists walk_texpr args
-    | TIndirectCall { fn_expr; args } ->
-        walk_texpr fn_expr || List.exists walk_texpr args
-    | TTupleLit es -> List.exists walk_texpr es
-    | TStructLit { fields; base; _ } ->
-        List.exists (fun (_, fe) -> walk_texpr fe) fields
-        || (match base with Some b -> walk_texpr b | None -> false)
-    | TFieldAccess { target; _ } -> walk_texpr target
-    | TEnumLit { args; _ } ->
-        List.exists (fun (_, fe) -> walk_texpr fe) args
-    | TMatch { scrutinee; arms; _ } ->
-        walk_texpr scrutinee
-        || List.exists (fun a -> walk_texpr a.tbody) arms
+    | _ -> false
   in
-  let rec walk_tstmt = function
-    | TLet { value; _ } | TLetTuple { value; _ }
-    | TAssign { value; _ } | TReturn { value; _ }
-    | TExprStmt value -> walk_texpr value
-    | TAssignField { target; value; _ }
-    | TAssignDeref { target; value; _ } ->
-        walk_texpr target || walk_texpr value
-    | TIf { cond; then_body; else_body } ->
-        walk_texpr cond
-        || List.exists walk_tstmt then_body
-        || List.exists walk_tstmt else_body
-    | TWhile { cond; body } ->
-        walk_texpr cond || List.exists walk_tstmt body
-    | TDefer { body; _ } -> List.exists walk_tstmt body
+  let stmt_is_heap s =
+    List.exists (exists_texpr expr_is_heap) (tstmt_own_exprs s)
   in
-  List.exists (fun tf -> List.exists walk_tstmt tf.tf_body) tfuncs
+  List.exists (fun tf ->
+    List.exists (exists_tstmt stmt_is_heap) tf.tf_body)
+    tfuncs
 
 (* Resolve `impl` blocks against the struct registry, validate each method
    (self-param shape, name clash with fields, dup methods across blocks),
@@ -2445,12 +2380,10 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
   let resolved =
     List.map
       (fun (parent_path, ib) ->
-        let ctx = {
-          global = []; structs = struct_index; enums = enum_index;
-          modules; scope = parent_path; tparams = [];
-          tvar_bindings = []; fn_asts = []; aliases = [];
-          ext_vars = []; ext_struct_fields = [];
-          instances; ext_structs; ext_types; ext_consts; ret_ty = None;
+        let ctx = { (empty_ctx ~instances) with
+          structs = struct_index; enums = enum_index;
+          modules; scope = parent_path;
+          ext_structs; ext_types; ext_consts;
         } in
         let s =
           match lookup_struct ctx ib.Ast.itarget with
@@ -2757,14 +2690,9 @@ let check_program program : tprogram =
   let ext_types =
     List.map (fun (et : Ast.extern_type) -> et.xtname) flat.ext_types
   in
-  let ann_only_ctx = {
-    global = []; structs = []; enums = []; modules = flat.modules;
-    scope = []; tparams = []; tvar_bindings = []; fn_asts = [];
-    aliases = [];
-    ext_vars = []; ext_struct_fields = [];
-    instances = mono_state;
-    ext_structs; ext_types; ext_consts = [];
-    ret_ty = None;
+  let ann_only_ctx = { (empty_ctx ~instances:mono_state) with
+    modules = flat.modules;
+    ext_structs; ext_types;
   } in
   let ext_consts =
     List.map (fun (ec : Ast.extern_const) ->
@@ -2835,13 +2763,12 @@ let check_program program : tprogram =
      a call site, where the error confusingly says "unknown function
      'bar'" with no pointer to the bad `pub use`). *)
   List.iter (fun (scope, _local_name, target_path, decl_pos) ->
-    let probe_ctx = {
+    let probe_ctx = { (empty_ctx ~instances:mono_state) with
       global; structs = struct_index; enums = enum_index;
-      modules; scope; tparams = [];
-      tvar_bindings = []; fn_asts = []; aliases = flat.aliases;
+      modules; scope;
+      aliases = flat.aliases;
       ext_vars; ext_struct_fields;
-      instances = mono_state; ext_structs; ext_types; ext_consts;
-      ret_ty = None;
+      ext_structs; ext_types; ext_consts;
     } in
     let resolves =
       lookup_fn probe_ctx target_path <> None
@@ -2867,13 +2794,12 @@ let check_program program : tprogram =
      filters the skeletons out via [is_concrete]; only the instance
      tfuncs (built later from pending jobs) carry real bodies. *)
   let elab_one_fn ~tvar_bindings (path, (f : Ast.func), mangled) =
-    let ctx0 = {
+    let ctx0 = { (empty_ctx ~instances:mono_state) with
       global; structs = struct_index; enums = enum_index;
       modules; scope = path; tparams = f.tparams;
       tvar_bindings; fn_asts; aliases = flat.aliases;
       ext_vars; ext_struct_fields;
-      instances = mono_state; ext_structs; ext_types; ext_consts;
-      ret_ty = None;
+      ext_structs; ext_types; ext_consts;
     } in
     let param_tys =
       List.map (fun (p : Ast.param) -> resolve_type_ann ctx0 p.pty) f.params
@@ -2959,11 +2885,9 @@ let check_program program : tprogram =
      non-generic decls. *)
   let mono_structs = List.rev mono_state.inst_structs in
   let mono_enums = List.rev mono_state.inst_enums in
-  let mono_inst_funcs = List.rev mono_state.inst_funcs in
-  let _ = mono_inst_funcs in   (* registered fn-instance signatures live
-                                  on the instance tfuncs; the global index
-                                  doesn't need them since callers already
-                                  emit instance mangled names directly. *)
+  (* mono_state.inst_funcs intentionally unused here — the registered
+     fn-instance signatures already live on the instance tfuncs, and
+     callers emit instance mangled names directly. *)
   (* DCE for prelude mono structs.  Walk every mono tfunc's signature
      and let-types looking for `TStruct ["Allocator"]`; if no such
      reference exists, drop the struct decl AND the impl methods that
@@ -3022,12 +2946,19 @@ let check_program program : tprogram =
      un-debug-able aggregate. *)
   let all_structs = struct_index @ mono_structs in
   let all_enums = enum_index @ mono_enums in
-  let struct_is_debug path =
-    List.exists (fun s -> s.sname_path = path && s.sis_debug) all_structs
-  in
-  let enum_is_debug path =
-    List.exists (fun e -> e.ename_path = path && e.eis_debug) all_enums
-  in
+  (* Hash the @debug paths up-front; field_ty_ok recurses per-tuple-element
+     so the inner List.exists scan was N*M for programs with many @debug
+     aggregates.  Now field validation is O(field_tree_size). *)
+  let debug_structs = Hashtbl.create 16 in
+  List.iter (fun (s : struct_sig) ->
+    if s.sis_debug then Hashtbl.replace debug_structs s.sname_path ())
+    all_structs;
+  let debug_enums = Hashtbl.create 16 in
+  List.iter (fun (e : enum_sig) ->
+    if e.eis_debug then Hashtbl.replace debug_enums e.ename_path ())
+    all_enums;
+  let struct_is_debug path = Hashtbl.mem debug_structs path in
+  let enum_is_debug path = Hashtbl.mem debug_enums path in
   let rec field_ty_ok = function
     | TInt _ | TCInt _ | TCShort _ | TCLong _
     | TCChar | TCSChar | TCUChar | TBool | TString | TPtr _ -> true

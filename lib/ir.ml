@@ -458,6 +458,70 @@ type tstmt =
   | TWhile of { cond : texpr; body : tstmt list }
   | TDefer of { body : tstmt list; pos : Pos.t }
 
+(* Structural traversal primitives for the typed AST.  Every consumer
+   that used to handwrite a per-constructor match (`collect_tuple_types_of`,
+   `uses_heap_of` in Typecheck; `reads_in_expr`, `lets_in_stmts`,
+   must-use walker in Lint) now goes through one of these.  Adding a
+   new texpr/tstmt constructor requires extending only the *_children
+   functions below. *)
+
+let texpr_children (te : texpr) : texpr list =
+  match te.e with
+  | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _
+  | TVar _ | TFnRef _ | TSizeOf _ -> []
+  | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> [sub]
+  | TBinOp (_, l, r) -> [l; r]
+  | TCall { args; _ } | TBuiltinCall { args; _ } -> args
+  | TIndirectCall { fn_expr; args } -> fn_expr :: args
+  | TTupleLit es -> es
+  | TStructLit { fields; base; _ } | TNew { fields; base; _ } ->
+      List.map snd fields @ Option.to_list base
+  | TFieldAccess { target; _ } -> [target]
+  | TEnumLit { args; _ } -> List.map snd args
+  | TMatch { scrutinee; arms; _ } ->
+      scrutinee :: List.map (fun a -> a.tbody) arms
+
+let rec iter_texpr f e =
+  f e;
+  List.iter (iter_texpr f) (texpr_children e)
+
+let rec exists_texpr p e =
+  p e || List.exists (exists_texpr p) (texpr_children e)
+
+let rec fold_texpr f acc e =
+  let acc = f acc e in
+  List.fold_left (fold_texpr f) acc (texpr_children e)
+
+(* Immediate sub-statements: bodies of TIf/TWhile/TDefer. *)
+let tstmt_substmts = function
+  | TIf { then_body; else_body; _ } -> then_body @ else_body
+  | TWhile { body; _ } | TDefer { body; _ } -> body
+  | TLet _ | TLetTuple _ | TAssign _ | TAssignField _
+  | TAssignDeref _ | TReturn _ | TExprStmt _ -> []
+
+(* Exprs that live DIRECTLY in [s] — cond, value, target.  Does NOT
+   include exprs nested in sub-stmts; compose with iter_texpr / fold_texpr
+   on each entry for deep traversal of an entire fn body. *)
+let tstmt_own_exprs = function
+  | TLet { value; _ } | TLetTuple { value; _ }
+  | TAssign { value; _ } | TReturn { value; _ }
+  | TExprStmt value -> [value]
+  | TAssignField { target; value; _ }
+  | TAssignDeref { target; value; _ } -> [target; value]
+  | TIf { cond; _ } | TWhile { cond; _ } -> [cond]
+  | TDefer _ -> []
+
+let rec iter_tstmt f s =
+  f s;
+  List.iter (iter_tstmt f) (tstmt_substmts s)
+
+let rec exists_tstmt p s =
+  p s || List.exists (exists_tstmt p) (tstmt_substmts s)
+
+let rec fold_tstmt f acc s =
+  let acc = f acc s in
+  List.fold_left (fold_tstmt f) acc (tstmt_substmts s)
+
 (* Per-function payload that codegen consumes — original Ast.func for
    the user-side trivia (param names, fn name, pos), the resolved C
    name, parameter and return types pre-resolved against the surrounding

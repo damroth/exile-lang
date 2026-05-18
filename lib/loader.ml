@@ -84,9 +84,9 @@ and expand_item ~from_file ~loaded ~stack item =
       if List.mem dep_path stack then
         Error.failf pos
           "circular import: '%s' is already being loaded" display;
-      if List.mem dep_path !loaded then []
+      if Hashtbl.mem loaded dep_path then []
       else begin
-        loaded := dep_path :: !loaded;
+        Hashtbl.add loaded dep_path ();
         if not (Sys.file_exists dep_path) then
           Error.failf pos "cannot find module '%s' (looked for %s)"
             display dep_path;
@@ -114,6 +114,7 @@ and expand_item ~from_file ~loaded ~stack item =
       end
 
 let load entry_path =
-  let loaded = ref [ entry_path ] in
+  let loaded = Hashtbl.create 32 in
+  Hashtbl.add loaded entry_path ();
   let items = parse_file entry_path in
   expand_items ~from_file:entry_path ~loaded ~stack:[ entry_path ] items

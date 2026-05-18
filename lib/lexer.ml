@@ -129,7 +129,15 @@ let tokenize ~file src =
             if j < len && is_digit src.[j] then (adv src.[j]; scan (j + 1)) else j
           in
           let stop = scan (i + 1) in
-          let n = int_of_string (String.sub src i (stop - i)) in
+          let lit = String.sub src i (stop - i) in
+          let n =
+            try int_of_string lit
+            with Failure _ ->
+              Error.failf p
+                "integer literal '%s' does not fit in a 63-bit OCaml int \
+                 (max %d)"
+                lit max_int
+          in
           loop stop ((Token.Int n, p) :: acc)
       | c when is_alpha c ->
           let rec scan j =

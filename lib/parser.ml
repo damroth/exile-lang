@@ -619,21 +619,29 @@ and parse_stmts s acc =
          self-terminating, no trailing semicolon needed"
   | _ -> parse_stmts s (parse_stmt s :: acc)
 
+(* Quadratic dedup over small parser lists (params, fields, variants,
+   use items).  Returns the first repeated key string, or None if all
+   keys distinct.  O(n²) is fine here — n is the size of one decl's
+   member list (typically ≤ 20); Hashtbl would dwarf the work. *)
+let find_dup_key ~key xs =
+  let rec loop seen = function
+    | [] -> None
+    | x :: rest ->
+        let k = key x in
+        if List.mem k seen then Some k
+        else loop (k :: seen) rest
+  in
+  loop [] xs
+
 (* Reject duplicate parameter names within a single fn / extern fn
    parameter list.  [kind] tags the decl shape in the error message
    ("function" / "extern fn"), [name_pos] points at the fn name so
    the user can navigate from the report to the offending decl. *)
 let check_dup_params params ~kind ~name ~name_pos =
-  let rec loop = function
-    | [] -> ()
-    | p :: rest ->
-        if List.exists (fun (q : Ast.param) -> q.pname = p.Ast.pname) rest
-        then
-          Error.failf name_pos "duplicate parameter '%s' in %s '%s'"
-            p.Ast.pname kind name;
-        loop rest
-  in
-  loop params
+  match find_dup_key ~key:(fun (p : Ast.param) -> p.pname) params with
+  | None -> ()
+  | Some n ->
+      Error.failf name_pos "duplicate parameter '%s' in %s '%s'" n kind name
 
 (* `<T>` / `<T, U>` after a struct/enum/fn name — generic type
    parameter list.  Returns names in source order; rejects empty `<>`
@@ -650,14 +658,10 @@ let parse_tparams s =
     in
     if names = [] then
       Error.failf (peek_pos s) "empty type parameter list <>";
-    let rec check_dups = function
-      | [] -> ()
-      | n :: rest ->
-          if List.mem n rest then
-            Error.failf (peek_pos s) "duplicate type parameter '%s'" n;
-          check_dups rest
-    in
-    check_dups names;
+    (match find_dup_key ~key:Fun.id names with
+     | None -> ()
+     | Some n ->
+         Error.failf (peek_pos s) "duplicate type parameter '%s'" n);
     names
   end
 
@@ -827,15 +831,11 @@ and parse_extern_struct_after_keyword s seen =
         let fields =
           parse_comma_list ~close:Token.RBrace ~item:parse_field s
         in
-        let rec check_dups = function
-          | [] -> ()
-          | (n, _) :: rest ->
-              if List.exists (fun (m, _) -> m = n) rest then
-                Error.failf name_pos
-                  "duplicate field '%s' in extern struct '%s'" n name;
-              check_dups rest
-        in
-        check_dups fields;
+        (match find_dup_key ~key:fst fields with
+         | None -> ()
+         | Some n ->
+             Error.failf name_pos
+               "duplicate field '%s' in extern struct '%s'" n name);
         if fields = [] then
           Error.failf name_pos
             "'extern struct %s {}' is empty — use `extern struct %s;` \
@@ -993,16 +993,15 @@ let parse_use_items s =
       in
       let items = collect_names [] in
       expect s Token.Semicolon;
-      (* Reject duplicates within the group itself. *)
-      let rec check_internal_dups = function
-        | [] -> ()
-        | (Some n, _) :: rest ->
-            if List.exists (fun (m, _) -> m = Some n) rest then
-              Error.failf p "duplicate name '%s' in 'use' group" n;
-            check_internal_dups rest
-        | (None, _) :: rest -> check_internal_dups rest
+      (* Reject duplicates within the group itself.  Wildcard items
+         (None) carry no name and are excluded from the dedup. *)
+      let named_items =
+        List.filter_map (fun (n, _) -> n) items
       in
-      check_internal_dups items;
+      (match find_dup_key ~key:Fun.id named_items with
+       | None -> ()
+       | Some n ->
+           Error.failf p "duplicate name '%s' in 'use' group" n);
       items
 
 (* parse_item handles `fn`, `mod`, and `use` at any nesting level, with an
@@ -1106,6 +1105,14 @@ let rec parse_item s seen =
       let at_pos = peek_pos s in
       ignore (advance s);
       let (attr_name, _) = expect_ident s ~what:"attribute name after '@'" in
+      (* Decorate every item produced by parse_item with [apply].  The four
+         "decorating" attributes (@tier, @debug, @must_use, @amiga_lib) all
+         share this shape — the only thing each contributes is the per-item
+         rewrite, with errors pointing at the @ position. *)
+      let apply_to_next ~apply =
+        parse_item s seen
+        |> List.map (fun (name_opt, item) -> (name_opt, apply item))
+      in
       (match attr_name with
        | "c_include" ->
            expect s Token.LParen;
@@ -1134,86 +1141,50 @@ let rec parse_item s seen =
              Error.failf tier_pos
                "unknown tier '%s' (expected: core, standard, full)" tier_name;
            expect s Token.RParen;
-           (* Decorate the next item with the tier hint.  Recurse into
-              parse_item to consume it, then inject the hint into
-              fn/struct/enum.  Reject on items where tier doesn't make
-              sense (use, impl, c_include, mod). *)
-           let next_items = parse_item s seen in
-           List.map (fun (name_opt, item) ->
-             let item' = match item with
-               | Ast.Function f ->
-                   Ast.Function { f with tier_hint = Some tier_name }
-               | Ast.Struct s ->
-                   Ast.Struct { s with stier_hint = Some tier_name }
-               | Ast.Enum e ->
-                   Ast.Enum { e with etier_hint = Some tier_name }
-               | _ ->
-                   Error.failf at_pos
-                     "'@tier' can only decorate fn / struct / enum decls"
-             in
-             (name_opt, item'))
-             next_items
+           apply_to_next ~apply:(function
+             | Ast.Function f ->
+                 Ast.Function { f with tier_hint = Some tier_name }
+             | Ast.Struct s ->
+                 Ast.Struct { s with stier_hint = Some tier_name }
+             | Ast.Enum e ->
+                 Ast.Enum { e with etier_hint = Some tier_name }
+             | _ ->
+                 Error.failf at_pos
+                   "'@tier' can only decorate fn / struct / enum decls")
        | "debug" ->
-           (* Bare attribute — no parens, no args.  Decorates a non-generic
-              struct or enum; the codegen synthesizes a Rust-Debug-style
-              one-line printer for values of that type so `print(v)` works. *)
-           let next_items = parse_item s seen in
-           List.map (fun (name_opt, item) ->
-             let item' = match item with
-               | Ast.Struct s when s.stparams <> [] ->
-                   Error.failf at_pos
-                     "'@debug' not yet supported for generic struct '%s' \
-                      (T-bound system needed first)" s.sname
-               | Ast.Enum e when e.etparams <> [] ->
-                   Error.failf at_pos
-                     "'@debug' not yet supported for generic enum '%s' \
-                      (T-bound system needed first)" e.ename
-               | Ast.Struct s -> Ast.Struct { s with sis_debug = true }
-               | Ast.Enum e -> Ast.Enum { e with eis_debug = true }
-               | _ ->
-                   Error.failf at_pos
-                     "'@debug' can only decorate struct / enum decls"
-             in
-             (name_opt, item'))
-             next_items
+           apply_to_next ~apply:(function
+             | Ast.Struct s when s.stparams <> [] ->
+                 Error.failf at_pos
+                   "'@debug' not yet supported for generic struct '%s' \
+                    (T-bound system needed first)" s.sname
+             | Ast.Enum e when e.etparams <> [] ->
+                 Error.failf at_pos
+                   "'@debug' not yet supported for generic enum '%s' \
+                    (T-bound system needed first)" e.ename
+             | Ast.Struct s -> Ast.Struct { s with sis_debug = true }
+             | Ast.Enum e -> Ast.Enum { e with eis_debug = true }
+             | _ ->
+                 Error.failf at_pos
+                   "'@debug' can only decorate struct / enum decls")
        | "must_use" ->
-           (* Bare attribute — no parens, no args.  Decorates fn (return
-              value must be consumed) or enum (any value of this type
-              must be consumed).  Rejected on struct / use / impl /
-              c_include / mod where the semantics don't apply. *)
-           let next_items = parse_item s seen in
-           List.map (fun (name_opt, item) ->
-             let item' = match item with
-               | Ast.Function f ->
-                   Ast.Function { f with must_use = true }
-               | Ast.Enum e ->
-                   Ast.Enum { e with emust_use = true }
-               | _ ->
-                   Error.failf at_pos
-                     "'@must_use' can only decorate fn / enum decls"
-             in
-             (name_opt, item'))
-             next_items
+           apply_to_next ~apply:(function
+             | Ast.Function f -> Ast.Function { f with must_use = true }
+             | Ast.Enum e -> Ast.Enum { e with emust_use = true }
+             | _ ->
+                 Error.failf at_pos
+                   "'@must_use' can only decorate fn / enum decls")
        | "amiga_lib" ->
            expect s Token.LParen;
            let (base_name, _) =
              expect_ident s ~what:"library base name after '@amiga_lib('"
            in
            expect s Token.RParen;
-           let next_items = parse_item s seen in
-           List.map (fun (name_opt, item) ->
-             let item' = match item with
-               | Ast.Function f when f.is_extern ->
-                   Ast.Function { f with amiga_lib = Some base_name }
-               | Ast.Function _ ->
-                   Error.failf at_pos
-                     "'@amiga_lib' can only decorate `extern fn` declarations"
-               | _ ->
-                   Error.failf at_pos
-                     "'@amiga_lib' can only decorate `extern fn` declarations"
-             in
-             (name_opt, item'))
-             next_items
+           apply_to_next ~apply:(function
+             | Ast.Function f when f.is_extern ->
+                 Ast.Function { f with amiga_lib = Some base_name }
+             | _ ->
+                 Error.failf at_pos
+                   "'@amiga_lib' can only decorate `extern fn` declarations")
        | other ->
            Error.failf at_pos
              "unknown attribute '@%s' (only '@c_include', '@tier', \
@@ -1244,15 +1215,10 @@ and parse_struct_decl s ~is_pub =
     parse_comma_list ~close:Token.RBrace ~item:parse_field s
   in
   (* Reject in-struct duplicate field names. *)
-  let rec check_dups = function
-    | [] -> ()
-    | (n, _) :: rest ->
-        if List.exists (fun (m, _) -> m = n) rest then
-          Error.failf name_pos
-            "duplicate field '%s' in struct '%s'" n name;
-        check_dups rest
-  in
-  check_dups fields;
+  (match find_dup_key ~key:fst fields with
+   | None -> ()
+   | Some n ->
+       Error.failf name_pos "duplicate field '%s' in struct '%s'" n name);
   Ast.{ sname = name; stparams; sfields = fields;
         spos = name_pos; sis_pub = is_pub;
         stier_hint = None; sis_debug = false }
