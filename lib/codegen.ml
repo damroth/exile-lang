@@ -526,6 +526,13 @@ and emit_simple_stmt ctx buf indent stmt =
 and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
   match m_expr.e with
   | TMatch { scrutinee; ename_path; arms } ->
+      (* Flat matches (binds are only var/wildcard) compile to a tag
+         `switch`; once any arm nests a variant pattern, a flat switch
+         can't distinguish two arms sharing an outer variant, so we fall
+         back to an if-else decision chain. *)
+      if List.exists (fun (a : tmatch_arm) -> tpat_nested a.tpat) arms then
+        emit_match_decision ctx ?assign_to buf indent ename_path arms scrutinee
+      else
       let inner = indent ^ "    " in
       let case_indent = inner ^ "    " in
       let body_indent = case_indent ^ "    " in
@@ -580,42 +587,8 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
                    | _ -> ())
                  binds
            | TPWildcard -> ());
-          if a.tdiverges then begin
-            (* `try` desugar's Err/None arm: early-return the body
-               from the enclosing fn.  By elab construction the body
-               is a TEnumLit on the outer fn's ret-type instance — we
-               assert that here so any future caller of `tdiverges`
-               with a different shape (TMatch, TVar, etc) breaks
-               loudly rather than emitting subtly broken C. *)
-            (match a.tbody.e with
-             | TEnumLit _ -> ()
-             | _ ->
-                 failwith
-                   "internal: tdiverges arm body must be a TEnumLit \
-                    (only `try` desugar produces diverging arms today)");
-            let trimmed = strip_trailing_space (c_type_prefix a.tbody.ty) in
-            Buffer.add_string buf body_indent;
-            Buffer.add_string buf trimmed;
-            Buffer.add_string buf " __try_ret;\n";
-            emit_value_into_temp ctx buf body_indent "__try_ret" a.tbody;
-            (* Flush every active defer scope before the early return
-               so resources opened above the `try` site get cleaned up
-               on the Err/None path the same as on a normal return. *)
-            let cleanups = List.flatten ctx.defer_chain in
-            emit_cleanups ctx buf body_indent cleanups;
-            Buffer.add_string buf body_indent;
-            Buffer.add_string buf "return __try_ret;\n"
-          end else begin
-            (match assign_to, a.tbody.e with
-             | Some lhs, TMatch _ ->
-                 emit_match_stmt ctx ~assign_to:lhs buf body_indent a.tbody
-             | Some lhs, _ ->
-                 emit_assign_line buf body_indent ~lhs
-                   ~emit_rhs:(fun () -> gen_expr ctx buf a.tbody)
-             | None, _ ->
-                 Buffer.add_string buf body_indent;
-                 gen_expr ctx buf a.tbody;
-                 Buffer.add_string buf ";\n");
+          emit_arm_result ctx assign_to buf body_indent a;
+          if not a.tdiverges then begin
             Buffer.add_string buf body_indent;
             Buffer.add_string buf "break;\n"
           end;
@@ -627,6 +600,117 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
       Buffer.add_string buf indent;
       Buffer.add_string buf "}\n"
   | _ -> assert false
+
+(* Does any sub-pattern nest another variant pattern?  Drives the
+   switch-vs-decision-chain choice in [emit_match_stmt]. *)
+and tpat_nested = function
+  | TPVariant { binds; _ } ->
+      List.exists (fun (_, p) ->
+        match p with TPVariant _ -> true | _ -> tpat_nested p) binds
+  | _ -> false
+
+(* Arm body emission shared by the switch and decision-chain paths
+   (without the switch's trailing `break`).  A `tdiverges` arm
+   early-returns (flushing defers); otherwise the body assigns to
+   [assign_to] (or recurses for a nested match), or runs as a bare
+   expression-statement when the match's value is discarded. *)
+and emit_arm_result ctx assign_to buf indent (a : tmatch_arm) =
+  if a.tdiverges then begin
+    (match a.tbody.e with
+     | TEnumLit _ -> ()
+     | _ ->
+         failwith
+           "internal: tdiverges arm body must be a TEnumLit \
+            (only `try` desugar produces diverging arms today)");
+    let trimmed = strip_trailing_space (c_type_prefix a.tbody.ty) in
+    Buffer.add_string buf indent;
+    Buffer.add_string buf trimmed;
+    Buffer.add_string buf " __try_ret;\n";
+    emit_value_into_temp ctx buf indent "__try_ret" a.tbody;
+    let cleanups = List.flatten ctx.defer_chain in
+    emit_cleanups ctx buf indent cleanups;
+    Buffer.add_string buf indent;
+    Buffer.add_string buf "return __try_ret;\n"
+  end else
+    (match assign_to, a.tbody.e with
+     | Some lhs, TMatch _ ->
+         emit_match_stmt ctx ~assign_to:lhs buf indent a.tbody
+     | Some lhs, _ ->
+         emit_assign_line buf indent ~lhs
+           ~emit_rhs:(fun () -> gen_expr ctx buf a.tbody)
+     | None, _ ->
+         Buffer.add_string buf indent;
+         gen_expr ctx buf a.tbody;
+         Buffer.add_string buf ";\n")
+
+(* Compile a (possibly nested) pattern against C l-value [scrut] of type
+   [ty] into a list of tag tests (joined with `&&` by the caller) and a
+   list of (bind-name, C l-value, type) extractions.  Nested variant
+   patterns descend into `<scrut>.data.<variant>.<field>`. *)
+and compile_pat ctx ~scrut ~ty tpat =
+  match tpat with
+  | TPWildcard -> ([], [])
+  | TPVar n -> ([], [ (n, scrut, ty) ])
+  | TPVariant { variant; binds; _ } ->
+      let cname = mangle_typ ty in
+      let tag_test = Printf.sprintf "%s.tag == %s_%s" scrut cname variant in
+      let vsig =
+        List.find (fun (vs : variant_sig) -> vs.vsname = variant)
+          (List.find (fun (es : enum_sig) ->
+               match ty with TEnum p -> es.ename_path = p | _ -> false)
+             ctx.enum_index).evariants
+      in
+      List.fold_left
+        (fun (ts, bs) (fname, subpat) ->
+          let ft = List.assoc fname vsig.vsfields in
+          let sub_scrut = Printf.sprintf "%s.data.%s.%s" scrut variant fname in
+          let (t2, b2) = compile_pat ctx ~scrut:sub_scrut ~ty:ft subpat in
+          (ts @ t2, bs @ b2))
+        ([ tag_test ], []) binds
+
+(* Decision-chain emission for matches with nested patterns.  Each arm
+   becomes `if (<tests>) { <binds>; <body> }`; the last arm is emitted as
+   a bare `else` (sound because typecheck proved exhaustiveness, and it
+   keeps the assigned value definitely-initialised under -Wall). *)
+and emit_match_decision ctx ?assign_to buf indent ename_path arms scrutinee =
+  let inner = indent ^ "    " in
+  let body_indent = inner ^ "    " in
+  let cname = mangle_typ (TEnum ename_path) in
+  Buffer.add_string buf indent;
+  Buffer.add_string buf "{\n";
+  Buffer.add_string buf inner;
+  Buffer.add_string buf (Printf.sprintf "struct %s __m;\n" cname);
+  emit_value_into_temp ctx buf inner "__m" scrutinee;
+  let n = List.length arms in
+  List.iteri
+    (fun i (a : tmatch_arm) ->
+      let is_last = i = n - 1 in
+      let (tests, binds) =
+        compile_pat ctx ~scrut:"__m" ~ty:(TEnum ename_path) a.tpat
+      in
+      Buffer.add_string buf inner;
+      (if is_last && i > 0 then
+         Buffer.add_string buf "else {\n"
+       else if is_last then
+         Buffer.add_string buf "{\n"
+       else begin
+         Buffer.add_string buf (if i = 0 then "if (" else "else if (");
+         Buffer.add_string buf (String.concat " && " tests);
+         Buffer.add_string buf ") {\n"
+       end);
+      List.iter (fun (name, lval, ty) ->
+          Buffer.add_string buf body_indent;
+          Buffer.add_string buf (c_decl ty name);
+          Buffer.add_string buf " = ";
+          Buffer.add_string buf lval;
+          Buffer.add_string buf ";\n")
+        binds;
+      emit_arm_result ctx assign_to buf body_indent a;
+      Buffer.add_string buf inner;
+      Buffer.add_string buf "}\n")
+    arms;
+  Buffer.add_string buf indent;
+  Buffer.add_string buf "}\n"
 
 (* Destructuring binding: introduce an inner C block, declare a `__t` temp
    of the tuple struct type, fill it from the RHS, then assign each hoisted

@@ -54,6 +54,26 @@ fn area(s: Shape) -> int {
     };
 }
 
+// Nested patterns: match through a layer of variants in one arm
+// (`Node(Shape::Circle(r))`).  Exhaustiveness is checked *through* the
+// nesting — the compiler proves every (outer, inner) combination is
+// covered, so no `_` fallback is needed here.  Drop any inner arm and
+// it reports the exact missing pattern, e.g. `Node(Square)`.
+pub enum Tree {
+    | Leaf(int)
+    | Node(Shape)
+}
+
+fn tree_kind(t: Tree) -> int {
+    return match t {
+        | Tree::Leaf(n) => n
+        | Tree::Node(Shape::Circle(r)) => r
+        | Tree::Node(Shape::Square) => 0
+        | Tree::Node(Shape::Rect(w, h)) => w + h
+        | Tree::Node(Shape::Triangle { base, height }) => base + height
+    };
+}
+
 fn main() {
     let d = Direction::East;
     describe_dir(d);                        // "sideways"
@@ -80,4 +100,9 @@ fn main() {
         | Shape::Triangle { base, height } => base + height
     };
     println(total);                           // 3
+
+    // Nested patterns — one arm reaches through two variant layers.
+    println(tree_kind(Tree::Leaf(42)));               // 42
+    println(tree_kind(Tree::Node(Shape::Circle(5)))); // 5
+    println(tree_kind(Tree::Node(Shape::Rect(3, 4)))); // 7
 }

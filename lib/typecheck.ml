@@ -641,6 +641,242 @@ let resolve_call_dispatch ~pos ~expected ctx ~resolved_mod ~arg_tys
   end
 
 
+(* ===== Pattern matching: lowering + exhaustiveness/redundancy ===== *)
+
+(* Lower an Ast.pattern against the type of the value it matches, into a
+   tpattern plus the list of (bind-name, type) it introduces.  Recurses
+   through nested variant patterns (`Outer::Wrap(Inner::A(n))`): each
+   field sub-pattern is lowered against that field's type.  Validates
+   that a variant pattern's type really is the matching enum, that the
+   variant exists, and that tuple/struct bind syntax matches the variant
+   kind. *)
+let rec lower_pattern ctx (value_ty : typ) (pat : Ast.pattern)
+    : tpattern * (string * typ) list =
+  match pat with
+  | Ast.PWildcard _ -> (TPWildcard, [])
+  | Ast.PVar (n, _) -> (TPVar n, [ (n, value_ty) ])
+  | Ast.PVariant { tname; variant; binds; pos = ppos } ->
+      let path =
+        match value_ty with
+        | TEnum p -> p
+        | other ->
+            Error.failf ppos
+              "variant pattern '%s' but the matched value has type %s"
+              variant (typ_name other)
+      in
+      let e_sig =
+        match resolve_enum_by_path ctx path with
+        | Some e -> e
+        | None -> Error.failf ppos "internal: enum '%s' missing from index"
+                    (String.concat "::" path)
+      in
+      let resolved =
+        match lookup_enum ctx tname with
+        | Some e' -> e'.ename_path
+        | None ->
+            Error.failf ppos "unknown enum '%s' in pattern"
+              (String.concat "::" tname)
+      in
+      if not (Mono.is_instance_of resolved path) then
+        Error.failf ppos
+          "pattern matches '%s' but the value has type '%s'"
+          (String.concat "::" resolved) (String.concat "::" path);
+      let (tag, vsig) =
+        match find_variant e_sig variant with
+        | Some r -> r
+        | None ->
+            Error.failf ppos "enum '%s' has no variant '%s'"
+              (String.concat "::" path) variant
+      in
+      (* (field-name, field-type, sub-pattern) in declaration order. *)
+      let ordered =
+        match binds, vsig.vsis_struct with
+        | Ast.PBTuple ps, false ->
+            let expected_n = List.length vsig.vsfields in
+            let got = List.length ps in
+            if expected_n <> got then
+              Error.failf ppos
+                "variant '%s' has %d field(s), pattern binds %d"
+                variant expected_n got;
+            List.map2 (fun (fn, ft) p -> (fn, ft, p)) vsig.vsfields ps
+        | Ast.PBStruct entries, true ->
+            let expected_names = List.map fst vsig.vsfields in
+            (match find_dup ~key:Fun.id (List.map fst entries) with
+             | Some n -> Error.failf ppos "duplicate field '%s' in pattern" n
+             | None -> ());
+            List.iter (fun (n, _) ->
+              if not (List.mem n expected_names) then
+                Error.failf ppos "variant '%s' has no field '%s'" variant n)
+              entries;
+            List.map (fun (fn, ft) ->
+              match List.assoc_opt fn entries with
+              | Some p -> (fn, ft, p)
+              | None -> (fn, ft, Ast.PWildcard ppos))
+              vsig.vsfields
+        | Ast.PBTuple _, true ->
+            Error.failf ppos
+              "variant '%s' is a struct variant; match it with \
+               '{ field: pat }', not '(...)'" variant
+        | Ast.PBStruct _, false ->
+            Error.failf ppos
+              "variant '%s' is a tuple variant; match it with \
+               '(...)', not '{ field: pat }'" variant
+      in
+      let lowered =
+        List.map (fun (fn, ft, sp) ->
+          let (tp, bs) = lower_pattern ctx ft sp in
+          ((fn, tp), bs))
+          ordered
+      in
+      (TPVariant { variant; tag; binds = List.map fst lowered },
+       List.concat_map snd lowered)
+
+(* Reduced pattern for the usefulness/exhaustiveness matrix (Maranget,
+   "Warnings for pattern matching").  Variable and wildcard binders both
+   match any value, so they collapse to [CWild]; a variant pattern keeps
+   its tag and field sub-patterns (declaration order).  Only enum-typed
+   columns carry constructors — fields of any other type can only be
+   bound (CWild), since exile has no literal patterns. *)
+type cpat = CWild | CCon of { tag : int; args : cpat list }
+
+let rec cpat_of_tpat : tpattern -> cpat = function
+  | TPWildcard | TPVar _ -> CWild
+  | TPVariant { tag; binds; _ } ->
+      CCon { tag; args = List.map (fun (_, p) -> cpat_of_tpat p) binds }
+
+(* Constructors of an enum type: (tag, field-types) per variant in
+   declaration order.  None for non-enum types — they have no
+   constructors and so always behave as a wildcard column. *)
+let enum_ctors ctx = function
+  | TEnum path ->
+      (match resolve_enum_by_path ctx path with
+       | Some e ->
+           Some (List.mapi (fun tag (vs : variant_sig) ->
+               (tag, List.map snd vs.vsfields)) e.evariants)
+       | None -> None)
+  | _ -> None
+
+let ctor_field_tys ctx ty tag =
+  match enum_ctors ctx ty with
+  | Some ctors -> (match List.assoc_opt tag ctors with Some fts -> fts | None -> [])
+  | None -> []
+
+(* Matrix row operations from the algorithm.  [specialize] keeps rows
+   whose first column matches constructor [tag] (expanding its [arity]
+   fields into the leading columns; a wildcard row expands to [arity]
+   wildcards); [default_matrix] keeps only wildcard-led rows, dropping
+   the first column. *)
+let specialize ~tag ~arity matrix =
+  List.filter_map (function
+    | CCon { tag = t; args } :: rest when t = tag -> Some (args @ rest)
+    | CCon _ :: _ -> None
+    | CWild :: rest -> Some (List.init arity (fun _ -> CWild) @ rest)
+    | [] -> assert false)
+    matrix
+
+let default_matrix matrix =
+  List.filter_map (function
+    | CWild :: rest -> Some rest
+    | CCon _ :: _ -> None
+    | [] -> assert false)
+    matrix
+
+let col0_tags matrix =
+  List.filter_map (function CCon { tag; _ } :: _ -> Some tag | _ -> None) matrix
+
+let rec split_at n xs =
+  if n <= 0 then ([], xs)
+  else match xs with
+    | [] -> ([], [])
+    | x :: rest -> let (a, b) = split_at (n - 1) rest in (x :: a, b)
+
+(* U(P, q): is row [q] useful w.r.t. matrix [matrix] (does it match a
+   value no row of [matrix] does)?  [types] gives each column's type.
+   Drives the redundant-arm check: arm i is redundant iff its row is
+   NOT useful w.r.t. the rows before it. *)
+let rec useful ctx types matrix q =
+  match types, q with
+  | [], [] -> matrix = []
+  | ty :: rest_t, CCon { tag; args } :: rest_q ->
+      let arity = List.length args in
+      useful ctx (ctor_field_tys ctx ty tag @ rest_t)
+        (specialize ~tag ~arity matrix) (args @ rest_q)
+  | ty :: rest_t, CWild :: rest_q ->
+      (match enum_ctors ctx ty with
+       | Some ctors when ctors <> [] ->
+           let present = col0_tags matrix in
+           if List.for_all (fun (tag, _) -> List.mem tag present) ctors then
+             List.exists (fun (tag, fts) ->
+               let arity = List.length fts in
+               useful ctx (fts @ rest_t) (specialize ~tag ~arity matrix)
+                 (List.init arity (fun _ -> CWild) @ rest_q))
+               ctors
+           else useful ctx rest_t (default_matrix matrix) rest_q
+       | _ -> useful ctx rest_t (default_matrix matrix) rest_q)
+  | _ -> assert false
+
+(* Witness of non-exhaustiveness: a value-pattern row that no row of
+   [matrix] matches, or None if [matrix] is exhaustive over [types]. *)
+let rec missing ctx types matrix =
+  match types with
+  | [] -> if matrix = [] then Some [] else None
+  | ty :: rest_t ->
+      (match enum_ctors ctx ty with
+       | Some ctors when ctors <> [] ->
+           let present = col0_tags matrix in
+           let absent =
+             List.filter (fun (tag, _) -> not (List.mem tag present)) ctors
+           in
+           if absent = [] then
+             let rec try_ctors = function
+               | [] -> None
+               | (tag, fts) :: more ->
+                   let arity = List.length fts in
+                   (match missing ctx (fts @ rest_t)
+                            (specialize ~tag ~arity matrix) with
+                    | Some w ->
+                        let (args, rest_w) = split_at arity w in
+                        Some (CCon { tag; args } :: rest_w)
+                    | None -> try_ctors more)
+             in
+             try_ctors ctors
+           else
+             (match missing ctx rest_t (default_matrix matrix) with
+              | None -> None
+              | Some w ->
+                  let (tag, fts) = List.hd absent in
+                  Some (CCon { tag;
+                               args = List.init (List.length fts)
+                                        (fun _ -> CWild) } :: w))
+       | _ ->
+           (match missing ctx rest_t (default_matrix matrix) with
+            | None -> None
+            | Some w -> Some (CWild :: w)))
+
+(* Render a witness pattern for the non-exhaustive error, e.g.
+   `Some(Triangle(_))` or `Shape::Rectangle { w: _, h: _ }`. *)
+let rec render_cpat ctx ty cp =
+  match cp, ty with
+  | CCon { tag; args }, TEnum path ->
+      (match resolve_enum_by_path ctx path with
+       | Some e ->
+           let vs = List.nth e.evariants tag in
+           if args = [] then vs.vsname
+           else if vs.vsis_struct then
+             vs.vsname ^ " { "
+             ^ String.concat ", "
+                 (List.map2 (fun (fn, ft) a ->
+                      fn ^ ": " ^ render_cpat ctx ft a) vs.vsfields args)
+             ^ " }"
+           else
+             vs.vsname ^ "("
+             ^ String.concat ", "
+                 (List.map2 (fun (_, ft) a -> render_cpat ctx ft a)
+                    vs.vsfields args)
+             ^ ")"
+       | None -> "_")
+  | _ -> "_"
+
 (* Elaborate Ast.expr → texpr.  Each typed node carries its type in
    `.ty`, so codegen never has to re-run typing.  Single source of
    truth for both type computation and tree elaboration — used to
@@ -904,166 +1140,41 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
             Error.failf match_pos
               "'match' requires an enum value, got %s" (typ_name other)
       in
-      let e_sig =
-        match resolve_enum_by_path ctx ename_path with
-        | Some e -> e
-        | None ->
-            Error.failf match_pos
-              "internal: enum '%s' missing from index"
-              (String.concat "::" ename_path)
-      in
-      let lower_subpat = function
-        | Ast.PWildcard _ -> TPWildcard
-        | Ast.PVar (n, _) -> TPVar n
-        | Ast.PVariant { pos = ppos; _ } ->
-            Error.failf ppos
-              "nested variant patterns are not yet supported"
-      in
       let tarms =
         List.map (fun (a : Ast.match_arm) ->
-          let (tpat, arm_env) =
-            match a.pat with
-            | Ast.PWildcard _ -> (TPWildcard, env)
-            | Ast.PVar (n, _) -> (TPVar n, (n, tscrut.ty) :: env)
-            | Ast.PVariant { tname; variant; binds; pos = ppos } ->
-                (* Pattern's enum must match (or be an instance of) the
-                   scrutinee's enum. *)
-                let resolved =
-                  match lookup_enum ctx tname with
-                  | Some e' -> e'.ename_path
-                  | None ->
-                      Error.failf ppos "unknown enum '%s' in pattern"
-                        (String.concat "::" tname)
-                in
-                if not (Mono.is_instance_of resolved ename_path) then
-                  Error.failf ppos
-                    "pattern matches '%s' but scrutinee has type '%s'"
-                    (String.concat "::" resolved)
-                    (String.concat "::" ename_path);
-                let (tag, vsig) =
-                  match find_variant e_sig variant with
-                  | Some r -> r
-                  | None ->
-                      Error.failf ppos "enum '%s' has no variant '%s'"
-                        (String.concat "::" ename_path) variant
-                in
-                (* Validate bind syntax against variant kind, then build
-                   ordered (name, sub-pattern) pairs. *)
-                let ordered_binds =
-                  match binds, vsig.vsis_struct with
-                  | Ast.PBTuple ps, false ->
-                      let expected_n = List.length vsig.vsfields in
-                      let got = List.length ps in
-                      if expected_n <> got then
-                        Error.failf ppos
-                          "variant '%s' has %d field(s), pattern binds %d"
-                          variant expected_n got;
-                      List.map2 (fun (n, _) p -> (n, p)) vsig.vsfields ps
-                  | Ast.PBStruct entries, true ->
-                      let expected_names = List.map fst vsig.vsfields in
-                      let got_names = List.map fst entries in
-                      (match find_dup ~key:Fun.id got_names with
-                       | Some n ->
-                           Error.failf ppos
-                             "duplicate field '%s' in pattern" n
-                       | None -> ());
-                      List.iter (fun (n, _) ->
-                        if not (List.mem n expected_names) then
-                          Error.failf ppos
-                            "variant '%s' has no field '%s'" variant n)
-                        entries;
-                      List.map (fun n ->
-                        match List.assoc_opt n entries with
-                        | Some p -> (n, p)
-                        | None -> (n, Ast.PWildcard ppos))
-                        expected_names
-                  | Ast.PBTuple _, true ->
-                      Error.failf ppos
-                        "variant '%s' is a struct variant; \
-                         match it with '{ field: pat }', not '(...)'"
-                        variant
-                  | Ast.PBStruct _, false ->
-                      Error.failf ppos
-                        "variant '%s' is a tuple variant; \
-                         match it with '(...)', not '{ field: pat }'"
-                        variant
-                in
-                let tbinds =
-                  List.map (fun (n, p) -> (n, lower_subpat p))
-                    ordered_binds
-                in
-                (* Duplicate bind name check across the pattern. *)
-                let bind_names =
-                  List.filter_map (fun (_, p) ->
-                    match p with Ast.PVar (n, _) -> Some n | _ -> None)
-                    ordered_binds
-                in
-                (match find_dup ~key:Fun.id bind_names with
-                 | Some n ->
-                     Error.failf ppos
-                       "duplicate bind name '%s' in pattern" n
-                 | None -> ());
-                let env' =
-                  List.fold_left2 (fun acc (_, bp) (_, ft) ->
-                    match bp with
-                    | Ast.PVar (n, _) -> (n, ft) :: acc
-                    | _ -> acc)
-                    env ordered_binds vsig.vsfields
-                in
-                (TPVariant { variant; tag; binds = tbinds }, env')
-          in
-          let tbody = elab_expr ~allow_void ctx arm_env a.body in
+          let (tpat, binds) = lower_pattern ctx tscrut.ty a.pat in
+          (* Bind names must be unique across the whole (possibly nested)
+             pattern, not just one level. *)
+          (match find_dup ~key:fst binds with
+           | Some n ->
+               Error.failf a.arm_pos "duplicate bind name '%s' in pattern" n
+           | None -> ());
+          let tbody = elab_expr ~allow_void ctx (binds @ env) a.body in
           { tpat; tbody; tdiverges = false; tarm_pos = a.arm_pos })
           arms
       in
-      (* Redundant-arm check: a variant matched twice, or any arm after
-         a catch-all (`_` / bare binding) that already covers everything,
-         is dead code (the variant-dup case also emits a C `duplicate
-         case value`).  Walk in source order tracking covered variants
-         and whether a catch-all has appeared. *)
-      ignore (
-        List.fold_left (fun (seen, caught_all) (a : Ast.match_arm) ->
-          if caught_all then
-            Error.failf a.arm_pos
-              "unreachable match arm: a previous '_' or binding already \
-               covers all remaining cases";
-          match a.pat with
-          | Ast.PWildcard _ | Ast.PVar _ -> (seen, true)
-          | Ast.PVariant { variant; pos = ppos; _ } ->
-              if List.mem variant seen then
-                Error.failf ppos
-                  "duplicate match arm for variant '%s'" variant;
-              (variant :: seen, caught_all))
-          ([], false) arms);
-      (* Exhaustiveness: every variant must be reached.  A wildcard or
-         bare-bind pattern covers all remaining variants. *)
-      let has_catchall =
-        List.exists (fun (a : Ast.match_arm) ->
-          match a.pat with
-          | Ast.PWildcard _ | Ast.PVar _ -> true
-          | _ -> false)
-          arms
+      (* Redundancy + exhaustiveness via the usefulness matrix (Maranget).
+         Each arm is one row of a single-column matrix; nested variant
+         patterns expand columns internally during specialization.  An
+         arm is redundant iff its row isn't useful w.r.t. the rows before
+         it; the match is non-exhaustive iff a wildcard value is still
+         useful, and the witness names a concrete uncovered pattern. *)
+      let rows =
+        List.map (fun (a : tmatch_arm) -> [ cpat_of_tpat a.tpat ]) tarms
       in
-      if not has_catchall then begin
-        let covered =
-          List.filter_map (fun (a : Ast.match_arm) ->
-            match a.pat with
-            | Ast.PVariant { variant; _ } -> Some variant
-            | _ -> None)
-            arms
-        in
-        let missing =
-          List.filter
-            (fun (vs : variant_sig) -> not (List.mem vs.vsname covered))
-            e_sig.evariants
-        in
-        if missing <> [] then
-          Error.failf match_pos
-            "non-exhaustive 'match': variant(s) %s not covered \
-             (add an arm or '_')"
-            (String.concat ", "
-               (List.map (fun (vs : variant_sig) -> vs.vsname) missing))
-      end;
+      List.iteri (fun i (a : Ast.match_arm) ->
+        let before = List.filteri (fun j _ -> j < i) rows in
+        if not (useful ctx [ tscrut.ty ] before (List.nth rows i)) then
+          Error.failf a.arm_pos
+            "unreachable match arm: earlier arms already cover this case")
+        arms;
+      (match missing ctx [ tscrut.ty ] rows with
+       | Some (w :: _) ->
+           Error.failf match_pos
+             "non-exhaustive 'match': pattern '%s' is not covered \
+              (add an arm or '_')"
+             (render_cpat ctx tscrut.ty w)
+       | _ -> ());
       (* All non-diverging arm bodies must agree on a type — pick the
          first as the witness. *)
       let non_div =

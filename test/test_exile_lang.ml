@@ -334,7 +334,7 @@ let () =
     \    let r = match e { | E::A => 1 | E::A => 2 | E::B => 3 };\n\
     \    println(r);\n\
      }\n"
-    "duplicate match arm for variant 'A'";
+    "unreachable match arm: earlier arms already cover this case";
 
   check_error "match arm after catch-all rejected as unreachable"
     "enum E { | A | B }\n\
@@ -343,7 +343,7 @@ let () =
     \    let r = match e { | _ => 1 | E::A => 2 };\n\
     \    println(r);\n\
      }\n"
-    "unreachable match arm: a previous '_' or binding already covers all remaining cases";
+    "unreachable match arm: earlier arms already cover this case";
 
   check_error "runaway monomorphization rejected"
     "fn f<T>(x: T) { f((x, x)); }\n\
@@ -888,7 +888,32 @@ let () =
 
   check_error "non-exhaustive match rejected"
     "enum E { | A | B }\nfn main() { let e = E::A; match e { | E::A => println(\"a\") } }\n"
-    "non-exhaustive 'match': variant(s) B not covered (add an arm or '_')";
+    "non-exhaustive 'match': pattern 'B' is not covered (add an arm or '_')";
+
+  check_error "non-exhaustive nested match names the missing pattern"
+    "enum Inner { | A(int) | B }\n\
+     enum Outer { | Wrap(Inner) | Empty }\n\
+     fn main() {\n\
+    \    let o = Outer::Empty;\n\
+    \    let r = match o { | Outer::Wrap(Inner::A(n)) => n | Outer::Empty => 0 };\n\
+    \    println(r);\n\
+     }\n"
+    "non-exhaustive 'match': pattern 'Wrap(B)' is not covered (add an arm or '_')";
+
+  check_error "redundant nested match arm rejected"
+    "enum Inner { | A(int) | B }\n\
+     enum Outer { | Wrap(Inner) | Empty }\n\
+     fn main() {\n\
+    \    let o = Outer::Empty;\n\
+    \    let r = match o { | Outer::Wrap(Inner::A(n)) => n \
+                          | Outer::Wrap(Inner::A(m)) => m | _ => 0 };\n\
+    \    println(r);\n\
+     }\n"
+    "unreachable match arm: earlier arms already cover this case";
+
+  (* Nested-pattern codegen correctness is exercised by execution in
+     examples/enums.exl (verify-host) — more robust than pinning the
+     decision-chain's exact C here. *)
 
   check_error "unknown variant in constructor rejected"
     "enum E { | A }\nfn main() { let e = E::Nope; }\n"
@@ -908,7 +933,7 @@ let () =
 
   check_error "pattern enum mismatch with scrutinee rejected"
     "enum A { | X }\nenum B { | Y }\nfn main() { let a = A::X; match a { | B::Y => println(\"b\") } }\n"
-    "pattern matches 'B' but scrutinee has type 'A'";
+    "pattern matches 'B' but the value has type 'A'";
 
   check_error "print of enum value rejected"
     "enum E { | A }\nfn main() { let e = E::A; println(e); }\n"
