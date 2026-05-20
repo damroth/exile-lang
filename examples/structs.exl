@@ -29,23 +29,23 @@ fn taller(r: Rect, by: int) -> Rect {
 
 fn main() {
     let p = make_point(3, 4);
-    print(p.x);
-    print(p.y);
+    println(p.x);
+    println(p.y);
 
     let q = shift(p, 10, 20);
-    print(q.x);
-    print(q.y);
+    println(q.x);
+    println(q.y);
 
     let r = Rect {
         origin: make_point(0, 0),
         width: 8,
         height: 5,
     };
-    print(area(r));
+    println(area(r));
 
     r.width = 10;
-    print(area(r));
+    println(area(r));
 
     let r2 = taller(r, 3);
-    print(area(r2));            // width 10 * height 8 = 80
+    println(area(r2));            // width 10 * height 8 = 80
 }

@@ -176,20 +176,23 @@ let printf_int_spec = function
   | TCInt { signed = false } -> Some ("%u", None)
   | _ -> None
 
-let emit_print : builtin_emit =
-  fun _ctx buf args emit_arg ->
+(* `print` (no newline) and `println` (trailing '\n') share emission;
+   [newline] picks the variant.  For `@debug` aggregates the synthesized
+   printer emits the value, and println appends a separate `printf("\n")`. *)
+let emit_print_impl ~newline buf args emit_arg =
+    let nl = if newline then "\\n" else "" in
     let arg = List.hd args in
     match arg.ty with
     | TStruct _ | TEnum _ ->
         (* `@debug` aggregate — call the synthesized printer.  Typecheck
            rejects non-debug aggregates so anything reaching here has
-           had its printer emitted up top.  Trailing newline matches the
-           scalar-print contract. *)
+           had its printer emitted up top. *)
         let fn = mangle_typ arg.ty ^ "__debug" in
         Buffer.add_string buf fn;
         Buffer.add_char buf '(';
         emit_arg arg;
-        Buffer.add_string buf "); printf(\"\\n\")"
+        Buffer.add_char buf ')';
+        if newline then Buffer.add_string buf "; printf(\"\\n\")"
     | _ ->
       let (fmt, cast) = match arg.ty with
         | TBool -> ("%d", None)
@@ -199,7 +202,7 @@ let emit_print : builtin_emit =
              | Some spec -> spec
              | None -> assert false  (* typecheck rejected this earlier *))
       in
-      Printf.bprintf buf "printf(\"%s\\n\", " fmt;
+      Printf.bprintf buf "printf(\"%s%s\", " fmt nl;
       (match cast with
        | Some c ->
            Printf.bprintf buf "(%s)(" c;
@@ -208,69 +211,37 @@ let emit_print : builtin_emit =
        | None -> emit_arg arg);
       Buffer.add_char buf ')'
 
+let emit_print : builtin_emit =
+  fun _ctx buf args emit_arg -> emit_print_impl ~newline:false buf args emit_arg
+
+let emit_println : builtin_emit =
+  fun _ctx buf args emit_arg -> emit_print_impl ~newline:true buf args emit_arg
+
 let emit_free : builtin_emit =
   fun _ctx buf args emit_arg ->
     Buffer.add_string buf "free(";
     emit_arg (List.hd args);
     Buffer.add_char buf ')'
 
-(* Render a typ user-facing.  Delegates to `Ir.typ_name` for everything
-   except generic enum/struct instances, which `typ_name` shows in
-   mangled form (`Result_i32_str`); here we consult the indexes for the
-   matching sig and produce `Result<i32, str>` via the saved
-   `einstance_args` / `sinstance_args`. *)
-let rec render_typ_user_facing ctx t =
-  match t with
-  | TEnum path ->
-      (match List.find_opt (fun (e : enum_sig) -> e.ename_path = path)
-               ctx.enum_index with
-       | Some { einstance_args = Some args; _ } when args <> [] ->
-           render_named_with_args ctx path args
-       | _ -> typ_name t)
-  | TStruct path ->
-      (match List.find_opt (fun (s : struct_sig) -> s.sname_path = path)
-               ctx.struct_index with
-       | Some { sinstance_args = Some args; _ } when args <> [] ->
-           render_named_with_args ctx path args
-       | _ -> typ_name t)
-  | TPtr inner -> "*" ^ render_typ_user_facing ctx inner
-  | TTuple ts ->
-      "(" ^ String.concat ", " (List.map (render_typ_user_facing ctx) ts) ^ ")"
-  | _ -> typ_name t
-and render_named_with_args ctx path args =
-  let last = List.nth path (List.length path - 1) in
-  let suffix = "_" ^ String.concat "_" (List.map mangle_typ args) in
-  let last_len = String.length last in
-  let suf_len = String.length suffix in
-  let base =
-    if last_len > suf_len
-       && String.sub last (last_len - suf_len) suf_len = suffix
-    then String.sub last 0 (last_len - suf_len)
-    else last
-  in
-  let prefix =
-    let rec init = function [] | [_] -> [] | x :: rest -> x :: init rest in
-    init path
-  in
-  let qualified = String.concat "::" (prefix @ [base]) in
-  let arg_strs = List.map (render_typ_user_facing ctx) args in
-  qualified ^ "<" ^ String.concat ", " arg_strs ^ ">"
-
 (* `type_name(expr)` lowers to a `const char *` string literal of the
-   arg's user-facing type name.  The arg's value is not consumed —
-   `sizeof` references it without evaluating (no side effects in C89,
-   no VLAs in our backend) so cc still counts every variable as used. *)
+   arg's user-facing type name (rendered by `Ir.render_typ_user_facing`).
+   The arg's value is not consumed — `sizeof` references it without
+   evaluating (no side effects in C89, no VLAs in our backend) so cc
+   still counts every variable as used. *)
 let emit_type_name : builtin_emit =
   fun ctx buf args emit_arg ->
     let arg = List.hd args in
     Buffer.add_string buf "((void)sizeof(";
     emit_arg arg;
     Buffer.add_string buf "), \"";
-    Buffer.add_string buf (escape_c (render_typ_user_facing ctx arg.ty));
+    Buffer.add_string buf (escape_c
+      (render_typ_user_facing ~structs:ctx.struct_index
+         ~enums:ctx.enum_index arg.ty));
     Buffer.add_string buf "\")"
 
 let builtin_emitters : (string * builtin_emit) list = [
   ("print", emit_print);
+  ("println", emit_println);
   ("free", emit_free);
   ("type_name", emit_type_name);
 ]

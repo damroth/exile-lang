@@ -10,8 +10,8 @@
 struct Point { x: int, y: int }
 
 fn dbg<T>(label: str, x: T) -> T {
-    print(label);
-    print(type_name(x));
+    println(label);
+    println(type_name(x));
     return x;
 }
 
@@ -21,18 +21,18 @@ fn main() {
     let c: int = -1;
     let s: str = "hi";
 
-    print(type_name(a));                            // i8
-    print(type_name(b));                            // u16
-    print(type_name(c));                            // i32
-    print(type_name(s));                            // str
-    print(type_name(42));                           // i32 (literal default)
+    println(type_name(a));                            // i8
+    println(type_name(b));                            // u16
+    println(type_name(c));                            // i32
+    println(type_name(s));                            // str
+    println(type_name(42));                           // i32 (literal default)
 
     let p = Point { x: 1, y: 2 };
-    print(type_name(p));                            // Point
-    print(type_name(&p));                           // *Point
+    println(type_name(p));                            // Point
+    println(type_name(&p));                           // *Point
 
     let r: Result<int, str> = Result::Ok(7);
-    print(type_name(r));                            // Result<i32, str>
+    println(type_name(r));                            // Result<i32, str>
 
     // Generic fn: each instance carries its concrete name.
     let _v1: int = dbg("v1:", 42);                  // v1: \n i32

@@ -29,18 +29,18 @@ pub enum Shape {
 
 fn describe_dir(d: Direction) {
     match d {
-        | Direction::North => print("up")
-        | Direction::South => print("down")
-        | _ => print("sideways")           // East and West together
+        | Direction::North => println("up")
+        | Direction::South => println("down")
+        | _ => println("sideways")           // East and West together
     }
 }
 
 fn describe_shape(s: Shape) {
     match s {
-        | Shape::Square => print("a square")
-        | Shape::Circle(r) => print(r)              // r : int
-        | Shape::Rect(w, _) => print(w)             // height ignored
-        | Shape::Triangle { base, height: h } => print(base + h)
+        | Shape::Square => println("a square")
+        | Shape::Circle(r) => println(r)              // r : int
+        | Shape::Rect(w, _) => println(w)             // height ignored
+        | Shape::Triangle { base, height: h } => println(base + h)
                                                     // shorthand + rename
     }
 }
@@ -65,9 +65,9 @@ fn main() {
     describe_shape(Shape::Circle(7));       // 7
     describe_shape(Shape::Rect(10, 20));    // 10
 
-    print(area(Shape::Circle(5)));          // 75 (5 * 5 * 3)
-    print(area(Shape::Rect(3, 4)));         // 12
-    print(area(Shape::Triangle { base: 6, height: 8 }));  // 24
+    println(area(Shape::Circle(5)));          // 75 (5 * 5 * 3)
+    println(area(Shape::Rect(3, 4)));         // 12
+    println(area(Shape::Triangle { base: 6, height: 8 }));  // 24
     describe_shape(Shape::Triangle { base: 1, height: 2 }); // 3
 
     // match-as-expression on a let RHS, with another match nested in
@@ -79,5 +79,5 @@ fn main() {
         | Shape::Rect(w, h) => w + h
         | Shape::Triangle { base, height } => base + height
     };
-    print(total);                           // 3
+    println(total);                           // 3
 }

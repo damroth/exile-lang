@@ -27,10 +27,10 @@ fn negate(x: c_int) -> c_int {
 }
 
 fn main() {
-    print(raw::apply_int(21, double_it) as int);     // 42
-    print(raw::apply_int(7, negate) as int);         // -7
+    println(raw::apply_int(21, double_it) as int);     // 42
+    println(raw::apply_int(7, negate) as int);         // -7
 
     // Function pointer as a let-bound value, called indirectly.
     let f: fn(c_int) -> c_int = double_it;
-    print(f(50) as int);                             // 100
+    println(f(50) as int);                             // 100
 }

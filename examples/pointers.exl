@@ -25,17 +25,17 @@ fn swap(a: *int, b: *int) {
 fn main() {
     let p = Point { x: 1, y: 2 };
     shift(&p, 10, 20);
-    print(p.x);
-    print(p.y);
+    println(p.x);
+    println(p.y);
 
     let n = 5;
-    print(deref_int(&n));
+    println(deref_int(&n));
     set_via_ptr(&n, 99);
-    print(n);
+    println(n);
 
     let x = 1;
     let y = 2;
     swap(&x, &y);
-    print(x);
-    print(y);
+    println(x);
+    println(y);
 }

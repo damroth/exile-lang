@@ -1,6 +1,8 @@
 // `++` is a compile-time string concat operator.  Both sides must be
-// string literals (or chains of literals) — the compiler folds them
-// into a single constant in the emitted C, with zero runtime cost.
+// compile-time-constant strings — a string literal, a chain of them, or
+// a `type_name(expr)` call (also a compile-time constant) — and the
+// compiler folds them into a single constant in the emitted C, with
+// zero runtime cost.
 //
 // Runtime concat is intentionally a separate facility going through
 // an explicit `Allocator` (post-MVP), so the alloc cost is visible at
@@ -13,14 +15,19 @@
 fn main() {
     // Two-piece concat.
     let greeting: str = "Hello, " ++ "World!";
-    print(greeting);                                // Hello, World!
+    println(greeting);                                // Hello, World!
 
     // Chain of pieces — folded left-to-right at compile time into one
     // string constant.
     let banner: str = "===" ++ " exile-lang " ++ "===";
-    print(banner);                                  // === exile-lang ===
+    println(banner);                                  // === exile-lang ===
 
     // Useful for version strings, path prefixes, etc.
     let version: str = "v" ++ "0" ++ "." ++ "4" ++ "." ++ "0";
-    print(version);                                 // v0.4.0
+    println(version);                                 // v0.4.0
+
+    // `type_name(expr)` is a compile-time constant too, so it folds into
+    // a `++` chain — handy for labels and debug output.
+    let labelled: str = "type: " ++ type_name(42);
+    println(labelled);                                // type: i32
 }

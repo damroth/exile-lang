@@ -14,7 +14,7 @@ mod math {
 
 mod greet {
     pub fn hi(name: str) {
-        print(name);
+        println(name);
     }
 }
 
@@ -25,8 +25,8 @@ mod greet {
 pub use math::double;
 
 fn main() {
-    print(math::double(21));
-    print(math::double_then_bump(10));
-    print(double(15));                       // 30 — same fn, no `math::`
+    println(math::double(21));
+    println(math::double_then_bump(10));
+    println(double(15));                       // 30 — same fn, no `math::`
     greet::hi("hello from modules");
 }

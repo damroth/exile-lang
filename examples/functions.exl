@@ -17,12 +17,12 @@ fn power(base: int, exp: int) -> int {
 }
 
 fn greet(name: str) {
-    print(name);
+    println(name);
 }
 
 fn main() {
-    print(add(3, 4));
-    print(square(5));
-    print(power(2, 10));
+    println(add(3, 4));
+    println(square(5));
+    println(power(2, 10));
     greet("hello from functions");
 }

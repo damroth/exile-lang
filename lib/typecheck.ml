@@ -409,9 +409,11 @@ let enum_is_debug (ctx : fn_ctx) path =
   List.exists (fun (e : enum_sig) ->
     e.ename_path = path && e.eis_debug) ctx.enums
 
-let builtin_print = {
-  bname = "print";
-  bcheck = (fun ~ctx ~pos ~args ~allow_void:_ ->
+(* `print` and `println` share the same one-printable-argument contract;
+   they differ only in codegen (trailing newline).  [name] flows into the
+   arity diagnostic so a misused `println(a, b)` reports `println`, not
+   `print`. *)
+let print_like_bcheck ~name = fun ~ctx ~pos ~args ~allow_void:_ ->
     match List.map (fun (a : texpr) -> a.ty) args with
     | [ TTuple _ ] ->
         Error.failf pos
@@ -448,9 +450,12 @@ let builtin_print = {
            first (e.g. `as int`)" (typ_name t)
     | [_] -> t_i32
     | tys ->
-        Error.failf pos "print() takes exactly one argument, got %d"
-          (List.length tys));
-}
+        Error.failf pos "%s() takes exactly one argument, got %d"
+          name (List.length tys)
+
+let builtin_print = { bname = "print"; bcheck = print_like_bcheck ~name:"print" }
+let builtin_println =
+  { bname = "println"; bcheck = print_like_bcheck ~name:"println" }
 
 let builtin_free = {
   bname = "free";
@@ -496,7 +501,8 @@ let builtin_type_name = {
           (List.length tys));
 }
 
-let builtins = [ builtin_print; builtin_free; builtin_type_name ]
+let builtins =
+  [ builtin_print; builtin_println; builtin_free; builtin_type_name ]
 
 let lookup_builtin = function
   | [ name ] -> List.find_opt (fun b -> b.bname = name) builtins
@@ -656,16 +662,23 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           (typ_name sub'.ty);
       { e = TNeg sub'; ty = sub'.ty; pos }
   | Ast.BinOp (Ast.Concat, l, r, _) ->
-      (* Compile-time string concat: both sides must reduce to a string
-         literal at elab time.  Recursion folds bottom-up so a chain like
-         `"a" ++ "b" ++ "c"` collapses to a single `TStringLit "abc"`.
-         For runtime concat use an Allocator method (`@must_use` Result
-         return), which is intentionally separate so the alloc cost is
-         visible at the call site. *)
+      (* Compile-time string concat: both sides must reduce to a
+         compile-time-constant string at elab time.  That's a string
+         literal, or a `type_name(expr)` call (its result is a `.rodata`
+         constant — rendered here so `type_name(x) ++ "\n"` folds).
+         Recursion folds bottom-up so `"a" ++ "b" ++ "c"` collapses to a
+         single `TStringLit "abc"`.  For runtime concat use an Allocator
+         method (`@must_use` Result return), kept separate so the alloc
+         cost stays visible at the call site. *)
       let l' = elab_expr ctx env l in
       let r' = elab_expr ctx env r in
       let extract (e : texpr) =
-        match e.e with TStringLit s -> Some s | _ -> None
+        match e.e with
+        | TStringLit s -> Some s
+        | TBuiltinCall { name = "type_name"; args = [ a ] } ->
+            Some (render_typ_user_facing ~structs:ctx.structs
+                    ~enums:ctx.enums a.ty)
+        | _ -> None
       in
       (match extract l', extract r' with
        | Some sl, Some sr ->

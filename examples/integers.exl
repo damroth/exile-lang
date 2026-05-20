@@ -7,18 +7,18 @@ fn main() {
     let y: u16 = 50000;
     let z: u32 = 3000000000;
 
-    print(a);
-    print(b);
-    print(c);
-    print(x);
-    print(y);
-    print(z);
+    println(a);
+    println(b);
+    println(c);
+    println(x);
+    println(y);
+    println(z);
 
     let big: i32 = 1000;
     let narrowed: i8 = big as i8;
-    print(narrowed);
+    println(narrowed);
 
     let small: i8 = 5;
     let widened: i32 = small as i32;
-    print(widened);
+    println(widened);
 }

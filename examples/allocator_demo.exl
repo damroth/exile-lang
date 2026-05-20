@@ -27,12 +27,12 @@ fn main() {
     // let annotation since the call has no constraining args.
     let p: *int = a.alloc();
     if p == null {
-        print(-1);
+        println(-1);
     } else {
         // Store and read back through the pointer to confirm the
         // memory is real and writable.
         *p = 42;
-        print(*p);                          // 42
+        println(*p);                          // 42
 
         a.free(p);
     }
@@ -42,7 +42,7 @@ fn main() {
     let q: *bool = a.alloc();
     if q != null {
         *q = true;
-        if *q { print(1); } else { print(0); }   // 1
+        if *q { println(1); } else { println(0); }   // 1
         a.free(q);
     }
 }

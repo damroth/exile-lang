@@ -313,6 +313,50 @@ let rec mangle_typ = function
 
 let tuple_struct_name ts = "ex_" ^ mangle_typ (TTuple ts)
 
+(* User-facing type rendering for `type_name(expr)` and error messages.
+   Delegates to [typ_name] for everything except generic enum/struct
+   instances, which [typ_name] would show in mangled form
+   (`Result_i32_str`); here we consult the [structs] / [enums] indexes
+   for the matching sig and reconstruct `Result<i32, str>` from the saved
+   `einstance_args` / `sinstance_args`.  Pure over the indexes so both
+   Typecheck (compile-time `++` folding of `type_name`) and Codegen can
+   share it. *)
+let rec render_typ_user_facing ~structs ~enums t =
+  match t with
+  | TEnum path ->
+      (match List.find_opt (fun (e : enum_sig) -> e.ename_path = path) enums with
+       | Some { einstance_args = Some args; _ } when args <> [] ->
+           render_named_with_args ~structs ~enums path args
+       | _ -> typ_name t)
+  | TStruct path ->
+      (match List.find_opt (fun (s : struct_sig) -> s.sname_path = path) structs with
+       | Some { sinstance_args = Some args; _ } when args <> [] ->
+           render_named_with_args ~structs ~enums path args
+       | _ -> typ_name t)
+  | TPtr inner -> "*" ^ render_typ_user_facing ~structs ~enums inner
+  | TTuple ts ->
+      "(" ^ String.concat ", "
+              (List.map (render_typ_user_facing ~structs ~enums) ts) ^ ")"
+  | _ -> typ_name t
+and render_named_with_args ~structs ~enums path args =
+  let last = List.nth path (List.length path - 1) in
+  let suffix = "_" ^ String.concat "_" (List.map mangle_typ args) in
+  let last_len = String.length last in
+  let suf_len = String.length suffix in
+  let base =
+    if last_len > suf_len
+       && String.sub last (last_len - suf_len) suf_len = suffix
+    then String.sub last 0 (last_len - suf_len)
+    else last
+  in
+  let prefix =
+    let rec init = function [] | [_] -> [] | x :: rest -> x :: init rest in
+    init path
+  in
+  let qualified = String.concat "::" (prefix @ [base]) in
+  let arg_strs = List.map (render_typ_user_facing ~structs ~enums) args in
+  qualified ^ "<" ^ String.concat ", " arg_strs ^ ">"
+
 (* Bottom-up tree rebuilder: structural constructors (TPtr / TTuple /
    TFnPtr) recurse internally; [f] is applied at every leaf type and
    returns its replacement.  Use this when a transformation only

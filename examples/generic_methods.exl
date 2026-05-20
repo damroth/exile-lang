@@ -36,20 +36,20 @@ impl Box {
 fn main() {
     // Two instances of `id`: ex_id_i32 and ex_id_bool.  Repeated
     // calls of the same shape reuse the cached instance.
-    print(id(42));                              // 42
-    print(id(7));                               // 7
-    if id(true) { print(1); } else { print(0); }  // 1
+    println(id(42));                              // 42
+    println(id(7));                               // 7
+    if id(true) { println(1); } else { println(0); }  // 1
 
     // Bidirectional: `T = int` inferred from the let annotation.
     let p: *int = make_null();
-    if p == null { print(100); } else { print(0); }   // 100
+    if p == null { println(100); } else { println(0); }   // 100
 
     // Generic method dispatch through `.`-syntax.  Two instances of
     // first: Box__first_i32 and Box__first_bool.
     let b = Box { value: 99 };
-    print(b.first(11));                         // 11
-    if b.first(false) { print(1); } else { print(0); }  // 0
+    println(b.first(11));                         // 11
+    if b.first(false) { println(1); } else { println(0); }  // 0
 
     // Mixed in with a non-generic method on the same impl block.
-    print(b.value_of());                        // 99
+    println(b.value_of());                        // 99
 }

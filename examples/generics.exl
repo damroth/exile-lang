@@ -58,21 +58,21 @@ fn read_doubled(ok: bool) -> Result<int, IoErr> {
 
 fn describe(r: Result<int, IoErr>) {
     match r {
-        | Result::Ok(v)  => print(v)
-        | Result::Err(_) => print(0)              // payload ignored
+        | Result::Ok(v)  => println(v)
+        | Result::Err(_) => println(0)              // payload ignored
     }
 }
 
 fn main() {
     // Generic struct: A = int, B = str inferred from field values.
     let p = Pair { fst: 5, snd: "hi" };
-    print(p.fst);                                  // 5
+    println(p.fst);                                  // 5
 
     // Prelude Option<T>: T = int from the payload.
     let some = Option::Some(7);
     let none: Option<int> = Option::None;          // T pinned by ann
-    print(first_int_or(99, some));                 // 7
-    print(first_int_or(99, none));                 // 99
+    println(first_int_or(99, some));                 // 7
+    println(first_int_or(99, none));                 // 99
 
     // Prelude Result<T, E>: T from payload, E from return type
     // (bidirectional propagation through `return`).
@@ -81,12 +81,12 @@ fn main() {
 
     // `try` chains: incr_opt(Some 7) → Some 8;  incr_opt(None) → None.
     match incr_opt(some) {
-        | Option::Some(x) => print(x)              // 8
-        | Option::None    => print(-1)
+        | Option::Some(x) => println(x)              // 8
+        | Option::None    => println(-1)
     }
     match incr_opt(none) {
-        | Option::Some(x) => print(x)
-        | Option::None    => print(-1)             // -1
+        | Option::Some(x) => println(x)
+        | Option::None    => println(-1)             // -1
     }
 
     // `try` on Result: read_doubled(true) doubles the Ok payload;

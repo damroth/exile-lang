@@ -32,10 +32,10 @@ impl Point {
 fn main() {
     let p = Point::origin();
     p.shift(3, 4);
-    print(p.area());            // 12
+    println(p.area());            // 12
 
     let q: *Point = &p;
-    print(q.area());            // auto-deref: same 12
+    println(q.area());            // auto-deref: same 12
 
-    print(Point::area(p));      // UFCS form
+    println(Point::area(p));      // UFCS form
 }

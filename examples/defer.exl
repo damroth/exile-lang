@@ -1,43 +1,43 @@
 fn lifo() {
-    defer print("third");
-    defer print("second");
-    defer print("first");
-    print("body");
+    defer println("third");
+    defer println("second");
+    defer println("first");
+    println("body");
 }
 
 fn block_defer() {
-    defer { print("a"); print("b"); print("c"); }
-    print("body");
+    defer { println("a"); println("b"); println("c"); }
+    println("body");
 }
 
 fn early_exit(n: int) -> int {
-    defer print("outer cleanup");
+    defer println("outer cleanup");
     if n > 0 {
-        defer print("inner cleanup");
+        defer println("inner cleanup");
         return n * 2;
     }
     return 0;
 }
 
 fn void_early_exit(skip: bool) {
-    defer print("cleanup");
+    defer println("cleanup");
     if skip {
-        print("skipped");
+        println("skipped");
         return;
     }
-    print("worked");
+    println("worked");
 }
 
 fn main() {
     lifo();
-    print("---");
+    println("---");
     block_defer();
-    print("---");
-    print(early_exit(5));
-    print("---");
-    print(early_exit(-3));
-    print("---");
+    println("---");
+    println(early_exit(5));
+    println("---");
+    println(early_exit(-3));
+    println("---");
     void_early_exit(true);
-    print("---");
+    println("---");
     void_early_exit(false);
 }

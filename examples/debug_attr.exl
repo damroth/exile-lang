@@ -32,10 +32,10 @@ fn main() {
     let p = Point { x: 3, y: 4 };
     let r = Rect { origin: p, width: 100, height: 50 };
 
-    print(p);                                       // Point { x: 3, y: 4 }
-    print(r);                                       // Rect { origin: Point { x: 3, y: 4 }, width: 100, height: 50 }
+    println(p);                                       // Point { x: 3, y: 4 }
+    println(r);                                       // Rect { origin: Point { x: 3, y: 4 }, width: 100, height: 50 }
 
-    print(Shape::Circle(7));                        // Shape::Circle(7)
-    print(Shape::Rectangle { w: 80, h: 20 });       // Shape::Rectangle { w: 80, h: 20 }
-    print(Shape::None);                             // Shape::None
+    println(Shape::Circle(7));                        // Shape::Circle(7)
+    println(Shape::Rectangle { w: 80, h: 20 });       // Shape::Rectangle { w: 80, h: 20 }
+    println(Shape::None);                             // Shape::None
 }

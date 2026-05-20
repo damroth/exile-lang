@@ -31,14 +31,14 @@ enum Maybe<T> {
 }
 
 fn main() {
-    print(id(7));                                // 7
+    println(id(7));                                // 7
     let p = Pair { fst: 42, snd: true };
-    print(p.fst);                                // 42
-    if p.snd { print(1); } else { print(0); }    // 1
+    println(p.fst);                                // 42
+    if p.snd { println(1); } else { println(0); }    // 1
 
     let m: Maybe<int> = Maybe::Just(99);
     match m {
-        | Maybe::Just(n)  => print(n)            // 99
-        | Maybe::Nothing  => print(-1)
+        | Maybe::Just(n)  => println(n)            // 99
+        | Maybe::Nothing  => println(-1)
     }
 }

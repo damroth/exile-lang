@@ -14,6 +14,6 @@ pub mod raw {
 
 fn main() {
     let lib: *Library = raw::lib_open();
-    print(raw::lib_use(lib));      // 100
+    println(raw::lib_use(lib));      // 100
     raw::lib_close(lib);
 }

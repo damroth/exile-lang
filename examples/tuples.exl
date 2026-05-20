@@ -22,18 +22,18 @@ fn label_score(score: int) -> (str, int) {
 
 fn main() {
     let (a, b) = split(5);
-    print(a);
-    print(b);
+    println(a);
+    println(b);
 
     let (lo, hi) = min_max(7, 3);
-    print(lo);
-    print(hi);
+    println(lo);
+    println(hi);
 
     let (grade, points) = label_score(85);
-    print(grade);
-    print(points);
+    println(grade);
+    println(points);
 
     let (x, y) = (10, 20);
-    print(x);
-    print(y);
+    println(x);
+    println(y);
 }

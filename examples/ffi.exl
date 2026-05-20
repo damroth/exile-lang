@@ -18,7 +18,7 @@ pub mod raw {
 }
 
 fn main() {
-    print(raw::add(40, 2));        // 42
-    print(raw::square(7));         // 49
+    println(raw::add(40, 2));        // 42
+    println(raw::square(7));         // 49
     raw::shout();                  // "HEY"
 }

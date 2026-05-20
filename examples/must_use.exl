@@ -25,15 +25,15 @@ fn try_div(n: int, d: int) -> Result<int, str> {
 fn main() {
     // Captured — no warning.
     let c: int = checksum(42);
-    print(c);                                       // 1309
+    println(c);                                       // 1309
 
     // Explicit discard — `_` opts out of must_use.
     let _ignored: int = checksum(99);
 
     // Result handled via `match` — used, no warning.
     match try_div(10, 2) {
-        | Result::Ok(q)  => print(q)                // 5
-        | Result::Err(_) => print(-1)
+        | Result::Ok(q)  => println(q)                // 5
+        | Result::Err(_) => println(-1)
     }
 
     // Uncomment any of these to see the linter fire:

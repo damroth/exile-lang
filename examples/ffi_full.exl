@@ -24,7 +24,7 @@ pub mod raw {
 
 fn main() {
     let lib: *Library = raw::open_lib("pretend.library", PRETEND_VERSION);
-    print(raw::lib_id(lib) as int);          // 0xCAFE = 51966
-    print(PRETEND_FLAGS as int);             // 0x03 = 3
+    println(raw::lib_id(lib) as int);          // 0xCAFE = 51966
+    println(PRETEND_FLAGS as int);             // 0x03 = 3
     raw::close_lib(lib);
 }
