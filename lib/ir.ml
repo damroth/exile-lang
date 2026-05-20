@@ -339,6 +339,25 @@ let rec type_for_all ~f = function
       && (match ret with Some t -> type_for_all ~f t | None -> true)
   | leaf -> f leaf
 
+(* True when [t]'s type tree has more than [limit] nodes.  Short-circuits
+   the moment the limit is passed, so the traversal is O(min(nodes,
+   limit)) even on a pathologically large type — runaway fn
+   monomorphization (`fn f<T>(x: T) { f((x, x)); }`) builds
+   exponentially-sized tuple types, and the guard must inspect them
+   without itself blowing up. *)
+let typ_size_exceeds limit t =
+  let count = ref 0 in
+  let rec go t =
+    incr count;
+    if !count > limit then raise Exit;
+    match t with
+    | TPtr inner -> go inner
+    | TTuple ts -> List.iter go ts
+    | TFnPtr { params; ret } -> List.iter go params; Option.iter go ret
+    | _ -> ()
+  in
+  (try go t; false with Exit -> true)
+
 (* Substitute every `TVar n` in [ty] using the [bindings] association.
    Variables not present in [bindings] are left as-is — partial
    substitution is the common case for nested generic decls. *)
@@ -452,7 +471,11 @@ type tstmt =
   | TAssignField of { target : texpr; field : string; value : texpr;
                       pos : Pos.t }
   | TAssignDeref of { target : texpr; value : texpr; pos : Pos.t }
-  | TReturn of { value : texpr; pos : Pos.t }
+  | TReturn of { value : texpr option; pos : Pos.t }
+                                          (* None = bare `return;` from a
+                                             void fn (main's bare return is
+                                             desugared to `Some 0` in
+                                             typecheck) *)
   | TExprStmt of texpr
   | TIf of { cond : texpr; then_body : tstmt list; else_body : tstmt list }
   | TWhile of { cond : texpr; body : tstmt list }
@@ -504,8 +527,8 @@ let tstmt_substmts = function
    on each entry for deep traversal of an entire fn body. *)
 let tstmt_own_exprs = function
   | TLet { value; _ } | TLetTuple { value; _ }
-  | TAssign { value; _ } | TReturn { value; _ }
-  | TExprStmt value -> [value]
+  | TAssign { value; _ } | TExprStmt value -> [value]
+  | TReturn { value; _ } -> Option.to_list value
   | TAssignField { target; value; _ }
   | TAssignDeref { target; value; _ } -> [target; value]
   | TIf { cond; _ } | TWhile { cond; _ } -> [cond]

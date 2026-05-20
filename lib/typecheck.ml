@@ -251,10 +251,14 @@ let find_variant (e : enum_sig) name : (int * variant_sig) option =
    the absolute `["foo"; "Point"]` — and `typ_eq` would reject the
    match.
 
-   On unresolved struct names we fall back to the raw path: downstream
-   checks (lookup at use site, or the `typ_eq` mismatch) emit a clearer
-   contextual error than we could here without a `Pos.t`. *)
-let rec resolve_type_ann_raw ctx ann =
+   Unknown type names are a hard error: the struct and enum indexes are
+   fully built before any annotation is resolved, so a name that misses
+   every lookup is a genuine typo (or a reference to an undeclared type),
+   not a forward reference.  [pos] anchors that error at the annotation's
+   decl site — callers pass it; the public wrapper defaults to Pos.zero
+   for the few sites without a handy position. *)
+let rec resolve_type_ann_raw ~pos ctx ann =
+  let recur = resolve_type_ann_raw ~pos ctx in
   match ann with
   | Ast.TyInt { signed; width } -> TInt { signed; width }
   | Ast.TyCInt { signed } -> TCInt { signed }
@@ -266,17 +270,17 @@ let rec resolve_type_ann_raw ctx ann =
   | Ast.TyCVoid -> TCVoid
   | Ast.TyStr -> TString
   | Ast.TyBool -> TBool
-  | Ast.TyTuple ts -> TTuple (List.map (resolve_type_ann_raw ctx) ts)
-  | Ast.TyPtr t -> TPtr (resolve_type_ann_raw ctx t)
+  | Ast.TyTuple ts -> TTuple (List.map recur ts)
+  | Ast.TyPtr t -> TPtr (recur t)
   | Ast.TyFnPtr { params; ret } ->
-      TFnPtr { params = List.map (resolve_type_ann_raw ctx) params;
-               ret = Option.map (resolve_type_ann_raw ctx) ret }
+      TFnPtr { params = List.map recur params;
+               ret = Option.map recur ret }
   | Ast.TyStruct { path; args = [] } ->
       (* Non-generic case: tparam reference / extern type / extern
-         struct / struct / enum / fallback.  ext_types / ext_structs
-         are flat (single C symbol name); qualified paths like
-         `raw::ULONG` accept the path as long as the last segment
-         matches.  Tparam ref is single-segment only. *)
+         struct / struct / enum.  ext_types / ext_structs are flat
+         (single C symbol name); qualified paths like `raw::ULONG`
+         accept the path as long as the last segment matches.  Tparam
+         ref is single-segment only. *)
       let last = match List.rev path with
         | n :: _ -> n
         | [] -> failwith "internal: resolve_type_ann_raw got empty path"
@@ -291,21 +295,23 @@ let rec resolve_type_ann_raw ctx ann =
             | None ->
                 (match lookup_enum ctx path with
                  | Some e -> TEnum e.ename_path
-                 | None -> TStruct path)))
+                 | None ->
+                     Error.failf pos "unknown type '%s'"
+                       (String.concat "::" path))))
   | Ast.TyStruct { path; args } ->
       (* Generic application `Foo<T1, T2>`: resolve each arg, look up
          the (still-skeletal) generic decl, substitute in its fields,
          and register a monomorphic instance under a mangled path.
          Subsequent uses of the same `Foo<T1, T2>` find the cached
          instance instead of re-substituting. *)
-      let resolved_args = List.map (resolve_type_ann_raw ctx) args in
+      let resolved_args = List.map recur args in
       (* Reject substitutions that still contain TVars from the caller
          scope — a properly monomorphic instance has no free type
          variables.  When we eventually add generic fns / inference
          this restriction relaxes. *)
       List.iter (fun t ->
         if not (is_concrete t) then
-          Error.failf Pos.zero
+          Error.failf pos
             "generic argument for '%s' must be a concrete type, got %s"
             (String.concat "::" path) (typ_name t))
         resolved_args;
@@ -313,7 +319,7 @@ let rec resolve_type_ann_raw ctx ann =
         let expected = List.length tparams in
         let got = List.length resolved_args in
         if expected <> got then
-          Error.failf Pos.zero
+          Error.failf pos
             "type '%s' expects %d generic argument(s), got %d"
             name expected got
       in
@@ -340,8 +346,8 @@ let rec resolve_type_ann_raw ctx ann =
    concrete types where the source mentions the fn's type parameters.
    Skeleton elaboration (`tvar_bindings = []`) leaves the result
    unchanged. *)
-let resolve_type_ann ctx ann =
-  subst_typ ctx.tvar_bindings (resolve_type_ann_raw ctx ann)
+let resolve_type_ann ?(pos = Pos.zero) ctx ann =
+  subst_typ ctx.tvar_bindings (resolve_type_ann_raw ~pos ctx ann)
 
 (* Recognise an integer literal expression — bare or negated — for type-fitting
    checks at let-binding sites. *)
@@ -722,6 +728,10 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       in
       let result_t =
         match op with
+        | Ast.Div when expr_int_lit r = Some 0 ->
+            (* Constant division by zero is undefined in C (and would
+               leak `-Wdiv-by-zero`); reject it at compile time. *)
+            Error.failf pos "division by zero"
         | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div ->
             need_int_operands ();
             if typ_eq l'.ty r'.ty then l'.ty
@@ -745,7 +755,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       { e = TBinOp (op, l', r'); ty = result_t; pos }
   | Ast.Cast (sub, ann, cast_pos) ->
       let sub' = elab_expr ctx env sub in
-      let tgt = resolve_type_ann ctx ann in
+      let tgt = resolve_type_ann ~pos:cast_pos ctx ann in
       if is_int_like sub'.ty && is_int_like tgt then ()
       else if is_ptr sub'.ty && is_ptr tgt then ()
       else
@@ -772,9 +782,9 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       let es' = List.map (elab_expr ctx env) es in
       let ty = TTuple (List.map (fun (e : texpr) -> e.ty) es') in
       { e = TTupleLit es'; ty; pos }
-  | Ast.SizeOf (ann, _) ->
+  | Ast.SizeOf (ann, sz_pos) ->
       (* `size_of(T)` yields a c_uint constant. *)
-      let t = resolve_type_ann ctx ann in
+      let t = resolve_type_ann ~pos:sz_pos ctx ann in
       { e = TSizeOf t; ty = TCInt { signed = false }; pos }
   | Ast.Var (n, var_pos) ->
       (* Local / extern const / extern var → TVar; top-level fn name →
@@ -993,6 +1003,25 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           { tpat; tbody; tdiverges = false; tarm_pos = a.arm_pos })
           arms
       in
+      (* Redundant-arm check: a variant matched twice, or any arm after
+         a catch-all (`_` / bare binding) that already covers everything,
+         is dead code (the variant-dup case also emits a C `duplicate
+         case value`).  Walk in source order tracking covered variants
+         and whether a catch-all has appeared. *)
+      ignore (
+        List.fold_left (fun (seen, caught_all) (a : Ast.match_arm) ->
+          if caught_all then
+            Error.failf a.arm_pos
+              "unreachable match arm: a previous '_' or binding already \
+               covers all remaining cases";
+          match a.pat with
+          | Ast.PWildcard _ | Ast.PVar _ -> (seen, true)
+          | Ast.PVariant { variant; pos = ppos; _ } ->
+              if List.mem variant seen then
+                Error.failf ppos
+                  "duplicate match arm for variant '%s'" variant;
+              (variant :: seen, caught_all))
+          ([], false) arms);
       (* Exhaustiveness: every variant must be reached.  A wildcard or
          bare-bind pattern covers all remaining variants. *)
       let has_catchall =
@@ -1701,7 +1730,8 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
    the elaborated `tstmt list`, alongside the hoisted let-decl list
    that the function-top declarations need.  Replaces `collect_lets` —
    `check_program` calls this once per function. *)
-let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
+let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
+    ctx param_env stmts
     : (string * typ) list * tstmt list =
   let decls = ref [] in
   let add_decl name t pos =
@@ -1727,7 +1757,7 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
            even when the payload alone doesn't determine them. *)
         let expected =
           match ty_ann with
-          | Some ann -> Some (resolve_type_ann ctx ann)
+          | Some ann -> Some (resolve_type_ann ~pos ctx ann)
           | None -> None
         in
         Option.iter
@@ -1879,7 +1909,7 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
             "deref assignment: expected %s, got %s"
             (typ_name inner) (typ_name tvalue.ty);
         (env, TAssignDeref { target = ttarget; value = tvalue; pos })
-    | Ast.Return (e, pos) ->
+    | Ast.Return (Some e, pos) ->
         let tvalue = elab_expr ?expected:ret_ty ctx env e in
         (* The bidirectional `expected` seeds inner inference (literal
            widths, generic params, tuple/struct shape) but does not
@@ -1900,9 +1930,40 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
                "cannot return a value from a function with no return \
                 type (declare `-> %s` if the value is intended)"
                (typ_name tvalue.ty));
-        (env, TReturn { value = tvalue; pos })
+        (env, TReturn { value = Some tvalue; pos })
+    | Ast.Return (None, pos) ->
+        (* Bare `return;`.  Legal as an early exit from a void fn, or
+           from `main` (where it means exit code 0 — desugared to
+           `return 0;` so the emitted `int main` stays valid under
+           -pedantic).  In a value-returning fn it's an error. *)
+        (match ret_ty with
+         | None -> (env, TReturn { value = None; pos })
+         | Some _ when is_main ->
+             let zero = { e = TIntLit 0; ty = t_i32; pos } in
+             (env, TReturn { value = Some zero; pos })
+         | Some t ->
+             Error.failf pos
+               "`return` needs a value — function returns %s" (typ_name t))
     | Ast.ExprStmt e ->
         let tvalue = elab_expr ~allow_void:true ctx env e in
+        (* A statement-position expression is only meaningful if it can
+           carry a side effect — a call (user fn / method / fn-ptr), an
+           effectful builtin (`print`/`free`, not the pure `type_name`),
+           or a `match` (control flow).  Anything else discards its value
+           with no effect and would emit `-Wunused-value` in the generated
+           C; reject it so the mistake surfaces in exile, not in cc.
+           Escape hatch for an intentionally-discarded value: `let _x =
+           <expr>;`. *)
+        let has_effect =
+          match tvalue.e with
+          | TCall _ | TIndirectCall _ | TMatch _ -> true
+          | TBuiltinCall { name; _ } -> name <> "type_name"
+          | _ -> false
+        in
+        if not has_effect then
+          Error.failf tvalue.pos
+            "expression statement has no effect — its result is \
+             discarded; remove it, or bind it with `let _x = ...`";
         (env, TExprStmt tvalue)
     | Ast.If { cond; then_body; else_body } ->
         let tcond = elab_expr ctx env cond in
@@ -2041,9 +2102,10 @@ let elab_body ?(ret_ty : typ option = None) ctx param_env stmts
         let (t', pt) = walk_expr ~allow_top:false target in
         let (v', pv) = walk_expr ~allow_top:false value in
         pt @ pv @ [ TAssignDeref { target = t'; value = v'; pos } ]
-    | TReturn { value; pos } ->
+    | TReturn { value = Some value; pos } ->
         let (v', p) = walk_expr ~allow_top:true value in
-        p @ [ TReturn { value = v'; pos } ]
+        p @ [ TReturn { value = Some v'; pos } ]
+    | TReturn { value = None; _ } as s -> [ s ]
     | TExprStmt e ->
         (* Top-level Match in expr-stmt position is handled by
            emit_match_stmt; everything else must be simple. *)
@@ -2219,8 +2281,9 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~ext_struc
         Some
           (p, f.name,
            { param_tys =
-               List.map (fun pp -> resolve_type_ann ctx pp.Ast.pty) f.params;
-             ret_ty = Option.map (resolve_type_ann ctx) f.ret_ty;
+               List.map (fun pp ->
+                 resolve_type_ann ~pos:f.pos ctx pp.Ast.pty) f.params;
+             ret_ty = Option.map (resolve_type_ann ~pos:f.pos ctx) f.ret_ty;
              mangled;
              fn_pub = f.is_pub;
              fn_tparams = f.tparams;
@@ -2255,7 +2318,8 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~
       } in
       { skel with
         sfields_ty =
-          List.map (fun (n, t) -> (n, resolve_type_ann ctx t)) s.sfields })
+          List.map (fun (n, t) ->
+            (n, resolve_type_ann ~pos:s.spos ctx t)) s.sfields })
     struct_flat skeleton
 
 (* Build the enum registry.  Like `build_struct_index` we go two-pass:
@@ -2296,10 +2360,12 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
             | Ast.VUnit -> ([], false)
             | Ast.VTuple tys ->
                 (List.mapi (fun i t ->
-                   ("_" ^ string_of_int i, resolve_type_ann ctx t)) tys,
+                   ("_" ^ string_of_int i,
+                    resolve_type_ann ~pos:e.epos ctx t)) tys,
                  false)
             | Ast.VStruct fs ->
-                (List.map (fun (n, t) -> (n, resolve_type_ann ctx t)) fs,
+                (List.map (fun (n, t) ->
+                   (n, resolve_type_ann ~pos:e.epos ctx t)) fs,
                  true)
           in
           { vsname = v.vname; vsfields; vsis_struct })
@@ -2307,6 +2373,57 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
       in
       { skel with evariants = variants })
     enum_flat skeleton
+
+(* Reject value-type reference cycles among structs/enums.  A struct
+   field or enum-variant payload of value type (TStruct / TEnum, or a
+   TTuple thereof) embeds the whole aggregate inline; a cycle through
+   such fields is an infinitely-sized C type ("field has incomplete
+   type" from the C compiler).  A pointer (`*T`) breaks the cycle — it
+   embeds only an address.  Generic skeletons are inert here: their
+   recursive fields carry TVar (no edge) and self-referential generic
+   value types are already rejected by the concrete-arg check in
+   resolve_type_ann_raw.  [pos_of] anchors the error at the decl. *)
+let detect_value_cycles ~structs ~enums ~pos_of =
+  let rec refs_of_typ = function
+    | TStruct p | TEnum p -> [ p ]
+    | TTuple ts -> List.concat_map refs_of_typ ts
+    | _ -> []
+  in
+  let name path = String.concat "::" path in
+  let edges path =
+    match List.find_opt (fun (s : struct_sig) -> s.sname_path = path) structs with
+    | Some s -> List.concat_map (fun (_, t) -> refs_of_typ t) s.sfields_ty
+    | None ->
+        (match List.find_opt (fun (e : enum_sig) -> e.ename_path = path) enums with
+         | Some e ->
+             List.concat_map (fun (v : variant_sig) ->
+               List.concat_map (fun (_, t) -> refs_of_typ t) v.vsfields)
+               e.evariants
+         | None -> [])
+  in
+  let cleared = Hashtbl.create 32 in
+  let rec dfs stack path =
+    if List.mem path stack then begin
+      let chain =
+        let rec upto = function
+          | x :: _ when x = path -> [ x ]
+          | x :: rest -> x :: upto rest
+          | [] -> []
+        in
+        List.rev (path :: upto stack)
+      in
+      Error.failf (pos_of path)
+        "recursive value type '%s' (cycle: %s) — a field embeds the \
+         type by value, making it infinitely sized; break the cycle \
+         with a pointer (`*T`)"
+        (name path) (String.concat " -> " (List.map name chain))
+    end else if not (Hashtbl.mem cleared path) then begin
+      List.iter (dfs (path :: stack)) (edges path);
+      Hashtbl.replace cleared path ()
+    end
+  in
+  List.iter (fun (s : struct_sig) -> dfs [] s.sname_path) structs;
+  List.iter (fun (e : enum_sig) -> dfs [] e.ename_path) enums
 
 (* Walk a typed function body looking for tuple types in use, deduplicating
    by mangled name; codegen later emits one C struct per unique shape.
@@ -2412,7 +2529,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
                method becomes a static method — no auto-ref/-deref later). *)
             (match m.params with
              | { pname = "self"; pty = ann } :: _ ->
-                 let self_t = resolve_type_ann ctx ann in
+                 let self_t = resolve_type_ann ~pos:m.pos ctx ann in
                  (match self_t with
                   | TStruct p when p = target_path -> ()
                   | TPtr (TStruct p) when p = target_path -> ()
@@ -2538,14 +2655,14 @@ let prelude_items () =
   let alloc_body = [
     (* return (self.alloc_fn(self.state, size_of(T))) as *T; *)
     Ast.Return (
-      Ast.Cast (
+      Some (Ast.Cast (
         Ast.MethodCall {
           receiver = var "self"; name = "alloc_fn";
           args = [ Ast.FieldAccess (var "self", "state", pos);
                    Ast.SizeOf (tvar "T", pos) ];
           pos;
         },
-        Ast.TyPtr (tvar "T"), pos),
+        Ast.TyPtr (tvar "T"), pos)),
       pos);
   ] in
   let free_body = [
@@ -2696,12 +2813,12 @@ let check_program program : tprogram =
   } in
   let ext_consts =
     List.map (fun (ec : Ast.extern_const) ->
-        (ec.ecname, resolve_type_ann ann_only_ctx ec.ecty))
+        (ec.ecname, resolve_type_ann ~pos:ec.ecpos ann_only_ctx ec.ecty))
       flat.ext_consts
   in
   let ext_vars =
     List.map (fun (ev : Ast.extern_var) ->
-        (ev.evname, resolve_type_ann ann_only_ctx ev.evty))
+        (ev.evname, resolve_type_ann ~pos:ev.evpos ann_only_ctx ev.evty))
       flat.ext_vars
   in
   let ext_struct_fields =
@@ -2711,7 +2828,7 @@ let check_program program : tprogram =
         | Some fs ->
             Some (es.esname,
                   List.map (fun (n, t) ->
-                      (n, resolve_type_ann ann_only_ctx t)) fs))
+                      (n, resolve_type_ann ~pos:es.espos ann_only_ctx t)) fs))
       flat.ext_structs
   in
   let struct_index =
@@ -2722,6 +2839,20 @@ let check_program program : tprogram =
     build_enum_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~modules:flat.modules ~struct_index flat.enums
   in
+  (* Fail fast on infinitely-sized value types before any elaboration. *)
+  let pos_of path =
+    match List.find_opt
+            (fun (p, (d : Ast.struct_decl)) -> p @ [d.sname] = path)
+            flat.structs with
+    | Some (_, d) -> d.spos
+    | None ->
+        (match List.find_opt
+                 (fun (p, (d : Ast.enum_decl)) -> p @ [d.ename] = path)
+                 flat.enums with
+         | Some (_, d) -> d.epos
+         | None -> Pos.zero)
+  in
+  detect_value_cycles ~structs:struct_index ~enums:enum_index ~pos_of;
   let (impl_funcs, virtual_modules) =
     expand_impls ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       flat struct_index enum_index flat.modules
@@ -2802,13 +2933,14 @@ let check_program program : tprogram =
       ext_structs; ext_types; ext_consts;
     } in
     let param_tys =
-      List.map (fun (p : Ast.param) -> resolve_type_ann ctx0 p.pty) f.params
+      List.map (fun (p : Ast.param) ->
+        resolve_type_ann ~pos:f.pos ctx0 p.pty) f.params
     in
     let exposed_extern = List.map fst ext_struct_fields in
     List.iter
       (forbid_naked_opaque ~exposed:exposed_extern f.pos)
       param_tys;
-    let ret_ty = Option.map (resolve_type_ann ctx0) f.ret_ty in
+    let ret_ty = Option.map (resolve_type_ann ~pos:f.pos ctx0) f.ret_ty in
     Option.iter (forbid_naked_opaque ~exposed:exposed_extern f.pos) ret_ty;
     (* `main` carries no user-declared return type, but a `return` inside
        it sets the process exit code, so the body type-checks against
@@ -2827,7 +2959,8 @@ let check_program program : tprogram =
     let is_skeleton = f.tparams <> [] && tvar_bindings = [] in
     let (lets, tbody) =
       if f.is_extern || is_skeleton then ([], [])
-      else elab_body ~ret_ty:effective_ret_ty ctx param_env f.body
+      else elab_body ~ret_ty:effective_ret_ty ~is_main:(f.name = "main")
+             ctx param_env f.body
     in
     (* Exhaustive-return check.  A value-returning fn must have a
        `return` on every control-flow path.  Without this, a non-

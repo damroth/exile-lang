@@ -262,6 +262,136 @@ let () =
      }\n"
     "stray ';' — `if`/`while`/`match` and inner blocks are self-terminating, no trailing semicolon needed";
 
+  check_error "unknown type name in let annotation rejected"
+    "fn main() { let x: NoSuchType = 1; print(x); }\n"
+    "unknown type 'NoSuchType'";
+
+  check_error "unknown type name in param annotation rejected"
+    "fn take(x: NoSuchType) { print(1); }\n\
+     fn main() { print(1); }\n"
+    "unknown type 'NoSuchType'";
+
+  check_error "self-recursive value struct rejected"
+    "struct Node { next: Node }\n\
+     fn main() { print(1); }\n"
+    "recursive value type 'Node' (cycle: Node -> Node) — a field embeds \
+     the type by value, making it infinitely sized; break the cycle with \
+     a pointer (`*T`)";
+
+  check_error "mutually-recursive value structs rejected"
+    "struct A { b: B }\n\
+     struct B { a: A }\n\
+     fn main() { print(1); }\n"
+    "recursive value type 'A' (cycle: A -> B -> A) — a field embeds the \
+     type by value, making it infinitely sized; break the cycle with a \
+     pointer (`*T`)";
+
+  check_error "self-recursive value enum rejected"
+    "enum List { | Nil | Cons(int, List) }\n\
+     fn main() { print(1); }\n"
+    "recursive value type 'List' (cycle: List -> List) — a field embeds \
+     the type by value, making it infinitely sized; break the cycle with \
+     a pointer (`*T`)";
+
+  check "recursive struct through pointer is allowed"
+    "struct Node { val: int, next: *Node }\n\
+     fn main() {\n\
+    \    let n = Node { val: 1, next: null };\n\
+    \    print(n.val);\n\
+     }\n"
+    "#include <stdio.h>\n\n\
+     struct ex_Node { long val; struct ex_Node *next; };\n\n\
+     int main(void) {\n\
+    \    struct ex_Node n;\n\
+    \    n.val = 1;\n\
+    \    n.next = ((void *)0);\n\
+    \    printf(\"%ld\\n\", (long)(n.val));\n\
+    \    return 0;\n\
+     }\n";
+
+  check_error "bare no-effect expression statement rejected"
+    "fn main() { 42; }\n"
+    "expression statement has no effect — its result is discarded; \
+     remove it, or bind it with `let _x = ...`";
+
+  check_error "discarded type_name() statement rejected"
+    "fn main() { type_name(42); }\n"
+    "expression statement has no effect — its result is discarded; \
+     remove it, or bind it with `let _x = ...`";
+
+  check_error "constant division by zero rejected"
+    "fn main() { let x = 1 / 0; print(x); }\n"
+    "division by zero";
+
+  check_error "duplicate match arm for same variant rejected"
+    "enum E { | A | B }\n\
+     fn main() {\n\
+    \    let e = E::A;\n\
+    \    let r = match e { | E::A => 1 | E::A => 2 | E::B => 3 };\n\
+    \    print(r);\n\
+     }\n"
+    "duplicate match arm for variant 'A'";
+
+  check_error "match arm after catch-all rejected as unreachable"
+    "enum E { | A | B }\n\
+     fn main() {\n\
+    \    let e = E::A;\n\
+    \    let r = match e { | _ => 1 | E::A => 2 };\n\
+    \    print(r);\n\
+     }\n"
+    "unreachable match arm: a previous '_' or binding already covers all remaining cases";
+
+  check_error "runaway monomorphization rejected"
+    "fn f<T>(x: T) { f((x, x)); }\n\
+     fn main() { f(1); }\n"
+    "monomorphization produced a type with more than 10000 nodes — a \
+     generic function is recursing with a growing type argument; make \
+     the recursion type-stable or add a non-generic base case";
+
+  check "bare 'return' early-exits void fn, flushing defers"
+    "fn f(b: bool) {\n\
+    \    defer { print(9); }\n\
+    \    if b { return; }\n\
+    \    print(1);\n\
+     }\n\
+     fn main() { f(true); }\n"
+    "#include <stdio.h>\n\n\
+     static void ex_f(int b);\n\n\
+     static void ex_f(int b) {\n\
+    \    if (b) {\n\
+    \        printf(\"%ld\\n\", (long)(9));\n\
+    \        return;\n\
+    \    }\n\
+    \    printf(\"%ld\\n\", (long)(1));\n\
+    \    printf(\"%ld\\n\", (long)(9));\n\
+     }\n\n\
+     int main(void) {\n\
+    \    ex_f(1);\n\
+    \    return 0;\n\
+     }\n";
+
+  check "bare 'return' in main means exit 0"
+    "fn main() {\n\
+    \    if true { return; }\n\
+    \    print(1);\n\
+     }\n"
+    "#include <stdio.h>\n\n\
+     int main(void) {\n\
+    \    if (1) {\n\
+    \        return 0;\n\
+    \    }\n\
+    \    printf(\"%ld\\n\", (long)(1));\n\
+    \    return 0;\n\
+     }\n";
+
+  check_error "bare 'return' in value-returning fn rejected"
+    "fn f() -> int {\n\
+    \    if true { return; }\n\
+    \    return 5;\n\
+     }\n\
+     fn main() { print(f()); }\n"
+    "`return` needs a value — function returns i32";
+
   check_error "top-level fn shadowing builtin 'print' rejected"
     "fn print(s: str) { }\n\
      fn main() { print(\"x\"); }\n"

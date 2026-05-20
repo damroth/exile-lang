@@ -14,3 +14,9 @@ outer cleanup
 ---
 outer cleanup
 0
+---
+skipped
+cleanup
+---
+worked
+cleanup

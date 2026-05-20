@@ -525,7 +525,12 @@ and parse_stmt s =
   | Token.Return ->
       let pos = peek_pos s in
       ignore (advance s);
-      let e = parse_expr s in
+      (* `return;` (no value) early-exits a void fn / main; `return e;`
+         carries a value. *)
+      let e =
+        if peek s = Token.Semicolon then None
+        else Some (parse_expr s)
+      in
       expect s Token.Semicolon;
       Ast.Return (e, pos)
   | Token.Defer ->

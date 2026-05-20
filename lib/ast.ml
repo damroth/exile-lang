@@ -155,7 +155,8 @@ type stmt =
                                              `raw::DOSBase = ...`). *)
   | AssignField of { target : expr; field : string; value : expr; pos : Pos.t }
   | AssignDeref of { target : expr; value : expr; pos : Pos.t }
-  | Return of expr * Pos.t
+  | Return of expr option * Pos.t       (* `return;` (None — void / main
+                                           exit 0) or `return <expr>;` *)
   | ExprStmt of expr
   | If of { cond : expr; then_body : stmt list; else_body : stmt list }
   | While of { cond : expr; body : stmt list }

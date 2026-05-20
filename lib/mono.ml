@@ -175,8 +175,29 @@ let find_fn state mangled =
    substitutes the bindings into the skeleton's signature, registers
    the resulting `fn_sig`, and queues a job so the body gets re-elaborated
    under the substituted types after the main typecheck loop finishes. *)
+(* A generic-fn instance whose type arguments exceed this many tree
+   nodes is treated as runaway monomorphization.  Since fn instances are
+   keyed by their argument types, bounding the per-instance type size
+   also bounds the total instance count — which guarantees the
+   instantiation drain terminates.  10000 is far beyond any hand-written
+   nesting yet small enough that the rejected type stays cheap to build
+   and inspect. *)
+let mono_type_size_limit = 10000
+
 let instantiate_fn state ~path ~func ~skel ~bindings ~origin_pos =
   let inst_args = List.map snd bindings in
+  (* Guard against non-terminating monomorphization: a generic fn that
+     recurses with an ever-growing type argument (e.g.
+     `fn f<T>(x: T) { f((x, x)); }`) would otherwise spin forever,
+     generating unboundedly many exponentially-large instances. *)
+  List.iter (fun t ->
+    if typ_size_exceeds mono_type_size_limit t then
+      Error.failf origin_pos
+        "monomorphization produced a type with more than %d nodes — a \
+         generic function is recursing with a growing type argument; make \
+         the recursion type-stable or add a non-generic base case"
+        mono_type_size_limit)
+    inst_args;
   let inst_mangled = fn_instance_mangled skel.mangled inst_args in
   match find_fn state inst_mangled with
   | Some s -> s

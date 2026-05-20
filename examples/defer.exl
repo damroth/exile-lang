@@ -19,6 +19,15 @@ fn early_exit(n: int) -> int {
     return 0;
 }
 
+fn void_early_exit(skip: bool) {
+    defer print("cleanup");
+    if skip {
+        print("skipped");
+        return;
+    }
+    print("worked");
+}
+
 fn main() {
     lifo();
     print("---");
@@ -27,4 +36,8 @@ fn main() {
     print(early_exit(5));
     print("---");
     print(early_exit(-3));
+    print("---");
+    void_early_exit(true);
+    print("---");
+    void_early_exit(false);
 }

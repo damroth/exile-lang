@@ -196,6 +196,7 @@ let print_bloat_report () =
     Printf.eprintf "  ... %d more\n" (count - top_n)
 
 let () =
+  Printexc.record_backtrace true;
   let a = parse_args (List.tl (Array.to_list Sys.argv)) in
   try
     let c_code =
@@ -239,6 +240,24 @@ let () =
   | Exile_lang.Error.Compile_error { pos; msg } ->
       show_error pos msg;
       exit 1
-  | Failure msg ->
-      Printf.eprintf "error: %s\n" msg;
+  | e ->
+      (* Anything that isn't a Compile_error is a broken internal
+         invariant (our `failwith "internal: ..."`) or an unexpected
+         exception (Assert_failure, Not_found, Match_failure, ...) — a
+         compiler bug, not a diagnostic about the user's program.  Frame
+         it as such so it isn't mistaken for a normal error, and never
+         let a raw OCaml backtrace leak as the primary output.  Set
+         EXILE_BACKTRACE=1 to see the trace while hacking on exilc. *)
+      let backtrace = Printexc.get_backtrace () in
+      let detail = match e with
+        | Failure msg -> msg
+        | e -> Printexc.to_string e
+      in
+      Printf.eprintf
+        "internal compiler error: %s\n\
+         this is a bug in exilc, not your program — please report it \
+         (input: %s)\n"
+        detail a.input;
+      if Sys.getenv_opt "EXILE_BACKTRACE" <> None && backtrace <> "" then
+        Printf.eprintf "%s" backtrace;
       exit 1

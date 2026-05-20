@@ -721,32 +721,40 @@ and gen_block ctx buf indent outer_scopes stmts =
         update_chain my_defers;
         emit_tstmt_ann ctx buf indent s;
         let all = List.flatten (my_defers :: outer_scopes) in
-        let needs_block =
-          all <> [] ||
-          (match value.e with
-           | TTupleLit _ | TStructLit _ | TNew _ | TMatch _ | TEnumLit _ ->
-               true
-           | _ -> false)
-        in
-        if not needs_block then begin
-          Buffer.add_string buf indent;
-          Buffer.add_string buf "return ";
-          gen_expr ctx buf value;
-          Buffer.add_string buf ";\n"
-        end else begin
-          let trimmed = strip_trailing_space (c_type_prefix value.ty) in
-          Buffer.add_string buf indent;
-          Buffer.add_string buf "{\n";
-          Buffer.add_string buf (indent ^ "    ");
-          Buffer.add_string buf trimmed;
-          Buffer.add_string buf " __exile_ret;\n";
-          emit_value_into_temp ctx buf (indent ^ "    ") "__exile_ret" value;
-          emit_cleanups ctx buf (indent ^ "    ") all;
-          Buffer.add_string buf (indent ^ "    ");
-          Buffer.add_string buf "return __exile_ret;\n";
-          Buffer.add_string buf indent;
-          Buffer.add_string buf "}\n"
-        end
+        (match value with
+         | None ->
+             (* Bare `return;` from a void fn: flush active defers, then
+                return with no value. *)
+             emit_cleanups ctx buf indent all;
+             Buffer.add_string buf indent;
+             Buffer.add_string buf "return;\n"
+         | Some value ->
+             let needs_block =
+               all <> [] ||
+               (match value.e with
+                | TTupleLit _ | TStructLit _ | TNew _ | TMatch _ | TEnumLit _ ->
+                    true
+                | _ -> false)
+             in
+             if not needs_block then begin
+               Buffer.add_string buf indent;
+               Buffer.add_string buf "return ";
+               gen_expr ctx buf value;
+               Buffer.add_string buf ";\n"
+             end else begin
+               let trimmed = strip_trailing_space (c_type_prefix value.ty) in
+               Buffer.add_string buf indent;
+               Buffer.add_string buf "{\n";
+               Buffer.add_string buf (indent ^ "    ");
+               Buffer.add_string buf trimmed;
+               Buffer.add_string buf " __exile_ret;\n";
+               emit_value_into_temp ctx buf (indent ^ "    ") "__exile_ret" value;
+               emit_cleanups ctx buf (indent ^ "    ") all;
+               Buffer.add_string buf (indent ^ "    ");
+               Buffer.add_string buf "return __exile_ret;\n";
+               Buffer.add_string buf indent;
+               Buffer.add_string buf "}\n"
+             end)
     | (TLet _ | TAssign _ | TAssignField _ | TAssignDeref _ | TExprStmt _) as s :: rest ->
         update_chain my_defers;
         emit_tstmt_ann ctx buf indent s;
