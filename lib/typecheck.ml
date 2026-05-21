@@ -2604,17 +2604,20 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
     enum_flat skeleton
 
 (* Reject value-type reference cycles among structs/enums.  A struct
-   field or enum-variant payload of value type (TStruct / TEnum, or a
-   TTuple thereof) embeds the whole aggregate inline; a cycle through
-   such fields is an infinitely-sized C type ("field has incomplete
-   type" from the C compiler).  A pointer (`*T`) breaks the cycle — it
-   embeds only an address.  Generic skeletons are inert here: their
-   recursive fields carry TVar (no edge) and self-referential generic
-   value types are already rejected by the concrete-arg check in
-   resolve_type_ann_raw.  [pos_of] anchors the error at the decl. *)
+   field or enum-variant payload of value type (TStruct / TEnum, a
+   TTuple thereof, or a generic application TStructApp / TEnumApp like
+   `b: B<T>`) embeds the whole aggregate inline; a cycle through such
+   fields is an infinitely-sized C type ("field has incomplete type"
+   from the C compiler).  A pointer (`*T`) breaks the cycle — it embeds
+   only an address.  Runs over the skeletons, so a generic application
+   counts as a value edge to the applied type (`A<T> { b: B<T> }` and
+   `B<T> { a: A<T> }` is a cycle); the args are walked too for nested
+   references.  [pos_of] anchors the error at the decl. *)
 let detect_value_cycles ~structs ~enums ~pos_of =
   let rec refs_of_typ = function
     | TStruct p | TEnum p -> [ p ]
+    | TStructApp { path; args } | TEnumApp { path; args } ->
+        path :: List.concat_map refs_of_typ args
     | TTuple ts -> List.concat_map refs_of_typ ts
     | _ -> []
   in
@@ -3282,6 +3285,8 @@ let check_program program : tprogram =
      identical to the prelude impl methods, but its origin file differs. *)
   let rec typ_mentions target = function
     | TStruct p -> p = target
+    | TStructApp { path; args } | TEnumApp { path; args } ->
+        path = target || List.exists (typ_mentions target) args
     | TPtr inner -> typ_mentions target inner
     | TTuple ts -> List.exists (typ_mentions target) ts
     | TFnPtr { params; ret } ->
@@ -3351,6 +3356,48 @@ let check_program program : tprogram =
     | TFnPtr _ | TNullPtr | TVar _
     | TStructApp _ | TEnumApp _ -> false
   in
+  (* A struct field / enum payload of opaque-`extern struct` type by value
+     is rejected (exile doesn't know its layout — only `*Opaque` is usable;
+     a by-value field would be C "incomplete type").  Validated over BOTH
+     skeletons (`struct S { w: raw::Win }`) and mono instances (`Pair<raw::Win,
+     int>`, where the opaque arrives as a by-value field of the instance).
+     Exposed extern structs (`extern struct Foo { ... }`) carry a known
+     layout and are fine. *)
+  let exposed_extern = List.map fst ext_struct_fields in
+  let struct_decl_pos path =
+    match List.find_opt
+            (fun (p, (d : Ast.struct_decl)) -> p @ [d.sname] = path) flat.structs with
+    | Some (_, d) -> d.spos
+    | None ->
+        (match List.find_opt
+                 (fun (p, (d : Ast.struct_decl)) ->
+                    Mono.is_instance_of (p @ [d.sname]) path) flat.structs with
+         | Some (_, d) -> d.spos
+         | None -> Pos.zero)
+  in
+  let enum_decl_pos path =
+    match List.find_opt
+            (fun (p, (d : Ast.enum_decl)) -> p @ [d.ename] = path) flat.enums with
+    | Some (_, d) -> d.epos
+    | None ->
+        (match List.find_opt
+                 (fun (p, (d : Ast.enum_decl)) ->
+                    Mono.is_instance_of (p @ [d.ename]) path) flat.enums with
+         | Some (_, d) -> d.epos
+         | None -> Pos.zero)
+  in
+  List.iter (fun (s : struct_sig) ->
+    let pos = struct_decl_pos s.sname_path in
+    List.iter (fun (_, ft) -> forbid_naked_opaque ~exposed:exposed_extern pos ft)
+      s.sfields_ty)
+    all_structs;
+  List.iter (fun (e : enum_sig) ->
+    let pos = enum_decl_pos e.ename_path in
+    List.iter (fun (vs : variant_sig) ->
+      List.iter (fun (_, ft) ->
+        forbid_naked_opaque ~exposed:exposed_extern pos ft) vs.vsfields)
+      e.evariants)
+    all_enums;
   List.iter (fun (s : struct_sig) ->
     if s.sis_debug then
       List.iter (fun (fname, fty) ->

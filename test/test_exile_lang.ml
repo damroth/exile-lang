@@ -297,6 +297,15 @@ let () =
      the type by value, making it infinitely sized; break the cycle with \
      a pointer (`*T`)";
 
+  check_error "mutually-recursive GENERIC value structs rejected"
+    "struct A<T> { b: B<T> }\n\
+     struct B<T> { a: A<T> }\n\
+     fn use_it(x: A<int>) -> int { return 1; }\n\
+     fn main() { println(1); }\n"
+    "recursive value type 'A' (cycle: A -> B -> A) — a field embeds the \
+     type by value, making it infinitely sized; break the cycle with a \
+     pointer (`*T`)";
+
   check "recursive struct through pointer is allowed"
     "struct Node { val: int, next: *Node }\n\
      fn main() {\n\
@@ -1367,6 +1376,24 @@ let () =
      "
     "opaque type 'Library' can only be used through a pointer (`*Library`) \
      — exile doesn't know its layout (use `extern struct Library { ... }` \
+     to expose fields)";
+
+  check_error "opaque extern struct as a struct field by value rejected"
+    "pub mod raw { extern struct Win; }\n\
+     struct S { w: raw::Win }\n\
+     fn use_s(_x: S) -> int { return 1; }\n\
+     fn main() { println(1); }\n"
+    "opaque type 'Win' can only be used through a pointer (`*Win`) \
+     — exile doesn't know its layout (use `extern struct Win { ... }` \
+     to expose fields)";
+
+  check_error "opaque extern struct as a generic type argument by value rejected"
+    "pub mod raw { extern struct Win; }\n\
+     struct Pair<A, B> { fst: A, snd: B }\n\
+     fn f(p: Pair<raw::Win, int>) -> int { return p.snd; }\n\
+     fn main() { println(1); }\n"
+    "opaque type 'Win' can only be used through a pointer (`*Win`) \
+     — exile doesn't know its layout (use `extern struct Win { ... }` \
      to expose fields)";
 
   check_no_cc "extern struct Foo { fields }: field read through pointer"
