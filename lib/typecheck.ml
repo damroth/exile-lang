@@ -351,7 +351,10 @@ let rec normalize_apps ctx t =
                 (fun (s : struct_sig) -> s.sname_path = path && s.stparams <> [])
                 ctx.structs with
         | Some skel ->
-            let inst = Mono.instantiate_struct ctx.instances skel args in
+            let inst =
+              Mono.instantiate_struct ctx.instances
+                ~normalize:(normalize_apps ctx) skel args
+            in
             TStruct inst.sname_path
         | None -> TStructApp { path; args }
       else TStructApp { path; args }
@@ -362,7 +365,10 @@ let rec normalize_apps ctx t =
                 (fun (e : enum_sig) -> e.ename_path = path && e.etparams <> [])
                 ctx.enums with
         | Some skel ->
-            let inst = Mono.instantiate_enum ctx.instances skel args in
+            let inst =
+              Mono.instantiate_enum ctx.instances
+                ~normalize:(normalize_apps ctx) skel args
+            in
             TEnum inst.ename_path
         | None -> TEnumApp { path; args }
       else TEnumApp { path; args }
@@ -380,6 +386,31 @@ let rec normalize_apps ctx t =
 let resolve_type_ann ?(pos = Pos.zero) ctx ann =
   normalize_apps ctx
     (subst_typ ctx.tvar_bindings (resolve_type_ann_raw ~pos ctx ann))
+
+(* Expand a (declared, actual) tparam-inference pair where the declared
+   type is a generic application (`Pair<T, int>`) and the actual is its
+   flat instance (`Pair_i32_int`).  Plain unification can't see the args
+   a flat instance dropped, so recover them from the instance's recorded
+   `sinstance_args` / `einstance_args` and pair them up element-wise.
+   Recurses through pointers and nested applications.  Used wherever a
+   generic application meets a concrete value: fn-call dispatch and
+   struct/enum-literal construction. *)
+let rec expand_inst_pair ctx (decl, act) =
+  match decl, act with
+  | TStructApp { args = dargs; _ }, TStruct inst_path ->
+      (match Mono.find_struct ctx.instances inst_path with
+       | Some { sinstance_args = Some iargs; _ }
+         when List.length iargs = List.length dargs ->
+           List.concat_map (expand_inst_pair ctx) (List.combine dargs iargs)
+       | _ -> [ (decl, act) ])
+  | TEnumApp { args = dargs; _ }, TEnum inst_path ->
+      (match Mono.find_enum ctx.instances inst_path with
+       | Some { einstance_args = Some iargs; _ }
+         when List.length iargs = List.length dargs ->
+           List.concat_map (expand_inst_pair ctx) (List.combine dargs iargs)
+       | _ -> [ (decl, act) ])
+  | TPtr d, TPtr a -> expand_inst_pair ctx (d, a)
+  | _ -> [ (decl, act) ]
 
 (* Recognise an integer literal expression — bare or negated — for type-fitting
    checks at let-binding sites. *)
@@ -650,29 +681,10 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
       loop n [] xs
     in
     (* A generic-struct parameter (`p: Pair<T, int>`) shows up as a
-       TStructApp whose actual argument is a flat instance that has lost
-       its type args — so plain unification can't recover `T`.  Expand
-       such pairs arg-by-arg using the instance's recorded
-       `sinstance_args` / `einstance_args`, recursing through pointers. *)
-    let rec expand_pair (decl, act) =
-      match decl, act with
-      | TStructApp { args = dargs; _ }, TStruct inst_path ->
-          (match Mono.find_struct ctx.instances inst_path with
-           | Some { sinstance_args = Some iargs; _ }
-             when List.length iargs = List.length dargs ->
-               List.concat_map expand_pair (List.combine dargs iargs)
-           | _ -> [ (decl, act) ])
-      | TEnumApp { args = dargs; _ }, TEnum inst_path ->
-          (match Mono.find_enum ctx.instances inst_path with
-           | Some { einstance_args = Some iargs; _ }
-             when List.length iargs = List.length dargs ->
-               List.concat_map expand_pair (List.combine dargs iargs)
-           | _ -> [ (decl, act) ])
-      | TPtr d, TPtr a -> expand_pair (d, a)
-      | _ -> [ (decl, act) ]
-    in
+       TStructApp whose actual is a flat instance that dropped its type
+       args; recover them so `T` is inferable (see [expand_inst_pair]). *)
     let inf_pairs =
-      List.concat_map expand_pair
+      List.concat_map (expand_inst_pair ctx)
         (List.combine skel.param_tys (take n_fixed arg_tys))
     in
     let seed_pairs =
@@ -680,10 +692,11 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
       | Some exp, Some r -> [(r, exp)]
       | _ -> []
     in
-    (* Generic-impl method: the receiver instance pins the impl tparams
-       (the leading fn_tparams) to the instance's type args.  Self can't
-       drive this via unification — a flat instance type has lost its
-       args — so we seed the bindings directly. *)
+    (* Generic-impl method dispatch: a `*self` receiver pairs a `*Pair<A,B>`
+       declaration against the *value* receiver type (auto-ref), which
+       expand_inst_pair's strict pointer match doesn't reach — so seed the
+       impl tparams (the leading fn_tparams) straight from the receiver
+       instance's type args. *)
     let seed =
       List.combine (take (List.length recv_inst_args) skel.fn_tparams)
         recv_inst_args
@@ -1450,15 +1463,17 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                    "struct literal '%s' missing field(s): %s"
                    display (String.concat ", " missing);
                let pairs =
-                 List.map (fun (fn, (fe : texpr)) ->
-                   let decl_t = List.assoc fn s.sfields_ty in
-                   (decl_t, fe.ty))
-                   tfields
+                 List.concat_map (expand_inst_pair ctx)
+                   (List.map (fun (fn, (fe : texpr)) ->
+                      let decl_t = List.assoc fn s.sfields_ty in
+                      (decl_t, fe.ty))
+                      tfields)
                in
                let inferred =
                  Mono.infer_tparams ~pos:lit_pos s.stparams pairs
                in
-               Mono.instantiate_struct ctx.instances s inferred
+               Mono.instantiate_struct ctx.instances
+                 ~normalize:(normalize_apps ctx) s inferred
              end
            in
            (match tbase with
@@ -1573,9 +1588,11 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                  | _ -> []
                in
                let inferred =
-                 Mono.infer_tparams ~pos:lit_pos ~seed e_sig.etparams pairs
+                 Mono.infer_tparams ~pos:lit_pos ~seed e_sig.etparams
+                   (List.concat_map (expand_inst_pair ctx) pairs)
                in
-               Mono.instantiate_enum ctx.instances e_sig inferred
+               Mono.instantiate_enum ctx.instances
+                 ~normalize:(normalize_apps ctx) e_sig inferred
              end
            in
            let (tag, v_used) =

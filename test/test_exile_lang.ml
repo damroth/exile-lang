@@ -747,6 +747,25 @@ let () =
     \    return self.v;\n\
      }\n";
 
+  check "nested generic struct field normalizes to a flat instance"
+    "struct Box<T> { v: T }\n\
+     struct Wrapper<T> { inner: Box<T> }\n\
+     fn main() {\n\
+    \    let w = Wrapper { inner: Box { v: 7 } };\n\
+    \    println(w.inner.v);\n\
+     }\n"
+    "#include <stdio.h>\n\n\
+     struct ex_Box_i32 { long v; };\n\
+     struct ex_Wrapper_i32 { struct ex_Box_i32 inner; };\n\n\
+     int main(void) {\n\
+    \    struct ex_Wrapper_i32 w;\n\
+    \    struct ex_Box_i32 __lift_0;\n\
+    \    __lift_0.v = 7;\n\
+    \    w.inner = __lift_0;\n\
+    \    printf(\"%ld\\n\", (long)(w.inner.v));\n\
+    \    return 0;\n\
+     }\n";
+
   check_error "bare 'self' outside an impl rejected"
     "fn foo(self) -> int { return 1; }\nfn main() { println(1); }\n"
     "bare 'self' is only allowed as the receiver of an 'impl' method";

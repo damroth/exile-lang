@@ -140,24 +140,45 @@ let make_enum_instance (skel : enum_sig) (args : typ list) : enum_sig =
     eis_debug = skel.eis_debug }
 
 (* Idempotent instantiation: returns the cached instance if one is
-   already registered for the same (decl path, args), otherwise
-   builds a fresh one and registers it. *)
-let instantiate_struct state skel args =
+   already registered for the same (decl path, args), otherwise builds a
+   fresh one and registers it.  [normalize] flattens any generic
+   application left in the instance's field/variant types after
+   substitution (`Wrapper<int>`'s `inner: Box<int>` -> the flat
+   `Box_i32` instance).  The fresh instance is cached *before* its fields
+   are normalized, so a recursive reference to the same instance
+   (`Node<int>`'s `next: *Node<int>`) resolves to the path instead of
+   re-instantiating forever. *)
+let instantiate_struct state ~normalize skel args =
   let path = instance_path skel.sname_path args in
   match find_struct state path with
   | Some inst -> inst
   | None ->
       let inst = make_struct_instance skel args in
       state.inst_structs <- inst :: state.inst_structs;
+      let inst =
+        { inst with sfields_ty =
+            List.map (fun (n, t) -> (n, normalize t)) inst.sfields_ty }
+      in
+      state.inst_structs <-
+        inst :: List.filter (fun s -> s.sname_path <> path) state.inst_structs;
       inst
 
-let instantiate_enum state skel args =
+let instantiate_enum state ~normalize skel args =
   let path = instance_path skel.ename_path args in
   match find_enum state path with
   | Some inst -> inst
   | None ->
       let inst = make_enum_instance skel args in
       state.inst_enums <- inst :: state.inst_enums;
+      let inst =
+        { inst with evariants =
+            List.map (fun (vs : variant_sig) ->
+              { vs with vsfields =
+                  List.map (fun (n, t) -> (n, normalize t)) vs.vsfields })
+              inst.evariants }
+      in
+      state.inst_enums <-
+        inst :: List.filter (fun e -> e.ename_path <> path) state.inst_enums;
       inst
 
 (* Mangled name of a generic-fn instance: skeleton's mangled name plus
