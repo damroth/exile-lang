@@ -272,6 +272,11 @@ let rec resolve_type_ann_raw ~pos ctx ann =
   | Ast.TyBool -> TBool
   | Ast.TyTuple ts -> TTuple (List.map recur ts)
   | Ast.TyPtr t -> TPtr (recur t)
+  | Ast.TySelf ->
+      (* parse_impl_block replaces bare-`self` with the target type, so a
+         surviving TySelf means `self` was used outside an impl method. *)
+      Error.failf pos
+        "bare 'self' is only allowed as the receiver of an 'impl' method"
   | Ast.TyFnPtr { params; ret } ->
       TFnPtr { params = List.map recur params;
                ret = Option.map recur ret }
@@ -299,22 +304,14 @@ let rec resolve_type_ann_raw ~pos ctx ann =
                      Error.failf pos "unknown type '%s'"
                        (String.concat "::" path))))
   | Ast.TyStruct { path; args } ->
-      (* Generic application `Foo<T1, T2>`: resolve each arg, look up
-         the (still-skeletal) generic decl, substitute in its fields,
-         and register a monomorphic instance under a mangled path.
-         Subsequent uses of the same `Foo<T1, T2>` find the cached
-         instance instead of re-substituting. *)
+      (* Generic application `Foo<T1, T2>`.  We do NOT instantiate here:
+         args may still contain free `TVar`s (a generic `impl`/fn
+         skeleton, e.g. `self: Pair<A, B>`).  Produce a TStructApp /
+         TEnumApp carrying the skeleton's absolute path + resolved args;
+         `resolve_type_ann` normalises it to a flat instance once every
+         arg is concrete.  Arity is checked here (no concreteness
+         needed). *)
       let resolved_args = List.map recur args in
-      (* Reject substitutions that still contain TVars from the caller
-         scope — a properly monomorphic instance has no free type
-         variables.  When we eventually add generic fns / inference
-         this restriction relaxes. *)
-      List.iter (fun t ->
-        if not (is_concrete t) then
-          Error.failf pos
-            "generic argument for '%s' must be a concrete type, got %s"
-            (String.concat "::" path) (typ_name t))
-        resolved_args;
       let check_arity ~name ~tparams =
         let expected = List.length tparams in
         let got = List.length resolved_args in
@@ -327,27 +324,62 @@ let rec resolve_type_ann_raw ~pos ctx ann =
        | Some s ->
            check_arity ~name:(String.concat "::" s.sname_path)
              ~tparams:s.stparams;
-           let inst = Mono.instantiate_struct ctx.instances s resolved_args in
-           TStruct inst.sname_path
+           TStructApp { path = s.sname_path; args = resolved_args }
        | None ->
            (match lookup_enum ctx path with
             | Some e ->
                 check_arity ~name:(String.concat "::" e.ename_path)
                   ~tparams:e.etparams;
-                let inst = Mono.instantiate_enum ctx.instances e resolved_args in
-                TEnum inst.ename_path
+                TEnumApp { path = e.ename_path; args = resolved_args }
             | None ->
-                Error.failf Pos.zero
+                Error.failf pos
                   "unknown generic type '%s'"
                   (String.concat "::" path)))
 
-(* Public entry point.  Wraps `resolve_type_ann_raw` with a final
-   `subst_typ ctx.tvar_bindings` step so generic-instance bodies see
-   concrete types where the source mentions the fn's type parameters.
-   Skeleton elaboration (`tvar_bindings = []`) leaves the result
-   unchanged. *)
+(* Instantiate every fully-concrete generic application in [t] to its flat
+   mono instance (registering the instance with Mono), bottom-up.  A
+   TStructApp / TEnumApp that still holds a free `TVar` is left as-is —
+   it belongs to a skeleton and will be normalised when re-elaborated with
+   concrete bindings.  This is what keeps the rest of the pipeline seeing
+   only flat `TStruct`/`TEnum` instances, never an application node. *)
+let rec normalize_apps ctx t =
+  match t with
+  | TStructApp { path; args } ->
+      let args = List.map (normalize_apps ctx) args in
+      if List.for_all is_concrete args then
+        match List.find_opt
+                (fun (s : struct_sig) -> s.sname_path = path && s.stparams <> [])
+                ctx.structs with
+        | Some skel ->
+            let inst = Mono.instantiate_struct ctx.instances skel args in
+            TStruct inst.sname_path
+        | None -> TStructApp { path; args }
+      else TStructApp { path; args }
+  | TEnumApp { path; args } ->
+      let args = List.map (normalize_apps ctx) args in
+      if List.for_all is_concrete args then
+        match List.find_opt
+                (fun (e : enum_sig) -> e.ename_path = path && e.etparams <> [])
+                ctx.enums with
+        | Some skel ->
+            let inst = Mono.instantiate_enum ctx.instances skel args in
+            TEnum inst.ename_path
+        | None -> TEnumApp { path; args }
+      else TEnumApp { path; args }
+  | TPtr inner -> TPtr (normalize_apps ctx inner)
+  | TTuple ts -> TTuple (List.map (normalize_apps ctx) ts)
+  | TFnPtr { params; ret } ->
+      TFnPtr { params = List.map (normalize_apps ctx) params;
+               ret = Option.map (normalize_apps ctx) ret }
+  | other -> other
+
+(* Public entry point.  Resolve the annotation, substitute the fn-instance
+   tvar bindings (so a generic-instance body sees concrete types where the
+   source mentions the fn's type parameters), then normalise any now-concrete
+   generic application to its flat mono instance. *)
 let resolve_type_ann ?(pos = Pos.zero) ctx ann =
-  subst_typ ctx.tvar_bindings (resolve_type_ann_raw ~pos ctx ann)
+  normalize_apps ctx
+    (subst_typ ctx.tvar_bindings (resolve_type_ann_raw ~pos ctx ann))
 
 (* Recognise an integer literal expression — bare or negated — for type-fitting
    checks at let-binding sites. *)
@@ -602,7 +634,8 @@ let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
    helper owns only the inference / instantiation step.  When
    inference fails (under-determined T), `Mono.infer_tparams` raises
    with a hint to add a let / return type annotation. *)
-let resolve_call_dispatch ~pos ~expected ctx ~resolved_mod ~arg_tys
+let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
+    ~resolved_mod ~arg_tys
     (skel : fn_sig) : string * typ list * typ option =
   if skel.fn_tparams = [] then
     (skel.mangled, skel.param_tys, skel.ret_ty)
@@ -616,14 +649,47 @@ let resolve_call_dispatch ~pos ~expected ctx ~resolved_mod ~arg_tys
       in
       loop n [] xs
     in
-    let inf_pairs = List.combine skel.param_tys (take n_fixed arg_tys) in
+    (* A generic-struct parameter (`p: Pair<T, int>`) shows up as a
+       TStructApp whose actual argument is a flat instance that has lost
+       its type args — so plain unification can't recover `T`.  Expand
+       such pairs arg-by-arg using the instance's recorded
+       `sinstance_args` / `einstance_args`, recursing through pointers. *)
+    let rec expand_pair (decl, act) =
+      match decl, act with
+      | TStructApp { args = dargs; _ }, TStruct inst_path ->
+          (match Mono.find_struct ctx.instances inst_path with
+           | Some { sinstance_args = Some iargs; _ }
+             when List.length iargs = List.length dargs ->
+               List.concat_map expand_pair (List.combine dargs iargs)
+           | _ -> [ (decl, act) ])
+      | TEnumApp { args = dargs; _ }, TEnum inst_path ->
+          (match Mono.find_enum ctx.instances inst_path with
+           | Some { einstance_args = Some iargs; _ }
+             when List.length iargs = List.length dargs ->
+               List.concat_map expand_pair (List.combine dargs iargs)
+           | _ -> [ (decl, act) ])
+      | TPtr d, TPtr a -> expand_pair (d, a)
+      | _ -> [ (decl, act) ]
+    in
+    let inf_pairs =
+      List.concat_map expand_pair
+        (List.combine skel.param_tys (take n_fixed arg_tys))
+    in
     let seed_pairs =
       match expected, skel.ret_ty with
       | Some exp, Some r -> [(r, exp)]
       | _ -> []
     in
+    (* Generic-impl method: the receiver instance pins the impl tparams
+       (the leading fn_tparams) to the instance's type args.  Self can't
+       drive this via unification — a flat instance type has lost its
+       args — so we seed the bindings directly. *)
+    let seed =
+      List.combine (take (List.length recv_inst_args) skel.fn_tparams)
+        recv_inst_args
+    in
     let inferred =
-      Mono.infer_tparams ~pos skel.fn_tparams (seed_pairs @ inf_pairs)
+      Mono.infer_tparams ~pos ~seed skel.fn_tparams (seed_pairs @ inf_pairs)
     in
     let bindings = List.combine skel.fn_tparams inferred in
     let func =
@@ -637,7 +703,13 @@ let resolve_call_dispatch ~pos ~expected ctx ~resolved_mod ~arg_tys
       Mono.instantiate_fn ctx.instances
         ~path:resolved_mod ~func ~skel ~bindings ~origin_pos:pos
     in
-    (inst.mangled, inst.param_tys, inst.ret_ty)
+    (* Mono.subst_typ substitutes the bindings but can't normalise a
+       now-concrete generic application (`Pair<A,B>` -> Pair<i32,bool>)
+       to its flat instance — that needs the index + Mono state.  Do it
+       here so the dispatch result is flat for the caller. *)
+    (inst.mangled,
+     List.map (normalize_apps ctx) inst.param_tys,
+     Option.map (normalize_apps ctx) inst.ret_ty)
   end
 
 
@@ -1704,7 +1776,23 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                struct, got %s"
               name (typ_name other)
       in
-      let mpath = struct_path @ [name] in
+      (* Methods of a generic struct are registered under the skeleton
+         path (`Pair`), not the instance path (`Pair_i32_bool`).  Map the
+         receiver instance back to its skeleton and remember its type
+         args — those pin the impl's type parameters at dispatch. *)
+      let (method_struct_path, recv_inst_args) =
+        match Mono.find_struct ctx.instances struct_path with
+        | Some { sinstance_args = Some inst_args; _ } when inst_args <> [] ->
+            (match List.find_opt
+                     (fun (s : struct_sig) ->
+                        s.stparams <> []
+                        && Mono.is_instance_of s.sname_path struct_path)
+                     ctx.structs with
+             | Some skel -> (skel.sname_path, inst_args)
+             | None -> (struct_path, []))
+        | _ -> (struct_path, [])
+      in
+      let mpath = method_struct_path @ [name] in
       let display = String.concat "::" mpath in
       let targs = List.map (elab_expr ctx env) args in
       let arg_tys = List.map (fun (a : texpr) -> a.ty) targs in
@@ -1775,7 +1863,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                name (String.concat "::" resolved_mod);
            let arg_tys_for_dispatch = trecv.ty :: arg_tys in
            let (mangled, inst_param_tys, ret_ty) =
-             resolve_call_dispatch ~pos:mc_pos ~expected ctx
+             resolve_call_dispatch ~pos:mc_pos ~expected ~recv_inst_args ctx
                ~resolved_mod ~arg_tys:arg_tys_for_dispatch skel
            in
            (match inst_param_tys with
@@ -2624,6 +2712,9 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
         let ctx = { (empty_ctx ~instances) with
           structs = struct_index; enums = enum_index;
           modules; scope = parent_path;
+          (* The impl's type parameters are in scope while resolving the
+             methods' self/param/ret types (`self: Pair<A, B>`). *)
+          tparams = ib.Ast.itparams;
           ext_structs; ext_types; ext_consts;
         } in
         let s =
@@ -2654,9 +2745,14 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
             (match m.params with
              | { pname = "self"; pty = ann } :: _ ->
                  let self_t = resolve_type_ann ~pos:m.pos ctx ann in
+                 (* Mono impl: self is `Foo` / `*Foo`.  Generic impl: self
+                    is the still-applied `Pair<A, B>` (a TStructApp on the
+                    target path, args = the impl tparams). *)
                  (match self_t with
                   | TStruct p when p = target_path -> ()
                   | TPtr (TStruct p) when p = target_path -> ()
+                  | TStructApp { path; _ } when path = target_path -> ()
+                  | TPtr (TStructApp { path; _ }) when path = target_path -> ()
                   | _ ->
                       Error.failf m.pos
                         "first parameter 'self' must have type '%s' or '*%s', \
@@ -2666,14 +2762,14 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
                         (typ_name self_t))
              | _ -> ()))
           ib.Ast.iitems;
-        (target_path, s.sis_pub, ib.Ast.iitems))
+        (target_path, s.sis_pub, ib.Ast.itparams, ib.Ast.iitems))
       flat.impls
   in
   (* Cross-block dup check: same method name on the same struct in two
      different impl blocks. *)
   let seen_methods = Hashtbl.create 16 in
   List.iter
-    (fun (target_path, _, methods) ->
+    (fun (target_path, _, _, methods) ->
       List.iter
         (fun (m : Ast.func) ->
           let key = (target_path, m.name) in
@@ -2688,7 +2784,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
   let virtual_modules =
     let seen = ref [] in
     List.filter_map
-      (fun (target_path, sis_pub, _) ->
+      (fun (target_path, sis_pub, _, _) ->
         if List.mem target_path !seen then None
         else (seen := target_path :: !seen;
               Some (target_path, sis_pub)))
@@ -2696,9 +2792,13 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
   in
   let impl_funcs =
     List.concat_map
-      (fun (target_path, _, methods) ->
+      (fun (target_path, _, itparams, methods) ->
         List.map
           (fun (m : Ast.func) ->
+            (* A generic impl's tparams become the method's own tparams,
+               so the method is treated as a generic fn (inferred /
+               instantiated per concrete receiver at the call site). *)
+            let m = { m with Ast.tparams = itparams @ m.tparams } in
             let mangled = mangle target_path m.name in
             (target_path, m, mangled))
           methods)
@@ -2819,7 +2919,8 @@ let prelude_items () =
       None free_body
   in
   let alloc_impl = {
-    Ast.itarget = ["Allocator"];
+    Ast.itparams = [];
+    itarget = ["Allocator"];
     iitems = [alloc_method; free_method];
     ipos = pos;
   } in
@@ -3118,14 +3219,21 @@ let check_program program : tprogram =
     match Mono.take_pending_fn_jobs mono_state with
     | [] -> List.rev acc
     | jobs ->
+        let norm_ctx =
+          { (empty_ctx ~instances:mono_state) with
+            structs = struct_index; enums = enum_index }
+        in
         let new_tfuncs =
           List.map (fun (job : Mono.pending_fn_job) ->
             let tf = elab_one_fn ~tvar_bindings:job.pj_bindings
               (job.pj_path, job.pj_func, job.pj_mangled)
             in
+            (* Normalise any now-concrete generic application (Mono's
+               subst leaves `Pair<i32,bool>` as an App; codegen needs the
+               flat `Pair_i32_bool` instance). *)
             { tf with
-              tf_param_tys = job.pj_param_tys;
-              tf_ret_ty = job.pj_ret_ty;
+              tf_param_tys = List.map (normalize_apps norm_ctx) job.pj_param_tys;
+              tf_ret_ty = Option.map (normalize_apps norm_ctx) job.pj_ret_ty;
               tf_origin_pos = Some job.pj_origin_pos })
             jobs
         in
@@ -3223,7 +3331,8 @@ let check_program program : tprogram =
     | TEnum p -> enum_is_debug p
     | TTuple ts -> List.for_all field_ty_ok ts
     | TCVoid | TExtStruct _ | TExtAlias _
-    | TFnPtr _ | TNullPtr | TVar _ -> false
+    | TFnPtr _ | TNullPtr | TVar _
+    | TStructApp _ | TEnumApp _ -> false
   in
   List.iter (fun (s : struct_sig) ->
     if s.sis_debug then

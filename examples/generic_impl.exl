@@ -1,0 +1,53 @@
+// Methods on a generic struct — `impl<T> Foo<T> { ... }`.
+//
+// The `<T>` after `impl` declares the impl's type parameters; the
+// target carries them (`Pair<A, B>`).  A method becomes generic over
+// those parameters and is monomorphized per concrete receiver at the
+// call site — `p.first()` on a `Pair<int, bool>` instantiates
+// `first` at `A = int, B = bool`.  Only methods actually called are
+// emitted (lazy), so unused ones cost nothing.
+//
+// `self` (and `*self` for a pointer receiver) are bare — no type
+// annotation needed; the compiler fills in the impl target.
+
+struct Pair<A, B> {
+    fst: A,
+    snd: B
+}
+
+impl<A, B> Pair<A, B> {
+    pub fn first(self) -> A { return self.fst; }
+    pub fn second(self) -> B { return self.snd; }
+
+    // Return type may permute the parameters — `swap` of a
+    // `Pair<A, B>` is a fresh `Pair<B, A>` instance.
+    pub fn swap(self) -> Pair<B, A> {
+        return Pair { fst: self.snd, snd: self.fst };
+    }
+}
+
+struct Box<T> { val: T }
+
+impl<T> Box<T> {
+    pub fn get(self) -> T { return self.val; }
+    // `*self` — pointer receiver, mutates in place.
+    pub fn set(*self, v: T) { self.val = v; }
+}
+
+fn main() {
+    let p = Pair { fst: 42, snd: true };       // Pair<int, bool>
+    println(p.first());                         // 42
+    if p.second() { println(1); } else { println(0); }  // 1
+
+    let q = p.swap();                           // Pair<bool, int>
+    println(q.second());                        // 42  (was fst)
+
+    // A distinct instantiation — Pair<int, int> — reuses the same
+    // source but emits its own monomorphic methods.
+    let r = Pair { fst: 7, snd: 9 };
+    println(r.first());                         // 7
+
+    let b = Box { val: 5 };
+    b.set(99);                                  // pointer receiver
+    println(b.get());                           // 99
+}

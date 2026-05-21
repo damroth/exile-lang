@@ -23,6 +23,13 @@ type type_ann =
                                           args=[] }` until typecheck binds
                                           them as type variables. *)
   | TyPtr of type_ann                  (* `*T` *)
+  | TySelf                             (* placeholder for a bare `self` /
+                                          `*self` method receiver — the
+                                          parser substitutes the enclosing
+                                          impl's target type before the AST
+                                          leaves parse_impl_block, so it
+                                          never reaches typecheck except as
+                                          a misuse outside an impl. *)
   | TyFnPtr of { params : type_ann list; ret : type_ann option }
                                        (* `fn(T1, T2) -> R` as a type.
                                           C-side maps to a function
@@ -329,6 +336,8 @@ and module_decl = {
   mis_pub : bool;
 }
 and impl_block = {
+  itparams : string list;    (* `<A, B>` after `impl` — generic impl over a
+                                generic struct; [] for a mono-struct impl *)
   itarget : string list;     (* path written by user, may be relative *)
   iitems : func list;
   ipos : Pos.t;

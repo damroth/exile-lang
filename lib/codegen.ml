@@ -149,6 +149,10 @@ let rec c_type_prefix = function
       failwith
         ("internal: TVar '" ^ n ^ "' reached c_type_prefix — \
           monomorphization missed an instantiation")
+  | (TStructApp _ | TEnumApp _) as t ->
+      failwith
+        ("internal: '" ^ typ_name t ^ "' reached c_type_prefix — a \
+          generic application was not monomorphized to a flat instance")
 
 let c_decl t name = c_type_prefix t ^ name
 

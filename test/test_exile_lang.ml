@@ -722,6 +722,42 @@ let () =
     "struct P { x: int }\nimpl P { pub fn foo(self: P) -> int { return self.x; } }\nfn main() { let p = P { x: 1 }; println(p.bar()); }\n"
     "no method 'bar' on type 'P'";
 
+  (* Generic impl (impl<T> Foo<T>) — methods on a generic struct,
+     monomorphized per concrete receiver; runtime coverage lives in
+     examples/generic_impl.exl. *)
+  check "generic impl method monomorphizes per receiver instance"
+    "struct Box<T> { v: T }\n\
+     impl<T> Box<T> {\n\
+    \    pub fn get(self) -> T { return self.v; }\n\
+     }\n\
+     fn main() {\n\
+    \    let b = Box { v: 5 };\n\
+    \    println(b.get());\n\
+     }\n"
+    "#include <stdio.h>\n\n\
+     struct ex_Box_i32 { long v; };\n\n\
+     long Box__get_i32(struct ex_Box_i32 self);\n\n\
+     int main(void) {\n\
+    \    struct ex_Box_i32 b;\n\
+    \    b.v = 5;\n\
+    \    printf(\"%ld\\n\", (long)(Box__get_i32(b)));\n\
+    \    return 0;\n\
+     }\n\n\
+     long Box__get_i32(struct ex_Box_i32 self) {\n\
+    \    return self.v;\n\
+     }\n";
+
+  check_error "bare 'self' outside an impl rejected"
+    "fn foo(self) -> int { return 1; }\nfn main() { println(1); }\n"
+    "bare 'self' is only allowed as the receiver of an 'impl' method";
+
+  check_error "generic impl target args must match declared params"
+    "struct Pair<A, B> { fst: A, snd: B }\n\
+     impl<A, B> Pair<B, A> { pub fn f(self) -> A { return self.snd; } }\n\
+     fn main() { println(1); }\n"
+    "'impl<A, B>' target must be 'Pair<A, B>' — the type arguments must \
+     match the declared parameters in order";
+
   check_error "private method called from outside rejected"
     "struct P { x: int }\nimpl P { fn priv(self: P) -> int { return self.x; } }\nfn main() { let p = P { x: 1 }; println(p.priv()); }\n"
     "method 'priv' is private to 'P'";

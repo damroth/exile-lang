@@ -51,6 +51,20 @@ type typ =
                                           ever generated — the type lives
                                           on the C side. *)
   | TEnum of string list               (* absolute path: e.g. ["geom"; "Shape"] *)
+  | TStructApp of { path : string list; args : typ list }
+  | TEnumApp of { path : string list; args : typ list }
+                                       (* A generic struct/enum applied to
+                                          type arguments that still contain
+                                          free `TVar`s — i.e. not yet
+                                          monomorphizable (e.g. `Pair<A, B>`
+                                          in a generic `impl`/fn skeleton).
+                                          The instant every arg is concrete,
+                                          `resolve_type_ann` normalises it to
+                                          a flat instance `TStruct`/`TEnum`
+                                          via Mono.  So these only ever hold
+                                          a partially-free application, are
+                                          never `is_concrete`, and never reach
+                                          codegen — exactly like `TVar`. *)
   | TPtr of typ                        (* `*T` *)
   | TFnPtr of { params : typ list; ret : typ option }
                                        (* `fn(T1, T2) -> R` — function
@@ -213,6 +227,9 @@ let rec type_of_ann = function
   | Ast.TyTuple ts -> TTuple (List.map type_of_ann ts)
   | Ast.TyStruct { path; args = _ } -> TStruct path
   | Ast.TyPtr t -> TPtr (type_of_ann t)
+  | Ast.TySelf ->
+      failwith "internal: TySelf reached type_of_ann — the parser should \
+                have substituted the impl target"
   | Ast.TyFnPtr { params; ret } ->
       TFnPtr { params = List.map type_of_ann params;
                ret = Option.map type_of_ann ret }
@@ -245,6 +262,9 @@ let rec typ_name = function
   | TExtStruct n -> n
   | TExtAlias n -> n
   | TEnum path -> String.concat "::" path
+  | TStructApp { path; args } | TEnumApp { path; args } ->
+      String.concat "::" path
+      ^ "<" ^ String.concat ", " (List.map typ_name args) ^ ">"
   | TPtr t -> "*" ^ typ_name t
   | TFnPtr { params; ret } ->
       let ps = String.concat ", " (List.map typ_name params) in
@@ -296,6 +316,12 @@ let rec mangle_typ = function
       (match List.rev path with
        | [] -> failwith "empty named-type path"
        | n :: rest -> mangle (List.rev rest) n)
+  | TStructApp _ | TEnumApp _ ->
+      (* Always carries a free TVar, so it's never concrete and should
+         have been normalised to a flat instance before any C name was
+         needed — same contract as TVar. *)
+      failwith "internal: TStructApp/TEnumApp reached mangle_typ — \
+                monomorphization should have normalised it"
   | TExtStruct n -> n              (* raw — opaque struct lives in C namespace *)
   | TExtAlias n -> n               (* raw — opaque type alias lives in C namespace *)
   | TPtr t -> "ptr_" ^ mangle_typ t
@@ -370,6 +396,10 @@ let rec type_map ~f = function
   | TFnPtr { params; ret } ->
       TFnPtr { params = List.map (type_map ~f) params;
                ret = Option.map (type_map ~f) ret }
+  | TStructApp { path; args } ->
+      TStructApp { path; args = List.map (type_map ~f) args }
+  | TEnumApp { path; args } ->
+      TEnumApp { path; args = List.map (type_map ~f) args }
   | leaf -> f leaf
 
 (* Conjunction fold over a type tree: [f] runs on each leaf, structural
@@ -381,6 +411,8 @@ let rec type_for_all ~f = function
   | TFnPtr { params; ret } ->
       List.for_all (type_for_all ~f) params
       && (match ret with Some t -> type_for_all ~f t | None -> true)
+  | TStructApp { args; _ } | TEnumApp { args; _ } ->
+      List.for_all (type_for_all ~f) args
   | leaf -> f leaf
 
 (* True when [t]'s type tree has more than [limit] nodes.  Short-circuits

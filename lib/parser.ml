@@ -174,10 +174,22 @@ let parse_param_reg_attr s =
 
 let parse_param s =
   let reg = parse_param_reg_attr s in
-  let (name, _) = expect_ident s ~what:"parameter name" in
-  expect s Token.Colon;
-  let ty = parse_type s in
-  Ast.{ pname = name; pty = ty; preg = Option.map fst reg }
+  (* Bare method receivers: `self` (by value) and `*self` (by pointer),
+     with no type annotation.  Typed as TySelf here; parse_impl_block
+     substitutes the impl's target type once it's known.  An explicit
+     `self: T` still goes through the regular `name: type` path below. *)
+  match peek s with
+  | Token.Ident "self" when peek2 s <> Token.Colon ->
+      ignore (advance s);
+      Ast.{ pname = "self"; pty = Ast.TySelf; preg = None }
+  | Token.Star when peek2 s = Token.Ident "self" ->
+      ignore (advance s); ignore (advance s);
+      Ast.{ pname = "self"; pty = Ast.TyPtr Ast.TySelf; preg = None }
+  | _ ->
+      let (name, _) = expect_ident s ~what:"parameter name" in
+      expect s Token.Colon;
+      let ty = parse_type s in
+      Ast.{ pname = name; pty = ty; preg = Option.map fst reg }
 
 let parse_params s =
   expect s Token.LParen;
@@ -1299,7 +1311,33 @@ and parse_enum_decl s ~is_pub =
 and parse_impl_block s =
   expect s Token.Impl;
   let pos = s.last_pos in
-  let target = parse_path s ~what:"struct name after 'impl'" in
+  (* `impl<A, B> Pair<A, B> { ... }` — the `<A, B>` declares the impl's
+     type parameters; the target carries them as arguments.  `impl Foo`
+     (mono) parses with no tparams and no target args. *)
+  let itparams = parse_tparams s in
+  let target_ty = parse_type s in
+  let (target_path, target_args) =
+    match target_ty with
+    | Ast.TyStruct { path; args } -> (path, args)
+    | _ ->
+        Error.failf pos "'impl' target must be a (possibly generic) struct"
+  in
+  (if itparams <> [] then begin
+     let expected =
+       List.map (fun n -> Ast.TyStruct { path = [ n ]; args = [] }) itparams
+     in
+     if target_args <> expected then
+       Error.failf pos
+         "'impl<%s>' target must be '%s<%s>' — the type arguments must \
+          match the declared parameters in order"
+         (String.concat ", " itparams)
+         (String.concat "::" target_path)
+         (String.concat ", " itparams)
+   end
+   else if target_args <> [] then
+     Error.failf pos
+       "generic 'impl' needs its parameters declared after 'impl', e.g. \
+        'impl<T> %s<T>'" (String.concat "::" target_path));
   expect s Token.LBrace;
   let rec loop seen acc =
     match peek s with
@@ -1317,7 +1355,22 @@ and parse_impl_block s =
                "expected 'fn' inside 'impl' block, got %s" (Token.pp t))
   in
   let methods = loop [] [] in
-  Ast.{ itarget = target; iitems = methods; ipos = pos }
+  (* Substitute the bare-`self` placeholder (TySelf, possibly under a
+     pointer) with the impl target type, so downstream sees an explicit
+     `self: Pair<A, B>` / `self: *Pair<A, B>`. *)
+  let rec replace_self = function
+    | Ast.TySelf -> target_ty
+    | Ast.TyPtr t -> Ast.TyPtr (replace_self t)
+    | other -> other
+  in
+  let methods =
+    List.map (fun (m : Ast.func) ->
+      { m with Ast.params =
+          List.map (fun (p : Ast.param) ->
+            { p with Ast.pty = replace_self p.pty }) m.params })
+      methods
+  in
+  Ast.{ itparams; itarget = target_path; iitems = methods; ipos = pos }
 
 and parse_module s seen ~is_pub =
   expect s Token.Mod;
