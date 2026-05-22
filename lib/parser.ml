@@ -1090,10 +1090,11 @@ let rec parse_item s seen =
           List.map (fun (name_opt, item) ->
             match item with
             | Ast.Use u ->
-                if u.is_wildcard then
-                  Error.failf u.pos
-                    "'pub use foo::*;' wildcard re-export not supported \
-                     (re-export individual names)";
+                (* `pub use foo::*;` is a synonym for `use foo::*;` — the
+                   loader inlines foo's public items into this scope, and
+                   they keep their own `pub` flag, so they are re-exported
+                   transitively either way.  `pub use foo::bar;` (single
+                   name) still rides the typecheck alias table. *)
                 (name_opt, Ast.Use { u with is_pub = true })
             | other -> (name_opt, other))
             items
@@ -1169,15 +1170,12 @@ let rec parse_item s seen =
                  Error.failf at_pos
                    "'@tier' can only decorate fn / struct / enum decls")
        | "debug" ->
+           (* `@debug` works on generic struct/enum too: monomorphization
+              gives each instance concrete fields, and the printer is
+              synthesized per instance.  The per-instance @debug-able field
+              check (in typecheck) runs on concrete instances, not the
+              skeleton (whose fields are free TVars). *)
            apply_to_next ~apply:(function
-             | Ast.Struct s when s.stparams <> [] ->
-                 Error.failf at_pos
-                   "'@debug' not yet supported for generic struct '%s' \
-                    (T-bound system needed first)" s.sname
-             | Ast.Enum e when e.etparams <> [] ->
-                 Error.failf at_pos
-                   "'@debug' not yet supported for generic enum '%s' \
-                    (T-bound system needed first)" e.ename
              | Ast.Struct s -> Ast.Struct { s with sis_debug = true }
              | Ast.Enum e -> Ast.Enum { e with eis_debug = true }
              | _ ->

@@ -1018,10 +1018,12 @@ let emit_enum_debug_fwddecl buf (e : enum_sig) =
     let cname = mangle_typ (TEnum e.ename_path) in
     Printf.bprintf buf "static void %s__debug(struct %s self);\n" cname cname
 
-let emit_struct_debug_def buf (s : struct_sig) =
+let emit_struct_debug_def ~structs ~enums buf (s : struct_sig) =
   if s.sis_debug then begin
     let cname = mangle_typ (TStruct s.sname_path) in
-    let name = last_segment s.sname_path in
+    (* User-facing header name: `Point` for mono, `Pair<i32, bool>` for a
+       generic instance — not the mangled `Pair_i32_bool`. *)
+    let name = render_typ_user_facing ~structs ~enums (TStruct s.sname_path) in
     Printf.bprintf buf "static void %s__debug(struct %s self) {\n" cname cname;
     Printf.bprintf buf "    printf(\"%s { \");\n" name;
     List.iteri (fun i (fname, fty) ->
@@ -1035,10 +1037,10 @@ let emit_struct_debug_def buf (s : struct_sig) =
     Buffer.add_string buf "}\n"
   end
 
-let emit_enum_debug_def buf (e : enum_sig) =
+let emit_enum_debug_def ~structs ~enums buf (e : enum_sig) =
   if e.eis_debug then begin
     let cname = mangle_typ (TEnum e.ename_path) in
-    let name = last_segment e.ename_path in
+    let name = render_typ_user_facing ~structs ~enums (TEnum e.ename_path) in
     Printf.bprintf buf "static void %s__debug(struct %s self) {\n" cname cname;
     Buffer.add_string buf "    switch (self.tag) {\n";
     List.iter (fun (vs : variant_sig) ->
@@ -1165,9 +1167,12 @@ let gen_program ?(annotate = false) (tp : tprogram) =
     List.iter (emit_struct_debug_fwddecl buf) debug_structs;
     List.iter (emit_enum_debug_fwddecl buf) debug_enums;
     Buffer.add_char buf '\n';
-    List.iter (fun s -> emit_struct_debug_def buf s; Buffer.add_char buf '\n')
+    let structs = tp.tp_struct_index and enums = tp.tp_enum_index in
+    List.iter (fun s ->
+      emit_struct_debug_def ~structs ~enums buf s; Buffer.add_char buf '\n')
       debug_structs;
-    List.iter (fun e -> emit_enum_debug_def buf e; Buffer.add_char buf '\n')
+    List.iter (fun e ->
+      emit_enum_debug_def ~structs ~enums buf e; Buffer.add_char buf '\n')
       debug_enums
   end;
   (* Generic fns (with TVar in their resolved signature) skip codegen

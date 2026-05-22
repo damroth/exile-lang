@@ -465,12 +465,19 @@ type builtin_sig = {
 
 (* True when [path] names a struct/enum whose `@debug` printer the codegen
    will synthesize.  Drives the `print(v)` dispatch on aggregate types. *)
+(* A generic-struct instance (`Pair_i32_bool`) lives in the Mono state,
+   not in ctx.structs (which holds the skeletons), so check both — the
+   instance inherits `sis_debug` from its skeleton. *)
 let struct_is_debug (ctx : fn_ctx) path =
-  List.exists (fun (s : struct_sig) ->
-    s.sname_path = path && s.sis_debug) ctx.structs
+  List.exists (fun (s : struct_sig) -> s.sname_path = path && s.sis_debug)
+    ctx.structs
+  || (match Mono.find_struct ctx.instances path with
+      | Some s -> s.sis_debug | None -> false)
 let enum_is_debug (ctx : fn_ctx) path =
-  List.exists (fun (e : enum_sig) ->
-    e.ename_path = path && e.eis_debug) ctx.enums
+  List.exists (fun (e : enum_sig) -> e.ename_path = path && e.eis_debug)
+    ctx.enums
+  || (match Mono.find_enum ctx.instances path with
+      | Some e -> e.eis_debug | None -> false)
 
 (* `print` and `println` share the same one-printable-argument contract;
    they differ only in codegen (trailing newline).  [name] flows into the
@@ -1452,29 +1459,45 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
               field types, build a fresh monomorphic struct_sig. *)
            let s_concrete =
              if s.stparams = [] then s
-             else begin
-               if tbase <> None then
-                 Error.failf lit_pos
-                   "'..base' on a generic struct '%s' is not yet supported \
-                    (annotate the value's type and re-create the literal)"
-                   display;
-               if missing <> [] then
-                 Error.failf lit_pos
-                   "struct literal '%s' missing field(s): %s"
-                   display (String.concat ", " missing);
-               let pairs =
-                 List.concat_map (expand_inst_pair ctx)
-                   (List.map (fun (fn, (fe : texpr)) ->
-                      let decl_t = List.assoc fn s.sfields_ty in
-                      (decl_t, fe.ty))
-                      tfields)
-               in
-               let inferred =
-                 Mono.infer_tparams ~pos:lit_pos s.stparams pairs
-               in
-               Mono.instantiate_struct ctx.instances
-                 ~normalize:(normalize_apps ctx) s inferred
-             end
+             else match tbase with
+               | Some be ->
+                   (* `..base` pins the concrete instance directly: the
+                      base value already has type `Pair<i32, bool>`, so the
+                      tparams need no inference from the (possibly partial)
+                      provided fields.  Missing fields are filled from base. *)
+                   (match be.ty with
+                    | TStruct path when Mono.is_instance_of s.sname_path path ->
+                        (match Mono.find_struct ctx.instances path with
+                         | Some inst -> inst
+                         | None ->
+                             (match resolve_struct_by_path ctx path with
+                              | Some inst -> inst
+                              | None ->
+                                  Error.failf lit_pos
+                                    "internal: '..base' instance '%s' missing \
+                                     from index" (String.concat "::" path)))
+                    | _ ->
+                        Error.failf lit_pos
+                          "'..base' in struct literal '%s' expects a value of \
+                           type '%s', got %s"
+                          display display (typ_name be.ty))
+               | None ->
+                   if missing <> [] then
+                     Error.failf lit_pos
+                       "struct literal '%s' missing field(s): %s"
+                       display (String.concat ", " missing);
+                   let pairs =
+                     List.concat_map (expand_inst_pair ctx)
+                       (List.map (fun (fn, (fe : texpr)) ->
+                          let decl_t = List.assoc fn s.sfields_ty in
+                          (decl_t, fe.ty))
+                          tfields)
+                   in
+                   let inferred =
+                     Mono.infer_tparams ~pos:lit_pos s.stparams pairs
+                   in
+                   Mono.instantiate_struct ctx.instances
+                     ~normalize:(normalize_apps ctx) s inferred
            in
            (match tbase with
             | None ->
@@ -3351,7 +3374,10 @@ let check_program program : tprogram =
     | TCChar | TCSChar | TCUChar | TBool | TString | TPtr _ -> true
     | TStruct p -> struct_is_debug p
     | TEnum p -> enum_is_debug p
-    | TTuple ts -> List.for_all field_ty_ok ts
+    (* Tuple fields aren't rendered by the synthesized printer yet
+       (codegen's emit_field_debug has no tuple case) — reject rather
+       than crash; revisit if tuple-in-@debug becomes worth the syntax. *)
+    | TTuple _
     | TCVoid | TExtStruct _ | TExtAlias _
     | TFnPtr _ | TNullPtr | TVar _
     | TStructApp _ | TEnumApp _ -> false
@@ -3398,37 +3424,33 @@ let check_program program : tprogram =
         forbid_naked_opaque ~exposed:exposed_extern pos ft) vs.vsfields)
       e.evariants)
     all_enums;
+  (* @debug-able field check.  Only concrete structs/enums are validated
+     (and emitted): a generic SKELETON has free-TVar fields that aren't
+     debug-able by themselves — its concrete instances are checked
+     individually, where the field types are real. *)
   List.iter (fun (s : struct_sig) ->
-    if s.sis_debug then
+    if s.sis_debug && s.stparams = [] then
       List.iter (fun (fname, fty) ->
         if not (field_ty_ok fty) then
-          let pos =
-            try (List.find (fun (p, (d : Ast.struct_decl)) ->
-                   p @ [d.sname] = s.sname_path) flat.structs
-                 |> snd).spos
-            with Not_found -> Pos.zero
-          in
-          Error.failf pos
+          Error.failf (struct_decl_pos s.sname_path)
             "'@debug' struct '%s': field '%s' of type %s is not debug-able \
              (mark the type `@debug`, or remove `@debug` from the struct)"
-            (String.concat "::" s.sname_path) fname (typ_name fty))
+            (render_typ_user_facing ~structs:all_structs ~enums:all_enums
+               (TStruct s.sname_path))
+            fname (typ_name fty))
         s.sfields_ty)
     all_structs;
   List.iter (fun (e : enum_sig) ->
-    if e.eis_debug then
+    if e.eis_debug && e.etparams = [] then
       List.iter (fun (vs : variant_sig) ->
         List.iter (fun (fname, fty) ->
           if not (field_ty_ok fty) then
-            let pos =
-              try (List.find (fun (p, (d : Ast.enum_decl)) ->
-                     p @ [d.ename] = e.ename_path) flat.enums
-                   |> snd).epos
-              with Not_found -> Pos.zero
-            in
-            Error.failf pos
+            Error.failf (enum_decl_pos e.ename_path)
               "'@debug' enum '%s': variant '%s' payload '%s' of type %s \
                is not debug-able"
-              (String.concat "::" e.ename_path) vs.vsname fname (typ_name fty))
+              (render_typ_user_facing ~structs:all_structs ~enums:all_enums
+                 (TEnum e.ename_path))
+              vs.vsname fname (typ_name fty))
           vs.vsfields)
         e.evariants)
     all_enums;

@@ -72,10 +72,14 @@ and expand_item ~from_file ~loaded ~stack item =
       in
       [ Ast.Module { m with mitems = mitems' } ]
   | Ast.Use ({ path; is_wildcard; is_pub; pos } as u) ->
-      (* `pub use foo::bar;` is a re-export — handled entirely by typecheck
-         via its alias table, never crosses file boundaries.  Pass through
-         unchanged so flatten_items sees it. *)
-      if is_pub then [ Ast.Use u ]
+      (* `pub use foo::bar;` (single name) is a re-export handled by
+         typecheck's alias table — pass through unchanged.  But a
+         wildcard `pub use foo::*;` is a synonym for `use foo::*;`: inline
+         foo's public items here (they keep their own `pub`, so the
+         re-export happens for free).  So only NON-wildcard pub use is
+         passed through; wildcard pub use falls into the load+inline path
+         below. *)
+      if is_pub && not is_wildcard then [ Ast.Use u ]
       else
       let display =
         String.concat "::" path ^ (if is_wildcard then "::*" else "")

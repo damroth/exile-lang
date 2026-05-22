@@ -3,16 +3,19 @@
 // to it.  Zero runtime cost on types you didn't mark; opt-in keeps the
 // emitted C small on tight targets like Amiga 256K.
 //
-// MVP scope: only non-generic struct/enum.  Each field must be itself
-// debug-able — int-like, bool, str, pointer (rendered as address), or
-// another `@debug` aggregate.  Opaque C types and fn-ptrs are rejected
-// at compile time.
+// Each field must be itself debug-able — int-like, bool, str, pointer
+// (rendered as address), or another `@debug` aggregate.  Opaque C types,
+// fn-ptrs, and tuple fields are rejected at compile time.
 //
-// Generics (`@debug struct Box<T>`) are deferred until the language has
-// trait bounds (`T: Debug` analogue).
+// `@debug` works on generic struct/enum too: monomorphization gives each
+// instance concrete fields, so the printer is synthesized per instance
+// (`Pair<i32, bool> { ... }`).  No trait bounds needed.
 
 @debug
 struct Point { x: int, y: int }
+
+@debug
+struct Pair<A, B> { fst: A, snd: B }
 
 @debug
 struct Rect {
@@ -38,4 +41,8 @@ fn main() {
     println(Shape::Circle(7));                        // Shape::Circle(7)
     println(Shape::Rectangle { w: 80, h: 20 });       // Shape::Rectangle { w: 80, h: 20 }
     println(Shape::None);                             // Shape::None
+
+    // Generic @debug — each instance prints with its concrete type.
+    println(Pair { fst: 1, snd: true });              // Pair<i32, bool> { fst: 1, snd: true }
+    println(Pair { fst: p, snd: 9 });                 // Pair<Point, i32> { fst: Point { x: 3, y: 4 }, snd: 9 }
 }

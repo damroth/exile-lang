@@ -633,6 +633,26 @@ let () =
     "struct Point { x: int, y: int, }\nstruct Other { z: int, }\nfn main() {\n    let o = Other { z: 7 };\n    let p = Point { x: 1, ..o };\n    println(p.x);\n}\n"
     "'..base' in struct literal 'Point' expects a value of type Point, got Other";
 
+  check "functional update on a generic struct (base pins the instance)"
+    "struct Pair<A, B> { fst: A, snd: B }\n\
+     fn main() {\n\
+    \    let p = Pair { fst: 1, snd: true };\n\
+    \    let q = Pair { fst: 99, ..p };\n\
+    \    println(q.fst);\n\
+     }\n"
+    "#include <stdio.h>\n\n\
+     struct ex_Pair_i32_bool { long fst; int snd; };\n\n\
+     int main(void) {\n\
+    \    struct ex_Pair_i32_bool p;\n\
+    \    struct ex_Pair_i32_bool q;\n\
+    \    p.fst = 1;\n\
+    \    p.snd = 1;\n\
+    \    q = p;\n\
+    \    q.fst = 99;\n\
+    \    printf(\"%ld\\n\", (long)(q.fst));\n\
+    \    return 0;\n\
+     }\n";
+
   check "null literal in struct field + equality check"
     "struct Node { value: int, next: *Node, }\nfn main() {\n    let n = new Node { value: 5, next: null };\n    defer free(n);\n    if n.next == null {\n        println(n.value);\n    }\n}\n"
     "#include <stdio.h>\n#include <stdlib.h>\n\nstruct ex_Node { long value; struct ex_Node *next; };\n\nint main(void) {\n    struct ex_Node *n;\n    n = malloc(sizeof(struct ex_Node));\n    n->value = 5;\n    n->next = ((void *)0);\n    if (n->next == ((void *)0)) {\n        printf(\"%ld\\n\", (long)(n->value));\n    }\n    free(n);\n    return 0;\n}\n";
@@ -1658,11 +1678,20 @@ let () =
      fn main() { println(nonexistent()); }\n"
     "'pub use raw::nonexistent' refers to unknown item — no fn, struct, or enum with that path is visible from this scope";
 
-  check_error "pub use wildcard rejected"
-    "pub mod raw { pub fn a() {} pub fn b() {} }\n\
-     pub use raw::*;\n\
-     fn main() {}\n"
-    "'pub use foo::*;' wildcard re-export not supported (re-export individual names)";
+  check_multi "pub use foo::* re-exports a file module's public items"
+    [ ("foo.exl", "pub fn ping() -> int { return 42; }\n");
+      ("bar.exl", "pub use foo::*;\n");
+      ("main.exl", "use bar;\nfn main() { println(bar::ping()); }\n") ]
+    "main.exl"
+    "#include <stdio.h>\n\n\
+     long bar__ping(void);\n\n\
+     long bar__ping(void) {\n\
+    \    return 42;\n\
+     }\n\n\
+     int main(void) {\n\
+    \    printf(\"%ld\\n\", (long)(bar__ping()));\n\
+    \    return 0;\n\
+     }\n";
 
   check "fn-ptr field call: recv.field(args) routes through TIndirectCall"
     "struct Op { f: fn(int) -> int }\n\
@@ -1929,17 +1958,32 @@ let () =
      fn main() { println(1); }\n"
     "'@must_use' can only decorate fn / enum decls";
 
-  check_error "@debug rejected on generic struct (MVP limitation)"
+  check "@debug on a generic struct: printer synthesized per instance"
     "@debug\n\
      struct Box<T> { v: T }\n\
-     fn main() { println(1); }\n"
-    "'@debug' not yet supported for generic struct 'Box' (T-bound system needed first)";
+     fn main() { println(Box { v: 5 }); }\n"
+    "#include <stdio.h>\n\n\
+     struct ex_Box_i32 { long v; };\n\n\
+     static void ex_Box_i32__debug(struct ex_Box_i32 self);\n\n\
+     static void ex_Box_i32__debug(struct ex_Box_i32 self) {\n\
+    \    printf(\"Box<i32> { \");\n\
+    \    printf(\"v: \");\n\
+    \    printf(\"%ld\", (long)(self.v));\n\
+    \    printf(\" }\");\n\
+     }\n\n\n\
+     int main(void) {\n\
+    \    struct ex_Box_i32 __lift_0;\n\
+    \    __lift_0.v = 5;\n\
+    \    ex_Box_i32__debug(__lift_0); printf(\"\\n\");\n\
+    \    return 0;\n\
+     }\n";
 
-  check_error "@debug rejected on generic enum (MVP limitation)"
+  check_error "@debug generic struct: non-debug-able field instance rejected"
     "@debug\n\
-     enum Maybe<T> { | Some(T) | None }\n\
-     fn main() { println(1); }\n"
-    "'@debug' not yet supported for generic enum 'Maybe' (T-bound system needed first)";
+     struct W<T> { f: T }\n\
+     fn main() { let w = W { f: (1, 2) }; println(w); }\n"
+    "'@debug' struct 'W<(i32, i32)>': field 'f' of type (i32, i32) is not \
+     debug-able (mark the type `@debug`, or remove `@debug` from the struct)";
 
   check_error "@debug rejects field of non-debug-able type"
     "@debug\n\
