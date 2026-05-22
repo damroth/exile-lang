@@ -28,7 +28,10 @@ EXAMPLE_NAMES:= $(notdir $(EXAMPLES_SRC:.exl=))
 # exist outside of m68k-amigaos.  Filter them out of the host
 # pipelines; the amiga pipelines still pick them up.
 AMIGA_ONLY    := $(filter amiga_%, $(EXAMPLE_NAMES))
-HOST_EXAMPLES := $(filter-out $(AMIGA_ONLY), $(EXAMPLE_NAMES))
+# `multi_file` lives in a subdirectory, so the flat examples/*.exl glob
+# above misses it; append it so host/verify aggregates pick it up.  It is
+# host-only (no amiga build) — see the dedicated host-multi_file rule.
+HOST_EXAMPLES := $(filter-out $(AMIGA_ONLY), $(EXAMPLE_NAMES)) multi_file
 
 GHCR_OWNER ?= damroth
 CI_IMAGE   ?= ghcr.io/$(GHCR_OWNER)/exile-lang-ci:latest
@@ -38,7 +41,7 @@ AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(EXAMPLE_NAMES))
 
 .PHONY: all build test clean toolchain toolchain-clean
 .PHONY: host amiga examples
-.PHONY: host-% amiga-% run-% run-host-% c-%
+.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file
 .PHONY: verify verify-host verify-amiga verify-host-% verify-amiga-%
 .PHONY: rebaseline-host rebaseline-host-%
 .PHONY: build-image
@@ -74,6 +77,13 @@ link_args = $(if $(call stub_for,$(1)),--link $(call stub_for,$(1)))
 # `make host-NAME`  → build host binary for examples/NAME.exl
 host-%: examples/%.exl $(call stub_for,%) build
 	$(EXILE) --target host --c-out $(C_OUT)/$*.c $(call link_args,$*) -o $(HOST_OUT)/$* $<
+
+# `multi_file` is a directory example: its entry point is main.exl, which
+# `use`s sibling file-modules.  The flat host-% rule can't express that,
+# so it gets a dedicated rule; verify/rebaseline reuse the % patterns
+# (expected output lives in examples/multi_file.expected).
+host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl build
+	$(EXILE) --target host --c-out $(C_OUT)/multi_file.c -o $(HOST_OUT)/multi_file $<
 
 # `make amiga-NAME` → build m68k Amiga binary
 amiga-%: examples/%.exl $(call stub_for,%) build

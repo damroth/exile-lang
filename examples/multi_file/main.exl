@@ -1,3 +1,6 @@
+// Multi-file program.  `use foo;` resolves to <dir>/foo.exl — here the
+// sibling examples/multi_file/lib.exl — and `use foo::*;` pulls in every
+// public item so calls drop the `lib::` qualifier.
 use lib::*;
 
 fn main() {

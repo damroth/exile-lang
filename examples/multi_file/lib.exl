@@ -1,11 +1,14 @@
+// A sibling file-module loaded by main.exl.  Only `pub` items cross the
+// module boundary — `private_helper` stays invisible to importers even
+// under `use lib::*`.
 pub fn greet(name: str) {
-    print(name);
+    println(name);
 }
 
 pub fn shout() {
-    print("HEY!");
+    println("HEY!");
 }
 
 fn private_helper() {
-    print("you cannot see me");
+    println("you cannot see me");
 }
