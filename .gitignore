@@ -13,6 +13,9 @@ examples/*
 examples/multi_file/*
 !examples/multi_file/*.exl
 !examples/multi_file/*.expected
+!examples/prelude/
+examples/prelude/*
+!examples/prelude/*.exl
 
 # opam
 *.install

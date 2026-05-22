@@ -1,0 +1,17 @@
+// Wildcard re-export builds a "prelude".  `pub use foo::*;` lifts every
+// public item of a child module up into its parent, so one `use parent::*;`
+// downstream pulls in the whole tree without listing names one at a time.
+//
+// `prelude` (examples/prelude/mod.exl) re-exports its `greetings` and
+// `farewells` submodules.  `main` imports `prelude::*` and calls the
+// functions unqualified — each arrived through two hops of re-export.
+//
+// Re-export is file-modules only; an inline `mod { ... }` block re-exports
+// per name (see examples/modules).
+
+use prelude::*;
+
+fn main() {
+    hello();                                  // from prelude::greetings
+    goodbye();                                // from prelude::farewells
+}

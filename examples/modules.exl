@@ -19,9 +19,9 @@ mod greet {
 }
 
 // `pub use foo::bar;` re-exports `bar` into the enclosing scope, so
-// callers can use the short name without the module qualifier.
-// Wildcard re-export (`pub use foo::*;`) is not supported — list names
-// one at a time.
+// callers can use the short name without the module qualifier.  The
+// wildcard form `pub use foo::*;` re-exports every public item at once
+// (file-modules only — see examples/multi_file).
 pub use math::double;
 
 fn main() {

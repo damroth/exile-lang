@@ -1,0 +1,4 @@
+// A prelude module: it owns no items of its own, it just re-exports its
+// submodules wholesale so downstream code imports one name instead of many.
+pub use greetings::*;
+pub use farewells::*;
