@@ -68,6 +68,12 @@ fn main() {
     let p = Pair { fst: 5, snd: "hi" };
     println(p.fst);                                  // 5
 
+    // `..base` functional update works on a generic instance too: the
+    // carried-over fields keep p's monomorphized types (A = int, B = str).
+    let p2 = Pair { fst: 6, ..p };
+    println(p2.fst);                                 // 6
+    println(p2.snd);                                 // hi
+
     // Prelude Option<T>: T = int from the payload.
     let some = Option::Some(7);
     let none: Option<int> = Option::None;          // T pinned by ann
