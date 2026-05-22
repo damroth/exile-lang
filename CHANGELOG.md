@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-05-22
+
+This release deepens generics and pattern matching: methods on generic
+structs, nested match patterns with full exhaustiveness checking, and
+`..base`/`@debug`/`pub use *` rounding out the generic and module surface.
+It also splits `print`/`println` and adds a bare `return;` early-exit.
+
+### Added
+- Methods on generic structs (`impl<T> Pair<T>`) with bare `self`, and
+  generic-struct types usable as function parameters
+- Nested match patterns with full exhaustiveness and redundancy checking
+  (Maranget's algorithm)
+- `println` builtin that appends the trailing newline
+- Bare `return;` early-exit that flushes pending `defer`s
+- `..base` functional update on generic structs
+- `@debug` attribute on generic structs
+- `pub use foo::*` wildcard re-export
+- New examples: `generic_impl.exl`, `reexport.exl`, and a multi-file
+  `prelude/` demo
+
+### Changed
+- `print` no longer appends a trailing newline — use the new `println`
+- `type_name()` now folds into the compile-time `++` operator
+- Parser reports a clear error on a stray `;` in statement position
+
+### Fixed
+- Nested generic structs: `App` types normalized in instance fields, with
+  struct- and enum-literal inference
+- Generics review: detect value cycles, eliminate dead code through `App`,
+  and reject opaque `extern` struct fields passed by value
+- Eight robustness fixes found by fuzzing
+
 ## [0.4.2] - 2026-05-15
 
 Small polish release on top of 0.4.1: two new compile-time builtins
@@ -194,4 +226,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.4.2]: https://github.com/damroth/exile-lang/releases/tag/v0.4.2
+[0.5.0]: https://github.com/damroth/exile-lang/releases/tag/v0.5.0
