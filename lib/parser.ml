@@ -88,10 +88,23 @@ let parse_comma_list ~close ~item s =
     in
     rest [ first ]
 
+(* Forward reference to [parse_expr], set once the expression parser is
+   defined below.  Lets `parse_type` read the size of `[T; N]` (a constant
+   expression) without merging the type and expression parser groups. *)
+let parse_expr_fwd : (state -> Ast.expr) ref =
+  ref (fun _ -> failwith "parse_expr_fwd not yet set")
+
 let rec parse_type s =
   let ti signed width = Ast.TyInt { signed; width } in
   match advance s with
   | (Token.Star, _) -> Ast.TyPtr (parse_type s)
+  | (Token.LBracket, _) ->
+      (* `[T; N]` — fixed-size array type. *)
+      let elem = parse_type s in
+      expect s Token.Semicolon;
+      let size = !parse_expr_fwd s in
+      expect s Token.RBracket;
+      Ast.TyArray { elem; size }
   | (Token.Question, _) ->
       (* `?T` is sugar for `Option<T>` — the prelude's optional-value
          enum.  Resolves at typecheck like any other generic application. *)
@@ -233,6 +246,28 @@ let rec parse_primary s =
   | Token.False -> Ast.BoolLit (false, p)
   | Token.Null -> Ast.NullLit p
   | Token.String str -> Ast.StringLit (str, p)
+  | Token.LBracket ->
+      (* Array literal: `[e1, e2, ...]` (explicit) or `[v; N]` (repeat).
+         Empty `[]` is rejected — no element type or size to infer. *)
+      if peek s = Token.RBracket then
+        Error.failf p "empty array literal `[]` is not allowed";
+      let first = parse_expr s in
+      (match peek s with
+       | Token.Semicolon ->
+           ignore (advance s);
+           let count = parse_expr s in
+           expect s Token.RBracket;
+           Ast.ArrayRepeat { value = first; count; pos = p }
+       | Token.Comma ->
+           ignore (advance s);
+           let rest = parse_comma_list ~close:Token.RBracket ~item:parse_expr s in
+           Ast.ArrayLit (first :: rest, p)
+       | Token.RBracket ->
+           ignore (advance s);
+           Ast.ArrayLit ([ first ], p)
+       | t ->
+           Error.failf (peek_pos s)
+             "expected ',', ';' or ']' in array literal, got %s" (Token.pp t))
   | Token.Minus -> Ast.Neg (parse_primary s, p)
   | Token.Tilde -> Ast.BitNot (parse_primary s, p)
   | Token.Try ->
@@ -365,17 +400,26 @@ and parse_struct_lit_body s =
    primary.  Disambiguation is by lookahead on the token after the name. *)
 and parse_postfix s base =
   let rec loop e =
-    if peek s = Token.Dot then begin
-      let p = peek_pos s in
-      ignore (advance s);
-      let (n, _) = expect_ident s ~what:"field or method name after '.'" in
-      if peek s = Token.LParen then begin
+    match peek s with
+    | Token.Dot ->
+        let p = peek_pos s in
         ignore (advance s);
-        let args = parse_args s in
-        loop (Ast.MethodCall { receiver = e; name = n; args; pos = p })
-      end else
-        loop (Ast.FieldAccess (e, n, p))
-    end else e
+        let (n, _) = expect_ident s ~what:"field or method name after '.'" in
+        if peek s = Token.LParen then begin
+          ignore (advance s);
+          let args = parse_args s in
+          loop (Ast.MethodCall { receiver = e; name = n; args; pos = p })
+        end else
+          loop (Ast.FieldAccess (e, n, p))
+    | Token.LBracket ->
+        (* `e[i]` — array indexing.  The index resets allow_bitor (fresh
+           bracketed sub-expression). *)
+        let p = peek_pos s in
+        ignore (advance s);
+        let index = parse_expr s in
+        expect s Token.RBracket;
+        loop (Ast.Index { base = e; index; pos = p })
+    | _ -> e
   in
   loop base
 
@@ -754,6 +798,8 @@ and parse_stmt s =
                 Ast.Assign { path = tname @ [variant]; value; pos = ep }
             | Ast.FieldAccess (target, field, fp) ->
                 Ast.AssignField { target; field; value; pos = fp }
+            | Ast.Index { base; index; pos = ip } ->
+                Ast.AssignIndex { base; index; value; pos = ip }
             | Ast.Deref (target, dp) ->
                 Ast.AssignDeref { target; value; pos = dp }
             | _ ->
@@ -778,6 +824,9 @@ and parse_stmts s acc =
         "stray ';' — `if`/`while`/`match` and inner blocks are \
          self-terminating, no trailing semicolon needed"
   | _ -> parse_stmts s (parse_stmt s :: acc)
+
+(* Close the forward reference so `parse_type` can read `[T; N]` sizes. *)
+let () = parse_expr_fwd := parse_expr
 
 (* Quadratic dedup over small parser lists (params, fields, variants,
    use items).  Returns the first repeated key string, or None if all

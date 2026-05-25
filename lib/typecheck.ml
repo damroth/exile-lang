@@ -61,14 +61,16 @@ type fn_ctx = {
                                             looked up in Var expr after
                                             local env miss; codegen
                                             emits raw NAME at use sites *)
-  consts : (string list * string * (typ * string)) list;
+  consts : (string list * string * (typ * string * int option)) list;
                                           (* user `const NAME: T = e;` index:
                                              (module path, name, (type,
-                                             mangled C name)).  Resolved with
-                                             scope walk-up like fns; a use
-                                             site becomes `TVar mangled`,
-                                             which codegen emits as the
-                                             `#define`d macro. *)
+                                             mangled C name, folded int value
+                                             — None for a bool const)).
+                                             Resolved with scope walk-up like
+                                             fns; a use site becomes `TVar
+                                             mangled`, which codegen emits as
+                                             the `#define`d macro.  The value
+                                             feeds array-size evaluation. *)
   ext_vars : (string * typ) list;        (* `extern var NAME: T;` —
                                             mutable global counterpart of
                                             ext_consts.  Looked up in Var
@@ -196,6 +198,46 @@ let lookup_const ctx path =
         if p = mod_path && n = name then Some info else None)
       ctx.consts)
 
+(* Evaluate an array size / repeat count: an integer literal, a reference
+   to an int `const` (bare or qualified, value already folded), or a
+   constant expression over those.  Shared by `[T; N]` type resolution and
+   `[v; N]` repeat literals. *)
+let eval_const_size ctx (e0 : Ast.expr) : int =
+  let rec sz (e : Ast.expr) : int =
+    match e with
+    | Ast.IntLit (n, _) -> n
+    | Ast.Neg (a, _) -> - (sz a)
+    | Ast.BitNot (a, _) -> lnot (sz a)
+    | Ast.BinOp (op, l, r, p) ->
+        let a = sz l and b = sz r in
+        (match op with
+         | Ast.Add -> a + b | Ast.Sub -> a - b | Ast.Mul -> a * b
+         | Ast.Div -> if b = 0 then Error.failf p "division by zero" else a / b
+         | Ast.Mod -> if b = 0 then Error.failf p "modulo by zero" else a mod b
+         | Ast.BitAnd -> a land b | Ast.BitOr -> a lor b
+         | Ast.BitXor -> a lxor b
+         | Ast.Shl -> a lsl b | Ast.Shr -> a asr b
+         | _ -> Error.failf p "array size must be a constant integer expression")
+    | Ast.Var (n, p) ->
+        (match lookup_const ctx [n] with
+         | Some (_, _, Some v) -> v
+         | Some (_, _, None) ->
+             Error.failf p "array size '%s' is a bool const, not an integer" n
+         | None ->
+             Error.failf p
+               "array size must be an integer literal or `const`, got '%s'" n)
+    | Ast.EnumLit { tname; variant; args = Ast.EATuple []; pos = p }
+      when tname <> [] ->
+        (match lookup_const ctx (tname @ [variant]) with
+         | Some (_, _, Some v) -> v
+         | Some (_, _, None) -> Error.failf p "array size is a bool const"
+         | None -> Error.failf p "array size must be an integer literal or `const`")
+    | other ->
+        Error.failf (Ast.expr_pos other)
+          "array size must be a constant integer expression"
+  in
+  sz e0
+
 let lookup_struct ctx path =
   walk_scope_up ctx path ~resolve:(fun mod_path name ->
     List.find_opt
@@ -245,6 +287,21 @@ let rec forbid_naked_opaque ?(exposed = []) pos = function
         "'c_void' has no values — only `*c_void` is usable as a type"
   | TPtr _ -> ()
   | TTuple ts -> List.iter (forbid_naked_opaque ~exposed pos) ts
+  | TArray { elem; _ } -> forbid_naked_opaque ~exposed pos elem
+  | _ -> ()
+
+(* Reject a by-value array as a member of an aggregate (struct field, enum
+   payload, tuple element).  The `[T; N]` wrapper struct is emitted after
+   user structs/tuples, so a by-value array member would reference an
+   as-yet-undefined C type — a deferred codegen-ordering limitation.
+   Pointer-to-array fields (`*[T; N]`) are fine. *)
+let rec forbid_array_aggregate_field pos = function
+  | TArray _ ->
+      Error.failf pos
+        "an array `[T; N]` as a by-value field is not supported yet — keep \
+         the array in a standalone binding, or use a pointer field `*[T; N]`"
+  | TTuple ts -> List.iter (forbid_array_aggregate_field pos) ts
+  | TPtr _ -> ()
   | _ -> ()
 
 (* Find a variant by name in an enum's variant list, returning its
@@ -287,6 +344,12 @@ let rec resolve_type_ann_raw ~pos ctx ann =
   | Ast.TyBool -> TBool
   | Ast.TyTuple ts -> TTuple (List.map recur ts)
   | Ast.TyPtr t -> TPtr (recur t)
+  | Ast.TyArray { elem; size } ->
+      let elem' = recur elem in
+      let n = eval_const_size ctx size in
+      if n <= 0 then
+        Error.failf pos "array size must be positive, got %d" n;
+      TArray { elem = elem'; size = n }
   | Ast.TySelf ->
       (* parse_impl_block replaces bare-`self` with the target type, so a
          surviving TySelf means `self` was used outside an impl method. *)
@@ -1207,6 +1270,59 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       let es' = List.map (elab_expr ctx env) es in
       let ty = TTuple (List.map (fun (e : texpr) -> e.ty) es') in
       { e = TTupleLit es'; ty; pos }
+  | Ast.ArrayLit (es, lit_pos) ->
+      if es = [] then
+        Error.failf lit_pos
+          "empty array literal `[]` has no element type or size";
+      (* Bidirectional: a `[T; N]` annotation propagates the element type to
+         each element (so literal widths agree) and pins the expected size. *)
+      let elem_expected =
+        match expected with Some (TArray { elem; _ }) -> Some elem | _ -> None
+      in
+      let tes = List.map (fun e -> elab_expr ?expected:elem_expected ctx env e) es in
+      let elem_ty = (List.hd tes).ty in
+      List.iter2 (fun (te : texpr) e ->
+        if not (typ_eq te.ty elem_ty) && not (int_lit_fits e elem_ty) then
+          Error.failf te.pos
+            "array elements must share one type: %s vs %s"
+            (typ_name elem_ty) (typ_name te.ty))
+        (List.tl tes) (List.tl es);
+      let n = List.length tes in
+      (match expected with
+       | Some (TArray { size; _ }) when size <> n ->
+           Error.failf lit_pos
+             "array literal has %d element(s) but type expects %d" n size
+       | _ -> ());
+      { e = TArrayLit tes; ty = TArray { elem = elem_ty; size = n }; pos }
+  | Ast.ArrayRepeat { value; count; pos = rep_pos } ->
+      let elem_expected =
+        match expected with Some (TArray { elem; _ }) -> Some elem | _ -> None
+      in
+      let tvalue = elab_expr ?expected:elem_expected ctx env value in
+      let n = eval_const_size ctx count in
+      if n <= 0 then
+        Error.failf rep_pos "array repeat count must be positive, got %d" n;
+      (match expected with
+       | Some (TArray { size; _ }) when size <> n ->
+           Error.failf rep_pos
+             "array repeat produces %d element(s) but type expects %d" n size
+       | _ -> ());
+      { e = TArrayRepeat { value = tvalue; count = n };
+        ty = TArray { elem = tvalue.ty; size = n }; pos }
+  | Ast.Index { base; index; pos = idx_pos } ->
+      let tbase = elab_expr ctx env base in
+      let elem_ty =
+        match tbase.ty with
+        | TArray { elem; _ } -> elem
+        | other ->
+            Error.failf idx_pos
+              "indexing `[...]` requires an array, got %s" (typ_name other)
+      in
+      let tindex = elab_expr ctx env index in
+      if not (is_int_like tindex.ty) then
+        Error.failf idx_pos
+          "array index must be an integer, got %s" (typ_name tindex.ty);
+      { e = TIndex { base = tbase; index = tindex }; ty = elem_ty; pos }
   | Ast.SizeOf (ann, sz_pos) ->
       (* `size_of(T)` yields a c_uint constant. *)
       let t = resolve_type_ann ~pos:sz_pos ctx ann in
@@ -1222,7 +1338,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
             | Some t -> { e = TVar n; ty = t; pos }
             | None ->
               (match lookup_const ctx [n] with
-               | Some (t, mangled) -> { e = TVar mangled; ty = t; pos }
+               | Some (t, mangled, _) -> { e = TVar mangled; ty = t; pos }
                | None ->
                 (match List.assoc_opt n ctx.ext_vars with
                  | Some t -> { e = TVar n; ty = t; pos }
@@ -1663,7 +1779,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
             (* user `const` (scope-resolved, mangled name) takes priority,
                then flat extern var / const (raw C name = last segment). *)
             (match lookup_const ctx (tname @ [variant]) with
-             | Some (t, mangled) -> Some (mangled, t)
+             | Some (t, mangled, _) -> Some (mangled, t)
              | None ->
                  (match List.assoc_opt variant ctx.ext_vars with
                   | Some t -> Some (variant, t)
@@ -1824,6 +1940,22 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
          enum variant is rewritten to an EnumLit and elab'd again. *)
       (match rewrite_call_as_enum_lit ctx path args call_pos with
        | Some lowered -> elab_expr ~allow_void ?expected ctx env lowered
+       | None when path = ["len"] ->
+           (* `len(a)` — array length, folded to a compile-time literal
+              (the array's static size N).  Pairs with `for i in 0..len(a)`. *)
+           (match args with
+            | [arg] ->
+                let ta = elab_expr ctx env arg in
+                (match ta.ty with
+                 | TArray { size; _ } ->
+                     (* `int` (not c_uint) so `i < len(a)` type-checks
+                        directly — len is meant to pair with index loops. *)
+                     { e = TIntLit size; ty = t_i32; pos }
+                 | other ->
+                     Error.failf call_pos
+                       "len(...) requires an array, got %s" (typ_name other))
+            | _ ->
+                Error.failf call_pos "len(...) takes exactly one argument")
        | None ->
            let targs = List.map (elab_expr ctx env) args in
            let arg_tys = List.map (fun (a : texpr) -> a.ty) targs in
@@ -2127,6 +2259,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
   let rec root_local : Ast.expr -> string option = function
     | Ast.Var (n, _) -> Some n
     | Ast.FieldAccess (t, _, _) -> root_local t
+    | Ast.Index { base; _ } -> root_local base
     | _ -> None
   in
   let require_mut name pos ~what =
@@ -2321,6 +2454,32 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
             field (typ_name fty) (typ_name tvalue.ty);
         (env, TAssignField { target = ttarget; field;
                                   value = tvalue; pos })
+    | Ast.AssignIndex { base; index; value; pos } ->
+        let tbase = elab_expr ctx env base in
+        let elem_ty =
+          match tbase.ty with
+          | TArray { elem; _ } -> elem
+          | other ->
+              Error.failf pos
+                "indexed assignment `a[i] = ...` requires an array, got %s"
+                (typ_name other)
+        in
+        let tindex = elab_expr ctx env index in
+        if not (is_int_like tindex.ty) then
+          Error.failf pos
+            "array index must be an integer, got %s" (typ_name tindex.ty);
+        (* Writing an element of an owned array needs a mutable root binding. *)
+        (match root_local base with
+         | Some n when List.mem_assoc n env ->
+             require_mut n pos ~what:"assign into"
+         | _ -> ());
+        let tvalue = elab_expr ctx env value in
+        if not (typ_eq tvalue.ty elem_ty) && not (int_lit_fits value elem_ty) then
+          Error.failf pos
+            "array element: expected %s, got %s"
+            (typ_name elem_ty) (typ_name tvalue.ty);
+        (env, TAssignIndex { base = tbase; index = tindex;
+                             value = tvalue; pos })
     | Ast.AssignDeref { target; value; pos } ->
         let ttarget = elab_expr ctx env target in
         let inner =
@@ -2477,7 +2636,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
   let is_block (e : texpr) =
     match e.e with
     | TStructLit _ | TTupleLit _ | TNew _ | TEnumLit _ | TMatch _
-    | TIfExpr _ -> true
+    | TIfExpr _ | TArrayLit _ | TArrayRepeat _ -> true
     | _ -> false
   in
   let rec walk_expr ~allow_top (te : texpr) : texpr * tstmt list =
@@ -2570,6 +2729,16 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
            would evaluate it unconditionally (same rule as match arms). *)
         let (cond', p) = walk_expr ~allow_top:false cond in
         ({ te with e = TIfExpr { cond = cond'; then_val; else_val } }, p)
+    | TArrayLit es ->
+        let (es', p) = map_args es in
+        ({ te with e = TArrayLit es' }, p)
+    | TArrayRepeat { value; count } ->
+        let (value', p) = walk_expr ~allow_top:false value in
+        ({ te with e = TArrayRepeat { value = value'; count } }, p)
+    | TIndex { base; index } ->
+        let (base', pb) = walk_expr ~allow_top:false base in
+        let (index', pi) = walk_expr ~allow_top:false index in
+        ({ te with e = TIndex { base = base'; index = index' } }, pb @ pi)
   in
   let rec lift_stmts stmts = List.concat_map lift_stmt stmts
   and lift_stmt = function
@@ -2590,6 +2759,11 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let (t', pt) = walk_expr ~allow_top:false target in
         let (v', pv) = walk_expr ~allow_top:false value in
         pt @ pv @ [ TAssignDeref { target = t'; value = v'; pos } ]
+    | TAssignIndex { base; index; value; pos } ->
+        let (b', pb) = walk_expr ~allow_top:false base in
+        let (i', pi) = walk_expr ~allow_top:false index in
+        let (v', pv) = walk_expr ~allow_top:false value in
+        pb @ pi @ pv @ [ TAssignIndex { base = b'; index = i'; value = v'; pos } ]
     | TReturn { value = Some value; pos } ->
         let (v', p) = walk_expr ~allow_top:true value in
         p @ [ TReturn { value = Some v'; pos } ]
@@ -2762,7 +2936,7 @@ let flatten_items program =
 
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
-let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~ext_struct_fields ~struct_index ~enum_index ~modules ~aliases flat =
+let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~consts ~ext_struct_fields ~struct_index ~enum_index ~modules ~aliases flat =
   List.filter_map
     (fun (p, (f : Ast.func), mangled) ->
       if f.name = "main" then None
@@ -2771,7 +2945,7 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~ext_struc
           structs = struct_index; enums = enum_index;
           modules; scope = p; tparams = f.tparams;
           aliases; ext_struct_fields;
-          ext_structs; ext_types; ext_consts;
+          ext_structs; ext_types; ext_consts; consts;
         } in
         Some
           (p, f.name,
@@ -2885,6 +3059,7 @@ let detect_value_cycles ~structs ~enums ~pos_of =
     | TStructApp { path; args } | TEnumApp { path; args } ->
         path :: List.concat_map refs_of_typ args
     | TTuple ts -> List.concat_map refs_of_typ ts
+    | TArray { elem; _ } -> refs_of_typ elem  (* embeds elem by value *)
     | _ -> []
   in
   let name path = String.concat "::" path in
@@ -2930,6 +3105,7 @@ let detect_value_cycles ~structs ~enums ~pos_of =
 let collect_tuple_types_of tfuncs =
   let tup_seen = ref [] in
   let fnptr_seen = ref [] in
+  let arr_seen = ref [] in
   let add_tuple t =
     let name = mangle_typ t in
     if not (List.exists (fun (n, _) -> n = name) !tup_seen) then
@@ -2940,6 +3116,11 @@ let collect_tuple_types_of tfuncs =
     if not (List.exists (fun (n, _) -> n = name) !fnptr_seen) then
       fnptr_seen := (name, t) :: !fnptr_seen
   in
+  let add_array t =
+    let name = mangle_typ t in
+    if not (List.exists (fun (n, _) -> n = name) !arr_seen) then
+      arr_seen := (name, t) :: !arr_seen
+  in
   let rec walk_typ t =
     match t with
     | TTuple ts -> add_tuple t; List.iter walk_typ ts
@@ -2947,10 +3128,13 @@ let collect_tuple_types_of tfuncs =
         add_fnptr t;
         List.iter walk_typ params;
         Option.iter walk_typ ret
+    | TArray { elem; _ } ->
+        (* Post-order: an array-of-array's inner shape must be defined
+           first, so add the element shapes before self. *)
+        walk_typ elem; add_array t
     | TPtr inner -> walk_typ inner
     | _ -> ()
   in
-  let walk_typ_ann ann = walk_typ (type_of_ann ann) in
   let visit_expr (te : texpr) =
     walk_typ te.ty;
     match te.e with TSizeOf t -> walk_typ t | _ -> ()
@@ -2960,11 +3144,13 @@ let collect_tuple_types_of tfuncs =
   in
   List.iter
     (fun tf ->
-      Option.iter walk_typ_ann tf.tf_func.Ast.ret_ty;
-      List.iter (fun (p : Ast.param) -> walk_typ_ann p.pty) tf.tf_func.params;
+      (* Walk the *resolved* signature types (array sizes / generic
+         instances already evaluated) rather than the raw AST anns. *)
+      Option.iter walk_typ tf.tf_ret_ty;
+      List.iter walk_typ tf.tf_param_tys;
       List.iter (iter_tstmt visit_stmt) tf.tf_body)
     tfuncs;
-  (List.rev !tup_seen, List.rev !fnptr_seen)
+  (List.rev !tup_seen, List.rev !fnptr_seen, List.rev !arr_seen)
 
 (* Detect heap usage by scanning the typed bodies for `TNew` expressions or
    builtin `free(p)` calls — both are emitted in C only when one of them is
@@ -3264,7 +3450,7 @@ and stmt_returns = function
   | TReturn _ -> true
   | TIf { then_body; else_body; _ } ->
       always_returns then_body && always_returns else_body
-  | TLet _ | TLetTuple _ | TAssign _ | TAssignField _
+  | TLet _ | TLetTuple _ | TAssign _ | TAssignField _ | TAssignIndex _
   | TAssignDeref _ | TWhile _ | TDefer _ | TExprStmt _ -> false
 
 (* Compile-time evaluation of `const NAME: T = expr;` declarations.
@@ -3418,8 +3604,9 @@ let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
   in
   dups [] entries;
   let consts_index =
-    List.map (fun (_, mod_path, (c : Ast.const_decl), mangled, typ) ->
-      (mod_path, c.kname, (typ, mangled)))
+    List.map (fun (abs, mod_path, (c : Ast.const_decl), mangled, typ) ->
+      let v = match eval_entry abs with CInt i -> Some i | CBool _ -> None in
+      (mod_path, c.kname, (typ, mangled, v)))
       entries
   in
   let tp_consts =
@@ -3559,17 +3746,18 @@ let check_program program : tprogram =
         (fun (p : Ast.param) -> check_c_ident f.pos "parameter" p.pname)
         f.params)
     impl_funcs;
-  let global =
-    build_global_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
-      ~ext_struct_fields
-      ~struct_index ~enum_index ~modules ~aliases:flat.aliases all_funcs
-  in
-  (* Fold every `const NAME: T = expr;` to a value now: use sites resolve
-     against [consts_index] during body elaboration, and [tp_consts]
+  (* Fold every `const NAME: T = expr;` to a value first: use sites resolve
+     against [consts_index] during signature + body elaboration (array
+     sizes `[T; N]` in a fn signature need const values), and [tp_consts]
      becomes the `#define` block in the emitted C. *)
   let (consts_index, tp_consts) =
     eval_consts ~instances:mono_state ~modules ~aliases:flat.aliases
       ~struct_index ~enum_index flat.consts
+  in
+  let global =
+    build_global_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
+      ~consts:consts_index ~ext_struct_fields
+      ~struct_index ~enum_index ~modules ~aliases:flat.aliases all_funcs
   in
   (* `pub use foo::bar;` validation.  Building the global index just
      above means every fn/struct/enum has its absolute path on file;
@@ -3720,7 +3908,8 @@ let check_program program : tprogram =
   in
   let instance_tfuncs = drain [] in
   let tp_funcs = skeleton_tfuncs @ instance_tfuncs in
-  let (tp_tuple_types, tp_fnptr_types) = collect_tuple_types_of tp_funcs in
+  let (tp_tuple_types, tp_fnptr_types, tp_array_types) =
+    collect_tuple_types_of tp_funcs in
   let tp_uses_heap = uses_heap_of tp_funcs in
   (* Drain monomorphic instances accumulated during resolve_type_ann
      into the program's indexes.  Instances accumulate in reverse
@@ -3747,6 +3936,7 @@ let check_program program : tprogram =
     | TStructApp { path; args } | TEnumApp { path; args } ->
         path = target || List.exists (typ_mentions target) args
     | TPtr inner -> typ_mentions target inner
+    | TArray { elem; _ } -> typ_mentions target elem
     | TTuple ts -> List.exists (typ_mentions target) ts
     | TFnPtr { params; ret } ->
         List.exists (typ_mentions target) params
@@ -3813,7 +4003,7 @@ let check_program program : tprogram =
     (* Tuple fields aren't rendered by the synthesized printer yet
        (codegen's emit_field_debug has no tuple case) — reject rather
        than crash; revisit if tuple-in-@debug becomes worth the syntax. *)
-    | TTuple _
+    | TTuple _ | TArray _
     | TCVoid | TExtStruct _ | TExtAlias _
     | TFnPtr _ | TNullPtr | TVar _
     | TStructApp _ | TEnumApp _ -> false
@@ -3850,14 +4040,17 @@ let check_program program : tprogram =
   in
   List.iter (fun (s : struct_sig) ->
     let pos = struct_decl_pos s.sname_path in
-    List.iter (fun (_, ft) -> forbid_naked_opaque ~exposed:exposed_extern pos ft)
+    List.iter (fun (_, ft) ->
+      forbid_naked_opaque ~exposed:exposed_extern pos ft;
+      forbid_array_aggregate_field pos ft)
       s.sfields_ty)
     all_structs;
   List.iter (fun (e : enum_sig) ->
     let pos = enum_decl_pos e.ename_path in
     List.iter (fun (vs : variant_sig) ->
       List.iter (fun (_, ft) ->
-        forbid_naked_opaque ~exposed:exposed_extern pos ft) vs.vsfields)
+        forbid_naked_opaque ~exposed:exposed_extern pos ft;
+        forbid_array_aggregate_field pos ft) vs.vsfields)
       e.evariants)
     all_enums;
   (* @debug-able field check.  Only concrete structs/enums are validated
@@ -3902,4 +4095,5 @@ let check_program program : tprogram =
     tp_c_includes = flat.c_includes;
     tp_ext_consts = ext_consts;
     tp_ext_vars = ext_vars;
-    tp_consts }
+    tp_consts;
+    tp_array_types }

@@ -50,6 +50,8 @@ let tokenize ~file src =
       | ')' -> loop (i + 1) ((Token.RParen, p) :: acc)
       | '{' -> loop (i + 1) ((Token.LBrace, p) :: acc)
       | '}' -> loop (i + 1) ((Token.RBrace, p) :: acc)
+      | '[' -> loop (i + 1) ((Token.LBracket, p) :: acc)
+      | ']' -> loop (i + 1) ((Token.RBracket, p) :: acc)
       | ';' -> loop (i + 1) ((Token.Semicolon, p) :: acc)
       | ',' -> loop (i + 1) ((Token.Comma, p) :: acc)
       | '.' when i + 2 < len && src.[i + 1] = '.' && src.[i + 2] = '.' ->

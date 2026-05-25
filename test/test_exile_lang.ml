@@ -275,6 +275,41 @@ let () =
     "const X: int = 5;\nfn main() { X = 6; println(X); }\n"
     "cannot assign to 'X' — it's a `const` (compile-time constant)";
 
+  (* Fixed-size arrays `[T; N]`: by-value aggregates (wrapper struct),
+     indexing `a[i]`, `len(a)` folds to N. *)
+  check "array literal, index and len"
+    "fn main() {\n    let a: [int; 3] = [10, 20, 30];\n    println(a[0]);\n    println(len(a));\n}\n"
+    "#include <stdio.h>\n\nstruct ex_arr3_i32 { long data[3]; };\n\nint main(void) {\n    struct ex_arr3_i32 a;\n    a.data[0] = 10;\n    a.data[1] = 20;\n    a.data[2] = 30;\n    printf(\"%ld\\n\", (long)(a.data[0]));\n    printf(\"%ld\\n\", (long)(3));\n    return 0;\n}\n";
+
+  check "array repeat literal fills with a loop, element assign"
+    "fn main() {\n    let mut a: [int; 4] = [0; 4];\n    a[2] = 7;\n    println(a[2]);\n}\n"
+    "#include <stdio.h>\n\nstruct ex_arr4_i32 { long data[4]; };\n\nint main(void) {\n    struct ex_arr4_i32 a;\n    {\n        int __af0;\n        for (__af0 = 0; __af0 < 4; __af0 = __af0 + 1) {\n            a.data[__af0] = 0;\n        }\n    }\n    a.data[2] = 7;\n    printf(\"%ld\\n\", (long)(a.data[2]));\n    return 0;\n}\n";
+
+  check_error "empty array literal rejected"
+    "fn main() {\n    let a = [];\n    println(1);\n}\n"
+    "empty array literal `[]` is not allowed";
+
+  check_error "array elements must share a type"
+    "fn main() {\n    let a: [int; 2] = [1, true];\n    println(1);\n}\n"
+    "array elements must share one type: i32 vs bool";
+
+  check_error "array literal size must match annotation"
+    "fn main() {\n    let a: [int; 3] = [1, 2];\n    println(1);\n}\n"
+    "array literal has 2 element(s) but type expects 3";
+
+  check_error "indexing a non-array rejected"
+    "fn main() {\n    let x = 5;\n    println(x[0]);\n}\n"
+    "indexing `[...]` requires an array, got i32";
+
+  check_error "mutating an array element needs `let mut`"
+    "fn main() {\n    let a: [int; 2] = [1, 2];\n    a[0] = 9;\n    println(a[0]);\n}\n"
+    "cannot assign into immutable 'a' — declare it with `let mut`";
+
+  check_error "array as a by-value struct field is rejected (for now)"
+    "struct G { cells: [int; 3] }\n\
+     fn main() { let g: G = G { cells: [1, 2, 3] }; println(g.cells[0]); }\n"
+    "an array `[T; N]` as a by-value field is not supported yet — keep the array in a standalone binding, or use a pointer field `*[T; N]`";
+
   check "unary minus on literal var and call"
     "fn id(x: int) -> int {\n    return x;\n}\nfn main() {\n    let a = -5;\n    let b = -a;\n    println(b);\n    println(-id(7));\n}\n"
     "#include <stdio.h>\n\nstatic long ex_id(long x);\n\nstatic long ex_id(long x) {\n    return x;\n}\n\nint main(void) {\n    long a;\n    long b;\n    a = -5;\n    b = -a;\n    printf(\"%ld\\n\", (long)(b));\n    printf(\"%ld\\n\", (long)(-(ex_id(7))));\n    return 0;\n}\n";

@@ -1,0 +1,37 @@
+// Fixed-size arrays `[T; N]`.  An array is a by-value aggregate — it copies
+// on assignment / pass / return, just like a struct; pass `&a` to avoid the
+// copy.  Indexing `a[i]` has no bounds check (the loop is expected to stay
+// in range).  `len(a)` folds to the compile-time size N.
+
+const ROWS: int = 4;
+
+// Sum the elements of an array passed by reference (no copy).
+fn sum(a: *[int; ROWS]) -> int {
+    let mut total = 0;
+    let mut i = 0;
+    while i < ROWS {
+        total = total + (*a)[i];
+        i = i + 1;
+    }
+    total
+}
+
+fn main() {
+    // Explicit literal, then mutate an element.
+    let mut data: [int; ROWS] = [10, 20, 30, 40];
+    data[1] = 99;
+    println(data[1]);                 // 99
+    println(len(data));               // 4
+
+    println(sum(&data));              // 10 + 99 + 30 + 40 = 179
+
+    // Repeat literal `[v; N]` fills every slot — handy for zeroed buffers.
+    let zeros: [int; 3] = [0; 3];
+    println(zeros[2]);                // 0
+
+    // Arrays copy by value: `copy` is independent of `data`.
+    let mut copy: [int; ROWS] = data;
+    copy[0] = 7;
+    println(data[0]);                 // 10 — original untouched
+    println(copy[0]);                 // 7
+}

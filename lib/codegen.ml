@@ -53,6 +53,7 @@ let emit_ann ctx buf indent (pos : Pos.t) =
 let tstmt_pos = function
   | TLet { pos; _ } | TLetTuple { pos; _ }
   | TAssign { pos; _ } | TAssignField { pos; _ }
+  | TAssignIndex { pos; _ }
   | TAssignDeref { pos; _ } | TDefer { pos; _ }
   | TReturn { pos; _ } -> pos
   | TExprStmt te -> te.pos
@@ -131,6 +132,10 @@ let rec c_type_prefix = function
   | TExtStruct n -> "struct " ^ n ^ " "
   | TExtAlias n -> n ^ " "
   | TEnum _ as t -> "struct " ^ mangle_typ t ^ " "
+  | TArray _ as t ->
+      (* `[T; N]` is emitted as a wrapper `struct ex_arrN_T { T data[N]; }`
+         so it copies by `=`; the definition is emitted up top per shape. *)
+      "struct ex_" ^ mangle_typ t ^ " "
   | TPtr TCVoid -> "void *"
   | TPtr inner ->
       (* Pointer types render as `<base> *` with no trailing space, so
@@ -286,6 +291,10 @@ let emit_assign_line buf indent ~lhs ~emit_rhs =
   emit_rhs ();
   Buffer.add_string buf ";\n"
 
+(* Fresh loop-counter names for `[v; N]` fill loops; bumped per emission so
+   nested repeats don't collide. *)
+let fill_counter = ref 0
+
 let rec gen_expr ctx buf (te : texpr) =
   match te.e with
   | TIntLit n -> Buffer.add_string buf (string_of_int n)
@@ -373,6 +382,18 @@ let rec gen_expr ctx buf (te : texpr) =
          node reaches `gen_expr`.  Top-level uses (let RHS, return,
          assign) are routed through `emit_value_into_temp`. *)
       assert false
+  | TIndex { base; index } ->
+      (* `a[i]` -> `a.data[i]` (the wrapper struct's array member).  A base
+         that isn't already a tight lvalue (a deref, say) needs parens so
+         `.data` binds to the whole base — deref-then-index, not
+         index-then-deref. *)
+      (match base.e with
+       | TVar _ | TFieldAccess _ | TIndex _ -> gen_expr ctx buf base
+       | _ ->
+           Buffer.add_char buf '('; gen_expr ctx buf base; Buffer.add_char buf ')');
+      Buffer.add_string buf ".data[";
+      gen_expr ctx buf index;
+      Buffer.add_char buf ']'
   | TFieldAccess { target; field } ->
       (* Auto-deref pointer-to-struct via `->`; otherwise plain `.`. *)
       let sep = match target.ty with TPtr _ -> "->" | _ -> "." in
@@ -385,7 +406,7 @@ let rec gen_expr ctx buf (te : texpr) =
       Buffer.add_string buf "sizeof(";
       Buffer.add_string buf (strip_trailing_space (c_type_prefix t));
       Buffer.add_char buf ')'
-  | TEnumLit _ | TMatch _ | TIfExpr _ ->
+  | TEnumLit _ | TMatch _ | TIfExpr _ | TArrayLit _ | TArrayRepeat _ ->
       (* Same as the block-shaped lit cases above — `lift_block_exprs`
          hoists these to `__lift_N` temps before codegen sees them. *)
       assert false
@@ -470,6 +491,34 @@ let rec emit_value_into_temp ctx buf indent temp_name (value : texpr) =
       emit_value_into_temp ctx buf (indent ^ "    ") temp_name else_val;
       Buffer.add_string buf indent;
       Buffer.add_string buf "}\n"
+  | TArrayLit es ->
+      (* `[e1, e2, ...]` — element-by-element into the wrapper's `data`
+         member.  C89 forbids non-constant compound literals, so we always
+         declare-then-fill. *)
+      List.iteri
+        (fun i e -> assign ~lhs:(Printf.sprintf "%s.data[%d]" temp_name i) e)
+        es
+  | TArrayRepeat { value; count } ->
+      (* `[v; N]` — fill loop.  v is re-evaluated each iteration (matches the
+         "evaluated at execution" semantics of the rest of the language). *)
+      let i = !fill_counter in
+      incr fill_counter;
+      let iv = Printf.sprintf "__af%d" i in
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "{\n";
+      let inner = indent ^ "    " in
+      Buffer.add_string buf inner;
+      Buffer.add_string buf (Printf.sprintf "int %s;\n" iv);
+      Buffer.add_string buf inner;
+      Buffer.add_string buf
+        (Printf.sprintf "for (%s = 0; %s < %d; %s = %s + 1) {\n"
+           iv iv count iv iv);
+      emit_value_into_temp ctx buf (inner ^ "    ")
+        (Printf.sprintf "%s.data[%s]" temp_name iv) value;
+      Buffer.add_string buf inner;
+      Buffer.add_string buf "}\n";
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "}\n"
   | _ -> assign ~lhs:temp_name value
 
 (* Statement emission with `defer` support.  `outer_scopes` is the list of
@@ -517,6 +566,19 @@ and emit_simple_stmt ctx buf indent stmt =
       Buffer.add_string buf " = ";
       gen_expr ctx buf value;
       Buffer.add_string buf ";\n"
+  | TAssignIndex { base; index; value; _ } ->
+      (* `a[i] = value` -> `a.data[i] = value;`.  Route through
+         emit_value_into_temp so a block-shaped element value (struct,
+         nested array, ...) lowers field-by-field into the element lvalue. *)
+      let lhs =
+        let b = Buffer.create 32 in
+        gen_expr ctx b base;
+        Buffer.add_string b ".data[";
+        gen_expr ctx b index;
+        Buffer.add_char b ']';
+        Buffer.contents b
+      in
+      emit_value_into_temp ctx buf indent lhs value
   | TExprStmt e ->
       (match e.e with
        | TMatch _ -> emit_match_stmt ctx buf indent e
@@ -830,7 +892,7 @@ and gen_block ctx buf indent outer_scopes stmts =
                all <> [] ||
                (match value.e with
                 | TTupleLit _ | TStructLit _ | TNew _ | TMatch _ | TEnumLit _
-                | TIfExpr _ -> true
+                | TIfExpr _ | TArrayLit _ | TArrayRepeat _ -> true
                 | _ -> false)
              in
              if not needs_block then begin
@@ -852,7 +914,8 @@ and gen_block ctx buf indent outer_scopes stmts =
                Buffer.add_string buf indent;
                Buffer.add_string buf "}\n"
              end)
-    | (TLet _ | TAssign _ | TAssignField _ | TAssignDeref _ | TExprStmt _) as s :: rest ->
+    | (TLet _ | TAssign _ | TAssignField _ | TAssignIndex _ | TAssignDeref _
+      | TExprStmt _) as s :: rest ->
         update_chain my_defers;
         emit_tstmt_ann ctx buf indent s;
         emit_simple_stmt ctx buf indent s;
@@ -972,6 +1035,18 @@ let emit_tuple_struct buf (_, t) =
   | TTuple ts ->
       let fields = List.mapi (fun i ty -> (ty, "_" ^ string_of_int i)) ts in
       emit_struct_decl buf (tuple_struct_name ts) fields
+  | _ -> ()
+
+(* `[T; N]` wrapper: `struct ex_arrN_T { T data[N]; };`.  The `[N]` suffix
+   makes this irregular vs emit_struct_decl, so it is emitted directly. *)
+let emit_array_struct buf (_, t) =
+  match t with
+  | TArray { elem; size } ->
+      Buffer.add_string buf "struct ";
+      Buffer.add_string buf ("ex_" ^ mangle_typ t);
+      Buffer.add_string buf " { ";
+      Buffer.add_string buf (c_decl elem "data");
+      Buffer.add_string buf (Printf.sprintf "[%d]; };\n" size)
   | _ -> ()
 
 (* Enum lowering.  Tag enum + a wrapper struct.  When at least one
@@ -1202,6 +1277,7 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   emit_section buf concrete_structs ~emit:(emit_named_struct buf);
   emit_section buf concrete_enums ~emit:(emit_named_enum buf);
   emit_section buf tp.tp_tuple_types ~emit:(emit_tuple_struct buf);
+  emit_section buf tp.tp_array_types ~emit:(emit_array_struct buf);
   (* `@debug` printers — synthesized one per marked struct/enum.  Forward
      decls first so a printer body can call another printer regardless
      of source declaration order; bodies come right after. *)

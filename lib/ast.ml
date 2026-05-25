@@ -1,5 +1,23 @@
 type int_width = W8 | W16 | W32
 
+type binop =
+  | Add | Sub | Mul | Div | Mod
+  | BitAnd | BitOr | BitXor | Shl | Shr  (* bitwise / shift; integer operands.
+                                            Codegen emits the C operator with
+                                            explicit parens so C's (looser)
+                                            bitwise precedence never leaks. *)
+  | Lt | Gt | LtEq | GtEq | EqEq | NotEq
+  | Concat                              (* `++` — compile-time string concat;
+                                           both operands must reduce to a
+                                           string literal at typecheck time. *)
+
+let binop_name = function
+  | Add -> "+" | Sub -> "-" | Mul -> "*" | Div -> "/" | Mod -> "%"
+  | BitAnd -> "&" | BitOr -> "|" | BitXor -> "^" | Shl -> "<<" | Shr -> ">>"
+  | Lt -> "<" | Gt -> ">" | LtEq -> "<=" | GtEq -> ">="
+  | EqEq -> "==" | NotEq -> "!="
+  | Concat -> "++"
+
 type type_ann =
   | TyInt of { signed : bool; width : int_width }
   | TyCInt of { signed : bool }        (* c_int / c_uint — native C int *)
@@ -23,6 +41,11 @@ type type_ann =
                                           args=[] }` until typecheck binds
                                           them as type variables. *)
   | TyPtr of type_ann                  (* `*T` *)
+  | TyArray of { elem : type_ann; size : expr }
+                                       (* `[T; N]` — fixed-size array.  N is
+                                          a constant expression (literal or
+                                          `const` reference), evaluated to a
+                                          concrete size at typecheck. *)
   | TySelf                             (* placeholder for a bare `self` /
                                           `*self` method receiver — the
                                           parser substitutes the enclosing
@@ -36,25 +59,7 @@ type type_ann =
                                           pointer.  No variadic in this
                                           form yet. *)
 
-type binop =
-  | Add | Sub | Mul | Div | Mod
-  | BitAnd | BitOr | BitXor | Shl | Shr  (* bitwise / shift; integer operands.
-                                            Codegen emits the C operator with
-                                            explicit parens so C's (looser)
-                                            bitwise precedence never leaks. *)
-  | Lt | Gt | LtEq | GtEq | EqEq | NotEq
-  | Concat                              (* `++` — compile-time string concat;
-                                           both operands must reduce to a
-                                           string literal at typecheck time. *)
-
-let binop_name = function
-  | Add -> "+" | Sub -> "-" | Mul -> "*" | Div -> "/" | Mod -> "%"
-  | BitAnd -> "&" | BitOr -> "|" | BitXor -> "^" | Shl -> "<<" | Shr -> ">>"
-  | Lt -> "<" | Gt -> ">" | LtEq -> "<=" | GtEq -> ">="
-  | EqEq -> "==" | NotEq -> "!="
-  | Concat -> "++"
-
-type expr =
+and expr =
   | IntLit of int * Pos.t
   | BoolLit of bool * Pos.t
   | StringLit of string * Pos.t
@@ -115,6 +120,16 @@ type expr =
                                            SizeOf keyword.  Resolves to
                                            a constant after monomorphization
                                            even when T is a tparam. *)
+  | ArrayLit of expr list * Pos.t       (* `[e1, e2, e3]` — explicit array
+                                           literal.  Element type and size
+                                           inferred from the elements; empty
+                                           `[]` is rejected (no inference). *)
+  | ArrayRepeat of { value : expr; count : expr; pos : Pos.t }
+                                        (* `[v; N]` — array of N copies of v.
+                                           N is a constant expression. *)
+  | Index of { base : expr; index : expr; pos : Pos.t }
+                                        (* `a[i]` — element access (lvalue or
+                                           rvalue).  No bounds check. *)
   | If of { cond : expr; then_blk : stmt list;
             else_blk : stmt list option; pos : Pos.t }
                                         (* `if c { ... } else { ... }`.  One
@@ -168,6 +183,8 @@ and stmt =
                                              `extern var` (e.g.
                                              `raw::DOSBase = ...`). *)
   | AssignField of { target : expr; field : string; value : expr; pos : Pos.t }
+  | AssignIndex of { base : expr; index : expr; value : expr; pos : Pos.t }
+                                          (* `a[i] = value` *)
   | AssignDeref of { target : expr; value : expr; pos : Pos.t }
   | Return of expr option * Pos.t       (* `return;` (None — void / main
                                            exit 0) or `return <expr>;` *)
@@ -190,7 +207,8 @@ let expr_pos = function
   | NullLit p -> p
   | StructLit { pos; _ } | New { pos; _ }
   | MethodCall { pos; _ } | EnumLit { pos; _ } | Match { pos; _ }
-  | If { pos; _ } -> pos
+  | If { pos; _ } | ArrayRepeat { pos; _ } | Index { pos; _ }
+  | ArrayLit (_, pos) -> pos
 
 type param = {
   pname : string;

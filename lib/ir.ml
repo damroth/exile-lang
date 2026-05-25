@@ -66,6 +66,16 @@ type typ =
                                           never `is_concrete`, and never reach
                                           codegen — exactly like `TVar`. *)
   | TPtr of typ                        (* `*T` *)
+  | TArray of { elem : typ; size : int }
+                                       (* `[T; N]` — fixed-size array, a
+                                          by-value aggregate (struct-like:
+                                          copied on assign/pass/return).
+                                          Codegen wraps it in
+                                          `struct { T data[N]; }` per unique
+                                          (elem, size) shape so it copies by
+                                          `=`; `a[i]` lowers to `a.data[i]`.
+                                          Size is a resolved literal /
+                                          const at typecheck time. *)
   | TFnPtr of { params : typ list; ret : typ option }
                                        (* `fn(T1, T2) -> R` — function
                                           pointer.  None ret = void.
@@ -227,6 +237,10 @@ let rec type_of_ann = function
   | Ast.TyTuple ts -> TTuple (List.map type_of_ann ts)
   | Ast.TyStruct { path; args = _ } -> TStruct path
   | Ast.TyPtr t -> TPtr (type_of_ann t)
+  | Ast.TyArray _ ->
+      (* Array sizes need const evaluation (a ctx), which this ctx-free
+         conversion can't do — consumers walk resolved [typ]s instead. *)
+      failwith "internal: TyArray reached type_of_ann — use the resolved type"
   | Ast.TySelf ->
       failwith "internal: TySelf reached type_of_ann — the parser should \
                 have substituted the impl target"
@@ -266,6 +280,7 @@ let rec typ_name = function
       String.concat "::" path
       ^ "<" ^ String.concat ", " (List.map typ_name args) ^ ">"
   | TPtr t -> "*" ^ typ_name t
+  | TArray { elem; size } -> Printf.sprintf "[%s; %d]" (typ_name elem) size
   | TFnPtr { params; ret } ->
       let ps = String.concat ", " (List.map typ_name params) in
       let r = match ret with None -> "" | Some t -> " -> " ^ typ_name t in
@@ -325,6 +340,7 @@ let rec mangle_typ = function
   | TExtStruct n -> n              (* raw — opaque struct lives in C namespace *)
   | TExtAlias n -> n               (* raw — opaque type alias lives in C namespace *)
   | TPtr t -> "ptr_" ^ mangle_typ t
+  | TArray { elem; size } -> Printf.sprintf "arr%d_%s" size (mangle_typ elem)
   | TFnPtr { params; ret } ->
       let ps = String.concat "_" (List.map mangle_typ params) in
       let r = match ret with None -> "void" | Some t -> mangle_typ t in
@@ -392,6 +408,7 @@ and render_named_with_args ~structs ~enums path args =
    only — single editing point for the whole pipeline. *)
 let rec type_map ~f = function
   | TPtr inner -> TPtr (type_map ~f inner)
+  | TArray { elem; size } -> TArray { elem = type_map ~f elem; size }
   | TTuple ts -> TTuple (List.map (type_map ~f) ts)
   | TFnPtr { params; ret } ->
       TFnPtr { params = List.map (type_map ~f) params;
@@ -407,6 +424,7 @@ let rec type_map ~f = function
    like "is this type concrete" or "does this type mention X". *)
 let rec type_for_all ~f = function
   | TPtr inner -> type_for_all ~f inner
+  | TArray { elem; _ } -> type_for_all ~f elem
   | TTuple ts -> List.for_all (type_for_all ~f) ts
   | TFnPtr { params; ret } ->
       List.for_all (type_for_all ~f) params
@@ -428,6 +446,7 @@ let typ_size_exceeds limit t =
     if !count > limit then raise Exit;
     match t with
     | TPtr inner -> go inner
+    | TArray { elem; _ } -> go elem
     | TTuple ts -> List.iter go ts
     | TFnPtr { params; ret } -> List.iter go params; Option.iter go ret
     | _ -> ()
@@ -504,6 +523,14 @@ type texpr_node =
   | TMatch of { scrutinee : texpr;
                 ename_path : string list;
                 arms : tmatch_arm list }
+  | TArrayLit of texpr list             (* `[e1, e2, ...]` — block-shaped,
+                                           lowered like a struct/tuple literal
+                                           (field-by-field `data[i] = ei`). *)
+  | TArrayRepeat of { value : texpr; count : int }
+                                        (* `[v; N]` — N copies; codegen emits
+                                           a small fill loop. *)
+  | TIndex of { base : texpr; index : texpr }
+                                        (* `a[i]` -> `a.data[i]` *)
   | TIfExpr of { cond : texpr; then_val : texpr; else_val : texpr }
                                         (* `if c { a } else { b }` used as a
                                            value.  Block-shaped like TMatch:
@@ -556,6 +583,8 @@ type tstmt =
                                              reference to an `extern var`. *)
   | TAssignField of { target : texpr; field : string; value : texpr;
                       pos : Pos.t }
+  | TAssignIndex of { base : texpr; index : texpr; value : texpr;
+                      pos : Pos.t }       (* `a[i] = value` -> `a.data[i] = ...` *)
   | TAssignDeref of { target : texpr; value : texpr; pos : Pos.t }
   | TReturn of { value : texpr option; pos : Pos.t }
                                           (* None = bare `return;` from a
@@ -590,6 +619,9 @@ let texpr_children (te : texpr) : texpr list =
   | TMatch { scrutinee; arms; _ } ->
       scrutinee :: List.map (fun a -> a.tbody) arms
   | TIfExpr { cond; then_val; else_val } -> [cond; then_val; else_val]
+  | TArrayLit es -> es
+  | TArrayRepeat { value; _ } -> [value]
+  | TIndex { base; index } -> [base; index]
 
 let rec iter_texpr f e =
   f e;
@@ -606,7 +638,7 @@ let rec fold_texpr f acc e =
 let tstmt_substmts = function
   | TIf { then_body; else_body; _ } -> then_body @ else_body
   | TWhile { body; _ } | TDefer { body; _ } -> body
-  | TLet _ | TLetTuple _ | TAssign _ | TAssignField _
+  | TLet _ | TLetTuple _ | TAssign _ | TAssignField _ | TAssignIndex _
   | TAssignDeref _ | TReturn _ | TExprStmt _ -> []
 
 (* Exprs that live DIRECTLY in [s] — cond, value, target.  Does NOT
@@ -618,6 +650,7 @@ let tstmt_own_exprs = function
   | TReturn { value; _ } -> Option.to_list value
   | TAssignField { target; value; _ }
   | TAssignDeref { target; value; _ } -> [target; value]
+  | TAssignIndex { base; index; value; _ } -> [base; index; value]
   | TIf { cond; _ } | TWhile { cond; _ } -> [cond]
   | TDefer _ -> []
 
@@ -678,6 +711,12 @@ type tprogram = {
                                          mutable global counterpart of
                                          tp_ext_consts.  Codegen emits
                                          `extern <type> NAME;` (no const). *)
+  tp_array_types : (string * typ) list; (* unique `[T; N]` shapes used in the
+                                           program (mangled name -> TArray),
+                                           dependency-ordered (inner shapes
+                                           first); codegen emits a wrapper
+                                           `struct ex_arrN_T { T data[N]; }`
+                                           per entry. *)
   tp_consts : (string * string) list;  (* user `const NAME: T = e;` folded
                                           to (mangled C name, literal value);
                                           codegen emits `#define <name>

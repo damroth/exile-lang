@@ -26,6 +26,8 @@ type t =
   | RParen
   | LBrace
   | RBrace
+  | LBracket
+  | RBracket
   | Semicolon
   | Comma
   | Colon
@@ -77,6 +79,7 @@ let pp = function
   | Amp -> "'&'" | New -> "'new'" | Null -> "'null'"
   | LParen -> "'('" | RParen -> "')'"
   | LBrace -> "'{'" | RBrace -> "'}'"
+  | LBracket -> "'['" | RBracket -> "']'"
   | Semicolon -> "';'" | Comma -> "','" | Colon -> "':'"
   | DoubleColon -> "'::'"
   | Arrow -> "'->'" | Eq -> "'='" | EqEq -> "'=='" | NotEq -> "'!='"
