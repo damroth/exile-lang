@@ -997,18 +997,28 @@ let is_value_if ~(then_blk : Ast.stmt list) ~(else_blk : Ast.stmt list option) =
 let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
   let pos = Ast.expr_pos e in
   match e with
-  | Ast.IntLit (n, _) -> { e = TIntLit n; ty = t_i32; pos }
+  | Ast.IntLit (n, _) ->
+      (* Adopt an expected TInt width (bidirectional typing) so a literal
+         in `let x: u32 = 1` / `... = 1 + 2` builds at the annotated width
+         instead of defaulting to i32.  A non-fitting value falls back to
+         i32 so the downstream fit-check reports the overflow cleanly. *)
+      let ty =
+        match expected with
+        | Some (TInt _ as t) when int_fits n t -> t
+        | _ -> t_i32
+      in
+      { e = TIntLit n; ty; pos }
   | Ast.BoolLit (b, _) -> { e = TBoolLit b; ty = TBool; pos }
   | Ast.NullLit _ -> { e = TNullLit; ty = TNullPtr; pos }
   | Ast.StringLit (s, _) -> { e = TStringLit s; ty = TString; pos }
   | Ast.Neg (sub, neg_pos) ->
-      let sub' = elab_expr ctx env sub in
+      let sub' = elab_expr ?expected ctx env sub in
       if not (is_int_like sub'.ty) then
         Error.failf neg_pos "negation '-' requires an integer, got %s"
           (typ_name sub'.ty);
       { e = TNeg sub'; ty = sub'.ty; pos }
   | Ast.BitNot (sub, not_pos) ->
-      let sub' = elab_expr ctx env sub in
+      let sub' = elab_expr ?expected ctx env sub in
       if not (is_int_like sub'.ty) then
         Error.failf not_pos
           "bitwise complement '~' requires an integer, got %s"
@@ -1061,14 +1071,27 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         { e = TIntLit n; ty = lit_ty; pos = other_pos }
       in
       let (l', r') =
-        match l, r with
-        | Ast.IntLit (n, lp), _ ->
-            let r' = elab_expr ctx env r in
-            (elab_lit n r'.ty lp, r')
-        | _, Ast.IntLit (n, rp) ->
-            let l' = elab_expr ctx env l in
-            (l', elab_lit n l'.ty rp)
-        | _ -> (elab_expr ctx env l, elab_expr ctx env r)
+        match op, expected with
+        (* Value-preserving int ops under an int annotation: push the
+           expected width into the operands so `1 + 2` (both literals)
+           adopts it.  Arithmetic/bitwise → both sides; shift → left only
+           (result takes the left type, the amount stays free). *)
+        | (Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod
+          | Ast.BitAnd | Ast.BitOr | Ast.BitXor), Some (TInt _ as t) ->
+            (elab_expr ~expected:t ctx env l, elab_expr ~expected:t ctx env r)
+        | (Ast.Shl | Ast.Shr), Some (TInt _ as t) ->
+            (elab_expr ~expected:t ctx env l, elab_expr ctx env r)
+        | _ ->
+            (* No int annotation (or a comparison): smart literal coercion
+               — a literal adopts its sibling operand's width. *)
+            (match l, r with
+             | Ast.IntLit (n, lp), _ ->
+                 let r' = elab_expr ctx env r in
+                 (elab_lit n r'.ty lp, r')
+             | _, Ast.IntLit (n, rp) ->
+                 let l' = elab_expr ctx env l in
+                 (l', elab_lit n l'.ty rp)
+             | _ -> (elab_expr ctx env l, elab_expr ctx env r))
       in
       let name = Ast.binop_name op in
       let need_int_operands () =
