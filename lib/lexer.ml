@@ -5,6 +5,7 @@ let is_digit c = c >= '0' && c <= '9'
 let keyword_or_ident = function
   | "fn" -> Token.Fn
   | "let" -> Token.Let
+  | "mut" -> Token.Mut
   | "return" -> Token.Return
   | "if" -> Token.If
   | "else" -> Token.Else

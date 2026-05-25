@@ -174,6 +174,11 @@ let parse_param_reg_attr s =
 
 let parse_param s =
   let reg = parse_param_reg_attr s in
+  (* `mut x: T` / `mut self` — the binding is mutable.  Immutable by
+     default, mirroring `let` vs `let mut`. *)
+  let is_mut =
+    if peek s = Token.Mut then (ignore (advance s); true) else false
+  in
   (* Bare method receivers: `self` (by value) and `*self` (by pointer),
      with no type annotation.  Typed as TySelf here; parse_impl_block
      substitutes the impl's target type once it's known.  An explicit
@@ -181,15 +186,15 @@ let parse_param s =
   match peek s with
   | Token.Ident "self" when peek2 s <> Token.Colon ->
       ignore (advance s);
-      Ast.{ pname = "self"; pty = Ast.TySelf; preg = None }
+      Ast.{ pname = "self"; pty = Ast.TySelf; preg = None; is_mut }
   | Token.Star when peek2 s = Token.Ident "self" ->
       ignore (advance s); ignore (advance s);
-      Ast.{ pname = "self"; pty = Ast.TyPtr Ast.TySelf; preg = None }
+      Ast.{ pname = "self"; pty = Ast.TyPtr Ast.TySelf; preg = None; is_mut }
   | _ ->
       let (name, _) = expect_ident s ~what:"parameter name" in
       expect s Token.Colon;
       let ty = parse_type s in
-      Ast.{ pname = name; pty = ty; preg = Option.map fst reg }
+      Ast.{ pname = name; pty = ty; preg = Option.map fst reg; is_mut }
 
 let parse_params s =
   expect s Token.LParen;
@@ -503,6 +508,11 @@ and parse_stmt s =
   | Token.Let ->
       let pos = peek_pos s in
       ignore (advance s);
+      (* `let mut x` / `let mut (a, b)` — mutable binding.  Immutable by
+         default. *)
+      let is_mut =
+        if peek s = Token.Mut then (ignore (advance s); true) else false
+      in
       (match peek s with
        | Token.LParen ->
            (* Destructuring binding `let (a, b, ...) = expr;` — names only,
@@ -521,7 +531,7 @@ and parse_stmt s =
            expect s Token.Eq;
            let value = parse_expr s in
            expect s Token.Semicolon;
-           Ast.LetTuple { names; value; pos }
+           Ast.LetTuple { names; value; is_mut; pos }
        | _ ->
            let (name, name_pos) =
              expect_ident s ~what:"variable name after 'let'"
@@ -533,7 +543,7 @@ and parse_stmt s =
            expect s Token.Eq;
            let value = parse_expr s in
            expect s Token.Semicolon;
-           Ast.Let { name; value; ty_ann; pos = name_pos })
+           Ast.Let { name; value; ty_ann; is_mut; pos = name_pos })
   | Token.Return ->
       let pos = peek_pos s in
       ignore (advance s);

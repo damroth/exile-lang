@@ -159,15 +159,15 @@ let () =
     "#include <stdio.h>\n\nstatic long ex_add(long a, long b);\n\nstatic long ex_add(long a, long b) {\n    return a + b;\n}\n\nint main(void) {\n    long x;\n    x = ex_add(3, 4);\n    printf(\"%ld\\n\", (long)(x));\n    return 0;\n}\n";
 
   check "assignment"
-    "fn main() {\n    let x = 1;\n    x = x + 41;\n    println(x);\n}\n"
+    "fn main() {\n    let mut x = 1;\n    x = x + 41;\n    println(x);\n}\n"
     "#include <stdio.h>\n\nint main(void) {\n    long x;\n    x = 1;\n    x = x + 41;\n    printf(\"%ld\\n\", (long)(x));\n    return 0;\n}\n";
 
   check "while loop"
-    "fn main() {\n    let i = 0;\n    while i < 3 {\n        println(i);\n        i = i + 1;\n    }\n}\n"
+    "fn main() {\n    let mut i = 0;\n    while i < 3 {\n        println(i);\n        i = i + 1;\n    }\n}\n"
     "#include <stdio.h>\n\nint main(void) {\n    long i;\n    i = 0;\n    while (i < 3) {\n        printf(\"%ld\\n\", (long)(i));\n        i = i + 1;\n    }\n    return 0;\n}\n";
 
   check "while with hoisted inner let"
-    "fn main() {\n    let i = 0;\n    while i < 2 {\n        let doubled = i * 2;\n        println(doubled);\n        i = i + 1;\n    }\n}\n"
+    "fn main() {\n    let mut i = 0;\n    while i < 2 {\n        let doubled = i * 2;\n        println(doubled);\n        i = i + 1;\n    }\n}\n"
     "#include <stdio.h>\n\nint main(void) {\n    long i;\n    long doubled;\n    i = 0;\n    while (i < 2) {\n        doubled = i * 2;\n        printf(\"%ld\\n\", (long)(doubled));\n        i = i + 1;\n    }\n    return 0;\n}\n";
 
   check "bool literals"
@@ -244,6 +244,33 @@ let () =
   check_error "assignment to undefined"
     "fn main() {\n    x = 5;\n}\n"
     "assignment to undefined variable 'x'";
+
+  (* Immutable-by-default: bindings and parameters need `mut` to be
+     reassigned or have an owned value mutated.  Mutability is
+     compile-time-only — a `mut` binding emits identical C (no `const`). *)
+  check_error "reassign immutable let rejected"
+    "fn main() {\n    let x = 1;\n    x = 2;\n    println(x);\n}\n"
+    "cannot assign to immutable 'x' — declare it with `let mut`";
+
+  check_error "mutate field of immutable value struct rejected"
+    "struct P { x: int, y: int }\n\
+     fn main() {\n    let p = P { x: 1, y: 2 };\n    p.x = 9;\n    println(p.x);\n}\n"
+    "cannot mutate field of immutable 'p' — declare it with `let mut`";
+
+  check_error "reassign immutable parameter rejected"
+    "fn f(n: int) -> int {\n    n = n + 1;\n    return n;\n}\n\
+     fn main() {\n    println(f(5));\n}\n"
+    "cannot assign to immutable 'n' — declare it with `let mut` (or mark the parameter `mut`)";
+
+  check "mut parameter allows mutation (emits plain C, no const)"
+    "fn inc(mut n: int) -> int {\n    n = n + 1;\n    return n;\n}\n\
+     fn main() {\n    println(inc(5));\n}\n"
+    "#include <stdio.h>\n\nstatic long ex_inc(long n);\n\nstatic long ex_inc(long n) {\n    n = n + 1;\n    return n;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_inc(5)));\n    return 0;\n}\n";
+
+  check "mutating a value struct field through `let mut`"
+    "struct P { x: int, y: int }\n\
+     fn main() {\n    let mut p = P { x: 1, y: 2 };\n    p.x = 9;\n    println(p.x);\n}\n"
+    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint main(void) {\n    struct ex_P p;\n    p.x = 1;\n    p.y = 2;\n    p.x = 9;\n    printf(\"%ld\\n\", (long)(p.x));\n    return 0;\n}\n";
 
   check_error "main with params"
     "fn main(x: int) {\n    println(x);\n}\n"
@@ -486,7 +513,7 @@ let () =
     "#include <stdio.h>\n\nstatic long ex_process(long n);\n\nstatic long ex_process(long n) {\n    if (n > 0) {\n        {\n            long __exile_ret;\n            __exile_ret = n;\n            printf(\"%s\\n\", \"inner\");\n            printf(\"%s\\n\", \"outer\");\n            return __exile_ret;\n        }\n    }\n    {\n        long __exile_ret;\n        __exile_ret = 0;\n        printf(\"%s\\n\", \"outer\");\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_process(5)));\n    return 0;\n}\n";
 
   check "defer in while fires per iteration"
-    "fn main() {\n    let i = 0;\n    while i < 2 {\n        defer println(\"end\");\n        println(i);\n        i = i + 1;\n    }\n}\n"
+    "fn main() {\n    let mut i = 0;\n    while i < 2 {\n        defer println(\"end\");\n        println(i);\n        i = i + 1;\n    }\n}\n"
     "#include <stdio.h>\n\nint main(void) {\n    long i;\n    i = 0;\n    while (i < 2) {\n        printf(\"%ld\\n\", (long)(i));\n        i = i + 1;\n        printf(\"%s\\n\", \"end\");\n    }\n    return 0;\n}\n";
 
   check_error "return inside defer body rejected"
@@ -542,7 +569,7 @@ let () =
     "#include <stdio.h>\n\nstruct ex_Point { long x; long y; };\n\nstatic struct ex_Point ex_make(long a, long b);\n\nstatic struct ex_Point ex_make(long a, long b) {\n    {\n        struct ex_Point __exile_ret;\n        __exile_ret.x = a;\n        __exile_ret.y = b;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Point p;\n    p = ex_make(3, 4);\n    printf(\"%ld\\n\", (long)(p.x));\n    printf(\"%ld\\n\", (long)(p.y));\n    return 0;\n}\n";
 
   check "struct field assignment"
-    "struct Point { x: int, y: int, }\nfn main() {\n    let p = Point { x: 1, y: 2 };\n    p.x = 99;\n    println(p.x);\n    println(p.y);\n}\n"
+    "struct Point { x: int, y: int, }\nfn main() {\n    let mut p = Point { x: 1, y: 2 };\n    p.x = 99;\n    println(p.x);\n    println(p.y);\n}\n"
     "#include <stdio.h>\n\nstruct ex_Point { long x; long y; };\n\nint main(void) {\n    struct ex_Point p;\n    p.x = 1;\n    p.y = 2;\n    p.x = 99;\n    printf(\"%ld\\n\", (long)(p.x));\n    printf(\"%ld\\n\", (long)(p.y));\n    return 0;\n}\n";
 
   check_error "unknown struct name"

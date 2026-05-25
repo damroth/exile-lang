@@ -1983,9 +1983,34 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
    that the function-top declarations need.  Replaces `collect_lets` —
    `check_program` calls this once per function. *)
 let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
-    ctx param_env stmts
+    ?(mut_params = []) ctx param_env stmts
     : (string * typ) list * tstmt list =
   let decls = ref [] in
+  (* Per-binding mutability.  Names are unique across a function body
+     (add_decl rejects shadowing/redeclaration and params are unique), so
+     one flat set keyed by name is correct without scoping concerns.
+     Seeded with `mut`-marked parameters; `let mut` bindings register as
+     they are walked.  Read only at assignment sites. *)
+  let mut_names = Hashtbl.create 16 in
+  List.iter (fun n -> Hashtbl.replace mut_names n ()) mut_params;
+  (* Root local of an l-value path that touches an *owned value* (not a
+     pointee): `x` / `x.f` / `x.f.g` -> Some "x"; anything crossing a
+     `*` deref, or rooted in a non-variable, -> None (pointee mutability
+     is a separate, deferred axis — see `AssignDeref`, which is never
+     gated). *)
+  let rec root_local : Ast.expr -> string option = function
+    | Ast.Var (n, _) -> Some n
+    | Ast.FieldAccess (t, _, _) -> root_local t
+    | _ -> None
+  in
+  let require_mut name pos ~what =
+    if not (Hashtbl.mem mut_names name) then
+      Error.failf pos
+        "cannot %s immutable '%s' — declare it with `let mut`%s"
+        what name
+        (if List.mem_assoc name param_env
+         then " (or mark the parameter `mut`)" else "")
+  in
   let add_decl name t pos =
     check_c_ident pos "variable" name;
     if List.mem_assoc name param_env then
@@ -2002,7 +2027,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         (final_env, ts :: rest_ts)
   and walk_stmt env stmt : (string * typ) list * tstmt =
     match stmt with
-    | Ast.Let { name; value; ty_ann; pos } ->
+    | Ast.Let { name; value; ty_ann; is_mut; pos } ->
         (* When the let has a type annotation, resolve it first so we
            can pass it as the expected type to elab_expr — that lets
            generic ctors like `Result::Ok(n)` infer all their tparams
@@ -2043,8 +2068,9 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                        name (typ_name t_ann) (typ_name t_inferred))
         in
         add_decl name t_actual pos;
+        if is_mut then Hashtbl.replace mut_names name ();
         ((name, t_actual) :: env, TLet { name; value = tvalue; pos })
-    | Ast.LetTuple { names; value; pos } ->
+    | Ast.LetTuple { names; value; is_mut; pos } ->
         let tvalue = elab_expr ctx env value in
         let elem_tys =
           match tvalue.ty with
@@ -2065,6 +2091,8 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
          | Some n -> Error.failf pos "duplicate name '%s' in 'let (...)'" n
          | None -> ());
         List.iter (fun (n, ty) -> add_decl n ty pos) pairs;
+        if is_mut then
+          List.iter (fun n -> Hashtbl.replace mut_names n ()) names;
         (List.rev_append pairs env,
          TLetTuple { names; value = tvalue; pos })
     | Ast.Assign { path; value; pos } ->
@@ -2100,6 +2128,13 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
              else
                Error.failf pos "assignment to undefined variable '%s'" display
          | Some _ -> ());
+        (* A local binding must be `mut` to be reassigned.  Qualified
+           paths and unqualified extern vars are mutable globals — not
+           gated. *)
+        (match path with
+         | [name] when List.mem_assoc name env ->
+             require_mut name pos ~what:"assign to"
+         | _ -> ());
         let tvalue = elab_expr ctx env value in
         (env, TAssign { path; value = tvalue; pos })
     | Ast.AssignField { target; field; value; pos } ->
@@ -2138,6 +2173,17 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                  pointer to struct, got %s"
                 field (typ_name other)
         in
+        (* Mutating a field of an *owned value* (TStruct/TExtStruct, not a
+           pointer) requires a mutable root binding.  Through a pointer it
+           is pointee mutation — a separate, deferred axis, left ungated
+           like AssignDeref. *)
+        (match ttarget.ty with
+         | TStruct _ | TExtStruct _ ->
+             (match root_local target with
+              | Some n when List.mem_assoc n env ->
+                  require_mut n pos ~what:"mutate field of"
+              | _ -> ())
+         | _ -> ());
         let tvalue = elab_expr ctx env value in
         if not (typ_eq tvalue.ty fty) && not (int_lit_fits value fty) then
           Error.failf pos
@@ -2949,7 +2995,7 @@ let prelude_items () =
   let self_param =
     { Ast.pname = "self";
       pty = Ast.TyStruct { path = ["Allocator"]; args = [] };
-      preg = None }
+      preg = None; is_mut = false }
   in
   let alloc_method =
     mk_method "alloc" ["T"] [self_param]
@@ -2958,7 +3004,8 @@ let prelude_items () =
   let free_method =
     mk_method "free" ["T"]
       [ self_param;
-        { Ast.pname = "p"; pty = Ast.TyPtr (tvar "T"); preg = None } ]
+        { Ast.pname = "p"; pty = Ast.TyPtr (tvar "T");
+          preg = None; is_mut = false } ]
       None free_body
   in
   let alloc_impl = {
@@ -3225,10 +3272,14 @@ let check_program program : tprogram =
         param_tys
     in
     let is_skeleton = f.tparams <> [] && tvar_bindings = [] in
+    let mut_params =
+      List.filter_map (fun (p : Ast.param) ->
+        if p.is_mut then Some p.pname else None) f.params
+    in
     let (lets, tbody) =
       if f.is_extern || is_skeleton then ([], [])
       else elab_body ~ret_ty:effective_ret_ty ~is_main:(f.name = "main")
-             ctx param_env f.body
+             ~mut_params ctx param_env f.body
     in
     (* Exhaustive-return check.  A value-returning fn must have a
        `return` on every control-flow path.  Without this, a non-

@@ -1,6 +1,7 @@
 type t =
   | Fn
   | Let
+  | Mut
   | Return
   | If
   | Else
@@ -60,7 +61,7 @@ type t =
   | Eof
 
 let pp = function
-  | Fn -> "'fn'" | Let -> "'let'" | Return -> "'return'"
+  | Fn -> "'fn'" | Let -> "'let'" | Mut -> "'mut'" | Return -> "'return'"
   | If -> "'if'" | Else -> "'else'" | While -> "'while'"
   | Mod -> "'mod'" | Pub -> "'pub'" | Use -> "'use'" | As -> "'as'"
   | Defer -> "'defer'"

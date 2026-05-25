@@ -143,6 +143,12 @@ let expr_pos = function
 type param = {
   pname : string;
   pty : type_ann;
+  is_mut : bool;                     (* `fn f(mut x: T)` — the parameter
+                                        binding is reassignable / its owned
+                                        value mutable.  Immutable by default
+                                        (mirrors `let` vs `let mut`).  Pointee
+                                        mutability through a `*T` param is a
+                                        separate, deferred axis. *)
   preg : string option;              (* `@reg(d0)` AmigaOS register pin.
                                         Validated against m68k register
                                         names (d0..d7, a0..a6).  Codegen
@@ -152,8 +158,13 @@ type param = {
 }
 
 type stmt =
-  | Let of { name : string; value : expr; ty_ann : type_ann option; pos : Pos.t }
-  | LetTuple of { names : string list; value : expr; pos : Pos.t }
+  | Let of { name : string; value : expr; ty_ann : type_ann option;
+             is_mut : bool; pos : Pos.t }
+                                          (* `let x` is immutable; `let mut x`
+                                             is reassignable.  Mutability is a
+                                             compile-time-only property —
+                                             codegen never emits `const`. *)
+  | LetTuple of { names : string list; value : expr; is_mut : bool; pos : Pos.t }
   | Assign of { path : string list; value : expr; pos : Pos.t }
                                           (* Single-segment path = local
                                              variable assignment; multi-
