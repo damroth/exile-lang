@@ -43,6 +43,11 @@ type t =
   | Minus
   | Star
   | Slash
+  | Percent
+  | Caret
+  | Tilde
+  | Shl
+  | Shr
   | True
   | False
   | Question
@@ -78,6 +83,8 @@ let pp = function
   | Lt -> "'<'" | Gt -> "'>'" | LtEq -> "'<='" | GtEq -> "'>='"
   | Plus -> "'+'" | PlusPlus -> "'++'"
   | Minus -> "'-'" | Star -> "'*'" | Slash -> "'/'"
+  | Percent -> "'%'" | Caret -> "'^'" | Tilde -> "'~'"
+  | Shl -> "'<<'" | Shr -> "'>>'"
   | True -> "'true'" | False -> "'false'"
   | Question -> "'?'" | Orelse -> "'orelse'" | Try -> "'try'"
   | Extern -> "'extern'" | Ellipsis -> "'...'" | At -> "'@'"

@@ -216,6 +216,39 @@ let () =
     "fn main() {\n    let a = 5;\n    if a == 5 {\n        println(1);\n    }\n    if a != 0 {\n        println(2);\n    }\n    if a <= 5 {\n        println(3);\n    }\n    if a >= 5 {\n        println(4);\n    }\n}\n"
     "#include <stdio.h>\n\nint main(void) {\n    long a;\n    a = 5;\n    if (a == 5) {\n        printf(\"%ld\\n\", (long)(1));\n    }\n    if (a != 0) {\n        printf(\"%ld\\n\", (long)(2));\n    }\n    if (a <= 5) {\n        printf(\"%ld\\n\", (long)(3));\n    }\n    if (a >= 5) {\n        printf(\"%ld\\n\", (long)(4));\n    }\n    return 0;\n}\n";
 
+  (* Bitwise / shift / modulo operators (Rust-order precedence; C is
+     emitted with explicit parens so its looser bitwise precedence never
+     leaks). *)
+  check "bitwise and/or/xor"
+    "fn main() {\n    let a = 12 & 10;\n    let b = 12 | 10;\n    let c = 12 ^ 10;\n    println(a + b + c);\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    long a;\n    long b;\n    long c;\n    a = 12 & 10;\n    b = 12 | 10;\n    c = 12 ^ 10;\n    printf(\"%ld\\n\", (long)(a + b + c));\n    return 0;\n}\n";
+
+  check "shift, modulo, bitwise-not"
+    "fn main() {\n    let s = 1 << 4;\n    let m = 17 % 5;\n    let n = ~s;\n    println(s + m + n);\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    long s;\n    long m;\n    long n;\n    s = 1 << 4;\n    m = 17 % 5;\n    n = ~s;\n    printf(\"%ld\\n\", (long)(s + m + n));\n    return 0;\n}\n";
+
+  check "bitwise binds tighter than comparison (parens emitted)"
+    "fn main() {\n    let r = 12 & 10 == 8;\n    println(r);\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int r;\n    r = (12 & 10) == 8;\n    printf(\"%d\\n\", r);\n    return 0;\n}\n";
+
+  check "nested generic closes with `>>` (token split)"
+    "struct Box<T> { v: T }\nfn inner(b: Box<Box<int>>) -> int {\n    b.v.v\n}\nfn main() {\n    let b: Box<Box<int>> = Box { v: Box { v: 7 } };\n    println(inner(b));\n}\n"
+    "#include <stdio.h>\n\nstruct ex_Box_i32 { long v; };\nstruct ex_Box_ex_Box_i32 { struct ex_Box_i32 v; };\n\nstatic long ex_inner(struct ex_Box_ex_Box_i32 b);\n\nstatic long ex_inner(struct ex_Box_ex_Box_i32 b) {\n    return b.v.v;\n}\n\nint main(void) {\n    struct ex_Box_ex_Box_i32 b;\n    struct ex_Box_i32 __lift_0;\n    __lift_0.v = 7;\n    b.v = __lift_0;\n    printf(\"%ld\\n\", (long)(ex_inner(b)));\n    return 0;\n}\n";
+
+  check_error "constant modulo by zero rejected"
+    "fn main() {\n    let x = 5 % 0;\n    println(x);\n}\n"
+    "modulo by zero";
+
+  check_error "constant shift out of range rejected"
+    "fn main() {\n    let x: i32 = 1;\n    println(x << 32);\n}\n"
+    "shift amount 32 is out of range for i32 (32 bits)";
+
+  check_error "bare bitor in match arm body is the separator, not an operator"
+    "enum E { A | B }\n\
+     fn f(e: E) -> int { match e { E::A => 1 | 2 } }\n\
+     fn main() { println(f(E::A)); }\n"
+    "expected pattern, got integer 2";
+
   check "unary minus on literal var and call"
     "fn id(x: int) -> int {\n    return x;\n}\nfn main() {\n    let a = -5;\n    let b = -a;\n    println(b);\n    println(-id(7));\n}\n"
     "#include <stdio.h>\n\nstatic long ex_id(long x);\n\nstatic long ex_id(long x) {\n    return x;\n}\n\nint main(void) {\n    long a;\n    long b;\n    a = -5;\n    b = -a;\n    printf(\"%ld\\n\", (long)(b));\n    printf(\"%ld\\n\", (long)(-(ex_id(7))));\n    return 0;\n}\n";
@@ -348,7 +381,7 @@ let () =
      pointer (`*T`)";
 
   check_error "self-recursive value enum rejected"
-    "enum List { | Nil | Cons(int, List) }\n\
+    "enum List { Nil | Cons(int, List) }\n\
      fn main() { println(1); }\n"
     "recursive value type 'List' (cycle: List -> List) — a field embeds \
      the type by value, making it infinitely sized; break the cycle with \
@@ -394,19 +427,19 @@ let () =
     "division by zero";
 
   check_error "duplicate match arm for same variant rejected"
-    "enum E { | A | B }\n\
+    "enum E { A | B }\n\
      fn main() {\n\
     \    let e = E::A;\n\
-    \    let r = match e { | E::A => 1 | E::A => 2 | E::B => 3 };\n\
+    \    let r = match e { E::A => 1 | E::A => 2 | E::B => 3 };\n\
     \    println(r);\n\
      }\n"
     "unreachable match arm: earlier arms already cover this case";
 
   check_error "match arm after catch-all rejected as unreachable"
-    "enum E { | A | B }\n\
+    "enum E { A | B }\n\
      fn main() {\n\
     \    let e = E::A;\n\
-    \    let r = match e { | _ => 1 | E::A => 2 };\n\
+    \    let r = match e { _ => 1 | E::A => 2 };\n\
     \    println(r);\n\
      }\n"
     "unreachable match arm: earlier arms already cover this case";
@@ -869,14 +902,14 @@ let () =
 
   check "enum unit variants + match with explicit arms"
     "enum Color {\n\
-    \    | Red\n\
+    \    Red\n\
     \    | Green\n\
     \    | Blue\n\
      }\n\
      fn main() {\n\
     \    let c = Color::Green;\n\
     \    match c {\n\
-    \        | Color::Red => println(\"r\")\n\
+    \        Color::Red => println(\"r\")\n\
     \        | Color::Green => println(\"g\")\n\
     \        | Color::Blue => println(\"b\")\n\
     \    }\n\
@@ -884,11 +917,11 @@ let () =
     "#include <stdio.h>\n\nenum ex_Color_tag { ex_Color_Red, ex_Color_Green, ex_Color_Blue };\nstruct ex_Color { enum ex_Color_tag tag; };\n\nint main(void) {\n    struct ex_Color c;\n    c.tag = ex_Color_Green;\n    {\n        struct ex_Color __m;\n        __m = c;\n        switch (__m.tag) {\n        case ex_Color_Red:\n            {\n                printf(\"%s\\n\", \"r\");\n                break;\n            }\n        case ex_Color_Green:\n            {\n                printf(\"%s\\n\", \"g\");\n                break;\n            }\n        case ex_Color_Blue:\n            {\n                printf(\"%s\\n\", \"b\");\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "match with wildcard arm covers remaining variants"
-    "enum E { | A | B | C }\n\
+    "enum E { A | B | C }\n\
      fn main() {\n\
     \    let e = E::A;\n\
     \    match e {\n\
-    \        | E::A => println(\"a\")\n\
+    \        E::A => println(\"a\")\n\
     \        | _ => println(\"other\")\n\
     \    }\n\
      }\n"
@@ -896,14 +929,14 @@ let () =
 
   check "tuple variants + match with bind patterns"
     "enum Shape {\n\
-    \    | Square\n\
+    \    Square\n\
     \    | Circle(int)\n\
     \    | Rect(int, int)\n\
      }\n\
      fn main() {\n\
     \    let s = Shape::Rect(3, 4);\n\
     \    match s {\n\
-    \        | Shape::Square => println(\"sq\")\n\
+    \        Shape::Square => println(\"sq\")\n\
     \        | Shape::Circle(r) => println(r)\n\
     \        | Shape::Rect(w, h) => println(w + h)\n\
     \    }\n\
@@ -911,27 +944,27 @@ let () =
     "#include <stdio.h>\n\nenum ex_Shape_tag { ex_Shape_Square, ex_Shape_Circle, ex_Shape_Rect };\nstruct ex_Shape { enum ex_Shape_tag tag; union { struct { long _0; } Circle; struct { long _0; long _1; } Rect; } data; };\n\nint main(void) {\n    struct ex_Shape s;\n    s.tag = ex_Shape_Rect;\n    s.data.Rect._0 = 3;\n    s.data.Rect._1 = 4;\n    {\n        struct ex_Shape __m;\n        __m = s;\n        switch (__m.tag) {\n        case ex_Shape_Square:\n            {\n                printf(\"%s\\n\", \"sq\");\n                break;\n            }\n        case ex_Shape_Circle:\n            {\n                long r = __m.data.Circle._0;\n                printf(\"%ld\\n\", (long)(r));\n                break;\n            }\n        case ex_Shape_Rect:\n            {\n                long w = __m.data.Rect._0;\n                long h = __m.data.Rect._1;\n                printf(\"%ld\\n\", (long)(w + h));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check_error "wrong arg count for tuple variant rejected"
-    "enum E { | A(int) }\nfn main() { let e = E::A(1, 2); }\n"
+    "enum E { A(int) }\nfn main() { let e = E::A(1, 2); }\n"
     "variant 'E::A' takes 1 argument(s), got 2";
 
   check_error "wrong arg type for tuple variant rejected"
-    "enum E { | A(str) }\nfn main() { let e = E::A(5); }\n"
+    "enum E { A(str) }\nfn main() { let e = E::A(5); }\n"
     "argument 1 of 'E::A': expected str, got i32";
 
   check_error "wrong bind count in pattern rejected"
-    "enum E { | A(int, int) }\nfn main() { let e = E::A(1, 2); match e { | E::A(x) => println(x) } }\n"
+    "enum E { A(int, int) }\nfn main() { let e = E::A(1, 2); match e { E::A(x) => println(x) } }\n"
     "variant 'A' has 2 field(s), pattern binds 1";
 
   check_error "duplicate bind name in pattern rejected"
-    "enum E { | A(int, int) }\nfn main() { let e = E::A(1, 2); match e { | E::A(x, x) => println(x) } }\n"
+    "enum E { A(int, int) }\nfn main() { let e = E::A(1, 2); match e { E::A(x, x) => println(x) } }\n"
     "duplicate bind name 'x' in pattern";
 
   check "match as expression in let RHS"
-    "enum E { | A | B(int) }\n\
+    "enum E { A | B(int) }\n\
      fn main() {\n\
     \    let e = E::B(7);\n\
     \    let v = match e {\n\
-    \        | E::A => 0\n\
+    \        E::A => 0\n\
     \        | E::B(n) => n + 1\n\
     \    };\n\
     \    println(v);\n\
@@ -939,10 +972,10 @@ let () =
     "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long v;\n    e.tag = ex_E_B;\n    e.data.B._0 = 7;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                v = 0;\n                break;\n            }\n        case ex_E_B:\n            {\n                long n = __m.data.B._0;\n                v = n + 1;\n                break;\n            }\n        }\n    }\n    printf(\"%ld\\n\", (long)(v));\n    return 0;\n}\n";
 
   check "match as expression in return position"
-    "enum E { | A | B(int) }\n\
+    "enum E { A | B(int) }\n\
      fn classify(e: E) -> int {\n\
     \    return match e {\n\
-    \        | E::A => 0\n\
+    \        E::A => 0\n\
     \        | E::B(n) => n\n\
     \    };\n\
      }\n\
@@ -953,14 +986,14 @@ let () =
     "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nstatic long ex_classify(struct ex_E e);\n\nstatic long ex_classify(struct ex_E e) {\n    {\n        long __exile_ret;\n        {\n            struct ex_E __m;\n            __m = e;\n            switch (__m.tag) {\n            case ex_E_A:\n                {\n                    __exile_ret = 0;\n                    break;\n                }\n            case ex_E_B:\n                {\n                    long n = __m.data.B._0;\n                    __exile_ret = n;\n                    break;\n                }\n            }\n        }\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_B;\n    e.data.B._0 = 42;\n    printf(\"%ld\\n\", (long)(ex_classify(e)));\n    return 0;\n}\n";
 
   check_error "match arms with inconsistent types rejected"
-    "enum E { | A | B }\nfn main() { let v = match E::A { | E::A => 1 | E::B => true }; println(v); }\n"
+    "enum E { A | B }\nfn main() { let v = match E::A { E::A => 1 | E::B => true }; println(v); }\n"
     "match arms have inconsistent types: i32 vs bool";
 
   check "EnumLit as fn arg lifts via __lift_N temp"
-    "enum E { | A | B(int) }\n\
+    "enum E { A | B(int) }\n\
      fn show(e: E) {\n\
     \    match e {\n\
-    \        | E::A => println(0)\n\
+    \        E::A => println(0)\n\
     \        | E::B(n) => println(n)\n\
     \    }\n\
      }\n\
@@ -970,11 +1003,11 @@ let () =
     "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nstatic void ex_show(struct ex_E e);\n\nstatic void ex_show(struct ex_E e) {\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_E_B:\n            {\n                long n = __m.data.B._0;\n                printf(\"%ld\\n\", (long)(n));\n                break;\n            }\n        }\n    }\n}\n\nint main(void) {\n    struct ex_E __lift_0;\n    __lift_0.tag = ex_E_B;\n    __lift_0.data.B._0 = 7;\n    ex_show(__lift_0);\n    return 0;\n}\n";
 
   check "Match as sub-expression in BinOp lifts to __lift_N"
-    "enum E { | A | B(int) }\n\
+    "enum E { A | B(int) }\n\
      fn main() {\n\
     \    let e = E::B(2);\n\
     \    let total = 1 + match e {\n\
-    \        | E::A => 0\n\
+    \        E::A => 0\n\
     \        | E::B(n) => n\n\
     \    };\n\
     \    println(total);\n\
@@ -983,40 +1016,40 @@ let () =
 
   check "struct-like variant: shorthand bind in pattern"
     "enum E {\n\
-    \    | A\n\
+    \    A\n\
     \    | B { x: int, y: int }\n\
      }\n\
      fn main() {\n\
     \    let e = E::B { x: 3, y: 4 };\n\
     \    match e {\n\
-    \        | E::A => println(0)\n\
+    \        E::A => println(0)\n\
     \        | E::B { x, y } => println(x + y)\n\
     \    }\n\
      }\n"
     "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long x; long y; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_B;\n    e.data.B.x = 3;\n    e.data.B.y = 4;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_E_B:\n            {\n                long x = __m.data.B.x;\n                long y = __m.data.B.y;\n                printf(\"%ld\\n\", (long)(x + y));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check_error "struct-syntax for tuple variant rejected"
-    "enum E { | A(int) }\nfn main() { let e = E::A { x: 1 }; }\n"
+    "enum E { A(int) }\nfn main() { let e = E::A { x: 1 }; }\n"
     "variant 'E::A' is a tuple variant; construct it with '(...)', not with '{ field: ... }'";
 
   check_error "tuple-syntax for struct variant rejected"
-    "enum E { | A { x: int } }\nfn main() { let e = E::A(1); }\n"
+    "enum E { A { x: int } }\nfn main() { let e = E::A(1); }\n"
     "variant 'E::A' is a struct variant; construct it with '{ field: ... }', not with '(...)'";
 
   check_error "missing field in struct variant ctor rejected"
-    "enum E { | A { x: int, y: int } }\nfn main() { let e = E::A { x: 1 }; }\n"
+    "enum E { A { x: int, y: int } }\nfn main() { let e = E::A { x: 1 }; }\n"
     "missing field 'y' in 'E::A' construction";
 
   check_error "extra field in struct variant ctor rejected"
-    "enum E { | A { x: int } }\nfn main() { let e = E::A { x: 1, y: 2 }; }\n"
+    "enum E { A { x: int } }\nfn main() { let e = E::A { x: 1, y: 2 }; }\n"
     "variant 'E::A' has no field 'y'";
 
   check_error "tuple pattern on struct variant rejected"
-    "enum E { | A { x: int } }\nfn main() { let e = E::A { x: 1 }; match e { | E::A(x) => println(x) } }\n"
+    "enum E { A { x: int } }\nfn main() { let e = E::A { x: 1 }; match e { E::A(x) => println(x) } }\n"
     "variant 'A' is a struct variant; match it with '{ field: pat }', not '(...)'";
 
   check_error "unknown field in variant pattern rejected"
-    "enum E { | A { x: int } }\nfn main() { let e = E::A { x: 1 }; match e { | E::A { y } => println(y) } }\n"
+    "enum E { A { x: int } }\nfn main() { let e = E::A { x: 1 }; match e { E::A { y } => println(y) } }\n"
     "variant 'A' has no field 'y'";
 
   check "StructLit as fn arg lifts to __lift_N"
@@ -1028,25 +1061,25 @@ let () =
     "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nstatic long ex_sum(struct ex_P p);\n\nstatic long ex_sum(struct ex_P p) {\n    return p.x + p.y;\n}\n\nint main(void) {\n    struct ex_P __lift_0;\n    __lift_0.x = 3;\n    __lift_0.y = 4;\n    printf(\"%ld\\n\", (long)(ex_sum(__lift_0)));\n    return 0;\n}\n";
 
   check_error "non-exhaustive match rejected"
-    "enum E { | A | B }\nfn main() { let e = E::A; match e { | E::A => println(\"a\") } }\n"
+    "enum E { A | B }\nfn main() { let e = E::A; match e { E::A => println(\"a\") } }\n"
     "non-exhaustive 'match': pattern 'B' is not covered (add an arm or '_')";
 
   check_error "non-exhaustive nested match names the missing pattern"
-    "enum Inner { | A(int) | B }\n\
-     enum Outer { | Wrap(Inner) | Empty }\n\
+    "enum Inner { A(int) | B }\n\
+     enum Outer { Wrap(Inner) | Empty }\n\
      fn main() {\n\
     \    let o = Outer::Empty;\n\
-    \    let r = match o { | Outer::Wrap(Inner::A(n)) => n | Outer::Empty => 0 };\n\
+    \    let r = match o { Outer::Wrap(Inner::A(n)) => n | Outer::Empty => 0 };\n\
     \    println(r);\n\
      }\n"
     "non-exhaustive 'match': pattern 'Wrap(B)' is not covered (add an arm or '_')";
 
   check_error "redundant nested match arm rejected"
-    "enum Inner { | A(int) | B }\n\
-     enum Outer { | Wrap(Inner) | Empty }\n\
+    "enum Inner { A(int) | B }\n\
+     enum Outer { Wrap(Inner) | Empty }\n\
      fn main() {\n\
     \    let o = Outer::Empty;\n\
-    \    let r = match o { | Outer::Wrap(Inner::A(n)) => n \
+    \    let r = match o { Outer::Wrap(Inner::A(n)) => n \
                           | Outer::Wrap(Inner::A(m)) => m | _ => 0 };\n\
     \    println(r);\n\
      }\n"
@@ -1057,7 +1090,7 @@ let () =
      decision-chain's exact C here. *)
 
   check_error "unknown variant in constructor rejected"
-    "enum E { | A }\nfn main() { let e = E::Nope; }\n"
+    "enum E { A }\nfn main() { let e = E::Nope; }\n"
     "enum 'E' has no variant 'Nope'";
 
   check_error "unknown enum in constructor rejected"
@@ -1065,19 +1098,19 @@ let () =
     "unknown enum 'Nope'";
 
   check_error "duplicate variant in enum decl rejected"
-    "enum E { | A | A }\nfn main() {}\n"
+    "enum E { A | A }\nfn main() {}\n"
     "duplicate variant 'A' in enum 'E'";
 
   check_error "match on non-enum rejected"
-    "fn main() { let x = 5; match x { | _ => println(\"x\") } }\n"
+    "fn main() { let x = 5; match x { _ => println(\"x\") } }\n"
     "'match' requires an enum value, got i32";
 
   check_error "pattern enum mismatch with scrutinee rejected"
-    "enum A { | X }\nenum B { | Y }\nfn main() { let a = A::X; match a { | B::Y => println(\"b\") } }\n"
+    "enum A { X }\nenum B { Y }\nfn main() { let a = A::X; match a { B::Y => println(\"b\") } }\n"
     "pattern matches 'B' but the value has type 'A'";
 
   check_error "print of enum value rejected"
-    "enum E { | A }\nfn main() { let e = E::A; println(e); }\n"
+    "enum E { A }\nfn main() { let e = E::A; println(e); }\n"
     "cannot print an enum value (E); match on it and print per variant, or mark the enum with `@debug`";
 
   check_error "unknown generic type rejected"
@@ -1085,7 +1118,7 @@ let () =
     "unknown generic type 'Box'";
 
   check "generic decls without instantiation emit nothing"
-    "enum Option<T> { | None | Some(T) }\n\
+    "enum Option<T> { None | Some(T) }\n\
      struct Pair<A, B> { fst: A, snd: B }\n\
      fn id<T>(x: T) -> T { return x; }\n\
      fn main() {}\n"
@@ -1100,35 +1133,35 @@ let () =
     "#include <stdio.h>\n\nstruct ex_Pair_i32_str { long fst; const char *snd; };\n\nint main(void) {\n    struct ex_Pair_i32_str p;\n    p.fst = 5;\n    p.snd = \"hi\";\n    printf(\"%ld\\n\", (long)(p.fst));\n    return 0;\n}\n";
 
   check "Result<T, E>: bidirectional typing infers E from return type"
-    "enum Result<T, E> { | Ok(T) | Err(E) }\n\
-     enum IoErr { | NotFound }\n\
+    "enum Result<T, E> { Ok(T) | Err(E) }\n\
+     enum IoErr { NotFound }\n\
      fn make() -> Result<int, IoErr> { return Result::Ok(42); }\n\
      fn main() {\n\
     \    let r = make();\n\
     \    match r {\n\
-    \        | Result::Ok(v) => println(v)\n\
+    \        Result::Ok(v) => println(v)\n\
     \        | Result::Err(_) => println(0)\n\
     \    }\n\
      }\n"
     "#include <stdio.h>\n\nenum ex_IoErr_tag { ex_IoErr_NotFound };\nstruct ex_IoErr { enum ex_IoErr_tag tag; };\nenum ex_Result_i32_ex_IoErr_tag { ex_Result_i32_ex_IoErr_Ok, ex_Result_i32_ex_IoErr_Err };\nstruct ex_Result_i32_ex_IoErr { enum ex_Result_i32_ex_IoErr_tag tag; union { struct { long _0; } Ok; struct { struct ex_IoErr _0; } Err; } data; };\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void);\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void) {\n    {\n        struct ex_Result_i32_ex_IoErr __exile_ret;\n        __exile_ret.tag = ex_Result_i32_ex_IoErr_Ok;\n        __exile_ret.data.Ok._0 = 42;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Result_i32_ex_IoErr r;\n    r = ex_make();\n    {\n        struct ex_Result_i32_ex_IoErr __m;\n        __m = r;\n        switch (__m.tag) {\n        case ex_Result_i32_ex_IoErr_Ok:\n            {\n                long v = __m.data.Ok._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Result_i32_ex_IoErr_Err:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "Option::None: type-ann pins T when payload doesn't"
-    "enum Option<T> { | None | Some(T) }\n\
+    "enum Option<T> { None | Some(T) }\n\
      fn main() {\n\
     \    let o: Option<int> = Option::None;\n\
     \    match o {\n\
-    \        | Option::None => println(0)\n\
+    \        Option::None => println(0)\n\
     \        | Option::Some(x) => println(x)\n\
     \    }\n\
      }\n"
     "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_None;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "generic enum: tuple ctor infers payload + match destructures"
-    "enum Option<T> { | None | Some(T) }\n\
+    "enum Option<T> { None | Some(T) }\n\
      fn main() {\n\
     \    let o = Option::Some(42);\n\
     \    match o {\n\
-    \        | Option::Some(x) => println(x)\n\
+    \        Option::Some(x) => println(x)\n\
     \        | Option::None => println(0)\n\
     \    }\n\
      }\n"
@@ -1138,7 +1171,7 @@ let () =
     "fn main() {\n\
     \    let o: ?int = Option::Some(5);\n\
     \    match o {\n\
-    \        | Option::Some(x) => println(x)\n\
+    \        Option::Some(x) => println(x)\n\
     \        | Option::None    => println(0)\n\
     \    }\n\
      }\n"
@@ -1169,11 +1202,11 @@ let () =
     \    let some = Option::Some(7);\n\
     \    let none: ?int = Option::None;\n\
     \    match incr(some) {\n\
-    \        | Option::Some(x) => println(x)\n\
+    \        Option::Some(x) => println(x)\n\
     \        | Option::None    => println(0)\n\
     \    }\n\
     \    match incr(none) {\n\
-    \        | Option::Some(x) => println(x)\n\
+    \        Option::Some(x) => println(x)\n\
     \        | Option::None    => println(0)\n\
     \    }\n\
      }\n"
@@ -1199,7 +1232,7 @@ let () =
     \    let v = try Option::Some(5);\n\
     \    return Result::Ok(v);\n\
      }\n\
-     fn main() { match f() { | Result::Ok(_) => println(1) | Result::Err(_) => println(0) } }\n"
+     fn main() { match f() { Result::Ok(_) => println(1) | Result::Err(_) => println(0) } }\n"
     "'try' on Option_i32 value but enclosing fn returns Result_i32_i32 \
      — they must share the same Option/Result shape";
 
@@ -1573,30 +1606,30 @@ let () =
     "fn main() {\n\
     \    let o = Option::Some(42);\n\
     \    match o {\n\
-    \        | Option::Some(x) => println(x)\n\
+    \        Option::Some(x) => println(x)\n\
     \        | Option::None => println(0)\n\
     \    }\n\
      }\n"
     "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Some;\n    o.data.Some._0 = 42;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "prelude: Result<T, E> usable without explicit declaration"
-    "enum IoErr { | NotFound }\n\
+    "enum IoErr { NotFound }\n\
      fn make() -> Result<int, IoErr> { return Result::Ok(42); }\n\
      fn main() {\n\
     \    let r = make();\n\
     \    match r {\n\
-    \        | Result::Ok(v) => println(v)\n\
+    \        Result::Ok(v) => println(v)\n\
     \        | Result::Err(_) => println(0)\n\
     \    }\n\
      }\n"
     "#include <stdio.h>\n\nenum ex_IoErr_tag { ex_IoErr_NotFound };\nstruct ex_IoErr { enum ex_IoErr_tag tag; };\nenum ex_Result_i32_ex_IoErr_tag { ex_Result_i32_ex_IoErr_Ok, ex_Result_i32_ex_IoErr_Err };\nstruct ex_Result_i32_ex_IoErr { enum ex_Result_i32_ex_IoErr_tag tag; union { struct { long _0; } Ok; struct { struct ex_IoErr _0; } Err; } data; };\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void);\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void) {\n    {\n        struct ex_Result_i32_ex_IoErr __exile_ret;\n        __exile_ret.tag = ex_Result_i32_ex_IoErr_Ok;\n        __exile_ret.data.Ok._0 = 42;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Result_i32_ex_IoErr r;\n    r = ex_make();\n    {\n        struct ex_Result_i32_ex_IoErr __m;\n        __m = r;\n        switch (__m.tag) {\n        case ex_Result_i32_ex_IoErr_Ok:\n            {\n                long v = __m.data.Ok._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Result_i32_ex_IoErr_Err:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "prelude: user-declared Option<T> overrides built-in"
-    "enum Option<T> { | Empty | Full(T) }\n\
+    "enum Option<T> { Empty | Full(T) }\n\
      fn main() {\n\
     \    let o = Option::Full(7);\n\
     \    match o {\n\
-    \        | Option::Full(x) => println(x)\n\
+    \        Option::Full(x) => println(x)\n\
     \        | Option::Empty => println(0)\n\
     \    }\n\
      }\n"
@@ -1774,7 +1807,7 @@ let () =
      }\n\
      fn main() {\n\
     \    match run(false) {\n\
-    \        | Option::Some(x) => println(x)\n\
+    \        Option::Some(x) => println(x)\n\
     \        | Option::None    => println(0)\n\
     \    }\n\
      }\n"

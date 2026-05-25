@@ -32,7 +32,7 @@ fn main() {
 
     // Result handled via `match` — used, no warning.
     match try_div(10, 2) {
-        | Result::Ok(q)  => println(q)                // 5
+        Result::Ok(q)  => println(q)                // 5
         | Result::Err(_) => println(-1)
     }
 

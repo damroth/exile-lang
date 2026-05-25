@@ -3,7 +3,7 @@
 //
 // Type parameters ride on the declaration head:
 //   struct Pair<A, B> { fst: A, snd: B }
-//   enum Tree<T> { | Leaf | Node(T, Tree<T>, Tree<T>) }
+//   enum Tree<T> { Leaf | Node(T, Tree<T>, Tree<T>) }
 //
 // Construction infers type arguments from payload values
 // ("bottom-up"), and a `let`/return type annotation can pin args
@@ -39,7 +39,7 @@ fn incr_opt(o: ?int) -> ?int {
     return Option::Some(v + 1);
 }
 
-enum IoErr { | NotFound | Denied }
+enum IoErr { NotFound | Denied }
 
 fn read_count(ok: bool) -> Result<int, IoErr> {
     if ok {
@@ -58,7 +58,7 @@ fn read_doubled(ok: bool) -> Result<int, IoErr> {
 
 fn describe(r: Result<int, IoErr>) {
     match r {
-        | Result::Ok(v)  => println(v)
+        Result::Ok(v)  => println(v)
         | Result::Err(_) => println(0)              // payload ignored
     }
 }
@@ -87,11 +87,11 @@ fn main() {
 
     // `try` chains: incr_opt(Some 7) → Some 8;  incr_opt(None) → None.
     match incr_opt(some) {
-        | Option::Some(x) => println(x)              // 8
+        Option::Some(x) => println(x)              // 8
         | Option::None    => println(-1)
     }
     match incr_opt(none) {
-        | Option::Some(x) => println(x)
+        Option::Some(x) => println(x)
         | Option::None    => println(-1)             // -1
     }
 

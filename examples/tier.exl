@@ -26,7 +26,7 @@ struct Pair<A, B> {
 
 @tier(full)
 enum Maybe<T> {
-    | Just(T)
+    Just(T)
     | Nothing
 }
 
@@ -38,7 +38,7 @@ fn main() {
 
     let m: Maybe<int> = Maybe::Just(99);
     match m {
-        | Maybe::Just(n)  => println(n)            // 99
+        Maybe::Just(n)  => println(n)            // 99
         | Maybe::Nothing  => println(-1)
     }
 }

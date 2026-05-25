@@ -1,0 +1,37 @@
+// Bitwise, shift and modulo operators — the bread and butter of register
+// masks, packed flags and ring-buffer wraparound.  Precedence is Rust
+// order (bitwise above comparisons), and the generated C is always fully
+// parenthesised, so `a & b == c` means `(a & b) == c` regardless of C's
+// own (looser) bitwise precedence.
+
+// Hardware-style flag masks built with shifts, combined with `|`.
+fn main() {
+    let read  = 1 << 0;               // 0x0001
+    let write = 1 << 1;               // 0x0002
+    let exec  = 1 << 2;               // 0x0004
+
+    let rw = read | write;            // 0x0003
+    println(rw);                      // 3
+
+    // Test a bit with `&`; bitwise binds tighter than `==`.
+    if rw & write == write {
+        println(1);                   // 1 — write bit is set
+    } else {
+        println(0);
+    }
+
+    // Clear a bit with AND-NOT, set the exec bit with OR.
+    let no_write = rw & ~write;       // 0x0001
+    println(no_write);                // 1
+
+    let all = rw | exec;              // 0x0007
+    println(all);                     // 7
+
+    // XOR toggles; shifting right divides by powers of two.
+    println(12 ^ 10);                 // 6
+    println(255 >> 4);                // 15
+
+    // Modulo — ring-buffer index wraparound.
+    let idx = 30 % 8;
+    println(idx);                     // 6
+}

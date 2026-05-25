@@ -467,6 +467,7 @@ type texpr_node =
                                            position; C autoconverts to
                                            function pointer. *)
   | TNeg of texpr
+  | TBitNot of texpr                    (* `~e` — bitwise complement *)
   | TBinOp of Ast.binop * texpr * texpr
   | TCall of { mangled : string; args : texpr list }
   | TBuiltinCall of { name : string; args : texpr list }
@@ -577,7 +578,7 @@ let texpr_children (te : texpr) : texpr list =
   match te.e with
   | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _
   | TVar _ | TFnRef _ | TSizeOf _ -> []
-  | TNeg sub | TRef sub | TDeref sub | TCast (sub, _) -> [sub]
+  | TNeg sub | TBitNot sub | TRef sub | TDeref sub | TCast (sub, _) -> [sub]
   | TBinOp (_, l, r) -> [l; r]
   | TCall { args; _ } | TBuiltinCall { args; _ } -> args
   | TIndirectCall { fn_expr; args } -> fn_expr :: args

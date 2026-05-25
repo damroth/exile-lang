@@ -37,14 +37,19 @@ type type_ann =
                                           form yet. *)
 
 type binop =
-  | Add | Sub | Mul | Div
+  | Add | Sub | Mul | Div | Mod
+  | BitAnd | BitOr | BitXor | Shl | Shr  (* bitwise / shift; integer operands.
+                                            Codegen emits the C operator with
+                                            explicit parens so C's (looser)
+                                            bitwise precedence never leaks. *)
   | Lt | Gt | LtEq | GtEq | EqEq | NotEq
   | Concat                              (* `++` — compile-time string concat;
                                            both operands must reduce to a
                                            string literal at typecheck time. *)
 
 let binop_name = function
-  | Add -> "+" | Sub -> "-" | Mul -> "*" | Div -> "/"
+  | Add -> "+" | Sub -> "-" | Mul -> "*" | Div -> "/" | Mod -> "%"
+  | BitAnd -> "&" | BitOr -> "|" | BitXor -> "^" | Shl -> "<<" | Shr -> ">>"
   | Lt -> "<" | Gt -> ">" | LtEq -> "<=" | GtEq -> ">="
   | EqEq -> "==" | NotEq -> "!="
   | Concat -> "++"
@@ -55,6 +60,9 @@ type expr =
   | StringLit of string * Pos.t
   | Var of string * Pos.t
   | Neg of expr * Pos.t
+  | BitNot of expr * Pos.t              (* `~e` — bitwise complement; integer
+                                           operand.  Prefix unary alongside
+                                           `-` / `&` / `*`. *)
   | BinOp of binop * expr * expr * Pos.t
   | Call of string list * expr list * Pos.t
   | Cast of expr * type_ann * Pos.t
@@ -175,7 +183,7 @@ and stmt =
 
 let expr_pos = function
   | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
-  | Var (_, p) | Neg (_, p) | BinOp (_, _, _, p)
+  | Var (_, p) | Neg (_, p) | BitNot (_, p) | BinOp (_, _, _, p)
   | Orelse (_, _, p) | Try (_, p) | SizeOf (_, p)
   | Call (_, _, p) | Cast (_, _, p) | TupleLit (_, p)
   | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)

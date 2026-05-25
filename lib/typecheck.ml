@@ -1007,6 +1007,13 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         Error.failf neg_pos "negation '-' requires an integer, got %s"
           (typ_name sub'.ty);
       { e = TNeg sub'; ty = sub'.ty; pos }
+  | Ast.BitNot (sub, not_pos) ->
+      let sub' = elab_expr ctx env sub in
+      if not (is_int_like sub'.ty) then
+        Error.failf not_pos
+          "bitwise complement '~' requires an integer, got %s"
+          (typ_name sub'.ty);
+      { e = TBitNot sub'; ty = sub'.ty; pos }
   | Ast.BinOp (Ast.Concat, l, r, _) ->
       (* Compile-time string concat: both sides must reduce to a
          compile-time-constant string at elab time.  That's a string
@@ -1087,14 +1094,35 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       in
       let result_t =
         match op with
-        | Ast.Div when expr_int_lit r = Some 0 ->
-            (* Constant division by zero is undefined in C (and would
-               leak `-Wdiv-by-zero`); reject it at compile time. *)
-            Error.failf pos "division by zero"
-        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div ->
+        | (Ast.Div | Ast.Mod) when expr_int_lit r = Some 0 ->
+            (* Constant division / modulo by zero is undefined in C (and
+               would leak `-Wdiv-by-zero`); reject it at compile time. *)
+            Error.failf pos "%s by zero"
+              (match op with Ast.Mod -> "modulo" | _ -> "division")
+        | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod ->
             need_int_operands ();
             if typ_eq l'.ty r'.ty then l'.ty
             else promote_int_widen ()
+        | Ast.BitAnd | Ast.BitOr | Ast.BitXor ->
+            (* Bitwise: integer operands of matching signedness; result
+               takes the wider operand's type (C-style widening). *)
+            need_int_operands ();
+            if typ_eq l'.ty r'.ty then l'.ty
+            else promote_int_widen ()
+        | Ast.Shl | Ast.Shr ->
+            (* Shift: both operands integer; the result takes the *left*
+               operand's type (the amount's type is irrelevant).  A
+               constant amount is range-checked against the left width. *)
+            need_int_operands ();
+            (match expr_int_lit r, l'.ty with
+             | Some k, _ when k < 0 ->
+                 Error.failf pos "shift amount %d is negative" k
+             | Some k, TInt { width; _ } when k >= int_width_bits width ->
+                 Error.failf pos
+                   "shift amount %d is out of range for %s (%d bits)"
+                   k (typ_name l'.ty) (int_width_bits width)
+             | _ -> ());
+            l'.ty
         | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq ->
             need_int_operands ();
             (if not (typ_eq l'.ty r'.ty) then
@@ -2434,6 +2462,9 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
     | TNeg sub ->
         let (sub', p) = walk_expr ~allow_top:false sub in
         ({ te with e = TNeg sub' }, p)
+    | TBitNot sub ->
+        let (sub', p) = walk_expr ~allow_top:false sub in
+        ({ te with e = TBitNot sub' }, p)
     | TBinOp (op, l, r) ->
         let (l', pl) = walk_expr ~allow_top:false l in
         let (r', pr) = walk_expr ~allow_top:false r in

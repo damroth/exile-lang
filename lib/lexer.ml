@@ -84,9 +84,13 @@ let tokenize ~file src =
       | '-' -> loop (i + 1) ((Token.Minus, p) :: acc)
       | '<' when i + 1 < len && src.[i + 1] = '=' ->
           adv '='; loop (i + 2) ((Token.LtEq, p) :: acc)
+      | '<' when i + 1 < len && src.[i + 1] = '<' ->
+          adv '<'; loop (i + 2) ((Token.Shl, p) :: acc)
       | '<' -> loop (i + 1) ((Token.Lt, p) :: acc)
       | '>' when i + 1 < len && src.[i + 1] = '=' ->
           adv '='; loop (i + 2) ((Token.GtEq, p) :: acc)
+      | '>' when i + 1 < len && src.[i + 1] = '>' ->
+          adv '>'; loop (i + 2) ((Token.Shr, p) :: acc)
       | '>' -> loop (i + 1) ((Token.Gt, p) :: acc)
       | '=' when i + 1 < len && src.[i + 1] = '=' ->
           adv '='; loop (i + 2) ((Token.EqEq, p) :: acc)
@@ -97,6 +101,9 @@ let tokenize ~file src =
           adv '='; loop (i + 2) ((Token.NotEq, p) :: acc)
       | '!' -> Error.failf p "unexpected '!'; did you mean '!='"
       | '|' -> loop (i + 1) ((Token.Pipe, p) :: acc)
+      | '^' -> loop (i + 1) ((Token.Caret, p) :: acc)
+      | '~' -> loop (i + 1) ((Token.Tilde, p) :: acc)
+      | '%' -> loop (i + 1) ((Token.Percent, p) :: acc)
       | '?' -> loop (i + 1) ((Token.Question, p) :: acc)
       | '@' -> loop (i + 1) ((Token.At, p) :: acc)
       | '"' ->

@@ -252,10 +252,21 @@ let builtin_emitters : (string * builtin_emit) list = [
 
 let lookup_builtin_emit name = List.assoc_opt name builtin_emitters
 
+(* Precedence levels of the *C* target (higher binds tighter), NOT exile's.
+   The emitted parens (added below when a child binds looser than its
+   parent) must reproduce the exile AST under C's rules — and exile's
+   bitwise precedence is Rust-order (`& ^ |` above comparisons) which
+   differs from C.  Pinning [prec] to C's ladder makes the minimal-paren
+   logic emit exactly the parens that force C to match the AST. *)
 let prec = function
-  | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq | Ast.EqEq | Ast.NotEq -> 0
-  | Ast.Add | Ast.Sub -> 1
-  | Ast.Mul | Ast.Div -> 2
+  | Ast.Mul | Ast.Div | Ast.Mod -> 10
+  | Ast.Add | Ast.Sub -> 9
+  | Ast.Shl | Ast.Shr -> 8
+  | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq -> 7
+  | Ast.EqEq | Ast.NotEq -> 6
+  | Ast.BitAnd -> 5
+  | Ast.BitXor -> 4
+  | Ast.BitOr -> 3
   | Ast.Concat ->
       (* Folded to a TStringLit during typecheck — no TBinOp(Concat) ever
          reaches codegen. *)
@@ -292,6 +303,9 @@ let rec gen_expr ctx buf (te : texpr) =
   | TNeg sub ->
       emit_unary ctx buf '-' sub
         ~simple:(function TIntLit _ | TVar _ -> true | _ -> false)
+  | TBitNot sub ->
+      emit_unary ctx buf '~' sub
+        ~simple:(function TIntLit _ | TVar _ -> true | _ -> false)
   | TCast (sub, _ann) ->
       (* Cast result type is already in `te.ty` (elab ran resolve_type_ann
          on the annotation); reading it here keeps the C output independent
@@ -306,13 +320,23 @@ let rec gen_expr ctx buf (te : texpr) =
       let op_str =
         match op with
         | Ast.Add -> " + " | Ast.Sub -> " - "
-        | Ast.Mul -> " * " | Ast.Div -> " / "
+        | Ast.Mul -> " * " | Ast.Div -> " / " | Ast.Mod -> " % "
+        | Ast.BitAnd -> " & " | Ast.BitOr -> " | " | Ast.BitXor -> " ^ "
+        | Ast.Shl -> " << " | Ast.Shr -> " >> "
         | Ast.Lt -> " < " | Ast.Gt -> " > "
         | Ast.LtEq -> " <= " | Ast.GtEq -> " >= "
         | Ast.EqEq -> " == " | Ast.NotEq -> " != "
         | Ast.Concat -> assert false   (* folded at typecheck time *)
       in
       let p = prec op in
+      (* Left-associative operators where a same-precedence right operand
+         changes meaning without parens (`a - (b - c)`, `a / (b / c)`,
+         `a << (b << c)`).  Commutative/associative ones (`& ^ |`, `+`,
+         `*`) are exempt — no parens needed. *)
+      let left_assoc = function
+        | Ast.Sub | Ast.Div | Ast.Mod | Ast.Shl | Ast.Shr -> true
+        | _ -> false
+      in
       (match l.e with
        | TBinOp (lop, _, _) when prec lop < p ->
            Buffer.add_char buf '('; gen_expr ctx buf l; Buffer.add_char buf ')'
@@ -320,7 +344,7 @@ let rec gen_expr ctx buf (te : texpr) =
       Buffer.add_string buf op_str;
       (match r.e with
        | TBinOp (rop, _, _)
-         when prec rop < p || (prec rop = p && (op = Ast.Sub || op = Ast.Div)) ->
+         when prec rop < p || (prec rop = p && left_assoc op) ->
            Buffer.add_char buf '('; gen_expr ctx buf r; Buffer.add_char buf ')'
        | _ -> gen_expr ctx buf r)
   | TBuiltinCall { name; args } ->

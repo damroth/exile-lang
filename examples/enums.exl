@@ -14,14 +14,14 @@
 // height: height }`.
 
 pub enum Direction {
-    | North
+    North
     | South
     | East
     | West
 }
 
 pub enum Shape {
-    | Square
+    Square
     | Circle(int)
     | Rect(int, int)
     | Triangle { base: int, height: int }
@@ -29,7 +29,7 @@ pub enum Shape {
 
 fn describe_dir(d: Direction) {
     match d {
-        | Direction::North => println("up")
+        Direction::North => println("up")
         | Direction::South => println("down")
         | _ => println("sideways")           // East and West together
     }
@@ -37,7 +37,7 @@ fn describe_dir(d: Direction) {
 
 fn describe_shape(s: Shape) {
     match s {
-        | Shape::Square => println("a square")
+        Shape::Square => println("a square")
         | Shape::Circle(r) => println(r)              // r : int
         | Shape::Rect(w, _) => println(w)             // height ignored
         | Shape::Triangle { base, height: h } => println(base + h)
@@ -47,7 +47,7 @@ fn describe_shape(s: Shape) {
 
 fn area(s: Shape) -> int {
     return match s {
-        | Shape::Square => 1
+        Shape::Square => 1
         | Shape::Circle(r) => r * r * 3             // ~pi*r*r, ints only
         | Shape::Rect(w, h) => w * h
         | Shape::Triangle { base, height } => base * height / 2
@@ -60,13 +60,13 @@ fn area(s: Shape) -> int {
 // covered, so no `_` fallback is needed here.  Drop any inner arm and
 // it reports the exact missing pattern, e.g. `Node(Square)`.
 pub enum Tree {
-    | Leaf(int)
+    Leaf(int)
     | Node(Shape)
 }
 
 fn tree_kind(t: Tree) -> int {
     return match t {
-        | Tree::Leaf(n) => n
+        Tree::Leaf(n) => n
         | Tree::Node(Shape::Circle(r)) => r
         | Tree::Node(Shape::Square) => 0
         | Tree::Node(Shape::Rect(w, h)) => w + h
@@ -94,7 +94,7 @@ fn main() {
     // an arm.  Each variant runs only its arm — lift doesn't change
     // that.
     let total = 1 + match Shape::Circle(2) {
-        | Shape::Square => 0
+        Shape::Square => 0
         | Shape::Circle(r) => r
         | Shape::Rect(w, h) => w + h
         | Shape::Triangle { base, height } => base + height

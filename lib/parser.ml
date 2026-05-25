@@ -4,10 +4,15 @@ type state = {
   (* Suppresses `Ident { ... }` parsing as a struct literal in positions
      where `{` opens a block (the condition of an if/while). *)
   mutable allow_struct_lit : bool;
+  (* Suppresses a bare top-level `|` (bitor) so it reads as the match-arm
+     SEPARATOR.  Cleared inside a match arm body; restored to `true` inside
+     any parenthesised / argument context, where `|` is unambiguously
+     bitor (`=> (A | B)`). *)
+  mutable allow_bitor : bool;
 }
 
 let make_state tokens =
-  { tokens; last_pos = Pos.zero; allow_struct_lit = true }
+  { tokens; last_pos = Pos.zero; allow_struct_lit = true; allow_bitor = true }
 
 let peek s = match s.tokens with [] -> Token.Eof | (t, _) :: _ -> t
 
@@ -31,6 +36,16 @@ let expect s tok =
   let (t, p) = advance s in
   if t <> tok then
     Error.failf p "expected %s, got %s" (Token.pp tok) (Token.pp t)
+
+(* Closing a generic argument list with `>` when the lexer merged two
+   closers into a single `>>` (Shr) — e.g. `Option<Option<int>>`.  Consume
+   one `>` for the current level and leave a `>` (Gt) pending for the
+   enclosing one.  C++11's token-split trick, localised to parse_type. *)
+let split_shr s =
+  match s.tokens with
+  | (Token.Shr, p) :: rest ->
+      s.tokens <- (Token.Gt, { p with col = p.col + 1 }) :: rest
+  | _ -> ()
 
 let expect_ident s ~what =
   match advance s with
@@ -123,13 +138,23 @@ let rec parse_type s =
       let args =
         if peek s = Token.Lt then begin
           ignore (advance s);
-          let tys =
-            parse_comma_list ~close:Token.Gt ~item:parse_type s
+          if peek s = Token.Gt then
+            Error.failf (peek_pos s) "empty generic argument list <>";
+          (* Close on `>`; a `>>` (Shr) closes this level and leaves a `>`
+             pending for the enclosing generic. *)
+          let rec loop acc =
+            let t = parse_type s in
+            let acc = t :: acc in
+            match peek s with
+            | Token.Comma -> ignore (advance s); loop acc
+            | Token.Gt -> ignore (advance s); List.rev acc
+            | Token.Shr -> split_shr s; List.rev acc
+            | other ->
+                Error.failf (peek_pos s)
+                  "expected ',' or '>' in generic arguments, got %s"
+                  (Token.pp other)
           in
-          if tys = [] then
-            Error.failf (peek_pos s)
-              "empty generic argument list <>";
-          tys
+          loop []
         end else []
       in
       Ast.TyStruct { path; args }
@@ -209,6 +234,7 @@ let rec parse_primary s =
   | Token.Null -> Ast.NullLit p
   | Token.String str -> Ast.StringLit (str, p)
   | Token.Minus -> Ast.Neg (parse_primary s, p)
+  | Token.Tilde -> Ast.BitNot (parse_primary s, p)
   | Token.Try ->
       (* `try expr` — unwrap-or-early-return.  Postfix-tight, like
          Rust's `?`: the operand is a primary plus its postfix chain,
@@ -374,6 +400,9 @@ and parse_mul s =
     | Token.Slash ->
         let p = peek_pos s in
         ignore (advance s); loop (Ast.BinOp (Ast.Div, left, parse_cast s, p))
+    | Token.Percent ->
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.Mod, left, parse_cast s, p))
     | _ -> left
   in
   loop (parse_cast s)
@@ -394,9 +423,58 @@ and parse_add s =
   in
   loop (parse_mul s)
 
-(* comparison binds looser than arithmetic; only one comparison per expression *)
+(* Bitwise / shift ladder, tighter than comparison and looser than `+`/`-`
+   (Rust order: `a & b == c` is `(a & b) == c`).  Tight→loose within:
+   shift, then `&`, then `^`, then `|`. *)
+and parse_shift s =
+  let rec loop left =
+    match peek s with
+    | Token.Shl ->
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.Shl, left, parse_add s, p))
+    | Token.Shr ->
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.Shr, left, parse_add s, p))
+    | _ -> left
+  in
+  loop (parse_add s)
+
+and parse_bitand s =
+  let rec loop left =
+    match peek s with
+    | Token.Amp ->
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.BitAnd, left, parse_shift s, p))
+    | _ -> left
+  in
+  loop (parse_shift s)
+
+and parse_bitxor s =
+  let rec loop left =
+    match peek s with
+    | Token.Caret ->
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.BitXor, left, parse_bitand s, p))
+    | _ -> left
+  in
+  loop (parse_bitand s)
+
+(* `|` (bitor) is suppressed at the top level of a match arm body, where a
+   bare `|` is the arm separator; parens/args restore it (see allow_bitor). *)
+and parse_bitor s =
+  let rec loop left =
+    match peek s with
+    | Token.Pipe when s.allow_bitor ->
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.BitOr, left, parse_bitxor s, p))
+    | _ -> left
+  in
+  loop (parse_bitxor s)
+
+(* comparison binds looser than the bitwise ladder; only one comparison
+   per expression *)
 and parse_cmp s =
-  let left = parse_add s in
+  let left = parse_bitor s in
   let cmp_op = match peek s with
     | Token.Lt -> Some Ast.Lt   | Token.Gt -> Some Ast.Gt
     | Token.LtEq -> Some Ast.LtEq | Token.GtEq -> Some Ast.GtEq
@@ -407,19 +485,49 @@ and parse_cmp s =
   | None -> left
   | Some op ->
       let p = peek_pos s in
-      ignore (advance s); Ast.BinOp (op, left, parse_add s, p)
+      ignore (advance s); Ast.BinOp (op, left, parse_bitor s, p)
 
 (* `orelse` has the lowest precedence — `a == b orelse default` parses as
    `(a == b) orelse default` (the comparison happens first, then the
    whole thing is the scrutinee).  Right-associative: `a orelse b orelse
-   c` = `a orelse (b orelse c)`. *)
+   c` = `a orelse (b orelse c)`.
+
+   Entering a full expression re-enables bitor (`|`): inside any
+   parenthesised / argument / condition context `|` is unambiguously the
+   bitwise operator.  Only the top level of a match arm body suppresses it
+   (see parse_arm_body), so a bare `|` there reads as the arm separator. *)
 and parse_expr s =
+  let prev = s.allow_bitor in
+  s.allow_bitor <- true;
   let left = parse_cmp s in
-  if peek s = Token.Orelse then begin
-    let p = peek_pos s in
-    ignore (advance s);
-    Ast.Orelse (left, parse_expr s, p)
-  end else left
+  let r =
+    if peek s = Token.Orelse then begin
+      let p = peek_pos s in
+      ignore (advance s);
+      Ast.Orelse (left, parse_expr s, p)
+    end else left
+  in
+  s.allow_bitor <- prev;
+  r
+
+(* A match arm body: a full expression but with a bare top-level `|`
+   suppressed (it is the arm separator).  Mirrors parse_expr's orelse
+   handling without re-enabling bitor; nested parens / args restore it via
+   parse_expr. *)
+and parse_arm_body s =
+  let prev = s.allow_bitor in
+  s.allow_bitor <- false;
+  let rec go () =
+    let left = parse_cmp s in
+    if peek s = Token.Orelse then begin
+      let p = peek_pos s in
+      ignore (advance s);
+      Ast.Orelse (left, go (), p)
+    end else left
+  in
+  let r = go () in
+  s.allow_bitor <- prev;
+  r
 
 and parse_args s = parse_comma_list ~close:Token.RParen ~item:parse_expr s
 
@@ -480,26 +588,31 @@ and parse_pattern s =
   | t ->
       Error.failf p "expected pattern, got %s" (Token.pp t)
 
-(* Parse `| pat => expr | pat => expr ... }` after the opening `{` has
-   been consumed.  Each arm starts with `|`; allowing the first arm to
-   omit it would save a character but breaks the visual symmetry that
-   makes diffs clean (every arm line starts the same way).  `}` is
-   consumed on exit. *)
+(* Parse `pat => expr | pat => expr ... }` after the opening `{` has been
+   consumed.  Arms are SEPARATED by `|` (no leading `|`); the same `|` is
+   the bitor operator elsewhere, disambiguated by position (a bare `|` in
+   an arm body is suppressed — see parse_arm_body, so it reads as this
+   separator).  `}` is consumed on exit. *)
 and parse_match_arms s acc =
+  (match peek s with
+   | Token.RBrace ->
+       Error.raise_ (peek_pos s) "'match' must have at least one arm"
+   | Token.Eof ->
+       Error.raise_ s.last_pos "unexpected end of file inside 'match'"
+   | _ -> ());
+  let arm_pos = peek_pos s in
+  let pat = parse_pattern s in
+  expect s Token.FatArrow;
+  let body = parse_arm_body s in
+  let acc = Ast.{ pat; body; arm_pos } :: acc in
   match peek s with
+  | Token.Pipe -> ignore (advance s); parse_match_arms s acc
   | Token.RBrace -> ignore (advance s); List.rev acc
   | Token.Eof ->
       Error.raise_ s.last_pos "unexpected end of file inside 'match'"
-  | Token.Pipe ->
-      let arm_pos = peek_pos s in
-      ignore (advance s);
-      let pat = parse_pattern s in
-      expect s Token.FatArrow;
-      let body = parse_expr s in
-      parse_match_arms s (Ast.{ pat; body; arm_pos } :: acc)
   | t ->
       Error.failf (peek_pos s)
-        "expected '|' before match arm, got %s" (Token.pp t)
+        "expected '|' (next arm) or '}' after match arm, got %s" (Token.pp t)
 
 and parse_block s =
   expect s Token.LBrace;
@@ -1268,11 +1381,11 @@ and parse_struct_decl s ~is_pub =
         spos = name_pos; sis_pub = is_pub;
         stier_hint = None; sis_debug = false }
 
-(* `enum Foo { | A | B(int) | C { f: T, ... } }` — leading `|` per
-   variant (OCaml/F# style; differs from Rust's trailing comma).
-   Each variant is `Name` (unit), `Name(T1, T2, ...)` (tuple), or
-   `Name { f: T, ... }` (struct).  Generic params on the enum head:
-   `enum Option<T> { | None | Some(T) }`. *)
+(* `enum Foo { A | B(int) | C { f: T, ... } }` — variants SEPARATED by `|`
+   (no leading `|`); the same `|` is the bitor operator elsewhere, here
+   unambiguous in type context.  Each variant is `Name` (unit),
+   `Name(T1, T2, ...)` (tuple), or `Name { f: T, ... }` (struct).  Generic
+   params on the enum head: `enum Option<T> { None | Some(T) }`. *)
 and parse_enum_decl s ~is_pub =
   expect s Token.Enum;
   let (name, name_pos) =
@@ -1282,39 +1395,47 @@ and parse_enum_decl s ~is_pub =
   in
   let etparams = parse_tparams s in
   expect s Token.LBrace;
+  let parse_variant s =
+    let (vname, vpos) = expect_ident s ~what:"variant name" in
+    let vkind =
+      match peek s with
+      | Token.LParen ->
+          ignore (advance s);
+          let tys = parse_comma_list ~close:Token.RParen
+                      ~item:parse_type s in
+          Ast.VTuple tys
+      | Token.LBrace ->
+          ignore (advance s);
+          let parse_field s =
+            let (fname, _) = expect_ident s ~what:"field name in variant" in
+            expect s Token.Colon;
+            (fname, parse_type s)
+          in
+          let fields = parse_comma_list ~close:Token.RBrace
+                         ~item:parse_field s in
+          Ast.VStruct fields
+      | _ -> Ast.VUnit
+    in
+    Ast.{ vname; vkind; vpos }
+  in
   let rec loop acc =
+    let acc = parse_variant s :: acc in
     match peek s with
+    | Token.Pipe -> ignore (advance s); loop acc
     | Token.RBrace -> ignore (advance s); List.rev acc
     | Token.Eof ->
         Error.raise_ s.last_pos "unexpected end of file inside 'enum'"
-    | Token.Pipe ->
-        ignore (advance s);
-        let (vname, vpos) = expect_ident s ~what:"variant name after '|'" in
-        let vkind =
-          match peek s with
-          | Token.LParen ->
-              ignore (advance s);
-              let tys = parse_comma_list ~close:Token.RParen
-                          ~item:parse_type s in
-              Ast.VTuple tys
-          | Token.LBrace ->
-              ignore (advance s);
-              let parse_field s =
-                let (fname, _) = expect_ident s ~what:"field name in variant" in
-                expect s Token.Colon;
-                (fname, parse_type s)
-              in
-              let fields = parse_comma_list ~close:Token.RBrace
-                             ~item:parse_field s in
-              Ast.VStruct fields
-          | _ -> Ast.VUnit
-        in
-        loop (Ast.{ vname; vkind; vpos } :: acc)
     | t ->
         Error.failf (peek_pos s)
-          "expected '|' before enum variant, got %s" (Token.pp t)
+          "expected '|' (next variant) or '}' after enum variant, got %s"
+          (Token.pp t)
   in
-  let variants = loop [] in
+  let variants =
+    match peek s with
+    | Token.RBrace ->
+        Error.failf name_pos "enum '%s' must declare at least one variant" name
+    | _ -> loop []
+  in
   if variants = [] then
     Error.failf name_pos "enum '%s' must declare at least one variant" name;
   let rec check_dups = function
