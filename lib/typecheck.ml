@@ -61,6 +61,14 @@ type fn_ctx = {
                                             looked up in Var expr after
                                             local env miss; codegen
                                             emits raw NAME at use sites *)
+  consts : (string list * string * (typ * string)) list;
+                                          (* user `const NAME: T = e;` index:
+                                             (module path, name, (type,
+                                             mangled C name)).  Resolved with
+                                             scope walk-up like fns; a use
+                                             site becomes `TVar mangled`,
+                                             which codegen emits as the
+                                             `#define`d macro. *)
   ext_vars : (string * typ) list;        (* `extern var NAME: T;` —
                                             mutable global counterpart of
                                             ext_consts.  Looked up in Var
@@ -96,7 +104,7 @@ let empty_ctx ~instances = {
   global = []; structs = []; enums = []; modules = [];
   scope = []; tparams = []; tvar_bindings = []; fn_asts = [];
   aliases = []; ext_vars = []; ext_struct_fields = [];
-  ext_structs = []; ext_types = []; ext_consts = [];
+  ext_structs = []; ext_types = []; ext_consts = []; consts = [];
   instances; ret_ty = None;
 }
 
@@ -180,6 +188,13 @@ let lookup_fn ctx path =
       (fun (p, n, s) ->
         if p = mod_path && n = name then Some (mod_path, s) else None)
       ctx.global)
+
+let lookup_const ctx path =
+  walk_scope_up ctx path ~resolve:(fun mod_path name ->
+    List.find_map
+      (fun (p, n, info) ->
+        if p = mod_path && n = name then Some info else None)
+      ctx.consts)
 
 let lookup_struct ctx path =
   walk_scope_up ctx path ~resolve:(fun mod_path name ->
@@ -1206,6 +1221,9 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
            (match List.assoc_opt n ctx.ext_consts with
             | Some t -> { e = TVar n; ty = t; pos }
             | None ->
+              (match lookup_const ctx [n] with
+               | Some (t, mangled) -> { e = TVar mangled; ty = t; pos }
+               | None ->
                 (match List.assoc_opt n ctx.ext_vars with
                  | Some t -> { e = TVar n; ty = t; pos }
                  | None ->
@@ -1215,7 +1233,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                             ty = TFnPtr { params = param_tys; ret = ret_ty };
                             pos }
                       | None ->
-                          Error.failf var_pos "undefined variable '%s'" n))))
+                          Error.failf var_pos "undefined variable '%s'" n)))))
   | Ast.Orelse (value, default, or_pos) ->
       (* `value orelse default` is a 2-arm match over Option/Result.
          We build the TMatch directly from elab'd children to avoid
@@ -1640,15 +1658,23 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
          payload is a reference to an extern var/const, not a unit
          variant.  Last segment is the C symbol name; ext_* tables are
          flat. *)
-      let extern_global = match args with
+      let qualified_global = match args with
         | Ast.EATuple [] when tname <> [] ->
-            (match List.assoc_opt variant ctx.ext_vars with
-             | Some t -> Some t
-             | None -> List.assoc_opt variant ctx.ext_consts)
+            (* user `const` (scope-resolved, mangled name) takes priority,
+               then flat extern var / const (raw C name = last segment). *)
+            (match lookup_const ctx (tname @ [variant]) with
+             | Some (t, mangled) -> Some (mangled, t)
+             | None ->
+                 (match List.assoc_opt variant ctx.ext_vars with
+                  | Some t -> Some (variant, t)
+                  | None ->
+                      (match List.assoc_opt variant ctx.ext_consts with
+                       | Some t -> Some (variant, t)
+                       | None -> None)))
         | _ -> None
       in
-      (match extern_global with
-       | Some t -> { e = TVar variant; ty = t; pos }
+      (match qualified_global with
+       | Some (cname, t) -> { e = TVar cname; ty = t; pos }
        | None ->
            let e_sig = match lookup_enum ctx tname with
              | Some e -> e
@@ -2225,6 +2251,10 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                Error.failf pos
                  "cannot assign to '%s' — it's an `extern const` (use \
                   `extern var` for mutable globals)" display
+             else if lookup_const ctx path <> None then
+               Error.failf pos
+                 "cannot assign to '%s' — it's a `const` (compile-time \
+                  constant)" display
              else
                Error.failf pos "assignment to undefined variable '%s'" display
          | Some _ -> ());
@@ -2598,6 +2628,9 @@ type flat = {
   ext_structs : Ast.extern_struct list;   (* always top-level, raw C names *)
   ext_types : Ast.extern_type list;       (* `extern type Foo;` aliases *)
   ext_consts : Ast.extern_const list;     (* `extern const NAME: T;` *)
+  consts : (string list * Ast.const_decl) list;  (* `const NAME: T = e;`
+                                                    with enclosing module
+                                                    path *)
   ext_vars : Ast.extern_var list;         (* `extern var NAME: T;` —
                                              mutable global, l-value *)
   enums : (string list * Ast.enum_decl) list;
@@ -2624,6 +2657,7 @@ let flatten_items program =
   let ext_structs = ref [] in
   let ext_types = ref [] in
   let ext_consts = ref [] in
+  let consts = ref [] in
   let ext_vars = ref [] in
   let enums = ref [] in
   let modules = ref [] in
@@ -2681,6 +2715,8 @@ let flatten_items program =
             ext_vars := ev :: !ext_vars
         | Ast.Enum e ->
             enums := (path, e) :: !enums
+        | Ast.Const c ->
+            consts := (path, c) :: !consts
         | Ast.Module m ->
             let mod_path = path @ [m.Ast.mname] in
             modules := (mod_path, m.Ast.mis_pub) :: !modules;
@@ -2721,6 +2757,7 @@ let flatten_items program =
     enums = List.rev !enums;
     modules = List.rev !modules;
     impls = List.rev !impls;
+    consts = List.rev !consts;
     aliases = List.rev !aliases }
 
 (* Build the global function index: every function with its module path,
@@ -3230,6 +3267,172 @@ and stmt_returns = function
   | TLet _ | TLetTuple _ | TAssign _ | TAssignField _
   | TAssignDeref _ | TWhile _ | TDefer _ | TExprStmt _ -> false
 
+(* Compile-time evaluation of `const NAME: T = expr;` declarations.
+   Folds int/bool scalar expressions — literals, references to other
+   consts (resolved by scope walk-up), `+ - * / %`, `& | ^ ~`, `<< >>`,
+   comparisons, unary `-`/`~`, and `as` casts — into concrete values.
+   `size_of` / `len` fold to C `sizeof(...)` expressions rather than
+   literals, so they are deliberately rejected here (deferred).  Returns
+   the index threaded into fn_ctx (path, name, (type, mangled)) and the
+   list of `(mangled, C-literal)` pairs codegen emits as `#define`s. *)
+type cval = CInt of int | CBool of bool
+
+let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
+    (consts : (string list * Ast.const_decl) list) =
+  let res_ctx scope =
+    { (empty_ctx ~instances) with
+      structs = struct_index; enums = enum_index; modules; aliases; scope }
+  in
+  (* (abs_path, mod_path, decl, mangled, resolved type) per const. *)
+  let entries =
+    List.map (fun (mod_path, (c : Ast.const_decl)) ->
+      let abs = mod_path @ [c.kname] in
+      let mangled = mangle mod_path c.kname in
+      let typ = resolve_type_ann ~pos:c.kpos (res_ctx mod_path) c.kty in
+      (abs, mod_path, c, mangled, typ))
+      consts
+  in
+  let find_abs abs =
+    List.find_opt (fun (a, _, _, _, _) -> a = abs) entries
+  in
+  let resolve_ref scope ref_path =
+    walk_scope_up (res_ctx scope) ref_path ~resolve:(fun mp name ->
+      List.find_map
+        (fun (a, _, _, _, _) -> if a = mp @ [name] then Some a else None)
+        entries)
+  in
+  let memo : (string list, cval) Hashtbl.t = Hashtbl.create 16 in
+  let in_prog : (string list, unit) Hashtbl.t = Hashtbl.create 16 in
+  let truncate typ i =
+    match typ with
+    | TInt { signed; width } ->
+        let bits = int_width_bits width in
+        let m = i land ((1 lsl bits) - 1) in
+        if signed && m >= (1 lsl (bits - 1)) then m - (1 lsl bits) else m
+    | _ -> i   (* c_* widths are target-defined; leave the value as-is *)
+  in
+  let rec eval_entry abs =
+    match Hashtbl.find_opt memo abs with
+    | Some v -> v
+    | None ->
+        let (_, mod_path, (c : Ast.const_decl), _, typ) =
+          match find_abs abs with Some e -> e | None -> assert false
+        in
+        if Hashtbl.mem in_prog abs then
+          Error.failf c.kpos
+            "cyclic constant definition involving '%s'"
+            (String.concat "::" abs);
+        Hashtbl.replace in_prog abs ();
+        let v = eval mod_path c.kvalue in
+        (match v, typ with
+         | CInt i, _ when not (int_fits i typ) ->
+             Error.failf c.kpos
+               "constant '%s' = %d does not fit in %s"
+               c.kname i (typ_name typ)
+         | CBool _, TBool -> ()
+         | CBool _, _ ->
+             Error.failf c.kpos
+               "constant '%s' is bool but declared %s" c.kname (typ_name typ)
+         | CInt _, _ -> ());
+        Hashtbl.remove in_prog abs;
+        Hashtbl.replace memo abs v;
+        v
+  and eval scope (e : Ast.expr) : cval =
+    match e with
+    | Ast.IntLit (n, _) -> CInt n
+    | Ast.BoolLit (b, _) -> CBool b
+    | Ast.Neg (sub, p) ->
+        (match eval scope sub with
+         | CInt i -> CInt (- i)
+         | CBool _ -> Error.failf p "'-' requires an integer constant")
+    | Ast.BitNot (sub, p) ->
+        (match eval scope sub with
+         | CInt i -> CInt (lnot i)
+         | CBool _ -> Error.failf p "'~' requires an integer constant")
+    | Ast.Cast (sub, ann, p) ->
+        (match eval scope sub with
+         | CInt i -> CInt (truncate (resolve_type_ann ~pos:p (res_ctx scope) ann) i)
+         | CBool _ -> Error.failf p "cannot cast a bool constant")
+    | Ast.BinOp (op, l, r, p) -> eval_binop scope op l r p
+    | Ast.Var (n, p) -> resolve_eval scope [n] p
+    | Ast.EnumLit { tname; variant; args = Ast.EATuple []; pos }
+      when tname <> [] ->
+        resolve_eval scope (tname @ [variant]) pos
+    | Ast.SizeOf (_, p) ->
+        Error.failf p
+          "'size_of(...)' is not allowed in a constant expression yet"
+    | other ->
+        Error.failf (Ast.expr_pos other) "not a constant expression"
+  and resolve_eval scope path p =
+    match resolve_ref scope path with
+    | Some abs -> eval_entry abs
+    | None ->
+        Error.failf p "unknown constant '%s'" (String.concat "::" path)
+  and eval_binop scope op l r p =
+    let ints () =
+      match eval scope l, eval scope r with
+      | CInt a, CInt b -> (a, b)
+      | _ ->
+          Error.failf p "operator '%s' requires integer constants"
+            (Ast.binop_name op)
+    in
+    match op with
+    | Ast.Add -> let (a, b) = ints () in CInt (a + b)
+    | Ast.Sub -> let (a, b) = ints () in CInt (a - b)
+    | Ast.Mul -> let (a, b) = ints () in CInt (a * b)
+    | Ast.Div ->
+        let (a, b) = ints () in
+        if b = 0 then Error.failf p "division by zero" else CInt (a / b)
+    | Ast.Mod ->
+        let (a, b) = ints () in
+        if b = 0 then Error.failf p "modulo by zero" else CInt (a mod b)
+    | Ast.BitAnd -> let (a, b) = ints () in CInt (a land b)
+    | Ast.BitOr  -> let (a, b) = ints () in CInt (a lor b)
+    | Ast.BitXor -> let (a, b) = ints () in CInt (a lxor b)
+    | Ast.Shl    -> let (a, b) = ints () in CInt (a lsl b)
+    | Ast.Shr    -> let (a, b) = ints () in CInt (a asr b)
+    | Ast.Lt -> let (a, b) = ints () in CBool (a < b)
+    | Ast.Gt -> let (a, b) = ints () in CBool (a > b)
+    | Ast.LtEq -> let (a, b) = ints () in CBool (a <= b)
+    | Ast.GtEq -> let (a, b) = ints () in CBool (a >= b)
+    | Ast.EqEq | Ast.NotEq ->
+        let eq =
+          match eval scope l, eval scope r with
+          | CInt a, CInt b -> a = b
+          | CBool a, CBool b -> a = b
+          | _ ->
+              Error.failf p
+                "'%s' compares two integers or two bools" (Ast.binop_name op)
+        in
+        CBool (if op = Ast.EqEq then eq else not eq)
+    | Ast.Concat ->
+        Error.failf p "'++' is not a constant expression"
+  in
+  (* Reject duplicate const paths up front (same scope + name). *)
+  let rec dups seen = function
+    | [] -> ()
+    | (abs, _, (c : Ast.const_decl), _, _) :: rest ->
+        if List.mem abs seen then
+          Error.failf c.kpos "constant '%s' already defined" c.kname;
+        dups (abs :: seen) rest
+  in
+  dups [] entries;
+  let consts_index =
+    List.map (fun (_, mod_path, (c : Ast.const_decl), mangled, typ) ->
+      (mod_path, c.kname, (typ, mangled)))
+      entries
+  in
+  let tp_consts =
+    List.map (fun (abs, _, _, mangled, _) ->
+      let lit = match eval_entry abs with
+        | CInt i -> string_of_int i
+        | CBool b -> if b then "1" else "0"
+      in
+      (mangled, lit))
+      entries
+  in
+  (consts_index, tp_consts)
+
 let check_program program : tprogram =
   let mono_state = Mono.new_state () in
   let program = prepend_prelude program in
@@ -3361,6 +3564,13 @@ let check_program program : tprogram =
       ~ext_struct_fields
       ~struct_index ~enum_index ~modules ~aliases:flat.aliases all_funcs
   in
+  (* Fold every `const NAME: T = expr;` to a value now: use sites resolve
+     against [consts_index] during body elaboration, and [tp_consts]
+     becomes the `#define` block in the emitted C. *)
+  let (consts_index, tp_consts) =
+    eval_consts ~instances:mono_state ~modules ~aliases:flat.aliases
+      ~struct_index ~enum_index flat.consts
+  in
   (* `pub use foo::bar;` validation.  Building the global index just
      above means every fn/struct/enum has its absolute path on file;
      we can now check each alias's target resolves from the alias's
@@ -3405,7 +3615,7 @@ let check_program program : tprogram =
       modules; scope = path; tparams = f.tparams;
       tvar_bindings; fn_asts; aliases = flat.aliases;
       ext_vars; ext_struct_fields;
-      ext_structs; ext_types; ext_consts;
+      ext_structs; ext_types; ext_consts; consts = consts_index;
     } in
     let param_tys =
       List.map (fun (p : Ast.param) ->
@@ -3691,4 +3901,5 @@ let check_program program : tprogram =
     tp_fnptr_types;
     tp_c_includes = flat.c_includes;
     tp_ext_consts = ext_consts;
-    tp_ext_vars = ext_vars }
+    tp_ext_vars = ext_vars;
+    tp_consts }

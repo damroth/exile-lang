@@ -249,6 +249,32 @@ let () =
      fn main() { println(f(E::A)); }\n"
     "expected pattern, got integer 2";
 
+  (* Compile-time `const`: folds to a literal, emitted as `#define`; can
+     reference earlier consts and use the full operator set. *)
+  check "const folds to a #define and use sites read the macro"
+    "const MAX: int = 100;\nconst HALF: int = MAX / 2;\nfn main() {\n    println(MAX);\n    println(HALF);\n}\n"
+    "#include <stdio.h>\n\n#define ex_MAX 100\n#define ex_HALF 50\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_MAX));\n    printf(\"%ld\\n\", (long)(ex_HALF));\n    return 0;\n}\n";
+
+  check "module const with shift fold, qualified reference"
+    "mod cfg { pub const DEPTH: int = 1 << 3; }\nfn main() {\n    println(cfg::DEPTH);\n}\n"
+    "#include <stdio.h>\n\n#define cfg__DEPTH 8\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(cfg__DEPTH));\n    return 0;\n}\n";
+
+  check_error "cyclic const definition rejected"
+    "const A: int = B;\nconst B: int = A;\nfn main() { println(A); }\n"
+    "cyclic constant definition involving 'A'";
+
+  check_error "const value overflowing its type rejected"
+    "const X: u8 = 300;\nfn main() { let x: u8 = X; println(x); }\n"
+    "constant 'X' = 300 does not fit in u8";
+
+  check_error "non-constant const initializer rejected"
+    "fn f() -> int { 5 }\nconst X: int = f();\nfn main() { println(X); }\n"
+    "not a constant expression";
+
+  check_error "assignment to a const rejected"
+    "const X: int = 5;\nfn main() { X = 6; println(X); }\n"
+    "cannot assign to 'X' — it's a `const` (compile-time constant)";
+
   check "unary minus on literal var and call"
     "fn id(x: int) -> int {\n    return x;\n}\nfn main() {\n    let a = -5;\n    let b = -a;\n    println(b);\n    println(-id(7));\n}\n"
     "#include <stdio.h>\n\nstatic long ex_id(long x);\n\nstatic long ex_id(long x) {\n    return x;\n}\n\nint main(void) {\n    long a;\n    long b;\n    a = -5;\n    b = -a;\n    printf(\"%ld\\n\", (long)(b));\n    printf(\"%ld\\n\", (long)(-(ex_id(7))));\n    return 0;\n}\n";

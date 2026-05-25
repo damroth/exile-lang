@@ -1218,6 +1218,12 @@ let rec parse_item s seen =
         Error.failf ed.Ast.epos
           "name '%s' already used in this scope" ed.Ast.ename;
       [ (Some ed.Ast.ename, Ast.Enum ed) ]
+  | Token.Const ->
+      let cd = parse_const_decl s ~is_pub in
+      if List.mem cd.Ast.kname seen then
+        Error.failf cd.Ast.kpos
+          "name '%s' already used in this scope" cd.Ast.kname;
+      [ (Some cd.Ast.kname, Ast.Const cd) ]
   | Token.Impl ->
       if is_pub then
         Error.failf (peek_pos s)
@@ -1353,6 +1359,20 @@ let rec parse_item s seen =
         "expected 'fn', 'extern fn', 'mod', 'use', 'struct', 'enum', \
          'impl' or '@c_include', got %s"
         (Token.pp (peek s))
+
+(* `const NAME: T = <expr>;` — a compile-time constant.  The `: T`
+   annotation is required (explicitness); the initialiser is any
+   expression, folded to a literal by typecheck. *)
+and parse_const_decl s ~is_pub =
+  expect s Token.Const;
+  let (name, name_pos) = expect_ident s ~what:"constant name after 'const'" in
+  expect s Token.Colon;
+  let ty = parse_type s in
+  expect s Token.Eq;
+  let value = parse_expr s in
+  expect s Token.Semicolon;
+  Ast.{ kname = name; kty = ty; kvalue = value;
+        kis_pub = is_pub; kpos = name_pos }
 
 and parse_struct_decl s ~is_pub =
   expect s Token.Struct;

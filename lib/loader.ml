@@ -28,6 +28,7 @@ let item_visible_in_wildcard = function
   | Ast.Module m -> m.Ast.mis_pub
   | Ast.Struct s -> s.Ast.sis_pub
   | Ast.Enum e -> e.Ast.eis_pub
+  | Ast.Const c -> c.Ast.kis_pub
   | Ast.ExternStruct _
   | Ast.ExternType _
   | Ast.ExternConst _
@@ -64,8 +65,8 @@ let rec expand_items ~from_file ~loaded ~stack items =
 and expand_item ~from_file ~loaded ~stack item =
   match item with
   | Ast.Function _ | Ast.Struct _ | Ast.ExternStruct _ | Ast.ExternType _
-  | Ast.ExternConst _ | Ast.ExternVar _ | Ast.Enum _ | Ast.Impl _
-  | Ast.CInclude _ -> [ item ]
+  | Ast.ExternConst _ | Ast.ExternVar _ | Ast.Const _ | Ast.Enum _
+  | Ast.Impl _ | Ast.CInclude _ -> [ item ]
   | Ast.Module m ->
       let mitems' =
         expand_items ~from_file ~loaded ~stack m.Ast.mitems

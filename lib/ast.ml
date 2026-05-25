@@ -329,6 +329,19 @@ type extern_const = {
   ecpos : Pos.t;
 }
 
+(* `const NAME: T = <expr>;` — a compile-time constant.  Unlike
+   `extern const` (a linker-resolved C symbol), this carries an
+   initialiser that the compiler folds to a literal at typecheck time and
+   emits as `#define`.  The type annotation is required.  Top-level or
+   module-level only; values are int / bool scalars for now. *)
+type const_decl = {
+  kname : string;
+  kty : type_ann;
+  kvalue : expr;
+  kis_pub : bool;
+  kpos : Pos.t;
+}
+
 (* `extern var DOSBase: *Library;` — globalna zmienna nie-funkcyjna,
    ustawiana przez kod C-strony (np. AmigaOS `OpenLibrary` zapisuje do
    `DOSBase`).  Identyczna struktura jak [extern_const] — różnica
@@ -358,6 +371,11 @@ type item =
   | ExternConst of extern_const         (* `extern const FOO: c_uint;`
                                            — global value resolved by
                                            the linker.  Top-level only. *)
+  | Const of const_decl                 (* `const NAME: T = expr;` —
+                                           compile-time constant folded to
+                                           a literal and emitted as
+                                           `#define`.  Top-level or
+                                           module-level. *)
   | ExternVar of extern_var             (* `extern var DOSBase: *Library;`
                                            — global mutable variable
                                            resolved by the linker.  Like

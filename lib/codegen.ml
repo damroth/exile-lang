@@ -1142,6 +1142,15 @@ let gen_program ?(annotate = false) (tp : tprogram) =
     Buffer.add_string buf path;
     Buffer.add_string buf "\"\n")
     tp.tp_c_includes;
+  (* User `const`s fold to literals emitted as `#define`s — usable in
+     array dimensions and constant expressions at the C level, and read as
+     mangled identifiers at use sites. *)
+  emit_section buf tp.tp_consts ~emit:(fun (name, value) ->
+    Buffer.add_string buf "#define ";
+    Buffer.add_string buf name;
+    Buffer.add_char buf ' ';
+    Buffer.add_string buf value;
+    Buffer.add_char buf '\n');
   emit_section buf tp.tp_ext_consts ~emit:(fun (name, t) ->
     Buffer.add_string buf "extern const ";
     Buffer.add_string buf (c_decl t name);

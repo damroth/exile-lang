@@ -678,4 +678,10 @@ type tprogram = {
                                          mutable global counterpart of
                                          tp_ext_consts.  Codegen emits
                                          `extern <type> NAME;` (no const). *)
+  tp_consts : (string * string) list;  (* user `const NAME: T = e;` folded
+                                          to (mangled C name, literal value);
+                                          codegen emits `#define <name>
+                                          <value>` so use sites (already
+                                          mangled TVars) and array sizes
+                                          resolve at the C level. *)
 }

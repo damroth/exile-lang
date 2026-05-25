@@ -1,0 +1,28 @@
+// Compile-time constants.  `const NAME: T = <expr>;` is folded to a
+// literal at compile time and emitted as a C `#define`, so it costs
+// nothing at runtime and can later size arrays.  Initialisers may use the
+// full operator set and reference earlier consts; cycles and values that
+// overflow the declared type are compile errors.
+
+const WIDTH:  int = 320;
+const HEIGHT: int = 256;
+const PIXELS: int = WIDTH * HEIGHT;        // derived from other consts
+
+// Flag masks, the way hardware registers are usually described.
+mod flags {
+    pub const READ:  int = 1 << 0;         // 0x01
+    pub const WRITE: int = 1 << 1;         // 0x02
+    pub const RW:    int = READ | WRITE;   // 0x03
+}
+
+fn main() {
+    println(WIDTH);
+    println(HEIGHT);
+    println(PIXELS);                       // 81920
+
+    println(flags::RW);                    // 3
+
+    // Consts compose like any other value in ordinary expressions.
+    let half = WIDTH / 2;
+    println(half);                         // 160
+}
