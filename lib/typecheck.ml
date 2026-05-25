@@ -976,6 +976,24 @@ let rec render_cpat ctx ty cp =
    O(N²) elab cost on deeply-nested expressions; that function and
    its helpers (binop_operand_types, validate_struct_lit, desugar_orelse)
    are gone, with their validation logic inlined per-case here. *)
+(* A block's trailing value, if it is a single expression (`{ e }`).
+   Block expressions with leading statements in branch position are
+   deferred (see WORKLOG bare-block-expr), so a value-producing branch
+   must be exactly one trailing expression. *)
+let branch_value_expr : Ast.stmt list -> Ast.expr option = function
+  | [ Ast.Tail e ] -> Some e
+  | _ -> None
+
+(* Does this `if` qualify as an *expression* (yields a value)?  Requires
+   an `else` and both branches reducible to a single trailing expression.
+   Otherwise it is a control-flow *statement* (guard clause, side
+   effects, both-branches-return). *)
+let is_value_if ~(then_blk : Ast.stmt list) ~(else_blk : Ast.stmt list option) =
+  match else_blk with
+  | None -> false
+  | Some eblk ->
+      branch_value_expr then_blk <> None && branch_value_expr eblk <> None
+
 let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
   let pos = Ast.expr_pos e in
   match e with
@@ -1288,6 +1306,37 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       in
       { e = TMatch { scrutinee = tscrut; ename_path; arms = tarms };
         ty = result_ty; pos }
+  | Ast.If { cond; then_blk; else_blk; pos } ->
+      (* `if` in value position: requires `else`, and both branches must
+         be a single trailing expression of the same type.  Branch blocks
+         with leading statements are deferred. *)
+      let eblk =
+        match else_blk with
+        | Some b -> b
+        | None ->
+            Error.failf pos
+              "`if` used as a value needs an `else` branch (a value must \
+               exist on every path)"
+      in
+      let branch_expr what blk =
+        match branch_value_expr blk with
+        | Some e -> e
+        | None ->
+            Error.failf pos
+              "`if` %s branch must be a single expression to yield a value \
+               (block expressions in branches are not yet supported)" what
+      in
+      let then_e = branch_expr "then" then_blk in
+      let else_e = branch_expr "else" eblk in
+      let tcond = elab_expr ctx env cond in
+      let tthen = elab_expr ?expected ~allow_void ctx env then_e in
+      let telse = elab_expr ?expected ~allow_void ctx env else_e in
+      if not (typ_eq tthen.ty telse.ty) then
+        Error.failf pos
+          "`if` branches have inconsistent types: %s vs %s"
+          (typ_name tthen.ty) (typ_name telse.ty);
+      { e = TIfExpr { cond = tcond; then_val = tthen; else_val = telse };
+        ty = tthen.ty; pos }
   | Ast.Try (value, try_pos) ->
       (* Lower to a TMatch with one yielding Ok/Some arm and one
          diverging Err/None arm.  The diverging arm carries the
@@ -2242,16 +2291,39 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
          | Some t ->
              Error.failf pos
                "`return` needs a value — function returns %s" (typ_name t))
-    | Ast.ExprStmt e ->
+    | Ast.ExprStmt e | Ast.Tail e ->
+        (* `e;` discards the value; a trailing `e` (no `;`) inside a void
+           branch is likewise a void statement (the function-body trailing
+           value is peeled off before walking, so it never reaches here). *)
+        elab_stmt_position env e
+    | Ast.While { cond; body } ->
+        let tcond = elab_expr ctx env cond in
+        let (_, tbody) = walk env body in
+        (param_env @ List.rev !decls,
+         TWhile { cond = tcond; body = tbody })
+    | Ast.Defer { body; pos } ->
+        let (_, tbody) = walk env body in
+        (env, TDefer { body = tbody; pos })
+  (* An expression used in statement (void) position.  `if` lowers to the
+     void TIf statement (guard clause / side effects, `else` optional,
+     branches are full blocks); everything else must carry a side effect.
+     Returns the post-stmt env with the same hoisting behaviour as the
+     old `If`/`While` cases (branch-local decls stay visible — function-
+     scoped C hoisting). *)
+  and elab_stmt_position env e =
+    match e with
+    | Ast.If { cond; then_blk; else_blk; _ } ->
+        let tcond = elab_expr ctx env cond in
+        let (_, t_then) = walk env then_blk in
+        let (_, t_else) = walk env (Option.value ~default:[] else_blk) in
+        (param_env @ List.rev !decls,
+         TIf { cond = tcond; then_body = t_then; else_body = t_else })
+    | _ ->
         let tvalue = elab_expr ~allow_void:true ctx env e in
-        (* A statement-position expression is only meaningful if it can
-           carry a side effect — a call (user fn / method / fn-ptr), an
-           effectful builtin (`print`/`free`, not the pure `type_name`),
-           or a `match` (control flow).  Anything else discards its value
-           with no effect and would emit `-Wunused-value` in the generated
-           C; reject it so the mistake surfaces in exile, not in cc.
-           Escape hatch for an intentionally-discarded value: `let _x =
-           <expr>;`. *)
+        (* Only side-effecting expressions are meaningful when their value
+           is discarded — a call, an effectful builtin, or a `match`.
+           Anything else would emit `-Wunused-value`; reject it here.
+           Escape hatch: bind with `let _x = ...`. *)
         let has_effect =
           match tvalue.e with
           | TCall _ | TIndirectCall _ | TMatch _ -> true
@@ -2263,22 +2335,50 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
             "expression statement has no effect — its result is \
              discarded; remove it, or bind it with `let _x = ...`";
         (env, TExprStmt tvalue)
-    | Ast.If { cond; then_body; else_body } ->
-        let tcond = elab_expr ctx env cond in
-        let (_, t_then) = walk env then_body in
-        let (_, t_else) = walk env else_body in
-        (param_env @ List.rev !decls,
-         TIf { cond = tcond; then_body = t_then; else_body = t_else })
-    | Ast.While { cond; body } ->
-        let tcond = elab_expr ctx env cond in
-        let (_, tbody) = walk env body in
-        (param_env @ List.rev !decls,
-         TWhile { cond = tcond; body = tbody })
-    | Ast.Defer { body; pos } ->
-        let (_, tbody) = walk env body in
-        (env, TDefer { body = tbody; pos })
   in
-  let (_, tstmts) = walk param_env stmts in
+  (* Peel a trailing block value (`{ ...; e }` with no `;` on `e`) off the
+     function body before walking.  In a fn with a *declared* return type it
+     becomes the return value; a control-flow `if` tail (no `else`, or with
+     statement branches) stays a statement and relies on the exhaustive-
+     return check.  In a void fn — and in `main`, whose return type is
+     implicit and whose exit code is set only by an explicit `return <int>;`
+     — a trailing expression is a void statement. *)
+  let body_stmts, tail =
+    match List.rev stmts with
+    | Ast.Tail e :: rest -> (List.rev rest, Some e)
+    | _ -> (stmts, None)
+  in
+  let (env_after, walked) = walk param_env body_stmts in
+  let tail_tstmts =
+    match tail with
+    | None -> []
+    | Some e ->
+        (match ret_ty with
+         | None ->
+             (* void fn: trailing expr is a void statement. *)
+             [ snd (elab_stmt_position env_after e) ]
+         | Some _ when is_main ->
+             (* `main`: trailing expr is a side-effecting statement, not an
+                exit code (use explicit `return <int>;` for that). *)
+             [ snd (elab_stmt_position env_after e) ]
+         | Some t ->
+             (match e with
+              | Ast.If { then_blk; else_blk; _ }
+                when not (is_value_if ~then_blk ~else_blk) ->
+                  (* Control-flow `if` at the tail (both-branches-return,
+                     or no else) — a statement, not a value. *)
+                  [ snd (elab_stmt_position env_after e) ]
+              | _ ->
+                  let pos = Ast.expr_pos e in
+                  let tvalue = elab_expr ?expected:(Some t) ctx env_after e in
+                  if not (typ_eq tvalue.ty t) then
+                    Error.failf pos
+                      "trailing expression: expected %s, got %s"
+                      (typ_name t) (typ_name tvalue.ty);
+                  [ TReturn { value = Some tvalue; pos } ]))
+  in
+  let tstmts = walked @ tail_tstmts in
+  ignore env_after;
   (* Post-elab: lift block-shaped sub-expressions (TStructLit, TTupleLit,
      TNew, TEnumLit, TMatch) that appear in positions where codegen
      emits via `gen_expr` (which can't handle them) into preceding
@@ -2295,7 +2395,8 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
   in
   let is_block (e : texpr) =
     match e.e with
-    | TStructLit _ | TTupleLit _ | TNew _ | TEnumLit _ | TMatch _ -> true
+    | TStructLit _ | TTupleLit _ | TNew _ | TEnumLit _ | TMatch _
+    | TIfExpr _ -> true
     | _ -> false
   in
   let rec walk_expr ~allow_top (te : texpr) : texpr * tstmt list =
@@ -2380,6 +2481,11 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
     | TMatch { scrutinee; ename_path; arms } ->
         let (scr', p) = walk_expr ~allow_top:false scrutinee in
         ({ te with e = TMatch { scrutinee = scr'; ename_path; arms } }, p)
+    | TIfExpr { cond; then_val; else_val } ->
+        (* Only the cond is lifted: hoisting a branch value above the `if`
+           would evaluate it unconditionally (same rule as match arms). *)
+        let (cond', p) = walk_expr ~allow_top:false cond in
+        ({ te with e = TIfExpr { cond = cond'; then_val; else_val } }, p)
   in
   let rec lift_stmts stmts = List.concat_map lift_stmt stmts
   and lift_stmt = function
@@ -3290,10 +3396,25 @@ let check_program program : tprogram =
     if not f.is_extern && not is_skeleton then
       (match ret_ty with
        | Some t when not (always_returns tbody) ->
-           Error.failf f.pos
-             "function '%s' declared with return type %s, but not \
-              every control-flow path ends in `return`"
-             f.name (typ_name t)
+           (* `;`-footgun: a trailing `e;` whose value matches the return
+              type is almost always a dropped trailing expression.  Point
+              at it rather than the generic "no return on every path". *)
+           let dropped_tail =
+             match List.rev tbody with
+             | TExprStmt e :: _ when typ_eq e.ty t -> true
+             | _ -> false
+           in
+           if dropped_tail then
+             Error.failf f.pos
+               "function '%s' returns %s but its last statement is a \
+                discarded expression — drop the trailing `;` to return its \
+                value, or add an explicit `return`"
+               f.name (typ_name t)
+           else
+             Error.failf f.pos
+               "function '%s' declared with return type %s, but not \
+                every control-flow path ends in `return`"
+               f.name (typ_name t)
        | _ -> ());
     { tf_path = path; tf_func = f; tf_mangled = mangled;
       tf_param_tys = param_tys; tf_ret_ty = ret_ty;

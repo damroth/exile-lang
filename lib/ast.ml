@@ -107,6 +107,21 @@ type expr =
                                            SizeOf keyword.  Resolves to
                                            a constant after monomorphization
                                            even when T is a tparam. *)
+  | If of { cond : expr; then_blk : stmt list;
+            else_blk : stmt list option; pos : Pos.t }
+                                        (* `if c { ... } else { ... }`.  One
+                                           node serves both roles: a void
+                                           *statement* (guard clause / side
+                                           effects, `else` optional) and an
+                                           *expression* (value, `else`
+                                           required, both branches one
+                                           trailing expression of the same
+                                           type).  Which role applies is
+                                           decided by position during elab:
+                                           value position requires `else` and
+                                           single-expression branches; bare-
+                                           block-expression branches are
+                                           deferred (see WORKLOG). *)
 
 and match_arm = { pat : pattern; body : expr; arm_pos : Pos.t }
 
@@ -130,34 +145,7 @@ and pat_binds =
                                             shorthand `f` desugars at parse
                                             time to `("f", PVar "f")`. *)
 
-let expr_pos = function
-  | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
-  | Var (_, p) | Neg (_, p) | BinOp (_, _, _, p)
-  | Orelse (_, _, p) | Try (_, p) | SizeOf (_, p)
-  | Call (_, _, p) | Cast (_, _, p) | TupleLit (_, p)
-  | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)
-  | NullLit p -> p
-  | StructLit { pos; _ } | New { pos; _ }
-  | MethodCall { pos; _ } | EnumLit { pos; _ } | Match { pos; _ } -> pos
-
-type param = {
-  pname : string;
-  pty : type_ann;
-  is_mut : bool;                     (* `fn f(mut x: T)` — the parameter
-                                        binding is reassignable / its owned
-                                        value mutable.  Immutable by default
-                                        (mirrors `let` vs `let mut`).  Pointee
-                                        mutability through a `*T` param is a
-                                        separate, deferred axis. *)
-  preg : string option;              (* `@reg(d0)` AmigaOS register pin.
-                                        Validated against m68k register
-                                        names (d0..d7, a0..a6).  Codegen
-                                        emits `__reg("X")` before the
-                                        param C type.  Only legal on
-                                        extern fn params. *)
-}
-
-type stmt =
+and stmt =
   | Let of { name : string; value : expr; ty_ann : type_ann option;
              is_mut : bool; pos : Pos.t }
                                           (* `let x` is immutable; `let mut x`
@@ -175,10 +163,43 @@ type stmt =
   | AssignDeref of { target : expr; value : expr; pos : Pos.t }
   | Return of expr option * Pos.t       (* `return;` (None — void / main
                                            exit 0) or `return <expr>;` *)
-  | ExprStmt of expr
-  | If of { cond : expr; then_body : stmt list; else_body : stmt list }
+  | ExprStmt of expr                    (* `e;` — value discarded *)
+  | Tail of expr                        (* trailing block expression (`e`
+                                           with no `;`, last in a block) —
+                                           the block's value.  In a value
+                                           function it becomes the return
+                                           value; in void position it is a
+                                           discarded / void statement. *)
   | While of { cond : expr; body : stmt list }
   | Defer of { body : stmt list; pos : Pos.t }
+
+let expr_pos = function
+  | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
+  | Var (_, p) | Neg (_, p) | BinOp (_, _, _, p)
+  | Orelse (_, _, p) | Try (_, p) | SizeOf (_, p)
+  | Call (_, _, p) | Cast (_, _, p) | TupleLit (_, p)
+  | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)
+  | NullLit p -> p
+  | StructLit { pos; _ } | New { pos; _ }
+  | MethodCall { pos; _ } | EnumLit { pos; _ } | Match { pos; _ }
+  | If { pos; _ } -> pos
+
+type param = {
+  pname : string;
+  pty : type_ann;
+  is_mut : bool;                     (* `fn f(mut x: T)` — the parameter
+                                        binding is reassignable / its owned
+                                        value mutable.  Immutable by default
+                                        (mirrors `let` vs `let mut`).  Pointee
+                                        mutability through a `*T` param is a
+                                        separate, deferred axis. *)
+  preg : string option;              (* `@reg(d0)` AmigaOS register pin.
+                                        Validated against m68k register
+                                        names (d0..d7, a0..a6).  Codegen
+                                        emits `__reg("X")` before the
+                                        param C type.  Only legal on
+                                        extern fn params. *)
+}
 
 type func = {
   name : string;

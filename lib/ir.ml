@@ -503,6 +503,15 @@ type texpr_node =
   | TMatch of { scrutinee : texpr;
                 ename_path : string list;
                 arms : tmatch_arm list }
+  | TIfExpr of { cond : texpr; then_val : texpr; else_val : texpr }
+                                        (* `if c { a } else { b }` used as a
+                                           value.  Block-shaped like TMatch:
+                                           never emitted inline by gen_expr —
+                                           value positions route through
+                                           emit_value_into_temp, nested uses
+                                           are lifted to a `__lift` temp.
+                                           Both branches yield a value of the
+                                           expression's type. *)
   | TSizeOf of typ                      (* `size_of(T)` — codegen emits
                                            `sizeof(<c_type_prefix t>)`.
                                            For instances of generic fns
@@ -579,6 +588,7 @@ let texpr_children (te : texpr) : texpr list =
   | TEnumLit { args; _ } -> List.map snd args
   | TMatch { scrutinee; arms; _ } ->
       scrutinee :: List.map (fun a -> a.tbody) arms
+  | TIfExpr { cond; then_val; else_val } -> [cond; then_val; else_val]
 
 let rec iter_texpr f e =
   f e;

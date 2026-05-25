@@ -178,6 +178,36 @@ let () =
     "fn main() {\n    let x = 2;\n    if x < 1 {\n        println(1);\n    } else if x < 3 {\n        println(2);\n    } else {\n        println(3);\n    }\n}\n"
     "#include <stdio.h>\n\nint main(void) {\n    long x;\n    x = 2;\n    if (x < 1) {\n        printf(\"%ld\\n\", (long)(1));\n    } else if (x < 3) {\n        printf(\"%ld\\n\", (long)(2));\n    } else {\n        printf(\"%ld\\n\", (long)(3));\n    }\n    return 0;\n}\n";
 
+  (* Expression-based bodies: trailing expression (no `;`) is a block's
+     value; `if` works as an expression in value position. *)
+  check "if-expression in let RHS"
+    "fn main() {\n    let x = if 3 < 5 { 10 } else { 20 };\n    println(x);\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    long x;\n    if (3 < 5) {\n        x = 10;\n    } else {\n        x = 20;\n    }\n    printf(\"%ld\\n\", (long)(x));\n    return 0;\n}\n";
+
+  check "function-body trailing expression is the return value"
+    "fn inc(a: int) -> int {\n    a + 1\n}\nfn main() {\n    println(inc(4));\n}\n"
+    "#include <stdio.h>\n\nstatic long ex_inc(long a);\n\nstatic long ex_inc(long a) {\n    return a + 1;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_inc(4)));\n    return 0;\n}\n";
+
+  check "if-expression as a function's trailing value"
+    "fn sign(x: int) -> int {\n    if x > 0 { 1 } else { 0 }\n}\nfn main() {\n    println(sign(5));\n}\n"
+    "#include <stdio.h>\n\nstatic long ex_sign(long x);\n\nstatic long ex_sign(long x) {\n    {\n        long __exile_ret;\n        if (x > 0) {\n            __exile_ret = 1;\n        } else {\n            __exile_ret = 0;\n        }\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_sign(5)));\n    return 0;\n}\n";
+
+  check_error "if-expression requires else in value position"
+    "fn main() {\n    let x = if 1 < 2 { 10 };\n    println(x);\n}\n"
+    "`if` used as a value needs an `else` branch (a value must exist on every path)";
+
+  check_error "if-expression branches must agree in type"
+    "fn main() {\n    let x = if 1 < 2 { 1 } else { \"hi\" };\n    println(x);\n}\n"
+    "`if` branches have inconsistent types: i32 vs str";
+
+  check_error "if-expression branch with statements is deferred"
+    "fn main() {\n    let x = if 1 < 2 { let y = 3; y } else { 0 };\n    println(x);\n}\n"
+    "`if` then branch must be a single expression to yield a value (block expressions in branches are not yet supported)";
+
+  check_error "dropped trailing value (`;` footgun) suggests dropping the `;`"
+    "fn g() -> int { 1 }\nfn f() -> int { g(); }\nfn main() { println(f()); }\n"
+    "function 'f' returns i32 but its last statement is a discarded expression — drop the trailing `;` to return its value, or add an explicit `return`";
+
   check "line and block comments"
     "// top comment\nfn main() {\n    /* block\n       comment */\n    let x = 1; // trailing\n    println(x);\n}\n"
     "#include <stdio.h>\n\nint main(void) {\n    long x;\n    x = 1;\n    printf(\"%ld\\n\", (long)(x));\n    return 0;\n}\n";

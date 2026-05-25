@@ -361,7 +361,7 @@ let rec gen_expr ctx buf (te : texpr) =
       Buffer.add_string buf "sizeof(";
       Buffer.add_string buf (strip_trailing_space (c_type_prefix t));
       Buffer.add_char buf ')'
-  | TEnumLit _ | TMatch _ ->
+  | TEnumLit _ | TMatch _ | TIfExpr _ ->
       (* Same as the block-shaped lit cases above — `lift_block_exprs`
          hoists these to `__lift_N` temps before codegen sees them. *)
       assert false
@@ -432,6 +432,20 @@ let rec emit_value_into_temp ctx buf indent temp_name (value : texpr) =
          switch whose every case assigns its arm result to the same
          temp.  See emit_match_stmt's `assign_to` mode. *)
       emit_match_stmt ctx ~assign_to:temp_name buf indent value
+  | TIfExpr { cond; then_val; else_val } ->
+      (* `if` used as a value: each branch assigns its result to the same
+         temp.  Branch values may themselves be block-shaped (nested
+         if/match), so recurse through emit_value_into_temp. *)
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "if (";
+      gen_expr ctx buf cond;
+      Buffer.add_string buf ") {\n";
+      emit_value_into_temp ctx buf (indent ^ "    ") temp_name then_val;
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "} else {\n";
+      emit_value_into_temp ctx buf (indent ^ "    ") temp_name else_val;
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "}\n"
   | _ -> assign ~lhs:temp_name value
 
 (* Statement emission with `defer` support.  `outer_scopes` is the list of
@@ -791,8 +805,8 @@ and gen_block ctx buf indent outer_scopes stmts =
              let needs_block =
                all <> [] ||
                (match value.e with
-                | TTupleLit _ | TStructLit _ | TNew _ | TMatch _ | TEnumLit _ ->
-                    true
+                | TTupleLit _ | TStructLit _ | TNew _ | TMatch _ | TEnumLit _
+                | TIfExpr _ -> true
                 | _ -> false)
              in
              if not needs_block then begin

@@ -223,6 +223,10 @@ let rec parse_primary s =
       let ty = parse_type s in
       expect s Token.RParen;
       Ast.SizeOf (ty, p)
+  | Token.If ->
+      (* `if` in expression position (`let x = if c { a } else { b }`).
+         The `if` keyword is already consumed by [advance]. *)
+      parse_if_after_kw s p
   | Token.Amp -> Ast.Ref (parse_postfix s (parse_primary s), p)
   | Token.Star -> Ast.Deref (parse_postfix s (parse_primary s), p)
   | Token.New ->
@@ -497,11 +501,37 @@ and parse_match_arms s acc =
       Error.failf (peek_pos s)
         "expected '|' before match arm, got %s" (Token.pp t)
 
-let rec parse_block s =
+and parse_block s =
   expect s Token.LBrace;
   let body = parse_stmts s [] in
   expect s Token.RBrace;
   body
+
+(* `if cond { ... } [else { ... } | else if ...]`.  One syntactic form
+   for both the statement and the expression role; elab decides which.
+   The condition is parsed with struct literals disabled so the opening
+   `{` always begins the then-block.  `else if` nests as the else
+   block's trailing expression. *)
+and parse_if s =
+  let pos = peek_pos s in
+  expect s Token.If;
+  parse_if_after_kw s pos
+and parse_if_after_kw s pos =
+  let prev = s.allow_struct_lit in
+  s.allow_struct_lit <- false;
+  let cond = parse_expr s in
+  s.allow_struct_lit <- prev;
+  let then_blk = parse_block s in
+  let else_blk =
+    match peek s with
+    | Token.Else ->
+        ignore (advance s);
+        (match peek s with
+         | Token.If -> Some [ Ast.Tail (parse_if s) ]
+         | _ -> Some (parse_block s))
+    | _ -> None
+  in
+  Ast.If { cond; then_blk; else_blk; pos }
 
 and parse_stmt s =
   match peek s with
@@ -569,22 +599,11 @@ and parse_stmt s =
       in
       Ast.Defer { body; pos }
   | Token.If ->
-      ignore (advance s);
-      let prev = s.allow_struct_lit in
-      s.allow_struct_lit <- false;
-      let cond = parse_expr s in
-      s.allow_struct_lit <- prev;
-      let then_body = parse_block s in
-      let else_body =
-        match peek s with
-        | Token.Else ->
-            ignore (advance s);
-            (match peek s with
-             | Token.If -> [ parse_stmt s ]
-             | _ -> parse_block s)
-        | _ -> []
-      in
-      Ast.If { cond; then_body; else_body }
+      (* Block-shaped, self-terminating: a trailing `if` (last in its
+         block, `}` next) is the block's value (`Tail`); otherwise it is a
+         void statement. *)
+      let e = parse_if s in
+      if peek s = Token.RBrace then Ast.Tail e else Ast.ExprStmt e
   | Token.While ->
       ignore (advance s);
       let prev = s.allow_struct_lit in
@@ -596,15 +615,15 @@ and parse_stmt s =
   | Token.Match ->
       (* `match` is parsed as an expression but its statement form
          needs no trailing `;` — block-shaped, like `if`/`while`.
-         We delegate to parse_primary so the same parser handles
-         both statement and let-RHS / return positions. *)
+         A trailing `match` (last in its block) is the block's value. *)
       let e = parse_primary s in
-      Ast.ExprStmt e
+      if peek s = Token.RBrace then Ast.Tail e else Ast.ExprStmt e
   | _ ->
       (* General statement: parse an expression, then dispatch on what
          follows.  An `=` makes it an assignment whose target is either a
          bare variable (`x = ...;`) or a field path (`p.x = ...;`); a `;`
-         keeps it as an expression statement. *)
+         keeps it as an expression statement; a closing `}` (no `;`) makes
+         it the block's trailing value. *)
       let e = parse_expr s in
       (match peek s with
        | Token.Eq ->
@@ -626,6 +645,7 @@ and parse_stmt s =
                 Ast.AssignDeref { target; value; pos = dp }
             | _ ->
                 Error.failf pos "invalid assignment target")
+       | Token.RBrace -> Ast.Tail e
        | _ ->
            expect s Token.Semicolon;
            Ast.ExprStmt e)
