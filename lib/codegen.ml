@@ -272,6 +272,8 @@ let prec = function
   | Ast.BitAnd -> 5
   | Ast.BitXor -> 4
   | Ast.BitOr -> 3
+  | Ast.And -> 2
+  | Ast.Or -> 1
   | Ast.Concat ->
       (* Folded to a TStringLit during typecheck — no TBinOp(Concat) ever
          reaches codegen. *)
@@ -332,6 +334,7 @@ let rec gen_expr ctx buf (te : texpr) =
         | Ast.Mul -> " * " | Ast.Div -> " / " | Ast.Mod -> " % "
         | Ast.BitAnd -> " & " | Ast.BitOr -> " | " | Ast.BitXor -> " ^ "
         | Ast.Shl -> " << " | Ast.Shr -> " >> "
+        | Ast.And -> " && " | Ast.Or -> " || "
         | Ast.Lt -> " < " | Ast.Gt -> " > "
         | Ast.LtEq -> " <= " | Ast.GtEq -> " >= "
         | Ast.EqEq -> " == " | Ast.NotEq -> " != "
@@ -346,14 +349,20 @@ let rec gen_expr ctx buf (te : texpr) =
         | Ast.Sub | Ast.Div | Ast.Mod | Ast.Shl | Ast.Shr -> true
         | _ -> false
       in
+      (* `&&` under `||` is legal C but gcc/clang emit `-Wparentheses` even
+         though the precedence is unambiguous.  Force parens around `&&`
+         operands of `||` to keep the output -Werror-clean. *)
+      let nest_warn child =
+        match op, child with Ast.Or, Ast.And -> true | _ -> false
+      in
       (match l.e with
-       | TBinOp (lop, _, _) when prec lop < p ->
+       | TBinOp (lop, _, _) when prec lop < p || nest_warn lop ->
            Buffer.add_char buf '('; gen_expr ctx buf l; Buffer.add_char buf ')'
        | _ -> gen_expr ctx buf l);
       Buffer.add_string buf op_str;
       (match r.e with
        | TBinOp (rop, _, _)
-         when prec rop < p || (prec rop = p && left_assoc op) ->
+         when prec rop < p || (prec rop = p && left_assoc op) || nest_warn rop ->
            Buffer.add_char buf '('; gen_expr ctx buf r; Buffer.add_char buf ')'
        | _ -> gen_expr ctx buf r)
   | TBuiltinCall { name; args } ->

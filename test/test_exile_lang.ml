@@ -330,6 +330,17 @@ let () =
     "fn main() {\n    for i in 0 as u8 ..= 255 as u8 { println(i); }\n}\n"
     "inclusive `for ... ..=255` reaches the maximum of u8 — `i + 1` wraps and the loop never ends; widen the counter type";
 
+  (* Short-circuit logical `&&` / `||` — both `bool`-only, `&&` tighter than
+     `||`, both looser than comparisons (Rust-order matches C, so no extra
+     parens are needed in the emitted C). *)
+  check "logical `&&` / `||` compose with comparisons"
+    "fn main() {\n    let a = 3;\n    let b = 5;\n    if a < b && b > 0 || a == 0 {\n        println(1);\n    } else {\n        println(0);\n    }\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    long a;\n    long b;\n    a = 3;\n    b = 5;\n    if ((a < b && b > 0) || a == 0) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    return 0;\n}\n";
+
+  check_error "logical `&&` rejects non-bool operands"
+    "fn main() {\n    if 5 && true { println(1); }\n}\n"
+    "logical '&&' requires bool operands, got i32 and bool";
+
   check "unary minus on literal var and call"
     "fn id(x: int) -> int {\n    return x;\n}\nfn main() {\n    let a = -5;\n    let b = -a;\n    println(b);\n    println(-id(7));\n}\n"
     "#include <stdio.h>\n\nstatic long ex_id(long x);\n\nstatic long ex_id(long x) {\n    return x;\n}\n\nint main(void) {\n    long a;\n    long b;\n    a = -5;\n    b = -a;\n    printf(\"%ld\\n\", (long)(b));\n    printf(\"%ld\\n\", (long)(-(ex_id(7))));\n    return 0;\n}\n";

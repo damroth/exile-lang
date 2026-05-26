@@ -6,6 +6,9 @@ type binop =
                                             Codegen emits the C operator with
                                             explicit parens so C's (looser)
                                             bitwise precedence never leaks. *)
+  | And | Or                            (* short-circuiting logical operators
+                                            on `bool` — same semantics as C
+                                            `&&` / `||`. *)
   | Lt | Gt | LtEq | GtEq | EqEq | NotEq
   | Concat                              (* `++` — compile-time string concat;
                                            both operands must reduce to a
@@ -14,6 +17,7 @@ type binop =
 let binop_name = function
   | Add -> "+" | Sub -> "-" | Mul -> "*" | Div -> "/" | Mod -> "%"
   | BitAnd -> "&" | BitOr -> "|" | BitXor -> "^" | Shl -> "<<" | Shr -> ">>"
+  | And -> "&&" | Or -> "||"
   | Lt -> "<" | Gt -> ">" | LtEq -> "<=" | GtEq -> ">="
   | EqEq -> "==" | NotEq -> "!="
   | Concat -> "++"

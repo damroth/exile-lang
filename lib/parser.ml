@@ -540,10 +540,33 @@ and parse_cmp s =
    parenthesised / argument / condition context `|` is unambiguously the
    bitwise operator.  Only the top level of a match arm body suppresses it
    (see parse_arm_body), so a bare `|` there reads as the arm separator. *)
+(* Short-circuiting logical operators `&&` / `||`, looser than comparisons
+   and tighter than `orelse` (Rust-order).  `||` is the loosest of the two
+   so `a && b || c` parses as `(a && b) || c`. *)
+and parse_and s =
+  let rec loop left =
+    match peek s with
+    | Token.AmpAmp ->
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.And, left, parse_cmp s, p))
+    | _ -> left
+  in
+  loop (parse_cmp s)
+
+and parse_or s =
+  let rec loop left =
+    match peek s with
+    | Token.PipePipe ->
+        let p = peek_pos s in
+        ignore (advance s); loop (Ast.BinOp (Ast.Or, left, parse_and s, p))
+    | _ -> left
+  in
+  loop (parse_and s)
+
 and parse_expr s =
   let prev = s.allow_bitor in
   s.allow_bitor <- true;
-  let left = parse_cmp s in
+  let left = parse_or s in
   let r =
     if peek s = Token.Orelse then begin
       let p = peek_pos s in
@@ -562,7 +585,7 @@ and parse_arm_body s =
   let prev = s.allow_bitor in
   s.allow_bitor <- false;
   let rec go () =
-    let left = parse_cmp s in
+    let left = parse_or s in
     if peek s = Token.Orelse then begin
       let p = peek_pos s in
       ignore (advance s);

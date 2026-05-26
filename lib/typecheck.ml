@@ -1341,6 +1341,12 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 "equality '%s' between incompatible types %s and %s"
                 name (typ_name l'.ty) (typ_name r'.ty);
             TBool
+        | Ast.And | Ast.Or ->
+            if not (typ_eq l'.ty TBool) || not (typ_eq r'.ty TBool) then
+              Error.failf pos
+                "logical '%s' requires bool operands, got %s and %s"
+                name (typ_name l'.ty) (typ_name r'.ty);
+            TBool
         | Ast.Concat ->
             failwith "internal: Concat reached scalar BinOp dispatch; \
                       the outer Concat arm in elab_expr should have \
@@ -3766,6 +3772,16 @@ let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
                 "'%s' compares two integers or two bools" (Ast.binop_name op)
         in
         CBool (if op = Ast.EqEq then eq else not eq)
+    | Ast.And | Ast.Or ->
+        let bools () =
+          match eval scope l, eval scope r with
+          | CBool a, CBool b -> (a, b)
+          | _ ->
+              Error.failf p
+                "logical '%s' requires bool constants" (Ast.binop_name op)
+        in
+        let (a, b) = bools () in
+        CBool (if op = Ast.And then a && b else a || b)
     | Ast.Concat ->
         Error.failf p "'++' is not a constant expression"
   in
