@@ -219,6 +219,8 @@ let rec subst_var_expr ~from ~to_ (e : Ast.expr) : Ast.expr =
       Ast.ArrayRepeat { value = sub value; count = sub count; pos }
   | Ast.Index { base; index; pos } ->
       Ast.Index { base = sub base; index = sub index; pos }
+  | Ast.Range { lo; hi; inclusive; pos } ->
+      Ast.Range { lo = sub lo; hi = sub hi; inclusive; pos }
   | Ast.StructLit { tname; fields; base; pos } ->
       Ast.StructLit { tname;
                       fields = List.map (fun (n, e) -> (n, sub e)) fields;
@@ -279,15 +281,14 @@ and subst_var_stmt ~from ~to_ (s : Ast.stmt) : Ast.stmt =
   | Ast.Tail e -> Ast.Tail (sub e)
   | Ast.While { cond; body } ->
       Ast.While { cond = sub cond; body = sub_block body }
-  | Ast.For { var; lo; hi; inclusive; body; pos } ->
+  | Ast.For { var; range; body; pos } ->
       (* If a nested `for` declares the same name, it shadows and we stop
          substituting inside.  Exile disallows shadowing, but the rewriter
          stays robust. *)
       if var = from then
-        Ast.For { var; lo = sub lo; hi = sub hi; inclusive; body; pos }
+        Ast.For { var; range = sub range; body; pos }
       else
-        Ast.For { var; lo = sub lo; hi = sub hi; inclusive;
-                  body = sub_block body; pos }
+        Ast.For { var; range = sub range; body = sub_block body; pos }
   | Ast.Defer { body; pos } ->
       Ast.Defer { body = sub_block body; pos }
 
@@ -1429,6 +1430,16 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         Error.failf idx_pos
           "array index must be an integer, got %s" (typ_name tindex.ty);
       { e = TIndex { base = tbase; index = tindex }; ty = elem_ty; pos }
+  | Ast.Range { lo; hi; inclusive; pos = rng_pos } ->
+      (* `a..b` / `a..=b` desugars to a literal of the prelude struct
+         `Range<T>` / `RangeInclusive<T>`.  `T` flows bidirectionally from
+         the bounds; an explicit annotation on the enclosing binding still
+         pins it via the StructLit elaboration path. *)
+      let tname = if inclusive then ["RangeInclusive"] else ["Range"] in
+      let lit = Ast.StructLit
+        { tname; fields = [("lo", lo); ("hi", hi)];
+          base = None; pos = rng_pos } in
+      elab_expr ?expected ~allow_void ctx env lit
   | Ast.SizeOf (ann, sz_pos) ->
       (* `size_of(T)` yields a c_uint constant. *)
       let t = resolve_type_ann ~pos:sz_pos ctx ann in
@@ -2647,7 +2658,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let (_, tbody) = walk env body in
         (param_env @ List.rev !decls,
          TWhile { cond = tcond; body = tbody })
-    | Ast.For { var; lo; hi; inclusive; body; pos } ->
+    | Ast.For { var; range; body; pos } ->
         (* Gensym the counter and bound so multiple sequential `for var in
            ...` blocks in one function don't collide on let-hoisting.  The
            user-facing `var` is renamed in the body before elaboration so
@@ -2656,33 +2667,98 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         incr for_gensym;
         let counter = Printf.sprintf "__fv%d" k in
         let end_var = Printf.sprintf "__fe%d" k in
-        let tlo = elab_expr ctx env lo in
-        if not (is_int_like tlo.ty) then
-          Error.failf pos
-            "'for' loop bound must be an integer, got %s" (typ_name tlo.ty);
-        let counter_ty = tlo.ty in
-        let thi = elab_expr ~expected:counter_ty ctx env hi in
-        if not (typ_eq thi.ty counter_ty) then
-          Error.failf pos
-            "'for' bounds disagree: lo is %s, hi is %s"
-            (typ_name counter_ty) (typ_name thi.ty);
+        (* Two ways to spell the bounds: a literal `..` / `..=` (fast path,
+           direct bounds, no struct alloc) or any expression of type
+           `Range<T>` / `RangeInclusive<T>` (pulled off `.lo` / `.hi`
+           through a temp; inclusive flag recovered from the struct name). *)
+        let (counter_ty, inclusive, tlo, thi, range_temp, hi_for_overflow) =
+          match range with
+          | Ast.Range { lo; hi; inclusive; _ } ->
+              let tlo = elab_expr ctx env lo in
+              if not (is_int_like tlo.ty) then
+                Error.failf pos
+                  "'for' loop bound must be an integer, got %s"
+                  (typ_name tlo.ty);
+              let cty = tlo.ty in
+              let thi = elab_expr ~expected:cty ctx env hi in
+              if not (typ_eq thi.ty cty) then
+                Error.failf pos
+                  "'for' bounds disagree: lo is %s, hi is %s"
+                  (typ_name cty) (typ_name thi.ty);
+              (cty, inclusive, tlo, thi, None, Some hi)
+          | _ ->
+              let trange = elab_expr ctx env range in
+              let (cty, incl) =
+                match trange.ty with
+                | TStruct path when Mono.is_instance_of ["Range"] path ->
+                    let s = match resolve_struct_by_path ctx path with
+                      | Some s -> s
+                      | None ->
+                          Error.failf pos
+                            "internal: `Range` instance %s not resolved"
+                            (String.concat "::" path)
+                    in
+                    let lo_ty =
+                      try List.assoc "lo" s.sfields_ty
+                      with Not_found ->
+                        Error.failf pos "internal: Range missing 'lo'"
+                    in
+                    (lo_ty, false)
+                | TStruct path
+                  when Mono.is_instance_of ["RangeInclusive"] path ->
+                    let s = match resolve_struct_by_path ctx path with
+                      | Some s -> s
+                      | None ->
+                          Error.failf pos
+                            "internal: `RangeInclusive` instance %s not \
+                             resolved" (String.concat "::" path)
+                    in
+                    let lo_ty =
+                      try List.assoc "lo" s.sfields_ty
+                      with Not_found ->
+                        Error.failf pos "internal: RangeInclusive missing 'lo'"
+                    in
+                    (lo_ty, true)
+                | other ->
+                    Error.failf pos
+                      "`for v in ...` needs a `..` / `..=` range or a \
+                       `Range<T>` / `RangeInclusive<T>` value, got %s"
+                      (typ_name other)
+              in
+              if not (is_int_like cty) then
+                Error.failf pos
+                  "'for' counter must be an integer, got %s" (typ_name cty);
+              let tmp = Printf.sprintf "__fr%d" k in
+              add_decl tmp trange.ty pos;
+              let tmp_var = { e = TVar tmp; ty = trange.ty; pos } in
+              let tlo = { e = TFieldAccess { target = tmp_var; field = "lo" };
+                          ty = cty; pos } in
+              let thi = { e = TFieldAccess { target = tmp_var; field = "hi" };
+                          ty = cty; pos } in
+              (cty, incl, tlo, thi, Some (tmp, trange), None)
+        in
         (* Inclusive range at the type maximum overflows the counter step
            (`i + 1` wraps and the loop never ends).  Catch when hi is a
-           literal at the type maximum — push the check to compile-time. *)
+           literal at the type maximum — push the check to compile-time.
+           Only meaningful for the literal-range fast path; value-range
+           paths can't be statically inspected. *)
         (if inclusive then
-           match expr_int_lit hi, counter_ty with
-           | Some k, TInt { signed; width } ->
-               let bits = int_width_bits width in
-               let maxv =
-                 if signed then (1 lsl (bits - 1)) - 1
-                 else (1 lsl bits) - 1
-               in
-               if k = maxv then
-                 Error.failf pos
-                   "inclusive `for ... ..=%d` reaches the maximum of %s — \
-                    `%s + 1` wraps and the loop never ends; widen the \
-                    counter type" k (typ_name counter_ty) var
-           | _ -> ());
+           match hi_for_overflow with
+           | Some hi_expr ->
+               (match expr_int_lit hi_expr, counter_ty with
+                | Some k, TInt { signed; width } ->
+                    let bits = int_width_bits width in
+                    let maxv =
+                      if signed then (1 lsl (bits - 1)) - 1
+                      else (1 lsl bits) - 1
+                    in
+                    if k = maxv then
+                      Error.failf pos
+                        "inclusive `for ... ..=%d` reaches the maximum of \
+                         %s — `%s + 1` wraps and the loop never ends; \
+                         widen the counter type" k (typ_name counter_ty) var
+                | _ -> ())
+           | None -> ());
         (* Register the gensym names in fn-level decls; mark counter mut. *)
         add_decl counter counter_ty pos;
         add_decl end_var counter_ty pos;
@@ -2692,7 +2768,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let body_env = (counter, counter_ty) :: env in
         let (_, tbody) = walk body_env renamed_body in
         (param_env @ List.rev !decls,
-         TFor { counter; end_var; lo = tlo; hi = thi;
+         TFor { counter; end_var; range_temp; lo = tlo; hi = thi;
                 inclusive; body = tbody; pos })
     | Ast.Defer { body; pos } ->
         let (_, tbody) = walk env body in
@@ -2940,11 +3016,20 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         p @ [ TWhile { cond = c'; body = lift_stmts body } ]
     | TDefer { body; pos } ->
         [ TDefer { body = lift_stmts body; pos } ]
-    | TFor { counter; end_var; lo; hi; inclusive; body; pos } ->
-        (* Expand the transient `TFor` into three statements: pin the end
-           bound to a `let __fe = hi` (evaluated once), initialise the
-           counter with `let mut __fv = lo`, then a while-loop whose body
-           is the user body followed by `__fv = __fv + 1`. *)
+    | TFor { counter; end_var; range_temp; lo; hi; inclusive; body; pos } ->
+        (* Expand the transient `TFor`.  If `range_temp` is Some, prepend a
+           `TLet tmp = <range value>` so the `.lo` / `.hi` field reads in
+           [lo]/[hi] have a binding.  Then pin the end bound to a
+           `let __fe = hi` (evaluated once), initialise the counter with
+           `let mut __fv = lo`, then a while-loop whose body is the user
+           body followed by `__fv = __fv + 1`. *)
+        let temp_let, ptemp =
+          match range_temp with
+          | None -> ([], [])
+          | Some (tmp, trange) ->
+              let (trange', pt) = walk_expr ~allow_top:true trange in
+              ([ TLet { name = tmp; value = trange'; pos } ], pt)
+        in
         let (lo', plo) = walk_expr ~allow_top:true lo in
         let (hi', phi) = walk_expr ~allow_top:true hi in
         let cty = lo'.ty in
@@ -2961,7 +3046,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let let_end = TLet { name = end_var; value = hi'; pos } in
         let let_cnt = TLet { name = counter; value = lo'; pos } in
         let while_ = TWhile { cond; body = body' } in
-        plo @ phi @ [ let_end; let_cnt; while_ ]
+        ptemp @ temp_let @ plo @ phi @ [ let_end; let_cnt; while_ ]
   in
   let lifted = lift_stmts tstmts in
   (List.rev !decls, lifted)
@@ -3503,6 +3588,23 @@ let prelude_items () =
      User code prefers `alloc.alloc::<Foo>()` over raw pointer maths. *)
   let cvoid_ptr = Ast.TyPtr Ast.TyCVoid in
   let cuint = Ast.TyCInt { signed = false } in
+  (* `Range<T>` / `RangeInclusive<T>` — generic prelude structs carrying a
+     pair of bounds.  `a..b` and `a..=b` desugar to a struct literal of the
+     respective type; `for v in r` extracts `.lo` and `.hi` when `r` is a
+     value of such a type (literal `..`/`..=` in for-head still take the
+     fast path). *)
+  let range_struct = {
+    Ast.sname = "Range"; stparams = ["T"];
+    sfields = [("lo", tvar "T"); ("hi", tvar "T")];
+    spos = prelude_pos; sis_pub = true;
+    stier_hint = Some "core"; sis_debug = false;
+  } in
+  let range_inclusive_struct = {
+    Ast.sname = "RangeInclusive"; stparams = ["T"];
+    sfields = [("lo", tvar "T"); ("hi", tvar "T")];
+    spos = prelude_pos; sis_pub = true;
+    stier_hint = Some "core"; sis_debug = false;
+  } in
   let alloc_struct = {
     Ast.sname = "Allocator";
     stparams = [];
@@ -3573,6 +3675,7 @@ let prelude_items () =
     ipos = pos;
   } in
   [ Ast.Enum option_decl; Ast.Enum result_decl;
+    Ast.Struct range_struct; Ast.Struct range_inclusive_struct;
     Ast.Struct alloc_struct; Ast.Impl alloc_impl ]
 
 (* Skip prelude items whose names collide with a user-declared top-level

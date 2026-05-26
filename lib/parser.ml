@@ -563,10 +563,29 @@ and parse_or s =
   in
   loop (parse_and s)
 
+(* Range as a value: `a..b` / `a..=b`.  Non-associative (no `a..b..c`),
+   Rust-order — looser than `||` / `&&` / arithmetic, tighter than
+   `orelse`.  So `0..n+1` parses as `0..(n+1)` and `0..len(a)` as
+   `0..(len(a))`. *)
+and parse_range s =
+  let left = parse_or s in
+  match peek s with
+  | Token.DotDot ->
+      let p = peek_pos s in
+      ignore (advance s);
+      let right = parse_or s in
+      Ast.Range { lo = left; hi = right; inclusive = false; pos = p }
+  | Token.DotDotEq ->
+      let p = peek_pos s in
+      ignore (advance s);
+      let right = parse_or s in
+      Ast.Range { lo = left; hi = right; inclusive = true; pos = p }
+  | _ -> left
+
 and parse_expr s =
   let prev = s.allow_bitor in
   s.allow_bitor <- true;
-  let left = parse_or s in
+  let left = parse_range s in
   let r =
     if peek s = Token.Orelse then begin
       let p = peek_pos s in
@@ -585,7 +604,7 @@ and parse_arm_body s =
   let prev = s.allow_bitor in
   s.allow_bitor <- false;
   let rec go () =
-    let left = parse_or s in
+    let left = parse_range s in
     if peek s = Token.Orelse then begin
       let p = peek_pos s in
       ignore (advance s);
@@ -793,28 +812,21 @@ and parse_stmt s =
       let body = parse_block s in
       Ast.While { cond; body }
   | Token.For ->
-      (* `for v in lo..hi { body }` (exclusive) or `..=hi` (inclusive).
-         The bounds are parsed with allow_struct_lit=false so the body's
-         opening `{` isn't mistaken for a struct literal. *)
+      (* `for v in <range> { body }`.  `<range>` is parsed as a full
+         expression with struct-lits disabled so the body's opening `{`
+         isn't mistaken for a literal.  A literal `a..b` / `a..=b` is
+         folded by `parse_range` into an `Ast.Range`; any other Range-typed
+         value works at typecheck time via field extraction. *)
       let pos = peek_pos s in
       ignore (advance s);
       let (var, _) = expect_ident s ~what:"loop variable after 'for'" in
       expect s Token.In;
       let prev = s.allow_struct_lit in
       s.allow_struct_lit <- false;
-      let lo = parse_expr s in
-      let inclusive =
-        match peek s with
-        | Token.DotDot -> ignore (advance s); false
-        | Token.DotDotEq -> ignore (advance s); true
-        | t ->
-            Error.failf (peek_pos s)
-              "expected '..' or '..=' in 'for' loop, got %s" (Token.pp t)
-      in
-      let hi = parse_expr s in
+      let range = parse_expr s in
       s.allow_struct_lit <- prev;
       let body = parse_block s in
-      Ast.For { var; lo; hi; inclusive; body; pos }
+      Ast.For { var; range; body; pos }
   | Token.Match ->
       (* `match` is parsed as an expression but its statement form
          needs no trailing `;` — block-shaped, like `if`/`while`.

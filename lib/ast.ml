@@ -134,6 +134,15 @@ and expr =
   | Index of { base : expr; index : expr; pos : Pos.t }
                                         (* `a[i]` — element access (lvalue or
                                            rvalue).  No bounds check. *)
+  | Range of { lo : expr; hi : expr; inclusive : bool; pos : Pos.t }
+                                        (* `a..b` (exclusive) / `a..=b`
+                                           (inclusive) as an expression
+                                           value.  Desugars to a literal of
+                                           the prelude struct `Range<T>` or
+                                           `RangeInclusive<T>` during elab;
+                                           a `for v in <Range literal>` head
+                                           still takes the direct fast path
+                                           in walk_stmt (no struct alloc). *)
   | If of { cond : expr; then_blk : stmt list;
             else_blk : stmt list option; pos : Pos.t }
                                         (* `if c { ... } else { ... }`.  One
@@ -200,15 +209,17 @@ and stmt =
                                            value; in void position it is a
                                            discarded / void statement. *)
   | While of { cond : expr; body : stmt list }
-  | For of { var : string; lo : expr; hi : expr;
-             inclusive : bool; body : stmt list; pos : Pos.t }
-                                          (* `for v in lo..hi { body }` or
-                                             `for v in lo..=hi { body }`.
-                                             Lowered to a while-loop in
-                                             typecheck; `v` is immutable
-                                             from the user's perspective
-                                             (codegen advances a gensym
-                                             counter). *)
+  | For of { var : string; range : expr;
+             body : stmt list; pos : Pos.t }
+                                          (* `for v in <range> { body }`.
+                                             `range` is either an `Ast.Range`
+                                             literal (fast path: direct
+                                             counter loop, no struct alloc)
+                                             or any expression of type
+                                             `Range<T>` / `RangeInclusive<T>`
+                                             (a binding, fn return, ...) —
+                                             typecheck pulls `.lo` / `.hi` /
+                                             inclusiveness off the value. *)
   | Defer of { body : stmt list; pos : Pos.t }
 
 let expr_pos = function
@@ -221,7 +232,7 @@ let expr_pos = function
   | StructLit { pos; _ } | New { pos; _ }
   | MethodCall { pos; _ } | EnumLit { pos; _ } | Match { pos; _ }
   | If { pos; _ } | ArrayRepeat { pos; _ } | Index { pos; _ }
-  | ArrayLit (_, pos) -> pos
+  | Range { pos; _ } | ArrayLit (_, pos) -> pos
 
 type param = {
   pname : string;

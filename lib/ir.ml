@@ -674,16 +674,24 @@ type tstmt =
   | TIf of { cond : texpr; then_body : tstmt list; else_body : tstmt list }
   | TWhile of { cond : texpr; body : tstmt list }
   | TFor of { counter : string; end_var : string;
+              range_temp : (string * texpr) option;
               lo : texpr; hi : texpr; inclusive : bool;
               body : tstmt list; pos : Pos.t }
                                           (* Transient node: walk_stmt
                                              produces it after elaborating
                                              a `for` loop's bounds and
                                              body; the lift pass expands
-                                             it into `[TLet end; TLet
-                                             mut counter; TWhile {body +
-                                             counter increment}]`.
-                                             Codegen never sees TFor. *)
+                                             it into `[range_temp let?;
+                                             TLet end; TLet mut counter;
+                                             TWhile {body + counter
+                                             increment}]`.  range_temp is
+                                             Some (name, value) for the
+                                             `for v in <Range value>`
+                                             path — lift prepends a TLet
+                                             binding `value` to `name` so
+                                             `.lo`/`.hi` references in
+                                             [lo]/[hi] resolve.  Codegen
+                                             never sees TFor. *)
   | TDefer of { body : tstmt list; pos : Pos.t }
 
 (* Structural traversal primitives for the typed AST.  Every consumer

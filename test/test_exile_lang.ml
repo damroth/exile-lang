@@ -350,6 +350,19 @@ let () =
     "fn main() {\n    for i in 0 as u8 ..= 255 as u8 { println(i); }\n}\n"
     "inclusive `for ... ..=255` reaches the maximum of u8 — `i + 1` wraps and the loop never ends; widen the counter type";
 
+  (* Range as a value: `a..b` / `a..=b` desugar to the prelude struct
+     `Range<T>` / `RangeInclusive<T>`, so a range can be bound, passed and
+     returned.  `for v in <Range value>` pulls `.lo` / `.hi` off the value
+     through a temp; a literal `..`/`..=` in for-head still takes the
+     direct fast path (no struct alloc). *)
+  check "`for v in <Range value>` pulls bounds off a struct field"
+    "fn main() {\n    let r = 0..3;\n    let mut s = 0;\n    for i in r { s = s + i; }\n    println(s);\n}\n"
+    "#include <stdio.h>\n\nstruct ex_Range_i32 { long lo; long hi; };\n\nint main(void) {\n    struct ex_Range_i32 r;\n    long s;\n    struct ex_Range_i32 __fr0;\n    long __fv0;\n    long __fe0;\n    r.lo = 0;\n    r.hi = 3;\n    s = 0;\n    __fr0 = r;\n    __fe0 = __fr0.hi;\n    __fv0 = __fr0.lo;\n    while (__fv0 < __fe0) {\n        s = s + __fv0;\n        __fv0 = __fv0 + 1;\n    }\n    printf(\"%ld\\n\", (long)(s));\n    return 0;\n}\n";
+
+  check_error "`for v in <non-Range value>` rejected"
+    "fn main() {\n    let n = 5;\n    for i in n { println(i); }\n}\n"
+    "`for v in ...` needs a `..` / `..=` range or a `Range<T>` / `RangeInclusive<T>` value, got i32";
+
   (* Short-circuit logical `&&` / `||` — both `bool`-only, `&&` tighter than
      `||`, both looser than comparisons (Rust-order matches C, so no extra
      parens are needed in the emitted C). *)
