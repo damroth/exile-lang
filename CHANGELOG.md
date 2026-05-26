@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-26
+
+A substantial post-MVP release that pivots exile-lang toward an
+immutable-by-default, expression-oriented core, and fills in the
+C-style essentials needed for everyday work: fixed-size arrays,
+ranges and `for` loops, compile-time constants, bitwise operators,
+and short-circuit logical `&&` / `||`. Closes the post-MVP pack.
+
+### Added
+- Immutable-by-default bindings: `let` is read-only; `let mut` is the
+  explicit opt-in (function parameters too)
+- Expression-based function bodies — trailing expression is the return
+  value; `if` is usable as an expression
+- Compile-time `const NAME: T = expr;` folded to a C `#define`
+- `size_of(T)` folds to a C `sizeof(...)` expression
+- Fixed-size arrays `[T; N]` with array literals, indexing, and `len`
+- `for v in lo..hi { ... }` loop with exclusive `..` and inclusive `..=`
+  range syntax
+- `Range<T>` and `RangeInclusive<T>` as first-class values; `for v in r`
+  iterates a range bound to a variable
+- Bitwise operators: `&`, `|`, `^`, `~`, `<<`, `>>`
+- Short-circuit logical `&&` and `||` (bool-only, with proper
+  short-circuit semantics)
+- New examples: `arrays.exl`, `bitwise.exl`, `constants.exl`,
+  `expressions.exl`, `for_loop.exl`
+
+### Changed
+- Enum and match arm syntax: `|` is now a separator only — the leading
+  `|` before the first variant/arm is dropped (frees `|` for bitwise OR)
+- Aggregate typedefs (struct/enum/tuple/array) are emitted in
+  topological order, so dependent types appear after their dependencies
+- Several existing examples updated to match the new syntax:
+  `enums.exl`, `functions.exl`, `generics.exl`, `must_use.exl`,
+  `structs.exl`, `tier.exl`, `debug_attr.exl`, `while_loop.exl`
+
+### Fixed
+- Typecheck propagates the expected `int` type through arithmetic
+  sub-expressions, fixing cases where an integer literal in a nested
+  binary op wasn't getting the surrounding context's type
+
 ## [0.5.0] - 2026-05-22
 
 This release deepens generics and pattern matching: methods on generic
@@ -226,4 +266,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.5.0]: https://github.com/damroth/exile-lang/releases/tag/v0.5.0
+[0.6.0]: https://github.com/damroth/exile-lang/releases/tag/v0.6.0
