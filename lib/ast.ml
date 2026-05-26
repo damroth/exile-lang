@@ -196,6 +196,15 @@ and stmt =
                                            value; in void position it is a
                                            discarded / void statement. *)
   | While of { cond : expr; body : stmt list }
+  | For of { var : string; lo : expr; hi : expr;
+             inclusive : bool; body : stmt list; pos : Pos.t }
+                                          (* `for v in lo..hi { body }` or
+                                             `for v in lo..=hi { body }`.
+                                             Lowered to a while-loop in
+                                             typecheck; `v` is immutable
+                                             from the user's perspective
+                                             (codegen advances a gensym
+                                             counter). *)
   | Defer of { body : stmt list; pos : Pos.t }
 
 let expr_pos = function

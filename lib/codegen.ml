@@ -55,7 +55,7 @@ let tstmt_pos = function
   | TAssign { pos; _ } | TAssignField { pos; _ }
   | TAssignIndex { pos; _ }
   | TAssignDeref { pos; _ } | TDefer { pos; _ }
-  | TReturn { pos; _ } -> pos
+  | TReturn { pos; _ } | TFor { pos; _ } -> pos
   | TExprStmt te -> te.pos
   | TIf { cond; _ } | TWhile { cond; _ } -> cond.pos
 
@@ -613,6 +613,10 @@ and emit_simple_stmt ctx buf indent stmt =
       Error.failf pos "'defer' inside a defer body is not supported"
   | TReturn { pos; _ } ->
       Error.failf pos "'return' inside a defer body is not supported"
+  | TFor _ ->
+      (* The lift pass always expands TFor into TLet+TLet+TWhile; reaching
+         codegen means lifting was skipped (compiler bug, not user error). *)
+      assert false
 
 (* Lower a TMatch.  Hoists the scrutinee into a fresh `__m` temp in a
    new C block and dispatches on its tag.  Each variant arm becomes a
@@ -944,6 +948,9 @@ and gen_block ctx buf indent outer_scopes stmts =
         Buffer.add_string buf indent;
         Buffer.add_string buf "}\n";
         loop my_defers rest
+    | TFor _ :: _ ->
+        (* Lift always expands TFor into TLet+TLet+TWhile before codegen. *)
+        assert false
   in
   loop [] stmts;
   ctx.defer_chain <- saved_chain
@@ -1201,6 +1208,9 @@ let emit_section buf items ~emit =
   end
 
 let gen_program ?(annotate = false) (tp : tprogram) =
+  (* Reset per-program so `__afK` loop-counter names start at 0 each
+     compile — keeps golden output deterministic across test runs. *)
+  fill_counter := 0;
   let ctx = new_gen_ctx ~annotate
     ~enum_index:tp.tp_enum_index
     ~struct_index:tp.tp_struct_index in

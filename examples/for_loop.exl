@@ -1,0 +1,35 @@
+// `for v in lo..hi { body }` (exclusive) and `for v in lo..=hi { body }`
+// (inclusive) — desugar to a counter+end while-loop.  The end bound is
+// evaluated once.  Empty / reversed ranges (`5..3`) run zero times.
+// Pairs naturally with `len(a)` over arrays.
+
+fn main() {
+    // Exclusive range: 0 + 1 + 2 + 3 + 4 = 10.
+    let mut s = 0;
+    for i in 0..5 {
+        s = s + i;
+    }
+    println(s);                       // 10
+
+    // Inclusive range: 1 + 2 + 3 + 4 + 5 = 15.
+    let mut t = 0;
+    for i in 1..=5 {
+        t = t + i;
+    }
+    println(t);                       // 15
+
+    // Loop over an array using its compile-time length.
+    let xs: [int; 4] = [10, 20, 30, 40];
+    let mut total = 0;
+    for i in 0..len(xs) {
+        total = total + xs[i];
+    }
+    println(total);                   // 100
+
+    // Reversed range produces zero iterations naturally — no special case.
+    let mut empty_count = 0;
+    for _i in 5..3 {
+        empty_count = empty_count + 1;
+    }
+    println(empty_count);             // 0
+}

@@ -310,6 +310,26 @@ let () =
      fn main() { let g: G = G { cells: [1, 2, 3] }; println(g.cells[0]); }\n"
     "an array `[T; N]` as a by-value field is not supported yet — keep the array in a standalone binding, or use a pointer field `*[T; N]`";
 
+  (* `for v in lo..hi { body }` (and `..=`) — desugars to a while-loop with
+     gensym counter/end, so multiple sequential `for i in ...` blocks in one
+     function don't collide on let-hoisting.  Bounds are evaluated once
+     (end pinned). *)
+  check "exclusive `for` desugars to a counter+end while-loop"
+    "fn main() {\n    let mut s = 0;\n    for i in 0..3 { s = s + i; }\n    println(s);\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    long s;\n    long __fv0;\n    long __fe0;\n    s = 0;\n    __fe0 = 3;\n    __fv0 = 0;\n    while (__fv0 < __fe0) {\n        s = s + __fv0;\n        __fv0 = __fv0 + 1;\n    }\n    printf(\"%ld\\n\", (long)(s));\n    return 0;\n}\n";
+
+  check "inclusive `for ..=` emits `<=` in the while condition"
+    "fn main() {\n    let mut s = 0;\n    for i in 0..=4 { s = s + i; }\n    println(s);\n}\n"
+    "#include <stdio.h>\n\nint main(void) {\n    long s;\n    long __fv0;\n    long __fe0;\n    s = 0;\n    __fe0 = 4;\n    __fv0 = 0;\n    while (__fv0 <= __fe0) {\n        s = s + __fv0;\n        __fv0 = __fv0 + 1;\n    }\n    printf(\"%ld\\n\", (long)(s));\n    return 0;\n}\n";
+
+  check_error "`for` bound must be an integer"
+    "fn main() {\n    for i in \"a\"..\"b\" { println(1); }\n}\n"
+    "'for' loop bound must be an integer, got str";
+
+  check_error "`for ... ..=MAX` on bounded type rejected at compile time"
+    "fn main() {\n    for i in 0 as u8 ..= 255 as u8 { println(i); }\n}\n"
+    "inclusive `for ... ..=255` reaches the maximum of u8 — `i + 1` wraps and the loop never ends; widen the counter type";
+
   check "unary minus on literal var and call"
     "fn id(x: int) -> int {\n    return x;\n}\nfn main() {\n    let a = -5;\n    let b = -a;\n    println(b);\n    println(-id(7));\n}\n"
     "#include <stdio.h>\n\nstatic long ex_id(long x);\n\nstatic long ex_id(long x) {\n    return x;\n}\n\nint main(void) {\n    long a;\n    long b;\n    a = -5;\n    b = -a;\n    printf(\"%ld\\n\", (long)(b));\n    printf(\"%ld\\n\", (long)(-(ex_id(7))));\n    return 0;\n}\n";

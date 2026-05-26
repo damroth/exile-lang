@@ -191,6 +191,106 @@ let lookup_fn ctx path =
         if p = mod_path && n = name then Some (mod_path, s) else None)
       ctx.global)
 
+(* Monotonic counter for `for`-loop gensym names — bumped per loop so two
+   sequential `for i in ...` blocks don't collide on let-hoisting. *)
+let for_gensym = ref 0
+
+(* Substitute free `Ast.Var (from, _)` references with `Ast.Var (to_, _)`
+   throughout an expression / statement / block.  Used by the `for` desugar
+   to give each loop's user-facing variable a unique gensym name in the
+   emitted C, so multiple sequential `for i in ...` blocks in the same
+   function don't collide on let-hoisting.  Exile disallows shadowing, so
+   no scope tracking is needed — `from` cannot be re-bound inside the body. *)
+let rec subst_var_expr ~from ~to_ (e : Ast.expr) : Ast.expr =
+  let sub = subst_var_expr ~from ~to_ in
+  let subo = function None -> None | Some e -> Some (sub e) in
+  match e with
+  | Ast.Var (n, p) when n = from -> Ast.Var (to_, p)
+  | Ast.IntLit _ | Ast.BoolLit _ | Ast.StringLit _ | Ast.NullLit _
+  | Ast.Var _ | Ast.SizeOf _ -> e
+  | Ast.Neg (sub_e, p) -> Ast.Neg (sub sub_e, p)
+  | Ast.BitNot (sub_e, p) -> Ast.BitNot (sub sub_e, p)
+  | Ast.BinOp (op, l, r, p) -> Ast.BinOp (op, sub l, sub r, p)
+  | Ast.Call (path, args, p) -> Ast.Call (path, List.map sub args, p)
+  | Ast.Cast (e', t, p) -> Ast.Cast (sub e', t, p)
+  | Ast.TupleLit (es, p) -> Ast.TupleLit (List.map sub es, p)
+  | Ast.ArrayLit (es, p) -> Ast.ArrayLit (List.map sub es, p)
+  | Ast.ArrayRepeat { value; count; pos } ->
+      Ast.ArrayRepeat { value = sub value; count = sub count; pos }
+  | Ast.Index { base; index; pos } ->
+      Ast.Index { base = sub base; index = sub index; pos }
+  | Ast.StructLit { tname; fields; base; pos } ->
+      Ast.StructLit { tname;
+                      fields = List.map (fun (n, e) -> (n, sub e)) fields;
+                      base = subo base; pos }
+  | Ast.FieldAccess (e', n, p) -> Ast.FieldAccess (sub e', n, p)
+  | Ast.Ref (e', p) -> Ast.Ref (sub e', p)
+  | Ast.Deref (e', p) -> Ast.Deref (sub e', p)
+  | Ast.New { tname; fields; base; pos } ->
+      Ast.New { tname;
+                fields = List.map (fun (n, e) -> (n, sub e)) fields;
+                base = subo base; pos }
+  | Ast.MethodCall { receiver; name; args; pos } ->
+      Ast.MethodCall { receiver = sub receiver; name;
+                       args = List.map sub args; pos }
+  | Ast.EnumLit { tname; variant; args; pos } ->
+      let args = match args with
+        | Ast.EATuple es -> Ast.EATuple (List.map sub es)
+        | Ast.EAStruct fs -> Ast.EAStruct (List.map (fun (n, e) -> (n, sub e)) fs)
+      in
+      Ast.EnumLit { tname; variant; args; pos }
+  | Ast.Match { scrutinee; arms; pos } ->
+      let arms = List.map (fun (a : Ast.match_arm) ->
+        { a with body = sub a.body }) arms in
+      Ast.Match { scrutinee = sub scrutinee; arms; pos }
+  | Ast.Orelse (a, b, p) -> Ast.Orelse (sub a, sub b, p)
+  | Ast.Try (e', p) -> Ast.Try (sub e', p)
+  | Ast.If { cond; then_blk; else_blk; pos } ->
+      Ast.If { cond = sub cond;
+               then_blk = List.map (subst_var_stmt ~from ~to_) then_blk;
+               else_blk =
+                 (match else_blk with
+                  | None -> None
+                  | Some b -> Some (List.map (subst_var_stmt ~from ~to_) b));
+               pos }
+
+and subst_var_stmt ~from ~to_ (s : Ast.stmt) : Ast.stmt =
+  let sub = subst_var_expr ~from ~to_ in
+  let sub_block = List.map (subst_var_stmt ~from ~to_) in
+  match s with
+  | Ast.Let { name; value; ty_ann; is_mut; pos } ->
+      Ast.Let { name; value = sub value; ty_ann; is_mut; pos }
+  | Ast.LetTuple { names; value; is_mut; pos } ->
+      Ast.LetTuple { names; value = sub value; is_mut; pos }
+  | Ast.Assign { path; value; pos } ->
+      (* A bare `i = ...` reassign should rename to `gensym = ...` too,
+         since the body's `i` is the gensym in the emitted code.  Single-
+         segment paths matching `from` are remapped; qualified paths stay. *)
+      let path = match path with [n] when n = from -> [to_] | p -> p in
+      Ast.Assign { path; value = sub value; pos }
+  | Ast.AssignField { target; field; value; pos } ->
+      Ast.AssignField { target = sub target; field; value = sub value; pos }
+  | Ast.AssignIndex { base; index; value; pos } ->
+      Ast.AssignIndex { base = sub base; index = sub index; value = sub value; pos }
+  | Ast.AssignDeref { target; value; pos } ->
+      Ast.AssignDeref { target = sub target; value = sub value; pos }
+  | Ast.Return (eo, p) -> Ast.Return ((match eo with None -> None | Some e -> Some (sub e)), p)
+  | Ast.ExprStmt e -> Ast.ExprStmt (sub e)
+  | Ast.Tail e -> Ast.Tail (sub e)
+  | Ast.While { cond; body } ->
+      Ast.While { cond = sub cond; body = sub_block body }
+  | Ast.For { var; lo; hi; inclusive; body; pos } ->
+      (* If a nested `for` declares the same name, it shadows and we stop
+         substituting inside.  Exile disallows shadowing, but the rewriter
+         stays robust. *)
+      if var = from then
+        Ast.For { var; lo = sub lo; hi = sub hi; inclusive; body; pos }
+      else
+        Ast.For { var; lo = sub lo; hi = sub hi; inclusive;
+                  body = sub_block body; pos }
+  | Ast.Defer { body; pos } ->
+      Ast.Defer { body = sub_block body; pos }
+
 let lookup_const ctx path =
   walk_scope_up ctx path ~resolve:(fun mod_path name ->
     List.find_map
@@ -492,9 +592,15 @@ let rec expand_inst_pair ctx (decl, act) =
 
 (* Recognise an integer literal expression — bare or negated — for type-fitting
    checks at let-binding sites. *)
-let expr_int_lit = function
+let rec expr_int_lit = function
   | Ast.IntLit (n, _) -> Some n
-  | Ast.Neg (Ast.IntLit (n, _), _) -> Some (-n)
+  | Ast.Neg (e, _) ->
+      (match expr_int_lit e with Some n -> Some (-n) | None -> None)
+  | Ast.Cast (e, _, _) ->
+      (* Transparent through `as`: `255 as u8` is a literal whose value
+         survives the cast unchanged when it already fits the target.
+         Used by the `for ... ..=MAX` overflow detector. *)
+      expr_int_lit e
   | _ -> None
 
 (* True when [expr] is an integer literal that fits into [target] (a TInt).
@@ -2541,6 +2647,53 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let (_, tbody) = walk env body in
         (param_env @ List.rev !decls,
          TWhile { cond = tcond; body = tbody })
+    | Ast.For { var; lo; hi; inclusive; body; pos } ->
+        (* Gensym the counter and bound so multiple sequential `for var in
+           ...` blocks in one function don't collide on let-hoisting.  The
+           user-facing `var` is renamed in the body before elaboration so
+           references resolve to the counter. *)
+        let k = !for_gensym in
+        incr for_gensym;
+        let counter = Printf.sprintf "__fv%d" k in
+        let end_var = Printf.sprintf "__fe%d" k in
+        let tlo = elab_expr ctx env lo in
+        if not (is_int_like tlo.ty) then
+          Error.failf pos
+            "'for' loop bound must be an integer, got %s" (typ_name tlo.ty);
+        let counter_ty = tlo.ty in
+        let thi = elab_expr ~expected:counter_ty ctx env hi in
+        if not (typ_eq thi.ty counter_ty) then
+          Error.failf pos
+            "'for' bounds disagree: lo is %s, hi is %s"
+            (typ_name counter_ty) (typ_name thi.ty);
+        (* Inclusive range at the type maximum overflows the counter step
+           (`i + 1` wraps and the loop never ends).  Catch when hi is a
+           literal at the type maximum — push the check to compile-time. *)
+        (if inclusive then
+           match expr_int_lit hi, counter_ty with
+           | Some k, TInt { signed; width } ->
+               let bits = int_width_bits width in
+               let maxv =
+                 if signed then (1 lsl (bits - 1)) - 1
+                 else (1 lsl bits) - 1
+               in
+               if k = maxv then
+                 Error.failf pos
+                   "inclusive `for ... ..=%d` reaches the maximum of %s — \
+                    `%s + 1` wraps and the loop never ends; widen the \
+                    counter type" k (typ_name counter_ty) var
+           | _ -> ());
+        (* Register the gensym names in fn-level decls; mark counter mut. *)
+        add_decl counter counter_ty pos;
+        add_decl end_var counter_ty pos;
+        Hashtbl.replace mut_names counter ();
+        (* Walk the body with the renamed counter binding. *)
+        let renamed_body = List.map (subst_var_stmt ~from:var ~to_:counter) body in
+        let body_env = (counter, counter_ty) :: env in
+        let (_, tbody) = walk body_env renamed_body in
+        (param_env @ List.rev !decls,
+         TFor { counter; end_var; lo = tlo; hi = thi;
+                inclusive; body = tbody; pos })
     | Ast.Defer { body; pos } ->
         let (_, tbody) = walk env body in
         (env, TDefer { body = tbody; pos })
@@ -2787,6 +2940,28 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         p @ [ TWhile { cond = c'; body = lift_stmts body } ]
     | TDefer { body; pos } ->
         [ TDefer { body = lift_stmts body; pos } ]
+    | TFor { counter; end_var; lo; hi; inclusive; body; pos } ->
+        (* Expand the transient `TFor` into three statements: pin the end
+           bound to a `let __fe = hi` (evaluated once), initialise the
+           counter with `let mut __fv = lo`, then a while-loop whose body
+           is the user body followed by `__fv = __fv + 1`. *)
+        let (lo', plo) = walk_expr ~allow_top:true lo in
+        let (hi', phi) = walk_expr ~allow_top:true hi in
+        let cty = lo'.ty in
+        let cvar = { e = TVar counter; ty = cty; pos } in
+        let evar = { e = TVar end_var; ty = cty; pos } in
+        let one = { e = TIntLit 1; ty = cty; pos } in
+        let cond_op = if inclusive then Ast.LtEq else Ast.Lt in
+        let cond = { e = TBinOp (cond_op, cvar, evar); ty = TBool; pos } in
+        let step_rhs =
+          { e = TBinOp (Ast.Add, cvar, one); ty = cty; pos } in
+        let step =
+          TAssign { path = [counter]; value = step_rhs; pos } in
+        let body' = lift_stmts body @ [ step ] in
+        let let_end = TLet { name = end_var; value = hi'; pos } in
+        let let_cnt = TLet { name = counter; value = lo'; pos } in
+        let while_ = TWhile { cond; body = body' } in
+        plo @ phi @ [ let_end; let_cnt; while_ ]
   in
   let lifted = lift_stmts tstmts in
   (List.rev !decls, lifted)
@@ -3451,7 +3626,7 @@ and stmt_returns = function
   | TIf { then_body; else_body; _ } ->
       always_returns then_body && always_returns else_body
   | TLet _ | TLetTuple _ | TAssign _ | TAssignField _ | TAssignIndex _
-  | TAssignDeref _ | TWhile _ | TDefer _ | TExprStmt _ -> false
+  | TAssignDeref _ | TWhile _ | TFor _ | TDefer _ | TExprStmt _ -> false
 
 (* Compile-time evaluation of `const NAME: T = expr;` declarations.
    Folds int/bool scalar expressions — literals, references to other
@@ -3621,6 +3796,10 @@ let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
   (consts_index, tp_consts)
 
 let check_program program : tprogram =
+  (* Per-program counter reset so gensym names (`__fv0`, `__fe0`, ...) start
+     from 0 in each compilation — keeps golden output deterministic across
+     test runs. *)
+  for_gensym := 0;
   let mono_state = Mono.new_state () in
   let program = prepend_prelude program in
   let flat = flatten_items program in

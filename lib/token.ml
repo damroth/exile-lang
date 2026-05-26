@@ -6,6 +6,8 @@ type t =
   | If
   | Else
   | While
+  | For
+  | In
   | Mod
   | Pub
   | Use
@@ -19,6 +21,7 @@ type t =
   | Pipe
   | Dot
   | DotDot
+  | DotDotEq
   | Amp
   | New
   | Null
@@ -70,12 +73,13 @@ type t =
 let pp = function
   | Fn -> "'fn'" | Let -> "'let'" | Mut -> "'mut'" | Return -> "'return'"
   | If -> "'if'" | Else -> "'else'" | While -> "'while'"
+  | For -> "'for'" | In -> "'in'"
   | Mod -> "'mod'" | Pub -> "'pub'" | Use -> "'use'" | As -> "'as'"
   | Defer -> "'defer'"
   | Struct -> "'struct'" | Impl -> "'impl'"
   | Enum -> "'enum'" | Match -> "'match'" | FatArrow -> "'=>'"
   | Pipe -> "'|'"
-  | Dot -> "'.'" | DotDot -> "'..'"
+  | Dot -> "'.'" | DotDot -> "'..'" | DotDotEq -> "'..='"
   | Amp -> "'&'" | New -> "'new'" | Null -> "'null'"
   | LParen -> "'('" | RParen -> "')'"
   | LBrace -> "'{'" | RBrace -> "'}'"

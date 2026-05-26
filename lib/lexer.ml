@@ -10,6 +10,8 @@ let keyword_or_ident = function
   | "if" -> Token.If
   | "else" -> Token.Else
   | "while" -> Token.While
+  | "for" -> Token.For
+  | "in" -> Token.In
   | "mod" -> Token.Mod
   | "pub" -> Token.Pub
   | "use" -> Token.Use
@@ -56,6 +58,8 @@ let tokenize ~file src =
       | ',' -> loop (i + 1) ((Token.Comma, p) :: acc)
       | '.' when i + 2 < len && src.[i + 1] = '.' && src.[i + 2] = '.' ->
           adv '.'; adv '.'; loop (i + 3) ((Token.Ellipsis, p) :: acc)
+      | '.' when i + 2 < len && src.[i + 1] = '.' && src.[i + 2] = '=' ->
+          adv '.'; adv '='; loop (i + 3) ((Token.DotDotEq, p) :: acc)
       | '.' when i + 1 < len && src.[i + 1] = '.' ->
           adv '.'; loop (i + 2) ((Token.DotDot, p) :: acc)
       | '.' -> loop (i + 1) ((Token.Dot, p) :: acc)

@@ -769,6 +769,29 @@ and parse_stmt s =
       s.allow_struct_lit <- prev;
       let body = parse_block s in
       Ast.While { cond; body }
+  | Token.For ->
+      (* `for v in lo..hi { body }` (exclusive) or `..=hi` (inclusive).
+         The bounds are parsed with allow_struct_lit=false so the body's
+         opening `{` isn't mistaken for a struct literal. *)
+      let pos = peek_pos s in
+      ignore (advance s);
+      let (var, _) = expect_ident s ~what:"loop variable after 'for'" in
+      expect s Token.In;
+      let prev = s.allow_struct_lit in
+      s.allow_struct_lit <- false;
+      let lo = parse_expr s in
+      let inclusive =
+        match peek s with
+        | Token.DotDot -> ignore (advance s); false
+        | Token.DotDotEq -> ignore (advance s); true
+        | t ->
+            Error.failf (peek_pos s)
+              "expected '..' or '..=' in 'for' loop, got %s" (Token.pp t)
+      in
+      let hi = parse_expr s in
+      s.allow_struct_lit <- prev;
+      let body = parse_block s in
+      Ast.For { var; lo; hi; inclusive; body; pos }
   | Token.Match ->
       (* `match` is parsed as an expression but its statement form
          needs no trailing `;` — block-shaped, like `if`/`while`.

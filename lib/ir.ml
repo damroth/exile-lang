@@ -594,6 +594,17 @@ type tstmt =
   | TExprStmt of texpr
   | TIf of { cond : texpr; then_body : tstmt list; else_body : tstmt list }
   | TWhile of { cond : texpr; body : tstmt list }
+  | TFor of { counter : string; end_var : string;
+              lo : texpr; hi : texpr; inclusive : bool;
+              body : tstmt list; pos : Pos.t }
+                                          (* Transient node: walk_stmt
+                                             produces it after elaborating
+                                             a `for` loop's bounds and
+                                             body; the lift pass expands
+                                             it into `[TLet end; TLet
+                                             mut counter; TWhile {body +
+                                             counter increment}]`.
+                                             Codegen never sees TFor. *)
   | TDefer of { body : tstmt list; pos : Pos.t }
 
 (* Structural traversal primitives for the typed AST.  Every consumer
@@ -637,7 +648,7 @@ let rec fold_texpr f acc e =
 (* Immediate sub-statements: bodies of TIf/TWhile/TDefer. *)
 let tstmt_substmts = function
   | TIf { then_body; else_body; _ } -> then_body @ else_body
-  | TWhile { body; _ } | TDefer { body; _ } -> body
+  | TWhile { body; _ } | TDefer { body; _ } | TFor { body; _ } -> body
   | TLet _ | TLetTuple _ | TAssign _ | TAssignField _ | TAssignIndex _
   | TAssignDeref _ | TReturn _ | TExprStmt _ -> []
 
@@ -652,6 +663,7 @@ let tstmt_own_exprs = function
   | TAssignDeref { target; value; _ } -> [target; value]
   | TAssignIndex { base; index; value; _ } -> [base; index; value]
   | TIf { cond; _ } | TWhile { cond; _ } -> [cond]
+  | TFor { lo; hi; _ } -> [lo; hi]
   | TDefer _ -> []
 
 let rec iter_tstmt f s =
