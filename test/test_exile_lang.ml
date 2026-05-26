@@ -305,10 +305,14 @@ let () =
     "fn main() {\n    let a: [int; 2] = [1, 2];\n    a[0] = 9;\n    println(a[0]);\n}\n"
     "cannot assign into immutable 'a' — declare it with `let mut`";
 
-  check_error "array as a by-value struct field is rejected (for now)"
+  check "array as a by-value struct field (wrapper struct emitted first)"
     "struct G { cells: [int; 3] }\n\
-     fn main() { let g: G = G { cells: [1, 2, 3] }; println(g.cells[0]); }\n"
-    "an array `[T; N]` as a by-value field is not supported yet — keep the array in a standalone binding, or use a pointer field `*[T; N]`";
+     fn main() { let g: G = G { cells: [10, 20, 30] }; println(g.cells[1]); }\n"
+    "#include <stdio.h>\n\nstruct ex_arr3_i32 { long data[3]; };\nstruct ex_G { struct ex_arr3_i32 cells; };\n\nint main(void) {\n    struct ex_G g;\n    struct ex_arr3_i32 __lift_0;\n    __lift_0.data[0] = 10;\n    __lift_0.data[1] = 20;\n    __lift_0.data[2] = 30;\n    g.cells = __lift_0;\n    printf(\"%ld\\n\", (long)(g.cells.data[1]));\n    return 0;\n}\n";
+
+  check "nested aggregate ordering: array-of-array, inner shape first"
+    "fn main() {\n    let a: [[int; 2]; 3] = [[1, 2], [3, 4], [5, 6]];\n    println(a[1][0]);\n}\n"
+    "#include <stdio.h>\n\nstruct ex_arr2_i32 { long data[2]; };\nstruct ex_arr3_arr2_i32 { struct ex_arr2_i32 data[3]; };\n\nint main(void) {\n    struct ex_arr3_arr2_i32 a;\n    struct ex_arr2_i32 __lift_0;\n    struct ex_arr2_i32 __lift_1;\n    struct ex_arr2_i32 __lift_2;\n    __lift_0.data[0] = 1;\n    __lift_0.data[1] = 2;\n    __lift_1.data[0] = 3;\n    __lift_1.data[1] = 4;\n    __lift_2.data[0] = 5;\n    __lift_2.data[1] = 6;\n    a.data[0] = __lift_0;\n    a.data[1] = __lift_1;\n    a.data[2] = __lift_2;\n    printf(\"%ld\\n\", (long)(a.data[1].data[0]));\n    return 0;\n}\n";
 
   (* `for v in lo..hi { body }` (and `..=`) — desugars to a while-loop with
      gensym counter/end, so multiple sequential `for i in ...` blocks in one

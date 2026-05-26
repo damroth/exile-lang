@@ -390,19 +390,6 @@ let rec forbid_naked_opaque ?(exposed = []) pos = function
   | TArray { elem; _ } -> forbid_naked_opaque ~exposed pos elem
   | _ -> ()
 
-(* Reject a by-value array as a member of an aggregate (struct field, enum
-   payload, tuple element).  The `[T; N]` wrapper struct is emitted after
-   user structs/tuples, so a by-value array member would reference an
-   as-yet-undefined C type — a deferred codegen-ordering limitation.
-   Pointer-to-array fields (`*[T; N]`) are fine. *)
-let rec forbid_array_aggregate_field pos = function
-  | TArray _ ->
-      Error.failf pos
-        "an array `[T; N]` as a by-value field is not supported yet — keep \
-         the array in a standalone binding, or use a pointer field `*[T; N]`"
-  | TTuple ts -> List.iter (forbid_array_aggregate_field pos) ts
-  | TPtr _ -> ()
-  | _ -> ()
 
 (* Find a variant by name in an enum's variant list, returning its
    (tag, variant_sig).  Tag is the index — codegen reads positions
@@ -4236,16 +4223,14 @@ let check_program program : tprogram =
   List.iter (fun (s : struct_sig) ->
     let pos = struct_decl_pos s.sname_path in
     List.iter (fun (_, ft) ->
-      forbid_naked_opaque ~exposed:exposed_extern pos ft;
-      forbid_array_aggregate_field pos ft)
+      forbid_naked_opaque ~exposed:exposed_extern pos ft)
       s.sfields_ty)
     all_structs;
   List.iter (fun (e : enum_sig) ->
     let pos = enum_decl_pos e.ename_path in
     List.iter (fun (vs : variant_sig) ->
       List.iter (fun (_, ft) ->
-        forbid_naked_opaque ~exposed:exposed_extern pos ft;
-        forbid_array_aggregate_field pos ft) vs.vsfields)
+        forbid_naked_opaque ~exposed:exposed_extern pos ft) vs.vsfields)
       e.evariants)
     all_enums;
   (* @debug-able field check.  Only concrete structs/enums are validated

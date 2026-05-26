@@ -1065,6 +1065,49 @@ let emit_array_struct buf (_, t) =
       Buffer.add_string buf (Printf.sprintf "[%d]; };\n" size)
   | _ -> ()
 
+(* Unified aggregate typedef view for the dependency-ordered emission.
+   Every C-level typedef the program needs (user structs / enums, tuple
+   wrappers, fixed-size array wrappers) lives in this list; gen_program
+   topo-sorts the list by by-value dependencies so each typedef precedes
+   any other that embeds it by value. *)
+type emit_agg =
+  | AStruct of struct_sig
+  | AEnum of enum_sig
+  | ATuple of string * typ              (* (mangled name, the TTuple typ) *)
+  | AArray of string * typ              (* (mangled name, the TArray typ) *)
+
+(* The C struct name this aggregate emits — also its key in the topo sort. *)
+let agg_cname = function
+  | AStruct s -> mangle_typ (TStruct s.sname_path)
+  | AEnum e -> mangle_typ (TEnum e.ename_path)
+  | ATuple (_, t) -> "ex_" ^ mangle_typ t
+  | AArray (_, t) -> "ex_" ^ mangle_typ t
+
+(* C struct names this type embeds by value (stops at pointers and fn-ptrs).
+   Used to compute one aggregate's dependencies on others.  Note: tuples
+   and arrays appear *themselves* in the dep list when nested, because
+   they too need their wrapper typedef defined first. *)
+let rec value_agg_keys t =
+  match t with
+  | TStruct _ as st -> [ mangle_typ st ]
+  | TEnum _ as en -> [ mangle_typ en ]
+  | TTuple ts as tt ->
+      ("ex_" ^ mangle_typ tt) :: List.concat_map value_agg_keys ts
+  | TArray { elem; _ } as ar ->
+      ("ex_" ^ mangle_typ ar) :: value_agg_keys elem
+  | _ -> []
+
+let agg_deps = function
+  | AStruct s ->
+      List.concat_map (fun (_, t) -> value_agg_keys t) s.sfields_ty
+  | AEnum e ->
+      List.concat_map (fun (vs : variant_sig) ->
+        List.concat_map (fun (_, t) -> value_agg_keys t) vs.vsfields)
+        e.evariants
+  | ATuple (_, TTuple ts) -> List.concat_map value_agg_keys ts
+  | AArray (_, TArray { elem; _ }) -> value_agg_keys elem
+  | ATuple _ | AArray _ -> []
+
 (* Enum lowering.  Tag enum + a wrapper struct.  When at least one
    variant carries payload, the struct also gets a `union data` whose
    members are per-variant inner structs (`struct { T _0; T _1; } V`).
@@ -1132,6 +1175,33 @@ let rec emit_field_debug buf ty access =
        | Some (spec, None) ->
            Printf.bprintf buf "printf(\"%s\", %s)" spec access
        | None -> assert false  (* typecheck @debug-validation rejected these *))
+
+let emit_agg buf = function
+  | AStruct s -> emit_named_struct buf s
+  | AEnum e -> emit_named_enum buf e
+  | ATuple (name, t) -> emit_tuple_struct buf (name, t)
+  | AArray (name, t) -> emit_array_struct buf (name, t)
+
+(* Stable dependency-ordered emission: DFS on the input list in source
+   order, recursing into each entry's deps first.  Aggregates without
+   forced ordering keep their original positions; only deps shuffle. *)
+let emit_aggs_topo buf aggs =
+  let by_key = Hashtbl.create 32 in
+  List.iter (fun a -> Hashtbl.replace by_key (agg_cname a) a) aggs;
+  let done_set = Hashtbl.create 32 in
+  let rec visit a =
+    let key = agg_cname a in
+    if not (Hashtbl.mem done_set key) then begin
+      Hashtbl.add done_set key ();
+      List.iter (fun dep_key ->
+        match Hashtbl.find_opt by_key dep_key with
+        | Some dep -> visit dep
+        | None -> ())   (* dep is a primitive / extern / fn-ptr — skip *)
+        (agg_deps a);
+      emit_agg buf a
+    end
+  in
+  List.iter visit aggs
 
 (* Last segment of a path — the user-facing type name to embed in the
    rendered debug output (e.g., `Point`, `Result`). *)
@@ -1293,10 +1363,20 @@ let gen_program ?(annotate = false) (tp : tprogram) =
         Buffer.add_string buf
           (Printf.sprintf "typedef %s(*%s)(%s);\n" r name ps)
     | _ -> assert false);
-  emit_section buf concrete_structs ~emit:(emit_named_struct buf);
-  emit_section buf concrete_enums ~emit:(emit_named_enum buf);
-  emit_section buf tp.tp_tuple_types ~emit:(emit_tuple_struct buf);
-  emit_section buf tp.tp_array_types ~emit:(emit_array_struct buf);
+  (* Topologically order all aggregate typedefs so each precedes any other
+     that embeds it by value (struct field, tuple element, array element).
+     Replaces the per-kind sections so a struct field of `[T; N]` or
+     `(int, int)` works without arranging by hand. *)
+  let aggs =
+    List.map (fun s -> AStruct s) concrete_structs
+    @ List.map (fun e -> AEnum e) concrete_enums
+    @ List.map (fun (n, t) -> ATuple (n, t)) tp.tp_tuple_types
+    @ List.map (fun (n, t) -> AArray (n, t)) tp.tp_array_types
+  in
+  if aggs <> [] then begin
+    Buffer.add_char buf '\n';
+    emit_aggs_topo buf aggs
+  end;
   (* `@debug` printers — synthesized one per marked struct/enum.  Forward
      decls first so a printer body can call another printer regardless
      of source declaration order; bodies come right after. *)
