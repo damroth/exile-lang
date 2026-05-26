@@ -355,6 +355,85 @@ let rec mangle_typ = function
 
 let tuple_struct_name ts = "ex_" ^ mangle_typ (TTuple ts)
 
+let strip_trailing_space s =
+  if String.length s > 0 && s.[String.length s - 1] = ' '
+  then String.sub s 0 (String.length s - 1)
+  else s
+
+(* The c_* family is intentionally width-variable: each maps to the
+   target C compiler's native type (`int` / `short` / `long` / ...).
+   On amiga-gcc m68k all of int/long are 32-bit; on a 64-bit Linux
+   host `long` is 64-bit, `int` is 32-bit.  This is the whole point —
+   `c_long` matches the platform's `long`, just like `long` in C
+   means.  For fixed widths regardless of target use `i32`/`u32`
+   etc. — those map to a guaranteed-≥32-bit type with consistent
+   value semantics across targets. *)
+let rec c_type_prefix = function
+  | TCInt { signed = true } -> "int "
+  | TCInt { signed = false } -> "unsigned int "
+  | TCShort { signed = true } -> "short "
+  | TCShort { signed = false } -> "unsigned short "
+  | TCLong { signed = true } -> "long "
+  | TCLong { signed = false } -> "unsigned long "
+  | TCChar -> "char "
+  | TCSChar -> "signed char "
+  | TCUChar -> "unsigned char "
+  | TCVoid ->
+      failwith "internal: naked c_void reached c_type_prefix — only \
+                *c_void is allowed; typecheck should have caught this"
+  | TInt { signed; width } ->
+      let s = if signed then "" else "unsigned " in
+      let core = match width with
+        | Ast.W8 -> "char"
+        | Ast.W16 -> "short"
+        (* C89 only guarantees `int >= 16 bits`; some Amiga compilers
+           (SAS/C default) actually use 16-bit int.  `long >= 32 bits` is
+           guaranteed, so we map i32/u32 to long for cross-compiler width
+           stability. *)
+        | Ast.W32 -> "long"
+      in
+      (* "signed char" is needed because C89 leaves plain `char` signedness
+         implementation-defined; for i8 we must be explicit. *)
+      let signed_core =
+        if signed && width = Ast.W8 then "signed char " else core ^ " "
+      in
+      s ^ signed_core
+  | TBool -> "int "
+  | TString -> "const char *"
+  | TTuple ts -> "struct " ^ tuple_struct_name ts ^ " "
+  | TStruct _ as t -> "struct " ^ mangle_typ t ^ " "
+  | TExtStruct n -> "struct " ^ n ^ " "
+  | TExtAlias n -> n ^ " "
+  | TEnum _ as t -> "struct " ^ mangle_typ t ^ " "
+  | TArray _ as t ->
+      (* `[T; N]` is emitted as a wrapper `struct ex_arrN_T { T data[N]; }`
+         so it copies by `=`; the definition is emitted up top per shape. *)
+      "struct ex_" ^ mangle_typ t ^ " "
+  | TPtr TCVoid -> "void *"
+  | TPtr inner ->
+      (* Pointer types render as `<base> *` with no trailing space, so
+         `c_decl t name` produces `<base> *name`. *)
+      strip_trailing_space (c_type_prefix inner) ^ " *"
+  | TFnPtr _ as t ->
+      (* Reference fn-ptr types by typedef alias (emitted up top by
+         gen_program).  Avoids the awkward C "function returning
+         function pointer" syntax at every use site. *)
+      mangle_typ t ^ " "
+  | TNullPtr ->
+      (* TNullPtr never owns a declaration — it is the type of the literal
+         `null`, always consumed under a concrete TPtr context. *)
+      failwith "TNullPtr should never reach c_type_prefix"
+  | TVar n ->
+      failwith
+        ("internal: TVar '" ^ n ^ "' reached c_type_prefix — \
+          monomorphization missed an instantiation")
+  | (TStructApp _ | TEnumApp _) as t ->
+      failwith
+        ("internal: '" ^ typ_name t ^ "' reached c_type_prefix — a \
+          generic application was not monomorphized to a flat instance")
+
+let c_decl t name = c_type_prefix t ^ name
+
 (* User-facing type rendering for `type_name(expr)` and error messages.
    Delegates to [typ_name] for everything except generic enum/struct
    instances, which [typ_name] would show in mangled form

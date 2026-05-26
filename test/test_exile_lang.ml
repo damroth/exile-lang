@@ -275,6 +275,22 @@ let () =
     "const X: int = 5;\nfn main() { X = 6; println(X); }\n"
     "cannot assign to 'X' — it's a `const` (compile-time constant)";
 
+  (* `size_of(T)` is allowed in const initialisers: folds to a C
+     `sizeof(...)` expression in the `#define` rather than a literal.
+     Such a const has no compile-time-known integer for exile, so it
+     can't be used as an array size — that has its own error path. *)
+  check "size_of(T) in a const folds to a C sizeof expression"
+    "struct Foo { x: int, y: int }\nconst HSZ: c_uint = size_of(Foo);\nfn main() { let n: c_uint = HSZ; println(n as int); }\n"
+    "#include <stdio.h>\n\n#define ex_HSZ (sizeof(struct ex_Foo))\n\nstruct ex_Foo { long x; long y; };\n\nint main(void) {\n    unsigned int n;\n    n = ex_HSZ;\n    printf(\"%ld\\n\", (long)(((long)n)));\n    return 0;\n}\n";
+
+  check "size_of composes with other const operators"
+    "struct P { x: int }\nconst T: c_uint = size_of(P) * 2 as c_uint;\nfn main() { println(T as int); }\n"
+    "#include <stdio.h>\n\n#define ex_T ((sizeof(struct ex_P) * 2))\n\nstruct ex_P { long x; };\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(((long)ex_T)));\n    return 0;\n}\n";
+
+  check_error "a sizeof-based const can't be an array size"
+    "struct P { x: int }\nconst SZ: c_uint = size_of(P);\nfn main() { let a: [int; SZ] = [0; SZ]; println(len(a)); }\n"
+    "array size 'SZ' is not a known integer at exile time (a bool const, or a `sizeof`/`as`-based value that folds to a C expression)";
+
   (* Fixed-size arrays `[T; N]`: by-value aggregates (wrapper struct),
      indexing `a[i]`, `len(a)` folds to N. *)
   check "array literal, index and len"

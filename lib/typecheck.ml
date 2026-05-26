@@ -322,7 +322,10 @@ let eval_const_size ctx (e0 : Ast.expr) : int =
         (match lookup_const ctx [n] with
          | Some (_, _, Some v) -> v
          | Some (_, _, None) ->
-             Error.failf p "array size '%s' is a bool const, not an integer" n
+             Error.failf p
+               "array size '%s' is not a known integer at exile time (a \
+                bool const, or a `sizeof`/`as`-based value that folds to \
+                a C expression)" n
          | None ->
              Error.failf p
                "array size must be an integer literal or `const`, got '%s'" n)
@@ -330,7 +333,11 @@ let eval_const_size ctx (e0 : Ast.expr) : int =
       when tname <> [] ->
         (match lookup_const ctx (tname @ [variant]) with
          | Some (_, _, Some v) -> v
-         | Some (_, _, None) -> Error.failf p "array size is a bool const"
+         | Some (_, _, None) ->
+             Error.failf p
+               "array size is not a known integer at exile time (a bool \
+                const, or a `sizeof`/`as`-based value that folds to a C \
+                expression)"
          | None -> Error.failf p "array size must be an integer literal or `const`")
     | other ->
         Error.failf (Ast.expr_pos other)
@@ -3629,7 +3636,12 @@ and stmt_returns = function
    literals, so they are deliberately rejected here (deferred).  Returns
    the index threaded into fn_ctx (path, name, (type, mangled)) and the
    list of `(mangled, C-literal)` pairs codegen emits as `#define`s. *)
-type cval = CInt of int | CBool of bool
+(* Compile-time value of a `const`.  `CExpr` carries an already-
+   parenthesised C expression — emitted verbatim as the `#define` body
+   when the value isn't a literal integer/bool but a target-dependent
+   construct like `sizeof(struct ex_Foo)`.  Such consts are NOT usable as
+   array sizes (no compile-time integer for exile to fold). *)
+type cval = CInt of int | CBool of bool | CExpr of string
 
 let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
     (consts : (string list * Ast.const_decl) list) =
@@ -3687,7 +3699,11 @@ let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
          | CBool _, _ ->
              Error.failf c.kpos
                "constant '%s' is bool but declared %s" c.kname (typ_name typ)
-         | CInt _, _ -> ());
+         | CInt _, _ -> ()
+         (* CExpr's value is a target-dependent C expression (`sizeof(...)`
+            and friends); exile can't compute its integer to fit-check.
+            Trust the declared type and let cc warn on narrowing. *)
+         | CExpr _, _ -> ());
         Hashtbl.remove in_prog abs;
         Hashtbl.replace memo abs v;
         v
@@ -3698,23 +3714,33 @@ let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
     | Ast.Neg (sub, p) ->
         (match eval scope sub with
          | CInt i -> CInt (- i)
+         | CExpr s -> CExpr ("(-" ^ s ^ ")")
          | CBool _ -> Error.failf p "'-' requires an integer constant")
     | Ast.BitNot (sub, p) ->
         (match eval scope sub with
          | CInt i -> CInt (lnot i)
+         | CExpr s -> CExpr ("(~" ^ s ^ ")")
          | CBool _ -> Error.failf p "'~' requires an integer constant")
     | Ast.Cast (sub, ann, p) ->
+        let target = resolve_type_ann ~pos:p (res_ctx scope) ann in
         (match eval scope sub with
-         | CInt i -> CInt (truncate (resolve_type_ann ~pos:p (res_ctx scope) ann) i)
+         | CInt i -> CInt (truncate target i)
+         | CExpr s ->
+             let cty = strip_trailing_space (c_type_prefix target) in
+             CExpr ("((" ^ cty ^ ")" ^ s ^ ")")
          | CBool _ -> Error.failf p "cannot cast a bool constant")
     | Ast.BinOp (op, l, r, p) -> eval_binop scope op l r p
     | Ast.Var (n, p) -> resolve_eval scope [n] p
     | Ast.EnumLit { tname; variant; args = Ast.EATuple []; pos }
       when tname <> [] ->
         resolve_eval scope (tname @ [variant]) pos
-    | Ast.SizeOf (_, p) ->
-        Error.failf p
-          "'size_of(...)' is not allowed in a constant expression yet"
+    | Ast.SizeOf (ann, p) ->
+        (* Folds to the C `sizeof(<c-type>)` expression — a target-dependent
+           constant that cc resolves.  The result type is c_uint by exile
+           convention. *)
+        let t = resolve_type_ann ~pos:p (res_ctx scope) ann in
+        let cty = strip_trailing_space (c_type_prefix t) in
+        CExpr ("sizeof(" ^ cty ^ ")")
     | other ->
         Error.failf (Ast.expr_pos other) "not a constant expression"
   and resolve_eval scope path p =
@@ -3723,52 +3749,95 @@ let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
     | None ->
         Error.failf p "unknown constant '%s'" (String.concat "::" path)
   and eval_binop scope op l r p =
+    let lv = eval scope l and rv = eval scope r in
+    (* Render a cval as a C-expression fragment.  Used when at least one
+       operand is a CExpr (e.g. `sizeof(...)`) — the result becomes an
+       opaque-to-exile, parenthesised C expression that cc will resolve. *)
+    let cstr = function
+      | CInt i -> string_of_int i
+      | CBool b -> if b then "1" else "0"
+      | CExpr s -> s
+    in
+    let is_cexpr = function CExpr _ -> true | _ -> false in
+    let mix_expr op_str =
+      CExpr ("(" ^ cstr lv ^ " " ^ op_str ^ " " ^ cstr rv ^ ")")
+    in
     let ints () =
-      match eval scope l, eval scope r with
+      match lv, rv with
       | CInt a, CInt b -> (a, b)
       | _ ->
           Error.failf p "operator '%s' requires integer constants"
             (Ast.binop_name op)
     in
+    let int_or_expr fold op_str =
+      match lv, rv with
+      | CInt a, CInt b -> CInt (fold a b)
+      | (CInt _ | CExpr _), (CInt _ | CExpr _) -> mix_expr op_str
+      | _ ->
+          Error.failf p "operator '%s' requires integer constants"
+            (Ast.binop_name op)
+    in
     match op with
-    | Ast.Add -> let (a, b) = ints () in CInt (a + b)
-    | Ast.Sub -> let (a, b) = ints () in CInt (a - b)
-    | Ast.Mul -> let (a, b) = ints () in CInt (a * b)
+    | Ast.Add -> int_or_expr ( + ) "+"
+    | Ast.Sub -> int_or_expr ( - ) "-"
+    | Ast.Mul -> int_or_expr ( * ) "*"
     | Ast.Div ->
-        let (a, b) = ints () in
-        if b = 0 then Error.failf p "division by zero" else CInt (a / b)
+        (match lv, rv with
+         | CInt a, CInt b ->
+             if b = 0 then Error.failf p "division by zero" else CInt (a / b)
+         | _ -> int_or_expr ( / ) "/")
     | Ast.Mod ->
-        let (a, b) = ints () in
-        if b = 0 then Error.failf p "modulo by zero" else CInt (a mod b)
-    | Ast.BitAnd -> let (a, b) = ints () in CInt (a land b)
-    | Ast.BitOr  -> let (a, b) = ints () in CInt (a lor b)
-    | Ast.BitXor -> let (a, b) = ints () in CInt (a lxor b)
-    | Ast.Shl    -> let (a, b) = ints () in CInt (a lsl b)
-    | Ast.Shr    -> let (a, b) = ints () in CInt (a asr b)
-    | Ast.Lt -> let (a, b) = ints () in CBool (a < b)
-    | Ast.Gt -> let (a, b) = ints () in CBool (a > b)
-    | Ast.LtEq -> let (a, b) = ints () in CBool (a <= b)
-    | Ast.GtEq -> let (a, b) = ints () in CBool (a >= b)
+        (match lv, rv with
+         | CInt a, CInt b ->
+             if b = 0 then Error.failf p "modulo by zero" else CInt (a mod b)
+         | _ -> int_or_expr (mod) "%")
+    | Ast.BitAnd -> int_or_expr (land) "&"
+    | Ast.BitOr  -> int_or_expr (lor) "|"
+    | Ast.BitXor -> int_or_expr (lxor) "^"
+    | Ast.Shl    -> int_or_expr (lsl) "<<"
+    | Ast.Shr    -> int_or_expr (asr) ">>"
+    | Ast.Lt ->
+        (match lv, rv with
+         | CInt a, CInt b -> CBool (a < b)
+         | _ when is_cexpr lv || is_cexpr rv -> mix_expr "<"
+         | _ -> let (a, b) = ints () in CBool (a < b))
+    | Ast.Gt ->
+        (match lv, rv with
+         | CInt a, CInt b -> CBool (a > b)
+         | _ when is_cexpr lv || is_cexpr rv -> mix_expr ">"
+         | _ -> let (a, b) = ints () in CBool (a > b))
+    | Ast.LtEq ->
+        (match lv, rv with
+         | CInt a, CInt b -> CBool (a <= b)
+         | _ when is_cexpr lv || is_cexpr rv -> mix_expr "<="
+         | _ -> let (a, b) = ints () in CBool (a <= b))
+    | Ast.GtEq ->
+        (match lv, rv with
+         | CInt a, CInt b -> CBool (a >= b)
+         | _ when is_cexpr lv || is_cexpr rv -> mix_expr ">="
+         | _ -> let (a, b) = ints () in CBool (a >= b))
     | Ast.EqEq | Ast.NotEq ->
-        let eq =
-          match eval scope l, eval scope r with
-          | CInt a, CInt b -> a = b
-          | CBool a, CBool b -> a = b
-          | _ ->
-              Error.failf p
-                "'%s' compares two integers or two bools" (Ast.binop_name op)
-        in
-        CBool (if op = Ast.EqEq then eq else not eq)
+        let op_str = if op = Ast.EqEq then "==" else "!=" in
+        (match lv, rv with
+         | CInt a, CInt b ->
+             let eq = a = b in
+             CBool (if op = Ast.EqEq then eq else not eq)
+         | CBool a, CBool b ->
+             let eq = a = b in
+             CBool (if op = Ast.EqEq then eq else not eq)
+         | _ when is_cexpr lv || is_cexpr rv -> mix_expr op_str
+         | _ ->
+             Error.failf p
+               "'%s' compares two integers or two bools" (Ast.binop_name op))
     | Ast.And | Ast.Or ->
-        let bools () =
-          match eval scope l, eval scope r with
-          | CBool a, CBool b -> (a, b)
-          | _ ->
-              Error.failf p
-                "logical '%s' requires bool constants" (Ast.binop_name op)
-        in
-        let (a, b) = bools () in
-        CBool (if op = Ast.And then a && b else a || b)
+        let op_str = if op = Ast.And then "&&" else "||" in
+        (match lv, rv with
+         | CBool a, CBool b ->
+             CBool (if op = Ast.And then a && b else a || b)
+         | _ when is_cexpr lv || is_cexpr rv -> mix_expr op_str
+         | _ ->
+             Error.failf p
+               "logical '%s' requires bool constants" (Ast.binop_name op))
     | Ast.Concat ->
         Error.failf p "'++' is not a constant expression"
   in
@@ -3783,7 +3852,10 @@ let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
   dups [] entries;
   let consts_index =
     List.map (fun (abs, mod_path, (c : Ast.const_decl), mangled, typ) ->
-      let v = match eval_entry abs with CInt i -> Some i | CBool _ -> None in
+      let v = match eval_entry abs with
+        | CInt i -> Some i
+        | CBool _ | CExpr _ -> None  (* not a known integer at exile time *)
+      in
       (mod_path, c.kname, (typ, mangled, v)))
       entries
   in
@@ -3792,6 +3864,7 @@ let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
       let lit = match eval_entry abs with
         | CInt i -> string_of_int i
         | CBool b -> if b then "1" else "0"
+        | CExpr s -> "(" ^ s ^ ")"
       in
       (mangled, lit))
       entries
