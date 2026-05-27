@@ -315,7 +315,7 @@ let () =
 
   check_error "indexing a non-array rejected"
     "fn main() {\n    let x = 5;\n    println(x[0]);\n}\n"
-    "indexing `[...]` requires an array, got i32";
+    "indexing `[...]` requires an array or Slice, got i32";
 
   check_error "mutating an array element needs `let mut`"
     "fn main() {\n    let a: [int; 2] = [1, 2];\n    a[0] = 9;\n    println(a[0]);\n}\n"
@@ -2590,6 +2590,31 @@ let () =
     \    println(*q);\n\
      }\n"
     "variable 'q' declared as *i32 but initializer has type *const i32";
+
+  check "slice: indexing s[i] lowers to s.ptr[i]"
+    "fn main() {\n\
+    \    let arr: [int; 4] = [10, 20, 30, 40];\n\
+    \    let s: Slice<int> = Slice { ptr: &arr[0], len: 4 };\n\
+    \    println(s[0]);\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Slice_i32 { const long *ptr; unsigned long len; };\nstruct ex_arr4_i32 { long data[4]; };\n\nint main(void) {\n    struct ex_arr4_i32 arr;\n    struct ex_Slice_i32 s;\n    arr.data[0] = 10;\n    arr.data[1] = 20;\n    arr.data[2] = 30;\n    arr.data[3] = 40;\n    s.ptr = &(arr.data[0]);\n    s.len = 4;\n    printf(\"%ld\\n\", (long)(s.ptr[0]));\n    return 0;\n}\n";
+
+  check "slice: .len + iter via while loop"
+    "fn sum(s: Slice<int>) -> int {\n\
+    \    let mut total: int = 0;\n\
+    \    let mut i: u32 = 0;\n\
+    \    while i < s.len {\n\
+    \        total = total + s[i];\n\
+    \        i = i + 1;\n\
+    \    }\n\
+    \    total\n\
+     }\n\
+     fn main() {\n\
+    \    let arr: [int; 4] = [10, 20, 30, 40];\n\
+    \    let s: Slice<int> = Slice { ptr: &arr[0], len: 4 };\n\
+    \    println(sum(s));\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Slice_i32 { const long *ptr; unsigned long len; };\nstruct ex_arr4_i32 { long data[4]; };\n\nstatic long ex_sum(struct ex_Slice_i32 s);\n\nstatic long ex_sum(struct ex_Slice_i32 s) {\n    long total;\n    unsigned long i;\n    total = 0;\n    i = 0;\n    while (i < s.len) {\n        total = total + s.ptr[i];\n        i = i + 1;\n    }\n    return total;\n}\n\nint main(void) {\n    struct ex_arr4_i32 arr;\n    struct ex_Slice_i32 s;\n    arr.data[0] = 10;\n    arr.data[1] = 20;\n    arr.data[2] = 30;\n    arr.data[3] = 40;\n    s.ptr = &(arr.data[0]);\n    s.len = 4;\n    printf(\"%ld\\n\", (long)(ex_sum(s)));\n    return 0;\n}\n";
 
   check_error "doc-comments: `@doc(non-string)` rejected"
     "@doc(123)\n\

@@ -516,6 +516,7 @@ and render_named_with_args ~structs ~enums path args =
    only — single editing point for the whole pipeline. *)
 let rec type_map ~f = function
   | TPtr inner -> TPtr (type_map ~f inner)
+  | TConstPtr inner -> TConstPtr (type_map ~f inner)
   | TArray { elem; size } -> TArray { elem = type_map ~f elem; size }
   | TTuple ts -> TTuple (List.map (type_map ~f) ts)
   | TFnPtr { params; ret } ->
@@ -532,6 +533,7 @@ let rec type_map ~f = function
    like "is this type concrete" or "does this type mention X". *)
 let rec type_for_all ~f = function
   | TPtr inner -> type_for_all ~f inner
+  | TConstPtr inner -> type_for_all ~f inner
   | TArray { elem; _ } -> type_for_all ~f elem
   | TTuple ts -> List.for_all (type_for_all ~f) ts
   | TFnPtr { params; ret } ->
@@ -554,6 +556,7 @@ let typ_size_exceeds limit t =
     if !count > limit then raise Exit;
     match t with
     | TPtr inner -> go inner
+    | TConstPtr inner -> go inner
     | TArray { elem; _ } -> go elem
     | TTuple ts -> List.iter go ts
     | TFnPtr { params; ret } -> List.iter go params; Option.iter go ret

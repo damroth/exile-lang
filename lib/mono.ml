@@ -91,6 +91,11 @@ let infer_tparams ~pos ?(seed = []) tparams pairs =
          | Some _ -> ()
          | None -> bindings := (n, act_t) :: !bindings)
     | TPtr a, TPtr b -> unify a b
+    | TConstPtr a, TConstPtr b -> unify a b
+    (* Pointee-immut coercion site: a `*const T` declaration unifies
+       with a `*U` actual just on the pointee.  The const drop runs at
+       the call's coercion check; here we only need to extract `T = U`. *)
+    | TConstPtr a, TPtr b -> unify a b
     | TTuple xs, TTuple ys when List.length xs = List.length ys ->
         List.iter2 unify xs ys
     | _ -> ()

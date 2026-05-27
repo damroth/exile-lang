@@ -1,0 +1,32 @@
+// `Slice<T>` — bounded view: a `*const T` pointer + a length.  Maps to
+// `struct ex_Slice_T { const T *ptr; unsigned long len; }` in C.
+//
+// MVP scope (2026-05-28):
+//   - Indexing `s[i]` lowers to `s.ptr[i]` (no bounds check at
+//     runtime in this MVP).
+//   - `.len` / `.ptr` field access works like any struct.
+//   - Pass by value through fn args — two-word struct copy.
+//
+// Construction today: explicit `Slice { ptr: &arr[0], len: N }` (the
+// `*T -> *const T` coercion is implicit at the field site).  Sub-slicing
+// and a mutable variant are deferred.
+
+fn sum(s: Slice<int>) -> int {
+    let mut total: int = 0;
+    let mut i: u32 = 0;
+    while i < s.len {
+        total = total + s[i];
+        i = i + 1;
+    }
+    total
+}
+
+fn first(s: Slice<int>) -> int { s[0] }
+
+fn main() {
+    let arr: [int; 5] = [3, 1, 4, 1, 5];
+    let s: Slice<int> = Slice { ptr: &arr[0], len: 5 };
+    println(sum(s));                   // 14
+    println(first(s));                 // 3
+    println(s.len as int);             // 5
+}

@@ -589,6 +589,12 @@ let rec expand_inst_pair ctx (decl, act) =
            List.concat_map (expand_inst_pair ctx) (List.combine dargs iargs)
        | _ -> [ (decl, act) ])
   | TPtr d, TPtr a -> expand_inst_pair ctx (d, a)
+  | TConstPtr d, TConstPtr a -> expand_inst_pair ctx (d, a)
+  (* `*const T` declaration paired with a `*U` actual: pointee-immutability
+     coercion is implicit, so infer `T = U` from the pointees alone (the
+     coercion itself runs after instance-resolution in the caller's
+     type check). *)
+  | TConstPtr d, TPtr a -> expand_inst_pair ctx (d, a)
   | _ -> [ (decl, act) ]
 
 (* Recognise an integer literal expression — bare or negated — for type-fitting
@@ -1504,14 +1510,31 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       let elem_ty =
         match tbase.ty with
         | TArray { elem; _ } -> elem
+        | TStruct path when Mono.is_instance_of ["Slice"] path ->
+            (* `Slice<T>` instance — element type is the resolved T from
+               the monomorphized struct fields.  `.ptr` is `*const T`,
+               so read it back through there. *)
+            (match resolve_struct_by_path ctx path with
+             | Some s ->
+                 (match List.assoc_opt "ptr" s.sfields_ty with
+                  | Some (TConstPtr t) -> t
+                  | _ ->
+                      Error.failf idx_pos
+                        "internal: `Slice` instance %s has no `ptr` of \
+                         *const shape" (String.concat "::" path))
+             | None ->
+                 Error.failf idx_pos
+                   "internal: `Slice` instance %s not in struct_index"
+                   (String.concat "::" path))
         | other ->
             Error.failf idx_pos
-              "indexing `[...]` requires an array, got %s" (typ_name other)
+              "indexing `[...]` requires an array or Slice, got %s"
+              (typ_name other)
       in
       let tindex = elab_expr ctx env index in
       if not (is_int_like tindex.ty) then
         Error.failf idx_pos
-          "array index must be an integer, got %s" (typ_name tindex.ty);
+          "index must be an integer, got %s" (typ_name tindex.ty);
       { e = TIndex { base = tbase; index = tindex }; ty = elem_ty; pos }
   | Ast.Range { lo; hi; inclusive; pos = rng_pos } ->
       (* `a..b` / `a..=b` desugars to a literal of the prelude struct
@@ -1984,7 +2007,8 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
            List.iter2 (fun (fn, fe) (fn', (te : texpr)) ->
              assert (fn = fn');
              let fty = List.assoc fn s_concrete.sfields_ty in
-             if not (typ_eq te.ty fty) && not (int_lit_fits fe fty) then
+             if not (coercible_to ~from:te.ty ~to_:fty)
+                && not (int_lit_fits fe fty) then
                Error.failf lit_pos
                  "field '%s' of struct '%s': expected %s, got %s"
                  fn display (typ_name fty) (typ_name te.ty))
@@ -3785,6 +3809,17 @@ let prelude_items () =
     spos = prelude_pos; sis_pub = true;
     stier_hint = Some "core"; sis_debug = false;
   } in
+  (* `Slice<T>` — bounded view (read-only pointer + length).  MVP scope:
+     indexing (`s[i]` lowers to `s.ptr[i]`), `.len` / `.ptr` field
+     access, by-value pass through fn args (struct copy of two words).
+     Sub-slicing and mutable variant deferred. *)
+  let slice_struct = {
+    Ast.sname = "Slice"; stparams = ["T"];
+    sfields = [("ptr", Ast.TyConstPtr (tvar "T"));
+               ("len", Ast.TyInt { signed = false; width = Ast.W32 })];
+    spos = prelude_pos; sis_pub = true;
+    stier_hint = Some "core"; sis_debug = false;
+  } in
   let alloc_struct = {
     Ast.sname = "Allocator";
     stparams = [];
@@ -3856,6 +3891,7 @@ let prelude_items () =
   } in
   [ Ast.Enum option_decl; Ast.Enum result_decl;
     Ast.Struct range_struct; Ast.Struct range_inclusive_struct;
+    Ast.Struct slice_struct;
     Ast.Struct alloc_struct; Ast.Impl alloc_impl ]
 
 (* Skip prelude items whose names collide with a user-declared top-level

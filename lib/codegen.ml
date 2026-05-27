@@ -317,15 +317,22 @@ let rec gen_expr ctx buf (te : texpr) =
          assign) are routed through `emit_value_into_temp`. *)
       assert false
   | TIndex { base; index } ->
-      (* `a[i]` -> `a.data[i]` (the wrapper struct's array member).  A base
-         that isn't already a tight lvalue (a deref, say) needs parens so
-         `.data` binds to the whole base — deref-then-index, not
-         index-then-deref. *)
+      (* Two paths:
+         - Array `[T; N]` -> `base.data[i]` (the wrapper struct's array
+           member).
+         - `Slice<T>` -> `base.ptr[i]` (raw pointer dereference, no
+           bounds check at runtime in this MVP).
+         A base that isn't already a tight lvalue (a deref, say) needs
+         parens so `.data` / `.ptr` binds to the whole base. *)
+      let suffix = match base.ty with
+        | TStruct path when Mono.is_instance_of ["Slice"] path -> ".ptr["
+        | _ -> ".data["
+      in
       (match base.e with
        | TVar _ | TFieldAccess _ | TIndex _ -> gen_expr ctx buf base
        | _ ->
            Buffer.add_char buf '('; gen_expr ctx buf base; Buffer.add_char buf ')');
-      Buffer.add_string buf ".data[";
+      Buffer.add_string buf suffix;
       gen_expr ctx buf index;
       Buffer.add_char buf ']'
   | TFieldAccess { target; field } ->
