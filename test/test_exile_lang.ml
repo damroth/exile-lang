@@ -2364,4 +2364,26 @@ let () =
     \    let p = Point { x: 3, y: 4 };\n\
     \    println(p);\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_Point { long x; long y; };\n\nstatic void ex_Point__debug(struct ex_Point self);\n\nstatic void ex_Point__debug(struct ex_Point self) {\n    printf(\"Point { \");\n    printf(\"x: \");\n    printf(\"%ld\", (long)(self.x));\n    printf(\", \");\n    printf(\"y: \");\n    printf(\"%ld\", (long)(self.y));\n    printf(\" }\");\n}\n\n\nint main(void) {\n    struct ex_Point p;\n    p.x = 3;\n    p.y = 4;\n    ex_Point__debug(p); printf(\"\\n\");\n    return 0;\n}\n"
+    "#include <stdio.h>\n\nstruct ex_Point { long x; long y; };\n\nstatic void ex_Point__debug(struct ex_Point self);\n\nstatic void ex_Point__debug(struct ex_Point self) {\n    printf(\"Point { \");\n    printf(\"x: \");\n    printf(\"%ld\", (long)(self.x));\n    printf(\", \");\n    printf(\"y: \");\n    printf(\"%ld\", (long)(self.y));\n    printf(\" }\");\n}\n\n\nint main(void) {\n    struct ex_Point p;\n    p.x = 3;\n    p.y = 4;\n    ex_Point__debug(p); printf(\"\\n\");\n    return 0;\n}\n";
+
+  check "hex literal: 0xDEAD parses and emits as decimal"
+    "fn main() {\n\
+    \    let x: u32 = 0xDEAD;\n\
+    \    println(x as int);\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    unsigned long x;\n    x = 57005;\n    printf(\"%ld\\n\", (long)(((long)x)));\n    return 0;\n}\n";
+
+  check "hex literal: case-insensitive prefix and digits"
+    "fn main() {\n\
+    \    let a: u32 = 0xff;\n\
+    \    let b: u32 = 0XFF;\n\
+    \    let c: u32 = 0xAbCd;\n\
+    \    println(a as int);\n\
+    \    println(b as int);\n\
+    \    println(c as int);\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    unsigned long a;\n    unsigned long b;\n    unsigned long c;\n    a = 255;\n    b = 255;\n    c = 43981;\n    printf(\"%ld\\n\", (long)(((long)a)));\n    printf(\"%ld\\n\", (long)(((long)b)));\n    printf(\"%ld\\n\", (long)(((long)c)));\n    return 0;\n}\n";
+
+  check_error "hex literal: 0x with no digits rejected"
+    "fn main() { let x = 0x; print(x); }\n"
+    "hex literal '0x' has no digits"

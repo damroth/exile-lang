@@ -1,0 +1,31 @@
+// Hex literals — `0x...` / `0X...`, case-insensitive digits.  Lexed to
+// the same `int` value as decimal; the codegen still emits decimal in C,
+// so this is purely a source-side notation.  Why it matters: tokens,
+// masks, MMIO addresses and ASCII codes all read better in hex.
+
+fn main() {
+    // ASCII — newline and uppercase 'A'.
+    let nl: u8 = 0x0A;
+    println(nl as int);                   // 10
+    let upper_a: u8 = 0x41;
+    println(upper_a as int);              // 65
+
+    // Bit mask + flag set, the canonical hex use case.
+    let read_flag: u32  = 0x01;
+    let write_flag: u32 = 0x02;
+    let exec_flag: u32  = 0x04;
+    let rwx: u32 = read_flag | write_flag | exec_flag;
+    println(rwx as int);                  // 7
+
+    // Case-insensitive: 0x, 0X, lowercase + uppercase digits all work.
+    let a: u32 = 0xdead;
+    let b: u32 = 0XBEEF;
+    let c: u32 = 0xCaFe;
+    println(a as int);                    // 57005
+    println(b as int);                    // 48879
+    println(c as int);                    // 51966
+
+    // Whole AmigaOS-style 24-bit register address — readable now.
+    let custom_base: u32 = 0xDFF000;
+    println(custom_base as int);          // 14675968
+}

@@ -143,10 +143,22 @@ let tokenize ~file src =
           let next = str (i + 1) in
           loop next ((Token.String (Buffer.contents buf), p) :: acc)
       | c when is_digit c ->
-          let rec scan j =
-            if j < len && is_digit src.[j] then (adv src.[j]; scan (j + 1)) else j
+          let is_hex_digit c =
+            is_digit c || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
           in
-          let stop = scan (i + 1) in
+          let hex =
+            c = '0' && i + 1 < len && (src.[i + 1] = 'x' || src.[i + 1] = 'X')
+          in
+          let start, pred =
+            if hex then (adv src.[i + 1]; i + 2, is_hex_digit)
+            else (i + 1, is_digit)
+          in
+          let rec scan j =
+            if j < len && pred src.[j] then (adv src.[j]; scan (j + 1)) else j
+          in
+          let stop = scan start in
+          if hex && stop = start then
+            Error.failf p "hex literal '0%c' has no digits" src.[i + 1];
           let lit = String.sub src i (stop - i) in
           let n =
             try int_of_string lit
