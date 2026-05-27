@@ -73,7 +73,7 @@ and expr =
                                            operand.  Prefix unary alongside
                                            `-` / `&` / `*`. *)
   | BinOp of binop * expr * expr * Pos.t
-  | Call of string list * expr list * Pos.t
+  | Call of { callee : string list; args : expr list; pos : Pos.t }
   | Cast of expr * type_ann * Pos.t
   | TupleLit of expr list * Pos.t
   | StructLit of { tname : string list; fields : (string * expr) list;
@@ -226,10 +226,10 @@ let expr_pos = function
   | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
   | Var (_, p) | Neg (_, p) | BitNot (_, p) | BinOp (_, _, _, p)
   | Orelse (_, _, p) | Try (_, p) | SizeOf (_, p)
-  | Call (_, _, p) | Cast (_, _, p) | TupleLit (_, p)
+  | Cast (_, _, p) | TupleLit (_, p)
   | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)
   | NullLit p -> p
-  | StructLit { pos; _ } | New { pos; _ }
+  | Call { pos; _ } | StructLit { pos; _ } | New { pos; _ }
   | MethodCall { pos; _ } | EnumLit { pos; _ } | Match { pos; _ }
   | If { pos; _ } | ArrayRepeat { pos; _ } | Index { pos; _ }
   | Range { pos; _ } | ArrayLit (_, pos) -> pos

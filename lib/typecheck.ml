@@ -211,7 +211,8 @@ let rec subst_var_expr ~from ~to_ (e : Ast.expr) : Ast.expr =
   | Ast.Neg (sub_e, p) -> Ast.Neg (sub sub_e, p)
   | Ast.BitNot (sub_e, p) -> Ast.BitNot (sub sub_e, p)
   | Ast.BinOp (op, l, r, p) -> Ast.BinOp (op, sub l, sub r, p)
-  | Ast.Call (path, args, p) -> Ast.Call (path, List.map sub args, p)
+  | Ast.Call { callee; args; pos } ->
+      Ast.Call { callee; args = List.map sub args; pos }
   | Ast.Cast (e', t, p) -> Ast.Cast (sub e', t, p)
   | Ast.TupleLit (es, p) -> Ast.TupleLit (List.map sub es, p)
   | Ast.ArrayLit (es, p) -> Ast.ArrayLit (List.map sub es, p)
@@ -2052,7 +2053,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
            { e = TEnumLit { ename_path = result_path; variant; tag;
                             args = targs };
              ty = TEnum result_path; pos })
-  | Ast.Call (path, args, call_pos) ->
+  | Ast.Call { callee = path; args; pos = call_pos } ->
       (* Enum-ctor dispatch first: a Call whose path resolves to an
          enum variant is rewritten to an EnumLit and elab'd again. *)
       (match rewrite_call_as_enum_lit ctx path args call_pos with

@@ -320,7 +320,7 @@ let rec parse_primary s =
       (match peek s with
        | Token.LParen ->
            ignore (advance s);
-           Ast.Call (path, parse_args s, p)
+           Ast.Call { callee = path; args = parse_args s; pos = p }
        | Token.LBrace when s.allow_struct_lit ->
            ignore (advance s);
            let (fields, base) = parse_struct_lit_body s in
