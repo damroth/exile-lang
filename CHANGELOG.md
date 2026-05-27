@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-27
+
+A pattern-matching and self-host pre-work release: `match` arms now
+support guards, or-patterns, and multi-statement bodies; doc-comment
+syntax is recognised; and bare-metal addressing gets `int → *T` casts
+alongside hex literals. Pipe operator `|>` lands as a postfix-tight
+desugar for ergonomic function chaining.
+
+### Added
+- Multi-statement `match` arm bodies: `=> { stmts; trailing }`. Trailing
+  expression is the arm's value (required in value position, optional in
+  statement position)
+- Pattern guards: `pat if <bool> => body`. Pattern binds are in scope
+  for the guard; exhaustiveness is checked against unguarded arms only
+- Or-patterns (MVP): `A | B | C => body` for wildcards, vars, and
+  unit variants. Bindless top-level alternatives only — nested OR and
+  equally-binding alternatives (`Some(x) | Other(x)`) are out of scope
+- Doc-comment syntax: `///` line comments and `@doc("...")` attribute
+  are recognised by the lexer/parser. Syntax-only MVP — no AST plumbing
+  or C emission yet
+- `int → *T` cast for MMIO-style addressing, e.g.
+  `0xDFF000 as *CustomChip`. Pointer → int still rejected
+- Pipe operator `|>`: `x |> f(a)` desugars to `f(x, a)` at parse time.
+  Postfix-tight (binds like `.method()`); left-to-right chaining works
+- Hex integer literals `0x...` / `0X...` in the lexer; empty `0x`
+  reports a clear error
+- New examples: `multi_stmt_match.exl`, `pattern_guards.exl`,
+  `or_patterns.exl`, `doc_comments.exl`, `int_to_ptr_cast.exl`,
+  `pipe.exl`, `hex_literals.exl`
+
+### Changed
+- Internal: `Ast.Call` refactored from tuple to record
+  `{ callee; args; pos }`. Matches the shape of `MethodCall` and eases
+  future field additions
+
 ## [0.6.0] - 2026-05-26
 
 A substantial post-MVP release that pivots exile-lang toward an
@@ -266,4 +301,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.6.0]: https://github.com/damroth/exile-lang/releases/tag/v0.6.0
+[0.7.0]: https://github.com/damroth/exile-lang/releases/tag/v0.7.0
