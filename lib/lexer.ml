@@ -110,6 +110,8 @@ let tokenize ~file src =
       | '!' -> Error.failf p "unexpected '!'; did you mean '!='"
       | '|' when i + 1 < len && src.[i + 1] = '|' ->
           adv '|'; loop (i + 2) ((Token.PipePipe, p) :: acc)
+      | '|' when i + 1 < len && src.[i + 1] = '>' ->
+          adv '>'; loop (i + 2) ((Token.PipeGt, p) :: acc)
       | '|' -> loop (i + 1) ((Token.Pipe, p) :: acc)
       | '^' -> loop (i + 1) ((Token.Caret, p) :: acc)
       | '~' -> loop (i + 1) ((Token.Tilde, p) :: acc)

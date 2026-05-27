@@ -419,6 +419,23 @@ and parse_postfix s base =
         let index = parse_expr s in
         expect s Token.RBracket;
         loop (Ast.Index { base = e; index; pos = p })
+    | Token.PipeGt ->
+        (* `e |> f(a, b)` ≡ `f(e, a, b)` — desugar at the parser, no AST
+           node.  Same tightness as `.method()` (Model B / Elixir-first-arg).
+           RHS grammar: path with optional `(args)` — explicitly no
+           method-call (`obj.m()`) on the right; use `e.m()` directly. *)
+        let p = peek_pos s in
+        ignore (advance s);
+        let (head, _) =
+          expect_ident s ~what:"function name after '|>'"
+        in
+        let path = parse_path_tail s [head] in
+        let args =
+          if peek s = Token.LParen then begin
+            ignore (advance s); parse_args s
+          end else []
+        in
+        loop (Ast.Call { callee = path; args = e :: args; pos = p })
     | _ -> e
   in
   loop base

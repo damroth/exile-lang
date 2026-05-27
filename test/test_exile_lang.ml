@@ -2386,4 +2386,27 @@ let () =
 
   check_error "hex literal: 0x with no digits rejected"
     "fn main() { let x = 0x; print(x); }\n"
-    "hex literal '0x' has no digits"
+    "hex literal '0x' has no digits";
+
+  check "pipe: x |> f(a) desugars to f(x, a)"
+    "fn add(a: int, b: int) -> int { a + b }\n\
+     fn main() {\n\
+    \    let r = 3 |> add(4);\n\
+    \    println(r);\n\
+     }\n"
+    "#include <stdio.h>\n\nstatic long ex_add(long a, long b);\n\nstatic long ex_add(long a, long b) {\n    return a + b;\n}\n\nint main(void) {\n    long r;\n    r = ex_add(3, 4);\n    printf(\"%ld\\n\", (long)(r));\n    return 0;\n}\n";
+
+  check "pipe: bare ident `x |> f` ≡ `f(x)`"
+    "fn dbl(x: int) -> int { x + x }\n\
+     fn main() { println(5 |> dbl); }\n"
+    "#include <stdio.h>\n\nstatic long ex_dbl(long x);\n\nstatic long ex_dbl(long x) {\n    return x + x;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_dbl(5)));\n    return 0;\n}\n";
+
+  check "pipe: left-assoc chaining `x |> f() |> g()`"
+    "fn dbl(x: int) -> int { x + x }\n\
+     fn inc(x: int) -> int { x + 1 }\n\
+     fn main() { println(5 |> dbl() |> inc()); }\n"
+    "#include <stdio.h>\n\nstatic long ex_dbl(long x);\nstatic long ex_inc(long x);\n\nstatic long ex_dbl(long x) {\n    return x + x;\n}\n\nstatic long ex_inc(long x) {\n    return x + 1;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_inc(ex_dbl(5))));\n    return 0;\n}\n";
+
+  check_error "pipe: missing ident after `|>` rejected"
+    "fn main() { let x = 1 |> ; }\n"
+    "expected function name after '|>', got ';'"

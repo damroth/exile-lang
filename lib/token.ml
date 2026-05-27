@@ -20,6 +20,7 @@ type t =
   | FatArrow
   | Pipe
   | PipePipe
+  | PipeGt
   | AmpAmp
   | Dot
   | DotDot
@@ -80,7 +81,7 @@ let pp = function
   | Defer -> "'defer'"
   | Struct -> "'struct'" | Impl -> "'impl'"
   | Enum -> "'enum'" | Match -> "'match'" | FatArrow -> "'=>'"
-  | Pipe -> "'|'" | PipePipe -> "'||'" | AmpAmp -> "'&&'"
+  | Pipe -> "'|'" | PipePipe -> "'||'" | PipeGt -> "'|>'" | AmpAmp -> "'&&'"
   | Dot -> "'.'" | DotDot -> "'..'" | DotDotEq -> "'..='"
   | Amp -> "'&'" | New -> "'new'" | Null -> "'null'"
   | LParen -> "'('" | RParen -> "')'"

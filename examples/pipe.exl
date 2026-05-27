@@ -1,0 +1,32 @@
+// Pipe operator `|>` (first-arg style, à la Elixir/Gleam).
+//
+// Pure source-side sugar: `x |> f(a, b)` is parsed exactly as
+// `f(x, a, b)` — same types, same generated C, no new AST node.
+// Tightness equals method-call (`.method()`), so the precedence
+// mental model is "pipe is the dot for free functions".
+
+fn dbl(x: int) -> int { x + x }
+fn inc(x: int) -> int { x + 1 }
+fn clamp(x: int, lo: int, hi: int) -> int {
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+fn main() {
+    // Single pipe, no extra args: bare ident is allowed.
+    println(5 |> dbl);                 // 10
+
+    // Pipe with extra args — piped value becomes the FIRST argument.
+    println(7 |> clamp(0, 10));        // 7  (in range)
+    println(42 |> clamp(0, 10));       // 10 (saturated)
+
+    // Chaining is left-associative — read top-to-bottom as data flow.
+    let r = 3
+        |> dbl()                       // 6
+        |> inc()                       // 7
+        |> dbl();                      // 14
+    println(r);                        // 14
+
+    // Pipe has the same tightness as `.method()`, so binary operators
+    // outside the chain still bind to the chain *result*:
+    println(2 + (3 |> dbl()));         // 2 + 6 = 8
+}
