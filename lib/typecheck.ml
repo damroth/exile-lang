@@ -1585,6 +1585,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           variant = ok_name; tag = ok_tag;
           binds = [ ("_0", TPVar bind_name) ];
         };
+        tguard = None;
         tbody = { e = TVar bind_name; ty = ok_payload_ty; pos = or_pos };
         tdiverges = false;
         tarm_pos = or_pos;
@@ -1602,6 +1603,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         tpat = TPVariant {
           variant = err_name; tag = err_tag; binds = err_binds;
         };
+        tguard = None;
         tbody = tdefault;
         tdiverges = false;
         tarm_pos = or_pos;
@@ -1630,25 +1632,41 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
            | Some n ->
                Error.failf a.arm_pos "duplicate bind name '%s' in pattern" n
            | None -> ());
-          let tbody = elab_expr ~allow_void ctx (binds @ env) a.body in
-          { tpat; tbody; tdiverges = false; tarm_pos = a.arm_pos })
+          let arm_env = binds @ env in
+          let tguard =
+            match a.guard with
+            | None -> None
+            | Some g ->
+                let tg = elab_expr ctx arm_env g in
+                if not (typ_eq tg.ty TBool) then
+                  Error.failf tg.pos
+                    "match-arm guard `if ...` must be of type bool, got %s"
+                    (typ_name tg.ty);
+                Some tg
+          in
+          let tbody = elab_expr ~allow_void ctx arm_env a.body in
+          { tpat; tguard; tbody; tdiverges = false; tarm_pos = a.arm_pos })
           arms
       in
       (* Redundancy + exhaustiveness via the usefulness matrix (Maranget).
          Each arm expands to one or more single-column rows (one per
          or-pattern alternative); nested variant patterns expand columns
-         internally during specialization.  An arm is redundant iff *none*
-         of its rows is useful w.r.t. the rows before it (the union of
-         alternatives is already covered); the match is non-exhaustive
-         iff a wildcard value is still useful against the full flattened
-         matrix, and the witness names a concrete uncovered pattern. *)
+         internally during specialization.  Guards complicate both checks:
+         a guarded arm's pattern may match a value but the body still not
+         run, so the arm doesn't prove coverage.  Standard treatment:
+         - Redundancy of arm i uses only the rows of UNGUARDED prior arms
+           (guarded priors might leak their value through to arm i).
+         - Exhaustiveness uses only the rows of UNGUARDED arms (guarded
+           arms contribute nothing to "must cover" reasoning). *)
       let rows_per_arm =
         List.map (fun (a : tmatch_arm) ->
           List.map (fun cp -> [ cp ]) (cpat_rows_of_tpat a.tpat)) tarms
       in
+      let is_unguarded i = (List.nth tarms i).tguard = None in
       List.iteri (fun i (a : Ast.match_arm) ->
         let before =
-          List.concat (List.filteri (fun j _ -> j < i) rows_per_arm)
+          List.concat
+            (List.filteri (fun j _ -> j < i && is_unguarded j) rows_per_arm)
         in
         let any_useful =
           List.exists (fun row -> useful ctx [ tscrut.ty ] before row)
@@ -1658,7 +1676,10 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           Error.failf a.arm_pos
             "unreachable match arm: earlier arms already cover this case")
         arms;
-      let rows = List.concat rows_per_arm in
+      let rows =
+        List.concat
+          (List.filteri (fun i _ -> is_unguarded i) rows_per_arm)
+      in
       (match missing ctx [ tscrut.ty ] rows with
        | Some (w :: _) ->
            Error.failf match_pos
@@ -1799,7 +1820,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       in
       let ok_body = { e = TVar try_bind; ty = ok_payload_ty; pos = try_pos } in
       let ok_arm = {
-        tpat = ok_arm_pat; tbody = ok_body;
+        tpat = ok_arm_pat; tguard = None; tbody = ok_body;
         tdiverges = false; tarm_pos = try_pos;
       } in
       let try_err_bind = "__try_e" in
@@ -1830,7 +1851,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         pos = try_pos;
       } in
       let err_arm = {
-        tpat = err_arm_pat; tbody = err_body;
+        tpat = err_arm_pat; tguard = None; tbody = err_body;
         tdiverges = true; tarm_pos = try_pos;
       } in
       let node = TMatch {

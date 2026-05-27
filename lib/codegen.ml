@@ -220,6 +220,7 @@ let emit_assign_line buf indent ~lhs ~emit_rhs =
 (* Fresh loop-counter names for `[v; N]` fill loops; bumped per emission so
    nested repeats don't collide. *)
 let fill_counter = ref 0
+let match_label_counter = ref 0
 
 let rec gen_expr ctx buf (te : texpr) =
   match te.e with
@@ -568,10 +569,15 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
   match m_expr.e with
   | TMatch { scrutinee; ename_path; arms } ->
       (* Flat matches (binds are only var/wildcard) compile to a tag
-         `switch`; once any arm nests a variant pattern, a flat switch
-         can't distinguish two arms sharing an outer variant, so we fall
+         `switch`; once any arm nests a variant pattern OR carries a
+         guard, a flat switch can't distinguish two arms sharing an outer
+         variant (or evaluate the guard with binds in scope), so we fall
          back to an if-else decision chain. *)
-      if List.exists (fun (a : tmatch_arm) -> tpat_nested a.tpat) arms then
+      let needs_decision =
+        List.exists (fun (a : tmatch_arm) ->
+          tpat_nested a.tpat || a.tguard <> None) arms
+      in
+      if needs_decision then
         emit_match_decision ctx ?assign_to buf indent ename_path arms scrutinee
       else
       let inner = indent ^ "    " in
@@ -762,12 +768,26 @@ and emit_match_decision ctx ?assign_to buf indent ename_path arms scrutinee =
   Buffer.add_string buf inner;
   Buffer.add_string buf (Printf.sprintf "struct %s __m;\n" cname);
   emit_value_into_temp ctx buf inner "__m" scrutinee;
+  let has_guard = List.exists (fun (a : tmatch_arm) -> a.tguard <> None) arms in
+  if has_guard then
+    emit_arms_goto ctx assign_to buf inner body_indent (TEnum ename_path) arms
+  else
+    emit_arms_if_else ctx assign_to buf inner body_indent
+      (TEnum ename_path) arms;
+  Buffer.add_string buf indent;
+  Buffer.add_string buf "}\n"
+
+(* Guard-free decision chain — preserves the long-standing
+   "if/else if/.../else" layout so existing goldens don't churn.
+   The last arm is a bare `else` (typecheck-proved exhaustiveness
+   guarantees it covers what's left). *)
+and emit_arms_if_else ctx assign_to buf inner body_indent ty arms =
   let n = List.length arms in
   List.iteri
     (fun i (a : tmatch_arm) ->
       let is_last = i = n - 1 in
       let (tests, binds) =
-        compile_pat ctx ~scrut:"__m" ~ty:(TEnum ename_path) a.tpat
+        compile_pat ctx ~scrut:"__m" ~ty a.tpat
       in
       Buffer.add_string buf inner;
       (if is_last && i > 0 then
@@ -789,9 +809,68 @@ and emit_match_decision ctx ?assign_to buf indent ename_path arms scrutinee =
       emit_arm_result ctx assign_to buf body_indent a;
       Buffer.add_string buf inner;
       Buffer.add_string buf "}\n")
+    arms
+
+(* Guard-aware emission: each arm is a self-contained `if (tag-tests)
+   { binds; if (guard) { body; goto done; } }`.  Binds must be in scope
+   to evaluate the guard, so they can't live in the if-test position —
+   hence the nested form.  When the guard fails (or the tag doesn't
+   match), control falls through to the next arm's `if`.  An exhaustive
+   unguarded arm somewhere in the chain will always fire — typecheck
+   uses only unguarded arms for exhaustiveness, so this is guaranteed.
+   Non-diverging arms `goto __mdoneK` to short-circuit the chain;
+   diverging arms (`try` desugar) `return` instead. *)
+and emit_arms_goto ctx assign_to buf inner body_indent ty arms =
+  let label =
+    let i = !match_label_counter in
+    incr match_label_counter;
+    Printf.sprintf "__mdone%d" i
+  in
+  List.iter (fun (a : tmatch_arm) ->
+    let (tests, binds) = compile_pat ctx ~scrut:"__m" ~ty a.tpat in
+    (* Tag-test wrapper opens iff there's any test.  An unconditional arm
+       (wildcard / var only) still needs an enclosing block to scope
+       any binds it introduces. *)
+    Buffer.add_string buf inner;
+    (if tests = [] then
+       Buffer.add_string buf "{\n"
+     else begin
+       Buffer.add_string buf "if (";
+       Buffer.add_string buf (String.concat " && " tests);
+       Buffer.add_string buf ") {\n"
+     end);
+    List.iter (fun (name, lval, ty) ->
+        Buffer.add_string buf body_indent;
+        Buffer.add_string buf (c_decl ty name);
+        Buffer.add_string buf " = ";
+        Buffer.add_string buf lval;
+        Buffer.add_string buf ";\n")
+      binds;
+    let stmt_indent, close_guard =
+      match a.tguard with
+      | None -> (body_indent, false)
+      | Some g ->
+          Buffer.add_string buf body_indent;
+          Buffer.add_string buf "if (";
+          gen_expr ctx buf g;
+          Buffer.add_string buf ") {\n";
+          (body_indent ^ "    ", true)
+    in
+    emit_arm_result ctx assign_to buf stmt_indent a;
+    if not a.tdiverges then begin
+      Buffer.add_string buf stmt_indent;
+      Buffer.add_string buf (Printf.sprintf "goto %s;\n" label)
+    end;
+    if close_guard then begin
+      Buffer.add_string buf body_indent;
+      Buffer.add_string buf "}\n"
+    end;
+    Buffer.add_string buf inner;
+    Buffer.add_string buf "}\n")
     arms;
-  Buffer.add_string buf indent;
-  Buffer.add_string buf "}\n"
+  Buffer.add_string buf inner;
+  Buffer.add_string buf label;
+  Buffer.add_string buf ": ;\n"
 
 (* Destructuring binding: introduce an inner C block, declare a `__t` temp
    of the tuple struct type, fill it from the RHS, then assign each hoisted
@@ -1254,6 +1333,7 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   (* Reset per-program so `__afK` loop-counter names start at 0 each
      compile — keeps golden output deterministic across test runs. *)
   fill_counter := 0;
+  match_label_counter := 0;
   let ctx = new_gen_ctx ~annotate
     ~enum_index:tp.tp_enum_index
     ~struct_index:tp.tp_struct_index in

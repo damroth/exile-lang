@@ -2459,6 +2459,42 @@ let () =
      }\n"
     "or-pattern alternatives must bind zero variables (got bind 'x'); use separate arms if you need to bind";
 
+  check "guard: pat if cond => emits goto-based decision chain"
+    "enum Maybe { Some(int) | None }\n\
+     fn main() {\n\
+    \    let m = Maybe::Some(5);\n\
+    \    let r = match m {\n\
+    \        Maybe::Some(n) if n > 0 => 1\n\
+    \        | Maybe::Some(_) => 2\n\
+    \        | Maybe::None => 0\n\
+    \    };\n\
+    \    println(r);\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Maybe_tag { ex_Maybe_Some, ex_Maybe_None };\nstruct ex_Maybe { enum ex_Maybe_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Maybe m;\n    long r;\n    m.tag = ex_Maybe_Some;\n    m.data.Some._0 = 5;\n    {\n        struct ex_Maybe __m;\n        __m = m;\n        if (__m.tag == ex_Maybe_Some) {\n            long n = __m.data.Some._0;\n            if (n > 0) {\n                r = 1;\n                goto __mdone0;\n            }\n        }\n        if (__m.tag == ex_Maybe_Some) {\n            r = 2;\n            goto __mdone0;\n        }\n        if (__m.tag == ex_Maybe_None) {\n            r = 0;\n            goto __mdone0;\n        }\n        __mdone0: ;\n    }\n    printf(\"%ld\\n\", (long)(r));\n    return 0;\n}\n";
+
+  check_error "guard: must be bool"
+    "enum E { A(int) | B }\n\
+     fn main() {\n\
+    \    let e = E::A(1);\n\
+    \    match e {\n\
+    \        E::A(n) if n => println(1)\n\
+    \        | E::B => println(0)\n\
+    \    }\n\
+     }\n"
+    "match-arm guard `if ...` must be of type bool, got i32";
+
+  check_error "guard: does not count toward exhaustiveness"
+    "enum E { A | B }\n\
+     fn main() {\n\
+    \    let x = 0;\n\
+    \    let e = E::A;\n\
+    \    match e {\n\
+    \        E::A if x == 0 => println(1)\n\
+    \        | E::B => println(0)\n\
+    \    }\n\
+     }\n"
+    "non-exhaustive 'match': pattern 'A' is not covered (add an arm or '_')";
+
   check_error "or-pattern: nested or inside a variant bind rejected"
     "enum Color { Red | Green | Blue }\n\
      enum Boxed { B(Color) }\n\

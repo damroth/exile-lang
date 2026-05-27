@@ -1,0 +1,30 @@
+// Pattern guards — `pat if cond => body` adds a boolean predicate that
+// runs *after* the pattern matches.  Reads top-down like
+// `switch/case + if`, but the binds from the pattern are in scope for
+// the guard expression.
+//
+// Guards do NOT contribute to exhaustiveness: a guarded arm doesn't
+// prove coverage, so an *unguarded* fallback must catch every shape.
+// Common: a wildcard `_` arm at the end.
+//
+// Codegen: guards force the decision-chain path with `goto __mdoneN`
+// labels.  Each arm is `if (tag-test) { binds; if (guard) { body;
+// goto done; } }`; failed guards fall through to the next arm.
+
+enum Number { Whole(int) | Zero }
+
+fn describe(n: Number) -> int {
+    match n {
+        Number::Whole(v) if v > 0 => 1   // positive
+        | Number::Whole(v) if v < 0 => 2  // negative (guard on same pattern)
+        | Number::Whole(_) => 3           // zero-valued Whole (v == 0)
+        | Number::Zero => 0               // Zero variant
+    }
+}
+
+fn main() {
+    println(describe(Number::Whole(7)));    // 1
+    println(describe(Number::Whole(-3)));   // 2
+    println(describe(Number::Whole(0)));    // 3
+    println(describe(Number::Zero));        // 0
+}

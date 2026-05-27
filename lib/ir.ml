@@ -627,6 +627,11 @@ type texpr_node =
 
 and tmatch_arm = {
   tpat : tpattern;
+  tguard : texpr option;        (* `pat if <cond> => body` — typechecked
+                                   bool predicate; binds from `tpat` are
+                                   in scope.  Forces decision-chain
+                                   codegen and excludes the arm from
+                                   exhaustiveness coverage. *)
   tbody : texpr;
   tdiverges : bool;             (* if true, codegen emits `return tbody;`
                                    instead of assigning to the match's

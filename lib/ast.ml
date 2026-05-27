@@ -159,7 +159,15 @@ and expr =
                                            block-expression branches are
                                            deferred (see WORKLOG). *)
 
-and match_arm = { pat : pattern; body : expr; arm_pos : Pos.t }
+and match_arm = { pat : pattern;
+                   guard : expr option;   (* `pat if cond => body` —
+                                             optional boolean guard
+                                             evaluated *after* the pattern
+                                             matches.  Guards don't
+                                             contribute to exhaustiveness:
+                                             a guarded arm doesn't prove
+                                             coverage. *)
+                   body : expr; arm_pos : Pos.t }
 
 and enum_lit_args =
   | EATuple of expr list                (* unit ctor uses EATuple [] *)

@@ -723,9 +723,22 @@ and parse_match_arms s acc =
    | _ -> ());
   let arm_pos = peek_pos s in
   let pat = parse_pattern s in
+  (* Optional `if <cond>` guard between pattern and `=>`.  Bitor stays
+     enabled inside the guard expression — the guard runs to `=>`, and
+     the arm-separator `|` only appears *after* the body. *)
+  let guard =
+    if peek s = Token.If then begin
+      ignore (advance s);
+      let prev = s.allow_struct_lit in
+      s.allow_struct_lit <- false;
+      let g = parse_expr s in
+      s.allow_struct_lit <- prev;
+      Some g
+    end else None
+  in
   expect s Token.FatArrow;
   let body = parse_arm_body s in
-  let acc = Ast.{ pat; body; arm_pos } :: acc in
+  let acc = Ast.{ pat; guard; body; arm_pos } :: acc in
   match peek s with
   | Token.Pipe -> ignore (advance s); parse_match_arms s acc
   | Token.RBrace -> ignore (advance s); List.rev acc
