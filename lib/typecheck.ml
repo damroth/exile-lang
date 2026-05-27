@@ -1354,10 +1354,10 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       let tgt = resolve_type_ann ~pos:cast_pos ctx ann in
       if is_int_like sub'.ty && is_int_like tgt then ()
       else if is_ptr sub'.ty && is_ptr tgt then ()
+      else if is_int_like sub'.ty && is_ptr tgt then ()
       else
         Error.failf cast_pos
-          "cannot cast %s to %s (only integer-to-integer or \
-           pointer-to-pointer casts supported)"
+          "cannot cast %s to %s (supported: int↔int, ptr↔ptr, int→ptr)"
           (typ_name sub'.ty) (typ_name tgt);
       { e = TCast (sub', ann); ty = tgt; pos }
   | Ast.Ref (sub, _) ->

@@ -1859,7 +1859,7 @@ let () =
     \    let b = true;\n\
     \    let _ = b as *int;\n\
      }\n"
-    "cannot cast bool to *i32 (only integer-to-integer or pointer-to-pointer casts supported)";
+    "cannot cast bool to *i32 (supported: int↔int, ptr↔ptr, int→ptr)";
 
   check "prelude Allocator: dropped from emitted C when unused"
     "fn main() { println(1); }\n"
@@ -2409,4 +2409,21 @@ let () =
 
   check_error "pipe: missing ident after `|>` rejected"
     "fn main() { let x = 1 |> ; }\n"
-    "expected function name after '|>', got ';'"
+    "expected function name after '|>', got ';'";
+
+  check "cast: int literal to *T accepted (MMIO-style)"
+    "struct Custom { vposr: u32 }\n\
+     fn main() {\n\
+    \    let cust = 0xDFF000 as *Custom;\n\
+    \    let is_null: bool = cust == null;\n\
+    \    if is_null { println(1); } else { println(0); }\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Custom { unsigned long vposr; };\n\nint main(void) {\n    struct ex_Custom *cust;\n    int is_null;\n    cust = ((struct ex_Custom *)14675968);\n    is_null = cust == ((void *)0);\n    if (is_null) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    return 0;\n}\n";
+
+  check_error "cast: *T to int still rejected"
+    "fn main() {\n\
+    \    let p: *i32 = null;\n\
+    \    let n = p as int;\n\
+    \    println(n);\n\
+     }\n"
+    "cannot cast *i32 to i32 (supported: int↔int, ptr↔ptr, int→ptr)"

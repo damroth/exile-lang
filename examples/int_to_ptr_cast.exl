@@ -1,0 +1,30 @@
+// `int → *T` cast — MMIO-style addressing: a fixed hardware address
+// (typically a hex literal — `0xDFF000` is the Amiga Custom chip base)
+// turned into a typed pointer so the rest of the code can reference its
+// register layout by name.  The struct definition documents the layout;
+// the cast pins the base.  Deref would actually access hardware, so
+// here we just demonstrate that the cast is well-typed.
+
+struct CustomChip {
+    bltddat: u16,                       // blitter destination read data
+    dmaconr: u16,                       // DMA control read
+    vposr:   u16,                       // vertical beam position
+    vhposr:  u16,                       // vertical+horizontal beam position
+}
+
+fn main() {
+    // Pin the Custom chip register block at its known base address.
+    let cust: *CustomChip = 0xDFF000 as *CustomChip;
+
+    // Pointer is not null (it's a literal address), but a null check
+    // shows the value flows through the type system as a real pointer.
+    if cust == null {
+        println(1);                     // unreachable
+    } else {
+        println(0);                     // 0 — non-null typed pointer
+    }
+
+    // A null typed-pointer is still distinguishable.
+    let nothing: *CustomChip = null;
+    if nothing == null { println(1); } else { println(0); }   // 1
+}
