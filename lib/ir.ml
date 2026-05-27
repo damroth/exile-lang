@@ -65,7 +65,12 @@ type typ =
                                           a partially-free application, are
                                           never `is_concrete`, and never reach
                                           codegen — exactly like `TVar`. *)
-  | TPtr of typ                        (* `*T` *)
+  | TPtr of typ                        (* `*T` — mutable pointee *)
+  | TConstPtr of typ                   (* `*const T` — read-only pointee.
+                                          Codegen emits `const T *`; writes
+                                          via deref or field-of-deref are
+                                          rejected; coerces in from `TPtr T`
+                                          at let/assign/arg sites. *)
   | TArray of { elem : typ; size : int }
                                        (* `[T; N]` — fixed-size array, a
                                           by-value aggregate (struct-like:
@@ -116,7 +121,7 @@ let is_int_like = function
    makes FFI to AmigaOS-style `APTR`/`*c_char` ergonomic ("hello" cast
    to *c_uchar etc.). *)
 let is_ptr = function
-  | TPtr _ | TNullPtr | TString -> true
+  | TPtr _ | TConstPtr _ | TNullPtr | TString -> true
   | _ -> false
 
 let int_fits n typ =
@@ -237,6 +242,7 @@ let rec type_of_ann = function
   | Ast.TyTuple ts -> TTuple (List.map type_of_ann ts)
   | Ast.TyStruct { path; args = _ } -> TStruct path
   | Ast.TyPtr t -> TPtr (type_of_ann t)
+  | Ast.TyConstPtr t -> TConstPtr (type_of_ann t)
   | Ast.TyArray _ ->
       (* Array sizes need const evaluation (a ctx), which this ctx-free
          conversion can't do — consumers walk resolved [typ]s instead. *)
@@ -280,6 +286,7 @@ let rec typ_name = function
       String.concat "::" path
       ^ "<" ^ String.concat ", " (List.map typ_name args) ^ ">"
   | TPtr t -> "*" ^ typ_name t
+  | TConstPtr t -> "*const " ^ typ_name t
   | TArray { elem; size } -> Printf.sprintf "[%s; %d]" (typ_name elem) size
   | TFnPtr { params; ret } ->
       let ps = String.concat ", " (List.map typ_name params) in
@@ -294,11 +301,27 @@ let rec typ_name = function
 let rec typ_eq a b =
   match a, b with
   | TNullPtr, TPtr _ | TPtr _, TNullPtr -> true
+  | TNullPtr, TConstPtr _ | TConstPtr _, TNullPtr -> true
   | TNullPtr, TNullPtr -> true
   | TPtr a, TPtr b -> typ_eq a b
+  | TConstPtr a, TConstPtr b -> typ_eq a b
   | TTuple xs, TTuple ys ->
       List.length xs = List.length ys && List.for_all2 typ_eq xs ys
   | _ -> a = b
+
+(* Implicit pointee-immutability coercion: a `*T` value may flow into a
+   `*const T` slot (you can always drop write capability), but never the
+   reverse.  Used at let/return/arg/assign sites alongside `typ_eq` —
+   `coercible_to ~from ~to_` is true exactly when [typ_eq from to_] is,
+   or when [from] is `*T`/null and [to_] is `*const T`/null with the
+   same pointee.  Pointer-to-pointer through nested `*` keeps strict
+   `typ_eq` semantics (no automatic deep const-ification — that would
+   change C aliasing rules). *)
+let coercible_to ~from ~to_ =
+  typ_eq from to_ ||
+  (match from, to_ with
+   | TPtr a, TConstPtr b -> typ_eq a b
+   | _ -> false)
 
 (* Mangle a type to a C-identifier-safe string used as a unique key for
    tuple-struct dedup and as the C type name for named structs.  Tuples are
@@ -340,6 +363,7 @@ let rec mangle_typ = function
   | TExtStruct n -> n              (* raw — opaque struct lives in C namespace *)
   | TExtAlias n -> n               (* raw — opaque type alias lives in C namespace *)
   | TPtr t -> "ptr_" ^ mangle_typ t
+  | TConstPtr t -> "cptr_" ^ mangle_typ t
   | TArray { elem; size } -> Printf.sprintf "arr%d_%s" size (mangle_typ elem)
   | TFnPtr { params; ret } ->
       let ps = String.concat "_" (List.map mangle_typ params) in
@@ -414,6 +438,11 @@ let rec c_type_prefix = function
       (* Pointer types render as `<base> *` with no trailing space, so
          `c_decl t name` produces `<base> *name`. *)
       strip_trailing_space (c_type_prefix inner) ^ " *"
+  | TConstPtr TCVoid -> "const void *"
+  | TConstPtr inner ->
+      (* `*const T` -> `const T *` (pointer to const data; the pointer
+         itself stays rebindable per the binding's `let mut`). *)
+      "const " ^ strip_trailing_space (c_type_prefix inner) ^ " *"
   | TFnPtr _ as t ->
       (* Reference fn-ptr types by typedef alias (emitted up top by
          gen_program).  Avoids the awkward C "function returning

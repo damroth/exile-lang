@@ -330,7 +330,7 @@ let rec gen_expr ctx buf (te : texpr) =
       Buffer.add_char buf ']'
   | TFieldAccess { target; field } ->
       (* Auto-deref pointer-to-struct via `->`; otherwise plain `.`. *)
-      let sep = match target.ty with TPtr _ -> "->" | _ -> "." in
+      let sep = match target.ty with TPtr _ | TConstPtr _ -> "->" | _ -> "." in
       gen_expr ctx buf target;
       Buffer.add_string buf sep;
       Buffer.add_string buf field
@@ -489,7 +489,7 @@ and emit_simple_stmt ctx buf indent stmt =
   | TLetTuple { names; value; _ } ->
       emit_let_tuple ctx buf indent names value
   | TAssignField { target; field; value; _ } ->
-      let sep = match target.ty with TPtr _ -> "->" | _ -> "." in
+      let sep = match target.ty with TPtr _ | TConstPtr _ -> "->" | _ -> "." in
       Buffer.add_string buf indent;
       gen_expr ctx buf target;
       Buffer.add_string buf sep;

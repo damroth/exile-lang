@@ -44,7 +44,13 @@ type type_ann =
                                           appear as `TyStruct { path=["T"];
                                           args=[] }` until typecheck binds
                                           them as type variables. *)
-  | TyPtr of type_ann                  (* `*T` *)
+  | TyPtr of type_ann                  (* `*T` — mutable pointee *)
+  | TyConstPtr of type_ann             (* `*const T` — pointee is read-only
+                                          (maps to C `const T *`).  Writes
+                                          through such a pointer (`*p = v`)
+                                          and casts back to `*T` are
+                                          rejected.  Coerces *in* from `*T`
+                                          at assignment and call sites. *)
   | TyArray of { elem : type_ann; size : expr }
                                        (* `[T; N]` — fixed-size array.  N is
                                           a constant expression (literal or

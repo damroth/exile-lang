@@ -1,0 +1,42 @@
+// `*const T` — pointee-immutable pointer.  Maps to C `const T *`.
+//
+// Two orthogonal axes of mutability:
+//   - The binding: `let p` vs `let mut p` controls rebinding the pointer.
+//   - The pointee: `*T` vs `*const T` controls writes *through* the
+//     pointer (`*p = v`, `p.f = v`).
+//
+// Coercion rules:
+//   - `*T -> *const T`: implicit (you can always drop write capability)
+//     at let-init and fn-arg sites.
+//   - `*const T -> *T`: requires an explicit `as` cast (escape hatch,
+//     analogous to C and Rust's `*const T as *mut T`).
+
+struct Point { x: int, y: int }
+
+// Read-only access — the contract says "I won't write through p".
+fn dist_sq(p: *const Point) -> int {
+    p.x * p.x + p.y * p.y
+}
+
+// Same shape but with full write capability — mutate the pointee.
+fn translate(p: *Point, dx: int, dy: int) {
+    p.x = p.x + dx;
+    p.y = p.y + dy;
+}
+
+fn main() {
+    let mut q = Point { x: 3, y: 4 };
+    let p: *Point = &q;
+
+    // *T flows into a *const T argument by implicit coercion.
+    println(dist_sq(p));               // 25
+
+    // *T is still writable through its full form.
+    translate(p, 1, 1);
+    println(dist_sq(p));               // 41 (4*4 + 5*5)
+
+    // Direct *const binding from &expr also works.
+    let pc: *const Point = &q;
+    println(pc.x);                     // 4
+    println(pc.y);                     // 5
+}

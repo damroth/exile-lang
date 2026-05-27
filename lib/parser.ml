@@ -97,7 +97,16 @@ let parse_expr_fwd : (state -> Ast.expr) ref =
 let rec parse_type s =
   let ti signed width = Ast.TyInt { signed; width } in
   match advance s with
-  | (Token.Star, _) -> Ast.TyPtr (parse_type s)
+  | (Token.Star, _) ->
+      (* `*T` is the default mutable pointee; `*const T` marks the pointee
+         as read-only (maps to C `const T *`).  The `const` keyword reuses
+         Token.Const (top-level item-decl keyword); inside a type context
+         it's unambiguously the const-ptr marker. *)
+      if peek s = Token.Const then begin
+        ignore (advance s);
+        Ast.TyConstPtr (parse_type s)
+      end else
+        Ast.TyPtr (parse_type s)
   | (Token.LBracket, _) ->
       (* `[T; N]` — fixed-size array type. *)
       let elem = parse_type s in

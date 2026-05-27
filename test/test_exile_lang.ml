@@ -2548,6 +2548,49 @@ let () =
      }\n"
     "variable 'x' already declared in this function";
 
+  check "const-ptr: read through *const T emits `const T *`"
+    "fn main() {\n\
+    \    let x: int = 42;\n\
+    \    let p: *const int = &x;\n\
+    \    println(*p);\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    long x;\n    const long *p;\n    x = 42;\n    p = &x;\n    printf(\"%ld\\n\", (long)(*p));\n    return 0;\n}\n";
+
+  check "const-ptr: *T coerces to *const T at fn-arg site"
+    "fn read_int(p: *const int) -> int { *p }\n\
+     fn main() {\n\
+    \    let x: int = 42;\n\
+    \    let q: *int = &x;\n\
+    \    println(read_int(q));\n\
+     }\n"
+    "#include <stdio.h>\n\nstatic long ex_read_int(const long *p);\n\nstatic long ex_read_int(const long *p) {\n    return *p;\n}\n\nint main(void) {\n    long x;\n    long *q;\n    x = 42;\n    q = &x;\n    printf(\"%ld\\n\", (long)(ex_read_int(q)));\n    return 0;\n}\n";
+
+  check_error "const-ptr: writing through *const rejected"
+    "fn main() {\n\
+    \    let x: int = 1;\n\
+    \    let p: *const int = &x;\n\
+    \    *p = 99;\n\
+     }\n"
+    "cannot assign through '*const' pointer *const i32 (pointee is read-only)";
+
+  check_error "const-ptr: writing field through *const rejected"
+    "struct Point { x: int, y: int }\n\
+     fn main() {\n\
+    \    let p = Point { x: 1, y: 2 };\n\
+    \    let pp: *const Point = &p;\n\
+    \    pp.x = 99;\n\
+     }\n"
+    "cannot assign field 'x' through '*const' pointer *const Point (pointee is read-only)";
+
+  check_error "const-ptr: implicit *const T -> *T rejected"
+    "fn main() {\n\
+    \    let x: int = 1;\n\
+    \    let p: *const int = &x;\n\
+    \    let q: *int = p;\n\
+    \    println(*q);\n\
+     }\n"
+    "variable 'q' declared as *i32 but initializer has type *const i32";
+
   check_error "doc-comments: `@doc(non-string)` rejected"
     "@doc(123)\n\
      fn add(a: int, b: int) -> int { a + b }\n\

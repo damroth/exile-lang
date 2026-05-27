@@ -444,6 +444,7 @@ let rec resolve_type_ann_raw ~pos ctx ann =
   | Ast.TyBool -> TBool
   | Ast.TyTuple ts -> TTuple (List.map recur ts)
   | Ast.TyPtr t -> TPtr (recur t)
+  | Ast.TyConstPtr t -> TConstPtr (recur t)
   | Ast.TyArray { elem; size } ->
       let elem' = recur elem in
       let n = eval_const_size ctx size in
@@ -833,7 +834,7 @@ let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
   in
   let fixed_arg_tys = take expected_n arg_tys in
   List.iteri (fun i (exp, act) ->
-    if not (typ_eq exp act)
+    if not (coercible_to ~from:act ~to_:exp)
        && not (int_lit_fits (List.nth raw_args i) exp)
     then
       Error.failf pos
@@ -1448,7 +1449,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       let sub' = elab_expr ctx env sub in
       let ty =
         match sub'.ty with
-        | TPtr t -> t
+        | TPtr t | TConstPtr t -> t
         | TNullPtr -> Error.failf deref_pos "cannot deref 'null'"
         | other ->
             Error.failf deref_pos "deref '*' requires a pointer, got %s"
@@ -2116,7 +2117,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                      "variant '%s' takes %d argument(s), got %d"
                      display expected_n got;
                  List.iteri (fun i ((_, exp), (te : texpr)) ->
-                   if not (typ_eq exp te.ty)
+                   if not (coercible_to ~from:te.ty ~to_:exp)
                       && not (int_lit_fits (List.nth raws i) exp)
                    then
                      Error.failf lit_pos
@@ -2298,6 +2299,9 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         match trecv.ty with
         | TStruct p -> p
         | TPtr (TStruct p) -> p
+        | TConstPtr (TStruct p) -> p   (* methods can mutate through self;
+                                          MVP doesn't gate this — `&self`
+                                          vs `&mut self` is future work *)
         | other ->
             Error.failf mc_pos
               "method call '.%s()' requires a struct value or pointer to \
@@ -2432,7 +2436,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       let target' = elab_expr ctx env target in
       let field_ty =
         match target'.ty with
-        | TStruct p | TPtr (TStruct p) ->
+        | TStruct p | TPtr (TStruct p) | TConstPtr (TStruct p) ->
             let s = match resolve_struct_by_path ctx p with
               | Some s -> s
               | None -> Error.failf fa_pos "unknown struct '%s'"
@@ -2443,7 +2447,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
              | None ->
                  Error.failf fa_pos "struct '%s' has no field '%s'"
                    (String.concat "::" p) fname)
-        | TExtStruct n | TPtr (TExtStruct n) ->
+        | TExtStruct n | TPtr (TExtStruct n) | TConstPtr (TExtStruct n) ->
             (match List.assoc_opt n ctx.ext_struct_fields with
              | None ->
                  Error.failf fa_pos
@@ -2585,7 +2589,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                    Error.failf pos
                      "literal %d does not fit in %s" n (typ_name t_ann)
                | _ ->
-                   if typ_eq t_ann t_inferred then t_ann
+                   if coercible_to ~from:t_inferred ~to_:t_ann then t_ann
                    else
                      Error.failf pos
                        "variable '%s' declared as %s but initializer has type %s"
@@ -2667,6 +2671,14 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         (env, TAssign { path; value = tvalue; pos })
     | Ast.AssignField { target; field; value; pos } ->
         let ttarget = elab_expr ctx env target in
+        (* Reject field-write through a `*const` pointer up-front — the
+           pointee is read-only, even via field auto-deref. *)
+        (match ttarget.ty with
+         | TConstPtr _ ->
+             Error.failf pos
+               "cannot assign field '%s' through '*const' pointer %s \
+                (pointee is read-only)" field (typ_name ttarget.ty)
+         | _ -> ());
         let fty =
           match ttarget.ty with
           | TStruct p | TPtr (TStruct p) ->
@@ -2750,6 +2762,10 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let inner =
           match ttarget.ty with
           | TPtr t -> t
+          | TConstPtr _ ->
+              Error.failf pos
+                "cannot assign through '*const' pointer %s (pointee is \
+                 read-only)" (typ_name ttarget.ty)
           | other ->
               Error.failf pos
                 "assignment through '*' requires a pointer, got %s"
@@ -4519,7 +4535,8 @@ let check_program program : tprogram =
   let enum_is_debug path = Hashtbl.mem debug_enums path in
   let rec field_ty_ok = function
     | TInt _ | TCInt _ | TCShort _ | TCLong _
-    | TCChar | TCSChar | TCUChar | TBool | TString | TPtr _ -> true
+    | TCChar | TCSChar | TCUChar | TBool | TString | TPtr _
+    | TConstPtr _ -> true
     | TStruct p -> struct_is_debug p
     | TEnum p -> enum_is_debug p
     (* Tuple fields aren't rendered by the synthesized printer yet
