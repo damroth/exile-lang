@@ -2483,6 +2483,25 @@ let () =
      }\n"
     "match-arm guard `if ...` must be of type bool, got i32";
 
+  check "doc-comments: `///` lines are silently accepted (lexer skip)"
+    "/// Adds two integers.\n\
+     /// First argument is the left operand.\n\
+     fn add(a: int, b: int) -> int { a + b }\n\
+     fn main() { println(add(2, 3)); }\n"
+    "#include <stdio.h>\n\nstatic long ex_add(long a, long b);\n\nstatic long ex_add(long a, long b) {\n    return a + b;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_add(2, 3)));\n    return 0;\n}\n";
+
+  check "doc-comments: `@doc(\"...\")` attribute accepted (no-op)"
+    "@doc(\"Adds two integers.\")\n\
+     fn add(a: int, b: int) -> int { a + b }\n\
+     fn main() { println(add(2, 3)); }\n"
+    "#include <stdio.h>\n\nstatic long ex_add(long a, long b);\n\nstatic long ex_add(long a, long b) {\n    return a + b;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_add(2, 3)));\n    return 0;\n}\n";
+
+  check_error "doc-comments: `@doc(non-string)` rejected"
+    "@doc(123)\n\
+     fn add(a: int, b: int) -> int { a + b }\n\
+     fn main() { println(add(2, 3)); }\n"
+    "expected string literal in '@doc(\"...\")', got integer 123";
+
   check_error "guard: does not count toward exhaustiveness"
     "enum E { A | B }\n\
      fn main() {\n\

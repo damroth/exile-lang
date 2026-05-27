@@ -1504,10 +1504,30 @@ let rec parse_item s seen =
              | _ ->
                  Error.failf at_pos
                    "'@amiga_lib' can only decorate `extern fn` declarations")
+       | "doc" ->
+           (* `@doc("...")` — explicit attribute form of `///` line
+              doc-comments.  Both are syntactically accepted today but
+              are not yet propagated into the AST / generated C; the
+              syntax exists so source files can carry documentation
+              that future tooling (formatters, doc generators) can
+              consume without breaking the build.  Validates the arg
+              and drops the attribute. *)
+           expect s Token.LParen;
+           let _doc =
+             match advance s with
+             | (Token.String d, _) -> d
+             | (t, p) ->
+                 Error.failf p
+                   "expected string literal in '@doc(\"...\")', got %s"
+                   (Token.pp t)
+           in
+           expect s Token.RParen;
+           parse_item s seen
        | other ->
            Error.failf at_pos
              "unknown attribute '@%s' (only '@c_include', '@tier', \
-              '@must_use', '@debug' and '@amiga_lib' are supported)"
+              '@must_use', '@debug', '@doc' and '@amiga_lib' are \
+              supported)"
              other)
   | _ ->
       Error.failf (peek_pos s)

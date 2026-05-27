@@ -1,0 +1,25 @@
+// Doc-comments — both `///` line form and `@doc("...")` attribute form.
+//
+// Status (2026-05-27, MVP): both syntaxes are accepted, but neither is
+// yet propagated into the AST or generated C output.  The point of
+// shipping the syntax now is so source files can carry documentation
+// that future tooling (formatters, doc generators) can pick up without
+// breaking the build today.  Treating both as no-ops keeps the
+// implementation tiny and the interface stable.
+
+/// Doubles its input.
+/// Lines stack — Rust convention.
+fn dbl(x: int) -> int { x + x }
+
+@doc("Adds two integers using the explicit attribute form.")
+fn add(a: int, b: int) -> int { a + b }
+
+/// A point in 2D space.
+struct Point { x: int, y: int }
+
+fn main() {
+    println(dbl(5));                   // 10
+    println(add(2, 3));                // 5
+    let p = Point { x: 7, y: 9 };
+    println(p.x + p.y);                // 16
+}
