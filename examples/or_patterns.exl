@@ -1,0 +1,32 @@
+// Or-patterns: `pat1 | pat2 | pat3 => body` — pattern union, compact.
+// One body shared across multiple variants without a wildcard.
+//
+// MVP scope: alternatives bind zero variables (use separate arms if
+// you need to bind), and `|` is only allowed at the top of an arm
+// head (not nested inside a variant payload).
+//
+// Codegen: a flat-switch match emits multiple `case` labels falling
+// through to one body; a decision-chain match emits a `||`-joined
+// tag test.
+
+enum Token {
+    Plus | Minus | Star | Slash         // arithmetic operators
+    | LParen | RParen                   // brackets
+    | Ident                             // identifier
+    | NumberLit                         // numeric literal
+}
+
+fn category(t: Token) -> int {
+    match t {
+        Token::Plus | Token::Minus | Token::Star | Token::Slash => 1
+        | Token::LParen | Token::RParen => 2
+        | Token::Ident | Token::NumberLit => 3
+    }
+}
+
+fn main() {
+    println(category(Token::Plus));    // 1
+    println(category(Token::Slash));   // 1
+    println(category(Token::LParen));  // 2
+    println(category(Token::Ident));   // 3
+}

@@ -2426,4 +2426,47 @@ let () =
     \    let n = p as int;\n\
     \    println(n);\n\
      }\n"
-    "cannot cast *i32 to i32 (supported: int↔int, ptr↔ptr, int→ptr)"
+    "cannot cast *i32 to i32 (supported: int↔int, ptr↔ptr, int→ptr)";
+
+  check "or-pattern: A | B in match arm head emits stacked case labels"
+    "enum Color { Red | Green | Blue }\n\
+     fn main() {\n\
+    \    let c = Color::Green;\n\
+    \    match c {\n\
+    \        Color::Red | Color::Green => println(1)\n\
+    \        | Color::Blue => println(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Color_tag { ex_Color_Red, ex_Color_Green, ex_Color_Blue };\nstruct ex_Color { enum ex_Color_tag tag; };\n\nint main(void) {\n    struct ex_Color c;\n    c.tag = ex_Color_Green;\n    {\n        struct ex_Color __m;\n        __m = c;\n        switch (__m.tag) {\n        case ex_Color_Red:\n        case ex_Color_Green:\n            {\n                printf(\"%ld\\n\", (long)(1));\n                break;\n            }\n        case ex_Color_Blue:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check_error "or-pattern: still must cover every variant"
+    "enum E { A | B | C }\n\
+     fn main() {\n\
+    \    let e = E::A;\n\
+    \    match e {\n\
+    \        E::A | E::B => println(1)\n\
+    \    }\n\
+     }\n"
+    "non-exhaustive 'match': pattern 'C' is not covered (add an arm or '_')";
+
+  check_error "or-pattern: alternatives may not bind variables"
+    "enum E { Some(int) | None }\n\
+     fn main() {\n\
+    \    let e = E::Some(7);\n\
+    \    match e {\n\
+    \        E::Some(x) | E::None => println(1)\n\
+    \    }\n\
+     }\n"
+    "or-pattern alternatives must bind zero variables (got bind 'x'); use separate arms if you need to bind";
+
+  check_error "or-pattern: nested or inside a variant bind rejected"
+    "enum Color { Red | Green | Blue }\n\
+     enum Boxed { B(Color) }\n\
+     fn main() {\n\
+    \    let b = Boxed::B(Color::Red);\n\
+    \    match b {\n\
+    \        Boxed::B(Color::Red | Color::Green) => println(1)\n\
+    \        | Boxed::B(Color::Blue) => println(0)\n\
+    \    }\n\
+     }\n"
+    "or-pattern only allowed at the top of a match arm (nested `pat1 | pat2` inside a variant bind is not supported yet)"

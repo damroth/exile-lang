@@ -588,12 +588,28 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
       List.iter
         (fun (a : tmatch_arm) ->
           Buffer.add_string buf inner;
-          (match a.tpat with
-           | TPVariant { variant; _ } ->
-               Buffer.add_string buf (Printf.sprintf "case %s_%s:\n"
-                                        cname variant)
-           | TPWildcard | TPVar _ ->
-               Buffer.add_string buf "default:\n");
+          (* Or-pattern (`A | B | C`) emits multiple `case` labels falling
+             through to the same body; a wildcard alt subsumes the rest
+             into a single `default:`.  Non-or patterns use a single
+             label as before. *)
+          let alts =
+            match a.tpat with TPOr xs -> xs | other -> [ other ]
+          in
+          let has_wild =
+            List.exists (function TPWildcard | TPVar _ -> true | _ -> false)
+              alts
+          in
+          if has_wild then
+            Buffer.add_string buf "default:\n"
+          else
+            List.iteri (fun i alt ->
+              if i > 0 then Buffer.add_string buf inner;
+              match alt with
+              | TPVariant { variant; _ } ->
+                  Buffer.add_string buf
+                    (Printf.sprintf "case %s_%s:\n" cname variant)
+              | TPOr _ | TPWildcard | TPVar _ -> assert false)
+              alts;
           (* Each arm body lives in its own `{}` block so bind decls
              stay scoped to the case (and so we don't leak C variable
              names across cases). *)
@@ -627,7 +643,10 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
                             variant fname)
                    | _ -> ())
                  binds
-           | TPWildcard -> ());
+           | TPWildcard | TPOr _ -> ());
+                                   (* TPOr alts bind no variables by MVP
+                                      restriction; multiple case labels
+                                      share the same (empty) bind block *)
           emit_arm_result ctx assign_to buf body_indent a;
           if not a.tdiverges then begin
             Buffer.add_string buf body_indent;
@@ -648,6 +667,10 @@ and tpat_nested = function
   | TPVariant { binds; _ } ->
       List.exists (fun (_, p) ->
         match p with TPVariant _ -> true | _ -> tpat_nested p) binds
+  | TPOr _ -> false                       (* MVP alts are unit-variant /
+                                             wildcard only; flat switch
+                                             with stacked case labels
+                                             always works *)
   | _ -> false
 
 (* Arm body emission shared by the switch and decision-chain paths
@@ -708,6 +731,23 @@ and compile_pat ctx ~scrut ~ty tpat =
           let (t2, b2) = compile_pat ctx ~scrut:sub_scrut ~ty:ft subpat in
           (ts @ t2, bs @ b2))
         ([ tag_test ], []) binds
+  | TPOr alts ->
+      (* Or-pattern in decision-chain context: one `||`-joined test that
+         folds together each alternative's tests.  By MVP restriction
+         alternatives bind nothing, so `bs` from each alt is empty.  An
+         alt with zero tests (wildcard) collapses the whole disjunction
+         to "always true" — emit no test. *)
+      let alt_tests =
+        List.map (fun alt ->
+          let (ts, _bs) = compile_pat ctx ~scrut ~ty alt in ts) alts
+      in
+      if List.exists (fun ts -> ts = []) alt_tests then ([], [])
+      else
+        let joined =
+          List.map (fun ts ->
+            "(" ^ String.concat " && " ts ^ ")") alt_tests
+        in
+        ([ "(" ^ String.concat " || " joined ^ ")" ], [])
 
 (* Decision-chain emission for matches with nested patterns.  Each arm
    becomes `if (<tests>) { <binds>; <body> }`; the last arm is emitted as

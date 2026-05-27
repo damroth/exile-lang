@@ -174,6 +174,14 @@ and pattern =
                                            struct form: `Foo::V { f: p }` or
                                            shorthand `Foo::V { f }`.  Unit
                                            variants use `PBTuple []`. *)
+  | POr of pattern list * Pos.t         (* `pat1 | pat2 | ...` — pattern
+                                           union; matches if any
+                                           alternative matches.  MVP
+                                           requires zero binds in every
+                                           alternative (no variable can
+                                           be referenced in the arm body
+                                           that's only bound by some
+                                           alternatives). *)
 
 and pat_binds =
   | PBTuple of pattern list

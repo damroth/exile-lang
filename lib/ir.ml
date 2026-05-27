@@ -646,6 +646,9 @@ and tpattern =
                                         (* field name + sub-pattern;
                                            tuple form uses synthetic
                                            `_0`/`_1`/... names *)
+  | TPOr of tpattern list               (* `pat1 | pat2 | ...` — MVP
+                                           alternatives bind zero
+                                           variables (no merge needed) *)
 
 and texpr = {
   e : texpr_node;

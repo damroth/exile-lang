@@ -922,8 +922,8 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
    that a variant pattern's type really is the matching enum, that the
    variant exists, and that tuple/struct bind syntax matches the variant
    kind. *)
-let rec lower_pattern ctx (value_ty : typ) (pat : Ast.pattern)
-    : tpattern * (string * typ) list =
+let rec lower_pattern ?(allow_or = true) ctx (value_ty : typ)
+    (pat : Ast.pattern) : tpattern * (string * typ) list =
   match pat with
   | Ast.PWildcard _ -> (TPWildcard, [])
   | Ast.PVar (n, _) -> (TPVar n, [ (n, value_ty) ])
@@ -996,12 +996,66 @@ let rec lower_pattern ctx (value_ty : typ) (pat : Ast.pattern)
       in
       let lowered =
         List.map (fun (fn, ft, sp) ->
-          let (tp, bs) = lower_pattern ctx ft sp in
+          let (tp, bs) = lower_pattern ~allow_or:false ctx ft sp in
           ((fn, tp), bs))
           ordered
       in
       (TPVariant { variant; tag; binds = List.map fst lowered },
        List.concat_map snd lowered)
+  | Ast.POr (_, opos) when not allow_or ->
+      Error.failf opos
+        "or-pattern only allowed at the top of a match arm \
+         (nested `pat1 | pat2` inside a variant bind is not supported yet)"
+  | Ast.POr (alts, opos) ->
+      if List.length alts < 2 then
+        Error.failf opos
+          "internal: or-pattern parsed with %d alternative(s); \
+           expected at least 2" (List.length alts);
+      let lowered =
+        List.map (lower_pattern ~allow_or:false ctx value_ty) alts
+      in
+      (* MVP: every alternative must bind zero variables.  Rust requires
+         all alternatives to bind the *same set* of names; we punt that to
+         a follow-up — the common case (`Foo | Bar | Baz`, all unit
+         variants) wants zero binds anyway. *)
+      List.iter (fun (_, bs) ->
+        match bs with
+        | [] -> ()
+        | (n, _) :: _ ->
+            Error.failf opos
+              "or-pattern alternatives must bind zero variables \
+               (got bind '%s'); use separate arms if you need to bind" n)
+        lowered;
+      (* MVP: each alternative is a wildcard or a unit variant (no
+         payload).  Variants with payload — even all-wildcard payload
+         like `Foo(_)` — would force the decision-chain codegen path
+         and complicate duplicate-tag detection here; we defer them. *)
+      let talts = List.map fst lowered in
+      List.iter (function
+        | TPWildcard | TPVar _ -> ()
+        | TPVariant { binds = []; _ } -> ()
+        | TPVariant { variant; _ } ->
+            Error.failf opos
+              "or-pattern alternative '%s(...)' has a payload; only \
+               unit variants and `_` are allowed in `|` alternatives \
+               (use separate arms if you need to bind the payload)" variant
+        | TPOr _ -> assert false       (* allow_or:false in recursion *))
+        talts;
+      (* Within-or duplicate detection: `Foo | Foo` would emit duplicate
+         C `case` labels.  Maranget's redundancy check looks at arm-level
+         only, so we filter for this here. *)
+      let tags =
+        List.filter_map (function
+          | TPVariant { tag; variant; _ } -> Some (tag, variant)
+          | _ -> None) talts
+      in
+      (match find_dup ~key:fst tags with
+       | Some tag ->
+           let variant = List.assoc tag tags in
+           Error.failf opos
+             "or-pattern lists '%s' more than once" variant
+       | None -> ());
+      (TPOr talts, [])
 
 (* Reduced pattern for the usefulness/exhaustiveness matrix (Maranget,
    "Warnings for pattern matching").  Variable and wildcard binders both
@@ -1015,6 +1069,20 @@ let rec cpat_of_tpat : tpattern -> cpat = function
   | TPWildcard | TPVar _ -> CWild
   | TPVariant { tag; binds; _ } ->
       CCon { tag; args = List.map (fun (_, p) -> cpat_of_tpat p) binds }
+  | TPOr _ ->
+      (* Or-patterns expand to multiple matrix rows at the arm level
+         (see [cpat_rows_of_tpat]).  Bind-positions cannot contain TPOr
+         (top-level restriction in [lower_pattern]), so this is unreachable
+         from inside a variant. *)
+      assert false
+
+(* Expand an arm's pattern to the matrix rows it covers — a single row
+   for non-or patterns, one row per alternative for a top-level
+   `pat1 | pat2 | ...`.  Or-patterns only nest one level (enforced in
+   [lower_pattern]), so the result list size = number of alternatives. *)
+let cpat_rows_of_tpat : tpattern -> cpat list = function
+  | TPOr alts -> List.map cpat_of_tpat alts
+  | other -> [ cpat_of_tpat other ]
 
 (* Constructors of an enum type: (tag, field-types) per variant in
    declaration order.  None for non-enum types — they have no
@@ -1567,20 +1635,30 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           arms
       in
       (* Redundancy + exhaustiveness via the usefulness matrix (Maranget).
-         Each arm is one row of a single-column matrix; nested variant
-         patterns expand columns internally during specialization.  An
-         arm is redundant iff its row isn't useful w.r.t. the rows before
-         it; the match is non-exhaustive iff a wildcard value is still
-         useful, and the witness names a concrete uncovered pattern. *)
-      let rows =
-        List.map (fun (a : tmatch_arm) -> [ cpat_of_tpat a.tpat ]) tarms
+         Each arm expands to one or more single-column rows (one per
+         or-pattern alternative); nested variant patterns expand columns
+         internally during specialization.  An arm is redundant iff *none*
+         of its rows is useful w.r.t. the rows before it (the union of
+         alternatives is already covered); the match is non-exhaustive
+         iff a wildcard value is still useful against the full flattened
+         matrix, and the witness names a concrete uncovered pattern. *)
+      let rows_per_arm =
+        List.map (fun (a : tmatch_arm) ->
+          List.map (fun cp -> [ cp ]) (cpat_rows_of_tpat a.tpat)) tarms
       in
       List.iteri (fun i (a : Ast.match_arm) ->
-        let before = List.filteri (fun j _ -> j < i) rows in
-        if not (useful ctx [ tscrut.ty ] before (List.nth rows i)) then
+        let before =
+          List.concat (List.filteri (fun j _ -> j < i) rows_per_arm)
+        in
+        let any_useful =
+          List.exists (fun row -> useful ctx [ tscrut.ty ] before row)
+            (List.nth rows_per_arm i)
+        in
+        if not any_useful then
           Error.failf a.arm_pos
             "unreachable match arm: earlier arms already cover this case")
         arms;
+      let rows = List.concat rows_per_arm in
       (match missing ctx [ tscrut.ty ] rows with
        | Some (w :: _) ->
            Error.failf match_pos

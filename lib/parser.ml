@@ -645,6 +645,24 @@ and parse_args s = parse_comma_list ~close:Token.RParen ~item:parse_expr s
    than one segment for variants — bare `name` is always a binding. *)
 and parse_pattern s =
   let p = peek_pos s in
+  let head = parse_pattern_atom s in
+  (* Or-pattern continuation: `pat | pat | pat`.  Greedy — consumes all
+     `|`-prefixed alternatives.  Disambiguates from the arm separator
+     (which only fires *after* `=>` and body): in pattern position, `|`
+     can only be or-pattern.  Single-pattern paths bypass POr (no
+     allocation for the common case). *)
+  if peek s <> Token.Pipe then head
+  else
+    let rec gather acc =
+      ignore (advance s);            (* consume '|' *)
+      let next = parse_pattern_atom s in
+      let acc = next :: acc in
+      if peek s = Token.Pipe then gather acc else List.rev acc
+    in
+    Ast.POr (gather [head], p)
+
+and parse_pattern_atom s =
+  let p = peek_pos s in
   match peek s with
   | Token.Ident "_" ->
       ignore (advance s); Ast.PWildcard p
