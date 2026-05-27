@@ -143,6 +143,14 @@ and expr =
                                            a `for v in <Range literal>` head
                                            still takes the direct fast path
                                            in walk_stmt (no struct alloc). *)
+  | Block of stmt list * Pos.t          (* `{ stmts; trailing_expr }` — a
+                                           statement block that produces a
+                                           value (the trailing `Tail expr`).
+                                           Today emitted only by
+                                           `parse_arm_body` when a match
+                                           arm body starts with `{`; other
+                                           positions don't allow `{` to
+                                           start an expression. *)
   | If of { cond : expr; then_blk : stmt list;
             else_blk : stmt list option; pos : Pos.t }
                                         (* `if c { ... } else { ... }`.  One
@@ -244,7 +252,7 @@ let expr_pos = function
   | Orelse (_, _, p) | Try (_, p) | SizeOf (_, p)
   | Cast (_, _, p) | TupleLit (_, p)
   | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)
-  | NullLit p -> p
+  | NullLit p | Block (_, p) -> p
   | Call { pos; _ } | StructLit { pos; _ } | New { pos; _ }
   | MethodCall { pos; _ } | EnumLit { pos; _ } | Match { pos; _ }
   | If { pos; _ } | ArrayRepeat { pos; _ } | Index { pos; _ }

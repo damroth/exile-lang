@@ -616,21 +616,32 @@ and parse_expr s =
 (* A match arm body: a full expression but with a bare top-level `|`
    suppressed (it is the arm separator).  Mirrors parse_expr's orelse
    handling without re-enabling bitor; nested parens / args restore it via
-   parse_expr. *)
+   parse_expr.  When the body opens with `{`, parse a statement block —
+   the block becomes an `Ast.Block` whose elaboration walks the stmts
+   in the surrounding fn-body's decl scope.  Restores bitor inside the
+   block (statements may contain bitwise exprs). *)
 and parse_arm_body s =
-  let prev = s.allow_bitor in
-  s.allow_bitor <- false;
-  let rec go () =
-    let left = parse_range s in
-    if peek s = Token.Orelse then begin
-      let p = peek_pos s in
-      ignore (advance s);
-      Ast.Orelse (left, go (), p)
-    end else left
-  in
-  let r = go () in
-  s.allow_bitor <- prev;
-  r
+  if peek s = Token.LBrace then begin
+    let p = peek_pos s in
+    let prev = s.allow_bitor in
+    s.allow_bitor <- true;
+    let stmts = parse_block s in
+    s.allow_bitor <- prev;
+    Ast.Block (stmts, p)
+  end else
+    let prev = s.allow_bitor in
+    s.allow_bitor <- false;
+    let rec go () =
+      let left = parse_range s in
+      if peek s = Token.Orelse then begin
+        let p = peek_pos s in
+        ignore (advance s);
+        Ast.Orelse (left, go (), p)
+      end else left
+    in
+    let r = go () in
+    s.allow_bitor <- prev;
+    r
 
 and parse_args s = parse_comma_list ~close:Token.RParen ~item:parse_expr s
 

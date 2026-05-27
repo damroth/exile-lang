@@ -344,6 +344,10 @@ let rec gen_expr ctx buf (te : texpr) =
       (* Same as the block-shaped lit cases above — `lift_block_exprs`
          hoists these to `__lift_N` temps before codegen sees them. *)
       assert false
+  | TBlock _ ->
+      (* `{ stmts; trailing }` lives only at the arm-tbody position;
+         `emit_arm_result` handles it before gen_expr is reached. *)
+      assert false
 
 and emit_unary ctx buf prefix ~simple (te : texpr) =
   Buffer.add_char buf prefix;
@@ -705,6 +709,21 @@ and emit_arm_result ctx assign_to buf indent (a : tmatch_arm) =
     (match assign_to, a.tbody.e with
      | Some lhs, TMatch _ ->
          emit_match_stmt ctx ~assign_to:lhs buf indent a.tbody
+     | _, TBlock { stmts; trailing } ->
+         (* Multi-stmt arm body — emit each stmt in source order, then
+            either assign the trailing value to `lhs` or emit it as a
+            void expression-statement.  Stmts share the surrounding fn's
+            decl namespace (registered during typecheck's walk_stmt
+            recursion through `walk_stmts_hook`).  Trailing None ->
+            stmt-position block (no value); skip the assign. *)
+         List.iter (emit_simple_stmt ctx buf indent) stmts;
+         (match trailing with
+          | None -> ()                  (* allow_void block — stmts only *)
+          | Some te ->
+              let trailing_arm =
+                { a with tbody = te; tdiverges = false }
+              in
+              emit_arm_result ctx assign_to buf indent trailing_arm)
      | Some lhs, _ ->
          emit_assign_line buf indent ~lhs
            ~emit_rhs:(fun () -> gen_expr ctx buf a.tbody)

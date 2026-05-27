@@ -624,6 +624,20 @@ type texpr_node =
                                            For instances of generic fns
                                            the typ here is concrete after
                                            subst_typ runs in resolve_type_ann. *)
+  | TBlock of { stmts : tstmt list; trailing : texpr option }
+                                        (* `{ s1; s2; [trailing] }` block
+                                           expression.  Emitted only by
+                                           multi-stmt match arm bodies
+                                           today: lives at the arm's tbody
+                                           position and is rendered inline
+                                           by emit_arm_result (stmts then
+                                           assign trailing if present).
+                                           Trailing is None for stmt-
+                                           position blocks (`{ ... s; }`
+                                           with trailing semicolon — no
+                                           value); allowed only when the
+                                           match itself is in stmt
+                                           position (allow_void). *)
 
 and tmatch_arm = {
   tpat : tpattern;
@@ -661,7 +675,7 @@ and texpr = {
   pos : Pos.t;
 }
 
-type tstmt =
+and tstmt =
   | TLet of { name : string; value : texpr; pos : Pos.t }
   | TLetTuple of { names : string list; value : texpr; pos : Pos.t }
   | TAssign of { path : string list; value : texpr; pos : Pos.t }
@@ -728,6 +742,14 @@ let texpr_children (te : texpr) : texpr list =
   | TArrayLit es -> es
   | TArrayRepeat { value; _ } -> [value]
   | TIndex { base; index } -> [base; index]
+  | TBlock { stmts; trailing } ->
+      (* tstmt_children would give the texprs inside each stmt; for
+         consumers of texpr_children we surface trailing here and let
+         each stmt's payload reach them through the stmt-level
+         traversals.  Multi-stmt match arm bodies are walked by the
+         arm-level iter (see emit_arm_result). *)
+      let _ = stmts in
+      Option.to_list trailing
 
 let rec iter_texpr f e =
   f e;

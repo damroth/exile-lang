@@ -2496,6 +2496,58 @@ let () =
      fn main() { println(add(2, 3)); }\n"
     "#include <stdio.h>\n\nstatic long ex_add(long a, long b);\n\nstatic long ex_add(long a, long b) {\n    return a + b;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_add(2, 3)));\n    return 0;\n}\n";
 
+  check "multi-stmt arm body: value position with let + trailing expr"
+    "enum E { A(int) | B }\n\
+     fn main() {\n\
+    \    let e = E::A(7);\n\
+    \    let r = match e {\n\
+    \        E::A(n) => {\n\
+    \            let doubled = n + n;\n\
+    \            doubled + 1\n\
+    \        }\n\
+    \        | E::B => 0\n\
+    \    };\n\
+    \    println(r);\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } A; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long doubled;\n    long r;\n    e.tag = ex_E_A;\n    e.data.A._0 = 7;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                long n = __m.data.A._0;\n                doubled = n + n;\n                r = doubled + 1;\n                break;\n            }\n        case ex_E_B:\n            {\n                r = 0;\n                break;\n            }\n        }\n    }\n    printf(\"%ld\\n\", (long)(r));\n    return 0;\n}\n";
+
+  check "multi-stmt arm body: void position (no trailing expr)"
+    "enum E { A(int) | B }\n\
+     fn main() {\n\
+    \    let e = E::A(7);\n\
+    \    match e {\n\
+    \        E::A(n) => {\n\
+    \            println(n);\n\
+    \            println(n + 1);\n\
+    \        }\n\
+    \        | E::B => println(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } A; } data; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_A;\n    e.data.A._0 = 7;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                long n = __m.data.A._0;\n                printf(\"%ld\\n\", (long)(n));\n                printf(\"%ld\\n\", (long)(n + 1));\n                break;\n            }\n        case ex_E_B:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
+  check_error "multi-stmt arm body: value position requires trailing expr"
+    "enum E { A | B }\n\
+     fn main() {\n\
+    \    let e = E::A;\n\
+    \    let r = match e {\n\
+    \        E::A => { let x = 1; }\n\
+    \        | E::B => 2\n\
+    \    };\n\
+    \    println(r);\n\
+     }\n"
+    "block expression `{ ... }` must end with a trailing value expression (no `;` after the last expression) when used in a value position";
+
+  check_error "multi-stmt arm body: arm-local `let` shares fn decl namespace"
+    "enum E { A | B }\n\
+     fn main() {\n\
+    \    let e = E::A;\n\
+    \    match e {\n\
+    \        E::A => { let x = 1; println(x); }\n\
+    \        | E::B => { let x = 2; println(x); }\n\
+    \    }\n\
+     }\n"
+    "variable 'x' already declared in this function";
+
   check_error "doc-comments: `@doc(non-string)` rejected"
     "@doc(123)\n\
      fn add(a: int, b: int) -> int { a + b }\n\

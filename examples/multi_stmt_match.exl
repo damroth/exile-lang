@@ -1,0 +1,57 @@
+// Multi-statement match arm bodies — `=> { stmts; trailing }`.
+//
+// Two forms:
+//   - VALUE position: trailing expression (no `;`) becomes the arm's
+//     value.  `{ let x = ...; x + 1 }` evaluates the let, returns x+1.
+//   - STMT position: no trailing expression.  `{ println(a); println(b); }`
+//     runs side effects without producing a value.
+//
+// Block-local `let`s share the surrounding function's decl namespace
+// (no shadowing — exile-wide rule).  If you need the same name in two
+// arms, pick distinct ones or refactor into a helper fn.
+
+enum Shape {
+    Square(int)
+    | Circle(int)
+    | Rect(int, int)
+}
+
+fn area(s: Shape) -> int {
+    match s {
+        Shape::Square(side) => {
+            let sq = side * side;
+            sq                          // trailing value
+        }
+        | Shape::Circle(r) => {
+            // pi ≈ 314/100 (integer math; close enough for the example)
+            let r2 = r * r;
+            (r2 * 314) / 100
+        }
+        | Shape::Rect(w, h) => w * h    // single-expr arm still works
+    }
+}
+
+fn describe(s: Shape) {
+    match s {
+        Shape::Square(side) => {
+            println(1);                 // tag
+            println(side);
+        }
+        | Shape::Circle(r) => {
+            println(2);
+            println(r);
+        }
+        | Shape::Rect(w, h) => {
+            println(3);
+            println(w);
+            println(h);
+        }
+    }
+}
+
+fn main() {
+    println(area(Shape::Square(4)));        // 16
+    println(area(Shape::Circle(10)));       // 314
+    println(area(Shape::Rect(3, 5)));       // 15
+    describe(Shape::Rect(7, 9));            // 3, 7, 9
+}

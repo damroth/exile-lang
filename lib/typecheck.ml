@@ -244,8 +244,12 @@ let rec subst_var_expr ~from ~to_ (e : Ast.expr) : Ast.expr =
       Ast.EnumLit { tname; variant; args; pos }
   | Ast.Match { scrutinee; arms; pos } ->
       let arms = List.map (fun (a : Ast.match_arm) ->
-        { a with body = sub a.body }) arms in
+        { a with
+          guard = (match a.guard with None -> None | Some g -> Some (sub g));
+          body = sub a.body }) arms in
       Ast.Match { scrutinee = sub scrutinee; arms; pos }
+  | Ast.Block (stmts, p) ->
+      Ast.Block (List.map (subst_var_stmt ~from ~to_) stmts, p)
   | Ast.Orelse (a, b, p) -> Ast.Orelse (sub a, sub b, p)
   | Ast.Try (e', p) -> Ast.Try (sub e', p)
   | Ast.If { cond; then_blk; else_blk; pos } ->
@@ -1241,6 +1245,15 @@ let is_value_if ~(then_blk : Ast.stmt list) ~(else_blk : Ast.stmt list option) =
   | None -> false
   | Some eblk ->
       branch_value_expr then_blk <> None && branch_value_expr eblk <> None
+
+(* Per-body hook so [elab_expr] can elaborate `Ast.Block` (multi-stmt
+   match arm bodies) by reusing the function-scoped `walk_stmt`.  The
+   hook is installed by `elab_body` at entry and cleared on exit; outside
+   a function body, `Ast.Block` is a parse-time/lift error. *)
+let walk_stmts_hook
+  : ((string * typ) list -> Ast.stmt list ->
+       (string * typ) list * tstmt list) option ref
+  = ref None
 
 let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
   let pos = Ast.expr_pos e in
@@ -2451,6 +2464,41 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       in
       { e = TFieldAccess { target = target'; field = fname };
         ty = field_ty; pos }
+  | Ast.Block (stmts, block_pos) ->
+      (* `{ s1; s2; [trailing] }` — multi-stmt block expression.  Only
+         legal inside a function body (parse_arm_body emits it today);
+         requires the per-body `walk_stmts_hook` to be installed so we
+         can route let/let-tuple/assign/... through the function's
+         decl table.  Trailing `Tail e` produces the block's value;
+         without one the block is void (only valid when allow_void). *)
+      let walk =
+        match !walk_stmts_hook with
+        | Some w -> w
+        | None ->
+            Error.failf block_pos
+              "internal: block expression outside a function body"
+      in
+      let (init, trailing_ast) =
+        match List.rev stmts with
+        | Ast.Tail e :: rest -> (List.rev rest, Some e)
+        | _ -> (stmts, None)
+      in
+      let (env', tstmts) = walk env init in
+      (match trailing_ast with
+       | Some e ->
+           let ttrailing = elab_expr ?expected ~allow_void ctx env' e in
+           { e = TBlock { stmts = tstmts; trailing = Some ttrailing };
+             ty = ttrailing.ty; pos = block_pos }
+       | None ->
+           if not allow_void then
+             Error.failf block_pos
+               "block expression `{ ... }` must end with a trailing \
+                value expression (no `;` after the last expression) \
+                when used in a value position";
+           { e = TBlock { stmts = tstmts; trailing = None };
+             ty = t_i32; pos = block_pos })
+                                              (* placeholder ty; never
+                                                 read in void position *)
 
 (* Single-walk variant of the old `collect_lets`: it both validates the
    body (mirroring the per-stmt type checks that lived there) and produces
@@ -2917,6 +2965,15 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
     | Ast.Tail e :: rest -> (List.rev rest, Some e)
     | _ -> (stmts, None)
   in
+  (* Install the per-body walk_stmts hook so [elab_expr] can elaborate
+     `Ast.Block` (multi-stmt match arm bodies) by routing their stmts
+     through the same `walk` machinery that handles fn-body stmts (let/
+     let-tuple register into [decls], etc.).  Cleared at function exit
+     below so calls to `elab_expr` outside a body don't see stale
+     state.  We DON'T use try/finally — any exception aborts compilation
+     entirely so the leak is moot. *)
+  let prev_hook = !walk_stmts_hook in
+  walk_stmts_hook := Some walk;
   let (env_after, walked) = walk param_env body_stmts in
   let tail_tstmts =
     match tail with
@@ -3068,6 +3125,12 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let (base', pb) = walk_expr ~allow_top:false base in
         let (index', pi) = walk_expr ~allow_top:false index in
         ({ te with e = TIndex { base = base'; index = index' } }, pb @ pi)
+    | TBlock _ ->
+        (* Block lives only as a match arm body; arm-body texprs are
+           handled directly by emit_arm_result and are NOT walked by
+           lift_block_exprs (the lift pass operates on stmts/exprs in
+           the surrounding context, never on arm payloads). *)
+        (te, [])
   in
   let rec lift_stmts stmts = List.concat_map lift_stmt stmts
   and lift_stmt = function
@@ -3149,6 +3212,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         ptemp @ temp_let @ plo @ phi @ [ let_end; let_cnt; while_ ]
   in
   let lifted = lift_stmts tstmts in
+  walk_stmts_hook := prev_hook;
   (List.rev !decls, lifted)
 
 (* Result of one walk over the program tree: every function (with its
