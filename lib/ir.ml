@@ -726,7 +726,17 @@ and tstmt =
                                              typecheck) *)
   | TExprStmt of texpr
   | TIf of { cond : texpr; then_body : tstmt list; else_body : tstmt list }
-  | TWhile of { cond : texpr; body : tstmt list }
+  | TWhile of { cond : texpr; body : tstmt list; post : tstmt list }
+                                          (* `post` runs after each
+                                             iteration AND on `continue` —
+                                             so it carries a `for`-loop's
+                                             counter step.  Empty for plain
+                                             `while`/`loop`; when non-empty
+                                             codegen emits a C `for (; cond;
+                                             post)` so `continue` reaches
+                                             the step. *)
+  | TBreak of Pos.t
+  | TContinue of Pos.t
   | TFor of { counter : string; end_var : string;
               range_temp : (string * texpr) option;
               lo : texpr; hi : texpr; inclusive : bool;
@@ -797,9 +807,10 @@ let rec fold_texpr f acc e =
 (* Immediate sub-statements: bodies of TIf/TWhile/TDefer. *)
 let tstmt_substmts = function
   | TIf { then_body; else_body; _ } -> then_body @ else_body
-  | TWhile { body; _ } | TDefer { body; _ } | TFor { body; _ } -> body
+  | TWhile { body; post; _ } -> body @ post
+  | TDefer { body; _ } | TFor { body; _ } -> body
   | TLet _ | TLetTuple _ | TAssign _ | TAssignField _ | TAssignIndex _
-  | TAssignDeref _ | TReturn _ | TExprStmt _ -> []
+  | TAssignDeref _ | TReturn _ | TExprStmt _ | TBreak _ | TContinue _ -> []
 
 (* Exprs that live DIRECTLY in [s] — cond, value, target.  Does NOT
    include exprs nested in sub-stmts; compose with iter_texpr / fold_texpr
@@ -813,7 +824,7 @@ let tstmt_own_exprs = function
   | TAssignIndex { base; index; value; _ } -> [base; index; value]
   | TIf { cond; _ } | TWhile { cond; _ } -> [cond]
   | TFor { lo; hi; _ } -> [lo; hi]
-  | TDefer _ -> []
+  | TDefer _ | TBreak _ | TContinue _ -> []
 
 let rec iter_tstmt f s =
   f s;

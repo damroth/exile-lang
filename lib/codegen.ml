@@ -56,6 +56,7 @@ let tstmt_pos = function
   | TAssignIndex { pos; _ }
   | TAssignDeref { pos; _ } | TDefer { pos; _ }
   | TReturn { pos; _ } | TFor { pos; _ } -> pos
+  | TBreak pos | TContinue pos -> pos
   | TExprStmt te -> te.pos
   | TIf { cond; _ } | TWhile { cond; _ } -> cond.pos
 
@@ -480,6 +481,26 @@ let rec emit_value_into_temp ctx buf indent temp_name (value : texpr) =
 
    A `defer` body is a leaf — it must not contain another `defer` or
    `return`; both are rejected by `emit_simple_stmt`. *)
+(* Render a `for`-loop's post-iteration stmts as the third clause of a
+   C `for (; cond; <here>)`.  Comma-joined, no trailing semicolons.  The
+   lift pass only ever puts a single counter-step `TAssign` here, but we
+   handle a list for generality (assign + expr-stmt shapes only). *)
+and emit_for_post ctx buf post =
+  List.iteri (fun i s ->
+    if i > 0 then Buffer.add_string buf ", ";
+    match s with
+    | TAssign { path; value; _ } ->
+        let lhs = match List.rev path with n :: _ -> n | [] -> assert false in
+        Buffer.add_string buf lhs;
+        Buffer.add_string buf " = ";
+        gen_expr ctx buf value
+    | TExprStmt e -> gen_expr ctx buf e
+    | _ ->
+        (* lift only emits counter-step assigns here; anything else is a
+           compiler bug. *)
+        assert false)
+    post
+
 and emit_simple_stmt ctx buf indent stmt =
   match stmt with
   | TLet { name; value; _ } ->
@@ -546,14 +567,32 @@ and emit_simple_stmt ctx buf indent stmt =
            List.iter (emit_simple_stmt ctx buf (indent ^ "    ")) else_body;
            Buffer.add_string buf indent;
            Buffer.add_string buf "}\n")
-  | TWhile { cond; body } ->
+  | TWhile { cond; body; post } ->
       Buffer.add_string buf indent;
-      Buffer.add_string buf "while (";
-      gen_expr ctx buf cond;
-      Buffer.add_string buf ") {\n";
+      (match post with
+       | [] ->
+           Buffer.add_string buf "while (";
+           gen_expr ctx buf cond;
+           Buffer.add_string buf ") {\n"
+       | _ ->
+           (* Non-empty `post` (a `for`-loop's step) must run on `continue`
+              too, so emit a C `for (; cond; post)` whose third clause C
+              jumps to on `continue`.  The post stmts are rendered as
+              comma-joined expression statements. *)
+           Buffer.add_string buf "for (; ";
+           gen_expr ctx buf cond;
+           Buffer.add_string buf "; ";
+           emit_for_post ctx buf post;
+           Buffer.add_string buf ") {\n");
       List.iter (emit_simple_stmt ctx buf (indent ^ "    ")) body;
       Buffer.add_string buf indent;
       Buffer.add_string buf "}\n"
+  | TBreak _ ->
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "break;\n"
+  | TContinue _ ->
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "continue;\n"
   | TDefer { pos; _ } ->
       Error.failf pos "'defer' inside a defer body is not supported"
   | TReturn { pos; _ } ->
@@ -997,7 +1036,7 @@ and gen_block ctx buf indent outer_scopes stmts =
                Buffer.add_string buf "}\n"
              end)
     | (TLet _ | TAssign _ | TAssignField _ | TAssignIndex _ | TAssignDeref _
-      | TExprStmt _) as s :: rest ->
+      | TExprStmt _ | TBreak _ | TContinue _) as s :: rest ->
         update_chain my_defers;
         emit_tstmt_ann ctx buf indent s;
         emit_simple_stmt ctx buf indent s;
@@ -1014,13 +1053,21 @@ and gen_block ctx buf indent outer_scopes stmts =
         gen_if ctx buf indent outer_scopes my_defers
           cond then_body else_body;
         loop my_defers rest
-    | (TWhile { cond; body } as s) :: rest ->
+    | (TWhile { cond; body; post } as s) :: rest ->
         update_chain my_defers;
         emit_tstmt_ann ctx buf indent s;
         Buffer.add_string buf indent;
-        Buffer.add_string buf "while (";
-        gen_expr ctx buf cond;
-        Buffer.add_string buf ") {\n";
+        (match post with
+         | [] ->
+             Buffer.add_string buf "while (";
+             gen_expr ctx buf cond;
+             Buffer.add_string buf ") {\n"
+         | _ ->
+             Buffer.add_string buf "for (; ";
+             gen_expr ctx buf cond;
+             Buffer.add_string buf "; ";
+             emit_for_post ctx buf post;
+             Buffer.add_string buf ") {\n");
         gen_block ctx buf (indent ^ "    ")
           (my_defers :: outer_scopes) body;
         Buffer.add_string buf indent;

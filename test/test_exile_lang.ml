@@ -336,11 +336,11 @@ let () =
      (end pinned). *)
   check "exclusive `for` desugars to a counter+end while-loop"
     "fn main() {\n    let mut s = 0;\n    for i in 0..3 { s = s + i; }\n    println(s);\n}\n"
-    "#include <stdio.h>\n\nint main(void) {\n    long s;\n    long __fv0;\n    long __fe0;\n    s = 0;\n    __fe0 = 3;\n    __fv0 = 0;\n    while (__fv0 < __fe0) {\n        s = s + __fv0;\n        __fv0 = __fv0 + 1;\n    }\n    printf(\"%ld\\n\", (long)(s));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nint main(void) {\n    long s;\n    long __fv0;\n    long __fe0;\n    s = 0;\n    __fe0 = 3;\n    __fv0 = 0;\n    for (; __fv0 < __fe0; __fv0 = __fv0 + 1) {\n        s = s + __fv0;\n    }\n    printf(\"%ld\\n\", (long)(s));\n    return 0;\n}\n";
 
   check "inclusive `for ..=` emits `<=` in the while condition"
     "fn main() {\n    let mut s = 0;\n    for i in 0..=4 { s = s + i; }\n    println(s);\n}\n"
-    "#include <stdio.h>\n\nint main(void) {\n    long s;\n    long __fv0;\n    long __fe0;\n    s = 0;\n    __fe0 = 4;\n    __fv0 = 0;\n    while (__fv0 <= __fe0) {\n        s = s + __fv0;\n        __fv0 = __fv0 + 1;\n    }\n    printf(\"%ld\\n\", (long)(s));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nint main(void) {\n    long s;\n    long __fv0;\n    long __fe0;\n    s = 0;\n    __fe0 = 4;\n    __fv0 = 0;\n    for (; __fv0 <= __fe0; __fv0 = __fv0 + 1) {\n        s = s + __fv0;\n    }\n    printf(\"%ld\\n\", (long)(s));\n    return 0;\n}\n";
 
   check_error "`for` bound must be an integer"
     "fn main() {\n    for i in \"a\"..\"b\" { println(1); }\n}\n"
@@ -350,6 +350,40 @@ let () =
     "fn main() {\n    for i in 0 as u8 ..= 255 as u8 { println(i); }\n}\n"
     "inclusive `for ... ..=255` reaches the maximum of u8 — `i + 1` wraps and the loop never ends; widen the counter type";
 
+  check "loop + break: `loop { ... break; }` emits `while (1)`"
+    "fn main() {\n\
+    \    let mut i: int = 0;\n\
+    \    loop {\n\
+    \        if i >= 3 { break; }\n\
+    \        println(i);\n\
+    \        i = i + 1;\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    long i;\n    i = 0;\n    while (1) {\n        if (i >= 3) {\n            break;\n        }\n        printf(\"%ld\\n\", (long)(i));\n        i = i + 1;\n    }\n    return 0;\n}\n";
+
+  check "continue in `for` runs the counter step (C for third clause)"
+    "fn main() {\n\
+    \    let mut s: int = 0;\n\
+    \    for n in 0..6 {\n\
+    \        if n == 2 { continue; }\n\
+    \        s = s + n;\n\
+    \    }\n\
+    \    println(s);\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    long s;\n    long __fv0;\n    long __fe0;\n    s = 0;\n    __fe0 = 6;\n    __fv0 = 0;\n    for (; __fv0 < __fe0; __fv0 = __fv0 + 1) {\n        if (__fv0 == 2) {\n            continue;\n        }\n        s = s + __fv0;\n    }\n    printf(\"%ld\\n\", (long)(s));\n    return 0;\n}\n";
+
+  check_error "`break` outside a loop rejected"
+    "fn main() {\n    break;\n}\n"
+    "'break' outside a loop";
+
+  check_error "`continue` outside a loop rejected"
+    "fn main() {\n    continue;\n}\n"
+    "'continue' outside a loop";
+
+  check_error "`while` condition must be bool"
+    "fn main() {\n    while 1 { println(1); }\n}\n"
+    "'while' condition must be of type bool, got i32";
+
   (* Range as a value: `a..b` / `a..=b` desugar to the prelude struct
      `Range<T>` / `RangeInclusive<T>`, so a range can be bound, passed and
      returned.  `for v in <Range value>` pulls `.lo` / `.hi` off the value
@@ -357,7 +391,7 @@ let () =
      direct fast path (no struct alloc). *)
   check "`for v in <Range value>` pulls bounds off a struct field"
     "fn main() {\n    let r = 0..3;\n    let mut s = 0;\n    for i in r { s = s + i; }\n    println(s);\n}\n"
-    "#include <stdio.h>\n\nstruct ex_Range_i32 { long lo; long hi; };\n\nint main(void) {\n    struct ex_Range_i32 r;\n    long s;\n    struct ex_Range_i32 __fr0;\n    long __fv0;\n    long __fe0;\n    r.lo = 0;\n    r.hi = 3;\n    s = 0;\n    __fr0 = r;\n    __fe0 = __fr0.hi;\n    __fv0 = __fr0.lo;\n    while (__fv0 < __fe0) {\n        s = s + __fv0;\n        __fv0 = __fv0 + 1;\n    }\n    printf(\"%ld\\n\", (long)(s));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nstruct ex_Range_i32 { long lo; long hi; };\n\nint main(void) {\n    struct ex_Range_i32 r;\n    long s;\n    struct ex_Range_i32 __fr0;\n    long __fv0;\n    long __fe0;\n    r.lo = 0;\n    r.hi = 3;\n    s = 0;\n    __fr0 = r;\n    __fe0 = __fr0.hi;\n    __fv0 = __fr0.lo;\n    for (; __fv0 < __fe0; __fv0 = __fv0 + 1) {\n        s = s + __fv0;\n    }\n    printf(\"%ld\\n\", (long)(s));\n    return 0;\n}\n";
 
   check_error "`for v in <non-Range value>` rejected"
     "fn main() {\n    let n = 5;\n    for i in n { println(i); }\n}\n"

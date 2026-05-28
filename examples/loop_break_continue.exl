@@ -1,0 +1,42 @@
+// `loop` / `break` / `continue` — loop control flow.
+//
+//   - `loop { ... }` is an infinite loop (desugars to `while true`);
+//     exit it with `break`.
+//   - `break` leaves the nearest enclosing loop.
+//   - `continue` skips to the nearest loop's next iteration.  In a
+//     `for` loop the counter step still runs (it lives in the C
+//     `for (; cond; step)` third clause), so `continue` never spins.
+//
+// `break` / `continue` outside any loop is a compile error.
+
+fn main() {
+    // `loop` + `break`: count up to 3.
+    let mut i: int = 0;
+    loop {
+        if i >= 3 { break; }
+        println(i);                     // 0, 1, 2
+        i = i + 1;
+    }
+
+    // `continue` in a `for` — skip n == 2 but keep iterating.
+    let mut sum: int = 0;
+    for n in 0..6 {
+        if n == 2 { continue; }
+        sum = sum + n;
+    }
+    println(sum);                       // 0+1+3+4+5 = 13
+
+    // `break` in a `for` — stop early.
+    for k in 0..100 {
+        if k == 4 { break; }
+        println(k);                     // 0, 1, 2, 3
+    }
+
+    // `break` in a `while` — find the first multiple of 7 above 20.
+    let mut m: int = 21;
+    while m < 100 {
+        if m % 7 == 0 { break; }
+        m = m + 1;
+    }
+    println(m);                         // 21
+}

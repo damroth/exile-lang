@@ -296,6 +296,7 @@ and subst_var_stmt ~from ~to_ (s : Ast.stmt) : Ast.stmt =
         Ast.For { var; range = sub range; body = sub_block body; pos }
   | Ast.Defer { body; pos } ->
       Ast.Defer { body = sub_block body; pos }
+  | Ast.Break _ | Ast.Continue _ -> s
 
 let lookup_const ctx path =
   walk_scope_up ctx path ~resolve:(fun mod_path name ->
@@ -2537,6 +2538,9 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
     ?(mut_params = []) ctx param_env stmts
     : (string * typ) list * tstmt list =
   let decls = ref [] in
+  (* Loop nesting depth — `break` / `continue` are legal only when > 0.
+     Bumped around `while` / `for` / `loop` bodies as they are walked. *)
+  let loop_depth = ref 0 in
   (* Per-binding mutability.  Names are unique across a function body
      (add_decl rejects shadowing/redeclaration and params are unique), so
      one flat set keyed by name is correct without scoping concerns.
@@ -2843,9 +2847,23 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         elab_stmt_position env e
     | Ast.While { cond; body } ->
         let tcond = elab_expr ctx env cond in
+        if not (typ_eq tcond.ty TBool) then
+          Error.failf tcond.pos
+            "'while' condition must be of type bool, got %s"
+            (typ_name tcond.ty);
+        incr loop_depth;
         let (_, tbody) = walk env body in
+        decr loop_depth;
         (param_env @ List.rev !decls,
-         TWhile { cond = tcond; body = tbody })
+         TWhile { cond = tcond; body = tbody; post = [] })
+    | Ast.Break bpos ->
+        if !loop_depth = 0 then
+          Error.failf bpos "'break' outside a loop";
+        (env, TBreak bpos)
+    | Ast.Continue cpos ->
+        if !loop_depth = 0 then
+          Error.failf cpos "'continue' outside a loop";
+        (env, TContinue cpos)
     | Ast.For { var; range; body; pos } ->
         (* Gensym the counter and bound so multiple sequential `for var in
            ...` blocks in one function don't collide on let-hoisting.  The
@@ -2954,7 +2972,9 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         (* Walk the body with the renamed counter binding. *)
         let renamed_body = List.map (subst_var_stmt ~from:var ~to_:counter) body in
         let body_env = (counter, counter_ty) :: env in
+        incr loop_depth;
         let (_, tbody) = walk body_env renamed_body in
+        decr loop_depth;
         (param_env @ List.rev !decls,
          TFor { counter; end_var; range_temp; lo = tlo; hi = thi;
                 inclusive; body = tbody; pos })
@@ -3200,6 +3220,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let (v', p) = walk_expr ~allow_top:true value in
         p @ [ TReturn { value = Some v'; pos } ]
     | TReturn { value = None; _ } as s -> [ s ]
+    | (TBreak _ | TContinue _) as s -> [ s ]
     | TExprStmt e ->
         (* Top-level Match in expr-stmt position is handled by
            emit_match_stmt; everything else must be simple. *)
@@ -3210,13 +3231,14 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let (c', p) = walk_expr ~allow_top:false cond in
         p @ [ TIf { cond = c'; then_body = lift_stmts then_body;
                     else_body = lift_stmts else_body } ]
-    | TWhile { cond; body } ->
+    | TWhile { cond; body; post } ->
         let (c', p) = walk_expr ~allow_top:false cond in
         (* If `cond` was block-shaped, the lift evaluates it once before
            the loop — subsequent iterations re-use the temp.  In
            practice cond is bool-typed, so block-shaped conds are
            rare; document this limitation if it bites. *)
-        p @ [ TWhile { cond = c'; body = lift_stmts body } ]
+        p @ [ TWhile { cond = c'; body = lift_stmts body;
+                       post = lift_stmts post } ]
     | TDefer { body; pos } ->
         [ TDefer { body = lift_stmts body; pos } ]
     | TFor { counter; end_var; range_temp; lo; hi; inclusive; body; pos } ->
@@ -3245,10 +3267,13 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
           { e = TBinOp (Ast.Add, cvar, one); ty = cty; pos } in
         let step =
           TAssign { path = [counter]; value = step_rhs; pos } in
-        let body' = lift_stmts body @ [ step ] in
+        (* The counter step goes in `post`, not at the end of the body —
+           so `continue` runs it (C `for (; cond; step)` semantics) and
+           doesn't spin forever. *)
+        let body' = lift_stmts body in
         let let_end = TLet { name = end_var; value = hi'; pos } in
         let let_cnt = TLet { name = counter; value = lo'; pos } in
-        let while_ = TWhile { cond; body = body' } in
+        let while_ = TWhile { cond; body = body'; post = [ step ] } in
         ptemp @ temp_let @ plo @ phi @ [ let_end; let_cnt; while_ ]
   in
   let lifted = lift_stmts tstmts in
@@ -3945,7 +3970,8 @@ and stmt_returns = function
   | TIf { then_body; else_body; _ } ->
       always_returns then_body && always_returns else_body
   | TLet _ | TLetTuple _ | TAssign _ | TAssignField _ | TAssignIndex _
-  | TAssignDeref _ | TWhile _ | TFor _ | TDefer _ | TExprStmt _ -> false
+  | TAssignDeref _ | TWhile _ | TFor _ | TDefer _ | TExprStmt _
+  | TBreak _ | TContinue _ -> false
 
 (* Compile-time evaluation of `const NAME: T = expr;` declarations.
    Folds int/bool scalar expressions — literals, references to other

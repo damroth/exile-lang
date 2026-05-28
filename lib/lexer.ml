@@ -10,6 +10,9 @@ let keyword_or_ident = function
   | "if" -> Token.If
   | "else" -> Token.Else
   | "while" -> Token.While
+  | "loop" -> Token.Loop
+  | "break" -> Token.Break
+  | "continue" -> Token.Continue
   | "for" -> Token.For
   | "in" -> Token.In
   | "mod" -> Token.Mod

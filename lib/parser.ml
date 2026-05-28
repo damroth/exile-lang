@@ -879,6 +879,23 @@ and parse_stmt s =
       s.allow_struct_lit <- prev;
       let body = parse_block s in
       Ast.While { cond; body }
+  | Token.Loop ->
+      (* `loop { body }` — infinite loop, desugars to `while true`.
+         No new AST node: the `true` literal is a plain bool cond. *)
+      let pos = peek_pos s in
+      ignore (advance s);
+      let body = parse_block s in
+      Ast.While { cond = Ast.BoolLit (true, pos); body }
+  | Token.Break ->
+      let pos = peek_pos s in
+      ignore (advance s);
+      expect s Token.Semicolon;
+      Ast.Break pos
+  | Token.Continue ->
+      let pos = peek_pos s in
+      ignore (advance s);
+      expect s Token.Semicolon;
+      Ast.Continue pos
   | Token.For ->
       (* `for v in <range> { body }`.  `<range>` is parsed as a full
          expression with struct-lits disabled so the body's opening `{`

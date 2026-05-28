@@ -251,6 +251,11 @@ and stmt =
                                              typecheck pulls `.lo` / `.hi` /
                                              inclusiveness off the value. *)
   | Defer of { body : stmt list; pos : Pos.t }
+  | Break of Pos.t                        (* `break;` — exit the nearest
+                                             enclosing loop *)
+  | Continue of Pos.t                     (* `continue;` — skip to the
+                                             nearest loop's next iteration
+                                             (runs the `for` step) *)
 
 let expr_pos = function
   | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)

@@ -6,6 +6,9 @@ type t =
   | If
   | Else
   | While
+  | Loop
+  | Break
+  | Continue
   | For
   | In
   | Mod
@@ -76,6 +79,7 @@ type t =
 let pp = function
   | Fn -> "'fn'" | Let -> "'let'" | Mut -> "'mut'" | Return -> "'return'"
   | If -> "'if'" | Else -> "'else'" | While -> "'while'"
+  | Loop -> "'loop'" | Break -> "'break'" | Continue -> "'continue'"
   | For -> "'for'" | In -> "'in'"
   | Mod -> "'mod'" | Pub -> "'pub'" | Use -> "'use'" | As -> "'as'"
   | Defer -> "'defer'"
