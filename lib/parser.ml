@@ -1781,22 +1781,31 @@ and parse_impl_block s =
        "generic 'impl' needs its parameters declared after 'impl', e.g. \
         'impl<T> %s<T>'" (String.concat "::" target_path));
   expect s Token.LBrace;
-  let rec loop seen acc =
+  let rec loop seen acc assoc =
     match peek s with
-    | Token.RBrace -> ignore (advance s); List.rev acc
+    | Token.RBrace -> ignore (advance s); (List.rev acc, List.rev assoc)
     | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
+    | Token.Type ->
+        (* Associated-type binding: `type Item = Concrete;`. *)
+        ignore (advance s);
+        let (an, _) = expect_ident s ~what:"associated type name after 'type'" in
+        expect s Token.Eq;
+        let ty = parse_type s in
+        expect s Token.Semicolon;
+        loop seen acc ((an, ty) :: assoc)
     | _ ->
         let is_pub = peek s = Token.Pub in
         if is_pub then ignore (advance s);
         (match peek s with
          | Token.Fn ->
              let (name, fn) = parse_function s seen ~is_pub in
-             loop (name :: seen) (fn :: acc)
+             loop (name :: seen) (fn :: acc) assoc
          | t ->
              Error.failf (peek_pos s)
-               "expected 'fn' inside 'impl' block, got %s" (Token.pp t))
+               "expected 'fn' or 'type' inside 'impl' block, got %s"
+               (Token.pp t))
   in
-  let methods = loop [] [] in
+  let (methods, iassoc) = loop [] [] [] in
   (* Substitute the bare-`self` placeholder (TySelf, possibly under a
      pointer) with the impl target type, so downstream sees an explicit
      `self: Pair<A, B>` / `self: *Pair<A, B>`. *)
@@ -1818,7 +1827,8 @@ and parse_impl_block s =
             { p with Ast.pty = replace_self p.pty }) m.params })
       methods
   in
-  Ast.{ itparams; itrait; itarget = target_path; iitems = methods; ipos = pos }
+  Ast.{ itparams; itrait; iassoc; itarget = target_path; iitems = methods;
+        ipos = pos }
 
 (* `trait Name { fn m(self, ...) -> R; ... }` — method signatures.  A
    method ending with `;` is required; one with a `{ ... }` body provides
@@ -1842,20 +1852,29 @@ and parse_trait s ~is_pub =
     end else []
   in
   expect s Token.LBrace;
-  let rec loop seen acc defaults =
+  let rec loop seen acc defaults assoc =
     match peek s with
-    | Token.RBrace -> ignore (advance s); (List.rev acc, List.rev defaults)
+    | Token.RBrace ->
+        ignore (advance s);
+        (List.rev acc, List.rev defaults, List.rev assoc)
     | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
+    | Token.Type ->
+        (* Associated type declaration: `type Item;` (no default in MVP). *)
+        ignore (advance s);
+        let (an, _) = expect_ident s ~what:"associated type name after 'type'" in
+        expect s Token.Semicolon;
+        loop seen acc defaults (an :: assoc)
     | Token.Fn ->
         let (m, is_default) = parse_trait_method s seen in
         let defaults = if is_default then m.Ast.name :: defaults else defaults in
-        loop (m.Ast.name :: seen) (m :: acc) defaults
+        loop (m.Ast.name :: seen) (m :: acc) defaults assoc
     | t ->
         Error.failf (peek_pos s)
-          "expected 'fn' signature inside 'trait' block, got %s" (Token.pp t)
+          "expected 'fn' signature or 'type' inside 'trait' block, got %s"
+          (Token.pp t)
   in
-  let (methods, defaults) = loop [] [] [] in
-  Ast.{ trname = name; trsupers = supers; trmethods = methods;
+  let (methods, defaults, assoc) = loop [] [] [] [] in
+  Ast.{ trname = name; trassoc = assoc; trsupers = supers; trmethods = methods;
         trdefaults = defaults; trpos = name_pos; tris_pub = is_pub }
 
 (* Returns (method, is_default).  Required form ends with `;`; default

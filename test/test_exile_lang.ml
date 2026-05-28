@@ -543,6 +543,65 @@ let () =
      fn main() { let a = K { v: 7 }; println(a.hash()); }\n"
     "'Hash' requires supertrait 'Eq', but 'K' does not implement it (add `impl Eq for K`)";
 
+  check "associated type: `type Item;` + `Self::Item` in sig conforms"
+    "trait Iterator {\n\
+    \    type Item;\n\
+    \    fn next(self) -> Option<Self::Item>;\n\
+     }\n\
+     struct Counter { n: int }\n\
+     impl Iterator for Counter {\n\
+    \    type Item = int;\n\
+    \    fn next(self) -> Option<int> { Option::Some(self.n) }\n\
+     }\n\
+     fn main() {\n\
+    \    let c = Counter { n: 7 };\n\
+    \    match c.next() {\n\
+    \        Option::Some(v) => println(v)\n\
+    \        | Option::None => println(0)\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Counter { long n; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 Counter__next(struct ex_Counter self);\n\nint main(void) {\n    struct ex_Counter c;\n    c.n = 7;\n    {\n        struct ex_Option_i32 __m;\n        __m = Counter__next(c);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 Counter__next(struct ex_Counter self) {\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = self.n;\n        return __exile_ret;\n    }\n}\n";
+
+  check_error "associated type: missing `type X = ...` in impl rejected"
+    "trait Iterator { type Item; fn next(self) -> Option<Self::Item>; }\n\
+     struct C { n: int }\n\
+     impl Iterator for C { fn next(self) -> Option<int> { Option::None } }\n\
+     fn main() { let c = C { n: 0 };\n\
+    \    match c.next() { Option::Some(v) => println(v) | Option::None => println(-1) } }\n"
+    "missing associated type 'type Item = ...;' required by trait 'Iterator'";
+
+  check_error "associated type: binding not in trait rejected"
+    "trait Show { fn show(self) -> int; }\n\
+     struct C { n: int }\n\
+     impl Show for C { type Bogus = int; fn show(self) -> int { self.n } }\n\
+     fn main() { let c = C { n: 5 }; println(c.show()); }\n"
+    "associated type 'Bogus' is not a member of trait 'Show'";
+
+  check_error "associated type: `Self::Item` mismatch in impl sig rejected"
+    "trait Iterator { type Item; fn next(self) -> Option<Self::Item>; }\n\
+     struct C { n: int }\n\
+     impl Iterator for C { type Item = int; fn next(self) -> Option<bool> { Option::None } }\n\
+     fn main() { let c = C { n: 0 };\n\
+    \    match c.next() { Option::Some(v) => println(1) | Option::None => println(-1) } }\n"
+    "method 'next' return type does not match trait 'Iterator'";
+
+  (* `break` inside a `match` inside a loop must exit the loop, not the C
+     `switch` the match would otherwise compile to.  Such a match routes to
+     the if-else decision chain (no switch to capture the break). *)
+  check "break inside match-in-loop routes to if-else (break hits the loop)"
+    "enum E { A | B }\n\
+     fn main() {\n\
+    \    let mut i: int = 0;\n\
+    \    loop {\n\
+    \        let e = E::A;\n\
+    \        match e {\n\
+    \            E::A => { if i >= 3 { break; } println(i); i = i + 1; }\n\
+    \            | E::B => { break; }\n\
+    \        }\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; };\n\nint main(void) {\n    long i;\n    struct ex_E e;\n    i = 0;\n    while (1) {\n        e.tag = ex_E_A;\n        {\n            struct ex_E __m;\n            __m = e;\n            if (__m.tag == ex_E_A) {\n                if (i >= 3) {\n                    break;\n                }\n                printf(\"%ld\\n\", (long)(i));\n                i = i + 1;\n            }\n            else {\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
   (* Range as a value: `a..b` / `a..=b` desugar to the prelude struct
      `Range<T>` / `RangeInclusive<T>`, so a range can be bound, passed and
      returned.  `for v in <Range value>` pulls `.lo` / `.hi` off the value

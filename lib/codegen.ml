@@ -62,6 +62,37 @@ let tstmt_pos = function
 
 let emit_tstmt_ann ctx buf indent stmt = emit_ann ctx buf indent (tstmt_pos stmt)
 
+(* Does this statement / expression contain a `break`/`continue` that
+   targets an *enclosing* loop (i.e. not one nested inside an inner
+   `while`/`for` here)?  Used to route a `match` to the if-else decision
+   chain instead of a C `switch`, which would otherwise capture the
+   `break`.  Descends through `if` / `match` arms / block exprs but stops
+   at inner loops (their own break/continue belongs to them). *)
+let rec stmt_has_loop_break = function
+  | TBreak _ | TContinue _ -> true
+  | TIf { then_body; else_body; _ } ->
+      List.exists stmt_has_loop_break then_body
+      || List.exists stmt_has_loop_break else_body
+  | TWhile _ | TFor _ -> false
+  | TExprStmt e | TLet { value = e; _ } | TAssign { value = e; _ }
+  | TAssignField { value = e; _ } | TAssignDeref { value = e; _ }
+  | TLetTuple { value = e; _ } -> expr_has_loop_break e
+  | TAssignIndex { base; index; value; _ } ->
+      expr_has_loop_break base || expr_has_loop_break index
+      || expr_has_loop_break value
+  | TReturn { value = Some e; _ } -> expr_has_loop_break e
+  | TReturn { value = None; _ } | TDefer _ -> false
+and expr_has_loop_break (e : texpr) =
+  match e.e with
+  | TBlock { stmts; trailing } ->
+      List.exists stmt_has_loop_break stmts
+      || (match trailing with Some t -> expr_has_loop_break t | None -> false)
+  | TMatch { arms; _ } ->
+      List.exists (fun (a : tmatch_arm) -> expr_has_loop_break a.tbody) arms
+  | TIfExpr { then_val; else_val; _ } ->
+      expr_has_loop_break then_val || expr_has_loop_break else_val
+  | _ -> false
+
 let add_separated buf sep f xs =
   List.iteri
     (fun i x -> if i > 0 then Buffer.add_string buf sep; f x)
@@ -625,10 +656,16 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
          `switch`; once any arm nests a variant pattern OR carries a
          guard, a flat switch can't distinguish two arms sharing an outer
          variant (or evaluate the guard with binds in scope), so we fall
-         back to an if-else decision chain. *)
+         back to an if-else decision chain.
+         A `break`/`continue` targeting an *outer* loop in an arm body
+         also forces the decision chain: inside a C `switch`, `break`
+         would exit the switch instead of the loop (the canonical
+         `loop { match it.next() { … None => break } }` iterator shape).
+         The if-else chain has no switch to capture it. *)
       let needs_decision =
         List.exists (fun (a : tmatch_arm) ->
-          tpat_nested a.tpat || a.tguard <> None) arms
+          tpat_nested a.tpat || a.tguard <> None
+          || expr_has_loop_break a.tbody) arms
       in
       if needs_decision then
         emit_match_decision ctx ?assign_to buf indent ename_path arms scrutinee

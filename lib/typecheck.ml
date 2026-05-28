@@ -3718,16 +3718,27 @@ let uses_heap_of tfuncs =
    (or `mod__Foo__method` for `Foo` inside a module).  The struct's
    absolute path is registered as a virtual module so qualified call
    visibility walks (`Foo::method(p, ...)`) resolve naturally. *)
-(* Substitute the `Self` placeholder (`TySelf`, possibly under pointers)
-   with a concrete target type annotation — used when comparing a trait
-   method's declared signature against a concrete `impl Trait for Foo`. *)
-let rec subst_self_ann target = function
+(* Substitute `Self` and associated-type projections in a type annotation
+   with concrete types — used when comparing a trait method's declared
+   signature against a concrete `impl Trait for Foo`.
+   - `Self` (bare receiver `TySelf`, or written as a type name) → [target].
+   - `Self::Item` (a 2-segment `["Self"; "Item"]`) → its [assoc] binding.
+   Recurses through `TyStruct.args` (so `Option<Self::Item>` works) and
+   pointer wrappers.  The previous shallow version left args untouched —
+   load-bearing fix for associated types. *)
+let rec subst_assoc ~assoc target ann =
+  let recur = subst_assoc ~assoc target in
+  match ann with
   | Ast.TySelf -> target
-  (* `Self` written as a type name (e.g. `other: Self`) parses as a
-     single-segment struct path, not the bare-receiver `TySelf`. *)
   | Ast.TyStruct { path = ["Self"]; args = [] } -> target
-  | Ast.TyPtr t -> Ast.TyPtr (subst_self_ann target t)
-  | Ast.TyConstPtr t -> Ast.TyConstPtr (subst_self_ann target t)
+  | Ast.TyStruct { path = ["Self"; item]; args = [] } ->
+      (match List.assoc_opt item assoc with
+       | Some t -> t
+       | None -> ann)   (* unbound assoc — completeness check reports it *)
+  | Ast.TyStruct { path; args } ->
+      Ast.TyStruct { path; args = List.map recur args }
+  | Ast.TyPtr t -> Ast.TyPtr (recur t)
+  | Ast.TyConstPtr t -> Ast.TyConstPtr (recur t)
   | other -> other
 
 (* Resolve a written trait path to its (module, decl).  Unique name → use
@@ -3756,9 +3767,24 @@ let resolve_trait ~flat ~pos trait_written =
    method is implemented with a matching signature, and no method outside
    the trait sneaks into the impl block. *)
 let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
-    ~trait_written ~methods ~pos =
+    ~iassoc ~trait_written ~methods ~pos =
   let (trait_mod, trait_decl) = resolve_trait ~flat ~pos trait_written in
   let trait_path = trait_mod @ [trait_decl.Ast.trname] in
+  (* Associated-type completeness: every `type X;` in the trait must have a
+     `type X = ...;` in the impl, and no impl binding may name a non-trait
+     assoc. *)
+  List.iter (fun an ->
+    if not (List.mem_assoc an iassoc) then
+      Error.failf pos
+        "missing associated type 'type %s = ...;' required by trait '%s'"
+        an (String.concat "::" trait_path))
+    trait_decl.Ast.trassoc;
+  List.iter (fun (an, _) ->
+    if not (List.mem an trait_decl.Ast.trassoc) then
+      Error.failf pos
+        "associated type '%s' is not a member of trait '%s'"
+        an (String.concat "::" trait_path))
+    iassoc;
   (* Supertraits (`trait B: A`): the target must also implement every
      supertrait.  Reads the full impl table (populated in a pre-pass), so
      the supertrait's impl may appear before or after this one in source. *)
@@ -3788,7 +3814,8 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
                             itparams }
   in
   let cmp_ann tm_ann im_ann =
-    let t1 = resolve_type_ann ~pos ctx (subst_self_ann target_ann tm_ann) in
+    let t1 = resolve_type_ann ~pos ctx
+               (subst_assoc ~assoc:iassoc target_ann tm_ann) in
     let t2 = resolve_type_ann ~pos ctx im_ann in
     typ_eq t1 t2
   in
@@ -3803,8 +3830,9 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
   let specialise_default (tm : Ast.func) : Ast.func =
     { tm with
       Ast.params = List.map (fun (p : Ast.param) ->
-        { p with Ast.pty = subst_self_ann target_ann p.pty }) tm.params;
-      Ast.ret_ty = Option.map (subst_self_ann target_ann) tm.ret_ty }
+        { p with Ast.pty = subst_assoc ~assoc:iassoc target_ann p.pty })
+        tm.params;
+      Ast.ret_ty = Option.map (subst_assoc ~assoc:iassoc target_ann) tm.ret_ty }
   in
   (* Walk every trait method.  Provided → check signature.  Omitted and
      defaulted → synthesise from the default body.  Omitted and required →
@@ -3937,6 +3965,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
           | Some trait_written ->
               check_trait_conformance ~ctx ~flat ~parent_path
                 ~target_path ~itparams:ib.Ast.itparams
+                ~iassoc:ib.Ast.iassoc
                 ~trait_written ~methods:ib.Ast.iitems ~pos:ib.Ast.ipos
         in
         (target_path, s.sis_pub, ib.Ast.itparams,
@@ -4128,6 +4157,7 @@ let prelude_items () =
   let alloc_impl = {
     Ast.itparams = [];
     itrait = None;
+    iassoc = [];
     itarget = ["Allocator"];
     iitems = [alloc_method; free_method];
     ipos = pos;

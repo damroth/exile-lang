@@ -490,12 +490,20 @@ and impl_block = {
                                 carries `None`.  Trait impls additionally
                                 check signature conformance against the
                                 trait decl. *)
+  iassoc : (string * type_ann) list;
+                             (* associated-type bindings: `type Item = int;`
+                                → [("Item", TyInt ...)].  Only meaningful
+                                in a trait impl; the trait's `trassoc`
+                                names must all be bound. *)
   itarget : string list;     (* path written by user, may be relative *)
   iitems : func list;
   ipos : Pos.t;
 }
 and trait_decl = {
   trname : string;
+  trassoc : string list;     (* associated-type names: `type Item;` →
+                                ["Item"].  Every `impl` must bind each.
+                                Used in method sigs as `Self::Item`. *)
   trsupers : string list list;
                              (* supertraits: `trait B: A` → [["A"]];
                                 `trait B: A + C` → [["A"]; ["C"]].  An

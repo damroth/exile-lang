@@ -1,0 +1,41 @@
+// Associated types — `type Item;` in a trait, bound by `type Item = T;`
+// in each impl.  Method signatures refer to the projection `Self::Item`,
+// which the conformance check resolves to the impl's binding.
+//
+// This is the Iterator shape (the prerequisite associated types unlock).
+// Here we drive a concrete iterator by calling `next()` directly; the
+// `for x in iter` sugar and generic `I::Item` projection are the next
+// step.  Codegen sees only concrete types — associated types are erased.
+
+trait Iterator {
+    type Item;
+    fn next(self) -> Option<Self::Item>;
+}
+
+struct UpTo { cur: int, end: int }
+
+impl Iterator for UpTo {
+    type Item = int;
+    fn next(self) -> Option<int> {
+        if self.cur < self.end {
+            Option::Some(self.cur)
+        } else {
+            Option::None
+        }
+    }
+}
+
+fn main() {
+    let mut it = UpTo { cur: 0, end: 3 };
+
+    // Manual iteration: call next() until it yields None.
+    loop {
+        match it.next() {
+            Option::Some(v) => {
+                println(v);
+                it = UpTo { cur: it.cur + 1, end: it.end };
+            }
+            | Option::None => { break; }
+        }
+    }
+}
