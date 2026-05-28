@@ -7,8 +7,10 @@
 // appear in the impl.  Trait methods lower to ordinary `Type__method`
 // functions — zero runtime cost, static dispatch.
 //
-// Generic bounds (`fn print_area<T: Area>(x: T)`) and default methods
-// are later steps; today the call site names a concrete type.
+// Generic bounds `<T: Trait>` dispatch statically: each instantiation
+// monomorphizes to a direct call of the concrete type's method.  A type
+// that doesn't `impl` the bound trait is rejected at the call site.
+// Default methods and supertraits are later steps.
 
 trait Shape {
     fn area(self) -> int;
@@ -28,6 +30,10 @@ impl Shape for Square {
     fn perimeter(self) -> int { self.side * 4 }
 }
 
+// Generic over any Shape — `total_area` works for Rect and Square alike,
+// monomorphized per concrete type with zero runtime dispatch.
+fn total_area<T: Shape>(a: T, b: T) -> int { a.area() + b.area() }
+
 fn main() {
     let r = Rect { w: 3, h: 5 };
     println(r.area());                  // 15
@@ -36,4 +42,10 @@ fn main() {
     let sq = Square { side: 6 };
     println(sq.area());                 // 36
     println(sq.perimeter());            // 24
+
+    let r2 = Rect { w: 2, h: 2 };
+    println(total_area(r, r2));         // 15 + 4 = 19
+
+    let sq2 = Square { side: 1 };
+    println(total_area(sq, sq2));       // 36 + 1 = 37
 }

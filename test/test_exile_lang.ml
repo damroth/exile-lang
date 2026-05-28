@@ -427,6 +427,43 @@ let () =
      fn main() { let s = Sq { side: 2 }; println(s.area()); }\n"
     "method 'bogus' is not a member of trait 'Area'";
 
+  check "trait bound: `<T: Area>` generic dispatch monomorphizes per type"
+    "trait Area { fn area(self) -> int; }\n\
+     struct Square { side: int }\n\
+     impl Area for Square { fn area(self) -> int { self.side * self.side } }\n\
+     fn total<T: Area>(a: T, b: T) -> int { a.area() + b.area() }\n\
+     fn main() {\n\
+    \    let s1 = Square { side: 3 };\n\
+    \    let s2 = Square { side: 4 };\n\
+    \    println(total(s1, s2));\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Square { long side; };\n\nlong Square__area(struct ex_Square self);\nstatic long ex_total_ex_Square(struct ex_Square a, struct ex_Square b);\n\nint main(void) {\n    struct ex_Square s1;\n    struct ex_Square s2;\n    s1.side = 3;\n    s2.side = 4;\n    printf(\"%ld\\n\", (long)(ex_total_ex_Square(s1, s2)));\n    return 0;\n}\n\nlong Square__area(struct ex_Square self) {\n    return self.side * self.side;\n}\n\nstatic long ex_total_ex_Square(struct ex_Square a, struct ex_Square b) {\n    return Square__area(a) + Square__area(b);\n}\n";
+
+  check_error "trait bound: type not implementing the trait rejected"
+    "trait Area { fn area(self) -> int; }\n\
+     struct Square { side: int }\n\
+     impl Area for Square { fn area(self) -> int { self.side * self.side } }\n\
+     struct Plain { x: int }\n\
+     fn total<T: Area>(a: T, b: T) -> int { a.area() + b.area() }\n\
+     fn main() {\n\
+    \    let p1 = Plain { x: 3 };\n\
+    \    let p2 = Plain { x: 4 };\n\
+    \    println(total(p1, p2));\n\
+     }\n"
+    "type 'Plain' does not implement trait 'Area' (required by bound 'T: Area' on 'total')";
+
+  check_error "trait bound: multiple bounds `<T: A + B>` — missing one rejected"
+    "trait Area { fn area(self) -> int; }\n\
+     trait Name { fn tag(self) -> int; }\n\
+     struct Half { side: int }\n\
+     impl Area for Half { fn area(self) -> int { self.side } }\n\
+     fn describe<T: Area + Name>(x: T) -> int { x.area() + x.tag() }\n\
+     fn main() {\n\
+    \    let h = Half { side: 3 };\n\
+    \    println(describe(h));\n\
+     }\n"
+    "type 'Half' does not implement trait 'Name' (required by bound 'T: Name' on 'describe')";
+
   (* Range as a value: `a..b` / `a..=b` desugar to the prelude struct
      `Range<T>` / `RangeInclusive<T>`, so a range can be bound, passed and
      returned.  `for v in <Range value>` pulls `.lo` / `.hi` off the value

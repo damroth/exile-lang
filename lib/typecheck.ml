@@ -854,6 +854,25 @@ let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
   | None ->
       Error.failf pos "'%s' returns void, cannot use as a value" name
 
+(* Registry of `impl Trait for Type` pairs, as (trait-name, target
+   abs-path).  Populated by [expand_impls] (which resolves both the trait
+   and the target), read by [resolve_call_dispatch] to enforce a generic
+   fn's `<T: Trait>` bounds at instantiation.  Trait names are matched by
+   their last path segment — sufficient while traits are uniquely named
+   (the conformance check already rejects ambiguity). *)
+let trait_impl_table : (string * string list) list ref = ref []
+
+let typ_head_path = function
+  | TStruct p | TEnum p -> Some p
+  | TStructApp { path; _ } | TEnumApp { path; _ } -> Some path
+  | _ -> None
+
+(* True when [ty] has an `impl <trait_name> for <ty>` registered. *)
+let type_impls_trait ~trait_name ty =
+  match typ_head_path ty with
+  | None -> false
+  | Some path -> List.mem (trait_name, path) !trait_impl_table
+
 (* Generic-call dispatch: if the resolved fn is generic, infer its
    tparams from the actual arg types (and from the surrounding expected
    type via a bidirectional seed pair `(skel.ret_ty, expected)`),
@@ -911,6 +930,23 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
           Error.failf pos
             "internal: missing AST for generic fn '%s'" skel.mangled
     in
+    (* Enforce `<T: Trait>` bounds: the type inferred for each bounded
+       tparam must `impl Trait`.  Gives a clear error at the call site
+       instead of a downstream "no method m" once the instance body is
+       elaborated. *)
+    List.iter (fun (tparam, trait_written) ->
+      match List.assoc_opt tparam bindings with
+      | None -> ()
+      | Some ty ->
+          let trait_name =
+            match List.rev trait_written with n :: _ -> n | [] -> ""
+          in
+          if not (type_impls_trait ~trait_name ty) then
+            Error.failf pos
+              "type '%s' does not implement trait '%s' (required by bound \
+               '%s: %s' on '%s')"
+              (typ_name ty) trait_name tparam trait_name func.Ast.name)
+      func.Ast.tbounds;
     let inst =
       Mono.instantiate_fn ctx.instances
         ~path:resolved_mod ~func ~skel ~bindings ~origin_pos:pos
@@ -3708,6 +3744,10 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
                 qualify the path" (String.concat "::" trait_written))
   in
   let trait_path = trait_mod @ [trait_decl.Ast.trname] in
+  (* Register the (trait-name, target) pair so generic `<T: Trait>` bounds
+     can be enforced at instantiation. *)
+  trait_impl_table :=
+    (trait_decl.Ast.trname, target_path) :: !trait_impl_table;
   (* Orphan rule (D3): the impl must live in the trait's module or the
      target type's module (direct, not an ancestor). *)
   let target_mod = match List.rev target_path with _ :: rest -> List.rev rest | [] -> [] in
@@ -3998,7 +4038,7 @@ let prelude_items () =
     });
   ] in
   let mk_method name tparams params ret body = {
-    Ast.name; c_name = name; tparams; params; ret_ty = ret; body;
+    Ast.name; c_name = name; tparams; tbounds = []; params; ret_ty = ret; body;
     is_pub = true; is_extern = false; is_variadic = false;
     tier_hint = Some "full"; amiga_lib = None; must_use = false; pos;
   } in
@@ -4332,6 +4372,7 @@ let check_program program : tprogram =
      from 0 in each compilation — keeps golden output deterministic across
      test runs. *)
   for_gensym := 0;
+  trait_impl_table := [];
   let mono_state = Mono.new_state () in
   let program = prepend_prelude program in
   let flat = flatten_items program in

@@ -298,6 +298,13 @@ type func = {
                                         extern fns, so the linker pulls
                                         the right C symbol. *)
   tparams : string list;             (* generic type parameters: [] for mono *)
+  tbounds : (string * string list) list;
+                                     (* trait bounds: `<T: Area>` →
+                                        [("T", ["Area"])]; `<T: A + B>` →
+                                        two entries for "T".  Checked at
+                                        instantiation: the type bound to
+                                        the tparam must `impl` each trait.
+                                        [] when no bounds. *)
   params : param list;
   ret_ty : type_ann option;
   body : stmt list;                  (* empty when is_extern = true *)

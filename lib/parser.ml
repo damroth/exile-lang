@@ -1017,12 +1017,47 @@ let parse_tparams s =
     names
   end
 
+(* Like [parse_tparams] but also reads trait bounds: `<T: Area, U: A + B>`.
+   Returns (names, bounds) where bounds is a flat list of (tparam,
+   trait_path) — one entry per bound (so `T: A + B` yields two).  Used by
+   functions; structs/enums/impls use the plain [parse_tparams]. *)
+let parse_tparams_bounded s =
+  if peek s <> Token.Lt then ([], [])
+  else begin
+    ignore (advance s);
+    let bounds = ref [] in
+    let names =
+      parse_comma_list ~close:Token.Gt
+        ~item:(fun s ->
+          let (n, _) = expect_ident s ~what:"type parameter name" in
+          if peek s = Token.Colon then begin
+            ignore (advance s);
+            (* one or more `+`-separated trait paths *)
+            let rec read_bounds () =
+              let path = parse_path s ~what:"trait name in bound" in
+              bounds := (n, path) :: !bounds;
+              if peek s = Token.Plus then (ignore (advance s); read_bounds ())
+            in
+            read_bounds ()
+          end;
+          n)
+        s
+    in
+    if names = [] then
+      Error.failf (peek_pos s) "empty type parameter list <>";
+    (match find_dup_key ~key:Fun.id names with
+     | None -> ()
+     | Some n ->
+         Error.failf (peek_pos s) "duplicate type parameter '%s'" n);
+    (names, List.rev !bounds)
+  end
+
 let rec parse_function s seen_fns ~is_pub =
   expect s Token.Fn;
   let (name, name_pos) = expect_ident s ~what:"function name after 'fn'" in
   if List.mem name seen_fns then
     Error.failf name_pos "function '%s' already defined" name;
-  let tparams = parse_tparams s in
+  let (tparams, tbounds) = parse_tparams_bounded s in
   let params = parse_params s in
   check_dup_params params ~kind:"function" ~name ~name_pos;
   (* `@reg(...)` makes sense only on extern fn params (it pins the
@@ -1046,8 +1081,8 @@ let rec parse_function s seen_fns ~is_pub =
   expect s Token.LBrace;
   let body = parse_stmts s [] in
   expect s Token.RBrace;
-  (name, Ast.{ name; c_name = name; tparams; params; ret_ty; body; is_pub;
-               is_extern = false; is_variadic = false;
+  (name, Ast.{ name; c_name = name; tparams; tbounds; params; ret_ty; body;
+               is_pub; is_extern = false; is_variadic = false;
                tier_hint = None; amiga_lib = None; must_use = false;
                pos = name_pos })
 
@@ -1109,7 +1144,8 @@ and parse_extern_fn_after_keyword s seen_fns =
        Error.failf (peek_pos s)
          "expected ';' after 'extern fn %s' signature, got %s"
          name (Token.pp t));
-  (name, Ast.{ name; c_name; tparams = []; params; ret_ty; body = [];
+  (name, Ast.{ name; c_name; tparams = []; tbounds = []; params; ret_ty;
+               body = [];
                (* extern items are implicitly pub: they live in `mod raw`
                   by FFI hygiene rule, and the whole point is for the
                   surrounding stdlib / wrappers to call them. *)
@@ -1815,8 +1851,8 @@ and parse_trait_method s seen =
   let params = parse_params s in
   let ret_ty = parse_ret_ty s in
   expect s Token.Semicolon;
-  Ast.{ name; c_name = name; tparams = []; params; ret_ty; body = [];
-        is_pub = true; is_extern = false; is_variadic = false;
+  Ast.{ name; c_name = name; tparams = []; tbounds = []; params; ret_ty;
+        body = []; is_pub = true; is_extern = false; is_variadic = false;
         tier_hint = None; amiga_lib = None; must_use = false;
         pos = name_pos }
 
