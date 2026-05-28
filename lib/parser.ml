@@ -1826,6 +1826,19 @@ and parse_impl_block s =
 and parse_trait s ~is_pub =
   expect s Token.Trait;
   let (name, name_pos) = expect_ident s ~what:"trait name after 'trait'" in
+  (* Optional supertraits: `trait B: A + C { ... }`. *)
+  let supers =
+    if peek s = Token.Colon then begin
+      ignore (advance s);
+      let rec read acc =
+        let path = parse_path s ~what:"supertrait name" in
+        let acc = path :: acc in
+        if peek s = Token.Plus then (ignore (advance s); read acc)
+        else List.rev acc
+      in
+      read []
+    end else []
+  in
   expect s Token.LBrace;
   let rec loop seen acc defaults =
     match peek s with
@@ -1840,8 +1853,8 @@ and parse_trait s ~is_pub =
           "expected 'fn' signature inside 'trait' block, got %s" (Token.pp t)
   in
   let (methods, defaults) = loop [] [] [] in
-  Ast.{ trname = name; trmethods = methods; trdefaults = defaults;
-        trpos = name_pos; tris_pub = is_pub }
+  Ast.{ trname = name; trsupers = supers; trmethods = methods;
+        trdefaults = defaults; trpos = name_pos; tris_pub = is_pub }
 
 (* Returns (method, is_default).  Required form ends with `;`; default
    form has a `{ ... }` body. *)

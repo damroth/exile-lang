@@ -505,6 +505,27 @@ let () =
      fn main() { let a = A { v: 5 }; println(a.v); }\n"
     "missing method 'hi' required by trait 'Greet'";
 
+  check "supertrait: `trait Hash: Eq` accepts when both implemented \
+         (order-independent)"
+    "trait Eq { fn eq(self, other: Self) -> bool; }\n\
+     trait Hash: Eq { fn hash(self) -> int; }\n\
+     struct K { v: int }\n\
+     impl Hash for K { fn hash(self) -> int { self.v } }\n\
+     impl Eq for K { fn eq(self, other: K) -> bool { self.v == other.v } }\n\
+     fn main() {\n\
+    \    let a = K { v: 7 };\n\
+    \    println(a.hash());\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_K { long v; };\n\nlong K__hash(struct ex_K self);\nint K__eq(struct ex_K self, struct ex_K other);\n\nint main(void) {\n    struct ex_K a;\n    a.v = 7;\n    printf(\"%ld\\n\", (long)(K__hash(a)));\n    return 0;\n}\n\nlong K__hash(struct ex_K self) {\n    return self.v;\n}\n\nint K__eq(struct ex_K self, struct ex_K other) {\n    return self.v == other.v;\n}\n";
+
+  check_error "supertrait: missing supertrait impl rejected"
+    "trait Eq { fn eq(self, other: Self) -> bool; }\n\
+     trait Hash: Eq { fn hash(self) -> int; }\n\
+     struct K { v: int }\n\
+     impl Hash for K { fn hash(self) -> int { self.v } }\n\
+     fn main() { let a = K { v: 7 }; println(a.hash()); }\n"
+    "'Hash' requires supertrait 'Eq', but 'K' does not implement it (add `impl Eq for K`)";
+
   (* Range as a value: `a..b` / `a..=b` desugar to the prelude struct
      `Range<T>` / `RangeInclusive<T>`, so a range can be bound, passed and
      returned.  `for v in <Range value>` pulls `.lo` / `.hi` off the value

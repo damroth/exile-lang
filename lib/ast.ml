@@ -493,6 +493,11 @@ and impl_block = {
 }
 and trait_decl = {
   trname : string;
+  trsupers : string list list;
+                             (* supertraits: `trait B: A` → [["A"]];
+                                `trait B: A + C` → [["A"]; ["C"]].  An
+                                `impl B for T` requires `impl A for T`
+                                (and `impl C for T`) to exist. *)
   trmethods : func list;     (* method signatures; `body` carries the
                                 default-method body when the method has
                                 one (see [trdefaults]).  `self` receiver

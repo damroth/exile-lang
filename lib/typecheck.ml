@@ -3720,37 +3720,49 @@ let rec subst_self_ann target = function
   | Ast.TyConstPtr t -> Ast.TyConstPtr (subst_self_ann target t)
   | other -> other
 
-(* Validate `impl Trait for Foo`: trait exists, orphan rule holds, every
-   required trait method is implemented with a matching signature, and no
-   method outside the trait sneaks into the impl block. *)
-let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
-    ~trait_written ~methods ~pos =
+(* Resolve a written trait path to its (module, decl).  Unique name → use
+   it; multiple → prefer an exact absolute-path match; else ambiguous. *)
+let resolve_trait ~flat ~pos trait_written =
   let last p = match List.rev p with n :: _ -> n | [] -> "" in
   let tname = last trait_written in
-  (* Resolve the trait by name.  Unique name → use it; multiple → prefer an
-     exact absolute-path match against what was written; else ambiguous. *)
   let candidates =
     List.filter (fun (_, (td : Ast.trait_decl)) -> td.trname = tname)
       flat.traits
   in
-  let (trait_mod, trait_decl) =
-    match candidates with
-    | [] -> Error.failf pos "unknown trait '%s'" (String.concat "::" trait_written)
-    | [ one ] -> one
-    | many ->
-        (match List.find_opt
-                 (fun (p, td) -> p @ [td.Ast.trname] = trait_written) many with
-         | Some one -> one
-         | None ->
-             Error.failf pos
-               "ambiguous trait '%s' — multiple traits with that name; \
-                qualify the path" (String.concat "::" trait_written))
-  in
+  match candidates with
+  | [] -> Error.failf pos "unknown trait '%s'" (String.concat "::" trait_written)
+  | [ one ] -> one
+  | many ->
+      (match List.find_opt
+               (fun (p, td) -> p @ [td.Ast.trname] = trait_written) many with
+       | Some one -> one
+       | None ->
+           Error.failf pos
+             "ambiguous trait '%s' — multiple traits with that name; \
+              qualify the path" (String.concat "::" trait_written))
+
+(* Validate `impl Trait for Foo`: trait exists, orphan rule holds, all
+   supertraits are also implemented for the target, every required trait
+   method is implemented with a matching signature, and no method outside
+   the trait sneaks into the impl block. *)
+let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
+    ~trait_written ~methods ~pos =
+  let (trait_mod, trait_decl) = resolve_trait ~flat ~pos trait_written in
   let trait_path = trait_mod @ [trait_decl.Ast.trname] in
-  (* Register the (trait-name, target) pair so generic `<T: Trait>` bounds
-     can be enforced at instantiation. *)
-  trait_impl_table :=
-    (trait_decl.Ast.trname, target_path) :: !trait_impl_table;
+  (* Supertraits (`trait B: A`): the target must also implement every
+     supertrait.  Reads the full impl table (populated in a pre-pass), so
+     the supertrait's impl may appear before or after this one in source. *)
+  List.iter (fun super_written ->
+    let (_, super_decl) = resolve_trait ~flat ~pos super_written in
+    if not (List.mem (super_decl.Ast.trname, target_path) !trait_impl_table)
+    then
+      Error.failf pos
+        "'%s' requires supertrait '%s', but '%s' does not implement it \
+         (add `impl %s for %s`)"
+        (String.concat "::" trait_path) super_decl.Ast.trname
+        (String.concat "::" target_path) super_decl.Ast.trname
+        (String.concat "::" target_path))
+    trait_decl.Ast.trsupers;
   (* Orphan rule (D3): the impl must live in the trait's module or the
      target type's module (direct, not an ancestor). *)
   let target_mod = match List.rev target_path with _ :: rest -> List.rev rest | [] -> [] in
@@ -3829,6 +3841,26 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
   synthesised
 
 let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_index enum_index modules =
+  (* Pre-pass: register every `impl Trait for Foo` as (trait-name, target)
+     BEFORE any conformance check runs, so generic `<T: Trait>` bounds and
+     supertrait requirements resolve order-independently (a supertrait's
+     impl may be written after the impl that depends on it). *)
+  List.iter
+    (fun (parent_path, ib) ->
+      match ib.Ast.itrait with
+      | None -> ()
+      | Some trait_written ->
+          let ctx = { (empty_ctx ~instances) with
+            structs = struct_index; enums = enum_index;
+            modules; scope = parent_path; tparams = ib.Ast.itparams;
+            ext_structs; ext_types; ext_consts } in
+          (match lookup_struct ctx ib.Ast.itarget with
+           | None -> ()  (* the conformance pass reports the unknown target *)
+           | Some s ->
+               let (_, td) = resolve_trait ~flat ~pos:ib.Ast.ipos trait_written in
+               trait_impl_table :=
+                 (td.Ast.trname, s.sname_path) :: !trait_impl_table))
+    flat.impls;
   let resolved =
     List.map
       (fun (parent_path, ib) ->
