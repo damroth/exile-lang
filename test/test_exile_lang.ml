@@ -384,6 +384,49 @@ let () =
     "fn main() {\n    while 1 { println(1); }\n}\n"
     "'while' condition must be of type bool, got i32";
 
+  (* Traits (krok 1): `trait T { fn sigs; }` + `impl T for Foo` + monomorphic
+     dispatch.  Trait methods lower to ordinary `Foo__method` fns; the trait
+     impl is checked for signature conformance.  Generic bounds `<T: Trait>`
+     are a later step. *)
+  check "trait + impl: monomorphic method dispatch"
+    "trait Area { fn area(self) -> int; }\n\
+     struct Square { side: int }\n\
+     impl Area for Square {\n\
+    \    fn area(self) -> int { self.side * self.side }\n\
+     }\n\
+     fn main() {\n\
+    \    let sq = Square { side: 5 };\n\
+    \    println(sq.area());\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Square { long side; };\n\nlong Square__area(struct ex_Square self);\n\nint main(void) {\n    struct ex_Square sq;\n    sq.side = 5;\n    printf(\"%ld\\n\", (long)(Square__area(sq)));\n    return 0;\n}\n\nlong Square__area(struct ex_Square self) {\n    return self.side * self.side;\n}\n";
+
+  check_error "trait impl: missing required method rejected"
+    "trait Area { fn area(self) -> int; }\n\
+     struct Sq { side: int }\n\
+     impl Area for Sq { }\n\
+     fn main() { let s = Sq { side: 2 }; println(s.side); }\n"
+    "missing method 'area' required by trait 'Area'";
+
+  check_error "trait impl: unknown trait rejected"
+    "struct Sq { side: int }\n\
+     impl Area for Sq { fn area(self) -> int { 1 } }\n\
+     fn main() { let s = Sq { side: 2 }; println(s.area()); }\n"
+    "unknown trait 'Area'";
+
+  check_error "trait impl: signature mismatch (return type) rejected"
+    "trait Area { fn area(self) -> int; }\n\
+     struct Sq { side: int }\n\
+     impl Area for Sq { fn area(self) -> bool { true } }\n\
+     fn main() { let s = Sq { side: 2 }; println(s.side); }\n"
+    "method 'area' return type does not match trait 'Area'";
+
+  check_error "trait impl: extra method not in trait rejected"
+    "trait Area { fn area(self) -> int; }\n\
+     struct Sq { side: int }\n\
+     impl Area for Sq { fn area(self) -> int { 1 } fn bogus(self) -> int { 2 } }\n\
+     fn main() { let s = Sq { side: 2 }; println(s.area()); }\n"
+    "method 'bogus' is not a member of trait 'Area'";
+
   (* Range as a value: `a..b` / `a..=b` desugar to the prelude struct
      `Range<T>` / `RangeInclusive<T>`, so a range can be bound, passed and
      returned.  `for v in <Range value>` pulls `.lo` / `.hi` off the value

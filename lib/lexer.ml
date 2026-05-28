@@ -22,6 +22,7 @@ let keyword_or_ident = function
   | "defer" -> Token.Defer
   | "struct" -> Token.Struct
   | "impl" -> Token.Impl
+  | "trait" -> Token.Trait
   | "enum" -> Token.Enum
   | "match" -> Token.Match
   | "orelse" -> Token.Orelse

@@ -459,6 +459,7 @@ type item =
                                            ExternConst but assignable. *)
   | Enum of enum_decl
   | Impl of impl_block
+  | Trait of trait_decl
   | CInclude of { path : string; pos : Pos.t }
                                         (* `@c_include("path/to/header.h")`
                                            — emitted as `#include "..."` in
@@ -473,9 +474,25 @@ and module_decl = {
 and impl_block = {
   itparams : string list;    (* `<A, B>` after `impl` — generic impl over a
                                 generic struct; [] for a mono-struct impl *)
+  itrait : string list option;
+                             (* `impl Trait for Foo` carries `Some
+                                ["Trait"]`; a plain inherent `impl Foo`
+                                carries `None`.  Trait impls additionally
+                                check signature conformance against the
+                                trait decl. *)
   itarget : string list;     (* path written by user, may be relative *)
   iitems : func list;
   ipos : Pos.t;
+}
+and trait_decl = {
+  trname : string;
+  trmethods : func list;     (* method signatures — `body = []` means a
+                                required method (no default).  Default
+                                methods (non-empty body) are a later
+                                step.  `self` receiver substituted to
+                                `Self` placeholder at parse time. *)
+  trpos : Pos.t;
+  tris_pub : bool;
 }
 
 type program = item list

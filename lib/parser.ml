@@ -1424,6 +1424,9 @@ let rec parse_item s seen =
       (* impl blocks introduce no name into the surrounding scope — their
          methods are looked up via the target struct, not by a free name. *)
       [ (None, Ast.Impl ib) ]
+  | Token.Trait ->
+      let td = parse_trait s ~is_pub in
+      [ (Some td.Ast.trname, Ast.Trait td) ]
   | Token.Use ->
       let items = parse_use_items s in
       let items =
@@ -1694,9 +1697,29 @@ and parse_impl_block s =
   let pos = s.last_pos in
   (* `impl<A, B> Pair<A, B> { ... }` — the `<A, B>` declares the impl's
      type parameters; the target carries them as arguments.  `impl Foo`
-     (mono) parses with no tparams and no target args. *)
+     (mono) parses with no tparams and no target args.
+     `impl Trait for Foo { ... }` — trait impl: the first type is the
+     trait, `for` introduces the target. *)
   let itparams = parse_tparams s in
-  let target_ty = parse_type s in
+  let first_ty = parse_type s in
+  (* Disambiguate `impl Foo { ... }` (inherent) from `impl Trait for Foo
+     { ... }` (trait impl) by the presence of `for`. *)
+  let (itrait, target_ty) =
+    if peek s = Token.For then begin
+      ignore (advance s);
+      let trait_path =
+        match first_ty with
+        | Ast.TyStruct { path; args = [] } -> path
+        | Ast.TyStruct { path; _ } ->
+            Error.failf pos
+              "trait '%s' in 'impl ... for' must not carry type arguments \
+               (generic traits are not supported)" (String.concat "::" path)
+        | _ -> Error.failf pos "'impl' trait must be a named trait"
+      in
+      (Some trait_path, parse_type s)
+    end else
+      (None, first_ty)
+  in
   let (target_path, target_args) =
     match target_ty with
     | Ast.TyStruct { path; args } -> (path, args)
@@ -1746,12 +1769,56 @@ and parse_impl_block s =
   in
   let methods =
     List.map (fun (m : Ast.func) ->
-      { m with Ast.params =
+      (* Trait-impl methods follow the trait's visibility (they're part of
+         its public API), so an explicit per-method `pub` is unnecessary
+         and they're never private.  Inherent-impl methods keep their own
+         `pub`. *)
+      let is_pub = m.Ast.is_pub || itrait <> None in
+      { m with Ast.is_pub;
+        Ast.params =
           List.map (fun (p : Ast.param) ->
             { p with Ast.pty = replace_self p.pty }) m.params })
       methods
   in
-  Ast.{ itparams; itarget = target_path; iitems = methods; ipos = pos }
+  Ast.{ itparams; itrait; itarget = target_path; iitems = methods; ipos = pos }
+
+(* `trait Name { fn m(self, ...) -> R; ... }` — method signatures only in
+   this step (required methods, no default bodies).  Each signature ends
+   with `;`.  `self` stays `TySelf` (= `Self`); conformance against a
+   concrete `impl Trait for Foo` substitutes the target type. *)
+and parse_trait s ~is_pub =
+  expect s Token.Trait;
+  let (name, name_pos) = expect_ident s ~what:"trait name after 'trait'" in
+  expect s Token.LBrace;
+  let rec loop seen acc =
+    match peek s with
+    | Token.RBrace -> ignore (advance s); List.rev acc
+    | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
+    | Token.Fn ->
+        let m = parse_trait_method s seen in
+        loop (m.Ast.name :: seen) (m :: acc)
+    | t ->
+        Error.failf (peek_pos s)
+          "expected 'fn' signature inside 'trait' block, got %s" (Token.pp t)
+  in
+  let methods = loop [] [] in
+  Ast.{ trname = name; trmethods = methods; trpos = name_pos; tris_pub = is_pub }
+
+and parse_trait_method s seen =
+  expect s Token.Fn;
+  let (name, name_pos) = expect_ident s ~what:"method name after 'fn'" in
+  if List.mem name seen then
+    Error.failf name_pos "method '%s' already declared in this trait" name;
+  if peek s = Token.Lt then
+    Error.failf name_pos
+      "generic trait methods are not supported (method '%s')" name;
+  let params = parse_params s in
+  let ret_ty = parse_ret_ty s in
+  expect s Token.Semicolon;
+  Ast.{ name; c_name = name; tparams = []; params; ret_ty; body = [];
+        is_pub = true; is_extern = false; is_variadic = false;
+        tier_hint = None; amiga_lib = None; must_use = false;
+        pos = name_pos }
 
 and parse_module s seen ~is_pub =
   expect s Token.Mod;

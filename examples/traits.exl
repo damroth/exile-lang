@@ -1,0 +1,39 @@
+// Traits (step 1) — `trait T { fn sigs; }` + `impl T for Foo`, with
+// monomorphic (direct) method dispatch.
+//
+// A trait declares method signatures; `impl Trait for Type` provides
+// the bodies.  The compiler checks conformance: every required method
+// must be present with a matching signature, and no extra methods may
+// appear in the impl.  Trait methods lower to ordinary `Type__method`
+// functions — zero runtime cost, static dispatch.
+//
+// Generic bounds (`fn print_area<T: Area>(x: T)`) and default methods
+// are later steps; today the call site names a concrete type.
+
+trait Shape {
+    fn area(self) -> int;
+    fn perimeter(self) -> int;
+}
+
+struct Rect { w: int, h: int }
+struct Square { side: int }
+
+impl Shape for Rect {
+    fn area(self) -> int { self.w * self.h }
+    fn perimeter(self) -> int { (self.w + self.h) * 2 }
+}
+
+impl Shape for Square {
+    fn area(self) -> int { self.side * self.side }
+    fn perimeter(self) -> int { self.side * 4 }
+}
+
+fn main() {
+    let r = Rect { w: 3, h: 5 };
+    println(r.area());                  // 15
+    println(r.perimeter());             // 16
+
+    let sq = Square { side: 6 };
+    println(sq.area());                 // 36
+    println(sq.perimeter());            // 24
+}

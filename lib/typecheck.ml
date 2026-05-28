@@ -3303,6 +3303,8 @@ type flat = {
      resolution (relative-to-scope, ancestor walk-up) happens later
      once the struct index is built. *)
   impls : (string list * Ast.impl_block) list;
+  (* `trait` declarations with their enclosing module path. *)
+  traits : (string list * Ast.trait_decl) list;
   (* `pub use foo::bar;` re-exports.  Each entry is
      (scope, local_name, target_relative_path, decl_pos).  Lookup at
      `scope` for `local_name` redirects to `target_relative_path`
@@ -3325,6 +3327,7 @@ let flatten_items program =
   let enums = ref [] in
   let modules = ref [] in
   let impls = ref [] in
+  let traits = ref [] in
   let c_includes = ref [] in
   (* Uniform "must be at top level" reject — `extern struct/type/const`
      and `@c_include` all share the same constraint with the same
@@ -3386,6 +3389,8 @@ let flatten_items program =
             walk mod_path m.Ast.mitems
         | Ast.Impl ib ->
             impls := (path, ib) :: !impls
+        | Ast.Trait td ->
+            traits := (path, td) :: !traits
         | Ast.CInclude { path = inc_path; pos } ->
             if path <> [] then
               Error.failf pos
@@ -3420,6 +3425,7 @@ let flatten_items program =
     enums = List.rev !enums;
     modules = List.rev !modules;
     impls = List.rev !impls;
+    traits = List.rev !traits;
     consts = List.rev !consts;
     aliases = List.rev !aliases }
 
@@ -3666,6 +3672,100 @@ let uses_heap_of tfuncs =
    (or `mod__Foo__method` for `Foo` inside a module).  The struct's
    absolute path is registered as a virtual module so qualified call
    visibility walks (`Foo::method(p, ...)`) resolve naturally. *)
+(* Substitute the `Self` placeholder (`TySelf`, possibly under pointers)
+   with a concrete target type annotation — used when comparing a trait
+   method's declared signature against a concrete `impl Trait for Foo`. *)
+let rec subst_self_ann target = function
+  | Ast.TySelf -> target
+  | Ast.TyPtr t -> Ast.TyPtr (subst_self_ann target t)
+  | Ast.TyConstPtr t -> Ast.TyConstPtr (subst_self_ann target t)
+  | other -> other
+
+(* Validate `impl Trait for Foo`: trait exists, orphan rule holds, every
+   required trait method is implemented with a matching signature, and no
+   method outside the trait sneaks into the impl block. *)
+let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
+    ~trait_written ~methods ~pos =
+  let last p = match List.rev p with n :: _ -> n | [] -> "" in
+  let tname = last trait_written in
+  (* Resolve the trait by name.  Unique name → use it; multiple → prefer an
+     exact absolute-path match against what was written; else ambiguous. *)
+  let candidates =
+    List.filter (fun (_, (td : Ast.trait_decl)) -> td.trname = tname)
+      flat.traits
+  in
+  let (trait_mod, trait_decl) =
+    match candidates with
+    | [] -> Error.failf pos "unknown trait '%s'" (String.concat "::" trait_written)
+    | [ one ] -> one
+    | many ->
+        (match List.find_opt
+                 (fun (p, td) -> p @ [td.Ast.trname] = trait_written) many with
+         | Some one -> one
+         | None ->
+             Error.failf pos
+               "ambiguous trait '%s' — multiple traits with that name; \
+                qualify the path" (String.concat "::" trait_written))
+  in
+  let trait_path = trait_mod @ [trait_decl.Ast.trname] in
+  (* Orphan rule (D3): the impl must live in the trait's module or the
+     target type's module (direct, not an ancestor). *)
+  let target_mod = match List.rev target_path with _ :: rest -> List.rev rest | [] -> [] in
+  if parent_path <> trait_mod && parent_path <> target_mod then
+    Error.failf pos
+      "orphan 'impl %s for %s': a trait impl must live in the trait's \
+       module or the target type's module"
+      (String.concat "::" trait_path) (String.concat "::" target_path);
+  (* The target type as a type annotation, for substituting `Self`. *)
+  let target_ann =
+    Ast.TyStruct { path = target_path;
+                   args = List.map (fun n -> Ast.TyStruct { path = [n]; args = [] })
+                            itparams }
+  in
+  let cmp_ann tm_ann im_ann =
+    let t1 = resolve_type_ann ~pos ctx (subst_self_ann target_ann tm_ann) in
+    let t2 = resolve_type_ann ~pos ctx im_ann in
+    typ_eq t1 t2
+  in
+  let cmp_ret tm_ret im_ret =
+    match tm_ret, im_ret with
+    | None, None -> true
+    | Some a, Some b -> cmp_ann a b
+    | _ -> false
+  in
+  (* Every required trait method must have a matching impl method. *)
+  List.iter (fun (tm : Ast.func) ->
+    match List.find_opt (fun (im : Ast.func) -> im.name = tm.name) methods with
+    | None ->
+        Error.failf pos
+          "missing method '%s' required by trait '%s'"
+          tm.name (String.concat "::" trait_path)
+    | Some im ->
+        if List.length im.params <> List.length tm.params then
+          Error.failf im.pos
+            "method '%s' has %d parameter(s) but trait '%s' declares %d"
+            tm.name (List.length im.params)
+            (String.concat "::" trait_path) (List.length tm.params);
+        List.iter2 (fun (tp : Ast.param) (ip : Ast.param) ->
+          if not (cmp_ann tp.pty ip.pty) then
+            Error.failf im.pos
+              "method '%s': parameter '%s' type does not match trait '%s'"
+              tm.name ip.pname (String.concat "::" trait_path))
+          tm.params im.params;
+        if not (cmp_ret tm.ret_ty im.ret_ty) then
+          Error.failf im.pos
+            "method '%s' return type does not match trait '%s'"
+            tm.name (String.concat "::" trait_path))
+    trait_decl.Ast.trmethods;
+  (* No method outside the trait's surface. *)
+  List.iter (fun (im : Ast.func) ->
+    if not (List.exists (fun (tm : Ast.func) -> tm.name = im.name)
+              trait_decl.Ast.trmethods) then
+      Error.failf im.pos
+        "method '%s' is not a member of trait '%s'"
+        im.name (String.concat "::" trait_path))
+    methods
+
 let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_index enum_index modules =
   let resolved =
     List.map
@@ -3723,6 +3823,16 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
                         (typ_name self_t))
              | _ -> ()))
           ib.Ast.iitems;
+        (* Trait conformance: when this is `impl Trait for Foo`, check the
+           trait exists, every required method is present with a matching
+           signature, no extra methods sneak in, and the orphan rule
+           holds. *)
+        (match ib.Ast.itrait with
+         | None -> ()
+         | Some trait_written ->
+             check_trait_conformance ~ctx ~flat ~parent_path
+               ~target_path ~itparams:ib.Ast.itparams
+               ~trait_written ~methods:ib.Ast.iitems ~pos:ib.Ast.ipos);
         (target_path, s.sis_pub, ib.Ast.itparams, ib.Ast.iitems))
       flat.impls
   in
@@ -3910,6 +4020,7 @@ let prelude_items () =
   in
   let alloc_impl = {
     Ast.itparams = [];
+    itrait = None;
     itarget = ["Allocator"];
     iitems = [alloc_method; free_method];
     ipos = pos;
