@@ -10,11 +10,18 @@
 // Generic bounds `<T: Trait>` dispatch statically: each instantiation
 // monomorphizes to a direct call of the concrete type's method.  A type
 // that doesn't `impl` the bound trait is rejected at the call site.
-// Default methods and supertraits are later steps.
+//
+// Default methods: a trait method with a `{ ... }` body provides a
+// default an `impl` may omit (and may override).  The default is
+// synthesized per implementing type and can call the type's other
+// trait methods.  Supertraits and associated types are later steps.
 
 trait Shape {
     fn area(self) -> int;
     fn perimeter(self) -> int;
+    // Default: square of the perimeter-to-area ratio proxy — here just
+    // a derived metric built from the two required methods.
+    fn bbox(self) -> int { self.area() + self.perimeter() }
 }
 
 struct Rect { w: int, h: int }
@@ -48,4 +55,9 @@ fn main() {
 
     let sq2 = Square { side: 1 };
     println(total_area(sq, sq2));       // 36 + 1 = 37
+
+    // Default method `bbox` — neither impl defines it; both use the
+    // trait's default (area + perimeter).
+    println(r.bbox());                  // 15 + 16 = 31
+    println(sq.bbox());                 // 36 + 24 = 60
 }

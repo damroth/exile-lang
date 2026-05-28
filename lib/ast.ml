@@ -493,11 +493,16 @@ and impl_block = {
 }
 and trait_decl = {
   trname : string;
-  trmethods : func list;     (* method signatures — `body = []` means a
-                                required method (no default).  Default
-                                methods (non-empty body) are a later
-                                step.  `self` receiver substituted to
-                                `Self` placeholder at parse time. *)
+  trmethods : func list;     (* method signatures; `body` carries the
+                                default-method body when the method has
+                                one (see [trdefaults]).  `self` receiver
+                                stays `TySelf` (= `Self`) until conformance
+                                substitutes the impl target. *)
+  trdefaults : string list;  (* names of methods that declared a default
+                                body (`fn m(self) { ... }` rather than
+                                `fn m(self);`).  A defaulted method may be
+                                omitted by an `impl`; the default is then
+                                synthesised for that type. *)
   trpos : Pos.t;
   tris_pub : bool;
 }

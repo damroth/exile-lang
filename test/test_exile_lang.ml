@@ -464,6 +464,47 @@ let () =
      }\n"
     "type 'Half' does not implement trait 'Name' (required by bound 'T: Name' on 'describe')";
 
+  check "trait default method: synthesized when impl omits it"
+    "trait Greet {\n\
+    \    fn hi(self) -> int;\n\
+    \    fn greet(self) -> int { self.hi() }\n\
+     }\n\
+     struct A { v: int }\n\
+     impl Greet for A {\n\
+    \    fn hi(self) -> int { self.v }\n\
+     }\n\
+     fn main() {\n\
+    \    let a = A { v: 5 };\n\
+    \    println(a.greet());\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_A { long v; };\n\nlong A__hi(struct ex_A self);\nlong A__greet(struct ex_A self);\n\nint main(void) {\n    struct ex_A a;\n    a.v = 5;\n    printf(\"%ld\\n\", (long)(A__greet(a)));\n    return 0;\n}\n\nlong A__hi(struct ex_A self) {\n    return self.v;\n}\n\nlong A__greet(struct ex_A self) {\n    return A__hi(self);\n}\n";
+
+  check "trait default method: impl may override it"
+    "trait Greet {\n\
+    \    fn hi(self) -> int;\n\
+    \    fn greet(self) -> int { self.hi() }\n\
+     }\n\
+     struct A { v: int }\n\
+     impl Greet for A {\n\
+    \    fn hi(self) -> int { self.v }\n\
+    \    fn greet(self) -> int { self.v + 100 }\n\
+     }\n\
+     fn main() {\n\
+    \    let a = A { v: 5 };\n\
+    \    println(a.greet());\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_A { long v; };\n\nlong A__hi(struct ex_A self);\nlong A__greet(struct ex_A self);\n\nint main(void) {\n    struct ex_A a;\n    a.v = 5;\n    printf(\"%ld\\n\", (long)(A__greet(a)));\n    return 0;\n}\n\nlong A__hi(struct ex_A self) {\n    return self.v;\n}\n\nlong A__greet(struct ex_A self) {\n    return self.v + 100;\n}\n";
+
+  check_error "trait default method: required method still enforced"
+    "trait Greet {\n\
+    \    fn hi(self) -> int;\n\
+    \    fn greet(self) -> int { self.hi() }\n\
+     }\n\
+     struct A { v: int }\n\
+     impl Greet for A { }\n\
+     fn main() { let a = A { v: 5 }; println(a.v); }\n"
+    "missing method 'hi' required by trait 'Greet'";
+
   (* Range as a value: `a..b` / `a..=b` desugar to the prelude struct
      `Range<T>` / `RangeInclusive<T>`, so a range can be bound, passed and
      returned.  `for v in <Range value>` pulls `.lo` / `.hi` off the value

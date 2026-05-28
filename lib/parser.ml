@@ -1818,28 +1818,33 @@ and parse_impl_block s =
   in
   Ast.{ itparams; itrait; itarget = target_path; iitems = methods; ipos = pos }
 
-(* `trait Name { fn m(self, ...) -> R; ... }` — method signatures only in
-   this step (required methods, no default bodies).  Each signature ends
-   with `;`.  `self` stays `TySelf` (= `Self`); conformance against a
-   concrete `impl Trait for Foo` substitutes the target type. *)
+(* `trait Name { fn m(self, ...) -> R; ... }` — method signatures.  A
+   method ending with `;` is required; one with a `{ ... }` body provides
+   a default an `impl` may omit.  `self` stays `TySelf` (= `Self`);
+   conformance against a concrete `impl Trait for Foo` substitutes the
+   target type. *)
 and parse_trait s ~is_pub =
   expect s Token.Trait;
   let (name, name_pos) = expect_ident s ~what:"trait name after 'trait'" in
   expect s Token.LBrace;
-  let rec loop seen acc =
+  let rec loop seen acc defaults =
     match peek s with
-    | Token.RBrace -> ignore (advance s); List.rev acc
+    | Token.RBrace -> ignore (advance s); (List.rev acc, List.rev defaults)
     | Token.Eof -> Error.raise_ s.last_pos "unexpected end of file, expected '}'"
     | Token.Fn ->
-        let m = parse_trait_method s seen in
-        loop (m.Ast.name :: seen) (m :: acc)
+        let (m, is_default) = parse_trait_method s seen in
+        let defaults = if is_default then m.Ast.name :: defaults else defaults in
+        loop (m.Ast.name :: seen) (m :: acc) defaults
     | t ->
         Error.failf (peek_pos s)
           "expected 'fn' signature inside 'trait' block, got %s" (Token.pp t)
   in
-  let methods = loop [] [] in
-  Ast.{ trname = name; trmethods = methods; trpos = name_pos; tris_pub = is_pub }
+  let (methods, defaults) = loop [] [] [] in
+  Ast.{ trname = name; trmethods = methods; trdefaults = defaults;
+        trpos = name_pos; tris_pub = is_pub }
 
+(* Returns (method, is_default).  Required form ends with `;`; default
+   form has a `{ ... }` body. *)
 and parse_trait_method s seen =
   expect s Token.Fn;
   let (name, name_pos) = expect_ident s ~what:"method name after 'fn'" in
@@ -1850,11 +1855,20 @@ and parse_trait_method s seen =
       "generic trait methods are not supported (method '%s')" name;
   let params = parse_params s in
   let ret_ty = parse_ret_ty s in
-  expect s Token.Semicolon;
-  Ast.{ name; c_name = name; tparams = []; tbounds = []; params; ret_ty;
-        body = []; is_pub = true; is_extern = false; is_variadic = false;
-        tier_hint = None; amiga_lib = None; must_use = false;
-        pos = name_pos }
+  let (body, is_default) =
+    match peek s with
+    | Token.Semicolon -> ignore (advance s); ([], false)
+    | Token.LBrace -> (parse_block s, true)
+    | t ->
+        Error.failf (peek_pos s)
+          "expected ';' or '{ ... }' after trait method '%s', got %s"
+          name (Token.pp t)
+  in
+  (Ast.{ name; c_name = name; tparams = []; tbounds = []; params; ret_ty;
+         body; is_pub = true; is_extern = false; is_variadic = false;
+         tier_hint = None; amiga_lib = None; must_use = false;
+         pos = name_pos },
+   is_default)
 
 and parse_module s seen ~is_pub =
   expect s Token.Mod;

@@ -3713,6 +3713,9 @@ let uses_heap_of tfuncs =
    method's declared signature against a concrete `impl Trait for Foo`. *)
 let rec subst_self_ann target = function
   | Ast.TySelf -> target
+  (* `Self` written as a type name (e.g. `other: Self`) parses as a
+     single-segment struct path, not the bare-receiver `TySelf`. *)
+  | Ast.TyStruct { path = ["Self"]; args = [] } -> target
   | Ast.TyPtr t -> Ast.TyPtr (subst_self_ann target t)
   | Ast.TyConstPtr t -> Ast.TyConstPtr (subst_self_ann target t)
   | other -> other
@@ -3773,30 +3776,48 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
     | Some a, Some b -> cmp_ann a b
     | _ -> false
   in
-  (* Every required trait method must have a matching impl method. *)
-  List.iter (fun (tm : Ast.func) ->
-    match List.find_opt (fun (im : Ast.func) -> im.name = tm.name) methods with
-    | None ->
-        Error.failf pos
-          "missing method '%s' required by trait '%s'"
-          tm.name (String.concat "::" trait_path)
-    | Some im ->
-        if List.length im.params <> List.length tm.params then
-          Error.failf im.pos
-            "method '%s' has %d parameter(s) but trait '%s' declares %d"
-            tm.name (List.length im.params)
-            (String.concat "::" trait_path) (List.length tm.params);
-        List.iter2 (fun (tp : Ast.param) (ip : Ast.param) ->
-          if not (cmp_ann tp.pty ip.pty) then
+  (* Substitute `Self` in a (default) method's signature so the synthesised
+     impl method has the concrete target type for its receiver / params. *)
+  let specialise_default (tm : Ast.func) : Ast.func =
+    { tm with
+      Ast.params = List.map (fun (p : Ast.param) ->
+        { p with Ast.pty = subst_self_ann target_ann p.pty }) tm.params;
+      Ast.ret_ty = Option.map (subst_self_ann target_ann) tm.ret_ty }
+  in
+  (* Walk every trait method.  Provided → check signature.  Omitted and
+     defaulted → synthesise from the default body.  Omitted and required →
+     error.  Collect synthesised defaults to add to the impl. *)
+  let synthesised =
+    List.filter_map (fun (tm : Ast.func) ->
+      match List.find_opt (fun (im : Ast.func) -> im.name = tm.name) methods with
+      | Some im ->
+          if List.length im.params <> List.length tm.params then
             Error.failf im.pos
-              "method '%s': parameter '%s' type does not match trait '%s'"
-              tm.name ip.pname (String.concat "::" trait_path))
-          tm.params im.params;
-        if not (cmp_ret tm.ret_ty im.ret_ty) then
-          Error.failf im.pos
-            "method '%s' return type does not match trait '%s'"
-            tm.name (String.concat "::" trait_path))
-    trait_decl.Ast.trmethods;
+              "method '%s' has %d parameter(s) but trait '%s' declares %d"
+              tm.name (List.length im.params)
+              (String.concat "::" trait_path) (List.length tm.params);
+          List.iter2 (fun (tp : Ast.param) (ip : Ast.param) ->
+            if not (cmp_ann tp.pty ip.pty) then
+              Error.failf im.pos
+                "method '%s': parameter '%s' type does not match trait '%s'"
+                tm.name ip.pname (String.concat "::" trait_path))
+            tm.params im.params;
+          if not (cmp_ret tm.ret_ty im.ret_ty) then
+            Error.failf im.pos
+              "method '%s' return type does not match trait '%s'"
+              tm.name (String.concat "::" trait_path);
+          None
+      | None ->
+          if List.mem tm.name trait_decl.Ast.trdefaults then
+            (* Defaulted method omitted by the impl — synthesise it from the
+               trait's default body, with `Self` specialised to the target. *)
+            Some (specialise_default tm)
+          else
+            Error.failf pos
+              "missing method '%s' required by trait '%s'"
+              tm.name (String.concat "::" trait_path))
+      trait_decl.Ast.trmethods
+  in
   (* No method outside the trait's surface. *)
   List.iter (fun (im : Ast.func) ->
     if not (List.exists (fun (tm : Ast.func) -> tm.name = im.name)
@@ -3804,7 +3825,8 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
       Error.failf im.pos
         "method '%s' is not a member of trait '%s'"
         im.name (String.concat "::" trait_path))
-    methods
+    methods;
+  synthesised
 
 let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_index enum_index modules =
   let resolved =
@@ -3865,15 +3887,18 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
           ib.Ast.iitems;
         (* Trait conformance: when this is `impl Trait for Foo`, check the
            trait exists, every required method is present with a matching
-           signature, no extra methods sneak in, and the orphan rule
-           holds. *)
-        (match ib.Ast.itrait with
-         | None -> ()
-         | Some trait_written ->
-             check_trait_conformance ~ctx ~flat ~parent_path
-               ~target_path ~itparams:ib.Ast.itparams
-               ~trait_written ~methods:ib.Ast.iitems ~pos:ib.Ast.ipos);
-        (target_path, s.sis_pub, ib.Ast.itparams, ib.Ast.iitems))
+           signature, no extra methods sneak in, and the orphan rule holds.
+           Returns the synthesised default methods to add to the impl. *)
+        let synthesised =
+          match ib.Ast.itrait with
+          | None -> []
+          | Some trait_written ->
+              check_trait_conformance ~ctx ~flat ~parent_path
+                ~target_path ~itparams:ib.Ast.itparams
+                ~trait_written ~methods:ib.Ast.iitems ~pos:ib.Ast.ipos
+        in
+        (target_path, s.sis_pub, ib.Ast.itparams,
+         ib.Ast.iitems @ synthesised))
       flat.impls
   in
   (* Cross-block dup check: same method name on the same struct in two
