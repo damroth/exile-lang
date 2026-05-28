@@ -384,6 +384,23 @@ let () =
     "fn main() {\n    while 1 { println(1); }\n}\n"
     "'while' condition must be of type bool, got i32";
 
+  check "logical not: `!e` negates a bool, maps to C `!`"
+    "fn main() {\n\
+    \    let t: bool = true;\n\
+    \    if !t { println(1); } else { println(0); }\n\
+    \    if !(1 == 2) { println(1); } else { println(0); }\n\
+     }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    int t;\n    t = 1;\n    if (!t) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    if (!(1 == 2)) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    return 0;\n}\n";
+
+  check_error "logical not: non-bool operand rejected"
+    "fn main() { let x = !5; println(x); }\n"
+    "logical negation '!' requires a bool, got i32";
+
+  check "logical not: folds in a bool const"
+    "const FLAG: bool = !true;\n\
+     fn main() { if FLAG { println(1); } else { println(0); } }\n"
+    "#include <stdio.h>\n\n#define ex_FLAG 0\n\nint main(void) {\n    if (ex_FLAG) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    return 0;\n}\n";
+
   (* Traits (krok 1): `trait T { fn sigs; }` + `impl T for Foo` + monomorphic
      dispatch.  Trait methods lower to ordinary `Foo__method` fns; the trait
      impl is checked for signature conformance.  Generic bounds `<T: Trait>`

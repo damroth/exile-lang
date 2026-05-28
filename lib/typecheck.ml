@@ -210,6 +210,7 @@ let rec subst_var_expr ~from ~to_ (e : Ast.expr) : Ast.expr =
   | Ast.Var _ | Ast.SizeOf _ -> e
   | Ast.Neg (sub_e, p) -> Ast.Neg (sub sub_e, p)
   | Ast.BitNot (sub_e, p) -> Ast.BitNot (sub sub_e, p)
+  | Ast.Not (sub_e, p) -> Ast.Not (sub sub_e, p)
   | Ast.BinOp (op, l, r, p) -> Ast.BinOp (op, sub l, sub r, p)
   | Ast.Call { callee; args; pos } ->
       Ast.Call { callee; args = List.map sub args; pos }
@@ -1329,6 +1330,12 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           "bitwise complement '~' requires an integer, got %s"
           (typ_name sub'.ty);
       { e = TBitNot sub'; ty = sub'.ty; pos }
+  | Ast.Not (sub, not_pos) ->
+      let sub' = elab_expr ctx env sub in
+      if not (typ_eq sub'.ty TBool) then
+        Error.failf not_pos
+          "logical negation '!' requires a bool, got %s" (typ_name sub'.ty);
+      { e = TNot sub'; ty = TBool; pos }
   | Ast.BinOp (Ast.Concat, l, r, _) ->
       (* Compile-time string concat: both sides must reduce to a
          compile-time-constant string at elab time.  That's a string
@@ -3159,6 +3166,9 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
     | TBitNot sub ->
         let (sub', p) = walk_expr ~allow_top:false sub in
         ({ te with e = TBitNot sub' }, p)
+    | TNot sub ->
+        let (sub', p) = walk_expr ~allow_top:false sub in
+        ({ te with e = TNot sub' }, p)
     | TBinOp (op, l, r) ->
         let (l', pl) = walk_expr ~allow_top:false l in
         let (r', pr) = walk_expr ~allow_top:false r in
@@ -4274,6 +4284,11 @@ let eval_consts ~instances ~modules ~aliases ~struct_index ~enum_index
          | CInt i -> CInt (lnot i)
          | CExpr s -> CExpr ("(~" ^ s ^ ")")
          | CBool _ -> Error.failf p "'~' requires an integer constant")
+    | Ast.Not (sub, p) ->
+        (match eval scope sub with
+         | CBool b -> CBool (not b)
+         | CExpr s -> CExpr ("(!" ^ s ^ ")")
+         | CInt _ -> Error.failf p "'!' requires a bool constant")
     | Ast.Cast (sub, ann, p) ->
         let target = resolve_type_ann ~pos:p (res_ctx scope) ann in
         (match eval scope sub with

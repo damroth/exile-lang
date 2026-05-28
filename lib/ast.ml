@@ -78,6 +78,9 @@ and expr =
   | BitNot of expr * Pos.t              (* `~e` — bitwise complement; integer
                                            operand.  Prefix unary alongside
                                            `-` / `&` / `*`. *)
+  | Not of expr * Pos.t                 (* `!e` — logical negation; bool
+                                           operand, bool result.  Maps to
+                                           C `!`. *)
   | BinOp of binop * expr * expr * Pos.t
   | Call of { callee : string list; args : expr list; pos : Pos.t }
   | Cast of expr * type_ann * Pos.t
@@ -259,7 +262,7 @@ and stmt =
 
 let expr_pos = function
   | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
-  | Var (_, p) | Neg (_, p) | BitNot (_, p) | BinOp (_, _, _, p)
+  | Var (_, p) | Neg (_, p) | BitNot (_, p) | Not (_, p) | BinOp (_, _, _, p)
   | Orelse (_, _, p) | Try (_, p) | SizeOf (_, p)
   | Cast (_, _, p) | TupleLit (_, p)
   | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)

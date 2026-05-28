@@ -243,6 +243,9 @@ let rec gen_expr ctx buf (te : texpr) =
   | TBitNot sub ->
       emit_unary ctx buf '~' sub
         ~simple:(function TIntLit _ | TVar _ -> true | _ -> false)
+  | TNot sub ->
+      emit_unary ctx buf '!' sub
+        ~simple:(function TBoolLit _ | TVar _ -> true | _ -> false)
   | TCast (sub, _ann) ->
       (* Cast result type is already in `te.ty` (elab ran resolve_type_ann
          on the annotation); reading it here keeps the C output independent

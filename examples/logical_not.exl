@@ -1,0 +1,25 @@
+// Logical not `!` — boolean negation.  Operand must be `bool`, result is
+// `bool`; maps directly to C's `!`.  Postfix-tight, so `!a.flag()` reads
+// as `!(a.flag())`.  Folds at compile time inside a `const`.
+
+const DISABLED: bool = !true;          // false, folded to a #define
+
+struct Toggle { on: bool }
+impl Toggle {
+    pub fn is_off(self) -> bool { !self.on }
+}
+
+fn main() {
+    let t: bool = true;
+    if !t { println(1); } else { println(0); }      // 0
+
+    // Negate a comparison.
+    if !(1 == 2) { println(1); } else { println(0); }  // 1
+
+    // Negate a method call (postfix-tight).
+    let sw = Toggle { on: true };
+    if sw.is_off() { println(1); } else { println(0); } // 0
+
+    // Const-folded negation.
+    if DISABLED { println(1); } else { println(0); }    // 0
+}

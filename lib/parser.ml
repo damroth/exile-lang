@@ -279,6 +279,8 @@ let rec parse_primary s =
              "expected ',', ';' or ']' in array literal, got %s" (Token.pp t))
   | Token.Minus -> Ast.Neg (parse_primary s, p)
   | Token.Tilde -> Ast.BitNot (parse_primary s, p)
+  (* `!e` — logical not.  Postfix-tight so `!a.eq(b)` = `!(a.eq(b))`. *)
+  | Token.Bang -> Ast.Not (parse_postfix s (parse_primary s), p)
   | Token.Try ->
       (* `try expr` — unwrap-or-early-return.  Postfix-tight, like
          Rust's `?`: the operand is a primary plus its postfix chain,

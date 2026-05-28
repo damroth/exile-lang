@@ -46,6 +46,7 @@ type t =
   | Eq
   | EqEq
   | NotEq
+  | Bang
   | Lt
   | Gt
   | LtEq
@@ -95,6 +96,7 @@ let pp = function
   | Semicolon -> "';'" | Comma -> "','" | Colon -> "':'"
   | DoubleColon -> "'::'"
   | Arrow -> "'->'" | Eq -> "'='" | EqEq -> "'=='" | NotEq -> "'!='"
+  | Bang -> "'!'"
   | Lt -> "'<'" | Gt -> "'>'" | LtEq -> "'<='" | GtEq -> "'>='"
   | Plus -> "'+'" | PlusPlus -> "'++'"
   | Minus -> "'-'" | Star -> "'*'" | Slash -> "'/'"
