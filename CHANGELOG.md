@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-05-29
+
+The traits release. `trait` / `impl Trait for Type` lands with static,
+monomorphized dispatch, and brings the whole cascade it unlocks: generic
+bounds `<T: Trait>`, default methods, supertraits, associated types,
+`for`-in iteration over any `Iterator`, and `@derive(Eq, Hash, Clone)`.
+Rounding it out: pointee-immutable `*const T`, bounded `Slice<T>` views,
+`loop` / `break` / `continue`, and logical `!`.
+
+### Added
+- Traits: `trait T { fn sigs; }` + `impl T for Type`, with conformance
+  checking (every required method present with a matching signature, no
+  extras). Trait methods lower to ordinary `Type__method` functions —
+  static dispatch, zero runtime cost
+- Generic trait bounds `<T: Trait>` (and `<T: A + B>`): each instantiation
+  monomorphizes to a direct call of the concrete type's method; a type
+  that doesn't `impl` the bound is rejected at the call site
+- Default trait methods: a trait method with a `{ ... }` body provides a
+  default an `impl` may omit or override — synthesized per implementing
+  type, and may call the type's other trait methods
+- Supertraits: `trait B: A { ... }` requires implementors to also satisfy
+  `A`; declaration-order independent
+- Associated types: `type Item;` in a trait, bound by `type Item = T;` in
+  each impl and referenced as the `Self::Item` projection in method
+  signatures; erased before codegen
+- `for x in <iterator>` over any type that `impl Iterator` — desugars to
+  `loop { match it.next() { Some(x) => body | None => break } }`, reading
+  the element type from `next()`'s `Option<…>`; `break` / `continue` work
+  inside
+- `@derive(Eq, Hash, Clone)` on structs and enums: synthesizes real `impl`
+  blocks (field-wise `eq`, an `acc*31 + field.hash()` fold seeded by the
+  enum variant index, value-copy `clone`) that flow through conformance,
+  monomorphization, and codegen like any hand-written impl — so a derived
+  type satisfies a `<T: Eq>` bound. `Hash: Eq`, so deriving Hash requires
+  deriving Eq
+- `*const T` pointee-immutable pointers (C `const T *`): a mutability axis
+  orthogonal to `let` / `let mut`. `*T → *const T` coerces implicitly;
+  `*const T → *T` needs an explicit `as` cast; writes through a `*const T`
+  (`*p = v`, `p.f = v`) are rejected
+- `Slice<T>` bounded view (MVP): a `*const T` + length, mapping to
+  `struct { const T *ptr; unsigned long len; }`. Indexing `s[i]`, `.len` /
+  `.ptr` access, and pass-by-value; sub-slicing and a mutable variant
+  deferred
+- `loop { ... }` infinite loop with `break` / `continue`; `continue` in a
+  `for` still runs the counter step. `break` / `continue` outside a loop
+  is a compile error
+- Logical not `!` (bool → bool, maps to C `!`): postfix-tight and
+  const-foldable
+- New examples: `traits.exl`, `associated_types.exl`, `for_iterator.exl`,
+  `derive.exl`, `const_pointers.exl`, `slice.exl`,
+  `loop_break_continue.exl`, `logical_not.exl`
+
 ## [0.7.0] - 2026-05-27
 
 A pattern-matching and self-host pre-work release: `match` arms now
@@ -301,4 +353,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.7.0]: https://github.com/damroth/exile-lang/releases/tag/v0.7.0
+[0.8.0]: https://github.com/damroth/exile-lang/releases/tag/v0.8.0
