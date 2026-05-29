@@ -2384,6 +2384,20 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                name (typ_name trecv.ty) (typ_name trecv.ty) (typ_name targ.ty);
            let op = if name = "eq" then Ast.EqEq else Ast.NotEq in
            { e = TBinOp (op, trecv, targ); ty = TBool; pos }
+       | true, "hash", [] ->
+           (* Built-in `hash` on primitives → reinterpret as `u32` (a C
+              cast).  Lets `@derive(Hash)` fold integer/bool fields.  No
+              content hash for str / pointers yet. *)
+           (match trecv.ty with
+            | TInt _ | TCInt _ | TCShort _ | TCLong _ | TCChar | TCSChar
+            | TCUChar | TBool | TExtAlias _ ->
+                let u32_ann = Ast.TyInt { signed = false; width = Ast.W32 } in
+                { e = TCast (trecv, u32_ann);
+                  ty = TInt { signed = false; width = Ast.W32 }; pos }
+            | _ ->
+                Error.failf mc_pos
+                  "`hash` is not built-in for %s (str / pointer content \
+                   hashing is not supported yet)" (typ_name trecv.ty))
        | _ ->
       let struct_path =
         match trecv.ty with
@@ -4317,11 +4331,22 @@ let prelude_items () =
     trmethods = [ clone_sig ]; trdefaults = [];
     trpos = pos; tris_pub = true;
   } in
+  (* `Hash: Eq` — `fn hash(self) -> u32`.  Supertrait Eq signals the
+     hash/eq contract (`a.eq(b)` ⟹ `a.hash() == b.hash()`), so a type
+     deriving Hash must also derive/impl Eq. *)
+  let u32_ann = Ast.TyInt { signed = false; width = Ast.W32 } in
+  let hash_sig = trait_sig "hash" [self_v] (Some u32_ann) [] in
+  let hash_trait = {
+    Ast.trname = "Hash"; trassoc = []; trsupers = [ ["Eq"] ];
+    trmethods = [ hash_sig ]; trdefaults = [];
+    trpos = pos; tris_pub = true;
+  } in
   [ Ast.Enum option_decl; Ast.Enum result_decl;
     Ast.Struct range_struct; Ast.Struct range_inclusive_struct;
     Ast.Struct slice_struct;
     Ast.Struct alloc_struct; Ast.Impl alloc_impl;
-    Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait ]
+    Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait;
+    Ast.Trait hash_trait ]
 
 (* ===== `@derive(...)` — synthesize trait impls (DECYZJA #1/#2) =====
    Each `@derive`d trait becomes a real `impl Trait for Foo` generated as
@@ -4429,24 +4454,86 @@ let derive_clone ~name ~pos : Ast.item =
   Ast.Impl { itparams = []; itrait = Some ["Clone"]; iassoc = [];
              itarget = [name]; iitems = [m]; ipos = pos }
 
+(* Hash — `fn hash(self) -> u32`.  Multiplicative fold `acc*31 + f.hash()`
+   over fields (primitive fields fold via the built-in `.hash()`); an enum
+   seeds each arm with the variant index so distinct variants hash apart. *)
+let derive_u32_ann = Ast.TyInt { signed = false; width = Ast.W32 }
+
+let derive_hash_combine acc fh pos =
+  Ast.BinOp (Ast.Add,
+    Ast.BinOp (Ast.Mul, acc, Ast.IntLit (31, pos), pos), fh, pos)
+
+let derive_hash_call e pos =
+  Ast.MethodCall { receiver = e; name = "hash"; args = []; pos }
+
+let derive_hash_struct (s : Ast.struct_decl) : Ast.item =
+  let pos = s.spos in
+  let target = Ast.TyStruct { path = [s.sname]; args = [] } in
+  let field_hash (fname, _) =
+    derive_hash_call (Ast.FieldAccess (Ast.Var ("self", pos), fname, pos)) pos in
+  let body =
+    match s.sfields with
+    | [] -> Ast.Cast (Ast.IntLit (0, pos), derive_u32_ann, pos)
+    | f :: rest ->
+        List.fold_left (fun acc f -> derive_hash_combine acc (field_hash f) pos)
+          (field_hash f) rest
+  in
+  let m = derive_mk_method "hash" [ derive_field_param "self" target ]
+    (Some derive_u32_ann) [ Ast.Tail body ] pos in
+  Ast.Impl { itparams = []; itrait = Some ["Hash"]; iassoc = [];
+             itarget = [s.sname]; iitems = [m]; ipos = pos }
+
+let derive_hash_enum (e : Ast.enum_decl) : Ast.item =
+  let pos = e.epos in
+  let target = Ast.TyStruct { path = [e.ename]; args = [] } in
+  let arms =
+    List.mapi (fun idx (v : Ast.enum_variant) ->
+      let base = Ast.Cast (Ast.IntLit (idx, pos), derive_u32_ann, pos) in
+      let (binds, hashes) =
+        match v.vkind with
+        | Ast.VUnit -> (Ast.PBTuple [], [])
+        | Ast.VTuple tys ->
+            let n = List.length tys in
+            let nm i = Printf.sprintf "__dh%d" i in
+            (Ast.PBTuple (List.init n (fun i -> Ast.PVar (nm i, pos))),
+             List.init n (fun i -> derive_hash_call (Ast.Var (nm i, pos)) pos))
+        | Ast.VStruct fields ->
+            let names = List.map fst fields in
+            (Ast.PBStruct (List.map (fun f -> (f, Ast.PVar ("__dh_" ^ f, pos))) names),
+             List.map (fun f -> derive_hash_call (Ast.Var ("__dh_" ^ f, pos)) pos) names)
+      in
+      let body = List.fold_left (fun acc fh -> derive_hash_combine acc fh pos)
+        base hashes in
+      let pat = Ast.PVariant { tname = [e.ename]; variant = v.vname;
+                               binds; pos } in
+      Ast.{ pat; guard = None; body; arm_pos = pos })
+      e.evariants
+  in
+  let match_e = Ast.Match { scrutinee = Ast.Var ("self", pos); arms; pos } in
+  let m = derive_mk_method "hash" [ derive_field_param "self" target ]
+    (Some derive_u32_ann) [ Ast.Tail match_e ] pos in
+  Ast.Impl { itparams = []; itrait = Some ["Hash"]; iassoc = [];
+             itarget = [e.ename]; iitems = [m]; ipos = pos }
+
 let expand_derives (program : Ast.program) : Ast.program =
-  let one ~kind ~name ~pos ~generic eq_gen tr =
+  let one ~kind ~name ~pos ~generic ~gen_eq ~gen_hash tr =
+    let needs_mono trait =
+      if generic then
+        Error.failf pos
+          "@derive(%s) on a generic %s '%s' is not supported yet"
+          trait kind name
+    in
     match tr with
-    | "Eq" ->
-        if generic then
-          Error.failf pos
-            "@derive(Eq) on a generic %s '%s' is not supported yet" kind name;
-        eq_gen ()
+    | "Eq" -> needs_mono "Eq"; gen_eq ()
     | "Clone" -> derive_clone ~name ~pos
-    | "Hash" ->
-        Error.failf pos "@derive(Hash) is not supported yet"
+    | "Hash" -> needs_mono "Hash"; gen_hash ()
     | "Debug" ->
         Error.failf pos
           "@derive(Debug) needs a StringBuilder (deferred); use `@debug` \
            for a direct-print debug helper for now"
     | other ->
         Error.failf pos
-          "cannot derive '%s' (supported: Eq, Clone)" other
+          "cannot derive '%s' (supported: Eq, Hash, Clone)" other
   in
   let derived =
     List.concat_map (fun item ->
@@ -4454,11 +4541,13 @@ let expand_derives (program : Ast.program) : Ast.program =
       | Ast.Struct s when s.sderives <> [] ->
           List.map (one ~kind:"struct" ~name:s.sname ~pos:s.spos
                       ~generic:(s.stparams <> [])
-                      (fun () -> derive_eq_struct s)) s.sderives
+                      ~gen_eq:(fun () -> derive_eq_struct s)
+                      ~gen_hash:(fun () -> derive_hash_struct s)) s.sderives
       | Ast.Enum e when e.ederives <> [] ->
           List.map (one ~kind:"enum" ~name:e.ename ~pos:e.epos
                       ~generic:(e.etparams <> [])
-                      (fun () -> derive_eq_enum e)) e.ederives
+                      ~gen_eq:(fun () -> derive_eq_enum e)
+                      ~gen_hash:(fun () -> derive_hash_enum e)) e.ederives
       | _ -> [])
       program
   in

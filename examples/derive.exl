@@ -6,18 +6,20 @@
 //
 //   - Eq:    field-wise `&&` of `.eq()` (primitive fields fold to `==`);
 //            `ne` comes for free from the trait's default method.
+//   - Hash:  multiplicative fold `acc*31 + field.hash()` (an enum seeds
+//            each arm with the variant index).  `Hash: Eq`, so deriving
+//            Hash requires deriving Eq too.
 //   - Clone: a value copy (`fn clone(self) -> Self { self }`).
 //
 // Because derived impls are real, a derived type satisfies a `<T: Eq>`
 // bound — derive feeds straight into generic code.
 //
-// (`Hash` and `Debug` derives are deferred: Hash pending a hashing
-// decision, Debug pending a StringBuilder.)
+// (`Debug` derive is deferred pending a StringBuilder.)
 
-@derive(Eq, Clone)
+@derive(Eq, Hash, Clone)
 struct Point { x: int, y: int }
 
-@derive(Eq)
+@derive(Eq, Hash)
 enum Shape {
     Dot
     | Segment(int, int)
@@ -51,4 +53,9 @@ fn main() {
     let s3 = Shape::Tagged { id: 5 };
     if s1.eq(s2) { println(1); } else { println(0); }   // 1
     if s1.eq(s3) { println(1); } else { println(0); }   // 0
+
+    // Hash respects the eq/hash contract: equal values hash equal.
+    if p.hash() == q.hash() { println(1); } else { println(0); }    // 1
+    if s1.hash() == s2.hash() { println(1); } else { println(0); }  // 1
+    if s1.hash() == s3.hash() { println(1); } else { println(0); }  // 0
 }

@@ -609,17 +609,32 @@ let () =
      }\n"
     "#include <stdio.h>\n\nstruct ex_P { long x; };\n\nstruct ex_P P__clone(struct ex_P self);\n\nint main(void) {\n    struct ex_P a;\n    struct ex_P b;\n    a.x = 7;\n    b = P__clone(a);\n    printf(\"%ld\\n\", (long)(b.x));\n    return 0;\n}\n\nstruct ex_P P__clone(struct ex_P self) {\n    return self;\n}\n";
 
-  check_error "@derive(Hash) rejected (deferred)"
+  check "@derive(Hash) synthesizes a multiplicative field fold"
+    "@derive(Eq, Hash)\n\
+     struct P { x: int, y: int }\n\
+     fn main() {\n\
+    \    let a = P { x: 1, y: 2 };\n\
+    \    println(a.hash() as int);\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint P__eq(struct ex_P self, struct ex_P other);\nint P__ne(struct ex_P self, struct ex_P other);\nunsigned long P__hash(struct ex_P self);\n\nint main(void) {\n    struct ex_P a;\n    a.x = 1;\n    a.y = 2;\n    printf(\"%ld\\n\", (long)(((long)P__hash(a))));\n    return 0;\n}\n\nint P__eq(struct ex_P self, struct ex_P other) {\n    return self.x == other.x && self.y == other.y;\n}\n\nint P__ne(struct ex_P self, struct ex_P other) {\n    return !(P__eq(self, other));\n}\n\nunsigned long P__hash(struct ex_P self) {\n    return ((unsigned long)self.x) * 31 + ((unsigned long)self.y);\n}\n";
+
+  check_error "@derive(Hash) without Eq rejected (supertrait)"
     "@derive(Hash)\n\
      struct P { x: int }\n\
      fn main() { let a = P { x: 1 }; println(a.x); }\n"
-    "@derive(Hash) is not supported yet";
+    "'Hash' requires supertrait 'Eq', but 'P' does not implement it (add `impl Eq for P`)";
+
+  check_error "@derive(Hash) on a str field rejected"
+    "@derive(Eq, Hash)\n\
+     struct P { name: str }\n\
+     fn main() { let a = P { name: \"x\" }; println(a.name); }\n"
+    "`hash` is not built-in for str (str / pointer content hashing is not supported yet)";
 
   check_error "@derive of an unknown trait rejected"
     "@derive(Ord)\n\
      struct P { x: int }\n\
      fn main() { let a = P { x: 1 }; println(a.x); }\n"
-    "cannot derive 'Ord' (supported: Eq, Clone)";
+    "cannot derive 'Ord' (supported: Eq, Hash, Clone)";
 
   check_error "@derive on a generic struct rejected (MVP)"
     "@derive(Eq)\n\
