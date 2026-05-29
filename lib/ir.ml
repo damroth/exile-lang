@@ -757,6 +757,21 @@ and tstmt =
                                              `.lo`/`.hi` references in
                                              [lo]/[hi] resolve.  Codegen
                                              never sees TFor. *)
+  | TForEach of { it_var : string; it_init : texpr;
+                  body : tstmt list; pos : Pos.t }
+                                          (* Transient node: `for x in
+                                             <iterator>` over a type that
+                                             `impl Iterator`.  [it_init] is
+                                             the iterator value (evaluated
+                                             once into the mutable temp
+                                             [it_var]); [body] is the typed
+                                             loop body — a single match over
+                                             `it_var.next()` (Some(x) =>
+                                             user-body, None => break).
+                                             Lift expands to
+                                             `[TLet it_var = it_init;
+                                               TWhile {cond = true; body}]`.
+                                             Codegen never sees TForEach. *)
   | TDefer of { body : tstmt list; pos : Pos.t }
 
 (* Structural traversal primitives for the typed AST.  Every consumer
@@ -810,7 +825,7 @@ let rec fold_texpr f acc e =
 let tstmt_substmts = function
   | TIf { then_body; else_body; _ } -> then_body @ else_body
   | TWhile { body; post; _ } -> body @ post
-  | TDefer { body; _ } | TFor { body; _ } -> body
+  | TDefer { body; _ } | TFor { body; _ } | TForEach { body; _ } -> body
   | TLet _ | TLetTuple _ | TAssign _ | TAssignField _ | TAssignIndex _
   | TAssignDeref _ | TReturn _ | TExprStmt _ | TBreak _ | TContinue _ -> []
 
@@ -826,6 +841,7 @@ let tstmt_own_exprs = function
   | TAssignIndex { base; index; value; _ } -> [base; index; value]
   | TIf { cond; _ } | TWhile { cond; _ } -> [cond]
   | TFor { lo; hi; _ } -> [lo; hi]
+  | TForEach { it_init; _ } -> [it_init]
   | TDefer _ | TBreak _ | TContinue _ -> []
 
 let rec iter_tstmt f s =

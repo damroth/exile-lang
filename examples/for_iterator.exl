@@ -1,0 +1,48 @@
+// `for x in <iterator>` — iterating any type that `impl Iterator`.
+//
+// `Iterator` is a prelude trait:
+//     trait Iterator { type Item; fn next(*self) -> Option<Self::Item>; }
+// `next` takes `*self` so it can advance the iterator's state.  The
+// `for` loop desugars to:
+//     loop { match it.next() { Some(x) => body | None => break } }
+// reading the element type from `next()`'s `Option<…>` return — no
+// associated-type table needed.  `break` / `continue` work inside the
+// loop as usual.
+
+struct Countdown { n: int }
+
+impl Iterator for Countdown {
+    type Item = int;
+    fn next(*self) -> Option<int> {
+        if self.n <= 0 { return Option::None; }
+        let v = self.n;
+        self.n = self.n - 1;
+        Option::Some(v)
+    }
+}
+
+struct Range2 { cur: int, stop: int, step: int }
+
+impl Iterator for Range2 {
+    type Item = int;
+    fn next(*self) -> Option<int> {
+        if self.cur >= self.stop { return Option::None; }
+        let v = self.cur;
+        self.cur = self.cur + self.step;
+        Option::Some(v)
+    }
+}
+
+fn main() {
+    // Plain iteration.
+    let cd = Countdown { n: 4 };
+    for x in cd { println(x); }          // 4 3 2 1
+
+    // break + continue inside a for-each.
+    let r = Range2 { cur: 0, stop: 20, step: 1 };
+    for y in r {
+        if y == 5 { break; }
+        if y == 2 { continue; }
+        println(y * 10);                 // 0 10 30 40
+    }
+}

@@ -55,7 +55,7 @@ let tstmt_pos = function
   | TAssign { pos; _ } | TAssignField { pos; _ }
   | TAssignIndex { pos; _ }
   | TAssignDeref { pos; _ } | TDefer { pos; _ }
-  | TReturn { pos; _ } | TFor { pos; _ } -> pos
+  | TReturn { pos; _ } | TFor { pos; _ } | TForEach { pos; _ } -> pos
   | TBreak pos | TContinue pos -> pos
   | TExprStmt te -> te.pos
   | TIf { cond; _ } | TWhile { cond; _ } -> cond.pos
@@ -73,7 +73,7 @@ let rec stmt_has_loop_break = function
   | TIf { then_body; else_body; _ } ->
       List.exists stmt_has_loop_break then_body
       || List.exists stmt_has_loop_break else_body
-  | TWhile _ | TFor _ -> false
+  | TWhile _ | TFor _ | TForEach _ -> false
   | TExprStmt e | TLet { value = e; _ } | TAssign { value = e; _ }
   | TAssignField { value = e; _ } | TAssignDeref { value = e; _ }
   | TLetTuple { value = e; _ } -> expr_has_loop_break e
@@ -631,9 +631,10 @@ and emit_simple_stmt ctx buf indent stmt =
       Error.failf pos "'defer' inside a defer body is not supported"
   | TReturn { pos; _ } ->
       Error.failf pos "'return' inside a defer body is not supported"
-  | TFor _ ->
-      (* The lift pass always expands TFor into TLet+TLet+TWhile; reaching
-         codegen means lifting was skipped (compiler bug, not user error). *)
+  | TFor _ | TForEach _ ->
+      (* The lift pass always expands TFor / TForEach into TLet(+TLet)+
+         TWhile; reaching codegen means lifting was skipped (compiler bug,
+         not user error). *)
       assert false
 
 (* Lower a TMatch.  Hoists the scrutinee into a fresh `__m` temp in a
@@ -1113,8 +1114,9 @@ and gen_block ctx buf indent outer_scopes stmts =
         Buffer.add_string buf indent;
         Buffer.add_string buf "}\n";
         loop my_defers rest
-    | TFor _ :: _ ->
-        (* Lift always expands TFor into TLet+TLet+TWhile before codegen. *)
+    | (TFor _ | TForEach _) :: _ ->
+        (* Lift always expands TFor / TForEach into TLet(+TLet)+TWhile
+           before codegen. *)
         assert false
   in
   loop [] stmts;

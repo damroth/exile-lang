@@ -613,7 +613,42 @@ let () =
 
   check_error "`for v in <non-Range value>` rejected"
     "fn main() {\n    let n = 5;\n    for i in n { println(i); }\n}\n"
-    "`for v in ...` needs a `..` / `..=` range or a `Range<T>` / `RangeInclusive<T>` value, got i32";
+    "`for v in ...` needs a `..` / `..=` range, a `Range<T>` / `RangeInclusive<T>` value, or a type that `impl Iterator`, got i32";
+
+  (* `for x in <iterator>` over a type that `impl Iterator` (prelude trait).
+     Desugars to a mutable iterator temp + `loop { match it.next() {
+     Some(x) => body | None => break } }`.  `next` (a pointer receiver)
+     advances the iterator via auto-ref. *)
+  check "for-in-iterator: desugars to loop + match over next()"
+    "struct UpTo { cur: int, stop: int }\n\
+     impl Iterator for UpTo {\n\
+    \    type Item = int;\n\
+    \    fn next(*self) -> Option<int> {\n\
+    \        if self.cur >= self.stop { return Option::None; }\n\
+    \        let v = self.cur;\n\
+    \        self.cur = self.cur + 1;\n\
+    \        Option::Some(v)\n\
+    \    }\n\
+     }\n\
+     fn main() {\n\
+    \    let up = UpTo { cur: 0, stop: 3 };\n\
+    \    for x in up { println(x); }\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_UpTo { long cur; long stop; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\n\nint main(void) {\n    struct ex_UpTo up;\n    struct ex_UpTo __it0;\n    up.cur = 0;\n    up.stop = 3;\n    __it0 = up;\n    while (1) {\n        {\n            struct ex_Option_i32 __m;\n            __m = UpTo__next(&__it0);\n            if (__m.tag == ex_Option_i32_Some) {\n                long __fv0 = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(__fv0));\n            }\n            else {\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n";
+
+  (* Regression: a match-arm bind must stay in scope after a nested `if`
+     in the same multi-statement arm body.  (walk_stmt used to reset the
+     env to param_env+decls after an `if`, dropping arm binds.) *)
+  check "multi-stmt arm: bind stays in scope after a nested `if`"
+    "enum E { A(int) | B }\n\
+     fn main() {\n\
+    \    let e = E::A(5);\n\
+    \    match e {\n\
+    \        E::A(n) => { if n > 0 { println(99); } println(n); }\n\
+    \        | E::B => { println(0); }\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } A; } data; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_A;\n    e.data.A._0 = 5;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                long n = __m.data.A._0;\n                if (n > 0) {\n                    printf(\"%ld\\n\", (long)(99));\n                }\n                printf(\"%ld\\n\", (long)(n));\n                break;\n            }\n        case ex_E_B:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   (* Short-circuit logical `&&` / `||` — both `bool`-only, `&&` tighter than
      `||`, both looser than comparisons (Rust-order matches C, so no extra

@@ -2897,7 +2897,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         incr loop_depth;
         let (_, tbody) = walk env body in
         decr loop_depth;
-        (param_env @ List.rev !decls,
+        (List.rev !decls @ env,
          TWhile { cond = tcond; body = tbody; post = [] })
     | Ast.Break bpos ->
         if !loop_depth = 0 then
@@ -2908,21 +2908,70 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
           Error.failf cpos "'continue' outside a loop";
         (env, TContinue cpos)
     | Ast.For { var; range; body; pos } ->
-        (* Gensym the counter and bound so multiple sequential `for var in
-           ...` blocks in one function don't collide on let-hoisting.  The
-           user-facing `var` is renamed in the body before elaboration so
-           references resolve to the counter. *)
+        (* Gensym base so multiple sequential `for var in ...` blocks in one
+           function don't collide on let-hoisting.  The user-facing `var`
+           is renamed in the body before elaboration. *)
         let k = !for_gensym in
         incr for_gensym;
+        (* A non-literal range is elaborated once and dispatched on its
+           type: `Range`/`RangeInclusive` take the integer counter path;
+           a type that `impl Iterator` takes the iterator (loop + next)
+           path.  A literal `a..b` / `a..=b` always takes the counter fast
+           path (no struct alloc). *)
+        let pre_elab =
+          match range with Ast.Range _ -> None | _ -> Some (elab_expr ctx env range)
+        in
+        let is_iterator =
+          match pre_elab with
+          | Some tr ->
+              (match typ_head_path tr.ty with
+               | Some p -> List.mem ("Iterator", p) !trait_impl_table
+               | None -> false)
+          | None -> false
+        in
+        if is_iterator then begin
+          (* `for x in iter` over an `impl Iterator` value.  Desugar to a
+             mutable iterator temp + `loop { match it.next() { Some(x) =>
+             body | None => break } }`.  The element type flows from
+             `next()`'s `Option<…>` return (no assoc-type table needed). *)
+          let trange = Option.get pre_elab in
+          let it_var = Printf.sprintf "__it%d" k in
+          let elem_var = Printf.sprintf "__fv%d" k in
+          add_decl it_var trange.ty pos;
+          Hashtbl.replace mut_names it_var ();
+          let it_env = (it_var, trange.ty) :: env in
+          let next_call =
+            Ast.MethodCall { receiver = Ast.Var (it_var, pos); name = "next";
+                             args = []; pos } in
+          let some_pat =
+            Ast.PVariant { tname = ["Option"]; variant = "Some";
+                           binds = Ast.PBTuple [ Ast.PVar (elem_var, pos) ];
+                           pos } in
+          let none_pat =
+            Ast.PVariant { tname = ["Option"]; variant = "None";
+                           binds = Ast.PBTuple []; pos } in
+          let renamed_body =
+            List.map (subst_var_stmt ~from:var ~to_:elem_var) body in
+          let some_arm =
+            Ast.{ pat = some_pat; guard = None;
+                  body = Ast.Block (renamed_body, pos); arm_pos = pos } in
+          let none_arm =
+            Ast.{ pat = none_pat; guard = None;
+                  body = Ast.Block ([ Ast.Break pos ], pos); arm_pos = pos } in
+          let match_ast =
+            Ast.Match { scrutinee = next_call;
+                        arms = [ some_arm; none_arm ]; pos } in
+          incr loop_depth;
+          let (_, match_tstmt) = elab_stmt_position it_env match_ast in
+          decr loop_depth;
+          (List.rev !decls @ env,
+           TForEach { it_var; it_init = trange; body = [ match_tstmt ]; pos })
+        end else begin
         let counter = Printf.sprintf "__fv%d" k in
         let end_var = Printf.sprintf "__fe%d" k in
-        (* Two ways to spell the bounds: a literal `..` / `..=` (fast path,
-           direct bounds, no struct alloc) or any expression of type
-           `Range<T>` / `RangeInclusive<T>` (pulled off `.lo` / `.hi`
-           through a temp; inclusive flag recovered from the struct name). *)
         let (counter_ty, inclusive, tlo, thi, range_temp, hi_for_overflow) =
-          match range with
-          | Ast.Range { lo; hi; inclusive; _ } ->
+          match range, pre_elab with
+          | Ast.Range { lo; hi; inclusive; _ }, _ ->
               let tlo = elab_expr ctx env lo in
               if not (is_int_like tlo.ty) then
                 Error.failf pos
@@ -2935,8 +2984,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                   "'for' bounds disagree: lo is %s, hi is %s"
                   (typ_name cty) (typ_name thi.ty);
               (cty, inclusive, tlo, thi, None, Some hi)
-          | _ ->
-              let trange = elab_expr ctx env range in
+          | _, Some trange ->
               let (cty, incl) =
                 match trange.ty with
                 | TStruct path when Mono.is_instance_of ["Range"] path ->
@@ -2970,8 +3018,9 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                     (lo_ty, true)
                 | other ->
                     Error.failf pos
-                      "`for v in ...` needs a `..` / `..=` range or a \
-                       `Range<T>` / `RangeInclusive<T>` value, got %s"
+                      "`for v in ...` needs a `..` / `..=` range, a \
+                       `Range<T>` / `RangeInclusive<T>` value, or a type \
+                       that `impl Iterator`, got %s"
                       (typ_name other)
               in
               if not (is_int_like cty) then
@@ -2985,6 +3034,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
               let thi = { e = TFieldAccess { target = tmp_var; field = "hi" };
                           ty = cty; pos } in
               (cty, incl, tlo, thi, Some (tmp, trange), None)
+          | _, None -> assert false
         in
         (* Inclusive range at the type maximum overflows the counter step
            (`i + 1` wraps and the loop never ends).  Catch when hi is a
@@ -3018,9 +3068,10 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         incr loop_depth;
         let (_, tbody) = walk body_env renamed_body in
         decr loop_depth;
-        (param_env @ List.rev !decls,
+        (List.rev !decls @ env,
          TFor { counter; end_var; range_temp; lo = tlo; hi = thi;
                 inclusive; body = tbody; pos })
+        end
     | Ast.Defer { body; pos } ->
         let (_, tbody) = walk env body in
         (env, TDefer { body = tbody; pos })
@@ -3036,7 +3087,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let tcond = elab_expr ctx env cond in
         let (_, t_then) = walk env then_blk in
         let (_, t_else) = walk env (Option.value ~default:[] else_blk) in
-        (param_env @ List.rev !decls,
+        (List.rev !decls @ env,
          TIf { cond = tcond; then_body = t_then; else_body = t_else })
     | _ ->
         let tvalue = elab_expr ~allow_void:true ctx env e in
@@ -3321,6 +3372,17 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let let_cnt = TLet { name = counter; value = lo'; pos } in
         let while_ = TWhile { cond; body = body'; post = [ step ] } in
         ptemp @ temp_let @ plo @ phi @ [ let_end; let_cnt; while_ ]
+    | TForEach { it_var; it_init; body; pos } ->
+        (* `for x in <iterator>` → bind the iterator once into a mutable
+           temp, then `loop { match it.next() { Some(x) => body | None =>
+           break } }`.  The match body already references [it_var] and
+           carries the break, built typed during walk. *)
+        let (init', pinit) = walk_expr ~allow_top:true it_init in
+        let let_it = TLet { name = it_var; value = init'; pos } in
+        let cond = { e = TBoolLit true; ty = TBool; pos } in
+        let while_ =
+          TWhile { cond; body = lift_stmts body; post = [] } in
+        pinit @ [ let_it; while_ ]
   in
   let lifted = lift_stmts tstmts in
   walk_stmts_hook := prev_hook;
@@ -4162,10 +4224,31 @@ let prelude_items () =
     iitems = [alloc_method; free_method];
     ipos = pos;
   } in
+  (* `Iterator` — the prelude iteration protocol.  `for x in <value>`
+     desugars to `loop { match value.next() { Some(x) => … | None =>
+     break } }` for any type that `impl Iterator`.  `next` takes `*self`
+     so it can advance the iterator's state.  Skipped by prepend_prelude
+     if the user declares their own `trait Iterator`. *)
+  let iter_next =
+    { Ast.name = "next"; c_name = "next"; tparams = []; tbounds = [];
+      params = [ { Ast.pname = "self"; pty = Ast.TyPtr Ast.TySelf;
+                   preg = None; is_mut = false } ];
+      ret_ty = Some (Ast.TyStruct
+        { path = ["Option"];
+          args = [ Ast.TyStruct { path = ["Self"; "Item"]; args = [] } ] });
+      body = []; is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None; must_use = false; pos }
+  in
+  let iterator_trait = {
+    Ast.trname = "Iterator"; trassoc = ["Item"]; trsupers = [];
+    trmethods = [ iter_next ]; trdefaults = [];
+    trpos = pos; tris_pub = true;
+  } in
   [ Ast.Enum option_decl; Ast.Enum result_decl;
     Ast.Struct range_struct; Ast.Struct range_inclusive_struct;
     Ast.Struct slice_struct;
-    Ast.Struct alloc_struct; Ast.Impl alloc_impl ]
+    Ast.Struct alloc_struct; Ast.Impl alloc_impl;
+    Ast.Trait iterator_trait ]
 
 (* Skip prelude items whose names collide with a user-declared top-level
    enum or struct (and skip the matching `impl` block in that case).
@@ -4185,11 +4268,19 @@ let prepend_prelude (program : Ast.program) : Ast.program =
         | _ -> None)
       program
   in
+  let user_top_trait_names =
+    List.filter_map
+      (fun item -> match item with
+        | Ast.Trait t -> Some t.trname
+        | _ -> None)
+      program
+  in
   let kept =
     List.filter
       (fun item -> match item with
         | Ast.Enum e -> not (List.mem e.ename user_top_enum_names)
         | Ast.Struct s -> not (List.mem s.sname user_top_struct_names)
+        | Ast.Trait t -> not (List.mem t.trname user_top_trait_names)
         | Ast.Impl ib ->
             (match ib.itarget with
              | [n] -> not (List.mem n user_top_struct_names)
@@ -4218,7 +4309,7 @@ and stmt_returns = function
   | TIf { then_body; else_body; _ } ->
       always_returns then_body && always_returns else_body
   | TLet _ | TLetTuple _ | TAssign _ | TAssignField _ | TAssignIndex _
-  | TAssignDeref _ | TWhile _ | TFor _ | TDefer _ | TExprStmt _
+  | TAssignDeref _ | TWhile _ | TFor _ | TForEach _ | TDefer _ | TExprStmt _
   | TBreak _ | TContinue _ -> false
 
 (* Compile-time evaluation of `const NAME: T = expr;` declarations.
