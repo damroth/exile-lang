@@ -352,6 +352,10 @@ type struct_decl = {
                                         Rust-Debug-style printer for values
                                         of this struct.  MVP: legal only
                                         on non-generic struct decls. *)
+  sderives : string list;            (* `@derive(Eq, Clone)` — trait names
+                                        to auto-implement.  A pre-typecheck
+                                        pass synthesizes a real
+                                        `impl Trait for Foo`. *)
 }
 
 (* `enum Foo { | A | B(int, str) | C { f: T } }` — three variant forms.
@@ -386,6 +390,7 @@ type enum_decl = {
                                         of this enum, so `print(v)` works.
                                         MVP: legal only on non-generic
                                         enum decls. *)
+  ederives : string list;            (* `@derive(Eq, Clone)` on an enum. *)
 }
 
 type extern_struct = {

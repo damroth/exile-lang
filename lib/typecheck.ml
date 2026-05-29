@@ -2363,6 +2363,28 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                             ty = result_ty; pos }))))
   | Ast.MethodCall { receiver; name; args; pos = mc_pos } ->
       let trecv = elab_expr ctx env receiver in
+      (* Built-in `eq` / `ne` on primitive receivers (int-like / bool / str
+         / ptr).  Lets `@derive(Eq)` recurse uniformly through primitive
+         fields (`self.x.eq(other.x)`) without an `impl Eq for int`.  Maps
+         to `==` / `!=`.  Structs / enums fall through to their real impl
+         method (a derived or hand-written `Foo__eq`). *)
+      let is_primitive =
+        match trecv.ty with
+        | TInt _ | TCInt _ | TCShort _ | TCLong _ | TCChar | TCSChar
+        | TCUChar | TBool | TString | TExtAlias _
+        | TPtr _ | TConstPtr _ | TNullPtr -> true
+        | _ -> false
+      in
+      (match is_primitive, name, args with
+       | true, ("eq" | "ne"), [ arg ] ->
+           let targ = elab_expr ctx env arg in
+           if not (typ_eq trecv.ty targ.ty) then
+             Error.failf mc_pos
+               "'.%s' on %s expects a %s argument, got %s"
+               name (typ_name trecv.ty) (typ_name trecv.ty) (typ_name targ.ty);
+           let op = if name = "eq" then Ast.EqEq else Ast.NotEq in
+           { e = TBinOp (op, trecv, targ); ty = TBool; pos }
+       | _ ->
       let struct_path =
         match trecv.ty with
         | TStruct p -> p
@@ -2370,10 +2392,13 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         | TConstPtr (TStruct p) -> p   (* methods can mutate through self;
                                           MVP doesn't gate this — `&self`
                                           vs `&mut self` is future work *)
+        | TEnum p | TPtr (TEnum p) | TConstPtr (TEnum p) -> p
+                                       (* methods on an enum (e.g. derived
+                                          `Eq`); same lowering as structs *)
         | other ->
             Error.failf mc_pos
-              "method call '.%s()' requires a struct value or pointer to \
-               struct, got %s"
+              "method call '.%s()' requires a struct or enum value (or a \
+               pointer to one), got %s"
               name (typ_name other)
       in
       (* Methods of a generic struct are registered under the skeleton
@@ -2476,27 +2501,26 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 in
                 (* Auto-ref / auto-deref: align receiver shape with the
                    method's self-param shape. *)
+                (* Auto-ref / -deref by pointer-shape, independent of
+                   whether the receiver is a struct or an enum. *)
+                let recv_is_ptr =
+                  match trecv.ty with TPtr _ | TConstPtr _ -> true | _ -> false in
+                let self_is_ptr =
+                  match self_ty with TPtr _ | TConstPtr _ -> true | _ -> false in
                 let trecv_adj =
-                  match self_ty, trecv.ty with
-                  | TStruct _, TStruct _ -> trecv
-                  | TPtr _, TPtr _ -> trecv
-                  | TPtr _ as pt, TStruct _ ->
-                      { e = TRef trecv; ty = pt; pos = trecv.pos }
-                  | TStruct _ as st, TPtr _ ->
-                      { e = TDeref trecv; ty = st; pos = trecv.pos }
-                  | _ ->
-                      failwith
-                        (Printf.sprintf
-                           "internal: auto-ref/deref shape mismatch for \
-                            method '%s' — self_ty=%s, receiver=%s"
-                           display (typ_name self_ty) (typ_name trecv.ty))
+                  match self_is_ptr, recv_is_ptr with
+                  | false, false | true, true -> trecv
+                  | true, false ->
+                      { e = TRef trecv; ty = self_ty; pos = trecv.pos }
+                  | false, true ->
+                      { e = TDeref trecv; ty = self_ty; pos = trecv.pos }
                 in
                 { e = TCall { mangled; args = trecv_adj :: targs };
                   ty = result_ty; pos }
             | [] ->
                 failwith ("internal: method '" ^ display
                           ^ "' has empty inst_param_tys — typecheck should \
-                             have rejected the impl without a self param")))
+                             have rejected the impl without a self param"))))
   | Ast.FieldAccess (target, fname, fa_pos) ->
       (* `.field` auto-derefs one level of pointer-to-struct.  Works
          for ordinary structs (consulting struct_index) and for exposed
@@ -3940,6 +3964,17 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
     methods;
   synthesised
 
+(* Resolve an `impl` target to `(abs-path, is-pub, field-names)`.  Works
+   for both struct and enum targets; field-names is [] for an enum (the
+   method-name-vs-field clash check is struct-only). *)
+let resolve_impl_target ctx (path : string list) =
+  match lookup_struct ctx path with
+  | Some s -> Some (s.sname_path, s.sis_pub, List.map fst s.sfields_ty)
+  | None ->
+      (match lookup_enum ctx path with
+       | Some e -> Some (e.ename_path, e.eis_pub, [])
+       | None -> None)
+
 let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_index enum_index modules =
   (* Pre-pass: register every `impl Trait for Foo` as (trait-name, target)
      BEFORE any conformance check runs, so generic `<T: Trait>` bounds and
@@ -3954,12 +3989,12 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
             structs = struct_index; enums = enum_index;
             modules; scope = parent_path; tparams = ib.Ast.itparams;
             ext_structs; ext_types; ext_consts } in
-          (match lookup_struct ctx ib.Ast.itarget with
+          (match resolve_impl_target ctx ib.Ast.itarget with
            | None -> ()  (* the conformance pass reports the unknown target *)
-           | Some s ->
+           | Some (target_path, _, _) ->
                let (_, td) = resolve_trait ~flat ~pos:ib.Ast.ipos trait_written in
                trait_impl_table :=
-                 (td.Ast.trname, s.sname_path) :: !trait_impl_table))
+                 (td.Ast.trname, target_path) :: !trait_impl_table))
     flat.impls;
   let resolved =
     List.map
@@ -3972,16 +4007,14 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
           tparams = ib.Ast.itparams;
           ext_structs; ext_types; ext_consts;
         } in
-        let s =
-          match lookup_struct ctx ib.Ast.itarget with
-          | Some s -> s
+        let (target_path, target_pub, field_names) =
+          match resolve_impl_target ctx ib.Ast.itarget with
+          | Some t -> t
           | None ->
               Error.failf ib.Ast.ipos
-                "unknown struct '%s' in 'impl' block"
+                "unknown type '%s' in 'impl' block"
                 (String.concat "::" ib.Ast.itarget)
         in
-        let target_path = s.sname_path in
-        let field_names = List.map fst s.sfields_ty in
         let in_block_seen = ref [] in
         List.iter
           (fun (m : Ast.func) ->
@@ -4000,14 +4033,18 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
             (match m.params with
              | { pname = "self"; pty = ann } :: _ ->
                  let self_t = resolve_type_ann ~pos:m.pos ctx ann in
-                 (* Mono impl: self is `Foo` / `*Foo`.  Generic impl: self
-                    is the still-applied `Pair<A, B>` (a TStructApp on the
-                    target path, args = the impl tparams). *)
+                 (* Mono impl: self is `Foo` / `*Foo` (struct or enum).
+                    Generic impl: self is the still-applied `Pair<A, B>`
+                    (a TStructApp / TEnumApp on the target path). *)
                  (match self_t with
                   | TStruct p when p = target_path -> ()
                   | TPtr (TStruct p) when p = target_path -> ()
                   | TStructApp { path; _ } when path = target_path -> ()
                   | TPtr (TStructApp { path; _ }) when path = target_path -> ()
+                  | TEnum p when p = target_path -> ()
+                  | TPtr (TEnum p) when p = target_path -> ()
+                  | TEnumApp { path; _ } when path = target_path -> ()
+                  | TPtr (TEnumApp { path; _ }) when path = target_path -> ()
                   | _ ->
                       Error.failf m.pos
                         "first parameter 'self' must have type '%s' or '*%s', \
@@ -4030,7 +4067,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
                 ~iassoc:ib.Ast.iassoc
                 ~trait_written ~methods:ib.Ast.iitems ~pos:ib.Ast.ipos
         in
-        (target_path, s.sis_pub, ib.Ast.itparams,
+        (target_path, target_pub, ib.Ast.itparams,
          ib.Ast.iitems @ synthesised))
       flat.impls
   in
@@ -4106,6 +4143,7 @@ let prelude_items () =
     etier_hint = Some "core";
     emust_use = true;
     eis_debug = false;
+    ederives = [];
   } in
   let result_decl = {
     Ast.ename = "Result";
@@ -4116,6 +4154,7 @@ let prelude_items () =
     etier_hint = Some "core";
     emust_use = true;
     eis_debug = false;
+    ederives = [];
   } in
   (* Allocator — uniform pluggable memory interface.  `state` rides on
      every call so allocators with backing data (arenas, pools) can
@@ -4134,13 +4173,13 @@ let prelude_items () =
     Ast.sname = "Range"; stparams = ["T"];
     sfields = [("lo", tvar "T"); ("hi", tvar "T")];
     spos = prelude_pos; sis_pub = true;
-    stier_hint = Some "core"; sis_debug = false;
+    stier_hint = Some "core"; sis_debug = false; sderives = [];
   } in
   let range_inclusive_struct = {
     Ast.sname = "RangeInclusive"; stparams = ["T"];
     sfields = [("lo", tvar "T"); ("hi", tvar "T")];
     spos = prelude_pos; sis_pub = true;
-    stier_hint = Some "core"; sis_debug = false;
+    stier_hint = Some "core"; sis_debug = false; sderives = [];
   } in
   (* `Slice<T>` — bounded view (read-only pointer + length).  MVP scope:
      indexing (`s[i]` lowers to `s.ptr[i]`), `.len` / `.ptr` field
@@ -4151,7 +4190,7 @@ let prelude_items () =
     sfields = [("ptr", Ast.TyConstPtr (tvar "T"));
                ("len", Ast.TyInt { signed = false; width = Ast.W32 })];
     spos = prelude_pos; sis_pub = true;
-    stier_hint = Some "core"; sis_debug = false;
+    stier_hint = Some "core"; sis_debug = false; sderives = [];
   } in
   let alloc_struct = {
     Ast.sname = "Allocator";
@@ -4166,7 +4205,7 @@ let prelude_items () =
     spos = prelude_pos;
     sis_pub = true;
     stier_hint = Some "core";
-    sis_debug = false;
+    sis_debug = false; sderives = [];
   } in
   (* Method bodies use the fn-ptr-field call syntax (`self.alloc_fn(...)`)
      directly — typecheck routes it through TIndirectCall when the
@@ -4244,11 +4283,186 @@ let prelude_items () =
     trmethods = [ iter_next ]; trdefaults = [];
     trpos = pos; tris_pub = true;
   } in
+  (* `Eq` / `Clone` — prelude traits derivable via `@derive(Eq, Clone)`.
+     By-value `self` (value types copy cheaply).  `ne` is a default in
+     terms of `eq`.  `Clone::clone` returns a copy of self.  Primitive
+     types get built-in `eq`/`ne`/`clone` (see method-call elaboration)
+     so derived impls recurse through fields uniformly. *)
+  let mk_param name ty = { Ast.pname = name; pty = ty; preg = None;
+                           is_mut = false } in
+  let self_v = mk_param "self" Ast.TySelf in
+  let other_v = mk_param "other" Ast.TySelf in
+  let trait_sig name params ret body = {
+    Ast.name; c_name = name; tparams = []; tbounds = []; params;
+    ret_ty = ret; body; is_pub = true; is_extern = false;
+    is_variadic = false; tier_hint = None; amiga_lib = None;
+    must_use = false; pos }
+  in
+  let eq_sig = trait_sig "eq" [self_v; other_v] (Some Ast.TyBool) [] in
+  (* default `ne(self, other) = !self.eq(other)` *)
+  let ne_default =
+    trait_sig "ne" [self_v; other_v] (Some Ast.TyBool)
+      [ Ast.Tail (Ast.Not (Ast.MethodCall {
+          receiver = Ast.Var ("self", pos); name = "eq";
+          args = [ Ast.Var ("other", pos) ]; pos }, pos)) ]
+  in
+  let eq_trait = {
+    Ast.trname = "Eq"; trassoc = []; trsupers = [];
+    trmethods = [ eq_sig; ne_default ]; trdefaults = [ "ne" ];
+    trpos = pos; tris_pub = true;
+  } in
+  let clone_sig = trait_sig "clone" [self_v] (Some Ast.TySelf) [] in
+  let clone_trait = {
+    Ast.trname = "Clone"; trassoc = []; trsupers = [];
+    trmethods = [ clone_sig ]; trdefaults = [];
+    trpos = pos; tris_pub = true;
+  } in
   [ Ast.Enum option_decl; Ast.Enum result_decl;
     Ast.Struct range_struct; Ast.Struct range_inclusive_struct;
     Ast.Struct slice_struct;
     Ast.Struct alloc_struct; Ast.Impl alloc_impl;
-    Ast.Trait iterator_trait ]
+    Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait ]
+
+(* ===== `@derive(...)` — synthesize trait impls (DECYZJA #1/#2) =====
+   Each `@derive`d trait becomes a real `impl Trait for Foo` generated as
+   surface AST and run through the normal conformance + mono + codegen
+   path.  Bodies use `.eq()` on fields (primitive fields resolve via the
+   built-in `eq` in method-call elaboration; aggregate fields via their own
+   derived/hand-written impl), so derivation recurses uniformly. *)
+
+let derive_field_param name target_ann =
+  { Ast.pname = name; pty = target_ann; preg = None; is_mut = false }
+
+let derive_mk_method name params ret body pos =
+  { Ast.name; c_name = name; tparams = []; tbounds = []; params;
+    ret_ty = ret; body; is_pub = true; is_extern = false;
+    is_variadic = false; tier_hint = None; amiga_lib = None;
+    must_use = false; pos }
+
+(* `a.eq(b)` *)
+let derive_eq_call a b pos =
+  Ast.MethodCall { receiver = a; name = "eq"; args = [ b ]; pos }
+
+(* AND-fold a list of bool exprs; empty → `true`. *)
+let derive_and_all pos = function
+  | [] -> Ast.BoolLit (true, pos)
+  | x :: rest -> List.fold_left (fun acc e -> Ast.BinOp (Ast.And, acc, e, pos)) x rest
+
+let derive_eq_struct (s : Ast.struct_decl) : Ast.item =
+  let pos = s.spos in
+  let target = Ast.TyStruct { path = [s.sname]; args = [] } in
+  let cmps =
+    List.map (fun (fname, _) ->
+      derive_eq_call
+        (Ast.FieldAccess (Ast.Var ("self", pos), fname, pos))
+        (Ast.FieldAccess (Ast.Var ("other", pos), fname, pos)) pos)
+      s.sfields
+  in
+  let body = [ Ast.Tail (derive_and_all pos cmps) ] in
+  let m = derive_mk_method "eq"
+    [ derive_field_param "self" target; derive_field_param "other" target ]
+    (Some Ast.TyBool) body pos in
+  Ast.Impl { itparams = []; itrait = Some ["Eq"]; iassoc = [];
+             itarget = [s.sname]; iitems = [m]; ipos = pos }
+
+let derive_eq_enum (e : Ast.enum_decl) : Ast.item =
+  let pos = e.epos in
+  let target = Ast.TyStruct { path = [e.ename]; args = [] } in
+  let nvar = List.length e.evariants in
+  let outer_arms =
+    List.map (fun (v : Ast.enum_variant) ->
+      let vname = v.vname in
+      let (self_binds, other_binds, cmp) =
+        match v.vkind with
+        | Ast.VUnit ->
+            (Ast.PBTuple [], Ast.PBTuple [], Ast.BoolLit (true, pos))
+        | Ast.VTuple tys ->
+            let n = List.length tys in
+            let an i = Printf.sprintf "__de_a%d" i in
+            let bn i = Printf.sprintf "__de_b%d" i in
+            let sp = Ast.PBTuple (List.init n (fun i -> Ast.PVar (an i, pos))) in
+            let op = Ast.PBTuple (List.init n (fun i -> Ast.PVar (bn i, pos))) in
+            let cmps = List.init n (fun i ->
+              derive_eq_call (Ast.Var (an i, pos)) (Ast.Var (bn i, pos)) pos) in
+            (sp, op, derive_and_all pos cmps)
+        | Ast.VStruct fields ->
+            let names = List.map fst fields in
+            let an f = "__de_a_" ^ f in
+            let bn f = "__de_b_" ^ f in
+            let sp = Ast.PBStruct (List.map (fun f -> (f, Ast.PVar (an f, pos))) names) in
+            let op = Ast.PBStruct (List.map (fun f -> (f, Ast.PVar (bn f, pos))) names) in
+            let cmps = List.map (fun f ->
+              derive_eq_call (Ast.Var (an f, pos)) (Ast.Var (bn f, pos)) pos) names in
+            (sp, op, derive_and_all pos cmps)
+      in
+      let self_pat =
+        Ast.PVariant { tname = [e.ename]; variant = vname; binds = self_binds; pos } in
+      let inner_pat =
+        Ast.PVariant { tname = [e.ename]; variant = vname; binds = other_binds; pos } in
+      let inner_arms =
+        let matched = Ast.{ pat = inner_pat; guard = None; body = cmp; arm_pos = pos } in
+        if nvar = 1 then [ matched ]
+        else [ matched;
+               Ast.{ pat = Ast.PWildcard pos; guard = None;
+                     body = Ast.BoolLit (false, pos); arm_pos = pos } ]
+      in
+      let inner_match =
+        Ast.Match { scrutinee = Ast.Var ("other", pos); arms = inner_arms; pos } in
+      Ast.{ pat = self_pat; guard = None; body = inner_match; arm_pos = pos })
+      e.evariants
+  in
+  let outer_match =
+    Ast.Match { scrutinee = Ast.Var ("self", pos); arms = outer_arms; pos } in
+  let m = derive_mk_method "eq"
+    [ derive_field_param "self" target; derive_field_param "other" target ]
+    (Some Ast.TyBool) [ Ast.Tail outer_match ] pos in
+  Ast.Impl { itparams = []; itrait = Some ["Eq"]; iassoc = [];
+             itarget = [e.ename]; iitems = [m]; ipos = pos }
+
+(* Clone is a trivial value copy — `fn clone(self) -> Self { self }` —
+   for both structs and enums (value semantics; deep clone arrives with
+   heap types). *)
+let derive_clone ~name ~pos : Ast.item =
+  let target = Ast.TyStruct { path = [name]; args = [] } in
+  let m = derive_mk_method "clone" [ derive_field_param "self" target ]
+    (Some target) [ Ast.Tail (Ast.Var ("self", pos)) ] pos in
+  Ast.Impl { itparams = []; itrait = Some ["Clone"]; iassoc = [];
+             itarget = [name]; iitems = [m]; ipos = pos }
+
+let expand_derives (program : Ast.program) : Ast.program =
+  let one ~kind ~name ~pos ~generic eq_gen tr =
+    match tr with
+    | "Eq" ->
+        if generic then
+          Error.failf pos
+            "@derive(Eq) on a generic %s '%s' is not supported yet" kind name;
+        eq_gen ()
+    | "Clone" -> derive_clone ~name ~pos
+    | "Hash" ->
+        Error.failf pos "@derive(Hash) is not supported yet"
+    | "Debug" ->
+        Error.failf pos
+          "@derive(Debug) needs a StringBuilder (deferred); use `@debug` \
+           for a direct-print debug helper for now"
+    | other ->
+        Error.failf pos
+          "cannot derive '%s' (supported: Eq, Clone)" other
+  in
+  let derived =
+    List.concat_map (fun item ->
+      match item with
+      | Ast.Struct s when s.sderives <> [] ->
+          List.map (one ~kind:"struct" ~name:s.sname ~pos:s.spos
+                      ~generic:(s.stparams <> [])
+                      (fun () -> derive_eq_struct s)) s.sderives
+      | Ast.Enum e when e.ederives <> [] ->
+          List.map (one ~kind:"enum" ~name:e.ename ~pos:e.epos
+                      ~generic:(e.etparams <> [])
+                      (fun () -> derive_eq_enum e)) e.ederives
+      | _ -> [])
+      program
+  in
+  program @ derived
 
 (* Skip prelude items whose names collide with a user-declared top-level
    enum or struct (and skip the matching `impl` block in that case).
@@ -4568,6 +4782,9 @@ let check_program program : tprogram =
   trait_impl_table := [];
   let mono_state = Mono.new_state () in
   let program = prepend_prelude program in
+  (* Expand `@derive(...)` into real `impl Trait for Foo` blocks (after the
+     prelude so the Eq / Clone traits they target are in scope). *)
+  let program = expand_derives program in
   let flat = flatten_items program in
   (* main() must be at top level, not inside a module. *)
   List.iter

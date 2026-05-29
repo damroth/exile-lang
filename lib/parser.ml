@@ -1601,11 +1601,30 @@ let rec parse_item s seen =
            in
            expect s Token.RParen;
            parse_item s seen
+       | "derive" ->
+           (* `@derive(Eq, Clone, ...)` — auto-implement the named traits
+              for the decorated struct / enum.  A pre-typecheck pass
+              synthesizes real `impl Trait for Foo` blocks. *)
+           expect s Token.LParen;
+           let names =
+             parse_comma_list ~close:Token.RParen
+               ~item:(fun s ->
+                 let (n, _) = expect_ident s ~what:"trait name in '@derive'" in n)
+               s
+           in
+           if names = [] then
+             Error.failf at_pos "'@derive(...)' needs at least one trait";
+           apply_to_next ~apply:(function
+             | Ast.Struct s -> Ast.Struct { s with sderives = s.sderives @ names }
+             | Ast.Enum e -> Ast.Enum { e with ederives = e.ederives @ names }
+             | _ ->
+                 Error.failf at_pos
+                   "'@derive' can only decorate struct / enum decls")
        | other ->
            Error.failf at_pos
              "unknown attribute '@%s' (only '@c_include', '@tier', \
-              '@must_use', '@debug', '@doc' and '@amiga_lib' are \
-              supported)"
+              '@must_use', '@debug', '@doc', '@derive' and '@amiga_lib' \
+              are supported)"
              other)
   | _ ->
       Error.failf (peek_pos s)
@@ -1652,7 +1671,7 @@ and parse_struct_decl s ~is_pub =
        Error.failf name_pos "duplicate field '%s' in struct '%s'" n name);
   Ast.{ sname = name; stparams; sfields = fields;
         spos = name_pos; sis_pub = is_pub;
-        stier_hint = None; sis_debug = false }
+        stier_hint = None; sis_debug = false; sderives = [] }
 
 (* `enum Foo { A | B(int) | C { f: T, ... } }` — variants SEPARATED by `|`
    (no leading `|`); the same `|` is the bitor operator elsewhere, here
@@ -1723,7 +1742,8 @@ and parse_enum_decl s ~is_pub =
   check_dups variants;
   Ast.{ ename = name; etparams; evariants = variants;
         epos = name_pos; eis_pub = is_pub;
-        etier_hint = None; emust_use = false; eis_debug = false }
+        etier_hint = None; emust_use = false; eis_debug = false;
+        ederives = [] }
 
 (* `impl <Path> { fn ... fn ... }` — methods get registered against the
    target struct, not into the surrounding scope.  Each method is parsed

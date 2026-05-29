@@ -585,6 +585,48 @@ let () =
     \    match c.next() { Option::Some(v) => println(1) | Option::None => println(-1) } }\n"
     "method 'next' return type does not match trait 'Iterator'";
 
+  (* `@derive(Eq, Clone)` synthesizes real `impl Trait for Foo` blocks
+     (DECYZJA #1): a struct Eq is `&&` of field `.eq()` (primitive fields
+     fold to `==`); `ne` comes from the trait default; Clone is a value
+     copy `{ self }`.  Works on enums via nested match too. *)
+  check "@derive(Eq) on a struct synthesizes a field-wise eq + default ne"
+    "@derive(Eq)\n\
+     struct P { x: int, y: int }\n\
+     fn main() {\n\
+    \    let a = P { x: 1, y: 2 };\n\
+    \    let b = P { x: 1, y: 2 };\n\
+    \    if a.eq(b) { println(1); } else { println(0); }\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint P__eq(struct ex_P self, struct ex_P other);\nint P__ne(struct ex_P self, struct ex_P other);\n\nint main(void) {\n    struct ex_P a;\n    struct ex_P b;\n    a.x = 1;\n    a.y = 2;\n    b.x = 1;\n    b.y = 2;\n    if (P__eq(a, b)) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    return 0;\n}\n\nint P__eq(struct ex_P self, struct ex_P other) {\n    return self.x == other.x && self.y == other.y;\n}\n\nint P__ne(struct ex_P self, struct ex_P other) {\n    return !(P__eq(self, other));\n}\n";
+
+  check "@derive(Clone) synthesizes a value-copy clone"
+    "@derive(Clone)\n\
+     struct P { x: int }\n\
+     fn main() {\n\
+    \    let a = P { x: 7 };\n\
+    \    let b = a.clone();\n\
+    \    println(b.x);\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_P { long x; };\n\nstruct ex_P P__clone(struct ex_P self);\n\nint main(void) {\n    struct ex_P a;\n    struct ex_P b;\n    a.x = 7;\n    b = P__clone(a);\n    printf(\"%ld\\n\", (long)(b.x));\n    return 0;\n}\n\nstruct ex_P P__clone(struct ex_P self) {\n    return self;\n}\n";
+
+  check_error "@derive(Hash) rejected (deferred)"
+    "@derive(Hash)\n\
+     struct P { x: int }\n\
+     fn main() { let a = P { x: 1 }; println(a.x); }\n"
+    "@derive(Hash) is not supported yet";
+
+  check_error "@derive of an unknown trait rejected"
+    "@derive(Ord)\n\
+     struct P { x: int }\n\
+     fn main() { let a = P { x: 1 }; println(a.x); }\n"
+    "cannot derive 'Ord' (supported: Eq, Clone)";
+
+  check_error "@derive on a generic struct rejected (MVP)"
+    "@derive(Eq)\n\
+     struct Box<T> { v: T }\n\
+     fn main() { println(1); }\n"
+    "@derive(Eq) on a generic struct 'Box' is not supported yet";
+
   (* `break` inside a `match` inside a loop must exit the loop, not the C
      `switch` the match would otherwise compile to.  Such a match routes to
      the if-else decision chain (no switch to capture the break). *)
@@ -1231,7 +1273,7 @@ let () =
 
   check_error "method on unknown struct rejected"
     "impl Nope { fn x(self: Nope) {} }\nfn main() {}\n"
-    "unknown struct 'Nope' in 'impl' block";
+    "unknown type 'Nope' in 'impl' block";
 
   check_error "method 'self' must have struct type"
     "struct P { x: int }\nimpl P { fn foo(self: int) {} }\nfn main() {}\n"
@@ -1247,7 +1289,7 @@ let () =
 
   check_error "method call on non-struct rejected"
     "fn main() { let x: int = 5; println(x.foo()); }\n"
-    "method call '.foo()' requires a struct value or pointer to struct, got i32";
+    "method call '.foo()' requires a struct or enum value (or a pointer to one), got i32";
 
   check_error "unknown method rejected"
     "struct P { x: int }\nimpl P { pub fn foo(self: P) -> int { return self.x; } }\nfn main() { let p = P { x: 1 }; println(p.bar()); }\n"

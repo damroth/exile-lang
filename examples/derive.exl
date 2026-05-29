@@ -1,0 +1,54 @@
+// `@derive(...)` — auto-implement prelude traits for a struct or enum.
+//
+// `@derive(Eq, Clone)` synthesizes real `impl Eq for Foo` / `impl Clone
+// for Foo` blocks (the same code you could write by hand), which then
+// flow through conformance, monomorphization, and codegen like any impl.
+//
+//   - Eq:    field-wise `&&` of `.eq()` (primitive fields fold to `==`);
+//            `ne` comes for free from the trait's default method.
+//   - Clone: a value copy (`fn clone(self) -> Self { self }`).
+//
+// Because derived impls are real, a derived type satisfies a `<T: Eq>`
+// bound — derive feeds straight into generic code.
+//
+// (`Hash` and `Debug` derives are deferred: Hash pending a hashing
+// decision, Debug pending a StringBuilder.)
+
+@derive(Eq, Clone)
+struct Point { x: int, y: int }
+
+@derive(Eq)
+enum Shape {
+    Dot
+    | Segment(int, int)
+    | Tagged { id: int }
+}
+
+// Generic over any Eq — works for derived types.
+fn all_equal<T: Eq>(a: T, b: T, c: T) -> bool {
+    a.eq(b) && b.eq(c)
+}
+
+fn main() {
+    let p = Point { x: 3, y: 4 };
+    let q = Point { x: 3, y: 4 };
+    let r = Point { x: 9, y: 4 };
+
+    if p.eq(q) { println(1); } else { println(0); }     // 1
+    if p.ne(r) { println(1); } else { println(0); }     // 1 (default ne)
+
+    // Clone is a value copy.
+    let p2 = p.clone();
+    if p2.eq(p) { println(1); } else { println(0); }    // 1
+
+    // Derived Eq satisfies a generic `<T: Eq>` bound.
+    if all_equal(p, q, p2) { println(1); } else { println(0); }  // 1
+
+    // Enum Eq via nested match — tuple and struct variants compared
+    // field-by-field; different variants are never equal.
+    let s1 = Shape::Segment(1, 2);
+    let s2 = Shape::Segment(1, 2);
+    let s3 = Shape::Tagged { id: 5 };
+    if s1.eq(s2) { println(1); } else { println(0); }   // 1
+    if s1.eq(s3) { println(1); } else { println(0); }   // 0
+}
