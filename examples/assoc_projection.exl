@@ -1,0 +1,53 @@
+// Associated-type projection — `I::Item` in a generic function over a
+// trait that declares `type Item`.  Skeleton elaboration carries the
+// projection as a typed marker (`TAssocProj { head = TVar I; assoc =
+// Item }`); monomorphization substitutes `I` with a concrete type and
+// the marker is projected to the impl's recorded `type Item = T;`.
+//
+// Two concrete iterators (different `Item` types: `int` and `str`)
+// drive the same generic `first` through Mono — proves the projection
+// is per-instance, not a fixed-up trait type.  `Iterator` is the
+// prelude trait — no redeclaration here.
+
+struct Count { n: int, stop: int }
+impl Iterator for Count {
+    type Item = int;
+    fn next(*self) -> Option<int> {
+        if self.n >= self.stop { return Option::None; }
+        let v = self.n;
+        self.n = self.n + 1;
+        Option::Some(v)
+    }
+}
+
+struct Words { ws: [str; 3], i: int }
+impl Iterator for Words {
+    type Item = str;
+    fn next(*self) -> Option<str> {
+        if self.i >= 3 { return Option::None; }
+        let s = self.ws[self.i];
+        self.i = self.i + 1;
+        Option::Some(s)
+    }
+}
+
+// `I::Item` resolves at the call site: `first(&counts)` → `Option<int>`;
+// `first(&words)` → `Option<str>`.  The mono pass instantiates `first`
+// twice (once per Item type) — codegen never sees the projection.
+fn first<I: Iterator>(it: *I) -> Option<I::Item> {
+    return it.next();
+}
+
+fn main() {
+    let counts = Count { n: 10, stop: 12 };
+    match first(&counts) {
+        Option::Some(v) => { println(v); }      // 10
+        | Option::None => { println(99); }
+    }
+
+    let words = Words { ws: ["one", "two", "three"], i: 0 };
+    match first(&words) {
+        Option::Some(s) => { println(s); }      // one
+        | Option::None => { println("end"); }
+    }
+}

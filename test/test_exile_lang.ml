@@ -693,6 +693,56 @@ let () =
      }\n"
     "#include <stdio.h>\n\nstruct ex_UpTo { long cur; long stop; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\n\nint main(void) {\n    struct ex_UpTo up;\n    struct ex_UpTo __it0;\n    up.cur = 0;\n    up.stop = 3;\n    __it0 = up;\n    while (1) {\n        {\n            struct ex_Option_i32 __m;\n            __m = UpTo__next(&__it0);\n            if (__m.tag == ex_Option_i32_Some) {\n                long __fv0 = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(__fv0));\n            }\n            else {\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n";
 
+  (* Associated-type projection `I::Item` in a generic fn signature.
+     Skeleton-time produces a `TAssocProj { head = TVar I; assoc = Item }`;
+     at the `first(&up)` call site, mono substitutes `I → UpTo`, and
+     `normalize_apps` projects `Item` via the impl's `type Item = int;`
+     to a concrete `Option<int>` — same flat mono instance as
+     [for-in-iterator] (no second `Option<I::Item>` instantiation
+     appears in the C output). *)
+  check "I::Item projects to the impl's associated type at the call site"
+    "struct UpTo { cur: int, stop: int }\n\
+     impl Iterator for UpTo {\n\
+    \    type Item = int;\n\
+    \    fn next(*self) -> Option<int> {\n\
+    \        if self.cur >= self.stop { return Option::None; }\n\
+    \        let v = self.cur;\n\
+    \        self.cur = self.cur + 1;\n\
+    \        Option::Some(v)\n\
+    \    }\n\
+     }\n\
+     fn first<I: Iterator>(it: *I) -> Option<I::Item> {\n\
+    \    return it.next();\n\
+     }\n\
+     fn main() {\n\
+    \    let up = UpTo { cur: 0, stop: 2 };\n\
+    \    match first(&up) {\n\
+    \        Option::Some(v) => { println(v); }\n\
+    \        | Option::None => { println(99); }\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_UpTo { long cur; long stop; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it);\n\nint main(void) {\n    struct ex_UpTo up;\n    up.cur = 0;\n    up.stop = 2;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_first_ex_UpTo(&up);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(99));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it) {\n    return UpTo__next(it);\n}\n";
+
+  (* Ambiguous projection: two traits define `type Item` and the same
+     struct implements both.  `Counter::Item` without `<Counter as
+     Trait>::Item` qualification is unresolvable; we reject at use. *)
+  check_error "ambiguous associated-type projection rejected"
+    "trait Container { type Item; fn first(self) -> Self::Item; }\n\
+     struct Counter { n: int }\n\
+     impl Iterator for Counter {\n\
+    \    type Item = int;\n\
+    \    fn next(*self) -> Option<int> { return Option::Some(self.n); }\n\
+     }\n\
+     impl Container for Counter {\n\
+    \    type Item = str;\n\
+    \    fn first(self) -> str { return \"hi\"; }\n\
+     }\n\
+     fn main() {\n\
+    \    let x: Counter::Item = 5;\n\
+    \    println(x);\n\
+     }\n"
+    "ambiguous associated-type projection 'Counter::Item' (multiple traits define 'Item' — qualified `<Counter as Trait>::Item` is not yet supported)";
+
   (* Regression: a match-arm bind must stay in scope after a nested `if`
      in the same multi-statement arm body.  (walk_stmt used to reset the
      env to param_env+decls after an `if`, dropping arm binds.) *)

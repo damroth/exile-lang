@@ -97,6 +97,20 @@ type typ =
                                           is substituted with a concrete typ.
                                           Codegen never sees TVar — anything
                                           generic is monomorphized first. *)
+  | TAssocProj of { head : typ; assoc : string }
+                                       (* Associated-type projection
+                                          `I::Item` / `Counter::Item`.  Built
+                                          when `resolve_type_ann_raw` sees a
+                                          2-segment path whose head is a
+                                          tparam or concrete type AND the
+                                          assoc table has a matching
+                                          `impl Trait for head { type assoc =
+                                          ...; }`.  Carries the head typ
+                                          (often TVar in a skeleton; concrete
+                                          after subst) and the assoc name;
+                                          `normalize_apps` projects it to the
+                                          recorded impl's typ once head is
+                                          concrete.  Never reaches codegen. *)
 
 (* Default integer type — what `int` and bare integer literals reduce to. *)
 let t_i32 = TInt { signed = true; width = Ast.W32 }
@@ -294,6 +308,7 @@ let rec typ_name = function
       "fn(" ^ ps ^ ")" ^ r
   | TNullPtr -> "*<null>"
   | TVar n -> n
+  | TAssocProj { head; assoc } -> typ_name head ^ "::" ^ assoc
 
 (* Equality used for type-match decisions in let/return/arg/field/assign
    sites.  Plain `=` would reject `TNullPtr` against any concrete `TPtr T`;
@@ -360,6 +375,9 @@ let rec mangle_typ = function
          needed — same contract as TVar. *)
       failwith "internal: TStructApp/TEnumApp reached mangle_typ — \
                 monomorphization should have normalised it"
+  | TAssocProj _ ->
+      failwith "internal: TAssocProj reached mangle_typ — \
+                normalize_apps should have projected it"
   | TExtStruct n -> n              (* raw — opaque struct lives in C namespace *)
   | TExtAlias n -> n               (* raw — opaque type alias lives in C namespace *)
   | TPtr t -> "ptr_" ^ mangle_typ t
@@ -460,6 +478,10 @@ let rec c_type_prefix = function
       failwith
         ("internal: '" ^ typ_name t ^ "' reached c_type_prefix — a \
           generic application was not monomorphized to a flat instance")
+  | TAssocProj _ as t ->
+      failwith
+        ("internal: '" ^ typ_name t ^ "' reached c_type_prefix — \
+          normalize_apps did not project the associated type")
 
 let c_decl t name = c_type_prefix t ^ name
 
@@ -526,6 +548,8 @@ let rec type_map ~f = function
       TStructApp { path; args = List.map (type_map ~f) args }
   | TEnumApp { path; args } ->
       TEnumApp { path; args = List.map (type_map ~f) args }
+  | TAssocProj { head; assoc } ->
+      TAssocProj { head = type_map ~f head; assoc }
   | leaf -> f leaf
 
 (* Conjunction fold over a type tree: [f] runs on each leaf, structural
@@ -541,6 +565,7 @@ let rec type_for_all ~f = function
       && (match ret with Some t -> type_for_all ~f t | None -> true)
   | TStructApp { args; _ } | TEnumApp { args; _ } ->
       List.for_all (type_for_all ~f) args
+  | TAssocProj { head; _ } -> type_for_all ~f head
   | leaf -> f leaf
 
 (* True when [t]'s type tree has more than [limit] nodes.  Short-circuits

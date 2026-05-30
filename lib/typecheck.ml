@@ -431,6 +431,92 @@ let find_variant (e : enum_sig) name : (int * variant_sig) option =
    not a forward reference.  [pos] anchors that error at the annotation's
    decl site — callers pass it; the public wrapper defaults to Pos.zero
    for the few sites without a handy position. *)
+(* Registry of `impl Trait for Type` pairs, as (trait-name, target
+   abs-path).  Populated by [expand_impls] (which resolves both the trait
+   and the target), read by [resolve_call_dispatch] to enforce a generic
+   fn's `<T: Trait>` bounds at instantiation.  Trait names are matched by
+   their last path segment — sufficient while traits are uniquely named
+   (the conformance check already rejects ambiguity). *)
+let trait_impl_table : (string * string list) list ref = ref []
+
+(* `((trait-name, target-abs-path), [assoc-name, projected-typ])` for every
+   `impl Trait for Foo { type Item = T; ... }` block.  Populated by the same
+   pre-pass that fills [trait_impl_table], so projection lookups resolve
+   order-independently with conformance.  Read by:
+   - [resolve_type_ann_raw]'s hook on a `[head; assoc]` path — produces a
+     [TAssocProj] node whose [normalize_apps] projection follows this table.
+   - [normalize_apps] on [TAssocProj] with a concrete head — projects to the
+     recorded typ once the head is monomorphic.
+   Same naming model as [trait_impl_table]: trait matched by last segment. *)
+let trait_assoc_table
+  : ((string * string list) * (string * typ) list) list ref = ref []
+
+let typ_head_path = function
+  | TStruct p | TEnum p -> Some p
+  | TStructApp { path; _ } | TEnumApp { path; _ } -> Some path
+  | _ -> None
+
+(* Try to resolve a 2-segment path `[head; assoc]` as an associated-type
+   projection.  Returns [Some t] when [head] is a tparam (→ `TAssocProj`
+   over the tparam, projected at instance time by [normalize_apps]) or a
+   concrete struct/enum (→ direct projection if the impl is registered,
+   else [None]).  Returns [None] when [head] is neither in scope nor a
+   declared type — caller falls through to the standard "unknown type"
+   error.  Raises [Error] on ambiguity (≥2 traits define the same assoc
+   for the same head). *)
+let try_resolve_assoc_proj ~pos ctx path : typ option =
+  match path with
+  | [ head; assoc ] ->
+      let head_typ_opt : typ option =
+        if List.mem head ctx.tparams then Some (Ir.TVar head)
+        else
+          match lookup_struct ctx [head] with
+          | Some s when s.stparams = [] -> Some (Ir.TStruct s.sname_path)
+          | _ ->
+              (match lookup_enum ctx [head] with
+               | Some e when e.etparams = [] -> Some (Ir.TEnum e.ename_path)
+               | _ -> None)
+      in
+      (match head_typ_opt with
+       | None -> None
+       | Some head_typ ->
+           let head_path =
+             match head_typ with
+             | TVar _ -> None
+             | _ -> typ_head_path head_typ
+           in
+           (* Ambiguity is per trait NAME, not per (trait, target):
+              `impl Iterator for Count` + `impl Iterator for Words`
+              still resolve `I::Item` unambiguously (one trait, one
+              `type Item`).  Only two distinct traits both naming
+              `Item` are ambiguous.  For TVar head, every impl is a
+              candidate (the binding is unknown); for concrete head,
+              restrict to impls whose target matches. *)
+           let candidate_traits =
+             List.sort_uniq compare
+               (List.filter_map
+                  (fun ((trait, target), assocs) ->
+                    let head_matches = match head_path with
+                      | None -> true
+                      | Some hp -> target = hp
+                    in
+                    if head_matches && List.mem_assoc assoc assocs
+                    then Some trait else None)
+                  !trait_assoc_table)
+           in
+           (match candidate_traits with
+            | [] -> None
+            | [_one] -> Some (TAssocProj { head = head_typ; assoc })
+            | _ ->
+                (* Multiple traits define `assoc` for [head]: until
+                   `<T as Trait>::Item` lands, this is unresolvable. *)
+                Error.failf pos
+                  "ambiguous associated-type projection '%s::%s' \
+                   (multiple traits define '%s' — qualified \
+                   `<%s as Trait>::%s` is not yet supported)"
+                  head assoc assoc head assoc))
+  | _ -> None
+
 let rec resolve_type_ann_raw ~pos ctx ann =
   let recur = resolve_type_ann_raw ~pos ctx in
   match ann with
@@ -482,8 +568,11 @@ let rec resolve_type_ann_raw ~pos ctx ann =
                 (match lookup_enum ctx path with
                  | Some e -> TEnum e.ename_path
                  | None ->
-                     Error.failf pos "unknown type '%s'"
-                       (String.concat "::" path))))
+                     (match try_resolve_assoc_proj ~pos ctx path with
+                      | Some t -> t
+                      | None ->
+                          Error.failf pos "unknown type '%s'"
+                            (String.concat "::" path)))))
   | Ast.TyStruct { path; args } ->
       (* Generic application `Foo<T1, T2>`.  We do NOT instantiate here:
          args may still contain free `TVar`s (a generic `impl`/fn
@@ -558,6 +647,29 @@ let rec normalize_apps ctx t =
   | TFnPtr { params; ret } ->
       TFnPtr { params = List.map (normalize_apps ctx) params;
                ret = Option.map (normalize_apps ctx) ret }
+  | TAssocProj { head; assoc } ->
+      (* If the head is concrete we can look up the recorded
+         `type assoc = T;` from the impl and replace the projection
+         with that typ (then normalise it too — the recorded typ may
+         itself be a generic application).  Skeleton case (head still
+         carries a `TVar`) keeps the projection node intact; it gets
+         normalised once monomorphization substitutes a concrete head. *)
+      let head = normalize_apps ctx head in
+      if not (is_concrete head) then TAssocProj { head; assoc }
+      else
+        (match typ_head_path head with
+         | None -> TAssocProj { head; assoc }
+         | Some hp ->
+             let matches =
+               List.filter_map
+                 (fun ((_trait, target), assocs) ->
+                   if target = hp && List.mem_assoc assoc assocs
+                   then Some (List.assoc assoc assocs) else None)
+                 !trait_assoc_table
+             in
+             (match matches with
+              | [t] -> normalize_apps ctx t
+              | _ -> TAssocProj { head; assoc }))
   | other -> other
 
 (* Public entry point.  Resolve the annotation, substitute the fn-instance
@@ -861,13 +973,6 @@ let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
    fn's `<T: Trait>` bounds at instantiation.  Trait names are matched by
    their last path segment — sufficient while traits are uniquely named
    (the conformance check already rejects ambiguity). *)
-let trait_impl_table : (string * string list) list ref = ref []
-
-let typ_head_path = function
-  | TStruct p | TEnum p -> Some p
-  | TStructApp { path; _ } | TEnumApp { path; _ } -> Some path
-  | _ -> None
-
 (* True when [ty] has an `impl <trait_name> for <ty>` registered. *)
 let type_impls_trait ~trait_name ty =
   match typ_head_path ty with
@@ -4008,7 +4113,23 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
            | Some (target_path, _, _) ->
                let (_, td) = resolve_trait ~flat ~pos:ib.Ast.ipos trait_written in
                trait_impl_table :=
-                 (td.Ast.trname, target_path) :: !trait_impl_table))
+                 (td.Ast.trname, target_path) :: !trait_impl_table;
+               (* Same pre-pass populates the assoc table — resolving each
+                  `type X = T;` against the impl's tparam scope.  Skip on
+                  resolution failure (conformance pass will report). *)
+               let assoc_resolved =
+                 List.filter_map
+                   (fun (an, ann) ->
+                     try
+                       Some (an,
+                             resolve_type_ann ~pos:ib.Ast.ipos ctx ann)
+                     with _ -> None)
+                   ib.Ast.iassoc
+               in
+               if assoc_resolved <> [] then
+                 trait_assoc_table :=
+                   ((td.Ast.trname, target_path), assoc_resolved)
+                   :: !trait_assoc_table))
     flat.impls;
   let resolved =
     List.map
@@ -4869,6 +4990,7 @@ let check_program program : tprogram =
      test runs. *)
   for_gensym := 0;
   trait_impl_table := [];
+  trait_assoc_table := [];
   let mono_state = Mono.new_state () in
   let program = prepend_prelude program in
   (* Expand `@derive(...)` into real `impl Trait for Foo` blocks (after the
@@ -5258,7 +5380,7 @@ let check_program program : tprogram =
     | TTuple _ | TArray _
     | TCVoid | TExtStruct _ | TExtAlias _
     | TFnPtr _ | TNullPtr | TVar _
-    | TStructApp _ | TEnumApp _ -> false
+    | TStructApp _ | TEnumApp _ | TAssocProj _ -> false
   in
   (* A struct field / enum payload of opaque-`extern struct` type by value
      is rejected (exile doesn't know its layout — only `*Opaque` is usable;
