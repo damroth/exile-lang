@@ -1,0 +1,50 @@
+// StringBuilder — mutable growable u8 buffer in the prelude.  This
+// is the keystone of the writer pattern: `Display` / `Debug` impls
+// (next milestone) will assemble output by calling these methods on
+// a `*StringBuilder`.  Per DR-001 the read side (`as_slice`) and
+// growth math are pure exile; alloc / free go through `Allocator`'s
+// seam (the FFI live in the C stub, kept off the m68k target).
+//
+// v1 surface: `with_capacity`, `push_byte`, `length`, `as_slice`.
+// `push_str` (cstr_len + slice copy) and `push_int` (decimal render)
+// land in follow-up commits; `build()` waits for OwnedStr/String
+// once minimal-move semantics are in.
+
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+}
+
+fn main() {
+    let a = raw::make_c_allocator();
+
+    // `with_capacity(a, hint)` clamps cap = max(hint, 16), then
+    // allocates that many bytes through the allocator seam.  The
+    // builder owns the buffer; `len` starts at 0.
+    let mut sb = StringBuilder::with_capacity(a, 4 as u32);
+
+    // Push three ASCII bytes one at a time — well within initial
+    // capacity (16, after the clamp), no growth yet.
+    sb.push_byte(72 as u8);   // 'H'
+    sb.push_byte(105 as u8);  // 'i'
+    sb.push_byte(33 as u8);   // '!'
+    println(sb.length() as int);            // 3
+
+    // Force the geometric-doubling grow path: push 20 more bytes
+    // ('A'…'T') — capacity walks 16 → 32 as the new bytes overflow.
+    // Each `push_byte` writes via Delta-B (`buf[len] = b`).
+    let mut i: u32 = 0 as u32;
+    while i < 20 as u32 {
+        sb.push_byte((65 as u32 + i) as u8);
+        i = i + 1 as u32;
+    }
+    println(sb.length() as int);            // 23
+
+    // `as_slice()` exposes a read-only `Slice<u8>` over the live
+    // buffer — `*u8 → *const u8` is automatic at the boundary.
+    // Read-side indexing flows through the Slice (bare `*u8[i]`
+    // stays rejected; reads always go through Slice or array).
+    let view = sb.as_slice();
+    println(view[0] as int);                 // 72  ('H')
+    println(view[3] as int);                 // 65  ('A')
+    println(view[22] as int);                // 84  ('T')
+}

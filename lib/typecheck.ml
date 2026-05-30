@@ -4308,7 +4308,7 @@ let prelude_pos = { Pos.zero with file = "<prelude>" }
    user code mentions the type — keeps unrelated programs (hello_world,
    etc.) from carrying an unused `struct ex_Allocator` decl.  Add a
    name when introducing a new mono prelude struct. *)
-let prelude_mono_struct_names = ["Allocator"]
+let prelude_mono_struct_names = ["Allocator"; "StringBuilder"]
 
 let prelude_items () =
   let mk_unit name = {
@@ -4447,6 +4447,203 @@ let prelude_items () =
     iitems = [alloc_method; free_method];
     ipos = pos;
   } in
+  (* `StringBuilder` — mutable growable u8 buffer over the prelude
+     `Allocator`.  Keystone of the writer pattern: `Display`/`Debug`
+     impls call methods on a `*StringBuilder` to assemble output.
+     Per DR-001 the read side (`as_slice`) and growth math are pure
+     exile; alloc/free go through `Allocator`'s seam.  v1 ships
+     constructor + `push_byte` + `length` + `as_slice` + private
+     `grow`; `push_str` and `push_int` will land in follow-up commits.
+     No `build()` — that consumes the buffer and depends on
+     OwnedStr/String (deferred until minimal-move lands). *)
+  let u32_t = Ast.TyInt { signed = false; width = Ast.W32 } in
+  let u8_t = Ast.TyInt { signed = false; width = Ast.W8 } in
+  let u8_ptr = Ast.TyPtr u8_t in
+  let u8_cptr = Ast.TyConstPtr u8_t in
+  let sb_struct = {
+    Ast.sname = "StringBuilder";
+    stparams = [];
+    sfields = [
+      ("buf", u8_ptr);
+      ("len", u32_t);
+      ("cap", u32_t);
+      ("alloc", Ast.TyStruct { path = ["Allocator"]; args = [] });
+    ];
+    spos = prelude_pos;
+    sis_pub = true;
+    stier_hint = Some "full";
+    sis_debug = false; sderives = [];
+  } in
+  let int_lit n = Ast.IntLit (n, pos) in
+  let int_lit_as n ann = Ast.Cast (Ast.IntLit (n, pos), ann, pos) in
+  let u32_lit n = int_lit_as n u32_t in
+  let bin op a b = Ast.BinOp (op, a, b, pos) in
+  let field e f = Ast.FieldAccess (e, f, pos) in
+  let methcall recv name args =
+    Ast.MethodCall { receiver = recv; name; args; pos } in
+  let sb_self_ptr_param =
+    { Ast.pname = "self";
+      pty = Ast.TyPtr (Ast.TyStruct { path = ["StringBuilder"]; args = [] });
+      preg = None; is_mut = false }
+  in
+  let mk_sb_method ?(is_pub = true) name params ret body = {
+    Ast.name; c_name = name; tparams = []; tbounds = []; params; ret_ty = ret;
+    body; is_pub; is_extern = false; is_variadic = false;
+    tier_hint = Some "full"; amiga_lib = None; must_use = false; pos;
+  } in
+  let sb_struct_ann = Ast.TyStruct { path = ["StringBuilder"]; args = [] } in
+  let alloc_ann = Ast.TyStruct { path = ["Allocator"]; args = [] } in
+  (* with_capacity(a, hint): clamp `cap = max(hint, 16)`, alloc bytes
+     through the allocator seam, return a builder with len = 0. *)
+  let with_capacity_body = [
+    Ast.Let { name = "cap"; is_mut = false;
+              ty_ann = Some u32_t;
+              value =
+                Ast.If { cond = bin Ast.Lt (Ast.Var ("hint", pos)) (u32_lit 16);
+                         then_blk = [ Ast.Tail (u32_lit 16) ];
+                         else_blk = Some [ Ast.Tail (Ast.Var ("hint", pos)) ];
+                         pos };
+              pos };
+    Ast.Let { name = "buf"; is_mut = false; ty_ann = Some u8_ptr;
+              value = Ast.Cast (
+                methcall (Ast.Var ("a", pos)) "alloc_fn"
+                  [ field (Ast.Var ("a", pos)) "state";
+                    Ast.Cast (Ast.Var ("cap", pos), cuint, pos) ],
+                u8_ptr, pos);
+              pos };
+    Ast.Return (Some (Ast.StructLit {
+      tname = ["StringBuilder"];
+      fields = [
+        ("buf", Ast.Var ("buf", pos));
+        ("len", u32_lit 0);
+        ("cap", Ast.Var ("cap", pos));
+        ("alloc", Ast.Var ("a", pos));
+      ];
+      base = None; pos }), pos);
+  ] in
+  let with_capacity_method =
+    mk_sb_method "with_capacity"
+      [ { Ast.pname = "a"; pty = alloc_ann; preg = None; is_mut = false };
+        { Ast.pname = "hint"; pty = u32_t; preg = None; is_mut = false } ]
+      (Some sb_struct_ann) with_capacity_body
+  in
+  (* length( * self) -> u32: trivial accessor.  Named `length` (NOT `len`)
+     to avoid the method-vs-field name clash the impl-pass rejects. *)
+  let length_method =
+    mk_sb_method "length" [ sb_self_ptr_param ] (Some u32_t)
+      [ Ast.Return (Some (field (Ast.Var ("self", pos)) "len"), pos) ]
+  in
+  (* as_slice( * self) -> Slice<u8>: read-only view backed by buf/len.
+     Drops mutability via the `*u8 → *const u8` coercion. *)
+  let slice_u8_ann =
+    Ast.TyStruct { path = ["Slice"]; args = [ u8_t ] } in
+  let as_slice_method =
+    mk_sb_method "as_slice" [ sb_self_ptr_param ] (Some slice_u8_ann)
+      [ Ast.Return (Some (Ast.StructLit {
+          tname = ["Slice"];
+          fields = [
+            ("ptr", Ast.Cast (field (Ast.Var ("self", pos)) "buf",
+                              u8_cptr, pos));
+            ("len", field (Ast.Var ("self", pos)) "len");
+          ];
+          base = None; pos }), pos) ]
+  in
+  (* grow( * self, new_cap): alloc new buffer, copy existing bytes
+     through Slice<u8>+Delta-B, free old buffer, swap pointers.
+     Private to the prelude — push_* call it through self-method
+     resolution; user code touches buf/cap directly only at its
+     own risk. *)
+  let grow_body =
+    let self_v = Ast.Var ("self", pos) in
+    let self_alloc = field self_v "alloc" in
+    [
+      Ast.Let { name = "new_buf"; is_mut = false; ty_ann = Some u8_ptr;
+                value = Ast.Cast (
+                  methcall self_alloc "alloc_fn"
+                    [ field self_alloc "state";
+                      Ast.Cast (Ast.Var ("new_cap", pos), cuint, pos) ],
+                  u8_ptr, pos);
+                pos };
+      Ast.Let { name = "src"; is_mut = false; ty_ann = Some slice_u8_ann;
+                value = Ast.StructLit {
+                  tname = ["Slice"];
+                  fields = [
+                    ("ptr", Ast.Cast (field self_v "buf", u8_cptr, pos));
+                    ("len", field self_v "len");
+                  ]; base = None; pos };
+                pos };
+      Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+                value = u32_lit 0; pos };
+      Ast.While { cond = bin Ast.Lt (Ast.Var ("i", pos)) (field self_v "len");
+                  body = [
+                    Ast.AssignIndex {
+                      base = Ast.Var ("new_buf", pos);
+                      index = Ast.Var ("i", pos);
+                      value = Ast.Index { base = Ast.Var ("src", pos);
+                                          index = Ast.Var ("i", pos);
+                                          pos }; pos };
+                    Ast.Assign { path = ["i"];
+                                 value = bin Ast.Add (Ast.Var ("i", pos))
+                                           (u32_lit 1); pos };
+                  ] };
+      (* free old buffer: alloc.free_fn(alloc.state, buf as *c_void) *)
+      Ast.ExprStmt (methcall self_alloc "free_fn"
+        [ field self_alloc "state";
+          Ast.Cast (field self_v "buf", cvoid_ptr, pos) ]);
+      Ast.AssignField { target = self_v; field = "buf";
+                        value = Ast.Var ("new_buf", pos); pos };
+      Ast.AssignField { target = self_v; field = "cap";
+                        value = Ast.Var ("new_cap", pos); pos };
+    ]
+  in
+  let grow_method =
+    mk_sb_method ~is_pub:false "grow"
+      [ sb_self_ptr_param;
+        { Ast.pname = "new_cap"; pty = u32_t; preg = None; is_mut = false } ]
+      None grow_body
+  in
+  (* push_byte( * self, b): grow if full (geometric doubling), then
+     write the byte through Delta-B and bump len. *)
+  let push_byte_body =
+    let self_v = Ast.Var ("self", pos) in
+    [
+      Ast.ExprStmt (Ast.If {
+        cond = bin Ast.Gt
+                 (bin Ast.Add (field self_v "len") (u32_lit 1))
+                 (field self_v "cap");
+        then_blk = [
+          Ast.ExprStmt (methcall self_v "grow"
+            [ bin Ast.Mul (field self_v "cap") (u32_lit 2) ]);
+        ];
+        else_blk = None; pos });
+      Ast.AssignIndex {
+        base = field self_v "buf";
+        index = field self_v "len";
+        value = Ast.Var ("b", pos); pos };
+      Ast.AssignField { target = self_v; field = "len";
+                        value = bin Ast.Add (field self_v "len") (u32_lit 1);
+                        pos };
+    ]
+  in
+  let push_byte_method =
+    mk_sb_method "push_byte"
+      [ sb_self_ptr_param;
+        { Ast.pname = "b"; pty = u8_t; preg = None; is_mut = false } ]
+      None push_byte_body
+  in
+  let sb_impl = {
+    Ast.itparams = []; itrait = None; iassoc = [];
+    itarget = ["StringBuilder"];
+    iitems = [
+      with_capacity_method;
+      grow_method;
+      push_byte_method;
+      length_method;
+      as_slice_method;
+    ];
+    ipos = pos;
+  } in
+  let _ = int_lit in  (* kept for the upcoming push_int *)
   (* `Iterator` — the prelude iteration protocol.  `for x in <value>`
      desugars to `loop { match value.next() { Some(x) => … | None =>
      break } }` for any type that `impl Iterator`.  `next` takes `*self`
@@ -4515,6 +4712,7 @@ let prelude_items () =
     Ast.Struct range_struct; Ast.Struct range_inclusive_struct;
     Ast.Struct slice_struct;
     Ast.Struct alloc_struct; Ast.Impl alloc_impl;
+    Ast.Struct sb_struct; Ast.Impl sb_impl;
     Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait;
     Ast.Trait hash_trait ]
 
@@ -5330,10 +5528,9 @@ let check_program program : tprogram =
   in
   let instance_tfuncs = drain [] in
   let tp_funcs = skeleton_tfuncs @ instance_tfuncs in
-  let (tp_tuple_types, tp_fnptr_types, tp_array_types) =
-    collect_tuple_types_of tp_funcs in
-  let tp_uses_heap = uses_heap_of tp_funcs in
-  let tp_uses_string_h = uses_string_h_of tp_funcs in
+  (* tp_tuple_types / fnptr / array / uses_heap / uses_string_h are
+     collected after the prelude-mono DCE filter below — see the
+     comment at that site. *)
   (* Drain monomorphic instances accumulated during resolve_type_ann
      into the program's indexes.  Instances accumulate in reverse
      registration order; reversing puts them in roughly the order
@@ -5371,12 +5568,19 @@ let check_program program : tprogram =
     || (match tf.tf_ret_ty with Some t -> typ_mentions target t | None -> false)
     || List.exists (fun (_, t) -> typ_mentions target t) tf.tf_lets
   in
+  let is_from_prelude tf = tf.tf_func.Ast.pos.file = "<prelude>" in
   let used_in_user_code path =
+    (* Prelude-origin methods (e.g. `StringBuilder::with_capacity`) all
+       mention their own struct in self/ret — they'd vote themselves
+       live.  A mono prelude type is "used" only when concrete USER
+       code (or a USER-driven monomorphic instance) references it. *)
     List.exists
-      (fun tf -> tf.tf_func.Ast.tparams = [] && tfunc_mentions path tf)
+      (fun tf ->
+        tf.tf_func.Ast.tparams = []
+        && not (is_from_prelude tf)
+        && tfunc_mentions path tf)
       tp_funcs
   in
-  let is_from_prelude tf = tf.tf_func.Ast.pos.file = "<prelude>" in
   let struct_drop_set =
     List.filter
       (fun n -> not (used_in_user_code [n]))
@@ -5396,6 +5600,78 @@ let check_program program : tprogram =
               | [n] when List.mem n struct_drop_set -> true
               | _ -> false))
       tp_funcs
+  in
+  (* After dropping prelude-mono methods, re-collect type tables and
+     the include flags — the dropped bodies often referenced fn-ptr /
+     array / tuple shapes (e.g. `Allocator`'s alloc_fn) and pulled in
+     `<string.h>` (`cstr_len` for `push_str`) that nothing else uses.
+     Leaving those in would emit dead typedefs and includes in every
+     program that never touches the prelude type. *)
+  let (tp_tuple_types, tp_fnptr_types, tp_array_types) =
+    collect_tuple_types_of tp_funcs in
+  let tp_uses_heap = uses_heap_of tp_funcs in
+  let tp_uses_string_h = uses_string_h_of tp_funcs in
+  (* Drop mono instances that no surviving tfunc still mentions.  When
+     a prelude method like `StringBuilder::as_slice` is DCE'd, the
+     `Slice<u8>` instance it registered would otherwise leak into the
+     output as a dead struct decl.  Transitive closure: a mono struct
+     stays alive if its name is mentioned anywhere in a surviving
+     tfunc's signature/lets OR in another surviving mono struct's
+     fields. *)
+  let mentioned_paths =
+    let paths = ref [] in
+    let add p = if not (List.mem p !paths) then paths := p :: !paths in
+    let rec walk = function
+      | TStruct p | TEnum p -> add p
+      | TStructApp { path; args } | TEnumApp { path; args } ->
+          add path; List.iter walk args
+      | TPtr t | TConstPtr t -> walk t
+      | TArray { elem; _ } -> walk elem
+      | TTuple ts -> List.iter walk ts
+      | TFnPtr { params; ret } ->
+          List.iter walk params; Option.iter walk ret
+      | _ -> ()
+    in
+    List.iter (fun tf ->
+      List.iter walk tf.tf_param_tys;
+      Option.iter walk tf.tf_ret_ty;
+      List.iter (fun (_, t) -> walk t) tf.tf_lets)
+      tp_funcs;
+    (* Transitive: keep walking through struct fields / enum variants
+       of mono instances until the set stabilizes. *)
+    let changed = ref true in
+    while !changed do
+      changed := false;
+      List.iter (fun (s : struct_sig) ->
+        if List.mem s.sname_path !paths then
+          List.iter (fun (_, t) ->
+            let before = List.length !paths in
+            walk t;
+            if List.length !paths <> before then changed := true)
+            s.sfields_ty)
+        mono_structs;
+      List.iter (fun (e : enum_sig) ->
+        if List.mem e.ename_path !paths then
+          List.iter (fun (v : variant_sig) ->
+            List.iter (fun (_, t) ->
+              let before = List.length !paths in
+              walk t;
+              if List.length !paths <> before then changed := true)
+              v.vsfields)
+            e.evariants)
+        mono_enums
+    done;
+    !paths
+  in
+  let mono_structs =
+    List.filter (fun (s : struct_sig) ->
+      List.mem s.sname_path mentioned_paths)
+      mono_structs
+  in
+  let mono_enums =
+    List.filter (fun (e : enum_sig) ->
+      List.mem e.ename_path mentioned_paths)
+      mono_enums
   in
   (* `@debug` field-type validation.  Every field of a `@debug` struct
      (or every payload of a `@debug` enum variant) must itself be

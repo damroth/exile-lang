@@ -2291,6 +2291,25 @@ let () =
     "fn main() { println(1); }\n"
     "#include <stdio.h>\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(1));\n    return 0;\n}\n";
 
+  (* StringBuilder prelude type — same DCE guarantee as Allocator: a
+     hello-world that never names `StringBuilder` must not carry its
+     struct decl, methods, or the `Slice<u8>` instance `as_slice`
+     produces. *)
+  check "prelude StringBuilder: dropped from emitted C when unused"
+    "fn main() { println(1); }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(1));\n    return 0;\n}\n";
+
+  check_error "StringBuilder::with_capacity rejects non-Allocator first arg"
+    "fn main() { let sb = StringBuilder::with_capacity(5, 16 as u32); println(1); }\n"
+    "argument 1 of 'StringBuilder::with_capacity': expected Allocator, got i32";
+
+  check_error "StringBuilder::push_byte rejects a non-u8 byte"
+    "fn touch(sb: *StringBuilder) {\n\
+    \    sb.push_byte(257 as int);\n\
+     }\n\
+     fn main() { println(1); }\n"
+    "argument 1 of 'StringBuilder::push_byte': expected u8, got i32";
+
   check "user `mod Allocator { fn ... }` not confused with prelude impl"
     "mod Allocator {\n\
     \    pub fn helper() -> int { return 1; }\n\
