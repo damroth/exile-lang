@@ -2324,6 +2324,25 @@ let () =
      fn main() { println(1); }\n"
     "argument 1 of 'StringBuilder::push_int': expected i32, got str";
 
+  (* prelude String — Faza 1: same DCE story as SB.  Hello-world must
+     not drag in the struct, its methods, or the `Slice<u8>` instance
+     emerging from `as_slice`. *)
+  check "prelude String: dropped from emitted C when unused"
+    "fn main() { println(1); }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(1));\n    return 0;\n}\n";
+
+  check_error "String::with_str rejects a non-str second argument"
+    "fn main() { let s: String = String::with_str(make(), 42); println(1); }\n\
+     fn make() -> Allocator { return make(); }\n"
+    "argument 2 of 'String::with_str': expected str, got i32";
+
+  check_error "String::empty rejects extra arguments"
+    "fn main() {\n\
+    \    let s: String = String::empty();\n\
+    \    println(1);\n\
+     }\n"
+    "function 'String::empty' expects 1 argument(s), got 0";
+
   check "user `mod Allocator { fn ... }` not confused with prelude impl"
     "mod Allocator {\n\
     \    pub fn helper() -> int { return 1; }\n\

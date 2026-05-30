@@ -4308,7 +4308,7 @@ let prelude_pos = { Pos.zero with file = "<prelude>" }
    user code mentions the type — keeps unrelated programs (hello_world,
    etc.) from carrying an unused `struct ex_Allocator` decl.  Add a
    name when introducing a new mono prelude struct. *)
-let prelude_mono_struct_names = ["Allocator"; "StringBuilder"]
+let prelude_mono_struct_names = ["Allocator"; "StringBuilder"; "String"]
 
 let prelude_items () =
   let mk_unit name = {
@@ -4803,6 +4803,180 @@ let prelude_items () =
     ];
     ipos = pos;
   } in
+  (* `String` — owned NUL-terminated buffer, Faza 1 (deep-copy ctors,
+     sound today without a move pass).  Mirrors StringBuilder's
+     allocator-by-value shape minus `cap` (frozen owner; no growth).
+     The trailing NUL is written by every constructor so `as_str()`
+     hands out a libc-`%s`-safe pointer by construction (graft G1
+     from the design).  Faza 2 will add `build(sb) -> String` once
+     minimal-move lands.  `@move` attribute hooks here when DR-002
+     materialises — until then user must thread `*String` borrows
+     (every by-value copy aliases ptr and double-free would compile
+     silently). *)
+  let string_struct = {
+    Ast.sname = "String";
+    stparams = [];
+    sfields = [
+      ("ptr", u8_ptr);
+      ("len", u32_t);
+      ("alloc", Ast.TyStruct { path = ["Allocator"]; args = [] });
+    ];
+    spos = prelude_pos;
+    sis_pub = true;
+    stier_hint = Some "full";
+    sis_debug = false; sderives = [];
+  } in
+  let string_struct_ann = Ast.TyStruct { path = ["String"]; args = [] } in
+  let string_self_ptr_param =
+    { Ast.pname = "self";
+      pty = Ast.TyPtr string_struct_ann;
+      preg = None; is_mut = false }
+  in
+  let mk_string_method ?(is_pub = true) name params ret body = {
+    Ast.name; c_name = name; tparams = []; tbounds = []; params; ret_ty = ret;
+    body; is_pub; is_extern = false; is_variadic = false;
+    tier_hint = Some "full"; amiga_lib = None; must_use = false; pos;
+  } in
+  (* with_str(a, s): allocate len+1 bytes through the allocator seam,
+     copy `s` through a Slice<u8> view + Delta-B, write the NUL
+     terminator at [len].  Same growth-math idiom as
+     StringBuilder::push_str minus the grow check (size known up front). *)
+  let with_str_body =
+    let s_v = Ast.Var ("s", pos) in
+    let a_v = Ast.Var ("a", pos) in
+    [
+      Ast.Let { name = "n"; is_mut = false; ty_ann = Some u32_t;
+                value = Ast.Call { callee = ["cstr_len"]; args = [s_v]; pos };
+                pos };
+      Ast.Let { name = "buf"; is_mut = false; ty_ann = Some u8_ptr;
+                value = Ast.Cast (
+                  methcall a_v "alloc_fn"
+                    [ field a_v "state";
+                      bin Ast.Add (Ast.Var ("n", pos)) (u32_lit 1) ],
+                  u8_ptr, pos);
+                pos };
+      Ast.Let { name = "src"; is_mut = false; ty_ann = Some slice_u8_ann;
+                value = Ast.StructLit {
+                  tname = ["Slice"];
+                  fields = [
+                    ("ptr", Ast.Cast (s_v, u8_cptr, pos));
+                    ("len", Ast.Var ("n", pos));
+                  ]; base = None; pos };
+                pos };
+      Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+                value = u32_lit 0; pos };
+      Ast.While {
+        cond = bin Ast.Lt (Ast.Var ("i", pos)) (Ast.Var ("n", pos));
+        body = [
+          Ast.AssignIndex {
+            base = Ast.Var ("buf", pos);
+            index = Ast.Var ("i", pos);
+            value = Ast.Index { base = Ast.Var ("src", pos);
+                                index = Ast.Var ("i", pos); pos };
+            pos };
+          Ast.Assign { path = ["i"];
+                       value = bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1);
+                       pos };
+        ] };
+      Ast.AssignIndex {
+        base = Ast.Var ("buf", pos);
+        index = Ast.Var ("n", pos);
+        value = int_lit_as 0 u8_t; pos };
+      Ast.Return (Some (Ast.StructLit {
+        tname = ["String"];
+        fields = [
+          ("ptr", Ast.Var ("buf", pos));
+          ("len", Ast.Var ("n", pos));
+          ("alloc", a_v);
+        ]; base = None; pos }), pos);
+    ]
+  in
+  let with_str_method =
+    mk_string_method "with_str"
+      [ { Ast.pname = "a";
+          pty = Ast.TyStruct { path = ["Allocator"]; args = [] };
+          preg = None; is_mut = false };
+        { Ast.pname = "s"; pty = Ast.TyStr; preg = None; is_mut = false } ]
+      (Some string_struct_ann) with_str_body
+  in
+  (* empty(a): 1-byte buffer holding just NUL, so as_str() is still
+     `%s`-safe.  Avoids malloc(0) which is implementation-defined. *)
+  let empty_body =
+    let a_v = Ast.Var ("a", pos) in
+    [
+      Ast.Let { name = "buf"; is_mut = false; ty_ann = Some u8_ptr;
+                value = Ast.Cast (
+                  methcall a_v "alloc_fn"
+                    [ field a_v "state"; u32_lit 1 ],
+                  u8_ptr, pos);
+                pos };
+      Ast.AssignIndex {
+        base = Ast.Var ("buf", pos);
+        index = u32_lit 0;
+        value = int_lit_as 0 u8_t; pos };
+      Ast.Return (Some (Ast.StructLit {
+        tname = ["String"];
+        fields = [
+          ("ptr", Ast.Var ("buf", pos));
+          ("len", u32_lit 0);
+          ("alloc", a_v);
+        ]; base = None; pos }), pos);
+    ]
+  in
+  let empty_method =
+    mk_string_method "empty"
+      [ { Ast.pname = "a";
+          pty = Ast.TyStruct { path = ["Allocator"]; args = [] };
+          preg = None; is_mut = false } ]
+      (Some string_struct_ann) empty_body
+  in
+  (* length, as_slice, as_str: trivial accessors on the live buffer.
+     `as_str` reinterprets `*u8` as `str` (`const char *` at the C
+     level) — the NUL written by every constructor is what makes the
+     reinterpret libc-`%s`-safe. *)
+  let string_length_method =
+    mk_string_method "length" [ string_self_ptr_param ] (Some u32_t)
+      [ Ast.Return (Some (field (Ast.Var ("self", pos)) "len"), pos) ]
+  in
+  let string_as_slice_method =
+    mk_string_method "as_slice" [ string_self_ptr_param ] (Some slice_u8_ann)
+      [ Ast.Return (Some (Ast.StructLit {
+          tname = ["Slice"];
+          fields = [
+            ("ptr", Ast.Cast (field (Ast.Var ("self", pos)) "ptr",
+                              u8_cptr, pos));
+            ("len", field (Ast.Var ("self", pos)) "len");
+          ]; base = None; pos }), pos) ]
+  in
+  let string_as_str_method =
+    mk_string_method "as_str" [ string_self_ptr_param ] (Some Ast.TyStr)
+      [ Ast.Return (Some (Ast.Cast (
+          field (Ast.Var ("self", pos)) "ptr", Ast.TyStr, pos)), pos) ]
+  in
+  (* free( * self): hand the owned buffer back through the allocator
+     seam.  Named `free` not `drop` — matches Allocator::free's
+     convention and pairs idiomatically with `defer s.free();`. *)
+  let string_free_method =
+    let self_v = Ast.Var ("self", pos) in
+    let self_alloc = field self_v "alloc" in
+    mk_string_method "free" [ string_self_ptr_param ] None
+      [ Ast.ExprStmt (methcall self_alloc "free_fn"
+          [ field self_alloc "state";
+            Ast.Cast (field self_v "ptr", cvoid_ptr, pos) ]) ]
+  in
+  let string_impl = {
+    Ast.itparams = []; itrait = None; iassoc = [];
+    itarget = ["String"];
+    iitems = [
+      with_str_method;
+      empty_method;
+      string_length_method;
+      string_as_slice_method;
+      string_as_str_method;
+      string_free_method;
+    ];
+    ipos = pos;
+  } in
   (* `Iterator` — the prelude iteration protocol.  `for x in <value>`
      desugars to `loop { match value.next() { Some(x) => … | None =>
      break } }` for any type that `impl Iterator`.  `next` takes `*self`
@@ -4872,6 +5046,7 @@ let prelude_items () =
     Ast.Struct slice_struct;
     Ast.Struct alloc_struct; Ast.Impl alloc_impl;
     Ast.Struct sb_struct; Ast.Impl sb_impl;
+    Ast.Struct string_struct; Ast.Impl string_impl;
     Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait;
     Ast.Trait hash_trait ]
 

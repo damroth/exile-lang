@@ -1,0 +1,48 @@
+// String — owned, NUL-terminated buffer in the prelude (Faza 1
+// of the OwnedStr/String design).  Sits next to `StringBuilder`:
+// SB is mutable / growable, `String` is the frozen owner you
+// hand around (Vec<String>, HashMap<String, ...>, etc.).
+//
+// v1 surface: `with_str`, `empty`, `length`, `as_slice`, `as_str`,
+// `free`.  Every constructor writes the trailing NUL so `as_str()`
+// hands back a libc-`%s`-safe pointer by construction (G1 from
+// the design).  `build(sb) -> String` (Faza 2) lands once a
+// minimal-move pass is in — the by-value transfer to caller would
+// alias `sb.buf` without a consume check.
+//
+// `eq` / `hash` / `clone` are not implemented yet: the prelude
+// `Eq` / `Hash` / `Clone` traits take by-value `self` (their
+// signatures predate `*const self`), which would alias `ptr` on
+// every call and double-free silently.  They'll land hand-written
+// once the move pass picks them up.
+
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+}
+
+fn main() {
+    let a = raw::make_c_allocator();
+
+    // `with_str(a, s)` allocates `len(s)+1` bytes through the
+    // allocator seam, copies through a Slice<u8> + Delta-B, and
+    // writes NUL at [len].
+    let hi = String::with_str(a, "Hello, exile!");
+    println(hi.length() as int);          // 13
+
+    // `as_slice()` exposes the bytes without the NUL — read-only
+    // Slice<u8>, indexable.
+    let v = hi.as_slice();
+    println(v[0] as int);                  // 72  ('H')
+    println(v[7] as int);                  // 101 ('e' — start of "exile!")
+    println(v[12] as int);                 // 33  ('!')
+
+    // `defer hi.free()` would be idiomatic; the explicit call here
+    // makes the lifetime visible in the trace.
+    hi.free();
+
+    // `empty(a)` allocates a 1-byte buffer holding just NUL —
+    // avoids malloc(0) and keeps as_str() %s-safe.
+    let e = String::empty(a);
+    println(e.length() as int);            // 0
+    e.free();
+}
