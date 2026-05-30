@@ -4631,6 +4631,74 @@ let prelude_items () =
         { Ast.pname = "b"; pty = u8_t; preg = None; is_mut = false } ]
       None push_byte_body
   in
+  (* push_str( * self, s): take the str's length via the cstr_len
+     seam, grow to len+n (geometric doubling), then copy through a
+     `Slice<u8>` read + Delta-B writes.  `s as *const u8` is the
+     same pointer reinterpreted (str is `const char *` in C). *)
+  let push_str_body =
+    let self_v = Ast.Var ("self", pos) in
+    let s_v = Ast.Var ("s", pos) in
+    [
+      Ast.Let { name = "n"; is_mut = false; ty_ann = Some u32_t;
+                value = Ast.Call { callee = ["cstr_len"]; args = [s_v]; pos };
+                pos };
+      Ast.Let { name = "need"; is_mut = false; ty_ann = Some u32_t;
+                value = bin Ast.Add (field self_v "len") (Ast.Var ("n", pos));
+                pos };
+      Ast.ExprStmt (Ast.If {
+        cond = bin Ast.Gt (Ast.Var ("need", pos)) (field self_v "cap");
+        then_blk = [
+          Ast.Let { name = "new_cap"; is_mut = true; ty_ann = Some u32_t;
+                    value = field self_v "cap"; pos };
+          Ast.While {
+            cond = bin Ast.Lt (Ast.Var ("new_cap", pos))
+                              (Ast.Var ("need", pos));
+            body = [
+              Ast.Assign { path = ["new_cap"];
+                           value = bin Ast.Mul (Ast.Var ("new_cap", pos))
+                                                (u32_lit 2);
+                           pos };
+            ] };
+          Ast.ExprStmt (methcall self_v "grow"
+            [ Ast.Var ("new_cap", pos) ]);
+        ];
+        else_blk = None; pos });
+      Ast.Let { name = "src"; is_mut = false; ty_ann = Some slice_u8_ann;
+                value = Ast.StructLit {
+                  tname = ["Slice"];
+                  fields = [
+                    ("ptr", Ast.Cast (s_v, u8_cptr, pos));
+                    ("len", Ast.Var ("n", pos));
+                  ]; base = None; pos };
+                pos };
+      Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+                value = u32_lit 0; pos };
+      Ast.While {
+        cond = bin Ast.Lt (Ast.Var ("i", pos)) (Ast.Var ("n", pos));
+        body = [
+          Ast.AssignIndex {
+            base = field self_v "buf";
+            index = bin Ast.Add (field self_v "len")
+                                (Ast.Var ("i", pos));
+            value = Ast.Index { base = Ast.Var ("src", pos);
+                                index = Ast.Var ("i", pos); pos };
+            pos };
+          Ast.Assign { path = ["i"];
+                       value = bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1);
+                       pos };
+        ] };
+      Ast.AssignField { target = self_v; field = "len";
+                        value = bin Ast.Add (field self_v "len")
+                                            (Ast.Var ("n", pos));
+                        pos };
+    ]
+  in
+  let push_str_method =
+    mk_sb_method "push_str"
+      [ sb_self_ptr_param;
+        { Ast.pname = "s"; pty = Ast.TyStr; preg = None; is_mut = false } ]
+      None push_str_body
+  in
   let sb_impl = {
     Ast.itparams = []; itrait = None; iassoc = [];
     itarget = ["StringBuilder"];
@@ -4638,6 +4706,7 @@ let prelude_items () =
       with_capacity_method;
       grow_method;
       push_byte_method;
+      push_str_method;
       length_method;
       as_slice_method;
     ];
