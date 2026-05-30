@@ -908,6 +908,9 @@ type tprogram = {
   tp_global : (string list * string * fn_sig) list;
   tp_modules : (string list * bool) list;
   tp_uses_heap : bool;
+  tp_uses_string_h : bool;            (* `#include <string.h>` — set when
+                                         `cstr_len(...)` is called anywhere
+                                         in the program *)
   tp_tuple_types : (string * typ) list;
   tp_fnptr_types : (string * typ) list;  (* unique TFnPtr types used
                                             in the program; codegen

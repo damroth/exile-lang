@@ -188,6 +188,16 @@ let emit_free : builtin_emit =
     emit_arg (List.hd args);
     Buffer.add_char buf ')'
 
+(* `cstr_len(s)` lowers to `((unsigned long)strlen(<expr>))` — width-pin
+   to `u32` (which c_type_prefix renders as `unsigned long`) so the
+   call site never sees C's `size_t`.  `<string.h>` is pulled in by
+   `gen_program` when `tp.tp_uses_string_h` is set. *)
+let emit_cstr_len : builtin_emit =
+  fun _ctx buf args emit_arg ->
+    Buffer.add_string buf "((unsigned long)strlen(";
+    emit_arg (List.hd args);
+    Buffer.add_string buf "))"
+
 (* `type_name(expr)` lowers to a `const char *` string literal of the
    arg's user-facing type name (rendered by `Ir.render_typ_user_facing`).
    The arg's value is not consumed — `sizeof` references it without
@@ -209,6 +219,7 @@ let builtin_emitters : (string * builtin_emit) list = [
   ("println", emit_println);
   ("free", emit_free);
   ("type_name", emit_type_name);
+  ("cstr_len", emit_cstr_len);
 ]
 
 let lookup_builtin_emit name = List.assoc_opt name builtin_emitters
@@ -1460,6 +1471,8 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   Buffer.add_string buf "#include <stdio.h>\n";
   if tp.tp_uses_heap then
     Buffer.add_string buf "#include <stdlib.h>\n";
+  if tp.tp_uses_string_h then
+    Buffer.add_string buf "#include <string.h>\n";
   (* User-supplied `@c_include("...")` lines.  Quoted form so paths
      with `/` work (`exec/exec.h`, `proto/intuition.h`).  C accepts
      redeclaration of stdio symbols already declared via stdio.h, so

@@ -876,8 +876,28 @@ let builtin_type_name = {
           (List.length tys));
 }
 
+(* `cstr_len(s)` — narrow `strlen` seam-op (DR-001).  Returns the byte
+   length of a NUL-terminated `str` as `u32` (width-pinned at the seam,
+   not C's `size_t`).  Compile-time-erased intrinsic — the call lowers
+   to `(unsigned long)strlen(<expr>)` and pulls in `<string.h>`.  Used
+   by `StringBuilder::push_str` for unknown-length C strings; user code
+   prefers methods that already know the length.  No `mod sys::` wrap
+   yet — the per-target seam mechanism is deferred. *)
+let builtin_cstr_len = {
+  bname = "cstr_len";
+  bcheck = (fun ~ctx:_ ~pos ~args ~allow_void:_ ->
+    match List.map (fun (a : texpr) -> a.ty) args with
+    | [ TString ] -> TInt { signed = false; width = Ast.W32 }
+    | [ other ] ->
+        Error.failf pos "'cstr_len' expects a `str`, got %s" (typ_name other)
+    | xs ->
+        Error.failf pos "cstr_len() takes exactly one argument, got %d"
+          (List.length xs));
+}
+
 let builtins =
-  [ builtin_print; builtin_println; builtin_free; builtin_type_name ]
+  [ builtin_print; builtin_println; builtin_free; builtin_type_name;
+    builtin_cstr_len ]
 
 let lookup_builtin = function
   | [ name ] -> List.find_opt (fun b -> b.bname = name) builtins
@@ -3927,6 +3947,22 @@ let uses_heap_of tfuncs =
     List.exists (exists_tstmt stmt_is_heap) tf.tf_body)
     tfuncs
 
+(* `<string.h>` is pulled in only when something in the program needs
+   it.  Today the only trigger is `cstr_len(s)` (lowers to `strlen()`).
+   Same shape as [uses_heap_of] — checked once over the typed program
+   and forwarded to codegen via [tp_uses_string_h]. *)
+let uses_string_h_of tfuncs =
+  let expr_uses (te : texpr) = match te.e with
+    | TBuiltinCall { name = "cstr_len"; _ } -> true
+    | _ -> false
+  in
+  let stmt_uses s =
+    List.exists (exists_texpr expr_uses) (tstmt_own_exprs s)
+  in
+  List.exists (fun tf ->
+    List.exists (exists_tstmt stmt_uses) tf.tf_body)
+    tfuncs
+
 (* Resolve `impl` blocks against the struct registry, validate each method
    (self-param shape, name clash with fields, dup methods across blocks),
    and lower them to ordinary fn entries plus virtual-module entries.
@@ -5297,6 +5333,7 @@ let check_program program : tprogram =
   let (tp_tuple_types, tp_fnptr_types, tp_array_types) =
     collect_tuple_types_of tp_funcs in
   let tp_uses_heap = uses_heap_of tp_funcs in
+  let tp_uses_string_h = uses_string_h_of tp_funcs in
   (* Drain monomorphic instances accumulated during resolve_type_ann
      into the program's indexes.  Instances accumulate in reverse
      registration order; reversing puts them in roughly the order
@@ -5475,6 +5512,7 @@ let check_program program : tprogram =
     tp_global = global;
     tp_modules = modules;
     tp_uses_heap;
+    tp_uses_string_h;
     tp_tuple_types;
     tp_fnptr_types;
     tp_c_includes = flat.c_includes;

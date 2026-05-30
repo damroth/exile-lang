@@ -2663,6 +2663,26 @@ let () =
     "fn main() { println(type_name(1, 2)); }\n"
     "type_name() takes exactly one argument, got 2";
 
+  (* `cstr_len(s)` — narrow strlen seam (DR-001).  Lowers to
+     `((unsigned long)strlen(...))` and pulls `<string.h>` into the
+     output.  Width-pinned to `u32` at the call so the seam never
+     surfaces C's `size_t`. *)
+  check "cstr_len(s) lowers to strlen and pulls <string.h>"
+    "fn main() {\n\
+    \    let s = \"hi\";\n\
+    \    let n: u32 = cstr_len(s);\n\
+    \    println(n as int);\n\
+     }\n"
+    "#include <stdio.h>\n#include <string.h>\n\nint main(void) {\n    const char *s;\n    unsigned long n;\n    s = \"hi\";\n    n = ((unsigned long)strlen(s));\n    printf(\"%ld\\n\", (long)(((long)n)));\n    return 0;\n}\n";
+
+  check_error "cstr_len rejects non-str argument"
+    "fn main() { let n = cstr_len(42); println(n as int); }\n"
+    "'cstr_len' expects a `str`, got i32";
+
+  check_error "cstr_len rejects wrong arity"
+    "fn main() { let n = cstr_len(\"a\", \"b\"); println(n as int); }\n"
+    "cstr_len() takes exactly one argument, got 2";
+
   check "type_name() folds into compile-time '++' concat"
     "fn main() {\n\
     \    println(type_name(42) ++ \" literal\");\n\
