@@ -5041,6 +5041,33 @@ let prelude_items () =
     trmethods = [ hash_sig ]; trdefaults = [];
     trpos = pos; tris_pub = true;
   } in
+  (* `Display` / `Debug` — writer-pattern formatting traits.
+     `fn fmt( * self, out: *StringBuilder)` — borrow self, write
+     into a builder the caller owns; threading the same `out`
+     through nested fmts composes without intermediate allocs.
+     Display = user-facing (manual impls), Debug = developer-
+     facing (`@derive(Debug)` synthesises it; that landing
+     is a follow-up commit on top of this one).  Same signature
+     so the two stay structurally interchangeable. *)
+  let self_ptr_param =
+    mk_param "self" (Ast.TyPtr Ast.TySelf) in
+  let out_param =
+    mk_param "out"
+      (Ast.TyPtr (Ast.TyStruct { path = ["StringBuilder"]; args = [] })) in
+  let display_sig =
+    trait_sig "fmt" [self_ptr_param; out_param] None [] in
+  let display_trait = {
+    Ast.trname = "Display"; trassoc = []; trsupers = [];
+    trmethods = [ display_sig ]; trdefaults = [];
+    trpos = pos; tris_pub = true;
+  } in
+  let debug_sig =
+    trait_sig "fmt" [self_ptr_param; out_param] None [] in
+  let debug_trait = {
+    Ast.trname = "Debug"; trassoc = []; trsupers = [];
+    trmethods = [ debug_sig ]; trdefaults = [];
+    trpos = pos; tris_pub = true;
+  } in
   [ Ast.Enum option_decl; Ast.Enum result_decl;
     Ast.Struct range_struct; Ast.Struct range_inclusive_struct;
     Ast.Struct slice_struct;
@@ -5048,7 +5075,8 @@ let prelude_items () =
     Ast.Struct sb_struct; Ast.Impl sb_impl;
     Ast.Struct string_struct; Ast.Impl string_impl;
     Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait;
-    Ast.Trait hash_trait ]
+    Ast.Trait hash_trait;
+    Ast.Trait display_trait; Ast.Trait debug_trait ]
 
 (* ===== `@derive(...)` — synthesize trait impls (DECYZJA #1/#2) =====
    Each `@derive`d trait becomes a real `impl Trait for Foo` generated as

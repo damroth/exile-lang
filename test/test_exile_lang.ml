@@ -668,6 +668,27 @@ let () =
      fn main() { let a = P { x: 1 }; println(a.x); }\n"
     "cannot derive 'Ord' (supported: Eq, Hash, Clone)";
 
+  (* `Display` / `Debug` — prelude traits, writer pattern.  The user
+     writes `impl Display for Foo { fn fmt( * self, out: *StringBuilder)
+     { ... } }` by hand; threading the same `out` through nested
+     `child.fmt(out)` calls composes without intermediate allocs.
+     `@derive(Display)` is deliberately not supported (Display is
+     manual surface — the design intent is user-controlled output);
+     `@derive(Debug)` lands in a follow-up commit. *)
+  check_error "@derive(Display) rejected (Display is manual surface)"
+    "@derive(Display)\n\
+     struct P { x: int }\n\
+     fn main() { println(1); }\n"
+    "cannot derive 'Display' (supported: Eq, Hash, Clone)";
+
+  check_error "impl Display with the wrong fmt signature rejected"
+    "struct P { x: int }\n\
+     impl Display for P {\n\
+    \    fn fmt(*self, out: int) {}\n\
+     }\n\
+     fn main() { println(1); }\n"
+    "method 'fmt': parameter 'out' type does not match trait 'Display'";
+
   check_error "@derive on a generic struct rejected (MVP)"
     "@derive(Eq)\n\
      struct Box<T> { v: T }\n\

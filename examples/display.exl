@@ -1,0 +1,71 @@
+// Display — writer-pattern formatting trait.  `fn fmt(*self, out:
+// *StringBuilder)` borrows self and writes into a builder the
+// caller owns; threading the same `out` through nested fmts
+// composes (parent's fmt calls child.fmt(out)) without an
+// intermediate allocation.  This is the standard exile rendering
+// surface — `Debug` is its derivable sibling (`@derive(Debug)`,
+// landing in a follow-up commit).
+//
+// User code writes Display by hand: pick the literal pieces, push
+// them via `out.push_str(...)` / `out.push_int(...)` / `out.push_byte(...)`.
+// The same `*StringBuilder` flows into every nested fmt, so a
+// `Pair { lhs: Point, rhs: Point }` formats both points into the
+// same buffer with no intermediate allocations.
+
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+}
+
+struct Point { x: int, y: int }
+
+impl Display for Point {
+    fn fmt(*self, out: *StringBuilder) {
+        out.push_str("Point { x: ");
+        out.push_int(self.x);
+        out.push_str(", y: ");
+        out.push_int(self.y);
+        out.push_byte(125 as u8);             // '}'
+    }
+}
+
+// Composing impls — the same `out` threads through nested calls.
+struct Segment { lo: Point, hi: Point }
+
+impl Display for Segment {
+    fn fmt(*self, out: *StringBuilder) {
+        out.push_str("Segment[");
+        self.lo.fmt(out);                      // nested fmt: same builder
+        out.push_str(" -> ");
+        self.hi.fmt(out);
+        out.push_byte(93 as u8);              // ']'
+    }
+}
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut sb = StringBuilder::with_capacity(a, 4 as u32);
+
+    let p = Point { x: 7, y: -42 };
+    p.fmt(&sb);
+    // "Point { x: 7, y: -42 }" — 21 bytes.
+    println(sb.length() as int);              // 21
+
+    let v = sb.as_slice();
+    println(v[0] as int);                      // 80  ('P')
+    println(v[11] as int);                     // 55  ('7')
+    println(v[17] as int);                     // 45  ('-' before "42")
+
+    // Compose two Points into the same builder — no intermediate
+    // alloc, just the one growing buffer.
+    let mut sb2 = StringBuilder::with_capacity(a, 4 as u32);
+    let seg = Segment { lo: Point { x: 0, y: 0 },
+                        hi: Point { x: 100, y: -1 } };
+    seg.fmt(&sb2);
+    // "Segment[Point { x: 0, y: 0 } -> Point { x: 100, y: -1 }]"
+    //   8     + 19                + 4   + 22                   + 1 = 54 bytes
+    println(sb2.length() as int);             // 54
+
+    let v2 = sb2.as_slice();
+    println(v2[0] as int);                     // 83  ('S')
+    println(v2[8] as int);                     // 80  ('P' — start of nested Point)
+}
