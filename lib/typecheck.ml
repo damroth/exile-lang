@@ -4223,16 +4223,23 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
                  (match self_t with
                   | TStruct p when p = target_path -> ()
                   | TPtr (TStruct p) when p = target_path -> ()
+                  | TConstPtr (TStruct p) when p = target_path -> ()
                   | TStructApp { path; _ } when path = target_path -> ()
                   | TPtr (TStructApp { path; _ }) when path = target_path -> ()
+                  | TConstPtr (TStructApp { path; _ })
+                      when path = target_path -> ()
                   | TEnum p when p = target_path -> ()
                   | TPtr (TEnum p) when p = target_path -> ()
+                  | TConstPtr (TEnum p) when p = target_path -> ()
                   | TEnumApp { path; _ } when path = target_path -> ()
                   | TPtr (TEnumApp { path; _ }) when path = target_path -> ()
+                  | TConstPtr (TEnumApp { path; _ })
+                      when path = target_path -> ()
                   | _ ->
                       Error.failf m.pos
-                        "first parameter 'self' must have type '%s' or '*%s', \
-                         got %s"
+                        "first parameter 'self' must have type '%s', \
+                         '*%s', or '*const %s', got %s"
+                        (String.concat "::" target_path)
                         (String.concat "::" target_path)
                         (String.concat "::" target_path)
                         (typ_name self_t))

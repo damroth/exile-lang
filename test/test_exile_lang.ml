@@ -1413,7 +1413,31 @@ let () =
 
   check_error "method 'self' must have struct type"
     "struct P { x: int }\nimpl P { fn foo(self: int) {} }\nfn main() {}\n"
-    "first parameter 'self' must have type 'P' or '*P', got i32";
+    "first parameter 'self' must have type 'P', '*P', or '*const P', got i32";
+
+  (* `*const self` receiver — read-only borrow.  Lowers to a
+     `TConstPtr (TStruct target)` parameter the same way `*self`
+     lowers to `TPtr (TStruct target)`.  Method dispatch auto-refs
+     a value receiver (`p.sum()`) and a `*T` is implicitly coercible
+     to `*const T` at the receiver slot. *)
+  check "`*const self` receiver parses, auto-refs and dispatches"
+    "struct P { x: int, y: int }\n\
+     impl P {\n\
+    \    pub fn sum(*const self) -> int { return self.x + self.y; }\n\
+     }\n\
+     fn main() {\n\
+    \    let p = P { x: 3, y: 5 };\n\
+    \    println(p.sum());\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nlong P__sum(const struct ex_P *self);\n\nint main(void) {\n    struct ex_P p;\n    p.x = 3;\n    p.y = 5;\n    printf(\"%ld\\n\", (long)(P__sum(&p)));\n    return 0;\n}\n\nlong P__sum(const struct ex_P *self) {\n    return self->x + self->y;\n}\n";
+
+  check_error "writing through `*const self` rejected"
+    "struct P { x: int }\n\
+     impl P {\n\
+    \    pub fn bad(*const self) { self.x = 9; }\n\
+     }\n\
+     fn main() { let p = P { x: 1 }; p.bad(); }\n"
+    "cannot assign field 'x' through '*const' pointer *const P (pointee is read-only)";;
 
   check_error "method name clashes with field rejected"
     "struct P { v: int }\nimpl P { fn v(self: P) -> int { return self.v; } }\nfn main() {}\n"

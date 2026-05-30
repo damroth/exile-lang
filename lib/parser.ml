@@ -21,6 +21,11 @@ let peek2 s =
   | _ :: (t, _) :: _ -> t
   | _ -> Token.Eof
 
+let peek3 s =
+  match s.tokens with
+  | _ :: _ :: (t, _) :: _ -> t
+  | _ -> Token.Eof
+
 let peek_pos s =
   match s.tokens with (_, p) :: _ -> p | [] -> s.last_pos
 
@@ -226,10 +231,11 @@ let parse_param s =
   let is_mut =
     if peek s = Token.Mut then (ignore (advance s); true) else false
   in
-  (* Bare method receivers: `self` (by value) and `*self` (by pointer),
-     with no type annotation.  Typed as TySelf here; parse_impl_block
-     substitutes the impl's target type once it's known.  An explicit
-     `self: T` still goes through the regular `name: type` path below. *)
+  (* Bare method receivers: `self` (by value), `*self` (mut pointee),
+     `*const self` (read-only pointee).  All typed as TySelf-shaped
+     here; parse_impl_block substitutes the impl's target type once
+     it's known.  An explicit `self: T` still goes through the
+     regular `name: type` path below. *)
   match peek s with
   | Token.Ident "self" when peek2 s <> Token.Colon ->
       ignore (advance s);
@@ -237,6 +243,11 @@ let parse_param s =
   | Token.Star when peek2 s = Token.Ident "self" ->
       ignore (advance s); ignore (advance s);
       Ast.{ pname = "self"; pty = Ast.TyPtr Ast.TySelf; preg = None; is_mut }
+  | Token.Star when peek2 s = Token.Const
+                 && peek3 s = Token.Ident "self" ->
+      ignore (advance s); ignore (advance s); ignore (advance s);
+      Ast.{ pname = "self"; pty = Ast.TyConstPtr Ast.TySelf;
+            preg = None; is_mut }
   | _ ->
       let (name, _) = expect_ident s ~what:"parameter name" in
       expect s Token.Colon;
@@ -1832,6 +1843,7 @@ and parse_impl_block s =
   let rec replace_self = function
     | Ast.TySelf -> target_ty
     | Ast.TyPtr t -> Ast.TyPtr (replace_self t)
+    | Ast.TyConstPtr t -> Ast.TyConstPtr (replace_self t)
     | other -> other
   in
   let methods =
