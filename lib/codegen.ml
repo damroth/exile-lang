@@ -567,13 +567,17 @@ and emit_simple_stmt ctx buf indent stmt =
       gen_expr ctx buf value;
       Buffer.add_string buf ";\n"
   | TAssignIndex { base; index; value; _ } ->
-      (* `a[i] = value` -> `a.data[i] = value;`.  Route through
-         emit_value_into_temp so a block-shaped element value (struct,
-         nested array, ...) lowers field-by-field into the element lvalue. *)
+      (* `a[i] = value` lowers to `a.data[i] = value;` for the array
+         wrapper struct, or to `p[i] = value;` for raw `*T` writes
+         (Delta B).  Routes through emit_value_into_temp so a
+         block-shaped element value (struct, nested array, ...) lowers
+         field-by-field into the element lvalue. *)
       let lhs =
         let b = Buffer.create 32 in
         gen_expr ctx b base;
-        Buffer.add_string b ".data[";
+        (match base.ty with
+         | TPtr _ -> Buffer.add_char b '['
+         | _ -> Buffer.add_string b ".data[");
         gen_expr ctx b index;
         Buffer.add_char b ']';
         Buffer.contents b

@@ -321,6 +321,38 @@ let () =
     "fn main() {\n    let a: [int; 2] = [1, 2];\n    a[0] = 9;\n    println(a[0]);\n}\n"
     "cannot assign into immutable 'a' — declare it with `let mut`";
 
+  (* Delta B — write-through-pointer index store `*T[i] = v` (raw write,
+     no read-side counterpart on bare `*T`; reads keep flowing through
+     `Slice`).  Lowers to plain C `p[i] = v` — no `.data` wrapper.
+     Ungated by mut-root, same axis as `AssignDeref`. *)
+  check "`*T[i] = v` lowers to raw C `p[i] = v`"
+    "mod raw {\n\
+    \    extern fn malloc(n: c_ulong) -> *c_void;\n\
+    \    extern fn free(p: *c_void);\n\
+     }\n\
+     fn main() {\n\
+    \    let p = raw::malloc(2 as c_ulong) as *u8;\n\
+    \    p[0] = 7 as u8;\n\
+    \    p[1] = 11 as u8;\n\
+    \    println(*p as int);\n\
+    \    raw::free(p as *c_void);\n\
+     }\n"
+    "#include <stdio.h>\n\nextern void *malloc(unsigned long n);\nextern void free(void *p);\n\nint main(void) {\n    unsigned char *p;\n    p = ((unsigned char *)malloc(((unsigned long)2)));\n    p[0] = ((unsigned char)7);\n    p[1] = ((unsigned char)11);\n    printf(\"%ld\\n\", (long)(((long)*p)));\n    free(((void *)p));\n    return 0;\n}\n";
+
+  check_error "`*const T[i] = v` rejected (pointee is read-only)"
+    "mod raw {\n\
+    \    extern fn malloc(n: c_ulong) -> *c_void;\n\
+     }\n\
+     fn main() {\n\
+    \    let p = raw::malloc(1 as c_ulong) as *const u8;\n\
+    \    p[0] = 5 as u8;\n\
+     }\n"
+    "cannot assign through '*const' pointer *const u8 (pointee is read-only)";
+
+  check_error "indexed assignment on a non-array, non-pointer value rejected"
+    "fn main() {\n    let x = 5;\n    x[0] = 7;\n}\n"
+    "indexed assignment `a[i] = ...` requires an array or '*T' pointer, got i32";
+
   check "array as a by-value struct field (wrapper struct emitted first)"
     "struct G { cells: [int; 3] }\n\
      fn main() { let g: G = G { cells: [10, 20, 30] }; println(g.cells[1]); }\n"

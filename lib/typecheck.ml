@@ -2947,23 +2947,36 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                                   value = tvalue; pos })
     | Ast.AssignIndex { base; index; value; pos } ->
         let tbase = elab_expr ctx env base in
-        let elem_ty =
+        let through_ptr, elem_ty =
           match tbase.ty with
-          | TArray { elem; _ } -> elem
+          | TArray { elem; _ } -> false, elem
+          | TPtr elem ->
+              (* Raw write-through-pointer `p[i] = v` (Delta B): the
+                 element store routes to C `p[i]`.  Read-side index on
+                 a bare `*T` stays rejected — reads go through `Slice`,
+                 writes through this path. *)
+              true, elem
+          | TConstPtr _ ->
+              Error.failf pos
+                "cannot assign through '*const' pointer %s (pointee \
+                 is read-only)" (typ_name tbase.ty)
           | other ->
               Error.failf pos
-                "indexed assignment `a[i] = ...` requires an array, got %s"
-                (typ_name other)
+                "indexed assignment `a[i] = ...` requires an array \
+                 or '*T' pointer, got %s" (typ_name other)
         in
         let tindex = elab_expr ctx env index in
         if not (is_int_like tindex.ty) then
           Error.failf pos
             "array index must be an integer, got %s" (typ_name tindex.ty);
-        (* Writing an element of an owned array needs a mutable root binding. *)
-        (match root_local base with
-         | Some n when List.mem_assoc n env ->
-             require_mut n pos ~what:"assign into"
-         | _ -> ());
+        (* Writing an element of an owned array needs a mutable root
+           binding.  Through a pointer it is pointee mutation — the
+           same axis as `AssignDeref`, intentionally left ungated. *)
+        if not through_ptr then
+          (match root_local base with
+           | Some n when List.mem_assoc n env ->
+               require_mut n pos ~what:"assign into"
+           | _ -> ());
         let tvalue = elab_expr ctx env value in
         if not (typ_eq tvalue.ty elem_ty) && not (int_lit_fits value elem_ty) then
           Error.failf pos
