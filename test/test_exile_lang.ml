@@ -3070,6 +3070,27 @@ let () =
      }\n"
     "variable 'q' declared as *i32 but initializer has type *const i32";
 
+  (* Regression for a build_struct_index ordering crash: a top-level
+     `struct H { s: Slice<int> }` instantiates `Slice<int>` while the
+     prelude `Slice` skeleton's fields haven't been resolved yet (the
+     pass is names-first, fields-later).  Mono cached an empty
+     `Slice_i32` and every subsequent field-access on it crashed with
+     `Not_found` or hit "field 'len' missing".  Post-pass refresh
+     reseeds empty mono instances from the now-resolved skeleton, and
+     the orphan-drop closure walks top-level structs too so the
+     instance survives DCE even when only a struct decl references
+     it. *)
+  check "Slice<int> as a struct field — instance fields refreshed post-resolve"
+    "struct H { s: Slice<int> }\n\
+     fn touch(h: *H) -> u32 { return h.s.len; }\n\
+     fn main() {\n\
+    \    let arr: [int; 2] = [10, 20];\n\
+    \    let v: Slice<int> = Slice { ptr: &arr[0], len: 2 as u32 };\n\
+    \    let h: H = H { s: v };\n\
+    \    println(touch(&h) as int);\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Slice_i32 { const long *ptr; unsigned long len; };\nstruct ex_H { struct ex_Slice_i32 s; };\nstruct ex_arr2_i32 { long data[2]; };\n\nstatic unsigned long ex_touch(struct ex_H *h);\n\nstatic unsigned long ex_touch(struct ex_H *h) {\n    return h->s.len;\n}\n\nint main(void) {\n    struct ex_arr2_i32 arr;\n    struct ex_Slice_i32 v;\n    struct ex_H h;\n    arr.data[0] = 10;\n    arr.data[1] = 20;\n    v.ptr = &(arr.data[0]);\n    v.len = ((unsigned long)2);\n    h.s = v;\n    printf(\"%ld\\n\", (long)(((long)ex_touch(&h))));\n    return 0;\n}\n";
+
   check "slice: indexing s[i] lowers to s.ptr[i]"
     "fn main() {\n\
     \    let arr: [int; 4] = [10, 20, 30, 40];\n\

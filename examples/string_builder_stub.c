@@ -5,7 +5,7 @@
 
 #include <stdlib.h>
 
-typedef void *(*alloc_fn_t)(void *, unsigned int);
+typedef void *(*alloc_fn_t)(void *, unsigned long);
 typedef void (*free_fn_t)(void *, void *);
 
 struct ex_Allocator {
@@ -14,7 +14,7 @@ struct ex_Allocator {
     free_fn_t free_fn;
 };
 
-static void *c_alloc_thunk(void *_state, unsigned int n) {
+static void *c_alloc_thunk(void *_state, unsigned long n) {
     (void)_state;
     return malloc((size_t)n);
 }

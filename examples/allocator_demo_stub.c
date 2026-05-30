@@ -1,19 +1,19 @@
 /* Companion stub for allocator_demo.exl.  Wires the prelude
  * Allocator struct to libc malloc/free.  Defining the thunks +
- * factory C-side keeps the size_t mismatch (unsigned int on m68k,
- * unsigned long on 64-bit Linux) out of exile — exile passes
- * c_uint sized requests through, the C compiler does the implicit
- * promotion to size_t on the call edge. */
+ * factory C-side keeps the size_t skew (different widths across
+ * targets — unsigned long on 64-bit Linux, narrower on m68k) on
+ * the C side: exile passes a u32 byte-count through the seam, the
+ * thunk casts to size_t on its way to malloc. */
 
 #include <stdlib.h>
 
 /* Layout must match `struct ex_Allocator` emitted by exile codegen
  * for the prelude `Allocator`.  Fields declared in source order:
  *   state : *c_void
- *   alloc_fn : fn(*c_void, c_uint) -> *c_void
+ *   alloc_fn : fn(*c_void, u32) -> *c_void
  *   free_fn  : fn(*c_void, *c_void)
  * Keep this synchronized with prelude_items() in lib/typecheck.ml. */
-typedef void *(*alloc_fn_t)(void *, unsigned int);
+typedef void *(*alloc_fn_t)(void *, unsigned long);
 typedef void (*free_fn_t)(void *, void *);
 
 struct ex_Allocator {
@@ -22,7 +22,7 @@ struct ex_Allocator {
     free_fn_t free_fn;
 };
 
-static void *c_alloc_thunk(void *_state, unsigned int n) {
+static void *c_alloc_thunk(void *_state, unsigned long n) {
     (void)_state;
     return malloc((size_t)n);
 }

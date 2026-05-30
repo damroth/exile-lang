@@ -4347,7 +4347,6 @@ let prelude_items () =
      `size_of(T)` expand to compile-time constants in the emitted C.
      User code prefers `alloc.alloc::<Foo>()` over raw pointer maths. *)
   let cvoid_ptr = Ast.TyPtr Ast.TyCVoid in
-  let cuint = Ast.TyCInt { signed = false } in
   (* `Range<T>` / `RangeInclusive<T>` — generic prelude structs carrying a
      pair of bounds.  `a..b` and `a..=b` desugar to a struct literal of the
      respective type; `for v in r` extracts `.lo` and `.hi` when `r` is a
@@ -4381,8 +4380,15 @@ let prelude_items () =
     stparams = [];
     sfields = [
       ("state", cvoid_ptr);
+      (* Byte-count width-pinned to `u32` at the seam (DR-001 §6(ii) /
+         DR-003 defect #5): on the Amiga m68k toolchain `c_uint` is
+         16-bit and `cap as c_uint` truncates buffers >64KB.  The stub
+         takes the responsibility for `u32 → size_t` on its side. *)
       ("alloc_fn",
-       Ast.TyFnPtr { params = [cvoid_ptr; cuint]; ret = Some cvoid_ptr });
+       Ast.TyFnPtr {
+         params = [ cvoid_ptr;
+                    Ast.TyInt { signed = false; width = Ast.W32 } ];
+         ret = Some cvoid_ptr });
       ("free_fn",
        Ast.TyFnPtr { params = [cvoid_ptr; cvoid_ptr]; ret = None });
     ];
@@ -4397,13 +4403,17 @@ let prelude_items () =
   let pos = prelude_pos in
   let var n = Ast.Var (n, pos) in
   let alloc_body = [
-    (* return (self.alloc_fn(self.state, size_of(T))) as *T; *)
+    (* return (self.alloc_fn(self.state, size_of(T) as u32)) as *T;
+       (size_of returns c_uint; alloc_fn now takes u32 — width-pin
+       the byte-count at the seam per DR-001 §6(ii).) *)
     Ast.Return (
       Some (Ast.Cast (
         Ast.MethodCall {
           receiver = var "self"; name = "alloc_fn";
           args = [ Ast.FieldAccess (var "self", "state", pos);
-                   Ast.SizeOf (tvar "T", pos) ];
+                   Ast.Cast (Ast.SizeOf (tvar "T", pos),
+                             Ast.TyInt { signed = false; width = Ast.W32 },
+                             pos) ];
           pos;
         },
         Ast.TyPtr (tvar "T"), pos)),
@@ -4508,7 +4518,7 @@ let prelude_items () =
               value = Ast.Cast (
                 methcall (Ast.Var ("a", pos)) "alloc_fn"
                   [ field (Ast.Var ("a", pos)) "state";
-                    Ast.Cast (Ast.Var ("cap", pos), cuint, pos) ],
+                    Ast.Var ("cap", pos) ],
                 u8_ptr, pos);
               pos };
     Ast.Return (Some (Ast.StructLit {
@@ -4561,7 +4571,7 @@ let prelude_items () =
                 value = Ast.Cast (
                   methcall self_alloc "alloc_fn"
                     [ field self_alloc "state";
-                      Ast.Cast (Ast.Var ("new_cap", pos), cuint, pos) ],
+                      Ast.Var ("new_cap", pos) ],
                   u8_ptr, pos);
                 pos };
       Ast.Let { name = "src"; is_mut = false; ty_ann = Some slice_u8_ann;
@@ -5469,6 +5479,51 @@ let check_program program : tprogram =
     build_struct_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~modules:flat.modules ~enums:enum_skeleton flat.structs
   in
+  (* Defect-fix: `struct H { s: Slice<int> }` elaborates `Slice<int>`
+     during pass-2 of [build_struct_index], when every skeleton still
+     has `sfields_ty = []` (names-first, fields-later).  Mono caches
+     that empty instance, so every later use of `Slice<int>` saw
+     "no field 'ptr' / 'len'" or crashed with `Not_found`.  Refresh:
+     after pass-2, walk every cached mono struct instance and, when
+     it landed empty, rebuild its fields from the now-resolved
+     skeleton.  Iterates because a refresh can flatten a nested
+     `TStructApp` into another instance, which itself may be empty
+     until the next pass. *)
+  let refresh_instances () =
+    let changed = ref false in
+    let resolved_skel_of (inst : struct_sig) =
+      List.find_opt
+        (fun (s : struct_sig) ->
+          s.stparams <> []
+          && Mono.is_instance_of s.sname_path inst.sname_path)
+        struct_index
+    in
+    let norm_ctx =
+      { (empty_ctx ~instances:mono_state) with
+        structs = struct_index } in
+    let updated =
+      List.map
+        (fun (inst : struct_sig) ->
+          if inst.sfields_ty <> [] then inst
+          else
+            match resolved_skel_of inst, inst.sinstance_args with
+            | Some skel, Some args ->
+                let bindings = List.combine skel.stparams args in
+                let new_fields =
+                  List.map (fun (n, t) ->
+                    (n, normalize_apps norm_ctx (subst_typ bindings t)))
+                    skel.sfields_ty
+                in
+                if new_fields <> [] then changed := true;
+                { inst with sfields_ty = new_fields }
+            | _ -> inst)
+        mono_state.inst_structs
+    in
+    mono_state.inst_structs <- updated;
+    !changed
+  in
+  let rec loop () = if refresh_instances () then loop () in
+  loop ();
   let enum_index =
     build_enum_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~modules:flat.modules ~struct_index flat.enums
@@ -5786,8 +5841,15 @@ let check_program program : tprogram =
       Option.iter walk tf.tf_ret_ty;
       List.iter (fun (_, t) -> walk t) tf.tf_lets)
       tp_funcs;
+    (* Top-level user/prelude structs and enums are always emitted —
+       seed them so anything they reference (e.g. a `Slice<int>` field)
+       is kept too, even when no fn body mentions it. *)
+    List.iter (fun (s : struct_sig) -> add s.sname_path) struct_index;
+    List.iter (fun (e : enum_sig) -> add e.ename_path) enum_index;
     (* Transitive: keep walking through struct fields / enum variants
-       of mono instances until the set stabilizes. *)
+       of any reachable struct (mono OR top-level — a user struct
+       `H { s: Slice<int> }` pulls Slice_i32 in via its field even
+       though H itself lives in struct_index) until stable. *)
     let changed = ref true in
     while !changed do
       changed := false;
@@ -5798,7 +5860,7 @@ let check_program program : tprogram =
             walk t;
             if List.length !paths <> before then changed := true)
             s.sfields_ty)
-        mono_structs;
+        (struct_index @ mono_structs);
       List.iter (fun (e : enum_sig) ->
         if List.mem e.ename_path !paths then
           List.iter (fun (v : variant_sig) ->
@@ -5808,7 +5870,7 @@ let check_program program : tprogram =
               if List.length !paths <> before then changed := true)
               v.vsfields)
             e.evariants)
-        mono_enums
+        (enum_index @ mono_enums)
     done;
     !paths
   in
