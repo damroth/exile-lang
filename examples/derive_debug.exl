@@ -1,0 +1,72 @@
+// @derive(Debug) — auto-generated writer-pattern formatter.
+// Synthesizes `impl Debug for T { fn fmt(*self, out: *StringBuilder) }`
+// that renders in Rust's `{:?}` shape:
+//
+//   - struct  → `S { f1: ..., f2: ... }`  (empty `S`)
+//   - enum unit variant   → `E::V`
+//   - enum tuple variant  → `E::V(x1, x2)`
+//   - enum struct variant → `E::V { f: x }`
+//
+// Primitive fields land inline (push_int for int-like, "true"/"false"
+// for bool, quoted push_str for str).  Other field types must impl
+// Debug; the synth recurses through `.fmt(out)`, threading the same
+// builder so a nested struct adds no intermediate allocation.
+//
+// `Display` is the hand-written sibling — `@derive(Display)` is
+// rejected on purpose ("user-controlled output").
+
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+}
+
+@derive(Debug)
+struct Point { x: int, y: int }
+
+@derive(Debug)
+enum Shape {
+    Dot
+    | Segment(int, int)
+    | Tagged { id: int, name: str }
+}
+
+fn main() {
+    let a = raw::make_c_allocator();
+
+    // Struct: "Point { x: 7, y: -42 }" — 21 bytes.
+    let mut sb = StringBuilder::with_capacity(a, 4 as u32);
+    let p = Point { x: 7, y: -42 };
+    p.fmt(&sb);
+    println(sb.length() as int);              // 21
+    let v = sb.as_slice();
+    println(v[0] as int);                      // 80  ('P')
+    println(v[11] as int);                     // 55  ('7')
+    println(v[20] as int);                     // 125 ('}')
+
+    // Unit variant: "Shape::Dot" — 10 bytes.
+    let mut sb2 = StringBuilder::with_capacity(a, 4 as u32);
+    let dot = Shape::Dot;
+    dot.fmt(&sb2);
+    println(sb2.length() as int);             // 10
+
+    // Tuple variant: "Shape::Segment(1, 2)" — 20 bytes.
+    let mut sb3 = StringBuilder::with_capacity(a, 4 as u32);
+    let seg = Shape::Segment(1, 2);
+    seg.fmt(&sb3);
+    println(sb3.length() as int);             // 20
+    let v3 = sb3.as_slice();
+    println(v3[15] as int);                    // 49 ('1')
+    println(v3[18] as int);                    // 50 ('2')
+    println(v3[19] as int);                    // 41 (')')
+
+    // Struct variant: "Shape::Tagged { id: 5, name: "p" }" — 33 bytes.
+    let mut sb4 = StringBuilder::with_capacity(a, 4 as u32);
+    let tg = Shape::Tagged { id: 5, name: "p" };
+    tg.fmt(&sb4);
+    println(sb4.length() as int);             // 33
+    let v4 = sb4.as_slice();
+    println(v4[20] as int);                    // 53 ('5')
+    println(v4[29] as int);                    // 34 ('"' opening str quote)
+    println(v4[30] as int);                    // 112 ('p')
+    println(v4[31] as int);                    // 34 ('"' closing quote)
+    println(v4[32] as int);                    // 125 ('}')
+}

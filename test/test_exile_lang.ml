@@ -666,7 +666,7 @@ let () =
     "@derive(Ord)\n\
      struct P { x: int }\n\
      fn main() { let a = P { x: 1 }; println(a.x); }\n"
-    "cannot derive 'Ord' (supported: Eq, Hash, Clone)";
+    "cannot derive 'Ord' (supported: Eq, Hash, Clone, Debug)";
 
   (* `Display` / `Debug` — prelude traits, writer pattern.  The user
      writes `impl Display for Foo { fn fmt( * self, out: *StringBuilder)
@@ -679,7 +679,7 @@ let () =
     "@derive(Display)\n\
      struct P { x: int }\n\
      fn main() { println(1); }\n"
-    "cannot derive 'Display' (supported: Eq, Hash, Clone)";
+    "cannot derive 'Display' — Display is a hand-written surface; use `@derive(Debug)` for an automatically-generated formatter";
 
   check_error "impl Display with the wrong fmt signature rejected"
     "struct P { x: int }\n\
@@ -688,6 +688,24 @@ let () =
      }\n\
      fn main() { println(1); }\n"
     "method 'fmt': parameter 'out' type does not match trait 'Display'";
+
+  (* @derive(Debug) synthesizes an `impl Debug for T` whose fmt body
+     pushes the Rust-style `{:?}` rendering into the caller's
+     StringBuilder.  Primitive fields land via push_int / push_byte
+     for bool literal / quoted push_str for str; struct/enum fields
+     recurse through their own Debug impls. *)
+  check_error "@derive(Debug) on a generic struct rejected (MVP)"
+    "@derive(Debug)\n\
+     struct Box<T> { v: T }\n\
+     fn main() { println(1); }\n"
+    "@derive(Debug) on a generic struct 'Box' is not supported yet";
+
+  check_error "@derive(Debug) on a struct with a non-Debug field rejected"
+    "struct Inner { v: int }\n\
+     @derive(Debug)\n\
+     struct Outer { i: Inner }\n\
+     fn main() { println(1); }\n"
+    "no method 'fmt' on type 'Inner'";
 
   check_error "@derive on a generic struct rejected (MVP)"
     "@derive(Eq)\n\

@@ -5245,8 +5245,163 @@ let derive_hash_enum (e : Ast.enum_decl) : Ast.item =
   Ast.Impl { itparams = []; itrait = Some ["Hash"]; iassoc = [];
              itarget = [e.ename]; iitems = [m]; ipos = pos }
 
+(* @derive(Debug) helpers — writer-pattern body synthesis.  Output
+   format mirrors Rust's `{:?}` shape: struct `S { f: ..., g: ... }`,
+   unit / tuple / struct enum variants `E::V`, `E::V(..)`, `E::V { f:
+   .. }`.  Primitive fields land inline (push_int / push_byte for
+   bool / quoted push_str for str); other field types must impl Debug
+   and recurse through `.fmt(out)` (conformance enforces). *)
+let derive_debug_push_str s pos =
+  Ast.ExprStmt (Ast.MethodCall {
+    receiver = Ast.Var ("out", pos);
+    name = "push_str";
+    args = [ Ast.StringLit (s, pos) ];
+    pos })
+
+let derive_debug_push_byte b pos =
+  Ast.ExprStmt (Ast.MethodCall {
+    receiver = Ast.Var ("out", pos);
+    name = "push_byte";
+    args = [ Ast.Cast (Ast.IntLit (b, pos),
+                       Ast.TyInt { signed = false; width = Ast.W8 }, pos) ];
+    pos })
+
+(* Render a single value expression into `out`.  Primitive int-like
+   types push as decimal (i32-cast for narrower / wider integers);
+   bool branches to a literal push; str pushes quoted; anything else
+   recurses through the type's own Debug impl via `.fmt(out)`. *)
+let derive_debug_render_value (e : Ast.expr) (ty : Ast.type_ann) pos =
+  let i32_ann = Ast.TyInt { signed = true; width = Ast.W32 } in
+  match ty with
+  | Ast.TyInt _ | Ast.TyCInt _ | Ast.TyCShort _ | Ast.TyCLong _
+  | Ast.TyCChar | Ast.TyCSChar | Ast.TyCUChar ->
+      [ Ast.ExprStmt (Ast.MethodCall {
+          receiver = Ast.Var ("out", pos);
+          name = "push_int";
+          args = [ Ast.Cast (e, i32_ann, pos) ];
+          pos }) ]
+  | Ast.TyBool ->
+      [ Ast.ExprStmt (Ast.If {
+          cond = e;
+          then_blk = [ derive_debug_push_str "true" pos ];
+          else_blk = Some [ derive_debug_push_str "false" pos ];
+          pos }) ]
+  | Ast.TyStr ->
+      [ derive_debug_push_byte 34 pos;
+        Ast.ExprStmt (Ast.MethodCall {
+          receiver = Ast.Var ("out", pos);
+          name = "push_str";
+          args = [ e ]; pos });
+        derive_debug_push_byte 34 pos ]
+  | _ ->
+      [ Ast.ExprStmt (Ast.MethodCall {
+          receiver = e; name = "fmt";
+          args = [ Ast.Var ("out", pos) ]; pos }) ]
+
+(* Interleave a separator stmt-list between rendered chunks. *)
+let derive_debug_join sep chunks =
+  match chunks with
+  | [] -> []
+  | x :: rest -> List.fold_left (fun acc c -> acc @ sep @ c) x rest
+
+let derive_debug_sb_ann =
+  Ast.TyPtr (Ast.TyStruct { path = ["StringBuilder"]; args = [] })
+
+let derive_debug_mk_fmt target body pos =
+  let self_p = derive_field_param "self" (Ast.TyPtr target) in
+  let out_p =
+    { Ast.pname = "out"; pty = derive_debug_sb_ann;
+      preg = None; is_mut = false }
+  in
+  derive_mk_method "fmt" [self_p; out_p] None body pos
+
+let derive_debug_struct (s : Ast.struct_decl) : Ast.item =
+  let pos = s.spos in
+  let target = Ast.TyStruct { path = [s.sname]; args = [] } in
+  let self_v = Ast.Var ("self", pos) in
+  let body =
+    match s.sfields with
+    | [] -> [ derive_debug_push_str s.sname pos ]
+    | _ ->
+        let field_chunks =
+          List.map (fun (fname, fty) ->
+            let access = Ast.FieldAccess (self_v, fname, pos) in
+            derive_debug_push_str (fname ^ ": ") pos
+            :: derive_debug_render_value access fty pos)
+            s.sfields
+        in
+        derive_debug_push_str (s.sname ^ " { ") pos
+        :: (derive_debug_join [ derive_debug_push_str ", " pos ]
+              field_chunks)
+        @ [ derive_debug_push_byte 125 pos ]  (* '}' *)
+  in
+  let m = derive_debug_mk_fmt target body pos in
+  Ast.Impl { itparams = []; itrait = Some ["Debug"]; iassoc = [];
+             itarget = [s.sname]; iitems = [m]; ipos = pos }
+
+let derive_debug_enum (e : Ast.enum_decl) : Ast.item =
+  let pos = e.epos in
+  let target = Ast.TyStruct { path = [e.ename]; args = [] } in
+  let arms =
+    List.map (fun (v : Ast.enum_variant) ->
+      let prefix = e.ename ^ "::" ^ v.vname in
+      let (binds, body_stmts) =
+        match v.vkind with
+        | Ast.VUnit ->
+            (Ast.PBTuple [],
+             [ derive_debug_push_str prefix pos ])
+        | Ast.VTuple tys ->
+            let n = List.length tys in
+            let nm i = Printf.sprintf "__dd%d" i in
+            let pats = List.init n (fun i -> Ast.PVar (nm i, pos)) in
+            let chunks =
+              List.mapi (fun i ty ->
+                derive_debug_render_value (Ast.Var (nm i, pos)) ty pos)
+                tys
+            in
+            (Ast.PBTuple pats,
+             derive_debug_push_str (prefix ^ "(") pos
+             :: (derive_debug_join [ derive_debug_push_str ", " pos ]
+                   chunks)
+             @ [ derive_debug_push_byte 41 pos ])  (* ')' *)
+        | Ast.VStruct fields ->
+            let pats =
+              List.map (fun (n, _) ->
+                (n, Ast.PVar ("__dd_" ^ n, pos))) fields in
+            let chunks =
+              List.map (fun (n, ty) ->
+                derive_debug_push_str (n ^ ": ") pos
+                :: derive_debug_render_value
+                     (Ast.Var ("__dd_" ^ n, pos)) ty pos)
+                fields
+            in
+            (Ast.PBStruct pats,
+             derive_debug_push_str (prefix ^ " { ") pos
+             :: (derive_debug_join [ derive_debug_push_str ", " pos ]
+                   chunks)
+             @ [ derive_debug_push_byte 125 pos ])  (* '}' *)
+      in
+      let pat = Ast.PVariant { tname = [e.ename]; variant = v.vname;
+                               binds; pos } in
+      let arm_body = Ast.Block (body_stmts, pos) in
+      Ast.{ pat; guard = None; body = arm_body; arm_pos = pos })
+      e.evariants
+  in
+  (* `self` is a pointer-to-Self inside `fn fmt( * self, ...)`, so
+     the match scrutinee derefs to the enum value.  Field access
+     auto-derefs but pattern matching does not. *)
+  let body =
+    [ Ast.ExprStmt
+        (Ast.Match {
+          scrutinee = Ast.Deref (Ast.Var ("self", pos), pos);
+          arms; pos }) ]
+  in
+  let m = derive_debug_mk_fmt target body pos in
+  Ast.Impl { itparams = []; itrait = Some ["Debug"]; iassoc = [];
+             itarget = [e.ename]; iitems = [m]; ipos = pos }
+
 let expand_derives (program : Ast.program) : Ast.program =
-  let one ~kind ~name ~pos ~generic ~gen_eq ~gen_hash tr =
+  let one ~kind ~name ~pos ~generic ~gen_eq ~gen_hash ~gen_debug tr =
     let needs_mono trait =
       if generic then
         Error.failf pos
@@ -5257,13 +5412,14 @@ let expand_derives (program : Ast.program) : Ast.program =
     | "Eq" -> needs_mono "Eq"; gen_eq ()
     | "Clone" -> derive_clone ~name ~pos
     | "Hash" -> needs_mono "Hash"; gen_hash ()
-    | "Debug" ->
+    | "Debug" -> needs_mono "Debug"; gen_debug ()
+    | "Display" ->
         Error.failf pos
-          "@derive(Debug) needs a StringBuilder (deferred); use `@debug` \
-           for a direct-print debug helper for now"
+          "cannot derive 'Display' — Display is a hand-written surface; \
+           use `@derive(Debug)` for an automatically-generated formatter"
     | other ->
         Error.failf pos
-          "cannot derive '%s' (supported: Eq, Hash, Clone)" other
+          "cannot derive '%s' (supported: Eq, Hash, Clone, Debug)" other
   in
   let derived =
     List.concat_map (fun item ->
@@ -5272,12 +5428,16 @@ let expand_derives (program : Ast.program) : Ast.program =
           List.map (one ~kind:"struct" ~name:s.sname ~pos:s.spos
                       ~generic:(s.stparams <> [])
                       ~gen_eq:(fun () -> derive_eq_struct s)
-                      ~gen_hash:(fun () -> derive_hash_struct s)) s.sderives
+                      ~gen_hash:(fun () -> derive_hash_struct s)
+                      ~gen_debug:(fun () -> derive_debug_struct s))
+            s.sderives
       | Ast.Enum e when e.ederives <> [] ->
           List.map (one ~kind:"enum" ~name:e.ename ~pos:e.epos
                       ~generic:(e.etparams <> [])
                       ~gen_eq:(fun () -> derive_eq_enum e)
-                      ~gen_hash:(fun () -> derive_hash_enum e)) e.ederives
+                      ~gen_hash:(fun () -> derive_hash_enum e)
+                      ~gen_debug:(fun () -> derive_debug_enum e))
+            e.ederives
       | _ -> [])
       program
   in
@@ -5976,21 +6136,49 @@ let check_program program : tprogram =
     || List.exists (fun (_, t) -> typ_mentions target t) tf.tf_lets
   in
   let is_from_prelude tf = tf.tf_func.Ast.pos.file = "<prelude>" in
-  let used_in_user_code path =
-    (* Prelude-origin methods (e.g. `StringBuilder::with_capacity`) all
-       mention their own struct in self/ret — they'd vote themselves
-       live.  A mono prelude type is "used" only when concrete USER
-       code (or a USER-driven monomorphic instance) references it. *)
-    List.exists
-      (fun tf ->
-        tf.tf_func.Ast.tparams = []
-        && not (is_from_prelude tf)
-        && tfunc_mentions path tf)
-      tp_funcs
+  (* Prelude-origin methods (e.g. `StringBuilder::with_capacity`) all
+     mention their own struct in self/ret — they'd vote themselves
+     live.  A mono prelude type is "used" only when concrete USER
+     code (or a USER-driven monomorphic instance) references it.
+     Transitively: if `String` is used and its `alloc: Allocator`
+     field pulls Allocator in, Allocator stays — otherwise the
+     emitted C declares `struct ex_String { ... struct ex_Allocator
+     alloc; }` without a definition for ex_Allocator. *)
+  let user_direct =
+    List.filter
+      (fun n ->
+        List.exists
+          (fun tf ->
+            tf.tf_func.Ast.tparams = []
+            && not (is_from_prelude tf)
+            && tfunc_mentions [n] tf)
+          tp_funcs)
+      prelude_mono_struct_names
+  in
+  let used_prelude =
+    let keep = ref user_direct in
+    let changed = ref true in
+    while !changed do
+      changed := false;
+      List.iter (fun (s : struct_sig) ->
+        match s.sname_path with
+        | [n] when List.mem n !keep ->
+            List.iter (fun (_, t) ->
+              List.iter (fun candidate ->
+                if List.mem candidate prelude_mono_struct_names
+                   && not (List.mem candidate !keep)
+                   && typ_mentions [candidate] t
+                then (keep := candidate :: !keep; changed := true))
+                prelude_mono_struct_names)
+              s.sfields_ty
+        | _ -> ())
+        struct_index
+    done;
+    !keep
   in
   let struct_drop_set =
     List.filter
-      (fun n -> not (used_in_user_code [n]))
+      (fun n -> not (List.mem n used_prelude))
       prelude_mono_struct_names
   in
   let struct_index =

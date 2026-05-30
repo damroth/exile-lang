@@ -59,17 +59,30 @@ let is_silenced_name n =
    as a read — `let f = add; f(40, 2)` shouldn't warn.  Global fn names
    (`ex_add`, `mod__foo`) won't collide with let names so the extra
    entries are harmless noise. *)
-let reads_in_expr acc (e : texpr) =
-  fold_texpr (fun acc te ->
-    match te.e with
+(* TBlock's `stmts` aren't surfaced by [texpr_children] (see the
+   comment there) — multi-stmt match arm bodies wrap their stmts
+   in a Block, and a pure `fold_texpr` walker would miss reads
+   nested in those stmts.  Mutually recurse with [reads_in_stmts]
+   so the walker dives in. *)
+let rec reads_in_expr acc (e : texpr) =
+  let acc = match e.e with
     | TVar n | TFnRef n -> n :: acc
     | TCall { mangled; _ } -> mangled :: acc
-    | _ -> acc)
-    acc e
+    | _ -> acc
+  in
+  match e.e with
+  | TBlock { stmts; trailing } ->
+      let acc = reads_in_stmts acc stmts in
+      (match trailing with
+       | Some t -> reads_in_expr acc t
+       | None -> acc)
+  | _ ->
+      List.fold_left reads_in_expr acc (texpr_children e)
 
-let reads_in_stmts acc stmts =
-  List.fold_left (fold_tstmt (fun acc s ->
-    List.fold_left reads_in_expr acc (tstmt_own_exprs s)))
+and reads_in_stmts acc stmts =
+  List.fold_left (fun acc s ->
+    let acc = List.fold_left reads_in_expr acc (tstmt_own_exprs s) in
+    reads_in_stmts acc (tstmt_substmts s))
     acc stmts
 
 (* Collect (name, pos) for every TLet / TLetTuple binding in the tree.
