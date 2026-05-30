@@ -4699,6 +4699,86 @@ let prelude_items () =
         { Ast.pname = "s"; pty = Ast.TyStr; preg = None; is_mut = false } ]
       None push_str_body
   in
+  (* push_int( * self, n): decimal render through push_byte.  Negative
+     values prefix '-' and work in u32 so i32::min (whose negation
+     would overflow signed) still round-trips correctly — `0u - n_u`
+     wraps to the right absolute value.  Digits go to a 10-byte stack
+     buffer in reverse, then pushed in forward order. *)
+  let i32_t = Ast.TyInt { signed = true; width = Ast.W32 } in
+  let push_int_body =
+    let self_v = Ast.Var ("self", pos) in
+    let n_v = Ast.Var ("n", pos) in
+    let push_byte_b b =
+      Ast.ExprStmt (methcall self_v "push_byte" [ int_lit_as b u8_t ])
+    in
+    [
+      Ast.ExprStmt (Ast.If {
+        cond = bin Ast.EqEq n_v (int_lit 0);
+        then_blk = [
+          push_byte_b 48;   (* '0' *)
+          Ast.Return (None, pos);
+        ];
+        else_blk = None; pos });
+      Ast.Let { name = "u"; is_mut = true; ty_ann = Some u32_t;
+                value = u32_lit 0; pos };
+      Ast.ExprStmt (Ast.If {
+        cond = bin Ast.Lt n_v (int_lit 0);
+        then_blk = [
+          push_byte_b 45;   (* '-' *)
+          Ast.Assign { path = ["u"];
+                       value = bin Ast.Sub (u32_lit 0)
+                                            (Ast.Cast (n_v, u32_t, pos));
+                       pos };
+        ];
+        else_blk = Some [
+          Ast.Assign { path = ["u"];
+                       value = Ast.Cast (n_v, u32_t, pos);
+                       pos };
+        ]; pos });
+      Ast.Let { name = "digits"; is_mut = true;
+                ty_ann = Some (Ast.TyArray
+                                 { elem = u8_t; size = Ast.IntLit (10, pos) });
+                value = Ast.ArrayRepeat { value = int_lit_as 0 u8_t;
+                                          count = Ast.IntLit (10, pos); pos };
+                pos };
+      Ast.Let { name = "idx"; is_mut = true; ty_ann = Some u32_t;
+                value = u32_lit 0; pos };
+      Ast.While {
+        cond = bin Ast.Gt (Ast.Var ("u", pos)) (u32_lit 0);
+        body = [
+          Ast.AssignIndex {
+            base = Ast.Var ("digits", pos);
+            index = Ast.Var ("idx", pos);
+            value = Ast.Cast (
+              bin Ast.Add (u32_lit 48)
+                          (bin Ast.Mod (Ast.Var ("u", pos)) (u32_lit 10)),
+              u8_t, pos);
+            pos };
+          Ast.Assign { path = ["u"];
+                       value = bin Ast.Div (Ast.Var ("u", pos)) (u32_lit 10);
+                       pos };
+          Ast.Assign { path = ["idx"];
+                       value = bin Ast.Add (Ast.Var ("idx", pos)) (u32_lit 1);
+                       pos };
+        ] };
+      Ast.While {
+        cond = bin Ast.Gt (Ast.Var ("idx", pos)) (u32_lit 0);
+        body = [
+          Ast.Assign { path = ["idx"];
+                       value = bin Ast.Sub (Ast.Var ("idx", pos)) (u32_lit 1);
+                       pos };
+          Ast.ExprStmt (methcall self_v "push_byte"
+            [ Ast.Index { base = Ast.Var ("digits", pos);
+                          index = Ast.Var ("idx", pos); pos } ]);
+        ] };
+    ]
+  in
+  let push_int_method =
+    mk_sb_method "push_int"
+      [ sb_self_ptr_param;
+        { Ast.pname = "n"; pty = i32_t; preg = None; is_mut = false } ]
+      None push_int_body
+  in
   let sb_impl = {
     Ast.itparams = []; itrait = None; iassoc = [];
     itarget = ["StringBuilder"];
@@ -4707,12 +4787,12 @@ let prelude_items () =
       grow_method;
       push_byte_method;
       push_str_method;
+      push_int_method;
       length_method;
       as_slice_method;
     ];
     ipos = pos;
   } in
-  let _ = int_lit in  (* kept for the upcoming push_int *)
   (* `Iterator` — the prelude iteration protocol.  `for x in <value>`
      desugars to `loop { match value.next() { Some(x) => … | None =>
      break } }` for any type that `impl Iterator`.  `next` takes `*self`

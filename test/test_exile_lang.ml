@@ -2317,6 +2317,13 @@ let () =
      fn main() { println(1); }\n"
     "argument 1 of 'StringBuilder::push_str': expected str, got i32";
 
+  check_error "StringBuilder::push_int rejects a str argument"
+    "fn touch(sb: *StringBuilder) {\n\
+    \    sb.push_int(\"42\");\n\
+     }\n\
+     fn main() { println(1); }\n"
+    "argument 1 of 'StringBuilder::push_int': expected i32, got str";
+
   check "user `mod Allocator { fn ... }` not confused with prelude impl"
     "mod Allocator {\n\
     \    pub fn helper() -> int { return 1; }\n\
