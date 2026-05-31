@@ -1,9 +1,11 @@
 /* Companion stub for allocator_demo.exl.  Wires the prelude
  * Allocator struct to libc malloc/free.  Defining the thunks +
- * factory C-side keeps the size_t skew (different widths across
- * targets — unsigned long on 64-bit Linux, narrower on m68k) on
- * the C side: exile passes a u32 byte-count through the seam, the
- * thunk casts to size_t on its way to malloc. */
+ * factory C-side keeps the size_t skew on the C side: exile
+ * passes a u32 byte-count through the seam, the thunk casts to
+ * size_t on its way to malloc.  The free thunk receives the
+ * matching byte-count (DR-004 size-on-free) but libc free
+ * ignores it — the size is what an Amiga FreeMem / arena / pool
+ * / kernel ward-region backend actually needs. */
 
 #include <stdlib.h>
 
@@ -11,10 +13,10 @@
  * for the prelude `Allocator`.  Fields declared in source order:
  *   state : *c_void
  *   alloc_fn : fn(*c_void, u32) -> *c_void
- *   free_fn  : fn(*c_void, *c_void)
+ *   free_fn  : fn(*c_void, *c_void, u32) -> void
  * Keep this synchronized with prelude_items() in lib/typecheck.ml. */
 typedef void *(*alloc_fn_t)(void *, unsigned long);
-typedef void (*free_fn_t)(void *, void *);
+typedef void (*free_fn_t)(void *, void *, unsigned long);
 
 struct ex_Allocator {
     void *state;
@@ -27,8 +29,9 @@ static void *c_alloc_thunk(void *_state, unsigned long n) {
     return malloc((size_t)n);
 }
 
-static void c_free_thunk(void *_state, void *p) {
+static void c_free_thunk(void *_state, void *p, unsigned long _n) {
     (void)_state;
+    (void)_n;
     free(p);
 }
 

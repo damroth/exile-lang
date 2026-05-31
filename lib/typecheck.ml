@@ -4396,8 +4396,18 @@ let prelude_items () =
          params = [ cvoid_ptr;
                     Ast.TyInt { signed = false; width = Ast.W32 } ];
          ret = Some cvoid_ptr });
+      (* `free_fn` carries the byte-count back to the allocator (DR-004
+         size-on-free): libc free ignores it but Amiga FreeMem / arena /
+         pool / kernel ward-region need the size to reclaim — without
+         the size param every non-libc allocator breaks.  Cheap-now
+         (size_of(T) is a compile-time constant for typed free; the
+         buffer types track their own cap/len), expensive-later
+         (every Allocator consumer locks the signature). *)
       ("free_fn",
-       Ast.TyFnPtr { params = [cvoid_ptr; cvoid_ptr]; ret = None });
+       Ast.TyFnPtr {
+         params = [ cvoid_ptr; cvoid_ptr;
+                    Ast.TyInt { signed = false; width = Ast.W32 } ];
+         ret = None });
     ];
     spos = prelude_pos;
     sis_pub = true;
@@ -4427,11 +4437,17 @@ let prelude_items () =
       pos);
   ] in
   let free_body = [
-    (* self.free_fn(self.state, p as *c_void); *)
+    (* self.free_fn(self.state, p as *c_void, size_of(T) as u32);
+       size_of(T) is a compile-time constant for typed free, so the
+       seam carries the byte-count back to the allocator without
+       any runtime tracking on the caller side. *)
     Ast.ExprStmt (Ast.MethodCall {
       receiver = var "self"; name = "free_fn";
       args = [ Ast.FieldAccess (var "self", "state", pos);
-               Ast.Cast (var "p", cvoid_ptr, pos) ];
+               Ast.Cast (var "p", cvoid_ptr, pos);
+               Ast.Cast (Ast.SizeOf (tvar "T", pos),
+                         Ast.TyInt { signed = false; width = Ast.W32 },
+                         pos) ];
       pos;
     });
   ] in
@@ -4603,10 +4619,13 @@ let prelude_items () =
                                  value = bin Ast.Add (Ast.Var ("i", pos))
                                            (u32_lit 1); pos };
                   ] };
-      (* free old buffer: alloc.free_fn(alloc.state, buf as *c_void) *)
+      (* free old buffer: alloc.free_fn(alloc.state, buf, OLD cap).
+         cap is updated AFTER the free so the seam receives the
+         byte-count of the buffer being released. *)
       Ast.ExprStmt (methcall self_alloc "free_fn"
         [ field self_alloc "state";
-          Ast.Cast (field self_v "buf", cvoid_ptr, pos) ]);
+          Ast.Cast (field self_v "buf", cvoid_ptr, pos);
+          field self_v "cap" ]);
       Ast.AssignField { target = self_v; field = "buf";
                         value = Ast.Var ("new_buf", pos); pos };
       Ast.AssignField { target = self_v; field = "cap";
@@ -4966,10 +4985,13 @@ let prelude_items () =
   let string_free_method =
     let self_v = Ast.Var ("self", pos) in
     let self_alloc = field self_v "alloc" in
+    (* The buffer was allocated as `len + 1` bytes (NUL terminator),
+       so the seam carries the matching size back to the allocator. *)
     mk_string_method "free" [ string_self_ptr_param ] None
       [ Ast.ExprStmt (methcall self_alloc "free_fn"
           [ field self_alloc "state";
-            Ast.Cast (field self_v "ptr", cvoid_ptr, pos) ]) ]
+            Ast.Cast (field self_v "ptr", cvoid_ptr, pos);
+            bin Ast.Add (field self_v "len") (u32_lit 1) ]) ]
   in
   let string_impl = {
     Ast.itparams = []; itrait = None; iassoc = [];

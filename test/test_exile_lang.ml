@@ -2354,6 +2354,23 @@ let () =
     "fn main() { println(1); }\n"
     "#include <stdio.h>\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(1));\n    return 0;\n}\n";
 
+  (* DR-004 size-on-free: `Allocator.free_fn` carries the byte-count
+     back to the allocator.  `alloc.free(p)` lowers to
+     `free_fn(state, p, size_of(T))` — the size is a compile-time
+     constant per monomorphic instance, so libc backends ignore it
+     while Amiga FreeMem / arena / kernel ward-region backends use it. *)
+  check "Allocator::free threads size_of(T) through free_fn"
+    "mod raw {\n\
+    \    extern fn make_a() -> Allocator;\n\
+     }\n\
+     fn main() {\n\
+    \    let a = raw::make_a();\n\
+    \    let p: *int = a.alloc();\n\
+    \    a.free(p);\n\
+    \    println(1);\n\
+     }\n"
+    "#include <stdio.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\n\nextern struct ex_Allocator make_a(void);\nlong *Allocator__alloc_i32(struct ex_Allocator self);\nvoid Allocator__free_i32(struct ex_Allocator self, long *p);\n\nint main(void) {\n    struct ex_Allocator a;\n    long *p;\n    a = make_a();\n    p = Allocator__alloc_i32(a);\n    Allocator__free_i32(a, p);\n    printf(\"%ld\\n\", (long)(1));\n    return 0;\n}\n\nlong *Allocator__alloc_i32(struct ex_Allocator self) {\n    return ((long *)(self.alloc_fn)(self.state, ((unsigned long)sizeof(long))));\n}\n\nvoid Allocator__free_i32(struct ex_Allocator self, long *p) {\n    (self.free_fn)(self.state, ((void *)p), ((unsigned long)sizeof(long)));\n}\n";
+
   (* StringBuilder prelude type — same DCE guarantee as Allocator: a
      hello-world that never names `StringBuilder` must not carry its
      struct decl, methods, or the `Slice<u8>` instance `as_slice`
