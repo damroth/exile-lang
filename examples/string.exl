@@ -3,18 +3,21 @@
 // SB is mutable / growable, `String` is the frozen owner you
 // hand around (Vec<String>, HashMap<String, ...>, etc.).
 //
-// v1 surface: `with_str`, `empty`, `length`, `as_slice`, `as_str`,
-// `free`.  Every constructor writes the trailing NUL so `as_str()`
-// hands back a libc-`%s`-safe pointer by construction (G1 from
-// the design).  `build(sb) -> String` (Faza 2) lands once a
-// minimal-move pass is in — the by-value transfer to caller would
-// alias `sb.buf` without a consume check.
+// Surface: `with_str`, `empty`, `build`, `length`, `as_slice`,
+// `as_str`, `free`.  Every constructor writes the trailing NUL so
+// `as_str()` hands back a libc-`%s`-safe pointer by construction
+// (graft G1 from the design).
 //
-// `eq` / `hash` / `clone` are not implemented yet: the prelude
-// `Eq` / `Hash` / `Clone` traits take by-value `self` (their
-// signatures predate `*const self`), which would alias `ptr` on
-// every call and double-free silently.  They'll land hand-written
-// once the move pass picks them up.
+// `String` and `StringBuilder` are both `@move`: the move-pass
+// rejects silent by-value copies of the buffer.  `let s2 = s;`
+// followed by `s.free()` is a use-after-consume error.  Reads go
+// through `*const String` (auto-ref'd by method dispatch), and
+// `defer s.free()` is the idiomatic single-point cleanup.
+//
+// `eq` / `hash` / `clone` for String are still pending: the
+// prelude `Eq` / `Hash` traits take by-value `self` (their
+// signatures haven't been re-borrowed yet).  They'll land
+// hand-written once the trait surfaces flip to `*const self`.
 
 pub mod raw {
     extern fn make_c_allocator() -> Allocator;
@@ -45,4 +48,18 @@ fn main() {
     let e = String::empty(a);
     println(e.length() as int);            // 0
     e.free();
+
+    // `build(sb)` consumes a StringBuilder and projects its
+    // backing buffer into a String — O(1) transfer, no extra
+    // copy.  The move-pass forbids reusing `sb` after `build`
+    // (it would alias the buffer that String now owns).
+    let mut sb = StringBuilder::with_capacity(a, 4 as u32);
+    sb.push_str("built ");                 // 6 bytes
+    sb.push_int(2026);                     // 4 bytes
+    let s = String::build(sb);             // sb consumed here
+    println(s.length() as int);            // 10
+    let v2 = s.as_slice();
+    println(v2[0] as int);                  // 98  ('b')
+    println(v2[6] as int);                  // 50  ('2')
+    s.free();
 }

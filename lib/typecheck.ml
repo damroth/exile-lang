@@ -4506,7 +4506,11 @@ let prelude_items () =
     spos = prelude_pos;
     sis_pub = true;
     stier_hint = Some "full";
-    sis_debug = false; sderives = []; sis_move = false;
+    (* @move: a by-value copy of `StringBuilder` would alias `buf`,
+       and the first `grow()` on either copy would free the other's
+       backing storage.  The move-pass forbids the silent copy at
+       compile time. *)
+    sis_debug = false; sderives = []; sis_move = true;
   } in
   let int_lit n = Ast.IntLit (n, pos) in
   let int_lit_as n ann = Ast.Cast (Ast.IntLit (n, pos), ann, pos) in
@@ -4851,7 +4855,12 @@ let prelude_items () =
     spos = prelude_pos;
     sis_pub = true;
     stier_hint = Some "full";
-    sis_debug = false; sderives = []; sis_move = false;
+    (* @move: `String` owns its `ptr` — a by-value copy would alias
+       the buffer and `s.free()` on either copy would invalidate the
+       other.  The move-pass forces callers to thread `*String`
+       borrows for reads and to consume explicitly at `s.free()` or
+       at insert sites (`vec.push(s)` once Vec<String> lands). *)
+    sis_debug = false; sderives = []; sis_move = true;
   } in
   let string_struct_ann = Ast.TyStruct { path = ["String"]; args = [] } in
   let string_self_ptr_param =
@@ -4994,12 +5003,42 @@ let prelude_items () =
             Ast.Cast (field self_v "ptr", cvoid_ptr, pos);
             bin Ast.Add (field self_v "len") (u32_lit 1) ]) ]
   in
+  (* build(sb) — Faza A3 of OwnedStr/String.  Consumes the
+     StringBuilder by value (legal now that @move + Move.check are
+     in: the by-value param marks the caller's sb Consumed, so a
+     subsequent `sb.push_*` would error), writes the NUL terminator
+     at [sb.len] so `as_str()` stays %s-safe, and projects the
+     remaining fields into a fresh `String`.  Zero-copy: the buffer
+     ownership transfers, `cap` is dropped (accepted tail-waste). *)
+  let build_body =
+    let sb_v = Ast.Var ("sb", pos) in
+    [
+      Ast.AssignIndex {
+        base = field sb_v "buf";
+        index = field sb_v "len";
+        value = int_lit_as 0 u8_t; pos };
+      Ast.Return (Some (Ast.StructLit {
+        tname = ["String"];
+        fields = [
+          ("ptr", field sb_v "buf");
+          ("len", field sb_v "len");
+          ("alloc", field sb_v "alloc");
+        ]; base = None; pos }), pos);
+    ]
+  in
+  let build_method =
+    mk_string_method "build"
+      [ { Ast.pname = "sb"; pty = sb_struct_ann;
+          preg = None; is_mut = false } ]
+      (Some string_struct_ann) build_body
+  in
   let string_impl = {
     Ast.itparams = []; itrait = None; iassoc = [];
     itarget = ["String"];
     iitems = [
       with_str_method;
       empty_method;
+      build_method;
       string_length_method;
       string_as_slice_method;
       string_as_str_method;
@@ -6199,21 +6238,34 @@ let check_program program : tprogram =
   let used_prelude =
     let keep = ref user_direct in
     let changed = ref true in
+    let add_from_typ t =
+      List.iter (fun candidate ->
+        if List.mem candidate prelude_mono_struct_names
+           && not (List.mem candidate !keep)
+           && typ_mentions [candidate] t
+        then (keep := candidate :: !keep; changed := true))
+        prelude_mono_struct_names
+    in
     while !changed do
       changed := false;
+      (* Struct fields of a kept prelude struct keep their referenced
+         preludes alive (an embedded `alloc: Allocator` pulls Allocator). *)
       List.iter (fun (s : struct_sig) ->
         match s.sname_path with
         | [n] when List.mem n !keep ->
-            List.iter (fun (_, t) ->
-              List.iter (fun candidate ->
-                if List.mem candidate prelude_mono_struct_names
-                   && not (List.mem candidate !keep)
-                   && typ_mentions [candidate] t
-                then (keep := candidate :: !keep; changed := true))
-                prelude_mono_struct_names)
-              s.sfields_ty
+            List.iter (fun (_, t) -> add_from_typ t) s.sfields_ty
         | _ -> ())
-        struct_index
+        struct_index;
+      (* Method signatures of a kept prelude struct also count
+         (`String::build(sb: StringBuilder)` keeps StringBuilder
+         alive even though String's fields don't reference it). *)
+      List.iter (fun tf ->
+        match tf.tf_path with
+        | [n] when List.mem n !keep && is_from_prelude tf ->
+            List.iter add_from_typ tf.tf_param_tys;
+            Option.iter add_from_typ tf.tf_ret_ty
+        | _ -> ())
+        tp_funcs
     done;
     !keep
   in

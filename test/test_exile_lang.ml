@@ -721,6 +721,35 @@ let () =
      A `defer drop(&a)` that captures `a` errors if `a` is consumed
      anywhere in the surrounding scope — defer can't fire on a moved
      binding without re-using freed memory. *)
+  (* Prelude `String` and `StringBuilder` are `@move`: the silent
+     `let s2 = s; s.free()` double-free pattern is rejected
+     structurally now that they wear the affine marker. *)
+  check_error "double `String::free` via aliased let-rebind rejected"
+    "mod raw { extern fn make_a() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make_a();\n\
+    \    let s = String::with_str(a, \"x\");\n\
+    \    let s2 = s;\n\
+    \    s.free();\n\
+    \    s2.free();\n\
+     }\n"
+    "use of 's' after it was consumed at <input>:5:14 (move-marked types are use-at-most-once — borrow with '&s' / take '*const String' or clone to keep the source live)";
+
+  (* `String::build(sb)` consumes the StringBuilder.  Subsequent use
+     of `sb` (`push_*`, `length`, etc.) errors — the buffer ownership
+     has transferred. *)
+  check_error "StringBuilder consumed by `String::build`, subsequent push_str rejected"
+    "mod raw { extern fn make_a() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make_a();\n\
+    \    let mut sb = StringBuilder::with_capacity(a, 4 as u32);\n\
+    \    sb.push_str(\"hi\");\n\
+    \    let s = String::build(sb);\n\
+    \    sb.push_str(\"!\");\n\
+    \    println(s.length() as int);\n\
+     }\n"
+    "use of 'sb' after it was consumed at <input>:6:27 (move-marked types are use-at-most-once — borrow with '&sb' / take '*const StringBuilder' or clone to keep the source live)";
+
   check_error "@move binding consumed in scope, defer that reads it rejected"
     "@move\n\
      struct Owner { tag: int }\n\
