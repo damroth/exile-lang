@@ -156,7 +156,19 @@ let rec walk_expr ~structs live (te : texpr) =
         live (texpr_children te)
 
 and walk_stmts ~structs ~ret_ty live stmts =
-  List.fold_left (walk_stmt ~structs ~ret_ty) live stmts
+  (* Two-phase walk so `defer`-bodies see end-of-scope state in LIFO
+     order: gather defers as we encounter them; after the regular
+     stmts settle the live map, fire each defer body against the
+     accumulated state (newest-first, so a later defer's consume
+     can affect what an earlier defer sees). *)
+  let live, defers =
+    List.fold_left (fun (live, defers) s ->
+      match s with
+      | TDefer { body; _ } -> (live, body :: defers)
+      | _ -> (walk_stmt ~structs ~ret_ty live s, defers))
+      (live, []) stmts
+  in
+  List.fold_left (walk_stmts ~structs ~ret_ty) live defers
 
 and walk_stmt ~structs ~ret_ty live = function
   | TLet { name; value; _ } ->

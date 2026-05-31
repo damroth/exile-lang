@@ -717,6 +717,22 @@ let () =
   (* TMatch arm fork+merge: every non-diverging arm contributes to
      the post-match state.  All arms consume + fall through →
      Consumed post-match → use-after-consume on subsequent read. *)
+  (* TDefer is checked last against the end-of-scope state (LIFO).
+     A `defer drop(&a)` that captures `a` errors if `a` is consumed
+     anywhere in the surrounding scope — defer can't fire on a moved
+     binding without re-using freed memory. *)
+  check_error "@move binding consumed in scope, defer that reads it rejected"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn drop(o: *const Owner) { println(o.tag); }\n\
+     fn main() {\n\
+    \    let a = Owner { tag: 42 };\n\
+    \    defer drop(&a);\n\
+    \    println(take(a));\n\
+     }\n"
+    "use of 'a' after it was consumed at <input>:8:18 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
   check_error "@move binding consumed on every match arm errors on post-match use"
     "@move\n\
      struct Owner { tag: int }\n\
