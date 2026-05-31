@@ -5054,7 +5054,13 @@ let prelude_items () =
     trmethods = [ eq_sig; ne_default ]; trdefaults = [ "ne" ];
     trpos = pos; tris_pub = true;
   } in
-  let clone_sig = trait_sig "clone" [self_v] (Some Ast.TySelf) [] in
+  (* `Clone::clone` borrows self read-only so calling `s.clone()`
+     leaves `s` live — required once the move pass marks heap-owning
+     structs `@move` (DR-002 prereq).  Receiver is `*const Self`,
+     return is by-value `Self`. *)
+  let self_const_ptr_v = mk_param "self" (Ast.TyConstPtr Ast.TySelf) in
+  let clone_sig =
+    trait_sig "clone" [self_const_ptr_v] (Some Ast.TySelf) [] in
   let clone_trait = {
     Ast.trname = "Clone"; trassoc = []; trsupers = [];
     trmethods = [ clone_sig ]; trdefaults = [];
@@ -5203,13 +5209,18 @@ let derive_eq_enum (e : Ast.enum_decl) : Ast.item =
   Ast.Impl { itparams = []; itrait = Some ["Eq"]; iassoc = [];
              itarget = [e.ename]; iitems = [m]; ipos = pos }
 
-(* Clone is a trivial value copy — `fn clone(self) -> Self { self }` —
-   for both structs and enums (value semantics; deep clone arrives with
-   heap types). *)
+(* Clone is a trivial value copy — `fn clone( * const self) -> Self
+   { *self }` — for both structs and enums (value semantics; deep
+   clone arrives with heap types).  The `*const Self` receiver
+   leaves the source live so callers can compose `s.clone()` with
+   later uses of `s` once the move pass marks heap-owning structs
+   `@move`. *)
 let derive_clone ~name ~pos : Ast.item =
   let target = Ast.TyStruct { path = [name]; args = [] } in
-  let m = derive_mk_method "clone" [ derive_field_param "self" target ]
-    (Some target) [ Ast.Tail (Ast.Var ("self", pos)) ] pos in
+  let m = derive_mk_method "clone"
+    [ derive_field_param "self" (Ast.TyConstPtr target) ]
+    (Some target)
+    [ Ast.Tail (Ast.Deref (Ast.Var ("self", pos), pos)) ] pos in
   Ast.Impl { itparams = []; itrait = Some ["Clone"]; iassoc = [];
              itarget = [name]; iitems = [m]; ipos = pos }
 

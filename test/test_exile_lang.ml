@@ -639,7 +639,7 @@ let () =
     \    let b = a.clone();\n\
     \    println(b.x);\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_P { long x; };\n\nstruct ex_P P__clone(struct ex_P self);\n\nint main(void) {\n    struct ex_P a;\n    struct ex_P b;\n    a.x = 7;\n    b = P__clone(a);\n    printf(\"%ld\\n\", (long)(b.x));\n    return 0;\n}\n\nstruct ex_P P__clone(struct ex_P self) {\n    return self;\n}\n";
+    "#include <stdio.h>\n\nstruct ex_P { long x; };\n\nstruct ex_P P__clone(const struct ex_P *self);\n\nint main(void) {\n    struct ex_P a;\n    struct ex_P b;\n    a.x = 7;\n    b = P__clone(&a);\n    printf(\"%ld\\n\", (long)(b.x));\n    return 0;\n}\n\nstruct ex_P P__clone(const struct ex_P *self) {\n    return *self;\n}\n";
 
   check "@derive(Hash) synthesizes a multiplicative field fold"
     "@derive(Eq, Hash)\n\
