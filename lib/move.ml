@@ -61,11 +61,11 @@ let consume_var ~structs live (te : texpr) =
       set_consumed live n te.pos
   | _ -> live
 
-(* Merge two per-branch states (from TIf / future TMatch arms).  A
-   binding ends up Consumed iff Consumed on EVERY branch; otherwise
-   one path still has it live and reading it post-merge is legal.
-   Pos comes from the then-branch when both consume; arbitrary but
-   deterministic. *)
+(* Merge per-branch states.  A binding ends up Consumed iff Consumed
+   on EVERY non-diverging fall-through; a diverging branch (return /
+   break / continue / `try`-arm) can't reach the post-branch program
+   point so its state is dropped.  Pos comes from the first consuming
+   branch — arbitrary but deterministic. *)
 let merge_states a b =
   let names =
     List.sort_uniq compare (List.map fst a @ List.map fst b) in
@@ -77,6 +77,35 @@ let merge_states a b =
       | _ -> Live
     in (n, merged))
     names
+
+(* Predicate: does this expression unconditionally diverge?  Used to
+   drop branch states from the merge — a `try`-arm that early-returns
+   never reaches the post-match program point, so a consume inside
+   it can't make the post-match binding Consumed (the live path
+   doesn't run). *)
+let rec expr_diverges (te : texpr) =
+  match te.e with
+  | TMatch { arms; _ } ->
+      arms <> [] && List.for_all
+        (fun (a : tmatch_arm) -> a.tdiverges || expr_diverges a.tbody) arms
+  | TIfExpr { then_val; else_val; _ } ->
+      expr_diverges then_val && expr_diverges else_val
+  | TBlock { stmts; trailing } ->
+      stmts_diverge stmts
+      || (match trailing with
+          | Some t -> expr_diverges t
+          | None -> false)
+  | _ -> false
+
+and stmts_diverge stmts =
+  List.exists (fun s ->
+    match s with
+    | TReturn _ | TBreak _ | TContinue _ -> true
+    | TIf { then_body; else_body; _ } ->
+        stmts_diverge then_body && stmts_diverge else_body
+    | TExprStmt e -> expr_diverges e
+    | _ -> false)
+    stmts
 
 (* Walk an expression: validate every TVar read against the current
    state, then descend into sub-expressions.  Sub-call args are
@@ -96,6 +125,32 @@ let rec walk_expr ~structs live (te : texpr) =
       (match trailing with
        | Some e -> walk_expr ~structs live e
        | None -> live)
+  | TMatch { scrutinee; arms; _ } ->
+      let live = walk_expr ~structs live scrutinee in
+      (* Walk every arm for read-checking; only non-diverging arms
+         contribute to the post-merge state.  Empty match (no arms)
+         passes state through unchanged. *)
+      let contributions = List.filter_map (fun (a : tmatch_arm) ->
+        Option.iter (fun g -> ignore (walk_expr ~structs live g)) a.tguard;
+        let after = walk_expr ~structs live a.tbody in
+        if a.tdiverges || expr_diverges a.tbody then None
+        else Some after)
+        arms
+      in
+      (match contributions with
+       | [] -> live
+       | s :: rest -> List.fold_left merge_states s rest)
+  | TIfExpr { cond; then_val; else_val } ->
+      let live = walk_expr ~structs live cond in
+      let s_then = walk_expr ~structs live then_val in
+      let s_else = walk_expr ~structs live else_val in
+      let then_dvg = expr_diverges then_val in
+      let else_dvg = expr_diverges else_val in
+      (match then_dvg, else_dvg with
+       | true, true -> live
+       | true, false -> s_else
+       | false, true -> s_then
+       | false, false -> merge_states s_then s_else)
   | _ ->
       List.fold_left (walk_expr ~structs)
         live (texpr_children te)
@@ -131,23 +186,31 @@ and walk_stmt ~structs ~ret_ty live = function
       let live = walk_expr ~structs live cond in
       let s_then = walk_stmts ~structs ~ret_ty live then_body in
       let s_else = walk_stmts ~structs ~ret_ty live else_body in
-      merge_states s_then s_else
+      let then_dvg = stmts_diverge then_body in
+      let else_dvg = stmts_diverge else_body in
+      (match then_dvg, else_dvg with
+       | true, true -> live
+       | true, false -> s_else
+       | false, true -> s_then
+       | false, false -> merge_states s_then s_else)
   | TWhile { cond; body; post } ->
       let live = walk_expr ~structs live cond in
-      (* Conservative: walk one iteration, error if any tracked
-         binding becomes Consumed — re-iteration would re-consume. *)
-      let after =
-        walk_stmts ~structs ~ret_ty
-          (walk_stmts ~structs ~ret_ty live body) post in
-      List.iter (fun (n, st) ->
-        let pre = try List.assoc n live with Not_found -> Live in
-        match pre, st with
-        | Live, Consumed pos ->
-            Error.failf pos
-              "'%s' is consumed inside a loop body — the next iteration \
-               would re-consume the (already-moved) binding" n
-        | _ -> ())
-        after;
+      (* If every fall-through path through the body diverges (break /
+         return), no re-iteration happens and the consume is safe.
+         Otherwise any Live → Consumed transition would re-consume on
+         the next iter — reject. *)
+      let after_body = walk_stmts ~structs ~ret_ty live body in
+      let after = walk_stmts ~structs ~ret_ty after_body post in
+      if not (stmts_diverge body) then
+        List.iter (fun (n, st) ->
+          let pre = try List.assoc n live with Not_found -> Live in
+          match pre, st with
+          | Live, Consumed pos ->
+              Error.failf pos
+                "'%s' is consumed inside a loop body — the next iteration \
+                 would re-consume the (already-moved) binding" n
+          | _ -> ())
+          after;
       live
   | TFor _ | TForEach _ | TDefer _ | TBreak _ | TContinue _ -> live
 

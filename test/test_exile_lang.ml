@@ -696,6 +696,41 @@ let () =
      }\n"
     "#include <stdio.h>\n\nstruct ex_Owner { long tag; };\n\nstatic long ex_read(const struct ex_Owner *o);\nstatic long ex_take(struct ex_Owner o);\n\nstatic long ex_read(const struct ex_Owner *o) {\n    return o->tag;\n}\n\nstatic long ex_take(struct ex_Owner o) {\n    return o.tag;\n}\n\nint main(void) {\n    struct ex_Owner a;\n    a.tag = 7;\n    printf(\"%ld\\n\", (long)(ex_read(&a)));\n    printf(\"%ld\\n\", (long)(ex_read(&a)));\n    printf(\"%ld\\n\", (long)(ex_take(a)));\n    return 0;\n}\n";
 
+  (* Divergence oracle: a TIf branch that early-returns / breaks /
+     continues doesn't reach the post-branch program point, so its
+     consume can't make the binding Consumed post-merge.  Without
+     this, `if c { take(a); return; } take(a)` would false-positive
+     the second `take(a)` as use-after-consume. *)
+  check "@move binding consumed on early-return branch stays Live after the if"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn helper(a: Owner) -> int {\n\
+    \    if a.tag < 0 {\n\
+    \        return take(a);\n\
+    \    }\n\
+    \    return take(a);\n\
+     }\n\
+     fn main() { println(helper(Owner { tag: 1 })); }\n"
+    "#include <stdio.h>\n\nstruct ex_Owner { long tag; };\n\nstatic long ex_take(struct ex_Owner o);\nstatic long ex_helper(struct ex_Owner a);\n\nstatic long ex_take(struct ex_Owner o) {\n    return o.tag;\n}\n\nstatic long ex_helper(struct ex_Owner a) {\n    if (a.tag < 0) {\n        return ex_take(a);\n    }\n    return ex_take(a);\n}\n\nint main(void) {\n    struct ex_Owner __lift_0;\n    __lift_0.tag = 1;\n    printf(\"%ld\\n\", (long)(ex_helper(__lift_0)));\n    return 0;\n}\n";
+
+  (* TMatch arm fork+merge: every non-diverging arm contributes to
+     the post-match state.  All arms consume + fall through →
+     Consumed post-match → use-after-consume on subsequent read. *)
+  check_error "@move binding consumed on every match arm errors on post-match use"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn run(a: Owner) {\n\
+    \    match Option::Some(a.tag) {\n\
+    \        Option::Some(_) => { println(take(a)); }\n\
+    \        | Option::None  => { println(take(a)); }\n\
+    \    }\n\
+    \    println(take(a));\n\
+     }\n\
+     fn main() { run(Owner { tag: 42 }); }\n"
+    "use of 'a' after it was consumed at <input>:6:43 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
   check "@derive(Clone) synthesizes a value-copy clone"
     "@derive(Clone)\n\
      struct P { x: int }\n\
