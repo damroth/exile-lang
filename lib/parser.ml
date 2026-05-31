@@ -1581,6 +1581,18 @@ let rec parse_item s seen =
              | _ ->
                  Error.failf at_pos
                    "'@must_use' can only decorate fn / enum decls")
+       | "move" ->
+           (* `@move` marks a struct affine / use-at-most-once.  Picked up
+              by the DR-002 move-pass; a transitional spelling that retires
+              once `own *u8` (capability model) makes affine-ness inferable
+              from a field's type.  Enums are not supported in v1 — the
+              marker only describes by-value-aliasing structs (String,
+              StringBuilder, future Vec). *)
+           apply_to_next ~apply:(function
+             | Ast.Struct s -> Ast.Struct { s with sis_move = true }
+             | _ ->
+                 Error.failf at_pos
+                   "'@move' can only decorate struct decls")
        | "amiga_lib" ->
            expect s Token.LParen;
            let (base_name, _) =
@@ -1634,8 +1646,8 @@ let rec parse_item s seen =
        | other ->
            Error.failf at_pos
              "unknown attribute '@%s' (only '@c_include', '@tier', \
-              '@must_use', '@debug', '@doc', '@derive' and '@amiga_lib' \
-              are supported)"
+              '@must_use', '@move', '@debug', '@doc', '@derive' and \
+              '@amiga_lib' are supported)"
              other)
   | _ ->
       Error.failf (peek_pos s)
@@ -1682,7 +1694,8 @@ and parse_struct_decl s ~is_pub =
        Error.failf name_pos "duplicate field '%s' in struct '%s'" n name);
   Ast.{ sname = name; stparams; sfields = fields;
         spos = name_pos; sis_pub = is_pub;
-        stier_hint = None; sis_debug = false; sderives = [] }
+        stier_hint = None; sis_debug = false; sderives = [];
+        sis_move = false }
 
 (* `enum Foo { A | B(int) | C { f: T, ... } }` — variants SEPARATED by `|`
    (no leading `|`); the same `|` is the bitor operator elsewhere, here

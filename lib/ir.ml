@@ -199,6 +199,11 @@ type struct_sig = {
                                    Rust-Debug-style printer for this type
                                    and `print(v: TStruct path)` dispatches
                                    to it.  MVP: only mono structs. *)
+  ss_is_move : bool;            (* `@move` — affine / use-at-most-once.
+                                   Read by the DR-002 move-pass to gate
+                                   which bindings get consume tracking;
+                                   transitional marker that retires once
+                                   `own *u8` lands. *)
 }
 
 (* Enum signatures: variant order is preserved to give each variant a

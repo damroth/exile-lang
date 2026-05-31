@@ -631,6 +631,26 @@ let () =
      }\n"
     "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint P__eq(struct ex_P self, struct ex_P other);\nint P__ne(struct ex_P self, struct ex_P other);\n\nint main(void) {\n    struct ex_P a;\n    struct ex_P b;\n    a.x = 1;\n    a.y = 2;\n    b.x = 1;\n    b.y = 2;\n    if (P__eq(a, b)) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    return 0;\n}\n\nint P__eq(struct ex_P self, struct ex_P other) {\n    return self.x == other.x && self.y == other.y;\n}\n\nint P__ne(struct ex_P self, struct ex_P other) {\n    return !(P__eq(self, other));\n}\n";
 
+  (* `@move` — affine / use-at-most-once marker for heap-owning
+     structs.  Parser accepts and records on struct_sig
+     (`ss_is_move = true`); the DR-002 move-pass reads it in a
+     follow-up commit.  Today's commit is parsing only — no
+     enforcement, no codegen change. *)
+  check "@move struct parses; codegen unchanged"
+    "@move\n\
+     struct Owner { ptr: int, len: u32 }\n\
+     fn main() {\n\
+    \    let o = Owner { ptr: 0, len: 0 as u32 };\n\
+    \    println(o.ptr);\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Owner { long ptr; unsigned long len; };\n\nint main(void) {\n    struct ex_Owner o;\n    o.ptr = 0;\n    o.len = ((unsigned long)0);\n    printf(\"%ld\\n\", (long)(o.ptr));\n    return 0;\n}\n";
+
+  check_error "@move on an enum rejected (struct-only marker)"
+    "@move\n\
+     enum E { A | B }\n\
+     fn main() { println(1); }\n"
+    "'@move' can only decorate struct decls";
+
   check "@derive(Clone) synthesizes a value-copy clone"
     "@derive(Clone)\n\
      struct P { x: int }\n\

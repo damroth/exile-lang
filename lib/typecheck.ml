@@ -3754,7 +3754,8 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~
           sis_pub = s.sis_pub;
           stparams = s.stparams;
           sinstance_args = None;
-          sis_debug = s.sis_debug })
+          sis_debug = s.sis_debug;
+          ss_is_move = s.sis_move })
       struct_flat
   in
   List.map2
@@ -4363,13 +4364,13 @@ let prelude_items () =
     Ast.sname = "Range"; stparams = ["T"];
     sfields = [("lo", tvar "T"); ("hi", tvar "T")];
     spos = prelude_pos; sis_pub = true;
-    stier_hint = Some "core"; sis_debug = false; sderives = [];
+    stier_hint = Some "core"; sis_debug = false; sderives = []; sis_move = false;
   } in
   let range_inclusive_struct = {
     Ast.sname = "RangeInclusive"; stparams = ["T"];
     sfields = [("lo", tvar "T"); ("hi", tvar "T")];
     spos = prelude_pos; sis_pub = true;
-    stier_hint = Some "core"; sis_debug = false; sderives = [];
+    stier_hint = Some "core"; sis_debug = false; sderives = []; sis_move = false;
   } in
   (* `Slice<T>` — bounded view (read-only pointer + length).  MVP scope:
      indexing (`s[i]` lowers to `s.ptr[i]`), `.len` / `.ptr` field
@@ -4380,7 +4381,7 @@ let prelude_items () =
     sfields = [("ptr", Ast.TyConstPtr (tvar "T"));
                ("len", Ast.TyInt { signed = false; width = Ast.W32 })];
     spos = prelude_pos; sis_pub = true;
-    stier_hint = Some "core"; sis_debug = false; sderives = [];
+    stier_hint = Some "core"; sis_debug = false; sderives = []; sis_move = false;
   } in
   let alloc_struct = {
     Ast.sname = "Allocator";
@@ -4412,7 +4413,7 @@ let prelude_items () =
     spos = prelude_pos;
     sis_pub = true;
     stier_hint = Some "core";
-    sis_debug = false; sderives = [];
+    sis_debug = false; sderives = []; sis_move = false;
   } in
   (* Method bodies use the fn-ptr-field call syntax (`self.alloc_fn(...)`)
      directly — typecheck routes it through TIndirectCall when the
@@ -4505,7 +4506,7 @@ let prelude_items () =
     spos = prelude_pos;
     sis_pub = true;
     stier_hint = Some "full";
-    sis_debug = false; sderives = [];
+    sis_debug = false; sderives = []; sis_move = false;
   } in
   let int_lit n = Ast.IntLit (n, pos) in
   let int_lit_as n ann = Ast.Cast (Ast.IntLit (n, pos), ann, pos) in
@@ -4850,7 +4851,7 @@ let prelude_items () =
     spos = prelude_pos;
     sis_pub = true;
     stier_hint = Some "full";
-    sis_debug = false; sderives = [];
+    sis_debug = false; sderives = []; sis_move = false;
   } in
   let string_struct_ann = Ast.TyStruct { path = ["String"]; args = [] } in
   let string_self_ptr_param =

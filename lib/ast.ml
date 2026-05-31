@@ -356,6 +356,13 @@ type struct_decl = {
                                         to auto-implement.  A pre-typecheck
                                         pass synthesizes a real
                                         `impl Trait for Foo`. *)
+  sis_move : bool;                   (* `@move` — affine / use-at-most-once
+                                        semantics.  Marker is transitional
+                                        (a stop-gap for owning-vs-borrowing
+                                        `*u8` until the capability model's
+                                        `own *u8` lands).  Parser records
+                                        it; the move-pass (DR-002) reads
+                                        `ss_is_move` on the struct_sig. *)
 }
 
 (* `enum Foo { | A | B(int, str) | C { f: T } }` — three variant forms.
