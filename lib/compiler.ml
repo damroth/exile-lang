@@ -12,6 +12,7 @@ let compile ?(annotate = false) ?(profile = default_profile) src =
     |> Parser.parse_program
     |> Typecheck.check_program
   in
+  Move.check tp;
   Lint.lint ~profile tp;
   Codegen.gen_program ~annotate tp
 
@@ -21,5 +22,6 @@ let compile_file ?(annotate = false) ?(profile = default_profile) path =
     Loader.load path
     |> Typecheck.check_program
   in
+  Move.check tp;
   Lint.lint ~profile tp;
   Codegen.gen_program ~annotate tp

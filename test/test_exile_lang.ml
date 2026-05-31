@@ -651,6 +651,51 @@ let () =
      fn main() { println(1); }\n"
     "'@move' can only decorate struct decls";
 
+  (* DR-002 move-pass: @move binding consumed by `let b = a` then
+     read at `take(a)` is a use-after-consume, reported with both
+     positions (the move and the use). *)
+  check_error "@move binding read after `let b = a` rejected"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn main() {\n\
+    \    let a = Owner { tag: 42 };\n\
+    \    let b = a;\n\
+    \    println(take(a));\n\
+    \    println(take(b));\n\
+     }\n"
+    "use of 'a' after it was consumed at <input>:6:13 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
+  check_error "@move binding consumed by method receiver, error on subsequent use"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     impl Owner {\n\
+    \    pub fn take(self) -> int { return self.tag; }\n\
+    \    pub fn peek(*const self) -> int { return self.tag; }\n\
+     }\n\
+     fn main() {\n\
+    \    let a = Owner { tag: 7 };\n\
+    \    println(a.take());\n\
+    \    println(a.peek());\n\
+     }\n"
+    "use of 'a' after it was consumed at <input>:9:13 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
+  (* Borrow paths (`&a`, `*const self` receivers) leave the binding
+     live — same source can be read repeatedly and only consumed at
+     the end. *)
+  check "@move binding stays live across `&a` borrows"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn read(o: *const Owner) -> int { return o.tag; }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn main() {\n\
+    \    let a = Owner { tag: 7 };\n\
+    \    println(read(&a));\n\
+    \    println(read(&a));\n\
+    \    println(take(a));\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_Owner { long tag; };\n\nstatic long ex_read(const struct ex_Owner *o);\nstatic long ex_take(struct ex_Owner o);\n\nstatic long ex_read(const struct ex_Owner *o) {\n    return o->tag;\n}\n\nstatic long ex_take(struct ex_Owner o) {\n    return o.tag;\n}\n\nint main(void) {\n    struct ex_Owner a;\n    a.tag = 7;\n    printf(\"%ld\\n\", (long)(ex_read(&a)));\n    printf(\"%ld\\n\", (long)(ex_read(&a)));\n    printf(\"%ld\\n\", (long)(ex_take(a)));\n    return 0;\n}\n";
+
   check "@derive(Clone) synthesizes a value-copy clone"
     "@derive(Clone)\n\
      struct P { x: int }\n\
