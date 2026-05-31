@@ -1033,7 +1033,12 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
     in
     let seed_pairs =
       match expected, skel.ret_ty with
-      | Some exp, Some r -> [(r, exp)]
+      | Some exp, Some r ->
+          (* Same `(TStructApp [Vec] [TVar T], TStruct ["Vec_i32"])`
+             shape unification the arg-side path runs.  Without this
+             the inference unifier can't peel a flat mono instance
+             back into its tparam slots for the return-driven pair. *)
+          expand_inst_pair ctx (r, exp)
       | _ -> []
     in
     (* Generic-impl method dispatch: a `*self` receiver pairs a `*Pair<A,B>`
@@ -3101,7 +3106,15 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
           match pre_elab with
           | Some tr ->
               (match typ_head_path tr.ty with
-               | Some p -> List.mem ("Iterator", p) !trait_impl_table
+               | Some p ->
+                   (* Match generic-impl entries (`impl<T> Iterator for
+                      VecIter<T>` registers `["VecIter"]`, but the
+                      receiver here is a `["VecIter_i32"]` mono
+                      instance). *)
+                   List.exists
+                     (fun (n, decl_path) ->
+                       n = "Iterator" && Mono.is_instance_of decl_path p)
+                     !trait_impl_table
                | None -> false)
           | None -> false
         in
@@ -3882,7 +3895,7 @@ let detect_value_cycles ~structs ~enums ~pos_of =
    by mangled name; codegen later emits one C struct per unique shape.
    Reads the `.ty` field on each typed expression — no `type_of` dispatch
    needed. *)
-let collect_tuple_types_of tfuncs =
+let collect_tuple_types_of ?(structs = []) ?(enums = []) tfuncs =
   let tup_seen = ref [] in
   let fnptr_seen = ref [] in
   let arr_seen = ref [] in
@@ -3930,6 +3943,16 @@ let collect_tuple_types_of tfuncs =
       List.iter walk_typ tf.tf_param_tys;
       List.iter (iter_tstmt visit_stmt) tf.tf_body)
     tfuncs;
+  (* Struct fields and enum variants may carry types (fn-ptrs, arrays,
+     tuples) that nothing in the body references — e.g. an `Allocator`
+     whose `alloc_fn` / `free_fn` fields are the only mention of those
+     fn-ptr shapes when a caller alloc's but never frees.  Walk them
+     so the typedefs make it into the output. *)
+  List.iter (fun (s : struct_sig) ->
+    List.iter (fun (_, t) -> walk_typ t) s.sfields_ty) structs;
+  List.iter (fun (e : enum_sig) ->
+    List.iter (fun (v : variant_sig) ->
+      List.iter (fun (_, t) -> walk_typ t) v.vsfields) e.evariants) enums;
   (List.rev !tup_seen, List.rev !fnptr_seen, List.rev !arr_seen)
 
 (* Detect heap usage by scanning the typed bodies for `TNew` expressions or
@@ -4102,10 +4125,16 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
               tm.name (List.length im.params)
               (String.concat "::" trait_path) (List.length tm.params);
           List.iter2 (fun (tp : Ast.param) (ip : Ast.param) ->
-            if not (cmp_ann tp.pty ip.pty) then
+            if not (cmp_ann tp.pty ip.pty) then begin
+              let t1 = resolve_type_ann ~pos ctx
+                         (subst_assoc ~assoc:iassoc target_ann tp.pty) in
+              let t2 = resolve_type_ann ~pos ctx ip.pty in
               Error.failf im.pos
-                "method '%s': parameter '%s' type does not match trait '%s'"
-                tm.name ip.pname (String.concat "::" trait_path))
+                "method '%s': parameter '%s' type does not match trait '%s' \
+                 (expected %s, got %s)"
+                tm.name ip.pname (String.concat "::" trait_path)
+                (typ_name t1) (typ_name t2)
+            end)
             tm.params im.params;
           if not (cmp_ret tm.ret_ty im.ret_ty) then
             Error.failf im.pos
@@ -5046,6 +5075,313 @@ let prelude_items () =
     ];
     ipos = pos;
   } in
+  (* `Vec<T>` — growable workhorse collection (DR-003 v1 copy-out
+     value-T).  `@move` because the buffer aliases under a silent
+     value-copy; the move-pass forces single ownership.  `ptr` is
+     writable `*T` (Delta-B writes land directly); `count` (not
+     `len`) leaves the accessor `len()` free; we NEVER store a
+     `Slice<T>` in the struct (defect #3 bait) — every read builds
+     a local Slice-view from `ptr`/`count`.  Per-element drop of
+     `@move` payloads (`Vec<String>`) lands once `pop` /
+     `clear`-on-drop arrive — sound today for value-T (Token,
+     AstNode), where per-element drop is a no-op. *)
+  let vec_t_ann =
+    Ast.TyStruct { path = ["Vec"]; args = [ tvar "T" ] } in
+  let vec_iter_t_ann =
+    Ast.TyStruct { path = ["VecIter"]; args = [ tvar "T" ] } in
+  let option_t_ann =
+    Ast.TyStruct { path = ["Option"]; args = [ tvar "T" ] } in
+  let slice_t_ann =
+    Ast.TyStruct { path = ["Slice"]; args = [ tvar "T" ] } in
+  let alloc_ann_v =
+    Ast.TyStruct { path = ["Allocator"]; args = [] } in
+  let vec_struct = {
+    Ast.sname = "Vec";
+    stparams = ["T"];
+    sfields = [
+      ("ptr", Ast.TyPtr (tvar "T"));
+      ("count", u32_t);
+      ("cap", u32_t);
+      ("alloc", alloc_ann_v);
+    ];
+    spos = prelude_pos; sis_pub = true;
+    stier_hint = Some "full";
+    sis_debug = false; sderives = []; sis_move = true;
+  } in
+  let vec_iter_struct = {
+    Ast.sname = "VecIter";
+    stparams = ["T"];
+    sfields = [
+      ("data", Ast.TyConstPtr (tvar "T"));
+      ("len", u32_t);
+      ("pos", u32_t);
+    ];
+    spos = prelude_pos; sis_pub = true;
+    stier_hint = Some "full";
+    sis_debug = false; sderives = []; sis_move = false;
+  } in
+  let vec_self_ptr_param =
+    { Ast.pname = "self"; pty = Ast.TyPtr vec_t_ann;
+      preg = None; is_mut = false } in
+  let mk_vec_method ?(is_pub = true) name params ret body = {
+    Ast.name; c_name = name; tparams = []; tbounds = []; params;
+    ret_ty = ret; body; is_pub; is_extern = false;
+    is_variadic = false; tier_hint = Some "full"; amiga_lib = None;
+    must_use = false; pos;
+  } in
+  let size_of_T_as_u32 =
+    Ast.Cast (Ast.SizeOf (tvar "T", pos), u32_t, pos) in
+  (* with_capacity(a, hint): clamp cap = max(hint, 8), alloc
+     size_of(T)*cap bytes through the seam. *)
+  let vec_with_capacity_body = [
+    Ast.Let { name = "cap"; is_mut = false; ty_ann = Some u32_t;
+              value = Ast.If {
+                cond = bin Ast.Lt (Ast.Var ("hint", pos)) (u32_lit 8);
+                then_blk = [ Ast.Tail (u32_lit 8) ];
+                else_blk = Some [ Ast.Tail (Ast.Var ("hint", pos)) ];
+                pos }; pos };
+    Ast.Let { name = "bytes"; is_mut = false; ty_ann = Some u32_t;
+              value = bin Ast.Mul size_of_T_as_u32
+                                  (Ast.Var ("cap", pos)); pos };
+    Ast.Let { name = "p"; is_mut = false;
+              ty_ann = Some (Ast.TyPtr (tvar "T"));
+              value = Ast.Cast (
+                methcall (Ast.Var ("a", pos)) "alloc_fn"
+                  [ field (Ast.Var ("a", pos)) "state";
+                    Ast.Var ("bytes", pos) ],
+                Ast.TyPtr (tvar "T"), pos);
+              pos };
+    Ast.Return (Some (Ast.StructLit {
+      tname = ["Vec"];
+      fields = [
+        ("ptr", Ast.Var ("p", pos));
+        ("count", u32_lit 0);
+        ("cap", Ast.Var ("cap", pos));
+        ("alloc", Ast.Var ("a", pos));
+      ]; base = None; pos }), pos);
+  ] in
+  let vec_with_capacity_method =
+    mk_vec_method "with_capacity"
+      [ { Ast.pname = "a"; pty = alloc_ann_v;
+          preg = None; is_mut = false };
+        { Ast.pname = "hint"; pty = u32_t;
+          preg = None; is_mut = false } ]
+      (Some vec_t_ann) vec_with_capacity_body in
+  let vec_len_method =
+    mk_vec_method "len" [vec_self_ptr_param] (Some u32_t)
+      [ Ast.Return (Some (field (Ast.Var ("self", pos)) "count"), pos) ] in
+  (* grow( * self, new_cap): alloc new buf, copy through Slice-view
+     + Delta-B, free old with matching byte-count, swap fields. *)
+  let vec_grow_body =
+    let self_v = Ast.Var ("self", pos) in
+    let self_alloc = field self_v "alloc" in
+    [
+      Ast.Let { name = "bytes"; is_mut = false; ty_ann = Some u32_t;
+                value = bin Ast.Mul size_of_T_as_u32
+                                    (Ast.Var ("new_cap", pos)); pos };
+      Ast.Let { name = "new_ptr"; is_mut = false;
+                ty_ann = Some (Ast.TyPtr (tvar "T"));
+                value = Ast.Cast (
+                  methcall self_alloc "alloc_fn"
+                    [ field self_alloc "state";
+                      Ast.Var ("bytes", pos) ],
+                  Ast.TyPtr (tvar "T"), pos);
+                pos };
+      Ast.Let { name = "src"; is_mut = false; ty_ann = Some slice_t_ann;
+                value = Ast.StructLit {
+                  tname = ["Slice"];
+                  fields = [
+                    ("ptr", Ast.Cast (field self_v "ptr",
+                                      Ast.TyConstPtr (tvar "T"), pos));
+                    ("len", field self_v "count");
+                  ]; base = None; pos }; pos };
+      Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+                value = u32_lit 0; pos };
+      Ast.While {
+        cond = bin Ast.Lt (Ast.Var ("i", pos)) (field self_v "count");
+        body = [
+          Ast.AssignIndex {
+            base = Ast.Var ("new_ptr", pos);
+            index = Ast.Var ("i", pos);
+            value = Ast.Index { base = Ast.Var ("src", pos);
+                                index = Ast.Var ("i", pos); pos };
+            pos };
+          Ast.Assign { path = ["i"];
+                       value = bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1);
+                       pos };
+        ] };
+      Ast.Let { name = "old_bytes"; is_mut = false; ty_ann = Some u32_t;
+                value = bin Ast.Mul size_of_T_as_u32
+                                    (field self_v "cap"); pos };
+      Ast.ExprStmt (methcall self_alloc "free_fn"
+        [ field self_alloc "state";
+          Ast.Cast (field self_v "ptr", cvoid_ptr, pos);
+          Ast.Var ("old_bytes", pos) ]);
+      Ast.AssignField { target = self_v; field = "ptr";
+                        value = Ast.Var ("new_ptr", pos); pos };
+      Ast.AssignField { target = self_v; field = "cap";
+                        value = Ast.Var ("new_cap", pos); pos };
+    ]
+  in
+  let vec_grow_method =
+    mk_vec_method ~is_pub:false "grow"
+      [ vec_self_ptr_param;
+        { Ast.pname = "new_cap"; pty = u32_t;
+          preg = None; is_mut = false } ]
+      None vec_grow_body in
+  (* push( * self, x): grow if full, store via Delta-B, bump count.
+     `x` is consumed for `@move T` (per the move-pass) or copied
+     for value-T (one rule). *)
+  let vec_push_body =
+    let self_v = Ast.Var ("self", pos) in
+    [
+      Ast.ExprStmt (Ast.If {
+        cond = bin Ast.Gt
+                 (bin Ast.Add (field self_v "count") (u32_lit 1))
+                 (field self_v "cap");
+        then_blk = [
+          Ast.ExprStmt (methcall self_v "grow"
+            [ bin Ast.Mul (field self_v "cap") (u32_lit 2) ]);
+        ];
+        else_blk = None; pos });
+      Ast.AssignIndex {
+        base = field self_v "ptr";
+        index = field self_v "count";
+        value = Ast.Var ("x", pos); pos };
+      Ast.AssignField { target = self_v; field = "count";
+                        value = bin Ast.Add (field self_v "count")
+                                            (u32_lit 1);
+                        pos };
+    ]
+  in
+  let vec_push_method =
+    mk_vec_method "push"
+      [ vec_self_ptr_param;
+        { Ast.pname = "x"; pty = tvar "T";
+          preg = None; is_mut = false } ]
+      None vec_push_body in
+  (* get( * self, i) -> Option<T>: copy-out (DR-003 default).
+     OOB → None; in-bounds builds a local Slice<T> view and
+     yields `Some(s[i])`.  Value-T sound today; `Vec<@move T>`
+     get aliases the backing store and lands after per-element
+     drop. *)
+  let vec_get_body =
+    let self_v = Ast.Var ("self", pos) in
+    [
+      Ast.ExprStmt (Ast.If {
+        cond = bin Ast.GtEq (Ast.Var ("i", pos)) (field self_v "count");
+        then_blk = [
+          Ast.Return (Some (Ast.Call {
+            callee = ["Option"; "None"]; args = []; pos }), pos);
+        ];
+        else_blk = None; pos });
+      Ast.Let { name = "s"; is_mut = false; ty_ann = Some slice_t_ann;
+                value = Ast.StructLit {
+                  tname = ["Slice"];
+                  fields = [
+                    ("ptr", Ast.Cast (field self_v "ptr",
+                                      Ast.TyConstPtr (tvar "T"), pos));
+                    ("len", field self_v "count");
+                  ]; base = None; pos }; pos };
+      Ast.Return (Some (Ast.Call {
+        callee = ["Option"; "Some"];
+        args = [ Ast.Index { base = Ast.Var ("s", pos);
+                             index = Ast.Var ("i", pos); pos } ];
+        pos }), pos);
+    ]
+  in
+  let vec_get_method =
+    mk_vec_method "get"
+      [ vec_self_ptr_param;
+        { Ast.pname = "i"; pty = u32_t;
+          preg = None; is_mut = false } ]
+      (Some option_t_ann) vec_get_body in
+  let vec_as_slice_method =
+    mk_vec_method "as_slice" [vec_self_ptr_param] (Some slice_t_ann)
+      [ Ast.Return (Some (Ast.StructLit {
+          tname = ["Slice"];
+          fields = [
+            ("ptr", Ast.Cast (field (Ast.Var ("self", pos)) "ptr",
+                              Ast.TyConstPtr (tvar "T"), pos));
+            ("len", field (Ast.Var ("self", pos)) "count");
+          ]; base = None; pos }), pos) ] in
+  let vec_iter_method =
+    mk_vec_method "iter" [vec_self_ptr_param] (Some vec_iter_t_ann)
+      [ Ast.Return (Some (Ast.StructLit {
+          tname = ["VecIter"];
+          fields = [
+            ("data", Ast.Cast (field (Ast.Var ("self", pos)) "ptr",
+                               Ast.TyConstPtr (tvar "T"), pos));
+            ("len", field (Ast.Var ("self", pos)) "count");
+            ("pos", u32_lit 0);
+          ]; base = None; pos }), pos) ] in
+  let vec_impl = {
+    Ast.itparams = ["T"]; itrait = None; iassoc = [];
+    itarget = ["Vec"];
+    iitems = [
+      vec_with_capacity_method;
+      vec_len_method;
+      vec_grow_method;
+      vec_push_method;
+      vec_get_method;
+      vec_as_slice_method;
+      vec_iter_method;
+    ];
+    ipos = pos;
+  } in
+  (* VecIter::next - by-value cursor.  `data` is a `*const T` view
+     over the original vec; the iterator advances `pos` until it
+     hits `len`, yielding copies (value-T sound today). *)
+  let vec_iter_self_ptr_param =
+    { Ast.pname = "self"; pty = Ast.TyPtr vec_iter_t_ann;
+      preg = None; is_mut = false } in
+  let vec_iter_next_body =
+    let self_v = Ast.Var ("self", pos) in
+    [
+      Ast.ExprStmt (Ast.If {
+        cond = bin Ast.GtEq (field self_v "pos") (field self_v "len");
+        then_blk = [
+          Ast.Return (Some (Ast.Call {
+            callee = ["Option"; "None"]; args = []; pos }), pos);
+        ];
+        else_blk = None; pos });
+      Ast.Let { name = "s"; is_mut = false; ty_ann = Some slice_t_ann;
+                value = Ast.StructLit {
+                  tname = ["Slice"];
+                  fields = [
+                    ("ptr", field self_v "data");
+                    ("len", field self_v "len");
+                  ]; base = None; pos }; pos };
+      Ast.Let { name = "v"; is_mut = false; ty_ann = Some (tvar "T");
+                value = Ast.Index { base = Ast.Var ("s", pos);
+                                    index = field self_v "pos"; pos };
+                pos };
+      Ast.AssignField { target = self_v; field = "pos";
+                        value = bin Ast.Add (field self_v "pos")
+                                            (u32_lit 1);
+                        pos };
+      Ast.Return (Some (Ast.Call {
+        callee = ["Option"; "Some"];
+        args = [ Ast.Var ("v", pos) ];
+        pos }), pos);
+    ]
+  in
+  let vec_iter_next_method = {
+    Ast.name = "next"; c_name = "next"; tparams = []; tbounds = [];
+    params = [ vec_iter_self_ptr_param ];
+    ret_ty = Some option_t_ann;
+    body = vec_iter_next_body;
+    is_pub = true; is_extern = false; is_variadic = false;
+    tier_hint = Some "full"; amiga_lib = None;
+    must_use = false; pos;
+  } in
+  let vec_iter_impl = {
+    Ast.itparams = ["T"]; itrait = Some ["Iterator"];
+    iassoc = [("Item", tvar "T")];
+    itarget = ["VecIter"];
+    iitems = [ vec_iter_next_method ];
+    ipos = pos;
+  } in
   (* `Iterator` — the prelude iteration protocol.  `for x in <value>`
      desugars to `loop { match value.next() { Some(x) => … | None =>
      break } }` for any type that `impl Iterator`.  `next` takes `*self`
@@ -5149,9 +5485,12 @@ let prelude_items () =
     Ast.Struct alloc_struct; Ast.Impl alloc_impl;
     Ast.Struct sb_struct; Ast.Impl sb_impl;
     Ast.Struct string_struct; Ast.Impl string_impl;
+    Ast.Struct vec_struct; Ast.Struct vec_iter_struct;
+    Ast.Impl vec_impl;
     Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait;
     Ast.Trait hash_trait;
-    Ast.Trait display_trait; Ast.Trait debug_trait ]
+    Ast.Trait display_trait; Ast.Trait debug_trait;
+    Ast.Impl vec_iter_impl ]
 
 (* ===== `@derive(...)` — synthesize trait impls (DECYZJA #1/#2) =====
    Each `@derive`d trait becomes a real `impl Trait for Foo` generated as
@@ -5555,9 +5894,20 @@ let prepend_prelude (program : Ast.program) : Ast.program =
         | Ast.Struct s -> not (List.mem s.sname user_top_struct_names)
         | Ast.Trait t -> not (List.mem t.trname user_top_trait_names)
         | Ast.Impl ib ->
-            (match ib.itarget with
-             | [n] -> not (List.mem n user_top_struct_names)
-             | _ -> true)
+            (* Drop a prelude impl if the user shadowed either the
+               target struct (e.g. `struct Iterator { ... }`) or the
+               trait (e.g. `trait Iterator { fn next(self) ... }` —
+               the prelude impl would no longer match the user's
+               trait signature). *)
+            let target_shadowed = match ib.itarget with
+              | [n] -> List.mem n user_top_struct_names
+              | _ -> false
+            in
+            let trait_shadowed = match ib.itrait with
+              | Some [n] -> List.mem n user_top_trait_names
+              | _ -> false
+            in
+            not (target_shadowed || trait_shadowed)
         | _ -> true)
       (prelude_items ())
   in
@@ -6296,7 +6646,10 @@ let check_program program : tprogram =
      Leaving those in would emit dead typedefs and includes in every
      program that never touches the prelude type. *)
   let (tp_tuple_types, tp_fnptr_types, tp_array_types) =
-    collect_tuple_types_of tp_funcs in
+    collect_tuple_types_of
+      ~structs:(struct_index @ mono_structs)
+      ~enums:(enum_index @ mono_enums)
+      tp_funcs in
   let tp_uses_heap = uses_heap_of tp_funcs in
   let tp_uses_string_h = uses_string_h_of tp_funcs in
   (* Drop mono instances that no surviving tfunc still mentions.  When

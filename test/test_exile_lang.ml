@@ -721,6 +721,27 @@ let () =
      A `defer drop(&a)` that captures `a` errors if `a` is consumed
      anywhere in the surrounding scope — defer can't fire on a moved
      binding without re-using freed memory. *)
+  (* `Vec<T>` is `@move`: the silent `let v2 = v` alias is rejected
+     before it could cause a double-free or double-grow. *)
+  check_error "double `Vec::len` via aliased let-rebind rejected"
+    "mod raw { extern fn make_a() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make_a();\n\
+    \    let v: Vec<int> = Vec::with_capacity(a, 4 as u32);\n\
+    \    let v2 = v;\n\
+    \    println(v.len() as int);\n\
+     }\n"
+    "use of 'v' after it was consumed at <input>:5:14 (move-marked types are use-at-most-once — borrow with '&v' / take '*const Vec_i32' or clone to keep the source live)";
+
+  check_error "`Vec::push` rejects an arg of the wrong element type"
+    "mod raw { extern fn make_a() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make_a();\n\
+    \    let mut v: Vec<int> = Vec::with_capacity(a, 4 as u32);\n\
+    \    v.push(\"oops\");\n\
+     }\n"
+    "type parameter 'T' inferred as both 'i32' and 'str'";
+
   (* Prelude `String` and `StringBuilder` are `@move`: the silent
      `let s2 = s; s.free()` double-free pattern is rejected
      structurally now that they wear the affine marker. *)
@@ -832,7 +853,7 @@ let () =
     \    fn fmt(*self, out: int) {}\n\
      }\n\
      fn main() { println(1); }\n"
-    "method 'fmt': parameter 'out' type does not match trait 'Display'";
+    "method 'fmt': parameter 'out' type does not match trait 'Display' (expected *StringBuilder, got i32)";
 
   (* @derive(Debug) synthesizes an `impl Debug for T` whose fmt body
      pushes the Rust-style `{:?}` rendering into the caller's

@@ -1,0 +1,60 @@
+// `Vec<T>` — the prelude's growable workhorse collection (DR-003
+// v1 copy-out value-T).  Sits on top of the `Allocator` seam and
+// is `@move` so the move-pass forbids the silent buffer alias.
+//
+// Surface this version ships:
+//
+//   with_capacity(a, hint) -> Vec<T>   constructor, cap=max(hint, 8)
+//   len(*self) -> u32                  accessor
+//   push(*self, x: T)                  append, grows geometrically
+//   get(*self, i) -> Option<T>         copy-out, OOB → None
+//   as_slice(*self) -> Slice<T>        read-only view over the live buffer
+//   iter(*self) -> VecIter<T>          by-value cursor (impl Iterator)
+//
+// Per-element drop for `Vec<@move T>` (`Vec<String>` etc.) lands
+// once `pop` / `clear`-on-drop arrive — sound today for value-T
+// (Token, AstNode), where each element drop is a no-op.
+
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+}
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 4 as u32);
+
+    // Five pushes — the fifth crosses cap=4 and triggers grow.
+    v.push(10);
+    v.push(20);
+    v.push(30);
+    v.push(40);
+    v.push(50);
+    println(v.len() as int);                   // 5
+
+    // `get(i)` copies out; OOB lands as `Option::None`.
+    match v.get(0 as u32) {
+        Option::Some(x) => { println(x); }     // 10
+        | Option::None  => { println(-1); }
+    }
+    match v.get(4 as u32) {
+        Option::Some(x) => { println(x); }     // 50
+        | Option::None  => { println(-1); }
+    }
+    match v.get(99 as u32) {
+        Option::Some(x) => { println(x); }
+        | Option::None  => { println(-1); }    // -1
+    }
+
+    // `as_slice()` exposes a `Slice<T>` view — read-only,
+    // length-bounded, indexable.
+    let s = v.as_slice();
+    println(s[2]);                              // 30
+
+    // `iter()` returns a `VecIter<T>` cursor that `impl Iterator`,
+    // so `for x in it { ... }` desugars to the standard loop +
+    // `match next() { Some(x) => body | None => break }`.
+    let mut sum = 0;
+    let mut it = v.iter();
+    for x in it { sum = sum + x; }
+    println(sum);                               // 150
+}
