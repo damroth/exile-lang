@@ -1245,6 +1245,52 @@ let () =
      in
      contains c "ex_pair_i32_i32");
 
+  (* DR-002 W3 — cross-arm or-pattern redundancy.  Pre-fix the
+     redundant-arm check asked "is any row in this arm useful?",
+     so `A | B => ... | B | C => ...` passed (the second arm's
+     `C` is new) and codegen emitted duplicate `case ex_T_B:`
+     labels — cc rejected.  Walk alternatives in source order
+     and reject the first row already covered by accepted earlier
+     rows; the intra-arm `A | A` check continues to fire separately
+     at parser-level (`or-pattern lists 'A' more than once`). *)
+  check_error "W3: cross-arm or-pattern with overlap rejected as unreachable"
+    "enum E { A | B | C | D }\n\
+     fn classify(e: E) {\n\
+    \    match e {\n\
+    \        E::A | E::B => { println(1); }\n\
+    \        | E::B | E::C => { println(2); }\n\
+    \        | E::D => { println(3); }\n\
+    \    }\n\
+     }\n\
+     fn main() { classify(E::A); }\n"
+    "unreachable match arm: earlier arms already cover this case";
+
+  check_error "W3: fully-covered second arm after or-pattern rejected"
+    "enum E { A | B | C }\n\
+     fn classify(e: E) {\n\
+    \    match e {\n\
+    \        E::A | E::B => { println(1); }\n\
+    \        | E::B => { println(2); }\n\
+    \        | E::C => { println(3); }\n\
+    \    }\n\
+     }\n\
+     fn main() { classify(E::A); }\n"
+    "unreachable match arm: earlier arms already cover this case";
+
+  check_assert "W3: non-overlapping cross-arm or-patterns still compile"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum E { A | B | C | D }\n\
+          fn classify(e: E) {\n\
+         \    match e {\n\
+         \        E::A | E::B => { println(1); }\n\
+         \        | E::C | E::D => { println(2); }\n\
+         \    }\n\
+          }\n\
+          fn main() { classify(E::A); classify(E::C); }\n"
+     in
+     contains c "case ex_E_A" && contains c "case ex_E_C");
+
   check "@derive(Hash) synthesizes a multiplicative field fold"
     "@derive(Eq, Hash)\n\
      struct P { x: int, y: int }\n\

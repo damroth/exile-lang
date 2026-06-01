@@ -1999,18 +1999,32 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           List.map (fun cp -> [ cp ]) (cpat_rows_of_tpat a.tpat)) tarms
       in
       let is_unguarded i = (List.nth tarms i).tguard = None in
+      (* DR-002 W3 — per-alternative redundancy.  Pre-fix the check
+         asked whether the arm as a whole had any useful row, so an
+         arm like `B | C` after a `A | B` arm passed even though `B`
+         in the second arm is covered by the first.  Codegen then
+         emitted a flat switch with duplicate `case ex_T_B:` labels
+         and cc rejected the output.  Walk alternatives in source
+         order, accumulating accepted rows; reject the FIRST row a
+         given arm contributes that no surviving combination of
+         earlier rows leaves uncovered.  Guarded arms still check
+         against earlier-arm rows but don't seed the cross-arm
+         seen-set (their body may not run even when the pattern
+         matches — same rule the exhaustiveness pass already uses
+         below). *)
+      let seen_cross_arm = ref [] in
       List.iteri (fun i (a : Ast.match_arm) ->
-        let before =
-          List.concat
-            (List.filteri (fun j _ -> j < i && is_unguarded j) rows_per_arm)
-        in
-        let any_useful =
-          List.exists (fun row -> useful ctx [ tscrut.ty ] before row)
-            (List.nth rows_per_arm i)
-        in
-        if not any_useful then
-          Error.failf a.arm_pos
-            "unreachable match arm: earlier arms already cover this case")
+        let arm_rows = List.nth rows_per_arm i in
+        let seen_intra_arm = ref [] in
+        List.iter (fun row ->
+          let earlier = !seen_cross_arm @ !seen_intra_arm in
+          if not (useful ctx [ tscrut.ty ] earlier row) then
+            Error.failf a.arm_pos
+              "unreachable match arm: earlier arms already cover this case";
+          seen_intra_arm := !seen_intra_arm @ [ row ])
+          arm_rows;
+        if is_unguarded i then
+          seen_cross_arm := !seen_cross_arm @ !seen_intra_arm)
         arms;
       let rows =
         List.concat
