@@ -848,6 +848,15 @@ and emit_arm_result ctx assign_to buf indent (a : tmatch_arm) =
                 { a with tbody = te; tdiverges = false }
               in
               emit_arm_result ctx assign_to buf indent trailing_arm)
+     | Some lhs, (TStructLit _ | TNew _ | TEnumLit _ | TTupleLit _
+                  | TArrayLit _ | TArrayRepeat _ | TIfExpr _) ->
+         (* Block-shaped value in an arm body — route through the
+            per-shape field/elt assigner that the rest of codegen
+            uses for let-RHS / return / assign.  Without this case
+            a `@derive(Clone)` arm body of `H::Has(self.0.clone())`
+            (bare TEnumLit) would fall into the default branch's
+            `gen_expr` which asserts false on block-shaped lits. *)
+         emit_value_into_temp ctx buf indent lhs a.tbody
      | Some lhs, _ ->
          emit_assign_line buf indent ~lhs
            ~emit_rhs:(fun () -> gen_expr ctx buf a.tbody)

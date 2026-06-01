@@ -2604,6 +2604,12 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 Error.failf mc_pos
                   "`hash` is not built-in for %s (str / pointer content \
                    hashing is not supported yet)" (typ_name trecv.ty))
+       | true, "clone", [] ->
+           (* Built-in `clone` on primitives → identity value-copy.
+              Lets `@derive(Clone)` recurse through primitive fields
+              uniformly (`self.x.clone()` on `int` returns `self.x`).
+              Structs / enums fall through to their real `T__clone`. *)
+           trecv
        | _ ->
       let struct_path =
         match trecv.ty with
@@ -6597,20 +6603,85 @@ let derive_eq_enum (e : Ast.enum_decl) : Ast.item =
   Ast.Impl { itparams = []; itrait = Some ["Eq"]; iassoc = [];
              itarget = [e.ename]; iitems = [m]; ipos = pos }
 
-(* Clone is a trivial value copy — `fn clone( * const self) -> Self
-   { *self }` — for both structs and enums (value semantics; deep
-   clone arrives with heap types).  The `*const Self` receiver
-   leaves the source live so callers can compose `s.clone()` with
-   later uses of `s` once the move pass marks heap-owning structs
-   `@move`. *)
-let derive_clone ~name ~pos : Ast.item =
-  let target = Ast.TyStruct { path = [name]; args = [] } in
+(* `Clone` — field-wise deep copy mirroring `Eq` / `Hash` derive
+   shape.  Pre-fix this emitted `return *self;` (shallow memcpy);
+   that aliases every heap-owning field with the source so a later
+   `free()` on either side fires twice (DR-002 S4).  Now each
+   primitive field copies through the built-in `.clone()` (identity
+   value-copy) and each aggregate field dispatches through its
+   `T__clone` impl, so a `String` field deep-copies its buffer.
+   `@derive(Clone)` on a struct/enum carrying an @move field
+   without `impl Clone` for that field type errors at the inner
+   `.clone()` lookup. *)
+let derive_clone_struct (s : Ast.struct_decl) : Ast.item =
+  let pos = s.spos in
+  let target = Ast.TyStruct { path = [s.sname]; args = [] } in
+  let clone_call recv =
+    Ast.MethodCall { receiver = recv; name = "clone"; args = []; pos } in
+  let field_inits =
+    List.map (fun (fname, _) ->
+      (fname, clone_call
+                (Ast.FieldAccess (Ast.Var ("self", pos), fname, pos))))
+      s.sfields
+  in
+  let body =
+    Ast.StructLit { tname = [s.sname]; fields = field_inits;
+                    base = None; pos } in
   let m = derive_mk_method "clone"
     [ derive_field_param "self" (Ast.TyConstPtr target) ]
-    (Some target)
-    [ Ast.Tail (Ast.Deref (Ast.Var ("self", pos), pos)) ] pos in
+    (Some target) [ Ast.Tail body ] pos in
   Ast.Impl { itparams = []; itrait = Some ["Clone"]; iassoc = [];
-             itarget = [name]; iitems = [m]; ipos = pos }
+             itarget = [s.sname]; iitems = [m]; ipos = pos }
+
+let derive_clone_enum (e : Ast.enum_decl) : Ast.item =
+  let pos = e.epos in
+  let target = Ast.TyStruct { path = [e.ename]; args = [] } in
+  let clone_call recv =
+    Ast.MethodCall { receiver = recv; name = "clone"; args = []; pos } in
+  let arms = List.map (fun (v : Ast.enum_variant) ->
+    let vname = v.vname in
+    let (binds, ctor_args) = match v.vkind with
+      | Ast.VUnit ->
+          (Ast.PBTuple [], Ast.EATuple [])
+      | Ast.VTuple tys ->
+          let n = List.length tys in
+          let bn i = Printf.sprintf "__dc_a%d" i in
+          let bp =
+            Ast.PBTuple
+              (List.init n (fun i -> Ast.PVar (bn i, pos))) in
+          let args =
+            Ast.EATuple
+              (List.init n (fun i ->
+                 clone_call (Ast.Var (bn i, pos)))) in
+          (bp, args)
+      | Ast.VStruct fields ->
+          let names = List.map fst fields in
+          let bn f = "__dc_a_" ^ f in
+          let bp =
+            Ast.PBStruct
+              (List.map (fun f -> (f, Ast.PVar (bn f, pos))) names) in
+          let args =
+            Ast.EAStruct
+              (List.map (fun f ->
+                 (f, clone_call (Ast.Var (bn f, pos)))) names) in
+          (bp, args)
+    in
+    let pat =
+      Ast.PVariant { tname = [e.ename]; variant = vname; binds; pos } in
+    let body =
+      Ast.EnumLit { tname = [e.ename]; variant = vname;
+                    args = ctor_args; pos } in
+    Ast.{ pat; guard = None; body; arm_pos = pos })
+    e.evariants
+  in
+  let match_expr =
+    Ast.Match { scrutinee = Ast.Deref (Ast.Var ("self", pos), pos);
+                arms; pos } in
+  let m = derive_mk_method "clone"
+    [ derive_field_param "self" (Ast.TyConstPtr target) ]
+    (Some target) [ Ast.Tail match_expr ] pos in
+  Ast.Impl { itparams = []; itrait = Some ["Clone"]; iassoc = [];
+             itarget = [e.ename]; iitems = [m]; ipos = pos }
 
 (* Hash — `fn hash(self) -> u32`.  Multiplicative fold `acc*31 + f.hash()`
    over fields (primitive fields fold via the built-in `.hash()`); an enum
@@ -6833,7 +6904,8 @@ let derive_debug_enum (e : Ast.enum_decl) : Ast.item =
              itarget = [e.ename]; iitems = [m]; ipos = pos }
 
 let expand_derives (program : Ast.program) : Ast.program =
-  let one ~kind ~name ~pos ~generic ~gen_eq ~gen_hash ~gen_debug tr =
+  let one ~kind ~name ~pos ~generic
+      ~gen_eq ~gen_hash ~gen_clone ~gen_debug tr =
     let needs_mono trait =
       if generic then
         Error.failf pos
@@ -6842,7 +6914,7 @@ let expand_derives (program : Ast.program) : Ast.program =
     in
     match tr with
     | "Eq" -> needs_mono "Eq"; gen_eq ()
-    | "Clone" -> derive_clone ~name ~pos
+    | "Clone" -> needs_mono "Clone"; gen_clone ()
     | "Hash" -> needs_mono "Hash"; gen_hash ()
     | "Debug" -> needs_mono "Debug"; gen_debug ()
     | "Display" ->
@@ -6861,6 +6933,7 @@ let expand_derives (program : Ast.program) : Ast.program =
                       ~generic:(s.stparams <> [])
                       ~gen_eq:(fun () -> derive_eq_struct s)
                       ~gen_hash:(fun () -> derive_hash_struct s)
+                      ~gen_clone:(fun () -> derive_clone_struct s)
                       ~gen_debug:(fun () -> derive_debug_struct s))
             s.sderives
       | Ast.Enum e when e.ederives <> [] ->
@@ -6868,6 +6941,7 @@ let expand_derives (program : Ast.program) : Ast.program =
                       ~generic:(e.etparams <> [])
                       ~gen_eq:(fun () -> derive_eq_enum e)
                       ~gen_hash:(fun () -> derive_hash_enum e)
+                      ~gen_clone:(fun () -> derive_clone_enum e)
                       ~gen_debug:(fun () -> derive_debug_enum e))
             e.ederives
       | _ -> [])

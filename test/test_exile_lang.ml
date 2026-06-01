@@ -1085,7 +1085,7 @@ let () =
      }\n"
     "type 'Pt' does not implement Eq, so `==` cannot compare two values of it (add `@derive(Eq)` to the decl or write `impl Eq for Pt` to define content equality)";
 
-  check "@derive(Clone) synthesizes a value-copy clone"
+  check "@derive(Clone) synthesizes a field-wise deep copy"
     "@derive(Clone)\n\
      struct P { x: int }\n\
      fn main() {\n\
@@ -1093,7 +1093,52 @@ let () =
     \    let b = a.clone();\n\
     \    println(b.x);\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_P { long x; };\n\nstruct ex_P P__clone(const struct ex_P *self);\n\nint main(void) {\n    struct ex_P a;\n    struct ex_P b;\n    a.x = 7;\n    b = P__clone(&a);\n    printf(\"%ld\\n\", (long)(b.x));\n    return 0;\n}\n\nstruct ex_P P__clone(const struct ex_P *self) {\n    return *self;\n}\n";
+    "#include <stdio.h>\n\nstruct ex_P { long x; };\n\nstruct ex_P P__clone(const struct ex_P *self);\n\nint main(void) {\n    struct ex_P a;\n    struct ex_P b;\n    a.x = 7;\n    b = P__clone(&a);\n    printf(\"%ld\\n\", (long)(b.x));\n    return 0;\n}\n\nstruct ex_P P__clone(const struct ex_P *self) {\n    {\n        struct ex_P __exile_ret;\n        __exile_ret.x = self->x;\n        return __exile_ret;\n    }\n}\n";
+
+  (* DR-002 S4 — `@derive(Clone)` on a struct with a @move field
+     used to emit `return *self;` (shallow ptr-copy), aliasing
+     every heap-owning field with the source so a later `free()`
+     on either side double-fired (ASan double-free).  Fix mirrors
+     `@derive(Eq)` / `@derive(Hash)`: per-field recurse through
+     `self.f.clone()`; primitive fields hit the built-in identity
+     clone, aggregate fields dispatch through their own `T__clone`
+     impl (`String::clone` deep-copies via `with_str`).  An enum
+     payload variant maps to a per-arm match that constructs the
+     same variant with each bound name cloned. *)
+  check_assert "S4: `@derive(Clone)` on a String field recurses through `String__clone`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          @derive(Clone)\n\
+          struct H { name: String }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let h1 = H { name: String::with_str(a, \"x\") };\n\
+         \    let h2 = h1.clone();\n\
+         \    h1.name.free(); h2.name.free();\n\
+          }\n"
+     in
+     contains c "String__clone(&self->name)");
+
+  check_assert "S4: `@derive(Clone)` on an enum String payload recurses through `String__clone`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          @derive(Clone)\n\
+          enum E { Has(String) | Empty }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let e1 = E::Has(String::with_str(a, \"x\"));\n\
+         \    let _e2 = e1.clone();\n\
+          }\n"
+     in
+     contains c "E__clone" && contains c "String__clone(&__dc_a0)");
+
+  check_error "S4: `@derive(Clone)` on a generic struct rejected (MVP)"
+    "@derive(Clone)\n\
+     struct Box<T> { v: T }\n\
+     fn main() { println(1); }\n"
+    "@derive(Clone) on a generic struct 'Box' is not supported yet";
 
   check "@derive(Hash) synthesizes a multiplicative field fold"
     "@derive(Eq, Hash)\n\
