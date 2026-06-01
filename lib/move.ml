@@ -113,15 +113,60 @@ and stmts_diverge stmts =
     | _ -> false)
     stmts
 
+(* DR-002 S2 — collect affine bindings introduced by a match-arm
+   pattern.  Walks [pat] against the scrutinee's type, resolving
+   `TPVariant` binds against the enum sig's variant_sig.vsfields so
+   each sub-pattern matches its declared payload-field type.  The
+   move-pass seeds each returned `(name, ty)` into the arm's live
+   map; without this, `match h { Has(inner)=>{sink(inner);
+   inner.free()} }` left `inner` untracked and double-fired
+   silently.  `TPOr` contributes nothing (MVP rule: alternatives
+   bind zero variables). *)
+let rec affine_binds_of_pat ~structs ~enums (scrutinee_ty : typ)
+    (p : tpattern) =
+  match p with
+  | TPWildcard -> []
+  | TPVar n ->
+      if is_affine_typ ~structs scrutinee_ty then [(n, scrutinee_ty)]
+      else []
+  | TPVariant { variant; binds; _ } ->
+      let enum_path = match scrutinee_ty with
+        | TEnum p | TEnumApp { path = p; _ }
+        | TPtr (TEnum p) | TConstPtr (TEnum p)
+        | TPtr (TEnumApp { path = p; _ })
+        | TConstPtr (TEnumApp { path = p; _ }) -> Some p
+        | _ -> None
+      in
+      (match enum_path with
+       | None -> []
+       | Some path ->
+           (match List.find_opt
+                    (fun (e : enum_sig) -> e.ename_path = path) enums with
+            | None -> []
+            | Some esig ->
+                (match List.find_opt
+                         (fun (v : variant_sig) -> v.vsname = variant)
+                         esig.evariants with
+                 | None -> []
+                 | Some vsig ->
+                     List.concat_map (fun (bname, sub_pat) ->
+                       match List.assoc_opt bname vsig.vsfields with
+                       | None -> []
+                       | Some field_ty ->
+                           affine_binds_of_pat ~structs ~enums field_ty
+                             sub_pat)
+                       binds)))
+  | TPOr _ -> []
+
 (* Walk each arg left-to-right: validate reads against the in-flight
    state, then mark the binding Consumed if the arg is a bare affine
    TVar.  Shared by every consume-site shape — TCall, aggregate
    literals (TStructLit / TNew / TTupleLit / TEnumLit / TArrayLit),
    etc.  Same fold as the original TCall arm; factored so DR-002 S1
    aggregate-literal consumes stay one-line per shape. *)
-let rec consume_args ~structs live args =
+let rec consume_args ~structs ~enums live args =
   List.fold_left (fun live arg ->
-    let live = walk_expr ~structs live arg in
+    let live = walk_expr ~structs ~enums live arg in
     consume_var ~structs live arg)
     live args
 
@@ -130,11 +175,11 @@ let rec consume_args ~structs live args =
    walked recursively, then each arg's binding is consumed if it's a
    bare affine TVar.  Other shapes (TRef, TFieldAccess, ...) read
    without consuming. *)
-and walk_expr ~structs live (te : texpr) =
+and walk_expr ~structs ~enums live (te : texpr) =
   check_reads live te;
   match te.e with
   | TCall { args; _ } | TBuiltinCall { args; _ } ->
-      consume_args ~structs live args
+      consume_args ~structs ~enums live args
   (* DR-002 S1 — aggregate literals shallow-copy each field into the
      fresh value; a bare-TVar affine field aliases the source, so the
      binding must end Consumed.  Without this, `Wrap { f: s }` /
@@ -144,18 +189,19 @@ and walk_expr ~structs live (te : texpr) =
      binding the same way the field args consume — partial-overwrite
      still ships every untouched field through. *)
   | TStructLit { fields; base; _ } | TNew { fields; base; _ } ->
-      let live = consume_args ~structs live (List.map snd fields) in
+      let live =
+        consume_args ~structs ~enums live (List.map snd fields) in
       (match base with
        | Some b ->
-           let live = walk_expr ~structs live b in
+           let live = walk_expr ~structs ~enums live b in
            consume_var ~structs live b
        | None -> live)
   | TTupleLit es | TArrayLit es ->
-      consume_args ~structs live es
+      consume_args ~structs ~enums live es
   | TEnumLit { args; _ } ->
-      consume_args ~structs live (List.map snd args)
+      consume_args ~structs ~enums live (List.map snd args)
   | TArrayRepeat { value; _ } ->
-      let live = walk_expr ~structs live value in
+      let live = walk_expr ~structs ~enums live value in
       (* `[v; N]` codegen emits a fill loop that shallow-copies the
          evaluated value into every slot — for an @move type that
          creates N aliases of the same heap-owning binding (banned
@@ -169,29 +215,45 @@ and walk_expr ~structs live (te : texpr) =
            explicitly or use a non-@move element type)"
       else live
   | TBlock { stmts; trailing } ->
-      let live = walk_stmts ~structs ~ret_ty:None live stmts in
+      let live =
+        walk_stmts ~structs ~enums ~ret_ty:None live stmts in
       (match trailing with
-       | Some e -> walk_expr ~structs live e
+       | Some e -> walk_expr ~structs ~enums live e
        | None -> live)
   | TMatch { scrutinee; arms; _ } ->
-      let live = walk_expr ~structs live scrutinee in
-      (* Walk every arm for read-checking; only non-diverging arms
-         contribute to the post-merge state.  Empty match (no arms)
-         passes state through unchanged. *)
+      let live = walk_expr ~structs ~enums live scrutinee in
+      (* DR-002 S2 — seed each arm's live map with affine
+         pattern-binds drawn from the scrutinee type so the arm body
+         tracks `match h { Has(inner)=>... }`'s `inner`.  Filter the
+         binds back out of the post-arm contribution before merge —
+         arm-local names go out of scope at the arm's closing
+         brace, they must not survive into the post-match state. *)
       let contributions = List.filter_map (fun (a : tmatch_arm) ->
-        Option.iter (fun g -> ignore (walk_expr ~structs live g)) a.tguard;
-        let after = walk_expr ~structs live a.tbody in
+        let arm_binds =
+          affine_binds_of_pat ~structs ~enums scrutinee.ty a.tpat in
+        let seeded =
+          List.fold_left (fun lv (n, _) -> (n, Live) :: lv)
+            live arm_binds in
+        Option.iter
+          (fun g -> ignore (walk_expr ~structs ~enums seeded g))
+          a.tguard;
+        let after_full = walk_expr ~structs ~enums seeded a.tbody in
         if a.tdiverges || expr_diverges a.tbody then None
-        else Some after)
+        else
+          let bind_names = List.map fst arm_binds in
+          let after =
+            List.filter (fun (n, _) -> not (List.mem n bind_names))
+              after_full
+          in Some after)
         arms
       in
       (match contributions with
        | [] -> live
        | s :: rest -> List.fold_left merge_states s rest)
   | TIfExpr { cond; then_val; else_val } ->
-      let live = walk_expr ~structs live cond in
-      let s_then = walk_expr ~structs live then_val in
-      let s_else = walk_expr ~structs live else_val in
+      let live = walk_expr ~structs ~enums live cond in
+      let s_then = walk_expr ~structs ~enums live then_val in
+      let s_else = walk_expr ~structs ~enums live else_val in
       let then_dvg = expr_diverges then_val in
       let else_dvg = expr_diverges else_val in
       (match then_dvg, else_dvg with
@@ -200,10 +262,10 @@ and walk_expr ~structs live (te : texpr) =
        | false, true -> s_then
        | false, false -> merge_states s_then s_else)
   | _ ->
-      List.fold_left (walk_expr ~structs)
+      List.fold_left (walk_expr ~structs ~enums)
         live (texpr_children te)
 
-and walk_stmts ~structs ~ret_ty live stmts =
+and walk_stmts ~structs ~enums ~ret_ty live stmts =
   (* Two-phase walk so `defer`-bodies see end-of-scope state in LIFO
      order: gather defers as we encounter them; after the regular
      stmts settle the live map, fire each defer body against the
@@ -213,14 +275,14 @@ and walk_stmts ~structs ~ret_ty live stmts =
     List.fold_left (fun (live, defers) s ->
       match s with
       | TDefer { body; _ } -> (live, body :: defers)
-      | _ -> (walk_stmt ~structs ~ret_ty live s, defers))
+      | _ -> (walk_stmt ~structs ~enums ~ret_ty live s, defers))
       (live, []) stmts
   in
-  List.fold_left (walk_stmts ~structs ~ret_ty) live defers
+  List.fold_left (walk_stmts ~structs ~enums ~ret_ty) live defers
 
-and walk_stmt ~structs ~ret_ty live = function
+and walk_stmt ~structs ~enums ~ret_ty live = function
   | TLet { name; value; _ } ->
-      let live = walk_expr ~structs live value in
+      let live = walk_expr ~structs ~enums live value in
       let live = consume_var ~structs live value in
       if is_affine_typ ~structs value.ty
       then (name, Live) :: live
@@ -228,24 +290,24 @@ and walk_stmt ~structs ~ret_ty live = function
   | TLetTuple { value; _ } ->
       (* Tuple destructuring of affine fields is rare today (affine
          types aren't tuples).  Walk reads; consume nothing extra. *)
-      walk_expr ~structs live value
+      walk_expr ~structs ~enums live value
   | TAssign { value; _ }
   | TAssignField { value; _ }
   | TAssignIndex { value; _ }
   | TAssignDeref { value; _ } ->
-      let live = walk_expr ~structs live value in
+      let live = walk_expr ~structs ~enums live value in
       consume_var ~structs live value
   | TReturn { value = Some v; _ } ->
-      let live = walk_expr ~structs live v in
+      let live = walk_expr ~structs ~enums live v in
       (match ret_ty with
        | Some rt when is_affine_typ ~structs rt -> consume_var ~structs live v
        | _ -> live)
   | TReturn { value = None; _ } -> live
-  | TExprStmt e -> walk_expr ~structs live e
+  | TExprStmt e -> walk_expr ~structs ~enums live e
   | TIf { cond; then_body; else_body } ->
-      let live = walk_expr ~structs live cond in
-      let s_then = walk_stmts ~structs ~ret_ty live then_body in
-      let s_else = walk_stmts ~structs ~ret_ty live else_body in
+      let live = walk_expr ~structs ~enums live cond in
+      let s_then = walk_stmts ~structs ~enums ~ret_ty live then_body in
+      let s_else = walk_stmts ~structs ~enums ~ret_ty live else_body in
       let then_dvg = stmts_diverge then_body in
       let else_dvg = stmts_diverge else_body in
       (match then_dvg, else_dvg with
@@ -254,13 +316,13 @@ and walk_stmt ~structs ~ret_ty live = function
        | false, true -> s_then
        | false, false -> merge_states s_then s_else)
   | TWhile { cond; body; post } ->
-      let live = walk_expr ~structs live cond in
+      let live = walk_expr ~structs ~enums live cond in
       (* If every fall-through path through the body diverges (break /
          return), no re-iteration happens and the consume is safe.
          Otherwise any Live → Consumed transition would re-consume on
          the next iter — reject. *)
-      let after_body = walk_stmts ~structs ~ret_ty live body in
-      let after = walk_stmts ~structs ~ret_ty after_body post in
+      let after_body = walk_stmts ~structs ~enums ~ret_ty live body in
+      let after = walk_stmts ~structs ~enums ~ret_ty after_body post in
       if not (stmts_diverge body) then
         List.iter (fun (n, st) ->
           let pre = try List.assoc n live with Not_found -> Live in
@@ -275,7 +337,7 @@ and walk_stmt ~structs ~ret_ty live = function
   | TFor _ | TForEach _ | TDefer _ | TBreak _ | TContinue _ -> live
 
 (* Per-fn entry: seed live map with affine parameters, walk body. *)
-let check_fn ~structs (tf : tfunc) =
+let check_fn ~structs ~enums (tf : tfunc) =
   let params = tf.tf_func.Ast.params in
   let init_live =
     List.filter_map (fun (p, ty) ->
@@ -283,7 +345,7 @@ let check_fn ~structs (tf : tfunc) =
       (List.combine params tf.tf_param_tys)
   in
   let _ : (string * state) list =
-    walk_stmts ~structs ~ret_ty:tf.tf_ret_ty init_live tf.tf_body
+    walk_stmts ~structs ~enums ~ret_ty:tf.tf_ret_ty init_live tf.tf_body
   in
   ()
 
@@ -296,4 +358,6 @@ let check (tp : tprogram) =
       tp.tp_struct_index
   in
   if any_marked then
-    List.iter (check_fn ~structs:tp.tp_struct_index) tp.tp_funcs
+    List.iter
+      (check_fn ~structs:tp.tp_struct_index ~enums:tp.tp_enum_index)
+      tp.tp_funcs

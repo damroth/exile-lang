@@ -957,6 +957,31 @@ let () =
      }\n"
     "cannot use a @move value in `[expr; N]` — the array-repeat lowering shallow-copies the same value into every slot, aliasing the heap-owning source N times (build each element explicitly or use a non-@move element type)";
 
+  (* DR-002 S2 — pattern-bound @move tracked in the arm's live map.
+     The move-pass used to seed `live` only from `TLet` RHS and fn
+     params; arm binds (`H::Has(inner)`) were invisible, so a body
+     that consumed `inner` twice silently double-fired.  Fix walks
+     the pattern against the scrutinee's enum sig, threads each
+     affine bind into the arm's live map, and filters them out of
+     the post-arm contribution so they don't survive into the
+     post-match state. *)
+  check_error "S2: pattern-bound @move consumed twice in arm body rejected"
+    "@move struct Owner { tag: int }\n\
+     enum H { Has(Owner) | Empty }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn main() {\n\
+    \    let h = H::Has(Owner { tag: 42 });\n\
+    \    match h {\n\
+    \        H::Has(inner) => {\n\
+    \            let _x = take(inner);\n\
+    \            let _y = take(inner);\n\
+    \            println(_x + _y);\n\
+    \        }\n\
+    \        | H::Empty => {}\n\
+    \    }\n\
+     }\n"
+    "use of 'inner' after it was consumed at <input>:8:27 (move-marked types are use-at-most-once — borrow with '&inner' / take '*const Owner' or clone to keep the source live)";
+
   check "@derive(Clone) synthesizes a value-copy clone"
     "@derive(Clone)\n\
      struct P { x: int }\n\
