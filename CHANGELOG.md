@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-06-01
+
+The stdlib-backbone release. Exile gains owned heap data structures —
+`String`, `StringBuilder`, `Vec<T>`, and `HashMap<K, V>` — built on a new
+affine move-checker (`@move`, DR-002) that statically enforces use-at-most-once
+for owned values, so the heap types free exactly once with no double-free or
+use-after-free. Rounding it out: the `Display` / `Debug` writer-pattern traits
+with `@derive(Debug)`, an Allocator size-on-free seam (DR-004), and a
+feature-interaction retrospective that closed eight self-host blockers,
+restoring self-host-readiness.
+
+### Added
+- `@move` affine ownership (DR-002): the move-checker (`move.ml`) enforces
+  use-at-most-once dataflow over owned values, with a divergence oracle,
+  `match` / `if`-expression fork-and-merge (may-consume union), and a LIFO
+  `defer` end-of-scope check. Aggregate literals consume their `@move` fields;
+  `[expr; N]` rejects a `@move` element
+- Prelude `String` (Faza 1): owned NUL-terminated buffer with deep-copy (A2)
+  semantics, content-based `Eq` / `Hash` / `Clone`, and `String::build`
+- Prelude `StringBuilder`: `buf` / `len` / `cap` with `push_byte`, `push_str`,
+  `push_int` (decimal render), `length`, and `as_slice`
+- Prelude `Vec<T>` (DR-003): the copy-out value-`T` workhorse collection
+- Prelude `HashMap<K, V>` (DR-007): linear-probe open-addressed symbol table,
+  with `grow`, `remove`, and `iter`
+- `Display` / `Debug` prelude traits (writer pattern) and `@derive(Debug)`
+  auto-generated formatter
+- Allocator size-on-free seam (DR-004)
+- `*const self` borrow-only method receivers
+- `cstr_len(s)` builtin — narrow `strlen` seam (DR-001)
+- Raw write-through-pointer index assignment `p[i] = v`
+- `I::Item` associated-type projection in generic signatures
+- New examples: `string.exl`, `string_builder.exl`, `vec.exl`, `hashmap.exl`,
+  `display.exl`, `derive_debug.exl`, `str_ops.exl`, `assoc_projection.exl`
+
+### Changed
+- `Clone` re-signatured to `fn clone(*const self) -> Self`; `Eq` / `Hash`
+  re-signatured (DR-002 prerequisites)
+- `@derive(Eq)` on `*T` is address-equality by design (documented)
+- Allocator `alloc_fn` byte-count width-pinned to `u32` (DR-001 §6(ii))
+
+### Fixed
+- S0: move-pass `merge_states` uses a may-consume union across branches
+- S1/S2/S3: `@move` correctly tracked through aggregate literals, match-arm
+  pattern-binds, and partial-move scrutinees (scrutinee marked `Consumed`
+  post-arm); `String::free` takes `self` by value so the move-pass consumes it
+- S4: `@derive(Clone)` recurses field-wise instead of a `*self` memcpy
+- W1: a prelude struct used only as a field/payload now emits its definition
+- W2: `==` / `!=` on aggregates dispatches through the `Eq` impl
+- W3: cross-arm or-pattern duplicate constructor rejected at typecheck
+- W4: slice-read cast to `T` silences a spurious warning
+- C1/C2/C3: closed three ICE classes — `print`, generic tuple codegen, and
+  `List.combine` on a wrong-arity generic call
+- `(*p).field` lowers to `p->field` (precedence)
+- empty enum instances refreshed after `build_enum_index`
+
 ## [0.8.0] - 2026-05-29
 
 The traits release. `trait` / `impl Trait for Type` lands with static,
@@ -353,4 +408,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.8.0]: https://github.com/damroth/exile-lang/releases/tag/v0.8.0
+[0.9.0]: https://github.com/damroth/exile-lang/releases/tag/v0.9.0
