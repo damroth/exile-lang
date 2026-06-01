@@ -2,15 +2,19 @@
 // Flat `*Slot<K,V>` buffer over `Allocator`; `@move` so the
 // backing storage can't be silently aliased.  v1 ships:
 //
-//   with_capacity(a, hint) -> HashMap<K, V>   cap = max(hint, 8)
-//   len(*const self) -> u32                   accessor
-//   contains(*const self, k: K) -> bool       linear probe + hash+eq skip
-//   get(*const self, k: K) -> Option<V>       copy-out value
-//   insert(*self, k: K, v: V)                 store / overwrite
+//   with_capacity(a, hint) -> HashMap<K, V>     cap = max(hint, 8)
+//   len(*const self) -> u32                     accessor
+//   contains(*const self, k) -> bool            hash + linear probe
+//   get(*const self, k) -> Option<V>            copy-out value
+//   insert(*self, k, v)                         store / overwrite, grow on load > 0.75
+//   remove(*self, k)                            mark Tombstone, decrement count
+//   iter(*const self) -> HashMapIter<K, V>      cursor over Occupied slots
 //
-// `remove` (tombstone) and `iter` land in a follow-up.  K must
-// `impl Hash + Eq`; the bounds aren't recorded on the impl
-// tparams today — mono catches the missing impl at instantiation.
+// `HashMapIter<K, V>` impls `Iterator<Item = (K, V)>`, so
+// `for kv in m.iter() { let (k, v) = kv; ... }` walks live entries
+// (Empties and Tombstones are skipped).  K must `impl Hash + Eq`;
+// the bounds aren't recorded on the impl tparams today — mono
+// catches the missing impl at instantiation.
 //
 // `Slot<K, V>` stores `state: u8` (0=Empty, 1=Occupied, 2=Tombstone),
 // cached `hash: u32`, then `key: K`, `value: V`.  The cached hash
@@ -72,4 +76,41 @@ fn main() {
         Option::Some(v) => { println(v); }
         | Option::None => { println(-1); }              // -1
     }
+
+    // ── remove + grow + iter on int keys.  Insert past the
+    // initial cap=8 so grow runs; remove a couple of entries to
+    // exercise tombstones; iterate to sum the survivors.
+    let mut g: HashMap<int, int> = HashMap::with_capacity(a, 4 as u32);
+    let mut i: int = 0;
+    while i < 12 {
+        g.insert(i, i * 10);
+        i = i + 1;
+    }
+    println(g.len() as int);                            // 12
+
+    g.remove(3);
+    g.remove(7);
+    println(g.len() as int);                            // 10
+
+    // Tombstoned keys lookup → None; survivors still present.
+    match g.get(3) {
+        Option::Some(v) => { println(v); }
+        | Option::None => { println(-1); }              // -1
+    }
+    match g.get(5) {
+        Option::Some(v) => { println(v); }              // 50
+        | Option::None => { println(-1); }
+    }
+
+    // `iter()` yields (K, V) tuples for every Occupied slot;
+    // Empties and Tombstones are skipped.
+    let mut sum: int = 0;
+    let it = g.iter();
+    for kv in it {
+        let (k, v) = kv;
+        sum = sum + v;
+    }
+    // sum of i*10 for i in 0..12, minus removed 3*10 + 7*10
+    // = 660 - 30 - 70 = 560
+    println(sum);                                       // 560
 }

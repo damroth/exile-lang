@@ -2647,6 +2647,56 @@ let () =
      contains c "String__hash" && contains c "str__hash"
      && contains c "String__eq");
 
+  (* `insert` checks load > 0.75 before probing and calls the
+     private `grow` method, which alloc's a fresh buffer, walks
+     the old slots and re-probes every Occupied entry into the
+     new layout using each slot's cached hash. *)
+  check_assert "`HashMap::insert` rehashes via private `grow` on load > 0.75"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut m: HashMap<int,int> = HashMap::with_capacity(a, 4 as u32);\n\
+         \    m.insert(1, 100);\n\
+          }\n"
+     in
+     contains c "HashMap__grow" && contains c "memset"
+     && contains c "HashMap__insert");
+
+  check_assert "`HashMap::remove` lowers to a tombstone-mark on the matching slot"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut m: HashMap<int,int> = HashMap::with_capacity(a, 8 as u32);\n\
+         \    m.insert(1, 100);\n\
+         \    m.remove(1);\n\
+          }\n"
+     in
+     contains c "HashMap__remove"
+     (* Tombstone state byte (2) is written into the matching slot. *)
+     && contains c ".state = ((unsigned char)2)");
+
+  check_assert "`HashMap::iter` yields `(K, V)` tuples for `for kv in m.iter()`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut m: HashMap<int,int> = HashMap::with_capacity(a, 8 as u32);\n\
+         \    m.insert(1, 10);\n\
+         \    let mut sum: int = 0;\n\
+         \    let it = m.iter();\n\
+         \    for kv in it { let (k, v) = kv; sum = sum + v; }\n\
+         \    println(sum);\n\
+          }\n"
+     in
+     contains c "HashMap__iter"
+     && contains c "HashMapIter__next"
+     && contains c "tup2_i32_i32");
+
   check_assert "`String::eq` delegates to `str::eq` over `as_str`"
     (let c =
        Exile_lang.Compiler.compile

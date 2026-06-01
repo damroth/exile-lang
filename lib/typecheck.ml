@@ -5762,11 +5762,141 @@ let prelude_items () =
      Occupied → write slot.  No grow yet — v1 hard-errors via debug
      assertion if you fill the table (count == cap).  Grow lands in
      the follow-up. *)
+  (* grow( * self, new_cap): alloc a fresh zeroed buffer, walk the
+     old slots and re-probe every Occupied entry into the new layout
+     (cached `hash` lets us skip a re-hash), free the old buffer,
+     swap the pointer + cap.  Tombstones are dropped — only live
+     entries are re-inserted.  `count` stays accurate. *)
+  let hm_grow_body =
+    let self_v = Ast.Var ("self", pos) in
+    let self_alloc = field self_v "alloc" in
+    let size_of_slot_u32 =
+      bin Ast.Mul size_of_slot (Ast.Var ("new_cap", pos)) in
+    [
+      Ast.Let { name = "bytes"; is_mut = false; ty_ann = Some u32_t;
+                value = size_of_slot_u32; pos };
+      Ast.Let { name = "new_p"; is_mut = false;
+                ty_ann = Some (Ast.TyPtr slot_t_ann);
+                value = Ast.Cast (
+                  methcall self_alloc "alloc_fn"
+                    [ field self_alloc "state";
+                      Ast.Var ("bytes", pos) ],
+                  Ast.TyPtr slot_t_ann, pos); pos };
+      Ast.ExprStmt (Ast.Call {
+        callee = ["mem_zero"];
+        args = [ Ast.Var ("new_p", pos); Ast.Var ("bytes", pos) ];
+        pos });
+      Ast.Let { name = "old_cap"; is_mut = false; ty_ann = Some u32_t;
+                value = field self_v "cap"; pos };
+      Ast.Let { name = "old_view"; is_mut = false;
+                ty_ann = Some slice_slot_ann;
+                value = local_slice_of self_v; pos };
+      Ast.Let { name = "j"; is_mut = true; ty_ann = Some u32_t;
+                value = u32_lit 0; pos };
+      Ast.While {
+        cond = bin Ast.Lt (Ast.Var ("j", pos))
+                          (Ast.Var ("old_cap", pos));
+        body = [
+          Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
+                    value = Ast.Index { base = Ast.Var ("old_view", pos);
+                                        index = Ast.Var ("j", pos); pos };
+                    pos };
+          Ast.ExprStmt (Ast.If {
+            cond = bin Ast.EqEq (field (Ast.Var ("s", pos)) "state")
+                                (int_lit_as 1 u8_t);
+            then_blk = [
+              (* Re-probe `s` into the new buffer using its cached hash. *)
+              Ast.Let { name = "new_view"; is_mut = false;
+                        ty_ann = Some slice_slot_ann;
+                        value = Ast.StructLit {
+                          tname = ["Slice"];
+                          fields = [
+                            ("ptr", Ast.Cast (Ast.Var ("new_p", pos),
+                                              Ast.TyConstPtr slot_t_ann, pos));
+                            ("len", Ast.Var ("new_cap", pos));
+                          ]; base = None; pos }; pos };
+              Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+                        value = bin Ast.Mod
+                          (field (Ast.Var ("s", pos)) "hash")
+                          (Ast.Var ("new_cap", pos)); pos };
+              Ast.While { cond = Ast.BoolLit (true, pos); body = [
+                Ast.Let { name = "n"; is_mut = false; ty_ann = Some slot_t_ann;
+                          value = Ast.Index {
+                            base = Ast.Var ("new_view", pos);
+                            index = Ast.Var ("i", pos); pos };
+                          pos };
+                Ast.ExprStmt (Ast.If {
+                  cond = bin Ast.NotEq
+                           (field (Ast.Var ("n", pos)) "state")
+                           (int_lit_as 1 u8_t);
+                  then_blk = [
+                    Ast.AssignIndex {
+                      base = Ast.Var ("new_p", pos);
+                      index = Ast.Var ("i", pos);
+                      value = Ast.StructLit {
+                        tname = ["Slot"];
+                        fields = [
+                          ("state", int_lit_as 1 u8_t);
+                          ("hash", field (Ast.Var ("s", pos)) "hash");
+                          ("key",   field (Ast.Var ("s", pos)) "key");
+                          ("value", field (Ast.Var ("s", pos)) "value");
+                        ]; base = None; pos };
+                      pos };
+                    Ast.Break pos;
+                  ];
+                  else_blk = None; pos });
+                Ast.Assign { path = ["i"];
+                             value = bin Ast.Mod
+                               (bin Ast.Add (Ast.Var ("i", pos))
+                                            (u32_lit 1))
+                               (Ast.Var ("new_cap", pos)); pos };
+              ] };
+            ];
+            else_blk = None; pos });
+          Ast.Assign { path = ["j"];
+                       value = bin Ast.Add (Ast.Var ("j", pos))
+                                           (u32_lit 1); pos };
+        ] };
+      (* Release the old buffer; element heap was already moved into
+         new slots above, so byte-level free is enough. *)
+      Ast.Let { name = "old_bytes"; is_mut = false; ty_ann = Some u32_t;
+                value = bin Ast.Mul size_of_slot
+                                    (Ast.Var ("old_cap", pos)); pos };
+      Ast.ExprStmt (methcall self_alloc "free_fn"
+        [ field self_alloc "state";
+          Ast.Cast (field self_v "slots", cvoid_ptr, pos);
+          Ast.Var ("old_bytes", pos) ]);
+      Ast.AssignField { target = self_v; field = "slots";
+                        value = Ast.Var ("new_p", pos); pos };
+      Ast.AssignField { target = self_v; field = "cap";
+                        value = Ast.Var ("new_cap", pos); pos };
+    ]
+  in
+  let hm_grow_method =
+    mk_hm_method ~is_pub:false "grow"
+      [ hm_self_ptr_param;
+        { Ast.pname = "new_cap"; pty = u32_t;
+          preg = None; is_mut = false } ]
+      None hm_grow_body in
   let hm_insert_body =
     let self_v = Ast.Var ("self", pos) in
     let k_v = Ast.Var ("k", pos) in
     let v_v = Ast.Var ("v", pos) in
     [
+      (* Load-factor check: grow when (count + 1) * 4 > cap * 3
+         (load > 0.75).  Doubles the cap and rehashes every Occupied
+         slot — keeps the linear-probe cluster lengths bounded. *)
+      Ast.ExprStmt (Ast.If {
+        cond = bin Ast.Gt
+                 (bin Ast.Mul
+                    (bin Ast.Add (field self_v "count") (u32_lit 1))
+                    (u32_lit 4))
+                 (bin Ast.Mul (field self_v "cap") (u32_lit 3));
+        then_blk = [
+          Ast.ExprStmt (methcall self_v "grow"
+            [ bin Ast.Mul (field self_v "cap") (u32_lit 2) ]);
+        ];
+        else_blk = None; pos });
       Ast.Let { name = "h"; is_mut = false; ty_ann = Some u32_t;
                 value = methcall k_v "hash" []; pos };
       Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
@@ -5844,15 +5974,185 @@ let prelude_items () =
         { Ast.pname = "v"; pty = tvar "V";
           preg = None; is_mut = false } ]
       None hm_insert_body in
+  (* remove( * self, k): find slot with matching key, mark it
+     Tombstone, decrement count.  Returns silently if the key isn't
+     present.  v1 keeps the old key/value bytes in the tombstoned
+     slot (state byte alone changes) — fine for value K/V; @move K
+     leaves its heap stranded in the slot until the buffer is freed
+     wholesale (parity with the insert/grow caveat). *)
+  let hm_remove_body =
+    let self_v = Ast.Var ("self", pos) in
+    let k_v = Ast.Var ("k", pos) in
+    [
+      Ast.Let { name = "h"; is_mut = false; ty_ann = Some u32_t;
+                value = methcall k_v "hash" []; pos };
+      Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
+                value = local_slice_of self_v; pos };
+      Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+                value = bin Ast.Mod (Ast.Var ("h", pos))
+                                    (field self_v "cap"); pos };
+      Ast.While { cond = Ast.BoolLit (true, pos); body = [
+        Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
+                  value = Ast.Index { base = Ast.Var ("view", pos);
+                                      index = Ast.Var ("i", pos); pos };
+                  pos };
+        Ast.ExprStmt (Ast.If {
+          cond = bin Ast.EqEq (field (Ast.Var ("s", pos)) "state")
+                              (int_lit_as 0 u8_t);
+          then_blk = [ Ast.Return (None, pos) ];
+          else_blk = None; pos });
+        Ast.ExprStmt (Ast.If {
+          cond = bin Ast.And
+                   (bin Ast.EqEq
+                      (field (Ast.Var ("s", pos)) "state")
+                      (int_lit_as 1 u8_t))
+                   (bin Ast.EqEq
+                      (field (Ast.Var ("s", pos)) "hash")
+                      (Ast.Var ("h", pos)));
+          then_blk = [
+            Ast.ExprStmt (Ast.If {
+              cond = methcall k_v "eq"
+                       [ field (Ast.Var ("s", pos)) "key" ];
+              then_blk = [
+                Ast.AssignIndex {
+                  base = field self_v "slots";
+                  index = Ast.Var ("i", pos);
+                  value = Ast.StructLit {
+                    tname = ["Slot"];
+                    fields = [
+                      ("state", int_lit_as 2 u8_t);
+                      ("hash", field (Ast.Var ("s", pos)) "hash");
+                      ("key",   field (Ast.Var ("s", pos)) "key");
+                      ("value", field (Ast.Var ("s", pos)) "value");
+                    ]; base = None; pos };
+                  pos };
+                Ast.AssignField {
+                  target = self_v; field = "count";
+                  value = bin Ast.Sub (field self_v "count") (u32_lit 1);
+                  pos };
+                Ast.Return (None, pos);
+              ];
+              else_blk = None; pos });
+          ];
+          else_blk = None; pos });
+        Ast.Assign { path = ["i"];
+                     value = bin Ast.Mod
+                       (bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1))
+                       (field self_v "cap"); pos };
+      ] };
+    ]
+  in
+  let hm_remove_method =
+    mk_hm_method "remove"
+      [ hm_self_ptr_param;
+        { Ast.pname = "k"; pty = tvar "K";
+          preg = None; is_mut = false } ]
+      None hm_remove_body in
+  (* HashMapIter<K, V> — by-value cursor over Occupied slots.
+     `data` aliases the live slot buffer (read-only); `pos`/`len`
+     advance / cap the walk.  Yields `(K, V)` tuples; user can
+     destructure with `let (k, v) = ...;`. *)
+  let hashmap_iter_t_ann =
+    Ast.TyStruct { path = ["HashMapIter"];
+                   args = [ tvar "K"; tvar "V" ] } in
+  let kv_tuple_ann = Ast.TyTuple [ tvar "K"; tvar "V" ] in
+  let option_kv_ann =
+    Ast.TyStruct { path = ["Option"]; args = [ kv_tuple_ann ] } in
+  let hashmap_iter_struct = {
+    Ast.sname = "HashMapIter";
+    stparams = ["K"; "V"];
+    sfields = [
+      ("data", Ast.TyConstPtr slot_t_ann);
+      ("len", u32_t);
+      ("pos", u32_t);
+    ];
+    spos = prelude_pos; sis_pub = true;
+    stier_hint = Some "full";
+    sis_debug = false; sderives = []; sis_move = false;
+  } in
+  let hm_iter_method =
+    mk_hm_method "iter" [hm_self_const_ptr_param]
+      (Some hashmap_iter_t_ann)
+      [ Ast.Return (Some (Ast.StructLit {
+          tname = ["HashMapIter"];
+          fields = [
+            ("data", Ast.Cast (field (Ast.Var ("self", pos)) "slots",
+                               Ast.TyConstPtr slot_t_ann, pos));
+            ("len", field (Ast.Var ("self", pos)) "cap");
+            ("pos", u32_lit 0);
+          ]; base = None; pos }), pos) ] in
+  let hashmap_iter_self_ptr_param =
+    { Ast.pname = "self"; pty = Ast.TyPtr hashmap_iter_t_ann;
+      preg = None; is_mut = false } in
+  (* next( * self): walk forward from `pos` until an Occupied slot,
+     emit `Some((k, v))` and advance past it; out-of-bounds returns
+     `None`.  Tombstones and Emptys are skipped. *)
+  let hashmap_iter_next_body =
+    let self_v = Ast.Var ("self", pos) in
+    [
+      Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
+                value = Ast.StructLit {
+                  tname = ["Slice"];
+                  fields = [
+                    ("ptr", field self_v "data");
+                    ("len", field self_v "len");
+                  ]; base = None; pos };
+                pos };
+      Ast.While {
+        cond = bin Ast.Lt (field self_v "pos") (field self_v "len");
+        body = [
+          Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
+                    value = Ast.Index { base = Ast.Var ("view", pos);
+                                        index = field self_v "pos"; pos };
+                    pos };
+          Ast.AssignField { target = self_v; field = "pos";
+                            value = bin Ast.Add (field self_v "pos")
+                                                (u32_lit 1); pos };
+          Ast.ExprStmt (Ast.If {
+            cond = bin Ast.EqEq (field (Ast.Var ("s", pos)) "state")
+                                (int_lit_as 1 u8_t);
+            then_blk = [
+              Ast.Return (Some (Ast.Call {
+                callee = ["Option"; "Some"];
+                args = [ Ast.TupleLit (
+                  [ field (Ast.Var ("s", pos)) "key";
+                    field (Ast.Var ("s", pos)) "value" ], pos) ];
+                pos }), pos);
+            ];
+            else_blk = None; pos });
+        ] };
+      Ast.Return (Some (Ast.Call {
+        callee = ["Option"; "None"]; args = []; pos }), pos);
+    ]
+  in
+  let hashmap_iter_next_method = {
+    Ast.name = "next"; c_name = "next"; tparams = []; tbounds = [];
+    params = [ hashmap_iter_self_ptr_param ];
+    ret_ty = Some option_kv_ann;
+    body = hashmap_iter_next_body;
+    is_pub = true; is_extern = false; is_variadic = false;
+    tier_hint = Some "full"; amiga_lib = None;
+    must_use = false; pos;
+  } in
+  let hashmap_iter_impl = {
+    Ast.itparams = ["K"; "V"]; itrait = Some ["Iterator"];
+    iassoc = [("Item", kv_tuple_ann)];
+    itarget = ["HashMapIter"];
+    iitems = [ hashmap_iter_next_method ];
+    ipos = pos;
+  } in
   let hashmap_impl = {
     Ast.itparams = ["K"; "V"]; itrait = None; iassoc = [];
     itarget = ["HashMap"];
     iitems = [
       hm_with_capacity_method;
       hm_len_method;
+      hm_grow_method;
       hm_contains_method;
       hm_get_method;
       hm_insert_method;
+      hm_remove_method;
+      hm_iter_method;
     ];
     ipos = pos;
   } in
@@ -6141,12 +6441,14 @@ let prelude_items () =
     Ast.Struct vec_struct; Ast.Struct vec_iter_struct;
     Ast.Impl vec_impl;
     Ast.Struct slot_struct; Ast.Struct hashmap_struct;
+    Ast.Struct hashmap_iter_struct;
     Ast.Impl hashmap_impl;
     Ast.Module str_mod;
     Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait;
     Ast.Trait hash_trait;
     Ast.Trait display_trait; Ast.Trait debug_trait;
-    Ast.Impl vec_iter_impl ]
+    Ast.Impl vec_iter_impl;
+    Ast.Impl hashmap_iter_impl ]
 
 (* ===== `@derive(...)` — synthesize trait impls (DECYZJA #1/#2) =====
    Each `@derive`d trait becomes a real `impl Trait for Foo` generated as
