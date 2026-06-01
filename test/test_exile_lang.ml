@@ -3549,6 +3549,43 @@ let () =
     ~profile:Exile_lang.Profile.Full
     ["unused 'Result<i32, str>' value"];
 
+  (* DR-002 S5a — narrow escape-lint: returning a struct/`new`-lit
+     that embeds an address of a local binding leaks a dangling
+     pointer through a struct field, which cc's
+     `-Wreturn-local-addr` cannot see.  Pointer-typed params are
+     exempt — their target is caller-owned, so passing them through
+     a returned struct is the canonical view-exposure idiom. *)
+  check_lint "S5a: returning `Slice { ptr: &local[..] }` warns about dangling"
+    "fn make() -> Slice<int> {\n\
+    \    let arr: [int; 3] = [1, 2, 3];\n\
+    \    return Slice { ptr: &arr[0], len: 3 as u32 };\n\
+     }\n\
+     fn main() { let s = make(); println(s[0]); }\n"
+    ~profile:Exile_lang.Profile.Full
+    ["embeds the address of a local binding"];
+
+  check_lint "S5a: returning `new Box { f: &local }` warns about dangling"
+    "struct Box { p: *const int }\n\
+     fn make() -> *Box {\n\
+    \    let x: int = 7;\n\
+    \    return new Box { p: &x };\n\
+     }\n\
+     fn main() { let _b = make(); println(0); }\n"
+    ~profile:Exile_lang.Profile.Full
+    ["embeds the address of a local binding"];
+
+  check_lint "S5a: returning `Slice { ptr: arr_param }` (ptr-typed param) is silent"
+    "fn make(arr: *const int) -> Slice<int> {\n\
+    \    return Slice { ptr: arr, len: 3 as u32 };\n\
+     }\n\
+     fn main() {\n\
+    \    let arr: [int; 3] = [1, 2, 3];\n\
+    \    let s = make(&arr[0]);\n\
+    \    println(s[0]);\n\
+     }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
   check_error "@must_use rejects placement on non-decoratable items"
     "@must_use\n\
      impl Allocator { }\n\

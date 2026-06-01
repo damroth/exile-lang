@@ -197,6 +197,66 @@ let unused_lets_for (tf : tfunc) : warning list =
       lets
   end
 
+(* DR-002 S5a — narrow escape-lint: `return TStructLit { ..., &local,
+   ... }` and `return new TStructLit { ..., &local, ... }`.  Pre-fix
+   cc's `-Wreturn-local-addr` only catches a BARE `return &local`;
+   wrapping the address inside a struct field (`Slice { ptr: &arr[0],
+   ... }`) sneaks past `-Wall -Wextra` and the caller silently uses a
+   dangling pointer.  Scope is deliberately narrow per retrospektyw
+   "tani lint": only the direct struct/new-lit-as-return shape; a
+   refactor like `let s = Slice { ptr: &arr[0], ... }; return s;`
+   slips through (needs full borrow analysis — Owner-sigil territory).
+   Pointer-typed locals (`*T`, `*const T`, fn-ptrs) are exempt: the
+   pointer's target is typically caller-owned, so embedding it in a
+   returned struct is the canonical way to expose a view. *)
+let escaping_local_warnings_for (tf : tfunc) : warning list =
+  let is_stack_typ = function
+    | TPtr _ | TConstPtr _ | TNullPtr | TFnPtr _ -> false
+    | _ -> true
+  in
+  let locals = Hashtbl.create 16 in
+  List.iter2 (fun (p : Ast.param) ty ->
+    if is_stack_typ ty then Hashtbl.replace locals p.pname ())
+    tf.tf_func.params tf.tf_param_tys;
+  List.iter (fun (n, ty) ->
+    if is_stack_typ ty then Hashtbl.replace locals n ())
+    tf.tf_lets;
+  let rec lvalue_root (te : texpr) =
+    match te.e with
+    | TVar n -> Some n
+    | TFieldAccess { target; _ } -> lvalue_root target
+    | TIndex { base; _ } -> lvalue_root base
+    | _ -> None
+  in
+  let is_local_lvalue te =
+    match lvalue_root te with
+    | Some n -> Hashtbl.mem locals n
+    | None -> false
+  in
+  let rec contains_addr_of_local (te : texpr) =
+    match te.e with
+    | TRef sub when is_local_lvalue sub -> true
+    | _ -> List.exists contains_addr_of_local (texpr_children te)
+  in
+  let warnings = ref [] in
+  List.iter (fun s -> iter_tstmt (fun s ->
+    match s with
+    | TReturn { value = Some te; pos } ->
+        let is_aggregate =
+          match te.e with TStructLit _ | TNew _ -> true | _ -> false in
+        if is_aggregate && contains_addr_of_local te then begin
+          let msg =
+            "returning an aggregate that embeds the address of a local \
+             binding — the local goes out of scope when the function \
+             returns, leaving the caller with a dangling pointer (cc's \
+             `-Wreturn-local-addr` does not see addresses wrapped in \
+             struct/`new` fields)"
+          in
+          warnings := { pos; msg } :: !warnings
+        end
+    | _ -> ()) s) tf.tf_body;
+  List.rev !warnings
+
 (* Per-function unused-parameter check.  A parameter never read in the
    body is flagged, with the same `_`-prefix escape hatch as unused
    `let`s.  `self` is exempt — a method may keep the receiver in its
@@ -330,9 +390,18 @@ let collect ~(profile : Profile.t) (tp : tprogram) : warning list =
         Some { pos = tf.tf_func.pos; msg })
       tp.tp_funcs
   in
+  let escaping_warnings =
+    List.concat_map (fun tf ->
+      if is_prelude tf
+         || tf.tf_func.is_extern
+         || tf.tf_func.tparams <> []
+      then []
+      else escaping_local_warnings_for tf)
+      tp.tp_funcs
+  in
   let must_use = must_use_warnings tp in
   tier_warnings @ unused_let_warnings @ unused_param_warnings
-  @ unused_fn_warnings @ must_use
+  @ unused_fn_warnings @ escaping_warnings @ must_use
 
 let emit_warnings (ws : warning list) : unit =
   List.iter (fun w ->
