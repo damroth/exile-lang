@@ -1557,6 +1557,21 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
               "operator '%s' between incompatible types %s and %s"
               name (typ_name l'.ty) (typ_name r'.ty)
       in
+      (* `==` / `!=` on `str` — the C compiler would happily compare
+         pointer values (giving `1` only when both sides land in the
+         same `.rodata` slot after literal-dedup, `0` otherwise).  The
+         user-visible contract is value-equality, so lower to a call
+         to the prelude `str::eq` content compare.  NotEq wraps the
+         call in `!`.  Per DR-001 / str-ops design 2026-05-31. *)
+      if (op = Ast.EqEq || op = Ast.NotEq)
+         && typ_eq l'.ty TString && typ_eq r'.ty TString then
+        let call =
+          { e = TCall { mangled = "str__eq"; args = [l'; r'] };
+            ty = TBool; pos }
+        in
+        if op = Ast.EqEq then call
+        else { e = TNot call; ty = TBool; pos }
+      else
       let result_t =
         match op with
         | (Ast.Div | Ast.Mod) when expr_int_lit r = Some 0 ->
@@ -2637,6 +2652,25 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
            in
            (match inst_param_tys with
             | self_ty :: rest_params ->
+                (* Auto-ref regular args at `*const T` slots so
+                   `a.eq(b)` works for an Eq trait that now borrows
+                   `other: *const Self` — same ergonomic the receiver
+                   already gets.  Only `value T → *const T` is upgraded;
+                   other shapes flow through the regular type check. *)
+                let targs =
+                  let n = List.length rest_params in
+                  let r = List.length targs in
+                  if r = n then
+                    List.map2 (fun (te : texpr) pt ->
+                      match pt, te.ty with
+                      | TConstPtr inner, ty
+                        when (not (typ_eq ty pt))
+                          && typ_eq inner ty ->
+                          { e = TRef te; ty = pt; pos = te.pos }
+                      | _ -> te)
+                      targs rest_params
+                  else targs
+                in
                 let result_ty =
                   check_call_args ~pos:mc_pos
                     ~kind:"method" ~name:display
@@ -2645,8 +2679,6 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 in
                 (* Auto-ref / auto-deref: align receiver shape with the
                    method's self-param shape. *)
-                (* Auto-ref / -deref by pointer-shape, independent of
-                   whether the receiver is a struct or an enum. *)
                 let recv_is_ptr =
                   match trecv.ty with TPtr _ | TConstPtr _ -> true | _ -> false in
                 let self_is_ptr =
@@ -4892,9 +4924,20 @@ let prelude_items () =
     sis_debug = false; sderives = []; sis_move = true;
   } in
   let string_struct_ann = Ast.TyStruct { path = ["String"]; args = [] } in
+  (* `*self` for the destructive ops (`free` mutates ownership) and
+     `*const self` for the pure accessors (`length` / `as_slice` /
+     `as_str` borrow without aliasing) so user-written `let s = ...;
+     defer s.free(); println(s.length())` reads through the immutable
+     borrow while keeping the same call sites the original `*self`
+     allowed (`*const` accepts a `*T` by coercion). *)
   let string_self_ptr_param =
     { Ast.pname = "self";
       pty = Ast.TyPtr string_struct_ann;
+      preg = None; is_mut = false }
+  in
+  let string_self_const_ptr_param =
+    { Ast.pname = "self";
+      pty = Ast.TyConstPtr string_struct_ann;
       preg = None; is_mut = false }
   in
   let mk_string_method ?(is_pub = true) name params ret body = {
@@ -5000,11 +5043,11 @@ let prelude_items () =
      level) — the NUL written by every constructor is what makes the
      reinterpret libc-`%s`-safe. *)
   let string_length_method =
-    mk_string_method "length" [ string_self_ptr_param ] (Some u32_t)
+    mk_string_method "length" [ string_self_const_ptr_param ] (Some u32_t)
       [ Ast.Return (Some (field (Ast.Var ("self", pos)) "len"), pos) ]
   in
   let string_as_slice_method =
-    mk_string_method "as_slice" [ string_self_ptr_param ] (Some slice_u8_ann)
+    mk_string_method "as_slice" [ string_self_const_ptr_param ] (Some slice_u8_ann)
       [ Ast.Return (Some (Ast.StructLit {
           tname = ["Slice"];
           fields = [
@@ -5014,7 +5057,7 @@ let prelude_items () =
           ]; base = None; pos }), pos) ]
   in
   let string_as_str_method =
-    mk_string_method "as_str" [ string_self_ptr_param ] (Some Ast.TyStr)
+    mk_string_method "as_str" [ string_self_const_ptr_param ] (Some Ast.TyStr)
       [ Ast.Return (Some (Ast.Cast (
           field (Ast.Var ("self", pos)) "ptr", Ast.TyStr, pos)), pos) ]
   in
@@ -5073,6 +5116,86 @@ let prelude_items () =
       string_as_str_method;
       string_free_method;
     ];
+    ipos = pos;
+  } in
+  (* String's `Eq` / `Hash` / `Clone` are HAND-WRITTEN content-equal
+     impls that delegate to the prelude `str::*` ops.  `@derive` is
+     wrong here (the `alloc: Allocator` field would force `Allocator
+     impl Eq` and `ptr: *u8` would yield pointer-eq instead of
+     content-eq).  `Clone` deep-copies the buffer so each owner
+     manages its own allocation. *)
+  let string_self_const_ptr =
+    { Ast.pname = "self";
+      pty = Ast.TyConstPtr string_struct_ann;
+      preg = None; is_mut = false }
+  in
+  let string_other_const_ptr =
+    { Ast.pname = "other";
+      pty = Ast.TyConstPtr string_struct_ann;
+      preg = None; is_mut = false }
+  in
+  (* eq( * self, * other) = str::eq(self.as_str(), other.as_str()) *)
+  let string_eq_body =
+    let self_v = Ast.Var ("self", pos) in
+    let other_v = Ast.Var ("other", pos) in
+    [
+      Ast.Return (Some (Ast.Call {
+        callee = ["str"; "eq"];
+        args = [
+          methcall self_v "as_str" [];
+          methcall other_v "as_str" [];
+        ]; pos }), pos);
+    ]
+  in
+  let string_eq_method =
+    mk_string_method "eq"
+      [ string_self_const_ptr; string_other_const_ptr ]
+      (Some Ast.TyBool) string_eq_body
+  in
+  let string_eq_impl = {
+    Ast.itparams = []; itrait = Some ["Eq"]; iassoc = [];
+    itarget = ["String"];
+    iitems = [ string_eq_method ];
+    ipos = pos;
+  } in
+  let string_hash_body = [
+    Ast.Return (Some (Ast.Call {
+      callee = ["str"; "hash"];
+      args = [ methcall (Ast.Var ("self", pos)) "as_str" [] ];
+      pos }), pos);
+  ] in
+  let string_hash_method =
+    mk_string_method "hash"
+      [ string_self_const_ptr ]
+      (Some u32_t) string_hash_body
+  in
+  let string_hash_impl = {
+    Ast.itparams = []; itrait = Some ["Hash"]; iassoc = [];
+    itarget = ["String"];
+    iitems = [ string_hash_method ];
+    ipos = pos;
+  } in
+  (* clone( * const self) -> String: deep-copy via `String::with_str
+     (self.alloc, self.as_str())` so each owner has its own buffer.
+     The allocator value is copied into the new String (Allocator is
+     plain by-value, not affine). *)
+  let string_clone_body = [
+    Ast.Return (Some (Ast.Call {
+      callee = ["String"; "with_str"];
+      args = [
+        field (Ast.Var ("self", pos)) "alloc";
+        methcall (Ast.Var ("self", pos)) "as_str" [];
+      ]; pos }), pos);
+  ] in
+  let string_clone_method =
+    mk_string_method "clone"
+      [ string_self_const_ptr ]
+      (Some string_struct_ann) string_clone_body
+  in
+  let string_clone_impl = {
+    Ast.itparams = []; itrait = Some ["Clone"]; iassoc = [];
+    itarget = ["String"];
+    iitems = [ string_clone_method ];
     ipos = pos;
   } in
   (* `Vec<T>` — growable workhorse collection (DR-003 v1 copy-out
@@ -5417,24 +5540,37 @@ let prelude_items () =
     is_variadic = false; tier_hint = None; amiga_lib = None;
     must_use = false; pos }
   in
-  let eq_sig = trait_sig "eq" [self_v; other_v] (Some Ast.TyBool) [] in
-  (* default `ne(self, other) = !self.eq(other)` *)
+  (* `Eq` / `Hash` / `Clone` all borrow `self` read-only so an
+     `@move`-marked type (String, StringBuilder, Vec, …) can compare
+     / hash / clone without the move-pass consuming the source.
+     `Eq::eq` and `Eq::ne` take `( *const Self, *const Self)`;
+     `Hash::hash` takes `*const Self`; `Clone::clone` returns by-value
+     `Self` from a `*const Self` borrow.  Built-in primitive eq /
+     hash / clone (in MethodCall elaboration) auto-ref the receiver
+     so existing call sites stay `a.eq(b)` / `x.hash()` / `p.clone()`. *)
+  let self_const_ptr_v = mk_param "self" (Ast.TyConstPtr Ast.TySelf) in
+  let other_const_ptr_v = mk_param "other" (Ast.TyConstPtr Ast.TySelf) in
+  let _ = self_v in let _ = other_v in
+  let eq_sig =
+    trait_sig "eq" [self_const_ptr_v; other_const_ptr_v]
+      (Some Ast.TyBool) [] in
+  (* `ne` defaults to `!self.eq(other)`.  Both `self` and `other` are
+     now `*const Self`, so the body derefs them — otherwise method
+     dispatch sees a pointer receiver, hits the built-in primitive-
+     pointer eq path and silently lowers to a pointer compare. *)
   let ne_default =
-    trait_sig "ne" [self_v; other_v] (Some Ast.TyBool)
+    trait_sig "ne" [self_const_ptr_v; other_const_ptr_v]
+      (Some Ast.TyBool)
       [ Ast.Tail (Ast.Not (Ast.MethodCall {
-          receiver = Ast.Var ("self", pos); name = "eq";
-          args = [ Ast.Var ("other", pos) ]; pos }, pos)) ]
+          receiver = Ast.Deref (Ast.Var ("self", pos), pos);
+          name = "eq";
+          args = [ Ast.Deref (Ast.Var ("other", pos), pos) ]; pos }, pos)) ]
   in
   let eq_trait = {
     Ast.trname = "Eq"; trassoc = []; trsupers = [];
     trmethods = [ eq_sig; ne_default ]; trdefaults = [ "ne" ];
     trpos = pos; tris_pub = true;
   } in
-  (* `Clone::clone` borrows self read-only so calling `s.clone()`
-     leaves `s` live — required once the move pass marks heap-owning
-     structs `@move` (DR-002 prereq).  Receiver is `*const Self`,
-     return is by-value `Self`. *)
-  let self_const_ptr_v = mk_param "self" (Ast.TyConstPtr Ast.TySelf) in
   let clone_sig =
     trait_sig "clone" [self_const_ptr_v] (Some Ast.TySelf) [] in
   let clone_trait = {
@@ -5442,11 +5578,9 @@ let prelude_items () =
     trmethods = [ clone_sig ]; trdefaults = [];
     trpos = pos; tris_pub = true;
   } in
-  (* `Hash: Eq` — `fn hash(self) -> u32`.  Supertrait Eq signals the
-     hash/eq contract (`a.eq(b)` ⟹ `a.hash() == b.hash()`), so a type
-     deriving Hash must also derive/impl Eq. *)
   let u32_ann = Ast.TyInt { signed = false; width = Ast.W32 } in
-  let hash_sig = trait_sig "hash" [self_v] (Some u32_ann) [] in
+  let hash_sig =
+    trait_sig "hash" [self_const_ptr_v] (Some u32_ann) [] in
   let hash_trait = {
     Ast.trname = "Hash"; trassoc = []; trsupers = [ ["Eq"] ];
     trmethods = [ hash_sig ]; trdefaults = [];
@@ -5479,14 +5613,183 @@ let prelude_items () =
     trmethods = [ debug_sig ]; trdefaults = [];
     trpos = pos; tris_pub = true;
   } in
+  (* `mod str` — pure-exile string ops over `cstr_len` + Slice<u8>.
+     Per DR-001 (READ czysty) all bodies stay in exile; only
+     `cstr_len` (lowered to libc `strlen`) crosses the FFI seam.
+     `==` / `!=` on `str` operands dispatch to `str::eq` in the
+     BinOp arm (otherwise C would compare pointers — the long-standing
+     footgun this design closes). *)
+  let str_var n = Ast.Var (n, pos) in
+  let str_param pn =
+    { Ast.pname = pn; pty = Ast.TyStr; preg = None; is_mut = false } in
+  let mk_str_fn name params ret body = {
+    Ast.name; c_name = name; tparams = []; tbounds = [];
+    params; ret_ty = ret; body;
+    is_pub = true; is_extern = false; is_variadic = false;
+    tier_hint = Some "full"; amiga_lib = None;
+    must_use = false; pos;
+  } in
+  let slice_u8_ret = Ast.TyStruct { path = ["Slice"]; args = [ u8_t ] } in
+  let i_lit n = Ast.IntLit (n, pos) in
+  let cstr_len_of s =
+    Ast.Call { callee = ["cstr_len"]; args = [s]; pos } in
+  let as_bytes_call s =
+    Ast.Call { callee = ["as_bytes"]; args = [s]; pos } in
+  let str_len_body = [
+    Ast.Return (Some (cstr_len_of (str_var "s")), pos);
+  ] in
+  let str_len_fn =
+    mk_str_fn "len" [str_param "s"] (Some u32_t) str_len_body in
+  let str_as_bytes_body = [
+    Ast.Let { name = "n"; is_mut = false; ty_ann = Some u32_t;
+              value = cstr_len_of (str_var "s"); pos };
+    Ast.Return (Some (Ast.StructLit {
+      tname = ["Slice"];
+      fields = [
+        ("ptr", Ast.Cast (str_var "s", u8_cptr, pos));
+        ("len", str_var "n");
+      ]; base = None; pos }), pos);
+  ] in
+  let str_as_bytes_fn =
+    mk_str_fn "as_bytes" [str_param "s"] (Some slice_u8_ret)
+      str_as_bytes_body in
+  (* eq: len-check + byte-loop over Slice<u8>. *)
+  let str_eq_body = [
+    Ast.Let { name = "la"; is_mut = false; ty_ann = Some u32_t;
+              value = cstr_len_of (str_var "a"); pos };
+    Ast.Let { name = "lb"; is_mut = false; ty_ann = Some u32_t;
+              value = cstr_len_of (str_var "b"); pos };
+    Ast.ExprStmt (Ast.If {
+      cond = bin Ast.NotEq (str_var "la") (str_var "lb");
+      then_blk = [ Ast.Return (Some (Ast.BoolLit (false, pos)), pos) ];
+      else_blk = None; pos });
+    Ast.Let { name = "ba"; is_mut = false; ty_ann = Some slice_u8_ret;
+              value = as_bytes_call (str_var "a"); pos };
+    Ast.Let { name = "bb"; is_mut = false; ty_ann = Some slice_u8_ret;
+              value = as_bytes_call (str_var "b"); pos };
+    Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+              value = u32_lit 0; pos };
+    Ast.While {
+      cond = bin Ast.Lt (str_var "i") (str_var "la");
+      body = [
+        Ast.ExprStmt (Ast.If {
+          cond = bin Ast.NotEq
+                   (Ast.Index { base = str_var "ba";
+                                index = str_var "i"; pos })
+                   (Ast.Index { base = str_var "bb";
+                                index = str_var "i"; pos });
+          then_blk = [ Ast.Return (Some (Ast.BoolLit (false, pos)), pos) ];
+          else_blk = None; pos });
+        Ast.Assign { path = ["i"];
+                     value = bin Ast.Add (str_var "i") (u32_lit 1); pos };
+      ] };
+    Ast.Return (Some (Ast.BoolLit (true, pos)), pos);
+  ] in
+  let str_eq_fn =
+    mk_str_fn "eq" [str_param "a"; str_param "b"] (Some Ast.TyBool)
+      str_eq_body in
+  (* cmp: lexicographic; return ba[i]-bb[i] at first diff, else la-lb. *)
+  let str_cmp_body =
+    let i32_ann = Ast.TyInt { signed = true; width = Ast.W32 } in
+    [
+      Ast.Let { name = "la"; is_mut = false; ty_ann = Some u32_t;
+                value = cstr_len_of (str_var "a"); pos };
+      Ast.Let { name = "lb"; is_mut = false; ty_ann = Some u32_t;
+                value = cstr_len_of (str_var "b"); pos };
+      Ast.Let { name = "ba"; is_mut = false; ty_ann = Some slice_u8_ret;
+                value = as_bytes_call (str_var "a"); pos };
+      Ast.Let { name = "bb"; is_mut = false; ty_ann = Some slice_u8_ret;
+                value = as_bytes_call (str_var "b"); pos };
+      Ast.Let { name = "m"; is_mut = false; ty_ann = Some u32_t;
+                value = Ast.If {
+                  cond = bin Ast.Lt (str_var "la") (str_var "lb");
+                  then_blk = [ Ast.Tail (str_var "la") ];
+                  else_blk = Some [ Ast.Tail (str_var "lb") ];
+                  pos }; pos };
+      Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+                value = u32_lit 0; pos };
+      Ast.While {
+        cond = bin Ast.Lt (str_var "i") (str_var "m");
+        body = [
+          Ast.ExprStmt (Ast.If {
+            cond = bin Ast.NotEq
+                     (Ast.Index { base = str_var "ba";
+                                  index = str_var "i"; pos })
+                     (Ast.Index { base = str_var "bb";
+                                  index = str_var "i"; pos });
+            then_blk = [
+              Ast.Return (Some (bin Ast.Sub
+                (Ast.Cast (Ast.Index { base = str_var "ba";
+                                       index = str_var "i"; pos },
+                           i32_ann, pos))
+                (Ast.Cast (Ast.Index { base = str_var "bb";
+                                       index = str_var "i"; pos },
+                           i32_ann, pos))), pos);
+            ];
+            else_blk = None; pos });
+          Ast.Assign { path = ["i"];
+                       value = bin Ast.Add (str_var "i") (u32_lit 1); pos };
+        ] };
+      Ast.Return (Some (bin Ast.Sub
+        (Ast.Cast (str_var "la", i32_ann, pos))
+        (Ast.Cast (str_var "lb", i32_ann, pos))), pos);
+    ]
+  in
+  let str_cmp_fn =
+    mk_str_fn "cmp" [str_param "a"; str_param "b"]
+      (Some (Ast.TyInt { signed = true; width = Ast.W32 })) str_cmp_body in
+  (* hash: multiplicative content fold over Slice<u8> — same shape
+     as @derive(Hash)'s fold for byte-array fields.  Needed by
+     HashMap<String,_> / HashMap<str,_> so they avoid the pointer-
+     hash footgun the prelude `==` fix closes for equality. *)
+  let str_hash_body = [
+    Ast.Let { name = "bytes"; is_mut = false; ty_ann = Some slice_u8_ret;
+              value = as_bytes_call (str_var "s"); pos };
+    Ast.Let { name = "n"; is_mut = false; ty_ann = Some u32_t;
+              value = field (str_var "bytes") "len"; pos };
+    Ast.Let { name = "acc"; is_mut = true; ty_ann = Some u32_t;
+              value = u32_lit 0; pos };
+    Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+              value = u32_lit 0; pos };
+    Ast.While {
+      cond = bin Ast.Lt (str_var "i") (str_var "n");
+      body = [
+        Ast.Assign { path = ["acc"];
+                     value = bin Ast.Add
+                       (bin Ast.Mul (str_var "acc") (i_lit 31))
+                       (Ast.Cast (Ast.Index { base = str_var "bytes";
+                                              index = str_var "i"; pos },
+                                  u32_t, pos)); pos };
+        Ast.Assign { path = ["i"];
+                     value = bin Ast.Add (str_var "i") (u32_lit 1); pos };
+      ] };
+    Ast.Return (Some (str_var "acc"), pos);
+  ] in
+  let str_hash_fn =
+    mk_str_fn "hash" [str_param "s"] (Some u32_t) str_hash_body in
+  let str_mod = {
+    Ast.mname = "str";
+    mitems = [
+      Ast.Function str_len_fn;
+      Ast.Function str_as_bytes_fn;
+      Ast.Function str_eq_fn;
+      Ast.Function str_cmp_fn;
+      Ast.Function str_hash_fn;
+    ];
+    mpos = pos;
+    mis_pub = true;
+  } in
   [ Ast.Enum option_decl; Ast.Enum result_decl;
     Ast.Struct range_struct; Ast.Struct range_inclusive_struct;
     Ast.Struct slice_struct;
     Ast.Struct alloc_struct; Ast.Impl alloc_impl;
     Ast.Struct sb_struct; Ast.Impl sb_impl;
     Ast.Struct string_struct; Ast.Impl string_impl;
+    Ast.Impl string_eq_impl; Ast.Impl string_hash_impl;
+    Ast.Impl string_clone_impl;
     Ast.Struct vec_struct; Ast.Struct vec_iter_struct;
     Ast.Impl vec_impl;
+    Ast.Module str_mod;
     Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait;
     Ast.Trait hash_trait;
     Ast.Trait display_trait; Ast.Trait debug_trait;
@@ -5529,7 +5832,8 @@ let derive_eq_struct (s : Ast.struct_decl) : Ast.item =
   in
   let body = [ Ast.Tail (derive_and_all pos cmps) ] in
   let m = derive_mk_method "eq"
-    [ derive_field_param "self" target; derive_field_param "other" target ]
+    [ derive_field_param "self" (Ast.TyConstPtr target);
+      derive_field_param "other" (Ast.TyConstPtr target) ]
     (Some Ast.TyBool) body pos in
   Ast.Impl { itparams = []; itrait = Some ["Eq"]; iassoc = [];
              itarget = [s.sname]; iitems = [m]; ipos = pos }
@@ -5576,14 +5880,19 @@ let derive_eq_enum (e : Ast.enum_decl) : Ast.item =
                      body = Ast.BoolLit (false, pos); arm_pos = pos } ]
       in
       let inner_match =
-        Ast.Match { scrutinee = Ast.Var ("other", pos); arms = inner_arms; pos } in
+        Ast.Match {
+          scrutinee = Ast.Deref (Ast.Var ("other", pos), pos);
+          arms = inner_arms; pos } in
       Ast.{ pat = self_pat; guard = None; body = inner_match; arm_pos = pos })
       e.evariants
   in
   let outer_match =
-    Ast.Match { scrutinee = Ast.Var ("self", pos); arms = outer_arms; pos } in
+    Ast.Match {
+      scrutinee = Ast.Deref (Ast.Var ("self", pos), pos);
+      arms = outer_arms; pos } in
   let m = derive_mk_method "eq"
-    [ derive_field_param "self" target; derive_field_param "other" target ]
+    [ derive_field_param "self" (Ast.TyConstPtr target);
+      derive_field_param "other" (Ast.TyConstPtr target) ]
     (Some Ast.TyBool) [ Ast.Tail outer_match ] pos in
   Ast.Impl { itparams = []; itrait = Some ["Eq"]; iassoc = [];
              itarget = [e.ename]; iitems = [m]; ipos = pos }
@@ -5627,7 +5936,8 @@ let derive_hash_struct (s : Ast.struct_decl) : Ast.item =
         List.fold_left (fun acc f -> derive_hash_combine acc (field_hash f) pos)
           (field_hash f) rest
   in
-  let m = derive_mk_method "hash" [ derive_field_param "self" target ]
+  let m = derive_mk_method "hash"
+    [ derive_field_param "self" (Ast.TyConstPtr target) ]
     (Some derive_u32_ann) [ Ast.Tail body ] pos in
   Ast.Impl { itparams = []; itrait = Some ["Hash"]; iassoc = [];
              itarget = [s.sname]; iitems = [m]; ipos = pos }
@@ -5658,8 +5968,11 @@ let derive_hash_enum (e : Ast.enum_decl) : Ast.item =
       Ast.{ pat; guard = None; body; arm_pos = pos })
       e.evariants
   in
-  let match_e = Ast.Match { scrutinee = Ast.Var ("self", pos); arms; pos } in
-  let m = derive_mk_method "hash" [ derive_field_param "self" target ]
+  let match_e =
+    Ast.Match { scrutinee = Ast.Deref (Ast.Var ("self", pos), pos);
+                arms; pos } in
+  let m = derive_mk_method "hash"
+    [ derive_field_param "self" (Ast.TyConstPtr target) ]
     (Some derive_u32_ann) [ Ast.Tail match_e ] pos in
   Ast.Impl { itparams = []; itrait = Some ["Hash"]; iassoc = [];
              itarget = [e.ename]; iitems = [m]; ipos = pos }
@@ -6637,6 +6950,63 @@ let check_program program : tprogram =
            && match tf.tf_path with
               | [n] when List.mem n struct_drop_set -> true
               | _ -> false))
+      tp_funcs
+  in
+  (* Reachability DCE for non-generic prelude fns (mod str, future
+     mod sys, …): seed live set with every mangled name a non-prelude
+     tfunc references, then transitively pull in prelude fns those
+     references reach.  Anything still unreached and prelude-origin
+     gets dropped, so a hello-world that never names `str::*` doesn't
+     carry the byte-loop bodies. *)
+  let referenced_mangled tf =
+    let names = ref [] in
+    let visit_expr (te : texpr) =
+      match te.e with
+      | TCall { mangled; _ } -> names := mangled :: !names
+      | _ -> ()
+    in
+    let visit_stmt s =
+      List.iter (iter_texpr visit_expr) (tstmt_own_exprs s)
+    in
+    List.iter (iter_tstmt visit_stmt) tf.tf_body;
+    !names
+  in
+  let prelude_module_paths = [ ["str"] ] in
+  let is_drop_candidate tf =
+    is_from_prelude tf
+    && tf.tf_func.Ast.tparams = []
+    && List.mem tf.tf_path prelude_module_paths
+  in
+  (* Re-seed reachability so every always-kept tfunc (user + prelude
+     that isn't a drop candidate) is in the BFS root set.  Without
+     this, a prelude impl like `String::eq` that calls `str::eq`
+     wouldn't pull the body in — `str::eq` would stay unreached
+     and the C output ends with an unresolved external. *)
+  let live_set =
+    let live = Hashtbl.create 64 in
+    let queue = Queue.create () in
+    List.iter (fun tf ->
+      if not (is_drop_candidate tf) then begin
+        Hashtbl.replace live tf.tf_mangled ();
+        Queue.add tf queue
+      end)
+      tp_funcs;
+    while not (Queue.is_empty queue) do
+      let tf = Queue.pop queue in
+      List.iter (fun m ->
+        if not (Hashtbl.mem live m) then begin
+          Hashtbl.replace live m ();
+          List.iter (fun caller ->
+            if caller.tf_mangled = m then Queue.add caller queue)
+            tp_funcs
+        end)
+        (referenced_mangled tf)
+    done;
+    live
+  in
+  let tp_funcs =
+    List.filter (fun tf ->
+      not (is_drop_candidate tf) || Hashtbl.mem live_set tf.tf_mangled)
       tp_funcs
   in
   (* After dropping prelude-mono methods, re-collect type tables and

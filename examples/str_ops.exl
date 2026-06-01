@@ -1,0 +1,39 @@
+// `mod str` — pure-exile string ops over `cstr_len` + `Slice<u8>`.
+// All bodies stay in exile per DR-001 (READ pure); only `cstr_len`
+// (lowered to libc `strlen`) crosses the FFI seam.
+//
+// Surface:
+//
+//   str::len(s) -> u32                 byte count (wraps cstr_len)
+//   str::as_bytes(s) -> Slice<u8>      length-bounded byte view
+//   str::eq(a, b) -> bool              content compare, target of `==`/`!=`
+//   str::cmp(a, b) -> i32              lexicographic
+//   str::hash(s) -> u32                content fold `acc*31+byte`
+//
+// Closes the long-standing footgun: `a == b` on `str` used to
+// compile to a C pointer compare (truthy only when `.rodata`
+// happened to dedup the literal).  Typecheck now dispatches
+// `==` / `!=` between two `str` operands to `str::eq`.
+
+fn main() {
+    // `==` / `!=` content compare — no more pointer-trap.
+    let a = "hello";
+    let b = "hello";
+    let c = "world";
+    if a == b { println(1); } else { println(0); }    // 1
+    if a == c { println(1); } else { println(0); }    // 0
+    if a != c { println(1); } else { println(0); }    // 1
+
+    // Free-functions — OCaml-style `str::*`, not methods on str.
+    println(str::len(a) as int);                       // 5
+    println(str::cmp(a, c));                           // -15 ('h'-'w')
+    println(str::hash("a") as int);                    // 97  (acc=0*31+'a')
+    println(str::hash("ab") as int);                   // 3105 (97*31+'b')
+
+    // `as_bytes(s)` exposes a `Slice<u8>` over the literal — same
+    // index machinery user code uses on arrays / Vec.
+    let bytes = str::as_bytes(a);
+    println(bytes.len as int);                         // 5
+    println(bytes[0] as int);                          // 104 ('h')
+    println(bytes[4] as int);                          // 111 ('o')
+}

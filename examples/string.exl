@@ -14,10 +14,10 @@
 // through `*const String` (auto-ref'd by method dispatch), and
 // `defer s.free()` is the idiomatic single-point cleanup.
 //
-// `eq` / `hash` / `clone` for String are still pending: the
-// prelude `Eq` / `Hash` traits take by-value `self` (their
-// signatures haven't been re-borrowed yet).  They'll land
-// hand-written once the trait surfaces flip to `*const self`.
+// `eq` / `hash` / `clone` are hand-written content impls that
+// delegate to `str::eq` / `str::hash` over `as_str()`.  `clone`
+// is a deep copy via `with_str(self.alloc, self.as_str())` — each
+// owner manages its own allocation.
 
 pub mod raw {
     extern fn make_c_allocator() -> Allocator;
@@ -61,5 +61,17 @@ fn main() {
     let v2 = s.as_slice();
     println(v2[0] as int);                  // 98  ('b')
     println(v2[6] as int);                  // 50  ('2')
-    s.free();
+
+    // Content `eq` / `hash` / `clone`.  `eq` walks bytes through
+    // `str::eq`; `hash` folds bytes through `str::hash`; `clone`
+    // deep-copies through `with_str`, so each owner frees its own
+    // buffer.
+    let s2 = String::with_str(a, "built 2026");
+    if s.eq(s2) { println(1); } else { println(0); }   // 1
+    if s.hash() == s2.hash() { println(1); } else { println(0); }   // 1
+    let s3 = s.clone();
+    println(s3.length() as int);            // 10
+    if s.eq(s3) { println(1); } else { println(0); }   // 1
+
+    s.free(); s2.free(); s3.free();
 }

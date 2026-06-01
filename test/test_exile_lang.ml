@@ -629,7 +629,7 @@ let () =
     \    let b = P { x: 1, y: 2 };\n\
     \    if a.eq(b) { println(1); } else { println(0); }\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint P__eq(struct ex_P self, struct ex_P other);\nint P__ne(struct ex_P self, struct ex_P other);\n\nint main(void) {\n    struct ex_P a;\n    struct ex_P b;\n    a.x = 1;\n    a.y = 2;\n    b.x = 1;\n    b.y = 2;\n    if (P__eq(a, b)) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    return 0;\n}\n\nint P__eq(struct ex_P self, struct ex_P other) {\n    return self.x == other.x && self.y == other.y;\n}\n\nint P__ne(struct ex_P self, struct ex_P other) {\n    return !(P__eq(self, other));\n}\n";
+    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint P__eq(const struct ex_P *self, const struct ex_P *other);\nint P__ne(const struct ex_P *self, const struct ex_P *other);\n\nint main(void) {\n    struct ex_P a;\n    struct ex_P b;\n    a.x = 1;\n    a.y = 2;\n    b.x = 1;\n    b.y = 2;\n    if (P__eq(&a, &b)) {\n        printf(\"%ld\\n\", (long)(1));\n    } else {\n        printf(\"%ld\\n\", (long)(0));\n    }\n    return 0;\n}\n\nint P__eq(const struct ex_P *self, const struct ex_P *other) {\n    return self->x == other->x && self->y == other->y;\n}\n\nint P__ne(const struct ex_P *self, const struct ex_P *other) {\n    return !(P__eq(&*self, &*other));\n}\n";
 
   (* `@move` — affine / use-at-most-once marker for heap-owning
      structs.  Parser accepts and records on struct_sig
@@ -814,7 +814,7 @@ let () =
     \    let a = P { x: 1, y: 2 };\n\
     \    println(a.hash() as int);\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint P__eq(struct ex_P self, struct ex_P other);\nint P__ne(struct ex_P self, struct ex_P other);\nunsigned long P__hash(struct ex_P self);\n\nint main(void) {\n    struct ex_P a;\n    a.x = 1;\n    a.y = 2;\n    printf(\"%ld\\n\", (long)(((long)P__hash(a))));\n    return 0;\n}\n\nint P__eq(struct ex_P self, struct ex_P other) {\n    return self.x == other.x && self.y == other.y;\n}\n\nint P__ne(struct ex_P self, struct ex_P other) {\n    return !(P__eq(self, other));\n}\n\nunsigned long P__hash(struct ex_P self) {\n    return ((unsigned long)self.x) * 31 + ((unsigned long)self.y);\n}\n";
+    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint P__eq(const struct ex_P *self, const struct ex_P *other);\nint P__ne(const struct ex_P *self, const struct ex_P *other);\nunsigned long P__hash(const struct ex_P *self);\n\nint main(void) {\n    struct ex_P a;\n    a.x = 1;\n    a.y = 2;\n    printf(\"%ld\\n\", (long)(((long)P__hash(&a))));\n    return 0;\n}\n\nint P__eq(const struct ex_P *self, const struct ex_P *other) {\n    return self->x == other->x && self->y == other->y;\n}\n\nint P__ne(const struct ex_P *self, const struct ex_P *other) {\n    return !(P__eq(&*self, &*other));\n}\n\nunsigned long P__hash(const struct ex_P *self) {\n    return ((unsigned long)self->x) * 31 + ((unsigned long)self->y);\n}\n";
 
   check_error "@derive(Hash) without Eq rejected (supertrait)"
     "@derive(Hash)\n\
@@ -2589,6 +2589,55 @@ let () =
      }\n"
     "function 'String::empty' expects 1 argument(s), got 0";
 
+  let contains hay needle =
+    let hn = String.length needle in
+    let hh = String.length hay in
+    let rec go i =
+      if i + hn > hh then false
+      else if String.sub hay i hn = needle then true
+      else go (i + 1)
+    in
+    go 0
+  in
+  (* String impls Eq/Hash/Clone by delegating to `str::*` content
+     ops over `as_str()`.  `s1.eq(s2)` on equal-content Strings
+     lowers to `str::eq(s1.as_str(), s2.as_str())`; the emission
+     pulls `str__eq` in via the reachability DCE even though no
+     user code calls `str::eq` directly. *)
+  check_assert "`String::eq` delegates to `str::eq` over `as_str`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make_a() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make_a();\n\
+         \    let s1 = String::with_str(a, \"x\");\n\
+         \    let s2 = String::with_str(a, \"x\");\n\
+         \    if s1.eq(s2) { println(1); } else { println(0); }\n\
+         \    s1.free(); s2.free();\n\
+          }\n"
+     in
+     contains c "String__eq("
+     && contains c "str__eq("
+     && contains c "String__as_str");
+
+  check_assert "`String::hash` delegates to `str::hash` and clone deep-copies"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make_a() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make_a();\n\
+         \    let s = String::with_str(a, \"x\");\n\
+         \    let h = s.hash();\n\
+         \    let c = s.clone();\n\
+         \    println(h as int);\n\
+         \    s.free(); c.free();\n\
+          }\n"
+     in
+     contains c "String__hash("
+     && contains c "str__hash("
+     && contains c "String__clone("
+     && contains c "String__with_str(self->alloc");
+
   check "user `mod Allocator { fn ... }` not confused with prelude impl"
     "mod Allocator {\n\
     \    pub fn helper() -> int { return 1; }\n\
@@ -2980,6 +3029,48 @@ let () =
   check_error "cstr_len rejects wrong arity"
     "fn main() { let n = cstr_len(\"a\", \"b\"); println(n as int); }\n"
     "cstr_len() takes exactly one argument, got 2";
+
+  (* `str == str` and `str != str` lower to `str::eq` content compare
+     instead of C pointer compare (the long-standing footgun: even
+     identical literals could land in different `.rodata` slots and
+     pointer compare would lie).  Per str ops design 2026-05-31. *)
+  let contains hay needle =
+    let hn = String.length needle in
+    let hh = String.length hay in
+    let rec go i =
+      if i + hn > hh then false
+      else if String.sub hay i hn = needle then true
+      else go (i + 1)
+    in
+    go 0
+  in
+  check_assert "`str == str` lowers to `str::eq` content compare"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn same(a: str, b: str) -> bool { return a == b; }\n\
+          fn main() { if same(\"foo\", \"foo\") { println(1); } else { println(0); } }\n"
+     in
+     contains c "str__eq(a, b)" && not (contains c "return a == b"));
+
+  check_assert "`str != str` wraps `str::eq` in logical NOT"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn diff(a: str, b: str) -> bool { return a != b; }\n\
+          fn main() { if diff(\"x\", \"y\") { println(1); } else { println(0); } }\n"
+     in
+     contains c "!(str__eq(a, b))");
+
+  check_assert "`str::hash(s)` emits a call to the synthesized fold"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() { println(str::hash(\"a\") as int); }\n"
+     in
+     contains c "str__hash(\"a\")"
+     && contains c "acc * 31 + ((unsigned long)bytes.ptr[i])");
+
+  check "prelude `mod str` dropped from hello-world emission"
+    "fn main() { println(1); }\n"
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(1));\n    return 0;\n}\n";
 
   check "type_name() folds into compile-time '++' concat"
     "fn main() {\n\
