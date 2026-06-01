@@ -1597,6 +1597,41 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         in
         if op = Ast.EqEq then call
         else { e = TNot call; ty = TBool; pos }
+      (* `==` / `!=` on a struct/enum — DR-002 W2.  Pre-fix the
+         operator fell through to raw `a == b` in C which cc rejects
+         for aggregates; `.eq()` dispatch worked but the operator
+         didn't reach it.  Lower the BinOp to `T__eq(&a, &b)` when
+         the trait_impl_table has `impl Eq for T` registered
+         (`@derive(Eq)` or hand-written); reject upfront with a
+         helpful diagnostic when it isn't.  Method takes `*const
+         self, *const other`, so auto-ref both sides.  NotEq wraps
+         in `!`. *)
+      else if (op = Ast.EqEq || op = Ast.NotEq)
+              && typ_eq l'.ty r'.ty
+              && (match l'.ty with TStruct _ | TEnum _ -> true | _ -> false)
+      then
+        let target = match l'.ty with
+          | TStruct p | TEnum p -> p
+          | _ -> assert false
+        in
+        if not (List.mem ("Eq", target) !trait_impl_table) then
+          Error.failf pos
+            "type '%s' does not implement Eq, so `%s` cannot compare \
+             two values of it (add `@derive(Eq)` to the decl or write \
+             `impl Eq for %s` to define content equality)"
+            (typ_name l'.ty) name (typ_name l'.ty)
+        else
+          let eq_mangled = mangle target "eq" in
+          let lref =
+            { e = TRef l'; ty = TConstPtr l'.ty; pos = l'.pos } in
+          let rref =
+            { e = TRef r'; ty = TConstPtr r'.ty; pos = r'.pos } in
+          let call =
+            { e = TCall { mangled = eq_mangled; args = [lref; rref] };
+              ty = TBool; pos }
+          in
+          if op = Ast.EqEq then call
+          else { e = TNot call; ty = TBool; pos }
       else
       let result_t =
         match op with

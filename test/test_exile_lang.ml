@@ -1030,6 +1030,61 @@ let () =
      contains c "struct ex_Allocator {" && contains c "struct ex_Vec_i32 {"
      && contains c "struct ex_A {");
 
+  (* DR-002 W2 — `==` / `!=` on a struct/enum lowers to `T__eq`.
+     Pre-fix the operator fell through to raw `a == b` in C and cc
+     rejected aggregate equality.  `.eq()` dispatch was already
+     wired; W2 hooks the operator into the same path through
+     `trait_impl_table`.  Without an Eq impl, the operator errors
+     upfront with a directive to derive or impl Eq. *)
+  check_assert "W2: `s1 == s2` on String lowers to `String__eq(&s1, &s2)`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let s1 = String::with_str(a, \"x\");\n\
+         \    let s2 = String::with_str(a, \"x\");\n\
+         \    if s1 == s2 { println(1); } else { println(0); }\n\
+         \    s1.free(); s2.free();\n\
+          }\n"
+     in
+     contains c "String__eq(&s1, &s2)");
+
+  check_assert "W2: `@derive(Eq)` struct dispatches `==` through `T__eq`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "@derive(Eq)\n\
+          struct Pt { x: int, y: int }\n\
+          fn main() {\n\
+         \    let p1 = Pt { x: 1, y: 2 };\n\
+         \    let p2 = Pt { x: 1, y: 2 };\n\
+         \    if p1 == p2 { println(1); } else { println(0); }\n\
+          }\n"
+     in
+     contains c "Pt__eq(&p1, &p2)");
+
+  check_assert "W2: `!=` on an `@derive(Eq)` enum negates the `T__eq` call"
+    (let c =
+       Exile_lang.Compiler.compile
+         "@derive(Eq)\n\
+          enum H { Has(int) | Empty }\n\
+          fn main() {\n\
+         \    let a = H::Has(7);\n\
+         \    let b = H::Empty;\n\
+         \    if a != b { println(1); } else { println(0); }\n\
+          }\n"
+     in
+     contains c "!(H__eq(&a, &b))");
+
+  check_error "W2: `==` on a struct without Eq impl errors with derive hint"
+    "struct Pt { x: int, y: int }\n\
+     fn main() {\n\
+    \    let p1 = Pt { x: 1, y: 2 };\n\
+    \    let p2 = Pt { x: 1, y: 2 };\n\
+    \    if p1 == p2 { println(1); } else { println(0); }\n\
+     }\n"
+    "type 'Pt' does not implement Eq, so `==` cannot compare two values of it (add `@derive(Eq)` to the decl or write `impl Eq for Pt` to define content equality)";
+
   check "@derive(Clone) synthesizes a value-copy clone"
     "@derive(Clone)\n\
      struct P { x: int }\n\
