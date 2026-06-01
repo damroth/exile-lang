@@ -61,11 +61,17 @@ let consume_var ~structs live (te : texpr) =
       set_consumed live n te.pos
   | _ -> live
 
-(* Merge per-branch states.  A binding ends up Consumed iff Consumed
-   on EVERY non-diverging fall-through; a diverging branch (return /
-   break / continue / `try`-arm) can't reach the post-branch program
-   point so its state is dropped.  Pos comes from the first consuming
-   branch — arbitrary but deterministic. *)
+(* Merge per-branch states — may-consume union (DR-002 S0).  A binding
+   ends up Consumed iff Consumed on AT LEAST ONE non-diverging
+   fall-through; a diverging branch (return / break / continue /
+   `try`-arm) can't reach the post-branch program point so its state
+   is dropped BEFORE entering this function (callers filter divergence
+   out).  Sound-conservative: `if c { sink(s) }` followed by `s.use()`
+   is rejected even though the else-branch left s Live — the move-pass
+   can't prove `c` at compile time and reuse on either path is a
+   double-consume.  False-positive forces the user to write a
+   deterministic consume (or refactor); deliberate trade.  Pos comes
+   from the first consuming branch — arbitrary but deterministic. *)
 let merge_states a b =
   let names =
     List.sort_uniq compare (List.map fst a @ List.map fst b) in
@@ -73,8 +79,8 @@ let merge_states a b =
     let sa = try List.assoc n a with Not_found -> Live in
     let sb = try List.assoc n b with Not_found -> Live in
     let merged = match sa, sb with
-      | Consumed pa, Consumed _ -> Consumed pa
-      | _ -> Live
+      | Consumed pa, _ | _, Consumed pa -> Consumed pa
+      | Live, Live -> Live
     in (n, merged))
     names
 

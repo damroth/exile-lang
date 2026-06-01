@@ -797,6 +797,65 @@ let () =
      fn main() { run(Owner { tag: 42 }); }\n"
     "use of 'a' after it was consumed at <input>:6:43 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
 
+  (* DR-002 S0 — may-consume merge.  When ONE branch of a fork
+     consumes an @move binding and the other leaves it Live, the
+     post-merge state is Consumed (not Live).  Pre-fix `merge_states`
+     used `Consumed,Consumed→Consumed | _→Live` — the inverse of the
+     DR-002 contract — and let `defer s.free(); if c { sink(s); }`
+     silently double-fire.  Four forms exercised: defer-after-if,
+     match-arm conditional, if-expr value-position, if-stmt. *)
+  check_error "S0: defer body rejects @move after conditional consume in if-stmt"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn drop(o: *const Owner) { println(o.tag); }\n\
+     fn run(c: bool) {\n\
+    \    let a = Owner { tag: 1 };\n\
+    \    defer drop(&a);\n\
+    \    if c { println(take(a)); }\n\
+     }\n\
+     fn main() { run(true); }\n"
+    "use of 'a' after it was consumed at <input>:8:25 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
+  check_error "S0: post-match use rejected when ONE arm consumes @move"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn run(o: Option<int>) {\n\
+    \    let a = Owner { tag: 1 };\n\
+    \    match o {\n\
+    \        Option::Some(_) => { println(take(a)); }\n\
+    \        | Option::None  => {}\n\
+    \    }\n\
+    \    println(take(a));\n\
+     }\n\
+     fn main() { run(Option::Some(1)); }\n"
+    "use of 'a' after it was consumed at <input>:7:43 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
+  check_error "S0: post-if-expr use rejected when then-value consumes @move"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn run(c: bool) {\n\
+    \    let a = Owner { tag: 1 };\n\
+    \    let n = if c { take(a) } else { 0 };\n\
+    \    println(n + take(a));\n\
+     }\n\
+     fn main() { run(true); }\n"
+    "use of 'a' after it was consumed at <input>:6:25 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
+  check_error "S0: post-if-stmt use rejected when then-body consumes @move"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn run(c: bool) {\n\
+    \    let a = Owner { tag: 1 };\n\
+    \    if c { println(take(a)); }\n\
+    \    println(take(a));\n\
+     }\n\
+     fn main() { run(true); }\n"
+    "use of 'a' after it was consumed at <input>:6:25 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
   check "@derive(Clone) synthesizes a value-copy clone"
     "@derive(Clone)\n\
      struct P { x: int }\n\
