@@ -227,7 +227,15 @@ and walk_expr ~structs ~enums live (te : texpr) =
          tracks `match h { Has(inner)=>... }`'s `inner`.  Filter the
          binds back out of the post-arm contribution before merge —
          arm-local names go out of scope at the arm's closing
-         brace, they must not survive into the post-match state. *)
+         brace, they must not survive into the post-match state.
+         DR-002 S3 — partial-move scrutinee.  If an arm consumed
+         any affine pattern-bind, the scrutinee carries a stale
+         payload pointer; re-using the scrutinee binding (`let _b
+         = h`, `take(h)`, `return h`) would alias freed memory.
+         Mark the scrutinee TVar Consumed in this arm's
+         contribution so the merge-states union (may-consume,
+         per S0) raises the post-match state to Consumed even if a
+         sibling arm left it Live. *)
       let contributions = List.filter_map (fun (a : tmatch_arm) ->
         let arm_binds =
           affine_binds_of_pat ~structs ~enums scrutinee.ty a.tpat in
@@ -241,9 +249,25 @@ and walk_expr ~structs ~enums live (te : texpr) =
         if a.tdiverges || expr_diverges a.tbody then None
         else
           let bind_names = List.map fst arm_binds in
+          let any_bind_consumed =
+            List.exists (fun n ->
+              match List.assoc_opt n after_full with
+              | Some (Consumed _) -> true
+              | _ -> false)
+              bind_names
+          in
           let after =
             List.filter (fun (n, _) -> not (List.mem n bind_names))
               after_full
+          in
+          let after =
+            if any_bind_consumed then
+              match scrutinee.e with
+              | TVar sn ->
+                  (sn, Consumed scrutinee.pos)
+                  :: List.remove_assoc sn after
+              | _ -> after
+            else after
           in Some after)
         arms
       in

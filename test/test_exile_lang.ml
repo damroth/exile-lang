@@ -3586,6 +3586,50 @@ let () =
     ~profile:Exile_lang.Profile.Full
     [];
 
+  (* DR-002 S3 — partial-move scrutinee.  S2 tracks pattern-bound
+     @move locally per arm but the scrutinee binding stays Live, so
+     re-using it after an arm that consumed its payload (`let _b =
+     h`, `take(h)`, `return h`) silently aliases a freed payload
+     pointer.  Fix: after walking each arm body, if ANY affine
+     pattern-bind ended Consumed and the scrutinee is a bare
+     TVar `sn`, splice `(sn, Consumed)` into the arm's
+     contribution; the may-consume merge (S0) propagates Consumed
+     to the post-match state, so a later read of the scrutinee
+     errors.  Read-only arms (`Has(inner) => println(inner.tag)`)
+     leave the bind Live and don't trigger the splice — h stays
+     reusable. *)
+  check_error "S3: scrutinee reused after partial-move arm rejected"
+    "@move struct Owner { tag: int }\n\
+     enum H { Has(Owner) | Empty }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn run(h: H) {\n\
+    \    match h {\n\
+    \        H::Has(inner) => { let _x = take(inner); }\n\
+    \        | H::Empty => {}\n\
+    \    }\n\
+    \    let _b = h;\n\
+     }\n\
+     fn main() { run(H::Has(Owner { tag: 1 })); }\n"
+    "use of 'h' after it was consumed at <input>:5:11 (move-marked types are use-at-most-once — borrow with '&h' / take '*const H' or clone to keep the source live)";
+
+  check_assert "S3: scrutinee reusable after read-only arm (no payload consume)"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "@move struct Owner { tag: int }\n\
+          enum H { Has(Owner) | Empty }\n\
+          fn run(h: H) -> int {\n\
+         \    let mut sum: int = 0;\n\
+         \    match h {\n\
+         \        H::Has(inner) => { sum = inner.tag; }\n\
+         \        | H::Empty => {}\n\
+         \    }\n\
+         \    let _b = h;\n\
+         \    return sum;\n\
+          }\n\
+          fn main() { println(run(H::Has(Owner { tag: 5 }))); }\n");
+       true
+     with _ -> false);
+
   check_error "@must_use rejects placement on non-decoratable items"
     "@must_use\n\
      impl Allocator { }\n\
