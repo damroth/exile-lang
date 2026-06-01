@@ -1068,6 +1068,29 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
     (skel.mangled, skel.param_tys, skel.ret_ty)
   else begin
     let n_fixed = List.length skel.param_tys in
+    let got = List.length arg_tys in
+    (* DR-002 C3 — arity check before `List.combine` over arg_tys.
+       The callsite's [check_call_args] runs AFTER this function and
+       would have caught the mismatch with a clean diagnostic, but
+       the combine here is reached first and raises
+       Invalid_argument straight up to the user as an ICE.  Reject
+       under-supplied generic calls (and over-supplied non-variadic
+       ones) up front so tparam inference only sees aligned pairs. *)
+    let arity_ok =
+      if skel.fn_variadic then got >= n_fixed else got = n_fixed in
+    if not arity_ok then begin
+      let display =
+        let m = skel.mangled in
+        if String.length m >= 3 && String.sub m 0 3 = "ex_"
+        then String.sub m 3 (String.length m - 3)
+        else m
+      in
+      Error.failf pos
+        (if skel.fn_variadic
+         then "'%s' expects at least %d argument(s), got %d"
+         else "'%s' expects %d argument(s), got %d")
+        display n_fixed got
+    end;
     let take n xs =
       let rec loop n acc = function
         | _ when n <= 0 -> List.rev acc

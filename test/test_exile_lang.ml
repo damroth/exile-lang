@@ -1211,6 +1211,40 @@ let () =
      in
      contains c "tup2_i32_i32" && contains c "ex_wrap_i32");
 
+  (* DR-002 C3 — wrong-arity multi-arg generic call used to crash
+     in `List.combine skel.param_tys (take ... arg_tys)` because the
+     callsite's `check_call_args` arity diagnostic only ran AFTER
+     `resolve_call_dispatch`'s tparam inference.  Arity now checks
+     up front (`'fn' expects N argument(s), got M`) and the inference
+     loop only sees length-aligned (param, arg) pairs.  Display strips
+     `ex_` prefix so top-level fns read naturally in the error. *)
+  check_error "C3: under-supplied generic fn call errors with arity, not ICE"
+    "fn pair<A, B>(a: A, b: B) -> A { return a; }\n\
+     fn main() {\n\
+    \    let x = pair(1);\n\
+    \    println(x);\n\
+     }\n"
+    "'pair' expects 2 argument(s), got 1";
+
+  check_error "C3: over-supplied generic fn call errors with arity, not ICE"
+    "fn pair<A, B>(a: A, b: B) -> A { return a; }\n\
+     fn main() {\n\
+    \    let x = pair(1, 2, 3);\n\
+    \    println(x);\n\
+     }\n"
+    "'pair' expects 2 argument(s), got 3";
+
+  check_assert "C3: correctly-arity'd generic fn call still infers + dispatches"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn pair<A, B>(a: A, b: B) -> A { return a; }\n\
+          fn main() {\n\
+         \    let x = pair(1, 2);\n\
+         \    println(x);\n\
+          }\n"
+     in
+     contains c "ex_pair_i32_i32");
+
   check "@derive(Hash) synthesizes a multiplicative field fold"
     "@derive(Eq, Hash)\n\
      struct P { x: int, y: int }\n\
