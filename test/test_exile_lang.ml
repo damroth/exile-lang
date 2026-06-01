@@ -1140,6 +1140,77 @@ let () =
      fn main() { println(1); }\n"
     "@derive(Clone) on a generic struct 'Box' is not supported yet";
 
+  (* DR-002 C1 — `print_like_bcheck`'s catch-all `[_]→t_i32` let
+     every non-explicit singleton (`*const T`, fn-ptr, array,
+     unresolved-TVar, …) through to codegen, where
+     `emit_print_impl` asserted false because `printf_int_spec`
+     returned None.  Replace the catch-all with an allowlist
+     (TInt / TCInt / TBool / TString) and add explicit reject
+     arms for `TConstPtr`, `TFnPtr`, `TArray` that point users at
+     the right idiom.  Closes the ICE class for print/println
+     argument types — anything not on the allowlist now errors
+     with a typed diagnostic instead of crashing the compiler. *)
+  check_error "C1: `println(*const T)` errors with a deref hint (no ICE)"
+    "fn main() {\n\
+    \    let x: int = 5;\n\
+    \    let p: *const int = &x;\n\
+    \    println(p);\n\
+     }\n"
+    "cannot print a const-pointer value (*const i32); deref or print a field";
+
+  check_error "C1: `println(fn_ptr)` errors with a call/cast hint (no ICE)"
+    "fn helper() -> int { return 42; }\n\
+     fn main() {\n\
+    \    let f: fn() -> int = helper;\n\
+    \    println(f);\n\
+     }\n"
+    "cannot print a function-pointer value (fn() -> i32); call it or cast to an int first";
+
+  check_error "C1: `println([T; N])` errors with an iterate hint (no ICE)"
+    "fn main() {\n\
+    \    let arr: [int; 3] = [1, 2, 3];\n\
+    \    println(arr);\n\
+     }\n"
+    "cannot print an array value ([i32; 3]); iterate and print each element";
+
+  (* DR-002 C2 — `collect_tuple_types_of`'s `add_tuple` /
+     `add_fnptr` / `add_array` walked every tfunc's signature and
+     every struct/enum's field types, including generic skeletons
+     carrying TVar in a tuple/fnptr/array slot.  `mangle_typ` has
+     no encoding for TVar and asserted false on the declaration
+     alone (`fn wrap<T>(x: T) -> (T, int)`, `struct Pair<T> { p:
+     (T, int) }`).  Guard each `add_*` with `contains_tvar`:
+     skeletons skip aggregate registration; their monomorphic
+     instances (walked separately) carry concrete args verbatim
+     and register correctly. *)
+  check_assert "C2: tuple-returning generic fn declaration compiles (no codegen ICE)"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn wrap<T>(x: T) -> (T, int) { return (x, 1); }\n\
+          fn main() { println(0); }\n"
+     in
+     contains c "int main");
+
+  check_assert "C2: generic struct with tuple field declaration compiles (no codegen ICE)"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Pair<T> { p: (T, int) }\n\
+          fn main() { println(0); }\n"
+     in
+     contains c "int main");
+
+  check_assert "C2: concrete tuple-returning generic instance still emits a tuple typedef"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn wrap<T>(x: T, y: int) -> (T, int) { return (x, y); }\n\
+          fn main() {\n\
+         \    let p = wrap(42, 7);\n\
+         \    let (a, b) = p;\n\
+         \    println(a); println(b);\n\
+          }\n"
+     in
+     contains c "tup2_i32_i32" && contains c "ex_wrap_i32");
+
   check "@derive(Hash) synthesizes a multiplicative field fold"
     "@derive(Eq, Hash)\n\
      struct P { x: int, y: int }\n\

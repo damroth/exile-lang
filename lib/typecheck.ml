@@ -804,6 +804,18 @@ let print_like_bcheck ~name = fun ~ctx ~pos ~args ~allow_void:_ ->
         Error.failf pos
           "cannot print a pointer value (%s); deref or print a field"
           (typ_name t)
+    | [ TConstPtr _ as t ] ->
+        Error.failf pos
+          "cannot print a const-pointer value (%s); deref or print a field"
+          (typ_name t)
+    | [ TFnPtr _ as t ] ->
+        Error.failf pos
+          "cannot print a function-pointer value (%s); call it or cast \
+           to an int first" (typ_name t)
+    | [ TArray _ as t ] ->
+        Error.failf pos
+          "cannot print an array value (%s); iterate and print each element"
+          (typ_name t)
     | [ TNullPtr ] ->
         Error.failf pos "cannot print 'null'"
     | [ TEnum path ] when enum_is_debug ctx path -> t_i32
@@ -824,7 +836,21 @@ let print_like_bcheck ~name = fun ~ctx ~pos ~args ~allow_void:_ ->
         Error.failf pos
           "cannot directly print a %s value; cast to a known type \
            first (e.g. `as int`)" (typ_name t)
-    | [_] -> t_i32
+    (* Allowlist: only the primitive shapes codegen actually knows how
+       to format reach the codegen path (`printf_int_spec` for ints,
+       `%s` for str, `%d` for bool).  Pre-fix every other singleton
+       fell through to a catch-all `[_]→t_i32` and codegen asserted
+       false — `println( * const T)`, `println(fn_ptr)`,
+       `println([T; N])` all ICE'd.  Each rejection above already
+       covers a known shape; the final catch-all here turns any
+       leftover (TStructApp / TEnumApp / TAssocProj / TVar /
+       TCVoid …) into a clean error instead of leaking to codegen. *)
+    | [ (TInt _ | TCInt _ | TBool | TString) ] -> t_i32
+    | [ ty ] ->
+        Error.failf pos
+          "cannot print a value of type %s; convert it to a printable \
+           type first (int / bool / str, or `@debug`-mark the type)"
+          (typ_name ty)
     | tys ->
         Error.failf pos "%s() takes exactly one argument, got %d"
           name (List.length tys)
@@ -3998,20 +4024,47 @@ let collect_tuple_types_of ?(structs = []) ?(enums = []) tfuncs =
   let tup_seen = ref [] in
   let fnptr_seen = ref [] in
   let arr_seen = ref [] in
+  (* DR-002 C2 — skip aggregates that still hold an unresolved TVar
+     (or a generic TStructApp / TEnumApp / TAssocProj head).  Pre-fix
+     a generic skeleton's signature (`fn wrap<T>(x:T) -> (T, int)`)
+     or field type (`struct Pair<T> { p: (T, int) }`) flowed straight
+     into `mangle_typ`, which has no encoding for TVar and asserted
+     false on the declaration alone.  Skeletons never reach codegen
+     — only their monomorphic instances do, and those carry concrete
+     args verbatim. *)
+  let rec contains_tvar (t : typ) =
+    match t with
+    | TVar _ | TAssocProj _ -> true
+    | TTuple ts -> List.exists contains_tvar ts
+    | TFnPtr { params; ret } ->
+        List.exists contains_tvar params
+        || (match ret with Some t -> contains_tvar t | None -> false)
+    | TArray { elem; _ } -> contains_tvar elem
+    | TPtr inner | TConstPtr inner -> contains_tvar inner
+    | TStructApp { args; _ } | TEnumApp { args; _ } ->
+        List.exists contains_tvar args
+    | _ -> false
+  in
   let add_tuple t =
-    let name = mangle_typ t in
-    if not (List.exists (fun (n, _) -> n = name) !tup_seen) then
-      tup_seen := (name, t) :: !tup_seen
+    if contains_tvar t then ()
+    else
+      let name = mangle_typ t in
+      if not (List.exists (fun (n, _) -> n = name) !tup_seen) then
+        tup_seen := (name, t) :: !tup_seen
   in
   let add_fnptr t =
-    let name = mangle_typ t in
-    if not (List.exists (fun (n, _) -> n = name) !fnptr_seen) then
-      fnptr_seen := (name, t) :: !fnptr_seen
+    if contains_tvar t then ()
+    else
+      let name = mangle_typ t in
+      if not (List.exists (fun (n, _) -> n = name) !fnptr_seen) then
+        fnptr_seen := (name, t) :: !fnptr_seen
   in
   let add_array t =
-    let name = mangle_typ t in
-    if not (List.exists (fun (n, _) -> n = name) !arr_seen) then
-      arr_seen := (name, t) :: !arr_seen
+    if contains_tvar t then ()
+    else
+      let name = mangle_typ t in
+      if not (List.exists (fun (n, _) -> n = name) !arr_seen) then
+        arr_seen := (name, t) :: !arr_seen
   in
   let rec walk_typ t =
     match t with
