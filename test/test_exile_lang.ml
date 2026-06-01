@@ -2617,6 +2617,36 @@ let () =
      lowers to `str::eq(s1.as_str(), s2.as_str())`; the emission
      pulls `str__eq` in via the reachability DCE even though no
      user code calls `str::eq` directly. *)
+  (* HashMap v1 (DR-007): open-addressing linear probe + cached
+     hash + content `K::eq`.  String keys are the headline use case;
+     `String::hash` delegates to `str::hash` so equal-content
+     Strings hit the same slot. *)
+  check_assert "`HashMap<int,int>` insert+get roundtrips"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut m: HashMap<int,int> = HashMap::with_capacity(a, 8 as u32);\n\
+         \    m.insert(42, 7);\n\
+          }\n"
+     in
+     contains c "HashMap__insert" && contains c "HashMap__with_capacity"
+     && contains c "memset" && contains c "Slot");
+
+  check_assert "`HashMap<String,_>` pulls in String::hash / str::hash for key dispatch"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut m: HashMap<String,int> = HashMap::with_capacity(a, 8 as u32);\n\
+         \    m.insert(String::with_str(a, \"x\"), 1);\n\
+          }\n"
+     in
+     contains c "String__hash" && contains c "str__hash"
+     && contains c "String__eq");
+
   check_assert "`String::eq` delegates to `str::eq` over `as_str`"
     (let c =
        Exile_lang.Compiler.compile

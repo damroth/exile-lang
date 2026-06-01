@@ -214,12 +214,24 @@ let emit_type_name : builtin_emit =
          ~enums:ctx.enum_index arg.ty));
     Buffer.add_string buf "\")"
 
+(* `mem_zero(ptr, n_bytes)` -> `memset(ptr, 0, n_bytes)` — returns
+   the original pointer in C but we treat it as a void-call (return
+   value ignored).  Pulls `<string.h>` via tp_uses_string_h. *)
+let emit_mem_zero : builtin_emit =
+  fun _ctx buf args emit_arg ->
+    Buffer.add_string buf "memset(";
+    emit_arg (List.nth args 0);
+    Buffer.add_string buf ", 0, ";
+    emit_arg (List.nth args 1);
+    Buffer.add_char buf ')'
+
 let builtin_emitters : (string * builtin_emit) list = [
   ("print", emit_print);
   ("println", emit_println);
   ("free", emit_free);
   ("type_name", emit_type_name);
   ("cstr_len", emit_cstr_len);
+  ("mem_zero", emit_mem_zero);
 ]
 
 let lookup_builtin_emit name = List.assoc_opt name builtin_emitters

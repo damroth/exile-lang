@@ -643,6 +643,7 @@ let rec normalize_apps ctx t =
         | None -> TEnumApp { path; args }
       else TEnumApp { path; args }
   | TPtr inner -> TPtr (normalize_apps ctx inner)
+  | TConstPtr inner -> TConstPtr (normalize_apps ctx inner)
   | TTuple ts -> TTuple (List.map (normalize_apps ctx) ts)
   | TFnPtr { params; ret } ->
       TFnPtr { params = List.map (normalize_apps ctx) params;
@@ -895,9 +896,34 @@ let builtin_cstr_len = {
           (List.length xs));
 }
 
+(* `mem_zero(ptr, n_bytes)` — fill `n_bytes` starting at `ptr` with
+   zeros.  Used by HashMap (and any other slot-buffer collection) to
+   initialise a freshly-alloc'd region without forging a default
+   value for the embedded `K`/`V` fields — `malloc` returns garbage
+   and the discriminator byte must read 0 (Empty).  Lowers to
+   `memset(ptr, 0, n)` and pulls `<string.h>`. *)
+let builtin_mem_zero = {
+  bname = "mem_zero";
+  bcheck = (fun ~ctx:_ ~pos ~args ~allow_void:_ ->
+    match List.map (fun (a : texpr) -> a.ty) args with
+    | [ TPtr _; n_ty ] | [ TConstPtr _; n_ty ]
+      when is_int_like n_ty -> TInt { signed = true; width = Ast.W32 }
+    | [ p; _ ] when not (is_ptr p) ->
+        Error.failf pos
+          "'mem_zero' expects a pointer first argument, got %s"
+          (typ_name p)
+    | [ _; n ] ->
+        Error.failf pos
+          "'mem_zero' expects an integer byte count, got %s"
+          (typ_name n)
+    | xs ->
+        Error.failf pos "mem_zero() takes exactly 2 arguments, got %d"
+          (List.length xs));
+}
+
 let builtins =
   [ builtin_print; builtin_println; builtin_free; builtin_type_name;
-    builtin_cstr_len ]
+    builtin_cstr_len; builtin_mem_zero ]
 
 let lookup_builtin = function
   | [ name ] -> List.find_opt (fun b -> b.bname = name) builtins
@@ -4009,7 +4035,8 @@ let uses_heap_of tfuncs =
    and forwarded to codegen via [tp_uses_string_h]. *)
 let uses_string_h_of tfuncs =
   let expr_uses (te : texpr) = match te.e with
-    | TBuiltinCall { name = "cstr_len"; _ } -> true
+    | TBuiltinCall { name = "cstr_len"; _ }
+    | TBuiltinCall { name = "mem_zero"; _ } -> true
     | _ -> false
   in
   let stmt_uses s =
@@ -5505,6 +5532,330 @@ let prelude_items () =
     iitems = [ vec_iter_next_method ];
     ipos = pos;
   } in
+  (* `HashMap<K, V>` — open-addressing linear-probing table.
+     Flat `*Slot<K,V>` buffer over `Allocator`; `@move` so the buffer
+     can't be silently aliased.  Per DR-007: `K: Hash + Eq` (the
+     bounds aren't recorded on the impl tparams today — mono catches
+     the missing impl at instantiation), hash cached in the slot
+     so probe skips look at `u32` before `K::eq`.  v1 ships
+     `with_capacity` / `len` / `contains` / `get` / `insert`; `remove`
+     (tombstone) and `iter` land next. *)
+  let slot_t_ann =
+    Ast.TyStruct { path = ["Slot"]; args = [ tvar "K"; tvar "V" ] } in
+  let hashmap_t_ann =
+    Ast.TyStruct { path = ["HashMap"]; args = [ tvar "K"; tvar "V" ] } in
+  let option_v_ann =
+    Ast.TyStruct { path = ["Option"]; args = [ tvar "V" ] } in
+  let slice_slot_ann =
+    Ast.TyStruct { path = ["Slice"]; args = [ slot_t_ann ] } in
+  let slot_struct = {
+    Ast.sname = "Slot";
+    stparams = ["K"; "V"];
+    sfields = [
+      ("state", u8_t);    (* 0=Empty, 1=Occupied, 2=Tombstone *)
+      ("hash", u32_t);
+      ("key", tvar "K");
+      ("value", tvar "V");
+    ];
+    spos = prelude_pos; sis_pub = true;
+    stier_hint = Some "full";
+    sis_debug = false; sderives = []; sis_move = false;
+  } in
+  let hashmap_struct = {
+    Ast.sname = "HashMap";
+    stparams = ["K"; "V"];
+    sfields = [
+      ("slots", Ast.TyPtr slot_t_ann);
+      ("count", u32_t);
+      ("cap", u32_t);
+      ("alloc", alloc_ann_v);
+    ];
+    spos = prelude_pos; sis_pub = true;
+    stier_hint = Some "full";
+    sis_debug = false; sderives = []; sis_move = true;
+  } in
+  let hm_self_ptr_param =
+    { Ast.pname = "self"; pty = Ast.TyPtr hashmap_t_ann;
+      preg = None; is_mut = false } in
+  let hm_self_const_ptr_param =
+    { Ast.pname = "self"; pty = Ast.TyConstPtr hashmap_t_ann;
+      preg = None; is_mut = false } in
+  let mk_hm_method ?(is_pub = true) name params ret body = {
+    Ast.name; c_name = name; tparams = []; tbounds = []; params;
+    ret_ty = ret; body; is_pub; is_extern = false;
+    is_variadic = false; tier_hint = Some "full"; amiga_lib = None;
+    must_use = false; pos;
+  } in
+  let size_of_slot =
+    Ast.Cast (Ast.SizeOf (slot_t_ann, pos), u32_t, pos) in
+  let local_slice_of self_v =
+    Ast.StructLit {
+      tname = ["Slice"];
+      fields = [
+        ("ptr", Ast.Cast (field self_v "slots",
+                          Ast.TyConstPtr slot_t_ann, pos));
+        ("len", field self_v "cap");
+      ]; base = None; pos }
+  in
+  (* with_capacity(a, hint): cap = max(hint, 8); alloc cap *
+     size_of(Slot<K,V>) bytes and mem_zero them so every slot's
+     `state` byte reads Empty (0).  K / V payloads stay zeroed
+     too — unused until a slot transitions to Occupied. *)
+  let hm_with_capacity_body = [
+    Ast.Let { name = "cap"; is_mut = false; ty_ann = Some u32_t;
+              value = Ast.If {
+                cond = bin Ast.Lt (Ast.Var ("hint", pos)) (u32_lit 8);
+                then_blk = [ Ast.Tail (u32_lit 8) ];
+                else_blk = Some [ Ast.Tail (Ast.Var ("hint", pos)) ];
+                pos }; pos };
+    Ast.Let { name = "bytes"; is_mut = false; ty_ann = Some u32_t;
+              value = bin Ast.Mul size_of_slot
+                                  (Ast.Var ("cap", pos)); pos };
+    Ast.Let { name = "p"; is_mut = false;
+              ty_ann = Some (Ast.TyPtr slot_t_ann);
+              value = Ast.Cast (
+                methcall (Ast.Var ("a", pos)) "alloc_fn"
+                  [ field (Ast.Var ("a", pos)) "state";
+                    Ast.Var ("bytes", pos) ],
+                Ast.TyPtr slot_t_ann, pos); pos };
+    Ast.ExprStmt (Ast.Call {
+      callee = ["mem_zero"];
+      args = [ Ast.Var ("p", pos); Ast.Var ("bytes", pos) ];
+      pos });
+    Ast.Return (Some (Ast.StructLit {
+      tname = ["HashMap"];
+      fields = [
+        ("slots", Ast.Var ("p", pos));
+        ("count", u32_lit 0);
+        ("cap", Ast.Var ("cap", pos));
+        ("alloc", Ast.Var ("a", pos));
+      ]; base = None; pos }), pos);
+  ] in
+  let hm_with_capacity_method =
+    mk_hm_method "with_capacity"
+      [ { Ast.pname = "a"; pty = alloc_ann_v;
+          preg = None; is_mut = false };
+        { Ast.pname = "hint"; pty = u32_t;
+          preg = None; is_mut = false } ]
+      (Some hashmap_t_ann) hm_with_capacity_body in
+  let hm_len_method =
+    mk_hm_method "len" [hm_self_const_ptr_param] (Some u32_t)
+      [ Ast.Return (Some (field (Ast.Var ("self", pos)) "count"), pos) ] in
+  (* contains( * self, k): hash k, linear probe; Occupied + matching
+     hash + key.eq(slot.key) → true.  Empty stops the probe;
+     Tombstone keeps scanning. *)
+  let hm_contains_body =
+    let self_v = Ast.Var ("self", pos) in
+    let k_v = Ast.Var ("k", pos) in
+    [
+      Ast.Let { name = "h"; is_mut = false; ty_ann = Some u32_t;
+                value = methcall k_v "hash" []; pos };
+      Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
+                value = local_slice_of self_v; pos };
+      Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+                value = bin Ast.Mod (Ast.Var ("h", pos))
+                                    (field self_v "cap"); pos };
+      Ast.While { cond = Ast.BoolLit (true, pos); body = [
+        Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
+                  value = Ast.Index { base = Ast.Var ("view", pos);
+                                      index = Ast.Var ("i", pos); pos };
+                  pos };
+        Ast.ExprStmt (Ast.If {
+          cond = bin Ast.EqEq (field (Ast.Var ("s", pos)) "state")
+                              (int_lit_as 0 u8_t);
+          then_blk = [
+            Ast.Return (Some (Ast.BoolLit (false, pos)), pos);
+          ];
+          else_blk = None; pos });
+        Ast.ExprStmt (Ast.If {
+          cond = bin Ast.And
+                   (bin Ast.EqEq
+                      (field (Ast.Var ("s", pos)) "state")
+                      (int_lit_as 1 u8_t))
+                   (bin Ast.EqEq
+                      (field (Ast.Var ("s", pos)) "hash")
+                      (Ast.Var ("h", pos)));
+          then_blk = [
+            Ast.ExprStmt (Ast.If {
+              cond = methcall k_v "eq"
+                       [ field (Ast.Var ("s", pos)) "key" ];
+              then_blk = [
+                Ast.Return (Some (Ast.BoolLit (true, pos)), pos);
+              ];
+              else_blk = None; pos });
+          ];
+          else_blk = None; pos });
+        Ast.Assign { path = ["i"];
+                     value = bin Ast.Mod
+                       (bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1))
+                       (field self_v "cap"); pos };
+      ] };
+    ]
+  in
+  let hm_contains_method =
+    mk_hm_method "contains"
+      [ hm_self_const_ptr_param;
+        { Ast.pname = "k"; pty = tvar "K";
+          preg = None; is_mut = false } ]
+      (Some Ast.TyBool) hm_contains_body in
+  (* get( * self, k): same probe; on key match return Some(slot.value),
+     on Empty return None. *)
+  let hm_get_body =
+    let self_v = Ast.Var ("self", pos) in
+    let k_v = Ast.Var ("k", pos) in
+    [
+      Ast.Let { name = "h"; is_mut = false; ty_ann = Some u32_t;
+                value = methcall k_v "hash" []; pos };
+      Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
+                value = local_slice_of self_v; pos };
+      Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+                value = bin Ast.Mod (Ast.Var ("h", pos))
+                                    (field self_v "cap"); pos };
+      Ast.While { cond = Ast.BoolLit (true, pos); body = [
+        Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
+                  value = Ast.Index { base = Ast.Var ("view", pos);
+                                      index = Ast.Var ("i", pos); pos };
+                  pos };
+        Ast.ExprStmt (Ast.If {
+          cond = bin Ast.EqEq (field (Ast.Var ("s", pos)) "state")
+                              (int_lit_as 0 u8_t);
+          then_blk = [
+            Ast.Return (Some (Ast.Call {
+              callee = ["Option"; "None"]; args = []; pos }), pos);
+          ];
+          else_blk = None; pos });
+        Ast.ExprStmt (Ast.If {
+          cond = bin Ast.And
+                   (bin Ast.EqEq
+                      (field (Ast.Var ("s", pos)) "state")
+                      (int_lit_as 1 u8_t))
+                   (bin Ast.EqEq
+                      (field (Ast.Var ("s", pos)) "hash")
+                      (Ast.Var ("h", pos)));
+          then_blk = [
+            Ast.ExprStmt (Ast.If {
+              cond = methcall k_v "eq"
+                       [ field (Ast.Var ("s", pos)) "key" ];
+              then_blk = [
+                Ast.Return (Some (Ast.Call {
+                  callee = ["Option"; "Some"];
+                  args = [ field (Ast.Var ("s", pos)) "value" ]; pos }),
+                  pos);
+              ];
+              else_blk = None; pos });
+          ];
+          else_blk = None; pos });
+        Ast.Assign { path = ["i"];
+                     value = bin Ast.Mod
+                       (bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1))
+                       (field self_v "cap"); pos };
+      ] };
+    ]
+  in
+  let hm_get_method =
+    mk_hm_method "get"
+      [ hm_self_const_ptr_param;
+        { Ast.pname = "k"; pty = tvar "K";
+          preg = None; is_mut = false } ]
+      (Some option_v_ann) hm_get_body in
+  (* insert( * self, k, v): probe; first Empty/Tombstone or matching
+     Occupied → write slot.  No grow yet — v1 hard-errors via debug
+     assertion if you fill the table (count == cap).  Grow lands in
+     the follow-up. *)
+  let hm_insert_body =
+    let self_v = Ast.Var ("self", pos) in
+    let k_v = Ast.Var ("k", pos) in
+    let v_v = Ast.Var ("v", pos) in
+    [
+      Ast.Let { name = "h"; is_mut = false; ty_ann = Some u32_t;
+                value = methcall k_v "hash" []; pos };
+      Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
+                value = local_slice_of self_v; pos };
+      Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+                value = bin Ast.Mod (Ast.Var ("h", pos))
+                                    (field self_v "cap"); pos };
+      Ast.While { cond = Ast.BoolLit (true, pos); body = [
+        Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
+                  value = Ast.Index { base = Ast.Var ("view", pos);
+                                      index = Ast.Var ("i", pos); pos };
+                  pos };
+        Ast.ExprStmt (Ast.If {
+          cond = bin Ast.NotEq (field (Ast.Var ("s", pos)) "state")
+                               (int_lit_as 1 u8_t);
+          then_blk = [
+            (* Empty or Tombstone → put k,v here and bump count if it
+               was Empty (Tombstone means count is already incremented
+               from a prior alive entry, but we removed it… handled
+               more carefully once `remove` lands; v1 always bumps). *)
+            Ast.AssignIndex {
+              base = field self_v "slots";
+              index = Ast.Var ("i", pos);
+              value = Ast.StructLit {
+                tname = ["Slot"];
+                fields = [
+                  ("state", int_lit_as 1 u8_t);
+                  ("hash", Ast.Var ("h", pos));
+                  ("key", k_v);
+                  ("value", v_v);
+                ]; base = None; pos };
+              pos };
+            Ast.AssignField {
+              target = self_v; field = "count";
+              value = bin Ast.Add (field self_v "count") (u32_lit 1);
+              pos };
+            Ast.Return (None, pos);
+          ];
+          else_blk = None; pos });
+        Ast.ExprStmt (Ast.If {
+          cond = bin Ast.And
+                   (bin Ast.EqEq
+                      (field (Ast.Var ("s", pos)) "hash")
+                      (Ast.Var ("h", pos)))
+                   (methcall k_v "eq"
+                      [ field (Ast.Var ("s", pos)) "key" ]);
+          then_blk = [
+            Ast.AssignIndex {
+              base = field self_v "slots";
+              index = Ast.Var ("i", pos);
+              value = Ast.StructLit {
+                tname = ["Slot"];
+                fields = [
+                  ("state", int_lit_as 1 u8_t);
+                  ("hash", Ast.Var ("h", pos));
+                  ("key", k_v);
+                  ("value", v_v);
+                ]; base = None; pos };
+              pos };
+            Ast.Return (None, pos);
+          ];
+          else_blk = None; pos });
+        Ast.Assign { path = ["i"];
+                     value = bin Ast.Mod
+                       (bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1))
+                       (field self_v "cap"); pos };
+      ] };
+    ]
+  in
+  let hm_insert_method =
+    mk_hm_method "insert"
+      [ hm_self_ptr_param;
+        { Ast.pname = "k"; pty = tvar "K";
+          preg = None; is_mut = false };
+        { Ast.pname = "v"; pty = tvar "V";
+          preg = None; is_mut = false } ]
+      None hm_insert_body in
+  let hashmap_impl = {
+    Ast.itparams = ["K"; "V"]; itrait = None; iassoc = [];
+    itarget = ["HashMap"];
+    iitems = [
+      hm_with_capacity_method;
+      hm_len_method;
+      hm_contains_method;
+      hm_get_method;
+      hm_insert_method;
+    ];
+    ipos = pos;
+  } in
   (* `Iterator` — the prelude iteration protocol.  `for x in <value>`
      desugars to `loop { match value.next() { Some(x) => … | None =>
      break } }` for any type that `impl Iterator`.  `next` takes `*self`
@@ -5789,6 +6140,8 @@ let prelude_items () =
     Ast.Impl string_clone_impl;
     Ast.Struct vec_struct; Ast.Struct vec_iter_struct;
     Ast.Impl vec_impl;
+    Ast.Struct slot_struct; Ast.Struct hashmap_struct;
+    Ast.Impl hashmap_impl;
     Ast.Module str_mod;
     Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait;
     Ast.Trait hash_trait;
@@ -6244,9 +6597,27 @@ and stmt_returns = function
   | TReturn _ -> true
   | TIf { then_body; else_body; _ } ->
       always_returns then_body && always_returns else_body
+  | TWhile { cond; body; _ } ->
+      (* `while (true) { ... }` with no `break` is an infinite loop —
+         the only way out is via `return` from within.  Treating it as
+         "always returns" lets prelude collections write probe loops
+         (`while (true) { if ... return; }`) without a redundant
+         unreachable return at the end. *)
+      (match cond.e with
+       | TBoolLit true when not (List.exists has_break body) -> true
+       | _ -> false)
   | TLet _ | TLetTuple _ | TAssign _ | TAssignField _ | TAssignIndex _
-  | TAssignDeref _ | TWhile _ | TFor _ | TForEach _ | TDefer _ | TExprStmt _
+  | TAssignDeref _ | TFor _ | TForEach _ | TDefer _ | TExprStmt _
   | TBreak _ | TContinue _ -> false
+
+and has_break = function
+  | TBreak _ -> true
+  | TIf { then_body; else_body; _ } ->
+      List.exists has_break then_body
+      || List.exists has_break else_body
+  | TWhile _ | TFor _ | TForEach _ -> false (* break inside nested loop is local *)
+  | TDefer { body; _ } -> List.exists has_break body
+  | _ -> false
 
 (* Compile-time evaluation of `const NAME: T = expr;` declarations.
    Folds int/bool scalar expressions — literals, references to other
@@ -6874,7 +7245,16 @@ let check_program program : tprogram =
     | _ -> false
   in
   let tfunc_mentions target tf =
-    List.exists (typ_mentions target) tf.tf_param_tys
+    let body_mentions = ref false in
+    let visit_expr (te : texpr) =
+      if typ_mentions target te.ty then body_mentions := true
+    in
+    let visit_stmt s =
+      List.iter (iter_texpr visit_expr) (tstmt_own_exprs s)
+    in
+    List.iter (iter_tstmt visit_stmt) tf.tf_body;
+    !body_mentions
+    || List.exists (typ_mentions target) tf.tf_param_tys
     || (match tf.tf_ret_ty with Some t -> typ_mentions target t | None -> false)
     || List.exists (fun (_, t) -> typ_mentions target t) tf.tf_lets
   in

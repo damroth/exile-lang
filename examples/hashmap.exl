@@ -1,0 +1,75 @@
+// `HashMap<K, V>` — open-addressing linear-probing table (DR-007).
+// Flat `*Slot<K,V>` buffer over `Allocator`; `@move` so the
+// backing storage can't be silently aliased.  v1 ships:
+//
+//   with_capacity(a, hint) -> HashMap<K, V>   cap = max(hint, 8)
+//   len(*const self) -> u32                   accessor
+//   contains(*const self, k: K) -> bool       linear probe + hash+eq skip
+//   get(*const self, k: K) -> Option<V>       copy-out value
+//   insert(*self, k: K, v: V)                 store / overwrite
+//
+// `remove` (tombstone) and `iter` land in a follow-up.  K must
+// `impl Hash + Eq`; the bounds aren't recorded on the impl
+// tparams today — mono catches the missing impl at instantiation.
+//
+// `Slot<K, V>` stores `state: u8` (0=Empty, 1=Occupied, 2=Tombstone),
+// cached `hash: u32`, then `key: K`, `value: V`.  The cached hash
+// lets probes skip slots before touching `K::eq`, and `mem_zero`
+// initialises the freshly-alloc'd buffer so every slot's state
+// byte reads Empty without forging a default K / V.
+
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+}
+
+fn main() {
+    let a = raw::make_c_allocator();
+
+    // ── HashMap<int, int> — value keys, sanity for the table mechanics.
+    let mut m: HashMap<int, int> = HashMap::with_capacity(a, 8 as u32);
+    m.insert(1, 100);
+    m.insert(2, 200);
+    m.insert(3, 300);
+    println(m.len() as int);                            // 3
+
+    if m.contains(2) { println(1); } else { println(0); }   // 1
+    if m.contains(99) { println(1); } else { println(0); }  // 0
+
+    match m.get(1) {
+        Option::Some(v) => { println(v); }              // 100
+        | Option::None => { println(-1); }
+    }
+    match m.get(99) {
+        Option::Some(v) => { println(v); }
+        | Option::None => { println(-1); }              // -1
+    }
+
+    // Re-insert overwrites and leaves len unchanged.
+    m.insert(2, 222);
+    match m.get(2) {
+        Option::Some(v) => { println(v); }              // 222
+        | Option::None => { println(-1); }
+    }
+    println(m.len() as int);                            // 3
+
+    // ── HashMap<String, int> — the self-host motivator.  The
+    // hand-written `String::eq` / `String::hash` delegate to
+    // `str::eq` / `str::hash`, so equal-content Strings hit the
+    // same slot and lookup succeeds across distinct String values.
+    let mut kw: HashMap<String, int> = HashMap::with_capacity(a, 8 as u32);
+    kw.insert(String::with_str(a, "fn"),     1);
+    kw.insert(String::with_str(a, "let"),    2);
+    kw.insert(String::with_str(a, "return"), 3);
+    println(kw.len() as int);                           // 3
+
+    let probe = String::with_str(a, "fn");
+    match kw.get(probe) {
+        Option::Some(v) => { println(v); }              // 1
+        | Option::None => { println(-1); }
+    }
+    let miss = String::with_str(a, "while");
+    match kw.get(miss) {
+        Option::Some(v) => { println(v); }
+        | Option::None => { println(-1); }              // -1
+    }
+}
