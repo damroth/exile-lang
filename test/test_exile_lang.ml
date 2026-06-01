@@ -1431,6 +1431,19 @@ let () =
     "struct Point { x: int, y: int, }\nfn shift(p: *Point, dx: int) {\n    p.x = p.x + dx;\n}\nfn main() {\n    let p = Point { x: 0, y: 0 };\n    shift(&p, 10);\n    println(p.x);\n}\n"
     "#include <stdio.h>\n\nstruct ex_Point { long x; long y; };\n\nstatic void ex_shift(struct ex_Point *p, long dx);\n\nstatic void ex_shift(struct ex_Point *p, long dx) {\n    p->x = p->x + dx;\n}\n\nint main(void) {\n    struct ex_Point p;\n    p.x = 0;\n    p.y = 0;\n    ex_shift(&p, 10);\n    printf(\"%ld\\n\", (long)(p.x));\n    return 0;\n}\n";
 
+  (* `( * p).field` used to emit `* p.field` — C parses `.` tighter
+     than `*`, so cc rejected it ("`p` is a pointer; did you mean
+     `->`?").  Codegen now detects the explicit `Deref → Field`
+     shape and emits arrow notation directly. *)
+  check "explicit `(*p).field` lowers to `p->field` (precedence fix)"
+    "struct P { x: int, y: int }\n\
+     fn main() {\n\
+    \    let p = P { x: 7, y: 3 };\n\
+    \    let q: *const P = &p;\n\
+    \    println((*q).x);\n\
+     }\n"
+    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint main(void) {\n    struct ex_P p;\n    const struct ex_P *q;\n    p.x = 7;\n    p.y = 3;\n    q = &p;\n    printf(\"%ld\\n\", (long)(q->x));\n    return 0;\n}\n";
+
   check "pointer to int: ref, deref-load, deref-store"
     "fn main() {\n    let n = 5;\n    let pn = &n;\n    println(*pn);\n    *pn = 99;\n    println(n);\n}\n"
     "#include <stdio.h>\n\nint main(void) {\n    long n;\n    long *pn;\n    n = 5;\n    pn = &n;\n    printf(\"%ld\\n\", (long)(*pn));\n    *pn = 99;\n    printf(\"%ld\\n\", (long)(n));\n    return 0;\n}\n";

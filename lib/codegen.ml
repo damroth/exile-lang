@@ -381,6 +381,16 @@ let rec gen_expr ctx buf (te : texpr) =
       Buffer.add_string buf suffix;
       gen_expr ctx buf index;
       Buffer.add_char buf ']'
+  | TFieldAccess { target = { e = TDeref inner; _ }; field } ->
+      (* `( * p).field` — C parses `.` tighter than the leading `*`,
+         so the naive `* p.field` lowers to `*(p.field)` and cc
+         rejects.  Use arrow notation on the underlying pointer
+         instead — the result reads cleaner and sidesteps the
+         precedence trap regardless of how the pointer expression
+         is shaped. *)
+      gen_expr ctx buf inner;
+      Buffer.add_string buf "->";
+      Buffer.add_string buf field
   | TFieldAccess { target; field } ->
       (* Auto-deref pointer-to-struct via `->`; otherwise plain `.`. *)
       let sep = match target.ty with TPtr _ | TConstPtr _ -> "->" | _ -> "." in
