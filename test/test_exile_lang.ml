@@ -3529,6 +3529,23 @@ let () =
      the orphan-drop closure walks top-level structs too so the
      instance survives DCE even when only a struct decl references
      it. *)
+  (* Same defect on the enum side: `struct H { o: Option<int> }`
+     elaborated `Option<int>` against the placeholder enum_skeleton
+     (variant names known, payloads still `[]`).  Without refreshing
+     the cached enum instance after `build_enum_index` resolves the
+     real variants, `Option::Some(42)` was rejected with "variant
+     takes 0 argument(s), got 1". *)
+  check "Option<int> as a struct field — variant payloads refreshed post-resolve"
+    "struct H { o: Option<int> }\n\
+     fn main() {\n\
+    \    let h: H = H { o: Option::Some(42) };\n\
+    \    match h.o {\n\
+    \        Option::Some(v) => { println(v); }\n\
+    \        | Option::None    => { println(0); }\n\
+    \    }\n\
+     }\n"
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\nstruct ex_H { struct ex_Option_i32 o; };\n\nint main(void) {\n    struct ex_H h;\n    struct ex_Option_i32 __lift_0;\n    __lift_0.tag = ex_Option_i32_Some;\n    __lift_0.data.Some._0 = 42;\n    h.o = __lift_0;\n    {\n        struct ex_Option_i32 __m;\n        __m = h.o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+
   check "Slice<int> as a struct field — instance fields refreshed post-resolve"
     "struct H { s: Slice<int> }\n\
      fn touch(h: *H) -> u32 { return h.s.len; }\n\

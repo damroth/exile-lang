@@ -7307,6 +7307,66 @@ let check_program program : tprogram =
     build_enum_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~modules:flat.modules ~struct_index flat.enums
   in
+  (* Same defect on the enum side: `struct H { o: Option<int> }`
+     elaborated `Option<int>` against the placeholder enum_skeleton
+     whose variants carried empty `vsfields`.  After enum_index
+     resolves the real variants, walk cached enum instances and
+     refresh any that landed empty.  Loop because a refreshed
+     variant's payload type may itself be a still-empty TStructApp /
+     TEnumApp. *)
+  let refresh_enum_instances () =
+    let changed = ref false in
+    let resolved_skel_of (inst : enum_sig) =
+      List.find_opt
+        (fun (e : enum_sig) ->
+          e.etparams <> []
+          && Mono.is_instance_of e.ename_path inst.ename_path)
+        enum_index
+    in
+    let norm_ctx =
+      { (empty_ctx ~instances:mono_state) with
+        structs = struct_index; enums = enum_index } in
+    let needs_refresh (inst : enum_sig) =
+      (* "Empty" = every variant has no fields AND the skeleton has
+         at least one variant with fields (variants like `Option::None`
+         legitimately have no payload). *)
+      match resolved_skel_of inst with
+      | None -> false
+      | Some skel ->
+          let skel_has_payload =
+            List.exists (fun (v : variant_sig) -> v.vsfields <> []) skel.evariants
+          in
+          let inst_has_payload =
+            List.exists (fun (v : variant_sig) -> v.vsfields <> []) inst.evariants
+          in
+          skel_has_payload && not inst_has_payload
+    in
+    let updated =
+      List.map
+        (fun (inst : enum_sig) ->
+          if not (needs_refresh inst) then inst
+          else
+            match resolved_skel_of inst, inst.einstance_args with
+            | Some skel, Some args ->
+                let bindings = List.combine skel.etparams args in
+                let new_variants =
+                  List.map (fun (v : variant_sig) ->
+                    { v with vsfields =
+                        List.map (fun (n, t) ->
+                          (n, normalize_apps norm_ctx (subst_typ bindings t)))
+                          v.vsfields })
+                    skel.evariants
+                in
+                changed := true;
+                { inst with evariants = new_variants }
+            | _ -> inst)
+        mono_state.inst_enums
+    in
+    mono_state.inst_enums <- updated;
+    !changed
+  in
+  let rec loop_enum () = if refresh_enum_instances () then loop_enum () in
+  loop_enum ();
   (* Fail fast on infinitely-sized value types before any elaboration. *)
   let pos_of path =
     match List.find_opt
