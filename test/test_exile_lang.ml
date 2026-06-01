@@ -1291,6 +1291,38 @@ let () =
      in
      contains c "case ex_E_A" && contains c "case ex_E_C");
 
+  (* DR-002 W4 — `Vec<*T>` grow used to expand the slice-routed
+     copy as `new_ptr[i] = src.ptr[i]` (LHS `U **`, RHS `U * const
+     *`), which cc flagged `-Wdiscarded-qualifiers`.  `Vec<int>`
+     dropped const trivially and never warned.  Wrap the RHS in
+     `as T`: cast is a no-op at the C level for plain T and
+     silences the discard for pointer T (cc treats explicit casts
+     as intent). *)
+  check_assert "W4: `Vec<*int>` grow body carries an explicit `(T)` cast"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut v: Vec<*int> = Vec::with_capacity(a, 2 as u32);\n\
+         \    let mut x: int = 1;\n\
+         \    v.push(&x);\n\
+          }\n"
+     in
+     contains c "new_ptr[i] = ((long *)src.ptr[i])");
+
+  check_assert "W4: `Vec<int>` grow body still emits the cast (no-op for plain T)"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 2 as u32);\n\
+         \    v.push(1);\n\
+          }\n"
+     in
+     contains c "new_ptr[i] = ((long)src.ptr[i])");
+
   check "@derive(Hash) synthesizes a multiplicative field fold"
     "@derive(Eq, Hash)\n\
      struct P { x: int, y: int }\n\

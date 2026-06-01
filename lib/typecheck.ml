@@ -5491,11 +5491,21 @@ let prelude_items () =
       Ast.While {
         cond = bin Ast.Lt (Ast.Var ("i", pos)) (field self_v "count");
         body = [
+          (* DR-002 W4 — cast the source element back to `T` before
+             storing.  `Slice<T>` carries `*const T`, so `src[i]`
+             yields a const-qualified T; assigning straight into the
+             writable `new_ptr[i]` (`*T`) emitted `-Wdiscarded-
+             qualifiers` for any `Vec<*U>` (LHS `U **`, RHS `U * const
+             *`).  Plain-value `T` cases (`Vec<int>` etc.) drop const
+             trivially and never warned; the cast is a no-op for them
+             at the C level and silences the warning for pointer-T. *)
           Ast.AssignIndex {
             base = Ast.Var ("new_ptr", pos);
             index = Ast.Var ("i", pos);
-            value = Ast.Index { base = Ast.Var ("src", pos);
-                                index = Ast.Var ("i", pos); pos };
+            value = Ast.Cast (
+              Ast.Index { base = Ast.Var ("src", pos);
+                          index = Ast.Var ("i", pos); pos },
+              tvar "T", pos);
             pos };
           Ast.Assign { path = ["i"];
                        value = bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1);
