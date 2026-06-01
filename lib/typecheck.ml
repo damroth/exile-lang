@@ -4957,14 +4957,21 @@ let prelude_items () =
      defer s.free(); println(s.length())` reads through the immutable
      borrow while keeping the same call sites the original `*self`
      allowed (`*const` accepts a `*T` by coercion). *)
-  let string_self_ptr_param =
-    { Ast.pname = "self";
-      pty = Ast.TyPtr string_struct_ann;
-      preg = None; is_mut = false }
-  in
   let string_self_const_ptr_param =
     { Ast.pname = "self";
       pty = Ast.TyConstPtr string_struct_ann;
+      preg = None; is_mut = false }
+  in
+  (* By-value self for `free` — destructor needs to consume the
+     binding under the move-pass (parallels `String::build(sb)`).
+     `*self` would auto-ref to `TPtr String` and `consume_var`
+     only seeds Consumed for bare-TVar by-value args, so the legal
+     `s.free(); s.length();` use-after-free would compile +
+     segfault.  By-value receiver flows the TVar straight through
+     TCall → consume. *)
+  let string_self_value_param =
+    { Ast.pname = "self";
+      pty = string_struct_ann;
       preg = None; is_mut = false }
   in
   let mk_string_method ?(is_pub = true) name params ret body = {
@@ -5088,15 +5095,18 @@ let prelude_items () =
       [ Ast.Return (Some (Ast.Cast (
           field (Ast.Var ("self", pos)) "ptr", Ast.TyStr, pos)), pos) ]
   in
-  (* free( * self): hand the owned buffer back through the allocator
+  (* free(self): hand the owned buffer back through the allocator
      seam.  Named `free` not `drop` — matches Allocator::free's
-     convention and pairs idiomatically with `defer s.free();`. *)
+     convention and pairs idiomatically with `defer s.free();`.
+     By-value self (not `*self`) so the move-pass consumes the
+     binding through TCall — `s.free(); s.length();` rejected at
+     compile-time instead of segfaulting at runtime. *)
   let string_free_method =
     let self_v = Ast.Var ("self", pos) in
     let self_alloc = field self_v "alloc" in
     (* The buffer was allocated as `len + 1` bytes (NUL terminator),
        so the seam carries the matching size back to the allocator. *)
-    mk_string_method "free" [ string_self_ptr_param ] None
+    mk_string_method "free" [ string_self_value_param ] None
       [ Ast.ExprStmt (methcall self_alloc "free_fn"
           [ field self_alloc "state";
             Ast.Cast (field self_v "ptr", cvoid_ptr, pos);

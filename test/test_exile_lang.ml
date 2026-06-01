@@ -756,6 +756,32 @@ let () =
      }\n"
     "use of 's' after it was consumed at <input>:5:14 (move-marked types are use-at-most-once — borrow with '&s' / take '*const String' or clone to keep the source live)";
 
+  (* `String::free` takes `self` by value (not `* self`), so the
+     move-pass consumes the binding the moment the destructor fires.
+     Pre-refactor the signature was `fn free( * self)` — `s.free()`
+     auto-ref'd to `TPtr String` and `consume_var` skipped it, so
+     `s.free(); s.free();` (double free) and `s.free(); s.length();`
+     (use-after-free) compiled cleanly and segfaulted at runtime. *)
+  check_error "double `s.free()` rejected — free consumes the binding"
+    "mod raw { extern fn make_a() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make_a();\n\
+    \    let s = String::with_str(a, \"x\");\n\
+    \    s.free();\n\
+    \    s.free();\n\
+     }\n"
+    "use of 's' after it was consumed at <input>:5:5 (move-marked types are use-at-most-once — borrow with '&s' / take '*const String' or clone to keep the source live)";
+
+  check_error "use-after-`free` rejected — read on consumed String"
+    "mod raw { extern fn make_a() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make_a();\n\
+    \    let s = String::with_str(a, \"x\");\n\
+    \    s.free();\n\
+    \    println(s.length() as int);\n\
+     }\n"
+    "use of 's' after it was consumed at <input>:5:5 (move-marked types are use-at-most-once — borrow with '&s' / take '*const String' or clone to keep the source live)";
+
   (* `String::build(sb)` consumes the StringBuilder.  Subsequent use
      of `sb` (`push_*`, `length`, etc.) errors — the buffer ownership
      has transferred. *)
