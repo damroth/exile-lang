@@ -7661,16 +7661,59 @@ let check_program program : tprogram =
         then (keep := candidate :: !keep; changed := true))
         prelude_mono_struct_names
     in
+    let is_prelude_struct_name = function
+      | [n] -> List.mem n prelude_mono_struct_names
+      | _ -> false
+    in
     while !changed do
       changed := false;
-      (* Struct fields of a kept prelude struct keep their referenced
-         preludes alive (an embedded `alloc: Allocator` pulls Allocator). *)
-      List.iter (fun (s : struct_sig) ->
-        match s.sname_path with
-        | [n] when List.mem n !keep ->
-            List.iter (fun (_, t) -> add_from_typ t) s.sfields_ty
-        | _ -> ())
-        struct_index;
+      (* Field-type reachability — DR-002 W1:
+         (1) A KEPT prelude struct pulls in preludes its own fields
+             reference (`String { ..., alloc: Allocator }` → keep
+             Allocator).
+         (2) A USER struct ALWAYS pulls in preludes its fields
+             reference, because user struct decls are emitted
+             unconditionally — without this `struct Token { name:
+             String }` would emit `struct ex_Token { struct
+             ex_String name; }` with no definition for `ex_String`
+             and cc would reject `incomplete type`. *)
+      let sweep_struct (s : struct_sig) =
+        let is_prelude_decl = is_prelude_struct_name s.sname_path in
+        let kept_prelude = match s.sname_path with
+          | [n] when is_prelude_decl -> List.mem n !keep
+          | _ -> false
+        in
+        (* Skip generic skeletons (`stparams <> []`): their fields
+           may reference a concrete prelude type (`Vec<T>.alloc:
+           Allocator`) but the skeleton itself never reaches codegen
+           — only its mono instances do, and those carry the
+           reference verbatim with `stparams = []`.  Without this
+           filter Vec's `alloc` field would pull Allocator into
+           every hello-world program. *)
+        if s.stparams <> [] then ()
+        else if (is_prelude_decl && kept_prelude) || not is_prelude_decl then
+          List.iter (fun (_, t) -> add_from_typ t) s.sfields_ty
+      in
+      List.iter sweep_struct struct_index;
+      (* Mono instances (`Vec_i32`, `HashMap_String_i32`, …) live
+         separately from struct_index but reach codegen the same
+         way.  A user struct `struct A { v: Vec<int> }` registers
+         `Vec_i32` whose `alloc: Allocator` field pulls Allocator
+         into the keep set. *)
+      List.iter sweep_struct mono_structs;
+      (* Same field-type reachability for enum variant payloads:
+         `enum H { Has(Allocator) | Empty }` embeds Allocator by
+         value in the union slot.  Skip generic skeletons
+         (`etparams <> []`) for the same reason — only their mono
+         instances reach codegen and carry the concrete reference. *)
+      let sweep_enum (e : enum_sig) =
+        if e.etparams = [] then
+          List.iter (fun (v : variant_sig) ->
+            List.iter (fun (_, t) -> add_from_typ t) v.vsfields)
+            e.evariants
+      in
+      List.iter sweep_enum enum_index;
+      List.iter sweep_enum mono_enums;
       (* Method signatures of a kept prelude struct also count
          (`String::build(sb: StringBuilder)` keeps StringBuilder
          alive even though String's fields don't reference it). *)

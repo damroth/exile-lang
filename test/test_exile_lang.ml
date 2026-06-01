@@ -982,6 +982,54 @@ let () =
      }\n"
     "use of 'inner' after it was consumed at <input>:8:27 (move-marked types are use-at-most-once — borrow with '&inner' / take '*const Owner' or clone to keep the source live)";
 
+  (* DR-002 W1 — prelude struct used only as a field/payload must
+     still emit its C definition.  The mono-prelude DCE pass used
+     to seed `keep` only from non-prelude tfunc signatures + body
+     texpr types; field reachability fired only for KEPT prelude
+     structs, so a user struct/enum whose field referenced an
+     otherwise-unused prelude type left the C decl with
+     `incomplete type`.  Fix sweeps non-generic user structs/enums
+     (and mono prelude-collection instances like `Vec_i32`) for
+     prelude mentions, while skipping generic skeletons whose TVar
+     payload can't false-trigger anything. *)
+  let contains hay needle =
+    let hn = String.length needle in
+    let hh = String.length hay in
+    let rec go i =
+      if i + hn > hh then false
+      else if String.sub hay i hn = needle then true
+      else go (i + 1)
+    in
+    go 0
+  in
+  check_assert "W1: user struct with `Allocator` field pulls in `ex_Allocator` def"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct H { a: Allocator }\n\
+          fn pick(h: H) -> H { return h; }\n\
+          fn main() { println(0); }\n"
+     in
+     contains c "struct ex_Allocator {" && contains c "struct ex_H {");
+
+  check_assert "W1: user enum with `Allocator` variant payload pulls in `ex_Allocator` def"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum H { Has(Allocator) | Empty }\n\
+          fn pick(h: H) -> H { return h; }\n\
+          fn main() { println(0); }\n"
+     in
+     contains c "struct ex_Allocator {" && contains c "struct ex_H {");
+
+  check_assert "W1: user struct with `Vec<int>` field pulls in `ex_Allocator` transitively"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct A { v: Vec<int> }\n\
+          fn pick(a: A) -> A { return a; }\n\
+          fn main() { println(0); }\n"
+     in
+     contains c "struct ex_Allocator {" && contains c "struct ex_Vec_i32 {"
+     && contains c "struct ex_A {");
+
   check "@derive(Clone) synthesizes a value-copy clone"
     "@derive(Clone)\n\
      struct P { x: int }\n\
