@@ -113,19 +113,61 @@ and stmts_diverge stmts =
     | _ -> false)
     stmts
 
+(* Walk each arg left-to-right: validate reads against the in-flight
+   state, then mark the binding Consumed if the arg is a bare affine
+   TVar.  Shared by every consume-site shape — TCall, aggregate
+   literals (TStructLit / TNew / TTupleLit / TEnumLit / TArrayLit),
+   etc.  Same fold as the original TCall arm; factored so DR-002 S1
+   aggregate-literal consumes stay one-line per shape. *)
+let rec consume_args ~structs live args =
+  List.fold_left (fun live arg ->
+    let live = walk_expr ~structs live arg in
+    consume_var ~structs live arg)
+    live args
+
 (* Walk an expression: validate every TVar read against the current
    state, then descend into sub-expressions.  Sub-call args are
    walked recursively, then each arg's binding is consumed if it's a
-   bare affine TVar.  Other shapes (TRef, TStructLit, ...) read
+   bare affine TVar.  Other shapes (TRef, TFieldAccess, ...) read
    without consuming. *)
-let rec walk_expr ~structs live (te : texpr) =
+and walk_expr ~structs live (te : texpr) =
   check_reads live te;
   match te.e with
   | TCall { args; _ } | TBuiltinCall { args; _ } ->
-      List.fold_left (fun live arg ->
-        let live = walk_expr ~structs live arg in
-        consume_var ~structs live arg)
-        live args
+      consume_args ~structs live args
+  (* DR-002 S1 — aggregate literals shallow-copy each field into the
+     fresh value; a bare-TVar affine field aliases the source, so the
+     binding must end Consumed.  Without this, `Wrap { f: s }` /
+     `Option::Some(s)` / `(s, 1)` / `[s]` / `new Wrap { f: s }` would
+     leave `s` Live and a subsequent `take(s)` / `s.free()` would
+     silently double-fire at runtime.  `..base` consumes the base
+     binding the same way the field args consume — partial-overwrite
+     still ships every untouched field through. *)
+  | TStructLit { fields; base; _ } | TNew { fields; base; _ } ->
+      let live = consume_args ~structs live (List.map snd fields) in
+      (match base with
+       | Some b ->
+           let live = walk_expr ~structs live b in
+           consume_var ~structs live b
+       | None -> live)
+  | TTupleLit es | TArrayLit es ->
+      consume_args ~structs live es
+  | TEnumLit { args; _ } ->
+      consume_args ~structs live (List.map snd args)
+  | TArrayRepeat { value; _ } ->
+      let live = walk_expr ~structs live value in
+      (* `[v; N]` codegen emits a fill loop that shallow-copies the
+         evaluated value into every slot — for an @move type that
+         creates N aliases of the same heap-owning binding (banned
+         outright; the user must build N values explicitly).  Refuse
+         BEFORE the shallow-copy ships. *)
+      if is_affine_typ ~structs value.ty then
+        Error.failf value.pos
+          "cannot use a @move value in `[expr; N]` — the array-repeat \
+           lowering shallow-copies the same value into every slot, \
+           aliasing the heap-owning source N times (build each element \
+           explicitly or use a non-@move element type)"
+      else live
   | TBlock { stmts; trailing } ->
       let live = walk_stmts ~structs ~ret_ty:None live stmts in
       (match trailing with

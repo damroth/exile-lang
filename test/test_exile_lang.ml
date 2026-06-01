@@ -856,6 +856,81 @@ let () =
      fn main() { run(true); }\n"
     "use of 'a' after it was consumed at <input>:6:25 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
 
+  (* DR-002 S1 — aggregate literals consume @move fields/elements.
+     Each shape (TStructLit / TTupleLit / TEnumLit / TArrayLit /
+     TNew) shallow-copies the bare-TVar arg into the fresh value;
+     pre-fix the source stayed Live and a subsequent reuse would
+     silently double-fire at runtime.  TArrayRepeat with an @move
+     element is banned outright — the fill-loop lowering N-aliases
+     the same source. *)
+  check_error "S1: struct literal consumes @move field, post-lit use rejected"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     struct Wrap { f: Owner }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn main() {\n\
+    \    let a = Owner { tag: 1 };\n\
+    \    let w = Wrap { f: a };\n\
+    \    println(take(a));\n\
+     }\n"
+    "use of 'a' after it was consumed at <input>:7:23 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
+  check_error "S1: tuple literal consumes @move element, post-lit use rejected"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn main() {\n\
+    \    let a = Owner { tag: 1 };\n\
+    \    let _t = (a, 1);\n\
+    \    println(take(a));\n\
+     }\n"
+    "use of 'a' after it was consumed at <input>:6:15 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
+  check_error "S1: enum literal payload consumes @move arg, post-lit use rejected"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn main() {\n\
+    \    let a = Owner { tag: 1 };\n\
+    \    let _o = Option::Some(a);\n\
+    \    println(take(a));\n\
+     }\n"
+    "use of 'a' after it was consumed at <input>:6:27 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
+  check_error "S1: array literal consumes @move element, post-lit use rejected"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn main() {\n\
+    \    let a = Owner { tag: 1 };\n\
+    \    let _arr: [Owner; 1] = [a];\n\
+    \    println(take(a));\n\
+     }\n"
+    "use of 'a' after it was consumed at <input>:6:29 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
+  check_error "S1: `new` heap-init consumes @move field, post-lit use rejected"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     struct Wrap { f: Owner }\n\
+     fn take(o: Owner) -> int { return o.tag; }\n\
+     fn main() {\n\
+    \    let a = Owner { tag: 1 };\n\
+    \    let p = new Wrap { f: a };\n\
+    \    println(take(a));\n\
+    \    free(p);\n\
+     }\n"
+    "use of 'a' after it was consumed at <input>:7:27 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
+
+  check_error "S1: `[expr; N]` with @move element rejected outright"
+    "@move\n\
+     struct Owner { tag: int }\n\
+     fn main() {\n\
+    \    let a = Owner { tag: 1 };\n\
+    \    let _arr: [Owner; 3] = [a; 3];\n\
+    \    println(_arr[0].tag);\n\
+     }\n"
+    "cannot use a @move value in `[expr; N]` — the array-repeat lowering shallow-copies the same value into every slot, aliasing the heap-owning source N times (build each element explicitly or use a non-@move element type)";
+
   check "@derive(Clone) synthesizes a value-copy clone"
     "@derive(Clone)\n\
      struct P { x: int }\n\
