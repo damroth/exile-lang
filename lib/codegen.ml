@@ -225,6 +225,14 @@ let emit_mem_zero : builtin_emit =
     emit_arg (List.nth args 1);
     Buffer.add_char buf ')'
 
+(* `default_allocator()` lowers to a call into the per-program helper
+   `exile_default_allocator()` — the helper plus its alloc/free thunks
+   are emitted at the top of the C output when `tp_uses_default_
+   allocator` is set (see `gen_program`).  Zero-arg call. *)
+let emit_default_allocator : builtin_emit =
+  fun _ctx buf _args _emit_arg ->
+    Buffer.add_string buf "exile_default_allocator()"
+
 let builtin_emitters : (string * builtin_emit) list = [
   ("print", emit_print);
   ("println", emit_println);
@@ -232,6 +240,7 @@ let builtin_emitters : (string * builtin_emit) list = [
   ("type_name", emit_type_name);
   ("cstr_len", emit_cstr_len);
   ("mem_zero", emit_mem_zero);
+  ("default_allocator", emit_default_allocator);
 ]
 
 let lookup_builtin_emit name = List.assoc_opt name builtin_emitters
@@ -619,6 +628,18 @@ and emit_simple_stmt ctx buf indent stmt =
   | TExprStmt e ->
       (match e.e with
        | TMatch _ -> emit_match_stmt ctx buf indent e
+       | TBlock { stmts; trailing } ->
+           (* Inline block at stmt position — emit every stmt and
+              drop the trailing value (its type is whatever the
+              expression position would have wanted; the `let _ = ...`
+              lint at typecheck has already approved the discard).
+              Used by the `println(x)` Display-dispatch desugar so
+              the writer-pattern sequence (alloc / fmt / build / print
+              / free) flows into the enclosing fn body verbatim. *)
+           List.iter (emit_simple_stmt ctx buf indent) stmts;
+           (match trailing with
+            | None -> ()
+            | Some _ -> ())
        | _ ->
            Buffer.add_string buf indent;
            gen_expr ctx buf e;
@@ -1603,6 +1624,33 @@ let gen_program ?(annotate = false) (tp : tprogram) =
     List.iter (fun e ->
       emit_enum_debug_def ~structs ~enums buf e; Buffer.add_char buf '\n')
       debug_enums
+  end;
+  (* `default_allocator()` helper + alloc/free thunks.  Emitted as
+     `static` so the symbols never escape the translation unit; needs
+     `struct ex_Allocator` to be declared above (the aggs section
+     already takes care of that whenever something in the program
+     mentions Allocator).  Thunks ignore the state arg — libc has no
+     allocator-state concept; the free thunk also ignores the
+     byte-count (DR-004 size-on-free seam exists so non-libc
+     allocators can use it, libc just discards). *)
+  if tp.tp_uses_default_allocator then begin
+    Buffer.add_string buf "\n\
+      static void *exile_default_alloc_thunk(void *_state, unsigned long n) {\n\
+      \    (void)_state;\n\
+      \    return malloc((size_t)n);\n\
+      }\n\
+      static void exile_default_free_thunk(void *_state, void *p, unsigned long _n) {\n\
+      \    (void)_state;\n\
+      \    (void)_n;\n\
+      \    free(p);\n\
+      }\n\
+      static struct ex_Allocator exile_default_allocator(void) {\n\
+      \    struct ex_Allocator a;\n\
+      \    a.state = 0;\n\
+      \    a.alloc_fn = exile_default_alloc_thunk;\n\
+      \    a.free_fn = exile_default_free_thunk;\n\
+      \    return a;\n\
+      }\n"
   end;
   (* Generic fns (with TVar in their resolved signature) skip codegen
      for the same reason as generic struct/enum decls — the

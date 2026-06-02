@@ -195,6 +195,11 @@ let lookup_fn ctx path =
    sequential `for i in ...` blocks don't collide on let-hoisting. *)
 let for_gensym = ref 0
 
+(* Monotonic counter for the temp names that `println(x)` Display dispatch
+   introduces — bumped per print so two prints in the same fn don't
+   collide on the hoisted StringBuilder/String slots. *)
+let display_dispatch_gensym = ref 0
+
 (* Substitute free `Ast.Var (from, _)` references with `Ast.Var (to_, _)`
    throughout an expression / statement / block.  Used by the `for` desugar
    to give each loop's user-facing variable a unique gensym name in the
@@ -947,9 +952,28 @@ let builtin_mem_zero = {
           (List.length xs));
 }
 
+(* `default_allocator()` — zero-arg prelude builtin that returns an
+   `Allocator` wired to libc `malloc` / `free`.  Lets `println(x)`
+   on a `impl Display for T` desugar to the writer pattern without
+   threading an Allocator binding through every call site — the
+   user gets a polymorphic print with the same ergonomics as a
+   primitive print.  Codegen emits a per-program `static struct
+   ex_Allocator exile_default_allocator(void)` helper plus its
+   alloc/free thunks; usage triggers `#include <stdlib.h>`. *)
+let builtin_default_allocator = {
+  bname = "default_allocator";
+  bcheck = (fun ~ctx:_ ~pos ~args ~allow_void:_ ->
+    match args with
+    | [] -> TStruct ["Allocator"]
+    | xs ->
+        Error.failf pos
+          "default_allocator() takes no arguments, got %d"
+          (List.length xs));
+}
+
 let builtins =
   [ builtin_print; builtin_println; builtin_free; builtin_type_name;
-    builtin_cstr_len; builtin_mem_zero ]
+    builtin_cstr_len; builtin_mem_zero; builtin_default_allocator ]
 
 let lookup_builtin = function
   | [ name ] -> List.find_opt (fun b -> b.bname = name) builtins
@@ -2529,6 +2553,92 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
            let arg_tys = List.map (fun (a : texpr) -> a.ty) targs in
            (match lookup_builtin path with
             | Some b ->
+                (* DR-002 — `println(x)` / `print(x)` on a struct/enum
+                   value `x` whose type has an `impl Display for T`
+                   registered: desugar to the writer pattern (alloc a
+                   temp StringBuilder via `default_allocator()`, ask
+                   x to render itself into it, build a String, print
+                   `as_str()`, free the String).  Without this the
+                   `print_like_bcheck` allowlist rejects every
+                   aggregate that isn't `@debug`-marked — Display is
+                   the user-facing manual surface, but bare `println`
+                   never reached it.  Single-arg only; the
+                   `print_like_bcheck` arity diagnostic still applies
+                   to other shapes. *)
+                let print_name =
+                  match path with [n] -> n | _ -> "" in
+                let display_dispatch_ok =
+                  (print_name = "print" || print_name = "println")
+                  && (match targs with
+                      | [ a ] ->
+                          (match a.ty with
+                           | TStruct p | TEnum p ->
+                               List.mem ("Display", p)
+                                 !trait_impl_table
+                           | _ -> false)
+                      | _ -> false)
+                in
+                if display_dispatch_ok then begin
+                  let user_arg = List.hd args in
+                  let n = !display_dispatch_gensym in
+                  incr display_dispatch_gensym;
+                  let sb_name = Printf.sprintf "__disp_sb_%d" n in
+                  let s_name = Printf.sprintf "__disp_s_%d" n in
+                  let p = call_pos in
+                  let sb_ann =
+                    Ast.TyStruct { path = ["StringBuilder"];
+                                   args = [] } in
+                  let string_ann =
+                    Ast.TyStruct { path = ["String"]; args = [] } in
+                  let u32_ann =
+                    Ast.TyInt { signed = false; width = Ast.W32 } in
+                  let make_alloc =
+                    Ast.Call { callee = ["default_allocator"];
+                               args = []; pos = p } in
+                  let cap_arg =
+                    Ast.Cast (Ast.IntLit (32, p), u32_ann, p) in
+                  let sb_init =
+                    Ast.Call {
+                      callee = ["StringBuilder"; "with_capacity"];
+                      args = [ make_alloc; cap_arg ];
+                      pos = p } in
+                  let fmt_call =
+                    Ast.MethodCall {
+                      receiver = user_arg; name = "fmt";
+                      args = [ Ast.Ref (Ast.Var (sb_name, p), p) ];
+                      pos = p } in
+                  let build_call =
+                    Ast.Call {
+                      callee = ["String"; "build"];
+                      args = [ Ast.Var (sb_name, p) ];
+                      pos = p } in
+                  let as_str_call =
+                    Ast.MethodCall {
+                      receiver = Ast.Var (s_name, p);
+                      name = "as_str"; args = []; pos = p } in
+                  let inner_print =
+                    Ast.Call { callee = [print_name];
+                               args = [ as_str_call ];
+                               pos = p } in
+                  let free_call =
+                    Ast.MethodCall {
+                      receiver = Ast.Var (s_name, p);
+                      name = "free"; args = []; pos = p } in
+                  let block_stmts = [
+                    Ast.Let { name = sb_name; value = sb_init;
+                              ty_ann = Some sb_ann; is_mut = true;
+                              pos = p };
+                    Ast.ExprStmt fmt_call;
+                    Ast.Let { name = s_name; value = build_call;
+                              ty_ann = Some string_ann;
+                              is_mut = false; pos = p };
+                    Ast.ExprStmt inner_print;
+                    Ast.ExprStmt free_call;
+                    Ast.Tail (Ast.IntLit (0, p));
+                  ] in
+                  elab_expr ~allow_void ?expected ctx env
+                    (Ast.Block (block_stmts, p))
+                end else
                 let result_ty =
                   b.bcheck ~ctx ~pos:call_pos ~args:targs ~allow_void
                 in
@@ -3445,10 +3555,14 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         (* Only side-effecting expressions are meaningful when their value
            is discarded — a call, an effectful builtin, or a `match`.
            Anything else would emit `-Wunused-value`; reject it here.
-           Escape hatch: bind with `let _x = ...`. *)
+           Escape hatch: bind with `let _x = ...`.  `TBlock` is treated
+           as effectful unconditionally — the only block-producers we
+           emit (multi-stmt match arm bodies, `Display`-dispatch
+           desugar) are intrinsically sequences of effects with a
+           trailing value that we already produced for typing. *)
         let has_effect =
           match tvalue.e with
-          | TCall _ | TIndirectCall _ | TMatch _ -> true
+          | TCall _ | TIndirectCall _ | TMatch _ | TBlock _ -> true
           | TBuiltinCall { name; _ } -> name <> "type_name"
           | _ -> false
         in
@@ -4146,11 +4260,14 @@ let collect_tuple_types_of ?(structs = []) ?(enums = []) tfuncs =
 
 (* Detect heap usage by scanning the typed bodies for `TNew` expressions or
    builtin `free(p)` calls — both are emitted in C only when one of them is
-   present, so codegen can conditionally include `<stdlib.h>`. *)
+   present, so codegen can conditionally include `<stdlib.h>`.
+   `default_allocator()` also needs `<stdlib.h>` because its alloc/free
+   thunks call libc `malloc`/`free`. *)
 let uses_heap_of tfuncs =
   let expr_is_heap (te : texpr) = match te.e with
     | TNew _ -> true
-    | TBuiltinCall { name = "free"; _ } -> true
+    | TBuiltinCall { name = "free"; _ }
+    | TBuiltinCall { name = "default_allocator"; _ } -> true
     | _ -> false
   in
   let stmt_is_heap s =
@@ -4158,6 +4275,21 @@ let uses_heap_of tfuncs =
   in
   List.exists (fun tf ->
     List.exists (exists_tstmt stmt_is_heap) tf.tf_body)
+    tfuncs
+
+(* Detect calls to the prelude `default_allocator()` builtin so codegen
+   can emit the libc-backed thunks + helper fn at the top of the C
+   output.  Forwarded via `tp_uses_default_allocator`. *)
+let uses_default_allocator_of tfuncs =
+  let expr_uses (te : texpr) = match te.e with
+    | TBuiltinCall { name = "default_allocator"; _ } -> true
+    | _ -> false
+  in
+  let stmt_uses s =
+    List.exists (exists_texpr expr_uses) (tstmt_own_exprs s)
+  in
+  List.exists (fun tf ->
+    List.exists (exists_tstmt stmt_uses) tf.tf_body)
     tfuncs
 
 (* `<string.h>` is pulled in only when something in the program needs
@@ -8026,6 +8158,7 @@ let check_program program : tprogram =
       tp_funcs in
   let tp_uses_heap = uses_heap_of tp_funcs in
   let tp_uses_string_h = uses_string_h_of tp_funcs in
+  let tp_uses_default_allocator = uses_default_allocator_of tp_funcs in
   (* Drop mono instances that no surviving tfunc still mentions.  When
      a prelude method like `StringBuilder::as_slice` is DCE'd, the
      `Slice<u8>` instance it registered would otherwise leak into the
@@ -8211,6 +8344,7 @@ let check_program program : tprogram =
     tp_modules = modules;
     tp_uses_heap;
     tp_uses_string_h;
+    tp_uses_default_allocator;
     tp_tuple_types;
     tp_fnptr_types;
     tp_c_includes = flat.c_includes;

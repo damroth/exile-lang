@@ -3630,6 +3630,64 @@ let () =
        true
      with _ -> false);
 
+  (* `default_allocator()` — zero-arg prelude builtin that returns
+     a libc-backed `Allocator`.  Enables `println(x)` Display
+     dispatch without threading an Allocator binding through every
+     call site; standalone use also works for any prelude collection
+     (String / StringBuilder / Vec / HashMap) that needs an
+     Allocator. *)
+  check_assert "default_allocator(): emits libc helper + thunks at the top of C output"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let s = String::with_str(a, \"hi\");\n\
+         \    println(s.length() as int);\n\
+         \    s.free();\n\
+          }\n"
+     in
+     contains c "static struct ex_Allocator exile_default_allocator(void)"
+     && contains c "exile_default_alloc_thunk"
+     && contains c "exile_default_free_thunk"
+     && contains c "exile_default_allocator()");
+
+  check_error "default_allocator(): rejects extra arguments"
+    "fn main() { let _a = default_allocator(0); }\n"
+    "default_allocator() takes no arguments, got 1";
+
+  (* `println(x)` / `print(x)` on a struct/enum with `impl Display
+     for T` registered: desugar to the writer pattern.  Without this
+     `print_like_bcheck` would reject every aggregate that isn't
+     `@debug`-marked — Display was a manual surface the operator
+     never reached. *)
+  check_assert "println(enum) with impl Display dispatches through the writer pattern"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum Tok { Num(int) | Plus | Minus }\n\
+          impl Display for Tok {\n\
+         \    fn fmt(*self, out: *StringBuilder) {\n\
+         \        match *self {\n\
+         \            Tok::Num(n) => { out.push_str(\"Num(\"); out.push_int(n); out.push_str(\")\"); }\n\
+         \            | Tok::Plus  => { out.push_str(\"+\"); }\n\
+         \            | Tok::Minus => { out.push_str(\"-\"); }\n\
+         \        }\n\
+          }\n\
+          }\n\
+          fn main() {\n\
+         \    let t = Tok::Num(42);\n\
+         \    println(t);\n\
+          }\n"
+     in
+     contains c "Tok__fmt(&t, &__disp_sb_"
+     && contains c "String__build(__disp_sb_"
+     && contains c "String__as_str(&__disp_s_"
+     && contains c "String__free(__disp_s_");
+
+  check_error "println(struct) without impl Display still rejected with helpful hint"
+    "struct Pt { x: int }\n\
+     fn main() { let p = Pt { x: 1 }; println(p); }\n"
+    "cannot print a struct value (Pt); print individual fields, or mark the struct with `@debug`";
+
   check_error "@must_use rejects placement on non-decoratable items"
     "@must_use\n\
      impl Allocator { }\n\

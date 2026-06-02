@@ -811,7 +811,7 @@ and tstmt =
    new texpr/tstmt constructor requires extending only the *_children
    functions below. *)
 
-let texpr_children (te : texpr) : texpr list =
+let rec texpr_children (te : texpr) : texpr list =
   match te.e with
   | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _
   | TVar _ | TFnRef _ | TSizeOf _ -> []
@@ -832,13 +832,33 @@ let texpr_children (te : texpr) : texpr list =
   | TArrayRepeat { value; _ } -> [value]
   | TIndex { base; index } -> [base; index]
   | TBlock { stmts; trailing } ->
-      (* tstmt_children would give the texprs inside each stmt; for
-         consumers of texpr_children we surface trailing here and let
-         each stmt's payload reach them through the stmt-level
-         traversals.  Multi-stmt match arm bodies are walked by the
-         arm-level iter (see emit_arm_result). *)
-      let _ = stmts in
-      Option.to_list trailing
+      (* Surface every texpr inside the block — own-exprs of each
+         direct stmt plus the trailing value.  Sub-stmts (TIf bodies,
+         TWhile, TDefer body, ...) recurse through stmt-level
+         traversals (`iter_tstmt`); for plain expression-shaped
+         payloads (TLet RHS, TExprStmt argument, ...) the
+         tstmt_own_exprs walk is enough.  Used by the `Display`-
+         dispatch desugar (which inserts a TBlock at expression
+         position carrying TLet/TExprStmt children) so program-level
+         scans like `uses_default_allocator_of` reach the
+         TBuiltinCalls inside. *)
+      List.concat_map tstmt_own_exprs stmts
+      @ Option.to_list trailing
+
+(* Exprs that live DIRECTLY in [s] — cond, value, target.  Does NOT
+   include exprs nested in sub-stmts; compose with iter_texpr / fold_texpr
+   on each entry for deep traversal of an entire fn body. *)
+and tstmt_own_exprs = function
+  | TLet { value; _ } | TLetTuple { value; _ }
+  | TAssign { value; _ } | TExprStmt value -> [value]
+  | TReturn { value; _ } -> Option.to_list value
+  | TAssignField { target; value; _ }
+  | TAssignDeref { target; value; _ } -> [target; value]
+  | TAssignIndex { base; index; value; _ } -> [base; index; value]
+  | TIf { cond; _ } | TWhile { cond; _ } -> [cond]
+  | TFor { lo; hi; _ } -> [lo; hi]
+  | TForEach { it_init; _ } -> [it_init]
+  | TDefer _ | TBreak _ | TContinue _ -> []
 
 let rec iter_texpr f e =
   f e;
@@ -858,21 +878,6 @@ let tstmt_substmts = function
   | TDefer { body; _ } | TFor { body; _ } | TForEach { body; _ } -> body
   | TLet _ | TLetTuple _ | TAssign _ | TAssignField _ | TAssignIndex _
   | TAssignDeref _ | TReturn _ | TExprStmt _ | TBreak _ | TContinue _ -> []
-
-(* Exprs that live DIRECTLY in [s] — cond, value, target.  Does NOT
-   include exprs nested in sub-stmts; compose with iter_texpr / fold_texpr
-   on each entry for deep traversal of an entire fn body. *)
-let tstmt_own_exprs = function
-  | TLet { value; _ } | TLetTuple { value; _ }
-  | TAssign { value; _ } | TExprStmt value -> [value]
-  | TReturn { value; _ } -> Option.to_list value
-  | TAssignField { target; value; _ }
-  | TAssignDeref { target; value; _ } -> [target; value]
-  | TAssignIndex { base; index; value; _ } -> [base; index; value]
-  | TIf { cond; _ } | TWhile { cond; _ } -> [cond]
-  | TFor { lo; hi; _ } -> [lo; hi]
-  | TForEach { it_init; _ } -> [it_init]
-  | TDefer _ | TBreak _ | TContinue _ -> []
 
 let rec iter_tstmt f s =
   f s;
@@ -916,6 +921,11 @@ type tprogram = {
   tp_uses_string_h : bool;            (* `#include <string.h>` — set when
                                          `cstr_len(...)` is called anywhere
                                          in the program *)
+  tp_uses_default_allocator : bool;   (* `default_allocator()` was called
+                                         somewhere — codegen emits the
+                                         libc-backed alloc/free thunks +
+                                         helper fn at the top of the C
+                                         output *)
   tp_tuple_types : (string * typ) list;
   tp_fnptr_types : (string * typ) list;  (* unique TFnPtr types used
                                             in the program; codegen
