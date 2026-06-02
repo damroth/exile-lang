@@ -30,6 +30,7 @@ let item_visible_in_wildcard = function
   | Ast.Enum e -> e.Ast.eis_pub
   | Ast.Const c -> c.Ast.kis_pub
   | Ast.Trait t -> t.Ast.tris_pub
+  | Ast.TypeAlias ta -> ta.Ast.tais_pub
   | Ast.ExternStruct _
   | Ast.ExternType _
   | Ast.ExternConst _
@@ -67,7 +68,8 @@ and expand_item ~from_file ~loaded ~stack item =
   match item with
   | Ast.Function _ | Ast.Struct _ | Ast.ExternStruct _ | Ast.ExternType _
   | Ast.ExternConst _ | Ast.ExternVar _ | Ast.Const _ | Ast.Enum _
-  | Ast.Impl _ | Ast.Trait _ | Ast.CInclude _ -> [ item ]
+  | Ast.Impl _ | Ast.Trait _ | Ast.CInclude _ | Ast.TypeAlias _ ->
+      [ item ]
   | Ast.Module m ->
       let mitems' =
         expand_items ~from_file ~loaded ~stack m.Ast.mitems

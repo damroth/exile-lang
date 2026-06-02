@@ -94,6 +94,18 @@ type fn_ctx = {
                                              local_name redirects to target
                                              path resolved
                                              against the same scope. *)
+  type_aliases : (string list * Ast.type_alias_decl) list;
+                                          (* User-defined `type Name<T...> =
+                                             Type;` aliases with their
+                                             enclosing module path.  Looked
+                                             up by `resolve_type_ann_raw`
+                                             on `Ast.TyStruct { path; args }`
+                                             before the struct/enum lookup;
+                                             a match substitutes args into
+                                             tparams of `tatarget` and
+                                             recurses.  Cycle-guard is
+                                             managed inline via a visited
+                                             list parameter. *)
 }
 
 (* Skeleton ctx with every list field defaulted to [] and ret_ty None.
@@ -105,7 +117,7 @@ type fn_ctx = {
 let empty_ctx ~instances = {
   global = []; structs = []; enums = []; modules = [];
   scope = []; tparams = []; tvar_bindings = []; fn_asts = [];
-  aliases = []; ext_vars = []; ext_struct_fields = [];
+  aliases = []; type_aliases = []; ext_vars = []; ext_struct_fields = [];
   ext_structs = []; ext_types = []; ext_consts = []; consts = [];
   instances; ret_ty = None;
 }
@@ -522,8 +534,31 @@ let try_resolve_assoc_proj ~pos ctx path : typ option =
                   head assoc assoc head assoc))
   | _ -> None
 
-let rec resolve_type_ann_raw ~pos ctx ann =
-  let recur = resolve_type_ann_raw ~pos ctx in
+(* DR-002 FP-1 — `type Name<T...> = Type;` lookup with ancestor-
+   scope walk-up matching `lookup_struct`'s shape.  Multi-segment
+   paths require absolute match; single-segment paths walk up
+   `ctx.scope` looking for `<scope>::<name>`. *)
+let lookup_type_alias ctx path =
+  let abs_match try_path =
+    List.find_opt
+      (fun (pmod, ta) -> pmod @ [ta.Ast.taname] = try_path)
+      ctx.type_aliases
+  in
+  match path with
+  | [n] ->
+      let rec walk_up scope =
+        match abs_match (scope @ [n]) with
+        | Some hit -> Some hit
+        | None ->
+            (match scope with
+             | [] -> None
+             | _ -> walk_up (List.rev (List.tl (List.rev scope))))
+      in
+      walk_up ctx.scope
+  | _ -> abs_match path
+
+let rec resolve_type_ann_raw ?(visited = []) ~pos ctx ann =
+  let recur = resolve_type_ann_raw ~visited ~pos ctx in
   match ann with
   | Ast.TyInt { signed; width } -> TInt { signed; width }
   | Ast.TyCInt { signed } -> TCInt { signed }
@@ -552,64 +587,98 @@ let rec resolve_type_ann_raw ~pos ctx ann =
   | Ast.TyFnPtr { params; ret } ->
       TFnPtr { params = List.map recur params;
                ret = Option.map recur ret }
-  | Ast.TyStruct { path; args = [] } ->
-      (* Non-generic case: tparam reference / extern type / extern
-         struct / struct / enum.  ext_types / ext_structs are flat
-         (single C symbol name); qualified paths like `raw::ULONG`
-         accept the path as long as the last segment matches.  Tparam
-         ref is single-segment only. *)
-      let last = match List.rev path with
-        | n :: _ -> n
-        | [] -> failwith "internal: resolve_type_ann_raw got empty path"
-      in
-      (match path with
-       | [n] when List.mem n ctx.tparams -> TVar n
-       | _ when List.mem last ctx.ext_types -> TExtAlias last
-       | _ when List.mem last ctx.ext_structs -> TExtStruct last
-       | _ ->
+  | Ast.TyStruct { path; args } ->
+      (* DR-002 FP-1 — `type Name<T...> = Type;` is checked FIRST so
+         an alias that happens to share a path tail with a struct
+         still wins (matches OCaml's `type t = u` substitution
+         semantics).  Cycle-guard: each recursive step adds the
+         alias's absolute path to [visited]; a hit on a path already
+         there aborts with a clean error. *)
+      (match lookup_type_alias ctx path with
+       | Some (_pmod, ta) ->
+           let abs_path = _pmod @ [ta.Ast.taname] in
+           if List.mem abs_path visited then
+             Error.failf pos
+               "type alias cycle through '%s' — alias resolution \
+                would loop"
+               (String.concat "::" abs_path);
+           let resolved_args = List.map recur args in
+           let expected = List.length ta.Ast.tatparams in
+           let got = List.length resolved_args in
+           if expected <> got then
+             Error.failf pos
+               "type alias '%s' expects %d generic argument(s), got %d"
+               (String.concat "::" abs_path) expected got;
+           let bindings = List.combine ta.Ast.tatparams resolved_args in
+           (* Resolve the target with the alias's tparams added to
+              ctx.tparams (so TVars in the body resolve to TVar n),
+              then substitute the call-site args into them. *)
+           let inner_ctx =
+             { ctx with tparams = ta.Ast.tatparams @ ctx.tparams } in
+           let target_t =
+             resolve_type_ann_raw
+               ~visited:(abs_path :: visited) ~pos inner_ctx
+               ta.Ast.tatarget
+           in
+           subst_typ bindings target_t
+       | None when args = [] ->
+           (* Non-generic case: tparam reference / extern type / extern
+              struct / struct / enum.  ext_types / ext_structs are flat
+              (single C symbol name); qualified paths like `raw::ULONG`
+              accept the path as long as the last segment matches.
+              Tparam ref is single-segment only. *)
+           let last = match List.rev path with
+             | n :: _ -> n
+             | [] -> failwith "internal: resolve_type_ann_raw got empty path"
+           in
+           (match path with
+            | [n] when List.mem n ctx.tparams -> TVar n
+            | _ when List.mem last ctx.ext_types -> TExtAlias last
+            | _ when List.mem last ctx.ext_structs -> TExtStruct last
+            | _ ->
+                (match lookup_struct ctx path with
+                 | Some s -> TStruct s.sname_path
+                 | None ->
+                     (match lookup_enum ctx path with
+                      | Some e -> TEnum e.ename_path
+                      | None ->
+                          (match try_resolve_assoc_proj ~pos ctx path with
+                           | Some t -> t
+                           | None ->
+                               Error.failf pos "unknown type '%s'"
+                                 (String.concat "::" path)))))
+       | None ->
+           (* Generic application `Foo<T1, T2>`.  We do NOT instantiate
+              here: args may still contain free `TVar`s (a generic
+              `impl`/fn skeleton, e.g. `self: Pair<A, B>`).  Produce a
+              TStructApp / TEnumApp carrying the skeleton's absolute
+              path + resolved args; `resolve_type_ann` normalises it
+              to a flat instance once every arg is concrete.  Arity
+              is checked here (no concreteness needed). *)
+           let resolved_args = List.map recur args in
+           let check_arity ~name ~tparams =
+             let expected = List.length tparams in
+             let got = List.length resolved_args in
+             if expected <> got then
+               Error.failf pos
+                 "type '%s' expects %d generic argument(s), got %d"
+                 name expected got
+           in
            (match lookup_struct ctx path with
-            | Some s -> TStruct s.sname_path
+            | Some s ->
+                check_arity ~name:(String.concat "::" s.sname_path)
+                  ~tparams:s.stparams;
+                TStructApp { path = s.sname_path; args = resolved_args }
             | None ->
                 (match lookup_enum ctx path with
-                 | Some e -> TEnum e.ename_path
+                 | Some e ->
+                     check_arity ~name:(String.concat "::" e.ename_path)
+                       ~tparams:e.etparams;
+                     TEnumApp { path = e.ename_path; args = resolved_args }
                  | None ->
-                     (match try_resolve_assoc_proj ~pos ctx path with
-                      | Some t -> t
-                      | None ->
-                          Error.failf pos "unknown type '%s'"
-                            (String.concat "::" path)))))
-  | Ast.TyStruct { path; args } ->
-      (* Generic application `Foo<T1, T2>`.  We do NOT instantiate here:
-         args may still contain free `TVar`s (a generic `impl`/fn
-         skeleton, e.g. `self: Pair<A, B>`).  Produce a TStructApp /
-         TEnumApp carrying the skeleton's absolute path + resolved args;
-         `resolve_type_ann` normalises it to a flat instance once every
-         arg is concrete.  Arity is checked here (no concreteness
-         needed). *)
-      let resolved_args = List.map recur args in
-      let check_arity ~name ~tparams =
-        let expected = List.length tparams in
-        let got = List.length resolved_args in
-        if expected <> got then
-          Error.failf pos
-            "type '%s' expects %d generic argument(s), got %d"
-            name expected got
-      in
-      (match lookup_struct ctx path with
-       | Some s ->
-           check_arity ~name:(String.concat "::" s.sname_path)
-             ~tparams:s.stparams;
-           TStructApp { path = s.sname_path; args = resolved_args }
-       | None ->
-           (match lookup_enum ctx path with
-            | Some e ->
-                check_arity ~name:(String.concat "::" e.ename_path)
-                  ~tparams:e.etparams;
-                TEnumApp { path = e.ename_path; args = resolved_args }
-            | None ->
-                Error.failf pos
-                  "unknown generic type '%s'"
-                  (String.concat "::" path)))
+                     Error.failf pos
+                       "unknown generic type '%s'"
+                       (String.concat "::" path))))
 
 (* Instantiate every fully-concrete generic application in [t] to its flat
    mono instance (registering the instance with Mono), bottom-up.  A
@@ -3887,6 +3956,12 @@ type flat = {
      usage.  Multi-segment local_name not supported (the parser only
      emits single-segment Use names today). *)
   aliases : (string list * string * string list * Pos.t) list;
+  (* `type Name<T...> = Type;` user-defined aliases with their
+     enclosing module path.  Resolved by `resolve_type_ann_raw`
+     before struct/enum lookup — alias hits substitute targs into
+     `tatarget` and recurse.  Cycle-guard prevents infinite
+     `type A = B; type B = A;` loops. *)
+  type_aliases : (string list * Ast.type_alias_decl) list;
 }
 
 let flatten_items program =
@@ -3901,6 +3976,7 @@ let flatten_items program =
   let modules = ref [] in
   let impls = ref [] in
   let traits = ref [] in
+  let type_aliases = ref [] in
   let c_includes = ref [] in
   (* Uniform "must be at top level" reject — `extern struct/type/const`
      and `@c_include` all share the same constraint with the same
@@ -3964,6 +4040,25 @@ let flatten_items program =
             impls := (path, ib) :: !impls
         | Ast.Trait td ->
             traits := (path, td) :: !traits
+        | Ast.TypeAlias ta ->
+            (* Reject shadowing primitive type names — `type int = u32`
+               would silently rewrite every `int` annotation in scope
+               into u32, breaking the language-spec types.  Apply at
+               the flatten pass so the error surfaces before any
+               annotation-resolution.  Generics OK (`type Box<T> = ...`)
+               — the body uses tparams, not primitives. *)
+            let reserved = [
+              "int"; "bool"; "str"; "u8"; "u16"; "u32"; "u64";
+              "i8"; "i16"; "i32"; "i64"; "c_int"; "c_uint";
+              "c_short"; "c_ushort"; "c_long"; "c_ulong";
+              "c_char"; "c_schar"; "c_uchar"; "c_void"; "Self";
+            ] in
+            if List.mem ta.Ast.taname reserved then
+              Error.failf ta.Ast.tapos
+                "'type %s' shadows a built-in type — pick a different \
+                 alias name"
+                ta.Ast.taname;
+            type_aliases := (path, ta) :: !type_aliases
         | Ast.CInclude { path = inc_path; pos } ->
             if path <> [] then
               Error.failf pos
@@ -4000,11 +4095,12 @@ let flatten_items program =
     impls = List.rev !impls;
     traits = List.rev !traits;
     consts = List.rev !consts;
-    aliases = List.rev !aliases }
+    aliases = List.rev !aliases;
+    type_aliases = List.rev !type_aliases }
 
 (* Build the global function index: every function with its module path,
    exile-side name, and signature.  main() is excluded — it is not callable. *)
-let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~consts ~ext_struct_fields ~struct_index ~enum_index ~modules ~aliases flat =
+let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~consts ~ext_struct_fields ~struct_index ~enum_index ~modules ~aliases ~type_aliases flat =
   List.filter_map
     (fun (p, (f : Ast.func), mangled) ->
       if f.name = "main" then None
@@ -4012,7 +4108,7 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~consts ~e
         let ctx = { (empty_ctx ~instances) with
           structs = struct_index; enums = enum_index;
           modules; scope = p; tparams = f.tparams;
-          aliases; ext_struct_fields;
+          aliases; type_aliases; ext_struct_fields;
           ext_structs; ext_types; ext_consts; consts;
         } in
         Some
@@ -4034,7 +4130,8 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~consts ~e
    Two passes are necessary because field types can refer to other
    structs declared in any order, and `resolve_type_ann` needs to see
    them all to rewrite relative paths to absolute. *)
-let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~enums struct_flat =
+let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts
+    ~modules ~enums ~type_aliases struct_flat =
   let skeleton =
     List.map
       (fun (p, (s : Ast.struct_decl)) ->
@@ -4050,7 +4147,7 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~
   List.map2
     (fun (p, (s : Ast.struct_decl)) skel ->
       let ctx = { (empty_ctx ~instances) with
-        structs = skeleton; enums;
+        structs = skeleton; enums; type_aliases;
         modules; scope = p; tparams = s.stparams;
         ext_structs; ext_types; ext_consts;
       } in
@@ -4068,7 +4165,8 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~
    three forms look the same to codegen; struct variants keep their
    user-given names.  `vsis_struct` lets the constructor type-check
    reject `Foo::V(args)` for a struct variant and vice versa. *)
-let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~struct_index enum_flat =
+let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts
+    ~modules ~struct_index ~type_aliases enum_flat =
   let skeleton =
     List.map
       (fun (p, (e : Ast.enum_decl)) ->
@@ -4087,7 +4185,7 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts ~modules ~st
   List.map2
     (fun (p, (e : Ast.enum_decl)) skel ->
       let ctx = { (empty_ctx ~instances) with
-        structs = struct_index; enums = skeleton;
+        structs = struct_index; enums = skeleton; type_aliases;
         modules; scope = p; tparams = e.etparams;
         ext_structs; ext_types; ext_consts;
       } in
@@ -7607,7 +7705,8 @@ let check_program program : tprogram =
   in
   let struct_index =
     build_struct_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
-      ~modules:flat.modules ~enums:enum_skeleton flat.structs
+      ~modules:flat.modules ~enums:enum_skeleton
+      ~type_aliases:flat.type_aliases flat.structs
   in
   (* Defect-fix: `struct H { s: Slice<int> }` elaborates `Slice<int>`
      during pass-2 of [build_struct_index], when every skeleton still
@@ -7656,7 +7755,8 @@ let check_program program : tprogram =
   loop ();
   let enum_index =
     build_enum_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
-      ~modules:flat.modules ~struct_index flat.enums
+      ~modules:flat.modules ~struct_index
+      ~type_aliases:flat.type_aliases flat.enums
   in
   (* Same defect on the enum side: `struct H { o: Option<int> }`
      elaborated `Option<int>` against the placeholder enum_skeleton
@@ -7771,7 +7871,8 @@ let check_program program : tprogram =
   let global =
     build_global_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~consts:consts_index ~ext_struct_fields
-      ~struct_index ~enum_index ~modules ~aliases:flat.aliases all_funcs
+      ~struct_index ~enum_index ~modules ~aliases:flat.aliases
+      ~type_aliases:flat.type_aliases all_funcs
   in
   (* `pub use foo::bar;` validation.  Building the global index just
      above means every fn/struct/enum has its absolute path on file;
@@ -7816,6 +7917,7 @@ let check_program program : tprogram =
       global; structs = struct_index; enums = enum_index;
       modules; scope = path; tparams = f.tparams;
       tvar_bindings; fn_asts; aliases = flat.aliases;
+      type_aliases = flat.type_aliases;
       ext_vars; ext_struct_fields;
       ext_structs; ext_types; ext_consts; consts = consts_index;
     } in

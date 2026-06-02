@@ -3688,6 +3688,55 @@ let () =
      fn main() { let p = Pt { x: 1 }; println(p); }\n"
     "cannot print a struct value (Pt); print individual fields, or mark the struct with `@debug`";
 
+  (* FP-1 — `type Name<T...> = Type;` pure (transparent) alias.
+     Substitution at `resolve_type_ann_raw`, before struct/enum
+     lookup; tparams bound to call-site args; cycle-guard rejects
+     `type A = B; type B = A;` deterministically; primitive names
+     reserved (`type int = ...` errors). *)
+  check_assert "type alias: `type NodeId = int` substitutes into let annotation"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "type NodeId = int;\n\
+          fn main() {\n\
+         \    let x: NodeId = 42;\n\
+         \    println(x);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "type alias: generic alias `type ParseRes<T> = Result<T, str>` resolves"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "type ParseRes<T> = Result<T, str>;\n\
+          fn make() -> ParseRes<int> { return Result::Ok(42); }\n\
+          fn main() {\n\
+         \    match make() {\n\
+         \        Result::Ok(v) => { println(v); }\n\
+         \        | Result::Err(_) => { println(0); }\n\
+         \    }\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "type alias: `type A = B; type B = A;` cycle rejected"
+    "type A = B;\n\
+     type B = A;\n\
+     fn main() {\n\
+    \    let x: A = 0;\n\
+    \    println(x);\n\
+     }\n"
+    "type alias cycle through 'A' — alias resolution would loop";
+
+  check_error "type alias: shadowing a primitive type name rejected"
+    "type int = u32;\n\
+     fn main() { println(1); }\n"
+    "'type int' shadows a built-in type — pick a different alias name";
+
+  check_error "type alias: wrong generic arity rejected"
+    "type Pair<A, B> = A;\n\
+     fn main() { let _x: Pair<int> = 0; println(0); }\n"
+    "type alias 'Pair' expects 2 generic argument(s), got 1";
+
   check_error "@must_use rejects placement on non-decoratable items"
     "@must_use\n\
      impl Allocator { }\n\

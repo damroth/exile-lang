@@ -452,6 +452,21 @@ type extern_var = {
   evpos : Pos.t;
 }
 
+(* `type Name<T...> = Type;` — pure (transparent) alias resolved by
+   substitution in `resolve_type_ann_raw`.  NOT a newtype: the alias
+   name and its target are interchangeable in every type annotation
+   position (let-bind, fn-arg, ret, field, `as`).  Generic aliases
+   (`type ParseRes<T> = Result<T, ParseErr>`) bind `tatparams` →
+   call-site args before substituting into `tatarget`.  Pre-self-host
+   ergonomy per FP-1 design 2026-05-28. *)
+type type_alias_decl = {
+  taname : string;
+  tatparams : string list;
+  tatarget : type_ann;
+  tais_pub : bool;
+  tapos : Pos.t;
+}
+
 type item =
   | Function of func
   | Module of module_decl
@@ -467,6 +482,16 @@ type item =
   | ExternType of extern_type           (* `extern type LONG;` — raw C
                                            type alias visible in exile.
                                            Top-level only. *)
+  | TypeAlias of type_alias_decl        (* `type Name<T...> = Type;` —
+                                           pure alias, NOT newtype.  The
+                                           alias name and target are
+                                           interchangeable in every type
+                                           annotation position; ctors
+                                           still go through the original
+                                           type.  Top-level + module
+                                           level.  Resolved in
+                                           resolve_type_ann_raw with a
+                                           cycle-guard. *)
   | ExternConst of extern_const         (* `extern const FOO: c_uint;`
                                            — global value resolved by
                                            the linker.  Top-level only. *)

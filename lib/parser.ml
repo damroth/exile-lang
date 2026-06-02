@@ -1465,6 +1465,12 @@ let rec parse_item s seen =
         Error.failf cd.Ast.kpos
           "name '%s' already used in this scope" cd.Ast.kname;
       [ (Some cd.Ast.kname, Ast.Const cd) ]
+  | Token.Type ->
+      let ta = parse_type_alias_decl s ~is_pub in
+      if List.mem ta.Ast.taname seen then
+        Error.failf ta.Ast.tapos
+          "name '%s' already used in this scope" ta.Ast.taname;
+      [ (Some ta.Ast.taname, Ast.TypeAlias ta) ]
   | Token.Impl ->
       if is_pub then
         Error.failf (peek_pos s)
@@ -1652,7 +1658,7 @@ let rec parse_item s seen =
   | _ ->
       Error.failf (peek_pos s)
         "expected 'fn', 'extern fn', 'mod', 'use', 'struct', 'enum', \
-         'impl' or '@c_include', got %s"
+         'type', 'impl' or '@c_include', got %s"
         (Token.pp (peek s))
 
 (* `const NAME: T = <expr>;` — a compile-time constant.  The `: T`
@@ -1668,6 +1674,32 @@ and parse_const_decl s ~is_pub =
   expect s Token.Semicolon;
   Ast.{ kname = name; kty = ty; kvalue = value;
         kis_pub = is_pub; kpos = name_pos }
+
+(* `type Name<T...> = Type;` — pure alias.  Parsed as a top-level
+   item (FP-1, design 2026-05-28).  Generic tparams optional; the
+   target is any type annotation, including another alias (cycle is
+   caught at resolve time, not parse time). *)
+and parse_type_alias_decl s ~is_pub =
+  expect s Token.Type;
+  let (name, name_pos) =
+    match advance s with
+    | (Token.Ident n, p) -> (n, p)
+    | (_, p) -> Error.raise_ p "expected type alias name after 'type'"
+  in
+  let tparams = parse_tparams s in
+  (match advance s with
+   | (Token.Eq, _) -> ()
+   | (t, p) ->
+       Error.failf p
+         "expected '=' after 'type %s', got %s" name (Token.pp t));
+  let target = parse_type s in
+  (match peek s with
+   | Token.Semicolon -> ignore (advance s)
+   | t ->
+       Error.failf (peek_pos s)
+         "expected ';' after 'type %s = ...', got %s" name (Token.pp t));
+  Ast.{ taname = name; tatparams = tparams; tatarget = target;
+        tais_pub = is_pub; tapos = name_pos }
 
 and parse_struct_decl s ~is_pub =
   expect s Token.Struct;
