@@ -835,21 +835,35 @@ and tpat_nested = function
    expression-statement when the match's value is discarded. *)
 and emit_arm_result ctx assign_to buf indent (a : tmatch_arm) =
   if a.tdiverges then begin
-    (match a.tbody.e with
-     | TEnumLit _ -> ()
-     | _ ->
-         failwith
-           "internal: tdiverges arm body must be a TEnumLit \
-            (only `try` desugar produces diverging arms today)");
-    let trimmed = strip_trailing_space (c_type_prefix a.tbody.ty) in
-    Buffer.add_string buf indent;
-    Buffer.add_string buf trimmed;
-    Buffer.add_string buf " __try_ret;\n";
-    emit_value_into_temp ctx buf indent "__try_ret" a.tbody;
-    let cleanups = List.flatten ctx.defer_chain in
-    emit_cleanups ctx buf indent cleanups;
-    Buffer.add_string buf indent;
-    Buffer.add_string buf "return __try_ret;\n"
+    match a.tbody.e with
+    | TEnumLit _ ->
+        (* `try` desugar shape: arm body builds an Err/None value and
+           the synthesized return ships it out of the enclosing fn. *)
+        let trimmed = strip_trailing_space (c_type_prefix a.tbody.ty) in
+        Buffer.add_string buf indent;
+        Buffer.add_string buf trimmed;
+        Buffer.add_string buf " __try_ret;\n";
+        emit_value_into_temp ctx buf indent "__try_ret" a.tbody;
+        let cleanups = List.flatten ctx.defer_chain in
+        emit_cleanups ctx buf indent cleanups;
+        Buffer.add_string buf indent;
+        Buffer.add_string buf "return __try_ret;\n"
+    | TBlock { stmts; trailing = None } ->
+        (* `let-else` desugar shape: arm body is a user-written
+           divergent stmt sequence (return / break / continue / ...).
+           Route through `gen_block` so TReturn flushes enclosing
+           defers, TBreak/TContinue land in their loop, etc.; restore
+           `defer_chain` after — the arm itself doesn't introduce a
+           defer scope.  `assign_to` is ignored: the divergent arm
+           never reaches the assignment slot. *)
+        let _ = assign_to in
+        let saved_chain = ctx.defer_chain in
+        gen_block ctx buf indent saved_chain stmts;
+        ctx.defer_chain <- saved_chain
+    | _ ->
+        failwith
+          "internal: tdiverges arm body must be a TEnumLit \
+           or a void TBlock (try / let-else desugar shapes)"
   end else
     (match assign_to, a.tbody.e with
      | Some lhs, TMatch _ ->

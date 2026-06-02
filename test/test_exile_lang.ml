@@ -3737,6 +3737,54 @@ let () =
      fn main() { let _x: Pair<int> = 0; println(0); }\n"
     "type alias 'Pair' expects 2 generic argument(s), got 1";
 
+  (* FP-2 — `let <refutable-pat> = expr else { divergent };` MVP:
+     pattern is a single qualified variant ctor with flat-name
+     binds; enum must have >=2 variants; else-block must diverge
+     (return/break/continue).  Desugar: TLet / TLetTuple wrapping
+     a TMatch whose success arm extracts the binds and whose
+     wildcard arm emits the else stmts verbatim through the
+     `gen_block` path (so TReturn flushes defers, TBreak/Continue
+     reach their loop). *)
+  check_assert "let-else: success path binds escape to enclosing scope"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn parse() -> Option<int> { return Option::Some(42); }\n\
+          fn main() {\n\
+         \    let Option::Some(v) = parse() else { return; };\n\
+         \    println(v);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "let-else: multi-bind tuple variant extracts both names"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "enum Pair { Two(int, int) | One(int) }\n\
+          fn parse() -> Pair { return Pair::Two(7, 11); }\n\
+          fn main() {\n\
+         \    let Pair::Two(a, b) = parse() else { return; };\n\
+         \    println(a + b);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "let-else: else without divergence rejected"
+    "fn parse() -> Option<int> { return Option::None; }\n\
+     fn main() {\n\
+    \    let Option::Some(v) = parse() else { println(0); };\n\
+    \    println(v);\n\
+     }\n"
+    "let-else else-block must diverge (return / break / continue / never-returning fn)";
+
+  check_error "let-else: single-variant enum rejected (else unreachable)"
+    "enum One { Only(int) }\n\
+     fn parse() -> One { return One::Only(7); }\n\
+     fn main() {\n\
+    \    let One::Only(v) = parse() else { return; };\n\
+    \    println(v);\n\
+     }\n"
+    "let-else else-branch is unreachable: enum 'One' has only one variant — use a plain `let` instead";
+
   check_error "@must_use rejects placement on non-decoratable items"
     "@must_use\n\
      impl Allocator { }\n\

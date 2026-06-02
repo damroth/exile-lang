@@ -287,6 +287,9 @@ and subst_var_stmt ~from ~to_ (s : Ast.stmt) : Ast.stmt =
       Ast.Let { name; value = sub value; ty_ann; is_mut; pos }
   | Ast.LetTuple { names; value; is_mut; pos } ->
       Ast.LetTuple { names; value = sub value; is_mut; pos }
+  | Ast.LetElse { pat; value; else_body; pos } ->
+      Ast.LetElse { pat; value = sub value;
+                    else_body = sub_block else_body; pos }
   | Ast.Assign { path; value; pos } ->
       (* A bare `i = ...` reassign should rename to `gensym = ...` too,
          since the body's `i` is the gensym in the emitted code.  Single-
@@ -3178,6 +3181,156 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         add_decl name t_actual pos;
         if is_mut then Hashtbl.replace mut_names name ();
         ((name, t_actual) :: env, TLet { name; value = tvalue; pos })
+    | Ast.LetElse { pat; value; else_body; pos } ->
+        (* FP-2 — `let <refutable-pat> = expr else { divergent };`.
+           Desugar to TMatch wrapped in TLet / TLetTuple so the
+           pattern's binds escape into the enclosing scope (bind-
+           hoisting per design 2026-05-28).  MVP rules: pattern is a
+           non-or PVariant whose binds are all single-segment PVar
+           (no nested patterns), enclosing enum has ≥2 variants
+           (else-branch otherwise unreachable), and the else-block
+           diverges (return / break / continue, etc.). *)
+        let (tname, variant_name, binds_ast) = match pat with
+          | Ast.PVariant { tname; variant; binds; _ } ->
+              (tname, variant, binds)
+          | Ast.PWildcard _ | Ast.PVar _ ->
+              Error.failf pos
+                "let-else pattern must be refutable (a qualified \
+                 variant constructor like `Option::Some(v)`); use a \
+                 plain `let` for irrefutable bindings"
+          | Ast.POr _ ->
+              Error.failf pos
+                "let-else MVP does not support or-patterns; spell out \
+                 one variant or use a `match`"
+        in
+        let _ = tname in
+        let bind_pairs = match binds_ast with
+          | Ast.PBTuple ps ->
+              List.mapi (fun i p ->
+                let local = Printf.sprintf "__le_a%d" i in
+                let field = Printf.sprintf "_%d" i in
+                match p with
+                | Ast.PVar (n, _) -> (field, n, local)
+                | _ ->
+                    Error.failf pos
+                      "let-else MVP only supports flat name binds in \
+                       the pattern — got a nested sub-pattern")
+                ps
+          | Ast.PBStruct fields ->
+              List.map (fun (fname, p) ->
+                let local = "__le_a_" ^ fname in
+                match p with
+                | Ast.PVar (n, _) -> (fname, n, local)
+                | _ ->
+                    Error.failf pos
+                      "let-else MVP only supports flat name binds in \
+                       the pattern — got a nested sub-pattern")
+                fields
+        in
+        if bind_pairs = [] then
+          Error.failf pos
+            "let-else on a unit variant binds nothing — use a plain \
+             `match` instead";
+        let tvalue = elab_expr ctx env value in
+        let enum_path = match tvalue.ty with
+          | TEnum p -> p
+          | other ->
+              Error.failf pos
+                "let-else scrutinee must be enum-typed, got %s"
+                (typ_name other)
+        in
+        let esig =
+          match resolve_enum_by_path ctx enum_path with
+          | Some e -> e
+          | None ->
+              Error.failf pos "internal: enum '%s' not in scope"
+                (String.concat "::" enum_path)
+        in
+        if List.length esig.evariants < 2 then
+          Error.failf pos
+            "let-else else-branch is unreachable: enum '%s' has only \
+             one variant — use a plain `let` instead"
+            (String.concat "::" enum_path);
+        let (variant_tag, vsig) =
+          let rec find i = function
+            | [] ->
+                Error.failf pos
+                  "variant '%s' not found in enum '%s'"
+                  variant_name (String.concat "::" enum_path)
+            | (v : variant_sig) :: rest ->
+                if v.vsname = variant_name then (i, v)
+                else find (i + 1) rest
+          in
+          find 0 esig.evariants
+        in
+        let lookup_field_ty fname =
+          match List.assoc_opt fname vsig.vsfields with
+          | Some t -> t
+          | None ->
+              Error.failf pos
+                "field '%s' not found in variant '%s::%s'"
+                fname (String.concat "::" enum_path) variant_name
+        in
+        let bind_typed = List.map (fun (fname, bname, local) ->
+            (fname, bname, local, lookup_field_ty fname))
+            bind_pairs in
+        List.iter (fun (_, n, _, _) ->
+          if List.mem_assoc n env then
+            Error.failf pos "duplicate name '%s' in let-else" n)
+          bind_typed;
+        List.iter (fun (_, n, _, t) -> add_decl n t pos) bind_typed;
+        let env' = List.fold_left (fun env (_, n, _, t) -> (n, t) :: env)
+                     env bind_typed in
+        (* Walk the else body in the OUTER env (binds are not in scope
+           inside else — the divergent branch never sees them). *)
+        let (_, t_else_stmts) = walk env else_body in
+        if not (Move.stmts_diverge t_else_stmts) then
+          Error.failf pos
+            "let-else else-block must diverge (return / break / \
+             continue / never-returning fn)";
+        (* Build the desugared TMatch.  Success arm extracts each bind
+           into a local name, returns a tuple (or single value); else
+           arm wraps the divergent stmts in a TBlock and is flagged
+           tdiverges so the match's value type comes from the success
+           arm alone. *)
+        let success_binds = List.map (fun (fname, _, local, _) ->
+            (fname, TPVar local))
+            bind_typed in
+        let success_tpat =
+          TPVariant { variant = variant_name; tag = variant_tag;
+                      binds = success_binds } in
+        let success_body, result_ty =
+          match bind_typed with
+          | [(_, _, local, t)] ->
+              ({ e = TVar local; ty = t; pos }, t)
+          | _ ->
+              let ts = List.map (fun (_, _, _, t) -> t) bind_typed in
+              let es = List.map (fun (_, _, local, t) ->
+                           { e = TVar local; ty = t; pos })
+                         bind_typed in
+              ({ e = TTupleLit es; ty = TTuple ts; pos }, TTuple ts)
+        in
+        let success_arm =
+          { tpat = success_tpat; tguard = None;
+            tbody = success_body;
+            tdiverges = false; tarm_pos = pos } in
+        let else_block_expr =
+          { e = TBlock { stmts = t_else_stmts; trailing = None };
+            ty = result_ty; pos } in
+        let else_arm =
+          { tpat = TPWildcard; tguard = None;
+            tbody = else_block_expr;
+            tdiverges = true; tarm_pos = pos } in
+        let tmatch =
+          { e = TMatch { scrutinee = tvalue; ename_path = enum_path;
+                         arms = [success_arm; else_arm] };
+            ty = result_ty; pos } in
+        (match bind_typed with
+         | [(_, bname, _, _)] ->
+             (env', TLet { name = bname; value = tmatch; pos })
+         | _ ->
+             let names = List.map (fun (_, n, _, _) -> n) bind_typed in
+             (env', TLetTuple { names; value = tmatch; pos }))
     | Ast.LetTuple { names; value; is_mut; pos } ->
         let tvalue = elab_expr ctx env value in
         let elem_tys =

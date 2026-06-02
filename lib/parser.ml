@@ -843,17 +843,46 @@ and parse_stmt s =
            expect s Token.Semicolon;
            Ast.LetTuple { names; value; is_mut; pos }
        | _ ->
-           let (name, name_pos) =
-             expect_ident s ~what:"variable name after 'let'"
+           (* FP-2 let-else detection: a refutable-variant pattern
+              always starts with a qualified path (`Option::Some(v)`,
+              `Foo::Bar(x)`).  Peek two tokens — `Ident :: ...` →
+              parse as let-else; everything else takes the existing
+              single-ident `let name [: type] = expr;` path
+              (covers `let _ = ...` since `_` is also an Ident). *)
+           let is_let_else =
+             match s.tokens with
+             | (Token.Ident _, _) :: (Token.DoubleColon, _) :: _ -> true
+             | _ -> false
            in
-           let ty_ann =
-             if peek s = Token.Colon then (ignore (advance s); Some (parse_type s))
-             else None
-           in
-           expect s Token.Eq;
-           let value = parse_expr s in
-           expect s Token.Semicolon;
-           Ast.Let { name; value; ty_ann; is_mut; pos = name_pos })
+           if is_let_else then begin
+             if is_mut then
+               Error.failf pos
+                 "'let mut' is not supported with a refutable pattern \
+                  (pattern binds are immutable by default)";
+             let pat = parse_pattern s in
+             expect s Token.Eq;
+             let value = parse_expr s in
+             (match advance s with
+              | (Token.Else, _) -> ()
+              | (t, p) ->
+                  Error.failf p
+                    "expected 'else { ... }' after `let <pattern> = \
+                     expr`, got %s" (Token.pp t));
+             let else_body = parse_block s in
+             expect s Token.Semicolon;
+             Ast.LetElse { pat; value; else_body; pos }
+           end else
+             let (name, name_pos) =
+               expect_ident s ~what:"variable name after 'let'"
+             in
+             let ty_ann =
+               if peek s = Token.Colon then (ignore (advance s); Some (parse_type s))
+               else None
+             in
+             expect s Token.Eq;
+             let value = parse_expr s in
+             expect s Token.Semicolon;
+             Ast.Let { name; value; ty_ann; is_mut; pos = name_pos })
   | Token.Return ->
       let pos = peek_pos s in
       ignore (advance s);

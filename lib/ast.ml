@@ -222,6 +222,18 @@ and stmt =
                                              compile-time-only property —
                                              codegen never emits `const`. *)
   | LetTuple of { names : string list; value : expr; is_mut : bool; pos : Pos.t }
+  | LetElse of { pat : pattern; value : expr; else_body : stmt list;
+                 pos : Pos.t }
+                                          (* `let <refutable-pat> = expr
+                                             else { divergent-block };`
+                                             FP-2: bind-hoisting desugar.
+                                             Pattern must be refutable
+                                             (variant ctor) and the
+                                             else-block must diverge
+                                             (return / break / continue
+                                             / never-returning fn).
+                                             Binds escape to the
+                                             enclosing block. *)
   | Assign of { path : string list; value : expr; pos : Pos.t }
                                           (* Single-segment path = local
                                              variable assignment; multi-
