@@ -30,7 +30,7 @@ impl Point {
 }
 
 fn main() {
-    let p = Point::origin();
+    let mut p = Point::origin();
     p.shift(3, 4);
     println(p.area());            // 12
 

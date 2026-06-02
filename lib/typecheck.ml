@@ -1601,6 +1601,14 @@ let walk_stmts_hook
        (string * typ) list * tstmt list) option ref
   = ref None
 
+(* DR — receiver-mutability per design 2026-05-28.  Hook installed by
+   [elab_body] so [elab_expr]'s MethodCall path can ask whether a
+   receiver expression is a mutable lvalue (`let mut` binding, field/
+   index reached through a mut place, or auto-deref through `*T`).
+   Used to gate `*self` methods: a mutable receiver is required, and
+   `*const T` receivers / immutable bindings are rejected up-front. *)
+let is_mut_lvalue_hook : (texpr -> bool) option ref = ref None
+
 let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
   let pos = Ast.expr_pos e in
   match e with
@@ -2989,6 +2997,41 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                     ~param_tys:rest_params ~raw_args:args ~targs
                     ~ret_ty ~allow_void ()
                 in
+                (* DR — receiver-mutability (design 2026-05-28).
+                   `*self` (mutable receiver) requires either a mut
+                   pointer or a mut place; reject `*const T` receivers
+                   and immutable bindings up-front so an inadvertent
+                   `let c = ...; c.bump()` doesn't silently mutate
+                   through the auto-ref.  `*const self` keeps the
+                   permissive "callable on everything" semantics —
+                   the auto-ref/deref matrix below handles the
+                   shape coercion. *)
+                (match self_ty with
+                 | TPtr _ ->
+                     (match trecv.ty with
+                      | TConstPtr _ ->
+                          Error.failf mc_pos
+                            "method '%s' takes a mutable receiver \
+                             (`*self`) but receiver is %s (read-only) \
+                             — call a `*const self` method, or pass a \
+                             `*T` to the value"
+                            display (typ_name trecv.ty)
+                      | TPtr _ -> ()
+                      | _ ->
+                          let mut_ok = match !is_mut_lvalue_hook with
+                            | Some h -> h trecv
+                            | None -> false
+                          in
+                          if not mut_ok then
+                            Error.failf mc_pos
+                              "method '%s' takes a mutable receiver \
+                               (`*self`); the call expression is not a \
+                               mutable place — declare the binding \
+                               `let mut` (or mark the parameter `mut`), \
+                               or use a `*const self` method if no \
+                               mutation is needed"
+                              display)
+                 | _ -> ());
                 (* Auto-ref / auto-deref: align receiver shape with the
                    method's self-param shape. *)
                 let recv_is_ptr =
@@ -3815,6 +3858,30 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
      entirely so the leak is moot. *)
   let prev_hook = !walk_stmts_hook in
   walk_stmts_hook := Some walk;
+  (* receiver-mutability hook: walks a typed receiver and decides
+     whether it backs a mutable lvalue.  TVar checks `mut_names`;
+     TFieldAccess / TIndex follow the chain — a step through a `*T`
+     target is mutable (mut pointer's pointee is mut), `*const T` is
+     not.  Used by MethodCall elab to gate `*self` calls. *)
+  let rec is_mut_recv (te : texpr) =
+    match te.e with
+    | TVar n -> Hashtbl.mem mut_names n
+    | TFieldAccess { target; _ } ->
+        (match target.ty with
+         | TPtr _ -> true
+         | TConstPtr _ -> false
+         | _ -> is_mut_recv target)
+    | TIndex { base; _ } ->
+        (match base.ty with
+         | TPtr _ -> true
+         | TConstPtr _ -> false
+         | _ -> is_mut_recv base)
+    | TDeref sub ->
+        (match sub.ty with TPtr _ -> true | _ -> false)
+    | _ -> false
+  in
+  let prev_mut_hook = !is_mut_lvalue_hook in
+  is_mut_lvalue_hook := Some is_mut_recv;
   let (env_after, walked) = walk param_env body_stmts in
   let tail_tstmts =
     match tail with
@@ -4073,6 +4140,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
   in
   let lifted = lift_stmts tstmts in
   walk_stmts_hook := prev_hook;
+  is_mut_lvalue_hook := prev_mut_hook;
   (List.rev !decls, lifted)
 
 (* Result of one walk over the program tree: every function (with its
@@ -5126,6 +5194,11 @@ let prelude_items () =
       pty = Ast.TyPtr (Ast.TyStruct { path = ["StringBuilder"]; args = [] });
       preg = None; is_mut = false }
   in
+  let sb_self_const_ptr_param =
+    { Ast.pname = "self";
+      pty = Ast.TyConstPtr (Ast.TyStruct { path = ["StringBuilder"]; args = [] });
+      preg = None; is_mut = false }
+  in
   let mk_sb_method ?(is_pub = true) name params ret body = {
     Ast.name; c_name = name; tparams = []; tbounds = []; params; ret_ty = ret;
     body; is_pub; is_extern = false; is_variadic = false;
@@ -5170,7 +5243,7 @@ let prelude_items () =
   (* length( * self) -> u32: trivial accessor.  Named `length` (NOT `len`)
      to avoid the method-vs-field name clash the impl-pass rejects. *)
   let length_method =
-    mk_sb_method "length" [ sb_self_ptr_param ] (Some u32_t)
+    mk_sb_method "length" [ sb_self_const_ptr_param ] (Some u32_t)
       [ Ast.Return (Some (field (Ast.Var ("self", pos)) "len"), pos) ]
   in
   (* as_slice( * self) -> Slice<u8>: read-only view backed by buf/len.
@@ -5178,7 +5251,7 @@ let prelude_items () =
   let slice_u8_ann =
     Ast.TyStruct { path = ["Slice"]; args = [ u8_t ] } in
   let as_slice_method =
-    mk_sb_method "as_slice" [ sb_self_ptr_param ] (Some slice_u8_ann)
+    mk_sb_method "as_slice" [ sb_self_const_ptr_param ] (Some slice_u8_ann)
       [ Ast.Return (Some (Ast.StructLit {
           tname = ["Slice"];
           fields = [
@@ -5797,6 +5870,9 @@ let prelude_items () =
   let vec_self_ptr_param =
     { Ast.pname = "self"; pty = Ast.TyPtr vec_t_ann;
       preg = None; is_mut = false } in
+  let vec_self_const_ptr_param =
+    { Ast.pname = "self"; pty = Ast.TyConstPtr vec_t_ann;
+      preg = None; is_mut = false } in
   let mk_vec_method ?(is_pub = true) name params ret body = {
     Ast.name; c_name = name; tparams = []; tbounds = []; params;
     ret_ty = ret; body; is_pub; is_extern = false;
@@ -5842,7 +5918,7 @@ let prelude_items () =
           preg = None; is_mut = false } ]
       (Some vec_t_ann) vec_with_capacity_body in
   let vec_len_method =
-    mk_vec_method "len" [vec_self_ptr_param] (Some u32_t)
+    mk_vec_method "len" [vec_self_const_ptr_param] (Some u32_t)
       [ Ast.Return (Some (field (Ast.Var ("self", pos)) "count"), pos) ] in
   (* grow( * self, new_cap): alloc new buf, copy through Slice-view
      + Delta-B, free old with matching byte-count, swap fields. *)
@@ -5976,12 +6052,12 @@ let prelude_items () =
   in
   let vec_get_method =
     mk_vec_method "get"
-      [ vec_self_ptr_param;
+      [ vec_self_const_ptr_param;
         { Ast.pname = "i"; pty = u32_t;
           preg = None; is_mut = false } ]
       (Some option_t_ann) vec_get_body in
   let vec_as_slice_method =
-    mk_vec_method "as_slice" [vec_self_ptr_param] (Some slice_t_ann)
+    mk_vec_method "as_slice" [vec_self_const_ptr_param] (Some slice_t_ann)
       [ Ast.Return (Some (Ast.StructLit {
           tname = ["Slice"];
           fields = [
@@ -5990,7 +6066,7 @@ let prelude_items () =
             ("len", field (Ast.Var ("self", pos)) "count");
           ]; base = None; pos }), pos) ] in
   let vec_iter_method =
-    mk_vec_method "iter" [vec_self_ptr_param] (Some vec_iter_t_ann)
+    mk_vec_method "iter" [vec_self_const_ptr_param] (Some vec_iter_t_ann)
       [ Ast.Return (Some (Ast.StructLit {
           tname = ["VecIter"];
           fields = [
@@ -6772,27 +6848,29 @@ let prelude_items () =
     trpos = pos; tris_pub = true;
   } in
   (* `Display` / `Debug` — writer-pattern formatting traits.
-     `fn fmt( * self, out: *StringBuilder)` — borrow self, write
-     into a builder the caller owns; threading the same `out`
-     through nested fmts composes without intermediate allocs.
-     Display = user-facing (manual impls), Debug = developer-
-     facing (`@derive(Debug)` synthesises it; that landing
-     is a follow-up commit on top of this one).  Same signature
-     so the two stay structurally interchangeable. *)
-  let self_ptr_param =
-    mk_param "self" (Ast.TyPtr Ast.TySelf) in
+     `fn fmt( * const self, out: *StringBuilder)` — read-only borrow
+     of self, write into a builder the caller owns; threading the
+     same `out` through nested fmts composes without intermediate
+     allocs.  Receiver was `*self` before receiver-mutability
+     landed; `*const self` (per DECYZJA #2-bis 2026-05-28) makes
+     the read-only intent explicit and lets the formatter take
+     immutable bindings too.  Display = user-facing (manual
+     impls); Debug = developer-facing (`@derive(Debug)` synthesises
+     it). *)
+  let self_const_ptr_param =
+    mk_param "self" (Ast.TyConstPtr Ast.TySelf) in
   let out_param =
     mk_param "out"
       (Ast.TyPtr (Ast.TyStruct { path = ["StringBuilder"]; args = [] })) in
   let display_sig =
-    trait_sig "fmt" [self_ptr_param; out_param] None [] in
+    trait_sig "fmt" [self_const_ptr_param; out_param] None [] in
   let display_trait = {
     Ast.trname = "Display"; trassoc = []; trsupers = [];
     trmethods = [ display_sig ]; trdefaults = [];
     trpos = pos; tris_pub = true;
   } in
   let debug_sig =
-    trait_sig "fmt" [self_ptr_param; out_param] None [] in
+    trait_sig "fmt" [self_const_ptr_param; out_param] None [] in
   let debug_trait = {
     Ast.trname = "Debug"; trassoc = []; trsupers = [];
     trmethods = [ debug_sig ]; trdefaults = [];
@@ -7294,7 +7372,7 @@ let derive_debug_sb_ann =
   Ast.TyPtr (Ast.TyStruct { path = ["StringBuilder"]; args = [] })
 
 let derive_debug_mk_fmt target body pos =
-  let self_p = derive_field_param "self" (Ast.TyPtr target) in
+  let self_p = derive_field_param "self" (Ast.TyConstPtr target) in
   let out_p =
     { Ast.pname = "out"; pty = derive_debug_sb_ann;
       preg = None; is_mut = false }

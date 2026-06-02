@@ -1,4 +1,4 @@
-// Display — writer-pattern formatting trait.  `fn fmt(*self, out:
+// Display — writer-pattern formatting trait.  `fn fmt(*const self, out:
 // *StringBuilder)` borrows self and writes into a builder the
 // caller owns; threading the same `out` through nested fmts
 // composes (parent's fmt calls child.fmt(out)) without an
@@ -19,7 +19,7 @@ pub mod raw {
 struct Point { x: int, y: int }
 
 impl Display for Point {
-    fn fmt(*self, out: *StringBuilder) {
+    fn fmt(*const self, out: *StringBuilder) {
         out.push_str("Point { x: ");
         out.push_int(self.x);
         out.push_str(", y: ");
@@ -32,7 +32,7 @@ impl Display for Point {
 struct Segment { lo: Point, hi: Point }
 
 impl Display for Segment {
-    fn fmt(*self, out: *StringBuilder) {
+    fn fmt(*const self, out: *StringBuilder) {
         out.push_str("Segment[");
         self.lo.fmt(out);                      // nested fmt: same builder
         out.push_str(" -> ");

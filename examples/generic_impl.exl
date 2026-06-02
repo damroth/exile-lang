@@ -47,7 +47,7 @@ fn main() {
     let r = Pair { fst: 7, snd: 9 };
     println(r.first());                         // 7
 
-    let b = Box { val: 5 };
+    let mut b = Box { val: 5 };
     b.set(99);                                  // pointer receiver
     println(b.get());                           // 99
 }

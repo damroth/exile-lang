@@ -1366,7 +1366,7 @@ let () =
   check_error "impl Display with the wrong fmt signature rejected"
     "struct P { x: int }\n\
      impl Display for P {\n\
-    \    fn fmt(*self, out: int) {}\n\
+    \    fn fmt(*const self, out: int) {}\n\
      }\n\
      fn main() { println(1); }\n"
     "method 'fmt': parameter 'out' type does not match trait 'Display' (expected *StringBuilder, got i32)";
@@ -2074,7 +2074,7 @@ let () =
     \    pub fn shift(self: *Point, dx: int) { self.x = self.x + dx; }\n\
      }\n\
      fn main() {\n\
-    \    let p = Point { x: 1, y: 2 };\n\
+    \    let mut p = Point { x: 1, y: 2 };\n\
     \    p.shift(10);\n\
     \    println(p.x);\n\
      }\n"
@@ -3665,7 +3665,7 @@ let () =
        Exile_lang.Compiler.compile
          "enum Tok { Num(int) | Plus | Minus }\n\
           impl Display for Tok {\n\
-         \    fn fmt(*self, out: *StringBuilder) {\n\
+         \    fn fmt(*const self, out: *StringBuilder) {\n\
          \        match *self {\n\
          \            Tok::Num(n) => { out.push_str(\"Num(\"); out.push_int(n); out.push_str(\")\"); }\n\
          \            | Tok::Plus  => { out.push_str(\"+\"); }\n\
@@ -3784,6 +3784,64 @@ let () =
     \    println(v);\n\
      }\n"
     "let-else else-branch is unreachable: enum 'One' has only one variant — use a plain `let` instead";
+
+  (* Receiver-mutability per design 2026-05-28.
+     `*self` requires a mutable place; the auto-ref matrix rejects
+     a `*const T` receiver outright (DECYZJA #2/#3).
+     `*const self` stays callable on every shape — by-value
+     bindings, mut bindings, `*T`, and `*const T` all auto-ref
+     into TConstPtr. *)
+  check_error "receiver-mutability: `*self` on immutable binding rejected"
+    "struct C { n: int }\n\
+     impl C {\n\
+    \    pub fn bump(*self) { self.n = self.n + 1; }\n\
+     }\n\
+     fn main() {\n\
+    \    let c = C { n: 0 };\n\
+    \    c.bump();\n\
+     }\n"
+    "method 'C::bump' takes a mutable receiver (`*self`); the call expression is not a mutable place — declare the binding `let mut` (or mark the parameter `mut`), or use a `*const self` method if no mutation is needed";
+
+  check_error "receiver-mutability: `*self` through `*const T` receiver rejected"
+    "struct C { n: int }\n\
+     impl C {\n\
+    \    pub fn bump(*self) { self.n = self.n + 1; }\n\
+     }\n\
+     fn run(p: *const C) { p.bump(); }\n\
+     fn main() {\n\
+    \    let mut c = C { n: 0 };\n\
+    \    run(&c);\n\
+     }\n"
+    "method 'C::bump' takes a mutable receiver (`*self`) but receiver is *const C (read-only) — call a `*const self` method, or pass a `*T` to the value";
+
+  check_assert "receiver-mutability: `*self` on `let mut` binding compiles"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct C { n: int }\n\
+          impl C {\n\
+         \    pub fn bump(*self) { self.n = self.n + 1; }\n\
+          }\n\
+          fn main() {\n\
+         \    let mut c = C { n: 0 };\n\
+         \    c.bump();\n\
+         \    println(c.n);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "receiver-mutability: `*const self` callable on `let` binding"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct C { n: int }\n\
+          impl C {\n\
+         \    pub fn read(*const self) -> int { return self.n; }\n\
+          }\n\
+          fn main() {\n\
+         \    let c = C { n: 7 };\n\
+         \    println(c.read());\n\
+          }\n");
+       true
+     with _ -> false);
 
   check_error "@must_use rejects placement on non-decoratable items"
     "@must_use\n\

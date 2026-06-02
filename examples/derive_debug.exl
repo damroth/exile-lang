@@ -1,5 +1,5 @@
 // @derive(Debug) — auto-generated writer-pattern formatter.
-// Synthesizes `impl Debug for T { fn fmt(*self, out: *StringBuilder) }`
+// Synthesizes `impl Debug for T { fn fmt(*const self, out: *StringBuilder) }`
 // that renders in Rust's `{:?}` shape:
 //
 //   - struct  → `S { f1: ..., f2: ... }`  (empty `S`)
