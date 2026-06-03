@@ -1,0 +1,58 @@
+// `a[lo..hi]` / `a[lo..=hi]` — sub-slicing (DR-011).
+//
+// When the index expression is a Range value, `[]` produces a fresh
+// `Slice<T>` view instead of a scalar element copy.  Works on arrays
+// and on existing slices — both expose `[i]` of element type `T`,
+// so `&base[lo]` and the resulting `Slice<T> { ptr, len }` fall out
+// of the existing index machinery.
+//
+// Semantics:
+//   `a[lo..hi]`   -> Slice<T> { ptr: &a[lo], len: (hi - lo)     as u32 }
+//   `a[lo..=hi]`  -> Slice<T> { ptr: &a[lo], len: (hi - lo + 1) as u32 }
+//
+// v1 limits (deliberate):
+//   - No bounds check, consistent with the rest of `[i]`.
+//   - Range bounds must be the same int type as the base's index.
+//   - Mutable sub-slicing (`SliceMut<T>`) is not in v1 — only
+//     read-only views are produced.
+//
+// Self-host motivation: lexer/parser need cheap token-spans from a
+// source buffer.  `src[start..end]` returns a `Slice<u8>` without
+// copying or extra plumbing.
+
+fn sum(s: Slice<int>) -> int {
+    let mut acc: int = 0;
+    let mut i: u32 = 0 as u32;
+    while i < s.len {
+        acc = acc + s[i as int];
+        i = i + 1 as u32;
+    }
+    acc
+}
+
+fn main() {
+    let arr: [int; 6] = [10, 20, 30, 40, 50, 60];
+
+    // Exclusive: arr[1..4] yields a 3-element view [20, 30, 40].
+    let mid = arr[1..4];
+    println(mid.len as int);           // 3
+    println(sum(mid));                 // 90
+
+    // Inclusive: arr[0..=2] yields a 3-element view [10, 20, 30].
+    let head = arr[0..=2];
+    println(head.len as int);          // 3
+    println(sum(head));                // 60
+
+    // Sub-slicing an existing slice composes — `s1[2..5]` of a
+    // 6-wide slice returns the inner 3-element view [30, 40, 50].
+    let s1 = arr[0..6];
+    let s2 = s1[2..5];
+    println(s2.len as int);            // 3
+    println(sum(s2));                  // 120
+
+    // Variable Range works too — pre-built then handed to `[]`.
+    let r = 2..4;
+    let tail = arr[r];
+    println(tail.len as int);          // 2
+    println(sum(tail));                // 70
+}

@@ -1935,10 +1935,99 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
               (typ_name other)
       in
       let tindex = elab_expr ctx env index in
-      if not (is_int_like tindex.ty) then
-        Error.failf idx_pos
-          "index must be an integer, got %s" (typ_name tindex.ty);
-      { e = TIndex { base = tbase; index = tindex }; ty = elem_ty; pos }
+      (* DR-011 sub-slicing: `s[lo..hi]` / `s[lo..=hi]` desugars to a
+         `Slice<T>` view rather than a scalar index.  We recognise it
+         by `tindex.ty` being a mono instance of `Range` /
+         `RangeInclusive`, then build `Slice { ptr: &base[lo],
+         len: (hi - lo) [+ 1] as u32 }`.  Bounds-check is omitted in
+         v1 (consistent with the rest of `[i]`); the lo/hi types are
+         the bound's integer type (cast to u32 for `Slice.len`). *)
+      let range_inclusive_opt = match tindex.ty with
+        | TStruct rp when Mono.is_instance_of ["Range"] rp -> Some (false, rp)
+        | TStruct rp when Mono.is_instance_of ["RangeInclusive"] rp -> Some (true, rp)
+        | _ -> None
+      in
+      (match range_inclusive_opt with
+       | Some (inclusive, range_path) ->
+           let range_sig = match resolve_struct_by_path ctx range_path with
+             | Some s -> s
+             | None ->
+                 Error.failf idx_pos
+                   "internal: Range instance %s not resolved"
+                   (String.concat "::" range_path)
+           in
+           let bound_ty =
+             try List.assoc "lo" range_sig.sfields_ty
+             with Not_found ->
+               Error.failf idx_pos "internal: Range missing 'lo' field"
+           in
+           let u32_t = TInt { signed = false; width = Ast.W32 } in
+           let u32_ann = Ast.TyInt { signed = false; width = Ast.W32 } in
+           (* Inline-fold when the Range was constructed in place
+              (`s[1..4]`): we can read lo/hi directly off the
+              StructLit without forcing a temp.  Variable-Range
+              (`let r = 1..4; s[r]`) falls back to field access on
+              the lifted temp. *)
+           let (lo_expr, hi_expr) =
+             match tindex.e with
+             | TStructLit { fields; _ } ->
+                 (try
+                    (List.assoc "lo" fields, List.assoc "hi" fields)
+                  with Not_found ->
+                    ({ e = TFieldAccess { target = tindex; field = "lo" };
+                       ty = bound_ty; pos = idx_pos },
+                     { e = TFieldAccess { target = tindex; field = "hi" };
+                       ty = bound_ty; pos = idx_pos }))
+             | _ ->
+                 ({ e = TFieldAccess { target = tindex; field = "lo" };
+                    ty = bound_ty; pos = idx_pos },
+                  { e = TFieldAccess { target = tindex; field = "hi" };
+                    ty = bound_ty; pos = idx_pos })
+           in
+           let diff =
+             { e = TBinOp (Ast.Sub, hi_expr, lo_expr);
+               ty = bound_ty; pos = idx_pos } in
+           let span =
+             if inclusive then
+               let one = { e = TIntLit 1; ty = bound_ty; pos = idx_pos } in
+               { e = TBinOp (Ast.Add, diff, one);
+                 ty = bound_ty; pos = idx_pos }
+             else diff
+           in
+           let len_expr =
+             { e = TCast (span, u32_ann); ty = u32_t; pos = idx_pos } in
+           let elem_indexed =
+             { e = TIndex { base = tbase; index = lo_expr };
+               ty = elem_ty; pos = idx_pos } in
+           let ptr_ty = TConstPtr elem_ty in
+           let ptr_expr =
+             { e = TRef elem_indexed; ty = ptr_ty; pos = idx_pos } in
+           let slice_skel = match List.find_opt
+             (fun (s : struct_sig) -> s.sname_path = ["Slice"]
+                                       && s.stparams <> [])
+             ctx.structs with
+             | Some s -> s
+             | None ->
+                 Error.failf idx_pos
+                   "internal: prelude Slice<T> skeleton not registered"
+           in
+           let slice_inst =
+             Mono.instantiate_struct ctx.instances
+               ~normalize:(normalize_apps ctx) slice_skel [elem_ty]
+           in
+           let slice_ty = TStruct slice_inst.sname_path in
+           { e = TStructLit
+               { sname_path = slice_inst.sname_path;
+                 fields = [("ptr", ptr_expr); ("len", len_expr)];
+                 base = None };
+             ty = slice_ty; pos }
+       | None ->
+           if not (is_int_like tindex.ty) then
+             Error.failf idx_pos
+               "index must be an integer or a Range, got %s"
+               (typ_name tindex.ty);
+           { e = TIndex { base = tbase; index = tindex };
+             ty = elem_ty; pos })
   | Ast.Range { lo; hi; inclusive; pos = rng_pos } ->
       (* `a..b` / `a..=b` desugars to a literal of the prelude struct
          `Range<T>` / `RangeInclusive<T>`.  `T` flows bidirectionally from

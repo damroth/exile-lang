@@ -4582,6 +4582,76 @@ let () =
      }\n"
     "#include <stdio.h>\n\nstruct ex_Slice_i32 { const long *ptr; unsigned long len; };\nstruct ex_arr4_i32 { long data[4]; };\n\nint main(void) {\n    struct ex_arr4_i32 arr;\n    struct ex_Slice_i32 s;\n    arr.data[0] = 10;\n    arr.data[1] = 20;\n    arr.data[2] = 30;\n    arr.data[3] = 40;\n    s.ptr = &(arr.data[0]);\n    s.len = 4;\n    printf(\"%ld\\n\", (long)(s.ptr[0]));\n    return 0;\n}\n";
 
+  (* DR-011 sub-slicing — `a[lo..hi]` / `a[lo..=hi]` on an array or
+     existing Slice produces a fresh `Slice<T>` view rather than a
+     scalar element.  Length is `hi - lo` (or `hi - lo + 1` for
+     inclusive).  Bounds-check is omitted in v1, consistent with the
+     rest of `[i]`. *)
+  check_assert "DR-011: sub-slice of an array produces a Slice<T> with ptr+len"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let arr: [int; 5] = [10, 20, 30, 40, 50];\n\
+         \    let s = arr[1..4];\n\
+         \    println(s.len as int);\n\
+         \    println(s[0]);\n\
+         \    println(s[2]);\n\
+          }\n"
+     in
+     contains c "s.ptr = &(arr.data[1])");
+
+  check_assert "DR-011: sub-slice with `..=` is one element longer than `..`"
+    (let c_excl =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let arr: [int; 4] = [1, 2, 3, 4];\n\
+         \    let s = arr[0..2];\n\
+         \    println(s.len as int);\n\
+          }\n"
+     and c_incl =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let arr: [int; 4] = [1, 2, 3, 4];\n\
+         \    let s = arr[0..=2];\n\
+         \    println(s.len as int);\n\
+          }\n"
+     in
+     (* Inclusive form emits an explicit `+ 1` somewhere in len computation. *)
+     contains c_incl "+ 1"
+     && not (contains c_excl "+ 1"));
+
+  check_assert "DR-011: sub-slice of an existing Slice produces a nested Slice"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let arr: [int; 6] = [0, 1, 2, 3, 4, 5];\n\
+         \    let s1: Slice<int> = arr[0..6];\n\
+         \    let s2 = s1[2..5];\n\
+         \    println(s2.len as int);\n\
+         \    println(s2[0]);\n\
+          }\n"
+     in
+     contains c "s2.ptr = &(s1.ptr[2])");
+
+  check_assert "DR-011: sub-slice as fn arg type-checks (Slice<int> param)"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn first(s: Slice<int>) -> int { s[0] }\n\
+          fn main() {\n\
+         \    let arr: [int; 4] = [1, 2, 3, 4];\n\
+         \    println(first(arr[1..4]));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "DR-011: indexing with a non-integer non-Range rejected"
+    "fn main() {\n\
+    \    let arr: [int; 4] = [1, 2, 3, 4];\n\
+    \    let s = arr[true];\n\
+    \    println(s);\n\
+     }\n"
+    "index must be an integer or a Range, got bool";
+
   check "slice: .len + iter via while loop"
     "fn sum(s: Slice<int>) -> int {\n\
     \    let mut total: int = 0;\n\
