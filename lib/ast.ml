@@ -1,5 +1,9 @@
 type int_width = W8 | W16 | W32
 
+(* DR-floats: two IEEE float widths.  No arbitrary other widths —
+   f32 is single, f64 is double, period.  Bare `3.14` defaults to f64. *)
+type float_width = F32 | F64
+
 type binop =
   | Add | Sub | Mul | Div | Mod
   | BitAnd | BitOr | BitXor | Shl | Shr  (* bitwise / shift; integer operands.
@@ -33,6 +37,13 @@ type type_ann =
   | TyCVoid                            (* c_void — only legal under TyPtr *)
   | TyStr
   | TyBool
+  | TyFloat of float_width             (* `f32` / `f64`.  Operators are
+                                          built-in IEEE; `Eq` / `Ord` / `Hash`
+                                          traits are deliberately NOT
+                                          implemented (NaN ≠ NaN, no total
+                                          equality / ordering — distinctively
+                                          exile, not Rust's PartialEq/
+                                          PartialOrd split). *)
   | TyTuple of type_ann list
   | TyStruct of { path : string list; args : type_ann list }
                                        (* qualified path + optional generic
@@ -71,6 +82,7 @@ type type_ann =
 
 and expr =
   | IntLit of int * Pos.t
+  | FloatLit of float * float_width * Pos.t
   | BoolLit of bool * Pos.t
   | StringLit of string * Pos.t
   | Var of string * Pos.t
@@ -273,7 +285,7 @@ and stmt =
                                              (runs the `for` step) *)
 
 let expr_pos = function
-  | IntLit (_, p) | BoolLit (_, p) | StringLit (_, p)
+  | IntLit (_, p) | FloatLit (_, _, p) | BoolLit (_, p) | StringLit (_, p)
   | Var (_, p) | Neg (_, p) | BitNot (_, p) | Not (_, p) | BinOp (_, _, _, p)
   | Orelse (_, _, p) | Try (_, p) | SizeOf (_, p)
   | Cast (_, _, p) | TupleLit (_, p)

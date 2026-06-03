@@ -30,6 +30,7 @@ type typ =
   | TCUChar                            (* c_uchar *)
   | TCVoid                             (* c_void — only under TPtr *)
   | TBool
+  | TFloat of Ast.float_width
   | TString
   | TTuple of typ list
   | TStruct of string list             (* absolute path: e.g. ["foo"; "Point"] *)
@@ -258,6 +259,7 @@ let rec type_of_ann = function
   | Ast.TyCVoid -> TCVoid
   | Ast.TyStr -> TString
   | Ast.TyBool -> TBool
+  | Ast.TyFloat w -> TFloat w
   | Ast.TyTuple ts -> TTuple (List.map type_of_ann ts)
   | Ast.TyStruct { path; args = _ } -> TStruct path
   | Ast.TyPtr t -> TPtr (type_of_ann t)
@@ -295,6 +297,8 @@ let rec typ_name = function
   | TCUChar -> "c_uchar"
   | TCVoid -> "c_void"
   | TBool -> "bool"
+  | TFloat Ast.F32 -> "f32"
+  | TFloat Ast.F64 -> "f64"
   | TString -> "str"
   | TTuple ts -> "(" ^ String.concat ", " (List.map typ_name ts) ^ ")"
   | TStruct path -> String.concat "::" path
@@ -366,6 +370,8 @@ let rec mangle_typ = function
   | TCUChar -> "cuchar"
   | TCVoid -> "cvoid"
   | TBool -> "bool"
+  | TFloat Ast.F32 -> "f32"
+  | TFloat Ast.F64 -> "f64"
   | TString -> "str"
   | TTuple ts ->
       Printf.sprintf "tup%d_%s" (List.length ts)
@@ -446,6 +452,8 @@ let rec c_type_prefix = function
       in
       s ^ signed_core
   | TBool -> "int "
+  | TFloat Ast.F32 -> "float "
+  | TFloat Ast.F64 -> "double "
   | TString -> "const char *"
   | TTuple ts -> "struct " ^ tuple_struct_name ts ^ " "
   | TStruct _ as t -> "struct " ^ mangle_typ t ^ " "
@@ -617,6 +625,7 @@ let is_concrete =
    never re-runs `type_of`. *)
 type texpr_node =
   | TIntLit of int
+  | TFloatLit of float * Ast.float_width
   | TBoolLit of bool
   | TNullLit
   | TStringLit of string
@@ -813,7 +822,7 @@ and tstmt =
 
 let rec texpr_children (te : texpr) : texpr list =
   match te.e with
-  | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _
+  | TIntLit _ | TFloatLit _ | TBoolLit _ | TNullLit | TStringLit _
   | TVar _ | TFnRef _ | TSizeOf _ -> []
   | TNeg sub | TBitNot sub | TNot sub | TRef sub | TDeref sub
   | TCast (sub, _) -> [sub]

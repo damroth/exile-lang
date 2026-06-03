@@ -166,16 +166,78 @@ let tokenize ~file src =
           let stop = scan start in
           if hex && stop = start then
             Error.failf p "hex literal '0%c' has no digits" src.[i + 1];
-          let lit = String.sub src i (stop - i) in
-          let n =
-            try int_of_string lit
-            with Failure _ ->
-              Error.failf p
-                "integer literal '%s' does not fit in a 63-bit OCaml int \
-                 (max %d)"
-                lit max_int
+          (* DR-floats: an integer immediately followed by `.<digit>` is
+             a float literal.  `s.field` (Dot Ident) and `0..n` (DotDot)
+             stay integer-tokens because their next char isn't a digit.
+             Optional exponent `e[+-]?<digits>` and optional `f32`/`f64`
+             suffix follow.  Bare floats default to f64. *)
+          let is_float =
+            not hex
+            && stop < len && src.[stop] = '.'
+            && stop + 1 < len && is_digit src.[stop + 1]
           in
-          loop stop ((Token.Int n, p) :: acc)
+          if is_float then begin
+            adv '.';
+            let frac_stop =
+              let rec scan j =
+                if j < len && is_digit src.[j]
+                then (adv src.[j]; scan (j + 1)) else j
+              in
+              scan (stop + 1)
+            in
+            let exp_stop =
+              if frac_stop < len
+                 && (src.[frac_stop] = 'e' || src.[frac_stop] = 'E') then begin
+                adv src.[frac_stop];
+                let after_e = frac_stop + 1 in
+                let sign_skipped =
+                  if after_e < len
+                     && (src.[after_e] = '+' || src.[after_e] = '-') then
+                    (adv src.[after_e]; after_e + 1)
+                  else after_e
+                in
+                if sign_skipped >= len || not (is_digit src.[sign_skipped]) then
+                  Error.failf p
+                    "float literal exponent has no digits";
+                let rec scan j =
+                  if j < len && is_digit src.[j]
+                  then (adv src.[j]; scan (j + 1)) else j
+                in
+                scan sign_skipped
+              end else frac_stop
+            in
+            let (is32, suf_stop) =
+              if exp_stop + 2 < len
+                 && src.[exp_stop] = 'f'
+                 && src.[exp_stop + 1] = '3'
+                 && src.[exp_stop + 2] = '2' then
+                (adv 'f'; adv '3'; adv '2'; (true, exp_stop + 3))
+              else if exp_stop + 2 < len
+                      && src.[exp_stop] = 'f'
+                      && src.[exp_stop + 1] = '6'
+                      && src.[exp_stop + 2] = '4' then
+                (adv 'f'; adv '6'; adv '4'; (false, exp_stop + 3))
+              else (false, exp_stop)
+            in
+            let lit = String.sub src i (exp_stop - i) in
+            let f =
+              try float_of_string lit
+              with Failure _ ->
+                Error.failf p "invalid float literal '%s'" lit
+            in
+            loop suf_stop ((Token.Float (f, is32), p) :: acc)
+          end else begin
+            let lit = String.sub src i (stop - i) in
+            let n =
+              try int_of_string lit
+              with Failure _ ->
+                Error.failf p
+                  "integer literal '%s' does not fit in a 63-bit OCaml int \
+                   (max %d)"
+                  lit max_int
+            in
+            loop stop ((Token.Int n, p) :: acc)
+          end
       | c when is_alpha c ->
           let rec scan j =
             if j < len && is_alnum src.[j] then (adv src.[j]; scan (j + 1)) else j

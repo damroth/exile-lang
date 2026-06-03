@@ -194,7 +194,7 @@ let rec prov_of live (te : texpr) =
         (fun acc (a : tmatch_arm) -> meet acc (prov_of live a.tbody))
         CallerOrStatic arms
   | TBlock { trailing = Some t; _ } -> prov_of live t
-  | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _
+  | TIntLit _ | TFloatLit _ | TBoolLit _ | TNullLit | TStringLit _
   | TFnRef _ | TSizeOf _ -> CallerOrStatic
   | TCall { mangled; args } ->
       prov_of_call ~prov_of_arg:(prov_of live) mangled args

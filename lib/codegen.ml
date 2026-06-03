@@ -162,6 +162,13 @@ let emit_print_impl ~newline buf args emit_arg =
       let (fmt, cast) = match arg.ty with
         | TBool -> ("%d", None)
         | TString -> ("%s", None)
+        | TFloat Ast.F32 -> ("%g", Some "double")  (* promote f32 -> double
+                                                       for printf varargs;
+                                                       C standard does this
+                                                       implicitly, the cast
+                                                       just makes it explicit
+                                                       and survives -pedantic. *)
+        | TFloat Ast.F64 -> ("%g", None)
         | _ ->
             (match printf_int_spec arg.ty with
              | Some spec -> spec
@@ -289,6 +296,25 @@ let match_label_counter = ref 0
 let rec gen_expr ctx buf (te : texpr) =
   match te.e with
   | TIntLit n -> Buffer.add_string buf (string_of_int n)
+  | TFloatLit (f, w) ->
+      (* C89 has no hex-float literals (C99 added `0x1.0p+1`), so we
+         render decimal with enough precision to round-trip the IEEE
+         value — 17 digits for f64, 9 for f32 (per IEEE-754).  The
+         trailing `f` suffix tags f32 so the C compiler doesn't
+         widen the literal to double. *)
+      let s =
+        match w with
+        | Ast.F32 -> Printf.sprintf "%.9g" f
+        | Ast.F64 -> Printf.sprintf "%.17g" f
+      in
+      Buffer.add_string buf s;
+      (* Ensure the literal carries a decimal point or exponent so C
+         parses it as float, not int (e.g. `1` -> `1.0`). *)
+      let has_dot_or_exp =
+        String.contains s '.' || String.contains s 'e' || String.contains s 'E'
+      in
+      if not has_dot_or_exp then Buffer.add_string buf ".0";
+      if w = Ast.F32 then Buffer.add_char buf 'f'
   | TBoolLit b -> Buffer.add_string buf (if b then "1" else "0")
   | TNullLit -> Buffer.add_string buf "((void *)0)"
   | TStringLit s ->

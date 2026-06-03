@@ -3054,7 +3054,7 @@ let () =
     \    let b = true;\n\
     \    let _ = b as *int;\n\
      }\n"
-    "cannot cast bool to *i32 (supported: int↔int, ptr↔ptr, int→ptr)";
+    "cannot cast bool to *i32 (supported: int↔int, int↔float, float↔float, ptr↔ptr, int→ptr)";
 
   check "prelude Allocator: dropped from emitted C when unused"
     "fn main() { println(1); }\n"
@@ -3935,6 +3935,93 @@ let () =
      fn main() {}\n"
     "duplicate case 'A' in view 'Sign'";
 
+  (* DR-floats — f32 / f64 with IEEE built-in operators.  The
+     distinctive choice (Q2 design 2026-05-31) is that arithmetic
+     and comparison operators are built-in / IEEE on float, but
+     `Eq` / `Ord` / `Hash` traits are NOT implemented — so float
+     can't `@derive(Eq)`, can't be a HashMap key, and `f.eq(g)`
+     falls through to the struct/enum path (which rejects it).
+     This is exile-distinctive vs Rust's PartialEq/PartialOrd
+     split. *)
+  check_assert "DR-floats: arithmetic + comparison work on f64"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let x: f64 = 3.14;\n\
+         \    let y: f64 = 2.0;\n\
+         \    println(x + y);\n\
+         \    println(x * y);\n\
+         \    if x > y { println(1); } else { println(0); }\n\
+          }\n"
+     in
+     contains c "double x"
+     && contains c "double y"
+     && contains c "x + y"
+     && contains c "x > y");
+
+  check_assert "DR-floats: f32 literal carries the `f` suffix and emits `float`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a: f32 = 1.5f32;\n\
+         \    let b: f32 = 2.25f32;\n\
+         \    println(a + b);\n\
+          }\n"
+     in
+     contains c "float a"
+     && contains c "float b"
+     && contains c "1.5f"
+     && contains c "2.25f");
+
+  check_assert "DR-floats: `as` casts cross int<->float and f32<->f64"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let i: int = 7;\n\
+         \    let f: f64 = i as f64;\n\
+         \    let g: f32 = f as f32;\n\
+         \    let j: int = g as int;\n\
+         \    println(j);\n\
+          }\n"
+     in
+     contains c "(double)" && contains c "(float)" && contains c "(long)");
+
+  check_error "DR-floats: `%%` on float rejected (libm fmod is deferred)"
+    "fn main() {\n\
+    \    let a: f64 = 5.0;\n\
+    \    let b: f64 = 2.0;\n\
+    \    let _ = a % b;\n\
+     }\n"
+    "operator '%' is not built-in for float (use the libm `fmod`/`fmodf` extern fn when binding it lands)";
+
+  check_error "DR-floats: float.eq() not built-in (no Eq trait on float)"
+    "fn main() {\n\
+    \    let a: f64 = 1.0;\n\
+    \    if a.eq(a) { println(1); } else { println(0); }\n\
+     }\n"
+    "method call '.eq()' requires a struct or enum value (or a pointer to one), got f64";
+
+  check_error "DR-floats: float.hash() not built-in (no Hash trait on float)"
+    "fn main() {\n\
+    \    let a: f64 = 1.0;\n\
+    \    println(a.hash() as int);\n\
+     }\n"
+    "method call '.hash()' requires a struct or enum value (or a pointer to one), got f64";
+
+  check_error "DR-floats: @derive(Eq) on a struct with a float field cascades to reject"
+    "@derive(Eq)\n\
+     struct P { x: f64 }\n\
+     fn main() {}\n"
+    "method call '.eq()' requires a struct or enum value (or a pointer to one), got f64";
+
+  check_error "DR-floats: mixed-width comparison rejected without explicit cast"
+    "fn main() {\n\
+    \    let a: f32 = 1.0f32;\n\
+    \    let b: f64 = 1.0;\n\
+    \    if a < b { println(1); } else { println(0); }\n\
+     }\n"
+    "comparison '<' between f32 and f64 — mixed-width float comparison requires an explicit `as` cast";
+
   (* DR-002 S3 — partial-move scrutinee.  S2 tracks pattern-bound
      @move locally per arm but the scrutinee binding stays Live, so
      re-using it after an arm that consumed its payload (`let _b =
@@ -4513,7 +4600,7 @@ let () =
     \    let n = p as int;\n\
     \    println(n);\n\
      }\n"
-    "cannot cast *i32 to i32 (supported: int↔int, ptr↔ptr, int→ptr)";
+    "cannot cast *i32 to i32 (supported: int↔int, int↔float, float↔float, ptr↔ptr, int→ptr)";
 
   check "or-pattern: A | B in match arm head emits stacked case labels"
     "enum Color { Red | Green | Blue }\n\

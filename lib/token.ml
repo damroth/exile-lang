@@ -76,6 +76,8 @@ type t =
   | SizeOf
   | Ident of string
   | Int of int
+  | Float of float * bool   (* value, is_f32 (true = `f32` suffix, false = `f64`
+                                or bare double — bare `3.14` defaults to f64) *)
   | String of string
   | Eof
 
@@ -111,5 +113,7 @@ let pp = function
   | SizeOf -> "'size_of'"
   | Ident s -> Printf.sprintf "identifier '%s'" s
   | Int n -> Printf.sprintf "integer %d" n
+  | Float (f, is32) ->
+      Printf.sprintf "float %g%s" f (if is32 then "f32" else "")
   | String s -> Printf.sprintf "string \"%s\"" s
   | Eof -> "end of file"

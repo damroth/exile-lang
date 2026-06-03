@@ -1,0 +1,62 @@
+// `f32` / `f64` — IEEE single / double precision (DR-floats).
+//
+// Distinctive design (DR-floats Q2, design 2026-05-31): arithmetic
+// (`+ - * /`) and comparison (`< > <= >= == !=`) operators are
+// BUILT-IN and IEEE — they emit the raw C operator, NaN ≠ NaN
+// flows through, no traits hide the behaviour.  Float types
+// deliberately do NOT implement `Eq` / `Ord` / `Hash` traits:
+//
+//   - `f.eq(g)` / `f.hash()` fall through to the struct/enum path
+//     and reject ("requires struct or enum, got f64").
+//   - `@derive(Eq, Hash)` on a struct with a float field cascades
+//     to the same reject when the derive recurses through the
+//     field with `.eq()` / `.hash()`.
+//   - `HashMap<f64, _>` rejects at instantiation — float can't be
+//     a hash-table key.
+//
+// This is the "operators-yes, traits-no" choice — distinct from
+// Rust's PartialEq/PartialOrd split.  The whole language stays
+// one-trait-per-relation (`Eq` is total), and floats are simply
+// excluded from the trait surface.
+//
+// Operator `%` (modulo) on float is intentionally not built-in —
+// it lowers to libm `fmod` / `fmodf`, deferred until the binding
+// lands.  Bitwise / shift operators reject too (only on integers).
+//
+// Casts: `int as f64`, `f64 as f32`, `f32 as f64`, `f64 as int`
+// (truncating) — all explicit, no implicit mixed-width arithmetic.
+//
+// Bare literal: `3.14` defaults to `f64`.  Explicit width via
+// suffix: `3.14f32` is f32, `3.14f64` is f64.  Exponent: `2.5e10`.
+
+fn main() {
+    // Basic arithmetic on f64.
+    let pi: f64 = 3.14159;
+    let two: f64 = 2.0;
+    println(pi + two);                         // 5.14159
+    println(pi * two);                         // 6.28318
+    println(pi - two);                         // 1.14159
+    println(pi / two);                         // 1.57079
+
+    // Comparison + negation.
+    if pi > two { println(1); } else { println(0); }   // 1
+    println(-pi);                                       // -3.14159
+
+    // f32: smaller storage, less precision.  Suffix `f32` on the
+    // literal pins the type without an extra `as` cast.
+    let a: f32 = 1.5f32;
+    let b: f32 = 2.25f32;
+    println(a + b);                            // 3.75
+
+    // Cross-width: explicit `as` cast required.  No implicit
+    // widening (an int annotation doesn't force a float operand).
+    let i: int = 7;
+    let f: f64 = i as f64;
+    let g: f32 = f as f32;
+    let back: int = g as int;
+    println(back);                             // 7
+
+    // Exponent literal — `e` introduces the power-of-10 exponent.
+    let avogadro: f64 = 6.022e23;
+    println(avogadro);                         // 6.022e+23
+}

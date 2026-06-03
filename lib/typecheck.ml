@@ -229,7 +229,7 @@ let rec subst_var_expr ~from ~to_ (e : Ast.expr) : Ast.expr =
   let subo = function None -> None | Some e -> Some (sub e) in
   match e with
   | Ast.Var (n, p) when n = from -> Ast.Var (to_, p)
-  | Ast.IntLit _ | Ast.BoolLit _ | Ast.StringLit _ | Ast.NullLit _
+  | Ast.IntLit _ | Ast.FloatLit _ | Ast.BoolLit _ | Ast.StringLit _ | Ast.NullLit _
   | Ast.Var _ | Ast.SizeOf _ -> e
   | Ast.Neg (sub_e, p) -> Ast.Neg (sub sub_e, p)
   | Ast.BitNot (sub_e, p) -> Ast.BitNot (sub sub_e, p)
@@ -579,6 +579,7 @@ let rec resolve_type_ann_raw ?(visited = []) ~pos ctx ann =
   | Ast.TyCVoid -> TCVoid
   | Ast.TyStr -> TString
   | Ast.TyBool -> TBool
+  | Ast.TyFloat w -> TFloat w
   | Ast.TyTuple ts -> TTuple (List.map recur ts)
   | Ast.TyPtr t -> TPtr (recur t)
   | Ast.TyConstPtr t -> TConstPtr (recur t)
@@ -928,7 +929,7 @@ let print_like_bcheck ~name = fun ~ctx ~pos ~args ~allow_void:_ ->
        covers a known shape; the final catch-all here turns any
        leftover (TStructApp / TEnumApp / TAssocProj / TVar /
        TCVoid …) into a clean error instead of leaking to codegen. *)
-    | [ (TInt _ | TCInt _ | TBool | TString) ] -> t_i32
+    | [ (TInt _ | TCInt _ | TBool | TString | TFloat _) ] -> t_i32
     | [ ty ] ->
         Error.failf pos
           "cannot print a value of type %s; convert it to a printable \
@@ -1629,13 +1630,16 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         | _ -> t_i32
       in
       { e = TIntLit n; ty; pos }
+  | Ast.FloatLit (f, w, _) -> { e = TFloatLit (f, w); ty = TFloat w; pos }
   | Ast.BoolLit (b, _) -> { e = TBoolLit b; ty = TBool; pos }
   | Ast.NullLit _ -> { e = TNullLit; ty = TNullPtr; pos }
   | Ast.StringLit (s, _) -> { e = TStringLit s; ty = TString; pos }
   | Ast.Neg (sub, neg_pos) ->
       let sub' = elab_expr ?expected ctx env sub in
-      if not (is_int_like sub'.ty) then
-        Error.failf neg_pos "negation '-' requires an integer, got %s"
+      let is_float = function TFloat _ -> true | _ -> false in
+      if not (is_int_like sub'.ty || is_float sub'.ty) then
+        Error.failf neg_pos
+          "negation '-' requires an integer or float, got %s"
           (typ_name sub'.ty);
       { e = TNeg sub'; ty = sub'.ty; pos }
   | Ast.BitNot (sub, not_pos) ->
@@ -1799,6 +1803,22 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                would leak `-Wdiv-by-zero`); reject it at compile time. *)
             Error.failf pos "%s by zero"
               (match op with Ast.Mod -> "modulo" | _ -> "division")
+        | (Ast.Add | Ast.Sub | Ast.Mul | Ast.Div) when
+            (match l'.ty, r'.ty with
+             | TFloat a, TFloat b when a = b -> true
+             | _ -> false) ->
+            (* DR-floats: IEEE arithmetic on matching float widths.  No
+               int↔float implicit mix — explicit `as` cast required (the
+               user opts in to the precision change).  Mod (`%`) is
+               deferred to libm `fmod` — rejected here for now. *)
+            l'.ty
+        | Ast.Mod when
+            (match l'.ty, r'.ty with
+             | TFloat _, _ | _, TFloat _ -> true
+             | _ -> false) ->
+            Error.failf pos
+              "operator '%%' is not built-in for float (use the libm \
+               `fmod`/`fmodf` extern fn when binding it lands)"
         | Ast.Add | Ast.Sub | Ast.Mul | Ast.Div | Ast.Mod ->
             need_int_operands ();
             if typ_eq l'.ty r'.ty then l'.ty
@@ -1824,10 +1844,23 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
              | _ -> ());
             l'.ty
         | Ast.Lt | Ast.Gt | Ast.LtEq | Ast.GtEq ->
-            need_int_operands ();
-            (if not (typ_eq l'.ty r'.ty) then
-               ignore (promote_int_widen ()));
-            TBool
+            (* DR-floats: IEEE comparison on matching float widths
+               (NaN comparisons return false in C — that's the
+               built-in semantics, and exile carries it forward
+               by emitting the raw operator).  No float trait Ord
+               — total order would lie about NaN. *)
+            (match l'.ty, r'.ty with
+             | TFloat a, TFloat b when a = b -> TBool
+             | TFloat _, _ | _, TFloat _ ->
+                 Error.failf pos
+                   "comparison '%s' between %s and %s — mixed-width \
+                    float comparison requires an explicit `as` cast"
+                   name (typ_name l'.ty) (typ_name r'.ty)
+             | _ ->
+                 need_int_operands ();
+                 (if not (typ_eq l'.ty r'.ty) then
+                    ignore (promote_int_widen ()));
+                 TBool)
         | Ast.EqEq | Ast.NotEq ->
             if not (typ_eq l'.ty r'.ty) then
               Error.failf pos
@@ -1849,12 +1882,20 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
   | Ast.Cast (sub, ann, cast_pos) ->
       let sub' = elab_expr ctx env sub in
       let tgt = resolve_type_ann ~pos:cast_pos ctx ann in
+      let is_float = function TFloat _ -> true | _ -> false in
       if is_int_like sub'.ty && is_int_like tgt then ()
       else if is_ptr sub'.ty && is_ptr tgt then ()
       else if is_int_like sub'.ty && is_ptr tgt then ()
+      (* DR-floats: int↔float and float↔float casts (truncation /
+         widening as in C).  No ptr↔float cast — kinds stay
+         separate. *)
+      else if is_int_like sub'.ty && is_float tgt then ()
+      else if is_float sub'.ty && is_int_like tgt then ()
+      else if is_float sub'.ty && is_float tgt then ()
       else
         Error.failf cast_pos
-          "cannot cast %s to %s (supported: int↔int, ptr↔ptr, int→ptr)"
+          "cannot cast %s to %s (supported: int↔int, int↔float, \
+           float↔float, ptr↔ptr, int→ptr)"
           (typ_name sub'.ty) (typ_name tgt);
       { e = TCast (sub', ann); ty = tgt; pos }
   | Ast.Ref (sub, _) ->
@@ -4111,7 +4152,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
           (Some e', p)
     in
     match te.e with
-    | TIntLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _
+    | TIntLit _ | TFloatLit _ | TBoolLit _ | TNullLit | TStringLit _ | TVar _
     | TFnRef _ | TSizeOf _ ->
         (te, [])
     | TNeg sub ->
@@ -8809,7 +8850,7 @@ let check_program program : tprogram =
   let enum_is_debug path = Hashtbl.mem debug_enums path in
   let rec field_ty_ok = function
     | TInt _ | TCInt _ | TCShort _ | TCLong _
-    | TCChar | TCSChar | TCUChar | TBool | TString | TPtr _
+    | TCChar | TCSChar | TCUChar | TBool | TFloat _ | TString | TPtr _
     | TConstPtr _ -> true
     | TStruct p -> struct_is_debug p
     | TEnum p -> enum_is_debug p

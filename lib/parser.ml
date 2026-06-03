@@ -154,6 +154,8 @@ let rec parse_type s =
   | (Token.Ident "c_void", _) -> Ast.TyCVoid
   | (Token.Ident "str", _) -> Ast.TyStr
   | (Token.Ident "bool", _) -> Ast.TyBool
+  | (Token.Ident "f32", _) -> Ast.TyFloat Ast.F32
+  | (Token.Ident "f64", _) -> Ast.TyFloat Ast.F64
   | (Token.Ident n, _) ->
       (* Any other identifier is a struct path, possibly qualified
          (`mod::Inner::Point`).  An optional generic argument list may
@@ -262,6 +264,8 @@ let rec parse_primary s =
   let (t, p) = advance s in
   match t with
   | Token.Int n -> Ast.IntLit (n, p)
+  | Token.Float (f, is32) ->
+      Ast.FloatLit (f, (if is32 then Ast.F32 else Ast.F64), p)
   | Token.True -> Ast.BoolLit (true, p)
   | Token.False -> Ast.BoolLit (false, p)
   | Token.Null -> Ast.NullLit p
