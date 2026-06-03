@@ -13,6 +13,7 @@ let compile ?(annotate = false) ?(profile = default_profile) src =
     |> Typecheck.check_program
   in
   Move.check tp;
+  Escape.check tp;
   Lint.lint ~profile tp;
   Codegen.gen_program ~annotate tp
 
@@ -23,5 +24,6 @@ let compile_file ?(annotate = false) ?(profile = default_profile) path =
     |> Typecheck.check_program
   in
   Move.check tp;
+  Escape.check tp;
   Lint.lint ~profile tp;
   Codegen.gen_program ~annotate tp

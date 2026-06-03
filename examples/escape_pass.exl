@@ -1,0 +1,66 @@
+// DR-010 escape pass (Tier-1 floor) — soundness barrier for borrows
+// rooted in local bindings.  The compiler propagates `&local`
+// provenance through composite literals and let-bindings, then rejects
+// at four escape sites: TReturn, store through non-local pointer,
+// container-insert, and TNew/TStructLit-as-return.
+//
+// What the floor catches that cc misses:
+//
+//   ❌ fn make() -> Slice<int> {
+//          let arr: [int; 3] = [1, 2, 3];
+//          return Slice { ptr: &arr[0], len: 3 as u32 };
+//      }
+//
+// The `&arr[0]` borrow is wrapped inside a struct field — gcc's
+// `-Wreturn-local-addr` silently passes (it sees only the bare
+// `return aggregate`, not the wrapped address).  The Tier-1 floor
+// propagates Local provenance through the StructLit and trips the
+// return-site check structurally.
+//
+// What the floor accepts:
+//
+//   ✅ Pointer-typed params (`*T` / `*const T`) — their root lives
+//      outside the current frame (caller-owned).  No annotation
+//      needed: zero-składni identity rule.
+//
+//   ✅ Intra-frame container-insert — `let mut v = ...; let x = ...;
+//      v.push(&x);` is sound because both `v` and `x` die at the
+//      same scope.
+//
+//   ✅ `@escapes` opt-out — forward-compat hatch for fns that
+//      legitimately return borrows rooted in arena/region storage
+//      the analyser can't yet model.
+
+// (1) Borrow a caller-owned array (`*const T` param) and wrap it
+//     inside a `Slice` — analyser sees the param-rooted prov and
+//     accepts the return.
+fn first_three(arr: *const int) -> Slice<int> {
+    return Slice { ptr: arr, len: 3 as u32 };
+}
+
+// (2) Intra-frame push: `v` and `x` both live in main's frame, so
+//     pushing `&x` is sound.  The floor recognises the receiver
+//     as a local binding and skips the storing-arg check.
+fn use_local_vec(a: Allocator) -> int {
+    let mut v: Vec<*int> = Vec::with_capacity(a, 2 as u32);
+    let mut x: int = 42;
+    let mut y: int = 7;
+    v.push(&x);
+    v.push(&y);
+    let s = v.as_slice();
+    *s[0] + *s[1]
+}
+
+fn main() {
+    let arr: [int; 3] = [10, 20, 30];
+
+    // Param-rooted borrow surfaces back through a Slice — sound.
+    let s = first_three(&arr[0]);
+    println(s[0]);
+    println(s[1]);
+    println(s[2]);
+
+    // Intra-frame Vec<*const T> + local element borrow — sound.
+    let a = default_allocator();
+    println(use_local_vec(a));
+}

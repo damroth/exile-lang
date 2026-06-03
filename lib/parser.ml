@@ -1125,7 +1125,7 @@ let rec parse_function s seen_fns ~is_pub =
   expect s Token.RBrace;
   (name, Ast.{ name; c_name = name; tparams; tbounds; params; ret_ty; body;
                is_pub; is_extern = false; is_variadic = false;
-               tier_hint = None; amiga_lib = None; must_use = false;
+               tier_hint = None; amiga_lib = None; must_use = false; escapes_hatch = false;
                pos = name_pos })
 
 (* `extern fn name(args) -> T;` — forward decl for a C-side symbol.
@@ -1192,7 +1192,7 @@ and parse_extern_fn_after_keyword s seen_fns =
                   by FFI hygiene rule, and the whole point is for the
                   surrounding stdlib / wrappers to call them. *)
                is_pub = true; is_extern = true; is_variadic;
-               tier_hint = None; amiga_lib = None; must_use = false;
+               tier_hint = None; amiga_lib = None; must_use = false; escapes_hatch = false;
                pos = name_pos })
 
 (* Like parse_params but accepts a trailing `, ...` to mark the fn as
@@ -1616,6 +1616,19 @@ let rec parse_item s seen =
              | _ ->
                  Error.failf at_pos
                    "'@must_use' can only decorate fn / enum decls")
+       | "escapes" ->
+           (* `@escapes` — DR-010 forward-compat hatch.  Function-level
+              opt-out from escape-analysis floor.  Use case: arena/
+              region-allocated returns that legitimately surface a
+              borrow rooted in caller-owned storage the analyser
+              can't yet model (no Owner-sigil / ward yet).  Strukturalny
+              skeleton — predykat trwały, semantyka tightenuje gdy
+              capability model dochodzi. *)
+           apply_to_next ~apply:(function
+             | Ast.Function f -> Ast.Function { f with escapes_hatch = true }
+             | _ ->
+                 Error.failf at_pos
+                   "'@escapes' can only decorate fn decls")
        | "move" ->
            (* `@move` marks a struct affine / use-at-most-once.  Picked up
               by the DR-002 move-pass; a transitional spelling that retires
@@ -1681,8 +1694,8 @@ let rec parse_item s seen =
        | other ->
            Error.failf at_pos
              "unknown attribute '@%s' (only '@c_include', '@tier', \
-              '@must_use', '@move', '@debug', '@doc', '@derive' and \
-              '@amiga_lib' are supported)"
+              '@must_use', '@escapes', '@move', '@debug', '@doc', \
+              '@derive' and '@amiga_lib' are supported)"
              other)
   | _ ->
       Error.failf (peek_pos s)
@@ -2006,7 +2019,7 @@ and parse_trait_method s seen =
   in
   (Ast.{ name; c_name = name; tparams = []; tbounds = []; params; ret_ty;
          body; is_pub = true; is_extern = false; is_variadic = false;
-         tier_hint = None; amiga_lib = None; must_use = false;
+         tier_hint = None; amiga_lib = None; must_use = false; escapes_hatch = false;
          pos = name_pos },
    is_default)
 

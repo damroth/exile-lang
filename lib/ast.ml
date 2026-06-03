@@ -349,6 +349,14 @@ type func = {
                                         the return value (call in statement
                                         position with nobody binding it) is
                                         flagged by the linter. *)
+  escapes_hatch : bool;              (* `@escapes` — function-level forward-
+                                        compat hatch (DR-010): opts out of
+                                        the escape-analysis floor for fns
+                                        that legitimately return borrows
+                                        rooted in arena/region storage the
+                                        analyser can't yet model.  Skeleton
+                                        atrybut — strukturalny swap-point
+                                        gdy Owner-sigil / ward dochodzi. *)
   pos : Pos.t;
 }
 

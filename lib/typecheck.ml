@@ -5125,7 +5125,7 @@ let prelude_items () =
   let mk_method name tparams params ret body = {
     Ast.name; c_name = name; tparams; tbounds = []; params; ret_ty = ret; body;
     is_pub = true; is_extern = false; is_variadic = false;
-    tier_hint = Some "full"; amiga_lib = None; must_use = false; pos;
+    tier_hint = Some "full"; amiga_lib = None; must_use = false; escapes_hatch = false; pos;
   } in
   let self_param =
     { Ast.pname = "self";
@@ -5202,7 +5202,7 @@ let prelude_items () =
   let mk_sb_method ?(is_pub = true) name params ret body = {
     Ast.name; c_name = name; tparams = []; tbounds = []; params; ret_ty = ret;
     body; is_pub; is_extern = false; is_variadic = false;
-    tier_hint = Some "full"; amiga_lib = None; must_use = false; pos;
+    tier_hint = Some "full"; amiga_lib = None; must_use = false; escapes_hatch = false; pos;
   } in
   let sb_struct_ann = Ast.TyStruct { path = ["StringBuilder"]; args = [] } in
   let alloc_ann = Ast.TyStruct { path = ["Allocator"]; args = [] } in
@@ -5564,7 +5564,7 @@ let prelude_items () =
   let mk_string_method ?(is_pub = true) name params ret body = {
     Ast.name; c_name = name; tparams = []; tbounds = []; params; ret_ty = ret;
     body; is_pub; is_extern = false; is_variadic = false;
-    tier_hint = Some "full"; amiga_lib = None; must_use = false; pos;
+    tier_hint = Some "full"; amiga_lib = None; must_use = false; escapes_hatch = false; pos;
   } in
   (* with_str(a, s): allocate len+1 bytes through the allocator seam,
      copy `s` through a Slice<u8> view + Delta-B, write the NUL
@@ -5877,7 +5877,7 @@ let prelude_items () =
     Ast.name; c_name = name; tparams = []; tbounds = []; params;
     ret_ty = ret; body; is_pub; is_extern = false;
     is_variadic = false; tier_hint = Some "full"; amiga_lib = None;
-    must_use = false; pos;
+    must_use = false; escapes_hatch = false; pos;
   } in
   let size_of_T_as_u32 =
     Ast.Cast (Ast.SizeOf (tvar "T", pos), u32_t, pos) in
@@ -6133,7 +6133,7 @@ let prelude_items () =
     body = vec_iter_next_body;
     is_pub = true; is_extern = false; is_variadic = false;
     tier_hint = Some "full"; amiga_lib = None;
-    must_use = false; pos;
+    must_use = false; escapes_hatch = false; pos;
   } in
   let vec_iter_impl = {
     Ast.itparams = ["T"]; itrait = Some ["Iterator"];
@@ -6194,7 +6194,7 @@ let prelude_items () =
     Ast.name; c_name = name; tparams = []; tbounds = []; params;
     ret_ty = ret; body; is_pub; is_extern = false;
     is_variadic = false; tier_hint = Some "full"; amiga_lib = None;
-    must_use = false; pos;
+    must_use = false; escapes_hatch = false; pos;
   } in
   let size_of_slot =
     Ast.Cast (Ast.SizeOf (slot_t_ann, pos), u32_t, pos) in
@@ -6742,7 +6742,7 @@ let prelude_items () =
     body = hashmap_iter_next_body;
     is_pub = true; is_extern = false; is_variadic = false;
     tier_hint = Some "full"; amiga_lib = None;
-    must_use = false; pos;
+    must_use = false; escapes_hatch = false; pos;
   } in
   let hashmap_iter_impl = {
     Ast.itparams = ["K"; "V"]; itrait = Some ["Iterator"];
@@ -6779,7 +6779,7 @@ let prelude_items () =
         { path = ["Option"];
           args = [ Ast.TyStruct { path = ["Self"; "Item"]; args = [] } ] });
       body = []; is_pub = true; is_extern = false; is_variadic = false;
-      tier_hint = None; amiga_lib = None; must_use = false; pos }
+      tier_hint = None; amiga_lib = None; must_use = false; escapes_hatch = false; pos }
   in
   let iterator_trait = {
     Ast.trname = "Iterator"; trassoc = ["Item"]; trsupers = [];
@@ -6799,7 +6799,7 @@ let prelude_items () =
     Ast.name; c_name = name; tparams = []; tbounds = []; params;
     ret_ty = ret; body; is_pub = true; is_extern = false;
     is_variadic = false; tier_hint = None; amiga_lib = None;
-    must_use = false; pos }
+    must_use = false; escapes_hatch = false; pos }
   in
   (* `Eq` / `Hash` / `Clone` all borrow `self` read-only so an
      `@move`-marked type (String, StringBuilder, Vec, …) can compare
@@ -6890,7 +6890,7 @@ let prelude_items () =
     params; ret_ty = ret; body;
     is_pub = true; is_extern = false; is_variadic = false;
     tier_hint = Some "full"; amiga_lib = None;
-    must_use = false; pos;
+    must_use = false; escapes_hatch = false; pos;
   } in
   let slice_u8_ret = Ast.TyStruct { path = ["Slice"]; args = [ u8_t ] } in
   let i_lit n = Ast.IntLit (n, pos) in
@@ -7076,7 +7076,7 @@ let derive_mk_method name params ret body pos =
   { Ast.name; c_name = name; tparams = []; tbounds = []; params;
     ret_ty = ret; body; is_pub = true; is_extern = false;
     is_variadic = false; tier_hint = None; amiga_lib = None;
-    must_use = false; pos }
+    must_use = false; escapes_hatch = false; pos }
 
 (* `a.eq(b)` *)
 let derive_eq_call a b pos =

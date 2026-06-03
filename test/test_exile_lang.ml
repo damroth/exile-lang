@@ -3549,32 +3549,40 @@ let () =
     ~profile:Exile_lang.Profile.Full
     ["unused 'Result<i32, str>' value"];
 
-  (* DR-002 S5a — narrow escape-lint: returning a struct/`new`-lit
-     that embeds an address of a local binding leaks a dangling
-     pointer through a struct field, which cc's
-     `-Wreturn-local-addr` cannot see.  Pointer-typed params are
-     exempt — their target is caller-owned, so passing them through
-     a returned struct is the canonical view-exposure idiom. *)
-  check_lint "S5a: returning `Slice { ptr: &local[..] }` warns about dangling"
+  (* DR-010 Faza A — Tier-1 escape floor.  Returning an aggregate
+     literal (struct / `new`) whose field embeds an address of a
+     local binding is a hard error.  Tier-1 propagates `&local`
+     provenance through composite literals (TStructLit / TNew),
+     catching the wrap-in-struct hole that defeats cc's
+     `-Wreturn-local-addr`.  Pointer-typed params are exempt —
+     their root lives outside the frame, so embedding them in a
+     returned struct is the canonical view-exposure idiom. *)
+  let escape_return_msg =
+    "returning a value that embeds the address of a local binding — \
+     the local goes out of scope at the end of its enclosing block, \
+     leaving the caller with a dangling borrow.  Wrap the storage in \
+     a caller-owned region, return a copy / `String::with_str(...)` \
+     instead of a borrow, or — for arena/region-allocated returns — \
+     mark the fn `@escapes` (forward-compat hatch)"
+  in
+  check_error "DR-010: returning `Slice { ptr: &local[..] }` is a hard error"
     "fn make() -> Slice<int> {\n\
     \    let arr: [int; 3] = [1, 2, 3];\n\
     \    return Slice { ptr: &arr[0], len: 3 as u32 };\n\
      }\n\
      fn main() { let s = make(); println(s[0]); }\n"
-    ~profile:Exile_lang.Profile.Full
-    ["embeds the address of a local binding"];
+    escape_return_msg;
 
-  check_lint "S5a: returning `new Box { f: &local }` warns about dangling"
+  check_error "DR-010: returning `new Box { f: &local }` is a hard error"
     "struct Box { p: *const int }\n\
      fn make() -> *Box {\n\
     \    let x: int = 7;\n\
     \    return new Box { p: &x };\n\
      }\n\
      fn main() { let _b = make(); println(0); }\n"
-    ~profile:Exile_lang.Profile.Full
-    ["embeds the address of a local binding"];
+    escape_return_msg;
 
-  check_lint "S5a: returning `Slice { ptr: arr_param }` (ptr-typed param) is silent"
+  check_lint "DR-010: returning `Slice { ptr: arr_param }` (ptr-typed param) is silent"
     "fn make(arr: *const int) -> Slice<int> {\n\
     \    return Slice { ptr: arr, len: 3 as u32 };\n\
      }\n\
@@ -3585,6 +3593,46 @@ let () =
      }\n"
     ~profile:Exile_lang.Profile.Full
     [];
+
+  (* DR-010 — laundering through `let` (the case S5a-lint missed).
+     `return s` where `s = Slice { ptr: &local, ... }` is rejected
+     because Tier-1 floor propagates Local prov through the let-
+     binding state and re-meets it at the return site.  Closes the
+     hole that motivated DR-010 even past Tier-2/3. *)
+  check_error "DR-010: laundering &local through let then returning is a hard error"
+    "fn make() -> Slice<int> {\n\
+    \    let arr: [int; 3] = [1, 2, 3];\n\
+    \    let s = Slice { ptr: &arr[0], len: 3 as u32 };\n\
+    \    return s;\n\
+     }\n\
+     fn main() { let s = make(); println(s[0]); }\n"
+    escape_return_msg;
+
+  (* DR-010 — bare `return &local` (the case `-Wreturn-local-addr`
+     does see).  Tier-1 covers it too via TRef → Local prov. *)
+  check_error "DR-010: bare `return &local` is a hard error"
+    "fn make() -> *int {\n\
+    \    let mut x: int = 7;\n\
+    \    return &x;\n\
+     }\n\
+     fn main() { let _p = make(); println(0); }\n"
+    escape_return_msg;
+
+  (* DR-010 `@escapes` hatch — function-level opt-out.  An arena/
+     region-allocated fn that legitimately returns a borrow rooted
+     in caller-owned-but-analyser-opaque storage can suppress the
+     floor.  Strukturalny skeleton — swappable predykat. *)
+  check_assert "DR-010: `@escapes` suppresses the floor for the marked fn"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "@escapes\n\
+          fn make() -> Slice<int> {\n\
+         \    let arr: [int; 3] = [1, 2, 3];\n\
+         \    return Slice { ptr: &arr[0], len: 3 as u32 };\n\
+          }\n\
+          fn main() { let _s = make(); println(0); }\n");
+       true
+     with _ -> false);
 
   (* DR-002 S3 — partial-move scrutinee.  S2 tracks pattern-bound
      @move locally per arm but the scrutinee binding stays Live, so
