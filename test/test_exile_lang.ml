@@ -3703,6 +3703,96 @@ let () =
        true
      with _ -> false);
 
+  (* DR-010 Phase C — use-after-invalidation.  A `let s = v.as_slice()`
+     records `s` as a borrow rooted in `v`; a subsequent
+     `v.push(x)` / `v.grow()` reallocates the buffer the borrow
+     points into, so reading `s` afterwards dangles.  Closes S5c. *)
+  check_error "DR-010-C: use of `v.as_slice()` after `v.push(...)` rejected (S5c)"
+    "pub mod raw { extern fn make_c_allocator() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make_c_allocator();\n\
+    \    let mut v: Vec<int> = Vec::with_capacity(a, 4 as u32);\n\
+    \    v.push(10);\n\
+    \    let s = v.as_slice();\n\
+    \    v.push(99);\n\
+    \    println(s[0]);\n\
+     }\n"
+    "use of borrow 's' after it was invalidated by 'Vec::push' at <input>:7:6 — growing / freeing the owner reallocates the buffer the borrow pointed into, so subsequent reads dangle (rebuild the borrow after the mutation, or use a copy that doesn't share the buffer)";
+
+  (* DR-010 Phase C — String::free invalidates `s.as_str()` borrow.
+     Closes S5d (use-after-free).  String::free is in the invalidating
+     list because freeing the buffer dangles every outstanding view. *)
+  check_error "DR-010-C: use of `s.as_str()` after `s.free()` rejected (S5d)"
+    "pub mod raw { extern fn make_c_allocator() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make_c_allocator();\n\
+    \    let mut s: String = String::with_str(a, \"hello\");\n\
+    \    let view = s.as_str();\n\
+    \    s.free();\n\
+    \    println(view);\n\
+     }\n"
+    "use of borrow 'view' after it was invalidated by 'String::free' at <input>:6:6 — growing / freeing the owner reallocates the buffer the borrow pointed into, so subsequent reads dangle (rebuild the borrow after the mutation, or use a copy that doesn't share the buffer)";
+
+  (* DR-010 Phase C — rebuilding the borrow after a mutation is fine.
+     Push first, then take the slice — the slice points at the
+     post-grow buffer, no dangling. *)
+  check_assert "DR-010-C: rebuilding the borrow after a mutation is silent"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make_c_allocator() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make_c_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 4 as u32);\n\
+         \    v.push(10);\n\
+         \    v.push(99);\n\
+         \    let s = v.as_slice();\n\
+         \    println(s[0]);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  (* DR-010 Phase C — borrowing two distinct owners doesn't cross
+     invalidation: mutating `v1` should not kill `s2 = v2.as_slice()`.
+     Owner tracking is per-binding, so the kill scopes precisely. *)
+  check_assert "DR-010-C: mutation on one container leaves another's borrow alive"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make_c_allocator() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make_c_allocator();\n\
+         \    let mut v1: Vec<int> = Vec::with_capacity(a, 4 as u32);\n\
+         \    let mut v2: Vec<int> = Vec::with_capacity(a, 4 as u32);\n\
+         \    v1.push(10);\n\
+         \    v2.push(20);\n\
+         \    let s2 = v2.as_slice();\n\
+         \    v1.push(99);\n\
+         \    println(s2[0]);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  (* DR-010 Phase C — `h2 = h1.clone()` produces independent storage;
+     `h1.name.free()` must NOT invalidate `h2`.  Verifies that the
+     hardcoded borrowing-returns list (as_slice/as_str/iter only) is
+     narrow enough — `clone` allocates a fresh String, the result is
+     not a borrow.  Regression guard for the false positive that
+     drove the design (test failed during impl). *)
+  check_assert "DR-010-C: `clone()` does NOT propagate owner ownership"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          @derive(Clone)\n\
+          struct H { name: String }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let h1 = H { name: String::with_str(a, \"x\") };\n\
+         \    let h2 = h1.clone();\n\
+         \    h1.name.free();\n\
+         \    h2.name.free();\n\
+          }\n");
+       true
+     with _ -> false);
+
   (* DR-002 S3 — partial-move scrutinee.  S2 tracks pattern-bound
      @move locally per arm but the scrutinee binding stays Live, so
      re-using it after an arm that consumed its payload (`let _b =
