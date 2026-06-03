@@ -1338,11 +1338,22 @@ let () =
      fn main() { let a = P { x: 1 }; println(a.x); }\n"
     "'Hash' requires supertrait 'Eq', but 'P' does not implement it (add `impl Eq for P`)";
 
-  check_error "@derive(Hash) on a str field rejected"
-    "@derive(Eq, Hash)\n\
-     struct P { name: str }\n\
-     fn main() { let a = P { name: \"x\" }; println(a.name); }\n"
-    "`hash` is not built-in for str (str / pointer content hashing is not supported yet)";
+  (* @derive(Hash) on a struct with a `str` field now folds through
+     the content hash `str::hash` (DR-007 follow-up enabling
+     `HashMap<str, _>`).  Pre-fix this errored with "hash not built
+     in for str"; with the dispatch in place the `.hash()` call on
+     the str field lowers to `str__hash(self.name)`. *)
+  check_assert "@derive(Hash) on a str field folds through `str::hash`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "@derive(Eq, Hash)\n\
+          struct P { name: str }\n\
+          fn main() {\n\
+         \    let a = P { name: \"x\" };\n\
+         \    println(a.hash() as int);\n\
+          }\n"
+     in
+     contains c "P__hash" && contains c "str__hash(self->name)");
 
   check_error "@derive of an unknown trait rejected"
     "@derive(Ord)\n\
@@ -3212,6 +3223,51 @@ let () =
      contains c "HashMap__iter"
      && contains c "HashMapIter__next"
      && contains c "tup2_i32_i32");
+
+  (* DR-007 follow-up — `HashMap<str, _>` is the second motivating
+     use-case (alongside `HashMap<String, _>`).  `str.hash()` had no
+     content-hash dispatch and the `Hash` conformance check rejected
+     `str` keys; `str.eq()` lowered to pointer-compare via the BinOp
+     path, which would let two distinct-pointer keys with the same
+     content miss each other.  Fixed by dispatching `.hash()` on
+     `TString` to `str__hash` and `.eq()`/`.ne()` to `str__eq` (same
+     path the `==` / `!=` operator already takes). *)
+  check_assert "DR-007: `str.hash()` dispatches to the content-hash `str::hash`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() { println(\"hello\".hash() as int); }\n"
+     in
+     contains c "str__hash(\"hello\")");
+
+  check_assert "DR-007: `str.eq(other)` content-compares via `str::eq`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    if \"foo\".eq(\"foo\") { println(1); } else { println(0); }\n\
+          }\n"
+     in
+     contains c "str__eq(\"foo\", \"foo\")");
+
+  check_assert "DR-007: `HashMap<str, int>` insert + get round-trips"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut kw: HashMap<str, int> = HashMap::with_capacity(a, 8 as u32);\n\
+         \    kw.insert(\"fn\", 1);\n\
+         \    kw.insert(\"let\", 2);\n\
+         \    println(kw.len() as int);\n\
+         \    match kw.get(\"fn\") {\n\
+         \        Option::Some(v) => { println(v); }\n\
+         \        | Option::None => { println(-1); }\n\
+         \    }\n\
+          }\n"
+     in
+     contains c "HashMap__with_capacity_str_i32"
+     && contains c "HashMap__insert_str_i32"
+     && contains c "HashMap__get_str_i32"
+     && contains c "str__hash");
 
   check_assert "`String::eq` delegates to `str::eq` over `as_str`"
     (let c =

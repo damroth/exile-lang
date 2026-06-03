@@ -2930,21 +2930,39 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
              Error.failf mc_pos
                "'.%s' on %s expects a %s argument, got %s"
                name (typ_name trecv.ty) (typ_name trecv.ty) (typ_name targ.ty);
-           let op = if name = "eq" then Ast.EqEq else Ast.NotEq in
-           { e = TBinOp (op, trecv, targ); ty = TBool; pos }
+           (* DR-007: `str.eq(other)` / `str.ne(other)` must content-
+              compare so `HashMap<str, _>` lookups hit the same slot
+              for equal-content keys.  Dispatch to the prelude
+              `str::eq` (same path the `==` / `!=` operator takes).
+              Other primitives use the direct C comparison. *)
+           if typ_eq trecv.ty TString then
+             let call =
+               { e = TCall { mangled = "str__eq"; args = [trecv; targ] };
+                 ty = TBool; pos }
+             in
+             if name = "eq" then call
+             else { e = TNot call; ty = TBool; pos }
+           else
+             let op = if name = "eq" then Ast.EqEq else Ast.NotEq in
+             { e = TBinOp (op, trecv, targ); ty = TBool; pos }
        | true, "hash", [] ->
-           (* Built-in `hash` on primitives → reinterpret as `u32` (a C
-              cast).  Lets `@derive(Hash)` fold integer/bool fields.  No
-              content hash for str / pointers yet. *)
+           (* Built-in `hash` on primitives.  Integer / bool / c-int
+              widths reinterpret as `u32` (cheap C cast) and let
+              `@derive(Hash)` fold them; `str` dispatches to the
+              prelude `str::hash` content hash (DR-007 prereq for
+              `HashMap<str, _>`). *)
            (match trecv.ty with
             | TInt _ | TCInt _ | TCShort _ | TCLong _ | TCChar | TCSChar
             | TCUChar | TBool | TExtAlias _ ->
                 let u32_ann = Ast.TyInt { signed = false; width = Ast.W32 } in
                 { e = TCast (trecv, u32_ann);
                   ty = TInt { signed = false; width = Ast.W32 }; pos }
+            | TString ->
+                { e = TCall { mangled = "str__hash"; args = [trecv] };
+                  ty = TInt { signed = false; width = Ast.W32 }; pos }
             | _ ->
                 Error.failf mc_pos
-                  "`hash` is not built-in for %s (str / pointer content \
+                  "`hash` is not built-in for %s (pointer content \
                    hashing is not supported yet)" (typ_name trecv.ty))
        | true, "clone", [] ->
            (* Built-in `clone` on primitives → identity value-copy.
@@ -6236,9 +6254,9 @@ let prelude_items () =
      can't be silently aliased.  Per DR-007: `K: Hash + Eq` (the
      bounds aren't recorded on the impl tparams today — mono catches
      the missing impl at instantiation), hash cached in the slot
-     so probe skips look at `u32` before `K::eq`.  v1 ships
-     `with_capacity` / `len` / `contains` / `get` / `insert`; `remove`
-     (tombstone) and `iter` land next. *)
+     so probe skips look at `u32` before `K::eq`.  Full API:
+     `with_capacity` / `len` / `contains` / `get` / `insert` /
+     `remove` (tombstone) / `iter` (HashMapIter cursor). *)
   let slot_t_ann =
     Ast.TyStruct { path = ["Slot"]; args = [ tvar "K"; tvar "V" ] } in
   let hashmap_t_ann =

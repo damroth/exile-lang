@@ -113,4 +113,23 @@ fn main() {
     // sum of i*10 for i in 0..12, minus removed 3*10 + 7*10
     // = 660 - 30 - 70 = 560
     println(sum);                                       // 560
+
+    // ── HashMap<str, int> — the lexer-keyword use-case.  str
+    // dispatches through built-in `str::hash` / `str::eq`, so
+    // distinct string literals with the same content hit the
+    // same slot (no extra String allocation needed for the keys).
+    let mut tok: HashMap<str, int> = HashMap::with_capacity(a, 8 as u32);
+    tok.insert("fn",     1);
+    tok.insert("let",    2);
+    tok.insert("return", 3);
+    println(tok.len() as int);                          // 3
+
+    match tok.get("let") {
+        Option::Some(v) => { println(v); }              // 2
+        | Option::None => { println(-1); }
+    }
+    match tok.get("while") {
+        Option::Some(v) => { println(v); }
+        | Option::None => { println(-1); }              // -1
+    }
 }
