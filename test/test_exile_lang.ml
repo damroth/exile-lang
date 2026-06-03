@@ -4056,6 +4056,55 @@ let () =
      }\n"
     "`with` target must be an lvalue — a local binding, a field, an index, or a deref.  Got an expression that produces a fresh value (e.g. a fn call returning by value); bind it to a `let mut` first and `with` over that.";
 
+  (* DR-008 A1 captureless-decay (`|x: T| -> R body`).  A
+     pre-typecheck pass lifts each lambda to a fresh top-level fn
+     `__lambda_N`; the lambda expression becomes a Var referring to
+     that fn, which decays to a C fn-pointer at the use site.
+     Captureless is enforced by construction — the lifted body
+     lives at top level, so any reference to an enclosing local
+     errors as "undefined variable". *)
+  check_assert "DR-008: lambda decays to fn-ptr; `apply(|x: int| -> int x*2, n)` works"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn apply(f: fn(int) -> int, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let twice = |x: int| -> int x * 2;\n\
+         \    println(apply(twice, 7));\n\
+          }\n"
+     in
+     contains c "ex___lambda_"
+     && contains c "long ex_apply"
+     && contains c "twice = ex___lambda_");
+
+  check_assert "DR-008: lambda inlined at the call site works"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn apply(f: fn(int) -> int, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    println(apply(|x: int| -> int x + 1, 10));\n\
+          }\n"
+     in
+     contains c "apply(ex___lambda_");
+
+  check_assert "DR-008: two lambdas in the same fn get distinct __lambda_N names"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn apply(f: fn(int) -> int, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    println(apply(|x: int| -> int x + 1, 1));\n\
+         \    println(apply(|x: int| -> int x * 2, 2));\n\
+          }\n"
+     in
+     contains c "ex___lambda_0" && contains c "ex___lambda_1");
+
+  check_error "DR-008: lambda referencing an outer local fails captureless check"
+    "fn main() {\n\
+    \    let y: int = 5;\n\
+    \    let f = |x: int| -> int x + y;\n\
+    \    println(f(7));\n\
+     }\n"
+    "undefined variable 'y'";
+
   check_error "DR-012: borrow can't escape the `with` block (out-of-scope after)"
     "fn main() {\n\
     \    let mut arr: [int; 3] = [1, 2, 3];\n\

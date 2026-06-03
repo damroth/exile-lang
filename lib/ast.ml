@@ -155,6 +155,27 @@ and expr =
   | Index of { base : expr; index : expr; pos : Pos.t }
                                         (* `a[i]` — element access (lvalue or
                                            rvalue).  No bounds check. *)
+  | Lambda of { params : (string * type_ann) list;
+                ret_ty : type_ann option;
+                body : expr; pos : Pos.t }
+                                        (* `|p: T, q: U| body` — DR-008
+                                           captureless decay (A1).  A
+                                           pre-typecheck pass lifts each
+                                           lambda to a top-level fn
+                                           `__lambda_N` and replaces the
+                                           expression with a
+                                           `Var "__lambda_N"` that the
+                                           ordinary lookup turns into a
+                                           `TFnRef` (auto-decays to a C
+                                           fn-pointer at the use site).
+                                           Captureless is enforced by
+                                           construction: the lifted body
+                                           lives at the top level so any
+                                           reference to an enclosing local
+                                           is an "undefined variable"
+                                           error.  v1: param types
+                                           required, return type optional
+                                           (inferred from body type). *)
   | Range of { lo : expr; hi : expr; inclusive : bool; pos : Pos.t }
                                         (* `a..b` (exclusive) / `a..=b`
                                            (inclusive) as an expression
@@ -311,7 +332,7 @@ let expr_pos = function
   | Call { pos; _ } | StructLit { pos; _ } | New { pos; _ }
   | MethodCall { pos; _ } | EnumLit { pos; _ } | Match { pos; _ }
   | If { pos; _ } | ArrayRepeat { pos; _ } | Index { pos; _ }
-  | Range { pos; _ } | ArrayLit (_, pos) -> pos
+  | Range { pos; _ } | ArrayLit (_, pos) | Lambda { pos; _ } -> pos
 
 type param = {
   pname : string;

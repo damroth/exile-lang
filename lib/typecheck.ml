@@ -251,6 +251,13 @@ let rec subst_var_expr ~from ~to_ (e : Ast.expr) : Ast.expr =
       Ast.Index { base = sub base; index = sub index; pos }
   | Ast.Range { lo; hi; inclusive; pos } ->
       Ast.Range { lo = sub lo; hi = sub hi; inclusive; pos }
+  | Ast.Lambda { params; ret_ty; body; pos } ->
+      (* The body is its own scope (lifted to a top-level fn); a
+         substitution of `from -> to_` in an enclosing context
+         shouldn't reach in.  Lambdas that shadow `from` as a
+         param keep the param.  Pre-typecheck pass walks lambdas
+         separately so this case is mostly a safe no-op pass-through. *)
+      Ast.Lambda { params; ret_ty; body = sub body; pos }
   | Ast.StructLit { tname; fields; base; pos } ->
       Ast.StructLit { tname;
                       fields = List.map (fun (n, e) -> (n, sub e)) fields;
@@ -1640,6 +1647,10 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
   | Ast.FloatLit (f, w, _) -> { e = TFloatLit (f, w); ty = TFloat w; pos }
   | Ast.BoolLit (b, _) -> { e = TBoolLit b; ty = TBool; pos }
   | Ast.NullLit _ -> { e = TNullLit; ty = TNullPtr; pos }
+  | Ast.Lambda { pos = lam_pos; _ } ->
+      Error.failf lam_pos
+        "internal: lambda expression reached elab_expr unresolved \
+         (expand_lambdas pre-pass missing?)"
   | Ast.StringLit (s, _) -> { e = TStringLit s; ty = TString; pos }
   | Ast.Neg (sub, neg_pos) ->
       let sub' = elab_expr ?expected ctx env sub in
@@ -7750,6 +7761,146 @@ let derive_debug_enum (e : Ast.enum_decl) : Ast.item =
    scrutinee of type `T` rather than `Name`) lands in the elab path
    for `Ast.Match`, which has the type information needed to decide
    when to insert the view-call. *)
+(* DR-008 A1 captureless-decay — lift every `Ast.Lambda` to a fresh
+   top-level fn `__lambda_N` and replace the expression with a
+   `Var "__lambda_N"`.  The ordinary expr lookup turns that var
+   into a `TFnRef`, which auto-decays to a C fn-pointer at the use
+   site.  Captureless is enforced by construction: the lifted body
+   lives at top level, so any reference to an enclosing local is a
+   plain "undefined variable" error at elab time. *)
+let expand_lambdas (program : Ast.program) : Ast.program =
+  let lifted = ref [] in
+  let counter = ref 0 in
+  let fresh_name () =
+    let n = !counter in
+    incr counter;
+    Printf.sprintf "__lambda_%d" n
+  in
+  let rec lift_e (e : Ast.expr) : Ast.expr =
+    match e with
+    | Ast.Lambda { params; ret_ty; body; pos } ->
+        let body = lift_e body in
+        let name = fresh_name () in
+        let ast_params =
+          List.map (fun (n, t) ->
+            Ast.{ pname = n; pty = t; preg = None; is_mut = false })
+            params
+        in
+        (* Use `Tail body` so the body's type becomes the lambda fn's
+           return type — exile's expression-based fn bodies do the
+           inference for us; an explicit `-> T` annotation on the
+           lambda still pins it (the synthesised fn carries `ret_ty`). *)
+        let body_stmts = [ Ast.Tail body ] in
+        let fn = Ast.{
+          name; c_name = name; tparams = []; tbounds = [];
+          params = ast_params; ret_ty; body = body_stmts;
+          is_pub = false; is_extern = false; is_variadic = false;
+          amiga_lib = None; tier_hint = None;
+          must_use = false; escapes_hatch = false; pos
+        } in
+        lifted := Ast.Function fn :: !lifted;
+        Ast.Var (name, pos)
+    | Ast.IntLit _ | Ast.FloatLit _ | Ast.BoolLit _ | Ast.StringLit _
+    | Ast.NullLit _ | Ast.Var _ | Ast.SizeOf _ -> e
+    | Ast.Neg (sub, p) -> Ast.Neg (lift_e sub, p)
+    | Ast.BitNot (sub, p) -> Ast.BitNot (lift_e sub, p)
+    | Ast.Not (sub, p) -> Ast.Not (lift_e sub, p)
+    | Ast.BinOp (op, l, r, p) -> Ast.BinOp (op, lift_e l, lift_e r, p)
+    | Ast.Orelse (a, b, p) -> Ast.Orelse (lift_e a, lift_e b, p)
+    | Ast.Try (a, p) -> Ast.Try (lift_e a, p)
+    | Ast.Cast (a, t, p) -> Ast.Cast (lift_e a, t, p)
+    | Ast.TupleLit (es, p) -> Ast.TupleLit (List.map lift_e es, p)
+    | Ast.Call { callee; args; pos } ->
+        Ast.Call { callee; args = List.map lift_e args; pos }
+    | Ast.MethodCall { receiver; name; args; pos } ->
+        Ast.MethodCall { receiver = lift_e receiver; name;
+                         args = List.map lift_e args; pos }
+    | Ast.StructLit { tname; fields; base; pos } ->
+        Ast.StructLit { tname;
+                        fields = List.map (fun (n, e) -> (n, lift_e e)) fields;
+                        base = Option.map lift_e base; pos }
+    | Ast.FieldAccess (a, n, p) -> Ast.FieldAccess (lift_e a, n, p)
+    | Ast.Ref (a, p) -> Ast.Ref (lift_e a, p)
+    | Ast.Deref (a, p) -> Ast.Deref (lift_e a, p)
+    | Ast.New { tname; fields; base; pos } ->
+        Ast.New { tname;
+                  fields = List.map (fun (n, e) -> (n, lift_e e)) fields;
+                  base = Option.map lift_e base; pos }
+    | Ast.EnumLit { tname; variant; args; pos } ->
+        let args = match args with
+          | Ast.EATuple es -> Ast.EATuple (List.map lift_e es)
+          | Ast.EAStruct fs ->
+              Ast.EAStruct (List.map (fun (n, e) -> (n, lift_e e)) fs)
+        in
+        Ast.EnumLit { tname; variant; args; pos }
+    | Ast.Match { scrutinee; arms; pos } ->
+        let arms = List.map (fun (a : Ast.match_arm) ->
+          { a with
+            Ast.guard = Option.map lift_e a.guard;
+            body = lift_e a.body }) arms
+        in
+        Ast.Match { scrutinee = lift_e scrutinee; arms; pos }
+    | Ast.If { cond; then_blk; else_blk; pos } ->
+        Ast.If { cond = lift_e cond;
+                 then_blk = List.map lift_s then_blk;
+                 else_blk = Option.map (List.map lift_s) else_blk;
+                 pos }
+    | Ast.ArrayLit (es, p) -> Ast.ArrayLit (List.map lift_e es, p)
+    | Ast.ArrayRepeat { value; count; pos } ->
+        Ast.ArrayRepeat { value = lift_e value; count = lift_e count; pos }
+    | Ast.Index { base; index; pos } ->
+        Ast.Index { base = lift_e base; index = lift_e index; pos }
+    | Ast.Range { lo; hi; inclusive; pos } ->
+        Ast.Range { lo = lift_e lo; hi = lift_e hi; inclusive; pos }
+    | Ast.Block (stmts, p) -> Ast.Block (List.map lift_s stmts, p)
+  and lift_s (s : Ast.stmt) : Ast.stmt =
+    match s with
+    | Ast.Let { name; value; ty_ann; is_mut; pos } ->
+        Ast.Let { name; value = lift_e value; ty_ann; is_mut; pos }
+    | Ast.LetTuple { names; value; is_mut; pos } ->
+        Ast.LetTuple { names; value = lift_e value; is_mut; pos }
+    | Ast.LetElse { pat; value; else_body; pos } ->
+        Ast.LetElse { pat; value = lift_e value;
+                      else_body = List.map lift_s else_body; pos }
+    | Ast.Assign { path; value; pos } ->
+        Ast.Assign { path; value = lift_e value; pos }
+    | Ast.AssignField { target; field; value; pos } ->
+        Ast.AssignField { target = lift_e target; field;
+                          value = lift_e value; pos }
+    | Ast.AssignIndex { base; index; value; pos } ->
+        Ast.AssignIndex { base = lift_e base; index = lift_e index;
+                          value = lift_e value; pos }
+    | Ast.AssignDeref { target; value; pos } ->
+        Ast.AssignDeref { target = lift_e target;
+                          value = lift_e value; pos }
+    | Ast.Return (e, p) -> Ast.Return (Option.map lift_e e, p)
+    | Ast.ExprStmt e -> Ast.ExprStmt (lift_e e)
+    | Ast.Tail e -> Ast.Tail (lift_e e)
+    | Ast.While { cond; body } ->
+        Ast.While { cond = lift_e cond; body = List.map lift_s body }
+    | Ast.For { var; range; body; pos } ->
+        Ast.For { var; range = lift_e range;
+                  body = List.map lift_s body; pos }
+    | Ast.Defer { body; pos } ->
+        Ast.Defer { body = List.map lift_s body; pos }
+    | Ast.With { target; name; body; pos } ->
+        Ast.With { target = lift_e target; name;
+                   body = List.map lift_s body; pos }
+    | Ast.Break _ | Ast.Continue _ -> s
+  in
+  let rec lift_item (it : Ast.item) : Ast.item =
+    match it with
+    | Ast.Function f ->
+        Ast.Function { f with body = List.map lift_s f.body }
+    | Ast.Module m ->
+        Ast.Module { m with mitems = List.map lift_item m.mitems }
+    | Ast.View v ->
+        Ast.View { v with vbody = List.map lift_s v.vbody }
+    | other -> other
+  in
+  let walked = List.map lift_item program in
+  walked @ List.rev !lifted
+
 let expand_views (program : Ast.program) : Ast.program =
   let case_to_variant (c : Ast.view_case) : Ast.enum_variant =
     let vkind =
@@ -8200,6 +8351,12 @@ let check_program program : tprogram =
   trait_assoc_table := [];
   let mono_state = Mono.new_state () in
   let program = prepend_prelude program in
+  (* DR-008 A1 — lift every captureless lambda to a fresh top-level
+     fn before anything else looks at the program.  The replacement
+     `Var "__lambda_N"` flows through ordinary fn-ptr decay; any
+     reference to an enclosing local errors as "undefined variable"
+     at elab time, which is exactly the captureless guarantee. *)
+  let program = expand_lambdas program in
   (* DR-009 — expand `view Name(...) -> ... { ... }` into a nominal
      enum + view-fn before anything else looks at the program.
      Subsequent passes (derives, flatten, elab) see plain enums and

@@ -1,0 +1,75 @@
+// Captureless lambdas (DR-008 A1).
+//
+// `|p: T, q: U| -> R body` is an anonymous lambda expression.  A
+// pre-typecheck pass lifts each one to a fresh top-level fn named
+// `__lambda_N`; the lambda expression becomes a reference to that
+// fn, which decays to a C function pointer at the use site.
+//
+// Captureless is enforced by construction.  The lifted body lives
+// at the top level, so any reference to an enclosing local errors
+// as "undefined variable" — no closure environment, no heap, no
+// GC.  Predicates, comparators, mappers all work; closures that
+// would need to read enclosing state are deliberately deferred
+// (A2 — non-escaping monomorphised closures — will arrive in a
+// separate session after the self-host bring-up).
+//
+// v1 limits (deliberate):
+//   - Param types must be written (no inference from use site).
+//   - Return type must be written too (`-> R`).  The body is an
+//     expression that runs as the lambda's trailing value.
+//   - No captures (any outer-var reference errors at elab).
+//   - No multi-statement bodies in v1 — wrap them in a named fn
+//     if you need locals or sequencing inside the lambda.
+
+fn apply(f: fn(int) -> int, x: int) -> int {
+    f(x)
+}
+
+fn fold(s: Slice<int>, init: int,
+        f: fn(int, int) -> int) -> int {
+    let mut acc: int = init;
+    let mut i: u32 = 0 as u32;
+    while i < s.len {
+        acc = f(acc, s[i as int]);
+        i = i + 1 as u32;
+    }
+    acc
+}
+
+fn count_if(s: Slice<int>,
+            pred: fn(int) -> bool) -> int {
+    let mut count: int = 0;
+    let mut i: u32 = 0 as u32;
+    while i < s.len {
+        if pred(s[i as int]) { count = count + 1; }
+        i = i + 1 as u32;
+    }
+    count
+}
+
+fn main() {
+    // Inline lambda — declared at the call site.
+    println(apply(|x: int| -> int x * 2, 7));      // 14
+    println(apply(|x: int| -> int x + 1, 41));     // 42
+
+    // Bind a lambda to a name and reuse it.
+    let square = |x: int| -> int x * x;
+    println(apply(square, 5));                     // 25
+    println(apply(square, 9));                     // 81
+
+    // Predicates and folds — the canonical captureless use case.
+    let arr: [int; 6] = [1, 2, 3, 4, 5, 6];
+
+    let total = fold(arr[0..6], 0,
+                     |acc: int, v: int| -> int acc + v);
+    println(total);                                // 21
+
+    let max = fold(arr[0..6], 0,
+                   |acc: int, v: int| -> int
+                       if v > acc { v } else { acc });
+    println(max);                                  // 6
+
+    let evens = count_if(arr[0..6],
+                         |v: int| -> bool v % 2 == 0);
+    println(evens);                                // 3
+}

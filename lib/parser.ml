@@ -270,6 +270,44 @@ let rec parse_primary s =
   | Token.False -> Ast.BoolLit (false, p)
   | Token.Null -> Ast.NullLit p
   | Token.String str -> Ast.StringLit (str, p)
+  | Token.Pipe ->
+      (* DR-008 captureless lambda `|p: T, q: U| body` or `|| body`.
+         Pipe in primary position can only start a lambda — bitor
+         `a | b` always has an operand before it.  v1 requires
+         explicit param types; an empty param list uses `||`
+         (treated by the lexer as the logical-or token, special-
+         cased below). *)
+      let params =
+        if peek s = Token.Pipe then []
+        else
+          parse_comma_list ~close:Token.Pipe
+            ~item:(fun s ->
+              let (n, _) =
+                expect_ident s ~what:"lambda parameter name" in
+              expect s Token.Colon;
+              let t = parse_type s in
+              (n, t))
+            s
+      in
+      let ret_ty =
+        if peek s = Token.Arrow then begin
+          ignore (advance s);
+          Some (parse_type s)
+        end else None
+      in
+      let body = parse_expr s in
+      Ast.Lambda { params; ret_ty; body; pos = p }
+  | Token.PipePipe ->
+      (* `||` token here means an empty lambda param list — same
+         path as above but with no params to parse. *)
+      let ret_ty =
+        if peek s = Token.Arrow then begin
+          ignore (advance s);
+          Some (parse_type s)
+        end else None
+      in
+      let body = parse_expr s in
+      Ast.Lambda { params = []; ret_ty; body; pos = p }
   | Token.LBracket ->
       (* Array literal: `[e1, e2, ...]` (explicit) or `[v; N]` (repeat).
          Empty `[]` is rejected — no element type or size to infer. *)
