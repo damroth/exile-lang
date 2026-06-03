@@ -42,10 +42,10 @@ fn main() {
     // buffer — `*u8 → *const u8` is automatic at the boundary.
     // Read-side indexing flows through the Slice (bare `*u8[i]`
     // stays rejected; reads always go through Slice or array).
-    let view = sb.as_slice();
-    println(view[0] as int);                 // 72  ('H')
-    println(view[3] as int);                 // 65  ('A')
-    println(view[22] as int);                // 84  ('T')
+    let bytes = sb.as_slice();
+    println(bytes[0] as int);                // 72  ('H')
+    println(bytes[3] as int);                // 65  ('A')
+    println(bytes[22] as int);               // 84  ('T')
 
     // `push_str` takes a NUL-terminated `str`: cstr_len for the
     // length (narrow seam), grow if needed, then copy through the

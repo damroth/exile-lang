@@ -527,6 +527,21 @@ type item =
   | Enum of enum_decl
   | Impl of impl_block
   | Trait of trait_decl
+  | View of view_decl                   (* `view Name(p: T) -> A | B(U) {
+                                            body }` — DR-009 active patterns.
+                                            A pre-typecheck pass synthesises
+                                            a nominal enum `Name { A | B(U) }`
+                                            (choice-enum) and a function
+                                            `Name(p: T) -> Name { body }`.
+                                            Match arms that name `Name::Case`
+                                            against a scrutinee of type `T`
+                                            (not `Name`) get rewritten to
+                                            `let __c = Name(scr); match __c
+                                            { Name::Case => ... }` — view-call
+                                            then ordinary tagged switch.
+                                            Maranget exhaustiveness comes for
+                                            free since the choice-enum is
+                                            nominal. *)
   | CInclude of { path : string; pos : Pos.t }
                                         (* `@c_include("path/to/header.h")`
                                            — emitted as `#include "..."` in
@@ -578,6 +593,25 @@ and trait_decl = {
                                 synthesised for that type. *)
   trpos : Pos.t;
   tris_pub : bool;
+}
+and view_decl = {
+  vname : string;
+  vparam : param;            (* the single scrutinee param; v1 = one param *)
+  vcases : view_case list;
+  vbody : stmt list;
+  vpos : Pos.t;
+  vis_pub : bool;
+}
+and view_case = {
+  vcname : string;
+  vcfields : (string * type_ann) list;
+                             (* per-case payload — empty for unit cases,
+                                synthetic `_0` / `_1` / ... for tuple-style,
+                                user-given names for struct-style.  Same
+                                shape `enum_decl.evariants` uses, so the
+                                pre-typecheck pass can emit a matching
+                                `Ast.Enum` literally. *)
+  vcis_struct : bool;
 }
 
 type program = item list

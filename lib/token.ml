@@ -19,6 +19,7 @@ type t =
   | Struct
   | Impl
   | Trait
+  | View
   | Enum
   | Match
   | FatArrow
@@ -86,6 +87,7 @@ let pp = function
   | Mod -> "'mod'" | Pub -> "'pub'" | Use -> "'use'" | As -> "'as'"
   | Defer -> "'defer'"
   | Struct -> "'struct'" | Impl -> "'impl'" | Trait -> "'trait'"
+  | View -> "'view'"
   | Enum -> "'enum'" | Match -> "'match'" | FatArrow -> "'=>'"
   | Pipe -> "'|'" | PipePipe -> "'||'" | PipeGt -> "'|>'" | AmpAmp -> "'&&'"
   | Dot -> "'.'" | DotDot -> "'..'" | DotDotEq -> "'..='"

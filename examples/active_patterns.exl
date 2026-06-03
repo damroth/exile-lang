@@ -1,0 +1,88 @@
+// Active patterns (DR-009) — `view Name(p: T) -> Case1 | Case2 { body }`.
+//
+// A `view` is syntactic sugar over an existing `enum` plus an
+// ordinary function.  The decl
+//
+//   view Sign(n: int) -> Negative | Zero | Positive {
+//       if n < 0 { return Sign::Negative; }
+//       if n == 0 { return Sign::Zero; }
+//       return Sign::Positive;
+//   }
+//
+// expands at compile time to a nominal enum
+//
+//   enum Sign { Negative | Zero | Positive }
+//
+// plus a function `Sign(n: int) -> Sign` whose body is the user's
+// body (literally).  Match arms that name `Sign::Negative` against
+// a scrutinee of type `int` (the view's input) automatically wrap
+// the scrutinee in `Sign(scr)`, so the match runs against the
+// synthesised enum.  Maranget exhaustiveness on `Sign::*` comes
+// for free — the choice-enum is closed and nominal.
+//
+// Distinctiveness (inspiration-not-copy): F# has banana-clip
+// `(|Foo|Bar|)`, OCaml / Rust have neither.  Exile picks the
+// `view` keyword and a namespaced `Sign::Negative` because
+// namespacing avoids case-name pollution and reads as an enum
+// (which it literally is, post-expansion).
+//
+// v1 limits (deliberate):
+//   - Total only — every input value must classify into a case
+//     (no partial `view TryInt(s) -> ?int { ... }` syntax yet).
+//   - Single scrutinee parameter, no extra args.
+//   - Tuple-style payload only (`Big(int)`), no struct-style
+//     (`Big { v: int }`) — the trailing `{` would be ambiguous
+//     with the view body's `{`.
+//   - In a single match, all view-tagged arms must use the same
+//     view name; mixing two views in one match isn't supported.
+
+view Sign(n: int) -> Negative | Zero | Positive {
+    if n < 0 { return Sign::Negative; }
+    if n == 0 { return Sign::Zero; }
+    return Sign::Positive;
+}
+
+view Magnitude(n: int) -> Small | Medium | Large(int) {
+    if n < 10 { return Magnitude::Small; }
+    if n < 100 { return Magnitude::Medium; }
+    return Magnitude::Large(n);
+}
+
+fn classify(n: int) {
+    // Match-site rewrite: scrutinee `n` is `int`, but the arms
+    // name `Sign::*`, so the compiler inserts a `Sign(n)` call.
+    match n {
+        Sign::Negative => { println(-1); }
+        | Sign::Zero => { println(0); }
+        | Sign::Positive => { println(1); }
+    }
+}
+
+fn weigh(n: int) {
+    // A different view in a different match.  The Large case
+    // carries a payload; destructure with the usual tuple syntax.
+    match n {
+        Magnitude::Small => { println(1); }
+        | Magnitude::Medium => { println(2); }
+        | Magnitude::Large(v) => { println(v); }
+    }
+}
+
+fn main() {
+    classify(-5);                              // -1
+    classify(0);                               //  0
+    classify(42);                              //  1
+
+    weigh(7);                                  //  1
+    weigh(50);                                 //  2
+    weigh(2500);                               //  2500
+
+    // Explicit ctor form — `Sign(n)` returns the choice-enum, then
+    // match runs against it directly (no scrutinee rewrite needed).
+    let s = Sign(99);
+    match s {
+        Sign::Negative => { println(-1); }
+        | Sign::Zero => { println(0); }
+        | Sign::Positive => { println(1); }    // 1
+    }
+}

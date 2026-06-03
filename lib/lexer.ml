@@ -23,6 +23,7 @@ let keyword_or_ident = function
   | "struct" -> Token.Struct
   | "impl" -> Token.Impl
   | "trait" -> Token.Trait
+  | "view" -> Token.View
   | "enum" -> Token.Enum
   | "match" -> Token.Match
   | "orelse" -> Token.Orelse

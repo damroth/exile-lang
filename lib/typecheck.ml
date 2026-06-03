@@ -207,6 +207,12 @@ let lookup_fn ctx path =
    sequential `for i in ...` blocks don't collide on let-hoisting. *)
 let for_gensym = ref 0
 
+(* DR-009 — registry of view names.  Filled by [expand_views] so
+   [elab_expr] on `Ast.Match` can spot patterns like `Sign::Positive`
+   against a scrutinee of the view's input type (rather than the
+   synthesised enum) and wrap the scrutinee in the view-fn call. *)
+let view_names : (string, unit) Hashtbl.t = Hashtbl.create 8
+
 (* Monotonic counter for the temp names that `println(x)` Display dispatch
    introduces — bumped per print so two prints in the same fn don't
    collide on the hoisted StringBuilder/String slots. *)
@@ -2144,7 +2150,43 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
   | Ast.Match { scrutinee; arms; pos = match_pos } ->
       if arms = [] then
         Error.failf match_pos "'match' must have at least one arm";
+      (* DR-009 — match-site view-call insertion.  If any arm pattern
+         names `Vname::Case` where `Vname` is a registered view, the
+         scrutinee is the view's INPUT (not the synthesised enum), so
+         wrap it in the view-fn call: `match scr { Vname::A => ... }`
+         becomes `match Vname(scr) { Vname::A => ... }`.  Done before
+         the scrutinee is elaborated so the rest of the match path
+         sees a normal enum match.  v1 constraint: all arms must use
+         the same view name; multiple view-tagged arms with
+         different view names are not supported in v1 (would require
+         splitting the match — design says: keep Maranget simple). *)
+      let rec view_in_pat = function
+        | Ast.PVariant { tname = [vn]; _ }
+            when Hashtbl.mem view_names vn -> Some vn
+        | Ast.POr (alts, _) -> List.find_map view_in_pat alts
+        | _ -> None
+      in
+      let view_target =
+        List.find_map (fun (a : Ast.match_arm) -> view_in_pat a.pat) arms
+      in
       let tscrut = elab_expr ctx env scrutinee in
+      (* Only insert the view-fn call when the scrutinee isn't already
+         of the view's enum type — otherwise `let s = Sign(7); match s
+         { Sign::A => ... }` would double-wrap.  Re-elab the wrapped
+         AST through the call path so check_call_args validates the
+         input type matches the view's param. *)
+      let tscrut =
+        match view_target with
+        | Some vname
+          when (match tscrut.ty with
+                | TEnum [v] when v = vname -> false
+                | _ -> true) ->
+            let wrapped =
+              Ast.Call { callee = [vname]; args = [scrutinee];
+                         pos = match_pos } in
+            elab_expr ctx env wrapped
+        | _ -> tscrut
+      in
       let ename_path =
         match tscrut.ty with
         | TEnum p -> p
@@ -4407,7 +4449,11 @@ let flatten_items program =
         | Ast.Use { pos; _ } ->
             Error.failf pos
               "internal: 'use' declaration reached codegen unresolved \
-               (loader pass missing?)")
+               (loader pass missing?)"
+        | Ast.View { vpos; _ } ->
+            Error.failf vpos
+              "internal: 'view' declaration reached flatten unresolved \
+               (expand_views pre-pass missing?)")
       items
   in
   walk [] program;
@@ -7571,6 +7617,73 @@ let derive_debug_enum (e : Ast.enum_decl) : Ast.item =
   Ast.Impl { itparams = []; itrait = Some ["Debug"]; iassoc = [];
              itarget = [e.ename]; iitems = [m]; ipos = pos }
 
+(* DR-009 — expand each `view Name(p: T) -> Case1 | Case2 { body }` into
+   a nominal `enum Name { Case1 | Case2 }` plus a function `Name(p: T)
+   -> Name { body }`.  After this pass the rest of the pipeline sees
+   the view as an ordinary enum + an ordinary fn — Maranget
+   exhaustiveness on `Name::*`, mono on `Name(arg)`, codegen on tagged
+   switch.  Recursion through modules so view-decls nested under
+   `mod foo { ... }` get the same treatment.
+
+   Match-arm rewrite (`match scr { Name::A => ... }` against a
+   scrutinee of type `T` rather than `Name`) lands in the elab path
+   for `Ast.Match`, which has the type information needed to decide
+   when to insert the view-call. *)
+let expand_views (program : Ast.program) : Ast.program =
+  let case_to_variant (c : Ast.view_case) : Ast.enum_variant =
+    let vkind =
+      if c.vcis_struct then Ast.VStruct c.vcfields
+      else if c.vcfields = [] then Ast.VUnit
+      else Ast.VTuple (List.map snd c.vcfields)
+    in
+    Ast.{ vname = c.vcname; vkind; vpos = Pos.zero }
+  in
+  let view_to_items (v : Ast.view_decl) : Ast.item list =
+    let enum_decl = Ast.{
+      ename = v.vname;
+      etparams = [];
+      evariants = List.map case_to_variant v.vcases;
+      epos = v.vpos;
+      eis_pub = v.vis_pub;
+      etier_hint = None;
+      emust_use = false;
+      eis_debug = false;
+      ederives = [];
+    } in
+    let ret_ty = Some (Ast.TyStruct { path = [v.vname]; args = [] }) in
+    let fn_decl = Ast.{
+      name = v.vname;
+      c_name = v.vname;
+      tparams = [];
+      tbounds = [];
+      params = [v.vparam];
+      ret_ty;
+      body = v.vbody;
+      is_pub = v.vis_pub;
+      is_extern = false;
+      is_variadic = false;
+      amiga_lib = None;
+      tier_hint = None;
+      must_use = false;
+      escapes_hatch = false;
+      pos = v.vpos;
+    } in
+    [Ast.Enum enum_decl; Ast.Function fn_decl]
+  in
+  let rec walk (items : Ast.item list) : Ast.item list =
+    List.concat_map (fun item ->
+      match item with
+      | Ast.View v ->
+          Hashtbl.replace view_names v.vname ();
+          view_to_items v
+      | Ast.Module m ->
+          [Ast.Module { m with mitems = walk m.mitems }]
+      | other -> [other])
+      items
+  in
+  Hashtbl.clear view_names;
+  walk program
+
 let expand_derives (program : Ast.program) : Ast.program =
   let one ~kind ~name ~pos ~generic
       ~gen_eq ~gen_hash ~gen_clone ~gen_debug tr =
@@ -7965,6 +8078,11 @@ let check_program program : tprogram =
   trait_assoc_table := [];
   let mono_state = Mono.new_state () in
   let program = prepend_prelude program in
+  (* DR-009 — expand `view Name(...) -> ... { ... }` into a nominal
+     enum + view-fn before anything else looks at the program.
+     Subsequent passes (derives, flatten, elab) see plain enums and
+     fns. *)
+  let program = expand_views program in
   (* Expand `@derive(...)` into real `impl Trait for Foo` blocks (after the
      prelude so the Eq / Clone traits they target are in scope). *)
   let program = expand_derives program in

@@ -1511,6 +1511,9 @@ let rec parse_item s seen =
   | Token.Trait ->
       let td = parse_trait s ~is_pub in
       [ (Some td.Ast.trname, Ast.Trait td) ]
+  | Token.View ->
+      let vd = parse_view_decl s ~is_pub in
+      [ (Some vd.Ast.vname, Ast.View vd) ]
   | Token.Use ->
       let items = parse_use_items s in
       let items =
@@ -1995,6 +1998,69 @@ and parse_trait s ~is_pub =
   let (methods, defaults, assoc) = loop [] [] [] [] in
   Ast.{ trname = name; trassoc = assoc; trsupers = supers; trmethods = methods;
         trdefaults = defaults; trpos = name_pos; tris_pub = is_pub }
+
+(* `view Name(p: T) -> A | B(U) | C { f: V } { body }` — DR-009 active
+   patterns.  v1: single scrutinee param, total (body must return one
+   of the case constructors).  Cases are parsed like enum variants —
+   unit / tuple-of-types / struct-of-fields.  Body is a regular stmt
+   list; case constructors are referenced via the qualified `Name::A`
+   syntax (bare `A` deferred — keeps the v1 parser/typecheck
+   transparent). *)
+and parse_view_decl s ~is_pub =
+  expect s Token.View;
+  let (name, name_pos) = expect_ident s ~what:"view name after 'view'" in
+  expect s Token.LParen;
+  let (pname, _) = expect_ident s ~what:"view scrutinee parameter name" in
+  expect s Token.Colon;
+  let pty = parse_type s in
+  expect s Token.RParen;
+  let param = Ast.{ pname; pty; preg = None; is_mut = false } in
+  expect s Token.Arrow;
+  (* Case payload: unit `A` or tuple `B(T1, T2)`.  Struct-style cases
+     `C { f: T }` are deliberately not supported in v1 because the
+     opening `{` would clash with the view body's opening `{` (a
+     trailing struct-style case is ambiguous with the body start).
+     Tuple-style covers the use cases (cases with payload destructure
+     positionally in match arms). *)
+  let parse_case s =
+    let (cname, cpos) = expect_ident s ~what:"view case name" in
+    let fields =
+      match peek s with
+      | Token.LParen ->
+          ignore (advance s);
+          let tys = parse_comma_list ~close:Token.RParen
+                      ~item:parse_type s in
+          List.mapi (fun i t -> (Printf.sprintf "_%d" i, t)) tys
+      | _ -> []
+    in
+    ignore cpos;
+    Ast.{ vcname = cname; vcfields = fields; vcis_struct = false }
+  in
+  let rec loop acc =
+    let acc = parse_case s :: acc in
+    match peek s with
+    | Token.Pipe -> ignore (advance s); loop acc
+    | Token.LBrace -> List.rev acc
+    | t ->
+        Error.failf (peek_pos s)
+          "expected '|' (next case) or '{' (view body) after view case, got %s"
+          (Token.pp t)
+  in
+  let cases = loop [] in
+  let rec check_dup_cases = function
+    | [] -> ()
+    | (c : Ast.view_case) :: rest ->
+        if List.exists (fun (d : Ast.view_case) -> d.vcname = c.vcname) rest
+        then Error.failf name_pos
+          "duplicate case '%s' in view '%s'" c.vcname name;
+        check_dup_cases rest
+  in
+  check_dup_cases cases;
+  expect s Token.LBrace;
+  let body = parse_stmts s [] in
+  expect s Token.RBrace;
+  Ast.{ vname = name; vparam = param; vcases = cases;
+        vbody = body; vpos = name_pos; vis_pub = is_pub }
 
 (* Returns (method, is_default).  Required form ends with `;`; default
    form has a `{ ... }` body. *)

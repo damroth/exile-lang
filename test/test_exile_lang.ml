@@ -3783,11 +3783,11 @@ let () =
      fn main() {\n\
     \    let a = raw::make_c_allocator();\n\
     \    let mut s: String = String::with_str(a, \"hello\");\n\
-    \    let view = s.as_str();\n\
+    \    let vw = s.as_str();\n\
     \    s.free();\n\
-    \    println(view);\n\
+    \    println(vw);\n\
      }\n"
-    "use of borrow 'view' after it was invalidated by 'String::free' at <input>:6:6 — growing / freeing the owner reallocates the buffer the borrow pointed into, so subsequent reads dangle (rebuild the borrow after the mutation, or use a copy that doesn't share the buffer)";
+    "use of borrow 'vw' after it was invalidated by 'String::free' at <input>:6:6 — growing / freeing the owner reallocates the buffer the borrow pointed into, so subsequent reads dangle (rebuild the borrow after the mutation, or use a copy that doesn't share the buffer)";
 
   (* DR-010 Phase C — rebuilding the borrow after a mutation is fine.
      Push first, then take the slice — the slice points at the
@@ -3848,6 +3848,92 @@ let () =
           }\n");
        true
      with _ -> false);
+
+  (* DR-009 active patterns (`view`).  `view Name(p: T) -> A | B {
+     body }` synthesises a nominal enum `Name { A | B }` plus a
+     function `Name(p: T) -> Name { body }`.  A `match scr { Name::A
+     => ... }` against a scrutinee of type `T` (not `Name`) gets
+     rewritten to wrap the scrutinee in the view-fn call so the
+     match sees the synthesised enum.  Maranget exhaustiveness on
+     the choice-enum comes for free (`Name::*` is nominal/closed). *)
+  check_assert "DR-009: view with explicit ctor — `Name(scr)` returns case"
+    (let c =
+       Exile_lang.Compiler.compile
+         "view Sign(n: int) -> Negative | Zero | Positive {\n\
+         \    if n < 0 { return Sign::Negative; }\n\
+         \    if n == 0 { return Sign::Zero; }\n\
+         \    return Sign::Positive;\n\
+          }\n\
+          fn main() {\n\
+         \    let s = Sign(7);\n\
+         \    match s {\n\
+         \        Sign::Negative => { println(-1); }\n\
+         \        | Sign::Zero => { println(0); }\n\
+         \        | Sign::Positive => { println(1); }\n\
+         \    }\n\
+          }\n"
+     in
+     contains c "ex_Sign(7)" && contains c "case ex_Sign_Positive");
+
+  check_assert "DR-009: match-site view-call inserted automatically"
+    (let c =
+       Exile_lang.Compiler.compile
+         "view Sign(n: int) -> Negative | Zero | Positive {\n\
+         \    if n < 0 { return Sign::Negative; }\n\
+         \    if n == 0 { return Sign::Zero; }\n\
+         \    return Sign::Positive;\n\
+          }\n\
+          fn classify(n: int) {\n\
+         \    match n {\n\
+         \        Sign::Negative => { println(-1); }\n\
+         \        | Sign::Zero => { println(0); }\n\
+         \        | Sign::Positive => { println(1); }\n\
+         \    }\n\
+          }\n\
+          fn main() { classify(-5); classify(0); classify(42); }\n"
+     in
+     (* The classify match is over an `int`, but the view-rewrite
+        inserts a Sign(n) call so the match runs against ex_Sign. *)
+     contains c "ex_Sign(n)");
+
+  check_assert "DR-009: tuple-payload case parses, destructures, and yields"
+    (let c =
+       Exile_lang.Compiler.compile
+         "view Parse(s: int) -> Big(int) | Small(int) {\n\
+         \    if s >= 100 { return Parse::Big(s); }\n\
+         \    return Parse::Small(s);\n\
+          }\n\
+          fn classify(n: int) {\n\
+         \    match n {\n\
+         \        Parse::Big(v) => { println(v * 10); }\n\
+         \        | Parse::Small(v) => { println(v); }\n\
+         \    }\n\
+          }\n\
+          fn main() { classify(7); classify(150); }\n"
+     in
+     contains c "ex_Parse_Big" && contains c "ex_Parse_Small");
+
+  check_error "DR-009: view match exhaustiveness enforced via the choice-enum"
+    "view Sign(n: int) -> Negative | Zero | Positive {\n\
+    \    if n < 0 { return Sign::Negative; }\n\
+    \    if n == 0 { return Sign::Zero; }\n\
+    \    return Sign::Positive;\n\
+     }\n\
+     fn classify(n: int) {\n\
+    \    match n {\n\
+    \        Sign::Negative => { println(-1); }\n\
+    \        | Sign::Zero => { println(0); }\n\
+     }\n\
+     }\n\
+     fn main() { classify(5); }\n"
+    "non-exhaustive 'match': pattern 'Positive' is not covered (add an arm or '_')";
+
+  check_error "DR-009: duplicate case in a view rejected at parse time"
+    "view Sign(n: int) -> A | B | A {\n\
+    \    return Sign::A;\n\
+     }\n\
+     fn main() {}\n"
+    "duplicate case 'A' in view 'Sign'";
 
   (* DR-002 S3 — partial-move scrutinee.  S2 tracks pattern-bound
      @move locally per arm but the scrutinee binding stays Live, so
