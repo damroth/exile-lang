@@ -1,0 +1,63 @@
+// Scoped projection (DR-012) — `with <name> in <lvalue> { body }`.
+//
+// `with` binds a borrow to an lvalue for the duration of a block:
+//
+//   with x in arr[i] {
+//       *x = 99;        // *T mutable borrow; mutates the element
+//   }                   // `x` goes out of scope here — the dangle
+//                       // is unutterable, no escape pass needed
+//
+// Semantics:
+//   - `x` is a *T pointer to the lvalue.  Mutate the storage by
+//     writing through `*x`; read with `*x` too.
+//   - When the lvalue is reached through a `Slice<T>` (whose
+//     `.ptr` is `*const T`), the borrow inherits read-only-ness
+//     and `x` becomes `*const T` automatically — writes through
+//     it are rejected by the const-pointer rules.
+//   - `with` does NOT consume the target.
+//   - The target MUST be an lvalue (local, field, index, deref);
+//     a fn-call return is a fresh rvalue and is rejected (taking
+//     its address would dangle).
+//   - Referencing `x` after the `}` is an out-of-scope error
+//     because the binding is scoped to the body block.  The
+//     borrow's lifetime is purely syntactic — the dangle is
+//     unutterable.
+//
+// Self-host motivation: zero-copy in-place mutation of Vec / array
+// elements without `let p = &v[i]; ...; (loose p alive)` boilerplate.
+// The block-scope is the lifetime, no extra analysis required.
+
+fn bump_each(arr: *[int; 5]) {
+    let mut i: int = 0;
+    while i < 5 {
+        with x in arr[i] { *x = *x + 1; }
+        i = i + 1;
+    }
+}
+
+fn main() {
+    let mut arr: [int; 5] = [10, 20, 30, 40, 50];
+
+    // Mutate one element via the borrow.
+    with x in arr[2] { *x = 999; }
+    println(arr[0]);                    // 10
+    println(arr[1]);                    // 20
+    println(arr[2]);                    // 999
+    println(arr[3]);                    // 40
+    println(arr[4]);                    // 50
+
+    // The borrow can also do read+write in one block.
+    with x in arr[0] {
+        let old = *x;
+        *x = old * 2;
+        println(old);                   // 10
+    }
+    println(arr[0]);                    // 20
+
+    // Through a pointer: `bump_each` walks the array and increments
+    // each cell via `with`.  Caller still owns the storage.
+    bump_each(&arr);
+    println(arr[0]);                    // 21
+    println(arr[2]);                    // 1000
+    println(arr[4]);                    // 51
+}

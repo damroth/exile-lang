@@ -280,6 +280,23 @@ and stmt =
   | Defer of { body : stmt list; pos : Pos.t }
   | Break of Pos.t                        (* `break;` — exit the nearest
                                              enclosing loop *)
+  | With of { target : expr; name : string; body : stmt list; pos : Pos.t }
+                                          (* DR-012 scoped projection:
+                                             `with <target> |<name>| { body }`.
+                                             Binds `name` to `&<target>`
+                                             (`*T` mutable pointer-honest)
+                                             for the body block.  Desugars
+                                             at typecheck time to a let-ref
+                                             inside its own block, so the
+                                             borrow is statically scoped —
+                                             a name referenced outside the
+                                             block is out-of-scope (the
+                                             dangle is unutterable).
+                                             Does not consume the target.
+                                             The existing escape pass (DR-
+                                             010) catches in-block escapes
+                                             (return / store-into-non-local)
+                                             without any extra plumbing. *)
   | Continue of Pos.t                     (* `continue;` — skip to the
                                              nearest loop's next iteration
                                              (runs the `for` step) *)

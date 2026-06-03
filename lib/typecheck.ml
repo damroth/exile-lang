@@ -218,6 +218,11 @@ let view_names : (string, unit) Hashtbl.t = Hashtbl.create 8
    collide on the hoisted StringBuilder/String slots. *)
 let display_dispatch_gensym = ref 0
 
+(* Monotonic counter for DR-012 `with` gensym names — bumped per `with`
+   so two sequential blocks reusing the user-visible binding name don't
+   collide on the function-top decl list. *)
+let with_gensym = ref 0
+
 (* Substitute free `Ast.Var (from, _)` references with `Ast.Var (to_, _)`
    throughout an expression / statement / block.  Used by the `for` desugar
    to give each loop's user-facing variable a unique gensym name in the
@@ -323,6 +328,8 @@ and subst_var_stmt ~from ~to_ (s : Ast.stmt) : Ast.stmt =
         Ast.For { var; range = sub range; body = sub_block body; pos }
   | Ast.Defer { body; pos } ->
       Ast.Defer { body = sub_block body; pos }
+  | Ast.With { target; name; body; pos } ->
+      Ast.With { target = sub target; name; body = sub_block body; pos }
   | Ast.Break _ | Ast.Continue _ -> s
 
 let lookup_const ctx path =
@@ -1957,6 +1964,17 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         ty = TArray { elem = tvalue.ty; size = n }; pos }
   | Ast.Index { base; index; pos = idx_pos } ->
       let tbase = elab_expr ctx env base in
+      (* DR-012 — auto-deref one level of `*T` for `[]`.  Mirrors the
+         field-access auto-deref so `with s in v.as_slice() {s[0]}`
+         reads through the borrow without forcing `( *s )[0]`.  Only
+         peel a single layer; deeper indirection still surfaces the
+         original error. *)
+      let tbase =
+        match tbase.ty with
+        | TPtr inner | TConstPtr inner ->
+            { e = TDeref tbase; ty = inner; pos = tbase.pos }
+        | _ -> tbase
+      in
       let elem_ty =
         match tbase.ty with
         | TArray { elem; _ } -> elem
@@ -3991,6 +4009,68 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
     | Ast.Defer { body; pos } ->
         let (_, tbody) = walk env body in
         (env, TDefer { body = tbody; pos })
+    | Ast.With { target; name; body; pos } ->
+        (* DR-012 scoped projection.  Desugar to
+             { let <internal> = &target; body[name -> internal]... }
+           — a TBlock-shaped TExprStmt isolates the binding to the
+           body block so referencing the name after the `with` is
+           an out-of-scope error.  The internal gensym name lets
+           multiple `with x in ...` blocks in the same fn each
+           register their own decl without colliding on the fn-top
+           decl list; `subst_var_stmt` rewrites the user-visible
+           `x` inside the body to point at the gensym. *)
+        let t_target = elab_expr ctx env target in
+        (* `with` needs an lvalue — `&<rvalue>` is invalid in C and
+           would silently take the address of a temporary that
+           expires at the end of the expression.  Restrict to the
+           shapes the field/index/deref machinery accepts. *)
+        let is_lvalue (te : texpr) =
+          match te.e with
+          | TVar _ | TFieldAccess _ | TIndex _ | TDeref _ -> true
+          | _ -> false
+        in
+        if not (is_lvalue t_target) then
+          Error.failf pos
+            "`with` target must be an lvalue — a local binding, a \
+             field, an index, or a deref.  Got an expression that \
+             produces a fresh value (e.g. a fn call returning by \
+             value); bind it to a `let mut` first and `with` over \
+             that.";
+        (* If the target is reached through a const-ptr source
+           (Slice's `.ptr` is `*const T`, indexing through it yields
+           a `const T &` in C), the borrow must inherit read-only-ness
+           or `cc` warns `-Wdiscarded-qualifiers`. *)
+        let const_inherited =
+          match t_target.e with
+          | TIndex { base; _ } ->
+              (match base.ty with
+               | TStruct path
+                 when Mono.is_instance_of ["Slice"] path -> true
+               | _ -> false)
+          | _ -> false
+        in
+        let ptr_ty =
+          if const_inherited
+          then TConstPtr t_target.ty
+          else TPtr t_target.ty
+        in
+        let ref_e = { e = TRef t_target; ty = ptr_ty; pos } in
+        let internal =
+          let n = !with_gensym in
+          incr with_gensym;
+          Printf.sprintf "%s__with%d" name n
+        in
+        let body =
+          List.map (subst_var_stmt ~from:name ~to_:internal) body in
+        add_decl internal ptr_ty pos;
+        let body_env = (internal, ptr_ty) :: env in
+        let (_, t_body) = walk body_env body in
+        let let_st = TLet { name = internal; value = ref_e; pos } in
+        let block_expr =
+          { e = TBlock { stmts = let_st :: t_body; trailing = None };
+            ty = TBool; pos }
+        in
+        (env, TExprStmt block_expr)
   (* An expression used in statement (void) position.  `if` lowers to the
      void TIf statement (guard clause / side effects, `else` optional,
      branches are full blocks); everything else must carry a side effect.
@@ -8115,6 +8195,7 @@ let check_program program : tprogram =
      from 0 in each compilation — keeps golden output deterministic across
      test runs. *)
   for_gensym := 0;
+  with_gensym := 0;
   trait_impl_table := [];
   trait_assoc_table := [];
   let mono_state = Mono.new_state () in

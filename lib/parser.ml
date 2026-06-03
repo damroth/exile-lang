@@ -911,6 +911,26 @@ and parse_stmt s =
         | _ -> [ parse_stmt s ]
       in
       Ast.Defer { body; pos }
+  | Token.With ->
+      (* DR-012 scoped projection:
+           with <name> in <expr> { body }
+         Borrows `<expr>` as `*T` into the block-scoped binding
+         `<name>`.  The `name in expr` shape mirrors `for v in
+         iter` and sidesteps the `|x|` ambiguity with bitor that
+         the original design sketch had.  Struct literals are
+         disabled while parsing `<expr>` so a trailing `{` opens
+         the body, not a struct lit. *)
+      let pos = peek_pos s in
+      ignore (advance s);
+      let (name, _) =
+        expect_ident s ~what:"binding name after 'with'" in
+      expect s Token.In;
+      let prev = s.allow_struct_lit in
+      s.allow_struct_lit <- false;
+      let target = parse_expr s in
+      s.allow_struct_lit <- prev;
+      let body = parse_block s in
+      Ast.With { target; name; body; pos }
   | Token.If ->
       (* Block-shaped, self-terminating: a trailing `if` (last in its
          block, `}` next) is the block's value (`Tail`); otherwise it is a

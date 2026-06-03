@@ -4014,6 +4014,56 @@ let () =
      fn main() {}\n"
     "method call '.eq()' requires a struct or enum value (or a pointer to one), got f64";
 
+  (* DR-012 scoped projection (`with <name> in <lvalue> { body }`)
+     — binds a borrow to the lvalue for the body block.  The borrow
+     is `*T` (mutable pointer-honest) when the lvalue is owned
+     storage (array element, struct field, local), or `*const T`
+     when reached through a `Slice<T>` (whose `.ptr` is `*const T`
+     so the borrow inherits read-only-ness automatically).  Existing
+     escape pass catches in-block leaks. *)
+  check_assert "DR-012: `with x in arr[i] { *x = ... }` mutates the element in place"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let mut arr: [int; 4] = [10, 20, 30, 40];\n\
+         \    with x in arr[2] { *x = 999; }\n\
+         \    println(arr[2]);\n\
+          }\n"
+     in
+     contains c "x__with0 = &(arr.data[2])"
+     && contains c "*x__with0 = 999");
+
+  check_assert "DR-012: `with` over a Slice element inherits *const T"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 2 as u32);\n\
+         \    v.push(7);\n\
+         \    let sl = v.as_slice();\n\
+         \    with e in sl[0] { println(*e); }\n\
+          }\n"
+     in
+     contains c "const long *e__with");
+
+  check_error "DR-012: `with` over a fn-call result rejected (rvalue)"
+    "pub mod raw { extern fn make() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make();\n\
+    \    let mut v: Vec<int> = Vec::with_capacity(a, 4 as u32);\n\
+    \    with sl in v.as_slice() { println(sl.len as int); }\n\
+     }\n"
+    "`with` target must be an lvalue — a local binding, a field, an index, or a deref.  Got an expression that produces a fresh value (e.g. a fn call returning by value); bind it to a `let mut` first and `with` over that.";
+
+  check_error "DR-012: borrow can't escape the `with` block (out-of-scope after)"
+    "fn main() {\n\
+    \    let mut arr: [int; 3] = [1, 2, 3];\n\
+    \    with x in arr[0] { *x = 100; }\n\
+    \    println(*x);\n\
+     }\n"
+    "undefined variable 'x'";
+
   check_error "DR-floats: mixed-width comparison rejected without explicit cast"
     "fn main() {\n\
     \    let a: f32 = 1.0f32;\n\
