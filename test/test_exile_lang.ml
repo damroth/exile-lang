@@ -3634,6 +3634,75 @@ let () =
        true
      with _ -> false);
 
+  (* DR-010 Faza B — param-SET summary across calls.  A trivial
+     pass-through fn carries `summary = {0}` (returns arg 0); the
+     caller's `return passthrough(&local)` then surfaces Local prov
+     at the return site through the call, structurally rejecting
+     the launder.  Closes the S5b residual that Tier-1 missed. *)
+  check_error "DR-010-B: laundering &local through a pass-through call rejected"
+    "fn passthrough(p: *int) -> *int { p }\n\
+     fn make() -> *int {\n\
+    \    let mut x: int = 7;\n\
+    \    return passthrough(&x);\n\
+     }\n\
+     fn main() { let _p = make(); println(0); }\n"
+    escape_return_msg;
+
+  (* DR-010 Faza B — pass-through chain `f(g(p))` propagates param
+     summary across two hops; param-rooted call still surfaces as
+     CallerOrStatic at the return site (sound positive case). *)
+  check_assert "DR-010-B: chained pass-through of a param is silent"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn passthrough(p: *int) -> *int { p }\n\
+          fn relay(q: *int) -> *int { passthrough(q) }\n\
+          fn main() {\n\
+         \    let mut x: int = 7;\n\
+         \    let p = relay(&x);\n\
+         \    println(*p);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  (* DR-010 Faza B — `Vec::as_slice` reads `self.ptr` / `self.count`
+     and packs them into a `Slice<T>`; its summary computes to
+     `{0}` (self-param).  A `return local_vec.as_slice()` thus
+     surfaces the receiver's Local prov through the call and trips
+     the return-floor.  This is THE motivating S5b case (closes
+     "laundering through methods like `vec.as_slice()`"). *)
+  check_error "DR-010-B: returning `local_vec.as_slice()` rejected (S5b laundering)"
+    "pub mod raw { extern fn make_c_allocator() -> Allocator; }\n\
+     fn make() -> Slice<int> {\n\
+    \    let a = raw::make_c_allocator();\n\
+    \    let mut v: Vec<int> = Vec::with_capacity(a, 4 as u32);\n\
+    \    v.push(1);\n\
+    \    return v.as_slice();\n\
+     }\n\
+     fn main() { let _s = make(); println(0); }\n"
+    escape_return_msg;
+
+  (* DR-010 Faza B — recursive fn (AST-traversal pattern: the
+     canonical exilc.exl shape) where the body returns a value
+     mixing the recursive call's result with a param-rooted
+     expression.  SCC-least-fixpoint converges to `{0}`; reject
+     would force `@escapes`, masking real `&local` bugs (Decyzja
+     #3).  Should compile silently. *)
+  check_assert "DR-010-B: recursive param-derived return converges silently"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Node { next: *const Node, val: int }\n\
+          fn last(n: *const Node) -> *const Node {\n\
+         \    if n.next == null { return n; }\n\
+         \    return last(n.next);\n\
+          }\n\
+          fn main() {\n\
+         \    let leaf = Node { next: null, val: 1 };\n\
+         \    let _p = last(&leaf);\n\
+         \    println(0);\n\
+          }\n");
+       true
+     with _ -> false);
+
   (* DR-002 S3 — partial-move scrutinee.  S2 tracks pattern-bound
      @move locally per arm but the scrutinee binding stays Live, so
      re-using it after an arm that consumed its payload (`let _b =
