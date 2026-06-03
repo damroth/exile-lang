@@ -80,7 +80,7 @@ fn main() {
     // ── remove + grow + iter on int keys.  Insert past the
     // initial cap=8 so grow runs; remove a couple of entries to
     // exercise tombstones; iterate to sum the survivors.
-    let mut g: HashMap<int, int> = HashMap::with_capacity(a, 4 as u32);
+    let mut g: HashMap<int, int> = HashMap::with_capacity(a, 8 as u32);
     let mut i: int = 0;
     while i < 12 {
         g.insert(i, i * 10);

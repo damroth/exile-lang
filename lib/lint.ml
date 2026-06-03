@@ -233,6 +233,70 @@ let unused_params_for (tf : tfunc) : warning list =
       params
   end
 
+(* M1 perf-quickwin (Gap-B audit 2026-06-02) — warn when a growable
+   collection is built with a hint so small the first few inserts
+   will reallocate.  Catches `Vec::with_capacity(a, 0)` /
+   `HashMap::with_capacity(a, 1)` patterns that look harmless but
+   trigger one or two `grow` calls before settling.  Threshold is
+   the prelude's own floor (cap = max(hint, 8)) — anything strictly
+   smaller than 8 is the bug class. *)
+let with_capacity_hint_warnings (tp : tprogram) : warning list =
+  let is_with_capacity_call mangled =
+    let suffix = "__with_capacity" in
+    let mlen = String.length mangled in
+    let slen = String.length suffix in
+    if mlen < slen + 4 then false
+    else
+      let rec find_substr i =
+        if i + slen > mlen then false
+        else if String.sub mangled i slen = suffix then true
+        else find_substr (i + 1)
+      in
+      find_substr 0
+  in
+  (* `4 as u32` lowers to TCast (TIntLit 4, u32_ann).  Peel one cast
+     and look for an immediate int literal — that's the source-level
+     "I wrote a number" shape we want to flag.  Computed hints
+     (`size_of(T) * n` etc.) flow through and don't trigger. *)
+  let rec literal_hint (te : texpr) =
+    match te.e with
+    | TIntLit n -> Some n
+    | TCast (sub, _) -> literal_hint sub
+    | _ -> None
+  in
+  let collect_in_expr acc te =
+    fold_texpr (fun acc t ->
+      match t.e with
+      | TCall { mangled; args } when is_with_capacity_call mangled ->
+          (match args with
+           | _ :: hint :: _ ->
+               (match literal_hint hint with
+                | Some n when n < 8 ->
+                    let msg =
+                      Printf.sprintf
+                        "'%s' called with hint %d; the prelude clamps \
+                         growable collections to a minimum of 8, so any \
+                         hint < 8 only hides intent (use 8 if you want \
+                         the default, or a realistic estimate to avoid \
+                         the first one or two `grow` calls)"
+                        mangled n
+                    in
+                    { pos = t.pos; msg } :: acc
+                | _ -> acc)
+           | _ -> acc)
+      | _ -> acc) acc te
+  in
+  let walk_stmts acc stmts =
+    List.fold_left (fold_tstmt (fun acc s ->
+      List.fold_left collect_in_expr acc (tstmt_own_exprs s)))
+      acc stmts
+  in
+  List.fold_left (fun acc tf ->
+    if tf.tf_func.pos.file = "<prelude>" then acc
+    else List.rev_append (walk_stmts [] tf.tf_body) acc)
+    [] tp.tp_funcs
+  |> List.rev
+
 (* Pure analysis: returns the warnings the linter would emit, without
    touching stderr.  Tests compare the list directly; CLI prints via
    [emit_warnings]. *)
@@ -340,9 +404,17 @@ let collect ~(profile : Profile.t) (tp : tprogram) : warning list =
       tp.tp_funcs
   in
   let must_use = must_use_warnings tp in
+  let with_cap_hints = with_capacity_hint_warnings tp in
   tier_warnings @ unused_let_warnings @ unused_param_warnings
-  @ unused_fn_warnings @ must_use
+  @ unused_fn_warnings @ must_use @ with_cap_hints
 
+(* M1 perf-quickwin (Gap-B audit 2026-06-02) — warn when a growable
+   collection is built with a hint so small the first few inserts
+   will reallocate.  Catches `Vec::with_capacity(a, 0)` /
+   `HashMap::with_capacity(a, 1)` patterns that look harmless but
+   trigger one or two `grow` calls before settling.  Threshold is
+   the prelude's own floor (cap = max(hint, 8)) — anything strictly
+   smaller than 8 is the bug class. *)
 let emit_warnings (ws : warning list) : unit =
   List.iter (fun w ->
     Printf.eprintf "%s:%d:%d: warning: %s\n"

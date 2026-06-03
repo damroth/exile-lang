@@ -6497,17 +6497,32 @@ let prelude_items () =
         ("len", field self_v "cap");
       ]; base = None; pos }
   in
-  (* with_capacity(a, hint): cap = max(hint, 8); alloc cap *
-     size_of(Slot<K,V>) bytes and mem_zero them so every slot's
-     `state` byte reads Empty (0).  K / V payloads stay zeroed
-     too — unused until a slot transitions to Occupied. *)
+  (* with_capacity(a, hint): cap = next-pow-of-2(max(hint, 8)); alloc
+     cap * size_of(Slot<K,V>) bytes and mem_zero them so every slot's
+     `state` byte reads Empty (0).  K / V payloads stay zeroed too —
+     unused until a slot transitions to Occupied.  The power-of-2
+     invariant (M2) lets every probe compute `h & (cap - 1)` instead
+     of `h % cap`, swapping 68k DIVU (~140cy) for AND (~4cy). *)
   let hm_with_capacity_body = [
-    Ast.Let { name = "cap"; is_mut = false; ty_ann = Some u32_t;
+    Ast.Let { name = "raw"; is_mut = false; ty_ann = Some u32_t;
               value = Ast.If {
                 cond = bin Ast.Lt (Ast.Var ("hint", pos)) (u32_lit 8);
                 then_blk = [ Ast.Tail (u32_lit 8) ];
                 else_blk = Some [ Ast.Tail (Ast.Var ("hint", pos)) ];
                 pos }; pos };
+    (* Round `raw` up to the next power of 2 by doubling from 1
+       until we meet it.  Tiny loop (≤ 30 iters for u32) — runs
+       once at construction, not on every probe. *)
+    Ast.Let { name = "cap"; is_mut = true; ty_ann = Some u32_t;
+              value = u32_lit 1; pos };
+    Ast.While {
+      cond = bin Ast.Lt (Ast.Var ("cap", pos)) (Ast.Var ("raw", pos));
+      body = [
+        Ast.Assign { path = ["cap"];
+                     value = bin Ast.Shl
+                       (Ast.Var ("cap", pos)) (u32_lit 1); pos };
+      ];
+    };
     Ast.Let { name = "bytes"; is_mut = false; ty_ann = Some u32_t;
               value = bin Ast.Mul size_of_slot
                                   (Ast.Var ("cap", pos)); pos };
@@ -6553,8 +6568,10 @@ let prelude_items () =
       Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
                 value = local_slice_of self_v; pos };
       Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
-                value = bin Ast.Mod (Ast.Var ("h", pos))
-                                    (field self_v "cap"); pos };
+                value = bin Ast.BitAnd (Ast.Var ("h", pos))
+                                       (bin Ast.Sub
+                                          (field self_v "cap")
+                                          (u32_lit 1)); pos };
       Ast.While { cond = Ast.BoolLit (true, pos); body = [
         Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
                   value = Ast.Index { base = Ast.Var ("view", pos);
@@ -6586,9 +6603,10 @@ let prelude_items () =
           ];
           else_blk = None; pos });
         Ast.Assign { path = ["i"];
-                     value = bin Ast.Mod
+                     value = bin Ast.BitAnd
                        (bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1))
-                       (field self_v "cap"); pos };
+                       (bin Ast.Sub (field self_v "cap") (u32_lit 1));
+                     pos };
       ] };
     ]
   in
@@ -6609,8 +6627,10 @@ let prelude_items () =
       Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
                 value = local_slice_of self_v; pos };
       Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
-                value = bin Ast.Mod (Ast.Var ("h", pos))
-                                    (field self_v "cap"); pos };
+                value = bin Ast.BitAnd (Ast.Var ("h", pos))
+                                       (bin Ast.Sub
+                                          (field self_v "cap")
+                                          (u32_lit 1)); pos };
       Ast.While { cond = Ast.BoolLit (true, pos); body = [
         Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
                   value = Ast.Index { base = Ast.Var ("view", pos);
@@ -6646,9 +6666,10 @@ let prelude_items () =
           ];
           else_blk = None; pos });
         Ast.Assign { path = ["i"];
-                     value = bin Ast.Mod
+                     value = bin Ast.BitAnd
                        (bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1))
-                       (field self_v "cap"); pos };
+                       (bin Ast.Sub (field self_v "cap") (u32_lit 1));
+                     pos };
       ] };
     ]
   in
@@ -6716,9 +6737,11 @@ let prelude_items () =
                             ("len", Ast.Var ("new_cap", pos));
                           ]; base = None; pos }; pos };
               Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
-                        value = bin Ast.Mod
+                        value = bin Ast.BitAnd
                           (field (Ast.Var ("s", pos)) "hash")
-                          (Ast.Var ("new_cap", pos)); pos };
+                          (bin Ast.Sub (Ast.Var ("new_cap", pos))
+                                       (u32_lit 1));
+                        pos };
               Ast.While { cond = Ast.BoolLit (true, pos); body = [
                 Ast.Let { name = "n"; is_mut = false; ty_ann = Some slot_t_ann;
                           value = Ast.Index {
@@ -6746,10 +6769,12 @@ let prelude_items () =
                   ];
                   else_blk = None; pos });
                 Ast.Assign { path = ["i"];
-                             value = bin Ast.Mod
+                             value = bin Ast.BitAnd
                                (bin Ast.Add (Ast.Var ("i", pos))
                                             (u32_lit 1))
-                               (Ast.Var ("new_cap", pos)); pos };
+                               (bin Ast.Sub (Ast.Var ("new_cap", pos))
+                                            (u32_lit 1));
+                             pos };
               ] };
             ];
             else_blk = None; pos });
@@ -6802,8 +6827,10 @@ let prelude_items () =
       Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
                 value = local_slice_of self_v; pos };
       Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
-                value = bin Ast.Mod (Ast.Var ("h", pos))
-                                    (field self_v "cap"); pos };
+                value = bin Ast.BitAnd (Ast.Var ("h", pos))
+                                       (bin Ast.Sub
+                                          (field self_v "cap")
+                                          (u32_lit 1)); pos };
       Ast.While { cond = Ast.BoolLit (true, pos); body = [
         Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
                   value = Ast.Index { base = Ast.Var ("view", pos);
@@ -6860,9 +6887,10 @@ let prelude_items () =
           ];
           else_blk = None; pos });
         Ast.Assign { path = ["i"];
-                     value = bin Ast.Mod
+                     value = bin Ast.BitAnd
                        (bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1))
-                       (field self_v "cap"); pos };
+                       (bin Ast.Sub (field self_v "cap") (u32_lit 1));
+                     pos };
       ] };
     ]
   in
@@ -6889,8 +6917,10 @@ let prelude_items () =
       Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
                 value = local_slice_of self_v; pos };
       Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
-                value = bin Ast.Mod (Ast.Var ("h", pos))
-                                    (field self_v "cap"); pos };
+                value = bin Ast.BitAnd (Ast.Var ("h", pos))
+                                       (bin Ast.Sub
+                                          (field self_v "cap")
+                                          (u32_lit 1)); pos };
       Ast.While { cond = Ast.BoolLit (true, pos); body = [
         Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
                   value = Ast.Index { base = Ast.Var ("view", pos);
@@ -6936,9 +6966,10 @@ let prelude_items () =
           ];
           else_blk = None; pos });
         Ast.Assign { path = ["i"];
-                     value = bin Ast.Mod
+                     value = bin Ast.BitAnd
                        (bin Ast.Add (Ast.Var ("i", pos)) (u32_lit 1))
-                       (field self_v "cap"); pos };
+                       (bin Ast.Sub (field self_v "cap") (u32_lit 1));
+                     pos };
       ] };
     ]
   in

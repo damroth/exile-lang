@@ -42,7 +42,7 @@ fn first_three(arr: *const int) -> Slice<int> {
 //     pushing `&x` is sound.  The floor recognises the receiver
 //     as a local binding and skips the storing-arg check.
 fn use_local_vec(a: Allocator) -> int {
-    let mut v: Vec<*int> = Vec::with_capacity(a, 2 as u32);
+    let mut v: Vec<*int> = Vec::with_capacity(a, 8 as u32);
     let mut x: int = 42;
     let mut y: int = 7;
     v.push(&x);

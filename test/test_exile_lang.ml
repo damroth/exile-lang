@@ -4097,6 +4097,64 @@ let () =
      in
      contains c "ex___lambda_0" && contains c "ex___lambda_1");
 
+  (* Perf quick-win M2 (Gap-B audit 2026-06-02) — HashMap caps round
+     up to the next power of 2 in `with_capacity`, and the probe step
+     uses `h & (cap - 1)` instead of `h % cap` so 68k DIVU (~140 cy)
+     drops to AND (~4 cy).  The generated C reflects this by emitting
+     a bitwise-AND with `cap - 1` in every probe. *)
+  check_assert "M2: HashMap probe uses `& (cap - 1)` instead of `% cap`"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut m: HashMap<int, int> = HashMap::with_capacity(a, 16 as u32);\n\
+         \    m.insert(1, 100);\n\
+         \    if m.contains(1) { println(1); } else { println(0); }\n\
+          }\n"
+     in
+     contains c "h & (self->cap - "
+     && not (contains c "% self->cap"));
+
+  check_assert "M2: HashMap with_capacity rounds up to the next power of 2"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut m: HashMap<int, int> = HashMap::with_capacity(a, 10 as u32);\n\
+         \    println(1);\n\
+          }\n"
+     in
+     (* The pow-2 loop body shifts cap left by 1; the cast +
+        u32-encoded shift amount is the signature of the round-up. *)
+     contains c "cap = cap << ((unsigned long)1)");
+
+  (* Perf quick-win M1 (Gap-B audit) — warn when a growable collection
+     is built with a hint < 8.  The prelude floor itself clamps to 8,
+     so a smaller hint can't actually shrink the buffer — it just
+     hides intent.  Folding to ≥ 8 also saves one or two `grow` calls
+     on a fresh collection that takes more than 4-7 elements. *)
+  check_lint "M1: with_capacity hint < 8 warns about grow-thrashing"
+    "pub mod raw { extern fn make() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make();\n\
+    \    let mut v: Vec<int> = Vec::with_capacity(a, 4 as u32);\n\
+    \    v.push(1);\n\
+     }\n"
+    ~profile:Exile_lang.Profile.Full
+    ["called with hint 4"];
+
+  check_lint "M1: with_capacity hint = 8 is silent (matches the floor)"
+    "pub mod raw { extern fn make() -> Allocator; }\n\
+     fn main() {\n\
+    \    let a = raw::make();\n\
+    \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+    \    v.push(1);\n\
+     }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
   (* DR-006 — `pub mod sys` is the one seam between exile stdlib and
      the host platform.  Width-pinned extern fns (sys_alloc / sys_free
      / sys_write / sys_read) are exposed in the prelude; the compiler

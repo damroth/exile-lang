@@ -43,7 +43,7 @@ impl Display for Segment {
 
 fn main() {
     let a = raw::make_c_allocator();
-    let mut sb = StringBuilder::with_capacity(a, 4 as u32);
+    let mut sb = StringBuilder::with_capacity(a, 8 as u32);
 
     let p = Point { x: 7, y: -42 };
     p.fmt(&sb);
@@ -57,7 +57,7 @@ fn main() {
 
     // Compose two Points into the same builder — no intermediate
     // alloc, just the one growing buffer.
-    let mut sb2 = StringBuilder::with_capacity(a, 4 as u32);
+    let mut sb2 = StringBuilder::with_capacity(a, 8 as u32);
     let seg = Segment { lo: Point { x: 0, y: 0 },
                         hi: Point { x: 100, y: -1 } };
     seg.fmt(&sb2);

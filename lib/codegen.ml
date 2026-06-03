@@ -369,9 +369,16 @@ let rec gen_expr ctx buf (te : texpr) =
       in
       (* `&&` under `||` is legal C but gcc/clang emit `-Wparentheses` even
          though the precedence is unambiguous.  Force parens around `&&`
-         operands of `||` to keep the output -Werror-clean. *)
+         operands of `||` to keep the output -Werror-clean.  Same story
+         for arithmetic (`+` / `-`) under a bitwise operator (`& | ^`):
+         the precedence in C is well-defined but `-Wparentheses` still
+         fires (Wall-by-default), so paren the arithmetic child. *)
       let nest_warn child =
-        match op, child with Ast.Or, Ast.And -> true | _ -> false
+        match op, child with
+        | Ast.Or, Ast.And -> true
+        | (Ast.BitAnd | Ast.BitOr | Ast.BitXor),
+          (Ast.Add | Ast.Sub) -> true
+        | _ -> false
       in
       (match l.e with
        | TBinOp (lop, _, _) when prec lop < p || nest_warn lop ->

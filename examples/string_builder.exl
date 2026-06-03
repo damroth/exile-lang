@@ -19,7 +19,7 @@ fn main() {
     // `with_capacity(a, hint)` clamps cap = max(hint, 16), then
     // allocates that many bytes through the allocator seam.  The
     // builder owns the buffer; `len` starts at 0.
-    let mut sb = StringBuilder::with_capacity(a, 4 as u32);
+    let mut sb = StringBuilder::with_capacity(a, 8 as u32);
 
     // Push three ASCII bytes one at a time — well within initial
     // capacity (16, after the clamp), no growth yet.
@@ -51,7 +51,7 @@ fn main() {
     // length (narrow seam), grow if needed, then copy through the
     // same Slice<u8>+Delta-B path `push_byte` uses.  `s as *const u8`
     // reinterprets the pointer (str is `const char *` in C).
-    let mut sb2 = StringBuilder::with_capacity(a, 4 as u32);
+    let mut sb2 = StringBuilder::with_capacity(a, 8 as u32);
     sb2.push_str("Hello, ");                 // 7 bytes
     sb2.push_str("StringBuilder!");          // 14 bytes
     println(sb2.length() as int);            // 21
@@ -65,7 +65,7 @@ fn main() {
     // negative values prefix '-' and work in u32 internally so
     // `i32::min` round-trips (the negation that would overflow in
     // signed arith wraps cleanly in u32).
-    let mut sb3 = StringBuilder::with_capacity(a, 4 as u32);
+    let mut sb3 = StringBuilder::with_capacity(a, 8 as u32);
     sb3.push_int(0);
     sb3.push_int(42);
     sb3.push_int(-7);
