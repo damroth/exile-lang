@@ -4097,6 +4097,44 @@ let () =
      in
      contains c "ex___lambda_0" && contains c "ex___lambda_1");
 
+  (* DR-006 — `pub mod sys` is the one seam between exile stdlib and
+     the host platform.  Width-pinned extern fns (sys_alloc / sys_free
+     / sys_write / sys_read) are exposed in the prelude; the compiler
+     drops unreferenced ones at emit time (DCE) so plain programs
+     don't carry the seam declarations.  `default_allocator()`
+     plugs through this seam by default. *)
+  check_assert "DR-006: a plain program does not emit any `sys_*` extern decls"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() { println(\"hi\"); }\n"
+     in
+     not (contains c "sys_alloc")
+     && not (contains c "sys_write"));
+
+  check_assert "DR-006: program calling sys_alloc emits its extern decl"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let p = sys::sys_alloc(null as *c_void, 16 as c_ulong);\n\
+         \    sys::sys_free(null as *c_void, p, 16 as c_ulong);\n\
+         \    println(1);\n\
+          }\n"
+     in
+     contains c "extern void *sys_alloc"
+     && contains c "extern void sys_free"
+     && contains c "p = sys_alloc"
+     && contains c "sys_free(");
+
+  check_assert "DR-006: extern fns inside `mod sys` are exempt from the raw-quarantine"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let n: c_long = sys::sys_write(1 as c_int, null as *const c_uchar, 0 as c_ulong);\n\
+         \    println(n as int);\n\
+          }\n");
+       true
+     with _ -> false);
+
   check_error "DR-008: lambda referencing an outer local fails captureless check"
     "fn main() {\n\
     \    let y: int = 5;\n\
@@ -4171,7 +4209,7 @@ let () =
      call site; standalone use also works for any prelude collection
      (String / StringBuilder / Vec / HashMap) that needs an
      Allocator. *)
-  check_assert "default_allocator(): emits libc helper + thunks at the top of C output"
+  check_assert "default_allocator(): plugs the sys:: seam into the Allocator helper"
     (let c =
        Exile_lang.Compiler.compile
          "fn main() {\n\
@@ -4181,10 +4219,14 @@ let () =
          \    s.free();\n\
           }\n"
      in
+     (* Post-DR-006 the helper wires sys_alloc / sys_free (from the
+        prelude `pub mod sys`) directly — no more inline libc
+        thunks; the host backend lives in runtime/sys_host.c. *)
      contains c "static struct ex_Allocator exile_default_allocator(void)"
-     && contains c "exile_default_alloc_thunk"
-     && contains c "exile_default_free_thunk"
-     && contains c "exile_default_allocator()");
+     && contains c "a.alloc_fn = sys_alloc;"
+     && contains c "a.free_fn = sys_free;"
+     && contains c "extern void *sys_alloc"
+     && contains c "extern void sys_free");
 
   check_error "default_allocator(): rejects extra arguments"
     "fn main() { let _a = default_allocator(0); }\n"

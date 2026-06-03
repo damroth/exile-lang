@@ -4483,8 +4483,13 @@ let flatten_items program =
   (* Uniform "must be at top level" reject — `extern struct/type/const`
      and `@c_include` all share the same constraint with the same
      wording.  Path captured by walk and threaded in. *)
+  (* `mod raw` is the user-facing FFI quarantine; `mod sys` is the
+     compiler-shipped target seam (DR-006) — its extern fns are
+     hand-vetted, target-portable, and don't need the raw-module
+     hygiene gate. *)
   let in_raw_module path = match List.rev path with
     | "raw" :: _ -> true
+    | "sys" :: _ -> true
     | _ -> false
   in
   let require_raw ~current_path ~kind ~name ~pos =
@@ -7327,6 +7332,76 @@ let prelude_items () =
     mpos = pos;
     mis_pub = true;
   } in
+  (* DR-006 — `pub mod sys` is the one seam between exile stdlib and
+     the host platform.  Each backend (host / amiga / kernel) supplies
+     the bodies behind these `extern fn`s; layer-0 code calls the
+     interface verbatim and the compiler swaps the implementation by
+     auto-linking the matching runtime per `--target`.  Width-pinned
+     signatures (`c_ulong` byte counts, `c_int` fds) avoid the
+     `size_t`/`ssize_t` portability skew DR-001 warned about. *)
+  let cvoid_ptr_ann = Ast.TyPtr Ast.TyCVoid in
+  let cuchar_ptr_ann = Ast.TyPtr Ast.TyCUChar in
+  let cuchar_const_ptr_ann = Ast.TyConstPtr Ast.TyCUChar in
+  let cint_ann = Ast.TyCInt { signed = true } in
+  let culong_ann = Ast.TyCLong { signed = false } in
+  let clong_ann = Ast.TyCLong { signed = true } in
+  let mk_extern name params ret = {
+    Ast.name;
+    c_name = name;
+    tparams = []; tbounds = [];
+    params;
+    ret_ty = ret;
+    body = [];
+    is_pub = true;
+    is_extern = true;
+    is_variadic = false;
+    tier_hint = Some "core";
+    amiga_lib = None;
+    must_use = false;
+    escapes_hatch = false;
+    pos;
+  } in
+  let mk_param name ty =
+    { Ast.pname = name; pty = ty; preg = None; is_mut = false }
+  in
+  let sys_alloc_fn =
+    mk_extern "sys_alloc"
+      [ mk_param "state" cvoid_ptr_ann;
+        mk_param "n" culong_ann ]
+      (Some cvoid_ptr_ann)
+  in
+  let sys_free_fn =
+    mk_extern "sys_free"
+      [ mk_param "state" cvoid_ptr_ann;
+        mk_param "p" cvoid_ptr_ann;
+        mk_param "n" culong_ann ]
+      None
+  in
+  let sys_write_fn =
+    mk_extern "sys_write"
+      [ mk_param "fd" cint_ann;
+        mk_param "buf" cuchar_const_ptr_ann;
+        mk_param "n" culong_ann ]
+      (Some clong_ann)
+  in
+  let sys_read_fn =
+    mk_extern "sys_read"
+      [ mk_param "fd" cint_ann;
+        mk_param "buf" cuchar_ptr_ann;
+        mk_param "n" culong_ann ]
+      (Some clong_ann)
+  in
+  let sys_mod = {
+    Ast.mname = "sys";
+    mitems = [
+      Ast.Function sys_alloc_fn;
+      Ast.Function sys_free_fn;
+      Ast.Function sys_write_fn;
+      Ast.Function sys_read_fn;
+    ];
+    mpos = pos;
+    mis_pub = true;
+  } in
   [ Ast.Enum option_decl; Ast.Enum result_decl;
     Ast.Struct range_struct; Ast.Struct range_inclusive_struct;
     Ast.Struct slice_struct;
@@ -7341,6 +7416,7 @@ let prelude_items () =
     Ast.Struct hashmap_iter_struct;
     Ast.Impl hashmap_impl;
     Ast.Module str_mod;
+    Ast.Module sys_mod;
     Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait;
     Ast.Trait hash_trait;
     Ast.Trait display_trait; Ast.Trait debug_trait;

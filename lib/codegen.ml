@@ -1673,25 +1673,11 @@ let gen_program ?(annotate = false) (tp : tprogram) =
      allocator-state concept; the free thunk also ignores the
      byte-count (DR-004 size-on-free seam exists so non-libc
      allocators can use it, libc just discards). *)
-  if tp.tp_uses_default_allocator then begin
-    Buffer.add_string buf "\n\
-      static void *exile_default_alloc_thunk(void *_state, unsigned long n) {\n\
-      \    (void)_state;\n\
-      \    return malloc((size_t)n);\n\
-      }\n\
-      static void exile_default_free_thunk(void *_state, void *p, unsigned long _n) {\n\
-      \    (void)_state;\n\
-      \    (void)_n;\n\
-      \    free(p);\n\
-      }\n\
-      static struct ex_Allocator exile_default_allocator(void) {\n\
-      \    struct ex_Allocator a;\n\
-      \    a.state = 0;\n\
-      \    a.alloc_fn = exile_default_alloc_thunk;\n\
-      \    a.free_fn = exile_default_free_thunk;\n\
-      \    return a;\n\
-      }\n"
-  end;
+  (* `default_allocator()` helper is emitted later, AFTER the
+     forward-decl section, so the `sys_alloc` / `sys_free` extern
+     decls land before the helper that references them.  See the
+     `tp_uses_default_allocator` block right after the fn fwd-decl
+     loop below. *)
   (* Generic fns (with TVar in their resolved signature) skip codegen
      for the same reason as generic struct/enum decls — the
      monomorphizer materialises concrete instantiations later. *)
@@ -1706,10 +1692,63 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   let non_main =
     List.filter (fun tf -> tf.tf_func.Ast.name <> "main") concrete_funcs
   in
+  (* DCE for prelude `extern fn`s.  The DR-006 `sys::*` seam ships
+     four extern fns whether or not the user calls them; keeping
+     them all in the emit churns every golden snapshot.  Walk
+     every non-prelude body for referenced mangled names, then
+     drop any prelude extern fn the program doesn't touch.
+     Non-prelude extern fns (user FFI) stay regardless — they
+     resolve against the user's own --link stubs. *)
+  let referenced_fns =
+    let acc = Hashtbl.create 64 in
+    List.iter (fun tf ->
+      if tf.tf_func.Ast.pos.file <> "<prelude>" then
+        List.iter (iter_tstmt (fun s ->
+          List.iter (fun te ->
+            iter_texpr (fun te' ->
+              match te'.e with
+              | TCall { mangled; _ } | TFnRef mangled ->
+                  Hashtbl.replace acc mangled ()
+              | _ -> ())
+              te)
+            (tstmt_own_exprs s)))
+          tf.tf_body)
+      tp.tp_funcs;
+    (* `default_allocator` codegen wires `sys_alloc` / `sys_free` in
+       its helper fn — count those as referenced when the helper is
+       emitted. *)
+    if tp.tp_uses_default_allocator then begin
+      Hashtbl.replace acc "sys_alloc" ();
+      Hashtbl.replace acc "sys_free" ()
+    end;
+    acc
+  in
+  let non_main =
+    List.filter (fun tf ->
+      if tf.tf_func.Ast.is_extern
+         && tf.tf_func.Ast.pos.file = "<prelude>"
+         && not (Hashtbl.mem referenced_fns tf.tf_mangled)
+      then false
+      else true)
+      non_main
+  in
   emit_section buf non_main ~emit:(fun tf ->
     emit_fn_sig buf tf;
     Buffer.add_string buf ";\n");
   Buffer.add_char buf '\n';
+  (* `default_allocator()` helper — emitted AFTER the extern fwd-
+     decls so `sys_alloc` / `sys_free` are visible when the helper
+     body references them. *)
+  if tp.tp_uses_default_allocator then begin
+    Buffer.add_string buf "\n\
+      static struct ex_Allocator exile_default_allocator(void) {\n\
+      \    struct ex_Allocator a;\n\
+      \    a.state = 0;\n\
+      \    a.alloc_fn = sys_alloc;\n\
+      \    a.free_fn = sys_free;\n\
+      \    return a;\n\
+      }\n\n"
+  end;
   (* extern fn has no body — fwd-decl above is the entire emission. *)
   let definable = List.filter (fun tf -> not tf.tf_func.Ast.is_extern) concrete_funcs in
   let last = List.length definable - 1 in

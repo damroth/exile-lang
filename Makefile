@@ -74,16 +74,21 @@ toolchain-clean:
 stub_for = $(wildcard examples/$(1)_stub.c)
 link_args = $(if $(call stub_for,$(1)),--link $(call stub_for,$(1)))
 
+# DR-006 — the host backend for the `sys::*` seam.  Linked into every
+# host build; the linker discards it when no `sys_*` symbol is reached
+# (cc only complains about unresolved references, not unused defs). *)
+SYS_HOST := runtime/sys_host.c
+
 # `make host-NAME`  → build host binary for examples/NAME.exl
-host-%: examples/%.exl $(call stub_for,%) build
-	$(EXILE) --target host --c-out $(C_OUT)/$*.c $(call link_args,$*) -o $(HOST_OUT)/$* $<
+host-%: examples/%.exl $(call stub_for,%) $(SYS_HOST) build
+	$(EXILE) --target host --c-out $(C_OUT)/$*.c --link $(SYS_HOST) $(call link_args,$*) -o $(HOST_OUT)/$* $<
 
 # `multi_file` is a directory example: its entry point is main.exl, which
 # `use`s sibling file-modules.  The flat host-% rule can't express that,
 # so it gets a dedicated rule; verify/rebaseline reuse the % patterns
 # (expected output lives in examples/multi_file.expected).
-host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl build
-	$(EXILE) --target host --c-out $(C_OUT)/multi_file.c -o $(HOST_OUT)/multi_file $<
+host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_HOST) build
+	$(EXILE) --target host --c-out $(C_OUT)/multi_file.c --link $(SYS_HOST) -o $(HOST_OUT)/multi_file $<
 
 # `make amiga-NAME` → build m68k Amiga binary
 amiga-%: examples/%.exl $(call stub_for,%) build
