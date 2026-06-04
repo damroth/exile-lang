@@ -1,0 +1,149 @@
+;; exile-tokens-dump v1 examples/selfhost_pos.exl
+Struct @examples/selfhost_pos.exl:29:1
+(Ident Pos) @examples/selfhost_pos.exl:29:8
+LBrace @examples/selfhost_pos.exl:29:12
+(Ident line) @examples/selfhost_pos.exl:30:5
+Colon @examples/selfhost_pos.exl:30:9
+(Ident int) @examples/selfhost_pos.exl:30:11
+Comma @examples/selfhost_pos.exl:30:14
+(Ident col) @examples/selfhost_pos.exl:31:5
+Colon @examples/selfhost_pos.exl:31:8
+(Ident int) @examples/selfhost_pos.exl:31:10
+Comma @examples/selfhost_pos.exl:31:13
+(Ident file) @examples/selfhost_pos.exl:32:5
+Colon @examples/selfhost_pos.exl:32:9
+(Ident str) @examples/selfhost_pos.exl:32:11
+Comma @examples/selfhost_pos.exl:32:14
+RBrace @examples/selfhost_pos.exl:33:1
+Impl @examples/selfhost_pos.exl:35:1
+(Ident Pos) @examples/selfhost_pos.exl:35:6
+LBrace @examples/selfhost_pos.exl:35:10
+Pub @examples/selfhost_pos.exl:39:5
+Fn @examples/selfhost_pos.exl:39:9
+(Ident zero) @examples/selfhost_pos.exl:39:12
+LParen @examples/selfhost_pos.exl:39:16
+RParen @examples/selfhost_pos.exl:39:17
+Arrow @examples/selfhost_pos.exl:39:19
+(Ident Pos) @examples/selfhost_pos.exl:39:22
+LBrace @examples/selfhost_pos.exl:39:26
+(Ident Pos) @examples/selfhost_pos.exl:40:9
+LBrace @examples/selfhost_pos.exl:40:13
+(Ident line) @examples/selfhost_pos.exl:40:15
+Colon @examples/selfhost_pos.exl:40:19
+(Int 1) @examples/selfhost_pos.exl:40:21
+Comma @examples/selfhost_pos.exl:40:22
+(Ident col) @examples/selfhost_pos.exl:40:24
+Colon @examples/selfhost_pos.exl:40:27
+(Int 1) @examples/selfhost_pos.exl:40:29
+Comma @examples/selfhost_pos.exl:40:30
+(Ident file) @examples/selfhost_pos.exl:40:32
+Colon @examples/selfhost_pos.exl:40:36
+(String "<unknown>") @examples/selfhost_pos.exl:40:38
+RBrace @examples/selfhost_pos.exl:40:50
+RBrace @examples/selfhost_pos.exl:41:5
+RBrace @examples/selfhost_pos.exl:42:1
+Impl @examples/selfhost_pos.exl:47:1
+(Ident Display) @examples/selfhost_pos.exl:47:6
+For @examples/selfhost_pos.exl:47:14
+(Ident Pos) @examples/selfhost_pos.exl:47:18
+LBrace @examples/selfhost_pos.exl:47:22
+Fn @examples/selfhost_pos.exl:48:5
+(Ident fmt) @examples/selfhost_pos.exl:48:8
+LParen @examples/selfhost_pos.exl:48:11
+Star @examples/selfhost_pos.exl:48:12
+Const @examples/selfhost_pos.exl:48:13
+(Ident self) @examples/selfhost_pos.exl:48:19
+Comma @examples/selfhost_pos.exl:48:23
+(Ident out) @examples/selfhost_pos.exl:48:25
+Colon @examples/selfhost_pos.exl:48:28
+Star @examples/selfhost_pos.exl:48:30
+(Ident StringBuilder) @examples/selfhost_pos.exl:48:31
+RParen @examples/selfhost_pos.exl:48:44
+LBrace @examples/selfhost_pos.exl:48:46
+(Ident out) @examples/selfhost_pos.exl:49:9
+Dot @examples/selfhost_pos.exl:49:12
+(Ident push_str) @examples/selfhost_pos.exl:49:13
+LParen @examples/selfhost_pos.exl:49:21
+(Ident self) @examples/selfhost_pos.exl:49:22
+Dot @examples/selfhost_pos.exl:49:26
+(Ident file) @examples/selfhost_pos.exl:49:27
+RParen @examples/selfhost_pos.exl:49:31
+Semicolon @examples/selfhost_pos.exl:49:32
+(Ident out) @examples/selfhost_pos.exl:50:9
+Dot @examples/selfhost_pos.exl:50:12
+(Ident push_str) @examples/selfhost_pos.exl:50:13
+LParen @examples/selfhost_pos.exl:50:21
+(String ":") @examples/selfhost_pos.exl:50:22
+RParen @examples/selfhost_pos.exl:50:25
+Semicolon @examples/selfhost_pos.exl:50:26
+(Ident out) @examples/selfhost_pos.exl:51:9
+Dot @examples/selfhost_pos.exl:51:12
+(Ident push_int) @examples/selfhost_pos.exl:51:13
+LParen @examples/selfhost_pos.exl:51:21
+(Ident self) @examples/selfhost_pos.exl:51:22
+Dot @examples/selfhost_pos.exl:51:26
+(Ident line) @examples/selfhost_pos.exl:51:27
+RParen @examples/selfhost_pos.exl:51:31
+Semicolon @examples/selfhost_pos.exl:51:32
+(Ident out) @examples/selfhost_pos.exl:52:9
+Dot @examples/selfhost_pos.exl:52:12
+(Ident push_str) @examples/selfhost_pos.exl:52:13
+LParen @examples/selfhost_pos.exl:52:21
+(String ":") @examples/selfhost_pos.exl:52:22
+RParen @examples/selfhost_pos.exl:52:25
+Semicolon @examples/selfhost_pos.exl:52:26
+(Ident out) @examples/selfhost_pos.exl:53:9
+Dot @examples/selfhost_pos.exl:53:12
+(Ident push_int) @examples/selfhost_pos.exl:53:13
+LParen @examples/selfhost_pos.exl:53:21
+(Ident self) @examples/selfhost_pos.exl:53:22
+Dot @examples/selfhost_pos.exl:53:26
+(Ident col) @examples/selfhost_pos.exl:53:27
+RParen @examples/selfhost_pos.exl:53:30
+Semicolon @examples/selfhost_pos.exl:53:31
+RBrace @examples/selfhost_pos.exl:54:5
+RBrace @examples/selfhost_pos.exl:55:1
+Fn @examples/selfhost_pos.exl:57:1
+(Ident main) @examples/selfhost_pos.exl:57:4
+LParen @examples/selfhost_pos.exl:57:8
+RParen @examples/selfhost_pos.exl:57:9
+LBrace @examples/selfhost_pos.exl:57:11
+Let @examples/selfhost_pos.exl:60:5
+(Ident p) @examples/selfhost_pos.exl:60:9
+Eq @examples/selfhost_pos.exl:60:11
+(Ident Pos) @examples/selfhost_pos.exl:60:13
+LBrace @examples/selfhost_pos.exl:60:17
+(Ident line) @examples/selfhost_pos.exl:60:19
+Colon @examples/selfhost_pos.exl:60:23
+(Int 10) @examples/selfhost_pos.exl:60:25
+Comma @examples/selfhost_pos.exl:60:27
+(Ident col) @examples/selfhost_pos.exl:60:29
+Colon @examples/selfhost_pos.exl:60:32
+(Int 5) @examples/selfhost_pos.exl:60:34
+Comma @examples/selfhost_pos.exl:60:35
+(Ident file) @examples/selfhost_pos.exl:60:37
+Colon @examples/selfhost_pos.exl:60:41
+(String "test.exl") @examples/selfhost_pos.exl:60:43
+RBrace @examples/selfhost_pos.exl:60:54
+Semicolon @examples/selfhost_pos.exl:60:55
+(Ident println) @examples/selfhost_pos.exl:61:5
+LParen @examples/selfhost_pos.exl:61:12
+(Ident p) @examples/selfhost_pos.exl:61:13
+RParen @examples/selfhost_pos.exl:61:14
+Semicolon @examples/selfhost_pos.exl:61:15
+Let @examples/selfhost_pos.exl:64:5
+(Ident z) @examples/selfhost_pos.exl:64:9
+Eq @examples/selfhost_pos.exl:64:11
+(Ident Pos) @examples/selfhost_pos.exl:64:13
+DoubleColon @examples/selfhost_pos.exl:64:16
+(Ident zero) @examples/selfhost_pos.exl:64:18
+LParen @examples/selfhost_pos.exl:64:22
+RParen @examples/selfhost_pos.exl:64:23
+Semicolon @examples/selfhost_pos.exl:64:24
+(Ident println) @examples/selfhost_pos.exl:65:5
+LParen @examples/selfhost_pos.exl:65:12
+(Ident z) @examples/selfhost_pos.exl:65:13
+RParen @examples/selfhost_pos.exl:65:14
+Semicolon @examples/selfhost_pos.exl:65:15
+RBrace @examples/selfhost_pos.exl:66:1
+Eof @examples/selfhost_pos.exl:67:1

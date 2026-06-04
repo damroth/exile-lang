@@ -1,0 +1,5 @@
+;; exile-ast-dump v1 examples/selfhost_pos.exl
+(struct Pos (fields (field line (int i32)) (field col (int i32)) (field file str)))
+(impl Pos (fn zero pub (params ) (struct Pos) (body (tail (struct-lit Pos (field line (int 1)) (field col (int 1)) (field file (string "<unknown>")))))))
+(impl Pos (trait Display) (fn fmt pub (params (param self (const-ptr (struct Pos))) (param out (ptr (struct StringBuilder)))) void (body (expr-stmt (method-call (var out) push_str (field-access (var self) file))) (expr-stmt (method-call (var out) push_str (string ":"))) (expr-stmt (method-call (var out) push_int (field-access (var self) line))) (expr-stmt (method-call (var out) push_str (string ":"))) (expr-stmt (method-call (var out) push_int (field-access (var self) col))))))
+(fn main (params ) void (body (let p (struct-lit Pos (field line (int 10)) (field col (int 5)) (field file (string "test.exl")))) (expr-stmt (call println (var p))) (let z (call Pos::zero )) (expr-stmt (call println (var z)))))

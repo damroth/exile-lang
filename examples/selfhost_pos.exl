@@ -1,0 +1,66 @@
+// Self-host Faza 0 — first foundation port.
+//
+// Ports `lib/pos.ml` (the OCaml exilc oracle) to exile.  Pos is a
+// leaf module: a 3-field record + one helper that renders it as
+// `<file>:<line>:<col>`.  Trivial enough that the port is mostly
+// about establishing idioms the rest of the fleet (token / ast /
+// ir) will mirror:
+//
+//   - Records map straight to `struct ... { f: T, ... }` with no
+//     hidden indirection; field order matters at the dump layer
+//     (declaration order is canonical per Faza −1 ratification).
+//
+//   - OCaml's `Printf.sprintf "%s:%d:%d"` lowers to a Display impl
+//     that writes through the prelude StringBuilder.  Writer-pattern
+//     is the prelude's canonical formatting protocol — no heap-
+//     stringy returns escape the impl, allocator decisions stay in
+//     the caller.
+//
+//   - Synthetic constants (OCaml `let zero = { ... }`) become
+//     value-returning fns; exile doesn't have struct-typed `const`
+//     bindings today, and a fn is the natural call-site shape.
+//
+// The OCaml original is 6 lines plus comments.  This exile port
+// is ~25 active lines — the overhead is the Display impl, which
+// the OCaml side gets from a one-liner sprintf.  Acceptable for
+// the showcase-quality bar (Display is value-explicit; the cost
+// shows up where the abstraction stops being free).
+
+struct Pos {
+    line: int,
+    col: int,
+    file: str,
+}
+
+impl Pos {
+    // Synthetic position used when no real source location is
+    // available — e.g. internal compiler errors generated during
+    // AST post-processing.  Mirrors `Pos.zero` on the OCaml side.
+    pub fn zero() -> Pos {
+        Pos { line: 1, col: 1, file: "<unknown>" }
+    }
+}
+
+// `Pos.to_string` becomes a Display impl: the writer-pattern
+// composes through `println(p)` Display-dispatch without a
+// stringbuilder of its own at the call site.
+impl Display for Pos {
+    fn fmt(*const self, out: *StringBuilder) {
+        out.push_str(self.file);
+        out.push_str(":");
+        out.push_int(self.line);
+        out.push_str(":");
+        out.push_int(self.col);
+    }
+}
+
+fn main() {
+    // Match the original to_string sample: a real position renders
+    // as `<file>:<line>:<col>`.
+    let p = Pos { line: 10, col: 5, file: "test.exl" };
+    println(p);                                  // test.exl:10:5
+
+    // The synthetic zero matches the OCaml `Pos.zero` exactly.
+    let z = Pos::zero();
+    println(z);                                  // <unknown>:1:1
+}
