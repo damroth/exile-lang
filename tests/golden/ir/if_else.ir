@@ -1,0 +1,16 @@
+;; exile-typed-ir-dump v1 examples/if_else.exl
+(tfn ex_abs (params (param x (int i32))) (int i32) (body (if (binop < (var x) :ty (int i32) (int 0) :ty (int i32)) :ty bool (then (return (neg (var x) :ty (int i32)) :ty (int i32))) (else (return (var x) :ty (int i32))))))
+(tfn ex_classify (params (param n (int i32))) (int i32) (body (if (binop < (var n) :ty (int i32) (int 0) :ty (int i32)) :ty bool (then (return (neg (int 1) :ty (int i32)) :ty (int i32))) (else (if (binop == (var n) :ty (int i32) (int 0) :ty (int i32)) :ty bool (then (return (int 0) :ty (int i32))) (else (return (int 1) :ty (int i32))))))))
+(tfn main (params ) void (body (expr-stmt (builtin-call println (call ex_abs (neg (int 7) :ty (int i32)) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_abs (int 3) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_classify (neg (int 5) :ty (int i32)) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_classify (int 0) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_classify (int 42) :ty (int i32)) :ty (int i32)) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

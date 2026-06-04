@@ -1,0 +1,5 @@
+;; exile-ast-dump v1 examples/pipe.exl
+(fn dbl (params (param x (int i32))) (int i32) (body (tail (binop + (var x) (var x)))))
+(fn inc (params (param x (int i32))) (int i32) (body (tail (binop + (var x) (int 1)))))
+(fn clamp (params (param x (int i32)) (param lo (int i32)) (param hi (int i32))) (int i32) (body (tail (if (binop < (var x) (var lo)) (then (tail (var lo))) (else (tail (if (binop > (var x) (var hi)) (then (tail (var hi))) (else (tail (var x))))))))))
+(fn main (params ) void (body (expr-stmt (call println (call dbl (int 5)))) (expr-stmt (call println (call clamp (int 7) (int 0) (int 10)))) (expr-stmt (call println (call clamp (int 42) (int 0) (int 10)))) (let r (call dbl (call inc (call dbl (int 3))))) (expr-stmt (call println (var r))) (expr-stmt (call println (binop + (int 2) (call dbl (int 3)))))))

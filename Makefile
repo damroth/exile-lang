@@ -168,6 +168,132 @@ rebaseline-host-%: host-%
 
 rebaseline-host: $(HOST_EXAMPLES:%=rebaseline-host-%)
 
+# ===== Self-host bring-up Faza −1 — differential-harness golden corpus =====
+#
+# Three canonical dumps per example, committed under tests/golden/.
+# The OCaml exilc is the oracle; the future exile port aims to
+# produce byte-identical output (`make selfhost-diff` becomes the
+# port's regression test).  Run `make selfhost-corpus` to regen
+# after an intentional format change or when adding an example.
+#
+# Token and AST dumps work on every example out of the box.  IR
+# dumps run the full typecheck so any example that wouldn't
+# host-compile cleanly also wouldn't carry an IR golden — we keep
+# the union view here and let `selfhost-diff-ir` surface the
+# mismatch if any.  `multi_file` lives in a subdir and uses a
+# bespoke entry path — out of the flat corpus for v1.
+
+SELFHOST_GOLDEN := tests/golden
+SELFHOST_TOKENS := $(SELFHOST_GOLDEN)/tokens
+SELFHOST_AST    := $(SELFHOST_GOLDEN)/ast
+SELFHOST_IR     := $(SELFHOST_GOLDEN)/ir
+
+.PHONY: selfhost-corpus selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
+.PHONY: selfhost-diff selfhost-diff-tokens selfhost-diff-ast selfhost-diff-ir
+.PHONY: selfhost-corpus-% selfhost-diff-%
+
+selfhost-corpus: selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
+
+selfhost-corpus-tokens: build
+	@mkdir -p $(SELFHOST_TOKENS)
+	@for name in $(EXAMPLE_NAMES); do \
+		$(EXILE) --emit-tokens -o $(SELFHOST_TOKENS)/$$name.tokens examples/$$name.exl; \
+	done
+	@echo "selfhost-corpus-tokens: wrote $(words $(EXAMPLE_NAMES)) dumps"
+
+selfhost-corpus-ast: build
+	@mkdir -p $(SELFHOST_AST)
+	@for name in $(EXAMPLE_NAMES); do \
+		$(EXILE) --emit-ast -o $(SELFHOST_AST)/$$name.ast examples/$$name.exl; \
+	done
+	@echo "selfhost-corpus-ast: wrote $(words $(EXAMPLE_NAMES)) dumps"
+
+selfhost-corpus-ir: build
+	@mkdir -p $(SELFHOST_IR)
+	@for name in $(EXAMPLE_NAMES); do \
+		$(EXILE) --emit-typed-ir --user-only -o $(SELFHOST_IR)/$$name.ir examples/$$name.exl; \
+	done
+	@echo "selfhost-corpus-ir: wrote $(words $(EXAMPLE_NAMES)) dumps"
+
+# Per-example regen — useful when iterating on one example without
+# rebuilding the whole 66-file corpus.
+selfhost-corpus-%: examples/%.exl build
+	@mkdir -p $(SELFHOST_TOKENS) $(SELFHOST_AST) $(SELFHOST_IR)
+	$(EXILE) --emit-tokens               -o $(SELFHOST_TOKENS)/$*.tokens $<
+	$(EXILE) --emit-ast                  -o $(SELFHOST_AST)/$*.ast       $<
+	$(EXILE) --emit-typed-ir --user-only -o $(SELFHOST_IR)/$*.ir         $<
+
+# Verify the OCaml emitter still produces the committed corpus
+# byte-for-byte.  Any drift is either an intentional format change
+# (rerun `selfhost-corpus`) or a regression in the OCaml emitter.
+# Once the exile port lands, the port runs through these same
+# targets — drift then signals a port-vs-oracle bug.
+selfhost-diff: selfhost-diff-tokens selfhost-diff-ast selfhost-diff-ir
+
+selfhost-diff-tokens: build
+	@fail=0; \
+	for name in $(EXAMPLE_NAMES); do \
+		actual=$$(mktemp); \
+		$(EXILE) --emit-tokens examples/$$name.exl > $$actual 2>/dev/null; \
+		if [ ! -f $(SELFHOST_TOKENS)/$$name.tokens ]; then \
+			echo "selfhost-diff-tokens: missing $(SELFHOST_TOKENS)/$$name.tokens"; \
+			fail=1; \
+		elif ! diff -q $(SELFHOST_TOKENS)/$$name.tokens $$actual >/dev/null; then \
+			echo "selfhost-diff-tokens: drift $$name"; \
+			diff $(SELFHOST_TOKENS)/$$name.tokens $$actual | head -10; \
+			fail=1; \
+		fi; \
+		rm $$actual; \
+	done; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-diff-tokens: clean"; else exit 1; fi
+
+selfhost-diff-ast: build
+	@fail=0; \
+	for name in $(EXAMPLE_NAMES); do \
+		actual=$$(mktemp); \
+		$(EXILE) --emit-ast examples/$$name.exl > $$actual 2>/dev/null; \
+		if [ ! -f $(SELFHOST_AST)/$$name.ast ]; then \
+			echo "selfhost-diff-ast: missing $(SELFHOST_AST)/$$name.ast"; \
+			fail=1; \
+		elif ! diff -q $(SELFHOST_AST)/$$name.ast $$actual >/dev/null; then \
+			echo "selfhost-diff-ast: drift $$name"; \
+			diff $(SELFHOST_AST)/$$name.ast $$actual | head -10; \
+			fail=1; \
+		fi; \
+		rm $$actual; \
+	done; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-diff-ast: clean"; else exit 1; fi
+
+selfhost-diff-ir: build
+	@fail=0; \
+	for name in $(EXAMPLE_NAMES); do \
+		actual=$$(mktemp); \
+		$(EXILE) --emit-typed-ir --user-only examples/$$name.exl > $$actual 2>/dev/null; \
+		if [ ! -f $(SELFHOST_IR)/$$name.ir ]; then \
+			echo "selfhost-diff-ir: missing $(SELFHOST_IR)/$$name.ir"; \
+			fail=1; \
+		elif ! diff -q $(SELFHOST_IR)/$$name.ir $$actual >/dev/null; then \
+			echo "selfhost-diff-ir: drift $$name"; \
+			diff $(SELFHOST_IR)/$$name.ir $$actual | head -10; \
+			fail=1; \
+		fi; \
+		rm $$actual; \
+	done; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-diff-ir: clean"; else exit 1; fi
+
+# Per-example diff across all three forms.  Convenient for chasing
+# down a single example's drift.
+selfhost-diff-%: examples/%.exl build
+	@actual=$$(mktemp); \
+	$(EXILE) --emit-tokens $< > $$actual; \
+	diff $(SELFHOST_TOKENS)/$*.tokens $$actual && \
+	$(EXILE) --emit-ast $< > $$actual; \
+	diff $(SELFHOST_AST)/$*.ast $$actual && \
+	$(EXILE) --emit-typed-ir --user-only $< > $$actual; \
+	diff $(SELFHOST_IR)/$*.ir $$actual && \
+	rm $$actual && \
+	echo "selfhost-diff-$*: clean"
+
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io
 # -u <user> --password-stdin`).  Override owner/tag via env, e.g.

@@ -1,0 +1,126 @@
+;; exile-tokens-dump v1 examples/modules.exl
+Mod @examples/modules.exl:1:1
+(Ident math) @examples/modules.exl:1:5
+LBrace @examples/modules.exl:1:10
+Pub @examples/modules.exl:2:5
+Fn @examples/modules.exl:2:9
+(Ident double) @examples/modules.exl:2:12
+LParen @examples/modules.exl:2:18
+(Ident n) @examples/modules.exl:2:19
+Colon @examples/modules.exl:2:20
+(Ident int) @examples/modules.exl:2:22
+RParen @examples/modules.exl:2:25
+Arrow @examples/modules.exl:2:27
+(Ident int) @examples/modules.exl:2:30
+LBrace @examples/modules.exl:2:34
+Return @examples/modules.exl:3:9
+(Ident n) @examples/modules.exl:3:16
+Star @examples/modules.exl:3:18
+(Int 2) @examples/modules.exl:3:20
+Semicolon @examples/modules.exl:3:21
+RBrace @examples/modules.exl:4:5
+Fn @examples/modules.exl:6:5
+(Ident bump) @examples/modules.exl:6:8
+LParen @examples/modules.exl:6:12
+(Ident n) @examples/modules.exl:6:13
+Colon @examples/modules.exl:6:14
+(Ident int) @examples/modules.exl:6:16
+RParen @examples/modules.exl:6:19
+Arrow @examples/modules.exl:6:21
+(Ident int) @examples/modules.exl:6:24
+LBrace @examples/modules.exl:6:28
+Return @examples/modules.exl:7:9
+(Ident n) @examples/modules.exl:7:16
+Plus @examples/modules.exl:7:18
+(Int 1) @examples/modules.exl:7:20
+Semicolon @examples/modules.exl:7:21
+RBrace @examples/modules.exl:8:5
+Pub @examples/modules.exl:10:5
+Fn @examples/modules.exl:10:9
+(Ident double_then_bump) @examples/modules.exl:10:12
+LParen @examples/modules.exl:10:28
+(Ident n) @examples/modules.exl:10:29
+Colon @examples/modules.exl:10:30
+(Ident int) @examples/modules.exl:10:32
+RParen @examples/modules.exl:10:35
+Arrow @examples/modules.exl:10:37
+(Ident int) @examples/modules.exl:10:40
+LBrace @examples/modules.exl:10:44
+Return @examples/modules.exl:11:9
+(Ident bump) @examples/modules.exl:11:16
+LParen @examples/modules.exl:11:20
+(Ident double) @examples/modules.exl:11:21
+LParen @examples/modules.exl:11:27
+(Ident n) @examples/modules.exl:11:28
+RParen @examples/modules.exl:11:29
+RParen @examples/modules.exl:11:30
+Semicolon @examples/modules.exl:11:31
+RBrace @examples/modules.exl:12:5
+RBrace @examples/modules.exl:13:1
+Mod @examples/modules.exl:15:1
+(Ident greet) @examples/modules.exl:15:5
+LBrace @examples/modules.exl:15:11
+Pub @examples/modules.exl:16:5
+Fn @examples/modules.exl:16:9
+(Ident hi) @examples/modules.exl:16:12
+LParen @examples/modules.exl:16:14
+(Ident name) @examples/modules.exl:16:15
+Colon @examples/modules.exl:16:19
+(Ident str) @examples/modules.exl:16:21
+RParen @examples/modules.exl:16:24
+LBrace @examples/modules.exl:16:26
+(Ident println) @examples/modules.exl:17:9
+LParen @examples/modules.exl:17:16
+(Ident name) @examples/modules.exl:17:17
+RParen @examples/modules.exl:17:21
+Semicolon @examples/modules.exl:17:22
+RBrace @examples/modules.exl:18:5
+RBrace @examples/modules.exl:19:1
+Pub @examples/modules.exl:25:1
+Use @examples/modules.exl:25:5
+(Ident math) @examples/modules.exl:25:9
+DoubleColon @examples/modules.exl:25:13
+(Ident double) @examples/modules.exl:25:15
+Semicolon @examples/modules.exl:25:21
+Fn @examples/modules.exl:27:1
+(Ident main) @examples/modules.exl:27:4
+LParen @examples/modules.exl:27:8
+RParen @examples/modules.exl:27:9
+LBrace @examples/modules.exl:27:11
+(Ident println) @examples/modules.exl:28:5
+LParen @examples/modules.exl:28:12
+(Ident math) @examples/modules.exl:28:13
+DoubleColon @examples/modules.exl:28:17
+(Ident double) @examples/modules.exl:28:19
+LParen @examples/modules.exl:28:25
+(Int 21) @examples/modules.exl:28:26
+RParen @examples/modules.exl:28:28
+RParen @examples/modules.exl:28:29
+Semicolon @examples/modules.exl:28:30
+(Ident println) @examples/modules.exl:29:5
+LParen @examples/modules.exl:29:12
+(Ident math) @examples/modules.exl:29:13
+DoubleColon @examples/modules.exl:29:17
+(Ident double_then_bump) @examples/modules.exl:29:19
+LParen @examples/modules.exl:29:35
+(Int 10) @examples/modules.exl:29:36
+RParen @examples/modules.exl:29:38
+RParen @examples/modules.exl:29:39
+Semicolon @examples/modules.exl:29:40
+(Ident println) @examples/modules.exl:30:5
+LParen @examples/modules.exl:30:12
+(Ident double) @examples/modules.exl:30:13
+LParen @examples/modules.exl:30:19
+(Int 15) @examples/modules.exl:30:20
+RParen @examples/modules.exl:30:22
+RParen @examples/modules.exl:30:23
+Semicolon @examples/modules.exl:30:24
+(Ident greet) @examples/modules.exl:31:5
+DoubleColon @examples/modules.exl:31:10
+(Ident hi) @examples/modules.exl:31:12
+LParen @examples/modules.exl:31:14
+(String "hello from modules") @examples/modules.exl:31:15
+RParen @examples/modules.exl:31:35
+Semicolon @examples/modules.exl:31:36
+RBrace @examples/modules.exl:32:1
+Eof @examples/modules.exl:33:1

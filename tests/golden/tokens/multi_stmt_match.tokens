@@ -1,0 +1,229 @@
+;; exile-tokens-dump v1 examples/multi_stmt_match.exl
+Enum @examples/multi_stmt_match.exl:13:1
+(Ident Shape) @examples/multi_stmt_match.exl:13:6
+LBrace @examples/multi_stmt_match.exl:13:12
+(Ident Square) @examples/multi_stmt_match.exl:14:5
+LParen @examples/multi_stmt_match.exl:14:11
+(Ident int) @examples/multi_stmt_match.exl:14:12
+RParen @examples/multi_stmt_match.exl:14:15
+Pipe @examples/multi_stmt_match.exl:15:5
+(Ident Circle) @examples/multi_stmt_match.exl:15:7
+LParen @examples/multi_stmt_match.exl:15:13
+(Ident int) @examples/multi_stmt_match.exl:15:14
+RParen @examples/multi_stmt_match.exl:15:17
+Pipe @examples/multi_stmt_match.exl:16:5
+(Ident Rect) @examples/multi_stmt_match.exl:16:7
+LParen @examples/multi_stmt_match.exl:16:11
+(Ident int) @examples/multi_stmt_match.exl:16:12
+Comma @examples/multi_stmt_match.exl:16:15
+(Ident int) @examples/multi_stmt_match.exl:16:17
+RParen @examples/multi_stmt_match.exl:16:20
+RBrace @examples/multi_stmt_match.exl:17:1
+Fn @examples/multi_stmt_match.exl:19:1
+(Ident area) @examples/multi_stmt_match.exl:19:4
+LParen @examples/multi_stmt_match.exl:19:8
+(Ident s) @examples/multi_stmt_match.exl:19:9
+Colon @examples/multi_stmt_match.exl:19:10
+(Ident Shape) @examples/multi_stmt_match.exl:19:12
+RParen @examples/multi_stmt_match.exl:19:17
+Arrow @examples/multi_stmt_match.exl:19:19
+(Ident int) @examples/multi_stmt_match.exl:19:22
+LBrace @examples/multi_stmt_match.exl:19:26
+Match @examples/multi_stmt_match.exl:20:5
+(Ident s) @examples/multi_stmt_match.exl:20:11
+LBrace @examples/multi_stmt_match.exl:20:13
+(Ident Shape) @examples/multi_stmt_match.exl:21:9
+DoubleColon @examples/multi_stmt_match.exl:21:14
+(Ident Square) @examples/multi_stmt_match.exl:21:16
+LParen @examples/multi_stmt_match.exl:21:22
+(Ident side) @examples/multi_stmt_match.exl:21:23
+RParen @examples/multi_stmt_match.exl:21:27
+FatArrow @examples/multi_stmt_match.exl:21:29
+LBrace @examples/multi_stmt_match.exl:21:32
+Let @examples/multi_stmt_match.exl:22:13
+(Ident sq) @examples/multi_stmt_match.exl:22:17
+Eq @examples/multi_stmt_match.exl:22:20
+(Ident side) @examples/multi_stmt_match.exl:22:22
+Star @examples/multi_stmt_match.exl:22:27
+(Ident side) @examples/multi_stmt_match.exl:22:29
+Semicolon @examples/multi_stmt_match.exl:22:33
+(Ident sq) @examples/multi_stmt_match.exl:23:13
+RBrace @examples/multi_stmt_match.exl:24:9
+Pipe @examples/multi_stmt_match.exl:25:9
+(Ident Shape) @examples/multi_stmt_match.exl:25:11
+DoubleColon @examples/multi_stmt_match.exl:25:16
+(Ident Circle) @examples/multi_stmt_match.exl:25:18
+LParen @examples/multi_stmt_match.exl:25:24
+(Ident r) @examples/multi_stmt_match.exl:25:25
+RParen @examples/multi_stmt_match.exl:25:26
+FatArrow @examples/multi_stmt_match.exl:25:28
+LBrace @examples/multi_stmt_match.exl:25:31
+Let @examples/multi_stmt_match.exl:27:13
+(Ident r2) @examples/multi_stmt_match.exl:27:17
+Eq @examples/multi_stmt_match.exl:27:20
+(Ident r) @examples/multi_stmt_match.exl:27:22
+Star @examples/multi_stmt_match.exl:27:24
+(Ident r) @examples/multi_stmt_match.exl:27:26
+Semicolon @examples/multi_stmt_match.exl:27:27
+LParen @examples/multi_stmt_match.exl:28:13
+(Ident r2) @examples/multi_stmt_match.exl:28:14
+Star @examples/multi_stmt_match.exl:28:17
+(Int 314) @examples/multi_stmt_match.exl:28:19
+RParen @examples/multi_stmt_match.exl:28:22
+Slash @examples/multi_stmt_match.exl:28:24
+(Int 100) @examples/multi_stmt_match.exl:28:26
+RBrace @examples/multi_stmt_match.exl:29:9
+Pipe @examples/multi_stmt_match.exl:30:9
+(Ident Shape) @examples/multi_stmt_match.exl:30:11
+DoubleColon @examples/multi_stmt_match.exl:30:16
+(Ident Rect) @examples/multi_stmt_match.exl:30:18
+LParen @examples/multi_stmt_match.exl:30:22
+(Ident w) @examples/multi_stmt_match.exl:30:23
+Comma @examples/multi_stmt_match.exl:30:24
+(Ident h) @examples/multi_stmt_match.exl:30:26
+RParen @examples/multi_stmt_match.exl:30:27
+FatArrow @examples/multi_stmt_match.exl:30:29
+(Ident w) @examples/multi_stmt_match.exl:30:32
+Star @examples/multi_stmt_match.exl:30:34
+(Ident h) @examples/multi_stmt_match.exl:30:36
+RBrace @examples/multi_stmt_match.exl:31:5
+RBrace @examples/multi_stmt_match.exl:32:1
+Fn @examples/multi_stmt_match.exl:34:1
+(Ident describe) @examples/multi_stmt_match.exl:34:4
+LParen @examples/multi_stmt_match.exl:34:12
+(Ident s) @examples/multi_stmt_match.exl:34:13
+Colon @examples/multi_stmt_match.exl:34:14
+(Ident Shape) @examples/multi_stmt_match.exl:34:16
+RParen @examples/multi_stmt_match.exl:34:21
+LBrace @examples/multi_stmt_match.exl:34:23
+Match @examples/multi_stmt_match.exl:35:5
+(Ident s) @examples/multi_stmt_match.exl:35:11
+LBrace @examples/multi_stmt_match.exl:35:13
+(Ident Shape) @examples/multi_stmt_match.exl:36:9
+DoubleColon @examples/multi_stmt_match.exl:36:14
+(Ident Square) @examples/multi_stmt_match.exl:36:16
+LParen @examples/multi_stmt_match.exl:36:22
+(Ident side) @examples/multi_stmt_match.exl:36:23
+RParen @examples/multi_stmt_match.exl:36:27
+FatArrow @examples/multi_stmt_match.exl:36:29
+LBrace @examples/multi_stmt_match.exl:36:32
+(Ident println) @examples/multi_stmt_match.exl:37:13
+LParen @examples/multi_stmt_match.exl:37:20
+(Int 1) @examples/multi_stmt_match.exl:37:21
+RParen @examples/multi_stmt_match.exl:37:22
+Semicolon @examples/multi_stmt_match.exl:37:23
+(Ident println) @examples/multi_stmt_match.exl:38:13
+LParen @examples/multi_stmt_match.exl:38:20
+(Ident side) @examples/multi_stmt_match.exl:38:21
+RParen @examples/multi_stmt_match.exl:38:25
+Semicolon @examples/multi_stmt_match.exl:38:26
+RBrace @examples/multi_stmt_match.exl:39:9
+Pipe @examples/multi_stmt_match.exl:40:9
+(Ident Shape) @examples/multi_stmt_match.exl:40:11
+DoubleColon @examples/multi_stmt_match.exl:40:16
+(Ident Circle) @examples/multi_stmt_match.exl:40:18
+LParen @examples/multi_stmt_match.exl:40:24
+(Ident r) @examples/multi_stmt_match.exl:40:25
+RParen @examples/multi_stmt_match.exl:40:26
+FatArrow @examples/multi_stmt_match.exl:40:28
+LBrace @examples/multi_stmt_match.exl:40:31
+(Ident println) @examples/multi_stmt_match.exl:41:13
+LParen @examples/multi_stmt_match.exl:41:20
+(Int 2) @examples/multi_stmt_match.exl:41:21
+RParen @examples/multi_stmt_match.exl:41:22
+Semicolon @examples/multi_stmt_match.exl:41:23
+(Ident println) @examples/multi_stmt_match.exl:42:13
+LParen @examples/multi_stmt_match.exl:42:20
+(Ident r) @examples/multi_stmt_match.exl:42:21
+RParen @examples/multi_stmt_match.exl:42:22
+Semicolon @examples/multi_stmt_match.exl:42:23
+RBrace @examples/multi_stmt_match.exl:43:9
+Pipe @examples/multi_stmt_match.exl:44:9
+(Ident Shape) @examples/multi_stmt_match.exl:44:11
+DoubleColon @examples/multi_stmt_match.exl:44:16
+(Ident Rect) @examples/multi_stmt_match.exl:44:18
+LParen @examples/multi_stmt_match.exl:44:22
+(Ident w) @examples/multi_stmt_match.exl:44:23
+Comma @examples/multi_stmt_match.exl:44:24
+(Ident h) @examples/multi_stmt_match.exl:44:26
+RParen @examples/multi_stmt_match.exl:44:27
+FatArrow @examples/multi_stmt_match.exl:44:29
+LBrace @examples/multi_stmt_match.exl:44:32
+(Ident println) @examples/multi_stmt_match.exl:45:13
+LParen @examples/multi_stmt_match.exl:45:20
+(Int 3) @examples/multi_stmt_match.exl:45:21
+RParen @examples/multi_stmt_match.exl:45:22
+Semicolon @examples/multi_stmt_match.exl:45:23
+(Ident println) @examples/multi_stmt_match.exl:46:13
+LParen @examples/multi_stmt_match.exl:46:20
+(Ident w) @examples/multi_stmt_match.exl:46:21
+RParen @examples/multi_stmt_match.exl:46:22
+Semicolon @examples/multi_stmt_match.exl:46:23
+(Ident println) @examples/multi_stmt_match.exl:47:13
+LParen @examples/multi_stmt_match.exl:47:20
+(Ident h) @examples/multi_stmt_match.exl:47:21
+RParen @examples/multi_stmt_match.exl:47:22
+Semicolon @examples/multi_stmt_match.exl:47:23
+RBrace @examples/multi_stmt_match.exl:48:9
+RBrace @examples/multi_stmt_match.exl:49:5
+RBrace @examples/multi_stmt_match.exl:50:1
+Fn @examples/multi_stmt_match.exl:52:1
+(Ident main) @examples/multi_stmt_match.exl:52:4
+LParen @examples/multi_stmt_match.exl:52:8
+RParen @examples/multi_stmt_match.exl:52:9
+LBrace @examples/multi_stmt_match.exl:52:11
+(Ident println) @examples/multi_stmt_match.exl:53:5
+LParen @examples/multi_stmt_match.exl:53:12
+(Ident area) @examples/multi_stmt_match.exl:53:13
+LParen @examples/multi_stmt_match.exl:53:17
+(Ident Shape) @examples/multi_stmt_match.exl:53:18
+DoubleColon @examples/multi_stmt_match.exl:53:23
+(Ident Square) @examples/multi_stmt_match.exl:53:25
+LParen @examples/multi_stmt_match.exl:53:31
+(Int 4) @examples/multi_stmt_match.exl:53:32
+RParen @examples/multi_stmt_match.exl:53:33
+RParen @examples/multi_stmt_match.exl:53:34
+RParen @examples/multi_stmt_match.exl:53:35
+Semicolon @examples/multi_stmt_match.exl:53:36
+(Ident println) @examples/multi_stmt_match.exl:54:5
+LParen @examples/multi_stmt_match.exl:54:12
+(Ident area) @examples/multi_stmt_match.exl:54:13
+LParen @examples/multi_stmt_match.exl:54:17
+(Ident Shape) @examples/multi_stmt_match.exl:54:18
+DoubleColon @examples/multi_stmt_match.exl:54:23
+(Ident Circle) @examples/multi_stmt_match.exl:54:25
+LParen @examples/multi_stmt_match.exl:54:31
+(Int 10) @examples/multi_stmt_match.exl:54:32
+RParen @examples/multi_stmt_match.exl:54:34
+RParen @examples/multi_stmt_match.exl:54:35
+RParen @examples/multi_stmt_match.exl:54:36
+Semicolon @examples/multi_stmt_match.exl:54:37
+(Ident println) @examples/multi_stmt_match.exl:55:5
+LParen @examples/multi_stmt_match.exl:55:12
+(Ident area) @examples/multi_stmt_match.exl:55:13
+LParen @examples/multi_stmt_match.exl:55:17
+(Ident Shape) @examples/multi_stmt_match.exl:55:18
+DoubleColon @examples/multi_stmt_match.exl:55:23
+(Ident Rect) @examples/multi_stmt_match.exl:55:25
+LParen @examples/multi_stmt_match.exl:55:29
+(Int 3) @examples/multi_stmt_match.exl:55:30
+Comma @examples/multi_stmt_match.exl:55:31
+(Int 5) @examples/multi_stmt_match.exl:55:33
+RParen @examples/multi_stmt_match.exl:55:34
+RParen @examples/multi_stmt_match.exl:55:35
+RParen @examples/multi_stmt_match.exl:55:36
+Semicolon @examples/multi_stmt_match.exl:55:37
+(Ident describe) @examples/multi_stmt_match.exl:56:5
+LParen @examples/multi_stmt_match.exl:56:13
+(Ident Shape) @examples/multi_stmt_match.exl:56:14
+DoubleColon @examples/multi_stmt_match.exl:56:19
+(Ident Rect) @examples/multi_stmt_match.exl:56:21
+LParen @examples/multi_stmt_match.exl:56:25
+(Int 7) @examples/multi_stmt_match.exl:56:26
+Comma @examples/multi_stmt_match.exl:56:27
+(Int 9) @examples/multi_stmt_match.exl:56:29
+RParen @examples/multi_stmt_match.exl:56:30
+RParen @examples/multi_stmt_match.exl:56:31
+Semicolon @examples/multi_stmt_match.exl:56:32
+RBrace @examples/multi_stmt_match.exl:57:1
+Eof @examples/multi_stmt_match.exl:58:1

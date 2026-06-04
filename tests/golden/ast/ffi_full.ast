@@ -1,0 +1,11 @@
+;; exile-ast-dump v1 examples/ffi_full.exl
+(c-include "ffi_full_stub.h")
+(module raw
+  (extern-type ULONG)
+  (extern-struct Library)
+  (extern-const PRETEND_VERSION (struct ULONG))
+  (extern-const PRETEND_FLAGS (struct ULONG))
+  (fn open_lib extern pub (params (param name str) (param version (struct ULONG))) (ptr (struct Library)))
+  (fn close_lib extern pub (params (param lib (ptr (struct Library)))) void)
+  (fn lib_id extern pub (params (param lib (ptr (struct Library)))) (struct ULONG)))
+(fn main (params ) void (body (let lib (ty (ptr (struct Library))) (call raw::open_lib (string "pretend.library") (var PRETEND_VERSION))) (expr-stmt (call println (cast (call raw::lib_id (var lib)) (int i32)))) (expr-stmt (call println (cast (var PRETEND_FLAGS) (int i32)))) (expr-stmt (call raw::close_lib (var lib)))))

@@ -1,0 +1,5 @@
+;; exile-ast-dump v1 examples/tier.exl
+(fn id (tparams T) (params (param x (struct T))) (struct T) (body (return (var x))))
+(struct Pair (tparams A B) (fields (field fst (struct A)) (field snd (struct B))))
+(enum Maybe (tparams T) (variants (variant Just (struct T)) (variant Nothing)))
+(fn main (params ) void (body (expr-stmt (call println (call id (int 7)))) (let p (struct-lit Pair (field fst (int 42)) (field snd (bool true)))) (expr-stmt (call println (field-access (var p) fst))) (expr-stmt (if (field-access (var p) snd) (then (expr-stmt (call println (int 1)))) (else (expr-stmt (call println (int 0)))))) (let m (ty (struct-app Maybe (int i32))) (call Maybe::Just (int 99))) (tail (match (var m) (arm (pat-variant Maybe::Just (pat-var n)) (call println (var n))) (arm (pat-variant Maybe::Nothing) (call println (neg (int 1))))))))

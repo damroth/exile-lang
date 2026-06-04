@@ -1,0 +1,139 @@
+;; exile-tokens-dump v1 examples/functions.exl
+Fn @examples/functions.exl:1:1
+(Ident add) @examples/functions.exl:1:4
+LParen @examples/functions.exl:1:7
+(Ident a) @examples/functions.exl:1:8
+Colon @examples/functions.exl:1:9
+(Ident int) @examples/functions.exl:1:11
+Comma @examples/functions.exl:1:14
+(Ident b) @examples/functions.exl:1:16
+Colon @examples/functions.exl:1:17
+(Ident int) @examples/functions.exl:1:19
+RParen @examples/functions.exl:1:22
+Arrow @examples/functions.exl:1:24
+(Ident int) @examples/functions.exl:1:27
+LBrace @examples/functions.exl:1:31
+Return @examples/functions.exl:2:5
+(Ident a) @examples/functions.exl:2:12
+Plus @examples/functions.exl:2:14
+(Ident b) @examples/functions.exl:2:16
+Semicolon @examples/functions.exl:2:17
+RBrace @examples/functions.exl:3:1
+Fn @examples/functions.exl:5:1
+(Ident square) @examples/functions.exl:5:4
+LParen @examples/functions.exl:5:10
+(Ident n) @examples/functions.exl:5:11
+Colon @examples/functions.exl:5:12
+(Ident int) @examples/functions.exl:5:14
+RParen @examples/functions.exl:5:17
+Arrow @examples/functions.exl:5:19
+(Ident int) @examples/functions.exl:5:22
+LBrace @examples/functions.exl:5:26
+Return @examples/functions.exl:6:5
+(Ident n) @examples/functions.exl:6:12
+Star @examples/functions.exl:6:14
+(Ident n) @examples/functions.exl:6:16
+Semicolon @examples/functions.exl:6:17
+RBrace @examples/functions.exl:7:1
+Fn @examples/functions.exl:9:1
+(Ident power) @examples/functions.exl:9:4
+LParen @examples/functions.exl:9:9
+(Ident base) @examples/functions.exl:9:10
+Colon @examples/functions.exl:9:14
+(Ident int) @examples/functions.exl:9:16
+Comma @examples/functions.exl:9:19
+(Ident exp) @examples/functions.exl:9:21
+Colon @examples/functions.exl:9:24
+(Ident int) @examples/functions.exl:9:26
+RParen @examples/functions.exl:9:29
+Arrow @examples/functions.exl:9:31
+(Ident int) @examples/functions.exl:9:34
+LBrace @examples/functions.exl:9:38
+Let @examples/functions.exl:10:5
+Mut @examples/functions.exl:10:9
+(Ident result) @examples/functions.exl:10:13
+Eq @examples/functions.exl:10:20
+(Int 1) @examples/functions.exl:10:22
+Semicolon @examples/functions.exl:10:23
+Let @examples/functions.exl:11:5
+Mut @examples/functions.exl:11:9
+(Ident i) @examples/functions.exl:11:13
+Eq @examples/functions.exl:11:15
+(Int 0) @examples/functions.exl:11:17
+Semicolon @examples/functions.exl:11:18
+While @examples/functions.exl:12:5
+(Ident i) @examples/functions.exl:12:11
+Lt @examples/functions.exl:12:13
+(Ident exp) @examples/functions.exl:12:15
+LBrace @examples/functions.exl:12:19
+(Ident result) @examples/functions.exl:13:9
+Eq @examples/functions.exl:13:16
+(Ident result) @examples/functions.exl:13:18
+Star @examples/functions.exl:13:25
+(Ident base) @examples/functions.exl:13:27
+Semicolon @examples/functions.exl:13:31
+(Ident i) @examples/functions.exl:14:9
+Eq @examples/functions.exl:14:11
+(Ident i) @examples/functions.exl:14:13
+Plus @examples/functions.exl:14:15
+(Int 1) @examples/functions.exl:14:17
+Semicolon @examples/functions.exl:14:18
+RBrace @examples/functions.exl:15:5
+Return @examples/functions.exl:16:5
+(Ident result) @examples/functions.exl:16:12
+Semicolon @examples/functions.exl:16:18
+RBrace @examples/functions.exl:17:1
+Fn @examples/functions.exl:19:1
+(Ident greet) @examples/functions.exl:19:4
+LParen @examples/functions.exl:19:9
+(Ident name) @examples/functions.exl:19:10
+Colon @examples/functions.exl:19:14
+(Ident str) @examples/functions.exl:19:16
+RParen @examples/functions.exl:19:19
+LBrace @examples/functions.exl:19:21
+(Ident println) @examples/functions.exl:20:5
+LParen @examples/functions.exl:20:12
+(Ident name) @examples/functions.exl:20:13
+RParen @examples/functions.exl:20:17
+Semicolon @examples/functions.exl:20:18
+RBrace @examples/functions.exl:21:1
+Fn @examples/functions.exl:23:1
+(Ident main) @examples/functions.exl:23:4
+LParen @examples/functions.exl:23:8
+RParen @examples/functions.exl:23:9
+LBrace @examples/functions.exl:23:11
+(Ident println) @examples/functions.exl:24:5
+LParen @examples/functions.exl:24:12
+(Ident add) @examples/functions.exl:24:13
+LParen @examples/functions.exl:24:16
+(Int 3) @examples/functions.exl:24:17
+Comma @examples/functions.exl:24:18
+(Int 4) @examples/functions.exl:24:20
+RParen @examples/functions.exl:24:21
+RParen @examples/functions.exl:24:22
+Semicolon @examples/functions.exl:24:23
+(Ident println) @examples/functions.exl:25:5
+LParen @examples/functions.exl:25:12
+(Ident square) @examples/functions.exl:25:13
+LParen @examples/functions.exl:25:19
+(Int 5) @examples/functions.exl:25:20
+RParen @examples/functions.exl:25:21
+RParen @examples/functions.exl:25:22
+Semicolon @examples/functions.exl:25:23
+(Ident println) @examples/functions.exl:26:5
+LParen @examples/functions.exl:26:12
+(Ident power) @examples/functions.exl:26:13
+LParen @examples/functions.exl:26:18
+(Int 2) @examples/functions.exl:26:19
+Comma @examples/functions.exl:26:20
+(Int 10) @examples/functions.exl:26:22
+RParen @examples/functions.exl:26:24
+RParen @examples/functions.exl:26:25
+Semicolon @examples/functions.exl:26:26
+(Ident greet) @examples/functions.exl:27:5
+LParen @examples/functions.exl:27:10
+(String "hello from functions") @examples/functions.exl:27:11
+RParen @examples/functions.exl:27:33
+Semicolon @examples/functions.exl:27:34
+RBrace @examples/functions.exl:28:1
+Eof @examples/functions.exl:29:1

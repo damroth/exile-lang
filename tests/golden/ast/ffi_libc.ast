@@ -1,0 +1,5 @@
+;; exile-ast-dump v1 examples/ffi_libc.exl
+(module raw
+  (fn putchar extern pub (params (param c (c_int signed))) (c_int signed))
+  (fn print_f extern pub variadic (params (param fmt str)) (c_int signed)))
+(fn main (params ) void (body (expr-stmt (call raw::putchar (int 72))) (expr-stmt (call raw::putchar (int 105))) (expr-stmt (call raw::putchar (int 33))) (expr-stmt (call raw::putchar (int 10))) (expr-stmt (call raw::print_f (string "answer: %d\n") (int 42))) (expr-stmt (call raw::print_f (string "two ints: %d %d\n") (int 7) (int 13)))))

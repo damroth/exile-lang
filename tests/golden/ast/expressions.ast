@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/expressions.exl
+(fn classify (params (param n (int i32))) str (body (tail (if (binop < (var n) (int 0)) (then (tail (string "negative"))) (else (tail (if (binop == (var n) (int 0)) (then (tail (string "zero"))) (else (tail (string "positive"))))))))))
+(fn twice (params (param n (int i32))) (int i32) (body (tail (binop * (var n) (int 2)))))
+(fn main (params ) void (body (let label (if (binop > (int 7) (int 3)) (then (tail (string "big"))) (else (tail (string "small"))))) (expr-stmt (call println (var label))) (expr-stmt (call println (call classify (neg (int 4))))) (expr-stmt (call println (call classify (int 0)))) (expr-stmt (call println (call classify (int 9)))) (expr-stmt (call println (call twice (int 21))))))

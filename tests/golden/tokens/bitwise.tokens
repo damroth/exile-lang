@@ -1,0 +1,113 @@
+;; exile-tokens-dump v1 examples/bitwise.exl
+Fn @examples/bitwise.exl:8:1
+(Ident main) @examples/bitwise.exl:8:4
+LParen @examples/bitwise.exl:8:8
+RParen @examples/bitwise.exl:8:9
+LBrace @examples/bitwise.exl:8:11
+Let @examples/bitwise.exl:9:5
+(Ident read) @examples/bitwise.exl:9:9
+Eq @examples/bitwise.exl:9:15
+(Int 1) @examples/bitwise.exl:9:17
+Shl @examples/bitwise.exl:9:19
+(Int 0) @examples/bitwise.exl:9:22
+Semicolon @examples/bitwise.exl:9:23
+Let @examples/bitwise.exl:10:5
+(Ident write) @examples/bitwise.exl:10:9
+Eq @examples/bitwise.exl:10:15
+(Int 1) @examples/bitwise.exl:10:17
+Shl @examples/bitwise.exl:10:19
+(Int 1) @examples/bitwise.exl:10:22
+Semicolon @examples/bitwise.exl:10:23
+Let @examples/bitwise.exl:11:5
+(Ident exec) @examples/bitwise.exl:11:9
+Eq @examples/bitwise.exl:11:15
+(Int 1) @examples/bitwise.exl:11:17
+Shl @examples/bitwise.exl:11:19
+(Int 2) @examples/bitwise.exl:11:22
+Semicolon @examples/bitwise.exl:11:23
+Let @examples/bitwise.exl:13:5
+(Ident rw) @examples/bitwise.exl:13:9
+Eq @examples/bitwise.exl:13:12
+(Ident read) @examples/bitwise.exl:13:14
+Pipe @examples/bitwise.exl:13:19
+(Ident write) @examples/bitwise.exl:13:21
+Semicolon @examples/bitwise.exl:13:26
+(Ident println) @examples/bitwise.exl:14:5
+LParen @examples/bitwise.exl:14:12
+(Ident rw) @examples/bitwise.exl:14:13
+RParen @examples/bitwise.exl:14:15
+Semicolon @examples/bitwise.exl:14:16
+If @examples/bitwise.exl:17:5
+(Ident rw) @examples/bitwise.exl:17:8
+Amp @examples/bitwise.exl:17:11
+(Ident write) @examples/bitwise.exl:17:13
+EqEq @examples/bitwise.exl:17:19
+(Ident write) @examples/bitwise.exl:17:22
+LBrace @examples/bitwise.exl:17:28
+(Ident println) @examples/bitwise.exl:18:9
+LParen @examples/bitwise.exl:18:16
+(Int 1) @examples/bitwise.exl:18:17
+RParen @examples/bitwise.exl:18:18
+Semicolon @examples/bitwise.exl:18:19
+RBrace @examples/bitwise.exl:19:5
+Else @examples/bitwise.exl:19:7
+LBrace @examples/bitwise.exl:19:12
+(Ident println) @examples/bitwise.exl:20:9
+LParen @examples/bitwise.exl:20:16
+(Int 0) @examples/bitwise.exl:20:17
+RParen @examples/bitwise.exl:20:18
+Semicolon @examples/bitwise.exl:20:19
+RBrace @examples/bitwise.exl:21:5
+Let @examples/bitwise.exl:24:5
+(Ident no_write) @examples/bitwise.exl:24:9
+Eq @examples/bitwise.exl:24:18
+(Ident rw) @examples/bitwise.exl:24:20
+Amp @examples/bitwise.exl:24:23
+Tilde @examples/bitwise.exl:24:25
+(Ident write) @examples/bitwise.exl:24:26
+Semicolon @examples/bitwise.exl:24:31
+(Ident println) @examples/bitwise.exl:25:5
+LParen @examples/bitwise.exl:25:12
+(Ident no_write) @examples/bitwise.exl:25:13
+RParen @examples/bitwise.exl:25:21
+Semicolon @examples/bitwise.exl:25:22
+Let @examples/bitwise.exl:27:5
+(Ident all) @examples/bitwise.exl:27:9
+Eq @examples/bitwise.exl:27:13
+(Ident rw) @examples/bitwise.exl:27:15
+Pipe @examples/bitwise.exl:27:18
+(Ident exec) @examples/bitwise.exl:27:20
+Semicolon @examples/bitwise.exl:27:24
+(Ident println) @examples/bitwise.exl:28:5
+LParen @examples/bitwise.exl:28:12
+(Ident all) @examples/bitwise.exl:28:13
+RParen @examples/bitwise.exl:28:16
+Semicolon @examples/bitwise.exl:28:17
+(Ident println) @examples/bitwise.exl:31:5
+LParen @examples/bitwise.exl:31:12
+(Int 12) @examples/bitwise.exl:31:13
+Caret @examples/bitwise.exl:31:16
+(Int 10) @examples/bitwise.exl:31:18
+RParen @examples/bitwise.exl:31:20
+Semicolon @examples/bitwise.exl:31:21
+(Ident println) @examples/bitwise.exl:32:5
+LParen @examples/bitwise.exl:32:12
+(Int 255) @examples/bitwise.exl:32:13
+Shr @examples/bitwise.exl:32:17
+(Int 4) @examples/bitwise.exl:32:20
+RParen @examples/bitwise.exl:32:21
+Semicolon @examples/bitwise.exl:32:22
+Let @examples/bitwise.exl:35:5
+(Ident idx) @examples/bitwise.exl:35:9
+Eq @examples/bitwise.exl:35:13
+(Int 30) @examples/bitwise.exl:35:15
+Percent @examples/bitwise.exl:35:18
+(Int 8) @examples/bitwise.exl:35:20
+Semicolon @examples/bitwise.exl:35:21
+(Ident println) @examples/bitwise.exl:36:5
+LParen @examples/bitwise.exl:36:12
+(Ident idx) @examples/bitwise.exl:36:13
+RParen @examples/bitwise.exl:36:16
+Semicolon @examples/bitwise.exl:36:17
+RBrace @examples/bitwise.exl:37:1
+Eof @examples/bitwise.exl:38:1

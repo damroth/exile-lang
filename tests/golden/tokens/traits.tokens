@@ -1,0 +1,297 @@
+;; exile-tokens-dump v1 examples/traits.exl
+Trait @examples/traits.exl:19:1
+(Ident Shape) @examples/traits.exl:19:7
+LBrace @examples/traits.exl:19:13
+Fn @examples/traits.exl:20:5
+(Ident area) @examples/traits.exl:20:8
+LParen @examples/traits.exl:20:12
+(Ident self) @examples/traits.exl:20:13
+RParen @examples/traits.exl:20:17
+Arrow @examples/traits.exl:20:19
+(Ident int) @examples/traits.exl:20:22
+Semicolon @examples/traits.exl:20:25
+Fn @examples/traits.exl:21:5
+(Ident perimeter) @examples/traits.exl:21:8
+LParen @examples/traits.exl:21:17
+(Ident self) @examples/traits.exl:21:18
+RParen @examples/traits.exl:21:22
+Arrow @examples/traits.exl:21:24
+(Ident int) @examples/traits.exl:21:27
+Semicolon @examples/traits.exl:21:30
+Fn @examples/traits.exl:24:5
+(Ident bbox) @examples/traits.exl:24:8
+LParen @examples/traits.exl:24:12
+(Ident self) @examples/traits.exl:24:13
+RParen @examples/traits.exl:24:17
+Arrow @examples/traits.exl:24:19
+(Ident int) @examples/traits.exl:24:22
+LBrace @examples/traits.exl:24:26
+(Ident self) @examples/traits.exl:24:28
+Dot @examples/traits.exl:24:32
+(Ident area) @examples/traits.exl:24:33
+LParen @examples/traits.exl:24:37
+RParen @examples/traits.exl:24:38
+Plus @examples/traits.exl:24:40
+(Ident self) @examples/traits.exl:24:42
+Dot @examples/traits.exl:24:46
+(Ident perimeter) @examples/traits.exl:24:47
+LParen @examples/traits.exl:24:56
+RParen @examples/traits.exl:24:57
+RBrace @examples/traits.exl:24:59
+RBrace @examples/traits.exl:25:1
+Struct @examples/traits.exl:27:1
+(Ident Rect) @examples/traits.exl:27:8
+LBrace @examples/traits.exl:27:13
+(Ident w) @examples/traits.exl:27:15
+Colon @examples/traits.exl:27:16
+(Ident int) @examples/traits.exl:27:18
+Comma @examples/traits.exl:27:21
+(Ident h) @examples/traits.exl:27:23
+Colon @examples/traits.exl:27:24
+(Ident int) @examples/traits.exl:27:26
+RBrace @examples/traits.exl:27:30
+Struct @examples/traits.exl:28:1
+(Ident Square) @examples/traits.exl:28:8
+LBrace @examples/traits.exl:28:15
+(Ident side) @examples/traits.exl:28:17
+Colon @examples/traits.exl:28:21
+(Ident int) @examples/traits.exl:28:23
+RBrace @examples/traits.exl:28:27
+Impl @examples/traits.exl:30:1
+(Ident Shape) @examples/traits.exl:30:6
+For @examples/traits.exl:30:12
+(Ident Rect) @examples/traits.exl:30:16
+LBrace @examples/traits.exl:30:21
+Fn @examples/traits.exl:31:5
+(Ident area) @examples/traits.exl:31:8
+LParen @examples/traits.exl:31:12
+(Ident self) @examples/traits.exl:31:13
+RParen @examples/traits.exl:31:17
+Arrow @examples/traits.exl:31:19
+(Ident int) @examples/traits.exl:31:22
+LBrace @examples/traits.exl:31:26
+(Ident self) @examples/traits.exl:31:28
+Dot @examples/traits.exl:31:32
+(Ident w) @examples/traits.exl:31:33
+Star @examples/traits.exl:31:35
+(Ident self) @examples/traits.exl:31:37
+Dot @examples/traits.exl:31:41
+(Ident h) @examples/traits.exl:31:42
+RBrace @examples/traits.exl:31:44
+Fn @examples/traits.exl:32:5
+(Ident perimeter) @examples/traits.exl:32:8
+LParen @examples/traits.exl:32:17
+(Ident self) @examples/traits.exl:32:18
+RParen @examples/traits.exl:32:22
+Arrow @examples/traits.exl:32:24
+(Ident int) @examples/traits.exl:32:27
+LBrace @examples/traits.exl:32:31
+LParen @examples/traits.exl:32:33
+(Ident self) @examples/traits.exl:32:34
+Dot @examples/traits.exl:32:38
+(Ident w) @examples/traits.exl:32:39
+Plus @examples/traits.exl:32:41
+(Ident self) @examples/traits.exl:32:43
+Dot @examples/traits.exl:32:47
+(Ident h) @examples/traits.exl:32:48
+RParen @examples/traits.exl:32:49
+Star @examples/traits.exl:32:51
+(Int 2) @examples/traits.exl:32:53
+RBrace @examples/traits.exl:32:55
+RBrace @examples/traits.exl:33:1
+Impl @examples/traits.exl:35:1
+(Ident Shape) @examples/traits.exl:35:6
+For @examples/traits.exl:35:12
+(Ident Square) @examples/traits.exl:35:16
+LBrace @examples/traits.exl:35:23
+Fn @examples/traits.exl:36:5
+(Ident area) @examples/traits.exl:36:8
+LParen @examples/traits.exl:36:12
+(Ident self) @examples/traits.exl:36:13
+RParen @examples/traits.exl:36:17
+Arrow @examples/traits.exl:36:19
+(Ident int) @examples/traits.exl:36:22
+LBrace @examples/traits.exl:36:26
+(Ident self) @examples/traits.exl:36:28
+Dot @examples/traits.exl:36:32
+(Ident side) @examples/traits.exl:36:33
+Star @examples/traits.exl:36:38
+(Ident self) @examples/traits.exl:36:40
+Dot @examples/traits.exl:36:44
+(Ident side) @examples/traits.exl:36:45
+RBrace @examples/traits.exl:36:50
+Fn @examples/traits.exl:37:5
+(Ident perimeter) @examples/traits.exl:37:8
+LParen @examples/traits.exl:37:17
+(Ident self) @examples/traits.exl:37:18
+RParen @examples/traits.exl:37:22
+Arrow @examples/traits.exl:37:24
+(Ident int) @examples/traits.exl:37:27
+LBrace @examples/traits.exl:37:31
+(Ident self) @examples/traits.exl:37:33
+Dot @examples/traits.exl:37:37
+(Ident side) @examples/traits.exl:37:38
+Star @examples/traits.exl:37:43
+(Int 4) @examples/traits.exl:37:45
+RBrace @examples/traits.exl:37:47
+RBrace @examples/traits.exl:38:1
+Fn @examples/traits.exl:42:1
+(Ident total_area) @examples/traits.exl:42:4
+Lt @examples/traits.exl:42:14
+(Ident T) @examples/traits.exl:42:15
+Colon @examples/traits.exl:42:16
+(Ident Shape) @examples/traits.exl:42:18
+Gt @examples/traits.exl:42:23
+LParen @examples/traits.exl:42:24
+(Ident a) @examples/traits.exl:42:25
+Colon @examples/traits.exl:42:26
+(Ident T) @examples/traits.exl:42:28
+Comma @examples/traits.exl:42:29
+(Ident b) @examples/traits.exl:42:31
+Colon @examples/traits.exl:42:32
+(Ident T) @examples/traits.exl:42:34
+RParen @examples/traits.exl:42:35
+Arrow @examples/traits.exl:42:37
+(Ident int) @examples/traits.exl:42:40
+LBrace @examples/traits.exl:42:44
+(Ident a) @examples/traits.exl:42:46
+Dot @examples/traits.exl:42:47
+(Ident area) @examples/traits.exl:42:48
+LParen @examples/traits.exl:42:52
+RParen @examples/traits.exl:42:53
+Plus @examples/traits.exl:42:55
+(Ident b) @examples/traits.exl:42:57
+Dot @examples/traits.exl:42:58
+(Ident area) @examples/traits.exl:42:59
+LParen @examples/traits.exl:42:63
+RParen @examples/traits.exl:42:64
+RBrace @examples/traits.exl:42:66
+Fn @examples/traits.exl:44:1
+(Ident main) @examples/traits.exl:44:4
+LParen @examples/traits.exl:44:8
+RParen @examples/traits.exl:44:9
+LBrace @examples/traits.exl:44:11
+Let @examples/traits.exl:45:5
+(Ident r) @examples/traits.exl:45:9
+Eq @examples/traits.exl:45:11
+(Ident Rect) @examples/traits.exl:45:13
+LBrace @examples/traits.exl:45:18
+(Ident w) @examples/traits.exl:45:20
+Colon @examples/traits.exl:45:21
+(Int 3) @examples/traits.exl:45:23
+Comma @examples/traits.exl:45:24
+(Ident h) @examples/traits.exl:45:26
+Colon @examples/traits.exl:45:27
+(Int 5) @examples/traits.exl:45:29
+RBrace @examples/traits.exl:45:31
+Semicolon @examples/traits.exl:45:32
+(Ident println) @examples/traits.exl:46:5
+LParen @examples/traits.exl:46:12
+(Ident r) @examples/traits.exl:46:13
+Dot @examples/traits.exl:46:14
+(Ident area) @examples/traits.exl:46:15
+LParen @examples/traits.exl:46:19
+RParen @examples/traits.exl:46:20
+RParen @examples/traits.exl:46:21
+Semicolon @examples/traits.exl:46:22
+(Ident println) @examples/traits.exl:47:5
+LParen @examples/traits.exl:47:12
+(Ident r) @examples/traits.exl:47:13
+Dot @examples/traits.exl:47:14
+(Ident perimeter) @examples/traits.exl:47:15
+LParen @examples/traits.exl:47:24
+RParen @examples/traits.exl:47:25
+RParen @examples/traits.exl:47:26
+Semicolon @examples/traits.exl:47:27
+Let @examples/traits.exl:49:5
+(Ident sq) @examples/traits.exl:49:9
+Eq @examples/traits.exl:49:12
+(Ident Square) @examples/traits.exl:49:14
+LBrace @examples/traits.exl:49:21
+(Ident side) @examples/traits.exl:49:23
+Colon @examples/traits.exl:49:27
+(Int 6) @examples/traits.exl:49:29
+RBrace @examples/traits.exl:49:31
+Semicolon @examples/traits.exl:49:32
+(Ident println) @examples/traits.exl:50:5
+LParen @examples/traits.exl:50:12
+(Ident sq) @examples/traits.exl:50:13
+Dot @examples/traits.exl:50:15
+(Ident area) @examples/traits.exl:50:16
+LParen @examples/traits.exl:50:20
+RParen @examples/traits.exl:50:21
+RParen @examples/traits.exl:50:22
+Semicolon @examples/traits.exl:50:23
+(Ident println) @examples/traits.exl:51:5
+LParen @examples/traits.exl:51:12
+(Ident sq) @examples/traits.exl:51:13
+Dot @examples/traits.exl:51:15
+(Ident perimeter) @examples/traits.exl:51:16
+LParen @examples/traits.exl:51:25
+RParen @examples/traits.exl:51:26
+RParen @examples/traits.exl:51:27
+Semicolon @examples/traits.exl:51:28
+Let @examples/traits.exl:53:5
+(Ident r2) @examples/traits.exl:53:9
+Eq @examples/traits.exl:53:12
+(Ident Rect) @examples/traits.exl:53:14
+LBrace @examples/traits.exl:53:19
+(Ident w) @examples/traits.exl:53:21
+Colon @examples/traits.exl:53:22
+(Int 2) @examples/traits.exl:53:24
+Comma @examples/traits.exl:53:25
+(Ident h) @examples/traits.exl:53:27
+Colon @examples/traits.exl:53:28
+(Int 2) @examples/traits.exl:53:30
+RBrace @examples/traits.exl:53:32
+Semicolon @examples/traits.exl:53:33
+(Ident println) @examples/traits.exl:54:5
+LParen @examples/traits.exl:54:12
+(Ident total_area) @examples/traits.exl:54:13
+LParen @examples/traits.exl:54:23
+(Ident r) @examples/traits.exl:54:24
+Comma @examples/traits.exl:54:25
+(Ident r2) @examples/traits.exl:54:27
+RParen @examples/traits.exl:54:29
+RParen @examples/traits.exl:54:30
+Semicolon @examples/traits.exl:54:31
+Let @examples/traits.exl:56:5
+(Ident sq2) @examples/traits.exl:56:9
+Eq @examples/traits.exl:56:13
+(Ident Square) @examples/traits.exl:56:15
+LBrace @examples/traits.exl:56:22
+(Ident side) @examples/traits.exl:56:24
+Colon @examples/traits.exl:56:28
+(Int 1) @examples/traits.exl:56:30
+RBrace @examples/traits.exl:56:32
+Semicolon @examples/traits.exl:56:33
+(Ident println) @examples/traits.exl:57:5
+LParen @examples/traits.exl:57:12
+(Ident total_area) @examples/traits.exl:57:13
+LParen @examples/traits.exl:57:23
+(Ident sq) @examples/traits.exl:57:24
+Comma @examples/traits.exl:57:26
+(Ident sq2) @examples/traits.exl:57:28
+RParen @examples/traits.exl:57:31
+RParen @examples/traits.exl:57:32
+Semicolon @examples/traits.exl:57:33
+(Ident println) @examples/traits.exl:61:5
+LParen @examples/traits.exl:61:12
+(Ident r) @examples/traits.exl:61:13
+Dot @examples/traits.exl:61:14
+(Ident bbox) @examples/traits.exl:61:15
+LParen @examples/traits.exl:61:19
+RParen @examples/traits.exl:61:20
+RParen @examples/traits.exl:61:21
+Semicolon @examples/traits.exl:61:22
+(Ident println) @examples/traits.exl:62:5
+LParen @examples/traits.exl:62:12
+(Ident sq) @examples/traits.exl:62:13
+Dot @examples/traits.exl:62:15
+(Ident bbox) @examples/traits.exl:62:16
+LParen @examples/traits.exl:62:20
+RParen @examples/traits.exl:62:21
+RParen @examples/traits.exl:62:22
+Semicolon @examples/traits.exl:62:23
+RBrace @examples/traits.exl:63:1
+Eof @examples/traits.exl:64:1

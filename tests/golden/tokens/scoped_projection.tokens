@@ -1,0 +1,200 @@
+;; exile-tokens-dump v1 examples/scoped_projection.exl
+Fn @examples/scoped_projection.exl:30:1
+(Ident bump_each) @examples/scoped_projection.exl:30:4
+LParen @examples/scoped_projection.exl:30:13
+(Ident arr) @examples/scoped_projection.exl:30:14
+Colon @examples/scoped_projection.exl:30:17
+Star @examples/scoped_projection.exl:30:19
+LBracket @examples/scoped_projection.exl:30:20
+(Ident int) @examples/scoped_projection.exl:30:21
+Semicolon @examples/scoped_projection.exl:30:24
+(Int 5) @examples/scoped_projection.exl:30:26
+RBracket @examples/scoped_projection.exl:30:27
+RParen @examples/scoped_projection.exl:30:28
+LBrace @examples/scoped_projection.exl:30:30
+Let @examples/scoped_projection.exl:31:5
+Mut @examples/scoped_projection.exl:31:9
+(Ident i) @examples/scoped_projection.exl:31:13
+Colon @examples/scoped_projection.exl:31:14
+(Ident int) @examples/scoped_projection.exl:31:16
+Eq @examples/scoped_projection.exl:31:20
+(Int 0) @examples/scoped_projection.exl:31:22
+Semicolon @examples/scoped_projection.exl:31:23
+While @examples/scoped_projection.exl:32:5
+(Ident i) @examples/scoped_projection.exl:32:11
+Lt @examples/scoped_projection.exl:32:13
+(Int 5) @examples/scoped_projection.exl:32:15
+LBrace @examples/scoped_projection.exl:32:17
+With @examples/scoped_projection.exl:33:9
+(Ident x) @examples/scoped_projection.exl:33:14
+In @examples/scoped_projection.exl:33:16
+(Ident arr) @examples/scoped_projection.exl:33:19
+LBracket @examples/scoped_projection.exl:33:22
+(Ident i) @examples/scoped_projection.exl:33:23
+RBracket @examples/scoped_projection.exl:33:24
+LBrace @examples/scoped_projection.exl:33:26
+Star @examples/scoped_projection.exl:33:28
+(Ident x) @examples/scoped_projection.exl:33:29
+Eq @examples/scoped_projection.exl:33:31
+Star @examples/scoped_projection.exl:33:33
+(Ident x) @examples/scoped_projection.exl:33:34
+Plus @examples/scoped_projection.exl:33:36
+(Int 1) @examples/scoped_projection.exl:33:38
+Semicolon @examples/scoped_projection.exl:33:39
+RBrace @examples/scoped_projection.exl:33:41
+(Ident i) @examples/scoped_projection.exl:34:9
+Eq @examples/scoped_projection.exl:34:11
+(Ident i) @examples/scoped_projection.exl:34:13
+Plus @examples/scoped_projection.exl:34:15
+(Int 1) @examples/scoped_projection.exl:34:17
+Semicolon @examples/scoped_projection.exl:34:18
+RBrace @examples/scoped_projection.exl:35:5
+RBrace @examples/scoped_projection.exl:36:1
+Fn @examples/scoped_projection.exl:38:1
+(Ident main) @examples/scoped_projection.exl:38:4
+LParen @examples/scoped_projection.exl:38:8
+RParen @examples/scoped_projection.exl:38:9
+LBrace @examples/scoped_projection.exl:38:11
+Let @examples/scoped_projection.exl:39:5
+Mut @examples/scoped_projection.exl:39:9
+(Ident arr) @examples/scoped_projection.exl:39:13
+Colon @examples/scoped_projection.exl:39:16
+LBracket @examples/scoped_projection.exl:39:18
+(Ident int) @examples/scoped_projection.exl:39:19
+Semicolon @examples/scoped_projection.exl:39:22
+(Int 5) @examples/scoped_projection.exl:39:24
+RBracket @examples/scoped_projection.exl:39:25
+Eq @examples/scoped_projection.exl:39:27
+LBracket @examples/scoped_projection.exl:39:29
+(Int 10) @examples/scoped_projection.exl:39:30
+Comma @examples/scoped_projection.exl:39:32
+(Int 20) @examples/scoped_projection.exl:39:34
+Comma @examples/scoped_projection.exl:39:36
+(Int 30) @examples/scoped_projection.exl:39:38
+Comma @examples/scoped_projection.exl:39:40
+(Int 40) @examples/scoped_projection.exl:39:42
+Comma @examples/scoped_projection.exl:39:44
+(Int 50) @examples/scoped_projection.exl:39:46
+RBracket @examples/scoped_projection.exl:39:48
+Semicolon @examples/scoped_projection.exl:39:49
+With @examples/scoped_projection.exl:42:5
+(Ident x) @examples/scoped_projection.exl:42:10
+In @examples/scoped_projection.exl:42:12
+(Ident arr) @examples/scoped_projection.exl:42:15
+LBracket @examples/scoped_projection.exl:42:18
+(Int 2) @examples/scoped_projection.exl:42:19
+RBracket @examples/scoped_projection.exl:42:20
+LBrace @examples/scoped_projection.exl:42:22
+Star @examples/scoped_projection.exl:42:24
+(Ident x) @examples/scoped_projection.exl:42:25
+Eq @examples/scoped_projection.exl:42:27
+(Int 999) @examples/scoped_projection.exl:42:29
+Semicolon @examples/scoped_projection.exl:42:32
+RBrace @examples/scoped_projection.exl:42:34
+(Ident println) @examples/scoped_projection.exl:43:5
+LParen @examples/scoped_projection.exl:43:12
+(Ident arr) @examples/scoped_projection.exl:43:13
+LBracket @examples/scoped_projection.exl:43:16
+(Int 0) @examples/scoped_projection.exl:43:17
+RBracket @examples/scoped_projection.exl:43:18
+RParen @examples/scoped_projection.exl:43:19
+Semicolon @examples/scoped_projection.exl:43:20
+(Ident println) @examples/scoped_projection.exl:44:5
+LParen @examples/scoped_projection.exl:44:12
+(Ident arr) @examples/scoped_projection.exl:44:13
+LBracket @examples/scoped_projection.exl:44:16
+(Int 1) @examples/scoped_projection.exl:44:17
+RBracket @examples/scoped_projection.exl:44:18
+RParen @examples/scoped_projection.exl:44:19
+Semicolon @examples/scoped_projection.exl:44:20
+(Ident println) @examples/scoped_projection.exl:45:5
+LParen @examples/scoped_projection.exl:45:12
+(Ident arr) @examples/scoped_projection.exl:45:13
+LBracket @examples/scoped_projection.exl:45:16
+(Int 2) @examples/scoped_projection.exl:45:17
+RBracket @examples/scoped_projection.exl:45:18
+RParen @examples/scoped_projection.exl:45:19
+Semicolon @examples/scoped_projection.exl:45:20
+(Ident println) @examples/scoped_projection.exl:46:5
+LParen @examples/scoped_projection.exl:46:12
+(Ident arr) @examples/scoped_projection.exl:46:13
+LBracket @examples/scoped_projection.exl:46:16
+(Int 3) @examples/scoped_projection.exl:46:17
+RBracket @examples/scoped_projection.exl:46:18
+RParen @examples/scoped_projection.exl:46:19
+Semicolon @examples/scoped_projection.exl:46:20
+(Ident println) @examples/scoped_projection.exl:47:5
+LParen @examples/scoped_projection.exl:47:12
+(Ident arr) @examples/scoped_projection.exl:47:13
+LBracket @examples/scoped_projection.exl:47:16
+(Int 4) @examples/scoped_projection.exl:47:17
+RBracket @examples/scoped_projection.exl:47:18
+RParen @examples/scoped_projection.exl:47:19
+Semicolon @examples/scoped_projection.exl:47:20
+With @examples/scoped_projection.exl:50:5
+(Ident x) @examples/scoped_projection.exl:50:10
+In @examples/scoped_projection.exl:50:12
+(Ident arr) @examples/scoped_projection.exl:50:15
+LBracket @examples/scoped_projection.exl:50:18
+(Int 0) @examples/scoped_projection.exl:50:19
+RBracket @examples/scoped_projection.exl:50:20
+LBrace @examples/scoped_projection.exl:50:22
+Let @examples/scoped_projection.exl:51:9
+(Ident old) @examples/scoped_projection.exl:51:13
+Eq @examples/scoped_projection.exl:51:17
+Star @examples/scoped_projection.exl:51:19
+(Ident x) @examples/scoped_projection.exl:51:20
+Semicolon @examples/scoped_projection.exl:51:21
+Star @examples/scoped_projection.exl:52:9
+(Ident x) @examples/scoped_projection.exl:52:10
+Eq @examples/scoped_projection.exl:52:12
+(Ident old) @examples/scoped_projection.exl:52:14
+Star @examples/scoped_projection.exl:52:18
+(Int 2) @examples/scoped_projection.exl:52:20
+Semicolon @examples/scoped_projection.exl:52:21
+(Ident println) @examples/scoped_projection.exl:53:9
+LParen @examples/scoped_projection.exl:53:16
+(Ident old) @examples/scoped_projection.exl:53:17
+RParen @examples/scoped_projection.exl:53:20
+Semicolon @examples/scoped_projection.exl:53:21
+RBrace @examples/scoped_projection.exl:54:5
+(Ident println) @examples/scoped_projection.exl:55:5
+LParen @examples/scoped_projection.exl:55:12
+(Ident arr) @examples/scoped_projection.exl:55:13
+LBracket @examples/scoped_projection.exl:55:16
+(Int 0) @examples/scoped_projection.exl:55:17
+RBracket @examples/scoped_projection.exl:55:18
+RParen @examples/scoped_projection.exl:55:19
+Semicolon @examples/scoped_projection.exl:55:20
+(Ident bump_each) @examples/scoped_projection.exl:59:5
+LParen @examples/scoped_projection.exl:59:14
+Amp @examples/scoped_projection.exl:59:15
+(Ident arr) @examples/scoped_projection.exl:59:16
+RParen @examples/scoped_projection.exl:59:19
+Semicolon @examples/scoped_projection.exl:59:20
+(Ident println) @examples/scoped_projection.exl:60:5
+LParen @examples/scoped_projection.exl:60:12
+(Ident arr) @examples/scoped_projection.exl:60:13
+LBracket @examples/scoped_projection.exl:60:16
+(Int 0) @examples/scoped_projection.exl:60:17
+RBracket @examples/scoped_projection.exl:60:18
+RParen @examples/scoped_projection.exl:60:19
+Semicolon @examples/scoped_projection.exl:60:20
+(Ident println) @examples/scoped_projection.exl:61:5
+LParen @examples/scoped_projection.exl:61:12
+(Ident arr) @examples/scoped_projection.exl:61:13
+LBracket @examples/scoped_projection.exl:61:16
+(Int 2) @examples/scoped_projection.exl:61:17
+RBracket @examples/scoped_projection.exl:61:18
+RParen @examples/scoped_projection.exl:61:19
+Semicolon @examples/scoped_projection.exl:61:20
+(Ident println) @examples/scoped_projection.exl:62:5
+LParen @examples/scoped_projection.exl:62:12
+(Ident arr) @examples/scoped_projection.exl:62:13
+LBracket @examples/scoped_projection.exl:62:16
+(Int 4) @examples/scoped_projection.exl:62:17
+RBracket @examples/scoped_projection.exl:62:18
+RParen @examples/scoped_projection.exl:62:19
+Semicolon @examples/scoped_projection.exl:62:20
+RBrace @examples/scoped_projection.exl:63:1
+Eof @examples/scoped_projection.exl:64:1

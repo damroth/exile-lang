@@ -1,0 +1,178 @@
+;; exile-tokens-dump v1 examples/arrays.exl
+Const @examples/arrays.exl:6:1
+(Ident ROWS) @examples/arrays.exl:6:7
+Colon @examples/arrays.exl:6:11
+(Ident int) @examples/arrays.exl:6:13
+Eq @examples/arrays.exl:6:17
+(Int 4) @examples/arrays.exl:6:19
+Semicolon @examples/arrays.exl:6:20
+Fn @examples/arrays.exl:9:1
+(Ident sum) @examples/arrays.exl:9:4
+LParen @examples/arrays.exl:9:7
+(Ident a) @examples/arrays.exl:9:8
+Colon @examples/arrays.exl:9:9
+Star @examples/arrays.exl:9:11
+LBracket @examples/arrays.exl:9:12
+(Ident int) @examples/arrays.exl:9:13
+Semicolon @examples/arrays.exl:9:16
+(Ident ROWS) @examples/arrays.exl:9:18
+RBracket @examples/arrays.exl:9:22
+RParen @examples/arrays.exl:9:23
+Arrow @examples/arrays.exl:9:25
+(Ident int) @examples/arrays.exl:9:28
+LBrace @examples/arrays.exl:9:32
+Let @examples/arrays.exl:10:5
+Mut @examples/arrays.exl:10:9
+(Ident total) @examples/arrays.exl:10:13
+Eq @examples/arrays.exl:10:19
+(Int 0) @examples/arrays.exl:10:21
+Semicolon @examples/arrays.exl:10:22
+Let @examples/arrays.exl:11:5
+Mut @examples/arrays.exl:11:9
+(Ident i) @examples/arrays.exl:11:13
+Eq @examples/arrays.exl:11:15
+(Int 0) @examples/arrays.exl:11:17
+Semicolon @examples/arrays.exl:11:18
+While @examples/arrays.exl:12:5
+(Ident i) @examples/arrays.exl:12:11
+Lt @examples/arrays.exl:12:13
+(Ident ROWS) @examples/arrays.exl:12:15
+LBrace @examples/arrays.exl:12:20
+(Ident total) @examples/arrays.exl:13:9
+Eq @examples/arrays.exl:13:15
+(Ident total) @examples/arrays.exl:13:17
+Plus @examples/arrays.exl:13:23
+LParen @examples/arrays.exl:13:25
+Star @examples/arrays.exl:13:26
+(Ident a) @examples/arrays.exl:13:27
+RParen @examples/arrays.exl:13:28
+LBracket @examples/arrays.exl:13:29
+(Ident i) @examples/arrays.exl:13:30
+RBracket @examples/arrays.exl:13:31
+Semicolon @examples/arrays.exl:13:32
+(Ident i) @examples/arrays.exl:14:9
+Eq @examples/arrays.exl:14:11
+(Ident i) @examples/arrays.exl:14:13
+Plus @examples/arrays.exl:14:15
+(Int 1) @examples/arrays.exl:14:17
+Semicolon @examples/arrays.exl:14:18
+RBrace @examples/arrays.exl:15:5
+(Ident total) @examples/arrays.exl:16:5
+RBrace @examples/arrays.exl:17:1
+Fn @examples/arrays.exl:19:1
+(Ident main) @examples/arrays.exl:19:4
+LParen @examples/arrays.exl:19:8
+RParen @examples/arrays.exl:19:9
+LBrace @examples/arrays.exl:19:11
+Let @examples/arrays.exl:21:5
+Mut @examples/arrays.exl:21:9
+(Ident data) @examples/arrays.exl:21:13
+Colon @examples/arrays.exl:21:17
+LBracket @examples/arrays.exl:21:19
+(Ident int) @examples/arrays.exl:21:20
+Semicolon @examples/arrays.exl:21:23
+(Ident ROWS) @examples/arrays.exl:21:25
+RBracket @examples/arrays.exl:21:29
+Eq @examples/arrays.exl:21:31
+LBracket @examples/arrays.exl:21:33
+(Int 10) @examples/arrays.exl:21:34
+Comma @examples/arrays.exl:21:36
+(Int 20) @examples/arrays.exl:21:38
+Comma @examples/arrays.exl:21:40
+(Int 30) @examples/arrays.exl:21:42
+Comma @examples/arrays.exl:21:44
+(Int 40) @examples/arrays.exl:21:46
+RBracket @examples/arrays.exl:21:48
+Semicolon @examples/arrays.exl:21:49
+(Ident data) @examples/arrays.exl:22:5
+LBracket @examples/arrays.exl:22:9
+(Int 1) @examples/arrays.exl:22:10
+RBracket @examples/arrays.exl:22:11
+Eq @examples/arrays.exl:22:13
+(Int 99) @examples/arrays.exl:22:15
+Semicolon @examples/arrays.exl:22:17
+(Ident println) @examples/arrays.exl:23:5
+LParen @examples/arrays.exl:23:12
+(Ident data) @examples/arrays.exl:23:13
+LBracket @examples/arrays.exl:23:17
+(Int 1) @examples/arrays.exl:23:18
+RBracket @examples/arrays.exl:23:19
+RParen @examples/arrays.exl:23:20
+Semicolon @examples/arrays.exl:23:21
+(Ident println) @examples/arrays.exl:24:5
+LParen @examples/arrays.exl:24:12
+(Ident len) @examples/arrays.exl:24:13
+LParen @examples/arrays.exl:24:16
+(Ident data) @examples/arrays.exl:24:17
+RParen @examples/arrays.exl:24:21
+RParen @examples/arrays.exl:24:22
+Semicolon @examples/arrays.exl:24:23
+(Ident println) @examples/arrays.exl:26:5
+LParen @examples/arrays.exl:26:12
+(Ident sum) @examples/arrays.exl:26:13
+LParen @examples/arrays.exl:26:16
+Amp @examples/arrays.exl:26:17
+(Ident data) @examples/arrays.exl:26:18
+RParen @examples/arrays.exl:26:22
+RParen @examples/arrays.exl:26:23
+Semicolon @examples/arrays.exl:26:24
+Let @examples/arrays.exl:29:5
+(Ident zeros) @examples/arrays.exl:29:9
+Colon @examples/arrays.exl:29:14
+LBracket @examples/arrays.exl:29:16
+(Ident int) @examples/arrays.exl:29:17
+Semicolon @examples/arrays.exl:29:20
+(Int 3) @examples/arrays.exl:29:22
+RBracket @examples/arrays.exl:29:23
+Eq @examples/arrays.exl:29:25
+LBracket @examples/arrays.exl:29:27
+(Int 0) @examples/arrays.exl:29:28
+Semicolon @examples/arrays.exl:29:29
+(Int 3) @examples/arrays.exl:29:31
+RBracket @examples/arrays.exl:29:32
+Semicolon @examples/arrays.exl:29:33
+(Ident println) @examples/arrays.exl:30:5
+LParen @examples/arrays.exl:30:12
+(Ident zeros) @examples/arrays.exl:30:13
+LBracket @examples/arrays.exl:30:18
+(Int 2) @examples/arrays.exl:30:19
+RBracket @examples/arrays.exl:30:20
+RParen @examples/arrays.exl:30:21
+Semicolon @examples/arrays.exl:30:22
+Let @examples/arrays.exl:33:5
+Mut @examples/arrays.exl:33:9
+(Ident copy) @examples/arrays.exl:33:13
+Colon @examples/arrays.exl:33:17
+LBracket @examples/arrays.exl:33:19
+(Ident int) @examples/arrays.exl:33:20
+Semicolon @examples/arrays.exl:33:23
+(Ident ROWS) @examples/arrays.exl:33:25
+RBracket @examples/arrays.exl:33:29
+Eq @examples/arrays.exl:33:31
+(Ident data) @examples/arrays.exl:33:33
+Semicolon @examples/arrays.exl:33:37
+(Ident copy) @examples/arrays.exl:34:5
+LBracket @examples/arrays.exl:34:9
+(Int 0) @examples/arrays.exl:34:10
+RBracket @examples/arrays.exl:34:11
+Eq @examples/arrays.exl:34:13
+(Int 7) @examples/arrays.exl:34:15
+Semicolon @examples/arrays.exl:34:16
+(Ident println) @examples/arrays.exl:35:5
+LParen @examples/arrays.exl:35:12
+(Ident data) @examples/arrays.exl:35:13
+LBracket @examples/arrays.exl:35:17
+(Int 0) @examples/arrays.exl:35:18
+RBracket @examples/arrays.exl:35:19
+RParen @examples/arrays.exl:35:20
+Semicolon @examples/arrays.exl:35:21
+(Ident println) @examples/arrays.exl:36:5
+LParen @examples/arrays.exl:36:12
+(Ident copy) @examples/arrays.exl:36:13
+LBracket @examples/arrays.exl:36:17
+(Int 0) @examples/arrays.exl:36:18
+RBracket @examples/arrays.exl:36:19
+RParen @examples/arrays.exl:36:20
+Semicolon @examples/arrays.exl:36:21
+RBrace @examples/arrays.exl:37:1
+Eof @examples/arrays.exl:38:1

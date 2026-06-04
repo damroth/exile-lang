@@ -1,0 +1,222 @@
+;; exile-tokens-dump v1 examples/for_iterator.exl
+Struct @examples/for_iterator.exl:12:1
+(Ident Countdown) @examples/for_iterator.exl:12:8
+LBrace @examples/for_iterator.exl:12:18
+(Ident n) @examples/for_iterator.exl:12:20
+Colon @examples/for_iterator.exl:12:21
+(Ident int) @examples/for_iterator.exl:12:23
+RBrace @examples/for_iterator.exl:12:27
+Impl @examples/for_iterator.exl:14:1
+(Ident Iterator) @examples/for_iterator.exl:14:6
+For @examples/for_iterator.exl:14:15
+(Ident Countdown) @examples/for_iterator.exl:14:19
+LBrace @examples/for_iterator.exl:14:29
+Type @examples/for_iterator.exl:15:5
+(Ident Item) @examples/for_iterator.exl:15:10
+Eq @examples/for_iterator.exl:15:15
+(Ident int) @examples/for_iterator.exl:15:17
+Semicolon @examples/for_iterator.exl:15:20
+Fn @examples/for_iterator.exl:16:5
+(Ident next) @examples/for_iterator.exl:16:8
+LParen @examples/for_iterator.exl:16:12
+Star @examples/for_iterator.exl:16:13
+(Ident self) @examples/for_iterator.exl:16:14
+RParen @examples/for_iterator.exl:16:18
+Arrow @examples/for_iterator.exl:16:20
+(Ident Option) @examples/for_iterator.exl:16:23
+Lt @examples/for_iterator.exl:16:29
+(Ident int) @examples/for_iterator.exl:16:30
+Gt @examples/for_iterator.exl:16:33
+LBrace @examples/for_iterator.exl:16:35
+If @examples/for_iterator.exl:17:9
+(Ident self) @examples/for_iterator.exl:17:12
+Dot @examples/for_iterator.exl:17:16
+(Ident n) @examples/for_iterator.exl:17:17
+LtEq @examples/for_iterator.exl:17:19
+(Int 0) @examples/for_iterator.exl:17:22
+LBrace @examples/for_iterator.exl:17:24
+Return @examples/for_iterator.exl:17:26
+(Ident Option) @examples/for_iterator.exl:17:33
+DoubleColon @examples/for_iterator.exl:17:39
+(Ident None) @examples/for_iterator.exl:17:41
+Semicolon @examples/for_iterator.exl:17:45
+RBrace @examples/for_iterator.exl:17:47
+Let @examples/for_iterator.exl:18:9
+(Ident v) @examples/for_iterator.exl:18:13
+Eq @examples/for_iterator.exl:18:15
+(Ident self) @examples/for_iterator.exl:18:17
+Dot @examples/for_iterator.exl:18:21
+(Ident n) @examples/for_iterator.exl:18:22
+Semicolon @examples/for_iterator.exl:18:23
+(Ident self) @examples/for_iterator.exl:19:9
+Dot @examples/for_iterator.exl:19:13
+(Ident n) @examples/for_iterator.exl:19:14
+Eq @examples/for_iterator.exl:19:16
+(Ident self) @examples/for_iterator.exl:19:18
+Dot @examples/for_iterator.exl:19:22
+(Ident n) @examples/for_iterator.exl:19:23
+Minus @examples/for_iterator.exl:19:25
+(Int 1) @examples/for_iterator.exl:19:27
+Semicolon @examples/for_iterator.exl:19:28
+(Ident Option) @examples/for_iterator.exl:20:9
+DoubleColon @examples/for_iterator.exl:20:15
+(Ident Some) @examples/for_iterator.exl:20:17
+LParen @examples/for_iterator.exl:20:21
+(Ident v) @examples/for_iterator.exl:20:22
+RParen @examples/for_iterator.exl:20:23
+RBrace @examples/for_iterator.exl:21:5
+RBrace @examples/for_iterator.exl:22:1
+Struct @examples/for_iterator.exl:24:1
+(Ident Range2) @examples/for_iterator.exl:24:8
+LBrace @examples/for_iterator.exl:24:15
+(Ident cur) @examples/for_iterator.exl:24:17
+Colon @examples/for_iterator.exl:24:20
+(Ident int) @examples/for_iterator.exl:24:22
+Comma @examples/for_iterator.exl:24:25
+(Ident stop) @examples/for_iterator.exl:24:27
+Colon @examples/for_iterator.exl:24:31
+(Ident int) @examples/for_iterator.exl:24:33
+Comma @examples/for_iterator.exl:24:36
+(Ident step) @examples/for_iterator.exl:24:38
+Colon @examples/for_iterator.exl:24:42
+(Ident int) @examples/for_iterator.exl:24:44
+RBrace @examples/for_iterator.exl:24:48
+Impl @examples/for_iterator.exl:26:1
+(Ident Iterator) @examples/for_iterator.exl:26:6
+For @examples/for_iterator.exl:26:15
+(Ident Range2) @examples/for_iterator.exl:26:19
+LBrace @examples/for_iterator.exl:26:26
+Type @examples/for_iterator.exl:27:5
+(Ident Item) @examples/for_iterator.exl:27:10
+Eq @examples/for_iterator.exl:27:15
+(Ident int) @examples/for_iterator.exl:27:17
+Semicolon @examples/for_iterator.exl:27:20
+Fn @examples/for_iterator.exl:28:5
+(Ident next) @examples/for_iterator.exl:28:8
+LParen @examples/for_iterator.exl:28:12
+Star @examples/for_iterator.exl:28:13
+(Ident self) @examples/for_iterator.exl:28:14
+RParen @examples/for_iterator.exl:28:18
+Arrow @examples/for_iterator.exl:28:20
+(Ident Option) @examples/for_iterator.exl:28:23
+Lt @examples/for_iterator.exl:28:29
+(Ident int) @examples/for_iterator.exl:28:30
+Gt @examples/for_iterator.exl:28:33
+LBrace @examples/for_iterator.exl:28:35
+If @examples/for_iterator.exl:29:9
+(Ident self) @examples/for_iterator.exl:29:12
+Dot @examples/for_iterator.exl:29:16
+(Ident cur) @examples/for_iterator.exl:29:17
+GtEq @examples/for_iterator.exl:29:21
+(Ident self) @examples/for_iterator.exl:29:24
+Dot @examples/for_iterator.exl:29:28
+(Ident stop) @examples/for_iterator.exl:29:29
+LBrace @examples/for_iterator.exl:29:34
+Return @examples/for_iterator.exl:29:36
+(Ident Option) @examples/for_iterator.exl:29:43
+DoubleColon @examples/for_iterator.exl:29:49
+(Ident None) @examples/for_iterator.exl:29:51
+Semicolon @examples/for_iterator.exl:29:55
+RBrace @examples/for_iterator.exl:29:57
+Let @examples/for_iterator.exl:30:9
+(Ident v) @examples/for_iterator.exl:30:13
+Eq @examples/for_iterator.exl:30:15
+(Ident self) @examples/for_iterator.exl:30:17
+Dot @examples/for_iterator.exl:30:21
+(Ident cur) @examples/for_iterator.exl:30:22
+Semicolon @examples/for_iterator.exl:30:25
+(Ident self) @examples/for_iterator.exl:31:9
+Dot @examples/for_iterator.exl:31:13
+(Ident cur) @examples/for_iterator.exl:31:14
+Eq @examples/for_iterator.exl:31:18
+(Ident self) @examples/for_iterator.exl:31:20
+Dot @examples/for_iterator.exl:31:24
+(Ident cur) @examples/for_iterator.exl:31:25
+Plus @examples/for_iterator.exl:31:29
+(Ident self) @examples/for_iterator.exl:31:31
+Dot @examples/for_iterator.exl:31:35
+(Ident step) @examples/for_iterator.exl:31:36
+Semicolon @examples/for_iterator.exl:31:40
+(Ident Option) @examples/for_iterator.exl:32:9
+DoubleColon @examples/for_iterator.exl:32:15
+(Ident Some) @examples/for_iterator.exl:32:17
+LParen @examples/for_iterator.exl:32:21
+(Ident v) @examples/for_iterator.exl:32:22
+RParen @examples/for_iterator.exl:32:23
+RBrace @examples/for_iterator.exl:33:5
+RBrace @examples/for_iterator.exl:34:1
+Fn @examples/for_iterator.exl:36:1
+(Ident main) @examples/for_iterator.exl:36:4
+LParen @examples/for_iterator.exl:36:8
+RParen @examples/for_iterator.exl:36:9
+LBrace @examples/for_iterator.exl:36:11
+Let @examples/for_iterator.exl:38:5
+(Ident cd) @examples/for_iterator.exl:38:9
+Eq @examples/for_iterator.exl:38:12
+(Ident Countdown) @examples/for_iterator.exl:38:14
+LBrace @examples/for_iterator.exl:38:24
+(Ident n) @examples/for_iterator.exl:38:26
+Colon @examples/for_iterator.exl:38:27
+(Int 4) @examples/for_iterator.exl:38:29
+RBrace @examples/for_iterator.exl:38:31
+Semicolon @examples/for_iterator.exl:38:32
+For @examples/for_iterator.exl:39:5
+(Ident x) @examples/for_iterator.exl:39:9
+In @examples/for_iterator.exl:39:11
+(Ident cd) @examples/for_iterator.exl:39:14
+LBrace @examples/for_iterator.exl:39:17
+(Ident println) @examples/for_iterator.exl:39:19
+LParen @examples/for_iterator.exl:39:26
+(Ident x) @examples/for_iterator.exl:39:27
+RParen @examples/for_iterator.exl:39:28
+Semicolon @examples/for_iterator.exl:39:29
+RBrace @examples/for_iterator.exl:39:31
+Let @examples/for_iterator.exl:42:5
+(Ident r) @examples/for_iterator.exl:42:9
+Eq @examples/for_iterator.exl:42:11
+(Ident Range2) @examples/for_iterator.exl:42:13
+LBrace @examples/for_iterator.exl:42:20
+(Ident cur) @examples/for_iterator.exl:42:22
+Colon @examples/for_iterator.exl:42:25
+(Int 0) @examples/for_iterator.exl:42:27
+Comma @examples/for_iterator.exl:42:28
+(Ident stop) @examples/for_iterator.exl:42:30
+Colon @examples/for_iterator.exl:42:34
+(Int 20) @examples/for_iterator.exl:42:36
+Comma @examples/for_iterator.exl:42:38
+(Ident step) @examples/for_iterator.exl:42:40
+Colon @examples/for_iterator.exl:42:44
+(Int 1) @examples/for_iterator.exl:42:46
+RBrace @examples/for_iterator.exl:42:48
+Semicolon @examples/for_iterator.exl:42:49
+For @examples/for_iterator.exl:43:5
+(Ident y) @examples/for_iterator.exl:43:9
+In @examples/for_iterator.exl:43:11
+(Ident r) @examples/for_iterator.exl:43:14
+LBrace @examples/for_iterator.exl:43:16
+If @examples/for_iterator.exl:44:9
+(Ident y) @examples/for_iterator.exl:44:12
+EqEq @examples/for_iterator.exl:44:14
+(Int 5) @examples/for_iterator.exl:44:17
+LBrace @examples/for_iterator.exl:44:19
+Break @examples/for_iterator.exl:44:21
+Semicolon @examples/for_iterator.exl:44:26
+RBrace @examples/for_iterator.exl:44:28
+If @examples/for_iterator.exl:45:9
+(Ident y) @examples/for_iterator.exl:45:12
+EqEq @examples/for_iterator.exl:45:14
+(Int 2) @examples/for_iterator.exl:45:17
+LBrace @examples/for_iterator.exl:45:19
+Continue @examples/for_iterator.exl:45:21
+Semicolon @examples/for_iterator.exl:45:29
+RBrace @examples/for_iterator.exl:45:31
+(Ident println) @examples/for_iterator.exl:46:9
+LParen @examples/for_iterator.exl:46:16
+(Ident y) @examples/for_iterator.exl:46:17
+Star @examples/for_iterator.exl:46:19
+(Int 10) @examples/for_iterator.exl:46:21
+RParen @examples/for_iterator.exl:46:23
+Semicolon @examples/for_iterator.exl:46:24
+RBrace @examples/for_iterator.exl:47:5
+RBrace @examples/for_iterator.exl:48:1
+Eof @examples/for_iterator.exl:49:1

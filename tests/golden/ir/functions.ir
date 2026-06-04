@@ -1,0 +1,18 @@
+;; exile-typed-ir-dump v1 examples/functions.exl
+(tfn ex_add (params (param a (int i32)) (param b (int i32))) (int i32) (body (return (binop + (var a) :ty (int i32) (var b) :ty (int i32)) :ty (int i32))))
+(tfn ex_square (params (param n (int i32))) (int i32) (body (return (binop * (var n) :ty (int i32) (var n) :ty (int i32)) :ty (int i32))))
+(tfn ex_power (params (param base (int i32)) (param exp (int i32))) (int i32) (body (let result (int 1) :ty (int i32)) (let i (int 0) :ty (int i32)) (while (binop < (var i) :ty (int i32) (var exp) :ty (int i32)) :ty bool (body (assign result (binop * (var result) :ty (int i32) (var base) :ty (int i32)) :ty (int i32)) (assign i (binop + (var i) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32)))) (return (var result) :ty (int i32))))
+(tfn ex_greet (params (param name str)) void (body (expr-stmt (builtin-call println (var name) :ty str) :ty (int i32))))
+(tfn main (params ) void (body (expr-stmt (builtin-call println (call ex_add (int 3) :ty (int i32) (int 4) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_square (int 5) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_power (int 2) :ty (int i32) (int 10) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (call ex_greet (string "hello from functions") :ty str) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

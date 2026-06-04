@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/methods.exl
+(struct Point (fields (field x (int i32)) (field y (int i32))))
+(impl Point (fn origin pub (params ) (struct Point) (body (return (struct-lit Point (field x (int 0)) (field y (int 0)))))) (fn area pub (params (param self (struct Point))) (int i32) (body (return (binop * (field-access (var self) x) (field-access (var self) y))))) (fn shift pub (params (param self (ptr (struct Point))) (param dx (int i32)) (param dy (int i32))) void (body (assign-field (var self) x (binop + (field-access (var self) x) (var dx))) (assign-field (var self) y (binop + (field-access (var self) y) (var dy))))))
+(fn main (params ) void (body (let mut p (call Point::origin )) (expr-stmt (method-call (var p) shift (int 3) (int 4))) (expr-stmt (call println (method-call (var p) area ))) (let q (ty (ptr (struct Point))) (ref (var p))) (expr-stmt (call println (method-call (var q) area ))) (expr-stmt (call println (call Point::area (var p))))))

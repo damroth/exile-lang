@@ -1,0 +1,214 @@
+;; exile-tokens-dump v1 examples/type_name.exl
+Struct @examples/type_name.exl:10:1
+(Ident Point) @examples/type_name.exl:10:8
+LBrace @examples/type_name.exl:10:14
+(Ident x) @examples/type_name.exl:10:16
+Colon @examples/type_name.exl:10:17
+(Ident int) @examples/type_name.exl:10:19
+Comma @examples/type_name.exl:10:22
+(Ident y) @examples/type_name.exl:10:24
+Colon @examples/type_name.exl:10:25
+(Ident int) @examples/type_name.exl:10:27
+RBrace @examples/type_name.exl:10:31
+Fn @examples/type_name.exl:12:1
+(Ident dbg) @examples/type_name.exl:12:4
+Lt @examples/type_name.exl:12:7
+(Ident T) @examples/type_name.exl:12:8
+Gt @examples/type_name.exl:12:9
+LParen @examples/type_name.exl:12:10
+(Ident label) @examples/type_name.exl:12:11
+Colon @examples/type_name.exl:12:16
+(Ident str) @examples/type_name.exl:12:18
+Comma @examples/type_name.exl:12:21
+(Ident x) @examples/type_name.exl:12:23
+Colon @examples/type_name.exl:12:24
+(Ident T) @examples/type_name.exl:12:26
+RParen @examples/type_name.exl:12:27
+Arrow @examples/type_name.exl:12:29
+(Ident T) @examples/type_name.exl:12:32
+LBrace @examples/type_name.exl:12:34
+(Ident println) @examples/type_name.exl:13:5
+LParen @examples/type_name.exl:13:12
+(Ident label) @examples/type_name.exl:13:13
+RParen @examples/type_name.exl:13:18
+Semicolon @examples/type_name.exl:13:19
+(Ident println) @examples/type_name.exl:14:5
+LParen @examples/type_name.exl:14:12
+(Ident type_name) @examples/type_name.exl:14:13
+LParen @examples/type_name.exl:14:22
+(Ident x) @examples/type_name.exl:14:23
+RParen @examples/type_name.exl:14:24
+RParen @examples/type_name.exl:14:25
+Semicolon @examples/type_name.exl:14:26
+Return @examples/type_name.exl:15:5
+(Ident x) @examples/type_name.exl:15:12
+Semicolon @examples/type_name.exl:15:13
+RBrace @examples/type_name.exl:16:1
+Fn @examples/type_name.exl:18:1
+(Ident main) @examples/type_name.exl:18:4
+LParen @examples/type_name.exl:18:8
+RParen @examples/type_name.exl:18:9
+LBrace @examples/type_name.exl:18:11
+Let @examples/type_name.exl:19:5
+(Ident a) @examples/type_name.exl:19:9
+Colon @examples/type_name.exl:19:10
+(Ident i8) @examples/type_name.exl:19:12
+Eq @examples/type_name.exl:19:15
+(Int 5) @examples/type_name.exl:19:17
+Semicolon @examples/type_name.exl:19:18
+Let @examples/type_name.exl:20:5
+(Ident b) @examples/type_name.exl:20:9
+Colon @examples/type_name.exl:20:10
+(Ident u16) @examples/type_name.exl:20:12
+Eq @examples/type_name.exl:20:16
+(Int 100) @examples/type_name.exl:20:18
+Semicolon @examples/type_name.exl:20:21
+Let @examples/type_name.exl:21:5
+(Ident c) @examples/type_name.exl:21:9
+Colon @examples/type_name.exl:21:10
+(Ident int) @examples/type_name.exl:21:12
+Eq @examples/type_name.exl:21:16
+Minus @examples/type_name.exl:21:18
+(Int 1) @examples/type_name.exl:21:19
+Semicolon @examples/type_name.exl:21:20
+Let @examples/type_name.exl:22:5
+(Ident s) @examples/type_name.exl:22:9
+Colon @examples/type_name.exl:22:10
+(Ident str) @examples/type_name.exl:22:12
+Eq @examples/type_name.exl:22:16
+(String "hi") @examples/type_name.exl:22:18
+Semicolon @examples/type_name.exl:22:22
+(Ident println) @examples/type_name.exl:24:5
+LParen @examples/type_name.exl:24:12
+(Ident type_name) @examples/type_name.exl:24:13
+LParen @examples/type_name.exl:24:22
+(Ident a) @examples/type_name.exl:24:23
+RParen @examples/type_name.exl:24:24
+RParen @examples/type_name.exl:24:25
+Semicolon @examples/type_name.exl:24:26
+(Ident println) @examples/type_name.exl:25:5
+LParen @examples/type_name.exl:25:12
+(Ident type_name) @examples/type_name.exl:25:13
+LParen @examples/type_name.exl:25:22
+(Ident b) @examples/type_name.exl:25:23
+RParen @examples/type_name.exl:25:24
+RParen @examples/type_name.exl:25:25
+Semicolon @examples/type_name.exl:25:26
+(Ident println) @examples/type_name.exl:26:5
+LParen @examples/type_name.exl:26:12
+(Ident type_name) @examples/type_name.exl:26:13
+LParen @examples/type_name.exl:26:22
+(Ident c) @examples/type_name.exl:26:23
+RParen @examples/type_name.exl:26:24
+RParen @examples/type_name.exl:26:25
+Semicolon @examples/type_name.exl:26:26
+(Ident println) @examples/type_name.exl:27:5
+LParen @examples/type_name.exl:27:12
+(Ident type_name) @examples/type_name.exl:27:13
+LParen @examples/type_name.exl:27:22
+(Ident s) @examples/type_name.exl:27:23
+RParen @examples/type_name.exl:27:24
+RParen @examples/type_name.exl:27:25
+Semicolon @examples/type_name.exl:27:26
+(Ident println) @examples/type_name.exl:28:5
+LParen @examples/type_name.exl:28:12
+(Ident type_name) @examples/type_name.exl:28:13
+LParen @examples/type_name.exl:28:22
+(Int 42) @examples/type_name.exl:28:23
+RParen @examples/type_name.exl:28:25
+RParen @examples/type_name.exl:28:26
+Semicolon @examples/type_name.exl:28:27
+Let @examples/type_name.exl:30:5
+(Ident p) @examples/type_name.exl:30:9
+Eq @examples/type_name.exl:30:11
+(Ident Point) @examples/type_name.exl:30:13
+LBrace @examples/type_name.exl:30:19
+(Ident x) @examples/type_name.exl:30:21
+Colon @examples/type_name.exl:30:22
+(Int 1) @examples/type_name.exl:30:24
+Comma @examples/type_name.exl:30:25
+(Ident y) @examples/type_name.exl:30:27
+Colon @examples/type_name.exl:30:28
+(Int 2) @examples/type_name.exl:30:30
+RBrace @examples/type_name.exl:30:32
+Semicolon @examples/type_name.exl:30:33
+(Ident println) @examples/type_name.exl:31:5
+LParen @examples/type_name.exl:31:12
+(Ident type_name) @examples/type_name.exl:31:13
+LParen @examples/type_name.exl:31:22
+(Ident p) @examples/type_name.exl:31:23
+RParen @examples/type_name.exl:31:24
+RParen @examples/type_name.exl:31:25
+Semicolon @examples/type_name.exl:31:26
+(Ident println) @examples/type_name.exl:32:5
+LParen @examples/type_name.exl:32:12
+(Ident type_name) @examples/type_name.exl:32:13
+LParen @examples/type_name.exl:32:22
+Amp @examples/type_name.exl:32:23
+(Ident p) @examples/type_name.exl:32:24
+RParen @examples/type_name.exl:32:25
+RParen @examples/type_name.exl:32:26
+Semicolon @examples/type_name.exl:32:27
+Let @examples/type_name.exl:34:5
+(Ident r) @examples/type_name.exl:34:9
+Colon @examples/type_name.exl:34:10
+(Ident Result) @examples/type_name.exl:34:12
+Lt @examples/type_name.exl:34:18
+(Ident int) @examples/type_name.exl:34:19
+Comma @examples/type_name.exl:34:22
+(Ident str) @examples/type_name.exl:34:24
+Gt @examples/type_name.exl:34:27
+Eq @examples/type_name.exl:34:29
+(Ident Result) @examples/type_name.exl:34:31
+DoubleColon @examples/type_name.exl:34:37
+(Ident Ok) @examples/type_name.exl:34:39
+LParen @examples/type_name.exl:34:41
+(Int 7) @examples/type_name.exl:34:42
+RParen @examples/type_name.exl:34:43
+Semicolon @examples/type_name.exl:34:44
+(Ident println) @examples/type_name.exl:35:5
+LParen @examples/type_name.exl:35:12
+(Ident type_name) @examples/type_name.exl:35:13
+LParen @examples/type_name.exl:35:22
+(Ident r) @examples/type_name.exl:35:23
+RParen @examples/type_name.exl:35:24
+RParen @examples/type_name.exl:35:25
+Semicolon @examples/type_name.exl:35:26
+Let @examples/type_name.exl:38:5
+(Ident _v1) @examples/type_name.exl:38:9
+Colon @examples/type_name.exl:38:12
+(Ident int) @examples/type_name.exl:38:14
+Eq @examples/type_name.exl:38:18
+(Ident dbg) @examples/type_name.exl:38:20
+LParen @examples/type_name.exl:38:23
+(String "v1:") @examples/type_name.exl:38:24
+Comma @examples/type_name.exl:38:29
+(Int 42) @examples/type_name.exl:38:31
+RParen @examples/type_name.exl:38:33
+Semicolon @examples/type_name.exl:38:34
+Let @examples/type_name.exl:39:5
+(Ident _v2) @examples/type_name.exl:39:9
+Colon @examples/type_name.exl:39:12
+(Ident str) @examples/type_name.exl:39:14
+Eq @examples/type_name.exl:39:18
+(Ident dbg) @examples/type_name.exl:39:20
+LParen @examples/type_name.exl:39:23
+(String "v2:") @examples/type_name.exl:39:24
+Comma @examples/type_name.exl:39:29
+(String "text") @examples/type_name.exl:39:31
+RParen @examples/type_name.exl:39:37
+Semicolon @examples/type_name.exl:39:38
+Let @examples/type_name.exl:40:5
+(Ident _v3) @examples/type_name.exl:40:9
+Colon @examples/type_name.exl:40:12
+(Ident Point) @examples/type_name.exl:40:14
+Eq @examples/type_name.exl:40:20
+(Ident dbg) @examples/type_name.exl:40:22
+LParen @examples/type_name.exl:40:25
+(String "v3:") @examples/type_name.exl:40:26
+Comma @examples/type_name.exl:40:31
+(Ident p) @examples/type_name.exl:40:33
+RParen @examples/type_name.exl:40:34
+Semicolon @examples/type_name.exl:40:35
+RBrace @examples/type_name.exl:41:1
+Eof @examples/type_name.exl:42:1

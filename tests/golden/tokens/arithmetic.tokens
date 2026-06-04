@@ -1,0 +1,70 @@
+;; exile-tokens-dump v1 examples/arithmetic.exl
+Fn @examples/arithmetic.exl:1:1
+(Ident main) @examples/arithmetic.exl:1:4
+LParen @examples/arithmetic.exl:1:8
+RParen @examples/arithmetic.exl:1:9
+LBrace @examples/arithmetic.exl:1:11
+Let @examples/arithmetic.exl:2:5
+(Ident sum) @examples/arithmetic.exl:2:9
+Eq @examples/arithmetic.exl:2:17
+(Int 6) @examples/arithmetic.exl:2:19
+Plus @examples/arithmetic.exl:2:21
+(Int 4) @examples/arithmetic.exl:2:23
+Semicolon @examples/arithmetic.exl:2:24
+Let @examples/arithmetic.exl:3:5
+(Ident diff) @examples/arithmetic.exl:3:9
+Eq @examples/arithmetic.exl:3:17
+(Int 100) @examples/arithmetic.exl:3:19
+Minus @examples/arithmetic.exl:3:23
+(Int 42) @examples/arithmetic.exl:3:25
+Semicolon @examples/arithmetic.exl:3:27
+Let @examples/arithmetic.exl:4:5
+(Ident product) @examples/arithmetic.exl:4:9
+Eq @examples/arithmetic.exl:4:17
+(Int 6) @examples/arithmetic.exl:4:19
+Star @examples/arithmetic.exl:4:21
+(Int 7) @examples/arithmetic.exl:4:23
+Semicolon @examples/arithmetic.exl:4:24
+Let @examples/arithmetic.exl:5:5
+(Ident quot) @examples/arithmetic.exl:5:9
+Eq @examples/arithmetic.exl:5:17
+(Int 84) @examples/arithmetic.exl:5:19
+Slash @examples/arithmetic.exl:5:22
+(Int 2) @examples/arithmetic.exl:5:24
+Semicolon @examples/arithmetic.exl:5:25
+Let @examples/arithmetic.exl:6:5
+(Ident mixed) @examples/arithmetic.exl:6:9
+Eq @examples/arithmetic.exl:6:17
+(Int 1) @examples/arithmetic.exl:6:19
+Plus @examples/arithmetic.exl:6:21
+(Int 2) @examples/arithmetic.exl:6:23
+Star @examples/arithmetic.exl:6:25
+(Int 3) @examples/arithmetic.exl:6:27
+Semicolon @examples/arithmetic.exl:6:28
+(Ident println) @examples/arithmetic.exl:8:5
+LParen @examples/arithmetic.exl:8:12
+(Ident sum) @examples/arithmetic.exl:8:13
+RParen @examples/arithmetic.exl:8:16
+Semicolon @examples/arithmetic.exl:8:17
+(Ident println) @examples/arithmetic.exl:9:5
+LParen @examples/arithmetic.exl:9:12
+(Ident diff) @examples/arithmetic.exl:9:13
+RParen @examples/arithmetic.exl:9:17
+Semicolon @examples/arithmetic.exl:9:18
+(Ident println) @examples/arithmetic.exl:10:5
+LParen @examples/arithmetic.exl:10:12
+(Ident product) @examples/arithmetic.exl:10:13
+RParen @examples/arithmetic.exl:10:20
+Semicolon @examples/arithmetic.exl:10:21
+(Ident println) @examples/arithmetic.exl:11:5
+LParen @examples/arithmetic.exl:11:12
+(Ident quot) @examples/arithmetic.exl:11:13
+RParen @examples/arithmetic.exl:11:17
+Semicolon @examples/arithmetic.exl:11:18
+(Ident println) @examples/arithmetic.exl:12:5
+LParen @examples/arithmetic.exl:12:12
+(Ident mixed) @examples/arithmetic.exl:12:13
+RParen @examples/arithmetic.exl:12:18
+Semicolon @examples/arithmetic.exl:12:19
+RBrace @examples/arithmetic.exl:13:1
+Eof @examples/arithmetic.exl:14:1

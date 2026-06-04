@@ -1,0 +1,130 @@
+;; exile-tokens-dump v1 examples/must_use.exl
+At @examples/must_use.exl:13:1
+(Ident must_use) @examples/must_use.exl:13:2
+Fn @examples/must_use.exl:14:1
+(Ident checksum) @examples/must_use.exl:14:4
+LParen @examples/must_use.exl:14:12
+(Ident payload) @examples/must_use.exl:14:13
+Colon @examples/must_use.exl:14:20
+(Ident int) @examples/must_use.exl:14:22
+RParen @examples/must_use.exl:14:25
+Arrow @examples/must_use.exl:14:27
+(Ident int) @examples/must_use.exl:14:30
+LBrace @examples/must_use.exl:14:34
+Return @examples/must_use.exl:15:5
+(Ident payload) @examples/must_use.exl:15:12
+Star @examples/must_use.exl:15:20
+(Int 31) @examples/must_use.exl:15:22
+Plus @examples/must_use.exl:15:25
+(Int 7) @examples/must_use.exl:15:27
+Semicolon @examples/must_use.exl:15:28
+RBrace @examples/must_use.exl:16:1
+Fn @examples/must_use.exl:18:1
+(Ident try_div) @examples/must_use.exl:18:4
+LParen @examples/must_use.exl:18:11
+(Ident n) @examples/must_use.exl:18:12
+Colon @examples/must_use.exl:18:13
+(Ident int) @examples/must_use.exl:18:15
+Comma @examples/must_use.exl:18:18
+(Ident d) @examples/must_use.exl:18:20
+Colon @examples/must_use.exl:18:21
+(Ident int) @examples/must_use.exl:18:23
+RParen @examples/must_use.exl:18:26
+Arrow @examples/must_use.exl:18:28
+(Ident Result) @examples/must_use.exl:18:31
+Lt @examples/must_use.exl:18:37
+(Ident int) @examples/must_use.exl:18:38
+Comma @examples/must_use.exl:18:41
+(Ident str) @examples/must_use.exl:18:43
+Gt @examples/must_use.exl:18:46
+LBrace @examples/must_use.exl:18:48
+If @examples/must_use.exl:19:5
+(Ident d) @examples/must_use.exl:19:8
+EqEq @examples/must_use.exl:19:10
+(Int 0) @examples/must_use.exl:19:13
+LBrace @examples/must_use.exl:19:15
+Return @examples/must_use.exl:20:9
+(Ident Result) @examples/must_use.exl:20:16
+DoubleColon @examples/must_use.exl:20:22
+(Ident Err) @examples/must_use.exl:20:24
+LParen @examples/must_use.exl:20:27
+(String "div by zero") @examples/must_use.exl:20:28
+RParen @examples/must_use.exl:20:41
+Semicolon @examples/must_use.exl:20:42
+RBrace @examples/must_use.exl:21:5
+Return @examples/must_use.exl:22:5
+(Ident Result) @examples/must_use.exl:22:12
+DoubleColon @examples/must_use.exl:22:18
+(Ident Ok) @examples/must_use.exl:22:20
+LParen @examples/must_use.exl:22:22
+(Ident n) @examples/must_use.exl:22:23
+Slash @examples/must_use.exl:22:25
+(Ident d) @examples/must_use.exl:22:27
+RParen @examples/must_use.exl:22:28
+Semicolon @examples/must_use.exl:22:29
+RBrace @examples/must_use.exl:23:1
+Fn @examples/must_use.exl:25:1
+(Ident main) @examples/must_use.exl:25:4
+LParen @examples/must_use.exl:25:8
+RParen @examples/must_use.exl:25:9
+LBrace @examples/must_use.exl:25:11
+Let @examples/must_use.exl:27:5
+(Ident c) @examples/must_use.exl:27:9
+Colon @examples/must_use.exl:27:10
+(Ident int) @examples/must_use.exl:27:12
+Eq @examples/must_use.exl:27:16
+(Ident checksum) @examples/must_use.exl:27:18
+LParen @examples/must_use.exl:27:26
+(Int 42) @examples/must_use.exl:27:27
+RParen @examples/must_use.exl:27:29
+Semicolon @examples/must_use.exl:27:30
+(Ident println) @examples/must_use.exl:28:5
+LParen @examples/must_use.exl:28:12
+(Ident c) @examples/must_use.exl:28:13
+RParen @examples/must_use.exl:28:14
+Semicolon @examples/must_use.exl:28:15
+Let @examples/must_use.exl:31:5
+(Ident _ignored) @examples/must_use.exl:31:9
+Colon @examples/must_use.exl:31:17
+(Ident int) @examples/must_use.exl:31:19
+Eq @examples/must_use.exl:31:23
+(Ident checksum) @examples/must_use.exl:31:25
+LParen @examples/must_use.exl:31:33
+(Int 99) @examples/must_use.exl:31:34
+RParen @examples/must_use.exl:31:36
+Semicolon @examples/must_use.exl:31:37
+Match @examples/must_use.exl:34:5
+(Ident try_div) @examples/must_use.exl:34:11
+LParen @examples/must_use.exl:34:18
+(Int 10) @examples/must_use.exl:34:19
+Comma @examples/must_use.exl:34:21
+(Int 2) @examples/must_use.exl:34:23
+RParen @examples/must_use.exl:34:24
+LBrace @examples/must_use.exl:34:26
+(Ident Result) @examples/must_use.exl:35:9
+DoubleColon @examples/must_use.exl:35:15
+(Ident Ok) @examples/must_use.exl:35:17
+LParen @examples/must_use.exl:35:19
+(Ident q) @examples/must_use.exl:35:20
+RParen @examples/must_use.exl:35:21
+FatArrow @examples/must_use.exl:35:24
+(Ident println) @examples/must_use.exl:35:27
+LParen @examples/must_use.exl:35:34
+(Ident q) @examples/must_use.exl:35:35
+RParen @examples/must_use.exl:35:36
+Pipe @examples/must_use.exl:36:9
+(Ident Result) @examples/must_use.exl:36:11
+DoubleColon @examples/must_use.exl:36:17
+(Ident Err) @examples/must_use.exl:36:19
+LParen @examples/must_use.exl:36:22
+(Ident _) @examples/must_use.exl:36:23
+RParen @examples/must_use.exl:36:24
+FatArrow @examples/must_use.exl:36:26
+(Ident println) @examples/must_use.exl:36:29
+LParen @examples/must_use.exl:36:36
+Minus @examples/must_use.exl:36:37
+(Int 1) @examples/must_use.exl:36:38
+RParen @examples/must_use.exl:36:39
+RBrace @examples/must_use.exl:37:5
+RBrace @examples/must_use.exl:42:1
+Eof @examples/must_use.exl:43:1

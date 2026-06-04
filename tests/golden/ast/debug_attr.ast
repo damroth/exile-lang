@@ -1,0 +1,6 @@
+;; exile-ast-dump v1 examples/debug_attr.exl
+(struct Point (fields (field x (int i32)) (field y (int i32))))
+(struct Pair (tparams A B) (fields (field fst (struct A)) (field snd (struct B))))
+(struct Rect (fields (field origin (struct Point)) (field width (int i32)) (field height (int i32))))
+(enum Shape (variants (variant Circle (int i32)) (variant Rectangle (field w (int i32)) (field h (int i32))) (variant None)))
+(fn main (params ) void (body (let p (struct-lit Point (field x (int 3)) (field y (int 4)))) (let r (struct-lit Rect (field origin (var p)) (field width (int 100)) (field height (int 50)))) (expr-stmt (call println (var p))) (expr-stmt (call println (var r))) (expr-stmt (call println (call Shape::Circle (int 7)))) (expr-stmt (call println (struct-lit Shape::Rectangle (field w (int 80)) (field h (int 20))))) (expr-stmt (call println (enum-lit Shape::None))) (expr-stmt (call println (struct-lit Pair (field fst (int 1)) (field snd (bool true))))) (expr-stmt (call println (struct-lit Pair (field fst (var p)) (field snd (int 9)))))))

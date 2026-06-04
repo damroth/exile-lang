@@ -1,0 +1,87 @@
+;; exile-tokens-dump v1 examples/ffi_libc.exl
+Pub @examples/ffi_libc.exl:15:1
+Mod @examples/ffi_libc.exl:15:5
+(Ident raw) @examples/ffi_libc.exl:15:9
+LBrace @examples/ffi_libc.exl:15:13
+Extern @examples/ffi_libc.exl:16:5
+Fn @examples/ffi_libc.exl:16:12
+(Ident putchar) @examples/ffi_libc.exl:16:15
+LParen @examples/ffi_libc.exl:16:22
+(Ident c) @examples/ffi_libc.exl:16:23
+Colon @examples/ffi_libc.exl:16:24
+(Ident c_int) @examples/ffi_libc.exl:16:26
+RParen @examples/ffi_libc.exl:16:31
+Arrow @examples/ffi_libc.exl:16:33
+(Ident c_int) @examples/ffi_libc.exl:16:36
+Semicolon @examples/ffi_libc.exl:16:41
+Extern @examples/ffi_libc.exl:17:5
+Fn @examples/ffi_libc.exl:17:12
+(Ident print_f) @examples/ffi_libc.exl:17:15
+As @examples/ffi_libc.exl:17:23
+(Ident printf) @examples/ffi_libc.exl:17:26
+LParen @examples/ffi_libc.exl:17:32
+(Ident fmt) @examples/ffi_libc.exl:17:33
+Colon @examples/ffi_libc.exl:17:36
+(Ident str) @examples/ffi_libc.exl:17:38
+Comma @examples/ffi_libc.exl:17:41
+Ellipsis @examples/ffi_libc.exl:17:43
+RParen @examples/ffi_libc.exl:17:46
+Arrow @examples/ffi_libc.exl:17:48
+(Ident c_int) @examples/ffi_libc.exl:17:51
+Semicolon @examples/ffi_libc.exl:17:56
+RBrace @examples/ffi_libc.exl:18:1
+Fn @examples/ffi_libc.exl:20:1
+(Ident main) @examples/ffi_libc.exl:20:4
+LParen @examples/ffi_libc.exl:20:8
+RParen @examples/ffi_libc.exl:20:9
+LBrace @examples/ffi_libc.exl:20:11
+(Ident raw) @examples/ffi_libc.exl:21:5
+DoubleColon @examples/ffi_libc.exl:21:8
+(Ident putchar) @examples/ffi_libc.exl:21:10
+LParen @examples/ffi_libc.exl:21:17
+(Int 72) @examples/ffi_libc.exl:21:18
+RParen @examples/ffi_libc.exl:21:20
+Semicolon @examples/ffi_libc.exl:21:21
+(Ident raw) @examples/ffi_libc.exl:22:5
+DoubleColon @examples/ffi_libc.exl:22:8
+(Ident putchar) @examples/ffi_libc.exl:22:10
+LParen @examples/ffi_libc.exl:22:17
+(Int 105) @examples/ffi_libc.exl:22:18
+RParen @examples/ffi_libc.exl:22:21
+Semicolon @examples/ffi_libc.exl:22:22
+(Ident raw) @examples/ffi_libc.exl:23:5
+DoubleColon @examples/ffi_libc.exl:23:8
+(Ident putchar) @examples/ffi_libc.exl:23:10
+LParen @examples/ffi_libc.exl:23:17
+(Int 33) @examples/ffi_libc.exl:23:18
+RParen @examples/ffi_libc.exl:23:20
+Semicolon @examples/ffi_libc.exl:23:21
+(Ident raw) @examples/ffi_libc.exl:24:5
+DoubleColon @examples/ffi_libc.exl:24:8
+(Ident putchar) @examples/ffi_libc.exl:24:10
+LParen @examples/ffi_libc.exl:24:17
+(Int 10) @examples/ffi_libc.exl:24:18
+RParen @examples/ffi_libc.exl:24:20
+Semicolon @examples/ffi_libc.exl:24:21
+(Ident raw) @examples/ffi_libc.exl:25:5
+DoubleColon @examples/ffi_libc.exl:25:8
+(Ident print_f) @examples/ffi_libc.exl:25:10
+LParen @examples/ffi_libc.exl:25:17
+(String "answer: %d\n") @examples/ffi_libc.exl:25:18
+Comma @examples/ffi_libc.exl:25:32
+(Int 42) @examples/ffi_libc.exl:25:34
+RParen @examples/ffi_libc.exl:25:36
+Semicolon @examples/ffi_libc.exl:25:37
+(Ident raw) @examples/ffi_libc.exl:26:5
+DoubleColon @examples/ffi_libc.exl:26:8
+(Ident print_f) @examples/ffi_libc.exl:26:10
+LParen @examples/ffi_libc.exl:26:17
+(String "two ints: %d %d\n") @examples/ffi_libc.exl:26:18
+Comma @examples/ffi_libc.exl:26:37
+(Int 7) @examples/ffi_libc.exl:26:39
+Comma @examples/ffi_libc.exl:26:40
+(Int 13) @examples/ffi_libc.exl:26:42
+RParen @examples/ffi_libc.exl:26:44
+Semicolon @examples/ffi_libc.exl:26:45
+RBrace @examples/ffi_libc.exl:27:1
+Eof @examples/ffi_libc.exl:28:1

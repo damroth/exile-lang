@@ -1,0 +1,133 @@
+;; exile-tokens-dump v1 examples/for_loop.exl
+Fn @examples/for_loop.exl:6:1
+(Ident main) @examples/for_loop.exl:6:4
+LParen @examples/for_loop.exl:6:8
+RParen @examples/for_loop.exl:6:9
+LBrace @examples/for_loop.exl:6:11
+Let @examples/for_loop.exl:8:5
+Mut @examples/for_loop.exl:8:9
+(Ident s) @examples/for_loop.exl:8:13
+Eq @examples/for_loop.exl:8:15
+(Int 0) @examples/for_loop.exl:8:17
+Semicolon @examples/for_loop.exl:8:18
+For @examples/for_loop.exl:9:5
+(Ident i) @examples/for_loop.exl:9:9
+In @examples/for_loop.exl:9:11
+(Int 0) @examples/for_loop.exl:9:14
+DotDot @examples/for_loop.exl:9:15
+(Int 5) @examples/for_loop.exl:9:17
+LBrace @examples/for_loop.exl:9:19
+(Ident s) @examples/for_loop.exl:10:9
+Eq @examples/for_loop.exl:10:11
+(Ident s) @examples/for_loop.exl:10:13
+Plus @examples/for_loop.exl:10:15
+(Ident i) @examples/for_loop.exl:10:17
+Semicolon @examples/for_loop.exl:10:18
+RBrace @examples/for_loop.exl:11:5
+(Ident println) @examples/for_loop.exl:12:5
+LParen @examples/for_loop.exl:12:12
+(Ident s) @examples/for_loop.exl:12:13
+RParen @examples/for_loop.exl:12:14
+Semicolon @examples/for_loop.exl:12:15
+Let @examples/for_loop.exl:15:5
+Mut @examples/for_loop.exl:15:9
+(Ident t) @examples/for_loop.exl:15:13
+Eq @examples/for_loop.exl:15:15
+(Int 0) @examples/for_loop.exl:15:17
+Semicolon @examples/for_loop.exl:15:18
+For @examples/for_loop.exl:16:5
+(Ident i) @examples/for_loop.exl:16:9
+In @examples/for_loop.exl:16:11
+(Int 1) @examples/for_loop.exl:16:14
+DotDotEq @examples/for_loop.exl:16:15
+(Int 5) @examples/for_loop.exl:16:18
+LBrace @examples/for_loop.exl:16:20
+(Ident t) @examples/for_loop.exl:17:9
+Eq @examples/for_loop.exl:17:11
+(Ident t) @examples/for_loop.exl:17:13
+Plus @examples/for_loop.exl:17:15
+(Ident i) @examples/for_loop.exl:17:17
+Semicolon @examples/for_loop.exl:17:18
+RBrace @examples/for_loop.exl:18:5
+(Ident println) @examples/for_loop.exl:19:5
+LParen @examples/for_loop.exl:19:12
+(Ident t) @examples/for_loop.exl:19:13
+RParen @examples/for_loop.exl:19:14
+Semicolon @examples/for_loop.exl:19:15
+Let @examples/for_loop.exl:22:5
+(Ident xs) @examples/for_loop.exl:22:9
+Colon @examples/for_loop.exl:22:11
+LBracket @examples/for_loop.exl:22:13
+(Ident int) @examples/for_loop.exl:22:14
+Semicolon @examples/for_loop.exl:22:17
+(Int 4) @examples/for_loop.exl:22:19
+RBracket @examples/for_loop.exl:22:20
+Eq @examples/for_loop.exl:22:22
+LBracket @examples/for_loop.exl:22:24
+(Int 10) @examples/for_loop.exl:22:25
+Comma @examples/for_loop.exl:22:27
+(Int 20) @examples/for_loop.exl:22:29
+Comma @examples/for_loop.exl:22:31
+(Int 30) @examples/for_loop.exl:22:33
+Comma @examples/for_loop.exl:22:35
+(Int 40) @examples/for_loop.exl:22:37
+RBracket @examples/for_loop.exl:22:39
+Semicolon @examples/for_loop.exl:22:40
+Let @examples/for_loop.exl:23:5
+Mut @examples/for_loop.exl:23:9
+(Ident total) @examples/for_loop.exl:23:13
+Eq @examples/for_loop.exl:23:19
+(Int 0) @examples/for_loop.exl:23:21
+Semicolon @examples/for_loop.exl:23:22
+For @examples/for_loop.exl:24:5
+(Ident i) @examples/for_loop.exl:24:9
+In @examples/for_loop.exl:24:11
+(Int 0) @examples/for_loop.exl:24:14
+DotDot @examples/for_loop.exl:24:15
+(Ident len) @examples/for_loop.exl:24:17
+LParen @examples/for_loop.exl:24:20
+(Ident xs) @examples/for_loop.exl:24:21
+RParen @examples/for_loop.exl:24:23
+LBrace @examples/for_loop.exl:24:25
+(Ident total) @examples/for_loop.exl:25:9
+Eq @examples/for_loop.exl:25:15
+(Ident total) @examples/for_loop.exl:25:17
+Plus @examples/for_loop.exl:25:23
+(Ident xs) @examples/for_loop.exl:25:25
+LBracket @examples/for_loop.exl:25:27
+(Ident i) @examples/for_loop.exl:25:28
+RBracket @examples/for_loop.exl:25:29
+Semicolon @examples/for_loop.exl:25:30
+RBrace @examples/for_loop.exl:26:5
+(Ident println) @examples/for_loop.exl:27:5
+LParen @examples/for_loop.exl:27:12
+(Ident total) @examples/for_loop.exl:27:13
+RParen @examples/for_loop.exl:27:18
+Semicolon @examples/for_loop.exl:27:19
+Let @examples/for_loop.exl:30:5
+Mut @examples/for_loop.exl:30:9
+(Ident empty_count) @examples/for_loop.exl:30:13
+Eq @examples/for_loop.exl:30:25
+(Int 0) @examples/for_loop.exl:30:27
+Semicolon @examples/for_loop.exl:30:28
+For @examples/for_loop.exl:31:5
+(Ident _i) @examples/for_loop.exl:31:9
+In @examples/for_loop.exl:31:12
+(Int 5) @examples/for_loop.exl:31:15
+DotDot @examples/for_loop.exl:31:16
+(Int 3) @examples/for_loop.exl:31:18
+LBrace @examples/for_loop.exl:31:20
+(Ident empty_count) @examples/for_loop.exl:32:9
+Eq @examples/for_loop.exl:32:21
+(Ident empty_count) @examples/for_loop.exl:32:23
+Plus @examples/for_loop.exl:32:35
+(Int 1) @examples/for_loop.exl:32:37
+Semicolon @examples/for_loop.exl:32:38
+RBrace @examples/for_loop.exl:33:5
+(Ident println) @examples/for_loop.exl:34:5
+LParen @examples/for_loop.exl:34:12
+(Ident empty_count) @examples/for_loop.exl:34:13
+RParen @examples/for_loop.exl:34:24
+Semicolon @examples/for_loop.exl:34:25
+RBrace @examples/for_loop.exl:35:1
+Eof @examples/for_loop.exl:36:1

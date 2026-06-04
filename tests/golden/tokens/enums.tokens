@@ -1,0 +1,529 @@
+;; exile-tokens-dump v1 examples/enums.exl
+Pub @examples/enums.exl:16:1
+Enum @examples/enums.exl:16:5
+(Ident Direction) @examples/enums.exl:16:10
+LBrace @examples/enums.exl:16:20
+(Ident North) @examples/enums.exl:17:5
+Pipe @examples/enums.exl:18:5
+(Ident South) @examples/enums.exl:18:7
+Pipe @examples/enums.exl:19:5
+(Ident East) @examples/enums.exl:19:7
+Pipe @examples/enums.exl:20:5
+(Ident West) @examples/enums.exl:20:7
+RBrace @examples/enums.exl:21:1
+Pub @examples/enums.exl:23:1
+Enum @examples/enums.exl:23:5
+(Ident Shape) @examples/enums.exl:23:10
+LBrace @examples/enums.exl:23:16
+(Ident Square) @examples/enums.exl:24:5
+Pipe @examples/enums.exl:25:5
+(Ident Circle) @examples/enums.exl:25:7
+LParen @examples/enums.exl:25:13
+(Ident int) @examples/enums.exl:25:14
+RParen @examples/enums.exl:25:17
+Pipe @examples/enums.exl:26:5
+(Ident Rect) @examples/enums.exl:26:7
+LParen @examples/enums.exl:26:11
+(Ident int) @examples/enums.exl:26:12
+Comma @examples/enums.exl:26:15
+(Ident int) @examples/enums.exl:26:17
+RParen @examples/enums.exl:26:20
+Pipe @examples/enums.exl:27:5
+(Ident Triangle) @examples/enums.exl:27:7
+LBrace @examples/enums.exl:27:16
+(Ident base) @examples/enums.exl:27:18
+Colon @examples/enums.exl:27:22
+(Ident int) @examples/enums.exl:27:24
+Comma @examples/enums.exl:27:27
+(Ident height) @examples/enums.exl:27:29
+Colon @examples/enums.exl:27:35
+(Ident int) @examples/enums.exl:27:37
+RBrace @examples/enums.exl:27:41
+RBrace @examples/enums.exl:28:1
+Fn @examples/enums.exl:30:1
+(Ident describe_dir) @examples/enums.exl:30:4
+LParen @examples/enums.exl:30:16
+(Ident d) @examples/enums.exl:30:17
+Colon @examples/enums.exl:30:18
+(Ident Direction) @examples/enums.exl:30:20
+RParen @examples/enums.exl:30:29
+LBrace @examples/enums.exl:30:31
+Match @examples/enums.exl:31:5
+(Ident d) @examples/enums.exl:31:11
+LBrace @examples/enums.exl:31:13
+(Ident Direction) @examples/enums.exl:32:9
+DoubleColon @examples/enums.exl:32:18
+(Ident North) @examples/enums.exl:32:20
+FatArrow @examples/enums.exl:32:26
+(Ident println) @examples/enums.exl:32:29
+LParen @examples/enums.exl:32:36
+(String "up") @examples/enums.exl:32:37
+RParen @examples/enums.exl:32:41
+Pipe @examples/enums.exl:33:9
+(Ident Direction) @examples/enums.exl:33:11
+DoubleColon @examples/enums.exl:33:20
+(Ident South) @examples/enums.exl:33:22
+FatArrow @examples/enums.exl:33:28
+(Ident println) @examples/enums.exl:33:31
+LParen @examples/enums.exl:33:38
+(String "down") @examples/enums.exl:33:39
+RParen @examples/enums.exl:33:45
+Pipe @examples/enums.exl:34:9
+(Ident _) @examples/enums.exl:34:11
+FatArrow @examples/enums.exl:34:13
+(Ident println) @examples/enums.exl:34:16
+LParen @examples/enums.exl:34:23
+(String "sideways") @examples/enums.exl:34:24
+RParen @examples/enums.exl:34:34
+RBrace @examples/enums.exl:35:5
+RBrace @examples/enums.exl:36:1
+Fn @examples/enums.exl:38:1
+(Ident describe_shape) @examples/enums.exl:38:4
+LParen @examples/enums.exl:38:18
+(Ident s) @examples/enums.exl:38:19
+Colon @examples/enums.exl:38:20
+(Ident Shape) @examples/enums.exl:38:22
+RParen @examples/enums.exl:38:27
+LBrace @examples/enums.exl:38:29
+Match @examples/enums.exl:39:5
+(Ident s) @examples/enums.exl:39:11
+LBrace @examples/enums.exl:39:13
+(Ident Shape) @examples/enums.exl:40:9
+DoubleColon @examples/enums.exl:40:14
+(Ident Square) @examples/enums.exl:40:16
+FatArrow @examples/enums.exl:40:23
+(Ident println) @examples/enums.exl:40:26
+LParen @examples/enums.exl:40:33
+(String "a square") @examples/enums.exl:40:34
+RParen @examples/enums.exl:40:44
+Pipe @examples/enums.exl:41:9
+(Ident Shape) @examples/enums.exl:41:11
+DoubleColon @examples/enums.exl:41:16
+(Ident Circle) @examples/enums.exl:41:18
+LParen @examples/enums.exl:41:24
+(Ident r) @examples/enums.exl:41:25
+RParen @examples/enums.exl:41:26
+FatArrow @examples/enums.exl:41:28
+(Ident println) @examples/enums.exl:41:31
+LParen @examples/enums.exl:41:38
+(Ident r) @examples/enums.exl:41:39
+RParen @examples/enums.exl:41:40
+Pipe @examples/enums.exl:42:9
+(Ident Shape) @examples/enums.exl:42:11
+DoubleColon @examples/enums.exl:42:16
+(Ident Rect) @examples/enums.exl:42:18
+LParen @examples/enums.exl:42:22
+(Ident w) @examples/enums.exl:42:23
+Comma @examples/enums.exl:42:24
+(Ident _) @examples/enums.exl:42:26
+RParen @examples/enums.exl:42:27
+FatArrow @examples/enums.exl:42:29
+(Ident println) @examples/enums.exl:42:32
+LParen @examples/enums.exl:42:39
+(Ident w) @examples/enums.exl:42:40
+RParen @examples/enums.exl:42:41
+Pipe @examples/enums.exl:43:9
+(Ident Shape) @examples/enums.exl:43:11
+DoubleColon @examples/enums.exl:43:16
+(Ident Triangle) @examples/enums.exl:43:18
+LBrace @examples/enums.exl:43:27
+(Ident base) @examples/enums.exl:43:29
+Comma @examples/enums.exl:43:33
+(Ident height) @examples/enums.exl:43:35
+Colon @examples/enums.exl:43:41
+(Ident h) @examples/enums.exl:43:43
+RBrace @examples/enums.exl:43:45
+FatArrow @examples/enums.exl:43:47
+(Ident println) @examples/enums.exl:43:50
+LParen @examples/enums.exl:43:57
+(Ident base) @examples/enums.exl:43:58
+Plus @examples/enums.exl:43:63
+(Ident h) @examples/enums.exl:43:65
+RParen @examples/enums.exl:43:66
+RBrace @examples/enums.exl:45:5
+RBrace @examples/enums.exl:46:1
+Fn @examples/enums.exl:48:1
+(Ident area) @examples/enums.exl:48:4
+LParen @examples/enums.exl:48:8
+(Ident s) @examples/enums.exl:48:9
+Colon @examples/enums.exl:48:10
+(Ident Shape) @examples/enums.exl:48:12
+RParen @examples/enums.exl:48:17
+Arrow @examples/enums.exl:48:19
+(Ident int) @examples/enums.exl:48:22
+LBrace @examples/enums.exl:48:26
+Return @examples/enums.exl:49:5
+Match @examples/enums.exl:49:12
+(Ident s) @examples/enums.exl:49:18
+LBrace @examples/enums.exl:49:20
+(Ident Shape) @examples/enums.exl:50:9
+DoubleColon @examples/enums.exl:50:14
+(Ident Square) @examples/enums.exl:50:16
+FatArrow @examples/enums.exl:50:23
+(Int 1) @examples/enums.exl:50:26
+Pipe @examples/enums.exl:51:9
+(Ident Shape) @examples/enums.exl:51:11
+DoubleColon @examples/enums.exl:51:16
+(Ident Circle) @examples/enums.exl:51:18
+LParen @examples/enums.exl:51:24
+(Ident r) @examples/enums.exl:51:25
+RParen @examples/enums.exl:51:26
+FatArrow @examples/enums.exl:51:28
+(Ident r) @examples/enums.exl:51:31
+Star @examples/enums.exl:51:33
+(Ident r) @examples/enums.exl:51:35
+Star @examples/enums.exl:51:37
+(Int 3) @examples/enums.exl:51:39
+Pipe @examples/enums.exl:52:9
+(Ident Shape) @examples/enums.exl:52:11
+DoubleColon @examples/enums.exl:52:16
+(Ident Rect) @examples/enums.exl:52:18
+LParen @examples/enums.exl:52:22
+(Ident w) @examples/enums.exl:52:23
+Comma @examples/enums.exl:52:24
+(Ident h) @examples/enums.exl:52:26
+RParen @examples/enums.exl:52:27
+FatArrow @examples/enums.exl:52:29
+(Ident w) @examples/enums.exl:52:32
+Star @examples/enums.exl:52:34
+(Ident h) @examples/enums.exl:52:36
+Pipe @examples/enums.exl:53:9
+(Ident Shape) @examples/enums.exl:53:11
+DoubleColon @examples/enums.exl:53:16
+(Ident Triangle) @examples/enums.exl:53:18
+LBrace @examples/enums.exl:53:27
+(Ident base) @examples/enums.exl:53:29
+Comma @examples/enums.exl:53:33
+(Ident height) @examples/enums.exl:53:35
+RBrace @examples/enums.exl:53:42
+FatArrow @examples/enums.exl:53:44
+(Ident base) @examples/enums.exl:53:47
+Star @examples/enums.exl:53:52
+(Ident height) @examples/enums.exl:53:54
+Slash @examples/enums.exl:53:61
+(Int 2) @examples/enums.exl:53:63
+RBrace @examples/enums.exl:54:5
+Semicolon @examples/enums.exl:54:6
+RBrace @examples/enums.exl:55:1
+Pub @examples/enums.exl:62:1
+Enum @examples/enums.exl:62:5
+(Ident Tree) @examples/enums.exl:62:10
+LBrace @examples/enums.exl:62:15
+(Ident Leaf) @examples/enums.exl:63:5
+LParen @examples/enums.exl:63:9
+(Ident int) @examples/enums.exl:63:10
+RParen @examples/enums.exl:63:13
+Pipe @examples/enums.exl:64:5
+(Ident Node) @examples/enums.exl:64:7
+LParen @examples/enums.exl:64:11
+(Ident Shape) @examples/enums.exl:64:12
+RParen @examples/enums.exl:64:17
+RBrace @examples/enums.exl:65:1
+Fn @examples/enums.exl:67:1
+(Ident tree_kind) @examples/enums.exl:67:4
+LParen @examples/enums.exl:67:13
+(Ident t) @examples/enums.exl:67:14
+Colon @examples/enums.exl:67:15
+(Ident Tree) @examples/enums.exl:67:17
+RParen @examples/enums.exl:67:21
+Arrow @examples/enums.exl:67:23
+(Ident int) @examples/enums.exl:67:26
+LBrace @examples/enums.exl:67:30
+Return @examples/enums.exl:68:5
+Match @examples/enums.exl:68:12
+(Ident t) @examples/enums.exl:68:18
+LBrace @examples/enums.exl:68:20
+(Ident Tree) @examples/enums.exl:69:9
+DoubleColon @examples/enums.exl:69:13
+(Ident Leaf) @examples/enums.exl:69:15
+LParen @examples/enums.exl:69:19
+(Ident n) @examples/enums.exl:69:20
+RParen @examples/enums.exl:69:21
+FatArrow @examples/enums.exl:69:23
+(Ident n) @examples/enums.exl:69:26
+Pipe @examples/enums.exl:70:9
+(Ident Tree) @examples/enums.exl:70:11
+DoubleColon @examples/enums.exl:70:15
+(Ident Node) @examples/enums.exl:70:17
+LParen @examples/enums.exl:70:21
+(Ident Shape) @examples/enums.exl:70:22
+DoubleColon @examples/enums.exl:70:27
+(Ident Circle) @examples/enums.exl:70:29
+LParen @examples/enums.exl:70:35
+(Ident r) @examples/enums.exl:70:36
+RParen @examples/enums.exl:70:37
+RParen @examples/enums.exl:70:38
+FatArrow @examples/enums.exl:70:40
+(Ident r) @examples/enums.exl:70:43
+Pipe @examples/enums.exl:71:9
+(Ident Tree) @examples/enums.exl:71:11
+DoubleColon @examples/enums.exl:71:15
+(Ident Node) @examples/enums.exl:71:17
+LParen @examples/enums.exl:71:21
+(Ident Shape) @examples/enums.exl:71:22
+DoubleColon @examples/enums.exl:71:27
+(Ident Square) @examples/enums.exl:71:29
+RParen @examples/enums.exl:71:35
+FatArrow @examples/enums.exl:71:37
+(Int 0) @examples/enums.exl:71:40
+Pipe @examples/enums.exl:72:9
+(Ident Tree) @examples/enums.exl:72:11
+DoubleColon @examples/enums.exl:72:15
+(Ident Node) @examples/enums.exl:72:17
+LParen @examples/enums.exl:72:21
+(Ident Shape) @examples/enums.exl:72:22
+DoubleColon @examples/enums.exl:72:27
+(Ident Rect) @examples/enums.exl:72:29
+LParen @examples/enums.exl:72:33
+(Ident w) @examples/enums.exl:72:34
+Comma @examples/enums.exl:72:35
+(Ident h) @examples/enums.exl:72:37
+RParen @examples/enums.exl:72:38
+RParen @examples/enums.exl:72:39
+FatArrow @examples/enums.exl:72:41
+(Ident w) @examples/enums.exl:72:44
+Plus @examples/enums.exl:72:46
+(Ident h) @examples/enums.exl:72:48
+Pipe @examples/enums.exl:73:9
+(Ident Tree) @examples/enums.exl:73:11
+DoubleColon @examples/enums.exl:73:15
+(Ident Node) @examples/enums.exl:73:17
+LParen @examples/enums.exl:73:21
+(Ident Shape) @examples/enums.exl:73:22
+DoubleColon @examples/enums.exl:73:27
+(Ident Triangle) @examples/enums.exl:73:29
+LBrace @examples/enums.exl:73:38
+(Ident base) @examples/enums.exl:73:40
+Comma @examples/enums.exl:73:44
+(Ident height) @examples/enums.exl:73:46
+RBrace @examples/enums.exl:73:53
+RParen @examples/enums.exl:73:54
+FatArrow @examples/enums.exl:73:56
+(Ident base) @examples/enums.exl:73:59
+Plus @examples/enums.exl:73:64
+(Ident height) @examples/enums.exl:73:66
+RBrace @examples/enums.exl:74:5
+Semicolon @examples/enums.exl:74:6
+RBrace @examples/enums.exl:75:1
+Fn @examples/enums.exl:77:1
+(Ident main) @examples/enums.exl:77:4
+LParen @examples/enums.exl:77:8
+RParen @examples/enums.exl:77:9
+LBrace @examples/enums.exl:77:11
+Let @examples/enums.exl:78:5
+(Ident d) @examples/enums.exl:78:9
+Eq @examples/enums.exl:78:11
+(Ident Direction) @examples/enums.exl:78:13
+DoubleColon @examples/enums.exl:78:22
+(Ident East) @examples/enums.exl:78:24
+Semicolon @examples/enums.exl:78:28
+(Ident describe_dir) @examples/enums.exl:79:5
+LParen @examples/enums.exl:79:17
+(Ident d) @examples/enums.exl:79:18
+RParen @examples/enums.exl:79:19
+Semicolon @examples/enums.exl:79:20
+(Ident describe_shape) @examples/enums.exl:84:5
+LParen @examples/enums.exl:84:19
+(Ident Shape) @examples/enums.exl:84:20
+DoubleColon @examples/enums.exl:84:25
+(Ident Square) @examples/enums.exl:84:27
+RParen @examples/enums.exl:84:33
+Semicolon @examples/enums.exl:84:34
+(Ident describe_shape) @examples/enums.exl:85:5
+LParen @examples/enums.exl:85:19
+(Ident Shape) @examples/enums.exl:85:20
+DoubleColon @examples/enums.exl:85:25
+(Ident Circle) @examples/enums.exl:85:27
+LParen @examples/enums.exl:85:33
+(Int 7) @examples/enums.exl:85:34
+RParen @examples/enums.exl:85:35
+RParen @examples/enums.exl:85:36
+Semicolon @examples/enums.exl:85:37
+(Ident describe_shape) @examples/enums.exl:86:5
+LParen @examples/enums.exl:86:19
+(Ident Shape) @examples/enums.exl:86:20
+DoubleColon @examples/enums.exl:86:25
+(Ident Rect) @examples/enums.exl:86:27
+LParen @examples/enums.exl:86:31
+(Int 10) @examples/enums.exl:86:32
+Comma @examples/enums.exl:86:34
+(Int 20) @examples/enums.exl:86:36
+RParen @examples/enums.exl:86:38
+RParen @examples/enums.exl:86:39
+Semicolon @examples/enums.exl:86:40
+(Ident println) @examples/enums.exl:88:5
+LParen @examples/enums.exl:88:12
+(Ident area) @examples/enums.exl:88:13
+LParen @examples/enums.exl:88:17
+(Ident Shape) @examples/enums.exl:88:18
+DoubleColon @examples/enums.exl:88:23
+(Ident Circle) @examples/enums.exl:88:25
+LParen @examples/enums.exl:88:31
+(Int 5) @examples/enums.exl:88:32
+RParen @examples/enums.exl:88:33
+RParen @examples/enums.exl:88:34
+RParen @examples/enums.exl:88:35
+Semicolon @examples/enums.exl:88:36
+(Ident println) @examples/enums.exl:89:5
+LParen @examples/enums.exl:89:12
+(Ident area) @examples/enums.exl:89:13
+LParen @examples/enums.exl:89:17
+(Ident Shape) @examples/enums.exl:89:18
+DoubleColon @examples/enums.exl:89:23
+(Ident Rect) @examples/enums.exl:89:25
+LParen @examples/enums.exl:89:29
+(Int 3) @examples/enums.exl:89:30
+Comma @examples/enums.exl:89:31
+(Int 4) @examples/enums.exl:89:33
+RParen @examples/enums.exl:89:34
+RParen @examples/enums.exl:89:35
+RParen @examples/enums.exl:89:36
+Semicolon @examples/enums.exl:89:37
+(Ident println) @examples/enums.exl:90:5
+LParen @examples/enums.exl:90:12
+(Ident area) @examples/enums.exl:90:13
+LParen @examples/enums.exl:90:17
+(Ident Shape) @examples/enums.exl:90:18
+DoubleColon @examples/enums.exl:90:23
+(Ident Triangle) @examples/enums.exl:90:25
+LBrace @examples/enums.exl:90:34
+(Ident base) @examples/enums.exl:90:36
+Colon @examples/enums.exl:90:40
+(Int 6) @examples/enums.exl:90:42
+Comma @examples/enums.exl:90:43
+(Ident height) @examples/enums.exl:90:45
+Colon @examples/enums.exl:90:51
+(Int 8) @examples/enums.exl:90:53
+RBrace @examples/enums.exl:90:55
+RParen @examples/enums.exl:90:56
+RParen @examples/enums.exl:90:57
+Semicolon @examples/enums.exl:90:58
+(Ident describe_shape) @examples/enums.exl:91:5
+LParen @examples/enums.exl:91:19
+(Ident Shape) @examples/enums.exl:91:20
+DoubleColon @examples/enums.exl:91:25
+(Ident Triangle) @examples/enums.exl:91:27
+LBrace @examples/enums.exl:91:36
+(Ident base) @examples/enums.exl:91:38
+Colon @examples/enums.exl:91:42
+(Int 1) @examples/enums.exl:91:44
+Comma @examples/enums.exl:91:45
+(Ident height) @examples/enums.exl:91:47
+Colon @examples/enums.exl:91:53
+(Int 2) @examples/enums.exl:91:55
+RBrace @examples/enums.exl:91:57
+RParen @examples/enums.exl:91:58
+Semicolon @examples/enums.exl:91:59
+Let @examples/enums.exl:96:5
+(Ident total) @examples/enums.exl:96:9
+Eq @examples/enums.exl:96:15
+(Int 1) @examples/enums.exl:96:17
+Plus @examples/enums.exl:96:19
+Match @examples/enums.exl:96:21
+(Ident Shape) @examples/enums.exl:96:27
+DoubleColon @examples/enums.exl:96:32
+(Ident Circle) @examples/enums.exl:96:34
+LParen @examples/enums.exl:96:40
+(Int 2) @examples/enums.exl:96:41
+RParen @examples/enums.exl:96:42
+LBrace @examples/enums.exl:96:44
+(Ident Shape) @examples/enums.exl:97:9
+DoubleColon @examples/enums.exl:97:14
+(Ident Square) @examples/enums.exl:97:16
+FatArrow @examples/enums.exl:97:23
+(Int 0) @examples/enums.exl:97:26
+Pipe @examples/enums.exl:98:9
+(Ident Shape) @examples/enums.exl:98:11
+DoubleColon @examples/enums.exl:98:16
+(Ident Circle) @examples/enums.exl:98:18
+LParen @examples/enums.exl:98:24
+(Ident r) @examples/enums.exl:98:25
+RParen @examples/enums.exl:98:26
+FatArrow @examples/enums.exl:98:28
+(Ident r) @examples/enums.exl:98:31
+Pipe @examples/enums.exl:99:9
+(Ident Shape) @examples/enums.exl:99:11
+DoubleColon @examples/enums.exl:99:16
+(Ident Rect) @examples/enums.exl:99:18
+LParen @examples/enums.exl:99:22
+(Ident w) @examples/enums.exl:99:23
+Comma @examples/enums.exl:99:24
+(Ident h) @examples/enums.exl:99:26
+RParen @examples/enums.exl:99:27
+FatArrow @examples/enums.exl:99:29
+(Ident w) @examples/enums.exl:99:32
+Plus @examples/enums.exl:99:34
+(Ident h) @examples/enums.exl:99:36
+Pipe @examples/enums.exl:100:9
+(Ident Shape) @examples/enums.exl:100:11
+DoubleColon @examples/enums.exl:100:16
+(Ident Triangle) @examples/enums.exl:100:18
+LBrace @examples/enums.exl:100:27
+(Ident base) @examples/enums.exl:100:29
+Comma @examples/enums.exl:100:33
+(Ident height) @examples/enums.exl:100:35
+RBrace @examples/enums.exl:100:42
+FatArrow @examples/enums.exl:100:44
+(Ident base) @examples/enums.exl:100:47
+Plus @examples/enums.exl:100:52
+(Ident height) @examples/enums.exl:100:54
+RBrace @examples/enums.exl:101:5
+Semicolon @examples/enums.exl:101:6
+(Ident println) @examples/enums.exl:102:5
+LParen @examples/enums.exl:102:12
+(Ident total) @examples/enums.exl:102:13
+RParen @examples/enums.exl:102:18
+Semicolon @examples/enums.exl:102:19
+(Ident println) @examples/enums.exl:105:5
+LParen @examples/enums.exl:105:12
+(Ident tree_kind) @examples/enums.exl:105:13
+LParen @examples/enums.exl:105:22
+(Ident Tree) @examples/enums.exl:105:23
+DoubleColon @examples/enums.exl:105:27
+(Ident Leaf) @examples/enums.exl:105:29
+LParen @examples/enums.exl:105:33
+(Int 42) @examples/enums.exl:105:34
+RParen @examples/enums.exl:105:36
+RParen @examples/enums.exl:105:37
+RParen @examples/enums.exl:105:38
+Semicolon @examples/enums.exl:105:39
+(Ident println) @examples/enums.exl:106:5
+LParen @examples/enums.exl:106:12
+(Ident tree_kind) @examples/enums.exl:106:13
+LParen @examples/enums.exl:106:22
+(Ident Tree) @examples/enums.exl:106:23
+DoubleColon @examples/enums.exl:106:27
+(Ident Node) @examples/enums.exl:106:29
+LParen @examples/enums.exl:106:33
+(Ident Shape) @examples/enums.exl:106:34
+DoubleColon @examples/enums.exl:106:39
+(Ident Circle) @examples/enums.exl:106:41
+LParen @examples/enums.exl:106:47
+(Int 5) @examples/enums.exl:106:48
+RParen @examples/enums.exl:106:49
+RParen @examples/enums.exl:106:50
+RParen @examples/enums.exl:106:51
+RParen @examples/enums.exl:106:52
+Semicolon @examples/enums.exl:106:53
+(Ident println) @examples/enums.exl:107:5
+LParen @examples/enums.exl:107:12
+(Ident tree_kind) @examples/enums.exl:107:13
+LParen @examples/enums.exl:107:22
+(Ident Tree) @examples/enums.exl:107:23
+DoubleColon @examples/enums.exl:107:27
+(Ident Node) @examples/enums.exl:107:29
+LParen @examples/enums.exl:107:33
+(Ident Shape) @examples/enums.exl:107:34
+DoubleColon @examples/enums.exl:107:39
+(Ident Rect) @examples/enums.exl:107:41
+LParen @examples/enums.exl:107:45
+(Int 3) @examples/enums.exl:107:46
+Comma @examples/enums.exl:107:47
+(Int 4) @examples/enums.exl:107:49
+RParen @examples/enums.exl:107:50
+RParen @examples/enums.exl:107:51
+RParen @examples/enums.exl:107:52
+RParen @examples/enums.exl:107:53
+Semicolon @examples/enums.exl:107:54
+RBrace @examples/enums.exl:108:1
+Eof @examples/enums.exl:109:1

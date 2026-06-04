@@ -1,0 +1,194 @@
+;; exile-tokens-dump v1 examples/defer.exl
+Fn @examples/defer.exl:1:1
+(Ident lifo) @examples/defer.exl:1:4
+LParen @examples/defer.exl:1:8
+RParen @examples/defer.exl:1:9
+LBrace @examples/defer.exl:1:11
+Defer @examples/defer.exl:2:5
+(Ident println) @examples/defer.exl:2:11
+LParen @examples/defer.exl:2:18
+(String "third") @examples/defer.exl:2:19
+RParen @examples/defer.exl:2:26
+Semicolon @examples/defer.exl:2:27
+Defer @examples/defer.exl:3:5
+(Ident println) @examples/defer.exl:3:11
+LParen @examples/defer.exl:3:18
+(String "second") @examples/defer.exl:3:19
+RParen @examples/defer.exl:3:27
+Semicolon @examples/defer.exl:3:28
+Defer @examples/defer.exl:4:5
+(Ident println) @examples/defer.exl:4:11
+LParen @examples/defer.exl:4:18
+(String "first") @examples/defer.exl:4:19
+RParen @examples/defer.exl:4:26
+Semicolon @examples/defer.exl:4:27
+(Ident println) @examples/defer.exl:5:5
+LParen @examples/defer.exl:5:12
+(String "body") @examples/defer.exl:5:13
+RParen @examples/defer.exl:5:19
+Semicolon @examples/defer.exl:5:20
+RBrace @examples/defer.exl:6:1
+Fn @examples/defer.exl:8:1
+(Ident block_defer) @examples/defer.exl:8:4
+LParen @examples/defer.exl:8:15
+RParen @examples/defer.exl:8:16
+LBrace @examples/defer.exl:8:18
+Defer @examples/defer.exl:9:5
+LBrace @examples/defer.exl:9:11
+(Ident println) @examples/defer.exl:9:13
+LParen @examples/defer.exl:9:20
+(String "a") @examples/defer.exl:9:21
+RParen @examples/defer.exl:9:24
+Semicolon @examples/defer.exl:9:25
+(Ident println) @examples/defer.exl:9:27
+LParen @examples/defer.exl:9:34
+(String "b") @examples/defer.exl:9:35
+RParen @examples/defer.exl:9:38
+Semicolon @examples/defer.exl:9:39
+(Ident println) @examples/defer.exl:9:41
+LParen @examples/defer.exl:9:48
+(String "c") @examples/defer.exl:9:49
+RParen @examples/defer.exl:9:52
+Semicolon @examples/defer.exl:9:53
+RBrace @examples/defer.exl:9:55
+(Ident println) @examples/defer.exl:10:5
+LParen @examples/defer.exl:10:12
+(String "body") @examples/defer.exl:10:13
+RParen @examples/defer.exl:10:19
+Semicolon @examples/defer.exl:10:20
+RBrace @examples/defer.exl:11:1
+Fn @examples/defer.exl:13:1
+(Ident early_exit) @examples/defer.exl:13:4
+LParen @examples/defer.exl:13:14
+(Ident n) @examples/defer.exl:13:15
+Colon @examples/defer.exl:13:16
+(Ident int) @examples/defer.exl:13:18
+RParen @examples/defer.exl:13:21
+Arrow @examples/defer.exl:13:23
+(Ident int) @examples/defer.exl:13:26
+LBrace @examples/defer.exl:13:30
+Defer @examples/defer.exl:14:5
+(Ident println) @examples/defer.exl:14:11
+LParen @examples/defer.exl:14:18
+(String "outer cleanup") @examples/defer.exl:14:19
+RParen @examples/defer.exl:14:34
+Semicolon @examples/defer.exl:14:35
+If @examples/defer.exl:15:5
+(Ident n) @examples/defer.exl:15:8
+Gt @examples/defer.exl:15:10
+(Int 0) @examples/defer.exl:15:12
+LBrace @examples/defer.exl:15:14
+Defer @examples/defer.exl:16:9
+(Ident println) @examples/defer.exl:16:15
+LParen @examples/defer.exl:16:22
+(String "inner cleanup") @examples/defer.exl:16:23
+RParen @examples/defer.exl:16:38
+Semicolon @examples/defer.exl:16:39
+Return @examples/defer.exl:17:9
+(Ident n) @examples/defer.exl:17:16
+Star @examples/defer.exl:17:18
+(Int 2) @examples/defer.exl:17:20
+Semicolon @examples/defer.exl:17:21
+RBrace @examples/defer.exl:18:5
+Return @examples/defer.exl:19:5
+(Int 0) @examples/defer.exl:19:12
+Semicolon @examples/defer.exl:19:13
+RBrace @examples/defer.exl:20:1
+Fn @examples/defer.exl:22:1
+(Ident void_early_exit) @examples/defer.exl:22:4
+LParen @examples/defer.exl:22:19
+(Ident skip) @examples/defer.exl:22:20
+Colon @examples/defer.exl:22:24
+(Ident bool) @examples/defer.exl:22:26
+RParen @examples/defer.exl:22:30
+LBrace @examples/defer.exl:22:32
+Defer @examples/defer.exl:23:5
+(Ident println) @examples/defer.exl:23:11
+LParen @examples/defer.exl:23:18
+(String "cleanup") @examples/defer.exl:23:19
+RParen @examples/defer.exl:23:28
+Semicolon @examples/defer.exl:23:29
+If @examples/defer.exl:24:5
+(Ident skip) @examples/defer.exl:24:8
+LBrace @examples/defer.exl:24:13
+(Ident println) @examples/defer.exl:25:9
+LParen @examples/defer.exl:25:16
+(String "skipped") @examples/defer.exl:25:17
+RParen @examples/defer.exl:25:26
+Semicolon @examples/defer.exl:25:27
+Return @examples/defer.exl:26:9
+Semicolon @examples/defer.exl:26:15
+RBrace @examples/defer.exl:27:5
+(Ident println) @examples/defer.exl:28:5
+LParen @examples/defer.exl:28:12
+(String "worked") @examples/defer.exl:28:13
+RParen @examples/defer.exl:28:21
+Semicolon @examples/defer.exl:28:22
+RBrace @examples/defer.exl:29:1
+Fn @examples/defer.exl:31:1
+(Ident main) @examples/defer.exl:31:4
+LParen @examples/defer.exl:31:8
+RParen @examples/defer.exl:31:9
+LBrace @examples/defer.exl:31:11
+(Ident lifo) @examples/defer.exl:32:5
+LParen @examples/defer.exl:32:9
+RParen @examples/defer.exl:32:10
+Semicolon @examples/defer.exl:32:11
+(Ident println) @examples/defer.exl:33:5
+LParen @examples/defer.exl:33:12
+(String "---") @examples/defer.exl:33:13
+RParen @examples/defer.exl:33:18
+Semicolon @examples/defer.exl:33:19
+(Ident block_defer) @examples/defer.exl:34:5
+LParen @examples/defer.exl:34:16
+RParen @examples/defer.exl:34:17
+Semicolon @examples/defer.exl:34:18
+(Ident println) @examples/defer.exl:35:5
+LParen @examples/defer.exl:35:12
+(String "---") @examples/defer.exl:35:13
+RParen @examples/defer.exl:35:18
+Semicolon @examples/defer.exl:35:19
+(Ident println) @examples/defer.exl:36:5
+LParen @examples/defer.exl:36:12
+(Ident early_exit) @examples/defer.exl:36:13
+LParen @examples/defer.exl:36:23
+(Int 5) @examples/defer.exl:36:24
+RParen @examples/defer.exl:36:25
+RParen @examples/defer.exl:36:26
+Semicolon @examples/defer.exl:36:27
+(Ident println) @examples/defer.exl:37:5
+LParen @examples/defer.exl:37:12
+(String "---") @examples/defer.exl:37:13
+RParen @examples/defer.exl:37:18
+Semicolon @examples/defer.exl:37:19
+(Ident println) @examples/defer.exl:38:5
+LParen @examples/defer.exl:38:12
+(Ident early_exit) @examples/defer.exl:38:13
+LParen @examples/defer.exl:38:23
+Minus @examples/defer.exl:38:24
+(Int 3) @examples/defer.exl:38:25
+RParen @examples/defer.exl:38:26
+RParen @examples/defer.exl:38:27
+Semicolon @examples/defer.exl:38:28
+(Ident println) @examples/defer.exl:39:5
+LParen @examples/defer.exl:39:12
+(String "---") @examples/defer.exl:39:13
+RParen @examples/defer.exl:39:18
+Semicolon @examples/defer.exl:39:19
+(Ident void_early_exit) @examples/defer.exl:40:5
+LParen @examples/defer.exl:40:20
+True @examples/defer.exl:40:21
+RParen @examples/defer.exl:40:25
+Semicolon @examples/defer.exl:40:26
+(Ident println) @examples/defer.exl:41:5
+LParen @examples/defer.exl:41:12
+(String "---") @examples/defer.exl:41:13
+RParen @examples/defer.exl:41:18
+Semicolon @examples/defer.exl:41:19
+(Ident void_early_exit) @examples/defer.exl:42:5
+LParen @examples/defer.exl:42:20
+False @examples/defer.exl:42:21
+RParen @examples/defer.exl:42:26
+Semicolon @examples/defer.exl:42:27
+RBrace @examples/defer.exl:43:1
+Eof @examples/defer.exl:44:1

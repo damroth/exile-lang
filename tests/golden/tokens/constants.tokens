@@ -1,0 +1,99 @@
+;; exile-tokens-dump v1 examples/constants.exl
+Const @examples/constants.exl:7:1
+(Ident WIDTH) @examples/constants.exl:7:7
+Colon @examples/constants.exl:7:12
+(Ident int) @examples/constants.exl:7:15
+Eq @examples/constants.exl:7:19
+(Int 320) @examples/constants.exl:7:21
+Semicolon @examples/constants.exl:7:24
+Const @examples/constants.exl:8:1
+(Ident HEIGHT) @examples/constants.exl:8:7
+Colon @examples/constants.exl:8:13
+(Ident int) @examples/constants.exl:8:15
+Eq @examples/constants.exl:8:19
+(Int 256) @examples/constants.exl:8:21
+Semicolon @examples/constants.exl:8:24
+Const @examples/constants.exl:9:1
+(Ident PIXELS) @examples/constants.exl:9:7
+Colon @examples/constants.exl:9:13
+(Ident int) @examples/constants.exl:9:15
+Eq @examples/constants.exl:9:19
+(Ident WIDTH) @examples/constants.exl:9:21
+Star @examples/constants.exl:9:27
+(Ident HEIGHT) @examples/constants.exl:9:29
+Semicolon @examples/constants.exl:9:35
+Mod @examples/constants.exl:12:1
+(Ident flags) @examples/constants.exl:12:5
+LBrace @examples/constants.exl:12:11
+Pub @examples/constants.exl:13:5
+Const @examples/constants.exl:13:9
+(Ident READ) @examples/constants.exl:13:15
+Colon @examples/constants.exl:13:19
+(Ident int) @examples/constants.exl:13:22
+Eq @examples/constants.exl:13:26
+(Int 1) @examples/constants.exl:13:28
+Shl @examples/constants.exl:13:30
+(Int 0) @examples/constants.exl:13:33
+Semicolon @examples/constants.exl:13:34
+Pub @examples/constants.exl:14:5
+Const @examples/constants.exl:14:9
+(Ident WRITE) @examples/constants.exl:14:15
+Colon @examples/constants.exl:14:20
+(Ident int) @examples/constants.exl:14:22
+Eq @examples/constants.exl:14:26
+(Int 1) @examples/constants.exl:14:28
+Shl @examples/constants.exl:14:30
+(Int 1) @examples/constants.exl:14:33
+Semicolon @examples/constants.exl:14:34
+Pub @examples/constants.exl:15:5
+Const @examples/constants.exl:15:9
+(Ident RW) @examples/constants.exl:15:15
+Colon @examples/constants.exl:15:17
+(Ident int) @examples/constants.exl:15:22
+Eq @examples/constants.exl:15:26
+(Ident READ) @examples/constants.exl:15:28
+Pipe @examples/constants.exl:15:33
+(Ident WRITE) @examples/constants.exl:15:35
+Semicolon @examples/constants.exl:15:40
+RBrace @examples/constants.exl:16:1
+Fn @examples/constants.exl:18:1
+(Ident main) @examples/constants.exl:18:4
+LParen @examples/constants.exl:18:8
+RParen @examples/constants.exl:18:9
+LBrace @examples/constants.exl:18:11
+(Ident println) @examples/constants.exl:19:5
+LParen @examples/constants.exl:19:12
+(Ident WIDTH) @examples/constants.exl:19:13
+RParen @examples/constants.exl:19:18
+Semicolon @examples/constants.exl:19:19
+(Ident println) @examples/constants.exl:20:5
+LParen @examples/constants.exl:20:12
+(Ident HEIGHT) @examples/constants.exl:20:13
+RParen @examples/constants.exl:20:19
+Semicolon @examples/constants.exl:20:20
+(Ident println) @examples/constants.exl:21:5
+LParen @examples/constants.exl:21:12
+(Ident PIXELS) @examples/constants.exl:21:13
+RParen @examples/constants.exl:21:19
+Semicolon @examples/constants.exl:21:20
+(Ident println) @examples/constants.exl:23:5
+LParen @examples/constants.exl:23:12
+(Ident flags) @examples/constants.exl:23:13
+DoubleColon @examples/constants.exl:23:18
+(Ident RW) @examples/constants.exl:23:20
+RParen @examples/constants.exl:23:22
+Semicolon @examples/constants.exl:23:23
+Let @examples/constants.exl:26:5
+(Ident half) @examples/constants.exl:26:9
+Eq @examples/constants.exl:26:14
+(Ident WIDTH) @examples/constants.exl:26:16
+Slash @examples/constants.exl:26:22
+(Int 2) @examples/constants.exl:26:24
+Semicolon @examples/constants.exl:26:25
+(Ident println) @examples/constants.exl:27:5
+LParen @examples/constants.exl:27:12
+(Ident half) @examples/constants.exl:27:13
+RParen @examples/constants.exl:27:17
+Semicolon @examples/constants.exl:27:18
+RBrace @examples/constants.exl:28:1
+Eof @examples/constants.exl:29:1

@@ -1,0 +1,15 @@
+;; exile-typed-ir-dump v1 examples/scoped_projection.exl
+(tfn ex_bump_each (params (param arr (ptr (array (int i32) 5)))) void (body (let i (int 0) :ty (int i32)) (while (binop < (var i) :ty (int i32) (int 5) :ty (int i32)) :ty bool (body (expr-stmt (block (stmts (let x__with0 (ref (index (deref (var arr) :ty (ptr (array (int i32) 5))) :ty (array (int i32) 5) (var i) :ty (int i32)) :ty (int i32)) :ty (ptr (int i32))) (assign-deref (var x__with0) :ty (ptr (int i32)) (binop + (deref (var x__with0) :ty (ptr (int i32))) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32)))) :ty bool) (assign i (binop + (var i) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32))))))
+(tfn main (params ) void (body (let arr (array-lit (int 10) :ty (int i32) (int 20) :ty (int i32) (int 30) :ty (int i32) (int 40) :ty (int i32) (int 50) :ty (int i32)) :ty (array (int i32) 5)) (expr-stmt (block (stmts (let x__with1 (ref (index (var arr) :ty (array (int i32) 5) (int 2) :ty (int i32)) :ty (int i32)) :ty (ptr (int i32))) (assign-deref (var x__with1) :ty (ptr (int i32)) (int 999) :ty (int i32)))) :ty bool) (expr-stmt (builtin-call println (index (var arr) :ty (array (int i32) 5) (int 0) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (index (var arr) :ty (array (int i32) 5) (int 1) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (index (var arr) :ty (array (int i32) 5) (int 2) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (index (var arr) :ty (array (int i32) 5) (int 3) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (index (var arr) :ty (array (int i32) 5) (int 4) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (block (stmts (let x__with2 (ref (index (var arr) :ty (array (int i32) 5) (int 0) :ty (int i32)) :ty (int i32)) :ty (ptr (int i32))) (let old (deref (var x__with2) :ty (ptr (int i32))) :ty (int i32)) (assign-deref (var x__with2) :ty (ptr (int i32)) (binop * (var old) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var old) :ty (int i32)) :ty (int i32)))) :ty bool) (expr-stmt (builtin-call println (index (var arr) :ty (array (int i32) 5) (int 0) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (call ex_bump_each (ref (var arr) :ty (array (int i32) 5)) :ty (ptr (array (int i32) 5))) :ty (int i32)) (expr-stmt (builtin-call println (index (var arr) :ty (array (int i32) 5) (int 0) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (index (var arr) :ty (array (int i32) 5) (int 2) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (index (var arr) :ty (array (int i32) 5) (int 4) :ty (int i32)) :ty (int i32)) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

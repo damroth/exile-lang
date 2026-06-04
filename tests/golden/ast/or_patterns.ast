@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/or_patterns.exl
+(enum Token (variants (variant Plus) (variant Minus) (variant Star) (variant Slash) (variant LParen) (variant RParen) (variant Ident) (variant NumberLit)))
+(fn category (params (param t (struct Token))) (int i32) (body (tail (match (var t) (arm (pat-or (pat-variant Token::Plus) (pat-variant Token::Minus) (pat-variant Token::Star) (pat-variant Token::Slash)) (int 1)) (arm (pat-or (pat-variant Token::LParen) (pat-variant Token::RParen)) (int 2)) (arm (pat-or (pat-variant Token::Ident) (pat-variant Token::NumberLit)) (int 3))))))
+(fn main (params ) void (body (expr-stmt (call println (call category (enum-lit Token::Plus)))) (expr-stmt (call println (call category (enum-lit Token::Slash)))) (expr-stmt (call println (call category (enum-lit Token::LParen)))) (expr-stmt (call println (call category (enum-lit Token::Ident))))))

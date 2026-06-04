@@ -1,0 +1,246 @@
+;; exile-tokens-dump v1 examples/ctypes.exl
+Pub @examples/ctypes.exl:20:1
+Mod @examples/ctypes.exl:20:5
+(Ident raw) @examples/ctypes.exl:20:9
+LBrace @examples/ctypes.exl:20:13
+Extern @examples/ctypes.exl:21:5
+Fn @examples/ctypes.exl:21:12
+(Ident s_neg) @examples/ctypes.exl:21:15
+LParen @examples/ctypes.exl:21:20
+(Ident x) @examples/ctypes.exl:21:21
+Colon @examples/ctypes.exl:21:22
+(Ident c_short) @examples/ctypes.exl:21:24
+RParen @examples/ctypes.exl:21:31
+Arrow @examples/ctypes.exl:21:33
+(Ident c_short) @examples/ctypes.exl:21:36
+Semicolon @examples/ctypes.exl:21:43
+Extern @examples/ctypes.exl:22:5
+Fn @examples/ctypes.exl:22:12
+(Ident us_double) @examples/ctypes.exl:22:15
+LParen @examples/ctypes.exl:22:24
+(Ident x) @examples/ctypes.exl:22:25
+Colon @examples/ctypes.exl:22:26
+(Ident c_ushort) @examples/ctypes.exl:22:28
+RParen @examples/ctypes.exl:22:36
+Arrow @examples/ctypes.exl:22:38
+(Ident c_ushort) @examples/ctypes.exl:22:41
+Semicolon @examples/ctypes.exl:22:49
+Extern @examples/ctypes.exl:23:5
+Fn @examples/ctypes.exl:23:12
+(Ident l_add) @examples/ctypes.exl:23:15
+LParen @examples/ctypes.exl:23:20
+(Ident a) @examples/ctypes.exl:23:21
+Colon @examples/ctypes.exl:23:22
+(Ident c_long) @examples/ctypes.exl:23:24
+Comma @examples/ctypes.exl:23:30
+(Ident b) @examples/ctypes.exl:23:32
+Colon @examples/ctypes.exl:23:33
+(Ident c_long) @examples/ctypes.exl:23:35
+RParen @examples/ctypes.exl:23:41
+Arrow @examples/ctypes.exl:23:43
+(Ident c_long) @examples/ctypes.exl:23:46
+Semicolon @examples/ctypes.exl:23:52
+Extern @examples/ctypes.exl:24:5
+Fn @examples/ctypes.exl:24:12
+(Ident ul_inc) @examples/ctypes.exl:24:15
+LParen @examples/ctypes.exl:24:21
+(Ident x) @examples/ctypes.exl:24:22
+Colon @examples/ctypes.exl:24:23
+(Ident c_ulong) @examples/ctypes.exl:24:25
+RParen @examples/ctypes.exl:24:32
+Arrow @examples/ctypes.exl:24:34
+(Ident c_ulong) @examples/ctypes.exl:24:37
+Semicolon @examples/ctypes.exl:24:44
+Extern @examples/ctypes.exl:25:5
+Fn @examples/ctypes.exl:25:12
+(Ident ui_double) @examples/ctypes.exl:25:15
+LParen @examples/ctypes.exl:25:24
+(Ident x) @examples/ctypes.exl:25:25
+Colon @examples/ctypes.exl:25:26
+(Ident c_uint) @examples/ctypes.exl:25:28
+RParen @examples/ctypes.exl:25:34
+Arrow @examples/ctypes.exl:25:36
+(Ident c_uint) @examples/ctypes.exl:25:39
+Semicolon @examples/ctypes.exl:25:45
+Extern @examples/ctypes.exl:26:5
+Fn @examples/ctypes.exl:26:12
+(Ident sc_neg) @examples/ctypes.exl:26:15
+LParen @examples/ctypes.exl:26:21
+(Ident x) @examples/ctypes.exl:26:22
+Colon @examples/ctypes.exl:26:23
+(Ident c_schar) @examples/ctypes.exl:26:25
+RParen @examples/ctypes.exl:26:32
+Arrow @examples/ctypes.exl:26:34
+(Ident c_schar) @examples/ctypes.exl:26:37
+Semicolon @examples/ctypes.exl:26:44
+Extern @examples/ctypes.exl:27:5
+Fn @examples/ctypes.exl:27:12
+(Ident uc_id) @examples/ctypes.exl:27:15
+LParen @examples/ctypes.exl:27:20
+(Ident x) @examples/ctypes.exl:27:21
+Colon @examples/ctypes.exl:27:22
+(Ident c_uchar) @examples/ctypes.exl:27:24
+RParen @examples/ctypes.exl:27:31
+Arrow @examples/ctypes.exl:27:33
+(Ident c_uchar) @examples/ctypes.exl:27:36
+Semicolon @examples/ctypes.exl:27:43
+Extern @examples/ctypes.exl:29:5
+Fn @examples/ctypes.exl:29:12
+(Ident vp_id) @examples/ctypes.exl:29:15
+LParen @examples/ctypes.exl:29:20
+(Ident p) @examples/ctypes.exl:29:21
+Colon @examples/ctypes.exl:29:22
+Star @examples/ctypes.exl:29:24
+(Ident c_void) @examples/ctypes.exl:29:25
+RParen @examples/ctypes.exl:29:31
+Arrow @examples/ctypes.exl:29:33
+Star @examples/ctypes.exl:29:36
+(Ident c_void) @examples/ctypes.exl:29:37
+Semicolon @examples/ctypes.exl:29:43
+RBrace @examples/ctypes.exl:30:1
+Fn @examples/ctypes.exl:32:1
+(Ident main) @examples/ctypes.exl:32:4
+LParen @examples/ctypes.exl:32:8
+RParen @examples/ctypes.exl:32:9
+LBrace @examples/ctypes.exl:32:11
+(Ident println) @examples/ctypes.exl:33:5
+LParen @examples/ctypes.exl:33:12
+(Ident raw) @examples/ctypes.exl:33:13
+DoubleColon @examples/ctypes.exl:33:16
+(Ident s_neg) @examples/ctypes.exl:33:18
+LParen @examples/ctypes.exl:33:23
+(Int 42) @examples/ctypes.exl:33:24
+As @examples/ctypes.exl:33:27
+(Ident c_short) @examples/ctypes.exl:33:30
+RParen @examples/ctypes.exl:33:37
+As @examples/ctypes.exl:33:39
+(Ident int) @examples/ctypes.exl:33:42
+RParen @examples/ctypes.exl:33:45
+Semicolon @examples/ctypes.exl:33:46
+(Ident println) @examples/ctypes.exl:34:5
+LParen @examples/ctypes.exl:34:12
+(Ident raw) @examples/ctypes.exl:34:13
+DoubleColon @examples/ctypes.exl:34:16
+(Ident us_double) @examples/ctypes.exl:34:18
+LParen @examples/ctypes.exl:34:27
+(Int 123) @examples/ctypes.exl:34:28
+As @examples/ctypes.exl:34:32
+(Ident c_ushort) @examples/ctypes.exl:34:35
+RParen @examples/ctypes.exl:34:43
+As @examples/ctypes.exl:34:45
+(Ident int) @examples/ctypes.exl:34:48
+RParen @examples/ctypes.exl:34:51
+Semicolon @examples/ctypes.exl:34:52
+(Ident println) @examples/ctypes.exl:35:5
+LParen @examples/ctypes.exl:35:12
+(Ident raw) @examples/ctypes.exl:35:13
+DoubleColon @examples/ctypes.exl:35:16
+(Ident l_add) @examples/ctypes.exl:35:18
+LParen @examples/ctypes.exl:35:23
+(Int 1000) @examples/ctypes.exl:35:24
+As @examples/ctypes.exl:35:29
+(Ident c_long) @examples/ctypes.exl:35:32
+Comma @examples/ctypes.exl:35:38
+(Int 234) @examples/ctypes.exl:35:40
+As @examples/ctypes.exl:35:44
+(Ident c_long) @examples/ctypes.exl:35:47
+RParen @examples/ctypes.exl:35:53
+As @examples/ctypes.exl:35:55
+(Ident int) @examples/ctypes.exl:35:58
+RParen @examples/ctypes.exl:35:61
+Semicolon @examples/ctypes.exl:35:62
+(Ident println) @examples/ctypes.exl:36:5
+LParen @examples/ctypes.exl:36:12
+(Ident raw) @examples/ctypes.exl:36:13
+DoubleColon @examples/ctypes.exl:36:16
+(Ident ul_inc) @examples/ctypes.exl:36:18
+LParen @examples/ctypes.exl:36:24
+(Int 5677) @examples/ctypes.exl:36:25
+As @examples/ctypes.exl:36:30
+(Ident c_ulong) @examples/ctypes.exl:36:33
+RParen @examples/ctypes.exl:36:40
+As @examples/ctypes.exl:36:42
+(Ident int) @examples/ctypes.exl:36:45
+RParen @examples/ctypes.exl:36:48
+Semicolon @examples/ctypes.exl:36:49
+(Ident println) @examples/ctypes.exl:37:5
+LParen @examples/ctypes.exl:37:12
+(Ident raw) @examples/ctypes.exl:37:13
+DoubleColon @examples/ctypes.exl:37:16
+(Ident ui_double) @examples/ctypes.exl:37:18
+LParen @examples/ctypes.exl:37:27
+(Int 150) @examples/ctypes.exl:37:28
+As @examples/ctypes.exl:37:32
+(Ident c_uint) @examples/ctypes.exl:37:35
+RParen @examples/ctypes.exl:37:41
+As @examples/ctypes.exl:37:43
+(Ident int) @examples/ctypes.exl:37:46
+RParen @examples/ctypes.exl:37:49
+Semicolon @examples/ctypes.exl:37:50
+(Ident println) @examples/ctypes.exl:38:5
+LParen @examples/ctypes.exl:38:12
+(Ident raw) @examples/ctypes.exl:38:13
+DoubleColon @examples/ctypes.exl:38:16
+(Ident sc_neg) @examples/ctypes.exl:38:18
+LParen @examples/ctypes.exl:38:24
+(Int 7) @examples/ctypes.exl:38:25
+As @examples/ctypes.exl:38:27
+(Ident c_schar) @examples/ctypes.exl:38:30
+RParen @examples/ctypes.exl:38:37
+As @examples/ctypes.exl:38:39
+(Ident int) @examples/ctypes.exl:38:42
+RParen @examples/ctypes.exl:38:45
+Semicolon @examples/ctypes.exl:38:46
+(Ident println) @examples/ctypes.exl:39:5
+LParen @examples/ctypes.exl:39:12
+(Ident raw) @examples/ctypes.exl:39:13
+DoubleColon @examples/ctypes.exl:39:16
+(Ident uc_id) @examples/ctypes.exl:39:18
+LParen @examples/ctypes.exl:39:23
+(Int 99) @examples/ctypes.exl:39:24
+As @examples/ctypes.exl:39:27
+(Ident c_uchar) @examples/ctypes.exl:39:30
+RParen @examples/ctypes.exl:39:37
+As @examples/ctypes.exl:39:39
+(Ident int) @examples/ctypes.exl:39:42
+RParen @examples/ctypes.exl:39:45
+Semicolon @examples/ctypes.exl:39:46
+Let @examples/ctypes.exl:41:5
+(Ident p) @examples/ctypes.exl:41:9
+Colon @examples/ctypes.exl:41:10
+Star @examples/ctypes.exl:41:12
+(Ident c_void) @examples/ctypes.exl:41:13
+Eq @examples/ctypes.exl:41:20
+Null @examples/ctypes.exl:41:22
+Semicolon @examples/ctypes.exl:41:26
+Let @examples/ctypes.exl:42:5
+(Ident back) @examples/ctypes.exl:42:9
+Eq @examples/ctypes.exl:42:14
+(Ident raw) @examples/ctypes.exl:42:16
+DoubleColon @examples/ctypes.exl:42:19
+(Ident vp_id) @examples/ctypes.exl:42:21
+LParen @examples/ctypes.exl:42:26
+(Ident p) @examples/ctypes.exl:42:27
+RParen @examples/ctypes.exl:42:28
+Semicolon @examples/ctypes.exl:42:29
+If @examples/ctypes.exl:43:5
+(Ident back) @examples/ctypes.exl:43:8
+EqEq @examples/ctypes.exl:43:13
+Null @examples/ctypes.exl:43:16
+LBrace @examples/ctypes.exl:43:21
+(Ident println) @examples/ctypes.exl:43:23
+LParen @examples/ctypes.exl:43:30
+(Int 0) @examples/ctypes.exl:43:31
+RParen @examples/ctypes.exl:43:32
+Semicolon @examples/ctypes.exl:43:33
+RBrace @examples/ctypes.exl:43:35
+Else @examples/ctypes.exl:43:37
+LBrace @examples/ctypes.exl:43:42
+(Ident println) @examples/ctypes.exl:43:44
+LParen @examples/ctypes.exl:43:51
+(Int 1) @examples/ctypes.exl:43:52
+RParen @examples/ctypes.exl:43:53
+Semicolon @examples/ctypes.exl:43:54
+RBrace @examples/ctypes.exl:43:56
+RBrace @examples/ctypes.exl:44:1
+Eof @examples/ctypes.exl:45:1

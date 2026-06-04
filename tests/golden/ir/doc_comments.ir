@@ -1,0 +1,17 @@
+;; exile-typed-ir-dump v1 examples/doc_comments.exl
+(tfn ex_dbl (params (param x (int i32))) (int i32) (body (return (binop + (var x) :ty (int i32) (var x) :ty (int i32)) :ty (int i32))))
+(tfn ex_add (params (param a (int i32)) (param b (int i32))) (int i32) (body (return (binop + (var a) :ty (int i32) (var b) :ty (int i32)) :ty (int i32))))
+(tfn main (params ) void (body (expr-stmt (builtin-call println (call ex_dbl (int 5) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_add (int 2) :ty (int i32) (int 3) :ty (int i32)) :ty (int i32)) :ty (int i32)) (let p (struct-lit Point (field x (int 7) :ty (int i32)) (field y (int 9) :ty (int i32))) :ty (struct Point)) (expr-stmt (builtin-call println (binop + (field-access (var p) :ty (struct Point) x) :ty (int i32) (field-access (var p) :ty (struct Point) y) :ty (int i32)) :ty (int i32)) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Point)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

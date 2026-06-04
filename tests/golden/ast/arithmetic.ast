@@ -1,0 +1,2 @@
+;; exile-ast-dump v1 examples/arithmetic.exl
+(fn main (params ) void (body (let sum (binop + (int 6) (int 4))) (let diff (binop - (int 100) (int 42))) (let product (binop * (int 6) (int 7))) (let quot (binop / (int 84) (int 2))) (let mixed (binop + (int 1) (binop * (int 2) (int 3)))) (expr-stmt (call println (var sum))) (expr-stmt (call println (var diff))) (expr-stmt (call println (var product))) (expr-stmt (call println (var quot))) (expr-stmt (call println (var mixed)))))

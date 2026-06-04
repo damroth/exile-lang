@@ -1,0 +1,6 @@
+;; exile-ast-dump v1 examples/generic_methods.exl
+(fn id (tparams T) (params (param x (struct T))) (struct T) (body (return (var x))))
+(fn make_null (tparams T) (params ) (ptr (struct T)) (body (return null)))
+(struct Box (fields (field value (int i32))))
+(impl Box (fn first pub (tparams T) (params (param self (struct Box)) (param x (struct T))) (struct T) (body (return (var x)))) (fn value_of pub (params (param self (struct Box))) (int i32) (body (return (field-access (var self) value)))))
+(fn main (params ) void (body (expr-stmt (call println (call id (int 42)))) (expr-stmt (call println (call id (int 7)))) (expr-stmt (if (call id (bool true)) (then (expr-stmt (call println (int 1)))) (else (expr-stmt (call println (int 0)))))) (let p (ty (ptr (int i32))) (call make_null )) (expr-stmt (if (binop == (var p) null) (then (expr-stmt (call println (int 100)))) (else (expr-stmt (call println (int 0)))))) (let b (struct-lit Box (field value (int 99)))) (expr-stmt (call println (method-call (var b) first (int 11)))) (expr-stmt (if (method-call (var b) first (bool false)) (then (expr-stmt (call println (int 1)))) (else (expr-stmt (call println (int 0)))))) (expr-stmt (call println (method-call (var b) value_of )))))

@@ -1,0 +1,154 @@
+;; exile-tokens-dump v1 examples/associated_types.exl
+Trait @examples/associated_types.exl:10:1
+(Ident Iterator) @examples/associated_types.exl:10:7
+LBrace @examples/associated_types.exl:10:16
+Type @examples/associated_types.exl:11:5
+(Ident Item) @examples/associated_types.exl:11:10
+Semicolon @examples/associated_types.exl:11:14
+Fn @examples/associated_types.exl:12:5
+(Ident next) @examples/associated_types.exl:12:8
+LParen @examples/associated_types.exl:12:12
+(Ident self) @examples/associated_types.exl:12:13
+RParen @examples/associated_types.exl:12:17
+Arrow @examples/associated_types.exl:12:19
+(Ident Option) @examples/associated_types.exl:12:22
+Lt @examples/associated_types.exl:12:28
+(Ident Self) @examples/associated_types.exl:12:29
+DoubleColon @examples/associated_types.exl:12:33
+(Ident Item) @examples/associated_types.exl:12:35
+Gt @examples/associated_types.exl:12:39
+Semicolon @examples/associated_types.exl:12:40
+RBrace @examples/associated_types.exl:13:1
+Struct @examples/associated_types.exl:15:1
+(Ident UpTo) @examples/associated_types.exl:15:8
+LBrace @examples/associated_types.exl:15:13
+(Ident cur) @examples/associated_types.exl:15:15
+Colon @examples/associated_types.exl:15:18
+(Ident int) @examples/associated_types.exl:15:20
+Comma @examples/associated_types.exl:15:23
+(Ident end) @examples/associated_types.exl:15:25
+Colon @examples/associated_types.exl:15:28
+(Ident int) @examples/associated_types.exl:15:30
+RBrace @examples/associated_types.exl:15:34
+Impl @examples/associated_types.exl:17:1
+(Ident Iterator) @examples/associated_types.exl:17:6
+For @examples/associated_types.exl:17:15
+(Ident UpTo) @examples/associated_types.exl:17:19
+LBrace @examples/associated_types.exl:17:24
+Type @examples/associated_types.exl:18:5
+(Ident Item) @examples/associated_types.exl:18:10
+Eq @examples/associated_types.exl:18:15
+(Ident int) @examples/associated_types.exl:18:17
+Semicolon @examples/associated_types.exl:18:20
+Fn @examples/associated_types.exl:19:5
+(Ident next) @examples/associated_types.exl:19:8
+LParen @examples/associated_types.exl:19:12
+(Ident self) @examples/associated_types.exl:19:13
+RParen @examples/associated_types.exl:19:17
+Arrow @examples/associated_types.exl:19:19
+(Ident Option) @examples/associated_types.exl:19:22
+Lt @examples/associated_types.exl:19:28
+(Ident int) @examples/associated_types.exl:19:29
+Gt @examples/associated_types.exl:19:32
+LBrace @examples/associated_types.exl:19:34
+If @examples/associated_types.exl:20:9
+(Ident self) @examples/associated_types.exl:20:12
+Dot @examples/associated_types.exl:20:16
+(Ident cur) @examples/associated_types.exl:20:17
+Lt @examples/associated_types.exl:20:21
+(Ident self) @examples/associated_types.exl:20:23
+Dot @examples/associated_types.exl:20:27
+(Ident end) @examples/associated_types.exl:20:28
+LBrace @examples/associated_types.exl:20:32
+(Ident Option) @examples/associated_types.exl:21:13
+DoubleColon @examples/associated_types.exl:21:19
+(Ident Some) @examples/associated_types.exl:21:21
+LParen @examples/associated_types.exl:21:25
+(Ident self) @examples/associated_types.exl:21:26
+Dot @examples/associated_types.exl:21:30
+(Ident cur) @examples/associated_types.exl:21:31
+RParen @examples/associated_types.exl:21:34
+RBrace @examples/associated_types.exl:22:9
+Else @examples/associated_types.exl:22:11
+LBrace @examples/associated_types.exl:22:16
+(Ident Option) @examples/associated_types.exl:23:13
+DoubleColon @examples/associated_types.exl:23:19
+(Ident None) @examples/associated_types.exl:23:21
+RBrace @examples/associated_types.exl:24:9
+RBrace @examples/associated_types.exl:25:5
+RBrace @examples/associated_types.exl:26:1
+Fn @examples/associated_types.exl:28:1
+(Ident main) @examples/associated_types.exl:28:4
+LParen @examples/associated_types.exl:28:8
+RParen @examples/associated_types.exl:28:9
+LBrace @examples/associated_types.exl:28:11
+Let @examples/associated_types.exl:29:5
+Mut @examples/associated_types.exl:29:9
+(Ident it) @examples/associated_types.exl:29:13
+Eq @examples/associated_types.exl:29:16
+(Ident UpTo) @examples/associated_types.exl:29:18
+LBrace @examples/associated_types.exl:29:23
+(Ident cur) @examples/associated_types.exl:29:25
+Colon @examples/associated_types.exl:29:28
+(Int 0) @examples/associated_types.exl:29:30
+Comma @examples/associated_types.exl:29:31
+(Ident end) @examples/associated_types.exl:29:33
+Colon @examples/associated_types.exl:29:36
+(Int 3) @examples/associated_types.exl:29:38
+RBrace @examples/associated_types.exl:29:40
+Semicolon @examples/associated_types.exl:29:41
+Loop @examples/associated_types.exl:32:5
+LBrace @examples/associated_types.exl:32:10
+Match @examples/associated_types.exl:33:9
+(Ident it) @examples/associated_types.exl:33:15
+Dot @examples/associated_types.exl:33:17
+(Ident next) @examples/associated_types.exl:33:18
+LParen @examples/associated_types.exl:33:22
+RParen @examples/associated_types.exl:33:23
+LBrace @examples/associated_types.exl:33:25
+(Ident Option) @examples/associated_types.exl:34:13
+DoubleColon @examples/associated_types.exl:34:19
+(Ident Some) @examples/associated_types.exl:34:21
+LParen @examples/associated_types.exl:34:25
+(Ident v) @examples/associated_types.exl:34:26
+RParen @examples/associated_types.exl:34:27
+FatArrow @examples/associated_types.exl:34:29
+LBrace @examples/associated_types.exl:34:32
+(Ident println) @examples/associated_types.exl:35:17
+LParen @examples/associated_types.exl:35:24
+(Ident v) @examples/associated_types.exl:35:25
+RParen @examples/associated_types.exl:35:26
+Semicolon @examples/associated_types.exl:35:27
+(Ident it) @examples/associated_types.exl:36:17
+Eq @examples/associated_types.exl:36:20
+(Ident UpTo) @examples/associated_types.exl:36:22
+LBrace @examples/associated_types.exl:36:27
+(Ident cur) @examples/associated_types.exl:36:29
+Colon @examples/associated_types.exl:36:32
+(Ident it) @examples/associated_types.exl:36:34
+Dot @examples/associated_types.exl:36:36
+(Ident cur) @examples/associated_types.exl:36:37
+Plus @examples/associated_types.exl:36:41
+(Int 1) @examples/associated_types.exl:36:43
+Comma @examples/associated_types.exl:36:44
+(Ident end) @examples/associated_types.exl:36:46
+Colon @examples/associated_types.exl:36:49
+(Ident it) @examples/associated_types.exl:36:51
+Dot @examples/associated_types.exl:36:53
+(Ident end) @examples/associated_types.exl:36:54
+RBrace @examples/associated_types.exl:36:58
+Semicolon @examples/associated_types.exl:36:59
+RBrace @examples/associated_types.exl:37:13
+Pipe @examples/associated_types.exl:38:13
+(Ident Option) @examples/associated_types.exl:38:15
+DoubleColon @examples/associated_types.exl:38:21
+(Ident None) @examples/associated_types.exl:38:23
+FatArrow @examples/associated_types.exl:38:28
+LBrace @examples/associated_types.exl:38:31
+Break @examples/associated_types.exl:38:33
+Semicolon @examples/associated_types.exl:38:38
+RBrace @examples/associated_types.exl:38:40
+RBrace @examples/associated_types.exl:39:9
+RBrace @examples/associated_types.exl:40:5
+RBrace @examples/associated_types.exl:41:1
+Eof @examples/associated_types.exl:42:1

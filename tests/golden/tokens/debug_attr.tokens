@@ -1,0 +1,183 @@
+;; exile-tokens-dump v1 examples/debug_attr.exl
+At @examples/debug_attr.exl:14:1
+(Ident debug) @examples/debug_attr.exl:14:2
+Struct @examples/debug_attr.exl:15:1
+(Ident Point) @examples/debug_attr.exl:15:8
+LBrace @examples/debug_attr.exl:15:14
+(Ident x) @examples/debug_attr.exl:15:16
+Colon @examples/debug_attr.exl:15:17
+(Ident int) @examples/debug_attr.exl:15:19
+Comma @examples/debug_attr.exl:15:22
+(Ident y) @examples/debug_attr.exl:15:24
+Colon @examples/debug_attr.exl:15:25
+(Ident int) @examples/debug_attr.exl:15:27
+RBrace @examples/debug_attr.exl:15:31
+At @examples/debug_attr.exl:17:1
+(Ident debug) @examples/debug_attr.exl:17:2
+Struct @examples/debug_attr.exl:18:1
+(Ident Pair) @examples/debug_attr.exl:18:8
+Lt @examples/debug_attr.exl:18:12
+(Ident A) @examples/debug_attr.exl:18:13
+Comma @examples/debug_attr.exl:18:14
+(Ident B) @examples/debug_attr.exl:18:16
+Gt @examples/debug_attr.exl:18:17
+LBrace @examples/debug_attr.exl:18:19
+(Ident fst) @examples/debug_attr.exl:18:21
+Colon @examples/debug_attr.exl:18:24
+(Ident A) @examples/debug_attr.exl:18:26
+Comma @examples/debug_attr.exl:18:27
+(Ident snd) @examples/debug_attr.exl:18:29
+Colon @examples/debug_attr.exl:18:32
+(Ident B) @examples/debug_attr.exl:18:34
+RBrace @examples/debug_attr.exl:18:36
+At @examples/debug_attr.exl:20:1
+(Ident debug) @examples/debug_attr.exl:20:2
+Struct @examples/debug_attr.exl:21:1
+(Ident Rect) @examples/debug_attr.exl:21:8
+LBrace @examples/debug_attr.exl:21:13
+(Ident origin) @examples/debug_attr.exl:22:5
+Colon @examples/debug_attr.exl:22:11
+(Ident Point) @examples/debug_attr.exl:22:13
+Comma @examples/debug_attr.exl:22:18
+(Ident width) @examples/debug_attr.exl:23:5
+Colon @examples/debug_attr.exl:23:10
+(Ident int) @examples/debug_attr.exl:23:12
+Comma @examples/debug_attr.exl:23:15
+(Ident height) @examples/debug_attr.exl:24:5
+Colon @examples/debug_attr.exl:24:11
+(Ident int) @examples/debug_attr.exl:24:13
+Comma @examples/debug_attr.exl:24:16
+RBrace @examples/debug_attr.exl:25:1
+At @examples/debug_attr.exl:27:1
+(Ident debug) @examples/debug_attr.exl:27:2
+Enum @examples/debug_attr.exl:28:1
+(Ident Shape) @examples/debug_attr.exl:28:6
+LBrace @examples/debug_attr.exl:28:12
+(Ident Circle) @examples/debug_attr.exl:29:5
+LParen @examples/debug_attr.exl:29:11
+(Ident int) @examples/debug_attr.exl:29:12
+RParen @examples/debug_attr.exl:29:15
+Pipe @examples/debug_attr.exl:30:5
+(Ident Rectangle) @examples/debug_attr.exl:30:7
+LBrace @examples/debug_attr.exl:30:17
+(Ident w) @examples/debug_attr.exl:30:19
+Colon @examples/debug_attr.exl:30:20
+(Ident int) @examples/debug_attr.exl:30:22
+Comma @examples/debug_attr.exl:30:25
+(Ident h) @examples/debug_attr.exl:30:27
+Colon @examples/debug_attr.exl:30:28
+(Ident int) @examples/debug_attr.exl:30:30
+RBrace @examples/debug_attr.exl:30:34
+Pipe @examples/debug_attr.exl:31:5
+(Ident None) @examples/debug_attr.exl:31:7
+RBrace @examples/debug_attr.exl:32:1
+Fn @examples/debug_attr.exl:34:1
+(Ident main) @examples/debug_attr.exl:34:4
+LParen @examples/debug_attr.exl:34:8
+RParen @examples/debug_attr.exl:34:9
+LBrace @examples/debug_attr.exl:34:11
+Let @examples/debug_attr.exl:35:5
+(Ident p) @examples/debug_attr.exl:35:9
+Eq @examples/debug_attr.exl:35:11
+(Ident Point) @examples/debug_attr.exl:35:13
+LBrace @examples/debug_attr.exl:35:19
+(Ident x) @examples/debug_attr.exl:35:21
+Colon @examples/debug_attr.exl:35:22
+(Int 3) @examples/debug_attr.exl:35:24
+Comma @examples/debug_attr.exl:35:25
+(Ident y) @examples/debug_attr.exl:35:27
+Colon @examples/debug_attr.exl:35:28
+(Int 4) @examples/debug_attr.exl:35:30
+RBrace @examples/debug_attr.exl:35:32
+Semicolon @examples/debug_attr.exl:35:33
+Let @examples/debug_attr.exl:36:5
+(Ident r) @examples/debug_attr.exl:36:9
+Eq @examples/debug_attr.exl:36:11
+(Ident Rect) @examples/debug_attr.exl:36:13
+LBrace @examples/debug_attr.exl:36:18
+(Ident origin) @examples/debug_attr.exl:36:20
+Colon @examples/debug_attr.exl:36:26
+(Ident p) @examples/debug_attr.exl:36:28
+Comma @examples/debug_attr.exl:36:29
+(Ident width) @examples/debug_attr.exl:36:31
+Colon @examples/debug_attr.exl:36:36
+(Int 100) @examples/debug_attr.exl:36:38
+Comma @examples/debug_attr.exl:36:41
+(Ident height) @examples/debug_attr.exl:36:43
+Colon @examples/debug_attr.exl:36:49
+(Int 50) @examples/debug_attr.exl:36:51
+RBrace @examples/debug_attr.exl:36:54
+Semicolon @examples/debug_attr.exl:36:55
+(Ident println) @examples/debug_attr.exl:38:5
+LParen @examples/debug_attr.exl:38:12
+(Ident p) @examples/debug_attr.exl:38:13
+RParen @examples/debug_attr.exl:38:14
+Semicolon @examples/debug_attr.exl:38:15
+(Ident println) @examples/debug_attr.exl:39:5
+LParen @examples/debug_attr.exl:39:12
+(Ident r) @examples/debug_attr.exl:39:13
+RParen @examples/debug_attr.exl:39:14
+Semicolon @examples/debug_attr.exl:39:15
+(Ident println) @examples/debug_attr.exl:41:5
+LParen @examples/debug_attr.exl:41:12
+(Ident Shape) @examples/debug_attr.exl:41:13
+DoubleColon @examples/debug_attr.exl:41:18
+(Ident Circle) @examples/debug_attr.exl:41:20
+LParen @examples/debug_attr.exl:41:26
+(Int 7) @examples/debug_attr.exl:41:27
+RParen @examples/debug_attr.exl:41:28
+RParen @examples/debug_attr.exl:41:29
+Semicolon @examples/debug_attr.exl:41:30
+(Ident println) @examples/debug_attr.exl:42:5
+LParen @examples/debug_attr.exl:42:12
+(Ident Shape) @examples/debug_attr.exl:42:13
+DoubleColon @examples/debug_attr.exl:42:18
+(Ident Rectangle) @examples/debug_attr.exl:42:20
+LBrace @examples/debug_attr.exl:42:30
+(Ident w) @examples/debug_attr.exl:42:32
+Colon @examples/debug_attr.exl:42:33
+(Int 80) @examples/debug_attr.exl:42:35
+Comma @examples/debug_attr.exl:42:37
+(Ident h) @examples/debug_attr.exl:42:39
+Colon @examples/debug_attr.exl:42:40
+(Int 20) @examples/debug_attr.exl:42:42
+RBrace @examples/debug_attr.exl:42:45
+RParen @examples/debug_attr.exl:42:46
+Semicolon @examples/debug_attr.exl:42:47
+(Ident println) @examples/debug_attr.exl:43:5
+LParen @examples/debug_attr.exl:43:12
+(Ident Shape) @examples/debug_attr.exl:43:13
+DoubleColon @examples/debug_attr.exl:43:18
+(Ident None) @examples/debug_attr.exl:43:20
+RParen @examples/debug_attr.exl:43:24
+Semicolon @examples/debug_attr.exl:43:25
+(Ident println) @examples/debug_attr.exl:46:5
+LParen @examples/debug_attr.exl:46:12
+(Ident Pair) @examples/debug_attr.exl:46:13
+LBrace @examples/debug_attr.exl:46:18
+(Ident fst) @examples/debug_attr.exl:46:20
+Colon @examples/debug_attr.exl:46:23
+(Int 1) @examples/debug_attr.exl:46:25
+Comma @examples/debug_attr.exl:46:26
+(Ident snd) @examples/debug_attr.exl:46:28
+Colon @examples/debug_attr.exl:46:31
+True @examples/debug_attr.exl:46:33
+RBrace @examples/debug_attr.exl:46:38
+RParen @examples/debug_attr.exl:46:39
+Semicolon @examples/debug_attr.exl:46:40
+(Ident println) @examples/debug_attr.exl:47:5
+LParen @examples/debug_attr.exl:47:12
+(Ident Pair) @examples/debug_attr.exl:47:13
+LBrace @examples/debug_attr.exl:47:18
+(Ident fst) @examples/debug_attr.exl:47:20
+Colon @examples/debug_attr.exl:47:23
+(Ident p) @examples/debug_attr.exl:47:25
+Comma @examples/debug_attr.exl:47:26
+(Ident snd) @examples/debug_attr.exl:47:28
+Colon @examples/debug_attr.exl:47:31
+(Int 9) @examples/debug_attr.exl:47:33
+RBrace @examples/debug_attr.exl:47:35
+RParen @examples/debug_attr.exl:47:36
+Semicolon @examples/debug_attr.exl:47:37
+RBrace @examples/debug_attr.exl:48:1
+Eof @examples/debug_attr.exl:49:1

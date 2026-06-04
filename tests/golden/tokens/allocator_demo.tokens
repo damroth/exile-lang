@@ -1,0 +1,123 @@
+;; exile-tokens-dump v1 examples/allocator_demo.exl
+Pub @examples/allocator_demo.exl:18:1
+Mod @examples/allocator_demo.exl:18:5
+(Ident raw) @examples/allocator_demo.exl:18:9
+LBrace @examples/allocator_demo.exl:18:13
+Extern @examples/allocator_demo.exl:19:5
+Fn @examples/allocator_demo.exl:19:12
+(Ident make_c_allocator) @examples/allocator_demo.exl:19:15
+LParen @examples/allocator_demo.exl:19:31
+RParen @examples/allocator_demo.exl:19:32
+Arrow @examples/allocator_demo.exl:19:34
+(Ident Allocator) @examples/allocator_demo.exl:19:37
+Semicolon @examples/allocator_demo.exl:19:46
+RBrace @examples/allocator_demo.exl:20:1
+Fn @examples/allocator_demo.exl:22:1
+(Ident main) @examples/allocator_demo.exl:22:4
+LParen @examples/allocator_demo.exl:22:8
+RParen @examples/allocator_demo.exl:22:9
+LBrace @examples/allocator_demo.exl:22:11
+Let @examples/allocator_demo.exl:23:5
+(Ident a) @examples/allocator_demo.exl:23:9
+Eq @examples/allocator_demo.exl:23:11
+(Ident raw) @examples/allocator_demo.exl:23:13
+DoubleColon @examples/allocator_demo.exl:23:16
+(Ident make_c_allocator) @examples/allocator_demo.exl:23:18
+LParen @examples/allocator_demo.exl:23:34
+RParen @examples/allocator_demo.exl:23:35
+Semicolon @examples/allocator_demo.exl:23:36
+Let @examples/allocator_demo.exl:28:5
+(Ident p) @examples/allocator_demo.exl:28:9
+Colon @examples/allocator_demo.exl:28:10
+Star @examples/allocator_demo.exl:28:12
+(Ident int) @examples/allocator_demo.exl:28:13
+Eq @examples/allocator_demo.exl:28:17
+(Ident a) @examples/allocator_demo.exl:28:19
+Dot @examples/allocator_demo.exl:28:20
+(Ident alloc) @examples/allocator_demo.exl:28:21
+LParen @examples/allocator_demo.exl:28:26
+RParen @examples/allocator_demo.exl:28:27
+Semicolon @examples/allocator_demo.exl:28:28
+If @examples/allocator_demo.exl:29:5
+(Ident p) @examples/allocator_demo.exl:29:8
+EqEq @examples/allocator_demo.exl:29:10
+Null @examples/allocator_demo.exl:29:13
+LBrace @examples/allocator_demo.exl:29:18
+(Ident println) @examples/allocator_demo.exl:30:9
+LParen @examples/allocator_demo.exl:30:16
+Minus @examples/allocator_demo.exl:30:17
+(Int 1) @examples/allocator_demo.exl:30:18
+RParen @examples/allocator_demo.exl:30:19
+Semicolon @examples/allocator_demo.exl:30:20
+RBrace @examples/allocator_demo.exl:31:5
+Else @examples/allocator_demo.exl:31:7
+LBrace @examples/allocator_demo.exl:31:12
+Star @examples/allocator_demo.exl:34:9
+(Ident p) @examples/allocator_demo.exl:34:10
+Eq @examples/allocator_demo.exl:34:12
+(Int 42) @examples/allocator_demo.exl:34:14
+Semicolon @examples/allocator_demo.exl:34:16
+(Ident println) @examples/allocator_demo.exl:35:9
+LParen @examples/allocator_demo.exl:35:16
+Star @examples/allocator_demo.exl:35:17
+(Ident p) @examples/allocator_demo.exl:35:18
+RParen @examples/allocator_demo.exl:35:19
+Semicolon @examples/allocator_demo.exl:35:20
+(Ident a) @examples/allocator_demo.exl:37:9
+Dot @examples/allocator_demo.exl:37:10
+(Ident free) @examples/allocator_demo.exl:37:11
+LParen @examples/allocator_demo.exl:37:15
+(Ident p) @examples/allocator_demo.exl:37:16
+RParen @examples/allocator_demo.exl:37:17
+Semicolon @examples/allocator_demo.exl:37:18
+RBrace @examples/allocator_demo.exl:38:5
+Let @examples/allocator_demo.exl:42:5
+(Ident q) @examples/allocator_demo.exl:42:9
+Colon @examples/allocator_demo.exl:42:10
+Star @examples/allocator_demo.exl:42:12
+(Ident bool) @examples/allocator_demo.exl:42:13
+Eq @examples/allocator_demo.exl:42:18
+(Ident a) @examples/allocator_demo.exl:42:20
+Dot @examples/allocator_demo.exl:42:21
+(Ident alloc) @examples/allocator_demo.exl:42:22
+LParen @examples/allocator_demo.exl:42:27
+RParen @examples/allocator_demo.exl:42:28
+Semicolon @examples/allocator_demo.exl:42:29
+If @examples/allocator_demo.exl:43:5
+(Ident q) @examples/allocator_demo.exl:43:8
+NotEq @examples/allocator_demo.exl:43:10
+Null @examples/allocator_demo.exl:43:13
+LBrace @examples/allocator_demo.exl:43:18
+Star @examples/allocator_demo.exl:44:9
+(Ident q) @examples/allocator_demo.exl:44:10
+Eq @examples/allocator_demo.exl:44:12
+True @examples/allocator_demo.exl:44:14
+Semicolon @examples/allocator_demo.exl:44:18
+If @examples/allocator_demo.exl:45:9
+Star @examples/allocator_demo.exl:45:12
+(Ident q) @examples/allocator_demo.exl:45:13
+LBrace @examples/allocator_demo.exl:45:15
+(Ident println) @examples/allocator_demo.exl:45:17
+LParen @examples/allocator_demo.exl:45:24
+(Int 1) @examples/allocator_demo.exl:45:25
+RParen @examples/allocator_demo.exl:45:26
+Semicolon @examples/allocator_demo.exl:45:27
+RBrace @examples/allocator_demo.exl:45:29
+Else @examples/allocator_demo.exl:45:31
+LBrace @examples/allocator_demo.exl:45:36
+(Ident println) @examples/allocator_demo.exl:45:38
+LParen @examples/allocator_demo.exl:45:45
+(Int 0) @examples/allocator_demo.exl:45:46
+RParen @examples/allocator_demo.exl:45:47
+Semicolon @examples/allocator_demo.exl:45:48
+RBrace @examples/allocator_demo.exl:45:50
+(Ident a) @examples/allocator_demo.exl:46:9
+Dot @examples/allocator_demo.exl:46:10
+(Ident free) @examples/allocator_demo.exl:46:11
+LParen @examples/allocator_demo.exl:46:15
+(Ident q) @examples/allocator_demo.exl:46:16
+RParen @examples/allocator_demo.exl:46:17
+Semicolon @examples/allocator_demo.exl:46:18
+RBrace @examples/allocator_demo.exl:47:5
+RBrace @examples/allocator_demo.exl:48:1
+Eof @examples/allocator_demo.exl:49:1

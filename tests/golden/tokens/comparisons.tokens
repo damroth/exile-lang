@@ -1,0 +1,75 @@
+;; exile-tokens-dump v1 examples/comparisons.exl
+Fn @examples/comparisons.exl:1:1
+(Ident main) @examples/comparisons.exl:1:4
+LParen @examples/comparisons.exl:1:8
+RParen @examples/comparisons.exl:1:9
+LBrace @examples/comparisons.exl:1:11
+Let @examples/comparisons.exl:2:5
+(Ident x) @examples/comparisons.exl:2:9
+Eq @examples/comparisons.exl:2:11
+(Int 5) @examples/comparisons.exl:2:13
+Semicolon @examples/comparisons.exl:2:14
+(Ident println) @examples/comparisons.exl:4:5
+LParen @examples/comparisons.exl:4:12
+(Ident x) @examples/comparisons.exl:4:13
+EqEq @examples/comparisons.exl:4:15
+(Int 5) @examples/comparisons.exl:4:18
+RParen @examples/comparisons.exl:4:19
+Semicolon @examples/comparisons.exl:4:20
+(Ident println) @examples/comparisons.exl:5:5
+LParen @examples/comparisons.exl:5:12
+(Ident x) @examples/comparisons.exl:5:13
+NotEq @examples/comparisons.exl:5:15
+(Int 0) @examples/comparisons.exl:5:18
+RParen @examples/comparisons.exl:5:19
+Semicolon @examples/comparisons.exl:5:20
+(Ident println) @examples/comparisons.exl:6:5
+LParen @examples/comparisons.exl:6:12
+(Ident x) @examples/comparisons.exl:6:13
+Lt @examples/comparisons.exl:6:15
+(Int 10) @examples/comparisons.exl:6:18
+RParen @examples/comparisons.exl:6:20
+Semicolon @examples/comparisons.exl:6:21
+(Ident println) @examples/comparisons.exl:7:5
+LParen @examples/comparisons.exl:7:12
+(Ident x) @examples/comparisons.exl:7:13
+Gt @examples/comparisons.exl:7:15
+(Int 0) @examples/comparisons.exl:7:18
+RParen @examples/comparisons.exl:7:19
+Semicolon @examples/comparisons.exl:7:20
+(Ident println) @examples/comparisons.exl:8:5
+LParen @examples/comparisons.exl:8:12
+(Ident x) @examples/comparisons.exl:8:13
+LtEq @examples/comparisons.exl:8:15
+(Int 5) @examples/comparisons.exl:8:18
+RParen @examples/comparisons.exl:8:19
+Semicolon @examples/comparisons.exl:8:20
+(Ident println) @examples/comparisons.exl:9:5
+LParen @examples/comparisons.exl:9:12
+(Ident x) @examples/comparisons.exl:9:13
+GtEq @examples/comparisons.exl:9:15
+(Int 5) @examples/comparisons.exl:9:18
+RParen @examples/comparisons.exl:9:19
+Semicolon @examples/comparisons.exl:9:20
+Let @examples/comparisons.exl:11:5
+(Ident yes) @examples/comparisons.exl:11:9
+Eq @examples/comparisons.exl:11:13
+True @examples/comparisons.exl:11:15
+Semicolon @examples/comparisons.exl:11:19
+Let @examples/comparisons.exl:12:5
+(Ident no) @examples/comparisons.exl:12:9
+Eq @examples/comparisons.exl:12:13
+False @examples/comparisons.exl:12:15
+Semicolon @examples/comparisons.exl:12:20
+(Ident println) @examples/comparisons.exl:13:5
+LParen @examples/comparisons.exl:13:12
+(Ident yes) @examples/comparisons.exl:13:13
+RParen @examples/comparisons.exl:13:16
+Semicolon @examples/comparisons.exl:13:17
+(Ident println) @examples/comparisons.exl:14:5
+LParen @examples/comparisons.exl:14:12
+(Ident no) @examples/comparisons.exl:14:13
+RParen @examples/comparisons.exl:14:15
+Semicolon @examples/comparisons.exl:14:16
+RBrace @examples/comparisons.exl:15:1
+Eof @examples/comparisons.exl:16:1

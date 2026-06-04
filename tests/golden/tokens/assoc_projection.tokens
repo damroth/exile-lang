@@ -1,0 +1,292 @@
+;; exile-tokens-dump v1 examples/assoc_projection.exl
+Struct @examples/assoc_projection.exl:12:1
+(Ident Count) @examples/assoc_projection.exl:12:8
+LBrace @examples/assoc_projection.exl:12:14
+(Ident n) @examples/assoc_projection.exl:12:16
+Colon @examples/assoc_projection.exl:12:17
+(Ident int) @examples/assoc_projection.exl:12:19
+Comma @examples/assoc_projection.exl:12:22
+(Ident stop) @examples/assoc_projection.exl:12:24
+Colon @examples/assoc_projection.exl:12:28
+(Ident int) @examples/assoc_projection.exl:12:30
+RBrace @examples/assoc_projection.exl:12:34
+Impl @examples/assoc_projection.exl:13:1
+(Ident Iterator) @examples/assoc_projection.exl:13:6
+For @examples/assoc_projection.exl:13:15
+(Ident Count) @examples/assoc_projection.exl:13:19
+LBrace @examples/assoc_projection.exl:13:25
+Type @examples/assoc_projection.exl:14:5
+(Ident Item) @examples/assoc_projection.exl:14:10
+Eq @examples/assoc_projection.exl:14:15
+(Ident int) @examples/assoc_projection.exl:14:17
+Semicolon @examples/assoc_projection.exl:14:20
+Fn @examples/assoc_projection.exl:15:5
+(Ident next) @examples/assoc_projection.exl:15:8
+LParen @examples/assoc_projection.exl:15:12
+Star @examples/assoc_projection.exl:15:13
+(Ident self) @examples/assoc_projection.exl:15:14
+RParen @examples/assoc_projection.exl:15:18
+Arrow @examples/assoc_projection.exl:15:20
+(Ident Option) @examples/assoc_projection.exl:15:23
+Lt @examples/assoc_projection.exl:15:29
+(Ident int) @examples/assoc_projection.exl:15:30
+Gt @examples/assoc_projection.exl:15:33
+LBrace @examples/assoc_projection.exl:15:35
+If @examples/assoc_projection.exl:16:9
+(Ident self) @examples/assoc_projection.exl:16:12
+Dot @examples/assoc_projection.exl:16:16
+(Ident n) @examples/assoc_projection.exl:16:17
+GtEq @examples/assoc_projection.exl:16:19
+(Ident self) @examples/assoc_projection.exl:16:22
+Dot @examples/assoc_projection.exl:16:26
+(Ident stop) @examples/assoc_projection.exl:16:27
+LBrace @examples/assoc_projection.exl:16:32
+Return @examples/assoc_projection.exl:16:34
+(Ident Option) @examples/assoc_projection.exl:16:41
+DoubleColon @examples/assoc_projection.exl:16:47
+(Ident None) @examples/assoc_projection.exl:16:49
+Semicolon @examples/assoc_projection.exl:16:53
+RBrace @examples/assoc_projection.exl:16:55
+Let @examples/assoc_projection.exl:17:9
+(Ident v) @examples/assoc_projection.exl:17:13
+Eq @examples/assoc_projection.exl:17:15
+(Ident self) @examples/assoc_projection.exl:17:17
+Dot @examples/assoc_projection.exl:17:21
+(Ident n) @examples/assoc_projection.exl:17:22
+Semicolon @examples/assoc_projection.exl:17:23
+(Ident self) @examples/assoc_projection.exl:18:9
+Dot @examples/assoc_projection.exl:18:13
+(Ident n) @examples/assoc_projection.exl:18:14
+Eq @examples/assoc_projection.exl:18:16
+(Ident self) @examples/assoc_projection.exl:18:18
+Dot @examples/assoc_projection.exl:18:22
+(Ident n) @examples/assoc_projection.exl:18:23
+Plus @examples/assoc_projection.exl:18:25
+(Int 1) @examples/assoc_projection.exl:18:27
+Semicolon @examples/assoc_projection.exl:18:28
+(Ident Option) @examples/assoc_projection.exl:19:9
+DoubleColon @examples/assoc_projection.exl:19:15
+(Ident Some) @examples/assoc_projection.exl:19:17
+LParen @examples/assoc_projection.exl:19:21
+(Ident v) @examples/assoc_projection.exl:19:22
+RParen @examples/assoc_projection.exl:19:23
+RBrace @examples/assoc_projection.exl:20:5
+RBrace @examples/assoc_projection.exl:21:1
+Struct @examples/assoc_projection.exl:23:1
+(Ident Words) @examples/assoc_projection.exl:23:8
+LBrace @examples/assoc_projection.exl:23:14
+(Ident ws) @examples/assoc_projection.exl:23:16
+Colon @examples/assoc_projection.exl:23:18
+LBracket @examples/assoc_projection.exl:23:20
+(Ident str) @examples/assoc_projection.exl:23:21
+Semicolon @examples/assoc_projection.exl:23:24
+(Int 3) @examples/assoc_projection.exl:23:26
+RBracket @examples/assoc_projection.exl:23:27
+Comma @examples/assoc_projection.exl:23:28
+(Ident i) @examples/assoc_projection.exl:23:30
+Colon @examples/assoc_projection.exl:23:31
+(Ident int) @examples/assoc_projection.exl:23:33
+RBrace @examples/assoc_projection.exl:23:37
+Impl @examples/assoc_projection.exl:24:1
+(Ident Iterator) @examples/assoc_projection.exl:24:6
+For @examples/assoc_projection.exl:24:15
+(Ident Words) @examples/assoc_projection.exl:24:19
+LBrace @examples/assoc_projection.exl:24:25
+Type @examples/assoc_projection.exl:25:5
+(Ident Item) @examples/assoc_projection.exl:25:10
+Eq @examples/assoc_projection.exl:25:15
+(Ident str) @examples/assoc_projection.exl:25:17
+Semicolon @examples/assoc_projection.exl:25:20
+Fn @examples/assoc_projection.exl:26:5
+(Ident next) @examples/assoc_projection.exl:26:8
+LParen @examples/assoc_projection.exl:26:12
+Star @examples/assoc_projection.exl:26:13
+(Ident self) @examples/assoc_projection.exl:26:14
+RParen @examples/assoc_projection.exl:26:18
+Arrow @examples/assoc_projection.exl:26:20
+(Ident Option) @examples/assoc_projection.exl:26:23
+Lt @examples/assoc_projection.exl:26:29
+(Ident str) @examples/assoc_projection.exl:26:30
+Gt @examples/assoc_projection.exl:26:33
+LBrace @examples/assoc_projection.exl:26:35
+If @examples/assoc_projection.exl:27:9
+(Ident self) @examples/assoc_projection.exl:27:12
+Dot @examples/assoc_projection.exl:27:16
+(Ident i) @examples/assoc_projection.exl:27:17
+GtEq @examples/assoc_projection.exl:27:19
+(Int 3) @examples/assoc_projection.exl:27:22
+LBrace @examples/assoc_projection.exl:27:24
+Return @examples/assoc_projection.exl:27:26
+(Ident Option) @examples/assoc_projection.exl:27:33
+DoubleColon @examples/assoc_projection.exl:27:39
+(Ident None) @examples/assoc_projection.exl:27:41
+Semicolon @examples/assoc_projection.exl:27:45
+RBrace @examples/assoc_projection.exl:27:47
+Let @examples/assoc_projection.exl:28:9
+(Ident s) @examples/assoc_projection.exl:28:13
+Eq @examples/assoc_projection.exl:28:15
+(Ident self) @examples/assoc_projection.exl:28:17
+Dot @examples/assoc_projection.exl:28:21
+(Ident ws) @examples/assoc_projection.exl:28:22
+LBracket @examples/assoc_projection.exl:28:24
+(Ident self) @examples/assoc_projection.exl:28:25
+Dot @examples/assoc_projection.exl:28:29
+(Ident i) @examples/assoc_projection.exl:28:30
+RBracket @examples/assoc_projection.exl:28:31
+Semicolon @examples/assoc_projection.exl:28:32
+(Ident self) @examples/assoc_projection.exl:29:9
+Dot @examples/assoc_projection.exl:29:13
+(Ident i) @examples/assoc_projection.exl:29:14
+Eq @examples/assoc_projection.exl:29:16
+(Ident self) @examples/assoc_projection.exl:29:18
+Dot @examples/assoc_projection.exl:29:22
+(Ident i) @examples/assoc_projection.exl:29:23
+Plus @examples/assoc_projection.exl:29:25
+(Int 1) @examples/assoc_projection.exl:29:27
+Semicolon @examples/assoc_projection.exl:29:28
+(Ident Option) @examples/assoc_projection.exl:30:9
+DoubleColon @examples/assoc_projection.exl:30:15
+(Ident Some) @examples/assoc_projection.exl:30:17
+LParen @examples/assoc_projection.exl:30:21
+(Ident s) @examples/assoc_projection.exl:30:22
+RParen @examples/assoc_projection.exl:30:23
+RBrace @examples/assoc_projection.exl:31:5
+RBrace @examples/assoc_projection.exl:32:1
+Fn @examples/assoc_projection.exl:37:1
+(Ident first) @examples/assoc_projection.exl:37:4
+Lt @examples/assoc_projection.exl:37:9
+(Ident I) @examples/assoc_projection.exl:37:10
+Colon @examples/assoc_projection.exl:37:11
+(Ident Iterator) @examples/assoc_projection.exl:37:13
+Gt @examples/assoc_projection.exl:37:21
+LParen @examples/assoc_projection.exl:37:22
+(Ident it) @examples/assoc_projection.exl:37:23
+Colon @examples/assoc_projection.exl:37:25
+Star @examples/assoc_projection.exl:37:27
+(Ident I) @examples/assoc_projection.exl:37:28
+RParen @examples/assoc_projection.exl:37:29
+Arrow @examples/assoc_projection.exl:37:31
+(Ident Option) @examples/assoc_projection.exl:37:34
+Lt @examples/assoc_projection.exl:37:40
+(Ident I) @examples/assoc_projection.exl:37:41
+DoubleColon @examples/assoc_projection.exl:37:42
+(Ident Item) @examples/assoc_projection.exl:37:44
+Gt @examples/assoc_projection.exl:37:48
+LBrace @examples/assoc_projection.exl:37:50
+Return @examples/assoc_projection.exl:38:5
+(Ident it) @examples/assoc_projection.exl:38:12
+Dot @examples/assoc_projection.exl:38:14
+(Ident next) @examples/assoc_projection.exl:38:15
+LParen @examples/assoc_projection.exl:38:19
+RParen @examples/assoc_projection.exl:38:20
+Semicolon @examples/assoc_projection.exl:38:21
+RBrace @examples/assoc_projection.exl:39:1
+Fn @examples/assoc_projection.exl:41:1
+(Ident main) @examples/assoc_projection.exl:41:4
+LParen @examples/assoc_projection.exl:41:8
+RParen @examples/assoc_projection.exl:41:9
+LBrace @examples/assoc_projection.exl:41:11
+Let @examples/assoc_projection.exl:42:5
+(Ident counts) @examples/assoc_projection.exl:42:9
+Eq @examples/assoc_projection.exl:42:16
+(Ident Count) @examples/assoc_projection.exl:42:18
+LBrace @examples/assoc_projection.exl:42:24
+(Ident n) @examples/assoc_projection.exl:42:26
+Colon @examples/assoc_projection.exl:42:27
+(Int 10) @examples/assoc_projection.exl:42:29
+Comma @examples/assoc_projection.exl:42:31
+(Ident stop) @examples/assoc_projection.exl:42:33
+Colon @examples/assoc_projection.exl:42:37
+(Int 12) @examples/assoc_projection.exl:42:39
+RBrace @examples/assoc_projection.exl:42:42
+Semicolon @examples/assoc_projection.exl:42:43
+Match @examples/assoc_projection.exl:43:5
+(Ident first) @examples/assoc_projection.exl:43:11
+LParen @examples/assoc_projection.exl:43:16
+Amp @examples/assoc_projection.exl:43:17
+(Ident counts) @examples/assoc_projection.exl:43:18
+RParen @examples/assoc_projection.exl:43:24
+LBrace @examples/assoc_projection.exl:43:26
+(Ident Option) @examples/assoc_projection.exl:44:9
+DoubleColon @examples/assoc_projection.exl:44:15
+(Ident Some) @examples/assoc_projection.exl:44:17
+LParen @examples/assoc_projection.exl:44:21
+(Ident v) @examples/assoc_projection.exl:44:22
+RParen @examples/assoc_projection.exl:44:23
+FatArrow @examples/assoc_projection.exl:44:25
+LBrace @examples/assoc_projection.exl:44:28
+(Ident println) @examples/assoc_projection.exl:44:30
+LParen @examples/assoc_projection.exl:44:37
+(Ident v) @examples/assoc_projection.exl:44:38
+RParen @examples/assoc_projection.exl:44:39
+Semicolon @examples/assoc_projection.exl:44:40
+RBrace @examples/assoc_projection.exl:44:42
+Pipe @examples/assoc_projection.exl:45:9
+(Ident Option) @examples/assoc_projection.exl:45:11
+DoubleColon @examples/assoc_projection.exl:45:17
+(Ident None) @examples/assoc_projection.exl:45:19
+FatArrow @examples/assoc_projection.exl:45:24
+LBrace @examples/assoc_projection.exl:45:27
+(Ident println) @examples/assoc_projection.exl:45:29
+LParen @examples/assoc_projection.exl:45:36
+(Int 99) @examples/assoc_projection.exl:45:37
+RParen @examples/assoc_projection.exl:45:39
+Semicolon @examples/assoc_projection.exl:45:40
+RBrace @examples/assoc_projection.exl:45:42
+RBrace @examples/assoc_projection.exl:46:5
+Let @examples/assoc_projection.exl:48:5
+(Ident words) @examples/assoc_projection.exl:48:9
+Eq @examples/assoc_projection.exl:48:15
+(Ident Words) @examples/assoc_projection.exl:48:17
+LBrace @examples/assoc_projection.exl:48:23
+(Ident ws) @examples/assoc_projection.exl:48:25
+Colon @examples/assoc_projection.exl:48:27
+LBracket @examples/assoc_projection.exl:48:29
+(String "one") @examples/assoc_projection.exl:48:30
+Comma @examples/assoc_projection.exl:48:35
+(String "two") @examples/assoc_projection.exl:48:37
+Comma @examples/assoc_projection.exl:48:42
+(String "three") @examples/assoc_projection.exl:48:44
+RBracket @examples/assoc_projection.exl:48:51
+Comma @examples/assoc_projection.exl:48:52
+(Ident i) @examples/assoc_projection.exl:48:54
+Colon @examples/assoc_projection.exl:48:55
+(Int 0) @examples/assoc_projection.exl:48:57
+RBrace @examples/assoc_projection.exl:48:59
+Semicolon @examples/assoc_projection.exl:48:60
+Match @examples/assoc_projection.exl:49:5
+(Ident first) @examples/assoc_projection.exl:49:11
+LParen @examples/assoc_projection.exl:49:16
+Amp @examples/assoc_projection.exl:49:17
+(Ident words) @examples/assoc_projection.exl:49:18
+RParen @examples/assoc_projection.exl:49:23
+LBrace @examples/assoc_projection.exl:49:25
+(Ident Option) @examples/assoc_projection.exl:50:9
+DoubleColon @examples/assoc_projection.exl:50:15
+(Ident Some) @examples/assoc_projection.exl:50:17
+LParen @examples/assoc_projection.exl:50:21
+(Ident s) @examples/assoc_projection.exl:50:22
+RParen @examples/assoc_projection.exl:50:23
+FatArrow @examples/assoc_projection.exl:50:25
+LBrace @examples/assoc_projection.exl:50:28
+(Ident println) @examples/assoc_projection.exl:50:30
+LParen @examples/assoc_projection.exl:50:37
+(Ident s) @examples/assoc_projection.exl:50:38
+RParen @examples/assoc_projection.exl:50:39
+Semicolon @examples/assoc_projection.exl:50:40
+RBrace @examples/assoc_projection.exl:50:42
+Pipe @examples/assoc_projection.exl:51:9
+(Ident Option) @examples/assoc_projection.exl:51:11
+DoubleColon @examples/assoc_projection.exl:51:17
+(Ident None) @examples/assoc_projection.exl:51:19
+FatArrow @examples/assoc_projection.exl:51:24
+LBrace @examples/assoc_projection.exl:51:27
+(Ident println) @examples/assoc_projection.exl:51:29
+LParen @examples/assoc_projection.exl:51:36
+(String "end") @examples/assoc_projection.exl:51:37
+RParen @examples/assoc_projection.exl:51:42
+Semicolon @examples/assoc_projection.exl:51:43
+RBrace @examples/assoc_projection.exl:51:45
+RBrace @examples/assoc_projection.exl:52:5
+RBrace @examples/assoc_projection.exl:53:1
+Eof @examples/assoc_projection.exl:54:1

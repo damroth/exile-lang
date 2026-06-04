@@ -1,0 +1,7 @@
+;; exile-ast-dump v1 examples/pointers.exl
+(struct Point (fields (field x (int i32)) (field y (int i32))))
+(fn shift (params (param p (ptr (struct Point))) (param dx (int i32)) (param dy (int i32))) void (body (assign-field (var p) x (binop + (field-access (var p) x) (var dx))) (assign-field (var p) y (binop + (field-access (var p) y) (var dy)))))
+(fn deref_int (params (param pn (ptr (int i32)))) (int i32) (body (return (deref (var pn)))))
+(fn set_via_ptr (params (param pn (ptr (int i32))) (param v (int i32))) void (body (assign-deref (var pn) (var v))))
+(fn swap (params (param a (ptr (int i32))) (param b (ptr (int i32)))) void (body (let tmp (deref (var a))) (assign-deref (var a) (deref (var b))) (assign-deref (var b) (var tmp))))
+(fn main (params ) void (body (let p (struct-lit Point (field x (int 1)) (field y (int 2)))) (expr-stmt (call shift (ref (var p)) (int 10) (int 20))) (expr-stmt (call println (field-access (var p) x))) (expr-stmt (call println (field-access (var p) y))) (let n (int 5)) (expr-stmt (call println (call deref_int (ref (var n))))) (expr-stmt (call set_via_ptr (ref (var n)) (int 99))) (expr-stmt (call println (var n))) (let x (int 1)) (let y (int 2)) (expr-stmt (call swap (ref (var x)) (ref (var y)))) (expr-stmt (call println (var x))) (expr-stmt (call println (var y)))))

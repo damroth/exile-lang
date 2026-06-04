@@ -1,0 +1,7 @@
+;; exile-ast-dump v1 examples/ffi_opaque.exl
+(module raw
+  (extern-struct Library)
+  (fn lib_open extern pub (params ) (ptr (struct Library)))
+  (fn lib_use extern pub (params (param lib (ptr (struct Library)))) (int i32))
+  (fn lib_close extern pub (params (param lib (ptr (struct Library)))) void))
+(fn main (params ) void (body (let lib (ty (ptr (struct Library))) (call raw::lib_open )) (expr-stmt (call println (call raw::lib_use (var lib)))) (expr-stmt (call raw::lib_close (var lib)))))

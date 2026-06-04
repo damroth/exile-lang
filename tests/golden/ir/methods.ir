@@ -1,0 +1,18 @@
+;; exile-typed-ir-dump v1 examples/methods.exl
+(tfn main (params ) void (body (let p (call Point__origin) :ty (struct Point)) (expr-stmt (call Point__shift (ref (var p) :ty (struct Point)) :ty (ptr (struct Point)) (int 3) :ty (int i32) (int 4) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call Point__area (var p) :ty (struct Point)) :ty (int i32)) :ty (int i32)) (let q (ref (var p) :ty (struct Point)) :ty (ptr (struct Point))) (expr-stmt (builtin-call println (call Point__area (deref (var q) :ty (ptr (struct Point))) :ty (struct Point)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call Point__area (var p) :ty (struct Point)) :ty (int i32)) :ty (int i32))))
+(tfn Point__origin pub (params ) (struct Point) (body (return (struct-lit Point (field x (int 0) :ty (int i32)) (field y (int 0) :ty (int i32))) :ty (struct Point))))
+(tfn Point__area pub (params (param self (struct Point))) (int i32) (body (return (binop * (field-access (var self) :ty (struct Point) x) :ty (int i32) (field-access (var self) :ty (struct Point) y) :ty (int i32)) :ty (int i32))))
+(tfn Point__shift pub (params (param self (ptr (struct Point))) (param dx (int i32)) (param dy (int i32))) void (body (assign-field (var self) :ty (ptr (struct Point)) x (binop + (field-access (var self) :ty (ptr (struct Point)) x) :ty (int i32) (var dx) :ty (int i32)) :ty (int i32)) (assign-field (var self) :ty (ptr (struct Point)) y (binop + (field-access (var self) :ty (ptr (struct Point)) y) :ty (int i32) (var dy) :ty (int i32)) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Point)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

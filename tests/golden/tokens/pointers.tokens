@@ -1,0 +1,219 @@
+;; exile-tokens-dump v1 examples/pointers.exl
+Struct @examples/pointers.exl:1:1
+(Ident Point) @examples/pointers.exl:1:8
+LBrace @examples/pointers.exl:1:14
+(Ident x) @examples/pointers.exl:2:5
+Colon @examples/pointers.exl:2:6
+(Ident int) @examples/pointers.exl:2:8
+Comma @examples/pointers.exl:2:11
+(Ident y) @examples/pointers.exl:3:5
+Colon @examples/pointers.exl:3:6
+(Ident int) @examples/pointers.exl:3:8
+Comma @examples/pointers.exl:3:11
+RBrace @examples/pointers.exl:4:1
+Fn @examples/pointers.exl:6:1
+(Ident shift) @examples/pointers.exl:6:4
+LParen @examples/pointers.exl:6:9
+(Ident p) @examples/pointers.exl:6:10
+Colon @examples/pointers.exl:6:11
+Star @examples/pointers.exl:6:13
+(Ident Point) @examples/pointers.exl:6:14
+Comma @examples/pointers.exl:6:19
+(Ident dx) @examples/pointers.exl:6:21
+Colon @examples/pointers.exl:6:23
+(Ident int) @examples/pointers.exl:6:25
+Comma @examples/pointers.exl:6:28
+(Ident dy) @examples/pointers.exl:6:30
+Colon @examples/pointers.exl:6:32
+(Ident int) @examples/pointers.exl:6:34
+RParen @examples/pointers.exl:6:37
+LBrace @examples/pointers.exl:6:39
+(Ident p) @examples/pointers.exl:7:5
+Dot @examples/pointers.exl:7:6
+(Ident x) @examples/pointers.exl:7:7
+Eq @examples/pointers.exl:7:9
+(Ident p) @examples/pointers.exl:7:11
+Dot @examples/pointers.exl:7:12
+(Ident x) @examples/pointers.exl:7:13
+Plus @examples/pointers.exl:7:15
+(Ident dx) @examples/pointers.exl:7:17
+Semicolon @examples/pointers.exl:7:19
+(Ident p) @examples/pointers.exl:8:5
+Dot @examples/pointers.exl:8:6
+(Ident y) @examples/pointers.exl:8:7
+Eq @examples/pointers.exl:8:9
+(Ident p) @examples/pointers.exl:8:11
+Dot @examples/pointers.exl:8:12
+(Ident y) @examples/pointers.exl:8:13
+Plus @examples/pointers.exl:8:15
+(Ident dy) @examples/pointers.exl:8:17
+Semicolon @examples/pointers.exl:8:19
+RBrace @examples/pointers.exl:9:1
+Fn @examples/pointers.exl:11:1
+(Ident deref_int) @examples/pointers.exl:11:4
+LParen @examples/pointers.exl:11:13
+(Ident pn) @examples/pointers.exl:11:14
+Colon @examples/pointers.exl:11:16
+Star @examples/pointers.exl:11:18
+(Ident int) @examples/pointers.exl:11:19
+RParen @examples/pointers.exl:11:22
+Arrow @examples/pointers.exl:11:24
+(Ident int) @examples/pointers.exl:11:27
+LBrace @examples/pointers.exl:11:31
+Return @examples/pointers.exl:12:5
+Star @examples/pointers.exl:12:12
+(Ident pn) @examples/pointers.exl:12:13
+Semicolon @examples/pointers.exl:12:15
+RBrace @examples/pointers.exl:13:1
+Fn @examples/pointers.exl:15:1
+(Ident set_via_ptr) @examples/pointers.exl:15:4
+LParen @examples/pointers.exl:15:15
+(Ident pn) @examples/pointers.exl:15:16
+Colon @examples/pointers.exl:15:18
+Star @examples/pointers.exl:15:20
+(Ident int) @examples/pointers.exl:15:21
+Comma @examples/pointers.exl:15:24
+(Ident v) @examples/pointers.exl:15:26
+Colon @examples/pointers.exl:15:27
+(Ident int) @examples/pointers.exl:15:29
+RParen @examples/pointers.exl:15:32
+LBrace @examples/pointers.exl:15:34
+Star @examples/pointers.exl:16:5
+(Ident pn) @examples/pointers.exl:16:6
+Eq @examples/pointers.exl:16:9
+(Ident v) @examples/pointers.exl:16:11
+Semicolon @examples/pointers.exl:16:12
+RBrace @examples/pointers.exl:17:1
+Fn @examples/pointers.exl:19:1
+(Ident swap) @examples/pointers.exl:19:4
+LParen @examples/pointers.exl:19:8
+(Ident a) @examples/pointers.exl:19:9
+Colon @examples/pointers.exl:19:10
+Star @examples/pointers.exl:19:12
+(Ident int) @examples/pointers.exl:19:13
+Comma @examples/pointers.exl:19:16
+(Ident b) @examples/pointers.exl:19:18
+Colon @examples/pointers.exl:19:19
+Star @examples/pointers.exl:19:21
+(Ident int) @examples/pointers.exl:19:22
+RParen @examples/pointers.exl:19:25
+LBrace @examples/pointers.exl:19:27
+Let @examples/pointers.exl:20:5
+(Ident tmp) @examples/pointers.exl:20:9
+Eq @examples/pointers.exl:20:13
+Star @examples/pointers.exl:20:15
+(Ident a) @examples/pointers.exl:20:16
+Semicolon @examples/pointers.exl:20:17
+Star @examples/pointers.exl:21:5
+(Ident a) @examples/pointers.exl:21:6
+Eq @examples/pointers.exl:21:8
+Star @examples/pointers.exl:21:10
+(Ident b) @examples/pointers.exl:21:11
+Semicolon @examples/pointers.exl:21:12
+Star @examples/pointers.exl:22:5
+(Ident b) @examples/pointers.exl:22:6
+Eq @examples/pointers.exl:22:8
+(Ident tmp) @examples/pointers.exl:22:10
+Semicolon @examples/pointers.exl:22:13
+RBrace @examples/pointers.exl:23:1
+Fn @examples/pointers.exl:25:1
+(Ident main) @examples/pointers.exl:25:4
+LParen @examples/pointers.exl:25:8
+RParen @examples/pointers.exl:25:9
+LBrace @examples/pointers.exl:25:11
+Let @examples/pointers.exl:26:5
+(Ident p) @examples/pointers.exl:26:9
+Eq @examples/pointers.exl:26:11
+(Ident Point) @examples/pointers.exl:26:13
+LBrace @examples/pointers.exl:26:19
+(Ident x) @examples/pointers.exl:26:21
+Colon @examples/pointers.exl:26:22
+(Int 1) @examples/pointers.exl:26:24
+Comma @examples/pointers.exl:26:25
+(Ident y) @examples/pointers.exl:26:27
+Colon @examples/pointers.exl:26:28
+(Int 2) @examples/pointers.exl:26:30
+RBrace @examples/pointers.exl:26:32
+Semicolon @examples/pointers.exl:26:33
+(Ident shift) @examples/pointers.exl:27:5
+LParen @examples/pointers.exl:27:10
+Amp @examples/pointers.exl:27:11
+(Ident p) @examples/pointers.exl:27:12
+Comma @examples/pointers.exl:27:13
+(Int 10) @examples/pointers.exl:27:15
+Comma @examples/pointers.exl:27:17
+(Int 20) @examples/pointers.exl:27:19
+RParen @examples/pointers.exl:27:21
+Semicolon @examples/pointers.exl:27:22
+(Ident println) @examples/pointers.exl:28:5
+LParen @examples/pointers.exl:28:12
+(Ident p) @examples/pointers.exl:28:13
+Dot @examples/pointers.exl:28:14
+(Ident x) @examples/pointers.exl:28:15
+RParen @examples/pointers.exl:28:16
+Semicolon @examples/pointers.exl:28:17
+(Ident println) @examples/pointers.exl:29:5
+LParen @examples/pointers.exl:29:12
+(Ident p) @examples/pointers.exl:29:13
+Dot @examples/pointers.exl:29:14
+(Ident y) @examples/pointers.exl:29:15
+RParen @examples/pointers.exl:29:16
+Semicolon @examples/pointers.exl:29:17
+Let @examples/pointers.exl:31:5
+(Ident n) @examples/pointers.exl:31:9
+Eq @examples/pointers.exl:31:11
+(Int 5) @examples/pointers.exl:31:13
+Semicolon @examples/pointers.exl:31:14
+(Ident println) @examples/pointers.exl:32:5
+LParen @examples/pointers.exl:32:12
+(Ident deref_int) @examples/pointers.exl:32:13
+LParen @examples/pointers.exl:32:22
+Amp @examples/pointers.exl:32:23
+(Ident n) @examples/pointers.exl:32:24
+RParen @examples/pointers.exl:32:25
+RParen @examples/pointers.exl:32:26
+Semicolon @examples/pointers.exl:32:27
+(Ident set_via_ptr) @examples/pointers.exl:33:5
+LParen @examples/pointers.exl:33:16
+Amp @examples/pointers.exl:33:17
+(Ident n) @examples/pointers.exl:33:18
+Comma @examples/pointers.exl:33:19
+(Int 99) @examples/pointers.exl:33:21
+RParen @examples/pointers.exl:33:23
+Semicolon @examples/pointers.exl:33:24
+(Ident println) @examples/pointers.exl:34:5
+LParen @examples/pointers.exl:34:12
+(Ident n) @examples/pointers.exl:34:13
+RParen @examples/pointers.exl:34:14
+Semicolon @examples/pointers.exl:34:15
+Let @examples/pointers.exl:36:5
+(Ident x) @examples/pointers.exl:36:9
+Eq @examples/pointers.exl:36:11
+(Int 1) @examples/pointers.exl:36:13
+Semicolon @examples/pointers.exl:36:14
+Let @examples/pointers.exl:37:5
+(Ident y) @examples/pointers.exl:37:9
+Eq @examples/pointers.exl:37:11
+(Int 2) @examples/pointers.exl:37:13
+Semicolon @examples/pointers.exl:37:14
+(Ident swap) @examples/pointers.exl:38:5
+LParen @examples/pointers.exl:38:9
+Amp @examples/pointers.exl:38:10
+(Ident x) @examples/pointers.exl:38:11
+Comma @examples/pointers.exl:38:12
+Amp @examples/pointers.exl:38:14
+(Ident y) @examples/pointers.exl:38:15
+RParen @examples/pointers.exl:38:16
+Semicolon @examples/pointers.exl:38:17
+(Ident println) @examples/pointers.exl:39:5
+LParen @examples/pointers.exl:39:12
+(Ident x) @examples/pointers.exl:39:13
+RParen @examples/pointers.exl:39:14
+Semicolon @examples/pointers.exl:39:15
+(Ident println) @examples/pointers.exl:40:5
+LParen @examples/pointers.exl:40:12
+(Ident y) @examples/pointers.exl:40:13
+RParen @examples/pointers.exl:40:14
+Semicolon @examples/pointers.exl:40:15
+RBrace @examples/pointers.exl:41:1
+Eof @examples/pointers.exl:42:1

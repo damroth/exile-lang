@@ -1,0 +1,277 @@
+;; exile-tokens-dump v1 examples/active_patterns.exl
+View @examples/active_patterns.exl:39:1
+(Ident Sign) @examples/active_patterns.exl:39:6
+LParen @examples/active_patterns.exl:39:10
+(Ident n) @examples/active_patterns.exl:39:11
+Colon @examples/active_patterns.exl:39:12
+(Ident int) @examples/active_patterns.exl:39:14
+RParen @examples/active_patterns.exl:39:17
+Arrow @examples/active_patterns.exl:39:19
+(Ident Negative) @examples/active_patterns.exl:39:22
+Pipe @examples/active_patterns.exl:39:31
+(Ident Zero) @examples/active_patterns.exl:39:33
+Pipe @examples/active_patterns.exl:39:38
+(Ident Positive) @examples/active_patterns.exl:39:40
+LBrace @examples/active_patterns.exl:39:49
+If @examples/active_patterns.exl:40:5
+(Ident n) @examples/active_patterns.exl:40:8
+Lt @examples/active_patterns.exl:40:10
+(Int 0) @examples/active_patterns.exl:40:12
+LBrace @examples/active_patterns.exl:40:14
+Return @examples/active_patterns.exl:40:16
+(Ident Sign) @examples/active_patterns.exl:40:23
+DoubleColon @examples/active_patterns.exl:40:27
+(Ident Negative) @examples/active_patterns.exl:40:29
+Semicolon @examples/active_patterns.exl:40:37
+RBrace @examples/active_patterns.exl:40:39
+If @examples/active_patterns.exl:41:5
+(Ident n) @examples/active_patterns.exl:41:8
+EqEq @examples/active_patterns.exl:41:10
+(Int 0) @examples/active_patterns.exl:41:13
+LBrace @examples/active_patterns.exl:41:15
+Return @examples/active_patterns.exl:41:17
+(Ident Sign) @examples/active_patterns.exl:41:24
+DoubleColon @examples/active_patterns.exl:41:28
+(Ident Zero) @examples/active_patterns.exl:41:30
+Semicolon @examples/active_patterns.exl:41:34
+RBrace @examples/active_patterns.exl:41:36
+Return @examples/active_patterns.exl:42:5
+(Ident Sign) @examples/active_patterns.exl:42:12
+DoubleColon @examples/active_patterns.exl:42:16
+(Ident Positive) @examples/active_patterns.exl:42:18
+Semicolon @examples/active_patterns.exl:42:26
+RBrace @examples/active_patterns.exl:43:1
+View @examples/active_patterns.exl:45:1
+(Ident Magnitude) @examples/active_patterns.exl:45:6
+LParen @examples/active_patterns.exl:45:15
+(Ident n) @examples/active_patterns.exl:45:16
+Colon @examples/active_patterns.exl:45:17
+(Ident int) @examples/active_patterns.exl:45:19
+RParen @examples/active_patterns.exl:45:22
+Arrow @examples/active_patterns.exl:45:24
+(Ident Small) @examples/active_patterns.exl:45:27
+Pipe @examples/active_patterns.exl:45:33
+(Ident Medium) @examples/active_patterns.exl:45:35
+Pipe @examples/active_patterns.exl:45:42
+(Ident Large) @examples/active_patterns.exl:45:44
+LParen @examples/active_patterns.exl:45:49
+(Ident int) @examples/active_patterns.exl:45:50
+RParen @examples/active_patterns.exl:45:53
+LBrace @examples/active_patterns.exl:45:55
+If @examples/active_patterns.exl:46:5
+(Ident n) @examples/active_patterns.exl:46:8
+Lt @examples/active_patterns.exl:46:10
+(Int 10) @examples/active_patterns.exl:46:12
+LBrace @examples/active_patterns.exl:46:15
+Return @examples/active_patterns.exl:46:17
+(Ident Magnitude) @examples/active_patterns.exl:46:24
+DoubleColon @examples/active_patterns.exl:46:33
+(Ident Small) @examples/active_patterns.exl:46:35
+Semicolon @examples/active_patterns.exl:46:40
+RBrace @examples/active_patterns.exl:46:42
+If @examples/active_patterns.exl:47:5
+(Ident n) @examples/active_patterns.exl:47:8
+Lt @examples/active_patterns.exl:47:10
+(Int 100) @examples/active_patterns.exl:47:12
+LBrace @examples/active_patterns.exl:47:16
+Return @examples/active_patterns.exl:47:18
+(Ident Magnitude) @examples/active_patterns.exl:47:25
+DoubleColon @examples/active_patterns.exl:47:34
+(Ident Medium) @examples/active_patterns.exl:47:36
+Semicolon @examples/active_patterns.exl:47:42
+RBrace @examples/active_patterns.exl:47:44
+Return @examples/active_patterns.exl:48:5
+(Ident Magnitude) @examples/active_patterns.exl:48:12
+DoubleColon @examples/active_patterns.exl:48:21
+(Ident Large) @examples/active_patterns.exl:48:23
+LParen @examples/active_patterns.exl:48:28
+(Ident n) @examples/active_patterns.exl:48:29
+RParen @examples/active_patterns.exl:48:30
+Semicolon @examples/active_patterns.exl:48:31
+RBrace @examples/active_patterns.exl:49:1
+Fn @examples/active_patterns.exl:51:1
+(Ident classify) @examples/active_patterns.exl:51:4
+LParen @examples/active_patterns.exl:51:12
+(Ident n) @examples/active_patterns.exl:51:13
+Colon @examples/active_patterns.exl:51:14
+(Ident int) @examples/active_patterns.exl:51:16
+RParen @examples/active_patterns.exl:51:19
+LBrace @examples/active_patterns.exl:51:21
+Match @examples/active_patterns.exl:54:5
+(Ident n) @examples/active_patterns.exl:54:11
+LBrace @examples/active_patterns.exl:54:13
+(Ident Sign) @examples/active_patterns.exl:55:9
+DoubleColon @examples/active_patterns.exl:55:13
+(Ident Negative) @examples/active_patterns.exl:55:15
+FatArrow @examples/active_patterns.exl:55:24
+LBrace @examples/active_patterns.exl:55:27
+(Ident println) @examples/active_patterns.exl:55:29
+LParen @examples/active_patterns.exl:55:36
+Minus @examples/active_patterns.exl:55:37
+(Int 1) @examples/active_patterns.exl:55:38
+RParen @examples/active_patterns.exl:55:39
+Semicolon @examples/active_patterns.exl:55:40
+RBrace @examples/active_patterns.exl:55:42
+Pipe @examples/active_patterns.exl:56:9
+(Ident Sign) @examples/active_patterns.exl:56:11
+DoubleColon @examples/active_patterns.exl:56:15
+(Ident Zero) @examples/active_patterns.exl:56:17
+FatArrow @examples/active_patterns.exl:56:22
+LBrace @examples/active_patterns.exl:56:25
+(Ident println) @examples/active_patterns.exl:56:27
+LParen @examples/active_patterns.exl:56:34
+(Int 0) @examples/active_patterns.exl:56:35
+RParen @examples/active_patterns.exl:56:36
+Semicolon @examples/active_patterns.exl:56:37
+RBrace @examples/active_patterns.exl:56:39
+Pipe @examples/active_patterns.exl:57:9
+(Ident Sign) @examples/active_patterns.exl:57:11
+DoubleColon @examples/active_patterns.exl:57:15
+(Ident Positive) @examples/active_patterns.exl:57:17
+FatArrow @examples/active_patterns.exl:57:26
+LBrace @examples/active_patterns.exl:57:29
+(Ident println) @examples/active_patterns.exl:57:31
+LParen @examples/active_patterns.exl:57:38
+(Int 1) @examples/active_patterns.exl:57:39
+RParen @examples/active_patterns.exl:57:40
+Semicolon @examples/active_patterns.exl:57:41
+RBrace @examples/active_patterns.exl:57:43
+RBrace @examples/active_patterns.exl:58:5
+RBrace @examples/active_patterns.exl:59:1
+Fn @examples/active_patterns.exl:61:1
+(Ident weigh) @examples/active_patterns.exl:61:4
+LParen @examples/active_patterns.exl:61:9
+(Ident n) @examples/active_patterns.exl:61:10
+Colon @examples/active_patterns.exl:61:11
+(Ident int) @examples/active_patterns.exl:61:13
+RParen @examples/active_patterns.exl:61:16
+LBrace @examples/active_patterns.exl:61:18
+Match @examples/active_patterns.exl:64:5
+(Ident n) @examples/active_patterns.exl:64:11
+LBrace @examples/active_patterns.exl:64:13
+(Ident Magnitude) @examples/active_patterns.exl:65:9
+DoubleColon @examples/active_patterns.exl:65:18
+(Ident Small) @examples/active_patterns.exl:65:20
+FatArrow @examples/active_patterns.exl:65:26
+LBrace @examples/active_patterns.exl:65:29
+(Ident println) @examples/active_patterns.exl:65:31
+LParen @examples/active_patterns.exl:65:38
+(Int 1) @examples/active_patterns.exl:65:39
+RParen @examples/active_patterns.exl:65:40
+Semicolon @examples/active_patterns.exl:65:41
+RBrace @examples/active_patterns.exl:65:43
+Pipe @examples/active_patterns.exl:66:9
+(Ident Magnitude) @examples/active_patterns.exl:66:11
+DoubleColon @examples/active_patterns.exl:66:20
+(Ident Medium) @examples/active_patterns.exl:66:22
+FatArrow @examples/active_patterns.exl:66:29
+LBrace @examples/active_patterns.exl:66:32
+(Ident println) @examples/active_patterns.exl:66:34
+LParen @examples/active_patterns.exl:66:41
+(Int 2) @examples/active_patterns.exl:66:42
+RParen @examples/active_patterns.exl:66:43
+Semicolon @examples/active_patterns.exl:66:44
+RBrace @examples/active_patterns.exl:66:46
+Pipe @examples/active_patterns.exl:67:9
+(Ident Magnitude) @examples/active_patterns.exl:67:11
+DoubleColon @examples/active_patterns.exl:67:20
+(Ident Large) @examples/active_patterns.exl:67:22
+LParen @examples/active_patterns.exl:67:27
+(Ident v) @examples/active_patterns.exl:67:28
+RParen @examples/active_patterns.exl:67:29
+FatArrow @examples/active_patterns.exl:67:31
+LBrace @examples/active_patterns.exl:67:34
+(Ident println) @examples/active_patterns.exl:67:36
+LParen @examples/active_patterns.exl:67:43
+(Ident v) @examples/active_patterns.exl:67:44
+RParen @examples/active_patterns.exl:67:45
+Semicolon @examples/active_patterns.exl:67:46
+RBrace @examples/active_patterns.exl:67:48
+RBrace @examples/active_patterns.exl:68:5
+RBrace @examples/active_patterns.exl:69:1
+Fn @examples/active_patterns.exl:71:1
+(Ident main) @examples/active_patterns.exl:71:4
+LParen @examples/active_patterns.exl:71:8
+RParen @examples/active_patterns.exl:71:9
+LBrace @examples/active_patterns.exl:71:11
+(Ident classify) @examples/active_patterns.exl:72:5
+LParen @examples/active_patterns.exl:72:13
+Minus @examples/active_patterns.exl:72:14
+(Int 5) @examples/active_patterns.exl:72:15
+RParen @examples/active_patterns.exl:72:16
+Semicolon @examples/active_patterns.exl:72:17
+(Ident classify) @examples/active_patterns.exl:73:5
+LParen @examples/active_patterns.exl:73:13
+(Int 0) @examples/active_patterns.exl:73:14
+RParen @examples/active_patterns.exl:73:15
+Semicolon @examples/active_patterns.exl:73:16
+(Ident classify) @examples/active_patterns.exl:74:5
+LParen @examples/active_patterns.exl:74:13
+(Int 42) @examples/active_patterns.exl:74:14
+RParen @examples/active_patterns.exl:74:16
+Semicolon @examples/active_patterns.exl:74:17
+(Ident weigh) @examples/active_patterns.exl:76:5
+LParen @examples/active_patterns.exl:76:10
+(Int 7) @examples/active_patterns.exl:76:11
+RParen @examples/active_patterns.exl:76:12
+Semicolon @examples/active_patterns.exl:76:13
+(Ident weigh) @examples/active_patterns.exl:77:5
+LParen @examples/active_patterns.exl:77:10
+(Int 50) @examples/active_patterns.exl:77:11
+RParen @examples/active_patterns.exl:77:13
+Semicolon @examples/active_patterns.exl:77:14
+(Ident weigh) @examples/active_patterns.exl:78:5
+LParen @examples/active_patterns.exl:78:10
+(Int 2500) @examples/active_patterns.exl:78:11
+RParen @examples/active_patterns.exl:78:15
+Semicolon @examples/active_patterns.exl:78:16
+Let @examples/active_patterns.exl:82:5
+(Ident s) @examples/active_patterns.exl:82:9
+Eq @examples/active_patterns.exl:82:11
+(Ident Sign) @examples/active_patterns.exl:82:13
+LParen @examples/active_patterns.exl:82:17
+(Int 99) @examples/active_patterns.exl:82:18
+RParen @examples/active_patterns.exl:82:20
+Semicolon @examples/active_patterns.exl:82:21
+Match @examples/active_patterns.exl:83:5
+(Ident s) @examples/active_patterns.exl:83:11
+LBrace @examples/active_patterns.exl:83:13
+(Ident Sign) @examples/active_patterns.exl:84:9
+DoubleColon @examples/active_patterns.exl:84:13
+(Ident Negative) @examples/active_patterns.exl:84:15
+FatArrow @examples/active_patterns.exl:84:24
+LBrace @examples/active_patterns.exl:84:27
+(Ident println) @examples/active_patterns.exl:84:29
+LParen @examples/active_patterns.exl:84:36
+Minus @examples/active_patterns.exl:84:37
+(Int 1) @examples/active_patterns.exl:84:38
+RParen @examples/active_patterns.exl:84:39
+Semicolon @examples/active_patterns.exl:84:40
+RBrace @examples/active_patterns.exl:84:42
+Pipe @examples/active_patterns.exl:85:9
+(Ident Sign) @examples/active_patterns.exl:85:11
+DoubleColon @examples/active_patterns.exl:85:15
+(Ident Zero) @examples/active_patterns.exl:85:17
+FatArrow @examples/active_patterns.exl:85:22
+LBrace @examples/active_patterns.exl:85:25
+(Ident println) @examples/active_patterns.exl:85:27
+LParen @examples/active_patterns.exl:85:34
+(Int 0) @examples/active_patterns.exl:85:35
+RParen @examples/active_patterns.exl:85:36
+Semicolon @examples/active_patterns.exl:85:37
+RBrace @examples/active_patterns.exl:85:39
+Pipe @examples/active_patterns.exl:86:9
+(Ident Sign) @examples/active_patterns.exl:86:11
+DoubleColon @examples/active_patterns.exl:86:15
+(Ident Positive) @examples/active_patterns.exl:86:17
+FatArrow @examples/active_patterns.exl:86:26
+LBrace @examples/active_patterns.exl:86:29
+(Ident println) @examples/active_patterns.exl:86:31
+LParen @examples/active_patterns.exl:86:38
+(Int 1) @examples/active_patterns.exl:86:39
+RParen @examples/active_patterns.exl:86:40
+Semicolon @examples/active_patterns.exl:86:41
+RBrace @examples/active_patterns.exl:86:43
+RBrace @examples/active_patterns.exl:87:5
+RBrace @examples/active_patterns.exl:88:1
+Eof @examples/active_patterns.exl:89:1

@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/pattern_guards.exl
+(enum Number (variants (variant Whole (int i32)) (variant Zero)))
+(fn describe (params (param n (struct Number))) (int i32) (body (tail (match (var n) (arm (pat-variant Number::Whole (pat-var v)) (guard (binop > (var v) (int 0))) (int 1)) (arm (pat-variant Number::Whole (pat-var v)) (guard (binop < (var v) (int 0))) (int 2)) (arm (pat-variant Number::Whole _) (int 3)) (arm (pat-variant Number::Zero) (int 0))))))
+(fn main (params ) void (body (expr-stmt (call println (call describe (call Number::Whole (int 7))))) (expr-stmt (call println (call describe (call Number::Whole (neg (int 3)))))) (expr-stmt (call println (call describe (call Number::Whole (int 0))))) (expr-stmt (call println (call describe (enum-lit Number::Zero))))))

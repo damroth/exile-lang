@@ -1,0 +1,18 @@
+;; exile-typed-ir-dump v1 examples/defer.exl
+(tfn ex_lifo (params ) void (body (defer (expr-stmt (builtin-call println (string "third") :ty str) :ty (int i32))) (defer (expr-stmt (builtin-call println (string "second") :ty str) :ty (int i32))) (defer (expr-stmt (builtin-call println (string "first") :ty str) :ty (int i32))) (expr-stmt (builtin-call println (string "body") :ty str) :ty (int i32))))
+(tfn ex_block_defer (params ) void (body (defer (expr-stmt (builtin-call println (string "a") :ty str) :ty (int i32)) (expr-stmt (builtin-call println (string "b") :ty str) :ty (int i32)) (expr-stmt (builtin-call println (string "c") :ty str) :ty (int i32))) (expr-stmt (builtin-call println (string "body") :ty str) :ty (int i32))))
+(tfn ex_early_exit (params (param n (int i32))) (int i32) (body (defer (expr-stmt (builtin-call println (string "outer cleanup") :ty str) :ty (int i32))) (if (binop > (var n) :ty (int i32) (int 0) :ty (int i32)) :ty bool (then (defer (expr-stmt (builtin-call println (string "inner cleanup") :ty str) :ty (int i32))) (return (binop * (var n) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32))) (else )) (return (int 0) :ty (int i32))))
+(tfn ex_void_early_exit (params (param skip bool)) void (body (defer (expr-stmt (builtin-call println (string "cleanup") :ty str) :ty (int i32))) (if (var skip) :ty bool (then (expr-stmt (builtin-call println (string "skipped") :ty str) :ty (int i32)) (return)) (else )) (expr-stmt (builtin-call println (string "worked") :ty str) :ty (int i32))))
+(tfn main (params ) void (body (expr-stmt (call ex_lifo) :ty (int i32)) (expr-stmt (builtin-call println (string "---") :ty str) :ty (int i32)) (expr-stmt (call ex_block_defer) :ty (int i32)) (expr-stmt (builtin-call println (string "---") :ty str) :ty (int i32)) (expr-stmt (builtin-call println (call ex_early_exit (int 5) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (string "---") :ty str) :ty (int i32)) (expr-stmt (builtin-call println (call ex_early_exit (neg (int 3) :ty (int i32)) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (string "---") :ty str) :ty (int i32)) (expr-stmt (call ex_void_early_exit (bool true) :ty bool) :ty (int i32)) (expr-stmt (builtin-call println (string "---") :ty str) :ty (int i32)) (expr-stmt (call ex_void_early_exit (bool false) :ty bool) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

@@ -1,0 +1,17 @@
+;; exile-ast-dump v1 examples/amiga_hello.exl
+(c-include "exec/types.h")
+(c-include "exec/libraries.h")
+(c-include "dos/dos.h")
+(module raw
+  (extern-struct Library)
+  (extern-type ULONG)
+  (extern-type BPTR)
+  (extern-type APTR)
+  (extern-type LONG)
+  (extern-var SysBase (ptr (struct Library)))
+  (extern-var DOSBase (ptr (struct Library)))
+  (fn open_library extern pub (params (param name (ptr c_char)) (param version (struct ULONG))) (ptr (struct Library)))
+  (fn close_library extern pub (params (param library (ptr (struct Library)))) void)
+  (fn dos_output extern pub (params ) (struct BPTR))
+  (fn dos_write extern pub (params (param file (struct BPTR)) (param buffer (ptr c_char)) (param length (struct LONG))) (struct LONG)))
+(fn main (params ) void (body (let dos_name (ty (ptr c_char)) (cast (string "dos.library") (ptr c_char))) (assign raw::DOSBase (call raw::open_library (var dos_name) (cast (int 0) (struct raw::ULONG)))) (tail (if (binop != (enum-lit raw::DOSBase) null) (then (let msg (ty (ptr c_char)) (cast (string "Hello, AmigaOS!\n") (ptr c_char))) (let out (call raw::dos_output )) (expr-stmt (call raw::dos_write (var out) (var msg) (cast (int 16) (struct raw::LONG)))) (expr-stmt (call raw::close_library (enum-lit raw::DOSBase))))))))

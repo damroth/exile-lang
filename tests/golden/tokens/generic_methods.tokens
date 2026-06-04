@@ -1,0 +1,206 @@
+;; exile-tokens-dump v1 examples/generic_methods.exl
+Fn @examples/generic_methods.exl:11:1
+(Ident id) @examples/generic_methods.exl:11:4
+Lt @examples/generic_methods.exl:11:6
+(Ident T) @examples/generic_methods.exl:11:7
+Gt @examples/generic_methods.exl:11:8
+LParen @examples/generic_methods.exl:11:9
+(Ident x) @examples/generic_methods.exl:11:10
+Colon @examples/generic_methods.exl:11:11
+(Ident T) @examples/generic_methods.exl:11:13
+RParen @examples/generic_methods.exl:11:14
+Arrow @examples/generic_methods.exl:11:16
+(Ident T) @examples/generic_methods.exl:11:19
+LBrace @examples/generic_methods.exl:11:21
+Return @examples/generic_methods.exl:12:5
+(Ident x) @examples/generic_methods.exl:12:12
+Semicolon @examples/generic_methods.exl:12:13
+RBrace @examples/generic_methods.exl:13:1
+Fn @examples/generic_methods.exl:17:1
+(Ident make_null) @examples/generic_methods.exl:17:4
+Lt @examples/generic_methods.exl:17:13
+(Ident T) @examples/generic_methods.exl:17:14
+Gt @examples/generic_methods.exl:17:15
+LParen @examples/generic_methods.exl:17:16
+RParen @examples/generic_methods.exl:17:17
+Arrow @examples/generic_methods.exl:17:19
+Star @examples/generic_methods.exl:17:22
+(Ident T) @examples/generic_methods.exl:17:23
+LBrace @examples/generic_methods.exl:17:25
+Return @examples/generic_methods.exl:18:5
+Null @examples/generic_methods.exl:18:12
+Semicolon @examples/generic_methods.exl:18:16
+RBrace @examples/generic_methods.exl:19:1
+Struct @examples/generic_methods.exl:21:1
+(Ident Box) @examples/generic_methods.exl:21:8
+LBrace @examples/generic_methods.exl:21:12
+(Ident value) @examples/generic_methods.exl:21:14
+Colon @examples/generic_methods.exl:21:19
+(Ident int) @examples/generic_methods.exl:21:21
+RBrace @examples/generic_methods.exl:21:25
+Impl @examples/generic_methods.exl:23:1
+(Ident Box) @examples/generic_methods.exl:23:6
+LBrace @examples/generic_methods.exl:23:10
+Pub @examples/generic_methods.exl:27:5
+Fn @examples/generic_methods.exl:27:9
+(Ident first) @examples/generic_methods.exl:27:12
+Lt @examples/generic_methods.exl:27:17
+(Ident T) @examples/generic_methods.exl:27:18
+Gt @examples/generic_methods.exl:27:19
+LParen @examples/generic_methods.exl:27:20
+(Ident self) @examples/generic_methods.exl:27:21
+Colon @examples/generic_methods.exl:27:25
+(Ident Box) @examples/generic_methods.exl:27:27
+Comma @examples/generic_methods.exl:27:30
+(Ident x) @examples/generic_methods.exl:27:32
+Colon @examples/generic_methods.exl:27:33
+(Ident T) @examples/generic_methods.exl:27:35
+RParen @examples/generic_methods.exl:27:36
+Arrow @examples/generic_methods.exl:27:38
+(Ident T) @examples/generic_methods.exl:27:41
+LBrace @examples/generic_methods.exl:27:43
+Return @examples/generic_methods.exl:28:9
+(Ident x) @examples/generic_methods.exl:28:16
+Semicolon @examples/generic_methods.exl:28:17
+RBrace @examples/generic_methods.exl:29:5
+Pub @examples/generic_methods.exl:31:5
+Fn @examples/generic_methods.exl:31:9
+(Ident value_of) @examples/generic_methods.exl:31:12
+LParen @examples/generic_methods.exl:31:20
+(Ident self) @examples/generic_methods.exl:31:21
+Colon @examples/generic_methods.exl:31:25
+(Ident Box) @examples/generic_methods.exl:31:27
+RParen @examples/generic_methods.exl:31:30
+Arrow @examples/generic_methods.exl:31:32
+(Ident int) @examples/generic_methods.exl:31:35
+LBrace @examples/generic_methods.exl:31:39
+Return @examples/generic_methods.exl:32:9
+(Ident self) @examples/generic_methods.exl:32:16
+Dot @examples/generic_methods.exl:32:20
+(Ident value) @examples/generic_methods.exl:32:21
+Semicolon @examples/generic_methods.exl:32:26
+RBrace @examples/generic_methods.exl:33:5
+RBrace @examples/generic_methods.exl:34:1
+Fn @examples/generic_methods.exl:36:1
+(Ident main) @examples/generic_methods.exl:36:4
+LParen @examples/generic_methods.exl:36:8
+RParen @examples/generic_methods.exl:36:9
+LBrace @examples/generic_methods.exl:36:11
+(Ident println) @examples/generic_methods.exl:39:5
+LParen @examples/generic_methods.exl:39:12
+(Ident id) @examples/generic_methods.exl:39:13
+LParen @examples/generic_methods.exl:39:15
+(Int 42) @examples/generic_methods.exl:39:16
+RParen @examples/generic_methods.exl:39:18
+RParen @examples/generic_methods.exl:39:19
+Semicolon @examples/generic_methods.exl:39:20
+(Ident println) @examples/generic_methods.exl:40:5
+LParen @examples/generic_methods.exl:40:12
+(Ident id) @examples/generic_methods.exl:40:13
+LParen @examples/generic_methods.exl:40:15
+(Int 7) @examples/generic_methods.exl:40:16
+RParen @examples/generic_methods.exl:40:17
+RParen @examples/generic_methods.exl:40:18
+Semicolon @examples/generic_methods.exl:40:19
+If @examples/generic_methods.exl:41:5
+(Ident id) @examples/generic_methods.exl:41:8
+LParen @examples/generic_methods.exl:41:10
+True @examples/generic_methods.exl:41:11
+RParen @examples/generic_methods.exl:41:15
+LBrace @examples/generic_methods.exl:41:17
+(Ident println) @examples/generic_methods.exl:41:19
+LParen @examples/generic_methods.exl:41:26
+(Int 1) @examples/generic_methods.exl:41:27
+RParen @examples/generic_methods.exl:41:28
+Semicolon @examples/generic_methods.exl:41:29
+RBrace @examples/generic_methods.exl:41:31
+Else @examples/generic_methods.exl:41:33
+LBrace @examples/generic_methods.exl:41:38
+(Ident println) @examples/generic_methods.exl:41:40
+LParen @examples/generic_methods.exl:41:47
+(Int 0) @examples/generic_methods.exl:41:48
+RParen @examples/generic_methods.exl:41:49
+Semicolon @examples/generic_methods.exl:41:50
+RBrace @examples/generic_methods.exl:41:52
+Let @examples/generic_methods.exl:44:5
+(Ident p) @examples/generic_methods.exl:44:9
+Colon @examples/generic_methods.exl:44:10
+Star @examples/generic_methods.exl:44:12
+(Ident int) @examples/generic_methods.exl:44:13
+Eq @examples/generic_methods.exl:44:17
+(Ident make_null) @examples/generic_methods.exl:44:19
+LParen @examples/generic_methods.exl:44:28
+RParen @examples/generic_methods.exl:44:29
+Semicolon @examples/generic_methods.exl:44:30
+If @examples/generic_methods.exl:45:5
+(Ident p) @examples/generic_methods.exl:45:8
+EqEq @examples/generic_methods.exl:45:10
+Null @examples/generic_methods.exl:45:13
+LBrace @examples/generic_methods.exl:45:18
+(Ident println) @examples/generic_methods.exl:45:20
+LParen @examples/generic_methods.exl:45:27
+(Int 100) @examples/generic_methods.exl:45:28
+RParen @examples/generic_methods.exl:45:31
+Semicolon @examples/generic_methods.exl:45:32
+RBrace @examples/generic_methods.exl:45:34
+Else @examples/generic_methods.exl:45:36
+LBrace @examples/generic_methods.exl:45:41
+(Ident println) @examples/generic_methods.exl:45:43
+LParen @examples/generic_methods.exl:45:50
+(Int 0) @examples/generic_methods.exl:45:51
+RParen @examples/generic_methods.exl:45:52
+Semicolon @examples/generic_methods.exl:45:53
+RBrace @examples/generic_methods.exl:45:55
+Let @examples/generic_methods.exl:49:5
+(Ident b) @examples/generic_methods.exl:49:9
+Eq @examples/generic_methods.exl:49:11
+(Ident Box) @examples/generic_methods.exl:49:13
+LBrace @examples/generic_methods.exl:49:17
+(Ident value) @examples/generic_methods.exl:49:19
+Colon @examples/generic_methods.exl:49:24
+(Int 99) @examples/generic_methods.exl:49:26
+RBrace @examples/generic_methods.exl:49:29
+Semicolon @examples/generic_methods.exl:49:30
+(Ident println) @examples/generic_methods.exl:50:5
+LParen @examples/generic_methods.exl:50:12
+(Ident b) @examples/generic_methods.exl:50:13
+Dot @examples/generic_methods.exl:50:14
+(Ident first) @examples/generic_methods.exl:50:15
+LParen @examples/generic_methods.exl:50:20
+(Int 11) @examples/generic_methods.exl:50:21
+RParen @examples/generic_methods.exl:50:23
+RParen @examples/generic_methods.exl:50:24
+Semicolon @examples/generic_methods.exl:50:25
+If @examples/generic_methods.exl:51:5
+(Ident b) @examples/generic_methods.exl:51:8
+Dot @examples/generic_methods.exl:51:9
+(Ident first) @examples/generic_methods.exl:51:10
+LParen @examples/generic_methods.exl:51:15
+False @examples/generic_methods.exl:51:16
+RParen @examples/generic_methods.exl:51:21
+LBrace @examples/generic_methods.exl:51:23
+(Ident println) @examples/generic_methods.exl:51:25
+LParen @examples/generic_methods.exl:51:32
+(Int 1) @examples/generic_methods.exl:51:33
+RParen @examples/generic_methods.exl:51:34
+Semicolon @examples/generic_methods.exl:51:35
+RBrace @examples/generic_methods.exl:51:37
+Else @examples/generic_methods.exl:51:39
+LBrace @examples/generic_methods.exl:51:44
+(Ident println) @examples/generic_methods.exl:51:46
+LParen @examples/generic_methods.exl:51:53
+(Int 0) @examples/generic_methods.exl:51:54
+RParen @examples/generic_methods.exl:51:55
+Semicolon @examples/generic_methods.exl:51:56
+RBrace @examples/generic_methods.exl:51:58
+(Ident println) @examples/generic_methods.exl:54:5
+LParen @examples/generic_methods.exl:54:12
+(Ident b) @examples/generic_methods.exl:54:13
+Dot @examples/generic_methods.exl:54:14
+(Ident value_of) @examples/generic_methods.exl:54:15
+LParen @examples/generic_methods.exl:54:23
+RParen @examples/generic_methods.exl:54:24
+RParen @examples/generic_methods.exl:54:25
+Semicolon @examples/generic_methods.exl:54:26
+RBrace @examples/generic_methods.exl:55:1
+Eof @examples/generic_methods.exl:56:1

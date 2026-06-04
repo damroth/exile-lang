@@ -1,0 +1,73 @@
+;; exile-tokens-dump v1 examples/ffi.exl
+Pub @examples/ffi.exl:14:1
+Mod @examples/ffi.exl:14:5
+(Ident raw) @examples/ffi.exl:14:9
+LBrace @examples/ffi.exl:14:13
+Extern @examples/ffi.exl:15:5
+Fn @examples/ffi.exl:15:12
+(Ident add) @examples/ffi.exl:15:15
+LParen @examples/ffi.exl:15:18
+(Ident a) @examples/ffi.exl:15:19
+Colon @examples/ffi.exl:15:20
+(Ident int) @examples/ffi.exl:15:22
+Comma @examples/ffi.exl:15:25
+(Ident b) @examples/ffi.exl:15:27
+Colon @examples/ffi.exl:15:28
+(Ident int) @examples/ffi.exl:15:30
+RParen @examples/ffi.exl:15:33
+Arrow @examples/ffi.exl:15:35
+(Ident int) @examples/ffi.exl:15:38
+Semicolon @examples/ffi.exl:15:41
+Extern @examples/ffi.exl:16:5
+Fn @examples/ffi.exl:16:12
+(Ident square) @examples/ffi.exl:16:15
+LParen @examples/ffi.exl:16:21
+(Ident x) @examples/ffi.exl:16:22
+Colon @examples/ffi.exl:16:23
+(Ident int) @examples/ffi.exl:16:25
+RParen @examples/ffi.exl:16:28
+Arrow @examples/ffi.exl:16:30
+(Ident int) @examples/ffi.exl:16:33
+Semicolon @examples/ffi.exl:16:36
+Extern @examples/ffi.exl:17:5
+Fn @examples/ffi.exl:17:12
+(Ident shout) @examples/ffi.exl:17:15
+LParen @examples/ffi.exl:17:20
+RParen @examples/ffi.exl:17:21
+Semicolon @examples/ffi.exl:17:22
+RBrace @examples/ffi.exl:18:1
+Fn @examples/ffi.exl:20:1
+(Ident main) @examples/ffi.exl:20:4
+LParen @examples/ffi.exl:20:8
+RParen @examples/ffi.exl:20:9
+LBrace @examples/ffi.exl:20:11
+(Ident println) @examples/ffi.exl:21:5
+LParen @examples/ffi.exl:21:12
+(Ident raw) @examples/ffi.exl:21:13
+DoubleColon @examples/ffi.exl:21:16
+(Ident add) @examples/ffi.exl:21:18
+LParen @examples/ffi.exl:21:21
+(Int 40) @examples/ffi.exl:21:22
+Comma @examples/ffi.exl:21:24
+(Int 2) @examples/ffi.exl:21:26
+RParen @examples/ffi.exl:21:27
+RParen @examples/ffi.exl:21:28
+Semicolon @examples/ffi.exl:21:29
+(Ident println) @examples/ffi.exl:22:5
+LParen @examples/ffi.exl:22:12
+(Ident raw) @examples/ffi.exl:22:13
+DoubleColon @examples/ffi.exl:22:16
+(Ident square) @examples/ffi.exl:22:18
+LParen @examples/ffi.exl:22:24
+(Int 7) @examples/ffi.exl:22:25
+RParen @examples/ffi.exl:22:26
+RParen @examples/ffi.exl:22:27
+Semicolon @examples/ffi.exl:22:28
+(Ident raw) @examples/ffi.exl:23:5
+DoubleColon @examples/ffi.exl:23:8
+(Ident shout) @examples/ffi.exl:23:10
+LParen @examples/ffi.exl:23:15
+RParen @examples/ffi.exl:23:16
+Semicolon @examples/ffi.exl:23:17
+RBrace @examples/ffi.exl:24:1
+Eof @examples/ffi.exl:25:1

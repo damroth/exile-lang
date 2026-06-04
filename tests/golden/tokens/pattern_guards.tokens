@@ -1,0 +1,123 @@
+;; exile-tokens-dump v1 examples/pattern_guards.exl
+Enum @examples/pattern_guards.exl:14:1
+(Ident Number) @examples/pattern_guards.exl:14:6
+LBrace @examples/pattern_guards.exl:14:13
+(Ident Whole) @examples/pattern_guards.exl:14:15
+LParen @examples/pattern_guards.exl:14:20
+(Ident int) @examples/pattern_guards.exl:14:21
+RParen @examples/pattern_guards.exl:14:24
+Pipe @examples/pattern_guards.exl:14:26
+(Ident Zero) @examples/pattern_guards.exl:14:28
+RBrace @examples/pattern_guards.exl:14:33
+Fn @examples/pattern_guards.exl:16:1
+(Ident describe) @examples/pattern_guards.exl:16:4
+LParen @examples/pattern_guards.exl:16:12
+(Ident n) @examples/pattern_guards.exl:16:13
+Colon @examples/pattern_guards.exl:16:14
+(Ident Number) @examples/pattern_guards.exl:16:16
+RParen @examples/pattern_guards.exl:16:22
+Arrow @examples/pattern_guards.exl:16:24
+(Ident int) @examples/pattern_guards.exl:16:27
+LBrace @examples/pattern_guards.exl:16:31
+Match @examples/pattern_guards.exl:17:5
+(Ident n) @examples/pattern_guards.exl:17:11
+LBrace @examples/pattern_guards.exl:17:13
+(Ident Number) @examples/pattern_guards.exl:18:9
+DoubleColon @examples/pattern_guards.exl:18:15
+(Ident Whole) @examples/pattern_guards.exl:18:17
+LParen @examples/pattern_guards.exl:18:22
+(Ident v) @examples/pattern_guards.exl:18:23
+RParen @examples/pattern_guards.exl:18:24
+If @examples/pattern_guards.exl:18:26
+(Ident v) @examples/pattern_guards.exl:18:29
+Gt @examples/pattern_guards.exl:18:31
+(Int 0) @examples/pattern_guards.exl:18:33
+FatArrow @examples/pattern_guards.exl:18:35
+(Int 1) @examples/pattern_guards.exl:18:38
+Pipe @examples/pattern_guards.exl:19:9
+(Ident Number) @examples/pattern_guards.exl:19:11
+DoubleColon @examples/pattern_guards.exl:19:17
+(Ident Whole) @examples/pattern_guards.exl:19:19
+LParen @examples/pattern_guards.exl:19:24
+(Ident v) @examples/pattern_guards.exl:19:25
+RParen @examples/pattern_guards.exl:19:26
+If @examples/pattern_guards.exl:19:28
+(Ident v) @examples/pattern_guards.exl:19:31
+Lt @examples/pattern_guards.exl:19:33
+(Int 0) @examples/pattern_guards.exl:19:35
+FatArrow @examples/pattern_guards.exl:19:37
+(Int 2) @examples/pattern_guards.exl:19:40
+Pipe @examples/pattern_guards.exl:20:9
+(Ident Number) @examples/pattern_guards.exl:20:11
+DoubleColon @examples/pattern_guards.exl:20:17
+(Ident Whole) @examples/pattern_guards.exl:20:19
+LParen @examples/pattern_guards.exl:20:24
+(Ident _) @examples/pattern_guards.exl:20:25
+RParen @examples/pattern_guards.exl:20:26
+FatArrow @examples/pattern_guards.exl:20:28
+(Int 3) @examples/pattern_guards.exl:20:31
+Pipe @examples/pattern_guards.exl:21:9
+(Ident Number) @examples/pattern_guards.exl:21:11
+DoubleColon @examples/pattern_guards.exl:21:17
+(Ident Zero) @examples/pattern_guards.exl:21:19
+FatArrow @examples/pattern_guards.exl:21:24
+(Int 0) @examples/pattern_guards.exl:21:27
+RBrace @examples/pattern_guards.exl:22:5
+RBrace @examples/pattern_guards.exl:23:1
+Fn @examples/pattern_guards.exl:25:1
+(Ident main) @examples/pattern_guards.exl:25:4
+LParen @examples/pattern_guards.exl:25:8
+RParen @examples/pattern_guards.exl:25:9
+LBrace @examples/pattern_guards.exl:25:11
+(Ident println) @examples/pattern_guards.exl:26:5
+LParen @examples/pattern_guards.exl:26:12
+(Ident describe) @examples/pattern_guards.exl:26:13
+LParen @examples/pattern_guards.exl:26:21
+(Ident Number) @examples/pattern_guards.exl:26:22
+DoubleColon @examples/pattern_guards.exl:26:28
+(Ident Whole) @examples/pattern_guards.exl:26:30
+LParen @examples/pattern_guards.exl:26:35
+(Int 7) @examples/pattern_guards.exl:26:36
+RParen @examples/pattern_guards.exl:26:37
+RParen @examples/pattern_guards.exl:26:38
+RParen @examples/pattern_guards.exl:26:39
+Semicolon @examples/pattern_guards.exl:26:40
+(Ident println) @examples/pattern_guards.exl:27:5
+LParen @examples/pattern_guards.exl:27:12
+(Ident describe) @examples/pattern_guards.exl:27:13
+LParen @examples/pattern_guards.exl:27:21
+(Ident Number) @examples/pattern_guards.exl:27:22
+DoubleColon @examples/pattern_guards.exl:27:28
+(Ident Whole) @examples/pattern_guards.exl:27:30
+LParen @examples/pattern_guards.exl:27:35
+Minus @examples/pattern_guards.exl:27:36
+(Int 3) @examples/pattern_guards.exl:27:37
+RParen @examples/pattern_guards.exl:27:38
+RParen @examples/pattern_guards.exl:27:39
+RParen @examples/pattern_guards.exl:27:40
+Semicolon @examples/pattern_guards.exl:27:41
+(Ident println) @examples/pattern_guards.exl:28:5
+LParen @examples/pattern_guards.exl:28:12
+(Ident describe) @examples/pattern_guards.exl:28:13
+LParen @examples/pattern_guards.exl:28:21
+(Ident Number) @examples/pattern_guards.exl:28:22
+DoubleColon @examples/pattern_guards.exl:28:28
+(Ident Whole) @examples/pattern_guards.exl:28:30
+LParen @examples/pattern_guards.exl:28:35
+(Int 0) @examples/pattern_guards.exl:28:36
+RParen @examples/pattern_guards.exl:28:37
+RParen @examples/pattern_guards.exl:28:38
+RParen @examples/pattern_guards.exl:28:39
+Semicolon @examples/pattern_guards.exl:28:40
+(Ident println) @examples/pattern_guards.exl:29:5
+LParen @examples/pattern_guards.exl:29:12
+(Ident describe) @examples/pattern_guards.exl:29:13
+LParen @examples/pattern_guards.exl:29:21
+(Ident Number) @examples/pattern_guards.exl:29:22
+DoubleColon @examples/pattern_guards.exl:29:28
+(Ident Zero) @examples/pattern_guards.exl:29:30
+RParen @examples/pattern_guards.exl:29:34
+RParen @examples/pattern_guards.exl:29:35
+Semicolon @examples/pattern_guards.exl:29:36
+RBrace @examples/pattern_guards.exl:30:1
+Eof @examples/pattern_guards.exl:31:1

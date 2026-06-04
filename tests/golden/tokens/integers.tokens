@@ -1,0 +1,125 @@
+;; exile-tokens-dump v1 examples/integers.exl
+Fn @examples/integers.exl:1:1
+(Ident main) @examples/integers.exl:1:4
+LParen @examples/integers.exl:1:8
+RParen @examples/integers.exl:1:9
+LBrace @examples/integers.exl:1:11
+Let @examples/integers.exl:2:5
+(Ident a) @examples/integers.exl:2:9
+Colon @examples/integers.exl:2:10
+(Ident i8) @examples/integers.exl:2:12
+Eq @examples/integers.exl:2:16
+Minus @examples/integers.exl:2:18
+(Int 42) @examples/integers.exl:2:19
+Semicolon @examples/integers.exl:2:21
+Let @examples/integers.exl:3:5
+(Ident b) @examples/integers.exl:3:9
+Colon @examples/integers.exl:3:10
+(Ident i16) @examples/integers.exl:3:12
+Eq @examples/integers.exl:3:16
+Minus @examples/integers.exl:3:18
+(Int 1000) @examples/integers.exl:3:19
+Semicolon @examples/integers.exl:3:23
+Let @examples/integers.exl:4:5
+(Ident c) @examples/integers.exl:4:9
+Colon @examples/integers.exl:4:10
+(Ident i32) @examples/integers.exl:4:12
+Eq @examples/integers.exl:4:16
+Minus @examples/integers.exl:4:18
+(Int 1000000) @examples/integers.exl:4:19
+Semicolon @examples/integers.exl:4:26
+Let @examples/integers.exl:6:5
+(Ident x) @examples/integers.exl:6:9
+Colon @examples/integers.exl:6:10
+(Ident u8) @examples/integers.exl:6:12
+Eq @examples/integers.exl:6:16
+(Int 200) @examples/integers.exl:6:18
+Semicolon @examples/integers.exl:6:21
+Let @examples/integers.exl:7:5
+(Ident y) @examples/integers.exl:7:9
+Colon @examples/integers.exl:7:10
+(Ident u16) @examples/integers.exl:7:12
+Eq @examples/integers.exl:7:16
+(Int 50000) @examples/integers.exl:7:18
+Semicolon @examples/integers.exl:7:23
+Let @examples/integers.exl:8:5
+(Ident z) @examples/integers.exl:8:9
+Colon @examples/integers.exl:8:10
+(Ident u32) @examples/integers.exl:8:12
+Eq @examples/integers.exl:8:16
+(Int 3000000000) @examples/integers.exl:8:18
+Semicolon @examples/integers.exl:8:28
+(Ident println) @examples/integers.exl:10:5
+LParen @examples/integers.exl:10:12
+(Ident a) @examples/integers.exl:10:13
+RParen @examples/integers.exl:10:14
+Semicolon @examples/integers.exl:10:15
+(Ident println) @examples/integers.exl:11:5
+LParen @examples/integers.exl:11:12
+(Ident b) @examples/integers.exl:11:13
+RParen @examples/integers.exl:11:14
+Semicolon @examples/integers.exl:11:15
+(Ident println) @examples/integers.exl:12:5
+LParen @examples/integers.exl:12:12
+(Ident c) @examples/integers.exl:12:13
+RParen @examples/integers.exl:12:14
+Semicolon @examples/integers.exl:12:15
+(Ident println) @examples/integers.exl:13:5
+LParen @examples/integers.exl:13:12
+(Ident x) @examples/integers.exl:13:13
+RParen @examples/integers.exl:13:14
+Semicolon @examples/integers.exl:13:15
+(Ident println) @examples/integers.exl:14:5
+LParen @examples/integers.exl:14:12
+(Ident y) @examples/integers.exl:14:13
+RParen @examples/integers.exl:14:14
+Semicolon @examples/integers.exl:14:15
+(Ident println) @examples/integers.exl:15:5
+LParen @examples/integers.exl:15:12
+(Ident z) @examples/integers.exl:15:13
+RParen @examples/integers.exl:15:14
+Semicolon @examples/integers.exl:15:15
+Let @examples/integers.exl:17:5
+(Ident big) @examples/integers.exl:17:9
+Colon @examples/integers.exl:17:12
+(Ident i32) @examples/integers.exl:17:14
+Eq @examples/integers.exl:17:18
+(Int 1000) @examples/integers.exl:17:20
+Semicolon @examples/integers.exl:17:24
+Let @examples/integers.exl:18:5
+(Ident narrowed) @examples/integers.exl:18:9
+Colon @examples/integers.exl:18:17
+(Ident i8) @examples/integers.exl:18:19
+Eq @examples/integers.exl:18:22
+(Ident big) @examples/integers.exl:18:24
+As @examples/integers.exl:18:28
+(Ident i8) @examples/integers.exl:18:31
+Semicolon @examples/integers.exl:18:33
+(Ident println) @examples/integers.exl:19:5
+LParen @examples/integers.exl:19:12
+(Ident narrowed) @examples/integers.exl:19:13
+RParen @examples/integers.exl:19:21
+Semicolon @examples/integers.exl:19:22
+Let @examples/integers.exl:21:5
+(Ident small) @examples/integers.exl:21:9
+Colon @examples/integers.exl:21:14
+(Ident i8) @examples/integers.exl:21:16
+Eq @examples/integers.exl:21:19
+(Int 5) @examples/integers.exl:21:21
+Semicolon @examples/integers.exl:21:22
+Let @examples/integers.exl:22:5
+(Ident widened) @examples/integers.exl:22:9
+Colon @examples/integers.exl:22:16
+(Ident i32) @examples/integers.exl:22:18
+Eq @examples/integers.exl:22:22
+(Ident small) @examples/integers.exl:22:24
+As @examples/integers.exl:22:30
+(Ident i32) @examples/integers.exl:22:33
+Semicolon @examples/integers.exl:22:36
+(Ident println) @examples/integers.exl:23:5
+LParen @examples/integers.exl:23:12
+(Ident widened) @examples/integers.exl:23:13
+RParen @examples/integers.exl:23:20
+Semicolon @examples/integers.exl:23:21
+RBrace @examples/integers.exl:24:1
+Eof @examples/integers.exl:25:1

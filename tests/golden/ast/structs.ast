@@ -1,0 +1,8 @@
+;; exile-ast-dump v1 examples/structs.exl
+(struct Point (fields (field x (int i32)) (field y (int i32))))
+(struct Rect (fields (field origin (struct Point)) (field width (int i32)) (field height (int i32))))
+(fn make_point (params (param x (int i32)) (param y (int i32))) (struct Point) (body (return (struct-lit Point (field x (var x)) (field y (var y))))))
+(fn shift (params (param p (struct Point)) (param dx (int i32)) (param dy (int i32))) (struct Point) (body (return (struct-lit Point (field x (binop + (field-access (var p) x) (var dx))) (field y (binop + (field-access (var p) y) (var dy)))))))
+(fn area (params (param r (struct Rect))) (int i32) (body (return (binop * (field-access (var r) width) (field-access (var r) height)))))
+(fn taller (params (param r (struct Rect)) (param by (int i32))) (struct Rect) (body (return (struct-lit Rect (field height (binop + (field-access (var r) height) (var by))) (base (var r))))))
+(fn main (params ) void (body (let p (call make_point (int 3) (int 4))) (expr-stmt (call println (field-access (var p) x))) (expr-stmt (call println (field-access (var p) y))) (let q (call shift (var p) (int 10) (int 20))) (expr-stmt (call println (field-access (var q) x))) (expr-stmt (call println (field-access (var q) y))) (let mut r (struct-lit Rect (field origin (call make_point (int 0) (int 0))) (field width (int 8)) (field height (int 5)))) (expr-stmt (call println (call area (var r)))) (assign-field (var r) width (int 10)) (expr-stmt (call println (call area (var r)))) (let r2 (call taller (var r) (int 3))) (expr-stmt (call println (call area (var r2))))))

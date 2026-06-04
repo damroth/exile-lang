@@ -1,0 +1,358 @@
+;; exile-tokens-dump v1 examples/display.exl
+Pub @examples/display.exl:15:1
+Mod @examples/display.exl:15:5
+(Ident raw) @examples/display.exl:15:9
+LBrace @examples/display.exl:15:13
+Extern @examples/display.exl:16:5
+Fn @examples/display.exl:16:12
+(Ident make_c_allocator) @examples/display.exl:16:15
+LParen @examples/display.exl:16:31
+RParen @examples/display.exl:16:32
+Arrow @examples/display.exl:16:34
+(Ident Allocator) @examples/display.exl:16:37
+Semicolon @examples/display.exl:16:46
+RBrace @examples/display.exl:17:1
+Struct @examples/display.exl:19:1
+(Ident Point) @examples/display.exl:19:8
+LBrace @examples/display.exl:19:14
+(Ident x) @examples/display.exl:19:16
+Colon @examples/display.exl:19:17
+(Ident int) @examples/display.exl:19:19
+Comma @examples/display.exl:19:22
+(Ident y) @examples/display.exl:19:24
+Colon @examples/display.exl:19:25
+(Ident int) @examples/display.exl:19:27
+RBrace @examples/display.exl:19:31
+Impl @examples/display.exl:21:1
+(Ident Display) @examples/display.exl:21:6
+For @examples/display.exl:21:14
+(Ident Point) @examples/display.exl:21:18
+LBrace @examples/display.exl:21:24
+Fn @examples/display.exl:22:5
+(Ident fmt) @examples/display.exl:22:8
+LParen @examples/display.exl:22:11
+Star @examples/display.exl:22:12
+Const @examples/display.exl:22:13
+(Ident self) @examples/display.exl:22:19
+Comma @examples/display.exl:22:23
+(Ident out) @examples/display.exl:22:25
+Colon @examples/display.exl:22:28
+Star @examples/display.exl:22:30
+(Ident StringBuilder) @examples/display.exl:22:31
+RParen @examples/display.exl:22:44
+LBrace @examples/display.exl:22:46
+(Ident out) @examples/display.exl:23:9
+Dot @examples/display.exl:23:12
+(Ident push_str) @examples/display.exl:23:13
+LParen @examples/display.exl:23:21
+(String "Point { x: ") @examples/display.exl:23:22
+RParen @examples/display.exl:23:35
+Semicolon @examples/display.exl:23:36
+(Ident out) @examples/display.exl:24:9
+Dot @examples/display.exl:24:12
+(Ident push_int) @examples/display.exl:24:13
+LParen @examples/display.exl:24:21
+(Ident self) @examples/display.exl:24:22
+Dot @examples/display.exl:24:26
+(Ident x) @examples/display.exl:24:27
+RParen @examples/display.exl:24:28
+Semicolon @examples/display.exl:24:29
+(Ident out) @examples/display.exl:25:9
+Dot @examples/display.exl:25:12
+(Ident push_str) @examples/display.exl:25:13
+LParen @examples/display.exl:25:21
+(String ", y: ") @examples/display.exl:25:22
+RParen @examples/display.exl:25:29
+Semicolon @examples/display.exl:25:30
+(Ident out) @examples/display.exl:26:9
+Dot @examples/display.exl:26:12
+(Ident push_int) @examples/display.exl:26:13
+LParen @examples/display.exl:26:21
+(Ident self) @examples/display.exl:26:22
+Dot @examples/display.exl:26:26
+(Ident y) @examples/display.exl:26:27
+RParen @examples/display.exl:26:28
+Semicolon @examples/display.exl:26:29
+(Ident out) @examples/display.exl:27:9
+Dot @examples/display.exl:27:12
+(Ident push_byte) @examples/display.exl:27:13
+LParen @examples/display.exl:27:22
+(Int 125) @examples/display.exl:27:23
+As @examples/display.exl:27:27
+(Ident u8) @examples/display.exl:27:30
+RParen @examples/display.exl:27:32
+Semicolon @examples/display.exl:27:33
+RBrace @examples/display.exl:28:5
+RBrace @examples/display.exl:29:1
+Struct @examples/display.exl:32:1
+(Ident Segment) @examples/display.exl:32:8
+LBrace @examples/display.exl:32:16
+(Ident lo) @examples/display.exl:32:18
+Colon @examples/display.exl:32:20
+(Ident Point) @examples/display.exl:32:22
+Comma @examples/display.exl:32:27
+(Ident hi) @examples/display.exl:32:29
+Colon @examples/display.exl:32:31
+(Ident Point) @examples/display.exl:32:33
+RBrace @examples/display.exl:32:39
+Impl @examples/display.exl:34:1
+(Ident Display) @examples/display.exl:34:6
+For @examples/display.exl:34:14
+(Ident Segment) @examples/display.exl:34:18
+LBrace @examples/display.exl:34:26
+Fn @examples/display.exl:35:5
+(Ident fmt) @examples/display.exl:35:8
+LParen @examples/display.exl:35:11
+Star @examples/display.exl:35:12
+Const @examples/display.exl:35:13
+(Ident self) @examples/display.exl:35:19
+Comma @examples/display.exl:35:23
+(Ident out) @examples/display.exl:35:25
+Colon @examples/display.exl:35:28
+Star @examples/display.exl:35:30
+(Ident StringBuilder) @examples/display.exl:35:31
+RParen @examples/display.exl:35:44
+LBrace @examples/display.exl:35:46
+(Ident out) @examples/display.exl:36:9
+Dot @examples/display.exl:36:12
+(Ident push_str) @examples/display.exl:36:13
+LParen @examples/display.exl:36:21
+(String "Segment[") @examples/display.exl:36:22
+RParen @examples/display.exl:36:32
+Semicolon @examples/display.exl:36:33
+(Ident self) @examples/display.exl:37:9
+Dot @examples/display.exl:37:13
+(Ident lo) @examples/display.exl:37:14
+Dot @examples/display.exl:37:16
+(Ident fmt) @examples/display.exl:37:17
+LParen @examples/display.exl:37:20
+(Ident out) @examples/display.exl:37:21
+RParen @examples/display.exl:37:24
+Semicolon @examples/display.exl:37:25
+(Ident out) @examples/display.exl:38:9
+Dot @examples/display.exl:38:12
+(Ident push_str) @examples/display.exl:38:13
+LParen @examples/display.exl:38:21
+(String " -> ") @examples/display.exl:38:22
+RParen @examples/display.exl:38:28
+Semicolon @examples/display.exl:38:29
+(Ident self) @examples/display.exl:39:9
+Dot @examples/display.exl:39:13
+(Ident hi) @examples/display.exl:39:14
+Dot @examples/display.exl:39:16
+(Ident fmt) @examples/display.exl:39:17
+LParen @examples/display.exl:39:20
+(Ident out) @examples/display.exl:39:21
+RParen @examples/display.exl:39:24
+Semicolon @examples/display.exl:39:25
+(Ident out) @examples/display.exl:40:9
+Dot @examples/display.exl:40:12
+(Ident push_byte) @examples/display.exl:40:13
+LParen @examples/display.exl:40:22
+(Int 93) @examples/display.exl:40:23
+As @examples/display.exl:40:26
+(Ident u8) @examples/display.exl:40:29
+RParen @examples/display.exl:40:31
+Semicolon @examples/display.exl:40:32
+RBrace @examples/display.exl:41:5
+RBrace @examples/display.exl:42:1
+Fn @examples/display.exl:44:1
+(Ident main) @examples/display.exl:44:4
+LParen @examples/display.exl:44:8
+RParen @examples/display.exl:44:9
+LBrace @examples/display.exl:44:11
+Let @examples/display.exl:45:5
+(Ident a) @examples/display.exl:45:9
+Eq @examples/display.exl:45:11
+(Ident raw) @examples/display.exl:45:13
+DoubleColon @examples/display.exl:45:16
+(Ident make_c_allocator) @examples/display.exl:45:18
+LParen @examples/display.exl:45:34
+RParen @examples/display.exl:45:35
+Semicolon @examples/display.exl:45:36
+Let @examples/display.exl:46:5
+Mut @examples/display.exl:46:9
+(Ident sb) @examples/display.exl:46:13
+Eq @examples/display.exl:46:16
+(Ident StringBuilder) @examples/display.exl:46:18
+DoubleColon @examples/display.exl:46:31
+(Ident with_capacity) @examples/display.exl:46:33
+LParen @examples/display.exl:46:46
+(Ident a) @examples/display.exl:46:47
+Comma @examples/display.exl:46:48
+(Int 8) @examples/display.exl:46:50
+As @examples/display.exl:46:52
+(Ident u32) @examples/display.exl:46:55
+RParen @examples/display.exl:46:58
+Semicolon @examples/display.exl:46:59
+Let @examples/display.exl:48:5
+(Ident p) @examples/display.exl:48:9
+Eq @examples/display.exl:48:11
+(Ident Point) @examples/display.exl:48:13
+LBrace @examples/display.exl:48:19
+(Ident x) @examples/display.exl:48:21
+Colon @examples/display.exl:48:22
+(Int 7) @examples/display.exl:48:24
+Comma @examples/display.exl:48:25
+(Ident y) @examples/display.exl:48:27
+Colon @examples/display.exl:48:28
+Minus @examples/display.exl:48:30
+(Int 42) @examples/display.exl:48:31
+RBrace @examples/display.exl:48:34
+Semicolon @examples/display.exl:48:35
+(Ident p) @examples/display.exl:49:5
+Dot @examples/display.exl:49:6
+(Ident fmt) @examples/display.exl:49:7
+LParen @examples/display.exl:49:10
+Amp @examples/display.exl:49:11
+(Ident sb) @examples/display.exl:49:12
+RParen @examples/display.exl:49:14
+Semicolon @examples/display.exl:49:15
+(Ident println) @examples/display.exl:51:5
+LParen @examples/display.exl:51:12
+(Ident sb) @examples/display.exl:51:13
+Dot @examples/display.exl:51:15
+(Ident length) @examples/display.exl:51:16
+LParen @examples/display.exl:51:22
+RParen @examples/display.exl:51:23
+As @examples/display.exl:51:25
+(Ident int) @examples/display.exl:51:28
+RParen @examples/display.exl:51:31
+Semicolon @examples/display.exl:51:32
+Let @examples/display.exl:53:5
+(Ident v) @examples/display.exl:53:9
+Eq @examples/display.exl:53:11
+(Ident sb) @examples/display.exl:53:13
+Dot @examples/display.exl:53:15
+(Ident as_slice) @examples/display.exl:53:16
+LParen @examples/display.exl:53:24
+RParen @examples/display.exl:53:25
+Semicolon @examples/display.exl:53:26
+(Ident println) @examples/display.exl:54:5
+LParen @examples/display.exl:54:12
+(Ident v) @examples/display.exl:54:13
+LBracket @examples/display.exl:54:14
+(Int 0) @examples/display.exl:54:15
+RBracket @examples/display.exl:54:16
+As @examples/display.exl:54:18
+(Ident int) @examples/display.exl:54:21
+RParen @examples/display.exl:54:24
+Semicolon @examples/display.exl:54:25
+(Ident println) @examples/display.exl:55:5
+LParen @examples/display.exl:55:12
+(Ident v) @examples/display.exl:55:13
+LBracket @examples/display.exl:55:14
+(Int 11) @examples/display.exl:55:15
+RBracket @examples/display.exl:55:17
+As @examples/display.exl:55:19
+(Ident int) @examples/display.exl:55:22
+RParen @examples/display.exl:55:25
+Semicolon @examples/display.exl:55:26
+(Ident println) @examples/display.exl:56:5
+LParen @examples/display.exl:56:12
+(Ident v) @examples/display.exl:56:13
+LBracket @examples/display.exl:56:14
+(Int 17) @examples/display.exl:56:15
+RBracket @examples/display.exl:56:17
+As @examples/display.exl:56:19
+(Ident int) @examples/display.exl:56:22
+RParen @examples/display.exl:56:25
+Semicolon @examples/display.exl:56:26
+Let @examples/display.exl:60:5
+Mut @examples/display.exl:60:9
+(Ident sb2) @examples/display.exl:60:13
+Eq @examples/display.exl:60:17
+(Ident StringBuilder) @examples/display.exl:60:19
+DoubleColon @examples/display.exl:60:32
+(Ident with_capacity) @examples/display.exl:60:34
+LParen @examples/display.exl:60:47
+(Ident a) @examples/display.exl:60:48
+Comma @examples/display.exl:60:49
+(Int 8) @examples/display.exl:60:51
+As @examples/display.exl:60:53
+(Ident u32) @examples/display.exl:60:56
+RParen @examples/display.exl:60:59
+Semicolon @examples/display.exl:60:60
+Let @examples/display.exl:61:5
+(Ident seg) @examples/display.exl:61:9
+Eq @examples/display.exl:61:13
+(Ident Segment) @examples/display.exl:61:15
+LBrace @examples/display.exl:61:23
+(Ident lo) @examples/display.exl:61:25
+Colon @examples/display.exl:61:27
+(Ident Point) @examples/display.exl:61:29
+LBrace @examples/display.exl:61:35
+(Ident x) @examples/display.exl:61:37
+Colon @examples/display.exl:61:38
+(Int 0) @examples/display.exl:61:40
+Comma @examples/display.exl:61:41
+(Ident y) @examples/display.exl:61:43
+Colon @examples/display.exl:61:44
+(Int 0) @examples/display.exl:61:46
+RBrace @examples/display.exl:61:48
+Comma @examples/display.exl:61:49
+(Ident hi) @examples/display.exl:62:25
+Colon @examples/display.exl:62:27
+(Ident Point) @examples/display.exl:62:29
+LBrace @examples/display.exl:62:35
+(Ident x) @examples/display.exl:62:37
+Colon @examples/display.exl:62:38
+(Int 100) @examples/display.exl:62:40
+Comma @examples/display.exl:62:43
+(Ident y) @examples/display.exl:62:45
+Colon @examples/display.exl:62:46
+Minus @examples/display.exl:62:48
+(Int 1) @examples/display.exl:62:49
+RBrace @examples/display.exl:62:51
+RBrace @examples/display.exl:62:53
+Semicolon @examples/display.exl:62:54
+(Ident seg) @examples/display.exl:63:5
+Dot @examples/display.exl:63:8
+(Ident fmt) @examples/display.exl:63:9
+LParen @examples/display.exl:63:12
+Amp @examples/display.exl:63:13
+(Ident sb2) @examples/display.exl:63:14
+RParen @examples/display.exl:63:17
+Semicolon @examples/display.exl:63:18
+(Ident println) @examples/display.exl:66:5
+LParen @examples/display.exl:66:12
+(Ident sb2) @examples/display.exl:66:13
+Dot @examples/display.exl:66:16
+(Ident length) @examples/display.exl:66:17
+LParen @examples/display.exl:66:23
+RParen @examples/display.exl:66:24
+As @examples/display.exl:66:26
+(Ident int) @examples/display.exl:66:29
+RParen @examples/display.exl:66:32
+Semicolon @examples/display.exl:66:33
+Let @examples/display.exl:68:5
+(Ident v2) @examples/display.exl:68:9
+Eq @examples/display.exl:68:12
+(Ident sb2) @examples/display.exl:68:14
+Dot @examples/display.exl:68:17
+(Ident as_slice) @examples/display.exl:68:18
+LParen @examples/display.exl:68:26
+RParen @examples/display.exl:68:27
+Semicolon @examples/display.exl:68:28
+(Ident println) @examples/display.exl:69:5
+LParen @examples/display.exl:69:12
+(Ident v2) @examples/display.exl:69:13
+LBracket @examples/display.exl:69:15
+(Int 0) @examples/display.exl:69:16
+RBracket @examples/display.exl:69:17
+As @examples/display.exl:69:19
+(Ident int) @examples/display.exl:69:22
+RParen @examples/display.exl:69:25
+Semicolon @examples/display.exl:69:26
+(Ident println) @examples/display.exl:70:5
+LParen @examples/display.exl:70:12
+(Ident v2) @examples/display.exl:70:13
+LBracket @examples/display.exl:70:15
+(Int 8) @examples/display.exl:70:16
+RBracket @examples/display.exl:70:17
+As @examples/display.exl:70:19
+(Ident int) @examples/display.exl:70:22
+RParen @examples/display.exl:70:25
+Semicolon @examples/display.exl:70:26
+RBrace @examples/display.exl:71:1
+Eof @examples/display.exl:72:1

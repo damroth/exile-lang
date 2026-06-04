@@ -1,0 +1,16 @@
+;; exile-typed-ir-dump v1 examples/expressions.exl
+(tfn ex_classify (params (param n (int i32))) str (body (return (if-expr (binop < (var n) :ty (int i32) (int 0) :ty (int i32)) :ty bool (string "negative") :ty str (if-expr (binop == (var n) :ty (int i32) (int 0) :ty (int i32)) :ty bool (string "zero") :ty str (string "positive") :ty str) :ty str) :ty str)))
+(tfn ex_twice (params (param n (int i32))) (int i32) (body (return (binop * (var n) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32))))
+(tfn main (params ) void (body (let label (if-expr (binop > (int 7) :ty (int i32) (int 3) :ty (int i32)) :ty bool (string "big") :ty str (string "small") :ty str) :ty str) (expr-stmt (builtin-call println (var label) :ty str) :ty (int i32)) (expr-stmt (builtin-call println (call ex_classify (neg (int 4) :ty (int i32)) :ty (int i32)) :ty str) :ty (int i32)) (expr-stmt (builtin-call println (call ex_classify (int 0) :ty (int i32)) :ty str) :ty (int i32)) (expr-stmt (builtin-call println (call ex_classify (int 9) :ty (int i32)) :ty str) :ty (int i32)) (expr-stmt (builtin-call println (call ex_twice (int 21) :ty (int i32)) :ty (int i32)) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

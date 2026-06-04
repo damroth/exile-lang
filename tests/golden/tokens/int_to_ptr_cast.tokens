@@ -1,0 +1,85 @@
+;; exile-tokens-dump v1 examples/int_to_ptr_cast.exl
+Struct @examples/int_to_ptr_cast.exl:8:1
+(Ident CustomChip) @examples/int_to_ptr_cast.exl:8:8
+LBrace @examples/int_to_ptr_cast.exl:8:19
+(Ident bltddat) @examples/int_to_ptr_cast.exl:9:5
+Colon @examples/int_to_ptr_cast.exl:9:12
+(Ident u16) @examples/int_to_ptr_cast.exl:9:14
+Comma @examples/int_to_ptr_cast.exl:9:17
+(Ident dmaconr) @examples/int_to_ptr_cast.exl:10:5
+Colon @examples/int_to_ptr_cast.exl:10:12
+(Ident u16) @examples/int_to_ptr_cast.exl:10:14
+Comma @examples/int_to_ptr_cast.exl:10:17
+(Ident vposr) @examples/int_to_ptr_cast.exl:11:5
+Colon @examples/int_to_ptr_cast.exl:11:10
+(Ident u16) @examples/int_to_ptr_cast.exl:11:14
+Comma @examples/int_to_ptr_cast.exl:11:17
+(Ident vhposr) @examples/int_to_ptr_cast.exl:12:5
+Colon @examples/int_to_ptr_cast.exl:12:11
+(Ident u16) @examples/int_to_ptr_cast.exl:12:14
+Comma @examples/int_to_ptr_cast.exl:12:17
+RBrace @examples/int_to_ptr_cast.exl:13:1
+Fn @examples/int_to_ptr_cast.exl:15:1
+(Ident main) @examples/int_to_ptr_cast.exl:15:4
+LParen @examples/int_to_ptr_cast.exl:15:8
+RParen @examples/int_to_ptr_cast.exl:15:9
+LBrace @examples/int_to_ptr_cast.exl:15:11
+Let @examples/int_to_ptr_cast.exl:17:5
+(Ident cust) @examples/int_to_ptr_cast.exl:17:9
+Colon @examples/int_to_ptr_cast.exl:17:13
+Star @examples/int_to_ptr_cast.exl:17:15
+(Ident CustomChip) @examples/int_to_ptr_cast.exl:17:16
+Eq @examples/int_to_ptr_cast.exl:17:27
+(Int 14675968) @examples/int_to_ptr_cast.exl:17:29
+As @examples/int_to_ptr_cast.exl:17:38
+Star @examples/int_to_ptr_cast.exl:17:41
+(Ident CustomChip) @examples/int_to_ptr_cast.exl:17:42
+Semicolon @examples/int_to_ptr_cast.exl:17:52
+If @examples/int_to_ptr_cast.exl:21:5
+(Ident cust) @examples/int_to_ptr_cast.exl:21:8
+EqEq @examples/int_to_ptr_cast.exl:21:13
+Null @examples/int_to_ptr_cast.exl:21:16
+LBrace @examples/int_to_ptr_cast.exl:21:21
+(Ident println) @examples/int_to_ptr_cast.exl:22:9
+LParen @examples/int_to_ptr_cast.exl:22:16
+(Int 1) @examples/int_to_ptr_cast.exl:22:17
+RParen @examples/int_to_ptr_cast.exl:22:18
+Semicolon @examples/int_to_ptr_cast.exl:22:19
+RBrace @examples/int_to_ptr_cast.exl:23:5
+Else @examples/int_to_ptr_cast.exl:23:7
+LBrace @examples/int_to_ptr_cast.exl:23:12
+(Ident println) @examples/int_to_ptr_cast.exl:24:9
+LParen @examples/int_to_ptr_cast.exl:24:16
+(Int 0) @examples/int_to_ptr_cast.exl:24:17
+RParen @examples/int_to_ptr_cast.exl:24:18
+Semicolon @examples/int_to_ptr_cast.exl:24:19
+RBrace @examples/int_to_ptr_cast.exl:25:5
+Let @examples/int_to_ptr_cast.exl:28:5
+(Ident nothing) @examples/int_to_ptr_cast.exl:28:9
+Colon @examples/int_to_ptr_cast.exl:28:16
+Star @examples/int_to_ptr_cast.exl:28:18
+(Ident CustomChip) @examples/int_to_ptr_cast.exl:28:19
+Eq @examples/int_to_ptr_cast.exl:28:30
+Null @examples/int_to_ptr_cast.exl:28:32
+Semicolon @examples/int_to_ptr_cast.exl:28:36
+If @examples/int_to_ptr_cast.exl:29:5
+(Ident nothing) @examples/int_to_ptr_cast.exl:29:8
+EqEq @examples/int_to_ptr_cast.exl:29:16
+Null @examples/int_to_ptr_cast.exl:29:19
+LBrace @examples/int_to_ptr_cast.exl:29:24
+(Ident println) @examples/int_to_ptr_cast.exl:29:26
+LParen @examples/int_to_ptr_cast.exl:29:33
+(Int 1) @examples/int_to_ptr_cast.exl:29:34
+RParen @examples/int_to_ptr_cast.exl:29:35
+Semicolon @examples/int_to_ptr_cast.exl:29:36
+RBrace @examples/int_to_ptr_cast.exl:29:38
+Else @examples/int_to_ptr_cast.exl:29:40
+LBrace @examples/int_to_ptr_cast.exl:29:45
+(Ident println) @examples/int_to_ptr_cast.exl:29:47
+LParen @examples/int_to_ptr_cast.exl:29:54
+(Int 0) @examples/int_to_ptr_cast.exl:29:55
+RParen @examples/int_to_ptr_cast.exl:29:56
+Semicolon @examples/int_to_ptr_cast.exl:29:57
+RBrace @examples/int_to_ptr_cast.exl:29:59
+RBrace @examples/int_to_ptr_cast.exl:30:1
+Eof @examples/int_to_ptr_cast.exl:31:1

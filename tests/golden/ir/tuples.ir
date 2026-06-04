@@ -1,0 +1,17 @@
+;; exile-typed-ir-dump v1 examples/tuples.exl
+(tfn ex_split (params (param n (int i32))) (tuple (int i32) (int i32)) (body (return (tuple-lit (binop * (var n) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32) (binop * (var n) :ty (int i32) (int 3) :ty (int i32)) :ty (int i32)) :ty (tuple (int i32) (int i32)))))
+(tfn ex_min_max (params (param a (int i32)) (param b (int i32))) (tuple (int i32) (int i32)) (body (if (binop < (var a) :ty (int i32) (var b) :ty (int i32)) :ty bool (then (return (tuple-lit (var a) :ty (int i32) (var b) :ty (int i32)) :ty (tuple (int i32) (int i32)))) (else (return (tuple-lit (var b) :ty (int i32) (var a) :ty (int i32)) :ty (tuple (int i32) (int i32)))))))
+(tfn ex_label_score (params (param score (int i32))) (tuple str (int i32)) (body (if (binop >= (var score) :ty (int i32) (int 90) :ty (int i32)) :ty bool (then (return (tuple-lit (string "A") :ty str (var score) :ty (int i32)) :ty (tuple str (int i32)))) (else (if (binop >= (var score) :ty (int i32) (int 70) :ty (int i32)) :ty bool (then (return (tuple-lit (string "B") :ty str (var score) :ty (int i32)) :ty (tuple str (int i32)))) (else (return (tuple-lit (string "C") :ty str (var score) :ty (int i32)) :ty (tuple str (int i32)))))))))
+(tfn main (params ) void (body (let-tuple (a b) (call ex_split (int 5) :ty (int i32)) :ty (tuple (int i32) (int i32))) (expr-stmt (builtin-call println (var a) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var b) :ty (int i32)) :ty (int i32)) (let-tuple (lo hi) (call ex_min_max (int 7) :ty (int i32) (int 3) :ty (int i32)) :ty (tuple (int i32) (int i32))) (expr-stmt (builtin-call println (var lo) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var hi) :ty (int i32)) :ty (int i32)) (let-tuple (grade points) (call ex_label_score (int 85) :ty (int i32)) :ty (tuple str (int i32))) (expr-stmt (builtin-call println (var grade) :ty str) :ty (int i32)) (expr-stmt (builtin-call println (var points) :ty (int i32)) :ty (int i32)) (let-tuple (x y) (tuple-lit (int 10) :ty (int i32) (int 20) :ty (int i32)) :ty (tuple (int i32) (int i32))) (expr-stmt (builtin-call println (var x) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var y) :ty (int i32)) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

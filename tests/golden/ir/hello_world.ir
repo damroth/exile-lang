@@ -1,0 +1,14 @@
+;; exile-typed-ir-dump v1 examples/hello_world.exl
+(tfn main (params ) void (body (expr-stmt (builtin-call println (string "Hello, World!") :ty str) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

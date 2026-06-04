@@ -1,0 +1,136 @@
+;; exile-tokens-dump v1 examples/logical_not.exl
+Const @examples/logical_not.exl:5:1
+(Ident DISABLED) @examples/logical_not.exl:5:7
+Colon @examples/logical_not.exl:5:15
+(Ident bool) @examples/logical_not.exl:5:17
+Eq @examples/logical_not.exl:5:22
+Bang @examples/logical_not.exl:5:24
+True @examples/logical_not.exl:5:25
+Semicolon @examples/logical_not.exl:5:29
+Struct @examples/logical_not.exl:7:1
+(Ident Toggle) @examples/logical_not.exl:7:8
+LBrace @examples/logical_not.exl:7:15
+(Ident on) @examples/logical_not.exl:7:17
+Colon @examples/logical_not.exl:7:19
+(Ident bool) @examples/logical_not.exl:7:21
+RBrace @examples/logical_not.exl:7:26
+Impl @examples/logical_not.exl:8:1
+(Ident Toggle) @examples/logical_not.exl:8:6
+LBrace @examples/logical_not.exl:8:13
+Pub @examples/logical_not.exl:9:5
+Fn @examples/logical_not.exl:9:9
+(Ident is_off) @examples/logical_not.exl:9:12
+LParen @examples/logical_not.exl:9:18
+(Ident self) @examples/logical_not.exl:9:19
+RParen @examples/logical_not.exl:9:23
+Arrow @examples/logical_not.exl:9:25
+(Ident bool) @examples/logical_not.exl:9:28
+LBrace @examples/logical_not.exl:9:33
+Bang @examples/logical_not.exl:9:35
+(Ident self) @examples/logical_not.exl:9:36
+Dot @examples/logical_not.exl:9:40
+(Ident on) @examples/logical_not.exl:9:41
+RBrace @examples/logical_not.exl:9:44
+RBrace @examples/logical_not.exl:10:1
+Fn @examples/logical_not.exl:12:1
+(Ident main) @examples/logical_not.exl:12:4
+LParen @examples/logical_not.exl:12:8
+RParen @examples/logical_not.exl:12:9
+LBrace @examples/logical_not.exl:12:11
+Let @examples/logical_not.exl:13:5
+(Ident t) @examples/logical_not.exl:13:9
+Colon @examples/logical_not.exl:13:10
+(Ident bool) @examples/logical_not.exl:13:12
+Eq @examples/logical_not.exl:13:17
+True @examples/logical_not.exl:13:19
+Semicolon @examples/logical_not.exl:13:23
+If @examples/logical_not.exl:14:5
+Bang @examples/logical_not.exl:14:8
+(Ident t) @examples/logical_not.exl:14:9
+LBrace @examples/logical_not.exl:14:11
+(Ident println) @examples/logical_not.exl:14:13
+LParen @examples/logical_not.exl:14:20
+(Int 1) @examples/logical_not.exl:14:21
+RParen @examples/logical_not.exl:14:22
+Semicolon @examples/logical_not.exl:14:23
+RBrace @examples/logical_not.exl:14:25
+Else @examples/logical_not.exl:14:27
+LBrace @examples/logical_not.exl:14:32
+(Ident println) @examples/logical_not.exl:14:34
+LParen @examples/logical_not.exl:14:41
+(Int 0) @examples/logical_not.exl:14:42
+RParen @examples/logical_not.exl:14:43
+Semicolon @examples/logical_not.exl:14:44
+RBrace @examples/logical_not.exl:14:46
+If @examples/logical_not.exl:17:5
+Bang @examples/logical_not.exl:17:8
+LParen @examples/logical_not.exl:17:9
+(Int 1) @examples/logical_not.exl:17:10
+EqEq @examples/logical_not.exl:17:12
+(Int 2) @examples/logical_not.exl:17:15
+RParen @examples/logical_not.exl:17:16
+LBrace @examples/logical_not.exl:17:18
+(Ident println) @examples/logical_not.exl:17:20
+LParen @examples/logical_not.exl:17:27
+(Int 1) @examples/logical_not.exl:17:28
+RParen @examples/logical_not.exl:17:29
+Semicolon @examples/logical_not.exl:17:30
+RBrace @examples/logical_not.exl:17:32
+Else @examples/logical_not.exl:17:34
+LBrace @examples/logical_not.exl:17:39
+(Ident println) @examples/logical_not.exl:17:41
+LParen @examples/logical_not.exl:17:48
+(Int 0) @examples/logical_not.exl:17:49
+RParen @examples/logical_not.exl:17:50
+Semicolon @examples/logical_not.exl:17:51
+RBrace @examples/logical_not.exl:17:53
+Let @examples/logical_not.exl:20:5
+(Ident sw) @examples/logical_not.exl:20:9
+Eq @examples/logical_not.exl:20:12
+(Ident Toggle) @examples/logical_not.exl:20:14
+LBrace @examples/logical_not.exl:20:21
+(Ident on) @examples/logical_not.exl:20:23
+Colon @examples/logical_not.exl:20:25
+True @examples/logical_not.exl:20:27
+RBrace @examples/logical_not.exl:20:32
+Semicolon @examples/logical_not.exl:20:33
+If @examples/logical_not.exl:21:5
+(Ident sw) @examples/logical_not.exl:21:8
+Dot @examples/logical_not.exl:21:10
+(Ident is_off) @examples/logical_not.exl:21:11
+LParen @examples/logical_not.exl:21:17
+RParen @examples/logical_not.exl:21:18
+LBrace @examples/logical_not.exl:21:20
+(Ident println) @examples/logical_not.exl:21:22
+LParen @examples/logical_not.exl:21:29
+(Int 1) @examples/logical_not.exl:21:30
+RParen @examples/logical_not.exl:21:31
+Semicolon @examples/logical_not.exl:21:32
+RBrace @examples/logical_not.exl:21:34
+Else @examples/logical_not.exl:21:36
+LBrace @examples/logical_not.exl:21:41
+(Ident println) @examples/logical_not.exl:21:43
+LParen @examples/logical_not.exl:21:50
+(Int 0) @examples/logical_not.exl:21:51
+RParen @examples/logical_not.exl:21:52
+Semicolon @examples/logical_not.exl:21:53
+RBrace @examples/logical_not.exl:21:55
+If @examples/logical_not.exl:24:5
+(Ident DISABLED) @examples/logical_not.exl:24:8
+LBrace @examples/logical_not.exl:24:17
+(Ident println) @examples/logical_not.exl:24:19
+LParen @examples/logical_not.exl:24:26
+(Int 1) @examples/logical_not.exl:24:27
+RParen @examples/logical_not.exl:24:28
+Semicolon @examples/logical_not.exl:24:29
+RBrace @examples/logical_not.exl:24:31
+Else @examples/logical_not.exl:24:33
+LBrace @examples/logical_not.exl:24:38
+(Ident println) @examples/logical_not.exl:24:40
+LParen @examples/logical_not.exl:24:47
+(Int 0) @examples/logical_not.exl:24:48
+RParen @examples/logical_not.exl:24:49
+Semicolon @examples/logical_not.exl:24:50
+RBrace @examples/logical_not.exl:24:52
+RBrace @examples/logical_not.exl:25:1
+Eof @examples/logical_not.exl:26:1

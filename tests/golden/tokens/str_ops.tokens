@@ -1,0 +1,167 @@
+;; exile-tokens-dump v1 examples/str_ops.exl
+Fn @examples/str_ops.exl:18:1
+(Ident main) @examples/str_ops.exl:18:4
+LParen @examples/str_ops.exl:18:8
+RParen @examples/str_ops.exl:18:9
+LBrace @examples/str_ops.exl:18:11
+Let @examples/str_ops.exl:20:5
+(Ident a) @examples/str_ops.exl:20:9
+Eq @examples/str_ops.exl:20:11
+(String "hello") @examples/str_ops.exl:20:13
+Semicolon @examples/str_ops.exl:20:20
+Let @examples/str_ops.exl:21:5
+(Ident b) @examples/str_ops.exl:21:9
+Eq @examples/str_ops.exl:21:11
+(String "hello") @examples/str_ops.exl:21:13
+Semicolon @examples/str_ops.exl:21:20
+Let @examples/str_ops.exl:22:5
+(Ident c) @examples/str_ops.exl:22:9
+Eq @examples/str_ops.exl:22:11
+(String "world") @examples/str_ops.exl:22:13
+Semicolon @examples/str_ops.exl:22:20
+If @examples/str_ops.exl:23:5
+(Ident a) @examples/str_ops.exl:23:8
+EqEq @examples/str_ops.exl:23:10
+(Ident b) @examples/str_ops.exl:23:13
+LBrace @examples/str_ops.exl:23:15
+(Ident println) @examples/str_ops.exl:23:17
+LParen @examples/str_ops.exl:23:24
+(Int 1) @examples/str_ops.exl:23:25
+RParen @examples/str_ops.exl:23:26
+Semicolon @examples/str_ops.exl:23:27
+RBrace @examples/str_ops.exl:23:29
+Else @examples/str_ops.exl:23:31
+LBrace @examples/str_ops.exl:23:36
+(Ident println) @examples/str_ops.exl:23:38
+LParen @examples/str_ops.exl:23:45
+(Int 0) @examples/str_ops.exl:23:46
+RParen @examples/str_ops.exl:23:47
+Semicolon @examples/str_ops.exl:23:48
+RBrace @examples/str_ops.exl:23:50
+If @examples/str_ops.exl:24:5
+(Ident a) @examples/str_ops.exl:24:8
+EqEq @examples/str_ops.exl:24:10
+(Ident c) @examples/str_ops.exl:24:13
+LBrace @examples/str_ops.exl:24:15
+(Ident println) @examples/str_ops.exl:24:17
+LParen @examples/str_ops.exl:24:24
+(Int 1) @examples/str_ops.exl:24:25
+RParen @examples/str_ops.exl:24:26
+Semicolon @examples/str_ops.exl:24:27
+RBrace @examples/str_ops.exl:24:29
+Else @examples/str_ops.exl:24:31
+LBrace @examples/str_ops.exl:24:36
+(Ident println) @examples/str_ops.exl:24:38
+LParen @examples/str_ops.exl:24:45
+(Int 0) @examples/str_ops.exl:24:46
+RParen @examples/str_ops.exl:24:47
+Semicolon @examples/str_ops.exl:24:48
+RBrace @examples/str_ops.exl:24:50
+If @examples/str_ops.exl:25:5
+(Ident a) @examples/str_ops.exl:25:8
+NotEq @examples/str_ops.exl:25:10
+(Ident c) @examples/str_ops.exl:25:13
+LBrace @examples/str_ops.exl:25:15
+(Ident println) @examples/str_ops.exl:25:17
+LParen @examples/str_ops.exl:25:24
+(Int 1) @examples/str_ops.exl:25:25
+RParen @examples/str_ops.exl:25:26
+Semicolon @examples/str_ops.exl:25:27
+RBrace @examples/str_ops.exl:25:29
+Else @examples/str_ops.exl:25:31
+LBrace @examples/str_ops.exl:25:36
+(Ident println) @examples/str_ops.exl:25:38
+LParen @examples/str_ops.exl:25:45
+(Int 0) @examples/str_ops.exl:25:46
+RParen @examples/str_ops.exl:25:47
+Semicolon @examples/str_ops.exl:25:48
+RBrace @examples/str_ops.exl:25:50
+(Ident println) @examples/str_ops.exl:28:5
+LParen @examples/str_ops.exl:28:12
+(Ident str) @examples/str_ops.exl:28:13
+DoubleColon @examples/str_ops.exl:28:16
+(Ident len) @examples/str_ops.exl:28:18
+LParen @examples/str_ops.exl:28:21
+(Ident a) @examples/str_ops.exl:28:22
+RParen @examples/str_ops.exl:28:23
+As @examples/str_ops.exl:28:25
+(Ident int) @examples/str_ops.exl:28:28
+RParen @examples/str_ops.exl:28:31
+Semicolon @examples/str_ops.exl:28:32
+(Ident println) @examples/str_ops.exl:29:5
+LParen @examples/str_ops.exl:29:12
+(Ident str) @examples/str_ops.exl:29:13
+DoubleColon @examples/str_ops.exl:29:16
+(Ident cmp) @examples/str_ops.exl:29:18
+LParen @examples/str_ops.exl:29:21
+(Ident a) @examples/str_ops.exl:29:22
+Comma @examples/str_ops.exl:29:23
+(Ident c) @examples/str_ops.exl:29:25
+RParen @examples/str_ops.exl:29:26
+RParen @examples/str_ops.exl:29:27
+Semicolon @examples/str_ops.exl:29:28
+(Ident println) @examples/str_ops.exl:30:5
+LParen @examples/str_ops.exl:30:12
+(Ident str) @examples/str_ops.exl:30:13
+DoubleColon @examples/str_ops.exl:30:16
+(Ident hash) @examples/str_ops.exl:30:18
+LParen @examples/str_ops.exl:30:22
+(String "a") @examples/str_ops.exl:30:23
+RParen @examples/str_ops.exl:30:26
+As @examples/str_ops.exl:30:28
+(Ident int) @examples/str_ops.exl:30:31
+RParen @examples/str_ops.exl:30:34
+Semicolon @examples/str_ops.exl:30:35
+(Ident println) @examples/str_ops.exl:31:5
+LParen @examples/str_ops.exl:31:12
+(Ident str) @examples/str_ops.exl:31:13
+DoubleColon @examples/str_ops.exl:31:16
+(Ident hash) @examples/str_ops.exl:31:18
+LParen @examples/str_ops.exl:31:22
+(String "ab") @examples/str_ops.exl:31:23
+RParen @examples/str_ops.exl:31:27
+As @examples/str_ops.exl:31:29
+(Ident int) @examples/str_ops.exl:31:32
+RParen @examples/str_ops.exl:31:35
+Semicolon @examples/str_ops.exl:31:36
+Let @examples/str_ops.exl:35:5
+(Ident bytes) @examples/str_ops.exl:35:9
+Eq @examples/str_ops.exl:35:15
+(Ident str) @examples/str_ops.exl:35:17
+DoubleColon @examples/str_ops.exl:35:20
+(Ident as_bytes) @examples/str_ops.exl:35:22
+LParen @examples/str_ops.exl:35:30
+(Ident a) @examples/str_ops.exl:35:31
+RParen @examples/str_ops.exl:35:32
+Semicolon @examples/str_ops.exl:35:33
+(Ident println) @examples/str_ops.exl:36:5
+LParen @examples/str_ops.exl:36:12
+(Ident bytes) @examples/str_ops.exl:36:13
+Dot @examples/str_ops.exl:36:18
+(Ident len) @examples/str_ops.exl:36:19
+As @examples/str_ops.exl:36:23
+(Ident int) @examples/str_ops.exl:36:26
+RParen @examples/str_ops.exl:36:29
+Semicolon @examples/str_ops.exl:36:30
+(Ident println) @examples/str_ops.exl:37:5
+LParen @examples/str_ops.exl:37:12
+(Ident bytes) @examples/str_ops.exl:37:13
+LBracket @examples/str_ops.exl:37:18
+(Int 0) @examples/str_ops.exl:37:19
+RBracket @examples/str_ops.exl:37:20
+As @examples/str_ops.exl:37:22
+(Ident int) @examples/str_ops.exl:37:25
+RParen @examples/str_ops.exl:37:28
+Semicolon @examples/str_ops.exl:37:29
+(Ident println) @examples/str_ops.exl:38:5
+LParen @examples/str_ops.exl:38:12
+(Ident bytes) @examples/str_ops.exl:38:13
+LBracket @examples/str_ops.exl:38:18
+(Int 4) @examples/str_ops.exl:38:19
+RBracket @examples/str_ops.exl:38:20
+As @examples/str_ops.exl:38:22
+(Ident int) @examples/str_ops.exl:38:25
+RParen @examples/str_ops.exl:38:28
+Semicolon @examples/str_ops.exl:38:29
+RBrace @examples/str_ops.exl:39:1
+Eof @examples/str_ops.exl:40:1

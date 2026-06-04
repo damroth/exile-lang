@@ -1,0 +1,265 @@
+;; exile-tokens-dump v1 examples/generic_impl.exl
+Struct @examples/generic_impl.exl:13:1
+(Ident Pair) @examples/generic_impl.exl:13:8
+Lt @examples/generic_impl.exl:13:12
+(Ident A) @examples/generic_impl.exl:13:13
+Comma @examples/generic_impl.exl:13:14
+(Ident B) @examples/generic_impl.exl:13:16
+Gt @examples/generic_impl.exl:13:17
+LBrace @examples/generic_impl.exl:13:19
+(Ident fst) @examples/generic_impl.exl:14:5
+Colon @examples/generic_impl.exl:14:8
+(Ident A) @examples/generic_impl.exl:14:10
+Comma @examples/generic_impl.exl:14:11
+(Ident snd) @examples/generic_impl.exl:15:5
+Colon @examples/generic_impl.exl:15:8
+(Ident B) @examples/generic_impl.exl:15:10
+RBrace @examples/generic_impl.exl:16:1
+Impl @examples/generic_impl.exl:18:1
+Lt @examples/generic_impl.exl:18:5
+(Ident A) @examples/generic_impl.exl:18:6
+Comma @examples/generic_impl.exl:18:7
+(Ident B) @examples/generic_impl.exl:18:9
+Gt @examples/generic_impl.exl:18:10
+(Ident Pair) @examples/generic_impl.exl:18:12
+Lt @examples/generic_impl.exl:18:16
+(Ident A) @examples/generic_impl.exl:18:17
+Comma @examples/generic_impl.exl:18:18
+(Ident B) @examples/generic_impl.exl:18:20
+Gt @examples/generic_impl.exl:18:21
+LBrace @examples/generic_impl.exl:18:23
+Pub @examples/generic_impl.exl:19:5
+Fn @examples/generic_impl.exl:19:9
+(Ident first) @examples/generic_impl.exl:19:12
+LParen @examples/generic_impl.exl:19:17
+(Ident self) @examples/generic_impl.exl:19:18
+RParen @examples/generic_impl.exl:19:22
+Arrow @examples/generic_impl.exl:19:24
+(Ident A) @examples/generic_impl.exl:19:27
+LBrace @examples/generic_impl.exl:19:29
+Return @examples/generic_impl.exl:19:31
+(Ident self) @examples/generic_impl.exl:19:38
+Dot @examples/generic_impl.exl:19:42
+(Ident fst) @examples/generic_impl.exl:19:43
+Semicolon @examples/generic_impl.exl:19:46
+RBrace @examples/generic_impl.exl:19:48
+Pub @examples/generic_impl.exl:20:5
+Fn @examples/generic_impl.exl:20:9
+(Ident second) @examples/generic_impl.exl:20:12
+LParen @examples/generic_impl.exl:20:18
+(Ident self) @examples/generic_impl.exl:20:19
+RParen @examples/generic_impl.exl:20:23
+Arrow @examples/generic_impl.exl:20:25
+(Ident B) @examples/generic_impl.exl:20:28
+LBrace @examples/generic_impl.exl:20:30
+Return @examples/generic_impl.exl:20:32
+(Ident self) @examples/generic_impl.exl:20:39
+Dot @examples/generic_impl.exl:20:43
+(Ident snd) @examples/generic_impl.exl:20:44
+Semicolon @examples/generic_impl.exl:20:47
+RBrace @examples/generic_impl.exl:20:49
+Pub @examples/generic_impl.exl:24:5
+Fn @examples/generic_impl.exl:24:9
+(Ident swap) @examples/generic_impl.exl:24:12
+LParen @examples/generic_impl.exl:24:16
+(Ident self) @examples/generic_impl.exl:24:17
+RParen @examples/generic_impl.exl:24:21
+Arrow @examples/generic_impl.exl:24:23
+(Ident Pair) @examples/generic_impl.exl:24:26
+Lt @examples/generic_impl.exl:24:30
+(Ident B) @examples/generic_impl.exl:24:31
+Comma @examples/generic_impl.exl:24:32
+(Ident A) @examples/generic_impl.exl:24:34
+Gt @examples/generic_impl.exl:24:35
+LBrace @examples/generic_impl.exl:24:37
+Return @examples/generic_impl.exl:25:9
+(Ident Pair) @examples/generic_impl.exl:25:16
+LBrace @examples/generic_impl.exl:25:21
+(Ident fst) @examples/generic_impl.exl:25:23
+Colon @examples/generic_impl.exl:25:26
+(Ident self) @examples/generic_impl.exl:25:28
+Dot @examples/generic_impl.exl:25:32
+(Ident snd) @examples/generic_impl.exl:25:33
+Comma @examples/generic_impl.exl:25:36
+(Ident snd) @examples/generic_impl.exl:25:38
+Colon @examples/generic_impl.exl:25:41
+(Ident self) @examples/generic_impl.exl:25:43
+Dot @examples/generic_impl.exl:25:47
+(Ident fst) @examples/generic_impl.exl:25:48
+RBrace @examples/generic_impl.exl:25:52
+Semicolon @examples/generic_impl.exl:25:53
+RBrace @examples/generic_impl.exl:26:5
+RBrace @examples/generic_impl.exl:27:1
+Struct @examples/generic_impl.exl:29:1
+(Ident Box) @examples/generic_impl.exl:29:8
+Lt @examples/generic_impl.exl:29:11
+(Ident T) @examples/generic_impl.exl:29:12
+Gt @examples/generic_impl.exl:29:13
+LBrace @examples/generic_impl.exl:29:15
+(Ident val) @examples/generic_impl.exl:29:17
+Colon @examples/generic_impl.exl:29:20
+(Ident T) @examples/generic_impl.exl:29:22
+RBrace @examples/generic_impl.exl:29:24
+Impl @examples/generic_impl.exl:31:1
+Lt @examples/generic_impl.exl:31:5
+(Ident T) @examples/generic_impl.exl:31:6
+Gt @examples/generic_impl.exl:31:7
+(Ident Box) @examples/generic_impl.exl:31:9
+Lt @examples/generic_impl.exl:31:12
+(Ident T) @examples/generic_impl.exl:31:13
+Gt @examples/generic_impl.exl:31:14
+LBrace @examples/generic_impl.exl:31:16
+Pub @examples/generic_impl.exl:32:5
+Fn @examples/generic_impl.exl:32:9
+(Ident get) @examples/generic_impl.exl:32:12
+LParen @examples/generic_impl.exl:32:15
+(Ident self) @examples/generic_impl.exl:32:16
+RParen @examples/generic_impl.exl:32:20
+Arrow @examples/generic_impl.exl:32:22
+(Ident T) @examples/generic_impl.exl:32:25
+LBrace @examples/generic_impl.exl:32:27
+Return @examples/generic_impl.exl:32:29
+(Ident self) @examples/generic_impl.exl:32:36
+Dot @examples/generic_impl.exl:32:40
+(Ident val) @examples/generic_impl.exl:32:41
+Semicolon @examples/generic_impl.exl:32:44
+RBrace @examples/generic_impl.exl:32:46
+Pub @examples/generic_impl.exl:34:5
+Fn @examples/generic_impl.exl:34:9
+(Ident set) @examples/generic_impl.exl:34:12
+LParen @examples/generic_impl.exl:34:15
+Star @examples/generic_impl.exl:34:16
+(Ident self) @examples/generic_impl.exl:34:17
+Comma @examples/generic_impl.exl:34:21
+(Ident v) @examples/generic_impl.exl:34:23
+Colon @examples/generic_impl.exl:34:24
+(Ident T) @examples/generic_impl.exl:34:26
+RParen @examples/generic_impl.exl:34:27
+LBrace @examples/generic_impl.exl:34:29
+(Ident self) @examples/generic_impl.exl:34:31
+Dot @examples/generic_impl.exl:34:35
+(Ident val) @examples/generic_impl.exl:34:36
+Eq @examples/generic_impl.exl:34:40
+(Ident v) @examples/generic_impl.exl:34:42
+Semicolon @examples/generic_impl.exl:34:43
+RBrace @examples/generic_impl.exl:34:45
+RBrace @examples/generic_impl.exl:35:1
+Fn @examples/generic_impl.exl:37:1
+(Ident main) @examples/generic_impl.exl:37:4
+LParen @examples/generic_impl.exl:37:8
+RParen @examples/generic_impl.exl:37:9
+LBrace @examples/generic_impl.exl:37:11
+Let @examples/generic_impl.exl:38:5
+(Ident p) @examples/generic_impl.exl:38:9
+Eq @examples/generic_impl.exl:38:11
+(Ident Pair) @examples/generic_impl.exl:38:13
+LBrace @examples/generic_impl.exl:38:18
+(Ident fst) @examples/generic_impl.exl:38:20
+Colon @examples/generic_impl.exl:38:23
+(Int 42) @examples/generic_impl.exl:38:25
+Comma @examples/generic_impl.exl:38:27
+(Ident snd) @examples/generic_impl.exl:38:29
+Colon @examples/generic_impl.exl:38:32
+True @examples/generic_impl.exl:38:34
+RBrace @examples/generic_impl.exl:38:39
+Semicolon @examples/generic_impl.exl:38:40
+(Ident println) @examples/generic_impl.exl:39:5
+LParen @examples/generic_impl.exl:39:12
+(Ident p) @examples/generic_impl.exl:39:13
+Dot @examples/generic_impl.exl:39:14
+(Ident first) @examples/generic_impl.exl:39:15
+LParen @examples/generic_impl.exl:39:20
+RParen @examples/generic_impl.exl:39:21
+RParen @examples/generic_impl.exl:39:22
+Semicolon @examples/generic_impl.exl:39:23
+If @examples/generic_impl.exl:40:5
+(Ident p) @examples/generic_impl.exl:40:8
+Dot @examples/generic_impl.exl:40:9
+(Ident second) @examples/generic_impl.exl:40:10
+LParen @examples/generic_impl.exl:40:16
+RParen @examples/generic_impl.exl:40:17
+LBrace @examples/generic_impl.exl:40:19
+(Ident println) @examples/generic_impl.exl:40:21
+LParen @examples/generic_impl.exl:40:28
+(Int 1) @examples/generic_impl.exl:40:29
+RParen @examples/generic_impl.exl:40:30
+Semicolon @examples/generic_impl.exl:40:31
+RBrace @examples/generic_impl.exl:40:33
+Else @examples/generic_impl.exl:40:35
+LBrace @examples/generic_impl.exl:40:40
+(Ident println) @examples/generic_impl.exl:40:42
+LParen @examples/generic_impl.exl:40:49
+(Int 0) @examples/generic_impl.exl:40:50
+RParen @examples/generic_impl.exl:40:51
+Semicolon @examples/generic_impl.exl:40:52
+RBrace @examples/generic_impl.exl:40:54
+Let @examples/generic_impl.exl:42:5
+(Ident q) @examples/generic_impl.exl:42:9
+Eq @examples/generic_impl.exl:42:11
+(Ident p) @examples/generic_impl.exl:42:13
+Dot @examples/generic_impl.exl:42:14
+(Ident swap) @examples/generic_impl.exl:42:15
+LParen @examples/generic_impl.exl:42:19
+RParen @examples/generic_impl.exl:42:20
+Semicolon @examples/generic_impl.exl:42:21
+(Ident println) @examples/generic_impl.exl:43:5
+LParen @examples/generic_impl.exl:43:12
+(Ident q) @examples/generic_impl.exl:43:13
+Dot @examples/generic_impl.exl:43:14
+(Ident second) @examples/generic_impl.exl:43:15
+LParen @examples/generic_impl.exl:43:21
+RParen @examples/generic_impl.exl:43:22
+RParen @examples/generic_impl.exl:43:23
+Semicolon @examples/generic_impl.exl:43:24
+Let @examples/generic_impl.exl:47:5
+(Ident r) @examples/generic_impl.exl:47:9
+Eq @examples/generic_impl.exl:47:11
+(Ident Pair) @examples/generic_impl.exl:47:13
+LBrace @examples/generic_impl.exl:47:18
+(Ident fst) @examples/generic_impl.exl:47:20
+Colon @examples/generic_impl.exl:47:23
+(Int 7) @examples/generic_impl.exl:47:25
+Comma @examples/generic_impl.exl:47:26
+(Ident snd) @examples/generic_impl.exl:47:28
+Colon @examples/generic_impl.exl:47:31
+(Int 9) @examples/generic_impl.exl:47:33
+RBrace @examples/generic_impl.exl:47:35
+Semicolon @examples/generic_impl.exl:47:36
+(Ident println) @examples/generic_impl.exl:48:5
+LParen @examples/generic_impl.exl:48:12
+(Ident r) @examples/generic_impl.exl:48:13
+Dot @examples/generic_impl.exl:48:14
+(Ident first) @examples/generic_impl.exl:48:15
+LParen @examples/generic_impl.exl:48:20
+RParen @examples/generic_impl.exl:48:21
+RParen @examples/generic_impl.exl:48:22
+Semicolon @examples/generic_impl.exl:48:23
+Let @examples/generic_impl.exl:50:5
+Mut @examples/generic_impl.exl:50:9
+(Ident b) @examples/generic_impl.exl:50:13
+Eq @examples/generic_impl.exl:50:15
+(Ident Box) @examples/generic_impl.exl:50:17
+LBrace @examples/generic_impl.exl:50:21
+(Ident val) @examples/generic_impl.exl:50:23
+Colon @examples/generic_impl.exl:50:26
+(Int 5) @examples/generic_impl.exl:50:28
+RBrace @examples/generic_impl.exl:50:30
+Semicolon @examples/generic_impl.exl:50:31
+(Ident b) @examples/generic_impl.exl:51:5
+Dot @examples/generic_impl.exl:51:6
+(Ident set) @examples/generic_impl.exl:51:7
+LParen @examples/generic_impl.exl:51:10
+(Int 99) @examples/generic_impl.exl:51:11
+RParen @examples/generic_impl.exl:51:13
+Semicolon @examples/generic_impl.exl:51:14
+(Ident println) @examples/generic_impl.exl:52:5
+LParen @examples/generic_impl.exl:52:12
+(Ident b) @examples/generic_impl.exl:52:13
+Dot @examples/generic_impl.exl:52:14
+(Ident get) @examples/generic_impl.exl:52:15
+LParen @examples/generic_impl.exl:52:18
+RParen @examples/generic_impl.exl:52:19
+RParen @examples/generic_impl.exl:52:20
+Semicolon @examples/generic_impl.exl:52:21
+RBrace @examples/generic_impl.exl:53:1
+Eof @examples/generic_impl.exl:54:1

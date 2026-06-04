@@ -1,0 +1,119 @@
+;; exile-tokens-dump v1 examples/or_patterns.exl
+Enum @examples/or_patterns.exl:12:1
+(Ident Token) @examples/or_patterns.exl:12:6
+LBrace @examples/or_patterns.exl:12:12
+(Ident Plus) @examples/or_patterns.exl:13:5
+Pipe @examples/or_patterns.exl:13:10
+(Ident Minus) @examples/or_patterns.exl:13:12
+Pipe @examples/or_patterns.exl:13:18
+(Ident Star) @examples/or_patterns.exl:13:20
+Pipe @examples/or_patterns.exl:13:25
+(Ident Slash) @examples/or_patterns.exl:13:27
+Pipe @examples/or_patterns.exl:14:5
+(Ident LParen) @examples/or_patterns.exl:14:7
+Pipe @examples/or_patterns.exl:14:14
+(Ident RParen) @examples/or_patterns.exl:14:16
+Pipe @examples/or_patterns.exl:15:5
+(Ident Ident) @examples/or_patterns.exl:15:7
+Pipe @examples/or_patterns.exl:16:5
+(Ident NumberLit) @examples/or_patterns.exl:16:7
+RBrace @examples/or_patterns.exl:17:1
+Fn @examples/or_patterns.exl:19:1
+(Ident category) @examples/or_patterns.exl:19:4
+LParen @examples/or_patterns.exl:19:12
+(Ident t) @examples/or_patterns.exl:19:13
+Colon @examples/or_patterns.exl:19:14
+(Ident Token) @examples/or_patterns.exl:19:16
+RParen @examples/or_patterns.exl:19:21
+Arrow @examples/or_patterns.exl:19:23
+(Ident int) @examples/or_patterns.exl:19:26
+LBrace @examples/or_patterns.exl:19:30
+Match @examples/or_patterns.exl:20:5
+(Ident t) @examples/or_patterns.exl:20:11
+LBrace @examples/or_patterns.exl:20:13
+(Ident Token) @examples/or_patterns.exl:21:9
+DoubleColon @examples/or_patterns.exl:21:14
+(Ident Plus) @examples/or_patterns.exl:21:16
+Pipe @examples/or_patterns.exl:21:21
+(Ident Token) @examples/or_patterns.exl:21:23
+DoubleColon @examples/or_patterns.exl:21:28
+(Ident Minus) @examples/or_patterns.exl:21:30
+Pipe @examples/or_patterns.exl:21:36
+(Ident Token) @examples/or_patterns.exl:21:38
+DoubleColon @examples/or_patterns.exl:21:43
+(Ident Star) @examples/or_patterns.exl:21:45
+Pipe @examples/or_patterns.exl:21:50
+(Ident Token) @examples/or_patterns.exl:21:52
+DoubleColon @examples/or_patterns.exl:21:57
+(Ident Slash) @examples/or_patterns.exl:21:59
+FatArrow @examples/or_patterns.exl:21:65
+(Int 1) @examples/or_patterns.exl:21:68
+Pipe @examples/or_patterns.exl:22:9
+(Ident Token) @examples/or_patterns.exl:22:11
+DoubleColon @examples/or_patterns.exl:22:16
+(Ident LParen) @examples/or_patterns.exl:22:18
+Pipe @examples/or_patterns.exl:22:25
+(Ident Token) @examples/or_patterns.exl:22:27
+DoubleColon @examples/or_patterns.exl:22:32
+(Ident RParen) @examples/or_patterns.exl:22:34
+FatArrow @examples/or_patterns.exl:22:41
+(Int 2) @examples/or_patterns.exl:22:44
+Pipe @examples/or_patterns.exl:23:9
+(Ident Token) @examples/or_patterns.exl:23:11
+DoubleColon @examples/or_patterns.exl:23:16
+(Ident Ident) @examples/or_patterns.exl:23:18
+Pipe @examples/or_patterns.exl:23:24
+(Ident Token) @examples/or_patterns.exl:23:26
+DoubleColon @examples/or_patterns.exl:23:31
+(Ident NumberLit) @examples/or_patterns.exl:23:33
+FatArrow @examples/or_patterns.exl:23:43
+(Int 3) @examples/or_patterns.exl:23:46
+RBrace @examples/or_patterns.exl:24:5
+RBrace @examples/or_patterns.exl:25:1
+Fn @examples/or_patterns.exl:27:1
+(Ident main) @examples/or_patterns.exl:27:4
+LParen @examples/or_patterns.exl:27:8
+RParen @examples/or_patterns.exl:27:9
+LBrace @examples/or_patterns.exl:27:11
+(Ident println) @examples/or_patterns.exl:28:5
+LParen @examples/or_patterns.exl:28:12
+(Ident category) @examples/or_patterns.exl:28:13
+LParen @examples/or_patterns.exl:28:21
+(Ident Token) @examples/or_patterns.exl:28:22
+DoubleColon @examples/or_patterns.exl:28:27
+(Ident Plus) @examples/or_patterns.exl:28:29
+RParen @examples/or_patterns.exl:28:33
+RParen @examples/or_patterns.exl:28:34
+Semicolon @examples/or_patterns.exl:28:35
+(Ident println) @examples/or_patterns.exl:29:5
+LParen @examples/or_patterns.exl:29:12
+(Ident category) @examples/or_patterns.exl:29:13
+LParen @examples/or_patterns.exl:29:21
+(Ident Token) @examples/or_patterns.exl:29:22
+DoubleColon @examples/or_patterns.exl:29:27
+(Ident Slash) @examples/or_patterns.exl:29:29
+RParen @examples/or_patterns.exl:29:34
+RParen @examples/or_patterns.exl:29:35
+Semicolon @examples/or_patterns.exl:29:36
+(Ident println) @examples/or_patterns.exl:30:5
+LParen @examples/or_patterns.exl:30:12
+(Ident category) @examples/or_patterns.exl:30:13
+LParen @examples/or_patterns.exl:30:21
+(Ident Token) @examples/or_patterns.exl:30:22
+DoubleColon @examples/or_patterns.exl:30:27
+(Ident LParen) @examples/or_patterns.exl:30:29
+RParen @examples/or_patterns.exl:30:35
+RParen @examples/or_patterns.exl:30:36
+Semicolon @examples/or_patterns.exl:30:37
+(Ident println) @examples/or_patterns.exl:31:5
+LParen @examples/or_patterns.exl:31:12
+(Ident category) @examples/or_patterns.exl:31:13
+LParen @examples/or_patterns.exl:31:21
+(Ident Token) @examples/or_patterns.exl:31:22
+DoubleColon @examples/or_patterns.exl:31:27
+(Ident Ident) @examples/or_patterns.exl:31:29
+RParen @examples/or_patterns.exl:31:34
+RParen @examples/or_patterns.exl:31:35
+Semicolon @examples/or_patterns.exl:31:36
+RBrace @examples/or_patterns.exl:32:1
+Eof @examples/or_patterns.exl:33:1

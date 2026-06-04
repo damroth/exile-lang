@@ -1,0 +1,368 @@
+;; exile-tokens-dump v1 examples/string_builder.exl
+Pub @examples/string_builder.exl:12:1
+Mod @examples/string_builder.exl:12:5
+(Ident raw) @examples/string_builder.exl:12:9
+LBrace @examples/string_builder.exl:12:13
+Extern @examples/string_builder.exl:13:5
+Fn @examples/string_builder.exl:13:12
+(Ident make_c_allocator) @examples/string_builder.exl:13:15
+LParen @examples/string_builder.exl:13:31
+RParen @examples/string_builder.exl:13:32
+Arrow @examples/string_builder.exl:13:34
+(Ident Allocator) @examples/string_builder.exl:13:37
+Semicolon @examples/string_builder.exl:13:46
+RBrace @examples/string_builder.exl:14:1
+Fn @examples/string_builder.exl:16:1
+(Ident main) @examples/string_builder.exl:16:4
+LParen @examples/string_builder.exl:16:8
+RParen @examples/string_builder.exl:16:9
+LBrace @examples/string_builder.exl:16:11
+Let @examples/string_builder.exl:17:5
+(Ident a) @examples/string_builder.exl:17:9
+Eq @examples/string_builder.exl:17:11
+(Ident raw) @examples/string_builder.exl:17:13
+DoubleColon @examples/string_builder.exl:17:16
+(Ident make_c_allocator) @examples/string_builder.exl:17:18
+LParen @examples/string_builder.exl:17:34
+RParen @examples/string_builder.exl:17:35
+Semicolon @examples/string_builder.exl:17:36
+Let @examples/string_builder.exl:22:5
+Mut @examples/string_builder.exl:22:9
+(Ident sb) @examples/string_builder.exl:22:13
+Eq @examples/string_builder.exl:22:16
+(Ident StringBuilder) @examples/string_builder.exl:22:18
+DoubleColon @examples/string_builder.exl:22:31
+(Ident with_capacity) @examples/string_builder.exl:22:33
+LParen @examples/string_builder.exl:22:46
+(Ident a) @examples/string_builder.exl:22:47
+Comma @examples/string_builder.exl:22:48
+(Int 8) @examples/string_builder.exl:22:50
+As @examples/string_builder.exl:22:52
+(Ident u32) @examples/string_builder.exl:22:55
+RParen @examples/string_builder.exl:22:58
+Semicolon @examples/string_builder.exl:22:59
+(Ident sb) @examples/string_builder.exl:26:5
+Dot @examples/string_builder.exl:26:7
+(Ident push_byte) @examples/string_builder.exl:26:8
+LParen @examples/string_builder.exl:26:17
+(Int 72) @examples/string_builder.exl:26:18
+As @examples/string_builder.exl:26:21
+(Ident u8) @examples/string_builder.exl:26:24
+RParen @examples/string_builder.exl:26:26
+Semicolon @examples/string_builder.exl:26:27
+(Ident sb) @examples/string_builder.exl:27:5
+Dot @examples/string_builder.exl:27:7
+(Ident push_byte) @examples/string_builder.exl:27:8
+LParen @examples/string_builder.exl:27:17
+(Int 105) @examples/string_builder.exl:27:18
+As @examples/string_builder.exl:27:22
+(Ident u8) @examples/string_builder.exl:27:25
+RParen @examples/string_builder.exl:27:27
+Semicolon @examples/string_builder.exl:27:28
+(Ident sb) @examples/string_builder.exl:28:5
+Dot @examples/string_builder.exl:28:7
+(Ident push_byte) @examples/string_builder.exl:28:8
+LParen @examples/string_builder.exl:28:17
+(Int 33) @examples/string_builder.exl:28:18
+As @examples/string_builder.exl:28:21
+(Ident u8) @examples/string_builder.exl:28:24
+RParen @examples/string_builder.exl:28:26
+Semicolon @examples/string_builder.exl:28:27
+(Ident println) @examples/string_builder.exl:29:5
+LParen @examples/string_builder.exl:29:12
+(Ident sb) @examples/string_builder.exl:29:13
+Dot @examples/string_builder.exl:29:15
+(Ident length) @examples/string_builder.exl:29:16
+LParen @examples/string_builder.exl:29:22
+RParen @examples/string_builder.exl:29:23
+As @examples/string_builder.exl:29:25
+(Ident int) @examples/string_builder.exl:29:28
+RParen @examples/string_builder.exl:29:31
+Semicolon @examples/string_builder.exl:29:32
+Let @examples/string_builder.exl:34:5
+Mut @examples/string_builder.exl:34:9
+(Ident i) @examples/string_builder.exl:34:13
+Colon @examples/string_builder.exl:34:14
+(Ident u32) @examples/string_builder.exl:34:16
+Eq @examples/string_builder.exl:34:20
+(Int 0) @examples/string_builder.exl:34:22
+As @examples/string_builder.exl:34:24
+(Ident u32) @examples/string_builder.exl:34:27
+Semicolon @examples/string_builder.exl:34:30
+While @examples/string_builder.exl:35:5
+(Ident i) @examples/string_builder.exl:35:11
+Lt @examples/string_builder.exl:35:13
+(Int 20) @examples/string_builder.exl:35:15
+As @examples/string_builder.exl:35:18
+(Ident u32) @examples/string_builder.exl:35:21
+LBrace @examples/string_builder.exl:35:25
+(Ident sb) @examples/string_builder.exl:36:9
+Dot @examples/string_builder.exl:36:11
+(Ident push_byte) @examples/string_builder.exl:36:12
+LParen @examples/string_builder.exl:36:21
+LParen @examples/string_builder.exl:36:22
+(Int 65) @examples/string_builder.exl:36:23
+As @examples/string_builder.exl:36:26
+(Ident u32) @examples/string_builder.exl:36:29
+Plus @examples/string_builder.exl:36:33
+(Ident i) @examples/string_builder.exl:36:35
+RParen @examples/string_builder.exl:36:36
+As @examples/string_builder.exl:36:38
+(Ident u8) @examples/string_builder.exl:36:41
+RParen @examples/string_builder.exl:36:43
+Semicolon @examples/string_builder.exl:36:44
+(Ident i) @examples/string_builder.exl:37:9
+Eq @examples/string_builder.exl:37:11
+(Ident i) @examples/string_builder.exl:37:13
+Plus @examples/string_builder.exl:37:15
+(Int 1) @examples/string_builder.exl:37:17
+As @examples/string_builder.exl:37:19
+(Ident u32) @examples/string_builder.exl:37:22
+Semicolon @examples/string_builder.exl:37:25
+RBrace @examples/string_builder.exl:38:5
+(Ident println) @examples/string_builder.exl:39:5
+LParen @examples/string_builder.exl:39:12
+(Ident sb) @examples/string_builder.exl:39:13
+Dot @examples/string_builder.exl:39:15
+(Ident length) @examples/string_builder.exl:39:16
+LParen @examples/string_builder.exl:39:22
+RParen @examples/string_builder.exl:39:23
+As @examples/string_builder.exl:39:25
+(Ident int) @examples/string_builder.exl:39:28
+RParen @examples/string_builder.exl:39:31
+Semicolon @examples/string_builder.exl:39:32
+Let @examples/string_builder.exl:45:5
+(Ident bytes) @examples/string_builder.exl:45:9
+Eq @examples/string_builder.exl:45:15
+(Ident sb) @examples/string_builder.exl:45:17
+Dot @examples/string_builder.exl:45:19
+(Ident as_slice) @examples/string_builder.exl:45:20
+LParen @examples/string_builder.exl:45:28
+RParen @examples/string_builder.exl:45:29
+Semicolon @examples/string_builder.exl:45:30
+(Ident println) @examples/string_builder.exl:46:5
+LParen @examples/string_builder.exl:46:12
+(Ident bytes) @examples/string_builder.exl:46:13
+LBracket @examples/string_builder.exl:46:18
+(Int 0) @examples/string_builder.exl:46:19
+RBracket @examples/string_builder.exl:46:20
+As @examples/string_builder.exl:46:22
+(Ident int) @examples/string_builder.exl:46:25
+RParen @examples/string_builder.exl:46:28
+Semicolon @examples/string_builder.exl:46:29
+(Ident println) @examples/string_builder.exl:47:5
+LParen @examples/string_builder.exl:47:12
+(Ident bytes) @examples/string_builder.exl:47:13
+LBracket @examples/string_builder.exl:47:18
+(Int 3) @examples/string_builder.exl:47:19
+RBracket @examples/string_builder.exl:47:20
+As @examples/string_builder.exl:47:22
+(Ident int) @examples/string_builder.exl:47:25
+RParen @examples/string_builder.exl:47:28
+Semicolon @examples/string_builder.exl:47:29
+(Ident println) @examples/string_builder.exl:48:5
+LParen @examples/string_builder.exl:48:12
+(Ident bytes) @examples/string_builder.exl:48:13
+LBracket @examples/string_builder.exl:48:18
+(Int 22) @examples/string_builder.exl:48:19
+RBracket @examples/string_builder.exl:48:21
+As @examples/string_builder.exl:48:23
+(Ident int) @examples/string_builder.exl:48:26
+RParen @examples/string_builder.exl:48:29
+Semicolon @examples/string_builder.exl:48:30
+Let @examples/string_builder.exl:54:5
+Mut @examples/string_builder.exl:54:9
+(Ident sb2) @examples/string_builder.exl:54:13
+Eq @examples/string_builder.exl:54:17
+(Ident StringBuilder) @examples/string_builder.exl:54:19
+DoubleColon @examples/string_builder.exl:54:32
+(Ident with_capacity) @examples/string_builder.exl:54:34
+LParen @examples/string_builder.exl:54:47
+(Ident a) @examples/string_builder.exl:54:48
+Comma @examples/string_builder.exl:54:49
+(Int 8) @examples/string_builder.exl:54:51
+As @examples/string_builder.exl:54:53
+(Ident u32) @examples/string_builder.exl:54:56
+RParen @examples/string_builder.exl:54:59
+Semicolon @examples/string_builder.exl:54:60
+(Ident sb2) @examples/string_builder.exl:55:5
+Dot @examples/string_builder.exl:55:8
+(Ident push_str) @examples/string_builder.exl:55:9
+LParen @examples/string_builder.exl:55:17
+(String "Hello, ") @examples/string_builder.exl:55:18
+RParen @examples/string_builder.exl:55:27
+Semicolon @examples/string_builder.exl:55:28
+(Ident sb2) @examples/string_builder.exl:56:5
+Dot @examples/string_builder.exl:56:8
+(Ident push_str) @examples/string_builder.exl:56:9
+LParen @examples/string_builder.exl:56:17
+(String "StringBuilder!") @examples/string_builder.exl:56:18
+RParen @examples/string_builder.exl:56:34
+Semicolon @examples/string_builder.exl:56:35
+(Ident println) @examples/string_builder.exl:57:5
+LParen @examples/string_builder.exl:57:12
+(Ident sb2) @examples/string_builder.exl:57:13
+Dot @examples/string_builder.exl:57:16
+(Ident length) @examples/string_builder.exl:57:17
+LParen @examples/string_builder.exl:57:23
+RParen @examples/string_builder.exl:57:24
+As @examples/string_builder.exl:57:26
+(Ident int) @examples/string_builder.exl:57:29
+RParen @examples/string_builder.exl:57:32
+Semicolon @examples/string_builder.exl:57:33
+Let @examples/string_builder.exl:59:5
+(Ident v2) @examples/string_builder.exl:59:9
+Eq @examples/string_builder.exl:59:12
+(Ident sb2) @examples/string_builder.exl:59:14
+Dot @examples/string_builder.exl:59:17
+(Ident as_slice) @examples/string_builder.exl:59:18
+LParen @examples/string_builder.exl:59:26
+RParen @examples/string_builder.exl:59:27
+Semicolon @examples/string_builder.exl:59:28
+(Ident println) @examples/string_builder.exl:60:5
+LParen @examples/string_builder.exl:60:12
+(Ident v2) @examples/string_builder.exl:60:13
+LBracket @examples/string_builder.exl:60:15
+(Int 0) @examples/string_builder.exl:60:16
+RBracket @examples/string_builder.exl:60:17
+As @examples/string_builder.exl:60:19
+(Ident int) @examples/string_builder.exl:60:22
+RParen @examples/string_builder.exl:60:25
+Semicolon @examples/string_builder.exl:60:26
+(Ident println) @examples/string_builder.exl:61:5
+LParen @examples/string_builder.exl:61:12
+(Ident v2) @examples/string_builder.exl:61:13
+LBracket @examples/string_builder.exl:61:15
+(Int 7) @examples/string_builder.exl:61:16
+RBracket @examples/string_builder.exl:61:17
+As @examples/string_builder.exl:61:19
+(Ident int) @examples/string_builder.exl:61:22
+RParen @examples/string_builder.exl:61:25
+Semicolon @examples/string_builder.exl:61:26
+(Ident println) @examples/string_builder.exl:62:5
+LParen @examples/string_builder.exl:62:12
+(Ident v2) @examples/string_builder.exl:62:13
+LBracket @examples/string_builder.exl:62:15
+(Int 20) @examples/string_builder.exl:62:16
+RBracket @examples/string_builder.exl:62:18
+As @examples/string_builder.exl:62:20
+(Ident int) @examples/string_builder.exl:62:23
+RParen @examples/string_builder.exl:62:26
+Semicolon @examples/string_builder.exl:62:27
+Let @examples/string_builder.exl:68:5
+Mut @examples/string_builder.exl:68:9
+(Ident sb3) @examples/string_builder.exl:68:13
+Eq @examples/string_builder.exl:68:17
+(Ident StringBuilder) @examples/string_builder.exl:68:19
+DoubleColon @examples/string_builder.exl:68:32
+(Ident with_capacity) @examples/string_builder.exl:68:34
+LParen @examples/string_builder.exl:68:47
+(Ident a) @examples/string_builder.exl:68:48
+Comma @examples/string_builder.exl:68:49
+(Int 8) @examples/string_builder.exl:68:51
+As @examples/string_builder.exl:68:53
+(Ident u32) @examples/string_builder.exl:68:56
+RParen @examples/string_builder.exl:68:59
+Semicolon @examples/string_builder.exl:68:60
+(Ident sb3) @examples/string_builder.exl:69:5
+Dot @examples/string_builder.exl:69:8
+(Ident push_int) @examples/string_builder.exl:69:9
+LParen @examples/string_builder.exl:69:17
+(Int 0) @examples/string_builder.exl:69:18
+RParen @examples/string_builder.exl:69:19
+Semicolon @examples/string_builder.exl:69:20
+(Ident sb3) @examples/string_builder.exl:70:5
+Dot @examples/string_builder.exl:70:8
+(Ident push_int) @examples/string_builder.exl:70:9
+LParen @examples/string_builder.exl:70:17
+(Int 42) @examples/string_builder.exl:70:18
+RParen @examples/string_builder.exl:70:20
+Semicolon @examples/string_builder.exl:70:21
+(Ident sb3) @examples/string_builder.exl:71:5
+Dot @examples/string_builder.exl:71:8
+(Ident push_int) @examples/string_builder.exl:71:9
+LParen @examples/string_builder.exl:71:17
+Minus @examples/string_builder.exl:71:18
+(Int 7) @examples/string_builder.exl:71:19
+RParen @examples/string_builder.exl:71:20
+Semicolon @examples/string_builder.exl:71:21
+(Ident sb3) @examples/string_builder.exl:72:5
+Dot @examples/string_builder.exl:72:8
+(Ident push_int) @examples/string_builder.exl:72:9
+LParen @examples/string_builder.exl:72:17
+Minus @examples/string_builder.exl:72:18
+(Int 2147483648) @examples/string_builder.exl:72:19
+RParen @examples/string_builder.exl:72:29
+Semicolon @examples/string_builder.exl:72:30
+(Ident println) @examples/string_builder.exl:73:5
+LParen @examples/string_builder.exl:73:12
+(Ident sb3) @examples/string_builder.exl:73:13
+Dot @examples/string_builder.exl:73:16
+(Ident length) @examples/string_builder.exl:73:17
+LParen @examples/string_builder.exl:73:23
+RParen @examples/string_builder.exl:73:24
+As @examples/string_builder.exl:73:26
+(Ident int) @examples/string_builder.exl:73:29
+RParen @examples/string_builder.exl:73:32
+Semicolon @examples/string_builder.exl:73:33
+Let @examples/string_builder.exl:75:5
+(Ident v3) @examples/string_builder.exl:75:9
+Eq @examples/string_builder.exl:75:12
+(Ident sb3) @examples/string_builder.exl:75:14
+Dot @examples/string_builder.exl:75:17
+(Ident as_slice) @examples/string_builder.exl:75:18
+LParen @examples/string_builder.exl:75:26
+RParen @examples/string_builder.exl:75:27
+Semicolon @examples/string_builder.exl:75:28
+(Ident println) @examples/string_builder.exl:76:5
+LParen @examples/string_builder.exl:76:12
+(Ident v3) @examples/string_builder.exl:76:13
+LBracket @examples/string_builder.exl:76:15
+(Int 0) @examples/string_builder.exl:76:16
+RBracket @examples/string_builder.exl:76:17
+As @examples/string_builder.exl:76:19
+(Ident int) @examples/string_builder.exl:76:22
+RParen @examples/string_builder.exl:76:25
+Semicolon @examples/string_builder.exl:76:26
+(Ident println) @examples/string_builder.exl:77:5
+LParen @examples/string_builder.exl:77:12
+(Ident v3) @examples/string_builder.exl:77:13
+LBracket @examples/string_builder.exl:77:15
+(Int 1) @examples/string_builder.exl:77:16
+RBracket @examples/string_builder.exl:77:17
+As @examples/string_builder.exl:77:19
+(Ident int) @examples/string_builder.exl:77:22
+RParen @examples/string_builder.exl:77:25
+Semicolon @examples/string_builder.exl:77:26
+(Ident println) @examples/string_builder.exl:78:5
+LParen @examples/string_builder.exl:78:12
+(Ident v3) @examples/string_builder.exl:78:13
+LBracket @examples/string_builder.exl:78:15
+(Int 3) @examples/string_builder.exl:78:16
+RBracket @examples/string_builder.exl:78:17
+As @examples/string_builder.exl:78:19
+(Ident int) @examples/string_builder.exl:78:22
+RParen @examples/string_builder.exl:78:25
+Semicolon @examples/string_builder.exl:78:26
+(Ident println) @examples/string_builder.exl:79:5
+LParen @examples/string_builder.exl:79:12
+(Ident v3) @examples/string_builder.exl:79:13
+LBracket @examples/string_builder.exl:79:15
+(Int 5) @examples/string_builder.exl:79:16
+RBracket @examples/string_builder.exl:79:17
+As @examples/string_builder.exl:79:19
+(Ident int) @examples/string_builder.exl:79:22
+RParen @examples/string_builder.exl:79:25
+Semicolon @examples/string_builder.exl:79:26
+(Ident println) @examples/string_builder.exl:80:5
+LParen @examples/string_builder.exl:80:12
+(Ident v3) @examples/string_builder.exl:80:13
+LBracket @examples/string_builder.exl:80:15
+(Int 15) @examples/string_builder.exl:80:16
+RBracket @examples/string_builder.exl:80:18
+As @examples/string_builder.exl:80:20
+(Ident int) @examples/string_builder.exl:80:23
+RParen @examples/string_builder.exl:80:26
+Semicolon @examples/string_builder.exl:80:27
+RBrace @examples/string_builder.exl:81:1
+Eof @examples/string_builder.exl:82:1

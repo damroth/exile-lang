@@ -1,0 +1,5 @@
+;; exile-ast-dump v1 examples/logical_not.exl
+(const DISABLED bool (not (bool true)))
+(struct Toggle (fields (field on bool)))
+(impl Toggle (fn is_off pub (params (param self (struct Toggle))) bool (body (tail (not (field-access (var self) on))))))
+(fn main (params ) void (body (let t (ty bool) (bool true)) (expr-stmt (if (not (var t)) (then (expr-stmt (call println (int 1)))) (else (expr-stmt (call println (int 0)))))) (expr-stmt (if (not (binop == (int 1) (int 2))) (then (expr-stmt (call println (int 1)))) (else (expr-stmt (call println (int 0)))))) (let sw (struct-lit Toggle (field on (bool true)))) (expr-stmt (if (method-call (var sw) is_off ) (then (expr-stmt (call println (int 1)))) (else (expr-stmt (call println (int 0)))))) (tail (if (var DISABLED) (then (expr-stmt (call println (int 1)))) (else (expr-stmt (call println (int 0))))))))

@@ -1,0 +1,14 @@
+;; exile-typed-ir-dump v1 examples/for_loop.exl
+(tfn main (params ) void (body (let s (int 0) :ty (int i32)) (let __fe0 (int 5) :ty (int i32)) (let __fv0 (int 0) :ty (int i32)) (while (binop < (var __fv0) :ty (int i32) (var __fe0) :ty (int i32)) :ty bool (body (assign s (binop + (var s) :ty (int i32) (var __fv0) :ty (int i32)) :ty (int i32))) (post (assign __fv0 (binop + (var __fv0) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32)))) (expr-stmt (builtin-call println (var s) :ty (int i32)) :ty (int i32)) (let t (int 0) :ty (int i32)) (let __fe1 (int 5) :ty (int i32)) (let __fv1 (int 1) :ty (int i32)) (while (binop <= (var __fv1) :ty (int i32) (var __fe1) :ty (int i32)) :ty bool (body (assign t (binop + (var t) :ty (int i32) (var __fv1) :ty (int i32)) :ty (int i32))) (post (assign __fv1 (binop + (var __fv1) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32)))) (expr-stmt (builtin-call println (var t) :ty (int i32)) :ty (int i32)) (let xs (array-lit (int 10) :ty (int i32) (int 20) :ty (int i32) (int 30) :ty (int i32) (int 40) :ty (int i32)) :ty (array (int i32) 4)) (let total (int 0) :ty (int i32)) (let __fe2 (int 4) :ty (int i32)) (let __fv2 (int 0) :ty (int i32)) (while (binop < (var __fv2) :ty (int i32) (var __fe2) :ty (int i32)) :ty bool (body (assign total (binop + (var total) :ty (int i32) (index (var xs) :ty (array (int i32) 4) (var __fv2) :ty (int i32)) :ty (int i32)) :ty (int i32))) (post (assign __fv2 (binop + (var __fv2) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32)))) (expr-stmt (builtin-call println (var total) :ty (int i32)) :ty (int i32)) (let empty_count (int 0) :ty (int i32)) (let __fe3 (int 3) :ty (int i32)) (let __fv3 (int 5) :ty (int i32)) (while (binop < (var __fv3) :ty (int i32) (var __fe3) :ty (int i32)) :ty bool (body (assign empty_count (binop + (var empty_count) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32))) (post (assign __fv3 (binop + (var __fv3) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32)))) (expr-stmt (builtin-call println (var empty_count) :ty (int i32)) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

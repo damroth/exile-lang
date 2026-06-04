@@ -1,0 +1,77 @@
+;; exile-tokens-dump v1 examples/string_concat.exl
+Fn @examples/string_concat.exl:15:1
+(Ident main) @examples/string_concat.exl:15:4
+LParen @examples/string_concat.exl:15:8
+RParen @examples/string_concat.exl:15:9
+LBrace @examples/string_concat.exl:15:11
+Let @examples/string_concat.exl:17:5
+(Ident greeting) @examples/string_concat.exl:17:9
+Colon @examples/string_concat.exl:17:17
+(Ident str) @examples/string_concat.exl:17:19
+Eq @examples/string_concat.exl:17:23
+(String "Hello, ") @examples/string_concat.exl:17:25
+PlusPlus @examples/string_concat.exl:17:35
+(String "World!") @examples/string_concat.exl:17:38
+Semicolon @examples/string_concat.exl:17:46
+(Ident println) @examples/string_concat.exl:18:5
+LParen @examples/string_concat.exl:18:12
+(Ident greeting) @examples/string_concat.exl:18:13
+RParen @examples/string_concat.exl:18:21
+Semicolon @examples/string_concat.exl:18:22
+Let @examples/string_concat.exl:22:5
+(Ident banner) @examples/string_concat.exl:22:9
+Colon @examples/string_concat.exl:22:15
+(Ident str) @examples/string_concat.exl:22:17
+Eq @examples/string_concat.exl:22:21
+(String "===") @examples/string_concat.exl:22:23
+PlusPlus @examples/string_concat.exl:22:29
+(String " exile-lang ") @examples/string_concat.exl:22:32
+PlusPlus @examples/string_concat.exl:22:47
+(String "===") @examples/string_concat.exl:22:50
+Semicolon @examples/string_concat.exl:22:55
+(Ident println) @examples/string_concat.exl:23:5
+LParen @examples/string_concat.exl:23:12
+(Ident banner) @examples/string_concat.exl:23:13
+RParen @examples/string_concat.exl:23:19
+Semicolon @examples/string_concat.exl:23:20
+Let @examples/string_concat.exl:26:5
+(Ident version) @examples/string_concat.exl:26:9
+Colon @examples/string_concat.exl:26:16
+(Ident str) @examples/string_concat.exl:26:18
+Eq @examples/string_concat.exl:26:22
+(String "v") @examples/string_concat.exl:26:24
+PlusPlus @examples/string_concat.exl:26:28
+(String "0") @examples/string_concat.exl:26:31
+PlusPlus @examples/string_concat.exl:26:35
+(String ".") @examples/string_concat.exl:26:38
+PlusPlus @examples/string_concat.exl:26:42
+(String "4") @examples/string_concat.exl:26:45
+PlusPlus @examples/string_concat.exl:26:49
+(String ".") @examples/string_concat.exl:26:52
+PlusPlus @examples/string_concat.exl:26:56
+(String "0") @examples/string_concat.exl:26:59
+Semicolon @examples/string_concat.exl:26:62
+(Ident println) @examples/string_concat.exl:27:5
+LParen @examples/string_concat.exl:27:12
+(Ident version) @examples/string_concat.exl:27:13
+RParen @examples/string_concat.exl:27:20
+Semicolon @examples/string_concat.exl:27:21
+Let @examples/string_concat.exl:31:5
+(Ident labelled) @examples/string_concat.exl:31:9
+Colon @examples/string_concat.exl:31:17
+(Ident str) @examples/string_concat.exl:31:19
+Eq @examples/string_concat.exl:31:23
+(String "type: ") @examples/string_concat.exl:31:25
+PlusPlus @examples/string_concat.exl:31:34
+(Ident type_name) @examples/string_concat.exl:31:37
+LParen @examples/string_concat.exl:31:46
+(Int 42) @examples/string_concat.exl:31:47
+RParen @examples/string_concat.exl:31:49
+Semicolon @examples/string_concat.exl:31:50
+(Ident println) @examples/string_concat.exl:32:5
+LParen @examples/string_concat.exl:32:12
+(Ident labelled) @examples/string_concat.exl:32:13
+RParen @examples/string_concat.exl:32:21
+Semicolon @examples/string_concat.exl:32:22
+RBrace @examples/string_concat.exl:33:1
+Eof @examples/string_concat.exl:34:1

@@ -1,0 +1,11 @@
+;; exile-ast-dump v1 examples/ctypes.exl
+(module raw
+  (fn s_neg extern pub (params (param x (c_short signed))) (c_short signed))
+  (fn us_double extern pub (params (param x (c_short unsigned))) (c_short unsigned))
+  (fn l_add extern pub (params (param a (c_long signed)) (param b (c_long signed))) (c_long signed))
+  (fn ul_inc extern pub (params (param x (c_long unsigned))) (c_long unsigned))
+  (fn ui_double extern pub (params (param x (c_int unsigned))) (c_int unsigned))
+  (fn sc_neg extern pub (params (param x c_schar)) c_schar)
+  (fn uc_id extern pub (params (param x c_uchar)) c_uchar)
+  (fn vp_id extern pub (params (param p (ptr c_void))) (ptr c_void)))
+(fn main (params ) void (body (expr-stmt (call println (cast (call raw::s_neg (cast (int 42) (c_short signed))) (int i32)))) (expr-stmt (call println (cast (call raw::us_double (cast (int 123) (c_short unsigned))) (int i32)))) (expr-stmt (call println (cast (call raw::l_add (cast (int 1000) (c_long signed)) (cast (int 234) (c_long signed))) (int i32)))) (expr-stmt (call println (cast (call raw::ul_inc (cast (int 5677) (c_long unsigned))) (int i32)))) (expr-stmt (call println (cast (call raw::ui_double (cast (int 150) (c_int unsigned))) (int i32)))) (expr-stmt (call println (cast (call raw::sc_neg (cast (int 7) c_schar)) (int i32)))) (expr-stmt (call println (cast (call raw::uc_id (cast (int 99) c_uchar)) (int i32)))) (let p (ty (ptr c_void)) null) (let back (call raw::vp_id (var p))) (tail (if (binop == (var back) null) (then (expr-stmt (call println (int 0)))) (else (expr-stmt (call println (int 1))))))))

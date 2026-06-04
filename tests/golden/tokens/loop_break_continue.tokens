@@ -1,0 +1,129 @@
+;; exile-tokens-dump v1 examples/loop_break_continue.exl
+Fn @examples/loop_break_continue.exl:12:1
+(Ident main) @examples/loop_break_continue.exl:12:4
+LParen @examples/loop_break_continue.exl:12:8
+RParen @examples/loop_break_continue.exl:12:9
+LBrace @examples/loop_break_continue.exl:12:11
+Let @examples/loop_break_continue.exl:14:5
+Mut @examples/loop_break_continue.exl:14:9
+(Ident i) @examples/loop_break_continue.exl:14:13
+Colon @examples/loop_break_continue.exl:14:14
+(Ident int) @examples/loop_break_continue.exl:14:16
+Eq @examples/loop_break_continue.exl:14:20
+(Int 0) @examples/loop_break_continue.exl:14:22
+Semicolon @examples/loop_break_continue.exl:14:23
+Loop @examples/loop_break_continue.exl:15:5
+LBrace @examples/loop_break_continue.exl:15:10
+If @examples/loop_break_continue.exl:16:9
+(Ident i) @examples/loop_break_continue.exl:16:12
+GtEq @examples/loop_break_continue.exl:16:14
+(Int 3) @examples/loop_break_continue.exl:16:17
+LBrace @examples/loop_break_continue.exl:16:19
+Break @examples/loop_break_continue.exl:16:21
+Semicolon @examples/loop_break_continue.exl:16:26
+RBrace @examples/loop_break_continue.exl:16:28
+(Ident println) @examples/loop_break_continue.exl:17:9
+LParen @examples/loop_break_continue.exl:17:16
+(Ident i) @examples/loop_break_continue.exl:17:17
+RParen @examples/loop_break_continue.exl:17:18
+Semicolon @examples/loop_break_continue.exl:17:19
+(Ident i) @examples/loop_break_continue.exl:18:9
+Eq @examples/loop_break_continue.exl:18:11
+(Ident i) @examples/loop_break_continue.exl:18:13
+Plus @examples/loop_break_continue.exl:18:15
+(Int 1) @examples/loop_break_continue.exl:18:17
+Semicolon @examples/loop_break_continue.exl:18:18
+RBrace @examples/loop_break_continue.exl:19:5
+Let @examples/loop_break_continue.exl:22:5
+Mut @examples/loop_break_continue.exl:22:9
+(Ident sum) @examples/loop_break_continue.exl:22:13
+Colon @examples/loop_break_continue.exl:22:16
+(Ident int) @examples/loop_break_continue.exl:22:18
+Eq @examples/loop_break_continue.exl:22:22
+(Int 0) @examples/loop_break_continue.exl:22:24
+Semicolon @examples/loop_break_continue.exl:22:25
+For @examples/loop_break_continue.exl:23:5
+(Ident n) @examples/loop_break_continue.exl:23:9
+In @examples/loop_break_continue.exl:23:11
+(Int 0) @examples/loop_break_continue.exl:23:14
+DotDot @examples/loop_break_continue.exl:23:15
+(Int 6) @examples/loop_break_continue.exl:23:17
+LBrace @examples/loop_break_continue.exl:23:19
+If @examples/loop_break_continue.exl:24:9
+(Ident n) @examples/loop_break_continue.exl:24:12
+EqEq @examples/loop_break_continue.exl:24:14
+(Int 2) @examples/loop_break_continue.exl:24:17
+LBrace @examples/loop_break_continue.exl:24:19
+Continue @examples/loop_break_continue.exl:24:21
+Semicolon @examples/loop_break_continue.exl:24:29
+RBrace @examples/loop_break_continue.exl:24:31
+(Ident sum) @examples/loop_break_continue.exl:25:9
+Eq @examples/loop_break_continue.exl:25:13
+(Ident sum) @examples/loop_break_continue.exl:25:15
+Plus @examples/loop_break_continue.exl:25:19
+(Ident n) @examples/loop_break_continue.exl:25:21
+Semicolon @examples/loop_break_continue.exl:25:22
+RBrace @examples/loop_break_continue.exl:26:5
+(Ident println) @examples/loop_break_continue.exl:27:5
+LParen @examples/loop_break_continue.exl:27:12
+(Ident sum) @examples/loop_break_continue.exl:27:13
+RParen @examples/loop_break_continue.exl:27:16
+Semicolon @examples/loop_break_continue.exl:27:17
+For @examples/loop_break_continue.exl:30:5
+(Ident k) @examples/loop_break_continue.exl:30:9
+In @examples/loop_break_continue.exl:30:11
+(Int 0) @examples/loop_break_continue.exl:30:14
+DotDot @examples/loop_break_continue.exl:30:15
+(Int 100) @examples/loop_break_continue.exl:30:17
+LBrace @examples/loop_break_continue.exl:30:21
+If @examples/loop_break_continue.exl:31:9
+(Ident k) @examples/loop_break_continue.exl:31:12
+EqEq @examples/loop_break_continue.exl:31:14
+(Int 4) @examples/loop_break_continue.exl:31:17
+LBrace @examples/loop_break_continue.exl:31:19
+Break @examples/loop_break_continue.exl:31:21
+Semicolon @examples/loop_break_continue.exl:31:26
+RBrace @examples/loop_break_continue.exl:31:28
+(Ident println) @examples/loop_break_continue.exl:32:9
+LParen @examples/loop_break_continue.exl:32:16
+(Ident k) @examples/loop_break_continue.exl:32:17
+RParen @examples/loop_break_continue.exl:32:18
+Semicolon @examples/loop_break_continue.exl:32:19
+RBrace @examples/loop_break_continue.exl:33:5
+Let @examples/loop_break_continue.exl:36:5
+Mut @examples/loop_break_continue.exl:36:9
+(Ident m) @examples/loop_break_continue.exl:36:13
+Colon @examples/loop_break_continue.exl:36:14
+(Ident int) @examples/loop_break_continue.exl:36:16
+Eq @examples/loop_break_continue.exl:36:20
+(Int 21) @examples/loop_break_continue.exl:36:22
+Semicolon @examples/loop_break_continue.exl:36:24
+While @examples/loop_break_continue.exl:37:5
+(Ident m) @examples/loop_break_continue.exl:37:11
+Lt @examples/loop_break_continue.exl:37:13
+(Int 100) @examples/loop_break_continue.exl:37:15
+LBrace @examples/loop_break_continue.exl:37:19
+If @examples/loop_break_continue.exl:38:9
+(Ident m) @examples/loop_break_continue.exl:38:12
+Percent @examples/loop_break_continue.exl:38:14
+(Int 7) @examples/loop_break_continue.exl:38:16
+EqEq @examples/loop_break_continue.exl:38:18
+(Int 0) @examples/loop_break_continue.exl:38:21
+LBrace @examples/loop_break_continue.exl:38:23
+Break @examples/loop_break_continue.exl:38:25
+Semicolon @examples/loop_break_continue.exl:38:30
+RBrace @examples/loop_break_continue.exl:38:32
+(Ident m) @examples/loop_break_continue.exl:39:9
+Eq @examples/loop_break_continue.exl:39:11
+(Ident m) @examples/loop_break_continue.exl:39:13
+Plus @examples/loop_break_continue.exl:39:15
+(Int 1) @examples/loop_break_continue.exl:39:17
+Semicolon @examples/loop_break_continue.exl:39:18
+RBrace @examples/loop_break_continue.exl:40:5
+(Ident println) @examples/loop_break_continue.exl:41:5
+LParen @examples/loop_break_continue.exl:41:12
+(Ident m) @examples/loop_break_continue.exl:41:13
+RParen @examples/loop_break_continue.exl:41:14
+Semicolon @examples/loop_break_continue.exl:41:15
+RBrace @examples/loop_break_continue.exl:42:1
+Eof @examples/loop_break_continue.exl:43:1

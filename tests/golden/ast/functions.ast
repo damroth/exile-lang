@@ -1,0 +1,6 @@
+;; exile-ast-dump v1 examples/functions.exl
+(fn add (params (param a (int i32)) (param b (int i32))) (int i32) (body (return (binop + (var a) (var b)))))
+(fn square (params (param n (int i32))) (int i32) (body (return (binop * (var n) (var n)))))
+(fn power (params (param base (int i32)) (param exp (int i32))) (int i32) (body (let mut result (int 1)) (let mut i (int 0)) (while (binop < (var i) (var exp)) (assign result (binop * (var result) (var base))) (assign i (binop + (var i) (int 1)))) (return (var result))))
+(fn greet (params (param name str)) void (body (expr-stmt (call println (var name)))))
+(fn main (params ) void (body (expr-stmt (call println (call add (int 3) (int 4)))) (expr-stmt (call println (call square (int 5)))) (expr-stmt (call println (call power (int 2) (int 10)))) (expr-stmt (call greet (string "hello from functions")))))

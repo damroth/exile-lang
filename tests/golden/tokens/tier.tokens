@@ -1,0 +1,158 @@
+;; exile-tokens-dump v1 examples/tier.exl
+At @examples/tier.exl:16:1
+(Ident tier) @examples/tier.exl:16:2
+LParen @examples/tier.exl:16:6
+(Ident core) @examples/tier.exl:16:7
+RParen @examples/tier.exl:16:11
+Fn @examples/tier.exl:17:1
+(Ident id) @examples/tier.exl:17:4
+Lt @examples/tier.exl:17:6
+(Ident T) @examples/tier.exl:17:7
+Gt @examples/tier.exl:17:8
+LParen @examples/tier.exl:17:9
+(Ident x) @examples/tier.exl:17:10
+Colon @examples/tier.exl:17:11
+(Ident T) @examples/tier.exl:17:13
+RParen @examples/tier.exl:17:14
+Arrow @examples/tier.exl:17:16
+(Ident T) @examples/tier.exl:17:19
+LBrace @examples/tier.exl:17:21
+Return @examples/tier.exl:18:5
+(Ident x) @examples/tier.exl:18:12
+Semicolon @examples/tier.exl:18:13
+RBrace @examples/tier.exl:19:1
+At @examples/tier.exl:21:1
+(Ident tier) @examples/tier.exl:21:2
+LParen @examples/tier.exl:21:6
+(Ident standard) @examples/tier.exl:21:7
+RParen @examples/tier.exl:21:15
+Struct @examples/tier.exl:22:1
+(Ident Pair) @examples/tier.exl:22:8
+Lt @examples/tier.exl:22:12
+(Ident A) @examples/tier.exl:22:13
+Comma @examples/tier.exl:22:14
+(Ident B) @examples/tier.exl:22:16
+Gt @examples/tier.exl:22:17
+LBrace @examples/tier.exl:22:19
+(Ident fst) @examples/tier.exl:23:5
+Colon @examples/tier.exl:23:8
+(Ident A) @examples/tier.exl:23:10
+Comma @examples/tier.exl:23:11
+(Ident snd) @examples/tier.exl:24:5
+Colon @examples/tier.exl:24:8
+(Ident B) @examples/tier.exl:24:10
+Comma @examples/tier.exl:24:11
+RBrace @examples/tier.exl:25:1
+At @examples/tier.exl:27:1
+(Ident tier) @examples/tier.exl:27:2
+LParen @examples/tier.exl:27:6
+(Ident full) @examples/tier.exl:27:7
+RParen @examples/tier.exl:27:11
+Enum @examples/tier.exl:28:1
+(Ident Maybe) @examples/tier.exl:28:6
+Lt @examples/tier.exl:28:11
+(Ident T) @examples/tier.exl:28:12
+Gt @examples/tier.exl:28:13
+LBrace @examples/tier.exl:28:15
+(Ident Just) @examples/tier.exl:29:5
+LParen @examples/tier.exl:29:9
+(Ident T) @examples/tier.exl:29:10
+RParen @examples/tier.exl:29:11
+Pipe @examples/tier.exl:30:5
+(Ident Nothing) @examples/tier.exl:30:7
+RBrace @examples/tier.exl:31:1
+Fn @examples/tier.exl:33:1
+(Ident main) @examples/tier.exl:33:4
+LParen @examples/tier.exl:33:8
+RParen @examples/tier.exl:33:9
+LBrace @examples/tier.exl:33:11
+(Ident println) @examples/tier.exl:34:5
+LParen @examples/tier.exl:34:12
+(Ident id) @examples/tier.exl:34:13
+LParen @examples/tier.exl:34:15
+(Int 7) @examples/tier.exl:34:16
+RParen @examples/tier.exl:34:17
+RParen @examples/tier.exl:34:18
+Semicolon @examples/tier.exl:34:19
+Let @examples/tier.exl:35:5
+(Ident p) @examples/tier.exl:35:9
+Eq @examples/tier.exl:35:11
+(Ident Pair) @examples/tier.exl:35:13
+LBrace @examples/tier.exl:35:18
+(Ident fst) @examples/tier.exl:35:20
+Colon @examples/tier.exl:35:23
+(Int 42) @examples/tier.exl:35:25
+Comma @examples/tier.exl:35:27
+(Ident snd) @examples/tier.exl:35:29
+Colon @examples/tier.exl:35:32
+True @examples/tier.exl:35:34
+RBrace @examples/tier.exl:35:39
+Semicolon @examples/tier.exl:35:40
+(Ident println) @examples/tier.exl:36:5
+LParen @examples/tier.exl:36:12
+(Ident p) @examples/tier.exl:36:13
+Dot @examples/tier.exl:36:14
+(Ident fst) @examples/tier.exl:36:15
+RParen @examples/tier.exl:36:18
+Semicolon @examples/tier.exl:36:19
+If @examples/tier.exl:37:5
+(Ident p) @examples/tier.exl:37:8
+Dot @examples/tier.exl:37:9
+(Ident snd) @examples/tier.exl:37:10
+LBrace @examples/tier.exl:37:14
+(Ident println) @examples/tier.exl:37:16
+LParen @examples/tier.exl:37:23
+(Int 1) @examples/tier.exl:37:24
+RParen @examples/tier.exl:37:25
+Semicolon @examples/tier.exl:37:26
+RBrace @examples/tier.exl:37:28
+Else @examples/tier.exl:37:30
+LBrace @examples/tier.exl:37:35
+(Ident println) @examples/tier.exl:37:37
+LParen @examples/tier.exl:37:44
+(Int 0) @examples/tier.exl:37:45
+RParen @examples/tier.exl:37:46
+Semicolon @examples/tier.exl:37:47
+RBrace @examples/tier.exl:37:49
+Let @examples/tier.exl:39:5
+(Ident m) @examples/tier.exl:39:9
+Colon @examples/tier.exl:39:10
+(Ident Maybe) @examples/tier.exl:39:12
+Lt @examples/tier.exl:39:17
+(Ident int) @examples/tier.exl:39:18
+Gt @examples/tier.exl:39:21
+Eq @examples/tier.exl:39:23
+(Ident Maybe) @examples/tier.exl:39:25
+DoubleColon @examples/tier.exl:39:30
+(Ident Just) @examples/tier.exl:39:32
+LParen @examples/tier.exl:39:36
+(Int 99) @examples/tier.exl:39:37
+RParen @examples/tier.exl:39:39
+Semicolon @examples/tier.exl:39:40
+Match @examples/tier.exl:40:5
+(Ident m) @examples/tier.exl:40:11
+LBrace @examples/tier.exl:40:13
+(Ident Maybe) @examples/tier.exl:41:9
+DoubleColon @examples/tier.exl:41:14
+(Ident Just) @examples/tier.exl:41:16
+LParen @examples/tier.exl:41:20
+(Ident n) @examples/tier.exl:41:21
+RParen @examples/tier.exl:41:22
+FatArrow @examples/tier.exl:41:25
+(Ident println) @examples/tier.exl:41:28
+LParen @examples/tier.exl:41:35
+(Ident n) @examples/tier.exl:41:36
+RParen @examples/tier.exl:41:37
+Pipe @examples/tier.exl:42:9
+(Ident Maybe) @examples/tier.exl:42:11
+DoubleColon @examples/tier.exl:42:16
+(Ident Nothing) @examples/tier.exl:42:18
+FatArrow @examples/tier.exl:42:27
+(Ident println) @examples/tier.exl:42:30
+LParen @examples/tier.exl:42:37
+Minus @examples/tier.exl:42:38
+(Int 1) @examples/tier.exl:42:39
+RParen @examples/tier.exl:42:40
+RBrace @examples/tier.exl:43:5
+RBrace @examples/tier.exl:44:1
+Eof @examples/tier.exl:45:1

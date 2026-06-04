@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/slice.exl
+(fn sum (params (param s (struct-app Slice (int i32)))) (int i32) (body (let mut total (ty (int i32)) (int 0)) (let mut i (ty (int u32)) (int 0)) (while (binop < (var i) (field-access (var s) len)) (assign total (binop + (var total) (index (var s) (var i)))) (assign i (binop + (var i) (int 1)))) (tail (var total))))
+(fn first (params (param s (struct-app Slice (int i32)))) (int i32) (body (tail (index (var s) (int 0)))))
+(fn main (params ) void (body (let arr (ty (array (int i32) ?)) (array-lit (int 3) (int 1) (int 4) (int 1) (int 5))) (let s (ty (struct-app Slice (int i32))) (struct-lit Slice (field ptr (ref (index (var arr) (int 0)))) (field len (int 5)))) (expr-stmt (call println (call sum (var s)))) (expr-stmt (call println (call first (var s)))) (expr-stmt (call println (cast (field-access (var s) len) (int i32))))))

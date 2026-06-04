@@ -1,0 +1,775 @@
+;; exile-tokens-dump v1 examples/hashmap.exl
+Pub @examples/hashmap.exl:25:1
+Mod @examples/hashmap.exl:25:5
+(Ident raw) @examples/hashmap.exl:25:9
+LBrace @examples/hashmap.exl:25:13
+Extern @examples/hashmap.exl:26:5
+Fn @examples/hashmap.exl:26:12
+(Ident make_c_allocator) @examples/hashmap.exl:26:15
+LParen @examples/hashmap.exl:26:31
+RParen @examples/hashmap.exl:26:32
+Arrow @examples/hashmap.exl:26:34
+(Ident Allocator) @examples/hashmap.exl:26:37
+Semicolon @examples/hashmap.exl:26:46
+RBrace @examples/hashmap.exl:27:1
+Fn @examples/hashmap.exl:29:1
+(Ident main) @examples/hashmap.exl:29:4
+LParen @examples/hashmap.exl:29:8
+RParen @examples/hashmap.exl:29:9
+LBrace @examples/hashmap.exl:29:11
+Let @examples/hashmap.exl:30:5
+(Ident a) @examples/hashmap.exl:30:9
+Eq @examples/hashmap.exl:30:11
+(Ident raw) @examples/hashmap.exl:30:13
+DoubleColon @examples/hashmap.exl:30:16
+(Ident make_c_allocator) @examples/hashmap.exl:30:18
+LParen @examples/hashmap.exl:30:34
+RParen @examples/hashmap.exl:30:35
+Semicolon @examples/hashmap.exl:30:36
+Let @examples/hashmap.exl:33:5
+Mut @examples/hashmap.exl:33:9
+(Ident m) @examples/hashmap.exl:33:13
+Colon @examples/hashmap.exl:33:14
+(Ident HashMap) @examples/hashmap.exl:33:16
+Lt @examples/hashmap.exl:33:23
+(Ident int) @examples/hashmap.exl:33:24
+Comma @examples/hashmap.exl:33:27
+(Ident int) @examples/hashmap.exl:33:29
+Gt @examples/hashmap.exl:33:32
+Eq @examples/hashmap.exl:33:34
+(Ident HashMap) @examples/hashmap.exl:33:36
+DoubleColon @examples/hashmap.exl:33:43
+(Ident with_capacity) @examples/hashmap.exl:33:45
+LParen @examples/hashmap.exl:33:58
+(Ident a) @examples/hashmap.exl:33:59
+Comma @examples/hashmap.exl:33:60
+(Int 8) @examples/hashmap.exl:33:62
+As @examples/hashmap.exl:33:64
+(Ident u32) @examples/hashmap.exl:33:67
+RParen @examples/hashmap.exl:33:70
+Semicolon @examples/hashmap.exl:33:71
+(Ident m) @examples/hashmap.exl:34:5
+Dot @examples/hashmap.exl:34:6
+(Ident insert) @examples/hashmap.exl:34:7
+LParen @examples/hashmap.exl:34:13
+(Int 1) @examples/hashmap.exl:34:14
+Comma @examples/hashmap.exl:34:15
+(Int 100) @examples/hashmap.exl:34:17
+RParen @examples/hashmap.exl:34:20
+Semicolon @examples/hashmap.exl:34:21
+(Ident m) @examples/hashmap.exl:35:5
+Dot @examples/hashmap.exl:35:6
+(Ident insert) @examples/hashmap.exl:35:7
+LParen @examples/hashmap.exl:35:13
+(Int 2) @examples/hashmap.exl:35:14
+Comma @examples/hashmap.exl:35:15
+(Int 200) @examples/hashmap.exl:35:17
+RParen @examples/hashmap.exl:35:20
+Semicolon @examples/hashmap.exl:35:21
+(Ident m) @examples/hashmap.exl:36:5
+Dot @examples/hashmap.exl:36:6
+(Ident insert) @examples/hashmap.exl:36:7
+LParen @examples/hashmap.exl:36:13
+(Int 3) @examples/hashmap.exl:36:14
+Comma @examples/hashmap.exl:36:15
+(Int 300) @examples/hashmap.exl:36:17
+RParen @examples/hashmap.exl:36:20
+Semicolon @examples/hashmap.exl:36:21
+(Ident println) @examples/hashmap.exl:37:5
+LParen @examples/hashmap.exl:37:12
+(Ident m) @examples/hashmap.exl:37:13
+Dot @examples/hashmap.exl:37:14
+(Ident len) @examples/hashmap.exl:37:15
+LParen @examples/hashmap.exl:37:18
+RParen @examples/hashmap.exl:37:19
+As @examples/hashmap.exl:37:21
+(Ident int) @examples/hashmap.exl:37:24
+RParen @examples/hashmap.exl:37:27
+Semicolon @examples/hashmap.exl:37:28
+If @examples/hashmap.exl:39:5
+(Ident m) @examples/hashmap.exl:39:8
+Dot @examples/hashmap.exl:39:9
+(Ident contains) @examples/hashmap.exl:39:10
+LParen @examples/hashmap.exl:39:18
+(Int 2) @examples/hashmap.exl:39:19
+RParen @examples/hashmap.exl:39:20
+LBrace @examples/hashmap.exl:39:22
+(Ident println) @examples/hashmap.exl:39:24
+LParen @examples/hashmap.exl:39:31
+(Int 1) @examples/hashmap.exl:39:32
+RParen @examples/hashmap.exl:39:33
+Semicolon @examples/hashmap.exl:39:34
+RBrace @examples/hashmap.exl:39:36
+Else @examples/hashmap.exl:39:38
+LBrace @examples/hashmap.exl:39:43
+(Ident println) @examples/hashmap.exl:39:45
+LParen @examples/hashmap.exl:39:52
+(Int 0) @examples/hashmap.exl:39:53
+RParen @examples/hashmap.exl:39:54
+Semicolon @examples/hashmap.exl:39:55
+RBrace @examples/hashmap.exl:39:57
+If @examples/hashmap.exl:40:5
+(Ident m) @examples/hashmap.exl:40:8
+Dot @examples/hashmap.exl:40:9
+(Ident contains) @examples/hashmap.exl:40:10
+LParen @examples/hashmap.exl:40:18
+(Int 99) @examples/hashmap.exl:40:19
+RParen @examples/hashmap.exl:40:21
+LBrace @examples/hashmap.exl:40:23
+(Ident println) @examples/hashmap.exl:40:25
+LParen @examples/hashmap.exl:40:32
+(Int 1) @examples/hashmap.exl:40:33
+RParen @examples/hashmap.exl:40:34
+Semicolon @examples/hashmap.exl:40:35
+RBrace @examples/hashmap.exl:40:37
+Else @examples/hashmap.exl:40:39
+LBrace @examples/hashmap.exl:40:44
+(Ident println) @examples/hashmap.exl:40:46
+LParen @examples/hashmap.exl:40:53
+(Int 0) @examples/hashmap.exl:40:54
+RParen @examples/hashmap.exl:40:55
+Semicolon @examples/hashmap.exl:40:56
+RBrace @examples/hashmap.exl:40:58
+Match @examples/hashmap.exl:42:5
+(Ident m) @examples/hashmap.exl:42:11
+Dot @examples/hashmap.exl:42:12
+(Ident get) @examples/hashmap.exl:42:13
+LParen @examples/hashmap.exl:42:16
+(Int 1) @examples/hashmap.exl:42:17
+RParen @examples/hashmap.exl:42:18
+LBrace @examples/hashmap.exl:42:20
+(Ident Option) @examples/hashmap.exl:43:9
+DoubleColon @examples/hashmap.exl:43:15
+(Ident Some) @examples/hashmap.exl:43:17
+LParen @examples/hashmap.exl:43:21
+(Ident v) @examples/hashmap.exl:43:22
+RParen @examples/hashmap.exl:43:23
+FatArrow @examples/hashmap.exl:43:25
+LBrace @examples/hashmap.exl:43:28
+(Ident println) @examples/hashmap.exl:43:30
+LParen @examples/hashmap.exl:43:37
+(Ident v) @examples/hashmap.exl:43:38
+RParen @examples/hashmap.exl:43:39
+Semicolon @examples/hashmap.exl:43:40
+RBrace @examples/hashmap.exl:43:42
+Pipe @examples/hashmap.exl:44:9
+(Ident Option) @examples/hashmap.exl:44:11
+DoubleColon @examples/hashmap.exl:44:17
+(Ident None) @examples/hashmap.exl:44:19
+FatArrow @examples/hashmap.exl:44:24
+LBrace @examples/hashmap.exl:44:27
+(Ident println) @examples/hashmap.exl:44:29
+LParen @examples/hashmap.exl:44:36
+Minus @examples/hashmap.exl:44:37
+(Int 1) @examples/hashmap.exl:44:38
+RParen @examples/hashmap.exl:44:39
+Semicolon @examples/hashmap.exl:44:40
+RBrace @examples/hashmap.exl:44:42
+RBrace @examples/hashmap.exl:45:5
+Match @examples/hashmap.exl:46:5
+(Ident m) @examples/hashmap.exl:46:11
+Dot @examples/hashmap.exl:46:12
+(Ident get) @examples/hashmap.exl:46:13
+LParen @examples/hashmap.exl:46:16
+(Int 99) @examples/hashmap.exl:46:17
+RParen @examples/hashmap.exl:46:19
+LBrace @examples/hashmap.exl:46:21
+(Ident Option) @examples/hashmap.exl:47:9
+DoubleColon @examples/hashmap.exl:47:15
+(Ident Some) @examples/hashmap.exl:47:17
+LParen @examples/hashmap.exl:47:21
+(Ident v) @examples/hashmap.exl:47:22
+RParen @examples/hashmap.exl:47:23
+FatArrow @examples/hashmap.exl:47:25
+LBrace @examples/hashmap.exl:47:28
+(Ident println) @examples/hashmap.exl:47:30
+LParen @examples/hashmap.exl:47:37
+(Ident v) @examples/hashmap.exl:47:38
+RParen @examples/hashmap.exl:47:39
+Semicolon @examples/hashmap.exl:47:40
+RBrace @examples/hashmap.exl:47:42
+Pipe @examples/hashmap.exl:48:9
+(Ident Option) @examples/hashmap.exl:48:11
+DoubleColon @examples/hashmap.exl:48:17
+(Ident None) @examples/hashmap.exl:48:19
+FatArrow @examples/hashmap.exl:48:24
+LBrace @examples/hashmap.exl:48:27
+(Ident println) @examples/hashmap.exl:48:29
+LParen @examples/hashmap.exl:48:36
+Minus @examples/hashmap.exl:48:37
+(Int 1) @examples/hashmap.exl:48:38
+RParen @examples/hashmap.exl:48:39
+Semicolon @examples/hashmap.exl:48:40
+RBrace @examples/hashmap.exl:48:42
+RBrace @examples/hashmap.exl:49:5
+(Ident m) @examples/hashmap.exl:52:5
+Dot @examples/hashmap.exl:52:6
+(Ident insert) @examples/hashmap.exl:52:7
+LParen @examples/hashmap.exl:52:13
+(Int 2) @examples/hashmap.exl:52:14
+Comma @examples/hashmap.exl:52:15
+(Int 222) @examples/hashmap.exl:52:17
+RParen @examples/hashmap.exl:52:20
+Semicolon @examples/hashmap.exl:52:21
+Match @examples/hashmap.exl:53:5
+(Ident m) @examples/hashmap.exl:53:11
+Dot @examples/hashmap.exl:53:12
+(Ident get) @examples/hashmap.exl:53:13
+LParen @examples/hashmap.exl:53:16
+(Int 2) @examples/hashmap.exl:53:17
+RParen @examples/hashmap.exl:53:18
+LBrace @examples/hashmap.exl:53:20
+(Ident Option) @examples/hashmap.exl:54:9
+DoubleColon @examples/hashmap.exl:54:15
+(Ident Some) @examples/hashmap.exl:54:17
+LParen @examples/hashmap.exl:54:21
+(Ident v) @examples/hashmap.exl:54:22
+RParen @examples/hashmap.exl:54:23
+FatArrow @examples/hashmap.exl:54:25
+LBrace @examples/hashmap.exl:54:28
+(Ident println) @examples/hashmap.exl:54:30
+LParen @examples/hashmap.exl:54:37
+(Ident v) @examples/hashmap.exl:54:38
+RParen @examples/hashmap.exl:54:39
+Semicolon @examples/hashmap.exl:54:40
+RBrace @examples/hashmap.exl:54:42
+Pipe @examples/hashmap.exl:55:9
+(Ident Option) @examples/hashmap.exl:55:11
+DoubleColon @examples/hashmap.exl:55:17
+(Ident None) @examples/hashmap.exl:55:19
+FatArrow @examples/hashmap.exl:55:24
+LBrace @examples/hashmap.exl:55:27
+(Ident println) @examples/hashmap.exl:55:29
+LParen @examples/hashmap.exl:55:36
+Minus @examples/hashmap.exl:55:37
+(Int 1) @examples/hashmap.exl:55:38
+RParen @examples/hashmap.exl:55:39
+Semicolon @examples/hashmap.exl:55:40
+RBrace @examples/hashmap.exl:55:42
+RBrace @examples/hashmap.exl:56:5
+(Ident println) @examples/hashmap.exl:57:5
+LParen @examples/hashmap.exl:57:12
+(Ident m) @examples/hashmap.exl:57:13
+Dot @examples/hashmap.exl:57:14
+(Ident len) @examples/hashmap.exl:57:15
+LParen @examples/hashmap.exl:57:18
+RParen @examples/hashmap.exl:57:19
+As @examples/hashmap.exl:57:21
+(Ident int) @examples/hashmap.exl:57:24
+RParen @examples/hashmap.exl:57:27
+Semicolon @examples/hashmap.exl:57:28
+Let @examples/hashmap.exl:63:5
+Mut @examples/hashmap.exl:63:9
+(Ident kw) @examples/hashmap.exl:63:13
+Colon @examples/hashmap.exl:63:15
+(Ident HashMap) @examples/hashmap.exl:63:17
+Lt @examples/hashmap.exl:63:24
+(Ident String) @examples/hashmap.exl:63:25
+Comma @examples/hashmap.exl:63:31
+(Ident int) @examples/hashmap.exl:63:33
+Gt @examples/hashmap.exl:63:36
+Eq @examples/hashmap.exl:63:38
+(Ident HashMap) @examples/hashmap.exl:63:40
+DoubleColon @examples/hashmap.exl:63:47
+(Ident with_capacity) @examples/hashmap.exl:63:49
+LParen @examples/hashmap.exl:63:62
+(Ident a) @examples/hashmap.exl:63:63
+Comma @examples/hashmap.exl:63:64
+(Int 8) @examples/hashmap.exl:63:66
+As @examples/hashmap.exl:63:68
+(Ident u32) @examples/hashmap.exl:63:71
+RParen @examples/hashmap.exl:63:74
+Semicolon @examples/hashmap.exl:63:75
+(Ident kw) @examples/hashmap.exl:64:5
+Dot @examples/hashmap.exl:64:7
+(Ident insert) @examples/hashmap.exl:64:8
+LParen @examples/hashmap.exl:64:14
+(Ident String) @examples/hashmap.exl:64:15
+DoubleColon @examples/hashmap.exl:64:21
+(Ident with_str) @examples/hashmap.exl:64:23
+LParen @examples/hashmap.exl:64:31
+(Ident a) @examples/hashmap.exl:64:32
+Comma @examples/hashmap.exl:64:33
+(String "fn") @examples/hashmap.exl:64:35
+RParen @examples/hashmap.exl:64:39
+Comma @examples/hashmap.exl:64:40
+(Int 1) @examples/hashmap.exl:64:46
+RParen @examples/hashmap.exl:64:47
+Semicolon @examples/hashmap.exl:64:48
+(Ident kw) @examples/hashmap.exl:65:5
+Dot @examples/hashmap.exl:65:7
+(Ident insert) @examples/hashmap.exl:65:8
+LParen @examples/hashmap.exl:65:14
+(Ident String) @examples/hashmap.exl:65:15
+DoubleColon @examples/hashmap.exl:65:21
+(Ident with_str) @examples/hashmap.exl:65:23
+LParen @examples/hashmap.exl:65:31
+(Ident a) @examples/hashmap.exl:65:32
+Comma @examples/hashmap.exl:65:33
+(String "let") @examples/hashmap.exl:65:35
+RParen @examples/hashmap.exl:65:40
+Comma @examples/hashmap.exl:65:41
+(Int 2) @examples/hashmap.exl:65:46
+RParen @examples/hashmap.exl:65:47
+Semicolon @examples/hashmap.exl:65:48
+(Ident kw) @examples/hashmap.exl:66:5
+Dot @examples/hashmap.exl:66:7
+(Ident insert) @examples/hashmap.exl:66:8
+LParen @examples/hashmap.exl:66:14
+(Ident String) @examples/hashmap.exl:66:15
+DoubleColon @examples/hashmap.exl:66:21
+(Ident with_str) @examples/hashmap.exl:66:23
+LParen @examples/hashmap.exl:66:31
+(Ident a) @examples/hashmap.exl:66:32
+Comma @examples/hashmap.exl:66:33
+(String "return") @examples/hashmap.exl:66:35
+RParen @examples/hashmap.exl:66:43
+Comma @examples/hashmap.exl:66:44
+(Int 3) @examples/hashmap.exl:66:46
+RParen @examples/hashmap.exl:66:47
+Semicolon @examples/hashmap.exl:66:48
+(Ident println) @examples/hashmap.exl:67:5
+LParen @examples/hashmap.exl:67:12
+(Ident kw) @examples/hashmap.exl:67:13
+Dot @examples/hashmap.exl:67:15
+(Ident len) @examples/hashmap.exl:67:16
+LParen @examples/hashmap.exl:67:19
+RParen @examples/hashmap.exl:67:20
+As @examples/hashmap.exl:67:22
+(Ident int) @examples/hashmap.exl:67:25
+RParen @examples/hashmap.exl:67:28
+Semicolon @examples/hashmap.exl:67:29
+Let @examples/hashmap.exl:69:5
+(Ident probe) @examples/hashmap.exl:69:9
+Eq @examples/hashmap.exl:69:15
+(Ident String) @examples/hashmap.exl:69:17
+DoubleColon @examples/hashmap.exl:69:23
+(Ident with_str) @examples/hashmap.exl:69:25
+LParen @examples/hashmap.exl:69:33
+(Ident a) @examples/hashmap.exl:69:34
+Comma @examples/hashmap.exl:69:35
+(String "fn") @examples/hashmap.exl:69:37
+RParen @examples/hashmap.exl:69:41
+Semicolon @examples/hashmap.exl:69:42
+Match @examples/hashmap.exl:70:5
+(Ident kw) @examples/hashmap.exl:70:11
+Dot @examples/hashmap.exl:70:13
+(Ident get) @examples/hashmap.exl:70:14
+LParen @examples/hashmap.exl:70:17
+(Ident probe) @examples/hashmap.exl:70:18
+RParen @examples/hashmap.exl:70:23
+LBrace @examples/hashmap.exl:70:25
+(Ident Option) @examples/hashmap.exl:71:9
+DoubleColon @examples/hashmap.exl:71:15
+(Ident Some) @examples/hashmap.exl:71:17
+LParen @examples/hashmap.exl:71:21
+(Ident v) @examples/hashmap.exl:71:22
+RParen @examples/hashmap.exl:71:23
+FatArrow @examples/hashmap.exl:71:25
+LBrace @examples/hashmap.exl:71:28
+(Ident println) @examples/hashmap.exl:71:30
+LParen @examples/hashmap.exl:71:37
+(Ident v) @examples/hashmap.exl:71:38
+RParen @examples/hashmap.exl:71:39
+Semicolon @examples/hashmap.exl:71:40
+RBrace @examples/hashmap.exl:71:42
+Pipe @examples/hashmap.exl:72:9
+(Ident Option) @examples/hashmap.exl:72:11
+DoubleColon @examples/hashmap.exl:72:17
+(Ident None) @examples/hashmap.exl:72:19
+FatArrow @examples/hashmap.exl:72:24
+LBrace @examples/hashmap.exl:72:27
+(Ident println) @examples/hashmap.exl:72:29
+LParen @examples/hashmap.exl:72:36
+Minus @examples/hashmap.exl:72:37
+(Int 1) @examples/hashmap.exl:72:38
+RParen @examples/hashmap.exl:72:39
+Semicolon @examples/hashmap.exl:72:40
+RBrace @examples/hashmap.exl:72:42
+RBrace @examples/hashmap.exl:73:5
+Let @examples/hashmap.exl:74:5
+(Ident miss) @examples/hashmap.exl:74:9
+Eq @examples/hashmap.exl:74:14
+(Ident String) @examples/hashmap.exl:74:16
+DoubleColon @examples/hashmap.exl:74:22
+(Ident with_str) @examples/hashmap.exl:74:24
+LParen @examples/hashmap.exl:74:32
+(Ident a) @examples/hashmap.exl:74:33
+Comma @examples/hashmap.exl:74:34
+(String "while") @examples/hashmap.exl:74:36
+RParen @examples/hashmap.exl:74:43
+Semicolon @examples/hashmap.exl:74:44
+Match @examples/hashmap.exl:75:5
+(Ident kw) @examples/hashmap.exl:75:11
+Dot @examples/hashmap.exl:75:13
+(Ident get) @examples/hashmap.exl:75:14
+LParen @examples/hashmap.exl:75:17
+(Ident miss) @examples/hashmap.exl:75:18
+RParen @examples/hashmap.exl:75:22
+LBrace @examples/hashmap.exl:75:24
+(Ident Option) @examples/hashmap.exl:76:9
+DoubleColon @examples/hashmap.exl:76:15
+(Ident Some) @examples/hashmap.exl:76:17
+LParen @examples/hashmap.exl:76:21
+(Ident v) @examples/hashmap.exl:76:22
+RParen @examples/hashmap.exl:76:23
+FatArrow @examples/hashmap.exl:76:25
+LBrace @examples/hashmap.exl:76:28
+(Ident println) @examples/hashmap.exl:76:30
+LParen @examples/hashmap.exl:76:37
+(Ident v) @examples/hashmap.exl:76:38
+RParen @examples/hashmap.exl:76:39
+Semicolon @examples/hashmap.exl:76:40
+RBrace @examples/hashmap.exl:76:42
+Pipe @examples/hashmap.exl:77:9
+(Ident Option) @examples/hashmap.exl:77:11
+DoubleColon @examples/hashmap.exl:77:17
+(Ident None) @examples/hashmap.exl:77:19
+FatArrow @examples/hashmap.exl:77:24
+LBrace @examples/hashmap.exl:77:27
+(Ident println) @examples/hashmap.exl:77:29
+LParen @examples/hashmap.exl:77:36
+Minus @examples/hashmap.exl:77:37
+(Int 1) @examples/hashmap.exl:77:38
+RParen @examples/hashmap.exl:77:39
+Semicolon @examples/hashmap.exl:77:40
+RBrace @examples/hashmap.exl:77:42
+RBrace @examples/hashmap.exl:78:5
+Let @examples/hashmap.exl:83:5
+Mut @examples/hashmap.exl:83:9
+(Ident g) @examples/hashmap.exl:83:13
+Colon @examples/hashmap.exl:83:14
+(Ident HashMap) @examples/hashmap.exl:83:16
+Lt @examples/hashmap.exl:83:23
+(Ident int) @examples/hashmap.exl:83:24
+Comma @examples/hashmap.exl:83:27
+(Ident int) @examples/hashmap.exl:83:29
+Gt @examples/hashmap.exl:83:32
+Eq @examples/hashmap.exl:83:34
+(Ident HashMap) @examples/hashmap.exl:83:36
+DoubleColon @examples/hashmap.exl:83:43
+(Ident with_capacity) @examples/hashmap.exl:83:45
+LParen @examples/hashmap.exl:83:58
+(Ident a) @examples/hashmap.exl:83:59
+Comma @examples/hashmap.exl:83:60
+(Int 8) @examples/hashmap.exl:83:62
+As @examples/hashmap.exl:83:64
+(Ident u32) @examples/hashmap.exl:83:67
+RParen @examples/hashmap.exl:83:70
+Semicolon @examples/hashmap.exl:83:71
+Let @examples/hashmap.exl:84:5
+Mut @examples/hashmap.exl:84:9
+(Ident i) @examples/hashmap.exl:84:13
+Colon @examples/hashmap.exl:84:14
+(Ident int) @examples/hashmap.exl:84:16
+Eq @examples/hashmap.exl:84:20
+(Int 0) @examples/hashmap.exl:84:22
+Semicolon @examples/hashmap.exl:84:23
+While @examples/hashmap.exl:85:5
+(Ident i) @examples/hashmap.exl:85:11
+Lt @examples/hashmap.exl:85:13
+(Int 12) @examples/hashmap.exl:85:15
+LBrace @examples/hashmap.exl:85:18
+(Ident g) @examples/hashmap.exl:86:9
+Dot @examples/hashmap.exl:86:10
+(Ident insert) @examples/hashmap.exl:86:11
+LParen @examples/hashmap.exl:86:17
+(Ident i) @examples/hashmap.exl:86:18
+Comma @examples/hashmap.exl:86:19
+(Ident i) @examples/hashmap.exl:86:21
+Star @examples/hashmap.exl:86:23
+(Int 10) @examples/hashmap.exl:86:25
+RParen @examples/hashmap.exl:86:27
+Semicolon @examples/hashmap.exl:86:28
+(Ident i) @examples/hashmap.exl:87:9
+Eq @examples/hashmap.exl:87:11
+(Ident i) @examples/hashmap.exl:87:13
+Plus @examples/hashmap.exl:87:15
+(Int 1) @examples/hashmap.exl:87:17
+Semicolon @examples/hashmap.exl:87:18
+RBrace @examples/hashmap.exl:88:5
+(Ident println) @examples/hashmap.exl:89:5
+LParen @examples/hashmap.exl:89:12
+(Ident g) @examples/hashmap.exl:89:13
+Dot @examples/hashmap.exl:89:14
+(Ident len) @examples/hashmap.exl:89:15
+LParen @examples/hashmap.exl:89:18
+RParen @examples/hashmap.exl:89:19
+As @examples/hashmap.exl:89:21
+(Ident int) @examples/hashmap.exl:89:24
+RParen @examples/hashmap.exl:89:27
+Semicolon @examples/hashmap.exl:89:28
+(Ident g) @examples/hashmap.exl:91:5
+Dot @examples/hashmap.exl:91:6
+(Ident remove) @examples/hashmap.exl:91:7
+LParen @examples/hashmap.exl:91:13
+(Int 3) @examples/hashmap.exl:91:14
+RParen @examples/hashmap.exl:91:15
+Semicolon @examples/hashmap.exl:91:16
+(Ident g) @examples/hashmap.exl:92:5
+Dot @examples/hashmap.exl:92:6
+(Ident remove) @examples/hashmap.exl:92:7
+LParen @examples/hashmap.exl:92:13
+(Int 7) @examples/hashmap.exl:92:14
+RParen @examples/hashmap.exl:92:15
+Semicolon @examples/hashmap.exl:92:16
+(Ident println) @examples/hashmap.exl:93:5
+LParen @examples/hashmap.exl:93:12
+(Ident g) @examples/hashmap.exl:93:13
+Dot @examples/hashmap.exl:93:14
+(Ident len) @examples/hashmap.exl:93:15
+LParen @examples/hashmap.exl:93:18
+RParen @examples/hashmap.exl:93:19
+As @examples/hashmap.exl:93:21
+(Ident int) @examples/hashmap.exl:93:24
+RParen @examples/hashmap.exl:93:27
+Semicolon @examples/hashmap.exl:93:28
+Match @examples/hashmap.exl:96:5
+(Ident g) @examples/hashmap.exl:96:11
+Dot @examples/hashmap.exl:96:12
+(Ident get) @examples/hashmap.exl:96:13
+LParen @examples/hashmap.exl:96:16
+(Int 3) @examples/hashmap.exl:96:17
+RParen @examples/hashmap.exl:96:18
+LBrace @examples/hashmap.exl:96:20
+(Ident Option) @examples/hashmap.exl:97:9
+DoubleColon @examples/hashmap.exl:97:15
+(Ident Some) @examples/hashmap.exl:97:17
+LParen @examples/hashmap.exl:97:21
+(Ident v) @examples/hashmap.exl:97:22
+RParen @examples/hashmap.exl:97:23
+FatArrow @examples/hashmap.exl:97:25
+LBrace @examples/hashmap.exl:97:28
+(Ident println) @examples/hashmap.exl:97:30
+LParen @examples/hashmap.exl:97:37
+(Ident v) @examples/hashmap.exl:97:38
+RParen @examples/hashmap.exl:97:39
+Semicolon @examples/hashmap.exl:97:40
+RBrace @examples/hashmap.exl:97:42
+Pipe @examples/hashmap.exl:98:9
+(Ident Option) @examples/hashmap.exl:98:11
+DoubleColon @examples/hashmap.exl:98:17
+(Ident None) @examples/hashmap.exl:98:19
+FatArrow @examples/hashmap.exl:98:24
+LBrace @examples/hashmap.exl:98:27
+(Ident println) @examples/hashmap.exl:98:29
+LParen @examples/hashmap.exl:98:36
+Minus @examples/hashmap.exl:98:37
+(Int 1) @examples/hashmap.exl:98:38
+RParen @examples/hashmap.exl:98:39
+Semicolon @examples/hashmap.exl:98:40
+RBrace @examples/hashmap.exl:98:42
+RBrace @examples/hashmap.exl:99:5
+Match @examples/hashmap.exl:100:5
+(Ident g) @examples/hashmap.exl:100:11
+Dot @examples/hashmap.exl:100:12
+(Ident get) @examples/hashmap.exl:100:13
+LParen @examples/hashmap.exl:100:16
+(Int 5) @examples/hashmap.exl:100:17
+RParen @examples/hashmap.exl:100:18
+LBrace @examples/hashmap.exl:100:20
+(Ident Option) @examples/hashmap.exl:101:9
+DoubleColon @examples/hashmap.exl:101:15
+(Ident Some) @examples/hashmap.exl:101:17
+LParen @examples/hashmap.exl:101:21
+(Ident v) @examples/hashmap.exl:101:22
+RParen @examples/hashmap.exl:101:23
+FatArrow @examples/hashmap.exl:101:25
+LBrace @examples/hashmap.exl:101:28
+(Ident println) @examples/hashmap.exl:101:30
+LParen @examples/hashmap.exl:101:37
+(Ident v) @examples/hashmap.exl:101:38
+RParen @examples/hashmap.exl:101:39
+Semicolon @examples/hashmap.exl:101:40
+RBrace @examples/hashmap.exl:101:42
+Pipe @examples/hashmap.exl:102:9
+(Ident Option) @examples/hashmap.exl:102:11
+DoubleColon @examples/hashmap.exl:102:17
+(Ident None) @examples/hashmap.exl:102:19
+FatArrow @examples/hashmap.exl:102:24
+LBrace @examples/hashmap.exl:102:27
+(Ident println) @examples/hashmap.exl:102:29
+LParen @examples/hashmap.exl:102:36
+Minus @examples/hashmap.exl:102:37
+(Int 1) @examples/hashmap.exl:102:38
+RParen @examples/hashmap.exl:102:39
+Semicolon @examples/hashmap.exl:102:40
+RBrace @examples/hashmap.exl:102:42
+RBrace @examples/hashmap.exl:103:5
+Let @examples/hashmap.exl:107:5
+Mut @examples/hashmap.exl:107:9
+(Ident sum) @examples/hashmap.exl:107:13
+Colon @examples/hashmap.exl:107:16
+(Ident int) @examples/hashmap.exl:107:18
+Eq @examples/hashmap.exl:107:22
+(Int 0) @examples/hashmap.exl:107:24
+Semicolon @examples/hashmap.exl:107:25
+Let @examples/hashmap.exl:108:5
+(Ident it) @examples/hashmap.exl:108:9
+Eq @examples/hashmap.exl:108:12
+(Ident g) @examples/hashmap.exl:108:14
+Dot @examples/hashmap.exl:108:15
+(Ident iter) @examples/hashmap.exl:108:16
+LParen @examples/hashmap.exl:108:20
+RParen @examples/hashmap.exl:108:21
+Semicolon @examples/hashmap.exl:108:22
+For @examples/hashmap.exl:109:5
+(Ident kv) @examples/hashmap.exl:109:9
+In @examples/hashmap.exl:109:12
+(Ident it) @examples/hashmap.exl:109:15
+LBrace @examples/hashmap.exl:109:18
+Let @examples/hashmap.exl:110:9
+LParen @examples/hashmap.exl:110:13
+(Ident k) @examples/hashmap.exl:110:14
+Comma @examples/hashmap.exl:110:15
+(Ident v) @examples/hashmap.exl:110:17
+RParen @examples/hashmap.exl:110:18
+Eq @examples/hashmap.exl:110:20
+(Ident kv) @examples/hashmap.exl:110:22
+Semicolon @examples/hashmap.exl:110:24
+(Ident sum) @examples/hashmap.exl:111:9
+Eq @examples/hashmap.exl:111:13
+(Ident sum) @examples/hashmap.exl:111:15
+Plus @examples/hashmap.exl:111:19
+(Ident v) @examples/hashmap.exl:111:21
+Semicolon @examples/hashmap.exl:111:22
+RBrace @examples/hashmap.exl:112:5
+(Ident println) @examples/hashmap.exl:115:5
+LParen @examples/hashmap.exl:115:12
+(Ident sum) @examples/hashmap.exl:115:13
+RParen @examples/hashmap.exl:115:16
+Semicolon @examples/hashmap.exl:115:17
+Let @examples/hashmap.exl:121:5
+Mut @examples/hashmap.exl:121:9
+(Ident tok) @examples/hashmap.exl:121:13
+Colon @examples/hashmap.exl:121:16
+(Ident HashMap) @examples/hashmap.exl:121:18
+Lt @examples/hashmap.exl:121:25
+(Ident str) @examples/hashmap.exl:121:26
+Comma @examples/hashmap.exl:121:29
+(Ident int) @examples/hashmap.exl:121:31
+Gt @examples/hashmap.exl:121:34
+Eq @examples/hashmap.exl:121:36
+(Ident HashMap) @examples/hashmap.exl:121:38
+DoubleColon @examples/hashmap.exl:121:45
+(Ident with_capacity) @examples/hashmap.exl:121:47
+LParen @examples/hashmap.exl:121:60
+(Ident a) @examples/hashmap.exl:121:61
+Comma @examples/hashmap.exl:121:62
+(Int 8) @examples/hashmap.exl:121:64
+As @examples/hashmap.exl:121:66
+(Ident u32) @examples/hashmap.exl:121:69
+RParen @examples/hashmap.exl:121:72
+Semicolon @examples/hashmap.exl:121:73
+(Ident tok) @examples/hashmap.exl:122:5
+Dot @examples/hashmap.exl:122:8
+(Ident insert) @examples/hashmap.exl:122:9
+LParen @examples/hashmap.exl:122:15
+(String "fn") @examples/hashmap.exl:122:16
+Comma @examples/hashmap.exl:122:20
+(Int 1) @examples/hashmap.exl:122:26
+RParen @examples/hashmap.exl:122:27
+Semicolon @examples/hashmap.exl:122:28
+(Ident tok) @examples/hashmap.exl:123:5
+Dot @examples/hashmap.exl:123:8
+(Ident insert) @examples/hashmap.exl:123:9
+LParen @examples/hashmap.exl:123:15
+(String "let") @examples/hashmap.exl:123:16
+Comma @examples/hashmap.exl:123:21
+(Int 2) @examples/hashmap.exl:123:26
+RParen @examples/hashmap.exl:123:27
+Semicolon @examples/hashmap.exl:123:28
+(Ident tok) @examples/hashmap.exl:124:5
+Dot @examples/hashmap.exl:124:8
+(Ident insert) @examples/hashmap.exl:124:9
+LParen @examples/hashmap.exl:124:15
+(String "return") @examples/hashmap.exl:124:16
+Comma @examples/hashmap.exl:124:24
+(Int 3) @examples/hashmap.exl:124:26
+RParen @examples/hashmap.exl:124:27
+Semicolon @examples/hashmap.exl:124:28
+(Ident println) @examples/hashmap.exl:125:5
+LParen @examples/hashmap.exl:125:12
+(Ident tok) @examples/hashmap.exl:125:13
+Dot @examples/hashmap.exl:125:16
+(Ident len) @examples/hashmap.exl:125:17
+LParen @examples/hashmap.exl:125:20
+RParen @examples/hashmap.exl:125:21
+As @examples/hashmap.exl:125:23
+(Ident int) @examples/hashmap.exl:125:26
+RParen @examples/hashmap.exl:125:29
+Semicolon @examples/hashmap.exl:125:30
+Match @examples/hashmap.exl:127:5
+(Ident tok) @examples/hashmap.exl:127:11
+Dot @examples/hashmap.exl:127:14
+(Ident get) @examples/hashmap.exl:127:15
+LParen @examples/hashmap.exl:127:18
+(String "let") @examples/hashmap.exl:127:19
+RParen @examples/hashmap.exl:127:24
+LBrace @examples/hashmap.exl:127:26
+(Ident Option) @examples/hashmap.exl:128:9
+DoubleColon @examples/hashmap.exl:128:15
+(Ident Some) @examples/hashmap.exl:128:17
+LParen @examples/hashmap.exl:128:21
+(Ident v) @examples/hashmap.exl:128:22
+RParen @examples/hashmap.exl:128:23
+FatArrow @examples/hashmap.exl:128:25
+LBrace @examples/hashmap.exl:128:28
+(Ident println) @examples/hashmap.exl:128:30
+LParen @examples/hashmap.exl:128:37
+(Ident v) @examples/hashmap.exl:128:38
+RParen @examples/hashmap.exl:128:39
+Semicolon @examples/hashmap.exl:128:40
+RBrace @examples/hashmap.exl:128:42
+Pipe @examples/hashmap.exl:129:9
+(Ident Option) @examples/hashmap.exl:129:11
+DoubleColon @examples/hashmap.exl:129:17
+(Ident None) @examples/hashmap.exl:129:19
+FatArrow @examples/hashmap.exl:129:24
+LBrace @examples/hashmap.exl:129:27
+(Ident println) @examples/hashmap.exl:129:29
+LParen @examples/hashmap.exl:129:36
+Minus @examples/hashmap.exl:129:37
+(Int 1) @examples/hashmap.exl:129:38
+RParen @examples/hashmap.exl:129:39
+Semicolon @examples/hashmap.exl:129:40
+RBrace @examples/hashmap.exl:129:42
+RBrace @examples/hashmap.exl:130:5
+Match @examples/hashmap.exl:131:5
+(Ident tok) @examples/hashmap.exl:131:11
+Dot @examples/hashmap.exl:131:14
+(Ident get) @examples/hashmap.exl:131:15
+LParen @examples/hashmap.exl:131:18
+(String "while") @examples/hashmap.exl:131:19
+RParen @examples/hashmap.exl:131:26
+LBrace @examples/hashmap.exl:131:28
+(Ident Option) @examples/hashmap.exl:132:9
+DoubleColon @examples/hashmap.exl:132:15
+(Ident Some) @examples/hashmap.exl:132:17
+LParen @examples/hashmap.exl:132:21
+(Ident v) @examples/hashmap.exl:132:22
+RParen @examples/hashmap.exl:132:23
+FatArrow @examples/hashmap.exl:132:25
+LBrace @examples/hashmap.exl:132:28
+(Ident println) @examples/hashmap.exl:132:30
+LParen @examples/hashmap.exl:132:37
+(Ident v) @examples/hashmap.exl:132:38
+RParen @examples/hashmap.exl:132:39
+Semicolon @examples/hashmap.exl:132:40
+RBrace @examples/hashmap.exl:132:42
+Pipe @examples/hashmap.exl:133:9
+(Ident Option) @examples/hashmap.exl:133:11
+DoubleColon @examples/hashmap.exl:133:17
+(Ident None) @examples/hashmap.exl:133:19
+FatArrow @examples/hashmap.exl:133:24
+LBrace @examples/hashmap.exl:133:27
+(Ident println) @examples/hashmap.exl:133:29
+LParen @examples/hashmap.exl:133:36
+Minus @examples/hashmap.exl:133:37
+(Int 1) @examples/hashmap.exl:133:38
+RParen @examples/hashmap.exl:133:39
+Semicolon @examples/hashmap.exl:133:40
+RBrace @examples/hashmap.exl:133:42
+RBrace @examples/hashmap.exl:134:5
+RBrace @examples/hashmap.exl:135:1
+Eof @examples/hashmap.exl:136:1

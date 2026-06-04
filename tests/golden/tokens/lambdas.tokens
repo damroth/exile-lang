@@ -1,0 +1,390 @@
+;; exile-tokens-dump v1 examples/lambdas.exl
+Fn @examples/lambdas.exl:24:1
+(Ident apply) @examples/lambdas.exl:24:4
+LParen @examples/lambdas.exl:24:9
+(Ident f) @examples/lambdas.exl:24:10
+Colon @examples/lambdas.exl:24:11
+Fn @examples/lambdas.exl:24:13
+LParen @examples/lambdas.exl:24:15
+(Ident int) @examples/lambdas.exl:24:16
+RParen @examples/lambdas.exl:24:19
+Arrow @examples/lambdas.exl:24:21
+(Ident int) @examples/lambdas.exl:24:24
+Comma @examples/lambdas.exl:24:27
+(Ident x) @examples/lambdas.exl:24:29
+Colon @examples/lambdas.exl:24:30
+(Ident int) @examples/lambdas.exl:24:32
+RParen @examples/lambdas.exl:24:35
+Arrow @examples/lambdas.exl:24:37
+(Ident int) @examples/lambdas.exl:24:40
+LBrace @examples/lambdas.exl:24:44
+(Ident f) @examples/lambdas.exl:25:5
+LParen @examples/lambdas.exl:25:6
+(Ident x) @examples/lambdas.exl:25:7
+RParen @examples/lambdas.exl:25:8
+RBrace @examples/lambdas.exl:26:1
+Fn @examples/lambdas.exl:28:1
+(Ident fold) @examples/lambdas.exl:28:4
+LParen @examples/lambdas.exl:28:8
+(Ident s) @examples/lambdas.exl:28:9
+Colon @examples/lambdas.exl:28:10
+(Ident Slice) @examples/lambdas.exl:28:12
+Lt @examples/lambdas.exl:28:17
+(Ident int) @examples/lambdas.exl:28:18
+Gt @examples/lambdas.exl:28:21
+Comma @examples/lambdas.exl:28:22
+(Ident init) @examples/lambdas.exl:28:24
+Colon @examples/lambdas.exl:28:28
+(Ident int) @examples/lambdas.exl:28:30
+Comma @examples/lambdas.exl:28:33
+(Ident f) @examples/lambdas.exl:29:9
+Colon @examples/lambdas.exl:29:10
+Fn @examples/lambdas.exl:29:12
+LParen @examples/lambdas.exl:29:14
+(Ident int) @examples/lambdas.exl:29:15
+Comma @examples/lambdas.exl:29:18
+(Ident int) @examples/lambdas.exl:29:20
+RParen @examples/lambdas.exl:29:23
+Arrow @examples/lambdas.exl:29:25
+(Ident int) @examples/lambdas.exl:29:28
+RParen @examples/lambdas.exl:29:31
+Arrow @examples/lambdas.exl:29:33
+(Ident int) @examples/lambdas.exl:29:36
+LBrace @examples/lambdas.exl:29:40
+Let @examples/lambdas.exl:30:5
+Mut @examples/lambdas.exl:30:9
+(Ident acc) @examples/lambdas.exl:30:13
+Colon @examples/lambdas.exl:30:16
+(Ident int) @examples/lambdas.exl:30:18
+Eq @examples/lambdas.exl:30:22
+(Ident init) @examples/lambdas.exl:30:24
+Semicolon @examples/lambdas.exl:30:28
+Let @examples/lambdas.exl:31:5
+Mut @examples/lambdas.exl:31:9
+(Ident i) @examples/lambdas.exl:31:13
+Colon @examples/lambdas.exl:31:14
+(Ident u32) @examples/lambdas.exl:31:16
+Eq @examples/lambdas.exl:31:20
+(Int 0) @examples/lambdas.exl:31:22
+As @examples/lambdas.exl:31:24
+(Ident u32) @examples/lambdas.exl:31:27
+Semicolon @examples/lambdas.exl:31:30
+While @examples/lambdas.exl:32:5
+(Ident i) @examples/lambdas.exl:32:11
+Lt @examples/lambdas.exl:32:13
+(Ident s) @examples/lambdas.exl:32:15
+Dot @examples/lambdas.exl:32:16
+(Ident len) @examples/lambdas.exl:32:17
+LBrace @examples/lambdas.exl:32:21
+(Ident acc) @examples/lambdas.exl:33:9
+Eq @examples/lambdas.exl:33:13
+(Ident f) @examples/lambdas.exl:33:15
+LParen @examples/lambdas.exl:33:16
+(Ident acc) @examples/lambdas.exl:33:17
+Comma @examples/lambdas.exl:33:20
+(Ident s) @examples/lambdas.exl:33:22
+LBracket @examples/lambdas.exl:33:23
+(Ident i) @examples/lambdas.exl:33:24
+As @examples/lambdas.exl:33:26
+(Ident int) @examples/lambdas.exl:33:29
+RBracket @examples/lambdas.exl:33:32
+RParen @examples/lambdas.exl:33:33
+Semicolon @examples/lambdas.exl:33:34
+(Ident i) @examples/lambdas.exl:34:9
+Eq @examples/lambdas.exl:34:11
+(Ident i) @examples/lambdas.exl:34:13
+Plus @examples/lambdas.exl:34:15
+(Int 1) @examples/lambdas.exl:34:17
+As @examples/lambdas.exl:34:19
+(Ident u32) @examples/lambdas.exl:34:22
+Semicolon @examples/lambdas.exl:34:25
+RBrace @examples/lambdas.exl:35:5
+(Ident acc) @examples/lambdas.exl:36:5
+RBrace @examples/lambdas.exl:37:1
+Fn @examples/lambdas.exl:39:1
+(Ident count_if) @examples/lambdas.exl:39:4
+LParen @examples/lambdas.exl:39:12
+(Ident s) @examples/lambdas.exl:39:13
+Colon @examples/lambdas.exl:39:14
+(Ident Slice) @examples/lambdas.exl:39:16
+Lt @examples/lambdas.exl:39:21
+(Ident int) @examples/lambdas.exl:39:22
+Gt @examples/lambdas.exl:39:25
+Comma @examples/lambdas.exl:39:26
+(Ident pred) @examples/lambdas.exl:40:13
+Colon @examples/lambdas.exl:40:17
+Fn @examples/lambdas.exl:40:19
+LParen @examples/lambdas.exl:40:21
+(Ident int) @examples/lambdas.exl:40:22
+RParen @examples/lambdas.exl:40:25
+Arrow @examples/lambdas.exl:40:27
+(Ident bool) @examples/lambdas.exl:40:30
+RParen @examples/lambdas.exl:40:34
+Arrow @examples/lambdas.exl:40:36
+(Ident int) @examples/lambdas.exl:40:39
+LBrace @examples/lambdas.exl:40:43
+Let @examples/lambdas.exl:41:5
+Mut @examples/lambdas.exl:41:9
+(Ident count) @examples/lambdas.exl:41:13
+Colon @examples/lambdas.exl:41:18
+(Ident int) @examples/lambdas.exl:41:20
+Eq @examples/lambdas.exl:41:24
+(Int 0) @examples/lambdas.exl:41:26
+Semicolon @examples/lambdas.exl:41:27
+Let @examples/lambdas.exl:42:5
+Mut @examples/lambdas.exl:42:9
+(Ident i) @examples/lambdas.exl:42:13
+Colon @examples/lambdas.exl:42:14
+(Ident u32) @examples/lambdas.exl:42:16
+Eq @examples/lambdas.exl:42:20
+(Int 0) @examples/lambdas.exl:42:22
+As @examples/lambdas.exl:42:24
+(Ident u32) @examples/lambdas.exl:42:27
+Semicolon @examples/lambdas.exl:42:30
+While @examples/lambdas.exl:43:5
+(Ident i) @examples/lambdas.exl:43:11
+Lt @examples/lambdas.exl:43:13
+(Ident s) @examples/lambdas.exl:43:15
+Dot @examples/lambdas.exl:43:16
+(Ident len) @examples/lambdas.exl:43:17
+LBrace @examples/lambdas.exl:43:21
+If @examples/lambdas.exl:44:9
+(Ident pred) @examples/lambdas.exl:44:12
+LParen @examples/lambdas.exl:44:16
+(Ident s) @examples/lambdas.exl:44:17
+LBracket @examples/lambdas.exl:44:18
+(Ident i) @examples/lambdas.exl:44:19
+As @examples/lambdas.exl:44:21
+(Ident int) @examples/lambdas.exl:44:24
+RBracket @examples/lambdas.exl:44:27
+RParen @examples/lambdas.exl:44:28
+LBrace @examples/lambdas.exl:44:30
+(Ident count) @examples/lambdas.exl:44:32
+Eq @examples/lambdas.exl:44:38
+(Ident count) @examples/lambdas.exl:44:40
+Plus @examples/lambdas.exl:44:46
+(Int 1) @examples/lambdas.exl:44:48
+Semicolon @examples/lambdas.exl:44:49
+RBrace @examples/lambdas.exl:44:51
+(Ident i) @examples/lambdas.exl:45:9
+Eq @examples/lambdas.exl:45:11
+(Ident i) @examples/lambdas.exl:45:13
+Plus @examples/lambdas.exl:45:15
+(Int 1) @examples/lambdas.exl:45:17
+As @examples/lambdas.exl:45:19
+(Ident u32) @examples/lambdas.exl:45:22
+Semicolon @examples/lambdas.exl:45:25
+RBrace @examples/lambdas.exl:46:5
+(Ident count) @examples/lambdas.exl:47:5
+RBrace @examples/lambdas.exl:48:1
+Fn @examples/lambdas.exl:50:1
+(Ident main) @examples/lambdas.exl:50:4
+LParen @examples/lambdas.exl:50:8
+RParen @examples/lambdas.exl:50:9
+LBrace @examples/lambdas.exl:50:11
+(Ident println) @examples/lambdas.exl:52:5
+LParen @examples/lambdas.exl:52:12
+(Ident apply) @examples/lambdas.exl:52:13
+LParen @examples/lambdas.exl:52:18
+Pipe @examples/lambdas.exl:52:19
+(Ident x) @examples/lambdas.exl:52:20
+Colon @examples/lambdas.exl:52:21
+(Ident int) @examples/lambdas.exl:52:23
+Pipe @examples/lambdas.exl:52:26
+Arrow @examples/lambdas.exl:52:28
+(Ident int) @examples/lambdas.exl:52:31
+(Ident x) @examples/lambdas.exl:52:35
+Star @examples/lambdas.exl:52:37
+(Int 2) @examples/lambdas.exl:52:39
+Comma @examples/lambdas.exl:52:40
+(Int 7) @examples/lambdas.exl:52:42
+RParen @examples/lambdas.exl:52:43
+RParen @examples/lambdas.exl:52:44
+Semicolon @examples/lambdas.exl:52:45
+(Ident println) @examples/lambdas.exl:53:5
+LParen @examples/lambdas.exl:53:12
+(Ident apply) @examples/lambdas.exl:53:13
+LParen @examples/lambdas.exl:53:18
+Pipe @examples/lambdas.exl:53:19
+(Ident x) @examples/lambdas.exl:53:20
+Colon @examples/lambdas.exl:53:21
+(Ident int) @examples/lambdas.exl:53:23
+Pipe @examples/lambdas.exl:53:26
+Arrow @examples/lambdas.exl:53:28
+(Ident int) @examples/lambdas.exl:53:31
+(Ident x) @examples/lambdas.exl:53:35
+Plus @examples/lambdas.exl:53:37
+(Int 1) @examples/lambdas.exl:53:39
+Comma @examples/lambdas.exl:53:40
+(Int 41) @examples/lambdas.exl:53:42
+RParen @examples/lambdas.exl:53:44
+RParen @examples/lambdas.exl:53:45
+Semicolon @examples/lambdas.exl:53:46
+Let @examples/lambdas.exl:56:5
+(Ident square) @examples/lambdas.exl:56:9
+Eq @examples/lambdas.exl:56:16
+Pipe @examples/lambdas.exl:56:18
+(Ident x) @examples/lambdas.exl:56:19
+Colon @examples/lambdas.exl:56:20
+(Ident int) @examples/lambdas.exl:56:22
+Pipe @examples/lambdas.exl:56:25
+Arrow @examples/lambdas.exl:56:27
+(Ident int) @examples/lambdas.exl:56:30
+(Ident x) @examples/lambdas.exl:56:34
+Star @examples/lambdas.exl:56:36
+(Ident x) @examples/lambdas.exl:56:38
+Semicolon @examples/lambdas.exl:56:39
+(Ident println) @examples/lambdas.exl:57:5
+LParen @examples/lambdas.exl:57:12
+(Ident apply) @examples/lambdas.exl:57:13
+LParen @examples/lambdas.exl:57:18
+(Ident square) @examples/lambdas.exl:57:19
+Comma @examples/lambdas.exl:57:25
+(Int 5) @examples/lambdas.exl:57:27
+RParen @examples/lambdas.exl:57:28
+RParen @examples/lambdas.exl:57:29
+Semicolon @examples/lambdas.exl:57:30
+(Ident println) @examples/lambdas.exl:58:5
+LParen @examples/lambdas.exl:58:12
+(Ident apply) @examples/lambdas.exl:58:13
+LParen @examples/lambdas.exl:58:18
+(Ident square) @examples/lambdas.exl:58:19
+Comma @examples/lambdas.exl:58:25
+(Int 9) @examples/lambdas.exl:58:27
+RParen @examples/lambdas.exl:58:28
+RParen @examples/lambdas.exl:58:29
+Semicolon @examples/lambdas.exl:58:30
+Let @examples/lambdas.exl:61:5
+(Ident arr) @examples/lambdas.exl:61:9
+Colon @examples/lambdas.exl:61:12
+LBracket @examples/lambdas.exl:61:14
+(Ident int) @examples/lambdas.exl:61:15
+Semicolon @examples/lambdas.exl:61:18
+(Int 6) @examples/lambdas.exl:61:20
+RBracket @examples/lambdas.exl:61:21
+Eq @examples/lambdas.exl:61:23
+LBracket @examples/lambdas.exl:61:25
+(Int 1) @examples/lambdas.exl:61:26
+Comma @examples/lambdas.exl:61:27
+(Int 2) @examples/lambdas.exl:61:29
+Comma @examples/lambdas.exl:61:30
+(Int 3) @examples/lambdas.exl:61:32
+Comma @examples/lambdas.exl:61:33
+(Int 4) @examples/lambdas.exl:61:35
+Comma @examples/lambdas.exl:61:36
+(Int 5) @examples/lambdas.exl:61:38
+Comma @examples/lambdas.exl:61:39
+(Int 6) @examples/lambdas.exl:61:41
+RBracket @examples/lambdas.exl:61:42
+Semicolon @examples/lambdas.exl:61:43
+Let @examples/lambdas.exl:63:5
+(Ident total) @examples/lambdas.exl:63:9
+Eq @examples/lambdas.exl:63:15
+(Ident fold) @examples/lambdas.exl:63:17
+LParen @examples/lambdas.exl:63:21
+(Ident arr) @examples/lambdas.exl:63:22
+LBracket @examples/lambdas.exl:63:25
+(Int 0) @examples/lambdas.exl:63:26
+DotDot @examples/lambdas.exl:63:27
+(Int 6) @examples/lambdas.exl:63:29
+RBracket @examples/lambdas.exl:63:30
+Comma @examples/lambdas.exl:63:31
+(Int 0) @examples/lambdas.exl:63:33
+Comma @examples/lambdas.exl:63:34
+Pipe @examples/lambdas.exl:64:22
+(Ident acc) @examples/lambdas.exl:64:23
+Colon @examples/lambdas.exl:64:26
+(Ident int) @examples/lambdas.exl:64:28
+Comma @examples/lambdas.exl:64:31
+(Ident v) @examples/lambdas.exl:64:33
+Colon @examples/lambdas.exl:64:34
+(Ident int) @examples/lambdas.exl:64:36
+Pipe @examples/lambdas.exl:64:39
+Arrow @examples/lambdas.exl:64:41
+(Ident int) @examples/lambdas.exl:64:44
+(Ident acc) @examples/lambdas.exl:64:48
+Plus @examples/lambdas.exl:64:52
+(Ident v) @examples/lambdas.exl:64:54
+RParen @examples/lambdas.exl:64:55
+Semicolon @examples/lambdas.exl:64:56
+(Ident println) @examples/lambdas.exl:65:5
+LParen @examples/lambdas.exl:65:12
+(Ident total) @examples/lambdas.exl:65:13
+RParen @examples/lambdas.exl:65:18
+Semicolon @examples/lambdas.exl:65:19
+Let @examples/lambdas.exl:67:5
+(Ident max) @examples/lambdas.exl:67:9
+Eq @examples/lambdas.exl:67:13
+(Ident fold) @examples/lambdas.exl:67:15
+LParen @examples/lambdas.exl:67:19
+(Ident arr) @examples/lambdas.exl:67:20
+LBracket @examples/lambdas.exl:67:23
+(Int 0) @examples/lambdas.exl:67:24
+DotDot @examples/lambdas.exl:67:25
+(Int 6) @examples/lambdas.exl:67:27
+RBracket @examples/lambdas.exl:67:28
+Comma @examples/lambdas.exl:67:29
+(Int 0) @examples/lambdas.exl:67:31
+Comma @examples/lambdas.exl:67:32
+Pipe @examples/lambdas.exl:68:20
+(Ident acc) @examples/lambdas.exl:68:21
+Colon @examples/lambdas.exl:68:24
+(Ident int) @examples/lambdas.exl:68:26
+Comma @examples/lambdas.exl:68:29
+(Ident v) @examples/lambdas.exl:68:31
+Colon @examples/lambdas.exl:68:32
+(Ident int) @examples/lambdas.exl:68:34
+Pipe @examples/lambdas.exl:68:37
+Arrow @examples/lambdas.exl:68:39
+(Ident int) @examples/lambdas.exl:68:42
+If @examples/lambdas.exl:69:24
+(Ident v) @examples/lambdas.exl:69:27
+Gt @examples/lambdas.exl:69:29
+(Ident acc) @examples/lambdas.exl:69:31
+LBrace @examples/lambdas.exl:69:35
+(Ident v) @examples/lambdas.exl:69:37
+RBrace @examples/lambdas.exl:69:39
+Else @examples/lambdas.exl:69:41
+LBrace @examples/lambdas.exl:69:46
+(Ident acc) @examples/lambdas.exl:69:48
+RBrace @examples/lambdas.exl:69:52
+RParen @examples/lambdas.exl:69:53
+Semicolon @examples/lambdas.exl:69:54
+(Ident println) @examples/lambdas.exl:70:5
+LParen @examples/lambdas.exl:70:12
+(Ident max) @examples/lambdas.exl:70:13
+RParen @examples/lambdas.exl:70:16
+Semicolon @examples/lambdas.exl:70:17
+Let @examples/lambdas.exl:72:5
+(Ident evens) @examples/lambdas.exl:72:9
+Eq @examples/lambdas.exl:72:15
+(Ident count_if) @examples/lambdas.exl:72:17
+LParen @examples/lambdas.exl:72:25
+(Ident arr) @examples/lambdas.exl:72:26
+LBracket @examples/lambdas.exl:72:29
+(Int 0) @examples/lambdas.exl:72:30
+DotDot @examples/lambdas.exl:72:31
+(Int 6) @examples/lambdas.exl:72:33
+RBracket @examples/lambdas.exl:72:34
+Comma @examples/lambdas.exl:72:35
+Pipe @examples/lambdas.exl:73:26
+(Ident v) @examples/lambdas.exl:73:27
+Colon @examples/lambdas.exl:73:28
+(Ident int) @examples/lambdas.exl:73:30
+Pipe @examples/lambdas.exl:73:33
+Arrow @examples/lambdas.exl:73:35
+(Ident bool) @examples/lambdas.exl:73:38
+(Ident v) @examples/lambdas.exl:73:43
+Percent @examples/lambdas.exl:73:45
+(Int 2) @examples/lambdas.exl:73:47
+EqEq @examples/lambdas.exl:73:49
+(Int 0) @examples/lambdas.exl:73:52
+RParen @examples/lambdas.exl:73:53
+Semicolon @examples/lambdas.exl:73:54
+(Ident println) @examples/lambdas.exl:74:5
+LParen @examples/lambdas.exl:74:12
+(Ident evens) @examples/lambdas.exl:74:13
+RParen @examples/lambdas.exl:74:18
+Semicolon @examples/lambdas.exl:74:19
+RBrace @examples/lambdas.exl:75:1
+Eof @examples/lambdas.exl:76:1

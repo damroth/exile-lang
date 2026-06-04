@@ -1,0 +1,123 @@
+;; exile-tokens-dump v1 examples/ffi_full.exl
+At @examples/ffi_full.exl:11:1
+(Ident c_include) @examples/ffi_full.exl:11:2
+LParen @examples/ffi_full.exl:11:11
+(String "ffi_full_stub.h") @examples/ffi_full.exl:11:12
+RParen @examples/ffi_full.exl:11:29
+Pub @examples/ffi_full.exl:13:1
+Mod @examples/ffi_full.exl:13:5
+(Ident raw) @examples/ffi_full.exl:13:9
+LBrace @examples/ffi_full.exl:13:13
+Extern @examples/ffi_full.exl:14:5
+Type @examples/ffi_full.exl:14:12
+(Ident ULONG) @examples/ffi_full.exl:14:17
+Semicolon @examples/ffi_full.exl:14:22
+Extern @examples/ffi_full.exl:15:5
+Struct @examples/ffi_full.exl:15:12
+(Ident Library) @examples/ffi_full.exl:15:19
+Semicolon @examples/ffi_full.exl:15:26
+Extern @examples/ffi_full.exl:17:5
+Const @examples/ffi_full.exl:17:12
+(Ident PRETEND_VERSION) @examples/ffi_full.exl:17:18
+Colon @examples/ffi_full.exl:17:33
+(Ident ULONG) @examples/ffi_full.exl:17:35
+Semicolon @examples/ffi_full.exl:17:40
+Extern @examples/ffi_full.exl:18:5
+Const @examples/ffi_full.exl:18:12
+(Ident PRETEND_FLAGS) @examples/ffi_full.exl:18:18
+Colon @examples/ffi_full.exl:18:31
+(Ident ULONG) @examples/ffi_full.exl:18:33
+Semicolon @examples/ffi_full.exl:18:38
+Extern @examples/ffi_full.exl:20:5
+Fn @examples/ffi_full.exl:20:12
+(Ident open_lib) @examples/ffi_full.exl:20:15
+As @examples/ffi_full.exl:20:24
+(Ident PretendOpenLibrary) @examples/ffi_full.exl:20:27
+LParen @examples/ffi_full.exl:20:45
+(Ident name) @examples/ffi_full.exl:20:46
+Colon @examples/ffi_full.exl:20:50
+(Ident str) @examples/ffi_full.exl:20:52
+Comma @examples/ffi_full.exl:20:55
+(Ident version) @examples/ffi_full.exl:20:57
+Colon @examples/ffi_full.exl:20:64
+(Ident ULONG) @examples/ffi_full.exl:20:66
+RParen @examples/ffi_full.exl:20:71
+Arrow @examples/ffi_full.exl:20:73
+Star @examples/ffi_full.exl:20:76
+(Ident Library) @examples/ffi_full.exl:20:77
+Semicolon @examples/ffi_full.exl:20:84
+Extern @examples/ffi_full.exl:21:5
+Fn @examples/ffi_full.exl:21:12
+(Ident close_lib) @examples/ffi_full.exl:21:15
+As @examples/ffi_full.exl:21:25
+(Ident PretendCloseLibrary) @examples/ffi_full.exl:21:28
+LParen @examples/ffi_full.exl:21:47
+(Ident lib) @examples/ffi_full.exl:21:48
+Colon @examples/ffi_full.exl:21:51
+Star @examples/ffi_full.exl:21:53
+(Ident Library) @examples/ffi_full.exl:21:54
+RParen @examples/ffi_full.exl:21:61
+Semicolon @examples/ffi_full.exl:21:62
+Extern @examples/ffi_full.exl:22:5
+Fn @examples/ffi_full.exl:22:12
+(Ident lib_id) @examples/ffi_full.exl:22:15
+As @examples/ffi_full.exl:22:22
+(Ident PretendLibraryID) @examples/ffi_full.exl:22:25
+LParen @examples/ffi_full.exl:22:41
+(Ident lib) @examples/ffi_full.exl:22:42
+Colon @examples/ffi_full.exl:22:45
+Star @examples/ffi_full.exl:22:47
+(Ident Library) @examples/ffi_full.exl:22:48
+RParen @examples/ffi_full.exl:22:55
+Arrow @examples/ffi_full.exl:22:57
+(Ident ULONG) @examples/ffi_full.exl:22:60
+Semicolon @examples/ffi_full.exl:22:65
+RBrace @examples/ffi_full.exl:23:1
+Fn @examples/ffi_full.exl:25:1
+(Ident main) @examples/ffi_full.exl:25:4
+LParen @examples/ffi_full.exl:25:8
+RParen @examples/ffi_full.exl:25:9
+LBrace @examples/ffi_full.exl:25:11
+Let @examples/ffi_full.exl:26:5
+(Ident lib) @examples/ffi_full.exl:26:9
+Colon @examples/ffi_full.exl:26:12
+Star @examples/ffi_full.exl:26:14
+(Ident Library) @examples/ffi_full.exl:26:15
+Eq @examples/ffi_full.exl:26:23
+(Ident raw) @examples/ffi_full.exl:26:25
+DoubleColon @examples/ffi_full.exl:26:28
+(Ident open_lib) @examples/ffi_full.exl:26:30
+LParen @examples/ffi_full.exl:26:38
+(String "pretend.library") @examples/ffi_full.exl:26:39
+Comma @examples/ffi_full.exl:26:56
+(Ident PRETEND_VERSION) @examples/ffi_full.exl:26:58
+RParen @examples/ffi_full.exl:26:73
+Semicolon @examples/ffi_full.exl:26:74
+(Ident println) @examples/ffi_full.exl:27:5
+LParen @examples/ffi_full.exl:27:12
+(Ident raw) @examples/ffi_full.exl:27:13
+DoubleColon @examples/ffi_full.exl:27:16
+(Ident lib_id) @examples/ffi_full.exl:27:18
+LParen @examples/ffi_full.exl:27:24
+(Ident lib) @examples/ffi_full.exl:27:25
+RParen @examples/ffi_full.exl:27:28
+As @examples/ffi_full.exl:27:30
+(Ident int) @examples/ffi_full.exl:27:33
+RParen @examples/ffi_full.exl:27:36
+Semicolon @examples/ffi_full.exl:27:37
+(Ident println) @examples/ffi_full.exl:28:5
+LParen @examples/ffi_full.exl:28:12
+(Ident PRETEND_FLAGS) @examples/ffi_full.exl:28:13
+As @examples/ffi_full.exl:28:27
+(Ident int) @examples/ffi_full.exl:28:30
+RParen @examples/ffi_full.exl:28:33
+Semicolon @examples/ffi_full.exl:28:34
+(Ident raw) @examples/ffi_full.exl:29:5
+DoubleColon @examples/ffi_full.exl:29:8
+(Ident close_lib) @examples/ffi_full.exl:29:10
+LParen @examples/ffi_full.exl:29:19
+(Ident lib) @examples/ffi_full.exl:29:20
+RParen @examples/ffi_full.exl:29:23
+Semicolon @examples/ffi_full.exl:29:24
+RBrace @examples/ffi_full.exl:30:1
+Eof @examples/ffi_full.exl:31:1

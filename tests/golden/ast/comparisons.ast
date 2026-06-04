@@ -1,0 +1,2 @@
+;; exile-ast-dump v1 examples/comparisons.exl
+(fn main (params ) void (body (let x (int 5)) (expr-stmt (call println (binop == (var x) (int 5)))) (expr-stmt (call println (binop != (var x) (int 0)))) (expr-stmt (call println (binop < (var x) (int 10)))) (expr-stmt (call println (binop > (var x) (int 0)))) (expr-stmt (call println (binop <= (var x) (int 5)))) (expr-stmt (call println (binop >= (var x) (int 5)))) (let yes (bool true)) (let no (bool false)) (expr-stmt (call println (var yes))) (expr-stmt (call println (var no)))))

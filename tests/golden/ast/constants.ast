@@ -1,0 +1,9 @@
+;; exile-ast-dump v1 examples/constants.exl
+(const WIDTH (int i32) (int 320))
+(const HEIGHT (int i32) (int 256))
+(const PIXELS (int i32) (binop * (var WIDTH) (var HEIGHT)))
+(module flags
+  (const READ (int i32) (binop << (int 1) (int 0)))
+  (const WRITE (int i32) (binop << (int 1) (int 1)))
+  (const RW (int i32) (binop | (var READ) (var WRITE))))
+(fn main (params ) void (body (expr-stmt (call println (var WIDTH))) (expr-stmt (call println (var HEIGHT))) (expr-stmt (call println (var PIXELS))) (expr-stmt (call println (enum-lit flags::RW))) (let half (binop / (var WIDTH) (int 2))) (expr-stmt (call println (var half)))))

@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/must_use.exl
+(fn checksum must-use (params (param payload (int i32))) (int i32) (body (return (binop + (binop * (var payload) (int 31)) (int 7)))))
+(fn try_div (params (param n (int i32)) (param d (int i32))) (struct-app Result (int i32) str) (body (expr-stmt (if (binop == (var d) (int 0)) (then (return (call Result::Err (string "div by zero")))))) (return (call Result::Ok (binop / (var n) (var d))))))
+(fn main (params ) void (body (let c (ty (int i32)) (call checksum (int 42))) (expr-stmt (call println (var c))) (let _ignored (ty (int i32)) (call checksum (int 99))) (tail (match (call try_div (int 10) (int 2)) (arm (pat-variant Result::Ok (pat-var q)) (call println (var q))) (arm (pat-variant Result::Err _) (call println (neg (int 1))))))))

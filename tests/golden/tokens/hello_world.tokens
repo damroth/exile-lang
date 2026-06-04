@@ -1,0 +1,13 @@
+;; exile-tokens-dump v1 examples/hello_world.exl
+Fn @examples/hello_world.exl:1:1
+(Ident main) @examples/hello_world.exl:1:4
+LParen @examples/hello_world.exl:1:8
+RParen @examples/hello_world.exl:1:9
+LBrace @examples/hello_world.exl:1:11
+(Ident println) @examples/hello_world.exl:2:5
+LParen @examples/hello_world.exl:2:12
+(String "Hello, World!") @examples/hello_world.exl:2:13
+RParen @examples/hello_world.exl:2:28
+Semicolon @examples/hello_world.exl:2:29
+RBrace @examples/hello_world.exl:3:1
+Eof @examples/hello_world.exl:4:1

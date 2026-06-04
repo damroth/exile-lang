@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/if_else.exl
+(fn abs (params (param x (int i32))) (int i32) (body (tail (if (binop < (var x) (int 0)) (then (return (neg (var x)))) (else (return (var x)))))))
+(fn classify (params (param n (int i32))) (int i32) (body (tail (if (binop < (var n) (int 0)) (then (return (neg (int 1)))) (else (tail (if (binop == (var n) (int 0)) (then (return (int 0))) (else (return (int 1))))))))))
+(fn main (params ) void (body (expr-stmt (call println (call abs (neg (int 7))))) (expr-stmt (call println (call abs (int 3)))) (expr-stmt (call println (call classify (neg (int 5))))) (expr-stmt (call println (call classify (int 0)))) (expr-stmt (call println (call classify (int 42))))))

@@ -1,0 +1,116 @@
+;; exile-tokens-dump v1 examples/ffi_callback.exl
+Pub @examples/ffi_callback.exl:17:1
+Mod @examples/ffi_callback.exl:17:5
+(Ident raw) @examples/ffi_callback.exl:17:9
+LBrace @examples/ffi_callback.exl:17:13
+Extern @examples/ffi_callback.exl:18:5
+Fn @examples/ffi_callback.exl:18:12
+(Ident apply_int) @examples/ffi_callback.exl:18:15
+As @examples/ffi_callback.exl:18:25
+(Ident ffi_apply_int) @examples/ffi_callback.exl:18:28
+LParen @examples/ffi_callback.exl:18:41
+(Ident x) @examples/ffi_callback.exl:18:42
+Colon @examples/ffi_callback.exl:18:43
+(Ident c_int) @examples/ffi_callback.exl:18:45
+Comma @examples/ffi_callback.exl:18:50
+(Ident f) @examples/ffi_callback.exl:18:52
+Colon @examples/ffi_callback.exl:18:53
+Fn @examples/ffi_callback.exl:18:55
+LParen @examples/ffi_callback.exl:18:57
+(Ident c_int) @examples/ffi_callback.exl:18:58
+RParen @examples/ffi_callback.exl:18:63
+Arrow @examples/ffi_callback.exl:18:65
+(Ident c_int) @examples/ffi_callback.exl:18:68
+RParen @examples/ffi_callback.exl:18:73
+Arrow @examples/ffi_callback.exl:18:75
+(Ident c_int) @examples/ffi_callback.exl:18:78
+Semicolon @examples/ffi_callback.exl:18:83
+RBrace @examples/ffi_callback.exl:19:1
+Fn @examples/ffi_callback.exl:21:1
+(Ident double_it) @examples/ffi_callback.exl:21:4
+LParen @examples/ffi_callback.exl:21:13
+(Ident x) @examples/ffi_callback.exl:21:14
+Colon @examples/ffi_callback.exl:21:15
+(Ident c_int) @examples/ffi_callback.exl:21:17
+RParen @examples/ffi_callback.exl:21:22
+Arrow @examples/ffi_callback.exl:21:24
+(Ident c_int) @examples/ffi_callback.exl:21:27
+LBrace @examples/ffi_callback.exl:21:33
+Return @examples/ffi_callback.exl:22:5
+(Ident x) @examples/ffi_callback.exl:22:12
+Plus @examples/ffi_callback.exl:22:14
+(Ident x) @examples/ffi_callback.exl:22:16
+Semicolon @examples/ffi_callback.exl:22:17
+RBrace @examples/ffi_callback.exl:23:1
+Fn @examples/ffi_callback.exl:25:1
+(Ident negate) @examples/ffi_callback.exl:25:4
+LParen @examples/ffi_callback.exl:25:10
+(Ident x) @examples/ffi_callback.exl:25:11
+Colon @examples/ffi_callback.exl:25:12
+(Ident c_int) @examples/ffi_callback.exl:25:14
+RParen @examples/ffi_callback.exl:25:19
+Arrow @examples/ffi_callback.exl:25:21
+(Ident c_int) @examples/ffi_callback.exl:25:24
+LBrace @examples/ffi_callback.exl:25:30
+Return @examples/ffi_callback.exl:26:5
+Minus @examples/ffi_callback.exl:26:12
+(Ident x) @examples/ffi_callback.exl:26:13
+Semicolon @examples/ffi_callback.exl:26:14
+RBrace @examples/ffi_callback.exl:27:1
+Fn @examples/ffi_callback.exl:29:1
+(Ident main) @examples/ffi_callback.exl:29:4
+LParen @examples/ffi_callback.exl:29:8
+RParen @examples/ffi_callback.exl:29:9
+LBrace @examples/ffi_callback.exl:29:11
+(Ident println) @examples/ffi_callback.exl:30:5
+LParen @examples/ffi_callback.exl:30:12
+(Ident raw) @examples/ffi_callback.exl:30:13
+DoubleColon @examples/ffi_callback.exl:30:16
+(Ident apply_int) @examples/ffi_callback.exl:30:18
+LParen @examples/ffi_callback.exl:30:27
+(Int 21) @examples/ffi_callback.exl:30:28
+Comma @examples/ffi_callback.exl:30:30
+(Ident double_it) @examples/ffi_callback.exl:30:32
+RParen @examples/ffi_callback.exl:30:41
+As @examples/ffi_callback.exl:30:43
+(Ident int) @examples/ffi_callback.exl:30:46
+RParen @examples/ffi_callback.exl:30:49
+Semicolon @examples/ffi_callback.exl:30:50
+(Ident println) @examples/ffi_callback.exl:31:5
+LParen @examples/ffi_callback.exl:31:12
+(Ident raw) @examples/ffi_callback.exl:31:13
+DoubleColon @examples/ffi_callback.exl:31:16
+(Ident apply_int) @examples/ffi_callback.exl:31:18
+LParen @examples/ffi_callback.exl:31:27
+(Int 7) @examples/ffi_callback.exl:31:28
+Comma @examples/ffi_callback.exl:31:29
+(Ident negate) @examples/ffi_callback.exl:31:31
+RParen @examples/ffi_callback.exl:31:37
+As @examples/ffi_callback.exl:31:39
+(Ident int) @examples/ffi_callback.exl:31:42
+RParen @examples/ffi_callback.exl:31:45
+Semicolon @examples/ffi_callback.exl:31:46
+Let @examples/ffi_callback.exl:34:5
+(Ident f) @examples/ffi_callback.exl:34:9
+Colon @examples/ffi_callback.exl:34:10
+Fn @examples/ffi_callback.exl:34:12
+LParen @examples/ffi_callback.exl:34:14
+(Ident c_int) @examples/ffi_callback.exl:34:15
+RParen @examples/ffi_callback.exl:34:20
+Arrow @examples/ffi_callback.exl:34:22
+(Ident c_int) @examples/ffi_callback.exl:34:25
+Eq @examples/ffi_callback.exl:34:31
+(Ident double_it) @examples/ffi_callback.exl:34:33
+Semicolon @examples/ffi_callback.exl:34:42
+(Ident println) @examples/ffi_callback.exl:35:5
+LParen @examples/ffi_callback.exl:35:12
+(Ident f) @examples/ffi_callback.exl:35:13
+LParen @examples/ffi_callback.exl:35:14
+(Int 50) @examples/ffi_callback.exl:35:15
+RParen @examples/ffi_callback.exl:35:17
+As @examples/ffi_callback.exl:35:19
+(Ident int) @examples/ffi_callback.exl:35:22
+RParen @examples/ffi_callback.exl:35:25
+Semicolon @examples/ffi_callback.exl:35:26
+RBrace @examples/ffi_callback.exl:36:1
+Eof @examples/ffi_callback.exl:37:1

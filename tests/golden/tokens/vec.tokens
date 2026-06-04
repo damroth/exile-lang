@@ -1,0 +1,260 @@
+;; exile-tokens-dump v1 examples/vec.exl
+Pub @examples/vec.exl:18:1
+Mod @examples/vec.exl:18:5
+(Ident raw) @examples/vec.exl:18:9
+LBrace @examples/vec.exl:18:13
+Extern @examples/vec.exl:19:5
+Fn @examples/vec.exl:19:12
+(Ident make_c_allocator) @examples/vec.exl:19:15
+LParen @examples/vec.exl:19:31
+RParen @examples/vec.exl:19:32
+Arrow @examples/vec.exl:19:34
+(Ident Allocator) @examples/vec.exl:19:37
+Semicolon @examples/vec.exl:19:46
+RBrace @examples/vec.exl:20:1
+Fn @examples/vec.exl:22:1
+(Ident main) @examples/vec.exl:22:4
+LParen @examples/vec.exl:22:8
+RParen @examples/vec.exl:22:9
+LBrace @examples/vec.exl:22:11
+Let @examples/vec.exl:23:5
+(Ident a) @examples/vec.exl:23:9
+Eq @examples/vec.exl:23:11
+(Ident raw) @examples/vec.exl:23:13
+DoubleColon @examples/vec.exl:23:16
+(Ident make_c_allocator) @examples/vec.exl:23:18
+LParen @examples/vec.exl:23:34
+RParen @examples/vec.exl:23:35
+Semicolon @examples/vec.exl:23:36
+Let @examples/vec.exl:24:5
+Mut @examples/vec.exl:24:9
+(Ident v) @examples/vec.exl:24:13
+Colon @examples/vec.exl:24:14
+(Ident Vec) @examples/vec.exl:24:16
+Lt @examples/vec.exl:24:19
+(Ident int) @examples/vec.exl:24:20
+Gt @examples/vec.exl:24:23
+Eq @examples/vec.exl:24:25
+(Ident Vec) @examples/vec.exl:24:27
+DoubleColon @examples/vec.exl:24:30
+(Ident with_capacity) @examples/vec.exl:24:32
+LParen @examples/vec.exl:24:45
+(Ident a) @examples/vec.exl:24:46
+Comma @examples/vec.exl:24:47
+(Int 8) @examples/vec.exl:24:49
+As @examples/vec.exl:24:51
+(Ident u32) @examples/vec.exl:24:54
+RParen @examples/vec.exl:24:57
+Semicolon @examples/vec.exl:24:58
+(Ident v) @examples/vec.exl:27:5
+Dot @examples/vec.exl:27:6
+(Ident push) @examples/vec.exl:27:7
+LParen @examples/vec.exl:27:11
+(Int 10) @examples/vec.exl:27:12
+RParen @examples/vec.exl:27:14
+Semicolon @examples/vec.exl:27:15
+(Ident v) @examples/vec.exl:28:5
+Dot @examples/vec.exl:28:6
+(Ident push) @examples/vec.exl:28:7
+LParen @examples/vec.exl:28:11
+(Int 20) @examples/vec.exl:28:12
+RParen @examples/vec.exl:28:14
+Semicolon @examples/vec.exl:28:15
+(Ident v) @examples/vec.exl:29:5
+Dot @examples/vec.exl:29:6
+(Ident push) @examples/vec.exl:29:7
+LParen @examples/vec.exl:29:11
+(Int 30) @examples/vec.exl:29:12
+RParen @examples/vec.exl:29:14
+Semicolon @examples/vec.exl:29:15
+(Ident v) @examples/vec.exl:30:5
+Dot @examples/vec.exl:30:6
+(Ident push) @examples/vec.exl:30:7
+LParen @examples/vec.exl:30:11
+(Int 40) @examples/vec.exl:30:12
+RParen @examples/vec.exl:30:14
+Semicolon @examples/vec.exl:30:15
+(Ident v) @examples/vec.exl:31:5
+Dot @examples/vec.exl:31:6
+(Ident push) @examples/vec.exl:31:7
+LParen @examples/vec.exl:31:11
+(Int 50) @examples/vec.exl:31:12
+RParen @examples/vec.exl:31:14
+Semicolon @examples/vec.exl:31:15
+(Ident println) @examples/vec.exl:32:5
+LParen @examples/vec.exl:32:12
+(Ident v) @examples/vec.exl:32:13
+Dot @examples/vec.exl:32:14
+(Ident len) @examples/vec.exl:32:15
+LParen @examples/vec.exl:32:18
+RParen @examples/vec.exl:32:19
+As @examples/vec.exl:32:21
+(Ident int) @examples/vec.exl:32:24
+RParen @examples/vec.exl:32:27
+Semicolon @examples/vec.exl:32:28
+Match @examples/vec.exl:35:5
+(Ident v) @examples/vec.exl:35:11
+Dot @examples/vec.exl:35:12
+(Ident get) @examples/vec.exl:35:13
+LParen @examples/vec.exl:35:16
+(Int 0) @examples/vec.exl:35:17
+As @examples/vec.exl:35:19
+(Ident u32) @examples/vec.exl:35:22
+RParen @examples/vec.exl:35:25
+LBrace @examples/vec.exl:35:27
+(Ident Option) @examples/vec.exl:36:9
+DoubleColon @examples/vec.exl:36:15
+(Ident Some) @examples/vec.exl:36:17
+LParen @examples/vec.exl:36:21
+(Ident x) @examples/vec.exl:36:22
+RParen @examples/vec.exl:36:23
+FatArrow @examples/vec.exl:36:25
+LBrace @examples/vec.exl:36:28
+(Ident println) @examples/vec.exl:36:30
+LParen @examples/vec.exl:36:37
+(Ident x) @examples/vec.exl:36:38
+RParen @examples/vec.exl:36:39
+Semicolon @examples/vec.exl:36:40
+RBrace @examples/vec.exl:36:42
+Pipe @examples/vec.exl:37:9
+(Ident Option) @examples/vec.exl:37:11
+DoubleColon @examples/vec.exl:37:17
+(Ident None) @examples/vec.exl:37:19
+FatArrow @examples/vec.exl:37:25
+LBrace @examples/vec.exl:37:28
+(Ident println) @examples/vec.exl:37:30
+LParen @examples/vec.exl:37:37
+Minus @examples/vec.exl:37:38
+(Int 1) @examples/vec.exl:37:39
+RParen @examples/vec.exl:37:40
+Semicolon @examples/vec.exl:37:41
+RBrace @examples/vec.exl:37:43
+RBrace @examples/vec.exl:38:5
+Match @examples/vec.exl:39:5
+(Ident v) @examples/vec.exl:39:11
+Dot @examples/vec.exl:39:12
+(Ident get) @examples/vec.exl:39:13
+LParen @examples/vec.exl:39:16
+(Int 4) @examples/vec.exl:39:17
+As @examples/vec.exl:39:19
+(Ident u32) @examples/vec.exl:39:22
+RParen @examples/vec.exl:39:25
+LBrace @examples/vec.exl:39:27
+(Ident Option) @examples/vec.exl:40:9
+DoubleColon @examples/vec.exl:40:15
+(Ident Some) @examples/vec.exl:40:17
+LParen @examples/vec.exl:40:21
+(Ident x) @examples/vec.exl:40:22
+RParen @examples/vec.exl:40:23
+FatArrow @examples/vec.exl:40:25
+LBrace @examples/vec.exl:40:28
+(Ident println) @examples/vec.exl:40:30
+LParen @examples/vec.exl:40:37
+(Ident x) @examples/vec.exl:40:38
+RParen @examples/vec.exl:40:39
+Semicolon @examples/vec.exl:40:40
+RBrace @examples/vec.exl:40:42
+Pipe @examples/vec.exl:41:9
+(Ident Option) @examples/vec.exl:41:11
+DoubleColon @examples/vec.exl:41:17
+(Ident None) @examples/vec.exl:41:19
+FatArrow @examples/vec.exl:41:25
+LBrace @examples/vec.exl:41:28
+(Ident println) @examples/vec.exl:41:30
+LParen @examples/vec.exl:41:37
+Minus @examples/vec.exl:41:38
+(Int 1) @examples/vec.exl:41:39
+RParen @examples/vec.exl:41:40
+Semicolon @examples/vec.exl:41:41
+RBrace @examples/vec.exl:41:43
+RBrace @examples/vec.exl:42:5
+Match @examples/vec.exl:43:5
+(Ident v) @examples/vec.exl:43:11
+Dot @examples/vec.exl:43:12
+(Ident get) @examples/vec.exl:43:13
+LParen @examples/vec.exl:43:16
+(Int 99) @examples/vec.exl:43:17
+As @examples/vec.exl:43:20
+(Ident u32) @examples/vec.exl:43:23
+RParen @examples/vec.exl:43:26
+LBrace @examples/vec.exl:43:28
+(Ident Option) @examples/vec.exl:44:9
+DoubleColon @examples/vec.exl:44:15
+(Ident Some) @examples/vec.exl:44:17
+LParen @examples/vec.exl:44:21
+(Ident x) @examples/vec.exl:44:22
+RParen @examples/vec.exl:44:23
+FatArrow @examples/vec.exl:44:25
+LBrace @examples/vec.exl:44:28
+(Ident println) @examples/vec.exl:44:30
+LParen @examples/vec.exl:44:37
+(Ident x) @examples/vec.exl:44:38
+RParen @examples/vec.exl:44:39
+Semicolon @examples/vec.exl:44:40
+RBrace @examples/vec.exl:44:42
+Pipe @examples/vec.exl:45:9
+(Ident Option) @examples/vec.exl:45:11
+DoubleColon @examples/vec.exl:45:17
+(Ident None) @examples/vec.exl:45:19
+FatArrow @examples/vec.exl:45:25
+LBrace @examples/vec.exl:45:28
+(Ident println) @examples/vec.exl:45:30
+LParen @examples/vec.exl:45:37
+Minus @examples/vec.exl:45:38
+(Int 1) @examples/vec.exl:45:39
+RParen @examples/vec.exl:45:40
+Semicolon @examples/vec.exl:45:41
+RBrace @examples/vec.exl:45:43
+RBrace @examples/vec.exl:46:5
+Let @examples/vec.exl:50:5
+(Ident s) @examples/vec.exl:50:9
+Eq @examples/vec.exl:50:11
+(Ident v) @examples/vec.exl:50:13
+Dot @examples/vec.exl:50:14
+(Ident as_slice) @examples/vec.exl:50:15
+LParen @examples/vec.exl:50:23
+RParen @examples/vec.exl:50:24
+Semicolon @examples/vec.exl:50:25
+(Ident println) @examples/vec.exl:51:5
+LParen @examples/vec.exl:51:12
+(Ident s) @examples/vec.exl:51:13
+LBracket @examples/vec.exl:51:14
+(Int 2) @examples/vec.exl:51:15
+RBracket @examples/vec.exl:51:16
+RParen @examples/vec.exl:51:17
+Semicolon @examples/vec.exl:51:18
+Let @examples/vec.exl:56:5
+Mut @examples/vec.exl:56:9
+(Ident sum) @examples/vec.exl:56:13
+Eq @examples/vec.exl:56:17
+(Int 0) @examples/vec.exl:56:19
+Semicolon @examples/vec.exl:56:20
+Let @examples/vec.exl:57:5
+Mut @examples/vec.exl:57:9
+(Ident it) @examples/vec.exl:57:13
+Eq @examples/vec.exl:57:16
+(Ident v) @examples/vec.exl:57:18
+Dot @examples/vec.exl:57:19
+(Ident iter) @examples/vec.exl:57:20
+LParen @examples/vec.exl:57:24
+RParen @examples/vec.exl:57:25
+Semicolon @examples/vec.exl:57:26
+For @examples/vec.exl:58:5
+(Ident x) @examples/vec.exl:58:9
+In @examples/vec.exl:58:11
+(Ident it) @examples/vec.exl:58:14
+LBrace @examples/vec.exl:58:17
+(Ident sum) @examples/vec.exl:58:19
+Eq @examples/vec.exl:58:23
+(Ident sum) @examples/vec.exl:58:25
+Plus @examples/vec.exl:58:29
+(Ident x) @examples/vec.exl:58:31
+Semicolon @examples/vec.exl:58:32
+RBrace @examples/vec.exl:58:34
+(Ident println) @examples/vec.exl:59:5
+LParen @examples/vec.exl:59:12
+(Ident sum) @examples/vec.exl:59:13
+RParen @examples/vec.exl:59:16
+Semicolon @examples/vec.exl:59:17
+RBrace @examples/vec.exl:60:1
+Eof @examples/vec.exl:61:1

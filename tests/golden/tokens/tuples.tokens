@@ -1,0 +1,219 @@
+;; exile-tokens-dump v1 examples/tuples.exl
+Fn @examples/tuples.exl:1:1
+(Ident split) @examples/tuples.exl:1:4
+LParen @examples/tuples.exl:1:9
+(Ident n) @examples/tuples.exl:1:10
+Colon @examples/tuples.exl:1:11
+(Ident int) @examples/tuples.exl:1:13
+RParen @examples/tuples.exl:1:16
+Arrow @examples/tuples.exl:1:18
+LParen @examples/tuples.exl:1:21
+(Ident int) @examples/tuples.exl:1:22
+Comma @examples/tuples.exl:1:25
+(Ident int) @examples/tuples.exl:1:27
+RParen @examples/tuples.exl:1:30
+LBrace @examples/tuples.exl:1:32
+Return @examples/tuples.exl:2:5
+LParen @examples/tuples.exl:2:12
+(Ident n) @examples/tuples.exl:2:13
+Star @examples/tuples.exl:2:15
+(Int 2) @examples/tuples.exl:2:17
+Comma @examples/tuples.exl:2:18
+(Ident n) @examples/tuples.exl:2:20
+Star @examples/tuples.exl:2:22
+(Int 3) @examples/tuples.exl:2:24
+RParen @examples/tuples.exl:2:25
+Semicolon @examples/tuples.exl:2:26
+RBrace @examples/tuples.exl:3:1
+Fn @examples/tuples.exl:5:1
+(Ident min_max) @examples/tuples.exl:5:4
+LParen @examples/tuples.exl:5:11
+(Ident a) @examples/tuples.exl:5:12
+Colon @examples/tuples.exl:5:13
+(Ident int) @examples/tuples.exl:5:15
+Comma @examples/tuples.exl:5:18
+(Ident b) @examples/tuples.exl:5:20
+Colon @examples/tuples.exl:5:21
+(Ident int) @examples/tuples.exl:5:23
+RParen @examples/tuples.exl:5:26
+Arrow @examples/tuples.exl:5:28
+LParen @examples/tuples.exl:5:31
+(Ident int) @examples/tuples.exl:5:32
+Comma @examples/tuples.exl:5:35
+(Ident int) @examples/tuples.exl:5:37
+RParen @examples/tuples.exl:5:40
+LBrace @examples/tuples.exl:5:42
+If @examples/tuples.exl:6:5
+(Ident a) @examples/tuples.exl:6:8
+Lt @examples/tuples.exl:6:10
+(Ident b) @examples/tuples.exl:6:12
+LBrace @examples/tuples.exl:6:14
+Return @examples/tuples.exl:7:9
+LParen @examples/tuples.exl:7:16
+(Ident a) @examples/tuples.exl:7:17
+Comma @examples/tuples.exl:7:18
+(Ident b) @examples/tuples.exl:7:20
+RParen @examples/tuples.exl:7:21
+Semicolon @examples/tuples.exl:7:22
+RBrace @examples/tuples.exl:8:5
+Else @examples/tuples.exl:8:7
+LBrace @examples/tuples.exl:8:12
+Return @examples/tuples.exl:9:9
+LParen @examples/tuples.exl:9:16
+(Ident b) @examples/tuples.exl:9:17
+Comma @examples/tuples.exl:9:18
+(Ident a) @examples/tuples.exl:9:20
+RParen @examples/tuples.exl:9:21
+Semicolon @examples/tuples.exl:9:22
+RBrace @examples/tuples.exl:10:5
+RBrace @examples/tuples.exl:11:1
+Fn @examples/tuples.exl:13:1
+(Ident label_score) @examples/tuples.exl:13:4
+LParen @examples/tuples.exl:13:15
+(Ident score) @examples/tuples.exl:13:16
+Colon @examples/tuples.exl:13:21
+(Ident int) @examples/tuples.exl:13:23
+RParen @examples/tuples.exl:13:26
+Arrow @examples/tuples.exl:13:28
+LParen @examples/tuples.exl:13:31
+(Ident str) @examples/tuples.exl:13:32
+Comma @examples/tuples.exl:13:35
+(Ident int) @examples/tuples.exl:13:37
+RParen @examples/tuples.exl:13:40
+LBrace @examples/tuples.exl:13:42
+If @examples/tuples.exl:14:5
+(Ident score) @examples/tuples.exl:14:8
+GtEq @examples/tuples.exl:14:14
+(Int 90) @examples/tuples.exl:14:17
+LBrace @examples/tuples.exl:14:20
+Return @examples/tuples.exl:15:9
+LParen @examples/tuples.exl:15:16
+(String "A") @examples/tuples.exl:15:17
+Comma @examples/tuples.exl:15:20
+(Ident score) @examples/tuples.exl:15:22
+RParen @examples/tuples.exl:15:27
+Semicolon @examples/tuples.exl:15:28
+RBrace @examples/tuples.exl:16:5
+Else @examples/tuples.exl:16:7
+If @examples/tuples.exl:16:12
+(Ident score) @examples/tuples.exl:16:15
+GtEq @examples/tuples.exl:16:21
+(Int 70) @examples/tuples.exl:16:24
+LBrace @examples/tuples.exl:16:27
+Return @examples/tuples.exl:17:9
+LParen @examples/tuples.exl:17:16
+(String "B") @examples/tuples.exl:17:17
+Comma @examples/tuples.exl:17:20
+(Ident score) @examples/tuples.exl:17:22
+RParen @examples/tuples.exl:17:27
+Semicolon @examples/tuples.exl:17:28
+RBrace @examples/tuples.exl:18:5
+Else @examples/tuples.exl:18:7
+LBrace @examples/tuples.exl:18:12
+Return @examples/tuples.exl:19:9
+LParen @examples/tuples.exl:19:16
+(String "C") @examples/tuples.exl:19:17
+Comma @examples/tuples.exl:19:20
+(Ident score) @examples/tuples.exl:19:22
+RParen @examples/tuples.exl:19:27
+Semicolon @examples/tuples.exl:19:28
+RBrace @examples/tuples.exl:20:5
+RBrace @examples/tuples.exl:21:1
+Fn @examples/tuples.exl:23:1
+(Ident main) @examples/tuples.exl:23:4
+LParen @examples/tuples.exl:23:8
+RParen @examples/tuples.exl:23:9
+LBrace @examples/tuples.exl:23:11
+Let @examples/tuples.exl:24:5
+LParen @examples/tuples.exl:24:9
+(Ident a) @examples/tuples.exl:24:10
+Comma @examples/tuples.exl:24:11
+(Ident b) @examples/tuples.exl:24:13
+RParen @examples/tuples.exl:24:14
+Eq @examples/tuples.exl:24:16
+(Ident split) @examples/tuples.exl:24:18
+LParen @examples/tuples.exl:24:23
+(Int 5) @examples/tuples.exl:24:24
+RParen @examples/tuples.exl:24:25
+Semicolon @examples/tuples.exl:24:26
+(Ident println) @examples/tuples.exl:25:5
+LParen @examples/tuples.exl:25:12
+(Ident a) @examples/tuples.exl:25:13
+RParen @examples/tuples.exl:25:14
+Semicolon @examples/tuples.exl:25:15
+(Ident println) @examples/tuples.exl:26:5
+LParen @examples/tuples.exl:26:12
+(Ident b) @examples/tuples.exl:26:13
+RParen @examples/tuples.exl:26:14
+Semicolon @examples/tuples.exl:26:15
+Let @examples/tuples.exl:28:5
+LParen @examples/tuples.exl:28:9
+(Ident lo) @examples/tuples.exl:28:10
+Comma @examples/tuples.exl:28:12
+(Ident hi) @examples/tuples.exl:28:14
+RParen @examples/tuples.exl:28:16
+Eq @examples/tuples.exl:28:18
+(Ident min_max) @examples/tuples.exl:28:20
+LParen @examples/tuples.exl:28:27
+(Int 7) @examples/tuples.exl:28:28
+Comma @examples/tuples.exl:28:29
+(Int 3) @examples/tuples.exl:28:31
+RParen @examples/tuples.exl:28:32
+Semicolon @examples/tuples.exl:28:33
+(Ident println) @examples/tuples.exl:29:5
+LParen @examples/tuples.exl:29:12
+(Ident lo) @examples/tuples.exl:29:13
+RParen @examples/tuples.exl:29:15
+Semicolon @examples/tuples.exl:29:16
+(Ident println) @examples/tuples.exl:30:5
+LParen @examples/tuples.exl:30:12
+(Ident hi) @examples/tuples.exl:30:13
+RParen @examples/tuples.exl:30:15
+Semicolon @examples/tuples.exl:30:16
+Let @examples/tuples.exl:32:5
+LParen @examples/tuples.exl:32:9
+(Ident grade) @examples/tuples.exl:32:10
+Comma @examples/tuples.exl:32:15
+(Ident points) @examples/tuples.exl:32:17
+RParen @examples/tuples.exl:32:23
+Eq @examples/tuples.exl:32:25
+(Ident label_score) @examples/tuples.exl:32:27
+LParen @examples/tuples.exl:32:38
+(Int 85) @examples/tuples.exl:32:39
+RParen @examples/tuples.exl:32:41
+Semicolon @examples/tuples.exl:32:42
+(Ident println) @examples/tuples.exl:33:5
+LParen @examples/tuples.exl:33:12
+(Ident grade) @examples/tuples.exl:33:13
+RParen @examples/tuples.exl:33:18
+Semicolon @examples/tuples.exl:33:19
+(Ident println) @examples/tuples.exl:34:5
+LParen @examples/tuples.exl:34:12
+(Ident points) @examples/tuples.exl:34:13
+RParen @examples/tuples.exl:34:19
+Semicolon @examples/tuples.exl:34:20
+Let @examples/tuples.exl:36:5
+LParen @examples/tuples.exl:36:9
+(Ident x) @examples/tuples.exl:36:10
+Comma @examples/tuples.exl:36:11
+(Ident y) @examples/tuples.exl:36:13
+RParen @examples/tuples.exl:36:14
+Eq @examples/tuples.exl:36:16
+LParen @examples/tuples.exl:36:18
+(Int 10) @examples/tuples.exl:36:19
+Comma @examples/tuples.exl:36:21
+(Int 20) @examples/tuples.exl:36:23
+RParen @examples/tuples.exl:36:25
+Semicolon @examples/tuples.exl:36:26
+(Ident println) @examples/tuples.exl:37:5
+LParen @examples/tuples.exl:37:12
+(Ident x) @examples/tuples.exl:37:13
+RParen @examples/tuples.exl:37:14
+Semicolon @examples/tuples.exl:37:15
+(Ident println) @examples/tuples.exl:38:5
+LParen @examples/tuples.exl:38:12
+(Ident y) @examples/tuples.exl:38:13
+RParen @examples/tuples.exl:38:14
+Semicolon @examples/tuples.exl:38:15
+RBrace @examples/tuples.exl:39:1
+Eof @examples/tuples.exl:40:1

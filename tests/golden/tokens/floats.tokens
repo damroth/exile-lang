@@ -1,0 +1,147 @@
+;; exile-tokens-dump v1 examples/floats.exl
+Fn @examples/floats.exl:32:1
+(Ident main) @examples/floats.exl:32:4
+LParen @examples/floats.exl:32:8
+RParen @examples/floats.exl:32:9
+LBrace @examples/floats.exl:32:11
+Let @examples/floats.exl:34:5
+(Ident pi) @examples/floats.exl:34:9
+Colon @examples/floats.exl:34:11
+(Ident f64) @examples/floats.exl:34:13
+Eq @examples/floats.exl:34:17
+(Float 0x1.921f9f01b866ep+1 f64) @examples/floats.exl:34:19
+Semicolon @examples/floats.exl:34:26
+Let @examples/floats.exl:35:5
+(Ident two) @examples/floats.exl:35:9
+Colon @examples/floats.exl:35:12
+(Ident f64) @examples/floats.exl:35:14
+Eq @examples/floats.exl:35:18
+(Float 0x1p+1 f64) @examples/floats.exl:35:20
+Semicolon @examples/floats.exl:35:23
+(Ident println) @examples/floats.exl:36:5
+LParen @examples/floats.exl:36:12
+(Ident pi) @examples/floats.exl:36:13
+Plus @examples/floats.exl:36:16
+(Ident two) @examples/floats.exl:36:18
+RParen @examples/floats.exl:36:21
+Semicolon @examples/floats.exl:36:22
+(Ident println) @examples/floats.exl:37:5
+LParen @examples/floats.exl:37:12
+(Ident pi) @examples/floats.exl:37:13
+Star @examples/floats.exl:37:16
+(Ident two) @examples/floats.exl:37:18
+RParen @examples/floats.exl:37:21
+Semicolon @examples/floats.exl:37:22
+(Ident println) @examples/floats.exl:38:5
+LParen @examples/floats.exl:38:12
+(Ident pi) @examples/floats.exl:38:13
+Minus @examples/floats.exl:38:16
+(Ident two) @examples/floats.exl:38:18
+RParen @examples/floats.exl:38:21
+Semicolon @examples/floats.exl:38:22
+(Ident println) @examples/floats.exl:39:5
+LParen @examples/floats.exl:39:12
+(Ident pi) @examples/floats.exl:39:13
+Slash @examples/floats.exl:39:16
+(Ident two) @examples/floats.exl:39:18
+RParen @examples/floats.exl:39:21
+Semicolon @examples/floats.exl:39:22
+If @examples/floats.exl:42:5
+(Ident pi) @examples/floats.exl:42:8
+Gt @examples/floats.exl:42:11
+(Ident two) @examples/floats.exl:42:13
+LBrace @examples/floats.exl:42:17
+(Ident println) @examples/floats.exl:42:19
+LParen @examples/floats.exl:42:26
+(Int 1) @examples/floats.exl:42:27
+RParen @examples/floats.exl:42:28
+Semicolon @examples/floats.exl:42:29
+RBrace @examples/floats.exl:42:31
+Else @examples/floats.exl:42:33
+LBrace @examples/floats.exl:42:38
+(Ident println) @examples/floats.exl:42:40
+LParen @examples/floats.exl:42:47
+(Int 0) @examples/floats.exl:42:48
+RParen @examples/floats.exl:42:49
+Semicolon @examples/floats.exl:42:50
+RBrace @examples/floats.exl:42:52
+(Ident println) @examples/floats.exl:43:5
+LParen @examples/floats.exl:43:12
+Minus @examples/floats.exl:43:13
+(Ident pi) @examples/floats.exl:43:14
+RParen @examples/floats.exl:43:16
+Semicolon @examples/floats.exl:43:17
+Let @examples/floats.exl:47:5
+(Ident a) @examples/floats.exl:47:9
+Colon @examples/floats.exl:47:10
+(Ident f32) @examples/floats.exl:47:12
+Eq @examples/floats.exl:47:16
+(Float 0x1.8p+0 f32) @examples/floats.exl:47:18
+Semicolon @examples/floats.exl:47:24
+Let @examples/floats.exl:48:5
+(Ident b) @examples/floats.exl:48:9
+Colon @examples/floats.exl:48:10
+(Ident f32) @examples/floats.exl:48:12
+Eq @examples/floats.exl:48:16
+(Float 0x1.2p+1 f32) @examples/floats.exl:48:18
+Semicolon @examples/floats.exl:48:25
+(Ident println) @examples/floats.exl:49:5
+LParen @examples/floats.exl:49:12
+(Ident a) @examples/floats.exl:49:13
+Plus @examples/floats.exl:49:15
+(Ident b) @examples/floats.exl:49:17
+RParen @examples/floats.exl:49:18
+Semicolon @examples/floats.exl:49:19
+Let @examples/floats.exl:53:5
+(Ident i) @examples/floats.exl:53:9
+Colon @examples/floats.exl:53:10
+(Ident int) @examples/floats.exl:53:12
+Eq @examples/floats.exl:53:16
+(Int 7) @examples/floats.exl:53:18
+Semicolon @examples/floats.exl:53:19
+Let @examples/floats.exl:54:5
+(Ident f) @examples/floats.exl:54:9
+Colon @examples/floats.exl:54:10
+(Ident f64) @examples/floats.exl:54:12
+Eq @examples/floats.exl:54:16
+(Ident i) @examples/floats.exl:54:18
+As @examples/floats.exl:54:20
+(Ident f64) @examples/floats.exl:54:23
+Semicolon @examples/floats.exl:54:26
+Let @examples/floats.exl:55:5
+(Ident g) @examples/floats.exl:55:9
+Colon @examples/floats.exl:55:10
+(Ident f32) @examples/floats.exl:55:12
+Eq @examples/floats.exl:55:16
+(Ident f) @examples/floats.exl:55:18
+As @examples/floats.exl:55:20
+(Ident f32) @examples/floats.exl:55:23
+Semicolon @examples/floats.exl:55:26
+Let @examples/floats.exl:56:5
+(Ident back) @examples/floats.exl:56:9
+Colon @examples/floats.exl:56:13
+(Ident int) @examples/floats.exl:56:15
+Eq @examples/floats.exl:56:19
+(Ident g) @examples/floats.exl:56:21
+As @examples/floats.exl:56:23
+(Ident int) @examples/floats.exl:56:26
+Semicolon @examples/floats.exl:56:29
+(Ident println) @examples/floats.exl:57:5
+LParen @examples/floats.exl:57:12
+(Ident back) @examples/floats.exl:57:13
+RParen @examples/floats.exl:57:17
+Semicolon @examples/floats.exl:57:18
+Let @examples/floats.exl:60:5
+(Ident avogadro) @examples/floats.exl:60:9
+Colon @examples/floats.exl:60:17
+(Ident f64) @examples/floats.exl:60:19
+Eq @examples/floats.exl:60:23
+(Float 0x1.fe154f457ea13p+78 f64) @examples/floats.exl:60:25
+Semicolon @examples/floats.exl:60:33
+(Ident println) @examples/floats.exl:61:5
+LParen @examples/floats.exl:61:12
+(Ident avogadro) @examples/floats.exl:61:13
+RParen @examples/floats.exl:61:21
+Semicolon @examples/floats.exl:61:22
+RBrace @examples/floats.exl:62:1
+Eof @examples/floats.exl:63:1

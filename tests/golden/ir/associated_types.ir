@@ -1,0 +1,17 @@
+;; exile-typed-ir-dump v1 examples/associated_types.exl
+(tfn main (params ) void (body (let it (struct-lit UpTo (field cur (int 0) :ty (int i32)) (field end (int 3) :ty (int i32))) :ty (struct UpTo)) (while (bool true) :ty bool (body (expr-stmt (match (call UpTo__next (var it) :ty (struct UpTo)) :ty (enum Option_i32) :enum Option_i32 (arm (pat-variant Some tag=1 (field _0 (pat-var v))) (block (stmts (expr-stmt (builtin-call println (var v) :ty (int i32)) :ty (int i32)) (assign it (struct-lit UpTo (field cur (binop + (field-access (var it) :ty (struct UpTo) cur) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32)) (field end (field-access (var it) :ty (struct UpTo) end) :ty (int i32))) :ty (struct UpTo)))) :ty (int i32)) (arm (pat-variant None tag=0) (block (stmts (break))) :ty (int i32))) :ty (int i32))))))
+(tfn UpTo__next pub (params (param self (struct UpTo))) (enum Option_i32) (body (return (if-expr (binop < (field-access (var self) :ty (struct UpTo) cur) :ty (int i32) (field-access (var self) :ty (struct UpTo) end) :ty (int i32)) :ty bool (enum-lit Option_i32::Some tag=1 (field _0 (field-access (var self) :ty (struct UpTo) cur) :ty (int i32))) :ty (enum Option_i32) (enum-lit Option_i32::None tag=0) :ty (enum Option_i32)) :ty (enum Option_i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct UpTo)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Option_i32)
+  (enum Result)
+)

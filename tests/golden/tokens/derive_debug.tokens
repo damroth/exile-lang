@@ -1,0 +1,397 @@
+;; exile-tokens-dump v1 examples/derive_debug.exl
+Pub @examples/derive_debug.exl:18:1
+Mod @examples/derive_debug.exl:18:5
+(Ident raw) @examples/derive_debug.exl:18:9
+LBrace @examples/derive_debug.exl:18:13
+Extern @examples/derive_debug.exl:19:5
+Fn @examples/derive_debug.exl:19:12
+(Ident make_c_allocator) @examples/derive_debug.exl:19:15
+LParen @examples/derive_debug.exl:19:31
+RParen @examples/derive_debug.exl:19:32
+Arrow @examples/derive_debug.exl:19:34
+(Ident Allocator) @examples/derive_debug.exl:19:37
+Semicolon @examples/derive_debug.exl:19:46
+RBrace @examples/derive_debug.exl:20:1
+At @examples/derive_debug.exl:22:1
+(Ident derive) @examples/derive_debug.exl:22:2
+LParen @examples/derive_debug.exl:22:8
+(Ident Debug) @examples/derive_debug.exl:22:9
+RParen @examples/derive_debug.exl:22:14
+Struct @examples/derive_debug.exl:23:1
+(Ident Point) @examples/derive_debug.exl:23:8
+LBrace @examples/derive_debug.exl:23:14
+(Ident x) @examples/derive_debug.exl:23:16
+Colon @examples/derive_debug.exl:23:17
+(Ident int) @examples/derive_debug.exl:23:19
+Comma @examples/derive_debug.exl:23:22
+(Ident y) @examples/derive_debug.exl:23:24
+Colon @examples/derive_debug.exl:23:25
+(Ident int) @examples/derive_debug.exl:23:27
+RBrace @examples/derive_debug.exl:23:31
+At @examples/derive_debug.exl:25:1
+(Ident derive) @examples/derive_debug.exl:25:2
+LParen @examples/derive_debug.exl:25:8
+(Ident Debug) @examples/derive_debug.exl:25:9
+RParen @examples/derive_debug.exl:25:14
+Enum @examples/derive_debug.exl:26:1
+(Ident Shape) @examples/derive_debug.exl:26:6
+LBrace @examples/derive_debug.exl:26:12
+(Ident Dot) @examples/derive_debug.exl:27:5
+Pipe @examples/derive_debug.exl:28:5
+(Ident Segment) @examples/derive_debug.exl:28:7
+LParen @examples/derive_debug.exl:28:14
+(Ident int) @examples/derive_debug.exl:28:15
+Comma @examples/derive_debug.exl:28:18
+(Ident int) @examples/derive_debug.exl:28:20
+RParen @examples/derive_debug.exl:28:23
+Pipe @examples/derive_debug.exl:29:5
+(Ident Tagged) @examples/derive_debug.exl:29:7
+LBrace @examples/derive_debug.exl:29:14
+(Ident id) @examples/derive_debug.exl:29:16
+Colon @examples/derive_debug.exl:29:18
+(Ident int) @examples/derive_debug.exl:29:20
+Comma @examples/derive_debug.exl:29:23
+(Ident name) @examples/derive_debug.exl:29:25
+Colon @examples/derive_debug.exl:29:29
+(Ident str) @examples/derive_debug.exl:29:31
+RBrace @examples/derive_debug.exl:29:35
+RBrace @examples/derive_debug.exl:30:1
+Fn @examples/derive_debug.exl:32:1
+(Ident main) @examples/derive_debug.exl:32:4
+LParen @examples/derive_debug.exl:32:8
+RParen @examples/derive_debug.exl:32:9
+LBrace @examples/derive_debug.exl:32:11
+Let @examples/derive_debug.exl:33:5
+(Ident a) @examples/derive_debug.exl:33:9
+Eq @examples/derive_debug.exl:33:11
+(Ident raw) @examples/derive_debug.exl:33:13
+DoubleColon @examples/derive_debug.exl:33:16
+(Ident make_c_allocator) @examples/derive_debug.exl:33:18
+LParen @examples/derive_debug.exl:33:34
+RParen @examples/derive_debug.exl:33:35
+Semicolon @examples/derive_debug.exl:33:36
+Let @examples/derive_debug.exl:36:5
+Mut @examples/derive_debug.exl:36:9
+(Ident sb) @examples/derive_debug.exl:36:13
+Eq @examples/derive_debug.exl:36:16
+(Ident StringBuilder) @examples/derive_debug.exl:36:18
+DoubleColon @examples/derive_debug.exl:36:31
+(Ident with_capacity) @examples/derive_debug.exl:36:33
+LParen @examples/derive_debug.exl:36:46
+(Ident a) @examples/derive_debug.exl:36:47
+Comma @examples/derive_debug.exl:36:48
+(Int 8) @examples/derive_debug.exl:36:50
+As @examples/derive_debug.exl:36:52
+(Ident u32) @examples/derive_debug.exl:36:55
+RParen @examples/derive_debug.exl:36:58
+Semicolon @examples/derive_debug.exl:36:59
+Let @examples/derive_debug.exl:37:5
+(Ident p) @examples/derive_debug.exl:37:9
+Eq @examples/derive_debug.exl:37:11
+(Ident Point) @examples/derive_debug.exl:37:13
+LBrace @examples/derive_debug.exl:37:19
+(Ident x) @examples/derive_debug.exl:37:21
+Colon @examples/derive_debug.exl:37:22
+(Int 7) @examples/derive_debug.exl:37:24
+Comma @examples/derive_debug.exl:37:25
+(Ident y) @examples/derive_debug.exl:37:27
+Colon @examples/derive_debug.exl:37:28
+Minus @examples/derive_debug.exl:37:30
+(Int 42) @examples/derive_debug.exl:37:31
+RBrace @examples/derive_debug.exl:37:34
+Semicolon @examples/derive_debug.exl:37:35
+(Ident p) @examples/derive_debug.exl:38:5
+Dot @examples/derive_debug.exl:38:6
+(Ident fmt) @examples/derive_debug.exl:38:7
+LParen @examples/derive_debug.exl:38:10
+Amp @examples/derive_debug.exl:38:11
+(Ident sb) @examples/derive_debug.exl:38:12
+RParen @examples/derive_debug.exl:38:14
+Semicolon @examples/derive_debug.exl:38:15
+(Ident println) @examples/derive_debug.exl:39:5
+LParen @examples/derive_debug.exl:39:12
+(Ident sb) @examples/derive_debug.exl:39:13
+Dot @examples/derive_debug.exl:39:15
+(Ident length) @examples/derive_debug.exl:39:16
+LParen @examples/derive_debug.exl:39:22
+RParen @examples/derive_debug.exl:39:23
+As @examples/derive_debug.exl:39:25
+(Ident int) @examples/derive_debug.exl:39:28
+RParen @examples/derive_debug.exl:39:31
+Semicolon @examples/derive_debug.exl:39:32
+Let @examples/derive_debug.exl:40:5
+(Ident v) @examples/derive_debug.exl:40:9
+Eq @examples/derive_debug.exl:40:11
+(Ident sb) @examples/derive_debug.exl:40:13
+Dot @examples/derive_debug.exl:40:15
+(Ident as_slice) @examples/derive_debug.exl:40:16
+LParen @examples/derive_debug.exl:40:24
+RParen @examples/derive_debug.exl:40:25
+Semicolon @examples/derive_debug.exl:40:26
+(Ident println) @examples/derive_debug.exl:41:5
+LParen @examples/derive_debug.exl:41:12
+(Ident v) @examples/derive_debug.exl:41:13
+LBracket @examples/derive_debug.exl:41:14
+(Int 0) @examples/derive_debug.exl:41:15
+RBracket @examples/derive_debug.exl:41:16
+As @examples/derive_debug.exl:41:18
+(Ident int) @examples/derive_debug.exl:41:21
+RParen @examples/derive_debug.exl:41:24
+Semicolon @examples/derive_debug.exl:41:25
+(Ident println) @examples/derive_debug.exl:42:5
+LParen @examples/derive_debug.exl:42:12
+(Ident v) @examples/derive_debug.exl:42:13
+LBracket @examples/derive_debug.exl:42:14
+(Int 11) @examples/derive_debug.exl:42:15
+RBracket @examples/derive_debug.exl:42:17
+As @examples/derive_debug.exl:42:19
+(Ident int) @examples/derive_debug.exl:42:22
+RParen @examples/derive_debug.exl:42:25
+Semicolon @examples/derive_debug.exl:42:26
+(Ident println) @examples/derive_debug.exl:43:5
+LParen @examples/derive_debug.exl:43:12
+(Ident v) @examples/derive_debug.exl:43:13
+LBracket @examples/derive_debug.exl:43:14
+(Int 20) @examples/derive_debug.exl:43:15
+RBracket @examples/derive_debug.exl:43:17
+As @examples/derive_debug.exl:43:19
+(Ident int) @examples/derive_debug.exl:43:22
+RParen @examples/derive_debug.exl:43:25
+Semicolon @examples/derive_debug.exl:43:26
+Let @examples/derive_debug.exl:46:5
+Mut @examples/derive_debug.exl:46:9
+(Ident sb2) @examples/derive_debug.exl:46:13
+Eq @examples/derive_debug.exl:46:17
+(Ident StringBuilder) @examples/derive_debug.exl:46:19
+DoubleColon @examples/derive_debug.exl:46:32
+(Ident with_capacity) @examples/derive_debug.exl:46:34
+LParen @examples/derive_debug.exl:46:47
+(Ident a) @examples/derive_debug.exl:46:48
+Comma @examples/derive_debug.exl:46:49
+(Int 8) @examples/derive_debug.exl:46:51
+As @examples/derive_debug.exl:46:53
+(Ident u32) @examples/derive_debug.exl:46:56
+RParen @examples/derive_debug.exl:46:59
+Semicolon @examples/derive_debug.exl:46:60
+Let @examples/derive_debug.exl:47:5
+(Ident dot) @examples/derive_debug.exl:47:9
+Eq @examples/derive_debug.exl:47:13
+(Ident Shape) @examples/derive_debug.exl:47:15
+DoubleColon @examples/derive_debug.exl:47:20
+(Ident Dot) @examples/derive_debug.exl:47:22
+Semicolon @examples/derive_debug.exl:47:25
+(Ident dot) @examples/derive_debug.exl:48:5
+Dot @examples/derive_debug.exl:48:8
+(Ident fmt) @examples/derive_debug.exl:48:9
+LParen @examples/derive_debug.exl:48:12
+Amp @examples/derive_debug.exl:48:13
+(Ident sb2) @examples/derive_debug.exl:48:14
+RParen @examples/derive_debug.exl:48:17
+Semicolon @examples/derive_debug.exl:48:18
+(Ident println) @examples/derive_debug.exl:49:5
+LParen @examples/derive_debug.exl:49:12
+(Ident sb2) @examples/derive_debug.exl:49:13
+Dot @examples/derive_debug.exl:49:16
+(Ident length) @examples/derive_debug.exl:49:17
+LParen @examples/derive_debug.exl:49:23
+RParen @examples/derive_debug.exl:49:24
+As @examples/derive_debug.exl:49:26
+(Ident int) @examples/derive_debug.exl:49:29
+RParen @examples/derive_debug.exl:49:32
+Semicolon @examples/derive_debug.exl:49:33
+Let @examples/derive_debug.exl:52:5
+Mut @examples/derive_debug.exl:52:9
+(Ident sb3) @examples/derive_debug.exl:52:13
+Eq @examples/derive_debug.exl:52:17
+(Ident StringBuilder) @examples/derive_debug.exl:52:19
+DoubleColon @examples/derive_debug.exl:52:32
+(Ident with_capacity) @examples/derive_debug.exl:52:34
+LParen @examples/derive_debug.exl:52:47
+(Ident a) @examples/derive_debug.exl:52:48
+Comma @examples/derive_debug.exl:52:49
+(Int 8) @examples/derive_debug.exl:52:51
+As @examples/derive_debug.exl:52:53
+(Ident u32) @examples/derive_debug.exl:52:56
+RParen @examples/derive_debug.exl:52:59
+Semicolon @examples/derive_debug.exl:52:60
+Let @examples/derive_debug.exl:53:5
+(Ident seg) @examples/derive_debug.exl:53:9
+Eq @examples/derive_debug.exl:53:13
+(Ident Shape) @examples/derive_debug.exl:53:15
+DoubleColon @examples/derive_debug.exl:53:20
+(Ident Segment) @examples/derive_debug.exl:53:22
+LParen @examples/derive_debug.exl:53:29
+(Int 1) @examples/derive_debug.exl:53:30
+Comma @examples/derive_debug.exl:53:31
+(Int 2) @examples/derive_debug.exl:53:33
+RParen @examples/derive_debug.exl:53:34
+Semicolon @examples/derive_debug.exl:53:35
+(Ident seg) @examples/derive_debug.exl:54:5
+Dot @examples/derive_debug.exl:54:8
+(Ident fmt) @examples/derive_debug.exl:54:9
+LParen @examples/derive_debug.exl:54:12
+Amp @examples/derive_debug.exl:54:13
+(Ident sb3) @examples/derive_debug.exl:54:14
+RParen @examples/derive_debug.exl:54:17
+Semicolon @examples/derive_debug.exl:54:18
+(Ident println) @examples/derive_debug.exl:55:5
+LParen @examples/derive_debug.exl:55:12
+(Ident sb3) @examples/derive_debug.exl:55:13
+Dot @examples/derive_debug.exl:55:16
+(Ident length) @examples/derive_debug.exl:55:17
+LParen @examples/derive_debug.exl:55:23
+RParen @examples/derive_debug.exl:55:24
+As @examples/derive_debug.exl:55:26
+(Ident int) @examples/derive_debug.exl:55:29
+RParen @examples/derive_debug.exl:55:32
+Semicolon @examples/derive_debug.exl:55:33
+Let @examples/derive_debug.exl:56:5
+(Ident v3) @examples/derive_debug.exl:56:9
+Eq @examples/derive_debug.exl:56:12
+(Ident sb3) @examples/derive_debug.exl:56:14
+Dot @examples/derive_debug.exl:56:17
+(Ident as_slice) @examples/derive_debug.exl:56:18
+LParen @examples/derive_debug.exl:56:26
+RParen @examples/derive_debug.exl:56:27
+Semicolon @examples/derive_debug.exl:56:28
+(Ident println) @examples/derive_debug.exl:57:5
+LParen @examples/derive_debug.exl:57:12
+(Ident v3) @examples/derive_debug.exl:57:13
+LBracket @examples/derive_debug.exl:57:15
+(Int 15) @examples/derive_debug.exl:57:16
+RBracket @examples/derive_debug.exl:57:18
+As @examples/derive_debug.exl:57:20
+(Ident int) @examples/derive_debug.exl:57:23
+RParen @examples/derive_debug.exl:57:26
+Semicolon @examples/derive_debug.exl:57:27
+(Ident println) @examples/derive_debug.exl:58:5
+LParen @examples/derive_debug.exl:58:12
+(Ident v3) @examples/derive_debug.exl:58:13
+LBracket @examples/derive_debug.exl:58:15
+(Int 18) @examples/derive_debug.exl:58:16
+RBracket @examples/derive_debug.exl:58:18
+As @examples/derive_debug.exl:58:20
+(Ident int) @examples/derive_debug.exl:58:23
+RParen @examples/derive_debug.exl:58:26
+Semicolon @examples/derive_debug.exl:58:27
+(Ident println) @examples/derive_debug.exl:59:5
+LParen @examples/derive_debug.exl:59:12
+(Ident v3) @examples/derive_debug.exl:59:13
+LBracket @examples/derive_debug.exl:59:15
+(Int 19) @examples/derive_debug.exl:59:16
+RBracket @examples/derive_debug.exl:59:18
+As @examples/derive_debug.exl:59:20
+(Ident int) @examples/derive_debug.exl:59:23
+RParen @examples/derive_debug.exl:59:26
+Semicolon @examples/derive_debug.exl:59:27
+Let @examples/derive_debug.exl:62:5
+Mut @examples/derive_debug.exl:62:9
+(Ident sb4) @examples/derive_debug.exl:62:13
+Eq @examples/derive_debug.exl:62:17
+(Ident StringBuilder) @examples/derive_debug.exl:62:19
+DoubleColon @examples/derive_debug.exl:62:32
+(Ident with_capacity) @examples/derive_debug.exl:62:34
+LParen @examples/derive_debug.exl:62:47
+(Ident a) @examples/derive_debug.exl:62:48
+Comma @examples/derive_debug.exl:62:49
+(Int 8) @examples/derive_debug.exl:62:51
+As @examples/derive_debug.exl:62:53
+(Ident u32) @examples/derive_debug.exl:62:56
+RParen @examples/derive_debug.exl:62:59
+Semicolon @examples/derive_debug.exl:62:60
+Let @examples/derive_debug.exl:63:5
+(Ident tg) @examples/derive_debug.exl:63:9
+Eq @examples/derive_debug.exl:63:12
+(Ident Shape) @examples/derive_debug.exl:63:14
+DoubleColon @examples/derive_debug.exl:63:19
+(Ident Tagged) @examples/derive_debug.exl:63:21
+LBrace @examples/derive_debug.exl:63:28
+(Ident id) @examples/derive_debug.exl:63:30
+Colon @examples/derive_debug.exl:63:32
+(Int 5) @examples/derive_debug.exl:63:34
+Comma @examples/derive_debug.exl:63:35
+(Ident name) @examples/derive_debug.exl:63:37
+Colon @examples/derive_debug.exl:63:41
+(String "p") @examples/derive_debug.exl:63:43
+RBrace @examples/derive_debug.exl:63:47
+Semicolon @examples/derive_debug.exl:63:48
+(Ident tg) @examples/derive_debug.exl:64:5
+Dot @examples/derive_debug.exl:64:7
+(Ident fmt) @examples/derive_debug.exl:64:8
+LParen @examples/derive_debug.exl:64:11
+Amp @examples/derive_debug.exl:64:12
+(Ident sb4) @examples/derive_debug.exl:64:13
+RParen @examples/derive_debug.exl:64:16
+Semicolon @examples/derive_debug.exl:64:17
+(Ident println) @examples/derive_debug.exl:65:5
+LParen @examples/derive_debug.exl:65:12
+(Ident sb4) @examples/derive_debug.exl:65:13
+Dot @examples/derive_debug.exl:65:16
+(Ident length) @examples/derive_debug.exl:65:17
+LParen @examples/derive_debug.exl:65:23
+RParen @examples/derive_debug.exl:65:24
+As @examples/derive_debug.exl:65:26
+(Ident int) @examples/derive_debug.exl:65:29
+RParen @examples/derive_debug.exl:65:32
+Semicolon @examples/derive_debug.exl:65:33
+Let @examples/derive_debug.exl:66:5
+(Ident v4) @examples/derive_debug.exl:66:9
+Eq @examples/derive_debug.exl:66:12
+(Ident sb4) @examples/derive_debug.exl:66:14
+Dot @examples/derive_debug.exl:66:17
+(Ident as_slice) @examples/derive_debug.exl:66:18
+LParen @examples/derive_debug.exl:66:26
+RParen @examples/derive_debug.exl:66:27
+Semicolon @examples/derive_debug.exl:66:28
+(Ident println) @examples/derive_debug.exl:67:5
+LParen @examples/derive_debug.exl:67:12
+(Ident v4) @examples/derive_debug.exl:67:13
+LBracket @examples/derive_debug.exl:67:15
+(Int 20) @examples/derive_debug.exl:67:16
+RBracket @examples/derive_debug.exl:67:18
+As @examples/derive_debug.exl:67:20
+(Ident int) @examples/derive_debug.exl:67:23
+RParen @examples/derive_debug.exl:67:26
+Semicolon @examples/derive_debug.exl:67:27
+(Ident println) @examples/derive_debug.exl:68:5
+LParen @examples/derive_debug.exl:68:12
+(Ident v4) @examples/derive_debug.exl:68:13
+LBracket @examples/derive_debug.exl:68:15
+(Int 29) @examples/derive_debug.exl:68:16
+RBracket @examples/derive_debug.exl:68:18
+As @examples/derive_debug.exl:68:20
+(Ident int) @examples/derive_debug.exl:68:23
+RParen @examples/derive_debug.exl:68:26
+Semicolon @examples/derive_debug.exl:68:27
+(Ident println) @examples/derive_debug.exl:69:5
+LParen @examples/derive_debug.exl:69:12
+(Ident v4) @examples/derive_debug.exl:69:13
+LBracket @examples/derive_debug.exl:69:15
+(Int 30) @examples/derive_debug.exl:69:16
+RBracket @examples/derive_debug.exl:69:18
+As @examples/derive_debug.exl:69:20
+(Ident int) @examples/derive_debug.exl:69:23
+RParen @examples/derive_debug.exl:69:26
+Semicolon @examples/derive_debug.exl:69:27
+(Ident println) @examples/derive_debug.exl:70:5
+LParen @examples/derive_debug.exl:70:12
+(Ident v4) @examples/derive_debug.exl:70:13
+LBracket @examples/derive_debug.exl:70:15
+(Int 31) @examples/derive_debug.exl:70:16
+RBracket @examples/derive_debug.exl:70:18
+As @examples/derive_debug.exl:70:20
+(Ident int) @examples/derive_debug.exl:70:23
+RParen @examples/derive_debug.exl:70:26
+Semicolon @examples/derive_debug.exl:70:27
+(Ident println) @examples/derive_debug.exl:71:5
+LParen @examples/derive_debug.exl:71:12
+(Ident v4) @examples/derive_debug.exl:71:13
+LBracket @examples/derive_debug.exl:71:15
+(Int 32) @examples/derive_debug.exl:71:16
+RBracket @examples/derive_debug.exl:71:18
+As @examples/derive_debug.exl:71:20
+(Ident int) @examples/derive_debug.exl:71:23
+RParen @examples/derive_debug.exl:71:26
+Semicolon @examples/derive_debug.exl:71:27
+RBrace @examples/derive_debug.exl:72:1
+Eof @examples/derive_debug.exl:73:1

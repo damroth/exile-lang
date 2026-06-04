@@ -1,0 +1,105 @@
+;; exile-tokens-dump v1 examples/expressions.exl
+Fn @examples/expressions.exl:10:1
+(Ident classify) @examples/expressions.exl:10:4
+LParen @examples/expressions.exl:10:12
+(Ident n) @examples/expressions.exl:10:13
+Colon @examples/expressions.exl:10:14
+(Ident int) @examples/expressions.exl:10:16
+RParen @examples/expressions.exl:10:19
+Arrow @examples/expressions.exl:10:21
+(Ident str) @examples/expressions.exl:10:24
+LBrace @examples/expressions.exl:10:28
+If @examples/expressions.exl:11:5
+(Ident n) @examples/expressions.exl:11:8
+Lt @examples/expressions.exl:11:10
+(Int 0) @examples/expressions.exl:11:12
+LBrace @examples/expressions.exl:11:14
+(String "negative") @examples/expressions.exl:12:9
+RBrace @examples/expressions.exl:13:5
+Else @examples/expressions.exl:13:7
+If @examples/expressions.exl:13:12
+(Ident n) @examples/expressions.exl:13:15
+EqEq @examples/expressions.exl:13:17
+(Int 0) @examples/expressions.exl:13:20
+LBrace @examples/expressions.exl:13:22
+(String "zero") @examples/expressions.exl:14:9
+RBrace @examples/expressions.exl:15:5
+Else @examples/expressions.exl:15:7
+LBrace @examples/expressions.exl:15:12
+(String "positive") @examples/expressions.exl:16:9
+RBrace @examples/expressions.exl:17:5
+RBrace @examples/expressions.exl:18:1
+Fn @examples/expressions.exl:21:1
+(Ident twice) @examples/expressions.exl:21:4
+LParen @examples/expressions.exl:21:9
+(Ident n) @examples/expressions.exl:21:10
+Colon @examples/expressions.exl:21:11
+(Ident int) @examples/expressions.exl:21:13
+RParen @examples/expressions.exl:21:16
+Arrow @examples/expressions.exl:21:18
+(Ident int) @examples/expressions.exl:21:21
+LBrace @examples/expressions.exl:21:25
+(Ident n) @examples/expressions.exl:22:5
+Star @examples/expressions.exl:22:7
+(Int 2) @examples/expressions.exl:22:9
+RBrace @examples/expressions.exl:23:1
+Fn @examples/expressions.exl:25:1
+(Ident main) @examples/expressions.exl:25:4
+LParen @examples/expressions.exl:25:8
+RParen @examples/expressions.exl:25:9
+LBrace @examples/expressions.exl:25:11
+Let @examples/expressions.exl:27:5
+(Ident label) @examples/expressions.exl:27:9
+Eq @examples/expressions.exl:27:15
+If @examples/expressions.exl:27:17
+(Int 7) @examples/expressions.exl:27:20
+Gt @examples/expressions.exl:27:22
+(Int 3) @examples/expressions.exl:27:24
+LBrace @examples/expressions.exl:27:26
+(String "big") @examples/expressions.exl:27:28
+RBrace @examples/expressions.exl:27:34
+Else @examples/expressions.exl:27:36
+LBrace @examples/expressions.exl:27:41
+(String "small") @examples/expressions.exl:27:43
+RBrace @examples/expressions.exl:27:51
+Semicolon @examples/expressions.exl:27:52
+(Ident println) @examples/expressions.exl:28:5
+LParen @examples/expressions.exl:28:12
+(Ident label) @examples/expressions.exl:28:13
+RParen @examples/expressions.exl:28:18
+Semicolon @examples/expressions.exl:28:19
+(Ident println) @examples/expressions.exl:30:5
+LParen @examples/expressions.exl:30:12
+(Ident classify) @examples/expressions.exl:30:13
+LParen @examples/expressions.exl:30:21
+Minus @examples/expressions.exl:30:22
+(Int 4) @examples/expressions.exl:30:23
+RParen @examples/expressions.exl:30:24
+RParen @examples/expressions.exl:30:25
+Semicolon @examples/expressions.exl:30:26
+(Ident println) @examples/expressions.exl:31:5
+LParen @examples/expressions.exl:31:12
+(Ident classify) @examples/expressions.exl:31:13
+LParen @examples/expressions.exl:31:21
+(Int 0) @examples/expressions.exl:31:22
+RParen @examples/expressions.exl:31:23
+RParen @examples/expressions.exl:31:24
+Semicolon @examples/expressions.exl:31:25
+(Ident println) @examples/expressions.exl:32:5
+LParen @examples/expressions.exl:32:12
+(Ident classify) @examples/expressions.exl:32:13
+LParen @examples/expressions.exl:32:21
+(Int 9) @examples/expressions.exl:32:22
+RParen @examples/expressions.exl:32:23
+RParen @examples/expressions.exl:32:24
+Semicolon @examples/expressions.exl:32:25
+(Ident println) @examples/expressions.exl:34:5
+LParen @examples/expressions.exl:34:12
+(Ident twice) @examples/expressions.exl:34:13
+LParen @examples/expressions.exl:34:18
+(Int 21) @examples/expressions.exl:34:19
+RParen @examples/expressions.exl:34:21
+RParen @examples/expressions.exl:34:22
+Semicolon @examples/expressions.exl:34:23
+RBrace @examples/expressions.exl:35:1
+Eof @examples/expressions.exl:36:1

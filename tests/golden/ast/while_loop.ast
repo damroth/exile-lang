@@ -1,0 +1,2 @@
+;; exile-ast-dump v1 examples/while_loop.exl
+(fn main (params ) void (body (let mut i (int 5)) (while (binop > (var i) (int 0)) (expr-stmt (call println (var i))) (assign i (binop - (var i) (int 1)))) (expr-stmt (call println (string "liftoff!")))))

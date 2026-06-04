@@ -1,0 +1,190 @@
+;; exile-tokens-dump v1 examples/escape_pass.exl
+Fn @examples/escape_pass.exl:37:1
+(Ident first_three) @examples/escape_pass.exl:37:4
+LParen @examples/escape_pass.exl:37:15
+(Ident arr) @examples/escape_pass.exl:37:16
+Colon @examples/escape_pass.exl:37:19
+Star @examples/escape_pass.exl:37:21
+Const @examples/escape_pass.exl:37:22
+(Ident int) @examples/escape_pass.exl:37:28
+RParen @examples/escape_pass.exl:37:31
+Arrow @examples/escape_pass.exl:37:33
+(Ident Slice) @examples/escape_pass.exl:37:36
+Lt @examples/escape_pass.exl:37:41
+(Ident int) @examples/escape_pass.exl:37:42
+Gt @examples/escape_pass.exl:37:45
+LBrace @examples/escape_pass.exl:37:47
+Return @examples/escape_pass.exl:38:5
+(Ident Slice) @examples/escape_pass.exl:38:12
+LBrace @examples/escape_pass.exl:38:18
+(Ident ptr) @examples/escape_pass.exl:38:20
+Colon @examples/escape_pass.exl:38:23
+(Ident arr) @examples/escape_pass.exl:38:25
+Comma @examples/escape_pass.exl:38:28
+(Ident len) @examples/escape_pass.exl:38:30
+Colon @examples/escape_pass.exl:38:33
+(Int 3) @examples/escape_pass.exl:38:35
+As @examples/escape_pass.exl:38:37
+(Ident u32) @examples/escape_pass.exl:38:40
+RBrace @examples/escape_pass.exl:38:44
+Semicolon @examples/escape_pass.exl:38:45
+RBrace @examples/escape_pass.exl:39:1
+Fn @examples/escape_pass.exl:44:1
+(Ident use_local_vec) @examples/escape_pass.exl:44:4
+LParen @examples/escape_pass.exl:44:17
+(Ident a) @examples/escape_pass.exl:44:18
+Colon @examples/escape_pass.exl:44:19
+(Ident Allocator) @examples/escape_pass.exl:44:21
+RParen @examples/escape_pass.exl:44:30
+Arrow @examples/escape_pass.exl:44:32
+(Ident int) @examples/escape_pass.exl:44:35
+LBrace @examples/escape_pass.exl:44:39
+Let @examples/escape_pass.exl:45:5
+Mut @examples/escape_pass.exl:45:9
+(Ident v) @examples/escape_pass.exl:45:13
+Colon @examples/escape_pass.exl:45:14
+(Ident Vec) @examples/escape_pass.exl:45:16
+Lt @examples/escape_pass.exl:45:19
+Star @examples/escape_pass.exl:45:20
+(Ident int) @examples/escape_pass.exl:45:21
+Gt @examples/escape_pass.exl:45:24
+Eq @examples/escape_pass.exl:45:26
+(Ident Vec) @examples/escape_pass.exl:45:28
+DoubleColon @examples/escape_pass.exl:45:31
+(Ident with_capacity) @examples/escape_pass.exl:45:33
+LParen @examples/escape_pass.exl:45:46
+(Ident a) @examples/escape_pass.exl:45:47
+Comma @examples/escape_pass.exl:45:48
+(Int 8) @examples/escape_pass.exl:45:50
+As @examples/escape_pass.exl:45:52
+(Ident u32) @examples/escape_pass.exl:45:55
+RParen @examples/escape_pass.exl:45:58
+Semicolon @examples/escape_pass.exl:45:59
+Let @examples/escape_pass.exl:46:5
+Mut @examples/escape_pass.exl:46:9
+(Ident x) @examples/escape_pass.exl:46:13
+Colon @examples/escape_pass.exl:46:14
+(Ident int) @examples/escape_pass.exl:46:16
+Eq @examples/escape_pass.exl:46:20
+(Int 42) @examples/escape_pass.exl:46:22
+Semicolon @examples/escape_pass.exl:46:24
+Let @examples/escape_pass.exl:47:5
+Mut @examples/escape_pass.exl:47:9
+(Ident y) @examples/escape_pass.exl:47:13
+Colon @examples/escape_pass.exl:47:14
+(Ident int) @examples/escape_pass.exl:47:16
+Eq @examples/escape_pass.exl:47:20
+(Int 7) @examples/escape_pass.exl:47:22
+Semicolon @examples/escape_pass.exl:47:23
+(Ident v) @examples/escape_pass.exl:48:5
+Dot @examples/escape_pass.exl:48:6
+(Ident push) @examples/escape_pass.exl:48:7
+LParen @examples/escape_pass.exl:48:11
+Amp @examples/escape_pass.exl:48:12
+(Ident x) @examples/escape_pass.exl:48:13
+RParen @examples/escape_pass.exl:48:14
+Semicolon @examples/escape_pass.exl:48:15
+(Ident v) @examples/escape_pass.exl:49:5
+Dot @examples/escape_pass.exl:49:6
+(Ident push) @examples/escape_pass.exl:49:7
+LParen @examples/escape_pass.exl:49:11
+Amp @examples/escape_pass.exl:49:12
+(Ident y) @examples/escape_pass.exl:49:13
+RParen @examples/escape_pass.exl:49:14
+Semicolon @examples/escape_pass.exl:49:15
+Let @examples/escape_pass.exl:50:5
+(Ident s) @examples/escape_pass.exl:50:9
+Eq @examples/escape_pass.exl:50:11
+(Ident v) @examples/escape_pass.exl:50:13
+Dot @examples/escape_pass.exl:50:14
+(Ident as_slice) @examples/escape_pass.exl:50:15
+LParen @examples/escape_pass.exl:50:23
+RParen @examples/escape_pass.exl:50:24
+Semicolon @examples/escape_pass.exl:50:25
+Star @examples/escape_pass.exl:51:5
+(Ident s) @examples/escape_pass.exl:51:6
+LBracket @examples/escape_pass.exl:51:7
+(Int 0) @examples/escape_pass.exl:51:8
+RBracket @examples/escape_pass.exl:51:9
+Plus @examples/escape_pass.exl:51:11
+Star @examples/escape_pass.exl:51:13
+(Ident s) @examples/escape_pass.exl:51:14
+LBracket @examples/escape_pass.exl:51:15
+(Int 1) @examples/escape_pass.exl:51:16
+RBracket @examples/escape_pass.exl:51:17
+RBrace @examples/escape_pass.exl:52:1
+Fn @examples/escape_pass.exl:54:1
+(Ident main) @examples/escape_pass.exl:54:4
+LParen @examples/escape_pass.exl:54:8
+RParen @examples/escape_pass.exl:54:9
+LBrace @examples/escape_pass.exl:54:11
+Let @examples/escape_pass.exl:55:5
+(Ident arr) @examples/escape_pass.exl:55:9
+Colon @examples/escape_pass.exl:55:12
+LBracket @examples/escape_pass.exl:55:14
+(Ident int) @examples/escape_pass.exl:55:15
+Semicolon @examples/escape_pass.exl:55:18
+(Int 3) @examples/escape_pass.exl:55:20
+RBracket @examples/escape_pass.exl:55:21
+Eq @examples/escape_pass.exl:55:23
+LBracket @examples/escape_pass.exl:55:25
+(Int 10) @examples/escape_pass.exl:55:26
+Comma @examples/escape_pass.exl:55:28
+(Int 20) @examples/escape_pass.exl:55:30
+Comma @examples/escape_pass.exl:55:32
+(Int 30) @examples/escape_pass.exl:55:34
+RBracket @examples/escape_pass.exl:55:36
+Semicolon @examples/escape_pass.exl:55:37
+Let @examples/escape_pass.exl:58:5
+(Ident s) @examples/escape_pass.exl:58:9
+Eq @examples/escape_pass.exl:58:11
+(Ident first_three) @examples/escape_pass.exl:58:13
+LParen @examples/escape_pass.exl:58:24
+Amp @examples/escape_pass.exl:58:25
+(Ident arr) @examples/escape_pass.exl:58:26
+LBracket @examples/escape_pass.exl:58:29
+(Int 0) @examples/escape_pass.exl:58:30
+RBracket @examples/escape_pass.exl:58:31
+RParen @examples/escape_pass.exl:58:32
+Semicolon @examples/escape_pass.exl:58:33
+(Ident println) @examples/escape_pass.exl:59:5
+LParen @examples/escape_pass.exl:59:12
+(Ident s) @examples/escape_pass.exl:59:13
+LBracket @examples/escape_pass.exl:59:14
+(Int 0) @examples/escape_pass.exl:59:15
+RBracket @examples/escape_pass.exl:59:16
+RParen @examples/escape_pass.exl:59:17
+Semicolon @examples/escape_pass.exl:59:18
+(Ident println) @examples/escape_pass.exl:60:5
+LParen @examples/escape_pass.exl:60:12
+(Ident s) @examples/escape_pass.exl:60:13
+LBracket @examples/escape_pass.exl:60:14
+(Int 1) @examples/escape_pass.exl:60:15
+RBracket @examples/escape_pass.exl:60:16
+RParen @examples/escape_pass.exl:60:17
+Semicolon @examples/escape_pass.exl:60:18
+(Ident println) @examples/escape_pass.exl:61:5
+LParen @examples/escape_pass.exl:61:12
+(Ident s) @examples/escape_pass.exl:61:13
+LBracket @examples/escape_pass.exl:61:14
+(Int 2) @examples/escape_pass.exl:61:15
+RBracket @examples/escape_pass.exl:61:16
+RParen @examples/escape_pass.exl:61:17
+Semicolon @examples/escape_pass.exl:61:18
+Let @examples/escape_pass.exl:64:5
+(Ident a) @examples/escape_pass.exl:64:9
+Eq @examples/escape_pass.exl:64:11
+(Ident default_allocator) @examples/escape_pass.exl:64:13
+LParen @examples/escape_pass.exl:64:30
+RParen @examples/escape_pass.exl:64:31
+Semicolon @examples/escape_pass.exl:64:32
+(Ident println) @examples/escape_pass.exl:65:5
+LParen @examples/escape_pass.exl:65:12
+(Ident use_local_vec) @examples/escape_pass.exl:65:13
+LParen @examples/escape_pass.exl:65:26
+(Ident a) @examples/escape_pass.exl:65:27
+RParen @examples/escape_pass.exl:65:28
+RParen @examples/escape_pass.exl:65:29
+Semicolon @examples/escape_pass.exl:65:30
+RBrace @examples/escape_pass.exl:66:1
+Eof @examples/escape_pass.exl:67:1

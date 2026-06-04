@@ -1,0 +1,18 @@
+;; exile-typed-ir-dump v1 examples/modules.exl
+(tfn math__double pub (params (param n (int i32))) (int i32) (body (return (binop * (var n) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32))))
+(tfn math__bump (params (param n (int i32))) (int i32) (body (return (binop + (var n) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32))))
+(tfn math__double_then_bump pub (params (param n (int i32))) (int i32) (body (return (call math__bump (call math__double (var n) :ty (int i32)) :ty (int i32)) :ty (int i32))))
+(tfn greet__hi pub (params (param name str)) void (body (expr-stmt (builtin-call println (var name) :ty str) :ty (int i32))))
+(tfn main (params ) void (body (expr-stmt (builtin-call println (call math__double (int 21) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call math__double_then_bump (int 10) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call math__double (int 15) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (call greet__hi (string "hello from modules") :ty str) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

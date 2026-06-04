@@ -1,0 +1,267 @@
+;; exile-tokens-dump v1 examples/structs.exl
+Struct @examples/structs.exl:1:1
+(Ident Point) @examples/structs.exl:1:8
+LBrace @examples/structs.exl:1:14
+(Ident x) @examples/structs.exl:2:5
+Colon @examples/structs.exl:2:6
+(Ident int) @examples/structs.exl:2:8
+Comma @examples/structs.exl:2:11
+(Ident y) @examples/structs.exl:3:5
+Colon @examples/structs.exl:3:6
+(Ident int) @examples/structs.exl:3:8
+Comma @examples/structs.exl:3:11
+RBrace @examples/structs.exl:4:1
+Struct @examples/structs.exl:6:1
+(Ident Rect) @examples/structs.exl:6:8
+LBrace @examples/structs.exl:6:13
+(Ident origin) @examples/structs.exl:7:5
+Colon @examples/structs.exl:7:11
+(Ident Point) @examples/structs.exl:7:13
+Comma @examples/structs.exl:7:18
+(Ident width) @examples/structs.exl:8:5
+Colon @examples/structs.exl:8:10
+(Ident int) @examples/structs.exl:8:12
+Comma @examples/structs.exl:8:15
+(Ident height) @examples/structs.exl:9:5
+Colon @examples/structs.exl:9:11
+(Ident int) @examples/structs.exl:9:13
+Comma @examples/structs.exl:9:16
+RBrace @examples/structs.exl:10:1
+Fn @examples/structs.exl:12:1
+(Ident make_point) @examples/structs.exl:12:4
+LParen @examples/structs.exl:12:14
+(Ident x) @examples/structs.exl:12:15
+Colon @examples/structs.exl:12:16
+(Ident int) @examples/structs.exl:12:18
+Comma @examples/structs.exl:12:21
+(Ident y) @examples/structs.exl:12:23
+Colon @examples/structs.exl:12:24
+(Ident int) @examples/structs.exl:12:26
+RParen @examples/structs.exl:12:29
+Arrow @examples/structs.exl:12:31
+(Ident Point) @examples/structs.exl:12:34
+LBrace @examples/structs.exl:12:40
+Return @examples/structs.exl:13:5
+(Ident Point) @examples/structs.exl:13:12
+LBrace @examples/structs.exl:13:18
+(Ident x) @examples/structs.exl:13:20
+Colon @examples/structs.exl:13:21
+(Ident x) @examples/structs.exl:13:23
+Comma @examples/structs.exl:13:24
+(Ident y) @examples/structs.exl:13:26
+Colon @examples/structs.exl:13:27
+(Ident y) @examples/structs.exl:13:29
+RBrace @examples/structs.exl:13:31
+Semicolon @examples/structs.exl:13:32
+RBrace @examples/structs.exl:14:1
+Fn @examples/structs.exl:16:1
+(Ident shift) @examples/structs.exl:16:4
+LParen @examples/structs.exl:16:9
+(Ident p) @examples/structs.exl:16:10
+Colon @examples/structs.exl:16:11
+(Ident Point) @examples/structs.exl:16:13
+Comma @examples/structs.exl:16:18
+(Ident dx) @examples/structs.exl:16:20
+Colon @examples/structs.exl:16:22
+(Ident int) @examples/structs.exl:16:24
+Comma @examples/structs.exl:16:27
+(Ident dy) @examples/structs.exl:16:29
+Colon @examples/structs.exl:16:31
+(Ident int) @examples/structs.exl:16:33
+RParen @examples/structs.exl:16:36
+Arrow @examples/structs.exl:16:38
+(Ident Point) @examples/structs.exl:16:41
+LBrace @examples/structs.exl:16:47
+Return @examples/structs.exl:17:5
+(Ident Point) @examples/structs.exl:17:12
+LBrace @examples/structs.exl:17:18
+(Ident x) @examples/structs.exl:17:20
+Colon @examples/structs.exl:17:21
+(Ident p) @examples/structs.exl:17:23
+Dot @examples/structs.exl:17:24
+(Ident x) @examples/structs.exl:17:25
+Plus @examples/structs.exl:17:27
+(Ident dx) @examples/structs.exl:17:29
+Comma @examples/structs.exl:17:31
+(Ident y) @examples/structs.exl:17:33
+Colon @examples/structs.exl:17:34
+(Ident p) @examples/structs.exl:17:36
+Dot @examples/structs.exl:17:37
+(Ident y) @examples/structs.exl:17:38
+Plus @examples/structs.exl:17:40
+(Ident dy) @examples/structs.exl:17:42
+RBrace @examples/structs.exl:17:45
+Semicolon @examples/structs.exl:17:46
+RBrace @examples/structs.exl:18:1
+Fn @examples/structs.exl:20:1
+(Ident area) @examples/structs.exl:20:4
+LParen @examples/structs.exl:20:8
+(Ident r) @examples/structs.exl:20:9
+Colon @examples/structs.exl:20:10
+(Ident Rect) @examples/structs.exl:20:12
+RParen @examples/structs.exl:20:16
+Arrow @examples/structs.exl:20:18
+(Ident int) @examples/structs.exl:20:21
+LBrace @examples/structs.exl:20:25
+Return @examples/structs.exl:21:5
+(Ident r) @examples/structs.exl:21:12
+Dot @examples/structs.exl:21:13
+(Ident width) @examples/structs.exl:21:14
+Star @examples/structs.exl:21:20
+(Ident r) @examples/structs.exl:21:22
+Dot @examples/structs.exl:21:23
+(Ident height) @examples/structs.exl:21:24
+Semicolon @examples/structs.exl:21:30
+RBrace @examples/structs.exl:22:1
+Fn @examples/structs.exl:26:1
+(Ident taller) @examples/structs.exl:26:4
+LParen @examples/structs.exl:26:10
+(Ident r) @examples/structs.exl:26:11
+Colon @examples/structs.exl:26:12
+(Ident Rect) @examples/structs.exl:26:14
+Comma @examples/structs.exl:26:18
+(Ident by) @examples/structs.exl:26:20
+Colon @examples/structs.exl:26:22
+(Ident int) @examples/structs.exl:26:24
+RParen @examples/structs.exl:26:27
+Arrow @examples/structs.exl:26:29
+(Ident Rect) @examples/structs.exl:26:32
+LBrace @examples/structs.exl:26:37
+Return @examples/structs.exl:27:5
+(Ident Rect) @examples/structs.exl:27:12
+LBrace @examples/structs.exl:27:17
+(Ident height) @examples/structs.exl:27:19
+Colon @examples/structs.exl:27:25
+(Ident r) @examples/structs.exl:27:27
+Dot @examples/structs.exl:27:28
+(Ident height) @examples/structs.exl:27:29
+Plus @examples/structs.exl:27:36
+(Ident by) @examples/structs.exl:27:38
+Comma @examples/structs.exl:27:40
+DotDot @examples/structs.exl:27:42
+(Ident r) @examples/structs.exl:27:44
+RBrace @examples/structs.exl:27:46
+Semicolon @examples/structs.exl:27:47
+RBrace @examples/structs.exl:28:1
+Fn @examples/structs.exl:30:1
+(Ident main) @examples/structs.exl:30:4
+LParen @examples/structs.exl:30:8
+RParen @examples/structs.exl:30:9
+LBrace @examples/structs.exl:30:11
+Let @examples/structs.exl:31:5
+(Ident p) @examples/structs.exl:31:9
+Eq @examples/structs.exl:31:11
+(Ident make_point) @examples/structs.exl:31:13
+LParen @examples/structs.exl:31:23
+(Int 3) @examples/structs.exl:31:24
+Comma @examples/structs.exl:31:25
+(Int 4) @examples/structs.exl:31:27
+RParen @examples/structs.exl:31:28
+Semicolon @examples/structs.exl:31:29
+(Ident println) @examples/structs.exl:32:5
+LParen @examples/structs.exl:32:12
+(Ident p) @examples/structs.exl:32:13
+Dot @examples/structs.exl:32:14
+(Ident x) @examples/structs.exl:32:15
+RParen @examples/structs.exl:32:16
+Semicolon @examples/structs.exl:32:17
+(Ident println) @examples/structs.exl:33:5
+LParen @examples/structs.exl:33:12
+(Ident p) @examples/structs.exl:33:13
+Dot @examples/structs.exl:33:14
+(Ident y) @examples/structs.exl:33:15
+RParen @examples/structs.exl:33:16
+Semicolon @examples/structs.exl:33:17
+Let @examples/structs.exl:35:5
+(Ident q) @examples/structs.exl:35:9
+Eq @examples/structs.exl:35:11
+(Ident shift) @examples/structs.exl:35:13
+LParen @examples/structs.exl:35:18
+(Ident p) @examples/structs.exl:35:19
+Comma @examples/structs.exl:35:20
+(Int 10) @examples/structs.exl:35:22
+Comma @examples/structs.exl:35:24
+(Int 20) @examples/structs.exl:35:26
+RParen @examples/structs.exl:35:28
+Semicolon @examples/structs.exl:35:29
+(Ident println) @examples/structs.exl:36:5
+LParen @examples/structs.exl:36:12
+(Ident q) @examples/structs.exl:36:13
+Dot @examples/structs.exl:36:14
+(Ident x) @examples/structs.exl:36:15
+RParen @examples/structs.exl:36:16
+Semicolon @examples/structs.exl:36:17
+(Ident println) @examples/structs.exl:37:5
+LParen @examples/structs.exl:37:12
+(Ident q) @examples/structs.exl:37:13
+Dot @examples/structs.exl:37:14
+(Ident y) @examples/structs.exl:37:15
+RParen @examples/structs.exl:37:16
+Semicolon @examples/structs.exl:37:17
+Let @examples/structs.exl:39:5
+Mut @examples/structs.exl:39:9
+(Ident r) @examples/structs.exl:39:13
+Eq @examples/structs.exl:39:15
+(Ident Rect) @examples/structs.exl:39:17
+LBrace @examples/structs.exl:39:22
+(Ident origin) @examples/structs.exl:40:9
+Colon @examples/structs.exl:40:15
+(Ident make_point) @examples/structs.exl:40:17
+LParen @examples/structs.exl:40:27
+(Int 0) @examples/structs.exl:40:28
+Comma @examples/structs.exl:40:29
+(Int 0) @examples/structs.exl:40:31
+RParen @examples/structs.exl:40:32
+Comma @examples/structs.exl:40:33
+(Ident width) @examples/structs.exl:41:9
+Colon @examples/structs.exl:41:14
+(Int 8) @examples/structs.exl:41:16
+Comma @examples/structs.exl:41:17
+(Ident height) @examples/structs.exl:42:9
+Colon @examples/structs.exl:42:15
+(Int 5) @examples/structs.exl:42:17
+Comma @examples/structs.exl:42:18
+RBrace @examples/structs.exl:43:5
+Semicolon @examples/structs.exl:43:6
+(Ident println) @examples/structs.exl:44:5
+LParen @examples/structs.exl:44:12
+(Ident area) @examples/structs.exl:44:13
+LParen @examples/structs.exl:44:17
+(Ident r) @examples/structs.exl:44:18
+RParen @examples/structs.exl:44:19
+RParen @examples/structs.exl:44:20
+Semicolon @examples/structs.exl:44:21
+(Ident r) @examples/structs.exl:46:5
+Dot @examples/structs.exl:46:6
+(Ident width) @examples/structs.exl:46:7
+Eq @examples/structs.exl:46:13
+(Int 10) @examples/structs.exl:46:15
+Semicolon @examples/structs.exl:46:17
+(Ident println) @examples/structs.exl:47:5
+LParen @examples/structs.exl:47:12
+(Ident area) @examples/structs.exl:47:13
+LParen @examples/structs.exl:47:17
+(Ident r) @examples/structs.exl:47:18
+RParen @examples/structs.exl:47:19
+RParen @examples/structs.exl:47:20
+Semicolon @examples/structs.exl:47:21
+Let @examples/structs.exl:49:5
+(Ident r2) @examples/structs.exl:49:9
+Eq @examples/structs.exl:49:12
+(Ident taller) @examples/structs.exl:49:14
+LParen @examples/structs.exl:49:20
+(Ident r) @examples/structs.exl:49:21
+Comma @examples/structs.exl:49:22
+(Int 3) @examples/structs.exl:49:24
+RParen @examples/structs.exl:49:25
+Semicolon @examples/structs.exl:49:26
+(Ident println) @examples/structs.exl:50:5
+LParen @examples/structs.exl:50:12
+(Ident area) @examples/structs.exl:50:13
+LParen @examples/structs.exl:50:17
+(Ident r2) @examples/structs.exl:50:18
+RParen @examples/structs.exl:50:20
+RParen @examples/structs.exl:50:21
+Semicolon @examples/structs.exl:50:22
+RBrace @examples/structs.exl:51:1
+Eof @examples/structs.exl:52:1

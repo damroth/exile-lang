@@ -1,0 +1,5 @@
+;; exile-ast-dump v1 examples/const_pointers.exl
+(struct Point (fields (field x (int i32)) (field y (int i32))))
+(fn dist_sq (params (param p (const-ptr (struct Point)))) (int i32) (body (tail (binop + (binop * (field-access (var p) x) (field-access (var p) x)) (binop * (field-access (var p) y) (field-access (var p) y))))))
+(fn translate (params (param p (ptr (struct Point))) (param dx (int i32)) (param dy (int i32))) void (body (assign-field (var p) x (binop + (field-access (var p) x) (var dx))) (assign-field (var p) y (binop + (field-access (var p) y) (var dy)))))
+(fn main (params ) void (body (let mut q (struct-lit Point (field x (int 3)) (field y (int 4)))) (let p (ty (ptr (struct Point))) (ref (var q))) (expr-stmt (call println (call dist_sq (var p)))) (expr-stmt (call translate (var p) (int 1) (int 1))) (expr-stmt (call println (call dist_sq (var p)))) (let pc (ty (const-ptr (struct Point))) (ref (var q))) (expr-stmt (call println (field-access (var pc) x))) (expr-stmt (call println (field-access (var pc) y)))))

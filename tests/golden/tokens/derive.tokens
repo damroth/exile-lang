@@ -1,0 +1,393 @@
+;; exile-tokens-dump v1 examples/derive.exl
+At @examples/derive.exl:19:1
+(Ident derive) @examples/derive.exl:19:2
+LParen @examples/derive.exl:19:8
+(Ident Eq) @examples/derive.exl:19:9
+Comma @examples/derive.exl:19:11
+(Ident Hash) @examples/derive.exl:19:13
+Comma @examples/derive.exl:19:17
+(Ident Clone) @examples/derive.exl:19:19
+RParen @examples/derive.exl:19:24
+Struct @examples/derive.exl:20:1
+(Ident Point) @examples/derive.exl:20:8
+LBrace @examples/derive.exl:20:14
+(Ident x) @examples/derive.exl:20:16
+Colon @examples/derive.exl:20:17
+(Ident int) @examples/derive.exl:20:19
+Comma @examples/derive.exl:20:22
+(Ident y) @examples/derive.exl:20:24
+Colon @examples/derive.exl:20:25
+(Ident int) @examples/derive.exl:20:27
+RBrace @examples/derive.exl:20:31
+At @examples/derive.exl:22:1
+(Ident derive) @examples/derive.exl:22:2
+LParen @examples/derive.exl:22:8
+(Ident Eq) @examples/derive.exl:22:9
+Comma @examples/derive.exl:22:11
+(Ident Hash) @examples/derive.exl:22:13
+RParen @examples/derive.exl:22:17
+Enum @examples/derive.exl:23:1
+(Ident Shape) @examples/derive.exl:23:6
+LBrace @examples/derive.exl:23:12
+(Ident Dot) @examples/derive.exl:24:5
+Pipe @examples/derive.exl:25:5
+(Ident Segment) @examples/derive.exl:25:7
+LParen @examples/derive.exl:25:14
+(Ident int) @examples/derive.exl:25:15
+Comma @examples/derive.exl:25:18
+(Ident int) @examples/derive.exl:25:20
+RParen @examples/derive.exl:25:23
+Pipe @examples/derive.exl:26:5
+(Ident Tagged) @examples/derive.exl:26:7
+LBrace @examples/derive.exl:26:14
+(Ident id) @examples/derive.exl:26:16
+Colon @examples/derive.exl:26:18
+(Ident int) @examples/derive.exl:26:20
+RBrace @examples/derive.exl:26:24
+RBrace @examples/derive.exl:27:1
+Fn @examples/derive.exl:30:1
+(Ident all_equal) @examples/derive.exl:30:4
+Lt @examples/derive.exl:30:13
+(Ident T) @examples/derive.exl:30:14
+Colon @examples/derive.exl:30:15
+(Ident Eq) @examples/derive.exl:30:17
+Gt @examples/derive.exl:30:19
+LParen @examples/derive.exl:30:20
+(Ident a) @examples/derive.exl:30:21
+Colon @examples/derive.exl:30:22
+(Ident T) @examples/derive.exl:30:24
+Comma @examples/derive.exl:30:25
+(Ident b) @examples/derive.exl:30:27
+Colon @examples/derive.exl:30:28
+(Ident T) @examples/derive.exl:30:30
+Comma @examples/derive.exl:30:31
+(Ident c) @examples/derive.exl:30:33
+Colon @examples/derive.exl:30:34
+(Ident T) @examples/derive.exl:30:36
+RParen @examples/derive.exl:30:37
+Arrow @examples/derive.exl:30:39
+(Ident bool) @examples/derive.exl:30:42
+LBrace @examples/derive.exl:30:47
+(Ident a) @examples/derive.exl:31:5
+Dot @examples/derive.exl:31:6
+(Ident eq) @examples/derive.exl:31:7
+LParen @examples/derive.exl:31:9
+(Ident b) @examples/derive.exl:31:10
+RParen @examples/derive.exl:31:11
+AmpAmp @examples/derive.exl:31:13
+(Ident b) @examples/derive.exl:31:16
+Dot @examples/derive.exl:31:17
+(Ident eq) @examples/derive.exl:31:18
+LParen @examples/derive.exl:31:20
+(Ident c) @examples/derive.exl:31:21
+RParen @examples/derive.exl:31:22
+RBrace @examples/derive.exl:32:1
+Fn @examples/derive.exl:34:1
+(Ident main) @examples/derive.exl:34:4
+LParen @examples/derive.exl:34:8
+RParen @examples/derive.exl:34:9
+LBrace @examples/derive.exl:34:11
+Let @examples/derive.exl:35:5
+(Ident p) @examples/derive.exl:35:9
+Eq @examples/derive.exl:35:11
+(Ident Point) @examples/derive.exl:35:13
+LBrace @examples/derive.exl:35:19
+(Ident x) @examples/derive.exl:35:21
+Colon @examples/derive.exl:35:22
+(Int 3) @examples/derive.exl:35:24
+Comma @examples/derive.exl:35:25
+(Ident y) @examples/derive.exl:35:27
+Colon @examples/derive.exl:35:28
+(Int 4) @examples/derive.exl:35:30
+RBrace @examples/derive.exl:35:32
+Semicolon @examples/derive.exl:35:33
+Let @examples/derive.exl:36:5
+(Ident q) @examples/derive.exl:36:9
+Eq @examples/derive.exl:36:11
+(Ident Point) @examples/derive.exl:36:13
+LBrace @examples/derive.exl:36:19
+(Ident x) @examples/derive.exl:36:21
+Colon @examples/derive.exl:36:22
+(Int 3) @examples/derive.exl:36:24
+Comma @examples/derive.exl:36:25
+(Ident y) @examples/derive.exl:36:27
+Colon @examples/derive.exl:36:28
+(Int 4) @examples/derive.exl:36:30
+RBrace @examples/derive.exl:36:32
+Semicolon @examples/derive.exl:36:33
+Let @examples/derive.exl:37:5
+(Ident r) @examples/derive.exl:37:9
+Eq @examples/derive.exl:37:11
+(Ident Point) @examples/derive.exl:37:13
+LBrace @examples/derive.exl:37:19
+(Ident x) @examples/derive.exl:37:21
+Colon @examples/derive.exl:37:22
+(Int 9) @examples/derive.exl:37:24
+Comma @examples/derive.exl:37:25
+(Ident y) @examples/derive.exl:37:27
+Colon @examples/derive.exl:37:28
+(Int 4) @examples/derive.exl:37:30
+RBrace @examples/derive.exl:37:32
+Semicolon @examples/derive.exl:37:33
+If @examples/derive.exl:39:5
+(Ident p) @examples/derive.exl:39:8
+Dot @examples/derive.exl:39:9
+(Ident eq) @examples/derive.exl:39:10
+LParen @examples/derive.exl:39:12
+(Ident q) @examples/derive.exl:39:13
+RParen @examples/derive.exl:39:14
+LBrace @examples/derive.exl:39:16
+(Ident println) @examples/derive.exl:39:18
+LParen @examples/derive.exl:39:25
+(Int 1) @examples/derive.exl:39:26
+RParen @examples/derive.exl:39:27
+Semicolon @examples/derive.exl:39:28
+RBrace @examples/derive.exl:39:30
+Else @examples/derive.exl:39:32
+LBrace @examples/derive.exl:39:37
+(Ident println) @examples/derive.exl:39:39
+LParen @examples/derive.exl:39:46
+(Int 0) @examples/derive.exl:39:47
+RParen @examples/derive.exl:39:48
+Semicolon @examples/derive.exl:39:49
+RBrace @examples/derive.exl:39:51
+If @examples/derive.exl:40:5
+(Ident p) @examples/derive.exl:40:8
+Dot @examples/derive.exl:40:9
+(Ident ne) @examples/derive.exl:40:10
+LParen @examples/derive.exl:40:12
+(Ident r) @examples/derive.exl:40:13
+RParen @examples/derive.exl:40:14
+LBrace @examples/derive.exl:40:16
+(Ident println) @examples/derive.exl:40:18
+LParen @examples/derive.exl:40:25
+(Int 1) @examples/derive.exl:40:26
+RParen @examples/derive.exl:40:27
+Semicolon @examples/derive.exl:40:28
+RBrace @examples/derive.exl:40:30
+Else @examples/derive.exl:40:32
+LBrace @examples/derive.exl:40:37
+(Ident println) @examples/derive.exl:40:39
+LParen @examples/derive.exl:40:46
+(Int 0) @examples/derive.exl:40:47
+RParen @examples/derive.exl:40:48
+Semicolon @examples/derive.exl:40:49
+RBrace @examples/derive.exl:40:51
+Let @examples/derive.exl:43:5
+(Ident p2) @examples/derive.exl:43:9
+Eq @examples/derive.exl:43:12
+(Ident p) @examples/derive.exl:43:14
+Dot @examples/derive.exl:43:15
+(Ident clone) @examples/derive.exl:43:16
+LParen @examples/derive.exl:43:21
+RParen @examples/derive.exl:43:22
+Semicolon @examples/derive.exl:43:23
+If @examples/derive.exl:44:5
+(Ident p2) @examples/derive.exl:44:8
+Dot @examples/derive.exl:44:10
+(Ident eq) @examples/derive.exl:44:11
+LParen @examples/derive.exl:44:13
+(Ident p) @examples/derive.exl:44:14
+RParen @examples/derive.exl:44:15
+LBrace @examples/derive.exl:44:17
+(Ident println) @examples/derive.exl:44:19
+LParen @examples/derive.exl:44:26
+(Int 1) @examples/derive.exl:44:27
+RParen @examples/derive.exl:44:28
+Semicolon @examples/derive.exl:44:29
+RBrace @examples/derive.exl:44:31
+Else @examples/derive.exl:44:33
+LBrace @examples/derive.exl:44:38
+(Ident println) @examples/derive.exl:44:40
+LParen @examples/derive.exl:44:47
+(Int 0) @examples/derive.exl:44:48
+RParen @examples/derive.exl:44:49
+Semicolon @examples/derive.exl:44:50
+RBrace @examples/derive.exl:44:52
+If @examples/derive.exl:47:5
+(Ident all_equal) @examples/derive.exl:47:8
+LParen @examples/derive.exl:47:17
+(Ident p) @examples/derive.exl:47:18
+Comma @examples/derive.exl:47:19
+(Ident q) @examples/derive.exl:47:21
+Comma @examples/derive.exl:47:22
+(Ident p2) @examples/derive.exl:47:24
+RParen @examples/derive.exl:47:26
+LBrace @examples/derive.exl:47:28
+(Ident println) @examples/derive.exl:47:30
+LParen @examples/derive.exl:47:37
+(Int 1) @examples/derive.exl:47:38
+RParen @examples/derive.exl:47:39
+Semicolon @examples/derive.exl:47:40
+RBrace @examples/derive.exl:47:42
+Else @examples/derive.exl:47:44
+LBrace @examples/derive.exl:47:49
+(Ident println) @examples/derive.exl:47:51
+LParen @examples/derive.exl:47:58
+(Int 0) @examples/derive.exl:47:59
+RParen @examples/derive.exl:47:60
+Semicolon @examples/derive.exl:47:61
+RBrace @examples/derive.exl:47:63
+Let @examples/derive.exl:51:5
+(Ident s1) @examples/derive.exl:51:9
+Eq @examples/derive.exl:51:12
+(Ident Shape) @examples/derive.exl:51:14
+DoubleColon @examples/derive.exl:51:19
+(Ident Segment) @examples/derive.exl:51:21
+LParen @examples/derive.exl:51:28
+(Int 1) @examples/derive.exl:51:29
+Comma @examples/derive.exl:51:30
+(Int 2) @examples/derive.exl:51:32
+RParen @examples/derive.exl:51:33
+Semicolon @examples/derive.exl:51:34
+Let @examples/derive.exl:52:5
+(Ident s2) @examples/derive.exl:52:9
+Eq @examples/derive.exl:52:12
+(Ident Shape) @examples/derive.exl:52:14
+DoubleColon @examples/derive.exl:52:19
+(Ident Segment) @examples/derive.exl:52:21
+LParen @examples/derive.exl:52:28
+(Int 1) @examples/derive.exl:52:29
+Comma @examples/derive.exl:52:30
+(Int 2) @examples/derive.exl:52:32
+RParen @examples/derive.exl:52:33
+Semicolon @examples/derive.exl:52:34
+Let @examples/derive.exl:53:5
+(Ident s3) @examples/derive.exl:53:9
+Eq @examples/derive.exl:53:12
+(Ident Shape) @examples/derive.exl:53:14
+DoubleColon @examples/derive.exl:53:19
+(Ident Tagged) @examples/derive.exl:53:21
+LBrace @examples/derive.exl:53:28
+(Ident id) @examples/derive.exl:53:30
+Colon @examples/derive.exl:53:32
+(Int 5) @examples/derive.exl:53:34
+RBrace @examples/derive.exl:53:36
+Semicolon @examples/derive.exl:53:37
+If @examples/derive.exl:54:5
+(Ident s1) @examples/derive.exl:54:8
+Dot @examples/derive.exl:54:10
+(Ident eq) @examples/derive.exl:54:11
+LParen @examples/derive.exl:54:13
+(Ident s2) @examples/derive.exl:54:14
+RParen @examples/derive.exl:54:16
+LBrace @examples/derive.exl:54:18
+(Ident println) @examples/derive.exl:54:20
+LParen @examples/derive.exl:54:27
+(Int 1) @examples/derive.exl:54:28
+RParen @examples/derive.exl:54:29
+Semicolon @examples/derive.exl:54:30
+RBrace @examples/derive.exl:54:32
+Else @examples/derive.exl:54:34
+LBrace @examples/derive.exl:54:39
+(Ident println) @examples/derive.exl:54:41
+LParen @examples/derive.exl:54:48
+(Int 0) @examples/derive.exl:54:49
+RParen @examples/derive.exl:54:50
+Semicolon @examples/derive.exl:54:51
+RBrace @examples/derive.exl:54:53
+If @examples/derive.exl:55:5
+(Ident s1) @examples/derive.exl:55:8
+Dot @examples/derive.exl:55:10
+(Ident eq) @examples/derive.exl:55:11
+LParen @examples/derive.exl:55:13
+(Ident s3) @examples/derive.exl:55:14
+RParen @examples/derive.exl:55:16
+LBrace @examples/derive.exl:55:18
+(Ident println) @examples/derive.exl:55:20
+LParen @examples/derive.exl:55:27
+(Int 1) @examples/derive.exl:55:28
+RParen @examples/derive.exl:55:29
+Semicolon @examples/derive.exl:55:30
+RBrace @examples/derive.exl:55:32
+Else @examples/derive.exl:55:34
+LBrace @examples/derive.exl:55:39
+(Ident println) @examples/derive.exl:55:41
+LParen @examples/derive.exl:55:48
+(Int 0) @examples/derive.exl:55:49
+RParen @examples/derive.exl:55:50
+Semicolon @examples/derive.exl:55:51
+RBrace @examples/derive.exl:55:53
+If @examples/derive.exl:58:5
+(Ident p) @examples/derive.exl:58:8
+Dot @examples/derive.exl:58:9
+(Ident hash) @examples/derive.exl:58:10
+LParen @examples/derive.exl:58:14
+RParen @examples/derive.exl:58:15
+EqEq @examples/derive.exl:58:17
+(Ident q) @examples/derive.exl:58:20
+Dot @examples/derive.exl:58:21
+(Ident hash) @examples/derive.exl:58:22
+LParen @examples/derive.exl:58:26
+RParen @examples/derive.exl:58:27
+LBrace @examples/derive.exl:58:29
+(Ident println) @examples/derive.exl:58:31
+LParen @examples/derive.exl:58:38
+(Int 1) @examples/derive.exl:58:39
+RParen @examples/derive.exl:58:40
+Semicolon @examples/derive.exl:58:41
+RBrace @examples/derive.exl:58:43
+Else @examples/derive.exl:58:45
+LBrace @examples/derive.exl:58:50
+(Ident println) @examples/derive.exl:58:52
+LParen @examples/derive.exl:58:59
+(Int 0) @examples/derive.exl:58:60
+RParen @examples/derive.exl:58:61
+Semicolon @examples/derive.exl:58:62
+RBrace @examples/derive.exl:58:64
+If @examples/derive.exl:59:5
+(Ident s1) @examples/derive.exl:59:8
+Dot @examples/derive.exl:59:10
+(Ident hash) @examples/derive.exl:59:11
+LParen @examples/derive.exl:59:15
+RParen @examples/derive.exl:59:16
+EqEq @examples/derive.exl:59:18
+(Ident s2) @examples/derive.exl:59:21
+Dot @examples/derive.exl:59:23
+(Ident hash) @examples/derive.exl:59:24
+LParen @examples/derive.exl:59:28
+RParen @examples/derive.exl:59:29
+LBrace @examples/derive.exl:59:31
+(Ident println) @examples/derive.exl:59:33
+LParen @examples/derive.exl:59:40
+(Int 1) @examples/derive.exl:59:41
+RParen @examples/derive.exl:59:42
+Semicolon @examples/derive.exl:59:43
+RBrace @examples/derive.exl:59:45
+Else @examples/derive.exl:59:47
+LBrace @examples/derive.exl:59:52
+(Ident println) @examples/derive.exl:59:54
+LParen @examples/derive.exl:59:61
+(Int 0) @examples/derive.exl:59:62
+RParen @examples/derive.exl:59:63
+Semicolon @examples/derive.exl:59:64
+RBrace @examples/derive.exl:59:66
+If @examples/derive.exl:60:5
+(Ident s1) @examples/derive.exl:60:8
+Dot @examples/derive.exl:60:10
+(Ident hash) @examples/derive.exl:60:11
+LParen @examples/derive.exl:60:15
+RParen @examples/derive.exl:60:16
+EqEq @examples/derive.exl:60:18
+(Ident s3) @examples/derive.exl:60:21
+Dot @examples/derive.exl:60:23
+(Ident hash) @examples/derive.exl:60:24
+LParen @examples/derive.exl:60:28
+RParen @examples/derive.exl:60:29
+LBrace @examples/derive.exl:60:31
+(Ident println) @examples/derive.exl:60:33
+LParen @examples/derive.exl:60:40
+(Int 1) @examples/derive.exl:60:41
+RParen @examples/derive.exl:60:42
+Semicolon @examples/derive.exl:60:43
+RBrace @examples/derive.exl:60:45
+Else @examples/derive.exl:60:47
+LBrace @examples/derive.exl:60:52
+(Ident println) @examples/derive.exl:60:54
+LParen @examples/derive.exl:60:61
+(Int 0) @examples/derive.exl:60:62
+RParen @examples/derive.exl:60:63
+Semicolon @examples/derive.exl:60:64
+RBrace @examples/derive.exl:60:66
+RBrace @examples/derive.exl:61:1
+Eof @examples/derive.exl:62:1

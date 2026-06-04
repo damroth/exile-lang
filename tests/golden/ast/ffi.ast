@@ -1,0 +1,6 @@
+;; exile-ast-dump v1 examples/ffi.exl
+(module raw
+  (fn add extern pub (params (param a (int i32)) (param b (int i32))) (int i32))
+  (fn square extern pub (params (param x (int i32))) (int i32))
+  (fn shout extern pub (params ) void))
+(fn main (params ) void (body (expr-stmt (call println (call raw::add (int 40) (int 2)))) (expr-stmt (call println (call raw::square (int 7)))) (expr-stmt (call raw::shout ))))

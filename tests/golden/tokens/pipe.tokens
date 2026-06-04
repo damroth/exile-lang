@@ -1,0 +1,140 @@
+;; exile-tokens-dump v1 examples/pipe.exl
+Fn @examples/pipe.exl:8:1
+(Ident dbl) @examples/pipe.exl:8:4
+LParen @examples/pipe.exl:8:7
+(Ident x) @examples/pipe.exl:8:8
+Colon @examples/pipe.exl:8:9
+(Ident int) @examples/pipe.exl:8:11
+RParen @examples/pipe.exl:8:14
+Arrow @examples/pipe.exl:8:16
+(Ident int) @examples/pipe.exl:8:19
+LBrace @examples/pipe.exl:8:23
+(Ident x) @examples/pipe.exl:8:25
+Plus @examples/pipe.exl:8:27
+(Ident x) @examples/pipe.exl:8:29
+RBrace @examples/pipe.exl:8:31
+Fn @examples/pipe.exl:9:1
+(Ident inc) @examples/pipe.exl:9:4
+LParen @examples/pipe.exl:9:7
+(Ident x) @examples/pipe.exl:9:8
+Colon @examples/pipe.exl:9:9
+(Ident int) @examples/pipe.exl:9:11
+RParen @examples/pipe.exl:9:14
+Arrow @examples/pipe.exl:9:16
+(Ident int) @examples/pipe.exl:9:19
+LBrace @examples/pipe.exl:9:23
+(Ident x) @examples/pipe.exl:9:25
+Plus @examples/pipe.exl:9:27
+(Int 1) @examples/pipe.exl:9:29
+RBrace @examples/pipe.exl:9:31
+Fn @examples/pipe.exl:10:1
+(Ident clamp) @examples/pipe.exl:10:4
+LParen @examples/pipe.exl:10:9
+(Ident x) @examples/pipe.exl:10:10
+Colon @examples/pipe.exl:10:11
+(Ident int) @examples/pipe.exl:10:13
+Comma @examples/pipe.exl:10:16
+(Ident lo) @examples/pipe.exl:10:18
+Colon @examples/pipe.exl:10:20
+(Ident int) @examples/pipe.exl:10:22
+Comma @examples/pipe.exl:10:25
+(Ident hi) @examples/pipe.exl:10:27
+Colon @examples/pipe.exl:10:29
+(Ident int) @examples/pipe.exl:10:31
+RParen @examples/pipe.exl:10:34
+Arrow @examples/pipe.exl:10:36
+(Ident int) @examples/pipe.exl:10:39
+LBrace @examples/pipe.exl:10:43
+If @examples/pipe.exl:11:5
+(Ident x) @examples/pipe.exl:11:8
+Lt @examples/pipe.exl:11:10
+(Ident lo) @examples/pipe.exl:11:12
+LBrace @examples/pipe.exl:11:15
+(Ident lo) @examples/pipe.exl:11:17
+RBrace @examples/pipe.exl:11:20
+Else @examples/pipe.exl:11:22
+If @examples/pipe.exl:11:27
+(Ident x) @examples/pipe.exl:11:30
+Gt @examples/pipe.exl:11:32
+(Ident hi) @examples/pipe.exl:11:34
+LBrace @examples/pipe.exl:11:37
+(Ident hi) @examples/pipe.exl:11:39
+RBrace @examples/pipe.exl:11:42
+Else @examples/pipe.exl:11:44
+LBrace @examples/pipe.exl:11:49
+(Ident x) @examples/pipe.exl:11:51
+RBrace @examples/pipe.exl:11:53
+RBrace @examples/pipe.exl:12:1
+Fn @examples/pipe.exl:14:1
+(Ident main) @examples/pipe.exl:14:4
+LParen @examples/pipe.exl:14:8
+RParen @examples/pipe.exl:14:9
+LBrace @examples/pipe.exl:14:11
+(Ident println) @examples/pipe.exl:16:5
+LParen @examples/pipe.exl:16:12
+(Int 5) @examples/pipe.exl:16:13
+PipeGt @examples/pipe.exl:16:15
+(Ident dbl) @examples/pipe.exl:16:18
+RParen @examples/pipe.exl:16:21
+Semicolon @examples/pipe.exl:16:22
+(Ident println) @examples/pipe.exl:19:5
+LParen @examples/pipe.exl:19:12
+(Int 7) @examples/pipe.exl:19:13
+PipeGt @examples/pipe.exl:19:15
+(Ident clamp) @examples/pipe.exl:19:18
+LParen @examples/pipe.exl:19:23
+(Int 0) @examples/pipe.exl:19:24
+Comma @examples/pipe.exl:19:25
+(Int 10) @examples/pipe.exl:19:27
+RParen @examples/pipe.exl:19:29
+RParen @examples/pipe.exl:19:30
+Semicolon @examples/pipe.exl:19:31
+(Ident println) @examples/pipe.exl:20:5
+LParen @examples/pipe.exl:20:12
+(Int 42) @examples/pipe.exl:20:13
+PipeGt @examples/pipe.exl:20:16
+(Ident clamp) @examples/pipe.exl:20:19
+LParen @examples/pipe.exl:20:24
+(Int 0) @examples/pipe.exl:20:25
+Comma @examples/pipe.exl:20:26
+(Int 10) @examples/pipe.exl:20:28
+RParen @examples/pipe.exl:20:30
+RParen @examples/pipe.exl:20:31
+Semicolon @examples/pipe.exl:20:32
+Let @examples/pipe.exl:23:5
+(Ident r) @examples/pipe.exl:23:9
+Eq @examples/pipe.exl:23:11
+(Int 3) @examples/pipe.exl:23:13
+PipeGt @examples/pipe.exl:24:9
+(Ident dbl) @examples/pipe.exl:24:12
+LParen @examples/pipe.exl:24:15
+RParen @examples/pipe.exl:24:16
+PipeGt @examples/pipe.exl:25:9
+(Ident inc) @examples/pipe.exl:25:12
+LParen @examples/pipe.exl:25:15
+RParen @examples/pipe.exl:25:16
+PipeGt @examples/pipe.exl:26:9
+(Ident dbl) @examples/pipe.exl:26:12
+LParen @examples/pipe.exl:26:15
+RParen @examples/pipe.exl:26:16
+Semicolon @examples/pipe.exl:26:17
+(Ident println) @examples/pipe.exl:27:5
+LParen @examples/pipe.exl:27:12
+(Ident r) @examples/pipe.exl:27:13
+RParen @examples/pipe.exl:27:14
+Semicolon @examples/pipe.exl:27:15
+(Ident println) @examples/pipe.exl:31:5
+LParen @examples/pipe.exl:31:12
+(Int 2) @examples/pipe.exl:31:13
+Plus @examples/pipe.exl:31:15
+LParen @examples/pipe.exl:31:17
+(Int 3) @examples/pipe.exl:31:18
+PipeGt @examples/pipe.exl:31:20
+(Ident dbl) @examples/pipe.exl:31:23
+LParen @examples/pipe.exl:31:26
+RParen @examples/pipe.exl:31:27
+RParen @examples/pipe.exl:31:28
+RParen @examples/pipe.exl:31:29
+Semicolon @examples/pipe.exl:31:30
+RBrace @examples/pipe.exl:32:1
+Eof @examples/pipe.exl:33:1

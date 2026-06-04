@@ -1,0 +1,9 @@
+;; exile-ast-dump v1 examples/modules.exl
+(module math
+  (fn double pub (params (param n (int i32))) (int i32) (body (return (binop * (var n) (int 2)))))
+  (fn bump (params (param n (int i32))) (int i32) (body (return (binop + (var n) (int 1)))))
+  (fn double_then_bump pub (params (param n (int i32))) (int i32) (body (return (call bump (call double (var n)))))))
+(module greet
+  (fn hi pub (params (param name str)) void (body (expr-stmt (call println (var name))))))
+(use pub math::double)
+(fn main (params ) void (body (expr-stmt (call println (call math::double (int 21)))) (expr-stmt (call println (call math::double_then_bump (int 10)))) (expr-stmt (call println (call double (int 15)))) (expr-stmt (call greet::hi (string "hello from modules")))))

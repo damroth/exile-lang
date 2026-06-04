@@ -1,0 +1,14 @@
+;; exile-typed-ir-dump v1 examples/while_loop.exl
+(tfn main (params ) void (body (let i (int 5) :ty (int i32)) (while (binop > (var i) :ty (int i32) (int 0) :ty (int i32)) :ty bool (body (expr-stmt (builtin-call println (var i) :ty (int i32)) :ty (int i32)) (assign i (binop - (var i) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32)))) (expr-stmt (builtin-call println (string "liftoff!") :ty str) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

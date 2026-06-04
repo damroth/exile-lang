@@ -1,0 +1,5 @@
+;; exile-ast-dump v1 examples/associated_types.exl
+(trait Iterator (fn next pub (params (param self self)) (struct-app Option (struct Self::Item)) (body )))
+(struct UpTo (fields (field cur (int i32)) (field end (int i32))))
+(impl UpTo (trait Iterator) (fn next pub (params (param self (struct UpTo))) (struct-app Option (int i32)) (body (tail (if (binop < (field-access (var self) cur) (field-access (var self) end)) (then (tail (call Option::Some (field-access (var self) cur)))) (else (tail (enum-lit Option::None))))))))
+(fn main (params ) void (body (let mut it (struct-lit UpTo (field cur (int 0)) (field end (int 3)))) (while (bool true) (tail (match (method-call (var it) next ) (arm (pat-variant Option::Some (pat-var v)) (block (expr-stmt (call println (var v))) (assign it (struct-lit UpTo (field cur (binop + (field-access (var it) cur) (int 1))) (field end (field-access (var it) end)))))) (arm (pat-variant Option::None) (block (break))))))))

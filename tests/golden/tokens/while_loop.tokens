@@ -1,0 +1,36 @@
+;; exile-tokens-dump v1 examples/while_loop.exl
+Fn @examples/while_loop.exl:1:1
+(Ident main) @examples/while_loop.exl:1:4
+LParen @examples/while_loop.exl:1:8
+RParen @examples/while_loop.exl:1:9
+LBrace @examples/while_loop.exl:1:11
+Let @examples/while_loop.exl:2:5
+Mut @examples/while_loop.exl:2:9
+(Ident i) @examples/while_loop.exl:2:13
+Eq @examples/while_loop.exl:2:15
+(Int 5) @examples/while_loop.exl:2:17
+Semicolon @examples/while_loop.exl:2:18
+While @examples/while_loop.exl:3:5
+(Ident i) @examples/while_loop.exl:3:11
+Gt @examples/while_loop.exl:3:13
+(Int 0) @examples/while_loop.exl:3:15
+LBrace @examples/while_loop.exl:3:17
+(Ident println) @examples/while_loop.exl:4:9
+LParen @examples/while_loop.exl:4:16
+(Ident i) @examples/while_loop.exl:4:17
+RParen @examples/while_loop.exl:4:18
+Semicolon @examples/while_loop.exl:4:19
+(Ident i) @examples/while_loop.exl:5:9
+Eq @examples/while_loop.exl:5:11
+(Ident i) @examples/while_loop.exl:5:13
+Minus @examples/while_loop.exl:5:15
+(Int 1) @examples/while_loop.exl:5:17
+Semicolon @examples/while_loop.exl:5:18
+RBrace @examples/while_loop.exl:6:5
+(Ident println) @examples/while_loop.exl:7:5
+LParen @examples/while_loop.exl:7:12
+(String "liftoff!") @examples/while_loop.exl:7:13
+RParen @examples/while_loop.exl:7:23
+Semicolon @examples/while_loop.exl:7:24
+RBrace @examples/while_loop.exl:8:1
+Eof @examples/while_loop.exl:9:1

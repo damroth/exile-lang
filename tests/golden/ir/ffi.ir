@@ -1,0 +1,17 @@
+;; exile-typed-ir-dump v1 examples/ffi.exl
+(tfn add extern pub (params (param a (int i32)) (param b (int i32))) (int i32))
+(tfn square extern pub (params (param x (int i32))) (int i32))
+(tfn shout extern pub (params ) void)
+(tfn main (params ) void (body (expr-stmt (builtin-call println (call add (int 40) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call square (int 7) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (call shout) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

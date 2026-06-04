@@ -1,0 +1,99 @@
+;; exile-tokens-dump v1 examples/doc_comments.exl
+Fn @examples/doc_comments.exl:12:1
+(Ident dbl) @examples/doc_comments.exl:12:4
+LParen @examples/doc_comments.exl:12:7
+(Ident x) @examples/doc_comments.exl:12:8
+Colon @examples/doc_comments.exl:12:9
+(Ident int) @examples/doc_comments.exl:12:11
+RParen @examples/doc_comments.exl:12:14
+Arrow @examples/doc_comments.exl:12:16
+(Ident int) @examples/doc_comments.exl:12:19
+LBrace @examples/doc_comments.exl:12:23
+(Ident x) @examples/doc_comments.exl:12:25
+Plus @examples/doc_comments.exl:12:27
+(Ident x) @examples/doc_comments.exl:12:29
+RBrace @examples/doc_comments.exl:12:31
+At @examples/doc_comments.exl:14:1
+(Ident doc) @examples/doc_comments.exl:14:2
+LParen @examples/doc_comments.exl:14:5
+(String "Adds two integers using the explicit attribute form.") @examples/doc_comments.exl:14:6
+RParen @examples/doc_comments.exl:14:60
+Fn @examples/doc_comments.exl:15:1
+(Ident add) @examples/doc_comments.exl:15:4
+LParen @examples/doc_comments.exl:15:7
+(Ident a) @examples/doc_comments.exl:15:8
+Colon @examples/doc_comments.exl:15:9
+(Ident int) @examples/doc_comments.exl:15:11
+Comma @examples/doc_comments.exl:15:14
+(Ident b) @examples/doc_comments.exl:15:16
+Colon @examples/doc_comments.exl:15:17
+(Ident int) @examples/doc_comments.exl:15:19
+RParen @examples/doc_comments.exl:15:22
+Arrow @examples/doc_comments.exl:15:24
+(Ident int) @examples/doc_comments.exl:15:27
+LBrace @examples/doc_comments.exl:15:31
+(Ident a) @examples/doc_comments.exl:15:33
+Plus @examples/doc_comments.exl:15:35
+(Ident b) @examples/doc_comments.exl:15:37
+RBrace @examples/doc_comments.exl:15:39
+Struct @examples/doc_comments.exl:18:1
+(Ident Point) @examples/doc_comments.exl:18:8
+LBrace @examples/doc_comments.exl:18:14
+(Ident x) @examples/doc_comments.exl:18:16
+Colon @examples/doc_comments.exl:18:17
+(Ident int) @examples/doc_comments.exl:18:19
+Comma @examples/doc_comments.exl:18:22
+(Ident y) @examples/doc_comments.exl:18:24
+Colon @examples/doc_comments.exl:18:25
+(Ident int) @examples/doc_comments.exl:18:27
+RBrace @examples/doc_comments.exl:18:31
+Fn @examples/doc_comments.exl:20:1
+(Ident main) @examples/doc_comments.exl:20:4
+LParen @examples/doc_comments.exl:20:8
+RParen @examples/doc_comments.exl:20:9
+LBrace @examples/doc_comments.exl:20:11
+(Ident println) @examples/doc_comments.exl:21:5
+LParen @examples/doc_comments.exl:21:12
+(Ident dbl) @examples/doc_comments.exl:21:13
+LParen @examples/doc_comments.exl:21:16
+(Int 5) @examples/doc_comments.exl:21:17
+RParen @examples/doc_comments.exl:21:18
+RParen @examples/doc_comments.exl:21:19
+Semicolon @examples/doc_comments.exl:21:20
+(Ident println) @examples/doc_comments.exl:22:5
+LParen @examples/doc_comments.exl:22:12
+(Ident add) @examples/doc_comments.exl:22:13
+LParen @examples/doc_comments.exl:22:16
+(Int 2) @examples/doc_comments.exl:22:17
+Comma @examples/doc_comments.exl:22:18
+(Int 3) @examples/doc_comments.exl:22:20
+RParen @examples/doc_comments.exl:22:21
+RParen @examples/doc_comments.exl:22:22
+Semicolon @examples/doc_comments.exl:22:23
+Let @examples/doc_comments.exl:23:5
+(Ident p) @examples/doc_comments.exl:23:9
+Eq @examples/doc_comments.exl:23:11
+(Ident Point) @examples/doc_comments.exl:23:13
+LBrace @examples/doc_comments.exl:23:19
+(Ident x) @examples/doc_comments.exl:23:21
+Colon @examples/doc_comments.exl:23:22
+(Int 7) @examples/doc_comments.exl:23:24
+Comma @examples/doc_comments.exl:23:25
+(Ident y) @examples/doc_comments.exl:23:27
+Colon @examples/doc_comments.exl:23:28
+(Int 9) @examples/doc_comments.exl:23:30
+RBrace @examples/doc_comments.exl:23:32
+Semicolon @examples/doc_comments.exl:23:33
+(Ident println) @examples/doc_comments.exl:24:5
+LParen @examples/doc_comments.exl:24:12
+(Ident p) @examples/doc_comments.exl:24:13
+Dot @examples/doc_comments.exl:24:14
+(Ident x) @examples/doc_comments.exl:24:15
+Plus @examples/doc_comments.exl:24:17
+(Ident p) @examples/doc_comments.exl:24:19
+Dot @examples/doc_comments.exl:24:20
+(Ident y) @examples/doc_comments.exl:24:21
+RParen @examples/doc_comments.exl:24:22
+Semicolon @examples/doc_comments.exl:24:23
+RBrace @examples/doc_comments.exl:25:1
+Eof @examples/doc_comments.exl:26:1

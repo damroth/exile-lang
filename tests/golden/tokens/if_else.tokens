@@ -1,0 +1,114 @@
+;; exile-tokens-dump v1 examples/if_else.exl
+Fn @examples/if_else.exl:1:1
+(Ident abs) @examples/if_else.exl:1:4
+LParen @examples/if_else.exl:1:7
+(Ident x) @examples/if_else.exl:1:8
+Colon @examples/if_else.exl:1:9
+(Ident int) @examples/if_else.exl:1:11
+RParen @examples/if_else.exl:1:14
+Arrow @examples/if_else.exl:1:16
+(Ident int) @examples/if_else.exl:1:19
+LBrace @examples/if_else.exl:1:23
+If @examples/if_else.exl:2:5
+(Ident x) @examples/if_else.exl:2:8
+Lt @examples/if_else.exl:2:10
+(Int 0) @examples/if_else.exl:2:12
+LBrace @examples/if_else.exl:2:14
+Return @examples/if_else.exl:3:9
+Minus @examples/if_else.exl:3:16
+(Ident x) @examples/if_else.exl:3:17
+Semicolon @examples/if_else.exl:3:18
+RBrace @examples/if_else.exl:4:5
+Else @examples/if_else.exl:4:7
+LBrace @examples/if_else.exl:4:12
+Return @examples/if_else.exl:5:9
+(Ident x) @examples/if_else.exl:5:16
+Semicolon @examples/if_else.exl:5:17
+RBrace @examples/if_else.exl:6:5
+RBrace @examples/if_else.exl:7:1
+Fn @examples/if_else.exl:9:1
+(Ident classify) @examples/if_else.exl:9:4
+LParen @examples/if_else.exl:9:12
+(Ident n) @examples/if_else.exl:9:13
+Colon @examples/if_else.exl:9:14
+(Ident int) @examples/if_else.exl:9:16
+RParen @examples/if_else.exl:9:19
+Arrow @examples/if_else.exl:9:21
+(Ident int) @examples/if_else.exl:9:24
+LBrace @examples/if_else.exl:9:28
+If @examples/if_else.exl:10:5
+(Ident n) @examples/if_else.exl:10:8
+Lt @examples/if_else.exl:10:10
+(Int 0) @examples/if_else.exl:10:12
+LBrace @examples/if_else.exl:10:14
+Return @examples/if_else.exl:11:9
+Minus @examples/if_else.exl:11:16
+(Int 1) @examples/if_else.exl:11:17
+Semicolon @examples/if_else.exl:11:18
+RBrace @examples/if_else.exl:12:5
+Else @examples/if_else.exl:12:7
+If @examples/if_else.exl:12:12
+(Ident n) @examples/if_else.exl:12:15
+EqEq @examples/if_else.exl:12:17
+(Int 0) @examples/if_else.exl:12:20
+LBrace @examples/if_else.exl:12:22
+Return @examples/if_else.exl:13:9
+(Int 0) @examples/if_else.exl:13:16
+Semicolon @examples/if_else.exl:13:17
+RBrace @examples/if_else.exl:14:5
+Else @examples/if_else.exl:14:7
+LBrace @examples/if_else.exl:14:12
+Return @examples/if_else.exl:15:9
+(Int 1) @examples/if_else.exl:15:16
+Semicolon @examples/if_else.exl:15:17
+RBrace @examples/if_else.exl:16:5
+RBrace @examples/if_else.exl:17:1
+Fn @examples/if_else.exl:19:1
+(Ident main) @examples/if_else.exl:19:4
+LParen @examples/if_else.exl:19:8
+RParen @examples/if_else.exl:19:9
+LBrace @examples/if_else.exl:19:11
+(Ident println) @examples/if_else.exl:20:5
+LParen @examples/if_else.exl:20:12
+(Ident abs) @examples/if_else.exl:20:13
+LParen @examples/if_else.exl:20:16
+Minus @examples/if_else.exl:20:17
+(Int 7) @examples/if_else.exl:20:18
+RParen @examples/if_else.exl:20:19
+RParen @examples/if_else.exl:20:20
+Semicolon @examples/if_else.exl:20:21
+(Ident println) @examples/if_else.exl:21:5
+LParen @examples/if_else.exl:21:12
+(Ident abs) @examples/if_else.exl:21:13
+LParen @examples/if_else.exl:21:16
+(Int 3) @examples/if_else.exl:21:17
+RParen @examples/if_else.exl:21:18
+RParen @examples/if_else.exl:21:19
+Semicolon @examples/if_else.exl:21:20
+(Ident println) @examples/if_else.exl:23:5
+LParen @examples/if_else.exl:23:12
+(Ident classify) @examples/if_else.exl:23:13
+LParen @examples/if_else.exl:23:21
+Minus @examples/if_else.exl:23:22
+(Int 5) @examples/if_else.exl:23:23
+RParen @examples/if_else.exl:23:24
+RParen @examples/if_else.exl:23:25
+Semicolon @examples/if_else.exl:23:26
+(Ident println) @examples/if_else.exl:24:5
+LParen @examples/if_else.exl:24:12
+(Ident classify) @examples/if_else.exl:24:13
+LParen @examples/if_else.exl:24:21
+(Int 0) @examples/if_else.exl:24:22
+RParen @examples/if_else.exl:24:23
+RParen @examples/if_else.exl:24:24
+Semicolon @examples/if_else.exl:24:25
+(Ident println) @examples/if_else.exl:25:5
+LParen @examples/if_else.exl:25:12
+(Ident classify) @examples/if_else.exl:25:13
+LParen @examples/if_else.exl:25:21
+(Int 42) @examples/if_else.exl:25:22
+RParen @examples/if_else.exl:25:24
+RParen @examples/if_else.exl:25:25
+Semicolon @examples/if_else.exl:25:26
+RBrace @examples/if_else.exl:26:1
+Eof @examples/if_else.exl:27:1

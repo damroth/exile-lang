@@ -1,0 +1,15 @@
+;; exile-typed-ir-dump v1 examples/int_to_ptr_cast.exl
+(tfn main (params ) void (body (let cust (cast (int 14675968) :ty (int i32) (ptr (struct CustomChip))) :ty (ptr (struct CustomChip))) (if (binop == (var cust) :ty (ptr (struct CustomChip)) null :ty null-ptr) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) (let nothing null :ty null-ptr) (if (binop == (var nothing) :ty (ptr (struct CustomChip)) null :ty null-ptr) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32))))))
+(mono-instances
+  (struct CustomChip)
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+)

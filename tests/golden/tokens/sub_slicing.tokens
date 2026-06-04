@@ -1,0 +1,214 @@
+;; exile-tokens-dump v1 examples/sub_slicing.exl
+Fn @examples/sub_slicing.exl:23:1
+(Ident sum) @examples/sub_slicing.exl:23:4
+LParen @examples/sub_slicing.exl:23:7
+(Ident s) @examples/sub_slicing.exl:23:8
+Colon @examples/sub_slicing.exl:23:9
+(Ident Slice) @examples/sub_slicing.exl:23:11
+Lt @examples/sub_slicing.exl:23:16
+(Ident int) @examples/sub_slicing.exl:23:17
+Gt @examples/sub_slicing.exl:23:20
+RParen @examples/sub_slicing.exl:23:21
+Arrow @examples/sub_slicing.exl:23:23
+(Ident int) @examples/sub_slicing.exl:23:26
+LBrace @examples/sub_slicing.exl:23:30
+Let @examples/sub_slicing.exl:24:5
+Mut @examples/sub_slicing.exl:24:9
+(Ident acc) @examples/sub_slicing.exl:24:13
+Colon @examples/sub_slicing.exl:24:16
+(Ident int) @examples/sub_slicing.exl:24:18
+Eq @examples/sub_slicing.exl:24:22
+(Int 0) @examples/sub_slicing.exl:24:24
+Semicolon @examples/sub_slicing.exl:24:25
+Let @examples/sub_slicing.exl:25:5
+Mut @examples/sub_slicing.exl:25:9
+(Ident i) @examples/sub_slicing.exl:25:13
+Colon @examples/sub_slicing.exl:25:14
+(Ident u32) @examples/sub_slicing.exl:25:16
+Eq @examples/sub_slicing.exl:25:20
+(Int 0) @examples/sub_slicing.exl:25:22
+As @examples/sub_slicing.exl:25:24
+(Ident u32) @examples/sub_slicing.exl:25:27
+Semicolon @examples/sub_slicing.exl:25:30
+While @examples/sub_slicing.exl:26:5
+(Ident i) @examples/sub_slicing.exl:26:11
+Lt @examples/sub_slicing.exl:26:13
+(Ident s) @examples/sub_slicing.exl:26:15
+Dot @examples/sub_slicing.exl:26:16
+(Ident len) @examples/sub_slicing.exl:26:17
+LBrace @examples/sub_slicing.exl:26:21
+(Ident acc) @examples/sub_slicing.exl:27:9
+Eq @examples/sub_slicing.exl:27:13
+(Ident acc) @examples/sub_slicing.exl:27:15
+Plus @examples/sub_slicing.exl:27:19
+(Ident s) @examples/sub_slicing.exl:27:21
+LBracket @examples/sub_slicing.exl:27:22
+(Ident i) @examples/sub_slicing.exl:27:23
+As @examples/sub_slicing.exl:27:25
+(Ident int) @examples/sub_slicing.exl:27:28
+RBracket @examples/sub_slicing.exl:27:31
+Semicolon @examples/sub_slicing.exl:27:32
+(Ident i) @examples/sub_slicing.exl:28:9
+Eq @examples/sub_slicing.exl:28:11
+(Ident i) @examples/sub_slicing.exl:28:13
+Plus @examples/sub_slicing.exl:28:15
+(Int 1) @examples/sub_slicing.exl:28:17
+As @examples/sub_slicing.exl:28:19
+(Ident u32) @examples/sub_slicing.exl:28:22
+Semicolon @examples/sub_slicing.exl:28:25
+RBrace @examples/sub_slicing.exl:29:5
+(Ident acc) @examples/sub_slicing.exl:30:5
+RBrace @examples/sub_slicing.exl:31:1
+Fn @examples/sub_slicing.exl:33:1
+(Ident main) @examples/sub_slicing.exl:33:4
+LParen @examples/sub_slicing.exl:33:8
+RParen @examples/sub_slicing.exl:33:9
+LBrace @examples/sub_slicing.exl:33:11
+Let @examples/sub_slicing.exl:34:5
+(Ident arr) @examples/sub_slicing.exl:34:9
+Colon @examples/sub_slicing.exl:34:12
+LBracket @examples/sub_slicing.exl:34:14
+(Ident int) @examples/sub_slicing.exl:34:15
+Semicolon @examples/sub_slicing.exl:34:18
+(Int 6) @examples/sub_slicing.exl:34:20
+RBracket @examples/sub_slicing.exl:34:21
+Eq @examples/sub_slicing.exl:34:23
+LBracket @examples/sub_slicing.exl:34:25
+(Int 10) @examples/sub_slicing.exl:34:26
+Comma @examples/sub_slicing.exl:34:28
+(Int 20) @examples/sub_slicing.exl:34:30
+Comma @examples/sub_slicing.exl:34:32
+(Int 30) @examples/sub_slicing.exl:34:34
+Comma @examples/sub_slicing.exl:34:36
+(Int 40) @examples/sub_slicing.exl:34:38
+Comma @examples/sub_slicing.exl:34:40
+(Int 50) @examples/sub_slicing.exl:34:42
+Comma @examples/sub_slicing.exl:34:44
+(Int 60) @examples/sub_slicing.exl:34:46
+RBracket @examples/sub_slicing.exl:34:48
+Semicolon @examples/sub_slicing.exl:34:49
+Let @examples/sub_slicing.exl:37:5
+(Ident mid) @examples/sub_slicing.exl:37:9
+Eq @examples/sub_slicing.exl:37:13
+(Ident arr) @examples/sub_slicing.exl:37:15
+LBracket @examples/sub_slicing.exl:37:18
+(Int 1) @examples/sub_slicing.exl:37:19
+DotDot @examples/sub_slicing.exl:37:20
+(Int 4) @examples/sub_slicing.exl:37:22
+RBracket @examples/sub_slicing.exl:37:23
+Semicolon @examples/sub_slicing.exl:37:24
+(Ident println) @examples/sub_slicing.exl:38:5
+LParen @examples/sub_slicing.exl:38:12
+(Ident mid) @examples/sub_slicing.exl:38:13
+Dot @examples/sub_slicing.exl:38:16
+(Ident len) @examples/sub_slicing.exl:38:17
+As @examples/sub_slicing.exl:38:21
+(Ident int) @examples/sub_slicing.exl:38:24
+RParen @examples/sub_slicing.exl:38:27
+Semicolon @examples/sub_slicing.exl:38:28
+(Ident println) @examples/sub_slicing.exl:39:5
+LParen @examples/sub_slicing.exl:39:12
+(Ident sum) @examples/sub_slicing.exl:39:13
+LParen @examples/sub_slicing.exl:39:16
+(Ident mid) @examples/sub_slicing.exl:39:17
+RParen @examples/sub_slicing.exl:39:20
+RParen @examples/sub_slicing.exl:39:21
+Semicolon @examples/sub_slicing.exl:39:22
+Let @examples/sub_slicing.exl:42:5
+(Ident head) @examples/sub_slicing.exl:42:9
+Eq @examples/sub_slicing.exl:42:14
+(Ident arr) @examples/sub_slicing.exl:42:16
+LBracket @examples/sub_slicing.exl:42:19
+(Int 0) @examples/sub_slicing.exl:42:20
+DotDotEq @examples/sub_slicing.exl:42:21
+(Int 2) @examples/sub_slicing.exl:42:24
+RBracket @examples/sub_slicing.exl:42:25
+Semicolon @examples/sub_slicing.exl:42:26
+(Ident println) @examples/sub_slicing.exl:43:5
+LParen @examples/sub_slicing.exl:43:12
+(Ident head) @examples/sub_slicing.exl:43:13
+Dot @examples/sub_slicing.exl:43:17
+(Ident len) @examples/sub_slicing.exl:43:18
+As @examples/sub_slicing.exl:43:22
+(Ident int) @examples/sub_slicing.exl:43:25
+RParen @examples/sub_slicing.exl:43:28
+Semicolon @examples/sub_slicing.exl:43:29
+(Ident println) @examples/sub_slicing.exl:44:5
+LParen @examples/sub_slicing.exl:44:12
+(Ident sum) @examples/sub_slicing.exl:44:13
+LParen @examples/sub_slicing.exl:44:16
+(Ident head) @examples/sub_slicing.exl:44:17
+RParen @examples/sub_slicing.exl:44:21
+RParen @examples/sub_slicing.exl:44:22
+Semicolon @examples/sub_slicing.exl:44:23
+Let @examples/sub_slicing.exl:48:5
+(Ident s1) @examples/sub_slicing.exl:48:9
+Eq @examples/sub_slicing.exl:48:12
+(Ident arr) @examples/sub_slicing.exl:48:14
+LBracket @examples/sub_slicing.exl:48:17
+(Int 0) @examples/sub_slicing.exl:48:18
+DotDot @examples/sub_slicing.exl:48:19
+(Int 6) @examples/sub_slicing.exl:48:21
+RBracket @examples/sub_slicing.exl:48:22
+Semicolon @examples/sub_slicing.exl:48:23
+Let @examples/sub_slicing.exl:49:5
+(Ident s2) @examples/sub_slicing.exl:49:9
+Eq @examples/sub_slicing.exl:49:12
+(Ident s1) @examples/sub_slicing.exl:49:14
+LBracket @examples/sub_slicing.exl:49:16
+(Int 2) @examples/sub_slicing.exl:49:17
+DotDot @examples/sub_slicing.exl:49:18
+(Int 5) @examples/sub_slicing.exl:49:20
+RBracket @examples/sub_slicing.exl:49:21
+Semicolon @examples/sub_slicing.exl:49:22
+(Ident println) @examples/sub_slicing.exl:50:5
+LParen @examples/sub_slicing.exl:50:12
+(Ident s2) @examples/sub_slicing.exl:50:13
+Dot @examples/sub_slicing.exl:50:15
+(Ident len) @examples/sub_slicing.exl:50:16
+As @examples/sub_slicing.exl:50:20
+(Ident int) @examples/sub_slicing.exl:50:23
+RParen @examples/sub_slicing.exl:50:26
+Semicolon @examples/sub_slicing.exl:50:27
+(Ident println) @examples/sub_slicing.exl:51:5
+LParen @examples/sub_slicing.exl:51:12
+(Ident sum) @examples/sub_slicing.exl:51:13
+LParen @examples/sub_slicing.exl:51:16
+(Ident s2) @examples/sub_slicing.exl:51:17
+RParen @examples/sub_slicing.exl:51:19
+RParen @examples/sub_slicing.exl:51:20
+Semicolon @examples/sub_slicing.exl:51:21
+Let @examples/sub_slicing.exl:54:5
+(Ident r) @examples/sub_slicing.exl:54:9
+Eq @examples/sub_slicing.exl:54:11
+(Int 2) @examples/sub_slicing.exl:54:13
+DotDot @examples/sub_slicing.exl:54:14
+(Int 4) @examples/sub_slicing.exl:54:16
+Semicolon @examples/sub_slicing.exl:54:17
+Let @examples/sub_slicing.exl:55:5
+(Ident tail) @examples/sub_slicing.exl:55:9
+Eq @examples/sub_slicing.exl:55:14
+(Ident arr) @examples/sub_slicing.exl:55:16
+LBracket @examples/sub_slicing.exl:55:19
+(Ident r) @examples/sub_slicing.exl:55:20
+RBracket @examples/sub_slicing.exl:55:21
+Semicolon @examples/sub_slicing.exl:55:22
+(Ident println) @examples/sub_slicing.exl:56:5
+LParen @examples/sub_slicing.exl:56:12
+(Ident tail) @examples/sub_slicing.exl:56:13
+Dot @examples/sub_slicing.exl:56:17
+(Ident len) @examples/sub_slicing.exl:56:18
+As @examples/sub_slicing.exl:56:22
+(Ident int) @examples/sub_slicing.exl:56:25
+RParen @examples/sub_slicing.exl:56:28
+Semicolon @examples/sub_slicing.exl:56:29
+(Ident println) @examples/sub_slicing.exl:57:5
+LParen @examples/sub_slicing.exl:57:12
+(Ident sum) @examples/sub_slicing.exl:57:13
+LParen @examples/sub_slicing.exl:57:16
+(Ident tail) @examples/sub_slicing.exl:57:17
+RParen @examples/sub_slicing.exl:57:21
+RParen @examples/sub_slicing.exl:57:22
+Semicolon @examples/sub_slicing.exl:57:23
+RBrace @examples/sub_slicing.exl:58:1
+Eof @examples/sub_slicing.exl:59:1

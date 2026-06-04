@@ -1,0 +1,16 @@
+;; exile-typed-ir-dump v1 examples/or_patterns.exl
+(tfn ex_category (params (param t (enum Token))) (int i32) (body (return (match (var t) :ty (enum Token) :enum Token (arm (pat-or (pat-variant Plus tag=0) (pat-variant Minus tag=1) (pat-variant Star tag=2) (pat-variant Slash tag=3)) (int 1) :ty (int i32)) (arm (pat-or (pat-variant LParen tag=4) (pat-variant RParen tag=5)) (int 2) :ty (int i32)) (arm (pat-or (pat-variant Ident tag=6) (pat-variant NumberLit tag=7)) (int 3) :ty (int i32))) :ty (int i32))))
+(tfn main (params ) void (body (let __lift_0 (enum-lit Token::Plus tag=0) :ty (enum Token)) (expr-stmt (builtin-call println (call ex_category (var __lift_0) :ty (enum Token)) :ty (int i32)) :ty (int i32)) (let __lift_1 (enum-lit Token::Slash tag=3) :ty (enum Token)) (expr-stmt (builtin-call println (call ex_category (var __lift_1) :ty (enum Token)) :ty (int i32)) :ty (int i32)) (let __lift_2 (enum-lit Token::LParen tag=4) :ty (enum Token)) (expr-stmt (builtin-call println (call ex_category (var __lift_2) :ty (enum Token)) :ty (int i32)) :ty (int i32)) (let __lift_3 (enum-lit Token::Ident tag=6) :ty (enum Token)) (expr-stmt (builtin-call println (call ex_category (var __lift_3) :ty (enum Token)) :ty (int i32)) :ty (int i32))))
+(mono-instances
+  (struct HashMap)
+  (struct HashMapIter)
+  (struct Range)
+  (struct RangeInclusive)
+  (struct Slice)
+  (struct Slot)
+  (struct Vec)
+  (struct VecIter)
+  (enum Option)
+  (enum Result)
+  (enum Token)
+)

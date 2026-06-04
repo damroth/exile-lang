@@ -1,0 +1,161 @@
+;; exile-tokens-dump v1 examples/methods.exl
+Struct @examples/methods.exl:7:1
+(Ident Point) @examples/methods.exl:7:8
+LBrace @examples/methods.exl:7:14
+(Ident x) @examples/methods.exl:8:5
+Colon @examples/methods.exl:8:6
+(Ident int) @examples/methods.exl:8:8
+Comma @examples/methods.exl:8:11
+(Ident y) @examples/methods.exl:9:5
+Colon @examples/methods.exl:9:6
+(Ident int) @examples/methods.exl:9:8
+Comma @examples/methods.exl:9:11
+RBrace @examples/methods.exl:10:1
+Impl @examples/methods.exl:12:1
+(Ident Point) @examples/methods.exl:12:6
+LBrace @examples/methods.exl:12:12
+Pub @examples/methods.exl:15:5
+Fn @examples/methods.exl:15:9
+(Ident origin) @examples/methods.exl:15:12
+LParen @examples/methods.exl:15:18
+RParen @examples/methods.exl:15:19
+Arrow @examples/methods.exl:15:21
+(Ident Point) @examples/methods.exl:15:24
+LBrace @examples/methods.exl:15:30
+Return @examples/methods.exl:16:9
+(Ident Point) @examples/methods.exl:16:16
+LBrace @examples/methods.exl:16:22
+(Ident x) @examples/methods.exl:16:24
+Colon @examples/methods.exl:16:25
+(Int 0) @examples/methods.exl:16:27
+Comma @examples/methods.exl:16:28
+(Ident y) @examples/methods.exl:16:30
+Colon @examples/methods.exl:16:31
+(Int 0) @examples/methods.exl:16:33
+RBrace @examples/methods.exl:16:35
+Semicolon @examples/methods.exl:16:36
+RBrace @examples/methods.exl:17:5
+Pub @examples/methods.exl:20:5
+Fn @examples/methods.exl:20:9
+(Ident area) @examples/methods.exl:20:12
+LParen @examples/methods.exl:20:16
+(Ident self) @examples/methods.exl:20:17
+Colon @examples/methods.exl:20:21
+(Ident Point) @examples/methods.exl:20:23
+RParen @examples/methods.exl:20:28
+Arrow @examples/methods.exl:20:30
+(Ident int) @examples/methods.exl:20:33
+LBrace @examples/methods.exl:20:37
+Return @examples/methods.exl:21:9
+(Ident self) @examples/methods.exl:21:16
+Dot @examples/methods.exl:21:20
+(Ident x) @examples/methods.exl:21:21
+Star @examples/methods.exl:21:23
+(Ident self) @examples/methods.exl:21:25
+Dot @examples/methods.exl:21:29
+(Ident y) @examples/methods.exl:21:30
+Semicolon @examples/methods.exl:21:31
+RBrace @examples/methods.exl:22:5
+Pub @examples/methods.exl:26:5
+Fn @examples/methods.exl:26:9
+(Ident shift) @examples/methods.exl:26:12
+LParen @examples/methods.exl:26:17
+(Ident self) @examples/methods.exl:26:18
+Colon @examples/methods.exl:26:22
+Star @examples/methods.exl:26:24
+(Ident Point) @examples/methods.exl:26:25
+Comma @examples/methods.exl:26:30
+(Ident dx) @examples/methods.exl:26:32
+Colon @examples/methods.exl:26:34
+(Ident int) @examples/methods.exl:26:36
+Comma @examples/methods.exl:26:39
+(Ident dy) @examples/methods.exl:26:41
+Colon @examples/methods.exl:26:43
+(Ident int) @examples/methods.exl:26:45
+RParen @examples/methods.exl:26:48
+LBrace @examples/methods.exl:26:50
+(Ident self) @examples/methods.exl:27:9
+Dot @examples/methods.exl:27:13
+(Ident x) @examples/methods.exl:27:14
+Eq @examples/methods.exl:27:16
+(Ident self) @examples/methods.exl:27:18
+Dot @examples/methods.exl:27:22
+(Ident x) @examples/methods.exl:27:23
+Plus @examples/methods.exl:27:25
+(Ident dx) @examples/methods.exl:27:27
+Semicolon @examples/methods.exl:27:29
+(Ident self) @examples/methods.exl:28:9
+Dot @examples/methods.exl:28:13
+(Ident y) @examples/methods.exl:28:14
+Eq @examples/methods.exl:28:16
+(Ident self) @examples/methods.exl:28:18
+Dot @examples/methods.exl:28:22
+(Ident y) @examples/methods.exl:28:23
+Plus @examples/methods.exl:28:25
+(Ident dy) @examples/methods.exl:28:27
+Semicolon @examples/methods.exl:28:29
+RBrace @examples/methods.exl:29:5
+RBrace @examples/methods.exl:30:1
+Fn @examples/methods.exl:32:1
+(Ident main) @examples/methods.exl:32:4
+LParen @examples/methods.exl:32:8
+RParen @examples/methods.exl:32:9
+LBrace @examples/methods.exl:32:11
+Let @examples/methods.exl:33:5
+Mut @examples/methods.exl:33:9
+(Ident p) @examples/methods.exl:33:13
+Eq @examples/methods.exl:33:15
+(Ident Point) @examples/methods.exl:33:17
+DoubleColon @examples/methods.exl:33:22
+(Ident origin) @examples/methods.exl:33:24
+LParen @examples/methods.exl:33:30
+RParen @examples/methods.exl:33:31
+Semicolon @examples/methods.exl:33:32
+(Ident p) @examples/methods.exl:34:5
+Dot @examples/methods.exl:34:6
+(Ident shift) @examples/methods.exl:34:7
+LParen @examples/methods.exl:34:12
+(Int 3) @examples/methods.exl:34:13
+Comma @examples/methods.exl:34:14
+(Int 4) @examples/methods.exl:34:16
+RParen @examples/methods.exl:34:17
+Semicolon @examples/methods.exl:34:18
+(Ident println) @examples/methods.exl:35:5
+LParen @examples/methods.exl:35:12
+(Ident p) @examples/methods.exl:35:13
+Dot @examples/methods.exl:35:14
+(Ident area) @examples/methods.exl:35:15
+LParen @examples/methods.exl:35:19
+RParen @examples/methods.exl:35:20
+RParen @examples/methods.exl:35:21
+Semicolon @examples/methods.exl:35:22
+Let @examples/methods.exl:37:5
+(Ident q) @examples/methods.exl:37:9
+Colon @examples/methods.exl:37:10
+Star @examples/methods.exl:37:12
+(Ident Point) @examples/methods.exl:37:13
+Eq @examples/methods.exl:37:19
+Amp @examples/methods.exl:37:21
+(Ident p) @examples/methods.exl:37:22
+Semicolon @examples/methods.exl:37:23
+(Ident println) @examples/methods.exl:38:5
+LParen @examples/methods.exl:38:12
+(Ident q) @examples/methods.exl:38:13
+Dot @examples/methods.exl:38:14
+(Ident area) @examples/methods.exl:38:15
+LParen @examples/methods.exl:38:19
+RParen @examples/methods.exl:38:20
+RParen @examples/methods.exl:38:21
+Semicolon @examples/methods.exl:38:22
+(Ident println) @examples/methods.exl:40:5
+LParen @examples/methods.exl:40:12
+(Ident Point) @examples/methods.exl:40:13
+DoubleColon @examples/methods.exl:40:18
+(Ident area) @examples/methods.exl:40:20
+LParen @examples/methods.exl:40:24
+(Ident p) @examples/methods.exl:40:25
+RParen @examples/methods.exl:40:26
+RParen @examples/methods.exl:40:27
+Semicolon @examples/methods.exl:40:28
+RBrace @examples/methods.exl:41:1
+Eof @examples/methods.exl:42:1

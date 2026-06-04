@@ -1,0 +1,131 @@
+;; exile-tokens-dump v1 examples/hex_literals.exl
+Fn @examples/hex_literals.exl:6:1
+(Ident main) @examples/hex_literals.exl:6:4
+LParen @examples/hex_literals.exl:6:8
+RParen @examples/hex_literals.exl:6:9
+LBrace @examples/hex_literals.exl:6:11
+Let @examples/hex_literals.exl:8:5
+(Ident nl) @examples/hex_literals.exl:8:9
+Colon @examples/hex_literals.exl:8:11
+(Ident u8) @examples/hex_literals.exl:8:13
+Eq @examples/hex_literals.exl:8:16
+(Int 10) @examples/hex_literals.exl:8:18
+Semicolon @examples/hex_literals.exl:8:22
+(Ident println) @examples/hex_literals.exl:9:5
+LParen @examples/hex_literals.exl:9:12
+(Ident nl) @examples/hex_literals.exl:9:13
+As @examples/hex_literals.exl:9:16
+(Ident int) @examples/hex_literals.exl:9:19
+RParen @examples/hex_literals.exl:9:22
+Semicolon @examples/hex_literals.exl:9:23
+Let @examples/hex_literals.exl:10:5
+(Ident upper_a) @examples/hex_literals.exl:10:9
+Colon @examples/hex_literals.exl:10:16
+(Ident u8) @examples/hex_literals.exl:10:18
+Eq @examples/hex_literals.exl:10:21
+(Int 65) @examples/hex_literals.exl:10:23
+Semicolon @examples/hex_literals.exl:10:27
+(Ident println) @examples/hex_literals.exl:11:5
+LParen @examples/hex_literals.exl:11:12
+(Ident upper_a) @examples/hex_literals.exl:11:13
+As @examples/hex_literals.exl:11:21
+(Ident int) @examples/hex_literals.exl:11:24
+RParen @examples/hex_literals.exl:11:27
+Semicolon @examples/hex_literals.exl:11:28
+Let @examples/hex_literals.exl:14:5
+(Ident read_flag) @examples/hex_literals.exl:14:9
+Colon @examples/hex_literals.exl:14:18
+(Ident u32) @examples/hex_literals.exl:14:20
+Eq @examples/hex_literals.exl:14:25
+(Int 1) @examples/hex_literals.exl:14:27
+Semicolon @examples/hex_literals.exl:14:31
+Let @examples/hex_literals.exl:15:5
+(Ident write_flag) @examples/hex_literals.exl:15:9
+Colon @examples/hex_literals.exl:15:19
+(Ident u32) @examples/hex_literals.exl:15:21
+Eq @examples/hex_literals.exl:15:25
+(Int 2) @examples/hex_literals.exl:15:27
+Semicolon @examples/hex_literals.exl:15:31
+Let @examples/hex_literals.exl:16:5
+(Ident exec_flag) @examples/hex_literals.exl:16:9
+Colon @examples/hex_literals.exl:16:18
+(Ident u32) @examples/hex_literals.exl:16:20
+Eq @examples/hex_literals.exl:16:25
+(Int 4) @examples/hex_literals.exl:16:27
+Semicolon @examples/hex_literals.exl:16:31
+Let @examples/hex_literals.exl:17:5
+(Ident rwx) @examples/hex_literals.exl:17:9
+Colon @examples/hex_literals.exl:17:12
+(Ident u32) @examples/hex_literals.exl:17:14
+Eq @examples/hex_literals.exl:17:18
+(Ident read_flag) @examples/hex_literals.exl:17:20
+Pipe @examples/hex_literals.exl:17:30
+(Ident write_flag) @examples/hex_literals.exl:17:32
+Pipe @examples/hex_literals.exl:17:43
+(Ident exec_flag) @examples/hex_literals.exl:17:45
+Semicolon @examples/hex_literals.exl:17:54
+(Ident println) @examples/hex_literals.exl:18:5
+LParen @examples/hex_literals.exl:18:12
+(Ident rwx) @examples/hex_literals.exl:18:13
+As @examples/hex_literals.exl:18:17
+(Ident int) @examples/hex_literals.exl:18:20
+RParen @examples/hex_literals.exl:18:23
+Semicolon @examples/hex_literals.exl:18:24
+Let @examples/hex_literals.exl:21:5
+(Ident a) @examples/hex_literals.exl:21:9
+Colon @examples/hex_literals.exl:21:10
+(Ident u32) @examples/hex_literals.exl:21:12
+Eq @examples/hex_literals.exl:21:16
+(Int 57005) @examples/hex_literals.exl:21:18
+Semicolon @examples/hex_literals.exl:21:24
+Let @examples/hex_literals.exl:22:5
+(Ident b) @examples/hex_literals.exl:22:9
+Colon @examples/hex_literals.exl:22:10
+(Ident u32) @examples/hex_literals.exl:22:12
+Eq @examples/hex_literals.exl:22:16
+(Int 48879) @examples/hex_literals.exl:22:18
+Semicolon @examples/hex_literals.exl:22:24
+Let @examples/hex_literals.exl:23:5
+(Ident c) @examples/hex_literals.exl:23:9
+Colon @examples/hex_literals.exl:23:10
+(Ident u32) @examples/hex_literals.exl:23:12
+Eq @examples/hex_literals.exl:23:16
+(Int 51966) @examples/hex_literals.exl:23:18
+Semicolon @examples/hex_literals.exl:23:24
+(Ident println) @examples/hex_literals.exl:24:5
+LParen @examples/hex_literals.exl:24:12
+(Ident a) @examples/hex_literals.exl:24:13
+As @examples/hex_literals.exl:24:15
+(Ident int) @examples/hex_literals.exl:24:18
+RParen @examples/hex_literals.exl:24:21
+Semicolon @examples/hex_literals.exl:24:22
+(Ident println) @examples/hex_literals.exl:25:5
+LParen @examples/hex_literals.exl:25:12
+(Ident b) @examples/hex_literals.exl:25:13
+As @examples/hex_literals.exl:25:15
+(Ident int) @examples/hex_literals.exl:25:18
+RParen @examples/hex_literals.exl:25:21
+Semicolon @examples/hex_literals.exl:25:22
+(Ident println) @examples/hex_literals.exl:26:5
+LParen @examples/hex_literals.exl:26:12
+(Ident c) @examples/hex_literals.exl:26:13
+As @examples/hex_literals.exl:26:15
+(Ident int) @examples/hex_literals.exl:26:18
+RParen @examples/hex_literals.exl:26:21
+Semicolon @examples/hex_literals.exl:26:22
+Let @examples/hex_literals.exl:29:5
+(Ident custom_base) @examples/hex_literals.exl:29:9
+Colon @examples/hex_literals.exl:29:20
+(Ident u32) @examples/hex_literals.exl:29:22
+Eq @examples/hex_literals.exl:29:26
+(Int 14675968) @examples/hex_literals.exl:29:28
+Semicolon @examples/hex_literals.exl:29:36
+(Ident println) @examples/hex_literals.exl:30:5
+LParen @examples/hex_literals.exl:30:12
+(Ident custom_base) @examples/hex_literals.exl:30:13
+As @examples/hex_literals.exl:30:25
+(Ident int) @examples/hex_literals.exl:30:28
+RParen @examples/hex_literals.exl:30:31
+Semicolon @examples/hex_literals.exl:30:32
+RBrace @examples/hex_literals.exl:31:1
+Eof @examples/hex_literals.exl:32:1

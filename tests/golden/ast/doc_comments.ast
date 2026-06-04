@@ -1,0 +1,5 @@
+;; exile-ast-dump v1 examples/doc_comments.exl
+(fn dbl (params (param x (int i32))) (int i32) (body (tail (binop + (var x) (var x)))))
+(fn add (params (param a (int i32)) (param b (int i32))) (int i32) (body (tail (binop + (var a) (var b)))))
+(struct Point (fields (field x (int i32)) (field y (int i32))))
+(fn main (params ) void (body (expr-stmt (call println (call dbl (int 5)))) (expr-stmt (call println (call add (int 2) (int 3)))) (let p (struct-lit Point (field x (int 7)) (field y (int 9)))) (expr-stmt (call println (binop + (field-access (var p) x) (field-access (var p) y))))))

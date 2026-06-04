@@ -1,0 +1,149 @@
+;; exile-tokens-dump v1 examples/slice.exl
+Fn @examples/slice.exl:14:1
+(Ident sum) @examples/slice.exl:14:4
+LParen @examples/slice.exl:14:7
+(Ident s) @examples/slice.exl:14:8
+Colon @examples/slice.exl:14:9
+(Ident Slice) @examples/slice.exl:14:11
+Lt @examples/slice.exl:14:16
+(Ident int) @examples/slice.exl:14:17
+Gt @examples/slice.exl:14:20
+RParen @examples/slice.exl:14:21
+Arrow @examples/slice.exl:14:23
+(Ident int) @examples/slice.exl:14:26
+LBrace @examples/slice.exl:14:30
+Let @examples/slice.exl:15:5
+Mut @examples/slice.exl:15:9
+(Ident total) @examples/slice.exl:15:13
+Colon @examples/slice.exl:15:18
+(Ident int) @examples/slice.exl:15:20
+Eq @examples/slice.exl:15:24
+(Int 0) @examples/slice.exl:15:26
+Semicolon @examples/slice.exl:15:27
+Let @examples/slice.exl:16:5
+Mut @examples/slice.exl:16:9
+(Ident i) @examples/slice.exl:16:13
+Colon @examples/slice.exl:16:14
+(Ident u32) @examples/slice.exl:16:16
+Eq @examples/slice.exl:16:20
+(Int 0) @examples/slice.exl:16:22
+Semicolon @examples/slice.exl:16:23
+While @examples/slice.exl:17:5
+(Ident i) @examples/slice.exl:17:11
+Lt @examples/slice.exl:17:13
+(Ident s) @examples/slice.exl:17:15
+Dot @examples/slice.exl:17:16
+(Ident len) @examples/slice.exl:17:17
+LBrace @examples/slice.exl:17:21
+(Ident total) @examples/slice.exl:18:9
+Eq @examples/slice.exl:18:15
+(Ident total) @examples/slice.exl:18:17
+Plus @examples/slice.exl:18:23
+(Ident s) @examples/slice.exl:18:25
+LBracket @examples/slice.exl:18:26
+(Ident i) @examples/slice.exl:18:27
+RBracket @examples/slice.exl:18:28
+Semicolon @examples/slice.exl:18:29
+(Ident i) @examples/slice.exl:19:9
+Eq @examples/slice.exl:19:11
+(Ident i) @examples/slice.exl:19:13
+Plus @examples/slice.exl:19:15
+(Int 1) @examples/slice.exl:19:17
+Semicolon @examples/slice.exl:19:18
+RBrace @examples/slice.exl:20:5
+(Ident total) @examples/slice.exl:21:5
+RBrace @examples/slice.exl:22:1
+Fn @examples/slice.exl:24:1
+(Ident first) @examples/slice.exl:24:4
+LParen @examples/slice.exl:24:9
+(Ident s) @examples/slice.exl:24:10
+Colon @examples/slice.exl:24:11
+(Ident Slice) @examples/slice.exl:24:13
+Lt @examples/slice.exl:24:18
+(Ident int) @examples/slice.exl:24:19
+Gt @examples/slice.exl:24:22
+RParen @examples/slice.exl:24:23
+Arrow @examples/slice.exl:24:25
+(Ident int) @examples/slice.exl:24:28
+LBrace @examples/slice.exl:24:32
+(Ident s) @examples/slice.exl:24:34
+LBracket @examples/slice.exl:24:35
+(Int 0) @examples/slice.exl:24:36
+RBracket @examples/slice.exl:24:37
+RBrace @examples/slice.exl:24:39
+Fn @examples/slice.exl:26:1
+(Ident main) @examples/slice.exl:26:4
+LParen @examples/slice.exl:26:8
+RParen @examples/slice.exl:26:9
+LBrace @examples/slice.exl:26:11
+Let @examples/slice.exl:27:5
+(Ident arr) @examples/slice.exl:27:9
+Colon @examples/slice.exl:27:12
+LBracket @examples/slice.exl:27:14
+(Ident int) @examples/slice.exl:27:15
+Semicolon @examples/slice.exl:27:18
+(Int 5) @examples/slice.exl:27:20
+RBracket @examples/slice.exl:27:21
+Eq @examples/slice.exl:27:23
+LBracket @examples/slice.exl:27:25
+(Int 3) @examples/slice.exl:27:26
+Comma @examples/slice.exl:27:27
+(Int 1) @examples/slice.exl:27:29
+Comma @examples/slice.exl:27:30
+(Int 4) @examples/slice.exl:27:32
+Comma @examples/slice.exl:27:33
+(Int 1) @examples/slice.exl:27:35
+Comma @examples/slice.exl:27:36
+(Int 5) @examples/slice.exl:27:38
+RBracket @examples/slice.exl:27:39
+Semicolon @examples/slice.exl:27:40
+Let @examples/slice.exl:28:5
+(Ident s) @examples/slice.exl:28:9
+Colon @examples/slice.exl:28:10
+(Ident Slice) @examples/slice.exl:28:12
+Lt @examples/slice.exl:28:17
+(Ident int) @examples/slice.exl:28:18
+Gt @examples/slice.exl:28:21
+Eq @examples/slice.exl:28:23
+(Ident Slice) @examples/slice.exl:28:25
+LBrace @examples/slice.exl:28:31
+(Ident ptr) @examples/slice.exl:28:33
+Colon @examples/slice.exl:28:36
+Amp @examples/slice.exl:28:38
+(Ident arr) @examples/slice.exl:28:39
+LBracket @examples/slice.exl:28:42
+(Int 0) @examples/slice.exl:28:43
+RBracket @examples/slice.exl:28:44
+Comma @examples/slice.exl:28:45
+(Ident len) @examples/slice.exl:28:47
+Colon @examples/slice.exl:28:50
+(Int 5) @examples/slice.exl:28:52
+RBrace @examples/slice.exl:28:54
+Semicolon @examples/slice.exl:28:55
+(Ident println) @examples/slice.exl:29:5
+LParen @examples/slice.exl:29:12
+(Ident sum) @examples/slice.exl:29:13
+LParen @examples/slice.exl:29:16
+(Ident s) @examples/slice.exl:29:17
+RParen @examples/slice.exl:29:18
+RParen @examples/slice.exl:29:19
+Semicolon @examples/slice.exl:29:20
+(Ident println) @examples/slice.exl:30:5
+LParen @examples/slice.exl:30:12
+(Ident first) @examples/slice.exl:30:13
+LParen @examples/slice.exl:30:18
+(Ident s) @examples/slice.exl:30:19
+RParen @examples/slice.exl:30:20
+RParen @examples/slice.exl:30:21
+Semicolon @examples/slice.exl:30:22
+(Ident println) @examples/slice.exl:31:5
+LParen @examples/slice.exl:31:12
+(Ident s) @examples/slice.exl:31:13
+Dot @examples/slice.exl:31:14
+(Ident len) @examples/slice.exl:31:15
+As @examples/slice.exl:31:19
+(Ident int) @examples/slice.exl:31:22
+RParen @examples/slice.exl:31:25
+Semicolon @examples/slice.exl:31:26
+RBrace @examples/slice.exl:32:1
+Eof @examples/slice.exl:33:1

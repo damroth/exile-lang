@@ -1,0 +1,373 @@
+;; exile-tokens-dump v1 examples/generics.exl
+Struct @examples/generics.exl:16:1
+(Ident Pair) @examples/generics.exl:16:8
+Lt @examples/generics.exl:16:12
+(Ident A) @examples/generics.exl:16:13
+Comma @examples/generics.exl:16:14
+(Ident B) @examples/generics.exl:16:16
+Gt @examples/generics.exl:16:17
+LBrace @examples/generics.exl:16:19
+(Ident fst) @examples/generics.exl:17:5
+Colon @examples/generics.exl:17:8
+(Ident A) @examples/generics.exl:17:10
+Comma @examples/generics.exl:17:11
+(Ident snd) @examples/generics.exl:18:5
+Colon @examples/generics.exl:18:8
+(Ident B) @examples/generics.exl:18:10
+RBrace @examples/generics.exl:19:1
+Fn @examples/generics.exl:30:1
+(Ident first_int_or) @examples/generics.exl:30:4
+LParen @examples/generics.exl:30:16
+(Ident d) @examples/generics.exl:30:17
+Colon @examples/generics.exl:30:18
+(Ident int) @examples/generics.exl:30:20
+Comma @examples/generics.exl:30:23
+(Ident opt) @examples/generics.exl:30:25
+Colon @examples/generics.exl:30:28
+Question @examples/generics.exl:30:30
+(Ident int) @examples/generics.exl:30:31
+RParen @examples/generics.exl:30:34
+Arrow @examples/generics.exl:30:36
+(Ident int) @examples/generics.exl:30:39
+LBrace @examples/generics.exl:30:43
+Return @examples/generics.exl:31:5
+(Ident opt) @examples/generics.exl:31:12
+Orelse @examples/generics.exl:31:16
+(Ident d) @examples/generics.exl:31:23
+Semicolon @examples/generics.exl:31:24
+RBrace @examples/generics.exl:32:1
+Fn @examples/generics.exl:37:1
+(Ident incr_opt) @examples/generics.exl:37:4
+LParen @examples/generics.exl:37:12
+(Ident o) @examples/generics.exl:37:13
+Colon @examples/generics.exl:37:14
+Question @examples/generics.exl:37:16
+(Ident int) @examples/generics.exl:37:17
+RParen @examples/generics.exl:37:20
+Arrow @examples/generics.exl:37:22
+Question @examples/generics.exl:37:25
+(Ident int) @examples/generics.exl:37:26
+LBrace @examples/generics.exl:37:30
+Let @examples/generics.exl:38:5
+(Ident v) @examples/generics.exl:38:9
+Eq @examples/generics.exl:38:11
+Try @examples/generics.exl:38:13
+(Ident o) @examples/generics.exl:38:17
+Semicolon @examples/generics.exl:38:18
+Return @examples/generics.exl:39:5
+(Ident Option) @examples/generics.exl:39:12
+DoubleColon @examples/generics.exl:39:18
+(Ident Some) @examples/generics.exl:39:20
+LParen @examples/generics.exl:39:24
+(Ident v) @examples/generics.exl:39:25
+Plus @examples/generics.exl:39:27
+(Int 1) @examples/generics.exl:39:29
+RParen @examples/generics.exl:39:30
+Semicolon @examples/generics.exl:39:31
+RBrace @examples/generics.exl:40:1
+Enum @examples/generics.exl:42:1
+(Ident IoErr) @examples/generics.exl:42:6
+LBrace @examples/generics.exl:42:12
+(Ident NotFound) @examples/generics.exl:42:14
+Pipe @examples/generics.exl:42:23
+(Ident Denied) @examples/generics.exl:42:25
+RBrace @examples/generics.exl:42:32
+Fn @examples/generics.exl:44:1
+(Ident read_count) @examples/generics.exl:44:4
+LParen @examples/generics.exl:44:14
+(Ident ok) @examples/generics.exl:44:15
+Colon @examples/generics.exl:44:17
+(Ident bool) @examples/generics.exl:44:19
+RParen @examples/generics.exl:44:23
+Arrow @examples/generics.exl:44:25
+(Ident Result) @examples/generics.exl:44:28
+Lt @examples/generics.exl:44:34
+(Ident int) @examples/generics.exl:44:35
+Comma @examples/generics.exl:44:38
+(Ident IoErr) @examples/generics.exl:44:40
+Gt @examples/generics.exl:44:45
+LBrace @examples/generics.exl:44:47
+If @examples/generics.exl:45:5
+(Ident ok) @examples/generics.exl:45:8
+LBrace @examples/generics.exl:45:11
+Return @examples/generics.exl:46:9
+(Ident Result) @examples/generics.exl:46:16
+DoubleColon @examples/generics.exl:46:22
+(Ident Ok) @examples/generics.exl:46:24
+LParen @examples/generics.exl:46:26
+(Int 42) @examples/generics.exl:46:27
+RParen @examples/generics.exl:46:29
+Semicolon @examples/generics.exl:46:30
+RBrace @examples/generics.exl:47:5
+Return @examples/generics.exl:48:5
+(Ident Result) @examples/generics.exl:48:12
+DoubleColon @examples/generics.exl:48:18
+(Ident Err) @examples/generics.exl:48:20
+LParen @examples/generics.exl:48:23
+(Ident IoErr) @examples/generics.exl:48:24
+DoubleColon @examples/generics.exl:48:29
+(Ident NotFound) @examples/generics.exl:48:31
+RParen @examples/generics.exl:48:39
+Semicolon @examples/generics.exl:48:40
+RBrace @examples/generics.exl:49:1
+Fn @examples/generics.exl:54:1
+(Ident read_doubled) @examples/generics.exl:54:4
+LParen @examples/generics.exl:54:16
+(Ident ok) @examples/generics.exl:54:17
+Colon @examples/generics.exl:54:19
+(Ident bool) @examples/generics.exl:54:21
+RParen @examples/generics.exl:54:25
+Arrow @examples/generics.exl:54:27
+(Ident Result) @examples/generics.exl:54:30
+Lt @examples/generics.exl:54:36
+(Ident int) @examples/generics.exl:54:37
+Comma @examples/generics.exl:54:40
+(Ident IoErr) @examples/generics.exl:54:42
+Gt @examples/generics.exl:54:47
+LBrace @examples/generics.exl:54:49
+Let @examples/generics.exl:55:5
+(Ident v) @examples/generics.exl:55:9
+Eq @examples/generics.exl:55:11
+Try @examples/generics.exl:55:13
+(Ident read_count) @examples/generics.exl:55:17
+LParen @examples/generics.exl:55:27
+(Ident ok) @examples/generics.exl:55:28
+RParen @examples/generics.exl:55:30
+Semicolon @examples/generics.exl:55:31
+Return @examples/generics.exl:56:5
+(Ident Result) @examples/generics.exl:56:12
+DoubleColon @examples/generics.exl:56:18
+(Ident Ok) @examples/generics.exl:56:20
+LParen @examples/generics.exl:56:22
+(Ident v) @examples/generics.exl:56:23
+Star @examples/generics.exl:56:25
+(Int 2) @examples/generics.exl:56:27
+RParen @examples/generics.exl:56:28
+Semicolon @examples/generics.exl:56:29
+RBrace @examples/generics.exl:57:1
+Fn @examples/generics.exl:59:1
+(Ident describe) @examples/generics.exl:59:4
+LParen @examples/generics.exl:59:12
+(Ident r) @examples/generics.exl:59:13
+Colon @examples/generics.exl:59:14
+(Ident Result) @examples/generics.exl:59:16
+Lt @examples/generics.exl:59:22
+(Ident int) @examples/generics.exl:59:23
+Comma @examples/generics.exl:59:26
+(Ident IoErr) @examples/generics.exl:59:28
+Gt @examples/generics.exl:59:33
+RParen @examples/generics.exl:59:34
+LBrace @examples/generics.exl:59:36
+Match @examples/generics.exl:60:5
+(Ident r) @examples/generics.exl:60:11
+LBrace @examples/generics.exl:60:13
+(Ident Result) @examples/generics.exl:61:9
+DoubleColon @examples/generics.exl:61:15
+(Ident Ok) @examples/generics.exl:61:17
+LParen @examples/generics.exl:61:19
+(Ident v) @examples/generics.exl:61:20
+RParen @examples/generics.exl:61:21
+FatArrow @examples/generics.exl:61:24
+(Ident println) @examples/generics.exl:61:27
+LParen @examples/generics.exl:61:34
+(Ident v) @examples/generics.exl:61:35
+RParen @examples/generics.exl:61:36
+Pipe @examples/generics.exl:62:9
+(Ident Result) @examples/generics.exl:62:11
+DoubleColon @examples/generics.exl:62:17
+(Ident Err) @examples/generics.exl:62:19
+LParen @examples/generics.exl:62:22
+(Ident _) @examples/generics.exl:62:23
+RParen @examples/generics.exl:62:24
+FatArrow @examples/generics.exl:62:26
+(Ident println) @examples/generics.exl:62:29
+LParen @examples/generics.exl:62:36
+(Int 0) @examples/generics.exl:62:37
+RParen @examples/generics.exl:62:38
+RBrace @examples/generics.exl:63:5
+RBrace @examples/generics.exl:64:1
+Fn @examples/generics.exl:66:1
+(Ident main) @examples/generics.exl:66:4
+LParen @examples/generics.exl:66:8
+RParen @examples/generics.exl:66:9
+LBrace @examples/generics.exl:66:11
+Let @examples/generics.exl:68:5
+(Ident p) @examples/generics.exl:68:9
+Eq @examples/generics.exl:68:11
+(Ident Pair) @examples/generics.exl:68:13
+LBrace @examples/generics.exl:68:18
+(Ident fst) @examples/generics.exl:68:20
+Colon @examples/generics.exl:68:23
+(Int 5) @examples/generics.exl:68:25
+Comma @examples/generics.exl:68:26
+(Ident snd) @examples/generics.exl:68:28
+Colon @examples/generics.exl:68:31
+(String "hi") @examples/generics.exl:68:33
+RBrace @examples/generics.exl:68:38
+Semicolon @examples/generics.exl:68:39
+(Ident println) @examples/generics.exl:69:5
+LParen @examples/generics.exl:69:12
+(Ident p) @examples/generics.exl:69:13
+Dot @examples/generics.exl:69:14
+(Ident fst) @examples/generics.exl:69:15
+RParen @examples/generics.exl:69:18
+Semicolon @examples/generics.exl:69:19
+Let @examples/generics.exl:73:5
+(Ident p2) @examples/generics.exl:73:9
+Eq @examples/generics.exl:73:12
+(Ident Pair) @examples/generics.exl:73:14
+LBrace @examples/generics.exl:73:19
+(Ident fst) @examples/generics.exl:73:21
+Colon @examples/generics.exl:73:24
+(Int 6) @examples/generics.exl:73:26
+Comma @examples/generics.exl:73:27
+DotDot @examples/generics.exl:73:29
+(Ident p) @examples/generics.exl:73:31
+RBrace @examples/generics.exl:73:33
+Semicolon @examples/generics.exl:73:34
+(Ident println) @examples/generics.exl:74:5
+LParen @examples/generics.exl:74:12
+(Ident p2) @examples/generics.exl:74:13
+Dot @examples/generics.exl:74:15
+(Ident fst) @examples/generics.exl:74:16
+RParen @examples/generics.exl:74:19
+Semicolon @examples/generics.exl:74:20
+(Ident println) @examples/generics.exl:75:5
+LParen @examples/generics.exl:75:12
+(Ident p2) @examples/generics.exl:75:13
+Dot @examples/generics.exl:75:15
+(Ident snd) @examples/generics.exl:75:16
+RParen @examples/generics.exl:75:19
+Semicolon @examples/generics.exl:75:20
+Let @examples/generics.exl:78:5
+(Ident some) @examples/generics.exl:78:9
+Eq @examples/generics.exl:78:14
+(Ident Option) @examples/generics.exl:78:16
+DoubleColon @examples/generics.exl:78:22
+(Ident Some) @examples/generics.exl:78:24
+LParen @examples/generics.exl:78:28
+(Int 7) @examples/generics.exl:78:29
+RParen @examples/generics.exl:78:30
+Semicolon @examples/generics.exl:78:31
+Let @examples/generics.exl:79:5
+(Ident none) @examples/generics.exl:79:9
+Colon @examples/generics.exl:79:13
+(Ident Option) @examples/generics.exl:79:15
+Lt @examples/generics.exl:79:21
+(Ident int) @examples/generics.exl:79:22
+Gt @examples/generics.exl:79:25
+Eq @examples/generics.exl:79:27
+(Ident Option) @examples/generics.exl:79:29
+DoubleColon @examples/generics.exl:79:35
+(Ident None) @examples/generics.exl:79:37
+Semicolon @examples/generics.exl:79:41
+(Ident println) @examples/generics.exl:80:5
+LParen @examples/generics.exl:80:12
+(Ident first_int_or) @examples/generics.exl:80:13
+LParen @examples/generics.exl:80:25
+(Int 99) @examples/generics.exl:80:26
+Comma @examples/generics.exl:80:28
+(Ident some) @examples/generics.exl:80:30
+RParen @examples/generics.exl:80:34
+RParen @examples/generics.exl:80:35
+Semicolon @examples/generics.exl:80:36
+(Ident println) @examples/generics.exl:81:5
+LParen @examples/generics.exl:81:12
+(Ident first_int_or) @examples/generics.exl:81:13
+LParen @examples/generics.exl:81:25
+(Int 99) @examples/generics.exl:81:26
+Comma @examples/generics.exl:81:28
+(Ident none) @examples/generics.exl:81:30
+RParen @examples/generics.exl:81:34
+RParen @examples/generics.exl:81:35
+Semicolon @examples/generics.exl:81:36
+(Ident describe) @examples/generics.exl:85:5
+LParen @examples/generics.exl:85:13
+(Ident read_count) @examples/generics.exl:85:14
+LParen @examples/generics.exl:85:24
+True @examples/generics.exl:85:25
+RParen @examples/generics.exl:85:29
+RParen @examples/generics.exl:85:30
+Semicolon @examples/generics.exl:85:31
+(Ident describe) @examples/generics.exl:86:5
+LParen @examples/generics.exl:86:13
+(Ident read_count) @examples/generics.exl:86:14
+LParen @examples/generics.exl:86:24
+False @examples/generics.exl:86:25
+RParen @examples/generics.exl:86:30
+RParen @examples/generics.exl:86:31
+Semicolon @examples/generics.exl:86:32
+Match @examples/generics.exl:89:5
+(Ident incr_opt) @examples/generics.exl:89:11
+LParen @examples/generics.exl:89:19
+(Ident some) @examples/generics.exl:89:20
+RParen @examples/generics.exl:89:24
+LBrace @examples/generics.exl:89:26
+(Ident Option) @examples/generics.exl:90:9
+DoubleColon @examples/generics.exl:90:15
+(Ident Some) @examples/generics.exl:90:17
+LParen @examples/generics.exl:90:21
+(Ident x) @examples/generics.exl:90:22
+RParen @examples/generics.exl:90:23
+FatArrow @examples/generics.exl:90:25
+(Ident println) @examples/generics.exl:90:28
+LParen @examples/generics.exl:90:35
+(Ident x) @examples/generics.exl:90:36
+RParen @examples/generics.exl:90:37
+Pipe @examples/generics.exl:91:9
+(Ident Option) @examples/generics.exl:91:11
+DoubleColon @examples/generics.exl:91:17
+(Ident None) @examples/generics.exl:91:19
+FatArrow @examples/generics.exl:91:27
+(Ident println) @examples/generics.exl:91:30
+LParen @examples/generics.exl:91:37
+Minus @examples/generics.exl:91:38
+(Int 1) @examples/generics.exl:91:39
+RParen @examples/generics.exl:91:40
+RBrace @examples/generics.exl:92:5
+Match @examples/generics.exl:93:5
+(Ident incr_opt) @examples/generics.exl:93:11
+LParen @examples/generics.exl:93:19
+(Ident none) @examples/generics.exl:93:20
+RParen @examples/generics.exl:93:24
+LBrace @examples/generics.exl:93:26
+(Ident Option) @examples/generics.exl:94:9
+DoubleColon @examples/generics.exl:94:15
+(Ident Some) @examples/generics.exl:94:17
+LParen @examples/generics.exl:94:21
+(Ident x) @examples/generics.exl:94:22
+RParen @examples/generics.exl:94:23
+FatArrow @examples/generics.exl:94:25
+(Ident println) @examples/generics.exl:94:28
+LParen @examples/generics.exl:94:35
+(Ident x) @examples/generics.exl:94:36
+RParen @examples/generics.exl:94:37
+Pipe @examples/generics.exl:95:9
+(Ident Option) @examples/generics.exl:95:11
+DoubleColon @examples/generics.exl:95:17
+(Ident None) @examples/generics.exl:95:19
+FatArrow @examples/generics.exl:95:27
+(Ident println) @examples/generics.exl:95:30
+LParen @examples/generics.exl:95:37
+Minus @examples/generics.exl:95:38
+(Int 1) @examples/generics.exl:95:39
+RParen @examples/generics.exl:95:40
+RBrace @examples/generics.exl:96:5
+(Ident describe) @examples/generics.exl:100:5
+LParen @examples/generics.exl:100:13
+(Ident read_doubled) @examples/generics.exl:100:14
+LParen @examples/generics.exl:100:26
+True @examples/generics.exl:100:27
+RParen @examples/generics.exl:100:31
+RParen @examples/generics.exl:100:32
+Semicolon @examples/generics.exl:100:33
+(Ident describe) @examples/generics.exl:101:5
+LParen @examples/generics.exl:101:13
+(Ident read_doubled) @examples/generics.exl:101:14
+LParen @examples/generics.exl:101:26
+False @examples/generics.exl:101:27
+RParen @examples/generics.exl:101:32
+RParen @examples/generics.exl:101:33
+Semicolon @examples/generics.exl:101:34
+RBrace @examples/generics.exl:102:1
+Eof @examples/generics.exl:103:1

@@ -1,0 +1,21 @@
+;; exile-tokens-dump v1 examples/reexport.exl
+Use @examples/reexport.exl:12:1
+(Ident prelude) @examples/reexport.exl:12:5
+DoubleColon @examples/reexport.exl:12:12
+Star @examples/reexport.exl:12:14
+Semicolon @examples/reexport.exl:12:15
+Fn @examples/reexport.exl:14:1
+(Ident main) @examples/reexport.exl:14:4
+LParen @examples/reexport.exl:14:8
+RParen @examples/reexport.exl:14:9
+LBrace @examples/reexport.exl:14:11
+(Ident hello) @examples/reexport.exl:15:5
+LParen @examples/reexport.exl:15:10
+RParen @examples/reexport.exl:15:11
+Semicolon @examples/reexport.exl:15:12
+(Ident goodbye) @examples/reexport.exl:16:5
+LParen @examples/reexport.exl:16:12
+RParen @examples/reexport.exl:16:13
+Semicolon @examples/reexport.exl:16:14
+RBrace @examples/reexport.exl:17:1
+Eof @examples/reexport.exl:18:1

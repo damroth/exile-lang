@@ -1,0 +1,255 @@
+;; exile-tokens-dump v1 examples/amiga_hello.exl
+At @examples/amiga_hello.exl:21:1
+(Ident c_include) @examples/amiga_hello.exl:21:2
+LParen @examples/amiga_hello.exl:21:11
+(String "exec/types.h") @examples/amiga_hello.exl:21:12
+RParen @examples/amiga_hello.exl:21:26
+At @examples/amiga_hello.exl:22:1
+(Ident c_include) @examples/amiga_hello.exl:22:2
+LParen @examples/amiga_hello.exl:22:11
+(String "exec/libraries.h") @examples/amiga_hello.exl:22:12
+RParen @examples/amiga_hello.exl:22:30
+At @examples/amiga_hello.exl:23:1
+(Ident c_include) @examples/amiga_hello.exl:23:2
+LParen @examples/amiga_hello.exl:23:11
+(String "dos/dos.h") @examples/amiga_hello.exl:23:12
+RParen @examples/amiga_hello.exl:23:23
+Pub @examples/amiga_hello.exl:25:1
+Mod @examples/amiga_hello.exl:25:5
+(Ident raw) @examples/amiga_hello.exl:25:9
+LBrace @examples/amiga_hello.exl:25:13
+Extern @examples/amiga_hello.exl:28:5
+Struct @examples/amiga_hello.exl:28:12
+(Ident Library) @examples/amiga_hello.exl:28:19
+Semicolon @examples/amiga_hello.exl:28:26
+Extern @examples/amiga_hello.exl:34:5
+Type @examples/amiga_hello.exl:34:12
+(Ident ULONG) @examples/amiga_hello.exl:34:17
+Semicolon @examples/amiga_hello.exl:34:22
+Extern @examples/amiga_hello.exl:35:5
+Type @examples/amiga_hello.exl:35:12
+(Ident BPTR) @examples/amiga_hello.exl:35:17
+Semicolon @examples/amiga_hello.exl:35:21
+Extern @examples/amiga_hello.exl:36:5
+Type @examples/amiga_hello.exl:36:12
+(Ident APTR) @examples/amiga_hello.exl:36:17
+Semicolon @examples/amiga_hello.exl:36:21
+Extern @examples/amiga_hello.exl:37:5
+Type @examples/amiga_hello.exl:37:12
+(Ident LONG) @examples/amiga_hello.exl:37:17
+Semicolon @examples/amiga_hello.exl:37:21
+Extern @examples/amiga_hello.exl:41:5
+Var @examples/amiga_hello.exl:41:12
+(Ident SysBase) @examples/amiga_hello.exl:41:16
+Colon @examples/amiga_hello.exl:41:23
+Star @examples/amiga_hello.exl:41:25
+(Ident Library) @examples/amiga_hello.exl:41:26
+Semicolon @examples/amiga_hello.exl:41:33
+Extern @examples/amiga_hello.exl:42:5
+Var @examples/amiga_hello.exl:42:12
+(Ident DOSBase) @examples/amiga_hello.exl:42:16
+Colon @examples/amiga_hello.exl:42:23
+Star @examples/amiga_hello.exl:42:25
+(Ident Library) @examples/amiga_hello.exl:42:26
+Semicolon @examples/amiga_hello.exl:42:33
+At @examples/amiga_hello.exl:45:5
+(Ident amiga_lib) @examples/amiga_hello.exl:45:6
+LParen @examples/amiga_hello.exl:45:15
+(Ident SysBase) @examples/amiga_hello.exl:45:16
+RParen @examples/amiga_hello.exl:45:23
+Extern @examples/amiga_hello.exl:46:5
+Fn @examples/amiga_hello.exl:46:12
+(Ident open_library) @examples/amiga_hello.exl:46:15
+As @examples/amiga_hello.exl:46:28
+(Ident OpenLibrary) @examples/amiga_hello.exl:46:31
+LParen @examples/amiga_hello.exl:46:42
+At @examples/amiga_hello.exl:47:9
+(Ident reg) @examples/amiga_hello.exl:47:10
+LParen @examples/amiga_hello.exl:47:13
+(Ident a1) @examples/amiga_hello.exl:47:14
+RParen @examples/amiga_hello.exl:47:16
+(Ident name) @examples/amiga_hello.exl:47:18
+Colon @examples/amiga_hello.exl:47:22
+Star @examples/amiga_hello.exl:47:24
+(Ident c_char) @examples/amiga_hello.exl:47:25
+Comma @examples/amiga_hello.exl:47:31
+At @examples/amiga_hello.exl:48:9
+(Ident reg) @examples/amiga_hello.exl:48:10
+LParen @examples/amiga_hello.exl:48:13
+(Ident d0) @examples/amiga_hello.exl:48:14
+RParen @examples/amiga_hello.exl:48:16
+(Ident version) @examples/amiga_hello.exl:48:18
+Colon @examples/amiga_hello.exl:48:25
+(Ident ULONG) @examples/amiga_hello.exl:48:27
+RParen @examples/amiga_hello.exl:49:5
+Arrow @examples/amiga_hello.exl:49:7
+Star @examples/amiga_hello.exl:49:10
+(Ident Library) @examples/amiga_hello.exl:49:11
+Semicolon @examples/amiga_hello.exl:49:18
+At @examples/amiga_hello.exl:51:5
+(Ident amiga_lib) @examples/amiga_hello.exl:51:6
+LParen @examples/amiga_hello.exl:51:15
+(Ident SysBase) @examples/amiga_hello.exl:51:16
+RParen @examples/amiga_hello.exl:51:23
+Extern @examples/amiga_hello.exl:52:5
+Fn @examples/amiga_hello.exl:52:12
+(Ident close_library) @examples/amiga_hello.exl:52:15
+As @examples/amiga_hello.exl:52:29
+(Ident CloseLibrary) @examples/amiga_hello.exl:52:32
+LParen @examples/amiga_hello.exl:52:44
+At @examples/amiga_hello.exl:53:9
+(Ident reg) @examples/amiga_hello.exl:53:10
+LParen @examples/amiga_hello.exl:53:13
+(Ident a1) @examples/amiga_hello.exl:53:14
+RParen @examples/amiga_hello.exl:53:16
+(Ident library) @examples/amiga_hello.exl:53:18
+Colon @examples/amiga_hello.exl:53:25
+Star @examples/amiga_hello.exl:53:27
+(Ident Library) @examples/amiga_hello.exl:53:28
+RParen @examples/amiga_hello.exl:54:5
+Semicolon @examples/amiga_hello.exl:54:6
+At @examples/amiga_hello.exl:58:5
+(Ident amiga_lib) @examples/amiga_hello.exl:58:6
+LParen @examples/amiga_hello.exl:58:15
+(Ident DOSBase) @examples/amiga_hello.exl:58:16
+RParen @examples/amiga_hello.exl:58:23
+Extern @examples/amiga_hello.exl:59:5
+Fn @examples/amiga_hello.exl:59:12
+(Ident dos_output) @examples/amiga_hello.exl:59:15
+As @examples/amiga_hello.exl:59:26
+(Ident Output) @examples/amiga_hello.exl:59:29
+LParen @examples/amiga_hello.exl:59:35
+RParen @examples/amiga_hello.exl:59:36
+Arrow @examples/amiga_hello.exl:59:38
+(Ident BPTR) @examples/amiga_hello.exl:59:41
+Semicolon @examples/amiga_hello.exl:59:45
+At @examples/amiga_hello.exl:64:5
+(Ident amiga_lib) @examples/amiga_hello.exl:64:6
+LParen @examples/amiga_hello.exl:64:15
+(Ident DOSBase) @examples/amiga_hello.exl:64:16
+RParen @examples/amiga_hello.exl:64:23
+Extern @examples/amiga_hello.exl:65:5
+Fn @examples/amiga_hello.exl:65:12
+(Ident dos_write) @examples/amiga_hello.exl:65:15
+As @examples/amiga_hello.exl:65:25
+(Ident Write) @examples/amiga_hello.exl:65:28
+LParen @examples/amiga_hello.exl:65:33
+At @examples/amiga_hello.exl:66:9
+(Ident reg) @examples/amiga_hello.exl:66:10
+LParen @examples/amiga_hello.exl:66:13
+(Ident d1) @examples/amiga_hello.exl:66:14
+RParen @examples/amiga_hello.exl:66:16
+(Ident file) @examples/amiga_hello.exl:66:18
+Colon @examples/amiga_hello.exl:66:22
+(Ident BPTR) @examples/amiga_hello.exl:66:24
+Comma @examples/amiga_hello.exl:66:28
+At @examples/amiga_hello.exl:67:9
+(Ident reg) @examples/amiga_hello.exl:67:10
+LParen @examples/amiga_hello.exl:67:13
+(Ident d2) @examples/amiga_hello.exl:67:14
+RParen @examples/amiga_hello.exl:67:16
+(Ident buffer) @examples/amiga_hello.exl:67:18
+Colon @examples/amiga_hello.exl:67:24
+Star @examples/amiga_hello.exl:67:26
+(Ident c_char) @examples/amiga_hello.exl:67:27
+Comma @examples/amiga_hello.exl:67:33
+At @examples/amiga_hello.exl:68:9
+(Ident reg) @examples/amiga_hello.exl:68:10
+LParen @examples/amiga_hello.exl:68:13
+(Ident d3) @examples/amiga_hello.exl:68:14
+RParen @examples/amiga_hello.exl:68:16
+(Ident length) @examples/amiga_hello.exl:68:18
+Colon @examples/amiga_hello.exl:68:24
+(Ident LONG) @examples/amiga_hello.exl:68:26
+RParen @examples/amiga_hello.exl:69:5
+Arrow @examples/amiga_hello.exl:69:7
+(Ident LONG) @examples/amiga_hello.exl:69:10
+Semicolon @examples/amiga_hello.exl:69:14
+RBrace @examples/amiga_hello.exl:70:1
+Fn @examples/amiga_hello.exl:72:1
+(Ident main) @examples/amiga_hello.exl:72:4
+LParen @examples/amiga_hello.exl:72:8
+RParen @examples/amiga_hello.exl:72:9
+LBrace @examples/amiga_hello.exl:72:11
+Let @examples/amiga_hello.exl:73:5
+(Ident dos_name) @examples/amiga_hello.exl:73:9
+Colon @examples/amiga_hello.exl:73:17
+Star @examples/amiga_hello.exl:73:19
+(Ident c_char) @examples/amiga_hello.exl:73:20
+Eq @examples/amiga_hello.exl:73:27
+(String "dos.library") @examples/amiga_hello.exl:73:29
+As @examples/amiga_hello.exl:73:43
+Star @examples/amiga_hello.exl:73:46
+(Ident c_char) @examples/amiga_hello.exl:73:47
+Semicolon @examples/amiga_hello.exl:73:53
+(Ident raw) @examples/amiga_hello.exl:74:5
+DoubleColon @examples/amiga_hello.exl:74:8
+(Ident DOSBase) @examples/amiga_hello.exl:74:10
+Eq @examples/amiga_hello.exl:74:18
+(Ident raw) @examples/amiga_hello.exl:74:20
+DoubleColon @examples/amiga_hello.exl:74:23
+(Ident open_library) @examples/amiga_hello.exl:74:25
+LParen @examples/amiga_hello.exl:74:37
+(Ident dos_name) @examples/amiga_hello.exl:74:38
+Comma @examples/amiga_hello.exl:74:46
+(Int 0) @examples/amiga_hello.exl:74:48
+As @examples/amiga_hello.exl:74:50
+(Ident raw) @examples/amiga_hello.exl:74:53
+DoubleColon @examples/amiga_hello.exl:74:56
+(Ident ULONG) @examples/amiga_hello.exl:74:58
+RParen @examples/amiga_hello.exl:74:63
+Semicolon @examples/amiga_hello.exl:74:64
+If @examples/amiga_hello.exl:75:5
+(Ident raw) @examples/amiga_hello.exl:75:8
+DoubleColon @examples/amiga_hello.exl:75:11
+(Ident DOSBase) @examples/amiga_hello.exl:75:13
+NotEq @examples/amiga_hello.exl:75:21
+Null @examples/amiga_hello.exl:75:24
+LBrace @examples/amiga_hello.exl:75:29
+Let @examples/amiga_hello.exl:76:9
+(Ident msg) @examples/amiga_hello.exl:76:13
+Colon @examples/amiga_hello.exl:76:16
+Star @examples/amiga_hello.exl:76:18
+(Ident c_char) @examples/amiga_hello.exl:76:19
+Eq @examples/amiga_hello.exl:76:26
+(String "Hello, AmigaOS!\n") @examples/amiga_hello.exl:76:28
+As @examples/amiga_hello.exl:76:48
+Star @examples/amiga_hello.exl:76:51
+(Ident c_char) @examples/amiga_hello.exl:76:52
+Semicolon @examples/amiga_hello.exl:76:58
+Let @examples/amiga_hello.exl:77:9
+(Ident out) @examples/amiga_hello.exl:77:13
+Eq @examples/amiga_hello.exl:77:17
+(Ident raw) @examples/amiga_hello.exl:77:19
+DoubleColon @examples/amiga_hello.exl:77:22
+(Ident dos_output) @examples/amiga_hello.exl:77:24
+LParen @examples/amiga_hello.exl:77:34
+RParen @examples/amiga_hello.exl:77:35
+Semicolon @examples/amiga_hello.exl:77:36
+(Ident raw) @examples/amiga_hello.exl:78:9
+DoubleColon @examples/amiga_hello.exl:78:12
+(Ident dos_write) @examples/amiga_hello.exl:78:14
+LParen @examples/amiga_hello.exl:78:23
+(Ident out) @examples/amiga_hello.exl:78:24
+Comma @examples/amiga_hello.exl:78:27
+(Ident msg) @examples/amiga_hello.exl:78:29
+Comma @examples/amiga_hello.exl:78:32
+(Int 16) @examples/amiga_hello.exl:78:34
+As @examples/amiga_hello.exl:78:37
+(Ident raw) @examples/amiga_hello.exl:78:40
+DoubleColon @examples/amiga_hello.exl:78:43
+(Ident LONG) @examples/amiga_hello.exl:78:45
+RParen @examples/amiga_hello.exl:78:49
+Semicolon @examples/amiga_hello.exl:78:50
+(Ident raw) @examples/amiga_hello.exl:79:9
+DoubleColon @examples/amiga_hello.exl:79:12
+(Ident close_library) @examples/amiga_hello.exl:79:14
+LParen @examples/amiga_hello.exl:79:27
+(Ident raw) @examples/amiga_hello.exl:79:28
+DoubleColon @examples/amiga_hello.exl:79:31
+(Ident DOSBase) @examples/amiga_hello.exl:79:33
+RParen @examples/amiga_hello.exl:79:40
+Semicolon @examples/amiga_hello.exl:79:41
+RBrace @examples/amiga_hello.exl:80:5
+RBrace @examples/amiga_hello.exl:81:1
+Eof @examples/amiga_hello.exl:82:1

@@ -1,0 +1,77 @@
+;; exile-tokens-dump v1 examples/ffi_opaque.exl
+Pub @examples/ffi_opaque.exl:7:1
+Mod @examples/ffi_opaque.exl:7:5
+(Ident raw) @examples/ffi_opaque.exl:7:9
+LBrace @examples/ffi_opaque.exl:7:13
+Extern @examples/ffi_opaque.exl:8:5
+Struct @examples/ffi_opaque.exl:8:12
+(Ident Library) @examples/ffi_opaque.exl:8:19
+Semicolon @examples/ffi_opaque.exl:8:26
+Extern @examples/ffi_opaque.exl:10:5
+Fn @examples/ffi_opaque.exl:10:12
+(Ident lib_open) @examples/ffi_opaque.exl:10:15
+LParen @examples/ffi_opaque.exl:10:23
+RParen @examples/ffi_opaque.exl:10:24
+Arrow @examples/ffi_opaque.exl:10:26
+Star @examples/ffi_opaque.exl:10:29
+(Ident Library) @examples/ffi_opaque.exl:10:30
+Semicolon @examples/ffi_opaque.exl:10:37
+Extern @examples/ffi_opaque.exl:11:5
+Fn @examples/ffi_opaque.exl:11:12
+(Ident lib_use) @examples/ffi_opaque.exl:11:15
+LParen @examples/ffi_opaque.exl:11:22
+(Ident lib) @examples/ffi_opaque.exl:11:23
+Colon @examples/ffi_opaque.exl:11:26
+Star @examples/ffi_opaque.exl:11:28
+(Ident Library) @examples/ffi_opaque.exl:11:29
+RParen @examples/ffi_opaque.exl:11:36
+Arrow @examples/ffi_opaque.exl:11:38
+(Ident int) @examples/ffi_opaque.exl:11:41
+Semicolon @examples/ffi_opaque.exl:11:44
+Extern @examples/ffi_opaque.exl:12:5
+Fn @examples/ffi_opaque.exl:12:12
+(Ident lib_close) @examples/ffi_opaque.exl:12:15
+LParen @examples/ffi_opaque.exl:12:24
+(Ident lib) @examples/ffi_opaque.exl:12:25
+Colon @examples/ffi_opaque.exl:12:28
+Star @examples/ffi_opaque.exl:12:30
+(Ident Library) @examples/ffi_opaque.exl:12:31
+RParen @examples/ffi_opaque.exl:12:38
+Semicolon @examples/ffi_opaque.exl:12:39
+RBrace @examples/ffi_opaque.exl:13:1
+Fn @examples/ffi_opaque.exl:15:1
+(Ident main) @examples/ffi_opaque.exl:15:4
+LParen @examples/ffi_opaque.exl:15:8
+RParen @examples/ffi_opaque.exl:15:9
+LBrace @examples/ffi_opaque.exl:15:11
+Let @examples/ffi_opaque.exl:16:5
+(Ident lib) @examples/ffi_opaque.exl:16:9
+Colon @examples/ffi_opaque.exl:16:12
+Star @examples/ffi_opaque.exl:16:14
+(Ident Library) @examples/ffi_opaque.exl:16:15
+Eq @examples/ffi_opaque.exl:16:23
+(Ident raw) @examples/ffi_opaque.exl:16:25
+DoubleColon @examples/ffi_opaque.exl:16:28
+(Ident lib_open) @examples/ffi_opaque.exl:16:30
+LParen @examples/ffi_opaque.exl:16:38
+RParen @examples/ffi_opaque.exl:16:39
+Semicolon @examples/ffi_opaque.exl:16:40
+(Ident println) @examples/ffi_opaque.exl:17:5
+LParen @examples/ffi_opaque.exl:17:12
+(Ident raw) @examples/ffi_opaque.exl:17:13
+DoubleColon @examples/ffi_opaque.exl:17:16
+(Ident lib_use) @examples/ffi_opaque.exl:17:18
+LParen @examples/ffi_opaque.exl:17:25
+(Ident lib) @examples/ffi_opaque.exl:17:26
+RParen @examples/ffi_opaque.exl:17:29
+RParen @examples/ffi_opaque.exl:17:30
+Semicolon @examples/ffi_opaque.exl:17:31
+(Ident raw) @examples/ffi_opaque.exl:18:5
+DoubleColon @examples/ffi_opaque.exl:18:8
+(Ident lib_close) @examples/ffi_opaque.exl:18:10
+LParen @examples/ffi_opaque.exl:18:19
+(Ident lib) @examples/ffi_opaque.exl:18:20
+RParen @examples/ffi_opaque.exl:18:23
+Semicolon @examples/ffi_opaque.exl:18:24
+RBrace @examples/ffi_opaque.exl:19:1
+Eof @examples/ffi_opaque.exl:20:1

@@ -1,0 +1,6 @@
+;; exile-ast-dump v1 examples/ffi_callback.exl
+(module raw
+  (fn apply_int extern pub (params (param x (c_int signed)) (param f (fn-ptr ((c_int signed)) (c_int signed)))) (c_int signed)))
+(fn double_it (params (param x (c_int signed))) (c_int signed) (body (return (binop + (var x) (var x)))))
+(fn negate (params (param x (c_int signed))) (c_int signed) (body (return (neg (var x)))))
+(fn main (params ) void (body (expr-stmt (call println (cast (call raw::apply_int (int 21) (var double_it)) (int i32)))) (expr-stmt (call println (cast (call raw::apply_int (int 7) (var negate)) (int i32)))) (let f (ty (fn-ptr ((c_int signed)) (c_int signed))) (var double_it)) (expr-stmt (call println (cast (call f (int 50)) (int i32))))))
