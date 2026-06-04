@@ -42,25 +42,17 @@ jobs:
     # ===== Self-host bring-up Faza −1 — differential-harness gate =====
     #
     # `make selfhost-diff` checks that the OCaml exilc still emits the
-    # committed corpus byte-for-byte across all 66 examples × 3 dump
+    # committed corpus byte-for-byte across every example × 3 dump
     # forms (tokens / AST / typed IR).  Any drift here is either an
     # intentional format change (the PR should also include the regen
     # under tests/golden/) or a regression in the OCaml emitter.
     #
-    # The regen+git-diff combo below adds a second gate: it catches
-    # cases where a PR changes the lexer / parser / typecheck output
-    # but forgets to refresh tests/golden/.  Without this, a stale
-    # corpus would silently mask the drift until somebody manually
-    # ran `make selfhost-corpus`.
+    # Drift detection is symmetric — a PR that changes the emitter but
+    # forgets to refresh tests/golden/ produces the exact same
+    # "drift X" failure here, so a separate regen + git-diff gate
+    # would be redundant.
     - name: Verify selfhost dumps byte-stable (Faza -1 oracle)
       run: opam exec -- make selfhost-diff
-
-    - name: Verify selfhost corpus is committed in sync
-      run: |
-        opam exec -- make selfhost-corpus
-        git diff --exit-code tests/golden/ \
-          || (echo "tests/golden/ drift — run 'make selfhost-corpus' \
-                    and commit the refreshed files"; exit 1)
 
   amiga-verify:
     runs-on: ubuntu-latest
