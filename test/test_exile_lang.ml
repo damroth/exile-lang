@@ -5290,4 +5290,145 @@ let () =
        \    m.insert(7, 100);\n\
         }\n"
      in
-     dump_typed_ir src = dump_typed_ir src)
+     dump_typed_ir src = dump_typed_ir src);
+
+  (* ===== DR-013 perf-report v1 =====
+
+     The collector folds typed-IR for cost-sites (i32 mul/div/mod
+     soft-call, indirect call, Vec/HashMap with_capacity(_,<8) =
+     no-cap, aggregate by-value copy) and groups codegen-emitted fns
+     by skeleton.  Tests pin the wire-level invariants — kinds, hot
+     flag heuristic, folds-at-O2 marker, JSON envelope shape — so
+     downstream consumers (the v2 heatmap, perf quick-win lints M1/M2)
+     can rely on them. *)
+
+  let perf_collect src =
+    let (tp, _c) = Exile_lang.Compiler.compile_capture src in
+    let bloat = Exile_lang.Codegen.last_bloat () in
+    Exile_lang.Perf_report.collect tp bloat
+  in
+  let dr013_contains hay sub =
+    let lh = String.length hay and ls = String.length sub in
+    let rec loop i =
+      if i + ls > lh then false
+      else if String.sub hay i ls = sub then true
+      else loop (i + 1)
+    in loop 0
+  in
+  let find_fn (r : Exile_lang.Perf_report.report) mangled =
+    List.find_opt (fun f -> f.Exile_lang.Perf_report.fm_mangled = mangled)
+      r.r_fns
+  in
+  let kinds_for f =
+    List.map (fun s -> s.Exile_lang.Perf_report.cs_kind) f.Exile_lang.Perf_report.fm_sites
+  in
+
+  check_assert "DR-013: i32 mul/div/mod detected as soft-call cost-sites"
+    (let r = perf_collect
+       "fn calc3(x: int, y: int) -> int { x * y + x / y + x % y }\n\
+        fn main() { println(calc3(10, 3)); }\n"
+     in
+     match find_fn r "ex_calc3" with
+     | None -> false
+     | Some f ->
+         let ks = kinds_for f in
+         List.mem Exile_lang.Perf_report.Mul32 ks
+         && List.mem Exile_lang.Perf_report.DivuDiv ks
+         && List.mem Exile_lang.Perf_report.DivuMod ks);
+
+  check_assert "DR-013: folds-at-O2 marker on literal × literal, not on var × var"
+    (let r = perf_collect
+       "fn foldlit(x: int) -> int {\n\
+       \    let a: int = 3 * 4;\n\
+       \    let b: int = x * 4;\n\
+       \    a + b\n\
+        }\n\
+        fn main() { println(foldlit(7)); }\n"
+     in
+     match find_fn r "ex_foldlit" with
+     | None -> false
+     | Some f ->
+         let sites = f.Exile_lang.Perf_report.fm_sites in
+         let muls =
+           List.filter (fun s ->
+             s.Exile_lang.Perf_report.cs_kind = Exile_lang.Perf_report.Mul32) sites
+         in
+         List.length muls = 2
+         && List.exists (fun s -> s.Exile_lang.Perf_report.cs_folds_at_o2) muls
+         && List.exists (fun s -> not s.Exile_lang.Perf_report.cs_folds_at_o2) muls);
+
+  check_assert "DR-013: hot flag fires on i32 modulo anywhere"
+    (let r = perf_collect
+       "fn spicy(x: int) -> int { x % 7 }\n\
+        fn cooled(x: int) -> int { x + 1 }\n\
+        fn main() { println(spicy(10) + cooled(2)); }\n"
+     in
+     match find_fn r "ex_spicy", find_fn r "ex_cooled" with
+     | Some hot, Some cool ->
+         hot.Exile_lang.Perf_report.fm_hot && not cool.Exile_lang.Perf_report.fm_hot
+     | _ -> false);
+
+  check_assert "DR-013: in_loop tagged for cost-sites inside while-body"
+    (let r = perf_collect
+       "fn looped(n: int) -> int {\n\
+       \    let mut acc: int = 0;\n\
+       \    let mut i: int = 0;\n\
+       \    while i < n {\n\
+       \        acc = acc + i % 5;\n\
+       \        i = i + 1;\n\
+       \    }\n\
+       \    acc\n\
+        }\n\
+        fn main() { println(looped(10)); }\n"
+     in
+     match find_fn r "ex_looped" with
+     | None -> false
+     | Some f ->
+         List.exists (fun s ->
+           s.Exile_lang.Perf_report.cs_kind = Exile_lang.Perf_report.DivuMod
+           && s.Exile_lang.Perf_report.cs_in_loop) f.Exile_lang.Perf_report.fm_sites);
+
+  check_assert "DR-013: no-capacity site on Vec::with_capacity(_, <8)"
+    (let r = perf_collect
+       "fn main() {\n\
+       \    let a = default_allocator();\n\
+       \    let mut v: Vec<int> = Vec::with_capacity(a, 2 as u32);\n\
+       \    v.push(1);\n\
+        }\n"
+     in
+     match find_fn r "main" with
+     | None -> false
+     | Some f ->
+         List.exists (fun s ->
+           s.Exile_lang.Perf_report.cs_kind = Exile_lang.Perf_report.NoCapacity)
+           f.Exile_lang.Perf_report.fm_sites);
+
+  check_assert "DR-013: skeleton grouping collapses mono instances"
+    (let r = perf_collect
+       "fn main() {\n\
+       \    let a = default_allocator();\n\
+       \    let mut vi: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+       \    let mut vu: Vec<u32> = Vec::with_capacity(a, 8 as u32);\n\
+       \    vi.push(1);\n\
+       \    vu.push(1 as u32);\n\
+        }\n"
+     in
+     (* Both Vec_i32 and Vec_u32 mono-instances must collapse into one
+        group keyed on the skeleton's source name `Vec::push`. *)
+     let push = List.find_opt (fun g ->
+       g.Exile_lang.Perf_report.sg_name = "push"
+       && g.Exile_lang.Perf_report.sg_path = ["Vec"]) r.r_groups in
+     match push with
+     | Some g -> List.length g.Exile_lang.Perf_report.sg_instances = 2
+     | None -> false);
+
+  check_assert "DR-013: JSON envelope carries version, total_bytes, fn_count"
+    (let r = perf_collect
+       "fn main() { println(1 + 2); }\n"
+     in
+     let j = Exile_lang.Perf_report.to_json r in
+     dr013_contains j "\"version\":1"
+     && dr013_contains j "\"total_bytes\":"
+     && dr013_contains j "\"fn_count\":"
+     && dr013_contains j "\"groups\":["
+     && dr013_contains j "\"fns\":[")

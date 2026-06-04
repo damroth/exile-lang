@@ -4,7 +4,7 @@ let usage () =
   prerr_endline
     "usage: exilc [--target c|host|amiga] [--profile core|standard|full] \
      [-o <output>] [--c-out <path>] [--link <c-stub>]... [--annotate] \
-     [--bloat-report] [--show-cc-warnings] <file.exl>";
+     [--bloat-report] [--perf-report[=json]] [--show-cc-warnings] <file.exl>";
   exit 1
 
 let show_error (pos : Exile_lang.Pos.t) msg =
@@ -50,6 +50,8 @@ let default_profile_for_target = function
    stdout when no `-o` is set). *)
 type emit_kind = EmitTokens | EmitAst | EmitTypedIr
 
+type perf_report_fmt = PerfHuman | PerfJson
+
 type args = {
   target : target;
   profile : Exile_lang.Profile.t;
@@ -58,6 +60,7 @@ type args = {
   link_files : string list;
   annotate : bool;
   bloat_report : bool;
+  perf_report : perf_report_fmt option;
   show_cc_warnings : bool;
   emit : emit_kind option;
   emit_user_only : bool;
@@ -76,6 +79,7 @@ let parse_args argv =
   let input = ref None in
   let annotate = ref false in
   let bloat_report = ref false in
+  let perf_report = ref None in
   let show_cc_warnings = ref false in
   let emit = ref None in
   let emit_user_only = ref false in
@@ -96,6 +100,9 @@ let parse_args argv =
     | "--link" :: p :: rest -> link_files := p :: !link_files; loop rest
     | "--annotate" :: rest -> annotate := true; loop rest
     | "--bloat-report" :: rest -> bloat_report := true; loop rest
+    | "--perf-report" :: rest -> perf_report := Some PerfHuman; loop rest
+    | "--perf-report=json" :: rest -> perf_report := Some PerfJson; loop rest
+    | "--perf-report=human" :: rest -> perf_report := Some PerfHuman; loop rest
     | "--show-cc-warnings" :: rest -> show_cc_warnings := true; loop rest
     | "--emit-tokens" :: rest -> set_emit EmitTokens; loop rest
     | "--emit-ast" :: rest -> set_emit EmitAst; loop rest
@@ -127,6 +134,7 @@ let parse_args argv =
         link_files = List.rev !link_files;
         annotate = !annotate;
         bloat_report = !bloat_report;
+        perf_report = !perf_report;
         show_cc_warnings = !show_cc_warnings;
         emit = !emit;
         emit_user_only = !emit_user_only;
@@ -206,6 +214,16 @@ let ensure_dir path =
       exit 1
     end
 
+let print_perf_report fmt tp =
+  let bloat = Exile_lang.Codegen.last_bloat () in
+  let report = Exile_lang.Perf_report.collect tp bloat in
+  let text = match fmt with
+    | PerfHuman -> Exile_lang.Perf_report.to_human report
+    | PerfJson -> Exile_lang.Perf_report.to_json report
+  in
+  output_string stderr text;
+  output_char stderr '\n'
+
 let print_bloat_report () =
   let entries = Exile_lang.Codegen.last_bloat () in
   let sorted =
@@ -270,9 +288,16 @@ let () =
     (match a.emit with
      | Some kind -> run_emit a kind; exit 0
      | None -> ());
-    let c_code =
-      Exile_lang.Compiler.compile_file
-        ~annotate:a.annotate ~profile:a.profile a.input
+    let (tp_opt, c_code) =
+      if a.perf_report <> None then
+        let (tp, c) =
+          Exile_lang.Compiler.compile_file_capture
+            ~annotate:a.annotate ~profile:a.profile a.input
+        in (Some tp, c)
+      else
+        (None,
+         Exile_lang.Compiler.compile_file
+           ~annotate:a.annotate ~profile:a.profile a.input)
     in
     let c_path =
       match a.c_out with
@@ -288,6 +313,9 @@ let () =
       | Target_amiga -> "amiga"
     in
     if a.bloat_report then print_bloat_report ();
+    (match a.perf_report, tp_opt with
+     | Some fmt, Some tp -> print_perf_report fmt tp
+     | _ -> ());
     (* Success line goes out only after cc succeeds (it `exit 1`s on
        failure).  target=c stops at the transpile and reports `wrote
        ...`; host/amiga delegate the success message to
