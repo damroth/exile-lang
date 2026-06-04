@@ -1,0 +1,1535 @@
+;; exile-tokens-dump v1 examples/selfhost_token.exl
+Pub @examples/selfhost_token.exl:35:1
+Enum @examples/selfhost_token.exl:35:5
+(Ident Token) @examples/selfhost_token.exl:35:10
+LBrace @examples/selfhost_token.exl:35:16
+(Ident Fn) @examples/selfhost_token.exl:36:5
+Pipe @examples/selfhost_token.exl:37:5
+(Ident Let) @examples/selfhost_token.exl:37:7
+Pipe @examples/selfhost_token.exl:38:5
+(Ident Mut) @examples/selfhost_token.exl:38:7
+Pipe @examples/selfhost_token.exl:39:5
+(Ident Return) @examples/selfhost_token.exl:39:7
+Pipe @examples/selfhost_token.exl:40:5
+(Ident If) @examples/selfhost_token.exl:40:7
+Pipe @examples/selfhost_token.exl:41:5
+(Ident Else) @examples/selfhost_token.exl:41:7
+Pipe @examples/selfhost_token.exl:42:5
+(Ident While) @examples/selfhost_token.exl:42:7
+Pipe @examples/selfhost_token.exl:43:5
+(Ident Loop) @examples/selfhost_token.exl:43:7
+Pipe @examples/selfhost_token.exl:44:5
+(Ident Break) @examples/selfhost_token.exl:44:7
+Pipe @examples/selfhost_token.exl:45:5
+(Ident Continue) @examples/selfhost_token.exl:45:7
+Pipe @examples/selfhost_token.exl:46:5
+(Ident For) @examples/selfhost_token.exl:46:7
+Pipe @examples/selfhost_token.exl:47:5
+(Ident In) @examples/selfhost_token.exl:47:7
+Pipe @examples/selfhost_token.exl:48:5
+(Ident Mod) @examples/selfhost_token.exl:48:7
+Pipe @examples/selfhost_token.exl:49:5
+(Ident Pub) @examples/selfhost_token.exl:49:7
+Pipe @examples/selfhost_token.exl:50:5
+(Ident Use) @examples/selfhost_token.exl:50:7
+Pipe @examples/selfhost_token.exl:51:5
+(Ident As) @examples/selfhost_token.exl:51:7
+Pipe @examples/selfhost_token.exl:52:5
+(Ident Defer) @examples/selfhost_token.exl:52:7
+Pipe @examples/selfhost_token.exl:53:5
+(Ident Struct) @examples/selfhost_token.exl:53:7
+Pipe @examples/selfhost_token.exl:54:5
+(Ident Impl) @examples/selfhost_token.exl:54:7
+Pipe @examples/selfhost_token.exl:55:5
+(Ident Trait) @examples/selfhost_token.exl:55:7
+Pipe @examples/selfhost_token.exl:56:5
+(Ident View) @examples/selfhost_token.exl:56:7
+Pipe @examples/selfhost_token.exl:57:5
+(Ident With) @examples/selfhost_token.exl:57:7
+Pipe @examples/selfhost_token.exl:58:5
+(Ident Enum) @examples/selfhost_token.exl:58:7
+Pipe @examples/selfhost_token.exl:59:5
+(Ident Match) @examples/selfhost_token.exl:59:7
+Pipe @examples/selfhost_token.exl:60:5
+(Ident FatArrow) @examples/selfhost_token.exl:60:7
+Pipe @examples/selfhost_token.exl:61:5
+(Ident Pipe) @examples/selfhost_token.exl:61:7
+Pipe @examples/selfhost_token.exl:62:5
+(Ident PipePipe) @examples/selfhost_token.exl:62:7
+Pipe @examples/selfhost_token.exl:63:5
+(Ident PipeGt) @examples/selfhost_token.exl:63:7
+Pipe @examples/selfhost_token.exl:64:5
+(Ident AmpAmp) @examples/selfhost_token.exl:64:7
+Pipe @examples/selfhost_token.exl:65:5
+(Ident Dot) @examples/selfhost_token.exl:65:7
+Pipe @examples/selfhost_token.exl:66:5
+(Ident DotDot) @examples/selfhost_token.exl:66:7
+Pipe @examples/selfhost_token.exl:67:5
+(Ident DotDotEq) @examples/selfhost_token.exl:67:7
+Pipe @examples/selfhost_token.exl:68:5
+(Ident Amp) @examples/selfhost_token.exl:68:7
+Pipe @examples/selfhost_token.exl:69:5
+(Ident New) @examples/selfhost_token.exl:69:7
+Pipe @examples/selfhost_token.exl:70:5
+(Ident Null) @examples/selfhost_token.exl:70:7
+Pipe @examples/selfhost_token.exl:71:5
+(Ident LParen) @examples/selfhost_token.exl:71:7
+Pipe @examples/selfhost_token.exl:72:5
+(Ident RParen) @examples/selfhost_token.exl:72:7
+Pipe @examples/selfhost_token.exl:73:5
+(Ident LBrace) @examples/selfhost_token.exl:73:7
+Pipe @examples/selfhost_token.exl:74:5
+(Ident RBrace) @examples/selfhost_token.exl:74:7
+Pipe @examples/selfhost_token.exl:75:5
+(Ident LBracket) @examples/selfhost_token.exl:75:7
+Pipe @examples/selfhost_token.exl:76:5
+(Ident RBracket) @examples/selfhost_token.exl:76:7
+Pipe @examples/selfhost_token.exl:77:5
+(Ident Semicolon) @examples/selfhost_token.exl:77:7
+Pipe @examples/selfhost_token.exl:78:5
+(Ident Comma) @examples/selfhost_token.exl:78:7
+Pipe @examples/selfhost_token.exl:79:5
+(Ident Colon) @examples/selfhost_token.exl:79:7
+Pipe @examples/selfhost_token.exl:80:5
+(Ident DoubleColon) @examples/selfhost_token.exl:80:7
+Pipe @examples/selfhost_token.exl:81:5
+(Ident Arrow) @examples/selfhost_token.exl:81:7
+Pipe @examples/selfhost_token.exl:82:5
+(Ident Eq) @examples/selfhost_token.exl:82:7
+Pipe @examples/selfhost_token.exl:83:5
+(Ident EqEq) @examples/selfhost_token.exl:83:7
+Pipe @examples/selfhost_token.exl:84:5
+(Ident NotEq) @examples/selfhost_token.exl:84:7
+Pipe @examples/selfhost_token.exl:85:5
+(Ident Bang) @examples/selfhost_token.exl:85:7
+Pipe @examples/selfhost_token.exl:86:5
+(Ident Lt) @examples/selfhost_token.exl:86:7
+Pipe @examples/selfhost_token.exl:87:5
+(Ident Gt) @examples/selfhost_token.exl:87:7
+Pipe @examples/selfhost_token.exl:88:5
+(Ident LtEq) @examples/selfhost_token.exl:88:7
+Pipe @examples/selfhost_token.exl:89:5
+(Ident GtEq) @examples/selfhost_token.exl:89:7
+Pipe @examples/selfhost_token.exl:90:5
+(Ident Plus) @examples/selfhost_token.exl:90:7
+Pipe @examples/selfhost_token.exl:91:5
+(Ident PlusPlus) @examples/selfhost_token.exl:91:7
+Pipe @examples/selfhost_token.exl:92:5
+(Ident Minus) @examples/selfhost_token.exl:92:7
+Pipe @examples/selfhost_token.exl:93:5
+(Ident Star) @examples/selfhost_token.exl:93:7
+Pipe @examples/selfhost_token.exl:94:5
+(Ident Slash) @examples/selfhost_token.exl:94:7
+Pipe @examples/selfhost_token.exl:95:5
+(Ident Percent) @examples/selfhost_token.exl:95:7
+Pipe @examples/selfhost_token.exl:96:5
+(Ident Caret) @examples/selfhost_token.exl:96:7
+Pipe @examples/selfhost_token.exl:97:5
+(Ident Tilde) @examples/selfhost_token.exl:97:7
+Pipe @examples/selfhost_token.exl:98:5
+(Ident Shl) @examples/selfhost_token.exl:98:7
+Pipe @examples/selfhost_token.exl:99:5
+(Ident Shr) @examples/selfhost_token.exl:99:7
+Pipe @examples/selfhost_token.exl:100:5
+(Ident True) @examples/selfhost_token.exl:100:7
+Pipe @examples/selfhost_token.exl:101:5
+(Ident False) @examples/selfhost_token.exl:101:7
+Pipe @examples/selfhost_token.exl:102:5
+(Ident Question) @examples/selfhost_token.exl:102:7
+Pipe @examples/selfhost_token.exl:103:5
+(Ident Orelse) @examples/selfhost_token.exl:103:7
+Pipe @examples/selfhost_token.exl:104:5
+(Ident TryTok) @examples/selfhost_token.exl:104:7
+Pipe @examples/selfhost_token.exl:105:5
+(Ident Extern) @examples/selfhost_token.exl:105:7
+Pipe @examples/selfhost_token.exl:106:5
+(Ident Ellipsis) @examples/selfhost_token.exl:106:7
+Pipe @examples/selfhost_token.exl:107:5
+(Ident At) @examples/selfhost_token.exl:107:7
+Pipe @examples/selfhost_token.exl:108:5
+(Ident TypeTok) @examples/selfhost_token.exl:108:7
+Pipe @examples/selfhost_token.exl:109:5
+(Ident Const) @examples/selfhost_token.exl:109:7
+Pipe @examples/selfhost_token.exl:110:5
+(Ident VarTok) @examples/selfhost_token.exl:110:7
+Pipe @examples/selfhost_token.exl:111:5
+(Ident SizeOf) @examples/selfhost_token.exl:111:7
+Pipe @examples/selfhost_token.exl:112:5
+(Ident Ident) @examples/selfhost_token.exl:112:7
+LParen @examples/selfhost_token.exl:112:12
+(Ident str) @examples/selfhost_token.exl:112:13
+RParen @examples/selfhost_token.exl:112:16
+Pipe @examples/selfhost_token.exl:113:5
+(Ident Int) @examples/selfhost_token.exl:113:7
+LParen @examples/selfhost_token.exl:113:10
+(Ident int) @examples/selfhost_token.exl:113:11
+RParen @examples/selfhost_token.exl:113:14
+Pipe @examples/selfhost_token.exl:114:5
+(Ident Float) @examples/selfhost_token.exl:114:7
+LParen @examples/selfhost_token.exl:114:12
+(Ident f64) @examples/selfhost_token.exl:114:13
+Comma @examples/selfhost_token.exl:114:16
+(Ident bool) @examples/selfhost_token.exl:114:18
+RParen @examples/selfhost_token.exl:114:22
+Pipe @examples/selfhost_token.exl:115:5
+(Ident StringTok) @examples/selfhost_token.exl:115:7
+LParen @examples/selfhost_token.exl:115:16
+(Ident str) @examples/selfhost_token.exl:115:17
+RParen @examples/selfhost_token.exl:115:20
+Pipe @examples/selfhost_token.exl:116:5
+(Ident Eof) @examples/selfhost_token.exl:116:7
+RBrace @examples/selfhost_token.exl:117:1
+Fn @examples/selfhost_token.exl:124:1
+(Ident push_float_suffix) @examples/selfhost_token.exl:124:4
+LParen @examples/selfhost_token.exl:124:21
+(Ident out) @examples/selfhost_token.exl:124:22
+Colon @examples/selfhost_token.exl:124:25
+Star @examples/selfhost_token.exl:124:27
+(Ident StringBuilder) @examples/selfhost_token.exl:124:28
+Comma @examples/selfhost_token.exl:124:41
+(Ident is32) @examples/selfhost_token.exl:124:43
+Colon @examples/selfhost_token.exl:124:47
+(Ident bool) @examples/selfhost_token.exl:124:49
+RParen @examples/selfhost_token.exl:124:53
+LBrace @examples/selfhost_token.exl:124:55
+If @examples/selfhost_token.exl:125:5
+(Ident is32) @examples/selfhost_token.exl:125:8
+LBrace @examples/selfhost_token.exl:125:13
+(Ident out) @examples/selfhost_token.exl:126:9
+Dot @examples/selfhost_token.exl:126:12
+(Ident push_str) @examples/selfhost_token.exl:126:13
+LParen @examples/selfhost_token.exl:126:21
+(String "<f32>") @examples/selfhost_token.exl:126:22
+RParen @examples/selfhost_token.exl:126:29
+Semicolon @examples/selfhost_token.exl:126:30
+RBrace @examples/selfhost_token.exl:127:5
+Else @examples/selfhost_token.exl:127:7
+LBrace @examples/selfhost_token.exl:127:12
+(Ident out) @examples/selfhost_token.exl:128:9
+Dot @examples/selfhost_token.exl:128:12
+(Ident push_str) @examples/selfhost_token.exl:128:13
+LParen @examples/selfhost_token.exl:128:21
+(String "<f64>") @examples/selfhost_token.exl:128:22
+RParen @examples/selfhost_token.exl:128:29
+Semicolon @examples/selfhost_token.exl:128:30
+RBrace @examples/selfhost_token.exl:129:5
+RBrace @examples/selfhost_token.exl:130:1
+Impl @examples/selfhost_token.exl:132:1
+(Ident Display) @examples/selfhost_token.exl:132:6
+For @examples/selfhost_token.exl:132:14
+(Ident Token) @examples/selfhost_token.exl:132:18
+LBrace @examples/selfhost_token.exl:132:24
+Fn @examples/selfhost_token.exl:133:5
+(Ident fmt) @examples/selfhost_token.exl:133:8
+LParen @examples/selfhost_token.exl:133:11
+Star @examples/selfhost_token.exl:133:12
+Const @examples/selfhost_token.exl:133:13
+(Ident self) @examples/selfhost_token.exl:133:19
+Comma @examples/selfhost_token.exl:133:23
+(Ident out) @examples/selfhost_token.exl:133:25
+Colon @examples/selfhost_token.exl:133:28
+Star @examples/selfhost_token.exl:133:30
+(Ident StringBuilder) @examples/selfhost_token.exl:133:31
+RParen @examples/selfhost_token.exl:133:44
+LBrace @examples/selfhost_token.exl:133:46
+Match @examples/selfhost_token.exl:134:9
+Star @examples/selfhost_token.exl:134:15
+(Ident self) @examples/selfhost_token.exl:134:16
+LBrace @examples/selfhost_token.exl:134:21
+(Ident Token) @examples/selfhost_token.exl:135:13
+DoubleColon @examples/selfhost_token.exl:135:18
+(Ident Fn) @examples/selfhost_token.exl:135:20
+FatArrow @examples/selfhost_token.exl:135:23
+LBrace @examples/selfhost_token.exl:135:26
+(Ident out) @examples/selfhost_token.exl:135:28
+Dot @examples/selfhost_token.exl:135:31
+(Ident push_str) @examples/selfhost_token.exl:135:32
+LParen @examples/selfhost_token.exl:135:40
+(String "'fn'") @examples/selfhost_token.exl:135:41
+RParen @examples/selfhost_token.exl:135:47
+Semicolon @examples/selfhost_token.exl:135:48
+RBrace @examples/selfhost_token.exl:135:50
+Pipe @examples/selfhost_token.exl:136:13
+(Ident Token) @examples/selfhost_token.exl:136:15
+DoubleColon @examples/selfhost_token.exl:136:20
+(Ident Let) @examples/selfhost_token.exl:136:22
+FatArrow @examples/selfhost_token.exl:136:26
+LBrace @examples/selfhost_token.exl:136:29
+(Ident out) @examples/selfhost_token.exl:136:31
+Dot @examples/selfhost_token.exl:136:34
+(Ident push_str) @examples/selfhost_token.exl:136:35
+LParen @examples/selfhost_token.exl:136:43
+(String "'let'") @examples/selfhost_token.exl:136:44
+RParen @examples/selfhost_token.exl:136:51
+Semicolon @examples/selfhost_token.exl:136:52
+RBrace @examples/selfhost_token.exl:136:54
+Pipe @examples/selfhost_token.exl:137:13
+(Ident Token) @examples/selfhost_token.exl:137:15
+DoubleColon @examples/selfhost_token.exl:137:20
+(Ident Mut) @examples/selfhost_token.exl:137:22
+FatArrow @examples/selfhost_token.exl:137:26
+LBrace @examples/selfhost_token.exl:137:29
+(Ident out) @examples/selfhost_token.exl:137:31
+Dot @examples/selfhost_token.exl:137:34
+(Ident push_str) @examples/selfhost_token.exl:137:35
+LParen @examples/selfhost_token.exl:137:43
+(String "'mut'") @examples/selfhost_token.exl:137:44
+RParen @examples/selfhost_token.exl:137:51
+Semicolon @examples/selfhost_token.exl:137:52
+RBrace @examples/selfhost_token.exl:137:54
+Pipe @examples/selfhost_token.exl:138:13
+(Ident Token) @examples/selfhost_token.exl:138:15
+DoubleColon @examples/selfhost_token.exl:138:20
+(Ident Return) @examples/selfhost_token.exl:138:22
+FatArrow @examples/selfhost_token.exl:138:29
+LBrace @examples/selfhost_token.exl:138:32
+(Ident out) @examples/selfhost_token.exl:138:34
+Dot @examples/selfhost_token.exl:138:37
+(Ident push_str) @examples/selfhost_token.exl:138:38
+LParen @examples/selfhost_token.exl:138:46
+(String "'return'") @examples/selfhost_token.exl:138:47
+RParen @examples/selfhost_token.exl:138:57
+Semicolon @examples/selfhost_token.exl:138:58
+RBrace @examples/selfhost_token.exl:138:60
+Pipe @examples/selfhost_token.exl:139:13
+(Ident Token) @examples/selfhost_token.exl:139:15
+DoubleColon @examples/selfhost_token.exl:139:20
+(Ident If) @examples/selfhost_token.exl:139:22
+FatArrow @examples/selfhost_token.exl:139:25
+LBrace @examples/selfhost_token.exl:139:28
+(Ident out) @examples/selfhost_token.exl:139:30
+Dot @examples/selfhost_token.exl:139:33
+(Ident push_str) @examples/selfhost_token.exl:139:34
+LParen @examples/selfhost_token.exl:139:42
+(String "'if'") @examples/selfhost_token.exl:139:43
+RParen @examples/selfhost_token.exl:139:49
+Semicolon @examples/selfhost_token.exl:139:50
+RBrace @examples/selfhost_token.exl:139:52
+Pipe @examples/selfhost_token.exl:140:13
+(Ident Token) @examples/selfhost_token.exl:140:15
+DoubleColon @examples/selfhost_token.exl:140:20
+(Ident Else) @examples/selfhost_token.exl:140:22
+FatArrow @examples/selfhost_token.exl:140:27
+LBrace @examples/selfhost_token.exl:140:30
+(Ident out) @examples/selfhost_token.exl:140:32
+Dot @examples/selfhost_token.exl:140:35
+(Ident push_str) @examples/selfhost_token.exl:140:36
+LParen @examples/selfhost_token.exl:140:44
+(String "'else'") @examples/selfhost_token.exl:140:45
+RParen @examples/selfhost_token.exl:140:53
+Semicolon @examples/selfhost_token.exl:140:54
+RBrace @examples/selfhost_token.exl:140:56
+Pipe @examples/selfhost_token.exl:141:13
+(Ident Token) @examples/selfhost_token.exl:141:15
+DoubleColon @examples/selfhost_token.exl:141:20
+(Ident While) @examples/selfhost_token.exl:141:22
+FatArrow @examples/selfhost_token.exl:141:28
+LBrace @examples/selfhost_token.exl:141:31
+(Ident out) @examples/selfhost_token.exl:141:33
+Dot @examples/selfhost_token.exl:141:36
+(Ident push_str) @examples/selfhost_token.exl:141:37
+LParen @examples/selfhost_token.exl:141:45
+(String "'while'") @examples/selfhost_token.exl:141:46
+RParen @examples/selfhost_token.exl:141:55
+Semicolon @examples/selfhost_token.exl:141:56
+RBrace @examples/selfhost_token.exl:141:58
+Pipe @examples/selfhost_token.exl:142:13
+(Ident Token) @examples/selfhost_token.exl:142:15
+DoubleColon @examples/selfhost_token.exl:142:20
+(Ident Loop) @examples/selfhost_token.exl:142:22
+FatArrow @examples/selfhost_token.exl:142:27
+LBrace @examples/selfhost_token.exl:142:30
+(Ident out) @examples/selfhost_token.exl:142:32
+Dot @examples/selfhost_token.exl:142:35
+(Ident push_str) @examples/selfhost_token.exl:142:36
+LParen @examples/selfhost_token.exl:142:44
+(String "'loop'") @examples/selfhost_token.exl:142:45
+RParen @examples/selfhost_token.exl:142:53
+Semicolon @examples/selfhost_token.exl:142:54
+RBrace @examples/selfhost_token.exl:142:56
+Pipe @examples/selfhost_token.exl:143:13
+(Ident Token) @examples/selfhost_token.exl:143:15
+DoubleColon @examples/selfhost_token.exl:143:20
+(Ident Break) @examples/selfhost_token.exl:143:22
+FatArrow @examples/selfhost_token.exl:143:28
+LBrace @examples/selfhost_token.exl:143:31
+(Ident out) @examples/selfhost_token.exl:143:33
+Dot @examples/selfhost_token.exl:143:36
+(Ident push_str) @examples/selfhost_token.exl:143:37
+LParen @examples/selfhost_token.exl:143:45
+(String "'break'") @examples/selfhost_token.exl:143:46
+RParen @examples/selfhost_token.exl:143:55
+Semicolon @examples/selfhost_token.exl:143:56
+RBrace @examples/selfhost_token.exl:143:58
+Pipe @examples/selfhost_token.exl:144:13
+(Ident Token) @examples/selfhost_token.exl:144:15
+DoubleColon @examples/selfhost_token.exl:144:20
+(Ident Continue) @examples/selfhost_token.exl:144:22
+FatArrow @examples/selfhost_token.exl:144:31
+LBrace @examples/selfhost_token.exl:144:34
+(Ident out) @examples/selfhost_token.exl:144:36
+Dot @examples/selfhost_token.exl:144:39
+(Ident push_str) @examples/selfhost_token.exl:144:40
+LParen @examples/selfhost_token.exl:144:48
+(String "'continue'") @examples/selfhost_token.exl:144:49
+RParen @examples/selfhost_token.exl:144:61
+Semicolon @examples/selfhost_token.exl:144:62
+RBrace @examples/selfhost_token.exl:144:64
+Pipe @examples/selfhost_token.exl:145:13
+(Ident Token) @examples/selfhost_token.exl:145:15
+DoubleColon @examples/selfhost_token.exl:145:20
+(Ident For) @examples/selfhost_token.exl:145:22
+FatArrow @examples/selfhost_token.exl:145:26
+LBrace @examples/selfhost_token.exl:145:29
+(Ident out) @examples/selfhost_token.exl:145:31
+Dot @examples/selfhost_token.exl:145:34
+(Ident push_str) @examples/selfhost_token.exl:145:35
+LParen @examples/selfhost_token.exl:145:43
+(String "'for'") @examples/selfhost_token.exl:145:44
+RParen @examples/selfhost_token.exl:145:51
+Semicolon @examples/selfhost_token.exl:145:52
+RBrace @examples/selfhost_token.exl:145:54
+Pipe @examples/selfhost_token.exl:146:13
+(Ident Token) @examples/selfhost_token.exl:146:15
+DoubleColon @examples/selfhost_token.exl:146:20
+(Ident In) @examples/selfhost_token.exl:146:22
+FatArrow @examples/selfhost_token.exl:146:25
+LBrace @examples/selfhost_token.exl:146:28
+(Ident out) @examples/selfhost_token.exl:146:30
+Dot @examples/selfhost_token.exl:146:33
+(Ident push_str) @examples/selfhost_token.exl:146:34
+LParen @examples/selfhost_token.exl:146:42
+(String "'in'") @examples/selfhost_token.exl:146:43
+RParen @examples/selfhost_token.exl:146:49
+Semicolon @examples/selfhost_token.exl:146:50
+RBrace @examples/selfhost_token.exl:146:52
+Pipe @examples/selfhost_token.exl:147:13
+(Ident Token) @examples/selfhost_token.exl:147:15
+DoubleColon @examples/selfhost_token.exl:147:20
+(Ident Mod) @examples/selfhost_token.exl:147:22
+FatArrow @examples/selfhost_token.exl:147:26
+LBrace @examples/selfhost_token.exl:147:29
+(Ident out) @examples/selfhost_token.exl:147:31
+Dot @examples/selfhost_token.exl:147:34
+(Ident push_str) @examples/selfhost_token.exl:147:35
+LParen @examples/selfhost_token.exl:147:43
+(String "'mod'") @examples/selfhost_token.exl:147:44
+RParen @examples/selfhost_token.exl:147:51
+Semicolon @examples/selfhost_token.exl:147:52
+RBrace @examples/selfhost_token.exl:147:54
+Pipe @examples/selfhost_token.exl:148:13
+(Ident Token) @examples/selfhost_token.exl:148:15
+DoubleColon @examples/selfhost_token.exl:148:20
+(Ident Pub) @examples/selfhost_token.exl:148:22
+FatArrow @examples/selfhost_token.exl:148:26
+LBrace @examples/selfhost_token.exl:148:29
+(Ident out) @examples/selfhost_token.exl:148:31
+Dot @examples/selfhost_token.exl:148:34
+(Ident push_str) @examples/selfhost_token.exl:148:35
+LParen @examples/selfhost_token.exl:148:43
+(String "'pub'") @examples/selfhost_token.exl:148:44
+RParen @examples/selfhost_token.exl:148:51
+Semicolon @examples/selfhost_token.exl:148:52
+RBrace @examples/selfhost_token.exl:148:54
+Pipe @examples/selfhost_token.exl:149:13
+(Ident Token) @examples/selfhost_token.exl:149:15
+DoubleColon @examples/selfhost_token.exl:149:20
+(Ident Use) @examples/selfhost_token.exl:149:22
+FatArrow @examples/selfhost_token.exl:149:26
+LBrace @examples/selfhost_token.exl:149:29
+(Ident out) @examples/selfhost_token.exl:149:31
+Dot @examples/selfhost_token.exl:149:34
+(Ident push_str) @examples/selfhost_token.exl:149:35
+LParen @examples/selfhost_token.exl:149:43
+(String "'use'") @examples/selfhost_token.exl:149:44
+RParen @examples/selfhost_token.exl:149:51
+Semicolon @examples/selfhost_token.exl:149:52
+RBrace @examples/selfhost_token.exl:149:54
+Pipe @examples/selfhost_token.exl:150:13
+(Ident Token) @examples/selfhost_token.exl:150:15
+DoubleColon @examples/selfhost_token.exl:150:20
+(Ident As) @examples/selfhost_token.exl:150:22
+FatArrow @examples/selfhost_token.exl:150:25
+LBrace @examples/selfhost_token.exl:150:28
+(Ident out) @examples/selfhost_token.exl:150:30
+Dot @examples/selfhost_token.exl:150:33
+(Ident push_str) @examples/selfhost_token.exl:150:34
+LParen @examples/selfhost_token.exl:150:42
+(String "'as'") @examples/selfhost_token.exl:150:43
+RParen @examples/selfhost_token.exl:150:49
+Semicolon @examples/selfhost_token.exl:150:50
+RBrace @examples/selfhost_token.exl:150:52
+Pipe @examples/selfhost_token.exl:151:13
+(Ident Token) @examples/selfhost_token.exl:151:15
+DoubleColon @examples/selfhost_token.exl:151:20
+(Ident Defer) @examples/selfhost_token.exl:151:22
+FatArrow @examples/selfhost_token.exl:151:28
+LBrace @examples/selfhost_token.exl:151:31
+(Ident out) @examples/selfhost_token.exl:151:33
+Dot @examples/selfhost_token.exl:151:36
+(Ident push_str) @examples/selfhost_token.exl:151:37
+LParen @examples/selfhost_token.exl:151:45
+(String "'defer'") @examples/selfhost_token.exl:151:46
+RParen @examples/selfhost_token.exl:151:55
+Semicolon @examples/selfhost_token.exl:151:56
+RBrace @examples/selfhost_token.exl:151:58
+Pipe @examples/selfhost_token.exl:152:13
+(Ident Token) @examples/selfhost_token.exl:152:15
+DoubleColon @examples/selfhost_token.exl:152:20
+(Ident Struct) @examples/selfhost_token.exl:152:22
+FatArrow @examples/selfhost_token.exl:152:29
+LBrace @examples/selfhost_token.exl:152:32
+(Ident out) @examples/selfhost_token.exl:152:34
+Dot @examples/selfhost_token.exl:152:37
+(Ident push_str) @examples/selfhost_token.exl:152:38
+LParen @examples/selfhost_token.exl:152:46
+(String "'struct'") @examples/selfhost_token.exl:152:47
+RParen @examples/selfhost_token.exl:152:57
+Semicolon @examples/selfhost_token.exl:152:58
+RBrace @examples/selfhost_token.exl:152:60
+Pipe @examples/selfhost_token.exl:153:13
+(Ident Token) @examples/selfhost_token.exl:153:15
+DoubleColon @examples/selfhost_token.exl:153:20
+(Ident Impl) @examples/selfhost_token.exl:153:22
+FatArrow @examples/selfhost_token.exl:153:27
+LBrace @examples/selfhost_token.exl:153:30
+(Ident out) @examples/selfhost_token.exl:153:32
+Dot @examples/selfhost_token.exl:153:35
+(Ident push_str) @examples/selfhost_token.exl:153:36
+LParen @examples/selfhost_token.exl:153:44
+(String "'impl'") @examples/selfhost_token.exl:153:45
+RParen @examples/selfhost_token.exl:153:53
+Semicolon @examples/selfhost_token.exl:153:54
+RBrace @examples/selfhost_token.exl:153:56
+Pipe @examples/selfhost_token.exl:154:13
+(Ident Token) @examples/selfhost_token.exl:154:15
+DoubleColon @examples/selfhost_token.exl:154:20
+(Ident Trait) @examples/selfhost_token.exl:154:22
+FatArrow @examples/selfhost_token.exl:154:28
+LBrace @examples/selfhost_token.exl:154:31
+(Ident out) @examples/selfhost_token.exl:154:33
+Dot @examples/selfhost_token.exl:154:36
+(Ident push_str) @examples/selfhost_token.exl:154:37
+LParen @examples/selfhost_token.exl:154:45
+(String "'trait'") @examples/selfhost_token.exl:154:46
+RParen @examples/selfhost_token.exl:154:55
+Semicolon @examples/selfhost_token.exl:154:56
+RBrace @examples/selfhost_token.exl:154:58
+Pipe @examples/selfhost_token.exl:155:13
+(Ident Token) @examples/selfhost_token.exl:155:15
+DoubleColon @examples/selfhost_token.exl:155:20
+(Ident View) @examples/selfhost_token.exl:155:22
+FatArrow @examples/selfhost_token.exl:155:27
+LBrace @examples/selfhost_token.exl:155:30
+(Ident out) @examples/selfhost_token.exl:155:32
+Dot @examples/selfhost_token.exl:155:35
+(Ident push_str) @examples/selfhost_token.exl:155:36
+LParen @examples/selfhost_token.exl:155:44
+(String "'view'") @examples/selfhost_token.exl:155:45
+RParen @examples/selfhost_token.exl:155:53
+Semicolon @examples/selfhost_token.exl:155:54
+RBrace @examples/selfhost_token.exl:155:56
+Pipe @examples/selfhost_token.exl:156:13
+(Ident Token) @examples/selfhost_token.exl:156:15
+DoubleColon @examples/selfhost_token.exl:156:20
+(Ident With) @examples/selfhost_token.exl:156:22
+FatArrow @examples/selfhost_token.exl:156:27
+LBrace @examples/selfhost_token.exl:156:30
+(Ident out) @examples/selfhost_token.exl:156:32
+Dot @examples/selfhost_token.exl:156:35
+(Ident push_str) @examples/selfhost_token.exl:156:36
+LParen @examples/selfhost_token.exl:156:44
+(String "'with'") @examples/selfhost_token.exl:156:45
+RParen @examples/selfhost_token.exl:156:53
+Semicolon @examples/selfhost_token.exl:156:54
+RBrace @examples/selfhost_token.exl:156:56
+Pipe @examples/selfhost_token.exl:157:13
+(Ident Token) @examples/selfhost_token.exl:157:15
+DoubleColon @examples/selfhost_token.exl:157:20
+(Ident Enum) @examples/selfhost_token.exl:157:22
+FatArrow @examples/selfhost_token.exl:157:27
+LBrace @examples/selfhost_token.exl:157:30
+(Ident out) @examples/selfhost_token.exl:157:32
+Dot @examples/selfhost_token.exl:157:35
+(Ident push_str) @examples/selfhost_token.exl:157:36
+LParen @examples/selfhost_token.exl:157:44
+(String "'enum'") @examples/selfhost_token.exl:157:45
+RParen @examples/selfhost_token.exl:157:53
+Semicolon @examples/selfhost_token.exl:157:54
+RBrace @examples/selfhost_token.exl:157:56
+Pipe @examples/selfhost_token.exl:158:13
+(Ident Token) @examples/selfhost_token.exl:158:15
+DoubleColon @examples/selfhost_token.exl:158:20
+(Ident Match) @examples/selfhost_token.exl:158:22
+FatArrow @examples/selfhost_token.exl:158:28
+LBrace @examples/selfhost_token.exl:158:31
+(Ident out) @examples/selfhost_token.exl:158:33
+Dot @examples/selfhost_token.exl:158:36
+(Ident push_str) @examples/selfhost_token.exl:158:37
+LParen @examples/selfhost_token.exl:158:45
+(String "'match'") @examples/selfhost_token.exl:158:46
+RParen @examples/selfhost_token.exl:158:55
+Semicolon @examples/selfhost_token.exl:158:56
+RBrace @examples/selfhost_token.exl:158:58
+Pipe @examples/selfhost_token.exl:159:13
+(Ident Token) @examples/selfhost_token.exl:159:15
+DoubleColon @examples/selfhost_token.exl:159:20
+(Ident FatArrow) @examples/selfhost_token.exl:159:22
+FatArrow @examples/selfhost_token.exl:159:31
+LBrace @examples/selfhost_token.exl:159:34
+(Ident out) @examples/selfhost_token.exl:159:36
+Dot @examples/selfhost_token.exl:159:39
+(Ident push_str) @examples/selfhost_token.exl:159:40
+LParen @examples/selfhost_token.exl:159:48
+(String "'=>'") @examples/selfhost_token.exl:159:49
+RParen @examples/selfhost_token.exl:159:55
+Semicolon @examples/selfhost_token.exl:159:56
+RBrace @examples/selfhost_token.exl:159:58
+Pipe @examples/selfhost_token.exl:160:13
+(Ident Token) @examples/selfhost_token.exl:160:15
+DoubleColon @examples/selfhost_token.exl:160:20
+(Ident Pipe) @examples/selfhost_token.exl:160:22
+FatArrow @examples/selfhost_token.exl:160:27
+LBrace @examples/selfhost_token.exl:160:30
+(Ident out) @examples/selfhost_token.exl:160:32
+Dot @examples/selfhost_token.exl:160:35
+(Ident push_str) @examples/selfhost_token.exl:160:36
+LParen @examples/selfhost_token.exl:160:44
+(String "'|'") @examples/selfhost_token.exl:160:45
+RParen @examples/selfhost_token.exl:160:50
+Semicolon @examples/selfhost_token.exl:160:51
+RBrace @examples/selfhost_token.exl:160:53
+Pipe @examples/selfhost_token.exl:161:13
+(Ident Token) @examples/selfhost_token.exl:161:15
+DoubleColon @examples/selfhost_token.exl:161:20
+(Ident PipePipe) @examples/selfhost_token.exl:161:22
+FatArrow @examples/selfhost_token.exl:161:31
+LBrace @examples/selfhost_token.exl:161:34
+(Ident out) @examples/selfhost_token.exl:161:36
+Dot @examples/selfhost_token.exl:161:39
+(Ident push_str) @examples/selfhost_token.exl:161:40
+LParen @examples/selfhost_token.exl:161:48
+(String "'||'") @examples/selfhost_token.exl:161:49
+RParen @examples/selfhost_token.exl:161:55
+Semicolon @examples/selfhost_token.exl:161:56
+RBrace @examples/selfhost_token.exl:161:58
+Pipe @examples/selfhost_token.exl:162:13
+(Ident Token) @examples/selfhost_token.exl:162:15
+DoubleColon @examples/selfhost_token.exl:162:20
+(Ident PipeGt) @examples/selfhost_token.exl:162:22
+FatArrow @examples/selfhost_token.exl:162:29
+LBrace @examples/selfhost_token.exl:162:32
+(Ident out) @examples/selfhost_token.exl:162:34
+Dot @examples/selfhost_token.exl:162:37
+(Ident push_str) @examples/selfhost_token.exl:162:38
+LParen @examples/selfhost_token.exl:162:46
+(String "'|>'") @examples/selfhost_token.exl:162:47
+RParen @examples/selfhost_token.exl:162:53
+Semicolon @examples/selfhost_token.exl:162:54
+RBrace @examples/selfhost_token.exl:162:56
+Pipe @examples/selfhost_token.exl:163:13
+(Ident Token) @examples/selfhost_token.exl:163:15
+DoubleColon @examples/selfhost_token.exl:163:20
+(Ident AmpAmp) @examples/selfhost_token.exl:163:22
+FatArrow @examples/selfhost_token.exl:163:29
+LBrace @examples/selfhost_token.exl:163:32
+(Ident out) @examples/selfhost_token.exl:163:34
+Dot @examples/selfhost_token.exl:163:37
+(Ident push_str) @examples/selfhost_token.exl:163:38
+LParen @examples/selfhost_token.exl:163:46
+(String "'&&'") @examples/selfhost_token.exl:163:47
+RParen @examples/selfhost_token.exl:163:53
+Semicolon @examples/selfhost_token.exl:163:54
+RBrace @examples/selfhost_token.exl:163:56
+Pipe @examples/selfhost_token.exl:164:13
+(Ident Token) @examples/selfhost_token.exl:164:15
+DoubleColon @examples/selfhost_token.exl:164:20
+(Ident Dot) @examples/selfhost_token.exl:164:22
+FatArrow @examples/selfhost_token.exl:164:26
+LBrace @examples/selfhost_token.exl:164:29
+(Ident out) @examples/selfhost_token.exl:164:31
+Dot @examples/selfhost_token.exl:164:34
+(Ident push_str) @examples/selfhost_token.exl:164:35
+LParen @examples/selfhost_token.exl:164:43
+(String "'.'") @examples/selfhost_token.exl:164:44
+RParen @examples/selfhost_token.exl:164:49
+Semicolon @examples/selfhost_token.exl:164:50
+RBrace @examples/selfhost_token.exl:164:52
+Pipe @examples/selfhost_token.exl:165:13
+(Ident Token) @examples/selfhost_token.exl:165:15
+DoubleColon @examples/selfhost_token.exl:165:20
+(Ident DotDot) @examples/selfhost_token.exl:165:22
+FatArrow @examples/selfhost_token.exl:165:29
+LBrace @examples/selfhost_token.exl:165:32
+(Ident out) @examples/selfhost_token.exl:165:34
+Dot @examples/selfhost_token.exl:165:37
+(Ident push_str) @examples/selfhost_token.exl:165:38
+LParen @examples/selfhost_token.exl:165:46
+(String "'..'") @examples/selfhost_token.exl:165:47
+RParen @examples/selfhost_token.exl:165:53
+Semicolon @examples/selfhost_token.exl:165:54
+RBrace @examples/selfhost_token.exl:165:56
+Pipe @examples/selfhost_token.exl:166:13
+(Ident Token) @examples/selfhost_token.exl:166:15
+DoubleColon @examples/selfhost_token.exl:166:20
+(Ident DotDotEq) @examples/selfhost_token.exl:166:22
+FatArrow @examples/selfhost_token.exl:166:31
+LBrace @examples/selfhost_token.exl:166:34
+(Ident out) @examples/selfhost_token.exl:166:36
+Dot @examples/selfhost_token.exl:166:39
+(Ident push_str) @examples/selfhost_token.exl:166:40
+LParen @examples/selfhost_token.exl:166:48
+(String "'..='") @examples/selfhost_token.exl:166:49
+RParen @examples/selfhost_token.exl:166:56
+Semicolon @examples/selfhost_token.exl:166:57
+RBrace @examples/selfhost_token.exl:166:59
+Pipe @examples/selfhost_token.exl:167:13
+(Ident Token) @examples/selfhost_token.exl:167:15
+DoubleColon @examples/selfhost_token.exl:167:20
+(Ident Amp) @examples/selfhost_token.exl:167:22
+FatArrow @examples/selfhost_token.exl:167:26
+LBrace @examples/selfhost_token.exl:167:29
+(Ident out) @examples/selfhost_token.exl:167:31
+Dot @examples/selfhost_token.exl:167:34
+(Ident push_str) @examples/selfhost_token.exl:167:35
+LParen @examples/selfhost_token.exl:167:43
+(String "'&'") @examples/selfhost_token.exl:167:44
+RParen @examples/selfhost_token.exl:167:49
+Semicolon @examples/selfhost_token.exl:167:50
+RBrace @examples/selfhost_token.exl:167:52
+Pipe @examples/selfhost_token.exl:168:13
+(Ident Token) @examples/selfhost_token.exl:168:15
+DoubleColon @examples/selfhost_token.exl:168:20
+(Ident New) @examples/selfhost_token.exl:168:22
+FatArrow @examples/selfhost_token.exl:168:26
+LBrace @examples/selfhost_token.exl:168:29
+(Ident out) @examples/selfhost_token.exl:168:31
+Dot @examples/selfhost_token.exl:168:34
+(Ident push_str) @examples/selfhost_token.exl:168:35
+LParen @examples/selfhost_token.exl:168:43
+(String "'new'") @examples/selfhost_token.exl:168:44
+RParen @examples/selfhost_token.exl:168:51
+Semicolon @examples/selfhost_token.exl:168:52
+RBrace @examples/selfhost_token.exl:168:54
+Pipe @examples/selfhost_token.exl:169:13
+(Ident Token) @examples/selfhost_token.exl:169:15
+DoubleColon @examples/selfhost_token.exl:169:20
+(Ident Null) @examples/selfhost_token.exl:169:22
+FatArrow @examples/selfhost_token.exl:169:27
+LBrace @examples/selfhost_token.exl:169:30
+(Ident out) @examples/selfhost_token.exl:169:32
+Dot @examples/selfhost_token.exl:169:35
+(Ident push_str) @examples/selfhost_token.exl:169:36
+LParen @examples/selfhost_token.exl:169:44
+(String "'null'") @examples/selfhost_token.exl:169:45
+RParen @examples/selfhost_token.exl:169:53
+Semicolon @examples/selfhost_token.exl:169:54
+RBrace @examples/selfhost_token.exl:169:56
+Pipe @examples/selfhost_token.exl:170:13
+(Ident Token) @examples/selfhost_token.exl:170:15
+DoubleColon @examples/selfhost_token.exl:170:20
+(Ident LParen) @examples/selfhost_token.exl:170:22
+FatArrow @examples/selfhost_token.exl:170:29
+LBrace @examples/selfhost_token.exl:170:32
+(Ident out) @examples/selfhost_token.exl:170:34
+Dot @examples/selfhost_token.exl:170:37
+(Ident push_str) @examples/selfhost_token.exl:170:38
+LParen @examples/selfhost_token.exl:170:46
+(String "'('") @examples/selfhost_token.exl:170:47
+RParen @examples/selfhost_token.exl:170:52
+Semicolon @examples/selfhost_token.exl:170:53
+RBrace @examples/selfhost_token.exl:170:55
+Pipe @examples/selfhost_token.exl:171:13
+(Ident Token) @examples/selfhost_token.exl:171:15
+DoubleColon @examples/selfhost_token.exl:171:20
+(Ident RParen) @examples/selfhost_token.exl:171:22
+FatArrow @examples/selfhost_token.exl:171:29
+LBrace @examples/selfhost_token.exl:171:32
+(Ident out) @examples/selfhost_token.exl:171:34
+Dot @examples/selfhost_token.exl:171:37
+(Ident push_str) @examples/selfhost_token.exl:171:38
+LParen @examples/selfhost_token.exl:171:46
+(String "')'") @examples/selfhost_token.exl:171:47
+RParen @examples/selfhost_token.exl:171:52
+Semicolon @examples/selfhost_token.exl:171:53
+RBrace @examples/selfhost_token.exl:171:55
+Pipe @examples/selfhost_token.exl:172:13
+(Ident Token) @examples/selfhost_token.exl:172:15
+DoubleColon @examples/selfhost_token.exl:172:20
+(Ident LBrace) @examples/selfhost_token.exl:172:22
+FatArrow @examples/selfhost_token.exl:172:29
+LBrace @examples/selfhost_token.exl:172:32
+(Ident out) @examples/selfhost_token.exl:172:34
+Dot @examples/selfhost_token.exl:172:37
+(Ident push_str) @examples/selfhost_token.exl:172:38
+LParen @examples/selfhost_token.exl:172:46
+(String "'{'") @examples/selfhost_token.exl:172:47
+RParen @examples/selfhost_token.exl:172:52
+Semicolon @examples/selfhost_token.exl:172:53
+RBrace @examples/selfhost_token.exl:172:55
+Pipe @examples/selfhost_token.exl:173:13
+(Ident Token) @examples/selfhost_token.exl:173:15
+DoubleColon @examples/selfhost_token.exl:173:20
+(Ident RBrace) @examples/selfhost_token.exl:173:22
+FatArrow @examples/selfhost_token.exl:173:29
+LBrace @examples/selfhost_token.exl:173:32
+(Ident out) @examples/selfhost_token.exl:173:34
+Dot @examples/selfhost_token.exl:173:37
+(Ident push_str) @examples/selfhost_token.exl:173:38
+LParen @examples/selfhost_token.exl:173:46
+(String "'}'") @examples/selfhost_token.exl:173:47
+RParen @examples/selfhost_token.exl:173:52
+Semicolon @examples/selfhost_token.exl:173:53
+RBrace @examples/selfhost_token.exl:173:55
+Pipe @examples/selfhost_token.exl:174:13
+(Ident Token) @examples/selfhost_token.exl:174:15
+DoubleColon @examples/selfhost_token.exl:174:20
+(Ident LBracket) @examples/selfhost_token.exl:174:22
+FatArrow @examples/selfhost_token.exl:174:31
+LBrace @examples/selfhost_token.exl:174:34
+(Ident out) @examples/selfhost_token.exl:174:36
+Dot @examples/selfhost_token.exl:174:39
+(Ident push_str) @examples/selfhost_token.exl:174:40
+LParen @examples/selfhost_token.exl:174:48
+(String "'['") @examples/selfhost_token.exl:174:49
+RParen @examples/selfhost_token.exl:174:54
+Semicolon @examples/selfhost_token.exl:174:55
+RBrace @examples/selfhost_token.exl:174:57
+Pipe @examples/selfhost_token.exl:175:13
+(Ident Token) @examples/selfhost_token.exl:175:15
+DoubleColon @examples/selfhost_token.exl:175:20
+(Ident RBracket) @examples/selfhost_token.exl:175:22
+FatArrow @examples/selfhost_token.exl:175:31
+LBrace @examples/selfhost_token.exl:175:34
+(Ident out) @examples/selfhost_token.exl:175:36
+Dot @examples/selfhost_token.exl:175:39
+(Ident push_str) @examples/selfhost_token.exl:175:40
+LParen @examples/selfhost_token.exl:175:48
+(String "']'") @examples/selfhost_token.exl:175:49
+RParen @examples/selfhost_token.exl:175:54
+Semicolon @examples/selfhost_token.exl:175:55
+RBrace @examples/selfhost_token.exl:175:57
+Pipe @examples/selfhost_token.exl:176:13
+(Ident Token) @examples/selfhost_token.exl:176:15
+DoubleColon @examples/selfhost_token.exl:176:20
+(Ident Semicolon) @examples/selfhost_token.exl:176:22
+FatArrow @examples/selfhost_token.exl:176:32
+LBrace @examples/selfhost_token.exl:176:35
+(Ident out) @examples/selfhost_token.exl:176:37
+Dot @examples/selfhost_token.exl:176:40
+(Ident push_str) @examples/selfhost_token.exl:176:41
+LParen @examples/selfhost_token.exl:176:49
+(String "';'") @examples/selfhost_token.exl:176:50
+RParen @examples/selfhost_token.exl:176:55
+Semicolon @examples/selfhost_token.exl:176:56
+RBrace @examples/selfhost_token.exl:176:58
+Pipe @examples/selfhost_token.exl:177:13
+(Ident Token) @examples/selfhost_token.exl:177:15
+DoubleColon @examples/selfhost_token.exl:177:20
+(Ident Comma) @examples/selfhost_token.exl:177:22
+FatArrow @examples/selfhost_token.exl:177:28
+LBrace @examples/selfhost_token.exl:177:31
+(Ident out) @examples/selfhost_token.exl:177:33
+Dot @examples/selfhost_token.exl:177:36
+(Ident push_str) @examples/selfhost_token.exl:177:37
+LParen @examples/selfhost_token.exl:177:45
+(String "','") @examples/selfhost_token.exl:177:46
+RParen @examples/selfhost_token.exl:177:51
+Semicolon @examples/selfhost_token.exl:177:52
+RBrace @examples/selfhost_token.exl:177:54
+Pipe @examples/selfhost_token.exl:178:13
+(Ident Token) @examples/selfhost_token.exl:178:15
+DoubleColon @examples/selfhost_token.exl:178:20
+(Ident Colon) @examples/selfhost_token.exl:178:22
+FatArrow @examples/selfhost_token.exl:178:28
+LBrace @examples/selfhost_token.exl:178:31
+(Ident out) @examples/selfhost_token.exl:178:33
+Dot @examples/selfhost_token.exl:178:36
+(Ident push_str) @examples/selfhost_token.exl:178:37
+LParen @examples/selfhost_token.exl:178:45
+(String "':'") @examples/selfhost_token.exl:178:46
+RParen @examples/selfhost_token.exl:178:51
+Semicolon @examples/selfhost_token.exl:178:52
+RBrace @examples/selfhost_token.exl:178:54
+Pipe @examples/selfhost_token.exl:179:13
+(Ident Token) @examples/selfhost_token.exl:179:15
+DoubleColon @examples/selfhost_token.exl:179:20
+(Ident DoubleColon) @examples/selfhost_token.exl:179:22
+FatArrow @examples/selfhost_token.exl:179:34
+LBrace @examples/selfhost_token.exl:179:37
+(Ident out) @examples/selfhost_token.exl:179:39
+Dot @examples/selfhost_token.exl:179:42
+(Ident push_str) @examples/selfhost_token.exl:179:43
+LParen @examples/selfhost_token.exl:179:51
+(String "'::'") @examples/selfhost_token.exl:179:52
+RParen @examples/selfhost_token.exl:179:58
+Semicolon @examples/selfhost_token.exl:179:59
+RBrace @examples/selfhost_token.exl:179:61
+Pipe @examples/selfhost_token.exl:180:13
+(Ident Token) @examples/selfhost_token.exl:180:15
+DoubleColon @examples/selfhost_token.exl:180:20
+(Ident Arrow) @examples/selfhost_token.exl:180:22
+FatArrow @examples/selfhost_token.exl:180:28
+LBrace @examples/selfhost_token.exl:180:31
+(Ident out) @examples/selfhost_token.exl:180:33
+Dot @examples/selfhost_token.exl:180:36
+(Ident push_str) @examples/selfhost_token.exl:180:37
+LParen @examples/selfhost_token.exl:180:45
+(String "'->'") @examples/selfhost_token.exl:180:46
+RParen @examples/selfhost_token.exl:180:52
+Semicolon @examples/selfhost_token.exl:180:53
+RBrace @examples/selfhost_token.exl:180:55
+Pipe @examples/selfhost_token.exl:181:13
+(Ident Token) @examples/selfhost_token.exl:181:15
+DoubleColon @examples/selfhost_token.exl:181:20
+(Ident Eq) @examples/selfhost_token.exl:181:22
+FatArrow @examples/selfhost_token.exl:181:25
+LBrace @examples/selfhost_token.exl:181:28
+(Ident out) @examples/selfhost_token.exl:181:30
+Dot @examples/selfhost_token.exl:181:33
+(Ident push_str) @examples/selfhost_token.exl:181:34
+LParen @examples/selfhost_token.exl:181:42
+(String "'='") @examples/selfhost_token.exl:181:43
+RParen @examples/selfhost_token.exl:181:48
+Semicolon @examples/selfhost_token.exl:181:49
+RBrace @examples/selfhost_token.exl:181:51
+Pipe @examples/selfhost_token.exl:182:13
+(Ident Token) @examples/selfhost_token.exl:182:15
+DoubleColon @examples/selfhost_token.exl:182:20
+(Ident EqEq) @examples/selfhost_token.exl:182:22
+FatArrow @examples/selfhost_token.exl:182:27
+LBrace @examples/selfhost_token.exl:182:30
+(Ident out) @examples/selfhost_token.exl:182:32
+Dot @examples/selfhost_token.exl:182:35
+(Ident push_str) @examples/selfhost_token.exl:182:36
+LParen @examples/selfhost_token.exl:182:44
+(String "'=='") @examples/selfhost_token.exl:182:45
+RParen @examples/selfhost_token.exl:182:51
+Semicolon @examples/selfhost_token.exl:182:52
+RBrace @examples/selfhost_token.exl:182:54
+Pipe @examples/selfhost_token.exl:183:13
+(Ident Token) @examples/selfhost_token.exl:183:15
+DoubleColon @examples/selfhost_token.exl:183:20
+(Ident NotEq) @examples/selfhost_token.exl:183:22
+FatArrow @examples/selfhost_token.exl:183:28
+LBrace @examples/selfhost_token.exl:183:31
+(Ident out) @examples/selfhost_token.exl:183:33
+Dot @examples/selfhost_token.exl:183:36
+(Ident push_str) @examples/selfhost_token.exl:183:37
+LParen @examples/selfhost_token.exl:183:45
+(String "'!='") @examples/selfhost_token.exl:183:46
+RParen @examples/selfhost_token.exl:183:52
+Semicolon @examples/selfhost_token.exl:183:53
+RBrace @examples/selfhost_token.exl:183:55
+Pipe @examples/selfhost_token.exl:184:13
+(Ident Token) @examples/selfhost_token.exl:184:15
+DoubleColon @examples/selfhost_token.exl:184:20
+(Ident Bang) @examples/selfhost_token.exl:184:22
+FatArrow @examples/selfhost_token.exl:184:27
+LBrace @examples/selfhost_token.exl:184:30
+(Ident out) @examples/selfhost_token.exl:184:32
+Dot @examples/selfhost_token.exl:184:35
+(Ident push_str) @examples/selfhost_token.exl:184:36
+LParen @examples/selfhost_token.exl:184:44
+(String "'!'") @examples/selfhost_token.exl:184:45
+RParen @examples/selfhost_token.exl:184:50
+Semicolon @examples/selfhost_token.exl:184:51
+RBrace @examples/selfhost_token.exl:184:53
+Pipe @examples/selfhost_token.exl:185:13
+(Ident Token) @examples/selfhost_token.exl:185:15
+DoubleColon @examples/selfhost_token.exl:185:20
+(Ident Lt) @examples/selfhost_token.exl:185:22
+FatArrow @examples/selfhost_token.exl:185:25
+LBrace @examples/selfhost_token.exl:185:28
+(Ident out) @examples/selfhost_token.exl:185:30
+Dot @examples/selfhost_token.exl:185:33
+(Ident push_str) @examples/selfhost_token.exl:185:34
+LParen @examples/selfhost_token.exl:185:42
+(String "'<'") @examples/selfhost_token.exl:185:43
+RParen @examples/selfhost_token.exl:185:48
+Semicolon @examples/selfhost_token.exl:185:49
+RBrace @examples/selfhost_token.exl:185:51
+Pipe @examples/selfhost_token.exl:186:13
+(Ident Token) @examples/selfhost_token.exl:186:15
+DoubleColon @examples/selfhost_token.exl:186:20
+(Ident Gt) @examples/selfhost_token.exl:186:22
+FatArrow @examples/selfhost_token.exl:186:25
+LBrace @examples/selfhost_token.exl:186:28
+(Ident out) @examples/selfhost_token.exl:186:30
+Dot @examples/selfhost_token.exl:186:33
+(Ident push_str) @examples/selfhost_token.exl:186:34
+LParen @examples/selfhost_token.exl:186:42
+(String "'>'") @examples/selfhost_token.exl:186:43
+RParen @examples/selfhost_token.exl:186:48
+Semicolon @examples/selfhost_token.exl:186:49
+RBrace @examples/selfhost_token.exl:186:51
+Pipe @examples/selfhost_token.exl:187:13
+(Ident Token) @examples/selfhost_token.exl:187:15
+DoubleColon @examples/selfhost_token.exl:187:20
+(Ident LtEq) @examples/selfhost_token.exl:187:22
+FatArrow @examples/selfhost_token.exl:187:27
+LBrace @examples/selfhost_token.exl:187:30
+(Ident out) @examples/selfhost_token.exl:187:32
+Dot @examples/selfhost_token.exl:187:35
+(Ident push_str) @examples/selfhost_token.exl:187:36
+LParen @examples/selfhost_token.exl:187:44
+(String "'<='") @examples/selfhost_token.exl:187:45
+RParen @examples/selfhost_token.exl:187:51
+Semicolon @examples/selfhost_token.exl:187:52
+RBrace @examples/selfhost_token.exl:187:54
+Pipe @examples/selfhost_token.exl:188:13
+(Ident Token) @examples/selfhost_token.exl:188:15
+DoubleColon @examples/selfhost_token.exl:188:20
+(Ident GtEq) @examples/selfhost_token.exl:188:22
+FatArrow @examples/selfhost_token.exl:188:27
+LBrace @examples/selfhost_token.exl:188:30
+(Ident out) @examples/selfhost_token.exl:188:32
+Dot @examples/selfhost_token.exl:188:35
+(Ident push_str) @examples/selfhost_token.exl:188:36
+LParen @examples/selfhost_token.exl:188:44
+(String "'>='") @examples/selfhost_token.exl:188:45
+RParen @examples/selfhost_token.exl:188:51
+Semicolon @examples/selfhost_token.exl:188:52
+RBrace @examples/selfhost_token.exl:188:54
+Pipe @examples/selfhost_token.exl:189:13
+(Ident Token) @examples/selfhost_token.exl:189:15
+DoubleColon @examples/selfhost_token.exl:189:20
+(Ident Plus) @examples/selfhost_token.exl:189:22
+FatArrow @examples/selfhost_token.exl:189:27
+LBrace @examples/selfhost_token.exl:189:30
+(Ident out) @examples/selfhost_token.exl:189:32
+Dot @examples/selfhost_token.exl:189:35
+(Ident push_str) @examples/selfhost_token.exl:189:36
+LParen @examples/selfhost_token.exl:189:44
+(String "'+'") @examples/selfhost_token.exl:189:45
+RParen @examples/selfhost_token.exl:189:50
+Semicolon @examples/selfhost_token.exl:189:51
+RBrace @examples/selfhost_token.exl:189:53
+Pipe @examples/selfhost_token.exl:190:13
+(Ident Token) @examples/selfhost_token.exl:190:15
+DoubleColon @examples/selfhost_token.exl:190:20
+(Ident PlusPlus) @examples/selfhost_token.exl:190:22
+FatArrow @examples/selfhost_token.exl:190:31
+LBrace @examples/selfhost_token.exl:190:34
+(Ident out) @examples/selfhost_token.exl:190:36
+Dot @examples/selfhost_token.exl:190:39
+(Ident push_str) @examples/selfhost_token.exl:190:40
+LParen @examples/selfhost_token.exl:190:48
+(String "'++'") @examples/selfhost_token.exl:190:49
+RParen @examples/selfhost_token.exl:190:55
+Semicolon @examples/selfhost_token.exl:190:56
+RBrace @examples/selfhost_token.exl:190:58
+Pipe @examples/selfhost_token.exl:191:13
+(Ident Token) @examples/selfhost_token.exl:191:15
+DoubleColon @examples/selfhost_token.exl:191:20
+(Ident Minus) @examples/selfhost_token.exl:191:22
+FatArrow @examples/selfhost_token.exl:191:28
+LBrace @examples/selfhost_token.exl:191:31
+(Ident out) @examples/selfhost_token.exl:191:33
+Dot @examples/selfhost_token.exl:191:36
+(Ident push_str) @examples/selfhost_token.exl:191:37
+LParen @examples/selfhost_token.exl:191:45
+(String "'-'") @examples/selfhost_token.exl:191:46
+RParen @examples/selfhost_token.exl:191:51
+Semicolon @examples/selfhost_token.exl:191:52
+RBrace @examples/selfhost_token.exl:191:54
+Pipe @examples/selfhost_token.exl:192:13
+(Ident Token) @examples/selfhost_token.exl:192:15
+DoubleColon @examples/selfhost_token.exl:192:20
+(Ident Star) @examples/selfhost_token.exl:192:22
+FatArrow @examples/selfhost_token.exl:192:27
+LBrace @examples/selfhost_token.exl:192:30
+(Ident out) @examples/selfhost_token.exl:192:32
+Dot @examples/selfhost_token.exl:192:35
+(Ident push_str) @examples/selfhost_token.exl:192:36
+LParen @examples/selfhost_token.exl:192:44
+(String "'*'") @examples/selfhost_token.exl:192:45
+RParen @examples/selfhost_token.exl:192:50
+Semicolon @examples/selfhost_token.exl:192:51
+RBrace @examples/selfhost_token.exl:192:53
+Pipe @examples/selfhost_token.exl:193:13
+(Ident Token) @examples/selfhost_token.exl:193:15
+DoubleColon @examples/selfhost_token.exl:193:20
+(Ident Slash) @examples/selfhost_token.exl:193:22
+FatArrow @examples/selfhost_token.exl:193:28
+LBrace @examples/selfhost_token.exl:193:31
+(Ident out) @examples/selfhost_token.exl:193:33
+Dot @examples/selfhost_token.exl:193:36
+(Ident push_str) @examples/selfhost_token.exl:193:37
+LParen @examples/selfhost_token.exl:193:45
+(String "'/'") @examples/selfhost_token.exl:193:46
+RParen @examples/selfhost_token.exl:193:51
+Semicolon @examples/selfhost_token.exl:193:52
+RBrace @examples/selfhost_token.exl:193:54
+Pipe @examples/selfhost_token.exl:194:13
+(Ident Token) @examples/selfhost_token.exl:194:15
+DoubleColon @examples/selfhost_token.exl:194:20
+(Ident Percent) @examples/selfhost_token.exl:194:22
+FatArrow @examples/selfhost_token.exl:194:30
+LBrace @examples/selfhost_token.exl:194:33
+(Ident out) @examples/selfhost_token.exl:194:35
+Dot @examples/selfhost_token.exl:194:38
+(Ident push_str) @examples/selfhost_token.exl:194:39
+LParen @examples/selfhost_token.exl:194:47
+(String "'%'") @examples/selfhost_token.exl:194:48
+RParen @examples/selfhost_token.exl:194:53
+Semicolon @examples/selfhost_token.exl:194:54
+RBrace @examples/selfhost_token.exl:194:56
+Pipe @examples/selfhost_token.exl:195:13
+(Ident Token) @examples/selfhost_token.exl:195:15
+DoubleColon @examples/selfhost_token.exl:195:20
+(Ident Caret) @examples/selfhost_token.exl:195:22
+FatArrow @examples/selfhost_token.exl:195:28
+LBrace @examples/selfhost_token.exl:195:31
+(Ident out) @examples/selfhost_token.exl:195:33
+Dot @examples/selfhost_token.exl:195:36
+(Ident push_str) @examples/selfhost_token.exl:195:37
+LParen @examples/selfhost_token.exl:195:45
+(String "'^'") @examples/selfhost_token.exl:195:46
+RParen @examples/selfhost_token.exl:195:51
+Semicolon @examples/selfhost_token.exl:195:52
+RBrace @examples/selfhost_token.exl:195:54
+Pipe @examples/selfhost_token.exl:196:13
+(Ident Token) @examples/selfhost_token.exl:196:15
+DoubleColon @examples/selfhost_token.exl:196:20
+(Ident Tilde) @examples/selfhost_token.exl:196:22
+FatArrow @examples/selfhost_token.exl:196:28
+LBrace @examples/selfhost_token.exl:196:31
+(Ident out) @examples/selfhost_token.exl:196:33
+Dot @examples/selfhost_token.exl:196:36
+(Ident push_str) @examples/selfhost_token.exl:196:37
+LParen @examples/selfhost_token.exl:196:45
+(String "'~'") @examples/selfhost_token.exl:196:46
+RParen @examples/selfhost_token.exl:196:51
+Semicolon @examples/selfhost_token.exl:196:52
+RBrace @examples/selfhost_token.exl:196:54
+Pipe @examples/selfhost_token.exl:197:13
+(Ident Token) @examples/selfhost_token.exl:197:15
+DoubleColon @examples/selfhost_token.exl:197:20
+(Ident Shl) @examples/selfhost_token.exl:197:22
+FatArrow @examples/selfhost_token.exl:197:26
+LBrace @examples/selfhost_token.exl:197:29
+(Ident out) @examples/selfhost_token.exl:197:31
+Dot @examples/selfhost_token.exl:197:34
+(Ident push_str) @examples/selfhost_token.exl:197:35
+LParen @examples/selfhost_token.exl:197:43
+(String "'<<'") @examples/selfhost_token.exl:197:44
+RParen @examples/selfhost_token.exl:197:50
+Semicolon @examples/selfhost_token.exl:197:51
+RBrace @examples/selfhost_token.exl:197:53
+Pipe @examples/selfhost_token.exl:198:13
+(Ident Token) @examples/selfhost_token.exl:198:15
+DoubleColon @examples/selfhost_token.exl:198:20
+(Ident Shr) @examples/selfhost_token.exl:198:22
+FatArrow @examples/selfhost_token.exl:198:26
+LBrace @examples/selfhost_token.exl:198:29
+(Ident out) @examples/selfhost_token.exl:198:31
+Dot @examples/selfhost_token.exl:198:34
+(Ident push_str) @examples/selfhost_token.exl:198:35
+LParen @examples/selfhost_token.exl:198:43
+(String "'>>'") @examples/selfhost_token.exl:198:44
+RParen @examples/selfhost_token.exl:198:50
+Semicolon @examples/selfhost_token.exl:198:51
+RBrace @examples/selfhost_token.exl:198:53
+Pipe @examples/selfhost_token.exl:199:13
+(Ident Token) @examples/selfhost_token.exl:199:15
+DoubleColon @examples/selfhost_token.exl:199:20
+(Ident True) @examples/selfhost_token.exl:199:22
+FatArrow @examples/selfhost_token.exl:199:27
+LBrace @examples/selfhost_token.exl:199:30
+(Ident out) @examples/selfhost_token.exl:199:32
+Dot @examples/selfhost_token.exl:199:35
+(Ident push_str) @examples/selfhost_token.exl:199:36
+LParen @examples/selfhost_token.exl:199:44
+(String "'true'") @examples/selfhost_token.exl:199:45
+RParen @examples/selfhost_token.exl:199:53
+Semicolon @examples/selfhost_token.exl:199:54
+RBrace @examples/selfhost_token.exl:199:56
+Pipe @examples/selfhost_token.exl:200:13
+(Ident Token) @examples/selfhost_token.exl:200:15
+DoubleColon @examples/selfhost_token.exl:200:20
+(Ident False) @examples/selfhost_token.exl:200:22
+FatArrow @examples/selfhost_token.exl:200:28
+LBrace @examples/selfhost_token.exl:200:31
+(Ident out) @examples/selfhost_token.exl:200:33
+Dot @examples/selfhost_token.exl:200:36
+(Ident push_str) @examples/selfhost_token.exl:200:37
+LParen @examples/selfhost_token.exl:200:45
+(String "'false'") @examples/selfhost_token.exl:200:46
+RParen @examples/selfhost_token.exl:200:55
+Semicolon @examples/selfhost_token.exl:200:56
+RBrace @examples/selfhost_token.exl:200:58
+Pipe @examples/selfhost_token.exl:201:13
+(Ident Token) @examples/selfhost_token.exl:201:15
+DoubleColon @examples/selfhost_token.exl:201:20
+(Ident Question) @examples/selfhost_token.exl:201:22
+FatArrow @examples/selfhost_token.exl:201:31
+LBrace @examples/selfhost_token.exl:201:34
+(Ident out) @examples/selfhost_token.exl:201:36
+Dot @examples/selfhost_token.exl:201:39
+(Ident push_str) @examples/selfhost_token.exl:201:40
+LParen @examples/selfhost_token.exl:201:48
+(String "'?'") @examples/selfhost_token.exl:201:49
+RParen @examples/selfhost_token.exl:201:54
+Semicolon @examples/selfhost_token.exl:201:55
+RBrace @examples/selfhost_token.exl:201:57
+Pipe @examples/selfhost_token.exl:202:13
+(Ident Token) @examples/selfhost_token.exl:202:15
+DoubleColon @examples/selfhost_token.exl:202:20
+(Ident Orelse) @examples/selfhost_token.exl:202:22
+FatArrow @examples/selfhost_token.exl:202:29
+LBrace @examples/selfhost_token.exl:202:32
+(Ident out) @examples/selfhost_token.exl:202:34
+Dot @examples/selfhost_token.exl:202:37
+(Ident push_str) @examples/selfhost_token.exl:202:38
+LParen @examples/selfhost_token.exl:202:46
+(String "'orelse'") @examples/selfhost_token.exl:202:47
+RParen @examples/selfhost_token.exl:202:57
+Semicolon @examples/selfhost_token.exl:202:58
+RBrace @examples/selfhost_token.exl:202:60
+Pipe @examples/selfhost_token.exl:203:13
+(Ident Token) @examples/selfhost_token.exl:203:15
+DoubleColon @examples/selfhost_token.exl:203:20
+(Ident TryTok) @examples/selfhost_token.exl:203:22
+FatArrow @examples/selfhost_token.exl:203:29
+LBrace @examples/selfhost_token.exl:203:32
+(Ident out) @examples/selfhost_token.exl:203:34
+Dot @examples/selfhost_token.exl:203:37
+(Ident push_str) @examples/selfhost_token.exl:203:38
+LParen @examples/selfhost_token.exl:203:46
+(String "'try'") @examples/selfhost_token.exl:203:47
+RParen @examples/selfhost_token.exl:203:54
+Semicolon @examples/selfhost_token.exl:203:55
+RBrace @examples/selfhost_token.exl:203:57
+Pipe @examples/selfhost_token.exl:204:13
+(Ident Token) @examples/selfhost_token.exl:204:15
+DoubleColon @examples/selfhost_token.exl:204:20
+(Ident Extern) @examples/selfhost_token.exl:204:22
+FatArrow @examples/selfhost_token.exl:204:29
+LBrace @examples/selfhost_token.exl:204:32
+(Ident out) @examples/selfhost_token.exl:204:34
+Dot @examples/selfhost_token.exl:204:37
+(Ident push_str) @examples/selfhost_token.exl:204:38
+LParen @examples/selfhost_token.exl:204:46
+(String "'extern'") @examples/selfhost_token.exl:204:47
+RParen @examples/selfhost_token.exl:204:57
+Semicolon @examples/selfhost_token.exl:204:58
+RBrace @examples/selfhost_token.exl:204:60
+Pipe @examples/selfhost_token.exl:205:13
+(Ident Token) @examples/selfhost_token.exl:205:15
+DoubleColon @examples/selfhost_token.exl:205:20
+(Ident Ellipsis) @examples/selfhost_token.exl:205:22
+FatArrow @examples/selfhost_token.exl:205:31
+LBrace @examples/selfhost_token.exl:205:34
+(Ident out) @examples/selfhost_token.exl:205:36
+Dot @examples/selfhost_token.exl:205:39
+(Ident push_str) @examples/selfhost_token.exl:205:40
+LParen @examples/selfhost_token.exl:205:48
+(String "'...'") @examples/selfhost_token.exl:205:49
+RParen @examples/selfhost_token.exl:205:56
+Semicolon @examples/selfhost_token.exl:205:57
+RBrace @examples/selfhost_token.exl:205:59
+Pipe @examples/selfhost_token.exl:206:13
+(Ident Token) @examples/selfhost_token.exl:206:15
+DoubleColon @examples/selfhost_token.exl:206:20
+(Ident At) @examples/selfhost_token.exl:206:22
+FatArrow @examples/selfhost_token.exl:206:25
+LBrace @examples/selfhost_token.exl:206:28
+(Ident out) @examples/selfhost_token.exl:206:30
+Dot @examples/selfhost_token.exl:206:33
+(Ident push_str) @examples/selfhost_token.exl:206:34
+LParen @examples/selfhost_token.exl:206:42
+(String "'@'") @examples/selfhost_token.exl:206:43
+RParen @examples/selfhost_token.exl:206:48
+Semicolon @examples/selfhost_token.exl:206:49
+RBrace @examples/selfhost_token.exl:206:51
+Pipe @examples/selfhost_token.exl:207:13
+(Ident Token) @examples/selfhost_token.exl:207:15
+DoubleColon @examples/selfhost_token.exl:207:20
+(Ident TypeTok) @examples/selfhost_token.exl:207:22
+FatArrow @examples/selfhost_token.exl:207:30
+LBrace @examples/selfhost_token.exl:207:33
+(Ident out) @examples/selfhost_token.exl:207:35
+Dot @examples/selfhost_token.exl:207:38
+(Ident push_str) @examples/selfhost_token.exl:207:39
+LParen @examples/selfhost_token.exl:207:47
+(String "'type'") @examples/selfhost_token.exl:207:48
+RParen @examples/selfhost_token.exl:207:56
+Semicolon @examples/selfhost_token.exl:207:57
+RBrace @examples/selfhost_token.exl:207:59
+Pipe @examples/selfhost_token.exl:208:13
+(Ident Token) @examples/selfhost_token.exl:208:15
+DoubleColon @examples/selfhost_token.exl:208:20
+(Ident Const) @examples/selfhost_token.exl:208:22
+FatArrow @examples/selfhost_token.exl:208:28
+LBrace @examples/selfhost_token.exl:208:31
+(Ident out) @examples/selfhost_token.exl:208:33
+Dot @examples/selfhost_token.exl:208:36
+(Ident push_str) @examples/selfhost_token.exl:208:37
+LParen @examples/selfhost_token.exl:208:45
+(String "'const'") @examples/selfhost_token.exl:208:46
+RParen @examples/selfhost_token.exl:208:55
+Semicolon @examples/selfhost_token.exl:208:56
+RBrace @examples/selfhost_token.exl:208:58
+Pipe @examples/selfhost_token.exl:209:13
+(Ident Token) @examples/selfhost_token.exl:209:15
+DoubleColon @examples/selfhost_token.exl:209:20
+(Ident VarTok) @examples/selfhost_token.exl:209:22
+FatArrow @examples/selfhost_token.exl:209:29
+LBrace @examples/selfhost_token.exl:209:32
+(Ident out) @examples/selfhost_token.exl:209:34
+Dot @examples/selfhost_token.exl:209:37
+(Ident push_str) @examples/selfhost_token.exl:209:38
+LParen @examples/selfhost_token.exl:209:46
+(String "'var'") @examples/selfhost_token.exl:209:47
+RParen @examples/selfhost_token.exl:209:54
+Semicolon @examples/selfhost_token.exl:209:55
+RBrace @examples/selfhost_token.exl:209:57
+Pipe @examples/selfhost_token.exl:210:13
+(Ident Token) @examples/selfhost_token.exl:210:15
+DoubleColon @examples/selfhost_token.exl:210:20
+(Ident SizeOf) @examples/selfhost_token.exl:210:22
+FatArrow @examples/selfhost_token.exl:210:29
+LBrace @examples/selfhost_token.exl:210:32
+(Ident out) @examples/selfhost_token.exl:210:34
+Dot @examples/selfhost_token.exl:210:37
+(Ident push_str) @examples/selfhost_token.exl:210:38
+LParen @examples/selfhost_token.exl:210:46
+(String "'size_of'") @examples/selfhost_token.exl:210:47
+RParen @examples/selfhost_token.exl:210:58
+Semicolon @examples/selfhost_token.exl:210:59
+RBrace @examples/selfhost_token.exl:210:61
+Pipe @examples/selfhost_token.exl:211:13
+(Ident Token) @examples/selfhost_token.exl:211:15
+DoubleColon @examples/selfhost_token.exl:211:20
+(Ident Ident) @examples/selfhost_token.exl:211:22
+LParen @examples/selfhost_token.exl:211:27
+(Ident s) @examples/selfhost_token.exl:211:28
+RParen @examples/selfhost_token.exl:211:29
+FatArrow @examples/selfhost_token.exl:211:31
+LBrace @examples/selfhost_token.exl:211:34
+(Ident out) @examples/selfhost_token.exl:212:17
+Dot @examples/selfhost_token.exl:212:20
+(Ident push_str) @examples/selfhost_token.exl:212:21
+LParen @examples/selfhost_token.exl:212:29
+(String "identifier '") @examples/selfhost_token.exl:212:30
+RParen @examples/selfhost_token.exl:212:44
+Semicolon @examples/selfhost_token.exl:212:45
+(Ident out) @examples/selfhost_token.exl:213:17
+Dot @examples/selfhost_token.exl:213:20
+(Ident push_str) @examples/selfhost_token.exl:213:21
+LParen @examples/selfhost_token.exl:213:29
+(Ident s) @examples/selfhost_token.exl:213:30
+RParen @examples/selfhost_token.exl:213:31
+Semicolon @examples/selfhost_token.exl:213:32
+(Ident out) @examples/selfhost_token.exl:214:17
+Dot @examples/selfhost_token.exl:214:20
+(Ident push_str) @examples/selfhost_token.exl:214:21
+LParen @examples/selfhost_token.exl:214:29
+(String "'") @examples/selfhost_token.exl:214:30
+RParen @examples/selfhost_token.exl:214:33
+Semicolon @examples/selfhost_token.exl:214:34
+RBrace @examples/selfhost_token.exl:215:13
+Pipe @examples/selfhost_token.exl:216:13
+(Ident Token) @examples/selfhost_token.exl:216:15
+DoubleColon @examples/selfhost_token.exl:216:20
+(Ident Int) @examples/selfhost_token.exl:216:22
+LParen @examples/selfhost_token.exl:216:25
+(Ident n) @examples/selfhost_token.exl:216:26
+RParen @examples/selfhost_token.exl:216:27
+FatArrow @examples/selfhost_token.exl:216:29
+LBrace @examples/selfhost_token.exl:216:32
+(Ident out) @examples/selfhost_token.exl:217:17
+Dot @examples/selfhost_token.exl:217:20
+(Ident push_str) @examples/selfhost_token.exl:217:21
+LParen @examples/selfhost_token.exl:217:29
+(String "integer ") @examples/selfhost_token.exl:217:30
+RParen @examples/selfhost_token.exl:217:40
+Semicolon @examples/selfhost_token.exl:217:41
+(Ident out) @examples/selfhost_token.exl:218:17
+Dot @examples/selfhost_token.exl:218:20
+(Ident push_int) @examples/selfhost_token.exl:218:21
+LParen @examples/selfhost_token.exl:218:29
+(Ident n) @examples/selfhost_token.exl:218:30
+RParen @examples/selfhost_token.exl:218:31
+Semicolon @examples/selfhost_token.exl:218:32
+RBrace @examples/selfhost_token.exl:219:13
+Pipe @examples/selfhost_token.exl:220:13
+(Ident Token) @examples/selfhost_token.exl:220:15
+DoubleColon @examples/selfhost_token.exl:220:20
+(Ident Float) @examples/selfhost_token.exl:220:22
+LParen @examples/selfhost_token.exl:220:27
+(Ident _f) @examples/selfhost_token.exl:220:28
+Comma @examples/selfhost_token.exl:220:30
+(Ident is32) @examples/selfhost_token.exl:220:32
+RParen @examples/selfhost_token.exl:220:36
+FatArrow @examples/selfhost_token.exl:220:38
+LBrace @examples/selfhost_token.exl:220:41
+(Ident out) @examples/selfhost_token.exl:225:17
+Dot @examples/selfhost_token.exl:225:20
+(Ident push_str) @examples/selfhost_token.exl:225:21
+LParen @examples/selfhost_token.exl:225:29
+(String "float ") @examples/selfhost_token.exl:225:30
+RParen @examples/selfhost_token.exl:225:38
+Semicolon @examples/selfhost_token.exl:225:39
+(Ident push_float_suffix) @examples/selfhost_token.exl:226:17
+LParen @examples/selfhost_token.exl:226:34
+(Ident out) @examples/selfhost_token.exl:226:35
+Comma @examples/selfhost_token.exl:226:38
+(Ident is32) @examples/selfhost_token.exl:226:40
+RParen @examples/selfhost_token.exl:226:44
+Semicolon @examples/selfhost_token.exl:226:45
+RBrace @examples/selfhost_token.exl:227:13
+Pipe @examples/selfhost_token.exl:228:13
+(Ident Token) @examples/selfhost_token.exl:228:15
+DoubleColon @examples/selfhost_token.exl:228:20
+(Ident StringTok) @examples/selfhost_token.exl:228:22
+LParen @examples/selfhost_token.exl:228:31
+(Ident s) @examples/selfhost_token.exl:228:32
+RParen @examples/selfhost_token.exl:228:33
+FatArrow @examples/selfhost_token.exl:228:35
+LBrace @examples/selfhost_token.exl:228:38
+(Ident out) @examples/selfhost_token.exl:229:17
+Dot @examples/selfhost_token.exl:229:20
+(Ident push_str) @examples/selfhost_token.exl:229:21
+LParen @examples/selfhost_token.exl:229:29
+(String "string \"") @examples/selfhost_token.exl:229:30
+RParen @examples/selfhost_token.exl:229:41
+Semicolon @examples/selfhost_token.exl:229:42
+(Ident out) @examples/selfhost_token.exl:230:17
+Dot @examples/selfhost_token.exl:230:20
+(Ident push_str) @examples/selfhost_token.exl:230:21
+LParen @examples/selfhost_token.exl:230:29
+(Ident s) @examples/selfhost_token.exl:230:30
+RParen @examples/selfhost_token.exl:230:31
+Semicolon @examples/selfhost_token.exl:230:32
+(Ident out) @examples/selfhost_token.exl:231:17
+Dot @examples/selfhost_token.exl:231:20
+(Ident push_str) @examples/selfhost_token.exl:231:21
+LParen @examples/selfhost_token.exl:231:29
+(String "\"") @examples/selfhost_token.exl:231:30
+RParen @examples/selfhost_token.exl:231:34
+Semicolon @examples/selfhost_token.exl:231:35
+RBrace @examples/selfhost_token.exl:232:13
+Pipe @examples/selfhost_token.exl:233:13
+(Ident Token) @examples/selfhost_token.exl:233:15
+DoubleColon @examples/selfhost_token.exl:233:20
+(Ident Eof) @examples/selfhost_token.exl:233:22
+FatArrow @examples/selfhost_token.exl:233:26
+LBrace @examples/selfhost_token.exl:233:29
+(Ident out) @examples/selfhost_token.exl:233:31
+Dot @examples/selfhost_token.exl:233:34
+(Ident push_str) @examples/selfhost_token.exl:233:35
+LParen @examples/selfhost_token.exl:233:43
+(String "end of file") @examples/selfhost_token.exl:233:44
+RParen @examples/selfhost_token.exl:233:57
+Semicolon @examples/selfhost_token.exl:233:58
+RBrace @examples/selfhost_token.exl:233:60
+RBrace @examples/selfhost_token.exl:234:9
+RBrace @examples/selfhost_token.exl:235:5
+RBrace @examples/selfhost_token.exl:236:1
+Fn @examples/selfhost_token.exl:238:1
+(Ident main) @examples/selfhost_token.exl:238:4
+LParen @examples/selfhost_token.exl:238:8
+RParen @examples/selfhost_token.exl:238:9
+LBrace @examples/selfhost_token.exl:238:11
+Let @examples/selfhost_token.exl:243:5
+(Ident kw) @examples/selfhost_token.exl:243:9
+Eq @examples/selfhost_token.exl:243:12
+(Ident Token) @examples/selfhost_token.exl:243:14
+DoubleColon @examples/selfhost_token.exl:243:19
+(Ident Fn) @examples/selfhost_token.exl:243:21
+Semicolon @examples/selfhost_token.exl:243:23
+(Ident println) @examples/selfhost_token.exl:244:5
+LParen @examples/selfhost_token.exl:244:12
+(Ident kw) @examples/selfhost_token.exl:244:13
+RParen @examples/selfhost_token.exl:244:15
+Semicolon @examples/selfhost_token.exl:244:16
+Let @examples/selfhost_token.exl:246:5
+(Ident arrow) @examples/selfhost_token.exl:246:9
+Eq @examples/selfhost_token.exl:246:15
+(Ident Token) @examples/selfhost_token.exl:246:17
+DoubleColon @examples/selfhost_token.exl:246:22
+(Ident FatArrow) @examples/selfhost_token.exl:246:24
+Semicolon @examples/selfhost_token.exl:246:32
+(Ident println) @examples/selfhost_token.exl:247:5
+LParen @examples/selfhost_token.exl:247:12
+(Ident arrow) @examples/selfhost_token.exl:247:13
+RParen @examples/selfhost_token.exl:247:18
+Semicolon @examples/selfhost_token.exl:247:19
+Let @examples/selfhost_token.exl:249:5
+(Ident id) @examples/selfhost_token.exl:249:9
+Eq @examples/selfhost_token.exl:249:12
+(Ident Token) @examples/selfhost_token.exl:249:14
+DoubleColon @examples/selfhost_token.exl:249:19
+(Ident Ident) @examples/selfhost_token.exl:249:21
+LParen @examples/selfhost_token.exl:249:26
+(String "main") @examples/selfhost_token.exl:249:27
+RParen @examples/selfhost_token.exl:249:33
+Semicolon @examples/selfhost_token.exl:249:34
+(Ident println) @examples/selfhost_token.exl:250:5
+LParen @examples/selfhost_token.exl:250:12
+(Ident id) @examples/selfhost_token.exl:250:13
+RParen @examples/selfhost_token.exl:250:15
+Semicolon @examples/selfhost_token.exl:250:16
+Let @examples/selfhost_token.exl:252:5
+(Ident n) @examples/selfhost_token.exl:252:9
+Eq @examples/selfhost_token.exl:252:11
+(Ident Token) @examples/selfhost_token.exl:252:13
+DoubleColon @examples/selfhost_token.exl:252:18
+(Ident Int) @examples/selfhost_token.exl:252:20
+LParen @examples/selfhost_token.exl:252:23
+(Int 42) @examples/selfhost_token.exl:252:24
+RParen @examples/selfhost_token.exl:252:26
+Semicolon @examples/selfhost_token.exl:252:27
+(Ident println) @examples/selfhost_token.exl:253:5
+LParen @examples/selfhost_token.exl:253:12
+(Ident n) @examples/selfhost_token.exl:253:13
+RParen @examples/selfhost_token.exl:253:14
+Semicolon @examples/selfhost_token.exl:253:15
+Let @examples/selfhost_token.exl:255:5
+(Ident f) @examples/selfhost_token.exl:255:9
+Eq @examples/selfhost_token.exl:255:11
+(Ident Token) @examples/selfhost_token.exl:255:13
+DoubleColon @examples/selfhost_token.exl:255:18
+(Ident Float) @examples/selfhost_token.exl:255:20
+LParen @examples/selfhost_token.exl:255:25
+(Float 0x1.91eb851eb851fp+1 f64) @examples/selfhost_token.exl:255:26
+Comma @examples/selfhost_token.exl:255:30
+False @examples/selfhost_token.exl:255:32
+RParen @examples/selfhost_token.exl:255:37
+Semicolon @examples/selfhost_token.exl:255:38
+(Ident println) @examples/selfhost_token.exl:256:5
+LParen @examples/selfhost_token.exl:256:12
+(Ident f) @examples/selfhost_token.exl:256:13
+RParen @examples/selfhost_token.exl:256:14
+Semicolon @examples/selfhost_token.exl:256:15
+Let @examples/selfhost_token.exl:258:5
+(Ident s) @examples/selfhost_token.exl:258:9
+Eq @examples/selfhost_token.exl:258:11
+(Ident Token) @examples/selfhost_token.exl:258:13
+DoubleColon @examples/selfhost_token.exl:258:18
+(Ident StringTok) @examples/selfhost_token.exl:258:20
+LParen @examples/selfhost_token.exl:258:29
+(String "hello") @examples/selfhost_token.exl:258:30
+RParen @examples/selfhost_token.exl:258:37
+Semicolon @examples/selfhost_token.exl:258:38
+(Ident println) @examples/selfhost_token.exl:259:5
+LParen @examples/selfhost_token.exl:259:12
+(Ident s) @examples/selfhost_token.exl:259:13
+RParen @examples/selfhost_token.exl:259:14
+Semicolon @examples/selfhost_token.exl:259:15
+Let @examples/selfhost_token.exl:261:5
+(Ident end) @examples/selfhost_token.exl:261:9
+Eq @examples/selfhost_token.exl:261:13
+(Ident Token) @examples/selfhost_token.exl:261:15
+DoubleColon @examples/selfhost_token.exl:261:20
+(Ident Eof) @examples/selfhost_token.exl:261:22
+Semicolon @examples/selfhost_token.exl:261:25
+(Ident println) @examples/selfhost_token.exl:262:5
+LParen @examples/selfhost_token.exl:262:12
+(Ident end) @examples/selfhost_token.exl:262:13
+RParen @examples/selfhost_token.exl:262:16
+Semicolon @examples/selfhost_token.exl:262:17
+RBrace @examples/selfhost_token.exl:263:1
+Eof @examples/selfhost_token.exl:264:1

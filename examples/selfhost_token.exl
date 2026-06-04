@@ -1,0 +1,263 @@
+// Self-host Faza 0 — third foundation port.
+//
+// Ports `lib/token.ml` (121 OCaml lines).  Token is a wide enum:
+// 78 variants — most unit (keywords + punctuation), four carry
+// payload (Ident str, Int int, Float f64 + is_f32 flag, String
+// str).  The `pp` renderer turns each variant into a user-facing
+// diagnostic phrase, e.g. `Fn -> "'fn'"`, `Ident s -> "identifier
+// 's'"`.
+//
+// Port shape (mirrors the idioms pinned by selfhost_pos /
+// selfhost_error):
+//
+//   - OCaml `type t = | Fn | Let | ... | Ident of string | ...` →
+//     `enum Token { Fn | Let | ... | Ident(str) | ... }`.  Variant
+//     order matters at the dump layer (declaration order is
+//     canonical per Faza −1), so we keep the OCaml ordering
+//     verbatim.
+//
+//   - OCaml `pp` becomes `impl Display for Token` with one match
+//     arm per variant.  The writer-pattern composes through SB
+//     `push_str` for static phrases and the prelude's primitive
+//     `push_int` for integer payloads.
+//
+//   - Float payload renders to `<f32>` / `<f64>` placeholders for
+//     now.  The OCaml side uses `Printf.sprintf "%g%s"` which has
+//     no exile counterpart yet (no float-to-decimal in the
+//     prelude); a real `f64 → str` formatter lands as part of a
+//     later prelude pass — for the port the placeholder keeps the
+//     diagnostic phrase shape (`float <…>`) without losing
+//     information the diagnostic actually cares about.
+//
+// Demo file — production self-host port (selfhost/) will live in
+// its own module and `use raw::token::*;` from the lexer port.
+
+pub enum Token {
+    Fn
+    | Let
+    | Mut
+    | Return
+    | If
+    | Else
+    | While
+    | Loop
+    | Break
+    | Continue
+    | For
+    | In
+    | Mod
+    | Pub
+    | Use
+    | As
+    | Defer
+    | Struct
+    | Impl
+    | Trait
+    | View
+    | With
+    | Enum
+    | Match
+    | FatArrow
+    | Pipe
+    | PipePipe
+    | PipeGt
+    | AmpAmp
+    | Dot
+    | DotDot
+    | DotDotEq
+    | Amp
+    | New
+    | Null
+    | LParen
+    | RParen
+    | LBrace
+    | RBrace
+    | LBracket
+    | RBracket
+    | Semicolon
+    | Comma
+    | Colon
+    | DoubleColon
+    | Arrow
+    | Eq
+    | EqEq
+    | NotEq
+    | Bang
+    | Lt
+    | Gt
+    | LtEq
+    | GtEq
+    | Plus
+    | PlusPlus
+    | Minus
+    | Star
+    | Slash
+    | Percent
+    | Caret
+    | Tilde
+    | Shl
+    | Shr
+    | True
+    | False
+    | Question
+    | Orelse
+    | TryTok       // can't be named `Try` — that's an exile keyword
+    | Extern
+    | Ellipsis
+    | At
+    | TypeTok      // can't be named `Type` — exile keyword
+    | Const
+    | VarTok       // can't be named `Var` — exile keyword
+    | SizeOf
+    | Ident(str)
+    | Int(int)
+    | Float(f64, bool)
+    | StringTok(str)   // can't be named `String` — collides with prelude
+    | Eof
+}
+
+// Pulled out of the Display match so the `if` lives in a plain
+// fn body — match-arm bodies that end in `if`/`while`/`match` are
+// parsed as block-shaped value-expressions today (worklog:
+// "block-shaped-sub-expr in match — DEFER"), so we route the
+// suffix tag through a helper instead.
+fn push_float_suffix(out: *StringBuilder, is32: bool) {
+    if is32 {
+        out.push_str("<f32>");
+    } else {
+        out.push_str("<f64>");
+    }
+}
+
+impl Display for Token {
+    fn fmt(*const self, out: *StringBuilder) {
+        match *self {
+            Token::Fn => { out.push_str("'fn'"); }
+            | Token::Let => { out.push_str("'let'"); }
+            | Token::Mut => { out.push_str("'mut'"); }
+            | Token::Return => { out.push_str("'return'"); }
+            | Token::If => { out.push_str("'if'"); }
+            | Token::Else => { out.push_str("'else'"); }
+            | Token::While => { out.push_str("'while'"); }
+            | Token::Loop => { out.push_str("'loop'"); }
+            | Token::Break => { out.push_str("'break'"); }
+            | Token::Continue => { out.push_str("'continue'"); }
+            | Token::For => { out.push_str("'for'"); }
+            | Token::In => { out.push_str("'in'"); }
+            | Token::Mod => { out.push_str("'mod'"); }
+            | Token::Pub => { out.push_str("'pub'"); }
+            | Token::Use => { out.push_str("'use'"); }
+            | Token::As => { out.push_str("'as'"); }
+            | Token::Defer => { out.push_str("'defer'"); }
+            | Token::Struct => { out.push_str("'struct'"); }
+            | Token::Impl => { out.push_str("'impl'"); }
+            | Token::Trait => { out.push_str("'trait'"); }
+            | Token::View => { out.push_str("'view'"); }
+            | Token::With => { out.push_str("'with'"); }
+            | Token::Enum => { out.push_str("'enum'"); }
+            | Token::Match => { out.push_str("'match'"); }
+            | Token::FatArrow => { out.push_str("'=>'"); }
+            | Token::Pipe => { out.push_str("'|'"); }
+            | Token::PipePipe => { out.push_str("'||'"); }
+            | Token::PipeGt => { out.push_str("'|>'"); }
+            | Token::AmpAmp => { out.push_str("'&&'"); }
+            | Token::Dot => { out.push_str("'.'"); }
+            | Token::DotDot => { out.push_str("'..'"); }
+            | Token::DotDotEq => { out.push_str("'..='"); }
+            | Token::Amp => { out.push_str("'&'"); }
+            | Token::New => { out.push_str("'new'"); }
+            | Token::Null => { out.push_str("'null'"); }
+            | Token::LParen => { out.push_str("'('"); }
+            | Token::RParen => { out.push_str("')'"); }
+            | Token::LBrace => { out.push_str("'{'"); }
+            | Token::RBrace => { out.push_str("'}'"); }
+            | Token::LBracket => { out.push_str("'['"); }
+            | Token::RBracket => { out.push_str("']'"); }
+            | Token::Semicolon => { out.push_str("';'"); }
+            | Token::Comma => { out.push_str("','"); }
+            | Token::Colon => { out.push_str("':'"); }
+            | Token::DoubleColon => { out.push_str("'::'"); }
+            | Token::Arrow => { out.push_str("'->'"); }
+            | Token::Eq => { out.push_str("'='"); }
+            | Token::EqEq => { out.push_str("'=='"); }
+            | Token::NotEq => { out.push_str("'!='"); }
+            | Token::Bang => { out.push_str("'!'"); }
+            | Token::Lt => { out.push_str("'<'"); }
+            | Token::Gt => { out.push_str("'>'"); }
+            | Token::LtEq => { out.push_str("'<='"); }
+            | Token::GtEq => { out.push_str("'>='"); }
+            | Token::Plus => { out.push_str("'+'"); }
+            | Token::PlusPlus => { out.push_str("'++'"); }
+            | Token::Minus => { out.push_str("'-'"); }
+            | Token::Star => { out.push_str("'*'"); }
+            | Token::Slash => { out.push_str("'/'"); }
+            | Token::Percent => { out.push_str("'%'"); }
+            | Token::Caret => { out.push_str("'^'"); }
+            | Token::Tilde => { out.push_str("'~'"); }
+            | Token::Shl => { out.push_str("'<<'"); }
+            | Token::Shr => { out.push_str("'>>'"); }
+            | Token::True => { out.push_str("'true'"); }
+            | Token::False => { out.push_str("'false'"); }
+            | Token::Question => { out.push_str("'?'"); }
+            | Token::Orelse => { out.push_str("'orelse'"); }
+            | Token::TryTok => { out.push_str("'try'"); }
+            | Token::Extern => { out.push_str("'extern'"); }
+            | Token::Ellipsis => { out.push_str("'...'"); }
+            | Token::At => { out.push_str("'@'"); }
+            | Token::TypeTok => { out.push_str("'type'"); }
+            | Token::Const => { out.push_str("'const'"); }
+            | Token::VarTok => { out.push_str("'var'"); }
+            | Token::SizeOf => { out.push_str("'size_of'"); }
+            | Token::Ident(s) => {
+                out.push_str("identifier '");
+                out.push_str(s);
+                out.push_str("'");
+            }
+            | Token::Int(n) => {
+                out.push_str("integer ");
+                out.push_int(n);
+            }
+            | Token::Float(_f, is32) => {
+                // f64 → str renderer is deferred (no prelude
+                // primitive yet); placeholder keeps the diagnostic
+                // shape `float <…>` so downstream parsers parse
+                // out the kind even without the value.
+                out.push_str("float ");
+                push_float_suffix(out, is32);
+            }
+            | Token::StringTok(s) => {
+                out.push_str("string \"");
+                out.push_str(s);
+                out.push_str("\"");
+            }
+            | Token::Eof => { out.push_str("end of file"); }
+        }
+    }
+}
+
+fn main() {
+    // Spot-check a representative spread: a keyword, a sigil, a
+    // payload-carrying variant, EOF.  Pulls every match-arm
+    // shape (unit, str-payload, int-payload, two-payload,
+    // sentinel) through Display.
+    let kw = Token::Fn;
+    println(kw);                                 // 'fn'
+
+    let arrow = Token::FatArrow;
+    println(arrow);                              // '=>'
+
+    let id = Token::Ident("main");
+    println(id);                                 // identifier 'main'
+
+    let n = Token::Int(42);
+    println(n);                                  // integer 42
+
+    let f = Token::Float(3.14, false);
+    println(f);                                  // float <f64>
+
+    let s = Token::StringTok("hello");
+    println(s);                                  // string "hello"
+
+    let end = Token::Eof;
+    println(end);                                // end of file
+}
