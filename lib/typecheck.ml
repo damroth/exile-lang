@@ -5022,16 +5022,24 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
                    args = List.map (fun n -> Ast.TyStruct { path = [n]; args = [] })
                             itparams }
   in
-  let cmp_ann tm_ann im_ann =
-    let t1 = resolve_type_ann ~pos ctx
+  (* DR-014 — method-tparams must be in scope for both sides during
+     comparison.  Without them `cmp_ann` would call resolve_type_ann
+     on a `T` neither known to the impl context (struct-scope) nor a
+     real type, and trip "unknown type T".  Splice them into ctx
+     just for the resolution; the names match position-for-position
+     in trait vs impl, so a `T` on each side resolves to the same
+     `TVar T`. *)
+  let cmp_ann ~tparams tm_ann im_ann =
+    let ctx' = { ctx with tparams = tparams @ ctx.tparams } in
+    let t1 = resolve_type_ann ~pos ctx'
                (subst_assoc ~assoc:iassoc target_ann tm_ann) in
-    let t2 = resolve_type_ann ~pos ctx im_ann in
+    let t2 = resolve_type_ann ~pos ctx' im_ann in
     typ_eq t1 t2
   in
-  let cmp_ret tm_ret im_ret =
+  let cmp_ret ~tparams tm_ret im_ret =
     match tm_ret, im_ret with
     | None, None -> true
-    | Some a, Some b -> cmp_ann a b
+    | Some a, Some b -> cmp_ann ~tparams a b
     | _ -> false
   in
   (* Substitute `Self` in a (default) method's signature so the synthesised
@@ -5055,11 +5063,22 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
               "method '%s' has %d parameter(s) but trait '%s' declares %d"
               tm.name (List.length im.params)
               (String.concat "::" trait_path) (List.length tm.params);
+          (* DR-014 — generic-method tparam arity must match too.
+             Same-position names get treated as the same TVar by
+             cmp_ann's scope-splice; differing arity is a flat
+             mismatch. *)
+          if List.length im.tparams <> List.length tm.tparams then
+            Error.failf im.pos
+              "method '%s' has %d type parameter(s) but trait '%s' declares %d"
+              tm.name (List.length im.tparams)
+              (String.concat "::" trait_path) (List.length tm.tparams);
+          let m_tparams = tm.tparams in
+          let ctx' = { ctx with tparams = m_tparams @ ctx.tparams } in
           List.iter2 (fun (tp : Ast.param) (ip : Ast.param) ->
-            if not (cmp_ann tp.pty ip.pty) then begin
-              let t1 = resolve_type_ann ~pos ctx
+            if not (cmp_ann ~tparams:m_tparams tp.pty ip.pty) then begin
+              let t1 = resolve_type_ann ~pos ctx'
                          (subst_assoc ~assoc:iassoc target_ann tp.pty) in
-              let t2 = resolve_type_ann ~pos ctx ip.pty in
+              let t2 = resolve_type_ann ~pos ctx' ip.pty in
               Error.failf im.pos
                 "method '%s': parameter '%s' type does not match trait '%s' \
                  (expected %s, got %s)"
@@ -5067,7 +5086,7 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
                 (typ_name t1) (typ_name t2)
             end)
             tm.params im.params;
-          if not (cmp_ret tm.ret_ty im.ret_ty) then
+          if not (cmp_ret ~tparams:m_tparams tm.ret_ty im.ret_ty) then
             Error.failf im.pos
               "method '%s' return type does not match trait '%s'"
               tm.name (String.concat "::" trait_path);

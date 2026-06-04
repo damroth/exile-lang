@@ -5149,6 +5149,58 @@ let () =
      }\n"
     "or-pattern only allowed at the top of a match arm (nested `pat1 | pat2` inside a variant bind is not supported yet)";
 
+  (* ===== DR-014 generic trait methods =====
+     `fn map<F>( *const self, ...)` and friends.  Empirically zero
+     perf overhead (mono direct-call same as generic free fns), so
+     this is purely a scope-cut from trait-step-1.  Pre-req for
+     iterator combinators (DR-015) but useful on its own. *)
+
+  check_assert "DR-014: generic trait method called with T inferred from arg"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "trait Boxed { fn echo<T>(*const self, x: T) -> T; }\n\
+          struct A {}\n\
+          impl Boxed for A { fn echo<T>(*const self, x: T) -> T { x } }\n\
+          fn main() { let a = A {}; println(a.echo(7)); }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-014: generic default method synthesises on a bare impl"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "trait Boxed { fn echo<T>(*const self, x: T) -> T { x } }\n\
+          struct A {}\n\
+          impl Boxed for A {}\n\
+          fn main() { let a = A {}; println(a.echo(99)); }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-014: bound on method tparam dispatches through the bound"
+    (let c =
+       Exile_lang.Compiler.compile
+         "trait Shape { fn area(*const self) -> int; }\n\
+          trait Apply { fn run<S: Shape>(*const self, s: S) -> int; }\n\
+          struct Circle { r: int }\n\
+          impl Shape for Circle { fn area(*const self) -> int { self.r * self.r * 3 } }\n\
+          struct Runner {}\n\
+          impl Apply for Runner {\n\
+         \    fn run<S: Shape>(*const self, s: S) -> int { s.area() }\n\
+          }\n\
+          fn main() { let r = Runner {}; println(r.run(Circle { r: 5 })); }\n"
+     in
+     (* Mono produces a per-call instance that direct-calls
+        Circle::area — no vtable, no indirection. *)
+     contains c "Runner__run_ex_Circle" && contains c "Circle__area");
+
+  check_error "DR-014: arity mismatch between trait and impl rejected"
+    "trait Boxed { fn echo<T>(*const self, x: T) -> T; }\n\
+     struct A {}\n\
+     impl Boxed for A {\n\
+    \    fn echo(*const self, x: int) -> int { x }\n\
+     }\n\
+     fn main() {}\n"
+    "method 'echo' has 0 type parameter(s) but trait 'Boxed' declares 1";
+
   (* ===== Self-host bring-up Faza −1 — differential-harness dumps =====
 
      The three canonical dump forms are emitted from the OCaml exilc

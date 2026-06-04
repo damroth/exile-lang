@@ -1,0 +1,309 @@
+;; exile-tokens-dump v1 examples/generic_trait_methods.exl
+Trait @examples/generic_trait_methods.exl:32:1
+(Ident Boxed) @examples/generic_trait_methods.exl:32:7
+LBrace @examples/generic_trait_methods.exl:32:13
+Fn @examples/generic_trait_methods.exl:34:5
+(Ident echo) @examples/generic_trait_methods.exl:34:8
+Lt @examples/generic_trait_methods.exl:34:12
+(Ident T) @examples/generic_trait_methods.exl:34:13
+Gt @examples/generic_trait_methods.exl:34:14
+LParen @examples/generic_trait_methods.exl:34:15
+Star @examples/generic_trait_methods.exl:34:16
+Const @examples/generic_trait_methods.exl:34:17
+(Ident self) @examples/generic_trait_methods.exl:34:23
+Comma @examples/generic_trait_methods.exl:34:27
+(Ident x) @examples/generic_trait_methods.exl:34:29
+Colon @examples/generic_trait_methods.exl:34:30
+(Ident T) @examples/generic_trait_methods.exl:34:32
+RParen @examples/generic_trait_methods.exl:34:33
+Arrow @examples/generic_trait_methods.exl:34:35
+(Ident T) @examples/generic_trait_methods.exl:34:38
+Semicolon @examples/generic_trait_methods.exl:34:39
+Fn @examples/generic_trait_methods.exl:38:5
+(Ident pass) @examples/generic_trait_methods.exl:38:8
+Lt @examples/generic_trait_methods.exl:38:12
+(Ident T) @examples/generic_trait_methods.exl:38:13
+Gt @examples/generic_trait_methods.exl:38:14
+LParen @examples/generic_trait_methods.exl:38:15
+Star @examples/generic_trait_methods.exl:38:16
+Const @examples/generic_trait_methods.exl:38:17
+(Ident self) @examples/generic_trait_methods.exl:38:23
+Comma @examples/generic_trait_methods.exl:38:27
+(Ident x) @examples/generic_trait_methods.exl:38:29
+Colon @examples/generic_trait_methods.exl:38:30
+(Ident T) @examples/generic_trait_methods.exl:38:32
+RParen @examples/generic_trait_methods.exl:38:33
+Arrow @examples/generic_trait_methods.exl:38:35
+(Ident T) @examples/generic_trait_methods.exl:38:38
+LBrace @examples/generic_trait_methods.exl:38:40
+(Ident x) @examples/generic_trait_methods.exl:38:42
+RBrace @examples/generic_trait_methods.exl:38:44
+RBrace @examples/generic_trait_methods.exl:39:1
+Struct @examples/generic_trait_methods.exl:45:1
+(Ident A) @examples/generic_trait_methods.exl:45:8
+LBrace @examples/generic_trait_methods.exl:45:10
+(Ident tag) @examples/generic_trait_methods.exl:45:12
+Colon @examples/generic_trait_methods.exl:45:15
+(Ident int) @examples/generic_trait_methods.exl:45:17
+RBrace @examples/generic_trait_methods.exl:45:21
+Impl @examples/generic_trait_methods.exl:47:1
+(Ident Boxed) @examples/generic_trait_methods.exl:47:6
+For @examples/generic_trait_methods.exl:47:12
+(Ident A) @examples/generic_trait_methods.exl:47:16
+LBrace @examples/generic_trait_methods.exl:47:18
+Fn @examples/generic_trait_methods.exl:48:5
+(Ident echo) @examples/generic_trait_methods.exl:48:8
+Lt @examples/generic_trait_methods.exl:48:12
+(Ident T) @examples/generic_trait_methods.exl:48:13
+Gt @examples/generic_trait_methods.exl:48:14
+LParen @examples/generic_trait_methods.exl:48:15
+Star @examples/generic_trait_methods.exl:48:16
+Const @examples/generic_trait_methods.exl:48:17
+(Ident self) @examples/generic_trait_methods.exl:48:23
+Comma @examples/generic_trait_methods.exl:48:27
+(Ident x) @examples/generic_trait_methods.exl:48:29
+Colon @examples/generic_trait_methods.exl:48:30
+(Ident T) @examples/generic_trait_methods.exl:48:32
+RParen @examples/generic_trait_methods.exl:48:33
+Arrow @examples/generic_trait_methods.exl:48:35
+(Ident T) @examples/generic_trait_methods.exl:48:38
+LBrace @examples/generic_trait_methods.exl:48:40
+(Ident x) @examples/generic_trait_methods.exl:48:42
+RBrace @examples/generic_trait_methods.exl:48:44
+RBrace @examples/generic_trait_methods.exl:49:1
+Trait @examples/generic_trait_methods.exl:51:1
+(Ident Shape) @examples/generic_trait_methods.exl:51:7
+LBrace @examples/generic_trait_methods.exl:51:13
+Fn @examples/generic_trait_methods.exl:52:5
+(Ident area) @examples/generic_trait_methods.exl:52:8
+LParen @examples/generic_trait_methods.exl:52:12
+Star @examples/generic_trait_methods.exl:52:13
+Const @examples/generic_trait_methods.exl:52:14
+(Ident self) @examples/generic_trait_methods.exl:52:20
+RParen @examples/generic_trait_methods.exl:52:24
+Arrow @examples/generic_trait_methods.exl:52:26
+(Ident int) @examples/generic_trait_methods.exl:52:29
+Semicolon @examples/generic_trait_methods.exl:52:32
+RBrace @examples/generic_trait_methods.exl:53:1
+Struct @examples/generic_trait_methods.exl:55:1
+(Ident Square) @examples/generic_trait_methods.exl:55:8
+LBrace @examples/generic_trait_methods.exl:55:15
+(Ident side) @examples/generic_trait_methods.exl:55:17
+Colon @examples/generic_trait_methods.exl:55:21
+(Ident int) @examples/generic_trait_methods.exl:55:23
+RBrace @examples/generic_trait_methods.exl:55:27
+Impl @examples/generic_trait_methods.exl:56:1
+(Ident Shape) @examples/generic_trait_methods.exl:56:6
+For @examples/generic_trait_methods.exl:56:12
+(Ident Square) @examples/generic_trait_methods.exl:56:16
+LBrace @examples/generic_trait_methods.exl:56:23
+Fn @examples/generic_trait_methods.exl:57:5
+(Ident area) @examples/generic_trait_methods.exl:57:8
+LParen @examples/generic_trait_methods.exl:57:12
+Star @examples/generic_trait_methods.exl:57:13
+Const @examples/generic_trait_methods.exl:57:14
+(Ident self) @examples/generic_trait_methods.exl:57:20
+RParen @examples/generic_trait_methods.exl:57:24
+Arrow @examples/generic_trait_methods.exl:57:26
+(Ident int) @examples/generic_trait_methods.exl:57:29
+LBrace @examples/generic_trait_methods.exl:57:33
+(Ident self) @examples/generic_trait_methods.exl:57:35
+Dot @examples/generic_trait_methods.exl:57:39
+(Ident side) @examples/generic_trait_methods.exl:57:40
+Star @examples/generic_trait_methods.exl:57:45
+(Ident self) @examples/generic_trait_methods.exl:57:47
+Dot @examples/generic_trait_methods.exl:57:51
+(Ident side) @examples/generic_trait_methods.exl:57:52
+RBrace @examples/generic_trait_methods.exl:57:57
+RBrace @examples/generic_trait_methods.exl:58:1
+Struct @examples/generic_trait_methods.exl:60:1
+(Ident Circle) @examples/generic_trait_methods.exl:60:8
+LBrace @examples/generic_trait_methods.exl:60:15
+(Ident r) @examples/generic_trait_methods.exl:60:17
+Colon @examples/generic_trait_methods.exl:60:18
+(Ident int) @examples/generic_trait_methods.exl:60:20
+RBrace @examples/generic_trait_methods.exl:60:24
+Impl @examples/generic_trait_methods.exl:61:1
+(Ident Shape) @examples/generic_trait_methods.exl:61:6
+For @examples/generic_trait_methods.exl:61:12
+(Ident Circle) @examples/generic_trait_methods.exl:61:16
+LBrace @examples/generic_trait_methods.exl:61:23
+Fn @examples/generic_trait_methods.exl:62:5
+(Ident area) @examples/generic_trait_methods.exl:62:8
+LParen @examples/generic_trait_methods.exl:62:12
+Star @examples/generic_trait_methods.exl:62:13
+Const @examples/generic_trait_methods.exl:62:14
+(Ident self) @examples/generic_trait_methods.exl:62:20
+RParen @examples/generic_trait_methods.exl:62:24
+Arrow @examples/generic_trait_methods.exl:62:26
+(Ident int) @examples/generic_trait_methods.exl:62:29
+LBrace @examples/generic_trait_methods.exl:62:33
+(Ident self) @examples/generic_trait_methods.exl:62:35
+Dot @examples/generic_trait_methods.exl:62:39
+(Ident r) @examples/generic_trait_methods.exl:62:40
+Star @examples/generic_trait_methods.exl:62:42
+(Ident self) @examples/generic_trait_methods.exl:62:44
+Dot @examples/generic_trait_methods.exl:62:48
+(Ident r) @examples/generic_trait_methods.exl:62:49
+Star @examples/generic_trait_methods.exl:62:51
+(Int 3) @examples/generic_trait_methods.exl:62:53
+RBrace @examples/generic_trait_methods.exl:62:55
+RBrace @examples/generic_trait_methods.exl:63:1
+Trait @examples/generic_trait_methods.exl:65:1
+(Ident Apply) @examples/generic_trait_methods.exl:65:7
+LBrace @examples/generic_trait_methods.exl:65:13
+Fn @examples/generic_trait_methods.exl:69:5
+(Ident run) @examples/generic_trait_methods.exl:69:8
+Lt @examples/generic_trait_methods.exl:69:11
+(Ident S) @examples/generic_trait_methods.exl:69:12
+Colon @examples/generic_trait_methods.exl:69:13
+(Ident Shape) @examples/generic_trait_methods.exl:69:15
+Gt @examples/generic_trait_methods.exl:69:20
+LParen @examples/generic_trait_methods.exl:69:21
+Star @examples/generic_trait_methods.exl:69:22
+Const @examples/generic_trait_methods.exl:69:23
+(Ident self) @examples/generic_trait_methods.exl:69:29
+Comma @examples/generic_trait_methods.exl:69:33
+(Ident s) @examples/generic_trait_methods.exl:69:35
+Colon @examples/generic_trait_methods.exl:69:36
+(Ident S) @examples/generic_trait_methods.exl:69:38
+RParen @examples/generic_trait_methods.exl:69:39
+Arrow @examples/generic_trait_methods.exl:69:41
+(Ident int) @examples/generic_trait_methods.exl:69:44
+Semicolon @examples/generic_trait_methods.exl:69:47
+RBrace @examples/generic_trait_methods.exl:70:1
+Struct @examples/generic_trait_methods.exl:72:1
+(Ident Runner) @examples/generic_trait_methods.exl:72:8
+LBrace @examples/generic_trait_methods.exl:72:15
+(Ident tag) @examples/generic_trait_methods.exl:72:17
+Colon @examples/generic_trait_methods.exl:72:20
+(Ident int) @examples/generic_trait_methods.exl:72:22
+RBrace @examples/generic_trait_methods.exl:72:26
+Impl @examples/generic_trait_methods.exl:73:1
+(Ident Apply) @examples/generic_trait_methods.exl:73:6
+For @examples/generic_trait_methods.exl:73:12
+(Ident Runner) @examples/generic_trait_methods.exl:73:16
+LBrace @examples/generic_trait_methods.exl:73:23
+Fn @examples/generic_trait_methods.exl:74:5
+(Ident run) @examples/generic_trait_methods.exl:74:8
+Lt @examples/generic_trait_methods.exl:74:11
+(Ident S) @examples/generic_trait_methods.exl:74:12
+Colon @examples/generic_trait_methods.exl:74:13
+(Ident Shape) @examples/generic_trait_methods.exl:74:15
+Gt @examples/generic_trait_methods.exl:74:20
+LParen @examples/generic_trait_methods.exl:74:21
+Star @examples/generic_trait_methods.exl:74:22
+Const @examples/generic_trait_methods.exl:74:23
+(Ident self) @examples/generic_trait_methods.exl:74:29
+Comma @examples/generic_trait_methods.exl:74:33
+(Ident s) @examples/generic_trait_methods.exl:74:35
+Colon @examples/generic_trait_methods.exl:74:36
+(Ident S) @examples/generic_trait_methods.exl:74:38
+RParen @examples/generic_trait_methods.exl:74:39
+Arrow @examples/generic_trait_methods.exl:74:41
+(Ident int) @examples/generic_trait_methods.exl:74:44
+LBrace @examples/generic_trait_methods.exl:74:48
+(Ident s) @examples/generic_trait_methods.exl:75:9
+Dot @examples/generic_trait_methods.exl:75:10
+(Ident area) @examples/generic_trait_methods.exl:75:11
+LParen @examples/generic_trait_methods.exl:75:15
+RParen @examples/generic_trait_methods.exl:75:16
+RBrace @examples/generic_trait_methods.exl:76:5
+RBrace @examples/generic_trait_methods.exl:77:1
+Fn @examples/generic_trait_methods.exl:79:1
+(Ident main) @examples/generic_trait_methods.exl:79:4
+LParen @examples/generic_trait_methods.exl:79:8
+RParen @examples/generic_trait_methods.exl:79:9
+LBrace @examples/generic_trait_methods.exl:79:11
+Let @examples/generic_trait_methods.exl:80:5
+(Ident a) @examples/generic_trait_methods.exl:80:9
+Eq @examples/generic_trait_methods.exl:80:11
+(Ident A) @examples/generic_trait_methods.exl:80:13
+LBrace @examples/generic_trait_methods.exl:80:15
+(Ident tag) @examples/generic_trait_methods.exl:80:17
+Colon @examples/generic_trait_methods.exl:80:20
+(Int 0) @examples/generic_trait_methods.exl:80:22
+RBrace @examples/generic_trait_methods.exl:80:24
+Semicolon @examples/generic_trait_methods.exl:80:25
+(Ident println) @examples/generic_trait_methods.exl:83:5
+LParen @examples/generic_trait_methods.exl:83:12
+(Ident a) @examples/generic_trait_methods.exl:83:13
+Dot @examples/generic_trait_methods.exl:83:14
+(Ident echo) @examples/generic_trait_methods.exl:83:15
+LParen @examples/generic_trait_methods.exl:83:19
+(Int 7) @examples/generic_trait_methods.exl:83:20
+RParen @examples/generic_trait_methods.exl:83:21
+RParen @examples/generic_trait_methods.exl:83:22
+Semicolon @examples/generic_trait_methods.exl:83:23
+(Ident println) @examples/generic_trait_methods.exl:84:5
+LParen @examples/generic_trait_methods.exl:84:12
+(Ident a) @examples/generic_trait_methods.exl:84:13
+Dot @examples/generic_trait_methods.exl:84:14
+(Ident echo) @examples/generic_trait_methods.exl:84:15
+LParen @examples/generic_trait_methods.exl:84:19
+(Int 100) @examples/generic_trait_methods.exl:84:20
+RParen @examples/generic_trait_methods.exl:84:23
+RParen @examples/generic_trait_methods.exl:84:24
+Semicolon @examples/generic_trait_methods.exl:84:25
+(Ident println) @examples/generic_trait_methods.exl:87:5
+LParen @examples/generic_trait_methods.exl:87:12
+(Ident a) @examples/generic_trait_methods.exl:87:13
+Dot @examples/generic_trait_methods.exl:87:14
+(Ident pass) @examples/generic_trait_methods.exl:87:15
+LParen @examples/generic_trait_methods.exl:87:19
+(Int 13) @examples/generic_trait_methods.exl:87:20
+RParen @examples/generic_trait_methods.exl:87:22
+RParen @examples/generic_trait_methods.exl:87:23
+Semicolon @examples/generic_trait_methods.exl:87:24
+Let @examples/generic_trait_methods.exl:91:5
+(Ident r) @examples/generic_trait_methods.exl:91:9
+Eq @examples/generic_trait_methods.exl:91:11
+(Ident Runner) @examples/generic_trait_methods.exl:91:13
+LBrace @examples/generic_trait_methods.exl:91:20
+(Ident tag) @examples/generic_trait_methods.exl:91:22
+Colon @examples/generic_trait_methods.exl:91:25
+(Int 0) @examples/generic_trait_methods.exl:91:27
+RBrace @examples/generic_trait_methods.exl:91:29
+Semicolon @examples/generic_trait_methods.exl:91:30
+Let @examples/generic_trait_methods.exl:92:5
+(Ident c) @examples/generic_trait_methods.exl:92:9
+Eq @examples/generic_trait_methods.exl:92:11
+(Ident Circle) @examples/generic_trait_methods.exl:92:13
+LBrace @examples/generic_trait_methods.exl:92:20
+(Ident r) @examples/generic_trait_methods.exl:92:22
+Colon @examples/generic_trait_methods.exl:92:23
+(Int 5) @examples/generic_trait_methods.exl:92:25
+RBrace @examples/generic_trait_methods.exl:92:27
+Semicolon @examples/generic_trait_methods.exl:92:28
+Let @examples/generic_trait_methods.exl:93:5
+(Ident sq) @examples/generic_trait_methods.exl:93:9
+Eq @examples/generic_trait_methods.exl:93:12
+(Ident Square) @examples/generic_trait_methods.exl:93:14
+LBrace @examples/generic_trait_methods.exl:93:21
+(Ident side) @examples/generic_trait_methods.exl:93:23
+Colon @examples/generic_trait_methods.exl:93:27
+(Int 4) @examples/generic_trait_methods.exl:93:29
+RBrace @examples/generic_trait_methods.exl:93:31
+Semicolon @examples/generic_trait_methods.exl:93:32
+(Ident println) @examples/generic_trait_methods.exl:94:5
+LParen @examples/generic_trait_methods.exl:94:12
+(Ident r) @examples/generic_trait_methods.exl:94:13
+Dot @examples/generic_trait_methods.exl:94:14
+(Ident run) @examples/generic_trait_methods.exl:94:15
+LParen @examples/generic_trait_methods.exl:94:18
+(Ident c) @examples/generic_trait_methods.exl:94:19
+RParen @examples/generic_trait_methods.exl:94:20
+RParen @examples/generic_trait_methods.exl:94:21
+Semicolon @examples/generic_trait_methods.exl:94:22
+(Ident println) @examples/generic_trait_methods.exl:95:5
+LParen @examples/generic_trait_methods.exl:95:12
+(Ident r) @examples/generic_trait_methods.exl:95:13
+Dot @examples/generic_trait_methods.exl:95:14
+(Ident run) @examples/generic_trait_methods.exl:95:15
+LParen @examples/generic_trait_methods.exl:95:18
+(Ident sq) @examples/generic_trait_methods.exl:95:19
+RParen @examples/generic_trait_methods.exl:95:21
+RParen @examples/generic_trait_methods.exl:95:22
+Semicolon @examples/generic_trait_methods.exl:95:23
+RBrace @examples/generic_trait_methods.exl:96:1
+Eof @examples/generic_trait_methods.exl:97:1

@@ -1,0 +1,13 @@
+;; exile-ast-dump v1 examples/generic_trait_methods.exl
+(trait Boxed (fn echo pub (tparams T) (params (param self (const-ptr self)) (param x (struct T))) (struct T) (body )) (fn pass pub (tparams T) (params (param self (const-ptr self)) (param x (struct T))) (struct T) (body (tail (var x)))))
+(struct A (fields (field tag (int i32))))
+(impl A (trait Boxed) (fn echo pub (tparams T) (params (param self (const-ptr (struct A))) (param x (struct T))) (struct T) (body (tail (var x)))))
+(trait Shape (fn area pub (params (param self (const-ptr self))) (int i32) (body )))
+(struct Square (fields (field side (int i32))))
+(impl Square (trait Shape) (fn area pub (params (param self (const-ptr (struct Square)))) (int i32) (body (tail (binop * (field-access (var self) side) (field-access (var self) side))))))
+(struct Circle (fields (field r (int i32))))
+(impl Circle (trait Shape) (fn area pub (params (param self (const-ptr (struct Circle)))) (int i32) (body (tail (binop * (binop * (field-access (var self) r) (field-access (var self) r)) (int 3))))))
+(trait Apply (fn run pub (tparams S) (params (param self (const-ptr self)) (param s (struct S))) (int i32) (body )))
+(struct Runner (fields (field tag (int i32))))
+(impl Runner (trait Apply) (fn run pub (tparams S) (params (param self (const-ptr (struct Runner))) (param s (struct S))) (int i32) (body (tail (method-call (var s) area )))))
+(fn main (params ) void (body (let a (struct-lit A (field tag (int 0)))) (expr-stmt (call println (method-call (var a) echo (int 7)))) (expr-stmt (call println (method-call (var a) echo (int 100)))) (expr-stmt (call println (method-call (var a) pass (int 13)))) (let r (struct-lit Runner (field tag (int 0)))) (let c (struct-lit Circle (field r (int 5)))) (let sq (struct-lit Square (field side (int 4)))) (expr-stmt (call println (method-call (var r) run (var c)))) (expr-stmt (call println (method-call (var r) run (var sq))))))

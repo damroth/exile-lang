@@ -1,0 +1,96 @@
+// Generic trait methods (DR-014).
+//
+// A trait method may carry its own type parameters:
+//
+//   trait Apply {
+//       fn run<S: Shape>(*const self, s: S) -> int;
+//   }
+//
+// Mono instantiates these per call exactly like generic free fns —
+// direct call, no vtable, no indirection.  Empirically zero perf
+// overhead vs hand-monomorphised code.  The guard against this
+// shape was a scope-cut from trait-step-1, not a soundness fence;
+// the rest of the machinery (generic-impl dispatch, Mono.infer_tparams)
+// was already in place.
+//
+// Prereq for iterator combinators (DR-015 `.map(...).filter(...)`)
+// but useful on its own.
+//
+// Three flavours of generic-method use covered below:
+//
+//   1. Type-parameter inferred from the value argument
+//      (`Boxed::echo<T>` -> `T = int` from `7`).
+//
+//   2. Generic default method synthesised on a bare impl
+//      (`impl Boxed for A {}` borrows `echo<T>` from the trait
+//      body, no per-impl repetition needed).
+//
+//   3. Method-tparam carrying a trait bound that drives the
+//      dispatch inside the body (`fn run<S: Shape>(s: S) -> int`
+//      calls `s.area()` via the `S: Shape` constraint).
+
+trait Boxed {
+    // Required generic method.
+    fn echo<T>(*const self, x: T) -> T;
+
+    // Generic default — every impl gets this for free unless it
+    // overrides.  The body is mono-instantiated per call.
+    fn pass<T>(*const self, x: T) -> T { x }
+}
+
+// Carries a sentinel field so the emitted C struct isn't empty;
+// C89 rejects empty structs under `-Wpedantic`.  The field
+// isn't used anywhere — the trait methods all ignore `*const self`
+// because the example is about dispatch, not state.
+struct A { tag: int }
+
+impl Boxed for A {
+    fn echo<T>(*const self, x: T) -> T { x }
+}
+
+trait Shape {
+    fn area(*const self) -> int;
+}
+
+struct Square { side: int }
+impl Shape for Square {
+    fn area(*const self) -> int { self.side * self.side }
+}
+
+struct Circle { r: int }
+impl Shape for Circle {
+    fn area(*const self) -> int { self.r * self.r * 3 }
+}
+
+trait Apply {
+    // Method tparam with a trait bound — same machinery as
+    // `fn total_area<T: Shape>(...)` on a free fn.  The body can
+    // call any Shape method on `s`.
+    fn run<S: Shape>(*const self, s: S) -> int;
+}
+
+struct Runner { tag: int }
+impl Apply for Runner {
+    fn run<S: Shape>(*const self, s: S) -> int {
+        s.area()
+    }
+}
+
+fn main() {
+    let a = A { tag: 0 };
+
+    // 1. Inferred T from arg — int.
+    println(a.echo(7));                 // 7
+    println(a.echo(100));               // 100
+
+    // 2. Default method on a bare impl (no per-impl rewrite).
+    println(a.pass(13));                // 13
+
+    // 3. Bounded method tparam — `r.run(c)` instantiates Apply::run
+    // at `S = Circle`, body calls Circle::area through the bound.
+    let r = Runner { tag: 0 };
+    let c = Circle { r: 5 };
+    let sq = Square { side: 4 };
+    println(r.run(c));                  // 75 (5*5*3)
+    println(r.run(sq));                 // 16
+}

@@ -2131,9 +2131,15 @@ and parse_trait_method s seen =
   let (name, name_pos) = expect_ident s ~what:"method name after 'fn'" in
   if List.mem name seen then
     Error.failf name_pos "method '%s' already declared in this trait" name;
-  if peek s = Token.Lt then
-    Error.failf name_pos
-      "generic trait methods are not supported (method '%s')" name;
+  (* DR-014 — generic trait methods.  `fn map<F>(...)` parses the
+     tparam list with bounds (`<F: Mapper>`) the same way free fns
+     do.  Per design notes the guard here was scope-cut at trait-
+     step-1, not soundness — generic methods mono-instantiate
+     direct-call exactly like generic free fns. *)
+  let (tparams, tbounds) =
+    if peek s = Token.Lt then parse_tparams_bounded s
+    else ([], [])
+  in
   let params = parse_params s in
   let ret_ty = parse_ret_ty s in
   let (body, is_default) =
@@ -2145,7 +2151,7 @@ and parse_trait_method s seen =
           "expected ';' or '{ ... }' after trait method '%s', got %s"
           name (Token.pp t)
   in
-  (Ast.{ name; c_name = name; tparams = []; tbounds = []; params; ret_ty;
+  (Ast.{ name; c_name = name; tparams; tbounds; params; ret_ty;
          body; is_pub = true; is_extern = false; is_variadic = false;
          tier_hint = None; amiga_lib = None; must_use = false; escapes_hatch = false;
          pos = name_pos },
