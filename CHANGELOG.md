@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-06-04
+
+The escape-analysis and self-host bring-up release. The keystone is DR-010,
+a static escape/non-escape pass that closes the last four self-host soundness
+blockers — it proves which values outlive their scope without being a borrow
+checker. Around it lands the code-elevating feature wave queued ahead of
+self-hosting (sub-slicing, scoped projection, active patterns, captureless
+lambdas, generic trait methods, floats, type aliases, let-else, receiver
+mutability), plus the bring-up machinery itself: a differential harness that
+emits canonical token/AST/IR dumps, a golden corpus to lock them down, and the
+first three ports of the compiler's own modules into Exile. Rounded out by
+compile-time perf introspection (`--perf-report`) and two 68k perf wins.
+
+### Added
+- DR-010 escape pass (`escape.ml`), in three phases: Phase A Tier-1 floor
+  (S5a folded to a hard error), Phase B param-SET-summary with an SCC fixpoint
+  over recursion (S5b), Phase C borrow invalidation (S5c/S5d). A static
+  escape/non-escape analysis — not a borrow checker — closing the last four
+  self-host soundness blockers
+- DR-011 sub-slicing: `a[lo..hi]` and `a[lo..=hi]` yield a `Slice<T>` view
+  (`{ ptr, len }`); a `Range` is now usable inside `[]`
+- DR-012 scoped projection: `with <name> in <lvalue> { body }` binds a `*T`
+  pointer to an lvalue for the block — read and write through `*name`
+- DR-009 active patterns: `view Name(p: T) -> A | B { body }`, total-only
+  sugar over a synthesised `enum` plus a function, with full Maranget
+  exhaustiveness on the synthesised variants
+- DR-008 A1 captureless lambdas: `|p: T| -> R body`; a lambda that captures
+  nothing decays to a plain function pointer (zero heap)
+- DR-014 generic trait methods
+- Floating point `f32` / `f64` with IEEE built-in operators; `Eq` / `Ord` /
+  `Hash` are deliberately not implemented (distinct float identity)
+- Type aliases (FP-1): `type Name<T...> = Type;`
+- let-else (FP-2): `let <pat> = expr else { <divergent> };`
+- Receiver mutability: `*self` / `*const self` method receivers
+  (pointer-honest mutability)
+- DR-007 follow-up: builtin `str.hash()` / `str.eq()` dispatch, enabling
+  `HashMap<str, _>`
+- DR-006 `mod sys` seam with per-target backends (`runtime/sys_host.c`,
+  `runtime/sys_amiga.c`, the latter linking `-lm` for soft float)
+- `default_allocator()` builtin; `println(x)` dispatches through `Display`
+- Self-host bring-up harness: `--emit-tokens` / `--emit-ast` /
+  `--emit-typed-ir` emit canonical dumps (`dump.ml`) — position-elided,
+  collection-sorted, golden-stable — plus a golden corpus and
+  `selfhost-corpus` / `selfhost-diff` Make targets
+- First three Faza-0 ports of the compiler's own modules:
+  `selfhost_pos.exl`, `selfhost_error.exl`, `selfhost_token.exl`
+- DR-013 perf-introspection: `--perf-report` (also `=json` / `=human`) — a
+  compile-time budget-vs-actual cost report read from the typed IR
+  (`perf_report.ml`)
+- M1 `with_capacity` lint to size growable collections up front
+- New examples: `escape_pass.exl`, `sub_slicing.exl`, `scoped_projection.exl`,
+  `active_patterns.exl`, `lambdas.exl`, `generic_trait_methods.exl`,
+  `floats.exl`, `selfhost_pos.exl`, `selfhost_error.exl`, `selfhost_token.exl`
+
+### Changed
+- M2: `HashMap` capacity is now rounded up to a power of two, so the probe
+  index uses a bitmask instead of a 68k `DIVU`
+- CI gates phase -1 corpus byte-stability and drops the now-redundant in-sync
+  gate, keeping the `selfhost-diff` check
+- Several existing examples refreshed to track the new features
+
 ## [0.9.0] - 2026-06-01
 
 The stdlib-backbone release. Exile gains owned heap data structures —
@@ -408,4 +469,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.9.0]: https://github.com/damroth/exile-lang/releases/tag/v0.9.0
+[0.10.0]: https://github.com/damroth/exile-lang/releases/tag/v0.10.0
