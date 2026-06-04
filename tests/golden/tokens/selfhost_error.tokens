@@ -1,0 +1,317 @@
+;; exile-tokens-dump v1 examples/selfhost_error.exl
+Mod @examples/selfhost_error.exl:32:1
+(Ident pos) @examples/selfhost_error.exl:32:5
+LBrace @examples/selfhost_error.exl:32:9
+Pub @examples/selfhost_error.exl:33:5
+Struct @examples/selfhost_error.exl:33:9
+(Ident Pos) @examples/selfhost_error.exl:33:16
+LBrace @examples/selfhost_error.exl:33:20
+(Ident line) @examples/selfhost_error.exl:34:9
+Colon @examples/selfhost_error.exl:34:13
+(Ident int) @examples/selfhost_error.exl:34:15
+Comma @examples/selfhost_error.exl:34:18
+(Ident col) @examples/selfhost_error.exl:35:9
+Colon @examples/selfhost_error.exl:35:12
+(Ident int) @examples/selfhost_error.exl:35:14
+Comma @examples/selfhost_error.exl:35:17
+(Ident file) @examples/selfhost_error.exl:36:9
+Colon @examples/selfhost_error.exl:36:13
+(Ident str) @examples/selfhost_error.exl:36:15
+Comma @examples/selfhost_error.exl:36:18
+RBrace @examples/selfhost_error.exl:37:5
+Impl @examples/selfhost_error.exl:39:5
+(Ident Pos) @examples/selfhost_error.exl:39:10
+LBrace @examples/selfhost_error.exl:39:14
+Pub @examples/selfhost_error.exl:40:9
+Fn @examples/selfhost_error.exl:40:13
+(Ident zero) @examples/selfhost_error.exl:40:16
+LParen @examples/selfhost_error.exl:40:20
+RParen @examples/selfhost_error.exl:40:21
+Arrow @examples/selfhost_error.exl:40:23
+(Ident Pos) @examples/selfhost_error.exl:40:26
+LBrace @examples/selfhost_error.exl:40:30
+(Ident Pos) @examples/selfhost_error.exl:41:13
+LBrace @examples/selfhost_error.exl:41:17
+(Ident line) @examples/selfhost_error.exl:41:19
+Colon @examples/selfhost_error.exl:41:23
+(Int 1) @examples/selfhost_error.exl:41:25
+Comma @examples/selfhost_error.exl:41:26
+(Ident col) @examples/selfhost_error.exl:41:28
+Colon @examples/selfhost_error.exl:41:31
+(Int 1) @examples/selfhost_error.exl:41:33
+Comma @examples/selfhost_error.exl:41:34
+(Ident file) @examples/selfhost_error.exl:41:36
+Colon @examples/selfhost_error.exl:41:40
+(String "<unknown>") @examples/selfhost_error.exl:41:42
+RBrace @examples/selfhost_error.exl:41:54
+RBrace @examples/selfhost_error.exl:42:9
+RBrace @examples/selfhost_error.exl:43:5
+Impl @examples/selfhost_error.exl:45:5
+(Ident Display) @examples/selfhost_error.exl:45:10
+For @examples/selfhost_error.exl:45:18
+(Ident Pos) @examples/selfhost_error.exl:45:22
+LBrace @examples/selfhost_error.exl:45:26
+Fn @examples/selfhost_error.exl:46:9
+(Ident fmt) @examples/selfhost_error.exl:46:12
+LParen @examples/selfhost_error.exl:46:15
+Star @examples/selfhost_error.exl:46:16
+Const @examples/selfhost_error.exl:46:17
+(Ident self) @examples/selfhost_error.exl:46:23
+Comma @examples/selfhost_error.exl:46:27
+(Ident out) @examples/selfhost_error.exl:46:29
+Colon @examples/selfhost_error.exl:46:32
+Star @examples/selfhost_error.exl:46:34
+(Ident StringBuilder) @examples/selfhost_error.exl:46:35
+RParen @examples/selfhost_error.exl:46:48
+LBrace @examples/selfhost_error.exl:46:50
+(Ident out) @examples/selfhost_error.exl:47:13
+Dot @examples/selfhost_error.exl:47:16
+(Ident push_str) @examples/selfhost_error.exl:47:17
+LParen @examples/selfhost_error.exl:47:25
+(Ident self) @examples/selfhost_error.exl:47:26
+Dot @examples/selfhost_error.exl:47:30
+(Ident file) @examples/selfhost_error.exl:47:31
+RParen @examples/selfhost_error.exl:47:35
+Semicolon @examples/selfhost_error.exl:47:36
+(Ident out) @examples/selfhost_error.exl:48:13
+Dot @examples/selfhost_error.exl:48:16
+(Ident push_str) @examples/selfhost_error.exl:48:17
+LParen @examples/selfhost_error.exl:48:25
+(String ":") @examples/selfhost_error.exl:48:26
+RParen @examples/selfhost_error.exl:48:29
+Semicolon @examples/selfhost_error.exl:48:30
+(Ident out) @examples/selfhost_error.exl:49:13
+Dot @examples/selfhost_error.exl:49:16
+(Ident push_int) @examples/selfhost_error.exl:49:17
+LParen @examples/selfhost_error.exl:49:25
+(Ident self) @examples/selfhost_error.exl:49:26
+Dot @examples/selfhost_error.exl:49:30
+(Ident line) @examples/selfhost_error.exl:49:31
+RParen @examples/selfhost_error.exl:49:35
+Semicolon @examples/selfhost_error.exl:49:36
+(Ident out) @examples/selfhost_error.exl:50:13
+Dot @examples/selfhost_error.exl:50:16
+(Ident push_str) @examples/selfhost_error.exl:50:17
+LParen @examples/selfhost_error.exl:50:25
+(String ":") @examples/selfhost_error.exl:50:26
+RParen @examples/selfhost_error.exl:50:29
+Semicolon @examples/selfhost_error.exl:50:30
+(Ident out) @examples/selfhost_error.exl:51:13
+Dot @examples/selfhost_error.exl:51:16
+(Ident push_int) @examples/selfhost_error.exl:51:17
+LParen @examples/selfhost_error.exl:51:25
+(Ident self) @examples/selfhost_error.exl:51:26
+Dot @examples/selfhost_error.exl:51:30
+(Ident col) @examples/selfhost_error.exl:51:31
+RParen @examples/selfhost_error.exl:51:34
+Semicolon @examples/selfhost_error.exl:51:35
+RBrace @examples/selfhost_error.exl:52:9
+RBrace @examples/selfhost_error.exl:53:5
+RBrace @examples/selfhost_error.exl:54:1
+Pub @examples/selfhost_error.exl:56:1
+Struct @examples/selfhost_error.exl:56:5
+(Ident CompileError) @examples/selfhost_error.exl:56:12
+LBrace @examples/selfhost_error.exl:56:25
+(Ident pos) @examples/selfhost_error.exl:57:5
+Colon @examples/selfhost_error.exl:57:8
+(Ident pos) @examples/selfhost_error.exl:57:10
+DoubleColon @examples/selfhost_error.exl:57:13
+(Ident Pos) @examples/selfhost_error.exl:57:15
+Comma @examples/selfhost_error.exl:57:18
+(Ident msg) @examples/selfhost_error.exl:58:5
+Colon @examples/selfhost_error.exl:58:8
+(Ident str) @examples/selfhost_error.exl:58:10
+Comma @examples/selfhost_error.exl:58:13
+RBrace @examples/selfhost_error.exl:59:1
+Impl @examples/selfhost_error.exl:61:1
+(Ident CompileError) @examples/selfhost_error.exl:61:6
+LBrace @examples/selfhost_error.exl:61:19
+Pub @examples/selfhost_error.exl:66:5
+Fn @examples/selfhost_error.exl:66:9
+(Ident make) @examples/selfhost_error.exl:66:12
+LParen @examples/selfhost_error.exl:66:16
+(Ident p) @examples/selfhost_error.exl:66:17
+Colon @examples/selfhost_error.exl:66:18
+Star @examples/selfhost_error.exl:66:20
+Const @examples/selfhost_error.exl:66:21
+(Ident pos) @examples/selfhost_error.exl:66:27
+DoubleColon @examples/selfhost_error.exl:66:30
+(Ident Pos) @examples/selfhost_error.exl:66:32
+Comma @examples/selfhost_error.exl:66:35
+(Ident msg) @examples/selfhost_error.exl:66:37
+Colon @examples/selfhost_error.exl:66:40
+(Ident str) @examples/selfhost_error.exl:66:42
+RParen @examples/selfhost_error.exl:66:45
+Arrow @examples/selfhost_error.exl:66:47
+(Ident CompileError) @examples/selfhost_error.exl:66:50
+LBrace @examples/selfhost_error.exl:66:63
+(Ident CompileError) @examples/selfhost_error.exl:67:9
+LBrace @examples/selfhost_error.exl:67:22
+(Ident pos) @examples/selfhost_error.exl:67:24
+Colon @examples/selfhost_error.exl:67:27
+Star @examples/selfhost_error.exl:67:29
+(Ident p) @examples/selfhost_error.exl:67:30
+Comma @examples/selfhost_error.exl:67:31
+(Ident msg) @examples/selfhost_error.exl:67:33
+Colon @examples/selfhost_error.exl:67:36
+(Ident msg) @examples/selfhost_error.exl:67:38
+RBrace @examples/selfhost_error.exl:67:42
+RBrace @examples/selfhost_error.exl:68:5
+RBrace @examples/selfhost_error.exl:69:1
+Impl @examples/selfhost_error.exl:71:1
+(Ident Display) @examples/selfhost_error.exl:71:6
+For @examples/selfhost_error.exl:71:14
+(Ident CompileError) @examples/selfhost_error.exl:71:18
+LBrace @examples/selfhost_error.exl:71:31
+Fn @examples/selfhost_error.exl:75:5
+(Ident fmt) @examples/selfhost_error.exl:75:8
+LParen @examples/selfhost_error.exl:75:11
+Star @examples/selfhost_error.exl:75:12
+Const @examples/selfhost_error.exl:75:13
+(Ident self) @examples/selfhost_error.exl:75:19
+Comma @examples/selfhost_error.exl:75:23
+(Ident out) @examples/selfhost_error.exl:75:25
+Colon @examples/selfhost_error.exl:75:28
+Star @examples/selfhost_error.exl:75:30
+(Ident StringBuilder) @examples/selfhost_error.exl:75:31
+RParen @examples/selfhost_error.exl:75:44
+LBrace @examples/selfhost_error.exl:75:46
+(Ident out) @examples/selfhost_error.exl:76:9
+Dot @examples/selfhost_error.exl:76:12
+(Ident push_str) @examples/selfhost_error.exl:76:13
+LParen @examples/selfhost_error.exl:76:21
+(Ident self) @examples/selfhost_error.exl:76:22
+Dot @examples/selfhost_error.exl:76:26
+(Ident pos) @examples/selfhost_error.exl:76:27
+Dot @examples/selfhost_error.exl:76:30
+(Ident file) @examples/selfhost_error.exl:76:31
+RParen @examples/selfhost_error.exl:76:35
+Semicolon @examples/selfhost_error.exl:76:36
+(Ident out) @examples/selfhost_error.exl:77:9
+Dot @examples/selfhost_error.exl:77:12
+(Ident push_str) @examples/selfhost_error.exl:77:13
+LParen @examples/selfhost_error.exl:77:21
+(String ":") @examples/selfhost_error.exl:77:22
+RParen @examples/selfhost_error.exl:77:25
+Semicolon @examples/selfhost_error.exl:77:26
+(Ident out) @examples/selfhost_error.exl:78:9
+Dot @examples/selfhost_error.exl:78:12
+(Ident push_int) @examples/selfhost_error.exl:78:13
+LParen @examples/selfhost_error.exl:78:21
+(Ident self) @examples/selfhost_error.exl:78:22
+Dot @examples/selfhost_error.exl:78:26
+(Ident pos) @examples/selfhost_error.exl:78:27
+Dot @examples/selfhost_error.exl:78:30
+(Ident line) @examples/selfhost_error.exl:78:31
+RParen @examples/selfhost_error.exl:78:35
+Semicolon @examples/selfhost_error.exl:78:36
+(Ident out) @examples/selfhost_error.exl:79:9
+Dot @examples/selfhost_error.exl:79:12
+(Ident push_str) @examples/selfhost_error.exl:79:13
+LParen @examples/selfhost_error.exl:79:21
+(String ":") @examples/selfhost_error.exl:79:22
+RParen @examples/selfhost_error.exl:79:25
+Semicolon @examples/selfhost_error.exl:79:26
+(Ident out) @examples/selfhost_error.exl:80:9
+Dot @examples/selfhost_error.exl:80:12
+(Ident push_int) @examples/selfhost_error.exl:80:13
+LParen @examples/selfhost_error.exl:80:21
+(Ident self) @examples/selfhost_error.exl:80:22
+Dot @examples/selfhost_error.exl:80:26
+(Ident pos) @examples/selfhost_error.exl:80:27
+Dot @examples/selfhost_error.exl:80:30
+(Ident col) @examples/selfhost_error.exl:80:31
+RParen @examples/selfhost_error.exl:80:34
+Semicolon @examples/selfhost_error.exl:80:35
+(Ident out) @examples/selfhost_error.exl:81:9
+Dot @examples/selfhost_error.exl:81:12
+(Ident push_str) @examples/selfhost_error.exl:81:13
+LParen @examples/selfhost_error.exl:81:21
+(String ": error: ") @examples/selfhost_error.exl:81:22
+RParen @examples/selfhost_error.exl:81:33
+Semicolon @examples/selfhost_error.exl:81:34
+(Ident out) @examples/selfhost_error.exl:82:9
+Dot @examples/selfhost_error.exl:82:12
+(Ident push_str) @examples/selfhost_error.exl:82:13
+LParen @examples/selfhost_error.exl:82:21
+(Ident self) @examples/selfhost_error.exl:82:22
+Dot @examples/selfhost_error.exl:82:26
+(Ident msg) @examples/selfhost_error.exl:82:27
+RParen @examples/selfhost_error.exl:82:30
+Semicolon @examples/selfhost_error.exl:82:31
+RBrace @examples/selfhost_error.exl:83:5
+RBrace @examples/selfhost_error.exl:84:1
+Fn @examples/selfhost_error.exl:86:1
+(Ident main) @examples/selfhost_error.exl:86:4
+LParen @examples/selfhost_error.exl:86:8
+RParen @examples/selfhost_error.exl:86:9
+LBrace @examples/selfhost_error.exl:86:11
+Let @examples/selfhost_error.exl:88:5
+(Ident p) @examples/selfhost_error.exl:88:9
+Eq @examples/selfhost_error.exl:88:11
+(Ident pos) @examples/selfhost_error.exl:88:13
+DoubleColon @examples/selfhost_error.exl:88:16
+(Ident Pos) @examples/selfhost_error.exl:88:18
+LBrace @examples/selfhost_error.exl:88:22
+(Ident line) @examples/selfhost_error.exl:88:24
+Colon @examples/selfhost_error.exl:88:28
+(Int 42) @examples/selfhost_error.exl:88:30
+Comma @examples/selfhost_error.exl:88:32
+(Ident col) @examples/selfhost_error.exl:88:34
+Colon @examples/selfhost_error.exl:88:37
+(Int 7) @examples/selfhost_error.exl:88:39
+Comma @examples/selfhost_error.exl:88:40
+(Ident file) @examples/selfhost_error.exl:88:42
+Colon @examples/selfhost_error.exl:88:46
+(String "parser.exl") @examples/selfhost_error.exl:88:48
+RBrace @examples/selfhost_error.exl:88:61
+Semicolon @examples/selfhost_error.exl:88:62
+Let @examples/selfhost_error.exl:89:5
+(Ident e) @examples/selfhost_error.exl:89:9
+Eq @examples/selfhost_error.exl:89:11
+(Ident CompileError) @examples/selfhost_error.exl:89:13
+DoubleColon @examples/selfhost_error.exl:89:25
+(Ident make) @examples/selfhost_error.exl:89:27
+LParen @examples/selfhost_error.exl:89:31
+Amp @examples/selfhost_error.exl:89:32
+(Ident p) @examples/selfhost_error.exl:89:33
+Comma @examples/selfhost_error.exl:89:34
+(String "expected ';' after statement") @examples/selfhost_error.exl:89:36
+RParen @examples/selfhost_error.exl:89:66
+Semicolon @examples/selfhost_error.exl:89:67
+(Ident println) @examples/selfhost_error.exl:90:5
+LParen @examples/selfhost_error.exl:90:12
+(Ident e) @examples/selfhost_error.exl:90:13
+RParen @examples/selfhost_error.exl:90:14
+Semicolon @examples/selfhost_error.exl:90:15
+Let @examples/selfhost_error.exl:95:5
+(Ident z) @examples/selfhost_error.exl:95:9
+Eq @examples/selfhost_error.exl:95:11
+(Ident pos) @examples/selfhost_error.exl:95:13
+DoubleColon @examples/selfhost_error.exl:95:16
+(Ident Pos) @examples/selfhost_error.exl:95:18
+DoubleColon @examples/selfhost_error.exl:95:21
+(Ident zero) @examples/selfhost_error.exl:95:23
+LParen @examples/selfhost_error.exl:95:27
+RParen @examples/selfhost_error.exl:95:28
+Semicolon @examples/selfhost_error.exl:95:29
+Let @examples/selfhost_error.exl:96:5
+(Ident internal) @examples/selfhost_error.exl:96:9
+Eq @examples/selfhost_error.exl:96:18
+(Ident CompileError) @examples/selfhost_error.exl:96:20
+DoubleColon @examples/selfhost_error.exl:96:32
+(Ident make) @examples/selfhost_error.exl:96:34
+LParen @examples/selfhost_error.exl:96:38
+Amp @examples/selfhost_error.exl:96:39
+(Ident z) @examples/selfhost_error.exl:96:40
+Comma @examples/selfhost_error.exl:96:41
+(String "internal: unhandled IR variant reached codegen") @examples/selfhost_error.exl:97:9
+RParen @examples/selfhost_error.exl:97:57
+Semicolon @examples/selfhost_error.exl:97:58
+(Ident println) @examples/selfhost_error.exl:98:5
+LParen @examples/selfhost_error.exl:98:12
+(Ident internal) @examples/selfhost_error.exl:98:13
+RParen @examples/selfhost_error.exl:98:21
+Semicolon @examples/selfhost_error.exl:98:22
+RBrace @examples/selfhost_error.exl:100:1
+Eof @examples/selfhost_error.exl:101:1

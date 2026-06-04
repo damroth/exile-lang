@@ -1,0 +1,2 @@
+parser.exl:42:7: error: expected ';' after statement
+<unknown>:1:1: error: internal: unhandled IR variant reached codegen

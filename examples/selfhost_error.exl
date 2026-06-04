@@ -1,0 +1,100 @@
+// Self-host Faza 0 — second foundation port.
+//
+// Ports `lib/error.ml` (3 OCaml lines) to exile.  The original:
+//
+//   exception Compile_error of { pos : Pos.t; msg : string }
+//   let raise_ pos msg = raise (Compile_error { pos; msg })
+//   let failf pos fmt = Printf.ksprintf (raise_ pos) fmt
+//
+// Architectural pivot: **exile has no exceptions**.  The OCaml
+// codebase uses `raise Compile_error` as a control-flow shortcut
+// from any depth; in exile the equivalent is a value-returning
+// `Result<T, *const CompileError>` (or `?T` for parser slots that
+// only care about presence), threaded through `try` / `?` /
+// `orelse`.  The error TYPE stays the same; the propagation
+// mechanism is what we re-shape.
+//
+// `Printf.ksprintf` (`failf` formatter) also doesn't survive
+// straight: exile has no `printf`-family format strings.
+// Dynamic-message construction lives at the call site with the
+// StringBuilder writer — caller builds the message, hands it in
+// as a `str` (literal) or `String` (heap), `make_from_str` /
+// `make_from_owned` factories accept either.  v1 keeps the str
+// path (static messages cover ~80% of the OCaml uses); the
+// owned-String path lands when the first dynamic message wants it.
+//
+// This file is still a DEMO of the idiom — the production self-
+// host port (selfhost/ multi-file) will `use` the real Pos and
+// CompileError modules instead of inlining a stripped Pos here.
+// The inline copy below is the smallest hand-rolled equivalent so
+// the demo stays single-file.
+
+mod pos {
+    pub struct Pos {
+        line: int,
+        col: int,
+        file: str,
+    }
+
+    impl Pos {
+        pub fn zero() -> Pos {
+            Pos { line: 1, col: 1, file: "<unknown>" }
+        }
+    }
+
+    impl Display for Pos {
+        fn fmt(*const self, out: *StringBuilder) {
+            out.push_str(self.file);
+            out.push_str(":");
+            out.push_int(self.line);
+            out.push_str(":");
+            out.push_int(self.col);
+        }
+    }
+}
+
+pub struct CompileError {
+    pos: pos::Pos,
+    msg: str,
+}
+
+impl CompileError {
+    // Static-message factory.  The OCaml `raise_` shortcut prepares
+    // the error and unwinds in one step; here we just build the
+    // value and let the caller propagate it through `?`-style
+    // chaining once the pipeline grows past the demo stage.
+    pub fn make(p: *const pos::Pos, msg: str) -> CompileError {
+        CompileError { pos: *p, msg: msg }
+    }
+}
+
+impl Display for CompileError {
+    // Matches the cc-style diagnostic the OCaml side emits:
+    // `<file>:<line>:<col>: error: <msg>`.  Editors / CI parse
+    // this shape out of the box.
+    fn fmt(*const self, out: *StringBuilder) {
+        out.push_str(self.pos.file);
+        out.push_str(":");
+        out.push_int(self.pos.line);
+        out.push_str(":");
+        out.push_int(self.pos.col);
+        out.push_str(": error: ");
+        out.push_str(self.msg);
+    }
+}
+
+fn main() {
+    // Concrete error at a real source position.
+    let p = pos::Pos { line: 42, col: 7, file: "parser.exl" };
+    let e = CompileError::make(&p, "expected ';' after statement");
+    println(e);
+    // parser.exl:42:7: error: expected ';' after statement
+
+    // Synthetic position (internal compiler errors) round-trip
+    // through the same Display path.
+    let z = pos::Pos::zero();
+    let internal = CompileError::make(&z,
+        "internal: unhandled IR variant reached codegen");
+    println(internal);
+    // <unknown>:1:1: error: internal: unhandled IR variant reached codegen
+}
