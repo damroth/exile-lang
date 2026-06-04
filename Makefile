@@ -74,10 +74,12 @@ toolchain-clean:
 stub_for = $(wildcard examples/$(1)_stub.c)
 link_args = $(if $(call stub_for,$(1)),--link $(call stub_for,$(1)))
 
-# DR-006 — the host backend for the `sys::*` seam.  Linked into every
-# host build; the linker discards it when no `sys_*` symbol is reached
-# (cc only complains about unresolved references, not unused defs). *)
+# DR-006 — per-target backends for the `sys::*` seam.  Linked into
+# every build for the matching target; the linker discards them when
+# no `sys_*` symbol is reached (cc only complains about unresolved
+# references, not unused defs).
 SYS_HOST := runtime/sys_host.c
+SYS_AMIGA := runtime/sys_amiga.c
 
 # `make host-NAME`  → build host binary for examples/NAME.exl
 host-%: examples/%.exl $(call stub_for,%) $(SYS_HOST) build
@@ -91,12 +93,12 @@ host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_
 	$(EXILE) --target host --c-out $(C_OUT)/multi_file.c --link $(SYS_HOST) -o $(HOST_OUT)/multi_file $<
 
 # `make amiga-NAME` → build m68k Amiga binary
-amiga-%: examples/%.exl $(call stub_for,%) build
+amiga-%: examples/%.exl $(call stub_for,%) $(SYS_AMIGA) build
 	@if [ ! -x $(AMIGA_GCC) ]; then \
 		echo "amiga-gcc missing — run 'make toolchain' first"; \
 		exit 1; \
 	fi
-	$(EXILE) --target amiga --c-out $(C_OUT)/$*.c $(call link_args,$*) -o $(AMIGA_OUT)/$* $<
+	$(EXILE) --target amiga --c-out $(C_OUT)/$*.c --link $(SYS_AMIGA) $(call link_args,$*) -o $(AMIGA_OUT)/$* $<
 
 # `make c-NAME` → just emit C, no native binary
 c-%: examples/%.exl build

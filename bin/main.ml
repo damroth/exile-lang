@@ -156,7 +156,13 @@ let compile_host ~show_cc_warnings ~profile c_path link_files input output =
 
 let compile_amiga ~show_cc_warnings ~profile c_path link_files input output =
   let gcc = amiga_gcc () in
-  run_cmd (Printf.sprintf "%s -noixemul %s %s -o %s %s %s"
+  (* `-lm` pulls in Bebbo's soft-float thunks (`__adddf3`, `__muldf3`,
+     `__addsf3`, ...) — bare 68000 has no FPU, every `f32`/`f64` op
+     lowers to a math-library call.  Bebbo packages these in libm
+     (not libgcc — libgcc here only carries soft-int helpers).
+     `-noixemul` keeps the libnix POSIX shim out; libm is independent
+     and links cleanly under that profile. *)
+  run_cmd (Printf.sprintf "%s -noixemul %s %s -o %s %s %s -lm"
     (Filename.quote gcc) (cc_warn_suppress show_cc_warnings)
     (include_flag input)
     (Filename.quote output) (Filename.quote c_path)
