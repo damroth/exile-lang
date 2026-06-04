@@ -44,6 +44,12 @@ let default_profile_for_target = function
   | Target_c | Target_host -> Exile_lang.Profile.Full
   | Target_amiga -> Exile_lang.Profile.Standard
 
+(* Differential-harness dumps (DR self-host bring-up Faza −1).  Only
+   one emit-* is honoured at a time; the pipeline short-circuits as
+   soon as the requested form is produced and writes it to `-o` (or
+   stdout when no `-o` is set). *)
+type emit_kind = EmitTokens | EmitAst | EmitTypedIr
+
 type args = {
   target : target;
   profile : Exile_lang.Profile.t;
@@ -53,6 +59,8 @@ type args = {
   annotate : bool;
   bloat_report : bool;
   show_cc_warnings : bool;
+  emit : emit_kind option;
+  emit_user_only : bool;
   input : string;
 }
 
@@ -69,6 +77,16 @@ let parse_args argv =
   let annotate = ref false in
   let bloat_report = ref false in
   let show_cc_warnings = ref false in
+  let emit = ref None in
+  let emit_user_only = ref false in
+  let set_emit k =
+    if !emit <> None then begin
+      Printf.eprintf
+        "only one of --emit-tokens / --emit-ast / --emit-typed-ir at a time\n";
+      exit 1
+    end;
+    emit := Some k
+  in
   let rec loop = function
     | [] -> ()
     | "--target" :: t :: rest -> target := parse_target t; loop rest
@@ -79,6 +97,10 @@ let parse_args argv =
     | "--annotate" :: rest -> annotate := true; loop rest
     | "--bloat-report" :: rest -> bloat_report := true; loop rest
     | "--show-cc-warnings" :: rest -> show_cc_warnings := true; loop rest
+    | "--emit-tokens" :: rest -> set_emit EmitTokens; loop rest
+    | "--emit-ast" :: rest -> set_emit EmitAst; loop rest
+    | "--emit-typed-ir" :: rest -> set_emit EmitTypedIr; loop rest
+    | "--user-only" :: rest -> emit_user_only := true; loop rest
     | "--help" :: _ | "-h" :: _ -> usage ()
     | f :: rest when String.length f > 0 && f.[0] <> '-' ->
         if !input <> None then begin
@@ -106,6 +128,8 @@ let parse_args argv =
         annotate = !annotate;
         bloat_report = !bloat_report;
         show_cc_warnings = !show_cc_warnings;
+        emit = !emit;
+        emit_user_only = !emit_user_only;
         input = i }
 
 let toolchain_path () =
@@ -201,10 +225,51 @@ let print_bloat_report () =
   if count > top_n then
     Printf.eprintf "  ... %d more\n" (count - top_n)
 
+let write_dump output content =
+  match output with
+  | None -> print_string content
+  | Some path ->
+      ensure_dir path;
+      Out_channel.with_open_text path (fun oc ->
+        Out_channel.output_string oc content)
+
+(* Drive the requested differential dump and short-circuit before
+   codegen.  The dumps are golden-input for the future exile port —
+   each pipeline stage runs and we emit at exactly the spot the port
+   targets: tokens after lex, AST after parse + loader, typed IR
+   after typecheck + lift (the move / escape / lint passes do not
+   change the IR, so post-typecheck is the right anchor). *)
+let run_emit (a : args) (kind : emit_kind) =
+  let file = a.input in
+  match kind with
+  | EmitTokens ->
+      let src = In_channel.with_open_text file In_channel.input_all in
+      let toks = Exile_lang.Lexer.tokenize ~file src in
+      write_dump a.output
+        (Exile_lang.Dump.dump_tokens ~file toks)
+  | EmitAst ->
+      let program = Exile_lang.Loader.load file in
+      write_dump a.output
+        (Exile_lang.Dump.dump_ast ~file program)
+  | EmitTypedIr ->
+      let tp =
+        Exile_lang.Loader.load file
+        |> Exile_lang.Typecheck.check_program
+      in
+      write_dump a.output
+        (Exile_lang.Dump.dump_typed_ir
+           ~file ~user_only:a.emit_user_only tp)
+
 let () =
   Printexc.record_backtrace true;
   let a = parse_args (List.tl (Array.to_list Sys.argv)) in
   try
+    (* Emit-* runs the relevant prefix of the pipeline and exits.
+       It is mutually exclusive with codegen / cc — the harness is
+       a read-only diagnostic. *)
+    (match a.emit with
+     | Some kind -> run_emit a kind; exit 0
+     | None -> ());
     let c_code =
       Exile_lang.Compiler.compile_file
         ~annotate:a.annotate ~profile:a.profile a.input

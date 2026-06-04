@@ -125,6 +125,28 @@ let check_lint label src ~profile expected_msg_substrs =
     expected_msg_substrs msgs;
   Printf.printf "ok: %s\n" label
 
+(* DR self-host bring-up Faza −1 — differential-harness dumps.  The
+   three canonical forms (tokens / AST / typed IR) are golden-input
+   for the future exile port: porting the lexer in exile means
+   making its --emit-tokens output match this one byte-for-byte. *)
+let dump_tokens src =
+  src
+  |> Exile_lang.Lexer.tokenize ~file:"<input>"
+  |> Exile_lang.Dump.dump_tokens ~file:"<input>"
+
+let dump_ast src =
+  src
+  |> Exile_lang.Lexer.tokenize ~file:"<input>"
+  |> Exile_lang.Parser.parse_program
+  |> Exile_lang.Dump.dump_ast ~file:"<input>"
+
+let dump_typed_ir ?(user_only = true) src =
+  src
+  |> Exile_lang.Lexer.tokenize ~file:"<input>"
+  |> Exile_lang.Parser.parse_program
+  |> Exile_lang.Typecheck.check_program
+  |> Exile_lang.Dump.dump_typed_ir ~file:"<input>" ~user_only
+
 let () =
   check "hello world"
     "fn main() {\n    println(\"Hello, World!\");\n}\n"
@@ -5125,4 +5147,95 @@ let () =
     \        | Boxed::B(Color::Blue) => println(0)\n\
     \    }\n\
      }\n"
-    "or-pattern only allowed at the top of a match arm (nested `pat1 | pat2` inside a variant bind is not supported yet)"
+    "or-pattern only allowed at the top of a match arm (nested `pat1 | pat2` inside a variant bind is not supported yet)";
+
+  (* ===== Self-host bring-up Faza −1 — differential-harness dumps =====
+
+     The three canonical dump forms are emitted from the OCaml exilc
+     as oracles for the future exile port.  Tests below cover the
+     format-stability invariants (header, deterministic ordering,
+     bit-stable across runs) rather than locking the full dump text
+     — the goal here is: when the port runs, its dump must match
+     this byte-for-byte, so any drift inside our own emitter is a
+     bug we want a test to catch. *)
+
+  let starts_with hay prefix =
+    let lh = String.length hay and lp = String.length prefix in
+    lh >= lp && String.sub hay 0 lp = prefix
+  in
+
+  check_assert "Faza -1: --emit-tokens header + EOF sentinel"
+    (let d = dump_tokens "fn main() {}\n" in
+     starts_with d ";; exile-tokens-dump v1 <input>\n"
+     && contains d "Fn @<input>:1:1"
+     && contains d "Eof @<input>:");
+
+  check_assert "Faza -1: --emit-tokens captures float suffix"
+    (let d = dump_tokens "fn main() { let a: f32 = 1.5f32; }\n" in
+     contains d "(Float "
+     && contains d " f32)");
+
+  check_assert "Faza -1: --emit-ast header + structural fn body"
+    (let d = dump_ast "fn add(x: int, y: int) -> int { x + y }\n" in
+     starts_with d ";; exile-ast-dump v1 <input>\n"
+     && contains d "(fn add"
+     && contains d "(param x (int i32))"
+     && contains d "(param y (int i32))"
+     && contains d "(binop + (var x) (var y))");
+
+  check_assert "Faza -1: --emit-ast lambda survives the parse"
+    (let d = dump_ast
+       "fn main() { let f = |x: int| -> int x * 2; println(f(7)); }\n"
+     in
+     contains d "(lambda "
+     && contains d "(param x (int i32))");
+
+  check_assert "Faza -1: --emit-typed-ir carries :ty on every node"
+    (let d = dump_typed_ir
+       "fn add(x: int, y: int) -> int { x + y }\n\
+        fn main() { println(add(2, 3)); }\n"
+     in
+     starts_with d ";; exile-typed-ir-dump v1 <input>\n"
+     && contains d ":ty (int i32)"
+     && contains d "(tfn ex_add"
+     && contains d "(call ex_add");
+
+  check_assert "Faza -1: --emit-typed-ir mono-instances section is sorted"
+    (let d = dump_typed_ir
+       "pub mod raw { extern fn make() -> Allocator; }\n\
+        fn main() {\n\
+       \    let a = raw::make();\n\
+       \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+       \    v.push(1);\n\
+        }\n"
+     in
+     contains d "(mono-instances"
+     (* Alphabetical: Allocator < Vec_i32, both should appear in
+        that relative order in the sorted list. *)
+     && let find sub =
+          let lh = String.length d and ls = String.length sub in
+          let rec loop i =
+            if i + ls > lh then None
+            else if String.sub d i ls = sub then Some i
+            else loop (i + 1)
+          in
+          loop 0
+        in
+        let alloc_pos = find "(struct Allocator)" in
+        let vec_pos = find "(struct Vec_i32)" in
+        match alloc_pos, vec_pos with
+        | Some a, Some v -> a < v
+        | _ -> false);
+
+  check_assert "Faza -1: --emit-typed-ir is deterministic across runs"
+    (let src =
+       "pub mod raw { extern fn make() -> Allocator; }\n\
+        fn main() {\n\
+       \    let a = raw::make();\n\
+       \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+       \    let mut m: HashMap<int, int> = HashMap::with_capacity(a, 8 as u32);\n\
+       \    v.push(1);\n\
+       \    m.insert(7, 100);\n\
+        }\n"
+     in
+     dump_typed_ir src = dump_typed_ir src)
