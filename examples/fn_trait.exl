@@ -1,0 +1,107 @@
+// Fn-trait prelude (DR-017).
+//
+// `Fn1` and `Fn2` are now in the prelude — synthesized alongside
+// Iterator / Display / Eq / Hash / Clone.  Per the DR-015 reality-
+// check (2026-06-04), Fn is encoded as a real per-arity trait whose
+// argument and result types are associated types, not trait tparams:
+//
+//   trait Fn1 {
+//       type Arg;
+//       type Output;
+//       fn call(*const self, a: Self::Arg) -> Self::Output;
+//   }
+//
+//   trait Fn2 {
+//       type Arg1;
+//       type Arg2;
+//       type Output;
+//       fn call(*const self, a: Self::Arg1, b: Self::Arg2) -> Self::Output;
+//   }
+//
+// This shape works on existing infra:
+//   - `<F: Fn1>` bound + `F::Arg` / `F::Output` projection in a
+//     bounded free fn or a generic adapter.
+//   - `f.call(x)` dispatches via the trait — direct call, no vtable
+//     (DR-014 generic-trait methods + mono).
+//   - DR-016 bounded impls let an adapter like `Map<I, F>` constrain
+//     `I: Iterator, F: Fn1` and project `F::Output` through to its
+//     own `Item`.
+//
+// Bundled in this commit: a fix to `type_impls_trait` that lets a
+// `<I: Iterator>` bound accept a mono-instance receiver
+// (`VecIter_i32`).  Same `Mono.is_instance_of` pattern the `for x in
+// iter` desugar already used — without the fix, free-fn bounds
+// errored on `v.iter()`.
+//
+// Sentinel field on empty structs (`_tag: int`) avoids the C89
+// `-Wpedantic` warning on empty struct declarations.  The field is
+// otherwise unused.
+
+// 1. Fn1 — single-argument callable.
+
+struct AddOne { _tag: int }
+
+impl Fn1 for AddOne {
+    type Arg = int;
+    type Output = int;
+    fn call(*const self, a: int) -> int { a + 1 }
+}
+
+fn apply<F: Fn1>(f: F, x: F::Arg) -> F::Output { f.call(x) }
+
+// 2. Fn2 — binary callable; drives fold-style accumulators in the
+// future combinator stdlib.
+
+struct AddPair { _tag: int }
+
+impl Fn2 for AddPair {
+    type Arg1 = int;
+    type Arg2 = int;
+    type Output = int;
+    fn call(*const self, a: int, b: int) -> int { a + b }
+}
+
+fn apply2<F: Fn2>(f: F, x: F::Arg1, y: F::Arg2) -> F::Output {
+    f.call(x, y)
+}
+
+// 3. Map<I, F> — the lazy adapter pattern from DR-015.  Requires
+// DR-016 bounded impls plus the prelude Fn1.  `Self::Item = F::Output`
+// chains the inner closure's output through to the outer Iterator.
+//
+// The `try` idiom on `self.inner.next()` propagates None up through
+// the Option without needing an explicit `Option::None` literal in a
+// payload-bound match arm (where bidirectional seeding through assoc-
+// type projection doesn't yet flow).
+
+struct Map<I, F> { inner: I, f: F }
+
+impl<I: Iterator, F: Fn1> Iterator for Map<I, F> {
+    type Item = F::Output;
+    fn next(*self) -> Option<F::Output> {
+        let v = try self.inner.next();
+        Option::Some(self.f.call(v))
+    }
+}
+
+fn main() {
+    // 1. Fn1 through a free-fn bound.
+    let f1 = AddOne { _tag: 0 };
+    println(apply(f1, 41));             // 42
+
+    // 2. Fn2 — two-arg dispatch.
+    let f2 = AddPair { _tag: 0 };
+    println(apply2(f2, 13, 29));        // 42
+
+    // 3. Map adapter — Vec::iter() is the source, AddOne is the f.
+    // Drives a single fused loop through `for x in m`: no temp Vec,
+    // mono-inline, zero heap.
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(10); v.push(20); v.push(30);
+    let m: Map<VecIter<int>, AddOne> =
+        Map { inner: v.iter(), f: AddOne { _tag: 0 } };
+    let mut acc: int = 0;
+    for x in m { acc = acc + x; }
+    println(acc);                       // 11 + 21 + 31 = 63
+}

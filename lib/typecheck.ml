@@ -26,6 +26,18 @@ type fn_ctx = {
   tparams : string list;                 (* generic type params in scope:
                                             ["T"; "U"] inside a generic
                                             decl's body, [] otherwise *)
+  tbounds : (string * string list) list;  (* per-tparam trait bounds in
+                                             scope: `<F: Fn1>` populates
+                                             `("F", ["Fn1"])`.  Read by
+                                             the associated-type
+                                             projection resolver to
+                                             disambiguate `F::Output`
+                                             when several traits define
+                                             the assoc name (e.g. Fn1
+                                             and Fn2 both have
+                                             `Output`); the resolver
+                                             picks the trait declared
+                                             on F's bound list. *)
   tvar_bindings : (string * typ) list;   (* substitute these into every
                                             type produced by resolve_type_ann.
                                             Empty for skeleton elab; populated
@@ -116,7 +128,7 @@ type fn_ctx = {
    field to fn_ctx requires editing this constant only. *)
 let empty_ctx ~instances = {
   global = []; structs = []; enums = []; modules = [];
-  scope = []; tparams = []; tvar_bindings = []; fn_asts = [];
+  scope = []; tparams = []; tbounds = []; tvar_bindings = []; fn_asts = [];
   aliases = []; type_aliases = []; ext_vars = []; ext_struct_fields = [];
   ext_structs = []; ext_types = []; ext_consts = []; consts = [];
   instances; ret_ty = None;
@@ -543,6 +555,32 @@ let try_resolve_assoc_proj ~pos ctx path : typ option =
                     if head_matches && List.mem_assoc assoc assocs
                     then Some trait else None)
                   !trait_assoc_table)
+           in
+           (* For TVar head with bound `<F: Trait>`, restrict candidates
+              to the trait names on F's bound list — handles cases like
+              `F: Fn1` where both Fn1 and Fn2 define `Output`, but the
+              bound pins which one applies.  Trait identity here uses
+              the last path segment, mirroring [trait_impl_table]'s
+              lookup convention. *)
+           let candidate_traits =
+             match head_typ with
+             | TVar n ->
+                 let bound_trait_names =
+                   List.filter_map
+                     (fun (tp, trait_path) ->
+                       if tp = n then
+                         match List.rev trait_path with
+                         | last :: _ -> Some last
+                         | [] -> None
+                       else None)
+                     ctx.tbounds
+                 in
+                 (match bound_trait_names with
+                  | [] -> candidate_traits
+                  | _ ->
+                      List.filter (fun t -> List.mem t bound_trait_names)
+                        candidate_traits)
+             | _ -> candidate_traits
            in
            (match candidate_traits with
             | [] -> None
@@ -1162,11 +1200,20 @@ let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
    fn's `<T: Trait>` bounds at instantiation.  Trait names are matched by
    their last path segment — sufficient while traits are uniquely named
    (the conformance check already rejects ambiguity). *)
-(* True when [ty] has an `impl <trait_name> for <ty>` registered. *)
+(* True when [ty] has an `impl <trait_name> for <ty>` registered.  The
+   table keys hold the SKELETON path (`impl<T> Iterator for VecIter<T>`
+   registers `["VecIter"]`), so mono-instance heads like `["VecIter_i32"]`
+   match through [Mono.is_instance_of] — same pattern the `for x in iter`
+   desugar uses at line ~3870 to recognise an Iterator receiver. *)
 let type_impls_trait ~trait_name ty =
   match typ_head_path ty with
   | None -> false
-  | Some path -> List.mem (trait_name, path) !trait_impl_table
+  | Some path ->
+      List.exists
+        (fun (n, decl_path) ->
+          n = trait_name
+          && (decl_path = path || Mono.is_instance_of decl_path path))
+        !trait_impl_table
 
 (* Generic-call dispatch: if the resolved fn is generic, infer its
    tparams from the actual arg types (and from the surrounding expected
@@ -4618,7 +4665,7 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~consts ~e
       else
         let ctx = { (empty_ctx ~instances) with
           structs = struct_index; enums = enum_index;
-          modules; scope = p; tparams = f.tparams;
+          modules; scope = p; tparams = f.tparams; tbounds = f.tbounds;
           aliases; type_aliases; ext_struct_fields;
           ext_structs; ext_types; ext_consts; consts;
         } in
@@ -5135,7 +5182,8 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
       | Some trait_written ->
           let ctx = { (empty_ctx ~instances) with
             structs = struct_index; enums = enum_index;
-            modules; scope = parent_path; tparams = ib.Ast.itparams;
+            modules; scope = parent_path;
+            tparams = ib.Ast.itparams; tbounds = ib.Ast.itbounds;
             ext_structs; ext_types; ext_consts } in
           (match resolve_impl_target ctx ib.Ast.itarget with
            | None -> ()  (* the conformance pass reports the unknown target *)
@@ -5168,7 +5216,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
           modules; scope = parent_path;
           (* The impl's type parameters are in scope while resolving the
              methods' self/param/ret types (`self: Pair<A, B>`). *)
-          tparams = ib.Ast.itparams;
+          tparams = ib.Ast.itparams; tbounds = ib.Ast.itbounds;
           ext_structs; ext_types; ext_consts;
         } in
         let (target_path, target_pub, field_names) =
@@ -7134,6 +7182,60 @@ let prelude_items () =
     trmethods = [ iter_next ]; trdefaults = [];
     trpos = pos; tris_pub = true;
   } in
+  (* `Fn1` / `Fn2` — callable protocols.  Per the DR-015 reality-check
+     (2026-06-04) Fn is encoded as a real per-arity trait whose argument
+     and result types are associated types, not trait tparams: exile
+     has no generic-trait surface and assoc-types already work in bound
+     position + bodies.  `impl Fn1 for Foo { type Arg = T; type Output =
+     U; fn call(self-const-ptr, a: T) -> U { ... } }` lets a generic
+     adapter (`Map<I: Iterator, F: Fn1>`) drive both the in-type and
+     out-type through `F::Arg` and `F::Output`.  v1 ships Fn1 (unary,
+     drives map/filter/take/enumerate) and Fn2 (binary, drives fold's
+     accumulator).  Higher arities ship when a combinator actually
+     wants one — Fn3+/zip stay out of v1. *)
+  let fn1_call =
+    { Ast.name = "call"; c_name = "call"; tparams = []; tbounds = [];
+      params = [
+        { Ast.pname = "self";
+          pty = Ast.TyConstPtr Ast.TySelf;
+          preg = None; is_mut = false };
+        { Ast.pname = "a";
+          pty = Ast.TyStruct { path = ["Self"; "Arg"]; args = [] };
+          preg = None; is_mut = false };
+      ];
+      ret_ty = Some (Ast.TyStruct { path = ["Self"; "Output"]; args = [] });
+      body = []; is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None;
+      must_use = false; escapes_hatch = false; pos }
+  in
+  let fn1_trait = {
+    Ast.trname = "Fn1"; trassoc = ["Arg"; "Output"]; trsupers = [];
+    trmethods = [ fn1_call ]; trdefaults = [];
+    trpos = pos; tris_pub = true;
+  } in
+  let fn2_call =
+    { Ast.name = "call"; c_name = "call"; tparams = []; tbounds = [];
+      params = [
+        { Ast.pname = "self";
+          pty = Ast.TyConstPtr Ast.TySelf;
+          preg = None; is_mut = false };
+        { Ast.pname = "a";
+          pty = Ast.TyStruct { path = ["Self"; "Arg1"]; args = [] };
+          preg = None; is_mut = false };
+        { Ast.pname = "b";
+          pty = Ast.TyStruct { path = ["Self"; "Arg2"]; args = [] };
+          preg = None; is_mut = false };
+      ];
+      ret_ty = Some (Ast.TyStruct { path = ["Self"; "Output"]; args = [] });
+      body = []; is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None;
+      must_use = false; escapes_hatch = false; pos }
+  in
+  let fn2_trait = {
+    Ast.trname = "Fn2"; trassoc = ["Arg1"; "Arg2"; "Output"]; trsupers = [];
+    trmethods = [ fn2_call ]; trdefaults = [];
+    trpos = pos; tris_pub = true;
+  } in
   (* `Eq` / `Clone` — prelude traits derivable via `@derive(Eq, Clone)`.
      By-value `self` (value types copy cheaply).  `ne` is a default in
      terms of `eq`.  `Clone::clone` returns a copy of self.  Primitive
@@ -7475,7 +7577,9 @@ let prelude_items () =
     Ast.Impl hashmap_impl;
     Ast.Module str_mod;
     Ast.Module sys_mod;
-    Ast.Trait iterator_trait; Ast.Trait eq_trait; Ast.Trait clone_trait;
+    Ast.Trait iterator_trait;
+    Ast.Trait fn1_trait; Ast.Trait fn2_trait;
+    Ast.Trait eq_trait; Ast.Trait clone_trait;
     Ast.Trait hash_trait;
     Ast.Trait display_trait; Ast.Trait debug_trait;
     Ast.Impl vec_iter_impl;
@@ -8784,7 +8888,7 @@ let check_program program : tprogram =
   let elab_one_fn ~tvar_bindings (path, (f : Ast.func), mangled) =
     let ctx0 = { (empty_ctx ~instances:mono_state) with
       global; structs = struct_index; enums = enum_index;
-      modules; scope = path; tparams = f.tparams;
+      modules; scope = path; tparams = f.tparams; tbounds = f.tbounds;
       tvar_bindings; fn_asts; aliases = flat.aliases;
       type_aliases = flat.type_aliases;
       ext_vars; ext_struct_fields;

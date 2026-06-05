@@ -5293,6 +5293,114 @@ let () =
        true
      with _ -> false);
 
+  (* ===== DR-017 Fn-trait prelude + mono-instance trait recognition =====
+
+     Two related ships bundled in one commit because they jointly unlock
+     the DR-015 lazy adapter pattern (`Map<I: Iterator, F: Fn1>`):
+
+     1. `type_impls_trait` (typecheck.ml:1166) used exact `List.mem` on
+        the (trait, target-path) registry, so a mono-instance receiver
+        like `VecIter_i32` failed to match the skeleton-keyed entry
+        `("Iterator", ["VecIter"])`.  Same fix the `for x in iter`
+        desugar already had — match via `Mono.is_instance_of`.  This
+        is a pre-existing bug; `<I: Iterator>` bound on any free fn
+        called with `v.iter()` errored "VecIter_i32 does not implement
+        Iterator" before this fix.
+
+     2. Fn1 / Fn2 traits land in the prelude (per DR-015 reality-check
+        2026-06-04: Fn = real per-arity trait with associated Arg /
+        Output types, not a generic-trait surface).  Body shape is
+        `trait FnN { type Arg{1..N}; type Output;
+        fn call(self-const-ptr, args...) -> Self::Output }`.  User
+        writes `impl Fn1 for AddOne { type Arg = int; type Output = int;
+        fn call(self-const-ptr, a: int) -> int { a + 1 } }` then can be
+        passed through a `<F: Fn1>`-bounded free fn or adapter
+        struct. *)
+
+  check_assert "DR-017: <I: Iterator> bound accepts mono Vec iterator"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn count_iter<I: Iterator>(mut it: I) -> int {\n\
+         \    let mut n: int = 0;\n\
+         \    for _x in it { n = n + 1; }\n\
+         \    n\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(10); v.push(20); v.push(30);\n\
+         \    println(count_iter(v.iter()));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-017: prelude Fn1 trait + assoc-type projection through bound"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          fn apply<F: Fn1>(f: F, x: F::Arg) -> F::Output { f.call(x) }\n\
+          fn main() {\n\
+         \    let a = AddOne { _tag: 0 };\n\
+         \    println(apply(a, 41));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-017: prelude Fn2 trait with two arg associated types"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Add { _tag: int }\n\
+          impl Fn2 for Add {\n\
+         \    type Arg1 = int;\n\
+         \    type Arg2 = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int, b: int) -> int { a + b }\n\
+          }\n\
+          fn apply2<F: Fn2>(f: F, x: F::Arg1, y: F::Arg2) -> F::Output {\n\
+         \    f.call(x, y)\n\
+          }\n\
+          fn main() {\n\
+         \    let f = Add { _tag: 0 };\n\
+         \    println(apply2(f, 13, 29));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-017: Map<I: Iterator, F: Fn1> lazy adapter"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          struct Map<I, F> { inner: I, f: F }\n\
+          impl<I: Iterator, F: Fn1> Iterator for Map<I, F> {\n\
+         \    type Item = F::Output;\n\
+         \    fn next(*self) -> Option<F::Output> {\n\
+         \        let v = try self.inner.next();\n\
+         \        Option::Some(self.f.call(v))\n\
+         \    }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(10); v.push(20); v.push(30);\n\
+         \    let m: Map<VecIter<int>, AddOne> =\n\
+         \        Map { inner: v.iter(), f: AddOne { _tag: 0 } };\n\
+         \    let mut acc: int = 0;\n\
+         \    for x in m { acc = acc + x; }\n\
+         \    println(acc);\n\
+          }\n");
+       true
+     with _ -> false);
+
   (* ===== Self-host bring-up Faza −1 — differential-harness dumps =====
 
      The three canonical dump forms are emitted from the OCaml exilc
