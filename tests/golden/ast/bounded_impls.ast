@@ -1,0 +1,13 @@
+;; exile-ast-dump v1 examples/bounded_impls.exl
+(trait Show (fn show pub (params (param self (const-ptr self))) (int i32) (body )))
+(trait Tag (fn tag pub (params (param self (const-ptr self))) (int i32) (body )))
+(struct Inner (fields (field x (int i32))))
+(impl Inner (trait Show) (fn show pub (params (param self (const-ptr (struct Inner)))) (int i32) (body (tail (field-access (var self) x)))))
+(impl Inner (trait Tag) (fn tag pub (params (param self (const-ptr (struct Inner)))) (int i32) (body (tail (binop * (field-access (var self) x) (int 10))))))
+(struct Box (tparams T) (fields (field v (struct T))))
+(impl Box (trait Show) (fn show pub (params (param self (const-ptr (struct-app Box (struct T))))) (int i32) (body (tail (binop + (method-call (field-access (var self) v) show ) (int 1))))))
+(struct Pair (tparams T) (fields (field a (struct T)) (field b (struct T))))
+(impl Pair (trait Show) (fn show pub (params (param self (const-ptr (struct-app Pair (struct T))))) (int i32) (body (tail (binop + (method-call (field-access (var self) a) show ) (method-call (field-access (var self) b) tag ))))))
+(struct Cell (tparams K V) (fields (field key (struct K)) (field val (struct V))))
+(impl Cell (trait Show) (fn show pub (params (param self (const-ptr (struct-app Cell (struct K) (struct V))))) (int i32) (body (tail (method-call (field-access (var self) val) show )))))
+(fn main (params ) void (body (let inner (struct-lit Inner (field x (int 41)))) (let boxed (struct-lit Box (field v (var inner)))) (expr-stmt (call println (method-call (var boxed) show ))) (let pair (struct-lit Pair (field a (struct-lit Inner (field x (int 3)))) (field b (struct-lit Inner (field x (int 5)))))) (expr-stmt (call println (method-call (var pair) show ))) (let cell (struct-lit Cell (field key (int 7)) (field val (struct-lit Inner (field x (int 100)))))) (expr-stmt (call println (method-call (var cell) show )))))

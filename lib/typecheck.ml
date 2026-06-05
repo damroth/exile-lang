@@ -5238,7 +5238,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
                 ~iassoc:ib.Ast.iassoc
                 ~trait_written ~methods:ib.Ast.iitems ~pos:ib.Ast.ipos
         in
-        (target_path, target_pub, ib.Ast.itparams,
+        (target_path, target_pub, ib.Ast.itparams, ib.Ast.itbounds,
          ib.Ast.iitems @ synthesised))
       flat.impls
   in
@@ -5246,7 +5246,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
      different impl blocks. *)
   let seen_methods = Hashtbl.create 16 in
   List.iter
-    (fun (target_path, _, _, methods) ->
+    (fun (target_path, _, _, _, methods) ->
       List.iter
         (fun (m : Ast.func) ->
           let key = (target_path, m.name) in
@@ -5261,7 +5261,7 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
   let virtual_modules =
     let seen = ref [] in
     List.filter_map
-      (fun (target_path, sis_pub, _, _) ->
+      (fun (target_path, sis_pub, _, _, _) ->
         if List.mem target_path !seen then None
         else (seen := target_path :: !seen;
               Some (target_path, sis_pub)))
@@ -5269,13 +5269,21 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
   in
   let impl_funcs =
     List.concat_map
-      (fun (target_path, _, itparams, methods) ->
+      (fun (target_path, _, itparams, itbounds, methods) ->
         List.map
           (fun (m : Ast.func) ->
             (* A generic impl's tparams become the method's own tparams,
                so the method is treated as a generic fn (inferred /
-               instantiated per concrete receiver at the call site). *)
-            let m = { m with Ast.tparams = itparams @ m.tparams } in
+               instantiated per concrete receiver at the call site).
+               Bounds on those tparams (`impl<T: Bound>`) also splice
+               into the method's tbounds — the existing
+               instantiation-time `type_impls_trait` check
+               (typecheck.ml:1267) then covers them with no separate
+               enforcement path. *)
+            let m = { m with
+              Ast.tparams = itparams @ m.tparams;
+              Ast.tbounds = itbounds @ m.tbounds;
+            } in
             let mangled = mangle target_path m.name in
             (target_path, m, mangled))
           methods)
@@ -5453,7 +5461,7 @@ let prelude_items () =
       None free_body
   in
   let alloc_impl = {
-    Ast.itparams = [];
+    Ast.itparams = []; itbounds = [];
     itrait = None;
     iassoc = [];
     itarget = ["Allocator"];
@@ -5805,7 +5813,7 @@ let prelude_items () =
       None push_int_body
   in
   let sb_impl = {
-    Ast.itparams = []; itrait = None; iassoc = [];
+    Ast.itparams = []; itbounds = []; itrait = None; iassoc = [];
     itarget = ["StringBuilder"];
     iitems = [
       with_capacity_method;
@@ -6038,7 +6046,7 @@ let prelude_items () =
       (Some string_struct_ann) build_body
   in
   let string_impl = {
-    Ast.itparams = []; itrait = None; iassoc = [];
+    Ast.itparams = []; itbounds = []; itrait = None; iassoc = [];
     itarget = ["String"];
     iitems = [
       with_str_method;
@@ -6086,7 +6094,7 @@ let prelude_items () =
       (Some Ast.TyBool) string_eq_body
   in
   let string_eq_impl = {
-    Ast.itparams = []; itrait = Some ["Eq"]; iassoc = [];
+    Ast.itparams = []; itbounds = []; itrait = Some ["Eq"]; iassoc = [];
     itarget = ["String"];
     iitems = [ string_eq_method ];
     ipos = pos;
@@ -6103,7 +6111,7 @@ let prelude_items () =
       (Some u32_t) string_hash_body
   in
   let string_hash_impl = {
-    Ast.itparams = []; itrait = Some ["Hash"]; iassoc = [];
+    Ast.itparams = []; itbounds = []; itrait = Some ["Hash"]; iassoc = [];
     itarget = ["String"];
     iitems = [ string_hash_method ];
     ipos = pos;
@@ -6126,7 +6134,7 @@ let prelude_items () =
       (Some string_struct_ann) string_clone_body
   in
   let string_clone_impl = {
-    Ast.itparams = []; itrait = Some ["Clone"]; iassoc = [];
+    Ast.itparams = []; itbounds = []; itrait = Some ["Clone"]; iassoc = [];
     itarget = ["String"];
     iitems = [ string_clone_method ];
     ipos = pos;
@@ -6385,7 +6393,7 @@ let prelude_items () =
             ("pos", u32_lit 0);
           ]; base = None; pos }), pos) ] in
   let vec_impl = {
-    Ast.itparams = ["T"]; itrait = None; iassoc = [];
+    Ast.itparams = ["T"]; itbounds = []; itrait = None; iassoc = [];
     itarget = ["Vec"];
     iitems = [
       vec_with_capacity_method;
@@ -6445,7 +6453,7 @@ let prelude_items () =
     must_use = false; escapes_hatch = false; pos;
   } in
   let vec_iter_impl = {
-    Ast.itparams = ["T"]; itrait = Some ["Iterator"];
+    Ast.itparams = ["T"]; itbounds = []; itrait = Some ["Iterator"];
     iassoc = [("Item", tvar "T")];
     itarget = ["VecIter"];
     iitems = [ vec_iter_next_method ];
@@ -7085,14 +7093,14 @@ let prelude_items () =
     must_use = false; escapes_hatch = false; pos;
   } in
   let hashmap_iter_impl = {
-    Ast.itparams = ["K"; "V"]; itrait = Some ["Iterator"];
+    Ast.itparams = ["K"; "V"]; itbounds = []; itrait = Some ["Iterator"];
     iassoc = [("Item", kv_tuple_ann)];
     itarget = ["HashMapIter"];
     iitems = [ hashmap_iter_next_method ];
     ipos = pos;
   } in
   let hashmap_impl = {
-    Ast.itparams = ["K"; "V"]; itrait = None; iassoc = [];
+    Ast.itparams = ["K"; "V"]; itbounds = []; itrait = None; iassoc = [];
     itarget = ["HashMap"];
     iitems = [
       hm_with_capacity_method;
@@ -7513,7 +7521,7 @@ let derive_eq_struct (s : Ast.struct_decl) : Ast.item =
     [ derive_field_param "self" (Ast.TyConstPtr target);
       derive_field_param "other" (Ast.TyConstPtr target) ]
     (Some Ast.TyBool) body pos in
-  Ast.Impl { itparams = []; itrait = Some ["Eq"]; iassoc = [];
+  Ast.Impl { itparams = []; itbounds = []; itrait = Some ["Eq"]; iassoc = [];
              itarget = [s.sname]; iitems = [m]; ipos = pos }
 
 let derive_eq_enum (e : Ast.enum_decl) : Ast.item =
@@ -7572,7 +7580,7 @@ let derive_eq_enum (e : Ast.enum_decl) : Ast.item =
     [ derive_field_param "self" (Ast.TyConstPtr target);
       derive_field_param "other" (Ast.TyConstPtr target) ]
     (Some Ast.TyBool) [ Ast.Tail outer_match ] pos in
-  Ast.Impl { itparams = []; itrait = Some ["Eq"]; iassoc = [];
+  Ast.Impl { itparams = []; itbounds = []; itrait = Some ["Eq"]; iassoc = [];
              itarget = [e.ename]; iitems = [m]; ipos = pos }
 
 (* `Clone` — field-wise deep copy mirroring `Eq` / `Hash` derive
@@ -7602,7 +7610,7 @@ let derive_clone_struct (s : Ast.struct_decl) : Ast.item =
   let m = derive_mk_method "clone"
     [ derive_field_param "self" (Ast.TyConstPtr target) ]
     (Some target) [ Ast.Tail body ] pos in
-  Ast.Impl { itparams = []; itrait = Some ["Clone"]; iassoc = [];
+  Ast.Impl { itparams = []; itbounds = []; itrait = Some ["Clone"]; iassoc = [];
              itarget = [s.sname]; iitems = [m]; ipos = pos }
 
 let derive_clone_enum (e : Ast.enum_decl) : Ast.item =
@@ -7652,7 +7660,7 @@ let derive_clone_enum (e : Ast.enum_decl) : Ast.item =
   let m = derive_mk_method "clone"
     [ derive_field_param "self" (Ast.TyConstPtr target) ]
     (Some target) [ Ast.Tail match_expr ] pos in
-  Ast.Impl { itparams = []; itrait = Some ["Clone"]; iassoc = [];
+  Ast.Impl { itparams = []; itbounds = []; itrait = Some ["Clone"]; iassoc = [];
              itarget = [e.ename]; iitems = [m]; ipos = pos }
 
 (* Hash — `fn hash(self) -> u32`.  Multiplicative fold `acc*31 + f.hash()`
@@ -7682,7 +7690,7 @@ let derive_hash_struct (s : Ast.struct_decl) : Ast.item =
   let m = derive_mk_method "hash"
     [ derive_field_param "self" (Ast.TyConstPtr target) ]
     (Some derive_u32_ann) [ Ast.Tail body ] pos in
-  Ast.Impl { itparams = []; itrait = Some ["Hash"]; iassoc = [];
+  Ast.Impl { itparams = []; itbounds = []; itrait = Some ["Hash"]; iassoc = [];
              itarget = [s.sname]; iitems = [m]; ipos = pos }
 
 let derive_hash_enum (e : Ast.enum_decl) : Ast.item =
@@ -7717,7 +7725,7 @@ let derive_hash_enum (e : Ast.enum_decl) : Ast.item =
   let m = derive_mk_method "hash"
     [ derive_field_param "self" (Ast.TyConstPtr target) ]
     (Some derive_u32_ann) [ Ast.Tail match_e ] pos in
-  Ast.Impl { itparams = []; itrait = Some ["Hash"]; iassoc = [];
+  Ast.Impl { itparams = []; itbounds = []; itrait = Some ["Hash"]; iassoc = [];
              itarget = [e.ename]; iitems = [m]; ipos = pos }
 
 (* @derive(Debug) helpers — writer-pattern body synthesis.  Output
@@ -7811,7 +7819,7 @@ let derive_debug_struct (s : Ast.struct_decl) : Ast.item =
         @ [ derive_debug_push_byte 125 pos ]  (* '}' *)
   in
   let m = derive_debug_mk_fmt target body pos in
-  Ast.Impl { itparams = []; itrait = Some ["Debug"]; iassoc = [];
+  Ast.Impl { itparams = []; itbounds = []; itrait = Some ["Debug"]; iassoc = [];
              itarget = [s.sname]; iitems = [m]; ipos = pos }
 
 let derive_debug_enum (e : Ast.enum_decl) : Ast.item =
@@ -7872,7 +7880,7 @@ let derive_debug_enum (e : Ast.enum_decl) : Ast.item =
           arms; pos }) ]
   in
   let m = derive_debug_mk_fmt target body pos in
-  Ast.Impl { itparams = []; itrait = Some ["Debug"]; iassoc = [];
+  Ast.Impl { itparams = []; itbounds = []; itrait = Some ["Debug"]; iassoc = [];
              itarget = [e.ename]; iitems = [m]; ipos = pos }
 
 (* DR-009 — expand each `view Name(p: T) -> Case1 | Case2 { body }` into

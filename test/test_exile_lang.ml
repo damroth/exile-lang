@@ -5201,6 +5201,98 @@ let () =
      fn main() {}\n"
     "method 'echo' has 0 type parameter(s) but trait 'Boxed' declares 1";
 
+  (* ===== DR-016 bounded generic impls =====
+
+     `impl<T: Bound>` was a gap in the trait system: only free fns
+     could carry tparam bounds, so a generic impl over a wrapper
+     couldn't require its T to satisfy a trait.  This blocked the
+     final lazy-iterator pattern (`impl<I: Iterator, F: Fn1>
+     Iterator for Map<I, F>`).  The fix is purely structural — the
+     parser already had `parse_tparams_bounded`, the bound check
+     already fired at instantiation time on `func.tbounds`; this
+     adds `impl_block.itbounds` and splices it into the lifted
+     method's tbounds so the same check covers both. *)
+
+  check_assert "DR-016: impl<T: Bound> body can call trait method on T"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "trait Show { fn show(*const self) -> int; }\n\
+          struct Inner { x: int }\n\
+          impl Show for Inner { fn show(*const self) -> int { self.x } }\n\
+          struct Box<T> { v: T }\n\
+          impl<T: Show> Show for Box<T> {\n\
+         \    fn show(*const self) -> int { self.v.show() + 1 }\n\
+          }\n\
+          fn main() {\n\
+         \    let b = Box { v: Inner { x: 41 } };\n\
+         \    println(b.show());\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-016: multiple bounds on one tparam (T: A + B)"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "trait Show { fn show(*const self) -> int; }\n\
+          trait Tag { fn tag(*const self) -> int; }\n\
+          struct Foo { x: int }\n\
+          impl Show for Foo { fn show(*const self) -> int { self.x } }\n\
+          impl Tag for Foo { fn tag(*const self) -> int { 99 } }\n\
+          struct Pair<T> { a: T, b: T }\n\
+          impl<T: Show + Tag> Show for Pair<T> {\n\
+         \    fn show(*const self) -> int { self.a.show() + self.b.tag() }\n\
+          }\n\
+          fn main() {\n\
+         \    let p = Pair { a: Foo { x: 1 }, b: Foo { x: 2 } };\n\
+         \    println(p.show());\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "DR-016: bound rejects type that does not implement the trait"
+    "trait Show { fn show(*const self) -> int; }\n\
+     struct Bare { x: int }\n\
+     struct Box<T> { v: T }\n\
+     impl<T: Show> Show for Box<T> {\n\
+    \    fn show(*const self) -> int { self.v.show() + 1 }\n\
+     }\n\
+     fn main() {\n\
+    \    let b = Box { v: Bare { x: 7 } };\n\
+    \    println(b.show());\n\
+     }\n"
+    "type 'Bare' does not implement trait 'Show' (required by bound 'T: Show' on 'show')";
+
+  check_assert "DR-016: impl<T> without bound still compiles (regression)"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Box<T> { v: T }\n\
+          impl<T> Box<T> {\n\
+         \    pub fn into_inner(self) -> T { self.v }\n\
+          }\n\
+          fn main() {\n\
+         \    let b = Box { v: 42 };\n\
+         \    println(b.into_inner());\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-016: bound on one of multiple impl tparams"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "trait Show { fn show(*const self) -> int; }\n\
+          struct N { v: int }\n\
+          impl Show for N { fn show(*const self) -> int { self.v } }\n\
+          struct Cell<K, V> { key: K, val: V }\n\
+          impl<K, V: Show> Show for Cell<K, V> {\n\
+         \    fn show(*const self) -> int { self.val.show() }\n\
+          }\n\
+          fn main() {\n\
+         \    let c = Cell { key: 7, val: N { v: 100 } };\n\
+         \    println(c.show());\n\
+          }\n");
+       true
+     with _ -> false);
+
   (* ===== Self-host bring-up Faza −1 — differential-harness dumps =====
 
      The three canonical dump forms are emitted from the OCaml exilc

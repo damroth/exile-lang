@@ -1921,7 +1921,7 @@ and parse_impl_block s =
      (mono) parses with no tparams and no target args.
      `impl Trait for Foo { ... }` — trait impl: the first type is the
      trait, `for` introduces the target. *)
-  let itparams = parse_tparams s in
+  let (itparams, itbounds) = parse_tparams_bounded s in
   let first_ty = parse_type s in
   (* Disambiguate `impl Foo { ... }` (inherent) from `impl Trait for Foo
      { ... }` (trait impl) by the presence of `for`. *)
@@ -2011,7 +2011,8 @@ and parse_impl_block s =
             { p with Ast.pty = replace_self p.pty }) m.params })
       methods
   in
-  Ast.{ itparams; itrait; iassoc; itarget = target_path; iitems = methods;
+  Ast.{ itparams; itbounds; itrait; iassoc;
+        itarget = target_path; iitems = methods;
         ipos = pos }
 
 (* `trait Name { fn m(self, ...) -> R; ... }` — method signatures.  A

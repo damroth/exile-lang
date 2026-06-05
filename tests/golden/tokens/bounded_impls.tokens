@@ -1,0 +1,327 @@
+;; exile-tokens-dump v1 examples/bounded_impls.exl
+Trait @examples/bounded_impls.exl:25:1
+(Ident Show) @examples/bounded_impls.exl:25:7
+LBrace @examples/bounded_impls.exl:25:12
+Fn @examples/bounded_impls.exl:26:5
+(Ident show) @examples/bounded_impls.exl:26:8
+LParen @examples/bounded_impls.exl:26:12
+Star @examples/bounded_impls.exl:26:13
+Const @examples/bounded_impls.exl:26:14
+(Ident self) @examples/bounded_impls.exl:26:20
+RParen @examples/bounded_impls.exl:26:24
+Arrow @examples/bounded_impls.exl:26:26
+(Ident int) @examples/bounded_impls.exl:26:29
+Semicolon @examples/bounded_impls.exl:26:32
+RBrace @examples/bounded_impls.exl:27:1
+Trait @examples/bounded_impls.exl:29:1
+(Ident Tag) @examples/bounded_impls.exl:29:7
+LBrace @examples/bounded_impls.exl:29:11
+Fn @examples/bounded_impls.exl:30:5
+(Ident tag) @examples/bounded_impls.exl:30:8
+LParen @examples/bounded_impls.exl:30:11
+Star @examples/bounded_impls.exl:30:12
+Const @examples/bounded_impls.exl:30:13
+(Ident self) @examples/bounded_impls.exl:30:19
+RParen @examples/bounded_impls.exl:30:23
+Arrow @examples/bounded_impls.exl:30:25
+(Ident int) @examples/bounded_impls.exl:30:28
+Semicolon @examples/bounded_impls.exl:30:31
+RBrace @examples/bounded_impls.exl:31:1
+Struct @examples/bounded_impls.exl:35:1
+(Ident Inner) @examples/bounded_impls.exl:35:8
+LBrace @examples/bounded_impls.exl:35:14
+(Ident x) @examples/bounded_impls.exl:35:16
+Colon @examples/bounded_impls.exl:35:17
+(Ident int) @examples/bounded_impls.exl:35:19
+RBrace @examples/bounded_impls.exl:35:23
+Impl @examples/bounded_impls.exl:37:1
+(Ident Show) @examples/bounded_impls.exl:37:6
+For @examples/bounded_impls.exl:37:11
+(Ident Inner) @examples/bounded_impls.exl:37:15
+LBrace @examples/bounded_impls.exl:37:21
+Fn @examples/bounded_impls.exl:38:5
+(Ident show) @examples/bounded_impls.exl:38:8
+LParen @examples/bounded_impls.exl:38:12
+Star @examples/bounded_impls.exl:38:13
+Const @examples/bounded_impls.exl:38:14
+(Ident self) @examples/bounded_impls.exl:38:20
+RParen @examples/bounded_impls.exl:38:24
+Arrow @examples/bounded_impls.exl:38:26
+(Ident int) @examples/bounded_impls.exl:38:29
+LBrace @examples/bounded_impls.exl:38:33
+(Ident self) @examples/bounded_impls.exl:38:35
+Dot @examples/bounded_impls.exl:38:39
+(Ident x) @examples/bounded_impls.exl:38:40
+RBrace @examples/bounded_impls.exl:38:42
+RBrace @examples/bounded_impls.exl:39:1
+Impl @examples/bounded_impls.exl:41:1
+(Ident Tag) @examples/bounded_impls.exl:41:6
+For @examples/bounded_impls.exl:41:10
+(Ident Inner) @examples/bounded_impls.exl:41:14
+LBrace @examples/bounded_impls.exl:41:20
+Fn @examples/bounded_impls.exl:42:5
+(Ident tag) @examples/bounded_impls.exl:42:8
+LParen @examples/bounded_impls.exl:42:11
+Star @examples/bounded_impls.exl:42:12
+Const @examples/bounded_impls.exl:42:13
+(Ident self) @examples/bounded_impls.exl:42:19
+RParen @examples/bounded_impls.exl:42:23
+Arrow @examples/bounded_impls.exl:42:25
+(Ident int) @examples/bounded_impls.exl:42:28
+LBrace @examples/bounded_impls.exl:42:32
+(Ident self) @examples/bounded_impls.exl:42:34
+Dot @examples/bounded_impls.exl:42:38
+(Ident x) @examples/bounded_impls.exl:42:39
+Star @examples/bounded_impls.exl:42:41
+(Int 10) @examples/bounded_impls.exl:42:43
+RBrace @examples/bounded_impls.exl:42:46
+RBrace @examples/bounded_impls.exl:43:1
+Struct @examples/bounded_impls.exl:51:1
+(Ident Box) @examples/bounded_impls.exl:51:8
+Lt @examples/bounded_impls.exl:51:11
+(Ident T) @examples/bounded_impls.exl:51:12
+Gt @examples/bounded_impls.exl:51:13
+LBrace @examples/bounded_impls.exl:51:15
+(Ident v) @examples/bounded_impls.exl:51:17
+Colon @examples/bounded_impls.exl:51:18
+(Ident T) @examples/bounded_impls.exl:51:20
+RBrace @examples/bounded_impls.exl:51:22
+Impl @examples/bounded_impls.exl:53:1
+Lt @examples/bounded_impls.exl:53:5
+(Ident T) @examples/bounded_impls.exl:53:6
+Colon @examples/bounded_impls.exl:53:7
+(Ident Show) @examples/bounded_impls.exl:53:9
+Gt @examples/bounded_impls.exl:53:13
+(Ident Show) @examples/bounded_impls.exl:53:15
+For @examples/bounded_impls.exl:53:20
+(Ident Box) @examples/bounded_impls.exl:53:24
+Lt @examples/bounded_impls.exl:53:27
+(Ident T) @examples/bounded_impls.exl:53:28
+Gt @examples/bounded_impls.exl:53:29
+LBrace @examples/bounded_impls.exl:53:31
+Fn @examples/bounded_impls.exl:54:5
+(Ident show) @examples/bounded_impls.exl:54:8
+LParen @examples/bounded_impls.exl:54:12
+Star @examples/bounded_impls.exl:54:13
+Const @examples/bounded_impls.exl:54:14
+(Ident self) @examples/bounded_impls.exl:54:20
+RParen @examples/bounded_impls.exl:54:24
+Arrow @examples/bounded_impls.exl:54:26
+(Ident int) @examples/bounded_impls.exl:54:29
+LBrace @examples/bounded_impls.exl:54:33
+(Ident self) @examples/bounded_impls.exl:54:35
+Dot @examples/bounded_impls.exl:54:39
+(Ident v) @examples/bounded_impls.exl:54:40
+Dot @examples/bounded_impls.exl:54:41
+(Ident show) @examples/bounded_impls.exl:54:42
+LParen @examples/bounded_impls.exl:54:46
+RParen @examples/bounded_impls.exl:54:47
+Plus @examples/bounded_impls.exl:54:49
+(Int 1) @examples/bounded_impls.exl:54:51
+RBrace @examples/bounded_impls.exl:54:53
+RBrace @examples/bounded_impls.exl:55:1
+Struct @examples/bounded_impls.exl:63:1
+(Ident Pair) @examples/bounded_impls.exl:63:8
+Lt @examples/bounded_impls.exl:63:12
+(Ident T) @examples/bounded_impls.exl:63:13
+Gt @examples/bounded_impls.exl:63:14
+LBrace @examples/bounded_impls.exl:63:16
+(Ident a) @examples/bounded_impls.exl:63:18
+Colon @examples/bounded_impls.exl:63:19
+(Ident T) @examples/bounded_impls.exl:63:21
+Comma @examples/bounded_impls.exl:63:22
+(Ident b) @examples/bounded_impls.exl:63:24
+Colon @examples/bounded_impls.exl:63:25
+(Ident T) @examples/bounded_impls.exl:63:27
+RBrace @examples/bounded_impls.exl:63:29
+Impl @examples/bounded_impls.exl:65:1
+Lt @examples/bounded_impls.exl:65:5
+(Ident T) @examples/bounded_impls.exl:65:6
+Colon @examples/bounded_impls.exl:65:7
+(Ident Show) @examples/bounded_impls.exl:65:9
+Plus @examples/bounded_impls.exl:65:14
+(Ident Tag) @examples/bounded_impls.exl:65:16
+Gt @examples/bounded_impls.exl:65:19
+(Ident Show) @examples/bounded_impls.exl:65:21
+For @examples/bounded_impls.exl:65:26
+(Ident Pair) @examples/bounded_impls.exl:65:30
+Lt @examples/bounded_impls.exl:65:34
+(Ident T) @examples/bounded_impls.exl:65:35
+Gt @examples/bounded_impls.exl:65:36
+LBrace @examples/bounded_impls.exl:65:38
+Fn @examples/bounded_impls.exl:66:5
+(Ident show) @examples/bounded_impls.exl:66:8
+LParen @examples/bounded_impls.exl:66:12
+Star @examples/bounded_impls.exl:66:13
+Const @examples/bounded_impls.exl:66:14
+(Ident self) @examples/bounded_impls.exl:66:20
+RParen @examples/bounded_impls.exl:66:24
+Arrow @examples/bounded_impls.exl:66:26
+(Ident int) @examples/bounded_impls.exl:66:29
+LBrace @examples/bounded_impls.exl:66:33
+(Ident self) @examples/bounded_impls.exl:66:35
+Dot @examples/bounded_impls.exl:66:39
+(Ident a) @examples/bounded_impls.exl:66:40
+Dot @examples/bounded_impls.exl:66:41
+(Ident show) @examples/bounded_impls.exl:66:42
+LParen @examples/bounded_impls.exl:66:46
+RParen @examples/bounded_impls.exl:66:47
+Plus @examples/bounded_impls.exl:66:49
+(Ident self) @examples/bounded_impls.exl:66:51
+Dot @examples/bounded_impls.exl:66:55
+(Ident b) @examples/bounded_impls.exl:66:56
+Dot @examples/bounded_impls.exl:66:57
+(Ident tag) @examples/bounded_impls.exl:66:58
+LParen @examples/bounded_impls.exl:66:61
+RParen @examples/bounded_impls.exl:66:62
+RBrace @examples/bounded_impls.exl:66:64
+RBrace @examples/bounded_impls.exl:67:1
+Struct @examples/bounded_impls.exl:75:1
+(Ident Cell) @examples/bounded_impls.exl:75:8
+Lt @examples/bounded_impls.exl:75:12
+(Ident K) @examples/bounded_impls.exl:75:13
+Comma @examples/bounded_impls.exl:75:14
+(Ident V) @examples/bounded_impls.exl:75:16
+Gt @examples/bounded_impls.exl:75:17
+LBrace @examples/bounded_impls.exl:75:19
+(Ident key) @examples/bounded_impls.exl:75:21
+Colon @examples/bounded_impls.exl:75:24
+(Ident K) @examples/bounded_impls.exl:75:26
+Comma @examples/bounded_impls.exl:75:27
+(Ident val) @examples/bounded_impls.exl:75:29
+Colon @examples/bounded_impls.exl:75:32
+(Ident V) @examples/bounded_impls.exl:75:34
+RBrace @examples/bounded_impls.exl:75:36
+Impl @examples/bounded_impls.exl:77:1
+Lt @examples/bounded_impls.exl:77:5
+(Ident K) @examples/bounded_impls.exl:77:6
+Comma @examples/bounded_impls.exl:77:7
+(Ident V) @examples/bounded_impls.exl:77:9
+Colon @examples/bounded_impls.exl:77:10
+(Ident Show) @examples/bounded_impls.exl:77:12
+Gt @examples/bounded_impls.exl:77:16
+(Ident Show) @examples/bounded_impls.exl:77:18
+For @examples/bounded_impls.exl:77:23
+(Ident Cell) @examples/bounded_impls.exl:77:27
+Lt @examples/bounded_impls.exl:77:31
+(Ident K) @examples/bounded_impls.exl:77:32
+Comma @examples/bounded_impls.exl:77:33
+(Ident V) @examples/bounded_impls.exl:77:35
+Gt @examples/bounded_impls.exl:77:36
+LBrace @examples/bounded_impls.exl:77:38
+Fn @examples/bounded_impls.exl:78:5
+(Ident show) @examples/bounded_impls.exl:78:8
+LParen @examples/bounded_impls.exl:78:12
+Star @examples/bounded_impls.exl:78:13
+Const @examples/bounded_impls.exl:78:14
+(Ident self) @examples/bounded_impls.exl:78:20
+RParen @examples/bounded_impls.exl:78:24
+Arrow @examples/bounded_impls.exl:78:26
+(Ident int) @examples/bounded_impls.exl:78:29
+LBrace @examples/bounded_impls.exl:78:33
+(Ident self) @examples/bounded_impls.exl:78:35
+Dot @examples/bounded_impls.exl:78:39
+(Ident val) @examples/bounded_impls.exl:78:40
+Dot @examples/bounded_impls.exl:78:43
+(Ident show) @examples/bounded_impls.exl:78:44
+LParen @examples/bounded_impls.exl:78:48
+RParen @examples/bounded_impls.exl:78:49
+RBrace @examples/bounded_impls.exl:78:51
+RBrace @examples/bounded_impls.exl:79:1
+Fn @examples/bounded_impls.exl:81:1
+(Ident main) @examples/bounded_impls.exl:81:4
+LParen @examples/bounded_impls.exl:81:8
+RParen @examples/bounded_impls.exl:81:9
+LBrace @examples/bounded_impls.exl:81:11
+Let @examples/bounded_impls.exl:82:5
+(Ident inner) @examples/bounded_impls.exl:82:9
+Eq @examples/bounded_impls.exl:82:15
+(Ident Inner) @examples/bounded_impls.exl:82:17
+LBrace @examples/bounded_impls.exl:82:23
+(Ident x) @examples/bounded_impls.exl:82:25
+Colon @examples/bounded_impls.exl:82:26
+(Int 41) @examples/bounded_impls.exl:82:28
+RBrace @examples/bounded_impls.exl:82:31
+Semicolon @examples/bounded_impls.exl:82:32
+Let @examples/bounded_impls.exl:85:5
+(Ident boxed) @examples/bounded_impls.exl:85:9
+Eq @examples/bounded_impls.exl:85:15
+(Ident Box) @examples/bounded_impls.exl:85:17
+LBrace @examples/bounded_impls.exl:85:21
+(Ident v) @examples/bounded_impls.exl:85:23
+Colon @examples/bounded_impls.exl:85:24
+(Ident inner) @examples/bounded_impls.exl:85:26
+RBrace @examples/bounded_impls.exl:85:32
+Semicolon @examples/bounded_impls.exl:85:33
+(Ident println) @examples/bounded_impls.exl:86:5
+LParen @examples/bounded_impls.exl:86:12
+(Ident boxed) @examples/bounded_impls.exl:86:13
+Dot @examples/bounded_impls.exl:86:18
+(Ident show) @examples/bounded_impls.exl:86:19
+LParen @examples/bounded_impls.exl:86:23
+RParen @examples/bounded_impls.exl:86:24
+RParen @examples/bounded_impls.exl:86:25
+Semicolon @examples/bounded_impls.exl:86:26
+Let @examples/bounded_impls.exl:89:5
+(Ident pair) @examples/bounded_impls.exl:89:9
+Eq @examples/bounded_impls.exl:89:14
+(Ident Pair) @examples/bounded_impls.exl:89:16
+LBrace @examples/bounded_impls.exl:89:21
+(Ident a) @examples/bounded_impls.exl:89:23
+Colon @examples/bounded_impls.exl:89:24
+(Ident Inner) @examples/bounded_impls.exl:89:26
+LBrace @examples/bounded_impls.exl:89:32
+(Ident x) @examples/bounded_impls.exl:89:34
+Colon @examples/bounded_impls.exl:89:35
+(Int 3) @examples/bounded_impls.exl:89:37
+RBrace @examples/bounded_impls.exl:89:39
+Comma @examples/bounded_impls.exl:89:40
+(Ident b) @examples/bounded_impls.exl:89:42
+Colon @examples/bounded_impls.exl:89:43
+(Ident Inner) @examples/bounded_impls.exl:89:45
+LBrace @examples/bounded_impls.exl:89:51
+(Ident x) @examples/bounded_impls.exl:89:53
+Colon @examples/bounded_impls.exl:89:54
+(Int 5) @examples/bounded_impls.exl:89:56
+RBrace @examples/bounded_impls.exl:89:58
+RBrace @examples/bounded_impls.exl:89:60
+Semicolon @examples/bounded_impls.exl:89:61
+(Ident println) @examples/bounded_impls.exl:90:5
+LParen @examples/bounded_impls.exl:90:12
+(Ident pair) @examples/bounded_impls.exl:90:13
+Dot @examples/bounded_impls.exl:90:17
+(Ident show) @examples/bounded_impls.exl:90:18
+LParen @examples/bounded_impls.exl:90:22
+RParen @examples/bounded_impls.exl:90:23
+RParen @examples/bounded_impls.exl:90:24
+Semicolon @examples/bounded_impls.exl:90:25
+Let @examples/bounded_impls.exl:93:5
+(Ident cell) @examples/bounded_impls.exl:93:9
+Eq @examples/bounded_impls.exl:93:14
+(Ident Cell) @examples/bounded_impls.exl:93:16
+LBrace @examples/bounded_impls.exl:93:21
+(Ident key) @examples/bounded_impls.exl:93:23
+Colon @examples/bounded_impls.exl:93:26
+(Int 7) @examples/bounded_impls.exl:93:28
+Comma @examples/bounded_impls.exl:93:29
+(Ident val) @examples/bounded_impls.exl:93:31
+Colon @examples/bounded_impls.exl:93:34
+(Ident Inner) @examples/bounded_impls.exl:93:36
+LBrace @examples/bounded_impls.exl:93:42
+(Ident x) @examples/bounded_impls.exl:93:44
+Colon @examples/bounded_impls.exl:93:45
+(Int 100) @examples/bounded_impls.exl:93:47
+RBrace @examples/bounded_impls.exl:93:51
+RBrace @examples/bounded_impls.exl:93:53
+Semicolon @examples/bounded_impls.exl:93:54
+(Ident println) @examples/bounded_impls.exl:94:5
+LParen @examples/bounded_impls.exl:94:12
+(Ident cell) @examples/bounded_impls.exl:94:13
+Dot @examples/bounded_impls.exl:94:17
+(Ident show) @examples/bounded_impls.exl:94:18
+LParen @examples/bounded_impls.exl:94:22
+RParen @examples/bounded_impls.exl:94:23
+RParen @examples/bounded_impls.exl:94:24
+Semicolon @examples/bounded_impls.exl:94:25
+RBrace @examples/bounded_impls.exl:95:1
+Eof @examples/bounded_impls.exl:96:1

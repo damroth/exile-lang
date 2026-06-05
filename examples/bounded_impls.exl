@@ -1,0 +1,95 @@
+// Bounded generic impls (DR-016).
+//
+// An `impl` over a generic type can constrain its tparams with trait
+// bounds — same shape as `fn f<T: Bound>(...)` but on `impl<T: Bound>`.
+//
+//   impl<T: Show> Show for Box<T> {
+//       fn show(*const self) -> int { self.v.show() + 1 }
+//   }
+//
+// The body can call any method from `T`'s bound traits (`self.v.show()`
+// dispatches because the impl declared `T: Show`).  At instantiation
+// time the compiler checks the concrete T satisfies every bound; the
+// check sits in the same code path as `fn`-tparam bound enforcement
+// (typecheck.ml:1267), so the error message is identical:
+//
+//   error: type 'Bare' does not implement trait 'Show'
+//          (required by bound 'T: Show' on 'show')
+//
+// This is the keystone for DR-015 lazy iterator combinators — the
+// adapter struct's `impl<I: Iterator, F: Fn1> Iterator for Map<I, F>`
+// shape needs exactly this feature, and the dot-method chain
+// (`.map(f).filter(p)`) already shipped with DR-014 generic trait
+// methods.
+
+trait Show {
+    fn show(*const self) -> int;
+}
+
+trait Tag {
+    fn tag(*const self) -> int;
+}
+
+// Concrete `Inner` implements both Show and Tag.
+
+struct Inner { x: int }
+
+impl Show for Inner {
+    fn show(*const self) -> int { self.x }
+}
+
+impl Tag for Inner {
+    fn tag(*const self) -> int { self.x * 10 }
+}
+
+// 1. Single-bound impl — `T: Show`.
+//
+// The body calls `self.v.show()`, which only typechecks because the
+// impl declared the bound.  Drop the bound and the call errors with
+// `no method 'show' on T`.
+
+struct Box<T> { v: T }
+
+impl<T: Show> Show for Box<T> {
+    fn show(*const self) -> int { self.v.show() + 1 }
+}
+
+// 2. Multi-bound impl — `T: Show + Tag`.
+//
+// Same machinery, two bounds parsed as `+`-separated trait paths.
+// Both bounds are checked at instantiation; the body uses methods
+// from each.
+
+struct Pair<T> { a: T, b: T }
+
+impl<T: Show + Tag> Show for Pair<T> {
+    fn show(*const self) -> int { self.a.show() + self.b.tag() }
+}
+
+// 3. Bound on one of multiple tparams.
+//
+// `impl<K, V: Show>` — `K` is unconstrained, only `V` has a bound.
+// Useful when the wrapper is generic over a key/value pair and only
+// one side needs to implement something.
+
+struct Cell<K, V> { key: K, val: V }
+
+impl<K, V: Show> Show for Cell<K, V> {
+    fn show(*const self) -> int { self.val.show() }
+}
+
+fn main() {
+    let inner = Inner { x: 41 };
+
+    // 1. Box<Inner> — Inner: Show is satisfied, the call chains.
+    let boxed = Box { v: inner };
+    println(boxed.show());              // 42 (41 + 1)
+
+    // 2. Pair<Inner> — Inner: Show + Tag both satisfied.
+    let pair = Pair { a: Inner { x: 3 }, b: Inner { x: 5 } };
+    println(pair.show());               // 3 + 5*10 = 53
+
+    // 3. Cell<int, Inner> — only V: Show needed, K stays unconstrained.
+    let cell = Cell { key: 7, val: Inner { x: 100 } };
+    println(cell.show());               // 100
+}

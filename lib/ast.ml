@@ -606,6 +606,15 @@ and module_decl = {
 and impl_block = {
   itparams : string list;    (* `<A, B>` after `impl` — generic impl over a
                                 generic struct; [] for a mono-struct impl *)
+  itbounds : (string * string list) list;
+                             (* `impl<T: A + B>` — trait bounds on the
+                                impl's tparams, one entry per bound (so
+                                `T: A + B` yields two).  Same shape as
+                                `func.tbounds`; at method-lift time these
+                                are spliced into each method's `tbounds`
+                                so the existing instantiation-time
+                                `type_impls_trait` check covers them
+                                without a separate enforcement path. *)
   itrait : string list option;
                              (* `impl Trait for Foo` carries `Some
                                 ["Trait"]`; a plain inherent `impl Foo`
