@@ -1,0 +1,6 @@
+;; exile-ast-dump v1 examples/closures_a2.exl
+(fn run_unary (tparams F) (params (param f (struct F)) (param x (int i32))) (int i32) (body (tail (call f (var x)))))
+(fn add_base (tparams F) (params (param f (struct F)) (param x (int i32))) (int i32) (body (tail (call f (var x)))))
+(fn caller (params (param base (int i32))) (int i32) (body (let bump (lambda ((param x (int i32))) (int i32) (binop + (var x) (var base)))) (tail (call add_base (var bump) (int 5)))))
+(fn run_binary (tparams F) (params (param f (struct F)) (param x (int i32)) (param y (int i32))) (int i32) (body (tail (call f (var x) (var y)))))
+(fn main (params ) void (body (let t (ty (int i32)) (int 10)) (let add_t (lambda ((param x (int i32))) (int i32) (binop + (var x) (var t)))) (expr-stmt (call println (call run_unary (var add_t) (int 5)))) (let a (ty (int i32)) (int 100)) (let b (ty (int i32)) (int 7)) (let combine (lambda ((param x (int i32))) (int i32) (binop + (binop + (var x) (var a)) (var b)))) (expr-stmt (call println (call run_unary (var combine) (int 1)))) (expr-stmt (call println (call caller (int 50)))) (let base (ty (int i32)) (int 1000)) (let bin (lambda ((param x (int i32)) (param y (int i32))) (int i32) (binop + (binop + (var x) (var y)) (var base)))) (expr-stmt (call println (call run_binary (var bin) (int 3) (int 4))))))

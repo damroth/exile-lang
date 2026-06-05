@@ -1,0 +1,249 @@
+;; exile-tokens-dump v1 examples/closures_a2.exl
+Fn @examples/closures_a2.exl:40:1
+(Ident run_unary) @examples/closures_a2.exl:40:4
+Lt @examples/closures_a2.exl:40:13
+(Ident F) @examples/closures_a2.exl:40:14
+Colon @examples/closures_a2.exl:40:15
+Pipe @examples/closures_a2.exl:40:17
+(Ident int) @examples/closures_a2.exl:40:18
+Pipe @examples/closures_a2.exl:40:21
+Arrow @examples/closures_a2.exl:40:22
+(Ident int) @examples/closures_a2.exl:40:24
+Gt @examples/closures_a2.exl:40:27
+LParen @examples/closures_a2.exl:40:28
+(Ident f) @examples/closures_a2.exl:40:29
+Colon @examples/closures_a2.exl:40:30
+(Ident F) @examples/closures_a2.exl:40:32
+Comma @examples/closures_a2.exl:40:33
+(Ident x) @examples/closures_a2.exl:40:35
+Colon @examples/closures_a2.exl:40:36
+(Ident int) @examples/closures_a2.exl:40:38
+RParen @examples/closures_a2.exl:40:41
+Arrow @examples/closures_a2.exl:40:43
+(Ident int) @examples/closures_a2.exl:40:46
+LBrace @examples/closures_a2.exl:40:50
+(Ident f) @examples/closures_a2.exl:40:52
+LParen @examples/closures_a2.exl:40:53
+(Ident x) @examples/closures_a2.exl:40:54
+RParen @examples/closures_a2.exl:40:55
+RBrace @examples/closures_a2.exl:40:57
+Fn @examples/closures_a2.exl:52:1
+(Ident add_base) @examples/closures_a2.exl:52:4
+Lt @examples/closures_a2.exl:52:12
+(Ident F) @examples/closures_a2.exl:52:13
+Colon @examples/closures_a2.exl:52:14
+Pipe @examples/closures_a2.exl:52:16
+(Ident int) @examples/closures_a2.exl:52:17
+Pipe @examples/closures_a2.exl:52:20
+Arrow @examples/closures_a2.exl:52:21
+(Ident int) @examples/closures_a2.exl:52:23
+Gt @examples/closures_a2.exl:52:26
+LParen @examples/closures_a2.exl:52:27
+(Ident f) @examples/closures_a2.exl:52:28
+Colon @examples/closures_a2.exl:52:29
+(Ident F) @examples/closures_a2.exl:52:31
+Comma @examples/closures_a2.exl:52:32
+(Ident x) @examples/closures_a2.exl:52:34
+Colon @examples/closures_a2.exl:52:35
+(Ident int) @examples/closures_a2.exl:52:37
+RParen @examples/closures_a2.exl:52:40
+Arrow @examples/closures_a2.exl:52:42
+(Ident int) @examples/closures_a2.exl:52:45
+LBrace @examples/closures_a2.exl:52:49
+(Ident f) @examples/closures_a2.exl:52:51
+LParen @examples/closures_a2.exl:52:52
+(Ident x) @examples/closures_a2.exl:52:53
+RParen @examples/closures_a2.exl:52:54
+RBrace @examples/closures_a2.exl:52:56
+Fn @examples/closures_a2.exl:54:1
+(Ident caller) @examples/closures_a2.exl:54:4
+LParen @examples/closures_a2.exl:54:10
+(Ident base) @examples/closures_a2.exl:54:11
+Colon @examples/closures_a2.exl:54:15
+(Ident int) @examples/closures_a2.exl:54:17
+RParen @examples/closures_a2.exl:54:20
+Arrow @examples/closures_a2.exl:54:22
+(Ident int) @examples/closures_a2.exl:54:25
+LBrace @examples/closures_a2.exl:54:29
+Let @examples/closures_a2.exl:55:5
+(Ident bump) @examples/closures_a2.exl:55:9
+Eq @examples/closures_a2.exl:55:14
+Pipe @examples/closures_a2.exl:55:16
+(Ident x) @examples/closures_a2.exl:55:17
+Colon @examples/closures_a2.exl:55:18
+(Ident int) @examples/closures_a2.exl:55:20
+Pipe @examples/closures_a2.exl:55:23
+Arrow @examples/closures_a2.exl:55:25
+(Ident int) @examples/closures_a2.exl:55:28
+(Ident x) @examples/closures_a2.exl:55:32
+Plus @examples/closures_a2.exl:55:34
+(Ident base) @examples/closures_a2.exl:55:36
+Semicolon @examples/closures_a2.exl:55:40
+(Ident add_base) @examples/closures_a2.exl:56:5
+LParen @examples/closures_a2.exl:56:13
+(Ident bump) @examples/closures_a2.exl:56:14
+Comma @examples/closures_a2.exl:56:18
+(Int 5) @examples/closures_a2.exl:56:20
+RParen @examples/closures_a2.exl:56:21
+RBrace @examples/closures_a2.exl:57:1
+Fn @examples/closures_a2.exl:66:1
+(Ident run_binary) @examples/closures_a2.exl:66:4
+Lt @examples/closures_a2.exl:66:14
+(Ident F) @examples/closures_a2.exl:66:15
+Colon @examples/closures_a2.exl:66:16
+Pipe @examples/closures_a2.exl:66:18
+(Ident int) @examples/closures_a2.exl:66:19
+Comma @examples/closures_a2.exl:66:22
+(Ident int) @examples/closures_a2.exl:66:24
+Pipe @examples/closures_a2.exl:66:27
+Arrow @examples/closures_a2.exl:66:28
+(Ident int) @examples/closures_a2.exl:66:30
+Gt @examples/closures_a2.exl:66:33
+LParen @examples/closures_a2.exl:66:34
+(Ident f) @examples/closures_a2.exl:66:35
+Colon @examples/closures_a2.exl:66:36
+(Ident F) @examples/closures_a2.exl:66:38
+Comma @examples/closures_a2.exl:66:39
+(Ident x) @examples/closures_a2.exl:66:41
+Colon @examples/closures_a2.exl:66:42
+(Ident int) @examples/closures_a2.exl:66:44
+Comma @examples/closures_a2.exl:66:47
+(Ident y) @examples/closures_a2.exl:66:49
+Colon @examples/closures_a2.exl:66:50
+(Ident int) @examples/closures_a2.exl:66:52
+RParen @examples/closures_a2.exl:66:55
+Arrow @examples/closures_a2.exl:66:57
+(Ident int) @examples/closures_a2.exl:66:60
+LBrace @examples/closures_a2.exl:66:64
+(Ident f) @examples/closures_a2.exl:67:5
+LParen @examples/closures_a2.exl:67:6
+(Ident x) @examples/closures_a2.exl:67:7
+Comma @examples/closures_a2.exl:67:8
+(Ident y) @examples/closures_a2.exl:67:10
+RParen @examples/closures_a2.exl:67:11
+RBrace @examples/closures_a2.exl:68:1
+Fn @examples/closures_a2.exl:70:1
+(Ident main) @examples/closures_a2.exl:70:4
+LParen @examples/closures_a2.exl:70:8
+RParen @examples/closures_a2.exl:70:9
+LBrace @examples/closures_a2.exl:70:11
+Let @examples/closures_a2.exl:72:5
+(Ident t) @examples/closures_a2.exl:72:9
+Colon @examples/closures_a2.exl:72:10
+(Ident int) @examples/closures_a2.exl:72:12
+Eq @examples/closures_a2.exl:72:16
+(Int 10) @examples/closures_a2.exl:72:18
+Semicolon @examples/closures_a2.exl:72:20
+Let @examples/closures_a2.exl:73:5
+(Ident add_t) @examples/closures_a2.exl:73:9
+Eq @examples/closures_a2.exl:73:15
+Pipe @examples/closures_a2.exl:73:17
+(Ident x) @examples/closures_a2.exl:73:18
+Colon @examples/closures_a2.exl:73:19
+(Ident int) @examples/closures_a2.exl:73:21
+Pipe @examples/closures_a2.exl:73:24
+Arrow @examples/closures_a2.exl:73:26
+(Ident int) @examples/closures_a2.exl:73:29
+(Ident x) @examples/closures_a2.exl:73:33
+Plus @examples/closures_a2.exl:73:35
+(Ident t) @examples/closures_a2.exl:73:37
+Semicolon @examples/closures_a2.exl:73:38
+(Ident println) @examples/closures_a2.exl:74:5
+LParen @examples/closures_a2.exl:74:12
+(Ident run_unary) @examples/closures_a2.exl:74:13
+LParen @examples/closures_a2.exl:74:22
+(Ident add_t) @examples/closures_a2.exl:74:23
+Comma @examples/closures_a2.exl:74:28
+(Int 5) @examples/closures_a2.exl:74:30
+RParen @examples/closures_a2.exl:74:31
+RParen @examples/closures_a2.exl:74:32
+Semicolon @examples/closures_a2.exl:74:33
+Let @examples/closures_a2.exl:77:5
+(Ident a) @examples/closures_a2.exl:77:9
+Colon @examples/closures_a2.exl:77:10
+(Ident int) @examples/closures_a2.exl:77:12
+Eq @examples/closures_a2.exl:77:16
+(Int 100) @examples/closures_a2.exl:77:18
+Semicolon @examples/closures_a2.exl:77:21
+Let @examples/closures_a2.exl:78:5
+(Ident b) @examples/closures_a2.exl:78:9
+Colon @examples/closures_a2.exl:78:10
+(Ident int) @examples/closures_a2.exl:78:12
+Eq @examples/closures_a2.exl:78:16
+(Int 7) @examples/closures_a2.exl:78:18
+Semicolon @examples/closures_a2.exl:78:19
+Let @examples/closures_a2.exl:79:5
+(Ident combine) @examples/closures_a2.exl:79:9
+Eq @examples/closures_a2.exl:79:17
+Pipe @examples/closures_a2.exl:79:19
+(Ident x) @examples/closures_a2.exl:79:20
+Colon @examples/closures_a2.exl:79:21
+(Ident int) @examples/closures_a2.exl:79:23
+Pipe @examples/closures_a2.exl:79:26
+Arrow @examples/closures_a2.exl:79:28
+(Ident int) @examples/closures_a2.exl:79:31
+(Ident x) @examples/closures_a2.exl:79:35
+Plus @examples/closures_a2.exl:79:37
+(Ident a) @examples/closures_a2.exl:79:39
+Plus @examples/closures_a2.exl:79:41
+(Ident b) @examples/closures_a2.exl:79:43
+Semicolon @examples/closures_a2.exl:79:44
+(Ident println) @examples/closures_a2.exl:80:5
+LParen @examples/closures_a2.exl:80:12
+(Ident run_unary) @examples/closures_a2.exl:80:13
+LParen @examples/closures_a2.exl:80:22
+(Ident combine) @examples/closures_a2.exl:80:23
+Comma @examples/closures_a2.exl:80:30
+(Int 1) @examples/closures_a2.exl:80:32
+RParen @examples/closures_a2.exl:80:33
+RParen @examples/closures_a2.exl:80:34
+Semicolon @examples/closures_a2.exl:80:35
+(Ident println) @examples/closures_a2.exl:83:5
+LParen @examples/closures_a2.exl:83:12
+(Ident caller) @examples/closures_a2.exl:83:13
+LParen @examples/closures_a2.exl:83:19
+(Int 50) @examples/closures_a2.exl:83:20
+RParen @examples/closures_a2.exl:83:22
+RParen @examples/closures_a2.exl:83:23
+Semicolon @examples/closures_a2.exl:83:24
+Let @examples/closures_a2.exl:86:5
+(Ident base) @examples/closures_a2.exl:86:9
+Colon @examples/closures_a2.exl:86:13
+(Ident int) @examples/closures_a2.exl:86:15
+Eq @examples/closures_a2.exl:86:19
+(Int 1000) @examples/closures_a2.exl:86:21
+Semicolon @examples/closures_a2.exl:86:25
+Let @examples/closures_a2.exl:87:5
+(Ident bin) @examples/closures_a2.exl:87:9
+Eq @examples/closures_a2.exl:87:13
+Pipe @examples/closures_a2.exl:87:15
+(Ident x) @examples/closures_a2.exl:87:16
+Colon @examples/closures_a2.exl:87:17
+(Ident int) @examples/closures_a2.exl:87:19
+Comma @examples/closures_a2.exl:87:22
+(Ident y) @examples/closures_a2.exl:87:24
+Colon @examples/closures_a2.exl:87:25
+(Ident int) @examples/closures_a2.exl:87:27
+Pipe @examples/closures_a2.exl:87:30
+Arrow @examples/closures_a2.exl:87:32
+(Ident int) @examples/closures_a2.exl:87:35
+(Ident x) @examples/closures_a2.exl:87:39
+Plus @examples/closures_a2.exl:87:41
+(Ident y) @examples/closures_a2.exl:87:43
+Plus @examples/closures_a2.exl:87:45
+(Ident base) @examples/closures_a2.exl:87:47
+Semicolon @examples/closures_a2.exl:87:51
+(Ident println) @examples/closures_a2.exl:88:5
+LParen @examples/closures_a2.exl:88:12
+(Ident run_binary) @examples/closures_a2.exl:88:13
+LParen @examples/closures_a2.exl:88:23
+(Ident bin) @examples/closures_a2.exl:88:24
+Comma @examples/closures_a2.exl:88:27
+(Int 3) @examples/closures_a2.exl:88:29
+Comma @examples/closures_a2.exl:88:30
+(Int 4) @examples/closures_a2.exl:88:32
+RParen @examples/closures_a2.exl:88:33
+RParen @examples/closures_a2.exl:88:34
+Semicolon @examples/closures_a2.exl:88:35
+RBrace @examples/closures_a2.exl:89:1
+Eof @examples/closures_a2.exl:90:1

@@ -8232,141 +8232,649 @@ let derive_debug_enum (e : Ast.enum_decl) : Ast.item =
    scrutinee of type `T` rather than `Name`) lands in the elab path
    for `Ast.Match`, which has the type information needed to decide
    when to insert the view-call. *)
-(* DR-008 A1 captureless-decay — lift every `Ast.Lambda` to a fresh
-   top-level fn `__lambda_N` and replace the expression with a
-   `Var "__lambda_N"`.  The ordinary expr lookup turns that var
-   into a `TFnRef`, which auto-decays to a C fn-pointer at the use
-   site.  Captureless is enforced by construction: the lifted body
-   lives at top level, so any reference to an enclosing local is a
-   plain "undefined variable" error at elab time. *)
+(* DR-024 closures-A2 — lifts every `Ast.Lambda` to a synthesised
+   top-level form.  Two paths:
+
+   - Captureless (no free vars referring to enclosing locals): the
+     legacy DR-008 A1 decay.  Lambda turns into a fresh top-level
+     fn `__lambda_N`, the expression becomes `Var "__lambda_N"`,
+     and the ordinary fn-ptr-decay in elab makes it usable as a
+     callable value.
+
+   - With captures: synthesise an env struct `__closure_N { c1: T1,
+     ...}`, an `impl Fn{arity} for __closure_N` whose `call` body is
+     the lambda's body with each captured name rewritten to
+     `self.<name>`, and replace the expression with a struct literal
+     `__closure_N { c1: c1, c2: c2, ... }` constructing the env from
+     the surrounding scope.  Captures are inferred by a free-var
+     walk over the lambda body; capture types come from the
+     surrounding fn's params and explicitly-annotated lets (the only
+     bindings whose type is known before typecheck).  An untyped
+     let referenced as a capture errors with a clear message
+     pointing the user at the missing annotation.
+
+   The synthesised env struct, impl, and `call` method all flow
+   through the normal typecheck / mono / codegen pipeline — codegen
+   sees a real impl Fn{arity}, mono picks the right instance, and
+   the rest of the DR-015 sugars (DR-018 / DR-019 call-desugar,
+   DR-021 |A|->R bound, DR-022 assoc equality) Just Work on top. *)
 let expand_lambdas (program : Ast.program) : Ast.program =
   let lifted = ref [] in
   let counter = ref 0 in
-  let fresh_name () =
-    let n = !counter in
-    incr counter;
+  let fresh_lambda_name () =
+    let n = !counter in incr counter;
     Printf.sprintf "__lambda_%d" n
   in
-  let rec lift_e (e : Ast.expr) : Ast.expr =
+  let closure_counter = ref 0 in
+  let fresh_closure_name () =
+    let n = !closure_counter in incr closure_counter;
+    Printf.sprintf "__closure_%d" n
+  in
+  (* Collect the names referenced as Ast.Var that are NOT bound
+     locally inside [e] (by lambda params or internal lets/patterns).
+     Used at Lambda elab to discover captures: the lambda's own
+     params + any internal lets shadow names that would otherwise
+     look like captures. *)
+  let rec free_vars_of_expr (bound : (string, unit) Hashtbl.t) (e : Ast.expr) acc =
     match e with
-    | Ast.Lambda { params; ret_ty; body; pos } ->
-        let body = lift_e body in
-        let name = fresh_name () in
-        let ast_params =
-          List.map (fun (n, t) ->
-            Ast.{ pname = n; pty = t; preg = None; is_mut = false })
-            params
-        in
-        (* Use `Tail body` so the body's type becomes the lambda fn's
-           return type — exile's expression-based fn bodies do the
-           inference for us; an explicit `-> T` annotation on the
-           lambda still pins it (the synthesised fn carries `ret_ty`). *)
-        let body_stmts = [ Ast.Tail body ] in
-        let fn = Ast.{
-          name; c_name = name; tparams = []; tbounds = [];
-          params = ast_params; ret_ty; body = body_stmts;
-          is_pub = false; is_extern = false; is_variadic = false;
-          amiga_lib = None; tier_hint = None;
-          must_use = false; escapes_hatch = false; pos
-        } in
-        lifted := Ast.Function fn :: !lifted;
-        Ast.Var (name, pos)
+    | Ast.Var (n, _) ->
+        if Hashtbl.mem bound n then acc
+        else if List.mem n acc then acc
+        else acc @ [n]
     | Ast.IntLit _ | Ast.FloatLit _ | Ast.BoolLit _ | Ast.StringLit _
-    | Ast.NullLit _ | Ast.Var _ | Ast.SizeOf _ -> e
-    | Ast.Neg (sub, p) -> Ast.Neg (lift_e sub, p)
-    | Ast.BitNot (sub, p) -> Ast.BitNot (lift_e sub, p)
-    | Ast.Not (sub, p) -> Ast.Not (lift_e sub, p)
-    | Ast.BinOp (op, l, r, p) -> Ast.BinOp (op, lift_e l, lift_e r, p)
-    | Ast.Orelse (a, b, p) -> Ast.Orelse (lift_e a, lift_e b, p)
-    | Ast.Try (a, p) -> Ast.Try (lift_e a, p)
-    | Ast.Cast (a, t, p) -> Ast.Cast (lift_e a, t, p)
-    | Ast.TupleLit (es, p) -> Ast.TupleLit (List.map lift_e es, p)
+    | Ast.NullLit _ | Ast.SizeOf _ -> acc
+    | Ast.Neg (sub, _) | Ast.BitNot (sub, _) | Ast.Not (sub, _)
+    | Ast.Try (sub, _) | Ast.Cast (sub, _, _)
+    | Ast.FieldAccess (sub, _, _)
+    | Ast.Ref (sub, _) | Ast.Deref (sub, _) ->
+        free_vars_of_expr bound sub acc
+    | Ast.BinOp (_, l, r, _) | Ast.Orelse (l, r, _) ->
+        let acc = free_vars_of_expr bound l acc in
+        free_vars_of_expr bound r acc
+    | Ast.TupleLit (es, _) | Ast.ArrayLit (es, _) ->
+        List.fold_left (fun a e -> free_vars_of_expr bound e a) acc es
+    | Ast.ArrayRepeat { value; count; _ } ->
+        let acc = free_vars_of_expr bound value acc in
+        free_vars_of_expr bound count acc
+    | Ast.Index { base; index; _ } ->
+        let acc = free_vars_of_expr bound base acc in
+        free_vars_of_expr bound index acc
+    | Ast.Range { lo; hi; _ } ->
+        let acc = free_vars_of_expr bound lo acc in
+        free_vars_of_expr bound hi acc
+    | Ast.Call { args; _ } ->
+        List.fold_left (fun a e -> free_vars_of_expr bound e a) acc args
+    | Ast.MethodCall { receiver; args; _ } ->
+        let acc = free_vars_of_expr bound receiver acc in
+        List.fold_left (fun a e -> free_vars_of_expr bound e a) acc args
+    | Ast.StructLit { fields; base; _ } | Ast.New { fields; base; _ } ->
+        let acc =
+          List.fold_left (fun a (_, e) -> free_vars_of_expr bound e a)
+            acc fields
+        in
+        (match base with
+         | Some b -> free_vars_of_expr bound b acc
+         | None -> acc)
+    | Ast.EnumLit { args; _ } ->
+        let args =
+          match args with
+          | Ast.EATuple es -> es
+          | Ast.EAStruct fs -> List.map snd fs
+        in
+        List.fold_left (fun a e -> free_vars_of_expr bound e a) acc args
+    | Ast.Match { scrutinee; arms; _ } ->
+        let acc = free_vars_of_expr bound scrutinee acc in
+        List.fold_left (fun a (arm : Ast.match_arm) ->
+          let pat_binds = pattern_bound_names arm.pat in
+          let saved = List.map (fun n -> (n, Hashtbl.mem bound n)) pat_binds in
+          List.iter (fun n -> Hashtbl.replace bound n ()) pat_binds;
+          let a =
+            match arm.guard with
+            | Some g -> free_vars_of_expr bound g a
+            | None -> a
+          in
+          let a = free_vars_of_expr bound arm.body a in
+          List.iter (fun (n, was) ->
+            if was then () else Hashtbl.remove bound n) saved;
+          a) acc arms
+    | Ast.If { cond; then_blk; else_blk; _ } ->
+        let acc = free_vars_of_expr bound cond acc in
+        let acc = free_vars_of_stmts bound then_blk acc in
+        (match else_blk with
+         | Some sl -> free_vars_of_stmts bound sl acc
+         | None -> acc)
+    | Ast.Block (stmts, _) -> free_vars_of_stmts bound stmts acc
+    | Ast.Lambda { params; body; _ } ->
+        (* Inner lambda: its own params shadow within its body.  Its
+           captures are still free vars from the OUTER lambda's
+           perspective if they're not in OUTER's params / lets. *)
+        let saved =
+          List.map (fun (n, _) -> (n, Hashtbl.mem bound n)) params
+        in
+        List.iter (fun (n, _) -> Hashtbl.replace bound n ()) params;
+        let acc = free_vars_of_expr bound body acc in
+        List.iter (fun (n, was) ->
+          if was then () else Hashtbl.remove bound n) saved;
+        acc
+  and pattern_bound_names (p : Ast.pattern) : string list =
+    let rec go acc = function
+      | Ast.PWildcard _ -> acc
+      | Ast.PVar (n, _) ->
+          if n = "_" || List.mem n acc then acc else n :: acc
+      | Ast.PVariant { binds; _ } ->
+          (match binds with
+           | Ast.PBTuple ps -> List.fold_left go acc ps
+           | Ast.PBStruct ps -> List.fold_left (fun a (_, p) -> go a p) acc ps)
+      | Ast.POr (alts, _) -> List.fold_left go acc alts
+    in go [] p
+  and free_vars_of_stmts bound stmts acc =
+    let (acc, removed) =
+      List.fold_left (fun (acc, removed) s ->
+        match s with
+        | Ast.Let { name; value; _ } ->
+            let acc = free_vars_of_expr bound value acc in
+            let was = Hashtbl.mem bound name in
+            Hashtbl.replace bound name ();
+            (acc, (name, was) :: removed)
+        | Ast.LetTuple { names; value; _ } ->
+            let acc = free_vars_of_expr bound value acc in
+            let added =
+              List.map (fun n ->
+                let was = Hashtbl.mem bound n in
+                Hashtbl.replace bound n ();
+                (n, was)) names
+            in
+            (acc, added @ removed)
+        | Ast.LetElse { pat; value; else_body; _ } ->
+            let acc = free_vars_of_expr bound value acc in
+            let acc = free_vars_of_stmts bound else_body acc in
+            let added =
+              List.map (fun n ->
+                let was = Hashtbl.mem bound n in
+                Hashtbl.replace bound n ();
+                (n, was)) (pattern_bound_names pat)
+            in
+            (acc, added @ removed)
+        | Ast.Assign { path = [n]; value; _ } ->
+            let acc = if Hashtbl.mem bound n then acc
+                      else if List.mem n acc then acc else acc @ [n] in
+            (free_vars_of_expr bound value acc, removed)
+        | Ast.Assign { value; _ } ->
+            (free_vars_of_expr bound value acc, removed)
+        | Ast.AssignField { target; value; _ }
+        | Ast.AssignDeref { target; value; _ } ->
+            let acc = free_vars_of_expr bound target acc in
+            (free_vars_of_expr bound value acc, removed)
+        | Ast.AssignIndex { base; index; value; _ } ->
+            let acc = free_vars_of_expr bound base acc in
+            let acc = free_vars_of_expr bound index acc in
+            (free_vars_of_expr bound value acc, removed)
+        | Ast.Return (Some e, _) | Ast.ExprStmt e | Ast.Tail e ->
+            (free_vars_of_expr bound e acc, removed)
+        | Ast.Return (None, _) -> (acc, removed)
+        | Ast.While { cond; body } ->
+            let acc = free_vars_of_expr bound cond acc in
+            (free_vars_of_stmts bound body acc, removed)
+        | Ast.For { var; range; body; _ } ->
+            let acc = free_vars_of_expr bound range acc in
+            let was = Hashtbl.mem bound var in
+            Hashtbl.replace bound var ();
+            let acc = free_vars_of_stmts bound body acc in
+            if not was then Hashtbl.remove bound var;
+            (acc, removed)
+        | Ast.With { target; name; body; _ } ->
+            let acc = free_vars_of_expr bound target acc in
+            let was = Hashtbl.mem bound name in
+            Hashtbl.replace bound name ();
+            let acc = free_vars_of_stmts bound body acc in
+            if not was then Hashtbl.remove bound name;
+            (acc, removed)
+        | Ast.Defer { body; _ } ->
+            (free_vars_of_stmts bound body acc, removed)
+        | Ast.Break _ | Ast.Continue _ -> (acc, removed))
+        (acc, []) stmts
+    in
+    (* Pop the block-local bindings before returning so outer-scope
+       references after the block stay correctly classified. *)
+    List.iter (fun (n, was) ->
+      if not was then Hashtbl.remove bound n) removed;
+    acc
+  in
+  (* Substitute `Ast.Var (cap, _)` with `Ast.FieldAccess (Ast.Var
+     ("self", pos), cap, pos)` everywhere except where a tighter
+     binding shadows the name.  Used to rewrite the lambda's body
+     into the impl Fn1 `call` method body. *)
+  let rec subst_captures captures bound (e : Ast.expr) : Ast.expr =
+    match e with
+    | Ast.Var (n, p) when List.mem n captures && not (Hashtbl.mem bound n) ->
+        Ast.FieldAccess (Ast.Var ("self", p), n, p)
+    | Ast.Var _ | Ast.IntLit _ | Ast.FloatLit _ | Ast.BoolLit _
+    | Ast.StringLit _ | Ast.NullLit _ | Ast.SizeOf _ -> e
+    | Ast.Neg (s, p) -> Ast.Neg (subst_captures captures bound s, p)
+    | Ast.BitNot (s, p) -> Ast.BitNot (subst_captures captures bound s, p)
+    | Ast.Not (s, p) -> Ast.Not (subst_captures captures bound s, p)
+    | Ast.Try (s, p) -> Ast.Try (subst_captures captures bound s, p)
+    | Ast.Cast (s, t, p) -> Ast.Cast (subst_captures captures bound s, t, p)
+    | Ast.FieldAccess (s, f, p) ->
+        Ast.FieldAccess (subst_captures captures bound s, f, p)
+    | Ast.Ref (s, p) -> Ast.Ref (subst_captures captures bound s, p)
+    | Ast.Deref (s, p) -> Ast.Deref (subst_captures captures bound s, p)
+    | Ast.BinOp (op, l, r, p) ->
+        Ast.BinOp (op, subst_captures captures bound l,
+                       subst_captures captures bound r, p)
+    | Ast.Orelse (l, r, p) ->
+        Ast.Orelse (subst_captures captures bound l,
+                    subst_captures captures bound r, p)
+    | Ast.TupleLit (es, p) ->
+        Ast.TupleLit (List.map (subst_captures captures bound) es, p)
+    | Ast.ArrayLit (es, p) ->
+        Ast.ArrayLit (List.map (subst_captures captures bound) es, p)
+    | Ast.ArrayRepeat { value; count; pos } ->
+        Ast.ArrayRepeat {
+          value = subst_captures captures bound value;
+          count = subst_captures captures bound count; pos }
+    | Ast.Index { base; index; pos } ->
+        Ast.Index { base = subst_captures captures bound base;
+                    index = subst_captures captures bound index; pos }
+    | Ast.Range { lo; hi; inclusive; pos } ->
+        Ast.Range { lo = subst_captures captures bound lo;
+                    hi = subst_captures captures bound hi; inclusive; pos }
     | Ast.Call { callee; args; pos } ->
-        Ast.Call { callee; args = List.map lift_e args; pos }
+        Ast.Call { callee;
+                   args = List.map (subst_captures captures bound) args; pos }
     | Ast.MethodCall { receiver; name; args; pos } ->
-        Ast.MethodCall { receiver = lift_e receiver; name;
-                         args = List.map lift_e args; pos }
+        Ast.MethodCall {
+          receiver = subst_captures captures bound receiver; name;
+          args = List.map (subst_captures captures bound) args; pos }
     | Ast.StructLit { tname; fields; base; pos } ->
-        Ast.StructLit { tname;
-                        fields = List.map (fun (n, e) -> (n, lift_e e)) fields;
-                        base = Option.map lift_e base; pos }
-    | Ast.FieldAccess (a, n, p) -> Ast.FieldAccess (lift_e a, n, p)
-    | Ast.Ref (a, p) -> Ast.Ref (lift_e a, p)
-    | Ast.Deref (a, p) -> Ast.Deref (lift_e a, p)
+        Ast.StructLit {
+          tname;
+          fields = List.map (fun (n, e) ->
+            (n, subst_captures captures bound e)) fields;
+          base = Option.map (subst_captures captures bound) base; pos }
     | Ast.New { tname; fields; base; pos } ->
-        Ast.New { tname;
-                  fields = List.map (fun (n, e) -> (n, lift_e e)) fields;
-                  base = Option.map lift_e base; pos }
+        Ast.New {
+          tname;
+          fields = List.map (fun (n, e) ->
+            (n, subst_captures captures bound e)) fields;
+          base = Option.map (subst_captures captures bound) base; pos }
     | Ast.EnumLit { tname; variant; args; pos } ->
         let args = match args with
-          | Ast.EATuple es -> Ast.EATuple (List.map lift_e es)
+          | Ast.EATuple es ->
+              Ast.EATuple (List.map (subst_captures captures bound) es)
           | Ast.EAStruct fs ->
-              Ast.EAStruct (List.map (fun (n, e) -> (n, lift_e e)) fs)
+              Ast.EAStruct (List.map (fun (n, e) ->
+                (n, subst_captures captures bound e)) fs)
+        in
+        Ast.EnumLit { tname; variant; args; pos }
+    | Ast.Match { scrutinee; arms; pos } ->
+        let arms = List.map (fun (a : Ast.match_arm) ->
+          let pat_binds = pattern_bound_names a.pat in
+          let saved = List.map (fun n -> (n, Hashtbl.mem bound n)) pat_binds in
+          List.iter (fun n -> Hashtbl.replace bound n ()) pat_binds;
+          let arm = { a with
+            Ast.guard = Option.map (subst_captures captures bound) a.guard;
+            body = subst_captures captures bound a.body } in
+          List.iter (fun (n, was) ->
+            if not was then Hashtbl.remove bound n) saved;
+          arm) arms
+        in
+        Ast.Match {
+          scrutinee = subst_captures captures bound scrutinee; arms; pos }
+    | Ast.If { cond; then_blk; else_blk; pos } ->
+        Ast.If {
+          cond = subst_captures captures bound cond;
+          then_blk = subst_captures_stmts captures bound then_blk;
+          else_blk =
+            Option.map (subst_captures_stmts captures bound) else_blk;
+          pos }
+    | Ast.Block (stmts, p) ->
+        Ast.Block (subst_captures_stmts captures bound stmts, p)
+    | Ast.Lambda { params; ret_ty; body; pos } ->
+        let saved =
+          List.map (fun (n, _) -> (n, Hashtbl.mem bound n)) params
+        in
+        List.iter (fun (n, _) -> Hashtbl.replace bound n ()) params;
+        let body = subst_captures captures bound body in
+        List.iter (fun (n, was) ->
+          if not was then Hashtbl.remove bound n) saved;
+        Ast.Lambda { params; ret_ty; body; pos }
+  and subst_captures_stmts captures bound stmts =
+    let (out, removed) =
+      List.fold_left (fun (acc, removed) s ->
+        let (s', new_binds) =
+          match s with
+          | Ast.Let { name; value; ty_ann; is_mut; pos } ->
+              let value = subst_captures captures bound value in
+              let was = Hashtbl.mem bound name in
+              Hashtbl.replace bound name ();
+              (Ast.Let { name; value; ty_ann; is_mut; pos }, [(name, was)])
+          | Ast.LetTuple { names; value; is_mut; pos } ->
+              let value = subst_captures captures bound value in
+              let added =
+                List.map (fun n ->
+                  let was = Hashtbl.mem bound n in
+                  Hashtbl.replace bound n ();
+                  (n, was)) names
+              in
+              (Ast.LetTuple { names; value; is_mut; pos }, added)
+          | Ast.LetElse { pat; value; else_body; pos } ->
+              let value = subst_captures captures bound value in
+              let else_body = subst_captures_stmts captures bound else_body in
+              let added =
+                List.map (fun n ->
+                  let was = Hashtbl.mem bound n in
+                  Hashtbl.replace bound n ();
+                  (n, was)) (pattern_bound_names pat)
+              in
+              (Ast.LetElse { pat; value; else_body; pos }, added)
+          | Ast.Assign { path; value; pos } ->
+              (Ast.Assign { path;
+                            value = subst_captures captures bound value;
+                            pos }, [])
+          | Ast.AssignField { target; field; value; pos } ->
+              (Ast.AssignField {
+                 target = subst_captures captures bound target;
+                 field;
+                 value = subst_captures captures bound value;
+                 pos }, [])
+          | Ast.AssignIndex { base; index; value; pos } ->
+              (Ast.AssignIndex {
+                 base = subst_captures captures bound base;
+                 index = subst_captures captures bound index;
+                 value = subst_captures captures bound value;
+                 pos }, [])
+          | Ast.AssignDeref { target; value; pos } ->
+              (Ast.AssignDeref {
+                 target = subst_captures captures bound target;
+                 value = subst_captures captures bound value;
+                 pos }, [])
+          | Ast.Return (e, p) ->
+              (Ast.Return (Option.map (subst_captures captures bound) e, p),
+               [])
+          | Ast.ExprStmt e ->
+              (Ast.ExprStmt (subst_captures captures bound e), [])
+          | Ast.Tail e ->
+              (Ast.Tail (subst_captures captures bound e), [])
+          | Ast.While { cond; body } ->
+              (Ast.While {
+                 cond = subst_captures captures bound cond;
+                 body = subst_captures_stmts captures bound body }, [])
+          | Ast.For { var; range; body; pos } ->
+              let range = subst_captures captures bound range in
+              let was = Hashtbl.mem bound var in
+              Hashtbl.replace bound var ();
+              let body = subst_captures_stmts captures bound body in
+              if not was then Hashtbl.remove bound var;
+              (Ast.For { var; range; body; pos }, [])
+          | Ast.With { target; name; body; pos } ->
+              let target = subst_captures captures bound target in
+              let was = Hashtbl.mem bound name in
+              Hashtbl.replace bound name ();
+              let body = subst_captures_stmts captures bound body in
+              if not was then Hashtbl.remove bound name;
+              (Ast.With { target; name; body; pos }, [])
+          | Ast.Defer { body; pos } ->
+              (Ast.Defer {
+                 body = subst_captures_stmts captures bound body; pos }, [])
+          | Ast.Break _ | Ast.Continue _ -> (s, [])
+        in
+        (s' :: acc, new_binds @ removed)) ([], []) stmts
+    in
+    List.iter (fun (n, was) ->
+      if not was then Hashtbl.remove bound n) removed;
+    List.rev out
+  in
+  let rec lift_e ~scope (e : Ast.expr) : Ast.expr =
+    match e with
+    | Ast.Lambda { params; ret_ty; body; pos } ->
+        let body = lift_e ~scope:(scope @ params) body in
+        let bound = Hashtbl.create 16 in
+        List.iter (fun (n, _) -> Hashtbl.replace bound n ()) params;
+        let free = free_vars_of_expr bound body [] in
+        let captures =
+          List.filter_map (fun n ->
+            match List.assoc_opt n scope with
+            | Some ann -> Some (n, ann)
+            | None -> None) free
+        in
+        if captures = [] then
+          (* A1 path — captureless decay. *)
+          let name = fresh_lambda_name () in
+          let ast_params =
+            List.map (fun (n, t) ->
+              Ast.{ pname = n; pty = t; preg = None; is_mut = false })
+              params
+          in
+          let body_stmts = [ Ast.Tail body ] in
+          let fn = Ast.{
+            name; c_name = name; tparams = []; tbounds = [];
+            params = ast_params; ret_ty; body = body_stmts;
+            is_pub = false; is_extern = false; is_variadic = false;
+            amiga_lib = None; tier_hint = None;
+            must_use = false; escapes_hatch = false; pos
+          } in
+          lifted := Ast.Function fn :: !lifted;
+          Ast.Var (name, pos)
+        else begin
+          (* A2 path — synthesise env struct + impl FnN. *)
+          let arity = List.length params in
+          let fn_trait_name = Printf.sprintf "Fn%d" arity in
+          let closure_name = fresh_closure_name () in
+          let env_struct = Ast.{
+            sname = closure_name;
+            sis_pub = false;
+            stparams = [];
+            sfields =
+              List.map (fun (cap_name, cap_ann) ->
+                (cap_name, cap_ann)) captures;
+            spos = pos;
+            sis_debug = false;
+            sis_move = false;
+            sderives = [];
+            stier_hint = None;
+          } in
+          (* Build call's body — start from the lambda body, substitute
+             every captured-Var reference with `self.<name>`, wrap in a
+             `Tail` so the body's value flows as the call's result. *)
+          let cap_names = List.map fst captures in
+          let bound_for_subst = Hashtbl.create 8 in
+          List.iter (fun (n, _) -> Hashtbl.replace bound_for_subst n ())
+            params;
+          let body_substituted =
+            subst_captures cap_names bound_for_subst body
+          in
+          (* parse_impl_block replaces bare-`TySelf` with the target
+             type at parse time; since this impl is synthesised after
+             parsing, write the concrete target type straight into
+             the `self` param so resolve_type_ann doesn't trip on a
+             stray TySelf at body elab. *)
+          let target_ty =
+            Ast.TyStruct { path = [closure_name]; args = [] }
+          in
+          let self_ty = Ast.TyConstPtr target_ty in
+          let call_params =
+            { Ast.pname = "self"; pty = self_ty;
+              preg = None; is_mut = false } ::
+            List.map (fun (n, t) ->
+              Ast.{ pname = n; pty = t; preg = None; is_mut = false })
+              params
+          in
+          let call_method = Ast.{
+            name = "call"; c_name = "call";
+            tparams = []; tbounds = [];
+            params = call_params;
+            ret_ty;
+            body = [ Ast.Tail body_substituted ];
+            is_pub = true; is_extern = false; is_variadic = false;
+            amiga_lib = None; tier_hint = None;
+            must_use = false; escapes_hatch = false; pos
+          } in
+          let assoc_bindings =
+            let arg_part =
+              match arity with
+              | 0 -> []
+              | 1 ->
+                  [("Arg", snd (List.hd params))]
+              | _ ->
+                  List.mapi (fun i (_, t) ->
+                    (Printf.sprintf "Arg%d" (i + 1), t)) params
+            in
+            let ret_ann =
+              match ret_ty with
+              | Some t -> t
+              | None -> Ast.TyStruct { path = ["c_void"]; args = [] }
+            in
+            arg_part @ [("Output", ret_ann)]
+          in
+          let env_impl = Ast.Impl Ast.{
+            itparams = [];
+            itbounds = [];
+            itrait = Some [fn_trait_name];
+            iassoc = assoc_bindings;
+            itarget = [closure_name];
+            iitems = [call_method];
+            ipos = pos;
+          } in
+          lifted :=
+            env_impl :: Ast.Struct env_struct :: !lifted;
+          (* Replace the lambda expression with a struct literal
+             constructing the env from the surrounding scope. *)
+          let fields =
+            List.map (fun (cap_name, _) ->
+              (cap_name, Ast.Var (cap_name, pos))) captures
+          in
+          Ast.StructLit {
+            tname = [closure_name]; fields; base = None; pos }
+        end
+    | Ast.IntLit _ | Ast.FloatLit _ | Ast.BoolLit _ | Ast.StringLit _
+    | Ast.NullLit _ | Ast.Var _ | Ast.SizeOf _ -> e
+    | Ast.Neg (sub, p) -> Ast.Neg (lift_e ~scope sub, p)
+    | Ast.BitNot (sub, p) -> Ast.BitNot (lift_e ~scope sub, p)
+    | Ast.Not (sub, p) -> Ast.Not (lift_e ~scope sub, p)
+    | Ast.BinOp (op, l, r, p) ->
+        Ast.BinOp (op, lift_e ~scope l, lift_e ~scope r, p)
+    | Ast.Orelse (a, b, p) ->
+        Ast.Orelse (lift_e ~scope a, lift_e ~scope b, p)
+    | Ast.Try (a, p) -> Ast.Try (lift_e ~scope a, p)
+    | Ast.Cast (a, t, p) -> Ast.Cast (lift_e ~scope a, t, p)
+    | Ast.TupleLit (es, p) -> Ast.TupleLit (List.map (lift_e ~scope) es, p)
+    | Ast.Call { callee; args; pos } ->
+        Ast.Call { callee; args = List.map (lift_e ~scope) args; pos }
+    | Ast.MethodCall { receiver; name; args; pos } ->
+        Ast.MethodCall { receiver = lift_e ~scope receiver; name;
+                         args = List.map (lift_e ~scope) args; pos }
+    | Ast.StructLit { tname; fields; base; pos } ->
+        Ast.StructLit { tname;
+                        fields = List.map (fun (n, e) ->
+                          (n, lift_e ~scope e)) fields;
+                        base = Option.map (lift_e ~scope) base; pos }
+    | Ast.FieldAccess (a, n, p) -> Ast.FieldAccess (lift_e ~scope a, n, p)
+    | Ast.Ref (a, p) -> Ast.Ref (lift_e ~scope a, p)
+    | Ast.Deref (a, p) -> Ast.Deref (lift_e ~scope a, p)
+    | Ast.New { tname; fields; base; pos } ->
+        Ast.New { tname;
+                  fields = List.map (fun (n, e) ->
+                    (n, lift_e ~scope e)) fields;
+                  base = Option.map (lift_e ~scope) base; pos }
+    | Ast.EnumLit { tname; variant; args; pos } ->
+        let args = match args with
+          | Ast.EATuple es -> Ast.EATuple (List.map (lift_e ~scope) es)
+          | Ast.EAStruct fs ->
+              Ast.EAStruct (List.map (fun (n, e) ->
+                (n, lift_e ~scope e)) fs)
         in
         Ast.EnumLit { tname; variant; args; pos }
     | Ast.Match { scrutinee; arms; pos } ->
         let arms = List.map (fun (a : Ast.match_arm) ->
           { a with
-            Ast.guard = Option.map lift_e a.guard;
-            body = lift_e a.body }) arms
+            Ast.guard = Option.map (lift_e ~scope) a.guard;
+            body = lift_e ~scope a.body }) arms
         in
-        Ast.Match { scrutinee = lift_e scrutinee; arms; pos }
+        Ast.Match { scrutinee = lift_e ~scope scrutinee; arms; pos }
     | Ast.If { cond; then_blk; else_blk; pos } ->
-        Ast.If { cond = lift_e cond;
-                 then_blk = List.map lift_s then_blk;
-                 else_blk = Option.map (List.map lift_s) else_blk;
+        Ast.If { cond = lift_e ~scope cond;
+                 then_blk = lift_stmts ~scope then_blk;
+                 else_blk = Option.map (lift_stmts ~scope) else_blk;
                  pos }
-    | Ast.ArrayLit (es, p) -> Ast.ArrayLit (List.map lift_e es, p)
+    | Ast.ArrayLit (es, p) -> Ast.ArrayLit (List.map (lift_e ~scope) es, p)
     | Ast.ArrayRepeat { value; count; pos } ->
-        Ast.ArrayRepeat { value = lift_e value; count = lift_e count; pos }
+        Ast.ArrayRepeat { value = lift_e ~scope value;
+                          count = lift_e ~scope count; pos }
     | Ast.Index { base; index; pos } ->
-        Ast.Index { base = lift_e base; index = lift_e index; pos }
+        Ast.Index { base = lift_e ~scope base;
+                    index = lift_e ~scope index; pos }
     | Ast.Range { lo; hi; inclusive; pos } ->
-        Ast.Range { lo = lift_e lo; hi = lift_e hi; inclusive; pos }
-    | Ast.Block (stmts, p) -> Ast.Block (List.map lift_s stmts, p)
-  and lift_s (s : Ast.stmt) : Ast.stmt =
+        Ast.Range { lo = lift_e ~scope lo;
+                    hi = lift_e ~scope hi; inclusive; pos }
+    | Ast.Block (stmts, p) ->
+        Ast.Block (lift_stmts ~scope stmts, p)
+  and lift_stmts ~scope (stmts : Ast.stmt list) : Ast.stmt list =
+    let (out, _) =
+      List.fold_left (fun (acc, scope) s ->
+        let (s', scope') = lift_s ~scope s in
+        (s' :: acc, scope')) ([], scope) stmts
+    in
+    List.rev out
+  and lift_s ~scope (s : Ast.stmt) : Ast.stmt * (string * Ast.type_ann) list =
     match s with
     | Ast.Let { name; value; ty_ann; is_mut; pos } ->
-        Ast.Let { name; value = lift_e value; ty_ann; is_mut; pos }
+        let value = lift_e ~scope value in
+        let scope' =
+          match ty_ann with
+          | Some ann -> (name, ann) :: scope
+          | None -> scope
+        in
+        (Ast.Let { name; value; ty_ann; is_mut; pos }, scope')
     | Ast.LetTuple { names; value; is_mut; pos } ->
-        Ast.LetTuple { names; value = lift_e value; is_mut; pos }
+        (Ast.LetTuple { names; value = lift_e ~scope value; is_mut; pos },
+         scope)
     | Ast.LetElse { pat; value; else_body; pos } ->
-        Ast.LetElse { pat; value = lift_e value;
-                      else_body = List.map lift_s else_body; pos }
+        (Ast.LetElse { pat; value = lift_e ~scope value;
+                       else_body = lift_stmts ~scope else_body; pos },
+         scope)
     | Ast.Assign { path; value; pos } ->
-        Ast.Assign { path; value = lift_e value; pos }
+        (Ast.Assign { path; value = lift_e ~scope value; pos }, scope)
     | Ast.AssignField { target; field; value; pos } ->
-        Ast.AssignField { target = lift_e target; field;
-                          value = lift_e value; pos }
+        (Ast.AssignField { target = lift_e ~scope target; field;
+                           value = lift_e ~scope value; pos }, scope)
     | Ast.AssignIndex { base; index; value; pos } ->
-        Ast.AssignIndex { base = lift_e base; index = lift_e index;
-                          value = lift_e value; pos }
+        (Ast.AssignIndex { base = lift_e ~scope base;
+                           index = lift_e ~scope index;
+                           value = lift_e ~scope value; pos }, scope)
     | Ast.AssignDeref { target; value; pos } ->
-        Ast.AssignDeref { target = lift_e target;
-                          value = lift_e value; pos }
-    | Ast.Return (e, p) -> Ast.Return (Option.map lift_e e, p)
-    | Ast.ExprStmt e -> Ast.ExprStmt (lift_e e)
-    | Ast.Tail e -> Ast.Tail (lift_e e)
+        (Ast.AssignDeref { target = lift_e ~scope target;
+                           value = lift_e ~scope value; pos }, scope)
+    | Ast.Return (e, p) ->
+        (Ast.Return (Option.map (lift_e ~scope) e, p), scope)
+    | Ast.ExprStmt e -> (Ast.ExprStmt (lift_e ~scope e), scope)
+    | Ast.Tail e -> (Ast.Tail (lift_e ~scope e), scope)
     | Ast.While { cond; body } ->
-        Ast.While { cond = lift_e cond; body = List.map lift_s body }
+        (Ast.While { cond = lift_e ~scope cond;
+                     body = lift_stmts ~scope body }, scope)
     | Ast.For { var; range; body; pos } ->
-        Ast.For { var; range = lift_e range;
-                  body = List.map lift_s body; pos }
+        (Ast.For { var; range = lift_e ~scope range;
+                   body = lift_stmts ~scope body; pos }, scope)
     | Ast.Defer { body; pos } ->
-        Ast.Defer { body = List.map lift_s body; pos }
+        (Ast.Defer { body = lift_stmts ~scope body; pos }, scope)
     | Ast.With { target; name; body; pos } ->
-        Ast.With { target = lift_e target; name;
-                   body = List.map lift_s body; pos }
-    | Ast.Break _ | Ast.Continue _ -> s
+        (Ast.With { target = lift_e ~scope target; name;
+                    body = lift_stmts ~scope body; pos }, scope)
+    | Ast.Break _ | Ast.Continue _ -> (s, scope)
   in
   let rec lift_item (it : Ast.item) : Ast.item =
     match it with
     | Ast.Function f ->
-        Ast.Function { f with body = List.map lift_s f.body }
+        let scope =
+          List.map (fun (p : Ast.param) -> (p.Ast.pname, p.Ast.pty))
+            f.params
+        in
+        Ast.Function { f with body = lift_stmts ~scope f.body }
     | Ast.Module m ->
         Ast.Module { m with mitems = List.map lift_item m.mitems }
     | Ast.View v ->
-        Ast.View { v with vbody = List.map lift_s v.vbody }
+        let scope = [(v.vparam.Ast.pname, v.vparam.Ast.pty)] in
+        Ast.View { v with vbody = lift_stmts ~scope v.vbody }
     | other -> other
   in
   let walked = List.map lift_item program in

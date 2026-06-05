@@ -4215,13 +4215,20 @@ let () =
        true
      with _ -> false);
 
-  check_error "DR-008: lambda referencing an outer local fails captureless check"
-    "fn main() {\n\
-    \    let y: int = 5;\n\
-    \    let f = |x: int| -> int x + y;\n\
-    \    println(f(7));\n\
-     }\n"
-    "undefined variable 'y'";
+  (* DR-008 A1 originally rejected this with "undefined variable 'y'";
+     DR-024 A2 closures-with-capture turn the SAME source into an
+     env-struct + impl Fn1 synthesis at expand_lambdas time, so the
+     compile now succeeds and the captured `y` flows through. *)
+  check_assert "DR-024: lambda capturing annotated outer local compiles"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let y: int = 5;\n\
+         \    let f = |x: int| -> int x + y;\n\
+         \    println(f(7));\n\
+          }\n");
+       true
+     with _ -> false);
 
   check_error "DR-012: borrow can't escape the `with` block (out-of-scope after)"
     "fn main() {\n\
@@ -5595,6 +5602,70 @@ let () =
      fn run<F: ||->int>(f: F) -> int { f() }\n\
      fn main() { let f = Forty { _tag: 0 }; println(run(f)); }\n"
     "bound 'F: Fn0' on 'run' requires 'F::Output = i32' but type 'Forty' has 'Fn0::Output = u32'";
+
+  (* DR-024 A2 closures with capture inference.  expand_lambdas
+     synthesises an env-struct + auto-impl Fn{arity} when a lambda
+     references locals; capture types come from the surrounding fn's
+     params or annotated lets. *)
+
+  check_assert "DR-024: A2 single-capture from annotated let"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let t: int = 10;\n\
+         \    let f = |x: int| -> int x + t;\n\
+         \    println(run(f, 5));\n\
+          }\n"
+     in
+     contains c "__closure_0__call" || contains c "__closure_0");
+
+  check_assert "DR-024: A2 multi-capture from annotated lets"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let a: int = 10;\n\
+         \    let b: int = 20;\n\
+         \    let f = |x: int| -> int x + a + b;\n\
+         \    println(run(f, 5));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-024: A2 binary lambda capturing → Fn2 impl"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn run<F: |int, int|->int>(f: F, x: int, y: int) -> int {\n\
+         \    f(x, y)\n\
+          }\n\
+          fn main() {\n\
+         \    let base: int = 100;\n\
+         \    let g = |x: int, y: int| -> int x + y + base;\n\
+         \    println(run(g, 3, 4));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-024: lambda capturing fn param compiles"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn caller(base: int) -> int {\n\
+         \    let f = |x: int| -> int x + base;\n\
+         \    run(f, 5)\n\
+          }\n\
+          fn main() { println(caller(100)); }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-024: captureless lambda still takes A1 fn-ptr path"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run(f: fn(int) -> int, x: int) -> int { f(x) }\n\
+          fn main() { println(run(|x: int| -> int x + 1, 41)); }\n"
+     in
+     contains c "__lambda_0");
 
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\

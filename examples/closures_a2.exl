@@ -1,0 +1,89 @@
+// A2 closures with capture (DR-024).
+//
+// `|x: int| -> int x + t` referencing an outer `t: int` no longer
+// errors "undefined variable"; instead `expand_lambdas` (the
+// pre-typecheck pass) walks the body, collects free vars, and
+// synthesises:
+//
+//   struct __closure_N { c1: T1, c2: T2, ... }
+//
+//   impl Fn{arity} for __closure_N {
+//       type Arg = T_param;       // (or Arg1, Arg2 for Fn2)
+//       type Output = T_ret;
+//       fn call(*const self, p: T_param) -> T_ret {
+//           body_with_captures_rewritten_to_self_fields
+//       }
+//   }
+//
+// then replaces the lambda expression with `__closure_N { c1: c1,
+// c2: c2 }` — a plain struct literal that constructs the env from
+// the surrounding scope.  All of the DR-016 / DR-017 / DR-018 /
+// DR-019 / DR-020 / DR-021 / DR-022 / DR-023 surface kicks in on
+// top: the bound `<F: |int|->int>` reads naturally, `f(x)` desugars
+// to `f.call(x)`, and `F::Output` projects via the bound shortcut.
+//
+// Capture-type inference: pre-typecheck has no real type system, so
+// captured names must come from a binding whose type is visible
+// without elaboration — `fn` params or `let name: T = ...`
+// annotated lets.  A capture from an untyped `let name = ...` falls
+// through to the DR-008 "undefined variable" error (the synthesis
+// finds no type for it).
+//
+// Three flavours of capture below.
+
+// 1. Single capture from an annotated let.
+//
+// `|x| x + t` over `t: int` synthesises `__closure_0 { t: int }` +
+// `impl Fn1 for __closure_0 { type Arg = int; type Output = int;
+// fn call(*const self, x: int) -> int { x + self.t } }`.
+
+fn run_unary<F: |int|->int>(f: F, x: int) -> int { f(x) }
+
+// 2. Multi-capture, mixing two annotated lets.
+//
+// `|x| x + a + b` over `a: int, b: int` synthesises `__closure_N {
+// a: int, b: int }` with both fields populated from the
+// surrounding scope at the struct-lit replacement site.
+
+// 3. Capturing a fn param.  Same machinery — params have known
+// types just like annotated lets, so the synthesis pulls the
+// type straight off the param decl.
+
+fn add_base<F: |int|->int>(f: F, x: int) -> int { f(x) }
+
+fn caller(base: int) -> int {
+    let bump = |x: int| -> int x + base;
+    add_base(bump, 5)
+}
+
+// 4. Binary lambda capturing — Fn2.
+//
+// `|x, y| x + y + base` synthesises `__closure_M { base: int }` +
+// `impl Fn2 for __closure_M { type Arg1 = int; type Arg2 = int;
+// type Output = int; fn call(*const self, x: int, y: int) -> int {
+// x + y + self.base } }`.
+
+fn run_binary<F: |int, int|->int>(f: F, x: int, y: int) -> int {
+    f(x, y)
+}
+
+fn main() {
+    // 1. Single capture.
+    let t: int = 10;
+    let add_t = |x: int| -> int x + t;
+    println(run_unary(add_t, 5));        // 15 = 5 + 10
+
+    // 2. Multi capture.
+    let a: int = 100;
+    let b: int = 7;
+    let combine = |x: int| -> int x + a + b;
+    println(run_unary(combine, 1));      // 108 = 1 + 100 + 7
+
+    // 3. Capture a fn param (caller's `base`).
+    println(caller(50));                 // 55 = 5 + 50
+
+    // 4. Binary lambda capturing.
+    let base: int = 1000;
+    let bin = |x: int, y: int| -> int x + y + base;
+    println(run_binary(bin, 3, 4));      // 1007 = 3 + 4 + 1000
+}
