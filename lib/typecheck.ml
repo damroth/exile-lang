@@ -3269,8 +3269,46 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 { e = TIndirectCall { fn_expr; args = targs };
                   ty = result_ty; pos }
             | None ->
-                Error.failf mc_pos "no method '%s' on type '%s'"
-                  name (String.concat "::" struct_path))
+                (* DR-019 FieldAccess call-desugar — `recv.f(args)` where
+                   `recv` has a field `f` whose type implements a Fn-trait
+                   (Fn1 / Fn2 / ...) rewrites to `(recv.f).call(args)`.
+                   Extends DR-018's single-Var call-desugar to FieldAccess
+                   heads — the common `self.f(v)` shape inside an adapter
+                   method body.  Detection is via `trait_impl_table`
+                   (concrete struct/enum field type) or `ctx.tbounds`
+                   (tparam-typed field via generic adapter). *)
+                let is_fn_trait_name t =
+                  String.length t >= 2 && String.sub t 0 2 = "Fn"
+                in
+                let field_carries_fn_impl =
+                  match resolve_struct_by_path ctx struct_path with
+                  | None -> false
+                  | Some s ->
+                      (match List.assoc_opt name s.sfields_ty with
+                       | Some (TStruct p | TEnum p) ->
+                           List.exists
+                             (fun (t, target) ->
+                               target = p && is_fn_trait_name t)
+                             !trait_impl_table
+                       | Some (TVar tp) ->
+                           List.exists
+                             (fun (q, trait_path) ->
+                               q = tp
+                               && (match List.rev trait_path with
+                                   | last :: _ -> is_fn_trait_name last
+                                   | [] -> false))
+                             ctx.tbounds
+                       | _ -> false)
+                in
+                if field_carries_fn_impl then
+                  elab_expr ~allow_void ?expected ctx env
+                    (Ast.MethodCall {
+                       receiver =
+                         Ast.FieldAccess (receiver, name, mc_pos);
+                       name = "call"; args; pos = mc_pos })
+                else
+                  Error.failf mc_pos "no method '%s' on type '%s'"
+                    name (String.concat "::" struct_path))
        | Some (resolved_mod, ({ fn_pub; _ } as skel)) ->
            let rec walk_segments parent = function
              | [] -> ()

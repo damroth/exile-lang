@@ -85,12 +85,11 @@ impl<I: Iterator, F: Fn1> Iterator for Map<I, F> {
     type Item = F::Output;
     fn next(*self) -> Option<F::Output> {
         let v = try self.inner.next();
-        // `f` is a local rebind of the field so the call-desugar
-        // applies — `f(v)` reduces to `f.call(v)`.  `self.f(v)` would
-        // parse as a method call on `self.f` named ... nothing, so the
-        // desugar lives on simple Var heads (v1 scope).
-        let f = self.f;
-        Option::Some(f(v))
+        // DR-019 FieldAccess call-desugar — `self.f(v)` reduces to
+        // `(self.f).call(v)` because field `f` carries a Fn1-impl
+        // value (its bound `F: Fn1` makes the desugar fire on the
+        // tparam-typed field).
+        Option::Some(self.f(v))
     }
 }
 

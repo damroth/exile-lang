@@ -5425,6 +5425,61 @@ let () =
     "fn main() { let x: int = 10; println(x(5)); }\n"
     "unknown function 'x'";
 
+  check_assert "DR-019: h.f(v) sugar on field carrying Fn1-impl struct"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          struct Holder { f: AddOne }\n\
+          fn main() {\n\
+         \    let h = Holder { f: AddOne { _tag: 0 } };\n\
+         \    println(h.f(41));\n\
+          }\n"
+     in
+     contains c "AddOne__call");
+
+  check_assert "DR-019: self.f(v) sugar in Map<I, F>::next adapter body"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          struct Map<I, F> { inner: I, f: F }\n\
+          impl<I: Iterator, F: Fn1> Iterator for Map<I, F> {\n\
+         \    type Item = F::Output;\n\
+         \    fn next(*self) -> Option<F::Output> {\n\
+         \        let v = try self.inner.next();\n\
+         \        Option::Some(self.f(v))\n\
+         \    }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(10);\n\
+         \    let m: Map<VecIter<int>, AddOne> =\n\
+         \        Map { inner: v.iter(), f: AddOne { _tag: 0 } };\n\
+         \    let mut acc: int = 0;\n\
+         \    for x in m { acc = acc + x; }\n\
+         \    println(acc);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "DR-019: non-Fn field still errors 'no method'"
+    "struct Holder { v: int }\n\
+     fn main() {\n\
+    \    let h = Holder { v: 10 };\n\
+    \    println(h.v(5));\n\
+     }\n"
+    "no method 'v' on type 'Holder'";
+
   check_assert "DR-017: Map<I: Iterator, F: Fn1> lazy adapter"
     (try
        ignore (Exile_lang.Compiler.compile
