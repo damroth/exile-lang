@@ -5371,6 +5371,60 @@ let () =
        true
      with _ -> false);
 
+  check_assert "DR-018: f(x) sugar on Fn1-bound tparam desugars to f.call(x)"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          fn apply<F: Fn1>(f: F, x: F::Arg) -> F::Output { f(x) }\n\
+          fn main() { let a = AddOne { _tag: 0 }; println(apply(a, 41)); }\n"
+     in
+     contains c "AddOne__call");
+
+  check_assert "DR-018: f(x, y) sugar on Fn2-bound tparam"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Add { _tag: int }\n\
+          impl Fn2 for Add {\n\
+         \    type Arg1 = int;\n\
+         \    type Arg2 = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int, b: int) -> int { a + b }\n\
+          }\n\
+          fn apply2<F: Fn2>(f: F, x: F::Arg1, y: F::Arg2) -> F::Output {\n\
+         \    f(x, y)\n\
+          }\n\
+          fn main() {\n\
+         \    let f = Add { _tag: 0 };\n\
+         \    println(apply2(f, 13, 29));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-018: f(x) sugar on concrete struct with Fn1 impl"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          fn main() {\n\
+         \    let f = AddOne { _tag: 0 };\n\
+         \    println(f(41));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "DR-018: x(5) on non-Fn type stays an 'unknown function' error"
+    "fn main() { let x: int = 10; println(x(5)); }\n"
+    "unknown function 'x'";
+
   check_assert "DR-017: Map<I: Iterator, F: Fn1> lazy adapter"
     (try
        ignore (Exile_lang.Compiler.compile

@@ -2856,6 +2856,66 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                             args = targs };
              ty = TEnum result_path; pos })
   | Ast.Call { callee = path; args; pos = call_pos } ->
+      (* DR-018 call-desugar — `f(x)` where `f` is a local variable
+         whose type is a tparam bounded by a Fn-trait (Fn1, Fn2, ...)
+         rewrites to `f.call(x)` so the standard trait-method dispatch
+         takes over.  Without this the next branch would fall into
+         `lookup_fn` and report "unknown function 'f'".  Only fires
+         when `f` is a SINGLE-segment path that resolves to a local
+         Var, not a real fn — qualified paths or shadowed identifiers
+         keep their existing meaning.  Concrete struct types whose
+         `impl Fn1 for X` is registered also dispatch through this
+         path (they have `X` head, not a TVar, but the same Fn-trait
+         lookup applies). *)
+      let fn_call_desugar =
+        match path with
+        | [n] ->
+            let lookup_ty =
+              match List.assoc_opt n env with
+              | Some t -> Some t
+              | None ->
+                  (match List.assoc_opt n ctx.ext_consts with
+                   | Some t -> Some t
+                   | None -> List.assoc_opt n ctx.ext_vars)
+            in
+            (match lookup_ty with
+             | Some (TVar tp) ->
+                 let bound_traits =
+                   List.filter_map
+                     (fun (q, trait_path) ->
+                       if q = tp then
+                         match List.rev trait_path with
+                         | last :: _ -> Some last
+                         | [] -> None
+                       else None)
+                     ctx.tbounds
+                 in
+                 let is_fn_trait t =
+                   String.length t >= 2
+                   && String.sub t 0 2 = "Fn"
+                 in
+                 if List.exists is_fn_trait bound_traits
+                    && lookup_fn ctx path = None
+                 then Some n
+                 else None
+             | Some (TStruct p | TEnum p)
+                 when (List.exists (fun (t, target) ->
+                          target = p
+                          && String.length t >= 2
+                          && String.sub t 0 2 = "Fn")
+                          !trait_impl_table)
+                      && lookup_fn ctx path = None ->
+                 Some n
+             | _ -> None)
+        | _ -> None
+      in
+      (match fn_call_desugar with
+       | Some n ->
+           elab_expr ~allow_void ?expected ctx env
+             (Ast.MethodCall {
+                receiver = Ast.Var (n, call_pos);
+                name = "call"; args; pos = call_pos })
+       | None ->
       (* Enum-ctor dispatch first: a Call whose path resolves to an
          enum variant is rewritten to an EnumLit and elab'd again. *)
       (match rewrite_call_as_enum_lit ctx path args call_pos with
@@ -3067,7 +3127,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                               ~raw_args:args ~targs ~ret_ty ~allow_void ()
                           in
                           { e = TCall { mangled; args = targs };
-                            ty = result_ty; pos }))))
+                            ty = result_ty; pos })))))
   | Ast.MethodCall { receiver; name; args; pos = mc_pos } ->
       let trecv = elab_expr ctx env receiver in
       (* Built-in `eq` / `ne` on primitive receivers (int-like / bool / str

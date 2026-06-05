@@ -47,7 +47,12 @@ impl Fn1 for AddOne {
     fn call(*const self, a: int) -> int { a + 1 }
 }
 
-fn apply<F: Fn1>(f: F, x: F::Arg) -> F::Output { f.call(x) }
+// DR-018 call-desugar — `f(x)` on a Fn-bound tparam (or a concrete
+// type with `impl FnN`) lowers to `f.call(x)` so users don't need to
+// spell out the trait method.  Without the sugar, `f(x)` would error
+// with "unknown function 'f'" because the elab path looks up free fns
+// first.  Same applies to `f(x, y)` for Fn2.
+fn apply<F: Fn1>(f: F, x: F::Arg) -> F::Output { f(x) }
 
 // 2. Fn2 — binary callable; drives fold-style accumulators in the
 // future combinator stdlib.
@@ -62,7 +67,7 @@ impl Fn2 for AddPair {
 }
 
 fn apply2<F: Fn2>(f: F, x: F::Arg1, y: F::Arg2) -> F::Output {
-    f.call(x, y)
+    f(x, y)
 }
 
 // 3. Map<I, F> — the lazy adapter pattern from DR-015.  Requires
@@ -80,7 +85,12 @@ impl<I: Iterator, F: Fn1> Iterator for Map<I, F> {
     type Item = F::Output;
     fn next(*self) -> Option<F::Output> {
         let v = try self.inner.next();
-        Option::Some(self.f.call(v))
+        // `f` is a local rebind of the field so the call-desugar
+        // applies — `f(v)` reduces to `f.call(v)`.  `self.f(v)` would
+        // parse as a method call on `self.f` named ... nothing, so the
+        // desugar lives on simple Var heads (v1 scope).
+        let f = self.f;
+        Option::Some(f(v))
     }
 }
 
