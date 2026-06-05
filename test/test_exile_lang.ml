@@ -5480,6 +5480,57 @@ let () =
      }\n"
     "no method 'v' on type 'Holder'";
 
+  check_assert "DR-020: Option::None in match arm picks up TEnumApp expected"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          struct Map<I, F> { inner: I, f: F }\n\
+          impl<I: Iterator, F: Fn1> Iterator for Map<I, F> {\n\
+         \    type Item = F::Output;\n\
+         \    fn next(*self) -> Option<F::Output> {\n\
+         \        match self.inner.next() {\n\
+         \            Option::Some(v) => Option::Some(self.f(v))\n\
+         \            | Option::None => Option::None\n\
+         \        }\n\
+         \    }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(10); v.push(20);\n\
+         \    let m: Map<VecIter<int>, AddOne> =\n\
+         \        Map { inner: v.iter(), f: AddOne { _tag: 0 } };\n\
+         \    let mut acc: int = 0;\n\
+         \    for x in m { acc = acc + x; }\n\
+         \    println(acc);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-020: Result::Err in match arm picks up TEnumApp expected"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn fwd<T>(r: Result<T, str>) -> Result<T, str> {\n\
+         \    match r {\n\
+         \        Result::Ok(v) => Result::Ok(v)\n\
+         \        | Result::Err(e) => Result::Err(e)\n\
+         \    }\n\
+          }\n\
+          fn main() {\n\
+         \    let r: Result<int, str> = Result::Ok(42);\n\
+         \    match fwd(r) {\n\
+         \        Result::Ok(v) => println(v)\n\
+         \        | Result::Err(_e) => println(0)\n\
+         \    }\n\
+          }\n");
+       true
+     with _ -> false);
+
   check_assert "DR-017: Map<I: Iterator, F: Fn1> lazy adapter"
     (try
        ignore (Exile_lang.Compiler.compile

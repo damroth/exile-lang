@@ -2332,7 +2332,14 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                     (typ_name tg.ty);
                 Some tg
           in
-          let tbody = elab_expr ~allow_void ctx arm_env a.body in
+          (* DR-020 propagate the match's expected type into each arm
+             body.  This lets nested generic enum constructions
+             (`Option::None` in a fn returning `Option<F::Output>`)
+             pick up their tparams from the bidirectional seed, so the
+             user can write a natural match instead of a `try`
+             workaround.  Forwarded as-is — guards still typecheck as
+             bool independently. *)
+          let tbody = elab_expr ~allow_void ?expected ctx arm_env a.body in
           { tpat; tguard; tbody; tdiverges = false; tarm_pos = a.arm_pos })
           arms
       in
@@ -2770,6 +2777,22 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                                List.combine e_sig.etparams inst_args
                            | None -> [])
                       | None -> [])
+                 (* DR-020 bidirectional seed for non-concrete generic
+                    Option / Result expected types.  When the enclosing
+                    fn's ret type is `Option<F::Output>` (or any other
+                    generic shape where args carry TVars / TAssocProj),
+                    the expected type stays as TEnumApp rather than
+                    collapsing to a flat TEnum mono-instance.  Match
+                    the skeleton path against `e_sig.ename_path` and
+                    seed `etparams` directly from `args` — keeps the
+                    bare `Option::None => Option::None` arm working
+                    when the surrounding match's expected type carries
+                    a tparam-projected payload. *)
+                 | Some (TEnumApp { path; args = exp_args })
+                   when path = e_sig.ename_path
+                        && List.length exp_args
+                           = List.length e_sig.etparams ->
+                     List.combine e_sig.etparams exp_args
                  | _ -> []
                in
                let inferred =

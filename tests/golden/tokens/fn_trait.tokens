@@ -210,183 +210,196 @@ DoubleColon @examples/fn_trait.exl:86:31
 (Ident Output) @examples/fn_trait.exl:86:33
 Gt @examples/fn_trait.exl:86:39
 LBrace @examples/fn_trait.exl:86:41
-Let @examples/fn_trait.exl:87:9
-(Ident v) @examples/fn_trait.exl:87:13
-Eq @examples/fn_trait.exl:87:15
-Try @examples/fn_trait.exl:87:17
-(Ident self) @examples/fn_trait.exl:87:21
-Dot @examples/fn_trait.exl:87:25
-(Ident inner) @examples/fn_trait.exl:87:26
-Dot @examples/fn_trait.exl:87:31
-(Ident next) @examples/fn_trait.exl:87:32
-LParen @examples/fn_trait.exl:87:36
-RParen @examples/fn_trait.exl:87:37
-Semicolon @examples/fn_trait.exl:87:38
-(Ident Option) @examples/fn_trait.exl:92:9
-DoubleColon @examples/fn_trait.exl:92:15
-(Ident Some) @examples/fn_trait.exl:92:17
-LParen @examples/fn_trait.exl:92:21
-(Ident self) @examples/fn_trait.exl:92:22
-Dot @examples/fn_trait.exl:92:26
-(Ident f) @examples/fn_trait.exl:92:27
-LParen @examples/fn_trait.exl:92:28
-(Ident v) @examples/fn_trait.exl:92:29
-RParen @examples/fn_trait.exl:92:30
-RParen @examples/fn_trait.exl:92:31
-RBrace @examples/fn_trait.exl:93:5
-RBrace @examples/fn_trait.exl:94:1
-Fn @examples/fn_trait.exl:96:1
-(Ident main) @examples/fn_trait.exl:96:4
-LParen @examples/fn_trait.exl:96:8
-RParen @examples/fn_trait.exl:96:9
-LBrace @examples/fn_trait.exl:96:11
-Let @examples/fn_trait.exl:98:5
-(Ident f1) @examples/fn_trait.exl:98:9
-Eq @examples/fn_trait.exl:98:12
-(Ident AddOne) @examples/fn_trait.exl:98:14
-LBrace @examples/fn_trait.exl:98:21
-(Ident _tag) @examples/fn_trait.exl:98:23
-Colon @examples/fn_trait.exl:98:27
-(Int 0) @examples/fn_trait.exl:98:29
-RBrace @examples/fn_trait.exl:98:31
-Semicolon @examples/fn_trait.exl:98:32
-(Ident println) @examples/fn_trait.exl:99:5
-LParen @examples/fn_trait.exl:99:12
-(Ident apply) @examples/fn_trait.exl:99:13
-LParen @examples/fn_trait.exl:99:18
-(Ident f1) @examples/fn_trait.exl:99:19
-Comma @examples/fn_trait.exl:99:21
-(Int 41) @examples/fn_trait.exl:99:23
-RParen @examples/fn_trait.exl:99:25
-RParen @examples/fn_trait.exl:99:26
-Semicolon @examples/fn_trait.exl:99:27
-Let @examples/fn_trait.exl:102:5
-(Ident f2) @examples/fn_trait.exl:102:9
-Eq @examples/fn_trait.exl:102:12
-(Ident AddPair) @examples/fn_trait.exl:102:14
-LBrace @examples/fn_trait.exl:102:22
-(Ident _tag) @examples/fn_trait.exl:102:24
-Colon @examples/fn_trait.exl:102:28
-(Int 0) @examples/fn_trait.exl:102:30
-RBrace @examples/fn_trait.exl:102:32
-Semicolon @examples/fn_trait.exl:102:33
-(Ident println) @examples/fn_trait.exl:103:5
-LParen @examples/fn_trait.exl:103:12
-(Ident apply2) @examples/fn_trait.exl:103:13
-LParen @examples/fn_trait.exl:103:19
-(Ident f2) @examples/fn_trait.exl:103:20
-Comma @examples/fn_trait.exl:103:22
-(Int 13) @examples/fn_trait.exl:103:24
-Comma @examples/fn_trait.exl:103:26
-(Int 29) @examples/fn_trait.exl:103:28
-RParen @examples/fn_trait.exl:103:30
-RParen @examples/fn_trait.exl:103:31
-Semicolon @examples/fn_trait.exl:103:32
-Let @examples/fn_trait.exl:108:5
-(Ident a) @examples/fn_trait.exl:108:9
-Eq @examples/fn_trait.exl:108:11
-(Ident default_allocator) @examples/fn_trait.exl:108:13
-LParen @examples/fn_trait.exl:108:30
-RParen @examples/fn_trait.exl:108:31
-Semicolon @examples/fn_trait.exl:108:32
-Let @examples/fn_trait.exl:109:5
-Mut @examples/fn_trait.exl:109:9
-(Ident v) @examples/fn_trait.exl:109:13
-Colon @examples/fn_trait.exl:109:14
-(Ident Vec) @examples/fn_trait.exl:109:16
-Lt @examples/fn_trait.exl:109:19
-(Ident int) @examples/fn_trait.exl:109:20
-Gt @examples/fn_trait.exl:109:23
-Eq @examples/fn_trait.exl:109:25
-(Ident Vec) @examples/fn_trait.exl:109:27
-DoubleColon @examples/fn_trait.exl:109:30
-(Ident with_capacity) @examples/fn_trait.exl:109:32
-LParen @examples/fn_trait.exl:109:45
-(Ident a) @examples/fn_trait.exl:109:46
-Comma @examples/fn_trait.exl:109:47
-(Int 8) @examples/fn_trait.exl:109:49
-As @examples/fn_trait.exl:109:51
-(Ident u32) @examples/fn_trait.exl:109:54
-RParen @examples/fn_trait.exl:109:57
-Semicolon @examples/fn_trait.exl:109:58
-(Ident v) @examples/fn_trait.exl:110:5
-Dot @examples/fn_trait.exl:110:6
-(Ident push) @examples/fn_trait.exl:110:7
-LParen @examples/fn_trait.exl:110:11
-(Int 10) @examples/fn_trait.exl:110:12
-RParen @examples/fn_trait.exl:110:14
-Semicolon @examples/fn_trait.exl:110:15
-(Ident v) @examples/fn_trait.exl:110:17
-Dot @examples/fn_trait.exl:110:18
-(Ident push) @examples/fn_trait.exl:110:19
-LParen @examples/fn_trait.exl:110:23
-(Int 20) @examples/fn_trait.exl:110:24
-RParen @examples/fn_trait.exl:110:26
-Semicolon @examples/fn_trait.exl:110:27
-(Ident v) @examples/fn_trait.exl:110:29
-Dot @examples/fn_trait.exl:110:30
-(Ident push) @examples/fn_trait.exl:110:31
-LParen @examples/fn_trait.exl:110:35
-(Int 30) @examples/fn_trait.exl:110:36
-RParen @examples/fn_trait.exl:110:38
-Semicolon @examples/fn_trait.exl:110:39
+Match @examples/fn_trait.exl:98:9
+(Ident self) @examples/fn_trait.exl:98:15
+Dot @examples/fn_trait.exl:98:19
+(Ident inner) @examples/fn_trait.exl:98:20
+Dot @examples/fn_trait.exl:98:25
+(Ident next) @examples/fn_trait.exl:98:26
+LParen @examples/fn_trait.exl:98:30
+RParen @examples/fn_trait.exl:98:31
+LBrace @examples/fn_trait.exl:98:33
+(Ident Option) @examples/fn_trait.exl:99:13
+DoubleColon @examples/fn_trait.exl:99:19
+(Ident Some) @examples/fn_trait.exl:99:21
+LParen @examples/fn_trait.exl:99:25
+(Ident v) @examples/fn_trait.exl:99:26
+RParen @examples/fn_trait.exl:99:27
+FatArrow @examples/fn_trait.exl:99:29
+(Ident Option) @examples/fn_trait.exl:99:32
+DoubleColon @examples/fn_trait.exl:99:38
+(Ident Some) @examples/fn_trait.exl:99:40
+LParen @examples/fn_trait.exl:99:44
+(Ident self) @examples/fn_trait.exl:99:45
+Dot @examples/fn_trait.exl:99:49
+(Ident f) @examples/fn_trait.exl:99:50
+LParen @examples/fn_trait.exl:99:51
+(Ident v) @examples/fn_trait.exl:99:52
+RParen @examples/fn_trait.exl:99:53
+RParen @examples/fn_trait.exl:99:54
+Pipe @examples/fn_trait.exl:100:13
+(Ident Option) @examples/fn_trait.exl:100:15
+DoubleColon @examples/fn_trait.exl:100:21
+(Ident None) @examples/fn_trait.exl:100:23
+FatArrow @examples/fn_trait.exl:100:28
+(Ident Option) @examples/fn_trait.exl:100:31
+DoubleColon @examples/fn_trait.exl:100:37
+(Ident None) @examples/fn_trait.exl:100:39
+RBrace @examples/fn_trait.exl:101:9
+RBrace @examples/fn_trait.exl:102:5
+RBrace @examples/fn_trait.exl:103:1
+Fn @examples/fn_trait.exl:105:1
+(Ident main) @examples/fn_trait.exl:105:4
+LParen @examples/fn_trait.exl:105:8
+RParen @examples/fn_trait.exl:105:9
+LBrace @examples/fn_trait.exl:105:11
+Let @examples/fn_trait.exl:107:5
+(Ident f1) @examples/fn_trait.exl:107:9
+Eq @examples/fn_trait.exl:107:12
+(Ident AddOne) @examples/fn_trait.exl:107:14
+LBrace @examples/fn_trait.exl:107:21
+(Ident _tag) @examples/fn_trait.exl:107:23
+Colon @examples/fn_trait.exl:107:27
+(Int 0) @examples/fn_trait.exl:107:29
+RBrace @examples/fn_trait.exl:107:31
+Semicolon @examples/fn_trait.exl:107:32
+(Ident println) @examples/fn_trait.exl:108:5
+LParen @examples/fn_trait.exl:108:12
+(Ident apply) @examples/fn_trait.exl:108:13
+LParen @examples/fn_trait.exl:108:18
+(Ident f1) @examples/fn_trait.exl:108:19
+Comma @examples/fn_trait.exl:108:21
+(Int 41) @examples/fn_trait.exl:108:23
+RParen @examples/fn_trait.exl:108:25
+RParen @examples/fn_trait.exl:108:26
+Semicolon @examples/fn_trait.exl:108:27
 Let @examples/fn_trait.exl:111:5
-(Ident m) @examples/fn_trait.exl:111:9
-Colon @examples/fn_trait.exl:111:10
-(Ident Map) @examples/fn_trait.exl:111:12
-Lt @examples/fn_trait.exl:111:15
-(Ident VecIter) @examples/fn_trait.exl:111:16
-Lt @examples/fn_trait.exl:111:23
-(Ident int) @examples/fn_trait.exl:111:24
-Gt @examples/fn_trait.exl:111:27
-Comma @examples/fn_trait.exl:111:28
-(Ident AddOne) @examples/fn_trait.exl:111:30
-Gt @examples/fn_trait.exl:111:36
-Eq @examples/fn_trait.exl:111:38
-(Ident Map) @examples/fn_trait.exl:112:9
-LBrace @examples/fn_trait.exl:112:13
-(Ident inner) @examples/fn_trait.exl:112:15
-Colon @examples/fn_trait.exl:112:20
-(Ident v) @examples/fn_trait.exl:112:22
-Dot @examples/fn_trait.exl:112:23
-(Ident iter) @examples/fn_trait.exl:112:24
-LParen @examples/fn_trait.exl:112:28
-RParen @examples/fn_trait.exl:112:29
-Comma @examples/fn_trait.exl:112:30
-(Ident f) @examples/fn_trait.exl:112:32
-Colon @examples/fn_trait.exl:112:33
-(Ident AddOne) @examples/fn_trait.exl:112:35
-LBrace @examples/fn_trait.exl:112:42
-(Ident _tag) @examples/fn_trait.exl:112:44
-Colon @examples/fn_trait.exl:112:48
-(Int 0) @examples/fn_trait.exl:112:50
-RBrace @examples/fn_trait.exl:112:52
-RBrace @examples/fn_trait.exl:112:54
-Semicolon @examples/fn_trait.exl:112:55
-Let @examples/fn_trait.exl:113:5
-Mut @examples/fn_trait.exl:113:9
-(Ident acc) @examples/fn_trait.exl:113:13
-Colon @examples/fn_trait.exl:113:16
-(Ident int) @examples/fn_trait.exl:113:18
-Eq @examples/fn_trait.exl:113:22
-(Int 0) @examples/fn_trait.exl:113:24
-Semicolon @examples/fn_trait.exl:113:25
-For @examples/fn_trait.exl:114:5
-(Ident x) @examples/fn_trait.exl:114:9
-In @examples/fn_trait.exl:114:11
-(Ident m) @examples/fn_trait.exl:114:14
-LBrace @examples/fn_trait.exl:114:16
-(Ident acc) @examples/fn_trait.exl:114:18
-Eq @examples/fn_trait.exl:114:22
-(Ident acc) @examples/fn_trait.exl:114:24
-Plus @examples/fn_trait.exl:114:28
-(Ident x) @examples/fn_trait.exl:114:30
-Semicolon @examples/fn_trait.exl:114:31
-RBrace @examples/fn_trait.exl:114:33
-(Ident println) @examples/fn_trait.exl:115:5
-LParen @examples/fn_trait.exl:115:12
-(Ident acc) @examples/fn_trait.exl:115:13
-RParen @examples/fn_trait.exl:115:16
-Semicolon @examples/fn_trait.exl:115:17
-RBrace @examples/fn_trait.exl:116:1
-Eof @examples/fn_trait.exl:117:1
+(Ident f2) @examples/fn_trait.exl:111:9
+Eq @examples/fn_trait.exl:111:12
+(Ident AddPair) @examples/fn_trait.exl:111:14
+LBrace @examples/fn_trait.exl:111:22
+(Ident _tag) @examples/fn_trait.exl:111:24
+Colon @examples/fn_trait.exl:111:28
+(Int 0) @examples/fn_trait.exl:111:30
+RBrace @examples/fn_trait.exl:111:32
+Semicolon @examples/fn_trait.exl:111:33
+(Ident println) @examples/fn_trait.exl:112:5
+LParen @examples/fn_trait.exl:112:12
+(Ident apply2) @examples/fn_trait.exl:112:13
+LParen @examples/fn_trait.exl:112:19
+(Ident f2) @examples/fn_trait.exl:112:20
+Comma @examples/fn_trait.exl:112:22
+(Int 13) @examples/fn_trait.exl:112:24
+Comma @examples/fn_trait.exl:112:26
+(Int 29) @examples/fn_trait.exl:112:28
+RParen @examples/fn_trait.exl:112:30
+RParen @examples/fn_trait.exl:112:31
+Semicolon @examples/fn_trait.exl:112:32
+Let @examples/fn_trait.exl:117:5
+(Ident a) @examples/fn_trait.exl:117:9
+Eq @examples/fn_trait.exl:117:11
+(Ident default_allocator) @examples/fn_trait.exl:117:13
+LParen @examples/fn_trait.exl:117:30
+RParen @examples/fn_trait.exl:117:31
+Semicolon @examples/fn_trait.exl:117:32
+Let @examples/fn_trait.exl:118:5
+Mut @examples/fn_trait.exl:118:9
+(Ident v) @examples/fn_trait.exl:118:13
+Colon @examples/fn_trait.exl:118:14
+(Ident Vec) @examples/fn_trait.exl:118:16
+Lt @examples/fn_trait.exl:118:19
+(Ident int) @examples/fn_trait.exl:118:20
+Gt @examples/fn_trait.exl:118:23
+Eq @examples/fn_trait.exl:118:25
+(Ident Vec) @examples/fn_trait.exl:118:27
+DoubleColon @examples/fn_trait.exl:118:30
+(Ident with_capacity) @examples/fn_trait.exl:118:32
+LParen @examples/fn_trait.exl:118:45
+(Ident a) @examples/fn_trait.exl:118:46
+Comma @examples/fn_trait.exl:118:47
+(Int 8) @examples/fn_trait.exl:118:49
+As @examples/fn_trait.exl:118:51
+(Ident u32) @examples/fn_trait.exl:118:54
+RParen @examples/fn_trait.exl:118:57
+Semicolon @examples/fn_trait.exl:118:58
+(Ident v) @examples/fn_trait.exl:119:5
+Dot @examples/fn_trait.exl:119:6
+(Ident push) @examples/fn_trait.exl:119:7
+LParen @examples/fn_trait.exl:119:11
+(Int 10) @examples/fn_trait.exl:119:12
+RParen @examples/fn_trait.exl:119:14
+Semicolon @examples/fn_trait.exl:119:15
+(Ident v) @examples/fn_trait.exl:119:17
+Dot @examples/fn_trait.exl:119:18
+(Ident push) @examples/fn_trait.exl:119:19
+LParen @examples/fn_trait.exl:119:23
+(Int 20) @examples/fn_trait.exl:119:24
+RParen @examples/fn_trait.exl:119:26
+Semicolon @examples/fn_trait.exl:119:27
+(Ident v) @examples/fn_trait.exl:119:29
+Dot @examples/fn_trait.exl:119:30
+(Ident push) @examples/fn_trait.exl:119:31
+LParen @examples/fn_trait.exl:119:35
+(Int 30) @examples/fn_trait.exl:119:36
+RParen @examples/fn_trait.exl:119:38
+Semicolon @examples/fn_trait.exl:119:39
+Let @examples/fn_trait.exl:120:5
+(Ident m) @examples/fn_trait.exl:120:9
+Colon @examples/fn_trait.exl:120:10
+(Ident Map) @examples/fn_trait.exl:120:12
+Lt @examples/fn_trait.exl:120:15
+(Ident VecIter) @examples/fn_trait.exl:120:16
+Lt @examples/fn_trait.exl:120:23
+(Ident int) @examples/fn_trait.exl:120:24
+Gt @examples/fn_trait.exl:120:27
+Comma @examples/fn_trait.exl:120:28
+(Ident AddOne) @examples/fn_trait.exl:120:30
+Gt @examples/fn_trait.exl:120:36
+Eq @examples/fn_trait.exl:120:38
+(Ident Map) @examples/fn_trait.exl:121:9
+LBrace @examples/fn_trait.exl:121:13
+(Ident inner) @examples/fn_trait.exl:121:15
+Colon @examples/fn_trait.exl:121:20
+(Ident v) @examples/fn_trait.exl:121:22
+Dot @examples/fn_trait.exl:121:23
+(Ident iter) @examples/fn_trait.exl:121:24
+LParen @examples/fn_trait.exl:121:28
+RParen @examples/fn_trait.exl:121:29
+Comma @examples/fn_trait.exl:121:30
+(Ident f) @examples/fn_trait.exl:121:32
+Colon @examples/fn_trait.exl:121:33
+(Ident AddOne) @examples/fn_trait.exl:121:35
+LBrace @examples/fn_trait.exl:121:42
+(Ident _tag) @examples/fn_trait.exl:121:44
+Colon @examples/fn_trait.exl:121:48
+(Int 0) @examples/fn_trait.exl:121:50
+RBrace @examples/fn_trait.exl:121:52
+RBrace @examples/fn_trait.exl:121:54
+Semicolon @examples/fn_trait.exl:121:55
+Let @examples/fn_trait.exl:122:5
+Mut @examples/fn_trait.exl:122:9
+(Ident acc) @examples/fn_trait.exl:122:13
+Colon @examples/fn_trait.exl:122:16
+(Ident int) @examples/fn_trait.exl:122:18
+Eq @examples/fn_trait.exl:122:22
+(Int 0) @examples/fn_trait.exl:122:24
+Semicolon @examples/fn_trait.exl:122:25
+For @examples/fn_trait.exl:123:5
+(Ident x) @examples/fn_trait.exl:123:9
+In @examples/fn_trait.exl:123:11
+(Ident m) @examples/fn_trait.exl:123:14
+LBrace @examples/fn_trait.exl:123:16
+(Ident acc) @examples/fn_trait.exl:123:18
+Eq @examples/fn_trait.exl:123:22
+(Ident acc) @examples/fn_trait.exl:123:24
+Plus @examples/fn_trait.exl:123:28
+(Ident x) @examples/fn_trait.exl:123:30
+Semicolon @examples/fn_trait.exl:123:31
+RBrace @examples/fn_trait.exl:123:33
+(Ident println) @examples/fn_trait.exl:124:5
+LParen @examples/fn_trait.exl:124:12
+(Ident acc) @examples/fn_trait.exl:124:13
+RParen @examples/fn_trait.exl:124:16
+Semicolon @examples/fn_trait.exl:124:17
+RBrace @examples/fn_trait.exl:125:1
+Eof @examples/fn_trait.exl:126:1
