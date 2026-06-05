@@ -1350,7 +1350,7 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
        tparam must `impl Trait`.  Gives a clear error at the call site
        instead of a downstream "no method m" once the instance body is
        elaborated. *)
-    List.iter (fun (tparam, trait_written, _ast_assocs) ->
+    List.iter (fun (tparam, trait_written, ast_assocs) ->
       match List.assoc_opt tparam bindings with
       | None -> ()
       | Some ty ->
@@ -1361,7 +1361,50 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
             Error.failf pos
               "type '%s' does not implement trait '%s' (required by bound \
                '%s: %s' on '%s')"
-              (typ_name ty) trait_name tparam trait_name func.Ast.name)
+              (typ_name ty) trait_name tparam trait_name func.Ast.name;
+          (* DR-021 complement — bound-driven impl-side assoc equality.
+             When the bound carries assoc bindings (`<F: |int|->int>`
+             pins F's Arg=int, Output=int), check that the concrete
+             type's impl has matching assoc types.  Without this check
+             a mismatched impl would compile here and fail later with
+             a less-specific type error downstream.  Skipped silently
+             when the bound has no assocs (plain `<F: Trait>`) or when
+             the impl's assoc table entry isn't visible (the trait
+             check above already required the impl to exist; an
+             absent assoc record means we can't be more specific so
+             we trust the impl). *)
+          if ast_assocs <> [] then begin
+            match typ_head_path ty with
+            | None -> ()
+            | Some target_path ->
+                let impl_assocs =
+                  List.find_map (fun ((tn, target), assocs) ->
+                    if tn = trait_name
+                       && (target = target_path
+                           || Mono.is_instance_of target target_path)
+                    then Some assocs else None)
+                    !trait_assoc_table
+                in
+                (match impl_assocs with
+                 | None -> ()
+                 | Some impl_assocs ->
+                     List.iter (fun (an, expected_ann) ->
+                       let expected_typ =
+                         resolve_type_ann ~pos ctx expected_ann
+                       in
+                       match List.assoc_opt an impl_assocs with
+                       | None -> ()
+                       | Some impl_typ ->
+                           if not (typ_eq impl_typ expected_typ) then
+                             Error.failf pos
+                               "bound '%s: %s' on '%s' requires '%s::%s = \
+                                %s' but type '%s' has '%s::%s = %s'"
+                               tparam trait_name func.Ast.name
+                               tparam an (typ_name expected_typ)
+                               (typ_name ty) trait_name an
+                               (typ_name impl_typ))
+                       ast_assocs)
+          end)
       func.Ast.tbounds;
     let inst =
       Mono.instantiate_fn ctx.instances

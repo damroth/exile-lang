@@ -5566,6 +5566,48 @@ let () =
     "Fn-sugar bound `||->R` with no argument types is \
      not supported yet (Fn0 prelude trait pending)";
 
+  check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
+    "struct AddOne { _tag: int }\n\
+     impl Fn1 for AddOne {\n\
+    \    type Arg = int;\n\
+    \    type Output = u32;\n\
+    \    fn call(*const self, a: int) -> u32 { a as u32 + 1 as u32 }\n\
+     }\n\
+     fn apply<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+     fn main() {\n\
+    \    let a = AddOne { _tag: 0 };\n\
+    \    println(apply(a, 41));\n\
+     }\n"
+    "bound 'F: Fn1' on 'apply' requires 'F::Output = i32' but type 'AddOne' has 'Fn1::Output = u32'";
+
+  check_error "DR-022: bound assoc mismatch rejected at call site (Arg)"
+    "struct Sink { _tag: int }\n\
+     impl Fn1 for Sink {\n\
+    \    type Arg = u32;\n\
+    \    type Output = int;\n\
+    \    fn call(*const self, _a: u32) -> int { 0 }\n\
+     }\n\
+     fn apply<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+     fn main() {\n\
+    \    let s = Sink { _tag: 0 };\n\
+    \    println(apply(s, 1));\n\
+     }\n"
+    "bound 'F: Fn1' on 'apply' requires 'F::Arg = i32' but type 'Sink' has 'Fn1::Arg = u32'";
+
+  check_assert "DR-022: matching bound + impl assoc types compile"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          fn apply<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() { let a = AddOne { _tag: 0 }; println(apply(a, 41)); }\n");
+       true
+     with _ -> false);
+
   check_assert "DR-020: Result::Err in match arm picks up TEnumApp expected"
     (try
        ignore (Exile_lang.Compiler.compile
