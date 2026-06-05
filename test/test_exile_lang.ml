@@ -5667,6 +5667,30 @@ let () =
      in
      contains c "__lambda_0");
 
+  (* DR-025 — trait-decl assoc shortcut.  When a tparam carries a
+     bound `<F: Trait>` and the trait declares `assoc` in its
+     `trassoc`, `F::assoc` projects through the bound's trait decl
+     even when no `impl Trait for X` is registered yet.  Prereq for
+     prelude-synthesised adapter impls (combinator-stdlib) where
+     impl-side entries land later in user code. *)
+
+  check_assert "DR-025: F::Output compiles with NO impl Fn1 anywhere"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn echo<F: Fn1>(f: F, x: F::Arg) -> F::Output { f(x) }\n\
+          fn main() { println(42); }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-025: F::Arg + F::Output usable in fn sig without impl in scope"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Wrap<F> { inner: F }\n\
+          fn make<F: Fn1>(f: F) -> Wrap<F> { Wrap { inner: f } }\n\
+          fn main() { println(42); }\n");
+       true
+     with _ -> false);
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\

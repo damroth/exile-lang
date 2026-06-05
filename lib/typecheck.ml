@@ -510,6 +510,20 @@ let trait_impl_table : (string * string list) list ref = ref []
 let trait_assoc_table
   : ((string * string list) * (string * typ) list) list ref = ref []
 
+(* DR-025 trait-decl assoc registry: maps each declared trait's last
+   segment to its `trassoc` list.  Populated from `flat.traits` at the
+   start of [expand_impls] (BEFORE any impl is processed) so the
+   resolver can answer "does this bound's trait declare this assoc?"
+   without needing an impl entry.  Read by [try_resolve_assoc_proj]'s
+   TVar-bound shortcut: when head=`F` and ctx.tbounds has `F: Trait`
+   and `Trait` declares `assoc`, return `TAssocProj` even when no
+   `impl Trait for X` is registered yet — defers concrete
+   resolution to mono time.  This unblocks prelude-synthesised
+   adapter impls (`impl<I: Iterator, F: Fn1> Iterator for Map<I,
+   F> { type Item = F::Output; ... }`) where Fn1 impls land in
+   user code after the synth runs. *)
+let trait_decl_assocs : (string * string list) list ref = ref []
+
 let typ_head_path = function
   | TStruct p | TEnum p -> Some p
   | TStructApp { path; _ } | TEnumApp { path; _ } -> Some path
@@ -606,8 +620,37 @@ let try_resolve_assoc_proj ~pos ctx path : typ option =
                    ctx.tbounds
              | _ -> None
            in
+           (* DR-025 trait-decl shortcut.  When head is a tparam `F`
+              with bound `F: Trait` and `Trait` declares `assoc` in
+              its `trassoc`, return `TAssocProj { head=TVar F; assoc
+              }` even when no `impl Trait for X` is registered yet.
+              The projection stays deferred — mono resolves it once F
+              binds to a concrete type whose impl is visible.  This
+              unblocks prelude-synthesised adapter impls (Map / Filter
+              / ...) where Fn1 impls aren't in scope when the synth
+              registers, and is also a small correctness widening:
+              the user-side `<F: Trait>(...) -> F::Output` shape now
+              compiles in any context, not only when an unrelated
+              `impl Trait for X` happens to be reachable. *)
+           let bound_decl_match =
+             match head_typ with
+             | TVar n ->
+                 List.exists (fun (tp, trait_path, _assocs) ->
+                   if tp <> n then false
+                   else
+                     match List.rev trait_path with
+                     | last :: _ ->
+                         (match List.assoc_opt last !trait_decl_assocs with
+                          | Some assocs -> List.mem assoc assocs
+                          | None -> false)
+                     | [] -> false)
+                   ctx.tbounds
+             | _ -> false
+           in
            (match bound_direct with
             | Some t -> Some t
+            | None when bound_decl_match ->
+                Some (TAssocProj { head = head_typ; assoc })
             | None ->
                 (match candidate_traits with
                  | [] -> None
@@ -5383,6 +5426,15 @@ let resolve_impl_target ctx (path : string list) =
        | None -> None)
 
 let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_index enum_index modules =
+  (* DR-025 — populate the trait-decl assoc registry up front so the
+     resolver can answer `<F: Trait>(...) -> F::assoc` shortcut
+     queries without needing any `impl Trait for X` to be registered
+     yet.  Trait identity uses the last path segment, mirroring
+     [trait_impl_table] / [trait_assoc_table]. *)
+  trait_decl_assocs :=
+    List.map (fun (_, (td : Ast.trait_decl)) ->
+      (td.Ast.trname, td.Ast.trassoc))
+      flat.traits;
   (* Pre-pass: register every `impl Trait for Foo` as (trait-name, target)
      BEFORE any conformance check runs, so generic `<T: Trait>` bounds and
      supertrait requirements resolve order-independently (a supertrait's
@@ -9328,6 +9380,7 @@ let check_program program : tprogram =
   with_gensym := 0;
   trait_impl_table := [];
   trait_assoc_table := [];
+  trait_decl_assocs := [];
   let mono_state = Mono.new_state () in
   let program = prepend_prelude program in
   (* DR-008 A1 — lift every captureless lambda to a fresh top-level
