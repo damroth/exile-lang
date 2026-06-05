@@ -1122,9 +1122,20 @@ let parse_tparams s =
   end
 
 (* Like [parse_tparams] but also reads trait bounds: `<T: Area, U: A + B>`.
-   Returns (names, bounds) where bounds is a flat list of (tparam,
-   trait_path) — one entry per bound (so `T: A + B` yields two).  Used by
-   functions; structs/enums/impls use the plain [parse_tparams]. *)
+   Returns (names, bounds) where bounds is a flat list of
+   (tparam, trait_path, assoc_bindings) — one entry per bound
+   (so `T: A + B` yields two).  Plain trait-path bounds carry an
+   empty assoc-bindings list.
+
+   DR-021 sugar `<F: |A|->R>` (or `<F: |A, B|->R>`) lowers to the
+   corresponding `FnN` trait path with assoc bindings filled in:
+   `|A|->R` becomes `("F", ["Fn1"], [("Arg", A); ("Output", R)])`;
+   `|A, B|->R` becomes `("F", ["Fn2"], [("Arg1", A); ("Arg2", B);
+   ("Output", R)])`.  Arity 3+ rolls forward without code edits
+   when Fn3+ trait skeletons land in the prelude.  The empty-args
+   form `|| -> R` is reserved for the future Fn0 zero-arg trait
+   and is rejected for now.  Used by functions, structs/enums/
+   impls. *)
 let parse_tparams_bounded s =
   if peek s <> Token.Lt then ([], [])
   else begin
@@ -1136,10 +1147,56 @@ let parse_tparams_bounded s =
           let (n, _) = expect_ident s ~what:"type parameter name" in
           if peek s = Token.Colon then begin
             ignore (advance s);
-            (* one or more `+`-separated trait paths *)
+            (* one or more `+`-separated trait paths or DR-021 Fn-sugar *)
             let rec read_bounds () =
-              let path = parse_path s ~what:"trait name in bound" in
-              bounds := (n, path) :: !bounds;
+              let bound_pos = peek_pos s in
+              (match peek s with
+               | Token.Pipe ->
+                   ignore (advance s);
+                   (* `|A, B|->R` — comma-separated arg types until
+                      the closing pipe, then mandatory `->` and ret
+                      type. *)
+                   let args =
+                     if peek s = Token.Pipe then []
+                     else
+                       let rec loop acc =
+                         let t = parse_type s in
+                         let acc = t :: acc in
+                         match peek s with
+                         | Token.Comma -> ignore (advance s); loop acc
+                         | Token.Pipe -> List.rev acc
+                         | other ->
+                             Error.failf bound_pos
+                               "expected ',' or '|' in Fn-sugar bound, \
+                                got %s" (Token.pp other)
+                       in loop []
+                   in
+                   expect s Token.Pipe;
+                   expect s Token.Arrow;
+                   let ret = parse_type s in
+                   let arity = List.length args in
+                   if arity = 0 then
+                     Error.failf bound_pos
+                       "Fn-sugar bound `|...|->R` with no argument types \
+                        is not supported yet (Fn0 prelude trait pending)";
+                   let trait_name = Printf.sprintf "Fn%d" arity in
+                   let assocs =
+                     if arity = 1 then
+                       [("Arg", List.hd args); ("Output", ret)]
+                     else
+                       let numbered =
+                         List.mapi (fun i t ->
+                           (Printf.sprintf "Arg%d" (i + 1), t)) args
+                       in numbered @ [("Output", ret)]
+                   in
+                   bounds := (n, [trait_name], assocs) :: !bounds
+               | Token.PipePipe ->
+                   Error.failf bound_pos
+                     "Fn-sugar bound `||->R` with no argument types is \
+                      not supported yet (Fn0 prelude trait pending)"
+               | _ ->
+                   let path = parse_path s ~what:"trait name in bound" in
+                   bounds := (n, path, []) :: !bounds);
               if peek s = Token.Plus then (ignore (advance s); read_bounds ())
             in
             read_bounds ()

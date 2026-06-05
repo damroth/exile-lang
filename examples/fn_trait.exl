@@ -52,7 +52,13 @@ impl Fn1 for AddOne {
 // spell out the trait method.  Without the sugar, `f(x)` would error
 // with "unknown function 'f'" because the elab path looks up free fns
 // first.  Same applies to `f(x, y)` for Fn2.
-fn apply<F: Fn1>(f: F, x: F::Arg) -> F::Output { f(x) }
+// DR-021 sugar: `|int|->int` in bound position is parser sugar for
+// `Fn1` plus assoc bindings `Arg=int, Output=int`.  Mirror-closure
+// surface — the bound shape echoes the eventual closure-literal
+// type, which is exile's distinctive Fn surface (no `Fn(int)->int`
+// or `fn(int)->int` zoo).  Equivalent to writing `<F: Fn1>` and
+// pinning the types elsewhere, but pins them right at the bound.
+fn apply<F: |int|->int>(f: F, x: int) -> int { f(x) }
 
 // 2. Fn2 — binary callable; drives fold-style accumulators in the
 // future combinator stdlib.
@@ -66,7 +72,9 @@ impl Fn2 for AddPair {
     fn call(*const self, a: int, b: int) -> int { a + b }
 }
 
-fn apply2<F: Fn2>(f: F, x: F::Arg1, y: F::Arg2) -> F::Output {
+// DR-021 sugar for Fn2: `|A, B|->R` parses to Fn2<Arg1=A, Arg2=B,
+// Output=R>.  Same mirror-closure surface for the binary case.
+fn apply2<F: |int, int|->int>(f: F, x: int, y: int) -> int {
     f(x, y)
 }
 

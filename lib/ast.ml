@@ -363,12 +363,23 @@ type func = {
                                         extern fns, so the linker pulls
                                         the right C symbol. *)
   tparams : string list;             (* generic type parameters: [] for mono *)
-  tbounds : (string * string list) list;
+  tbounds : (string * string list * (string * type_ann) list) list;
                                      (* trait bounds: `<T: Area>` →
-                                        [("T", ["Area"])]; `<T: A + B>` →
+                                        [("T", ["Area"], [])]; `<T: A + B>` →
                                         two entries for "T".  Checked at
                                         instantiation: the type bound to
                                         the tparam must `impl` each trait.
+                                        Third element carries the DR-021
+                                        sugar's assoc-bindings — `<F:
+                                        |int|->int>` lowers to ("F",
+                                        ["Fn1"], [("Arg", TyInt …);
+                                        ("Output", TyInt …)]).  Plain
+                                        trait-path bounds get [].  The
+                                        bindings shortcut the assoc-type
+                                        projection: `F::Output` projects
+                                        directly to the bound type
+                                        without consulting the impl's
+                                        assoc table.
                                         [] when no bounds. *)
   params : param list;
   ret_ty : type_ann option;
@@ -606,7 +617,7 @@ and module_decl = {
 and impl_block = {
   itparams : string list;    (* `<A, B>` after `impl` — generic impl over a
                                 generic struct; [] for a mono-struct impl *)
-  itbounds : (string * string list) list;
+  itbounds : (string * string list * (string * type_ann) list) list;
                              (* `impl<T: A + B>` — trait bounds on the
                                 impl's tparams, one entry per bound (so
                                 `T: A + B` yields two).  Same shape as
@@ -614,7 +625,10 @@ and impl_block = {
                                 are spliced into each method's `tbounds`
                                 so the existing instantiation-time
                                 `type_impls_trait` check covers them
-                                without a separate enforcement path. *)
+                                without a separate enforcement path.
+                                Third element is the DR-021 sugar's
+                                assoc-bindings; plain trait-path bounds
+                                get []. *)
   itrait : string list option;
                              (* `impl Trait for Foo` carries `Some
                                 ["Trait"]`; a plain inherent `impl Foo`

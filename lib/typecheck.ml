@@ -26,18 +26,25 @@ type fn_ctx = {
   tparams : string list;                 (* generic type params in scope:
                                             ["T"; "U"] inside a generic
                                             decl's body, [] otherwise *)
-  tbounds : (string * string list) list;  (* per-tparam trait bounds in
-                                             scope: `<F: Fn1>` populates
-                                             `("F", ["Fn1"])`.  Read by
-                                             the associated-type
-                                             projection resolver to
-                                             disambiguate `F::Output`
-                                             when several traits define
-                                             the assoc name (e.g. Fn1
-                                             and Fn2 both have
-                                             `Output`); the resolver
-                                             picks the trait declared
-                                             on F's bound list. *)
+  tbounds : (string * string list * (string * typ) list) list;
+                                          (* per-tparam trait bounds in
+                                             scope.  `<F: Fn1>` populates
+                                             `("F", ["Fn1"], [])`; the
+                                             DR-021 sugar `<F: |int|->int>`
+                                             populates `("F", ["Fn1"],
+                                             [("Arg", TInt …);
+                                             ("Output", TInt …)])`.  Read
+                                             by the assoc-type projection
+                                             resolver: (a) to disambiguate
+                                             `F::Output` when several
+                                             traits define the assoc name
+                                             (Fn1 and Fn2 both have
+                                             `Output`) — the bound's trait
+                                             list pins the choice; (b) to
+                                             shortcut the projection
+                                             directly to a bound's assoc
+                                             binding without needing the
+                                             concrete impl's assoc table. *)
   tvar_bindings : (string * typ) list;   (* substitute these into every
                                             type produced by resolve_type_ann.
                                             Empty for skeleton elab; populated
@@ -567,7 +574,7 @@ let try_resolve_assoc_proj ~pos ctx path : typ option =
              | TVar n ->
                  let bound_trait_names =
                    List.filter_map
-                     (fun (tp, trait_path) ->
+                     (fun (tp, trait_path, _assocs) ->
                        if tp = n then
                          match List.rev trait_path with
                          | last :: _ -> Some last
@@ -582,17 +589,37 @@ let try_resolve_assoc_proj ~pos ctx path : typ option =
                         candidate_traits)
              | _ -> candidate_traits
            in
-           (match candidate_traits with
-            | [] -> None
-            | [_one] -> Some (TAssocProj { head = head_typ; assoc })
-            | _ ->
-                (* Multiple traits define `assoc` for [head]: until
-                   `<T as Trait>::Item` lands, this is unresolvable. *)
-                Error.failf pos
-                  "ambiguous associated-type projection '%s::%s' \
-                   (multiple traits define '%s' — qualified \
-                   `<%s as Trait>::%s` is not yet supported)"
-                  head assoc assoc head assoc))
+           (* DR-021 — bound-side assoc shortcut.  When head is a tparam
+              `F` and its bound carries an assoc binding for the
+              requested `assoc` name (e.g. `<F: |int|->int>` provides
+              ("Arg", TInt) and ("Output", TInt)), return that bound
+              type directly — no impl-side lookup needed.  Tried
+              BEFORE the candidate_traits dispatch so a sugar bound
+              shortcuts even when the impl isn't reachable from the
+              local scope. *)
+           let bound_direct =
+             match head_typ with
+             | TVar n ->
+                 List.find_map (fun (tp, _trait_path, assocs) ->
+                   if tp = n then List.assoc_opt assoc assocs
+                   else None)
+                   ctx.tbounds
+             | _ -> None
+           in
+           (match bound_direct with
+            | Some t -> Some t
+            | None ->
+                (match candidate_traits with
+                 | [] -> None
+                 | [_one] -> Some (TAssocProj { head = head_typ; assoc })
+                 | _ ->
+                     (* Multiple traits define `assoc` for [head]: until
+                        `<T as Trait>::Item` lands, this is unresolvable. *)
+                     Error.failf pos
+                       "ambiguous associated-type projection '%s::%s' \
+                        (multiple traits define '%s' — qualified \
+                        `<%s as Trait>::%s` is not yet supported)"
+                       head assoc assoc head assoc)))
   | _ -> None
 
 (* DR-002 FP-1 — `type Name<T...> = Type;` lookup with ancestor-
@@ -816,6 +843,25 @@ let rec normalize_apps ctx t =
 let resolve_type_ann ?(pos = Pos.zero) ctx ann =
   normalize_apps ctx
     (subst_typ ctx.tvar_bindings (resolve_type_ann_raw ~pos ctx ann))
+
+(* Convert AST-side tbounds (`Ast.type_ann` assoc bindings, e.g. on a
+   func / impl_block read from source) into ctx-side tbounds (resolved
+   `typ` bindings).  Threaded into [fn_ctx.tbounds] at every body-elab
+   site so the DR-021 assoc shortcut + the DR-017 bound-aware
+   disambiguation read concrete types directly.  The assoc type_anns
+   are resolved against the ctx-at-call-time (which already has
+   tparams in scope); they may reference tparams (`<F: |T|->T>` where
+   T is also a tparam) and that flows through resolve_type_ann's
+   TVar handling. *)
+let resolve_ast_tbounds ~pos ctx
+    (tbounds : (string * string list * (string * Ast.type_ann) list) list)
+    : (string * string list * (string * typ) list) list =
+  List.map (fun (tp, trait_path, ast_assocs) ->
+    let assocs =
+      List.map (fun (an, ann) -> (an, resolve_type_ann ~pos ctx ann))
+        ast_assocs
+    in
+    (tp, trait_path, assocs)) tbounds
 
 (* Expand a (declared, actual) tparam-inference pair where the declared
    type is a generic application (`Pair<T, int>`) and the actual is its
@@ -1304,7 +1350,7 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
        tparam must `impl Trait`.  Gives a clear error at the call site
        instead of a downstream "no method m" once the instance body is
        elaborated. *)
-    List.iter (fun (tparam, trait_written) ->
+    List.iter (fun (tparam, trait_written, _ast_assocs) ->
       match List.assoc_opt tparam bindings with
       | None -> ()
       | Some ty ->
@@ -2905,7 +2951,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
              | Some (TVar tp) ->
                  let bound_traits =
                    List.filter_map
-                     (fun (q, trait_path) ->
+                     (fun (q, trait_path, _assocs) ->
                        if q = tp then
                          match List.rev trait_path with
                          | last :: _ -> Some last
@@ -3315,7 +3361,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                              !trait_impl_table
                        | Some (TVar tp) ->
                            List.exists
-                             (fun (q, trait_path) ->
+                             (fun (q, trait_path, _assocs) ->
                                q = tp
                                && (match List.rev trait_path with
                                    | last :: _ -> is_fn_trait_name last
@@ -4784,12 +4830,14 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~consts ~e
     (fun (p, (f : Ast.func), mangled) ->
       if f.name = "main" then None
       else
-        let ctx = { (empty_ctx ~instances) with
+        let ctx0 = { (empty_ctx ~instances) with
           structs = struct_index; enums = enum_index;
-          modules; scope = p; tparams = f.tparams; tbounds = f.tbounds;
+          modules; scope = p; tparams = f.tparams;
           aliases; type_aliases; ext_struct_fields;
           ext_structs; ext_types; ext_consts; consts;
         } in
+        let ctx = { ctx0 with
+          tbounds = resolve_ast_tbounds ~pos:f.pos ctx0 f.tbounds } in
         Some
           (p, f.name,
            { param_tys =
@@ -5301,11 +5349,13 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
       match ib.Ast.itrait with
       | None -> ()
       | Some trait_written ->
-          let ctx = { (empty_ctx ~instances) with
+          let ctx0 = { (empty_ctx ~instances) with
             structs = struct_index; enums = enum_index;
             modules; scope = parent_path;
-            tparams = ib.Ast.itparams; tbounds = ib.Ast.itbounds;
+            tparams = ib.Ast.itparams;
             ext_structs; ext_types; ext_consts } in
+          let ctx = { ctx0 with
+            tbounds = resolve_ast_tbounds ~pos:ib.Ast.ipos ctx0 ib.Ast.itbounds } in
           (match resolve_impl_target ctx ib.Ast.itarget with
            | None -> ()  (* the conformance pass reports the unknown target *)
            | Some (target_path, _, _) ->
@@ -5332,14 +5382,16 @@ let expand_impls ~instances ~ext_structs ~ext_types ~ext_consts flat struct_inde
   let resolved =
     List.map
       (fun (parent_path, ib) ->
-        let ctx = { (empty_ctx ~instances) with
+        let ctx0 = { (empty_ctx ~instances) with
           structs = struct_index; enums = enum_index;
           modules; scope = parent_path;
           (* The impl's type parameters are in scope while resolving the
              methods' self/param/ret types (`self: Pair<A, B>`). *)
-          tparams = ib.Ast.itparams; tbounds = ib.Ast.itbounds;
+          tparams = ib.Ast.itparams;
           ext_structs; ext_types; ext_consts;
         } in
+        let ctx = { ctx0 with
+          tbounds = resolve_ast_tbounds ~pos:ib.Ast.ipos ctx0 ib.Ast.itbounds } in
         let (target_path, target_pub, field_names) =
           match resolve_impl_target ctx ib.Ast.itarget with
           | Some t -> t
@@ -9007,14 +9059,16 @@ let check_program program : tprogram =
      filters the skeletons out via [is_concrete]; only the instance
      tfuncs (built later from pending jobs) carry real bodies. *)
   let elab_one_fn ~tvar_bindings (path, (f : Ast.func), mangled) =
-    let ctx0 = { (empty_ctx ~instances:mono_state) with
+    let ctx0_pre = { (empty_ctx ~instances:mono_state) with
       global; structs = struct_index; enums = enum_index;
-      modules; scope = path; tparams = f.tparams; tbounds = f.tbounds;
+      modules; scope = path; tparams = f.tparams;
       tvar_bindings; fn_asts; aliases = flat.aliases;
       type_aliases = flat.type_aliases;
       ext_vars; ext_struct_fields;
       ext_structs; ext_types; ext_consts; consts = consts_index;
     } in
+    let ctx0 = { ctx0_pre with
+      tbounds = resolve_ast_tbounds ~pos:f.pos ctx0_pre f.tbounds } in
     let param_tys =
       List.map (fun (p : Ast.param) ->
         resolve_type_ann ~pos:f.pos ctx0 p.pty) f.params

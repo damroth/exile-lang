@@ -1,10 +1,10 @@
 ;; exile-ast-dump v1 examples/fn_trait.exl
 (struct AddOne (fields (field _tag (int i32))))
 (impl AddOne (trait Fn1) (fn call pub (params (param self (const-ptr (struct AddOne))) (param a (int i32))) (int i32) (body (tail (binop + (var a) (int 1))))))
-(fn apply (tparams F) (params (param f (struct F)) (param x (struct F::Arg))) (struct F::Output) (body (tail (call f (var x)))))
+(fn apply (tparams F) (params (param f (struct F)) (param x (int i32))) (int i32) (body (tail (call f (var x)))))
 (struct AddPair (fields (field _tag (int i32))))
 (impl AddPair (trait Fn2) (fn call pub (params (param self (const-ptr (struct AddPair))) (param a (int i32)) (param b (int i32))) (int i32) (body (tail (binop + (var a) (var b))))))
-(fn apply2 (tparams F) (params (param f (struct F)) (param x (struct F::Arg1)) (param y (struct F::Arg2))) (struct F::Output) (body (tail (call f (var x) (var y)))))
+(fn apply2 (tparams F) (params (param f (struct F)) (param x (int i32)) (param y (int i32))) (int i32) (body (tail (call f (var x) (var y)))))
 (struct Map (tparams I F) (fields (field inner (struct I)) (field f (struct F))))
 (impl Map (trait Iterator) (fn next pub (params (param self (ptr (struct-app Map (struct I) (struct F))))) (struct-app Option (struct F::Output)) (body (tail (match (method-call (field-access (var self) inner) next ) (arm (pat-variant Option::Some (pat-var v)) (call Option::Some (method-call (var self) f (var v)))) (arm (pat-variant Option::None) (enum-lit Option::None)))))))
 (fn main (params ) void (body (let f1 (struct-lit AddOne (field _tag (int 0)))) (expr-stmt (call println (call apply (var f1) (int 41)))) (let f2 (struct-lit AddPair (field _tag (int 0)))) (expr-stmt (call println (call apply2 (var f2) (int 13) (int 29)))) (let a (call default_allocator )) (let mut v (ty (struct-app Vec (int i32))) (call Vec::with_capacity (var a) (cast (int 8) (int u32)))) (expr-stmt (method-call (var v) push (int 10))) (expr-stmt (method-call (var v) push (int 20))) (expr-stmt (method-call (var v) push (int 30))) (let m (ty (struct-app Map (struct-app VecIter (int i32)) (struct AddOne))) (struct-lit Map (field inner (method-call (var v) iter )) (field f (struct-lit AddOne (field _tag (int 0)))))) (let mut acc (ty (int i32)) (int 0)) (for x (var m) (assign acc (binop + (var acc) (var x)))) (expr-stmt (call println (var acc)))))

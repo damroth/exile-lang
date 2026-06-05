@@ -5512,6 +5512,60 @@ let () =
        true
      with _ -> false);
 
+  check_assert "DR-021: |A|->R bound sugar lowers to Fn1 + assoc bindings"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          fn apply<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() { let a = AddOne { _tag: 0 }; println(apply(a, 41)); }\n"
+     in
+     contains c "AddOne__call");
+
+  check_assert "DR-021: |A, B|->R bound sugar lowers to Fn2 with Arg1/Arg2"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Add { _tag: int }\n\
+          impl Fn2 for Add {\n\
+         \    type Arg1 = int;\n\
+         \    type Arg2 = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int, b: int) -> int { a + b }\n\
+          }\n\
+          fn apply2<F: |int, int|->int>(f: F, x: int, y: int) -> int {\n\
+         \    f(x, y)\n\
+          }\n\
+          fn main() {\n\
+         \    let f = Add { _tag: 0 };\n\
+         \    println(apply2(f, 13, 29));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-021: F::Arg / F::Output project via bound assoc shortcut"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          fn apply<F: |int|->int>(f: F, x: F::Arg) -> F::Output { f(x) }\n\
+          fn main() { let a = AddOne { _tag: 0 }; println(apply(a, 41)); }\n");
+       true
+     with _ -> false);
+
+  check_error "DR-021: ||->R with no arg types is rejected (Fn0 pending)"
+    "fn run<F: ||->int>(f: F) -> int { f() }\n\
+     fn main() {}\n"
+    "Fn-sugar bound `||->R` with no argument types is \
+     not supported yet (Fn0 prelude trait pending)";
+
   check_assert "DR-020: Result::Err in match arm picks up TEnumApp expected"
     (try
        ignore (Exile_lang.Compiler.compile
