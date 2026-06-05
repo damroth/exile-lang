@@ -5560,11 +5560,41 @@ let () =
        true
      with _ -> false);
 
-  check_error "DR-021: ||->R with no arg types is rejected (Fn0 pending)"
-    "fn run<F: ||->int>(f: F) -> int { f() }\n\
-     fn main() {}\n"
-    "Fn-sugar bound `||->R` with no argument types is \
-     not supported yet (Fn0 prelude trait pending)";
+  check_assert "DR-023: ||->R bound sugar lowers to Fn0 + Output assoc"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Forty { _tag: int }\n\
+          impl Fn0 for Forty {\n\
+         \    type Output = int;\n\
+         \    fn call(*const self) -> int { 42 }\n\
+          }\n\
+          fn run<F: ||->int>(f: F) -> int { f() }\n\
+          fn main() { let f = Forty { _tag: 0 }; println(run(f)); }\n"
+     in
+     contains c "Forty__call");
+
+  check_assert "DR-023: F::Output projects via bound on Fn0"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Forty { _tag: int }\n\
+          impl Fn0 for Forty {\n\
+         \    type Output = int;\n\
+         \    fn call(*const self) -> int { 42 }\n\
+          }\n\
+          fn run<F: ||->int>(f: F) -> F::Output { f() }\n\
+          fn main() { let f = Forty { _tag: 0 }; println(run(f)); }\n");
+       true
+     with _ -> false);
+
+  check_error "DR-023: Fn0 Output mismatch rejected at call site"
+    "struct Forty { _tag: int }\n\
+     impl Fn0 for Forty {\n\
+    \    type Output = u32;\n\
+    \    fn call(*const self) -> u32 { 42 as u32 }\n\
+     }\n\
+     fn run<F: ||->int>(f: F) -> int { f() }\n\
+     fn main() { let f = Forty { _tag: 0 }; println(run(f)); }\n"
+    "bound 'F: Fn0' on 'run' requires 'F::Output = i32' but type 'Forty' has 'Fn0::Output = u32'";
 
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\

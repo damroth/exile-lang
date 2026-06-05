@@ -1191,9 +1191,16 @@ let parse_tparams_bounded s =
                    in
                    bounds := (n, [trait_name], assocs) :: !bounds
                | Token.PipePipe ->
-                   Error.failf bound_pos
-                     "Fn-sugar bound `||->R` with no argument types is \
-                      not supported yet (Fn0 prelude trait pending)"
+                   (* `||->R` — empty-args closure shape; lowers to
+                      Fn0<Output=R>.  Distinct from `|| -> R` only at
+                      lex time; the lexer fuses the two pipes into
+                      PipePipe so the parser sees this single-token
+                      form.  Same Output assoc as the other arities. *)
+                   ignore (advance s);
+                   expect s Token.Arrow;
+                   let ret = parse_type s in
+                   bounds :=
+                     (n, ["Fn0"], [("Output", ret)]) :: !bounds
                | _ ->
                    let path = parse_path s ~what:"trait name in bound" in
                    bounds := (n, path, []) :: !bounds);
