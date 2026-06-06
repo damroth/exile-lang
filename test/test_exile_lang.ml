@@ -5751,6 +5751,25 @@ let () =
        true
      with _ -> false);
 
+  (* DR-027 - bound-order independence in tbound resolution.  When
+     `<I: Iterator, P: |I::Item|->bool>` lists I before P, the
+     resolver now sees I's Iterator bound in ctx.tbounds when
+     resolving P's assoc binding `I::Item`.  Pre-fix the resolution
+     iterated all bounds with the same empty ctx.tbounds, so
+     `I::Item` inside P's bound was looked up before I's Iterator
+     bound was visible - "unknown type 'I::Item'" even when the
+     same code shape worked on free fns. *)
+  check_assert "DR-027: |I::Item|->bool bound parses + resolves on free fn"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "trait Has { type Item; }\n\
+          struct Box {}\n\
+          impl Has for Box { type Item = int; }\n\
+          fn id<I: Has, P: |I::Item|->bool>(_x: int) -> int { 0 }\n\
+          fn main() { println(42); }\n");
+       true
+     with _ -> false);
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\

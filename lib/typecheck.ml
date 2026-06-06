@@ -860,18 +860,43 @@ let rec normalize_apps ctx t =
          with that typ (then normalise it too — the recorded typ may
          itself be a generic application).  Skeleton case (head still
          carries a `TVar`) keeps the projection node intact; it gets
-         normalised once monomorphization substitutes a concrete head. *)
+         normalised once monomorphization substitutes a concrete head.
+         DR-026 - mono-instance heads (`VecIter_i32`) match against
+         skeleton-registered impls (`VecIter`) via Mono.is_instance_of,
+         same pattern as DR-017 mono-instance trait recognition. *)
       let head = normalize_apps ctx head in
       if not (is_concrete head) then TAssocProj { head; assoc }
       else
         (match typ_head_path head with
          | None -> TAssocProj { head; assoc }
          | Some hp ->
+             (* DR-026 - substitute skeleton-tparams with the mono
+                instance's recorded args when the impl is registered
+                under the skeleton path but the head we're projecting
+                from is a mono instance.  Without this, `I::Item` on
+                `I = VecIter_i32` projects through `(Iterator,
+                VecIter)`'s recorded `Item = TVar T`, leaving T
+                unsubstituted and reaching codegen as an unknown type. *)
+             let inst_bindings =
+               match Mono.find_struct ctx.instances hp with
+               | Some { stparams; sinstance_args = Some args; _ }
+                 when stparams <> [] ->
+                   (try List.combine stparams args with _ -> [])
+               | _ -> []
+             in
+             let subst_for_inst t =
+               if inst_bindings = [] then t
+               else subst_typ inst_bindings t
+             in
              let matches =
                List.filter_map
                  (fun ((_trait, target), assocs) ->
-                   if target = hp && List.mem_assoc assoc assocs
-                   then Some (List.assoc assoc assocs) else None)
+                   let target_matches =
+                     target = hp || Mono.is_instance_of target hp
+                   in
+                   if target_matches && List.mem_assoc assoc assocs
+                   then Some (subst_for_inst (List.assoc assoc assocs))
+                   else None)
                  !trait_assoc_table
              in
              (match matches with
@@ -896,15 +921,25 @@ let resolve_type_ann ?(pos = Pos.zero) ctx ann =
    tparams in scope); they may reference tparams (`<F: |T|->T>` where
    T is also a tparam) and that flows through resolve_type_ann's
    TVar handling. *)
+(* Resolve bounds in source order, threading previously-resolved
+   bounds back into ctx so later bounds can refer to earlier ones'
+   trait-decl assocs.  Example: `impl<I: Iterator, P: |I::Item|->bool>`
+   needs `I: Iterator` already in ctx.tbounds before resolving
+   `I::Item` inside P's bound. *)
 let resolve_ast_tbounds ~pos ctx
     (tbounds : (string * string list * (string * Ast.type_ann) list) list)
     : (string * string list * (string * typ) list) list =
-  List.map (fun (tp, trait_path, ast_assocs) ->
-    let assocs =
-      List.map (fun (an, ann) -> (an, resolve_type_ann ~pos ctx ann))
-        ast_assocs
-    in
-    (tp, trait_path, assocs)) tbounds
+  let (rev, _ctx) =
+    List.fold_left (fun (acc, ctx) (tp, trait_path, ast_assocs) ->
+      let assocs =
+        List.map (fun (an, ann) -> (an, resolve_type_ann ~pos ctx ann))
+          ast_assocs
+      in
+      let resolved = (tp, trait_path, assocs) in
+      (resolved :: acc, { ctx with tbounds = resolved :: ctx.tbounds }))
+      ([], ctx) tbounds
+  in
+  List.rev rev
 
 (* Expand a (declared, actual) tparam-inference pair where the declared
    type is a generic application (`Pair<T, int>`) and the actual is its
