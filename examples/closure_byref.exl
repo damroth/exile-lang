@@ -1,0 +1,62 @@
+// Explicit by-ref capture lists (DR-033).
+//
+// DR-024 by default captures by value: `|x| x + t` over `t: int`
+// puts a copy of `t` into the env struct.  For a small value that's
+// fine, but for a struct (or anything large) the copy hurts the
+// perf model — and worse, it obscures intent: the reader can't tell
+// from the closure literal whether the env holds a value or a
+// pointer.
+//
+// DR-033 adds an opt-in capture list `[&n1, &n2, ...]` placed
+// immediately before the lambda's `|...|` head.  Each `&name`
+// switches that one capture from by-value to by-reference: the env
+// field is `*const T` instead of `T`, the env constructor uses
+// `&name` instead of `name`, and every reference inside the body
+// is rewritten to `*self.<name>` rather than `self.<name>`.  Names
+// NOT listed keep the legacy implicit by-value behaviour, so `[&a]
+// |x| x + a + b` captures `a` by-ref and `b` by-value side-by-side.
+//
+// Cost model stays visible: the user explicitly says `&` at the
+// construction site, mirroring how a regular `&x` argument signals
+// "pointer, not copy" anywhere else in the language.
+//
+// Soundness: env-struct with a ptr-field rooted in a local picks up
+// `bowners = [name]` automatically in escape-pass DR-010 — returning
+// or storing such a closure into a non-local pointer triggers the
+// existing S5a escape-hole reject.  No new escape machinery.
+//
+// Three flavours below.
+
+// 1. Single by-ref capture — small value but spelt by-ref to make
+// the intent explicit.  Body's `n` becomes `*self.n`.
+
+fn run_unary<F: |int|->int>(f: F, x: int) -> int { f(x) }
+
+// 2. Struct by-ref capture — avoids copying the struct into the env.
+// `c.field` desugars through `(*self.c).field`, which the codegen
+// folds to a single pointer-deref-then-field.
+
+struct Ctx { field: int }
+
+// 3. Mixed by-ref + implicit by-value.  `a` is listed (by-ref);
+// `b` isn't (implicit by-value).  Both flow through the same
+// __closure_N env struct, one field as `*const int`, the other
+// as `int`.
+
+fn main() {
+    // 1. by-ref int capture.
+    let n: int = 10;
+    let add_n = [&n] |x: int| -> int x + n;
+    println(run_unary(add_n, 5));        // 15 = 5 + 10
+
+    // 2. by-ref struct capture.
+    let c: Ctx = Ctx { field: 100 };
+    let read_field = [&c] |x: int| -> int c.field + x;
+    println(run_unary(read_field, 3));   // 103 = 100 + 3
+
+    // 3. Mixed: a by-ref, b by-value (implicit).
+    let a: int = 20;
+    let b: int = 5;
+    let combine = [&a] |x: int| -> int x + a + b;
+    println(run_unary(combine, 1));      // 26 = 1 + 20 + 5
+}

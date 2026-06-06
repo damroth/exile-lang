@@ -327,7 +327,7 @@ let rec parse_primary s =
         end else None
       in
       let body = parse_expr s in
-      Ast.Lambda { params; ret_ty; body; pos = p }
+      Ast.Lambda { params; ret_ty; body; captures = []; pos = p }
   | Token.PipePipe ->
       (* `||` token here means an empty lambda param list — same
          path as above but with no params to parse. *)
@@ -338,29 +338,82 @@ let rec parse_primary s =
         end else None
       in
       let body = parse_expr s in
-      Ast.Lambda { params = []; ret_ty; body; pos = p }
+      Ast.Lambda { params = []; ret_ty; body; captures = []; pos = p }
   | Token.LBracket ->
       (* Array literal: `[e1, e2, ...]` (explicit) or `[v; N]` (repeat).
-         Empty `[]` is rejected — no element type or size to infer. *)
+         Empty `[]` is rejected — no element type or size to infer.
+         DR-033: if the `]` is followed by `|` or `||`, the bracket
+         was a capture-list for a lambda — reinterpret post-hoc.
+         Capture-list elems must all be `&name`. *)
       if peek s = Token.RBracket then
         Error.failf p "empty array literal `[]` is not allowed";
       let first = parse_expr s in
-      (match peek s with
-       | Token.Semicolon ->
-           ignore (advance s);
-           let count = parse_expr s in
-           expect s Token.RBracket;
-           Ast.ArrayRepeat { value = first; count; pos = p }
-       | Token.Comma ->
-           ignore (advance s);
-           let rest = parse_comma_list ~close:Token.RBracket ~item:parse_expr s in
-           Ast.ArrayLit (first :: rest, p)
-       | Token.RBracket ->
-           ignore (advance s);
-           Ast.ArrayLit ([ first ], p)
-       | t ->
-           Error.failf (peek_pos s)
-             "expected ',', ';' or ']' in array literal, got %s" (Token.pp t))
+      let arr =
+        match peek s with
+        | Token.Semicolon ->
+            ignore (advance s);
+            let count = parse_expr s in
+            expect s Token.RBracket;
+            `Repeat (Ast.ArrayRepeat { value = first; count; pos = p })
+        | Token.Comma ->
+            ignore (advance s);
+            let rest =
+              parse_comma_list ~close:Token.RBracket ~item:parse_expr s in
+            `Lit (first :: rest)
+        | Token.RBracket ->
+            ignore (advance s);
+            `Lit [ first ]
+        | t ->
+            Error.failf (peek_pos s)
+              "expected ',', ';' or ']' in array literal, got %s" (Token.pp t)
+      in
+      let next = peek s in
+      let starts_lambda = (next = Token.Pipe) || (next = Token.PipePipe) in
+      (match arr with
+       | `Lit elems when starts_lambda ->
+           let all_refs =
+             List.for_all (function
+               | Ast.Ref (Ast.Var (_, _), _) -> true
+               | _ -> false) elems
+           in
+           if not all_refs then
+             Error.failf p
+               "capture list before lambda must contain only `&name` items \
+                (by-value captures are implicit; only `&name` belongs in \
+                a capture list)";
+           let captures =
+             List.map (function
+               | Ast.Ref (Ast.Var (n, _), _) -> (n, true)
+               | _ -> assert false) elems
+           in
+           let (lam_kw_tok, lam_kw_pos) = advance s in
+           let params =
+             match lam_kw_tok with
+             | Token.PipePipe -> []
+             | Token.Pipe ->
+                 if peek s = Token.Pipe then begin
+                   ignore (advance s); []
+                 end else
+                   parse_comma_list ~close:Token.Pipe
+                     ~item:(fun s ->
+                       let (n, _) =
+                         expect_ident s ~what:"lambda parameter name" in
+                       expect s Token.Colon;
+                       let t = parse_type s in
+                       (n, t))
+                     s
+             | _ -> assert false
+           in
+           let ret_ty =
+             if peek s = Token.Arrow then begin
+               ignore (advance s);
+               Some (parse_type s)
+             end else None
+           in
+           let body = parse_expr s in
+           Ast.Lambda { params; ret_ty; body; captures; pos = lam_kw_pos }
+       | `Lit elems -> Ast.ArrayLit (elems, p)
+       | `Repeat ar -> ar)
   | Token.Minus -> Ast.Neg (parse_primary s, p)
   | Token.Tilde -> Ast.BitNot (parse_primary s, p)
   (* `!e` — logical not.  Postfix-tight so `!a.eq(b)` = `!(a.eq(b))`. *)

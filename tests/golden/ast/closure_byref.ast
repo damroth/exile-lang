@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/closure_byref.exl
+(fn run_unary (tparams F) (params (param f (struct F)) (param x (int i32))) (int i32) (body (tail (call f (var x)))))
+(struct Ctx (fields (field field (int i32))))
+(fn main (params ) void (body (let n (ty (int i32)) (int 10)) (let add_n (lambda ((param x (int i32))) (int i32) (binop + (var x) (var n)))) (expr-stmt (call println (call run_unary (var add_n) (int 5)))) (let c (ty (struct Ctx)) (struct-lit Ctx (field field (int 100)))) (let read_field (lambda ((param x (int i32))) (int i32) (binop + (field-access (var c) field) (var x)))) (expr-stmt (call println (call run_unary (var read_field) (int 3)))) (let a (ty (int i32)) (int 20)) (let b (ty (int i32)) (int 5)) (let combine (lambda ((param x (int i32))) (int i32) (binop + (binop + (var x) (var a)) (var b)))) (expr-stmt (call println (call run_unary (var combine) (int 1))))))

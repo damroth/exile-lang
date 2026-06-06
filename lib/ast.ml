@@ -166,7 +166,9 @@ and expr =
                                            rvalue).  No bounds check. *)
   | Lambda of { params : (string * type_ann) list;
                 ret_ty : type_ann option;
-                body : expr; pos : Pos.t }
+                body : expr;
+                captures : (string * bool) list;
+                pos : Pos.t }
                                         (* `|p: T, q: U| body` — DR-008
                                            captureless decay (A1).  A
                                            pre-typecheck pass lifts each

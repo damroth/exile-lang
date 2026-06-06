@@ -270,13 +270,13 @@ let rec subst_var_expr ~from ~to_ (e : Ast.expr) : Ast.expr =
       Ast.Index { base = sub base; index = sub index; pos }
   | Ast.Range { lo; hi; inclusive; pos } ->
       Ast.Range { lo = sub lo; hi = sub hi; inclusive; pos }
-  | Ast.Lambda { params; ret_ty; body; pos } ->
+  | Ast.Lambda { params; ret_ty; body; captures; pos } ->
       (* The body is its own scope (lifted to a top-level fn); a
          substitution of `from -> to_` in an enclosing context
          shouldn't reach in.  Lambdas that shadow `from` as a
          param keep the param.  Pre-typecheck pass walks lambdas
          separately so this case is mostly a safe no-op pass-through. *)
-      Ast.Lambda { params; ret_ty; body = sub body; pos }
+      Ast.Lambda { params; ret_ty; body = sub body; captures; pos }
   | Ast.StructLit { tname; fields; base; pos } ->
       Ast.StructLit { tname;
                       fields = List.map (fun (n, e) -> (n, sub e)) fields;
@@ -8786,13 +8786,17 @@ let expand_lambdas (program : Ast.program) : Ast.program =
     acc
   in
   (* Substitute `Ast.Var (cap, _)` with `Ast.FieldAccess (Ast.Var
-     ("self", pos), cap, pos)` everywhere except where a tighter
-     binding shadows the name.  Used to rewrite the lambda's body
-     into the impl Fn1 `call` method body. *)
+     ("self", pos), cap, pos)` (or its Deref for DR-033 by-ref
+     captures) everywhere except where a tighter binding shadows
+     the name.  Used to rewrite the lambda's body into the impl
+     Fn1 `call` method body.  [captures] is `(name, is_byref)`. *)
   let rec subst_captures captures bound (e : Ast.expr) : Ast.expr =
     match e with
-    | Ast.Var (n, p) when List.mem n captures && not (Hashtbl.mem bound n) ->
-        Ast.FieldAccess (Ast.Var ("self", p), n, p)
+    | Ast.Var (n, p) when not (Hashtbl.mem bound n) &&
+                          List.mem_assoc n captures ->
+        let is_byref = List.assoc n captures in
+        let access = Ast.FieldAccess (Ast.Var ("self", p), n, p) in
+        if is_byref then Ast.Deref (access, p) else access
     | Ast.Var _ | Ast.IntLit _ | Ast.FloatLit _ | Ast.BoolLit _
     | Ast.StringLit _ | Ast.NullLit _ | Ast.SizeOf _ -> e
     | Ast.Neg (s, p) -> Ast.Neg (subst_captures captures bound s, p)
@@ -8879,7 +8883,7 @@ let expand_lambdas (program : Ast.program) : Ast.program =
           pos }
     | Ast.Block (stmts, p) ->
         Ast.Block (subst_captures_stmts captures bound stmts, p)
-    | Ast.Lambda { params; ret_ty; body; pos } ->
+    | Ast.Lambda { params; ret_ty; body; captures = inner_caps; pos } ->
         let saved =
           List.map (fun (n, _) -> (n, Hashtbl.mem bound n)) params
         in
@@ -8887,7 +8891,7 @@ let expand_lambdas (program : Ast.program) : Ast.program =
         let body = subst_captures captures bound body in
         List.iter (fun (n, was) ->
           if not was then Hashtbl.remove bound n) saved;
-        Ast.Lambda { params; ret_ty; body; pos }
+        Ast.Lambda { params; ret_ty; body; captures = inner_caps; pos }
   and subst_captures_stmts captures bound stmts =
     let (out, removed) =
       List.fold_left (fun (acc, removed) s ->
@@ -8976,16 +8980,35 @@ let expand_lambdas (program : Ast.program) : Ast.program =
   in
   let rec lift_e ~scope (e : Ast.expr) : Ast.expr =
     match e with
-    | Ast.Lambda { params; ret_ty; body; pos } ->
+    | Ast.Lambda { params; ret_ty; body; captures = explicit_caps; pos } ->
         let body = lift_e ~scope:(scope @ params) body in
         let bound = Hashtbl.create 16 in
         List.iter (fun (n, _) -> Hashtbl.replace bound n ()) params;
         let free = free_vars_of_expr bound body [] in
+        (* DR-033: validate explicit by-ref captures.  Each `&n` in the
+           capture list must (a) resolve to a name in [scope] and
+           (b) actually be referenced in the lambda body.  Implicit
+           by-value captures (free vars not listed) keep working. *)
+        List.iter (fun (n, _is_byref) ->
+          if not (List.mem_assoc n scope) then
+            Error.failf pos
+              "by-ref capture `&%s`: name not in scope at lambda \
+               (captures must be fn params or type-annotated lets)" n;
+          if not (List.mem n free) then
+            Error.failf pos
+              "by-ref capture `&%s` has no reference in lambda body" n
+        ) explicit_caps;
         let captures =
           List.filter_map (fun n ->
             match List.assoc_opt n scope with
-            | Some ann -> Some (n, ann)
-            | None -> None) free
+            | None -> None
+            | Some ann ->
+                let is_byref =
+                  match List.assoc_opt n explicit_caps with
+                  | Some b -> b
+                  | None -> false
+                in
+                Some (n, ann, is_byref)) free
         in
         if captures = [] then
           (* A1 path — captureless decay. *)
@@ -9015,8 +9038,10 @@ let expand_lambdas (program : Ast.program) : Ast.program =
             sis_pub = false;
             stparams = [];
             sfields =
-              List.map (fun (cap_name, cap_ann) ->
-                (cap_name, cap_ann)) captures;
+              List.map (fun (cap_name, cap_ann, is_byref) ->
+                let ft = if is_byref then Ast.TyConstPtr cap_ann
+                         else cap_ann in
+                (cap_name, ft)) captures;
             spos = pos;
             sis_debug = false;
             sis_move = false;
@@ -9026,12 +9051,13 @@ let expand_lambdas (program : Ast.program) : Ast.program =
           (* Build call's body — start from the lambda body, substitute
              every captured-Var reference with `self.<name>`, wrap in a
              `Tail` so the body's value flows as the call's result. *)
-          let cap_names = List.map fst captures in
+          let cap_name_mode =
+            List.map (fun (n, _, b) -> (n, b)) captures in
           let bound_for_subst = Hashtbl.create 8 in
           List.iter (fun (n, _) -> Hashtbl.replace bound_for_subst n ())
             params;
           let body_substituted =
-            subst_captures cap_names bound_for_subst body
+            subst_captures cap_name_mode bound_for_subst body
           in
           (* parse_impl_block replaces bare-`TySelf` with the target
              type at parse time; since this impl is synthesised after
@@ -9088,10 +9114,13 @@ let expand_lambdas (program : Ast.program) : Ast.program =
           lifted :=
             env_impl :: Ast.Struct env_struct :: !lifted;
           (* Replace the lambda expression with a struct literal
-             constructing the env from the surrounding scope. *)
+             constructing the env from the surrounding scope.  For
+             by-ref captures the field is initialised with `&name`. *)
           let fields =
-            List.map (fun (cap_name, _) ->
-              (cap_name, Ast.Var (cap_name, pos))) captures
+            List.map (fun (cap_name, _, is_byref) ->
+              let v = Ast.Var (cap_name, pos) in
+              let v = if is_byref then Ast.Ref (v, pos) else v in
+              (cap_name, v)) captures
           in
           Ast.StructLit {
             tname = [closure_name]; fields; base = None; pos }

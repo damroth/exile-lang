@@ -1,0 +1,164 @@
+;; exile-tokens-dump v1 examples/closure_byref.exl
+Fn @examples/closure_byref.exl:33:1
+(Ident run_unary) @examples/closure_byref.exl:33:4
+Lt @examples/closure_byref.exl:33:13
+(Ident F) @examples/closure_byref.exl:33:14
+Colon @examples/closure_byref.exl:33:15
+Pipe @examples/closure_byref.exl:33:17
+(Ident int) @examples/closure_byref.exl:33:18
+Pipe @examples/closure_byref.exl:33:21
+Arrow @examples/closure_byref.exl:33:22
+(Ident int) @examples/closure_byref.exl:33:24
+Gt @examples/closure_byref.exl:33:27
+LParen @examples/closure_byref.exl:33:28
+(Ident f) @examples/closure_byref.exl:33:29
+Colon @examples/closure_byref.exl:33:30
+(Ident F) @examples/closure_byref.exl:33:32
+Comma @examples/closure_byref.exl:33:33
+(Ident x) @examples/closure_byref.exl:33:35
+Colon @examples/closure_byref.exl:33:36
+(Ident int) @examples/closure_byref.exl:33:38
+RParen @examples/closure_byref.exl:33:41
+Arrow @examples/closure_byref.exl:33:43
+(Ident int) @examples/closure_byref.exl:33:46
+LBrace @examples/closure_byref.exl:33:50
+(Ident f) @examples/closure_byref.exl:33:52
+LParen @examples/closure_byref.exl:33:53
+(Ident x) @examples/closure_byref.exl:33:54
+RParen @examples/closure_byref.exl:33:55
+RBrace @examples/closure_byref.exl:33:57
+Struct @examples/closure_byref.exl:39:1
+(Ident Ctx) @examples/closure_byref.exl:39:8
+LBrace @examples/closure_byref.exl:39:12
+(Ident field) @examples/closure_byref.exl:39:14
+Colon @examples/closure_byref.exl:39:19
+(Ident int) @examples/closure_byref.exl:39:21
+RBrace @examples/closure_byref.exl:39:25
+Fn @examples/closure_byref.exl:46:1
+(Ident main) @examples/closure_byref.exl:46:4
+LParen @examples/closure_byref.exl:46:8
+RParen @examples/closure_byref.exl:46:9
+LBrace @examples/closure_byref.exl:46:11
+Let @examples/closure_byref.exl:48:5
+(Ident n) @examples/closure_byref.exl:48:9
+Colon @examples/closure_byref.exl:48:10
+(Ident int) @examples/closure_byref.exl:48:12
+Eq @examples/closure_byref.exl:48:16
+(Int 10) @examples/closure_byref.exl:48:18
+Semicolon @examples/closure_byref.exl:48:20
+Let @examples/closure_byref.exl:49:5
+(Ident add_n) @examples/closure_byref.exl:49:9
+Eq @examples/closure_byref.exl:49:15
+LBracket @examples/closure_byref.exl:49:17
+Amp @examples/closure_byref.exl:49:18
+(Ident n) @examples/closure_byref.exl:49:19
+RBracket @examples/closure_byref.exl:49:20
+Pipe @examples/closure_byref.exl:49:22
+(Ident x) @examples/closure_byref.exl:49:23
+Colon @examples/closure_byref.exl:49:24
+(Ident int) @examples/closure_byref.exl:49:26
+Pipe @examples/closure_byref.exl:49:29
+Arrow @examples/closure_byref.exl:49:31
+(Ident int) @examples/closure_byref.exl:49:34
+(Ident x) @examples/closure_byref.exl:49:38
+Plus @examples/closure_byref.exl:49:40
+(Ident n) @examples/closure_byref.exl:49:42
+Semicolon @examples/closure_byref.exl:49:43
+(Ident println) @examples/closure_byref.exl:50:5
+LParen @examples/closure_byref.exl:50:12
+(Ident run_unary) @examples/closure_byref.exl:50:13
+LParen @examples/closure_byref.exl:50:22
+(Ident add_n) @examples/closure_byref.exl:50:23
+Comma @examples/closure_byref.exl:50:28
+(Int 5) @examples/closure_byref.exl:50:30
+RParen @examples/closure_byref.exl:50:31
+RParen @examples/closure_byref.exl:50:32
+Semicolon @examples/closure_byref.exl:50:33
+Let @examples/closure_byref.exl:53:5
+(Ident c) @examples/closure_byref.exl:53:9
+Colon @examples/closure_byref.exl:53:10
+(Ident Ctx) @examples/closure_byref.exl:53:12
+Eq @examples/closure_byref.exl:53:16
+(Ident Ctx) @examples/closure_byref.exl:53:18
+LBrace @examples/closure_byref.exl:53:22
+(Ident field) @examples/closure_byref.exl:53:24
+Colon @examples/closure_byref.exl:53:29
+(Int 100) @examples/closure_byref.exl:53:31
+RBrace @examples/closure_byref.exl:53:35
+Semicolon @examples/closure_byref.exl:53:36
+Let @examples/closure_byref.exl:54:5
+(Ident read_field) @examples/closure_byref.exl:54:9
+Eq @examples/closure_byref.exl:54:20
+LBracket @examples/closure_byref.exl:54:22
+Amp @examples/closure_byref.exl:54:23
+(Ident c) @examples/closure_byref.exl:54:24
+RBracket @examples/closure_byref.exl:54:25
+Pipe @examples/closure_byref.exl:54:27
+(Ident x) @examples/closure_byref.exl:54:28
+Colon @examples/closure_byref.exl:54:29
+(Ident int) @examples/closure_byref.exl:54:31
+Pipe @examples/closure_byref.exl:54:34
+Arrow @examples/closure_byref.exl:54:36
+(Ident int) @examples/closure_byref.exl:54:39
+(Ident c) @examples/closure_byref.exl:54:43
+Dot @examples/closure_byref.exl:54:44
+(Ident field) @examples/closure_byref.exl:54:45
+Plus @examples/closure_byref.exl:54:51
+(Ident x) @examples/closure_byref.exl:54:53
+Semicolon @examples/closure_byref.exl:54:54
+(Ident println) @examples/closure_byref.exl:55:5
+LParen @examples/closure_byref.exl:55:12
+(Ident run_unary) @examples/closure_byref.exl:55:13
+LParen @examples/closure_byref.exl:55:22
+(Ident read_field) @examples/closure_byref.exl:55:23
+Comma @examples/closure_byref.exl:55:33
+(Int 3) @examples/closure_byref.exl:55:35
+RParen @examples/closure_byref.exl:55:36
+RParen @examples/closure_byref.exl:55:37
+Semicolon @examples/closure_byref.exl:55:38
+Let @examples/closure_byref.exl:58:5
+(Ident a) @examples/closure_byref.exl:58:9
+Colon @examples/closure_byref.exl:58:10
+(Ident int) @examples/closure_byref.exl:58:12
+Eq @examples/closure_byref.exl:58:16
+(Int 20) @examples/closure_byref.exl:58:18
+Semicolon @examples/closure_byref.exl:58:20
+Let @examples/closure_byref.exl:59:5
+(Ident b) @examples/closure_byref.exl:59:9
+Colon @examples/closure_byref.exl:59:10
+(Ident int) @examples/closure_byref.exl:59:12
+Eq @examples/closure_byref.exl:59:16
+(Int 5) @examples/closure_byref.exl:59:18
+Semicolon @examples/closure_byref.exl:59:19
+Let @examples/closure_byref.exl:60:5
+(Ident combine) @examples/closure_byref.exl:60:9
+Eq @examples/closure_byref.exl:60:17
+LBracket @examples/closure_byref.exl:60:19
+Amp @examples/closure_byref.exl:60:20
+(Ident a) @examples/closure_byref.exl:60:21
+RBracket @examples/closure_byref.exl:60:22
+Pipe @examples/closure_byref.exl:60:24
+(Ident x) @examples/closure_byref.exl:60:25
+Colon @examples/closure_byref.exl:60:26
+(Ident int) @examples/closure_byref.exl:60:28
+Pipe @examples/closure_byref.exl:60:31
+Arrow @examples/closure_byref.exl:60:33
+(Ident int) @examples/closure_byref.exl:60:36
+(Ident x) @examples/closure_byref.exl:60:40
+Plus @examples/closure_byref.exl:60:42
+(Ident a) @examples/closure_byref.exl:60:44
+Plus @examples/closure_byref.exl:60:46
+(Ident b) @examples/closure_byref.exl:60:48
+Semicolon @examples/closure_byref.exl:60:49
+(Ident println) @examples/closure_byref.exl:61:5
+LParen @examples/closure_byref.exl:61:12
+(Ident run_unary) @examples/closure_byref.exl:61:13
+LParen @examples/closure_byref.exl:61:22
+(Ident combine) @examples/closure_byref.exl:61:23
+Comma @examples/closure_byref.exl:61:30
+(Int 1) @examples/closure_byref.exl:61:32
+RParen @examples/closure_byref.exl:61:33
+RParen @examples/closure_byref.exl:61:34
+Semicolon @examples/closure_byref.exl:61:35
+RBrace @examples/closure_byref.exl:62:1
+Eof @examples/closure_byref.exl:63:1

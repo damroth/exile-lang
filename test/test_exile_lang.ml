@@ -5966,6 +5966,92 @@ let () =
      in
      contains c "sys_close");
 
+  (* DR-033 - `[&x] |y| body` explicit by-ref capture list.  Lowers
+     a capture from by-value (env field T) to by-reference (env
+     field *const T); each body reference to x desugars to *self.x.
+     Captures not listed keep the implicit by-value path.  Escape-
+     pass DR-010 owners_of picks up the ptr-field rooted in x for
+     free, so returning such a closure trips the existing S5a
+     reject. *)
+  check_assert "DR-033: [&n] |x: int| x + n lowers n to const ptr in env"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let n: int = 10;\n\
+         \    let add_n = [&n] |x: int| -> int x + n;\n\
+         \    println(run(add_n, 5));\n\
+          }\n"
+     in
+     contains c "const long *n");
+
+  check_assert "DR-033: by-ref struct capture lowers to ptr field"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Ctx { field: int }\n\
+          fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let c: Ctx = Ctx { field: 100 };\n\
+         \    let f = [&c] |x: int| -> int c.field + x;\n\
+         \    println(run(f, 3));\n\
+          }\n"
+     in
+     contains c "const struct ex_Ctx *c");
+
+  check_assert "DR-033: mixed by-ref + implicit by-value compiles"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let a: int = 20;\n\
+         \    let b: int = 5;\n\
+         \    let f = [&a] |x: int| -> int x + a + b;\n\
+         \    println(run(f, 1));\n\
+          }\n"
+     in
+     (* env-struct has `const long *a;` (by-ref) and plain `long b;`. *)
+     contains c "const long *a" && contains c "long b");
+
+  check_error "DR-033: by-ref capture of name not in scope rejected"
+    "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+     fn main() {\n\
+    \    let f = [&missing] |x: int| -> int x + 1;\n\
+    \    println(run(f, 0));\n\
+     }\n"
+    "by-ref capture `&missing`: name not in scope at lambda \
+     (captures must be fn params or type-annotated lets)";
+
+  check_error "DR-033: by-ref capture not referenced in body rejected"
+    "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+     fn main() {\n\
+    \    let n: int = 10;\n\
+    \    let f = [&n] |x: int| -> int x + 1;\n\
+    \    println(run(f, 0));\n\
+     }\n"
+    "by-ref capture `&n` has no reference in lambda body";
+
+  check_error "DR-033: plain `[t]` (no `&`) before lambda rejected"
+    "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+     fn main() {\n\
+    \    let t: int = 1;\n\
+    \    let f = [t] |x: int| -> int x + t;\n\
+    \    println(run(f, 0));\n\
+     }\n"
+    "capture list before lambda must contain only `&name` items \
+     (by-value captures are implicit; only `&name` belongs in \
+     a capture list)";
+
+  check_error "DR-033: closure with by-ref capture is type-distinct from raw struct"
+    "struct C0 { p: *const int }\n\
+     fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+     fn make() -> C0 {\n\
+    \    let n: int = 5;\n\
+    \    let f = [&n] |x: int| -> int x + n;\n\
+    \    f\n\
+     }\n\
+     fn main() { println(run(make(), 1)); }\n"
+    "trailing expression: expected C0, got __closure_0";
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\
