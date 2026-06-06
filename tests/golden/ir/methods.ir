@@ -4,6 +4,7 @@
 (tfn Point__area pub (params (param self (struct Point))) (int i32) (body (return (binop * (field-access (var self) :ty (struct Point) x) :ty (int i32) (field-access (var self) :ty (struct Point) y) :ty (int i32)) :ty (int i32))))
 (tfn Point__shift pub (params (param self (ptr (struct Point))) (param dx (int i32)) (param dy (int i32))) void (body (assign-field (var self) :ty (ptr (struct Point)) x (binop + (field-access (var self) :ty (ptr (struct Point)) x) :ty (int i32) (var dx) :ty (int i32)) :ty (int i32)) (assign-field (var self) :ty (ptr (struct Point)) y (binop + (field-access (var self) :ty (ptr (struct Point)) y) :ty (int i32) (var dy) :ty (int i32)) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -12,6 +13,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

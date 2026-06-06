@@ -11,6 +11,7 @@
 (tfn Box__first_bool pub (params (param self (struct Box)) (param x bool)) bool (body (return (var x) :ty bool)))
 (mono-instances
   (struct Box)
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -18,6 +19,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

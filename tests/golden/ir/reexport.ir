@@ -3,6 +3,7 @@
 (tfn ex_goodbye pub (params ) void (body (expr-stmt (builtin-call println (string "goodbye from the prelude") :ty str) :ty (int i32))))
 (tfn main (params ) void (body (expr-stmt (call ex_hello) :ty (int i32)) (expr-stmt (call ex_goodbye) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -10,6 +11,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

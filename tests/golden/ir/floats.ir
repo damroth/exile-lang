@@ -1,6 +1,7 @@
 ;; exile-typed-ir-dump v1 examples/floats.exl
 (tfn main (params ) void (body (let pi (float 0x1.921f9f01b866ep+1 f64) :ty (float f64)) (let two (float 0x1p+1 f64) :ty (float f64)) (expr-stmt (builtin-call println (binop + (var pi) :ty (float f64) (var two) :ty (float f64)) :ty (float f64)) :ty (int i32)) (expr-stmt (builtin-call println (binop * (var pi) :ty (float f64) (var two) :ty (float f64)) :ty (float f64)) :ty (int i32)) (expr-stmt (builtin-call println (binop - (var pi) :ty (float f64) (var two) :ty (float f64)) :ty (float f64)) :ty (int i32)) (expr-stmt (builtin-call println (binop / (var pi) :ty (float f64) (var two) :ty (float f64)) :ty (float f64)) :ty (int i32)) (if (binop > (var pi) :ty (float f64) (var two) :ty (float f64)) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) (expr-stmt (builtin-call println (neg (var pi) :ty (float f64)) :ty (float f64)) :ty (int i32)) (let a (float 0x1.8p+0 f32) :ty (float f32)) (let b (float 0x1.2p+1 f32) :ty (float f32)) (expr-stmt (builtin-call println (binop + (var a) :ty (float f32) (var b) :ty (float f32)) :ty (float f32)) :ty (int i32)) (let i (int 7) :ty (int i32)) (let f (cast (var i) :ty (int i32) (float f64)) :ty (float f64)) (let g (cast (var f) :ty (float f64) (float f32)) :ty (float f32)) (let back (cast (var g) :ty (float f32) (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var back) :ty (int i32)) :ty (int i32)) (let avogadro (float 0x1.fe154f457ea13p+78 f64) :ty (float f64)) (expr-stmt (builtin-call println (var avogadro) :ty (float f64)) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -8,6 +9,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

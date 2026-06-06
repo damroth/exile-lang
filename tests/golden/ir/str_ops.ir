@@ -1,6 +1,7 @@
 ;; exile-typed-ir-dump v1 examples/str_ops.exl
 (tfn main (params ) void (body (let a (string "hello") :ty str) (let b (string "hello") :ty str) (let c (string "world") :ty str) (if (call str__eq (var a) :ty str (var b) :ty str) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) (if (call str__eq (var a) :ty str (var c) :ty str) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) (if (not (call str__eq (var a) :ty str (var c) :ty str) :ty bool) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) (expr-stmt (builtin-call println (cast (call str__len (var a) :ty str) :ty (int u32) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call str__cmp (var a) :ty str (var c) :ty str) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (call str__hash (string "a") :ty str) :ty (int u32) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (call str__hash (string "ab") :ty str) :ty (int u32) (int i32)) :ty (int i32)) :ty (int i32)) (let bytes (call str__as_bytes (var a) :ty str) :ty (struct Slice_u8)) (expr-stmt (builtin-call println (cast (field-access (var bytes) :ty (struct Slice_u8) len) :ty (int u32) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (index (var bytes) :ty (struct Slice_u8) (int 0) :ty (int i32)) :ty (int u8) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (index (var bytes) :ty (struct Slice_u8) (int 4) :ty (int i32)) :ty (int u8) (int i32)) :ty (int i32)) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -9,6 +10,7 @@
   (struct Slice)
   (struct Slice_u8)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

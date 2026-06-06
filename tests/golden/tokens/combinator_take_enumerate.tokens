@@ -1,0 +1,265 @@
+;; exile-tokens-dump v1 examples/combinator_take_enumerate.exl
+Fn @examples/combinator_take_enumerate.exl:30:1
+(Ident main) @examples/combinator_take_enumerate.exl:30:4
+LParen @examples/combinator_take_enumerate.exl:30:8
+RParen @examples/combinator_take_enumerate.exl:30:9
+LBrace @examples/combinator_take_enumerate.exl:30:11
+Let @examples/combinator_take_enumerate.exl:31:5
+(Ident a) @examples/combinator_take_enumerate.exl:31:9
+Eq @examples/combinator_take_enumerate.exl:31:11
+(Ident default_allocator) @examples/combinator_take_enumerate.exl:31:13
+LParen @examples/combinator_take_enumerate.exl:31:30
+RParen @examples/combinator_take_enumerate.exl:31:31
+Semicolon @examples/combinator_take_enumerate.exl:31:32
+Let @examples/combinator_take_enumerate.exl:32:5
+Mut @examples/combinator_take_enumerate.exl:32:9
+(Ident v) @examples/combinator_take_enumerate.exl:32:13
+Colon @examples/combinator_take_enumerate.exl:32:14
+(Ident Vec) @examples/combinator_take_enumerate.exl:32:16
+Lt @examples/combinator_take_enumerate.exl:32:19
+(Ident int) @examples/combinator_take_enumerate.exl:32:20
+Gt @examples/combinator_take_enumerate.exl:32:23
+Eq @examples/combinator_take_enumerate.exl:32:25
+(Ident Vec) @examples/combinator_take_enumerate.exl:32:27
+DoubleColon @examples/combinator_take_enumerate.exl:32:30
+(Ident with_capacity) @examples/combinator_take_enumerate.exl:32:32
+LParen @examples/combinator_take_enumerate.exl:32:45
+(Ident a) @examples/combinator_take_enumerate.exl:32:46
+Comma @examples/combinator_take_enumerate.exl:32:47
+(Int 8) @examples/combinator_take_enumerate.exl:32:49
+As @examples/combinator_take_enumerate.exl:32:51
+(Ident u32) @examples/combinator_take_enumerate.exl:32:54
+RParen @examples/combinator_take_enumerate.exl:32:57
+Semicolon @examples/combinator_take_enumerate.exl:32:58
+(Ident v) @examples/combinator_take_enumerate.exl:33:5
+Dot @examples/combinator_take_enumerate.exl:33:6
+(Ident push) @examples/combinator_take_enumerate.exl:33:7
+LParen @examples/combinator_take_enumerate.exl:33:11
+(Int 10) @examples/combinator_take_enumerate.exl:33:12
+RParen @examples/combinator_take_enumerate.exl:33:14
+Semicolon @examples/combinator_take_enumerate.exl:33:15
+(Ident v) @examples/combinator_take_enumerate.exl:33:17
+Dot @examples/combinator_take_enumerate.exl:33:18
+(Ident push) @examples/combinator_take_enumerate.exl:33:19
+LParen @examples/combinator_take_enumerate.exl:33:23
+(Int 20) @examples/combinator_take_enumerate.exl:33:24
+RParen @examples/combinator_take_enumerate.exl:33:26
+Semicolon @examples/combinator_take_enumerate.exl:33:27
+(Ident v) @examples/combinator_take_enumerate.exl:33:29
+Dot @examples/combinator_take_enumerate.exl:33:30
+(Ident push) @examples/combinator_take_enumerate.exl:33:31
+LParen @examples/combinator_take_enumerate.exl:33:35
+(Int 30) @examples/combinator_take_enumerate.exl:33:36
+RParen @examples/combinator_take_enumerate.exl:33:38
+Semicolon @examples/combinator_take_enumerate.exl:33:39
+(Ident v) @examples/combinator_take_enumerate.exl:33:41
+Dot @examples/combinator_take_enumerate.exl:33:42
+(Ident push) @examples/combinator_take_enumerate.exl:33:43
+LParen @examples/combinator_take_enumerate.exl:33:47
+(Int 40) @examples/combinator_take_enumerate.exl:33:48
+RParen @examples/combinator_take_enumerate.exl:33:50
+Semicolon @examples/combinator_take_enumerate.exl:33:51
+(Ident v) @examples/combinator_take_enumerate.exl:33:53
+Dot @examples/combinator_take_enumerate.exl:33:54
+(Ident push) @examples/combinator_take_enumerate.exl:33:55
+LParen @examples/combinator_take_enumerate.exl:33:59
+(Int 50) @examples/combinator_take_enumerate.exl:33:60
+RParen @examples/combinator_take_enumerate.exl:33:62
+Semicolon @examples/combinator_take_enumerate.exl:33:63
+Let @examples/combinator_take_enumerate.exl:37:5
+(Ident t1) @examples/combinator_take_enumerate.exl:37:9
+Colon @examples/combinator_take_enumerate.exl:37:11
+(Ident Take) @examples/combinator_take_enumerate.exl:37:13
+Lt @examples/combinator_take_enumerate.exl:37:17
+(Ident VecIter) @examples/combinator_take_enumerate.exl:37:18
+Lt @examples/combinator_take_enumerate.exl:37:25
+(Ident int) @examples/combinator_take_enumerate.exl:37:26
+Shr @examples/combinator_take_enumerate.exl:37:29
+Eq @examples/combinator_take_enumerate.exl:37:32
+(Ident Take) @examples/combinator_take_enumerate.exl:38:9
+LBrace @examples/combinator_take_enumerate.exl:38:14
+(Ident inner) @examples/combinator_take_enumerate.exl:38:16
+Colon @examples/combinator_take_enumerate.exl:38:21
+(Ident v) @examples/combinator_take_enumerate.exl:38:23
+Dot @examples/combinator_take_enumerate.exl:38:24
+(Ident iter) @examples/combinator_take_enumerate.exl:38:25
+LParen @examples/combinator_take_enumerate.exl:38:29
+RParen @examples/combinator_take_enumerate.exl:38:30
+Comma @examples/combinator_take_enumerate.exl:38:31
+(Ident remaining) @examples/combinator_take_enumerate.exl:38:33
+Colon @examples/combinator_take_enumerate.exl:38:42
+(Int 3) @examples/combinator_take_enumerate.exl:38:44
+As @examples/combinator_take_enumerate.exl:38:46
+(Ident u32) @examples/combinator_take_enumerate.exl:38:49
+RBrace @examples/combinator_take_enumerate.exl:38:53
+Semicolon @examples/combinator_take_enumerate.exl:38:54
+Let @examples/combinator_take_enumerate.exl:39:5
+Mut @examples/combinator_take_enumerate.exl:39:9
+(Ident s1) @examples/combinator_take_enumerate.exl:39:13
+Colon @examples/combinator_take_enumerate.exl:39:15
+(Ident int) @examples/combinator_take_enumerate.exl:39:17
+Eq @examples/combinator_take_enumerate.exl:39:21
+(Int 0) @examples/combinator_take_enumerate.exl:39:23
+Semicolon @examples/combinator_take_enumerate.exl:39:24
+For @examples/combinator_take_enumerate.exl:40:5
+(Ident x) @examples/combinator_take_enumerate.exl:40:9
+In @examples/combinator_take_enumerate.exl:40:11
+(Ident t1) @examples/combinator_take_enumerate.exl:40:14
+LBrace @examples/combinator_take_enumerate.exl:40:17
+(Ident s1) @examples/combinator_take_enumerate.exl:40:19
+Eq @examples/combinator_take_enumerate.exl:40:22
+(Ident s1) @examples/combinator_take_enumerate.exl:40:24
+Plus @examples/combinator_take_enumerate.exl:40:27
+(Ident x) @examples/combinator_take_enumerate.exl:40:29
+Semicolon @examples/combinator_take_enumerate.exl:40:30
+RBrace @examples/combinator_take_enumerate.exl:40:32
+(Ident println) @examples/combinator_take_enumerate.exl:41:5
+LParen @examples/combinator_take_enumerate.exl:41:12
+(Ident s1) @examples/combinator_take_enumerate.exl:41:13
+RParen @examples/combinator_take_enumerate.exl:41:15
+Semicolon @examples/combinator_take_enumerate.exl:41:16
+Let @examples/combinator_take_enumerate.exl:44:5
+Mut @examples/combinator_take_enumerate.exl:44:9
+(Ident s2) @examples/combinator_take_enumerate.exl:44:13
+Colon @examples/combinator_take_enumerate.exl:44:15
+(Ident int) @examples/combinator_take_enumerate.exl:44:17
+Eq @examples/combinator_take_enumerate.exl:44:21
+(Int 0) @examples/combinator_take_enumerate.exl:44:23
+Semicolon @examples/combinator_take_enumerate.exl:44:24
+For @examples/combinator_take_enumerate.exl:45:5
+(Ident x) @examples/combinator_take_enumerate.exl:45:9
+In @examples/combinator_take_enumerate.exl:45:11
+(Ident v) @examples/combinator_take_enumerate.exl:45:14
+Dot @examples/combinator_take_enumerate.exl:45:15
+(Ident iter) @examples/combinator_take_enumerate.exl:45:16
+LParen @examples/combinator_take_enumerate.exl:45:20
+RParen @examples/combinator_take_enumerate.exl:45:21
+Dot @examples/combinator_take_enumerate.exl:45:22
+(Ident take) @examples/combinator_take_enumerate.exl:45:23
+LParen @examples/combinator_take_enumerate.exl:45:27
+(Int 2) @examples/combinator_take_enumerate.exl:45:28
+As @examples/combinator_take_enumerate.exl:45:30
+(Ident u32) @examples/combinator_take_enumerate.exl:45:33
+RParen @examples/combinator_take_enumerate.exl:45:36
+LBrace @examples/combinator_take_enumerate.exl:45:38
+(Ident s2) @examples/combinator_take_enumerate.exl:45:40
+Eq @examples/combinator_take_enumerate.exl:45:43
+(Ident s2) @examples/combinator_take_enumerate.exl:45:45
+Plus @examples/combinator_take_enumerate.exl:45:48
+(Ident x) @examples/combinator_take_enumerate.exl:45:50
+Semicolon @examples/combinator_take_enumerate.exl:45:51
+RBrace @examples/combinator_take_enumerate.exl:45:53
+(Ident println) @examples/combinator_take_enumerate.exl:46:5
+LParen @examples/combinator_take_enumerate.exl:46:12
+(Ident s2) @examples/combinator_take_enumerate.exl:46:13
+RParen @examples/combinator_take_enumerate.exl:46:15
+Semicolon @examples/combinator_take_enumerate.exl:46:16
+Let @examples/combinator_take_enumerate.exl:51:5
+Mut @examples/combinator_take_enumerate.exl:51:9
+(Ident s3) @examples/combinator_take_enumerate.exl:51:13
+Colon @examples/combinator_take_enumerate.exl:51:15
+(Ident int) @examples/combinator_take_enumerate.exl:51:17
+Eq @examples/combinator_take_enumerate.exl:51:21
+(Int 0) @examples/combinator_take_enumerate.exl:51:23
+Semicolon @examples/combinator_take_enumerate.exl:51:24
+For @examples/combinator_take_enumerate.exl:52:5
+(Ident pair) @examples/combinator_take_enumerate.exl:52:9
+In @examples/combinator_take_enumerate.exl:52:14
+(Ident v) @examples/combinator_take_enumerate.exl:52:17
+Dot @examples/combinator_take_enumerate.exl:52:18
+(Ident iter) @examples/combinator_take_enumerate.exl:52:19
+LParen @examples/combinator_take_enumerate.exl:52:23
+RParen @examples/combinator_take_enumerate.exl:52:24
+Dot @examples/combinator_take_enumerate.exl:52:25
+(Ident enumerate) @examples/combinator_take_enumerate.exl:52:26
+LParen @examples/combinator_take_enumerate.exl:52:35
+RParen @examples/combinator_take_enumerate.exl:52:36
+LBrace @examples/combinator_take_enumerate.exl:52:38
+Let @examples/combinator_take_enumerate.exl:53:9
+LParen @examples/combinator_take_enumerate.exl:53:13
+(Ident i) @examples/combinator_take_enumerate.exl:53:14
+Comma @examples/combinator_take_enumerate.exl:53:15
+(Ident x) @examples/combinator_take_enumerate.exl:53:17
+RParen @examples/combinator_take_enumerate.exl:53:18
+Eq @examples/combinator_take_enumerate.exl:53:20
+(Ident pair) @examples/combinator_take_enumerate.exl:53:22
+Semicolon @examples/combinator_take_enumerate.exl:53:26
+(Ident s3) @examples/combinator_take_enumerate.exl:54:9
+Eq @examples/combinator_take_enumerate.exl:54:12
+(Ident s3) @examples/combinator_take_enumerate.exl:54:14
+Plus @examples/combinator_take_enumerate.exl:54:17
+LParen @examples/combinator_take_enumerate.exl:54:19
+(Ident i) @examples/combinator_take_enumerate.exl:54:20
+As @examples/combinator_take_enumerate.exl:54:22
+(Ident int) @examples/combinator_take_enumerate.exl:54:25
+RParen @examples/combinator_take_enumerate.exl:54:28
+Star @examples/combinator_take_enumerate.exl:54:30
+(Int 100) @examples/combinator_take_enumerate.exl:54:32
+Plus @examples/combinator_take_enumerate.exl:54:36
+(Ident x) @examples/combinator_take_enumerate.exl:54:38
+Semicolon @examples/combinator_take_enumerate.exl:54:39
+RBrace @examples/combinator_take_enumerate.exl:55:5
+(Ident println) @examples/combinator_take_enumerate.exl:56:5
+LParen @examples/combinator_take_enumerate.exl:56:12
+(Ident s3) @examples/combinator_take_enumerate.exl:56:13
+RParen @examples/combinator_take_enumerate.exl:56:15
+Semicolon @examples/combinator_take_enumerate.exl:56:16
+Let @examples/combinator_take_enumerate.exl:60:5
+Mut @examples/combinator_take_enumerate.exl:60:9
+(Ident s4) @examples/combinator_take_enumerate.exl:60:13
+Colon @examples/combinator_take_enumerate.exl:60:15
+(Ident int) @examples/combinator_take_enumerate.exl:60:17
+Eq @examples/combinator_take_enumerate.exl:60:21
+(Int 0) @examples/combinator_take_enumerate.exl:60:23
+Semicolon @examples/combinator_take_enumerate.exl:60:24
+For @examples/combinator_take_enumerate.exl:61:5
+(Ident pair4) @examples/combinator_take_enumerate.exl:61:9
+In @examples/combinator_take_enumerate.exl:61:15
+(Ident v) @examples/combinator_take_enumerate.exl:61:18
+Dot @examples/combinator_take_enumerate.exl:61:19
+(Ident iter) @examples/combinator_take_enumerate.exl:61:20
+LParen @examples/combinator_take_enumerate.exl:61:24
+RParen @examples/combinator_take_enumerate.exl:61:25
+Dot @examples/combinator_take_enumerate.exl:61:26
+(Ident take) @examples/combinator_take_enumerate.exl:61:27
+LParen @examples/combinator_take_enumerate.exl:61:31
+(Int 3) @examples/combinator_take_enumerate.exl:61:32
+As @examples/combinator_take_enumerate.exl:61:34
+(Ident u32) @examples/combinator_take_enumerate.exl:61:37
+RParen @examples/combinator_take_enumerate.exl:61:40
+Dot @examples/combinator_take_enumerate.exl:61:41
+(Ident enumerate) @examples/combinator_take_enumerate.exl:61:42
+LParen @examples/combinator_take_enumerate.exl:61:51
+RParen @examples/combinator_take_enumerate.exl:61:52
+LBrace @examples/combinator_take_enumerate.exl:61:54
+Let @examples/combinator_take_enumerate.exl:62:9
+LParen @examples/combinator_take_enumerate.exl:62:13
+(Ident j) @examples/combinator_take_enumerate.exl:62:14
+Comma @examples/combinator_take_enumerate.exl:62:15
+(Ident y) @examples/combinator_take_enumerate.exl:62:17
+RParen @examples/combinator_take_enumerate.exl:62:18
+Eq @examples/combinator_take_enumerate.exl:62:20
+(Ident pair4) @examples/combinator_take_enumerate.exl:62:22
+Semicolon @examples/combinator_take_enumerate.exl:62:27
+(Ident s4) @examples/combinator_take_enumerate.exl:63:9
+Eq @examples/combinator_take_enumerate.exl:63:12
+(Ident s4) @examples/combinator_take_enumerate.exl:63:14
+Plus @examples/combinator_take_enumerate.exl:63:17
+LParen @examples/combinator_take_enumerate.exl:63:19
+(Ident j) @examples/combinator_take_enumerate.exl:63:20
+As @examples/combinator_take_enumerate.exl:63:22
+(Ident int) @examples/combinator_take_enumerate.exl:63:25
+RParen @examples/combinator_take_enumerate.exl:63:28
+Star @examples/combinator_take_enumerate.exl:63:30
+(Int 1000) @examples/combinator_take_enumerate.exl:63:32
+Plus @examples/combinator_take_enumerate.exl:63:37
+(Ident y) @examples/combinator_take_enumerate.exl:63:39
+Semicolon @examples/combinator_take_enumerate.exl:63:40
+RBrace @examples/combinator_take_enumerate.exl:64:5
+(Ident println) @examples/combinator_take_enumerate.exl:65:5
+LParen @examples/combinator_take_enumerate.exl:65:12
+(Ident s4) @examples/combinator_take_enumerate.exl:65:13
+RParen @examples/combinator_take_enumerate.exl:65:15
+Semicolon @examples/combinator_take_enumerate.exl:65:16
+RBrace @examples/combinator_take_enumerate.exl:66:1
+Eof @examples/combinator_take_enumerate.exl:67:1

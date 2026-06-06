@@ -5,6 +5,7 @@
 (tfn Write extern pub (params (param file (ext-alias BPTR)) (param buffer (ptr c_char)) (param length (ext-alias LONG))) (ext-alias LONG))
 (tfn main (params ) void (body (let dos_name (cast (string "dos.library") :ty str (ptr c_char)) :ty (ptr c_char)) (assign raw::DOSBase (call OpenLibrary (var dos_name) :ty (ptr c_char) (cast (int 0) :ty (int i32) (struct raw::ULONG)) :ty (ext-alias ULONG)) :ty (ptr (ext-struct Library))) (if (binop != (var DOSBase) :ty (ptr (ext-struct Library)) null :ty null-ptr) :ty bool (then (let msg (cast (string "Hello, AmigaOS!\n") :ty str (ptr c_char)) :ty (ptr c_char)) (let out (call Output) :ty (ext-alias BPTR)) (expr-stmt (call Write (var out) :ty (ext-alias BPTR) (var msg) :ty (ptr c_char) (cast (int 16) :ty (int i32) (struct raw::LONG)) :ty (ext-alias LONG)) :ty (ext-alias LONG)) (expr-stmt (call CloseLibrary (var DOSBase) :ty (ptr (ext-struct Library))) :ty (int i32))) (else ))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -12,6 +13,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

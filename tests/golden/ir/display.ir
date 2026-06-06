@@ -5,6 +5,7 @@
 (tfn Segment__fmt pub (params (param self (const-ptr (struct Segment))) (param out (ptr (struct StringBuilder)))) void (body (expr-stmt (call StringBuilder__push_str (var out) :ty (ptr (struct StringBuilder)) (string "Segment[") :ty str) :ty (int i32)) (expr-stmt (call Point__fmt (ref (field-access (var self) :ty (const-ptr (struct Segment)) lo) :ty (struct Point)) :ty (const-ptr (struct Point)) (var out) :ty (ptr (struct StringBuilder))) :ty (int i32)) (expr-stmt (call StringBuilder__push_str (var out) :ty (ptr (struct StringBuilder)) (string " -> ") :ty str) :ty (int i32)) (expr-stmt (call Point__fmt (ref (field-access (var self) :ty (const-ptr (struct Segment)) hi) :ty (struct Point)) :ty (const-ptr (struct Point)) (var out) :ty (ptr (struct StringBuilder))) :ty (int i32)) (expr-stmt (call StringBuilder__push_byte (var out) :ty (ptr (struct StringBuilder)) (cast (int 93) :ty (int i32) (int u8)) :ty (int u8)) :ty (int i32))))
 (mono-instances
   (struct Allocator)
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -16,6 +17,7 @@
   (struct Slice_u8)
   (struct Slot)
   (struct StringBuilder)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

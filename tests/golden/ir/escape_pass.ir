@@ -4,6 +4,7 @@
 (tfn main (params ) void (body (let arr (array-lit (int 10) :ty (int i32) (int 20) :ty (int i32) (int 30) :ty (int i32)) :ty (array (int i32) 3)) (let s (call ex_first_three (ref (index (var arr) :ty (array (int i32) 3) (int 0) :ty (int i32)) :ty (int i32)) :ty (ptr (int i32))) :ty (struct Slice_i32)) (expr-stmt (builtin-call println (index (var s) :ty (struct Slice_i32) (int 0) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (index (var s) :ty (struct Slice_i32) (int 1) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (index (var s) :ty (struct Slice_i32) (int 2) :ty (int i32)) :ty (int i32)) :ty (int i32)) (let a (builtin-call default_allocator) :ty (struct Allocator)) (expr-stmt (builtin-call println (call ex_use_local_vec (var a) :ty (struct Allocator)) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Allocator)
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -13,6 +14,7 @@
   (struct Slice_i32)
   (struct Slice_ptr_i32)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (struct Vec_ptr_i32)

@@ -8,6 +8,7 @@
 (tfn Shape__hash pub (params (param self (const-ptr (enum Shape)))) (int u32) (body (return (match (deref (var self) :ty (const-ptr (enum Shape))) :ty (enum Shape) :enum Shape (arm (pat-variant Dot tag=0) (cast (int 0) :ty (int i32) (int u32)) :ty (int u32)) (arm (pat-variant Segment tag=1 (field _0 (pat-var __dh0)) (field _1 (pat-var __dh1))) (binop + (binop * (binop + (binop * (cast (int 1) :ty (int i32) (int u32)) :ty (int u32) (int 31) :ty (int u32)) :ty (int u32) (cast (var __dh0) :ty (int i32) (int u32)) :ty (int u32)) :ty (int u32) (int 31) :ty (int u32)) :ty (int u32) (cast (var __dh1) :ty (int i32) (int u32)) :ty (int u32)) :ty (int u32)) (arm (pat-variant Tagged tag=2 (field id (pat-var __dh_id))) (binop + (binop * (cast (int 2) :ty (int i32) (int u32)) :ty (int u32) (int 31) :ty (int u32)) :ty (int u32) (cast (var __dh_id) :ty (int i32) (int u32)) :ty (int u32)) :ty (int u32))) :ty (int u32))))
 (tfn ex_all_equal_ex_Point (params (param a (struct Point)) (param b (struct Point)) (param c (struct Point))) bool (body (return (binop && (call Point__eq (ref (var a) :ty (struct Point)) :ty (const-ptr (struct Point)) (ref (var b) :ty (struct Point)) :ty (const-ptr (struct Point))) :ty bool (call Point__eq (ref (var b) :ty (struct Point)) :ty (const-ptr (struct Point)) (ref (var c) :ty (struct Point)) :ty (const-ptr (struct Point))) :ty bool) :ty bool)))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -16,6 +17,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

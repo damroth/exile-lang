@@ -10,6 +10,7 @@
 (tfn ex_total_area_ex_Rect (params (param a (struct Rect)) (param b (struct Rect))) (int i32) (body (return (binop + (call Rect__area (var a) :ty (struct Rect)) :ty (int i32) (call Rect__area (var b) :ty (struct Rect)) :ty (int i32)) :ty (int i32))))
 (tfn ex_total_area_ex_Square (params (param a (struct Square)) (param b (struct Square))) (int i32) (body (return (binop + (call Square__area (var a) :ty (struct Square)) :ty (int i32) (call Square__area (var b) :ty (struct Square)) :ty (int i32)) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -19,6 +20,7 @@
   (struct Slice)
   (struct Slot)
   (struct Square)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

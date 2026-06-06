@@ -10,6 +10,7 @@
 (tfn ex___lambda_4 (params (param acc (int i32)) (param v (int i32))) (int i32) (body (return (if-expr (binop > (var v) :ty (int i32) (var acc) :ty (int i32)) :ty bool (var v) :ty (int i32) (var acc) :ty (int i32)) :ty (int i32))))
 (tfn ex___lambda_5 (params (param v (int i32))) bool (body (return (binop == (binop % (var v) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32) (int 0) :ty (int i32)) :ty bool)))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -18,6 +19,7 @@
   (struct Slice)
   (struct Slice_i32)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

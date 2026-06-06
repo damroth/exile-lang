@@ -1,6 +1,7 @@
 ;; exile-typed-ir-dump v1 examples/constants.exl
 (tfn main (params ) void (body (expr-stmt (builtin-call println (var ex_WIDTH) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var ex_HEIGHT) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var ex_PIXELS) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var flags__RW) :ty (int i32)) :ty (int i32)) (let half (binop / (var ex_WIDTH) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var half) :ty (int i32)) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -8,6 +9,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

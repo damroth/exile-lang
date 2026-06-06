@@ -1,6 +1,7 @@
 ;; exile-typed-ir-dump v1 examples/sys_open_demo.exl
 (tfn main (params ) void (body (let path (cast (string "/etc/hostname") :ty str (const-ptr c_char)) :ty (const-ptr c_char)) (let fd (call sys_open (var path) :ty (const-ptr c_char) (cast (int 0) :ty (int i32) (c_int signed)) :ty (c_int signed)) :ty (c_int signed)) (if (binop < (var fd) :ty (c_int signed) (cast (int 0) :ty (int i32) (c_int signed)) :ty (c_int signed)) :ty bool (then (expr-stmt (builtin-call println (neg (int 1) :ty (int i32)) :ty (int i32)) :ty (int i32)) (return (int 0) :ty (int i32))) (else )) (let buf (array-repeat (cast (int 0) :ty (int i32) (int u8)) :ty (int u8) 256) :ty (array (int u8) 256)) (let n (call sys_read (var fd) :ty (c_int signed) (cast (cast (ref (var buf) :ty (array (int u8) 256)) :ty (ptr (array (int u8) 256)) (ptr (int u8))) :ty (ptr (int u8)) (ptr c_uchar)) :ty (ptr c_uchar) (cast (int 256) :ty (int i32) (c_long unsigned)) :ty (c_long unsigned)) :ty (c_long signed)) (expr-stmt (call sys_close (var fd) :ty (c_int signed)) :ty (c_int signed)) (if (binop > (var n) :ty (c_long signed) (cast (int 0) :ty (int i32) (c_long signed)) :ty (c_long signed)) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32))))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -8,6 +9,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

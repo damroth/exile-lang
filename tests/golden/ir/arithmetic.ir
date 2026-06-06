@@ -1,6 +1,7 @@
 ;; exile-typed-ir-dump v1 examples/arithmetic.exl
 (tfn main (params ) void (body (let sum (binop + (int 6) :ty (int i32) (int 4) :ty (int i32)) :ty (int i32)) (let diff (binop - (int 100) :ty (int i32) (int 42) :ty (int i32)) :ty (int i32)) (let product (binop * (int 6) :ty (int i32) (int 7) :ty (int i32)) :ty (int i32)) (let quot (binop / (int 84) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32)) (let mixed (binop + (int 1) :ty (int i32) (binop * (int 2) :ty (int i32) (int 3) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var sum) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var diff) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var product) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var quot) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var mixed) :ty (int i32)) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -8,6 +9,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

@@ -7576,10 +7576,66 @@ let prelude_items () =
       tier_hint = None; amiga_lib = None;
       must_use = false; escapes_hatch = false; pos }
   in
+  (* DR-026 Step D — Iterator.take(n) default-method.  Builds a
+     Take<Self> from `self` (by-value, consumes the iterator) plus a
+     `u32` cap.  Single struct-literal body; Mono pins Take's tparam
+     `I` to the impl target at each callsite. *)
+  let iter_take_default =
+    { Ast.name = "take"; c_name = "take";
+      tparams = []; tbounds = [];
+      params = [
+        { Ast.pname = "self"; pty = Ast.TySelf;
+          preg = None; is_mut = false };
+        { Ast.pname = "n"; pty = u32_t;
+          preg = None; is_mut = false };
+      ];
+      ret_ty = Some (Ast.TyStruct {
+        path = ["Take"];
+        args = [ Ast.TySelf ] });
+      body = [
+        Ast.Tail (Ast.StructLit {
+          tname = ["Take"];
+          fields = [
+            ("inner", Ast.Var ("self", pos));
+            ("remaining", Ast.Var ("n", pos));
+          ];
+          base = None; pos })
+      ];
+      is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None;
+      must_use = false; escapes_hatch = false; pos }
+  in
+  (* DR-026 Step D — Iterator.enumerate() default-method.  Builds an
+     Enumerate<Self> with idx pre-seeded to 0; each yielded item is a
+     (u32, I::Item) pair from the inner iterator's next(). *)
+  let iter_enumerate_default =
+    { Ast.name = "enumerate"; c_name = "enumerate";
+      tparams = []; tbounds = [];
+      params = [
+        { Ast.pname = "self"; pty = Ast.TySelf;
+          preg = None; is_mut = false };
+      ];
+      ret_ty = Some (Ast.TyStruct {
+        path = ["Enumerate"];
+        args = [ Ast.TySelf ] });
+      body = [
+        Ast.Tail (Ast.StructLit {
+          tname = ["Enumerate"];
+          fields = [
+            ("inner", Ast.Var ("self", pos));
+            ("idx", u32_lit 0);
+          ];
+          base = None; pos })
+      ];
+      is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None;
+      must_use = false; escapes_hatch = false; pos }
+  in
   let iterator_trait = {
     Ast.trname = "Iterator"; trassoc = ["Item"]; trsupers = [];
-    trmethods = [ iter_next; iter_map_default ];
-    trdefaults = ["map"];
+    trmethods = [ iter_next; iter_map_default;
+                  iter_take_default; iter_enumerate_default ];
+    trdefaults = ["map"; "take"; "enumerate"];
     trpos = pos; tris_pub = true;
   } in
   (* `Fn1` / `Fn2` — callable protocols.  Per the DR-015 reality-check
@@ -7813,6 +7869,166 @@ let prelude_items () =
     ];
     itarget = ["Map"];
     iitems = [ map_next_method ];
+    ipos = pos;
+  } in
+  (* DR-026 Step D — `Take<I>` adapter.  `take(n)` yields at most `n`
+     items from the inner iterator, then returns None.  Field
+     `remaining: u32` counts down; `next` short-circuits to None once
+     it reaches 0.  Item type passes through unchanged
+     (`I::Item`) — the assoc-projection multi-hop fix (Site-1, DR-027
+     refinement 2026-06-06) makes this resolve at every use site. *)
+  let take_struct = {
+    Ast.sname = "Take";
+    stparams = ["I"];
+    sfields = [
+      ("inner", Ast.TyStruct { path = ["I"]; args = [] });
+      ("remaining", u32_t);
+    ];
+    spos = pos; sis_pub = true;
+    stier_hint = None;
+    sis_debug = false; sderives = []; sis_move = false;
+  } in
+  let take_target_ty =
+    Ast.TyStruct {
+      path = ["Take"];
+      args = [ Ast.TyStruct { path = ["I"]; args = [] } ] } in
+  let take_next_self_param =
+    { Ast.pname = "self"; pty = Ast.TyPtr take_target_ty;
+      preg = None; is_mut = false } in
+  let take_next_body =
+    let self_v = Ast.Var ("self", pos) in
+    [
+      Ast.ExprStmt (Ast.If {
+        cond = bin Ast.EqEq (field self_v "remaining") (u32_lit 0);
+        then_blk = [
+          Ast.Return (Some (Ast.EnumLit {
+            tname = ["Option"]; variant = "None";
+            args = Ast.EATuple []; pos }), pos);
+        ];
+        else_blk = None; pos });
+      Ast.AssignField {
+        target = self_v; field = "remaining";
+        value = bin Ast.Sub (field self_v "remaining") (u32_lit 1);
+        pos };
+      Ast.Tail (methcall (field self_v "inner") "next" []);
+    ]
+  in
+  let take_next_method = {
+    Ast.name = "next"; c_name = "next";
+    tparams = []; tbounds = [];
+    params = [ take_next_self_param ];
+    ret_ty = Some (Ast.TyStruct {
+      path = ["Option"];
+      args = [ Ast.TyStruct {
+        path = ["I"; "Item"]; args = [] } ] });
+    body = take_next_body;
+    is_pub = true; is_extern = false; is_variadic = false;
+    tier_hint = None; amiga_lib = None;
+    must_use = false; escapes_hatch = false; pos
+  } in
+  let take_iter_impl = {
+    Ast.itparams = ["I"];
+    itbounds = [("I", ["Iterator"], [])];
+    itrait = Some ["Iterator"];
+    iassoc = [
+      ("Item", Ast.TyStruct { path = ["I"; "Item"]; args = [] })
+    ];
+    itarget = ["Take"];
+    iitems = [ take_next_method ];
+    ipos = pos;
+  } in
+  (* DR-026 Step D — `Enumerate<I>` adapter.  Pairs every yielded
+     value with its zero-based index as a `(u32, I::Item)` tuple.
+     `idx: u32` advances after every successful inner `next()`; on
+     inner None the index stays put and the outer next returns None.
+     Match-arm with a block body (multi-stmt: bump idx + emit pair)
+     keeps the assoc-projection path single-hop — the tuple item
+     type `(u32, I::Item)` projects through DR-027 site-1 with no
+     fresh machinery. *)
+  let enumerate_struct = {
+    Ast.sname = "Enumerate";
+    stparams = ["I"];
+    sfields = [
+      ("inner", Ast.TyStruct { path = ["I"]; args = [] });
+      ("idx", u32_t);
+    ];
+    spos = pos; sis_pub = true;
+    stier_hint = None;
+    sis_debug = false; sderives = []; sis_move = false;
+  } in
+  let enumerate_target_ty =
+    Ast.TyStruct {
+      path = ["Enumerate"];
+      args = [ Ast.TyStruct { path = ["I"]; args = [] } ] } in
+  let enumerate_next_self_param =
+    { Ast.pname = "self"; pty = Ast.TyPtr enumerate_target_ty;
+      preg = None; is_mut = false } in
+  let enumerate_item_ann =
+    Ast.TyTuple [
+      u32_t;
+      Ast.TyStruct { path = ["I"; "Item"]; args = [] };
+    ] in
+  let enumerate_next_body =
+    let self_v = Ast.Var ("self", pos) in
+    let scrutinee = methcall (field self_v "inner") "next" [] in
+    let pair_ann =
+      Ast.TyTuple [
+        u32_t;
+        Ast.TyStruct { path = ["I"; "Item"]; args = [] };
+      ] in
+    let some_arm = Ast.{
+      pat = PVariant {
+        tname = ["Option"]; variant = "Some";
+        binds = PBTuple [ PVar ("v", pos) ]; pos };
+      guard = None;
+      body = Block ([
+        Let { name = "i"; is_mut = false; ty_ann = Some u32_t;
+              value = field self_v "idx"; pos };
+        AssignField {
+          target = self_v; field = "idx";
+          value = bin Ast.Add (Var ("i", pos)) (u32_lit 1);
+          pos };
+        Let { name = "pair"; is_mut = false; ty_ann = Some pair_ann;
+              value = TupleLit ([ Var ("i", pos); Var ("v", pos) ], pos);
+              pos };
+        Tail (EnumLit {
+          tname = ["Option"]; variant = "Some";
+          args = EATuple [ Var ("pair", pos) ]; pos });
+      ], pos);
+      arm_pos = pos } in
+    let none_arm = Ast.{
+      pat = PVariant {
+        tname = ["Option"]; variant = "None";
+        binds = PBTuple []; pos };
+      guard = None;
+      body = EnumLit {
+        tname = ["Option"]; variant = "None";
+        args = EATuple []; pos };
+      arm_pos = pos } in
+    [ Ast.Tail (Ast.Match {
+        scrutinee; arms = [ some_arm; none_arm ]; pos }) ]
+  in
+  let enumerate_next_method = {
+    Ast.name = "next"; c_name = "next";
+    tparams = []; tbounds = [];
+    params = [ enumerate_next_self_param ];
+    ret_ty = Some (Ast.TyStruct {
+      path = ["Option"];
+      args = [ enumerate_item_ann ] });
+    body = enumerate_next_body;
+    is_pub = true; is_extern = false; is_variadic = false;
+    tier_hint = None; amiga_lib = None;
+    must_use = false; escapes_hatch = false; pos
+  } in
+  let enumerate_iter_impl = {
+    Ast.itparams = ["I"];
+    itbounds = [("I", ["Iterator"], [])];
+    itrait = Some ["Iterator"];
+    iassoc = [
+      ("Item", enumerate_item_ann)
+    ];
+    itarget = ["Enumerate"];
+    iitems = [ enumerate_next_method ];
     ipos = pos;
   } in
   (* `Eq` / `Clone` — prelude traits derivable via `@derive(Eq, Clone)`.
@@ -8189,6 +8405,10 @@ let prelude_items () =
     Ast.Impl hashmap_iter_impl;
     Ast.Struct map_struct;
     Ast.Impl map_iter_impl;
+    Ast.Struct take_struct;
+    Ast.Impl take_iter_impl;
+    Ast.Struct enumerate_struct;
+    Ast.Impl enumerate_iter_impl;
   ]
 
 (* ===== `@derive(...)` — synthesize trait impls (DECYZJA #1/#2) =====

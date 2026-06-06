@@ -12,6 +12,7 @@
 (mono-instances
   (struct A)
   (struct Circle)
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -21,6 +22,7 @@
   (struct Slice)
   (struct Slot)
   (struct Square)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

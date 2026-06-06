@@ -5,6 +5,7 @@
 (tfn ex_weigh (params (param n (int i32))) void (body (expr-stmt (match (call ex_Magnitude (var n) :ty (int i32)) :ty (enum Magnitude) :enum Magnitude (arm (pat-variant Small tag=0) (block (stmts (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32)))) :ty (int i32)) (arm (pat-variant Medium tag=1) (block (stmts (expr-stmt (builtin-call println (int 2) :ty (int i32)) :ty (int i32)))) :ty (int i32)) (arm (pat-variant Large tag=2 (field _0 (pat-var v))) (block (stmts (expr-stmt (builtin-call println (var v) :ty (int i32)) :ty (int i32)))) :ty (int i32))) :ty (int i32))))
 (tfn main (params ) void (body (expr-stmt (call ex_classify (neg (int 5) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (call ex_classify (int 0) :ty (int i32)) :ty (int i32)) (expr-stmt (call ex_classify (int 42) :ty (int i32)) :ty (int i32)) (expr-stmt (call ex_weigh (int 7) :ty (int i32)) :ty (int i32)) (expr-stmt (call ex_weigh (int 50) :ty (int i32)) :ty (int i32)) (expr-stmt (call ex_weigh (int 2500) :ty (int i32)) :ty (int i32)) (let s (call ex_Sign (int 99) :ty (int i32)) :ty (enum Sign)) (expr-stmt (match (var s) :ty (enum Sign) :enum Sign (arm (pat-variant Negative tag=0) (block (stmts (expr-stmt (builtin-call println (neg (int 1) :ty (int i32)) :ty (int i32)) :ty (int i32)))) :ty (int i32)) (arm (pat-variant Zero tag=1) (block (stmts (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) :ty (int i32)) (arm (pat-variant Positive tag=2) (block (stmts (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32)))) :ty (int i32))) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -12,6 +13,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Magnitude)

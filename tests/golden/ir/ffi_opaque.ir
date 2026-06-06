@@ -4,6 +4,7 @@
 (tfn lib_close extern pub (params (param lib (ptr (ext-struct Library)))) void)
 (tfn main (params ) void (body (let lib (call lib_open) :ty (ptr (ext-struct Library))) (expr-stmt (builtin-call println (call lib_use (var lib) :ty (ptr (ext-struct Library))) :ty (int i32)) :ty (int i32)) (expr-stmt (call lib_close (var lib) :ty (ptr (ext-struct Library))) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -11,6 +12,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

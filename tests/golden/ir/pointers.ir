@@ -5,6 +5,7 @@
 (tfn ex_swap (params (param a (ptr (int i32))) (param b (ptr (int i32)))) void (body (let tmp (deref (var a) :ty (ptr (int i32))) :ty (int i32)) (assign-deref (var a) :ty (ptr (int i32)) (deref (var b) :ty (ptr (int i32))) :ty (int i32)) (assign-deref (var b) :ty (ptr (int i32)) (var tmp) :ty (int i32))))
 (tfn main (params ) void (body (let p (struct-lit Point (field x (int 1) :ty (int i32)) (field y (int 2) :ty (int i32))) :ty (struct Point)) (expr-stmt (call ex_shift (ref (var p) :ty (struct Point)) :ty (ptr (struct Point)) (int 10) :ty (int i32) (int 20) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (field-access (var p) :ty (struct Point) x) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (field-access (var p) :ty (struct Point) y) :ty (int i32)) :ty (int i32)) (let n (int 5) :ty (int i32)) (expr-stmt (builtin-call println (call ex_deref_int (ref (var n) :ty (int i32)) :ty (ptr (int i32))) :ty (int i32)) :ty (int i32)) (expr-stmt (call ex_set_via_ptr (ref (var n) :ty (int i32)) :ty (ptr (int i32)) (int 99) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var n) :ty (int i32)) :ty (int i32)) (let x (int 1) :ty (int i32)) (let y (int 2) :ty (int i32)) (expr-stmt (call ex_swap (ref (var x) :ty (int i32)) :ty (ptr (int i32)) (ref (var y) :ty (int i32)) :ty (ptr (int i32))) :ty (int i32)) (expr-stmt (builtin-call println (var x) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var y) :ty (int i32)) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -13,6 +14,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

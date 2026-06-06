@@ -3,6 +3,7 @@
 (tfn main (params ) void (body (expr-stmt (builtin-call println (call ex_id_i32 (int 7) :ty (int i32)) :ty (int i32)) :ty (int i32)) (let p (struct-lit Pair_i32_bool (field fst (int 42) :ty (int i32)) (field snd (bool true) :ty bool)) :ty (struct Pair_i32_bool)) (expr-stmt (builtin-call println (field-access (var p) :ty (struct Pair_i32_bool) fst) :ty (int i32)) :ty (int i32)) (if (field-access (var p) :ty (struct Pair_i32_bool) snd) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) (let m (enum-lit Maybe_i32::Just tag=0 (field _0 (int 99) :ty (int i32))) :ty (enum Maybe_i32)) (expr-stmt (match (var m) :ty (enum Maybe_i32) :enum Maybe_i32 (arm (pat-variant Just tag=0 (field _0 (pat-var n))) (builtin-call println (var n) :ty (int i32)) :ty (int i32)) (arm (pat-variant Nothing tag=1) (builtin-call println (neg (int 1) :ty (int i32)) :ty (int i32)) :ty (int i32))) :ty (int i32))))
 (tfn ex_id_i32 (params (param x (int i32))) (int i32) (body (return (var x) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -12,6 +13,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Maybe)

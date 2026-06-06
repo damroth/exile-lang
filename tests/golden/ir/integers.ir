@@ -1,6 +1,7 @@
 ;; exile-typed-ir-dump v1 examples/integers.exl
 (tfn main (params ) void (body (let a (neg (int 42) :ty (int i8)) :ty (int i8)) (let b (neg (int 1000) :ty (int i16)) :ty (int i16)) (let c (neg (int 1000000) :ty (int i32)) :ty (int i32)) (let x (int 200) :ty (int u8)) (let y (int 50000) :ty (int u16)) (let z (int 3000000000) :ty (int u32)) (expr-stmt (builtin-call println (var a) :ty (int i8)) :ty (int i32)) (expr-stmt (builtin-call println (var b) :ty (int i16)) :ty (int i32)) (expr-stmt (builtin-call println (var c) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var x) :ty (int u8)) :ty (int i32)) (expr-stmt (builtin-call println (var y) :ty (int u16)) :ty (int i32)) (expr-stmt (builtin-call println (var z) :ty (int u32)) :ty (int i32)) (let big (int 1000) :ty (int i32)) (let narrowed (cast (var big) :ty (int i32) (int i8)) :ty (int i8)) (expr-stmt (builtin-call println (var narrowed) :ty (int i8)) :ty (int i32)) (let small (int 5) :ty (int i8)) (let widened (cast (var small) :ty (int i8) (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var widened) :ty (int i32)) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -8,6 +9,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

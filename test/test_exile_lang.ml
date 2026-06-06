@@ -1477,7 +1477,7 @@ let () =
     \    let up = UpTo { cur: 0, stop: 3 };\n\
     \    for x in up { println(x); }\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_UpTo { long cur; long stop; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\n\nint main(void) {\n    struct ex_UpTo up;\n    struct ex_UpTo __it0;\n    up.cur = 0;\n    up.stop = 3;\n    __it0 = up;\n    while (1) {\n        {\n            struct ex_Option_i32 __m;\n            __m = UpTo__next(&__it0);\n            if (__m.tag == ex_Option_i32_Some) {\n                long __fv0 = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(__fv0));\n            }\n            else {\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n";
+    "#include <stdio.h>\n\nstruct ex_UpTo { long cur; long stop; };\nstruct ex_Take_ex_UpTo { struct ex_UpTo inner; unsigned long remaining; };\nstruct ex_Enumerate_ex_UpTo { struct ex_UpTo inner; unsigned long idx; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n);\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self);\n\nint main(void) {\n    struct ex_UpTo up;\n    struct ex_UpTo __it0;\n    up.cur = 0;\n    up.stop = 3;\n    __it0 = up;\n    while (1) {\n        {\n            struct ex_Option_i32 __m;\n            __m = UpTo__next(&__it0);\n            if (__m.tag == ex_Option_i32_Some) {\n                long __fv0 = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(__fv0));\n            }\n            else {\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n) {\n    {\n        struct ex_Take_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.remaining = n;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self) {\n    {\n        struct ex_Enumerate_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.idx = ((unsigned long)0);\n        return __exile_ret;\n    }\n}\n";
 
   (* Associated-type projection `I::Item` in a generic fn signature.
      Skeleton-time produces a `TAssocProj { head = TVar I; assoc = Item }`;
@@ -1507,7 +1507,7 @@ let () =
     \        | Option::None => { println(99); }\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_UpTo { long cur; long stop; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it);\n\nint main(void) {\n    struct ex_UpTo up;\n    up.cur = 0;\n    up.stop = 2;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_first_ex_UpTo(&up);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(99));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it) {\n    return UpTo__next(it);\n}\n";
+    "#include <stdio.h>\n\nstruct ex_UpTo { long cur; long stop; };\nstruct ex_Take_ex_UpTo { struct ex_UpTo inner; unsigned long remaining; };\nstruct ex_Enumerate_ex_UpTo { struct ex_UpTo inner; unsigned long idx; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n);\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self);\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it);\n\nint main(void) {\n    struct ex_UpTo up;\n    up.cur = 0;\n    up.stop = 2;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_first_ex_UpTo(&up);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(99));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n) {\n    {\n        struct ex_Take_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.remaining = n;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self) {\n    {\n        struct ex_Enumerate_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.idx = ((unsigned long)0);\n        return __exile_ret;\n    }\n}\n\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it) {\n    return UpTo__next(it);\n}\n";
 
   (* Ambiguous projection: two traits define `type Item` and the same
      struct implements both.  `Counter::Item` without `<Counter as
@@ -6051,6 +6051,84 @@ let () =
      }\n\
      fn main() { println(run(make(), 1)); }\n"
     "trailing expression: expected C0, got __closure_0";
+
+  (* DR-026 Step D - `Take<I>` adapter struct + `Iterator.take(n)`
+     default-method + `Enumerate<I>` adapter struct +
+     `Iterator.enumerate()` default-method.  Both ride the DR-027
+     site-1 multi-hop assoc-projection fix (skeleton-tparam subst in
+     normalize_apps): `Take::Item` and `Enumerate::Item`'s inner
+     `I::Item` projects through every concrete iterator at use site.
+     Take is single-tparam (Self pinned by impl target), so mono
+     instantiates eagerly per Iterator-implementor.  Enumerate ships
+     a `(u32, I::Item)` tuple item — the same single-hop machinery
+     handles tuple sub-types unchanged. *)
+  check_assert "DR-026 Step D: Take<I> compiles + take(3) sums first three"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(1); v.push(2); v.push(3); v.push(4);\n\
+         \    let mut s: int = 0;\n\
+         \    for x in v.iter().take(3 as u32) { s = s + x; }\n\
+         \    println(s);\n\
+          }\n"
+     in
+     contains c "Take_ex_VecIter_i32"
+     && contains c "remaining");
+
+  check_assert "DR-026 Step D: Enumerate<I> compiles + emits (u32, Item) tuple"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(10); v.push(20);\n\
+         \    let mut s: int = 0;\n\
+         \    for pair in v.iter().enumerate() {\n\
+         \        let (i, x) = pair;\n\
+         \        s = s + (i as int) + x;\n\
+         \    }\n\
+         \    println(s);\n\
+          }\n"
+     in
+     contains c "Enumerate_ex_VecIter_i32"
+     && contains c "idx");
+
+  check_assert "DR-026 Step D: take(n).enumerate() chain mono-inlines"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(100); v.push(200); v.push(300);\n\
+         \    let mut s: int = 0;\n\
+         \    for pair in v.iter().take(2 as u32).enumerate() {\n\
+         \        let (i, x) = pair;\n\
+         \        s = s + (i as int) * 10 + x;\n\
+         \    }\n\
+         \    println(s);\n\
+          }\n"
+     in
+     (* Take pinned by VecIter_i32 then Enumerate pinned by Take. *)
+     contains c "Take_ex_VecIter_i32"
+     && contains c "Enumerate_ex_Take_ex_VecIter_i32");
+
+  check_assert "DR-026 Step D: manual Take constructor works"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(7); v.push(8); v.push(9);\n\
+         \    let t: Take<VecIter<int>> =\n\
+         \        Take { inner: v.iter(), remaining: 2 as u32 };\n\
+         \    let mut s: int = 0;\n\
+         \    for x in t { s = s + x; }\n\
+         \    println(s);\n\
+          }\n"
+     in
+     contains c "Take_ex_VecIter_i32");
 
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\

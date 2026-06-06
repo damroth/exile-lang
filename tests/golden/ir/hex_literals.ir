@@ -1,6 +1,7 @@
 ;; exile-typed-ir-dump v1 examples/hex_literals.exl
 (tfn main (params ) void (body (let nl (int 10) :ty (int u8)) (expr-stmt (builtin-call println (cast (var nl) :ty (int u8) (int i32)) :ty (int i32)) :ty (int i32)) (let upper_a (int 65) :ty (int u8)) (expr-stmt (builtin-call println (cast (var upper_a) :ty (int u8) (int i32)) :ty (int i32)) :ty (int i32)) (let read_flag (int 1) :ty (int u32)) (let write_flag (int 2) :ty (int u32)) (let exec_flag (int 4) :ty (int u32)) (let rwx (binop | (binop | (var read_flag) :ty (int u32) (var write_flag) :ty (int u32)) :ty (int u32) (var exec_flag) :ty (int u32)) :ty (int u32)) (expr-stmt (builtin-call println (cast (var rwx) :ty (int u32) (int i32)) :ty (int i32)) :ty (int i32)) (let a (int 57005) :ty (int u32)) (let b (int 48879) :ty (int u32)) (let c (int 51966) :ty (int u32)) (expr-stmt (builtin-call println (cast (var a) :ty (int u32) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (var b) :ty (int u32) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (var c) :ty (int u32) (int i32)) :ty (int i32)) :ty (int i32)) (let custom_base (int 14675968) :ty (int u32)) (expr-stmt (builtin-call println (cast (var custom_base) :ty (int u32) (int i32)) :ty (int i32)) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -8,6 +9,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

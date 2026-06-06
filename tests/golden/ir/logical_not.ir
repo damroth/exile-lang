@@ -2,6 +2,7 @@
 (tfn main (params ) void (body (let t (bool true) :ty bool) (if (not (var t) :ty bool) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) (if (not (binop == (int 1) :ty (int i32) (int 2) :ty (int i32)) :ty bool) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) (let sw (struct-lit Toggle (field on (bool true) :ty bool)) :ty (struct Toggle)) (if (call Toggle__is_off (var sw) :ty (struct Toggle)) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) (if (var ex_DISABLED) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32))))))
 (tfn Toggle__is_off pub (params (param self (struct Toggle))) bool (body (return (not (field-access (var self) :ty (struct Toggle) on) :ty bool) :ty bool)))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -9,6 +10,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Toggle)
   (struct Vec)
   (struct VecIter)

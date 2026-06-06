@@ -5,6 +5,7 @@
 (tfn ex_taller (params (param r (struct Rect)) (param by (int i32))) (struct Rect) (body (return (struct-lit Rect (field height (binop + (field-access (var r) :ty (struct Rect) height) :ty (int i32) (var by) :ty (int i32)) :ty (int i32)) (base (var r) :ty (struct Rect))) :ty (struct Rect))))
 (tfn main (params ) void (body (let p (call ex_make_point (int 3) :ty (int i32) (int 4) :ty (int i32)) :ty (struct Point)) (expr-stmt (builtin-call println (field-access (var p) :ty (struct Point) x) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (field-access (var p) :ty (struct Point) y) :ty (int i32)) :ty (int i32)) (let q (call ex_shift (var p) :ty (struct Point) (int 10) :ty (int i32) (int 20) :ty (int i32)) :ty (struct Point)) (expr-stmt (builtin-call println (field-access (var q) :ty (struct Point) x) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (field-access (var q) :ty (struct Point) y) :ty (int i32)) :ty (int i32)) (let r (struct-lit Rect (field origin (call ex_make_point (int 0) :ty (int i32) (int 0) :ty (int i32)) :ty (struct Point)) (field width (int 8) :ty (int i32)) (field height (int 5) :ty (int i32))) :ty (struct Rect)) (expr-stmt (builtin-call println (call ex_area (var r) :ty (struct Rect)) :ty (int i32)) :ty (int i32)) (assign-field (var r) :ty (struct Rect) width (int 10) :ty (int i32)) (expr-stmt (builtin-call println (call ex_area (var r) :ty (struct Rect)) :ty (int i32)) :ty (int i32)) (let r2 (call ex_taller (var r) :ty (struct Rect) (int 3) :ty (int i32)) :ty (struct Rect)) (expr-stmt (builtin-call println (call ex_area (var r2) :ty (struct Rect)) :ty (int i32)) :ty (int i32))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -14,6 +15,7 @@
   (struct Rect)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

@@ -9,6 +9,7 @@
 (tfn vp_id extern pub (params (param p (ptr c_void))) (ptr c_void))
 (tfn main (params ) void (body (expr-stmt (builtin-call println (cast (call s_neg (cast (int 42) :ty (int i32) (c_short signed)) :ty (c_short signed)) :ty (c_short signed) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (call us_double (cast (int 123) :ty (int i32) (c_short unsigned)) :ty (c_short unsigned)) :ty (c_short unsigned) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (call l_add (cast (int 1000) :ty (int i32) (c_long signed)) :ty (c_long signed) (cast (int 234) :ty (int i32) (c_long signed)) :ty (c_long signed)) :ty (c_long signed) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (call ul_inc (cast (int 5677) :ty (int i32) (c_long unsigned)) :ty (c_long unsigned)) :ty (c_long unsigned) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (call ui_double (cast (int 150) :ty (int i32) (c_int unsigned)) :ty (c_int unsigned)) :ty (c_int unsigned) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (call sc_neg (cast (int 7) :ty (int i32) c_schar) :ty c_schar) :ty c_schar (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (call uc_id (cast (int 99) :ty (int i32) c_uchar) :ty c_uchar) :ty c_uchar (int i32)) :ty (int i32)) :ty (int i32)) (let p null :ty null-ptr) (let back (call vp_id (var p) :ty (ptr c_void)) :ty (ptr c_void)) (if (binop == (var back) :ty (ptr c_void) null :ty null-ptr) :ty bool (then (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))))))
 (mono-instances
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -16,6 +17,7 @@
   (struct RangeInclusive)
   (struct Slice)
   (struct Slot)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

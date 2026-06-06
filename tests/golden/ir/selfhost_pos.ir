@@ -4,6 +4,7 @@
 (tfn Pos__fmt pub (params (param self (const-ptr (struct Pos))) (param out (ptr (struct StringBuilder)))) void (body (expr-stmt (call StringBuilder__push_str (var out) :ty (ptr (struct StringBuilder)) (field-access (var self) :ty (const-ptr (struct Pos)) file) :ty str) :ty (int i32)) (expr-stmt (call StringBuilder__push_str (var out) :ty (ptr (struct StringBuilder)) (string ":") :ty str) :ty (int i32)) (expr-stmt (call StringBuilder__push_int (var out) :ty (ptr (struct StringBuilder)) (field-access (var self) :ty (const-ptr (struct Pos)) line) :ty (int i32)) :ty (int i32)) (expr-stmt (call StringBuilder__push_str (var out) :ty (ptr (struct StringBuilder)) (string ":") :ty str) :ty (int i32)) (expr-stmt (call StringBuilder__push_int (var out) :ty (ptr (struct StringBuilder)) (field-access (var self) :ty (const-ptr (struct Pos)) col) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Allocator)
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -15,6 +16,7 @@
   (struct Slot)
   (struct String)
   (struct StringBuilder)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (enum Option)

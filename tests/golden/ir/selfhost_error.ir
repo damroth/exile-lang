@@ -7,6 +7,7 @@
 (mono-instances
   (struct Allocator)
   (struct CompileError)
+  (struct Enumerate)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
@@ -17,6 +18,7 @@
   (struct Slot)
   (struct String)
   (struct StringBuilder)
+  (struct Take)
   (struct Vec)
   (struct VecIter)
   (struct pos::Pos)

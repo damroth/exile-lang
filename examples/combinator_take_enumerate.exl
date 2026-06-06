@@ -1,0 +1,66 @@
+// Iterator combinator stdlib v1, Step D (DR-026).
+//
+// Two more lazy adapters land on top of `Map<I, F>` (Step A+B):
+//
+//   * `Take<I>` — yields at most `n` elements from the inner iter,
+//     then None.  Field `remaining: u32` counts down per `next()`;
+//     the short-circuit `if remaining == 0 { return None }` runs
+//     before forwarding to `inner.next()`.
+//
+//   * `Enumerate<I>` — pairs every yielded value with its zero-based
+//     index, returning `Option<(u32, I::Item)>`.  Inner None
+//     terminates without bumping `idx`.
+//
+// Both come with default-methods on `Iterator`:
+//
+//   fn take(self, n: u32) -> Take<Self>
+//   fn enumerate(self) -> Enumerate<Self>
+//
+// so the dot-chain `v.iter().take(3).enumerate()` reads naturally
+// and mono inlines the entire chain into a single fused next-loop.
+//
+// Item-type plumbing: `Take` keeps `I::Item` (single-hop assoc-proj,
+// Site-1 fix in DR-027's 2026-06-06 refinement); `Enumerate` adds
+// a `(u32, I::Item)` tuple — the same single-hop resolver fires
+// at every use site, no extra machinery.
+//
+// Four shapes below — manual constructor, dot-chain take, dot-chain
+// enumerate, then the composed `take().enumerate()` chain.
+
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(10); v.push(20); v.push(30); v.push(40); v.push(50);
+
+    // (1) Manual `Take` constructor — no `take(n)` sugar, just
+    // wrap the iterator in a struct literal.  Sums the first three.
+    let t1: Take<VecIter<int>> =
+        Take { inner: v.iter(), remaining: 3 as u32 };
+    let mut s1: int = 0;
+    for x in t1 { s1 = s1 + x; }
+    println(s1);                          // 60 = 10 + 20 + 30
+
+    // (2) Dot-chain `take(n)` — Iterator.take default-method.
+    let mut s2: int = 0;
+    for x in v.iter().take(2 as u32) { s2 = s2 + x; }
+    println(s2);                          // 30 = 10 + 20
+
+    // (3) Dot-chain `enumerate()` — Iterator.enumerate default.
+    // Pairs every element with `(idx, value)`.  Weight by index
+    // so `100*idx + value`.
+    let mut s3: int = 0;
+    for pair in v.iter().enumerate() {
+        let (i, x) = pair;
+        s3 = s3 + (i as int) * 100 + x;
+    }
+    println(s3);                          // 1150 = 10+120+230+340+450
+
+    // (4) Composed `take(3).enumerate()` — Take's items feed
+    // Enumerate's `inner`, mono inlines both into one loop.
+    let mut s4: int = 0;
+    for pair4 in v.iter().take(3 as u32).enumerate() {
+        let (j, y) = pair4;
+        s4 = s4 + (j as int) * 1000 + y;
+    }
+    println(s4);                          // 3060 = 10+(1000+20)+(2000+30)
+}
