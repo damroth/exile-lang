@@ -5,6 +5,7 @@
 (mono-instances
   (struct HashMap)
   (struct HashMapIter)
+  (struct Map)
   (struct Pair)
   (struct Pair_i32_bool)
   (struct Range)

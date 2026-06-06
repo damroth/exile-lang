@@ -5691,6 +5691,66 @@ let () =
        true
      with _ -> false);
 
+  (* DR-026 combinator stdlib v1 — Step A: prelude Map<I, F> adapter
+     + impl<I: Iterator, F: Fn1> Iterator for Map<I, F>.  Manual
+     construction shape; the .map() dot-chain ships in Step B. *)
+
+  check_assert "DR-026 A: Map<I, F> manual construction iterates user Fn1 impl"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct AddOne { _tag: int }\n\
+          impl Fn1 for AddOne {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int) -> int { a + 1 }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(10); v.push(20); v.push(30);\n\
+         \    let m: Map<VecIter<int>, AddOne> =\n\
+         \        Map { inner: v.iter(), f: AddOne { _tag: 0 } };\n\
+         \    let mut acc: int = 0;\n\
+         \    for x in m { acc = acc + x; }\n\
+         \    println(acc);\n\
+          }\n"
+     in
+     (* Verify the Map<VecIter_i32, AddOne> instance was mono'd and
+        AddOne's call dispatches directly inside Map's next. *)
+     contains c "AddOne__call");
+
+  check_assert "DR-026 A: Map<I, F> chains with A2 captured closure"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(10); v.push(20);\n\
+         \    let bump: int = 1;\n\
+         \    let m = Map { inner: v.iter(), f: |x: int| -> int x + bump };\n\
+         \    let mut acc: int = 0;\n\
+         \    for x in m { acc = acc + x; }\n\
+         \    println(acc);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-026 B: v.iter().map(closure) dot-chain (Iterator.map default)"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(10); v.push(20); v.push(30);\n\
+         \    let bump: int = 1;\n\
+         \    let m = v.iter().map(|x: int| -> int x + bump);\n\
+         \    let mut acc: int = 0;\n\
+         \    for x in m { acc = acc + x; }\n\
+         \    println(acc);\n\
+          }\n");
+       true
+     with _ -> false);
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\

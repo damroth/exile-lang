@@ -1,0 +1,313 @@
+;; exile-tokens-dump v1 examples/combinator_map.exl
+Struct @examples/combinator_map.exl:26:1
+(Ident AddDelta) @examples/combinator_map.exl:26:8
+LBrace @examples/combinator_map.exl:26:17
+(Ident delta) @examples/combinator_map.exl:26:19
+Colon @examples/combinator_map.exl:26:24
+(Ident int) @examples/combinator_map.exl:26:26
+RBrace @examples/combinator_map.exl:26:30
+Impl @examples/combinator_map.exl:28:1
+(Ident Fn1) @examples/combinator_map.exl:28:6
+For @examples/combinator_map.exl:28:10
+(Ident AddDelta) @examples/combinator_map.exl:28:14
+LBrace @examples/combinator_map.exl:28:23
+Type @examples/combinator_map.exl:29:5
+(Ident Arg) @examples/combinator_map.exl:29:10
+Eq @examples/combinator_map.exl:29:14
+(Ident int) @examples/combinator_map.exl:29:16
+Semicolon @examples/combinator_map.exl:29:19
+Type @examples/combinator_map.exl:30:5
+(Ident Output) @examples/combinator_map.exl:30:10
+Eq @examples/combinator_map.exl:30:17
+(Ident int) @examples/combinator_map.exl:30:19
+Semicolon @examples/combinator_map.exl:30:22
+Fn @examples/combinator_map.exl:31:5
+(Ident call) @examples/combinator_map.exl:31:8
+LParen @examples/combinator_map.exl:31:12
+Star @examples/combinator_map.exl:31:13
+Const @examples/combinator_map.exl:31:14
+(Ident self) @examples/combinator_map.exl:31:20
+Comma @examples/combinator_map.exl:31:24
+(Ident a) @examples/combinator_map.exl:31:26
+Colon @examples/combinator_map.exl:31:27
+(Ident int) @examples/combinator_map.exl:31:29
+RParen @examples/combinator_map.exl:31:32
+Arrow @examples/combinator_map.exl:31:34
+(Ident int) @examples/combinator_map.exl:31:37
+LBrace @examples/combinator_map.exl:31:41
+(Ident a) @examples/combinator_map.exl:31:43
+Plus @examples/combinator_map.exl:31:45
+(Ident self) @examples/combinator_map.exl:31:47
+Dot @examples/combinator_map.exl:31:51
+(Ident delta) @examples/combinator_map.exl:31:52
+RBrace @examples/combinator_map.exl:31:58
+RBrace @examples/combinator_map.exl:32:1
+Fn @examples/combinator_map.exl:34:1
+(Ident sum_iter) @examples/combinator_map.exl:34:4
+Lt @examples/combinator_map.exl:34:12
+(Ident I) @examples/combinator_map.exl:34:13
+Colon @examples/combinator_map.exl:34:14
+(Ident Iterator) @examples/combinator_map.exl:34:16
+Gt @examples/combinator_map.exl:34:24
+LParen @examples/combinator_map.exl:34:25
+Mut @examples/combinator_map.exl:34:26
+(Ident it) @examples/combinator_map.exl:34:30
+Colon @examples/combinator_map.exl:34:32
+(Ident I) @examples/combinator_map.exl:34:34
+Comma @examples/combinator_map.exl:34:35
+(Ident acc0) @examples/combinator_map.exl:34:37
+Colon @examples/combinator_map.exl:34:41
+(Ident int) @examples/combinator_map.exl:34:43
+RParen @examples/combinator_map.exl:34:46
+Arrow @examples/combinator_map.exl:34:48
+(Ident int) @examples/combinator_map.exl:34:51
+LBrace @examples/combinator_map.exl:34:55
+Let @examples/combinator_map.exl:35:5
+Mut @examples/combinator_map.exl:35:9
+(Ident acc) @examples/combinator_map.exl:35:13
+Colon @examples/combinator_map.exl:35:16
+(Ident int) @examples/combinator_map.exl:35:18
+Eq @examples/combinator_map.exl:35:22
+(Ident acc0) @examples/combinator_map.exl:35:24
+Semicolon @examples/combinator_map.exl:35:28
+For @examples/combinator_map.exl:36:5
+(Ident _x) @examples/combinator_map.exl:36:9
+In @examples/combinator_map.exl:36:12
+(Ident it) @examples/combinator_map.exl:36:15
+LBrace @examples/combinator_map.exl:36:18
+(Ident acc) @examples/combinator_map.exl:36:20
+Eq @examples/combinator_map.exl:36:24
+(Ident acc) @examples/combinator_map.exl:36:26
+Plus @examples/combinator_map.exl:36:30
+(Int 1) @examples/combinator_map.exl:36:32
+Semicolon @examples/combinator_map.exl:36:33
+RBrace @examples/combinator_map.exl:36:35
+(Ident acc) @examples/combinator_map.exl:37:5
+RBrace @examples/combinator_map.exl:38:1
+Fn @examples/combinator_map.exl:40:1
+(Ident main) @examples/combinator_map.exl:40:4
+LParen @examples/combinator_map.exl:40:8
+RParen @examples/combinator_map.exl:40:9
+LBrace @examples/combinator_map.exl:40:11
+Let @examples/combinator_map.exl:41:5
+(Ident a) @examples/combinator_map.exl:41:9
+Eq @examples/combinator_map.exl:41:11
+(Ident default_allocator) @examples/combinator_map.exl:41:13
+LParen @examples/combinator_map.exl:41:30
+RParen @examples/combinator_map.exl:41:31
+Semicolon @examples/combinator_map.exl:41:32
+Let @examples/combinator_map.exl:42:5
+Mut @examples/combinator_map.exl:42:9
+(Ident v) @examples/combinator_map.exl:42:13
+Colon @examples/combinator_map.exl:42:14
+(Ident Vec) @examples/combinator_map.exl:42:16
+Lt @examples/combinator_map.exl:42:19
+(Ident int) @examples/combinator_map.exl:42:20
+Gt @examples/combinator_map.exl:42:23
+Eq @examples/combinator_map.exl:42:25
+(Ident Vec) @examples/combinator_map.exl:42:27
+DoubleColon @examples/combinator_map.exl:42:30
+(Ident with_capacity) @examples/combinator_map.exl:42:32
+LParen @examples/combinator_map.exl:42:45
+(Ident a) @examples/combinator_map.exl:42:46
+Comma @examples/combinator_map.exl:42:47
+(Int 8) @examples/combinator_map.exl:42:49
+As @examples/combinator_map.exl:42:51
+(Ident u32) @examples/combinator_map.exl:42:54
+RParen @examples/combinator_map.exl:42:57
+Semicolon @examples/combinator_map.exl:42:58
+(Ident v) @examples/combinator_map.exl:43:5
+Dot @examples/combinator_map.exl:43:6
+(Ident push) @examples/combinator_map.exl:43:7
+LParen @examples/combinator_map.exl:43:11
+(Int 10) @examples/combinator_map.exl:43:12
+RParen @examples/combinator_map.exl:43:14
+Semicolon @examples/combinator_map.exl:43:15
+(Ident v) @examples/combinator_map.exl:43:17
+Dot @examples/combinator_map.exl:43:18
+(Ident push) @examples/combinator_map.exl:43:19
+LParen @examples/combinator_map.exl:43:23
+(Int 20) @examples/combinator_map.exl:43:24
+RParen @examples/combinator_map.exl:43:26
+Semicolon @examples/combinator_map.exl:43:27
+(Ident v) @examples/combinator_map.exl:43:29
+Dot @examples/combinator_map.exl:43:30
+(Ident push) @examples/combinator_map.exl:43:31
+LParen @examples/combinator_map.exl:43:35
+(Int 30) @examples/combinator_map.exl:43:36
+RParen @examples/combinator_map.exl:43:38
+Semicolon @examples/combinator_map.exl:43:39
+Let @examples/combinator_map.exl:46:5
+(Ident m1) @examples/combinator_map.exl:46:9
+Colon @examples/combinator_map.exl:46:11
+(Ident Map) @examples/combinator_map.exl:46:13
+Lt @examples/combinator_map.exl:46:16
+(Ident VecIter) @examples/combinator_map.exl:46:17
+Lt @examples/combinator_map.exl:46:24
+(Ident int) @examples/combinator_map.exl:46:25
+Gt @examples/combinator_map.exl:46:28
+Comma @examples/combinator_map.exl:46:29
+(Ident AddDelta) @examples/combinator_map.exl:46:31
+Gt @examples/combinator_map.exl:46:39
+Eq @examples/combinator_map.exl:46:41
+(Ident Map) @examples/combinator_map.exl:47:9
+LBrace @examples/combinator_map.exl:47:13
+(Ident inner) @examples/combinator_map.exl:47:15
+Colon @examples/combinator_map.exl:47:20
+(Ident v) @examples/combinator_map.exl:47:22
+Dot @examples/combinator_map.exl:47:23
+(Ident iter) @examples/combinator_map.exl:47:24
+LParen @examples/combinator_map.exl:47:28
+RParen @examples/combinator_map.exl:47:29
+Comma @examples/combinator_map.exl:47:30
+(Ident f) @examples/combinator_map.exl:47:32
+Colon @examples/combinator_map.exl:47:33
+(Ident AddDelta) @examples/combinator_map.exl:47:35
+LBrace @examples/combinator_map.exl:47:44
+(Ident delta) @examples/combinator_map.exl:47:46
+Colon @examples/combinator_map.exl:47:51
+(Int 1) @examples/combinator_map.exl:47:53
+RBrace @examples/combinator_map.exl:47:55
+RBrace @examples/combinator_map.exl:47:57
+Semicolon @examples/combinator_map.exl:47:58
+Let @examples/combinator_map.exl:48:5
+Mut @examples/combinator_map.exl:48:9
+(Ident s1) @examples/combinator_map.exl:48:13
+Colon @examples/combinator_map.exl:48:15
+(Ident int) @examples/combinator_map.exl:48:17
+Eq @examples/combinator_map.exl:48:21
+(Int 0) @examples/combinator_map.exl:48:23
+Semicolon @examples/combinator_map.exl:48:24
+For @examples/combinator_map.exl:49:5
+(Ident x) @examples/combinator_map.exl:49:9
+In @examples/combinator_map.exl:49:11
+(Ident m1) @examples/combinator_map.exl:49:14
+LBrace @examples/combinator_map.exl:49:17
+(Ident s1) @examples/combinator_map.exl:49:19
+Eq @examples/combinator_map.exl:49:22
+(Ident s1) @examples/combinator_map.exl:49:24
+Plus @examples/combinator_map.exl:49:27
+(Ident x) @examples/combinator_map.exl:49:29
+Semicolon @examples/combinator_map.exl:49:30
+RBrace @examples/combinator_map.exl:49:32
+(Ident println) @examples/combinator_map.exl:50:5
+LParen @examples/combinator_map.exl:50:12
+(Ident s1) @examples/combinator_map.exl:50:13
+RParen @examples/combinator_map.exl:50:15
+Semicolon @examples/combinator_map.exl:50:16
+Let @examples/combinator_map.exl:53:5
+(Ident bump) @examples/combinator_map.exl:53:9
+Colon @examples/combinator_map.exl:53:13
+(Ident int) @examples/combinator_map.exl:53:15
+Eq @examples/combinator_map.exl:53:19
+(Int 2) @examples/combinator_map.exl:53:21
+Semicolon @examples/combinator_map.exl:53:22
+Let @examples/combinator_map.exl:54:5
+(Ident m2) @examples/combinator_map.exl:54:9
+Eq @examples/combinator_map.exl:54:12
+(Ident Map) @examples/combinator_map.exl:54:14
+LBrace @examples/combinator_map.exl:54:18
+(Ident inner) @examples/combinator_map.exl:54:20
+Colon @examples/combinator_map.exl:54:25
+(Ident v) @examples/combinator_map.exl:54:27
+Dot @examples/combinator_map.exl:54:28
+(Ident iter) @examples/combinator_map.exl:54:29
+LParen @examples/combinator_map.exl:54:33
+RParen @examples/combinator_map.exl:54:34
+Comma @examples/combinator_map.exl:54:35
+(Ident f) @examples/combinator_map.exl:54:37
+Colon @examples/combinator_map.exl:54:38
+Pipe @examples/combinator_map.exl:54:40
+(Ident x) @examples/combinator_map.exl:54:41
+Colon @examples/combinator_map.exl:54:42
+(Ident int) @examples/combinator_map.exl:54:44
+Pipe @examples/combinator_map.exl:54:47
+Arrow @examples/combinator_map.exl:54:49
+(Ident int) @examples/combinator_map.exl:54:52
+(Ident x) @examples/combinator_map.exl:54:56
+Plus @examples/combinator_map.exl:54:58
+(Ident bump) @examples/combinator_map.exl:54:60
+RBrace @examples/combinator_map.exl:54:65
+Semicolon @examples/combinator_map.exl:54:66
+Let @examples/combinator_map.exl:55:5
+Mut @examples/combinator_map.exl:55:9
+(Ident s2) @examples/combinator_map.exl:55:13
+Colon @examples/combinator_map.exl:55:15
+(Ident int) @examples/combinator_map.exl:55:17
+Eq @examples/combinator_map.exl:55:21
+(Int 0) @examples/combinator_map.exl:55:23
+Semicolon @examples/combinator_map.exl:55:24
+For @examples/combinator_map.exl:56:5
+(Ident x) @examples/combinator_map.exl:56:9
+In @examples/combinator_map.exl:56:11
+(Ident m2) @examples/combinator_map.exl:56:14
+LBrace @examples/combinator_map.exl:56:17
+(Ident s2) @examples/combinator_map.exl:56:19
+Eq @examples/combinator_map.exl:56:22
+(Ident s2) @examples/combinator_map.exl:56:24
+Plus @examples/combinator_map.exl:56:27
+(Ident x) @examples/combinator_map.exl:56:29
+Semicolon @examples/combinator_map.exl:56:30
+RBrace @examples/combinator_map.exl:56:32
+(Ident println) @examples/combinator_map.exl:57:5
+LParen @examples/combinator_map.exl:57:12
+(Ident s2) @examples/combinator_map.exl:57:13
+RParen @examples/combinator_map.exl:57:15
+Semicolon @examples/combinator_map.exl:57:16
+Let @examples/combinator_map.exl:60:5
+(Ident scale) @examples/combinator_map.exl:60:9
+Colon @examples/combinator_map.exl:60:14
+(Ident int) @examples/combinator_map.exl:60:16
+Eq @examples/combinator_map.exl:60:20
+(Int 10) @examples/combinator_map.exl:60:22
+Semicolon @examples/combinator_map.exl:60:24
+Let @examples/combinator_map.exl:61:5
+(Ident m3) @examples/combinator_map.exl:61:9
+Eq @examples/combinator_map.exl:61:12
+(Ident v) @examples/combinator_map.exl:61:14
+Dot @examples/combinator_map.exl:61:15
+(Ident iter) @examples/combinator_map.exl:61:16
+LParen @examples/combinator_map.exl:61:20
+RParen @examples/combinator_map.exl:61:21
+Dot @examples/combinator_map.exl:61:22
+(Ident map) @examples/combinator_map.exl:61:23
+LParen @examples/combinator_map.exl:61:26
+Pipe @examples/combinator_map.exl:61:27
+(Ident x) @examples/combinator_map.exl:61:28
+Colon @examples/combinator_map.exl:61:29
+(Ident int) @examples/combinator_map.exl:61:31
+Pipe @examples/combinator_map.exl:61:34
+Arrow @examples/combinator_map.exl:61:36
+(Ident int) @examples/combinator_map.exl:61:39
+(Ident x) @examples/combinator_map.exl:61:43
+Star @examples/combinator_map.exl:61:45
+(Ident scale) @examples/combinator_map.exl:61:47
+RParen @examples/combinator_map.exl:61:52
+Semicolon @examples/combinator_map.exl:61:53
+Let @examples/combinator_map.exl:62:5
+Mut @examples/combinator_map.exl:62:9
+(Ident s3) @examples/combinator_map.exl:62:13
+Colon @examples/combinator_map.exl:62:15
+(Ident int) @examples/combinator_map.exl:62:17
+Eq @examples/combinator_map.exl:62:21
+(Int 0) @examples/combinator_map.exl:62:23
+Semicolon @examples/combinator_map.exl:62:24
+For @examples/combinator_map.exl:63:5
+(Ident x) @examples/combinator_map.exl:63:9
+In @examples/combinator_map.exl:63:11
+(Ident m3) @examples/combinator_map.exl:63:14
+LBrace @examples/combinator_map.exl:63:17
+(Ident s3) @examples/combinator_map.exl:63:19
+Eq @examples/combinator_map.exl:63:22
+(Ident s3) @examples/combinator_map.exl:63:24
+Plus @examples/combinator_map.exl:63:27
+(Ident x) @examples/combinator_map.exl:63:29
+Semicolon @examples/combinator_map.exl:63:30
+RBrace @examples/combinator_map.exl:63:32
+(Ident println) @examples/combinator_map.exl:64:5
+LParen @examples/combinator_map.exl:64:12
+(Ident s3) @examples/combinator_map.exl:64:13
+RParen @examples/combinator_map.exl:64:15
+Semicolon @examples/combinator_map.exl:64:16
+RBrace @examples/combinator_map.exl:65:1
+Eof @examples/combinator_map.exl:66:1

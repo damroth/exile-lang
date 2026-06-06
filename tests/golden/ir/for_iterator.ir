@@ -6,6 +6,7 @@
   (struct Countdown)
   (struct HashMap)
   (struct HashMapIter)
+  (struct Map)
   (struct Range)
   (struct Range2)
   (struct RangeInclusive)

@@ -6,6 +6,7 @@
   (struct Allocator)
   (struct HashMap)
   (struct HashMapIter)
+  (struct Map)
   (struct Pos)
   (struct Range)
   (struct RangeInclusive)

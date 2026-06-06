@@ -7445,9 +7445,46 @@ let prelude_items () =
       body = []; is_pub = true; is_extern = false; is_variadic = false;
       tier_hint = None; amiga_lib = None; must_use = false; escapes_hatch = false; pos }
   in
+  (* DR-026 Step B — Iterator.map default-method.  Builds the Map<Self,
+     F> adapter from `self` (by-value, consumes the iterator) plus a
+     user-supplied `f: F` callable.  The body is a plain struct literal
+     — Mono picks Map's tparams per use site (Self pinned by impl
+     target, F pinned by callsite arg).  Self is written as bare
+     TySelf which parse_impl_block / specialise_default substitute
+     with the impl target at synthesis time. *)
+  let iter_map_default =
+    { Ast.name = "map"; c_name = "map";
+      tparams = ["F"]; tbounds = [("F", ["Fn1"], [])];
+      params = [
+        { Ast.pname = "self"; pty = Ast.TySelf;
+          preg = None; is_mut = false };
+        { Ast.pname = "f";
+          pty = Ast.TyStruct { path = ["F"]; args = [] };
+          preg = None; is_mut = false };
+      ];
+      ret_ty = Some (Ast.TyStruct {
+        path = ["Map"];
+        args = [
+          Ast.TySelf;
+          Ast.TyStruct { path = ["F"]; args = [] };
+        ] });
+      body = [
+        Ast.Tail (Ast.StructLit {
+          tname = ["Map"];
+          fields = [
+            ("inner", Ast.Var ("self", pos));
+            ("f", Ast.Var ("f", pos));
+          ];
+          base = None; pos })
+      ];
+      is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None;
+      must_use = false; escapes_hatch = false; pos }
+  in
   let iterator_trait = {
     Ast.trname = "Iterator"; trassoc = ["Item"]; trsupers = [];
-    trmethods = [ iter_next ]; trdefaults = [];
+    trmethods = [ iter_next; iter_map_default ];
+    trdefaults = ["map"];
     trpos = pos; tris_pub = true;
   } in
   (* `Fn1` / `Fn2` — callable protocols.  Per the DR-015 reality-check
@@ -7520,6 +7557,103 @@ let prelude_items () =
     Ast.trname = "Fn2"; trassoc = ["Arg1"; "Arg2"; "Output"]; trsupers = [];
     trmethods = [ fn2_call ]; trdefaults = [];
     trpos = pos; tris_pub = true;
+  } in
+  (* DR-026 combinator stdlib v1 — Step A: `Map<I, F>` adapter struct
+     plus its `impl Iterator`.  Manual construction shape:
+
+       let m = Map { inner: v.iter(), f: my_closure };
+       for x in m { ... }
+
+     Iterator.map default-method (Step B) ships next, building this
+     adapter behind the dot-chain `v.iter().map(|x| ...)`.
+
+     The next-body matches Option from the inner iter; the `Some(v) =>
+     Option::Some(self.f(v))` arm uses DR-019 FieldAccess call-desugar
+     to lower `self.f(v)` to `(self.f).call(v)`, and the `None =>
+     Option::None` arm uses DR-020 bidirectional seed to pick up its
+     T from the fn's `Option<F::Output>` ret type.  `F::Output`
+     projects via the DR-025 trait-decl shortcut (Fn1 declares Output,
+     no impl needed at synth time). *)
+  let map_struct = {
+    Ast.sname = "Map";
+    stparams = ["I"; "F"];
+    sfields = [
+      ("inner", Ast.TyStruct { path = ["I"]; args = [] });
+      ("f", Ast.TyStruct { path = ["F"]; args = [] });
+    ];
+    spos = pos; sis_pub = true;
+    stier_hint = None;
+    sis_debug = false; sderives = []; sis_move = false;
+  } in
+  let map_target_ty =
+    Ast.TyStruct {
+      path = ["Map"];
+      args = [
+        Ast.TyStruct { path = ["I"]; args = [] };
+        Ast.TyStruct { path = ["F"]; args = [] };
+      ] } in
+  let map_next_self_param =
+    { Ast.pname = "self"; pty = Ast.TyPtr map_target_ty;
+      preg = None; is_mut = false } in
+  let map_next_body =
+    let scrutinee =
+      Ast.MethodCall {
+        receiver = Ast.FieldAccess (Ast.Var ("self", pos), "inner", pos);
+        name = "next"; args = []; pos }
+    in
+    let some_arm = Ast.{
+      pat = PVariant {
+        tname = ["Option"]; variant = "Some";
+        binds = PBTuple [ PVar ("v", pos) ]; pos };
+      guard = None;
+      body = EnumLit {
+        tname = ["Option"]; variant = "Some";
+        args = EATuple [
+          MethodCall {
+            receiver = FieldAccess (Var ("self", pos), "f", pos);
+            name = "call";
+            args = [ Var ("v", pos) ];
+            pos }
+        ]; pos };
+      arm_pos = pos } in
+    let none_arm = Ast.{
+      pat = PVariant {
+        tname = ["Option"]; variant = "None";
+        binds = PBTuple []; pos };
+      guard = None;
+      body = EnumLit {
+        tname = ["Option"]; variant = "None";
+        args = EATuple []; pos };
+      arm_pos = pos } in
+    [ Ast.Tail (Ast.Match {
+        scrutinee; arms = [ some_arm; none_arm ]; pos }) ]
+  in
+  let map_next_method = {
+    Ast.name = "next"; c_name = "next";
+    tparams = []; tbounds = [];
+    params = [ map_next_self_param ];
+    ret_ty = Some (Ast.TyStruct {
+      path = ["Option"];
+      args = [ Ast.TyStruct {
+        path = ["F"; "Output"]; args = [] } ] });
+    body = map_next_body;
+    is_pub = true; is_extern = false; is_variadic = false;
+    tier_hint = None; amiga_lib = None;
+    must_use = false; escapes_hatch = false; pos
+  } in
+  let map_iter_impl = {
+    Ast.itparams = ["I"; "F"];
+    itbounds = [
+      ("I", ["Iterator"], []);
+      ("F", ["Fn1"], []);
+    ];
+    itrait = Some ["Iterator"];
+    iassoc = [
+      ("Item", Ast.TyStruct { path = ["F"; "Output"]; args = [] })
+    ];
+    itarget = ["Map"];
+    iitems = [ map_next_method ];
+    ipos = pos;
   } in
   (* `Eq` / `Clone` — prelude traits derivable via `@derive(Eq, Clone)`.
      By-value `self` (value types copy cheaply).  `ne` is a default in
@@ -7868,7 +8002,10 @@ let prelude_items () =
     Ast.Trait hash_trait;
     Ast.Trait display_trait; Ast.Trait debug_trait;
     Ast.Impl vec_iter_impl;
-    Ast.Impl hashmap_iter_impl ]
+    Ast.Impl hashmap_iter_impl;
+    Ast.Struct map_struct;
+    Ast.Impl map_iter_impl;
+  ]
 
 (* ===== `@derive(...)` — synthesize trait impls (DECYZJA #1/#2) =====
    Each `@derive`d trait becomes a real `impl Trait for Foo` generated as

@@ -9,6 +9,7 @@
   (struct CompileError)
   (struct HashMap)
   (struct HashMapIter)
+  (struct Map)
   (struct Range)
   (struct RangeInclusive)
   (struct Slice)

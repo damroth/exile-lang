@@ -9,6 +9,7 @@
   (struct HashMap_ex_String_i32)
   (struct HashMap_i32_i32)
   (struct HashMap_str_i32)
+  (struct Map)
   (struct Range)
   (struct RangeInclusive)
   (struct Slice)

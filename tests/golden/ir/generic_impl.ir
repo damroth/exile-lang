@@ -17,6 +17,7 @@
   (struct Box_i32)
   (struct HashMap)
   (struct HashMapIter)
+  (struct Map)
   (struct Pair)
   (struct Pair_bool_i32)
   (struct Pair_i32_bool)

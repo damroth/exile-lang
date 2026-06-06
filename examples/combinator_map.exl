@@ -1,0 +1,65 @@
+// Iterator combinator stdlib v1, Step A + B (DR-026).
+//
+// Prelude now ships `Map<I, F>` adapter + `impl<I: Iterator, F: Fn1>
+// Iterator for Map<I, F>` plus `Iterator.map` as a default method.
+// Three idiomatic shapes work end-to-end:
+//
+//   1. Manual `Map { inner: it, f: f }` constructor.  Useful when
+//      the closure-impl is named (user-defined `struct + impl Fn1`).
+//
+//   2. Captured-closure literal feeding `Map` directly.  DR-024 A2
+//      lifts the lambda into an env-struct + auto-impl Fn1; the
+//      resulting type satisfies the `F: Fn1` bound on Map.
+//
+//   3. Dot-chain `v.iter().map(closure)` — DR-026 Step B's default
+//      method on Iterator.  Builds the same Map<Self, F> behind the
+//      method call; mono inlines the chain.
+//
+// All three lower to a single fused loop through `Map::next`, no
+// temp Vec, no heap.  `F::Output` becomes the chain's Item type via
+// the DR-021 bound shortcut + DR-025 trait-decl shortcut working
+// together.
+
+// (1) Named user closure-impl.  Reads `delta` from the struct's
+// field rather than from outer scope, so no A2 capture needed.
+
+struct AddDelta { delta: int }
+
+impl Fn1 for AddDelta {
+    type Arg = int;
+    type Output = int;
+    fn call(*const self, a: int) -> int { a + self.delta }
+}
+
+fn sum_iter<I: Iterator>(mut it: I, acc0: int) -> int {
+    let mut acc: int = acc0;
+    for _x in it { acc = acc + 1; }
+    acc
+}
+
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(10); v.push(20); v.push(30);
+
+    // (1) Manual constructor + user struct-impl.
+    let m1: Map<VecIter<int>, AddDelta> =
+        Map { inner: v.iter(), f: AddDelta { delta: 1 } };
+    let mut s1: int = 0;
+    for x in m1 { s1 = s1 + x; }
+    println(s1);                          // 63 = 11 + 21 + 31
+
+    // (2) Captured-closure literal feeding Map directly.
+    let bump: int = 2;
+    let m2 = Map { inner: v.iter(), f: |x: int| -> int x + bump };
+    let mut s2: int = 0;
+    for x in m2 { s2 = s2 + x; }
+    println(s2);                          // 66 = 12 + 22 + 32
+
+    // (3) Dot-chain — Iterator.map default method.
+    let scale: int = 10;
+    let m3 = v.iter().map(|x: int| -> int x * scale);
+    let mut s3: int = 0;
+    for x in m3 { s3 = s3 + x; }
+    println(s3);                          // 600 = 100 + 200 + 300
+}
