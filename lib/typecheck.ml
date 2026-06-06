@@ -7593,6 +7593,71 @@ let prelude_items () =
     trmethods = [ fn2_call ]; trdefaults = [];
     trpos = pos; tris_pub = true;
   } in
+  (* DR-029 - Fn3 and Fn4 prelude traits, ternary and quaternary
+     callable protocols.  Parser sugar `|A, B, C|->R` / `|A, B, C,
+     D|->R` was already arity-agnostic (`Fn{arity}` naming, Arg{N}
+     numbering), so this just lights up the bound sugar end-to-end
+     for the higher-arity cases.  Useful when a combinator-style
+     callback needs more than two values (zip-style accumulators,
+     ternary predicates) without forcing the user to bundle args
+     into a tuple. *)
+  let fn3_call =
+    { Ast.name = "call"; c_name = "call"; tparams = []; tbounds = [];
+      params = [
+        { Ast.pname = "self";
+          pty = Ast.TyConstPtr Ast.TySelf;
+          preg = None; is_mut = false };
+        { Ast.pname = "a";
+          pty = Ast.TyStruct { path = ["Self"; "Arg1"]; args = [] };
+          preg = None; is_mut = false };
+        { Ast.pname = "b";
+          pty = Ast.TyStruct { path = ["Self"; "Arg2"]; args = [] };
+          preg = None; is_mut = false };
+        { Ast.pname = "c";
+          pty = Ast.TyStruct { path = ["Self"; "Arg3"]; args = [] };
+          preg = None; is_mut = false };
+      ];
+      ret_ty = Some (Ast.TyStruct { path = ["Self"; "Output"]; args = [] });
+      body = []; is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None;
+      must_use = false; escapes_hatch = false; pos }
+  in
+  let fn3_trait = {
+    Ast.trname = "Fn3";
+    trassoc = ["Arg1"; "Arg2"; "Arg3"; "Output"]; trsupers = [];
+    trmethods = [ fn3_call ]; trdefaults = [];
+    trpos = pos; tris_pub = true;
+  } in
+  let fn4_call =
+    { Ast.name = "call"; c_name = "call"; tparams = []; tbounds = [];
+      params = [
+        { Ast.pname = "self";
+          pty = Ast.TyConstPtr Ast.TySelf;
+          preg = None; is_mut = false };
+        { Ast.pname = "a";
+          pty = Ast.TyStruct { path = ["Self"; "Arg1"]; args = [] };
+          preg = None; is_mut = false };
+        { Ast.pname = "b";
+          pty = Ast.TyStruct { path = ["Self"; "Arg2"]; args = [] };
+          preg = None; is_mut = false };
+        { Ast.pname = "c";
+          pty = Ast.TyStruct { path = ["Self"; "Arg3"]; args = [] };
+          preg = None; is_mut = false };
+        { Ast.pname = "d";
+          pty = Ast.TyStruct { path = ["Self"; "Arg4"]; args = [] };
+          preg = None; is_mut = false };
+      ];
+      ret_ty = Some (Ast.TyStruct { path = ["Self"; "Output"]; args = [] });
+      body = []; is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None;
+      must_use = false; escapes_hatch = false; pos }
+  in
+  let fn4_trait = {
+    Ast.trname = "Fn4";
+    trassoc = ["Arg1"; "Arg2"; "Arg3"; "Arg4"; "Output"]; trsupers = [];
+    trmethods = [ fn4_call ]; trdefaults = [];
+    trpos = pos; tris_pub = true;
+  } in
   (* DR-026 combinator stdlib v1 — Step A: `Map<I, F>` adapter struct
      plus its `impl Iterator`.  Manual construction shape:
 
@@ -8033,6 +8098,7 @@ let prelude_items () =
     Ast.Module sys_mod;
     Ast.Trait iterator_trait;
     Ast.Trait fn0_trait; Ast.Trait fn1_trait; Ast.Trait fn2_trait;
+    Ast.Trait fn3_trait; Ast.Trait fn4_trait;
     Ast.Trait eq_trait; Ast.Trait clone_trait;
     Ast.Trait hash_trait;
     Ast.Trait display_trait; Ast.Trait debug_trait;

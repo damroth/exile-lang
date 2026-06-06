@@ -5832,6 +5832,63 @@ let () =
        true
      with _ -> false);
 
+  (* DR-029 - prelude Fn3 / Fn4 traits.  Parser was already
+     arity-agnostic (`Fn{N}` + `Arg{N}` numbering); shipping the
+     trait declarations lights the bound sugar up for arities 3
+     and 4, plus the DR-024 A2 closure synthesis (which picks
+     Fn{arity} from the lambda's param count) reaches further. *)
+
+  check_assert "DR-029: Fn3 prelude trait + |A, B, C|->R bound dispatch"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Triple { _tag: int }\n\
+          impl Fn3 for Triple {\n\
+         \    type Arg1 = int;\n\
+         \    type Arg2 = int;\n\
+         \    type Arg3 = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int, b: int, c: int) -> int { a + b + c }\n\
+          }\n\
+          fn apply3<F: |int, int, int|->int>(f: F, x: int, y: int, z: int) -> int { f(x, y, z) }\n\
+          fn main() {\n\
+         \    let f = Triple { _tag: 0 };\n\
+         \    println(apply3(f, 10, 13, 19));\n\
+          }\n"
+     in
+     contains c "Triple__call");
+
+  check_assert "DR-029: Fn4 prelude trait + |A, B, C, D|->R bound dispatch"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Quad { _tag: int }\n\
+          impl Fn4 for Quad {\n\
+         \    type Arg1 = int;\n\
+         \    type Arg2 = int;\n\
+         \    type Arg3 = int;\n\
+         \    type Arg4 = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, a: int, b: int, c: int, d: int) -> int { a + b + c + d }\n\
+          }\n\
+          fn apply4<F: |int, int, int, int|->int>(f: F, w: int, x: int, y: int, z: int) -> int { f(w, x, y, z) }\n\
+          fn main() {\n\
+         \    let f = Quad { _tag: 0 };\n\
+         \    println(apply4(f, 5, 10, 13, 14));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-029: A2 captured closure with 3 params synthesises Fn3 impl"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn apply3<F: |int, int, int|->int>(f: F, x: int, y: int, z: int) -> int { f(x, y, z) }\n\
+          fn main() {\n\
+         \    let base: int = 100;\n\
+         \    let g = |a: int, b: int, c: int| -> int a + b + c + base;\n\
+         \    println(apply3(g, 13, 19, 10));\n\
+          }\n");
+       true
+     with _ -> false);
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\
