@@ -198,7 +198,7 @@ and walk_expr ~structs ~enums live (te : texpr) =
        | None -> live)
   | TTupleLit es | TArrayLit es ->
       consume_args ~structs ~enums live es
-  | TEnumLit { args; _ } ->
+  | TEnumLit { args; _ } | TNewEnum { args; _ } ->
       consume_args ~structs ~enums live (List.map snd args)
   | TArrayRepeat { value; _ } ->
       let live = walk_expr ~structs ~enums live value in

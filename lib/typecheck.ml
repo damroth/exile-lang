@@ -288,6 +288,8 @@ let rec subst_var_expr ~from ~to_ (e : Ast.expr) : Ast.expr =
       Ast.New { tname;
                 fields = List.map (fun (n, e) -> (n, sub e)) fields;
                 base = subo base; pos }
+  | Ast.NewEnum { tname; args; pos } ->
+      Ast.NewEnum { tname; args = List.map sub args; pos }
   | Ast.MethodCall { receiver; name; args; pos } ->
       Ast.MethodCall { receiver = sub receiver; name;
                        args = List.map sub args; pos }
@@ -2863,6 +2865,30 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
              if as_struct_lit then st else TPtr st
            in
            { e = result_node; ty = result_ty; pos })
+  | Ast.NewEnum { tname; args; pos = lit_pos } ->
+      (* DR-031 heap-boxed enum tuple-variant: split `Path::Variant`,
+         elaborate as an EnumLit tuple-variant first, then rewrap the
+         resulting IR node as TNewEnum with `*Enum` type. *)
+      let (enum_path, variant) =
+        match List.rev tname with
+        | last :: rev_init -> (List.rev rev_init, last)
+        | [] ->
+            Error.failf lit_pos
+              "'new ...' needs a qualified path (`Enum::Variant`)"
+      in
+      let lit_ast = Ast.EnumLit {
+        tname = enum_path; variant;
+        args = Ast.EATuple args; pos = lit_pos } in
+      let tlit = elab_expr ~allow_void ctx env lit_ast in
+      (match tlit.e, tlit.ty with
+       | TEnumLit { ename_path; variant = v; tag; args = targs }, TEnum p ->
+           { e = TNewEnum {
+               ename_path; variant = v; tag; args = targs };
+             ty = TPtr (TEnum p); pos = lit_pos }
+       | _ ->
+           Error.failf lit_pos
+             "'new %s::%s' must name an enum tuple-variant"
+             (String.concat "::" enum_path) variant)
   | Ast.EnumLit { tname; variant; args; pos = lit_pos } ->
       (* Fall-back BEFORE enum lookup: qualified `raw::DOSBase` with no
          payload is a reference to an extern var/const, not a unit
@@ -4634,6 +4660,10 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let (args', p) = map_fields args in
         ({ te with e = TEnumLit { ename_path; variant; tag;
                                   args = args' } }, p)
+    | TNewEnum { ename_path; variant; tag; args } ->
+        let (args', p) = map_fields args in
+        ({ te with e = TNewEnum { ename_path; variant; tag;
+                                  args = args' } }, p)
     | TMatch { scrutinee; ename_path; arms } ->
         let (scr', p) = walk_expr ~allow_top:false scrutinee in
         ({ te with e = TMatch { scrutinee = scr'; ename_path; arms } }, p)
@@ -5211,7 +5241,7 @@ let collect_tuple_types_of ?(structs = []) ?(enums = []) tfuncs =
    thunks call libc `malloc`/`free`. *)
 let uses_heap_of tfuncs =
   let expr_is_heap (te : texpr) = match te.e with
-    | TNew _ -> true
+    | TNew _ | TNewEnum _ -> true
     | TBuiltinCall { name = "free"; _ }
     | TBuiltinCall { name = "default_allocator"; _ } -> true
     | _ -> false
@@ -8021,6 +8051,7 @@ let prelude_items () =
   let cvoid_ptr_ann = Ast.TyPtr Ast.TyCVoid in
   let cuchar_ptr_ann = Ast.TyPtr Ast.TyCUChar in
   let cuchar_const_ptr_ann = Ast.TyConstPtr Ast.TyCUChar in
+  let cchar_const_ptr_ann = Ast.TyConstPtr Ast.TyCChar in
   let cint_ann = Ast.TyCInt { signed = true } in
   let culong_ann = Ast.TyCLong { signed = false } in
   let clong_ann = Ast.TyCLong { signed = true } in
@@ -8070,6 +8101,26 @@ let prelude_items () =
         mk_param "n" culong_ann ]
       (Some clong_ann)
   in
+  (* DR-032 sys_open / sys_close — file-handle seam for module-
+     loading (`use foo;` resolution in the future self-host port).
+     `path` is a `*const c_char` C string; `flags` is a POSIX-style
+     access mode (`O_RDONLY=0` covers the read-only port case);
+     return value is a small-int file handle (`>= 0` on success,
+     `-1` on failure).  Host backend wraps libc `open`/`close`;
+     amiga backend stubs to -1 until `dos.library/Open` + BPTR/fd
+     bookkeeping is wired up (single-file bootstrap on stdin/
+     stdout doesn't need it). *)
+  let sys_open_fn =
+    mk_extern "sys_open"
+      [ mk_param "path" cchar_const_ptr_ann;
+        mk_param "flags" cint_ann ]
+      (Some cint_ann)
+  in
+  let sys_close_fn =
+    mk_extern "sys_close"
+      [ mk_param "fd" cint_ann ]
+      (Some cint_ann)
+  in
   let sys_mod = {
     Ast.mname = "sys";
     mitems = [
@@ -8077,6 +8128,8 @@ let prelude_items () =
       Ast.Function sys_free_fn;
       Ast.Function sys_write_fn;
       Ast.Function sys_read_fn;
+      Ast.Function sys_open_fn;
+      Ast.Function sys_close_fn;
     ];
     mpos = pos;
     mis_pub = true;
@@ -8605,6 +8658,8 @@ let expand_lambdas (program : Ast.program) : Ast.program =
         (match base with
          | Some b -> free_vars_of_expr bound b acc
          | None -> acc)
+    | Ast.NewEnum { args; _ } ->
+        List.fold_left (fun a e -> free_vars_of_expr bound e a) acc args
     | Ast.EnumLit { args; _ } ->
         let args =
           match args with
@@ -8788,6 +8843,10 @@ let expand_lambdas (program : Ast.program) : Ast.program =
           fields = List.map (fun (n, e) ->
             (n, subst_captures captures bound e)) fields;
           base = Option.map (subst_captures captures bound) base; pos }
+    | Ast.NewEnum { tname; args; pos } ->
+        Ast.NewEnum {
+          tname;
+          args = List.map (subst_captures captures bound) args; pos }
     | Ast.EnumLit { tname; variant; args; pos } ->
         let args = match args with
           | Ast.EATuple es ->
@@ -9067,6 +9126,9 @@ let expand_lambdas (program : Ast.program) : Ast.program =
                   fields = List.map (fun (n, e) ->
                     (n, lift_e ~scope e)) fields;
                   base = Option.map (lift_e ~scope) base; pos }
+    | Ast.NewEnum { tname; args; pos } ->
+        Ast.NewEnum { tname;
+                      args = List.map (lift_e ~scope) args; pos }
     | Ast.EnumLit { tname; variant; args; pos } ->
         let args = match args with
           | Ast.EATuple es -> Ast.EATuple (List.map (lift_e ~scope) es)

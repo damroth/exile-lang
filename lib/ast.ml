@@ -106,6 +106,15 @@ and expr =
   | New of { tname : string list; fields : (string * expr) list;
              base : expr option; pos : Pos.t }
                                         (* `new T { f: e }` — heap-alloc + init *)
+  | NewEnum of { tname : string list; args : expr list; pos : Pos.t }
+                                        (* DR-031 `new Path::Variant(args)` —
+                                           heap-allocate the enum value and
+                                           return a `*Enum`.  Tuple-variant
+                                           form only in v1; struct-variant
+                                           heap-boxing defers.  Faithful
+                                           OCaml→Exile enum-AST port wants
+                                           this for recursive enums with
+                                           pointer-typed payloads. *)
   | MethodCall of { receiver : expr; name : string;
                     args : expr list; pos : Pos.t }
                                         (* `recv.name(args)` — dot-form method
@@ -330,6 +339,7 @@ let expr_pos = function
   | FieldAccess (_, _, p) | Ref (_, p) | Deref (_, p)
   | NullLit p | Block (_, p) -> p
   | Call { pos; _ } | StructLit { pos; _ } | New { pos; _ }
+  | NewEnum { pos; _ }
   | MethodCall { pos; _ } | EnumLit { pos; _ } | Match { pos; _ }
   | If { pos; _ } | ArrayRepeat { pos; _ } | Index { pos; _ }
   | Range { pos; _ } | ArrayLit (_, pos) | Lambda { pos; _ } -> pos

@@ -387,13 +387,25 @@ let rec parse_primary s =
   | Token.Star -> Ast.Deref (parse_postfix s (parse_primary s), p)
   | Token.New ->
       (* `new Path { f1: e1, ... }` — heap-allocate struct + init.
-         The struct path is required; the brace body is mandatory and
-         allowed even in cond positions (no ambiguity since `new` is a
-         dedicated keyword). *)
+         DR-031 `new Path::Variant(args)` — heap-allocate enum tuple-
+         variant; the path's last segment names the variant.  The
+         dispatch on `{` vs `(` resolves at parse time; struct-variant
+         heap-boxing (`new Path::V { f: e }`) defers to v2. *)
       let path = parse_path s ~what:"struct name after 'new'" in
-      expect s Token.LBrace;
-      let (fields, base) = parse_struct_lit_body s in
-      Ast.New { tname = path; fields; base; pos = p }
+      (match peek s with
+       | Token.LBrace ->
+           ignore (advance s);
+           let (fields, base) = parse_struct_lit_body s in
+           Ast.New { tname = path; fields; base; pos = p }
+       | Token.LParen ->
+           ignore (advance s);
+           let args = parse_args s in
+           Ast.NewEnum { tname = path; args; pos = p }
+       | other ->
+           Error.failf (peek_pos s)
+             "expected '{' (struct heap-init) or '(' (enum tuple-variant \
+              heap-box) after 'new %s', got %s"
+             (String.concat "::" path) (Token.pp other))
   | Token.Match ->
       (* `match scrutinee { | pat => expr | pat => expr }` — leading `|`
          on every arm (OCaml/F# style; differs from Rust's trailing `,`).

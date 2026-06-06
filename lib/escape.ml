@@ -173,7 +173,7 @@ let rec prov_of live (te : texpr) =
       (match base with
        | Some b -> meet from_fields (prov_of live b)
        | None -> from_fields)
-  | TEnumLit { args; _ } ->
+  | TEnumLit { args; _ } | TNewEnum { args; _ } ->
       List.fold_left
         (fun acc (_, v) -> meet acc (prov_of live v))
         CallerOrStatic args
@@ -225,7 +225,7 @@ let rec owners_of (live : state) (te : texpr) : string list =
         match base with Some b -> owners_of live b | None -> []
       in
       List.sort_uniq compare (from_fields @ from_base)
-  | TEnumLit { args; _ } ->
+  | TEnumLit { args; _ } | TNewEnum { args; _ } ->
       List.sort_uniq compare
         (List.concat_map (fun (_, v) -> owners_of live v) args)
   | TTupleLit es | TArrayLit es ->

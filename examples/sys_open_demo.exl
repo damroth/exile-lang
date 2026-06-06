@@ -1,0 +1,45 @@
+// File-open through the prelude sys-seam (DR-032).
+//
+// `sys::sys_open` / `sys::sys_close` join the existing sys_alloc /
+// sys_free / sys_read / sys_write trio.  The host backend wraps
+// libc `open` / `close`; the amiga backend stubs to -1 until
+// BPTR<->fd bookkeeping lands (single-file bootstrap on stdin /
+// stdout, which the initial self-host port uses, doesn't open
+// new files).
+//
+// The signatures are width-pinned in the prelude:
+//
+//   pub extern fn sys_open(path: *const c_char, flags: c_int) -> c_int
+//   pub extern fn sys_close(fd: c_int) -> c_int
+//
+// `flags` follows the POSIX numeric convention until a proper
+// `sys::O_RDONLY` constant block lands - `0` is read-only,
+// matching how the future module-loading path will read source
+// files for `use foo;` resolution.
+//
+// This example reads `/etc/hostname` (small, always present on
+// Linux hosts) and prints how many bytes came back.  Negative
+// `sys_open` return means the file isn't readable; the program
+// still terminates cleanly.
+
+fn main() {
+    let path = "/etc/hostname" as *const c_char;
+    let fd: c_int = sys::sys_open(path, 0 as c_int);   // O_RDONLY
+    if fd < 0 as c_int {
+        println(-1);   // open failed
+        return;
+    }
+
+    // Read up to 256 bytes into a stack buffer.  The actual byte
+    // count is whatever sys_read returns; -1 on read error.
+    let mut buf: [u8; 256] = [0 as u8; 256];
+    let n: c_long = sys::sys_read(
+        fd, &buf as *u8 as *c_uchar, 256 as c_ulong);
+
+    sys::sys_close(fd);
+
+    // Print 1 if any bytes were read, 0 otherwise - sidesteps the
+    // host-specific hostname length so the .expected snapshot is
+    // stable across machines.
+    if n > 0 as c_long { println(1); } else { println(0); }
+}

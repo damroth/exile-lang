@@ -44,3 +44,23 @@ long sys_read(int fd, unsigned char *buf, unsigned long n) {
     BPTR fh = (fd == 0) ? Input() : Output();
     return (long)Read(fh, (APTR)buf, (LONG)n);
 }
+
+/* DR-032 sys_open / sys_close stubs.  Amiga DOS uses BPTR file
+ * handles (BCPL pointers), not the small-int fds the seam exposes
+ * — wiring them up cleanly needs a BPTR->fd mapping table on the
+ * runtime side and a stable convention for which fd values point
+ * at Input/Output vs. opened files.  Single-file bootstrap on
+ * stdin/stdout (the path the future self-host port takes for
+ * its initial run) doesn't open new files, so the stubs return
+ * -1 (failure) for now.  Real implementation lands when the port
+ * starts loading multi-file modules. */
+int sys_open(const char *_path, int _flags) {
+    (void)_path;
+    (void)_flags;
+    return -1;
+}
+
+int sys_close(int _fd) {
+    (void)_fd;
+    return -1;
+}

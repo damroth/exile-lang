@@ -363,6 +363,10 @@ let rec render_expr (e : Ast.expr) : string =
       Printf.sprintf "(new %s %s%s)"
         (String.concat "::" tname)
         (String.concat " " fs) base_s
+  | Ast.NewEnum { tname; args; _ } ->
+      Printf.sprintf "(new-enum %s %s)"
+        (String.concat "::" tname)
+        (String.concat " " (List.map render_expr args))
   | Ast.EnumLit { tname; variant; args; _ } ->
       let args_s = match args with
         | Ast.EATuple [] -> ""
@@ -761,6 +765,17 @@ let rec render_texpr (te : texpr) : string =
                 args)
         in
         Printf.sprintf "(enum-lit %s::%s tag=%d%s)"
+          (String.concat "::" ename_path) variant tag args_s
+    | TNewEnum { ename_path; variant; tag; args } ->
+        let args_s =
+          if args = [] then ""
+          else
+            " " ^ String.concat " "
+              (List.map (fun (n, e) ->
+                Printf.sprintf "(field %s %s)" n (render_texpr e))
+                args)
+        in
+        Printf.sprintf "(new-enum %s::%s tag=%d%s)"
           (String.concat "::" ename_path) variant tag args_s
     | TMatch { scrutinee; ename_path; arms } ->
         let arms_s = List.map (fun (a : tmatch_arm) ->

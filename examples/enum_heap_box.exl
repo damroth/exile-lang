@@ -1,0 +1,68 @@
+// Heap-boxed enum tuple-variants (DR-031).
+//
+// `new Enum::Variant(args)` heap-allocates the enum value and yields
+// `*Enum` - mirror of `new Struct { ... }` for struct literals,
+// extended to the enum tuple-variant constructor.  The faithful
+// OCaml-variant -> Exile-enum-AST port wants this: the typical
+// OCaml AST type is a recursive enum whose payloads carry pointers
+// to subtrees, so building a tree shape on the heap reaches for
+// `new` at every internal node.
+//
+// Parser dispatches on the token following `new <path>`:
+//   - `{` -> struct heap-init (`new Foo { f: 1 }`)
+//   - `(` -> enum tuple-variant heap-box (`new Foo::Bar(1, 2)`)
+// Anything else is rejected with a clear message.
+//
+// Struct-variant heap-boxing (`new Foo::Bar { f: 1 }`) defers to a
+// follow-up; the v1 ship covers the tuple-variant case the AST port
+// needs.
+
+// Recursive enum AST: every constructor that has subtrees carries
+// `*const Self` payloads, broken on Self via pointer indirection so
+// the C lowering doesn't see an infinite-size struct.
+
+enum Expr {
+    Lit(int)
+    | Add(*Expr, *Expr)
+    | Mul(*Expr, *Expr)
+}
+
+fn eval(e: *Expr) -> int {
+    match *e {
+        Expr::Lit(n) => n
+        | Expr::Add(a, b) => eval(a) + eval(b)
+        | Expr::Mul(a, b) => eval(a) * eval(b)
+    }
+}
+
+// Walk the tree depth-first and free each node.  Manual today; the
+// future Owner-sigil work (DR-030 Faza 1) will synthesise a drop
+// method that does this automatically.
+fn free_tree(e: *Expr) {
+    match *e {
+        Expr::Lit(_n) => { }
+        | Expr::Add(a, b) => { free_tree(a); free_tree(b); }
+        | Expr::Mul(a, b) => { free_tree(a); free_tree(b); }
+    }
+    free(e);
+}
+
+fn main() {
+    // Build (3 * 7) + (5 * 4) + 1 = 42 on the heap.
+    let three = new Expr::Lit(3);
+    let seven = new Expr::Lit(7);
+    let twentyone = new Expr::Mul(three, seven);
+
+    let five = new Expr::Lit(5);
+    let four = new Expr::Lit(4);
+    let twenty = new Expr::Mul(five, four);
+
+    let one = new Expr::Lit(1);
+
+    let lhs = new Expr::Add(twentyone, twenty);
+    let root = new Expr::Add(lhs, one);
+
+    println(eval(root));            // 42
+
+    free_tree(root);
+}

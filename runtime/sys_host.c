@@ -14,6 +14,7 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 /* Width-pin signatures match what the prelude declares:
  *   sys_alloc(state: *c_void, n: c_ulong) -> *c_void
@@ -45,4 +46,17 @@ long sys_write(int fd, const unsigned char *buf, unsigned long n) {
 
 long sys_read(int fd, unsigned char *buf, unsigned long n) {
     return (long)read(fd, buf, (size_t)n);
+}
+
+/* DR-032 sys_open / sys_close.  `flags` follows the POSIX numeric
+ * convention (O_RDONLY=0, O_WRONLY=1, O_RDWR=2 + the create-mode
+ * bits); the exile caller may hand-roll the constants until a
+ * proper `sys::O_*` constant block lands.  Mode is 0644 for the
+ * create-path callers that need it. */
+int sys_open(const char *path, int flags) {
+    return open(path, flags, 0644);
+}
+
+int sys_close(int fd) {
+    return close(fd);
 }

@@ -5889,6 +5889,83 @@ let () =
        true
      with _ -> false);
 
+  (* DR-031 - `new Path::Variant(args)` heap-boxes an enum tuple-
+     variant.  Faithful OCaml-variant -> Exile-enum-AST port needs
+     this for recursive enum trees (the Add variant carries two
+     pointer-to-Expr payloads).  Parser dispatches on `(` vs `{`
+     after `new <path>`; the elab path reuses EnumLit machinery and
+     rewraps the result IR as TNewEnum with `*Enum` type; codegen
+     emits malloc + writes through `->`. *)
+
+  check_assert "DR-031: new Enum::Variant(args) heap-boxes single tuple-variant"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "enum E { Lit(int) | Add(int, int) }\n\
+          fn main() {\n\
+         \    let p = new E::Add(13, 29);\n\
+         \    match *p {\n\
+         \        E::Lit(n) => println(n)\n\
+         \        | E::Add(a, b) => println(a + b)\n\
+         \    }\n\
+         \    free(p);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-031: recursive enum AST via *const Self payload"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "enum Expr { Lit(int) | Add(*const Expr, *const Expr) }\n\
+          fn eval(e: *const Expr) -> int {\n\
+         \    match *e {\n\
+         \        Expr::Lit(n) => n\n\
+         \        | Expr::Add(a, b) => eval(a) + eval(b)\n\
+         \    }\n\
+          }\n\
+          fn main() {\n\
+         \    let l = new Expr::Lit(13);\n\
+         \    let r = new Expr::Lit(29);\n\
+         \    let s = new Expr::Add(l, r);\n\
+         \    println(eval(s));\n\
+         \    free(s); free(r); free(l);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "DR-031: `new Path` without ( or { rejected"
+    "enum E { Z }\n\
+     fn main() { let _p = new E::Z; }\n"
+    "expected '{' (struct heap-init) or '(' (enum tuple-variant heap-box) \
+     after 'new E::Z', got ';'";
+
+  (* DR-032 - prelude `sys::sys_open` + `sys::sys_close` extern decls.
+     The host-backend wraps libc `open`/`close`; the amiga-backend
+     stubs to -1 until BPTR<->fd bookkeeping lands.  Future self-host
+     module-loading (`use foo;` resolution) reads source files via
+     this seam.  These tests cover the prelude wiring; the runtime
+     thunks are covered by the host-target verify-host run. *)
+
+  check_assert "DR-032: sys::sys_open is in scope with extern c_int signature"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let p = \"/tmp/__exilc_dr032_unused\" as *const c_char;\n\
+         \    let _fd = sys::sys_open(p, 0 as c_int);\n\
+         \    println(0);\n\
+          }\n"
+     in
+     contains c "sys_open");
+
+  check_assert "DR-032: sys::sys_close takes c_int fd and returns c_int"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let _r: c_int = sys::sys_close(0 as c_int);\n\
+         \    println(0);\n\
+          }\n"
+     in
+     contains c "sys_close");
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\

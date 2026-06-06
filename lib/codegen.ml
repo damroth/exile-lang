@@ -408,13 +408,14 @@ let rec gen_expr ctx buf (te : texpr) =
       Buffer.add_string buf ")(";
       add_separated buf ", " (gen_expr ctx buf) args;
       Buffer.add_char buf ')'
-  | TTupleLit _ | TStructLit _ | TNew _ ->
+  | TTupleLit _ | TStructLit _ | TNew _ | TNewEnum _ ->
       (* The `lift_block_exprs` pass in typecheck rewrites every
-         block-shaped expression (tuple/struct/new/enum lit, match)
-         that appears in a sub-expression position into a `__lift_N`
-         temp + preceding `TLet`, so by the time codegen runs no such
-         node reaches `gen_expr`.  Top-level uses (let RHS, return,
-         assign) are routed through `emit_value_into_temp`. *)
+         block-shaped expression (tuple/struct/new/new-enum/enum lit,
+         match) that appears in a sub-expression position into a
+         `__lift_N` temp + preceding `TLet`, so by the time codegen
+         runs no such node reaches `gen_expr`.  Top-level uses (let
+         RHS, return, assign) are routed through
+         `emit_value_into_temp`. *)
       assert false
   | TIndex { base; index } ->
       (* Two paths:
@@ -525,6 +526,29 @@ let rec emit_value_into_temp ctx buf indent temp_name (value : texpr) =
         (fun (fname, arg) ->
           assign
             ~lhs:(Printf.sprintf "%s.data.%s.%s" temp_name variant fname)
+            arg)
+        args
+  | TNewEnum { ename_path; variant; args; _ } ->
+      (* DR-031 heap-boxed enum tuple-variant: `temp = malloc(sizeof(
+         struct ex_Enum)); temp->tag = ...; temp->data.V.fN = ...`.
+         Same writes as TEnumLit but through `->` instead of `.`,
+         and the leading `malloc` mirrors TNew. *)
+      let cname = "struct " ^ mangle_typ (TEnum ename_path) in
+      emit_assign_line buf indent ~lhs:temp_name
+        ~emit_rhs:(fun () ->
+          Buffer.add_string buf "malloc(sizeof(";
+          Buffer.add_string buf cname;
+          Buffer.add_string buf "))");
+      let enum_cname = mangle_typ (TEnum ename_path) in
+      emit_assign_line buf indent ~lhs:(temp_name ^ "->tag")
+        ~emit_rhs:(fun () ->
+          Buffer.add_string buf enum_cname;
+          Buffer.add_char buf '_';
+          Buffer.add_string buf variant);
+      List.iter
+        (fun (fname, arg) ->
+          assign
+            ~lhs:(Printf.sprintf "%s->data.%s.%s" temp_name variant fname)
             arg)
         args
   | TMatch _ ->
@@ -916,8 +940,8 @@ and emit_arm_result ctx assign_to buf indent (a : tmatch_arm) =
                 { a with tbody = te; tdiverges = false }
               in
               emit_arm_result ctx assign_to buf indent trailing_arm)
-     | Some lhs, (TStructLit _ | TNew _ | TEnumLit _ | TTupleLit _
-                  | TArrayLit _ | TArrayRepeat _ | TIfExpr _) ->
+     | Some lhs, (TStructLit _ | TNew _ | TNewEnum _ | TEnumLit _
+                  | TTupleLit _ | TArrayLit _ | TArrayRepeat _ | TIfExpr _) ->
          (* Block-shaped value in an arm body — route through the
             per-shape field/elt assigner that the rest of codegen
             uses for let-RHS / return / assign.  Without this case
@@ -1167,7 +1191,8 @@ and gen_block ctx buf indent outer_scopes stmts =
              let needs_block =
                all <> [] ||
                (match value.e with
-                | TTupleLit _ | TStructLit _ | TNew _ | TMatch _ | TEnumLit _
+                | TTupleLit _ | TStructLit _ | TNew _ | TNewEnum _
+                | TMatch _ | TEnumLit _
                 | TIfExpr _ | TArrayLit _ | TArrayRepeat _ -> true
                 | _ -> false)
              in

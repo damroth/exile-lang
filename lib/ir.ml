@@ -671,6 +671,17 @@ type texpr_node =
                                            come from variant_sig.vsfields,
                                            so codegen emits
                                            `data.<variant>.<name> = e` *)
+  | TNewEnum of { ename_path : string list;
+                  variant : string;
+                  tag : int;
+                  args : (string * texpr) list }
+                                        (* DR-031 heap-boxed enum tuple-
+                                           variant.  Same fields as
+                                           TEnumLit but codegen emits
+                                           malloc + writes through `->`
+                                           and the texpr ty is `TPtr
+                                           (TEnum ename_path)` rather
+                                           than the value type. *)
   | TMatch of { scrutinee : texpr;
                 ename_path : string list;
                 arms : tmatch_arm list }
@@ -833,7 +844,7 @@ let rec texpr_children (te : texpr) : texpr list =
   | TStructLit { fields; base; _ } | TNew { fields; base; _ } ->
       List.map snd fields @ Option.to_list base
   | TFieldAccess { target; _ } -> [target]
-  | TEnumLit { args; _ } -> List.map snd args
+  | TEnumLit { args; _ } | TNewEnum { args; _ } -> List.map snd args
   | TMatch { scrutinee; arms; _ } ->
       scrutinee :: List.map (fun a -> a.tbody) arms
   | TIfExpr { cond; then_val; else_val } -> [cond; then_val; else_val]
