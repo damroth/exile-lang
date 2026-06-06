@@ -1,0 +1,202 @@
+;; exile-tokens-dump v1 examples/fnptr_sugar.exl
+Fn @examples/fnptr_sugar.exl:22:1
+(Ident inc) @examples/fnptr_sugar.exl:22:4
+LParen @examples/fnptr_sugar.exl:22:7
+(Ident x) @examples/fnptr_sugar.exl:22:8
+Colon @examples/fnptr_sugar.exl:22:9
+(Ident int) @examples/fnptr_sugar.exl:22:11
+RParen @examples/fnptr_sugar.exl:22:14
+Arrow @examples/fnptr_sugar.exl:22:16
+(Ident int) @examples/fnptr_sugar.exl:22:19
+LBrace @examples/fnptr_sugar.exl:22:23
+(Ident x) @examples/fnptr_sugar.exl:22:25
+Plus @examples/fnptr_sugar.exl:22:27
+(Int 1) @examples/fnptr_sugar.exl:22:29
+RBrace @examples/fnptr_sugar.exl:22:31
+Fn @examples/fnptr_sugar.exl:25:1
+(Ident forty) @examples/fnptr_sugar.exl:25:4
+LParen @examples/fnptr_sugar.exl:25:9
+RParen @examples/fnptr_sugar.exl:25:10
+Arrow @examples/fnptr_sugar.exl:25:12
+(Ident int) @examples/fnptr_sugar.exl:25:15
+LBrace @examples/fnptr_sugar.exl:25:19
+(Int 40) @examples/fnptr_sugar.exl:25:21
+RBrace @examples/fnptr_sugar.exl:25:24
+Fn @examples/fnptr_sugar.exl:28:1
+(Ident sum) @examples/fnptr_sugar.exl:28:4
+LParen @examples/fnptr_sugar.exl:28:7
+(Ident a) @examples/fnptr_sugar.exl:28:8
+Colon @examples/fnptr_sugar.exl:28:9
+(Ident int) @examples/fnptr_sugar.exl:28:11
+Comma @examples/fnptr_sugar.exl:28:14
+(Ident b) @examples/fnptr_sugar.exl:28:16
+Colon @examples/fnptr_sugar.exl:28:17
+(Ident int) @examples/fnptr_sugar.exl:28:19
+RParen @examples/fnptr_sugar.exl:28:22
+Arrow @examples/fnptr_sugar.exl:28:24
+(Ident int) @examples/fnptr_sugar.exl:28:27
+LBrace @examples/fnptr_sugar.exl:28:31
+(Ident a) @examples/fnptr_sugar.exl:28:33
+Plus @examples/fnptr_sugar.exl:28:35
+(Ident b) @examples/fnptr_sugar.exl:28:37
+RBrace @examples/fnptr_sugar.exl:28:39
+Fn @examples/fnptr_sugar.exl:31:1
+(Ident apply) @examples/fnptr_sugar.exl:31:4
+LParen @examples/fnptr_sugar.exl:31:9
+(Ident cb) @examples/fnptr_sugar.exl:31:10
+Colon @examples/fnptr_sugar.exl:31:12
+Pipe @examples/fnptr_sugar.exl:31:14
+(Ident int) @examples/fnptr_sugar.exl:31:15
+Pipe @examples/fnptr_sugar.exl:31:18
+Arrow @examples/fnptr_sugar.exl:31:19
+(Ident int) @examples/fnptr_sugar.exl:31:21
+Comma @examples/fnptr_sugar.exl:31:24
+(Ident x) @examples/fnptr_sugar.exl:31:26
+Colon @examples/fnptr_sugar.exl:31:27
+(Ident int) @examples/fnptr_sugar.exl:31:29
+RParen @examples/fnptr_sugar.exl:31:32
+Arrow @examples/fnptr_sugar.exl:31:34
+(Ident int) @examples/fnptr_sugar.exl:31:37
+LBrace @examples/fnptr_sugar.exl:31:41
+(Ident cb) @examples/fnptr_sugar.exl:31:43
+LParen @examples/fnptr_sugar.exl:31:45
+(Ident x) @examples/fnptr_sugar.exl:31:46
+RParen @examples/fnptr_sugar.exl:31:47
+RBrace @examples/fnptr_sugar.exl:31:49
+Struct @examples/fnptr_sugar.exl:34:1
+(Ident Hooks) @examples/fnptr_sugar.exl:34:8
+LBrace @examples/fnptr_sugar.exl:34:14
+(Ident on_x) @examples/fnptr_sugar.exl:35:5
+Colon @examples/fnptr_sugar.exl:35:9
+Pipe @examples/fnptr_sugar.exl:35:11
+(Ident int) @examples/fnptr_sugar.exl:35:12
+Pipe @examples/fnptr_sugar.exl:35:15
+Arrow @examples/fnptr_sugar.exl:35:16
+(Ident int) @examples/fnptr_sugar.exl:35:18
+Comma @examples/fnptr_sugar.exl:35:21
+(Ident on_pair) @examples/fnptr_sugar.exl:36:5
+Colon @examples/fnptr_sugar.exl:36:12
+Pipe @examples/fnptr_sugar.exl:36:14
+(Ident int) @examples/fnptr_sugar.exl:36:15
+Comma @examples/fnptr_sugar.exl:36:18
+(Ident int) @examples/fnptr_sugar.exl:36:20
+Pipe @examples/fnptr_sugar.exl:36:23
+Arrow @examples/fnptr_sugar.exl:36:24
+(Ident int) @examples/fnptr_sugar.exl:36:26
+Comma @examples/fnptr_sugar.exl:36:29
+RBrace @examples/fnptr_sugar.exl:37:1
+Fn @examples/fnptr_sugar.exl:39:1
+(Ident main) @examples/fnptr_sugar.exl:39:4
+LParen @examples/fnptr_sugar.exl:39:8
+RParen @examples/fnptr_sugar.exl:39:9
+LBrace @examples/fnptr_sugar.exl:39:11
+Let @examples/fnptr_sugar.exl:41:5
+(Ident f) @examples/fnptr_sugar.exl:41:9
+Colon @examples/fnptr_sugar.exl:41:10
+Pipe @examples/fnptr_sugar.exl:41:12
+(Ident int) @examples/fnptr_sugar.exl:41:13
+Pipe @examples/fnptr_sugar.exl:41:16
+Arrow @examples/fnptr_sugar.exl:41:17
+(Ident int) @examples/fnptr_sugar.exl:41:19
+Eq @examples/fnptr_sugar.exl:41:23
+(Ident inc) @examples/fnptr_sugar.exl:41:25
+Semicolon @examples/fnptr_sugar.exl:41:28
+(Ident println) @examples/fnptr_sugar.exl:42:5
+LParen @examples/fnptr_sugar.exl:42:12
+(Ident f) @examples/fnptr_sugar.exl:42:13
+LParen @examples/fnptr_sugar.exl:42:14
+(Int 41) @examples/fnptr_sugar.exl:42:15
+RParen @examples/fnptr_sugar.exl:42:17
+RParen @examples/fnptr_sugar.exl:42:18
+Semicolon @examples/fnptr_sugar.exl:42:19
+Let @examples/fnptr_sugar.exl:45:5
+(Ident g) @examples/fnptr_sugar.exl:45:9
+Colon @examples/fnptr_sugar.exl:45:10
+PipePipe @examples/fnptr_sugar.exl:45:12
+Arrow @examples/fnptr_sugar.exl:45:14
+(Ident int) @examples/fnptr_sugar.exl:45:16
+Eq @examples/fnptr_sugar.exl:45:20
+(Ident forty) @examples/fnptr_sugar.exl:45:22
+Semicolon @examples/fnptr_sugar.exl:45:27
+(Ident println) @examples/fnptr_sugar.exl:46:5
+LParen @examples/fnptr_sugar.exl:46:12
+(Ident g) @examples/fnptr_sugar.exl:46:13
+LParen @examples/fnptr_sugar.exl:46:14
+RParen @examples/fnptr_sugar.exl:46:15
+Plus @examples/fnptr_sugar.exl:46:17
+(Int 2) @examples/fnptr_sugar.exl:46:19
+RParen @examples/fnptr_sugar.exl:46:20
+Semicolon @examples/fnptr_sugar.exl:46:21
+Let @examples/fnptr_sugar.exl:49:5
+(Ident h) @examples/fnptr_sugar.exl:49:9
+Colon @examples/fnptr_sugar.exl:49:10
+Pipe @examples/fnptr_sugar.exl:49:12
+(Ident int) @examples/fnptr_sugar.exl:49:13
+Pipe @examples/fnptr_sugar.exl:49:16
+Arrow @examples/fnptr_sugar.exl:49:17
+(Ident int) @examples/fnptr_sugar.exl:49:19
+Eq @examples/fnptr_sugar.exl:49:23
+Pipe @examples/fnptr_sugar.exl:49:25
+(Ident x) @examples/fnptr_sugar.exl:49:26
+Colon @examples/fnptr_sugar.exl:49:27
+(Ident int) @examples/fnptr_sugar.exl:49:29
+Pipe @examples/fnptr_sugar.exl:49:32
+Arrow @examples/fnptr_sugar.exl:49:34
+(Ident int) @examples/fnptr_sugar.exl:49:37
+(Ident x) @examples/fnptr_sugar.exl:49:41
+Star @examples/fnptr_sugar.exl:49:43
+(Int 2) @examples/fnptr_sugar.exl:49:45
+Semicolon @examples/fnptr_sugar.exl:49:46
+(Ident println) @examples/fnptr_sugar.exl:50:5
+LParen @examples/fnptr_sugar.exl:50:12
+(Ident h) @examples/fnptr_sugar.exl:50:13
+LParen @examples/fnptr_sugar.exl:50:14
+(Int 21) @examples/fnptr_sugar.exl:50:15
+RParen @examples/fnptr_sugar.exl:50:17
+RParen @examples/fnptr_sugar.exl:50:18
+Semicolon @examples/fnptr_sugar.exl:50:19
+(Ident println) @examples/fnptr_sugar.exl:53:5
+LParen @examples/fnptr_sugar.exl:53:12
+(Ident apply) @examples/fnptr_sugar.exl:53:13
+LParen @examples/fnptr_sugar.exl:53:18
+(Ident inc) @examples/fnptr_sugar.exl:53:19
+Comma @examples/fnptr_sugar.exl:53:22
+(Int 41) @examples/fnptr_sugar.exl:53:24
+RParen @examples/fnptr_sugar.exl:53:26
+RParen @examples/fnptr_sugar.exl:53:27
+Semicolon @examples/fnptr_sugar.exl:53:28
+Let @examples/fnptr_sugar.exl:56:5
+(Ident hooks) @examples/fnptr_sugar.exl:56:9
+Eq @examples/fnptr_sugar.exl:56:15
+(Ident Hooks) @examples/fnptr_sugar.exl:56:17
+LBrace @examples/fnptr_sugar.exl:56:23
+(Ident on_x) @examples/fnptr_sugar.exl:56:25
+Colon @examples/fnptr_sugar.exl:56:29
+(Ident inc) @examples/fnptr_sugar.exl:56:31
+Comma @examples/fnptr_sugar.exl:56:34
+(Ident on_pair) @examples/fnptr_sugar.exl:56:36
+Colon @examples/fnptr_sugar.exl:56:43
+(Ident sum) @examples/fnptr_sugar.exl:56:45
+RBrace @examples/fnptr_sugar.exl:56:49
+Semicolon @examples/fnptr_sugar.exl:56:50
+(Ident println) @examples/fnptr_sugar.exl:57:5
+LParen @examples/fnptr_sugar.exl:57:12
+(Ident hooks) @examples/fnptr_sugar.exl:57:13
+Dot @examples/fnptr_sugar.exl:57:18
+(Ident on_x) @examples/fnptr_sugar.exl:57:19
+LParen @examples/fnptr_sugar.exl:57:23
+(Int 0) @examples/fnptr_sugar.exl:57:24
+RParen @examples/fnptr_sugar.exl:57:25
+Plus @examples/fnptr_sugar.exl:57:27
+(Ident hooks) @examples/fnptr_sugar.exl:57:29
+Dot @examples/fnptr_sugar.exl:57:34
+(Ident on_pair) @examples/fnptr_sugar.exl:57:35
+LParen @examples/fnptr_sugar.exl:57:42
+(Int 20) @examples/fnptr_sugar.exl:57:43
+Comma @examples/fnptr_sugar.exl:57:45
+(Int 21) @examples/fnptr_sugar.exl:57:47
+RParen @examples/fnptr_sugar.exl:57:49
+RParen @examples/fnptr_sugar.exl:57:50
+Semicolon @examples/fnptr_sugar.exl:57:51
+RBrace @examples/fnptr_sugar.exl:58:1
+Eof @examples/fnptr_sugar.exl:59:1

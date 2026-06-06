@@ -195,6 +195,37 @@ let rec parse_type s =
        | [] -> Error.failf p "empty tuple type '()' is not supported"
        | [ t ] -> t
        | _ -> Ast.TyTuple tys)
+  | (Token.Pipe, pipe_pos) ->
+      (* DR-028 `|A|->R` / `|A, B|->R` in type-ann position is sugar for
+         `fn(A) -> R` / `fn(A, B) -> R`.  Mirror of the DR-021 sugar in
+         bound position - same surface, semantics differs by context:
+         in bound it's `<F: Fn{N}<Arg=A, Output=R>>` (any callable
+         satisfying the shape), in type-ann it's a concrete function
+         pointer (closures decay via DR-008 A1; captured closures get
+         their own struct type and don't fit a fn-ptr slot). *)
+      let args =
+        let rec loop acc =
+          let t = parse_type s in
+          let acc = t :: acc in
+          match peek s with
+          | Token.Comma -> ignore (advance s); loop acc
+          | Token.Pipe -> List.rev acc
+          | other ->
+              Error.failf pipe_pos
+                "expected ',' or '|' in fn-pointer type sugar, got %s"
+                (Token.pp other)
+        in loop []
+      in
+      expect s Token.Pipe;
+      expect s Token.Arrow;
+      let ret = parse_type s in
+      Ast.TyFnPtr { params = args; ret = Some ret }
+  | (Token.PipePipe, _) ->
+      (* `||->R` - zero-arg fn-ptr.  Same sugar as DR-023 for Fn0 in
+         bound position, but lowers to `fn() -> R` here. *)
+      expect s Token.Arrow;
+      let ret = parse_type s in
+      Ast.TyFnPtr { params = []; ret = Some ret }
   | (t, p) ->
       Error.failf p
         "expected type (int, i8/i16/i32, u8/u16/u32, str, bool, struct \

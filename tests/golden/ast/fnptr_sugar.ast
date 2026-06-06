@@ -1,0 +1,7 @@
+;; exile-ast-dump v1 examples/fnptr_sugar.exl
+(fn inc (params (param x (int i32))) (int i32) (body (tail (binop + (var x) (int 1)))))
+(fn forty (params ) (int i32) (body (tail (int 40))))
+(fn sum (params (param a (int i32)) (param b (int i32))) (int i32) (body (tail (binop + (var a) (var b)))))
+(fn apply (params (param cb (fn-ptr ((int i32)) (int i32))) (param x (int i32))) (int i32) (body (tail (call cb (var x)))))
+(struct Hooks (fields (field on_x (fn-ptr ((int i32)) (int i32))) (field on_pair (fn-ptr ((int i32) (int i32)) (int i32)))))
+(fn main (params ) void (body (let f (ty (fn-ptr ((int i32)) (int i32))) (var inc)) (expr-stmt (call println (call f (int 41)))) (let g (ty (fn-ptr () (int i32))) (var forty)) (expr-stmt (call println (binop + (call g ) (int 2)))) (let h (ty (fn-ptr ((int i32)) (int i32))) (lambda ((param x (int i32))) (int i32) (binop * (var x) (int 2)))) (expr-stmt (call println (call h (int 21)))) (expr-stmt (call println (call apply (var inc) (int 41)))) (let hooks (struct-lit Hooks (field on_x (var inc)) (field on_pair (var sum)))) (expr-stmt (call println (binop + (method-call (var hooks) on_x (int 0)) (method-call (var hooks) on_pair (int 20) (int 21)))))))

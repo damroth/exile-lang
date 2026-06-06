@@ -1,0 +1,58 @@
+// `|A|->R` sugar in type-annotation position (DR-028).
+//
+// Symmetry with the DR-021 bound sugar: the same `|A|->R` mirror
+// surface that describes "any callable taking A returning R" in
+// `<F: |A|->R>` bound position is now a concrete function-pointer
+// type `fn(A) -> R` (TyFnPtr) wherever a type annotation can stand.
+//
+// Three arities, three contexts:
+//
+//   - `let f: |int|->int = some_fn;`   (let annotation)
+//   - `fn run(cb: |int|->int, ...) { ... }`   (parameter type)
+//   - `struct Hooks { on_x: |int|->int }`   (struct field)
+//
+// Captureless lambdas decay through the DR-008 A1 pathway, so the
+// closure-literal shape feeds the slot directly.  A captured
+// closure has its own synthesised struct type (DR-024) that
+// doesn't fit a fn-ptr slot - the user gets a type-mismatch error
+// at the assignment site, correctly steering them toward an
+// existential bound or a struct-impl-Fn1 dispatch instead.
+
+// Single-arg: `|int|->int` lowers to `fn(int) -> int`.
+fn inc(x: int) -> int { x + 1 }
+
+// Zero-arg: `||->R` lowers to `fn() -> R`.
+fn forty() -> int { 40 }
+
+// Two-arg: `|A, B|->R` lowers to `fn(A, B) -> R`.
+fn sum(a: int, b: int) -> int { a + b }
+
+// fn parameter sugar.
+fn apply(cb: |int|->int, x: int) -> int { cb(x) }
+
+// Struct-field sugar.
+struct Hooks {
+    on_x: |int|->int,
+    on_pair: |int, int|->int,
+}
+
+fn main() {
+    // (1) let-annotation sugar + named fn.
+    let f: |int|->int = inc;
+    println(f(41));                  // 42
+
+    // (2) zero-arg sugar.
+    let g: ||->int = forty;
+    println(g() + 2);                // 42
+
+    // (3) captureless lambda decays into the sugar slot.
+    let h: |int|->int = |x: int| -> int x * 2;
+    println(h(21));                  // 42
+
+    // (4) sugar as a fn-parameter type.
+    println(apply(inc, 41));         // 42
+
+    // (5) sugar as a struct-field type.
+    let hooks = Hooks { on_x: inc, on_pair: sum };
+    println(hooks.on_x(0) + hooks.on_pair(20, 21));   // 1 + 41 = 42
+}

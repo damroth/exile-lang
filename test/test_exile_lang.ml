@@ -5770,6 +5770,68 @@ let () =
        true
      with _ -> false);
 
+  (* DR-028 - `|A|->R` / `||->R` / `|A, B|->R` in type-ann position
+     is sugar for `fn(...) -> R` (TyFnPtr).  Mirror of the DR-021
+     sugar in bound position, but with concrete fn-ptr semantics
+     here (the bound form is an existential `<F: Fn{N}<Arg=A,
+     Output=R>>`).  Captureless lambdas decay through the A1
+     pathway so `let f: |int|->int = |x| x + 1` works; a captured
+     closure has its own struct type and would error - correct
+     because a fn-ptr slot can't hold an env-struct. *)
+
+  check_assert "DR-028: |int|->int let-ann sugar = fn(int) -> int"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn inc(x: int) -> int { x + 1 }\n\
+          fn main() {\n\
+         \    let f: |int|->int = inc;\n\
+         \    println(f(41));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-028: ||->R zero-arg sugar"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn forty_two() -> int { 42 }\n\
+          fn main() {\n\
+         \    let f: ||->int = forty_two;\n\
+         \    println(f());\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-028: |A, B|->R multi-arg sugar in fn parameter"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn run(f: |int, int|->int, a: int, b: int) -> int { f(a, b) }\n\
+          fn add(a: int, b: int) -> int { a + b }\n\
+          fn main() { println(run(add, 13, 29)); }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-028: captureless lambda decays into |int|->int slot"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let f: |int|->int = |x: int| -> int x * 2;\n\
+         \    println(f(21));\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "DR-028: |A|->R sugar in a struct field type"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Hooks { on_x: |int|->int }\n\
+          fn inc(x: int) -> int { x + 1 }\n\
+          fn main() {\n\
+         \    let h = Hooks { on_x: inc };\n\
+         \    println(h.on_x(41));\n\
+          }\n");
+       true
+     with _ -> false);
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\
