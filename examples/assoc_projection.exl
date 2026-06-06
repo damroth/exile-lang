@@ -31,9 +31,25 @@ impl Iterator for Words {
     }
 }
 
+// Generic-Item iterator: `type Item = T` depends on the iterator's own
+// type parameter (unlike Count/Words, whose Item is already concrete).
+// `first(&gen)` instantiates `Gen<int>`; projecting `Gen<int>::Item`
+// substitutes the skeleton's `Item = T` through the mono instance's
+// recorded args (`T → int`).  Without that substitution the projection
+// leaks an unbound `T` and trips a downstream type error.
+struct Gen<T> { val: T, done: bool }
+impl<T> Iterator for Gen<T> {
+    type Item = T;
+    fn next(*self) -> Option<T> {
+        if self.done { return Option::None; }
+        self.done = true;
+        Option::Some(self.val)
+    }
+}
+
 // `I::Item` resolves at the call site: `first(&counts)` → `Option<int>`;
 // `first(&words)` → `Option<str>`.  The mono pass instantiates `first`
-// twice (once per Item type) — codegen never sees the projection.
+// once per Item type — codegen never sees the projection.
 fn first<I: Iterator>(it: *I) -> Option<I::Item> {
     return it.next();
 }
@@ -49,5 +65,11 @@ fn main() {
     match first(&words) {
         Option::Some(s) => { println(s); }      // one
         | Option::None => { println("end"); }
+    }
+
+    let gen = Gen { val: 42, done: false };
+    match first(&gen) {
+        Option::Some(n) => { println(n); }      // 42 — generic Item (type Item = T)
+        | Option::None => { println(99); }
     }
 }

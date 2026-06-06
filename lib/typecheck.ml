@@ -879,16 +879,19 @@ let rec normalize_apps ctx t =
                 `I = VecIter_i32` projects through `(Iterator,
                 VecIter)`'s recorded `Item = TVar T`, leaving T
                 unsubstituted and reaching codegen as an unknown type. *)
-             let inst_bindings =
+             (* Args carried by the concrete head — from a registered mono
+                instance's `sinstance_args`, or directly off a still-applied
+                TStructApp/TEnumApp. *)
+             let inst_args =
                match Mono.find_struct ctx.instances hp with
-               | Some { stparams; sinstance_args = Some args; _ }
-                 when stparams <> [] ->
-                   (try List.combine stparams args with _ -> [])
-               | _ -> []
-             in
-             let subst_for_inst t =
-               if inst_bindings = [] then t
-               else subst_typ inst_bindings t
+               | Some { sinstance_args = Some a; _ } -> a
+               | _ ->
+                   (match Mono.find_enum ctx.instances hp with
+                    | Some { einstance_args = Some a; _ } -> a
+                    | _ ->
+                        (match head with
+                         | TStructApp { args; _ } | TEnumApp { args; _ } -> args
+                         | _ -> []))
              in
              let matches =
                List.filter_map
@@ -896,8 +899,24 @@ let rec normalize_apps ctx t =
                    let target_matches =
                      target = hp || Mono.is_instance_of target hp
                    in
-                   if target_matches && List.mem_assoc assoc assocs
-                   then Some (subst_for_inst (List.assoc assoc assocs))
+                   if target_matches && List.mem_assoc assoc assocs then
+                     (* tparam NAMES come from the skeleton `target` — the
+                        mono instance itself carries `stparams=[]`, so the
+                        old `instance.stparams` read was always empty. *)
+                     let skel_tps =
+                       match lookup_struct ctx target with
+                       | Some s -> s.stparams
+                       | None ->
+                           (match lookup_enum ctx target with
+                            | Some e -> e.etparams | None -> [])
+                     in
+                     let binds =
+                       if skel_tps = [] || inst_args = [] then []
+                       else (try List.combine skel_tps inst_args with _ -> [])
+                     in
+                     let recorded = List.assoc assoc assocs in
+                     Some (if binds = [] then recorded
+                           else subst_typ binds recorded)
                    else None)
                  !trait_assoc_table
              in
@@ -1470,7 +1489,18 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
                  | Some impl_assocs ->
                      List.iter (fun (an, expected_ann) ->
                        let expected_typ =
-                         resolve_type_ann ~pos ctx expected_ann
+                         (* The bound's assoc-constraint may reference the
+                            fn/impl tparams (`Arg = I::Item`).  Resolve with
+                            those tparams in scope (→ deferred TAssocProj),
+                            then substitute the inferred bindings (I :=
+                            concrete) and normalise — without this the
+                            call-site ctx has no `I` and `I::Item` trips
+                            "unknown type". *)
+                         let ctx_tp =
+                           { ctx with tparams = skel.fn_tparams @ ctx.tparams } in
+                         normalize_apps ctx
+                           (subst_typ bindings
+                              (resolve_type_ann ~pos ctx_tp expected_ann))
                        in
                        match List.assoc_opt an impl_assocs with
                        | None -> ()
