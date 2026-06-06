@@ -1477,7 +1477,7 @@ let () =
     \    let up = UpTo { cur: 0, stop: 3 };\n\
     \    for x in up { println(x); }\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_UpTo { long cur; long stop; };\nstruct ex_Take_ex_UpTo { struct ex_UpTo inner; unsigned long remaining; };\nstruct ex_Enumerate_ex_UpTo { struct ex_UpTo inner; unsigned long idx; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n);\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self);\n\nint main(void) {\n    struct ex_UpTo up;\n    struct ex_UpTo __it0;\n    up.cur = 0;\n    up.stop = 3;\n    __it0 = up;\n    while (1) {\n        {\n            struct ex_Option_i32 __m;\n            __m = UpTo__next(&__it0);\n            if (__m.tag == ex_Option_i32_Some) {\n                long __fv0 = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(__fv0));\n            }\n            else {\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n) {\n    {\n        struct ex_Take_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.remaining = n;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self) {\n    {\n        struct ex_Enumerate_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.idx = ((unsigned long)0);\n        return __exile_ret;\n    }\n}\n";
+    "#include <stdio.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_UpTo { long cur; long stop; };\nstruct ex_Take_ex_UpTo { struct ex_UpTo inner; unsigned long remaining; };\nstruct ex_Enumerate_ex_UpTo { struct ex_UpTo inner; unsigned long idx; };\nstruct ex_Vec_i32 { long *ptr; unsigned long count; unsigned long cap; struct ex_Allocator alloc; };\nstruct ex_Slice_i32 { const long *ptr; unsigned long len; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n);\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self);\nstruct ex_Vec_i32 UpTo__collect(struct ex_UpTo self, struct ex_Allocator a);\nstruct ex_Vec_i32 Vec__with_capacity_i32(struct ex_Allocator a, unsigned long hint);\nvoid Vec__push_i32(struct ex_Vec_i32 *self, long x);\nstatic void Vec__grow_i32(struct ex_Vec_i32 *self, unsigned long new_cap);\n\nint main(void) {\n    struct ex_UpTo up;\n    struct ex_UpTo __it0;\n    up.cur = 0;\n    up.stop = 3;\n    __it0 = up;\n    while (1) {\n        {\n            struct ex_Option_i32 __m;\n            __m = UpTo__next(&__it0);\n            if (__m.tag == ex_Option_i32_Some) {\n                long __fv0 = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(__fv0));\n            }\n            else {\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n) {\n    {\n        struct ex_Take_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.remaining = n;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self) {\n    {\n        struct ex_Enumerate_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.idx = ((unsigned long)0);\n        return __exile_ret;\n    }\n}\n\nstruct ex_Vec_i32 UpTo__collect(struct ex_UpTo self, struct ex_Allocator a) {\n    struct ex_Vec_i32 out;\n    struct ex_UpTo __it1;\n    out = Vec__with_capacity_i32(a, ((unsigned long)8));\n    __it1 = self;\n    while (1) {\n        {\n            struct ex_Option_i32 __m;\n            __m = UpTo__next(&__it1);\n            if (__m.tag == ex_Option_i32_Some) {\n                long __fv1 = __m.data.Some._0;\n                Vec__push_i32(&out, __fv1);\n            }\n            else {\n                break;\n            }\n        }\n    }\n    return out;\n}\n\nstruct ex_Vec_i32 Vec__with_capacity_i32(struct ex_Allocator a, unsigned long hint) {\n    unsigned long cap;\n    unsigned long bytes;\n    long *p;\n    if (hint < ((unsigned long)8)) {\n        cap = ((unsigned long)8);\n    } else {\n        cap = hint;\n    }\n    bytes = ((unsigned long)sizeof(long)) * cap;\n    p = ((long *)(a.alloc_fn)(a.state, bytes));\n    {\n        struct ex_Vec_i32 __exile_ret;\n        __exile_ret.ptr = p;\n        __exile_ret.count = ((unsigned long)0);\n        __exile_ret.cap = cap;\n        __exile_ret.alloc = a;\n        return __exile_ret;\n    }\n}\n\nvoid Vec__push_i32(struct ex_Vec_i32 *self, long x) {\n    if (self->count + ((unsigned long)1) > self->cap) {\n        Vec__grow_i32(self, self->cap * ((unsigned long)2));\n    }\n    self->ptr[self->count] = x;\n    self->count = self->count + ((unsigned long)1);\n}\n\nstatic void Vec__grow_i32(struct ex_Vec_i32 *self, unsigned long new_cap) {\n    unsigned long bytes;\n    long *new_ptr;\n    struct ex_Slice_i32 src;\n    unsigned long i;\n    unsigned long old_bytes;\n    bytes = ((unsigned long)sizeof(long)) * new_cap;\n    new_ptr = ((long *)(self->alloc.alloc_fn)(self->alloc.state, bytes));\n    src.ptr = ((const long *)self->ptr);\n    src.len = self->count;\n    i = ((unsigned long)0);\n    while (i < self->count) {\n        new_ptr[i] = ((long)src.ptr[i]);\n        i = i + ((unsigned long)1);\n    }\n    old_bytes = ((unsigned long)sizeof(long)) * self->cap;\n    (self->alloc.free_fn)(self->alloc.state, ((void *)self->ptr), old_bytes);\n    self->ptr = new_ptr;\n    self->cap = new_cap;\n}\n";
 
   (* Associated-type projection `I::Item` in a generic fn signature.
      Skeleton-time produces a `TAssocProj { head = TVar I; assoc = Item }`;
@@ -1507,7 +1507,7 @@ let () =
     \        | Option::None => { println(99); }\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_UpTo { long cur; long stop; };\nstruct ex_Take_ex_UpTo { struct ex_UpTo inner; unsigned long remaining; };\nstruct ex_Enumerate_ex_UpTo { struct ex_UpTo inner; unsigned long idx; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n);\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self);\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it);\n\nint main(void) {\n    struct ex_UpTo up;\n    up.cur = 0;\n    up.stop = 2;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_first_ex_UpTo(&up);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(99));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n) {\n    {\n        struct ex_Take_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.remaining = n;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self) {\n    {\n        struct ex_Enumerate_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.idx = ((unsigned long)0);\n        return __exile_ret;\n    }\n}\n\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it) {\n    return UpTo__next(it);\n}\n";
+    "#include <stdio.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_UpTo { long cur; long stop; };\nstruct ex_Take_ex_UpTo { struct ex_UpTo inner; unsigned long remaining; };\nstruct ex_Enumerate_ex_UpTo { struct ex_UpTo inner; unsigned long idx; };\nstruct ex_Vec_i32 { long *ptr; unsigned long count; unsigned long cap; struct ex_Allocator alloc; };\nstruct ex_Slice_i32 { const long *ptr; unsigned long len; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n);\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self);\nstruct ex_Vec_i32 UpTo__collect(struct ex_UpTo self, struct ex_Allocator a);\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it);\nstruct ex_Vec_i32 Vec__with_capacity_i32(struct ex_Allocator a, unsigned long hint);\nvoid Vec__push_i32(struct ex_Vec_i32 *self, long x);\nstatic void Vec__grow_i32(struct ex_Vec_i32 *self, unsigned long new_cap);\n\nint main(void) {\n    struct ex_UpTo up;\n    up.cur = 0;\n    up.stop = 2;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_first_ex_UpTo(&up);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(99));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Take_ex_UpTo UpTo__take(struct ex_UpTo self, unsigned long n) {\n    {\n        struct ex_Take_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.remaining = n;\n        return __exile_ret;\n    }\n}\n\nstruct ex_Enumerate_ex_UpTo UpTo__enumerate(struct ex_UpTo self) {\n    {\n        struct ex_Enumerate_ex_UpTo __exile_ret;\n        __exile_ret.inner = self;\n        __exile_ret.idx = ((unsigned long)0);\n        return __exile_ret;\n    }\n}\n\nstruct ex_Vec_i32 UpTo__collect(struct ex_UpTo self, struct ex_Allocator a) {\n    struct ex_Vec_i32 out;\n    struct ex_UpTo __it0;\n    out = Vec__with_capacity_i32(a, ((unsigned long)8));\n    __it0 = self;\n    while (1) {\n        {\n            struct ex_Option_i32 __m;\n            __m = UpTo__next(&__it0);\n            if (__m.tag == ex_Option_i32_Some) {\n                long __fv0 = __m.data.Some._0;\n                Vec__push_i32(&out, __fv0);\n            }\n            else {\n                break;\n            }\n        }\n    }\n    return out;\n}\n\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it) {\n    return UpTo__next(it);\n}\n\nstruct ex_Vec_i32 Vec__with_capacity_i32(struct ex_Allocator a, unsigned long hint) {\n    unsigned long cap;\n    unsigned long bytes;\n    long *p;\n    if (hint < ((unsigned long)8)) {\n        cap = ((unsigned long)8);\n    } else {\n        cap = hint;\n    }\n    bytes = ((unsigned long)sizeof(long)) * cap;\n    p = ((long *)(a.alloc_fn)(a.state, bytes));\n    {\n        struct ex_Vec_i32 __exile_ret;\n        __exile_ret.ptr = p;\n        __exile_ret.count = ((unsigned long)0);\n        __exile_ret.cap = cap;\n        __exile_ret.alloc = a;\n        return __exile_ret;\n    }\n}\n\nvoid Vec__push_i32(struct ex_Vec_i32 *self, long x) {\n    if (self->count + ((unsigned long)1) > self->cap) {\n        Vec__grow_i32(self, self->cap * ((unsigned long)2));\n    }\n    self->ptr[self->count] = x;\n    self->count = self->count + ((unsigned long)1);\n}\n\nstatic void Vec__grow_i32(struct ex_Vec_i32 *self, unsigned long new_cap) {\n    unsigned long bytes;\n    long *new_ptr;\n    struct ex_Slice_i32 src;\n    unsigned long i;\n    unsigned long old_bytes;\n    bytes = ((unsigned long)sizeof(long)) * new_cap;\n    new_ptr = ((long *)(self->alloc.alloc_fn)(self->alloc.state, bytes));\n    src.ptr = ((const long *)self->ptr);\n    src.len = self->count;\n    i = ((unsigned long)0);\n    while (i < self->count) {\n        new_ptr[i] = ((long)src.ptr[i]);\n        i = i + ((unsigned long)1);\n    }\n    old_bytes = ((unsigned long)sizeof(long)) * self->cap;\n    (self->alloc.free_fn)(self->alloc.state, ((void *)self->ptr), old_bytes);\n    self->ptr = new_ptr;\n    self->cap = new_cap;\n}\n";
 
   (* Ambiguous projection: two traits define `type Item` and the same
      struct implements both.  `Counter::Item` without `<Counter as
@@ -6129,6 +6129,81 @@ let () =
           }\n"
      in
      contains c "Take_ex_VecIter_i32");
+
+  (* DR-026 Step E - `Iterator.fold(init, f)` and
+     `Iterator.collect(a)` consuming terminals.  `fold` walks the
+     iterator into a single accumulator via `Fn2.call(acc, x)`;
+     `collect` drains the iterator into a fresh `Vec<Self::Item>`.
+     Both consume `self` by value.
+
+     Method-level tparams use Acc/G (fold) to avoid name clashes
+     with impl-level tparams like Map<I, F> - the previous fold
+     definition with method-tparam `F` made dot-chained `map(...).
+     fold(...)` collapse the two `F`s during inference. *)
+  check_assert "DR-026 Step E: fold(0, sum) collapses iterator to scalar"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Sum { _t: int }\n\
+          impl Fn2 for Sum {\n\
+         \    type Arg1 = int;\n\
+         \    type Arg2 = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, acc: int, x: int) -> int { acc + x }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(1); v.push(2); v.push(3);\n\
+         \    let r: int = v.iter().fold(0, Sum { _t: 0 });\n\
+         \    println(r);\n\
+          }\n"
+     in
+     (* fold gets monomorphised per (Self, Acc, G) shape. *)
+     contains c "VecIter__fold_i32_i32_ex_Sum");
+
+  check_assert "DR-026 Step E: collect(a) drains iterator into Vec<Item>"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(1); v.push(2);\n\
+         \    let out: Vec<int> = v.iter().collect(a);\n\
+         \    println(out.len());\n\
+          }\n"
+     in
+     contains c "VecIter__collect_i32");
+
+  check_assert "DR-026 Step E: take(n).map(f).fold(init, g) chain fuses"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Sum { _t: int }\n\
+          impl Fn2 for Sum {\n\
+         \    type Arg1 = int;\n\
+         \    type Arg2 = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, acc: int, x: int) -> int { acc + x }\n\
+          }\n\
+          struct Double { _t: int }\n\
+          impl Fn1 for Double {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, x: int) -> int { x + x }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(1); v.push(2); v.push(3); v.push(4);\n\
+         \    let r: int =\n\
+         \        v.iter().take(2 as u32)\n\
+         \                .map(Double { _t: 0 })\n\
+         \                .fold(0, Sum { _t: 0 });\n\
+         \    println(r);\n\
+          }\n"
+     in
+     (* Take and Map adapters both pinned, fold consumes the chain. *)
+     contains c "Take_ex_VecIter_i32"
+     && contains c "Map_ex_Take_ex_VecIter_i32_ex_Double");
 
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\

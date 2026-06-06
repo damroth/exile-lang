@@ -5441,12 +5441,36 @@ let check_trait_conformance ~ctx ~flat ~parent_path ~target_path ~itparams
   in
   (* Substitute `Self` in a (default) method's signature so the synthesised
      impl method has the concrete target type for its receiver / params. *)
+  let sub_ann = subst_assoc ~assoc:iassoc target_ann in
+  let rec sub_stmts ss = List.map sub_stmt ss
+  and sub_stmt (s : Ast.stmt) : Ast.stmt = match s with
+    | Ast.Let { name; is_mut; ty_ann; value; pos } ->
+        Ast.Let { name; is_mut;
+                  ty_ann = Option.map sub_ann ty_ann;
+                  value; pos }
+    | Ast.LetElse { pat; value; else_body; pos } ->
+        Ast.LetElse { pat; value;
+                      else_body = sub_stmts else_body; pos }
+    | Ast.LetTuple _ | Ast.Assign _ | Ast.AssignField _
+    | Ast.AssignIndex _ | Ast.AssignDeref _
+    | Ast.Return _ | Ast.ExprStmt _ | Ast.Tail _
+    | Ast.Break _ | Ast.Continue _ -> s
+    | Ast.While { cond; body } ->
+        Ast.While { cond; body = sub_stmts body }
+    | Ast.For { var; range; body; pos } ->
+        Ast.For { var; range; body = sub_stmts body; pos }
+    | Ast.Defer { body; pos } ->
+        Ast.Defer { body = sub_stmts body; pos }
+    | Ast.With { target; name; body; pos } ->
+        Ast.With { target; name; body = sub_stmts body; pos }
+  in
   let specialise_default (tm : Ast.func) : Ast.func =
     { tm with
       Ast.params = List.map (fun (p : Ast.param) ->
-        { p with Ast.pty = subst_assoc ~assoc:iassoc target_ann p.pty })
+        { p with Ast.pty = sub_ann p.pty })
         tm.params;
-      Ast.ret_ty = Option.map (subst_assoc ~assoc:iassoc target_ann) tm.ret_ty }
+      Ast.ret_ty = Option.map sub_ann tm.ret_ty;
+      Ast.body = sub_stmts tm.body }
   in
   (* Walk every trait method.  Provided → check signature.  Omitted and
      defaulted → synthesise from the default body.  Omitted and required →
@@ -7631,11 +7655,108 @@ let prelude_items () =
       tier_hint = None; amiga_lib = None;
       must_use = false; escapes_hatch = false; pos }
   in
+  (* DR-026 Step E - `Iterator.fold(init, f)` consuming terminal.
+     Folds the iterator into a single accumulator via Fn2:
+     `acc = f.call(acc, x)` for every yielded `x`.  Generic over
+     `B` (the accumulator/return type); the `F: Fn2<Arg1=B,
+     Arg2=Self::Item, Output=B>` bound pins the callable's shape
+     bidirectionally.  By-value `self` is the consume signal —
+     after `fold` returns, the iterator is drained.
+
+     Body uses `for v in self` which desugars through the same
+     `Iterator::next` protocol the trait is defining (mono fuses
+     it with the impl's next on every concrete instantiation), so
+     the terminal lowers to a single `while next != None` loop
+     wrapping the Fn2-call. *)
+  let iter_fold_default =
+    let acc_ann = Ast.TyStruct { path = ["Acc"]; args = [] } in
+    { Ast.name = "fold"; c_name = "fold";
+      tparams = ["Acc"; "G"];
+      tbounds = [ ("G", ["Fn2"], []) ];
+      params = [
+        { Ast.pname = "self"; pty = Ast.TySelf;
+          preg = None; is_mut = false };
+        { Ast.pname = "init"; pty = acc_ann;
+          preg = None; is_mut = false };
+        { Ast.pname = "f";
+          pty = Ast.TyStruct { path = ["G"]; args = [] };
+          preg = None; is_mut = false };
+      ];
+      ret_ty = Some acc_ann;
+      body = [
+        Ast.Let { name = "acc"; is_mut = true; ty_ann = Some acc_ann;
+                  value = Ast.Var ("init", pos); pos };
+        Ast.For {
+          var = "v";
+          range = Ast.Var ("self", pos);
+          body = [
+            Ast.Assign {
+              path = ["acc"];
+              value = methcall (Ast.Var ("f", pos)) "call"
+                        [ Ast.Var ("acc", pos);
+                          Ast.Var ("v", pos) ];
+              pos };
+          ];
+          pos };
+        Ast.Tail (Ast.Var ("acc", pos));
+      ];
+      is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None;
+      must_use = true; escapes_hatch = false; pos }
+  in
+  (* DR-026 Step E - `Iterator.collect(a)` consuming terminal.
+     Drains the iterator into a fresh `Vec<Self::Item>` allocated
+     through the passed-in `Allocator`.  Initial capacity is the
+     prelude floor (8); push grows on overflow.  By-value `self`
+     consumes the iterator (same drain rule as fold).
+
+     Item type plumbs through `Self::Item` — DR-027 site-1 resolves
+     it at every concrete-iterator use site, so the returned
+     `Vec<Self::Item>` becomes e.g. `Vec<int>` for `VecIter<int>`
+     or `Vec<(u32, int)>` for `Enumerate<VecIter<int>>`. *)
+  let iter_collect_default =
+    let item_ann = Ast.TyStruct { path = ["Self"; "Item"]; args = [] } in
+    let collect_vec_ann =
+      Ast.TyStruct { path = ["Vec"]; args = [ item_ann ] } in
+    { Ast.name = "collect"; c_name = "collect";
+      tparams = []; tbounds = [];
+      params = [
+        { Ast.pname = "self"; pty = Ast.TySelf;
+          preg = None; is_mut = false };
+        { Ast.pname = "a"; pty = alloc_ann_v;
+          preg = None; is_mut = false };
+      ];
+      ret_ty = Some collect_vec_ann;
+      body = [
+        Ast.Let { name = "out"; is_mut = true;
+                  ty_ann = Some collect_vec_ann;
+                  value = Ast.Call {
+                    callee = ["Vec"; "with_capacity"];
+                    args = [
+                      Ast.Var ("a", pos);
+                      u32_lit 8;
+                    ]; pos };
+                  pos };
+        Ast.For {
+          var = "v";
+          range = Ast.Var ("self", pos);
+          body = [
+            Ast.ExprStmt (methcall (Ast.Var ("out", pos)) "push"
+                            [ Ast.Var ("v", pos) ]);
+          ];
+          pos };
+        Ast.Tail (Ast.Var ("out", pos));
+      ];
+      is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None;
+      must_use = true; escapes_hatch = false; pos }
+  in
   let iterator_trait = {
     Ast.trname = "Iterator"; trassoc = ["Item"]; trsupers = [];
     trmethods = [ iter_next; iter_map_default;
-                  iter_take_default; iter_enumerate_default ];
-    trdefaults = ["map"; "take"; "enumerate"];
+                  iter_take_default; iter_enumerate_default;
+                  iter_fold_default; iter_collect_default ];
+    trdefaults = ["map"; "take"; "enumerate"; "fold"; "collect"];
     trpos = pos; tris_pub = true;
   } in
   (* `Fn1` / `Fn2` — callable protocols.  Per the DR-015 reality-check

@@ -1,0 +1,320 @@
+;; exile-tokens-dump v1 examples/combinator_fold_collect.exl
+Struct @examples/combinator_fold_collect.exl:24:1
+(Ident Sum) @examples/combinator_fold_collect.exl:24:8
+LBrace @examples/combinator_fold_collect.exl:24:12
+(Ident _t) @examples/combinator_fold_collect.exl:24:14
+Colon @examples/combinator_fold_collect.exl:24:16
+(Ident int) @examples/combinator_fold_collect.exl:24:18
+RBrace @examples/combinator_fold_collect.exl:24:22
+Impl @examples/combinator_fold_collect.exl:25:1
+(Ident Fn2) @examples/combinator_fold_collect.exl:25:6
+For @examples/combinator_fold_collect.exl:25:10
+(Ident Sum) @examples/combinator_fold_collect.exl:25:14
+LBrace @examples/combinator_fold_collect.exl:25:18
+Type @examples/combinator_fold_collect.exl:26:5
+(Ident Arg1) @examples/combinator_fold_collect.exl:26:10
+Eq @examples/combinator_fold_collect.exl:26:15
+(Ident int) @examples/combinator_fold_collect.exl:26:17
+Semicolon @examples/combinator_fold_collect.exl:26:20
+Type @examples/combinator_fold_collect.exl:27:5
+(Ident Arg2) @examples/combinator_fold_collect.exl:27:10
+Eq @examples/combinator_fold_collect.exl:27:15
+(Ident int) @examples/combinator_fold_collect.exl:27:17
+Semicolon @examples/combinator_fold_collect.exl:27:20
+Type @examples/combinator_fold_collect.exl:28:5
+(Ident Output) @examples/combinator_fold_collect.exl:28:10
+Eq @examples/combinator_fold_collect.exl:28:17
+(Ident int) @examples/combinator_fold_collect.exl:28:19
+Semicolon @examples/combinator_fold_collect.exl:28:22
+Fn @examples/combinator_fold_collect.exl:29:5
+(Ident call) @examples/combinator_fold_collect.exl:29:8
+LParen @examples/combinator_fold_collect.exl:29:12
+Star @examples/combinator_fold_collect.exl:29:13
+Const @examples/combinator_fold_collect.exl:29:14
+(Ident self) @examples/combinator_fold_collect.exl:29:20
+Comma @examples/combinator_fold_collect.exl:29:24
+(Ident acc) @examples/combinator_fold_collect.exl:29:26
+Colon @examples/combinator_fold_collect.exl:29:29
+(Ident int) @examples/combinator_fold_collect.exl:29:31
+Comma @examples/combinator_fold_collect.exl:29:34
+(Ident x) @examples/combinator_fold_collect.exl:29:36
+Colon @examples/combinator_fold_collect.exl:29:37
+(Ident int) @examples/combinator_fold_collect.exl:29:39
+RParen @examples/combinator_fold_collect.exl:29:42
+Arrow @examples/combinator_fold_collect.exl:29:44
+(Ident int) @examples/combinator_fold_collect.exl:29:47
+LBrace @examples/combinator_fold_collect.exl:29:51
+(Ident acc) @examples/combinator_fold_collect.exl:29:53
+Plus @examples/combinator_fold_collect.exl:29:57
+(Ident x) @examples/combinator_fold_collect.exl:29:59
+RBrace @examples/combinator_fold_collect.exl:29:61
+RBrace @examples/combinator_fold_collect.exl:30:1
+Struct @examples/combinator_fold_collect.exl:32:1
+(Ident Double) @examples/combinator_fold_collect.exl:32:8
+LBrace @examples/combinator_fold_collect.exl:32:15
+(Ident _t) @examples/combinator_fold_collect.exl:32:17
+Colon @examples/combinator_fold_collect.exl:32:19
+(Ident int) @examples/combinator_fold_collect.exl:32:21
+RBrace @examples/combinator_fold_collect.exl:32:25
+Impl @examples/combinator_fold_collect.exl:33:1
+(Ident Fn1) @examples/combinator_fold_collect.exl:33:6
+For @examples/combinator_fold_collect.exl:33:10
+(Ident Double) @examples/combinator_fold_collect.exl:33:14
+LBrace @examples/combinator_fold_collect.exl:33:21
+Type @examples/combinator_fold_collect.exl:34:5
+(Ident Arg) @examples/combinator_fold_collect.exl:34:10
+Eq @examples/combinator_fold_collect.exl:34:14
+(Ident int) @examples/combinator_fold_collect.exl:34:16
+Semicolon @examples/combinator_fold_collect.exl:34:19
+Type @examples/combinator_fold_collect.exl:35:5
+(Ident Output) @examples/combinator_fold_collect.exl:35:10
+Eq @examples/combinator_fold_collect.exl:35:17
+(Ident int) @examples/combinator_fold_collect.exl:35:19
+Semicolon @examples/combinator_fold_collect.exl:35:22
+Fn @examples/combinator_fold_collect.exl:36:5
+(Ident call) @examples/combinator_fold_collect.exl:36:8
+LParen @examples/combinator_fold_collect.exl:36:12
+Star @examples/combinator_fold_collect.exl:36:13
+Const @examples/combinator_fold_collect.exl:36:14
+(Ident self) @examples/combinator_fold_collect.exl:36:20
+Comma @examples/combinator_fold_collect.exl:36:24
+(Ident x) @examples/combinator_fold_collect.exl:36:26
+Colon @examples/combinator_fold_collect.exl:36:27
+(Ident int) @examples/combinator_fold_collect.exl:36:29
+RParen @examples/combinator_fold_collect.exl:36:32
+Arrow @examples/combinator_fold_collect.exl:36:34
+(Ident int) @examples/combinator_fold_collect.exl:36:37
+LBrace @examples/combinator_fold_collect.exl:36:41
+(Ident x) @examples/combinator_fold_collect.exl:36:43
+Plus @examples/combinator_fold_collect.exl:36:45
+(Ident x) @examples/combinator_fold_collect.exl:36:47
+RBrace @examples/combinator_fold_collect.exl:36:49
+RBrace @examples/combinator_fold_collect.exl:37:1
+Fn @examples/combinator_fold_collect.exl:39:1
+(Ident main) @examples/combinator_fold_collect.exl:39:4
+LParen @examples/combinator_fold_collect.exl:39:8
+RParen @examples/combinator_fold_collect.exl:39:9
+LBrace @examples/combinator_fold_collect.exl:39:11
+Let @examples/combinator_fold_collect.exl:40:5
+(Ident a) @examples/combinator_fold_collect.exl:40:9
+Eq @examples/combinator_fold_collect.exl:40:11
+(Ident default_allocator) @examples/combinator_fold_collect.exl:40:13
+LParen @examples/combinator_fold_collect.exl:40:30
+RParen @examples/combinator_fold_collect.exl:40:31
+Semicolon @examples/combinator_fold_collect.exl:40:32
+Let @examples/combinator_fold_collect.exl:41:5
+Mut @examples/combinator_fold_collect.exl:41:9
+(Ident v) @examples/combinator_fold_collect.exl:41:13
+Colon @examples/combinator_fold_collect.exl:41:14
+(Ident Vec) @examples/combinator_fold_collect.exl:41:16
+Lt @examples/combinator_fold_collect.exl:41:19
+(Ident int) @examples/combinator_fold_collect.exl:41:20
+Gt @examples/combinator_fold_collect.exl:41:23
+Eq @examples/combinator_fold_collect.exl:41:25
+(Ident Vec) @examples/combinator_fold_collect.exl:41:27
+DoubleColon @examples/combinator_fold_collect.exl:41:30
+(Ident with_capacity) @examples/combinator_fold_collect.exl:41:32
+LParen @examples/combinator_fold_collect.exl:41:45
+(Ident a) @examples/combinator_fold_collect.exl:41:46
+Comma @examples/combinator_fold_collect.exl:41:47
+(Int 8) @examples/combinator_fold_collect.exl:41:49
+As @examples/combinator_fold_collect.exl:41:51
+(Ident u32) @examples/combinator_fold_collect.exl:41:54
+RParen @examples/combinator_fold_collect.exl:41:57
+Semicolon @examples/combinator_fold_collect.exl:41:58
+(Ident v) @examples/combinator_fold_collect.exl:42:5
+Dot @examples/combinator_fold_collect.exl:42:6
+(Ident push) @examples/combinator_fold_collect.exl:42:7
+LParen @examples/combinator_fold_collect.exl:42:11
+(Int 1) @examples/combinator_fold_collect.exl:42:12
+RParen @examples/combinator_fold_collect.exl:42:13
+Semicolon @examples/combinator_fold_collect.exl:42:14
+(Ident v) @examples/combinator_fold_collect.exl:42:16
+Dot @examples/combinator_fold_collect.exl:42:17
+(Ident push) @examples/combinator_fold_collect.exl:42:18
+LParen @examples/combinator_fold_collect.exl:42:22
+(Int 2) @examples/combinator_fold_collect.exl:42:23
+RParen @examples/combinator_fold_collect.exl:42:24
+Semicolon @examples/combinator_fold_collect.exl:42:25
+(Ident v) @examples/combinator_fold_collect.exl:42:27
+Dot @examples/combinator_fold_collect.exl:42:28
+(Ident push) @examples/combinator_fold_collect.exl:42:29
+LParen @examples/combinator_fold_collect.exl:42:33
+(Int 3) @examples/combinator_fold_collect.exl:42:34
+RParen @examples/combinator_fold_collect.exl:42:35
+Semicolon @examples/combinator_fold_collect.exl:42:36
+(Ident v) @examples/combinator_fold_collect.exl:42:38
+Dot @examples/combinator_fold_collect.exl:42:39
+(Ident push) @examples/combinator_fold_collect.exl:42:40
+LParen @examples/combinator_fold_collect.exl:42:44
+(Int 4) @examples/combinator_fold_collect.exl:42:45
+RParen @examples/combinator_fold_collect.exl:42:46
+Semicolon @examples/combinator_fold_collect.exl:42:47
+(Ident v) @examples/combinator_fold_collect.exl:42:49
+Dot @examples/combinator_fold_collect.exl:42:50
+(Ident push) @examples/combinator_fold_collect.exl:42:51
+LParen @examples/combinator_fold_collect.exl:42:55
+(Int 5) @examples/combinator_fold_collect.exl:42:56
+RParen @examples/combinator_fold_collect.exl:42:57
+Semicolon @examples/combinator_fold_collect.exl:42:58
+Let @examples/combinator_fold_collect.exl:45:5
+(Ident total) @examples/combinator_fold_collect.exl:45:9
+Colon @examples/combinator_fold_collect.exl:45:14
+(Ident int) @examples/combinator_fold_collect.exl:45:16
+Eq @examples/combinator_fold_collect.exl:45:20
+(Ident v) @examples/combinator_fold_collect.exl:45:22
+Dot @examples/combinator_fold_collect.exl:45:23
+(Ident iter) @examples/combinator_fold_collect.exl:45:24
+LParen @examples/combinator_fold_collect.exl:45:28
+RParen @examples/combinator_fold_collect.exl:45:29
+Dot @examples/combinator_fold_collect.exl:45:30
+(Ident fold) @examples/combinator_fold_collect.exl:45:31
+LParen @examples/combinator_fold_collect.exl:45:35
+(Int 0) @examples/combinator_fold_collect.exl:45:36
+Comma @examples/combinator_fold_collect.exl:45:37
+(Ident Sum) @examples/combinator_fold_collect.exl:45:39
+LBrace @examples/combinator_fold_collect.exl:45:43
+(Ident _t) @examples/combinator_fold_collect.exl:45:45
+Colon @examples/combinator_fold_collect.exl:45:47
+(Int 0) @examples/combinator_fold_collect.exl:45:49
+RBrace @examples/combinator_fold_collect.exl:45:51
+RParen @examples/combinator_fold_collect.exl:45:52
+Semicolon @examples/combinator_fold_collect.exl:45:53
+(Ident println) @examples/combinator_fold_collect.exl:46:5
+LParen @examples/combinator_fold_collect.exl:46:12
+(Ident total) @examples/combinator_fold_collect.exl:46:13
+RParen @examples/combinator_fold_collect.exl:46:18
+Semicolon @examples/combinator_fold_collect.exl:46:19
+Let @examples/combinator_fold_collect.exl:49:5
+(Ident biased) @examples/combinator_fold_collect.exl:49:9
+Colon @examples/combinator_fold_collect.exl:49:15
+(Ident int) @examples/combinator_fold_collect.exl:49:17
+Eq @examples/combinator_fold_collect.exl:49:21
+(Ident v) @examples/combinator_fold_collect.exl:49:23
+Dot @examples/combinator_fold_collect.exl:49:24
+(Ident iter) @examples/combinator_fold_collect.exl:49:25
+LParen @examples/combinator_fold_collect.exl:49:29
+RParen @examples/combinator_fold_collect.exl:49:30
+Dot @examples/combinator_fold_collect.exl:49:31
+(Ident fold) @examples/combinator_fold_collect.exl:49:32
+LParen @examples/combinator_fold_collect.exl:49:36
+(Int 100) @examples/combinator_fold_collect.exl:49:37
+Comma @examples/combinator_fold_collect.exl:49:40
+(Ident Sum) @examples/combinator_fold_collect.exl:49:42
+LBrace @examples/combinator_fold_collect.exl:49:46
+(Ident _t) @examples/combinator_fold_collect.exl:49:48
+Colon @examples/combinator_fold_collect.exl:49:50
+(Int 0) @examples/combinator_fold_collect.exl:49:52
+RBrace @examples/combinator_fold_collect.exl:49:54
+RParen @examples/combinator_fold_collect.exl:49:55
+Semicolon @examples/combinator_fold_collect.exl:49:56
+(Ident println) @examples/combinator_fold_collect.exl:50:5
+LParen @examples/combinator_fold_collect.exl:50:12
+(Ident biased) @examples/combinator_fold_collect.exl:50:13
+RParen @examples/combinator_fold_collect.exl:50:19
+Semicolon @examples/combinator_fold_collect.exl:50:20
+Let @examples/combinator_fold_collect.exl:54:5
+(Ident doubled) @examples/combinator_fold_collect.exl:54:9
+Colon @examples/combinator_fold_collect.exl:54:16
+(Ident Vec) @examples/combinator_fold_collect.exl:54:18
+Lt @examples/combinator_fold_collect.exl:54:21
+(Ident int) @examples/combinator_fold_collect.exl:54:22
+Gt @examples/combinator_fold_collect.exl:54:25
+Eq @examples/combinator_fold_collect.exl:54:27
+(Ident v) @examples/combinator_fold_collect.exl:55:9
+Dot @examples/combinator_fold_collect.exl:55:10
+(Ident iter) @examples/combinator_fold_collect.exl:55:11
+LParen @examples/combinator_fold_collect.exl:55:15
+RParen @examples/combinator_fold_collect.exl:55:16
+Dot @examples/combinator_fold_collect.exl:55:17
+(Ident map) @examples/combinator_fold_collect.exl:55:18
+LParen @examples/combinator_fold_collect.exl:55:21
+(Ident Double) @examples/combinator_fold_collect.exl:55:22
+LBrace @examples/combinator_fold_collect.exl:55:29
+(Ident _t) @examples/combinator_fold_collect.exl:55:31
+Colon @examples/combinator_fold_collect.exl:55:33
+(Int 0) @examples/combinator_fold_collect.exl:55:35
+RBrace @examples/combinator_fold_collect.exl:55:37
+RParen @examples/combinator_fold_collect.exl:55:38
+Dot @examples/combinator_fold_collect.exl:55:39
+(Ident collect) @examples/combinator_fold_collect.exl:55:40
+LParen @examples/combinator_fold_collect.exl:55:47
+(Ident a) @examples/combinator_fold_collect.exl:55:48
+RParen @examples/combinator_fold_collect.exl:55:49
+Semicolon @examples/combinator_fold_collect.exl:55:50
+Let @examples/combinator_fold_collect.exl:56:5
+Mut @examples/combinator_fold_collect.exl:56:9
+(Ident s) @examples/combinator_fold_collect.exl:56:13
+Colon @examples/combinator_fold_collect.exl:56:14
+(Ident int) @examples/combinator_fold_collect.exl:56:16
+Eq @examples/combinator_fold_collect.exl:56:20
+(Int 0) @examples/combinator_fold_collect.exl:56:22
+Semicolon @examples/combinator_fold_collect.exl:56:23
+For @examples/combinator_fold_collect.exl:57:5
+(Ident x) @examples/combinator_fold_collect.exl:57:9
+In @examples/combinator_fold_collect.exl:57:11
+(Ident doubled) @examples/combinator_fold_collect.exl:57:14
+Dot @examples/combinator_fold_collect.exl:57:21
+(Ident iter) @examples/combinator_fold_collect.exl:57:22
+LParen @examples/combinator_fold_collect.exl:57:26
+RParen @examples/combinator_fold_collect.exl:57:27
+LBrace @examples/combinator_fold_collect.exl:57:29
+(Ident s) @examples/combinator_fold_collect.exl:57:31
+Eq @examples/combinator_fold_collect.exl:57:33
+(Ident s) @examples/combinator_fold_collect.exl:57:35
+Plus @examples/combinator_fold_collect.exl:57:37
+(Ident x) @examples/combinator_fold_collect.exl:57:39
+Semicolon @examples/combinator_fold_collect.exl:57:40
+RBrace @examples/combinator_fold_collect.exl:57:42
+(Ident println) @examples/combinator_fold_collect.exl:58:5
+LParen @examples/combinator_fold_collect.exl:58:12
+(Ident s) @examples/combinator_fold_collect.exl:58:13
+RParen @examples/combinator_fold_collect.exl:58:14
+Semicolon @examples/combinator_fold_collect.exl:58:15
+Let @examples/combinator_fold_collect.exl:62:5
+(Ident pipe) @examples/combinator_fold_collect.exl:62:9
+Colon @examples/combinator_fold_collect.exl:62:13
+(Ident int) @examples/combinator_fold_collect.exl:62:15
+Eq @examples/combinator_fold_collect.exl:62:19
+(Ident v) @examples/combinator_fold_collect.exl:63:9
+Dot @examples/combinator_fold_collect.exl:63:10
+(Ident iter) @examples/combinator_fold_collect.exl:63:11
+LParen @examples/combinator_fold_collect.exl:63:15
+RParen @examples/combinator_fold_collect.exl:63:16
+Dot @examples/combinator_fold_collect.exl:64:10
+(Ident take) @examples/combinator_fold_collect.exl:64:11
+LParen @examples/combinator_fold_collect.exl:64:15
+(Int 3) @examples/combinator_fold_collect.exl:64:16
+As @examples/combinator_fold_collect.exl:64:18
+(Ident u32) @examples/combinator_fold_collect.exl:64:21
+RParen @examples/combinator_fold_collect.exl:64:24
+Dot @examples/combinator_fold_collect.exl:65:10
+(Ident map) @examples/combinator_fold_collect.exl:65:11
+LParen @examples/combinator_fold_collect.exl:65:14
+(Ident Double) @examples/combinator_fold_collect.exl:65:15
+LBrace @examples/combinator_fold_collect.exl:65:22
+(Ident _t) @examples/combinator_fold_collect.exl:65:24
+Colon @examples/combinator_fold_collect.exl:65:26
+(Int 0) @examples/combinator_fold_collect.exl:65:28
+RBrace @examples/combinator_fold_collect.exl:65:30
+RParen @examples/combinator_fold_collect.exl:65:31
+Dot @examples/combinator_fold_collect.exl:66:10
+(Ident fold) @examples/combinator_fold_collect.exl:66:11
+LParen @examples/combinator_fold_collect.exl:66:15
+(Int 0) @examples/combinator_fold_collect.exl:66:16
+Comma @examples/combinator_fold_collect.exl:66:17
+(Ident Sum) @examples/combinator_fold_collect.exl:66:19
+LBrace @examples/combinator_fold_collect.exl:66:23
+(Ident _t) @examples/combinator_fold_collect.exl:66:25
+Colon @examples/combinator_fold_collect.exl:66:27
+(Int 0) @examples/combinator_fold_collect.exl:66:29
+RBrace @examples/combinator_fold_collect.exl:66:31
+RParen @examples/combinator_fold_collect.exl:66:32
+Semicolon @examples/combinator_fold_collect.exl:66:33
+(Ident println) @examples/combinator_fold_collect.exl:67:5
+LParen @examples/combinator_fold_collect.exl:67:12
+(Ident pipe) @examples/combinator_fold_collect.exl:67:13
+RParen @examples/combinator_fold_collect.exl:67:17
+Semicolon @examples/combinator_fold_collect.exl:67:18
+RBrace @examples/combinator_fold_collect.exl:68:1
+Eof @examples/combinator_fold_collect.exl:69:1
