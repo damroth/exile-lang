@@ -1,0 +1,120 @@
+;; exile-tokens-dump v1 examples/host_only_sys_open_demo.exl
+Fn @examples/host_only_sys_open_demo.exl:25:1
+(Ident main) @examples/host_only_sys_open_demo.exl:25:4
+LParen @examples/host_only_sys_open_demo.exl:25:8
+RParen @examples/host_only_sys_open_demo.exl:25:9
+LBrace @examples/host_only_sys_open_demo.exl:25:11
+Let @examples/host_only_sys_open_demo.exl:26:5
+(Ident path) @examples/host_only_sys_open_demo.exl:26:9
+Eq @examples/host_only_sys_open_demo.exl:26:14
+(String "/etc/hostname") @examples/host_only_sys_open_demo.exl:26:16
+As @examples/host_only_sys_open_demo.exl:26:32
+Star @examples/host_only_sys_open_demo.exl:26:35
+Const @examples/host_only_sys_open_demo.exl:26:36
+(Ident c_char) @examples/host_only_sys_open_demo.exl:26:42
+Semicolon @examples/host_only_sys_open_demo.exl:26:48
+Let @examples/host_only_sys_open_demo.exl:27:5
+(Ident fd) @examples/host_only_sys_open_demo.exl:27:9
+Colon @examples/host_only_sys_open_demo.exl:27:11
+(Ident c_int) @examples/host_only_sys_open_demo.exl:27:13
+Eq @examples/host_only_sys_open_demo.exl:27:19
+(Ident sys) @examples/host_only_sys_open_demo.exl:27:21
+DoubleColon @examples/host_only_sys_open_demo.exl:27:24
+(Ident sys_open) @examples/host_only_sys_open_demo.exl:27:26
+LParen @examples/host_only_sys_open_demo.exl:27:34
+(Ident path) @examples/host_only_sys_open_demo.exl:27:35
+Comma @examples/host_only_sys_open_demo.exl:27:39
+(Int 0) @examples/host_only_sys_open_demo.exl:27:41
+As @examples/host_only_sys_open_demo.exl:27:43
+(Ident c_int) @examples/host_only_sys_open_demo.exl:27:46
+RParen @examples/host_only_sys_open_demo.exl:27:51
+Semicolon @examples/host_only_sys_open_demo.exl:27:52
+If @examples/host_only_sys_open_demo.exl:28:5
+(Ident fd) @examples/host_only_sys_open_demo.exl:28:8
+Lt @examples/host_only_sys_open_demo.exl:28:11
+(Int 0) @examples/host_only_sys_open_demo.exl:28:13
+As @examples/host_only_sys_open_demo.exl:28:15
+(Ident c_int) @examples/host_only_sys_open_demo.exl:28:18
+LBrace @examples/host_only_sys_open_demo.exl:28:24
+(Ident println) @examples/host_only_sys_open_demo.exl:29:9
+LParen @examples/host_only_sys_open_demo.exl:29:16
+Minus @examples/host_only_sys_open_demo.exl:29:17
+(Int 1) @examples/host_only_sys_open_demo.exl:29:18
+RParen @examples/host_only_sys_open_demo.exl:29:19
+Semicolon @examples/host_only_sys_open_demo.exl:29:20
+Return @examples/host_only_sys_open_demo.exl:30:9
+Semicolon @examples/host_only_sys_open_demo.exl:30:15
+RBrace @examples/host_only_sys_open_demo.exl:31:5
+Let @examples/host_only_sys_open_demo.exl:35:5
+Mut @examples/host_only_sys_open_demo.exl:35:9
+(Ident buf) @examples/host_only_sys_open_demo.exl:35:13
+Colon @examples/host_only_sys_open_demo.exl:35:16
+LBracket @examples/host_only_sys_open_demo.exl:35:18
+(Ident u8) @examples/host_only_sys_open_demo.exl:35:19
+Semicolon @examples/host_only_sys_open_demo.exl:35:21
+(Int 256) @examples/host_only_sys_open_demo.exl:35:23
+RBracket @examples/host_only_sys_open_demo.exl:35:26
+Eq @examples/host_only_sys_open_demo.exl:35:28
+LBracket @examples/host_only_sys_open_demo.exl:35:30
+(Int 0) @examples/host_only_sys_open_demo.exl:35:31
+As @examples/host_only_sys_open_demo.exl:35:33
+(Ident u8) @examples/host_only_sys_open_demo.exl:35:36
+Semicolon @examples/host_only_sys_open_demo.exl:35:38
+(Int 256) @examples/host_only_sys_open_demo.exl:35:40
+RBracket @examples/host_only_sys_open_demo.exl:35:43
+Semicolon @examples/host_only_sys_open_demo.exl:35:44
+Let @examples/host_only_sys_open_demo.exl:36:5
+(Ident n) @examples/host_only_sys_open_demo.exl:36:9
+Colon @examples/host_only_sys_open_demo.exl:36:10
+(Ident c_long) @examples/host_only_sys_open_demo.exl:36:12
+Eq @examples/host_only_sys_open_demo.exl:36:19
+(Ident sys) @examples/host_only_sys_open_demo.exl:36:21
+DoubleColon @examples/host_only_sys_open_demo.exl:36:24
+(Ident sys_read) @examples/host_only_sys_open_demo.exl:36:26
+LParen @examples/host_only_sys_open_demo.exl:36:34
+(Ident fd) @examples/host_only_sys_open_demo.exl:37:9
+Comma @examples/host_only_sys_open_demo.exl:37:11
+Amp @examples/host_only_sys_open_demo.exl:37:13
+(Ident buf) @examples/host_only_sys_open_demo.exl:37:14
+As @examples/host_only_sys_open_demo.exl:37:18
+Star @examples/host_only_sys_open_demo.exl:37:21
+(Ident u8) @examples/host_only_sys_open_demo.exl:37:22
+As @examples/host_only_sys_open_demo.exl:37:25
+Star @examples/host_only_sys_open_demo.exl:37:28
+(Ident c_uchar) @examples/host_only_sys_open_demo.exl:37:29
+Comma @examples/host_only_sys_open_demo.exl:37:36
+(Int 256) @examples/host_only_sys_open_demo.exl:37:38
+As @examples/host_only_sys_open_demo.exl:37:42
+(Ident c_ulong) @examples/host_only_sys_open_demo.exl:37:45
+RParen @examples/host_only_sys_open_demo.exl:37:52
+Semicolon @examples/host_only_sys_open_demo.exl:37:53
+(Ident sys) @examples/host_only_sys_open_demo.exl:39:5
+DoubleColon @examples/host_only_sys_open_demo.exl:39:8
+(Ident sys_close) @examples/host_only_sys_open_demo.exl:39:10
+LParen @examples/host_only_sys_open_demo.exl:39:19
+(Ident fd) @examples/host_only_sys_open_demo.exl:39:20
+RParen @examples/host_only_sys_open_demo.exl:39:22
+Semicolon @examples/host_only_sys_open_demo.exl:39:23
+If @examples/host_only_sys_open_demo.exl:44:5
+(Ident n) @examples/host_only_sys_open_demo.exl:44:8
+Gt @examples/host_only_sys_open_demo.exl:44:10
+(Int 0) @examples/host_only_sys_open_demo.exl:44:12
+As @examples/host_only_sys_open_demo.exl:44:14
+(Ident c_long) @examples/host_only_sys_open_demo.exl:44:17
+LBrace @examples/host_only_sys_open_demo.exl:44:24
+(Ident println) @examples/host_only_sys_open_demo.exl:44:26
+LParen @examples/host_only_sys_open_demo.exl:44:33
+(Int 1) @examples/host_only_sys_open_demo.exl:44:34
+RParen @examples/host_only_sys_open_demo.exl:44:35
+Semicolon @examples/host_only_sys_open_demo.exl:44:36
+RBrace @examples/host_only_sys_open_demo.exl:44:38
+Else @examples/host_only_sys_open_demo.exl:44:40
+LBrace @examples/host_only_sys_open_demo.exl:44:45
+(Ident println) @examples/host_only_sys_open_demo.exl:44:47
+LParen @examples/host_only_sys_open_demo.exl:44:54
+(Int 0) @examples/host_only_sys_open_demo.exl:44:55
+RParen @examples/host_only_sys_open_demo.exl:44:56
+Semicolon @examples/host_only_sys_open_demo.exl:44:57
+RBrace @examples/host_only_sys_open_demo.exl:44:59
+RBrace @examples/host_only_sys_open_demo.exl:45:1
+Eof @examples/host_only_sys_open_demo.exl:46:1

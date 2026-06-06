@@ -28,16 +28,24 @@ EXAMPLE_NAMES:= $(notdir $(EXAMPLES_SRC:.exl=))
 # exist outside of m68k-amigaos.  Filter them out of the host
 # pipelines; the amiga pipelines still pick them up.
 AMIGA_ONLY    := $(filter amiga_%, $(EXAMPLE_NAMES))
+# `host_only_*.exl` examples lean on POSIX-style sys-seam fns whose
+# Amiga backends are still stubs (e.g. sys_open returns -1 until
+# BPTR<->fd bookkeeping lands).  They build cleanly on Amiga but
+# diverge in output, so the verify-amiga compare would fail on
+# every CI run — filter them from the amiga pipelines.  Host
+# pipelines still pick them up.
+HOST_ONLY     := $(filter host_only_%, $(EXAMPLE_NAMES))
 # `multi_file` lives in a subdirectory, so the flat examples/*.exl glob
 # above misses it; append it so host/verify aggregates pick it up.  It is
 # host-only (no amiga build) — see the dedicated host-multi_file rule.
 HOST_EXAMPLES := $(filter-out $(AMIGA_ONLY), $(EXAMPLE_NAMES)) multi_file
+AMIGA_EXAMPLES:= $(filter-out $(HOST_ONLY), $(EXAMPLE_NAMES))
 
 GHCR_OWNER ?= damroth
 CI_IMAGE   ?= ghcr.io/$(GHCR_OWNER)/exile-lang-ci:latest
 
 HOST_BINS  := $(addprefix $(HOST_OUT)/,$(EXAMPLE_NAMES))
-AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(EXAMPLE_NAMES))
+AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(AMIGA_EXAMPLES))
 
 .PHONY: all build test clean toolchain toolchain-clean
 .PHONY: host amiga examples
@@ -115,7 +123,7 @@ run-host-%: host-%
 # Build everything for one target.  `host` only builds examples that
 # can plausibly link against libnix (skips amiga-only ones).
 host:  $(HOST_EXAMPLES:%=host-%)
-amiga: $(EXAMPLE_NAMES:%=amiga-%)
+amiga: $(AMIGA_EXAMPLES:%=amiga-%)
 examples: host
 
 # Compare a binary's stdout against examples/NAME.expected.  Two
@@ -156,7 +164,7 @@ verify-amiga-%: amiga-%
 	fi
 
 verify-host:  $(HOST_EXAMPLES:%=verify-host-%)
-verify-amiga: $(EXAMPLE_NAMES:%=verify-amiga-%)
+verify-amiga: $(AMIGA_EXAMPLES:%=verify-amiga-%)
 verify: verify-host verify-amiga
 
 # Capture current host stdout into examples/NAME.expected.  Use when
