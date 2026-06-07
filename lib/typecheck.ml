@@ -1224,7 +1224,7 @@ let builtin_mem_zero = {
   bname = "mem_zero";
   bcheck = (fun ~ctx:_ ~pos ~args ~allow_void:_ ->
     match List.map (fun (a : texpr) -> a.ty) args with
-    | [ TPtr _; n_ty ] | [ TConstPtr _; n_ty ]
+    | [ TPtr _; n_ty ] | [ TOwnPtr _; n_ty ] | [ TConstPtr _; n_ty ]
       when is_int_like n_ty -> TInt { signed = true; width = Ast.W32 }
     | [ p; _ ] when not (is_ptr p) ->
         Error.failf pos
@@ -5966,13 +5966,14 @@ let prelude_items () =
      OwnedStr/String (deferred until minimal-move lands). *)
   let u32_t = Ast.TyInt { signed = false; width = Ast.W32 } in
   let u8_t = Ast.TyInt { signed = false; width = Ast.W8 } in
-  let u8_ptr = Ast.TyPtr u8_t in
+  let _u8_ptr = Ast.TyPtr u8_t in
   let u8_cptr = Ast.TyConstPtr u8_t in
   let sb_struct = {
     Ast.sname = "StringBuilder";
     stparams = [];
     sfields = [
-      ("buf", u8_ptr);
+      (* DR-045: SB owns its buffer through `own *u8`. *)
+      ("buf", Ast.TyOwnPtr u8_t);
       ("len", u32_t);
       ("cap", u32_t);
       ("alloc", Ast.TyStruct { path = ["Allocator"]; args = [] });
@@ -5980,11 +5981,7 @@ let prelude_items () =
     spos = prelude_pos;
     sis_pub = true;
     stier_hint = Some "full";
-    (* @move: a by-value copy of `StringBuilder` would alias `buf`,
-       and the first `grow()` on either copy would free the other's
-       backing storage.  The move-pass forbids the silent copy at
-       compile time. *)
-    sis_debug = false; sderives = []; sis_move = true;
+    sis_debug = false; sderives = []; sis_move = false;
   } in
   let int_lit n = Ast.IntLit (n, pos) in
   let int_lit_as n ann = Ast.Cast (Ast.IntLit (n, pos), ann, pos) in
@@ -6021,12 +6018,14 @@ let prelude_items () =
                          else_blk = Some [ Ast.Tail (Ast.Var ("hint", pos)) ];
                          pos };
               pos };
-    Ast.Let { name = "buf"; is_mut = false; ty_ann = Some u8_ptr;
+    (* DR-045: SB::buf is `own *u8`. *)
+    Ast.Let { name = "buf"; is_mut = false;
+              ty_ann = Some (Ast.TyOwnPtr u8_t);
               value = Ast.Cast (
                 methcall (Ast.Var ("a", pos)) "alloc_fn"
                   [ field (Ast.Var ("a", pos)) "state";
                     Ast.Var ("cap", pos) ],
-                u8_ptr, pos);
+                Ast.TyOwnPtr u8_t, pos);
               pos };
     Ast.Return (Some (Ast.StructLit {
       tname = ["StringBuilder"];
@@ -6074,12 +6073,14 @@ let prelude_items () =
     let self_v = Ast.Var ("self", pos) in
     let self_alloc = field self_v "alloc" in
     [
-      Ast.Let { name = "new_buf"; is_mut = false; ty_ann = Some u8_ptr;
+      (* DR-045: SB grow allocates a new owned buffer. *)
+      Ast.Let { name = "new_buf"; is_mut = false;
+                ty_ann = Some (Ast.TyOwnPtr u8_t);
                 value = Ast.Cast (
                   methcall self_alloc "alloc_fn"
                     [ field self_alloc "state";
                       Ast.Var ("new_cap", pos) ],
-                  u8_ptr, pos);
+                  Ast.TyOwnPtr u8_t, pos);
                 pos };
       Ast.Let { name = "src"; is_mut = false; ty_ann = Some slice_u8_ann;
                 value = Ast.StructLit {
@@ -6661,20 +6662,15 @@ let prelude_items () =
     Ast.sname = "Vec";
     stparams = ["T"];
     sfields = [
-      (* DR-030 Faza-1a Step E: Vec migration to `own *T` deferred —
-         the generic drop body synth'd by Step C needs Mono dispatch
-         to materialise the per-instance fn (Vec__drop_i32, etc.).
-         Until that lands, Vec keeps `sis_move=true` and its
-         existing manual `free` for cleanup.  Tracked in WORKLOG
-         as Step E-Vec follow-up. *)
-      ("ptr", Ast.TyPtr (tvar "T"));
+      (* DR-045: Vec owns its buffer through `own *T`. *)
+      ("ptr", Ast.TyOwnPtr (tvar "T"));
       ("count", u32_t);
       ("cap", u32_t);
       ("alloc", alloc_ann_v);
     ];
     spos = prelude_pos; sis_pub = true;
     stier_hint = Some "full";
-    sis_debug = false; sderives = []; sis_move = true;
+    sis_debug = false; sderives = []; sis_move = false;
   } in
   let vec_iter_struct = {
     Ast.sname = "VecIter";
@@ -6714,13 +6710,14 @@ let prelude_items () =
     Ast.Let { name = "bytes"; is_mut = false; ty_ann = Some u32_t;
               value = bin Ast.Mul size_of_T_as_u32
                                   (Ast.Var ("cap", pos)); pos };
+    (* DR-045: Vec::ptr is `own *T`. *)
     Ast.Let { name = "p"; is_mut = false;
-              ty_ann = Some (Ast.TyPtr (tvar "T"));
+              ty_ann = Some (Ast.TyOwnPtr (tvar "T"));
               value = Ast.Cast (
                 methcall (Ast.Var ("a", pos)) "alloc_fn"
                   [ field (Ast.Var ("a", pos)) "state";
                     Ast.Var ("bytes", pos) ],
-                Ast.TyPtr (tvar "T"), pos);
+                Ast.TyOwnPtr (tvar "T"), pos);
               pos };
     Ast.Return (Some (Ast.StructLit {
       tname = ["Vec"];
@@ -6750,13 +6747,14 @@ let prelude_items () =
       Ast.Let { name = "bytes"; is_mut = false; ty_ann = Some u32_t;
                 value = bin Ast.Mul size_of_T_as_u32
                                     (Ast.Var ("new_cap", pos)); pos };
+      (* DR-045: grow allocates a new owned buffer. *)
       Ast.Let { name = "new_ptr"; is_mut = false;
-                ty_ann = Some (Ast.TyPtr (tvar "T"));
+                ty_ann = Some (Ast.TyOwnPtr (tvar "T"));
                 value = Ast.Cast (
                   methcall self_alloc "alloc_fn"
                     [ field self_alloc "state";
                       Ast.Var ("bytes", pos) ],
-                  Ast.TyPtr (tvar "T"), pos);
+                  Ast.TyOwnPtr (tvar "T"), pos);
                 pos };
       Ast.Let { name = "src"; is_mut = false; ty_ann = Some slice_t_ann;
                 value = Ast.StructLit {
@@ -6996,14 +6994,15 @@ let prelude_items () =
     Ast.sname = "HashMap";
     stparams = ["K"; "V"];
     sfields = [
-      ("slots", Ast.TyPtr slot_t_ann);
+      (* DR-045: HashMap owns its slot buffer through `own *Slot`. *)
+      ("slots", Ast.TyOwnPtr slot_t_ann);
       ("count", u32_t);
       ("cap", u32_t);
       ("alloc", alloc_ann_v);
     ];
     spos = prelude_pos; sis_pub = true;
     stier_hint = Some "full";
-    sis_debug = false; sderives = []; sis_move = true;
+    sis_debug = false; sderives = []; sis_move = false;
   } in
   let hm_self_ptr_param =
     { Ast.pname = "self"; pty = Ast.TyPtr hashmap_t_ann;
@@ -7057,13 +7056,14 @@ let prelude_items () =
     Ast.Let { name = "bytes"; is_mut = false; ty_ann = Some u32_t;
               value = bin Ast.Mul size_of_slot
                                   (Ast.Var ("cap", pos)); pos };
+    (* DR-045: HashMap::slots is `own *Slot`. *)
     Ast.Let { name = "p"; is_mut = false;
-              ty_ann = Some (Ast.TyPtr slot_t_ann);
+              ty_ann = Some (Ast.TyOwnPtr slot_t_ann);
               value = Ast.Cast (
                 methcall (Ast.Var ("a", pos)) "alloc_fn"
                   [ field (Ast.Var ("a", pos)) "state";
                     Ast.Var ("bytes", pos) ],
-                Ast.TyPtr slot_t_ann, pos); pos };
+                Ast.TyOwnPtr slot_t_ann, pos); pos };
     Ast.ExprStmt (Ast.Call {
       callee = ["mem_zero"];
       args = [ Ast.Var ("p", pos); Ast.Var ("bytes", pos) ];
@@ -7227,13 +7227,14 @@ let prelude_items () =
     [
       Ast.Let { name = "bytes"; is_mut = false; ty_ann = Some u32_t;
                 value = size_of_slot_u32; pos };
+      (* DR-045: HashMap grow allocates an owned slot buffer. *)
       Ast.Let { name = "new_p"; is_mut = false;
-                ty_ann = Some (Ast.TyPtr slot_t_ann);
+                ty_ann = Some (Ast.TyOwnPtr slot_t_ann);
                 value = Ast.Cast (
                   methcall self_alloc "alloc_fn"
                     [ field self_alloc "state";
                       Ast.Var ("bytes", pos) ],
-                  Ast.TyPtr slot_t_ann, pos); pos };
+                  Ast.TyOwnPtr slot_t_ann, pos); pos };
       Ast.ExprStmt (Ast.Call {
         callee = ["mem_zero"];
         args = [ Ast.Var ("new_p", pos); Ast.Var ("bytes", pos) ];

@@ -60,52 +60,91 @@ let has_drop ~structs path =
 (* Per-binding state. *)
 type status = Live | Consumed
 
-(* Build a synthetic `<local>.drop()` call statement.  The mangled
-   name has to match what Mono produced for the synth'd impl
-   method: `<skel_last>__drop[_<arg-mangle>]`.  For a non-generic
-   struct the path IS the skeleton; for a mono'd one (Vec_i32) we
-   read `sinstance_args` off the instance sig and split the last
-   segment back into skel + arg-mangle. *)
-let drop_call ~structs ~struct_path local_name pos : tstmt =
-  let mangled =
-    let inst =
-      List.find_opt (fun (s : struct_sig) -> s.sname_path = struct_path) structs
-    in
-    let last = match List.rev struct_path with
-      | n :: _ -> n
-      | [] -> "anon"
-    in
-    match inst with
-    | Some { sinstance_args = Some args; _ } when args <> [] ->
-        let arg_part = String.concat "_" (List.map mangle_typ args) in
-        (* `<inst_last> = <skel_last>_<arg_part>`; recover skel_last
-           by stripping the trailing `_<arg_part>`. *)
-        let suffix = "_" ^ arg_part in
-        let skel_last =
-          if String.length last > String.length suffix
-             && String.sub last (String.length last - String.length suffix)
-                  (String.length suffix) = suffix
-          then String.sub last 0 (String.length last - String.length suffix)
-          else last
-        in
-        skel_last ^ "__drop_" ^ arg_part
-    | _ ->
-        last ^ "__drop"
-  in
-  let self_arg = {
-    e = TRef {
-      e = TVar local_name;
-      ty = TStruct struct_path;
-      pos;
-    };
-    ty = TPtr (TStruct struct_path);
-    pos;
-  } in
-  TExprStmt {
-    e = TCall { mangled; args = [self_arg] };
-    ty = TStruct ["c_void"];
-    pos;
+(* Emit the inline equivalent of `<Struct>__drop(&local)`: for each
+   `own *T` field on the local's struct, fire
+   `local.alloc.free_fn(local.alloc.state, local.<field> as *c_void,
+   size_of(T) as u32)`.  Inlining sidesteps the Mono dispatch gap
+   that would otherwise need each mono-instance struct (Vec_i32,
+   HashMap_str_i32, ...) to materialise its own drop body before
+   codegen — the synth'd skel impl from Step C never gets
+   instantiated unless user code explicitly calls `local.drop()`.
+
+   Going inline also keeps the drop semantics symmetric with how
+   the language's other ownership operations lower (allocator-as-
+   value seam, no per-type runtime stub).  The synthesised
+   `Struct__drop` method survives untouched for user-written
+   explicit `local.drop()` — Mono dispatches it the normal way. *)
+let cvoid_ptr_ty = TPtr TCVoid
+let allocator_ty = TStruct ["Allocator"]
+
+let free_fn_ptr_ty =
+  TFnPtr {
+    params = [ cvoid_ptr_ty; cvoid_ptr_ty;
+               TInt { signed = false; width = Ast.W32 } ];
+    ret = None;
   }
+
+let drop_call ~structs ~struct_path local_name pos : tstmt list =
+  let sig_opt =
+    List.find_opt (fun (s : struct_sig) -> s.sname_path = struct_path) structs
+  in
+  match sig_opt with
+  | None -> []
+  | Some s ->
+      let local_v = {
+        e = TVar local_name;
+        ty = TStruct struct_path;
+        pos;
+      } in
+      let alloc_field = {
+        e = TFieldAccess { target = local_v; field = "alloc" };
+        ty = allocator_ty;
+        pos;
+      } in
+      let alloc_state = {
+        e = TFieldAccess { target = alloc_field; field = "state" };
+        ty = cvoid_ptr_ty;
+        pos;
+      } in
+      let alloc_free_fn = {
+        e = TFieldAccess { target = alloc_field; field = "free_fn" };
+        ty = free_fn_ptr_ty;
+        pos;
+      } in
+      let u32_t = TInt { signed = false; width = Ast.W32 } in
+      let make_free_for (fname, fty) =
+        match fty with
+        | TOwnPtr inner ->
+            let field_access = {
+              e = TFieldAccess { target = local_v; field = fname };
+              ty = fty;
+              pos;
+            } in
+            let cast_to_cvoid = {
+              e = TCast (field_access, Ast.TyPtr Ast.TyCVoid);
+              ty = cvoid_ptr_ty;
+              pos;
+            } in
+            let size_arg = {
+              e = TCast (
+                { e = TSizeOf inner;
+                  ty = TCInt { signed = false };
+                  pos },
+                Ast.TyInt { signed = false; width = Ast.W32 });
+              ty = u32_t;
+              pos;
+            } in
+            Some (TExprStmt {
+              e = TIndirectCall {
+                fn_expr = alloc_free_fn;
+                args = [ alloc_state; cast_to_cvoid; size_arg ];
+              };
+              ty = TInt { signed = true; width = Ast.W32 };
+              pos;
+            })
+        | _ -> None
+      in
+      List.filter_map make_free_for s.sfields_ty
 
 (* Resolve a typ → struct_path if it's a TStruct, else None. *)
 let struct_path_of = function
@@ -134,13 +173,55 @@ let rec walk_stmts ~structs (live : (string * status * typ * Pos.t) list)
   go [] live stmts
 
 and walk_stmt ~structs live stmt =
+  (* Helper: given an expression, mark the binding it consumes (if
+     any) as Consumed.  Shared by TLet RHS (a call as the let value)
+     and TExprStmt (a call at statement position).
+     `__drop(&local)` and any by-value first-arg call are the two
+     shapes Move.check models as consumes. *)
+  let is_drop_mangled m =
+    let ends_with s suf =
+      let ls = String.length s and lf = String.length suf in
+      ls >= lf && String.sub s (ls - lf) lf = suf
+    in
+    let contains_substr s sub =
+      let ls = String.length s and lsub = String.length sub in
+      let rec go i =
+        if i + lsub > ls then false
+        else if String.sub s i lsub = sub then true
+        else go (i + 1)
+      in
+      if lsub = 0 || ls < lsub then false else go 0
+    in
+    ends_with m "__drop" || contains_substr m "__drop_"
+  in
+  let consume_in_expr e =
+    match e with
+    | TCall { mangled; args = first :: _ } ->
+        (match first.e with
+         | TRef { e = TVar n; _ } when is_drop_mangled mangled -> Some n
+         | TVar n -> Some n
+         | _ -> None)
+    | _ -> None
+  in
+  let mark_consumed n live =
+    List.map (fun ((nm, st, ty, pos) as entry) ->
+      if nm = n && st = Live then (nm, Consumed, ty, pos)
+      else entry)
+      live
+  in
   match stmt with
-  | TLet { name; value; pos } when
-      is_affine_typ ~structs value.ty
-      && (match struct_path_of value.ty with
-          | Some p -> has_drop ~structs p
-          | None -> false) ->
-      ([stmt], (name, Live, value.ty, pos) :: live)
+  | TLet { name; value; pos } ->
+      let live =
+        match consume_in_expr value.e with
+        | Some n -> mark_consumed n live
+        | None -> live
+      in
+      if is_affine_typ ~structs value.ty
+         && (match struct_path_of value.ty with
+             | Some p -> has_drop ~structs p
+             | None -> false)
+      then ([stmt], (name, Live, value.ty, pos) :: live)
+      else ([stmt], live)
   | TReturn { value; pos } ->
       (* `return local;` for an affine `local` is a consume — the
          caller takes ownership.  Mark it Consumed before emitting
@@ -190,49 +271,24 @@ and walk_stmt ~structs live stmt =
       else
         (drops @ [TReturn { value; pos }], live')
   | TExprStmt e ->
-      (* Detect explicit consume:
-         - `Type__drop(&local)` (user wrote `local.drop()`) — first
-           arg is `TRef (TVar n)`, mangled ends in `__drop`.
-         - `Type__free(local)` and any other by-value affine method
-           — first arg is a bare `TVar n` of the owner's type.
-           These pass `self` by value, so Move.check has already
-           verified the consume.  Marking the binding Consumed in
-           drop's state machine keeps the scope-exit pass from
-           injecting a second drop call (no double-free). *)
-      let consumed_name =
-        match e.e with
-        | TCall { mangled; args = first :: _ } ->
-            (match first.e with
-             | TRef { e = TVar n; _ } when
-                 (let lm = String.length mangled in
-                  lm >= 6 &&
-                  String.sub mangled (lm - 6) 6 = "__drop") -> Some n
-             | TVar n -> Some n
-             | _ -> None)
-        | _ -> None
-      in
-      let live' =
-        match consumed_name with
-        | Some n ->
-            List.map (fun ((nm, st, ty, pos) as entry) ->
-              if nm = n && st = Live then (nm, Consumed, ty, pos)
-              else entry)
-              live
+      let live =
+        match consume_in_expr e.e with
+        | Some n -> mark_consumed n live
         | None -> live
       in
-      ([stmt], live')
+      ([stmt], live)
   | _ ->
       ([stmt], live)
 
 and drops_for_live ~structs live =
-  List.filter_map (fun (name, st, ty, pos) ->
+  List.concat_map (fun (name, st, ty, pos) ->
     match st with
     | Live ->
         (match struct_path_of ty with
          | Some p when has_drop ~structs p ->
-             Some (drop_call ~structs ~struct_path:p name pos)
-         | _ -> None)
-    | Consumed -> None)
+             drop_call ~structs ~struct_path:p name pos
+         | _ -> [])
+    | Consumed -> [])
     live
 
 (* Per-fn entry: walk body, then top-up drops for owners that

@@ -186,8 +186,21 @@ let rec consume_args ~structs ~enums live args =
 and walk_expr ~structs ~enums live (te : texpr) =
   check_reads live te;
   match te.e with
-  | TCall { args; _ } | TBuiltinCall { args; _ } ->
+  | TCall { args; _ } ->
       consume_args ~structs ~enums live args
+  | TBuiltinCall { name; args } ->
+      (* Built-ins that just read through the pointer (mem_zero ≡
+         memset) don't consume their first arg.  Only walk the
+         children for any nested affine uses. *)
+      let is_non_consuming = match name with
+        | "mem_zero" -> true
+        | _ -> false
+      in
+      if is_non_consuming then
+        List.fold_left
+          (fun live a -> walk_expr ~structs ~enums live a) live args
+      else
+        consume_args ~structs ~enums live args
   (* DR-002 S1 — aggregate literals shallow-copy each field into the
      fresh value; a bare-TVar affine field aliases the source, so the
      binding must end Consumed.  Without this, `Wrap { f: s }` /
@@ -385,11 +398,20 @@ let check_fn ~structs ~enums (tf : tfunc) =
    marked `@move` — in that case [is_affine_typ] returns false
    everywhere and the walk is a no-op. *)
 let check (tp : tprogram) =
-  let any_marked =
-    List.exists (fun (s : struct_sig) -> s.ss_is_move)
+  (* DR-045: post-migration most prelude affineness derives from
+     `own *T` field ownership rather than the legacy `@move` flag.
+     The early-exit predicate now catches either shape — a struct
+     marked `@move` OR a struct carrying any affine field. *)
+  let any_affine =
+    List.exists
+      (fun (s : struct_sig) ->
+        s.ss_is_move
+        || List.exists
+             (fun (_, ft) -> is_affine_typ ~structs:tp.tp_struct_index ft)
+             s.sfields_ty)
       tp.tp_struct_index
   in
-  if any_marked then
+  if any_affine then
     List.iter
       (check_fn ~structs:tp.tp_struct_index ~enums:tp.tp_enum_index)
       tp.tp_funcs
