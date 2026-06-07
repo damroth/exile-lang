@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-06-07
+
+The closures-and-ownership release, and the last one before self-host bring-up
+begins. Two arcs land together. First, the code-elevating feature wave finishes:
+real closures with capture, the `Fn0`..`Fn4` callable-trait family, and a lazy
+iterator-combinator stdlib (`map` / `filter` / `take` / `enumerate` / `fold` /
+`collect`) built on bounded generic impls — the chained, zero-heap iteration
+idiom the self-hosted compiler will lean on. Second, the memory model freezes:
+the Owner-sigil `own *T` pointer retires `@move` in favour of static
+end-of-scope auto-drop, extends to enum heap boxing for recursive trees (the
+AST representation path), and covers the whole Vec/StringBuilder/HashMap stdlib.
+Rounded out by the `sys_open`/`sys_close` file seam and transitive `pub use *`.
+With this, the language surface and memory model needed to port the compiler
+into Exile are complete.
+
+### Added
+- DR-024 closures with capture (A2): a capturing closure lowers to an
+  env-struct plus a synthesized `impl FnN`, with the body substituted over the
+  captured fields — zero heap, monomorphized inline. Captureless (A1) lambdas
+  still decay to a plain function pointer
+- DR-017 / DR-023 / DR-029 `Fn0`..`Fn4` prelude callable traits, with
+  `f(x)` desugaring to `f.call(x)` on any `Fn`-bounded value (DR-018) and
+  `self.f(v)` to `(self.f).call(v)` (DR-019)
+- DR-021 / DR-028 `|A| -> R` function-type source sugar in both bound and
+  type-annotation position; DR-023 `|| -> R` for the nullary `Fn0`
+- DR-033 `[&x]` explicit by-ref capture lists — opt-in borrow of a captured
+  binding instead of by-value
+- DR-016 bounded generic impls (`impl<I: Iterator, F: Fn1> Iterator for Map`),
+  the extension that unlocks lazy adapters
+- DR-026 iterator combinators: lazy, method-chained adapters `Map<I, F>` /
+  `Filter<I, P>` / `Take<I>` / `Enumerate<I>` plus the consuming terminals
+  `fold` and `collect`, exposed as `Iterator` default methods
+- DR-030 Owner-sigil memory model (Faza-1a): `own *T`, a third owning pointer
+  type that retires `@move` and auto-drops at end of scope via a new pass
+  (`drop.ml`), LIFO-unified with user `defer`. `own *T` coerces to `*T` /
+  `*const T` but never the reverse (a soundness tooth); drop is shallow,
+  by-field. Full owner-sigil coverage across the Vec / StringBuilder / HashMap
+  stdlib
+- DR-031 / DR-030 Faza-1.1 enum heap boxing: `new Enum::Variant(args)` lowers
+  to a malloc'd `own *Enum`, with drop synthesis over recursive enum trees —
+  the representation path for the self-hosted AST
+- DR-032 `sys::sys_open` / `sys::sys_close` prelude file-handle seam: the host
+  backend wraps libc `open`/`close`, the amiga backend stubs them — the seam
+  future module-loading will read source files through
+- DR-040 transitive `pub use foo::*` re-export
+- DR-036 / DR-038 untyped-let mini-inferencer: `let x = expr` infers its type
+  past bare literals
+- DR-035 transitive codegen dead-code elimination for prelude-emitted functions
+- New examples: `closures_a2.exl`, `closure_byref.exl`, `fn_trait.exl`,
+  `fnptr_sugar.exl`, `bounded_impls.exl`, `combinator_map.exl`,
+  `combinator_filter.exl`, `combinator_take_enumerate.exl`,
+  `combinator_fold_collect.exl`, `own_ptr.exl`, `enum_heap_box.exl`,
+  `host_only_sys_open_demo.exl`
+
+### Changed
+- DR-034 struct literals may appear inline as a call argument and inside
+  parenthesized grouping without extra binding
+- DR-020 generic enum constructors in `match` arms get a bidirectional type
+  seed, so the scrutinee's type parameters flow into the arm
+- DR-022 / DR-025 / DR-027 associated-type projection hardened for the
+  combinator stack: bound-driven impl assoc-equality checking, a
+  `try_resolve_assoc_proj` trait-decl shortcut, and bound-order /
+  mono-instance fixes
+- Host-only examples now follow a `host_only_*` naming convention and are
+  filtered out of the amiga verify pipeline
+
+### Fixed
+- DR-039 multi-hop `I::Item` associated-type projection over iterators with a
+  generic `Item`, plus a closure-escape regression suite closing the
+  outstanding escape hole
+
 ## [0.10.0] - 2026-06-04
 
 The escape-analysis and self-host bring-up release. The keystone is DR-010,
@@ -469,4 +540,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.10.0]: https://github.com/damroth/exile-lang/releases/tag/v0.10.0
+[0.11.0]: https://github.com/damroth/exile-lang/releases/tag/v0.11.0
