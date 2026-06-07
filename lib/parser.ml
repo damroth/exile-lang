@@ -503,22 +503,31 @@ let rec parse_primary s =
                               args = Ast.EATuple []; pos = p }))
   | Token.LParen ->
       (* Grouping `(e)` for a single expression, tuple literal `(e1, e2, ...)`
-         for two or more. *)
+         for two or more.  Same reasoning as parse_args: the closing
+         `)` makes `{` inside unambiguous even when the surrounding
+         context disabled struct literals. *)
+      let prev = s.allow_struct_lit in
+      s.allow_struct_lit <- true;
       let first = parse_expr s in
-      (match peek s with
-       | Token.Comma ->
-           ignore (advance s);
-           if peek s = Token.RParen then begin
-             (* trailing comma after a single expr — still grouping, not a 1-tuple *)
-             ignore (advance s);
-             first
-           end else begin
-             let rest = parse_comma_list ~close:Token.RParen ~item:parse_expr s in
-             Ast.TupleLit (first :: rest, p)
-           end
-       | _ ->
-           expect s Token.RParen;
-           first)
+      let r =
+        match peek s with
+        | Token.Comma ->
+            ignore (advance s);
+            if peek s = Token.RParen then begin
+              (* trailing comma after a single expr — still grouping, not a 1-tuple *)
+              ignore (advance s);
+              first
+            end else begin
+              let rest =
+                parse_comma_list ~close:Token.RParen ~item:parse_expr s in
+              Ast.TupleLit (first :: rest, p)
+            end
+        | _ ->
+            expect s Token.RParen;
+            first
+      in
+      s.allow_struct_lit <- prev;
+      r
   | _ -> Error.raise_ p "expected expression"
 
 and parse_struct_lit_field s =
@@ -803,7 +812,20 @@ and parse_arm_body s =
     s.allow_bitor <- prev;
     r
 
-and parse_args s = parse_comma_list ~close:Token.RParen ~item:parse_expr s
+and parse_args s =
+  (* A `(...)` group around fn / method-call arguments closes
+     unambiguously at the matching `)`, so a struct literal inside
+     the args is safe even when the enclosing context disabled
+     `allow_struct_lit` to keep `{` unambiguous (e.g. `for x in
+     v.iter().filter(P { _t: 0 }) { body }` — the outer `for`
+     range had to disable struct lits to reserve `{` for the loop
+     body, but inside the parens that reservation no longer
+     applies).  Restore the flag locally and snap it back. *)
+  let prev = s.allow_struct_lit in
+  s.allow_struct_lit <- true;
+  let r = parse_comma_list ~close:Token.RParen ~item:parse_expr s in
+  s.allow_struct_lit <- prev;
+  r
 
 (* Pattern grammar:
      `_`                              → wildcard

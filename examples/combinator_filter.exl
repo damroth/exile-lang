@@ -58,30 +58,29 @@ fn main() {
     v.push(1); v.push(2); v.push(3); v.push(4); v.push(5); v.push(6);
 
     // (1) Manual Filter constructor — explicit struct literal.
-    let pred1 = IsEven { _t: 0 };
     let f1: Filter<VecIter<int>, IsEven> =
-        Filter { inner: v.iter(), p: pred1 };
+        Filter { inner: v.iter(), p: IsEven { _t: 0 } };
     let mut s1: int = 0;
     for x in f1 { s1 = s1 + x; }
     println(s1);                          // 12 = 2 + 4 + 6
 
-    // (2) Dot-chain `filter(p)` — Iterator.filter default method.
-    let pred2 = GreaterThan { threshold: 3 };
+    // (2) Dot-chain `filter(p)` with inline struct-lit (DR-034).
     let mut s2: int = 0;
-    for x in v.iter().filter(pred2) { s2 = s2 + x; }
+    for x in v.iter().filter(GreaterThan { threshold: 3 }) {
+        s2 = s2 + x;
+    }
     println(s2);                          // 15 = 4 + 5 + 6
 
-    // (3) Filter then map — only evens get doubled.
-    let pred3 = IsEven { _t: 0 };
-    let bumper = Double { _t: 0 };
+    // (3) Filter then map, inline struct-lits all the way down.
     let mut s3: int = 0;
-    for x in v.iter().filter(pred3).map(bumper) { s3 = s3 + x; }
+    for x in v.iter().filter(IsEven { _t: 0 }).map(Double { _t: 0 }) {
+        s3 = s3 + x;
+    }
     println(s3);                          // 24 = 4 + 8 + 12
 
     // (4) Full pipeline: filter then map then fold terminal.
-    let pred4 = IsEven { _t: 0 };
-    let bumper4 = Double { _t: 0 };
-    let summer = Sum { _t: 0 };
-    let r: int = v.iter().filter(pred4).map(bumper4).fold(0, summer);
+    let r: int = v.iter().filter(IsEven { _t: 0 })
+                          .map(Double { _t: 0 })
+                          .fold(0, Sum { _t: 0 });
     println(r);                           // 24 — same as (3)
 }

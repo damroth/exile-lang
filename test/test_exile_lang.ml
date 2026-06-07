@@ -6301,6 +6301,45 @@ let () =
      contains c "Filter_ex_VecIter_i32_ex_IsEven"
      && contains c "Map_ex_Filter_ex_VecIter_i32_ex_IsEven_ex_Double");
 
+  (* DR-034 - inline struct literal in method-call args.  Before
+     this, `v.iter().filter(IsEven { _t: 0 })` errored at the
+     opening `{` because the enclosing `for x in ... { body }`
+     range disabled `allow_struct_lit` to reserve `{` for the
+     loop body — and that flag leaked into the parens around the
+     method args.  Closing `)` makes `{` inside unambiguous, so
+     parse_args (and parens-grouping) now locally restore the
+     flag. *)
+  check_assert "DR-034: inline struct-lit in method-call args parses"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct IsEven { _t: int }\n\
+          impl Fn1 for IsEven {\n\
+         \    type Arg = int;\n\
+         \    type Output = bool;\n\
+         \    fn call(*const self, x: int) -> bool { x % 2 == 0 }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(1); v.push(2); v.push(3); v.push(4);\n\
+         \    let mut s: int = 0;\n\
+         \    for x in v.iter().filter(IsEven { _t: 0 }) { s = s + x; }\n\
+         \    println(s);\n\
+          }\n"
+     in
+     contains c "Filter_ex_VecIter_i32_ex_IsEven");
+
+  check_assert "DR-034: inline struct-lit in parens grouping parses"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct P { x: int }\n\
+          fn main() {\n\
+         \    let p = (P { x: 42 });\n\
+         \    println(p.x);\n\
+          }\n"
+     in
+     contains c "ex_P");
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\

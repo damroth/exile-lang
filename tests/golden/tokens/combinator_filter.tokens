@@ -251,233 +251,198 @@ LParen @examples/combinator_filter.exl:58:66
 RParen @examples/combinator_filter.exl:58:68
 Semicolon @examples/combinator_filter.exl:58:69
 Let @examples/combinator_filter.exl:61:5
-(Ident pred1) @examples/combinator_filter.exl:61:9
-Eq @examples/combinator_filter.exl:61:15
-(Ident IsEven) @examples/combinator_filter.exl:61:17
-LBrace @examples/combinator_filter.exl:61:24
-(Ident _t) @examples/combinator_filter.exl:61:26
-Colon @examples/combinator_filter.exl:61:28
-(Int 0) @examples/combinator_filter.exl:61:30
-RBrace @examples/combinator_filter.exl:61:32
-Semicolon @examples/combinator_filter.exl:61:33
-Let @examples/combinator_filter.exl:62:5
-(Ident f1) @examples/combinator_filter.exl:62:9
-Colon @examples/combinator_filter.exl:62:11
-(Ident Filter) @examples/combinator_filter.exl:62:13
-Lt @examples/combinator_filter.exl:62:19
-(Ident VecIter) @examples/combinator_filter.exl:62:20
-Lt @examples/combinator_filter.exl:62:27
-(Ident int) @examples/combinator_filter.exl:62:28
-Gt @examples/combinator_filter.exl:62:31
-Comma @examples/combinator_filter.exl:62:32
-(Ident IsEven) @examples/combinator_filter.exl:62:34
-Gt @examples/combinator_filter.exl:62:40
-Eq @examples/combinator_filter.exl:62:42
-(Ident Filter) @examples/combinator_filter.exl:63:9
-LBrace @examples/combinator_filter.exl:63:16
-(Ident inner) @examples/combinator_filter.exl:63:18
-Colon @examples/combinator_filter.exl:63:23
-(Ident v) @examples/combinator_filter.exl:63:25
-Dot @examples/combinator_filter.exl:63:26
-(Ident iter) @examples/combinator_filter.exl:63:27
-LParen @examples/combinator_filter.exl:63:31
-RParen @examples/combinator_filter.exl:63:32
-Comma @examples/combinator_filter.exl:63:33
-(Ident p) @examples/combinator_filter.exl:63:35
-Colon @examples/combinator_filter.exl:63:36
-(Ident pred1) @examples/combinator_filter.exl:63:38
-RBrace @examples/combinator_filter.exl:63:44
-Semicolon @examples/combinator_filter.exl:63:45
-Let @examples/combinator_filter.exl:64:5
-Mut @examples/combinator_filter.exl:64:9
-(Ident s1) @examples/combinator_filter.exl:64:13
-Colon @examples/combinator_filter.exl:64:15
-(Ident int) @examples/combinator_filter.exl:64:17
-Eq @examples/combinator_filter.exl:64:21
-(Int 0) @examples/combinator_filter.exl:64:23
-Semicolon @examples/combinator_filter.exl:64:24
-For @examples/combinator_filter.exl:65:5
-(Ident x) @examples/combinator_filter.exl:65:9
-In @examples/combinator_filter.exl:65:11
-(Ident f1) @examples/combinator_filter.exl:65:14
-LBrace @examples/combinator_filter.exl:65:17
-(Ident s1) @examples/combinator_filter.exl:65:19
-Eq @examples/combinator_filter.exl:65:22
-(Ident s1) @examples/combinator_filter.exl:65:24
-Plus @examples/combinator_filter.exl:65:27
-(Ident x) @examples/combinator_filter.exl:65:29
-Semicolon @examples/combinator_filter.exl:65:30
-RBrace @examples/combinator_filter.exl:65:32
-(Ident println) @examples/combinator_filter.exl:66:5
-LParen @examples/combinator_filter.exl:66:12
-(Ident s1) @examples/combinator_filter.exl:66:13
-RParen @examples/combinator_filter.exl:66:15
-Semicolon @examples/combinator_filter.exl:66:16
-Let @examples/combinator_filter.exl:69:5
-(Ident pred2) @examples/combinator_filter.exl:69:9
-Eq @examples/combinator_filter.exl:69:15
-(Ident GreaterThan) @examples/combinator_filter.exl:69:17
-LBrace @examples/combinator_filter.exl:69:29
-(Ident threshold) @examples/combinator_filter.exl:69:31
-Colon @examples/combinator_filter.exl:69:40
-(Int 3) @examples/combinator_filter.exl:69:42
-RBrace @examples/combinator_filter.exl:69:44
-Semicolon @examples/combinator_filter.exl:69:45
-Let @examples/combinator_filter.exl:70:5
-Mut @examples/combinator_filter.exl:70:9
-(Ident s2) @examples/combinator_filter.exl:70:13
-Colon @examples/combinator_filter.exl:70:15
-(Ident int) @examples/combinator_filter.exl:70:17
-Eq @examples/combinator_filter.exl:70:21
-(Int 0) @examples/combinator_filter.exl:70:23
-Semicolon @examples/combinator_filter.exl:70:24
-For @examples/combinator_filter.exl:71:5
-(Ident x) @examples/combinator_filter.exl:71:9
-In @examples/combinator_filter.exl:71:11
-(Ident v) @examples/combinator_filter.exl:71:14
-Dot @examples/combinator_filter.exl:71:15
-(Ident iter) @examples/combinator_filter.exl:71:16
-LParen @examples/combinator_filter.exl:71:20
-RParen @examples/combinator_filter.exl:71:21
-Dot @examples/combinator_filter.exl:71:22
-(Ident filter) @examples/combinator_filter.exl:71:23
-LParen @examples/combinator_filter.exl:71:29
-(Ident pred2) @examples/combinator_filter.exl:71:30
-RParen @examples/combinator_filter.exl:71:35
-LBrace @examples/combinator_filter.exl:71:37
-(Ident s2) @examples/combinator_filter.exl:71:39
-Eq @examples/combinator_filter.exl:71:42
-(Ident s2) @examples/combinator_filter.exl:71:44
-Plus @examples/combinator_filter.exl:71:47
-(Ident x) @examples/combinator_filter.exl:71:49
-Semicolon @examples/combinator_filter.exl:71:50
-RBrace @examples/combinator_filter.exl:71:52
+(Ident f1) @examples/combinator_filter.exl:61:9
+Colon @examples/combinator_filter.exl:61:11
+(Ident Filter) @examples/combinator_filter.exl:61:13
+Lt @examples/combinator_filter.exl:61:19
+(Ident VecIter) @examples/combinator_filter.exl:61:20
+Lt @examples/combinator_filter.exl:61:27
+(Ident int) @examples/combinator_filter.exl:61:28
+Gt @examples/combinator_filter.exl:61:31
+Comma @examples/combinator_filter.exl:61:32
+(Ident IsEven) @examples/combinator_filter.exl:61:34
+Gt @examples/combinator_filter.exl:61:40
+Eq @examples/combinator_filter.exl:61:42
+(Ident Filter) @examples/combinator_filter.exl:62:9
+LBrace @examples/combinator_filter.exl:62:16
+(Ident inner) @examples/combinator_filter.exl:62:18
+Colon @examples/combinator_filter.exl:62:23
+(Ident v) @examples/combinator_filter.exl:62:25
+Dot @examples/combinator_filter.exl:62:26
+(Ident iter) @examples/combinator_filter.exl:62:27
+LParen @examples/combinator_filter.exl:62:31
+RParen @examples/combinator_filter.exl:62:32
+Comma @examples/combinator_filter.exl:62:33
+(Ident p) @examples/combinator_filter.exl:62:35
+Colon @examples/combinator_filter.exl:62:36
+(Ident IsEven) @examples/combinator_filter.exl:62:38
+LBrace @examples/combinator_filter.exl:62:45
+(Ident _t) @examples/combinator_filter.exl:62:47
+Colon @examples/combinator_filter.exl:62:49
+(Int 0) @examples/combinator_filter.exl:62:51
+RBrace @examples/combinator_filter.exl:62:53
+RBrace @examples/combinator_filter.exl:62:55
+Semicolon @examples/combinator_filter.exl:62:56
+Let @examples/combinator_filter.exl:63:5
+Mut @examples/combinator_filter.exl:63:9
+(Ident s1) @examples/combinator_filter.exl:63:13
+Colon @examples/combinator_filter.exl:63:15
+(Ident int) @examples/combinator_filter.exl:63:17
+Eq @examples/combinator_filter.exl:63:21
+(Int 0) @examples/combinator_filter.exl:63:23
+Semicolon @examples/combinator_filter.exl:63:24
+For @examples/combinator_filter.exl:64:5
+(Ident x) @examples/combinator_filter.exl:64:9
+In @examples/combinator_filter.exl:64:11
+(Ident f1) @examples/combinator_filter.exl:64:14
+LBrace @examples/combinator_filter.exl:64:17
+(Ident s1) @examples/combinator_filter.exl:64:19
+Eq @examples/combinator_filter.exl:64:22
+(Ident s1) @examples/combinator_filter.exl:64:24
+Plus @examples/combinator_filter.exl:64:27
+(Ident x) @examples/combinator_filter.exl:64:29
+Semicolon @examples/combinator_filter.exl:64:30
+RBrace @examples/combinator_filter.exl:64:32
+(Ident println) @examples/combinator_filter.exl:65:5
+LParen @examples/combinator_filter.exl:65:12
+(Ident s1) @examples/combinator_filter.exl:65:13
+RParen @examples/combinator_filter.exl:65:15
+Semicolon @examples/combinator_filter.exl:65:16
+Let @examples/combinator_filter.exl:68:5
+Mut @examples/combinator_filter.exl:68:9
+(Ident s2) @examples/combinator_filter.exl:68:13
+Colon @examples/combinator_filter.exl:68:15
+(Ident int) @examples/combinator_filter.exl:68:17
+Eq @examples/combinator_filter.exl:68:21
+(Int 0) @examples/combinator_filter.exl:68:23
+Semicolon @examples/combinator_filter.exl:68:24
+For @examples/combinator_filter.exl:69:5
+(Ident x) @examples/combinator_filter.exl:69:9
+In @examples/combinator_filter.exl:69:11
+(Ident v) @examples/combinator_filter.exl:69:14
+Dot @examples/combinator_filter.exl:69:15
+(Ident iter) @examples/combinator_filter.exl:69:16
+LParen @examples/combinator_filter.exl:69:20
+RParen @examples/combinator_filter.exl:69:21
+Dot @examples/combinator_filter.exl:69:22
+(Ident filter) @examples/combinator_filter.exl:69:23
+LParen @examples/combinator_filter.exl:69:29
+(Ident GreaterThan) @examples/combinator_filter.exl:69:30
+LBrace @examples/combinator_filter.exl:69:42
+(Ident threshold) @examples/combinator_filter.exl:69:44
+Colon @examples/combinator_filter.exl:69:53
+(Int 3) @examples/combinator_filter.exl:69:55
+RBrace @examples/combinator_filter.exl:69:57
+RParen @examples/combinator_filter.exl:69:58
+LBrace @examples/combinator_filter.exl:69:60
+(Ident s2) @examples/combinator_filter.exl:70:9
+Eq @examples/combinator_filter.exl:70:12
+(Ident s2) @examples/combinator_filter.exl:70:14
+Plus @examples/combinator_filter.exl:70:17
+(Ident x) @examples/combinator_filter.exl:70:19
+Semicolon @examples/combinator_filter.exl:70:20
+RBrace @examples/combinator_filter.exl:71:5
 (Ident println) @examples/combinator_filter.exl:72:5
 LParen @examples/combinator_filter.exl:72:12
 (Ident s2) @examples/combinator_filter.exl:72:13
 RParen @examples/combinator_filter.exl:72:15
 Semicolon @examples/combinator_filter.exl:72:16
 Let @examples/combinator_filter.exl:75:5
-(Ident pred3) @examples/combinator_filter.exl:75:9
-Eq @examples/combinator_filter.exl:75:15
-(Ident IsEven) @examples/combinator_filter.exl:75:17
-LBrace @examples/combinator_filter.exl:75:24
-(Ident _t) @examples/combinator_filter.exl:75:26
-Colon @examples/combinator_filter.exl:75:28
-(Int 0) @examples/combinator_filter.exl:75:30
-RBrace @examples/combinator_filter.exl:75:32
-Semicolon @examples/combinator_filter.exl:75:33
-Let @examples/combinator_filter.exl:76:5
-(Ident bumper) @examples/combinator_filter.exl:76:9
-Eq @examples/combinator_filter.exl:76:16
-(Ident Double) @examples/combinator_filter.exl:76:18
-LBrace @examples/combinator_filter.exl:76:25
-(Ident _t) @examples/combinator_filter.exl:76:27
-Colon @examples/combinator_filter.exl:76:29
-(Int 0) @examples/combinator_filter.exl:76:31
-RBrace @examples/combinator_filter.exl:76:33
-Semicolon @examples/combinator_filter.exl:76:34
-Let @examples/combinator_filter.exl:77:5
-Mut @examples/combinator_filter.exl:77:9
-(Ident s3) @examples/combinator_filter.exl:77:13
-Colon @examples/combinator_filter.exl:77:15
-(Ident int) @examples/combinator_filter.exl:77:17
-Eq @examples/combinator_filter.exl:77:21
-(Int 0) @examples/combinator_filter.exl:77:23
-Semicolon @examples/combinator_filter.exl:77:24
-For @examples/combinator_filter.exl:78:5
-(Ident x) @examples/combinator_filter.exl:78:9
-In @examples/combinator_filter.exl:78:11
-(Ident v) @examples/combinator_filter.exl:78:14
-Dot @examples/combinator_filter.exl:78:15
-(Ident iter) @examples/combinator_filter.exl:78:16
-LParen @examples/combinator_filter.exl:78:20
-RParen @examples/combinator_filter.exl:78:21
-Dot @examples/combinator_filter.exl:78:22
-(Ident filter) @examples/combinator_filter.exl:78:23
-LParen @examples/combinator_filter.exl:78:29
-(Ident pred3) @examples/combinator_filter.exl:78:30
-RParen @examples/combinator_filter.exl:78:35
-Dot @examples/combinator_filter.exl:78:36
-(Ident map) @examples/combinator_filter.exl:78:37
-LParen @examples/combinator_filter.exl:78:40
-(Ident bumper) @examples/combinator_filter.exl:78:41
-RParen @examples/combinator_filter.exl:78:47
-LBrace @examples/combinator_filter.exl:78:49
-(Ident s3) @examples/combinator_filter.exl:78:51
-Eq @examples/combinator_filter.exl:78:54
-(Ident s3) @examples/combinator_filter.exl:78:56
-Plus @examples/combinator_filter.exl:78:59
-(Ident x) @examples/combinator_filter.exl:78:61
-Semicolon @examples/combinator_filter.exl:78:62
-RBrace @examples/combinator_filter.exl:78:64
+Mut @examples/combinator_filter.exl:75:9
+(Ident s3) @examples/combinator_filter.exl:75:13
+Colon @examples/combinator_filter.exl:75:15
+(Ident int) @examples/combinator_filter.exl:75:17
+Eq @examples/combinator_filter.exl:75:21
+(Int 0) @examples/combinator_filter.exl:75:23
+Semicolon @examples/combinator_filter.exl:75:24
+For @examples/combinator_filter.exl:76:5
+(Ident x) @examples/combinator_filter.exl:76:9
+In @examples/combinator_filter.exl:76:11
+(Ident v) @examples/combinator_filter.exl:76:14
+Dot @examples/combinator_filter.exl:76:15
+(Ident iter) @examples/combinator_filter.exl:76:16
+LParen @examples/combinator_filter.exl:76:20
+RParen @examples/combinator_filter.exl:76:21
+Dot @examples/combinator_filter.exl:76:22
+(Ident filter) @examples/combinator_filter.exl:76:23
+LParen @examples/combinator_filter.exl:76:29
+(Ident IsEven) @examples/combinator_filter.exl:76:30
+LBrace @examples/combinator_filter.exl:76:37
+(Ident _t) @examples/combinator_filter.exl:76:39
+Colon @examples/combinator_filter.exl:76:41
+(Int 0) @examples/combinator_filter.exl:76:43
+RBrace @examples/combinator_filter.exl:76:45
+RParen @examples/combinator_filter.exl:76:46
+Dot @examples/combinator_filter.exl:76:47
+(Ident map) @examples/combinator_filter.exl:76:48
+LParen @examples/combinator_filter.exl:76:51
+(Ident Double) @examples/combinator_filter.exl:76:52
+LBrace @examples/combinator_filter.exl:76:59
+(Ident _t) @examples/combinator_filter.exl:76:61
+Colon @examples/combinator_filter.exl:76:63
+(Int 0) @examples/combinator_filter.exl:76:65
+RBrace @examples/combinator_filter.exl:76:67
+RParen @examples/combinator_filter.exl:76:68
+LBrace @examples/combinator_filter.exl:76:70
+(Ident s3) @examples/combinator_filter.exl:77:9
+Eq @examples/combinator_filter.exl:77:12
+(Ident s3) @examples/combinator_filter.exl:77:14
+Plus @examples/combinator_filter.exl:77:17
+(Ident x) @examples/combinator_filter.exl:77:19
+Semicolon @examples/combinator_filter.exl:77:20
+RBrace @examples/combinator_filter.exl:78:5
 (Ident println) @examples/combinator_filter.exl:79:5
 LParen @examples/combinator_filter.exl:79:12
 (Ident s3) @examples/combinator_filter.exl:79:13
 RParen @examples/combinator_filter.exl:79:15
 Semicolon @examples/combinator_filter.exl:79:16
 Let @examples/combinator_filter.exl:82:5
-(Ident pred4) @examples/combinator_filter.exl:82:9
-Eq @examples/combinator_filter.exl:82:15
-(Ident IsEven) @examples/combinator_filter.exl:82:17
-LBrace @examples/combinator_filter.exl:82:24
-(Ident _t) @examples/combinator_filter.exl:82:26
-Colon @examples/combinator_filter.exl:82:28
-(Int 0) @examples/combinator_filter.exl:82:30
-RBrace @examples/combinator_filter.exl:82:32
-Semicolon @examples/combinator_filter.exl:82:33
-Let @examples/combinator_filter.exl:83:5
-(Ident bumper4) @examples/combinator_filter.exl:83:9
-Eq @examples/combinator_filter.exl:83:17
-(Ident Double) @examples/combinator_filter.exl:83:19
-LBrace @examples/combinator_filter.exl:83:26
-(Ident _t) @examples/combinator_filter.exl:83:28
-Colon @examples/combinator_filter.exl:83:30
-(Int 0) @examples/combinator_filter.exl:83:32
-RBrace @examples/combinator_filter.exl:83:34
-Semicolon @examples/combinator_filter.exl:83:35
-Let @examples/combinator_filter.exl:84:5
-(Ident summer) @examples/combinator_filter.exl:84:9
-Eq @examples/combinator_filter.exl:84:16
-(Ident Sum) @examples/combinator_filter.exl:84:18
-LBrace @examples/combinator_filter.exl:84:22
-(Ident _t) @examples/combinator_filter.exl:84:24
-Colon @examples/combinator_filter.exl:84:26
-(Int 0) @examples/combinator_filter.exl:84:28
-RBrace @examples/combinator_filter.exl:84:30
-Semicolon @examples/combinator_filter.exl:84:31
-Let @examples/combinator_filter.exl:85:5
-(Ident r) @examples/combinator_filter.exl:85:9
-Colon @examples/combinator_filter.exl:85:10
-(Ident int) @examples/combinator_filter.exl:85:12
-Eq @examples/combinator_filter.exl:85:16
-(Ident v) @examples/combinator_filter.exl:85:18
-Dot @examples/combinator_filter.exl:85:19
-(Ident iter) @examples/combinator_filter.exl:85:20
-LParen @examples/combinator_filter.exl:85:24
-RParen @examples/combinator_filter.exl:85:25
-Dot @examples/combinator_filter.exl:85:26
-(Ident filter) @examples/combinator_filter.exl:85:27
-LParen @examples/combinator_filter.exl:85:33
-(Ident pred4) @examples/combinator_filter.exl:85:34
-RParen @examples/combinator_filter.exl:85:39
-Dot @examples/combinator_filter.exl:85:40
-(Ident map) @examples/combinator_filter.exl:85:41
-LParen @examples/combinator_filter.exl:85:44
-(Ident bumper4) @examples/combinator_filter.exl:85:45
-RParen @examples/combinator_filter.exl:85:52
-Dot @examples/combinator_filter.exl:85:53
-(Ident fold) @examples/combinator_filter.exl:85:54
-LParen @examples/combinator_filter.exl:85:58
-(Int 0) @examples/combinator_filter.exl:85:59
-Comma @examples/combinator_filter.exl:85:60
-(Ident summer) @examples/combinator_filter.exl:85:62
-RParen @examples/combinator_filter.exl:85:68
-Semicolon @examples/combinator_filter.exl:85:69
-(Ident println) @examples/combinator_filter.exl:86:5
-LParen @examples/combinator_filter.exl:86:12
-(Ident r) @examples/combinator_filter.exl:86:13
-RParen @examples/combinator_filter.exl:86:14
-Semicolon @examples/combinator_filter.exl:86:15
-RBrace @examples/combinator_filter.exl:87:1
-Eof @examples/combinator_filter.exl:88:1
+(Ident r) @examples/combinator_filter.exl:82:9
+Colon @examples/combinator_filter.exl:82:10
+(Ident int) @examples/combinator_filter.exl:82:12
+Eq @examples/combinator_filter.exl:82:16
+(Ident v) @examples/combinator_filter.exl:82:18
+Dot @examples/combinator_filter.exl:82:19
+(Ident iter) @examples/combinator_filter.exl:82:20
+LParen @examples/combinator_filter.exl:82:24
+RParen @examples/combinator_filter.exl:82:25
+Dot @examples/combinator_filter.exl:82:26
+(Ident filter) @examples/combinator_filter.exl:82:27
+LParen @examples/combinator_filter.exl:82:33
+(Ident IsEven) @examples/combinator_filter.exl:82:34
+LBrace @examples/combinator_filter.exl:82:41
+(Ident _t) @examples/combinator_filter.exl:82:43
+Colon @examples/combinator_filter.exl:82:45
+(Int 0) @examples/combinator_filter.exl:82:47
+RBrace @examples/combinator_filter.exl:82:49
+RParen @examples/combinator_filter.exl:82:50
+Dot @examples/combinator_filter.exl:83:27
+(Ident map) @examples/combinator_filter.exl:83:28
+LParen @examples/combinator_filter.exl:83:31
+(Ident Double) @examples/combinator_filter.exl:83:32
+LBrace @examples/combinator_filter.exl:83:39
+(Ident _t) @examples/combinator_filter.exl:83:41
+Colon @examples/combinator_filter.exl:83:43
+(Int 0) @examples/combinator_filter.exl:83:45
+RBrace @examples/combinator_filter.exl:83:47
+RParen @examples/combinator_filter.exl:83:48
+Dot @examples/combinator_filter.exl:84:27
+(Ident fold) @examples/combinator_filter.exl:84:28
+LParen @examples/combinator_filter.exl:84:32
+(Int 0) @examples/combinator_filter.exl:84:33
+Comma @examples/combinator_filter.exl:84:34
+(Ident Sum) @examples/combinator_filter.exl:84:36
+LBrace @examples/combinator_filter.exl:84:40
+(Ident _t) @examples/combinator_filter.exl:84:42
+Colon @examples/combinator_filter.exl:84:44
+(Int 0) @examples/combinator_filter.exl:84:46
+RBrace @examples/combinator_filter.exl:84:48
+RParen @examples/combinator_filter.exl:84:49
+Semicolon @examples/combinator_filter.exl:84:50
+(Ident println) @examples/combinator_filter.exl:85:5
+LParen @examples/combinator_filter.exl:85:12
+(Ident r) @examples/combinator_filter.exl:85:13
+RParen @examples/combinator_filter.exl:85:14
+Semicolon @examples/combinator_filter.exl:85:15
+RBrace @examples/combinator_filter.exl:86:1
+Eof @examples/combinator_filter.exl:87:1
