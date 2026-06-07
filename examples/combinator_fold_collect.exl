@@ -1,0 +1,68 @@
+// Iterator combinator stdlib v1, Step E (DR-026).
+//
+// Two consuming terminals close out the v1 combinator surface:
+//
+//   * `fold(init, f)` — folds the iterator into a single accumulator
+//     by calling `f.call(acc, x)` for every yielded `x`, returning
+//     the final `acc`.  The `F: Fn2` bound + the `B` accumulator
+//     tparam let `f` carry any `(B, Item) -> B` shape; mono inlines
+//     the closure into the loop.
+//
+//   * `collect(a)` — drains the iterator into a fresh
+//     `Vec<Self::Item>` allocated through the passed-in
+//     `Allocator`.  Initial capacity is the prelude floor (8);
+//     `push` grows on overflow.  Item type propagates via DR-027's
+//     Site-1 multi-hop assoc-projection — `Vec<int>` falls out of
+//     `VecIter<int>`, `Vec<(u32, int)>` falls out of
+//     `Enumerate<VecIter<int>>`.
+//
+// Both consume `self` by value (drained on return), so a Take/
+// Enumerate adapter handed to a terminal vanishes after the call.
+// The full chain `iter().take().map().fold()` lowers to one fused
+// next-loop calling the closure inline — zero temp allocations.
+
+struct Sum { _t: int }
+impl Fn2 for Sum {
+    type Arg1 = int;
+    type Arg2 = int;
+    type Output = int;
+    fn call(*const self, acc: int, x: int) -> int { acc + x }
+}
+
+struct Double { _t: int }
+impl Fn1 for Double {
+    type Arg = int;
+    type Output = int;
+    fn call(*const self, x: int) -> int { x + x }
+}
+
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(1); v.push(2); v.push(3); v.push(4); v.push(5);
+
+    // (1) Plain `fold(0, sum)` — sum every element.
+    let total: int = v.iter().fold(0, Sum { _t: 0 });
+    println(total);                          // 15 = 1+2+3+4+5
+
+    // (2) `fold` with a non-zero seed — biases the sum.
+    let biased: int = v.iter().fold(100, Sum { _t: 0 });
+    println(biased);                         // 115 = 100 + 15
+
+    // (3) `collect(a)` after a `map` — doubles every value into a
+    // fresh `Vec<int>`.  Each `push` grows the buffer on overflow.
+    let doubled: Vec<int> =
+        v.iter().map(Double { _t: 0 }).collect(a);
+    let mut s: int = 0;
+    for x in doubled.iter() { s = s + x; }
+    println(s);                              // 30 = 2+4+6+8+10
+
+    // (4) Full chain `take(3).map().fold()` — every adapter stays
+    // lazy, the whole pipeline fuses to one loop.
+    let pipe: int =
+        v.iter()
+         .take(3 as u32)
+         .map(Double { _t: 0 })
+         .fold(0, Sum { _t: 0 });
+    println(pipe);                           // 12 = 2+4+6
+}
