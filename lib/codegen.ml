@@ -1724,28 +1724,61 @@ let gen_program ?(annotate = false) (tp : tprogram) =
   let non_main =
     List.filter (fun tf -> tf.tf_func.Ast.name <> "main") concrete_funcs
   in
-  (* DCE for prelude `extern fn`s.  The DR-006 `sys::*` seam ships
-     four extern fns whether or not the user calls them; keeping
-     them all in the emit churns every golden snapshot.  Walk
-     every non-prelude body for referenced mangled names, then
-     drop any prelude extern fn the program doesn't touch.
-     Non-prelude extern fns (user FFI) stay regardless — they
-     resolve against the user's own --link stubs. *)
+  (* DR-035 - Transitive DCE for prelude-defined fns.  Extends the
+     DR-006 one-shot pattern from "prelude `extern fn`s only" to
+     all prelude-emitted fns (default-method synth, helper bodies).
+     Step D's Take/Enumerate and Step E's collect monomorphise
+     eagerly per Iterator-implementor — UpTo gets UpTo__take /
+     enumerate / collect symbols even when nothing calls them.
+
+     Algorithm: start from `main` (or every fn for lib builds with
+     no `main`) and BFS the call graph through TCall / TFnRef,
+     adding mangled names to the reachable set.  Then drop any
+     prelude fn whose mangled name didn't survive the walk.
+     Non-prelude fns stay regardless (user FFI / user code). *)
+  let fn_by_mangled = Hashtbl.create 64 in
+  List.iter (fun tf ->
+    Hashtbl.replace fn_by_mangled tf.tf_mangled tf)
+    tp.tp_funcs;
   let referenced_fns =
     let acc = Hashtbl.create 64 in
-    List.iter (fun tf ->
-      if tf.tf_func.Ast.pos.file <> "<prelude>" then
-        List.iter (iter_tstmt (fun s ->
-          List.iter (fun te ->
-            iter_texpr (fun te' ->
-              match te'.e with
-              | TCall { mangled; _ } | TFnRef mangled ->
-                  Hashtbl.replace acc mangled ()
-              | _ -> ())
-              te)
-            (tstmt_own_exprs s)))
-          tf.tf_body)
-      tp.tp_funcs;
+    let work = Queue.create () in
+    let mark_reachable tf =
+      if not (Hashtbl.mem acc tf.tf_mangled) then begin
+        Hashtbl.replace acc tf.tf_mangled ();
+        Queue.push tf work
+      end
+    in
+    let has_main =
+      List.exists (fun tf -> tf.tf_func.Ast.name = "main") tp.tp_funcs
+    in
+    (* Roots: `main` if present, else every concrete fn (the build
+       is acting as a library — keep the public surface alive). *)
+    if has_main then
+      List.iter (fun tf ->
+        if tf.tf_func.Ast.name = "main" then mark_reachable tf)
+        tp.tp_funcs
+    else
+      List.iter mark_reachable concrete_funcs;
+    while not (Queue.is_empty work) do
+      let tf = Queue.pop work in
+      List.iter (iter_tstmt (fun s ->
+        List.iter (fun te ->
+          iter_texpr (fun te' ->
+            match te'.e with
+            | TCall { mangled; _ } | TFnRef mangled ->
+                (match Hashtbl.find_opt fn_by_mangled mangled with
+                 | Some callee -> mark_reachable callee
+                 | None ->
+                     (* External (libc, user --link, prelude extern):
+                        record the name so the extern-fwd-decl filter
+                        below keeps it. *)
+                     Hashtbl.replace acc mangled ())
+            | _ -> ())
+            te)
+          (tstmt_own_exprs s)))
+        tf.tf_body
+    done;
     (* `default_allocator` codegen wires `sys_alloc` / `sys_free` in
        its helper fn — count those as referenced when the helper is
        emitted. *)
@@ -1755,15 +1788,12 @@ let gen_program ?(annotate = false) (tp : tprogram) =
     end;
     acc
   in
-  let non_main =
-    List.filter (fun tf ->
-      if tf.tf_func.Ast.is_extern
-         && tf.tf_func.Ast.pos.file = "<prelude>"
-         && not (Hashtbl.mem referenced_fns tf.tf_mangled)
-      then false
-      else true)
-      non_main
+  let is_dead tf =
+    tf.tf_func.Ast.pos.file = "<prelude>"
+    && not (Hashtbl.mem referenced_fns tf.tf_mangled)
   in
+  let concrete_funcs = List.filter (fun tf -> not (is_dead tf)) concrete_funcs in
+  let non_main = List.filter (fun tf -> not (is_dead tf)) non_main in
   emit_section buf non_main ~emit:(fun tf ->
     emit_fn_sig buf tf;
     Buffer.add_string buf ";\n");
