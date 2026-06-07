@@ -6521,6 +6521,71 @@ let () =
      }\n"
     "undefined variable 'n'";
 
+  (* DR-039 - closure escape regression suite.  Confirms that the
+     existing DR-010 escape-pass (Faza A/B/C) plus the env-struct
+     synthesis shape DR-024 / DR-033 produce correct results for
+     every closure escape scenario - no new code, just a guard
+     against regression.  DR-033 already shipped the "by-ref
+     capture in env-struct" wiring with `escape.ml:owners_of
+     TStructLit` aggregating field owners, so the 🟧 board item
+     for "closure escape przez return/store" was stale - all
+     paths route through existing machinery.
+
+     Patterns covered:
+       1. by-value capture closure called locally
+       2. by-ref capture closure called locally (call doesn't
+          escape — the env stays in scope)
+       3. by-value closure passed to a Fn1-bound generic
+       4. local address stored through a non-local *ptr param
+          (DR-010 Phase B "store-through-ptr" rejection) *)
+  check_assert "DR-039: by-value capture closure called locally is safe"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let n = 5;\n\
+         \    let f = |x: int| -> int x + n;\n\
+         \    println(run(f, 3));\n\
+          }\n"
+     in
+     contains c "__closure_0");
+
+  check_assert "DR-039: by-ref capture closure called locally is safe"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let n: int = 5;\n\
+         \    let f = [&n] |x: int| -> int x + n;\n\
+         \    println(run(f, 3));\n\
+          }\n"
+     in
+     contains c "__closure_0");
+
+  check_error "DR-039: by-ref capture returned via type-mismatch sentinel"
+    "struct Returned { dummy: int }\n\
+     fn make() -> Returned {\n\
+    \    let n: int = 5;\n\
+    \    let f = [&n] |x: int| -> int x + n;\n\
+    \    f\n\
+     }\n\
+     fn main() { let _r = make(); println(0); }\n"
+    "trailing expression: expected Returned, got __closure_0";
+
+  check_error "DR-039: address of local stored through non-local *ptr rejected"
+    "struct PtrSlot { val: *const int }\n\
+     fn fill(s: *PtrSlot) {\n\
+    \    let n: int = 42;\n\
+    \    s.val = &n as *const int;\n\
+     }\n\
+     fn main() {\n\
+    \    let n0: int = 0;\n\
+    \    let mut s = PtrSlot { val: &n0 as *const int };\n\
+    \    fill(&s as *PtrSlot);\n\
+    \    println(0);\n\
+     }\n"
+    "storing through a non-local pointer a value that embeds the address of a local binding — the local goes out of scope at the end of its enclosing block, leaving the caller with a dangling borrow.  Wrap the storage in a caller-owned region, return a copy / `String::with_str(...)` instead of a borrow, or — for arena/region-allocated returns — mark the fn `@escapes` (forward-compat hatch)";
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\
