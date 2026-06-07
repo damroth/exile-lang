@@ -93,37 +93,53 @@ and expand_item ~from_file ~loaded ~stack item =
       if List.mem dep_path stack then
         Error.failf pos
           "circular import: '%s' is already being loaded" display;
-      if Hashtbl.mem loaded dep_path then []
-      else begin
-        Hashtbl.add loaded dep_path ();
-        if not (Sys.file_exists dep_path) then
-          Error.failf pos "cannot find module '%s' (looked for %s)"
-            display dep_path;
-        let items = parse_file dep_path in
-        let stack' = dep_path :: stack in
-        let inner =
-          expand_items ~from_file:dep_path ~loaded ~stack:stack' items
-        in
-        if is_wildcard then
-          (* Wildcard import: drop the module wrapper and inline all public
-             items directly into the importing scope.  Private items stay
-             behind in the source file. *)
-          List.filter item_visible_in_wildcard inner
-        else begin
-          (* Non-wildcard `use`: introduce the file as a module whose name is
-             the last segment of the path (Rust-like). *)
-          let name =
-            match List.rev path with
-            | n :: _ -> n
-            | [] -> Error.failf pos "internal: empty 'use' path"
-          in
-          [ Ast.Module { mname = name; mitems = inner; mpos = pos;
-                         mis_pub = true } ]
-        end
-      end
+      (* Multi-import discipline: parse + expand once, cache the
+         resulting items.  Subsequent imports of the same file:
+           - wildcard (`use foo::*;` or transitive
+             `pub use foo::*;`) inlines the cached public items —
+             this is what makes `lib.exl: pub use inner::*` actually
+             re-export inner's items to importers of lib.
+           - non-wildcard (`use foo;`) emits nothing the second
+             time around — the Module wrapper already lives in the
+             top-level scope from the first import. *)
+      (match Hashtbl.find_opt loaded dep_path with
+       | Some cached ->
+           if is_wildcard then
+             List.filter item_visible_in_wildcard cached
+           else []
+       | None ->
+           if not (Sys.file_exists dep_path) then
+             Error.failf pos "cannot find module '%s' (looked for %s)"
+               display dep_path;
+           let items = parse_file dep_path in
+           let stack' = dep_path :: stack in
+           let inner =
+             expand_items ~from_file:dep_path ~loaded ~stack:stack' items
+           in
+           Hashtbl.add loaded dep_path inner;
+           if is_wildcard then
+             (* Wildcard import: drop the module wrapper and inline all
+                public items directly into the importing scope.  Private
+                items stay behind in the source file. *)
+             List.filter item_visible_in_wildcard inner
+           else begin
+             (* Non-wildcard `use`: introduce the file as a module whose
+                name is the last segment of the path (Rust-like). *)
+             let name =
+               match List.rev path with
+               | n :: _ -> n
+               | [] -> Error.failf pos "internal: empty 'use' path"
+             in
+             [ Ast.Module { mname = name; mitems = inner; mpos = pos;
+                            mis_pub = true } ]
+           end)
 
 let load entry_path =
-  let loaded = Hashtbl.create 32 in
-  Hashtbl.add loaded entry_path ();
+  let loaded : (string, Ast.item list) Hashtbl.t = Hashtbl.create 32 in
+  (* Entry file's items live at the top level; cache them as [] so a
+     transitive wildcard re-import doesn't accidentally drag them
+     back in (the dep_path = entry guard would also trip the circular
+     check, but the empty entry makes the intent explicit). *)
+  Hashtbl.add loaded entry_path [];
   let items = parse_file entry_path in
   expand_items ~from_file:entry_path ~loaded ~stack:[ entry_path ] items

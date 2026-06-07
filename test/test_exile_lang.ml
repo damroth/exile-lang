@@ -6511,15 +6511,35 @@ let () =
      in
      contains c "__closure_0");
 
-  check_error "DR-038: method-call RHS still needs explicit ann"
+  (* DR-041 - MethodCall RHS now infers via method_ret_index built
+     from every Impl block.  `let n = v.len()` where `v: Vec<int>`
+     looks up (Vec, len) → u32.  Generic ret types (`I::Item` etc.)
+     flow through un-substituted; the closure still picks up the
+     binding via A2.  Method call on a Var with NO scope ann or
+     on a receiver whose path doesn't match any impl still falls
+     through to the standard "undefined variable" error. *)
+  check_assert "DR-041: MethodCall RHS on typed receiver infers"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    let n = v.len();\n\
+         \    let f = |x: u32| -> u32 x + n;\n\
+         \    println(f(5 as u32) as int);\n\
+          }\n"
+     in
+     contains c "__closure_0");
+
+  check_error "DR-041: MethodCall on untyped receiver still needs ann"
     "fn main() {\n\
     \    let a = default_allocator();\n\
-    \    let v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+    \    let v = Vec::with_capacity(a, 8 as u32);\n\
     \    let n = v.len();\n\
     \    let f = |x: u32| -> u32 x + n;\n\
     \    println(f(5 as u32) as int);\n\
      }\n"
-    "undefined variable 'n'";
+    "could not infer type parameter 'T' from arguments (add a type annotation on the surrounding let / return)";
 
   (* DR-039 - closure escape regression suite.  Confirms that the
      existing DR-010 escape-pass (Faza A/B/C) plus the env-struct
@@ -6585,6 +6605,68 @@ let () =
     \    println(0);\n\
      }\n"
     "storing through a non-local pointer a value that embeds the address of a local binding — the local goes out of scope at the end of its enclosing block, leaving the caller with a dangling borrow.  Wrap the storage in a caller-owned region, return a copy / `String::with_str(...)` instead of a borrow, or — for arena/region-allocated returns — mark the fn `@escapes` (forward-compat hatch)";
+
+  (* DR-040 - transitive `pub use foo::*` re-export.  The loader
+     used to track loaded files with `(string, unit) Hashtbl` and
+     return [] on every subsequent import — wildcards from the
+     same dep_path got silently dropped.  Caching the expanded
+     items lets the second wildcard inline them properly. *)
+  let write_temp_file content suffix =
+    let path = Filename.temp_file "exile_test_" suffix in
+    let oc = open_out path in
+    output_string oc content;
+    close_out oc;
+    path
+  in
+  let with_three_file_scope inner_src lib_src main_src f =
+    let dir = Filename.temp_file "exile_test_dir_" "" in
+    Sys.remove dir;
+    Unix.mkdir dir 0o755;
+    let _ = write_temp_file in
+    let write name s =
+      let path = Filename.concat dir name in
+      let oc = open_out path in
+      output_string oc s; close_out oc;
+      path
+    in
+    let _ = write "inner.exl" inner_src in
+    let _ = write "lib.exl" lib_src in
+    let main_path = write "main.exl" main_src in
+    let result =
+      try Ok (Exile_lang.Compiler.compile_file main_path)
+      with Exile_lang.Error.Compile_error { msg; _ } -> Error msg
+    in
+    f result;
+    (* Clean up. *)
+    (try Sys.remove (Filename.concat dir "inner.exl") with _ -> ());
+    (try Sys.remove (Filename.concat dir "lib.exl") with _ -> ());
+    (try Sys.remove main_path with _ -> ());
+    (try Unix.rmdir dir with _ -> ())
+  in
+  with_three_file_scope
+    "pub fn hello() -> int { 42 }\npub fn world() -> int { 7 }\n"
+    "pub use inner::*;\n"
+    "use lib::*;\nfn main() { println(hello() + world()); }\n"
+    (function
+     | Ok c ->
+         check_assert "DR-040: pub use foo::* re-exports transitively"
+           (contains c "ex_hello" && contains c "ex_world")
+     | Error msg ->
+         Printf.eprintf
+           "FAIL: DR-040 transitive pub use compile failed: %s\n" msg;
+         exit 1);
+
+  with_three_file_scope
+    "pub fn private_one() -> int { 1 }\npub fn private_two() -> int { 2 }\n"
+    "use inner;\nfn shadow() -> int { inner::private_one() }\n"
+    "use lib;\nfn main() { println(0); }\n"
+    (function
+     | Ok _ ->
+         check_assert "DR-040: bare `use foo;` after sibling still introduces Module" true
+     | Error msg ->
+         Printf.eprintf
+           "FAIL: DR-040 use foo plain failed: %s\n" msg;
+         exit 1);
 
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\

@@ -9155,12 +9155,33 @@ let expand_lambdas (program : Ast.program) : Ast.program =
      Methods and qualified paths are skipped - their receiver
      types aren't known pre-typecheck. *)
   let fn_ret_index : (string, Ast.type_ann) Hashtbl.t = Hashtbl.create 64 in
+  (* DR-041 - method ret-ty index: (struct-name, method-name) → ret_ty.
+     Walks every Impl block and records the concrete method
+     signature for closure-polish #2 partial coverage — lets
+     `let n = v.len()` infer `n: u32` from Vec::len's ret_ty when
+     `v` carries an annotation in scope.  Generic ret types
+     (`I::Item`, `T`, etc.) are recorded as-is; the closure body
+     then sees the un-substituted ann, which still survives the
+     A2 lift path because the closure's own elab does the real
+     substitution at the use site. *)
+  let method_ret_index : ((string * string), Ast.type_ann) Hashtbl.t =
+    Hashtbl.create 64 in
   let rec index_item (it : Ast.item) =
     match it with
     | Ast.Function f ->
         (match f.ret_ty with
          | Some t -> Hashtbl.replace fn_ret_index f.name t
          | None -> ())
+    | Ast.Impl ib ->
+        (match ib.itarget with
+         | [target] ->
+             List.iter (fun (m : Ast.func) ->
+               match m.ret_ty with
+               | Some t ->
+                   Hashtbl.replace method_ret_index (target, m.name) t
+               | None -> ())
+               ib.iitems
+         | _ -> ())
     | Ast.Module m -> List.iter index_item m.mitems
     | _ -> ()
   in
@@ -9804,6 +9825,18 @@ let expand_lambdas (program : Ast.program) : Ast.program =
           | Ast.Not _ -> Some bool_ann
           | Ast.Call { callee = [single]; _ } ->
               Hashtbl.find_opt fn_ret_index single
+          | Ast.MethodCall { receiver; name; _ } ->
+              (* DR-041 - method ret-ty lookup.  Receiver type is
+                 inferred recursively (Var-from-scope, chained
+                 method calls, etc.); if it resolves to a single-
+                 name struct path, look the method up in the
+                 prelude / user impl table.  Generic ret types
+                 (`I::Item`) flow through unsubstituted - good
+                 enough for the A2 capture decision. *)
+              (match infer_ty_of receiver with
+               | Some (Ast.TyStruct { path = [target]; _ }) ->
+                   Hashtbl.find_opt method_ret_index (target, name)
+               | _ -> None)
           | Ast.StructLit { tname; _ } ->
               Some (Ast.TyStruct { path = tname; args = [] })
           | Ast.EnumLit { tname; _ } ->
