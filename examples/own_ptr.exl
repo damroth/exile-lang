@@ -1,0 +1,79 @@
+// Owner-sigil end-to-end (DR-030 Faza-1a + DR-042/DR-043).
+//
+// `own *T` marks unique ownership of the pointee — a third pointer
+// type sitting alongside `*T` (mutable borrow) and `*const T`
+// (read-only borrow).  The OWN-D1 coercion lets an `own *T` lend
+// itself out as either kind of borrow, but never the reverse:
+//
+//     own *T   -- lend -->  *T  or  *const T          OK
+//     *T       -- fabricate -->  own *T               REJECTED
+//
+// The single sanctioned origin of ownership is `Allocator.alloc`,
+// which casts the raw `*c_void` it gets from the backing allocator
+// into an `own *T`.  Plain pointer-to-own coercion stays forbidden
+// so the language can't mint ownership without going through the
+// seam.
+//
+// Drop synthesis (Step C) emits a `<Struct>__drop(*self)` impl
+// method for every struct carrying an `own *T` field; the body
+// frees each own pole through `self.alloc.free_fn(state, ptr,
+// size_of(T))`.  drop.ml (Step D) is a small post-Move.check
+// rewriter that walks each fn and injects the drop call at every
+// scope-exit — explicit `local.drop()` calls are detected and skip
+// the auto-insert so there's no double-free.
+//
+// The prelude `String` is migrated to `own *u8` (Step E), so the
+// usual `defer s.free()` idiom no longer needs to be written —
+// just allocate and let the auto-drop handle cleanup.
+
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+}
+
+// 1. User struct holding an `own *T` field plus the required
+//    `alloc: Allocator` so the synth drop knows how to release it.
+struct Buffer { p: own *int, alloc: Allocator }
+
+fn alloc_buffer(a: Allocator, value: int) -> Buffer {
+    let q: own *int = a.alloc();
+    let buf = Buffer { p: q, alloc: a };
+    *buf.p = value;
+    buf
+}
+
+fn use_buffer() -> int {
+    let a = raw::make_c_allocator();
+    // `buf` carries an `own *int`; when this fn returns the auto-
+    // drop pass injects `Buffer__drop(&buf)` before the return.
+    let mut buf = alloc_buffer(a, 42);
+    *buf.p   // 42
+}
+
+// 2. Migrated prelude type — `String.ptr` is now `own *u8` so the
+//    type itself is structurally affine through field ownership,
+//    not the legacy `@move` marker.  The same auto-drop mechanism
+//    fires: `s` goes out of scope at the end of the fn and
+//    `String__drop(&s)` lands right before the return.
+fn string_autodrop() -> int {
+    let a = raw::make_c_allocator();
+    let s = String::with_str(a, "hello, world");
+    s.length() as int        // 12; no explicit s.free()
+}
+
+// 3. Explicit `drop()` still works and the auto-drop is elided
+//    (Move.check + drop.ml's consume tracking).  This is the
+//    standard escape hatch when the user wants tighter control
+//    over the drop site.
+fn explicit_drop_no_double() -> int {
+    let a = raw::make_c_allocator();
+    let mut buf = alloc_buffer(a, 7);
+    let v = *buf.p;
+    buf.drop();              // explicit consume
+    v                        // 7
+}
+
+fn main() {
+    println(use_buffer());            // 42
+    println(string_autodrop());       // 12
+    println(explicit_drop_no_double()); // 7
+}

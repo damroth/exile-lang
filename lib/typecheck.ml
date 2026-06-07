@@ -4137,11 +4137,13 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let through_ptr, elem_ty =
           match tbase.ty with
           | TArray { elem; _ } -> false, elem
-          | TPtr elem ->
+          | TPtr elem | TOwnPtr elem ->
               (* Raw write-through-pointer `p[i] = v` (Delta B): the
                  element store routes to C `p[i]`.  Read-side index on
                  a bare `*T` stays rejected — reads go through `Slice`,
-                 writes through this path. *)
+                 writes through this path.  DR-030 Faza-1a: `own *T`
+                 also allows write-through-pointer indexing (codegen
+                 erases the sigil). *)
               true, elem
           | TConstPtr _ ->
               Error.failf pos
@@ -6325,19 +6327,19 @@ let prelude_items () =
     Ast.sname = "String";
     stparams = [];
     sfields = [
-      ("ptr", u8_ptr);
+      (* DR-030 Faza-1a Step E: `ptr` is now `own *u8` instead of
+         `*u8`, so the affineness derives structurally from the
+         own field.  `sis_move = false` since the predicate-swap
+         in move.ml (DR-042 Step B) reads ownership off the
+         field type. *)
+      ("ptr", Ast.TyOwnPtr u8_t);
       ("len", u32_t);
       ("alloc", Ast.TyStruct { path = ["Allocator"]; args = [] });
     ];
     spos = prelude_pos;
     sis_pub = true;
     stier_hint = Some "full";
-    (* @move: `String` owns its `ptr` — a by-value copy would alias
-       the buffer and `s.free()` on either copy would invalidate the
-       other.  The move-pass forces callers to thread `*String`
-       borrows for reads and to consume explicitly at `s.free()` or
-       at insert sites (`vec.push(s)` once Vec<String> lands). *)
-    sis_debug = false; sderives = []; sis_move = true;
+    sis_debug = false; sderives = []; sis_move = false;
   } in
   let string_struct_ann = Ast.TyStruct { path = ["String"]; args = [] } in
   (* `*self` for the destructive ops (`free` mutates ownership) and
@@ -6379,12 +6381,16 @@ let prelude_items () =
       Ast.Let { name = "n"; is_mut = false; ty_ann = Some u32_t;
                 value = Ast.Call { callee = ["cstr_len"]; args = [s_v]; pos };
                 pos };
-      Ast.Let { name = "buf"; is_mut = false; ty_ann = Some u8_ptr;
+      (* DR-030 Faza-1a Step E: cast the raw allocator return to
+         `own *u8` so the buffer flows into the String's own field
+         without an extra fabrication site. *)
+      Ast.Let { name = "buf"; is_mut = false;
+                ty_ann = Some (Ast.TyOwnPtr u8_t);
                 value = Ast.Cast (
                   methcall a_v "alloc_fn"
                     [ field a_v "state";
                       bin Ast.Add (Ast.Var ("n", pos)) (u32_lit 1) ],
-                  u8_ptr, pos);
+                  Ast.TyOwnPtr u8_t, pos);
                 pos };
       Ast.Let { name = "src"; is_mut = false; ty_ann = Some slice_u8_ann;
                 value = Ast.StructLit {
@@ -6435,11 +6441,13 @@ let prelude_items () =
   let empty_body =
     let a_v = Ast.Var ("a", pos) in
     [
-      Ast.Let { name = "buf"; is_mut = false; ty_ann = Some u8_ptr;
+      (* DR-030 Faza-1a Step E: own *u8 for String.ptr. *)
+      Ast.Let { name = "buf"; is_mut = false;
+                ty_ann = Some (Ast.TyOwnPtr u8_t);
                 value = Ast.Cast (
                   methcall a_v "alloc_fn"
                     [ field a_v "state"; u32_lit 1 ],
-                  u8_ptr, pos);
+                  Ast.TyOwnPtr u8_t, pos);
                 pos };
       Ast.AssignIndex {
         base = Ast.Var ("buf", pos);
@@ -6515,10 +6523,15 @@ let prelude_items () =
         base = field sb_v "buf";
         index = field sb_v "len";
         value = int_lit_as 0 u8_t; pos };
+      (* DR-030 Faza-1a Step E: cast the StringBuilder's `*u8` buf
+         to `own *u8` for transfer into the new String.  The build
+         consumes `sb` (move-pass marks sb Consumed via by-value
+         param), so this is a clean ownership transfer, not a
+         fabrication of duplicate ownership. *)
       Ast.Return (Some (Ast.StructLit {
         tname = ["String"];
         fields = [
-          ("ptr", field sb_v "buf");
+          ("ptr", Ast.Cast (field sb_v "buf", Ast.TyOwnPtr u8_t, pos));
           ("len", field sb_v "len");
           ("alloc", field sb_v "alloc");
         ]; base = None; pos }), pos);
@@ -6648,6 +6661,12 @@ let prelude_items () =
     Ast.sname = "Vec";
     stparams = ["T"];
     sfields = [
+      (* DR-030 Faza-1a Step E: Vec migration to `own *T` deferred —
+         the generic drop body synth'd by Step C needs Mono dispatch
+         to materialise the per-instance fn (Vec__drop_i32, etc.).
+         Until that lands, Vec keeps `sis_move=true` and its
+         existing manual `free` for cleanup.  Tracked in WORKLOG
+         as Step E-Vec follow-up. *)
       ("ptr", Ast.TyPtr (tvar "T"));
       ("count", u32_t);
       ("cap", u32_t);

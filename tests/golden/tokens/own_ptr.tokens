@@ -1,0 +1,216 @@
+;; exile-tokens-dump v1 examples/own_ptr.exl
+Pub @examples/own_ptr.exl:29:1
+Mod @examples/own_ptr.exl:29:5
+(Ident raw) @examples/own_ptr.exl:29:9
+LBrace @examples/own_ptr.exl:29:13
+Extern @examples/own_ptr.exl:30:5
+Fn @examples/own_ptr.exl:30:12
+(Ident make_c_allocator) @examples/own_ptr.exl:30:15
+LParen @examples/own_ptr.exl:30:31
+RParen @examples/own_ptr.exl:30:32
+Arrow @examples/own_ptr.exl:30:34
+(Ident Allocator) @examples/own_ptr.exl:30:37
+Semicolon @examples/own_ptr.exl:30:46
+RBrace @examples/own_ptr.exl:31:1
+Struct @examples/own_ptr.exl:35:1
+(Ident Buffer) @examples/own_ptr.exl:35:8
+LBrace @examples/own_ptr.exl:35:15
+(Ident p) @examples/own_ptr.exl:35:17
+Colon @examples/own_ptr.exl:35:18
+Own @examples/own_ptr.exl:35:20
+Star @examples/own_ptr.exl:35:24
+(Ident int) @examples/own_ptr.exl:35:25
+Comma @examples/own_ptr.exl:35:28
+(Ident alloc) @examples/own_ptr.exl:35:30
+Colon @examples/own_ptr.exl:35:35
+(Ident Allocator) @examples/own_ptr.exl:35:37
+RBrace @examples/own_ptr.exl:35:47
+Fn @examples/own_ptr.exl:37:1
+(Ident alloc_buffer) @examples/own_ptr.exl:37:4
+LParen @examples/own_ptr.exl:37:16
+(Ident a) @examples/own_ptr.exl:37:17
+Colon @examples/own_ptr.exl:37:18
+(Ident Allocator) @examples/own_ptr.exl:37:20
+Comma @examples/own_ptr.exl:37:29
+(Ident value) @examples/own_ptr.exl:37:31
+Colon @examples/own_ptr.exl:37:36
+(Ident int) @examples/own_ptr.exl:37:38
+RParen @examples/own_ptr.exl:37:41
+Arrow @examples/own_ptr.exl:37:43
+(Ident Buffer) @examples/own_ptr.exl:37:46
+LBrace @examples/own_ptr.exl:37:53
+Let @examples/own_ptr.exl:38:5
+(Ident q) @examples/own_ptr.exl:38:9
+Colon @examples/own_ptr.exl:38:10
+Own @examples/own_ptr.exl:38:12
+Star @examples/own_ptr.exl:38:16
+(Ident int) @examples/own_ptr.exl:38:17
+Eq @examples/own_ptr.exl:38:21
+(Ident a) @examples/own_ptr.exl:38:23
+Dot @examples/own_ptr.exl:38:24
+(Ident alloc) @examples/own_ptr.exl:38:25
+LParen @examples/own_ptr.exl:38:30
+RParen @examples/own_ptr.exl:38:31
+Semicolon @examples/own_ptr.exl:38:32
+Let @examples/own_ptr.exl:39:5
+(Ident buf) @examples/own_ptr.exl:39:9
+Eq @examples/own_ptr.exl:39:13
+(Ident Buffer) @examples/own_ptr.exl:39:15
+LBrace @examples/own_ptr.exl:39:22
+(Ident p) @examples/own_ptr.exl:39:24
+Colon @examples/own_ptr.exl:39:25
+(Ident q) @examples/own_ptr.exl:39:27
+Comma @examples/own_ptr.exl:39:28
+(Ident alloc) @examples/own_ptr.exl:39:30
+Colon @examples/own_ptr.exl:39:35
+(Ident a) @examples/own_ptr.exl:39:37
+RBrace @examples/own_ptr.exl:39:39
+Semicolon @examples/own_ptr.exl:39:40
+Star @examples/own_ptr.exl:40:5
+(Ident buf) @examples/own_ptr.exl:40:6
+Dot @examples/own_ptr.exl:40:9
+(Ident p) @examples/own_ptr.exl:40:10
+Eq @examples/own_ptr.exl:40:12
+(Ident value) @examples/own_ptr.exl:40:14
+Semicolon @examples/own_ptr.exl:40:19
+(Ident buf) @examples/own_ptr.exl:41:5
+RBrace @examples/own_ptr.exl:42:1
+Fn @examples/own_ptr.exl:44:1
+(Ident use_buffer) @examples/own_ptr.exl:44:4
+LParen @examples/own_ptr.exl:44:14
+RParen @examples/own_ptr.exl:44:15
+Arrow @examples/own_ptr.exl:44:17
+(Ident int) @examples/own_ptr.exl:44:20
+LBrace @examples/own_ptr.exl:44:24
+Let @examples/own_ptr.exl:45:5
+(Ident a) @examples/own_ptr.exl:45:9
+Eq @examples/own_ptr.exl:45:11
+(Ident raw) @examples/own_ptr.exl:45:13
+DoubleColon @examples/own_ptr.exl:45:16
+(Ident make_c_allocator) @examples/own_ptr.exl:45:18
+LParen @examples/own_ptr.exl:45:34
+RParen @examples/own_ptr.exl:45:35
+Semicolon @examples/own_ptr.exl:45:36
+Let @examples/own_ptr.exl:48:5
+Mut @examples/own_ptr.exl:48:9
+(Ident buf) @examples/own_ptr.exl:48:13
+Eq @examples/own_ptr.exl:48:17
+(Ident alloc_buffer) @examples/own_ptr.exl:48:19
+LParen @examples/own_ptr.exl:48:31
+(Ident a) @examples/own_ptr.exl:48:32
+Comma @examples/own_ptr.exl:48:33
+(Int 42) @examples/own_ptr.exl:48:35
+RParen @examples/own_ptr.exl:48:37
+Semicolon @examples/own_ptr.exl:48:38
+Star @examples/own_ptr.exl:49:5
+(Ident buf) @examples/own_ptr.exl:49:6
+Dot @examples/own_ptr.exl:49:9
+(Ident p) @examples/own_ptr.exl:49:10
+RBrace @examples/own_ptr.exl:50:1
+Fn @examples/own_ptr.exl:57:1
+(Ident string_autodrop) @examples/own_ptr.exl:57:4
+LParen @examples/own_ptr.exl:57:19
+RParen @examples/own_ptr.exl:57:20
+Arrow @examples/own_ptr.exl:57:22
+(Ident int) @examples/own_ptr.exl:57:25
+LBrace @examples/own_ptr.exl:57:29
+Let @examples/own_ptr.exl:58:5
+(Ident a) @examples/own_ptr.exl:58:9
+Eq @examples/own_ptr.exl:58:11
+(Ident raw) @examples/own_ptr.exl:58:13
+DoubleColon @examples/own_ptr.exl:58:16
+(Ident make_c_allocator) @examples/own_ptr.exl:58:18
+LParen @examples/own_ptr.exl:58:34
+RParen @examples/own_ptr.exl:58:35
+Semicolon @examples/own_ptr.exl:58:36
+Let @examples/own_ptr.exl:59:5
+(Ident s) @examples/own_ptr.exl:59:9
+Eq @examples/own_ptr.exl:59:11
+(Ident String) @examples/own_ptr.exl:59:13
+DoubleColon @examples/own_ptr.exl:59:19
+(Ident with_str) @examples/own_ptr.exl:59:21
+LParen @examples/own_ptr.exl:59:29
+(Ident a) @examples/own_ptr.exl:59:30
+Comma @examples/own_ptr.exl:59:31
+(String "hello, world") @examples/own_ptr.exl:59:33
+RParen @examples/own_ptr.exl:59:47
+Semicolon @examples/own_ptr.exl:59:48
+(Ident s) @examples/own_ptr.exl:60:5
+Dot @examples/own_ptr.exl:60:6
+(Ident length) @examples/own_ptr.exl:60:7
+LParen @examples/own_ptr.exl:60:13
+RParen @examples/own_ptr.exl:60:14
+As @examples/own_ptr.exl:60:16
+(Ident int) @examples/own_ptr.exl:60:19
+RBrace @examples/own_ptr.exl:61:1
+Fn @examples/own_ptr.exl:67:1
+(Ident explicit_drop_no_double) @examples/own_ptr.exl:67:4
+LParen @examples/own_ptr.exl:67:27
+RParen @examples/own_ptr.exl:67:28
+Arrow @examples/own_ptr.exl:67:30
+(Ident int) @examples/own_ptr.exl:67:33
+LBrace @examples/own_ptr.exl:67:37
+Let @examples/own_ptr.exl:68:5
+(Ident a) @examples/own_ptr.exl:68:9
+Eq @examples/own_ptr.exl:68:11
+(Ident raw) @examples/own_ptr.exl:68:13
+DoubleColon @examples/own_ptr.exl:68:16
+(Ident make_c_allocator) @examples/own_ptr.exl:68:18
+LParen @examples/own_ptr.exl:68:34
+RParen @examples/own_ptr.exl:68:35
+Semicolon @examples/own_ptr.exl:68:36
+Let @examples/own_ptr.exl:69:5
+Mut @examples/own_ptr.exl:69:9
+(Ident buf) @examples/own_ptr.exl:69:13
+Eq @examples/own_ptr.exl:69:17
+(Ident alloc_buffer) @examples/own_ptr.exl:69:19
+LParen @examples/own_ptr.exl:69:31
+(Ident a) @examples/own_ptr.exl:69:32
+Comma @examples/own_ptr.exl:69:33
+(Int 7) @examples/own_ptr.exl:69:35
+RParen @examples/own_ptr.exl:69:36
+Semicolon @examples/own_ptr.exl:69:37
+Let @examples/own_ptr.exl:70:5
+(Ident v) @examples/own_ptr.exl:70:9
+Eq @examples/own_ptr.exl:70:11
+Star @examples/own_ptr.exl:70:13
+(Ident buf) @examples/own_ptr.exl:70:14
+Dot @examples/own_ptr.exl:70:17
+(Ident p) @examples/own_ptr.exl:70:18
+Semicolon @examples/own_ptr.exl:70:19
+(Ident buf) @examples/own_ptr.exl:71:5
+Dot @examples/own_ptr.exl:71:8
+(Ident drop) @examples/own_ptr.exl:71:9
+LParen @examples/own_ptr.exl:71:13
+RParen @examples/own_ptr.exl:71:14
+Semicolon @examples/own_ptr.exl:71:15
+(Ident v) @examples/own_ptr.exl:72:5
+RBrace @examples/own_ptr.exl:73:1
+Fn @examples/own_ptr.exl:75:1
+(Ident main) @examples/own_ptr.exl:75:4
+LParen @examples/own_ptr.exl:75:8
+RParen @examples/own_ptr.exl:75:9
+LBrace @examples/own_ptr.exl:75:11
+(Ident println) @examples/own_ptr.exl:76:5
+LParen @examples/own_ptr.exl:76:12
+(Ident use_buffer) @examples/own_ptr.exl:76:13
+LParen @examples/own_ptr.exl:76:23
+RParen @examples/own_ptr.exl:76:24
+RParen @examples/own_ptr.exl:76:25
+Semicolon @examples/own_ptr.exl:76:26
+(Ident println) @examples/own_ptr.exl:77:5
+LParen @examples/own_ptr.exl:77:12
+(Ident string_autodrop) @examples/own_ptr.exl:77:13
+LParen @examples/own_ptr.exl:77:28
+RParen @examples/own_ptr.exl:77:29
+RParen @examples/own_ptr.exl:77:30
+Semicolon @examples/own_ptr.exl:77:31
+(Ident println) @examples/own_ptr.exl:78:5
+LParen @examples/own_ptr.exl:78:12
+(Ident explicit_drop_no_double) @examples/own_ptr.exl:78:13
+LParen @examples/own_ptr.exl:78:36
+RParen @examples/own_ptr.exl:78:37
+RParen @examples/own_ptr.exl:78:38
+Semicolon @examples/own_ptr.exl:78:39
+RBrace @examples/own_ptr.exl:79:1
+Eof @examples/own_ptr.exl:80:1

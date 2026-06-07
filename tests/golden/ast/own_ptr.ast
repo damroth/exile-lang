@@ -1,0 +1,9 @@
+;; exile-ast-dump v1 examples/own_ptr.exl
+(module raw
+  (fn make_c_allocator extern pub (params ) (struct Allocator)))
+(struct Buffer (fields (field p (own-ptr (int i32))) (field alloc (struct Allocator))))
+(fn alloc_buffer (params (param a (struct Allocator)) (param value (int i32))) (struct Buffer) (body (let q (ty (own-ptr (int i32))) (method-call (var a) alloc )) (let buf (struct-lit Buffer (field p (var q)) (field alloc (var a)))) (assign-deref (field-access (var buf) p) (var value)) (tail (var buf))))
+(fn use_buffer (params ) (int i32) (body (let a (call raw::make_c_allocator )) (let mut buf (call alloc_buffer (var a) (int 42))) (tail (deref (field-access (var buf) p)))))
+(fn string_autodrop (params ) (int i32) (body (let a (call raw::make_c_allocator )) (let s (call String::with_str (var a) (string "hello, world"))) (tail (cast (method-call (var s) length ) (int i32)))))
+(fn explicit_drop_no_double (params ) (int i32) (body (let a (call raw::make_c_allocator )) (let mut buf (call alloc_buffer (var a) (int 7))) (let v (deref (field-access (var buf) p))) (expr-stmt (method-call (var buf) drop )) (tail (var v))))
+(fn main (params ) void (body (expr-stmt (call println (call use_buffer ))) (expr-stmt (call println (call string_autodrop ))) (expr-stmt (call println (call explicit_drop_no_double )))))

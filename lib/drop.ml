@@ -60,16 +60,37 @@ let has_drop ~structs path =
 (* Per-binding state. *)
 type status = Live | Consumed
 
-(* Build a synthetic `<local>.drop()` call statement.  The IR
-   shape matches what an elaborated `local.drop()` produces in
-   user code, so the rest of the compiler treats it uniformly. *)
-let drop_call ~struct_path local_name pos : tstmt =
+(* Build a synthetic `<local>.drop()` call statement.  The mangled
+   name has to match what Mono produced for the synth'd impl
+   method: `<skel_last>__drop[_<arg-mangle>]`.  For a non-generic
+   struct the path IS the skeleton; for a mono'd one (Vec_i32) we
+   read `sinstance_args` off the instance sig and split the last
+   segment back into skel + arg-mangle. *)
+let drop_call ~structs ~struct_path local_name pos : tstmt =
   let mangled =
+    let inst =
+      List.find_opt (fun (s : struct_sig) -> s.sname_path = struct_path) structs
+    in
     let last = match List.rev struct_path with
       | n :: _ -> n
       | [] -> "anon"
     in
-    last ^ "__drop"
+    match inst with
+    | Some { sinstance_args = Some args; _ } when args <> [] ->
+        let arg_part = String.concat "_" (List.map mangle_typ args) in
+        (* `<inst_last> = <skel_last>_<arg_part>`; recover skel_last
+           by stripping the trailing `_<arg_part>`. *)
+        let suffix = "_" ^ arg_part in
+        let skel_last =
+          if String.length last > String.length suffix
+             && String.sub last (String.length last - String.length suffix)
+                  (String.length suffix) = suffix
+          then String.sub last 0 (String.length last - String.length suffix)
+          else last
+        in
+        skel_last ^ "__drop_" ^ arg_part
+    | _ ->
+        last ^ "__drop"
   in
   let self_arg = {
     e = TRef {
@@ -90,6 +111,12 @@ let drop_call ~struct_path local_name pos : tstmt =
 let struct_path_of = function
   | TStruct p -> Some p
   | _ -> None
+
+(* Per-fn temp-let collector — populated when a TReturn needs
+   value-then-drop sequencing.  rewrite_fn resets the ref before
+   each function and copies it into tf_lets afterwards so the
+   codegen hoist block emits the right declarations. *)
+let tmp_decls : (string * typ) list ref = ref []
 
 (* Walk statements with a live owner stack; emit drops before
    scope-exits.  Returns (rewritten_stmts, final_state) where
@@ -115,21 +142,72 @@ and walk_stmt ~structs live stmt =
           | None -> false) ->
       ([stmt], (name, Live, value.ty, pos) :: live)
   | TReturn { value; pos } ->
-      let drops = drops_for_live ~structs live in
-      (drops @ [TReturn { value; pos }], live)
+      (* `return local;` for an affine `local` is a consume — the
+         caller takes ownership.  Mark it Consumed before emitting
+         the drop list so its drop doesn't fire, otherwise the
+         caller and the callee both free the same buffer. *)
+      let consumed_name =
+        match value with
+        | Some { e = TVar n; _ } -> Some n
+        | _ -> None
+      in
+      let live' =
+        match consumed_name with
+        | Some n ->
+            List.map (fun ((nm, st, ty, pos) as entry) ->
+              if nm = n && st = Live then (nm, Consumed, ty, pos)
+              else entry)
+              live
+        | None -> live
+      in
+      let drops = drops_for_live ~structs live' in
+      (* Sequencing: drops must run AFTER the return value is
+         evaluated but BEFORE the actual return — otherwise
+         `return *buf.p;` reads through `buf.p` after its backing
+         storage was already freed.  Stash the value in a fresh
+         temp, then drop, then return the temp.  Skip the dance
+         when the return value is itself a Var (no eval order
+         hazard) or when there are no drops to inject. *)
+      let needs_temp =
+        drops <> [] &&
+        (match value with
+         | Some { e = TVar _; _ } | None -> false
+         | _ -> true)
+      in
+      if needs_temp then
+        match value with
+        | Some v ->
+            let tmp = Printf.sprintf "__drop_ret_%d_%d"
+                pos.Pos.line pos.Pos.col in
+            let tmp_let = TLet { name = tmp; value = v; pos } in
+            let tmp_var = { e = TVar tmp; ty = v.ty; pos = v.pos } in
+            (* Record the temp so gen_function's hoisted-decls block
+               emits a declaration for it. *)
+            tmp_decls := (tmp, v.ty) :: !tmp_decls;
+            ([tmp_let] @ drops
+             @ [TReturn { value = Some tmp_var; pos }], live')
+        | None -> (drops @ [TReturn { value; pos }], live')
+      else
+        (drops @ [TReturn { value; pos }], live')
   | TExprStmt e ->
-      (* If the expression is an explicit `<Type>__drop(&local)` call
-         (user wrote `local.drop()`), mark that owner Consumed so
-         the scope-exit pass doesn't add a second drop call.  Any
-         other call against an owner-typed `&local` first arg is
-         conservatively treated as consume too — most owner-eating
-         methods take `*self` and the worst case here is a missed
-         auto-drop, never a double-free. *)
+      (* Detect explicit consume:
+         - `Type__drop(&local)` (user wrote `local.drop()`) — first
+           arg is `TRef (TVar n)`, mangled ends in `__drop`.
+         - `Type__free(local)` and any other by-value affine method
+           — first arg is a bare `TVar n` of the owner's type.
+           These pass `self` by value, so Move.check has already
+           verified the consume.  Marking the binding Consumed in
+           drop's state machine keeps the scope-exit pass from
+           injecting a second drop call (no double-free). *)
       let consumed_name =
         match e.e with
-        | TCall { args = first :: _; _ } ->
+        | TCall { mangled; args = first :: _ } ->
             (match first.e with
-             | TRef { e = TVar n; _ } -> Some n
+             | TRef { e = TVar n; _ } when
+                 (let lm = String.length mangled in
+                  lm >= 6 &&
+                  String.sub mangled (lm - 6) 6 = "__drop") -> Some n
+             | TVar n -> Some n
              | _ -> None)
         | _ -> None
       in
@@ -152,7 +230,7 @@ and drops_for_live ~structs live =
     | Live ->
         (match struct_path_of ty with
          | Some p when has_drop ~structs p ->
-             Some (drop_call ~struct_path:p name pos)
+             Some (drop_call ~structs ~struct_path:p name pos)
          | _ -> None)
     | Consumed -> None)
     live
@@ -160,6 +238,7 @@ and drops_for_live ~structs live =
 (* Per-fn entry: walk body, then top-up drops for owners that
    reached the end without consume or explicit return. *)
 let rewrite_fn ~structs (tf : tfunc) : tfunc =
+  tmp_decls := [];
   let (body', final_live) = walk_stmts ~structs [] tf.tf_body in
   (* If the fn returns nothing explicitly (void), the body ends
      without a return statement — emit drops at the tail. *)
@@ -168,7 +247,9 @@ let rewrite_fn ~structs (tf : tfunc) : tfunc =
     then body'
     else body' @ drops_for_live ~structs final_live
   in
-  { tf with tf_body = body_with_tail }
+  { tf with
+    tf_body = body_with_tail;
+    tf_lets = tf.tf_lets @ List.rev !tmp_decls }
 
 (* Whole-program entry. *)
 let insert (tp : tprogram) : tprogram =
