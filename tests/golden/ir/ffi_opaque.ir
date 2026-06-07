@@ -5,6 +5,7 @@
 (tfn main (params ) void (body (let lib (call lib_open) :ty (ptr (ext-struct Library))) (expr-stmt (builtin-call println (call lib_use (var lib) :ty (ptr (ext-struct Library))) :ty (int i32)) :ty (int i32)) (expr-stmt (call lib_close (var lib) :ty (ptr (ext-struct Library))) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

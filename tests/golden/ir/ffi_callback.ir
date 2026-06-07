@@ -5,6 +5,7 @@
 (tfn main (params ) void (body (expr-stmt (builtin-call println (cast (call ffi_apply_int (int 21) :ty (int i32) (fn-ref ex_double_it) :ty (fn-ptr ((c_int signed)) (c_int signed))) :ty (c_int signed) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (call ffi_apply_int (int 7) :ty (int i32) (fn-ref ex_negate) :ty (fn-ptr ((c_int signed)) (c_int signed))) :ty (c_int signed) (int i32)) :ty (int i32)) :ty (int i32)) (let f (fn-ref ex_double_it) :ty (fn-ptr ((c_int signed)) (c_int signed))) (expr-stmt (builtin-call println (cast (call f (int 50) :ty (int i32)) :ty (c_int signed) (int i32)) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

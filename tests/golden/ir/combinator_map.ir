@@ -8,6 +8,7 @@
   (struct AddDelta)
   (struct Allocator)
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

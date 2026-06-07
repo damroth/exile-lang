@@ -5,6 +5,7 @@
 (tfn main (params ) void (body (expr-stmt (builtin-call println (call add (int 40) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call square (int 7) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (call shout) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

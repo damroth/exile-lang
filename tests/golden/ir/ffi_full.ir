@@ -5,6 +5,7 @@
 (tfn main (params ) void (body (let lib (call PretendOpenLibrary (string "pretend.library") :ty str (var PRETEND_VERSION) :ty (ext-alias ULONG)) :ty (ptr (ext-struct Library))) (expr-stmt (builtin-call println (cast (call PretendLibraryID (var lib) :ty (ptr (ext-struct Library))) :ty (ext-alias ULONG) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (cast (var PRETEND_FLAGS) :ty (ext-alias ULONG) (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (call PretendCloseLibrary (var lib) :ty (ptr (ext-struct Library))) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

@@ -9,6 +9,7 @@
 (tfn ex_all_equal_ex_Point (params (param a (struct Point)) (param b (struct Point)) (param c (struct Point))) bool (body (return (binop && (call Point__eq (ref (var a) :ty (struct Point)) :ty (const-ptr (struct Point)) (ref (var b) :ty (struct Point)) :ty (const-ptr (struct Point))) :ty bool (call Point__eq (ref (var b) :ty (struct Point)) :ty (const-ptr (struct Point)) (ref (var c) :ty (struct Point)) :ty (const-ptr (struct Point))) :ty bool) :ty bool)))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

@@ -14,6 +14,7 @@
   (struct Cell)
   (struct Cell_i32_ex_Inner)
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Inner)

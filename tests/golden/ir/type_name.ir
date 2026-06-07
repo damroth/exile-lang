@@ -6,6 +6,7 @@
 (tfn ex_dbg_ex_Point (params (param label str) (param x (struct Point))) (struct Point) (body (expr-stmt (builtin-call println (var label) :ty str) :ty (int i32)) (expr-stmt (builtin-call println (builtin-call type_name (var x) :ty (struct Point)) :ty str) :ty (int i32)) (return (var x) :ty (struct Point))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

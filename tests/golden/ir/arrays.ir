@@ -3,6 +3,7 @@
 (tfn main (params ) void (body (let data (array-lit (int 10) :ty (int i32) (int 20) :ty (int i32) (int 30) :ty (int i32) (int 40) :ty (int i32)) :ty (array (int i32) 4)) (assign-index (var data) :ty (array (int i32) 4) (int 1) :ty (int i32) (int 99) :ty (int i32)) (expr-stmt (builtin-call println (index (var data) :ty (array (int i32) 4) (int 1) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (int 4) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_sum (ref (var data) :ty (array (int i32) 4)) :ty (ptr (array (int i32) 4))) :ty (int i32)) :ty (int i32)) (let zeros (array-repeat (int 0) :ty (int i32) 3) :ty (array (int i32) 3)) (expr-stmt (builtin-call println (index (var zeros) :ty (array (int i32) 3) (int 2) :ty (int i32)) :ty (int i32)) :ty (int i32)) (let copy (var data) :ty (array (int i32) 4)) (assign-index (var copy) :ty (array (int i32) 4) (int 0) :ty (int i32) (int 7) :ty (int i32)) (expr-stmt (builtin-call println (index (var data) :ty (array (int i32) 4) (int 0) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (index (var copy) :ty (array (int i32) 4) (int 0) :ty (int i32)) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

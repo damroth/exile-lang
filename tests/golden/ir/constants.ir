@@ -2,6 +2,7 @@
 (tfn main (params ) void (body (expr-stmt (builtin-call println (var ex_WIDTH) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var ex_HEIGHT) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var ex_PIXELS) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var flags__RW) :ty (int i32)) :ty (int i32)) (let half (binop / (var ex_WIDTH) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var half) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

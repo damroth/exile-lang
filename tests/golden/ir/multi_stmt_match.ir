@@ -4,6 +4,7 @@
 (tfn main (params ) void (body (let __lift_0 (enum-lit Shape::Square tag=0 (field _0 (int 4) :ty (int i32))) :ty (enum Shape)) (expr-stmt (builtin-call println (call ex_area (var __lift_0) :ty (enum Shape)) :ty (int i32)) :ty (int i32)) (let __lift_1 (enum-lit Shape::Circle tag=1 (field _0 (int 10) :ty (int i32))) :ty (enum Shape)) (expr-stmt (builtin-call println (call ex_area (var __lift_1) :ty (enum Shape)) :ty (int i32)) :ty (int i32)) (let __lift_2 (enum-lit Shape::Rect tag=2 (field _0 (int 3) :ty (int i32)) (field _1 (int 5) :ty (int i32))) :ty (enum Shape)) (expr-stmt (builtin-call println (call ex_area (var __lift_2) :ty (enum Shape)) :ty (int i32)) :ty (int i32)) (let __lift_3 (enum-lit Shape::Rect tag=2 (field _0 (int 7) :ty (int i32)) (field _1 (int 9) :ty (int i32))) :ty (enum Shape)) (expr-stmt (call ex_describe (var __lift_3) :ty (enum Shape)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

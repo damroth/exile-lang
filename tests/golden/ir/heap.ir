@@ -4,6 +4,7 @@
 (tfn main (params ) void (body (let p (new Point (field x (int 1) :ty (int i32)) (field y (int 2) :ty (int i32))) :ty (ptr (struct Point))) (defer (expr-stmt (builtin-call free (var p) :ty (ptr (struct Point))) :ty (int i32))) (assign-field (var p) :ty (ptr (struct Point)) x (int 10) :ty (int i32)) (assign-field (var p) :ty (ptr (struct Point)) y (int 20) :ty (int i32)) (expr-stmt (builtin-call println (field-access (var p) :ty (ptr (struct Point)) x) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (field-access (var p) :ty (ptr (struct Point)) y) :ty (int i32)) :ty (int i32)) (let q (call ex_make_point (int 100) :ty (int i32) (int 200) :ty (int i32)) :ty (ptr (struct Point))) (defer (expr-stmt (builtin-call free (var q) :ty (ptr (struct Point))) :ty (int i32))) (expr-stmt (call ex_shift (var q) :ty (ptr (struct Point)) (int 5) :ty (int i32) (int 7) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (field-access (var q) :ty (ptr (struct Point)) x) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (field-access (var q) :ty (ptr (struct Point)) y) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

@@ -5,6 +5,7 @@
 (tfn main (params ) void (body (expr-stmt (builtin-call println (call ex_dbl (int 5) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_clamp (int 7) :ty (int i32) (int 0) :ty (int i32) (int 10) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_clamp (int 42) :ty (int i32) (int 0) :ty (int i32) (int 10) :ty (int i32)) :ty (int i32)) :ty (int i32)) (let r (call ex_dbl (call ex_inc (call ex_dbl (int 3) :ty (int i32)) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var r) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (binop + (int 2) :ty (int i32) (call ex_dbl (int 3) :ty (int i32)) :ty (int i32)) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

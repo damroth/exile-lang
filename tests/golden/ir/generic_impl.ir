@@ -16,6 +16,7 @@
   (struct Box)
   (struct Box_i32)
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

@@ -5,6 +5,7 @@
 (tfn main (params ) void (body (let-tuple (a b) (call ex_split (int 5) :ty (int i32)) :ty (tuple (int i32) (int i32))) (expr-stmt (builtin-call println (var a) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var b) :ty (int i32)) :ty (int i32)) (let-tuple (lo hi) (call ex_min_max (int 7) :ty (int i32) (int 3) :ty (int i32)) :ty (tuple (int i32) (int i32))) (expr-stmt (builtin-call println (var lo) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var hi) :ty (int i32)) :ty (int i32)) (let-tuple (grade points) (call ex_label_score (int 85) :ty (int i32)) :ty (tuple str (int i32))) (expr-stmt (builtin-call println (var grade) :ty str) :ty (int i32)) (expr-stmt (builtin-call println (var points) :ty (int i32)) :ty (int i32)) (let-tuple (x y) (tuple-lit (int 10) :ty (int i32) (int 20) :ty (int i32)) :ty (tuple (int i32) (int i32))) (expr-stmt (builtin-call println (var x) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var y) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

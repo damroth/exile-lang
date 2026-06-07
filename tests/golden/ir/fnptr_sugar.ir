@@ -7,6 +7,7 @@
 (tfn ex___lambda_0 (params (param x (int i32))) (int i32) (body (return (binop * (var x) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Hooks)

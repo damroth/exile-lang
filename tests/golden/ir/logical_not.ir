@@ -3,6 +3,7 @@
 (tfn Toggle__is_off pub (params (param self (struct Toggle))) bool (body (return (not (field-access (var self) :ty (struct Toggle) on) :ty bool) :ty bool)))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

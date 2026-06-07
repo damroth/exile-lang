@@ -3,6 +3,7 @@
 (tfn main (params ) void (body (let __lift_0 (enum-lit Token::Plus tag=0) :ty (enum Token)) (expr-stmt (builtin-call println (call ex_category (var __lift_0) :ty (enum Token)) :ty (int i32)) :ty (int i32)) (let __lift_1 (enum-lit Token::Slash tag=3) :ty (enum Token)) (expr-stmt (builtin-call println (call ex_category (var __lift_1) :ty (enum Token)) :ty (int i32)) :ty (int i32)) (let __lift_2 (enum-lit Token::LParen tag=4) :ty (enum Token)) (expr-stmt (builtin-call println (call ex_category (var __lift_2) :ty (enum Token)) :ty (int i32)) :ty (int i32)) (let __lift_3 (enum-lit Token::Ident tag=6) :ty (enum Token)) (expr-stmt (builtin-call println (call ex_category (var __lift_3) :ty (enum Token)) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

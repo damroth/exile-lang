@@ -14,6 +14,7 @@
   (struct Enumerate)
   (struct Enumerate_ex_Count)
   (struct Enumerate_ex_Words)
+  (struct Filter)
   (struct Gen)
   (struct Gen_i32)
   (struct HashMap)

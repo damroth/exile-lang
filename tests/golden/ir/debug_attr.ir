@@ -2,6 +2,7 @@
 (tfn main (params ) void (body (let p (struct-lit Point (field x (int 3) :ty (int i32)) (field y (int 4) :ty (int i32))) :ty (struct Point)) (let r (struct-lit Rect (field origin (var p) :ty (struct Point)) (field width (int 100) :ty (int i32)) (field height (int 50) :ty (int i32))) :ty (struct Rect)) (expr-stmt (builtin-call println (var p) :ty (struct Point)) :ty (int i32)) (expr-stmt (builtin-call println (var r) :ty (struct Rect)) :ty (int i32)) (let __lift_0 (enum-lit Shape::Circle tag=0 (field _0 (int 7) :ty (int i32))) :ty (enum Shape)) (expr-stmt (builtin-call println (var __lift_0) :ty (enum Shape)) :ty (int i32)) (let __lift_1 (enum-lit Shape::Rectangle tag=1 (field w (int 80) :ty (int i32)) (field h (int 20) :ty (int i32))) :ty (enum Shape)) (expr-stmt (builtin-call println (var __lift_1) :ty (enum Shape)) :ty (int i32)) (let __lift_2 (enum-lit Shape::None tag=2) :ty (enum Shape)) (expr-stmt (builtin-call println (var __lift_2) :ty (enum Shape)) :ty (int i32)) (let __lift_3 (struct-lit Pair_i32_bool (field fst (int 1) :ty (int i32)) (field snd (bool true) :ty bool)) :ty (struct Pair_i32_bool)) (expr-stmt (builtin-call println (var __lift_3) :ty (struct Pair_i32_bool)) :ty (int i32)) (let __lift_4 (struct-lit Pair_ex_Point_i32 (field fst (var p) :ty (struct Point)) (field snd (int 9) :ty (int i32))) :ty (struct Pair_ex_Point_i32)) (expr-stmt (builtin-call println (var __lift_4) :ty (struct Pair_ex_Point_i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

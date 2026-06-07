@@ -12,6 +12,7 @@
 (mono-instances
   (struct Box)
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

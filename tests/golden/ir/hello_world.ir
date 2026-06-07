@@ -2,6 +2,7 @@
 (tfn main (params ) void (body (expr-stmt (builtin-call println (string "Hello, World!") :ty str) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

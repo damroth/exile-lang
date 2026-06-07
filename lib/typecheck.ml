@@ -7751,12 +7751,49 @@ let prelude_items () =
       tier_hint = None; amiga_lib = None;
       must_use = true; escapes_hatch = false; pos }
   in
+  (* DR-026 Step C - `Iterator.filter(p)` default-method.  Builds a
+     `Filter<Self, P>` adapter from `self` (by-value, consumes the
+     iterator) plus a predicate `p: P` callable returning bool.
+     Same struct-literal shape as `take`/`enumerate` defaults; mono
+     pins `Self` to the impl target + `P` to the callsite arg
+     type. *)
+  let iter_filter_default =
+    { Ast.name = "filter"; c_name = "filter";
+      tparams = ["P"]; tbounds = [("P", ["Fn1"], [])];
+      params = [
+        { Ast.pname = "self"; pty = Ast.TySelf;
+          preg = None; is_mut = false };
+        { Ast.pname = "p";
+          pty = Ast.TyStruct { path = ["P"]; args = [] };
+          preg = None; is_mut = false };
+      ];
+      ret_ty = Some (Ast.TyStruct {
+        path = ["Filter"];
+        args = [
+          Ast.TySelf;
+          Ast.TyStruct { path = ["P"]; args = [] };
+        ] });
+      body = [
+        Ast.Tail (Ast.StructLit {
+          tname = ["Filter"];
+          fields = [
+            ("inner", Ast.Var ("self", pos));
+            ("p", Ast.Var ("p", pos));
+          ];
+          base = None; pos })
+      ];
+      is_pub = true; is_extern = false; is_variadic = false;
+      tier_hint = None; amiga_lib = None;
+      must_use = false; escapes_hatch = false; pos }
+  in
   let iterator_trait = {
     Ast.trname = "Iterator"; trassoc = ["Item"]; trsupers = [];
     trmethods = [ iter_next; iter_map_default;
                   iter_take_default; iter_enumerate_default;
+                  iter_filter_default;
                   iter_fold_default; iter_collect_default ];
-    trdefaults = ["map"; "take"; "enumerate"; "fold"; "collect"];
+    trdefaults = ["map"; "take"; "enumerate"; "filter";
+                  "fold"; "collect"];
     trpos = pos; tris_pub = true;
   } in
   (* `Fn1` / `Fn2` — callable protocols.  Per the DR-015 reality-check
@@ -8152,6 +8189,130 @@ let prelude_items () =
     iitems = [ enumerate_next_method ];
     ipos = pos;
   } in
+  (* DR-026 Step C - `Filter<I, P>` adapter.  Two-tparam: `I:
+     Iterator` provides the upstream stream, `P: Fn1` filters its
+     items.  Item type is `I::Item` (single-hop assoc-projection
+     through DR-027 site-1, same as Take/Enumerate).
+
+     `next` body sidesteps the if-as-value and block-if-branch
+     limitations the worklog flagged for predicate-driven `next`s:
+     instead of `if (p) Some else recur`, the body uses a mut
+     `keep`/`result` flag pair and a `while keep` outer loop.
+     Each iteration pulls one `inner.next()`, and:
+       Some(v) - if `p.call(v)` is true, store Some(v) and stop;
+                 otherwise drop the value and let the loop re-fire.
+       None   - record None and stop.
+     The trailing `result` is the matched final value.  Every
+     stmt-shaped branch lives inside a Block arm, so the codegen
+     path matches Enumerate's existing block-arm flow. *)
+  let filter_struct = {
+    Ast.sname = "Filter";
+    stparams = ["I"; "P"];
+    sfields = [
+      ("inner", Ast.TyStruct { path = ["I"]; args = [] });
+      ("p", Ast.TyStruct { path = ["P"]; args = [] });
+    ];
+    spos = pos; sis_pub = true;
+    stier_hint = None;
+    sis_debug = false; sderives = []; sis_move = false;
+  } in
+  let filter_target_ty =
+    Ast.TyStruct {
+      path = ["Filter"];
+      args = [
+        Ast.TyStruct { path = ["I"]; args = [] };
+        Ast.TyStruct { path = ["P"]; args = [] };
+      ] } in
+  let filter_next_self_param =
+    { Ast.pname = "self"; pty = Ast.TyPtr filter_target_ty;
+      preg = None; is_mut = false } in
+  let filter_item_ann =
+    Ast.TyStruct { path = ["I"; "Item"]; args = [] } in
+  let filter_option_item_ann =
+    Ast.TyStruct { path = ["Option"]; args = [ filter_item_ann ] } in
+  let filter_next_body =
+    let self_v = Ast.Var ("self", pos) in
+    let scrutinee = methcall (field self_v "inner") "next" [] in
+    let some_arm = Ast.{
+      pat = PVariant {
+        tname = ["Option"]; variant = "Some";
+        binds = PBTuple [ PVar ("v", pos) ]; pos };
+      guard = None;
+      body = Block ([
+        ExprStmt (If {
+          cond = methcall (field self_v "p") "call" [ Var ("v", pos) ];
+          then_blk = [
+            Assign {
+              path = ["result"];
+              value = EnumLit {
+                tname = ["Option"]; variant = "Some";
+                args = EATuple [ Var ("v", pos) ]; pos };
+              pos };
+            Assign {
+              path = ["keep"];
+              value = BoolLit (false, pos);
+              pos };
+          ];
+          else_blk = None; pos });
+      ], pos);
+      arm_pos = pos } in
+    let none_arm = Ast.{
+      pat = PVariant {
+        tname = ["Option"]; variant = "None";
+        binds = PBTuple []; pos };
+      guard = None;
+      body = Block ([
+        Assign {
+          path = ["keep"];
+          value = BoolLit (false, pos);
+          pos };
+      ], pos);
+      arm_pos = pos } in
+    [
+      Ast.Let { name = "keep"; is_mut = true; ty_ann = Some Ast.TyBool;
+                value = Ast.BoolLit (true, pos); pos };
+      Ast.Let { name = "result"; is_mut = true;
+                ty_ann = Some filter_option_item_ann;
+                value = Ast.EnumLit {
+                  tname = ["Option"]; variant = "None";
+                  args = Ast.EATuple []; pos };
+                pos };
+      Ast.While {
+        cond = Ast.Var ("keep", pos);
+        body = [
+          Ast.ExprStmt (Ast.Match {
+            scrutinee;
+            arms = [ some_arm; none_arm ];
+            pos });
+        ]
+      };
+      Ast.Tail (Ast.Var ("result", pos));
+    ]
+  in
+  let filter_next_method = {
+    Ast.name = "next"; c_name = "next";
+    tparams = []; tbounds = [];
+    params = [ filter_next_self_param ];
+    ret_ty = Some filter_option_item_ann;
+    body = filter_next_body;
+    is_pub = true; is_extern = false; is_variadic = false;
+    tier_hint = None; amiga_lib = None;
+    must_use = false; escapes_hatch = false; pos
+  } in
+  let filter_iter_impl = {
+    Ast.itparams = ["I"; "P"];
+    itbounds = [
+      ("I", ["Iterator"], []);
+      ("P", ["Fn1"], []);
+    ];
+    itrait = Some ["Iterator"];
+    iassoc = [
+      ("Item", filter_item_ann)
+    ];
+    itarget = ["Filter"];
+    iitems = [ filter_next_method ];
+    ipos = pos;
+  } in
   (* `Eq` / `Clone` — prelude traits derivable via `@derive(Eq, Clone)`.
      By-value `self` (value types copy cheaply).  `ne` is a default in
      terms of `eq`.  `Clone::clone` returns a copy of self.  Primitive
@@ -8530,6 +8691,8 @@ let prelude_items () =
     Ast.Impl take_iter_impl;
     Ast.Struct enumerate_struct;
     Ast.Impl enumerate_iter_impl;
+    Ast.Struct filter_struct;
+    Ast.Impl filter_iter_impl;
   ]
 
 (* ===== `@derive(...)` — synthesize trait impls (DECYZJA #1/#2) =====

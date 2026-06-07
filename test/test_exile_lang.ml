@@ -6205,6 +6205,102 @@ let () =
      contains c "Take_ex_VecIter_i32"
      && contains c "Map_ex_Take_ex_VecIter_i32_ex_Double");
 
+  (* DR-026 Step C - `Filter<I, P>` adapter struct +
+     `Iterator.filter(p)` default-method.  Closes out the v1
+     combinator surface.  Filter is two-tparam (I + P), so mono
+     defers until both pin at a callsite - no eager bloat per
+     Iterator-implementor (unlike Take/Enumerate).
+
+     Body-shape sidesteps the if-as-value and block-if-branch
+     limits the worklog flagged for predicate-driven `next`s:
+     mut `keep` + `result` flags drive a `while keep` outer loop;
+     every match-arm body is a plain stmt block (no value-returning
+     ifs).  Same DR-027 Site-1 multi-hop assoc-projection drives
+     `Filter::Item = I::Item` and Site-2 (DR-021 bound shortcut) is
+     exercised by the `P: Fn1` bound. *)
+  check_assert "DR-026 Step C: filter(p) drops items where p returns false"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct IsEven { _t: int }\n\
+          impl Fn1 for IsEven {\n\
+         \    type Arg = int;\n\
+         \    type Output = bool;\n\
+         \    fn call(*const self, x: int) -> bool { x % 2 == 0 }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(1); v.push(2); v.push(3); v.push(4);\n\
+         \    let pred = IsEven { _t: 0 };\n\
+         \    let mut s: int = 0;\n\
+         \    for x in v.iter().filter(pred) { s = s + x; }\n\
+         \    println(s);\n\
+          }\n"
+     in
+     (* Filter mono'd per (Self, P): VecIter<int> + IsEven. *)
+     contains c "Filter_ex_VecIter_i32_ex_IsEven"
+     && contains c "Filter__next_ex_VecIter_i32_ex_IsEven");
+
+  check_assert "DR-026 Step C: manual Filter constructor works"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct GT { threshold: int }\n\
+          impl Fn1 for GT {\n\
+         \    type Arg = int;\n\
+         \    type Output = bool;\n\
+         \    fn call(*const self, x: int) -> bool { x > self.threshold }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(7); v.push(8); v.push(9);\n\
+         \    let f: Filter<VecIter<int>, GT> =\n\
+         \        Filter { inner: v.iter(), p: GT { threshold: 7 } };\n\
+         \    let mut s: int = 0;\n\
+         \    for x in f { s = s + x; }\n\
+         \    println(s);\n\
+          }\n"
+     in
+     contains c "Filter_ex_VecIter_i32_ex_GT");
+
+  check_assert "DR-026 Step C: filter().map().fold() pipeline fuses"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct IsEven { _t: int }\n\
+          impl Fn1 for IsEven {\n\
+         \    type Arg = int;\n\
+         \    type Output = bool;\n\
+         \    fn call(*const self, x: int) -> bool { x % 2 == 0 }\n\
+          }\n\
+          struct Double { _t: int }\n\
+          impl Fn1 for Double {\n\
+         \    type Arg = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, x: int) -> int { x + x }\n\
+          }\n\
+          struct Sum { _t: int }\n\
+          impl Fn2 for Sum {\n\
+         \    type Arg1 = int;\n\
+         \    type Arg2 = int;\n\
+         \    type Output = int;\n\
+         \    fn call(*const self, acc: int, x: int) -> int { acc + x }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(1); v.push(2); v.push(3); v.push(4);\n\
+         \    let pred = IsEven { _t: 0 };\n\
+         \    let bumper = Double { _t: 0 };\n\
+         \    let summer = Sum { _t: 0 };\n\
+         \    let r: int =\n\
+         \        v.iter().filter(pred).map(bumper).fold(0, summer);\n\
+         \    println(r);\n\
+          }\n"
+     in
+     (* Filter pinned by VecIter, then Map pinned by Filter. *)
+     contains c "Filter_ex_VecIter_i32_ex_IsEven"
+     && contains c "Map_ex_Filter_ex_VecIter_i32_ex_IsEven_ex_Double");
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\

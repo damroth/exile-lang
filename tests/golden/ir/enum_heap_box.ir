@@ -4,6 +4,7 @@
 (tfn main (params ) void (body (let three (new-enum Expr::Lit tag=0 (field _0 (int 3) :ty (int i32))) :ty (ptr (enum Expr))) (let seven (new-enum Expr::Lit tag=0 (field _0 (int 7) :ty (int i32))) :ty (ptr (enum Expr))) (let twentyone (new-enum Expr::Mul tag=2 (field _0 (var three) :ty (ptr (enum Expr))) (field _1 (var seven) :ty (ptr (enum Expr)))) :ty (ptr (enum Expr))) (let five (new-enum Expr::Lit tag=0 (field _0 (int 5) :ty (int i32))) :ty (ptr (enum Expr))) (let four (new-enum Expr::Lit tag=0 (field _0 (int 4) :ty (int i32))) :ty (ptr (enum Expr))) (let twenty (new-enum Expr::Mul tag=2 (field _0 (var five) :ty (ptr (enum Expr))) (field _1 (var four) :ty (ptr (enum Expr)))) :ty (ptr (enum Expr))) (let one (new-enum Expr::Lit tag=0 (field _0 (int 1) :ty (int i32))) :ty (ptr (enum Expr))) (let lhs (new-enum Expr::Add tag=1 (field _0 (var twentyone) :ty (ptr (enum Expr))) (field _1 (var twenty) :ty (ptr (enum Expr)))) :ty (ptr (enum Expr))) (let root (new-enum Expr::Add tag=1 (field _0 (var lhs) :ty (ptr (enum Expr))) (field _1 (var one) :ty (ptr (enum Expr)))) :ty (ptr (enum Expr))) (expr-stmt (builtin-call println (call ex_eval (var root) :ty (ptr (enum Expr))) :ty (int i32)) :ty (int i32)) (expr-stmt (call ex_free_tree (var root) :ty (ptr (enum Expr))) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

@@ -14,6 +14,7 @@
 (tfn ex_run_binary_ex___closure_3 (params (param f (struct __closure_3)) (param x (int i32)) (param y (int i32))) (int i32) (body (return (call __closure_3__call (ref (var f) :ty (struct __closure_3)) :ty (const-ptr (struct __closure_3)) (var x) :ty (int i32) (var y) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

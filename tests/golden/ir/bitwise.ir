@@ -2,6 +2,7 @@
 (tfn main (params ) void (body (let read (binop << (int 1) :ty (int i32) (int 0) :ty (int i32)) :ty (int i32)) (let write (binop << (int 1) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32)) (let exec (binop << (int 1) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32)) (let rw (binop | (var read) :ty (int i32) (var write) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var rw) :ty (int i32)) :ty (int i32)) (if (binop == (binop & (var rw) :ty (int i32) (var write) :ty (int i32)) :ty (int i32) (var write) :ty (int i32)) :ty bool (then (expr-stmt (builtin-call println (int 1) :ty (int i32)) :ty (int i32))) (else (expr-stmt (builtin-call println (int 0) :ty (int i32)) :ty (int i32)))) (let no_write (binop & (var rw) :ty (int i32) (bit-not (var write) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var no_write) :ty (int i32)) :ty (int i32)) (let all (binop | (var rw) :ty (int i32) (var exec) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var all) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (binop ^ (int 12) :ty (int i32) (int 10) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (binop >> (int 255) :ty (int i32) (int 4) :ty (int i32)) :ty (int i32)) :ty (int i32)) (let idx (binop % (int 30) :ty (int i32) (int 8) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (var idx) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

@@ -4,6 +4,7 @@
 (tfn main (params ) void (body (expr-stmt (call putchar (int 72) :ty (int i32)) :ty (c_int signed)) (expr-stmt (call putchar (int 105) :ty (int i32)) :ty (c_int signed)) (expr-stmt (call putchar (int 33) :ty (int i32)) :ty (c_int signed)) (expr-stmt (call putchar (int 10) :ty (int i32)) :ty (c_int signed)) (expr-stmt (call printf (string "answer: %d\n") :ty str (int 42) :ty (int i32)) :ty (c_int signed)) (expr-stmt (call printf (string "two ints: %d %d\n") :ty str (int 7) :ty (int i32) (int 13) :ty (int i32)) :ty (c_int signed))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

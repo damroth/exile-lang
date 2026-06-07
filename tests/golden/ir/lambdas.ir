@@ -11,6 +11,7 @@
 (tfn ex___lambda_5 (params (param v (int i32))) bool (body (return (binop == (binop % (var v) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32) (int 0) :ty (int i32)) :ty bool)))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

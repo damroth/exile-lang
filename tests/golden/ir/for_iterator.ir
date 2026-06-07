@@ -8,6 +8,7 @@
   (struct Enumerate)
   (struct Enumerate_ex_Countdown)
   (struct Enumerate_ex_Range2)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

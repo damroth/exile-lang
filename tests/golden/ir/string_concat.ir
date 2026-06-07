@@ -2,6 +2,7 @@
 (tfn main (params ) void (body (let greeting (string "Hello, World!") :ty str) (expr-stmt (builtin-call println (var greeting) :ty str) :ty (int i32)) (let banner (string "=== exile-lang ===") :ty str) (expr-stmt (builtin-call println (var banner) :ty str) :ty (int i32)) (let version (string "v0.4.0") :ty str) (expr-stmt (builtin-call println (var version) :ty str) :ty (int i32)) (let labelled (string "type: i32") :ty str) (expr-stmt (builtin-call println (var labelled) :ty str) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

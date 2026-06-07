@@ -4,6 +4,7 @@
 (tfn main (params ) void (body (expr-stmt (call ex_hello) :ty (int i32)) (expr-stmt (call ex_goodbye) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

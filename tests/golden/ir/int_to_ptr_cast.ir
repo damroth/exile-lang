@@ -3,6 +3,7 @@
 (mono-instances
   (struct CustomChip)
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

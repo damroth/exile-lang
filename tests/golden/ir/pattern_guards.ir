@@ -3,6 +3,7 @@
 (tfn main (params ) void (body (let __lift_0 (enum-lit Number::Whole tag=0 (field _0 (int 7) :ty (int i32))) :ty (enum Number)) (expr-stmt (builtin-call println (call ex_describe (var __lift_0) :ty (enum Number)) :ty (int i32)) :ty (int i32)) (let __lift_1 (enum-lit Number::Whole tag=0 (field _0 (neg (int 3) :ty (int i32)) :ty (int i32))) :ty (enum Number)) (expr-stmt (builtin-call println (call ex_describe (var __lift_1) :ty (enum Number)) :ty (int i32)) :ty (int i32)) (let __lift_2 (enum-lit Number::Whole tag=0 (field _0 (int 0) :ty (int i32))) :ty (enum Number)) (expr-stmt (builtin-call println (call ex_describe (var __lift_2) :ty (enum Number)) :ty (int i32)) :ty (int i32)) (let __lift_3 (enum-lit Number::Zero tag=1) :ty (enum Number)) (expr-stmt (builtin-call println (call ex_describe (var __lift_3) :ty (enum Number)) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

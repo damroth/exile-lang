@@ -4,6 +4,7 @@
 (tfn main (params ) void (body (let q (struct-lit Point (field x (int 3) :ty (int i32)) (field y (int 4) :ty (int i32))) :ty (struct Point)) (let p (ref (var q) :ty (struct Point)) :ty (ptr (struct Point))) (expr-stmt (builtin-call println (call ex_dist_sq (var p) :ty (ptr (struct Point))) :ty (int i32)) :ty (int i32)) (expr-stmt (call ex_translate (var p) :ty (ptr (struct Point)) (int 1) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call ex_dist_sq (var p) :ty (ptr (struct Point))) :ty (int i32)) :ty (int i32)) (let pc (ref (var q) :ty (struct Point)) :ty (ptr (struct Point))) (expr-stmt (builtin-call println (field-access (var pc) :ty (const-ptr (struct Point)) x) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (field-access (var pc) :ty (const-ptr (struct Point)) y) :ty (int i32)) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

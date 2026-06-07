@@ -5,6 +5,7 @@
   (struct Enumerate)
   (struct Enumerate_ex_Take_ex_VecIter_i32)
   (struct Enumerate_ex_VecIter_i32)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

@@ -6,6 +6,7 @@
 (tfn main (params ) void (body (expr-stmt (builtin-call println (call math__double (int 21) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call math__double_then_bump (int 10) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call math__double (int 15) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (call greet__hi (string "hello from modules") :ty str) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

@@ -1,0 +1,87 @@
+// Iterator combinator stdlib v1, Step C (DR-026).
+//
+// `Filter<I, P>` is the predicate-driven adapter — it pulls items
+// from the inner iterator and only forwards the ones for which
+// `p.call(x)` returns true.  Same `impl<I: Iterator, P: Fn1>
+// Iterator for Filter<I, P>` shape as the other adapters: bounded
+// generic impl + `type Item = I::Item` projection via DR-027's
+// Site-1 fix.
+//
+// Body-shape note: a predicate-driven `next` is the one place in
+// the combinator family where the surface-level `if cond { ... }`
+// limits bite — block-bodied if-branches inside match arms and
+// `if cond Some else recurse` style trip the parser / codegen.
+// Filter sidesteps both by spelling the loop with a mutable
+// `keep` / `result` flag pair: pull one item, check the predicate,
+// either commit the value and clear `keep`, or let the loop run
+// again.  Plain stmts everywhere, no value-returning ifs.
+//
+// Iterator.filter is the dot-chain default:
+//
+//   fn filter<P: Fn1>(self, p: P) -> Filter<Self, P>
+//
+// Four shapes below — manual constructor, dot-chain filter, mixed
+// with map, and the full filter / map / fold pipeline.
+
+struct IsEven { _t: int }
+impl Fn1 for IsEven {
+    type Arg = int;
+    type Output = bool;
+    fn call(*const self, x: int) -> bool { x % 2 == 0 }
+}
+
+struct GreaterThan { threshold: int }
+impl Fn1 for GreaterThan {
+    type Arg = int;
+    type Output = bool;
+    fn call(*const self, x: int) -> bool { x > self.threshold }
+}
+
+struct Double { _t: int }
+impl Fn1 for Double {
+    type Arg = int;
+    type Output = int;
+    fn call(*const self, x: int) -> int { x + x }
+}
+
+struct Sum { _t: int }
+impl Fn2 for Sum {
+    type Arg1 = int;
+    type Arg2 = int;
+    type Output = int;
+    fn call(*const self, acc: int, x: int) -> int { acc + x }
+}
+
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(1); v.push(2); v.push(3); v.push(4); v.push(5); v.push(6);
+
+    // (1) Manual Filter constructor — explicit struct literal.
+    let pred1 = IsEven { _t: 0 };
+    let f1: Filter<VecIter<int>, IsEven> =
+        Filter { inner: v.iter(), p: pred1 };
+    let mut s1: int = 0;
+    for x in f1 { s1 = s1 + x; }
+    println(s1);                          // 12 = 2 + 4 + 6
+
+    // (2) Dot-chain `filter(p)` — Iterator.filter default method.
+    let pred2 = GreaterThan { threshold: 3 };
+    let mut s2: int = 0;
+    for x in v.iter().filter(pred2) { s2 = s2 + x; }
+    println(s2);                          // 15 = 4 + 5 + 6
+
+    // (3) Filter then map — only evens get doubled.
+    let pred3 = IsEven { _t: 0 };
+    let bumper = Double { _t: 0 };
+    let mut s3: int = 0;
+    for x in v.iter().filter(pred3).map(bumper) { s3 = s3 + x; }
+    println(s3);                          // 24 = 4 + 8 + 12
+
+    // (4) Full pipeline: filter then map then fold terminal.
+    let pred4 = IsEven { _t: 0 };
+    let bumper4 = Double { _t: 0 };
+    let summer = Sum { _t: 0 };
+    let r: int = v.iter().filter(pred4).map(bumper4).fold(0, summer);
+    println(r);                           // 24 — same as (3)
+}

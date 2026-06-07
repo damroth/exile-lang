@@ -3,6 +3,7 @@
 (tfn UpTo__next pub (params (param self (struct UpTo))) (enum Option_i32) (body (return (if-expr (binop < (field-access (var self) :ty (struct UpTo) cur) :ty (int i32) (field-access (var self) :ty (struct UpTo) end) :ty (int i32)) :ty bool (enum-lit Option_i32::Some tag=1 (field _0 (field-access (var self) :ty (struct UpTo) cur) :ty (int i32))) :ty (enum Option_i32) (enum-lit Option_i32::None tag=0) :ty (enum Option_i32)) :ty (enum Option_i32))))
 (mono-instances
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)

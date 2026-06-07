@@ -6,6 +6,7 @@
   (struct Allocator)
   (struct Double)
   (struct Enumerate)
+  (struct Filter)
   (struct HashMap)
   (struct HashMapIter)
   (struct Map)
