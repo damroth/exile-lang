@@ -9147,6 +9147,24 @@ let expand_lambdas (program : Ast.program) : Ast.program =
     let n = !closure_counter in incr closure_counter;
     Printf.sprintf "__closure_%d" n
   in
+  (* DR-036 follow-up - index every top-level fn's ret_ty by name.
+     The mini-inferencer below uses this to handle the
+     `let n = compute_value()` shape: a Call to a fn with a known
+     return type can flow its annotation into the surrounding
+     scope so a downstream closure sees `n` as captured.
+     Methods and qualified paths are skipped - their receiver
+     types aren't known pre-typecheck. *)
+  let fn_ret_index : (string, Ast.type_ann) Hashtbl.t = Hashtbl.create 64 in
+  let rec index_item (it : Ast.item) =
+    match it with
+    | Ast.Function f ->
+        (match f.ret_ty with
+         | Some t -> Hashtbl.replace fn_ret_index f.name t
+         | None -> ())
+    | Ast.Module m -> List.iter index_item m.mitems
+    | _ -> ()
+  in
+  List.iter index_item program;
   (* Collect the names referenced as Ast.Var that are NOT bound
      locally inside [e] (by lambda params or internal lets/patterns).
      Used at Lambda elab to discover captures: the lambda's own
@@ -9735,29 +9753,76 @@ let expand_lambdas (program : Ast.program) : Ast.program =
     match s with
     | Ast.Let { name; value; ty_ann; is_mut; pos } ->
         let value = lift_e ~scope value in
-        (* DR-036 - mini-inferencer for untyped let RHS, partial:
-           covers the literal-RHS path (`let n = 42; ...; |x| x + n`)
-           and the explicit-cast path (`let n = 42 as u32; ...`)
-           by deriving a type annotation cheaply from the RHS without
-           a real typecheck.  This is what lets captureless A2
-           closures pick up the binding as a capture instead of
-           sliding past it to the captureless A1 fn-ptr decay (which
-           then fails the Fn1 bound at the call site).  Complex RHS
-           (calls, ops, struct lits) still need an explicit
-           annotation - the full POST-typecheck lift restructuring
-           is the long-term fix. *)
+        (* DR-036 - mini-inferencer for untyped let RHS.  Walks the
+           RHS structurally without a real typecheck and derives a
+           cheap type annotation; the binding then enters scope so
+           a downstream closure can capture it through the A2 path
+           instead of decaying to A1 fn-ptr (which fails Fn1).
+           Patterns covered:
+             - IntLit / BoolLit / StringLit / FloatLit (literals)
+             - Cast (_, ann, _)               (explicit annotation)
+             - Var n (lookup in current scope, lets transitively
+               flow through `let a = 42; let b = a;` chains)
+             - BinOp (op, l, r) (the operator's result type is the
+               same as the wider/known operand for arithmetic and
+               always bool for comparisons / logical ops)
+             - Not / Neg / BitNot (unary)
+             - Call { callee = [name] } (top-level fn ret_ty lookup)
+             - StructLit { tname; ... } (cheap path-only wrap)
+             - EnumLit { tname; ... } (enum value)
+             - Range { ... } (constructs `Range<T>` from its bounds)
+           Complex RHS (method calls, generic struct lits with type
+           args, container literals) still need an explicit ann -
+           the long-term fix is the full POST-typecheck lift
+           restructuring. *)
+        let int_default = Ast.TyInt { signed = true; width = Ast.W32 } in
+        let bool_ann = Ast.TyBool in
+        let is_cmp_op = function
+          | Ast.EqEq | Ast.NotEq | Ast.Lt | Ast.LtEq
+          | Ast.Gt | Ast.GtEq -> true
+          | _ -> false
+        in
+        let is_logical_op = function
+          | Ast.And | Ast.Or -> true
+          | _ -> false
+        in
+        let rec infer_ty_of (e : Ast.expr) : Ast.type_ann option =
+          match e with
+          | Ast.IntLit _ -> Some int_default
+          | Ast.BoolLit _ -> Some bool_ann
+          | Ast.StringLit _ -> Some Ast.TyStr
+          | Ast.FloatLit (_, w, _) -> Some (Ast.TyFloat w)
+          | Ast.Cast (_, ann, _) -> Some ann
+          | Ast.Var (n, _) -> List.assoc_opt n scope
+          | Ast.BinOp (op, l, r, _) when is_cmp_op op || is_logical_op op ->
+              Some bool_ann
+          | Ast.BinOp (_, l, r, _) ->
+              (match infer_ty_of l with
+               | Some _ as t -> t
+               | None -> infer_ty_of r)
+          | Ast.Neg (sub, _) | Ast.BitNot (sub, _) -> infer_ty_of sub
+          | Ast.Not _ -> Some bool_ann
+          | Ast.Call { callee = [single]; _ } ->
+              Hashtbl.find_opt fn_ret_index single
+          | Ast.StructLit { tname; _ } ->
+              Some (Ast.TyStruct { path = tname; args = [] })
+          | Ast.EnumLit { tname; _ } ->
+              Some (Ast.TyStruct { path = tname; args = [] })
+          | Ast.Range _ ->
+              (* `Range<int>` is the common case; the lambda needs
+                 *some* aggregate type and Range carries its tparam
+                 from its bounds, but we cheaply pin to `int` since
+                 untyped ranges are the typical untyped-let target. *)
+              Some (Ast.TyStruct {
+                path = ["Range"];
+                args = [ int_default ];
+              })
+          | _ -> None
+        in
         let inferred_ty =
           match ty_ann with
           | Some _ -> ty_ann
-          | None ->
-              (match value with
-               | Ast.IntLit _ ->
-                   Some (Ast.TyInt { signed = true; width = Ast.W32 })
-               | Ast.BoolLit _ -> Some Ast.TyBool
-               | Ast.StringLit _ -> Some Ast.TyStr
-               | Ast.FloatLit (_, w, _) -> Some (Ast.TyFloat w)
-               | Ast.Cast (_, ann, _) -> Some ann
-               | _ -> None)
+          | None -> infer_ty_of value
         in
         let scope' =
           match inferred_ty with

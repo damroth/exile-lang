@@ -6452,14 +6452,74 @@ let () =
      in
      contains c "__closure_0");
 
-  check_error "DR-036: complex RHS still needs explicit ann"
-    "fn add(a: int, b: int) -> int { a + b }\n\
-     fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
-     fn main() {\n\
-    \    let n = add(40, 2);\n\
-    \    println(run(|x: int| -> int x + n, 5));\n\
+  (* DR-038 - mini-inferencer extended past literals to handle the
+     real-world idiom port-code uses: `let n = compute(); let bias
+     = ctx + 10; .map(|x| x + bias)`.  Patterns covered:
+       - Var n (scope chain lookup)
+       - BinOp (compare/logical → bool; arithmetic → operand type)
+       - Call to a top-level fn (ret_ty lookup)
+       - StructLit / EnumLit (path-only wrap)
+       - Neg / BitNot / Not (unary)
+       - Range (pinned to Range<int>) *)
+  check_assert "DR-038: BinOp Var+Var infers operand type"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let a = 40;\n\
+         \    let b = 2;\n\
+         \    let n = a + b;\n\
+         \    println(run(|x: int| -> int x + n, 5));\n\
+          }\n"
+     in
+     contains c "__closure_0");
+
+  check_assert "DR-038: Call to top-level fn infers ret_ty"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn compute() -> int { 42 }\n\
+          fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let n = compute();\n\
+         \    println(run(|x: int| -> int x + n, 5));\n\
+          }\n"
+     in
+     contains c "__closure_0");
+
+  check_assert "DR-038: BinOp comparison infers bool"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let a = 10;\n\
+         \    let cond = a > 5;\n\
+         \    println(run(|x: int| -> int if cond { x + 1 } else { x }, 5));\n\
+          }\n"
+     in
+     contains c "__closure_0");
+
+  check_assert "DR-038: Var-of-Var chain flows the inferred type"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let a = 10;\n\
+         \    let b = a;\n\
+         \    let c = b;\n\
+         \    println(run(|x: int| -> int x + c, 5));\n\
+          }\n"
+     in
+     contains c "__closure_0");
+
+  check_error "DR-038: method-call RHS still needs explicit ann"
+    "fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+    \    let n = v.len();\n\
+    \    let f = |x: u32| -> u32 x + n;\n\
+    \    println(f(5 as u32) as int);\n\
      }\n"
-    "type 'fn(i32) -> i32' does not implement trait 'Fn1' (required by bound 'F: Fn1' on 'run')";
+    "undefined variable 'n'";
 
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
