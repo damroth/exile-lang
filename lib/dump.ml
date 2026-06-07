@@ -94,6 +94,8 @@ let rec render_typ_canonical = function
   | TExtAlias n -> Printf.sprintf "(ext-alias %s)" n
   | TPtr inner ->
       Printf.sprintf "(ptr %s)" (render_typ_canonical inner)
+  | TOwnPtr inner ->
+      Printf.sprintf "(own-ptr %s)" (render_typ_canonical inner)
   | TConstPtr inner ->
       Printf.sprintf "(const-ptr %s)" (render_typ_canonical inner)
   | TArray { elem; size } ->
@@ -176,6 +178,7 @@ let render_token (t : Token.t) : string =
   | Token.DotDotEq -> "DotDotEq"
   | Token.Amp -> "Amp"
   | Token.New -> "New"
+  | Token.Own -> "Own"
   | Token.Null -> "Null"
   | Token.LParen -> "LParen"
   | Token.RParen -> "RParen"
@@ -268,6 +271,7 @@ let rec render_type_ann (ann : Ast.type_ann) : string =
         (String.concat "::" path)
         (String.concat " " (List.map render_type_ann args))
   | Ast.TyPtr t -> Printf.sprintf "(ptr %s)" (render_type_ann t)
+  | Ast.TyOwnPtr t -> Printf.sprintf "(own-ptr %s)" (render_type_ann t)
   | Ast.TyConstPtr t ->
       Printf.sprintf "(const-ptr %s)" (render_type_ann t)
   | Ast.TyArray { elem; _ } ->

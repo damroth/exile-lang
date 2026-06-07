@@ -25,7 +25,7 @@ fn main() {
     // Typed allocation: `alloc::<int>()` reduces to a sized
     // request + cast.  Bidirectional inference picks T from the
     // let annotation since the call has no constraining args.
-    let p: *int = a.alloc();
+    let p: own *int = a.alloc();
     if p == null {
         println(-1);
     } else {
@@ -39,7 +39,7 @@ fn main() {
 
     // Different T → different instance.  Both `Allocator__alloc_i32`
     // and `Allocator__alloc_bool` end up in the emitted C.
-    let q: *bool = a.alloc();
+    let q: own *bool = a.alloc();
     if q != null {
         *q = true;
         if *q { println(1); } else { println(0); }   // 1

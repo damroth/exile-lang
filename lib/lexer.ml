@@ -35,6 +35,7 @@ let keyword_or_ident = function
   | "var" -> Token.Var
   | "size_of" -> Token.SizeOf
   | "new" -> Token.New
+  | "own" -> Token.Own
   | "null" -> Token.Null
   | "true" -> Token.True
   | "false" -> Token.False

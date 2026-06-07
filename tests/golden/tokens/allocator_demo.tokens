@@ -29,15 +29,16 @@ Semicolon @examples/allocator_demo.exl:23:36
 Let @examples/allocator_demo.exl:28:5
 (Ident p) @examples/allocator_demo.exl:28:9
 Colon @examples/allocator_demo.exl:28:10
-Star @examples/allocator_demo.exl:28:12
-(Ident int) @examples/allocator_demo.exl:28:13
-Eq @examples/allocator_demo.exl:28:17
-(Ident a) @examples/allocator_demo.exl:28:19
-Dot @examples/allocator_demo.exl:28:20
-(Ident alloc) @examples/allocator_demo.exl:28:21
-LParen @examples/allocator_demo.exl:28:26
-RParen @examples/allocator_demo.exl:28:27
-Semicolon @examples/allocator_demo.exl:28:28
+Own @examples/allocator_demo.exl:28:12
+Star @examples/allocator_demo.exl:28:16
+(Ident int) @examples/allocator_demo.exl:28:17
+Eq @examples/allocator_demo.exl:28:21
+(Ident a) @examples/allocator_demo.exl:28:23
+Dot @examples/allocator_demo.exl:28:24
+(Ident alloc) @examples/allocator_demo.exl:28:25
+LParen @examples/allocator_demo.exl:28:30
+RParen @examples/allocator_demo.exl:28:31
+Semicolon @examples/allocator_demo.exl:28:32
 If @examples/allocator_demo.exl:29:5
 (Ident p) @examples/allocator_demo.exl:29:8
 EqEq @examples/allocator_demo.exl:29:10
@@ -74,15 +75,16 @@ RBrace @examples/allocator_demo.exl:38:5
 Let @examples/allocator_demo.exl:42:5
 (Ident q) @examples/allocator_demo.exl:42:9
 Colon @examples/allocator_demo.exl:42:10
-Star @examples/allocator_demo.exl:42:12
-(Ident bool) @examples/allocator_demo.exl:42:13
-Eq @examples/allocator_demo.exl:42:18
-(Ident a) @examples/allocator_demo.exl:42:20
-Dot @examples/allocator_demo.exl:42:21
-(Ident alloc) @examples/allocator_demo.exl:42:22
-LParen @examples/allocator_demo.exl:42:27
-RParen @examples/allocator_demo.exl:42:28
-Semicolon @examples/allocator_demo.exl:42:29
+Own @examples/allocator_demo.exl:42:12
+Star @examples/allocator_demo.exl:42:16
+(Ident bool) @examples/allocator_demo.exl:42:17
+Eq @examples/allocator_demo.exl:42:22
+(Ident a) @examples/allocator_demo.exl:42:24
+Dot @examples/allocator_demo.exl:42:25
+(Ident alloc) @examples/allocator_demo.exl:42:26
+LParen @examples/allocator_demo.exl:42:31
+RParen @examples/allocator_demo.exl:42:32
+Semicolon @examples/allocator_demo.exl:42:33
 If @examples/allocator_demo.exl:43:5
 (Ident q) @examples/allocator_demo.exl:43:8
 NotEq @examples/allocator_demo.exl:43:10

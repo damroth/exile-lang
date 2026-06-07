@@ -56,6 +56,20 @@ type type_ann =
                                           args=[] }` until typecheck binds
                                           them as type variables. *)
   | TyPtr of type_ann                  (* `*T` — mutable pointee *)
+  | TyOwnPtr of type_ann               (* `own *T` — DR-030 Faza-1a Owner-
+                                          sigil third-pointer type.  Marks
+                                          unique ownership of the pointee
+                                          (Allocator.alloc origin, free
+                                          / move consumes, scope-exit on
+                                          a Live owner injects drop).
+                                          Codegen erases the sigil: emits
+                                          `T *` exactly like TyPtr.  The
+                                          OWN-D1 coercion (ir.ml's
+                                          coercible_to) lets `own *T`
+                                          decay to `*T`/`*const T` for
+                                          borrowing, never the reverse —
+                                          you can lend ownership, never
+                                          fabricate it. *)
   | TyConstPtr of type_ann             (* `*const T` — pointee is read-only
                                           (maps to C `const T *`).  Writes
                                           through such a pointer (`*p = v`)

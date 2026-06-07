@@ -67,6 +67,12 @@ type typ =
                                           never `is_concrete`, and never reach
                                           codegen — exactly like `TVar`. *)
   | TPtr of typ                        (* `*T` — mutable pointee *)
+  | TOwnPtr of typ                     (* `own *T` — DR-030 Faza-1a Owner-
+                                          sigil unique pointer.  Codegen
+                                          identical to TPtr (sigil
+                                          erased).  OWN-D1: coerces to
+                                          TPtr / TConstPtr (lend), never
+                                          the reverse (fabricate). *)
   | TConstPtr of typ                   (* `*const T` — read-only pointee.
                                           Codegen emits `const T *`; writes
                                           via deref or field-of-deref are
@@ -136,7 +142,7 @@ let is_int_like = function
    makes FFI to AmigaOS-style `APTR`/`*c_char` ergonomic ("hello" cast
    to *c_uchar etc.). *)
 let is_ptr = function
-  | TPtr _ | TConstPtr _ | TNullPtr | TString -> true
+  | TPtr _ | TOwnPtr _ | TConstPtr _ | TNullPtr | TString -> true
   | _ -> false
 
 let int_fits n typ =
@@ -263,6 +269,7 @@ let rec type_of_ann = function
   | Ast.TyTuple ts -> TTuple (List.map type_of_ann ts)
   | Ast.TyStruct { path; args = _ } -> TStruct path
   | Ast.TyPtr t -> TPtr (type_of_ann t)
+  | Ast.TyOwnPtr t -> TOwnPtr (type_of_ann t)
   | Ast.TyConstPtr t -> TConstPtr (type_of_ann t)
   | Ast.TyArray _ ->
       (* Array sizes need const evaluation (a ctx), which this ctx-free
@@ -309,6 +316,7 @@ let rec typ_name = function
       String.concat "::" path
       ^ "<" ^ String.concat ", " (List.map typ_name args) ^ ">"
   | TPtr t -> "*" ^ typ_name t
+  | TOwnPtr t -> "own *" ^ typ_name t
   | TConstPtr t -> "*const " ^ typ_name t
   | TArray { elem; size } -> Printf.sprintf "[%s; %d]" (typ_name elem) size
   | TFnPtr { params; ret } ->
@@ -325,9 +333,11 @@ let rec typ_name = function
 let rec typ_eq a b =
   match a, b with
   | TNullPtr, TPtr _ | TPtr _, TNullPtr -> true
+  | TNullPtr, TOwnPtr _ | TOwnPtr _, TNullPtr -> true
   | TNullPtr, TConstPtr _ | TConstPtr _, TNullPtr -> true
   | TNullPtr, TNullPtr -> true
   | TPtr a, TPtr b -> typ_eq a b
+  | TOwnPtr a, TOwnPtr b -> typ_eq a b
   | TConstPtr a, TConstPtr b -> typ_eq a b
   | TTuple xs, TTuple ys ->
       List.length xs = List.length ys && List.for_all2 typ_eq xs ys
@@ -345,6 +355,12 @@ let coercible_to ~from ~to_ =
   typ_eq from to_ ||
   (match from, to_ with
    | TPtr a, TConstPtr b -> typ_eq a b
+   (* DR-030 Faza-1a OWN-D1: an `own *T` may lend itself out as a
+      plain pointer for borrowing, but the reverse never holds —
+      you cannot fabricate ownership from a borrow.  Same identity
+      rule as TPtr → TConstPtr: the pointee types must agree. *)
+   | TOwnPtr a, TPtr b -> typ_eq a b
+   | TOwnPtr a, TConstPtr b -> typ_eq a b
    | _ -> false)
 
 (* Mangle a type to a C-identifier-safe string used as a unique key for
@@ -392,6 +408,7 @@ let rec mangle_typ = function
   | TExtStruct n -> n              (* raw — opaque struct lives in C namespace *)
   | TExtAlias n -> n               (* raw — opaque type alias lives in C namespace *)
   | TPtr t -> "ptr_" ^ mangle_typ t
+  | TOwnPtr t -> "ownptr_" ^ mangle_typ t
   | TConstPtr t -> "cptr_" ^ mangle_typ t
   | TArray { elem; size } -> Printf.sprintf "arr%d_%s" size (mangle_typ elem)
   | TFnPtr { params; ret } ->
@@ -469,6 +486,11 @@ let rec c_type_prefix = function
       (* Pointer types render as `<base> *` with no trailing space, so
          `c_decl t name` produces `<base> *name`. *)
       strip_trailing_space (c_type_prefix inner) ^ " *"
+  | TOwnPtr TCVoid -> "void *"
+  | TOwnPtr inner ->
+      (* DR-030: own *T erases to plain `T *` in C - the ownership
+         invariant lives purely in the static checker. *)
+      strip_trailing_space (c_type_prefix inner) ^ " *"
   | TConstPtr TCVoid -> "const void *"
   | TConstPtr inner ->
       (* `*const T` -> `const T *` (pointer to const data; the pointer
@@ -519,6 +541,8 @@ let rec render_typ_user_facing ~structs ~enums t =
            render_named_with_args ~structs ~enums path args
        | _ -> typ_name t)
   | TPtr inner -> "*" ^ render_typ_user_facing ~structs ~enums inner
+  | TOwnPtr inner ->
+      "own *" ^ render_typ_user_facing ~structs ~enums inner
   | TTuple ts ->
       "(" ^ String.concat ", "
               (List.map (render_typ_user_facing ~structs ~enums) ts) ^ ")"
@@ -551,6 +575,7 @@ and render_named_with_args ~structs ~enums path args =
    only — single editing point for the whole pipeline. *)
 let rec type_map ~f = function
   | TPtr inner -> TPtr (type_map ~f inner)
+  | TOwnPtr inner -> TOwnPtr (type_map ~f inner)
   | TConstPtr inner -> TConstPtr (type_map ~f inner)
   | TArray { elem; size } -> TArray { elem = type_map ~f elem; size }
   | TTuple ts -> TTuple (List.map (type_map ~f) ts)
@@ -570,6 +595,7 @@ let rec type_map ~f = function
    like "is this type concrete" or "does this type mention X". *)
 let rec type_for_all ~f = function
   | TPtr inner -> type_for_all ~f inner
+  | TOwnPtr inner -> type_for_all ~f inner
   | TConstPtr inner -> type_for_all ~f inner
   | TArray { elem; _ } -> type_for_all ~f elem
   | TTuple ts -> List.for_all (type_for_all ~f) ts

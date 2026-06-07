@@ -706,6 +706,7 @@ let rec resolve_type_ann_raw ?(visited = []) ~pos ctx ann =
   | Ast.TyFloat w -> TFloat w
   | Ast.TyTuple ts -> TTuple (List.map recur ts)
   | Ast.TyPtr t -> TPtr (recur t)
+  | Ast.TyOwnPtr t -> TOwnPtr (recur t)
   | Ast.TyConstPtr t -> TConstPtr (recur t)
   | Ast.TyArray { elem; size } ->
       let elem' = recur elem in
@@ -851,6 +852,7 @@ let rec normalize_apps ctx t =
         | None -> TEnumApp { path; args }
       else TEnumApp { path; args }
   | TPtr inner -> TPtr (normalize_apps ctx inner)
+  | TOwnPtr inner -> TOwnPtr (normalize_apps ctx inner)
   | TConstPtr inner -> TConstPtr (normalize_apps ctx inner)
   | TTuple ts -> TTuple (List.map (normalize_apps ctx) ts)
   | TFnPtr { params; ret } ->
@@ -985,12 +987,21 @@ let rec expand_inst_pair ctx (decl, act) =
            List.concat_map (expand_inst_pair ctx) (List.combine dargs iargs)
        | _ -> [ (decl, act) ])
   | TPtr d, TPtr a -> expand_inst_pair ctx (d, a)
+  | TOwnPtr d, TOwnPtr a -> expand_inst_pair ctx (d, a)
   | TConstPtr d, TConstPtr a -> expand_inst_pair ctx (d, a)
   (* `*const T` declaration paired with a `*U` actual: pointee-immutability
      coercion is implicit, so infer `T = U` from the pointees alone (the
      coercion itself runs after instance-resolution in the caller's
      type check). *)
   | TConstPtr d, TPtr a -> expand_inst_pair ctx (d, a)
+  (* DR-030 OWN-D1: `own *T` decl paired with `*U` / `*const U`
+     actual — the call-site coercion narrows ownership down, so
+     infer T = U from the pointees.  The coercion check runs after
+     inference and ensures the lend is legal. *)
+  | TOwnPtr d, TPtr a -> expand_inst_pair ctx (d, a)
+  | TOwnPtr d, TConstPtr a -> expand_inst_pair ctx (d, a)
+  | TPtr d, TOwnPtr a -> expand_inst_pair ctx (d, a)
+  | TConstPtr d, TOwnPtr a -> expand_inst_pair ctx (d, a)
   | _ -> [ (decl, act) ]
 
 (* Recognise an integer literal expression — bare or negated — for type-fitting
@@ -2169,7 +2180,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       let sub' = elab_expr ctx env sub in
       let ty =
         match sub'.ty with
-        | TPtr t | TConstPtr t -> t
+        | TPtr t | TOwnPtr t | TConstPtr t -> t
         | TNullPtr -> Error.failf deref_pos "cannot deref 'null'"
         | other ->
             Error.failf deref_pos "deref '*' requires a pointer, got %s"
@@ -2228,7 +2239,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
          original error. *)
       let tbase =
         match tbase.ty with
-        | TPtr inner | TConstPtr inner ->
+        | TPtr inner | TOwnPtr inner | TConstPtr inner ->
             { e = TDeref tbase; ty = inner; pos = tbase.pos }
         | _ -> tbase
       in
@@ -3385,7 +3396,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         match trecv.ty with
         | TInt _ | TCInt _ | TCShort _ | TCLong _ | TCChar | TCSChar
         | TCUChar | TBool | TString | TExtAlias _
-        | TPtr _ | TConstPtr _ | TNullPtr -> true
+        | TPtr _ | TOwnPtr _ | TConstPtr _ | TNullPtr -> true
         | _ -> false
       in
       (match is_primitive, name, args with
@@ -3645,9 +3656,13 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 (* Auto-ref / auto-deref: align receiver shape with the
                    method's self-param shape. *)
                 let recv_is_ptr =
-                  match trecv.ty with TPtr _ | TConstPtr _ -> true | _ -> false in
+                  match trecv.ty with
+                  | TPtr _ | TOwnPtr _ | TConstPtr _ -> true | _ -> false
+                in
                 let self_is_ptr =
-                  match self_ty with TPtr _ | TConstPtr _ -> true | _ -> false in
+                  match self_ty with
+                  | TPtr _ | TOwnPtr _ | TConstPtr _ -> true | _ -> false
+                in
                 let trecv_adj =
                   match self_is_ptr, recv_is_ptr with
                   | false, false | true, true -> trecv
@@ -4161,6 +4176,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let inner =
           match ttarget.ty with
           | TPtr t -> t
+          | TOwnPtr t -> t
           | TConstPtr _ ->
               Error.failf pos
                 "cannot assign through '*const' pointer %s (pointee is \
@@ -5059,10 +5075,40 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts
         modules; scope = p; tparams = s.stparams;
         ext_structs; ext_types; ext_consts;
       } in
-      { skel with
-        sfields_ty =
-          List.map (fun (n, t) ->
-            (n, resolve_type_ann ~pos:s.spos ctx t)) s.sfields })
+      let sfields_ty =
+        List.map (fun (n, t) ->
+          (n, resolve_type_ann ~pos:s.spos ctx t)) s.sfields
+      in
+      (* DR-030 Faza-1a: a struct with at least one `own *T` field
+         must carry an `alloc: Allocator` field so the synthesised
+         drop knows which allocator to release the storage through.
+         Without an allocator on hand, ownership has no end-of-life
+         action and the language can't guarantee the free pairs
+         the original allocation (libc-`free` on Amiga-arena memory
+         is undefined behaviour).  Faza-1b will add `new(alloc)`
+         as the second sanctioned origin which gives an alternate
+         drop-source (carry-the-allocator-by-fat-ptr); until then
+         the alloc-field requirement is the simplest sound rule. *)
+      let has_own_field =
+        List.exists
+          (fun (_, ft) -> match ft with TOwnPtr _ -> true | _ -> false)
+          sfields_ty
+      in
+      let has_alloc_field =
+        List.exists
+          (fun (_, ft) -> match ft with
+             | TStruct ["Allocator"] -> true
+             | _ -> false)
+          sfields_ty
+      in
+      if has_own_field && not has_alloc_field then
+        Error.failf s.spos
+          "struct '%s' has an `own *T` field but no `alloc: Allocator` \
+           field — the owner-drop synthesis needs an allocator to \
+           release the storage through; add `alloc: Allocator` to the \
+           struct so the drop pass knows where to send the free"
+          s.sname;
+      { skel with sfields_ty })
     struct_flat skeleton
 
 (* Build the enum registry.  Like `build_struct_index` we go two-pass:
@@ -5197,7 +5243,7 @@ let collect_tuple_types_of ?(structs = []) ?(enums = []) tfuncs =
         List.exists contains_tvar params
         || (match ret with Some t -> contains_tvar t | None -> false)
     | TArray { elem; _ } -> contains_tvar elem
-    | TPtr inner | TConstPtr inner -> contains_tvar inner
+    | TPtr inner | TOwnPtr inner | TConstPtr inner -> contains_tvar inner
     | TStructApp { args; _ } | TEnumApp { args; _ } ->
         List.exists contains_tvar args
     | _ -> false
@@ -5234,7 +5280,7 @@ let collect_tuple_types_of ?(structs = []) ?(enums = []) tfuncs =
         (* Post-order: an array-of-array's inner shape must be defined
            first, so add the element shapes before self. *)
         walk_typ elem; add_array t
-    | TPtr inner -> walk_typ inner
+    | TPtr inner | TOwnPtr inner | TConstPtr inner -> walk_typ inner
     | _ -> ()
   in
   let visit_expr (te : texpr) =
@@ -5843,9 +5889,13 @@ let prelude_items () =
   let pos = prelude_pos in
   let var n = Ast.Var (n, pos) in
   let alloc_body = [
-    (* return (self.alloc_fn(self.state, size_of(T) as u32)) as *T;
-       (size_of returns c_uint; alloc_fn now takes u32 — width-pin
-       the byte-count at the seam per DR-001 §6(ii).) *)
+    (* DR-030 Faza-1a: Allocator.alloc is the sanctioned origin of
+       `own *T`.  The body casts the raw `*c_void` from `alloc_fn`
+       to `own *T` — that cast is "fabricate ownership" but explicit
+       (the seam between unsafe extern memory and the OWN-tracked
+       value world).  Plain `*T → own *T` implicit coercions remain
+       forbidden by OWN-D1; this cast is the single exception that
+       lets the rest of the language stay strict. *)
     Ast.Return (
       Some (Ast.Cast (
         Ast.MethodCall {
@@ -5856,7 +5906,7 @@ let prelude_items () =
                              pos) ];
           pos;
         },
-        Ast.TyPtr (tvar "T"), pos)),
+        Ast.TyOwnPtr (tvar "T"), pos)),
       pos);
   ] in
   let free_body = [
@@ -5886,7 +5936,7 @@ let prelude_items () =
   in
   let alloc_method =
     mk_method "alloc" ["T"] [self_param]
-      (Some (Ast.TyPtr (tvar "T"))) alloc_body
+      (Some (Ast.TyOwnPtr (tvar "T"))) alloc_body
   in
   let free_method =
     mk_method "free" ["T"]
@@ -10805,7 +10855,8 @@ let check_program program : tprogram =
     | TStruct p -> p = target
     | TStructApp { path; args } | TEnumApp { path; args } ->
         path = target || List.exists (typ_mentions target) args
-    | TPtr inner -> typ_mentions target inner
+    | TPtr inner | TOwnPtr inner | TConstPtr inner ->
+        typ_mentions target inner
     | TArray { elem; _ } -> typ_mentions target elem
     | TTuple ts -> List.exists (typ_mentions target) ts
     | TFnPtr { params; ret } ->
@@ -11029,7 +11080,7 @@ let check_program program : tprogram =
       | TStruct p | TEnum p -> add p
       | TStructApp { path; args } | TEnumApp { path; args } ->
           add path; List.iter walk args
-      | TPtr t | TConstPtr t -> walk t
+      | TPtr t | TOwnPtr t | TConstPtr t -> walk t
       | TArray { elem; _ } -> walk elem
       | TTuple ts -> List.iter walk ts
       | TFnPtr { params; ret } ->
@@ -11108,7 +11159,7 @@ let check_program program : tprogram =
   let rec field_ty_ok = function
     | TInt _ | TCInt _ | TCShort _ | TCLong _
     | TCChar | TCSChar | TCUChar | TBool | TFloat _ | TString | TPtr _
-    | TConstPtr _ -> true
+    | TOwnPtr _ | TConstPtr _ -> true
     | TStruct p -> struct_is_debug p
     | TEnum p -> enum_is_debug p
     (* Tuple fields aren't rendered by the synthesized printer yet

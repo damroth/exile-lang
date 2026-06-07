@@ -448,7 +448,10 @@ let rec gen_expr ctx buf (te : texpr) =
       Buffer.add_string buf field
   | TFieldAccess { target; field } ->
       (* Auto-deref pointer-to-struct via `->`; otherwise plain `.`. *)
-      let sep = match target.ty with TPtr _ | TConstPtr _ -> "->" | _ -> "." in
+      let sep =
+        match target.ty with
+        | TPtr _ | TOwnPtr _ | TConstPtr _ -> "->" | _ -> "."
+      in
       gen_expr ctx buf target;
       Buffer.add_string buf sep;
       Buffer.add_string buf field
@@ -650,7 +653,10 @@ and emit_simple_stmt ctx buf indent stmt =
   | TLetTuple { names; value; _ } ->
       emit_let_tuple ctx buf indent names value
   | TAssignField { target; field; value; _ } ->
-      let sep = match target.ty with TPtr _ | TConstPtr _ -> "->" | _ -> "." in
+      let sep =
+        match target.ty with
+        | TPtr _ | TOwnPtr _ | TConstPtr _ -> "->" | _ -> "."
+      in
       Buffer.add_string buf indent;
       gen_expr ctx buf target;
       Buffer.add_string buf sep;
@@ -675,7 +681,7 @@ and emit_simple_stmt ctx buf indent stmt =
         let b = Buffer.create 32 in
         gen_expr ctx b base;
         (match base.ty with
-         | TPtr _ -> Buffer.add_char b '['
+         | TPtr _ | TOwnPtr _ -> Buffer.add_char b '['
          | _ -> Buffer.add_string b ".data[");
         gen_expr ctx b index;
         Buffer.add_char b ']';
@@ -1461,7 +1467,8 @@ let rec emit_field_debug buf ty access =
       (* Quoted output, no runtime escape — user knows the content; for
          strings with embedded quotes/newlines the rendering is lossy. *)
       Printf.bprintf buf "printf(\"\\\"%%s\\\"\", %s)" access
-  | TPtr _ -> Printf.bprintf buf "printf(\"%%p\", (void*)(%s))" access
+  | TPtr _ | TOwnPtr _ ->
+      Printf.bprintf buf "printf(\"%%p\", (void*)(%s))" access
   | TStruct _ | TEnum _ ->
       let fn = mangle_typ ty ^ "__debug" in
       Printf.bprintf buf "%s(%s)" fn access

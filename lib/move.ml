@@ -17,15 +17,23 @@ open Ir
    zero-blast-radius guarantee is structural. *)
 type state = Live | Consumed of Pos.t
 
-(* True iff [t] resolves to a struct sig marked `@move`.  Pointer-
-   shaped slots (`*T`, `*const T`) are never affine — borrows can
-   never consume. *)
-let is_affine_typ ~structs t =
+(* True iff [t] should be tracked by the move-pass.  Borrowed pointers
+   (`*T`, `*const T`) are never affine — a borrow can't consume.  The
+   `own *T` sigil (DR-030 Faza-1a) marks unique ownership of the
+   pointee and is unconditionally affine.  Structs are affine when
+   the user marked them `@move` OR when at least one of their
+   fields carries ownership (transitive predicate — String/Vec drop
+   the `@move` attribute once their `ptr` field becomes `own *u8`). *)
+let rec is_affine_typ ~structs t =
   match t with
+  | TOwnPtr _ -> true
   | TStruct path ->
       (match List.find_opt
                (fun (s : struct_sig) -> s.sname_path = path) structs with
-       | Some s -> s.ss_is_move
+       | Some s ->
+           s.ss_is_move
+           || List.exists
+                (fun (_, ft) -> is_affine_typ ~structs ft) s.sfields_ty
        | None -> false)
   | _ -> false
 

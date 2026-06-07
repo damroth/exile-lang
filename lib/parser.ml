@@ -102,6 +102,20 @@ let parse_expr_fwd : (state -> Ast.expr) ref =
 let rec parse_type s =
   let ti signed width = Ast.TyInt { signed; width } in
   match advance s with
+  | (Token.Own, p) ->
+      (* DR-030 Faza-1a: `own *T` is the owner-sigil pointer type.
+         The sigil mandates a `*` after it - ownership always tags
+         a pointer slot, never a value.  Codegen erases the sigil
+         (emits plain `T *`); the OWN-D1 coercion in ir.ml's
+         `coercible_to` lets it decay to `*T` / `*const T` for
+         borrowing, never the reverse. *)
+      let (next_tok, np) = advance s in
+      if next_tok <> Token.Star then
+        Error.failf np
+          "expected '*' after 'own' (owner-sigil tags a pointer slot)";
+      let inner = parse_type s in
+      let _ = p in
+      Ast.TyOwnPtr inner
   | (Token.Star, _) ->
       (* `*T` is the default mutable pointee; `*const T` marks the pointee
          as read-only (maps to C `const T *`).  The `const` keyword reuses

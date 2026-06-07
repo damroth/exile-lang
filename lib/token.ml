@@ -33,6 +33,7 @@ type t =
   | DotDotEq
   | Amp
   | New
+  | Own           (* DR-030 Faza-1a: `own *T` owner-sigil pointer type *)
   | Null
   | LParen
   | RParen
@@ -95,7 +96,7 @@ let pp = function
   | Enum -> "'enum'" | Match -> "'match'" | FatArrow -> "'=>'"
   | Pipe -> "'|'" | PipePipe -> "'||'" | PipeGt -> "'|>'" | AmpAmp -> "'&&'"
   | Dot -> "'.'" | DotDot -> "'..'" | DotDotEq -> "'..='"
-  | Amp -> "'&'" | New -> "'new'" | Null -> "'null'"
+  | Amp -> "'&'" | New -> "'new'" | Own -> "'own'" | Null -> "'null'"
   | LParen -> "'('" | RParen -> "')'"
   | LBrace -> "'{'" | RBrace -> "'}'"
   | LBracket -> "'['" | RBracket -> "']'"
