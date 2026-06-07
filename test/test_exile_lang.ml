@@ -6411,6 +6411,56 @@ let () =
      && not (contains c "UpTo__enumerate")
      && not (contains c "UpTo__collect"));
 
+  (* DR-036 - untyped let mini-inferencer: closure capture now
+     resolves a `let n = 42` (untyped) the same way as `let n: int
+     = 42` would.  Without the inferencer, expand_lambdas saw an
+     empty scope, the lambda decayed to the captureless A1 fn-ptr
+     path, and the call site failed the Fn1 bound.  Covers
+     IntLit / BoolLit / StringLit / FloatLit / explicit Cast. *)
+  check_assert "DR-036: untyped `let n = 42` captures via lambda"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let n = 42;\n\
+         \    println(run(|x: int| -> int x + n, 5));\n\
+          }\n"
+     in
+     (* The lambda took the A2 path so there's a synth closure
+        struct with an `n` field. *)
+     contains c "__closure_0");
+
+  check_assert "DR-036: untyped `let b = true` captures via lambda"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+          fn main() {\n\
+         \    let b = true;\n\
+         \    println(run(|x: int| -> int if b { x + 1 } else { x }, 5));\n\
+          }\n"
+     in
+     contains c "__closure_0");
+
+  check_assert "DR-036: explicit cast literal `let n = 42 as u32` captures"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn run<F: |u32|->u32>(f: F, x: u32) -> u32 { f(x) }\n\
+          fn main() {\n\
+         \    let n = 42 as u32;\n\
+         \    println(run(|x: u32| -> u32 x + n, 5 as u32) as int);\n\
+          }\n"
+     in
+     contains c "__closure_0");
+
+  check_error "DR-036: complex RHS still needs explicit ann"
+    "fn add(a: int, b: int) -> int { a + b }\n\
+     fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }\n\
+     fn main() {\n\
+    \    let n = add(40, 2);\n\
+    \    println(run(|x: int| -> int x + n, 5));\n\
+     }\n"
+    "type 'fn(i32) -> i32' does not implement trait 'Fn1' (required by bound 'F: Fn1' on 'run')";
+
   check_error "DR-022: bound assoc mismatch rejected at call site (Output)"
     "struct AddOne { _tag: int }\n\
      impl Fn1 for AddOne {\n\

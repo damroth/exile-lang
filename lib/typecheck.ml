@@ -9735,8 +9735,32 @@ let expand_lambdas (program : Ast.program) : Ast.program =
     match s with
     | Ast.Let { name; value; ty_ann; is_mut; pos } ->
         let value = lift_e ~scope value in
-        let scope' =
+        (* DR-036 - mini-inferencer for untyped let RHS, partial:
+           covers the literal-RHS path (`let n = 42; ...; |x| x + n`)
+           and the explicit-cast path (`let n = 42 as u32; ...`)
+           by deriving a type annotation cheaply from the RHS without
+           a real typecheck.  This is what lets captureless A2
+           closures pick up the binding as a capture instead of
+           sliding past it to the captureless A1 fn-ptr decay (which
+           then fails the Fn1 bound at the call site).  Complex RHS
+           (calls, ops, struct lits) still need an explicit
+           annotation - the full POST-typecheck lift restructuring
+           is the long-term fix. *)
+        let inferred_ty =
           match ty_ann with
+          | Some _ -> ty_ann
+          | None ->
+              (match value with
+               | Ast.IntLit _ ->
+                   Some (Ast.TyInt { signed = true; width = Ast.W32 })
+               | Ast.BoolLit _ -> Some Ast.TyBool
+               | Ast.StringLit _ -> Some Ast.TyStr
+               | Ast.FloatLit (_, w, _) -> Some (Ast.TyFloat w)
+               | Ast.Cast (_, ann, _) -> Some ann
+               | _ -> None)
+        in
+        let scope' =
+          match inferred_ty with
           | Some ann -> (name, ann) :: scope
           | None -> scope
         in
