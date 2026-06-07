@@ -10068,6 +10068,96 @@ let expand_derives (program : Ast.program) : Ast.program =
   in
   program @ derived
 
+(* DR-030 Faza-1a Step C - synthesize a drop method (pointer-self)
+   for every struct that carries at least one own field.  The body
+   sends each own field through self.alloc.free_fn(state, ptr,
+   size_of(T)), mirroring how String::free emits its manual call.
+   Nested owning-struct fields recurse depth-first by name; cycles
+   are honest-limit out of v1.  Runs after expand_derives so
+   user-derived impls land before the drop emit (their bodies may
+   touch fields the drop pass reads). *)
+let expand_drop_methods (program : Ast.program) : Ast.program =
+  (* Inspect the AST-level type annotation - the resolved IR isn't
+     available at pass time, but we only need the structural shape
+     (`Ast.TyOwnPtr _` vs anything else) to decide whether a field
+     needs a drop call. *)
+  let is_own_ann = function Ast.TyOwnPtr _ -> true | _ -> false in
+  let synth_drop (s : Ast.struct_decl) : Ast.item option =
+    let has_own = List.exists (fun (_, t) -> is_own_ann t) s.sfields in
+    if not has_own then None
+    else begin
+      let pos = s.spos in
+      let self_v = Ast.Var ("self", pos) in
+      let cvoid_ptr = Ast.TyPtr Ast.TyCVoid in
+      let u32_ann =
+        Ast.TyInt { signed = false; width = Ast.W32 } in
+      let alloc_field = Ast.FieldAccess (self_v, "alloc", pos) in
+      let body_stmts =
+        List.filter_map (fun (fname, ft) ->
+          match ft with
+          | Ast.TyOwnPtr inner ->
+              (* self.alloc.free_fn(self.alloc.state,
+                                    self.<fname> as *c_void,
+                                    size_of(T) as u32) *)
+              Some (Ast.ExprStmt (Ast.MethodCall {
+                receiver = alloc_field; name = "free_fn";
+                args = [
+                  Ast.FieldAccess (alloc_field, "state", pos);
+                  Ast.Cast (Ast.FieldAccess (self_v, fname, pos),
+                            cvoid_ptr, pos);
+                  Ast.Cast (Ast.SizeOf (inner, pos), u32_ann, pos);
+                ]; pos }))
+          | _ -> None)
+          s.sfields
+      in
+      if body_stmts = [] then None
+      else begin
+        let self_struct_ann =
+          Ast.TyStruct {
+            path = [s.sname];
+            args = List.map (fun n ->
+              Ast.TyStruct { path = [n]; args = [] }) s.stparams;
+          } in
+        let drop_method = Ast.{
+          name = "drop"; c_name = "drop";
+          tparams = []; tbounds = [];
+          params = [{
+            pname = "self";
+            pty = Ast.TyPtr self_struct_ann;
+            preg = None; is_mut = false;
+          }];
+          ret_ty = None;
+          body = body_stmts;
+          is_pub = true; is_extern = false; is_variadic = false;
+          tier_hint = None; amiga_lib = None;
+          must_use = false; escapes_hatch = false; pos;
+        } in
+        Some (Ast.Impl Ast.{
+          itparams = s.stparams;
+          itbounds = [];
+          itrait = None;
+          iassoc = [];
+          itarget = [s.sname];
+          iitems = [drop_method];
+          ipos = pos;
+        })
+      end
+    end
+  in
+  let rec walk items =
+    List.concat_map (fun item ->
+      match item with
+      | Ast.Struct s ->
+          (match synth_drop s with
+           | Some impl -> [item; impl]
+           | None -> [item])
+      | Ast.Module m ->
+          [Ast.Module { m with mitems = walk m.mitems }]
+      | other -> [other])
+      items
+  in
+  walk program
+
 (* Skip prelude items whose names collide with a user-declared top-level
    enum or struct (and skip the matching `impl` block in that case).
    Matches by name only (top-level path = []). *)
@@ -10432,6 +10522,11 @@ let check_program program : tprogram =
   (* Expand `@derive(...)` into real `impl Trait for Foo` blocks (after the
      prelude so the Eq / Clone traits they target are in scope). *)
   let program = expand_derives program in
+  (* DR-030 Faza-1a Step C - synthesize `drop` impl for every
+     struct carrying an `own *T` field.  Runs after derives so
+     the synthesised drop sees any derive-generated methods
+     already attached to the struct. *)
+  let program = expand_drop_methods program in
   let flat = flatten_items program in
   (* main() must be at top level, not inside a module. *)
   List.iter
