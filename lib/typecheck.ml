@@ -2197,21 +2197,33 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       let sub' = elab_expr ctx env sub in
       let tgt = resolve_type_ann ~pos:cast_pos ctx ann in
       let is_float = function TFloat _ -> true | _ -> false in
-      if is_int_like sub'.ty && is_int_like tgt then ()
-      else if is_ptr sub'.ty && is_ptr tgt then ()
-      else if is_int_like sub'.ty && is_ptr tgt then ()
-      (* DR-floats: int↔float and float↔float casts (truncation /
-         widening as in C).  No ptr↔float cast — kinds stay
-         separate. *)
-      else if is_int_like sub'.ty && is_float tgt then ()
-      else if is_float sub'.ty && is_int_like tgt then ()
-      else if is_float sub'.ty && is_float tgt then ()
+      let kind_ok =
+        (is_int_like sub'.ty && is_int_like tgt)
+        || (is_ptr sub'.ty && is_ptr tgt)
+        || (is_int_like sub'.ty && is_ptr tgt)
+        (* DR-floats: int↔float and float↔float casts (truncation /
+           widening as in C).  No ptr↔float cast — kinds stay
+           separate. *)
+        || (is_int_like sub'.ty && is_float tgt)
+        || (is_float sub'.ty && is_int_like tgt)
+        || (is_float sub'.ty && is_float tgt)
+      in
+      if kind_ok then { e = TCast (sub', ann); ty = tgt; pos }
+      else if typ_eq sub'.ty tgt then
+        (* Identity cast on a non-scalar (struct / enum / tuple): a
+           semantic no-op.  C89 cannot cast to an aggregate type, so
+           the node is elided entirely instead of emitted.  Scalar and
+           pointer identities stay on the kind_ok path above — the
+           prelude's vec_grow W4 cast relies on the emitted pointer
+           cast to strip the slice-read const qualifier in C, and an
+           instantiated generic body (`src[i] as T` with T = struct)
+           must not error just because the cast became an identity. *)
+        sub'
       else
         Error.failf cast_pos
           "cannot cast %s to %s (supported: int↔int, int↔float, \
            float↔float, ptr↔ptr, int→ptr)"
-          (typ_name sub'.ty) (typ_name tgt);
-      { e = TCast (sub', ann); ty = tgt; pos }
+          (typ_name sub'.ty) (typ_name tgt)
   | Ast.Ref (sub, _) ->
       let sub' = elab_expr ctx env sub in
       { e = TRef sub'; ty = TPtr sub'.ty; pos }

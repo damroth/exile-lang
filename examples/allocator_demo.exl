@@ -25,24 +25,30 @@ fn main() {
     // Typed allocation: `alloc::<int>()` reduces to a sized
     // request + cast.  Bidirectional inference picks T from the
     // let annotation since the call has no constraining args.
+    //
+    // Allocation failure bails out with an early return: auto-drop
+    // is static (no runtime drop flags), so an owned value must be
+    // consumed on every fall-through path or on none — a diverging
+    // branch (return) is exempt from that rule.
     let p: own *int = a.alloc();
     if p == null {
         println(-1);
-    } else {
-        // Store and read back through the pointer to confirm the
-        // memory is real and writable.
-        *p = 42;
-        println(*p);                          // 42
-
-        a.free(p);
+        return;
     }
+    // Store and read back through the pointer to confirm the
+    // memory is real and writable.
+    *p = 42;
+    println(*p);                          // 42
+
+    a.free(p);
 
     // Different T → different instance.  Both `Allocator__alloc_i32`
     // and `Allocator__alloc_bool` end up in the emitted C.
     let q: own *bool = a.alloc();
-    if q != null {
-        *q = true;
-        if *q { println(1); } else { println(0); }   // 1
-        a.free(q);
+    if q == null {
+        return;
     }
+    *q = true;
+    if *q { println(1); } else { println(0); }   // 1
+    a.free(q);
 }

@@ -13,8 +13,8 @@ let compile ?(annotate = false) ?(profile = default_profile) src =
     |> Typecheck.check_program
   in
   Move.check tp;
-  let tp = Drop.insert tp in
   Escape.check tp;
+  let tp = Drop.insert tp in
   Lint.lint ~profile tp;
   Codegen.gen_program ~annotate tp
 
@@ -28,8 +28,8 @@ let compile_capture ?(annotate = false) ?(profile = default_profile) src =
     |> Typecheck.check_program
   in
   Move.check tp;
-  let tp = Drop.insert tp in
   Escape.check tp;
+  let tp = Drop.insert tp in
   Lint.lint ~profile tp;
   let c_code = Codegen.gen_program ~annotate tp in
   (tp, c_code)
@@ -41,8 +41,8 @@ let compile_file ?(annotate = false) ?(profile = default_profile) path =
     |> Typecheck.check_program
   in
   Move.check tp;
-  let tp = Drop.insert tp in
   Escape.check tp;
+  let tp = Drop.insert tp in
   Lint.lint ~profile tp;
   Codegen.gen_program ~annotate tp
 
@@ -55,8 +55,8 @@ let compile_file_capture ?(annotate = false) ?(profile = default_profile) path =
     |> Typecheck.check_program
   in
   Move.check tp;
-  let tp = Drop.insert tp in
   Escape.check tp;
+  let tp = Drop.insert tp in
   Lint.lint ~profile tp;
   let c_code = Codegen.gen_program ~annotate tp in
   (tp, c_code)

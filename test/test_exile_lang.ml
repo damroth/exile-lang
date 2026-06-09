@@ -1142,7 +1142,7 @@ let () =
          \    let a = raw::make();\n\
          \    let h1 = H { name: String::with_str(a, \"x\") };\n\
          \    let h2 = h1.clone();\n\
-         \    h1.name.free(); h2.name.free();\n\
+         \    println(h2.name.length() as int);\n\
           }\n"
      in
      contains c "String__clone(&self->name)");
@@ -3867,11 +3867,13 @@ let () =
      with _ -> false);
 
   (* DR-010 Phase C — `h2 = h1.clone()` produces independent storage;
-     `h1.name.free()` must NOT invalidate `h2`.  Verifies that the
-     hardcoded borrowing-returns list (as_slice/as_str/iter only) is
-     narrow enough — `clone` allocates a fresh String, the result is
-     not a borrow.  Regression guard for the false positive that
-     drove the design (test failed during impl). *)
+     using `h1` afterwards must NOT be a use-after-consume.  Verifies
+     that the hardcoded borrowing-returns list (as_slice/as_str/iter
+     only) is narrow enough — `clone` allocates a fresh String, the
+     result is not a borrow.  Regression guard for the false positive
+     that drove the design (test failed during impl).  (GATE-2: the
+     original cleanup `h1.name.free()` is now an illegal
+     move-out-of-field; both structs auto-drop instead.) *)
   check_assert "DR-010-C: `clone()` does NOT propagate owner ownership"
     (try
        ignore (Exile_lang.Compiler.compile
@@ -3882,8 +3884,8 @@ let () =
          \    let a = raw::make();\n\
          \    let h1 = H { name: String::with_str(a, \"x\") };\n\
          \    let h2 = h1.clone();\n\
-         \    h1.name.free();\n\
-         \    h2.name.free();\n\
+         \    println(h1.name.length() as int);\n\
+         \    println(h2.name.length() as int);\n\
           }\n");
        true
      with _ -> false);
@@ -6036,6 +6038,247 @@ let () =
           }\n");
        true
      with _ -> false);
+
+  (* GATE-1 (review 2026-06-09) - Vec<T> for aggregate T.  Commit
+     3d65de4 (W4) added `src[i] as T` in vec_grow; the cast checker's
+     kind whitelist rejected struct-to-struct, so EVERY Vec<struct/
+     enum/tuple/String> failed with "cannot cast T to T" from
+     <prelude>:1:1.  Fix: an identity cast on a non-scalar elides to
+     the bare expression (C89 cannot cast to an aggregate); scalar and
+     pointer identity casts keep emitting (the W4 const-strip relies
+     on the pointer one).  Push counts exceed the 8-slot floor so
+     vec_grow actually fires. *)
+
+  check_assert "GATE-1: Vec<struct> compiles and grows past capacity"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Token { kind: int, val: int }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<Token> = Vec::with_capacity(a, 8 as u32);\n\
+         \    let mut i = 0;\n\
+         \    while i < 20 {\n\
+         \        v.push(Token { kind: i, val: i * 2 });\n\
+         \        i = i + 1;\n\
+         \    }\n\
+         \    println(v.len() as int);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "GATE-1: Vec<enum> and Vec<(int, bool)> compile"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "enum Kind { Word | Num(int) }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut k: Vec<Kind> = Vec::with_capacity(a, 8 as u32);\n\
+         \    let mut j = 0;\n\
+         \    while j < 10 { k.push(Kind::Num(j)); j = j + 1; }\n\
+         \    println(k.len() as int);\n\
+         \    let mut tp: Vec<(int, bool)> = Vec::with_capacity(a, 8 as u32);\n\
+         \    let mut m = 0;\n\
+         \    while m < 10 { tp.push((m, true)); m = m + 1; }\n\
+         \    println(tp.len() as int);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "GATE-1: non-identity struct cast still rejected"
+    "struct A { x: int }\n\
+     struct B { x: int }\n\
+     fn main() {\n\
+    \    let a = A { x: 1 };\n\
+    \    let b = a as B;\n\
+    \    println(b.x);\n\
+     }\n"
+    "cannot cast A to B (supported: int↔int, int↔float, \
+     float↔float, ptr↔ptr, int→ptr)";
+
+  (* GATE-2 (review 2026-06-09) - unified drop pass: drop.ml delegates
+     ALL consume detection to Move.walk_expr (one consume model), drops
+     are transitive (has_drop_deep), affine by-value params drop in the
+     callee, and the own lifecycle is closed (L1 provenance auto-drop /
+     L2 drop-old-on-reassign / L3 rebind resurrection).  Each test
+     pins one reproduced symptom: the original suite was 669-green
+     while every one of these was a UAF, double-free, leak, or
+     spurious reject. *)
+
+  check_assert "GATE-2 S1: move-into-aggregate elides the source drop (one free)"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Named { name: String, id: int }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let s = String::with_str(a, \"hello\");\n\
+         \    let n = Named { name: s, id: 1 };\n\
+         \    println(n.name.length() as int);\n\
+          }\n"
+     in
+     (* exactly one release: n.name via n's transitive drop; the moved
+        `s` must NOT fire its own (that was the UAF). *)
+     contains c "(n.name.alloc.free_fn)"
+     && not (contains c "(s.alloc.free_fn)"));
+
+  check_assert "GATE-2 S2: tail-position consume (String::build as trailing expr)"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn make(a: Allocator) -> String {\n\
+         \    let mut sb = StringBuilder::with_capacity(a, 8 as u32);\n\
+         \    sb.push_str(\"xy\");\n\
+         \    String::build(sb)\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let s = make(a);\n\
+         \    println(s.length() as int);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "GATE-2 S3: consuming fn elides caller drop, callee drops its param"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn eat(s: String) -> int {\n\
+         \    return s.length() as int;\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let s = String::with_str(a, \"abc\");\n\
+         \    println(eat(s));\n\
+          }\n"
+     in
+     (* the single release lives in ex_eat (callee owns the param);
+        main's stale drop after the move is gone. *)
+     contains c "(s.alloc.free_fn)");
+
+  check_error "GATE-2 S4: moving an own field out via field-access rejected"
+    "struct Buffer { p: own *u8, alloc: Allocator }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let buf: own *u8 = a.alloc();\n\
+    \    let one = Buffer { p: buf, alloc: a };\n\
+    \    let two = Buffer { p: one.p, alloc: a };\n\
+    \    println(0);\n\
+     }\n"
+    "cannot move own *u8 out of a field — the parent struct still owns \
+     (and will drop) this storage; move the whole struct, or borrow \
+     the field instead";
+
+  check_assert "GATE-2 S5: nested affine struct drops transitively (Person.name)"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Person { name: String, age: int }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let p = Person { name: String::with_str(a, \"bob\"), age: 30 };\n\
+         \    println(p.age);\n\
+          }\n"
+     in
+     contains c "(p.name.alloc.free_fn)");
+
+  check_assert "GATE-2 L1: new(a) with no free auto-drops via provenance allocator"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct P { x: int }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let p = new(a) P { x: 5 };\n\
+         \    println(p.x);\n\
+          }\n"
+     in
+     contains c "(a.free_fn)(a.state, ((void *)p)");
+
+  check_error "GATE-2 L1: own from a call with unknown provenance must be consumed"
+    "struct P { x: int }\n\
+     fn make(a: Allocator) -> own *P {\n\
+    \    return new(a) P { x: 1 };\n\
+     }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let p = make(a);\n\
+    \    println(p.x);\n\
+     }\n"
+    "own value 'p' is never consumed — free it, move it, or return it \
+     (its allocator is not known here, so it cannot be auto-dropped)";
+
+  check_assert "GATE-2 L2: reassign over a live String drops the old value first"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut s = String::with_str(a, \"one\");\n\
+         \    s = String::with_str(a, \"two\");\n\
+         \    println(s.length() as int);\n\
+          }\n"
+     in
+     (* two releases of s: the drop-old before the store + scope end *)
+     let rec count i acc =
+       let sub = "(s.alloc.free_fn)" in
+       if i + String.length sub > String.length c then acc
+       else if String.sub c i (String.length sub) = sub
+       then count (i + 1) (acc + 1)
+       else count (i + 1) acc
+     in
+     count 0 0 = 2);
+
+  check_assert "GATE-2 L3: rebind after consume resurrects the binding"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn next(a: Allocator, s: String) -> String {\n\
+         \    return String::with_str(a, \"n\");\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut s = String::with_str(a, \"start\");\n\
+         \    s = next(a, s);\n\
+         \    println(s.length() as int);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "GATE-2 OWN-D3: consume on one branch but not the other rejected"
+    "fn eat(s: String) -> int { return s.length() as int; }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let s = String::with_str(a, \"x\");\n\
+    \    let c = true;\n\
+    \    if c {\n\
+    \        let n = eat(s);\n\
+    \        println(n);\n\
+    \    } else {\n\
+    \        println(0);\n\
+    \    }\n\
+     }\n"
+    "'s' is moved out on one branch but stays owned on the other — \
+     auto-drop is static (no runtime drop flags); consume it on every \
+     path or on none";
+
+  check_assert "GATE-2: defer s.free() consumes — auto-drop elided (one free path)"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let s = String::with_str(a, \"abc\");\n\
+         \    defer s.free();\n\
+         \    println(s.length() as int);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "GATE-2: use-after-explicit-drop rejected by the move pass"
+    "pub mod raw { extern fn make_c_allocator() -> Allocator; }\n\
+     struct Buffer { p: own *int, alloc: Allocator }\n\
+     fn main() {\n\
+    \    let a = raw::make_c_allocator();\n\
+    \    let q: own *int = a.alloc();\n\
+    \    let mut buf = Buffer { p: q, alloc: a };\n\
+    \    buf.drop();\n\
+    \    println(*buf.p);\n\
+     }\n"
+    "use of 'buf' after it was consumed at <input>:7:5 (move-marked \
+     types are use-at-most-once — borrow with '&buf' / take \
+     '*const Buffer' or clone to keep the source live)";
 
   (* DR-032 - prelude `sys::sys_open` + `sys::sys_close` extern decls.
      The host-backend wraps libc `open`/`close`; the amiga-backend

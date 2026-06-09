@@ -62,11 +62,31 @@ let rec check_reads live (te : texpr) =
    the binding Consumed.  The slot's "by-value-ness" is encoded in
    [te.ty]: a value slot has the struct type directly, a borrow slot
    has `TPtr` / `TConstPtr` and isn't affine.  Non-TVar arguments
-   (literals, struct lits, calls) flow without consuming a binding. *)
+   (literals, struct lits, calls) flow without consuming a binding.
+
+   GATE-2 S4 — a bare field access of an affine type in a by-value
+   slot is a move-out-of-field: it would create a second owner of the
+   field's storage while the parent struct keeps (and later drops)
+   the first.  v1 rejects it outright — move the whole parent or
+   borrow instead.  An explicit `as` cast remains the sanctioned
+   escape (the prelude's String::build transfers `sb.buf` that way:
+   the cast wrapper marks deliberate intent). *)
 let consume_var ~structs live (te : texpr) =
   match te.e with
   | TVar n when is_affine_typ ~structs te.ty ->
       set_consumed live n te.pos
+  | TFieldAccess _
+    when is_affine_typ ~structs te.ty
+      && te.pos.Pos.file <> "<prelude>" ->
+      (* Prelude bodies (HashMap slot shuffles, String::build's buf
+         transfer) move out of fields deliberately as part of their
+         hand-written memory management — the reject is a USER-code
+         gate. *)
+      Error.failf te.pos
+        "cannot move %s out of a field — the parent struct still owns \
+         (and will drop) this storage; move the whole struct, or borrow \
+         the field instead"
+        (typ_name te.ty)
   | _ -> live
 
 (* Merge per-branch states — may-consume union (DR-002 S0).  A binding
@@ -186,8 +206,34 @@ let rec consume_args ~structs ~enums live args =
 and walk_expr ~structs ~enums live (te : texpr) =
   check_reads live te;
   match te.e with
-  | TCall { args; _ } ->
-      consume_args ~structs ~enums live args
+  | TCall { mangled; args } ->
+      (* An explicit `x.drop()` releases x's storage even though the
+         synthesised drop method borrows its receiver (`*self`): the
+         by-ref first arg of a `__drop`-mangled call consumes the
+         binding.  This lives HERE (the single consume model) so both
+         use-after-drop is rejected and the drop-pass elides the
+         auto-drop (GATE-2 / OWN-D2). *)
+      let is_drop_mangled m =
+        let ends_with s suf =
+          let ls = String.length s and lf = String.length suf in
+          ls >= lf && String.sub s (ls - lf) lf = suf
+        in
+        let rec contains i =
+          let sub = "__drop_" in
+          let ls = String.length m and lsub = String.length sub in
+          if i + lsub > ls then false
+          else if String.sub m i lsub = sub then true
+          else contains (i + 1)
+        in
+        ends_with m "__drop" || contains 0
+      in
+      let live = consume_args ~structs ~enums live args in
+      (match args with
+       | { e = TRef ({ e = TVar n; _ } as inner); _ } :: _
+         when is_drop_mangled mangled
+           && is_affine_typ ~structs inner.ty ->
+           set_consumed live n inner.pos
+       | _ -> live)
   | TBuiltinCall { name; args } ->
       (* Built-ins that just read through the pointer (mem_zero ≡
          memset) don't consume their first arg.  Only walk the
@@ -336,7 +382,21 @@ and walk_stmt ~structs ~enums ~ret_ty live = function
       (* Tuple destructuring of affine fields is rare today (affine
          types aren't tuples).  Walk reads; consume nothing extra. *)
       walk_expr ~structs ~enums live value
-  | TAssign { value; _ }
+  | TAssign { path; value; _ } ->
+      (* GATE-2 L3 — rebind resurrects.  Assigning a fresh value to an
+         affine binding makes it Live again: the old value has either
+         been moved away (possibly into this very RHS — `s = next(a,
+         s)` consumes the old `s` as an argument first) or is dropped
+         by the drop-pass (L2) before the store.  This is what lets
+         loop-shaped ownership flow (`root = insert(a, root, v)`)
+         type-check: the body consumes and rebinds, so the binding is
+         Live again at the loop back-edge. *)
+      let live = walk_expr ~structs ~enums live value in
+      let live = consume_var ~structs live value in
+      (match path with
+       | [ n ] when List.mem_assoc n live ->
+           List.map (fun (k, v) -> if k = n then (k, Live) else (k, v)) live
+       | _ -> live)
   | TAssignField { value; _ }
   | TAssignIndex { value; _ }
   | TAssignDeref { value; _ } ->
