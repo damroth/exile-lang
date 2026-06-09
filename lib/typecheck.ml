@@ -284,12 +284,17 @@ let rec subst_var_expr ~from ~to_ (e : Ast.expr) : Ast.expr =
   | Ast.FieldAccess (e', n, p) -> Ast.FieldAccess (sub e', n, p)
   | Ast.Ref (e', p) -> Ast.Ref (sub e', p)
   | Ast.Deref (e', p) -> Ast.Deref (sub e', p)
-  | Ast.New { tname; fields; base; pos } ->
+  | Ast.New { tname; fields; base; alloc; pos } ->
       Ast.New { tname;
                 fields = List.map (fun (n, e) -> (n, sub e)) fields;
-                base = subo base; pos }
-  | Ast.NewEnum { tname; args; pos } ->
-      Ast.NewEnum { tname; args = List.map sub args; pos }
+                base = subo base;
+                alloc = Option.map sub alloc;
+                pos }
+  | Ast.NewEnum { tname; args; alloc; pos } ->
+      Ast.NewEnum { tname;
+                    args = List.map sub args;
+                    alloc = Option.map sub alloc;
+                    pos }
   | Ast.MethodCall { receiver; name; args; pos } ->
       Ast.MethodCall { receiver = sub receiver; name;
                        args = List.map sub args; pos }
@@ -1167,6 +1172,9 @@ let builtin_free = {
            corrupt the allocator"
     | [ { ty = TPtr _; _ } ] when allow_void -> t_i32
     | [ { ty = TPtr _; _ } ] ->
+        Error.failf pos "'free' returns void, cannot use as a value"
+    | [ { ty = TOwnPtr _; _ } ] when allow_void -> t_i32
+    | [ { ty = TOwnPtr _; _ } ] ->
         Error.failf pos "'free' returns void, cannot use as a value"
     | [ { ty = other; _ } ] ->
         Error.failf pos "'free' expects a pointer, got %s" (typ_name other)
@@ -2780,12 +2788,19 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       } in
       { e = node; ty = ok_payload_ty; pos }
   | (Ast.StructLit { tname; fields; base; pos = lit_pos } as raw_lit)
-  | (Ast.New { tname; fields; base; pos = lit_pos } as raw_lit) ->
+  | (Ast.New { tname; fields; base; alloc = _; pos = lit_pos } as raw_lit) ->
       (* Enum struct-variant ctor: parser emits StructLit for
          `Foo::V { f: e }`; if the path resolves to an enum variant,
          re-elab via the EnumLit branch. *)
       let as_struct_lit = match raw_lit with
         | Ast.StructLit _ -> true | _ -> false
+      in
+      (* DR-046: extract optional allocator expression for `new(alloc)` form.
+         When present, ret_ty becomes `own *T` (sanctioned ownership origin)
+         and codegen uses `alloc.alloc_fn` instead of raw `malloc`. *)
+      let alloc_ast = match raw_lit with
+        | Ast.New { alloc = Some a; _ } -> Some a
+        | _ -> None
       in
       (match if as_struct_lit
              then rewrite_struct_lit_as_enum_lit ctx tname fields base lit_pos
@@ -2896,20 +2911,42 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                  fn display (typ_name fty) (typ_name te.ty))
              fields tfields;
            let sname_path = s_concrete.sname_path in
+           (* DR-046: elab the allocator expression (if `new(alloc)` was
+              used) and verify it carries a value-shaped Allocator.
+              The presence of an allocator flips the ret_ty from raw
+              `*T` to `own *T` (sanctioned ownership origin). *)
+           let talloc =
+             Option.map (fun ae ->
+               let te = elab_expr ctx env ae in
+               (match te.ty with
+                | TStruct ["Allocator"] -> ()
+                | other ->
+                    Error.failf lit_pos
+                      "`new(...)` allocator expression must have type \
+                       Allocator, got %s" (typ_name other));
+               te) alloc_ast
+           in
            let result_node =
              if as_struct_lit
              then TStructLit { sname_path; fields = tfields; base = tbase }
-             else TNew { sname_path; fields = tfields; base = tbase }
+             else TNew { sname_path;
+                         fields = tfields;
+                         base = tbase;
+                         alloc = talloc }
            in
            let result_ty =
              let st = TStruct sname_path in
-             if as_struct_lit then st else TPtr st
+             if as_struct_lit then st
+             else if talloc <> None then TOwnPtr st
+             else TPtr st
            in
            { e = result_node; ty = result_ty; pos })
-  | Ast.NewEnum { tname; args; pos = lit_pos } ->
+  | Ast.NewEnum { tname; args; alloc; pos = lit_pos } ->
       (* DR-031 heap-boxed enum tuple-variant: split `Path::Variant`,
          elaborate as an EnumLit tuple-variant first, then rewrap the
-         resulting IR node as TNewEnum with `*Enum` type. *)
+         resulting IR node as TNewEnum with `*Enum` type.
+         DR-046: optional `new(alloc) Path::V(args)` flips the ret_ty
+         to `own *Enum` (sanctioned ownership origin). *)
       let (enum_path, variant) =
         match List.rev tname with
         | last :: rev_init -> (List.rev rev_init, last)
@@ -2917,15 +2954,30 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
             Error.failf lit_pos
               "'new ...' needs a qualified path (`Enum::Variant`)"
       in
+      let talloc =
+        Option.map (fun ae ->
+          let te = elab_expr ctx env ae in
+          (match te.ty with
+           | TStruct ["Allocator"] -> ()
+           | other ->
+               Error.failf lit_pos
+                 "`new(...)` allocator expression must have type \
+                  Allocator, got %s" (typ_name other));
+          te) alloc
+      in
       let lit_ast = Ast.EnumLit {
         tname = enum_path; variant;
         args = Ast.EATuple args; pos = lit_pos } in
       let tlit = elab_expr ~allow_void ctx env lit_ast in
       (match tlit.e, tlit.ty with
        | TEnumLit { ename_path; variant = v; tag; args = targs }, TEnum p ->
+           let result_ty =
+             if talloc <> None then TOwnPtr (TEnum p) else TPtr (TEnum p)
+           in
            { e = TNewEnum {
-               ename_path; variant = v; tag; args = targs };
-             ty = TPtr (TEnum p); pos = lit_pos }
+               ename_path; variant = v; tag; args = targs;
+               alloc = talloc };
+             ty = result_ty; pos = lit_pos }
        | _ ->
            Error.failf lit_pos
              "'new %s::%s' must name an enum tuple-variant"
@@ -3684,7 +3736,8 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       let target' = elab_expr ctx env target in
       let field_ty =
         match target'.ty with
-        | TStruct p | TPtr (TStruct p) | TConstPtr (TStruct p) ->
+        | TStruct p | TPtr (TStruct p) | TOwnPtr (TStruct p)
+        | TConstPtr (TStruct p) ->
             let s = match resolve_struct_by_path ctx p with
               | Some s -> s
               | None -> Error.failf fa_pos "unknown struct '%s'"
@@ -4699,19 +4752,23 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let (base', pb) = map_opt base in
         ({ te with e = TStructLit { sname_path; fields = fields';
                                     base = base' } }, pf @ pb)
-    | TNew { sname_path; fields; base } ->
+    | TNew { sname_path; fields; base; alloc } ->
         let (fields', pf) = map_fields fields in
         let (base', pb) = map_opt base in
+        let (alloc', pa) = map_opt alloc in
         ({ te with e = TNew { sname_path; fields = fields';
-                              base = base' } }, pf @ pb)
+                              base = base'; alloc = alloc' } },
+         pf @ pb @ pa)
     | TEnumLit { ename_path; variant; tag; args } ->
         let (args', p) = map_fields args in
         ({ te with e = TEnumLit { ename_path; variant; tag;
                                   args = args' } }, p)
-    | TNewEnum { ename_path; variant; tag; args } ->
+    | TNewEnum { ename_path; variant; tag; args; alloc } ->
         let (args', p) = map_fields args in
+        let (alloc', pa) = map_opt alloc in
         ({ te with e = TNewEnum { ename_path; variant; tag;
-                                  args = args' } }, p)
+                                  args = args'; alloc = alloc' } },
+         p @ pa)
     | TMatch { scrutinee; ename_path; arms } ->
         let (scr', p) = walk_expr ~allow_top:false scrutinee in
         ({ te with e = TMatch { scrutinee = scr'; ename_path; arms } }, p)
@@ -9484,16 +9541,20 @@ let expand_lambdas (program : Ast.program) : Ast.program =
           fields = List.map (fun (n, e) ->
             (n, subst_captures captures bound e)) fields;
           base = Option.map (subst_captures captures bound) base; pos }
-    | Ast.New { tname; fields; base; pos } ->
+    | Ast.New { tname; fields; base; alloc; pos } ->
         Ast.New {
           tname;
           fields = List.map (fun (n, e) ->
             (n, subst_captures captures bound e)) fields;
-          base = Option.map (subst_captures captures bound) base; pos }
-    | Ast.NewEnum { tname; args; pos } ->
+          base = Option.map (subst_captures captures bound) base;
+          alloc = Option.map (subst_captures captures bound) alloc;
+          pos }
+    | Ast.NewEnum { tname; args; alloc; pos } ->
         Ast.NewEnum {
           tname;
-          args = List.map (subst_captures captures bound) args; pos }
+          args = List.map (subst_captures captures bound) args;
+          alloc = Option.map (subst_captures captures bound) alloc;
+          pos }
     | Ast.EnumLit { tname; variant; args; pos } ->
         let args = match args with
           | Ast.EATuple es ->
@@ -9793,14 +9854,18 @@ let expand_lambdas (program : Ast.program) : Ast.program =
     | Ast.FieldAccess (a, n, p) -> Ast.FieldAccess (lift_e ~scope a, n, p)
     | Ast.Ref (a, p) -> Ast.Ref (lift_e ~scope a, p)
     | Ast.Deref (a, p) -> Ast.Deref (lift_e ~scope a, p)
-    | Ast.New { tname; fields; base; pos } ->
+    | Ast.New { tname; fields; base; alloc; pos } ->
         Ast.New { tname;
                   fields = List.map (fun (n, e) ->
                     (n, lift_e ~scope e)) fields;
-                  base = Option.map (lift_e ~scope) base; pos }
-    | Ast.NewEnum { tname; args; pos } ->
+                  base = Option.map (lift_e ~scope) base;
+                  alloc = Option.map (lift_e ~scope) alloc;
+                  pos }
+    | Ast.NewEnum { tname; args; alloc; pos } ->
         Ast.NewEnum { tname;
-                      args = List.map (lift_e ~scope) args; pos }
+                      args = List.map (lift_e ~scope) args;
+                      alloc = Option.map (lift_e ~scope) alloc;
+                      pos }
     | Ast.EnumLit { tname; variant; args; pos } ->
         let args = match args with
           | Ast.EATuple es -> Ast.EATuple (List.map (lift_e ~scope) es)

@@ -118,9 +118,13 @@ and expr =
   | Deref of expr * Pos.t              (* `*expr` — load through pointer *)
   | NullLit of Pos.t                   (* `null` — typeless pointer literal *)
   | New of { tname : string list; fields : (string * expr) list;
-             base : expr option; pos : Pos.t }
-                                        (* `new T { f: e }` — heap-alloc + init *)
-  | NewEnum of { tname : string list; args : expr list; pos : Pos.t }
+             base : expr option; alloc : expr option; pos : Pos.t }
+                                        (* `new T { f: e }` — raw malloc, ret = *T.
+                                           DR-046 `new(alloc) T { f: e }` — alloc'd
+                                           through the seam, ret = own *T (sanctioned
+                                           ownership origin). *)
+  | NewEnum of { tname : string list; args : expr list;
+                 alloc : expr option; pos : Pos.t }
                                         (* DR-031 `new Path::Variant(args)` —
                                            heap-allocate the enum value and
                                            return a `*Enum`.  Tuple-variant

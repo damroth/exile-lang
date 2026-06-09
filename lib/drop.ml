@@ -112,6 +112,45 @@ let drop_call ~structs ~struct_path local_name pos : tstmt list =
         pos;
       } in
       let u32_t = TInt { signed = false; width = Ast.W32 } in
+      (* Byte-count heuristic for size-tracking allocators (DR-046).
+         On host libc the byte-count is ignored, but kernels +
+         arena allocators read it to reclaim the right region.
+         Pick the shape from the struct's own fields:
+           - has `cap`  → `cap * size_of(elem)`   (growable: Vec, SB, HashMap)
+           - has `len`  → `len + 1`               (NUL-terminated: String)
+           - otherwise  → `size_of(elem)`         (single-element ownership) *)
+      let has_field name =
+        List.exists (fun (n, _) -> n = name) s.sfields_ty
+      in
+      let field_u32 name = {
+        e = TFieldAccess { target = local_v; field = name };
+        ty = u32_t;
+        pos;
+      } in
+      let size_of_elem inner = {
+        e = TCast (
+          { e = TSizeOf inner;
+            ty = TCInt { signed = false };
+            pos },
+          Ast.TyInt { signed = false; width = Ast.W32 });
+        ty = u32_t;
+        pos;
+      } in
+      let bytes_expr inner =
+        if has_field "cap" then
+          (* cap * size_of(elem) *)
+          { e = TBinOp (Ast.Mul, field_u32 "cap", size_of_elem inner);
+            ty = u32_t;
+            pos }
+        else if has_field "len" then
+          (* len + 1 — String trailing NUL convention. *)
+          { e = TBinOp (Ast.Add, field_u32 "len",
+                        { e = TIntLit 1; ty = u32_t; pos });
+            ty = u32_t;
+            pos }
+        else
+          size_of_elem inner
+      in
       let make_free_for (fname, fty) =
         match fty with
         | TOwnPtr inner ->
@@ -125,19 +164,10 @@ let drop_call ~structs ~struct_path local_name pos : tstmt list =
               ty = cvoid_ptr_ty;
               pos;
             } in
-            let size_arg = {
-              e = TCast (
-                { e = TSizeOf inner;
-                  ty = TCInt { signed = false };
-                  pos },
-                Ast.TyInt { signed = false; width = Ast.W32 });
-              ty = u32_t;
-              pos;
-            } in
             Some (TExprStmt {
               e = TIndirectCall {
                 fn_expr = alloc_free_fn;
-                args = [ alloc_state; cast_to_cvoid; size_arg ];
+                args = [ alloc_state; cast_to_cvoid; bytes_expr inner ];
               };
               ty = TInt { signed = true; width = Ast.W32 };
               pos;

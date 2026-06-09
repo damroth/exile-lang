@@ -501,13 +501,29 @@ let rec emit_value_into_temp ctx buf indent temp_name (value : texpr) =
       Option.iter (assign ~lhs:temp_name) base;
       List.iter (fun (fname, fe) -> assign ~lhs:(temp_name ^ "." ^ fname) fe)
         fields
-  | TNew { sname_path; fields; base } ->
+  | TNew { sname_path; fields; base; alloc } ->
       let cname = "struct " ^ mangle_typ (TStruct sname_path) in
       emit_assign_line buf indent ~lhs:temp_name
         ~emit_rhs:(fun () ->
-          Buffer.add_string buf "malloc(sizeof(";
-          Buffer.add_string buf cname;
-          Buffer.add_string buf "))");
+          match alloc with
+          | None ->
+              Buffer.add_string buf "malloc(sizeof(";
+              Buffer.add_string buf cname;
+              Buffer.add_string buf "))"
+          | Some ae ->
+              (* DR-046: new alloc-form routes through the seam,
+                 emitting an indirect call to ae.alloc_fn for the
+                 underlying byte allocation, then casting to the
+                 struct pointer type. *)
+              Buffer.add_string buf "((";
+              Buffer.add_string buf cname;
+              Buffer.add_string buf " *)(";
+              gen_expr ctx buf ae;
+              Buffer.add_string buf ".alloc_fn)(";
+              gen_expr ctx buf ae;
+              Buffer.add_string buf ".state, ((unsigned long)sizeof(";
+              Buffer.add_string buf cname;
+              Buffer.add_string buf "))))");
       (* `..base` for heap allocation: deref-assign the whole struct from
          the value-typed base, then override individual fields through
          the `->` arrow. *)
@@ -531,17 +547,30 @@ let rec emit_value_into_temp ctx buf indent temp_name (value : texpr) =
             ~lhs:(Printf.sprintf "%s.data.%s.%s" temp_name variant fname)
             arg)
         args
-  | TNewEnum { ename_path; variant; args; _ } ->
+  | TNewEnum { ename_path; variant; args; alloc } ->
       (* DR-031 heap-boxed enum tuple-variant: `temp = malloc(sizeof(
          struct ex_Enum)); temp->tag = ...; temp->data.V.fN = ...`.
          Same writes as TEnumLit but through `->` instead of `.`,
-         and the leading `malloc` mirrors TNew. *)
+         and the leading `malloc` mirrors TNew.  DR-046: when an
+         allocator is provided, route through the seam instead. *)
       let cname = "struct " ^ mangle_typ (TEnum ename_path) in
       emit_assign_line buf indent ~lhs:temp_name
         ~emit_rhs:(fun () ->
-          Buffer.add_string buf "malloc(sizeof(";
-          Buffer.add_string buf cname;
-          Buffer.add_string buf "))");
+          match alloc with
+          | None ->
+              Buffer.add_string buf "malloc(sizeof(";
+              Buffer.add_string buf cname;
+              Buffer.add_string buf "))"
+          | Some ae ->
+              Buffer.add_string buf "((";
+              Buffer.add_string buf cname;
+              Buffer.add_string buf " *)(";
+              gen_expr ctx buf ae;
+              Buffer.add_string buf ".alloc_fn)(";
+              gen_expr ctx buf ae;
+              Buffer.add_string buf ".state, ((unsigned long)sizeof(";
+              Buffer.add_string buf cname;
+              Buffer.add_string buf "))))");
       let enum_cname = mangle_typ (TEnum ename_path) in
       emit_assign_line buf indent ~lhs:(temp_name ^ "->tag")
         ~emit_rhs:(fun () ->

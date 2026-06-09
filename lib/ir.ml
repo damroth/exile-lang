@@ -688,7 +688,11 @@ type texpr_node =
   | TDeref of texpr
   | TNew of { sname_path : string list;
               fields : (string * texpr) list;
-              base : texpr option }
+              base : texpr option;
+              alloc : texpr option }   (* DR-046: Some alloc → sanctioned
+                                          ownership origin (ret = own *T,
+                                          codegen uses alloc.alloc_fn);
+                                          None → legacy raw malloc, ret = *T *)
   | TEnumLit of { ename_path : string list;
                   variant : string;
                   tag : int;            (* index in the enum's variant list *)
@@ -700,7 +704,8 @@ type texpr_node =
   | TNewEnum of { ename_path : string list;
                   variant : string;
                   tag : int;
-                  args : (string * texpr) list }
+                  args : (string * texpr) list;
+                  alloc : texpr option }   (* DR-046: Some → own *Enum origin *)
                                         (* DR-031 heap-boxed enum tuple-
                                            variant.  Same fields as
                                            TEnumLit but codegen emits

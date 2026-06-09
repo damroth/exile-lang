@@ -455,19 +455,28 @@ let rec parse_primary s =
   | Token.New ->
       (* `new Path { f1: e1, ... }` — heap-allocate struct + init.
          DR-031 `new Path::Variant(args)` — heap-allocate enum tuple-
-         variant; the path's last segment names the variant.  The
-         dispatch on `{` vs `(` resolves at parse time; struct-variant
-         heap-boxing (`new Path::V { f: e }`) defers to v2. *)
+         variant; the path's last segment names the variant.
+         DR-046 `new(alloc) Path { ... }` / `new(alloc) Path::V(args)` —
+         allocate through the seam, ret = own *T.  The optional
+         allocator expression sits in parens immediately after `new`. *)
+      let alloc_opt =
+        if peek s = Token.LParen then begin
+          ignore (advance s);
+          let e = parse_expr s in
+          expect s Token.RParen;
+          Some e
+        end else None
+      in
       let path = parse_path s ~what:"struct name after 'new'" in
       (match peek s with
        | Token.LBrace ->
            ignore (advance s);
            let (fields, base) = parse_struct_lit_body s in
-           Ast.New { tname = path; fields; base; pos = p }
+           Ast.New { tname = path; fields; base; alloc = alloc_opt; pos = p }
        | Token.LParen ->
            ignore (advance s);
            let args = parse_args s in
-           Ast.NewEnum { tname = path; args; pos = p }
+           Ast.NewEnum { tname = path; args; alloc = alloc_opt; pos = p }
        | other ->
            Error.failf (peek_pos s)
              "expected '{' (struct heap-init) or '(' (enum tuple-variant \
