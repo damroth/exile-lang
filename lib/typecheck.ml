@@ -1163,21 +1163,28 @@ let builtin_free = {
     | [ { e = TRef _; _ } ] ->
         (* Syntactic guard: `free(&...)` is always wrong — `&` produces
            a stack-or-field address, never a heap pointer.  Calling free
-           on it would corrupt the allocator's bookkeeping.  Real heap
-           pointers come from `new T { ... }` (or are propagated through
-           bindings from a `new`-let). *)
+           on it would corrupt the allocator's bookkeeping.  Owned heap
+           pointers come from `new(alloc) T { ... }` or `Allocator.alloc`. *)
         Error.failf pos
-          "'free' expects a heap-allocated pointer (from 'new'); got \
-           '&...' which is a stack or field address — this would \
+          "'free' expects an owned pointer `own *T` (from 'new(alloc)'); \
+           got '&...' which is a stack or field address — this would \
            corrupt the allocator"
-    | [ { ty = TPtr _; _ } ] when allow_void -> t_i32
-    | [ { ty = TPtr _; _ } ] ->
-        Error.failf pos "'free' returns void, cannot use as a value"
     | [ { ty = TOwnPtr _; _ } ] when allow_void -> t_i32
     | [ { ty = TOwnPtr _; _ } ] ->
         Error.failf pos "'free' returns void, cannot use as a value"
+    | [ { ty = (TPtr _ | TConstPtr _) as other; _ } ] ->
+        (* Owner-sigil free-gate: a plain borrow `*T` / `*const T` is
+           NOT an owned pointer.  Freeing a borrow risks a double-free
+           against the owner's own `free`/auto-drop.  Only `own *T`
+           (from `new(alloc)` / `Allocator.alloc`) is freeable. *)
+        Error.failf pos
+          "'free' expects an owned pointer `own *T`, got %s — a borrow \
+           cannot be freed (the owner releases it).  Owned pointers come \
+           from `new(alloc) T { ... }` or `Allocator.alloc`."
+          (typ_name other)
     | [ { ty = other; _ } ] ->
-        Error.failf pos "'free' expects a pointer, got %s" (typ_name other)
+        Error.failf pos
+          "'free' expects an owned pointer `own *T`, got %s" (typ_name other)
     | xs ->
         Error.failf pos "free() takes exactly one argument, got %d"
           (List.length xs));
@@ -1328,7 +1335,7 @@ let rewrite_struct_lit_as_enum_lit ctx tname fields base pos =
    wording.  Arg/void diagnostics retain "'<name>' …" exactly as before
    (and the "got X" half of every message is preserved verbatim). *)
 let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
-                    ~raw_args ~targs ~ret_ty ~allow_void () : typ =
+                    ~raw_args ~targs ~ret_ty ~allow_void () : typ * texpr list =
   let expected_n = List.length param_tys in
   let got = List.length raw_args in
   let arity_ok = if variadic then got >= expected_n else got = expected_n in
@@ -1343,6 +1350,10 @@ let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
     if n <= 0 then [] else match xs with
       | [] -> [] | x :: rest -> x :: take (n - 1) rest
   in
+  let rec drop n xs =
+    if n <= 0 then xs else match xs with
+      | [] -> [] | _ :: rest -> drop (n - 1) rest
+  in
   let fixed_arg_tys = take expected_n arg_tys in
   List.iteri (fun i (exp, act) ->
     if not (coercible_to ~from:act ~to_:exp)
@@ -1352,11 +1363,31 @@ let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
         "argument %d of '%s': expected %s, got %s"
         (i + 1) name (typ_name exp) (typ_name act))
     (List.combine param_tys fixed_arg_tys);
-  match ret_ty with
-  | Some t -> t
-  | None when allow_void -> t_i32
-  | None ->
-      Error.failf pos "'%s' returns void, cannot use as a value" name
+  (* DR-030 own-borrow: passing an `own *T` value into a borrow slot
+     (`*T` / `*const T`) is a NON-CONSUMING BORROW, not an ownership
+     move.  Restamp the argument's type to the parameter's borrow type
+     so the move-pass (which keys consume on the stamped slot type —
+     `own *T` affine, `*T`/`*const T` not) treats it as a loan and the
+     owner stays live for its own free/drop.  `own *T` and `*T` are the
+     same `T*` in C, so this is type-level only — zero codegen change.
+     Mirrors the already-target-aware return-value rule in move.ml. *)
+  let borrow_restamp param_ty (arg : texpr) =
+    match param_ty, arg.ty with
+    | (TPtr _ | TConstPtr _), TOwnPtr _ -> { arg with ty = param_ty }
+    | _ -> arg
+  in
+  let targs' =
+    List.map2 borrow_restamp param_tys (take expected_n targs)
+    @ drop expected_n targs
+  in
+  let result_ty =
+    match ret_ty with
+    | Some t -> t
+    | None when allow_void -> t_i32
+    | None ->
+        Error.failf pos "'%s' returns void, cannot use as a value" name
+  in
+  (result_ty, targs')
 
 (* Registry of `impl Trait for Type` pairs, as (trait-name, target
    abs-path).  Populated by [expand_impls] (which resolves both the trait
@@ -2915,6 +2946,13 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
               used) and verify it carries a value-shaped Allocator.
               The presence of an allocator flips the ret_ty from raw
               `*T` to `own *T` (sanctioned ownership origin). *)
+           if (not as_struct_lit) && alloc_ast = None then
+             Error.failf lit_pos
+               "bare `new %s { ... }` requires an explicit allocator: \
+                write `new(alloc) %s { ... }` (obtain one via \
+                `default_allocator()`).  Heap allocation is always \
+                explicit-allocator in exile."
+               display display;
            let talloc =
              Option.map (fun ae ->
                let te = elab_expr ctx env ae in
@@ -2954,6 +2992,13 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
             Error.failf lit_pos
               "'new ...' needs a qualified path (`Enum::Variant`)"
       in
+      if alloc = None then
+        Error.failf lit_pos
+          "bare `new %s(...)` requires an explicit allocator: \
+           write `new(alloc) %s(...)` (obtain one via \
+           `default_allocator()`).  Heap allocation is always \
+           explicit-allocator in exile."
+          (String.concat "::" tname) (String.concat "::" tname);
       let talloc =
         Option.map (fun ae ->
           let te = elab_expr ctx env ae in
@@ -3372,7 +3417,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 in
                 (match fnptr_local with
                  | Some (n, params, ret) ->
-                     let result_ty =
+                     let (result_ty, targs) =
                        check_call_args ~pos:call_pos
                          ~kind:"function pointer" ~name:n
                          ~param_tys:params ~raw_args:args ~targs
@@ -3429,7 +3474,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                                    "function '%s' is private to module '%s'"
                                    display
                                    (String.concat "::" resolved_mod));
-                          let result_ty =
+                          let (result_ty, targs) =
                             check_call_args ~pos:call_pos
                               ~kind:"function" ~name:display
                               ~variadic:fn_variadic ~param_tys
@@ -3503,10 +3548,15 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
         match trecv.ty with
         | TStruct p -> p
         | TPtr (TStruct p) -> p
+        | TOwnPtr (TStruct p) -> p     (* DR-030: own *T dispatches methods
+                                          like any pointer-to-struct; the
+                                          auto-ref matrix below borrows the
+                                          owner for `*self`/`*const self`. *)
         | TConstPtr (TStruct p) -> p   (* methods can mutate through self;
                                           MVP doesn't gate this — `&self`
                                           vs `&mut self` is future work *)
-        | TEnum p | TPtr (TEnum p) | TConstPtr (TEnum p) -> p
+        | TEnum p | TPtr (TEnum p) | TOwnPtr (TEnum p)
+        | TConstPtr (TEnum p) -> p
                                        (* methods on an enum (e.g. derived
                                           `Eq`); same lowering as structs *)
         | other ->
@@ -3548,7 +3598,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
            (match fnptr_field with
             | Some (params, ret) ->
                 let display = String.concat "::" struct_path ^ "." ^ name in
-                let result_ty =
+                let (result_ty, targs) =
                   check_call_args ~pos:mc_pos
                     ~kind:"fn-pointer field" ~name:display
                     ~param_tys:params ~raw_args:args ~targs
@@ -3664,7 +3714,7 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                       targs rest_params
                   else targs
                 in
-                let result_ty =
+                let (result_ty, targs) =
                   check_call_args ~pos:mc_pos
                     ~kind:"method" ~name:display
                     ~param_tys:rest_params ~raw_args:args ~targs
@@ -3717,7 +3767,17 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                 in
                 let trecv_adj =
                   match self_is_ptr, recv_is_ptr with
-                  | false, false | true, true -> trecv
+                  | true, true ->
+                      (* DR-030 own-borrow: an `own *T` receiver calling a
+                         `*self` / `*const self` method borrows — it does
+                         NOT move ownership.  Restamp to the borrow self-type
+                         so the move-pass keeps the owner live (same loan
+                         rule as call args).  Identical `T*` in C. *)
+                      (match self_ty, trecv.ty with
+                       | (TPtr _ | TConstPtr _), TOwnPtr _ ->
+                           { trecv with ty = self_ty }
+                       | _ -> trecv)
+                  | false, false -> trecv
                   | true, false ->
                       { e = TRef trecv; ty = self_ty; pos = trecv.pos }
                   | false, true ->
@@ -4135,7 +4195,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
          | _ -> ());
         let fty =
           match ttarget.ty with
-          | TStruct p | TPtr (TStruct p) ->
+          | TStruct p | TPtr (TStruct p) | TOwnPtr (TStruct p) ->
               let s = match resolve_struct_by_path ctx p with
                 | Some s -> s
                 | None ->
@@ -4672,7 +4732,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
   in
   let is_block (e : texpr) =
     match e.e with
-    | TStructLit _ | TTupleLit _ | TNew _ | TEnumLit _ | TMatch _
+    | TStructLit _ | TTupleLit _ | TNew _ | TNewEnum _ | TEnumLit _ | TMatch _
     | TIfExpr _ | TArrayLit _ | TArrayRepeat _ -> true
     | _ -> false
   in
@@ -5998,9 +6058,15 @@ let prelude_items () =
       (Some (Ast.TyOwnPtr (tvar "T"))) alloc_body
   in
   let free_method =
+    (* DR-030 own-borrow: `Allocator.free` RELEASES the pointee, so it
+       takes ownership — its parameter is `own *T`, not a borrow `*T`.
+       Passing an `own *T` here is therefore a MOVE (the move-pass
+       consumes the binding), which is what blocks a double-free.  A
+       borrow `*T` cannot be passed at all (mirrors the builtin
+       `free`'s own-only gate). *)
     mk_method "free" ["T"]
       [ self_param;
-        { Ast.pname = "p"; pty = Ast.TyPtr (tvar "T");
+        { Ast.pname = "p"; pty = Ast.TyOwnPtr (tvar "T");
           preg = None; is_mut = false } ]
       None free_body
   in

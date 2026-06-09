@@ -3,8 +3,8 @@ struct Point {
     y: int,
 }
 
-fn make_point(x: int, y: int) -> *Point {
-    return new Point { x: x, y: y };
+fn make_point(a: Allocator, x: int, y: int) -> own *Point {
+    return new(a) Point { x: x, y: y };
 }
 
 fn shift(p: *Point, dx: int, dy: int) {
@@ -13,7 +13,9 @@ fn shift(p: *Point, dx: int, dy: int) {
 }
 
 fn main() {
-    let p = new Point { x: 1, y: 2 };
+    let a = default_allocator();
+
+    let p = new(a) Point { x: 1, y: 2 };
     defer free(p);
 
     p.x = 10;
@@ -21,7 +23,7 @@ fn main() {
     println(p.x);
     println(p.y);
 
-    let q = make_point(100, 200);
+    let q = make_point(a, 100, 200);
     defer free(q);
 
     shift(q, 5, 7);

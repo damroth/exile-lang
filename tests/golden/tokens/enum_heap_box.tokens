@@ -1,290 +1,330 @@
 ;; exile-tokens-dump v1 examples/enum_heap_box.exl
-Enum @examples/enum_heap_box.exl:24:1
-(Ident Expr) @examples/enum_heap_box.exl:24:6
-LBrace @examples/enum_heap_box.exl:24:11
-(Ident Lit) @examples/enum_heap_box.exl:25:5
-LParen @examples/enum_heap_box.exl:25:8
-(Ident int) @examples/enum_heap_box.exl:25:9
-RParen @examples/enum_heap_box.exl:25:12
-Pipe @examples/enum_heap_box.exl:26:5
-(Ident Add) @examples/enum_heap_box.exl:26:7
-LParen @examples/enum_heap_box.exl:26:10
-Star @examples/enum_heap_box.exl:26:11
-(Ident Expr) @examples/enum_heap_box.exl:26:12
-Comma @examples/enum_heap_box.exl:26:16
-Star @examples/enum_heap_box.exl:26:18
-(Ident Expr) @examples/enum_heap_box.exl:26:19
-RParen @examples/enum_heap_box.exl:26:23
-Pipe @examples/enum_heap_box.exl:27:5
-(Ident Mul) @examples/enum_heap_box.exl:27:7
-LParen @examples/enum_heap_box.exl:27:10
-Star @examples/enum_heap_box.exl:27:11
-(Ident Expr) @examples/enum_heap_box.exl:27:12
-Comma @examples/enum_heap_box.exl:27:16
-Star @examples/enum_heap_box.exl:27:18
-(Ident Expr) @examples/enum_heap_box.exl:27:19
-RParen @examples/enum_heap_box.exl:27:23
-RBrace @examples/enum_heap_box.exl:28:1
-Fn @examples/enum_heap_box.exl:30:1
-(Ident eval) @examples/enum_heap_box.exl:30:4
-LParen @examples/enum_heap_box.exl:30:8
-(Ident e) @examples/enum_heap_box.exl:30:9
-Colon @examples/enum_heap_box.exl:30:10
-Star @examples/enum_heap_box.exl:30:12
-(Ident Expr) @examples/enum_heap_box.exl:30:13
-RParen @examples/enum_heap_box.exl:30:17
-Arrow @examples/enum_heap_box.exl:30:19
-(Ident int) @examples/enum_heap_box.exl:30:22
-LBrace @examples/enum_heap_box.exl:30:26
-Match @examples/enum_heap_box.exl:31:5
-Star @examples/enum_heap_box.exl:31:11
-(Ident e) @examples/enum_heap_box.exl:31:12
-LBrace @examples/enum_heap_box.exl:31:14
-(Ident Expr) @examples/enum_heap_box.exl:32:9
-DoubleColon @examples/enum_heap_box.exl:32:13
-(Ident Lit) @examples/enum_heap_box.exl:32:15
-LParen @examples/enum_heap_box.exl:32:18
-(Ident n) @examples/enum_heap_box.exl:32:19
-RParen @examples/enum_heap_box.exl:32:20
-FatArrow @examples/enum_heap_box.exl:32:22
-(Ident n) @examples/enum_heap_box.exl:32:25
-Pipe @examples/enum_heap_box.exl:33:9
-(Ident Expr) @examples/enum_heap_box.exl:33:11
-DoubleColon @examples/enum_heap_box.exl:33:15
-(Ident Add) @examples/enum_heap_box.exl:33:17
-LParen @examples/enum_heap_box.exl:33:20
-(Ident a) @examples/enum_heap_box.exl:33:21
-Comma @examples/enum_heap_box.exl:33:22
-(Ident b) @examples/enum_heap_box.exl:33:24
-RParen @examples/enum_heap_box.exl:33:25
-FatArrow @examples/enum_heap_box.exl:33:27
-(Ident eval) @examples/enum_heap_box.exl:33:30
-LParen @examples/enum_heap_box.exl:33:34
-(Ident a) @examples/enum_heap_box.exl:33:35
-RParen @examples/enum_heap_box.exl:33:36
-Plus @examples/enum_heap_box.exl:33:38
-(Ident eval) @examples/enum_heap_box.exl:33:40
-LParen @examples/enum_heap_box.exl:33:44
-(Ident b) @examples/enum_heap_box.exl:33:45
-RParen @examples/enum_heap_box.exl:33:46
-Pipe @examples/enum_heap_box.exl:34:9
-(Ident Expr) @examples/enum_heap_box.exl:34:11
-DoubleColon @examples/enum_heap_box.exl:34:15
-(Ident Mul) @examples/enum_heap_box.exl:34:17
-LParen @examples/enum_heap_box.exl:34:20
-(Ident a) @examples/enum_heap_box.exl:34:21
-Comma @examples/enum_heap_box.exl:34:22
-(Ident b) @examples/enum_heap_box.exl:34:24
-RParen @examples/enum_heap_box.exl:34:25
-FatArrow @examples/enum_heap_box.exl:34:27
-(Ident eval) @examples/enum_heap_box.exl:34:30
-LParen @examples/enum_heap_box.exl:34:34
-(Ident a) @examples/enum_heap_box.exl:34:35
-RParen @examples/enum_heap_box.exl:34:36
-Star @examples/enum_heap_box.exl:34:38
-(Ident eval) @examples/enum_heap_box.exl:34:40
-LParen @examples/enum_heap_box.exl:34:44
-(Ident b) @examples/enum_heap_box.exl:34:45
-RParen @examples/enum_heap_box.exl:34:46
-RBrace @examples/enum_heap_box.exl:35:5
-RBrace @examples/enum_heap_box.exl:36:1
-Fn @examples/enum_heap_box.exl:41:1
-(Ident free_tree) @examples/enum_heap_box.exl:41:4
-LParen @examples/enum_heap_box.exl:41:13
-(Ident e) @examples/enum_heap_box.exl:41:14
-Colon @examples/enum_heap_box.exl:41:15
-Star @examples/enum_heap_box.exl:41:17
-(Ident Expr) @examples/enum_heap_box.exl:41:18
-RParen @examples/enum_heap_box.exl:41:22
-LBrace @examples/enum_heap_box.exl:41:24
-Match @examples/enum_heap_box.exl:42:5
-Star @examples/enum_heap_box.exl:42:11
-(Ident e) @examples/enum_heap_box.exl:42:12
-LBrace @examples/enum_heap_box.exl:42:14
-(Ident Expr) @examples/enum_heap_box.exl:43:9
-DoubleColon @examples/enum_heap_box.exl:43:13
-(Ident Lit) @examples/enum_heap_box.exl:43:15
-LParen @examples/enum_heap_box.exl:43:18
-(Ident _n) @examples/enum_heap_box.exl:43:19
-RParen @examples/enum_heap_box.exl:43:21
-FatArrow @examples/enum_heap_box.exl:43:23
-LBrace @examples/enum_heap_box.exl:43:26
-RBrace @examples/enum_heap_box.exl:43:28
-Pipe @examples/enum_heap_box.exl:44:9
-(Ident Expr) @examples/enum_heap_box.exl:44:11
-DoubleColon @examples/enum_heap_box.exl:44:15
-(Ident Add) @examples/enum_heap_box.exl:44:17
-LParen @examples/enum_heap_box.exl:44:20
-(Ident a) @examples/enum_heap_box.exl:44:21
-Comma @examples/enum_heap_box.exl:44:22
-(Ident b) @examples/enum_heap_box.exl:44:24
-RParen @examples/enum_heap_box.exl:44:25
-FatArrow @examples/enum_heap_box.exl:44:27
-LBrace @examples/enum_heap_box.exl:44:30
-(Ident free_tree) @examples/enum_heap_box.exl:44:32
-LParen @examples/enum_heap_box.exl:44:41
-(Ident a) @examples/enum_heap_box.exl:44:42
-RParen @examples/enum_heap_box.exl:44:43
-Semicolon @examples/enum_heap_box.exl:44:44
-(Ident free_tree) @examples/enum_heap_box.exl:44:46
-LParen @examples/enum_heap_box.exl:44:55
-(Ident b) @examples/enum_heap_box.exl:44:56
-RParen @examples/enum_heap_box.exl:44:57
-Semicolon @examples/enum_heap_box.exl:44:58
-RBrace @examples/enum_heap_box.exl:44:60
-Pipe @examples/enum_heap_box.exl:45:9
-(Ident Expr) @examples/enum_heap_box.exl:45:11
-DoubleColon @examples/enum_heap_box.exl:45:15
-(Ident Mul) @examples/enum_heap_box.exl:45:17
-LParen @examples/enum_heap_box.exl:45:20
-(Ident a) @examples/enum_heap_box.exl:45:21
-Comma @examples/enum_heap_box.exl:45:22
-(Ident b) @examples/enum_heap_box.exl:45:24
-RParen @examples/enum_heap_box.exl:45:25
-FatArrow @examples/enum_heap_box.exl:45:27
-LBrace @examples/enum_heap_box.exl:45:30
-(Ident free_tree) @examples/enum_heap_box.exl:45:32
-LParen @examples/enum_heap_box.exl:45:41
-(Ident a) @examples/enum_heap_box.exl:45:42
-RParen @examples/enum_heap_box.exl:45:43
-Semicolon @examples/enum_heap_box.exl:45:44
-(Ident free_tree) @examples/enum_heap_box.exl:45:46
-LParen @examples/enum_heap_box.exl:45:55
-(Ident b) @examples/enum_heap_box.exl:45:56
-RParen @examples/enum_heap_box.exl:45:57
-Semicolon @examples/enum_heap_box.exl:45:58
-RBrace @examples/enum_heap_box.exl:45:60
-RBrace @examples/enum_heap_box.exl:46:5
-(Ident free) @examples/enum_heap_box.exl:47:5
-LParen @examples/enum_heap_box.exl:47:9
-(Ident e) @examples/enum_heap_box.exl:47:10
-RParen @examples/enum_heap_box.exl:47:11
-Semicolon @examples/enum_heap_box.exl:47:12
-RBrace @examples/enum_heap_box.exl:48:1
-Fn @examples/enum_heap_box.exl:50:1
-(Ident main) @examples/enum_heap_box.exl:50:4
-LParen @examples/enum_heap_box.exl:50:8
-RParen @examples/enum_heap_box.exl:50:9
-LBrace @examples/enum_heap_box.exl:50:11
-Let @examples/enum_heap_box.exl:52:5
-(Ident three) @examples/enum_heap_box.exl:52:9
-Eq @examples/enum_heap_box.exl:52:15
-New @examples/enum_heap_box.exl:52:17
-(Ident Expr) @examples/enum_heap_box.exl:52:21
-DoubleColon @examples/enum_heap_box.exl:52:25
-(Ident Lit) @examples/enum_heap_box.exl:52:27
-LParen @examples/enum_heap_box.exl:52:30
-(Int 3) @examples/enum_heap_box.exl:52:31
-RParen @examples/enum_heap_box.exl:52:32
-Semicolon @examples/enum_heap_box.exl:52:33
-Let @examples/enum_heap_box.exl:53:5
-(Ident seven) @examples/enum_heap_box.exl:53:9
-Eq @examples/enum_heap_box.exl:53:15
-New @examples/enum_heap_box.exl:53:17
-(Ident Expr) @examples/enum_heap_box.exl:53:21
-DoubleColon @examples/enum_heap_box.exl:53:25
-(Ident Lit) @examples/enum_heap_box.exl:53:27
-LParen @examples/enum_heap_box.exl:53:30
-(Int 7) @examples/enum_heap_box.exl:53:31
-RParen @examples/enum_heap_box.exl:53:32
-Semicolon @examples/enum_heap_box.exl:53:33
-Let @examples/enum_heap_box.exl:54:5
-(Ident twentyone) @examples/enum_heap_box.exl:54:9
-Eq @examples/enum_heap_box.exl:54:19
-New @examples/enum_heap_box.exl:54:21
-(Ident Expr) @examples/enum_heap_box.exl:54:25
-DoubleColon @examples/enum_heap_box.exl:54:29
-(Ident Mul) @examples/enum_heap_box.exl:54:31
-LParen @examples/enum_heap_box.exl:54:34
-(Ident three) @examples/enum_heap_box.exl:54:35
-Comma @examples/enum_heap_box.exl:54:40
-(Ident seven) @examples/enum_heap_box.exl:54:42
-RParen @examples/enum_heap_box.exl:54:47
-Semicolon @examples/enum_heap_box.exl:54:48
-Let @examples/enum_heap_box.exl:56:5
-(Ident five) @examples/enum_heap_box.exl:56:9
-Eq @examples/enum_heap_box.exl:56:14
-New @examples/enum_heap_box.exl:56:16
-(Ident Expr) @examples/enum_heap_box.exl:56:20
-DoubleColon @examples/enum_heap_box.exl:56:24
-(Ident Lit) @examples/enum_heap_box.exl:56:26
-LParen @examples/enum_heap_box.exl:56:29
-(Int 5) @examples/enum_heap_box.exl:56:30
-RParen @examples/enum_heap_box.exl:56:31
-Semicolon @examples/enum_heap_box.exl:56:32
+Enum @examples/enum_heap_box.exl:26:1
+(Ident Expr) @examples/enum_heap_box.exl:26:6
+LBrace @examples/enum_heap_box.exl:26:11
+(Ident Lit) @examples/enum_heap_box.exl:27:5
+LParen @examples/enum_heap_box.exl:27:8
+(Ident int) @examples/enum_heap_box.exl:27:9
+RParen @examples/enum_heap_box.exl:27:12
+Pipe @examples/enum_heap_box.exl:28:5
+(Ident Add) @examples/enum_heap_box.exl:28:7
+LParen @examples/enum_heap_box.exl:28:10
+Own @examples/enum_heap_box.exl:28:11
+Star @examples/enum_heap_box.exl:28:15
+(Ident Expr) @examples/enum_heap_box.exl:28:16
+Comma @examples/enum_heap_box.exl:28:20
+Own @examples/enum_heap_box.exl:28:22
+Star @examples/enum_heap_box.exl:28:26
+(Ident Expr) @examples/enum_heap_box.exl:28:27
+RParen @examples/enum_heap_box.exl:28:31
+Pipe @examples/enum_heap_box.exl:29:5
+(Ident Mul) @examples/enum_heap_box.exl:29:7
+LParen @examples/enum_heap_box.exl:29:10
+Own @examples/enum_heap_box.exl:29:11
+Star @examples/enum_heap_box.exl:29:15
+(Ident Expr) @examples/enum_heap_box.exl:29:16
+Comma @examples/enum_heap_box.exl:29:20
+Own @examples/enum_heap_box.exl:29:22
+Star @examples/enum_heap_box.exl:29:26
+(Ident Expr) @examples/enum_heap_box.exl:29:27
+RParen @examples/enum_heap_box.exl:29:31
+RBrace @examples/enum_heap_box.exl:30:1
+Fn @examples/enum_heap_box.exl:35:1
+(Ident eval) @examples/enum_heap_box.exl:35:4
+LParen @examples/enum_heap_box.exl:35:8
+(Ident e) @examples/enum_heap_box.exl:35:9
+Colon @examples/enum_heap_box.exl:35:10
+Star @examples/enum_heap_box.exl:35:12
+Const @examples/enum_heap_box.exl:35:13
+(Ident Expr) @examples/enum_heap_box.exl:35:19
+RParen @examples/enum_heap_box.exl:35:23
+Arrow @examples/enum_heap_box.exl:35:25
+(Ident int) @examples/enum_heap_box.exl:35:28
+LBrace @examples/enum_heap_box.exl:35:32
+Match @examples/enum_heap_box.exl:36:5
+Star @examples/enum_heap_box.exl:36:11
+(Ident e) @examples/enum_heap_box.exl:36:12
+LBrace @examples/enum_heap_box.exl:36:14
+(Ident Expr) @examples/enum_heap_box.exl:37:9
+DoubleColon @examples/enum_heap_box.exl:37:13
+(Ident Lit) @examples/enum_heap_box.exl:37:15
+LParen @examples/enum_heap_box.exl:37:18
+(Ident n) @examples/enum_heap_box.exl:37:19
+RParen @examples/enum_heap_box.exl:37:20
+FatArrow @examples/enum_heap_box.exl:37:22
+(Ident n) @examples/enum_heap_box.exl:37:25
+Pipe @examples/enum_heap_box.exl:38:9
+(Ident Expr) @examples/enum_heap_box.exl:38:11
+DoubleColon @examples/enum_heap_box.exl:38:15
+(Ident Add) @examples/enum_heap_box.exl:38:17
+LParen @examples/enum_heap_box.exl:38:20
+(Ident a) @examples/enum_heap_box.exl:38:21
+Comma @examples/enum_heap_box.exl:38:22
+(Ident b) @examples/enum_heap_box.exl:38:24
+RParen @examples/enum_heap_box.exl:38:25
+FatArrow @examples/enum_heap_box.exl:38:27
+(Ident eval) @examples/enum_heap_box.exl:38:30
+LParen @examples/enum_heap_box.exl:38:34
+(Ident a) @examples/enum_heap_box.exl:38:35
+RParen @examples/enum_heap_box.exl:38:36
+Plus @examples/enum_heap_box.exl:38:38
+(Ident eval) @examples/enum_heap_box.exl:38:40
+LParen @examples/enum_heap_box.exl:38:44
+(Ident b) @examples/enum_heap_box.exl:38:45
+RParen @examples/enum_heap_box.exl:38:46
+Pipe @examples/enum_heap_box.exl:39:9
+(Ident Expr) @examples/enum_heap_box.exl:39:11
+DoubleColon @examples/enum_heap_box.exl:39:15
+(Ident Mul) @examples/enum_heap_box.exl:39:17
+LParen @examples/enum_heap_box.exl:39:20
+(Ident a) @examples/enum_heap_box.exl:39:21
+Comma @examples/enum_heap_box.exl:39:22
+(Ident b) @examples/enum_heap_box.exl:39:24
+RParen @examples/enum_heap_box.exl:39:25
+FatArrow @examples/enum_heap_box.exl:39:27
+(Ident eval) @examples/enum_heap_box.exl:39:30
+LParen @examples/enum_heap_box.exl:39:34
+(Ident a) @examples/enum_heap_box.exl:39:35
+RParen @examples/enum_heap_box.exl:39:36
+Star @examples/enum_heap_box.exl:39:38
+(Ident eval) @examples/enum_heap_box.exl:39:40
+LParen @examples/enum_heap_box.exl:39:44
+(Ident b) @examples/enum_heap_box.exl:39:45
+RParen @examples/enum_heap_box.exl:39:46
+RBrace @examples/enum_heap_box.exl:40:5
+RBrace @examples/enum_heap_box.exl:41:1
+Fn @examples/enum_heap_box.exl:47:1
+(Ident free_tree) @examples/enum_heap_box.exl:47:4
+LParen @examples/enum_heap_box.exl:47:13
+(Ident e) @examples/enum_heap_box.exl:47:14
+Colon @examples/enum_heap_box.exl:47:15
+Own @examples/enum_heap_box.exl:47:17
+Star @examples/enum_heap_box.exl:47:21
+(Ident Expr) @examples/enum_heap_box.exl:47:22
+RParen @examples/enum_heap_box.exl:47:26
+LBrace @examples/enum_heap_box.exl:47:28
+Match @examples/enum_heap_box.exl:48:5
+Star @examples/enum_heap_box.exl:48:11
+(Ident e) @examples/enum_heap_box.exl:48:12
+LBrace @examples/enum_heap_box.exl:48:14
+(Ident Expr) @examples/enum_heap_box.exl:49:9
+DoubleColon @examples/enum_heap_box.exl:49:13
+(Ident Lit) @examples/enum_heap_box.exl:49:15
+LParen @examples/enum_heap_box.exl:49:18
+(Ident _n) @examples/enum_heap_box.exl:49:19
+RParen @examples/enum_heap_box.exl:49:21
+FatArrow @examples/enum_heap_box.exl:49:23
+LBrace @examples/enum_heap_box.exl:49:26
+RBrace @examples/enum_heap_box.exl:49:28
+Pipe @examples/enum_heap_box.exl:50:9
+(Ident Expr) @examples/enum_heap_box.exl:50:11
+DoubleColon @examples/enum_heap_box.exl:50:15
+(Ident Add) @examples/enum_heap_box.exl:50:17
+LParen @examples/enum_heap_box.exl:50:20
+(Ident a) @examples/enum_heap_box.exl:50:21
+Comma @examples/enum_heap_box.exl:50:22
+(Ident b) @examples/enum_heap_box.exl:50:24
+RParen @examples/enum_heap_box.exl:50:25
+FatArrow @examples/enum_heap_box.exl:50:27
+LBrace @examples/enum_heap_box.exl:50:30
+(Ident free_tree) @examples/enum_heap_box.exl:50:32
+LParen @examples/enum_heap_box.exl:50:41
+(Ident a) @examples/enum_heap_box.exl:50:42
+RParen @examples/enum_heap_box.exl:50:43
+Semicolon @examples/enum_heap_box.exl:50:44
+(Ident free_tree) @examples/enum_heap_box.exl:50:46
+LParen @examples/enum_heap_box.exl:50:55
+(Ident b) @examples/enum_heap_box.exl:50:56
+RParen @examples/enum_heap_box.exl:50:57
+Semicolon @examples/enum_heap_box.exl:50:58
+RBrace @examples/enum_heap_box.exl:50:60
+Pipe @examples/enum_heap_box.exl:51:9
+(Ident Expr) @examples/enum_heap_box.exl:51:11
+DoubleColon @examples/enum_heap_box.exl:51:15
+(Ident Mul) @examples/enum_heap_box.exl:51:17
+LParen @examples/enum_heap_box.exl:51:20
+(Ident a) @examples/enum_heap_box.exl:51:21
+Comma @examples/enum_heap_box.exl:51:22
+(Ident b) @examples/enum_heap_box.exl:51:24
+RParen @examples/enum_heap_box.exl:51:25
+FatArrow @examples/enum_heap_box.exl:51:27
+LBrace @examples/enum_heap_box.exl:51:30
+(Ident free_tree) @examples/enum_heap_box.exl:51:32
+LParen @examples/enum_heap_box.exl:51:41
+(Ident a) @examples/enum_heap_box.exl:51:42
+RParen @examples/enum_heap_box.exl:51:43
+Semicolon @examples/enum_heap_box.exl:51:44
+(Ident free_tree) @examples/enum_heap_box.exl:51:46
+LParen @examples/enum_heap_box.exl:51:55
+(Ident b) @examples/enum_heap_box.exl:51:56
+RParen @examples/enum_heap_box.exl:51:57
+Semicolon @examples/enum_heap_box.exl:51:58
+RBrace @examples/enum_heap_box.exl:51:60
+RBrace @examples/enum_heap_box.exl:52:5
+(Ident free) @examples/enum_heap_box.exl:53:5
+LParen @examples/enum_heap_box.exl:53:9
+(Ident e) @examples/enum_heap_box.exl:53:10
+RParen @examples/enum_heap_box.exl:53:11
+Semicolon @examples/enum_heap_box.exl:53:12
+RBrace @examples/enum_heap_box.exl:54:1
+Fn @examples/enum_heap_box.exl:56:1
+(Ident main) @examples/enum_heap_box.exl:56:4
+LParen @examples/enum_heap_box.exl:56:8
+RParen @examples/enum_heap_box.exl:56:9
+LBrace @examples/enum_heap_box.exl:56:11
 Let @examples/enum_heap_box.exl:57:5
-(Ident four) @examples/enum_heap_box.exl:57:9
-Eq @examples/enum_heap_box.exl:57:14
-New @examples/enum_heap_box.exl:57:16
-(Ident Expr) @examples/enum_heap_box.exl:57:20
-DoubleColon @examples/enum_heap_box.exl:57:24
-(Ident Lit) @examples/enum_heap_box.exl:57:26
-LParen @examples/enum_heap_box.exl:57:29
-(Int 4) @examples/enum_heap_box.exl:57:30
+(Ident a) @examples/enum_heap_box.exl:57:9
+Eq @examples/enum_heap_box.exl:57:11
+(Ident default_allocator) @examples/enum_heap_box.exl:57:13
+LParen @examples/enum_heap_box.exl:57:30
 RParen @examples/enum_heap_box.exl:57:31
 Semicolon @examples/enum_heap_box.exl:57:32
-Let @examples/enum_heap_box.exl:58:5
-(Ident twenty) @examples/enum_heap_box.exl:58:9
-Eq @examples/enum_heap_box.exl:58:16
-New @examples/enum_heap_box.exl:58:18
-(Ident Expr) @examples/enum_heap_box.exl:58:22
-DoubleColon @examples/enum_heap_box.exl:58:26
-(Ident Mul) @examples/enum_heap_box.exl:58:28
-LParen @examples/enum_heap_box.exl:58:31
-(Ident five) @examples/enum_heap_box.exl:58:32
-Comma @examples/enum_heap_box.exl:58:36
-(Ident four) @examples/enum_heap_box.exl:58:38
-RParen @examples/enum_heap_box.exl:58:42
-Semicolon @examples/enum_heap_box.exl:58:43
 Let @examples/enum_heap_box.exl:60:5
-(Ident one) @examples/enum_heap_box.exl:60:9
-Eq @examples/enum_heap_box.exl:60:13
-New @examples/enum_heap_box.exl:60:15
-(Ident Expr) @examples/enum_heap_box.exl:60:19
-DoubleColon @examples/enum_heap_box.exl:60:23
-(Ident Lit) @examples/enum_heap_box.exl:60:25
-LParen @examples/enum_heap_box.exl:60:28
-(Int 1) @examples/enum_heap_box.exl:60:29
-RParen @examples/enum_heap_box.exl:60:30
-Semicolon @examples/enum_heap_box.exl:60:31
+(Ident three) @examples/enum_heap_box.exl:60:9
+Eq @examples/enum_heap_box.exl:60:15
+New @examples/enum_heap_box.exl:60:17
+LParen @examples/enum_heap_box.exl:60:20
+(Ident a) @examples/enum_heap_box.exl:60:21
+RParen @examples/enum_heap_box.exl:60:22
+(Ident Expr) @examples/enum_heap_box.exl:60:24
+DoubleColon @examples/enum_heap_box.exl:60:28
+(Ident Lit) @examples/enum_heap_box.exl:60:30
+LParen @examples/enum_heap_box.exl:60:33
+(Int 3) @examples/enum_heap_box.exl:60:34
+RParen @examples/enum_heap_box.exl:60:35
+Semicolon @examples/enum_heap_box.exl:60:36
+Let @examples/enum_heap_box.exl:61:5
+(Ident seven) @examples/enum_heap_box.exl:61:9
+Eq @examples/enum_heap_box.exl:61:15
+New @examples/enum_heap_box.exl:61:17
+LParen @examples/enum_heap_box.exl:61:20
+(Ident a) @examples/enum_heap_box.exl:61:21
+RParen @examples/enum_heap_box.exl:61:22
+(Ident Expr) @examples/enum_heap_box.exl:61:24
+DoubleColon @examples/enum_heap_box.exl:61:28
+(Ident Lit) @examples/enum_heap_box.exl:61:30
+LParen @examples/enum_heap_box.exl:61:33
+(Int 7) @examples/enum_heap_box.exl:61:34
+RParen @examples/enum_heap_box.exl:61:35
+Semicolon @examples/enum_heap_box.exl:61:36
 Let @examples/enum_heap_box.exl:62:5
-(Ident lhs) @examples/enum_heap_box.exl:62:9
-Eq @examples/enum_heap_box.exl:62:13
-New @examples/enum_heap_box.exl:62:15
-(Ident Expr) @examples/enum_heap_box.exl:62:19
-DoubleColon @examples/enum_heap_box.exl:62:23
-(Ident Add) @examples/enum_heap_box.exl:62:25
-LParen @examples/enum_heap_box.exl:62:28
-(Ident twentyone) @examples/enum_heap_box.exl:62:29
-Comma @examples/enum_heap_box.exl:62:38
-(Ident twenty) @examples/enum_heap_box.exl:62:40
-RParen @examples/enum_heap_box.exl:62:46
-Semicolon @examples/enum_heap_box.exl:62:47
-Let @examples/enum_heap_box.exl:63:5
-(Ident root) @examples/enum_heap_box.exl:63:9
-Eq @examples/enum_heap_box.exl:63:14
-New @examples/enum_heap_box.exl:63:16
-(Ident Expr) @examples/enum_heap_box.exl:63:20
-DoubleColon @examples/enum_heap_box.exl:63:24
-(Ident Add) @examples/enum_heap_box.exl:63:26
-LParen @examples/enum_heap_box.exl:63:29
-(Ident lhs) @examples/enum_heap_box.exl:63:30
-Comma @examples/enum_heap_box.exl:63:33
-(Ident one) @examples/enum_heap_box.exl:63:35
-RParen @examples/enum_heap_box.exl:63:38
-Semicolon @examples/enum_heap_box.exl:63:39
-(Ident println) @examples/enum_heap_box.exl:65:5
-LParen @examples/enum_heap_box.exl:65:12
-(Ident eval) @examples/enum_heap_box.exl:65:13
-LParen @examples/enum_heap_box.exl:65:17
-(Ident root) @examples/enum_heap_box.exl:65:18
-RParen @examples/enum_heap_box.exl:65:22
-RParen @examples/enum_heap_box.exl:65:23
-Semicolon @examples/enum_heap_box.exl:65:24
-(Ident free_tree) @examples/enum_heap_box.exl:67:5
-LParen @examples/enum_heap_box.exl:67:14
-(Ident root) @examples/enum_heap_box.exl:67:15
-RParen @examples/enum_heap_box.exl:67:19
-Semicolon @examples/enum_heap_box.exl:67:20
-RBrace @examples/enum_heap_box.exl:68:1
-Eof @examples/enum_heap_box.exl:69:1
+(Ident twentyone) @examples/enum_heap_box.exl:62:9
+Eq @examples/enum_heap_box.exl:62:19
+New @examples/enum_heap_box.exl:62:21
+LParen @examples/enum_heap_box.exl:62:24
+(Ident a) @examples/enum_heap_box.exl:62:25
+RParen @examples/enum_heap_box.exl:62:26
+(Ident Expr) @examples/enum_heap_box.exl:62:28
+DoubleColon @examples/enum_heap_box.exl:62:32
+(Ident Mul) @examples/enum_heap_box.exl:62:34
+LParen @examples/enum_heap_box.exl:62:37
+(Ident three) @examples/enum_heap_box.exl:62:38
+Comma @examples/enum_heap_box.exl:62:43
+(Ident seven) @examples/enum_heap_box.exl:62:45
+RParen @examples/enum_heap_box.exl:62:50
+Semicolon @examples/enum_heap_box.exl:62:51
+Let @examples/enum_heap_box.exl:64:5
+(Ident five) @examples/enum_heap_box.exl:64:9
+Eq @examples/enum_heap_box.exl:64:14
+New @examples/enum_heap_box.exl:64:16
+LParen @examples/enum_heap_box.exl:64:19
+(Ident a) @examples/enum_heap_box.exl:64:20
+RParen @examples/enum_heap_box.exl:64:21
+(Ident Expr) @examples/enum_heap_box.exl:64:23
+DoubleColon @examples/enum_heap_box.exl:64:27
+(Ident Lit) @examples/enum_heap_box.exl:64:29
+LParen @examples/enum_heap_box.exl:64:32
+(Int 5) @examples/enum_heap_box.exl:64:33
+RParen @examples/enum_heap_box.exl:64:34
+Semicolon @examples/enum_heap_box.exl:64:35
+Let @examples/enum_heap_box.exl:65:5
+(Ident four) @examples/enum_heap_box.exl:65:9
+Eq @examples/enum_heap_box.exl:65:14
+New @examples/enum_heap_box.exl:65:16
+LParen @examples/enum_heap_box.exl:65:19
+(Ident a) @examples/enum_heap_box.exl:65:20
+RParen @examples/enum_heap_box.exl:65:21
+(Ident Expr) @examples/enum_heap_box.exl:65:23
+DoubleColon @examples/enum_heap_box.exl:65:27
+(Ident Lit) @examples/enum_heap_box.exl:65:29
+LParen @examples/enum_heap_box.exl:65:32
+(Int 4) @examples/enum_heap_box.exl:65:33
+RParen @examples/enum_heap_box.exl:65:34
+Semicolon @examples/enum_heap_box.exl:65:35
+Let @examples/enum_heap_box.exl:66:5
+(Ident twenty) @examples/enum_heap_box.exl:66:9
+Eq @examples/enum_heap_box.exl:66:16
+New @examples/enum_heap_box.exl:66:18
+LParen @examples/enum_heap_box.exl:66:21
+(Ident a) @examples/enum_heap_box.exl:66:22
+RParen @examples/enum_heap_box.exl:66:23
+(Ident Expr) @examples/enum_heap_box.exl:66:25
+DoubleColon @examples/enum_heap_box.exl:66:29
+(Ident Mul) @examples/enum_heap_box.exl:66:31
+LParen @examples/enum_heap_box.exl:66:34
+(Ident five) @examples/enum_heap_box.exl:66:35
+Comma @examples/enum_heap_box.exl:66:39
+(Ident four) @examples/enum_heap_box.exl:66:41
+RParen @examples/enum_heap_box.exl:66:45
+Semicolon @examples/enum_heap_box.exl:66:46
+Let @examples/enum_heap_box.exl:68:5
+(Ident one) @examples/enum_heap_box.exl:68:9
+Eq @examples/enum_heap_box.exl:68:13
+New @examples/enum_heap_box.exl:68:15
+LParen @examples/enum_heap_box.exl:68:18
+(Ident a) @examples/enum_heap_box.exl:68:19
+RParen @examples/enum_heap_box.exl:68:20
+(Ident Expr) @examples/enum_heap_box.exl:68:22
+DoubleColon @examples/enum_heap_box.exl:68:26
+(Ident Lit) @examples/enum_heap_box.exl:68:28
+LParen @examples/enum_heap_box.exl:68:31
+(Int 1) @examples/enum_heap_box.exl:68:32
+RParen @examples/enum_heap_box.exl:68:33
+Semicolon @examples/enum_heap_box.exl:68:34
+Let @examples/enum_heap_box.exl:70:5
+(Ident lhs) @examples/enum_heap_box.exl:70:9
+Eq @examples/enum_heap_box.exl:70:13
+New @examples/enum_heap_box.exl:70:15
+LParen @examples/enum_heap_box.exl:70:18
+(Ident a) @examples/enum_heap_box.exl:70:19
+RParen @examples/enum_heap_box.exl:70:20
+(Ident Expr) @examples/enum_heap_box.exl:70:22
+DoubleColon @examples/enum_heap_box.exl:70:26
+(Ident Add) @examples/enum_heap_box.exl:70:28
+LParen @examples/enum_heap_box.exl:70:31
+(Ident twentyone) @examples/enum_heap_box.exl:70:32
+Comma @examples/enum_heap_box.exl:70:41
+(Ident twenty) @examples/enum_heap_box.exl:70:43
+RParen @examples/enum_heap_box.exl:70:49
+Semicolon @examples/enum_heap_box.exl:70:50
+Let @examples/enum_heap_box.exl:71:5
+(Ident root) @examples/enum_heap_box.exl:71:9
+Eq @examples/enum_heap_box.exl:71:14
+New @examples/enum_heap_box.exl:71:16
+LParen @examples/enum_heap_box.exl:71:19
+(Ident a) @examples/enum_heap_box.exl:71:20
+RParen @examples/enum_heap_box.exl:71:21
+(Ident Expr) @examples/enum_heap_box.exl:71:23
+DoubleColon @examples/enum_heap_box.exl:71:27
+(Ident Add) @examples/enum_heap_box.exl:71:29
+LParen @examples/enum_heap_box.exl:71:32
+(Ident lhs) @examples/enum_heap_box.exl:71:33
+Comma @examples/enum_heap_box.exl:71:36
+(Ident one) @examples/enum_heap_box.exl:71:38
+RParen @examples/enum_heap_box.exl:71:41
+Semicolon @examples/enum_heap_box.exl:71:42
+(Ident println) @examples/enum_heap_box.exl:73:5
+LParen @examples/enum_heap_box.exl:73:12
+(Ident eval) @examples/enum_heap_box.exl:73:13
+LParen @examples/enum_heap_box.exl:73:17
+(Ident root) @examples/enum_heap_box.exl:73:18
+RParen @examples/enum_heap_box.exl:73:22
+RParen @examples/enum_heap_box.exl:73:23
+Semicolon @examples/enum_heap_box.exl:73:24
+(Ident free_tree) @examples/enum_heap_box.exl:75:5
+LParen @examples/enum_heap_box.exl:75:14
+(Ident root) @examples/enum_heap_box.exl:75:15
+RParen @examples/enum_heap_box.exl:75:19
+Semicolon @examples/enum_heap_box.exl:75:20
+RBrace @examples/enum_heap_box.exl:76:1
+Eof @examples/enum_heap_box.exl:77:1
