@@ -34,7 +34,7 @@ fn main() {
     m.insert(1, 100);
     m.insert(2, 200);
     m.insert(3, 300);
-    println(m.len() as int);                            // 3
+    println(m.length() as int);                            // 3
 
     if m.contains(2) { println(1); } else { println(0); }   // 1
     if m.contains(99) { println(1); } else { println(0); }  // 0
@@ -54,7 +54,7 @@ fn main() {
         Option::Some(v) => { println(v); }              // 222
         | Option::None => { println(-1); }
     }
-    println(m.len() as int);                            // 3
+    println(m.length() as int);                            // 3
 
     // ── HashMap<String, int> — the self-host motivator.  The
     // hand-written `String::eq` / `String::hash` delegate to
@@ -64,7 +64,7 @@ fn main() {
     kw.insert(String::with_str(a, "fn"),     1);
     kw.insert(String::with_str(a, "let"),    2);
     kw.insert(String::with_str(a, "return"), 3);
-    println(kw.len() as int);                           // 3
+    println(kw.length() as int);                           // 3
 
     let probe = String::with_str(a, "fn");
     match kw.get(probe) {
@@ -86,11 +86,11 @@ fn main() {
         g.insert(i, i * 10);
         i = i + 1;
     }
-    println(g.len() as int);                            // 12
+    println(g.length() as int);                            // 12
 
     g.remove(3);
     g.remove(7);
-    println(g.len() as int);                            // 10
+    println(g.length() as int);                            // 10
 
     // Tombstoned keys lookup → None; survivors still present.
     match g.get(3) {
@@ -122,7 +122,7 @@ fn main() {
     tok.insert("fn",     1);
     tok.insert("let",    2);
     tok.insert("return", 3);
-    println(tok.len() as int);                          // 3
+    println(tok.length() as int);                          // 3
 
     match tok.get("let") {
         Option::Some(v) => { println(v); }              // 2

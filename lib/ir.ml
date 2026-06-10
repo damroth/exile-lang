@@ -774,6 +774,9 @@ and tmatch_arm = {
 and tpattern =
   | TPWildcard
   | TPVar of string
+  | TPLit of int                        (* integer / char-literal pattern
+                                           (GATE-5a) — scalar match arm,
+                                           lowers to a C `case` label *)
   | TPVariant of { variant : string; tag : int;
                    binds : (string * tpattern) list }
                                         (* field name + sub-pattern;
@@ -872,10 +875,17 @@ let rec texpr_children (te : texpr) : texpr list =
   | TCall { args; _ } | TBuiltinCall { args; _ } -> args
   | TIndirectCall { fn_expr; args } -> fn_expr :: args
   | TTupleLit es -> es
-  | TStructLit { fields; base; _ } | TNew { fields; base; _ } ->
+  | TStructLit { fields; base; _ } ->
       List.map snd fields @ Option.to_list base
+  | TNew { fields; base; alloc; _ } ->
+      (* `alloc` is a real child: scans (unused-variable lint, DCE
+         reachability, default-allocator detection) must see the
+         allocator expression of `new(a) T { ... }`. *)
+      List.map snd fields @ Option.to_list base @ Option.to_list alloc
   | TFieldAccess { target; _ } -> [target]
-  | TEnumLit { args; _ } | TNewEnum { args; _ } -> List.map snd args
+  | TEnumLit { args; _ } -> List.map snd args
+  | TNewEnum { args; alloc; _ } ->
+      List.map snd args @ Option.to_list alloc
   | TMatch { scrutinee; arms; _ } ->
       scrutinee :: List.map (fun a -> a.tbody) arms
   | TIfExpr { cond; then_val; else_val } -> [cond; then_val; else_val]
@@ -884,16 +894,26 @@ let rec texpr_children (te : texpr) : texpr list =
   | TIndex { base; index } -> [base; index]
   | TBlock { stmts; trailing } ->
       (* Surface every texpr inside the block — own-exprs of each
-         direct stmt plus the trailing value.  Sub-stmts (TIf bodies,
-         TWhile, TDefer body, ...) recurse through stmt-level
-         traversals (`iter_tstmt`); for plain expression-shaped
-         payloads (TLet RHS, TExprStmt argument, ...) the
-         tstmt_own_exprs walk is enough.  Used by the `Display`-
-         dispatch desugar (which inserts a TBlock at expression
-         position carrying TLet/TExprStmt children) so program-level
-         scans like `uses_default_allocator_of` reach the
-         TBuiltinCalls inside. *)
-      List.concat_map tstmt_own_exprs stmts
+         stmt, recursing through sub-stmt bodies (TIf/TWhile/TDefer),
+         plus the trailing value.  The recursion matters (GATE-4):
+         arm-body blocks now lift in place, so a loop inside a match
+         arm carries calls in its BODY and program-level texpr scans
+         (DCE reachability, `uses_default_allocator_of`, ...) must
+         reach them — a shallow walk dropped `VecIter__next` as
+         unreachable and the emitted C lost its forward decl. *)
+      let rec deep s =
+        tstmt_own_exprs s
+        @ (match s with
+           | TIf { then_body; else_body; _ } ->
+               List.concat_map deep (then_body @ else_body)
+           | TWhile { body; post; _ } ->
+               List.concat_map deep (body @ post)
+           | TDefer { body; _ } | TFor { body; _ }
+           | TForEach { body; _ } ->
+               List.concat_map deep body
+           | _ -> [])
+      in
+      List.concat_map deep stmts
       @ Option.to_list trailing
 
 (* Exprs that live DIRECTLY in [s] — cond, value, target.  Does NOT

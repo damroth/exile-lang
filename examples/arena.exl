@@ -1,0 +1,74 @@
+// Arena — bump allocator for tree-shaped workloads (PORT-PREP P2).
+//
+// The AST-building idiom of the self-host compiler: thousands of
+// nodes allocated one `ptr_offset` bump at a time, released in ONE
+// wholesale `free_fn` call when the arena goes out of scope.
+//
+// Ownership model (P1, ratified 2026-06-10):
+//   - `arena.alloc_borrowed::<T>()` returns a plain BORROW `*T` —
+//     the node belongs to the ARENA, not to the binding, so the
+//     own/L1 lifecycle does not track it: no per-node free ceremony,
+//     which is the entire point of an arena.
+//   - the wholesale release IS the auto-drop: `Arena.buf` is an
+//     `own *u8` field with a sibling `alloc`, so the struct is
+//     droppable — scope exit returns the whole buffer (cap bytes)
+//     to the parent allocator.
+//   - exhaustion returns `null`; pick the capacity generously.
+//   - borrows into the buffer must not outlive the arena binding
+//     (same rule of thumb as a Slice into a Vec).
+
+enum Expr {
+    Lit(int)
+    | Add(*Expr, *Expr)
+    | Mul(*Expr, *Expr)
+}
+
+fn eval(e: *const Expr) -> int {
+    match *e {
+        Expr::Lit(n) => n
+        | Expr::Add(a, b) => eval(a) + eval(b)
+        | Expr::Mul(a, b) => eval(a) * eval(b)
+    }
+}
+
+// Smart constructors: allocate a node in the arena, fill it, hand
+// back the borrow.  This is the parser's node-building shape.
+fn lit(ar: *Arena, v: int) -> *Expr {
+    let n: *Expr = ar.alloc_borrowed();
+    *n = Expr::Lit(v);
+    return n;
+}
+
+fn add(ar: *Arena, l: *Expr, r: *Expr) -> *Expr {
+    let n: *Expr = ar.alloc_borrowed();
+    *n = Expr::Add(l, r);
+    return n;
+}
+
+fn mul(ar: *Arena, l: *Expr, r: *Expr) -> *Expr {
+    let n: *Expr = ar.alloc_borrowed();
+    *n = Expr::Mul(l, r);
+    return n;
+}
+
+fn main() {
+    let a = default_allocator();
+    let mut ar = Arena::with_capacity(a, 4096 as u32);
+
+    // (3 * 7) + (5 * 4) + 1 = 42 — no free_tree, no per-node frees.
+    let tree = add(&ar,
+                   add(&ar,
+                       mul(&ar, lit(&ar, 3), lit(&ar, 7)),
+                       mul(&ar, lit(&ar, 5), lit(&ar, 4))),
+                   lit(&ar, 1));
+    println(eval(tree));                   // 42
+
+    // Exhaustion is a null, not a crash: an 8-byte arena cannot hold
+    // an Expr node on any target.
+    let mut tiny = Arena::with_capacity(a, 8 as u32);
+    let none: *Expr = tiny.alloc_borrowed();
+    if none == null { println(0); }        // 0
+
+    // Scope end: two auto-drops, one per arena — each a single
+    // wholesale free_fn of the full buffer.
+}

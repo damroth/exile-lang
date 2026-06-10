@@ -85,13 +85,13 @@ Semicolon @examples/vec.exl:31:15
 LParen @examples/vec.exl:32:12
 (Ident v) @examples/vec.exl:32:13
 Dot @examples/vec.exl:32:14
-(Ident len) @examples/vec.exl:32:15
-LParen @examples/vec.exl:32:18
-RParen @examples/vec.exl:32:19
-As @examples/vec.exl:32:21
-(Ident int) @examples/vec.exl:32:24
-RParen @examples/vec.exl:32:27
-Semicolon @examples/vec.exl:32:28
+(Ident length) @examples/vec.exl:32:15
+LParen @examples/vec.exl:32:21
+RParen @examples/vec.exl:32:22
+As @examples/vec.exl:32:24
+(Ident int) @examples/vec.exl:32:27
+RParen @examples/vec.exl:32:30
+Semicolon @examples/vec.exl:32:31
 Match @examples/vec.exl:35:5
 (Ident v) @examples/vec.exl:35:11
 Dot @examples/vec.exl:35:12

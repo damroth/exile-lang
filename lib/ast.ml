@@ -255,6 +255,11 @@ and enum_lit_args =
 and pattern =
   | PWildcard of Pos.t
   | PVar of string * Pos.t              (* binds the scrutinee to the name *)
+  | PLit of int * Pos.t                 (* integer / char-literal pattern —
+                                           `match b { 'a' => ..., 0 => ... }`
+                                           (GATE-5a); scrutinee must be
+                                           int-like and the match needs a
+                                           final catch-all arm *)
   | PVariant of { tname : string list; variant : string;
                   binds : pat_binds; pos : Pos.t }
                                         (* tuple form: `Foo::V(p1, p2)`,

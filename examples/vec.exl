@@ -29,7 +29,7 @@ fn main() {
     v.push(30);
     v.push(40);
     v.push(50);
-    println(v.len() as int);                   // 5
+    println(v.length() as int);                   // 5
 
     // `get(i)` copies out; OOB lands as `Option::None`.
     match v.get(0 as u32) {

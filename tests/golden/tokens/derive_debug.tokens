@@ -102,12 +102,12 @@ RBrace @examples/derive_debug.exl:37:34
 Semicolon @examples/derive_debug.exl:37:35
 (Ident p) @examples/derive_debug.exl:38:5
 Dot @examples/derive_debug.exl:38:6
-(Ident fmt) @examples/derive_debug.exl:38:7
-LParen @examples/derive_debug.exl:38:10
-Amp @examples/derive_debug.exl:38:11
-(Ident sb) @examples/derive_debug.exl:38:12
-RParen @examples/derive_debug.exl:38:14
-Semicolon @examples/derive_debug.exl:38:15
+(Ident fmt_debug) @examples/derive_debug.exl:38:7
+LParen @examples/derive_debug.exl:38:16
+Amp @examples/derive_debug.exl:38:17
+(Ident sb) @examples/derive_debug.exl:38:18
+RParen @examples/derive_debug.exl:38:20
+Semicolon @examples/derive_debug.exl:38:21
 (Ident println) @examples/derive_debug.exl:39:5
 LParen @examples/derive_debug.exl:39:12
 (Ident sb) @examples/derive_debug.exl:39:13
@@ -182,12 +182,12 @@ DoubleColon @examples/derive_debug.exl:47:20
 Semicolon @examples/derive_debug.exl:47:25
 (Ident dot) @examples/derive_debug.exl:48:5
 Dot @examples/derive_debug.exl:48:8
-(Ident fmt) @examples/derive_debug.exl:48:9
-LParen @examples/derive_debug.exl:48:12
-Amp @examples/derive_debug.exl:48:13
-(Ident sb2) @examples/derive_debug.exl:48:14
-RParen @examples/derive_debug.exl:48:17
-Semicolon @examples/derive_debug.exl:48:18
+(Ident fmt_debug) @examples/derive_debug.exl:48:9
+LParen @examples/derive_debug.exl:48:18
+Amp @examples/derive_debug.exl:48:19
+(Ident sb2) @examples/derive_debug.exl:48:20
+RParen @examples/derive_debug.exl:48:23
+Semicolon @examples/derive_debug.exl:48:24
 (Ident println) @examples/derive_debug.exl:49:5
 LParen @examples/derive_debug.exl:49:12
 (Ident sb2) @examples/derive_debug.exl:49:13
@@ -228,12 +228,12 @@ RParen @examples/derive_debug.exl:53:34
 Semicolon @examples/derive_debug.exl:53:35
 (Ident seg) @examples/derive_debug.exl:54:5
 Dot @examples/derive_debug.exl:54:8
-(Ident fmt) @examples/derive_debug.exl:54:9
-LParen @examples/derive_debug.exl:54:12
-Amp @examples/derive_debug.exl:54:13
-(Ident sb3) @examples/derive_debug.exl:54:14
-RParen @examples/derive_debug.exl:54:17
-Semicolon @examples/derive_debug.exl:54:18
+(Ident fmt_debug) @examples/derive_debug.exl:54:9
+LParen @examples/derive_debug.exl:54:18
+Amp @examples/derive_debug.exl:54:19
+(Ident sb3) @examples/derive_debug.exl:54:20
+RParen @examples/derive_debug.exl:54:23
+Semicolon @examples/derive_debug.exl:54:24
 (Ident println) @examples/derive_debug.exl:55:5
 LParen @examples/derive_debug.exl:55:12
 (Ident sb3) @examples/derive_debug.exl:55:13
@@ -317,12 +317,12 @@ RBrace @examples/derive_debug.exl:63:47
 Semicolon @examples/derive_debug.exl:63:48
 (Ident tg) @examples/derive_debug.exl:64:5
 Dot @examples/derive_debug.exl:64:7
-(Ident fmt) @examples/derive_debug.exl:64:8
-LParen @examples/derive_debug.exl:64:11
-Amp @examples/derive_debug.exl:64:12
-(Ident sb4) @examples/derive_debug.exl:64:13
-RParen @examples/derive_debug.exl:64:16
-Semicolon @examples/derive_debug.exl:64:17
+(Ident fmt_debug) @examples/derive_debug.exl:64:8
+LParen @examples/derive_debug.exl:64:17
+Amp @examples/derive_debug.exl:64:18
+(Ident sb4) @examples/derive_debug.exl:64:19
+RParen @examples/derive_debug.exl:64:22
+Semicolon @examples/derive_debug.exl:64:23
 (Ident println) @examples/derive_debug.exl:65:5
 LParen @examples/derive_debug.exl:65:12
 (Ident sb4) @examples/derive_debug.exl:65:13

@@ -439,6 +439,7 @@ and render_pattern (p : Ast.pattern) : string =
   match p with
   | Ast.PWildcard _ -> "_"
   | Ast.PVar (n, _) -> Printf.sprintf "(pat-var %s)" n
+  | Ast.PLit (n, _) -> Printf.sprintf "(pat-lit %d)" n
   | Ast.PVariant { tname; variant; binds; _ } ->
       let binds_s = match binds with
         | Ast.PBTuple [] -> ""
@@ -681,6 +682,7 @@ let rec render_tpattern (p : tpattern) : string =
   match p with
   | TPWildcard -> "_"
   | TPVar n -> Printf.sprintf "(pat-var %s)" n
+  | TPLit n -> Printf.sprintf "(pat-lit %d)" n
   | TPVariant { variant; tag; binds } ->
       let binds_s =
         if binds = [] then ""

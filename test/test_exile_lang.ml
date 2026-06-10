@@ -269,7 +269,10 @@ let () =
     "enum E { A | B }\n\
      fn f(e: E) -> int { match e { E::A => 1 | 2 } }\n\
      fn main() { println(f(E::A)); }\n"
-    "expected pattern, got integer 2";
+    (* `2` reads as the next arm's literal pattern (GATE-5a), so the
+       parser now trips on the missing `=>` instead of the pattern
+       itself — either way the bare `|` stays a separator. *)
+    "expected '=>', got '}'";
 
   (* Compile-time `const`: folds to a literal, emitted as `#define`; can
      reference earlier consts and use the full operator set. *)
@@ -755,7 +758,7 @@ let () =
     \    let a = raw::make_a();\n\
     \    let v: Vec<int> = Vec::with_capacity(a, 4 as u32);\n\
     \    let v2 = v;\n\
-    \    println(v.len() as int);\n\
+    \    println(v.length() as int);\n\
      }\n"
     "use of 'v' after it was consumed at <input>:5:14 (move-marked types are use-at-most-once — borrow with '&v' / take '*const Vec_i32' or clone to keep the source live)";
 
@@ -970,7 +973,7 @@ let () =
     \    let a = Owner { tag: 1 };\n\
     \    let p = new(al) Wrap { f: a };\n\
     \    println(take(a));\n\
-    \    free(p);\n\
+    \    free(al, p);\n\
      }\n"
     "use of 'a' after it was consumed at <input>:8:31 (move-marked types are use-at-most-once — borrow with '&a' / take '*const Owner' or clone to keep the source live)";
 
@@ -1428,7 +1431,7 @@ let () =
      @derive(Debug)\n\
      struct Outer { i: Inner }\n\
      fn main() { println(1); }\n"
-    "no method 'fmt' on type 'Inner'";
+    "no method 'fmt_debug' on type 'Inner'";
 
   check_error "@derive on a generic struct rejected (MVP)"
     "@derive(Eq)\n\
@@ -2027,19 +2030,19 @@ let () =
     "cannot print a pointer value (*i32); deref or print a field";
 
   check "new(alloc) + free + defer-free for heap struct"
-    "struct Point { x: int, y: int }\nfn main() {\n    let a = default_allocator();\n    let p = new(a) Point { x: 1, y: 2 };\n    defer free(p);\n    println(p.x);\n}\n"
-    "#include <stdio.h>\n#include <stdlib.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_Point { long x; long y; };\n\nextern void *sys_alloc(void *state, unsigned long n);\nextern void sys_free(void *state, void *p, unsigned long n);\n\n\nstatic struct ex_Allocator exile_default_allocator(void) {\n    struct ex_Allocator a;\n    a.state = 0;\n    a.alloc_fn = sys_alloc;\n    a.free_fn = sys_free;\n    return a;\n}\n\nint main(void) {\n    struct ex_Allocator a;\n    struct ex_Point *p;\n    a = exile_default_allocator();\n    p = ((struct ex_Point *)(a.alloc_fn)(a.state, ((unsigned long)sizeof(struct ex_Point))));\n    p->x = 1;\n    p->y = 2;\n    printf(\"%ld\\n\", (long)(p->x));\n    free(p);\n    return 0;\n}\n";
+    "struct Point { x: int, y: int }\nfn main() {\n    let a = default_allocator();\n    let p = new(a) Point { x: 1, y: 2 };\n    defer free(a, p);\n    println(p.x);\n}\n"
+    "#include <stdio.h>\n#include <stdlib.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_Point { long x; long y; };\n\nextern void *sys_alloc(void *state, unsigned long n);\nextern void sys_free(void *state, void *p, unsigned long n);\n\n\nstatic struct ex_Allocator exile_default_allocator(void) {\n    struct ex_Allocator a;\n    a.state = 0;\n    a.alloc_fn = sys_alloc;\n    a.free_fn = sys_free;\n    return a;\n}\n\nint main(void) {\n    struct ex_Allocator a;\n    struct ex_Point *p;\n    a = exile_default_allocator();\n    p = ((struct ex_Point *)(a.alloc_fn)(a.state, ((unsigned long)sizeof(struct ex_Point))));\n    p->x = 1;\n    p->y = 2;\n    printf(\"%ld\\n\", (long)(p->x));\n    (a.free_fn)(a.state, ((void *)p), ((unsigned long)sizeof(struct ex_Point)));\n    return 0;\n}\n";
 
   check "fn returning own *Point via new(alloc)"
-    "struct Point { x: int, y: int }\nfn make(a: Allocator) -> own *Point {\n    return new(a) Point { x: 0, y: 0 };\n}\nfn main() {\n    let a = default_allocator();\n    let p = make(a);\n    defer free(p);\n    println(p.x);\n}\n"
-    "#include <stdio.h>\n#include <stdlib.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_Point { long x; long y; };\n\nextern void *sys_alloc(void *state, unsigned long n);\nextern void sys_free(void *state, void *p, unsigned long n);\nstatic struct ex_Point *ex_make(struct ex_Allocator a);\n\n\nstatic struct ex_Allocator exile_default_allocator(void) {\n    struct ex_Allocator a;\n    a.state = 0;\n    a.alloc_fn = sys_alloc;\n    a.free_fn = sys_free;\n    return a;\n}\n\nstatic struct ex_Point *ex_make(struct ex_Allocator a) {\n    {\n        struct ex_Point * __exile_ret;\n        __exile_ret = ((struct ex_Point *)(a.alloc_fn)(a.state, ((unsigned long)sizeof(struct ex_Point))));\n        __exile_ret->x = 0;\n        __exile_ret->y = 0;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Allocator a;\n    struct ex_Point *p;\n    a = exile_default_allocator();\n    p = ex_make(a);\n    printf(\"%ld\\n\", (long)(p->x));\n    free(p);\n    return 0;\n}\n";
+    "struct Point { x: int, y: int }\nfn make(a: Allocator) -> own *Point {\n    return new(a) Point { x: 0, y: 0 };\n}\nfn main() {\n    let a = default_allocator();\n    let p = make(a);\n    defer free(a, p);\n    println(p.x);\n}\n"
+    "#include <stdio.h>\n#include <stdlib.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_Point { long x; long y; };\n\nextern void *sys_alloc(void *state, unsigned long n);\nextern void sys_free(void *state, void *p, unsigned long n);\nstatic struct ex_Point *ex_make(struct ex_Allocator a);\n\n\nstatic struct ex_Allocator exile_default_allocator(void) {\n    struct ex_Allocator a;\n    a.state = 0;\n    a.alloc_fn = sys_alloc;\n    a.free_fn = sys_free;\n    return a;\n}\n\nstatic struct ex_Point *ex_make(struct ex_Allocator a) {\n    {\n        struct ex_Point * __exile_ret;\n        __exile_ret = ((struct ex_Point *)(a.alloc_fn)(a.state, ((unsigned long)sizeof(struct ex_Point))));\n        __exile_ret->x = 0;\n        __exile_ret->y = 0;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Allocator a;\n    struct ex_Point *p;\n    a = exile_default_allocator();\n    p = ex_make(a);\n    printf(\"%ld\\n\", (long)(p->x));\n    (a.free_fn)(a.state, ((void *)p), ((unsigned long)sizeof(struct ex_Point)));\n    return 0;\n}\n";
 
   check_error "free of non-pointer"
-    "fn main() {\n    let n = 5;\n    free(n);\n}\n"
+    "fn main() {\n    let a = default_allocator();\n    let n = 5;\n    free(a, n);\n}\n"
     "'free' expects an owned pointer `own *T`, got i32";
 
   check_error "free used as value"
-    "struct Point { x: int, y: int }\nfn main() {\n    let a = default_allocator();\n    let p = new(a) Point { x: 0, y: 0 };\n    let x = free(p);\n    println(x);\n}\n"
+    "struct Point { x: int, y: int }\nfn main() {\n    let a = default_allocator();\n    let p = new(a) Point { x: 0, y: 0 };\n    let x = free(a, p);\n    println(x);\n}\n"
     "'free' returns void, cannot use as a value";
 
   check_error "new of unknown struct"
@@ -2051,8 +2054,8 @@ let () =
     "#include <stdio.h>\n\nstruct ex_Point { long x; long y; long z; };\n\nint main(void) {\n    struct ex_Point p;\n    struct ex_Point q;\n    p.x = 1;\n    p.y = 2;\n    p.z = 3;\n    q = p;\n    q.x = 99;\n    printf(\"%ld\\n\", (long)(q.x));\n    printf(\"%ld\\n\", (long)(q.y));\n    printf(\"%ld\\n\", (long)(q.z));\n    return 0;\n}\n";
 
   check "functional update with new(alloc) copies through deref"
-    "struct Point { x: int, y: int }\nfn main() {\n    let a = default_allocator();\n    let p = Point { x: 1, y: 2 };\n    let r = new(a) Point { y: 50, ..p };\n    defer free(r);\n    println(r.x);\n    println(r.y);\n}\n"
-    "#include <stdio.h>\n#include <stdlib.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_Point { long x; long y; };\n\nextern void *sys_alloc(void *state, unsigned long n);\nextern void sys_free(void *state, void *p, unsigned long n);\n\n\nstatic struct ex_Allocator exile_default_allocator(void) {\n    struct ex_Allocator a;\n    a.state = 0;\n    a.alloc_fn = sys_alloc;\n    a.free_fn = sys_free;\n    return a;\n}\n\nint main(void) {\n    struct ex_Allocator a;\n    struct ex_Point p;\n    struct ex_Point *r;\n    a = exile_default_allocator();\n    p.x = 1;\n    p.y = 2;\n    r = ((struct ex_Point *)(a.alloc_fn)(a.state, ((unsigned long)sizeof(struct ex_Point))));\n    *r = p;\n    r->y = 50;\n    printf(\"%ld\\n\", (long)(r->x));\n    printf(\"%ld\\n\", (long)(r->y));\n    free(r);\n    return 0;\n}\n";
+    "struct Point { x: int, y: int }\nfn main() {\n    let a = default_allocator();\n    let p = Point { x: 1, y: 2 };\n    let r = new(a) Point { y: 50, ..p };\n    defer free(a, r);\n    println(r.x);\n    println(r.y);\n}\n"
+    "#include <stdio.h>\n#include <stdlib.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_Point { long x; long y; };\n\nextern void *sys_alloc(void *state, unsigned long n);\nextern void sys_free(void *state, void *p, unsigned long n);\n\n\nstatic struct ex_Allocator exile_default_allocator(void) {\n    struct ex_Allocator a;\n    a.state = 0;\n    a.alloc_fn = sys_alloc;\n    a.free_fn = sys_free;\n    return a;\n}\n\nint main(void) {\n    struct ex_Allocator a;\n    struct ex_Point p;\n    struct ex_Point *r;\n    a = exile_default_allocator();\n    p.x = 1;\n    p.y = 2;\n    r = ((struct ex_Point *)(a.alloc_fn)(a.state, ((unsigned long)sizeof(struct ex_Point))));\n    *r = p;\n    r->y = 50;\n    printf(\"%ld\\n\", (long)(r->x));\n    printf(\"%ld\\n\", (long)(r->y));\n    (a.free_fn)(a.state, ((void *)r), ((unsigned long)sizeof(struct ex_Point)));\n    return 0;\n}\n";
 
   check_error "functional update with mismatched base type"
     "struct Point { x: int, y: int, }\nstruct Other { z: int, }\nfn main() {\n    let o = Other { z: 7 };\n    let p = Point { x: 1, ..o };\n    println(p.x);\n}\n"
@@ -2079,8 +2082,8 @@ let () =
      }\n";
 
   check "null literal in struct field + equality check"
-    "struct Node { value: int, next: *Node }\nfn main() {\n    let a = default_allocator();\n    let n = new(a) Node { value: 5, next: null };\n    defer free(n);\n    if n.next == null {\n        println(n.value);\n    }\n}\n"
-    "#include <stdio.h>\n#include <stdlib.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_Node { long value; struct ex_Node *next; };\n\nextern void *sys_alloc(void *state, unsigned long n);\nextern void sys_free(void *state, void *p, unsigned long n);\n\n\nstatic struct ex_Allocator exile_default_allocator(void) {\n    struct ex_Allocator a;\n    a.state = 0;\n    a.alloc_fn = sys_alloc;\n    a.free_fn = sys_free;\n    return a;\n}\n\nint main(void) {\n    struct ex_Allocator a;\n    struct ex_Node *n;\n    a = exile_default_allocator();\n    n = ((struct ex_Node *)(a.alloc_fn)(a.state, ((unsigned long)sizeof(struct ex_Node))));\n    n->value = 5;\n    n->next = ((void *)0);\n    if (n->next == ((void *)0)) {\n        printf(\"%ld\\n\", (long)(n->value));\n    }\n    free(n);\n    return 0;\n}\n";
+    "struct Node { value: int, next: *Node }\nfn main() {\n    let a = default_allocator();\n    let n = new(a) Node { value: 5, next: null };\n    defer free(a, n);\n    if n.next == null {\n        println(n.value);\n    }\n}\n"
+    "#include <stdio.h>\n#include <stdlib.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_Node { long value; struct ex_Node *next; };\n\nextern void *sys_alloc(void *state, unsigned long n);\nextern void sys_free(void *state, void *p, unsigned long n);\n\n\nstatic struct ex_Allocator exile_default_allocator(void) {\n    struct ex_Allocator a;\n    a.state = 0;\n    a.alloc_fn = sys_alloc;\n    a.free_fn = sys_free;\n    return a;\n}\n\nint main(void) {\n    struct ex_Allocator a;\n    struct ex_Node *n;\n    a = exile_default_allocator();\n    n = ((struct ex_Node *)(a.alloc_fn)(a.state, ((unsigned long)sizeof(struct ex_Node))));\n    n->value = 5;\n    n->next = ((void *)0);\n    if (n->next == ((void *)0)) {\n        printf(\"%ld\\n\", (long)(n->value));\n    }\n    (a.free_fn)(a.state, ((void *)n), ((unsigned long)sizeof(struct ex_Node)));\n    return 0;\n}\n";
 
   check "null with typed let binding"
     "struct Point { x: int, y: int, }\nfn main() {\n    let p: *Point = null;\n    if p == null {\n        println(42);\n    }\n}\n"
@@ -2460,9 +2463,11 @@ let () =
     "enum E { A | A }\nfn main() {}\n"
     "duplicate variant 'A' in enum 'E'";
 
-  check_error "match on non-enum rejected"
-    "fn main() { let x = 5; match x { _ => println(\"x\") } }\n"
-    "'match' requires an enum value, got i32";
+  check_error "match on a non-enum non-integer rejected"
+    (* integer scrutinees became legal with literal patterns
+       (GATE-5a); everything else still rejects. *)
+    "fn main() { let s = \"x\"; match s { _ => println(\"x\") } }\n"
+    "'match' requires an enum or integer value, got str";
 
   check_error "pattern enum mismatch with scrutinee rejected"
     "enum A { X }\nenum B { Y }\nfn main() { let a = A::X; match a { B::Y => println(\"b\") } }\n"
@@ -3296,7 +3301,7 @@ let () =
          \    let mut kw: HashMap<str, int> = HashMap::with_capacity(a, 8 as u32);\n\
          \    kw.insert(\"fn\", 1);\n\
          \    kw.insert(\"let\", 2);\n\
-         \    println(kw.len() as int);\n\
+         \    println(kw.length() as int);\n\
          \    match kw.get(\"fn\") {\n\
          \        Option::Some(v) => { println(v); }\n\
          \        | Option::None => { println(-1); }\n\
@@ -4687,8 +4692,9 @@ let () =
 
   check_error "free(&local) rejected at typecheck (would corrupt allocator)"
     "fn main() {\n\
+    \    let a = default_allocator();\n\
     \    let x = 20;\n\
-    \    defer free(&x);\n\
+    \    defer free(a, &x);\n\
     \    println(x);\n\
      }\n"
     "'free' expects an owned pointer `own *T` (from 'new(alloc)'); got '&...' which is a stack or field address — this would corrupt the allocator";
@@ -4746,8 +4752,9 @@ let () =
   check_error "free(&field) rejected (same rule applies to field address)"
     "struct P { x: int }\n\
      fn main() {\n\
+    \    let a = default_allocator();\n\
     \    let p = P { x: 1 };\n\
-    \    free(&p.x);\n\
+    \    free(a, &p.x);\n\
      }\n"
     "'free' expects an owned pointer `own *T` (from 'new(alloc)'); got '&...' which is a stack or field address — this would corrupt the allocator";
 
@@ -5927,7 +5934,7 @@ let () =
          \        E::Lit(n) => println(n)\n\
          \        | E::Add(a, b) => println(a + b)\n\
          \    }\n\
-         \    free(p);\n\
+         \    free(al, p);\n\
           }\n");
        true
      with _ -> false);
@@ -5983,7 +5990,7 @@ let () =
 
   check_error "DR-047: free of a borrow rejected (own-only free-gate)"
     "struct P { x: int }\n\
-     fn sink(p: *P) { free(p); }\n\
+     fn sink(a: Allocator, p: *P) { free(a, p); }\n\
      fn main() { println(0); }\n"
     "'free' expects an owned pointer `own *T`, got *P — a borrow cannot \
      be freed (the owner releases it).  Owned pointers come from \
@@ -6017,7 +6024,7 @@ let () =
          \    let q = new(a) P { x: 1 };\n\
          \    bump(q, 5);\n\
          \    println(q.x);\n\
-         \    free(q);\n\
+         \    free(a, q);\n\
           }\n");
        true
      with _ -> false);
@@ -6034,7 +6041,7 @@ let () =
          \    let q = new(a) P { x: 9 };\n\
          \    println(q.get());\n\
          \    println(q.get());\n\
-         \    free(q);\n\
+         \    free(a, q);\n\
           }\n");
        true
      with _ -> false);
@@ -6061,7 +6068,7 @@ let () =
          \        v.push(Token { kind: i, val: i * 2 });\n\
          \        i = i + 1;\n\
          \    }\n\
-         \    println(v.len() as int);\n\
+         \    println(v.length() as int);\n\
           }\n");
        true
      with _ -> false);
@@ -6075,11 +6082,11 @@ let () =
          \    let mut k: Vec<Kind> = Vec::with_capacity(a, 8 as u32);\n\
          \    let mut j = 0;\n\
          \    while j < 10 { k.push(Kind::Num(j)); j = j + 1; }\n\
-         \    println(k.len() as int);\n\
+         \    println(k.length() as int);\n\
          \    let mut tp: Vec<(int, bool)> = Vec::with_capacity(a, 8 as u32);\n\
          \    let mut m = 0;\n\
          \    while m < 10 { tp.push((m, true)); m = m + 1; }\n\
-         \    println(tp.len() as int);\n\
+         \    println(tp.length() as int);\n\
           }\n");
        true
      with _ -> false);
@@ -6279,6 +6286,247 @@ let () =
     "use of 'buf' after it was consumed at <input>:7:5 (move-marked \
      types are use-at-most-once — borrow with '&buf' / take \
      '*const Buffer' or clone to keep the source live)";
+
+  (* GATE-3 (2026-06-10) - `free(alloc, p)` is two-arg and routes
+     through the allocator seam (a.free_fn), symmetric with `new(a)`.
+     The old one-arg form lowered to libc free() while new(a) went
+     through a.alloc_fn - heap corruption with an arena allocator. *)
+
+  check_assert "GATE-3: free(a, p) emits the allocator seam, not libc free"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct P { x: int }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let p = new(a) P { x: 7 };\n\
+         \    println(p.x);\n\
+         \    free(a, p);\n\
+          }\n"
+     in
+     contains c
+       "(a.free_fn)(a.state, ((void *)p), \
+        ((unsigned long)sizeof(struct ex_P)))"
+     && not (contains c "    free(p);"));
+
+  check_error "GATE-3: one-arg free(p) is gone, error points at free(alloc, p)"
+    "struct P { x: int }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let p = new(a) P { x: 1 };\n\
+    \    free(p);\n\
+     }\n"
+    "'free' takes the allocator and the owned pointer: `free(alloc, p)` \
+     — the one-argument form is gone (it bypassed the allocator seam; \
+     with an arena or Amiga allocator that corrupts the heap)";
+
+  check_error "GATE-3: first free arg must be an Allocator"
+    "struct P { x: int }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let p = new(a) P { x: 1 };\n\
+    \    free(p, p);\n\
+     }\n"
+    "first argument of 'free' must be the Allocator that produced the \
+     pointer (symmetric with `new(alloc)`), got own *P";
+
+  (* GATE-4 (2026-06-10) - lift-pass matrix audit: arm-body blocks lift
+     in place (TFor/TForEach expand, block-shaped sub-exprs get local
+     temps), TBlock texpr_children recurses through sub-stmt bodies so
+     program-level scans (DCE reachability) see calls inside arm
+     loops, and `&` of an rvalue pins a temp first. *)
+
+  check_assert "GATE-4: for-range inside a match arm expands (was ICE)"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "enum Cmd { Run(int) | Stop }\n\
+          fn main() {\n\
+         \    let c = Cmd::Run(3);\n\
+         \    match c {\n\
+         \        Cmd::Run(n) => {\n\
+         \            for i in 0..n {\n\
+         \                println(i);\n\
+         \            }\n\
+         \        }\n\
+         \        | Cmd::Stop => println(-1)\n\
+         \    }\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "GATE-4: iterator for-each inside a match arm keeps callee decls"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum C { Go | No }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(10);\n\
+         \    let c = C::Go;\n\
+         \    match c {\n\
+         \        C::Go => {\n\
+         \            for x in v.iter() {\n\
+         \                println(x);\n\
+         \            }\n\
+         \        }\n\
+         \        | C::No => println(-1)\n\
+         \    }\n\
+          }\n"
+     in
+     (* the DCE reachability walk must see VecIter__next inside the
+        arm's loop body, or its forward decl vanishes (C89 implicit
+        int, invalid C). *)
+     contains c "struct ex_Option_i32 VecIter__next_i32");
+
+  check_assert "GATE-4: method call on an rvalue receiver pins a temp"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct P { x: int }\n\
+          impl P { pub fn get(*const self) -> int { return self.x; } }\n\
+          fn make() -> P { return P { x: 9 }; }\n\
+          fn main() { println(make().get()); }\n"
+     in
+     contains c "&__lift_0" && not (contains c "&(ex_make())"));
+
+  check_lint "GATE-4: `new(a)` counts as a use of `a` (no false unused)"
+    "struct P { x: int }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let p = new(a) P { x: 5 };\n\
+    \    println(p.x);\n\
+     }\n"
+    ~profile:Exile_lang.Profile.Full
+    [];
+
+  (* GATE-5a (2026-06-10) - literal patterns in `match` + char
+     literals.  `'a'` lexes to the byte's int value; integer
+     scrutinees switch on the value with `case` labels; a final
+     unguarded catch-all is mandatory (integer domains are not
+     enumerable); duplicates and out-of-width literals reject. *)
+
+  check_assert "GATE-5a: literal match emits a C switch with case labels"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn classify(b: u8) -> int {\n\
+         \    match b {\n\
+         \        'a' => 1\n\
+         \        | 'b' | 'c' => 2\n\
+         \        | 10 => 3\n\
+         \        | _ => 0\n\
+         \    }\n\
+          }\n\
+          fn main() { println(classify('a' as u8)); }\n"
+     in
+     contains c "switch (__m)" && contains c "case 97:"
+     && contains c "case 98:" && contains c "case 99:"
+     && contains c "case 10:" && contains c "default:");
+
+  check_error "GATE-5a: integer match without a catch-all rejected"
+    "fn f(b: u8) -> int { match b { 1 => 1 | 2 => 2 } }\n\
+     fn main() { println(f(1 as u8)); }\n"
+    "non-exhaustive 'match' on an integer: add a final catch-all arm \
+     ('_' or a binding) — the integer domain cannot be enumerated";
+
+  check_error "GATE-5a: duplicate literal arm rejected"
+    "fn f(b: u8) -> int { match b { 1 => 1 | 1 => 2 | _ => 0 } }\n\
+     fn main() { println(f(1 as u8)); }\n"
+    "unreachable match arm: literal 1 is already covered";
+
+  check_error "GATE-5a: literal wider than the scrutinee type rejected"
+    "fn f(b: u8) -> int { match b { 300 => 1 | _ => 0 } }\n\
+     fn main() { println(f(1 as u8)); }\n"
+    "literal pattern 300 does not fit the matched type u8";
+
+  check_error "GATE-5a: nested literal in a variant payload rejected (v1)"
+    "enum E { V(int) }\n\
+     fn f(e: E) -> int { match e { E::V(0) => 1 | E::V(_n) => 0 } }\n\
+     fn main() { println(f(E::V(0))); }\n"
+    "literal patterns are only supported at the top level of a match \
+     arm (v1) — bind the payload and compare in a guard";
+
+  check_assert "GATE-5a: char literal is int sugar in expressions"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let bang = '!';\n\
+         \    println(bang);\n\
+         \    if bang == 33 { println(1); }\n\
+          }\n"
+     in
+     contains c "bang = 33");
+
+  check_error "GATE-5c: capability words are reserved (rune)"
+    "fn main() { let rune = 5; println(rune); }\n"
+    "'rune' is a reserved word (capability model, future syntax) — \
+     pick a different name";
+
+  check_error "GATE-5c: capability words are reserved (shared)"
+    "fn shared() -> int { return 1; }\n\
+     fn main() { println(shared()); }\n"
+    "'shared' is a reserved word (capability model, future syntax) — \
+     pick a different name";
+
+  (* PORT-PREP P2 (2026-06-10) - Arena bump allocator in the prelude +
+     the `ptr_offset` builtin it builds on.  P1 (ratified): nodes are
+     plain borrows from `alloc_borrowed::<T>()` - the arena owns them,
+     L1 does not track them; the wholesale release IS the GATE-2
+     auto-drop of the arena's own `buf` field (one free_fn of `cap`
+     bytes at scope exit). *)
+
+  check_assert "P2: arena tree build + eval, exactly one wholesale free"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum E { Lit(int) | Add(*E, *E) }\n\
+          fn eval(e: *const E) -> int {\n\
+         \    match *e {\n\
+         \        E::Lit(n) => n\n\
+         \        | E::Add(a, b) => eval(a) + eval(b)\n\
+         \    }\n\
+          }\n\
+          fn lit(ar: *Arena, v: int) -> *E {\n\
+         \    let n: *E = ar.alloc_borrowed();\n\
+         \    *n = E::Lit(v);\n\
+         \    return n;\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut ar = Arena::with_capacity(a, 4096 as u32);\n\
+         \    let l = lit(&ar, 40);\n\
+         \    let r = lit(&ar, 2);\n\
+         \    let t: *E = ar.alloc_borrowed();\n\
+         \    *t = E::Add(l, r);\n\
+         \    println(eval(t));\n\
+          }\n"
+     in
+     (* the auto-drop of `ar` releases cap bytes through the parent
+        allocator - the ONLY free_fn call in main *)
+     contains c
+       "(ar.alloc.free_fn)(ar.alloc.state, ((void *)ar.buf), \
+        ar.cap * ((unsigned long)sizeof(unsigned char)))"
+     && contains c "(self->buf + aligned)");
+
+  check_error "P2: ptr_offset requires a byte-pointer base"
+    "struct P { x: int }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let p = new(a) P { x: 1 };\n\
+    \    let q = ptr_offset(p, 4 as u32);\n\
+    \    println(0);\n\
+     }\n"
+    "'ptr_offset' steps in BYTES, so the base must be a u8 pointer, \
+     got a pointer to P — cast first";
+
+  check_assert "P2: arena exhaustion returns null (no crash, no UB)"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct Big { a: int, b: int, c: int, d: int }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut tiny = Arena::with_capacity(a, 8 as u32);\n\
+         \    let p: *Big = tiny.alloc_borrowed();\n\
+         \    if p == null { println(0); }\n\
+          }\n");
+       true
+     with _ -> false);
 
   (* DR-032 - prelude `sys::sys_open` + `sys::sys_close` extern decls.
      The host-backend wraps libc `open`/`close`; the amiga-backend
@@ -6511,7 +6759,7 @@ let () =
          \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
          \    v.push(1); v.push(2);\n\
          \    let out: Vec<int> = v.iter().collect(a);\n\
-         \    println(out.len());\n\
+         \    println(out.length());\n\
           }\n"
      in
      contains c "VecIter__collect_i32");
@@ -6838,7 +7086,7 @@ let () =
      contains c "__closure_0");
 
   (* DR-041 - MethodCall RHS now infers via method_ret_index built
-     from every Impl block.  `let n = v.len()` where `v: Vec<int>`
+     from every Impl block.  `let n = v.length()` where `v: Vec<int>`
      looks up (Vec, len) → u32.  Generic ret types (`I::Item` etc.)
      flow through un-substituted; the closure still picks up the
      binding via A2.  Method call on a Var with NO scope ann or
@@ -6850,7 +7098,7 @@ let () =
          "fn main() {\n\
          \    let a = default_allocator();\n\
          \    let v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
-         \    let n = v.len();\n\
+         \    let n = v.length();\n\
          \    let f = |x: u32| -> u32 x + n;\n\
          \    println(f(5 as u32) as int);\n\
           }\n"
@@ -6861,7 +7109,7 @@ let () =
     "fn main() {\n\
     \    let a = default_allocator();\n\
     \    let v = Vec::with_capacity(a, 8 as u32);\n\
-    \    let n = v.len();\n\
+    \    let n = v.length();\n\
     \    let f = |x: u32| -> u32 x + n;\n\
     \    println(f(5 as u32) as int);\n\
      }\n"

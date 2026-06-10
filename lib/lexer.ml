@@ -125,6 +125,39 @@ let tokenize ~file src =
       | '%' -> loop (i + 1) ((Token.Percent, p) :: acc)
       | '?' -> loop (i + 1) ((Token.Question, p) :: acc)
       | '@' -> loop (i + 1) ((Token.At, p) :: acc)
+      | '\'' ->
+          (* GATE-5a: char literal `'a'` — sugar for the byte's integer
+             value (exile strings ARE bytes; `'a'` = 97).  It is an
+             ordinary int literal afterwards: fits u8/i32 through the
+             usual int-literal machinery, works in `match`, `==`, and
+             arithmetic alike.  Escapes mirror string literals. *)
+          if i + 1 >= len then Error.raise_ p "unterminated char literal";
+          let (code, after) =
+            match src.[i + 1] with
+            | '\\' ->
+                if i + 2 >= len then
+                  Error.raise_ p "unterminated char literal";
+                let ec = src.[i + 2] in
+                let v =
+                  match ec with
+                  | 'n' -> 10 | 't' -> 9 | 'r' -> 13
+                  | 'b' -> 8 | '0' -> 0
+                  | '\\' -> 92 | '\'' -> 39 | '"' -> 34
+                  | c -> Error.failf p "unknown escape \\%c in char literal" c
+                in
+                adv '\\'; adv ec;
+                (v, i + 3)
+            | '\'' ->
+                Error.raise_ p "empty char literal"
+            | c ->
+                adv c;
+                (Char.code c, i + 2)
+          in
+          if after >= len || src.[after] <> '\'' then
+            Error.failf p
+              "char literal holds exactly one byte — missing closing '";
+          adv '\'';
+          loop (after + 1) ((Token.Int code, p) :: acc)
       | '"' ->
           Buffer.clear buf;
           let rec str j =
@@ -245,7 +278,22 @@ let tokenize ~file src =
             if j < len && is_alnum src.[j] then (adv src.[j]; scan (j + 1)) else j
           in
           let stop = scan (i + 1) in
-          loop stop ((keyword_or_ident (String.sub src i (stop - i)), p) :: acc)
+          let word = String.sub src i (stop - i) in
+          (* GATE-5 (2026-06-10): capability-model words reserved
+             BEFORE the API freeze — the last moment this can be a
+             breaking change.  They become real syntax in capability
+             phases 1.5-3 (rune = register-access sigil, ward =
+             layout/bounds region, seal = scope-exit primitive,
+             shared = non-unique ownership sigil, sigil = the
+             category itself).  Reserving now means no self-host
+             source can claim them as identifiers in the meantime. *)
+          (match word with
+           | "rune" | "ward" | "sigil" | "seal" | "shared" ->
+               Error.failf p
+                 "'%s' is a reserved word (capability model, future \
+                  syntax) — pick a different name" word
+           | _ -> ());
+          loop stop ((keyword_or_ident word, p) :: acc)
       | c -> Error.failf p "unexpected character %C" c
   in
   loop 0 []

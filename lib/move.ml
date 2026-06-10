@@ -153,7 +153,7 @@ and stmts_diverge stmts =
 let rec affine_binds_of_pat ~structs ~enums (scrutinee_ty : typ)
     (p : tpattern) =
   match p with
-  | TPWildcard -> []
+  | TPWildcard | TPLit _ -> []
   | TPVar n ->
       if is_affine_typ ~structs scrutinee_ty then [(n, scrutinee_ty)]
       else []

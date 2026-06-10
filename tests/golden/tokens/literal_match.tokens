@@ -1,0 +1,248 @@
+;; exile-tokens-dump v1 examples/literal_match.exl
+Enum @examples/literal_match.exl:17:1
+(Ident Kind) @examples/literal_match.exl:17:6
+LBrace @examples/literal_match.exl:17:11
+(Ident Letter) @examples/literal_match.exl:18:5
+Pipe @examples/literal_match.exl:19:5
+(Ident Digit) @examples/literal_match.exl:19:7
+Pipe @examples/literal_match.exl:20:5
+(Ident Space) @examples/literal_match.exl:20:7
+Pipe @examples/literal_match.exl:21:5
+(Ident Newline) @examples/literal_match.exl:21:7
+Pipe @examples/literal_match.exl:22:5
+(Ident Other) @examples/literal_match.exl:22:7
+LParen @examples/literal_match.exl:22:12
+(Ident u8) @examples/literal_match.exl:22:13
+RParen @examples/literal_match.exl:22:15
+RBrace @examples/literal_match.exl:23:1
+Fn @examples/literal_match.exl:25:1
+(Ident classify) @examples/literal_match.exl:25:4
+LParen @examples/literal_match.exl:25:12
+(Ident b) @examples/literal_match.exl:25:13
+Colon @examples/literal_match.exl:25:14
+(Ident u8) @examples/literal_match.exl:25:16
+RParen @examples/literal_match.exl:25:18
+Arrow @examples/literal_match.exl:25:20
+(Ident Kind) @examples/literal_match.exl:25:23
+LBrace @examples/literal_match.exl:25:28
+Match @examples/literal_match.exl:26:5
+(Ident b) @examples/literal_match.exl:26:11
+LBrace @examples/literal_match.exl:26:13
+(Int 32) @examples/literal_match.exl:27:9
+Pipe @examples/literal_match.exl:27:13
+(Int 9) @examples/literal_match.exl:27:15
+FatArrow @examples/literal_match.exl:27:20
+(Ident Kind) @examples/literal_match.exl:27:23
+DoubleColon @examples/literal_match.exl:27:27
+(Ident Space) @examples/literal_match.exl:27:29
+Pipe @examples/literal_match.exl:28:9
+(Int 10) @examples/literal_match.exl:28:11
+Pipe @examples/literal_match.exl:28:16
+(Int 13) @examples/literal_match.exl:28:18
+FatArrow @examples/literal_match.exl:28:23
+(Ident Kind) @examples/literal_match.exl:28:26
+DoubleColon @examples/literal_match.exl:28:30
+(Ident Newline) @examples/literal_match.exl:28:32
+Pipe @examples/literal_match.exl:29:9
+(Int 48) @examples/literal_match.exl:29:11
+FatArrow @examples/literal_match.exl:29:15
+(Ident Kind) @examples/literal_match.exl:29:18
+DoubleColon @examples/literal_match.exl:29:22
+(Ident Digit) @examples/literal_match.exl:29:24
+Pipe @examples/literal_match.exl:30:9
+(Int 49) @examples/literal_match.exl:30:11
+FatArrow @examples/literal_match.exl:30:15
+(Ident Kind) @examples/literal_match.exl:30:18
+DoubleColon @examples/literal_match.exl:30:22
+(Ident Digit) @examples/literal_match.exl:30:24
+Pipe @examples/literal_match.exl:31:9
+(Int 55) @examples/literal_match.exl:31:11
+FatArrow @examples/literal_match.exl:31:15
+(Ident Kind) @examples/literal_match.exl:31:18
+DoubleColon @examples/literal_match.exl:31:22
+(Ident Digit) @examples/literal_match.exl:31:24
+Pipe @examples/literal_match.exl:32:9
+(Int 97) @examples/literal_match.exl:32:11
+Pipe @examples/literal_match.exl:32:15
+(Int 98) @examples/literal_match.exl:32:17
+Pipe @examples/literal_match.exl:32:21
+(Int 122) @examples/literal_match.exl:32:23
+FatArrow @examples/literal_match.exl:32:27
+(Ident Kind) @examples/literal_match.exl:32:30
+DoubleColon @examples/literal_match.exl:32:34
+(Ident Letter) @examples/literal_match.exl:32:36
+Pipe @examples/literal_match.exl:33:9
+(Ident other) @examples/literal_match.exl:33:11
+FatArrow @examples/literal_match.exl:33:17
+(Ident Kind) @examples/literal_match.exl:33:20
+DoubleColon @examples/literal_match.exl:33:24
+(Ident Other) @examples/literal_match.exl:33:26
+LParen @examples/literal_match.exl:33:31
+(Ident other) @examples/literal_match.exl:33:32
+RParen @examples/literal_match.exl:33:37
+RBrace @examples/literal_match.exl:34:5
+RBrace @examples/literal_match.exl:35:1
+Fn @examples/literal_match.exl:37:1
+(Ident code) @examples/literal_match.exl:37:4
+LParen @examples/literal_match.exl:37:8
+(Ident k) @examples/literal_match.exl:37:9
+Colon @examples/literal_match.exl:37:10
+(Ident Kind) @examples/literal_match.exl:37:12
+RParen @examples/literal_match.exl:37:16
+Arrow @examples/literal_match.exl:37:18
+(Ident int) @examples/literal_match.exl:37:21
+LBrace @examples/literal_match.exl:37:25
+Match @examples/literal_match.exl:38:5
+(Ident k) @examples/literal_match.exl:38:11
+LBrace @examples/literal_match.exl:38:13
+(Ident Kind) @examples/literal_match.exl:39:9
+DoubleColon @examples/literal_match.exl:39:13
+(Ident Letter) @examples/literal_match.exl:39:15
+FatArrow @examples/literal_match.exl:39:22
+(Int 1) @examples/literal_match.exl:39:25
+Pipe @examples/literal_match.exl:40:9
+(Ident Kind) @examples/literal_match.exl:40:11
+DoubleColon @examples/literal_match.exl:40:15
+(Ident Digit) @examples/literal_match.exl:40:17
+FatArrow @examples/literal_match.exl:40:23
+(Int 2) @examples/literal_match.exl:40:26
+Pipe @examples/literal_match.exl:41:9
+(Ident Kind) @examples/literal_match.exl:41:11
+DoubleColon @examples/literal_match.exl:41:15
+(Ident Space) @examples/literal_match.exl:41:17
+FatArrow @examples/literal_match.exl:41:23
+(Int 3) @examples/literal_match.exl:41:26
+Pipe @examples/literal_match.exl:42:9
+(Ident Kind) @examples/literal_match.exl:42:11
+DoubleColon @examples/literal_match.exl:42:15
+(Ident Newline) @examples/literal_match.exl:42:17
+FatArrow @examples/literal_match.exl:42:25
+(Int 4) @examples/literal_match.exl:42:28
+Pipe @examples/literal_match.exl:43:9
+(Ident Kind) @examples/literal_match.exl:43:11
+DoubleColon @examples/literal_match.exl:43:15
+(Ident Other) @examples/literal_match.exl:43:17
+LParen @examples/literal_match.exl:43:22
+(Ident b) @examples/literal_match.exl:43:23
+RParen @examples/literal_match.exl:43:24
+FatArrow @examples/literal_match.exl:43:26
+(Ident b) @examples/literal_match.exl:43:29
+As @examples/literal_match.exl:43:31
+(Ident int) @examples/literal_match.exl:43:34
+RBrace @examples/literal_match.exl:44:5
+RBrace @examples/literal_match.exl:45:1
+Fn @examples/literal_match.exl:47:1
+(Ident main) @examples/literal_match.exl:47:4
+LParen @examples/literal_match.exl:47:8
+RParen @examples/literal_match.exl:47:9
+LBrace @examples/literal_match.exl:47:11
+(Ident println) @examples/literal_match.exl:48:5
+LParen @examples/literal_match.exl:48:12
+(Ident code) @examples/literal_match.exl:48:13
+LParen @examples/literal_match.exl:48:17
+(Ident classify) @examples/literal_match.exl:48:18
+LParen @examples/literal_match.exl:48:26
+(Int 97) @examples/literal_match.exl:48:27
+As @examples/literal_match.exl:48:31
+(Ident u8) @examples/literal_match.exl:48:34
+RParen @examples/literal_match.exl:48:36
+RParen @examples/literal_match.exl:48:37
+RParen @examples/literal_match.exl:48:38
+Semicolon @examples/literal_match.exl:48:39
+(Ident println) @examples/literal_match.exl:49:5
+LParen @examples/literal_match.exl:49:12
+(Ident code) @examples/literal_match.exl:49:13
+LParen @examples/literal_match.exl:49:17
+(Ident classify) @examples/literal_match.exl:49:18
+LParen @examples/literal_match.exl:49:26
+(Int 55) @examples/literal_match.exl:49:27
+As @examples/literal_match.exl:49:31
+(Ident u8) @examples/literal_match.exl:49:34
+RParen @examples/literal_match.exl:49:36
+RParen @examples/literal_match.exl:49:37
+RParen @examples/literal_match.exl:49:38
+Semicolon @examples/literal_match.exl:49:39
+(Ident println) @examples/literal_match.exl:50:5
+LParen @examples/literal_match.exl:50:12
+(Ident code) @examples/literal_match.exl:50:13
+LParen @examples/literal_match.exl:50:17
+(Ident classify) @examples/literal_match.exl:50:18
+LParen @examples/literal_match.exl:50:26
+(Int 32) @examples/literal_match.exl:50:27
+As @examples/literal_match.exl:50:31
+(Ident u8) @examples/literal_match.exl:50:34
+RParen @examples/literal_match.exl:50:36
+RParen @examples/literal_match.exl:50:37
+RParen @examples/literal_match.exl:50:38
+Semicolon @examples/literal_match.exl:50:39
+(Ident println) @examples/literal_match.exl:51:5
+LParen @examples/literal_match.exl:51:12
+(Ident code) @examples/literal_match.exl:51:13
+LParen @examples/literal_match.exl:51:17
+(Ident classify) @examples/literal_match.exl:51:18
+LParen @examples/literal_match.exl:51:26
+(Int 10) @examples/literal_match.exl:51:27
+As @examples/literal_match.exl:51:32
+(Ident u8) @examples/literal_match.exl:51:35
+RParen @examples/literal_match.exl:51:37
+RParen @examples/literal_match.exl:51:38
+RParen @examples/literal_match.exl:51:39
+Semicolon @examples/literal_match.exl:51:40
+(Ident println) @examples/literal_match.exl:52:5
+LParen @examples/literal_match.exl:52:12
+(Ident code) @examples/literal_match.exl:52:13
+LParen @examples/literal_match.exl:52:17
+(Ident classify) @examples/literal_match.exl:52:18
+LParen @examples/literal_match.exl:52:26
+(Int 33) @examples/literal_match.exl:52:27
+As @examples/literal_match.exl:52:31
+(Ident u8) @examples/literal_match.exl:52:34
+RParen @examples/literal_match.exl:52:36
+RParen @examples/literal_match.exl:52:37
+RParen @examples/literal_match.exl:52:38
+Semicolon @examples/literal_match.exl:52:39
+Let @examples/literal_match.exl:55:5
+(Ident bang) @examples/literal_match.exl:55:9
+Eq @examples/literal_match.exl:55:14
+(Int 33) @examples/literal_match.exl:55:16
+Semicolon @examples/literal_match.exl:55:19
+(Ident println) @examples/literal_match.exl:56:5
+LParen @examples/literal_match.exl:56:12
+(Ident bang) @examples/literal_match.exl:56:13
+RParen @examples/literal_match.exl:56:17
+Semicolon @examples/literal_match.exl:56:18
+Let @examples/literal_match.exl:60:5
+(Ident n) @examples/literal_match.exl:60:9
+Eq @examples/literal_match.exl:60:11
+(Int 60) @examples/literal_match.exl:60:13
+Semicolon @examples/literal_match.exl:60:15
+Let @examples/literal_match.exl:61:5
+(Ident sized) @examples/literal_match.exl:61:9
+Eq @examples/literal_match.exl:61:15
+Match @examples/literal_match.exl:61:17
+(Ident n) @examples/literal_match.exl:61:23
+LBrace @examples/literal_match.exl:61:25
+(Int 0) @examples/literal_match.exl:62:9
+FatArrow @examples/literal_match.exl:62:11
+(Int 0) @examples/literal_match.exl:62:14
+Pipe @examples/literal_match.exl:63:9
+(Ident x) @examples/literal_match.exl:63:11
+If @examples/literal_match.exl:63:13
+(Ident x) @examples/literal_match.exl:63:16
+Gt @examples/literal_match.exl:63:18
+(Int 50) @examples/literal_match.exl:63:20
+FatArrow @examples/literal_match.exl:63:23
+(Int 2) @examples/literal_match.exl:63:26
+Pipe @examples/literal_match.exl:64:9
+(Ident _) @examples/literal_match.exl:64:11
+FatArrow @examples/literal_match.exl:64:13
+(Int 1) @examples/literal_match.exl:64:16
+RBrace @examples/literal_match.exl:65:5
+Semicolon @examples/literal_match.exl:65:6
+(Ident println) @examples/literal_match.exl:66:5
+LParen @examples/literal_match.exl:66:12
+(Ident sized) @examples/literal_match.exl:66:13
+RParen @examples/literal_match.exl:66:18
+Semicolon @examples/literal_match.exl:66:19
+RBrace @examples/literal_match.exl:67:1
+Eof @examples/literal_match.exl:68:1

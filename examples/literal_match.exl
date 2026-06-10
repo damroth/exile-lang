@@ -1,0 +1,67 @@
+// Literal patterns in `match` (GATE-5a) — match directly on integer
+// values and char literals instead of if-else chains.  This is the
+// lexer-shaped workload: classify a byte in one `switch`-compiled
+// dispatch (dense `case` labels become a jump table on m68k).
+//
+// Rules:
+//   - the scrutinee must be an integer type (enum matches unchanged);
+//   - a char literal `'a'` is ordinary int-literal sugar for the byte
+//     value (exile strings ARE bytes), so it also works in `==`,
+//     arithmetic, and `let` initialisers;
+//   - or-patterns compose: `'b' | 'c' =>` emits stacked case labels;
+//   - the integer domain cannot be enumerated, so the match must end
+//     with a catch-all arm (`_` or a binding);
+//   - duplicate literals and literals that cannot fit the scrutinee
+//     type (`300` against a `u8`) are compile errors.
+
+enum Kind {
+    Letter
+    | Digit
+    | Space
+    | Newline
+    | Other(u8)
+}
+
+fn classify(b: u8) -> Kind {
+    match b {
+        ' ' | '\t' => Kind::Space
+        | '\n' | '\r' => Kind::Newline
+        | '0' => Kind::Digit
+        | '1' => Kind::Digit
+        | '7' => Kind::Digit
+        | 'a' | 'b' | 'z' => Kind::Letter
+        | other => Kind::Other(other)
+    }
+}
+
+fn code(k: Kind) -> int {
+    match k {
+        Kind::Letter => 1
+        | Kind::Digit => 2
+        | Kind::Space => 3
+        | Kind::Newline => 4
+        | Kind::Other(b) => b as int
+    }
+}
+
+fn main() {
+    println(code(classify('a' as u8)));    // 1
+    println(code(classify('7' as u8)));    // 2
+    println(code(classify(' ' as u8)));    // 3
+    println(code(classify('\n' as u8)));   // 4
+    println(code(classify('!' as u8)));    // 33 — '!' fell through
+
+    // Char literal as a plain expression: just the byte's value.
+    let bang = '!';
+    println(bang);                         // 33
+
+    // Guards work on literal arms (the match lowers to a decision
+    // chain instead of a switch when any arm carries a guard).
+    let n = 60;
+    let sized = match n {
+        0 => 0
+        | x if x > 50 => 2
+        | _ => 1
+    };
+    println(sized);                        // 2
+}

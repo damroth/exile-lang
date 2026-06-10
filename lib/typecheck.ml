@@ -1156,23 +1156,60 @@ let builtin_print = { bname = "print"; bcheck = print_like_bcheck ~name:"print" 
 let builtin_println =
   { bname = "println"; bcheck = print_like_bcheck ~name:"println" }
 
+(* GATE-3 (2026-06-10) — `free(alloc, p)` is two-arg and routes through
+   the allocator seam, symmetric with `new(alloc)`.  The old one-arg
+   `free(p)` lowered to libc `free()` while `new(a)` allocated through
+   `a.alloc_fn` — fine on the host (default_allocator IS malloc/free),
+   heap corruption with an arena or Amiga allocator.  No hidden state:
+   the caller names the allocator, codegen emits
+   `(a.free_fn)(a.state, p, sizeof(pointee))`.  With L1 provenance
+   auto-drop in place, a manual `free(a, p)` is the rare early-release
+   escape hatch — the good free is the one you don't write. *)
+(* `ptr_offset(p, n)` — byte-pointer arithmetic for the arena's bump
+   allocator (PORT-PREP P2, 2026-06-10).  Lowers to plain C pointer
+   addition `(p + n)`; on m68k that is one ADDA — zero hidden cost.
+   v1 keeps it byte-honest: the base must be a `u8` pointer (any
+   ownership flavour — the arena passes its own buffer field), and
+   the result is a plain BORROW `*u8` into the same storage: a
+   derived pointer is a view, never a second owner. *)
+let builtin_ptr_offset = {
+  bname = "ptr_offset";
+  bcheck = (fun ~ctx:_ ~pos ~args ~allow_void:_ ->
+    match args with
+    | [ { ty = (TPtr p | TOwnPtr p | TConstPtr p); _ }; { ty = n; _ } ]
+      when is_int_like n ->
+        (match p with
+         | TInt { signed = false; width = Ast.W8 } -> TPtr p
+         | other ->
+             Error.failf pos
+               "'ptr_offset' steps in BYTES, so the base must be a u8 \
+                pointer, got a pointer to %s — cast first" (typ_name other))
+    | [ { ty = other; _ }; _ ] ->
+        Error.failf pos
+          "'ptr_offset' expects a u8 pointer base, got %s" (typ_name other)
+    | xs ->
+        Error.failf pos "ptr_offset(p, n) takes exactly two arguments, \
+                         got %d" (List.length xs));
+}
+
 let builtin_free = {
   bname = "free";
   bcheck = (fun ~ctx:_ ~pos ~args ~allow_void ->
     match args with
-    | [ { e = TRef _; _ } ] ->
-        (* Syntactic guard: `free(&...)` is always wrong — `&` produces
-           a stack-or-field address, never a heap pointer.  Calling free
-           on it would corrupt the allocator's bookkeeping.  Owned heap
-           pointers come from `new(alloc) T { ... }` or `Allocator.alloc`. *)
+    | [ { ty = TStruct ["Allocator"]; _ }; { e = TRef _; _ } ] ->
+        (* Syntactic guard: `free(a, &...)` is always wrong — `&`
+           produces a stack-or-field address, never a heap pointer.
+           Freeing it would corrupt the allocator's bookkeeping. *)
         Error.failf pos
           "'free' expects an owned pointer `own *T` (from 'new(alloc)'); \
            got '&...' which is a stack or field address — this would \
            corrupt the allocator"
-    | [ { ty = TOwnPtr _; _ } ] when allow_void -> t_i32
-    | [ { ty = TOwnPtr _; _ } ] ->
+    | [ { ty = TStruct ["Allocator"]; _ }; { ty = TOwnPtr _; _ } ]
+      when allow_void -> t_i32
+    | [ { ty = TStruct ["Allocator"]; _ }; { ty = TOwnPtr _; _ } ] ->
         Error.failf pos "'free' returns void, cannot use as a value"
-    | [ { ty = (TPtr _ | TConstPtr _) as other; _ } ] ->
+    | [ { ty = TStruct ["Allocator"]; _ };
+        { ty = (TPtr _ | TConstPtr _) as other; _ } ] ->
         (* Owner-sigil free-gate: a plain borrow `*T` / `*const T` is
            NOT an owned pointer.  Freeing a borrow risks a double-free
            against the owner's own `free`/auto-drop.  Only `own *T`
@@ -1182,11 +1219,22 @@ let builtin_free = {
            cannot be freed (the owner releases it).  Owned pointers come \
            from `new(alloc) T { ... }` or `Allocator.alloc`."
           (typ_name other)
-    | [ { ty = other; _ } ] ->
+    | [ { ty = TStruct ["Allocator"]; _ }; { ty = other; _ } ] ->
         Error.failf pos
           "'free' expects an owned pointer `own *T`, got %s" (typ_name other)
+    | [ { ty = other; _ }; _ ] ->
+        Error.failf pos
+          "first argument of 'free' must be the Allocator that produced \
+           the pointer (symmetric with `new(alloc)`), got %s"
+          (typ_name other)
+    | [ _ ] ->
+        Error.failf pos
+          "'free' takes the allocator and the owned pointer: \
+           `free(alloc, p)` — the one-argument form is gone (it bypassed \
+           the allocator seam; with an arena or Amiga allocator that \
+           corrupts the heap)"
     | xs ->
-        Error.failf pos "free() takes exactly one argument, got %d"
+        Error.failf pos "free() takes exactly two arguments, got %d"
           (List.length xs));
 }
 
@@ -1275,7 +1323,8 @@ let builtin_default_allocator = {
 
 let builtins =
   [ builtin_print; builtin_println; builtin_free; builtin_type_name;
-    builtin_cstr_len; builtin_mem_zero; builtin_default_allocator ]
+    builtin_cstr_len; builtin_mem_zero; builtin_default_allocator;
+    builtin_ptr_offset ]
 
 let lookup_builtin = function
   | [ name ] -> List.find_opt (fun b -> b.bname = name) builtins
@@ -1589,11 +1638,35 @@ let resolve_call_dispatch ~pos ~expected ?(recv_inst_args = []) ctx
    that a variant pattern's type really is the matching enum, that the
    variant exists, and that tuple/struct bind syntax matches the variant
    kind. *)
-let rec lower_pattern ?(allow_or = true) ctx (value_ty : typ)
+let rec lower_pattern ?(allow_or = true) ?(top_level = true) ctx
+    (value_ty : typ)
     (pat : Ast.pattern) : tpattern * (string * typ) list =
   match pat with
   | Ast.PWildcard _ -> (TPWildcard, [])
   | Ast.PVar (n, _) -> (TPVar n, [ (n, value_ty) ])
+  | Ast.PLit (n, ppos) ->
+      (* GATE-5a literal pattern: scrutinee must be int-like and the
+         literal must fit its width (a `case 300:` against a u8
+         scrutinee can never match — reject at compile time).
+         Top-level only in v1: a literal nested in a variant payload
+         would need value tests inside the Maranget matrix (its
+         non-enum columns are bind-only), so exhaustiveness would
+         silently over-claim. *)
+      if not top_level then
+        Error.failf ppos
+          "literal patterns are only supported at the top level of a \
+           match arm (v1) — bind the payload and compare in a guard";
+      (match value_ty with
+       | TInt _ | TCInt _ ->
+           if not (int_fits n value_ty) then
+             Error.failf ppos
+               "literal pattern %d does not fit the matched type %s"
+               n (typ_name value_ty);
+           (TPLit n, [])
+       | other ->
+           Error.failf ppos
+             "literal pattern needs an integer scrutinee, got %s"
+             (typ_name other))
   | Ast.PVariant { tname; variant; binds; pos = ppos } ->
       let path =
         match value_ty with
@@ -1663,7 +1736,8 @@ let rec lower_pattern ?(allow_or = true) ctx (value_ty : typ)
       in
       let lowered =
         List.map (fun (fn, ft, sp) ->
-          let (tp, bs) = lower_pattern ~allow_or:false ctx ft sp in
+          let (tp, bs) =
+            lower_pattern ~allow_or:false ~top_level:false ctx ft sp in
           ((fn, tp), bs))
           ordered
       in
@@ -1699,7 +1773,7 @@ let rec lower_pattern ?(allow_or = true) ctx (value_ty : typ)
          and complicate duplicate-tag detection here; we defer them. *)
       let talts = List.map fst lowered in
       List.iter (function
-        | TPWildcard | TPVar _ -> ()
+        | TPWildcard | TPVar _ | TPLit _ -> ()
         | TPVariant { binds = []; _ } -> ()
         | TPVariant { variant; _ } ->
             Error.failf opos
@@ -1734,6 +1808,11 @@ type cpat = CWild | CCon of { tag : int; args : cpat list }
 
 let rec cpat_of_tpat : tpattern -> cpat = function
   | TPWildcard | TPVar _ -> CWild
+  | TPLit _ ->
+      (* Unreachable: scalar matches bypass the Maranget matrix
+         entirely, and nested literal patterns are rejected in
+         lower_pattern (top_level gate). *)
+      assert false
   | TPVariant { tag; binds; _ } ->
       CCon { tag; args = List.map (fun (_, p) -> cpat_of_tpat p) binds }
   | TPOr _ ->
@@ -2568,10 +2647,20 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
       let ename_path =
         match tscrut.ty with
         | TEnum p -> p
+        | TInt _ | TCInt _ ->
+            (* GATE-5a scalar literal match — `match b { 'a' => ... }`.
+               The empty path is the scalar sentinel: codegen switches
+               on the value itself instead of a tag, and the
+               exhaustiveness rule below replaces Maranget (integer
+               domains are not enumerated; a final catch-all arm is
+               required instead). *)
+            []
         | other ->
             Error.failf match_pos
-              "'match' requires an enum value, got %s" (typ_name other)
+              "'match' requires an enum or integer value, got %s"
+              (typ_name other)
       in
+      let scalar_match = ename_path = [] in
       let tarms =
         List.map (fun (a : Ast.match_arm) ->
           let (tpat, binds) = lower_pattern ctx tscrut.ty a.pat in
@@ -2604,6 +2693,48 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           { tpat; tguard; tbody; tdiverges = false; tarm_pos = a.arm_pos })
           arms
       in
+      if scalar_match then begin
+        (* Scalar exhaustiveness (GATE-5a): the integer domain is too
+           wide to enumerate, so the rule is simpler than Maranget —
+           every literal may appear once (per unguarded coverage), and
+           an UNGUARDED catch-all arm (`_` or a binding) must close
+           the match.  Guarded arms never prove coverage (same rule as
+           the enum path below). *)
+        let lits_of = function
+          | TPLit n -> [ n ]
+          | TPOr alts ->
+              List.filter_map
+                (function TPLit n -> Some n | _ -> None) alts
+          | _ -> []
+        in
+        let is_catch_all = function
+          | TPVar _ | TPWildcard -> true
+          | TPOr alts ->
+              List.exists
+                (function TPVar _ | TPWildcard -> true | _ -> false) alts
+          | _ -> false
+        in
+        let seen = Hashtbl.create 16 in
+        let covered = ref false in
+        List.iter (fun (a : tmatch_arm) ->
+          if !covered then
+            Error.failf a.tarm_pos
+              "unreachable match arm: an earlier catch-all already \
+               covers every value";
+          List.iter (fun n ->
+            if Hashtbl.mem seen n then
+              Error.failf a.tarm_pos
+                "unreachable match arm: literal %d is already covered" n;
+            if a.tguard = None then Hashtbl.add seen n ())
+            (lits_of a.tpat);
+          if is_catch_all a.tpat && a.tguard = None then covered := true)
+          tarms;
+        if not !covered then
+          Error.failf match_pos
+            "non-exhaustive 'match' on an integer: add a final \
+             catch-all arm ('_' or a binding) — the integer domain \
+             cannot be enumerated"
+      end else begin
       (* Redundancy + exhaustiveness via the usefulness matrix (Maranget).
          Each arm expands to one or more single-column rows (one per
          or-pattern alternative); nested variant patterns expand columns
@@ -2656,7 +2787,8 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
              "non-exhaustive 'match': pattern '%s' is not covered \
               (add an arm or '_')"
              (render_cpat ctx tscrut.ty w)
-       | _ -> ());
+       | _ -> ())
+      end;
       (* All non-diverging arm bodies must agree on a type — pick the
          first as the witness. *)
       let non_div =
@@ -3991,6 +4123,10 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                 "let-else pattern must be refutable (a qualified \
                  variant constructor like `Option::Some(v)`); use a \
                  plain `let` for irrefutable bindings"
+          | Ast.PLit _ ->
+              Error.failf pos
+                "let-else MVP does not support literal patterns; use \
+                 a `match` or an `if`"
           | Ast.POr _ ->
               Error.failf pos
                 "let-else MVP does not support or-patterns; spell out \
@@ -4812,7 +4948,22 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         ({ te with e = TFieldAccess { target = t'; field } }, p)
     | TRef sub ->
         let (sub', p) = walk_expr ~allow_top:false sub in
-        ({ te with e = TRef sub' }, p)
+        (* GATE-4 rvalue-receiver lift: `&` of a non-lvalue (a call
+           result, cast, arithmetic...) is invalid C — `&(ex_make())`
+           — and shows up whenever a `*self`-shaped method auto-refs
+           an rvalue receiver (`make().get()`).  Pin the value in a
+           `__lift_N` temp and take the temp's address. *)
+        let is_lvalue = match sub'.e with
+          | TVar _ | TFieldAccess _ | TIndex _ | TDeref _ -> true
+          | _ -> false
+        in
+        if is_lvalue then ({ te with e = TRef sub' }, p)
+        else begin
+          let n = fresh_lift () in
+          decls := (n, sub'.ty) :: !decls;
+          let lift_let = TLet { name = n; value = sub'; pos = sub'.pos } in
+          ({ te with e = TRef { sub' with e = TVar n } }, p @ [ lift_let ])
+        end
     | TDeref sub ->
         let (sub', p) = walk_expr ~allow_top:false sub in
         ({ te with e = TDeref sub' }, p)
@@ -4843,7 +4994,24 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
          p @ pa)
     | TMatch { scrutinee; ename_path; arms } ->
         let (scr', p) = walk_expr ~allow_top:false scrutinee in
-        ({ te with e = TMatch { scrutinee = scr'; ename_path; arms } }, p)
+        (* Arm bodies lift too (GATE-4) — otherwise a `for` inside an
+           arm block never expands and block-shaped sub-expressions
+           never get temps.  Any prelude produced for a non-block arm
+           body must only run when that arm matches, so it wraps into
+           a TBlock around the body instead of escaping upward. *)
+        let arms' =
+          List.map (fun (a : tmatch_arm) ->
+            let (body', pb) = walk_expr ~allow_top:true a.tbody in
+            let tbody =
+              if pb = [] then body'
+              else { body' with
+                     e = TBlock { stmts = pb; trailing = Some body' } }
+            in
+            { a with tbody })
+            arms
+        in
+        ({ te with e = TMatch { scrutinee = scr'; ename_path;
+                                arms = arms' } }, p)
     | TIfExpr { cond; then_val; else_val } ->
         (* Only the cond is lifted: hoisting a branch value above the `if`
            would evaluate it unconditionally (same rule as match arms). *)
@@ -4859,14 +5027,29 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let (base', pb) = walk_expr ~allow_top:false base in
         let (index', pi) = walk_expr ~allow_top:false index in
         ({ te with e = TIndex { base = base'; index = index' } }, pb @ pi)
-    | TBlock _ ->
-        (* Block lives only as a match arm body; arm-body texprs are
-           handled directly by emit_arm_result and are NOT walked by
-           lift_block_exprs (the lift pass operates on stmts/exprs in
-           the surrounding context, never on arm payloads). *)
-        (te, [])
-  in
-  let rec lift_stmts stmts = List.concat_map lift_stmt stmts
+    | TBlock { stmts; trailing } ->
+        (* Arm-body block (GATE-4): the block's OWN stmt list is a
+           legal statement context, so it lifts in place —
+           TFor/TForEach expand to TWhile and block-shaped
+           sub-expressions become local `__lift_N` temps INSIDE the
+           block.  Conditional evaluation is preserved (the block only
+           runs when its arm matches); nothing is hoisted above the
+           match, which is why the arm used to be skipped entirely —
+           skipping also left `for` in an arm body unexpanded and
+           crashed codegen.  The trailing value's lift prelude joins
+           the block's stmts; its top-level shape stays for
+           emit_arm_result. *)
+        let stmts' = lift_stmts stmts in
+        (match trailing with
+         | None ->
+             ({ te with e = TBlock { stmts = stmts'; trailing = None } },
+              [])
+         | Some tr ->
+             let (tr', p) = walk_expr ~allow_top:true tr in
+             ({ te with
+                e = TBlock { stmts = stmts' @ p; trailing = Some tr' } },
+              []))
+  and lift_stmts stmts = List.concat_map lift_stmt stmts
   and lift_stmt = function
     | TLet { name; value; pos } ->
         let (v', p) = walk_expr ~allow_top:true value in
@@ -5915,7 +6098,8 @@ let prelude_pos = { Pos.zero with file = "<prelude>" }
    user code mentions the type — keeps unrelated programs (hello_world,
    etc.) from carrying an unused `struct ex_Allocator` decl.  Add a
    name when introducing a new mono prelude struct. *)
-let prelude_mono_struct_names = ["Allocator"; "StringBuilder"; "String"]
+let prelude_mono_struct_names =
+  ["Allocator"; "StringBuilder"; "String"; "Arena"]
 
 let prelude_items () =
   let mk_unit name = {
@@ -6871,7 +7055,7 @@ let prelude_items () =
           preg = None; is_mut = false } ]
       (Some vec_t_ann) vec_with_capacity_body in
   let vec_len_method =
-    mk_vec_method "len" [vec_self_const_ptr_param] (Some u32_t)
+    mk_vec_method "length" [vec_self_const_ptr_param] (Some u32_t)
       [ Ast.Return (Some (field (Ast.Var ("self", pos)) "count"), pos) ] in
   (* grow( * self, new_cap): alloc new buf, copy through Slice-view
      + Delta-B, free old with matching byte-count, swap fields. *)
@@ -7220,7 +7404,7 @@ let prelude_items () =
           preg = None; is_mut = false } ]
       (Some hashmap_t_ann) hm_with_capacity_body in
   let hm_len_method =
-    mk_hm_method "len" [hm_self_const_ptr_param] (Some u32_t)
+    mk_hm_method "length" [hm_self_const_ptr_param] (Some u32_t)
       [ Ast.Return (Some (field (Ast.Var ("self", pos)) "count"), pos) ] in
   (* contains( * self, k): hash k, linear probe; Occupied + matching
      hash + key.eq(slot.key) → true.  Empty stops the probe;
@@ -8601,8 +8785,12 @@ let prelude_items () =
     trmethods = [ display_sig ]; trdefaults = [];
     trpos = pos; tris_pub = true;
   } in
+  (* GATE-5d: Debug's formatter is `fmt_debug`, not `fmt` — exile has
+     a flat per-type method namespace, so a type implementing BOTH
+     Display and Debug would otherwise collide on `fmt` (confirmed:
+     "method 'fmt' on 'P' already defined in another 'impl' block"). *)
   let debug_sig =
-    trait_sig "fmt" [self_const_ptr_param; out_param] None [] in
+    trait_sig "fmt_debug" [self_const_ptr_param; out_param] None [] in
   let debug_trait = {
     Ast.trname = "Debug"; trassoc = []; trsupers = [];
     trmethods = [ debug_sig ]; trdefaults = [];
@@ -8762,6 +8950,110 @@ let prelude_items () =
   ] in
   let str_hash_fn =
     mk_str_fn "hash" [str_param "s"] (Some u32_t) str_hash_body in
+  (* Arena — bump allocator over the seam (PORT-PREP P2, ratified
+     2026-06-10).  The AST-building idiom for the self-host port:
+     thousands of nodes, one wholesale release.
+
+     P1 decision (user-ratified): `alloc_borrowed::<T>()` returns a
+     plain BORROW `*T` — the node belongs to the ARENA, not to the
+     binding, so the own/L1 machinery does not track it (no per-node
+     free ceremony, which is the entire point of an arena).  `new(a)`
+     and `own` stay unchanged for general allocators.
+
+     Wholesale release IS the GATE-2 auto-drop: `buf` is an own field
+     with a sibling `alloc`, so the Arena struct is droppable — when
+     the arena binding goes out of scope (or is consumed by an
+     explicit `.drop()`), the whole backing buffer returns to the
+     parent allocator in one `free_fn` call.  The byte-count
+     heuristic reads the sibling `cap` field: cap * sizeof(u8) = the
+     exact footprint.
+
+     Honest v1 limits: borrows into the buffer must not outlive the
+     arena binding (same class as a Slice into a Vec — escape-pass
+     coverage is the DR-010 horizon); exhaustion returns `null`
+     (caller picks the capacity; the port sizes generously). *)
+  let arena_struct = {
+    Ast.sname = "Arena";
+    stparams = [];
+    sfields = [
+      ("buf", Ast.TyOwnPtr u8_t);
+      ("cap", u32_t);
+      ("off", u32_t);
+      ("alloc", alloc_ann);
+    ];
+    spos = pos; sis_pub = true;
+    stier_hint = Some "core"; sis_debug = false; sderives = [];
+    sis_move = false;
+  } in
+  let arena_struct_ann = Ast.TyStruct { path = ["Arena"]; args = [] } in
+  let arena_with_capacity_body = [
+    Ast.Let { name = "buf"; is_mut = false;
+              ty_ann = Some (Ast.TyOwnPtr u8_t);
+              value = Ast.Cast (
+                methcall (var "a") "alloc_fn"
+                  [ field (var "a") "state"; var "bytes" ],
+                Ast.TyOwnPtr u8_t, pos);
+              pos };
+    Ast.Return (Some (Ast.StructLit {
+      tname = ["Arena"];
+      fields = [
+        ("buf", var "buf");
+        ("cap", var "bytes");
+        ("off", u32_lit 0);
+        ("alloc", var "a");
+      ];
+      base = None; pos }), pos);
+  ] in
+  let arena_alloc_borrowed_body = [
+    (* aligned = (off + 7) & ~7 — 8-byte alignment covers every
+       exile-expressible field type on both host and m68k. *)
+    Ast.Let { name = "aligned"; is_mut = false; ty_ann = Some u32_t;
+              value = bin Ast.BitAnd
+                (bin Ast.Add (field (var "self") "off") (u32_lit 7))
+                (Ast.BitNot (u32_lit 7, pos));
+              pos };
+    Ast.Let { name = "need"; is_mut = false; ty_ann = Some u32_t;
+              value = Ast.Cast (Ast.SizeOf (tvar "T", pos), u32_t, pos);
+              pos };
+    Ast.ExprStmt (Ast.If {
+      cond = bin Ast.Gt (bin Ast.Add (var "aligned") (var "need"))
+               (field (var "self") "cap");
+      then_blk = [ Ast.Return (Some (Ast.NullLit pos), pos) ];
+      else_blk = None; pos });
+    Ast.Let { name = "p"; is_mut = false;
+              ty_ann = Some (Ast.TyPtr u8_t);
+              value = Ast.Call {
+                callee = ["ptr_offset"];
+                args = [ field (var "self") "buf"; var "aligned" ];
+                pos };
+              pos };
+    Ast.AssignField { target = var "self"; field = "off";
+                      value = bin Ast.Add (var "aligned") (var "need");
+                      pos };
+    Ast.Return (Some (Ast.Cast (var "p", Ast.TyPtr (tvar "T"), pos)), pos);
+  ] in
+  let arena_self_ptr_param =
+    { Ast.pname = "self"; pty = Ast.TyPtr arena_struct_ann;
+      preg = None; is_mut = false } in
+  let mk_arena_method name tparams params ret body = {
+    Ast.name; c_name = name; tparams; tbounds = []; params; ret_ty = ret;
+    body; is_pub = true; is_extern = false; is_variadic = false;
+    tier_hint = Some "full"; amiga_lib = None; must_use = false;
+    escapes_hatch = false; pos;
+  } in
+  let arena_impl = {
+    Ast.itparams = []; itbounds = []; itrait = None; iassoc = [];
+    itarget = ["Arena"];
+    iitems = [
+      mk_arena_method "with_capacity" []
+        [ { Ast.pname = "a"; pty = alloc_ann; preg = None; is_mut = false };
+          { Ast.pname = "bytes"; pty = u32_t; preg = None; is_mut = false } ]
+        (Some arena_struct_ann) arena_with_capacity_body;
+      mk_arena_method "alloc_borrowed" ["T"] [ arena_self_ptr_param ]
+        (Some (Ast.TyPtr (tvar "T"))) arena_alloc_borrowed_body;
+    ];
+    ipos = pos;
+  } in
   let str_mod = {
     Ast.mname = "str";
     mitems = [
@@ -8871,6 +9163,7 @@ let prelude_items () =
     Ast.Struct range_struct; Ast.Struct range_inclusive_struct;
     Ast.Struct slice_struct;
     Ast.Struct alloc_struct; Ast.Impl alloc_impl;
+    Ast.Struct arena_struct; Ast.Impl arena_impl;
     Ast.Struct sb_struct; Ast.Impl sb_impl;
     Ast.Struct string_struct; Ast.Impl string_impl;
     Ast.Impl string_eq_impl; Ast.Impl string_hash_impl;
@@ -9197,7 +9490,7 @@ let derive_debug_render_value (e : Ast.expr) (ty : Ast.type_ann) pos =
         derive_debug_push_byte 34 pos ]
   | _ ->
       [ Ast.ExprStmt (Ast.MethodCall {
-          receiver = e; name = "fmt";
+          receiver = e; name = "fmt_debug";
           args = [ Ast.Var ("out", pos) ]; pos }) ]
 
 (* Interleave a separator stmt-list between rendered chunks. *)
@@ -9215,7 +9508,7 @@ let derive_debug_mk_fmt target body pos =
     { Ast.pname = "out"; pty = derive_debug_sb_ann;
       preg = None; is_mut = false }
   in
-  derive_mk_method "fmt" [self_p; out_p] None body pos
+  derive_mk_method "fmt_debug" [self_p; out_p] None body pos
 
 let derive_debug_struct (s : Ast.struct_decl) : Ast.item =
   let pos = s.spos in
@@ -9481,7 +9774,7 @@ let expand_lambdas (program : Ast.program) : Ast.program =
         acc
   and pattern_bound_names (p : Ast.pattern) : string list =
     let rec go acc = function
-      | Ast.PWildcard _ -> acc
+      | Ast.PWildcard _ | Ast.PLit _ -> acc
       | Ast.PVar (n, _) ->
           if n = "_" || List.mem n acc then acc else n :: acc
       | Ast.PVariant { binds; _ } ->
@@ -9760,7 +10053,8 @@ let expand_lambdas (program : Ast.program) : Ast.program =
       if not was then Hashtbl.remove bound n) removed;
     List.rev out
   in
-  let rec lift_e ~scope (e : Ast.expr) : Ast.expr =
+  let rec lift_e ?(fn_bound_pos = false) ~scope (e : Ast.expr)
+    : Ast.expr =
     match e with
     | Ast.Lambda { params; ret_ty; body; captures = explicit_caps; pos } ->
         let body = lift_e ~scope:(scope @ params) body in
@@ -9792,7 +10086,7 @@ let expand_lambdas (program : Ast.program) : Ast.program =
                 in
                 Some (n, ann, is_byref)) free
         in
-        if captures = [] then
+        if captures = [] && not fn_bound_pos then
           (* A1 path — captureless decay. *)
           let name = fresh_lambda_name () in
           let ast_params =
@@ -9815,15 +10109,26 @@ let expand_lambdas (program : Ast.program) : Ast.program =
           let arity = List.length params in
           let fn_trait_name = Printf.sprintf "Fn%d" arity in
           let closure_name = fresh_closure_name () in
+          let env_fields =
+            List.map (fun (cap_name, cap_ann, is_byref) ->
+              let ft = if is_byref then Ast.TyConstPtr cap_ann
+                       else cap_ann in
+              (cap_name, ft)) captures
+          in
+          (* GATE-5b: a captureless lambda routed here (FnN-bound
+             position) has an EMPTY env — C89 forbids empty structs,
+             so a one-byte pad field keeps the shape legal.  The
+             struct-literal below initialises it to 0. *)
+          let env_fields =
+            if env_fields = [] then
+              [ ("_pad", Ast.TyInt { signed = false; width = Ast.W8 }) ]
+            else env_fields
+          in
           let env_struct = Ast.{
             sname = closure_name;
             sis_pub = false;
             stparams = [];
-            sfields =
-              List.map (fun (cap_name, cap_ann, is_byref) ->
-                let ft = if is_byref then Ast.TyConstPtr cap_ann
-                         else cap_ann in
-                (cap_name, ft)) captures;
+            sfields = env_fields;
             spos = pos;
             sis_debug = false;
             sis_move = false;
@@ -9904,6 +10209,10 @@ let expand_lambdas (program : Ast.program) : Ast.program =
               let v = if is_byref then Ast.Ref (v, pos) else v in
               (cap_name, v)) captures
           in
+          let fields =
+            if fields = [] then [ ("_pad", Ast.IntLit (0, pos)) ]
+            else fields
+          in
           Ast.StructLit {
             tname = [closure_name]; fields; base = None; pos }
         end
@@ -9922,8 +10231,17 @@ let expand_lambdas (program : Ast.program) : Ast.program =
     | Ast.Call { callee; args; pos } ->
         Ast.Call { callee; args = List.map (lift_e ~scope) args; pos }
     | Ast.MethodCall { receiver; name; args; pos } ->
+        (* GATE-5b: a captureless lambda in METHOD-ARG position routes
+           through the A2 empty-env closure instead of A1 fn-ptr decay
+           — method args are the combinator surface (`.map(|x| ...)`)
+           where an `F: FnN` bound awaits, and a bare fn-ptr does not
+           implement FnN.  Plain fn-ptr positions (lets, free-fn call
+           args) keep the A1 decay. *)
         Ast.MethodCall { receiver = lift_e ~scope receiver; name;
-                         args = List.map (lift_e ~scope) args; pos }
+                         args =
+                           List.map (lift_e ~fn_bound_pos:true ~scope)
+                             args;
+                         pos }
     | Ast.StructLit { tname; fields; base; pos } ->
         Ast.StructLit { tname;
                         fields = List.map (fun (n, e) ->

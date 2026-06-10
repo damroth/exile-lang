@@ -41,16 +41,18 @@ fn eval(e: *const Expr) -> int {
 }
 
 // Walk the tree depth-first and free each node.  `free_tree` takes
-// ownership (`own *Expr`); each owning child payload is moved into the
-// recursive call, then the node itself is freed.  Manual today; the
-// future Owner-sigil work (DR-030) synthesises this drop automatically.
-fn free_tree(e: own *Expr) {
+// ownership (`own *Expr`) plus the allocator the tree was built from:
+// `free(al, e)` releases through the allocator seam, symmetric with
+// `new(al)`.  Each owning child payload is moved into the recursive
+// call, then the node itself is freed.  Manual today; an arena makes
+// the whole walk unnecessary (free-wholesale).
+fn free_tree(al: Allocator, e: own *Expr) {
     match *e {
         Expr::Lit(_n) => { }
-        | Expr::Add(a, b) => { free_tree(a); free_tree(b); }
-        | Expr::Mul(a, b) => { free_tree(a); free_tree(b); }
+        | Expr::Add(a, b) => { free_tree(al, a); free_tree(al, b); }
+        | Expr::Mul(a, b) => { free_tree(al, a); free_tree(al, b); }
     }
-    free(e);
+    free(al, e);
 }
 
 fn main() {
@@ -72,5 +74,5 @@ fn main() {
 
     println(eval(root));            // 42
 
-    free_tree(root);
+    free_tree(a, root);
 }

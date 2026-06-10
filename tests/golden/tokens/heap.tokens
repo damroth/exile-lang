@@ -98,96 +98,92 @@ Eq @examples/heap.exl:16:11
 LParen @examples/heap.exl:16:30
 RParen @examples/heap.exl:16:31
 Semicolon @examples/heap.exl:16:32
-Let @examples/heap.exl:18:5
-(Ident p) @examples/heap.exl:18:9
-Eq @examples/heap.exl:18:11
-New @examples/heap.exl:18:13
-LParen @examples/heap.exl:18:16
-(Ident a) @examples/heap.exl:18:17
-RParen @examples/heap.exl:18:18
-(Ident Point) @examples/heap.exl:18:20
-LBrace @examples/heap.exl:18:26
-(Ident x) @examples/heap.exl:18:28
-Colon @examples/heap.exl:18:29
-(Int 1) @examples/heap.exl:18:31
-Comma @examples/heap.exl:18:32
-(Ident y) @examples/heap.exl:18:34
-Colon @examples/heap.exl:18:35
-(Int 2) @examples/heap.exl:18:37
-RBrace @examples/heap.exl:18:39
-Semicolon @examples/heap.exl:18:40
-Defer @examples/heap.exl:19:5
-(Ident free) @examples/heap.exl:19:11
-LParen @examples/heap.exl:19:15
-(Ident p) @examples/heap.exl:19:16
-RParen @examples/heap.exl:19:17
-Semicolon @examples/heap.exl:19:18
-(Ident p) @examples/heap.exl:21:5
-Dot @examples/heap.exl:21:6
-(Ident x) @examples/heap.exl:21:7
-Eq @examples/heap.exl:21:9
-(Int 10) @examples/heap.exl:21:11
-Semicolon @examples/heap.exl:21:13
-(Ident p) @examples/heap.exl:22:5
-Dot @examples/heap.exl:22:6
-(Ident y) @examples/heap.exl:22:7
-Eq @examples/heap.exl:22:9
-(Int 20) @examples/heap.exl:22:11
-Semicolon @examples/heap.exl:22:13
-(Ident println) @examples/heap.exl:23:5
-LParen @examples/heap.exl:23:12
-(Ident p) @examples/heap.exl:23:13
-Dot @examples/heap.exl:23:14
-(Ident x) @examples/heap.exl:23:15
-RParen @examples/heap.exl:23:16
-Semicolon @examples/heap.exl:23:17
-(Ident println) @examples/heap.exl:24:5
-LParen @examples/heap.exl:24:12
-(Ident p) @examples/heap.exl:24:13
-Dot @examples/heap.exl:24:14
-(Ident y) @examples/heap.exl:24:15
-RParen @examples/heap.exl:24:16
-Semicolon @examples/heap.exl:24:17
-Let @examples/heap.exl:26:5
-(Ident q) @examples/heap.exl:26:9
-Eq @examples/heap.exl:26:11
-(Ident make_point) @examples/heap.exl:26:13
-LParen @examples/heap.exl:26:23
-(Ident a) @examples/heap.exl:26:24
-Comma @examples/heap.exl:26:25
-(Int 100) @examples/heap.exl:26:27
-Comma @examples/heap.exl:26:30
-(Int 200) @examples/heap.exl:26:32
-RParen @examples/heap.exl:26:35
-Semicolon @examples/heap.exl:26:36
-Defer @examples/heap.exl:27:5
-(Ident free) @examples/heap.exl:27:11
-LParen @examples/heap.exl:27:15
-(Ident q) @examples/heap.exl:27:16
-RParen @examples/heap.exl:27:17
-Semicolon @examples/heap.exl:27:18
-(Ident shift) @examples/heap.exl:29:5
-LParen @examples/heap.exl:29:10
-(Ident q) @examples/heap.exl:29:11
-Comma @examples/heap.exl:29:12
-(Int 5) @examples/heap.exl:29:14
-Comma @examples/heap.exl:29:15
-(Int 7) @examples/heap.exl:29:17
-RParen @examples/heap.exl:29:18
-Semicolon @examples/heap.exl:29:19
-(Ident println) @examples/heap.exl:30:5
-LParen @examples/heap.exl:30:12
-(Ident q) @examples/heap.exl:30:13
-Dot @examples/heap.exl:30:14
-(Ident x) @examples/heap.exl:30:15
-RParen @examples/heap.exl:30:16
-Semicolon @examples/heap.exl:30:17
-(Ident println) @examples/heap.exl:31:5
-LParen @examples/heap.exl:31:12
-(Ident q) @examples/heap.exl:31:13
-Dot @examples/heap.exl:31:14
-(Ident y) @examples/heap.exl:31:15
-RParen @examples/heap.exl:31:16
-Semicolon @examples/heap.exl:31:17
-RBrace @examples/heap.exl:32:1
-Eof @examples/heap.exl:33:1
+Let @examples/heap.exl:22:5
+(Ident p) @examples/heap.exl:22:9
+Eq @examples/heap.exl:22:11
+New @examples/heap.exl:22:13
+LParen @examples/heap.exl:22:16
+(Ident a) @examples/heap.exl:22:17
+RParen @examples/heap.exl:22:18
+(Ident Point) @examples/heap.exl:22:20
+LBrace @examples/heap.exl:22:26
+(Ident x) @examples/heap.exl:22:28
+Colon @examples/heap.exl:22:29
+(Int 1) @examples/heap.exl:22:31
+Comma @examples/heap.exl:22:32
+(Ident y) @examples/heap.exl:22:34
+Colon @examples/heap.exl:22:35
+(Int 2) @examples/heap.exl:22:37
+RBrace @examples/heap.exl:22:39
+Semicolon @examples/heap.exl:22:40
+(Ident p) @examples/heap.exl:24:5
+Dot @examples/heap.exl:24:6
+(Ident x) @examples/heap.exl:24:7
+Eq @examples/heap.exl:24:9
+(Int 10) @examples/heap.exl:24:11
+Semicolon @examples/heap.exl:24:13
+(Ident p) @examples/heap.exl:25:5
+Dot @examples/heap.exl:25:6
+(Ident y) @examples/heap.exl:25:7
+Eq @examples/heap.exl:25:9
+(Int 20) @examples/heap.exl:25:11
+Semicolon @examples/heap.exl:25:13
+(Ident println) @examples/heap.exl:26:5
+LParen @examples/heap.exl:26:12
+(Ident p) @examples/heap.exl:26:13
+Dot @examples/heap.exl:26:14
+(Ident x) @examples/heap.exl:26:15
+RParen @examples/heap.exl:26:16
+Semicolon @examples/heap.exl:26:17
+(Ident println) @examples/heap.exl:27:5
+LParen @examples/heap.exl:27:12
+(Ident p) @examples/heap.exl:27:13
+Dot @examples/heap.exl:27:14
+(Ident y) @examples/heap.exl:27:15
+RParen @examples/heap.exl:27:16
+Semicolon @examples/heap.exl:27:17
+Let @examples/heap.exl:33:5
+(Ident q) @examples/heap.exl:33:9
+Eq @examples/heap.exl:33:11
+(Ident make_point) @examples/heap.exl:33:13
+LParen @examples/heap.exl:33:23
+(Ident a) @examples/heap.exl:33:24
+Comma @examples/heap.exl:33:25
+(Int 100) @examples/heap.exl:33:27
+Comma @examples/heap.exl:33:30
+(Int 200) @examples/heap.exl:33:32
+RParen @examples/heap.exl:33:35
+Semicolon @examples/heap.exl:33:36
+Defer @examples/heap.exl:34:5
+(Ident free) @examples/heap.exl:34:11
+LParen @examples/heap.exl:34:15
+(Ident a) @examples/heap.exl:34:16
+Comma @examples/heap.exl:34:17
+(Ident q) @examples/heap.exl:34:19
+RParen @examples/heap.exl:34:20
+Semicolon @examples/heap.exl:34:21
+(Ident shift) @examples/heap.exl:36:5
+LParen @examples/heap.exl:36:10
+(Ident q) @examples/heap.exl:36:11
+Comma @examples/heap.exl:36:12
+(Int 5) @examples/heap.exl:36:14
+Comma @examples/heap.exl:36:15
+(Int 7) @examples/heap.exl:36:17
+RParen @examples/heap.exl:36:18
+Semicolon @examples/heap.exl:36:19
+(Ident println) @examples/heap.exl:37:5
+LParen @examples/heap.exl:37:12
+(Ident q) @examples/heap.exl:37:13
+Dot @examples/heap.exl:37:14
+(Ident x) @examples/heap.exl:37:15
+RParen @examples/heap.exl:37:16
+Semicolon @examples/heap.exl:37:17
+(Ident println) @examples/heap.exl:38:5
+LParen @examples/heap.exl:38:12
+(Ident q) @examples/heap.exl:38:13
+Dot @examples/heap.exl:38:14
+(Ident y) @examples/heap.exl:38:15
+RParen @examples/heap.exl:38:16
+Semicolon @examples/heap.exl:38:17
+RBrace @examples/heap.exl:39:1
+Eof @examples/heap.exl:40:1

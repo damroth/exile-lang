@@ -15,16 +15,23 @@ fn shift(p: *Point, dx: int, dy: int) {
 fn main() {
     let a = default_allocator();
 
+    // Allocated at a syntactic `new(a)` site, so the compiler knows
+    // the provenance allocator: no manual free needed — the auto-drop
+    // pass releases `p` through `a.free_fn` at scope exit.  The good
+    // free is the one you don't write.
     let p = new(a) Point { x: 1, y: 2 };
-    defer free(p);
 
     p.x = 10;
     p.y = 20;
     println(p.x);
     println(p.y);
 
+    // Owned pointer received from a call: its provenance is unknown
+    // here, so it MUST be consumed explicitly — `free(a, q)` releases
+    // through the allocator seam, symmetric with `new(a)`.  Leaving
+    // it unconsumed is a compile error, not a silent leak.
     let q = make_point(a, 100, 200);
-    defer free(q);
+    defer free(a, q);
 
     shift(q, 5, 7);
     println(q.x);

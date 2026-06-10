@@ -189,16 +189,47 @@ let emit_print : builtin_emit =
 let emit_println : builtin_emit =
   fun _ctx buf args emit_arg -> emit_print_impl ~newline:true buf args emit_arg
 
+(* GATE-3: `free(a, p)` routes through the allocator seam — an
+   indirect call of a.free_fn with a.state, the pointer cast to
+   void-pointer, and the byte count — mirroring how `new(a)`
+   allocates through `a.alloc_fn`.  The byte count is the
+   compile-time pointee size (single-object ownership; growable
+   collections free through their own drop machinery). *)
 let emit_free : builtin_emit =
   fun _ctx buf args emit_arg ->
-    Buffer.add_string buf "free(";
-    emit_arg (List.hd args);
-    Buffer.add_char buf ')'
+    match args with
+    | [ alloc; ptr ] ->
+        let pointee = match ptr.ty with
+          | TOwnPtr inner -> inner
+          | other -> other   (* unreachable past bcheck *)
+        in
+        Buffer.add_char buf '(';
+        emit_arg alloc;
+        Buffer.add_string buf ".free_fn)(";
+        emit_arg alloc;
+        Buffer.add_string buf ".state, ((void *)";
+        emit_arg ptr;
+        Buffer.add_string buf "), ((unsigned long)sizeof(";
+        Buffer.add_string buf (strip_trailing_space (c_type_prefix pointee));
+        Buffer.add_string buf ")))"
+    | _ -> assert false   (* bcheck pinned the arity *)
 
 (* `cstr_len(s)` lowers to `((unsigned long)strlen(<expr>))` — width-pin
    to `u32` (which c_type_prefix renders as `unsigned long`) so the
    call site never sees C's `size_t`.  `<string.h>` is pulled in by
    `gen_program` when `tp.tp_uses_string_h` is set. *)
+(* `ptr_offset(p, n)` — plain C pointer addition on a byte pointer. *)
+let emit_ptr_offset : builtin_emit =
+  fun _ctx buf args emit_arg ->
+    match args with
+    | [ p; n ] ->
+        Buffer.add_char buf '(';
+        emit_arg p;
+        Buffer.add_string buf " + ";
+        emit_arg n;
+        Buffer.add_char buf ')'
+    | _ -> assert false
+
 let emit_cstr_len : builtin_emit =
   fun _ctx buf args emit_arg ->
     Buffer.add_string buf "((unsigned long)strlen(";
@@ -244,6 +275,7 @@ let builtin_emitters : (string * builtin_emit) list = [
   ("print", emit_print);
   ("println", emit_println);
   ("free", emit_free);
+  ("ptr_offset", emit_ptr_offset);
   ("type_name", emit_type_name);
   ("cstr_len", emit_cstr_len);
   ("mem_zero", emit_mem_zero);
@@ -824,14 +856,27 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
       let inner = indent ^ "    " in
       let case_indent = inner ^ "    " in
       let body_indent = case_indent ^ "    " in
-      let cname = mangle_typ (TEnum ename_path) in
+      (* GATE-5a: the empty ename_path is the scalar-literal-match
+         sentinel — `__m` is the integer scrutinee itself and the
+         switch dispatches on its value (C jump table on dense byte
+         cases — the lexer hot path), not on an enum tag. *)
+      let scalar = ename_path = [] in
+      let cname =
+        if scalar then "" else mangle_typ (TEnum ename_path) in
       Buffer.add_string buf indent;
       Buffer.add_string buf "{\n";
       Buffer.add_string buf inner;
-      Buffer.add_string buf (Printf.sprintf "struct %s __m;\n" cname);
+      if scalar then begin
+        Buffer.add_string buf (c_decl scrutinee.ty "__m");
+        Buffer.add_string buf ";\n"
+      end else
+        Buffer.add_string buf (Printf.sprintf "struct %s __m;\n" cname);
       emit_value_into_temp ctx buf inner "__m" scrutinee;
       Buffer.add_string buf inner;
-      Buffer.add_string buf "switch (__m.tag) {\n";
+      if scalar then
+        Buffer.add_string buf "switch (__m) {\n"
+      else
+        Buffer.add_string buf "switch (__m.tag) {\n";
       List.iter
         (fun (a : tmatch_arm) ->
           Buffer.add_string buf inner;
@@ -855,6 +900,8 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
               | TPVariant { variant; _ } ->
                   Buffer.add_string buf
                     (Printf.sprintf "case %s_%s:\n" cname variant)
+              | TPLit n ->
+                  Buffer.add_string buf (Printf.sprintf "case %d:\n" n)
               | TPOr _ | TPWildcard | TPVar _ -> assert false)
               alts;
           (* Each arm body lives in its own `{}` block so bind decls
@@ -868,8 +915,13 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
              bind as a single decl-with-init line. *)
           (match a.tpat with
            | TPVar n ->
+               (* The bind takes the SCRUTINEE's type — m_expr is the
+                  whole match expression, whose type is the arms'
+                  result (latent confusion exposed by scalar matches,
+                  where `match b { other => ... }` binds a u8 while
+                  the match may produce anything). *)
                Buffer.add_string buf body_indent;
-               Buffer.add_string buf (c_decl m_expr.ty n);
+               Buffer.add_string buf (c_decl scrutinee.ty n);
                Buffer.add_string buf " = __m;\n"
            | TPVariant { variant; binds; _ } ->
                let v =
@@ -890,7 +942,7 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
                             variant fname)
                    | _ -> ())
                  binds
-           | TPWildcard | TPOr _ -> ());
+           | TPLit _ | TPWildcard | TPOr _ -> ());
                                    (* TPOr alts bind no variables by MVP
                                       restriction; multiple case labels
                                       share the same (empty) bind block *)
@@ -1000,6 +1052,10 @@ and compile_pat ctx ~scrut ~ty tpat =
   match tpat with
   | TPWildcard -> ([], [])
   | TPVar n -> ([], [ (n, scrut, ty) ])
+  | TPLit n ->
+      (* Scalar literal in decision-chain context (guarded arms):
+         plain equality test on the scrutinee value. *)
+      ([ Printf.sprintf "%s == %d" scrut n ], [])
   | TPVariant { variant; binds; _ } ->
       let cname = mangle_typ ty in
       let tag_test = Printf.sprintf "%s.tag == %s_%s" scrut cname variant in
@@ -1041,18 +1097,25 @@ and compile_pat ctx ~scrut ~ty tpat =
 and emit_match_decision ctx ?assign_to buf indent ename_path arms scrutinee =
   let inner = indent ^ "    " in
   let body_indent = inner ^ "    " in
-  let cname = mangle_typ (TEnum ename_path) in
+  (* GATE-5a: scalar sentinel (empty path) — `__m` is the integer
+     scrutinee itself; the chain tests `__m == <lit>`. *)
+  let scalar = ename_path = [] in
+  let m_ty = if scalar then scrutinee.ty else TEnum ename_path in
   Buffer.add_string buf indent;
   Buffer.add_string buf "{\n";
   Buffer.add_string buf inner;
-  Buffer.add_string buf (Printf.sprintf "struct %s __m;\n" cname);
+  if scalar then begin
+    Buffer.add_string buf (c_decl scrutinee.ty "__m");
+    Buffer.add_string buf ";\n"
+  end else
+    Buffer.add_string buf
+      (Printf.sprintf "struct %s __m;\n" (mangle_typ m_ty));
   emit_value_into_temp ctx buf inner "__m" scrutinee;
   let has_guard = List.exists (fun (a : tmatch_arm) -> a.tguard <> None) arms in
   if has_guard then
-    emit_arms_goto ctx assign_to buf inner body_indent (TEnum ename_path) arms
+    emit_arms_goto ctx assign_to buf inner body_indent m_ty arms
   else
-    emit_arms_if_else ctx assign_to buf inner body_indent
-      (TEnum ename_path) arms;
+    emit_arms_if_else ctx assign_to buf inner body_indent m_ty arms;
   Buffer.add_string buf indent;
   Buffer.add_string buf "}\n"
 

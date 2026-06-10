@@ -882,6 +882,17 @@ and parse_pattern_atom s =
   match peek s with
   | Token.Ident "_" ->
       ignore (advance s); Ast.PWildcard p
+  | Token.Int n ->
+      (* GATE-5a literal pattern — `match b { 'a' => ... | 0 => ... }`.
+         Char literals already lexed to Token.Int. *)
+      ignore (advance s); Ast.PLit (n, p)
+  | Token.Minus ->
+      ignore (advance s);
+      (match peek s with
+       | Token.Int n -> ignore (advance s); Ast.PLit (-n, p)
+       | t ->
+           Error.failf p "expected an integer literal after '-' in \
+                          pattern, got %s" (Token.pp t))
   | Token.Ident name ->
       ignore (advance s);
       let path = parse_path_tail s [name] in

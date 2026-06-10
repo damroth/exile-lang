@@ -1,0 +1,375 @@
+;; exile-tokens-dump v1 examples/arena.exl
+Enum @examples/arena.exl:20:1
+(Ident Expr) @examples/arena.exl:20:6
+LBrace @examples/arena.exl:20:11
+(Ident Lit) @examples/arena.exl:21:5
+LParen @examples/arena.exl:21:8
+(Ident int) @examples/arena.exl:21:9
+RParen @examples/arena.exl:21:12
+Pipe @examples/arena.exl:22:5
+(Ident Add) @examples/arena.exl:22:7
+LParen @examples/arena.exl:22:10
+Star @examples/arena.exl:22:11
+(Ident Expr) @examples/arena.exl:22:12
+Comma @examples/arena.exl:22:16
+Star @examples/arena.exl:22:18
+(Ident Expr) @examples/arena.exl:22:19
+RParen @examples/arena.exl:22:23
+Pipe @examples/arena.exl:23:5
+(Ident Mul) @examples/arena.exl:23:7
+LParen @examples/arena.exl:23:10
+Star @examples/arena.exl:23:11
+(Ident Expr) @examples/arena.exl:23:12
+Comma @examples/arena.exl:23:16
+Star @examples/arena.exl:23:18
+(Ident Expr) @examples/arena.exl:23:19
+RParen @examples/arena.exl:23:23
+RBrace @examples/arena.exl:24:1
+Fn @examples/arena.exl:26:1
+(Ident eval) @examples/arena.exl:26:4
+LParen @examples/arena.exl:26:8
+(Ident e) @examples/arena.exl:26:9
+Colon @examples/arena.exl:26:10
+Star @examples/arena.exl:26:12
+Const @examples/arena.exl:26:13
+(Ident Expr) @examples/arena.exl:26:19
+RParen @examples/arena.exl:26:23
+Arrow @examples/arena.exl:26:25
+(Ident int) @examples/arena.exl:26:28
+LBrace @examples/arena.exl:26:32
+Match @examples/arena.exl:27:5
+Star @examples/arena.exl:27:11
+(Ident e) @examples/arena.exl:27:12
+LBrace @examples/arena.exl:27:14
+(Ident Expr) @examples/arena.exl:28:9
+DoubleColon @examples/arena.exl:28:13
+(Ident Lit) @examples/arena.exl:28:15
+LParen @examples/arena.exl:28:18
+(Ident n) @examples/arena.exl:28:19
+RParen @examples/arena.exl:28:20
+FatArrow @examples/arena.exl:28:22
+(Ident n) @examples/arena.exl:28:25
+Pipe @examples/arena.exl:29:9
+(Ident Expr) @examples/arena.exl:29:11
+DoubleColon @examples/arena.exl:29:15
+(Ident Add) @examples/arena.exl:29:17
+LParen @examples/arena.exl:29:20
+(Ident a) @examples/arena.exl:29:21
+Comma @examples/arena.exl:29:22
+(Ident b) @examples/arena.exl:29:24
+RParen @examples/arena.exl:29:25
+FatArrow @examples/arena.exl:29:27
+(Ident eval) @examples/arena.exl:29:30
+LParen @examples/arena.exl:29:34
+(Ident a) @examples/arena.exl:29:35
+RParen @examples/arena.exl:29:36
+Plus @examples/arena.exl:29:38
+(Ident eval) @examples/arena.exl:29:40
+LParen @examples/arena.exl:29:44
+(Ident b) @examples/arena.exl:29:45
+RParen @examples/arena.exl:29:46
+Pipe @examples/arena.exl:30:9
+(Ident Expr) @examples/arena.exl:30:11
+DoubleColon @examples/arena.exl:30:15
+(Ident Mul) @examples/arena.exl:30:17
+LParen @examples/arena.exl:30:20
+(Ident a) @examples/arena.exl:30:21
+Comma @examples/arena.exl:30:22
+(Ident b) @examples/arena.exl:30:24
+RParen @examples/arena.exl:30:25
+FatArrow @examples/arena.exl:30:27
+(Ident eval) @examples/arena.exl:30:30
+LParen @examples/arena.exl:30:34
+(Ident a) @examples/arena.exl:30:35
+RParen @examples/arena.exl:30:36
+Star @examples/arena.exl:30:38
+(Ident eval) @examples/arena.exl:30:40
+LParen @examples/arena.exl:30:44
+(Ident b) @examples/arena.exl:30:45
+RParen @examples/arena.exl:30:46
+RBrace @examples/arena.exl:31:5
+RBrace @examples/arena.exl:32:1
+Fn @examples/arena.exl:36:1
+(Ident lit) @examples/arena.exl:36:4
+LParen @examples/arena.exl:36:7
+(Ident ar) @examples/arena.exl:36:8
+Colon @examples/arena.exl:36:10
+Star @examples/arena.exl:36:12
+(Ident Arena) @examples/arena.exl:36:13
+Comma @examples/arena.exl:36:18
+(Ident v) @examples/arena.exl:36:20
+Colon @examples/arena.exl:36:21
+(Ident int) @examples/arena.exl:36:23
+RParen @examples/arena.exl:36:26
+Arrow @examples/arena.exl:36:28
+Star @examples/arena.exl:36:31
+(Ident Expr) @examples/arena.exl:36:32
+LBrace @examples/arena.exl:36:37
+Let @examples/arena.exl:37:5
+(Ident n) @examples/arena.exl:37:9
+Colon @examples/arena.exl:37:10
+Star @examples/arena.exl:37:12
+(Ident Expr) @examples/arena.exl:37:13
+Eq @examples/arena.exl:37:18
+(Ident ar) @examples/arena.exl:37:20
+Dot @examples/arena.exl:37:22
+(Ident alloc_borrowed) @examples/arena.exl:37:23
+LParen @examples/arena.exl:37:37
+RParen @examples/arena.exl:37:38
+Semicolon @examples/arena.exl:37:39
+Star @examples/arena.exl:38:5
+(Ident n) @examples/arena.exl:38:6
+Eq @examples/arena.exl:38:8
+(Ident Expr) @examples/arena.exl:38:10
+DoubleColon @examples/arena.exl:38:14
+(Ident Lit) @examples/arena.exl:38:16
+LParen @examples/arena.exl:38:19
+(Ident v) @examples/arena.exl:38:20
+RParen @examples/arena.exl:38:21
+Semicolon @examples/arena.exl:38:22
+Return @examples/arena.exl:39:5
+(Ident n) @examples/arena.exl:39:12
+Semicolon @examples/arena.exl:39:13
+RBrace @examples/arena.exl:40:1
+Fn @examples/arena.exl:42:1
+(Ident add) @examples/arena.exl:42:4
+LParen @examples/arena.exl:42:7
+(Ident ar) @examples/arena.exl:42:8
+Colon @examples/arena.exl:42:10
+Star @examples/arena.exl:42:12
+(Ident Arena) @examples/arena.exl:42:13
+Comma @examples/arena.exl:42:18
+(Ident l) @examples/arena.exl:42:20
+Colon @examples/arena.exl:42:21
+Star @examples/arena.exl:42:23
+(Ident Expr) @examples/arena.exl:42:24
+Comma @examples/arena.exl:42:28
+(Ident r) @examples/arena.exl:42:30
+Colon @examples/arena.exl:42:31
+Star @examples/arena.exl:42:33
+(Ident Expr) @examples/arena.exl:42:34
+RParen @examples/arena.exl:42:38
+Arrow @examples/arena.exl:42:40
+Star @examples/arena.exl:42:43
+(Ident Expr) @examples/arena.exl:42:44
+LBrace @examples/arena.exl:42:49
+Let @examples/arena.exl:43:5
+(Ident n) @examples/arena.exl:43:9
+Colon @examples/arena.exl:43:10
+Star @examples/arena.exl:43:12
+(Ident Expr) @examples/arena.exl:43:13
+Eq @examples/arena.exl:43:18
+(Ident ar) @examples/arena.exl:43:20
+Dot @examples/arena.exl:43:22
+(Ident alloc_borrowed) @examples/arena.exl:43:23
+LParen @examples/arena.exl:43:37
+RParen @examples/arena.exl:43:38
+Semicolon @examples/arena.exl:43:39
+Star @examples/arena.exl:44:5
+(Ident n) @examples/arena.exl:44:6
+Eq @examples/arena.exl:44:8
+(Ident Expr) @examples/arena.exl:44:10
+DoubleColon @examples/arena.exl:44:14
+(Ident Add) @examples/arena.exl:44:16
+LParen @examples/arena.exl:44:19
+(Ident l) @examples/arena.exl:44:20
+Comma @examples/arena.exl:44:21
+(Ident r) @examples/arena.exl:44:23
+RParen @examples/arena.exl:44:24
+Semicolon @examples/arena.exl:44:25
+Return @examples/arena.exl:45:5
+(Ident n) @examples/arena.exl:45:12
+Semicolon @examples/arena.exl:45:13
+RBrace @examples/arena.exl:46:1
+Fn @examples/arena.exl:48:1
+(Ident mul) @examples/arena.exl:48:4
+LParen @examples/arena.exl:48:7
+(Ident ar) @examples/arena.exl:48:8
+Colon @examples/arena.exl:48:10
+Star @examples/arena.exl:48:12
+(Ident Arena) @examples/arena.exl:48:13
+Comma @examples/arena.exl:48:18
+(Ident l) @examples/arena.exl:48:20
+Colon @examples/arena.exl:48:21
+Star @examples/arena.exl:48:23
+(Ident Expr) @examples/arena.exl:48:24
+Comma @examples/arena.exl:48:28
+(Ident r) @examples/arena.exl:48:30
+Colon @examples/arena.exl:48:31
+Star @examples/arena.exl:48:33
+(Ident Expr) @examples/arena.exl:48:34
+RParen @examples/arena.exl:48:38
+Arrow @examples/arena.exl:48:40
+Star @examples/arena.exl:48:43
+(Ident Expr) @examples/arena.exl:48:44
+LBrace @examples/arena.exl:48:49
+Let @examples/arena.exl:49:5
+(Ident n) @examples/arena.exl:49:9
+Colon @examples/arena.exl:49:10
+Star @examples/arena.exl:49:12
+(Ident Expr) @examples/arena.exl:49:13
+Eq @examples/arena.exl:49:18
+(Ident ar) @examples/arena.exl:49:20
+Dot @examples/arena.exl:49:22
+(Ident alloc_borrowed) @examples/arena.exl:49:23
+LParen @examples/arena.exl:49:37
+RParen @examples/arena.exl:49:38
+Semicolon @examples/arena.exl:49:39
+Star @examples/arena.exl:50:5
+(Ident n) @examples/arena.exl:50:6
+Eq @examples/arena.exl:50:8
+(Ident Expr) @examples/arena.exl:50:10
+DoubleColon @examples/arena.exl:50:14
+(Ident Mul) @examples/arena.exl:50:16
+LParen @examples/arena.exl:50:19
+(Ident l) @examples/arena.exl:50:20
+Comma @examples/arena.exl:50:21
+(Ident r) @examples/arena.exl:50:23
+RParen @examples/arena.exl:50:24
+Semicolon @examples/arena.exl:50:25
+Return @examples/arena.exl:51:5
+(Ident n) @examples/arena.exl:51:12
+Semicolon @examples/arena.exl:51:13
+RBrace @examples/arena.exl:52:1
+Fn @examples/arena.exl:54:1
+(Ident main) @examples/arena.exl:54:4
+LParen @examples/arena.exl:54:8
+RParen @examples/arena.exl:54:9
+LBrace @examples/arena.exl:54:11
+Let @examples/arena.exl:55:5
+(Ident a) @examples/arena.exl:55:9
+Eq @examples/arena.exl:55:11
+(Ident default_allocator) @examples/arena.exl:55:13
+LParen @examples/arena.exl:55:30
+RParen @examples/arena.exl:55:31
+Semicolon @examples/arena.exl:55:32
+Let @examples/arena.exl:56:5
+Mut @examples/arena.exl:56:9
+(Ident ar) @examples/arena.exl:56:13
+Eq @examples/arena.exl:56:16
+(Ident Arena) @examples/arena.exl:56:18
+DoubleColon @examples/arena.exl:56:23
+(Ident with_capacity) @examples/arena.exl:56:25
+LParen @examples/arena.exl:56:38
+(Ident a) @examples/arena.exl:56:39
+Comma @examples/arena.exl:56:40
+(Int 4096) @examples/arena.exl:56:42
+As @examples/arena.exl:56:47
+(Ident u32) @examples/arena.exl:56:50
+RParen @examples/arena.exl:56:53
+Semicolon @examples/arena.exl:56:54
+Let @examples/arena.exl:59:5
+(Ident tree) @examples/arena.exl:59:9
+Eq @examples/arena.exl:59:14
+(Ident add) @examples/arena.exl:59:16
+LParen @examples/arena.exl:59:19
+Amp @examples/arena.exl:59:20
+(Ident ar) @examples/arena.exl:59:21
+Comma @examples/arena.exl:59:23
+(Ident add) @examples/arena.exl:60:20
+LParen @examples/arena.exl:60:23
+Amp @examples/arena.exl:60:24
+(Ident ar) @examples/arena.exl:60:25
+Comma @examples/arena.exl:60:27
+(Ident mul) @examples/arena.exl:61:24
+LParen @examples/arena.exl:61:27
+Amp @examples/arena.exl:61:28
+(Ident ar) @examples/arena.exl:61:29
+Comma @examples/arena.exl:61:31
+(Ident lit) @examples/arena.exl:61:33
+LParen @examples/arena.exl:61:36
+Amp @examples/arena.exl:61:37
+(Ident ar) @examples/arena.exl:61:38
+Comma @examples/arena.exl:61:40
+(Int 3) @examples/arena.exl:61:42
+RParen @examples/arena.exl:61:43
+Comma @examples/arena.exl:61:44
+(Ident lit) @examples/arena.exl:61:46
+LParen @examples/arena.exl:61:49
+Amp @examples/arena.exl:61:50
+(Ident ar) @examples/arena.exl:61:51
+Comma @examples/arena.exl:61:53
+(Int 7) @examples/arena.exl:61:55
+RParen @examples/arena.exl:61:56
+RParen @examples/arena.exl:61:57
+Comma @examples/arena.exl:61:58
+(Ident mul) @examples/arena.exl:62:24
+LParen @examples/arena.exl:62:27
+Amp @examples/arena.exl:62:28
+(Ident ar) @examples/arena.exl:62:29
+Comma @examples/arena.exl:62:31
+(Ident lit) @examples/arena.exl:62:33
+LParen @examples/arena.exl:62:36
+Amp @examples/arena.exl:62:37
+(Ident ar) @examples/arena.exl:62:38
+Comma @examples/arena.exl:62:40
+(Int 5) @examples/arena.exl:62:42
+RParen @examples/arena.exl:62:43
+Comma @examples/arena.exl:62:44
+(Ident lit) @examples/arena.exl:62:46
+LParen @examples/arena.exl:62:49
+Amp @examples/arena.exl:62:50
+(Ident ar) @examples/arena.exl:62:51
+Comma @examples/arena.exl:62:53
+(Int 4) @examples/arena.exl:62:55
+RParen @examples/arena.exl:62:56
+RParen @examples/arena.exl:62:57
+RParen @examples/arena.exl:62:58
+Comma @examples/arena.exl:62:59
+(Ident lit) @examples/arena.exl:63:20
+LParen @examples/arena.exl:63:23
+Amp @examples/arena.exl:63:24
+(Ident ar) @examples/arena.exl:63:25
+Comma @examples/arena.exl:63:27
+(Int 1) @examples/arena.exl:63:29
+RParen @examples/arena.exl:63:30
+RParen @examples/arena.exl:63:31
+Semicolon @examples/arena.exl:63:32
+(Ident println) @examples/arena.exl:64:5
+LParen @examples/arena.exl:64:12
+(Ident eval) @examples/arena.exl:64:13
+LParen @examples/arena.exl:64:17
+(Ident tree) @examples/arena.exl:64:18
+RParen @examples/arena.exl:64:22
+RParen @examples/arena.exl:64:23
+Semicolon @examples/arena.exl:64:24
+Let @examples/arena.exl:68:5
+Mut @examples/arena.exl:68:9
+(Ident tiny) @examples/arena.exl:68:13
+Eq @examples/arena.exl:68:18
+(Ident Arena) @examples/arena.exl:68:20
+DoubleColon @examples/arena.exl:68:25
+(Ident with_capacity) @examples/arena.exl:68:27
+LParen @examples/arena.exl:68:40
+(Ident a) @examples/arena.exl:68:41
+Comma @examples/arena.exl:68:42
+(Int 8) @examples/arena.exl:68:44
+As @examples/arena.exl:68:46
+(Ident u32) @examples/arena.exl:68:49
+RParen @examples/arena.exl:68:52
+Semicolon @examples/arena.exl:68:53
+Let @examples/arena.exl:69:5
+(Ident none) @examples/arena.exl:69:9
+Colon @examples/arena.exl:69:13
+Star @examples/arena.exl:69:15
+(Ident Expr) @examples/arena.exl:69:16
+Eq @examples/arena.exl:69:21
+(Ident tiny) @examples/arena.exl:69:23
+Dot @examples/arena.exl:69:27
+(Ident alloc_borrowed) @examples/arena.exl:69:28
+LParen @examples/arena.exl:69:42
+RParen @examples/arena.exl:69:43
+Semicolon @examples/arena.exl:69:44
+If @examples/arena.exl:70:5
+(Ident none) @examples/arena.exl:70:8
+EqEq @examples/arena.exl:70:13
+Null @examples/arena.exl:70:16
+LBrace @examples/arena.exl:70:21
+(Ident println) @examples/arena.exl:70:23
+LParen @examples/arena.exl:70:30
+(Int 0) @examples/arena.exl:70:31
+RParen @examples/arena.exl:70:32
+Semicolon @examples/arena.exl:70:33
+RBrace @examples/arena.exl:70:35
+RBrace @examples/arena.exl:74:1
+Eof @examples/arena.exl:75:1
