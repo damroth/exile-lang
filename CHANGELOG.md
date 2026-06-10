@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.2] - 2026-06-10
+
+The pre-port release: the entire gate list from the 2026-06-09 language
+review is now closed (gates 3-5, after 0.11.1 closed 1-2), and the arena
+allocator lands as the final port-prep block — the language is ready for
+self-host bring-up to begin. 702 tests, verify-host 84/84, selfhost-diff
+3/3 clean, ASan clean.
+
+### Added
+- DR-049 GATE-5a literal patterns in `match` plus char literals: `'a'` is
+  sugar for a byte int-literal (string-style escapes), usable in patterns,
+  `==`, and arithmetic. An int-like scrutinee compiles to a C `switch`
+  (a jump table on 68k — the lexer hot path), or-patterns become stacked
+  `case` labels, guards a decision chain; scalar exhaustiveness requires
+  an unguarded catch-all arm. New example: `literal_match.exl`
+- DR-050 `Arena` bump allocator in the prelude (`with_capacity` /
+  `alloc_borrowed`): nodes are plain `*T` borrows owned by the arena, and
+  the whole buffer releases in a single `free_fn` call on scope exit via
+  the existing auto-drop machinery; align-8 bumps, `null` on exhaustion.
+  New example: `arena.exl`
+- DR-050 `ptr_offset(p, n)` builtin — emits C `(p + n)` (one ADDA on 68k);
+  u8-pointer base only, result is a plain borrow into the same storage
+- DR-049 GATE-5b captureless lambdas in method-argument position now route
+  through the A2 closure machinery with an empty env, so they satisfy
+  `Fn`-bounds: `.filter(|n| n > 1).map(|n| n * 10)` works end-to-end
+- DR-049 GATE-5c `rune` / `ward` / `sigil` / `seal` / `shared` reserved at
+  the lexer level for future capability-model syntax
+
+### Changed
+- DR-049 GATE-3 `free(alloc, p)` is now two-argument, releasing through the
+  allocator seam (`free_fn`) in symmetry with `new(alloc)`; the one-arg form
+  errors with guidance. One-arg `free` emitted libc `free()` while
+  `new(alloc)` allocated through `alloc_fn` — correct on the host by
+  coincidence, heap corruption with an arena or Amiga allocator
+- DR-049 GATE-5d pre-freeze naming sweep: `Vec.len` / `HashMap.len` (and
+  friends) renamed to `length`; the `Debug` trait method renamed `fmt` →
+  `fmt_debug` so `Display` and `Debug` can coexist on one type
+
+### Fixed
+- DR-049 GATE-4 lift-pass matrix audit (one systematic pass instead of a
+  patch per ICE): `for` in a match arm ICE'd — arm bodies now lift in
+  place; shallow `texpr_children` blinded program scans, so dead-code
+  elimination dropped functions called from loops inside arms (invalid
+  C89); `new(a)` now counts as a use of `a` (fixes a false "unused
+  variable" lint); method calls on rvalue receivers emitted invalid C
+  (`&(ex_make())`) — the receiver is pinned to a temp; match bindings in
+  the switch path were declared with the match-result type instead of the
+  scrutinee type
+
 ## [0.11.1] - 2026-06-10
 
 A hardening patch for the Owner-sigil memory model shipped in 0.11.0. A
@@ -587,4 +636,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.11.1]: https://github.com/damroth/exile-lang/releases/tag/v0.11.1
+[0.11.2]: https://github.com/damroth/exile-lang/releases/tag/v0.11.2
