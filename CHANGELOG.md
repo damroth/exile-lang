@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-06-10
+
+A hardening patch for the Owner-sigil memory model shipped in 0.11.0. A
+design-session review found soundness gaps that green tests had missed, and
+this release closes them: heap construction becomes fully allocator-explicit
+(`new(alloc)`, bare `new` removed), `free` is gated to owning pointers, and
+the drop pass is rewritten to share the move pass's consumption model —
+completing the own-lifecycle so an owned value transfers, returns, or dies,
+but never silently leaks or frees twice. 684 tests, verify-host 82/82,
+selfhost-diff 3/3 clean, ASan/LeakSanitizer clean on the probe corpus.
+
+### Added
+- DR-046 `new(alloc) T{}` and `new(alloc) Enum::V(...)` — allocator-explicit
+  heap construction as the sanctioned origin of `own *T`, with `free()`
+  accepting owning pointers
+- DR-047 first-class `own *T`: passing one to a `*T` / `*const T` parameter
+  is a borrow (a loan — the value stays live), as opposed to an `own *T`
+  parameter (a transfer); method dispatch and field assignment work through
+  the owner pointer
+- DR-048 own-lifecycle completion: bare `own *T` bindings auto-drop at end
+  of scope via static allocation-site provenance, reassigning a live `own`
+  drops the old value first, and rebinding after consumption is legal
+  (enables `s = next(s)` loops and `root = insert(a, root, v)` tree building)
+
+### Changed
+- DR-047 option-1 clean break: bare `new T{}` (no allocator) is removed —
+  every heap construction names its allocator
+- DR-048 unified drop pass: `drop.ml` rewritten to delegate consumption
+  detection to the move pass (`Move.walk_expr`), so both passes share one
+  liveness model instead of two drifting ones
+
+### Fixed
+- Auto-drop emitted `sizeof(unsigned char)` instead of the real buffer byte
+  count (DR-046)
+- `free()` accepted borrowed `*T` pointers — a latent double-free; it is now
+  own-only (DR-047)
+- ICE on nested enum boxing in argument position, e.g.
+  `new(a) E::Add(new(a) E::Num(2), ...)` (DR-047)
+- `Vec<T>` grow regression for aggregate element types ("cannot cast T to
+  T"): identity casts on non-scalar types are now elided entirely, since C89
+  has no aggregate casts (DR-048 GATE-1)
+- Five drop-pass symptoms rooted in consumption-model drift — double frees
+  and missed drops around callee-consumed and transitively-freed values
+  (DR-048 GATE-2)
+- Two silent leaks: reassigning a live `own` binding leaked the old value,
+  and a bare `own` from `new(alloc)` was never dropped at all (DR-048 GATE-2)
+
 ## [0.11.0] - 2026-06-07
 
 The closures-and-ownership release, and the last one before self-host bring-up
@@ -540,4 +587,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.11.0]: https://github.com/damroth/exile-lang/releases/tag/v0.11.0
+[0.11.1]: https://github.com/damroth/exile-lang/releases/tag/v0.11.1
