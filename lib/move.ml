@@ -48,6 +48,35 @@ let rec is_affine_typ ~structs t =
        | None -> false)
   | _ -> false
 
+(* Re-audit F2: does a value of [t] own heap memory (transitively)?
+   Gates `free(a, p)`: shallow-freeing a node whose payload still owns
+   children would silently leak them. *)
+let pointee_owns ~structs ~enums t =
+  let rec go visited t =
+    match t with
+    | TOwnPtr _ -> true
+    | TStruct _ -> is_affine_typ ~structs t
+    | TEnum p | TEnumApp { path = p; _ } ->
+        (not (List.mem p visited))
+        && (match List.find_opt
+                    (fun (e : enum_sig) -> e.ename_path = p) enums with
+            | Some e ->
+                List.exists (fun (v : variant_sig) ->
+                  List.exists (fun (_, ft) -> go (p :: visited) ft)
+                    v.vsfields)
+                  e.evariants
+            | None -> false)
+    | _ -> false
+  in
+  go [] t
+
+(* drop.ml replays [walk_expr] to learn per-expression consume sets
+   (OWN-D2 single-consume seam).  The replay seeds every name Live, so
+   any diagnostic that depends on the PRIOR state of a binding (the
+   free-gate below) would false-positive on already-validated code —
+   it must stay silent while this is set. *)
+let replaying = ref false
+
 let set_consumed live n pos =
   List.map (fun (k, v) ->
     match v with
@@ -215,6 +244,52 @@ let rec affine_binds_of_pat ~structs ~enums (scrutinee_ty : typ)
                        binds)))
   | TPOr _ -> []
 
+(* Re-audit F2: OWNING payload positions of [p] — `Some name` when
+   bound, `None` when wildcarded.  An arm that consumes ANY of them
+   leaves the matched root as a shell (PartialMoved / Consumed), so
+   every owning position must be consumed in that arm; a Live bind or
+   a wildcarded owning field would be storage nothing ever releases. *)
+let rec owning_slots_of_pat ~structs ~enums (scrutinee_ty : typ)
+    (p : tpattern) : string option list =
+  let owning t =
+    match t with
+    | TOwnPtr _ -> true
+    | TStruct _ -> is_affine_typ ~structs t
+    | _ -> false
+  in
+  match p with
+  | TPLit _ -> []
+  | TPWildcard -> if owning scrutinee_ty then [ None ] else []
+  | TPVar n -> if owning scrutinee_ty then [ Some n ] else []
+  | TPVariant { variant; binds; _ } ->
+      let enum_path = match scrutinee_ty with
+        | TEnum p | TEnumApp { path = p; _ }
+        | TPtr (TEnum p) | TConstPtr (TEnum p)
+        | TPtr (TEnumApp { path = p; _ })
+        | TConstPtr (TEnumApp { path = p; _ }) -> Some p
+        | _ -> None
+      in
+      (match enum_path with
+       | None -> []
+       | Some path ->
+           (match List.find_opt
+                    (fun (e : enum_sig) -> e.ename_path = path) enums with
+            | None -> []
+            | Some esig ->
+                (match List.find_opt
+                         (fun (v : variant_sig) -> v.vsname = variant)
+                         esig.evariants with
+                 | None -> []
+                 | Some vsig ->
+                     List.concat_map (fun (bname, sub_pat) ->
+                       match List.assoc_opt bname vsig.vsfields with
+                       | None -> []
+                       | Some field_ty ->
+                           owning_slots_of_pat ~structs ~enums field_ty
+                             sub_pat)
+                       binds)))
+  | TPOr _ -> []
+
 (* Walk each arg left-to-right: validate reads against the in-flight
    state, then mark the binding Consumed if the arg is a bare affine
    TVar.  Shared by every consume-site shape — TCall, aggregate
@@ -294,6 +369,24 @@ and walk_expr ~structs ~enums live (te : texpr) =
            Error.failf ptr_arg.pos
              "double free: '%s' was already consumed at %s:%d:%d"
              n mv.Pos.file mv.Pos.line mv.Pos.col
+       | _ -> ());
+      (* Re-audit F2: `free(a, p)` releases ONLY p's node.  On a root
+         whose payload may still own children (Live, owning pointee),
+         that is a silent leak — the children are never released.
+         Legal once the payload was moved out (PartialMoved, the
+         free_tree idiom), or when the pointee owns nothing. *)
+      (match ptr_arg.ty, List.assoc_opt n live with
+       | TOwnPtr inner, (Some Live | None)
+         when (not !replaying)
+           && ptr_arg.pos.Pos.file <> "<prelude>"
+           && pointee_owns ~structs ~enums inner ->
+           Error.failf ptr_arg.pos
+             "free(%s) releases only this node's storage, but its \
+              payload may still own memory (%s) — its children would \
+              silently leak; move them out first (match and consume \
+              every owned payload), or let auto-drop release the \
+              whole tree"
+             n (typ_name inner)
        | _ -> ());
       if is_affine_typ ~structs ptr_arg.ty
       then set_consumed live n ptr_arg.pos
@@ -413,6 +506,30 @@ and walk_expr ~structs ~enums live (te : texpr) =
               | _ -> false)
               bind_names
           in
+          (* Re-audit F2: partial-move is all-or-nothing per arm.  Once
+             one owning payload is moved out, the root is a shell
+             (PartialMoved) — a sibling owning payload left Live (or
+             wildcarded) has no owner left and silently leaks. *)
+          if any_bind_consumed && not borrowed_scrutinee then
+            List.iter (function
+              | None ->
+                  Error.failf scrutinee.pos
+                    "this arm moves out part of the matched payload but \
+                     leaves an owned field unbound — after the arm the \
+                     matched value keeps only its shell, so that field \
+                     would silently leak; bind and consume every owned \
+                     payload of the variant"
+              | Some bn ->
+                  (match List.assoc_opt bn after_full with
+                   | Some Live ->
+                       Error.failf scrutinee.pos
+                         "own payload '%s' stays alive in an arm that \
+                          moves out its sibling — after the arm the \
+                          matched value keeps only its shell, so '%s' \
+                          would silently leak; free or move it in this \
+                          arm too" bn bn
+                   | _ -> ()))
+              (owning_slots_of_pat ~structs ~enums scrutinee.ty a.tpat);
           let after =
             List.filter (fun (n, _) -> not (List.mem n bind_names))
               after_full

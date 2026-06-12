@@ -152,7 +152,7 @@ Semicolon @examples/derive_debug.exl:42:26
 LParen @examples/derive_debug.exl:43:12
 (Ident v) @examples/derive_debug.exl:43:13
 LBracket @examples/derive_debug.exl:43:14
-(Int 20) @examples/derive_debug.exl:43:15
+(Int 21) @examples/derive_debug.exl:43:15
 RBracket @examples/derive_debug.exl:43:17
 As @examples/derive_debug.exl:43:19
 (Ident int) @examples/derive_debug.exl:43:22
@@ -387,7 +387,7 @@ Semicolon @examples/derive_debug.exl:70:27
 LParen @examples/derive_debug.exl:71:12
 (Ident v4) @examples/derive_debug.exl:71:13
 LBracket @examples/derive_debug.exl:71:15
-(Int 32) @examples/derive_debug.exl:71:16
+(Int 33) @examples/derive_debug.exl:71:16
 RBracket @examples/derive_debug.exl:71:18
 As @examples/derive_debug.exl:71:20
 (Ident int) @examples/derive_debug.exl:71:23

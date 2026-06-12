@@ -477,6 +477,12 @@ let rec parse_primary s =
            ignore (advance s);
            let args = parse_args s in
            Ast.NewEnum { tname = path; args; alloc = alloc_opt; pos = p }
+       | _ when List.length path >= 2 ->
+           (* Re-audit F10: `new(a) Tree::Leaf` — bare unit variant,
+              same spelling as the value-level enum literal (the
+              `()` suffix stays legal). *)
+           Ast.NewEnum { tname = path; args = []; alloc = alloc_opt;
+                         pos = p }
        | other ->
            Error.failf (peek_pos s)
              "expected '{' (struct heap-init) or '(' (enum tuple-variant \

@@ -5968,11 +5968,21 @@ let () =
        true
      with _ -> false);
 
-  check_error "DR-031: `new Path` without ( or { rejected"
+  (* Re-audit F10: `new(a) E::Z` (bare unit variant, no parens) is now
+     legal grammar — same spelling as the value-level enum literal.
+     A bare single-segment `new Foo` still gets the parser error. *)
+  check_error "DR-031/F10: allocator-less `new E::Z` rejected at the gate"
     "enum E { Z }\n\
      fn main() { let _p = new E::Z; }\n"
+    "bare `new E::Z(...)` requires an explicit allocator: write \
+     `new(alloc) E::Z(...)` (obtain one via `default_allocator()`).  \
+     Heap allocation is always explicit-allocator in exile.";
+
+  check_error "F10: `new Foo` (single segment, no body) keeps the parser error"
+    "struct Foo { x: int }\n\
+     fn main() { let _p = new Foo; }\n"
     "expected '{' (struct heap-init) or '(' (enum tuple-variant heap-box) \
-     after 'new E::Z', got ';'";
+     after 'new Foo', got ';'";
 
   (* DR-047 - Owner-sigil first-class pointer + heap-allocation gates.
      (1) bare `new` (no allocator) is rejected — option-1 pure-explicit;
@@ -6518,7 +6528,25 @@ let () =
      (* the rewrite puts the cond's lift INSIDE a while(1) loop *)
      contains c "while (1)");
 
-  check_assert "B3: new(a) enum rvalue into a *const param keeps a mutable temp"
+  (* B3 history: DR-051 made this shape compile by keeping the lift
+     temp mutable — but the allocation still had no owner and leaked
+     (re-audit F3 confirmed 24 B under LeakSanitizer).  DR-052 rejects
+     an owned rvalue in a borrow slot outright; binding it first puts
+     it under the normal auto-drop lifecycle. *)
+  check_error "B3/F3: new(a) rvalue loaned into a *const param rejected"
+    "enum E { V(int) }\n\
+     fn read(e: *const E) -> int {\n\
+    \    match *e { E::V(n) => n }\n\
+     }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    println(read(new(a) E::V(7)));\n\
+     }\n"
+    "this owned value is only borrowed here, so nothing would own (or \
+     ever release) the allocation — bind it first (`let x: own *T = \
+     ...;`), then lend `x`";
+
+  check_assert "F3: bound new(a) loaned into *const compiles and auto-drops"
     (let c =
        Exile_lang.Compiler.compile
          "enum E { V(int) }\n\
@@ -6527,10 +6555,11 @@ let () =
           }\n\
           fn main() {\n\
          \    let a = default_allocator();\n\
-         \    println(read(new(a) E::V(7)));\n\
+         \    let e: own *E = new(a) E::V(7);\n\
+         \    println(read(e));\n\
           }\n"
      in
-     not (contains c "const struct ex_E *__lift_0"));
+     contains c "free_fn");
 
   check_assert "B4: write through an explicit deref-field parenthesizes"
     (let c =
@@ -6753,10 +6782,17 @@ let () =
     \    let t = new(a) E::Add(new(a) E::Lit(1), new(a) E::Lit(2));\n\
     \    match *t {\n\
     \        E::Lit(_n) => { }\n\
-    \        | E::Add(l, r) => { free(a, l); free(a, r); }\n\
+    \        | E::Add(l, r) => { free_tree(a, l); free_tree(a, r); }\n\
     \    }\n\
     \    println(eval(t));\n\
     \    free(a, t);\n\
+     }\n\
+     fn free_tree(a: Allocator, e: own *E) {\n\
+    \    match *e {\n\
+    \        E::Lit(_n) => { }\n\
+    \        | E::Add(l, r) => { free_tree(a, l); free_tree(a, r); }\n\
+    \    }\n\
+    \    free(a, e);\n\
      }\n"
     "use of 't' after its payload was moved out at <input>:8:11 — the \
      children are gone, only releasing the storage is left: \
@@ -6769,10 +6805,17 @@ let () =
     \    let t = new(a) E::Add(new(a) E::Lit(1), new(a) E::Lit(2));\n\
     \    match *t {\n\
     \        E::Lit(_n) => { }\n\
-    \        | E::Add(l, r) => { free(a, l); free(a, r); }\n\
+    \        | E::Add(l, r) => { free_tree(a, l); free_tree(a, r); }\n\
     \    }\n\
     \    free(a, t);\n\
     \    free(a, t);\n\
+     }\n\
+     fn free_tree(a: Allocator, e: own *E) {\n\
+    \    match *e {\n\
+    \        E::Lit(_n) => { }\n\
+    \        | E::Add(l, r) => { free_tree(a, l); free_tree(a, r); }\n\
+    \    }\n\
+    \    free(a, e);\n\
      }\n"
     "double free: 't' was already consumed at <input>:9:13";
 
@@ -6783,6 +6826,223 @@ let () =
      }\n"
     "embedded \\0 would silently truncate the string (exile str is \
      NUL-terminated) — use a byte buffer for binary data";
+
+  (* RE-AUDIT 2026-06-12 (DR-052) — borrow-of-local-own escape (the
+     live UAF that blocked the freeze), own-lifecycle completion, and
+     the polish batch.  Loans of an `own *T` restamp uniformly at
+     every borrow slot; a borrow of locally-released storage is as
+     Local as `&local` to the escape pass. *)
+
+  let escape_local_msg =
+    "returning a value that embeds the address of a local binding — \
+     the local goes out of scope at the end of its enclosing block, \
+     leaving the caller with a dangling borrow.  Wrap the storage in \
+     a caller-owned region, return a copy / `String::with_str(...)` \
+     instead of a borrow, or — for arena/region-allocated returns — \
+     mark the fn `@escapes` (forward-compat hatch)" in
+
+  check_error "DR-052: returning a borrow of a local own rejected (UAF)"
+    "fn via_local(a: Allocator) -> *const int {\n\
+    \    let q: own *int = a.alloc();\n\
+    \    *q = 42;\n\
+    \    let b: *const int = q;\n\
+    \    b\n\
+     }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    println(*via_local(a));\n\
+     }\n"
+    escape_local_msg;
+
+  check_error "DR-052: assign-channel borrow of a local own rejected"
+    "fn f(a: Allocator) -> *const int {\n\
+    \    let q: own *int = a.alloc();\n\
+    \    let mut b: *const int = null;\n\
+    \    b = q;\n\
+    \    return b;\n\
+     }\n\
+     fn main() { let a = default_allocator(); println(*f(a)); }\n"
+    escape_local_msg;
+
+  check_error "DR-052: struct-field channel borrow of a local own rejected"
+    "struct Holder { p: *const int }\n\
+     fn f(a: Allocator) -> Holder {\n\
+    \    let q: own *int = a.alloc();\n\
+    \    Holder { p: q }\n\
+     }\n\
+     fn main() { let a = default_allocator(); let h = f(a); println(*h.p); }\n"
+    escape_local_msg;
+
+  check_error "DR-052: laundering the borrow through a callee rejected"
+    "fn id(p: *const int) -> *const int { p }\n\
+     fn f(a: Allocator) -> *const int {\n\
+    \    let q: own *int = a.alloc();\n\
+    \    return id(q);\n\
+     }\n\
+     fn main() { let a = default_allocator(); println(*f(a)); }\n"
+    escape_local_msg;
+
+  check_assert "DR-052: local loan of an own is legal — q stays the owner"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let q: own *int = a.alloc();\n\
+         \    *q = 42;\n\
+         \    let b: *const int = q;\n\
+         \    println(*q);\n\
+         \    println(*b);\n\
+          }\n"
+     in
+     contains c "free_fn");
+
+  check_error "DR-052: reading the loan after free(a, q) rejected"
+    "fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let q: own *int = a.alloc();\n\
+    \    *q = 7;\n\
+    \    let b: *const int = q;\n\
+    \    free(a, q);\n\
+    \    println(*b);\n\
+     }\n"
+    "use of borrow 'b' after it was invalidated by 'free' at \
+     <input>:6:5 — growing / freeing the owner reallocates the buffer \
+     the borrow pointed into, so subsequent reads dangle (rebuild the \
+     borrow after the mutation, or use a copy that doesn't share the \
+     buffer)";
+
+  check_error "DR-052: assignment type-checks its RHS (was silent invalid C)"
+    "fn main() {\n\
+    \    let mut b: *const int = null;\n\
+    \    b = 5;\n\
+    \    println(1);\n\
+     }\n"
+    "cannot assign i32 to 'b' (declared as *const i32)";
+
+  check_error "DR-052/F2: shallow free of a live owning tree rejected"
+    "enum Tree { Leaf | Node(own *Tree, int, own *Tree) }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let n = new(a) Tree::Node(new(a) Tree::Leaf, 5, new(a) Tree::Leaf);\n\
+    \    match *n {\n\
+    \        Tree::Leaf => println(0)\n\
+    \        | Tree::Node(_l, x, _r) => println(x)\n\
+    \    }\n\
+    \    free(a, n);\n\
+     }\n"
+    "free(n) releases only this node's storage, but its payload may \
+     still own memory (Tree) — its children would silently leak; move \
+     them out first (match and consume every owned payload), or let \
+     auto-drop release the whole tree";
+
+  check_error "DR-052/F2: arm consuming one own payload must consume all"
+    "enum Tree { Leaf | Node(own *Tree, int, own *Tree) }\n\
+     fn free_tree(a: Allocator, t: own *Tree) {\n\
+    \    match *t {\n\
+    \        Tree::Leaf => { }\n\
+    \        | Tree::Node(l, _x, r) => { free_tree(a, l); }\n\
+    \    }\n\
+    \    free(a, t);\n\
+     }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let n = new(a) Tree::Leaf;\n\
+    \    free_tree(a, n);\n\
+     }\n"
+    "own payload 'r' stays alive in an arm that moves out its sibling \
+     — after the arm the matched value keeps only its shell, so 'r' \
+     would silently leak; free or move it in this arm too";
+
+  check_error "DR-052/F2: wildcarded own field in a consuming arm rejected"
+    "enum Tree { Leaf | Node(own *Tree, int, own *Tree) }\n\
+     fn free_tree(a: Allocator, t: own *Tree) {\n\
+    \    match *t {\n\
+    \        Tree::Leaf => { }\n\
+    \        | Tree::Node(l, _x, _) => { free_tree(a, l); }\n\
+    \    }\n\
+    \    free(a, t);\n\
+     }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let n = new(a) Tree::Leaf;\n\
+    \    free_tree(a, n);\n\
+     }\n"
+    "this arm moves out part of the matched payload but leaves an \
+     owned field unbound — after the arm the matched value keeps only \
+     its shell, so that field would silently leak; bind and consume \
+     every owned payload of the variant";
+
+  check_assert "DR-052/F2: read-only match + scope-exit deep auto-drop"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum Tree { Leaf | Node(own *Tree, int, own *Tree) }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let n = new(a) Tree::Node(new(a) Tree::Leaf, 5, new(a) Tree::Leaf);\n\
+         \    match *n {\n\
+         \        Tree::Leaf => println(0)\n\
+         \        | Tree::Node(_l, x, _r) => println(x)\n\
+         \    }\n\
+          }\n"
+     in
+     contains c "__drop_ptr");
+
+  check_assert "DR-052/F4: unused match-payload bind emits no C variable"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum E { A(int) | B }\n\
+          fn main() {\n\
+         \    let e = E::A(5);\n\
+         \    let r = match e {\n\
+         \        E::A(_n) => 1\n\
+         \        | E::B => 2\n\
+         \    };\n\
+         \    println(r);\n\
+          }\n"
+     in
+     not (contains c "_n"));
+
+  check_assert "DR-052/F10: bare unit variant after new(a) parses"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum Tree { Leaf | Node(own *Tree, int, own *Tree) }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let t: own *Tree = new(a) Tree::Leaf;\n\
+         \    match *t { Tree::Leaf => println(0) | Tree::Node(_l, x, _r) => println(x) }\n\
+          }\n"
+     in
+     contains c "free_fn");
+
+  check_assert "DR-052/F10: derived Debug closes with ' }'"
+    (let c =
+       Exile_lang.Compiler.compile
+         "@derive(Debug)\n\
+          struct Q { a: int }\n\
+          fn main() {\n\
+         \    let al = default_allocator();\n\
+         \    let q = Q { a: 7 };\n\
+         \    let mut sb = StringBuilder::with_capacity(al, 32 as u32);\n\
+         \    q.fmt_debug(&sb);\n\
+         \    let s = String::build(sb);\n\
+         \    println(s.as_str());\n\
+          }\n"
+     in
+     contains c "\" }\"");
+
+  check_assert "DR-052/F8: Slice answers .length() like the other containers"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(10);\n\
+         \    let s = v.as_slice();\n\
+         \    println(s.length() as int);\n\
+         \    println(s.len as int);\n\
+          }\n"
+     in
+     contains c "Slice__length");
 
   (* PORT-PREP P2 (2026-06-10) - Arena bump allocator in the prelude +
      the `ptr_offset` builtin it builds on.  P1 (ratified): nodes are

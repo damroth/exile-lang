@@ -1383,6 +1383,32 @@ let rewrite_struct_lit_as_enum_lit ctx tname fields base pos =
    say "takes"; unified to "expects" — no test asserted on the old
    wording.  Arg/void diagnostics retain "'<name>' …" exactly as before
    (and the "got X" half of every message is preserved verbatim). *)
+(* DR-052: an `own *T` value flowing into a borrow slot (`*T` /
+   `*const T`) is a LOAN — restamp the value to the slot's borrow
+   type so the move-pass (which keys consume on the stamped type)
+   keeps the owner live for its own free/drop.  Applied uniformly at
+   every borrow slot: call args, method receivers, let/assign,
+   struct-literal fields, enum-variant args.  `own *T` and `*T` are
+   the same `T*` in C — type-level only, zero codegen change.
+
+   Only PLACE expressions can lend (the owner keeps living somewhere
+   else).  A fresh owned RVALUE (`new(a) ...`, an own-returning call)
+   in a borrow slot would leave the allocation with no owner at all —
+   nothing tracks it, nothing releases it (re-audit F3 leak).  Reject
+   those up front. *)
+let loan_restamp ~slot_ty (te : texpr) =
+  match slot_ty, te.ty with
+  | (TPtr _ | TConstPtr _), TOwnPtr _ ->
+      (match te.e with
+       | TVar _ | TFieldAccess _ | TIndex _ | TDeref _ ->
+           { te with ty = slot_ty }
+       | _ ->
+           Error.failf te.pos
+             "this owned value is only borrowed here, so nothing would \
+              own (or ever release) the allocation — bind it first \
+              (`let x: own *T = ...;`), then lend `x`")
+  | _ -> te
+
 let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
                     ~raw_args ~targs ~ret_ty ~allow_void () : typ * texpr list =
   let expected_n = List.length param_tys in
@@ -1412,21 +1438,11 @@ let check_call_args ~pos ~kind ~name ?(variadic=false) ~param_tys
         "argument %d of '%s': expected %s, got %s"
         (i + 1) name (typ_name exp) (typ_name act))
     (List.combine param_tys fixed_arg_tys);
-  (* DR-030 own-borrow: passing an `own *T` value into a borrow slot
-     (`*T` / `*const T`) is a NON-CONSUMING BORROW, not an ownership
-     move.  Restamp the argument's type to the parameter's borrow type
-     so the move-pass (which keys consume on the stamped slot type —
-     `own *T` affine, `*T`/`*const T` not) treats it as a loan and the
-     owner stays live for its own free/drop.  `own *T` and `*T` are the
-     same `T*` in C, so this is type-level only — zero codegen change.
-     Mirrors the already-target-aware return-value rule in move.ml. *)
-  let borrow_restamp param_ty (arg : texpr) =
-    match param_ty, arg.ty with
-    | (TPtr _ | TConstPtr _), TOwnPtr _ -> { arg with ty = param_ty }
-    | _ -> arg
-  in
+  (* DR-030 own-borrow: an `own *T` arg in a borrow slot is a loan,
+     not a move — see [loan_restamp]. *)
   let targs' =
-    List.map2 borrow_restamp param_tys (take expected_n targs)
+    List.map2 (fun param_ty arg -> loan_restamp ~slot_ty:param_ty arg)
+      param_tys (take expected_n targs)
     @ drop expected_n targs
   in
   let result_ty =
@@ -3117,6 +3133,13 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                  "field '%s' of struct '%s': expected %s, got %s"
                  fn display (typ_name fty) (typ_name te.ty))
              fields tfields;
+           (* DR-052: an own value in a borrow-typed field is a loan. *)
+           let tfields =
+             List.map (fun (fn, (te : texpr)) ->
+               (fn, loan_restamp
+                      ~slot_ty:(List.assoc fn s_concrete.sfields_ty) te))
+               tfields
+           in
            let sname_path = s_concrete.sname_path in
            (* DR-046: elab the allocator expression (if `new(alloc)` was
               used) and verify it carries a value-shaped Allocator.
@@ -3343,7 +3366,9 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                        "argument %d of '%s': expected %s, got %s"
                        (i + 1) display (typ_name exp) (typ_name te.ty))
                    (List.combine v_used.vsfields telabs);
-                 List.map2 (fun (n, _) te -> (n, te))
+                 (* DR-052: own value in a borrow-typed payload = loan. *)
+                 List.map2 (fun (n, fty) te ->
+                     (n, loan_restamp ~slot_ty:fty te))
                    v_used.vsfields telabs
              | `Struct fs ->
                  if not v_used.vsis_struct then
@@ -3374,12 +3399,13 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                      Error.failf lit_pos
                        "field '%s' of '%s': expected %s, got %s"
                        n display (typ_name exp) (typ_name te.ty)) fs;
-                 (* Emit args in variant's field-declaration order. *)
-                 List.map (fun (n, _) ->
+                 (* Emit args in variant's field-declaration order.
+                    DR-052: own value in a borrow-typed field = loan. *)
+                 List.map (fun (n, fty) ->
                    let (_, te, _) =
                      List.find (fun (m, _, _) -> m = n) fs
                    in
-                   (n, te))
+                   (n, loan_restamp ~slot_ty:fty te))
                    v_used.vsfields
            in
            { e = TEnumLit { ename_path = result_path; variant; tag;
@@ -3946,13 +3972,8 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                   | true, true ->
                       (* DR-030 own-borrow: an `own *T` receiver calling a
                          `*self` / `*const self` method borrows — it does
-                         NOT move ownership.  Restamp to the borrow self-type
-                         so the move-pass keeps the owner live (same loan
-                         rule as call args).  Identical `T*` in C. *)
-                      (match self_ty, trecv.ty with
-                       | (TPtr _ | TConstPtr _), TOwnPtr _ ->
-                           { trecv with ty = self_ty }
-                       | _ -> trecv)
+                         NOT move ownership; see [loan_restamp]. *)
+                      loan_restamp ~slot_ty:self_ty trecv
                   | false, false -> trecv
                   | true, false ->
                       { e = TRef trecv; ty = self_ty; pos = trecv.pos }
@@ -4135,6 +4156,12 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                        "variable '%s' declared as %s but initializer has type %s"
                        name (typ_name t_ann) (typ_name t_inferred))
         in
+        (* DR-052: `let b: *const T = q` with `q: own *T` is a loan —
+           q stays the owner (and keeps its auto-drop); b is a borrow.
+           Without the restamp the move-pass saw an affine value-ty and
+           consumed q, while the drop-pass replay did not — q was both
+           "moved" and auto-dropped, and returning b was a silent UAF. *)
+        let tvalue = loan_restamp ~slot_ty:t_actual tvalue in
         add_decl name t_actual pos;
         if is_mut then Hashtbl.replace mut_names name ();
         ((name, t_actual) :: env, TLet { name; value = tvalue; pos })
@@ -4361,7 +4388,23 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
          | [name] when List.mem_assoc name env ->
              require_mut name pos ~what:"assign to"
          | _ -> ());
-        let tvalue = elab_expr ctx env value in
+        let tvalue = elab_expr ?expected:target_ty ctx env value in
+        (* Re-audit 2026-06-12: assignment never type-checked its RHS —
+           `b = 5` with `b: *const int` sailed through into invalid C.
+           Same contract as the annotated-let site. *)
+        (match target_ty with
+         | Some tty ->
+             if not (coercible_to ~from:tvalue.ty ~to_:tty)
+                && not (int_lit_fits value tty) then
+               Error.failf pos
+                 "cannot assign %s to '%s' (declared as %s)"
+                 (typ_name tvalue.ty) display (typ_name tty)
+         | None -> ());
+        let tvalue =
+          match target_ty with
+          | Some tty -> loan_restamp ~slot_ty:tty tvalue
+          | None -> tvalue
+        in
         (env, TAssign { path; value = tvalue; pos })
     | Ast.AssignField { target; field; value; pos } ->
         let ttarget = elab_expr ctx env target in
@@ -4419,10 +4462,12 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
               | _ -> ())
          | _ -> ());
         let tvalue = elab_expr ctx env value in
-        if not (typ_eq tvalue.ty fty) && not (int_lit_fits value fty) then
+        if not (coercible_to ~from:tvalue.ty ~to_:fty)
+           && not (int_lit_fits value fty) then
           Error.failf pos
             "field '%s': expected %s, got %s"
             field (typ_name fty) (typ_name tvalue.ty);
+        let tvalue = loan_restamp ~slot_ty:fty tvalue in
         (env, TAssignField { target = ttarget; field;
                                   value = tvalue; pos })
     | Ast.AssignIndex { base; index; value; pos } ->
@@ -4460,10 +4505,12 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                require_mut n pos ~what:"assign into"
            | _ -> ());
         let tvalue = elab_expr ctx env value in
-        if not (typ_eq tvalue.ty elem_ty) && not (int_lit_fits value elem_ty) then
+        if not (coercible_to ~from:tvalue.ty ~to_:elem_ty)
+           && not (int_lit_fits value elem_ty) then
           Error.failf pos
             "array element: expected %s, got %s"
             (typ_name elem_ty) (typ_name tvalue.ty);
+        let tvalue = loan_restamp ~slot_ty:elem_ty tvalue in
         (env, TAssignIndex { base = tbase; index = tindex;
                              value = tvalue; pos })
     | Ast.AssignDeref { target; value; pos } ->
@@ -4482,10 +4529,12 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                 (typ_name other)
         in
         let tvalue = elab_expr ctx env value in
-        if not (typ_eq tvalue.ty inner) && not (int_lit_fits value inner) then
+        if not (coercible_to ~from:tvalue.ty ~to_:inner)
+           && not (int_lit_fits value inner) then
           Error.failf pos
             "deref assignment: expected %s, got %s"
             (typ_name inner) (typ_name tvalue.ty);
+        let tvalue = loan_restamp ~slot_ty:inner tvalue in
         (env, TAssignDeref { target = ttarget; value = tvalue; pos })
     | Ast.Return (Some e, pos) ->
         let tvalue = elab_expr ?expected:ret_ty ctx env e in
@@ -7285,6 +7334,22 @@ let prelude_items () =
     ];
     ipos = pos;
   } in
+  (* Re-audit F8: uniform `.length()` across containers.  Slice keeps
+     its transparent `.ptr`/`.len` layout (it IS an honest view
+     struct), but answers the same method spelling as
+     Vec/String/HashMap/StringBuilder. *)
+  let slice_self_const_ptr_param =
+    { Ast.pname = "self"; pty = Ast.TyConstPtr slice_t_ann;
+      preg = None; is_mut = false } in
+  let slice_length_method =
+    mk_vec_method "length" [ slice_self_const_ptr_param ] (Some u32_t)
+      [ Ast.Return (Some (field (Ast.Var ("self", pos)) "len"), pos) ] in
+  let slice_impl = {
+    Ast.itparams = ["T"]; itbounds = []; itrait = None; iassoc = [];
+    itarget = ["Slice"];
+    iitems = [ slice_length_method ];
+    ipos = pos;
+  } in
   (* VecIter::next - by-value cursor.  `data` is a `*const T` view
      over the original vec; the iterator advances `pos` until it
      hits `len`, yielding copies (value-T sound today). *)
@@ -9231,6 +9296,7 @@ let prelude_items () =
     Ast.Impl string_clone_impl;
     Ast.Struct vec_struct; Ast.Struct vec_iter_struct;
     Ast.Impl vec_impl;
+    Ast.Impl slice_impl;
     Ast.Struct slot_struct; Ast.Struct hashmap_struct;
     Ast.Struct hashmap_iter_struct;
     Ast.Impl hashmap_impl;
@@ -9589,7 +9655,7 @@ let derive_debug_struct (s : Ast.struct_decl) : Ast.item =
         derive_debug_push_str (s.sname ^ " { ") pos
         :: (derive_debug_join [ derive_debug_push_str ", " pos ]
               field_chunks)
-        @ [ derive_debug_push_byte 125 pos ]  (* '}' *)
+        @ [ derive_debug_push_str " }" pos ]
   in
   let m = derive_debug_mk_fmt target body pos in
   Ast.Impl { itparams = []; itbounds = []; itrait = Some ["Debug"]; iassoc = [];
@@ -9635,7 +9701,7 @@ let derive_debug_enum (e : Ast.enum_decl) : Ast.item =
              derive_debug_push_str (prefix ^ " { ") pos
              :: (derive_debug_join [ derive_debug_push_str ", " pos ]
                    chunks)
-             @ [ derive_debug_push_byte 125 pos ])  (* '}' *)
+             @ [ derive_debug_push_str " }" pos ])
       in
       let pat = Ast.PVariant { tname = [e.ename]; variant = v.vname;
                                binds; pos } in

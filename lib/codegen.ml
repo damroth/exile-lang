@@ -863,6 +863,15 @@ and emit_simple_stmt ctx buf indent stmt =
    `return tbody;` instead of assign+break and ignores `assign_to` —
    the body is, by elab construction, a TEnumLit on the enclosing
    fn's return-type instance. *)
+(* Re-audit F4: a payload bind the arm never reads (an `_`-prefixed
+   placeholder, typically) would emit an unused C variable and break
+   -Werror builds.  The extraction read has no side effects, so the
+   decl is simply skipped.  Guard counts as a read. *)
+and arm_uses_bind (a : tmatch_arm) name =
+  let used te = match te.e with TVar n -> n = name | _ -> false in
+  exists_texpr used a.tbody
+  || (match a.tguard with Some g -> exists_texpr used g | None -> false)
+
 and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
   match m_expr.e with
   | TMatch { scrutinee; ename_path; arms } ->
@@ -955,7 +964,7 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
           (* C89 requires decls at the top of a block — emit each
              bind as a single decl-with-init line. *)
           (match a.tpat with
-           | TPVar n ->
+           | TPVar n when arm_uses_bind a n ->
                (* The bind takes the SCRUTINEE's type — m_expr is the
                   whole match expression, whose type is the arms'
                   result (latent confusion exposed by scalar matches,
@@ -964,6 +973,7 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
                Buffer.add_string buf body_indent;
                Buffer.add_string buf (c_decl scrutinee.ty n);
                Buffer.add_string buf " = __m;\n"
+           | TPVar _ -> ()
            | TPVariant { variant; binds; _ } ->
                let v =
                  List.find (fun (vs : variant_sig) -> vs.vsname = variant)
@@ -974,7 +984,7 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
                List.iter
                  (fun (fname, bp) ->
                    match bp with
-                   | TPVar n ->
+                   | TPVar n when arm_uses_bind a n ->
                        let ft = List.assoc fname v.vsfields in
                        Buffer.add_string buf body_indent;
                        Buffer.add_string buf (c_decl ft n);
@@ -1196,7 +1206,7 @@ and emit_arms_if_else ctx assign_to buf inner body_indent ty arms =
           Buffer.add_string buf " = ";
           Buffer.add_string buf lval;
           Buffer.add_string buf ";\n")
-        binds;
+        (List.filter (fun (name, _, _) -> arm_uses_bind a name) binds);
       emit_arm_result ctx assign_to buf body_indent a;
       Buffer.add_string buf inner;
       Buffer.add_string buf "}\n")
@@ -1236,7 +1246,7 @@ and emit_arms_goto ctx assign_to buf inner body_indent ty arms =
         Buffer.add_string buf " = ";
         Buffer.add_string buf lval;
         Buffer.add_string buf ";\n")
-      binds;
+      (List.filter (fun (name, _, _) -> arm_uses_bind a name) binds);
     let stmt_indent, close_guard =
       match a.tguard with
       | None -> (body_indent, false)

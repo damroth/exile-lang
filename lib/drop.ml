@@ -58,7 +58,11 @@ let states_by ~structs ~enums names (te : texpr)
   if names = [] then ([], [])
   else
     let live = List.map (fun n -> (n, Move.Live)) names in
-    let after = Move.walk_expr ~structs ~enums live te in
+    Move.replaying := true;
+    let after =
+      Fun.protect ~finally:(fun () -> Move.replaying := false)
+        (fun () -> Move.walk_expr ~structs ~enums live te)
+    in
     let consumed =
       List.filter_map
         (function (n, Move.Consumed _) -> Some n | _ -> None) after

@@ -70,10 +70,15 @@ type binding = {
   bprov : prov;
   bowners : string list;
   binvalid : (string * Pos.t) option;
+  (* Re-audit 2026-06-12: the binding holds an `own *T` — its POINTEE
+     is released inside this fn (auto-drop / explicit free) unless the
+     own itself is transferred out.  Any borrow taken from it is
+     therefore as local as `&local`. *)
+  bown : bool;
 }
 
-let mk_binding ?(owners = []) prov =
-  { bprov = prov; bowners = owners; binvalid = None }
+let mk_binding ?(owners = []) ?(own = false) prov =
+  { bprov = prov; bowners = owners; binvalid = None; bown = own }
 
 type state = (string * binding) list
 
@@ -84,6 +89,21 @@ let summary : (string, IntSet.t) Hashtbl.t = Hashtbl.create 64
 (* Per-function param-name → param-index table, refreshed at the
    start of each fn analysis (compute and enforcement both reset it). *)
 let params_idx : (string, int) Hashtbl.t = Hashtbl.create 8
+
+(* Re-audit 2026-06-12: `own *T` params.  The callee owns (and must
+   release) the pointee, so a borrow taken from an own param is as
+   local as a borrow of a local own binding. *)
+let params_own : (string, unit) Hashtbl.t = Hashtbl.create 8
+
+(* A TVar use of an own binding/param whose stamped type is a borrow
+   pointer is a LOAN of locally-released storage (typecheck restamps
+   own → `*T`/`*const T` at every borrow slot).  The pointee dies in
+   this fn — treat the borrow exactly like `&local`. *)
+let var_use_is_own_borrow (live : state) n (use_ty : typ) =
+  (match use_ty with TPtr _ | TConstPtr _ -> true | _ -> false)
+  && (match List.assoc_opt n live with
+      | Some b -> b.bown
+      | None -> Hashtbl.mem params_own n)
 
 (* Shared lvalue walker — mirrors [Lint.lvalue_root].  TDeref sub
    means the rvalue lives through a pointer, so the root is the
@@ -159,7 +179,9 @@ let prov_of_call ~prov_of_arg mangled args =
    table. *)
 let rec prov_of live (te : texpr) =
   match te.e with
-  | TVar n -> prov_of_var live n
+  | TVar n ->
+      if var_use_is_own_borrow live n te.ty then Local
+      else prov_of_var live n
   | TRef sub ->
       (match lvalue_root sub with
        | Some n when List.mem_assoc n live -> Local
@@ -222,9 +244,11 @@ let rec prov_of live (te : texpr) =
 let rec owners_of (live : state) (te : texpr) : string list =
   match te.e with
   | TVar n ->
-      (match List.assoc_opt n live with
-       | Some b -> b.bowners
-       | None -> [])
+      if var_use_is_own_borrow live n te.ty then [ n ]
+      else
+        (match List.assoc_opt n live with
+         | Some b -> b.bowners
+         | None -> [])
   | TRef sub ->
       (match lvalue_root sub with
        | Some n when List.mem_assoc n live -> [n]
@@ -373,7 +397,8 @@ let merge_states (a : state) (b : state) : state =
           | Some r, _ | _, Some r -> Some r
           | None, None -> None
         in
-        (n, { bprov = prov; bowners = owners; binvalid = invalid })
+        (n, { bprov = prov; bowners = owners; binvalid = invalid;
+              bown = ba.bown || bb.bown })
     | Some ba, None -> (n, ba)
     | None, Some bb -> (n, bb)
     | None, None -> assert false)
@@ -477,9 +502,10 @@ and walk_stmt ~report ~ret_acc (live : state) = function
       check_uses ~report live value;
       let p = prov_of live value in
       let owners = owners_of live value in
+      let own = match value.ty with TOwnPtr _ -> true | _ -> false in
       walk_expr_for_sites ~report ~ret_acc live value;
       let live = apply_call_effects live value in
-      (name, mk_binding ~owners p) :: List.remove_assoc name live
+      (name, mk_binding ~owners ~own p) :: List.remove_assoc name live
   | TLetTuple { names; value; _ } ->
       check_uses ~report live value;
       let p = prov_of live value in
@@ -497,7 +523,9 @@ and walk_stmt ~report ~ret_acc (live : state) = function
        | [n] ->
            let p = prov_of live value in
            let owners = owners_of live value in
-           (n, mk_binding ~owners p) :: List.remove_assoc n live
+           let own =
+             match value.ty with TOwnPtr _ -> true | _ -> false in
+           (n, mk_binding ~owners ~own p) :: List.remove_assoc n live
        | _ -> live)
   | TAssignField { target; value; pos; _ } ->
       check_uses ~report live target;
@@ -618,6 +646,11 @@ and apply_call_effects (live : state) (te : texpr) : state =
                   ~reason:(invalidation_reason mangled) ~pos:te.pos
             | _ -> live)
        | [] -> live)
+  (* Re-audit 2026-06-12: `free(a, q)` releases q's pointee — every
+     borrow rooted in q dangles from here on (same kill rule as the
+     method-level frees above). *)
+  | TBuiltinCall { name = "free"; args = [ _; { e = TVar owner; _ } ] } ->
+      invalidate_borrows_of live owner ~reason:"free" ~pos:te.pos
   | _ -> live
 
 (* Project the body's accumulated return-prov to a summary IntSet. *)
@@ -630,9 +663,15 @@ let project_to_summary ~num_params = function
 
 let analyze_fn ~report (tf : tfunc) : prov =
   Hashtbl.clear params_idx;
+  Hashtbl.clear params_own;
   List.iteri (fun i (p : Ast.param) ->
     Hashtbl.replace params_idx p.pname i)
     tf.tf_func.params;
+  List.iter2 (fun (p : Ast.param) ty ->
+    match ty with
+    | TOwnPtr _ -> Hashtbl.replace params_own p.pname ()
+    | _ -> ())
+    tf.tf_func.params tf.tf_param_tys;
   let init_live : state = [] in
   let ret_acc = ref CallerOrStatic in
   let _ = walk_stmts ~report ~ret_acc init_live tf.tf_body in

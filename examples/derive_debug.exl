@@ -32,15 +32,15 @@ enum Shape {
 fn main() {
     let a = raw::make_c_allocator();
 
-    // Struct: "Point { x: 7, y: -42 }" — 21 bytes.
+    // Struct: "Point { x: 7, y: -42 }" — 22 bytes.
     let mut sb = StringBuilder::with_capacity(a, 8 as u32);
     let p = Point { x: 7, y: -42 };
     p.fmt_debug(&sb);
-    println(sb.length() as int);              // 21
+    println(sb.length() as int);              // 22
     let v = sb.as_slice();
     println(v[0] as int);                      // 80  ('P')
     println(v[11] as int);                     // 55  ('7')
-    println(v[20] as int);                     // 125 ('}')
+    println(v[21] as int);                     // 125 ('}')
 
     // Unit variant: "Shape::Dot" — 10 bytes.
     let mut sb2 = StringBuilder::with_capacity(a, 8 as u32);
@@ -58,15 +58,15 @@ fn main() {
     println(v3[18] as int);                    // 50 ('2')
     println(v3[19] as int);                    // 41 (')')
 
-    // Struct variant: "Shape::Tagged { id: 5, name: "p" }" — 33 bytes.
+    // Struct variant: "Shape::Tagged { id: 5, name: "p" }" — 34 bytes.
     let mut sb4 = StringBuilder::with_capacity(a, 8 as u32);
     let tg = Shape::Tagged { id: 5, name: "p" };
     tg.fmt_debug(&sb4);
-    println(sb4.length() as int);             // 33
+    println(sb4.length() as int);             // 34
     let v4 = sb4.as_slice();
     println(v4[20] as int);                    // 53 ('5')
     println(v4[29] as int);                    // 34 ('"' opening str quote)
     println(v4[30] as int);                    // 112 ('p')
     println(v4[31] as int);                    // 34 ('"' closing quote)
-    println(v4[32] as int);                    // 125 ('}')
+    println(v4[33] as int);                    // 125 ('}')
 }
