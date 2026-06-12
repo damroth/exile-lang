@@ -517,11 +517,12 @@ let build_ptr_glue ~structs ~enums ~name pointee : tfunc =
     free_via ~alloc_expr:a_var ~ptr_expr:p_var
       ~bytes:(size_of_as_u32 pointee pos) pos
   in
-  let body =
+  let body, lets =
     match pointee with
     | TStruct sp ->
         let deref = { e = TDeref p_var; ty = pointee; pos } in
-        drop_stmts_for_struct ~structs ~enums deref sp pos @ [ free_self ]
+        (drop_stmts_for_struct ~structs ~enums deref sp pos @ [ free_self ],
+         [])
     | TEnum ep ->
         let es =
           match List.find_opt
@@ -530,7 +531,12 @@ let build_ptr_glue ~structs ~enums ~name pointee : tfunc =
           | None -> Error.failf pos "internal: enum '%s' missing in drop \
                                      glue" (String.concat "::" ep)
         in
-        let arms =
+        let is_self_field ft =
+          match ft with TOwnPtr (TEnum p2) -> p2 = ep | _ -> false in
+        (* [self_action]: what an arm does with a bound field that owns
+           the next node of the SAME enum (None = recurse like any
+           other payload). *)
+        let mk_arms ~self_action =
           List.mapi (fun tag (v : variant_sig) ->
             let binds =
               List.filter_map (fun (fname, ft) ->
@@ -548,8 +554,11 @@ let build_ptr_glue ~structs ~enums ~name pointee : tfunc =
                 let ft = List.assoc fname v.vsfields in
                 let bind_var =
                   { e = TVar ("__d_" ^ fname); ty = ft; pos } in
-                elem_drop_stmts ~structs ~enums ~container_alloc:a_var
-                  bind_var pos)
+                match self_action with
+                | Some act when is_self_field ft -> [ act bind_var ]
+                | _ ->
+                    elem_drop_stmts ~structs ~enums ~container_alloc:a_var
+                      bind_var pos)
                 binds
             in
             { tpat = TPVariant { variant = v.vsname; tag; binds };
@@ -561,15 +570,54 @@ let build_ptr_glue ~structs ~enums ~name pointee : tfunc =
             es.evariants
         in
         let deref = { e = TDeref p_var; ty = pointee; pos } in
-        [ TExprStmt {
+        let match_stmt arms =
+          TExprStmt {
             e = TMatch { scrutinee = deref; ename_path = ep; arms };
-            ty = i32_ty; pos } ]
-        @ [ free_self ]
-    | _ -> [ free_self ]
+            ty = i32_ty; pos } in
+        let linear =
+          List.for_all
+            (fun (v : variant_sig) ->
+              List.length
+                (List.filter (fun (_, ft) -> is_self_field ft) v.vsfields)
+              <= 1)
+            es.evariants
+          && List.exists
+               (fun (v : variant_sig) ->
+                 List.exists (fun (_, ft) -> is_self_field ft) v.vsfields)
+               es.evariants
+        in
+        if linear then begin
+          (* Kernel-foundation decision #2 (2026-06-12): the recursive
+             form burns one non-tail C frame per node — a long owned
+             list overruns a small (kernel) stack at scope exit.  When
+             every variant owns at most one next-node of the same enum
+             (a linear list), tear the spine down iteratively: O(1)
+             stack regardless of length.  Genuine trees (a variant
+             with two self-owned children) keep recursion — depth on
+             the C stack instead; documented honest limit. *)
+          let next_var = { e = TVar "__next"; ty = TOwnPtr pointee; pos } in
+          let null_lit = { e = TNullLit; ty = TNullPtr; pos } in
+          let set_next value = TAssign { path = [ "__next" ]; value; pos } in
+          let arms = mk_arms ~self_action:(Some set_next) in
+          let cond =
+            { e = TBinOp (Ast.NotEq, p_var, null_lit); ty = TBool; pos } in
+          ([ TWhile {
+               cond;
+               body =
+                 [ set_next null_lit;
+                   match_stmt arms;
+                   free_self;
+                   TAssign { path = [ "__p" ]; value = next_var; pos } ];
+               post = [] } ],
+           [ ("__next", TOwnPtr pointee) ])
+        end
+        else
+          ([ match_stmt (mk_arms ~self_action:None); free_self ], [])
+    | _ -> ([ free_self ], [])
   in
   mk_glue_tfunc ~name
     ~params:[ ("__a", allocator_ty); ("__p", TOwnPtr pointee) ]
-    ~lets:[] ~body
+    ~lets ~body
 
 (* Shared loop skeleton: `__i = 0; while (__i < <bound>) { <body>;
    __i = __i + 1; }`. *)

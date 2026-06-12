@@ -303,6 +303,15 @@ let tokenize ~file src =
                Error.failf p
                  "'%s' is a reserved word (capability model, future \
                   syntax) — pick a different name" word
+           (* Kernel-foundation freeze (2026-06-12, decision #3): the
+              wide-integer type names are reserved the same way — a
+              frozen `struct u64 {...}` would be reinterpreted the day
+              these become builtins.  Only the NAMES are reserved; the
+              64-bit width mechanics stay additive. *)
+           | "i64" | "u64" | "i128" | "u128" | "usize" | "isize" ->
+               Error.failf p
+                 "'%s' is a reserved word (future integer width) — \
+                  pick a different name" word
            | _ -> ());
           loop stop ((keyword_or_ident word, p) :: acc)
       | c -> Error.failf p "unexpected character %C" c

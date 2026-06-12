@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/owned_list.exl
+(enum List (variants (variant Cons (int i32) (own-ptr (struct List))) (variant Nil)))
+(fn sum_first (params (param head (const-ptr (struct List))) (param k (int i32))) (int i32) (body (let mut acc (int 0)) (let mut cur (var head)) (let mut left (var k)) (while (binop > (var left) (int 0)) (expr-stmt (match (deref (var cur)) (arm (pat-variant List::Cons (pat-var v) (pat-var next)) (block (assign acc (binop + (var acc) (var v))) (assign cur (var next)))) (arm (pat-variant List::Nil) (block (assign left (int 1)))))) (assign left (binop - (var left) (int 1)))) (return (var acc))))
+(fn main (params ) void (body (let a (call default_allocator )) (let mut head (ty (own-ptr (struct List))) (new-enum List::Nil )) (let mut i (int 1)) (while (binop <= (var i) (int 50000)) (assign head (new-enum List::Cons (var i) (var head))) (assign i (binop + (var i) (int 1)))) (expr-stmt (call println (call sum_first (var head) (int 3))))))

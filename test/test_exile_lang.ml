@@ -371,7 +371,7 @@ let () =
     \    println(*p as int);\n\
     \    raw::free(p as *c_void);\n\
      }\n"
-    "#include <stdio.h>\n\nextern void *malloc(unsigned long n);\nextern void free(void *p);\n\nint main(void) {\n    unsigned char *p;\n    p = ((unsigned char *)malloc(((unsigned long)2)));\n    p[0] = ((unsigned char)7);\n    p[1] = ((unsigned char)11);\n    printf(\"%ld\\n\", (long)(((long)*p)));\n    free(((void *)p));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nextern void *malloc(unsigned long n);\nextern void free(void *p);\n\nint main(void) {\n    unsigned char *p;\n    p = ((unsigned char *)(malloc(((unsigned long)2))));\n    p[0] = ((unsigned char)7);\n    p[1] = ((unsigned char)11);\n    printf(\"%ld\\n\", (long)(((long)(*p))));\n    free(((void *)p));\n    return 0;\n}\n";
 
   check_error "`*const T[i] = v` rejected (pointee is read-only)"
     "mod raw {\n\
@@ -1348,7 +1348,7 @@ let () =
          \    v.push(&x);\n\
           }\n"
      in
-     contains c "new_ptr[i] = ((long *)src.ptr[i])");
+     contains c "new_ptr[i] = ((long *)(src.ptr[i]))");
 
   check_assert "W4: `Vec<int>` grow body still emits the cast (no-op for plain T)"
     (let c =
@@ -1360,7 +1360,7 @@ let () =
          \    v.push(1);\n\
           }\n"
      in
-     contains c "new_ptr[i] = ((long)src.ptr[i])");
+     contains c "new_ptr[i] = ((long)(src.ptr[i]))");
 
   check "@derive(Hash) synthesizes a multiplicative field fold"
     "@derive(Eq, Hash)\n\
@@ -1372,7 +1372,7 @@ let () =
     (* DR-035 - `ne` dropped (DCE); `eq` retained because the
        derived Hash impl indirectly references it through the
        trait machinery's reachability snapshot. *)
-    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint P__eq(const struct ex_P *self, const struct ex_P *other);\nunsigned long P__hash(const struct ex_P *self);\n\nint main(void) {\n    struct ex_P a;\n    a.x = 1;\n    a.y = 2;\n    printf(\"%ld\\n\", (long)(((long)P__hash(&a))));\n    return 0;\n}\n\nint P__eq(const struct ex_P *self, const struct ex_P *other) {\n    return self->x == other->x && self->y == other->y;\n}\n\nunsigned long P__hash(const struct ex_P *self) {\n    return ((unsigned long)self->x) * 31 + ((unsigned long)self->y);\n}\n";
+    "#include <stdio.h>\n\nstruct ex_P { long x; long y; };\n\nint P__eq(const struct ex_P *self, const struct ex_P *other);\nunsigned long P__hash(const struct ex_P *self);\n\nint main(void) {\n    struct ex_P a;\n    a.x = 1;\n    a.y = 2;\n    printf(\"%ld\\n\", (long)(((long)(P__hash(&a)))));\n    return 0;\n}\n\nint P__eq(const struct ex_P *self, const struct ex_P *other) {\n    return self->x == other->x && self->y == other->y;\n}\n\nunsigned long P__hash(const struct ex_P *self) {\n    return ((unsigned long)(self->x)) * 31 + ((unsigned long)(self->y));\n}\n";
 
   check_error "@derive(Hash) without Eq rejected (supertrait)"
     "@derive(Hash)\n\
@@ -2776,7 +2776,7 @@ let () =
     \    let f: fn(c_int, c_int) -> c_int = add;\n\
     \    println(f(40, 2) as int);\n\
      }\n"
-    "#include <stdio.h>\n\ntypedef int (*fn2_cint_cint_to_cint)(int, int);\n\nstatic int ex_add(int a, int b);\n\nstatic int ex_add(int a, int b) {\n    return a + b;\n}\n\nint main(void) {\n    fn2_cint_cint_to_cint f;\n    f = ex_add;\n    printf(\"%ld\\n\", (long)(((long)f(40, 2))));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\ntypedef int (*fn2_cint_cint_to_cint)(int, int);\n\nstatic int ex_add(int a, int b);\n\nstatic int ex_add(int a, int b) {\n    return a + b;\n}\n\nint main(void) {\n    fn2_cint_cint_to_cint f;\n    f = ex_add;\n    printf(\"%ld\\n\", (long)(((long)(f(40, 2)))));\n    return 0;\n}\n";
 
   check_no_cc "fn pointer as extern fn parameter: signal-style callback"
     "pub mod raw { extern fn signal(sig: c_int, handler: fn(c_int)) -> fn(c_int); }\n\
@@ -2891,7 +2891,7 @@ let () =
     \        println(lib.lib_Version as int);\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nextern struct Library *open_lib(void);\n\nint main(void) {\n    struct Library *lib;\n    lib = open_lib();\n    if (lib != ((void *)0)) {\n        printf(\"%ld\\n\", (long)(((long)lib->lib_OpenCnt)));\n        printf(\"%ld\\n\", (long)(((long)lib->lib_Version)));\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nextern struct Library *open_lib(void);\n\nint main(void) {\n    struct Library *lib;\n    lib = open_lib();\n    if (lib != ((void *)0)) {\n        printf(\"%ld\\n\", (long)(((long)(lib->lib_OpenCnt))));\n        printf(\"%ld\\n\", (long)(((long)(lib->lib_Version))));\n    }\n    return 0;\n}\n";
 
   check_no_cc "extern struct: by-value type allowed when fields exposed"
     "pub mod raw {\n\
@@ -2902,7 +2902,7 @@ let () =
     \    let p: Point = raw::make_pt();\n\
     \    println(p.x as int);\n\
      }\n"
-    "#include <stdio.h>\n\nextern struct Point make_pt(void);\n\nint main(void) {\n    struct Point p;\n    p = make_pt();\n    printf(\"%ld\\n\", (long)(((long)p.x)));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nextern struct Point make_pt(void);\n\nint main(void) {\n    struct Point p;\n    p = make_pt();\n    printf(\"%ld\\n\", (long)(((long)(p.x))));\n    return 0;\n}\n";
 
   check_no_cc "extern struct: field write through pointer"
     "pub mod raw {\n\
@@ -3082,7 +3082,7 @@ let () =
     \    println(size_of(int) as int);\n\
     \    println(size_of(*int) as int);\n\
      }\n"
-    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(((long)sizeof(long))));\n    printf(\"%ld\\n\", (long)(((long)sizeof(long *))));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(((long)(sizeof(long)))));\n    printf(\"%ld\\n\", (long)(((long)(sizeof(long *)))));\n    return 0;\n}\n";
 
   check "size_of substitutes T per generic instance"
     "fn sz<T>(_p: *T) -> c_uint { return size_of(T); }\n\
@@ -3092,7 +3092,7 @@ let () =
     \    println(sz(p) as int);\n\
     \    println(sz(q) as int);\n\
      }\n"
-    "#include <stdio.h>\n\nstatic unsigned int ex_sz_i32(long *_p);\nstatic unsigned int ex_sz_bool(int *_p);\n\nint main(void) {\n    long *p;\n    int *q;\n    p = ((void *)0);\n    q = ((void *)0);\n    printf(\"%ld\\n\", (long)(((long)ex_sz_i32(p))));\n    printf(\"%ld\\n\", (long)(((long)ex_sz_bool(q))));\n    return 0;\n}\n\nstatic unsigned int ex_sz_i32(long *_p) {\n    return sizeof(long);\n}\n\nstatic unsigned int ex_sz_bool(int *_p) {\n    return sizeof(int);\n}\n";
+    "#include <stdio.h>\n\nstatic unsigned int ex_sz_i32(long *_p);\nstatic unsigned int ex_sz_bool(int *_p);\n\nint main(void) {\n    long *p;\n    int *q;\n    p = ((void *)0);\n    q = ((void *)0);\n    printf(\"%ld\\n\", (long)(((long)(ex_sz_i32(p)))));\n    printf(\"%ld\\n\", (long)(((long)(ex_sz_bool(q)))));\n    return 0;\n}\n\nstatic unsigned int ex_sz_i32(long *_p) {\n    return sizeof(long);\n}\n\nstatic unsigned int ex_sz_bool(int *_p) {\n    return sizeof(int);\n}\n";
 
   check "pointer-to-pointer cast with `as` accepted"
     "fn main() {\n\
@@ -3128,7 +3128,7 @@ let () =
     \    a.free(p);\n\
     \    println(1);\n\
      }\n"
-    "#include <stdio.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\n\nextern struct ex_Allocator make_a(void);\nlong *Allocator__alloc_i32(struct ex_Allocator self);\nvoid Allocator__free_i32(struct ex_Allocator self, long *p);\n\nint main(void) {\n    struct ex_Allocator a;\n    long *p;\n    a = make_a();\n    p = Allocator__alloc_i32(a);\n    Allocator__free_i32(a, p);\n    printf(\"%ld\\n\", (long)(1));\n    return 0;\n}\n\nlong *Allocator__alloc_i32(struct ex_Allocator self) {\n    return ((long *)(self.alloc_fn)(self.state, ((unsigned long)sizeof(long))));\n}\n\nvoid Allocator__free_i32(struct ex_Allocator self, long *p) {\n    (self.free_fn)(self.state, ((void *)p), ((unsigned long)sizeof(long)));\n}\n";
+    "#include <stdio.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\n\nextern struct ex_Allocator make_a(void);\nlong *Allocator__alloc_i32(struct ex_Allocator self);\nvoid Allocator__free_i32(struct ex_Allocator self, long *p);\n\nint main(void) {\n    struct ex_Allocator a;\n    long *p;\n    a = make_a();\n    p = Allocator__alloc_i32(a);\n    Allocator__free_i32(a, p);\n    printf(\"%ld\\n\", (long)(1));\n    return 0;\n}\n\nlong *Allocator__alloc_i32(struct ex_Allocator self) {\n    return ((long *)((self.alloc_fn)(self.state, ((unsigned long)(sizeof(long))))));\n}\n\nvoid Allocator__free_i32(struct ex_Allocator self, long *p) {\n    (self.free_fn)(self.state, ((void *)p), ((unsigned long)(sizeof(long))));\n}\n";
 
   (* StringBuilder prelude type — same DCE guarantee as Allocator: a
      hello-world that never names `StringBuilder` must not carry its
@@ -4666,7 +4666,7 @@ let () =
          "fn main() { println(str::hash(\"a\") as int); }\n"
      in
      contains c "str__hash(\"a\")"
-     && contains c "acc * 31 + ((unsigned long)bytes.ptr[i])");
+     && contains c "acc * 31 + ((unsigned long)(bytes.ptr[i]))");
 
   check "prelude `mod str` dropped from hello-world emission"
     "fn main() { println(1); }\n"
@@ -5064,7 +5064,7 @@ let () =
     \    let h: H = H { s: v };\n\
     \    println(touch(&h) as int);\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_Slice_i32 { const long *ptr; unsigned long len; };\nstruct ex_H { struct ex_Slice_i32 s; };\nstruct ex_arr2_i32 { long data[2]; };\n\nstatic unsigned long ex_touch(struct ex_H *h);\n\nstatic unsigned long ex_touch(struct ex_H *h) {\n    return h->s.len;\n}\n\nint main(void) {\n    struct ex_arr2_i32 arr;\n    struct ex_Slice_i32 v;\n    struct ex_H h;\n    arr.data[0] = 10;\n    arr.data[1] = 20;\n    v.ptr = &(arr.data[0]);\n    v.len = ((unsigned long)2);\n    h.s = v;\n    printf(\"%ld\\n\", (long)(((long)ex_touch(&h))));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nstruct ex_Slice_i32 { const long *ptr; unsigned long len; };\nstruct ex_H { struct ex_Slice_i32 s; };\nstruct ex_arr2_i32 { long data[2]; };\n\nstatic unsigned long ex_touch(struct ex_H *h);\n\nstatic unsigned long ex_touch(struct ex_H *h) {\n    return h->s.len;\n}\n\nint main(void) {\n    struct ex_arr2_i32 arr;\n    struct ex_Slice_i32 v;\n    struct ex_H h;\n    arr.data[0] = 10;\n    arr.data[1] = 20;\n    v.ptr = &(arr.data[0]);\n    v.len = ((unsigned long)2);\n    h.s = v;\n    printf(\"%ld\\n\", (long)(((long)(ex_touch(&h)))));\n    return 0;\n}\n";
 
   check "slice: indexing s[i] lowers to s.ptr[i]"
     "fn main() {\n\
@@ -7044,6 +7044,95 @@ let () =
      in
      contains c "Slice__length");
 
+  (* KERNEL-FOUNDATION FREEZE 2026-06-12 — decisions #1/#2/#3 from
+     audit-freeze-2026-06-11/KERNEL-FOUNDATION-FREEZE-DECISIONS.md,
+     each empirically reproduced before the fix: a cast miscompile, a
+     per-node-stack teardown (plus an assign-target aliasing miscompile
+     found while reproducing it), and unreserved future type names. *)
+
+  check_assert "KF#1: cast of a binary expression parenthesizes the operand"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let w: u16 = 0x1234;\n\
+         \    let hi: u8 = (w >> 8) as u8;\n\
+         \    println(hi as int);\n\
+          }\n"
+     in
+     contains c "((unsigned char)(w >> 8))");
+
+  check_assert "KF#1: cast of a bare variable stays unparenthesized"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let w: u16 = 7;\n\
+         \    println((w as u8) as int);\n\
+          }\n"
+     in
+     contains c "((unsigned char)w)");
+
+  List.iter
+    (fun w ->
+      check_error
+        (Printf.sprintf "KF#3: '%s' is reserved (future integer width)" w)
+        (Printf.sprintf "fn main() { let %s = 5; println(%s); }\n" w w)
+        (Printf.sprintf
+           "'%s' is a reserved word (future integer width) — pick a \
+            different name" w))
+    [ "i64"; "u64"; "i128"; "u128"; "usize"; "isize" ];
+
+  check_error "KF#3: reserved width name rejected in type position too"
+    "struct u64 { lo: u32, hi: u32 }\n\
+     fn main() { println(1); }\n"
+    "'u64' is a reserved word (future integer width) — pick a \
+     different name";
+
+  check_assert "KF#2: linear owned list drops iteratively (O(1) stack)"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum List { Cons(int, own *List) | Nil }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut head: own *List = new(a) List::Nil;\n\
+         \    let mut i = 0;\n\
+         \    while i < 10 {\n\
+         \        head = new(a) List::Cons(i, head);\n\
+         \        i = i + 1;\n\
+         \    }\n\
+         \    println(1);\n\
+          }\n"
+     in
+     contains c "while (__p != ((void *)0))"
+     && not (contains c "__drop_ptr_0(__a"));
+
+  check_assert "KF#2: owned tree keeps the recursive drop (honest limit)"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum Tree { Node(own *Tree, own *Tree) | Leaf(int) }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let t: own *Tree = new(a) Tree::Node(\n\
+         \        new(a) Tree::Leaf(1), new(a) Tree::Leaf(2));\n\
+         \    println(7);\n\
+          }\n"
+     in
+     contains c "__drop_ptr_0(__a, __d__0)"
+     && contains c "__drop_ptr_0(__a, __d__1)");
+
+  check_assert "KF: self-referencing rebind builds into a scratch, publishes last"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum List { Cons(int, own *List) | Nil }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut head: own *List = new(a) List::Nil;\n\
+         \    head = new(a) List::Cons(1, head);\n\
+         \    println(1);\n\
+          }\n"
+     in
+     contains c "__newv->data.Cons._1 = head;"
+     && contains c "head = __newv;");
+
   (* PORT-PREP P2 (2026-06-10) - Arena bump allocator in the prelude +
      the `ptr_offset` builtin it builds on.  P1 (ratified): nodes are
      plain borrows from `alloc_borrowed::<T>()` - the arena owns them,
@@ -7079,8 +7168,8 @@ let () =
      (* the auto-drop of `ar` releases cap bytes through the parent
         allocator - the ONLY free_fn call in main *)
      contains c
-       "(ar.alloc.free_fn)(ar.alloc.state, ((void *)ar.buf), \
-        ar.cap * ((unsigned long)sizeof(unsigned char)))"
+       "(ar.alloc.free_fn)(ar.alloc.state, ((void *)(ar.buf)), \
+        ar.cap * ((unsigned long)(sizeof(unsigned char))))"
      && contains c "(self->buf + aligned)");
 
   check_error "P2: ptr_offset requires a byte-pointer base"

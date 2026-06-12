@@ -1,0 +1,175 @@
+;; exile-tokens-dump v1 examples/owned_list.exl
+Enum @examples/owned_list.exl:25:1
+(Ident List) @examples/owned_list.exl:25:6
+LBrace @examples/owned_list.exl:25:11
+(Ident Cons) @examples/owned_list.exl:26:5
+LParen @examples/owned_list.exl:26:9
+(Ident int) @examples/owned_list.exl:26:10
+Comma @examples/owned_list.exl:26:13
+Own @examples/owned_list.exl:26:15
+Star @examples/owned_list.exl:26:19
+(Ident List) @examples/owned_list.exl:26:20
+RParen @examples/owned_list.exl:26:24
+Pipe @examples/owned_list.exl:27:3
+(Ident Nil) @examples/owned_list.exl:27:5
+RBrace @examples/owned_list.exl:28:1
+Fn @examples/owned_list.exl:30:1
+(Ident sum_first) @examples/owned_list.exl:30:4
+LParen @examples/owned_list.exl:30:13
+(Ident head) @examples/owned_list.exl:30:14
+Colon @examples/owned_list.exl:30:18
+Star @examples/owned_list.exl:30:20
+Const @examples/owned_list.exl:30:21
+(Ident List) @examples/owned_list.exl:30:27
+Comma @examples/owned_list.exl:30:31
+(Ident k) @examples/owned_list.exl:30:33
+Colon @examples/owned_list.exl:30:34
+(Ident int) @examples/owned_list.exl:30:36
+RParen @examples/owned_list.exl:30:39
+Arrow @examples/owned_list.exl:30:41
+(Ident int) @examples/owned_list.exl:30:44
+LBrace @examples/owned_list.exl:30:48
+Let @examples/owned_list.exl:31:5
+Mut @examples/owned_list.exl:31:9
+(Ident acc) @examples/owned_list.exl:31:13
+Eq @examples/owned_list.exl:31:17
+(Int 0) @examples/owned_list.exl:31:19
+Semicolon @examples/owned_list.exl:31:20
+Let @examples/owned_list.exl:32:5
+Mut @examples/owned_list.exl:32:9
+(Ident cur) @examples/owned_list.exl:32:13
+Eq @examples/owned_list.exl:32:17
+(Ident head) @examples/owned_list.exl:32:19
+Semicolon @examples/owned_list.exl:32:23
+Let @examples/owned_list.exl:33:5
+Mut @examples/owned_list.exl:33:9
+(Ident left) @examples/owned_list.exl:33:13
+Eq @examples/owned_list.exl:33:18
+(Ident k) @examples/owned_list.exl:33:20
+Semicolon @examples/owned_list.exl:33:21
+While @examples/owned_list.exl:34:5
+(Ident left) @examples/owned_list.exl:34:11
+Gt @examples/owned_list.exl:34:16
+(Int 0) @examples/owned_list.exl:34:18
+LBrace @examples/owned_list.exl:34:20
+Match @examples/owned_list.exl:35:9
+Star @examples/owned_list.exl:35:15
+(Ident cur) @examples/owned_list.exl:35:16
+LBrace @examples/owned_list.exl:35:20
+(Ident List) @examples/owned_list.exl:36:13
+DoubleColon @examples/owned_list.exl:36:17
+(Ident Cons) @examples/owned_list.exl:36:19
+LParen @examples/owned_list.exl:36:23
+(Ident v) @examples/owned_list.exl:36:24
+Comma @examples/owned_list.exl:36:25
+(Ident next) @examples/owned_list.exl:36:27
+RParen @examples/owned_list.exl:36:31
+FatArrow @examples/owned_list.exl:36:33
+LBrace @examples/owned_list.exl:36:36
+(Ident acc) @examples/owned_list.exl:37:17
+Eq @examples/owned_list.exl:37:21
+(Ident acc) @examples/owned_list.exl:37:23
+Plus @examples/owned_list.exl:37:27
+(Ident v) @examples/owned_list.exl:37:29
+Semicolon @examples/owned_list.exl:37:30
+(Ident cur) @examples/owned_list.exl:38:17
+Eq @examples/owned_list.exl:38:21
+(Ident next) @examples/owned_list.exl:38:23
+Semicolon @examples/owned_list.exl:38:27
+RBrace @examples/owned_list.exl:39:13
+Pipe @examples/owned_list.exl:40:13
+(Ident List) @examples/owned_list.exl:40:15
+DoubleColon @examples/owned_list.exl:40:19
+(Ident Nil) @examples/owned_list.exl:40:21
+FatArrow @examples/owned_list.exl:40:25
+LBrace @examples/owned_list.exl:40:28
+(Ident left) @examples/owned_list.exl:40:30
+Eq @examples/owned_list.exl:40:35
+(Int 1) @examples/owned_list.exl:40:37
+Semicolon @examples/owned_list.exl:40:38
+RBrace @examples/owned_list.exl:40:40
+RBrace @examples/owned_list.exl:41:9
+(Ident left) @examples/owned_list.exl:42:9
+Eq @examples/owned_list.exl:42:14
+(Ident left) @examples/owned_list.exl:42:16
+Minus @examples/owned_list.exl:42:21
+(Int 1) @examples/owned_list.exl:42:23
+Semicolon @examples/owned_list.exl:42:24
+RBrace @examples/owned_list.exl:43:5
+Return @examples/owned_list.exl:44:5
+(Ident acc) @examples/owned_list.exl:44:12
+Semicolon @examples/owned_list.exl:44:15
+RBrace @examples/owned_list.exl:45:1
+Fn @examples/owned_list.exl:47:1
+(Ident main) @examples/owned_list.exl:47:4
+LParen @examples/owned_list.exl:47:8
+RParen @examples/owned_list.exl:47:9
+LBrace @examples/owned_list.exl:47:11
+Let @examples/owned_list.exl:48:5
+(Ident a) @examples/owned_list.exl:48:9
+Eq @examples/owned_list.exl:48:11
+(Ident default_allocator) @examples/owned_list.exl:48:13
+LParen @examples/owned_list.exl:48:30
+RParen @examples/owned_list.exl:48:31
+Semicolon @examples/owned_list.exl:48:32
+Let @examples/owned_list.exl:50:5
+Mut @examples/owned_list.exl:50:9
+(Ident head) @examples/owned_list.exl:50:13
+Colon @examples/owned_list.exl:50:17
+Own @examples/owned_list.exl:50:19
+Star @examples/owned_list.exl:50:23
+(Ident List) @examples/owned_list.exl:50:24
+Eq @examples/owned_list.exl:50:29
+New @examples/owned_list.exl:50:31
+LParen @examples/owned_list.exl:50:34
+(Ident a) @examples/owned_list.exl:50:35
+RParen @examples/owned_list.exl:50:36
+(Ident List) @examples/owned_list.exl:50:38
+DoubleColon @examples/owned_list.exl:50:42
+(Ident Nil) @examples/owned_list.exl:50:44
+Semicolon @examples/owned_list.exl:50:47
+Let @examples/owned_list.exl:51:5
+Mut @examples/owned_list.exl:51:9
+(Ident i) @examples/owned_list.exl:51:13
+Eq @examples/owned_list.exl:51:15
+(Int 1) @examples/owned_list.exl:51:17
+Semicolon @examples/owned_list.exl:51:18
+While @examples/owned_list.exl:52:5
+(Ident i) @examples/owned_list.exl:52:11
+LtEq @examples/owned_list.exl:52:13
+(Int 50000) @examples/owned_list.exl:52:16
+LBrace @examples/owned_list.exl:52:22
+(Ident head) @examples/owned_list.exl:53:9
+Eq @examples/owned_list.exl:53:14
+New @examples/owned_list.exl:53:16
+LParen @examples/owned_list.exl:53:19
+(Ident a) @examples/owned_list.exl:53:20
+RParen @examples/owned_list.exl:53:21
+(Ident List) @examples/owned_list.exl:53:23
+DoubleColon @examples/owned_list.exl:53:27
+(Ident Cons) @examples/owned_list.exl:53:29
+LParen @examples/owned_list.exl:53:33
+(Ident i) @examples/owned_list.exl:53:34
+Comma @examples/owned_list.exl:53:35
+(Ident head) @examples/owned_list.exl:53:37
+RParen @examples/owned_list.exl:53:41
+Semicolon @examples/owned_list.exl:53:42
+(Ident i) @examples/owned_list.exl:54:9
+Eq @examples/owned_list.exl:54:11
+(Ident i) @examples/owned_list.exl:54:13
+Plus @examples/owned_list.exl:54:15
+(Int 1) @examples/owned_list.exl:54:17
+Semicolon @examples/owned_list.exl:54:18
+RBrace @examples/owned_list.exl:55:5
+(Ident println) @examples/owned_list.exl:58:5
+LParen @examples/owned_list.exl:58:12
+(Ident sum_first) @examples/owned_list.exl:58:13
+LParen @examples/owned_list.exl:58:22
+(Ident head) @examples/owned_list.exl:58:23
+Comma @examples/owned_list.exl:58:27
+(Int 3) @examples/owned_list.exl:58:29
+RParen @examples/owned_list.exl:58:30
+RParen @examples/owned_list.exl:58:31
+Semicolon @examples/owned_list.exl:58:32
+RBrace @examples/owned_list.exl:62:1
+Eof @examples/owned_list.exl:63:1

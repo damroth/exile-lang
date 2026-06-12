@@ -375,7 +375,16 @@ let rec gen_expr ctx buf (te : texpr) =
       Buffer.add_string buf "((";
       Buffer.add_string buf trimmed;
       Buffer.add_string buf ")";
-      gen_expr ctx buf sub;
+      (* A C cast binds tighter than any binary operator, so a non-atomic
+         operand must be parenthesized: `(w >> 8) as u8` without parens
+         emits `(unsigned char)w >> 8`, truncating before the shift. *)
+      (match sub.e with
+       | TIntLit _ | TFloatLit _ | TBoolLit _ | TVar _ ->
+           gen_expr ctx buf sub
+       | _ ->
+           Buffer.add_char buf '(';
+           gen_expr ctx buf sub;
+           Buffer.add_char buf ')');
       Buffer.add_char buf ')'
   | TBinOp (op, l, r) ->
       let op_str =
@@ -728,7 +737,33 @@ and emit_simple_stmt ctx buf indent stmt =
         | n :: _ -> n
         | [] -> assert false
       in
-      emit_value_into_temp ctx buf indent lhs value
+      let lhs_read_by_value =
+        match value.e with
+        | TNew _ | TNewEnum _ ->
+            exists_texpr
+              (fun te -> match te.e with TVar n -> n = lhs | _ -> false)
+              value
+        | _ -> false
+      in
+      if lhs_read_by_value then begin
+        (* `head = new(a) List::Cons(i, head)` (the ratified L2/L3
+           loop-consume idiom): the allocation overwrites `head`
+           BEFORE the payload writes read it, so the node would point
+           at itself.  Build into a scratch, publish last. *)
+        let inner = indent ^ "    " in
+        Buffer.add_string buf indent;
+        Buffer.add_string buf "{\n";
+        Buffer.add_string buf inner;
+        Buffer.add_string buf (c_decl value.ty "__newv");
+        Buffer.add_string buf ";\n";
+        emit_value_into_temp ctx buf inner "__newv" value;
+        Buffer.add_string buf inner;
+        Buffer.add_string buf lhs;
+        Buffer.add_string buf " = __newv;\n";
+        Buffer.add_string buf indent;
+        Buffer.add_string buf "}\n"
+      end
+      else emit_value_into_temp ctx buf indent lhs value
   | TLetTuple { names; value; _ } ->
       emit_let_tuple ctx buf indent names value
   | TAssignField { target; field; value; _ } ->

@@ -1,0 +1,62 @@
+// Owned linear list — the loop-consume idiom and O(1)-stack teardown.
+//
+// A self-recursive owned enum is the canonical list shape:
+//
+//     enum List { Cons(int, own *List) | Nil }
+//
+// Building it uses the sanctioned rebind-after-consume pattern (L3):
+// `head = new(a) List::Cons(i, head)` consumes the old `head` into
+// the new node's payload and rebinds the name to the new node in one
+// statement.  Codegen builds the node in a scratch and publishes it
+// last, so the payload write reads the OLD head, not the fresh
+// allocation (kernel-foundation 2026-06-12).
+//
+// At scope exit the auto-drop releases the whole spine.  Because every
+// variant owns at most ONE next-node of the same enum, the synthesized
+// drop glue walks the spine with a while-loop — constant stack however
+// long the list grows (here 50000 nodes; the recursive form burns one
+// C frame per node, which overruns a multi-MB host stack at a couple
+// hundred thousand nodes and an Amiga-sized stack (a few KB) within
+// hundreds).  Genuine trees (a variant with two owned children) keep
+// the recursive form: depth moves to the C stack, so deeply-degenerate
+// owned trees on a small stack need arena reclamation or manual
+// iterative teardown instead.
+
+enum List {
+    Cons(int, own *List)
+  | Nil
+}
+
+fn sum_first(head: *const List, k: int) -> int {
+    let mut acc = 0;
+    let mut cur = head;
+    let mut left = k;
+    while left > 0 {
+        match *cur {
+            List::Cons(v, next) => {
+                acc = acc + v;
+                cur = next;
+            }
+            | List::Nil => { left = 1; }
+        }
+        left = left - 1;
+    }
+    return acc;
+}
+
+fn main() {
+    let a = default_allocator();
+
+    let mut head: own *List = new(a) List::Nil;
+    let mut i = 1;
+    while i <= 50000 {
+        head = new(a) List::Cons(i, head);
+        i = i + 1;
+    }
+
+    // The list is built newest-first: 50000, 49999, 49998, ...
+    println(sum_first(head, 3));
+
+    // `head` is still owned here; the scope-exit auto-drop frees all
+    // 50001 nodes iteratively — no free() to write, no stack to blow.
+}
