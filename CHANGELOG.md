@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.3] - 2026-06-12
+
+The freeze-hardening patch: the no-way-back freeze audit before self-host
+bring-up rejected the freeze — despite a fully green suite it found ~18
+root causes (38 findings) of silent use-after-free, double-free, leaks,
+ICEs, and invalid C in the move/drop/escape ring and codegen. Two sprints
+(DR-051, DR-052) closed every one structurally — each finding reproduced
+under ASan before the fix, then locked in with adversarial regressions.
+740 tests, verify-host 84/84, selfhost-diff 3/3 clean, ASan+UBSan sweep
+clean on all 85 examples (the shipped `hashmap.exl` had been leaking).
+
+### Added
+- `Slice` gains a `length()` method in the prelude, matching the
+  Vec/String/HashMap/StringBuilder spelling; the `.len` field stays —
+  a Slice is a transparent view and its explicit layout is its identity
+- `new(a) Tree::Leaf` — bare unit-variant enum allocation (no parens)
+  is now legal
+
+### Changed
+- `str::len` renamed to `str::length`, completing the 0.11.2 naming
+  sweep (the audit showed module functions had been missed)
+- `HashMap` lookups (`get` / `contains` / `remove`) now borrow their key
+  argument instead of consuming it: the caller keeps ownership and its
+  auto-drop frees the key, so probe keys no longer leak
+- Host-vs-m68k arithmetic divergence documented as a decision: i32/u32
+  on the host runs on 64-bit C `long` (no 32-bit wrap), div-by-zero is
+  unchecked C semantics, negative div/mod is C89 implementation-defined
+  — accepted until the port's differential testing
+
+### Fixed
+- ICE: nested `match` as the last statement of a match-arm body
+- miscompile: a block-shaped `while` condition was hoisted once before
+  the loop and never re-evaluated (infinite loop) — it now re-evaluates
+  every iteration, with `continue` semantics preserved
+- invalid C89: `new(a) Enum::V(...)` rvalue into a `*const T` slot wrote
+  through a const-qualified temp; `(*p).field = v` emitted `*p.field`
+  without parentheses; `Slice<str>` emitted a duplicated
+  `const const char **`
+- exhaustive `match`-as-expression emitted a switch without `default`,
+  tripping may-be-uninitialized at `-O2` on host and m68k gcc — the last
+  arm now carries a stacked `default:`
+- write-after-consume UAF: `*q = 99` / `q.x = 99` after `free(a, q)`
+  compiled silently — assignment targets now count as uses in the move
+  pass
+- shallow-drop leaks: auto-drop freed only the outermost allocation, so
+  owning enum trees, `Vec<String>` elements, `HashMap` keys/values, and
+  nested `own` fields leaked. The drop pass now synthesizes recursive
+  drop functions (per-pointee, per-Vec, per-HashMap glue) so owned
+  structures free depth-first by construction
+- borrow-of-local-own escapes (UAF): returning or storing a borrow of a
+  local `own` (or arena-local) compiled while the owner auto-dropped at
+  scope exit, leaving a dangling alias. Loans are now restamped on every
+  borrow slot (let, assign, struct/enum fields, call args, receivers),
+  the escape pass treats a borrow of an own binding as local provenance,
+  and `free(a, q)` invalidates q's outstanding borrows
+- `defer` bodies reading an auto-dropped binding ran after the drop
+  (guaranteed UAF) — rejected at registration; consuming defers stay
+  legal
+- steal-through-const-borrow double-free: match bindings through a
+  borrowed scrutinee are demoted to borrows and can no longer consume
+  own children
+- partial-move tri-state for owned trees: consuming children via
+  `match *t` marks the root partially moved — reading it errors, while
+  `free(a, t)` legally releases just the root storage (the `free_tree`
+  idiom); leaving a partially-moved root live at scope exit errors
+- silent-leak rejects: a discarded own-returning call in statement
+  position, an own rvalue in a borrow slot ("bind it first, then lend"),
+  shallow `free(a, p)` on a root whose children still own memory, and a
+  match arm consuming some but not all owning slots of its pattern are
+  all compile errors now
+- assignment right-hand sides were never typechecked (`b = 5` for a
+  `b: *const int` produced invalid C) — assignments now coerce like
+  `let`
+- string literals with an embedded `\0` silently truncated the emitted
+  C literal — now rejected (the `'\0'` char literal stays)
+- unused match-payload bindings no longer emit C declarations (clean
+  under `-Wall -Wextra -Werror`)
+- derive-Debug output now closes with ` }` (space before the brace) for
+  structs and struct variants
+
 ## [0.11.2] - 2026-06-10
 
 The pre-port release: the entire gate list from the 2026-06-09 language
@@ -636,4 +716,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.11.2]: https://github.com/damroth/exile-lang/releases/tag/v0.11.2
+[0.11.3]: https://github.com/damroth/exile-lang/releases/tag/v0.11.3
