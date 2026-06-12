@@ -114,6 +114,10 @@ let returns_borrow_from_recv_prefixes = [
   "String__as_slice";
   "StringBuilder__as_slice";
   "HashMap__iter";
+  (* Freeze-audit B9: an arena node is a borrow INTO the arena's
+     buffer — returning one from the fn that owns the arena dangles
+     after the arena's auto-drop. *)
+  "Arena__alloc_borrowed";
 ]
 
 let mangled_has_prefix prefix mangled =
@@ -198,6 +202,14 @@ let rec prov_of live (te : texpr) =
   | TFnRef _ | TSizeOf _ -> CallerOrStatic
   | TCall { mangled; args } ->
       prov_of_call ~prov_of_arg:(prov_of live) mangled args
+  | TBuiltinCall { name = "ptr_offset"; args = base :: _ } ->
+      (* Freeze-audit B9: pointer arithmetic derives from its base —
+         a bump-allocated arena node is a borrow INTO the arena
+         buffer.  This makes the param-SET summary of
+         Arena.alloc_borrowed (and any user bump allocator) carry
+         return-derives-from-self, so returning a node out of the fn
+         that owns the arena is the dangling-borrow error. *)
+      prov_of live base
   | TBuiltinCall _ | TIndirectCall _ -> CallerOrStatic
   | TBlock { trailing = None; _ } -> CallerOrStatic
 

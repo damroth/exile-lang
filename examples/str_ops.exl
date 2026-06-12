@@ -4,7 +4,7 @@
 //
 // Surface:
 //
-//   str::len(s) -> u32                 byte count (wraps cstr_len)
+//   str::length(s) -> u32                 byte count (wraps cstr_len)
 //   str::as_bytes(s) -> Slice<u8>      length-bounded byte view
 //   str::eq(a, b) -> bool              content compare, target of `==`/`!=`
 //   str::cmp(a, b) -> i32              lexicographic
@@ -25,7 +25,7 @@ fn main() {
     if a != c { println(1); } else { println(0); }    // 1
 
     // Free-functions — OCaml-style `str::*`, not methods on str.
-    println(str::len(a) as int);                       // 5
+    println(str::length(a) as int);                       // 5
     println(str::cmp(a, c));                           // -15 ('h'-'w')
     println(str::hash("a") as int);                    // 97  (acc=0*31+'a')
     println(str::hash("ab") as int);                   // 3105 (97*31+'b')

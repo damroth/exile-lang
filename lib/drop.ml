@@ -53,14 +53,26 @@ open Ir
    own walker.  Replaying Move.walk_expr on an all-Live seed cannot
    raise: any consume-then-read inside one expression would have
    failed Move.check on this same program already. *)
-let consumed_by ~structs ~enums names (te : texpr) : string list =
-  if names = [] then []
+let states_by ~structs ~enums names (te : texpr)
+  : string list * string list =
+  if names = [] then ([], [])
   else
     let live = List.map (fun n -> (n, Move.Live)) names in
     let after = Move.walk_expr ~structs ~enums live te in
-    List.filter_map
-      (function (n, Move.Consumed _) -> Some n | _ -> None) after
-    |> List.sort_uniq compare
+    let consumed =
+      List.filter_map
+        (function (n, Move.Consumed _) -> Some n | _ -> None) after
+      |> List.sort_uniq compare
+    in
+    let partial =
+      List.filter_map
+        (function (n, Move.PartialMoved _) -> Some n | _ -> None) after
+      |> List.sort_uniq compare
+    in
+    (consumed, partial)
+
+let consumed_by ~structs ~enums names (te : texpr) : string list =
+  fst (states_by ~structs ~enums names te)
 
 (* Defer bodies are stmt lists; flatten to their top-level exprs in
    order (defer bodies cannot contain `defer`/`return`). *)
@@ -105,10 +117,20 @@ let rec has_drop_deep ~structs t =
 
 (* ---------- state ---------- *)
 
-type status = Live | Consumed
+type status =
+  | Live
+  | Consumed
+  | Partial
+      (* payload moved out through a match on an owned tree (move.ml
+         PartialMoved) — the storage still needs an explicit
+         `free(alloc, x)`; auto-drop would re-walk the stale payload *)
 
 type kind =
   | StructDrop of string list                  (* droppable struct path *)
+  | ArrayDrop of { elem_path : string list; size : int }
+      (* fixed array of self-sufficient droppable structs — each
+         element dropped in place (unrolled; stack storage itself
+         needs no free) *)
   | BareOwn of { pointee : typ; prov : string option }
 
 type entry = {
@@ -122,13 +144,23 @@ let names_of st = List.map (fun e -> e.ename) st
 
 let mark_consumed names st =
   List.map (fun e ->
+    match e.status with
+    | (Live | Partial) when List.mem e.ename names ->
+        { e with status = Consumed }
+    | _ -> e)
+    st
+
+let mark_partial names st =
+  List.map (fun e ->
     if e.status = Live && List.mem e.ename names
-    then { e with status = Consumed }
+    then { e with status = Partial }
     else e)
     st
 
 let apply_expr ~structs ~enums st (te : texpr) =
-  mark_consumed (consumed_by ~structs ~enums (names_of st) te) st
+  let (consumed, partial) =
+    states_by ~structs ~enums (names_of st) te in
+  mark_partial partial (mark_consumed consumed st)
 
 (* ---------- drop emission ---------- *)
 
@@ -172,68 +204,231 @@ let free_via ~alloc_expr ~ptr_expr ~bytes pos =
     pos;
   }
 
+(* ---------- B8: deep-drop glue (recursive by construction) ---------- *)
+
+(* Freeze-audit B8 root: the old emission was SHALLOW — one free per
+   direct own-field, never recursing into pointees or container
+   elements.  Owning enum trees leaked every child, Vec<String> leaked
+   every element buffer, HashMap<String, V> never released a key.
+
+   The structural fix: for every type whose ownership graph needs
+   recursion or iteration, synthesize ONE real drop function (post-mono
+   IR, registered into tp_funcs at the end of the pass, emitted and
+   DCE'd like any other fn):
+
+     __drop_ptr_<T>(a: Allocator, p: own *T)
+         struct pointee: drop its owned innards in place, then free p;
+         enum pointee:   match on *p, recurse into owned payloads
+                         (children of the same tree call this very
+                         function), then free p.
+     __drop_vec_<inst>(v: *Vec_inst)
+         drop each of the count elements in place, then free backing.
+     __drop_hm_<inst>(m: *HashMap_inst)
+         drop key/value of every Occupied slot, then free the slots.
+
+   Allocator sourcing: a struct's own-field frees through its sibling
+   `alloc` (declaration invariant); a tree's children free through the
+   SAME allocator as the root (single-allocator-per-tree assumption —
+   documented; arenas make it trivially true); Vec/HashMap elements of
+   bare-own type free through the container's allocator (same
+   assumption), while self-sufficient elements (String et al.) carry
+   their own. *)
+
+let glue_tbl : (string, string) Hashtbl.t = Hashtbl.create 16
+let glue_queue : (string * string) Queue.t = Queue.create ()
+    (* (kind-key, fn-name); kind-key = "ptr:<mangled>" / "vec:<path>"
+       / "hm:<path>" — the builder decodes it back via glue_meta. *)
+let glue_meta : (string, typ) Hashtbl.t = Hashtbl.create 16
+let glue_fns : tfunc list ref = ref []
+
+let glue_reset () =
+  Hashtbl.reset glue_tbl;
+  Queue.clear glue_queue;
+  Hashtbl.reset glue_meta;
+  glue_fns := []
+
+let prelude_pos = { Pos.file = "<prelude>"; line = 1; col = 1 }
+
+(* Does dropping a VALUE of this type require real work?  (Transitive;
+   enums recurse through their payloads, with a visited set for
+   recursive trees.) *)
+let rec droppable_deep ~structs ~enums ?(visited = []) t =
+  match t with
+  | TStruct _ -> has_drop_deep ~structs t
+  | TEnum p ->
+      if List.mem p visited then false
+      else
+        (match List.find_opt
+                 (fun (e : enum_sig) -> e.ename_path = p) enums with
+         | None -> false
+         | Some es ->
+             List.exists
+               (fun (v : variant_sig) ->
+                 List.exists
+                   (fun (_, ft) ->
+                     match ft with
+                     | TOwnPtr _ -> true
+                     | _ ->
+                         droppable_deep ~structs ~enums
+                           ~visited:(p :: visited) ft)
+                   v.vsfields)
+               es.evariants)
+  | _ -> false
+
+let request_glue ~key ~prefix (meta : typ) : string =
+  match Hashtbl.find_opt glue_tbl key with
+  | Some name -> name
+  | None ->
+      let name =
+        Printf.sprintf "__drop_%s_%d" prefix (Hashtbl.length glue_tbl) in
+      Hashtbl.replace glue_tbl key name;
+      Hashtbl.replace glue_meta key meta;
+      Queue.push (key, name) glue_queue;
+      name
+
+let request_ptr_glue pointee =
+  request_glue ~key:("ptr:" ^ mangle_typ pointee) ~prefix:"ptr" pointee
+
+let request_vec_glue inst_path =
+  request_glue ~key:("vec:" ^ String.concat "::" inst_path) ~prefix:"vec"
+    (TStruct inst_path)
+
+let request_hm_glue inst_path =
+  request_glue ~key:("hm:" ^ String.concat "::" inst_path) ~prefix:"hm"
+    (TStruct inst_path)
+
 (* Release everything [base] (a droppable struct value) owns: free its
-   direct `own *T` fields through the SAME level's `alloc` field, then
-   recurse into droppable struct-value fields (S5 transitivity —
-   `Person { name: String }` releases `name.ptr` via `name.alloc`). *)
-let rec drop_stmts_for_struct ~structs (base : texpr) path pos : tstmt list =
+   direct `own *T` fields through the SAME level's `alloc` field
+   (recursing through the pointee first when it owns things itself),
+   then recurse into droppable struct-value fields.  Vec / HashMap
+   instances with droppable contents divert to their synthesized glue
+   so elements are dropped too (B8). *)
+let rec drop_stmts_for_struct ~structs ~enums (base : texpr) path pos
+  : tstmt list =
   match find_struct ~structs path with
   | None -> []
   | Some s ->
-      let alloc_field = {
-        e = TFieldAccess { target = base; field = "alloc" };
-        ty = allocator_ty; pos;
-      } in
-      let has_field name =
-        List.exists (fun (n, _) -> n = name) s.sfields_ty in
-      let field_u32 name = {
-        e = TFieldAccess { target = base; field = name };
-        ty = u32_ty; pos;
-      } in
-      (* Byte-count heuristic (DR-046): size-tracking allocators get
-         the real footprint back.  Shape from sibling fields:
-           cap → cap * size_of(elem)      (growable: Vec/SB/HashMap)
-           len → len + 1                  (NUL-terminated: String)
-           else → size_of(elem)           (single-element ownership) *)
-      let bytes_expr inner =
-        if has_field "cap" then
-          { e = TBinOp (Ast.Mul, field_u32 "cap", size_of_as_u32 inner pos);
-            ty = u32_ty; pos }
-        else if has_field "len" then
-          { e = TBinOp (Ast.Add, field_u32 "len",
-                        { e = TIntLit 1; ty = u32_ty; pos });
-            ty = u32_ty; pos }
-        else size_of_as_u32 inner pos
+      let elem_of_own_field fname =
+        match List.assoc_opt fname s.sfields_ty with
+        | Some (TOwnPtr inner) -> Some inner
+        | _ -> None
       in
-      List.concat_map (fun (fname, fty) ->
-        match fty with
-        | TOwnPtr inner ->
-            let field_access = {
-              e = TFieldAccess { target = base; field = fname };
-              ty = fty; pos;
-            } in
-            [ free_via ~alloc_expr:alloc_field ~ptr_expr:field_access
-                ~bytes:(bytes_expr inner) pos ]
-        | TStruct p2 when has_drop_deep ~structs fty ->
-            let sub_base = {
-              e = TFieldAccess { target = base; field = fname };
-              ty = fty; pos;
-            } in
-            drop_stmts_for_struct ~structs sub_base p2 pos
-        | _ -> [])
-        s.sfields_ty
+      let base_ref =
+        match base.ty with
+        | TPtr _ | TOwnPtr _ | TConstPtr _ -> base
+        | _ -> { e = TRef base; ty = TPtr base.ty; pos }
+      in
+      let vec_like =
+        Mono.is_instance_of ["Vec"] path
+        || Mono.is_instance_of ["StringBuilder"] path
+      in
+      let elem_droppable inner =
+        droppable_deep ~structs ~enums inner
+        || (match inner with TOwnPtr _ -> true | _ -> false)
+      in
+      (match path, elem_of_own_field "ptr", elem_of_own_field "slots" with
+       | _, Some elem, _ when vec_like && elem_droppable elem ->
+           let g = request_vec_glue path in
+           [ TExprStmt {
+               e = TCall { mangled = g; args = [ base_ref ] };
+               ty = TInt { signed = true; width = Ast.W32 }; pos } ]
+       | _, _, Some (TStruct _ as slot_t)
+         when Mono.is_instance_of ["HashMap"] path
+           && (match find_struct ~structs
+                       (match slot_t with TStruct sp -> sp | _ -> [])
+               with
+               | Some slot_s ->
+                   List.exists (fun (fn, ft) ->
+                     (fn = "key" || fn = "value")
+                     && elem_droppable ft)
+                     slot_s.sfields_ty
+               | None -> false) ->
+           let g = request_hm_glue path in
+           [ TExprStmt {
+               e = TCall { mangled = g; args = [ base_ref ] };
+               ty = TInt { signed = true; width = Ast.W32 }; pos } ]
+       | _ ->
+           let alloc_field = {
+             e = TFieldAccess { target = base; field = "alloc" };
+             ty = allocator_ty; pos;
+           } in
+           let has_field name =
+             List.exists (fun (n, _) -> n = name) s.sfields_ty in
+           let field_u32 name = {
+             e = TFieldAccess { target = base; field = name };
+             ty = u32_ty; pos;
+           } in
+           (* Byte-count heuristic (DR-046): size-tracking allocators
+              get the real footprint back.  Shape from sibling fields:
+                cap -> cap * size_of(elem)   (growable buffers)
+                len -> len + 1               (NUL-terminated: String)
+                else -> size_of(elem)        (single-element) *)
+           let bytes_expr inner =
+             if has_field "cap" then
+               { e = TBinOp (Ast.Mul, field_u32 "cap",
+                             size_of_as_u32 inner pos);
+                 ty = u32_ty; pos }
+             else if has_field "len" then
+               { e = TBinOp (Ast.Add, field_u32 "len",
+                             { e = TIntLit 1; ty = u32_ty; pos });
+                 ty = u32_ty; pos }
+             else size_of_as_u32 inner pos
+           in
+           List.concat_map (fun (fname, fty) ->
+             match fty with
+             | TOwnPtr inner ->
+                 let field_access = {
+                   e = TFieldAccess { target = base; field = fname };
+                   ty = fty; pos;
+                 } in
+                 if droppable_deep ~structs ~enums inner then
+                   let g = request_ptr_glue inner in
+                   [ TExprStmt {
+                       e = TCall { mangled = g;
+                                   args = [ alloc_field; field_access ] };
+                       ty = TInt { signed = true; width = Ast.W32 };
+                       pos } ]
+                 else
+                   [ free_via ~alloc_expr:alloc_field
+                       ~ptr_expr:field_access
+                       ~bytes:(bytes_expr inner) pos ]
+             | TStruct p2 when has_drop_deep ~structs fty ->
+                 let sub_base = {
+                   e = TFieldAccess { target = base; field = fname };
+                   ty = fty; pos;
+                 } in
+                 drop_stmts_for_struct ~structs ~enums sub_base p2 pos
+             | _ -> [])
+             s.sfields_ty)
 
-let drop_stmts_for_entry ~structs (e : entry) : tstmt list =
+let drop_stmts_for_entry ~structs ~enums (e : entry) : tstmt list =
   match e.kind with
   | StructDrop path ->
       let base = { e = TVar e.ename; ty = TStruct path; pos = e.epos } in
-      drop_stmts_for_struct ~structs base path e.epos
+      drop_stmts_for_struct ~structs ~enums base path e.epos
   | BareOwn { pointee; prov = Some a } ->
       let alloc_expr = { e = TVar a; ty = allocator_ty; pos = e.epos } in
       let ptr_expr =
         { e = TVar e.ename; ty = TOwnPtr pointee; pos = e.epos } in
-      [ free_via ~alloc_expr ~ptr_expr
-          ~bytes:(size_of_as_u32 pointee e.epos) e.epos ]
+      if droppable_deep ~structs ~enums pointee then
+        let g = request_ptr_glue pointee in
+        [ TExprStmt {
+            e = TCall { mangled = g; args = [ alloc_expr; ptr_expr ] };
+            ty = TInt { signed = true; width = Ast.W32 }; pos = e.epos } ]
+      else
+        [ free_via ~alloc_expr ~ptr_expr
+            ~bytes:(size_of_as_u32 pointee e.epos) e.epos ]
+  | ArrayDrop { elem_path; size } ->
+      let arr_ty =
+        TArray { elem = TStruct elem_path; size } in
+      let arr_var = { e = TVar e.ename; ty = arr_ty; pos = e.epos } in
+      List.concat_map (fun i ->
+        let idx = { e = TIntLit i; ty = u32_ty; pos = e.epos } in
+        let elem_lv = {
+          e = TIndex { base = arr_var; index = idx };
+          ty = TStruct elem_path; pos = e.epos } in
+        drop_stmts_for_struct ~structs ~enums elem_lv elem_path e.epos)
+        (List.init size (fun i -> i))
   | BareOwn { prov = None; _ } ->
       (* L1 reject: nothing to release it with, and silence would be
          a leak.  The binding reached a scope exit Live. *)
@@ -245,12 +440,266 @@ let drop_stmts_for_entry ~structs (e : entry) : tstmt list =
 
 (* Drops for every Live entry, newest-first (LIFO declaration order —
    st keeps newest at the head). *)
-let drops_for_live ~structs st : tstmt list =
+let drops_for_live ~structs ~enums st : tstmt list =
   List.concat_map (fun e ->
     match e.status with
-    | Live -> drop_stmts_for_entry ~structs e
+    | Live -> drop_stmts_for_entry ~structs ~enums e
+    | Partial ->
+        Error.failf e.epos
+          "'%s' had its payload moved out and still owns its storage \
+           at scope exit — release it explicitly with `free(alloc, %s)`"
+          e.ename e.ename
     | Consumed -> [])
     st
+
+(* ---------- glue body builders ---------- *)
+
+let i32_ty = TInt { signed = true; width = Ast.W32 }
+
+let glue_call name args pos =
+  TExprStmt { e = TCall { mangled = name; args }; ty = i32_ty; pos }
+
+(* Drop stmts for one VALUE lvalue [lv] (struct value, bare own ptr, or
+   enum value is not expected here).  [container_alloc] supplies the
+   allocator for bare-own elements (same-allocator assumption). *)
+let elem_drop_stmts ~structs ~enums ~container_alloc (lv : texpr) pos
+  : tstmt list =
+  match lv.ty with
+  | TStruct p when has_drop_deep ~structs lv.ty ->
+      drop_stmts_for_struct ~structs ~enums lv p pos
+  | TOwnPtr inner ->
+      if droppable_deep ~structs ~enums inner then
+        let g = request_ptr_glue inner in
+        [ glue_call g [ container_alloc; lv ] pos ]
+      else
+        [ free_via ~alloc_expr:container_alloc ~ptr_expr:lv
+            ~bytes:(size_of_as_u32 inner pos) pos ]
+  | _ -> []
+
+let mk_glue_tfunc ~name ~params ~lets ~body : tfunc =
+  let rec ann_of = function
+    | TStruct p -> Ast.TyStruct { path = p; args = [] }
+    | TPtr t -> Ast.TyPtr (ann_of t)
+    | TOwnPtr t -> Ast.TyOwnPtr (ann_of t)
+    | TConstPtr t -> Ast.TyConstPtr (ann_of t)
+    | _ -> Ast.TyPtr Ast.TyCVoid
+  in
+  let ast_params =
+    List.map (fun (pname, ty) ->
+      { Ast.pname; pty = ann_of ty; preg = None; is_mut = false })
+      params
+  in
+  let f = Ast.{
+    name; c_name = name; tparams = []; tbounds = [];
+    params = ast_params; ret_ty = None; body = [];
+    is_pub = false; is_extern = false; is_variadic = false;
+    amiga_lib = None; tier_hint = None; must_use = false;
+    escapes_hatch = false; pos = prelude_pos;
+  } in
+  { tf_path = [ name ];
+    tf_func = f;
+    tf_mangled = name;
+    tf_param_tys = List.map snd params;
+    tf_ret_ty = None;
+    tf_body = body;
+    tf_lets = lets;
+    tf_origin_pos = None }
+
+let build_ptr_glue ~structs ~enums ~name pointee : tfunc =
+  let pos = prelude_pos in
+  let a_var = { e = TVar "__a"; ty = allocator_ty; pos } in
+  let p_var = { e = TVar "__p"; ty = TOwnPtr pointee; pos } in
+  let free_self =
+    free_via ~alloc_expr:a_var ~ptr_expr:p_var
+      ~bytes:(size_of_as_u32 pointee pos) pos
+  in
+  let body =
+    match pointee with
+    | TStruct sp ->
+        let deref = { e = TDeref p_var; ty = pointee; pos } in
+        drop_stmts_for_struct ~structs ~enums deref sp pos @ [ free_self ]
+    | TEnum ep ->
+        let es =
+          match List.find_opt
+                  (fun (e : enum_sig) -> e.ename_path = ep) enums with
+          | Some es -> es
+          | None -> Error.failf pos "internal: enum '%s' missing in drop \
+                                     glue" (String.concat "::" ep)
+        in
+        let arms =
+          List.mapi (fun tag (v : variant_sig) ->
+            let binds =
+              List.filter_map (fun (fname, ft) ->
+                let want = match ft with
+                  | TOwnPtr _ -> true
+                  | TStruct _ -> has_drop_deep ~structs ft
+                  | _ -> false
+                in
+                if want then Some (fname, TPVar ("__d_" ^ fname))
+                else None)
+                v.vsfields
+            in
+            let stmts =
+              List.concat_map (fun (fname, _) ->
+                let ft = List.assoc fname v.vsfields in
+                let bind_var =
+                  { e = TVar ("__d_" ^ fname); ty = ft; pos } in
+                elem_drop_stmts ~structs ~enums ~container_alloc:a_var
+                  bind_var pos)
+                binds
+            in
+            { tpat = TPVariant { variant = v.vsname; tag; binds };
+              tguard = None;
+              tbody = { e = TBlock { stmts; trailing = None };
+                        ty = i32_ty; pos };
+              tdiverges = false;
+              tarm_pos = pos })
+            es.evariants
+        in
+        let deref = { e = TDeref p_var; ty = pointee; pos } in
+        [ TExprStmt {
+            e = TMatch { scrutinee = deref; ename_path = ep; arms };
+            ty = i32_ty; pos } ]
+        @ [ free_self ]
+    | _ -> [ free_self ]
+  in
+  mk_glue_tfunc ~name
+    ~params:[ ("__a", allocator_ty); ("__p", TOwnPtr pointee) ]
+    ~lets:[] ~body
+
+(* Shared loop skeleton: `__i = 0; while (__i < <bound>) { <body>;
+   __i = __i + 1; }`. *)
+let count_loop ~bound ~mk_body pos : tstmt list =
+  let i_var = { e = TVar "__i"; ty = u32_ty; pos } in
+  let zero = { e = TIntLit 0; ty = u32_ty; pos } in
+  let one = { e = TIntLit 1; ty = u32_ty; pos } in
+  let cond = { e = TBinOp (Ast.Lt, i_var, bound); ty = TBool; pos } in
+  let step =
+    TAssign { path = [ "__i" ];
+              value = { e = TBinOp (Ast.Add, i_var, one);
+                        ty = u32_ty; pos };
+              pos }
+  in
+  [ TLet { name = "__i"; value = zero; pos };
+    TWhile { cond; body = mk_body i_var @ [ step ]; post = [] } ]
+
+let build_vec_glue ~structs ~enums ~name inst_path : tfunc =
+  let pos = prelude_pos in
+  let s = match find_struct ~structs inst_path with
+    | Some s -> s
+    | None -> Error.failf pos "internal: vec instance missing in drop glue"
+  in
+  let elem = match List.assoc_opt "ptr" s.sfields_ty with
+    | Some (TOwnPtr e) -> e
+    | _ -> Error.failf pos "internal: vec ptr field shape"
+  in
+  let count_field =
+    if List.mem_assoc "count" s.sfields_ty then "count" else "len" in
+  let v_var = { e = TVar "__v"; ty = TPtr (TStruct inst_path); pos } in
+  let vfield f ty = { e = TFieldAccess { target = v_var; field = f };
+                      ty; pos } in
+  let valloc = vfield "alloc" allocator_ty in
+  let body =
+    count_loop pos
+      ~bound:(vfield count_field u32_ty)
+      ~mk_body:(fun i_var ->
+        let elem_lv = {
+          e = TIndex { base = vfield "ptr" (TOwnPtr elem); index = i_var };
+          ty = elem; pos } in
+        elem_drop_stmts ~structs ~enums ~container_alloc:valloc elem_lv pos)
+    @ [ free_via ~alloc_expr:valloc
+          ~ptr_expr:(vfield "ptr" (TOwnPtr elem))
+          ~bytes:{ e = TBinOp (Ast.Mul, vfield "cap" u32_ty,
+                               size_of_as_u32 elem pos);
+                   ty = u32_ty; pos }
+          pos ]
+  in
+  mk_glue_tfunc ~name
+    ~params:[ ("__v", TPtr (TStruct inst_path)) ]
+    ~lets:[ ("__i", u32_ty) ] ~body
+
+let build_hm_glue ~structs ~enums ~name inst_path : tfunc =
+  let pos = prelude_pos in
+  let s = match find_struct ~structs inst_path with
+    | Some s -> s
+    | None -> Error.failf pos "internal: hashmap instance missing"
+  in
+  let slot_t = match List.assoc_opt "slots" s.sfields_ty with
+    | Some (TOwnPtr (TStruct sp as t)) -> (sp, t)
+    | _ -> Error.failf pos "internal: hashmap slots field shape"
+  in
+  let (slot_path, slot_ty) = slot_t in
+  let slot_s = match find_struct ~structs slot_path with
+    | Some s -> s
+    | None -> Error.failf pos "internal: slot struct missing"
+  in
+  let m_var = { e = TVar "__m"; ty = TPtr (TStruct inst_path); pos } in
+  let mfield f ty = { e = TFieldAccess { target = m_var; field = f };
+                      ty; pos } in
+  let malloc_ = mfield "alloc" allocator_ty in
+  let body =
+    count_loop pos
+      ~bound:(mfield "cap" u32_ty)
+      ~mk_body:(fun i_var ->
+        let slot_lv = {
+          e = TIndex { base = mfield "slots" (TOwnPtr slot_ty);
+                       index = i_var };
+          ty = slot_ty; pos } in
+        let state_f = {
+          e = TFieldAccess { target = slot_lv; field = "state" };
+          ty = TInt { signed = false; width = Ast.W8 }; pos } in
+        let occupied = {
+          e = TBinOp (Ast.EqEq, state_f,
+                      { e = TIntLit 1;
+                        ty = TInt { signed = false; width = Ast.W8 };
+                        pos });
+          ty = TBool; pos } in
+        let kv_drops =
+          List.concat_map (fun fname ->
+            match List.assoc_opt fname slot_s.sfields_ty with
+            | Some ft ->
+                let lv = {
+                  e = TFieldAccess { target = slot_lv; field = fname };
+                  ty = ft; pos } in
+                elem_drop_stmts ~structs ~enums ~container_alloc:malloc_
+                  lv pos
+            | None -> [])
+            [ "key"; "value" ]
+        in
+        if kv_drops = [] then []
+        else [ TIf { cond = occupied; then_body = kv_drops;
+                     else_body = [] } ])
+    @ [ free_via ~alloc_expr:malloc_
+          ~ptr_expr:(mfield "slots" (TOwnPtr slot_ty))
+          ~bytes:{ e = TBinOp (Ast.Mul, mfield "cap" u32_ty,
+                               size_of_as_u32 slot_ty pos);
+                   ty = u32_ty; pos }
+          pos ]
+  in
+  mk_glue_tfunc ~name
+    ~params:[ ("__m", TPtr (TStruct inst_path)) ]
+    ~lets:[ ("__i", u32_ty) ] ~body
+
+(* Drain the request queue to a fixpoint — building one glue body may
+   request glue for nested types (a tree of Vec<String>, ...). *)
+let drain_glue ~structs ~enums () =
+  while not (Queue.is_empty glue_queue) do
+    let (key, name) = Queue.pop glue_queue in
+    let meta = Hashtbl.find glue_meta key in
+    let tf =
+      if String.length key >= 4 && String.sub key 0 4 = "ptr:" then
+        build_ptr_glue ~structs ~enums ~name meta
+      else if String.length key >= 4 && String.sub key 0 4 = "vec:" then
+        (match meta with
+         | TStruct p -> build_vec_glue ~structs ~enums ~name p
+         | _ -> assert false)
+      else
+        (match meta with
+         | TStruct p -> build_hm_glue ~structs ~enums ~name p
+         | _ -> assert false)
+    in
+    glue_fns := tf :: !glue_fns
+  done
 
 (* ---------- provenance ---------- *)
 
@@ -273,6 +722,19 @@ let entry_for ~structs name (ty : typ) pos : entry option =
   | TOwnPtr inner ->
       Some { ename = name; status = Live;
              kind = BareOwn { pointee = inner; prov = None }; epos = pos }
+  | TArray { elem = TOwnPtr _; _ } ->
+      (* Freeze-audit B8: an array of bare owned pointers has no
+         allocator at hand to release the elements with — silent leak
+         territory.  Reject; wrap them in a struct that carries its
+         allocator, or use a Vec. *)
+      Error.failf pos
+        "an array of bare `own *T` cannot be auto-dropped (no \
+         allocator at hand for the elements) — wrap the pointers in \
+         an allocator-carrying struct, or use a Vec"
+  | TArray { elem = TStruct p; size }
+    when has_drop_deep ~structs (TStruct p) ->
+      Some { ename = name; status = Live;
+             kind = ArrayDrop { elem_path = p; size }; epos = pos }
   | _ -> None
 
 (* ---------- per-fn temp collector (value-then-drop sequencing) ----- *)
@@ -289,6 +751,7 @@ let merge_branches pos st_then st_else =
     match a.status, b.status with
     | Live, Live -> a
     | Consumed, Consumed -> a
+    | Partial, Partial -> a
     | _ ->
         Error.failf pos
           "'%s' is moved out on one branch but stays owned on the \
@@ -327,7 +790,7 @@ let rec walk_stmts ~structs ~enums ~defers (st : entry list) stmts
   let ends_in_return =
     match List.rev body with TReturn _ :: _ -> true | _ -> false in
   let tail_drops =
-    if ends_in_return then [] else drops_for_live ~structs locals in
+    if ends_in_return then [] else drops_for_live ~structs ~enums locals in
   (body @ tail_drops, survivors)
 
 and walk_stmt ~structs ~enums ~defers st stmt
@@ -342,7 +805,7 @@ and walk_stmt ~structs ~enums ~defers st stmt
       let shadow_drops =
         List.concat_map (fun e ->
           if e.ename = name && e.status = Live
-          then drop_stmts_for_entry ~structs e
+          then drop_stmts_for_entry ~structs ~enums e
           else [])
           st
       in
@@ -374,7 +837,7 @@ and walk_stmt ~structs ~enums ~defers st stmt
                 "assigning to '%s' would silently leak its current \
                  value (allocator provenance unknown) — free it or \
                  move it first" n
-          | _ -> drop_stmts_for_entry ~structs old
+          | _ -> drop_stmts_for_entry ~structs ~enums old
         else []
       in
       let st =
@@ -394,6 +857,23 @@ and walk_stmt ~structs ~enums ~defers st stmt
       (apply_one ~structs ~enums st stmt value, defers)
       |> fun ((stmts, st), defers) -> (stmts, st, defers)
   | TExprStmt e ->
+      (* Freeze-audit B12: an expression statement whose value is an
+         owned pointer or a droppable struct discards ownership on the
+         floor — nothing tracks it, nothing releases it (the L1
+         never-consumed check only sees BINDINGS).  Reject; binding it
+         puts it under the normal lifecycle. *)
+      (match e.ty with
+       | TOwnPtr _ ->
+           Error.failf e.pos
+             "this call returns an owned pointer that is silently \
+              discarded (and leaked) — bind it with `let`, then free, \
+              move, or return it"
+       | TStruct _ when has_drop_deep ~structs e.ty ->
+           Error.failf e.pos
+             "this expression produces an owning value that is silently \
+              discarded (and leaked) — bind it with `let` so it can be \
+              dropped or consumed"
+       | _ -> ());
       let st = apply_expr ~structs ~enums st e in
       ([stmt], st, defers)
   | TReturn { value; pos } ->
@@ -414,7 +894,7 @@ and walk_stmt ~structs ~enums ~defers st stmt
              (List.concat defers))
           st
       in
-      let drops = drops_for_live ~structs st_exit in
+      let drops = drops_for_live ~structs ~enums st_exit in
       (* Sequencing (DR-044): evaluate the return value BEFORE the
          drops — `return *buf.p` must read through `buf.p` while the
          backing storage is still alive.  Var returns and empty
@@ -464,9 +944,36 @@ and walk_stmt ~structs ~enums ~defers st stmt
       let (post', st_post) =
         walk_stmts ~structs ~enums ~defers st_body post in
       ([ TWhile { cond; body = body'; post = post' } ], st_post, defers)
-  | TDefer { body; _ } ->
-      (* Registered, not walked: the body's consumes apply at each
-         scope exit from here on (codegen runs defer bodies there). *)
+  | TDefer { body; pos } ->
+      (* Freeze-audit B10: in the emitted C the auto-drops land BEFORE
+         the defer flush, so a defer body that READS a tracked binding
+         without consuming it would run against freed storage.  Reject
+         up front; a defer that CONSUMES the binding (s.free(),
+         free(a, p)) elides the auto-drop and stays legal. *)
+      let tracked = names_of st in
+      let consumed = consumed_by_stmts ~structs ~enums tracked body in
+      let reads =
+        List.concat_map
+          (fun s ->
+            List.concat_map
+              (fun e ->
+                Ir.fold_texpr
+                  (fun acc (te : texpr) ->
+                    match te.e with
+                    | TVar n when List.mem n tracked -> n :: acc
+                    | _ -> acc)
+                  [] e)
+              (stmt_exprs s))
+          body
+        |> List.sort_uniq compare
+      in
+      (match List.filter (fun n -> not (List.mem n consumed)) reads with
+       | n :: _ ->
+           Error.failf pos
+             "defer body reads '%s', but '%s' is auto-dropped before \
+              deferred code runs — consume it inside the defer \
+              (free/drop) or restructure without defer" n n
+       | [] -> ());
       ([ stmt ], st, body :: defers)
   | TLetTuple _ | TFor _ | TForEach _ | TBreak _ | TContinue _ ->
       ([ stmt ], st, defers)
@@ -501,7 +1008,7 @@ let rewrite_fn ~structs ~enums (tf : tfunc) : tfunc =
       match List.rev body' with TReturn _ :: _ -> true | _ -> false in
     let body_final =
       if ends_in_return then body'
-      else body' @ drops_for_live ~structs st_end
+      else body' @ drops_for_live ~structs ~enums st_end
     in
     { tf with
       tf_body = body_final;
@@ -509,8 +1016,10 @@ let rewrite_fn ~structs ~enums (tf : tfunc) : tfunc =
   end
 
 let insert (tp : tprogram) : tprogram =
-  { tp with
-    tp_funcs =
-      List.map
-        (rewrite_fn ~structs:tp.tp_struct_index ~enums:tp.tp_enum_index)
-        tp.tp_funcs }
+  glue_reset ();
+  let structs = tp.tp_struct_index and enums = tp.tp_enum_index in
+  let funcs = List.map (rewrite_fn ~structs ~enums) tp.tp_funcs in
+  (* Build every requested deep-drop glue fn (fixpoint: a body may
+     request glue for nested types). *)
+  drain_glue ~structs ~enums ();
+  { tp with tp_funcs = funcs @ List.rev !glue_fns }

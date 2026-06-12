@@ -15,7 +15,18 @@ open Ir
 (* Per-binding state.  Tracked names live in an association list keyed
    by binding name; only `@move` bindings are ever inserted, so the
    zero-blast-radius guarantee is structural. *)
-type state = Live | Consumed of Pos.t
+type state =
+  | Live
+  | Consumed of Pos.t
+  | PartialMoved of Pos.t
+      (* freeze-audit B13: an owned tree whose CHILDREN were moved out
+         through a match (`match *t { Add(l, r) => free both }`) — the
+         payload is stale, but the root's own storage is still owned.
+         The only legal further use is releasing that storage:
+         `free(alloc, t)` or an explicit `t.drop()`.  Reads reject
+         (stale payload = UAF) and the binding must still be consumed
+         before scope exit (auto-drop would re-walk the stale
+         payload). *)
 
 (* True iff [t] should be tracked by the move-pass.  Borrowed pointers
    (`*T`, `*const T`) are never affine — a borrow can't consume.  The
@@ -39,13 +50,21 @@ let rec is_affine_typ ~structs t =
 
 let set_consumed live n pos =
   List.map (fun (k, v) ->
-    if k = n && v = Live then (k, Consumed pos) else (k, v))
+    match v with
+    | Live | PartialMoved _ when k = n -> (k, Consumed pos)
+    | _ -> (k, v))
     live
 
 (* Any TVar of a tracked binding in Consumed state is a use-after-
    consume — report at the use site, point at the move site. *)
 let rec check_reads live (te : texpr) =
   (match te.e with
+   | TBuiltinCall { name = "free"; args = [ alloc_arg; { e = TVar _; _ } ] } ->
+       (* The ptr slot of `free(a, x)` is the consume site itself —
+          its legality (Live / PartialMoved ok, Consumed = double-free)
+          is decided by walk_expr's dedicated arm, not by the generic
+          read check.  Only the allocator arg is an ordinary read. *)
+       check_reads live alloc_arg
    | TVar n ->
        (match List.assoc_opt n live with
         | Some (Consumed mv) ->
@@ -54,9 +73,18 @@ let rec check_reads live (te : texpr) =
                (move-marked types are use-at-most-once — borrow with \
                '&%s' / take '*const %s' or clone to keep the source live)"
               n mv.file mv.line mv.col n (typ_name te.ty)
+        | Some (PartialMoved mv) ->
+            Error.failf te.pos
+              "use of '%s' after its payload was moved out at %s:%d:%d \
+               — the children are gone, only releasing the storage is \
+               left: `free(alloc, %s)`"
+              n mv.file mv.line mv.col n
         | _ -> ())
    | _ -> ());
-  List.iter (check_reads live) (texpr_children te)
+  (match te.e with
+   | TBuiltinCall { name = "free"; args = [ _; { e = TVar _; _ } ] } ->
+       ()   (* children handled above (alloc arg only) *)
+   | _ -> List.iter (check_reads live) (texpr_children te))
 
 (* If [te] is a bare affine `TVar` sitting in a by-value slot, mark
    the binding Consumed.  The slot's "by-value-ness" is encoded in
@@ -108,6 +136,7 @@ let merge_states a b =
     let sb = try List.assoc n b with Not_found -> Live in
     let merged = match sa, sb with
       | Consumed pa, _ | _, Consumed pa -> Consumed pa
+      | PartialMoved pa, _ | _, PartialMoved pa -> PartialMoved pa
       | Live, Live -> Live
     in (n, merged))
     names
@@ -227,13 +256,48 @@ and walk_expr ~structs ~enums live (te : texpr) =
         in
         ends_with m "__drop" || contains 0
       in
-      let live = consume_args ~structs ~enums live args in
+      (* HashMap lookups (`get` / `contains` / `remove`) take the KEY
+         by value but only COMPARE through it — ownership stays with
+         the caller (whose auto-drop releases it; freeze-audit B8c
+         leaked every probe key into the callee).  Their key arg
+         (position 1, after self) is a non-consuming slot. *)
+      let lookup_borrows_key =
+        let pre p =
+          String.length mangled >= String.length p
+          && String.sub mangled 0 (String.length p) = p
+        in
+        pre "HashMap__get_" || pre "HashMap__contains_"
+        || pre "HashMap__remove_"
+      in
+      let live =
+        if lookup_borrows_key then
+          List.fold_left (fun lv a -> walk_expr ~structs ~enums lv a)
+            live args
+        else consume_args ~structs ~enums live args
+      in
       (match args with
        | { e = TRef ({ e = TVar n; _ } as inner); _ } :: _
          when is_drop_mangled mangled
            && is_affine_typ ~structs inner.ty ->
            set_consumed live n inner.pos
        | _ -> live)
+  | TBuiltinCall { name = "free";
+                   args = [ alloc_arg; { e = TVar n; _ } as ptr_arg ] } ->
+      (* `free(a, x)` releases x's STORAGE — legal on a Live owner and
+         on a PartialMoved root (children already moved out; B13's
+         free_tree idiom).  Walk the allocator arg normally, then
+         consume x directly, bypassing the read-check that would
+         reject the PartialMoved state. *)
+      let live = walk_expr ~structs ~enums live alloc_arg in
+      (match List.assoc_opt n live with
+       | Some (Consumed mv) ->
+           Error.failf ptr_arg.pos
+             "double free: '%s' was already consumed at %s:%d:%d"
+             n mv.Pos.file mv.Pos.line mv.Pos.col
+       | _ -> ());
+      if is_affine_typ ~structs ptr_arg.ty
+      then set_consumed live n ptr_arg.pos
+      else live
   | TBuiltinCall { name; args } ->
       (* Built-ins that just read through the pointer (mem_zero ≡
          memset) don't consume their first arg.  Only walk the
@@ -303,9 +367,35 @@ and walk_expr ~structs ~enums live (te : texpr) =
          contribution so the merge-states union (may-consume,
          per S0) raises the post-match state to Consumed even if a
          sibling arm left it Live. *)
+      (* Freeze-audit B11: binds reached through a BORROWED scrutinee
+         (`match *e` with `e: *T` / `*const T`, or a field/index hop
+         off a borrow) are loans — they must NOT be seeded as affine
+         owners here (typecheck demotes their types the same way).
+         Freeze-audit B13: when the scrutinee is an OWNED deref chain
+         (`match *t` with `t: own *E`), consuming a bind partial-moves
+         the ROOT binding — extract it through the deref. *)
+      let rec scrutinee_root (te : texpr) =
+        match te.e with
+        | TVar n -> Some (n, te.ty)
+        | TDeref inner | TFieldAccess { target = inner; _ }
+        | TIndex { base = inner; _ } -> scrutinee_root inner
+        | _ -> None
+      in
+      let rec borrowed_hop (te : texpr) =
+        match te.e with
+        | TDeref inner | TFieldAccess { target = inner; _ }
+        | TIndex { base = inner; _ } ->
+            (match inner.ty with
+             | TPtr _ | TConstPtr _ -> true
+             | _ -> borrowed_hop inner)
+        | _ -> false
+      in
+      let borrowed_scrutinee = borrowed_hop scrutinee in
       let contributions = List.filter_map (fun (a : tmatch_arm) ->
         let arm_binds =
-          affine_binds_of_pat ~structs ~enums scrutinee.ty a.tpat in
+          if borrowed_scrutinee then []
+          else affine_binds_of_pat ~structs ~enums scrutinee.ty a.tpat
+        in
         let seeded =
           List.fold_left (fun lv (n, _) -> (n, Live) :: lv)
             live arm_binds in
@@ -329,11 +419,19 @@ and walk_expr ~structs ~enums live (te : texpr) =
           in
           let after =
             if any_bind_consumed then
-              match scrutinee.e with
-              | TVar sn ->
+              match scrutinee.e, scrutinee_root scrutinee with
+              | TVar sn, _ ->
+                  (* Value scrutinee (`match h { ... }`): the whole
+                     binding is gone with its payload — full Consumed,
+                     as before B13. *)
                   (sn, Consumed scrutinee.pos)
                   :: List.remove_assoc sn after
-              | _ -> after
+              | _, Some (sn, _) ->
+                  (* Deref-rooted owned tree (`match *t`): children
+                     moved out, the root storage remains releasable. *)
+                  (sn, PartialMoved scrutinee.pos)
+                  :: List.remove_assoc sn after
+              | _, None -> after
             else after
           in Some after)
         arms
@@ -397,9 +495,21 @@ and walk_stmt ~structs ~enums ~ret_ty live = function
        | [ n ] when List.mem_assoc n live ->
            List.map (fun (k, v) -> if k = n then (k, Live) else (k, v)) live
        | _ -> live)
-  | TAssignField { value; _ }
-  | TAssignIndex { value; _ }
-  | TAssignDeref { value; _ } ->
+  | TAssignField { target; value; _ } ->
+      (* Freeze-audit B7: a WRITE through a binding is a use — the
+         lvalue target must be walked too, or `free(a, q); q.x = 1`
+         compiles into a heap-use-after-free.  The symmetric READ was
+         always checked; this closes the write half. *)
+      let live = walk_expr ~structs ~enums live target in
+      let live = walk_expr ~structs ~enums live value in
+      consume_var ~structs live value
+  | TAssignIndex { base; index; value; _ } ->
+      let live = walk_expr ~structs ~enums live base in
+      let live = walk_expr ~structs ~enums live index in
+      let live = walk_expr ~structs ~enums live value in
+      consume_var ~structs live value
+  | TAssignDeref { target; value; _ } ->
+      let live = walk_expr ~structs ~enums live target in
       let live = walk_expr ~structs ~enums live value in
       consume_var ~structs live value
   | TReturn { value = Some v; _ } ->

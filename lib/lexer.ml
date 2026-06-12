@@ -173,7 +173,18 @@ let tokenize ~file src =
                   let esc =
                     match ec with
                     | 'n' -> '\n' | 't' -> '\t' | 'r' -> '\r'
-                    | 'b' -> '\b' | '0' -> '\000'
+                    | 'b' -> '\b'
+                    | '0' ->
+                        (* Freeze-audit should-fix: exile strings are
+                           NUL-terminated byte strings — an embedded
+                           NUL silently truncates the emitted C
+                           literal (cstr_len saw 2 for "ab\0cd").
+                           Char literals keep '\0' (it is just the
+                           byte 0). *)
+                        Error.failf esc_pos
+                          "embedded \\0 would silently truncate the \
+                           string (exile str is NUL-terminated) — use \
+                           a byte buffer for binary data"
                     | '\\' -> '\\' | '"' -> '"'
                     | c -> Error.failf esc_pos "unknown escape \\%c" c
                   in

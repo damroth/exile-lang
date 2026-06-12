@@ -459,6 +459,11 @@ let rec gen_expr ctx buf (te : texpr) =
          parens so `.data` / `.ptr` binds to the whole base. *)
       let suffix = match base.ty with
         | TStruct path when Mono.is_instance_of ["Slice"] path -> ".ptr["
+        | TPtr _ | TOwnPtr _ | TConstPtr _ ->
+            (* Raw pointer base: plain C subscript (the deep-drop glue
+               walks `v->ptr[i]` this way; the assign path always
+               supported it). *)
+            "["
         | _ -> ".data["
       in
       (match base.e with
@@ -479,12 +484,25 @@ let rec gen_expr ctx buf (te : texpr) =
       Buffer.add_string buf "->";
       Buffer.add_string buf field
   | TFieldAccess { target; field } ->
-      (* Auto-deref pointer-to-struct via `->`; otherwise plain `.`. *)
+      (* Auto-deref pointer-to-struct via `->`; otherwise plain `.`.
+         A non-postfix target (`*p`, a cast, ...) needs parens — `.`
+         binds tighter than unary `*` in C, so a bare emission reads
+         as `*(p.field)` (freeze-audit B4). *)
       let sep =
         match target.ty with
         | TPtr _ | TOwnPtr _ | TConstPtr _ -> "->" | _ -> "."
       in
-      gen_expr ctx buf target;
+      let simple = match target.e with
+        | TVar _ | TFieldAccess _ | TIndex _ | TCall _
+        | TBuiltinCall _ | TIndirectCall _ -> true
+        | _ -> false
+      in
+      if simple then gen_expr ctx buf target
+      else begin
+        Buffer.add_char buf '(';
+        gen_expr ctx buf target;
+        Buffer.add_char buf ')'
+      end;
       Buffer.add_string buf sep;
       Buffer.add_string buf field
   | TRef sub -> emit_unary ctx buf '&' sub ~simple:(fun n -> lvalue_like n)
@@ -719,7 +737,20 @@ and emit_simple_stmt ctx buf indent stmt =
         | TPtr _ | TOwnPtr _ | TConstPtr _ -> "->" | _ -> "."
       in
       Buffer.add_string buf indent;
-      gen_expr ctx buf target;
+      (* Same parenthesisation rule as the TFieldAccess read path —
+         the deref target gets wrapped, never emitted bare before
+         the dot (freeze-audit B4). *)
+      let simple = match target.e with
+        | TVar _ | TFieldAccess _ | TIndex _ | TCall _
+        | TBuiltinCall _ | TIndirectCall _ -> true
+        | _ -> false
+      in
+      if simple then gen_expr ctx buf target
+      else begin
+        Buffer.add_char buf '(';
+        gen_expr ctx buf target;
+        Buffer.add_char buf ')'
+      end;
       Buffer.add_string buf sep;
       Buffer.add_string buf field;
       Buffer.add_string buf " = ";
@@ -877,13 +908,18 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
         Buffer.add_string buf "switch (__m) {\n"
       else
         Buffer.add_string buf "switch (__m.tag) {\n";
-      List.iter
-        (fun (a : tmatch_arm) ->
+      let n_arms = List.length arms in
+      List.iteri
+        (fun arm_i (a : tmatch_arm) ->
           Buffer.add_string buf inner;
           (* Or-pattern (`A | B | C`) emits multiple `case` labels falling
              through to the same body; a wildcard alt subsumes the rest
              into a single `default:`.  Non-or patterns use a single
-             label as before. *)
+             label as before.  The LAST arm of an exhaustive match
+             additionally gets a stacked `default:` label — typecheck
+             proved coverage, and without a default gcc's -O2 flow
+             analysis reports the assigned temp as possibly
+             uninitialized (freeze-audit B6, host AND m68k gcc). *)
           let alts =
             match a.tpat with TPOr xs -> xs | other -> [ other ]
           in
@@ -893,7 +929,7 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
           in
           if has_wild then
             Buffer.add_string buf "default:\n"
-          else
+          else begin
             List.iteri (fun i alt ->
               if i > 0 then Buffer.add_string buf inner;
               match alt with
@@ -904,6 +940,11 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
                   Buffer.add_string buf (Printf.sprintf "case %d:\n" n)
               | TPOr _ | TPWildcard | TPVar _ -> assert false)
               alts;
+            if arm_i = n_arms - 1 then begin
+              Buffer.add_string buf inner;
+              Buffer.add_string buf "default:\n"
+            end
+          end;
           (* Each arm body lives in its own `{}` block so bind decls
              stay scoped to the case (and so we don't leak C variable
              names across cases). *)
@@ -1012,6 +1053,14 @@ and emit_arm_result ctx assign_to buf indent (a : tmatch_arm) =
     (match assign_to, a.tbody.e with
      | Some lhs, TMatch _ ->
          emit_match_stmt ctx ~assign_to:lhs buf indent a.tbody
+     | None, TMatch _ ->
+         (* Nested match as the arm's trailing value in void position
+            (e.g. the LAST statement of an arm block — the parser
+            reads it as the block's tail).  Without this it fell into
+            the default `gen_expr` branch, which asserts on
+            block-shaped nodes (freeze-audit B1, found independently
+            by three dimensions). *)
+         emit_match_stmt ctx buf indent a.tbody
      | _, TBlock { stmts; trailing } ->
          (* Multi-stmt arm body — emit each stmt in source order, then
             either assign the trailing value to `lhs` or emit it as a

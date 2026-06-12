@@ -494,8 +494,18 @@ let rec c_type_prefix = function
   | TConstPtr TCVoid -> "const void *"
   | TConstPtr inner ->
       (* `*const T` -> `const T *` (pointer to const data; the pointer
-         itself stays rebindable per the binding's `let mut`). *)
-      "const " ^ strip_trailing_space (c_type_prefix inner) ^ " *"
+         itself stays rebindable per the binding's `let mut`).  When
+         the inner rendering is already const-qualified (`str` is
+         `const char *`), do not prepend a second `const` — duplicate
+         qualifiers break C89 -ansi -pedantic (freeze-audit B5). *)
+      let inner_c = strip_trailing_space (c_type_prefix inner) in
+      let prefix =
+        let lc = String.length "const " in
+        if String.length inner_c >= lc
+           && String.sub inner_c 0 lc = "const " then ""
+        else "const "
+      in
+      prefix ^ inner_c ^ " *"
   | TFnPtr _ as t ->
       (* Reference fn-ptr types by typedef alias (emitted up top by
          gen_program).  Avoids the awkward C "function returning

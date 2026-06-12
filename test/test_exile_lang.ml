@@ -21,11 +21,20 @@ let cc_check label c_code =
 let check label src expected =
   let actual = Exile_lang.Compiler.compile src in
   if actual <> expected then begin
-    Printf.eprintf "FAIL: %s\n--- expected ---\n%s--- got ---\n%s" label expected actual;
-    exit 1
-  end;
-  cc_check label actual;
-  Printf.printf "ok: %s\n" label
+    (* EXILE_REBASE=1: dump machine-parseable old/new pairs and keep
+       going — lets a script refresh every golden in one pass after a
+       deliberate whole-output change (e.g. the B6 default: labels). *)
+    match Sys.getenv_opt "EXILE_REBASE" with
+    | Some "1" ->
+        Printf.printf "===REBASE-LABEL===%s\n===REBASE-OLD===\n%s===REBASE-NEW===\n%s===REBASE-END===\n"
+          label expected actual
+    | _ ->
+        Printf.eprintf "FAIL: %s\n--- expected ---\n%s--- got ---\n%s" label expected actual;
+        exit 1
+  end else begin
+    cc_check label actual;
+    Printf.printf "ok: %s\n" label
+  end
 
 (* Like `check`, but skip the cc compile step.  Use when the generated
    C deliberately references an unresolved external (extern type alias
@@ -617,7 +626,7 @@ let () =
     \        | Option::None => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nstruct ex_Counter { long n; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 Counter__next(struct ex_Counter self);\n\nint main(void) {\n    struct ex_Counter c;\n    c.n = 7;\n    {\n        struct ex_Option_i32 __m;\n        __m = Counter__next(c);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 Counter__next(struct ex_Counter self) {\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = self.n;\n        return __exile_ret;\n    }\n}\n";
+    "#include <stdio.h>\n\nstruct ex_Counter { long n; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 Counter__next(struct ex_Counter self);\n\nint main(void) {\n    struct ex_Counter c;\n    c.n = 7;\n    {\n        struct ex_Option_i32 __m;\n        __m = Counter__next(c);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 Counter__next(struct ex_Counter self) {\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = self.n;\n        return __exile_ret;\n    }\n}\n";
 
   check_error "associated type: missing `type X = ...` in impl rejected"
     "trait Iterator { type Item; fn next(self) -> Option<Self::Item>; }\n\
@@ -1527,7 +1536,7 @@ let () =
        generic free fn `first<I>` in the mix.  `first` reaches
        UpTo__next via mono dispatch; nothing reaches Take / Enumerate
        / collect, so they all drop. *)
-    "#include <stdio.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_UpTo { long cur; long stop; };\nstruct ex_Take_ex_UpTo { struct ex_UpTo inner; unsigned long remaining; };\nstruct ex_Enumerate_ex_UpTo { struct ex_UpTo inner; unsigned long idx; };\nstruct ex_Vec_i32 { long *ptr; unsigned long count; unsigned long cap; struct ex_Allocator alloc; };\nstruct ex_Slice_i32 { const long *ptr; unsigned long len; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it);\n\nint main(void) {\n    struct ex_UpTo up;\n    up.cur = 0;\n    up.stop = 2;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_first_ex_UpTo(&up);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(99));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it) {\n    return UpTo__next(it);\n}\n";
+    "#include <stdio.h>\n\ntypedef void *(*fn2_ptr_cvoid_u32_to_ptr_cvoid)(void *, unsigned long);\ntypedef void (*fn3_ptr_cvoid_ptr_cvoid_u32_to_void)(void *, void *, unsigned long);\n\nstruct ex_Allocator { void *state; fn2_ptr_cvoid_u32_to_ptr_cvoid alloc_fn; fn3_ptr_cvoid_ptr_cvoid_u32_to_void free_fn; };\nstruct ex_UpTo { long cur; long stop; };\nstruct ex_Take_ex_UpTo { struct ex_UpTo inner; unsigned long remaining; };\nstruct ex_Enumerate_ex_UpTo { struct ex_UpTo inner; unsigned long idx; };\nstruct ex_Vec_i32 { long *ptr; unsigned long count; unsigned long cap; struct ex_Allocator alloc; };\nstruct ex_Slice_i32 { const long *ptr; unsigned long len; };\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self);\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it);\n\nint main(void) {\n    struct ex_UpTo up;\n    up.cur = 0;\n    up.stop = 2;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_first_ex_UpTo(&up);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(99));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n\nstruct ex_Option_i32 UpTo__next(struct ex_UpTo *self) {\n    long v;\n    if (self->cur >= self->stop) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_None;\n            return __exile_ret;\n        }\n    }\n    v = self->cur;\n    self->cur = self->cur + 1;\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v;\n        return __exile_ret;\n    }\n}\n\nstatic struct ex_Option_i32 ex_first_ex_UpTo(struct ex_UpTo *it) {\n    return UpTo__next(it);\n}\n";
 
   (* Ambiguous projection: two traits define `type Item` and the same
      struct implements both.  `Counter::Item` without `<Counter as
@@ -1561,7 +1570,7 @@ let () =
     \        | E::B => { println(0); }\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } A; } data; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_A;\n    e.data.A._0 = 5;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                long n = __m.data.A._0;\n                if (n > 0) {\n                    printf(\"%ld\\n\", (long)(99));\n                }\n                printf(\"%ld\\n\", (long)(n));\n                break;\n            }\n        case ex_E_B:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } A; } data; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_A;\n    e.data.A._0 = 5;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                long n = __m.data.A._0;\n                if (n > 0) {\n                    printf(\"%ld\\n\", (long)(99));\n                }\n                printf(\"%ld\\n\", (long)(n));\n                break;\n            }\n        case ex_E_B:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   (* Short-circuit logical `&&` / `||` — both `bool`-only, `&&` tighter than
      `||`, both looser than comparisons (Rust-order matches C, so no extra
@@ -2276,7 +2285,7 @@ let () =
     \        | Color::Blue => println(\"b\")\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Color_tag { ex_Color_Red, ex_Color_Green, ex_Color_Blue };\nstruct ex_Color { enum ex_Color_tag tag; };\n\nint main(void) {\n    struct ex_Color c;\n    c.tag = ex_Color_Green;\n    {\n        struct ex_Color __m;\n        __m = c;\n        switch (__m.tag) {\n        case ex_Color_Red:\n            {\n                printf(\"%s\\n\", \"r\");\n                break;\n            }\n        case ex_Color_Green:\n            {\n                printf(\"%s\\n\", \"g\");\n                break;\n            }\n        case ex_Color_Blue:\n            {\n                printf(\"%s\\n\", \"b\");\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Color_tag { ex_Color_Red, ex_Color_Green, ex_Color_Blue };\nstruct ex_Color { enum ex_Color_tag tag; };\n\nint main(void) {\n    struct ex_Color c;\n    c.tag = ex_Color_Green;\n    {\n        struct ex_Color __m;\n        __m = c;\n        switch (__m.tag) {\n        case ex_Color_Red:\n            {\n                printf(\"%s\\n\", \"r\");\n                break;\n            }\n        case ex_Color_Green:\n            {\n                printf(\"%s\\n\", \"g\");\n                break;\n            }\n        case ex_Color_Blue:\n        default:\n            {\n                printf(\"%s\\n\", \"b\");\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "match with wildcard arm covers remaining variants"
     "enum E { A | B | C }\n\
@@ -2303,7 +2312,7 @@ let () =
     \        | Shape::Rect(w, h) => println(w + h)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Shape_tag { ex_Shape_Square, ex_Shape_Circle, ex_Shape_Rect };\nstruct ex_Shape { enum ex_Shape_tag tag; union { struct { long _0; } Circle; struct { long _0; long _1; } Rect; } data; };\n\nint main(void) {\n    struct ex_Shape s;\n    s.tag = ex_Shape_Rect;\n    s.data.Rect._0 = 3;\n    s.data.Rect._1 = 4;\n    {\n        struct ex_Shape __m;\n        __m = s;\n        switch (__m.tag) {\n        case ex_Shape_Square:\n            {\n                printf(\"%s\\n\", \"sq\");\n                break;\n            }\n        case ex_Shape_Circle:\n            {\n                long r = __m.data.Circle._0;\n                printf(\"%ld\\n\", (long)(r));\n                break;\n            }\n        case ex_Shape_Rect:\n            {\n                long w = __m.data.Rect._0;\n                long h = __m.data.Rect._1;\n                printf(\"%ld\\n\", (long)(w + h));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Shape_tag { ex_Shape_Square, ex_Shape_Circle, ex_Shape_Rect };\nstruct ex_Shape { enum ex_Shape_tag tag; union { struct { long _0; } Circle; struct { long _0; long _1; } Rect; } data; };\n\nint main(void) {\n    struct ex_Shape s;\n    s.tag = ex_Shape_Rect;\n    s.data.Rect._0 = 3;\n    s.data.Rect._1 = 4;\n    {\n        struct ex_Shape __m;\n        __m = s;\n        switch (__m.tag) {\n        case ex_Shape_Square:\n            {\n                printf(\"%s\\n\", \"sq\");\n                break;\n            }\n        case ex_Shape_Circle:\n            {\n                long r = __m.data.Circle._0;\n                printf(\"%ld\\n\", (long)(r));\n                break;\n            }\n        case ex_Shape_Rect:\n        default:\n            {\n                long w = __m.data.Rect._0;\n                long h = __m.data.Rect._1;\n                printf(\"%ld\\n\", (long)(w + h));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check_error "wrong arg count for tuple variant rejected"
     "enum E { A(int) }\nfn main() { let e = E::A(1, 2); }\n"
@@ -2331,7 +2340,7 @@ let () =
     \    };\n\
     \    println(v);\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long v;\n    e.tag = ex_E_B;\n    e.data.B._0 = 7;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                v = 0;\n                break;\n            }\n        case ex_E_B:\n            {\n                long n = __m.data.B._0;\n                v = n + 1;\n                break;\n            }\n        }\n    }\n    printf(\"%ld\\n\", (long)(v));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long v;\n    e.tag = ex_E_B;\n    e.data.B._0 = 7;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                v = 0;\n                break;\n            }\n        case ex_E_B:\n        default:\n            {\n                long n = __m.data.B._0;\n                v = n + 1;\n                break;\n            }\n        }\n    }\n    printf(\"%ld\\n\", (long)(v));\n    return 0;\n}\n";
 
   check "match as expression in return position"
     "enum E { A | B(int) }\n\
@@ -2345,7 +2354,7 @@ let () =
     \    let e = E::B(42);\n\
     \    println(classify(e));\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nstatic long ex_classify(struct ex_E e);\n\nstatic long ex_classify(struct ex_E e) {\n    {\n        long __exile_ret;\n        {\n            struct ex_E __m;\n            __m = e;\n            switch (__m.tag) {\n            case ex_E_A:\n                {\n                    __exile_ret = 0;\n                    break;\n                }\n            case ex_E_B:\n                {\n                    long n = __m.data.B._0;\n                    __exile_ret = n;\n                    break;\n                }\n            }\n        }\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_B;\n    e.data.B._0 = 42;\n    printf(\"%ld\\n\", (long)(ex_classify(e)));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nstatic long ex_classify(struct ex_E e);\n\nstatic long ex_classify(struct ex_E e) {\n    {\n        long __exile_ret;\n        {\n            struct ex_E __m;\n            __m = e;\n            switch (__m.tag) {\n            case ex_E_A:\n                {\n                    __exile_ret = 0;\n                    break;\n                }\n            case ex_E_B:\n            default:\n                {\n                    long n = __m.data.B._0;\n                    __exile_ret = n;\n                    break;\n                }\n            }\n        }\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_B;\n    e.data.B._0 = 42;\n    printf(\"%ld\\n\", (long)(ex_classify(e)));\n    return 0;\n}\n";
 
   check_error "match arms with inconsistent types rejected"
     "enum E { A | B }\nfn main() { let v = match E::A { E::A => 1 | E::B => true }; println(v); }\n"
@@ -2362,7 +2371,7 @@ let () =
      fn main() {\n\
     \    show(E::B(7));\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nstatic void ex_show(struct ex_E e);\n\nstatic void ex_show(struct ex_E e) {\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_E_B:\n            {\n                long n = __m.data.B._0;\n                printf(\"%ld\\n\", (long)(n));\n                break;\n            }\n        }\n    }\n}\n\nint main(void) {\n    struct ex_E __lift_0;\n    __lift_0.tag = ex_E_B;\n    __lift_0.data.B._0 = 7;\n    ex_show(__lift_0);\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nstatic void ex_show(struct ex_E e);\n\nstatic void ex_show(struct ex_E e) {\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_E_B:\n        default:\n            {\n                long n = __m.data.B._0;\n                printf(\"%ld\\n\", (long)(n));\n                break;\n            }\n        }\n    }\n}\n\nint main(void) {\n    struct ex_E __lift_0;\n    __lift_0.tag = ex_E_B;\n    __lift_0.data.B._0 = 7;\n    ex_show(__lift_0);\n    return 0;\n}\n";
 
   check "Match as sub-expression in BinOp lifts to __lift_N"
     "enum E { A | B(int) }\n\
@@ -2374,7 +2383,7 @@ let () =
     \    };\n\
     \    println(total);\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long total;\n    long __lift_0;\n    e.tag = ex_E_B;\n    e.data.B._0 = 2;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                __lift_0 = 0;\n                break;\n            }\n        case ex_E_B:\n            {\n                long n = __m.data.B._0;\n                __lift_0 = n;\n                break;\n            }\n        }\n    }\n    total = 1 + __lift_0;\n    printf(\"%ld\\n\", (long)(total));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long total;\n    long __lift_0;\n    e.tag = ex_E_B;\n    e.data.B._0 = 2;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                __lift_0 = 0;\n                break;\n            }\n        case ex_E_B:\n        default:\n            {\n                long n = __m.data.B._0;\n                __lift_0 = n;\n                break;\n            }\n        }\n    }\n    total = 1 + __lift_0;\n    printf(\"%ld\\n\", (long)(total));\n    return 0;\n}\n";
 
   check "struct-like variant: shorthand bind in pattern"
     "enum E {\n\
@@ -2388,7 +2397,7 @@ let () =
     \        | E::B { x, y } => println(x + y)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long x; long y; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_B;\n    e.data.B.x = 3;\n    e.data.B.y = 4;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_E_B:\n            {\n                long x = __m.data.B.x;\n                long y = __m.data.B.y;\n                printf(\"%ld\\n\", (long)(x + y));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long x; long y; } B; } data; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_B;\n    e.data.B.x = 3;\n    e.data.B.y = 4;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_E_B:\n        default:\n            {\n                long x = __m.data.B.x;\n                long y = __m.data.B.y;\n                printf(\"%ld\\n\", (long)(x + y));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check_error "struct-syntax for tuple variant rejected"
     "enum E { A(int) }\nfn main() { let e = E::A { x: 1 }; }\n"
@@ -2507,7 +2516,7 @@ let () =
     \        | Result::Err(_) => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_IoErr_tag { ex_IoErr_NotFound };\nstruct ex_IoErr { enum ex_IoErr_tag tag; };\nenum ex_Result_i32_ex_IoErr_tag { ex_Result_i32_ex_IoErr_Ok, ex_Result_i32_ex_IoErr_Err };\nstruct ex_Result_i32_ex_IoErr { enum ex_Result_i32_ex_IoErr_tag tag; union { struct { long _0; } Ok; struct { struct ex_IoErr _0; } Err; } data; };\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void);\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void) {\n    {\n        struct ex_Result_i32_ex_IoErr __exile_ret;\n        __exile_ret.tag = ex_Result_i32_ex_IoErr_Ok;\n        __exile_ret.data.Ok._0 = 42;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Result_i32_ex_IoErr r;\n    r = ex_make();\n    {\n        struct ex_Result_i32_ex_IoErr __m;\n        __m = r;\n        switch (__m.tag) {\n        case ex_Result_i32_ex_IoErr_Ok:\n            {\n                long v = __m.data.Ok._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Result_i32_ex_IoErr_Err:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_IoErr_tag { ex_IoErr_NotFound };\nstruct ex_IoErr { enum ex_IoErr_tag tag; };\nenum ex_Result_i32_ex_IoErr_tag { ex_Result_i32_ex_IoErr_Ok, ex_Result_i32_ex_IoErr_Err };\nstruct ex_Result_i32_ex_IoErr { enum ex_Result_i32_ex_IoErr_tag tag; union { struct { long _0; } Ok; struct { struct ex_IoErr _0; } Err; } data; };\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void);\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void) {\n    {\n        struct ex_Result_i32_ex_IoErr __exile_ret;\n        __exile_ret.tag = ex_Result_i32_ex_IoErr_Ok;\n        __exile_ret.data.Ok._0 = 42;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Result_i32_ex_IoErr r;\n    r = ex_make();\n    {\n        struct ex_Result_i32_ex_IoErr __m;\n        __m = r;\n        switch (__m.tag) {\n        case ex_Result_i32_ex_IoErr_Ok:\n            {\n                long v = __m.data.Ok._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Result_i32_ex_IoErr_Err:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "Option::None: type-ann pins T when payload doesn't"
     "enum Option<T> { None | Some(T) }\n\
@@ -2518,7 +2527,7 @@ let () =
     \        | Option::Some(x) => println(x)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_None;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_None;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        case ex_Option_i32_Some:\n        default:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "generic enum: tuple ctor infers payload + match destructures"
     "enum Option<T> { None | Some(T) }\n\
@@ -2529,7 +2538,7 @@ let () =
     \        | Option::None => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Some;\n    o.data.Some._0 = 42;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Some;\n    o.data.Some._0 = 42;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "?T sugar: ?int parses as Option<int>"
     "fn main() {\n\
@@ -2539,7 +2548,7 @@ let () =
     \        | Option::None    => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Some;\n    o.data.Some._0 = 5;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Some;\n    o.data.Some._0 = 5;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "orelse: Option<T> orelse default unwraps Some, falls back on None"
     "fn first_or(o: ?int, d: int) -> int {\n\
@@ -2551,7 +2560,7 @@ let () =
     \    println(first_or(some, 99));\n\
     \    println(first_or(none, 99));\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstatic long ex_first_or(struct ex_Option_i32 o, long d);\n\nstatic long ex_first_or(struct ex_Option_i32 o, long d) {\n    {\n        long __exile_ret;\n        {\n            struct ex_Option_i32 __m;\n            __m = o;\n            switch (__m.tag) {\n            case ex_Option_i32_Some:\n                {\n                    long __orelse_v = __m.data.Some._0;\n                    __exile_ret = __orelse_v;\n                    break;\n                }\n            case ex_Option_i32_None:\n                {\n                    __exile_ret = d;\n                    break;\n                }\n            }\n        }\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Option_i32 some;\n    struct ex_Option_i32 none;\n    some.tag = ex_Option_i32_Some;\n    some.data.Some._0 = 7;\n    none.tag = ex_Option_i32_None;\n    printf(\"%ld\\n\", (long)(ex_first_or(some, 99)));\n    printf(\"%ld\\n\", (long)(ex_first_or(none, 99)));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstatic long ex_first_or(struct ex_Option_i32 o, long d);\n\nstatic long ex_first_or(struct ex_Option_i32 o, long d) {\n    {\n        long __exile_ret;\n        {\n            struct ex_Option_i32 __m;\n            __m = o;\n            switch (__m.tag) {\n            case ex_Option_i32_Some:\n                {\n                    long __orelse_v = __m.data.Some._0;\n                    __exile_ret = __orelse_v;\n                    break;\n                }\n            case ex_Option_i32_None:\n            default:\n                {\n                    __exile_ret = d;\n                    break;\n                }\n            }\n        }\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Option_i32 some;\n    struct ex_Option_i32 none;\n    some.tag = ex_Option_i32_Some;\n    some.data.Some._0 = 7;\n    none.tag = ex_Option_i32_None;\n    printf(\"%ld\\n\", (long)(ex_first_or(some, 99)));\n    printf(\"%ld\\n\", (long)(ex_first_or(none, 99)));\n    return 0;\n}\n";
 
   check_error "orelse on non-enum rejected"
     "fn main() { let x = 5 orelse 0; println(x); }\n"
@@ -2574,7 +2583,7 @@ let () =
     \        | Option::None    => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstatic struct ex_Option_i32 ex_incr(struct ex_Option_i32 o);\n\nstatic struct ex_Option_i32 ex_incr(struct ex_Option_i32 o) {\n    long v;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long __try_v = __m.data.Some._0;\n                v = __try_v;\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                struct ex_Option_i32 __try_ret;\n                __try_ret.tag = ex_Option_i32_None;\n                return __try_ret;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v + 1;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Option_i32 some;\n    struct ex_Option_i32 none;\n    some.tag = ex_Option_i32_Some;\n    some.data.Some._0 = 7;\n    none.tag = ex_Option_i32_None;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_incr(some);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_incr(none);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstatic struct ex_Option_i32 ex_incr(struct ex_Option_i32 o);\n\nstatic struct ex_Option_i32 ex_incr(struct ex_Option_i32 o) {\n    long v;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long __try_v = __m.data.Some._0;\n                v = __try_v;\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                struct ex_Option_i32 __try_ret;\n                __try_ret.tag = ex_Option_i32_None;\n                return __try_ret;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v + 1;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Option_i32 some;\n    struct ex_Option_i32 none;\n    some.tag = ex_Option_i32_Some;\n    some.data.Some._0 = 7;\n    none.tag = ex_Option_i32_None;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_incr(some);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_incr(none);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check_error "try inside main rejected (main returns an int exit code)"
     "fn main() {\n\
@@ -2974,7 +2983,7 @@ let () =
     \        | Option::None => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Some;\n    o.data.Some._0 = 42;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Some;\n    o.data.Some._0 = 42;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "prelude: Result<T, E> usable without explicit declaration"
     "enum IoErr { NotFound }\n\
@@ -2986,7 +2995,7 @@ let () =
     \        | Result::Err(_) => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_IoErr_tag { ex_IoErr_NotFound };\nstruct ex_IoErr { enum ex_IoErr_tag tag; };\nenum ex_Result_i32_ex_IoErr_tag { ex_Result_i32_ex_IoErr_Ok, ex_Result_i32_ex_IoErr_Err };\nstruct ex_Result_i32_ex_IoErr { enum ex_Result_i32_ex_IoErr_tag tag; union { struct { long _0; } Ok; struct { struct ex_IoErr _0; } Err; } data; };\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void);\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void) {\n    {\n        struct ex_Result_i32_ex_IoErr __exile_ret;\n        __exile_ret.tag = ex_Result_i32_ex_IoErr_Ok;\n        __exile_ret.data.Ok._0 = 42;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Result_i32_ex_IoErr r;\n    r = ex_make();\n    {\n        struct ex_Result_i32_ex_IoErr __m;\n        __m = r;\n        switch (__m.tag) {\n        case ex_Result_i32_ex_IoErr_Ok:\n            {\n                long v = __m.data.Ok._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Result_i32_ex_IoErr_Err:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_IoErr_tag { ex_IoErr_NotFound };\nstruct ex_IoErr { enum ex_IoErr_tag tag; };\nenum ex_Result_i32_ex_IoErr_tag { ex_Result_i32_ex_IoErr_Ok, ex_Result_i32_ex_IoErr_Err };\nstruct ex_Result_i32_ex_IoErr { enum ex_Result_i32_ex_IoErr_tag tag; union { struct { long _0; } Ok; struct { struct ex_IoErr _0; } Err; } data; };\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void);\n\nstatic struct ex_Result_i32_ex_IoErr ex_make(void) {\n    {\n        struct ex_Result_i32_ex_IoErr __exile_ret;\n        __exile_ret.tag = ex_Result_i32_ex_IoErr_Ok;\n        __exile_ret.data.Ok._0 = 42;\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    struct ex_Result_i32_ex_IoErr r;\n    r = ex_make();\n    {\n        struct ex_Result_i32_ex_IoErr __m;\n        __m = r;\n        switch (__m.tag) {\n        case ex_Result_i32_ex_IoErr_Ok:\n            {\n                long v = __m.data.Ok._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Result_i32_ex_IoErr_Err:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "prelude: user-declared Option<T> overrides built-in"
     "enum Option<T> { Empty | Full(T) }\n\
@@ -2997,7 +3006,7 @@ let () =
     \        | Option::Empty => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_Empty, ex_Option_i32_Full };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Full; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Full;\n    o.data.Full._0 = 7;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Full:\n            {\n                long x = __m.data.Full._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_Empty:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_Empty, ex_Option_i32_Full };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Full; } data; };\n\nint main(void) {\n    struct ex_Option_i32 o;\n    o.tag = ex_Option_i32_Full;\n    o.data.Full._0 = 7;\n    {\n        struct ex_Option_i32 __m;\n        __m = o;\n        switch (__m.tag) {\n        case ex_Option_i32_Full:\n            {\n                long x = __m.data.Full._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_Empty:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "mod-local struct as fn param and self resolves to absolute path"
     "mod geom {\n\
@@ -3418,7 +3427,7 @@ let () =
     \        | Option::None    => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstatic struct ex_Option_i32 ex_maybe(int ok);\nstatic struct ex_Option_i32 ex_run(int ok);\n\nstatic struct ex_Option_i32 ex_maybe(int ok) {\n    if (ok) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_Some;\n            __exile_ret.data.Some._0 = 42;\n            return __exile_ret;\n        }\n    }\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_None;\n        return __exile_ret;\n    }\n}\n\nstatic struct ex_Option_i32 ex_run(int ok) {\n    long v;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_maybe(ok);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long __try_v = __m.data.Some._0;\n                v = __try_v;\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                struct ex_Option_i32 __try_ret;\n                __try_ret.tag = ex_Option_i32_None;\n                printf(\"%ld\\n\", (long)(-1));\n                return __try_ret;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v + 1;\n        printf(\"%ld\\n\", (long)(-1));\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_run(0);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\n\nstatic struct ex_Option_i32 ex_maybe(int ok);\nstatic struct ex_Option_i32 ex_run(int ok);\n\nstatic struct ex_Option_i32 ex_maybe(int ok) {\n    if (ok) {\n        {\n            struct ex_Option_i32 __exile_ret;\n            __exile_ret.tag = ex_Option_i32_Some;\n            __exile_ret.data.Some._0 = 42;\n            return __exile_ret;\n        }\n    }\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_None;\n        return __exile_ret;\n    }\n}\n\nstatic struct ex_Option_i32 ex_run(int ok) {\n    long v;\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_maybe(ok);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long __try_v = __m.data.Some._0;\n                v = __try_v;\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                struct ex_Option_i32 __try_ret;\n                __try_ret.tag = ex_Option_i32_None;\n                printf(\"%ld\\n\", (long)(-1));\n                return __try_ret;\n            }\n        }\n    }\n    {\n        struct ex_Option_i32 __exile_ret;\n        __exile_ret.tag = ex_Option_i32_Some;\n        __exile_ret.data.Some._0 = v + 1;\n        printf(\"%ld\\n\", (long)(-1));\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    {\n        struct ex_Option_i32 __m;\n        __m = ex_run(0);\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long x = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(x));\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check_lint "lint: per-call-site origin pos (not prelude decl pos)"
     "fn id<T>(x: T) -> T { return x; }\n\
@@ -4865,7 +4874,7 @@ let () =
     \        | Color::Blue => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Color_tag { ex_Color_Red, ex_Color_Green, ex_Color_Blue };\nstruct ex_Color { enum ex_Color_tag tag; };\n\nint main(void) {\n    struct ex_Color c;\n    c.tag = ex_Color_Green;\n    {\n        struct ex_Color __m;\n        __m = c;\n        switch (__m.tag) {\n        case ex_Color_Red:\n        case ex_Color_Green:\n            {\n                printf(\"%ld\\n\", (long)(1));\n                break;\n            }\n        case ex_Color_Blue:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Color_tag { ex_Color_Red, ex_Color_Green, ex_Color_Blue };\nstruct ex_Color { enum ex_Color_tag tag; };\n\nint main(void) {\n    struct ex_Color c;\n    c.tag = ex_Color_Green;\n    {\n        struct ex_Color __m;\n        __m = c;\n        switch (__m.tag) {\n        case ex_Color_Red:\n        case ex_Color_Green:\n            {\n                printf(\"%ld\\n\", (long)(1));\n                break;\n            }\n        case ex_Color_Blue:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check_error "or-pattern: still must cover every variant"
     "enum E { A | B | C }\n\
@@ -4937,7 +4946,7 @@ let () =
     \    };\n\
     \    println(r);\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } A; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long doubled;\n    long r;\n    e.tag = ex_E_A;\n    e.data.A._0 = 7;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                long n = __m.data.A._0;\n                doubled = n + n;\n                r = doubled + 1;\n                break;\n            }\n        case ex_E_B:\n            {\n                r = 0;\n                break;\n            }\n        }\n    }\n    printf(\"%ld\\n\", (long)(r));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } A; } data; };\n\nint main(void) {\n    struct ex_E e;\n    long doubled;\n    long r;\n    e.tag = ex_E_A;\n    e.data.A._0 = 7;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                long n = __m.data.A._0;\n                doubled = n + n;\n                r = doubled + 1;\n                break;\n            }\n        case ex_E_B:\n        default:\n            {\n                r = 0;\n                break;\n            }\n        }\n    }\n    printf(\"%ld\\n\", (long)(r));\n    return 0;\n}\n";
 
   check "multi-stmt arm body: void position (no trailing expr)"
     "enum E { A(int) | B }\n\
@@ -4951,7 +4960,7 @@ let () =
     \        | E::B => println(0)\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } A; } data; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_A;\n    e.data.A._0 = 7;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                long n = __m.data.A._0;\n                printf(\"%ld\\n\", (long)(n));\n                printf(\"%ld\\n\", (long)(n + 1));\n                break;\n            }\n        case ex_E_B:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } A; } data; };\n\nint main(void) {\n    struct ex_E e;\n    e.tag = ex_E_A;\n    e.data.A._0 = 7;\n    {\n        struct ex_E __m;\n        __m = e;\n        switch (__m.tag) {\n        case ex_E_A:\n            {\n                long n = __m.data.A._0;\n                printf(\"%ld\\n\", (long)(n));\n                printf(\"%ld\\n\", (long)(n + 1));\n                break;\n            }\n        case ex_E_B:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check_error "multi-stmt arm body: value position requires trailing expr"
     "enum E { A | B }\n\
@@ -5044,7 +5053,7 @@ let () =
     \        | Option::None    => { println(0); }\n\
     \    }\n\
      }\n"
-    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\nstruct ex_H { struct ex_Option_i32 o; };\n\nint main(void) {\n    struct ex_H h;\n    struct ex_Option_i32 __lift_0;\n    __lift_0.tag = ex_Option_i32_Some;\n    __lift_0.data.Some._0 = 42;\n    h.o = __lift_0;\n    {\n        struct ex_Option_i32 __m;\n        __m = h.o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nenum ex_Option_i32_tag { ex_Option_i32_None, ex_Option_i32_Some };\nstruct ex_Option_i32 { enum ex_Option_i32_tag tag; union { struct { long _0; } Some; } data; };\nstruct ex_H { struct ex_Option_i32 o; };\n\nint main(void) {\n    struct ex_H h;\n    struct ex_Option_i32 __lift_0;\n    __lift_0.tag = ex_Option_i32_Some;\n    __lift_0.data.Some._0 = 42;\n    h.o = __lift_0;\n    {\n        struct ex_Option_i32 __m;\n        __m = h.o;\n        switch (__m.tag) {\n        case ex_Option_i32_Some:\n            {\n                long v = __m.data.Some._0;\n                printf(\"%ld\\n\", (long)(v));\n                break;\n            }\n        case ex_Option_i32_None:\n        default:\n            {\n                printf(\"%ld\\n\", (long)(0));\n                break;\n            }\n        }\n    }\n    return 0;\n}\n";
 
   check "Slice<int> as a struct field — instance fields refreshed post-resolve"
     "struct H { s: Slice<int> }\n\
@@ -6464,6 +6473,316 @@ let () =
      fn main() { println(shared()); }\n"
     "'shared' is a reserved word (capability model, future syntax) — \
      pick a different name";
+
+  (* FREEZE-AUDIT 2026-06-11 (DR-051) - adversarial regression corpus.
+     Every test below pins a confirmed audit finding (B1-B13 + the
+     should-fix batch); each was a real ICE / invalid-C / miscompile /
+     UAF / double-free / silent leak on a 702-green suite. *)
+
+  check_assert "B1: nested match as the LAST statement of a match arm"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "enum A { X | Y }\n\
+          enum B { P | Q }\n\
+          fn main() {\n\
+         \    let a = A::X;\n\
+         \    let b = B::P;\n\
+         \    match a {\n\
+         \        A::X => {\n\
+         \            println(1);\n\
+         \            match b {\n\
+         \                B::P => println(2)\n\
+         \                | B::Q => println(3)\n\
+         \            }\n\
+         \        }\n\
+         \        | A::Y => println(0)\n\
+         \    }\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_assert "B2: block-shaped while-cond re-evaluates every iteration"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum St { Go | Stop }\n\
+          fn main() {\n\
+         \    let mut n = 0;\n\
+         \    let mut st = St::Go;\n\
+         \    while match st { St::Go => true | St::Stop => false } {\n\
+         \        n = n + 1;\n\
+         \        if n >= 3 { st = St::Stop; }\n\
+         \    }\n\
+         \    println(n);\n\
+          }\n"
+     in
+     (* the rewrite puts the cond's lift INSIDE a while(1) loop *)
+     contains c "while (1)");
+
+  check_assert "B3: new(a) enum rvalue into a *const param keeps a mutable temp"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum E { V(int) }\n\
+          fn read(e: *const E) -> int {\n\
+         \    match *e { E::V(n) => n }\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    println(read(new(a) E::V(7)));\n\
+          }\n"
+     in
+     not (contains c "const struct ex_E *__lift_0"));
+
+  check_assert "B4: write through an explicit deref-field parenthesizes"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct P { x: int }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let p = new(a) P { x: 1 };\n\
+         \    (*p).x = 99;\n\
+         \    println((*p).x);\n\
+          }\n"
+     in
+     not (contains c "*p.x"));
+
+  check_assert "B5: Slice<str> emits a single const qualifier"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<str> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(\"x\");\n\
+         \    let s = v.as_slice();\n\
+         \    println(s[0]);\n\
+          }\n"
+     in
+     not (contains c "const const"));
+
+  check_assert "B6: exhaustive match-switch carries a default label"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum E { A | B }\n\
+          fn main() {\n\
+         \    let e = E::A;\n\
+         \    let v = match e { E::A => 1 | E::B => 2 };\n\
+         \    println(v);\n\
+          }\n"
+     in
+     contains c "default:");
+
+  check_error "B7: write through a field after free rejected"
+    "struct P { x: int }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let q = new(a) P { x: 1 };\n\
+    \    free(a, q);\n\
+    \    q.x = 99;\n\
+    \    println(0);\n\
+     }\n"
+    "use of 'q' after it was consumed at <input>:5:13 (move-marked \
+     types are use-at-most-once — borrow with '&q' / take \
+     '*const own *P' or clone to keep the source live)";
+
+  check_assert "B8: owning enum tree gets a recursive drop glue fn"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum E { Lit(int) | Add(own *E, own *E) }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let t = new(a) E::Add(new(a) E::Lit(1), new(a) E::Lit(2));\n\
+         \    match *t { E::Lit(n) => println(n) | E::Add(_l, _r) => println(9) }\n\
+          }\n"
+     in
+     contains c "__drop_ptr_0" && contains c "switch");
+
+  check_assert "B8: Vec<String> drops elements before the backing buffer"
+    (let c =
+       Exile_lang.Compiler.compile
+         "fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut v: Vec<String> = Vec::with_capacity(a, 8 as u32);\n\
+         \    v.push(String::with_str(a, \"hello\"));\n\
+         \    println(v.length() as int);\n\
+          }\n"
+     in
+     contains c "__drop_vec_0" && contains c "while (__i <");
+
+  check_assert "B8: HashMap<String, V> drops occupied keys"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut m: HashMap<String,int> = HashMap::with_capacity(a, 8 as u32);\n\
+         \    m.insert(String::with_str(a, \"x\"), 1);\n\
+          }\n"
+     in
+     contains c "__drop_hm_0" && contains c ".state == 1");
+
+  check_assert "B8: HashMap lookups borrow the key (caller keeps ownership)"
+    (let c =
+       Exile_lang.Compiler.compile
+         "pub mod raw { extern fn make() -> Allocator; }\n\
+          fn main() {\n\
+         \    let a = raw::make();\n\
+         \    let mut m: HashMap<String,int> = HashMap::with_capacity(a, 8 as u32);\n\
+         \    m.insert(String::with_str(a, \"x\"), 1);\n\
+         \    let probe = String::with_str(a, \"x\");\n\
+         \    match m.get(probe) {\n\
+         \        Option::Some(v) => println(v)\n\
+         \        | Option::None => println(-1)\n\
+         \    }\n\
+          }\n"
+     in
+     (* probe stays live past the lookup -> its own auto-drop fires *)
+     contains c "(probe.alloc.free_fn)");
+
+  check_error "B8: array of bare owned pointers rejected"
+    "fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let p: own *int = a.alloc();\n\
+    \    let q: own *int = a.alloc();\n\
+    \    let arr = [p, q];\n\
+    \    println(0);\n\
+     }\n"
+    "an array of bare `own *T` cannot be auto-dropped (no allocator \
+     at hand for the elements) — wrap the pointers in an \
+     allocator-carrying struct, or use a Vec";
+
+  check_error "B9: returning an arena node out of the arena-owning fn rejected"
+    "struct P { x: int }\n\
+     fn make() -> *P {\n\
+    \    let a = default_allocator();\n\
+    \    let mut ar = Arena::with_capacity(a, 64 as u32);\n\
+    \    let p: *P = ar.alloc_borrowed();\n\
+    \    p.x = 7;\n\
+    \    return p;\n\
+     }\n\
+     fn main() {\n\
+    \    let p = make();\n\
+    \    println(p.x);\n\
+     }\n"
+    "returning a value that embeds the address of a local binding — \
+     the local goes out of scope at the end of its enclosing block, \
+     leaving the caller with a dangling borrow.  Wrap the storage in \
+     a caller-owned region, return a copy / `String::with_str(...)` \
+     instead of a borrow, or — for arena/region-allocated returns — \
+     mark the fn `@escapes` (forward-compat hatch)";
+
+  check_assert "B9: arena node from a PARAM arena returns fine"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "struct P { x: int }\n\
+          fn node(ar: *Arena, v: int) -> *P {\n\
+         \    let p: *P = ar.alloc_borrowed();\n\
+         \    p.x = v;\n\
+         \    return p;\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let mut ar = Arena::with_capacity(a, 256 as u32);\n\
+         \    let p = node(&ar, 7);\n\
+         \    println(p.x);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "B10: defer reading an auto-dropped binding rejected"
+    "fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let s = String::with_str(a, \"abc\");\n\
+    \    defer println(s.length() as int);\n\
+     }\n"
+    "defer body reads 's', but 's' is auto-dropped before deferred \
+     code runs — consume it inside the defer (free/drop) or \
+     restructure without defer";
+
+  check_error "B11: stealing an own child through a *const borrow rejected"
+    "enum E { Lit(int) | Add(own *E, own *E) }\n\
+     fn steal(e: *const E, a: Allocator) {\n\
+    \    match *e {\n\
+    \        E::Lit(_n) => { }\n\
+    \        | E::Add(l, _r) => { free(a, l); }\n\
+    \    }\n\
+     }\n\
+     fn main() { println(0); }\n"
+    "'free' expects an owned pointer `own *T`, got *const E — a \
+     borrow cannot be freed (the owner releases it).  Owned pointers \
+     come from `new(alloc) T { ... }` or `Allocator.alloc`.";
+
+  check_error "B12: discarding an own-returning call rejected"
+    "struct P { x: int }\n\
+     fn make(a: Allocator) -> own *P {\n\
+    \    return new(a) P { x: 1 };\n\
+     }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    make(a);\n\
+    \    println(0);\n\
+     }\n"
+    "this call returns an owned pointer that is silently discarded \
+     (and leaked) — bind it with `let`, then free, move, or return it";
+
+  check_assert "B13: free_tree idiom — consume children, then free the root"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "enum E { Lit(int) | Add(own *E, own *E) }\n\
+          fn free_tree(a: Allocator, e: own *E) {\n\
+         \    match *e {\n\
+         \        E::Lit(_n) => { }\n\
+         \        | E::Add(l, r) => { free_tree(a, l); free_tree(a, r); }\n\
+         \    }\n\
+         \    free(a, e);\n\
+          }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let t = new(a) E::Add(new(a) E::Lit(1), new(a) E::Lit(2));\n\
+         \    free_tree(a, t);\n\
+         \    println(0);\n\
+          }\n");
+       true
+     with _ -> false);
+
+  check_error "B13: reading the root after its payload moved out rejected"
+    "enum E { Lit(int) | Add(own *E, own *E) }\n\
+     fn eval(e: *const E) -> int {\n\
+    \    match *e { E::Lit(n) => n | E::Add(_a, _b) => 0 }\n\
+     }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let t = new(a) E::Add(new(a) E::Lit(1), new(a) E::Lit(2));\n\
+    \    match *t {\n\
+    \        E::Lit(_n) => { }\n\
+    \        | E::Add(l, r) => { free(a, l); free(a, r); }\n\
+    \    }\n\
+    \    println(eval(t));\n\
+    \    free(a, t);\n\
+     }\n"
+    "use of 't' after its payload was moved out at <input>:8:11 — the \
+     children are gone, only releasing the storage is left: \
+     `free(alloc, t)`";
+
+  check_error "B13: double free of the partial-moved root rejected"
+    "enum E { Lit(int) | Add(own *E, own *E) }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let t = new(a) E::Add(new(a) E::Lit(1), new(a) E::Lit(2));\n\
+    \    match *t {\n\
+    \        E::Lit(_n) => { }\n\
+    \        | E::Add(l, r) => { free(a, l); free(a, r); }\n\
+    \    }\n\
+    \    free(a, t);\n\
+    \    free(a, t);\n\
+     }\n"
+    "double free: 't' was already consumed at <input>:9:13";
+
+  check_error "should-fix: embedded NUL in a string literal rejected"
+    "fn main() {\n\
+    \    let s = \"ab\\0cd\";\n\
+    \    println(s);\n\
+     }\n"
+    "embedded \\0 would silently truncate the string (exile str is \
+     NUL-terminated) — use a byte buffer for binary data";
 
   (* PORT-PREP P2 (2026-06-10) - Arena bump allocator in the prelude +
      the `ptr_offset` builtin it builds on.  P1 (ratified): nodes are

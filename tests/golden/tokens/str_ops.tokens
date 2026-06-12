@@ -80,14 +80,14 @@ RBrace @examples/str_ops.exl:25:50
 LParen @examples/str_ops.exl:28:12
 (Ident str) @examples/str_ops.exl:28:13
 DoubleColon @examples/str_ops.exl:28:16
-(Ident len) @examples/str_ops.exl:28:18
-LParen @examples/str_ops.exl:28:21
-(Ident a) @examples/str_ops.exl:28:22
-RParen @examples/str_ops.exl:28:23
-As @examples/str_ops.exl:28:25
-(Ident int) @examples/str_ops.exl:28:28
-RParen @examples/str_ops.exl:28:31
-Semicolon @examples/str_ops.exl:28:32
+(Ident length) @examples/str_ops.exl:28:18
+LParen @examples/str_ops.exl:28:24
+(Ident a) @examples/str_ops.exl:28:25
+RParen @examples/str_ops.exl:28:26
+As @examples/str_ops.exl:28:28
+(Ident int) @examples/str_ops.exl:28:31
+RParen @examples/str_ops.exl:28:34
+Semicolon @examples/str_ops.exl:28:35
 (Ident println) @examples/str_ops.exl:29:5
 LParen @examples/str_ops.exl:29:12
 (Ident str) @examples/str_ops.exl:29:13

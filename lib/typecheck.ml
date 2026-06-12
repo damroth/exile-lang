@@ -2661,9 +2661,41 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
               (typ_name other)
       in
       let scalar_match = ename_path = [] in
+      (* Freeze-audit B11: pattern binds reached THROUGH A BORROW are
+         loans, not transfers — `match *e` with `e: *const E` must not
+         hand out `own *T` children (a stolen child double-frees
+         against the real owner's drop).  Walk the scrutinee's access
+         chain: any non-own pointer hop makes the context borrowed, and
+         own-typed binds demote to the hop's borrow flavour.  The
+         move-pass applies the same rule to its bind seeding. *)
+      let scrutinee_borrow_mode =
+        let rec mode (te : texpr) =
+          match te.e with
+          | TDeref inner ->
+              (match inner.ty with
+               | TConstPtr _ -> Some `Const
+               | TPtr _ -> Some `Mut
+               | _ -> mode inner)
+          | TFieldAccess { target; _ } ->
+              (match target.ty with
+               | TConstPtr _ -> Some `Const
+               | TPtr _ -> Some `Mut
+               | _ -> mode target)
+          | TIndex { base; _ } -> mode base
+          | _ -> None
+        in
+        mode tscrut
+      in
+      let demote_bind_ty t =
+        match scrutinee_borrow_mode, t with
+        | Some `Const, TOwnPtr inner -> TConstPtr inner
+        | Some `Mut, TOwnPtr inner -> TPtr inner
+        | _ -> t
+      in
       let tarms =
         List.map (fun (a : Ast.match_arm) ->
           let (tpat, binds) = lower_pattern ctx tscrut.ty a.pat in
+          let binds = List.map (fun (n, t) -> (n, demote_bind_ty t)) binds in
           (* Bind names must be unique across the whole (possibly nested)
              pattern, not just one level. *)
           (match find_dup ~key:fst binds with
@@ -4888,7 +4920,18 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
     let walked, prelude = walk_subs te in
     if is_block walked && not allow_top then
       let n = fresh_lift () in
-      decls := (n, walked.ty) :: !decls;
+      (* A heap-init temp (`new(a) E::V(...)` straight into a
+         `*const T` slot) carries the SLOT's const-qualified type
+         after the borrow restamp, but its construction writes
+         through the temp — declare it mutable (`T *`) and let the
+         use site read it as const (always-legal direction in C).
+         Freeze-audit B3: the const decl made codegen emit
+         write-through-const, rejected at -ansi -pedantic. *)
+      let decl_ty = match walked.e, walked.ty with
+        | (TNew _ | TNewEnum _), TConstPtr inner -> TPtr inner
+        | _ -> walked.ty
+      in
+      decls := (n, decl_ty) :: !decls;
       let lift_let = TLet { name = n; value = walked; pos = walked.pos } in
       ({ te with e = TVar n }, prelude @ [ lift_let ])
     else
@@ -5090,12 +5133,27 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                     else_body = lift_stmts else_body } ]
     | TWhile { cond; body; post } ->
         let (c', p) = walk_expr ~allow_top:false cond in
-        (* If `cond` was block-shaped, the lift evaluates it once before
-           the loop — subsequent iterations re-use the temp.  In
-           practice cond is bool-typed, so block-shaped conds are
-           rare; document this limitation if it bites. *)
-        p @ [ TWhile { cond = c'; body = lift_stmts body;
-                       post = lift_stmts post } ]
+        (* Block-shaped cond (`while match st {...}`) — its lift
+           prelude must re-run EVERY iteration, not once before the
+           loop (hoisting froze the condition: freeze-audit B2,
+           infinite loop).  Rewrite to `while (1) { <prelude>;
+           if (!c) break; body }`; `continue` still hits `post`
+           first and then re-enters at the prelude, so the
+           re-evaluation order is preserved. *)
+        if p = [] then
+          [ TWhile { cond = c'; body = lift_stmts body;
+                     post = lift_stmts post } ]
+        else
+          let pos = c'.pos in
+          let true_cond = { e = TBoolLit true; ty = TBool; pos } in
+          let break_if_done =
+            TIf { cond = { e = TNot c'; ty = TBool; pos };
+                  then_body = [ TBreak pos ];
+                  else_body = [] }
+          in
+          [ TWhile { cond = true_cond;
+                     body = p @ [ break_if_done ] @ lift_stmts body;
+                     post = lift_stmts post } ]
     | TDefer { body; pos } ->
         [ TDefer { body = lift_stmts body; pos } ]
     | TFor { counter; end_var; range_temp; lo; hi; inclusive; body; pos } ->
@@ -8822,7 +8880,10 @@ let prelude_items () =
     Ast.Return (Some (cstr_len_of (str_var "s")), pos);
   ] in
   let str_len_fn =
-    mk_str_fn "len" [str_param "s"] (Some u32_t) str_len_body in
+    (* GATE-5d completion (freeze-audit should-fix): one naming
+       convention — `length` everywhere a COUNT is asked for
+       (methods went in DR-049; this module fn was missed). *)
+    mk_str_fn "length" [str_param "s"] (Some u32_t) str_len_body in
   let str_as_bytes_body = [
     Ast.Let { name = "n"; is_mut = false; ty_ann = Some u32_t;
               value = cstr_len_of (str_var "s"); pos };
