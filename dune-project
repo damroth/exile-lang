@@ -2,7 +2,7 @@
 
 (name exile-lang)
 
-(version 0.11.3)
+(version 0.11.4)
 
 (generate_opam_files true)
 

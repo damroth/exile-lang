@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.4] - 2026-06-13
+
+The kernel-foundation freeze gate (DR-053): the final hardening pass before
+self-host bring-up, closing the three gating decisions from the 2026-06-11
+freeze audit. A C cast of a binary operation lost its precedence; the
+sanctioned rebind-after-consume list idiom miscompiled into a self-referential
+cycle; dropping a long owned list overran the C stack one frame per node; and
+the integer-width type names were still free identifiers. Each finding was
+reproduced empirically — under ASan or a real m68k cross-build — before its
+fix. 752 tests, verify-host 85/85, verify-amiga 84/84 (m68k Bebbo + vamos),
+selfhost-diff 3/3 clean, ASan+UBSan sweep clean on all 84 host-buildable
+examples.
+
+### Added
+- `examples/owned_list.exl` — a self-recursive owned enum list showing the
+  rebind-after-consume idiom (`head = new(a) List::Cons(i, head)`) and the
+  scope-exit auto-drop releasing all 50,000 nodes with no `free()` to write
+
+### Changed
+- Auto-drop of an owned linear list — a self-recursive enum where every variant
+  owns at most one next-node of the same type — now walks the spine with a loop
+  instead of recursion, so teardown uses constant C stack however long the list
+  grows (the recursive form overran an 8 MB host stack around 200k nodes, and
+  an Amiga-sized stack within hundreds). Genuine trees (a variant with two owned
+  children) keep the recursive drop, where depth lives on the C stack by design
+- Reserved `i64`, `u64`, `i128`, `u128`, `usize`, and `isize` as keywords.
+  Only the names are frozen out of type positions ahead of self-host; the
+  64-bit machinery itself stays additive future work
+
+### Fixed
+- miscompile: a C cast of a binary operation lost precedence — `(w >> 8) as u8`
+  emitted `((unsigned char)w >> 8)`, truncating before the shift instead of
+  after. A cast now parenthesizes its operand unless that operand is provably
+  atomic
+- miscompile / use-after-free: the rebind-after-consume idiom
+  `head = new(a) List::Cons(i, head)` overwrote the destination before reading
+  the consumed old value, so the new node pointed at itself — a cycle that
+  auto-drop then walked into a use-after-free and double-free. Such assignments
+  now build the node in a scratch and publish it last
+
 ## [0.11.3] - 2026-06-12
 
 The freeze-hardening patch: the no-way-back freeze audit before self-host
@@ -716,4 +756,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.11.3]: https://github.com/damroth/exile-lang/releases/tag/v0.11.3
+[0.11.4]: https://github.com/damroth/exile-lang/releases/tag/v0.11.4
