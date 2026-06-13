@@ -1,0 +1,154 @@
+;; exile-tokens-dump v1 examples/owned_struct_list.exl
+Struct @examples/owned_struct_list.exl:9:1
+(Ident Node) @examples/owned_struct_list.exl:9:8
+LBrace @examples/owned_struct_list.exl:9:13
+(Ident val) @examples/owned_struct_list.exl:9:15
+Colon @examples/owned_struct_list.exl:9:18
+(Ident int) @examples/owned_struct_list.exl:9:20
+Comma @examples/owned_struct_list.exl:9:23
+(Ident next) @examples/owned_struct_list.exl:9:25
+Colon @examples/owned_struct_list.exl:9:29
+Own @examples/owned_struct_list.exl:9:31
+Star @examples/owned_struct_list.exl:9:35
+(Ident Node) @examples/owned_struct_list.exl:9:36
+Comma @examples/owned_struct_list.exl:9:40
+(Ident alloc) @examples/owned_struct_list.exl:9:42
+Colon @examples/owned_struct_list.exl:9:47
+(Ident Allocator) @examples/owned_struct_list.exl:9:49
+RBrace @examples/owned_struct_list.exl:9:59
+Fn @examples/owned_struct_list.exl:11:1
+(Ident sum) @examples/owned_struct_list.exl:11:4
+LParen @examples/owned_struct_list.exl:11:7
+(Ident head) @examples/owned_struct_list.exl:11:8
+Colon @examples/owned_struct_list.exl:11:12
+Star @examples/owned_struct_list.exl:11:14
+Const @examples/owned_struct_list.exl:11:15
+(Ident Node) @examples/owned_struct_list.exl:11:21
+RParen @examples/owned_struct_list.exl:11:25
+Arrow @examples/owned_struct_list.exl:11:27
+(Ident int) @examples/owned_struct_list.exl:11:30
+LBrace @examples/owned_struct_list.exl:11:34
+Let @examples/owned_struct_list.exl:12:5
+Mut @examples/owned_struct_list.exl:12:9
+(Ident acc) @examples/owned_struct_list.exl:12:13
+Eq @examples/owned_struct_list.exl:12:17
+(Int 0) @examples/owned_struct_list.exl:12:19
+Semicolon @examples/owned_struct_list.exl:12:20
+Let @examples/owned_struct_list.exl:13:5
+Mut @examples/owned_struct_list.exl:13:9
+(Ident cur) @examples/owned_struct_list.exl:13:13
+Eq @examples/owned_struct_list.exl:13:17
+(Ident head) @examples/owned_struct_list.exl:13:19
+Semicolon @examples/owned_struct_list.exl:13:23
+While @examples/owned_struct_list.exl:14:5
+(Ident cur) @examples/owned_struct_list.exl:14:11
+NotEq @examples/owned_struct_list.exl:14:15
+Null @examples/owned_struct_list.exl:14:18
+LBrace @examples/owned_struct_list.exl:14:23
+(Ident acc) @examples/owned_struct_list.exl:15:9
+Eq @examples/owned_struct_list.exl:15:13
+(Ident acc) @examples/owned_struct_list.exl:15:15
+Plus @examples/owned_struct_list.exl:15:19
+(Ident cur) @examples/owned_struct_list.exl:15:21
+Dot @examples/owned_struct_list.exl:15:24
+(Ident val) @examples/owned_struct_list.exl:15:25
+Semicolon @examples/owned_struct_list.exl:15:28
+(Ident cur) @examples/owned_struct_list.exl:16:9
+Eq @examples/owned_struct_list.exl:16:13
+(Ident cur) @examples/owned_struct_list.exl:16:15
+Dot @examples/owned_struct_list.exl:16:18
+(Ident next) @examples/owned_struct_list.exl:16:19
+Semicolon @examples/owned_struct_list.exl:16:23
+RBrace @examples/owned_struct_list.exl:17:5
+Return @examples/owned_struct_list.exl:18:5
+(Ident acc) @examples/owned_struct_list.exl:18:12
+Semicolon @examples/owned_struct_list.exl:18:15
+RBrace @examples/owned_struct_list.exl:19:1
+Fn @examples/owned_struct_list.exl:21:1
+(Ident main) @examples/owned_struct_list.exl:21:4
+LParen @examples/owned_struct_list.exl:21:8
+RParen @examples/owned_struct_list.exl:21:9
+LBrace @examples/owned_struct_list.exl:21:11
+Let @examples/owned_struct_list.exl:22:5
+(Ident a) @examples/owned_struct_list.exl:22:9
+Eq @examples/owned_struct_list.exl:22:11
+(Ident default_allocator) @examples/owned_struct_list.exl:22:13
+LParen @examples/owned_struct_list.exl:22:30
+RParen @examples/owned_struct_list.exl:22:31
+Semicolon @examples/owned_struct_list.exl:22:32
+Let @examples/owned_struct_list.exl:24:5
+Mut @examples/owned_struct_list.exl:24:9
+(Ident head) @examples/owned_struct_list.exl:24:13
+Colon @examples/owned_struct_list.exl:24:17
+Own @examples/owned_struct_list.exl:24:19
+Star @examples/owned_struct_list.exl:24:23
+(Ident Node) @examples/owned_struct_list.exl:24:24
+Eq @examples/owned_struct_list.exl:24:29
+New @examples/owned_struct_list.exl:24:31
+LParen @examples/owned_struct_list.exl:24:34
+(Ident a) @examples/owned_struct_list.exl:24:35
+RParen @examples/owned_struct_list.exl:24:36
+(Ident Node) @examples/owned_struct_list.exl:24:38
+LBrace @examples/owned_struct_list.exl:24:43
+(Ident val) @examples/owned_struct_list.exl:24:45
+Colon @examples/owned_struct_list.exl:24:48
+(Int 0) @examples/owned_struct_list.exl:24:50
+Comma @examples/owned_struct_list.exl:24:51
+(Ident next) @examples/owned_struct_list.exl:24:53
+Colon @examples/owned_struct_list.exl:24:57
+Null @examples/owned_struct_list.exl:24:59
+Comma @examples/owned_struct_list.exl:24:63
+(Ident alloc) @examples/owned_struct_list.exl:24:65
+Colon @examples/owned_struct_list.exl:24:70
+(Ident a) @examples/owned_struct_list.exl:24:72
+RBrace @examples/owned_struct_list.exl:24:74
+Semicolon @examples/owned_struct_list.exl:24:75
+Let @examples/owned_struct_list.exl:25:5
+Mut @examples/owned_struct_list.exl:25:9
+(Ident i) @examples/owned_struct_list.exl:25:13
+Eq @examples/owned_struct_list.exl:25:15
+(Int 1) @examples/owned_struct_list.exl:25:17
+Semicolon @examples/owned_struct_list.exl:25:18
+While @examples/owned_struct_list.exl:26:5
+(Ident i) @examples/owned_struct_list.exl:26:11
+LtEq @examples/owned_struct_list.exl:26:13
+(Int 1000) @examples/owned_struct_list.exl:26:16
+LBrace @examples/owned_struct_list.exl:26:21
+(Ident head) @examples/owned_struct_list.exl:27:9
+Eq @examples/owned_struct_list.exl:27:14
+New @examples/owned_struct_list.exl:27:16
+LParen @examples/owned_struct_list.exl:27:19
+(Ident a) @examples/owned_struct_list.exl:27:20
+RParen @examples/owned_struct_list.exl:27:21
+(Ident Node) @examples/owned_struct_list.exl:27:23
+LBrace @examples/owned_struct_list.exl:27:28
+(Ident val) @examples/owned_struct_list.exl:27:30
+Colon @examples/owned_struct_list.exl:27:33
+(Ident i) @examples/owned_struct_list.exl:27:35
+Comma @examples/owned_struct_list.exl:27:36
+(Ident next) @examples/owned_struct_list.exl:27:38
+Colon @examples/owned_struct_list.exl:27:42
+(Ident head) @examples/owned_struct_list.exl:27:44
+Comma @examples/owned_struct_list.exl:27:48
+(Ident alloc) @examples/owned_struct_list.exl:27:50
+Colon @examples/owned_struct_list.exl:27:55
+(Ident a) @examples/owned_struct_list.exl:27:57
+RBrace @examples/owned_struct_list.exl:27:59
+Semicolon @examples/owned_struct_list.exl:27:60
+(Ident i) @examples/owned_struct_list.exl:28:9
+Eq @examples/owned_struct_list.exl:28:11
+(Ident i) @examples/owned_struct_list.exl:28:13
+Plus @examples/owned_struct_list.exl:28:15
+(Int 1) @examples/owned_struct_list.exl:28:17
+Semicolon @examples/owned_struct_list.exl:28:18
+RBrace @examples/owned_struct_list.exl:29:5
+(Ident println) @examples/owned_struct_list.exl:32:5
+LParen @examples/owned_struct_list.exl:32:12
+(Ident sum) @examples/owned_struct_list.exl:32:13
+LParen @examples/owned_struct_list.exl:32:16
+(Ident head) @examples/owned_struct_list.exl:32:17
+RParen @examples/owned_struct_list.exl:32:21
+RParen @examples/owned_struct_list.exl:32:22
+Semicolon @examples/owned_struct_list.exl:32:23
+RBrace @examples/owned_struct_list.exl:37:1
+Eof @examples/owned_struct_list.exl:38:1

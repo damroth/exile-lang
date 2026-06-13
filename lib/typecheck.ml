@@ -4156,6 +4156,22 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                        "variable '%s' declared as %s but initializer has type %s"
                        name (typ_name t_ann) (typ_name t_inferred))
         in
+        (* DR-055: an owning binding cannot start as `null`.  An `own
+           *T` must own an allocation; a null-initialized owner owns
+           nothing, and (because the value type is TNullPtr, not
+           TOwnPtr) the drop pass never tracks it — a later reassignment
+           from `new(a)` then leaks at scope exit.  Reject here, aligned
+           with the L1 rule that an owner of unknown provenance is an
+           error, never a silent leak.  A `null` terminator belongs in a
+           field (the tail of a list), not in an owning binding. *)
+        (match t_actual, tvalue.e with
+         | TOwnPtr _, TNullLit ->
+             Error.failf pos
+               "owning binding '%s' cannot start as `null` — an `own *T` \
+                must own an allocation; initialize it from `new(a) ...` \
+                (use a `Nil` enum variant, or a sentinel node, for an \
+                empty list)" name
+         | _ -> ());
         (* DR-052: `let b: *const T = q` with `q: own *T` is a loan —
            q stays the owner (and keeps its auto-drop); b is a borrow.
            Without the restamp the move-pass saw an affine value-ty and

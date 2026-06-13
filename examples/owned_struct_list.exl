@@ -1,0 +1,37 @@
+// Owned struct intrusive list — the `own *Self` field links nodes and
+// the scope-exit auto-drop tears the spine down iteratively (BUG-A,
+// kernel-foundation 2026-06-12).  The enum form (owned_list.exl) is the
+// canonical owned recursive type; this shows the C-style intrusive
+// struct variant now drops safely too.  The empty list is a `null`
+// terminator stored in the `next` field, so the list is rooted in a
+// sentinel node — an owning binding is itself never null-initialized.
+
+struct Node { val: int, next: own *Node, alloc: Allocator }
+
+fn sum(head: *const Node) -> int {
+    let mut acc = 0;
+    let mut cur = head;
+    while cur != null {
+        acc = acc + cur.val;
+        cur = cur.next;
+    }
+    return acc;
+}
+
+fn main() {
+    let a = default_allocator();
+
+    let mut head: own *Node = new(a) Node { val: 0, next: null, alloc: a };
+    let mut i = 1;
+    while i <= 1000 {
+        head = new(a) Node { val: i, next: head, alloc: a };
+        i = i + 1;
+    }
+
+    // 0 + 1 + ... + 1000 = 500500
+    println(sum(head));
+
+    // `head` is still owned here; the scope-exit auto-drop walks the
+    // spine and frees all 1001 nodes with a while-loop — O(1) stack
+    // however long the list is, and no free() to write by hand.
+}

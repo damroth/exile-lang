@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/owned_struct_list.exl
+(struct Node (fields (field val (int i32)) (field next (own-ptr (struct Node))) (field alloc (struct Allocator))))
+(fn sum (params (param head (const-ptr (struct Node)))) (int i32) (body (let mut acc (int 0)) (let mut cur (var head)) (while (binop != (var cur) null) (assign acc (binop + (var acc) (field-access (var cur) val))) (assign cur (field-access (var cur) next))) (return (var acc))))
+(fn main (params ) void (body (let a (call default_allocator )) (let mut head (ty (own-ptr (struct Node))) (new Node (field val (int 0)) (field next null) (field alloc (var a)))) (let mut i (int 1)) (while (binop <= (var i) (int 1000)) (assign head (new Node (field val (var i)) (field next (var head)) (field alloc (var a)))) (assign i (binop + (var i) (int 1)))) (expr-stmt (call println (call sum (var head))))))

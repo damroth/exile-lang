@@ -7133,6 +7133,128 @@ let () =
      contains c "__newv->data.Cons._1 = head;"
      && contains c "head = __newv;");
 
+  (* BUG-A (kernel-foundation probe, 2026-06-12) - a self-referential
+     STRUCT with an `own *Self` field compiled but its synthesized drop
+     dereferenced the null terminator (`__p->next` off a NULL __p) ->
+     SEGV.  The enum spine teardown (DR-053) was not ported to the
+     struct path.  Fix: linear struct lists drop iteratively (O(1)
+     stack, the `__p != null` guard covers the terminator); struct
+     trees and the enum-tree path keep recursion but null-guard the
+     leaf.  Each shape verified ASan-clean before landing. *)
+
+  check_assert "BUG-A: linear owned struct drops iteratively, no null deref"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Node { val: int, next: own *Node, alloc: Allocator }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let n2: own *Node = new(a) Node { val: 2, next: null, alloc: a };\n\
+         \    let n1: own *Node = new(a) Node { val: 1, next: n2, alloc: a };\n\
+         \    println(n1.val);\n\
+          }\n"
+     in
+     contains c "while (__p != ((void *)0))"
+     && contains c "__next = __p->next;"
+     && not (contains c "__drop_ptr_0(__p->alloc, __p->next)"));
+
+  check_assert "BUG-A: linear struct spine still drops a non-self owned payload"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Blob { tag: int, alloc: Allocator }\n\
+          struct Node { val: int, blob: own *Blob, next: own *Node, \
+                        alloc: Allocator }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let b: own *Blob = new(a) Blob { tag: 9, alloc: a };\n\
+         \    let n: own *Node = new(a) Node { val: 1, blob: b, next: null, \
+                                                alloc: a };\n\
+         \    println(n.val);\n\
+          }\n"
+     in
+     contains c "while (__p != ((void *)0))"
+     && contains c "__next = __p->next;"
+     && contains c "((void *)(__p->blob))");
+
+  check_assert "BUG-A: owned struct tree keeps recursion but null-guards the leaf"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Tree { val: int, left: own *Tree, right: own *Tree, \
+                        alloc: Allocator }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let l: own *Tree = new(a) Tree { val: 2, left: null, \
+                                                right: null, alloc: a };\n\
+         \    let r: own *Tree = new(a) Tree { val: 3, left: null, \
+                                                right: null, alloc: a };\n\
+         \    let root: own *Tree = new(a) Tree { val: 1, left: l, right: r, \
+                                                   alloc: a };\n\
+         \    println(root.val);\n\
+          }\n"
+     in
+     contains c "if (__p == ((void *)0))"
+     && contains c "__drop_ptr_0(__p->alloc, __p->left)"
+     && contains c "__drop_ptr_0(__p->alloc, __p->right)");
+
+  check_assert "BUG-A: owned enum tree null-guards a raw-null child"
+    (let c =
+       Exile_lang.Compiler.compile
+         "enum Tree { Node(int, own *Tree, own *Tree) | Leaf }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let t: own *Tree = new(a) Tree::Node(1, null, null);\n\
+         \    println(0);\n\
+          }\n"
+     in
+     contains c "if (__p == ((void *)0))");
+
+  (* DR-055 (2026-06-13) - reject a null-initialized owning binding.  An
+     `own *T` must own an allocation; a null-init owner owns nothing, and
+     because its value type is TNullPtr (not TOwnPtr) the drop pass never
+     tracks it - a later reassignment from new(a) then leaked at scope
+     exit (LSan 24B, struct + enum).  L1-aligned: an owner of unknown
+     provenance is an error, never a silent leak.  A `null` terminator in
+     a FIELD (a list tail) stays legal - only the binding is rejected. *)
+
+  check_error "DR-055: null-init owning struct binding is rejected"
+    "struct Node { val: int, next: own *Node, alloc: Allocator }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let mut head: own *Node = null;\n\
+    \    head = new(a) Node { val: 1, next: head, alloc: a };\n\
+    \    println(head.val);\n\
+     }\n"
+    "owning binding 'head' cannot start as `null` — an `own *T` must \
+     own an allocation; initialize it from `new(a) ...` (use a `Nil` \
+     enum variant, or a sentinel node, for an empty list)";
+
+  check_error "DR-055: null-init owning enum binding is rejected"
+    "enum List { Cons(int, own *List) | Nil }\n\
+     fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let mut head: own *List = null;\n\
+    \    head = new(a) List::Cons(1, head);\n\
+    \    println(0);\n\
+     }\n"
+    "owning binding 'head' cannot start as `null` — an `own *T` must \
+     own an allocation; initialize it from `new(a) ...` (use a `Nil` \
+     enum variant, or a sentinel node, for an empty list)";
+
+  check_assert "DR-055: a `null` terminator in an own FIELD stays legal"
+    (let c =
+       Exile_lang.Compiler.compile
+         "struct Node { val: int, next: own *Node, alloc: Allocator }\n\
+          fn main() {\n\
+         \    let a = default_allocator();\n\
+         \    let n1: own *Node = new(a) Node { val: 1, next: null, \
+                                                alloc: a };\n\
+         \    let head: own *Node = new(a) Node { val: 2, next: n1, \
+                                                   alloc: a };\n\
+         \    println(head.val);\n\
+          }\n"
+     in
+     (* the tail field is the null terminator the iterative drop stops on *)
+     contains c "while (__p != ((void *)0))");
+
   (* PORT-PREP P2 (2026-06-10) - Arena bump allocator in the prelude +
      the `ptr_offset` builtin it builds on.  P1 (ratified): nodes are
      plain borrows from `alloc_borrowed::<T>()` - the arena owns them,

@@ -307,8 +307,8 @@ let request_hm_glue inst_path =
    then recurse into droppable struct-value fields.  Vec / HashMap
    instances with droppable contents divert to their synthesized glue
    so elements are dropped too (B8). *)
-let rec drop_stmts_for_struct ~structs ~enums (base : texpr) path pos
-  : tstmt list =
+let rec drop_stmts_for_struct ?(skip=None) ~structs ~enums (base : texpr) path
+    pos : tstmt list =
   match find_struct ~structs path with
   | None -> []
   | Some s ->
@@ -379,6 +379,7 @@ let rec drop_stmts_for_struct ~structs ~enums (base : texpr) path pos
              else size_of_as_u32 inner pos
            in
            List.concat_map (fun (fname, fty) ->
+             if Some fname = skip then [] else
              match fty with
              | TOwnPtr inner ->
                  let field_access = {
@@ -520,9 +521,58 @@ let build_ptr_glue ~structs ~enums ~name pointee : tfunc =
   let body, lets =
     match pointee with
     | TStruct sp ->
+        let null_lit = { e = TNullLit; ty = TNullPtr; pos } in
         let deref = { e = TDeref p_var; ty = pointee; pos } in
-        (drop_stmts_for_struct ~structs ~enums deref sp pos @ [ free_self ],
-         [])
+        (* Fields of this struct that own the next node of the SAME type. *)
+        let self_fields =
+          match find_struct ~structs sp with
+          | Some s ->
+              List.filter_map (fun (fn, ft) ->
+                match ft with
+                | TOwnPtr (TStruct p2) when p2 = sp -> Some fn
+                | _ -> None)
+                s.sfields_ty
+          | None -> [] in
+        (match self_fields with
+         | [ self_fn ] ->
+             (* Linear list: exactly one next-of-same-type field.  Walk
+                the spine iteratively (kernel-foundation decision #2,
+                ported from the enum path) -- O(1) stack however long the
+                list grows.  The self field is null-terminated, so the
+                loop's `__p != null` guard also covers the terminator
+                that the recursive form dereferenced (BUG-A SEGV). *)
+             let next_var =
+               { e = TVar "__next"; ty = TOwnPtr pointee; pos } in
+             let self_field = {
+               e = TFieldAccess { target = deref; field = self_fn };
+               ty = TOwnPtr pointee; pos } in
+             let cond =
+               { e = TBinOp (Ast.NotEq, p_var, null_lit); ty = TBool; pos } in
+             ([ TWhile {
+                  cond;
+                  body =
+                    TAssign { path = [ "__next" ]; value = self_field; pos }
+                    :: drop_stmts_for_struct ~skip:(Some self_fn)
+                         ~structs ~enums deref sp pos
+                    @ [ free_self;
+                        TAssign { path = [ "__p" ]; value = next_var; pos } ];
+                  post = [] } ],
+              [ ("__next", TOwnPtr pointee) ])
+         | _ ->
+             (* No self field, or a tree (>=2 self children): keep the
+                recursive form, but guard the null terminator a
+                null-valued `own *Self` (or an optional owner) leaves
+                behind.  The recursive call re-enters this same glue, so
+                one guard at the top makes every level null-safe (BUG-A). *)
+             let guard =
+               TIf { cond = { e = TBinOp (Ast.EqEq, p_var, null_lit);
+                              ty = TBool; pos };
+                     then_body = [ TReturn { value = None; pos } ];
+                     else_body = [] } in
+             (guard
+              :: drop_stmts_for_struct ~structs ~enums deref sp pos
+              @ [ free_self ],
+              []))
     | TEnum ep ->
         let es =
           match List.find_opt
@@ -611,8 +661,20 @@ let build_ptr_glue ~structs ~enums ~name pointee : tfunc =
                post = [] } ],
            [ ("__next", TOwnPtr pointee) ])
         end
-        else
-          ([ match_stmt (mk_arms ~self_action:None); free_self ], [])
+        else begin
+          (* Tree (a variant with >=2 self-owned children): keep the
+             recursive form, but guard a null child.  An owning pointer
+             into the same enum can hold a raw `null` (not just a Nil
+             variant), and the recursive call re-enters this glue, so a
+             top guard makes every level null-safe (BUG-A, enum side). *)
+          let null_lit = { e = TNullLit; ty = TNullPtr; pos } in
+          let guard =
+            TIf { cond = { e = TBinOp (Ast.EqEq, p_var, null_lit);
+                           ty = TBool; pos };
+                  then_body = [ TReturn { value = None; pos } ];
+                  else_body = [] } in
+          ([ guard; match_stmt (mk_arms ~self_action:None); free_self ], [])
+        end
     | _ -> ([ free_self ], [])
   in
   mk_glue_tfunc ~name
