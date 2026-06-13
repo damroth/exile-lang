@@ -1868,10 +1868,27 @@ let gen_program ?(annotate = false) ?(freestanding = false) (tp : tprogram) =
     ~struct_index:tp.tp_struct_index in
   let buf = Buffer.create 256 in
   (* D5 — libc includes are gated on !freestanding.  In freestanding the
-     IO/strlen/memzero front is replaced by the __ex_* helpers declared in
-     "freestanding.h" (linked from runtime/freestanding.c over sys_write). *)
+     IO/strlen/memzero front is replaced by the __ex_* helpers, defined in
+     runtime/freestanding.c over sys_write.  Their prototypes are emitted
+     INLINE (not via `#include "freestanding.h"`) so the output is
+     self-contained — it compiles on any target/driver with no `-I`
+     include path, only freestanding.c linked.  This block must stay in
+     sync with runtime/freestanding.h. *)
   if ctx.freestanding then
-    Buffer.add_string buf "#include \"freestanding.h\"\n"
+    Buffer.add_string buf
+      "/* --freestanding: libc-free helpers (link runtime/freestanding.c) */\n\
+       extern long sys_write(int fd, const unsigned char *buf, \
+       unsigned long n);\n\
+       unsigned long __ex_strlen(const char *s);\n\
+       void __ex_memzero(void *p, unsigned long n);\n\
+       void __ex_print_i32(long v);\n\
+       void __ex_println_i32(long v);\n\
+       void __ex_print_u32(unsigned long v);\n\
+       void __ex_println_u32(unsigned long v);\n\
+       void __ex_print_str(const char *s);\n\
+       void __ex_println_str(const char *s);\n\
+       void __ex_print_str_quoted(const char *s);\n\
+       void __ex_print_ptr(const void *p);\n"
   else begin
     Buffer.add_string buf "#include <stdio.h>\n";
     if tp.tp_uses_heap then

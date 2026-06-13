@@ -5,6 +5,11 @@
  * freestanding C with `-nostdlib` against freestanding.c + a sys_*.c
  * backend and `nm -u` shows only { sys_write, sys_alloc, sys_free }.
  */
+/* NOTE: exilc's `--freestanding` output does NOT `#include` this header —
+ * it emits the same prototypes inline so the generated C is self-contained
+ * (no -I path needed on any target).  This header is the canonical
+ * declaration freestanding.c compiles against; keep the two in sync (the
+ * inline copy lives in codegen.ml's gen_program). */
 #ifndef EXILE_FREESTANDING_H
 #define EXILE_FREESTANDING_H
 

@@ -7263,16 +7263,20 @@ let () =
      the same program/.expected covers both (see examples/
      freestanding_print.exl + `make verify-freestanding`'s nm-clean gate). *)
 
-  check_assert "FS: freestanding gates out <stdio.h>, includes freestanding.h"
+  check_assert "FS: freestanding gates out <stdio.h>, emits inline helper protos"
     (let c = Exile_lang.Compiler.compile ~freestanding:true
        "fn main() { println(1); }\n" in
-     contains c "#include \"freestanding.h\""
-     && not (contains c "#include <stdio.h>"));
+     (* self-contained: prototypes inline, NOT an #include that would need
+        an -I path the kernel build may not have *)
+     contains c "extern long sys_write(int fd, const unsigned char *buf"
+     && contains c "void __ex_println_i32(long v);"
+     && not (contains c "#include <stdio.h>")
+     && not (contains c "#include"));
 
-  check_assert "FS: non-freestanding still includes <stdio.h>, not freestanding.h"
+  check_assert "FS: non-freestanding still includes <stdio.h>, no __ex_ protos"
     (let c = Exile_lang.Compiler.compile "fn main() { println(1); }\n" in
      contains c "#include <stdio.h>"
-     && not (contains c "freestanding.h"));
+     && not (contains c "__ex_"));
 
   check_assert "FS: println(int) routes to __ex_println_i32, no printf"
     (let c = Exile_lang.Compiler.compile ~freestanding:true
