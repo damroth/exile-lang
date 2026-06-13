@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-06-13
+
+Two threads land: the last own-pointer null soundness holes close (DR-054 /
+DR-055), and a `--freestanding` codegen mode (DR-056) gives the libc-free
+output floor for exOS / bare-metal targets. An owned intrusive struct list
+whose tail was a `null` terminator could segfault on teardown, and an `own *T`
+binding initialized to `null` owned nothing yet escaped drop tracking, leaking
+on the next reassignment — both are now closed, the second at type-check.
+`--freestanding` drops `#include <stdio.h>` and routes print / strlen / memzero
+to libc-free `__ex_*` helpers over `sys_write`; linked `-nostdlib` the object is
+nm-clean (only `__ex_*` + the `sys_*` seam). 768 tests pass.
+
+### Added
+- `--freestanding` codegen mode: the emitted C drops `#include <stdio.h>` and
+  routes print, strlen, and memzero to libc-free `__ex_*` helpers over the
+  `sys_write` seam. Linked `-nostdlib` the object references only the `__ex_*`
+  helpers and the `sys_*` seam (nm-clean) — the output floor for exOS /
+  bare-metal targets. The same program still compiles the normal libc-printf
+  way without the flag, byte-identically
+- `runtime/freestanding.c` / `runtime/freestanding.h` — the `__ex_*` helper set
+  backing freestanding output, implemented over `sys_write`
+- `make verify-freestanding` — gates each `freestanding_*` example two ways:
+  nm-clean (no libc symbol may leak into the object) and functional (output
+  diff against `.expected`)
+- `examples/freestanding_print.exl` — the libc-free output floor demo
+- `examples/owned_struct_list.exl` — an owned intrusive struct list (`own *Self`
+  next field) whose spine is auto-dropped iteratively
+
+### Changed
+- Auto-drop of an owned intrusive struct list — a struct with exactly one
+  `own *Self` next-node field — now walks the spine with a loop instead of
+  recursion, so teardown uses constant C stack however long the list grows.
+  This ports the owned-enum-list change from 0.11.4 to the struct form
+
+### Fixed
+- segfault: dropping an owned struct or enum pointer whose `own *Self` field
+  held a `null` terminator dereferenced null on teardown. The drop glue now
+  null-guards each level, so the terminator that ends a list (or a null child of
+  a tree) is safe (BUG-A)
+- leak: an `own *T` binding initialized to `null` owned nothing and was not
+  tracked by the drop pass, so a later `new(a) ...` reassignment leaked at scope
+  exit. Such an initializer is now rejected at type-check (DR-055), pointing at
+  `new(a) ...` — a `null` terminator belongs in a field, not an owning binding
+- `--freestanding` output no longer needs `-I runtime` to compile: the `__ex_*`
+  prototypes are emitted inline rather than via an `#include`, so the C is
+  self-contained
+
 ## [0.11.4] - 2026-06-13
 
 The kernel-foundation freeze gate (DR-053): the final hardening pass before
@@ -756,4 +803,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.11.4]: https://github.com/damroth/exile-lang/releases/tag/v0.11.4
+[0.11.5]: https://github.com/damroth/exile-lang/releases/tag/v0.11.5
