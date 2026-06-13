@@ -13,6 +13,7 @@
    via [last_bloat] — see REFACTOR.md item #2 for the planned move
    to an explicit gen_ctx. *)
 
-val gen_program : ?annotate:bool -> Ir.tprogram -> string
+val gen_program :
+  ?annotate:bool -> ?freestanding:bool -> Ir.tprogram -> string
 
 val last_bloat : unit -> (string * int) list

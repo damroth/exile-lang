@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/freestanding_print.exl
+(struct Point (fields (field x (int i32)) (field y (int i32))))
+(enum Shape (variants (variant Dot) (variant Line (int i32)) (variant Box (field w (int i32)) (field h (int i32)))))
+(fn main (params ) void (body (expr-stmt (call println (string "freestanding print:"))) (expr-stmt (call println (int 42))) (let n (ty (int u32)) (int 1000)) (expr-stmt (call println (var n))) (let p (struct-lit Point (field x (int 3)) (field y (int 4)))) (expr-stmt (call println (var p))) (let s (struct-lit Shape::Box (field w (int 80)) (field h (int 20)))) (expr-stmt (call println (var s))) (expr-stmt (call println (call cstr_len (string "hello"))))))

@@ -7255,6 +7255,70 @@ let () =
      (* the tail field is the null terminator the iterative drop stops on *)
      contains c "while (__p != ((void *)0))");
 
+  (* FREESTANDING codegen mode (TIER-2, 2026-06-13) - `--freestanding`
+     emits C that links -nostdlib against only the sys_* seam + runtime/
+     freestanding.c.  print/strlen/memzero route to libc-free __ex_*
+     helpers, the libc includes are gated off, and float printing is a
+     hard error.  Output is byte-identical to the hosted printf path, so
+     the same program/.expected covers both (see examples/
+     freestanding_print.exl + `make verify-freestanding`'s nm-clean gate). *)
+
+  check_assert "FS: freestanding gates out <stdio.h>, includes freestanding.h"
+    (let c = Exile_lang.Compiler.compile ~freestanding:true
+       "fn main() { println(1); }\n" in
+     contains c "#include \"freestanding.h\""
+     && not (contains c "#include <stdio.h>"));
+
+  check_assert "FS: non-freestanding still includes <stdio.h>, not freestanding.h"
+    (let c = Exile_lang.Compiler.compile "fn main() { println(1); }\n" in
+     contains c "#include <stdio.h>"
+     && not (contains c "freestanding.h"));
+
+  check_assert "FS: println(int) routes to __ex_println_i32, no printf"
+    (let c = Exile_lang.Compiler.compile ~freestanding:true
+       "fn main() { println(42); }\n" in
+     contains c "__ex_println_i32((long)(42))"
+     && not (contains c "printf"));
+
+  check_assert "FS: println(str) routes to __ex_println_str"
+    (let c = Exile_lang.Compiler.compile ~freestanding:true
+       "fn main() { println(\"hi\"); }\n" in
+     contains c "__ex_println_str(\"hi\")");
+
+  check_assert "FS: println(u32) routes to __ex_println_u32"
+    (let c = Exile_lang.Compiler.compile ~freestanding:true
+       "fn main() { let n: u32 = 7; println(n); }\n" in
+     contains c "__ex_println_u32((unsigned long)(n))");
+
+  check_assert "FS: cstr_len routes to __ex_strlen, not libc strlen"
+    (let c = Exile_lang.Compiler.compile ~freestanding:true
+       "fn main() { println(cstr_len(\"hi\")); }\n" in
+     contains c "((unsigned long)__ex_strlen(\"hi\"))"
+     && not (contains c "((unsigned long)strlen("));
+
+  check_assert "FS: @debug routes punctuation + fields to __ex_*, no printf"
+    (let c = Exile_lang.Compiler.compile ~freestanding:true
+       "@debug\n\
+        struct Point { x: int, y: int }\n\
+        fn main() { let p = Point { x: 3, y: 4 }; println(p); }\n" in
+     contains c "__ex_print_str(\"Point { \")"
+     && contains c "__ex_print_i32((long)(self.x))"
+     && not (contains c "printf"));
+
+  (* float-print reject only fires under --freestanding, so check_error
+     (which compiles hosted) can't express it — catch directly. *)
+  check_assert "FS: println(float) is a hard error in freestanding"
+    (match Exile_lang.Compiler.compile ~freestanding:true
+             "fn main() { println(1.5); }\n" with
+     | exception Exile_lang.Error.Compile_error { msg; _ } ->
+         msg = "float printing is unsupported in --freestanding (libc-free \
+                float formatting is not in v1)"
+     | _ -> false);
+
+  check_assert "FS: float printing still works in the hosted path"
+    (let c = Exile_lang.Compiler.compile "fn main() { println(1.5); }\n" in
+     contains c "printf(\"%g");
+
   (* PORT-PREP P2 (2026-06-10) - Arena bump allocator in the prelude +
      the `ptr_offset` builtin it builds on.  P1 (ratified): nodes are
      plain borrows from `alloc_borrowed::<T>()` - the arena owns them,

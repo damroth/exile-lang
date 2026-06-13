@@ -24,14 +24,20 @@ open Ir
    `--bloat-report`. *)
 type gen_ctx = {
   annotate : bool;
+  freestanding : bool;   (* --freestanding: emit C that links -nostdlib
+                            against only the sys_* seam + runtime/
+                            freestanding.c.  Routes print/strlen/memset to
+                            libc-free __ex_* helpers and gates the libc
+                            includes.  A CLI input, threaded like
+                            [annotate] (not a computed tp_uses_* flag). *)
   enum_index : enum_sig list;
   struct_index : struct_sig list;
   mutable defer_chain : tstmt list list list;
   mutable bloat : (string * int) list;
 }
 
-let new_gen_ctx ~annotate ~enum_index ~struct_index =
-  { annotate; enum_index; struct_index;
+let new_gen_ctx ~annotate ~freestanding ~enum_index ~struct_index =
+  { annotate; freestanding; enum_index; struct_index;
     defer_chain = []; bloat = [] }
 
 (* Bloat snapshot from the most recent gen_program run.  Read by
@@ -144,7 +150,7 @@ let printf_int_spec = function
 (* `print` (no newline) and `println` (trailing '\n') share emission;
    [newline] picks the variant.  For `@debug` aggregates the synthesized
    printer emits the value, and println appends a separate `printf("\n")`. *)
-let emit_print_impl ~newline buf args emit_arg =
+let emit_print_impl ~freestanding ~newline buf args emit_arg =
     let nl = if newline then "\\n" else "" in
     let arg = List.hd args in
     match arg.ty with
@@ -157,7 +163,40 @@ let emit_print_impl ~newline buf args emit_arg =
         Buffer.add_char buf '(';
         emit_arg arg;
         Buffer.add_char buf ')';
-        if newline then Buffer.add_string buf "; printf(\"\\n\")"
+        if newline then
+          Buffer.add_string buf
+            (if freestanding then "; __ex_print_str(\"\\n\")"
+             else "; printf(\"\\n\")")
+    | TFloat _ when freestanding ->
+        (* D3: libc-free float formatting (Ryū/dragon4) is real work and a
+           naive formatter is a footgun; reject in v1. *)
+        Error.failf arg.pos
+          "float printing is unsupported in --freestanding (libc-free \
+           float formatting is not in v1)"
+    | _ when freestanding ->
+        (* D3: route to the __ex_* helpers so emitted C links -nostdlib.
+           Output matches the hosted printf path byte-for-byte — bool
+           prints as 0/1 like the hosted `%d` (true/false is a Display
+           concern, not the raw `println(bool)` primitive). *)
+        (match arg.ty with
+         | TString ->
+             Buffer.add_string buf
+               (if newline then "__ex_println_str(" else "__ex_print_str(");
+             emit_arg arg;
+             Buffer.add_char buf ')'
+         | _ ->
+             let (fn, cast) = match arg.ty with
+               | TInt { signed = false; _ } | TCInt { signed = false } ->
+                   ((if newline then "__ex_println_u32" else "__ex_print_u32"),
+                    "unsigned long")
+               | TBool | TInt _ | TCInt _ ->
+                   ((if newline then "__ex_println_i32" else "__ex_print_i32"),
+                    "long")
+               | _ -> assert false  (* typecheck rejected non-printable *)
+             in
+             Printf.bprintf buf "%s((%s)(" fn cast;
+             emit_arg arg;
+             Buffer.add_string buf "))")
     | _ ->
       let (fmt, cast) = match arg.ty with
         | TBool -> ("%d", None)
@@ -184,10 +223,12 @@ let emit_print_impl ~newline buf args emit_arg =
       Buffer.add_char buf ')'
 
 let emit_print : builtin_emit =
-  fun _ctx buf args emit_arg -> emit_print_impl ~newline:false buf args emit_arg
+  fun ctx buf args emit_arg ->
+    emit_print_impl ~freestanding:ctx.freestanding ~newline:false buf args emit_arg
 
 let emit_println : builtin_emit =
-  fun _ctx buf args emit_arg -> emit_print_impl ~newline:true buf args emit_arg
+  fun ctx buf args emit_arg ->
+    emit_print_impl ~freestanding:ctx.freestanding ~newline:true buf args emit_arg
 
 (* GATE-3: `free(a, p)` routes through the allocator seam — an
    indirect call of a.free_fn with a.state, the pointer cast to
@@ -231,8 +272,11 @@ let emit_ptr_offset : builtin_emit =
     | _ -> assert false
 
 let emit_cstr_len : builtin_emit =
-  fun _ctx buf args emit_arg ->
-    Buffer.add_string buf "((unsigned long)strlen(";
+  fun ctx buf args emit_arg ->
+    (* D4: freestanding routes strlen -> the libc-free __ex_strlen. *)
+    Buffer.add_string buf
+      (if ctx.freestanding then "((unsigned long)__ex_strlen("
+       else "((unsigned long)strlen(");
     emit_arg (List.hd args);
     Buffer.add_string buf "))"
 
@@ -256,12 +300,22 @@ let emit_type_name : builtin_emit =
    the original pointer in C but we treat it as a void-call (return
    value ignored).  Pulls `<string.h>` via tp_uses_string_h. *)
 let emit_mem_zero : builtin_emit =
-  fun _ctx buf args emit_arg ->
-    Buffer.add_string buf "memset(";
-    emit_arg (List.nth args 0);
-    Buffer.add_string buf ", 0, ";
-    emit_arg (List.nth args 1);
-    Buffer.add_char buf ')'
+  fun ctx buf args emit_arg ->
+    (* D4: freestanding routes memset -> the libc-free __ex_memzero
+       (same (ptr, n) order; the return value is ignored either way). *)
+    if ctx.freestanding then begin
+      Buffer.add_string buf "__ex_memzero(";
+      emit_arg (List.nth args 0);
+      Buffer.add_string buf ", ";
+      emit_arg (List.nth args 1);
+      Buffer.add_char buf ')'
+    end else begin
+      Buffer.add_string buf "memset(";
+      emit_arg (List.nth args 0);
+      Buffer.add_string buf ", 0, ";
+      emit_arg (List.nth args 1);
+      Buffer.add_char buf ')'
+    end
 
 (* `default_allocator()` lowers to a call into the per-program helper
    `exile_default_allocator()` — the helper plus its alloc/free thunks
@@ -1640,30 +1694,55 @@ let emit_named_enum buf (e : enum_sig) =
   end;
   Buffer.add_string buf " };\n"
 
+(* Emit `<indent>printf("<lit>");\n`, or its freestanding equivalent
+   `<indent>__ex_print_str("<lit>");\n`, for the constant punctuation the
+   Debug printer interleaves (type names, field names, braces, commas).
+   [lit] is the C-string body (no surrounding quotes); type/field names
+   carry no quote or backslash, so no extra escaping is needed. *)
+let emit_dbg_lit ~freestanding buf indent lit =
+  if freestanding then
+    Printf.bprintf buf "%s__ex_print_str(\"%s\");\n" indent lit
+  else
+    Printf.bprintf buf "%sprintf(\"%s\");\n" indent lit
+
 (* Emit a single printf-style fragment that renders [access] (a C l-value
    of type [ty]) Rust-Debug style, with no trailing newline.  Nested
    `@debug` aggregates call their own __debug printer (recursion via the
-   forward decls emitted up top). *)
-let rec emit_field_debug buf ty access =
+   forward decls emitted up top).  In freestanding mode every fragment
+   routes to a libc-free `__ex_*` helper, byte-identical output. *)
+let rec emit_field_debug ~freestanding buf ty access =
   match ty with
   | TBool ->
-      Printf.bprintf buf
-        "printf(\"%%s\", (%s) ? \"true\" : \"false\")" access
+      if freestanding then
+        Printf.bprintf buf "__ex_print_str((%s) ? \"true\" : \"false\")" access
+      else
+        Printf.bprintf buf
+          "printf(\"%%s\", (%s) ? \"true\" : \"false\")" access
   | TString ->
       (* Quoted output, no runtime escape — user knows the content; for
          strings with embedded quotes/newlines the rendering is lossy. *)
-      Printf.bprintf buf "printf(\"\\\"%%s\\\"\", %s)" access
+      if freestanding then Printf.bprintf buf "__ex_print_str_quoted(%s)" access
+      else Printf.bprintf buf "printf(\"\\\"%%s\\\"\", %s)" access
   | TPtr _ | TOwnPtr _ ->
-      Printf.bprintf buf "printf(\"%%p\", (void*)(%s))" access
+      if freestanding then Printf.bprintf buf "__ex_print_ptr((void*)(%s))" access
+      else Printf.bprintf buf "printf(\"%%p\", (void*)(%s))" access
   | TStruct _ | TEnum _ ->
       let fn = mangle_typ ty ^ "__debug" in
       Printf.bprintf buf "%s(%s)" fn access
   | _ ->
       (match printf_int_spec ty with
-       | Some (spec, Some c) ->
-           Printf.bprintf buf "printf(\"%s\", (%s)(%s))" spec c access
-       | Some (spec, None) ->
-           Printf.bprintf buf "printf(\"%s\", %s)" spec access
+       | Some (spec, casto) ->
+           if freestanding then
+             let (fn, cast) = match ty with
+               | TInt { signed = false; _ } | TCInt { signed = false } ->
+                   ("__ex_print_u32", "unsigned long")
+               | _ -> ("__ex_print_i32", "long")
+             in
+             Printf.bprintf buf "%s((%s)(%s))" fn cast access
+           else
+             (match casto with
+              | Some c -> Printf.bprintf buf "printf(\"%s\", (%s)(%s))" spec c access
+              | None -> Printf.bprintf buf "printf(\"%s\", %s)" spec access)
        | None -> assert false  (* typecheck @debug-validation rejected these *))
 
 let emit_agg buf = function
@@ -1707,26 +1786,26 @@ let emit_enum_debug_fwddecl buf (e : enum_sig) =
     let cname = mangle_typ (TEnum e.ename_path) in
     Printf.bprintf buf "static void %s__debug(struct %s self);\n" cname cname
 
-let emit_struct_debug_def ~structs ~enums buf (s : struct_sig) =
+let emit_struct_debug_def ~freestanding ~structs ~enums buf (s : struct_sig) =
   if s.sis_debug then begin
     let cname = mangle_typ (TStruct s.sname_path) in
     (* User-facing header name: `Point` for mono, `Pair<i32, bool>` for a
        generic instance — not the mangled `Pair_i32_bool`. *)
     let name = render_typ_user_facing ~structs ~enums (TStruct s.sname_path) in
     Printf.bprintf buf "static void %s__debug(struct %s self) {\n" cname cname;
-    Printf.bprintf buf "    printf(\"%s { \");\n" name;
+    emit_dbg_lit ~freestanding buf "    " (Printf.sprintf "%s { " name);
     List.iteri (fun i (fname, fty) ->
-      if i > 0 then Buffer.add_string buf "    printf(\", \");\n";
-      Printf.bprintf buf "    printf(\"%s: \");\n" fname;
+      if i > 0 then emit_dbg_lit ~freestanding buf "    " ", ";
+      emit_dbg_lit ~freestanding buf "    " (Printf.sprintf "%s: " fname);
       Buffer.add_string buf "    ";
-      emit_field_debug buf fty ("self." ^ fname);
+      emit_field_debug ~freestanding buf fty ("self." ^ fname);
       Buffer.add_string buf ";\n")
       s.sfields_ty;
-    Buffer.add_string buf "    printf(\" }\");\n";
+    emit_dbg_lit ~freestanding buf "    " " }";
     Buffer.add_string buf "}\n"
   end
 
-let emit_enum_debug_def ~structs ~enums buf (e : enum_sig) =
+let emit_enum_debug_def ~freestanding ~structs ~enums buf (e : enum_sig) =
   if e.eis_debug then begin
     let cname = mangle_typ (TEnum e.ename_path) in
     let name = render_typ_user_facing ~structs ~enums (TEnum e.ename_path) in
@@ -1735,28 +1814,31 @@ let emit_enum_debug_def ~structs ~enums buf (e : enum_sig) =
     List.iter (fun (vs : variant_sig) ->
       Printf.bprintf buf "    case %s_%s:\n" cname vs.vsname;
       if vs.vsfields = [] then
-        Printf.bprintf buf "        printf(\"%s::%s\");\n" name vs.vsname
+        emit_dbg_lit ~freestanding buf "        "
+          (Printf.sprintf "%s::%s" name vs.vsname)
       else if vs.vsis_struct then begin
-        Printf.bprintf buf "        printf(\"%s::%s { \");\n" name vs.vsname;
+        emit_dbg_lit ~freestanding buf "        "
+          (Printf.sprintf "%s::%s { " name vs.vsname);
         List.iteri (fun i (fname, fty) ->
-          if i > 0 then Buffer.add_string buf "        printf(\", \");\n";
-          Printf.bprintf buf "        printf(\"%s: \");\n" fname;
+          if i > 0 then emit_dbg_lit ~freestanding buf "        " ", ";
+          emit_dbg_lit ~freestanding buf "        " (Printf.sprintf "%s: " fname);
           Buffer.add_string buf "        ";
-          emit_field_debug buf fty
+          emit_field_debug ~freestanding buf fty
             (Printf.sprintf "self.data.%s.%s" vs.vsname fname);
           Buffer.add_string buf ";\n")
           vs.vsfields;
-        Buffer.add_string buf "        printf(\" }\");\n"
+        emit_dbg_lit ~freestanding buf "        " " }"
       end else begin
-        Printf.bprintf buf "        printf(\"%s::%s(\");\n" name vs.vsname;
+        emit_dbg_lit ~freestanding buf "        "
+          (Printf.sprintf "%s::%s(" name vs.vsname);
         List.iteri (fun i (fname, fty) ->
-          if i > 0 then Buffer.add_string buf "        printf(\", \");\n";
+          if i > 0 then emit_dbg_lit ~freestanding buf "        " ", ";
           Buffer.add_string buf "        ";
-          emit_field_debug buf fty
+          emit_field_debug ~freestanding buf fty
             (Printf.sprintf "self.data.%s.%s" vs.vsname fname);
           Buffer.add_string buf ";\n")
           vs.vsfields;
-        Buffer.add_string buf "        printf(\")\");\n"
+        emit_dbg_lit ~freestanding buf "        " ")"
       end;
       Buffer.add_string buf "        break;\n")
       e.evariants;
@@ -1776,20 +1858,27 @@ let emit_section buf items ~emit =
     List.iter emit items
   end
 
-let gen_program ?(annotate = false) (tp : tprogram) =
+let gen_program ?(annotate = false) ?(freestanding = false) (tp : tprogram) =
   (* Reset per-program so `__afK` loop-counter names start at 0 each
      compile — keeps golden output deterministic across test runs. *)
   fill_counter := 0;
   match_label_counter := 0;
-  let ctx = new_gen_ctx ~annotate
+  let ctx = new_gen_ctx ~annotate ~freestanding
     ~enum_index:tp.tp_enum_index
     ~struct_index:tp.tp_struct_index in
   let buf = Buffer.create 256 in
-  Buffer.add_string buf "#include <stdio.h>\n";
-  if tp.tp_uses_heap then
-    Buffer.add_string buf "#include <stdlib.h>\n";
-  if tp.tp_uses_string_h then
-    Buffer.add_string buf "#include <string.h>\n";
+  (* D5 — libc includes are gated on !freestanding.  In freestanding the
+     IO/strlen/memzero front is replaced by the __ex_* helpers declared in
+     "freestanding.h" (linked from runtime/freestanding.c over sys_write). *)
+  if ctx.freestanding then
+    Buffer.add_string buf "#include \"freestanding.h\"\n"
+  else begin
+    Buffer.add_string buf "#include <stdio.h>\n";
+    if tp.tp_uses_heap then
+      Buffer.add_string buf "#include <stdlib.h>\n";
+    if tp.tp_uses_string_h then
+      Buffer.add_string buf "#include <string.h>\n"
+  end;
   (* User-supplied `@c_include("...")` lines.  Quoted form so paths
      with `/` work (`exec/exec.h`, `proto/intuition.h`).  C accepts
      redeclaration of stdio symbols already declared via stdio.h, so
@@ -1884,10 +1973,12 @@ let gen_program ?(annotate = false) (tp : tprogram) =
     Buffer.add_char buf '\n';
     let structs = tp.tp_struct_index and enums = tp.tp_enum_index in
     List.iter (fun s ->
-      emit_struct_debug_def ~structs ~enums buf s; Buffer.add_char buf '\n')
+      emit_struct_debug_def ~freestanding:ctx.freestanding ~structs ~enums buf s;
+      Buffer.add_char buf '\n')
       debug_structs;
     List.iter (fun e ->
-      emit_enum_debug_def ~structs ~enums buf e; Buffer.add_char buf '\n')
+      emit_enum_debug_def ~freestanding:ctx.freestanding ~structs ~enums buf e;
+      Buffer.add_char buf '\n')
       debug_enums
   end;
   (* `default_allocator()` helper + alloc/free thunks.  Emitted as

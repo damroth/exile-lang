@@ -4,7 +4,8 @@ let usage () =
   prerr_endline
     "usage: exilc [--target c|host|amiga] [--profile core|standard|full] \
      [-o <output>] [--c-out <path>] [--link <c-stub>]... [--annotate] \
-     [--bloat-report] [--perf-report[=json]] [--show-cc-warnings] <file.exl>";
+     [--freestanding] [--bloat-report] [--perf-report[=json]] \
+     [--show-cc-warnings] <file.exl>";
   exit 1
 
 let show_error (pos : Exile_lang.Pos.t) msg =
@@ -59,6 +60,7 @@ type args = {
   c_out : string option;
   link_files : string list;
   annotate : bool;
+  freestanding : bool;
   bloat_report : bool;
   perf_report : perf_report_fmt option;
   show_cc_warnings : bool;
@@ -78,6 +80,7 @@ let parse_args argv =
   let link_files = ref [] in
   let input = ref None in
   let annotate = ref false in
+  let freestanding = ref false in
   let bloat_report = ref false in
   let perf_report = ref None in
   let show_cc_warnings = ref false in
@@ -99,6 +102,7 @@ let parse_args argv =
     | "--c-out" :: p :: rest -> c_out := Some p; loop rest
     | "--link" :: p :: rest -> link_files := p :: !link_files; loop rest
     | "--annotate" :: rest -> annotate := true; loop rest
+    | "--freestanding" :: rest -> freestanding := true; loop rest
     | "--bloat-report" :: rest -> bloat_report := true; loop rest
     | "--perf-report" :: rest -> perf_report := Some PerfHuman; loop rest
     | "--perf-report=json" :: rest -> perf_report := Some PerfJson; loop rest
@@ -133,6 +137,7 @@ let parse_args argv =
         output = !output; c_out = !c_out;
         link_files = List.rev !link_files;
         annotate = !annotate;
+        freestanding = !freestanding;
         bloat_report = !bloat_report;
         perf_report = !perf_report;
         show_cc_warnings = !show_cc_warnings;
@@ -292,12 +297,14 @@ let () =
       if a.perf_report <> None then
         let (tp, c) =
           Exile_lang.Compiler.compile_file_capture
-            ~annotate:a.annotate ~profile:a.profile a.input
+            ~annotate:a.annotate ~freestanding:a.freestanding
+            ~profile:a.profile a.input
         in (Some tp, c)
       else
         (None,
          Exile_lang.Compiler.compile_file
-           ~annotate:a.annotate ~profile:a.profile a.input)
+           ~annotate:a.annotate ~freestanding:a.freestanding
+           ~profile:a.profile a.input)
     in
     let c_path =
       match a.c_out with

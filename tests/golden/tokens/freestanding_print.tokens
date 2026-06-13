@@ -1,0 +1,114 @@
+;; exile-tokens-dump v1 examples/freestanding_print.exl
+At @examples/freestanding_print.exl:16:1
+(Ident debug) @examples/freestanding_print.exl:16:2
+Struct @examples/freestanding_print.exl:17:1
+(Ident Point) @examples/freestanding_print.exl:17:8
+LBrace @examples/freestanding_print.exl:17:14
+(Ident x) @examples/freestanding_print.exl:17:16
+Colon @examples/freestanding_print.exl:17:17
+(Ident int) @examples/freestanding_print.exl:17:19
+Comma @examples/freestanding_print.exl:17:22
+(Ident y) @examples/freestanding_print.exl:17:24
+Colon @examples/freestanding_print.exl:17:25
+(Ident int) @examples/freestanding_print.exl:17:27
+RBrace @examples/freestanding_print.exl:17:31
+At @examples/freestanding_print.exl:19:1
+(Ident debug) @examples/freestanding_print.exl:19:2
+Enum @examples/freestanding_print.exl:20:1
+(Ident Shape) @examples/freestanding_print.exl:20:6
+LBrace @examples/freestanding_print.exl:20:12
+(Ident Dot) @examples/freestanding_print.exl:21:5
+Pipe @examples/freestanding_print.exl:22:3
+(Ident Line) @examples/freestanding_print.exl:22:5
+LParen @examples/freestanding_print.exl:22:9
+(Ident int) @examples/freestanding_print.exl:22:10
+RParen @examples/freestanding_print.exl:22:13
+Pipe @examples/freestanding_print.exl:23:3
+(Ident Box) @examples/freestanding_print.exl:23:5
+LBrace @examples/freestanding_print.exl:23:9
+(Ident w) @examples/freestanding_print.exl:23:11
+Colon @examples/freestanding_print.exl:23:12
+(Ident int) @examples/freestanding_print.exl:23:14
+Comma @examples/freestanding_print.exl:23:17
+(Ident h) @examples/freestanding_print.exl:23:19
+Colon @examples/freestanding_print.exl:23:20
+(Ident int) @examples/freestanding_print.exl:23:22
+RBrace @examples/freestanding_print.exl:23:26
+RBrace @examples/freestanding_print.exl:24:1
+Fn @examples/freestanding_print.exl:26:1
+(Ident main) @examples/freestanding_print.exl:26:4
+LParen @examples/freestanding_print.exl:26:8
+RParen @examples/freestanding_print.exl:26:9
+LBrace @examples/freestanding_print.exl:26:11
+(Ident println) @examples/freestanding_print.exl:27:5
+LParen @examples/freestanding_print.exl:27:12
+(String "freestanding print:") @examples/freestanding_print.exl:27:13
+RParen @examples/freestanding_print.exl:27:34
+Semicolon @examples/freestanding_print.exl:27:35
+(Ident println) @examples/freestanding_print.exl:28:5
+LParen @examples/freestanding_print.exl:28:12
+(Int 42) @examples/freestanding_print.exl:28:13
+RParen @examples/freestanding_print.exl:28:15
+Semicolon @examples/freestanding_print.exl:28:16
+Let @examples/freestanding_print.exl:30:5
+(Ident n) @examples/freestanding_print.exl:30:9
+Colon @examples/freestanding_print.exl:30:10
+(Ident u32) @examples/freestanding_print.exl:30:12
+Eq @examples/freestanding_print.exl:30:16
+(Int 1000) @examples/freestanding_print.exl:30:18
+Semicolon @examples/freestanding_print.exl:30:22
+(Ident println) @examples/freestanding_print.exl:31:5
+LParen @examples/freestanding_print.exl:31:12
+(Ident n) @examples/freestanding_print.exl:31:13
+RParen @examples/freestanding_print.exl:31:14
+Semicolon @examples/freestanding_print.exl:31:15
+Let @examples/freestanding_print.exl:33:5
+(Ident p) @examples/freestanding_print.exl:33:9
+Eq @examples/freestanding_print.exl:33:11
+(Ident Point) @examples/freestanding_print.exl:33:13
+LBrace @examples/freestanding_print.exl:33:19
+(Ident x) @examples/freestanding_print.exl:33:21
+Colon @examples/freestanding_print.exl:33:22
+(Int 3) @examples/freestanding_print.exl:33:24
+Comma @examples/freestanding_print.exl:33:25
+(Ident y) @examples/freestanding_print.exl:33:27
+Colon @examples/freestanding_print.exl:33:28
+(Int 4) @examples/freestanding_print.exl:33:30
+RBrace @examples/freestanding_print.exl:33:32
+Semicolon @examples/freestanding_print.exl:33:33
+(Ident println) @examples/freestanding_print.exl:34:5
+LParen @examples/freestanding_print.exl:34:12
+(Ident p) @examples/freestanding_print.exl:34:13
+RParen @examples/freestanding_print.exl:34:14
+Semicolon @examples/freestanding_print.exl:34:15
+Let @examples/freestanding_print.exl:36:5
+(Ident s) @examples/freestanding_print.exl:36:9
+Eq @examples/freestanding_print.exl:36:11
+(Ident Shape) @examples/freestanding_print.exl:36:13
+DoubleColon @examples/freestanding_print.exl:36:18
+(Ident Box) @examples/freestanding_print.exl:36:20
+LBrace @examples/freestanding_print.exl:36:24
+(Ident w) @examples/freestanding_print.exl:36:26
+Colon @examples/freestanding_print.exl:36:27
+(Int 80) @examples/freestanding_print.exl:36:29
+Comma @examples/freestanding_print.exl:36:31
+(Ident h) @examples/freestanding_print.exl:36:33
+Colon @examples/freestanding_print.exl:36:34
+(Int 20) @examples/freestanding_print.exl:36:36
+RBrace @examples/freestanding_print.exl:36:39
+Semicolon @examples/freestanding_print.exl:36:40
+(Ident println) @examples/freestanding_print.exl:37:5
+LParen @examples/freestanding_print.exl:37:12
+(Ident s) @examples/freestanding_print.exl:37:13
+RParen @examples/freestanding_print.exl:37:14
+Semicolon @examples/freestanding_print.exl:37:15
+(Ident println) @examples/freestanding_print.exl:40:5
+LParen @examples/freestanding_print.exl:40:12
+(Ident cstr_len) @examples/freestanding_print.exl:40:13
+LParen @examples/freestanding_print.exl:40:21
+(String "hello") @examples/freestanding_print.exl:40:22
+RParen @examples/freestanding_print.exl:40:29
+RParen @examples/freestanding_print.exl:40:30
+Semicolon @examples/freestanding_print.exl:40:31
+RBrace @examples/freestanding_print.exl:41:1
+Eof @examples/freestanding_print.exl:42:1

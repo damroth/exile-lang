@@ -51,6 +51,7 @@ AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(AMIGA_EXAMPLES))
 .PHONY: host amiga examples
 .PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file
 .PHONY: verify verify-host verify-amiga verify-host-% verify-amiga-%
+.PHONY: verify-freestanding verify-freestanding-%
 .PHONY: rebaseline-host rebaseline-host-%
 .PHONY: build-image
 
@@ -166,6 +167,44 @@ verify-amiga-%: amiga-%
 verify-host:  $(HOST_EXAMPLES:%=verify-host-%)
 verify-amiga: $(AMIGA_EXAMPLES:%=verify-amiga-%)
 verify: verify-host verify-amiga
+
+# ===== Freestanding codegen mode (--freestanding) =====
+#
+# `freestanding_*.exl` examples are gated two ways:
+#   (1) nm-clean — the emitted C, compiled `-ffreestanding` with the
+#       stack-protector/PIC build artifacts off, may reference ONLY the
+#       __ex_* helpers + the sys_* seam.  Any libc symbol (printf/strlen/
+#       memset/malloc/...) is a hard failure — that nm-clean object IS the
+#       definition of done for the freestanding floor.
+#   (2) functional — link the emitted C against runtime/freestanding.c +
+#       sys_host.c (the host crt bootstraps `main`; sys_host is the host
+#       backend), run, diff examples/NAME.expected.  The same .exl also
+#       rides verify-host / verify-amiga via the libc-printf path with a
+#       byte-identical .expected.
+FS_OUT       := $(OUT)/freestanding
+FS_RUNTIME   := runtime/freestanding.c
+FREESTANDING_EXAMPLES := $(filter freestanding_%, $(EXAMPLE_NAMES))
+
+verify-freestanding-%: build
+	@mkdir -p $(C_OUT) $(FS_OUT)
+	@$(EXILE) --target c --freestanding --c-out $(C_OUT)/$*.fs.c examples/$*.exl >/dev/null
+	@$(CC) $(CFLAGS) -ffreestanding -fno-stack-protector -fno-pic -I runtime \
+		-c $(C_OUT)/$*.fs.c -o $(FS_OUT)/$*.o
+	@leak=$$(nm -u $(FS_OUT)/$*.o | awk '{print $$NF}' | grep -vE '^(__ex_|sys_)' || true); \
+	if [ -n "$$leak" ]; then \
+		echo "verify-freestanding-$*: LIBC LEAK -> $$leak"; exit 1; fi
+	@$(CC) -I runtime $(C_OUT)/$*.fs.c $(FS_RUNTIME) $(SYS_HOST) -o $(FS_OUT)/$*
+	@if [ ! -f examples/$*.expected ]; then \
+		echo "verify-freestanding-$*: missing examples/$*.expected"; exit 1; fi
+	@actual=$$($(FS_OUT)/$*); expected=$$(cat examples/$*.expected); \
+	if [ "$$actual" = "$$expected" ]; then \
+		echo "verify-freestanding-$*: ok (nm-clean + output)"; \
+	else \
+		echo "verify-freestanding-$*: FAIL"; \
+		diff <(echo "$$expected") <(echo "$$actual"); exit 1; \
+	fi
+
+verify-freestanding: $(FREESTANDING_EXAMPLES:%=verify-freestanding-%)
 
 # Capture current host stdout into examples/NAME.expected.  Use when
 # adding a new example or after an *intentional* output change; CI

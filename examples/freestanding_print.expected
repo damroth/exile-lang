@@ -1,0 +1,6 @@
+freestanding print:
+42
+1000
+Point { x: 3, y: 4 }
+Shape::Box { w: 80, h: 20 }
+5

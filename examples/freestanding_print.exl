@@ -1,0 +1,41 @@
+// --freestanding codegen mode: the emitted C links `-nostdlib` against
+// only the sys_* seam + runtime/freestanding.c.  No libc — print, strlen
+// and memzero route to libc-free `__ex_*` helpers over `sys_write`, and
+// the `#include <stdio.h>` is gone.  This is the floor for exOS /
+// bare-metal output.
+//
+//   exilc --freestanding --c-out out.c freestanding_print.exl
+//   cc -ffreestanding -nostdlib -fno-stack-protector -fno-pic \
+//      out.c runtime/freestanding.c runtime/sys_host.c -o out
+//   nm -u out.o   # -> only { sys_write, sys_alloc, sys_free }
+//
+// The SAME program also compiles the normal libc-printf way without the
+// flag (this file rides verify-host / verify-amiga too) — the output is
+// byte-identical, so one .expected covers all three.
+
+@debug
+struct Point { x: int, y: int }
+
+@debug
+enum Shape {
+    Dot
+  | Line(int)
+  | Box { w: int, h: int }
+}
+
+fn main() {
+    println("freestanding print:");
+    println(42);
+
+    let n: u32 = 1000;
+    println(n);
+
+    let p = Point { x: 3, y: 4 };
+    println(p);                       // Point { x: 3, y: 4 }
+
+    let s = Shape::Box { w: 80, h: 20 };
+    println(s);                       // Shape::Box { w: 80, h: 20 }
+
+    // strlen routes to __ex_strlen under --freestanding
+    println(cstr_len("hello"));       // 5
+}
