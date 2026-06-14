@@ -22,6 +22,9 @@ examples/selfhost/*
 !examples/selfhost/lex_errors/
 examples/selfhost/lex_errors/*
 !examples/selfhost/lex_errors/*.exl
+!examples/selfhost/parse_errors/
+examples/selfhost/parse_errors/*
+!examples/selfhost/parse_errors/*.exl
 
 # opam
 *.install

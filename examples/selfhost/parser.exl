@@ -216,6 +216,20 @@ fn peek_is(s: *const Parser, t: Token) -> bool {
     return tok_tag(peek(s)) == tok_tag(t);
 }
 
+// Append the OCaml `Token.pp` spelling, with the value for the payload
+// variants (`identifier 'x'` / `integer N` / `string "s"`) built into the
+// message — the parser-error counterpart of the lexer's dynamic messages.
+// Float's value is deferred (`??`, like the `%h`/`%g` dump deferral).
+fn pp_into(out: *StringBuilder, t: Token) {
+    match t {
+        Token::Ident(n) => { out.push_str("identifier '"); out.push_str(n); out.push_str("'"); }
+        | Token::Int(v) => { out.push_str("integer "); out.push_int(v); }
+        | Token::String(v) => { out.push_str("string \""); out.push_str(v); out.push_str("\""); }
+        | Token::Float(_f, _is32) => { out.push_str("float ??"); }
+        | u => { out.push_str(pp(u)); }
+    }
+}
+
 // `expected <pp(expected)>, got <pp(got)>` at the consumed token.
 fn expect(s: *Parser, expected: Token) {
     let tp = advance(s);
@@ -224,7 +238,7 @@ fn expect(s: *Parser, expected: Token) {
         sb.push_str("expected ");
         sb.push_str(pp(expected));
         sb.push_str(", got ");
-        sb.push_str(pp(tp.tok));
+        pp_into(&sb, tp.tok);
         fail(s, tp.pos, str::from_slice(s.ar, sb.as_slice()));
     }
 }
@@ -238,7 +252,7 @@ fn expect_ident(s: *Parser, what: str) -> IdentPos {
             sb.push_str("expected ");
             sb.push_str(what);
             sb.push_str(", got ");
-            sb.push_str(pp(tp.tok));
+            pp_into(&sb, tp.tok);
             fail(s, tp.pos, str::from_slice(s.ar, sb.as_slice()));
             IdentPos { name: "", pos: tp.pos }
         }
@@ -400,7 +414,7 @@ fn parse_type(s: *Parser) -> *const TypeAnn {
         | _ => {
             let mut sb = StringBuilder::with_capacity(s.a, 96 as u32);
             sb.push_str("expected type (int, i8/i16/i32, u8/u16/u32, str, bool, struct name, (T,...)), got ");
-            sb.push_str(pp(tp.tok));
+            pp_into(&sb, tp.tok);
             fail(s, tp.pos, str::from_slice(s.ar, sb.as_slice()));
             dummy_ty(s)
         }
@@ -458,7 +472,7 @@ fn parse_generic_args(s: *Parser, out: *Vec<*const TypeAnn>) {
                 | other => {
                     let mut sb = StringBuilder::with_capacity(s.a, 48 as u32);
                     sb.push_str("expected ',' or '>' in generic arguments, got ");
-                    sb.push_str(pp(other));
+                    pp_into(&sb, other);
                     fail(s, peek_pos(s), str::from_slice(s.ar, sb.as_slice()));
                     done = true;
                 }
@@ -480,7 +494,7 @@ fn parse_ty_fnsugar(s: *Parser, pipe_pos: Pos) -> *const TypeAnn {
                 | other => {
                     let mut sb = StringBuilder::with_capacity(s.a, 48 as u32);
                     sb.push_str("expected ',' or '|' in fn-pointer type sugar, got ");
-                    sb.push_str(pp(other));
+                    pp_into(&sb, other);
                     fail(s, pipe_pos, str::from_slice(s.ar, sb.as_slice()));
                     closed = true;
                 }
@@ -659,6 +673,22 @@ fn mk_block(s: *Parser, stmts: Vec<Stmt>, p: Pos) -> *const Expr { return e_node
 fn mk_if_expr(s: *Parser, cond: *const Expr, then_blk: Vec<Stmt>, else_blk: Option<Vec<Stmt>>, p: Pos) -> *const Expr {
     return e_node(s, Expr::If { cond: cond, then_blk: then_blk, else_blk: else_blk, pos: p });
 }
+fn mk_arraylit(s: *Parser, es: Vec<*const Expr>, p: Pos) -> *const Expr { return e_node(s, Expr::ArrayLit(es, p)); }
+fn mk_arrayrepeat(s: *Parser, value: *const Expr, count: *const Expr, p: Pos) -> *const Expr {
+    return e_node(s, Expr::ArrayRepeat { value: value, count: count, pos: p });
+}
+fn mk_lambda(s: *Parser, params: Vec<FieldDef>, ret_ty: Option<*const TypeAnn>,
+             body: *const Expr, captures: Vec<Capture>, p: Pos) -> *const Expr {
+    return e_node(s, Expr::Lambda { params: params, ret_ty: ret_ty, body: body, captures: captures, pos: p });
+}
+fn mk_new(s: *Parser, tname: Vec<str>, fields: Vec<Field>, base: Option<*const Expr>,
+          alloc: Option<*const Expr>, p: Pos) -> *const Expr {
+    return e_node(s, Expr::New { tname: tname, fields: fields, base: base, alloc: alloc, pos: p });
+}
+fn mk_newenum(s: *Parser, tname: Vec<str>, args: Vec<*const Expr>, alloc: Option<*const Expr>, p: Pos) -> *const Expr {
+    return e_node(s, Expr::NewEnum { tname: tname, args: args, alloc: alloc, pos: p });
+}
+fn mk_capture(name: str) -> Capture { return Capture { name: name, by_ref: true }; }
 
 // ===== Comma lists (monomorphic) =====
 
@@ -713,6 +743,10 @@ fn parse_primary(s: *Parser) -> *const Expr {
         | Token::SizeOf => prim_sizeof(s, p)
         | Token::If => parse_if_after_kw(s, p)
         | Token::Match => prim_match(s, p)
+        | Token::New => prim_new(s, p)
+        | Token::Pipe => prim_lambda(s, p)
+        | Token::PipePipe => prim_lambda0(s, p)
+        | Token::LBracket => prim_array(s, p)
         | Token::Ident(name) => prim_ident(s, name, p)
         | Token::LParen => prim_paren(s, p)
         | _ => {
@@ -720,6 +754,220 @@ fn parse_primary(s: *Parser) -> *const Expr {
             dummy_expr(s)
         }
     };
+}
+
+// `|p: T, q: U| [-> R] body` captureless lambda (the leading `|` already
+// consumed).  An empty list uses `||` (prim_lambda0).
+fn prim_lambda(s: *Parser, p: Pos) -> *const Expr {
+    let params = lambda_params(s);
+    let ret_ty = lambda_ret(s);
+    let body = parse_expr(s);
+    let captures: Vec<Capture> = Vec::with_capacity(s.a, 8 as u32);
+    return mk_lambda(s, params, ret_ty, body, captures, p);
+}
+
+// `|| [-> R] body` — zero-parameter lambda (the lexer merges `||`).
+fn prim_lambda0(s: *Parser, p: Pos) -> *const Expr {
+    let params: Vec<FieldDef> = Vec::with_capacity(s.a, 8 as u32);
+    let ret_ty = lambda_ret(s);
+    let body = parse_expr(s);
+    let captures: Vec<Capture> = Vec::with_capacity(s.a, 8 as u32);
+    return mk_lambda(s, params, ret_ty, body, captures, p);
+}
+
+// `name: T, name: T |` lambda parameters (closing `|` consumed).
+fn lambda_params(s: *Parser) -> Vec<FieldDef> {
+    let mut out: Vec<FieldDef> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, Token::Pipe) { bump(s); return out; }
+    out.push(lambda_param(s));
+    while !is_err(s) {
+        if peek_is(s, Token::Pipe) { bump(s); return out; }
+        if peek_is(s, Token::Comma) {
+            bump(s);
+            if peek_is(s, Token::Pipe) { bump(s); return out; }
+            out.push(lambda_param(s));
+        } else {
+            fail(s, peek_pos(s), "expected ',' or '|' in lambda parameters");
+            return out;
+        }
+    }
+    return out;
+}
+
+fn lambda_param(s: *Parser) -> FieldDef {
+    let np = expect_ident(s, "lambda parameter name");
+    expect(s, Token::Colon);
+    let ty = parse_type(s);
+    return FieldDef { name: np.name, ty: ty };
+}
+
+fn lambda_ret(s: *Parser) -> Option<*const TypeAnn> {
+    let none: Option<*const TypeAnn> = Option::None;
+    if peek_is(s, Token::Arrow) {
+        bump(s);
+        return Option::Some(parse_type(s));
+    }
+    return none;
+}
+
+// `[e1, e2, ...]` array literal, `[v; n]` repeat, or a `[&x, &y]` capture
+// list that a trailing `|`/`||` turns into a lambda (DR-033).
+fn prim_array(s: *Parser, p: Pos) -> *const Expr {
+    if peek_is(s, Token::RBracket) {
+        fail(s, p, "empty array literal `[]` is not allowed");
+        return dummy_expr(s);
+    }
+    let first = parse_expr(s);
+    if peek_is(s, Token::Semicolon) {
+        bump(s);
+        let count = parse_expr(s);
+        expect(s, Token::RBracket);
+        return mk_arrayrepeat(s, first, count, p);
+    }
+    let mut elems: Vec<*const Expr> = Vec::with_capacity(s.a, 8 as u32);
+    elems.push(first);
+    if peek_is(s, Token::Comma) {
+        bump(s);
+        array_elems_rest(s, &elems);
+    } else {
+        expect(s, Token::RBracket);
+    }
+    if peek_is(s, Token::Pipe) || peek_is(s, Token::PipePipe) {
+        return array_as_lambda(s, elems, p);
+    }
+    return mk_arraylit(s, elems, p);
+}
+
+// Parse `e, e, ... ]` into `out` (the first element + opening `[` already
+// consumed, the leading comma consumed).
+fn array_elems_rest(s: *Parser, out: *Vec<*const Expr>) {
+    let mut done = false;
+    while !is_err(s) && !done {
+        if peek_is(s, Token::RBracket) { bump(s); done = true; }
+        else {
+            out.push(parse_expr(s));
+            if peek_is(s, Token::RBracket) { bump(s); done = true; }
+            else if peek_is(s, Token::Comma) { bump(s); }
+            else { fail(s, peek_pos(s), "expected ',' or ']' in array literal"); done = true; }
+        }
+    }
+}
+
+// A `[&name, ...]` capture list followed by `|args|`/`||` — every element
+// must be `&name`; reinterpret as a lambda's captures.
+fn array_as_lambda(s: *Parser, elems: Vec<*const Expr>, p: Pos) -> *const Expr {
+    let mut captures: Vec<Capture> = Vec::with_capacity(s.a, 8 as u32);
+    let n = elems.length();
+    let mut i = 0 as u32;
+    let mut ok = true;
+    while i < n {
+        let e = elems.get(i) orelse dummy_expr(s);
+        match capture_name(e) {
+            Option::Some(nm) => { captures.push(mk_capture(nm)); }
+            | Option::None => { ok = false; }
+        }
+        i = i + 1 as u32;
+    }
+    if !ok {
+        fail(s, p, "capture list before lambda must contain only `&name` items (by-value captures are implicit; only `&name` belongs in a capture list)");
+        return dummy_expr(s);
+    }
+    let lam = advance(s);
+    let params = lambda_kw_params(s, lam.tok);
+    let ret_ty = lambda_ret(s);
+    let body = parse_expr(s);
+    return mk_lambda(s, params, ret_ty, body, captures, lam.pos);
+}
+
+fn lambda_kw_params(s: *Parser, kw: Token) -> Vec<FieldDef> {
+    return match kw {
+        Token::PipePipe => empty_fielddefs(s)
+        | _e => lambda_params(s)
+    };
+}
+
+fn empty_fielddefs(s: *Parser) -> Vec<FieldDef> {
+    let out: Vec<FieldDef> = Vec::with_capacity(s.a, 8 as u32);
+    return out;
+}
+
+fn capture_name(e: *const Expr) -> Option<str> {
+    let none: Option<str> = Option::None;
+    return match *e {
+        Expr::Ref(inner, _rp) => ref_inner_var(inner)
+        | _e => none
+    };
+}
+
+fn ref_inner_var(inner: *const Expr) -> Option<str> {
+    let none: Option<str> = Option::None;
+    return match *inner {
+        Expr::Var(name, _vp) => Option::Some(name)
+        | _e => none
+    };
+}
+
+// `new [(alloc)] Path { ... }` (struct heap-init) / `new [(alloc)]
+// Path::V(args)` (enum tuple-variant box) / bare unit variant.
+fn prim_new(s: *Parser, p: Pos) -> *const Expr {
+    let alloc = new_alloc(s);
+    let path = parse_path_seg(s, "struct name after 'new'");
+    if peek_is(s, Token::LBrace) {
+        bump(s);
+        return new_struct(s, path, alloc, p);
+    }
+    if peek_is(s, Token::LParen) {
+        bump(s);
+        let args = parse_args(s);
+        return mk_newenum(s, path, args, alloc, p);
+    }
+    if path.length() >= 2 as u32 {
+        let unit_args: Vec<*const Expr> = Vec::with_capacity(s.a, 8 as u32);
+        return mk_newenum(s, path, unit_args, alloc, p);
+    }
+    fail(s, peek_pos(s), "expected '{' (struct heap-init) or '(' (enum tuple-variant heap-box) after 'new'");
+    return dummy_expr(s);
+}
+
+fn new_alloc(s: *Parser) -> Option<*const Expr> {
+    let none: Option<*const Expr> = Option::None;
+    if peek_is(s, Token::LParen) {
+        bump(s);
+        let e = parse_expr(s);
+        expect(s, Token::RParen);
+        return Option::Some(e);
+    }
+    return none;
+}
+
+fn new_struct(s: *Parser, path: Vec<str>, alloc: Option<*const Expr>, p: Pos) -> *const Expr {
+    let mut fields: Vec<Field> = Vec::with_capacity(s.a, 8 as u32);
+    let no_base: Option<*const Expr> = Option::None;
+    let mut base: Option<*const Expr> = no_base;
+    let mut done = false;
+    while !is_err(s) && !done {
+        if peek_is(s, Token::RBrace) {
+            bump(s); done = true;
+        } else if peek_is(s, Token::DotDot) {
+            bump(s);
+            base = Option::Some(parse_expr(s));
+            if peek_is(s, Token::Comma) { bump(s); }
+            expect(s, Token::RBrace);
+            done = true;
+        } else {
+            fields.push(parse_struct_lit_field(s));
+            if peek_is(s, Token::RBrace) { bump(s); done = true; }
+            else if peek_is(s, Token::Comma) { bump(s); }
+            else { fail(s, peek_pos(s), "expected ',' or '}' in struct literal"); done = true; }
+        }
+    }
+    return mk_new(s, path, fields, base, alloc, p);
+}
+
+// A path that must START with an identifier (decl head / `new` target).
+fn parse_path_seg(s: *Parser, what: str) -> Vec<str> {
+    let head = expect_ident(s, what);
+    return parse_path_tail(s, head.name);
 }
 
 fn float_w(is32: bool) -> FloatWidth {
@@ -1160,7 +1408,10 @@ fn parse_pattern_atom(s: *Parser) -> Pattern {
         | Token::Int(n) => { bump(s); Pattern::PLit(n, p) }
         | Token::Ident(name) => pat_ident(s, name, p)
         | _ => {
-            fail(s, p, "expected pattern");
+            let mut sb = StringBuilder::with_capacity(s.a, 32 as u32);
+            sb.push_str("expected pattern, got ");
+            pp_into(&sb, peek(s));
+            fail(s, p, str::from_slice(s.ar, sb.as_slice()));
             Pattern::PWildcard(p)
         }
     };
@@ -1172,7 +1423,10 @@ fn pat_neg_lit(s: *Parser, p: Pos) -> Pattern {
     return match tp.tok {
         Token::Int(n) => Pattern::PLit(0 - n, p)
         | _ => {
-            fail(s, p, "expected an integer literal after '-' in pattern");
+            let mut sb = StringBuilder::with_capacity(s.a, 64 as u32);
+            sb.push_str("expected an integer literal after '-' in pattern, got ");
+            pp_into(&sb, tp.tok);
+            fail(s, p, str::from_slice(s.ar, sb.as_slice()));
             Pattern::PWildcard(p)
         }
     };

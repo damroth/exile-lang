@@ -259,7 +259,7 @@ SELFHOST_IR     := $(SELFHOST_GOLDEN)/ir
 
 .PHONY: selfhost-corpus selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 .PHONY: selfhost-diff selfhost-diff-tokens selfhost-diff-ast selfhost-diff-ir
-.PHONY: selfhost-corpus-% selfhost-diff-% selfhost-port-tokens selfhost-port-errors selfhost-port-ast
+.PHONY: selfhost-corpus-% selfhost-diff-% selfhost-port-tokens selfhost-port-errors selfhost-port-ast selfhost-port-parse-errors
 
 selfhost-corpus: selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 
@@ -423,13 +423,17 @@ selfhost-port-errors: host-selfhost-lexer
 	if [ $$fail -eq 0 ]; then echo "selfhost-port-errors: clean ($$n fixtures, port == oracle line 1)"; else exit 1; fi
 
 # Run the PORTED parser (`parser::parse_program`) over the corpus and diff
-# its `--emit-ast` dump against the golden.  The parser is being ported
-# sub-stage by sub-stage: declaration items (struct/enum/impl/trait/use/…)
-# are not yet handled and record a clear error, so an example that fails
-# to parse counts as "not-yet-ported", not a regression.  Among examples
-# that DO parse, the only tolerated divergence is the float literal VALUE
-# (`(float ?? w)` vs OCaml's `%h`, deferred with the lexer) — it is masked
-# before the compare, so any other diff (a real AST-shape bug) fails.
+# its `--emit-ast` dump against the golden.  Honest bucketing — an example
+# falls into exactly one of:
+#   - byte-identical (the port's AST == oracle)
+#   - float-value deferred (only `(float ?? w)` vs OCaml's `%h`, masked)
+#   - explicit deferral: the port stopped on a documented "not yet ported"
+#     marker (a declaration item, or generic trait bounds) — a tracked
+#     sub-stage boundary, NOT a regression
+#   - REGRESSION: a parse error WITHOUT that marker (the ported grammar
+#     choked mid-expr/stmt = incompleteness/bug), or a non-float AST diff
+# The marker test is what stops a swallowed expression gap from hiding in
+# the "not yet ported" bucket (REVIEW CHECKPOINT 2).
 selfhost-port-ast: host-selfhost-parser
 	@mask='s/\(float [^ ]+ /(float /g'; \
 	clean=0; defer=""; notp=0; fail=0; \
@@ -437,14 +441,39 @@ selfhost-port-ast: host-selfhost-parser
 		[ -f $(SELFHOST_AST)/$$name.ast ] || continue; \
 		actual=$$(mktemp); errf=$$(mktemp); \
 		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_parser > $$actual 2>$$errf; \
-		if [ -s $$errf ]; then notp=$$((notp+1)); \
+		if [ -s $$errf ]; then \
+			if grep -q "not yet ported" $$errf; then notp=$$((notp+1)); \
+			else echo "selfhost-port-ast: REGRESSION (parse error) $$name"; cat $$errf; fail=1; fi; \
 		elif diff -q $(SELFHOST_AST)/$$name.ast $$actual >/dev/null; then clean=$$((clean+1)); \
 		elif diff <(sed -E "$$mask" $(SELFHOST_AST)/$$name.ast) <(sed -E "$$mask" $$actual) >/dev/null; then defer="$$defer $$name"; \
-		else echo "selfhost-port-ast: REGRESSION $$name"; diff $(SELFHOST_AST)/$$name.ast $$actual | head -6; fail=1; fi; \
+		else echo "selfhost-port-ast: REGRESSION (AST diff) $$name"; diff $(SELFHOST_AST)/$$name.ast $$actual | head -6; fail=1; fi; \
 		rm $$actual $$errf; \
 	done; \
-	echo "selfhost-port-ast: $$clean byte-identical; deferred(float-value):$$defer; not-yet-ported(decls): $$notp"; \
-	if [ $$fail -eq 0 ]; then echo "selfhost-port-ast: clean (no structural regressions)"; else exit 1; fi
+	echo "selfhost-port-ast: $$clean byte-identical; float-deferred:$$defer; explicit-deferral (decl/bounds not-yet-ported): $$notp"; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-port-ast: clean (no expr/stmt regressions)"; else exit 1; fi
+
+# Parser error parity with the lexer's `selfhost-port-errors`: each fixture
+# in parse_errors/ holds one malformed expr/stmt/type/pattern, reachable by
+# the ported grammar (NOT a declaration).  Compare the port's diagnostic
+# against the first line of the OCaml `show_error` output.  The dynamic
+# token spelling (`got identifier 'x'` / `integer N` / `string "s"`) is
+# built into the message, so these match byte-for-byte.
+selfhost-port-parse-errors: host-selfhost-parser
+	@fail=0; n=0; \
+	for f in examples/selfhost/parse_errors/*.exl; do \
+		n=$$((n+1)); \
+		oc=$$($(EXILE) --emit-ast $$f 2>&1 >/dev/null | head -1); \
+		pt=$$(echo $$f | $(HOST_OUT)/selfhost_parser 2>&1 >/dev/null | head -1); \
+		if [ "$$oc" = "$$pt" ] && [ -n "$$pt" ]; then \
+			: ; \
+		else \
+			echo "selfhost-port-parse-errors: MISMATCH $$(basename $$f)"; \
+			echo "  oracle: $$oc"; \
+			echo "  port:   $$pt"; \
+			fail=1; \
+		fi; \
+	done; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-port-parse-errors: clean ($$n fixtures, port == oracle line 1)"; else exit 1; fi
 
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io
