@@ -1,0 +1,357 @@
+// Self-host port — `lib/lexer.ml`.
+//
+// The first real processing stage: source `str` -> `Vec<TokenPos>`.  A
+// byte-at-a-time scanner over `str::as_bytes(src)`, tracking line/col so
+// each token carries its start `Pos`.  Identifiers and string literals
+// are slices of the source; `str::from_slice(arena, …)` materialises
+// them as NUL-terminated `str`s owned by the arena (so a name lives as
+// long as the AST it ends up in).
+//
+// The mutable scan state lives in a `Lexer` struct mutated through
+// `*self`; `Slice<u8>` indexing gives O(1) byte access (computed once,
+// no per-byte `cstr_len`).  Byte comparisons use char literals — exile
+// char literals ARE their byte value (`'(' == 40`).
+//
+// Deferred (verified on inputs that avoid them, like the `%h` float
+// dump): the float-literal VALUE (the `.`/exponent/suffix syntax is
+// consumed so a float never mis-tokenises, but the value is a 0.0
+// placeholder — a `str -> f64` parser is a later prelude pass), and
+// string-escape DECODING (the scan is escape-aware so `\"` doesn't end
+// the string, but the interned bytes are raw — a decode pass lands with
+// the float parser).
+
+use pos::*;
+use token::*;
+
+// ===== Character classes (over byte values) =====
+
+fn is_digit(b: u8) -> bool {
+    return b >= '0' as u8 && b <= '9' as u8;
+}
+
+fn is_alpha(b: u8) -> bool {
+    return (b >= 'a' as u8 && b <= 'z' as u8)
+        || (b >= 'A' as u8 && b <= 'Z' as u8)
+        || b == '_' as u8;
+}
+
+fn is_alnum(b: u8) -> bool {
+    return is_alpha(b) || is_digit(b);
+}
+
+fn is_hex_digit(b: u8) -> bool {
+    return is_digit(b)
+        || (b >= 'a' as u8 && b <= 'f' as u8)
+        || (b >= 'A' as u8 && b <= 'F' as u8);
+}
+
+// ===== Keyword table =====
+//
+// OCaml's `keyword_or_ident` match becomes a `str::eq` chain — a word
+// that matches a keyword is that token, otherwise it is an identifier
+// (interned by the caller before reaching here).
+
+fn keyword_or_ident(word: str) -> Token {
+    if str::eq(word, "fn") { return Token::Fn; }
+    if str::eq(word, "let") { return Token::Let; }
+    if str::eq(word, "mut") { return Token::Mut; }
+    if str::eq(word, "return") { return Token::Return; }
+    if str::eq(word, "if") { return Token::If; }
+    if str::eq(word, "else") { return Token::Else; }
+    if str::eq(word, "while") { return Token::While; }
+    if str::eq(word, "loop") { return Token::Loop; }
+    if str::eq(word, "break") { return Token::Break; }
+    if str::eq(word, "continue") { return Token::Continue; }
+    if str::eq(word, "for") { return Token::For; }
+    if str::eq(word, "in") { return Token::In; }
+    if str::eq(word, "mod") { return Token::Mod; }
+    if str::eq(word, "pub") { return Token::Pub; }
+    if str::eq(word, "use") { return Token::Use; }
+    if str::eq(word, "as") { return Token::As; }
+    if str::eq(word, "defer") { return Token::Defer; }
+    if str::eq(word, "struct") { return Token::Struct; }
+    if str::eq(word, "impl") { return Token::Impl; }
+    if str::eq(word, "trait") { return Token::Trait; }
+    if str::eq(word, "view") { return Token::View; }
+    if str::eq(word, "with") { return Token::With; }
+    if str::eq(word, "enum") { return Token::Enum; }
+    if str::eq(word, "match") { return Token::Match; }
+    if str::eq(word, "orelse") { return Token::Orelse; }
+    if str::eq(word, "try") { return Token::Try; }
+    if str::eq(word, "extern") { return Token::Extern; }
+    if str::eq(word, "type") { return Token::Type; }
+    if str::eq(word, "const") { return Token::Const; }
+    if str::eq(word, "var") { return Token::Var; }
+    if str::eq(word, "size_of") { return Token::SizeOf; }
+    if str::eq(word, "new") { return Token::New; }
+    if str::eq(word, "own") { return Token::Own; }
+    if str::eq(word, "null") { return Token::Null; }
+    if str::eq(word, "true") { return Token::True; }
+    if str::eq(word, "false") { return Token::False; }
+    return Token::Ident(word);
+}
+
+// ===== Integer parsing =====
+
+fn parse_dec(bytes: Slice<u8>, start: u32, stop: u32) -> int {
+    let mut n = 0;
+    let mut j = start;
+    while j < stop {
+        n = n * 10 + (bytes[j] as int - 48);
+        j = j + 1 as u32;
+    }
+    return n;
+}
+
+fn hex_val(b: u8) -> int {
+    if b >= '0' as u8 && b <= '9' as u8 { return b as int - 48; }
+    if b >= 'a' as u8 && b <= 'f' as u8 { return b as int - 97 + 10; }
+    return b as int - 65 + 10;
+}
+
+fn parse_hex(bytes: Slice<u8>, start: u32, stop: u32) -> int {
+    let mut n = 0;
+    let mut j = start;
+    while j < stop {
+        n = n * 16 + hex_val(bytes[j]);
+        j = j + 1 as u32;
+    }
+    return n;
+}
+
+// `'\n'`-style escape in a char literal -> its byte value.
+fn char_escape(b: u8) -> int {
+    if b == 'n' as u8 { return 10; }
+    if b == 't' as u8 { return 9; }
+    if b == 'r' as u8 { return 13; }
+    if b == 'b' as u8 { return 8; }
+    if b == '0' as u8 { return 0; }
+    if b == 92 as u8 { return 92; }      // backslash
+    if b == 39 as u8 { return 39; }      // single quote
+    if b == 34 as u8 { return 34; }      // double quote
+    return b as int;
+}
+
+// ===== The scanner =====
+
+struct Lexer {
+    bytes: Slice<u8>,
+    len: u32,
+    i: u32,
+    line: int,
+    col: int,
+    file: str,
+}
+
+impl Lexer {
+    pub fn here(self: *const Lexer) -> Pos {
+        return Pos { line: self.line, col: self.col, file: self.file };
+    }
+
+    // Byte at absolute index `j`, or 0 past the end (a harmless sentinel
+    // — lookahead never acts on it without a `< len` check elsewhere).
+    pub fn at(self: *const Lexer, j: u32) -> u8 {
+        if j < self.len { return self.bytes[j]; }
+        return 0 as u8;
+    }
+
+    pub fn cur(self: *const Lexer) -> u8 { return self.at(self.i); }
+    pub fn peek1(self: *const Lexer) -> u8 { return self.at(self.i + 1 as u32); }
+    pub fn peek2(self: *const Lexer) -> u8 { return self.at(self.i + 2 as u32); }
+
+    // Consume the current byte, advancing line/col (newline resets col).
+    pub fn advance(self: *Lexer) {
+        if self.bytes[self.i] == 10 as u8 {
+            self.line = self.line + 1;
+            self.col = 1;
+        } else {
+            self.col = self.col + 1;
+        }
+        self.i = self.i + 1 as u32;
+    }
+}
+
+fn emit(toks: *Vec<TokenPos>, tok: Token, p: Pos) {
+    toks.push(TokenPos { tok: tok, pos: p });
+}
+
+// Scan an identifier / keyword starting at the current alpha byte.
+fn lex_word(lx: *Lexer, toks: *Vec<TokenPos>, ar: *Arena, start_i: u32, p: Pos) {
+    lx.advance();
+    while lx.i < lx.len && is_alnum(lx.cur()) { lx.advance(); }
+    let word = str::from_slice(ar, lx.bytes[start_i..lx.i]);
+    emit(toks, keyword_or_ident(word), p);
+}
+
+// Scan a number: hex (`0x…`), float (`…​.…`, value deferred), or decimal.
+fn lex_number(lx: *Lexer, toks: *Vec<TokenPos>, start_i: u32, p: Pos) {
+    if lx.cur() == '0' as u8
+       && (lx.peek1() == 'x' as u8 || lx.peek1() == 'X' as u8) {
+        lx.advance();
+        lx.advance();
+        let hstart = lx.i;
+        while lx.i < lx.len && is_hex_digit(lx.cur()) { lx.advance(); }
+        emit(toks, Token::Int(parse_hex(lx.bytes, hstart, lx.i)), p);
+    } else {
+        lx.advance();
+        while lx.i < lx.len && is_digit(lx.cur()) { lx.advance(); }
+        if lx.cur() == '.' as u8 && is_digit(lx.peek1()) {
+            // Float: consume the fractional part so it does not mis-
+            // tokenise; the value is deferred (str -> f64 not yet).
+            lx.advance();
+            while lx.i < lx.len && is_digit(lx.cur()) { lx.advance(); }
+            emit(toks, Token::Float(0.0, false), p);
+        } else {
+            emit(toks, Token::Int(parse_dec(lx.bytes, start_i, lx.i)), p);
+        }
+    }
+}
+
+// Scan a `'c'` char literal -> the byte's integer value (an Int token).
+fn lex_char(lx: *Lexer, toks: *Vec<TokenPos>, p: Pos) {
+    lx.advance();                         // opening '
+    let mut code = 0;
+    if lx.cur() == 92 as u8 {             // backslash escape
+        lx.advance();
+        code = char_escape(lx.cur());
+        lx.advance();
+    } else {
+        code = lx.cur() as int;
+        lx.advance();
+    }
+    if lx.cur() == 39 as u8 { lx.advance(); }   // closing '
+    emit(toks, Token::Int(code), p);
+}
+
+// Scan a `"…"` string literal.  The scan is escape-aware (so `\"` does
+// not end it); the interned bytes are RAW (escape decoding deferred).
+fn lex_string(lx: *Lexer, toks: *Vec<TokenPos>, ar: *Arena, p: Pos) {
+    lx.advance();                         // opening "
+    let sstart = lx.i;
+    while lx.i < lx.len && lx.cur() != 34 as u8 {
+        if lx.cur() == 92 as u8 { lx.advance(); lx.advance(); }
+        else { lx.advance(); }
+    }
+    let send = lx.i;
+    if lx.i < lx.len { lx.advance(); }    // closing "
+    emit(toks, Token::String(str::from_slice(ar, lx.bytes[sstart..send])), p);
+}
+
+// Skip a `//` line comment or `/* … */` block comment (no token).
+fn skip_line_comment(lx: *Lexer) {
+    lx.advance();
+    lx.advance();
+    while lx.i < lx.len && lx.cur() != 10 as u8 { lx.advance(); }
+}
+
+fn skip_block_comment(lx: *Lexer) {
+    lx.advance();
+    lx.advance();
+    while lx.i < lx.len && !(lx.cur() == '*' as u8 && lx.peek1() == '/' as u8) {
+        lx.advance();
+    }
+    if lx.i < lx.len { lx.advance(); lx.advance(); }   // consume */
+}
+
+// Handle one token (or whitespace / comment) at the current position.
+fn lex_one(lx: *Lexer, toks: *Vec<TokenPos>, ar: *Arena) {
+    let start_i = lx.i;
+    let c = lx.cur();
+    let p = lx.here();
+    if c == ' ' as u8 || c == 9 as u8 || c == 13 as u8 || c == 10 as u8 {
+        lx.advance();
+    } else if c == '(' as u8 { lx.advance(); emit(toks, Token::LParen, p); }
+    else if c == ')' as u8 { lx.advance(); emit(toks, Token::RParen, p); }
+    else if c == '{' as u8 { lx.advance(); emit(toks, Token::LBrace, p); }
+    else if c == '}' as u8 { lx.advance(); emit(toks, Token::RBrace, p); }
+    else if c == '[' as u8 { lx.advance(); emit(toks, Token::LBracket, p); }
+    else if c == ']' as u8 { lx.advance(); emit(toks, Token::RBracket, p); }
+    else if c == ';' as u8 { lx.advance(); emit(toks, Token::Semicolon, p); }
+    else if c == ',' as u8 { lx.advance(); emit(toks, Token::Comma, p); }
+    else if c == '.' as u8 {
+        if lx.peek1() == '.' as u8 && lx.peek2() == '.' as u8 {
+            lx.advance(); lx.advance(); lx.advance(); emit(toks, Token::Ellipsis, p);
+        } else if lx.peek1() == '.' as u8 && lx.peek2() == '=' as u8 {
+            lx.advance(); lx.advance(); lx.advance(); emit(toks, Token::DotDotEq, p);
+        } else if lx.peek1() == '.' as u8 {
+            lx.advance(); lx.advance(); emit(toks, Token::DotDot, p);
+        } else {
+            lx.advance(); emit(toks, Token::Dot, p);
+        }
+    }
+    else if c == '&' as u8 {
+        if lx.peek1() == '&' as u8 { lx.advance(); lx.advance(); emit(toks, Token::AmpAmp, p); }
+        else { lx.advance(); emit(toks, Token::Amp, p); }
+    }
+    else if c == ':' as u8 {
+        if lx.peek1() == ':' as u8 { lx.advance(); lx.advance(); emit(toks, Token::DoubleColon, p); }
+        else { lx.advance(); emit(toks, Token::Colon, p); }
+    }
+    else if c == '+' as u8 {
+        if lx.peek1() == '+' as u8 { lx.advance(); lx.advance(); emit(toks, Token::PlusPlus, p); }
+        else { lx.advance(); emit(toks, Token::Plus, p); }
+    }
+    else if c == '*' as u8 { lx.advance(); emit(toks, Token::Star, p); }
+    else if c == '/' as u8 {
+        if lx.peek1() == '/' as u8 { skip_line_comment(lx); }
+        else if lx.peek1() == '*' as u8 { skip_block_comment(lx); }
+        else { lx.advance(); emit(toks, Token::Slash, p); }
+    }
+    else if c == '-' as u8 {
+        if lx.peek1() == '>' as u8 { lx.advance(); lx.advance(); emit(toks, Token::Arrow, p); }
+        else { lx.advance(); emit(toks, Token::Minus, p); }
+    }
+    else if c == '<' as u8 {
+        if lx.peek1() == '=' as u8 { lx.advance(); lx.advance(); emit(toks, Token::LtEq, p); }
+        else if lx.peek1() == '<' as u8 { lx.advance(); lx.advance(); emit(toks, Token::Shl, p); }
+        else { lx.advance(); emit(toks, Token::Lt, p); }
+    }
+    else if c == '>' as u8 {
+        if lx.peek1() == '=' as u8 { lx.advance(); lx.advance(); emit(toks, Token::GtEq, p); }
+        else if lx.peek1() == '>' as u8 { lx.advance(); lx.advance(); emit(toks, Token::Shr, p); }
+        else { lx.advance(); emit(toks, Token::Gt, p); }
+    }
+    else if c == '=' as u8 {
+        if lx.peek1() == '=' as u8 { lx.advance(); lx.advance(); emit(toks, Token::EqEq, p); }
+        else if lx.peek1() == '>' as u8 { lx.advance(); lx.advance(); emit(toks, Token::FatArrow, p); }
+        else { lx.advance(); emit(toks, Token::Eq, p); }
+    }
+    else if c == '!' as u8 {
+        if lx.peek1() == '=' as u8 { lx.advance(); lx.advance(); emit(toks, Token::NotEq, p); }
+        else { lx.advance(); emit(toks, Token::Bang, p); }
+    }
+    else if c == '|' as u8 {
+        if lx.peek1() == '|' as u8 { lx.advance(); lx.advance(); emit(toks, Token::PipePipe, p); }
+        else if lx.peek1() == '>' as u8 { lx.advance(); lx.advance(); emit(toks, Token::PipeGt, p); }
+        else { lx.advance(); emit(toks, Token::Pipe, p); }
+    }
+    else if c == '^' as u8 { lx.advance(); emit(toks, Token::Caret, p); }
+    else if c == '~' as u8 { lx.advance(); emit(toks, Token::Tilde, p); }
+    else if c == '%' as u8 { lx.advance(); emit(toks, Token::Percent, p); }
+    else if c == '?' as u8 { lx.advance(); emit(toks, Token::Question, p); }
+    else if c == '@' as u8 { lx.advance(); emit(toks, Token::At, p); }
+    else if c == 39 as u8 { lex_char(lx, toks, p); }
+    else if c == 34 as u8 { lex_string(lx, toks, ar, p); }
+    else if is_digit(c) { lex_number(lx, toks, start_i, p); }
+    else if is_alpha(c) { lex_word(lx, toks, ar, start_i, p); }
+    else { lx.advance(); }   // unexpected byte: skip (valid sources never hit this)
+}
+
+// `tokenize` — scan `src` into the token stream, terminated by `Eof`.
+// Mirrors OCaml `tokenize`.
+pub fn tokenize(a: Allocator, ar: *Arena, file: str, src: str) -> Vec<TokenPos> {
+    let mut lx = Lexer {
+        bytes: str::as_bytes(src),
+        len: str::length(src),
+        i: 0 as u32,
+        line: 1,
+        col: 1,
+        file: file,
+    };
+    let mut toks: Vec<TokenPos> = Vec::with_capacity(a, 64 as u32);
+    while lx.i < lx.len {
+        lex_one(&lx, &toks, ar);
+    }
+    toks.push(TokenPos { tok: Token::Eof, pos: lx.here() });
+    return toks;
+}

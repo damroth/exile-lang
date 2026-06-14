@@ -1,1 +1,7 @@
-fn add(a: int) -> int { return a + 1; }
+// line comment
+fn f(a: int) -> int {
+    let b = 0xff;
+    let c = 'a';
+    /* block comment */
+    return a == b && c != 0;
+}

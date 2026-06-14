@@ -23,20 +23,34 @@
   (enum Result)
 )
 ;; exile-tokens-dump v1 examples/selfhost/token_fixture.exl
-Fn @examples/selfhost/token_fixture.exl:1:1
-(Ident add) @examples/selfhost/token_fixture.exl:1:4
-LParen @examples/selfhost/token_fixture.exl:1:7
-(Ident a) @examples/selfhost/token_fixture.exl:1:8
-Colon @examples/selfhost/token_fixture.exl:1:9
-(Ident int) @examples/selfhost/token_fixture.exl:1:11
-RParen @examples/selfhost/token_fixture.exl:1:14
-Arrow @examples/selfhost/token_fixture.exl:1:16
-(Ident int) @examples/selfhost/token_fixture.exl:1:19
-LBrace @examples/selfhost/token_fixture.exl:1:23
-Return @examples/selfhost/token_fixture.exl:1:25
-(Ident a) @examples/selfhost/token_fixture.exl:1:32
-Plus @examples/selfhost/token_fixture.exl:1:34
-(Int 1) @examples/selfhost/token_fixture.exl:1:36
-Semicolon @examples/selfhost/token_fixture.exl:1:37
-RBrace @examples/selfhost/token_fixture.exl:1:39
-Eof @examples/selfhost/token_fixture.exl:2:1
+Fn @examples/selfhost/token_fixture.exl:2:1
+(Ident f) @examples/selfhost/token_fixture.exl:2:4
+LParen @examples/selfhost/token_fixture.exl:2:5
+(Ident a) @examples/selfhost/token_fixture.exl:2:6
+Colon @examples/selfhost/token_fixture.exl:2:7
+(Ident int) @examples/selfhost/token_fixture.exl:2:9
+RParen @examples/selfhost/token_fixture.exl:2:12
+Arrow @examples/selfhost/token_fixture.exl:2:14
+(Ident int) @examples/selfhost/token_fixture.exl:2:17
+LBrace @examples/selfhost/token_fixture.exl:2:21
+Let @examples/selfhost/token_fixture.exl:3:5
+(Ident b) @examples/selfhost/token_fixture.exl:3:9
+Eq @examples/selfhost/token_fixture.exl:3:11
+(Int 255) @examples/selfhost/token_fixture.exl:3:13
+Semicolon @examples/selfhost/token_fixture.exl:3:17
+Let @examples/selfhost/token_fixture.exl:4:5
+(Ident c) @examples/selfhost/token_fixture.exl:4:9
+Eq @examples/selfhost/token_fixture.exl:4:11
+(Int 97) @examples/selfhost/token_fixture.exl:4:13
+Semicolon @examples/selfhost/token_fixture.exl:4:16
+Return @examples/selfhost/token_fixture.exl:6:5
+(Ident a) @examples/selfhost/token_fixture.exl:6:12
+EqEq @examples/selfhost/token_fixture.exl:6:14
+(Ident b) @examples/selfhost/token_fixture.exl:6:17
+AmpAmp @examples/selfhost/token_fixture.exl:6:19
+(Ident c) @examples/selfhost/token_fixture.exl:6:22
+NotEq @examples/selfhost/token_fixture.exl:6:24
+(Int 0) @examples/selfhost/token_fixture.exl:6:27
+Semicolon @examples/selfhost/token_fixture.exl:6:28
+RBrace @examples/selfhost/token_fixture.exl:7:1
+Eof @examples/selfhost/token_fixture.exl:8:1

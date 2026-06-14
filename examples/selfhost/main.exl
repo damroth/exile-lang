@@ -21,6 +21,7 @@ use pos;
 use ast::*;
 use ir::*;
 use token::*;
+use lexer::*;
 use dump::*;
 
 // ===== str / Vec helpers =====
@@ -406,44 +407,6 @@ fn build_ir_program(a: Allocator, ar: *Arena) -> Tprogram {
     };
 }
 
-// ===== Token fixture: examples/selfhost/token_fixture.exl =====
-//
-//   fn add(a: int) -> int { return a + 1; }
-//
-// Hand-built token stream with the lexer's exact positions (literal
-// identifiers — runtime interning is the lexer's job, ported next).
-// Exercises render_token + dump_tokens independently of the lexer.
-
-fn tok_at(tok: Token, line: int, col: int) -> TokenPos {
-    return TokenPos {
-        tok: tok,
-        pos: pos::Pos { line: line, col: col,
-                        file: "examples/selfhost/token_fixture.exl" },
-    };
-}
-
-fn build_token_fixture(a: Allocator) -> Vec<TokenPos> {
-    let mut toks: Vec<TokenPos> = Vec::with_capacity(a, 32 as u32);
-    toks.push(tok_at(Token::Fn, 1, 1));
-    toks.push(tok_at(Token::Ident("add"), 1, 4));
-    toks.push(tok_at(Token::LParen, 1, 7));
-    toks.push(tok_at(Token::Ident("a"), 1, 8));
-    toks.push(tok_at(Token::Colon, 1, 9));
-    toks.push(tok_at(Token::Ident("int"), 1, 11));
-    toks.push(tok_at(Token::RParen, 1, 14));
-    toks.push(tok_at(Token::Arrow, 1, 16));
-    toks.push(tok_at(Token::Ident("int"), 1, 19));
-    toks.push(tok_at(Token::LBrace, 1, 23));
-    toks.push(tok_at(Token::Return, 1, 25));
-    toks.push(tok_at(Token::Ident("a"), 1, 32));
-    toks.push(tok_at(Token::Plus, 1, 34));
-    toks.push(tok_at(Token::Int(1), 1, 36));
-    toks.push(tok_at(Token::Semicolon, 1, 37));
-    toks.push(tok_at(Token::RBrace, 1, 39));
-    toks.push(tok_at(Token::Eof, 2, 1));
-    return toks;
-}
-
 // Flush a builder to stdout through the sys seam — the shape the
 // self-host compiler uses to emit a dump to `-o` / stdout.
 fn flush(sb: *const StringBuilder) {
@@ -465,7 +428,11 @@ fn main() {
     let tp = build_ir_program(a, &ar);
     dump_typed_ir(&tp, "examples/selfhost/ir_fixture.exl", true, &sb);
 
-    let toks = build_token_fixture(a);
+    // The fixture source, byte-for-byte (a string-free program, so no
+    // quote escaping in the embedded literal); the lexer must reproduce
+    // the OCaml `--emit-tokens` of examples/selfhost/token_fixture.exl.
+    let toks = tokenize(a, &ar, "examples/selfhost/token_fixture.exl",
+        "// line comment\nfn f(a: int) -> int {\n    let b = 0xff;\n    let c = 'a';\n    /* block comment */\n    return a == b && c != 0;\n}\n");
     dump_tokens(&toks, "examples/selfhost/token_fixture.exl", &sb);
 
     flush(&sb);
