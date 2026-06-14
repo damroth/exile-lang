@@ -49,6 +49,10 @@ struct Parser {
     // the OCaml in-place split becomes a one-token lookahead flag instead.
     pending_gt: bool,
     gt_pos: Pos,
+    // Inside an `impl <Target> { ... }` body this holds `Target`, so a
+    // bare `self` receiver is parsed as `self: Target` directly — the
+    // OCaml post-parse `replace_self` rewrite without rebuilding methods.
+    self_target: Option<*const TypeAnn>,
     err: Option<*const CompileError>,
     a: Allocator,
     ar: *Arena,
@@ -62,10 +66,12 @@ struct IdentPos {
 
 fn new_parser(a: Allocator, ar: *Arena, toks: Slice<TokenPos>, n: u32) -> Parser {
     let no_err: Option<*const CompileError> = Option::None;
+    let no_target: Option<*const TypeAnn> = Option::None;
     return Parser {
         toks: toks, n: n, i: 0 as u32, last_pos: pos::Pos::zero(),
         allow_struct_lit: true, allow_bitor: true,
         pending_gt: false, gt_pos: pos::Pos::zero(),
+        self_target: no_target,
         err: no_err, a: a, ar: ar,
     };
 }
@@ -564,6 +570,26 @@ fn is_self_constptr(s: *const Parser) -> bool {
         && is_ident_named(peek3(s), "self");
 }
 
+// The self receiver's pointee type: the impl target inside an `impl`
+// body, else the bare `Self` placeholder.
+fn self_inner_ty(s: *Parser) -> *const TypeAnn {
+    return match s.self_target {
+        Option::Some(t) => t
+        | Option::None => ty_node(s, TypeAnn::TySelf)
+    };
+}
+
+// Copy a `Vec<str>` element-wise into `dst` (get = copy-out, so no borrow
+// of the source escapes into the result).
+fn copy_strs(src: *const Vec<str>, dst: *Vec<str>) {
+    let n = src.length();
+    let mut i = 0 as u32;
+    while i < n {
+        dst.push(src.get(i) orelse "");
+        i = i + 1 as u32;
+    }
+}
+
 fn parse_param(s: *Parser) -> Param {
     let reg = parse_param_reg_attr(s);
     let is_mut = peek_is(s, Token::Mut);
@@ -571,19 +597,19 @@ fn parse_param(s: *Parser) -> Param {
     let no_reg: Option<str> = Option::None;
     if is_self_value(s) {
         bump(s);
-        return Param { pname: "self", pty: ty_node(s, TypeAnn::TySelf), is_mut: is_mut, preg: no_reg };
+        return Param { pname: "self", pty: self_inner_ty(s), is_mut: is_mut, preg: no_reg };
     }
     if is_self_ptr(s) {
         bump(s); bump(s);
         return Param {
-            pname: "self", pty: ty_node(s, TypeAnn::TyPtr(ty_node(s, TypeAnn::TySelf))),
+            pname: "self", pty: mk_ptr_ty(s, false, self_inner_ty(s)),
             is_mut: is_mut, preg: no_reg,
         };
     }
     if is_self_constptr(s) {
         bump(s); bump(s); bump(s);
         return Param {
-            pname: "self", pty: ty_node(s, TypeAnn::TyConstPtr(ty_node(s, TypeAnn::TySelf))),
+            pname: "self", pty: mk_ptr_ty(s, true, self_inner_ty(s)),
             is_mut: is_mut, preg: no_reg,
         };
     }
@@ -1912,36 +1938,507 @@ fn build_func(_s: *Parser, name: str, tparams: Vec<str>, tbounds: Vec<TraitBound
     };
 }
 
-fn dummy_func(s: *Parser) -> Func {
-    let no_str: Option<str> = Option::None;
-    let no_ret: Option<*const TypeAnn> = Option::None;
-    let tparams: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
-    let tbounds: Vec<TraitBound> = Vec::with_capacity(s.a, 8 as u32);
-    let params: Vec<Param> = Vec::with_capacity(s.a, 8 as u32);
-    let body: Vec<Stmt> = Vec::with_capacity(s.a, 8 as u32);
-    return Func {
-        name: "", c_name: "", tparams: tparams, tbounds: tbounds,
-        params: params, ret_ty: no_ret, body: body, is_pub: false,
-        is_extern: false, is_variadic: false, amiga_lib: no_str, tier_hint: no_str,
-        must_use: false, escapes_hatch: false, pos: peek_pos(s),
+fn mk_item_fn(_s: *Parser, f: Func) -> Item { return Item::Function(f); }
+fn mk_item_struct(_s: *Parser, d: StructDecl) -> Item { return Item::Struct(d); }
+fn mk_item_enum(_s: *Parser, d: EnumDecl) -> Item { return Item::Enum(d); }
+fn mk_item_const(_s: *Parser, d: ConstDecl) -> Item { return Item::Const(d); }
+fn mk_item_typealias(_s: *Parser, d: TypeAliasDecl) -> Item { return Item::TypeAlias(d); }
+
+// ===== Top-level items =====
+
+// A required name where OCaml uses `Error.raise_` (no "got …" tail) —
+// struct / enum / type / mod heads.
+fn expect_name(s: *Parser, msg: str) -> IdentPos {
+    let tp = advance(s);
+    return match tp.tok {
+        Token::Ident(n) => IdentPos { name: n, pos: tp.pos }
+        | _ => {
+            fail(s, tp.pos, msg);
+            IdentPos { name: "", pos: tp.pos }
+        }
     };
 }
 
-fn mk_item_fn(_s: *Parser, f: Func) -> Item { return Item::Function(f); }
+// `name: T` field-def list until `close` (struct fields / enum
+// struct-variant members).  `what` tags the missing-name error.
+fn parse_fielddefs(s: *Parser, close: Token, what: str) -> Vec<FieldDef> {
+    let mut out: Vec<FieldDef> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, close) { bump(s); return out; }
+    out.push(parse_one_fielddef(s, what));
+    while !is_err(s) {
+        if peek_is(s, close) { bump(s); return out; }
+        if peek_is(s, Token::Comma) {
+            bump(s);
+            if peek_is(s, close) { bump(s); return out; }
+            out.push(parse_one_fielddef(s, what));
+        } else {
+            fail(s, peek_pos(s), "expected ',' or closing brace in field list");
+            return out;
+        }
+    }
+    return out;
+}
 
-// Top-level item.  PORT STATUS: `fn` ported; the declaration kinds
-// (struct/enum/trait/impl/view/extern/use/const/type/mod) land in the
-// next sub-stage — they record a clear error for now.
-fn parse_item(s: *Parser) -> Item {
+fn parse_one_fielddef(s: *Parser, what: str) -> FieldDef {
+    let np = expect_ident(s, what);
+    expect(s, Token::Colon);
+    let ty = parse_type(s);
+    return FieldDef { name: np.name, ty: ty };
+}
+
+fn parse_struct_decl(s: *Parser, is_pub: bool) -> StructDecl {
+    expect(s, Token::Struct);
+    let np = expect_name(s, "expected struct name after 'struct'");
+    let mut stparams: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    parse_tparams(s, &stparams);
+    expect(s, Token::LBrace);
+    let fields = parse_fielddefs(s, Token::RBrace, "field name in struct");
+    let no_str: Option<str> = Option::None;
+    let derives: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    return StructDecl {
+        sname: np.name, stparams: stparams, sfields: fields,
+        spos: np.pos, sis_pub: is_pub, stier_hint: no_str,
+        sis_debug: false, sderives: derives, sis_move: false,
+    };
+}
+
+fn parse_enum_decl(s: *Parser, is_pub: bool) -> EnumDecl {
+    expect(s, Token::Enum);
+    let np = expect_name(s, "expected enum name after 'enum'");
+    let mut etparams: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    parse_tparams(s, &etparams);
+    expect(s, Token::LBrace);
+    let variants = parse_variants(s, np.pos);
+    let no_str: Option<str> = Option::None;
+    let derives: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    return EnumDecl {
+        ename: np.name, etparams: etparams, evariants: variants,
+        epos: np.pos, eis_pub: is_pub, etier_hint: no_str,
+        emust_use: false, eis_debug: false, ederives: derives,
+    };
+}
+
+// `A | B(T) | C { f: T }` — variants SEPARATED by `|`, `}` ends.
+fn parse_variants(s: *Parser, epos: Pos) -> Vec<EnumVariant> {
+    let mut out: Vec<EnumVariant> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, Token::RBrace) {
+        fail(s, epos, "enum must declare at least one variant");
+        return out;
+    }
+    let mut done = false;
+    while !is_err(s) && !done {
+        out.push(parse_one_variant(s));
+        if is_err(s) { done = true; }
+        else if peek_is(s, Token::Pipe) { bump(s); }
+        else if peek_is(s, Token::RBrace) { bump(s); done = true; }
+        else { fail(s, peek_pos(s), "expected '|' (next variant) or '}' after enum variant"); done = true; }
+    }
+    return out;
+}
+
+fn parse_one_variant(s: *Parser) -> EnumVariant {
+    let np = expect_ident(s, "variant name");
+    let vkind = parse_variant_kind(s);
+    return EnumVariant { vname: np.name, vkind: vkind, vpos: np.pos };
+}
+
+fn parse_variant_kind(s: *Parser) -> VariantKind {
+    if peek_is(s, Token::LParen) {
+        bump(s);
+        return VariantKind::VTuple(comma_types(s, Token::RParen));
+    }
+    if peek_is(s, Token::LBrace) {
+        bump(s);
+        return VariantKind::VStruct(parse_fielddefs(s, Token::RBrace, "field name in variant"));
+    }
+    return VariantKind::VUnit;
+}
+
+fn parse_const_decl(s: *Parser, is_pub: bool) -> ConstDecl {
+    expect(s, Token::Const);
+    let np = expect_ident(s, "constant name after 'const'");
+    expect(s, Token::Colon);
+    let ty = parse_type(s);
+    expect(s, Token::Eq);
+    let value = parse_expr(s);
+    expect(s, Token::Semicolon);
+    return ConstDecl { kname: np.name, kty: ty, kvalue: value, kis_pub: is_pub, kpos: np.pos };
+}
+
+fn parse_type_alias_decl(s: *Parser, is_pub: bool) -> TypeAliasDecl {
+    expect(s, Token::Type);
+    let np = expect_name(s, "expected type alias name after 'type'");
+    let mut tparams: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    parse_tparams(s, &tparams);
+    expect(s, Token::Eq);
+    let target = parse_type(s);
+    expect(s, Token::Semicolon);
+    return TypeAliasDecl { taname: np.name, tatparams: tparams, tatarget: target, tais_pub: is_pub, tapos: np.pos };
+}
+
+// Dispatch a single declaration item into `out`.  PORT STATUS: fn +
+// struct/enum/const/type ported; impl/trait/view/mod/use/extern + `@`
+// attributes record a clear "not yet ported" marker (next sub-stage).
+fn mk_item_mod(_s: *Parser, d: ModuleDecl) -> Item { return Item::Module(d); }
+fn mk_item_impl(_s: *Parser, d: ImplBlock) -> Item { return Item::Impl(d); }
+fn mk_item_trait(_s: *Parser, d: TraitDecl) -> Item { return Item::Trait(d); }
+fn mk_item_view(_s: *Parser, d: ViewDecl) -> Item { return Item::View(d); }
+
+// ===== impl =====
+
+// Copy a `TyStruct` path into `out`; the impl target / trait must be a
+// (possibly generic) named struct/trait.
+fn extract_struct_path(s: *Parser, t: *const TypeAnn, out: *Vec<str>, pos: Pos) {
+    match *t {
+        TypeAnn::TyStruct { path } => { copy_strs(&path, out); }
+        | _e => { fail(s, pos, "'impl' target must be a (possibly generic) struct"); }
+    }
+}
+
+// `impl Foo` (inherent) vs `impl Trait for Foo` (trait impl).  Fills
+// `itrait` with the trait path when `for` is present; returns the target
+// type.
+fn impl_target(s: *Parser, first_ty: *const TypeAnn, itrait: *Option<Vec<str>>, pos: Pos) -> *const TypeAnn {
+    if peek_is(s, Token::For) {
+        bump(s);
+        let mut tp: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+        extract_struct_path(s, first_ty, &tp, pos);
+        *itrait = Option::Some(tp);
+        return parse_type(s);
+    }
+    return first_ty;
+}
+
+fn opt_is_some(o: *const Option<Vec<str>>) -> bool {
+    return match *o {
+        Option::Some(_x) => true
+        | Option::None => false
+    };
+}
+
+fn parse_impl_block(s: *Parser) -> ImplBlock {
+    expect(s, Token::Impl);
+    let pos = s.last_pos;
+    let mut itparams: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    parse_tparams(s, &itparams);
+    let first_ty = parse_type(s);
+    let no_trait: Option<Vec<str>> = Option::None;
+    let mut itrait: Option<Vec<str>> = no_trait;
+    let target_ty = impl_target(s, first_ty, &itrait, pos);
+    let mut itarget: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    extract_struct_path(s, target_ty, &itarget, pos);
+    let is_trait_impl = opt_is_some(&itrait);
+    expect(s, Token::LBrace);
+    let prev_target = s.self_target;
+    s.self_target = Option::Some(target_ty);
+    let mut methods: Vec<Func> = Vec::with_capacity(s.a, 8 as u32);
+    let mut iassoc: Vec<FieldDef> = Vec::with_capacity(s.a, 8 as u32);
+    parse_impl_body(s, &methods, &iassoc, is_trait_impl);
+    s.self_target = prev_target;
+    let itbounds: Vec<TraitBound> = Vec::with_capacity(s.a, 8 as u32);
+    return ImplBlock {
+        itparams: itparams, itbounds: itbounds, itrait: itrait, iassoc: iassoc,
+        itarget: itarget, iitems: methods, ipos: pos,
+    };
+}
+
+fn parse_impl_body(s: *Parser, methods: *Vec<Func>, iassoc: *Vec<FieldDef>, is_trait_impl: bool) {
+    let mut done = false;
+    while !is_err(s) && !done {
+        if peek_is(s, Token::RBrace) { bump(s); done = true; }
+        else if peek_is(s, Token::Eof) { fail(s, s.last_pos, "unexpected end of file, expected '}'"); done = true; }
+        else if peek_is(s, Token::Type) {
+            bump(s);
+            let an = expect_ident(s, "associated type name after 'type'");
+            expect(s, Token::Eq);
+            let ty = parse_type(s);
+            expect(s, Token::Semicolon);
+            iassoc.push(FieldDef { name: an.name, ty: ty });
+        } else {
+            let pub_ = peek_is(s, Token::Pub);
+            if pub_ { bump(s); }
+            let mpub = pub_ || is_trait_impl;
+            methods.push(parse_function(s, mpub));
+        }
+    }
+}
+
+// ===== trait =====
+
+fn parse_trait_path(s: *Parser, what: str) -> Vec<str> {
+    let head = expect_ident(s, what);
+    return parse_path_tail(s, head.name);
+}
+
+fn parse_supertraits(s: *Parser, supers: *Vec<Vec<str>>) {
+    if !peek_is(s, Token::Colon) { return; }
+    bump(s);
+    let mut done = false;
+    while !is_err(s) && !done {
+        supers.push(parse_trait_path(s, "supertrait name"));
+        if peek_is(s, Token::Plus) { bump(s); } else { done = true; }
+    }
+}
+
+fn parse_trait(s: *Parser, is_pub: bool) -> TraitDecl {
+    expect(s, Token::Trait);
+    let np = expect_ident(s, "trait name after 'trait'");
+    let mut supers: Vec<Vec<str>> = Vec::with_capacity(s.a, 8 as u32);
+    parse_supertraits(s, &supers);
+    expect(s, Token::LBrace);
+    let mut methods: Vec<Func> = Vec::with_capacity(s.a, 8 as u32);
+    let mut defaults: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    let mut assoc: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    parse_trait_body(s, &methods, &defaults, &assoc);
+    return TraitDecl {
+        trname: np.name, trassoc: assoc, trsupers: supers, trmethods: methods,
+        trdefaults: defaults, trpos: np.pos, tris_pub: is_pub,
+    };
+}
+
+fn parse_trait_body(s: *Parser, methods: *Vec<Func>, defaults: *Vec<str>, assoc: *Vec<str>) {
+    let mut done = false;
+    while !is_err(s) && !done {
+        if peek_is(s, Token::RBrace) { bump(s); done = true; }
+        else if peek_is(s, Token::Eof) { fail(s, s.last_pos, "unexpected end of file, expected '}'"); done = true; }
+        else if peek_is(s, Token::Type) {
+            bump(s);
+            let an = expect_ident(s, "associated type name after 'type'");
+            expect(s, Token::Semicolon);
+            assoc.push(an.name);
+        } else if peek_is(s, Token::Fn) {
+            parse_trait_method(s, methods, defaults);
+        } else {
+            fail(s, peek_pos(s), "expected 'fn' signature or 'type' inside 'trait' block");
+            done = true;
+        }
+    }
+}
+
+fn parse_trait_method(s: *Parser, methods: *Vec<Func>, defaults: *Vec<str>) {
+    expect(s, Token::Fn);
+    let np = expect_ident(s, "method name after 'fn'");
+    let mut tparams: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    parse_tparams(s, &tparams);
+    let params = parse_params(s);
+    let ret_ty = parse_ret_ty(s);
+    let mut body: Vec<Stmt> = Vec::with_capacity(s.a, 8 as u32);
+    let mut is_default = false;
+    if peek_is(s, Token::Semicolon) {
+        bump(s);
+    } else if peek_is(s, Token::LBrace) {
+        body = parse_block(s);
+        is_default = true;
+    } else {
+        fail(s, peek_pos(s), "expected ';' or '{ ... }' after trait method");
+    }
+    methods.push(build_trait_method(s, np.name, tparams, params, ret_ty, body, np.pos));
+    if is_default { defaults.push(np.name); }
+}
+
+fn build_trait_method(s: *Parser, name: str, tparams: Vec<str>, params: Vec<Param>,
+                       ret_ty: Option<*const TypeAnn>, body: Vec<Stmt>, pos: Pos) -> Func {
+    let no_str: Option<str> = Option::None;
+    let tbounds: Vec<TraitBound> = Vec::with_capacity(s.a, 8 as u32);
+    return Func {
+        name: name, c_name: name, tparams: tparams, tbounds: tbounds,
+        params: params, ret_ty: ret_ty, body: body, is_pub: true,
+        is_extern: false, is_variadic: false, amiga_lib: no_str, tier_hint: no_str,
+        must_use: false, escapes_hatch: false, pos: pos,
+    };
+}
+
+// ===== view (DR-009 active patterns) =====
+
+fn parse_view_decl(s: *Parser, is_pub: bool) -> ViewDecl {
+    expect(s, Token::View);
+    let np = expect_ident(s, "view name after 'view'");
+    expect(s, Token::LParen);
+    let pn = expect_ident(s, "view scrutinee parameter name");
+    expect(s, Token::Colon);
+    let pty = parse_type(s);
+    expect(s, Token::RParen);
+    let no_reg: Option<str> = Option::None;
+    let param = Param { pname: pn.name, pty: pty, is_mut: false, preg: no_reg };
+    expect(s, Token::Arrow);
+    let mut cases: Vec<ViewCase> = Vec::with_capacity(s.a, 8 as u32);
+    parse_view_cases(s, &cases);
+    expect(s, Token::LBrace);
+    let body = parse_stmts(s);
+    expect(s, Token::RBrace);
+    return ViewDecl {
+        vname: np.name, vparam: param, vcases: cases, vbody: body,
+        vpos: np.pos, vis_pub: is_pub,
+    };
+}
+
+fn parse_view_cases(s: *Parser, cases: *Vec<ViewCase>) {
+    let mut done = false;
+    while !is_err(s) && !done {
+        cases.push(parse_one_view_case(s));
+        if peek_is(s, Token::Pipe) { bump(s); }
+        else if peek_is(s, Token::LBrace) { done = true; }
+        else { fail(s, peek_pos(s), "expected '|' (next case) or '{' (view body) after view case"); done = true; }
+    }
+}
+
+fn parse_one_view_case(s: *Parser) -> ViewCase {
+    let np = expect_ident(s, "view case name");
+    let mut fields: Vec<FieldDef> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, Token::LParen) {
+        bump(s);
+        view_case_fields(s, &fields);
+    }
+    return ViewCase { vcname: np.name, vcfields: fields, vcis_struct: false };
+}
+
+fn view_case_fields(s: *Parser, fields: *Vec<FieldDef>) {
+    if peek_is(s, Token::RParen) { bump(s); return; }
+    let mut idx = 0;
+    fields.push(view_field(s, idx));
+    idx = idx + 1;
+    let mut done = false;
+    while !is_err(s) && !done {
+        if peek_is(s, Token::RParen) { bump(s); done = true; }
+        else if peek_is(s, Token::Comma) {
+            bump(s);
+            if peek_is(s, Token::RParen) { bump(s); done = true; }
+            else { fields.push(view_field(s, idx)); idx = idx + 1; }
+        } else {
+            fail(s, peek_pos(s), "expected ',' or ')' in view case");
+            done = true;
+        }
+    }
+}
+
+fn view_field(s: *Parser, idx: int) -> FieldDef {
+    let ty = parse_type(s);
+    let mut sb = StringBuilder::with_capacity(s.a, 8 as u32);
+    sb.push_str("_");
+    sb.push_int(idx);
+    return FieldDef { name: str::from_slice(s.ar, sb.as_slice()), ty: ty };
+}
+
+// `use a::b;` / `use a::*;` / `use a::{b, c}` — pushes one `Item::Use`
+// per imported name (a group yields several).  `pub use` re-exports, so
+// the `is_pub` flag rides onto every produced item.
+fn parse_use_items(s: *Parser, out: *Vec<Item>, is_pub: bool) {
+    let p = peek_pos(s);
+    expect(s, Token::Use);
+    let mut prefix: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    let kind = collect_use_segments(s, &prefix);
+    if kind == 2 {
+        use_group(s, out, &prefix, is_pub, p);
+    } else {
+        expect(s, Token::Semicolon);
+        out.push(mk_use_path(s, &prefix, kind == 1, is_pub, p));
+    }
+}
+
+// After a `use` segment ident: -1 = another segment follows (`::ident`),
+// 0 = single (`;` next), 1 = wildcard (`::*`), 2 = group (`::{`).
+fn use_after_seg(s: *Parser) -> int {
+    if !peek_is(s, Token::DoubleColon) { return 0; }
+    bump(s);
+    if peek_is(s, Token::LBrace) { bump(s); return 2; }
+    if peek_is(s, Token::Star) { bump(s); return 1; }
+    return -1;
+}
+
+// Returns the path kind (0 single / 1 wildcard / 2 group), filling
+// `prefix` with the leading segments.
+fn collect_use_segments(s: *Parser, prefix: *Vec<str>) -> int {
+    let mut result = 0;
+    let mut done = false;
+    while !is_err(s) && !done {
+        let tp = advance(s);
+        match tp.tok {
+            Token::Ident(n) => {
+                prefix.push(n);
+                let r = use_after_seg(s);
+                if r >= 0 { result = r; }
+                done = r >= 0;
+            }
+            | _e => {
+                let mut sb = StringBuilder::with_capacity(s.a, 40 as u32);
+                sb.push_str("expected identifier in 'use', got ");
+                pp_into(&sb, tp.tok);
+                fail(s, tp.pos, str::from_slice(s.ar, sb.as_slice()));
+                done = true;
+            }
+        }
+    }
+    return result;
+}
+
+fn use_group(s: *Parser, out: *Vec<Item>, prefix: *const Vec<str>, is_pub: bool, p: Pos) {
+    let mut done = false;
+    while !is_err(s) && !done {
+        let np = expect_name(s, "expected identifier in 'use' group");
+        out.push(mk_use_seg(s, prefix, np.name, is_pub, p));
+        if peek_is(s, Token::RBrace) { bump(s); done = true; }
+        else if peek_is(s, Token::Comma) {
+            bump(s);
+            if peek_is(s, Token::RBrace) { bump(s); done = true; }
+        } else {
+            fail(s, peek_pos(s), "expected ',' or '}' in 'use' group");
+            done = true;
+        }
+    }
+    expect(s, Token::Semicolon);
+}
+
+fn mk_use_path(s: *Parser, prefix: *const Vec<str>, wild: bool, is_pub: bool, p: Pos) -> Item {
+    let mut path: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    copy_strs(prefix, &path);
+    return Item::Use { path: path, is_wildcard: wild, is_pub: is_pub, pos: p };
+}
+
+fn mk_use_seg(s: *Parser, prefix: *const Vec<str>, name: str, is_pub: bool, p: Pos) -> Item {
+    let mut path: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    copy_strs(prefix, &path);
+    path.push(name);
+    return Item::Use { path: path, is_wildcard: false, is_pub: is_pub, pos: p };
+}
+
+fn parse_module(s: *Parser, is_pub: bool) -> ModuleDecl {
+    expect(s, Token::Mod);
+    let np = expect_name(s, "expected module name after 'mod'");
+    expect(s, Token::LBrace);
+    let mut items: Vec<Item> = Vec::with_capacity(s.a, 8 as u32);
+    let mut done = false;
+    while !is_err(s) && !done {
+        if peek_is(s, Token::RBrace) { bump(s); done = true; }
+        else if peek_is(s, Token::Eof) { fail(s, s.last_pos, "unexpected end of file, expected '}'"); done = true; }
+        else { parse_item(s, &items); }
+    }
+    return ModuleDecl { mname: np.name, mitems: items, mpos: np.pos, mis_pub: is_pub };
+}
+
+fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool) {
+    match peek(s) {
+        Token::Fn => { out.push(mk_item_fn(s, parse_function(s, is_pub))); }
+        | Token::Struct => { out.push(mk_item_struct(s, parse_struct_decl(s, is_pub))); }
+        | Token::Enum => { out.push(mk_item_enum(s, parse_enum_decl(s, is_pub))); }
+        | Token::Const => { out.push(mk_item_const(s, parse_const_decl(s, is_pub))); }
+        | Token::Type => { out.push(mk_item_typealias(s, parse_type_alias_decl(s, is_pub))); }
+        | Token::Mod => { out.push(mk_item_mod(s, parse_module(s, is_pub))); }
+        | Token::Use => { parse_use_items(s, out, is_pub); }
+        | Token::Impl => { out.push(mk_item_impl(s, parse_impl_block(s))); }
+        | Token::Trait => { out.push(mk_item_trait(s, parse_trait(s, is_pub))); }
+        | Token::View => { out.push(mk_item_view(s, parse_view_decl(s, is_pub))); }
+        | _e => { fail(s, peek_pos(s), "parser: this item kind not yet ported"); }
+    }
+}
+
+fn parse_item(s: *Parser, out: *Vec<Item>) {
+    if peek_is(s, Token::At) {
+        fail(s, peek_pos(s), "parser: '@' attributes not yet ported");
+        return;
+    }
     let is_pub = peek_is(s, Token::Pub);
     if is_pub { bump(s); }
-    return match peek(s) {
-        Token::Fn => mk_item_fn(s, parse_function(s, is_pub))
-        | _ => {
-            fail(s, peek_pos(s), "parser: this item kind not yet ported");
-            mk_item_fn(s, dummy_func(s))
-        }
-    };
+    parse_decl_item(s, out, is_pub);
 }
 
 // Bridge the error slot to the lexer-style `Result` contract.
@@ -1952,7 +2449,7 @@ pub fn parse_program(a: Allocator, ar: *Arena, toks: Slice<TokenPos>, n: u32)
     let mut done = false;
     while !is_err(&s) && !done {
         if peek_is(&s, Token::Eof) { done = true; }
-        else { items.push(parse_item(&s)); }
+        else { parse_item(&s, &items); }
     }
     return match s.err {
         Option::Some(e) => Result::Err(e)

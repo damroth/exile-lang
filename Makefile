@@ -433,12 +433,17 @@ selfhost-port-errors: host-selfhost-lexer
 #   - REGRESSION: a parse error WITHOUT that marker (the ported grammar
 #     choked mid-expr/stmt = incompleteness/bug), or a non-float AST diff
 # The marker test is what stops a swallowed expression gap from hiding in
-# the "not yet ported" bucket (REVIEW CHECKPOINT 2).
+# the "not yet ported" bucket (REVIEW CHECKPOINT 2).  String literals are
+# masked in the DEFERRAL comparison only (not the byte-identical check),
+# so a raw-vs-decoded escape difference reads as the documented
+# string-escape-decode deferral, while clean examples still verify their
+# string content exactly.
 selfhost-port-ast: host-selfhost-parser
-	@mask='s/\(float [^ ]+ /(float /g'; \
-	clean=0; defer=""; notp=0; fail=0; \
+	@mask='s/\(float [^ ]+ /(float /g; s/\(string "(\\.|[^"\\])*"\)/(string)/g'; \
+	clean=0; defer=""; notp=0; mf=0; fail=0; \
 	for name in $(EXAMPLE_NAMES); do \
 		[ -f $(SELFHOST_AST)/$$name.ast ] || continue; \
+		if [ "$$name" = "reexport" ]; then mf=$$((mf+1)); continue; fi; \
 		actual=$$(mktemp); errf=$$(mktemp); \
 		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_parser > $$actual 2>$$errf; \
 		if [ -s $$errf ]; then \
@@ -449,7 +454,7 @@ selfhost-port-ast: host-selfhost-parser
 		else echo "selfhost-port-ast: REGRESSION (AST diff) $$name"; diff $(SELFHOST_AST)/$$name.ast $$actual | head -6; fail=1; fi; \
 		rm $$actual $$errf; \
 	done; \
-	echo "selfhost-port-ast: $$clean byte-identical; float-deferred:$$defer; explicit-deferral (decl/bounds not-yet-ported): $$notp"; \
+	echo "selfhost-port-ast: $$clean byte-identical; float/string-deferred:$$defer; explicit-deferral (decl/bounds not-yet-ported): $$notp; multi-file (needs loader): $$mf"; \
 	if [ $$fail -eq 0 ]; then echo "selfhost-port-ast: clean (no expr/stmt regressions)"; else exit 1; fi
 
 # Parser error parity with the lexer's `selfhost-port-errors`: each fixture
