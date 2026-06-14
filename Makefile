@@ -37,8 +37,9 @@ AMIGA_ONLY    := $(filter amiga_%, $(EXAMPLE_NAMES))
 HOST_ONLY     := $(filter host_only_%, $(EXAMPLE_NAMES))
 # `multi_file` lives in a subdirectory, so the flat examples/*.exl glob
 # above misses it; append it so host/verify aggregates pick it up.  It is
-# host-only (no amiga build) — see the dedicated host-multi_file rule.
-HOST_EXAMPLES := $(filter-out $(AMIGA_ONLY), $(EXAMPLE_NAMES)) multi_file
+# host-only (no amiga build) — see the dedicated host-multi_file /
+# host-selfhost rules for the two directory examples.
+HOST_EXAMPLES := $(filter-out $(AMIGA_ONLY), $(EXAMPLE_NAMES)) multi_file selfhost
 AMIGA_EXAMPLES:= $(filter-out $(HOST_ONLY), $(EXAMPLE_NAMES))
 
 GHCR_OWNER ?= damroth
@@ -49,7 +50,7 @@ AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(AMIGA_EXAMPLES))
 
 .PHONY: all build test clean toolchain toolchain-clean
 .PHONY: host amiga examples
-.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file
+.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file host-selfhost
 .PHONY: verify verify-host verify-amiga verify-host-% verify-amiga-%
 .PHONY: verify-freestanding verify-freestanding-%
 .PHONY: rebaseline-host rebaseline-host-%
@@ -100,6 +101,13 @@ host-%: examples/%.exl $(call stub_for,%) $(SYS_HOST) build
 # (expected output lives in examples/multi_file.expected).
 host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/multi_file.c --link $(SYS_HOST) -o $(HOST_OUT)/multi_file $<
+
+# `selfhost` is the in-progress OCaml->Exile compiler port (Faza 0: the
+# AST stage).  Its entry point main.exl `use`s the dump/ast/pos module
+# chain and emits a canonical AST dump for the bundled fixture; verify
+# diffs that against examples/selfhost.expected (the OCaml oracle).
+host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl $(SYS_HOST) build
+	$(EXILE) --target host --c-out $(C_OUT)/selfhost.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost $<
 
 # `make amiga-NAME` → build m68k Amiga binary
 amiga-%: examples/%.exl $(call stub_for,%) $(SYS_AMIGA) build
