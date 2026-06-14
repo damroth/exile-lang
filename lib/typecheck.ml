@@ -9202,6 +9202,62 @@ let prelude_items () =
     ];
     ipos = pos;
   } in
+  (* `str::from_slice(arena, s)` — copy [s]'s bytes into the arena,
+     NUL-terminate, and return a `str` pointing at the arena copy.  The
+     string-interning primitive for the self-host lexer / parser: an
+     identifier or string literal is a slice of the source buffer, and
+     this materialises it as a NUL-terminated `str` that lives as long as
+     the arena (the AST owns its names through the same arena that owns
+     its nodes).  Exhaustion returns the empty string — size the arena
+     generously, the same contract as `alloc_borrowed`'s `null`. *)
+  let str_from_slice_body = [
+    Ast.Let { name = "n"; is_mut = false; ty_ann = Some u32_t;
+              value = field (var "s") "len"; pos };
+    Ast.Let { name = "start"; is_mut = false; ty_ann = Some u32_t;
+              value = field (var "arena") "off"; pos };
+    Ast.ExprStmt (Ast.If {
+      cond = bin Ast.Gt
+               (bin Ast.Add (bin Ast.Add (var "start") (var "n")) (u32_lit 1))
+               (field (var "arena") "cap");
+      then_blk = [ Ast.Return (Some (Ast.StringLit ("", pos)), pos) ];
+      else_blk = None; pos });
+    Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
+              value = u32_lit 0; pos };
+    Ast.While {
+      cond = bin Ast.Lt (var "i") (var "n");
+      body = [
+        Ast.AssignIndex {
+          base = field (var "arena") "buf";
+          index = bin Ast.Add (var "start") (var "i");
+          value = Ast.Index { base = var "s"; index = var "i"; pos };
+          pos };
+        Ast.Assign { path = ["i"];
+                     value = bin Ast.Add (var "i") (u32_lit 1); pos };
+      ] };
+    Ast.AssignIndex {
+      base = field (var "arena") "buf";
+      index = bin Ast.Add (var "start") (var "n");
+      value = int_lit_as 0 u8_t;
+      pos };
+    Ast.AssignField { target = var "arena"; field = "off";
+                      value = bin Ast.Add
+                                (bin Ast.Add (var "start") (var "n")) (u32_lit 1);
+                      pos };
+    Ast.Let { name = "p"; is_mut = false; ty_ann = Some (Ast.TyPtr u8_t);
+              value = Ast.Call { callee = ["ptr_offset"];
+                                 args = [ field (var "arena") "buf"; var "start" ];
+                                 pos };
+              pos };
+    Ast.Return (Some
+      (Ast.Cast (Ast.Cast (var "p", Ast.TyConstPtr Ast.TyCChar, pos),
+                 Ast.TyStr, pos)), pos);
+  ] in
+  let str_from_slice_fn =
+    mk_str_fn "from_slice"
+      [ { Ast.pname = "arena"; pty = Ast.TyPtr arena_struct_ann;
+          preg = None; is_mut = false };
+        { Ast.pname = "s"; pty = slice_u8_ret; preg = None; is_mut = false } ]
+      (Some Ast.TyStr) str_from_slice_body in
   let str_mod = {
     Ast.mname = "str";
     mitems = [
@@ -9210,6 +9266,7 @@ let prelude_items () =
       Ast.Function str_eq_fn;
       Ast.Function str_cmp_fn;
       Ast.Function str_hash_fn;
+      Ast.Function str_from_slice_fn;
     ];
     mpos = pos;
     mis_pub = true;
