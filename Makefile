@@ -102,11 +102,11 @@ host-%: examples/%.exl $(call stub_for,%) $(SYS_HOST) build
 host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/multi_file.c --link $(SYS_HOST) -o $(HOST_OUT)/multi_file $<
 
-# `selfhost` is the in-progress OCaml->Exile compiler port (Faza 0: the
-# AST stage).  Its entry point main.exl `use`s the dump/ast/pos module
-# chain and emits a canonical AST dump for the bundled fixture; verify
-# diffs that against examples/selfhost.expected (the OCaml oracle).
-host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl $(SYS_HOST) build
+# `selfhost` is the in-progress OCaml->Exile compiler port (Faza 0).  Its
+# entry point main.exl `use`s the dump/ir/ast/pos module chain and emits a
+# canonical AST dump + typed-IR dump for the bundled fixtures; verify diffs
+# that against examples/selfhost.expected (the OCaml oracle).
+host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/selfhost/ir.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost $<
 
 # `make amiga-NAME` → build m68k Amiga binary

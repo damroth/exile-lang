@@ -1,0 +1,274 @@
+// Self-host port — `lib/ir.ml` (data types).
+//
+// The typed intermediate representation: what typecheck produces and
+// codegen consumes.  It mirrors `ast` but every expression node carries
+// the type elaboration computed for it (`Texpr.ty`), and names are
+// resolved to absolute paths + mangled C symbols.
+//
+// This module ports the IR's DATA TYPES — the frozen typecheck↔codegen
+// contract.  `ir.ml`'s pure utilities (typ_name / mangle_typ /
+// c_type_prefix / type_of_ann / subst_typ / the texpr·tstmt traversal
+// family / …) are consumed by codegen, typecheck, mono and lint — they
+// ride with those stages, where they are exercised and verifiable.  The
+// only consumer at this stage, the IR dumper, is self-contained (it has
+// its own `render_typ_canonical`), so it needs none of them.
+//
+// Representation idioms follow `ast` (see SELFHOST-WORKLOG): `Typ` and
+// `Texpr` recurse through `*const T` (read-only borrows into the arena),
+// node lists are `Vec<*const T>`, name/payload pairs are named structs.
+
+use pos::*;
+use ast::*;
+
+// ===== Shared name-payload pairs =====
+
+// `(string * typ)` — a struct/enum field, a fn-let, a named type table.
+pub struct FieldTy {
+    name: str,
+    ty: *const Typ,
+}
+
+// `(string * texpr)` — a struct-literal / enum-ctor field initialiser.
+pub struct TexprField {
+    name: str,
+    value: *const Texpr,
+}
+
+// `(string * tpattern)` — a struct-variant pattern field.
+pub struct TFieldPat {
+    name: str,
+    pat: Tpattern,
+}
+
+// ===== The type domain =====
+
+pub struct IntKind {
+    is_signed: bool,
+    width: IntWidth,
+}
+
+// Every type the pipeline reasons about.  `TStruct` / `TEnum` carry the
+// absolute path; `TStructApp` / `TEnumApp` hold a still-generic
+// application (free `TVar`s) normalised away by mono before codegen;
+// `TVar` / `TAssocProj` are likewise pre-codegen only.
+pub enum Typ {
+    TInt(IntKind)
+    | TCInt { is_signed: bool }
+    | TCShort { is_signed: bool }
+    | TCLong { is_signed: bool }
+    | TCChar
+    | TCSChar
+    | TCUChar
+    | TCVoid
+    | TBool
+    | TFloat(FloatWidth)
+    | TString
+    | TTuple(Vec<*const Typ>)
+    | TStruct(Vec<str>)
+    | TExtAlias(str)
+    | TExtStruct(str)
+    | TEnum(Vec<str>)
+    | TStructApp { path: Vec<str>, args: Vec<*const Typ> }
+    | TEnumApp { path: Vec<str>, args: Vec<*const Typ> }
+    | TPtr(*const Typ)
+    | TOwnPtr(*const Typ)
+    | TConstPtr(*const Typ)
+    | TArray { elem: *const Typ, size: int }
+    | TFnPtr { params: Vec<*const Typ>, ret: Option<*const Typ> }
+    | TNullPtr
+    | TVar(str)
+    | TAssocProj { head: *const Typ, assoc: str }
+}
+
+// ===== Signatures =====
+
+pub struct FnSig {
+    param_tys: Vec<*const Typ>,
+    ret_ty: Option<*const Typ>,
+    mangled: str,
+    fn_pub: bool,
+    fn_tparams: Vec<str>,
+    fn_variadic: bool,
+}
+
+// A struct signature.  `sinstance_args` is `None` for the generic
+// skeleton, `Some args` for a monomorphic instance.
+pub struct StructSig {
+    sname_path: Vec<str>,
+    sfields_ty: Vec<FieldTy>,
+    sis_pub: bool,
+    stparams: Vec<str>,
+    sinstance_args: Option<Vec<*const Typ>>,
+    sis_debug: bool,
+    ss_is_move: bool,
+}
+
+// Variant order is preserved so each gets a stable C tag (= list index).
+pub struct VariantSig {
+    vsname: str,
+    vsfields: Vec<FieldTy>,
+    vsis_struct: bool,
+}
+
+pub struct EnumSig {
+    ename_path: Vec<str>,
+    evariants: Vec<VariantSig>,
+    eis_pub: bool,
+    etparams: Vec<str>,
+    einstance_args: Option<Vec<*const Typ>>,
+    eis_must_use: bool,
+    eis_debug: bool,
+}
+
+// ===== The typed AST =====
+//
+// Mirrors `ast::Expr` but every node is wrapped in `Texpr { e, ty, pos }`
+// — codegen reads `.ty` directly, never re-infers.
+
+pub enum TexprNode {
+    TIntLit(int)
+    | TFloatLit(f64, FloatWidth)
+    | TBoolLit(bool)
+    | TNullLit
+    | TStringLit(str)
+    | TVar(str)
+    | TFnRef(str)
+    | TNeg(*const Texpr)
+    | TBitNot(*const Texpr)
+    | TNot(*const Texpr)
+    | TBinOp(BinOp, *const Texpr, *const Texpr)
+    | TCall { mangled: str, args: Vec<*const Texpr> }
+    | TBuiltinCall { name: str, args: Vec<*const Texpr> }
+    | TIndirectCall { fn_expr: *const Texpr, args: Vec<*const Texpr> }
+    | TCast(*const Texpr, *const TypeAnn)
+    | TTupleLit(Vec<*const Texpr>)
+    | TStructLit { sname_path: Vec<str>, fields: Vec<TexprField>,
+                   base: Option<*const Texpr> }
+    | TFieldAccess { target: *const Texpr, field: str }
+    | TRef(*const Texpr)
+    | TDeref(*const Texpr)
+    | TNew { sname_path: Vec<str>, fields: Vec<TexprField>,
+             base: Option<*const Texpr>, alloc: Option<*const Texpr> }
+    | TEnumLit { ename_path: Vec<str>, variant: str, tag: int,
+                 args: Vec<TexprField> }
+    | TNewEnum { ename_path: Vec<str>, variant: str, tag: int,
+                 args: Vec<TexprField>, alloc: Option<*const Texpr> }
+    | TMatch { scrutinee: *const Texpr, ename_path: Vec<str>,
+               arms: Vec<TmatchArm> }
+    | TArrayLit(Vec<*const Texpr>)
+    | TArrayRepeat { value: *const Texpr, count: int }
+    | TIndex { base: *const Texpr, index: *const Texpr }
+    | TIfExpr { cond: *const Texpr, then_val: *const Texpr, else_val: *const Texpr }
+    | TSizeOf(*const Typ)
+    | TBlock { stmts: Vec<Tstmt>, trailing: Option<*const Texpr> }
+}
+
+// A match arm.  `tdiverges` marks `try`-desugar arms that `return`
+// straight out of the enclosing fn rather than yielding a value.
+pub struct TmatchArm {
+    tpat: Tpattern,
+    tguard: Option<*const Texpr>,
+    tbody: *const Texpr,
+    tdiverges: bool,
+    tarm_pos: Pos,
+}
+
+pub enum Tpattern {
+    TPWildcard
+    | TPVar(str)
+    | TPLit(int)
+    | TPVariant { variant: str, tag: int, binds: Vec<TFieldPat> }
+    | TPOr(Vec<Tpattern>)
+}
+
+// Every expression node, tagged with its elaborated type and position.
+pub struct Texpr {
+    e: TexprNode,
+    ty: *const Typ,
+    pos: Pos,
+}
+
+pub enum Tstmt {
+    TLet { name: str, value: *const Texpr, pos: Pos }
+    | TLetTuple { names: Vec<str>, value: *const Texpr, pos: Pos }
+    | TAssign { path: Vec<str>, value: *const Texpr, pos: Pos }
+    | TAssignField { target: *const Texpr, field: str, value: *const Texpr, pos: Pos }
+    | TAssignIndex { base: *const Texpr, index: *const Texpr,
+                     value: *const Texpr, pos: Pos }
+    | TAssignDeref { target: *const Texpr, value: *const Texpr, pos: Pos }
+    | TReturn { value: Option<*const Texpr>, pos: Pos }
+    | TExprStmt(*const Texpr)
+    | TIf { cond: *const Texpr, then_body: Vec<Tstmt>, else_body: Vec<Tstmt> }
+    | TWhile { cond: *const Texpr, body: Vec<Tstmt>, post: Vec<Tstmt> }
+    | TBreak(Pos)
+    | TContinue(Pos)
+    // Transient: lifted away before codegen (and the dump).  Kept in the
+    // contract so the lift pass has a node to rewrite; the dumper flags
+    // any that survive as an internal-compiler bug.
+    | TFor { counter: str, end_var: str, range_temp: Option<TexprField>,
+             lo: *const Texpr, hi: *const Texpr, inclusive: bool,
+             body: Vec<Tstmt>, pos: Pos }
+    | TForEach { it_var: str, it_init: *const Texpr, body: Vec<Tstmt>, pos: Pos }
+    | TDefer { body: Vec<Tstmt>, pos: Pos }
+}
+
+// ===== Function + program =====
+
+// `(string list * Ast.struct_decl)` — a struct decl with its module path.
+pub struct StructDeclEntry {
+    path: Vec<str>,
+    decl: StructDecl,
+}
+
+// `(string list * string * fn_sig)` — a global fn entry (path, name, sig).
+pub struct GlobalEntry {
+    path: Vec<str>,
+    name: str,
+    sig: FnSig,
+}
+
+// `(string list * bool)` — a module's path and its public flag.
+pub struct ModuleEntry {
+    path: Vec<str>,
+    is_pub: bool,
+}
+
+// `(string * string)` — a folded `const` (mangled C name, literal value).
+pub struct StrPair {
+    a: str,
+    b: str,
+}
+
+// Per-function codegen payload: the original `ast::Func` for user trivia,
+// the resolved C name, scope-resolved param/return types, the elaborated
+// body, and the hoisted let-decl list.
+pub struct Tfunc {
+    tf_path: Vec<str>,
+    tf_func: Func,
+    tf_mangled: str,
+    tf_param_tys: Vec<*const Typ>,
+    tf_ret_ty: Option<*const Typ>,
+    tf_body: Vec<Tstmt>,
+    tf_lets: Vec<FieldTy>,
+    tf_origin_pos: Option<Pos>,
+}
+
+// The whole checked + elaborated program codegen consumes.
+pub struct Tprogram {
+    tp_funcs: Vec<Tfunc>,
+    tp_struct_decls: Vec<StructDeclEntry>,
+    tp_struct_index: Vec<StructSig>,
+    tp_enum_index: Vec<EnumSig>,
+    tp_global: Vec<GlobalEntry>,
+    tp_modules: Vec<ModuleEntry>,
+    tp_uses_heap: bool,
+    tp_uses_string_h: bool,
+    tp_uses_default_allocator: bool,
+    tp_tuple_types: Vec<FieldTy>,
+    tp_fnptr_types: Vec<FieldTy>,
+    tp_c_includes: Vec<str>,
+    tp_ext_consts: Vec<FieldTy>,
+    tp_ext_vars: Vec<FieldTy>,
+    tp_array_types: Vec<FieldTy>,
+    tp_consts: Vec<StrPair>,
+}

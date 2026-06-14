@@ -1,0 +1,12 @@
+// Differential fixture for the self-host typed-IR stage.  A couple of
+// functions exercising the core texpr / tstmt / tfunc shapes (params,
+// return, binop, var, call, builtin-call) plus the always-present
+// prelude `mono-instances` tail.  Hand-built in main.exl; never run.
+
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn main() {
+    println(add(40, 2));
+}

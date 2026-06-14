@@ -19,6 +19,7 @@
 
 use pos;
 use ast::*;
+use ir::*;
 use dump::*;
 
 // ===== str / Vec helpers =====
@@ -231,6 +232,179 @@ fn build_fixture(a: Allocator, ar: *Arena) -> Vec<Item> {
     return prog;
 }
 
+// ===== Typed-IR fixture: examples/selfhost/ir_fixture.exl =====
+//
+//   fn add(a: int, b: int) -> int { return a + b; }
+//   fn main() { println(add(40, 2)); }
+
+fn ir_i32(ar: *Arena) -> *const Typ {
+    let t: *Typ = ar.alloc_borrowed();
+    *t = Typ::TInt(IntKind { is_signed: true, width: IntWidth::W32 });
+    return t as *const Typ;
+}
+
+fn ir_node(ar: *Arena, node: TexprNode, ty: *const Typ) -> *const Texpr {
+    let e: *Texpr = ar.alloc_borrowed();
+    *e = Texpr { e: node, ty: ty, pos: pos::Pos::zero() };
+    return e as *const Texpr;
+}
+
+// A non-extern, non-generic `ast::Func` with the given name + params +
+// return type.  Only the name / params / flags / pos are read by the IR
+// dumper (the typed body lives in `Tfunc.tf_body`), so the AST body is
+// left empty.
+fn ir_ast_func(a: Allocator, name: str, params: Vec<Param>,
+               ret_ty: Option<*const TypeAnn>) -> Func {
+    let no_str: Option<str> = Option::None;
+    let tbounds: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
+    let body: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    return Func {
+        name: name, c_name: name,
+        tparams: empty_strs(a), tbounds: tbounds,
+        params: params, ret_ty: ret_ty, body: body,
+        is_pub: false, is_extern: false, is_variadic: false,
+        amiga_lib: no_str, tier_hint: no_str,
+        must_use: false, escapes_hatch: false, pos: pos::Pos::zero(),
+    };
+}
+
+fn build_add_tfunc(a: Allocator, ar: *Arena) -> Tfunc {
+    let no_preg: Option<str> = Option::None;
+    let mut params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    params.push(Param { pname: "a", pty: ty_i32(ar), is_mut: false, preg: no_preg });
+    params.push(Param { pname: "b", pty: ty_i32(ar), is_mut: false, preg: no_preg });
+    let ast_ret: Option<*const TypeAnn> = Option::Some(ty_i32(ar));
+    let f = ir_ast_func(a, "add", params, ast_ret);
+
+    let mut ptys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    ptys.push(ir_i32(ar));
+    ptys.push(ir_i32(ar));
+
+    // return a + b
+    let va = ir_node(ar, TexprNode::TVar("a"), ir_i32(ar));
+    let vb = ir_node(ar, TexprNode::TVar("b"), ir_i32(ar));
+    let sum = ir_node(ar, TexprNode::TBinOp(BinOp::Add, va, vb), ir_i32(ar));
+    let ret_val: Option<*const Texpr> = Option::Some(sum);
+    let mut body: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    body.push(Tstmt::TReturn { value: ret_val, pos: pos::Pos::zero() });
+
+    let ir_ret: Option<*const Typ> = Option::Some(ir_i32(ar));
+    let tlets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let no_origin: Option<pos::Pos> = Option::None;
+    return Tfunc {
+        tf_path: empty_strs(a), tf_func: f, tf_mangled: "ex_add",
+        tf_param_tys: ptys, tf_ret_ty: ir_ret, tf_body: body,
+        tf_lets: tlets, tf_origin_pos: no_origin,
+    };
+}
+
+fn build_main_tfunc(a: Allocator, ar: *Arena) -> Tfunc {
+    let params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    let no_ret: Option<*const TypeAnn> = Option::None;
+    let f = ir_ast_func(a, "main", params, no_ret);
+
+    // println(add(40, 2))
+    let i40 = ir_node(ar, TexprNode::TIntLit(40), ir_i32(ar));
+    let i2 = ir_node(ar, TexprNode::TIntLit(2), ir_i32(ar));
+    let mut call_args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    call_args.push(i40);
+    call_args.push(i2);
+    let call = ir_node(ar, TexprNode::TCall { mangled: "ex_add", args: call_args }, ir_i32(ar));
+    let mut pr_args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    pr_args.push(call);
+    let pr = ir_node(ar, TexprNode::TBuiltinCall { name: "println", args: pr_args }, ir_i32(ar));
+    let mut body: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    body.push(Tstmt::TExprStmt(pr));
+
+    let no_ret_ty: Option<*const Typ> = Option::None;
+    let ptys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let tlets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let no_origin: Option<pos::Pos> = Option::None;
+    return Tfunc {
+        tf_path: empty_strs(a), tf_func: f, tf_mangled: "main",
+        tf_param_tys: ptys, tf_ret_ty: no_ret_ty, tf_body: body,
+        tf_lets: tlets, tf_origin_pos: no_origin,
+    };
+}
+
+// A minimal mono-instance entry: only the name is read by the dump.
+fn prelude_struct(a: Allocator, name: str) -> StructSig {
+    let fields: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let stparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let no_args: Option<Vec<*const Typ>> = Option::None;
+    return StructSig {
+        sname_path: one_str(a, name), sfields_ty: fields, sis_pub: true,
+        stparams: stparams, sinstance_args: no_args,
+        sis_debug: false, ss_is_move: false,
+    };
+}
+
+fn prelude_enum(a: Allocator, name: str) -> EnumSig {
+    let variants: Vec<VariantSig> = Vec::with_capacity(a, 8 as u32);
+    let etparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let no_args: Option<Vec<*const Typ>> = Option::None;
+    return EnumSig {
+        ename_path: one_str(a, name), evariants: variants, eis_pub: true,
+        etparams: etparams, einstance_args: no_args,
+        eis_must_use: false, eis_debug: false,
+    };
+}
+
+// The 12 prelude collection structs + 2 prelude enums that are always
+// registered in the type index (pushed unsorted — the dumper sorts).
+fn build_ir_program(a: Allocator, ar: *Arena) -> Tprogram {
+    let mut funcs: Vec<Tfunc> = Vec::with_capacity(a, 8 as u32);
+    funcs.push(build_add_tfunc(a, ar));
+    funcs.push(build_main_tfunc(a, ar));
+
+    let mut structs: Vec<StructSig> = Vec::with_capacity(a, 16 as u32);
+    structs.push(prelude_struct(a, "Vec"));
+    structs.push(prelude_struct(a, "VecIter"));
+    structs.push(prelude_struct(a, "Slice"));
+    structs.push(prelude_struct(a, "HashMap"));
+    structs.push(prelude_struct(a, "HashMapIter"));
+    structs.push(prelude_struct(a, "Slot"));
+    structs.push(prelude_struct(a, "Range"));
+    structs.push(prelude_struct(a, "RangeInclusive"));
+    structs.push(prelude_struct(a, "Map"));
+    structs.push(prelude_struct(a, "Filter"));
+    structs.push(prelude_struct(a, "Take"));
+    structs.push(prelude_struct(a, "Enumerate"));
+
+    let mut enums: Vec<EnumSig> = Vec::with_capacity(a, 8 as u32);
+    enums.push(prelude_enum(a, "Result"));
+    enums.push(prelude_enum(a, "Option"));
+
+    let struct_decls: Vec<StructDeclEntry> = Vec::with_capacity(a, 8 as u32);
+    let global: Vec<GlobalEntry> = Vec::with_capacity(a, 8 as u32);
+    let modules: Vec<ModuleEntry> = Vec::with_capacity(a, 8 as u32);
+    let tuple_types: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let fnptr_types: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let c_includes: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let ext_consts: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let ext_vars: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let array_types: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let consts: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
+    return Tprogram {
+        tp_funcs: funcs,
+        tp_struct_decls: struct_decls,
+        tp_struct_index: structs,
+        tp_enum_index: enums,
+        tp_global: global,
+        tp_modules: modules,
+        tp_uses_heap: false,
+        tp_uses_string_h: false,
+        tp_uses_default_allocator: false,
+        tp_tuple_types: tuple_types,
+        tp_fnptr_types: fnptr_types,
+        tp_c_includes: c_includes,
+        tp_ext_consts: ext_consts,
+        tp_ext_vars: ext_vars,
+        tp_array_types: array_types,
+        tp_consts: consts,
+    };
+}
+
 // Flush a builder to stdout through the sys seam — the shape the
 // self-host compiler uses to emit a dump to `-o` / stdout.
 fn flush(sb: *const StringBuilder) {
@@ -242,9 +416,15 @@ fn main() {
     let a = default_allocator();
     let mut ar = Arena::with_capacity(a, 16384 as u32);
 
-    let prog = build_fixture(a, &ar);
+    let mut sb = StringBuilder::with_capacity(a, 2048 as u32);
 
-    let mut sb = StringBuilder::with_capacity(a, 1024 as u32);
+    // AST stage fixture, then the typed-IR stage fixture — concatenated,
+    // diffed as one stream against examples/selfhost.expected.
+    let prog = build_fixture(a, &ar);
     dump_ast(&prog, "examples/selfhost/fixture.exl", &sb);
+
+    let tp = build_ir_program(a, &ar);
+    dump_typed_ir(&tp, "examples/selfhost/ir_fixture.exl", true, &sb);
+
     flush(&sb);
 }
