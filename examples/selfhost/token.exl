@@ -1,0 +1,113 @@
+// Self-host port — `lib/token.ml` (the token type).
+//
+// The lexer's output alphabet and the parser's input alphabet — the
+// frozen lexer↔parser contract.  78 variants: keywords + punctuation
+// (unit), four carry a payload (`Ident`, `Int`, `Float`, `String`).
+//
+// Names are the OCaml names verbatim — `Try` / `Type` / `Var` / `String`
+// are legal variant names (they differ from the lexer's lower-case
+// keywords, and a `String` variant coexists with the prelude `String`
+// type since variants are reached qualified, `Token::String`).  Variant
+// ORDER is the OCaml order verbatim: it is canonical at the dump layer.
+//
+// `token.ml`'s `pp` (the user-facing diagnostic phrase renderer, e.g.
+// `Fn -> "'fn'"`) is parser-facing — it surfaces in parse errors, not in
+// the `--emit-tokens` dump (which renders variant tags via the dumper's
+// `render_token`).  It rides with the parser stage, where it is
+// exercised.
+
+use pos::*;
+
+pub enum Token {
+    Fn
+    | Let
+    | Mut
+    | Return
+    | If
+    | Else
+    | While
+    | Loop
+    | Break
+    | Continue
+    | For
+    | In
+    | Mod
+    | Pub
+    | Use
+    | As
+    | Defer
+    | Struct
+    | Impl
+    | Trait
+    | View
+    | With
+    | Enum
+    | Match
+    | FatArrow
+    | Pipe
+    | PipePipe
+    | PipeGt
+    | AmpAmp
+    | Dot
+    | DotDot
+    | DotDotEq
+    | Amp
+    | New
+    | Own           // DR-030 Faza-1a: `own *T` owner-sigil pointer type
+    | Null
+    | LParen
+    | RParen
+    | LBrace
+    | RBrace
+    | LBracket
+    | RBracket
+    | Semicolon
+    | Comma
+    | Colon
+    | DoubleColon
+    | Arrow
+    | Eq
+    | EqEq
+    | NotEq
+    | Bang
+    | Lt
+    | Gt
+    | LtEq
+    | GtEq
+    | Plus
+    | PlusPlus
+    | Minus
+    | Star
+    | Slash
+    | Percent
+    | Caret
+    | Tilde
+    | Shl
+    | Shr
+    | True
+    | False
+    | Question
+    | Orelse
+    | Try
+    | Extern
+    | Ellipsis
+    | At
+    | Type
+    | Const
+    | Var
+    | SizeOf
+    | Ident(str)
+    | Int(int)
+    | Float(f64, bool)   // value, is_f32 (true = `f32` suffix, false = f64)
+    | String(str)
+    | Eof
+}
+
+// A token paired with its start position — the lexer's output element
+// (OCaml `(Token.t * Pos.t)`).  Lexer carries only the start anchor per
+// token, not an end-span.
+pub struct TokenPos {
+    tok: Token,
+    pos: Pos,
+}
+

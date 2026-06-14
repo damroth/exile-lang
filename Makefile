@@ -106,7 +106,7 @@ host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_
 # entry point main.exl `use`s the dump/ir/ast/pos module chain and emits a
 # canonical AST dump + typed-IR dump for the bundled fixtures; verify diffs
 # that against examples/selfhost.expected (the OCaml oracle).
-host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/selfhost/ir.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl $(SYS_HOST) build
+host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/selfhost/ir.exl examples/selfhost/token.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl examples/selfhost/token_fixture.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost $<
 
 # `make amiga-NAME` → build m68k Amiga binary
