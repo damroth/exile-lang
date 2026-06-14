@@ -23,6 +23,7 @@ use ir::*;
 use token::*;
 use lexer::*;
 use dump::*;
+use dump_token::*;
 
 // ===== str / Vec helpers =====
 

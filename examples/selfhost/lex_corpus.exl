@@ -1,0 +1,77 @@
+// Self-host lexer — corpus verification driver.
+//
+// The differential `main.exl` lexes one hand-rolled fixture; this
+// harness raises that to the WHOLE example corpus.  It reads a source
+// path on stdin (argv isn't exposed, so the Makefile pipes
+// `examples/NAME.exl` in), slurps the file through the sys-seam
+// (`sys_open`/`sys_read`, DR-032), tokenises it with the ported
+// `lexer::tokenize`, and emits the token dump in the exact
+// `exilc --emit-tokens` format.  The Makefile loops every example
+// through this and diffs against the committed golden tokens, so a
+// drift is a port-vs-oracle bug — not a re-run of the OCaml emitter.
+//
+// This is also the shape the self-host compiler uses to read source:
+// open by path, read to a growable buffer, intern into an arena.
+
+use pos;
+use token::*;
+use lexer::*;
+use dump_token::*;
+
+// Slurp every byte available on `fd` into `sb`, chunk by chunk, until
+// `sys_read` reports EOF (0) or error (< 0).  A regular file may hand
+// back a short read, so the loop is the contract — not one big read.
+fn read_all(fd: c_int, sb: *StringBuilder) {
+    let mut buf: [u8; 4096] = [0 as u8; 4096];
+    loop {
+        let n: c_long = sys::sys_read(fd, &buf as *u8 as *c_uchar, 4096 as c_ulong);
+        if n <= 0 as c_long { break; }
+        let mut k = 0 as u32;
+        while k < n as u32 {
+            sb.push_byte(buf[k]);
+            k = k + 1 as u32;
+        }
+    }
+}
+
+// The stdin-provided path carries a trailing newline (and maybe a CR);
+// return the length that excludes it.
+fn path_len(sl: Slice<u8>, n: u32) -> u32 {
+    let mut end = n;
+    while end > 0 as u32
+          && (sl[end - 1 as u32] == 10 as u8 || sl[end - 1 as u32] == 13 as u8) {
+        end = end - 1 as u32;
+    }
+    return end;
+}
+
+fn flush(sb: *const StringBuilder) {
+    let bytes = sb.as_slice();
+    sys::sys_write(1 as c_int, &bytes[0] as *const c_uchar, sb.length() as c_ulong);
+}
+
+fn main() {
+    let a = default_allocator();
+    let mut ar = Arena::with_capacity(a, 65536 as u32);
+
+    // 1. The source path arrives on stdin, one line.
+    let mut pbuf = StringBuilder::with_capacity(a, 256 as u32);
+    read_all(0 as c_int, &pbuf);
+    let plen = path_len(pbuf.as_slice(), pbuf.length());
+    let path = str::from_slice(&ar, pbuf.as_slice()[0 as u32..plen]);
+
+    // 2. Open + slurp the source file through the sys-seam.  A failed
+    //    open emits nothing — the diff against the golden then flags it.
+    let fd: c_int = sys::sys_open(path as *const c_char, 0 as c_int);
+    if fd < 0 as c_int { return; }
+    let mut src_sb = StringBuilder::with_capacity(a, 16384 as u32);
+    read_all(fd, &src_sb);
+    sys::sys_close(fd);
+    let src = str::from_slice(&ar, src_sb.as_slice());
+
+    // 3. Lex + emit the token dump.
+    let toks = tokenize(a, &ar, path, src);
+    let mut out = StringBuilder::with_capacity(a, 16384 as u32);
+    dump_tokens(&toks, path, &out);
+    flush(&out);
+}

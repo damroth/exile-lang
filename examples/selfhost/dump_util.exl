@@ -1,0 +1,47 @@
+// Self-host dump — shared literal-escaping helpers.
+//
+// String escaping is the one piece the AST, IR, and token dumpers all
+// need (string literals, char payloads, `String` tokens), so it lives
+// in its own leaf module rather than being duplicated or forcing a
+// token-only driver to pull in the whole AST/IR dumper.  Mirrors the
+// `escape_string` / `\xHH` machinery in `lib/dump.ml`.
+
+// `\xHH` lower-case hex byte, mirroring OCaml's `Printf.bprintf "\\x%02x"`.
+fn hex_digit(v: int) -> u8 {
+    if v < 10 { return (48 + v) as u8; }
+    return (87 + v) as u8;
+}
+
+pub fn push_hex_byte(out: *StringBuilder, code: int) {
+    out.push_str("\\x");
+    out.push_byte(hex_digit(code / 16));
+    out.push_byte(hex_digit(code % 16));
+}
+
+pub fn escape_other(out: *StringBuilder, b: u8, code: int) {
+    if code < 32 || code >= 127 { push_hex_byte(out, code); }
+    else { out.push_byte(b); }
+}
+
+// C-style string escape for dump literals.  Named escapes for newline /
+// tab / quote / backslash; everything else below 0x20 or at/above 0x7f
+// goes through the byte-level `\xHH` form; printable 7-bit ASCII passes
+// through.  Mirrors OCaml `escape_string`.
+pub fn escape_string(s: str, out: *StringBuilder) {
+    out.push_byte(34 as u8);
+    let bytes = str::as_bytes(s);
+    let n = str::length(s);
+    let mut i = 0 as u32;
+    while i < n {
+        let code = bytes[i] as int;
+        match code {
+            10 => { out.push_str("\\n"); }
+            | 9 => { out.push_str("\\t"); }
+            | 34 => { out.push_str("\\\""); }
+            | 92 => { out.push_str("\\\\"); }
+            | _ => { escape_other(out, bytes[i], code); }
+        }
+        i = i + 1 as u32;
+    }
+    out.push_byte(34 as u8);
+}

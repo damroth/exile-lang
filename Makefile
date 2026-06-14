@@ -50,7 +50,7 @@ AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(AMIGA_EXAMPLES))
 
 .PHONY: all build test clean toolchain toolchain-clean
 .PHONY: host amiga examples
-.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file host-selfhost
+.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file host-selfhost host-selfhost-lexer
 .PHONY: verify verify-host verify-amiga verify-host-% verify-amiga-%
 .PHONY: verify-freestanding verify-freestanding-%
 .PHONY: rebaseline-host rebaseline-host-%
@@ -106,8 +106,15 @@ host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_
 # entry point main.exl `use`s the dump/ir/ast/pos module chain and emits a
 # canonical AST dump + typed-IR dump for the bundled fixtures; verify diffs
 # that against examples/selfhost.expected (the OCaml oracle).
-host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/selfhost/ir.exl examples/selfhost/token.exl examples/selfhost/lexer.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl examples/selfhost/token_fixture.exl $(SYS_HOST) build
+host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl examples/selfhost/ir.exl examples/selfhost/token.exl examples/selfhost/lexer.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl examples/selfhost/token_fixture.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost $<
+
+# The lexer corpus harness: read a source path on stdin, lex it with the
+# ported `lexer::tokenize`, emit the token dump.  Token-only, so it pulls
+# in just the lexer + token dumper (dump_token / dump_util) — not the
+# AST/IR dumpers.  Driven by `selfhost-port-tokens`.
+host-selfhost-lexer: examples/selfhost/lex_corpus.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+	$(EXILE) --target host --c-out $(C_OUT)/selfhost_lexer.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_lexer $<
 
 # `make amiga-NAME` → build m68k Amiga binary
 amiga-%: examples/%.exl $(call stub_for,%) $(SYS_AMIGA) build
@@ -245,7 +252,7 @@ SELFHOST_IR     := $(SELFHOST_GOLDEN)/ir
 
 .PHONY: selfhost-corpus selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 .PHONY: selfhost-diff selfhost-diff-tokens selfhost-diff-ast selfhost-diff-ir
-.PHONY: selfhost-corpus-% selfhost-diff-%
+.PHONY: selfhost-corpus-% selfhost-diff-% selfhost-port-tokens
 
 selfhost-corpus: selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 
@@ -348,6 +355,41 @@ selfhost-diff-%: examples/%.exl build
 	diff $(SELFHOST_IR)/$*.ir $$actual && \
 	rm $$actual && \
 	echo "selfhost-diff-$*: clean"
+
+# ===== Self-host PORT verification — exile lexer vs golden corpus =====
+#
+# `selfhost-diff-tokens` re-checks the OCaml *emitter*; this runs the
+# *exile port* (the compiled `lexer::tokenize`) over every example and
+# diffs its token dump against the committed golden.  Drift is a
+# port-vs-oracle bug.
+#
+# Two renderings are deliberately deferred (no prelude primitive yet,
+# tracked in SELFHOST-WORKLOG): the float literal VALUE (`(Float ?? w)`
+# vs OCaml's `%h` hex form) and string-escape DECODING (raw vs decoded
+# `(String …)` content).  Both are masked before the compare, so a
+# divergence on anything else — token type, position, count, ordering,
+# or the f32/f64 width tag — still fails.  The deferring examples are
+# printed every run so the debt stays visible, never silently passed.
+selfhost-port-tokens: host-selfhost-lexer
+	@mask='s/\(Float [^ ]+ /(Float /; s/\(String .*\) @/(String) @/'; \
+	fail=0; clean=0; defer=""; \
+	for name in $(EXAMPLE_NAMES); do \
+		[ -f $(SELFHOST_TOKENS)/$$name.tokens ] || continue; \
+		actual=$$(mktemp); \
+		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_lexer > $$actual 2>/dev/null; \
+		if diff -q $(SELFHOST_TOKENS)/$$name.tokens $$actual >/dev/null; then \
+			clean=$$((clean+1)); \
+		elif diff <(sed -E "$$mask" $(SELFHOST_TOKENS)/$$name.tokens) <(sed -E "$$mask" $$actual) >/dev/null; then \
+			defer="$$defer $$name"; \
+		else \
+			echo "selfhost-port-tokens: REGRESSION $$name"; \
+			diff $(SELFHOST_TOKENS)/$$name.tokens $$actual | head -12; \
+			fail=1; \
+		fi; \
+		rm $$actual; \
+	done; \
+	echo "selfhost-port-tokens: $$clean/$(words $(EXAMPLE_NAMES)) byte-identical; deferred (float-value/string-escape):$$defer"; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-port-tokens: clean (no structural regressions)"; else exit 1; fi
 
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io

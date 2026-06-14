@@ -183,6 +183,21 @@ fn lex_word(lx: *Lexer, toks: *Vec<TokenPos>, ar: *Arena, start_i: u32, p: Pos) 
     emit(toks, keyword_or_ident(word), p);
 }
 
+// A trailing `f32` / `f64` width suffix on a float literal -> the is32
+// flag (`f32` -> true, `f64` or no suffix -> false).  Mirrors OCaml's
+// suffix scan; the literal's value is deferred but the width tag is exact.
+fn lex_float_suffix(lx: *Lexer) -> bool {
+    if lx.cur() == 'f' as u8 && lx.peek1() == '3' as u8 && lx.peek2() == '2' as u8 {
+        lx.advance(); lx.advance(); lx.advance();
+        return true;
+    }
+    if lx.cur() == 'f' as u8 && lx.peek1() == '6' as u8 && lx.peek2() == '4' as u8 {
+        lx.advance(); lx.advance(); lx.advance();
+        return false;
+    }
+    return false;
+}
+
 // Scan a number: hex (`0x…`), float (`…​.…`, value deferred), or decimal.
 fn lex_number(lx: *Lexer, toks: *Vec<TokenPos>, start_i: u32, p: Pos) {
     if lx.cur() == '0' as u8
@@ -196,11 +211,19 @@ fn lex_number(lx: *Lexer, toks: *Vec<TokenPos>, start_i: u32, p: Pos) {
         lx.advance();
         while lx.i < lx.len && is_digit(lx.cur()) { lx.advance(); }
         if lx.cur() == '.' as u8 && is_digit(lx.peek1()) {
-            // Float: consume the fractional part so it does not mis-
-            // tokenise; the value is deferred (str -> f64 not yet).
-            lx.advance();
+            // Float: fractional part, then optional exponent and optional
+            // f32/f64 suffix.  Consuming the full syntax keeps the token
+            // boundary + width tag exact; only the VALUE is deferred (0.0
+            // placeholder until a `str -> f64` parser lands).
+            lx.advance();                                  // '.'
             while lx.i < lx.len && is_digit(lx.cur()) { lx.advance(); }
-            emit(toks, Token::Float(0.0, false), p);
+            if lx.cur() == 'e' as u8 || lx.cur() == 'E' as u8 {
+                lx.advance();
+                if lx.cur() == '+' as u8 || lx.cur() == '-' as u8 { lx.advance(); }
+                while lx.i < lx.len && is_digit(lx.cur()) { lx.advance(); }
+            }
+            let is32 = lex_float_suffix(lx);
+            emit(toks, Token::Float(0.0, is32), p);
         } else {
             emit(toks, Token::Int(parse_dec(lx.bytes, start_i, lx.i)), p);
         }
