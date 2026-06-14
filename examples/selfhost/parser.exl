@@ -1,0 +1,1707 @@
+// Self-host port — `lib/parser.ml`.
+//
+// Recursive-descent parser: `Vec<TokenPos>` -> `Program` (`Vec<Item>`).
+// The largest stage of the pipeline.  AST nodes live in the arena —
+// single children behind `*const T` (read-only once parsed), node lists
+// in `Vec`.
+//
+// ERROR MODEL — error-state, not `try`-threading (an empirically-driven
+// departure from the lexer; see SELFHOST-WORKLOG).  OCaml raises on the
+// first parse error; exile has no exceptions.  The lexer's
+// `Result`/`try` does not scale to a deep recursive descent: every
+// mandatory token (`expect`, ~100 sites) is value-less, so `try
+// expect(...)` would discard its Ok payload and warn, forcing dead
+// `if !(try …){…}` bodies everywhere; and a token-dispatch `match` must
+// be match-AS-VALUE (no `return` inside arms — that ICEs), which makes
+// statement-position `try` inside an arm warn too.  Instead the parser
+// carries a one-shot `err` slot: a failing `expect`/`fail` records the
+// FIRST error (later ones are ignored, matching OCaml's first-raise) and
+// returns; value parsers hand back a dummy node on a poisoned state and
+// loops stop on `is_err`.  `parse_program` bridges the slot back to a
+// `Result`, so the stage's PUBLIC contract still matches the lexer's.
+//
+// State is a cursor over the token slice (the OCaml mutable-list `state`
+// becomes a Slice + index), plus the two context flags OCaml threads:
+// `allow_struct_lit` (off in if/while/match scrutinees so `{` opens a
+// block, not a struct literal) and `allow_bitor` (off in a match-arm
+// body so a bare `|` reads as the arm SEPARATOR).
+//
+// PORT STATUS: foundation + type/param parser.  Expression ladder,
+// statements, and declarations land in following sub-stages; the
+// not-yet-ported entry points record a clear error.
+
+use pos::*;
+use token::*;
+use ast::*;
+use error::*;
+
+// ===== State =====
+
+struct Parser {
+    toks: Slice<TokenPos>,
+    n: u32,
+    i: u32,
+    last_pos: Pos,
+    allow_struct_lit: bool,
+    allow_bitor: bool,
+    // A `>>` (Shr) that closes a generic level leaves a virtual `>` (Gt)
+    // pending for the enclosing level — the token slice is read-only, so
+    // the OCaml in-place split becomes a one-token lookahead flag instead.
+    pending_gt: bool,
+    gt_pos: Pos,
+    err: Option<*const CompileError>,
+    a: Allocator,
+    ar: *Arena,
+}
+
+// `(string * Pos.t)` — an identifier with its source position.
+struct IdentPos {
+    name: str,
+    pos: Pos,
+}
+
+fn new_parser(a: Allocator, ar: *Arena, toks: Slice<TokenPos>, n: u32) -> Parser {
+    let no_err: Option<*const CompileError> = Option::None;
+    return Parser {
+        toks: toks, n: n, i: 0 as u32, last_pos: pos::Pos::zero(),
+        allow_struct_lit: true, allow_bitor: true,
+        pending_gt: false, gt_pos: pos::Pos::zero(),
+        err: no_err, a: a, ar: ar,
+    };
+}
+
+// ===== Error slot =====
+
+fn is_err(s: *const Parser) -> bool {
+    return match s.err {
+        Option::Some(_e) => true
+        | Option::None => false
+    };
+}
+
+// Record the FIRST error; later calls are no-ops (OCaml raises once).
+fn fail(s: *Parser, p: Pos, msg: str) {
+    match s.err {
+        Option::None => { s.err = Option::Some(alloc(s.ar, p, msg)); }
+        | Option::Some(_e) => {}
+    }
+}
+
+// ===== Cursor =====
+
+fn peek(s: *const Parser) -> Token {
+    if s.pending_gt { return Token::Gt; }
+    if s.i < s.n { return s.toks[s.i].tok; }
+    return Token::Eof;
+}
+
+fn peek2(s: *const Parser) -> Token {
+    if s.i + 1 as u32 < s.n { return s.toks[s.i + 1 as u32].tok; }
+    return Token::Eof;
+}
+
+fn peek3(s: *const Parser) -> Token {
+    if s.i + 2 as u32 < s.n { return s.toks[s.i + 2 as u32].tok; }
+    return Token::Eof;
+}
+
+fn peek_pos(s: *const Parser) -> Pos {
+    if s.pending_gt { return s.gt_pos; }
+    if s.i < s.n { return s.toks[s.i].pos; }
+    return s.last_pos;
+}
+
+// Consume one token, returning it; updates last_pos.  Past the end it
+// yields `Eof` at the last position (OCaml's list-empty case).
+fn advance(s: *Parser) -> TokenPos {
+    if s.pending_gt {
+        s.pending_gt = false;
+        let gp = s.gt_pos;
+        if s.i < s.n { s.last_pos = s.toks[s.i].pos; s.i = s.i + 1 as u32; }
+        return TokenPos { tok: Token::Gt, pos: gp };
+    }
+    if s.i >= s.n {
+        return TokenPos { tok: Token::Eof, pos: s.last_pos };
+    }
+    let tp = s.toks[s.i];
+    s.i = s.i + 1 as u32;
+    s.last_pos = tp.pos;
+    return tp;
+}
+
+// Skip one token (the `ignore (advance s)` idiom).
+fn bump(s: *Parser) {
+    if s.pending_gt {
+        s.pending_gt = false;
+        if s.i < s.n { s.last_pos = s.toks[s.i].pos; s.i = s.i + 1 as u32; }
+        return;
+    }
+    if s.i < s.n {
+        s.last_pos = s.toks[s.i].pos;
+        s.i = s.i + 1 as u32;
+    }
+}
+
+// ===== Token tags + diagnostic spelling =====
+//
+// Exile enums have no structural `==`, so token-variant comparison goes
+// through a discriminant tag (payloads ignored — every `peek = Token.X`
+// check cares only about the variant).  `pp` is OCaml `Token.pp`, the
+// diagnostic phrase ('fn' / '::' / …) shown in parse errors.
+
+fn tok_tag(t: Token) -> int {
+    match t {
+        Token::Fn => 0 | Token::Let => 1 | Token::Mut => 2 | Token::Return => 3
+        | Token::If => 4 | Token::Else => 5 | Token::While => 6 | Token::Loop => 7
+        | Token::Break => 8 | Token::Continue => 9 | Token::For => 10 | Token::In => 11
+        | Token::Mod => 12 | Token::Pub => 13 | Token::Use => 14 | Token::As => 15
+        | Token::Defer => 16 | Token::Struct => 17 | Token::Impl => 18 | Token::Trait => 19
+        | Token::View => 20 | Token::With => 21 | Token::Enum => 22 | Token::Match => 23
+        | Token::FatArrow => 24 | Token::Pipe => 25 | Token::PipePipe => 26 | Token::PipeGt => 27
+        | Token::AmpAmp => 28 | Token::Dot => 29 | Token::DotDot => 30 | Token::DotDotEq => 31
+        | Token::Amp => 32 | Token::New => 33 | Token::Own => 34 | Token::Null => 35
+        | Token::LParen => 36 | Token::RParen => 37 | Token::LBrace => 38 | Token::RBrace => 39
+        | Token::LBracket => 40 | Token::RBracket => 41 | Token::Semicolon => 42 | Token::Comma => 43
+        | Token::Colon => 44 | Token::DoubleColon => 45 | Token::Arrow => 46 | Token::Eq => 47
+        | Token::EqEq => 48 | Token::NotEq => 49 | Token::Bang => 50 | Token::Lt => 51
+        | Token::Gt => 52 | Token::LtEq => 53 | Token::GtEq => 54 | Token::Plus => 55
+        | Token::PlusPlus => 56 | Token::Minus => 57 | Token::Star => 58 | Token::Slash => 59
+        | Token::Percent => 60 | Token::Caret => 61 | Token::Tilde => 62 | Token::Shl => 63
+        | Token::Shr => 64 | Token::True => 65 | Token::False => 66 | Token::Question => 67
+        | Token::Orelse => 68 | Token::Try => 69 | Token::Extern => 70 | Token::Ellipsis => 71
+        | Token::At => 72 | Token::Type => 73 | Token::Const => 74 | Token::Var => 75
+        | Token::SizeOf => 76 | Token::Ident(_s) => 77 | Token::Int(_n) => 78
+        | Token::Float(_f, _is32) => 79 | Token::String(_s) => 80 | Token::Eof => 81
+    }
+}
+
+// OCaml `Token.pp`.  Payload variants (Ident/Int/Float/String) render a
+// generic word for now — the value-bearing spelling rides with the
+// parser-error fixtures (deferred, like the lexer's dynamic messages).
+fn pp(t: Token) -> str {
+    match t {
+        Token::Fn => "'fn'" | Token::Let => "'let'" | Token::Mut => "'mut'"
+        | Token::Return => "'return'" | Token::If => "'if'" | Token::Else => "'else'"
+        | Token::While => "'while'" | Token::Loop => "'loop'" | Token::Break => "'break'"
+        | Token::Continue => "'continue'" | Token::For => "'for'" | Token::In => "'in'"
+        | Token::Mod => "'mod'" | Token::Pub => "'pub'" | Token::Use => "'use'"
+        | Token::As => "'as'" | Token::Defer => "'defer'" | Token::Struct => "'struct'"
+        | Token::Impl => "'impl'" | Token::Trait => "'trait'" | Token::View => "'view'"
+        | Token::With => "'with'" | Token::Enum => "'enum'" | Token::Match => "'match'"
+        | Token::FatArrow => "'=>'" | Token::Pipe => "'|'" | Token::PipePipe => "'||'"
+        | Token::PipeGt => "'|>'" | Token::AmpAmp => "'&&'" | Token::Dot => "'.'"
+        | Token::DotDot => "'..'" | Token::DotDotEq => "'..='" | Token::Amp => "'&'"
+        | Token::New => "'new'" | Token::Own => "'own'" | Token::Null => "'null'"
+        | Token::LParen => "'('" | Token::RParen => "')'" | Token::LBrace => "'{'"
+        | Token::RBrace => "'}'" | Token::LBracket => "'['" | Token::RBracket => "']'"
+        | Token::Semicolon => "';'" | Token::Comma => "','" | Token::Colon => "':'"
+        | Token::DoubleColon => "'::'" | Token::Arrow => "'->'" | Token::Eq => "'='"
+        | Token::EqEq => "'=='" | Token::NotEq => "'!='" | Token::Bang => "'!'"
+        | Token::Lt => "'<'" | Token::Gt => "'>'" | Token::LtEq => "'<='"
+        | Token::GtEq => "'>='" | Token::Plus => "'+'" | Token::PlusPlus => "'++'"
+        | Token::Minus => "'-'" | Token::Star => "'*'" | Token::Slash => "'/'"
+        | Token::Percent => "'%'" | Token::Caret => "'^'" | Token::Tilde => "'~'"
+        | Token::Shl => "'<<'" | Token::Shr => "'>>'" | Token::True => "'true'"
+        | Token::False => "'false'" | Token::Question => "'?'" | Token::Orelse => "'orelse'"
+        | Token::Try => "'try'" | Token::Extern => "'extern'" | Token::Ellipsis => "'...'"
+        | Token::At => "'@'" | Token::Type => "'type'" | Token::Const => "'const'"
+        | Token::Var => "'var'" | Token::SizeOf => "'size_of'"
+        | Token::Ident(_s) => "identifier" | Token::Int(_n) => "integer"
+        | Token::Float(_f, _is32) => "float" | Token::String(_s) => "string"
+        | Token::Eof => "end of file"
+    }
+}
+
+fn peek_is(s: *const Parser, t: Token) -> bool {
+    return tok_tag(peek(s)) == tok_tag(t);
+}
+
+// `expected <pp(expected)>, got <pp(got)>` at the consumed token.
+fn expect(s: *Parser, expected: Token) {
+    let tp = advance(s);
+    if tok_tag(tp.tok) != tok_tag(expected) {
+        let mut sb = StringBuilder::with_capacity(s.a, 48 as u32);
+        sb.push_str("expected ");
+        sb.push_str(pp(expected));
+        sb.push_str(", got ");
+        sb.push_str(pp(tp.tok));
+        fail(s, tp.pos, str::from_slice(s.ar, sb.as_slice()));
+    }
+}
+
+fn expect_ident(s: *Parser, what: str) -> IdentPos {
+    let tp = advance(s);
+    return match tp.tok {
+        Token::Ident(n) => IdentPos { name: n, pos: tp.pos }
+        | _ => {
+            let mut sb = StringBuilder::with_capacity(s.a, 48 as u32);
+            sb.push_str("expected ");
+            sb.push_str(what);
+            sb.push_str(", got ");
+            sb.push_str(pp(tp.tok));
+            fail(s, tp.pos, str::from_slice(s.ar, sb.as_slice()));
+            IdentPos { name: "", pos: tp.pos }
+        }
+    };
+}
+
+// ===== Paths =====
+
+// `:: ident :: ident …` after `head` is already parsed.
+fn parse_path_tail(s: *Parser, head: str) -> Vec<str> {
+    let mut path: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    path.push(head);
+    while !is_err(s) && peek_is(s, Token::DoubleColon) {
+        bump(s);
+        let ip = expect_ident(s, "identifier after '::'");
+        path.push(ip.name);
+    }
+    return path;
+}
+
+// ===== Types =====
+
+fn ty_node(s: *Parser, t: TypeAnn) -> *const TypeAnn {
+    let n: *TypeAnn = s.ar.alloc_borrowed();
+    *n = t;
+    return n as *const TypeAnn;
+}
+
+fn dummy_ty(s: *Parser) -> *const TypeAnn {
+    return ty_node(s, TypeAnn::TyBool);
+}
+
+fn ty_int(is_signed: bool, width: IntWidth) -> TypeAnn {
+    return TypeAnn::TyInt { is_signed: is_signed, width: width };
+}
+
+// `>` closing a generic list when the lexer merged two into `>>` (Shr):
+// consume one level, leave a `>` pending for the enclosing one.
+fn split_shr(s: *Parser) {
+    if s.i < s.n {
+        match s.toks[s.i].tok {
+            Token::Shr => {
+                let p = s.toks[s.i].pos;
+                s.pending_gt = true;
+                s.gt_pos = Pos { line: p.line, col: p.col + 1, file: p.file };
+            }
+            | _e => {}
+        }
+    }
+}
+
+// Comma-separated types until `close` (opener already consumed); trailing
+// comma allowed.  The monomorphic stand-in for OCaml's higher-order
+// `parse_comma_list ~item:parse_type`.
+fn comma_types(s: *Parser, close: Token) -> Vec<*const TypeAnn> {
+    let mut out: Vec<*const TypeAnn> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, close) { bump(s); return out; }
+    out.push(parse_type(s));
+    while !is_err(s) {
+        if peek_is(s, close) { bump(s); return out; }
+        if peek_is(s, Token::Comma) {
+            bump(s);
+            if peek_is(s, close) { bump(s); return out; }
+            out.push(parse_type(s));
+        } else {
+            let mut sb = StringBuilder::with_capacity(s.a, 32 as u32);
+            sb.push_str("expected ',' or ");
+            sb.push_str(pp(close));
+            fail(s, peek_pos(s), str::from_slice(s.ar, sb.as_slice()));
+            return out;
+        }
+    }
+    return out;
+}
+
+// `( ... )` type: empty -> error, one element -> grouping (unwrap), two or
+// more -> tuple.  A return-based helper because an `if`/`else if` value
+// needs single-expression branches (the side-effecting `fail` can't ride
+// inside one).
+fn close_paren_type(s: *Parser, tys: Vec<*const TypeAnn>, p: Pos) -> *const TypeAnn {
+    let nt = tys.length();
+    if nt == 0 as u32 {
+        fail(s, p, "empty tuple type '()' is not supported");
+        return dummy_ty(s);
+    }
+    if nt == 1 as u32 {
+        let sl = tys.as_slice();
+        return sl[0 as u32];
+    }
+    return ty_node(s, TypeAnn::TyTuple(tys));
+}
+
+// `*T` / `*const T` / `own *T` pointer types — return-based helpers so
+// enum-lit construction (and the `*const` if-branch) never rides inside a
+// match-arm body (the lift pass that hoists block-shaped exprs
+// deliberately skips arm bodies, so an un-lifted enum-lit / if there ICEs
+// codegen).
+fn mk_ptr_ty(s: *Parser, is_const: bool, inner: *const TypeAnn) -> *const TypeAnn {
+    if is_const { return ty_node(s, TypeAnn::TyConstPtr(inner)); }
+    return ty_node(s, TypeAnn::TyPtr(inner));
+}
+
+fn mk_own_ty(s: *Parser, inner: *const TypeAnn) -> *const TypeAnn {
+    return ty_node(s, TypeAnn::TyOwnPtr(inner));
+}
+
+fn parse_type(s: *Parser) -> *const TypeAnn {
+    if is_err(s) { return dummy_ty(s); }
+    let tp = advance(s);
+    return match tp.tok {
+        Token::Own => {
+            let nx = advance(s);
+            if tok_tag(nx.tok) != tok_tag(Token::Star) {
+                fail(s, nx.pos, "expected '*' after 'own' (owner-sigil tags a pointer slot)");
+            }
+            let own_inner = parse_type(s);
+            mk_own_ty(s, own_inner)
+        }
+        | Token::Star => {
+            let is_const = peek_is(s, Token::Const);
+            if is_const { bump(s); }
+            let pt_inner = parse_type(s);
+            mk_ptr_ty(s, is_const, pt_inner)
+        }
+        | Token::LBracket => {
+            let elem = parse_type(s);
+            expect(s, Token::Semicolon);
+            let size = parse_expr(s);
+            expect(s, Token::RBracket);
+            ty_node(s, TypeAnn::TyArray { elem: elem, size: size })
+        }
+        | Token::Question => {
+            let opt_inner = parse_type(s);
+            let mut opt_args: Vec<*const TypeAnn> = Vec::with_capacity(s.a, 8 as u32);
+            opt_args.push(opt_inner);
+            let mut opt_path: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+            opt_path.push("Option");
+            ty_node(s, TypeAnn::TyStruct { path: opt_path, args: opt_args })
+        }
+        | Token::Fn => {
+            expect(s, Token::LParen);
+            let fp_params = comma_types(s, Token::RParen);
+            let fp_ret = parse_ret_ty(s);
+            ty_node(s, TypeAnn::TyFnPtr { params: fp_params, ret: fp_ret })
+        }
+        | Token::Ident(name) => parse_type_ident(s, name, tp.pos)
+        | Token::LParen => {
+            let tys = comma_types(s, Token::RParen);
+            close_paren_type(s, tys, tp.pos)
+        }
+        | Token::Pipe => parse_ty_fnsugar(s, tp.pos)
+        | Token::PipePipe => {
+            expect(s, Token::Arrow);
+            let f0_ret = parse_type(s);
+            let f0_params: Vec<*const TypeAnn> = Vec::with_capacity(s.a, 8 as u32);
+            let f0_some: Option<*const TypeAnn> = Option::Some(f0_ret);
+            ty_node(s, TypeAnn::TyFnPtr { params: f0_params, ret: f0_some })
+        }
+        | _ => {
+            let mut sb = StringBuilder::with_capacity(s.a, 96 as u32);
+            sb.push_str("expected type (int, i8/i16/i32, u8/u16/u32, str, bool, struct name, (T,...)), got ");
+            sb.push_str(pp(tp.tok));
+            fail(s, tp.pos, str::from_slice(s.ar, sb.as_slice()));
+            dummy_ty(s)
+        }
+    };
+}
+
+// The `Ident` arm of parse_type: the primitive-name table, else a struct
+// path with an optional `<...>` generic argument list.
+fn parse_type_ident(s: *Parser, name: str, _p: Pos) -> *const TypeAnn {
+    if str::eq(name, "int") { return ty_node(s, ty_int(true, IntWidth::W32)); }
+    if str::eq(name, "i8") { return ty_node(s, ty_int(true, IntWidth::W8)); }
+    if str::eq(name, "i16") { return ty_node(s, ty_int(true, IntWidth::W16)); }
+    if str::eq(name, "i32") { return ty_node(s, ty_int(true, IntWidth::W32)); }
+    if str::eq(name, "u8") { return ty_node(s, ty_int(false, IntWidth::W8)); }
+    if str::eq(name, "u16") { return ty_node(s, ty_int(false, IntWidth::W16)); }
+    if str::eq(name, "u32") { return ty_node(s, ty_int(false, IntWidth::W32)); }
+    if str::eq(name, "c_int") { return ty_node(s, TypeAnn::TyCInt { is_signed: true }); }
+    if str::eq(name, "c_uint") { return ty_node(s, TypeAnn::TyCInt { is_signed: false }); }
+    if str::eq(name, "c_short") { return ty_node(s, TypeAnn::TyCShort { is_signed: true }); }
+    if str::eq(name, "c_ushort") { return ty_node(s, TypeAnn::TyCShort { is_signed: false }); }
+    if str::eq(name, "c_long") { return ty_node(s, TypeAnn::TyCLong { is_signed: true }); }
+    if str::eq(name, "c_ulong") { return ty_node(s, TypeAnn::TyCLong { is_signed: false }); }
+    if str::eq(name, "c_char") { return ty_node(s, TypeAnn::TyCChar); }
+    if str::eq(name, "c_schar") { return ty_node(s, TypeAnn::TyCSChar); }
+    if str::eq(name, "c_uchar") { return ty_node(s, TypeAnn::TyCUChar); }
+    if str::eq(name, "c_void") { return ty_node(s, TypeAnn::TyCVoid); }
+    if str::eq(name, "str") { return ty_node(s, TypeAnn::TyStr); }
+    if str::eq(name, "bool") { return ty_node(s, TypeAnn::TyBool); }
+    if str::eq(name, "f32") { return ty_node(s, TypeAnn::TyFloat(FloatWidth::F32)); }
+    if str::eq(name, "f64") { return ty_node(s, TypeAnn::TyFloat(FloatWidth::F64)); }
+    let path = parse_path_tail(s, name);
+    let mut args: Vec<*const TypeAnn> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, Token::Lt) {
+        bump(s);
+        if peek_is(s, Token::Gt) {
+            fail(s, peek_pos(s), "empty generic argument list <>");
+            return ty_node(s, TypeAnn::TyStruct { path: path, args: args });
+        }
+        parse_generic_args(s, &args);
+    }
+    return ty_node(s, TypeAnn::TyStruct { path: path, args: args });
+}
+
+// `T, U, ...>` generic argument tail (the `<` already consumed, non-empty
+// guaranteed).  Closes on `>` or a split `>>`.  Appends into `out`.
+fn parse_generic_args(s: *Parser, out: *Vec<*const TypeAnn>) {
+    let mut done = false;
+    while !is_err(s) && !done {
+        out.push(parse_type(s));
+        if !is_err(s) {
+            match peek(s) {
+                Token::Comma => { bump(s); }
+                | Token::Gt => { bump(s); done = true; }
+                | Token::Shr => { split_shr(s); done = true; }
+                | other => {
+                    let mut sb = StringBuilder::with_capacity(s.a, 48 as u32);
+                    sb.push_str("expected ',' or '>' in generic arguments, got ");
+                    sb.push_str(pp(other));
+                    fail(s, peek_pos(s), str::from_slice(s.ar, sb.as_slice()));
+                    done = true;
+                }
+            }
+        }
+    }
+}
+
+// `|A, B|->R` fn-pointer type sugar (the leading `|` already consumed).
+fn parse_ty_fnsugar(s: *Parser, pipe_pos: Pos) -> *const TypeAnn {
+    let mut args: Vec<*const TypeAnn> = Vec::with_capacity(s.a, 8 as u32);
+    let mut closed = false;
+    while !is_err(s) && !closed {
+        args.push(parse_type(s));
+        if !is_err(s) {
+            match peek(s) {
+                Token::Comma => { bump(s); }
+                | Token::Pipe => { closed = true; }
+                | other => {
+                    let mut sb = StringBuilder::with_capacity(s.a, 48 as u32);
+                    sb.push_str("expected ',' or '|' in fn-pointer type sugar, got ");
+                    sb.push_str(pp(other));
+                    fail(s, pipe_pos, str::from_slice(s.ar, sb.as_slice()));
+                    closed = true;
+                }
+            }
+        }
+    }
+    expect(s, Token::Pipe);
+    expect(s, Token::Arrow);
+    let ret = parse_type(s);
+    let some_ret: Option<*const TypeAnn> = Option::Some(ret);
+    return ty_node(s, TypeAnn::TyFnPtr { params: args, ret: some_ret });
+}
+
+fn parse_ret_ty(s: *Parser) -> Option<*const TypeAnn> {
+    if peek_is(s, Token::Arrow) {
+        bump(s);
+        return Option::Some(parse_type(s));
+    }
+    let none: Option<*const TypeAnn> = Option::None;
+    return none;
+}
+
+// ===== Parameters =====
+
+// `@reg(d0)` register-pin attribute (extern-fn params); returns the
+// register name if present.
+fn parse_param_reg_attr(s: *Parser) -> Option<str> {
+    let none: Option<str> = Option::None;
+    if peek_is(s, Token::At) {
+        let at_pos = peek_pos(s);
+        bump(s);
+        let attr = expect_ident(s, "attribute name after '@'");
+        if !str::eq(attr.name, "reg") {
+            let mut sb = StringBuilder::with_capacity(s.a, 64 as u32);
+            sb.push_str("only '@reg(<m68k-register>)' is supported on parameters, got '@");
+            sb.push_str(attr.name);
+            sb.push_str("'");
+            fail(s, at_pos, str::from_slice(s.ar, sb.as_slice()));
+            return none;
+        }
+        expect(s, Token::LParen);
+        let reg = expect_ident(s, "m68k register name");
+        expect(s, Token::RParen);
+        return Option::Some(reg.name);
+    }
+    return none;
+}
+
+fn is_ident_named(t: Token, w: str) -> bool {
+    return match t {
+        Token::Ident(n) => str::eq(n, w)
+        | _e => false
+    };
+}
+
+fn is_self_value(s: *const Parser) -> bool {
+    return is_ident_named(peek(s), "self") && !(tok_tag(peek2(s)) == tok_tag(Token::Colon));
+}
+
+fn is_self_ptr(s: *const Parser) -> bool {
+    return tok_tag(peek(s)) == tok_tag(Token::Star) && is_ident_named(peek2(s), "self");
+}
+
+fn is_self_constptr(s: *const Parser) -> bool {
+    return tok_tag(peek(s)) == tok_tag(Token::Star)
+        && tok_tag(peek2(s)) == tok_tag(Token::Const)
+        && is_ident_named(peek3(s), "self");
+}
+
+fn parse_param(s: *Parser) -> Param {
+    let reg = parse_param_reg_attr(s);
+    let is_mut = peek_is(s, Token::Mut);
+    if is_mut { bump(s); }
+    let no_reg: Option<str> = Option::None;
+    if is_self_value(s) {
+        bump(s);
+        return Param { pname: "self", pty: ty_node(s, TypeAnn::TySelf), is_mut: is_mut, preg: no_reg };
+    }
+    if is_self_ptr(s) {
+        bump(s); bump(s);
+        return Param {
+            pname: "self", pty: ty_node(s, TypeAnn::TyPtr(ty_node(s, TypeAnn::TySelf))),
+            is_mut: is_mut, preg: no_reg,
+        };
+    }
+    if is_self_constptr(s) {
+        bump(s); bump(s); bump(s);
+        return Param {
+            pname: "self", pty: ty_node(s, TypeAnn::TyConstPtr(ty_node(s, TypeAnn::TySelf))),
+            is_mut: is_mut, preg: no_reg,
+        };
+    }
+    let name = expect_ident(s, "parameter name");
+    expect(s, Token::Colon);
+    let ty = parse_type(s);
+    return Param { pname: name.name, pty: ty, is_mut: is_mut, preg: reg };
+}
+
+fn parse_params(s: *Parser) -> Vec<Param> {
+    expect(s, Token::LParen);
+    let mut out: Vec<Param> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, Token::RParen) { bump(s); return out; }
+    out.push(parse_param(s));
+    while !is_err(s) {
+        if peek_is(s, Token::RParen) { bump(s); return out; }
+        if peek_is(s, Token::Comma) {
+            bump(s);
+            if peek_is(s, Token::RParen) { bump(s); return out; }
+            out.push(parse_param(s));
+        } else {
+            fail(s, peek_pos(s), "expected ',' or ')'");
+            return out;
+        }
+    }
+    return out;
+}
+
+// ===== Expression node constructors =====
+//
+// Every Expr lives in the arena behind `*const Expr`.  Construction goes
+// through these so an enum-lit never appears inline inside a match-arm
+// body (the lift pass skips arm bodies → un-lifted block-shaped expr
+// ICEs codegen); in a plain return-position fn the lift pass works.
+
+fn e_node(s: *Parser, e: Expr) -> *const Expr {
+    let n: *Expr = s.ar.alloc_borrowed();
+    *n = e;
+    return n as *const Expr;
+}
+
+fn dummy_expr(s: *Parser) -> *const Expr { return e_node(s, Expr::NullLit(peek_pos(s))); }
+
+fn mk_int(s: *Parser, n: int, p: Pos) -> *const Expr { return e_node(s, Expr::IntLit(n, p)); }
+fn mk_float(s: *Parser, f: f64, w: FloatWidth, p: Pos) -> *const Expr { return e_node(s, Expr::FloatLit(f, w, p)); }
+fn mk_bool(s: *Parser, b: bool, p: Pos) -> *const Expr { return e_node(s, Expr::BoolLit(b, p)); }
+fn mk_null(s: *Parser, p: Pos) -> *const Expr { return e_node(s, Expr::NullLit(p)); }
+fn mk_str(s: *Parser, v: str, p: Pos) -> *const Expr { return e_node(s, Expr::StringLit(v, p)); }
+fn mk_var(s: *Parser, name: str, p: Pos) -> *const Expr { return e_node(s, Expr::Var(name, p)); }
+fn mk_neg(s: *Parser, e: *const Expr, p: Pos) -> *const Expr { return e_node(s, Expr::Neg(e, p)); }
+fn mk_bitnot(s: *Parser, e: *const Expr, p: Pos) -> *const Expr { return e_node(s, Expr::BitNot(e, p)); }
+fn mk_not(s: *Parser, e: *const Expr, p: Pos) -> *const Expr { return e_node(s, Expr::Not(e, p)); }
+fn mk_ref(s: *Parser, e: *const Expr, p: Pos) -> *const Expr { return e_node(s, Expr::Ref(e, p)); }
+fn mk_deref(s: *Parser, e: *const Expr, p: Pos) -> *const Expr { return e_node(s, Expr::Deref(e, p)); }
+fn mk_try(s: *Parser, e: *const Expr, p: Pos) -> *const Expr { return e_node(s, Expr::Try(e, p)); }
+fn mk_sizeof(s: *Parser, t: *const TypeAnn, p: Pos) -> *const Expr { return e_node(s, Expr::SizeOf(t, p)); }
+fn mk_binop(s: *Parser, op: BinOp, l: *const Expr, r: *const Expr, p: Pos) -> *const Expr {
+    return e_node(s, Expr::BinOp(op, l, r, p));
+}
+fn mk_cast(s: *Parser, e: *const Expr, t: *const TypeAnn, p: Pos) -> *const Expr { return e_node(s, Expr::Cast(e, t, p)); }
+fn mk_call(s: *Parser, callee: Vec<str>, args: Vec<*const Expr>, p: Pos) -> *const Expr {
+    return e_node(s, Expr::Call { callee: callee, args: args, pos: p });
+}
+fn mk_field(s: *Parser, e: *const Expr, name: str, p: Pos) -> *const Expr { return e_node(s, Expr::FieldAccess(e, name, p)); }
+fn mk_methodcall(s: *Parser, recv: *const Expr, name: str, args: Vec<*const Expr>, p: Pos) -> *const Expr {
+    return e_node(s, Expr::MethodCall { receiver: recv, name: name, args: args, pos: p });
+}
+fn mk_index(s: *Parser, base: *const Expr, idx: *const Expr, p: Pos) -> *const Expr {
+    return e_node(s, Expr::Index { base: base, index: idx, pos: p });
+}
+fn mk_tuple(s: *Parser, es: Vec<*const Expr>, p: Pos) -> *const Expr { return e_node(s, Expr::TupleLit(es, p)); }
+fn mk_orelse(s: *Parser, a: *const Expr, b: *const Expr, p: Pos) -> *const Expr { return e_node(s, Expr::Orelse(a, b, p)); }
+fn mk_range(s: *Parser, lo: *const Expr, hi: *const Expr, inc: bool, p: Pos) -> *const Expr {
+    return e_node(s, Expr::Range { lo: lo, hi: hi, inclusive: inc, pos: p });
+}
+fn mk_structlit(s: *Parser, tname: Vec<str>, fields: Vec<Field>, base: Option<*const Expr>, p: Pos) -> *const Expr {
+    return e_node(s, Expr::StructLit { tname: tname, fields: fields, base: base, pos: p });
+}
+fn mk_enumlit_unit(s: *Parser, tname: Vec<str>, variant: str, p: Pos) -> *const Expr {
+    let args: Vec<*const Expr> = Vec::with_capacity(s.a, 8 as u32);
+    return e_node(s, Expr::EnumLit { tname: tname, variant: variant, args: EnumLitArgs::EATuple(args), pos: p });
+}
+fn mk_match(s: *Parser, scrut: *const Expr, arms: Vec<MatchArm>, p: Pos) -> *const Expr {
+    return e_node(s, Expr::Match { scrutinee: scrut, arms: arms, pos: p });
+}
+fn mk_block(s: *Parser, stmts: Vec<Stmt>, p: Pos) -> *const Expr { return e_node(s, Expr::Block(stmts, p)); }
+fn mk_if_expr(s: *Parser, cond: *const Expr, then_blk: Vec<Stmt>, else_blk: Option<Vec<Stmt>>, p: Pos) -> *const Expr {
+    return e_node(s, Expr::If { cond: cond, then_blk: then_blk, else_blk: else_blk, pos: p });
+}
+
+// ===== Comma lists (monomorphic) =====
+
+fn comma_exprs(s: *Parser, close: Token) -> Vec<*const Expr> {
+    let mut out: Vec<*const Expr> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, close) { bump(s); return out; }
+    out.push(parse_expr(s));
+    while !is_err(s) {
+        if peek_is(s, close) { bump(s); return out; }
+        if peek_is(s, Token::Comma) {
+            bump(s);
+            if peek_is(s, close) { bump(s); return out; }
+            out.push(parse_expr(s));
+        } else {
+            fail(s, peek_pos(s), "expected ',' or closing bracket in expression list");
+            return out;
+        }
+    }
+    return out;
+}
+
+// `(...)` call/method arguments — struct literals are always allowed
+// inside (the `)` closes unambiguously), even where the surrounding
+// context disabled them.
+fn parse_args(s: *Parser) -> Vec<*const Expr> {
+    let prev = s.allow_struct_lit;
+    s.allow_struct_lit = true;
+    let r = comma_exprs(s, Token::RParen);
+    s.allow_struct_lit = prev;
+    return r;
+}
+
+// ===== Primary expressions =====
+
+fn parse_primary(s: *Parser) -> *const Expr {
+    if is_err(s) { return dummy_expr(s); }
+    let tp = advance(s);
+    let p = tp.pos;
+    return match tp.tok {
+        Token::Int(n) => mk_int(s, n, p)
+        | Token::Float(f, is32) => mk_float(s, f, float_w(is32), p)
+        | Token::True => mk_bool(s, true, p)
+        | Token::False => mk_bool(s, false, p)
+        | Token::Null => mk_null(s, p)
+        | Token::String(v) => mk_str(s, v, p)
+        | Token::Minus => mk_neg(s, parse_primary(s), p)
+        | Token::Tilde => mk_bitnot(s, parse_primary(s), p)
+        | Token::Bang => mk_not(s, parse_postfix(s, parse_primary(s)), p)
+        | Token::Try => mk_try(s, parse_postfix(s, parse_primary(s)), p)
+        | Token::Amp => mk_ref(s, parse_postfix(s, parse_primary(s)), p)
+        | Token::Star => mk_deref(s, parse_postfix(s, parse_primary(s)), p)
+        | Token::SizeOf => prim_sizeof(s, p)
+        | Token::If => parse_if_after_kw(s, p)
+        | Token::Match => prim_match(s, p)
+        | Token::Ident(name) => prim_ident(s, name, p)
+        | Token::LParen => prim_paren(s, p)
+        | _ => {
+            fail(s, p, "expected expression");
+            dummy_expr(s)
+        }
+    };
+}
+
+fn float_w(is32: bool) -> FloatWidth {
+    if is32 { return FloatWidth::F32; }
+    return FloatWidth::F64;
+}
+
+// `size_of(T)` — a parenthesised type.
+fn prim_sizeof(s: *Parser, p: Pos) -> *const Expr {
+    expect(s, Token::LParen);
+    let ty = parse_type(s);
+    expect(s, Token::RParen);
+    return mk_sizeof(s, ty, p);
+}
+
+// `match scrut { pat => body | ... }` — scrutinee parsed with struct
+// literals off so the `{` opens the match body.
+fn prim_match(s: *Parser, p: Pos) -> *const Expr {
+    let prev = s.allow_struct_lit;
+    s.allow_struct_lit = false;
+    let scrut = parse_expr(s);
+    s.allow_struct_lit = prev;
+    expect(s, Token::LBrace);
+    let arms = parse_match_arms(s);
+    return mk_match(s, scrut, arms, p);
+}
+
+// A path-qualified identifier: `foo::bar(...)` call, `T { ... }` struct
+// literal, `Foo::Variant` unit enum-lit, or a bare `Var`.
+fn prim_ident(s: *Parser, name: str, p: Pos) -> *const Expr {
+    let path = parse_path_tail(s, name);
+    if peek_is(s, Token::LParen) {
+        bump(s);
+        let args = parse_args(s);
+        return mk_call(s, path, args, p);
+    }
+    if peek_is(s, Token::LBrace) && s.allow_struct_lit {
+        bump(s);
+        return parse_struct_lit_rest(s, path, p);
+    }
+    return ident_path_value(s, path, p);
+}
+
+// A bare path with no `(`/`{`: a single segment is a `Var`; a qualified
+// path is a unit enum-variant constructor (`Foo::A`).
+fn ident_path_value(s: *Parser, path: Vec<str>, p: Pos) -> *const Expr {
+    if path.length() == 1 as u32 {
+        let sl = path.as_slice();
+        return mk_var(s, sl[0 as u32], p);
+    }
+    return enumlit_from_path(s, path, p);
+}
+
+fn enumlit_from_path(s: *Parser, path: Vec<str>, p: Pos) -> *const Expr {
+    let n = path.length();
+    let sl = path.as_slice();
+    let mut init: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < n - 1 as u32 {
+        init.push(sl[i]);
+        i = i + 1 as u32;
+    }
+    return mk_enumlit_unit(s, init, sl[n - 1 as u32], p);
+}
+
+// `( e )` grouping or `( e1, e2, ... )` tuple.
+fn prim_paren(s: *Parser, p: Pos) -> *const Expr {
+    let prev = s.allow_struct_lit;
+    s.allow_struct_lit = true;
+    let first = parse_expr(s);
+    let r = paren_tail(s, first, p);
+    s.allow_struct_lit = prev;
+    return r;
+}
+
+fn paren_tail(s: *Parser, first: *const Expr, p: Pos) -> *const Expr {
+    if peek_is(s, Token::Comma) {
+        bump(s);
+        if peek_is(s, Token::RParen) {
+            bump(s);
+            return first;
+        }
+        let mut es: Vec<*const Expr> = Vec::with_capacity(s.a, 8 as u32);
+        es.push(first);
+        let rest = comma_exprs(s, Token::RParen);
+        let rs = rest.as_slice();
+        let mut i = 0 as u32;
+        while i < rest.length() {
+            es.push(rs[i]);
+            i = i + 1 as u32;
+        }
+        return mk_tuple(s, es, p);
+    }
+    expect(s, Token::RParen);
+    return first;
+}
+
+// `f1: e1, ..base }` after the opening `{` is consumed.
+fn parse_struct_lit_rest(s: *Parser, tname: Vec<str>, p: Pos) -> *const Expr {
+    let mut fields: Vec<Field> = Vec::with_capacity(s.a, 8 as u32);
+    let no_base: Option<*const Expr> = Option::None;
+    let mut base: Option<*const Expr> = no_base;
+    let mut done = false;
+    while !is_err(s) && !done {
+        if peek_is(s, Token::RBrace) {
+            bump(s); done = true;
+        } else if peek_is(s, Token::DotDot) {
+            bump(s);
+            base = Option::Some(parse_expr(s));
+            if peek_is(s, Token::Comma) { bump(s); }
+            expect(s, Token::RBrace);
+            done = true;
+        } else {
+            let fld = parse_struct_lit_field(s);
+            fields.push(fld);
+            if peek_is(s, Token::RBrace) { bump(s); done = true; }
+            else if peek_is(s, Token::Comma) { bump(s); }
+            else { fail(s, peek_pos(s), "expected ',' or '}' in struct literal"); done = true; }
+        }
+    }
+    return mk_structlit(s, tname, fields, base, p);
+}
+
+fn parse_struct_lit_field(s: *Parser) -> Field {
+    let np = expect_ident(s, "field name in struct literal");
+    expect(s, Token::Colon);
+    let v = parse_expr(s);
+    return Field { name: np.name, value: v };
+}
+
+// ===== Postfix =====
+
+// Chain `.field` / `.method(args)` / `[index]` / `|> f(args)` onto a base.
+fn parse_postfix(s: *Parser, base: *const Expr) -> *const Expr {
+    let mut e = base;
+    let mut done = false;
+    while !is_err(s) && !done {
+        let p = peek_pos(s);
+        if peek_is(s, Token::Dot) {
+            bump(s);
+            let np = expect_ident(s, "field or method name after '.'");
+            if peek_is(s, Token::LParen) {
+                bump(s);
+                e = mk_methodcall(s, e, np.name, parse_args(s), p);
+            } else {
+                e = mk_field(s, e, np.name, p);
+            }
+        } else if peek_is(s, Token::LBracket) {
+            bump(s);
+            let idx = parse_expr(s);
+            expect(s, Token::RBracket);
+            e = mk_index(s, e, idx, p);
+        } else if peek_is(s, Token::PipeGt) {
+            bump(s);
+            e = postfix_pipe(s, e, p);
+        } else {
+            done = true;
+        }
+    }
+    return e;
+}
+
+// `e |> f(a, b)` ≡ `f(e, a, b)` — desugared at parse time.
+fn postfix_pipe(s: *Parser, e: *const Expr, p: Pos) -> *const Expr {
+    let hp = expect_ident(s, "function name after '|>'");
+    let path = parse_path_tail(s, hp.name);
+    let mut args: Vec<*const Expr> = Vec::with_capacity(s.a, 8 as u32);
+    args.push(e);
+    if peek_is(s, Token::LParen) {
+        bump(s);
+        let rest = parse_args(s);
+        let rs = rest.as_slice();
+        let mut i = 0 as u32;
+        while i < rest.length() {
+            args.push(rs[i]);
+            i = i + 1 as u32;
+        }
+    }
+    return mk_call(s, path, args, p);
+}
+
+// ===== Binary-operator ladder (tight -> loose) =====
+
+fn parse_cast(s: *Parser) -> *const Expr {
+    let mut e = parse_postfix(s, parse_primary(s));
+    while !is_err(s) && peek_is(s, Token::As) {
+        let p = peek_pos(s);
+        bump(s);
+        let ty = parse_type(s);
+        e = mk_cast(s, e, ty, p);
+    }
+    return e;
+}
+
+fn parse_mul(s: *Parser) -> *const Expr {
+    let mut e = parse_cast(s);
+    while !is_err(s) {
+        let op = mul_op(peek(s));
+        if op < 0 { return e; }
+        let p = peek_pos(s);
+        bump(s);
+        e = mk_binop(s, mul_binop(op), e, parse_cast(s), p);
+    }
+    return e;
+}
+
+fn mul_op(t: Token) -> int {
+    return match t {
+        Token::Star => 0 | Token::Slash => 1 | Token::Percent => 2 | _e => -1
+    };
+}
+fn mul_binop(op: int) -> BinOp {
+    if op == 0 { return BinOp::Mul; }
+    if op == 1 { return BinOp::Div; }
+    return BinOp::Mod;
+}
+
+fn parse_add(s: *Parser) -> *const Expr {
+    let mut e = parse_mul(s);
+    while !is_err(s) {
+        let op = add_op(peek(s));
+        if op < 0 { return e; }
+        let p = peek_pos(s);
+        bump(s);
+        e = mk_binop(s, add_binop(op), e, parse_mul(s), p);
+    }
+    return e;
+}
+
+fn add_op(t: Token) -> int {
+    return match t {
+        Token::Plus => 0 | Token::Minus => 1 | Token::PlusPlus => 2 | _e => -1
+    };
+}
+fn add_binop(op: int) -> BinOp {
+    if op == 0 { return BinOp::Add; }
+    if op == 1 { return BinOp::Sub; }
+    return BinOp::Concat;
+}
+
+fn parse_shift(s: *Parser) -> *const Expr {
+    let mut e = parse_add(s);
+    while !is_err(s) {
+        let op = shift_op(peek(s));
+        if op < 0 { return e; }
+        let p = peek_pos(s);
+        bump(s);
+        e = mk_binop(s, shift_binop(op), e, parse_add(s), p);
+    }
+    return e;
+}
+
+fn shift_op(t: Token) -> int {
+    return match t { Token::Shl => 0 | Token::Shr => 1 | _e => -1 };
+}
+fn shift_binop(op: int) -> BinOp {
+    if op == 0 { return BinOp::Shl; }
+    return BinOp::Shr;
+}
+
+fn parse_bitand(s: *Parser) -> *const Expr {
+    let mut e = parse_shift(s);
+    while !is_err(s) && peek_is(s, Token::Amp) {
+        let p = peek_pos(s);
+        bump(s);
+        e = mk_binop(s, BinOp::BitAnd, e, parse_shift(s), p);
+    }
+    return e;
+}
+
+fn parse_bitxor(s: *Parser) -> *const Expr {
+    let mut e = parse_bitand(s);
+    while !is_err(s) && peek_is(s, Token::Caret) {
+        let p = peek_pos(s);
+        bump(s);
+        e = mk_binop(s, BinOp::BitXor, e, parse_bitand(s), p);
+    }
+    return e;
+}
+
+fn parse_bitor(s: *Parser) -> *const Expr {
+    let mut e = parse_bitxor(s);
+    while !is_err(s) && peek_is(s, Token::Pipe) && s.allow_bitor {
+        let p = peek_pos(s);
+        bump(s);
+        e = mk_binop(s, BinOp::BitOr, e, parse_bitxor(s), p);
+    }
+    return e;
+}
+
+fn parse_cmp(s: *Parser) -> *const Expr {
+    let left = parse_bitor(s);
+    let op = cmp_op(peek(s));
+    if op < 0 { return left; }
+    let p = peek_pos(s);
+    bump(s);
+    return mk_binop(s, cmp_binop(op), left, parse_bitor(s), p);
+}
+
+fn cmp_op(t: Token) -> int {
+    return match t {
+        Token::Lt => 0 | Token::Gt => 1 | Token::LtEq => 2 | Token::GtEq => 3
+        | Token::EqEq => 4 | Token::NotEq => 5 | _e => -1
+    };
+}
+fn cmp_binop(op: int) -> BinOp {
+    if op == 0 { return BinOp::Lt; }
+    if op == 1 { return BinOp::Gt; }
+    if op == 2 { return BinOp::LtEq; }
+    if op == 3 { return BinOp::GtEq; }
+    if op == 4 { return BinOp::EqEq; }
+    return BinOp::NotEq;
+}
+
+fn parse_and(s: *Parser) -> *const Expr {
+    let mut e = parse_cmp(s);
+    while !is_err(s) && peek_is(s, Token::AmpAmp) {
+        let p = peek_pos(s);
+        bump(s);
+        e = mk_binop(s, BinOp::And, e, parse_cmp(s), p);
+    }
+    return e;
+}
+
+fn parse_or(s: *Parser) -> *const Expr {
+    let mut e = parse_and(s);
+    while !is_err(s) && peek_is(s, Token::PipePipe) {
+        let p = peek_pos(s);
+        bump(s);
+        e = mk_binop(s, BinOp::Or, e, parse_and(s), p);
+    }
+    return e;
+}
+
+fn parse_range(s: *Parser) -> *const Expr {
+    let left = parse_or(s);
+    let p = peek_pos(s);
+    if peek_is(s, Token::DotDot) {
+        bump(s);
+        return mk_range(s, left, parse_or(s), false, p);
+    }
+    if peek_is(s, Token::DotDotEq) {
+        bump(s);
+        return mk_range(s, left, parse_or(s), true, p);
+    }
+    return left;
+}
+
+fn parse_expr(s: *Parser) -> *const Expr {
+    let prev = s.allow_bitor;
+    s.allow_bitor = true;
+    let left = parse_range(s);
+    let r = expr_orelse(s, left);
+    s.allow_bitor = prev;
+    return r;
+}
+
+fn expr_orelse(s: *Parser, left: *const Expr) -> *const Expr {
+    if peek_is(s, Token::Orelse) {
+        let p = peek_pos(s);
+        bump(s);
+        return mk_orelse(s, left, parse_expr(s), p);
+    }
+    return left;
+}
+
+// A match-arm body: a full expression with a bare top-level `|`
+// suppressed (the arm separator), or a `{ ... }` statement block.
+fn parse_arm_body(s: *Parser) -> *const Expr {
+    let prev = s.allow_bitor;
+    if peek_is(s, Token::LBrace) {
+        let p = peek_pos(s);
+        s.allow_bitor = true;
+        let stmts = parse_block(s);
+        s.allow_bitor = prev;
+        return mk_block(s, stmts, p);
+    }
+    s.allow_bitor = false;
+    let r = arm_body_orelse(s);
+    s.allow_bitor = prev;
+    return r;
+}
+
+fn arm_body_orelse(s: *Parser) -> *const Expr {
+    let left = parse_range(s);
+    if peek_is(s, Token::Orelse) {
+        let p = peek_pos(s);
+        bump(s);
+        return mk_orelse(s, left, arm_body_orelse(s), p);
+    }
+    return left;
+}
+
+// ===== Patterns =====
+
+fn pat_node_var(_s: *Parser, name: str, p: Pos) -> Pattern { return Pattern::PVar(name, p); }
+
+fn comma_patterns(s: *Parser, close: Token) -> Vec<Pattern> {
+    let mut out: Vec<Pattern> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, close) { bump(s); return out; }
+    out.push(parse_pattern(s));
+    while !is_err(s) {
+        if peek_is(s, close) { bump(s); return out; }
+        if peek_is(s, Token::Comma) {
+            bump(s);
+            if peek_is(s, close) { bump(s); return out; }
+            out.push(parse_pattern(s));
+        } else {
+            fail(s, peek_pos(s), "expected ',' or closing bracket in pattern list");
+            return out;
+        }
+    }
+    return out;
+}
+
+fn parse_pattern(s: *Parser) -> Pattern {
+    let p = peek_pos(s);
+    let head = parse_pattern_atom(s);
+    if !peek_is(s, Token::Pipe) { return head; }
+    let mut alts: Vec<Pattern> = Vec::with_capacity(s.a, 8 as u32);
+    alts.push(head);
+    let mut done = false;
+    while !is_err(s) && !done {
+        bump(s);
+        alts.push(parse_pattern_atom(s));
+        if !peek_is(s, Token::Pipe) { done = true; }
+    }
+    return mk_por(s, alts, p);
+}
+
+fn mk_por(_s: *Parser, alts: Vec<Pattern>, p: Pos) -> Pattern { return Pattern::POr(alts, p); }
+
+fn parse_pattern_atom(s: *Parser) -> Pattern {
+    if is_err(s) { return Pattern::PWildcard(peek_pos(s)); }
+    let p = peek_pos(s);
+    return match peek(s) {
+        Token::Minus => pat_neg_lit(s, p)
+        | Token::Int(n) => { bump(s); Pattern::PLit(n, p) }
+        | Token::Ident(name) => pat_ident(s, name, p)
+        | _ => {
+            fail(s, p, "expected pattern");
+            Pattern::PWildcard(p)
+        }
+    };
+}
+
+fn pat_neg_lit(s: *Parser, p: Pos) -> Pattern {
+    bump(s);
+    let tp = advance(s);
+    return match tp.tok {
+        Token::Int(n) => Pattern::PLit(0 - n, p)
+        | _ => {
+            fail(s, p, "expected an integer literal after '-' in pattern");
+            Pattern::PWildcard(p)
+        }
+    };
+}
+
+fn pat_ident(s: *Parser, name: str, p: Pos) -> Pattern {
+    if str::eq(name, "_") { bump(s); return Pattern::PWildcard(p); }
+    bump(s);
+    let path = parse_path_tail(s, name);
+    if path.length() == 1 as u32 {
+        let n0 = path.get(0 as u32) orelse "";
+        return pat_node_var(s, n0, p);
+    }
+    return pat_variant(s, path, p);
+}
+
+fn pat_variant(s: *Parser, path: Vec<str>, p: Pos) -> Pattern {
+    let n = path.length();
+    let sl = path.as_slice();
+    let mut init: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < n - 1 as u32 { init.push(sl[i]); i = i + 1 as u32; }
+    let variant = sl[n - 1 as u32];
+    let binds = parse_pat_binds(s);
+    return mk_pvariant(s, init, variant, binds, p);
+}
+
+fn mk_pvariant(_s: *Parser, tname: Vec<str>, variant: str, binds: PatBinds, p: Pos) -> Pattern {
+    return Pattern::PVariant { tname: tname, variant: variant, binds: binds, pos: p };
+}
+
+fn parse_pat_binds(s: *Parser) -> PatBinds {
+    if peek_is(s, Token::LParen) {
+        bump(s);
+        return PatBinds::PBTuple(comma_patterns(s, Token::RParen));
+    }
+    if peek_is(s, Token::LBrace) {
+        bump(s);
+        return PatBinds::PBStruct(parse_struct_pat_fields(s));
+    }
+    let empty: Vec<Pattern> = Vec::with_capacity(s.a, 8 as u32);
+    return PatBinds::PBTuple(empty);
+}
+
+fn parse_struct_pat_fields(s: *Parser) -> Vec<FieldPat> {
+    let mut out: Vec<FieldPat> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, Token::RBrace) { bump(s); return out; }
+    out.push(parse_struct_pat_field(s));
+    while !is_err(s) {
+        if peek_is(s, Token::RBrace) { bump(s); return out; }
+        if peek_is(s, Token::Comma) {
+            bump(s);
+            if peek_is(s, Token::RBrace) { bump(s); return out; }
+            out.push(parse_struct_pat_field(s));
+        } else {
+            fail(s, peek_pos(s), "expected ',' or '}' in variant pattern");
+            return out;
+        }
+    }
+    return out;
+}
+
+fn parse_struct_pat_field(s: *Parser) -> FieldPat {
+    let np = expect_ident(s, "field name in variant pattern");
+    if peek_is(s, Token::Colon) {
+        bump(s);
+        return FieldPat { name: np.name, pat: parse_pattern(s) };
+    }
+    return FieldPat { name: np.name, pat: pat_node_var(s, np.name, np.pos) };
+}
+
+fn parse_match_arms(s: *Parser) -> Vec<MatchArm> {
+    let mut arms: Vec<MatchArm> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, Token::RBrace) {
+        fail(s, peek_pos(s), "'match' must have at least one arm");
+        return arms;
+    }
+    let mut done = false;
+    while !is_err(s) && !done {
+        arms.push(parse_one_arm(s));
+        if is_err(s) { done = true; }
+        else if peek_is(s, Token::Pipe) { bump(s); }
+        else if peek_is(s, Token::RBrace) { bump(s); done = true; }
+        else { fail(s, peek_pos(s), "expected '|' (next arm) or '}' after match arm"); done = true; }
+    }
+    return arms;
+}
+
+fn parse_one_arm(s: *Parser) -> MatchArm {
+    let arm_pos = peek_pos(s);
+    let pat = parse_pattern(s);
+    let guard = parse_arm_guard(s);
+    expect(s, Token::FatArrow);
+    let body = parse_arm_body(s);
+    return MatchArm { pat: pat, guard: guard, body: body, arm_pos: arm_pos };
+}
+
+fn parse_arm_guard(s: *Parser) -> Option<*const Expr> {
+    let none: Option<*const Expr> = Option::None;
+    if peek_is(s, Token::If) {
+        bump(s);
+        let prev = s.allow_struct_lit;
+        s.allow_struct_lit = false;
+        let g = parse_expr(s);
+        s.allow_struct_lit = prev;
+        return Option::Some(g);
+    }
+    return none;
+}
+
+// ===== Statements =====
+
+fn mk_tail(_s: *Parser, e: *const Expr) -> Stmt { return Stmt::Tail(e); }
+fn mk_exprstmt(_s: *Parser, e: *const Expr) -> Stmt { return Stmt::ExprStmt(e); }
+
+fn is_ident(t: Token) -> bool {
+    return match t { Token::Ident(_n) => true | _e => false };
+}
+
+fn parse_opt_type_ann(s: *Parser) -> Option<*const TypeAnn> {
+    let none: Option<*const TypeAnn> = Option::None;
+    if peek_is(s, Token::Colon) {
+        bump(s);
+        return Option::Some(parse_type(s));
+    }
+    return none;
+}
+
+fn comma_idents(s: *Parser, close: Token) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    if peek_is(s, close) { bump(s); return out; }
+    let first = expect_ident(s, "name in 'let (...)'");
+    out.push(first.name);
+    while !is_err(s) {
+        if peek_is(s, close) { bump(s); return out; }
+        if peek_is(s, Token::Comma) {
+            bump(s);
+            if peek_is(s, close) { bump(s); return out; }
+            let ip = expect_ident(s, "name in 'let (...)'");
+            out.push(ip.name);
+        } else {
+            fail(s, peek_pos(s), "expected ',' or ')' in 'let (...)'");
+            return out;
+        }
+    }
+    return out;
+}
+
+fn parse_stmt(s: *Parser) -> Stmt {
+    if is_err(s) { return mk_exprstmt(s, dummy_expr(s)); }
+    return match peek(s) {
+        Token::Let => stmt_let(s)
+        | Token::Return => stmt_return(s)
+        | Token::Defer => stmt_defer(s)
+        | Token::With => stmt_with(s)
+        | Token::If => stmt_if(s)
+        | Token::While => stmt_while(s)
+        | Token::Loop => stmt_loop(s)
+        | Token::Break => stmt_break(s)
+        | Token::Continue => stmt_continue(s)
+        | Token::For => stmt_for(s)
+        | Token::Match => stmt_match(s)
+        | _ => stmt_general(s)
+    };
+}
+
+fn stmt_let(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    let is_mut = peek_is(s, Token::Mut);
+    if is_mut { bump(s); }
+    if peek_is(s, Token::LParen) { return stmt_let_tuple(s, is_mut, pos); }
+    if is_ident(peek(s)) && tok_tag(peek2(s)) == tok_tag(Token::DoubleColon) {
+        return stmt_let_else(s, is_mut, pos);
+    }
+    return stmt_let_simple(s, is_mut, pos);
+}
+
+fn stmt_let_tuple(s: *Parser, is_mut: bool, pos: Pos) -> Stmt {
+    bump(s);
+    let names = comma_idents(s, Token::RParen);
+    expect(s, Token::Eq);
+    let value = parse_expr(s);
+    expect(s, Token::Semicolon);
+    return Stmt::LetTuple { names: names, value: value, is_mut: is_mut, pos: pos };
+}
+
+fn stmt_let_simple(s: *Parser, is_mut: bool, _pos: Pos) -> Stmt {
+    let np = expect_ident(s, "variable name after 'let'");
+    let ty_ann = parse_opt_type_ann(s);
+    expect(s, Token::Eq);
+    let value = parse_expr(s);
+    expect(s, Token::Semicolon);
+    return Stmt::Let { name: np.name, value: value, ty_ann: ty_ann, is_mut: is_mut, pos: np.pos };
+}
+
+fn stmt_let_else(s: *Parser, is_mut: bool, pos: Pos) -> Stmt {
+    if is_mut {
+        fail(s, pos, "'let mut' is not supported with a refutable pattern (pattern binds are immutable by default)");
+    }
+    let pat = parse_pattern(s);
+    expect(s, Token::Eq);
+    let value = parse_expr(s);
+    let tp = advance(s);
+    if tok_tag(tp.tok) != tok_tag(Token::Else) {
+        fail(s, tp.pos, "expected 'else { ... }' after `let <pattern> = expr`");
+    }
+    let else_body = parse_block(s);
+    expect(s, Token::Semicolon);
+    return Stmt::LetElse { pat: pat, value: value, else_body: else_body, pos: pos };
+}
+
+fn stmt_return(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    let e = stmt_return_value(s);
+    expect(s, Token::Semicolon);
+    return Stmt::Return(e, pos);
+}
+
+fn stmt_return_value(s: *Parser) -> Option<*const Expr> {
+    let none: Option<*const Expr> = Option::None;
+    if peek_is(s, Token::Semicolon) { return none; }
+    return Option::Some(parse_expr(s));
+}
+
+fn stmt_defer(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    let body = stmt_defer_body(s);
+    return Stmt::Defer { body: body, pos: pos };
+}
+
+fn stmt_defer_body(s: *Parser) -> Vec<Stmt> {
+    if peek_is(s, Token::LBrace) {
+        bump(s);
+        let stmts = parse_stmts(s);
+        expect(s, Token::RBrace);
+        return stmts;
+    }
+    let mut one: Vec<Stmt> = Vec::with_capacity(s.a, 8 as u32);
+    one.push(parse_stmt(s));
+    return one;
+}
+
+fn stmt_with(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    let np = expect_ident(s, "binding name after 'with'");
+    expect(s, Token::In);
+    let prev = s.allow_struct_lit;
+    s.allow_struct_lit = false;
+    let target = parse_expr(s);
+    s.allow_struct_lit = prev;
+    let body = parse_block(s);
+    return Stmt::With { target: target, name: np.name, body: body, pos: pos };
+}
+
+fn stmt_if(s: *Parser) -> Stmt {
+    let e = parse_if(s);
+    if peek_is(s, Token::RBrace) { return mk_tail(s, e); }
+    return mk_exprstmt(s, e);
+}
+
+fn stmt_while(s: *Parser) -> Stmt {
+    bump(s);
+    let prev = s.allow_struct_lit;
+    s.allow_struct_lit = false;
+    let cond = parse_expr(s);
+    s.allow_struct_lit = prev;
+    let body = parse_block(s);
+    return Stmt::While { cond: cond, body: body };
+}
+
+fn stmt_loop(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    let body = parse_block(s);
+    let cond = mk_bool(s, true, pos);
+    return Stmt::While { cond: cond, body: body };
+}
+
+fn stmt_break(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    expect(s, Token::Semicolon);
+    return Stmt::Break(pos);
+}
+
+fn stmt_continue(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    expect(s, Token::Semicolon);
+    return Stmt::Continue(pos);
+}
+
+fn stmt_for(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    let np = expect_ident(s, "loop variable after 'for'");
+    expect(s, Token::In);
+    let prev = s.allow_struct_lit;
+    s.allow_struct_lit = false;
+    let range = parse_expr(s);
+    s.allow_struct_lit = prev;
+    let body = parse_block(s);
+    return Stmt::For { iter_var: np.name, range: range, body: body, pos: pos };
+}
+
+fn stmt_match(s: *Parser) -> Stmt {
+    let e = parse_primary(s);
+    if peek_is(s, Token::RBrace) { return mk_tail(s, e); }
+    return mk_exprstmt(s, e);
+}
+
+// General statement: an expression, then `=` (assignment) / `}` (block
+// value) / `;` (expr-stmt).
+fn stmt_general(s: *Parser) -> Stmt {
+    let e = parse_expr(s);
+    if peek_is(s, Token::Eq) {
+        let pos = peek_pos(s);
+        bump(s);
+        let value = parse_expr(s);
+        expect(s, Token::Semicolon);
+        return stmt_assign_target(s, e, value, pos);
+    }
+    if peek_is(s, Token::RBrace) { return mk_tail(s, e); }
+    expect(s, Token::Semicolon);
+    return mk_exprstmt(s, e);
+}
+
+fn stmt_assign_target(s: *Parser, e: *const Expr, value: *const Expr, pos: Pos) -> Stmt {
+    return match *e {
+        Expr::Var(name, vp) => mk_assign_path1(s, name, value, vp)
+        | Expr::FieldAccess(target, field, fp) => mk_assign_field(s, target, field, value, fp)
+        | Expr::Index { base, index, pos } => mk_assign_index(s, base, index, value, pos)
+        | Expr::Deref(target, dp) => mk_assign_deref(s, target, value, dp)
+        | Expr::EnumLit { tname, variant, pos } => mk_assign_enumpath(s, tname, variant, value, pos)
+        | _ => {
+            fail(s, pos, "invalid assignment target");
+            mk_exprstmt(s, e)
+        }
+    };
+}
+
+fn mk_assign_path1(s: *Parser, name: str, value: *const Expr, pos: Pos) -> Stmt {
+    let mut path: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    path.push(name);
+    return Stmt::Assign { path: path, value: value, pos: pos };
+}
+
+fn mk_assign_enumpath(s: *Parser, tname: Vec<str>, variant: str, value: *const Expr, pos: Pos) -> Stmt {
+    let mut path: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    let ts = tname.as_slice();
+    let mut i = 0 as u32;
+    while i < tname.length() { path.push(ts[i]); i = i + 1 as u32; }
+    path.push(variant);
+    return Stmt::Assign { path: path, value: value, pos: pos };
+}
+
+fn mk_assign_field(_s: *Parser, target: *const Expr, field: str, value: *const Expr, pos: Pos) -> Stmt {
+    return Stmt::AssignField { target: target, field: field, value: value, pos: pos };
+}
+
+fn mk_assign_index(_s: *Parser, base: *const Expr, index: *const Expr, value: *const Expr, pos: Pos) -> Stmt {
+    return Stmt::AssignIndex { base: base, index: index, value: value, pos: pos };
+}
+
+fn mk_assign_deref(_s: *Parser, target: *const Expr, value: *const Expr, pos: Pos) -> Stmt {
+    return Stmt::AssignDeref { target: target, value: value, pos: pos };
+}
+
+fn parse_stmts(s: *Parser) -> Vec<Stmt> {
+    let mut out: Vec<Stmt> = Vec::with_capacity(s.a, 8 as u32);
+    let mut done = false;
+    while !is_err(s) && !done {
+        if peek_is(s, Token::RBrace) {
+            done = true;
+        } else if peek_is(s, Token::Eof) {
+            fail(s, s.last_pos, "unexpected end of file, expected '}'");
+            done = true;
+        } else if peek_is(s, Token::Semicolon) {
+            fail(s, peek_pos(s), "stray ';' — `if`/`while`/`match` and inner blocks are self-terminating, no trailing semicolon needed");
+            done = true;
+        } else {
+            out.push(parse_stmt(s));
+        }
+    }
+    return out;
+}
+
+fn parse_block(s: *Parser) -> Vec<Stmt> {
+    expect(s, Token::LBrace);
+    let body = parse_stmts(s);
+    expect(s, Token::RBrace);
+    return body;
+}
+
+fn parse_if(s: *Parser) -> *const Expr {
+    let pos = peek_pos(s);
+    expect(s, Token::If);
+    return parse_if_after_kw(s, pos);
+}
+
+fn parse_if_after_kw(s: *Parser, pos: Pos) -> *const Expr {
+    let prev = s.allow_struct_lit;
+    s.allow_struct_lit = false;
+    let cond = parse_expr(s);
+    s.allow_struct_lit = prev;
+    let then_blk = parse_block(s);
+    let else_blk = parse_else(s);
+    return mk_if_expr(s, cond, then_blk, else_blk, pos);
+}
+
+fn parse_else(s: *Parser) -> Option<Vec<Stmt>> {
+    let none: Option<Vec<Stmt>> = Option::None;
+    if !peek_is(s, Token::Else) { return none; }
+    bump(s);
+    if peek_is(s, Token::If) {
+        let mut blk: Vec<Stmt> = Vec::with_capacity(s.a, 8 as u32);
+        blk.push(mk_tail(s, parse_if(s)));
+        return Option::Some(blk);
+    }
+    return Option::Some(parse_block(s));
+}
+
+// ===== Functions + items =====
+
+// Fills `tparams` with `<T, U, ...>` names (out-param — returning a struct
+// of two Vecs would force a partial move of an affine field).  Trait
+// bounds (`<T: A + B>`) are deferred to a later sub-stage.
+fn parse_tparams(s: *Parser, tparams: *Vec<str>) {
+    if !peek_is(s, Token::Lt) { return; }
+    bump(s);
+    let mut done = false;
+    while !is_err(s) && !done {
+        let ip = expect_ident(s, "type parameter name");
+        tparams.push(ip.name);
+        if peek_is(s, Token::Colon) {
+            fail(s, peek_pos(s), "parser: trait bounds in generics not yet ported");
+            done = true;
+        } else {
+            done = tparams_sep(s);
+        }
+    }
+}
+
+fn tparams_sep(s: *Parser) -> bool {
+    return match peek(s) {
+        Token::Comma => { bump(s); false }
+        | Token::Gt => { bump(s); true }
+        | Token::Shr => { split_shr(s); true }
+        | _e => {
+            fail(s, peek_pos(s), "expected ',' or '>' in type parameters");
+            true
+        }
+    };
+}
+
+fn parse_function(s: *Parser, is_pub: bool) -> Func {
+    expect(s, Token::Fn);
+    let np = expect_ident(s, "function name after 'fn'");
+    let mut tparams: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    let tbounds: Vec<TraitBound> = Vec::with_capacity(s.a, 8 as u32);
+    parse_tparams(s, &tparams);
+    let params = parse_params(s);
+    let ret_ty = parse_ret_ty(s);
+    expect(s, Token::LBrace);
+    let body = parse_stmts(s);
+    expect(s, Token::RBrace);
+    return build_func(s, np.name, tparams, tbounds, params, ret_ty, body, is_pub, np.pos);
+}
+
+fn build_func(_s: *Parser, name: str, tparams: Vec<str>, tbounds: Vec<TraitBound>,
+              params: Vec<Param>, ret_ty: Option<*const TypeAnn>, body: Vec<Stmt>,
+              is_pub: bool, pos: Pos) -> Func {
+    let no_str: Option<str> = Option::None;
+    return Func {
+        name: name, c_name: name, tparams: tparams, tbounds: tbounds,
+        params: params, ret_ty: ret_ty, body: body, is_pub: is_pub,
+        is_extern: false, is_variadic: false, amiga_lib: no_str, tier_hint: no_str,
+        must_use: false, escapes_hatch: false, pos: pos,
+    };
+}
+
+fn dummy_func(s: *Parser) -> Func {
+    let no_str: Option<str> = Option::None;
+    let no_ret: Option<*const TypeAnn> = Option::None;
+    let tparams: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    let tbounds: Vec<TraitBound> = Vec::with_capacity(s.a, 8 as u32);
+    let params: Vec<Param> = Vec::with_capacity(s.a, 8 as u32);
+    let body: Vec<Stmt> = Vec::with_capacity(s.a, 8 as u32);
+    return Func {
+        name: "", c_name: "", tparams: tparams, tbounds: tbounds,
+        params: params, ret_ty: no_ret, body: body, is_pub: false,
+        is_extern: false, is_variadic: false, amiga_lib: no_str, tier_hint: no_str,
+        must_use: false, escapes_hatch: false, pos: peek_pos(s),
+    };
+}
+
+fn mk_item_fn(_s: *Parser, f: Func) -> Item { return Item::Function(f); }
+
+// Top-level item.  PORT STATUS: `fn` ported; the declaration kinds
+// (struct/enum/trait/impl/view/extern/use/const/type/mod) land in the
+// next sub-stage — they record a clear error for now.
+fn parse_item(s: *Parser) -> Item {
+    let is_pub = peek_is(s, Token::Pub);
+    if is_pub { bump(s); }
+    return match peek(s) {
+        Token::Fn => mk_item_fn(s, parse_function(s, is_pub))
+        | _ => {
+            fail(s, peek_pos(s), "parser: this item kind not yet ported");
+            mk_item_fn(s, dummy_func(s))
+        }
+    };
+}
+
+// Bridge the error slot to the lexer-style `Result` contract.
+pub fn parse_program(a: Allocator, ar: *Arena, toks: Slice<TokenPos>, n: u32)
+        -> Result<Vec<Item>, *const CompileError> {
+    let mut s = new_parser(a, ar, toks, n);
+    let mut items: Vec<Item> = Vec::with_capacity(a, 16 as u32);
+    let mut done = false;
+    while !is_err(&s) && !done {
+        if peek_is(&s, Token::Eof) { done = true; }
+        else { items.push(parse_item(&s)); }
+    }
+    return match s.err {
+        Option::Some(e) => Result::Err(e)
+        | Option::None => Result::Ok(items)
+    };
+}

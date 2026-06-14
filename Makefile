@@ -50,7 +50,7 @@ AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(AMIGA_EXAMPLES))
 
 .PHONY: all build test clean toolchain toolchain-clean
 .PHONY: host amiga examples
-.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file host-selfhost host-selfhost-lexer
+.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file host-selfhost host-selfhost-lexer host-selfhost-parser
 .PHONY: verify verify-host verify-amiga verify-host-% verify-amiga-%
 .PHONY: verify-freestanding verify-freestanding-%
 .PHONY: rebaseline-host rebaseline-host-%
@@ -106,7 +106,7 @@ host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_
 # entry point main.exl `use`s the dump/ir/ast/pos module chain and emits a
 # canonical AST dump + typed-IR dump for the bundled fixtures; verify diffs
 # that against examples/selfhost.expected (the OCaml oracle).
-host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl examples/selfhost/ir.exl examples/selfhost/token.exl examples/selfhost/lexer.exl examples/selfhost/error.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl examples/selfhost/token_fixture.exl $(SYS_HOST) build
+host-selfhost: examples/selfhost/main.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl examples/selfhost/ir.exl examples/selfhost/token.exl examples/selfhost/lexer.exl examples/selfhost/error.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl examples/selfhost/token_fixture.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost $<
 
 # The lexer corpus harness: read a source path on stdin, lex it with the
@@ -115,6 +115,13 @@ host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/se
 # AST/IR dumpers.  Driven by `selfhost-port-tokens`.
 host-selfhost-lexer: examples/selfhost/lex_corpus.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/error.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_lexer.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_lexer $<
+
+# The parser corpus harness: read a source path on stdin, lex + parse it
+# with the ported `parser::parse_program`, emit the AST dump.  Pulls in
+# the lexer + parser + AST dumper (dump_ast / dump_util) — not the IR
+# dumper.  Driven by `selfhost-port-ast`.
+host-selfhost-parser: examples/selfhost/parse_corpus.exl examples/selfhost/parser.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/error.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+	$(EXILE) --target host --c-out $(C_OUT)/selfhost_parser.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_parser $<
 
 # `make amiga-NAME` → build m68k Amiga binary
 amiga-%: examples/%.exl $(call stub_for,%) $(SYS_AMIGA) build
@@ -252,7 +259,7 @@ SELFHOST_IR     := $(SELFHOST_GOLDEN)/ir
 
 .PHONY: selfhost-corpus selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 .PHONY: selfhost-diff selfhost-diff-tokens selfhost-diff-ast selfhost-diff-ir
-.PHONY: selfhost-corpus-% selfhost-diff-% selfhost-port-tokens selfhost-port-errors
+.PHONY: selfhost-corpus-% selfhost-diff-% selfhost-port-tokens selfhost-port-errors selfhost-port-ast
 
 selfhost-corpus: selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 
@@ -414,6 +421,30 @@ selfhost-port-errors: host-selfhost-lexer
 		fi; \
 	done; \
 	if [ $$fail -eq 0 ]; then echo "selfhost-port-errors: clean ($$n fixtures, port == oracle line 1)"; else exit 1; fi
+
+# Run the PORTED parser (`parser::parse_program`) over the corpus and diff
+# its `--emit-ast` dump against the golden.  The parser is being ported
+# sub-stage by sub-stage: declaration items (struct/enum/impl/trait/use/…)
+# are not yet handled and record a clear error, so an example that fails
+# to parse counts as "not-yet-ported", not a regression.  Among examples
+# that DO parse, the only tolerated divergence is the float literal VALUE
+# (`(float ?? w)` vs OCaml's `%h`, deferred with the lexer) — it is masked
+# before the compare, so any other diff (a real AST-shape bug) fails.
+selfhost-port-ast: host-selfhost-parser
+	@mask='s/\(float [^ ]+ /(float /g'; \
+	clean=0; defer=""; notp=0; fail=0; \
+	for name in $(EXAMPLE_NAMES); do \
+		[ -f $(SELFHOST_AST)/$$name.ast ] || continue; \
+		actual=$$(mktemp); errf=$$(mktemp); \
+		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_parser > $$actual 2>$$errf; \
+		if [ -s $$errf ]; then notp=$$((notp+1)); \
+		elif diff -q $(SELFHOST_AST)/$$name.ast $$actual >/dev/null; then clean=$$((clean+1)); \
+		elif diff <(sed -E "$$mask" $(SELFHOST_AST)/$$name.ast) <(sed -E "$$mask" $$actual) >/dev/null; then defer="$$defer $$name"; \
+		else echo "selfhost-port-ast: REGRESSION $$name"; diff $(SELFHOST_AST)/$$name.ast $$actual | head -6; fail=1; fi; \
+		rm $$actual $$errf; \
+	done; \
+	echo "selfhost-port-ast: $$clean byte-identical; deferred(float-value):$$defer; not-yet-ported(decls): $$notp"; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-port-ast: clean (no structural regressions)"; else exit 1; fi
 
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io

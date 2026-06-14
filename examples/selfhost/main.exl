@@ -22,7 +22,8 @@ use ast::*;
 use ir::*;
 use token::*;
 use lexer::*;
-use dump::*;
+use dump_ast::*;
+use dump_ir::*;
 use dump_token::*;
 use error::*;
 

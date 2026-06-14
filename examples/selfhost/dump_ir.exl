@@ -1,0 +1,825 @@
+// Self-host port — the `--emit-typed-ir` dumper of `lib/dump.ml`.
+// Split from the AST dumper so a parser-only / AST-only driver does not
+// drag in the IR generic instantiations.  Shares the literal + path
+// helpers and `render_type_ann` from `dump_ast`.
+
+use pos::*;
+use ast::*;
+use ir::*;
+use dump_util::*;
+use dump_ast::*;
+
+// =====================================================================
+// Typed IR dump — the `--emit-typed-ir` half of `lib/dump.ml`.
+//
+// Runs post-typecheck and post-lift, so `TFor` / `TForEach` are gone:
+// their appearance in the dump is an internal-compiler-bug signal.
+// Every `texpr` carries an explicit `:ty <render_typ_canonical>` so
+// inference / dispatch / mono decisions are visible in the diff.  A
+// sorted `(mono-instances ...)` section follows the fn list so the
+// type index's iteration order never leaks into the output.
+// =====================================================================
+
+// ===== Canonical type rendering =====
+//
+// Distinct from the (deferred) `typ_name` / `mangle_typ` utilities:
+// int / c-int variants always carry explicit width + signedness, paths
+// are absolute, structural constructors are prefixed.
+
+fn render_typ_canon_list(xs: *const Vec<*const Typ>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_typ_canonical(sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+// `()` for a no-arg fn-ptr, `(T1 T2)` otherwise.
+fn render_fnptr_params(params: *const Vec<*const Typ>, out: *StringBuilder) {
+    if params.length() == 0 as u32 {
+        out.push_str("()");
+    } else {
+        out.push_str("(");
+        render_typ_canon_list(params, out);
+        out.push_str(")");
+    }
+}
+
+// `void` for a missing return type, else the rendered type.
+fn render_typ_canon_ret(ret: Option<*const Typ>, out: *StringBuilder) {
+    match ret {
+        Option::Some(t) => { render_typ_canonical(t, out); }
+        | Option::None => { out.push_str("void"); }
+    }
+}
+
+fn render_typ_canonical(t: *const Typ, out: *StringBuilder) {
+    match *t {
+        Typ::TInt(k) => {
+            out.push_str("(int ");
+            if k.is_signed { out.push_str("i"); } else { out.push_str("u"); }
+            out.push_str(int_width_suffix(k.width));
+            out.push_str(")");
+        }
+        | Typ::TCInt { is_signed } => {
+            out.push_str("(c_int ");
+            out.push_str(signed_word(is_signed));
+            out.push_str(")");
+        }
+        | Typ::TCShort { is_signed } => {
+            out.push_str("(c_short ");
+            out.push_str(signed_word(is_signed));
+            out.push_str(")");
+        }
+        | Typ::TCLong { is_signed } => {
+            out.push_str("(c_long ");
+            out.push_str(signed_word(is_signed));
+            out.push_str(")");
+        }
+        | Typ::TCChar => { out.push_str("c_char"); }
+        | Typ::TCSChar => { out.push_str("c_schar"); }
+        | Typ::TCUChar => { out.push_str("c_uchar"); }
+        | Typ::TCVoid => { out.push_str("c_void"); }
+        | Typ::TBool => { out.push_str("bool"); }
+        | Typ::TFloat(w) => {
+            out.push_str("(float ");
+            out.push_str(float_width_tag(w));
+            out.push_str(")");
+        }
+        | Typ::TString => { out.push_str("str"); }
+        | Typ::TNullPtr => { out.push_str("null-ptr"); }
+        | Typ::TStruct(path) => {
+            out.push_str("(struct ");
+            render_path(&path, out);
+            out.push_str(")");
+        }
+        | Typ::TEnum(path) => {
+            out.push_str("(enum ");
+            render_path(&path, out);
+            out.push_str(")");
+        }
+        | Typ::TExtStruct(n) => {
+            out.push_str("(ext-struct ");
+            out.push_str(n);
+            out.push_str(")");
+        }
+        | Typ::TExtAlias(n) => {
+            out.push_str("(ext-alias ");
+            out.push_str(n);
+            out.push_str(")");
+        }
+        | Typ::TPtr(inner) => {
+            out.push_str("(ptr ");
+            render_typ_canonical(inner, out);
+            out.push_str(")");
+        }
+        | Typ::TOwnPtr(inner) => {
+            out.push_str("(own-ptr ");
+            render_typ_canonical(inner, out);
+            out.push_str(")");
+        }
+        | Typ::TConstPtr(inner) => {
+            out.push_str("(const-ptr ");
+            render_typ_canonical(inner, out);
+            out.push_str(")");
+        }
+        | Typ::TArray { elem, size } => {
+            out.push_str("(array ");
+            render_typ_canonical(elem, out);
+            out.push_str(" ");
+            out.push_int(size);
+            out.push_str(")");
+        }
+        | Typ::TTuple(ts) => {
+            out.push_str("(tuple ");
+            render_typ_canon_list(&ts, out);
+            out.push_str(")");
+        }
+        | Typ::TFnPtr { params, ret } => {
+            out.push_str("(fn-ptr ");
+            render_fnptr_params(&params, out);
+            out.push_str(" ");
+            render_typ_canon_ret(ret, out);
+            out.push_str(")");
+        }
+        | Typ::TVar(n) => {
+            out.push_str("(tvar ");
+            out.push_str(n);
+            out.push_str(")");
+        }
+        | Typ::TStructApp { path, args } => {
+            out.push_str("(struct-app ");
+            render_path(&path, out);
+            out.push_str(" ");
+            render_typ_canon_list(&args, out);
+            out.push_str(")");
+        }
+        | Typ::TEnumApp { path, args } => {
+            out.push_str("(enum-app ");
+            render_path(&path, out);
+            out.push_str(" ");
+            render_typ_canon_list(&args, out);
+            out.push_str(")");
+        }
+        | Typ::TAssocProj { head, assoc } => {
+            out.push_str("(assoc-proj ");
+            render_typ_canonical(head, out);
+            out.push_str(" ");
+            out.push_str(assoc);
+            out.push_str(")");
+        }
+    }
+}
+
+// ===== Typed patterns =====
+
+fn render_tpattern_list(xs: *const Vec<Tpattern>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_tpattern(&sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+fn render_tfieldpat_list(xs: *const Vec<TFieldPat>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str("(field ");
+        out.push_str(sl[i].name);
+        out.push_str(" ");
+        render_tpattern(&sl[i].pat, out);
+        out.push_str(")");
+        i = i + 1 as u32;
+    }
+}
+
+// A variant pattern's bind tail: empty, or ` (field n p)...` (leading
+// space).  Pulled into a void helper so the `if` is not a match-arm
+// trailing value.
+fn render_tbinds_tail(binds: *const Vec<TFieldPat>, out: *StringBuilder) {
+    if binds.length() > 0 as u32 {
+        out.push_str(" ");
+        render_tfieldpat_list(binds, out);
+    }
+}
+
+fn render_tpattern(p: *const Tpattern, out: *StringBuilder) {
+    match *p {
+        Tpattern::TPWildcard => { out.push_str("_"); }
+        | Tpattern::TPVar(n) => {
+            out.push_str("(pat-var ");
+            out.push_str(n);
+            out.push_str(")");
+        }
+        | Tpattern::TPLit(n) => {
+            out.push_str("(pat-lit ");
+            out.push_int(n);
+            out.push_str(")");
+        }
+        | Tpattern::TPVariant { variant, tag, binds } => {
+            out.push_str("(pat-variant ");
+            out.push_str(variant);
+            out.push_str(" tag=");
+            out.push_int(tag);
+            render_tbinds_tail(&binds, out);
+            out.push_str(")");
+        }
+        | Tpattern::TPOr(alts) => {
+            out.push_str("(pat-or ");
+            render_tpattern_list(&alts, out);
+            out.push_str(")");
+        }
+    }
+}
+
+// ===== Typed expressions =====
+
+fn render_texpr_list(xs: *const Vec<*const Texpr>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_texpr(sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+fn render_texprfield_list(xs: *const Vec<TexprField>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str("(field ");
+        out.push_str(sl[i].name);
+        out.push_str(" ");
+        render_texpr(sl[i].value, out);
+        out.push_str(")");
+        i = i + 1 as u32;
+    }
+}
+
+// ` <e1> <e2>` argument tail (leading space) for a non-empty arg list.
+fn render_targs_tail(args: *const Vec<*const Texpr>, out: *StringBuilder) {
+    if args.length() > 0 as u32 {
+        out.push_str(" ");
+        render_texpr_list(args, out);
+    }
+}
+
+// ` (field n e)...` field tail (leading space) for non-empty enum args.
+fn render_tfields_tail(args: *const Vec<TexprField>, out: *StringBuilder) {
+    if args.length() > 0 as u32 {
+        out.push_str(" ");
+        render_texprfield_list(args, out);
+    }
+}
+
+// ` (base <e>)` suffix or nothing.
+fn render_tbase(base: Option<*const Texpr>, out: *StringBuilder) {
+    match base {
+        Option::Some(b) => {
+            out.push_str(" (base ");
+            render_texpr(b, out);
+            out.push_str(")");
+        }
+        | Option::None => { }
+    }
+}
+
+// ` (guard <e>)` suffix or nothing.
+fn render_tguard(guard: Option<*const Texpr>, out: *StringBuilder) {
+    match guard {
+        Option::Some(g) => {
+            out.push_str(" (guard ");
+            render_texpr(g, out);
+            out.push_str(")");
+        }
+        | Option::None => { }
+    }
+}
+
+// ` (trailing <e>)` suffix on a block, or nothing.
+fn render_ttrailing(trailing: Option<*const Texpr>, out: *StringBuilder) {
+    match trailing {
+        Option::Some(t) => {
+            out.push_str(" (trailing ");
+            render_texpr(t, out);
+            out.push_str(")");
+        }
+        | Option::None => { }
+    }
+}
+
+fn render_tarm(a: *const TmatchArm, out: *StringBuilder) {
+    out.push_str("(arm ");
+    render_tpattern(&a.tpat, out);
+    render_tguard(a.tguard, out);
+    if a.tdiverges { out.push_str(" diverges"); }
+    out.push_str(" ");
+    render_texpr(a.tbody, out);
+    out.push_str(")");
+}
+
+fn render_tarm_list(xs: *const Vec<TmatchArm>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_tarm(&sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+// `Foo::Variant` head shared by enum-lit / new-enum / match.
+fn render_variant_head(prefix: str, path: *const Vec<str>, variant: str,
+                       tag: int, out: *StringBuilder) {
+    out.push_str(prefix);
+    render_path(path, out);
+    out.push_str("::");
+    out.push_str(variant);
+    out.push_str(" tag=");
+    out.push_int(tag);
+}
+
+fn render_texpr(te: *const Texpr, out: *StringBuilder) {
+    render_texpr_node(te, out);
+    out.push_str(" :ty ");
+    render_typ_canonical(te.ty, out);
+}
+
+fn render_texpr_node(te: *const Texpr, out: *StringBuilder) {
+    match te.e {
+        TexprNode::TIntLit(n) => {
+            out.push_str("(int ");
+            out.push_int(n);
+            out.push_str(")");
+        }
+        | TexprNode::TFloatLit(_f, w) => {
+            // `%h` hex-float deferred (no prelude primitive yet).
+            out.push_str("(float ?? ");
+            out.push_str(float_width_tag(w));
+            out.push_str(")");
+        }
+        | TexprNode::TBoolLit(b) => {
+            out.push_str("(bool ");
+            if b { out.push_str("true"); } else { out.push_str("false"); }
+            out.push_str(")");
+        }
+        | TexprNode::TNullLit => { out.push_str("null"); }
+        | TexprNode::TStringLit(s) => {
+            out.push_str("(string ");
+            escape_string(s, out);
+            out.push_str(")");
+        }
+        | TexprNode::TVar(n) => {
+            out.push_str("(var ");
+            out.push_str(n);
+            out.push_str(")");
+        }
+        | TexprNode::TFnRef(n) => {
+            out.push_str("(fn-ref ");
+            out.push_str(n);
+            out.push_str(")");
+        }
+        | TexprNode::TNeg(sub) => {
+            out.push_str("(neg ");
+            render_texpr(sub, out);
+            out.push_str(")");
+        }
+        | TexprNode::TBitNot(sub) => {
+            out.push_str("(bit-not ");
+            render_texpr(sub, out);
+            out.push_str(")");
+        }
+        | TexprNode::TNot(sub) => {
+            out.push_str("(not ");
+            render_texpr(sub, out);
+            out.push_str(")");
+        }
+        | TexprNode::TBinOp(op, l, r) => {
+            out.push_str("(binop ");
+            out.push_str(binop_name(op));
+            out.push_str(" ");
+            render_texpr(l, out);
+            out.push_str(" ");
+            render_texpr(r, out);
+            out.push_str(")");
+        }
+        | TexprNode::TCall { mangled, args } => {
+            out.push_str("(call ");
+            out.push_str(mangled);
+            render_targs_tail(&args, out);
+            out.push_str(")");
+        }
+        | TexprNode::TBuiltinCall { name, args } => {
+            out.push_str("(builtin-call ");
+            out.push_str(name);
+            render_targs_tail(&args, out);
+            out.push_str(")");
+        }
+        | TexprNode::TIndirectCall { fn_expr, args } => {
+            out.push_str("(indirect-call ");
+            render_texpr(fn_expr, out);
+            render_targs_tail(&args, out);
+            out.push_str(")");
+        }
+        | TexprNode::TCast(sub, ann) => {
+            out.push_str("(cast ");
+            render_texpr(sub, out);
+            out.push_str(" ");
+            render_type_ann(ann, out);
+            out.push_str(")");
+        }
+        | TexprNode::TTupleLit(es) => {
+            out.push_str("(tuple-lit ");
+            render_texpr_list(&es, out);
+            out.push_str(")");
+        }
+        | TexprNode::TStructLit { sname_path, fields, base } => {
+            out.push_str("(struct-lit ");
+            render_path(&sname_path, out);
+            out.push_str(" ");
+            render_texprfield_list(&fields, out);
+            render_tbase(base, out);
+            out.push_str(")");
+        }
+        | TexprNode::TFieldAccess { target, field } => {
+            out.push_str("(field-access ");
+            render_texpr(target, out);
+            out.push_str(" ");
+            out.push_str(field);
+            out.push_str(")");
+        }
+        | TexprNode::TRef(sub) => {
+            out.push_str("(ref ");
+            render_texpr(sub, out);
+            out.push_str(")");
+        }
+        | TexprNode::TDeref(sub) => {
+            out.push_str("(deref ");
+            render_texpr(sub, out);
+            out.push_str(")");
+        }
+        | TexprNode::TNew { sname_path, fields, base } => {
+            out.push_str("(new ");
+            render_path(&sname_path, out);
+            out.push_str(" ");
+            render_texprfield_list(&fields, out);
+            render_tbase(base, out);
+            out.push_str(")");
+        }
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => {
+            render_variant_head("(enum-lit ", &ename_path, variant, tag, out);
+            render_tfields_tail(&args, out);
+            out.push_str(")");
+        }
+        | TexprNode::TNewEnum { ename_path, variant, tag, args } => {
+            render_variant_head("(new-enum ", &ename_path, variant, tag, out);
+            render_tfields_tail(&args, out);
+            out.push_str(")");
+        }
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            out.push_str("(match ");
+            render_texpr(scrutinee, out);
+            out.push_str(" :enum ");
+            render_path(&ename_path, out);
+            out.push_str(" ");
+            render_tarm_list(&arms, out);
+            out.push_str(")");
+        }
+        | TexprNode::TArrayLit(es) => {
+            out.push_str("(array-lit ");
+            render_texpr_list(&es, out);
+            out.push_str(")");
+        }
+        | TexprNode::TArrayRepeat { value, count } => {
+            out.push_str("(array-repeat ");
+            render_texpr(value, out);
+            out.push_str(" ");
+            out.push_int(count);
+            out.push_str(")");
+        }
+        | TexprNode::TIndex { base, index } => {
+            out.push_str("(index ");
+            render_texpr(base, out);
+            out.push_str(" ");
+            render_texpr(index, out);
+            out.push_str(")");
+        }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            out.push_str("(if-expr ");
+            render_texpr(cond, out);
+            out.push_str(" ");
+            render_texpr(then_val, out);
+            out.push_str(" ");
+            render_texpr(else_val, out);
+            out.push_str(")");
+        }
+        | TexprNode::TSizeOf(t) => {
+            out.push_str("(size-of ");
+            render_typ_canonical(t, out);
+            out.push_str(")");
+        }
+        | TexprNode::TBlock { stmts, trailing } => {
+            out.push_str("(block (stmts ");
+            render_tstmt_list(&stmts, out);
+            out.push_str(")");
+            render_ttrailing(trailing, out);
+            out.push_str(")");
+        }
+    }
+}
+
+// ===== Typed statements =====
+
+fn render_tstmt_list(xs: *const Vec<Tstmt>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_tstmt(&sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+// `(while ...)` optional ` (post <stmts>)` tail.
+fn render_tpost(post: *const Vec<Tstmt>, out: *StringBuilder) {
+    if post.length() > 0 as u32 {
+        out.push_str(" (post ");
+        render_tstmt_list(post, out);
+        out.push_str(")");
+    }
+}
+
+fn render_treturn(value: Option<*const Texpr>, out: *StringBuilder) {
+    match value {
+        Option::Some(v) => {
+            out.push_str("(return ");
+            render_texpr(v, out);
+            out.push_str(")");
+        }
+        | Option::None => { out.push_str("(return)"); }
+    }
+}
+
+fn render_tstmt(s: *const Tstmt, out: *StringBuilder) {
+    match *s {
+        Tstmt::TLet { name, value } => {
+            out.push_str("(let ");
+            out.push_str(name);
+            out.push_str(" ");
+            render_texpr(value, out);
+            out.push_str(")");
+        }
+        | Tstmt::TLetTuple { names, value } => {
+            out.push_str("(let-tuple (");
+            render_str_list(&names, out);
+            out.push_str(") ");
+            render_texpr(value, out);
+            out.push_str(")");
+        }
+        | Tstmt::TAssign { path, value } => {
+            out.push_str("(assign ");
+            render_path(&path, out);
+            out.push_str(" ");
+            render_texpr(value, out);
+            out.push_str(")");
+        }
+        | Tstmt::TAssignField { target, field, value } => {
+            out.push_str("(assign-field ");
+            render_texpr(target, out);
+            out.push_str(" ");
+            out.push_str(field);
+            out.push_str(" ");
+            render_texpr(value, out);
+            out.push_str(")");
+        }
+        | Tstmt::TAssignIndex { base, index, value } => {
+            out.push_str("(assign-index ");
+            render_texpr(base, out);
+            out.push_str(" ");
+            render_texpr(index, out);
+            out.push_str(" ");
+            render_texpr(value, out);
+            out.push_str(")");
+        }
+        | Tstmt::TAssignDeref { target, value } => {
+            out.push_str("(assign-deref ");
+            render_texpr(target, out);
+            out.push_str(" ");
+            render_texpr(value, out);
+            out.push_str(")");
+        }
+        | Tstmt::TReturn { value } => { render_treturn(value, out); }
+        | Tstmt::TExprStmt(e) => {
+            out.push_str("(expr-stmt ");
+            render_texpr(e, out);
+            out.push_str(")");
+        }
+        | Tstmt::TIf { cond, then_body, else_body } => {
+            out.push_str("(if ");
+            render_texpr(cond, out);
+            out.push_str(" (then ");
+            render_tstmt_list(&then_body, out);
+            out.push_str(") (else ");
+            render_tstmt_list(&else_body, out);
+            out.push_str("))");
+        }
+        | Tstmt::TWhile { cond, body, post } => {
+            out.push_str("(while ");
+            render_texpr(cond, out);
+            out.push_str(" (body ");
+            render_tstmt_list(&body, out);
+            out.push_str(")");
+            render_tpost(&post, out);
+            out.push_str(")");
+        }
+        | Tstmt::TFor { pos } => { out.push_str("(t-for-transient!)"); }
+        | Tstmt::TForEach { pos } => { out.push_str("(t-for-each-transient!)"); }
+        | Tstmt::TDefer { body } => {
+            out.push_str("(defer ");
+            render_tstmt_list(&body, out);
+            out.push_str(")");
+        }
+        | Tstmt::TBreak(_) => { out.push_str("(break)"); }
+        | Tstmt::TContinue(_) => { out.push_str("(continue)"); }
+    }
+}
+
+// ===== Functions =====
+
+// `(param[ mut] <name> <type>)` per parameter, zipping the user-side
+// param trivia with the scope-resolved param types.
+fn render_tfunc_params(tf: *const Tfunc, out: *StringBuilder) {
+    let n = tf.tf_func.params.length();
+    let ps = tf.tf_func.params.as_slice();
+    let ts = tf.tf_param_tys.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str("(param");
+        if ps[i].is_mut { out.push_str(" mut"); }
+        out.push_str(" ");
+        out.push_str(ps[i].pname);
+        out.push_str(" ");
+        render_typ_canonical(ts[i], out);
+        out.push_str(")");
+        i = i + 1 as u32;
+    }
+}
+
+fn render_tfunc(tf: *const Tfunc, out: *StringBuilder) {
+    out.push_str("(tfn ");
+    out.push_str(tf.tf_mangled);
+    if tf.tf_func.is_extern { out.push_str(" extern"); }
+    if tf.tf_func.is_pub { out.push_str(" pub"); }
+    if tf.tf_func.is_variadic { out.push_str(" variadic"); }
+    out.push_str(" (params ");
+    render_tfunc_params(tf, out);
+    out.push_str(") ");
+    render_typ_canon_ret(tf.tf_ret_ty, out);
+    if !tf.tf_func.is_extern {
+        out.push_str(" (body ");
+        render_tstmt_list(&tf.tf_body, out);
+        out.push_str(")");
+    }
+    out.push_str(")");
+}
+
+// ===== Mono-instances section =====
+//
+// Vec has no in-place sort, so the struct / enum names are emitted in
+// ascending order by a read-only "find the smallest name strictly
+// greater than the last one emitted" scan — which sorts AND deduplicates
+// without mutating the index (mirrors OCaml `List.sort_uniq`).  Names are
+// compared by path (`str::cmp` segment by segment), equivalent to
+// comparing the `::`-joined strings for real identifier paths.
+
+fn path_cmp(a: *const Vec<str>, b: *const Vec<str>) -> int {
+    let na = a.length();
+    let nb = b.length();
+    let sa = a.as_slice();
+    let sb = b.as_slice();
+    let mut i = 0 as u32;
+    while i < na && i < nb {
+        let c = str::cmp(sa[i], sb[i]) as int;
+        if c != 0 { return c; }
+        i = i + 1 as u32;
+    }
+    if na < nb { return -1; }
+    if na > nb { return 1; }
+    return 0;
+}
+
+fn emit_mono_structs(sigs: *const Vec<StructSig>, out: *StringBuilder) {
+    let n = sigs.length();
+    let sl = sigs.as_slice();
+    let mut has_prev = false;
+    let mut prev = 0 as u32;
+    let mut more = true;
+    while more {
+        let mut has_best = false;
+        let mut best = 0 as u32;
+        let mut i = 0 as u32;
+        while i < n {
+            let mut after = true;
+            if has_prev {
+                if path_cmp(&sl[i].sname_path, &sl[prev].sname_path) <= 0 { after = false; }
+            }
+            if after {
+                if !has_best { best = i; has_best = true; }
+                else { if path_cmp(&sl[i].sname_path, &sl[best].sname_path) < 0 { best = i; } }
+            }
+            i = i + 1 as u32;
+        }
+        if has_best {
+            out.push_str("  (struct ");
+            render_path(&sl[best].sname_path, out);
+            out.push_str(")\n");
+            prev = best;
+            has_prev = true;
+        } else {
+            more = false;
+        }
+    }
+}
+
+fn emit_mono_enums(sigs: *const Vec<EnumSig>, out: *StringBuilder) {
+    let n = sigs.length();
+    let sl = sigs.as_slice();
+    let mut has_prev = false;
+    let mut prev = 0 as u32;
+    let mut more = true;
+    while more {
+        let mut has_best = false;
+        let mut best = 0 as u32;
+        let mut i = 0 as u32;
+        while i < n {
+            let mut after = true;
+            if has_prev {
+                if path_cmp(&sl[i].ename_path, &sl[prev].ename_path) <= 0 { after = false; }
+            }
+            if after {
+                if !has_best { best = i; has_best = true; }
+                else { if path_cmp(&sl[i].ename_path, &sl[best].ename_path) < 0 { best = i; } }
+            }
+            i = i + 1 as u32;
+        }
+        if has_best {
+            out.push_str("  (enum ");
+            render_path(&sl[best].ename_path, out);
+            out.push_str(")\n");
+            prev = best;
+            has_prev = true;
+        } else {
+            more = false;
+        }
+    }
+}
+
+// A user (non-prelude) function — the `--user-only` filter.
+fn is_user_func(tf: *const Tfunc) -> bool {
+    return !str::eq(tf.tf_func.pos.file, "<prelude>");
+}
+
+// `dump_typed_ir` — the function list (each on its own line) under the
+// `;; exile-typed-ir-dump v1 <file>` header, then a sorted
+// `(mono-instances ...)` block.  `user_only` drops prelude functions.
+// Mirrors OCaml `dump_typed_ir`.
+pub fn dump_typed_ir(tp: *const Tprogram, file: str, user_only: bool,
+                     out: *StringBuilder) {
+    out.push_str(";; exile-typed-ir-dump v1 ");
+    out.push_str(file);
+    out.push_str("\n");
+    let n = tp.tp_funcs.length();
+    let fs = tp.tp_funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let mut keep = true;
+        if user_only {
+            if !is_user_func(&fs[i]) { keep = false; }
+        }
+        if keep {
+            render_tfunc(&fs[i], out);
+            out.push_str("\n");
+        }
+        i = i + 1 as u32;
+    }
+    out.push_str("(mono-instances\n");
+    emit_mono_structs(&tp.tp_struct_index, out);
+    emit_mono_enums(&tp.tp_enum_index, out);
+    out.push_str(")\n");
+}
