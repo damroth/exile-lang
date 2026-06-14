@@ -1,0 +1,142 @@
+;; exile-tokens-dump v1 examples/str_from_slice.exl
+Fn @examples/str_from_slice.exl:11:1
+(Ident main) @examples/str_from_slice.exl:11:4
+LParen @examples/str_from_slice.exl:11:8
+RParen @examples/str_from_slice.exl:11:9
+LBrace @examples/str_from_slice.exl:11:11
+Let @examples/str_from_slice.exl:12:5
+(Ident a) @examples/str_from_slice.exl:12:9
+Eq @examples/str_from_slice.exl:12:11
+(Ident default_allocator) @examples/str_from_slice.exl:12:13
+LParen @examples/str_from_slice.exl:12:30
+RParen @examples/str_from_slice.exl:12:31
+Semicolon @examples/str_from_slice.exl:12:32
+Let @examples/str_from_slice.exl:13:5
+Mut @examples/str_from_slice.exl:13:9
+(Ident ar) @examples/str_from_slice.exl:13:13
+Eq @examples/str_from_slice.exl:13:16
+(Ident Arena) @examples/str_from_slice.exl:13:18
+DoubleColon @examples/str_from_slice.exl:13:23
+(Ident with_capacity) @examples/str_from_slice.exl:13:25
+LParen @examples/str_from_slice.exl:13:38
+(Ident a) @examples/str_from_slice.exl:13:39
+Comma @examples/str_from_slice.exl:13:40
+(Int 1024) @examples/str_from_slice.exl:13:42
+As @examples/str_from_slice.exl:13:47
+(Ident u32) @examples/str_from_slice.exl:13:50
+RParen @examples/str_from_slice.exl:13:53
+Semicolon @examples/str_from_slice.exl:13:54
+Let @examples/str_from_slice.exl:18:5
+(Ident src) @examples/str_from_slice.exl:18:9
+Eq @examples/str_from_slice.exl:18:13
+(String "fn greet world") @examples/str_from_slice.exl:18:15
+Semicolon @examples/str_from_slice.exl:18:31
+Let @examples/str_from_slice.exl:19:5
+(Ident bytes) @examples/str_from_slice.exl:19:9
+Eq @examples/str_from_slice.exl:19:15
+(Ident str) @examples/str_from_slice.exl:19:17
+DoubleColon @examples/str_from_slice.exl:19:20
+(Ident as_bytes) @examples/str_from_slice.exl:19:22
+LParen @examples/str_from_slice.exl:19:30
+(Ident src) @examples/str_from_slice.exl:19:31
+RParen @examples/str_from_slice.exl:19:34
+Semicolon @examples/str_from_slice.exl:19:35
+Let @examples/str_from_slice.exl:21:5
+(Ident kw) @examples/str_from_slice.exl:21:9
+Eq @examples/str_from_slice.exl:21:12
+(Ident str) @examples/str_from_slice.exl:21:14
+DoubleColon @examples/str_from_slice.exl:21:17
+(Ident from_slice) @examples/str_from_slice.exl:21:19
+LParen @examples/str_from_slice.exl:21:29
+Amp @examples/str_from_slice.exl:21:30
+(Ident ar) @examples/str_from_slice.exl:21:31
+Comma @examples/str_from_slice.exl:21:33
+(Ident bytes) @examples/str_from_slice.exl:21:35
+LBracket @examples/str_from_slice.exl:21:40
+(Int 0) @examples/str_from_slice.exl:21:41
+DotDot @examples/str_from_slice.exl:21:42
+(Int 2) @examples/str_from_slice.exl:21:44
+RBracket @examples/str_from_slice.exl:21:45
+RParen @examples/str_from_slice.exl:21:46
+Semicolon @examples/str_from_slice.exl:21:47
+Let @examples/str_from_slice.exl:22:5
+(Ident name) @examples/str_from_slice.exl:22:9
+Eq @examples/str_from_slice.exl:22:14
+(Ident str) @examples/str_from_slice.exl:22:16
+DoubleColon @examples/str_from_slice.exl:22:19
+(Ident from_slice) @examples/str_from_slice.exl:22:21
+LParen @examples/str_from_slice.exl:22:31
+Amp @examples/str_from_slice.exl:22:32
+(Ident ar) @examples/str_from_slice.exl:22:33
+Comma @examples/str_from_slice.exl:22:35
+(Ident bytes) @examples/str_from_slice.exl:22:37
+LBracket @examples/str_from_slice.exl:22:42
+(Int 3) @examples/str_from_slice.exl:22:43
+DotDot @examples/str_from_slice.exl:22:44
+(Int 8) @examples/str_from_slice.exl:22:46
+RBracket @examples/str_from_slice.exl:22:47
+RParen @examples/str_from_slice.exl:22:48
+Semicolon @examples/str_from_slice.exl:22:49
+Let @examples/str_from_slice.exl:23:5
+(Ident arg) @examples/str_from_slice.exl:23:9
+Eq @examples/str_from_slice.exl:23:13
+(Ident str) @examples/str_from_slice.exl:23:15
+DoubleColon @examples/str_from_slice.exl:23:18
+(Ident from_slice) @examples/str_from_slice.exl:23:20
+LParen @examples/str_from_slice.exl:23:30
+Amp @examples/str_from_slice.exl:23:31
+(Ident ar) @examples/str_from_slice.exl:23:32
+Comma @examples/str_from_slice.exl:23:34
+(Ident bytes) @examples/str_from_slice.exl:23:36
+LBracket @examples/str_from_slice.exl:23:41
+(Int 9) @examples/str_from_slice.exl:23:42
+DotDot @examples/str_from_slice.exl:23:43
+(Int 14) @examples/str_from_slice.exl:23:45
+RBracket @examples/str_from_slice.exl:23:47
+RParen @examples/str_from_slice.exl:23:48
+Semicolon @examples/str_from_slice.exl:23:49
+(Ident println) @examples/str_from_slice.exl:25:5
+LParen @examples/str_from_slice.exl:25:12
+(Ident kw) @examples/str_from_slice.exl:25:13
+RParen @examples/str_from_slice.exl:25:15
+Semicolon @examples/str_from_slice.exl:25:16
+(Ident println) @examples/str_from_slice.exl:26:5
+LParen @examples/str_from_slice.exl:26:12
+(Ident name) @examples/str_from_slice.exl:26:13
+RParen @examples/str_from_slice.exl:26:17
+Semicolon @examples/str_from_slice.exl:26:18
+(Ident println) @examples/str_from_slice.exl:27:5
+LParen @examples/str_from_slice.exl:27:12
+(Ident arg) @examples/str_from_slice.exl:27:13
+RParen @examples/str_from_slice.exl:27:16
+Semicolon @examples/str_from_slice.exl:27:17
+(Ident println) @examples/str_from_slice.exl:28:5
+LParen @examples/str_from_slice.exl:28:12
+(Ident str) @examples/str_from_slice.exl:28:13
+DoubleColon @examples/str_from_slice.exl:28:16
+(Ident length) @examples/str_from_slice.exl:28:18
+LParen @examples/str_from_slice.exl:28:24
+(Ident name) @examples/str_from_slice.exl:28:25
+RParen @examples/str_from_slice.exl:28:29
+As @examples/str_from_slice.exl:28:31
+(Ident int) @examples/str_from_slice.exl:28:34
+RParen @examples/str_from_slice.exl:28:37
+Semicolon @examples/str_from_slice.exl:28:38
+If @examples/str_from_slice.exl:32:5
+(Ident str) @examples/str_from_slice.exl:32:8
+DoubleColon @examples/str_from_slice.exl:32:11
+(Ident eq) @examples/str_from_slice.exl:32:13
+LParen @examples/str_from_slice.exl:32:15
+(Ident name) @examples/str_from_slice.exl:32:16
+Comma @examples/str_from_slice.exl:32:20
+(String "greet") @examples/str_from_slice.exl:32:22
+RParen @examples/str_from_slice.exl:32:29
+LBrace @examples/str_from_slice.exl:32:31
+(Ident println) @examples/str_from_slice.exl:33:9
+LParen @examples/str_from_slice.exl:33:16
+(Int 1) @examples/str_from_slice.exl:33:17
+RParen @examples/str_from_slice.exl:33:18
+Semicolon @examples/str_from_slice.exl:33:19
+RBrace @examples/str_from_slice.exl:34:5
+RBrace @examples/str_from_slice.exl:35:1
+Eof @examples/str_from_slice.exl:36:1

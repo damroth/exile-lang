@@ -1,0 +1,35 @@
+// `str::from_slice(arena, slice)` — materialise a `Slice<u8>` as a
+// NUL-terminated `str` owned by an arena.  The string-interning
+// primitive for tokenizers and parsers: an identifier is a slice of the
+// source buffer (no NUL of its own), and this copies it into the arena
+// so the name lives as long as the tree it ends up in — the arena owns
+// names and nodes alike, released in one wholesale free.
+//
+// Exhaustion returns the empty string, the same contract as
+// `Arena::alloc_borrowed`'s `null` — size the arena generously.
+
+fn main() {
+    let a = default_allocator();
+    let mut ar = Arena::with_capacity(a, 1024 as u32);
+
+    // A source buffer; the words we want as standalone strings are
+    // slices of it.  `str::as_bytes` gives the read-only byte view,
+    // and `[lo..hi]` sub-slices it.
+    let src = "fn greet world";
+    let bytes = str::as_bytes(src);
+
+    let kw = str::from_slice(&ar, bytes[0..2]);     // "fn"
+    let name = str::from_slice(&ar, bytes[3..8]);   // "greet"
+    let arg = str::from_slice(&ar, bytes[9..14]);   // "world"
+
+    println(kw);                        // fn
+    println(name);                      // greet
+    println(arg);                       // world
+    println(str::length(name) as int);  // 5
+
+    // The interned copies are ordinary NUL-terminated strs — usable
+    // anywhere a `str` is, including content comparison.
+    if str::eq(name, "greet") {
+        println(1);                     // 1
+    }
+}
