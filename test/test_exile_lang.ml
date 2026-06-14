@@ -73,6 +73,35 @@ let check_multi label files entry_relpath expected =
   cleanup ();
   Printf.printf "ok: %s\n" label
 
+(* Multi-file analogue of [check_error]: compile [entry] from a temp tree
+   and assert it fails with [expected_msg]. *)
+let check_multi_error label files entry_relpath expected_msg =
+  let dir = Filename.temp_file "exile_multi_" "" in
+  Sys.remove dir;
+  let _ = Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote dir)) in
+  List.iter (fun (relpath, content) ->
+    let full = Filename.concat dir relpath in
+    let parent = Filename.dirname full in
+    let _ = Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote parent)) in
+    Out_channel.with_open_text full (fun oc ->
+      Out_channel.output_string oc content)) files;
+  let entry = Filename.concat dir entry_relpath in
+  let cleanup () =
+    ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir)))
+  in
+  (match Exile_lang.Compiler.compile_file entry with
+   | exception Exile_lang.Error.Compile_error { msg; _ } when msg = expected_msg ->
+       Printf.printf "ok: %s\n" label
+   | exception Exile_lang.Error.Compile_error { msg; _ } ->
+       Printf.eprintf "FAIL: %s\n--- expected error ---\n%s\n--- got error ---\n%s\n"
+         label expected_msg msg;
+       cleanup (); exit 1
+   | _ ->
+       Printf.eprintf "FAIL: %s\n--- expected error ---\n%s\n--- got: success\n"
+         label expected_msg;
+       cleanup (); exit 1);
+  cleanup ()
+
 let check_error label src expected_msg =
   match Exile_lang.Compiler.compile src with
   | exception Exile_lang.Error.Compile_error { msg; _ } when msg = expected_msg ->
@@ -2110,14 +2139,26 @@ let () =
     "fn main() {\n    println(null);\n}\n"
     "cannot print 'null'";
 
-  check_multi "wildcard import inlines pub items, hides private"
+  (* Wildcard import hoists the file as `mod lib` (so its fns keep their
+     `lib__` C names) and aliases the public ones into the using scope;
+     the private helper stays callable inside lib but not from main. *)
+  check_multi "wildcard import hoists module, aliases pub items, keeps private encapsulated"
     [ ("lib.exl",
-       "pub fn hello() -> int {\n    return 42;\n}\n\
-        fn priv() -> int {\n    return 99;\n}\n");
+       "pub fn hello() -> int {\n    return secret() + 1;\n}\n\
+        fn secret() -> int {\n    return 41;\n}\n");
       ("main.exl",
        "use lib::*;\n\nfn main() {\n    println(hello());\n}\n") ]
     "main.exl"
-    "#include <stdio.h>\n\nlong ex_hello(void);\n\nlong ex_hello(void) {\n    return 42;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_hello()));\n    return 0;\n}\n";
+    "#include <stdio.h>\n\nlong lib__hello(void);\nstatic long lib__secret(void);\n\nlong lib__hello(void) {\n    return lib__secret() + 1;\n}\n\nstatic long lib__secret(void) {\n    return 41;\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(lib__hello()));\n    return 0;\n}\n";
+
+  check_multi_error "wildcard import does not expose a private item to the importer"
+    [ ("lib.exl",
+       "pub fn hello() -> int {\n    return 42;\n}\n\
+        fn secret() -> int {\n    return 41;\n}\n");
+      ("main.exl",
+       "use lib::*;\n\nfn main() {\n    println(secret());\n}\n") ]
+    "main.exl"
+    "unknown function 'secret'";
 
   check "by-value method called via dot form"
     "struct Point { x: int, y: int }\n\
@@ -3382,7 +3423,7 @@ let () =
     "pub mod raw { pub fn helper() -> int { return 7; } }\n\
      pub use raw::nonexistent;\n\
      fn main() { println(nonexistent()); }\n"
-    "'pub use raw::nonexistent' refers to unknown item — no fn, struct, or enum with that path is visible from this scope";
+    "'pub use raw::nonexistent' refers to unknown item — no fn, struct, enum, or type alias with that path is visible from this scope";
 
   check_multi "pub use foo::* re-exports a file module's public items"
     [ ("foo.exl", "pub fn ping() -> int { return 42; }\n");
@@ -8082,7 +8123,7 @@ let () =
     (function
      | Ok c ->
          check_assert "DR-040: pub use foo::* re-exports transitively"
-           (contains c "ex_hello" && contains c "ex_world")
+           (contains c "lib__hello" && contains c "lib__world")
      | Error msg ->
          Printf.eprintf
            "FAIL: DR-040 transitive pub use compile failed: %s\n" msg;

@@ -1,0 +1,1079 @@
+// Self-host port — the `--emit-ast` half of `lib/dump.ml`.
+//
+// The canonical AST dump: one structural s-expression per top-level
+// item, positions elided.  This is the differential-harness oracle the
+// whole port is verified against — emission is decision-free by design
+// (`"(" kind children ")"`), so the bytes match the OCaml emitter
+// exactly.
+//
+// The OCaml renderers return strings and compose with `Printf.sprintf`;
+// the exile port follows the prelude's writer pattern instead — every
+// `render_*` writes into a shared `*StringBuilder`, so no heap string
+// is allocated per node and the whole dump lands in one buffer.  The
+// composition is identical byte-for-byte; only the plumbing differs.
+//
+// Two renderings are deliberately deferred (no prelude primitive yet),
+// matching the token port:
+//   - `FloatLit` uses OCaml's `%h` hexadecimal-float format, which has
+//     no exile counterpart; the placeholder keeps the node shape.  The
+//     differential corpus is verified on float-free inputs until a
+//     `f64 -> str` formatter lands.
+
+use ast::*;
+
+// ===== Small literal-rendering helpers =====
+
+fn int_width_suffix(w: IntWidth) -> str {
+    match w {
+        IntWidth::W8 => "8"
+        | IntWidth::W16 => "16"
+        | IntWidth::W32 => "32"
+    }
+}
+
+fn signed_word(b: bool) -> str {
+    if b { return "signed"; }
+    return "unsigned";
+}
+
+fn float_width_tag(w: FloatWidth) -> str {
+    match w {
+        FloatWidth::F32 => "f32"
+        | FloatWidth::F64 => "f64"
+    }
+}
+
+// `\xHH` lower-case hex byte, mirroring OCaml's `Printf.bprintf "\\x%02x"`.
+fn hex_digit(v: int) -> u8 {
+    if v < 10 { return (48 + v) as u8; }
+    return (87 + v) as u8;
+}
+
+fn push_hex_byte(out: *StringBuilder, code: int) {
+    out.push_str("\\x");
+    out.push_byte(hex_digit(code / 16));
+    out.push_byte(hex_digit(code % 16));
+}
+
+fn escape_other(out: *StringBuilder, b: u8, code: int) {
+    if code < 32 || code >= 127 { push_hex_byte(out, code); }
+    else { out.push_byte(b); }
+}
+
+// C-style string escape for dump literals.  Named escapes for newline /
+// tab / quote / backslash; everything else below 0x20 or at/above 0x7f
+// goes through the byte-level `\xHH` form; printable 7-bit ASCII passes
+// through.  Mirrors OCaml `escape_string`.
+fn escape_string(s: str, out: *StringBuilder) {
+    out.push_byte(34 as u8);
+    let bytes = str::as_bytes(s);
+    let n = str::length(s);
+    let mut i = 0 as u32;
+    while i < n {
+        let code = bytes[i] as int;
+        match code {
+            10 => { out.push_str("\\n"); }
+            | 9 => { out.push_str("\\t"); }
+            | 34 => { out.push_str("\\\""); }
+            | 92 => { out.push_str("\\\\"); }
+            | _ => { escape_other(out, bytes[i], code); }
+        }
+        i = i + 1 as u32;
+    }
+    out.push_byte(34 as u8);
+}
+
+// ===== List helpers =====
+//
+// The OCaml dumper leans on `String.concat " " (List.map f xs)` and
+// `String.concat "::" path`.  These reproduce the same separators in
+// the writer style: a space (or `::`) before every element but the
+// first, nothing leading or trailing.
+
+fn render_path(path: *const Vec<str>, out: *StringBuilder) {
+    let n = path.length();
+    let sl = path.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str("::"); }
+        out.push_str(sl[i]);
+        i = i + 1 as u32;
+    }
+}
+
+fn render_str_list(xs: *const Vec<str>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str(sl[i]);
+        i = i + 1 as u32;
+    }
+}
+
+fn render_expr_list(xs: *const Vec<*const Expr>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_expr(sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+fn render_type_list(xs: *const Vec<*const TypeAnn>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_type_ann(sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+// `(field <name> <expr>)` initialisers, space-separated.
+fn render_field_list(xs: *const Vec<Field>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str("(field ");
+        out.push_str(sl[i].name);
+        out.push_str(" ");
+        render_expr(sl[i].value, out);
+        out.push_str(")");
+        i = i + 1 as u32;
+    }
+}
+
+// `(field <name> <type>)` declarations, space-separated.
+fn render_fielddef_list(xs: *const Vec<FieldDef>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str("(field ");
+        out.push_str(sl[i].name);
+        out.push_str(" ");
+        render_type_ann(sl[i].ty, out);
+        out.push_str(")");
+        i = i + 1 as u32;
+    }
+}
+
+fn render_stmt_list(xs: *const Vec<Stmt>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_stmt(&sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+fn render_pattern_list(xs: *const Vec<Pattern>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_pattern(&sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+// ===== Type annotations =====
+
+// `Foo` (no args) renders as `(struct Foo)`; a generic application
+// `Option<int>` as `(struct-app Option (int i32))`.  Pulled out of the
+// `render_type_ann` arm so the branching `if` lives in a fn body, not
+// as a match-arm trailing value (a parser deferral — see WORKLOG).
+fn render_struct_ty(path: *const Vec<str>, args: *const Vec<*const TypeAnn>,
+                        out: *StringBuilder) {
+    if args.length() == 0 as u32 {
+        out.push_str("(struct ");
+        render_path(path, out);
+        out.push_str(")");
+    } else {
+        out.push_str("(struct-app ");
+        render_path(path, out);
+        out.push_str(" ");
+        render_type_list(args, out);
+        out.push_str(")");
+    }
+}
+
+fn render_type_ann(ann: *const TypeAnn, out: *StringBuilder) {
+    match *ann {
+        TypeAnn::TyInt { is_signed, width } => {
+            out.push_str("(int ");
+            if is_signed { out.push_str("i"); } else { out.push_str("u"); }
+            out.push_str(int_width_suffix(width));
+            out.push_str(")");
+        }
+        | TypeAnn::TyCInt { is_signed } => {
+            out.push_str("(c_int ");
+            out.push_str(signed_word(is_signed));
+            out.push_str(")");
+        }
+        | TypeAnn::TyCShort { is_signed } => {
+            out.push_str("(c_short ");
+            out.push_str(signed_word(is_signed));
+            out.push_str(")");
+        }
+        | TypeAnn::TyCLong { is_signed } => {
+            out.push_str("(c_long ");
+            out.push_str(signed_word(is_signed));
+            out.push_str(")");
+        }
+        | TypeAnn::TyCChar => { out.push_str("c_char"); }
+        | TypeAnn::TyCSChar => { out.push_str("c_schar"); }
+        | TypeAnn::TyCUChar => { out.push_str("c_uchar"); }
+        | TypeAnn::TyCVoid => { out.push_str("c_void"); }
+        | TypeAnn::TyStr => { out.push_str("str"); }
+        | TypeAnn::TyBool => { out.push_str("bool"); }
+        | TypeAnn::TyFloat(w) => {
+            out.push_str("(float ");
+            out.push_str(float_width_tag(w));
+            out.push_str(")");
+        }
+        | TypeAnn::TyTuple(ts) => {
+            out.push_str("(tuple ");
+            render_type_list(&ts, out);
+            out.push_str(")");
+        }
+        | TypeAnn::TyStruct { path, args } => {
+            render_struct_ty(&path, &args, out);
+        }
+        | TypeAnn::TyPtr(t) => {
+            out.push_str("(ptr ");
+            render_type_ann(t, out);
+            out.push_str(")");
+        }
+        | TypeAnn::TyOwnPtr(t) => {
+            out.push_str("(own-ptr ");
+            render_type_ann(t, out);
+            out.push_str(")");
+        }
+        | TypeAnn::TyConstPtr(t) => {
+            out.push_str("(const-ptr ");
+            render_type_ann(t, out);
+            out.push_str(")");
+        }
+        | TypeAnn::TyArray { elem } => {
+            // Size is a const-expr; the AST dump only marks the
+            // array shape (the resolved IR dump carries the number).
+            out.push_str("(array ");
+            render_type_ann(elem, out);
+            out.push_str(" ?)");
+        }
+        | TypeAnn::TySelf => { out.push_str("self"); }
+        | TypeAnn::TyFnPtr { params, ret } => {
+            out.push_str("(fn-ptr ");
+            if params.length() == 0 as u32 {
+                out.push_str("()");
+            } else {
+                out.push_str("(");
+                render_type_list(&params, out);
+                out.push_str(")");
+            }
+            out.push_str(" ");
+            render_ret(ret, out);
+            out.push_str(")");
+        }
+    }
+}
+
+// `void` for a missing return type, else the rendered type.  Shared by
+// fn-ptr types, lambdas, and function decls.
+fn render_ret(ret: Option<*const TypeAnn>, out: *StringBuilder) {
+    match ret {
+        Option::Some(t) => { render_type_ann(t, out); }
+        | Option::None => { out.push_str("void"); }
+    }
+}
+
+// ===== Expressions =====
+
+fn render_expr(e: *const Expr, out: *StringBuilder) {
+    match *e {
+        Expr::IntLit(n, _) => {
+            out.push_str("(int ");
+            out.push_int(n);
+            out.push_str(")");
+        }
+        | Expr::FloatLit(_f, w, _) => {
+            // `%h` hex-float deferred (no prelude primitive); the tag
+            // keeps the node shape for the float-free corpus.
+            out.push_str("(float ?? ");
+            out.push_str(float_width_tag(w));
+            out.push_str(")");
+        }
+        | Expr::BoolLit(b, _) => {
+            out.push_str("(bool ");
+            if b { out.push_str("true"); } else { out.push_str("false"); }
+            out.push_str(")");
+        }
+        | Expr::StringLit(s, _) => {
+            out.push_str("(string ");
+            escape_string(s, out);
+            out.push_str(")");
+        }
+        | Expr::NullLit(_) => { out.push_str("null"); }
+        | Expr::Var(n, _) => {
+            out.push_str("(var ");
+            out.push_str(n);
+            out.push_str(")");
+        }
+        | Expr::Neg(sub, _) => {
+            out.push_str("(neg ");
+            render_expr(sub, out);
+            out.push_str(")");
+        }
+        | Expr::BitNot(sub, _) => {
+            out.push_str("(bit-not ");
+            render_expr(sub, out);
+            out.push_str(")");
+        }
+        | Expr::Not(sub, _) => {
+            out.push_str("(not ");
+            render_expr(sub, out);
+            out.push_str(")");
+        }
+        | Expr::BinOp(op, l, r, _) => {
+            out.push_str("(binop ");
+            out.push_str(binop_name(op));
+            out.push_str(" ");
+            render_expr(l, out);
+            out.push_str(" ");
+            render_expr(r, out);
+            out.push_str(")");
+        }
+        | Expr::Orelse(a, b, _) => {
+            out.push_str("(orelse ");
+            render_expr(a, out);
+            out.push_str(" ");
+            render_expr(b, out);
+            out.push_str(")");
+        }
+        | Expr::Try(a, _) => {
+            out.push_str("(try ");
+            render_expr(a, out);
+            out.push_str(")");
+        }
+        | Expr::Cast(sub, ann, _) => {
+            out.push_str("(cast ");
+            render_expr(sub, out);
+            out.push_str(" ");
+            render_type_ann(ann, out);
+            out.push_str(")");
+        }
+        | Expr::SizeOf(ann, _) => {
+            out.push_str("(size-of ");
+            render_type_ann(ann, out);
+            out.push_str(")");
+        }
+        | Expr::TupleLit(es, _) => {
+            out.push_str("(tuple-lit ");
+            render_expr_list(&es, out);
+            out.push_str(")");
+        }
+        | Expr::Call { callee, args } => {
+            out.push_str("(call ");
+            render_path(&callee, out);
+            out.push_str(" ");
+            render_expr_list(&args, out);
+            out.push_str(")");
+        }
+        | Expr::MethodCall { receiver, name, args } => {
+            out.push_str("(method-call ");
+            render_expr(receiver, out);
+            out.push_str(" ");
+            out.push_str(name);
+            out.push_str(" ");
+            render_expr_list(&args, out);
+            out.push_str(")");
+        }
+        | Expr::StructLit { tname, fields, base } => {
+            out.push_str("(struct-lit ");
+            render_path(&tname, out);
+            out.push_str(" ");
+            render_field_list(&fields, out);
+            render_base(base, out);
+            out.push_str(")");
+        }
+        | Expr::FieldAccess(sub, n, _) => {
+            out.push_str("(field-access ");
+            render_expr(sub, out);
+            out.push_str(" ");
+            out.push_str(n);
+            out.push_str(")");
+        }
+        | Expr::Ref(sub, _) => {
+            out.push_str("(ref ");
+            render_expr(sub, out);
+            out.push_str(")");
+        }
+        | Expr::Deref(sub, _) => {
+            out.push_str("(deref ");
+            render_expr(sub, out);
+            out.push_str(")");
+        }
+        | Expr::New { tname, fields, base } => {
+            out.push_str("(new ");
+            render_path(&tname, out);
+            out.push_str(" ");
+            render_field_list(&fields, out);
+            render_base(base, out);
+            out.push_str(")");
+        }
+        | Expr::NewEnum { tname, args } => {
+            out.push_str("(new-enum ");
+            render_path(&tname, out);
+            out.push_str(" ");
+            render_expr_list(&args, out);
+            out.push_str(")");
+        }
+        | Expr::EnumLit { tname, variant, args } => {
+            out.push_str("(enum-lit ");
+            render_path(&tname, out);
+            out.push_str("::");
+            out.push_str(variant);
+            render_enum_args(&args, out);
+            out.push_str(")");
+        }
+        | Expr::Match { scrutinee, arms } => {
+            out.push_str("(match ");
+            render_expr(scrutinee, out);
+            out.push_str(" ");
+            render_arm_list(&arms, out);
+            out.push_str(")");
+        }
+        | Expr::If { cond, then_blk, else_blk } => {
+            out.push_str("(if ");
+            render_expr(cond, out);
+            out.push_str(" (then ");
+            render_stmt_list(&then_blk, out);
+            out.push_str(")");
+            render_else(else_blk, out);
+            out.push_str(")");
+        }
+        | Expr::ArrayLit(es, _) => {
+            out.push_str("(array-lit ");
+            render_expr_list(&es, out);
+            out.push_str(")");
+        }
+        | Expr::ArrayRepeat { value, count } => {
+            out.push_str("(array-repeat ");
+            render_expr(value, out);
+            out.push_str(" ");
+            render_expr(count, out);
+            out.push_str(")");
+        }
+        | Expr::Index { base, index } => {
+            out.push_str("(index ");
+            render_expr(base, out);
+            out.push_str(" ");
+            render_expr(index, out);
+            out.push_str(")");
+        }
+        | Expr::Range { lo, hi, inclusive } => {
+            out.push_str("(range ");
+            render_expr(lo, out);
+            out.push_str(" ");
+            render_expr(hi, out);
+            out.push_str(" ");
+            if inclusive { out.push_str("inclusive"); }
+            else { out.push_str("exclusive"); }
+            out.push_str(")");
+        }
+        | Expr::Block(stmts, _) => {
+            out.push_str("(block ");
+            render_stmt_list(&stmts, out);
+            out.push_str(")");
+        }
+        | Expr::Lambda { params, ret_ty, body } => {
+            out.push_str("(lambda (");
+            render_fielddef_as_params(&params, out);
+            out.push_str(") ");
+            render_ret(ret_ty, out);
+            out.push_str(" ");
+            render_expr(body, out);
+            out.push_str(")");
+        }
+    }
+}
+
+// `(base <expr>)` suffix on struct-lit / new, or nothing.
+fn render_base(base: Option<*const Expr>, out: *StringBuilder) {
+    match base {
+        Option::Some(b) => {
+            out.push_str(" (base ");
+            render_expr(b, out);
+            out.push_str(")");
+        }
+        | Option::None => { }
+    }
+}
+
+// Enum-constructor argument tail: empty for a unit ctor, ` <e1> <e2>`
+// for tuple args, ` (field n e)...` for struct args.  The conditional
+// leading space lives in void helpers (a match arm can't trail a bare
+// `if` — it would be read as the arm's value).
+fn render_enum_args(args: *const EnumLitArgs, out: *StringBuilder) {
+    match *args {
+        EnumLitArgs::EATuple(es) => { render_tuple_tail(&es, out); }
+        | EnumLitArgs::EAStruct(fs) => { render_struct_tail(&fs, out); }
+    }
+}
+
+fn render_tuple_tail(es: *const Vec<*const Expr>, out: *StringBuilder) {
+    if es.length() > 0 as u32 {
+        out.push_str(" ");
+        render_expr_list(es, out);
+    }
+}
+
+fn render_struct_tail(fs: *const Vec<Field>, out: *StringBuilder) {
+    if fs.length() > 0 as u32 {
+        out.push_str(" ");
+        render_field_list(fs, out);
+    }
+}
+
+// ` (else <stmts>)` suffix on an if-expr, or nothing.
+fn render_else(else_blk: Option<Vec<Stmt>>, out: *StringBuilder) {
+    match else_blk {
+        Option::Some(b) => {
+            out.push_str(" (else ");
+            render_stmt_list(&b, out);
+            out.push_str(")");
+        }
+        | Option::None => { }
+    }
+}
+
+// Lambda parameters render as `(param <name> <type>)`, unlike struct
+// fields (`(field ...)`), so they get their own loop.
+fn render_fielddef_as_params(xs: *const Vec<FieldDef>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str("(param ");
+        out.push_str(sl[i].name);
+        out.push_str(" ");
+        render_type_ann(sl[i].ty, out);
+        out.push_str(")");
+        i = i + 1 as u32;
+    }
+}
+
+// ===== Match arms =====
+
+fn render_arm_list(xs: *const Vec<MatchArm>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_arm(&sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+fn render_arm(a: *const MatchArm, out: *StringBuilder) {
+    out.push_str("(arm ");
+    render_pattern(&a.pat, out);
+    render_guard(a.guard, out);
+    out.push_str(" ");
+    render_expr(a.body, out);
+    out.push_str(")");
+}
+
+fn render_guard(guard: Option<*const Expr>, out: *StringBuilder) {
+    match guard {
+        Option::Some(g) => {
+            out.push_str(" (guard ");
+            render_expr(g, out);
+            out.push_str(")");
+        }
+        | Option::None => { }
+    }
+}
+
+// ===== Patterns =====
+
+fn render_pattern(p: *const Pattern, out: *StringBuilder) {
+    match *p {
+        Pattern::PWildcard(_) => { out.push_str("_"); }
+        | Pattern::PVar(n, _) => {
+            out.push_str("(pat-var ");
+            out.push_str(n);
+            out.push_str(")");
+        }
+        | Pattern::PLit(n, _) => {
+            out.push_str("(pat-lit ");
+            out.push_int(n);
+            out.push_str(")");
+        }
+        | Pattern::PVariant { tname, variant, binds } => {
+            out.push_str("(pat-variant ");
+            render_path(&tname, out);
+            out.push_str("::");
+            out.push_str(variant);
+            render_binds(&binds, out);
+            out.push_str(")");
+        }
+        | Pattern::POr(alts, _) => {
+            out.push_str("(pat-or ");
+            render_pattern_list(&alts, out);
+            out.push_str(")");
+        }
+    }
+}
+
+// A variant pattern's payload tail: empty for a unit variant, ` <p1>
+// <p2>` for tuple binds, ` (field n p)...` for struct binds.
+fn render_binds(binds: *const PatBinds, out: *StringBuilder) {
+    match *binds {
+        PatBinds::PBTuple(ps) => { render_tuple_binds(&ps, out); }
+        | PatBinds::PBStruct(fs) => { render_struct_binds(&fs, out); }
+    }
+}
+
+fn render_tuple_binds(ps: *const Vec<Pattern>, out: *StringBuilder) {
+    if ps.length() > 0 as u32 {
+        out.push_str(" ");
+        render_pattern_list(ps, out);
+    }
+}
+
+fn render_struct_binds(fs: *const Vec<FieldPat>, out: *StringBuilder) {
+    if fs.length() > 0 as u32 {
+        out.push_str(" ");
+        render_fieldpat_list(fs, out);
+    }
+}
+
+fn render_fieldpat_list(xs: *const Vec<FieldPat>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str("(field ");
+        out.push_str(sl[i].name);
+        out.push_str(" ");
+        render_pattern(&sl[i].pat, out);
+        out.push_str(")");
+        i = i + 1 as u32;
+    }
+}
+
+// ===== Statements =====
+
+fn render_stmt(s: *const Stmt, out: *StringBuilder) {
+    match *s {
+        Stmt::Let { name, value, ty_ann, is_mut } => {
+            out.push_str("(let");
+            if is_mut { out.push_str(" mut"); }
+            out.push_str(" ");
+            out.push_str(name);
+            render_let_ty(ty_ann, out);
+            out.push_str(" ");
+            render_expr(value, out);
+            out.push_str(")");
+        }
+        | Stmt::LetTuple { names, value, is_mut } => {
+            out.push_str("(let-tuple");
+            if is_mut { out.push_str(" mut"); }
+            out.push_str(" (");
+            render_str_list(&names, out);
+            out.push_str(") ");
+            render_expr(value, out);
+            out.push_str(")");
+        }
+        | Stmt::LetElse { pat, value, else_body } => {
+            out.push_str("(let-else ");
+            render_pattern(&pat, out);
+            out.push_str(" ");
+            render_expr(value, out);
+            out.push_str(" (else ");
+            render_stmt_list(&else_body, out);
+            out.push_str("))");
+        }
+        | Stmt::Assign { path, value } => {
+            out.push_str("(assign ");
+            render_path(&path, out);
+            out.push_str(" ");
+            render_expr(value, out);
+            out.push_str(")");
+        }
+        | Stmt::AssignField { target, field, value } => {
+            out.push_str("(assign-field ");
+            render_expr(target, out);
+            out.push_str(" ");
+            out.push_str(field);
+            out.push_str(" ");
+            render_expr(value, out);
+            out.push_str(")");
+        }
+        | Stmt::AssignIndex { base, index, value } => {
+            out.push_str("(assign-index ");
+            render_expr(base, out);
+            out.push_str(" ");
+            render_expr(index, out);
+            out.push_str(" ");
+            render_expr(value, out);
+            out.push_str(")");
+        }
+        | Stmt::AssignDeref { target, value } => {
+            out.push_str("(assign-deref ");
+            render_expr(target, out);
+            out.push_str(" ");
+            render_expr(value, out);
+            out.push_str(")");
+        }
+        | Stmt::Return(value, _) => {
+            match value {
+                Option::Some(e) => {
+                    out.push_str("(return ");
+                    render_expr(e, out);
+                    out.push_str(")");
+                }
+                | Option::None => { out.push_str("(return)"); }
+            }
+        }
+        | Stmt::ExprStmt(e) => {
+            out.push_str("(expr-stmt ");
+            render_expr(e, out);
+            out.push_str(")");
+        }
+        | Stmt::Tail(e) => {
+            out.push_str("(tail ");
+            render_expr(e, out);
+            out.push_str(")");
+        }
+        | Stmt::While { cond, body } => {
+            out.push_str("(while ");
+            render_expr(cond, out);
+            out.push_str(" ");
+            render_stmt_list(&body, out);
+            out.push_str(")");
+        }
+        | Stmt::For { iter_var, range, body } => {
+            out.push_str("(for ");
+            out.push_str(iter_var);
+            out.push_str(" ");
+            render_expr(range, out);
+            out.push_str(" ");
+            render_stmt_list(&body, out);
+            out.push_str(")");
+        }
+        | Stmt::Defer { body } => {
+            out.push_str("(defer ");
+            render_stmt_list(&body, out);
+            out.push_str(")");
+        }
+        | Stmt::With { target, name, body } => {
+            out.push_str("(with ");
+            out.push_str(name);
+            out.push_str(" ");
+            render_expr(target, out);
+            out.push_str(" ");
+            render_stmt_list(&body, out);
+            out.push_str(")");
+        }
+        | Stmt::Break(_) => { out.push_str("(break)"); }
+        | Stmt::Continue(_) => { out.push_str("(continue)"); }
+    }
+}
+
+// ` (ty <type>)` annotation on a `let`, or nothing.
+fn render_let_ty(ty_ann: Option<*const TypeAnn>, out: *StringBuilder) {
+    match ty_ann {
+        Option::Some(t) => {
+            out.push_str(" (ty ");
+            render_type_ann(t, out);
+            out.push_str(")");
+        }
+        | Option::None => { }
+    }
+}
+
+// ===== Declarations =====
+
+fn render_param(p: *const Param, out: *StringBuilder) {
+    out.push_str("(param");
+    if p.is_mut { out.push_str(" mut"); }
+    out.push_str(" ");
+    out.push_str(p.pname);
+    out.push_str(" ");
+    render_type_ann(p.pty, out);
+    out.push_str(")");
+}
+
+fn render_param_list(xs: *const Vec<Param>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_param(&sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+fn render_func(f: *const Func, out: *StringBuilder) {
+    out.push_str("(fn ");
+    out.push_str(f.name);
+    if f.is_extern { out.push_str(" extern"); }
+    if f.is_pub { out.push_str(" pub"); }
+    if f.is_variadic { out.push_str(" variadic"); }
+    if f.must_use { out.push_str(" must-use"); }
+    if f.escapes_hatch { out.push_str(" escapes"); }
+    render_tparams(&f.tparams, out);
+    out.push_str(" (params ");
+    render_param_list(&f.params, out);
+    out.push_str(") ");
+    render_ret(f.ret_ty, out);
+    if !f.is_extern {
+        out.push_str(" (body ");
+        render_stmt_list(&f.body, out);
+        out.push_str(")");
+    }
+    out.push_str(")");
+}
+
+// ` (tparams A B)` on a generic decl, or nothing.
+fn render_tparams(tparams: *const Vec<str>, out: *StringBuilder) {
+    if tparams.length() > 0 as u32 {
+        out.push_str(" (tparams ");
+        render_str_list(tparams, out);
+        out.push_str(")");
+    }
+}
+
+fn render_func_list(xs: *const Vec<Func>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_func(&sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+fn render_struct_decl(s: *const StructDecl, out: *StringBuilder) {
+    out.push_str("(struct ");
+    out.push_str(s.sname);
+    if s.sis_pub { out.push_str(" pub"); }
+    if s.sis_move { out.push_str(" move"); }
+    render_tparams(&s.stparams, out);
+    out.push_str(" (fields ");
+    render_fielddef_list(&s.sfields, out);
+    out.push_str("))");
+}
+
+fn render_enum_decl(e: *const EnumDecl, out: *StringBuilder) {
+    out.push_str("(enum ");
+    out.push_str(e.ename);
+    if e.eis_pub { out.push_str(" pub"); }
+    render_tparams(&e.etparams, out);
+    out.push_str(" (variants ");
+    render_variant_list(&e.evariants, out);
+    out.push_str("))");
+}
+
+fn render_variant_list(xs: *const Vec<EnumVariant>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str("(variant ");
+        out.push_str(sl[i].vname);
+        render_variant_kind(&sl[i].vkind, out);
+        out.push_str(")");
+        i = i + 1 as u32;
+    }
+}
+
+fn render_variant_kind(k: *const VariantKind, out: *StringBuilder) {
+    match *k {
+        VariantKind::VUnit => { }
+        | VariantKind::VTuple(ts) => {
+            out.push_str(" ");
+            render_type_list(&ts, out);
+        }
+        | VariantKind::VStruct(fs) => {
+            out.push_str(" ");
+            render_fielddef_list(&fs, out);
+        }
+    }
+}
+
+// ===== Top-level items =====
+
+fn render_item(it: *const Item, out: *StringBuilder) {
+    match *it {
+        Item::Function(f) => { render_func(&f, out); }
+        | Item::Struct(s) => { render_struct_decl(&s, out); }
+        | Item::Enum(e) => { render_enum_decl(&e, out); }
+        | Item::Const(c) => {
+            out.push_str("(const ");
+            out.push_str(c.kname);
+            out.push_str(" ");
+            render_type_ann(c.kty, out);
+            out.push_str(" ");
+            render_expr(c.kvalue, out);
+            out.push_str(")");
+        }
+        | Item::TypeAlias(ta) => {
+            out.push_str("(type-alias ");
+            out.push_str(ta.taname);
+            render_tparams(&ta.tatparams, out);
+            out.push_str(" ");
+            render_type_ann(ta.tatarget, out);
+            out.push_str(")");
+        }
+        | Item::ExternStruct(es) => {
+            out.push_str("(extern-struct ");
+            out.push_str(es.esname);
+            out.push_str(")");
+        }
+        | Item::ExternType(et) => {
+            out.push_str("(extern-type ");
+            out.push_str(et.xtname);
+            out.push_str(")");
+        }
+        | Item::ExternConst(ec) => {
+            out.push_str("(extern-const ");
+            out.push_str(ec.ecname);
+            out.push_str(" ");
+            render_type_ann(ec.ecty, out);
+            out.push_str(")");
+        }
+        | Item::ExternVar(ev) => {
+            out.push_str("(extern-var ");
+            out.push_str(ev.evname);
+            out.push_str(" ");
+            render_type_ann(ev.evty, out);
+            out.push_str(")");
+        }
+        | Item::Impl(ib) => {
+            out.push_str("(impl ");
+            render_path(&ib.itarget, out);
+            render_impl_trait(ib.itrait, out);
+            out.push_str(" ");
+            render_func_list(&ib.iitems, out);
+            out.push_str(")");
+        }
+        | Item::Trait(td) => {
+            out.push_str("(trait ");
+            out.push_str(td.trname);
+            out.push_str(" ");
+            render_func_list(&td.trmethods, out);
+            out.push_str(")");
+        }
+        | Item::View(v) => {
+            out.push_str("(view ");
+            out.push_str(v.vname);
+            out.push_str(" ");
+            render_param(&v.vparam, out);
+            out.push_str(" ");
+            render_view_cases(&v.vcases, out);
+            out.push_str(" (body ");
+            render_stmt_list(&v.vbody, out);
+            out.push_str("))");
+        }
+        | Item::Module(m) => {
+            out.push_str("(module ");
+            out.push_str(m.mname);
+            out.push_str("\n  ");
+            render_module_items(&m.mitems, out);
+            out.push_str(")");
+        }
+        | Item::Use { path, is_wildcard, is_pub } => {
+            out.push_str("(use ");
+            if is_pub { out.push_str("pub "); }
+            render_path(&path, out);
+            if is_wildcard { out.push_str("::*"); }
+            out.push_str(")");
+        }
+        | Item::CInclude { path } => {
+            out.push_str("(c-include ");
+            escape_string(path, out);
+            out.push_str(")");
+        }
+    }
+}
+
+// `impl Foo` is bare; `impl Trait for Foo` carries ` (trait Trait)`.
+fn render_impl_trait(itrait: Option<Vec<str>>, out: *StringBuilder) {
+    match itrait {
+        Option::Some(p) => {
+            out.push_str(" (trait ");
+            render_path(&p, out);
+            out.push_str(")");
+        }
+        | Option::None => { }
+    }
+}
+
+fn render_view_cases(xs: *const Vec<ViewCase>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str("(case ");
+        out.push_str(sl[i].vcname);
+        if sl[i].vcfields.length() > 0 as u32 {
+            out.push_str(" ");
+            render_fielddef_list(&sl[i].vcfields, out);
+        }
+        out.push_str(")");
+        i = i + 1 as u32;
+    }
+}
+
+// Module bodies render their items joined by `\n  ` (two-space indent),
+// matching the OCaml `String.concat "\n  "`.
+fn render_module_items(xs: *const Vec<Item>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str("\n  "); }
+        render_item(&sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+// ===== Top-level driver =====
+
+// `dump_ast` — the whole program as one line per top-level item, under
+// the `;; exile-ast-dump v1 <file>` header.  Mirrors OCaml `dump_ast`.
+pub fn dump_ast(program: *const Vec<Item>, file: str, out: *StringBuilder) {
+    out.push_str(";; exile-ast-dump v1 ");
+    out.push_str(file);
+    out.push_str("\n");
+    let n = program.length();
+    let sl = program.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        render_item(&sl[i], out);
+        out.push_str("\n");
+        i = i + 1 as u32;
+    }
+}

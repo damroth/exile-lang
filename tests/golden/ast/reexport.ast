@@ -1,4 +1,7 @@
 ;; exile-ast-dump v1 examples/reexport.exl
-(fn hello pub (params ) void (body (expr-stmt (call println (string "hello from the prelude")))))
-(fn goodbye pub (params ) void (body (expr-stmt (call println (string "goodbye from the prelude")))))
+(module prelude
+  (fn hello pub (params ) void (body (expr-stmt (call println (string "hello from the prelude")))))
+  (fn goodbye pub (params ) void (body (expr-stmt (call println (string "goodbye from the prelude"))))))
+(use pub prelude::hello)
+(use pub prelude::goodbye)
 (fn main (params ) void (body (expr-stmt (call hello )) (expr-stmt (call goodbye ))))

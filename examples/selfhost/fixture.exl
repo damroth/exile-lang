@@ -1,0 +1,22 @@
+// Differential fixture for the self-host AST stage.  Packs a spread of
+// declarations, types, statements, patterns and expressions into one
+// small program so the ported `dump_ast` exercises most of its arms
+// against the OCaml oracle.  Hand-built in main.exl; never run.
+
+struct Point { x: int, y: int }
+
+enum Shape {
+    Circle(int)
+    | Rect { w: int, h: int }
+}
+
+fn area(s: *const Shape) -> int {
+    match *s {
+        Shape::Circle(r) => r * r
+        | Shape::Rect { w, h } => w * h
+    }
+}
+
+fn main() {
+    println("Hello, World!");
+}

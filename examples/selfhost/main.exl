@@ -1,0 +1,250 @@
+// Self-host AST stage — differential verification driver.
+//
+// Builds a hand-rolled `ast::Program` for `fixture.exl` (a small but
+// broad source), renders it through the ported `dump_ast`, and writes
+// the bytes to stdout.  The output is diffed against the OCaml oracle
+// (`exilc --emit-ast examples/selfhost/fixture.exl`) — byte-identical
+// is the gate (see examples/selfhost.expected).
+//
+// Each module is imported explicitly for the names it provides — `pos`
+// for `Pos`, `ast` for the node types, `dump` for `dump_ast`.  `pos` is
+// a shared leaf (`ast` imports it too); the loader hoists it once, so a
+// module DAG is fine — no double-inlining.
+//
+// AST nodes live in an `Arena`: each is bump-allocated and handed back
+// as a read-only `*const` borrow; the whole tree is released in one
+// wholesale free when the arena leaves scope.  This is the parser's
+// node-building shape (examples/arena.exl).  By-value nodes (`Stmt`,
+// `Pattern`, `Param`, decls) ride in their `Vec`s directly.
+
+use pos;
+use ast::*;
+use dump::*;
+
+// ===== str / Vec helpers =====
+
+fn empty_strs(a: Allocator) -> Vec<str> {
+    return Vec::with_capacity(a, 8 as u32);
+}
+
+fn one_str(a: Allocator, s: str) -> Vec<str> {
+    let mut v: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    v.push(s);
+    return v;
+}
+
+// ===== Type builders =====
+
+fn ty_i32(ar: *Arena) -> *const TypeAnn {
+    let t: *TypeAnn = ar.alloc_borrowed();
+    *t = TypeAnn::TyInt { is_signed: true, width: IntWidth::W32 };
+    return t as *const TypeAnn;
+}
+
+fn ty_const_ptr(ar: *Arena, inner: *const TypeAnn) -> *const TypeAnn {
+    let t: *TypeAnn = ar.alloc_borrowed();
+    *t = TypeAnn::TyConstPtr(inner);
+    return t as *const TypeAnn;
+}
+
+fn ty_struct(a: Allocator, ar: *Arena, name: str) -> *const TypeAnn {
+    let args: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    let t: *TypeAnn = ar.alloc_borrowed();
+    *t = TypeAnn::TyStruct { path: one_str(a, name), args: args };
+    return t as *const TypeAnn;
+}
+
+// ===== Expression builders =====
+
+fn mk_string_lit(ar: *Arena, s: str) -> *const Expr {
+    let e: *Expr = ar.alloc_borrowed();
+    *e = Expr::StringLit(s, pos::Pos::zero());
+    return e as *const Expr;
+}
+
+fn mk_var(ar: *Arena, name: str) -> *const Expr {
+    let e: *Expr = ar.alloc_borrowed();
+    *e = Expr::Var(name, pos::Pos::zero());
+    return e as *const Expr;
+}
+
+fn mk_deref(ar: *Arena, sub: *const Expr) -> *const Expr {
+    let e: *Expr = ar.alloc_borrowed();
+    *e = Expr::Deref(sub, pos::Pos::zero());
+    return e as *const Expr;
+}
+
+fn mk_mul(ar: *Arena, l: *const Expr, r: *const Expr) -> *const Expr {
+    let e: *Expr = ar.alloc_borrowed();
+    *e = Expr::BinOp(BinOp::Mul, l, r, pos::Pos::zero());
+    return e as *const Expr;
+}
+
+// `f(arg)` — a single-argument call (the `println("…")` shape).
+fn mk_call1(a: Allocator, ar: *Arena, fn_name: str, arg: *const Expr) -> *const Expr {
+    let mut args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    args.push(arg);
+    let e: *Expr = ar.alloc_borrowed();
+    *e = Expr::Call { callee: one_str(a, fn_name), args: args, pos: pos::Pos::zero() };
+    return e as *const Expr;
+}
+
+// ===== Declaration builders =====
+
+// `struct Point { x: int, y: int }`
+fn build_point_struct(a: Allocator, ar: *Arena) -> StructDecl {
+    let mut fields: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
+    fields.push(FieldDef { name: "x", ty: ty_i32(ar) });
+    fields.push(FieldDef { name: "y", ty: ty_i32(ar) });
+    let no_str: Option<str> = Option::None;
+    return StructDecl {
+        sname: "Point",
+        stparams: empty_strs(a),
+        sfields: fields,
+        spos: pos::Pos::zero(),
+        sis_pub: false,
+        stier_hint: no_str,
+        sis_debug: false,
+        sderives: empty_strs(a),
+        sis_move: false,
+    };
+}
+
+// `enum Shape { Circle(int) | Rect { w: int, h: int } }`
+fn build_shape_enum(a: Allocator, ar: *Arena) -> EnumDecl {
+    let mut circle_tys: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    circle_tys.push(ty_i32(ar));
+
+    let mut rect_fields: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
+    rect_fields.push(FieldDef { name: "w", ty: ty_i32(ar) });
+    rect_fields.push(FieldDef { name: "h", ty: ty_i32(ar) });
+
+    let mut variants: Vec<EnumVariant> = Vec::with_capacity(a, 8 as u32);
+    variants.push(EnumVariant {
+        vname: "Circle", vkind: VariantKind::VTuple(circle_tys), vpos: pos::Pos::zero(),
+    });
+    variants.push(EnumVariant {
+        vname: "Rect", vkind: VariantKind::VStruct(rect_fields), vpos: pos::Pos::zero(),
+    });
+
+    let no_str: Option<str> = Option::None;
+    return EnumDecl {
+        ename: "Shape",
+        etparams: empty_strs(a),
+        evariants: variants,
+        epos: pos::Pos::zero(),
+        eis_pub: false,
+        etier_hint: no_str,
+        emust_use: false,
+        eis_debug: false,
+        ederives: empty_strs(a),
+    };
+}
+
+// One unguarded match arm `<pat> => <body>`.
+fn unguarded_arm(pat: Pattern, body: *const Expr) -> MatchArm {
+    let no_guard: Option<*const Expr> = Option::None;
+    return MatchArm { pat: pat, guard: no_guard, body: body, arm_pos: pos::Pos::zero() };
+}
+
+// `fn area(s: *const Shape) -> int { match *s { … } }`
+fn build_area_fn(a: Allocator, ar: *Arena) -> Func {
+    let no_preg: Option<str> = Option::None;
+    let mut params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    params.push(Param {
+        pname: "s",
+        pty: ty_const_ptr(ar, ty_struct(a, ar, "Shape")),
+        is_mut: false,
+        preg: no_preg,
+    });
+
+    // Shape::Circle(r) => r * r
+    let mut circle_binds: Vec<Pattern> = Vec::with_capacity(a, 8 as u32);
+    circle_binds.push(Pattern::PVar("r", pos::Pos::zero()));
+    let circle_pat = Pattern::PVariant {
+        tname: one_str(a, "Shape"), variant: "Circle",
+        binds: PatBinds::PBTuple(circle_binds), pos: pos::Pos::zero(),
+    };
+    let arm1 = unguarded_arm(circle_pat, mk_mul(ar, mk_var(ar, "r"), mk_var(ar, "r")));
+
+    // Shape::Rect { w, h } => w * h
+    let mut rect_binds: Vec<FieldPat> = Vec::with_capacity(a, 8 as u32);
+    rect_binds.push(FieldPat { name: "w", pat: Pattern::PVar("w", pos::Pos::zero()) });
+    rect_binds.push(FieldPat { name: "h", pat: Pattern::PVar("h", pos::Pos::zero()) });
+    let rect_pat = Pattern::PVariant {
+        tname: one_str(a, "Shape"), variant: "Rect",
+        binds: PatBinds::PBStruct(rect_binds), pos: pos::Pos::zero(),
+    };
+    let arm2 = unguarded_arm(rect_pat, mk_mul(ar, mk_var(ar, "w"), mk_var(ar, "h")));
+
+    let mut arms: Vec<MatchArm> = Vec::with_capacity(a, 8 as u32);
+    arms.push(arm1);
+    arms.push(arm2);
+
+    let match_expr: *Expr = ar.alloc_borrowed();
+    *match_expr = Expr::Match {
+        scrutinee: mk_deref(ar, mk_var(ar, "s")), arms: arms, pos: pos::Pos::zero(),
+    };
+
+    let mut body: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    body.push(Stmt::Tail(match_expr as *const Expr));
+
+    let ret: Option<*const TypeAnn> = Option::Some(ty_i32(ar));
+    let no_str: Option<str> = Option::None;
+    let tbounds: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
+    return Func {
+        name: "area", c_name: "area",
+        tparams: empty_strs(a), tbounds: tbounds,
+        params: params, ret_ty: ret, body: body,
+        is_pub: false, is_extern: false, is_variadic: false,
+        amiga_lib: no_str, tier_hint: no_str,
+        must_use: false, escapes_hatch: false, pos: pos::Pos::zero(),
+    };
+}
+
+// `fn main() { println("Hello, World!"); }`
+fn build_main_fn(a: Allocator, ar: *Arena) -> Func {
+    let call = mk_call1(a, ar, "println", mk_string_lit(ar, "Hello, World!"));
+    let mut body: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    body.push(Stmt::ExprStmt(call));
+
+    let no_ret: Option<*const TypeAnn> = Option::None;
+    let no_str: Option<str> = Option::None;
+    let tbounds: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
+    let params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    return Func {
+        name: "main", c_name: "main",
+        tparams: empty_strs(a), tbounds: tbounds,
+        params: params, ret_ty: no_ret, body: body,
+        is_pub: false, is_extern: false, is_variadic: false,
+        amiga_lib: no_str, tier_hint: no_str,
+        must_use: false, escapes_hatch: false, pos: pos::Pos::zero(),
+    };
+}
+
+fn build_fixture(a: Allocator, ar: *Arena) -> Vec<Item> {
+    let mut prog: Vec<Item> = Vec::with_capacity(a, 8 as u32);
+    prog.push(Item::Struct(build_point_struct(a, ar)));
+    prog.push(Item::Enum(build_shape_enum(a, ar)));
+    prog.push(Item::Function(build_area_fn(a, ar)));
+    prog.push(Item::Function(build_main_fn(a, ar)));
+    return prog;
+}
+
+// Flush a builder to stdout through the sys seam — the shape the
+// self-host compiler uses to emit a dump to `-o` / stdout.
+fn flush(sb: *const StringBuilder) {
+    let bytes = sb.as_slice();
+    sys::sys_write(1 as c_int, &bytes[0] as *const c_uchar, sb.length() as c_ulong);
+}
+
+fn main() {
+    let a = default_allocator();
+    let mut ar = Arena::with_capacity(a, 16384 as u32);
+
+    let prog = build_fixture(a, &ar);
+
+    let mut sb = StringBuilder::with_capacity(a, 1024 as u32);
+    dump_ast(&prog, "examples/selfhost/fixture.exl", &sb);
+    flush(&sb);
+}

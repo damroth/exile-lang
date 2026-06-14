@@ -201,9 +201,15 @@ let walk_scope_up ~resolve ctx (path : string list) =
                (match resolve (prefix @ alias_mod) alias_name with
                 | Some r -> Some r
                 | None ->
-                    (match prefix with
-                     | [] -> None
-                     | _ -> walk (parent_path prefix)))
+                    (* Loaded file-modules are hoisted to the program root,
+                       so an alias target whose path is rooted there resolves
+                       absolutely (not only relative to the current prefix). *)
+                    (match resolve alias_mod alias_name with
+                     | Some r -> Some r
+                     | None ->
+                         (match prefix with
+                          | [] -> None
+                          | _ -> walk (parent_path prefix))))
            | None ->
                (match prefix with
                 | [] -> None
@@ -5492,7 +5498,7 @@ let build_global_index ~instances ~ext_structs ~ext_types ~ext_consts ~consts ~e
    structs declared in any order, and `resolve_type_ann` needs to see
    them all to rewrite relative paths to absolute. *)
 let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts
-    ~modules ~enums ~type_aliases struct_flat =
+    ~modules ~enums ~type_aliases ~aliases struct_flat =
   let skeleton =
     List.map
       (fun (p, (s : Ast.struct_decl)) ->
@@ -5508,7 +5514,7 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts
   List.map2
     (fun (p, (s : Ast.struct_decl)) skel ->
       let ctx = { (empty_ctx ~instances) with
-        structs = skeleton; enums; type_aliases;
+        structs = skeleton; enums; type_aliases; aliases;
         modules; scope = p; tparams = s.stparams;
         ext_structs; ext_types; ext_consts;
       } in
@@ -5557,7 +5563,7 @@ let build_struct_index ~instances ~ext_structs ~ext_types ~ext_consts
    user-given names.  `vsis_struct` lets the constructor type-check
    reject `Foo::V(args)` for a struct variant and vice versa. *)
 let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts
-    ~modules ~struct_index ~type_aliases enum_flat =
+    ~modules ~struct_index ~type_aliases ~aliases enum_flat =
   let skeleton =
     List.map
       (fun (p, (e : Ast.enum_decl)) ->
@@ -5576,7 +5582,7 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts
   List.map2
     (fun (p, (e : Ast.enum_decl)) skel ->
       let ctx = { (empty_ctx ~instances) with
-        structs = struct_index; enums = skeleton; type_aliases;
+        structs = struct_index; enums = skeleton; type_aliases; aliases;
         modules; scope = p; tparams = e.etparams;
         ext_structs; ext_types; ext_consts;
       } in
@@ -11227,7 +11233,7 @@ let check_program program : tprogram =
   let struct_index =
     build_struct_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~modules:flat.modules ~enums:enum_skeleton
-      ~type_aliases:flat.type_aliases flat.structs
+      ~type_aliases:flat.type_aliases ~aliases:flat.aliases flat.structs
   in
   (* Defect-fix: `struct H { s: Slice<int> }` elaborates `Slice<int>`
      during pass-2 of [build_struct_index], when every skeleton still
@@ -11277,7 +11283,7 @@ let check_program program : tprogram =
   let enum_index =
     build_enum_index ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       ~modules:flat.modules ~struct_index
-      ~type_aliases:flat.type_aliases flat.enums
+      ~type_aliases:flat.type_aliases ~aliases:flat.aliases flat.enums
   in
   (* Same defect on the enum side: `struct H { o: Option<int> }`
      elaborated `Option<int>` against the placeholder enum_skeleton
@@ -11406,7 +11412,7 @@ let check_program program : tprogram =
     let probe_ctx = { (empty_ctx ~instances:mono_state) with
       global; structs = struct_index; enums = enum_index;
       modules; scope;
-      aliases = flat.aliases;
+      aliases = flat.aliases; type_aliases = flat.type_aliases;
       ext_vars; ext_struct_fields;
       ext_structs; ext_types; ext_consts;
     } in
@@ -11414,11 +11420,12 @@ let check_program program : tprogram =
       lookup_fn probe_ctx target_path <> None
       || lookup_struct probe_ctx target_path <> None
       || lookup_enum probe_ctx target_path <> None
+      || lookup_type_alias probe_ctx target_path <> None
     in
     if not resolves then
       Error.failf decl_pos
-        "'pub use %s' refers to unknown item — no fn, struct, or enum \
-         with that path is visible from this scope"
+        "'pub use %s' refers to unknown item — no fn, struct, enum, or \
+         type alias with that path is visible from this scope"
         (String.concat "::" target_path))
     flat.aliases;
   (* Side-table for re-elaborating generic fn instances after the main

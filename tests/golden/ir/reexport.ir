@@ -1,7 +1,7 @@
 ;; exile-typed-ir-dump v1 examples/reexport.exl
-(tfn ex_hello pub (params ) void (body (expr-stmt (builtin-call println (string "hello from the prelude") :ty str) :ty (int i32))))
-(tfn ex_goodbye pub (params ) void (body (expr-stmt (builtin-call println (string "goodbye from the prelude") :ty str) :ty (int i32))))
-(tfn main (params ) void (body (expr-stmt (call ex_hello) :ty (int i32)) (expr-stmt (call ex_goodbye) :ty (int i32))))
+(tfn prelude__hello pub (params ) void (body (expr-stmt (builtin-call println (string "hello from the prelude") :ty str) :ty (int i32))))
+(tfn prelude__goodbye pub (params ) void (body (expr-stmt (builtin-call println (string "goodbye from the prelude") :ty str) :ty (int i32))))
+(tfn main (params ) void (body (expr-stmt (call prelude__hello) :ty (int i32)) (expr-stmt (call prelude__goodbye) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
   (struct Filter)

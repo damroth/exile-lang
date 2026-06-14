@@ -16,6 +16,9 @@ examples/multi_file/*
 !examples/prelude/
 examples/prelude/*
 !examples/prelude/*.exl
+!examples/selfhost/
+examples/selfhost/*
+!examples/selfhost/*.exl
 
 # opam
 *.install
@@ -23,6 +26,7 @@ examples/prelude/*
 
 # internal worklog
 WORKLOG.md
+SELFHOST-WORKLOG.md
 
 # editor
 .merlin

@@ -1,0 +1,498 @@
+// Self-host port — `lib/ast.ml`.
+//
+// The abstract syntax tree: the frozen contract between the parser
+// (which builds it) and typecheck (which consumes it).  This is the
+// largest of the Faza-0 data modules and the first to exercise the
+// language's recursive-ADT story at scale, so a few representation
+// decisions are pinned here and reused by every later stage:
+//
+//   - Recursion is broken with explicit pointers.  A by-value cycle is
+//     unrepresentable (infinite size — OCaml boxes implicitly; we make
+//     the box visible).  `Expr` and `TypeAnn` contain *single* copies
+//     of themselves (`Neg of expr`, `TyPtr of type_ann`), so they are
+//     referenced through `*const T` — a read-only borrow, because the
+//     tree is immutable once parsed.  Node lists become `Vec<*const T>`.
+//
+//   - `Stmt`, `Pattern`, `Param`, `Item` only ever recurse *through* a
+//     `Vec` (a fixed-size handle), so they are already sized and ride
+//     by value in their lists (`Vec<Stmt>`, `Vec<Pattern>`).
+//
+//   - Variant payloads keep their named-field shape (`Call { callee,
+//     args, pos }`); the OCaml inline records map straight to enum
+//     struct-variants with no flattening.
+//
+//   - Every node carries the `Pos` the OCaml original carries.  The
+//     dump layer elides positions, but the frozen contract keeps them:
+//     typecheck reads them for diagnostics.
+//
+// Variant and type names are the OCaml names verbatim — keyword-cased
+// identifiers like `Try` / `Match` / `New` are legal as variant names
+// (they differ from the lexer's lower-case keywords), so no renaming is
+// needed.  The one field-name collision is the `for` loop variable,
+// which OCaml calls `var`; `var` is an exile keyword, so the field is
+// `iter_var` here.
+
+use pos::*;
+
+// ===== Scalars =====
+
+// `int` bit-widths.  Bare `int` is i32; the suffix forms (`i8`, `u16`,
+// …) pin the rest.
+pub enum IntWidth {
+    W8
+    | W16
+    | W32
+}
+
+// Two IEEE float widths — `f32` single, `f64` double, nothing else.
+// Bare `3.14` defaults to f64.
+pub enum FloatWidth {
+    F32
+    | F64
+}
+
+// Binary operators.  Bitwise / shift take integer operands; `And` / `Or`
+// short-circuit on `bool`; `Concat` (`++`) is compile-time string concat.
+pub enum BinOp {
+    Add | Sub | Mul | Div | Mod
+    | BitAnd | BitOr | BitXor | Shl | Shr
+    | And | Or
+    | Lt | Gt | LtEq | GtEq | EqEq | NotEq
+    | Concat
+}
+
+// ===== Shared name-payload pairs =====
+//
+// The OCaml AST threads several `(string * X) list` shapes; rather than
+// reach for tuples-in-Vec we name the pair, which reads better at the
+// use site and in the dumper.
+
+// `(string * expr)` — a struct-literal / `new` field initialiser.
+pub struct Field {
+    name: str,
+    value: *const Expr,
+}
+
+// `(string * type_ann)` — a declared field, an enum struct-variant
+// member, a lambda parameter, an associated-type binding.
+pub struct FieldDef {
+    name: str,
+    ty: *const TypeAnn,
+}
+
+// `(string * pattern)` — a struct-variant pattern field.
+pub struct FieldPat {
+    name: str,
+    pat: Pattern,
+}
+
+// `(string * bool)` — a lambda capture: the name and whether it is taken
+// by reference (`&x`) rather than by value.
+pub struct Capture {
+    name: str,
+    by_ref: bool,
+}
+
+// A single trait bound: `<T: A + B>` is one entry with `traits = [A, B]`.
+// `assoc` carries the DR-021 sugar's associated-type bindings (`<F:
+// |int|->int>` lowers to traits=[Fn1], assoc=[Arg, Output]); plain
+// trait-path bounds leave it empty.
+pub struct TraitBound {
+    tparam: str,
+    traits: Vec<str>,
+    assoc: Vec<FieldDef>,
+}
+
+// ===== Type annotations =====
+//
+// `TyInt` always pins signedness + width.  The `c_*` family maps to the
+// native C types (implementation-defined where C says so).  Recursion
+// (`TyPtr`, `TyArray`, …) goes through `*const TypeAnn`; `TyArray.size`
+// reaches into `Expr`, which makes `TypeAnn` and `Expr` mutually
+// recursive (legal — the cycle is broken by the pointers).
+
+pub enum TypeAnn {
+    TyInt { is_signed: bool, width: IntWidth }
+    | TyCInt { is_signed: bool }
+    | TyCShort { is_signed: bool }
+    | TyCLong { is_signed: bool }
+    | TyCChar
+    | TyCSChar
+    | TyCUChar
+    | TyCVoid
+    | TyStr
+    | TyBool
+    | TyFloat(FloatWidth)
+    | TyTuple(Vec<*const TypeAnn>)
+    | TyStruct { path: Vec<str>, args: Vec<*const TypeAnn> }
+    | TyPtr(*const TypeAnn)
+    | TyOwnPtr(*const TypeAnn)
+    | TyConstPtr(*const TypeAnn)
+    | TyArray { elem: *const TypeAnn, size: *const Expr }
+    | TySelf
+    | TyFnPtr { params: Vec<*const TypeAnn>, ret: Option<*const TypeAnn> }
+}
+
+// ===== Expressions =====
+//
+// `Match` / `If` are always expressions — usable as a let-RHS or return
+// value, or dropped in statement position.  `If` also doubles as a void
+// statement; which role applies is decided by position during elab.
+
+pub enum Expr {
+    IntLit(int, Pos)
+    | FloatLit(f64, FloatWidth, Pos)
+    | BoolLit(bool, Pos)
+    | StringLit(str, Pos)
+    | Var(str, Pos)
+    | Neg(*const Expr, Pos)
+    | BitNot(*const Expr, Pos)
+    | Not(*const Expr, Pos)
+    | BinOp(BinOp, *const Expr, *const Expr, Pos)
+    | Call { callee: Vec<str>, args: Vec<*const Expr>, pos: Pos }
+    | Cast(*const Expr, *const TypeAnn, Pos)
+    | TupleLit(Vec<*const Expr>, Pos)
+    | StructLit { tname: Vec<str>, fields: Vec<Field>,
+                  base: Option<*const Expr>, pos: Pos }
+    | FieldAccess(*const Expr, str, Pos)
+    | Ref(*const Expr, Pos)
+    | Deref(*const Expr, Pos)
+    | NullLit(Pos)
+    | New { tname: Vec<str>, fields: Vec<Field>,
+            base: Option<*const Expr>, alloc: Option<*const Expr>, pos: Pos }
+    | NewEnum { tname: Vec<str>, args: Vec<*const Expr>,
+                alloc: Option<*const Expr>, pos: Pos }
+    | MethodCall { receiver: *const Expr, name: str,
+                   args: Vec<*const Expr>, pos: Pos }
+    | EnumLit { tname: Vec<str>, variant: str, args: EnumLitArgs, pos: Pos }
+    | Match { scrutinee: *const Expr, arms: Vec<MatchArm>, pos: Pos }
+    | Orelse(*const Expr, *const Expr, Pos)
+    | Try(*const Expr, Pos)
+    | SizeOf(*const TypeAnn, Pos)
+    | ArrayLit(Vec<*const Expr>, Pos)
+    | ArrayRepeat { value: *const Expr, count: *const Expr, pos: Pos }
+    | Index { base: *const Expr, index: *const Expr, pos: Pos }
+    | Lambda { params: Vec<FieldDef>, ret_ty: Option<*const TypeAnn>,
+               body: *const Expr, captures: Vec<Capture>, pos: Pos }
+    | Range { lo: *const Expr, hi: *const Expr, inclusive: bool, pos: Pos }
+    | Block(Vec<Stmt>, Pos)
+    | If { cond: *const Expr, then_blk: Vec<Stmt>,
+           else_blk: Option<Vec<Stmt>>, pos: Pos }
+}
+
+// A match arm: a pattern, an optional boolean guard evaluated after the
+// pattern matches (guards don't contribute to exhaustiveness), and the
+// arm body.
+pub struct MatchArm {
+    pat: Pattern,
+    guard: Option<*const Expr>,
+    body: *const Expr,
+    arm_pos: Pos,
+}
+
+// Enum-constructor arguments: tuple form (`Foo::V(e1, e2)`, unit uses
+// the empty tuple) or struct form (`Foo::V { f: e }`).
+pub enum EnumLitArgs {
+    EATuple(Vec<*const Expr>)
+    | EAStruct(Vec<Field>)
+}
+
+// ===== Patterns =====
+
+pub enum Pattern {
+    PWildcard(Pos)
+    | PVar(str, Pos)
+    | PLit(int, Pos)
+    | PVariant { tname: Vec<str>, variant: str, binds: PatBinds, pos: Pos }
+    | POr(Vec<Pattern>, Pos)
+}
+
+// A variant pattern's payload binders: tuple form (`Foo::V(p1, p2)`,
+// unit uses the empty tuple) or struct form (`Foo::V { f: p }`,
+// shorthand `f` desugars to `("f", PVar "f")` at parse time).
+pub enum PatBinds {
+    PBTuple(Vec<Pattern>)
+    | PBStruct(Vec<FieldPat>)
+}
+
+// ===== Statements =====
+
+pub enum Stmt {
+    Let { name: str, value: *const Expr, ty_ann: Option<*const TypeAnn>,
+          is_mut: bool, pos: Pos }
+    | LetTuple { names: Vec<str>, value: *const Expr, is_mut: bool, pos: Pos }
+    | LetElse { pat: Pattern, value: *const Expr,
+                else_body: Vec<Stmt>, pos: Pos }
+    | Assign { path: Vec<str>, value: *const Expr, pos: Pos }
+    | AssignField { target: *const Expr, field: str, value: *const Expr, pos: Pos }
+    | AssignIndex { base: *const Expr, index: *const Expr,
+                    value: *const Expr, pos: Pos }
+    | AssignDeref { target: *const Expr, value: *const Expr, pos: Pos }
+    | Return(Option<*const Expr>, Pos)
+    | ExprStmt(*const Expr)
+    | Tail(*const Expr)
+    | While { cond: *const Expr, body: Vec<Stmt> }
+    | For { iter_var: str, range: *const Expr, body: Vec<Stmt>, pos: Pos }
+    | Defer { body: Vec<Stmt>, pos: Pos }
+    | Break(Pos)
+    | With { target: *const Expr, name: str, body: Vec<Stmt>, pos: Pos }
+    | Continue(Pos)
+}
+
+// ===== Declarations =====
+
+// A function parameter.  `preg` is the optional `@reg(d0)` AmigaOS
+// register pin (extern-fn params only).
+pub struct Param {
+    pname: str,
+    pty: *const TypeAnn,
+    is_mut: bool,
+    preg: Option<str>,
+}
+
+// A function / method declaration.  `c_name` equals `name` unless an
+// extern `as` rename is present.  `body` is empty when `is_extern`.
+pub struct Func {
+    name: str,
+    c_name: str,
+    tparams: Vec<str>,
+    tbounds: Vec<TraitBound>,
+    params: Vec<Param>,
+    ret_ty: Option<*const TypeAnn>,
+    body: Vec<Stmt>,
+    is_pub: bool,
+    is_extern: bool,
+    is_variadic: bool,
+    amiga_lib: Option<str>,
+    tier_hint: Option<str>,
+    must_use: bool,
+    escapes_hatch: bool,
+    pos: Pos,
+}
+
+pub struct StructDecl {
+    sname: str,
+    stparams: Vec<str>,
+    sfields: Vec<FieldDef>,
+    spos: Pos,
+    sis_pub: bool,
+    stier_hint: Option<str>,
+    sis_debug: bool,
+    sderives: Vec<str>,
+    sis_move: bool,
+}
+
+// The three enum-variant shapes.  Tuple / struct kinds carry their
+// fields; unit variants carry nothing.
+pub enum VariantKind {
+    VUnit
+    | VTuple(Vec<*const TypeAnn>)
+    | VStruct(Vec<FieldDef>)
+}
+
+pub struct EnumVariant {
+    vname: str,
+    vkind: VariantKind,
+    vpos: Pos,
+}
+
+pub struct EnumDecl {
+    ename: str,
+    etparams: Vec<str>,
+    evariants: Vec<EnumVariant>,
+    epos: Pos,
+    eis_pub: bool,
+    etier_hint: Option<str>,
+    emust_use: bool,
+    eis_debug: bool,
+    ederives: Vec<str>,
+}
+
+// `extern struct Foo;` (opaque, `esfields = None`) or `extern struct Foo
+// { ... }` (exposed layout the user vouches matches the C header).
+pub struct ExternStruct {
+    esname: str,
+    esfields: Option<Vec<FieldDef>>,
+    espos: Pos,
+}
+
+// `extern type LONG;` — a raw C type alias visible in exile.
+pub struct ExternType {
+    xtname: str,
+    xtpos: Pos,
+}
+
+// `extern const FOO: c_uint;` — a global value resolved by the linker.
+pub struct ExternConst {
+    ecname: str,
+    ecty: *const TypeAnn,
+    ecpos: Pos,
+}
+
+// `const NAME: T = expr;` — a compile-time constant folded to a literal
+// and emitted as `#define`.  The type annotation is required.
+pub struct ConstDecl {
+    kname: str,
+    kty: *const TypeAnn,
+    kvalue: *const Expr,
+    kis_pub: bool,
+    kpos: Pos,
+}
+
+// `extern var DOSBase: *Library;` — like `extern const` but assignable
+// (an l-value; no `const` in the C decl).
+pub struct ExternVar {
+    evname: str,
+    evty: *const TypeAnn,
+    evpos: Pos,
+}
+
+// `type Name<T...> = Type;` — a transparent alias (not a newtype): the
+// alias name and its target are interchangeable in every type position.
+pub struct TypeAliasDecl {
+    taname: str,
+    tatparams: Vec<str>,
+    tatarget: *const TypeAnn,
+    tais_pub: bool,
+    tapos: Pos,
+}
+
+// ===== Top-level items =====
+
+pub enum Item {
+    Function(Func)
+    | Module(ModuleDecl)
+    | Use { path: Vec<str>, is_wildcard: bool, is_pub: bool, pos: Pos }
+    | Struct(StructDecl)
+    | ExternStruct(ExternStruct)
+    | ExternType(ExternType)
+    | TypeAlias(TypeAliasDecl)
+    | ExternConst(ExternConst)
+    | Const(ConstDecl)
+    | ExternVar(ExternVar)
+    | Enum(EnumDecl)
+    | Impl(ImplBlock)
+    | Trait(TraitDecl)
+    | View(ViewDecl)
+    | CInclude { path: str, pos: Pos }
+}
+
+pub struct ModuleDecl {
+    mname: str,
+    mitems: Vec<Item>,
+    mpos: Pos,
+    mis_pub: bool,
+}
+
+// `impl<A> Trait for Foo` — `itrait` is `Some` for a trait impl, `None`
+// for an inherent impl.  `iassoc` binds the trait's associated types.
+pub struct ImplBlock {
+    itparams: Vec<str>,
+    itbounds: Vec<TraitBound>,
+    itrait: Option<Vec<str>>,
+    iassoc: Vec<FieldDef>,
+    itarget: Vec<str>,
+    iitems: Vec<Func>,
+    ipos: Pos,
+}
+
+// A trait declaration.  `trsupers` are the supertrait paths (`trait B: A
+// + C` → [[A], [C]]); `trmethods` carry default bodies inline, and
+// `trdefaults` names the methods that declared one.
+pub struct TraitDecl {
+    trname: str,
+    trassoc: Vec<str>,
+    trsupers: Vec<Vec<str>>,
+    trmethods: Vec<Func>,
+    trdefaults: Vec<str>,
+    trpos: Pos,
+    tris_pub: bool,
+}
+
+// `view Name(p: T) -> A | B(U) { body }` — DR-009 active patterns.  A
+// pre-typecheck pass lowers it to a choice-enum + a function.
+pub struct ViewDecl {
+    vname: str,
+    vparam: Param,
+    vcases: Vec<ViewCase>,
+    vbody: Vec<Stmt>,
+    vpos: Pos,
+    vis_pub: bool,
+}
+
+pub struct ViewCase {
+    vcname: str,
+    vcfields: Vec<FieldDef>,
+    vcis_struct: bool,
+}
+
+// A whole program is a list of top-level items.
+pub type Program = Vec<Item>;
+
+// ===== Helpers =====
+
+// The C / source spelling of a binary operator — used in diagnostics
+// and the AST dump.  Mirrors OCaml `binop_name`.
+pub fn binop_name(op: BinOp) -> str {
+    match op {
+        BinOp::Add => "+"
+        | BinOp::Sub => "-"
+        | BinOp::Mul => "*"
+        | BinOp::Div => "/"
+        | BinOp::Mod => "%"
+        | BinOp::BitAnd => "&"
+        | BinOp::BitOr => "|"
+        | BinOp::BitXor => "^"
+        | BinOp::Shl => "<<"
+        | BinOp::Shr => ">>"
+        | BinOp::And => "&&"
+        | BinOp::Or => "||"
+        | BinOp::Lt => "<"
+        | BinOp::Gt => ">"
+        | BinOp::LtEq => "<="
+        | BinOp::GtEq => ">="
+        | BinOp::EqEq => "=="
+        | BinOp::NotEq => "!="
+        | BinOp::Concat => "++"
+    }
+}
+
+// The source position of an expression — every variant carries one, and
+// this is the single place that pulls it back out (diagnostics, span
+// propagation during elab).  Mirrors OCaml `expr_pos`.
+pub fn expr_pos(e: *const Expr) -> Pos {
+    match *e {
+        Expr::IntLit(_n, p) => p
+        | Expr::FloatLit(_f, _w, p) => p
+        | Expr::BoolLit(_b, p) => p
+        | Expr::StringLit(_s, p) => p
+        | Expr::Var(_n, p) => p
+        | Expr::Neg(_e, p) => p
+        | Expr::BitNot(_e, p) => p
+        | Expr::Not(_e, p) => p
+        | Expr::BinOp(_op, _l, _r, p) => p
+        | Expr::Call { pos } => pos
+        | Expr::Cast(_e, _t, p) => p
+        | Expr::TupleLit(_es, p) => p
+        | Expr::StructLit { pos } => pos
+        | Expr::FieldAccess(_e, _n, p) => p
+        | Expr::Ref(_e, p) => p
+        | Expr::Deref(_e, p) => p
+        | Expr::NullLit(p) => p
+        | Expr::New { pos } => pos
+        | Expr::NewEnum { pos } => pos
+        | Expr::MethodCall { pos } => pos
+        | Expr::EnumLit { pos } => pos
+        | Expr::Match { pos } => pos
+        | Expr::Orelse(_a, _b, p) => p
+        | Expr::Try(_e, p) => p
+        | Expr::SizeOf(_t, p) => p
+        | Expr::ArrayLit(_es, p) => p
+        | Expr::ArrayRepeat { pos } => pos
+        | Expr::Index { pos } => pos
+        | Expr::Lambda { pos } => pos
+        | Expr::Range { pos } => pos
+        | Expr::Block(_stmts, p) => p
+        | Expr::If { pos } => pos
+    }
+}

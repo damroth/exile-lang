@@ -1,0 +1,38 @@
+// Self-host port — `lib/pos.ml`.
+//
+// A source position: line, column, and the originating file.  This is
+// the leaf module every later stage shares — `use pos::*;` from token,
+// ast, error and the pipeline stages above.  Field order mirrors the
+// OCaml record exactly (declaration order is canonical at the dump
+// layer, so the frozen contract must match byte-for-byte).
+//
+// OCaml `Pos.to_string` (a one-line `Printf.sprintf "%s:%d:%d"`) ports
+// to a `Display` impl over the prelude `StringBuilder` — the writer
+// pattern, so no heap string escapes and the allocator decision stays
+// at the call site.
+
+pub struct Pos {
+    line: int,
+    col: int,
+    file: str,
+}
+
+impl Pos {
+    // Synthetic position used when no real source location is available
+    // — e.g. internal compiler errors generated during AST post-
+    // processing.  Mirrors `Pos.zero` on the OCaml side.  Exile has no
+    // struct-typed `const` bindings, so the constant is a fn.
+    pub fn zero() -> Pos {
+        Pos { line: 1, col: 1, file: "<unknown>" }
+    }
+}
+
+impl Display for Pos {
+    fn fmt(*const self, out: *StringBuilder) {
+        out.push_str(self.file);
+        out.push_str(":");
+        out.push_int(self.line);
+        out.push_str(":");
+        out.push_int(self.col);
+    }
+}
