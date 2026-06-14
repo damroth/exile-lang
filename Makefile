@@ -106,14 +106,14 @@ host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_
 # entry point main.exl `use`s the dump/ir/ast/pos module chain and emits a
 # canonical AST dump + typed-IR dump for the bundled fixtures; verify diffs
 # that against examples/selfhost.expected (the OCaml oracle).
-host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl examples/selfhost/ir.exl examples/selfhost/token.exl examples/selfhost/lexer.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl examples/selfhost/token_fixture.exl $(SYS_HOST) build
+host-selfhost: examples/selfhost/main.exl examples/selfhost/dump.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl examples/selfhost/ir.exl examples/selfhost/token.exl examples/selfhost/lexer.exl examples/selfhost/error.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl examples/selfhost/token_fixture.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost $<
 
 # The lexer corpus harness: read a source path on stdin, lex it with the
 # ported `lexer::tokenize`, emit the token dump.  Token-only, so it pulls
 # in just the lexer + token dumper (dump_token / dump_util) — not the
 # AST/IR dumpers.  Driven by `selfhost-port-tokens`.
-host-selfhost-lexer: examples/selfhost/lex_corpus.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+host-selfhost-lexer: examples/selfhost/lex_corpus.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/error.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_lexer.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_lexer $<
 
 # `make amiga-NAME` → build m68k Amiga binary
@@ -252,7 +252,7 @@ SELFHOST_IR     := $(SELFHOST_GOLDEN)/ir
 
 .PHONY: selfhost-corpus selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 .PHONY: selfhost-diff selfhost-diff-tokens selfhost-diff-ast selfhost-diff-ir
-.PHONY: selfhost-corpus-% selfhost-diff-% selfhost-port-tokens
+.PHONY: selfhost-corpus-% selfhost-diff-% selfhost-port-tokens selfhost-port-errors
 
 selfhost-corpus: selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 
@@ -390,6 +390,30 @@ selfhost-port-tokens: host-selfhost-lexer
 	done; \
 	echo "selfhost-port-tokens: $$clean/$(words $(EXAMPLE_NAMES)) byte-identical; deferred (float-value/string-escape):$$defer"; \
 	if [ $$fail -eq 0 ]; then echo "selfhost-port-tokens: clean (no structural regressions)"; else exit 1; fi
+
+# Verify the PORT reports lexical errors with the same diagnostic the
+# OCaml oracle does.  Each fixture in lex_errors/ holds one lexical error;
+# compare the port's stderr (the CompileError Display) against the FIRST
+# line of the OCaml `show_error` output — lines 2-3 (the source echo +
+# caret) are a driver-level presentation layer the lexer port doesn't
+# emit.  Exercises the `try`/Result error threading that the valid-only
+# token corpus can't reach.
+selfhost-port-errors: host-selfhost-lexer
+	@fail=0; n=0; \
+	for f in examples/selfhost/lex_errors/*.exl; do \
+		n=$$((n+1)); \
+		oc=$$($(EXILE) --emit-tokens $$f 2>&1 >/dev/null | head -1); \
+		pt=$$(echo $$f | $(HOST_OUT)/selfhost_lexer 2>&1 >/dev/null | head -1); \
+		if [ "$$oc" = "$$pt" ] && [ -n "$$pt" ]; then \
+			: ; \
+		else \
+			echo "selfhost-port-errors: MISMATCH $$(basename $$f)"; \
+			echo "  oracle: $$oc"; \
+			echo "  port:   $$pt"; \
+			fail=1; \
+		fi; \
+	done; \
+	if [ $$fail -eq 0 ]; then echo "selfhost-port-errors: clean ($$n fixtures, port == oracle line 1)"; else exit 1; fi
 
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io

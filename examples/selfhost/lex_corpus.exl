@@ -17,6 +17,7 @@ use pos;
 use token::*;
 use lexer::*;
 use dump_token::*;
+use error::*;
 
 // Slurp every byte available on `fd` into `sb`, chunk by chunk, until
 // `sys_read` reports EOF (0) or error (< 0).  A regular file may hand
@@ -50,6 +51,16 @@ fn flush(sb: *const StringBuilder) {
     sys::sys_write(1 as c_int, &bytes[0] as *const c_uchar, sb.length() as c_ulong);
 }
 
+// Render a lexical error to stderr, the OCaml diagnostic shape (the
+// CompileError Display is the first line of `show_error`).
+fn report_error(a: Allocator, e: *const CompileError) {
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    e.fmt(&sb);
+    sb.push_str("\n");
+    let sl = sb.as_slice();
+    sys::sys_write(2 as c_int, &sl[0] as *const c_uchar, sb.length() as c_ulong);
+}
+
 fn main() {
     let a = default_allocator();
     let mut ar = Arena::with_capacity(a, 65536 as u32);
@@ -69,9 +80,13 @@ fn main() {
     sys::sys_close(fd);
     let src = str::from_slice(&ar, src_sb.as_slice());
 
-    // 3. Lex + emit the token dump.
-    let toks = tokenize(a, &ar, path, src);
-    let mut out = StringBuilder::with_capacity(a, 16384 as u32);
-    dump_tokens(&toks, path, &out);
-    flush(&out);
+    // 3. Lex + emit the token dump (or report a lexical error to stderr).
+    match tokenize(a, &ar, path, src) {
+        Result::Ok(toks) => {
+            let mut out = StringBuilder::with_capacity(a, 16384 as u32);
+            dump_tokens(&toks, path, &out);
+            flush(&out);
+        }
+        | Result::Err(e) => { report_error(a, e); }
+    }
 }

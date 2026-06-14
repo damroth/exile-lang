@@ -24,6 +24,7 @@ use token::*;
 use lexer::*;
 use dump::*;
 use dump_token::*;
+use error::*;
 
 // ===== str / Vec helpers =====
 
@@ -432,9 +433,11 @@ fn main() {
     // The fixture source, byte-for-byte (a string-free program, so no
     // quote escaping in the embedded literal); the lexer must reproduce
     // the OCaml `--emit-tokens` of examples/selfhost/token_fixture.exl.
-    let toks = tokenize(a, &ar, "examples/selfhost/token_fixture.exl",
-        "// line comment\nfn f(a: int) -> int {\n    let b = 0xff;\n    let c = 'a';\n    /* block comment */\n    return a == b && c != 0;\n}\n");
-    dump_tokens(&toks, "examples/selfhost/token_fixture.exl", &sb);
+    match tokenize(a, &ar, "examples/selfhost/token_fixture.exl",
+        "// line comment\nfn f(a: int) -> int {\n    let b = 0xff;\n    let c = 'a';\n    /* block comment */\n    return a == b && c != 0;\n}\n") {
+        Result::Ok(toks) => { dump_tokens(&toks, "examples/selfhost/token_fixture.exl", &sb); }
+        | Result::Err(e) => { e.fmt(&sb); }
+    }
 
     flush(&sb);
 }

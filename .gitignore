@@ -19,6 +19,9 @@ examples/prelude/*
 !examples/selfhost/
 examples/selfhost/*
 !examples/selfhost/*.exl
+!examples/selfhost/lex_errors/
+examples/selfhost/lex_errors/*
+!examples/selfhost/lex_errors/*.exl
 
 # opam
 *.install

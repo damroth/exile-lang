@@ -12,16 +12,26 @@
 // no per-byte `cstr_len`).  Byte comparisons use char literals — exile
 // char literals ARE their byte value (`'(' == 40`).
 //
+// Errors are threaded as values: OCaml `Error.failf` raises from any
+// depth; exile has no exceptions, so every fallible scan returns
+// `Result<bool, *const CompileError>` (the `bool` is a no-value
+// sentinel — there is no unit type) and `tokenize` returns
+// `Result<Vec<TokenPos>, *const CompileError>`, propagated with `try`.
+// The recursive-descent parser inherits this same shape.
+//
 // Deferred (verified on inputs that avoid them, like the `%h` float
 // dump): the float-literal VALUE (the `.`/exponent/suffix syntax is
 // consumed so a float never mis-tokenises, but the value is a 0.0
 // placeholder — a `str -> f64` parser is a later prelude pass), and
-// string-escape DECODING (the scan is escape-aware so `\"` doesn't end
-// the string, but the interned bytes are raw — a decode pass lands with
-// the float parser).
+// string-escape DECODING (the scan is escape-aware and VALIDATES escapes
+// — unknown / embedded-NUL still error — but the interned bytes are raw;
+// a decode pass lands with the float parser).  Two OCaml error sites are
+// also deferred: invalid-float-VALUE (no parse yet) and the 63-bit
+// integer-OVERFLOW check (OCaml-int-specific message; exile int wraps).
 
 use pos::*;
 use token::*;
+use error::*;
 
 // ===== Character classes (over byte values) =====
 
@@ -141,6 +151,8 @@ struct Lexer {
     line: int,
     col: int,
     file: str,
+    a: Allocator,
+    ar: *Arena,
 }
 
 impl Lexer {
@@ -175,12 +187,61 @@ fn emit(toks: *Vec<TokenPos>, tok: Token, p: Pos) {
     toks.push(TokenPos { tok: tok, pos: p });
 }
 
+// ===== Lexical errors =====
+//
+// Static messages pass a `str` literal straight to `error::alloc`;
+// dynamic ones build the text in a StringBuilder (embedding the
+// offending byte / word like OCaml's `%c` / `%C` / `%s`) and intern it
+// into the arena.  Both mirror `lib/lexer.ml`'s `Error.failf` text
+// byte-for-byte.
+fn mk_dyn(lx: *const Lexer, p: Pos, sb: *const StringBuilder) -> *const CompileError {
+    return alloc(lx.ar, p, str::from_slice(lx.ar, sb.as_slice()));
+}
+
+// Char-literal escapes accept `\0` (the byte 0); string escapes do NOT
+// (an embedded NUL truncates a NUL-terminated str — its own error).
+fn is_char_escape(b: u8) -> bool {
+    return b == 'n' as u8 || b == 't' as u8 || b == 'r' as u8 || b == 'b' as u8
+        || b == '0' as u8 || b == 92 as u8 || b == 39 as u8 || b == 34 as u8;
+}
+
+fn is_string_escape(b: u8) -> bool {
+    return b == 'n' as u8 || b == 't' as u8 || b == 'r' as u8 || b == 'b' as u8
+        || b == 92 as u8 || b == 34 as u8;
+}
+
+// GATE-5 reserved words (capability model + future integer widths) —
+// valid identifiers lexically, rejected so no source claims them before
+// they become real syntax.
+fn is_reserved_capability(w: str) -> bool {
+    return str::eq(w, "rune") || str::eq(w, "ward") || str::eq(w, "sigil")
+        || str::eq(w, "seal") || str::eq(w, "shared");
+}
+
+fn is_reserved_intwidth(w: str) -> bool {
+    return str::eq(w, "i64") || str::eq(w, "u64") || str::eq(w, "i128")
+        || str::eq(w, "u128") || str::eq(w, "usize") || str::eq(w, "isize");
+}
+
 // Scan an identifier / keyword starting at the current alpha byte.
-fn lex_word(lx: *Lexer, toks: *Vec<TokenPos>, ar: *Arena, start_i: u32, p: Pos) {
+fn lex_word(lx: *Lexer, toks: *Vec<TokenPos>, start_i: u32, p: Pos)
+        -> Result<bool, *const CompileError> {
     lx.advance();
     while lx.i < lx.len && is_alnum(lx.cur()) { lx.advance(); }
-    let word = str::from_slice(ar, lx.bytes[start_i..lx.i]);
+    let word = str::from_slice(lx.ar, lx.bytes[start_i..lx.i]);
+    if is_reserved_capability(word) || is_reserved_intwidth(word) {
+        let mut sb = StringBuilder::with_capacity(lx.a, 96 as u32);
+        sb.push_str("'");
+        sb.push_str(word);
+        if is_reserved_capability(word) {
+            sb.push_str("' is a reserved word (capability model, future syntax) — pick a different name");
+        } else {
+            sb.push_str("' is a reserved word (future integer width) — pick a different name");
+        }
+        return Result::Err(mk_dyn(lx, p, &sb));
+    }
     emit(toks, keyword_or_ident(word), p);
+    return Result::Ok(true);
 }
 
 // A trailing `f32` / `f64` width suffix on a float literal -> the is32
@@ -199,13 +260,22 @@ fn lex_float_suffix(lx: *Lexer) -> bool {
 }
 
 // Scan a number: hex (`0x…`), float (`…​.…`, value deferred), or decimal.
-fn lex_number(lx: *Lexer, toks: *Vec<TokenPos>, start_i: u32, p: Pos) {
+fn lex_number(lx: *Lexer, toks: *Vec<TokenPos>, start_i: u32, p: Pos)
+        -> Result<bool, *const CompileError> {
     if lx.cur() == '0' as u8
        && (lx.peek1() == 'x' as u8 || lx.peek1() == 'X' as u8) {
+        let xch = lx.peek1();
         lx.advance();
         lx.advance();
         let hstart = lx.i;
         while lx.i < lx.len && is_hex_digit(lx.cur()) { lx.advance(); }
+        if lx.i == hstart {
+            let mut sb = StringBuilder::with_capacity(lx.a, 32 as u32);
+            sb.push_str("hex literal '0");
+            sb.push_byte(xch);
+            sb.push_str("' has no digits");
+            return Result::Err(mk_dyn(lx, p, &sb));
+        }
         emit(toks, Token::Int(parse_hex(lx.bytes, hstart, lx.i)), p);
     } else {
         lx.advance();
@@ -220,6 +290,10 @@ fn lex_number(lx: *Lexer, toks: *Vec<TokenPos>, start_i: u32, p: Pos) {
             if lx.cur() == 'e' as u8 || lx.cur() == 'E' as u8 {
                 lx.advance();
                 if lx.cur() == '+' as u8 || lx.cur() == '-' as u8 { lx.advance(); }
+                if lx.i >= lx.len || !is_digit(lx.cur()) {
+                    return Result::Err(
+                        alloc(lx.ar, p, "float literal exponent has no digits"));
+                }
                 while lx.i < lx.len && is_digit(lx.cur()) { lx.advance(); }
             }
             let is32 = lex_float_suffix(lx);
@@ -228,36 +302,84 @@ fn lex_number(lx: *Lexer, toks: *Vec<TokenPos>, start_i: u32, p: Pos) {
             emit(toks, Token::Int(parse_dec(lx.bytes, start_i, lx.i)), p);
         }
     }
+    return Result::Ok(true);
 }
 
 // Scan a `'c'` char literal -> the byte's integer value (an Int token).
-fn lex_char(lx: *Lexer, toks: *Vec<TokenPos>, p: Pos) {
+fn lex_char(lx: *Lexer, toks: *Vec<TokenPos>, p: Pos)
+        -> Result<bool, *const CompileError> {
     lx.advance();                         // opening '
+    if lx.i >= lx.len {
+        return Result::Err(alloc(lx.ar, p, "unterminated char literal"));
+    }
     let mut code = 0;
     if lx.cur() == 92 as u8 {             // backslash escape
         lx.advance();
-        code = char_escape(lx.cur());
+        if lx.i >= lx.len {
+            return Result::Err(alloc(lx.ar, p, "unterminated char literal"));
+        }
+        let ec = lx.cur();
+        if !is_char_escape(ec) {
+            let mut sb = StringBuilder::with_capacity(lx.a, 40 as u32);
+            sb.push_str("unknown escape \\");
+            sb.push_byte(ec);
+            sb.push_str(" in char literal");
+            return Result::Err(mk_dyn(lx, p, &sb));
+        }
+        code = char_escape(ec);
         lx.advance();
+    } else if lx.cur() == 39 as u8 {      // '' — empty
+        return Result::Err(alloc(lx.ar, p, "empty char literal"));
     } else {
         code = lx.cur() as int;
         lx.advance();
     }
-    if lx.cur() == 39 as u8 { lx.advance(); }   // closing '
+    if lx.i >= lx.len || lx.cur() != 39 as u8 {
+        return Result::Err(
+            alloc(lx.ar, p, "char literal holds exactly one byte — missing closing '"));
+    }
+    lx.advance();                         // closing '
     emit(toks, Token::Int(code), p);
+    return Result::Ok(true);
 }
 
 // Scan a `"…"` string literal.  The scan is escape-aware (so `\"` does
-// not end it); the interned bytes are RAW (escape decoding deferred).
-fn lex_string(lx: *Lexer, toks: *Vec<TokenPos>, ar: *Arena, p: Pos) {
+// not end it) and VALIDATES each escape, but the interned bytes are RAW
+// (escape decoding deferred — see header).
+fn lex_string(lx: *Lexer, toks: *Vec<TokenPos>, p: Pos)
+        -> Result<bool, *const CompileError> {
     lx.advance();                         // opening "
     let sstart = lx.i;
     while lx.i < lx.len && lx.cur() != 34 as u8 {
-        if lx.cur() == 92 as u8 { lx.advance(); lx.advance(); }
-        else { lx.advance(); }
+        if lx.cur() == 92 as u8 {         // backslash escape
+            lx.advance();                 // consume backslash
+            let esc_pos = lx.here();
+            if lx.i >= lx.len {
+                return Result::Err(alloc(lx.ar, p, "unterminated string literal"));
+            }
+            let ec = lx.cur();
+            if ec == '0' as u8 {
+                return Result::Err(alloc(lx.ar, esc_pos,
+                    "embedded \\0 would silently truncate the string (exile str is NUL-terminated) — use a byte buffer for binary data"));
+            }
+            if !is_string_escape(ec) {
+                let mut sb = StringBuilder::with_capacity(lx.a, 24 as u32);
+                sb.push_str("unknown escape \\");
+                sb.push_byte(ec);
+                return Result::Err(mk_dyn(lx, esc_pos, &sb));
+            }
+            lx.advance();                 // consume escape char
+        } else {
+            lx.advance();
+        }
+    }
+    if lx.i >= lx.len {
+        return Result::Err(alloc(lx.ar, p, "unterminated string literal"));
     }
     let send = lx.i;
-    if lx.i < lx.len { lx.advance(); }    // closing "
-    emit(toks, Token::String(str::from_slice(ar, lx.bytes[sstart..send])), p);
+    lx.advance();                         // closing "
+    emit(toks, Token::String(str::from_slice(lx.ar, lx.bytes[sstart..send])), p);
+    return Result::Ok(true);
 }
 
 // Skip a `//` line comment or `/* … */` block comment (no token).
@@ -267,17 +389,21 @@ fn skip_line_comment(lx: *Lexer) {
     while lx.i < lx.len && lx.cur() != 10 as u8 { lx.advance(); }
 }
 
-fn skip_block_comment(lx: *Lexer) {
+fn skip_block_comment(lx: *Lexer, p: Pos) -> Result<bool, *const CompileError> {
     lx.advance();
     lx.advance();
     while lx.i < lx.len && !(lx.cur() == '*' as u8 && lx.peek1() == '/' as u8) {
         lx.advance();
     }
-    if lx.i < lx.len { lx.advance(); lx.advance(); }   // consume */
+    if lx.i >= lx.len {
+        return Result::Err(alloc(lx.ar, p, "unterminated block comment"));
+    }
+    lx.advance(); lx.advance();   // consume */
+    return Result::Ok(true);
 }
 
 // Handle one token (or whitespace / comment) at the current position.
-fn lex_one(lx: *Lexer, toks: *Vec<TokenPos>, ar: *Arena) {
+fn lex_one(lx: *Lexer, toks: *Vec<TokenPos>) -> Result<bool, *const CompileError> {
     let start_i = lx.i;
     let c = lx.cur();
     let p = lx.here();
@@ -317,7 +443,7 @@ fn lex_one(lx: *Lexer, toks: *Vec<TokenPos>, ar: *Arena) {
     else if c == '*' as u8 { lx.advance(); emit(toks, Token::Star, p); }
     else if c == '/' as u8 {
         if lx.peek1() == '/' as u8 { skip_line_comment(lx); }
-        else if lx.peek1() == '*' as u8 { skip_block_comment(lx); }
+        else if lx.peek1() == '*' as u8 { return skip_block_comment(lx, p); }
         else { lx.advance(); emit(toks, Token::Slash, p); }
     }
     else if c == '-' as u8 {
@@ -353,16 +479,26 @@ fn lex_one(lx: *Lexer, toks: *Vec<TokenPos>, ar: *Arena) {
     else if c == '%' as u8 { lx.advance(); emit(toks, Token::Percent, p); }
     else if c == '?' as u8 { lx.advance(); emit(toks, Token::Question, p); }
     else if c == '@' as u8 { lx.advance(); emit(toks, Token::At, p); }
-    else if c == 39 as u8 { lex_char(lx, toks, p); }
-    else if c == 34 as u8 { lex_string(lx, toks, ar, p); }
-    else if is_digit(c) { lex_number(lx, toks, start_i, p); }
-    else if is_alpha(c) { lex_word(lx, toks, ar, start_i, p); }
-    else { lx.advance(); }   // unexpected byte: skip (valid sources never hit this)
+    else if c == 39 as u8 { return lex_char(lx, toks, p); }
+    else if c == 34 as u8 { return lex_string(lx, toks, p); }
+    else if is_digit(c) { return lex_number(lx, toks, start_i, p); }
+    else if is_alpha(c) { return lex_word(lx, toks, start_i, p); }
+    else {
+        let mut sb = StringBuilder::with_capacity(lx.a, 32 as u32);
+        sb.push_str("unexpected character '");
+        sb.push_byte(c);
+        sb.push_str("'");
+        return Result::Err(mk_dyn(lx, p, &sb));
+    }
+    // Every successful branch consumes at least one byte; report that
+    // progress so `tokenize` can guard against a non-advancing scanner.
+    return Result::Ok(lx.i > start_i);
 }
 
 // `tokenize` — scan `src` into the token stream, terminated by `Eof`.
 // Mirrors OCaml `tokenize`.
-pub fn tokenize(a: Allocator, ar: *Arena, file: str, src: str) -> Vec<TokenPos> {
+pub fn tokenize(a: Allocator, ar: *Arena, file: str, src: str)
+        -> Result<Vec<TokenPos>, *const CompileError> {
     let mut lx = Lexer {
         bytes: str::as_bytes(src),
         len: str::length(src),
@@ -370,11 +506,16 @@ pub fn tokenize(a: Allocator, ar: *Arena, file: str, src: str) -> Vec<TokenPos> 
         line: 1,
         col: 1,
         file: file,
+        a: a,
+        ar: ar,
     };
     let mut toks: Vec<TokenPos> = Vec::with_capacity(a, 64 as u32);
     while lx.i < lx.len {
-        lex_one(&lx, &toks, ar);
+        // `try` propagates a lexical error; the bool is the progress flag
+        // — a false would mean a scanner branch failed to advance, so we
+        // break rather than spin (it never happens for well-formed input).
+        if !(try lex_one(&lx, &toks)) { break; }
     }
     toks.push(TokenPos { tok: Token::Eof, pos: lx.here() });
-    return toks;
+    return Result::Ok(toks);
 }

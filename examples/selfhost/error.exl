@@ -1,0 +1,43 @@
+// Self-host port — `lib/error.ml` (the compile-error type).
+//
+// OCaml raises `Compile_error {pos; msg}` from any depth and catches it
+// once at the top level.  Exile has no exceptions, so the error is a
+// VALUE threaded through `Result<T, *const CompileError>` via `try`
+// (same error type in and out, the Ok payload may differ).  The error
+// lives in the same arena as the tree being built, so it outlives the
+// `try` chain that carries it up to `main`.
+//
+// `Display` renders the first line of the OCaml `show_error` diagnostic;
+// the source-line + caret it adds are a driver-level presentation layer,
+// not part of the error value.
+
+use pos::*;
+
+pub struct CompileError {
+    pos: Pos,
+    msg: str,
+}
+
+// Allocate a `CompileError` in `ar` and hand back a read-only borrow —
+// the shape the fallible stages return as `Result::Err(...)`.  Dynamic
+// messages are built in a StringBuilder and interned with
+// `str::from_slice` before being passed in as `msg`.
+pub fn alloc(ar: *Arena, p: Pos, msg: str) -> *const CompileError {
+    let e: *CompileError = ar.alloc_borrowed();
+    *e = CompileError { pos: p, msg: msg };
+    return e as *const CompileError;
+}
+
+impl Display for CompileError {
+    // `<file>:<line>:<col>: error: <msg>` — byte-for-byte the first line
+    // the OCaml `show_error` prints (bin/main.ml).
+    fn fmt(*const self, out: *StringBuilder) {
+        out.push_str(self.pos.file);
+        out.push_str(":");
+        out.push_int(self.pos.line);
+        out.push_str(":");
+        out.push_int(self.pos.col);
+        out.push_str(": error: ");
+        out.push_str(self.msg);
+    }
+}
