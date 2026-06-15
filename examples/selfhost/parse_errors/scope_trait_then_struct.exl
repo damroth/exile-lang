@@ -1,0 +1,2 @@
+trait Foo {}
+struct Foo { a: int }

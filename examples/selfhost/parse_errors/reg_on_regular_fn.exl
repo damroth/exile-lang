@@ -1,0 +1,1 @@
+fn f(@reg(d0) x: int) {}

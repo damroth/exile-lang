@@ -1953,6 +1953,56 @@ fn check_tparam_dups(s: *Parser, tparams: *const Vec<str>) {
     }
 }
 
+// ===== Scope name-collision checks (mirrors OCaml `seen` threading) =====
+//
+// Each lexical scope (program, module body, impl body, trait body) carries
+// a `seen` list of names introduced so far.  A redefinition is rejected
+// with one of four messages keyed by decl kind.  Names are pushed onto
+// `seen` by the dispatch site after the decl parses.
+
+fn seen_contains(seen: *const Vec<str>, name: str) -> bool {
+    let n = seen.length();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(seen.get(i) orelse "", name) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+// struct / enum / const / type / extern-{struct,type,const,var} / view /
+// use-name — "name '<n>' already used in this scope".
+fn check_scope_name(s: *Parser, name: str, pos: Pos, seen: *const Vec<str>) {
+    if seen_contains(seen, name) {
+        let none_tok: Option<Token> = Option::None;
+        efailx(s, pos, "name '", name, "' already used in this scope", "", "", none_tok);
+    }
+}
+
+// fn / extern fn — "function '<n>' already defined".
+fn check_fn_redef(s: *Parser, name: str, pos: Pos, seen: *const Vec<str>) {
+    if seen_contains(seen, name) {
+        let none_tok: Option<Token> = Option::None;
+        efailx(s, pos, "function '", name, "' already defined", "", "", none_tok);
+    }
+}
+
+// trait method — "method '<n>' already declared in this trait".
+fn check_method_redecl(s: *Parser, name: str, pos: Pos, seen: *const Vec<str>) {
+    if seen_contains(seen, name) {
+        let none_tok: Option<Token> = Option::None;
+        efailx(s, pos, "method '", name, "' already declared in this trait", "", "", none_tok);
+    }
+}
+
+// mod — "module '<n>' already defined in this scope".
+fn check_module_redef(s: *Parser, name: str, pos: Pos, seen: *const Vec<str>) {
+    if seen_contains(seen, name) {
+        let none_tok: Option<Token> = Option::None;
+        efailx(s, pos, "module '", name, "' already defined in this scope", "", "", none_tok);
+    }
+}
+
 // ===== Functions + items =====
 
 // Fills `tparams` with `<T, U, ...>` names (out-param — returning a struct
@@ -2119,15 +2169,64 @@ fn arg_assoc_name(s: *Parser, idx: u32) -> str {
     return str::from_slice(s.ar, sb.as_slice());
 }
 
-fn parse_function(s: *Parser, is_pub: bool) -> Func {
+// `@reg(...)` pins a param to an m68k register — only meaningful on
+// `extern fn` (where it shapes the C decl).  Reject it on regular fns.
+fn check_no_reg_params(s: *Parser, params: *const Vec<Param>, name_pos: Pos) {
+    let none_tok: Option<Token> = Option::None;
+    let n = params.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < n && !is_err(s) {
+        match sl[i].preg {
+            Option::Some(_r) => {
+                efailx(s, name_pos, "'@reg(...)' on parameter '", sl[i].pname,
+                       "' is only allowed on `extern fn`", "", "", none_tok);
+            }
+            | Option::None => { }
+        }
+        i = i + 1 as u32;
+    }
+}
+
+fn ret_ty_is_some(ret_ty: Option<*const TypeAnn>) -> bool {
+    return match ret_ty {
+        Option::Some(_t) => true
+        | Option::None => false
+    };
+}
+
+// `main` is the program entry: no params, no declared return type, and
+// `pub` is meaningless on it.  All three diagnostics point at the name.
+fn check_main_signature(s: *Parser, name: str, params: *const Vec<Param>,
+                        ret_ty: Option<*const TypeAnn>, is_pub: bool, name_pos: Pos) {
+    if !str::eq(name, "main") { return; }
+    if params.length() > 0 as u32 {
+        fail(s, name_pos, "'main' must take no parameters");
+        return;
+    }
+    if ret_ty_is_some(ret_ty) {
+        fail(s, name_pos, "'main' must not declare a return type");
+        return;
+    }
+    if is_pub { fail(s, name_pos, "'pub' has no meaning on 'main'"); }
+}
+
+// `seen` is mutable: after the redefinition check, the fn name is recorded
+// here (rather than by the caller) so call sites can stay inline — a bound
+// `Func` cannot be re-consumed across an impl-body loop iteration.
+fn parse_function(s: *Parser, is_pub: bool, seen: *Vec<str>) -> Func {
     expect(s, Token::Fn);
     let np = expect_ident(s, "function name after 'fn'");
+    check_fn_redef(s, np.name, np.pos, seen);
+    seen.push(np.name);
     let mut tparams: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     let mut tbounds: Vec<TraitBound> = Vec::with_capacity(s.a, 8 as u32);
     parse_tparams_bounded(s, &tparams, &tbounds);
     let params = parse_params(s);
     check_dup_params(s, &params, "function", np.name, np.pos);
+    check_no_reg_params(s, &params, np.pos);
     let ret_ty = parse_ret_ty(s);
+    check_main_signature(s, np.name, &params, ret_ty, is_pub, np.pos);
     expect(s, Token::LBrace);
     let body = parse_stmts(s);
     expect(s, Token::RBrace);
@@ -2146,11 +2245,6 @@ fn build_func(_s: *Parser, name: str, tparams: Vec<str>, tbounds: Vec<TraitBound
     };
 }
 
-fn mk_item_fn(_s: *Parser, f: Func) -> Item { return Item::Function(f); }
-fn mk_item_struct(_s: *Parser, d: StructDecl) -> Item { return Item::Struct(d); }
-fn mk_item_enum(_s: *Parser, d: EnumDecl) -> Item { return Item::Enum(d); }
-fn mk_item_const(_s: *Parser, d: ConstDecl) -> Item { return Item::Const(d); }
-fn mk_item_typealias(_s: *Parser, d: TypeAliasDecl) -> Item { return Item::TypeAlias(d); }
 
 // ===== Top-level items =====
 
@@ -2292,10 +2386,6 @@ fn parse_type_alias_decl(s: *Parser, is_pub: bool) -> TypeAliasDecl {
 // Dispatch a single declaration item into `out`.  PORT STATUS: fn +
 // struct/enum/const/type ported; impl/trait/view/mod/use/extern + `@`
 // attributes record a clear "not yet ported" marker (next sub-stage).
-fn mk_item_mod(_s: *Parser, d: ModuleDecl) -> Item { return Item::Module(d); }
-fn mk_item_impl(_s: *Parser, d: ImplBlock) -> Item { return Item::Impl(d); }
-fn mk_item_trait(_s: *Parser, d: TraitDecl) -> Item { return Item::Trait(d); }
-fn mk_item_view(_s: *Parser, d: ViewDecl) -> Item { return Item::View(d); }
 
 // ===== impl =====
 
@@ -2356,6 +2446,7 @@ fn parse_impl_block(s: *Parser) -> ImplBlock {
 }
 
 fn parse_impl_body(s: *Parser, methods: *Vec<Func>, iassoc: *Vec<FieldDef>, is_trait_impl: bool) {
+    let mut mseen: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     let mut done = false;
     while !is_err(s) && !done {
         if peek_is(s, Token::RBrace) { bump(s); done = true; }
@@ -2371,7 +2462,7 @@ fn parse_impl_body(s: *Parser, methods: *Vec<Func>, iassoc: *Vec<FieldDef>, is_t
             let pub_ = peek_is(s, Token::Pub);
             if pub_ { bump(s); }
             let mpub = pub_ || is_trait_impl;
-            methods.push(parse_function(s, mpub));
+            methods.push(parse_function(s, mpub, &mseen));
         }
     }
 }
@@ -2402,14 +2493,15 @@ fn parse_trait(s: *Parser, is_pub: bool) -> TraitDecl {
     let mut methods: Vec<Func> = Vec::with_capacity(s.a, 8 as u32);
     let mut defaults: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     let mut assoc: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
-    parse_trait_body(s, &methods, &defaults, &assoc);
+    let mut tmseen: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    parse_trait_body(s, &methods, &defaults, &assoc, &tmseen);
     return TraitDecl {
         trname: np.name, trassoc: assoc, trsupers: supers, trmethods: methods,
         trdefaults: defaults, trpos: np.pos, tris_pub: is_pub,
     };
 }
 
-fn parse_trait_body(s: *Parser, methods: *Vec<Func>, defaults: *Vec<str>, assoc: *Vec<str>) {
+fn parse_trait_body(s: *Parser, methods: *Vec<Func>, defaults: *Vec<str>, assoc: *Vec<str>, seen: *Vec<str>) {
     let mut done = false;
     while !is_err(s) && !done {
         if peek_is(s, Token::RBrace) { bump(s); done = true; }
@@ -2420,7 +2512,7 @@ fn parse_trait_body(s: *Parser, methods: *Vec<Func>, defaults: *Vec<str>, assoc:
             expect(s, Token::Semicolon);
             assoc.push(an.name);
         } else if peek_is(s, Token::Fn) {
-            parse_trait_method(s, methods, defaults);
+            parse_trait_method(s, methods, defaults, seen);
         } else {
             fail(s, peek_pos(s), "expected 'fn' signature or 'type' inside 'trait' block");
             done = true;
@@ -2428,9 +2520,10 @@ fn parse_trait_body(s: *Parser, methods: *Vec<Func>, defaults: *Vec<str>, assoc:
     }
 }
 
-fn parse_trait_method(s: *Parser, methods: *Vec<Func>, defaults: *Vec<str>) {
+fn parse_trait_method(s: *Parser, methods: *Vec<Func>, defaults: *Vec<str>, seen: *Vec<str>) {
     expect(s, Token::Fn);
     let np = expect_ident(s, "method name after 'fn'");
+    check_method_redecl(s, np.name, np.pos, seen);
     let mut tparams: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     let mut tbounds: Vec<TraitBound> = Vec::with_capacity(s.a, 8 as u32);
     parse_tparams_bounded(s, &tparams, &tbounds);
@@ -2448,6 +2541,7 @@ fn parse_trait_method(s: *Parser, methods: *Vec<Func>, defaults: *Vec<str>) {
     }
     methods.push(build_trait_method(s, np.name, tparams, tbounds, params, ret_ty, body, np.pos));
     if is_default { defaults.push(np.name); }
+    seen.push(np.name);
 }
 
 fn build_trait_method(_s: *Parser, name: str, tparams: Vec<str>, tbounds: Vec<TraitBound>,
@@ -2536,16 +2630,28 @@ fn view_field(s: *Parser, idx: int) -> FieldDef {
 // `use a::b;` / `use a::*;` / `use a::{b, c}` — pushes one `Item::Use`
 // per imported name (a group yields several).  `pub use` re-exports, so
 // the `is_pub` flag rides onto every produced item.
-fn parse_use_items(s: *Parser, out: *Vec<Item>, is_pub: bool) {
+fn use_last_seg(prefix: *const Vec<str>) -> str {
+    let n = prefix.length();
+    if n == 0 as u32 { return ""; }
+    return prefix.get(n - 1 as u32) orelse "";
+}
+
+fn parse_use_items(s: *Parser, out: *Vec<Item>, is_pub: bool, seen: *Vec<str>) {
     let p = peek_pos(s);
     expect(s, Token::Use);
     let mut prefix: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     let kind = collect_use_segments(s, &prefix);
     if kind == 2 {
-        use_group(s, out, &prefix, is_pub, p);
+        use_group(s, out, &prefix, is_pub, p, seen);
     } else {
         expect(s, Token::Semicolon);
         out.push(mk_use_path(s, &prefix, kind == 1, is_pub, p));
+        // A single `use a::b;` introduces `b`; a wildcard introduces no name.
+        if kind == 0 {
+            let nm = use_last_seg(&prefix);
+            check_scope_name(s, nm, p, seen);
+            seen.push(nm);
+        }
     }
 }
 
@@ -2585,7 +2691,7 @@ fn collect_use_segments(s: *Parser, prefix: *Vec<str>) -> int {
     return result;
 }
 
-fn use_group(s: *Parser, out: *Vec<Item>, prefix: *const Vec<str>, is_pub: bool, p: Pos) {
+fn use_group(s: *Parser, out: *Vec<Item>, prefix: *const Vec<str>, is_pub: bool, p: Pos, seen: *Vec<str>) {
     let mut names: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     let mut done = false;
     while !is_err(s) && !done {
@@ -2602,12 +2708,21 @@ fn use_group(s: *Parser, out: *Vec<Item>, prefix: *const Vec<str>, is_pub: bool,
         }
     }
     expect(s, Token::Semicolon);
+    // Within-group dedup first (oracle order), then scope-collision per name.
     match find_dup_str(&names) {
         Option::Some(d) => {
             let none_tok: Option<Token> = Option::None;
             efailx(s, p, "duplicate name '", d, "' in 'use' group", "", "", none_tok);
         }
         | Option::None => { }
+    }
+    let gn = names.length();
+    let mut i = 0 as u32;
+    while i < gn && !is_err(s) {
+        let nm = names.get(i) orelse "";
+        check_scope_name(s, nm, p, seen);
+        seen.push(nm);
+        i = i + 1 as u32;
     }
 }
 
@@ -2624,16 +2739,18 @@ fn mk_use_seg(s: *Parser, prefix: *const Vec<str>, name: str, is_pub: bool, p: P
     return Item::Use { path: path, is_wildcard: false, is_pub: is_pub, pos: p };
 }
 
-fn parse_module(s: *Parser, is_pub: bool) -> ModuleDecl {
+fn parse_module(s: *Parser, is_pub: bool, seen: *const Vec<str>) -> ModuleDecl {
     expect(s, Token::Mod);
     let np = expect_name(s, "expected module name after 'mod'");
+    check_module_redef(s, np.name, np.pos, seen);
     expect(s, Token::LBrace);
     let mut items: Vec<Item> = Vec::with_capacity(s.a, 8 as u32);
+    let mut inner_seen: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     let mut done = false;
     while !is_err(s) && !done {
         if peek_is(s, Token::RBrace) { bump(s); done = true; }
         else if peek_is(s, Token::Eof) { fail(s, s.last_pos, "unexpected end of file, expected '}'"); done = true; }
-        else { parse_item(s, &items); }
+        else { parse_item(s, &items, &inner_seen); }
     }
     return ModuleDecl { mname: np.name, mitems: items, mpos: np.pos, mis_pub: is_pub };
 }
@@ -2687,9 +2804,10 @@ fn build_extern_func(s: *Parser, name: str, c_name: str, params: Vec<Param>,
 // `extern fn name(args) -> T;` — forward decl of a C symbol.  Optional
 // `as <c-symbol>` rename; generic params, `pub`, and a body block are all
 // rejected.  The `extern` keyword is already consumed by the caller.
-fn parse_extern_fn_after_keyword(s: *Parser) -> Func {
+fn parse_extern_fn_after_keyword(s: *Parser, seen: *const Vec<str>) -> Func {
     expect(s, Token::Fn);
     let np = expect_ident(s, "function name after 'extern fn'");
+    check_fn_redef(s, np.name, np.pos, seen);
     let mut c_name = np.name;
     if peek_is(s, Token::As) {
         bump(s);
@@ -2786,9 +2904,10 @@ fn check_extern_reg(s: *Parser, r: str, pname: str, pos: Pos) {
 
 // `extern struct Name;` (opaque) or `extern struct Name { f: T, ... }`
 // (exposed layout).  Generic params are rejected.
-fn parse_extern_struct_after_keyword(s: *Parser) -> ExternStruct {
+fn parse_extern_struct_after_keyword(s: *Parser, seen: *const Vec<str>) -> ExternStruct {
     expect(s, Token::Struct);
     let np = expect_ident(s, "struct name after 'extern struct'");
+    check_scope_name(s, np.name, np.pos, seen);
     if peek_is(s, Token::Lt) {
         let none_tok: Option<Token> = Option::None;
         efailx(s, np.pos, "'extern struct ", np.name,
@@ -2829,7 +2948,7 @@ fn parse_extern_struct_fields(s: *Parser, name: str, pos: Pos) -> Option<Vec<Fie
 
 // Shared head for `extern <kw> NAME ...` (type / const / var): consume the
 // keyword, read the name, reject a generic-param list.
-fn parse_extern_decl_head(s: *Parser, keyword: Token, label: str, ident_label: str) -> IdentPos {
+fn parse_extern_decl_head(s: *Parser, keyword: Token, label: str, ident_label: str, seen: *const Vec<str>) -> IdentPos {
     expect(s, keyword);
     let mut wb = StringBuilder::with_capacity(s.a, 48 as u32);
     wb.push_str(ident_label);
@@ -2837,6 +2956,7 @@ fn parse_extern_decl_head(s: *Parser, keyword: Token, label: str, ident_label: s
     wb.push_str(label);
     wb.push_str("'");
     let np = expect_ident(s, str::from_slice(s.ar, wb.as_slice()));
+    check_scope_name(s, np.name, np.pos, seen);
     if peek_is(s, Token::Lt) {
         let none_tok: Option<Token> = Option::None;
         efailx(s, np.pos, "'extern ", label, " ", np.name, "' cannot have generic parameters", none_tok);
@@ -2861,8 +2981,8 @@ fn parse_typed_extern_tail(s: *Parser, label: str, name: str) -> *const TypeAnn 
 }
 
 // `extern type T;` — raw C type alias.
-fn parse_extern_type_after_keyword(s: *Parser) -> ExternType {
-    let np = parse_extern_decl_head(s, Token::Type, "type", "type name");
+fn parse_extern_type_after_keyword(s: *Parser, seen: *const Vec<str>) -> ExternType {
+    let np = parse_extern_decl_head(s, Token::Type, "type", "type name", seen);
     if peek_is(s, Token::Semicolon) { bump(s); }
     else if !is_err(s) {
         efailx(s, peek_pos(s), "expected ';' after 'extern type ", np.name, "', got ", "", "", Option::Some(peek(s)));
@@ -2871,26 +2991,51 @@ fn parse_extern_type_after_keyword(s: *Parser) -> ExternType {
 }
 
 // `extern const NAME: T;` — linker-resolved global value.
-fn parse_extern_const_after_keyword(s: *Parser) -> ExternConst {
-    let np = parse_extern_decl_head(s, Token::Const, "const", "const name");
+fn parse_extern_const_after_keyword(s: *Parser, seen: *const Vec<str>) -> ExternConst {
+    let np = parse_extern_decl_head(s, Token::Const, "const", "const name", seen);
     let ty = parse_typed_extern_tail(s, "const", np.name);
     return ExternConst { ecname: np.name, ecty: ty, ecpos: np.pos };
 }
 
 // `extern var NAME: T;` — like extern const but assignable.
-fn parse_extern_var_after_keyword(s: *Parser) -> ExternVar {
-    let np = parse_extern_decl_head(s, Token::Var, "var", "variable name");
+fn parse_extern_var_after_keyword(s: *Parser, seen: *const Vec<str>) -> ExternVar {
+    let np = parse_extern_decl_head(s, Token::Var, "var", "variable name", seen);
     let ty = parse_typed_extern_tail(s, "var", np.name);
     return ExternVar { evname: np.name, evty: ty, evpos: np.pos };
 }
 
-fn parse_extern_item(s: *Parser, out: *Vec<Item>) {
+fn parse_extern_item(s: *Parser, out: *Vec<Item>, seen: *Vec<str>) {
     match peek(s) {
-        Token::Fn => { out.push(Item::Function(parse_extern_fn_after_keyword(s))); }
-        | Token::Struct => { out.push(Item::ExternStruct(parse_extern_struct_after_keyword(s))); }
-        | Token::Type => { out.push(Item::ExternType(parse_extern_type_after_keyword(s))); }
-        | Token::Const => { out.push(Item::ExternConst(parse_extern_const_after_keyword(s))); }
-        | Token::Var => { out.push(Item::ExternVar(parse_extern_var_after_keyword(s))); }
+        Token::Fn => {
+            let f = parse_extern_fn_after_keyword(s, seen);
+            let nf = f.name;
+            out.push(Item::Function(f));
+            seen.push(nf);
+        }
+        | Token::Struct => {
+            let es = parse_extern_struct_after_keyword(s, seen);
+            let ns = es.esname;
+            out.push(Item::ExternStruct(es));
+            seen.push(ns);
+        }
+        | Token::Type => {
+            let et = parse_extern_type_after_keyword(s, seen);
+            let nt = et.xtname;
+            out.push(Item::ExternType(et));
+            seen.push(nt);
+        }
+        | Token::Const => {
+            let ec = parse_extern_const_after_keyword(s, seen);
+            let nc = ec.ecname;
+            out.push(Item::ExternConst(ec));
+            seen.push(nc);
+        }
+        | Token::Var => {
+            let ev = parse_extern_var_after_keyword(s, seen);
+            let nv = ev.evname;
+            out.push(Item::ExternVar(ev));
+            seen.push(nv);
+        }
         | t => {
             efailx(s, peek_pos(s), "expected 'fn', 'struct', 'type', 'const' or 'var' after 'extern', got ",
                    "", "", "", "", Option::Some(t));
@@ -2898,18 +3043,61 @@ fn parse_extern_item(s: *Parser, out: *Vec<Item>) {
     }
 }
 
-fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool) {
+// Per kind: parse, scope-check the introduced name (fn checks inside
+// parse_function with its own message; mod inside parse_module; trait/view
+// carry NO self-check in the oracle but still occupy the name), push the
+// item, then record the name in `seen`.
+fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool, seen: *Vec<str>) {
     match peek(s) {
-        Token::Fn => { out.push(mk_item_fn(s, parse_function(s, is_pub))); }
-        | Token::Struct => { out.push(mk_item_struct(s, parse_struct_decl(s, is_pub))); }
-        | Token::Enum => { out.push(mk_item_enum(s, parse_enum_decl(s, is_pub))); }
-        | Token::Const => { out.push(mk_item_const(s, parse_const_decl(s, is_pub))); }
-        | Token::Type => { out.push(mk_item_typealias(s, parse_type_alias_decl(s, is_pub))); }
-        | Token::Mod => { out.push(mk_item_mod(s, parse_module(s, is_pub))); }
-        | Token::Use => { parse_use_items(s, out, is_pub); }
-        | Token::Impl => { out.push(mk_item_impl(s, parse_impl_block(s))); }
-        | Token::Trait => { out.push(mk_item_trait(s, parse_trait(s, is_pub))); }
-        | Token::View => { out.push(mk_item_view(s, parse_view_decl(s, is_pub))); }
+        Token::Fn => { out.push(Item::Function(parse_function(s, is_pub, seen))); }
+        | Token::Struct => {
+            let sd = parse_struct_decl(s, is_pub);
+            check_scope_name(s, sd.sname, sd.spos, seen);
+            let nst = sd.sname;
+            out.push(Item::Struct(sd));
+            seen.push(nst);
+        }
+        | Token::Enum => {
+            let ed = parse_enum_decl(s, is_pub);
+            check_scope_name(s, ed.ename, ed.epos, seen);
+            let nen = ed.ename;
+            out.push(Item::Enum(ed));
+            seen.push(nen);
+        }
+        | Token::Const => {
+            let cd = parse_const_decl(s, is_pub);
+            check_scope_name(s, cd.kname, cd.kpos, seen);
+            let nco = cd.kname;
+            out.push(Item::Const(cd));
+            seen.push(nco);
+        }
+        | Token::Type => {
+            let td = parse_type_alias_decl(s, is_pub);
+            check_scope_name(s, td.taname, td.tapos, seen);
+            let nty = td.taname;
+            out.push(Item::TypeAlias(td));
+            seen.push(nty);
+        }
+        | Token::Mod => {
+            let md = parse_module(s, is_pub, seen);
+            let nmo = md.mname;
+            out.push(Item::Module(md));
+            seen.push(nmo);
+        }
+        | Token::Use => { parse_use_items(s, out, is_pub, seen); }
+        | Token::Impl => { out.push(Item::Impl(parse_impl_block(s))); }
+        | Token::Trait => {
+            let trd = parse_trait(s, is_pub);
+            let ntr = trd.trname;
+            out.push(Item::Trait(trd));
+            seen.push(ntr);
+        }
+        | Token::View => {
+            let vd = parse_view_decl(s, is_pub);
+            let nvi = vd.vname;
+            out.push(Item::View(vd));
+            seen.push(nvi);
+        }
         | _e => { fail(s, peek_pos(s), "parser: this item kind not yet ported"); }
     }
 }
@@ -2997,7 +3185,7 @@ fn parse_derive_list(s: *Parser, at_pos: Pos, derives: *Vec<str>) {
     }
 }
 
-fn parse_attributed(s: *Parser, out: *Vec<Item>) {
+fn parse_attributed(s: *Parser, out: *Vec<Item>, seen: *Vec<str>) {
     let none_str: Option<str> = Option::None;
     let derives0: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     let mut deco = Deco {
@@ -3058,22 +3246,28 @@ fn parse_attributed(s: *Parser, out: *Vec<Item>) {
     if is_err(s) || standalone { return; }
     let is_pub = peek_is(s, Token::Pub);
     if is_pub { bump(s); }
-    apply_decorated_decl(s, out, &deco, is_pub);
+    apply_decorated_decl(s, out, &deco, is_pub, seen);
 }
 
-fn apply_decorated_decl(s: *Parser, out: *Vec<Item>, deco: *const Deco, is_pub: bool) {
+fn apply_decorated_decl(s: *Parser, out: *Vec<Item>, deco: *const Deco, is_pub: bool, seen: *Vec<str>) {
     if peek_is(s, Token::Fn) {
-        let mut f = parse_function(s, is_pub);
+        let mut f = parse_function(s, is_pub, seen);
         apply_deco_fn(s, deco, &f, false);
         out.push(Item::Function(f));
     } else if peek_is(s, Token::Struct) {
         let mut d = parse_struct_decl(s, is_pub);
+        check_scope_name(s, d.sname, d.spos, seen);
         apply_deco_struct(s, deco, &d);
+        let nst = d.sname;
         out.push(Item::Struct(d));
+        seen.push(nst);
     } else if peek_is(s, Token::Enum) {
         let mut e = parse_enum_decl(s, is_pub);
+        check_scope_name(s, e.ename, e.epos, seen);
         apply_deco_enum(s, deco, &e);
+        let nen = e.ename;
         out.push(Item::Enum(e));
+        seen.push(nen);
     } else if peek_is(s, Token::Extern) {
         if is_pub {
             fail(s, peek_pos(s), "'pub' is redundant on 'extern' — extern items are always callable / referenceable");
@@ -3081,9 +3275,11 @@ fn apply_decorated_decl(s: *Parser, out: *Vec<Item>, deco: *const Deco, is_pub: 
         }
         bump(s);
         if peek_is(s, Token::Fn) {
-            let mut xf = parse_extern_fn_after_keyword(s);
+            let mut xf = parse_extern_fn_after_keyword(s, seen);
             apply_deco_fn(s, deco, &xf, true);
+            let nxf = xf.name;
             out.push(Item::Function(xf));
+            seen.push(nxf);
         } else {
             fail(s, deco.pos, "'@amiga_lib' can only decorate `extern fn` declarations");
         }
@@ -3146,12 +3342,12 @@ fn apply_deco_enum(s: *Parser, deco: *const Deco, e: *EnumDecl) {
     }
 }
 
-fn parse_item(s: *Parser, out: *Vec<Item>) {
+fn parse_item(s: *Parser, out: *Vec<Item>, seen: *Vec<str>) {
     let is_pub = peek_is(s, Token::Pub);
     if is_pub { bump(s); }
     if peek_is(s, Token::At) {
         if is_pub { fail(s, peek_pos(s), "'pub' has no meaning on '@' attributes"); return; }
-        parse_attributed(s, out);
+        parse_attributed(s, out, seen);
         return;
     }
     if peek_is(s, Token::Extern) {
@@ -3160,10 +3356,10 @@ fn parse_item(s: *Parser, out: *Vec<Item>) {
             return;
         }
         bump(s);
-        parse_extern_item(s, out);
+        parse_extern_item(s, out, seen);
         return;
     }
-    parse_decl_item(s, out, is_pub);
+    parse_decl_item(s, out, is_pub, seen);
 }
 
 // Bridge the error slot to the lexer-style `Result` contract.
@@ -3171,10 +3367,11 @@ pub fn parse_program(a: Allocator, ar: *Arena, toks: Slice<TokenPos>, n: u32)
         -> Result<Vec<Item>, *const CompileError> {
     let mut s = new_parser(a, ar, toks, n);
     let mut items: Vec<Item> = Vec::with_capacity(a, 16 as u32);
+    let mut seen: Vec<str> = Vec::with_capacity(a, 16 as u32);
     let mut done = false;
     while !is_err(&s) && !done {
         if peek_is(&s, Token::Eof) { done = true; }
-        else { parse_item(&s, &items); }
+        else { parse_item(&s, &items, &seen); }
     }
     return match s.err {
         Option::Some(e) => Result::Err(e)

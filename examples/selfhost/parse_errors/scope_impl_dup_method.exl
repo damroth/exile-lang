@@ -1,0 +1,5 @@
+struct S { a: int }
+impl S {
+    fn m(self) {}
+    fn m(self) {}
+}
