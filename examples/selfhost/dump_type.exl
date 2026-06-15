@@ -1,0 +1,180 @@
+// Self-host port — shared type-annotation / path renderers.
+//
+// Extracted from `dump_ast` so the IR dumper (`dump_ir`) can render the
+// `TypeAnn` and path forms it needs WITHOUT pulling in `dump_ast`'s
+// expression / statement renderers.  Those reference `Vec<Field>` /
+// `Vec<Stmt>` generics that a typecheck-only driver never instantiates;
+// dragging them in left undefined monomorphic instances at the C level.
+// This module depends only on `ast` + `dump_util`, so both `dump_ast`
+// and `dump_ir` can share it cleanly.
+
+use ast::*;
+use dump_util::*;
+
+// ===== Small literal-rendering helpers =====
+
+pub fn int_width_suffix(w: IntWidth) -> str {
+    match w {
+        IntWidth::W8 => "8"
+        | IntWidth::W16 => "16"
+        | IntWidth::W32 => "32"
+    }
+}
+
+pub fn signed_word(b: bool) -> str {
+    if b { return "signed"; }
+    return "unsigned";
+}
+
+pub fn float_width_tag(w: FloatWidth) -> str {
+    match w {
+        FloatWidth::F32 => "f32"
+        | FloatWidth::F64 => "f64"
+    }
+}
+
+// ===== Path / name-list helpers =====
+
+pub fn render_path(path: *const Vec<str>, out: *StringBuilder) {
+    let n = path.length();
+    let sl = path.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str("::"); }
+        out.push_str(sl[i]);
+        i = i + 1 as u32;
+    }
+}
+
+pub fn render_str_list(xs: *const Vec<str>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        out.push_str(sl[i]);
+        i = i + 1 as u32;
+    }
+}
+
+pub fn render_type_list(xs: *const Vec<*const TypeAnn>, out: *StringBuilder) {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { out.push_str(" "); }
+        render_type_ann(sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+// ===== Type annotations =====
+
+// `Foo` (no args) renders as `(struct Foo)`; a generic application
+// `Option<int>` as `(struct-app Option (int i32))`.  Pulled out of the
+// `render_type_ann` arm so the branching `if` lives in a fn body, not
+// as a match-arm trailing value (a parser deferral — see WORKLOG).
+fn render_struct_ty(path: *const Vec<str>, args: *const Vec<*const TypeAnn>,
+                        out: *StringBuilder) {
+    if args.length() == 0 as u32 {
+        out.push_str("(struct ");
+        render_path(path, out);
+        out.push_str(")");
+    } else {
+        out.push_str("(struct-app ");
+        render_path(path, out);
+        out.push_str(" ");
+        render_type_list(args, out);
+        out.push_str(")");
+    }
+}
+
+pub fn render_type_ann(ann: *const TypeAnn, out: *StringBuilder) {
+    match *ann {
+        TypeAnn::TyInt { is_signed, width } => {
+            out.push_str("(int ");
+            if is_signed { out.push_str("i"); } else { out.push_str("u"); }
+            out.push_str(int_width_suffix(width));
+            out.push_str(")");
+        }
+        | TypeAnn::TyCInt { is_signed } => {
+            out.push_str("(c_int ");
+            out.push_str(signed_word(is_signed));
+            out.push_str(")");
+        }
+        | TypeAnn::TyCShort { is_signed } => {
+            out.push_str("(c_short ");
+            out.push_str(signed_word(is_signed));
+            out.push_str(")");
+        }
+        | TypeAnn::TyCLong { is_signed } => {
+            out.push_str("(c_long ");
+            out.push_str(signed_word(is_signed));
+            out.push_str(")");
+        }
+        | TypeAnn::TyCChar => { out.push_str("c_char"); }
+        | TypeAnn::TyCSChar => { out.push_str("c_schar"); }
+        | TypeAnn::TyCUChar => { out.push_str("c_uchar"); }
+        | TypeAnn::TyCVoid => { out.push_str("c_void"); }
+        | TypeAnn::TyStr => { out.push_str("str"); }
+        | TypeAnn::TyBool => { out.push_str("bool"); }
+        | TypeAnn::TyFloat(w) => {
+            out.push_str("(float ");
+            out.push_str(float_width_tag(w));
+            out.push_str(")");
+        }
+        | TypeAnn::TyTuple(ts) => {
+            out.push_str("(tuple ");
+            render_type_list(&ts, out);
+            out.push_str(")");
+        }
+        | TypeAnn::TyStruct { path, args } => {
+            render_struct_ty(&path, &args, out);
+        }
+        | TypeAnn::TyPtr(t) => {
+            out.push_str("(ptr ");
+            render_type_ann(t, out);
+            out.push_str(")");
+        }
+        | TypeAnn::TyOwnPtr(t) => {
+            out.push_str("(own-ptr ");
+            render_type_ann(t, out);
+            out.push_str(")");
+        }
+        | TypeAnn::TyConstPtr(t) => {
+            out.push_str("(const-ptr ");
+            render_type_ann(t, out);
+            out.push_str(")");
+        }
+        | TypeAnn::TyArray { elem } => {
+            // Size is a const-expr; the AST dump only marks the
+            // array shape (the resolved IR dump carries the number).
+            out.push_str("(array ");
+            render_type_ann(elem, out);
+            out.push_str(" ?)");
+        }
+        | TypeAnn::TySelf => { out.push_str("self"); }
+        | TypeAnn::TyFnPtr { params, ret } => {
+            out.push_str("(fn-ptr ");
+            if params.length() == 0 as u32 {
+                out.push_str("()");
+            } else {
+                out.push_str("(");
+                render_type_list(&params, out);
+                out.push_str(")");
+            }
+            out.push_str(" ");
+            render_ret(ret, out);
+            out.push_str(")");
+        }
+    }
+}
+
+// `void` for a missing return type, else the rendered type.  Shared by
+// fn-ptr types, lambdas, and function decls.
+pub fn render_ret(ret: Option<*const TypeAnn>, out: *StringBuilder) {
+    match ret {
+        Option::Some(t) => { render_type_ann(t, out); }
+        | Option::None => { out.push_str("void"); }
+    }
+}

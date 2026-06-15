@@ -1,0 +1,212 @@
+// Self-host port — `lib/typecheck.ml` (the type checker / elaborator).
+//
+// Staged port.  `check_program` lowers the parsed `Vec<Item>` into the
+// typed IR (`Tprogram`) that codegen consumes.  This is the critical-path
+// module (~12K LOC in the oracle); it is filled in feature by feature,
+// verified against `exilc --emit-typed-ir --user-only` byte-for-byte.
+//
+// SLICE 1 (this file's current reach): function signatures — params and
+// return types resolved through `resolve_type_ann` for the primitive /
+// pointer type domain — plus the fixed prelude `mono-instances` footprint.
+// Bodies are not yet elaborated (emitted empty); a function whose oracle
+// body is non-empty therefore lands in the gate's deferred bucket.
+
+use pos::*;
+use ast::*;
+use ir::*;
+use error::*;
+
+// ===== Typ node allocation =====
+
+fn ty_node(ar: *Arena, t: Typ) -> *const Typ {
+    let n: *Typ = ar.alloc_borrowed();
+    *n = t;
+    return n as *const Typ;
+}
+
+// ===== Type-annotation resolution (AST `TypeAnn` -> IR `Typ`) =====
+//
+// SLICE 1: the primitive + pointer domain.  Aggregate / nominal / generic
+// forms (struct, tuple, array, fn-ptr, Self) are deferred — they resolve
+// to a `TCVoid` placeholder so a fn carrying one simply diverges from the
+// oracle and lands in the deferred bucket rather than crashing.
+
+fn resolve_type_ann(a: Allocator, ar: *Arena, ann: *const TypeAnn) -> *const Typ {
+    return match *ann {
+        TypeAnn::TyInt { is_signed, width } =>
+            ty_node(ar, Typ::TInt(IntKind { is_signed: is_signed, width: width }))
+        | TypeAnn::TyCInt { is_signed } => ty_node(ar, Typ::TCInt { is_signed: is_signed })
+        | TypeAnn::TyCShort { is_signed } => ty_node(ar, Typ::TCShort { is_signed: is_signed })
+        | TypeAnn::TyCLong { is_signed } => ty_node(ar, Typ::TCLong { is_signed: is_signed })
+        | TypeAnn::TyCChar => ty_node(ar, Typ::TCChar)
+        | TypeAnn::TyCSChar => ty_node(ar, Typ::TCSChar)
+        | TypeAnn::TyCUChar => ty_node(ar, Typ::TCUChar)
+        | TypeAnn::TyCVoid => ty_node(ar, Typ::TCVoid)
+        | TypeAnn::TyStr => ty_node(ar, Typ::TString)
+        | TypeAnn::TyBool => ty_node(ar, Typ::TBool)
+        | TypeAnn::TyFloat(w) => ty_node(ar, Typ::TFloat(w))
+        | TypeAnn::TyPtr(t) => ty_node(ar, Typ::TPtr(resolve_type_ann(a, ar, t)))
+        | TypeAnn::TyOwnPtr(t) => ty_node(ar, Typ::TOwnPtr(resolve_type_ann(a, ar, t)))
+        | TypeAnn::TyConstPtr(t) => ty_node(ar, Typ::TConstPtr(resolve_type_ann(a, ar, t)))
+        | _other => ty_node(ar, Typ::TCVoid)
+    };
+}
+
+fn resolve_param_tys(a: Allocator, ar: *Arena, params: *const Vec<Param>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let n = params.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        out.push(resolve_type_ann(a, ar, sl[i].pty));
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+fn resolve_ret(a: Allocator, ar: *Arena, ret: Option<*const TypeAnn>) -> Option<*const Typ> {
+    return match ret {
+        Option::Some(t) => Option::Some(resolve_type_ann(a, ar, t))
+        | Option::None => Option::None
+    };
+}
+
+// `Param` is fully copyable (str / pointer / bool / Option<str>), so the
+// param list can be rebuilt for the IR `Tfunc` without moving it out of
+// the affine `Vec<Item>` the parser owns.
+fn copy_params(a: Allocator, src: *const Vec<Param>) -> Vec<Param> {
+    let mut out: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    let n = src.length();
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        out.push(Param { pname: sl[i].pname, pty: sl[i].pty, is_mut: sl[i].is_mut, preg: sl[i].preg });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// ===== Function elaboration =====
+
+fn elaborate_fn(a: Allocator, ar: *Arena, f: *const Func) -> Tfunc {
+    let params = copy_params(a, &f.params);
+    let param_tys = resolve_param_tys(a, ar, &f.params);
+    let ret_ty = resolve_ret(a, ar, f.ret_ty);
+    let body: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let no_pos: Option<Pos> = Option::None;
+    let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    // `tf_func` only feeds the dump's flags + param names; rebuild it with
+    // copied params and empty generic / body fields (the elaborated body
+    // lives in `tf_body`).
+    let tparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let tbounds: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
+    let dummy_body: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    let tf_func = Func {
+        name: f.name, c_name: f.c_name, tparams: tparams, tbounds: tbounds,
+        params: params, ret_ty: f.ret_ty, body: dummy_body, is_pub: f.is_pub,
+        is_extern: f.is_extern, is_variadic: f.is_variadic, amiga_lib: f.amiga_lib,
+        tier_hint: f.tier_hint, must_use: f.must_use, escapes_hatch: f.escapes_hatch, pos: f.pos,
+    };
+    return Tfunc {
+        tf_path: path, tf_func: tf_func, tf_mangled: f.name, tf_param_tys: param_tys,
+        tf_ret_ty: ret_ty, tf_body: body, tf_lets: lets, tf_origin_pos: no_pos,
+    };
+}
+
+fn elaborate_item(a: Allocator, ar: *Arena, it: *const Item, funcs: *Vec<Tfunc>) {
+    match *it {
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, &f)); }
+        | _e => { }
+    }
+}
+
+// ===== Prelude `mono-instances` footprint =====
+//
+// Every IR dump carries the registered prelude struct / enum skeletons.
+// Until the prelude itself is ported these are registered by name only
+// (the dump renders just `sname_path` / `ename_path`).
+
+fn push_struct_name(a: Allocator, sigs: *Vec<StructSig>, name: str) {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(name);
+    let fields: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let tparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let no_args: Option<Vec<*const Typ>> = Option::None;
+    sigs.push(StructSig {
+        sname_path: path, sfields_ty: fields, sis_pub: true, stparams: tparams,
+        sinstance_args: no_args, sis_debug: false, ss_is_move: false,
+    });
+}
+
+fn push_enum_name(a: Allocator, sigs: *Vec<EnumSig>, name: str) {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(name);
+    let variants: Vec<VariantSig> = Vec::with_capacity(a, 8 as u32);
+    let tparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let no_args: Option<Vec<*const Typ>> = Option::None;
+    sigs.push(EnumSig {
+        ename_path: path, evariants: variants, eis_pub: true, etparams: tparams,
+        einstance_args: no_args, eis_must_use: false, eis_debug: false,
+    });
+}
+
+fn prelude_struct_index(a: Allocator) -> Vec<StructSig> {
+    let mut sigs: Vec<StructSig> = Vec::with_capacity(a, 16 as u32);
+    push_struct_name(a, &sigs, "Enumerate");
+    push_struct_name(a, &sigs, "Filter");
+    push_struct_name(a, &sigs, "HashMap");
+    push_struct_name(a, &sigs, "HashMapIter");
+    push_struct_name(a, &sigs, "Map");
+    push_struct_name(a, &sigs, "Range");
+    push_struct_name(a, &sigs, "RangeInclusive");
+    push_struct_name(a, &sigs, "Slice");
+    push_struct_name(a, &sigs, "Slot");
+    push_struct_name(a, &sigs, "Take");
+    push_struct_name(a, &sigs, "Vec");
+    push_struct_name(a, &sigs, "VecIter");
+    return sigs;
+}
+
+fn prelude_enum_index(a: Allocator) -> Vec<EnumSig> {
+    let mut sigs: Vec<EnumSig> = Vec::with_capacity(a, 8 as u32);
+    push_enum_name(a, &sigs, "Option");
+    push_enum_name(a, &sigs, "Result");
+    return sigs;
+}
+
+// ===== Program assembly =====
+
+pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
+        -> Result<Tprogram, *const CompileError> {
+    let mut funcs: Vec<Tfunc> = Vec::with_capacity(a, 16 as u32);
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        elaborate_item(a, ar, &sl[i], &funcs);
+        i = i + 1 as u32;
+    }
+
+    let structs = prelude_struct_index(a);
+    let enums = prelude_enum_index(a);
+
+    let sdecls: Vec<StructDeclEntry> = Vec::with_capacity(a, 8 as u32);
+    let global: Vec<GlobalEntry> = Vec::with_capacity(a, 8 as u32);
+    let modules: Vec<ModuleEntry> = Vec::with_capacity(a, 8 as u32);
+    let tuples: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let fnptrs: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let cincludes: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let econsts: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let evars: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let arrays: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let consts: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
+
+    return Result::Ok(Tprogram {
+        tp_funcs: funcs, tp_struct_decls: sdecls, tp_struct_index: structs,
+        tp_enum_index: enums, tp_global: global, tp_modules: modules,
+        tp_uses_heap: false, tp_uses_string_h: false, tp_uses_default_allocator: false,
+        tp_tuple_types: tuples, tp_fnptr_types: fnptrs, tp_c_includes: cincludes,
+        tp_ext_consts: econsts, tp_ext_vars: evars, tp_array_types: arrays, tp_consts: consts,
+    });
+}

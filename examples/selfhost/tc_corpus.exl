@@ -1,0 +1,89 @@
+// Self-host typecheck — corpus verification driver.
+//
+// Read a source path on stdin, lex it, parse it, type-check it, and dump
+// the typed IR in `exilc --emit-typed-ir --user-only` format for the
+// byte-diff against the live oracle.  `--user-only` drops the prelude
+// functions, leaving the user `(tfn ...)` lines plus the fixed prelude
+// `(mono-instances ...)` footprint — the staged target while the body
+// elaborator is filled in feature by feature.
+
+use pos;
+use token::*;
+use lexer::*;
+use ast::*;
+use ir::*;
+use error::*;
+use parser::*;
+use typecheck::*;
+use dump_ir::*;
+
+fn read_all(fd: c_int, sb: *StringBuilder) {
+    let mut buf: [u8; 4096] = [0 as u8; 4096];
+    loop {
+        let n: c_long = sys::sys_read(fd, &buf as *u8 as *c_uchar, 4096 as c_ulong);
+        if n <= 0 as c_long { break; }
+        let mut k = 0 as u32;
+        while k < n as u32 {
+            sb.push_byte(buf[k]);
+            k = k + 1 as u32;
+        }
+    }
+}
+
+fn path_len(sl: Slice<u8>, n: u32) -> u32 {
+    let mut end = n;
+    while end > 0 as u32
+          && (sl[end - 1 as u32] == 10 as u8 || sl[end - 1 as u32] == 13 as u8) {
+        end = end - 1 as u32;
+    }
+    return end;
+}
+
+fn report_error(a: Allocator, e: *const CompileError) {
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    e.fmt(&sb);
+    sb.push_str("\n");
+    let sl = sb.as_slice();
+    sys::sys_write(2 as c_int, &sl[0] as *const c_uchar, sb.length() as c_ulong);
+}
+
+fn flush(sb: *const StringBuilder) {
+    let bytes = sb.as_slice();
+    sys::sys_write(1 as c_int, &bytes[0] as *const c_uchar, sb.length() as c_ulong);
+}
+
+fn main() {
+    let a = default_allocator();
+    let mut ar = Arena::with_capacity(a, 262144 as u32);
+
+    let mut pbuf = StringBuilder::with_capacity(a, 256 as u32);
+    read_all(0 as c_int, &pbuf);
+    let plen = path_len(pbuf.as_slice(), pbuf.length());
+    let path = str::from_slice(&ar, pbuf.as_slice()[0 as u32..plen]);
+
+    let fd: c_int = sys::sys_open(path as *const c_char, 0 as c_int);
+    if fd < 0 as c_int { return; }
+    let mut src_sb = StringBuilder::with_capacity(a, 16384 as u32);
+    read_all(fd, &src_sb);
+    sys::sys_close(fd);
+    let src = str::from_slice(&ar, src_sb.as_slice());
+
+    match tokenize(a, &ar, path, src) {
+        Result::Ok(toks) => {
+            match parse_program(a, &ar, toks.as_slice(), toks.length()) {
+                Result::Ok(prog) => {
+                    match check_program(a, &ar, &prog) {
+                        Result::Ok(tp) => {
+                            let mut out = StringBuilder::with_capacity(a, 16384 as u32);
+                            dump_typed_ir(&tp, path, true, &out);
+                            flush(&out);
+                        }
+                        | Result::Err(e) => { report_error(a, e); }
+                    }
+                }
+                | Result::Err(e) => { report_error(a, e); }
+            }
+        }
+        | Result::Err(e) => { report_error(a, e); }
+    }
+}

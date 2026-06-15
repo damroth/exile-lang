@@ -50,7 +50,7 @@ AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(AMIGA_EXAMPLES))
 
 .PHONY: all build test clean toolchain toolchain-clean
 .PHONY: host amiga examples
-.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file host-selfhost host-selfhost-lexer host-selfhost-parser
+.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file host-selfhost host-selfhost-lexer host-selfhost-parser host-selfhost-tc
 .PHONY: verify verify-host verify-amiga verify-host-% verify-amiga-%
 .PHONY: verify-freestanding verify-freestanding-%
 .PHONY: rebaseline-host rebaseline-host-%
@@ -106,7 +106,7 @@ host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_
 # entry point main.exl `use`s the dump/ir/ast/pos module chain and emits a
 # canonical AST dump + typed-IR dump for the bundled fixtures; verify diffs
 # that against examples/selfhost.expected (the OCaml oracle).
-host-selfhost: examples/selfhost/main.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl examples/selfhost/ir.exl examples/selfhost/token.exl examples/selfhost/lexer.exl examples/selfhost/error.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl examples/selfhost/token_fixture.exl $(SYS_HOST) build
+host-selfhost: examples/selfhost/main.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl examples/selfhost/ir.exl examples/selfhost/token.exl examples/selfhost/lexer.exl examples/selfhost/error.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl examples/selfhost/token_fixture.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost $<
 
 # The lexer corpus harness: read a source path on stdin, lex it with the
@@ -120,8 +120,11 @@ host-selfhost-lexer: examples/selfhost/lex_corpus.exl examples/selfhost/lexer.ex
 # with the ported `parser::parse_program`, emit the AST dump.  Pulls in
 # the lexer + parser + AST dumper (dump_ast / dump_util) — not the IR
 # dumper.  Driven by `selfhost-port-ast`.
-host-selfhost-parser: examples/selfhost/parse_corpus.exl examples/selfhost/parser.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/error.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+host-selfhost-parser: examples/selfhost/parse_corpus.exl examples/selfhost/parser.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/error.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_parser.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_parser $<
+
+host-selfhost-tc: examples/selfhost/tc_corpus.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+	$(EXILE) --target host --c-out $(C_OUT)/selfhost_tc.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_tc $<
 
 # `make amiga-NAME` → build m68k Amiga binary
 amiga-%: examples/%.exl $(call stub_for,%) $(SYS_AMIGA) build
@@ -259,7 +262,7 @@ SELFHOST_IR     := $(SELFHOST_GOLDEN)/ir
 
 .PHONY: selfhost-corpus selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 .PHONY: selfhost-diff selfhost-diff-tokens selfhost-diff-ast selfhost-diff-ir
-.PHONY: selfhost-corpus-% selfhost-diff-% selfhost-port-tokens selfhost-port-errors selfhost-port-ast selfhost-port-parse-errors
+.PHONY: selfhost-corpus-% selfhost-diff-% selfhost-port-tokens selfhost-port-errors selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir
 
 selfhost-corpus: selfhost-corpus-tokens selfhost-corpus-ast selfhost-corpus-ir
 
@@ -480,6 +483,27 @@ selfhost-port-parse-errors: host-selfhost-parser
 		fi; \
 	done; \
 	if [ $$fail -eq 0 ]; then echo "selfhost-port-parse-errors: clean ($$n fixtures, port == oracle line 1)"; else exit 1; fi
+
+# Typed-IR port gate (staged).  Compare the port's typecheck output against
+# the live oracle `--emit-typed-ir --user-only` (user `(tfn ...)` lines +
+# the fixed prelude `mono-instances` footprint).  The body elaborator is
+# filled in feature by feature, so honest buckets: byte-identical /
+# deferred (oracle body or feature the port doesn't reach yet) / REGRESSION
+# (port emits a different non-empty body — a real bug).  Examples whose
+# oracle dump is empty (amiga-only / typecheck-rejected) are skipped.
+selfhost-port-ir: host-selfhost-tc
+	@clean=0; defer=0; skip=0; \
+	for name in $(EXAMPLE_NAMES); do \
+		[ -f examples/$$name.exl ] || continue; \
+		oc=$$(mktemp); pt=$$(mktemp); \
+		$(EXILE) --emit-typed-ir --user-only examples/$$name.exl >$$oc 2>/dev/null; \
+		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_tc >$$pt 2>/dev/null; \
+		if [ ! -s $$oc ]; then skip=$$((skip+1)); rm $$oc $$pt; continue; fi; \
+		if diff -q $$oc $$pt >/dev/null; then clean=$$((clean+1)); \
+		else defer=$$((defer+1)); fi; \
+		rm $$oc $$pt; \
+	done; \
+	echo "selfhost-port-ir: $$clean byte-identical; $$defer deferred (body/feature pending); $$skip skipped (oracle empty)"
 
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io

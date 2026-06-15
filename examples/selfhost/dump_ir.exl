@@ -7,7 +7,7 @@ use pos::*;
 use ast::*;
 use ir::*;
 use dump_util::*;
-use dump_ast::*;
+use dump_type::*;
 
 // =====================================================================
 // Typed IR dump — the `--emit-typed-ir` half of `lib/dump.ml`.
