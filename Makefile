@@ -498,8 +498,9 @@ selfhost-port-parse-errors: host-selfhost-parser
 #                 a param/return type, or the mono-instances footprint is
 #                 wrong, OR the port emitted a non-empty body that does not
 #                 match — a real regression, NOT deferred work.  Printed.
-# Every unsupported construct — expression OR statement — lowers to the
-# `null :ty c_void` deferral marker, so incompleteness is visible.  That
+# Every unsupported construct — expression OR statement — lowers to a
+# visible deferral marker (`null :ty c_void`, or `(float ??` for the
+# consciously-deferred hex-float value format), so incompleteness is visible.  That
 # makes body-divergence honestly classifiable: when the signature/footprint
 # match (masked-both) but the bodies differ, the port output MUST carry a
 # marker for the divergence to be deferred work.  A body that differs with
@@ -521,7 +522,7 @@ selfhost-port-ir: host-selfhost-tc
 		sed "$$mask" $$oc >$$ocm; sed "$$mask" $$pt >$$ptm; \
 		if diff -q $$oc $$pt >/dev/null; then clean=$$((clean+1)); \
 		elif diff -q $$ocm $$ptm >/dev/null; then \
-			if grep -q 'null :ty c_void' $$pt; then defer=$$((defer+1)); \
+			if grep -qE 'null :ty c_void|\(float \?\?' $$pt; then defer=$$((defer+1)); \
 			else bodyregr=$$((bodyregr+1)); fail=1; \
 				echo "selfhost-port-ir: BODY-REGRESSION $$name (sig OK, body differs, no deferral marker)"; \
 				diff $$oc $$pt | head -4; fi; \

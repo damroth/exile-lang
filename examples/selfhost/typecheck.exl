@@ -294,6 +294,38 @@ fn elab_return_val(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
     };
 }
 
+fn empty_tstmts(a: Allocator) -> Vec<Tstmt> {
+    let v: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    return v;
+}
+
+fn elab_else_body(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+                  else_blk: Option<Vec<Stmt>>) -> Vec<Tstmt> {
+    return match else_blk {
+        Option::Some(blk) => elab_body(a, ar, env, ret, &blk)
+        | Option::None => empty_tstmts(a)
+    };
+}
+
+// An expression used in statement (void) position.  `if` lowers to the
+// void `TIf` statement (branches are full stmt-blocks, sharing the env —
+// C hoists branch-local lets); everything else becomes a `TExprStmt`.
+fn elab_stmt_pos(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+                 e: *const Expr, out: *Vec<Tstmt>) {
+    match *e {
+        Expr::If { cond, then_blk, else_blk } => {
+            let tcond = elab_expr(a, ar, env, none_ty(), cond);
+            let tthen = elab_body(a, ar, env, ret, &then_blk);
+            let telse = elab_else_body(a, ar, env, ret, else_blk);
+            out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
+        }
+        | _other => {
+            let ve = elab_expr(a, ar, env, none_ty(), e);
+            out.push(Tstmt::TExprStmt(ve));
+        }
+    }
+}
+
 fn elab_stmt(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              s: *const Stmt, out: *Vec<Tstmt>) {
     match *s {
@@ -303,10 +335,8 @@ fn elab_stmt(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Ty
             env.push(FieldTy { name: name, ty: vl.ty });
             out.push(Tstmt::TLet { name: name, value: vl, pos: expr_pos(value) });
         }
-        | Stmt::ExprStmt(e) => {
-            let ve = elab_expr(a, ar, env, none_ty(), e);
-            out.push(Tstmt::TExprStmt(ve));
-        }
+        | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, env, ret, e, out); }
+        | Stmt::Tail(e) => { elab_stmt_pos(a, ar, env, ret, e, out); }
         | Stmt::Return(val, pos) => {
             let tv = elab_return_val(a, ar, env, ret, val);
             out.push(Tstmt::TReturn { value: tv, pos: pos });
