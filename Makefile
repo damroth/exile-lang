@@ -486,24 +486,40 @@ selfhost-port-parse-errors: host-selfhost-parser
 
 # Typed-IR port gate (staged).  Compare the port's typecheck output against
 # the live oracle `--emit-typed-ir --user-only` (user `(tfn ...)` lines +
-# the fixed prelude `mono-instances` footprint).  The body elaborator is
-# filled in feature by feature, so honest buckets: byte-identical /
-# deferred (oracle body or feature the port doesn't reach yet) / REGRESSION
-# (port emits a different non-empty body — a real bug).  Examples whose
-# oracle dump is empty (amiga-only / typecheck-rejected) are skipped.
+# the fixed prelude `mono-instances` footprint).  The gate is SELF-HONEST
+# about which dimension diverges, by also comparing against a body-masked
+# oracle (`(body ...)` collapsed to `(body )` per tfn line — bodies are the
+# one dimension the elaborator fills in last):
+#   clean       — port == oracle verbatim (signature + footprint + body).
+#   body-pending — port == body-masked oracle: signature + mono-footprint
+#                  are byte-identical, only the (empty) body is unfilled.
+#                  This is the honest "ready modulo body" count.
+#   SIG-DIVERGE — port differs even after body-masking: the name (mangling),
+#                 a param/return type, or the mono-instances footprint is
+#                 wrong, OR the port emitted a non-empty body that does not
+#                 match — a real regression, NOT deferred work.  Printed.
+# A correctly elaborated body lands in `clean`; a wrong one surfaces as
+# SIG-DIVERGE (port's non-empty body != masked oracle), so body regressions
+# cannot hide in the deferred bucket as elaboration fills in.  Examples
+# whose oracle dump is empty (amiga-only / typecheck-rejected) are skipped.
 selfhost-port-ir: host-selfhost-tc
-	@clean=0; defer=0; skip=0; \
+	@clean=0; defer=0; sig=0; skip=0; fail=0; \
+	mask='s/(body .*$$/(body ))/'; \
 	for name in $(EXAMPLE_NAMES); do \
 		[ -f examples/$$name.exl ] || continue; \
-		oc=$$(mktemp); pt=$$(mktemp); \
+		oc=$$(mktemp); pt=$$(mktemp); ocm=$$(mktemp); \
 		$(EXILE) --emit-typed-ir --user-only examples/$$name.exl >$$oc 2>/dev/null; \
 		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_tc >$$pt 2>/dev/null; \
-		if [ ! -s $$oc ]; then skip=$$((skip+1)); rm $$oc $$pt; continue; fi; \
+		if [ ! -s $$oc ]; then skip=$$((skip+1)); rm $$oc $$pt $$ocm; continue; fi; \
+		sed "$$mask" $$oc >$$ocm; \
 		if diff -q $$oc $$pt >/dev/null; then clean=$$((clean+1)); \
-		else defer=$$((defer+1)); fi; \
-		rm $$oc $$pt; \
+		elif diff -q $$ocm $$pt >/dev/null; then defer=$$((defer+1)); \
+		else sig=$$((sig+1)); \
+			echo "selfhost-port-ir: SIG-DIVERGE $$name"; \
+			diff $$ocm $$pt | head -4; fi; \
+		rm $$oc $$pt $$ocm; \
 	done; \
-	echo "selfhost-port-ir: $$clean byte-identical; $$defer deferred (body/feature pending); $$skip skipped (oracle empty)"
+	echo "selfhost-port-ir: $$clean clean; $$defer body-pending (sig+footprint byte-identical); $$sig SIG-DIVERGE; $$skip skipped (oracle empty)"
 
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io

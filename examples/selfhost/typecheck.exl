@@ -88,6 +88,19 @@ fn copy_params(a: Allocator, src: *const Vec<Param>) -> Vec<Param> {
 
 // ===== Function elaboration =====
 
+// The emitted C symbol (mirrors OCaml `ir.mangle` + the flatten-time rule):
+// an `extern fn` keeps its C-side name, `main` stays unprefixed, and every
+// other top-level fn gets the `ex_` prefix.  Module-internal mangling
+// (`path__name`) lands with the module-elaboration slice.
+fn mangle_fn(a: Allocator, ar: *Arena, f: *const Func) -> str {
+    if f.is_extern { return f.c_name; }
+    if str::eq(f.name, "main") { return "main"; }
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("ex_");
+    sb.push_str(f.name);
+    return str::from_slice(ar, sb.as_slice());
+}
+
 fn elaborate_fn(a: Allocator, ar: *Arena, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
     let param_tys = resolve_param_tys(a, ar, &f.params);
@@ -109,7 +122,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, f: *const Func) -> Tfunc {
         tier_hint: f.tier_hint, must_use: f.must_use, escapes_hatch: f.escapes_hatch, pos: f.pos,
     };
     return Tfunc {
-        tf_path: path, tf_func: tf_func, tf_mangled: f.name, tf_param_tys: param_tys,
+        tf_path: path, tf_func: tf_func, tf_mangled: mangle_fn(a, ar, f), tf_param_tys: param_tys,
         tf_ret_ty: ret_ty, tf_body: body, tf_lets: lets, tf_origin_pos: no_pos,
     };
 }
