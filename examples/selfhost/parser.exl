@@ -1879,6 +1879,80 @@ fn parse_else(s: *Parser) -> Option<Vec<Stmt>> {
     return Option::Some(parse_block(s));
 }
 
+// ===== Duplicate-key checks (parser-level, mirrors OCaml find_dup_key) =====
+
+// First string that repeats an earlier one (source order), else None.
+fn find_dup_str(xs: *const Vec<str>) -> Option<str> {
+    let n = xs.length();
+    let mut i = 0 as u32;
+    while i < n {
+        let xi = xs.get(i) orelse "";
+        let mut j = 0 as u32;
+        while j < i {
+            if str::eq(xi, xs.get(j) orelse "") {
+                let r: Option<str> = Option::Some(xi);
+                return r;
+            }
+            j = j + 1 as u32;
+        }
+        i = i + 1 as u32;
+    }
+    let none: Option<str> = Option::None;
+    return none;
+}
+
+// "duplicate <what> '<dup>' in <kind> '<container>'" — params / fields.
+fn fail_dup(s: *Parser, pos: Pos, what: str, dup: str, kind: str, container: str) {
+    let mut sb = StringBuilder::with_capacity(s.a, 96 as u32);
+    sb.push_str("duplicate "); sb.push_str(what); sb.push_str(" '"); sb.push_str(dup);
+    sb.push_str("' in "); sb.push_str(kind); sb.push_str(" '"); sb.push_str(container);
+    sb.push_str("'");
+    fail(s, pos, str::from_slice(s.ar, sb.as_slice()));
+}
+
+// "duplicate <what> '<dup>'" — type-parameter lists (no container).
+fn fail_dup_simple(s: *Parser, pos: Pos, what: str, dup: str) {
+    let none_tok: Option<Token> = Option::None;
+    efailx(s, pos, "duplicate ", what, " '", dup, "'", none_tok);
+}
+
+fn field_names(s: *Parser, fields: *const Vec<FieldDef>) -> Vec<str> {
+    let mut names: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    let n = fields.length();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < n { names.push(sl[i].name); i = i + 1 as u32; }
+    return names;
+}
+
+fn param_names(s: *Parser, params: *const Vec<Param>) -> Vec<str> {
+    let mut names: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
+    let n = params.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < n { names.push(sl[i].pname); i = i + 1 as u32; }
+    return names;
+}
+
+// Reject duplicate parameter names in a fn / extern-fn list.  `kind` tags
+// the decl shape ("function" / "extern fn"); `name_pos` points at the head.
+fn check_dup_params(s: *Parser, params: *const Vec<Param>, kind: str, name: str, name_pos: Pos) {
+    let names = param_names(s, params);
+    match find_dup_str(&names) {
+        Option::Some(d) => { fail_dup(s, name_pos, "parameter", d, kind, name); }
+        | Option::None => { }
+    }
+}
+
+// Reject `<T, T>` in a type-parameter list (after it is fully parsed).
+fn check_tparam_dups(s: *Parser, tparams: *const Vec<str>) {
+    if is_err(s) { return; }
+    match find_dup_str(tparams) {
+        Option::Some(d) => { fail_dup_simple(s, peek_pos(s), "type parameter", d); }
+        | Option::None => { }
+    }
+}
+
 // ===== Functions + items =====
 
 // Fills `tparams` with `<T, U, ...>` names (out-param — returning a struct
@@ -1889,12 +1963,18 @@ fn parse_else(s: *Parser) -> Option<Vec<Stmt>> {
 fn parse_tparams(s: *Parser, tparams: *Vec<str>) {
     if !peek_is(s, Token::Lt) { return; }
     bump(s);
+    if peek_is(s, Token::Gt) {
+        bump(s);
+        fail(s, peek_pos(s), "empty type parameter list <>");
+        return;
+    }
     let mut done = false;
     while !is_err(s) && !done {
         let ip = expect_ident(s, "type parameter name");
         tparams.push(ip.name);
         done = tparams_sep(s);
     }
+    check_tparam_dups(s, tparams);
 }
 
 fn tparams_sep(s: *Parser) -> bool {
@@ -1917,6 +1997,11 @@ fn tparams_sep(s: *Parser) -> bool {
 fn parse_tparams_bounded(s: *Parser, tparams: *Vec<str>, tbounds: *Vec<TraitBound>) {
     if !peek_is(s, Token::Lt) { return; }
     bump(s);
+    if peek_is(s, Token::Gt) {
+        bump(s);
+        fail(s, peek_pos(s), "empty type parameter list <>");
+        return;
+    }
     let mut done = false;
     while !is_err(s) && !done {
         let ip = expect_ident(s, "type parameter name");
@@ -1927,6 +2012,7 @@ fn parse_tparams_bounded(s: *Parser, tparams: *Vec<str>, tbounds: *Vec<TraitBoun
         }
         if !is_err(s) { done = tparams_sep(s); }
     }
+    check_tparam_dups(s, tparams);
 }
 
 // One or more `+`-separated bounds on a single type parameter.
@@ -2040,6 +2126,7 @@ fn parse_function(s: *Parser, is_pub: bool) -> Func {
     let mut tbounds: Vec<TraitBound> = Vec::with_capacity(s.a, 8 as u32);
     parse_tparams_bounded(s, &tparams, &tbounds);
     let params = parse_params(s);
+    check_dup_params(s, &params, "function", np.name, np.pos);
     let ret_ty = parse_ret_ty(s);
     expect(s, Token::LBrace);
     let body = parse_stmts(s);
@@ -2114,6 +2201,11 @@ fn parse_struct_decl(s: *Parser, is_pub: bool) -> StructDecl {
     parse_tparams(s, &stparams);
     expect(s, Token::LBrace);
     let fields = parse_fielddefs(s, Token::RBrace, "field name in struct");
+    let snames = field_names(s, &fields);
+    match find_dup_str(&snames) {
+        Option::Some(d) => { fail_dup(s, np.pos, "field", d, "struct", np.name); }
+        | Option::None => { }
+    }
     let no_str: Option<str> = Option::None;
     let derives: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     return StructDecl {
@@ -2494,9 +2586,11 @@ fn collect_use_segments(s: *Parser, prefix: *Vec<str>) -> int {
 }
 
 fn use_group(s: *Parser, out: *Vec<Item>, prefix: *const Vec<str>, is_pub: bool, p: Pos) {
+    let mut names: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     let mut done = false;
     while !is_err(s) && !done {
         let np = expect_name(s, "expected identifier in 'use' group");
+        names.push(np.name);
         out.push(mk_use_seg(s, prefix, np.name, is_pub, p));
         if peek_is(s, Token::RBrace) { bump(s); done = true; }
         else if peek_is(s, Token::Comma) {
@@ -2508,6 +2602,13 @@ fn use_group(s: *Parser, out: *Vec<Item>, prefix: *const Vec<str>, is_pub: bool,
         }
     }
     expect(s, Token::Semicolon);
+    match find_dup_str(&names) {
+        Option::Some(d) => {
+            let none_tok: Option<Token> = Option::None;
+            efailx(s, p, "duplicate name '", d, "' in 'use' group", "", "", none_tok);
+        }
+        | Option::None => { }
+    }
 }
 
 fn mk_use_path(s: *Parser, prefix: *const Vec<str>, wild: bool, is_pub: bool, p: Pos) -> Item {
@@ -2603,6 +2704,7 @@ fn parse_extern_fn_after_keyword(s: *Parser) -> Func {
     }
     let mut is_variadic = false;
     let params = parse_extern_params(s, np.name, &is_variadic);
+    check_dup_params(s, &params, "extern fn", np.name, np.pos);
     validate_extern_regs(s, &params, np.pos);
     let ret_ty = parse_ret_ty(s);
     match peek(s) {
@@ -2711,6 +2813,11 @@ fn parse_extern_struct_fields(s: *Parser, name: str, pos: Pos) -> Option<Vec<Fie
             let none_tok: Option<Token> = Option::None;
             efailx(s, pos, "'extern struct ", name, " {}' is empty — use `extern struct ",
                    name, ";` for opaque types", none_tok);
+        }
+        let xnames = field_names(s, &fields);
+        match find_dup_str(&xnames) {
+            Option::Some(d) => { fail_dup(s, pos, "field", d, "extern struct", name); }
+            | Option::None => { }
         }
         return Option::Some(fields);
     }
@@ -2903,6 +3010,7 @@ fn parse_attributed(s: *Parser, out: *Vec<Item>) {
     while !is_err(s) && !loop_done {
         if !peek_is(s, Token::At) { loop_done = true; }
         else {
+            let at_pos = peek_pos(s);
             bump(s);
             let an = expect_ident(s, "attribute name after '@'");
             let nm = an.name;
@@ -2910,7 +3018,7 @@ fn parse_attributed(s: *Parser, out: *Vec<Item>) {
                 expect(s, Token::LParen);
                 let path = expect_string(s, "string literal in '@c_include(\"...\")'");
                 expect(s, Token::RParen);
-                out.push(Item::CInclude { path: path, pos: an.pos });
+                out.push(Item::CInclude { path: path, pos: at_pos });
                 standalone = true;
                 loop_done = true;
             } else if str::eq(nm, "doc") {
@@ -2937,10 +3045,10 @@ fn parse_attributed(s: *Parser, out: *Vec<Item>) {
                 expect(s, Token::RParen);
                 deco.amiga_lib = Option::Some(bn.name);
             } else if str::eq(nm, "derive") {
-                parse_derive_list(s, an.pos, &deco.derives);
+                parse_derive_list(s, at_pos, &deco.derives);
             } else {
                 let none_tok: Option<Token> = Option::None;
-                efailx(s, an.pos, "unknown attribute '@", nm,
+                efailx(s, at_pos, "unknown attribute '@", nm,
                        "' (only '@c_include', '@tier', '@must_use', '@escapes', '@move', '@debug', '@doc', '@derive' and '@amiga_lib' are supported)",
                        "", "", none_tok);
                 loop_done = true;

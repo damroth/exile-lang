@@ -458,11 +458,12 @@ selfhost-port-ast: host-selfhost-parser
 	if [ $$fail -eq 0 ]; then echo "selfhost-port-ast: clean (no expr/stmt regressions)"; else exit 1; fi
 
 # Parser error parity with the lexer's `selfhost-port-errors`: each fixture
-# in parse_errors/ holds one malformed expr/stmt/type/pattern, reachable by
-# the ported grammar (NOT a declaration).  Compare the port's diagnostic
-# against the first line of the OCaml `show_error` output.  The dynamic
-# token spelling (`got identifier 'x'` / `integer N` / `string "s"`) is
-# built into the message, so these match byte-for-byte.
+# in parse_errors/ holds one malformed construct (expr/stmt/type/pattern or
+# declaration — extern/attribute/generic-bound/duplicate-key), reachable by
+# the ported grammar.  Compare the port's diagnostic against the first line
+# of the OCaml `show_error` output.  The dynamic token spelling (`got
+# identifier 'x'` / `integer N` / `string "s"`) is built into the message,
+# so these match byte-for-byte.
 selfhost-port-parse-errors: host-selfhost-parser
 	@fail=0; n=0; \
 	for f in examples/selfhost/parse_errors/*.exl; do \

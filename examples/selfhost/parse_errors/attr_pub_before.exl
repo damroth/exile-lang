@@ -1,0 +1,2 @@
+pub @derive(Eq)
+struct S { a: int }

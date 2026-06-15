@@ -1,0 +1,1 @@
+extern fn p(a: int, a: int);
