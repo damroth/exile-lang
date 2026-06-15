@@ -498,28 +498,40 @@ selfhost-port-parse-errors: host-selfhost-parser
 #                 a param/return type, or the mono-instances footprint is
 #                 wrong, OR the port emitted a non-empty body that does not
 #                 match — a real regression, NOT deferred work.  Printed.
-# A correctly elaborated body lands in `clean`; a wrong one surfaces as
-# SIG-DIVERGE (port's non-empty body != masked oracle), so body regressions
-# cannot hide in the deferred bucket as elaboration fills in.  Examples
+# Every unsupported construct — expression OR statement — lowers to the
+# `null :ty c_void` deferral marker, so incompleteness is visible.  That
+# makes body-divergence honestly classifiable: when the signature/footprint
+# match (masked-both) but the bodies differ, the port output MUST carry a
+# marker for the divergence to be deferred work.  A body that differs with
+# NO marker is a real elaboration bug (a dropped/mis-elaborated statement
+# that looks complete) — flagged BODY-REGRESSION, not hidden in body-pending.
+# Buckets: clean / body-pending (sig+footprint identical, body differs but
+# every gap is a visible marker) / BODY-REGRESSION (sig identical, body
+# differs, NO marker) / SIG-DIVERGE (differs after body-masking).  Examples
 # whose oracle dump is empty (amiga-only / typecheck-rejected) are skipped.
 selfhost-port-ir: host-selfhost-tc
-	@clean=0; defer=0; sig=0; skip=0; fail=0; \
+	@clean=0; defer=0; bodyregr=0; sig=0; skip=0; fail=0; \
 	mask='s/(body .*$$/(body ))/'; \
 	for name in $(EXAMPLE_NAMES); do \
 		[ -f examples/$$name.exl ] || continue; \
-		oc=$$(mktemp); pt=$$(mktemp); ocm=$$(mktemp); \
+		oc=$$(mktemp); pt=$$(mktemp); ocm=$$(mktemp); ptm=$$(mktemp); \
 		$(EXILE) --emit-typed-ir --user-only examples/$$name.exl >$$oc 2>/dev/null; \
 		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_tc >$$pt 2>/dev/null; \
-		if [ ! -s $$oc ]; then skip=$$((skip+1)); rm $$oc $$pt $$ocm; continue; fi; \
-		sed "$$mask" $$oc >$$ocm; \
+		if [ ! -s $$oc ]; then skip=$$((skip+1)); rm $$oc $$pt $$ocm $$ptm; continue; fi; \
+		sed "$$mask" $$oc >$$ocm; sed "$$mask" $$pt >$$ptm; \
 		if diff -q $$oc $$pt >/dev/null; then clean=$$((clean+1)); \
-		elif diff -q $$ocm $$pt >/dev/null; then defer=$$((defer+1)); \
+		elif diff -q $$ocm $$ptm >/dev/null; then \
+			if grep -q 'null :ty c_void' $$pt; then defer=$$((defer+1)); \
+			else bodyregr=$$((bodyregr+1)); fail=1; \
+				echo "selfhost-port-ir: BODY-REGRESSION $$name (sig OK, body differs, no deferral marker)"; \
+				diff $$oc $$pt | head -4; fi; \
 		else sig=$$((sig+1)); \
 			echo "selfhost-port-ir: SIG-DIVERGE $$name"; \
-			diff $$ocm $$pt | head -4; fi; \
-		rm $$oc $$pt $$ocm; \
+			diff $$ocm $$ptm | head -4; fi; \
+		rm $$oc $$pt $$ocm $$ptm; \
 	done; \
-	echo "selfhost-port-ir: $$clean clean; $$defer body-pending (sig+footprint byte-identical); $$sig SIG-DIVERGE; $$skip skipped (oracle empty)"
+	echo "selfhost-port-ir: $$clean clean; $$defer body-pending (marked); $$bodyregr BODY-REGRESSION; $$sig SIG-DIVERGE; $$skip skipped (oracle empty)"; \
+	if [ $$bodyregr -ne 0 ]; then exit 1; fi
 
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io

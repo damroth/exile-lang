@@ -86,6 +86,262 @@ fn copy_params(a: Allocator, src: *const Vec<Param>) -> Vec<Param> {
     return out;
 }
 
+// ===== Body elaboration (slice 2) =====
+//
+// Elaborates expressions / statements into typed IR (`Texpr` / `Tstmt`).
+// SLICE 2 reach: scalar expressions (int / bool / str / null / float
+// literals, var lookup, unary neg/bitnot/not, binops, `println`/`print`
+// builtins) and `let` / `expr-stmt` statements.  Control flow, user calls,
+// method calls, aggregates, etc. fall to a `c_void` placeholder so the
+// enclosing fn diverges (gate: SIG-DIVERGE) rather than crashing.
+
+fn te_node(ar: *Arena, node: TexprNode, ty: *const Typ, pos: Pos) -> *const Texpr {
+    let n: *Texpr = ar.alloc_borrowed();
+    *n = Texpr { e: node, ty: ty, pos: pos };
+    return n as *const Texpr;
+}
+
+fn t_i32(ar: *Arena) -> *const Typ {
+    return ty_node(ar, Typ::TInt(IntKind { is_signed: true, width: IntWidth::W32 }));
+}
+fn t_bool(ar: *Arena) -> *const Typ { return ty_node(ar, Typ::TBool); }
+fn t_str(ar: *Arena) -> *const Typ { return ty_node(ar, Typ::TString); }
+
+// Deferral marker: an unsupported construct lowers to `null :ty c_void`
+// (the oracle never types `null` as `c_void`, so it is unambiguous).  Used
+// for BOTH unsupported expressions AND unsupported statements so that
+// incompleteness is always VISIBLE at the source / dump level — a dropped
+// statement leaves a `(expr-stmt null :ty c_void)` placeholder rather than
+// silently vanishing, keeping the deferred-work-must-be-visible invariant.
+fn defer_expr(ar: *Arena, p: Pos) -> *const Texpr {
+    return te_node(ar, TexprNode::TNullLit, ty_node(ar, Typ::TCVoid), p);
+}
+fn zero_pos() -> Pos { return Pos { line: 0 as int, col: 0 as int, file: "" }; }
+
+fn none_ty() -> Option<*const Typ> {
+    let n: Option<*const Typ> = Option::None;
+    return n;
+}
+
+fn is_tint(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(_k) => true
+        | _e => false
+    };
+}
+
+// Most recent binding wins (shadowing): scan the env tail-first.
+fn env_lookup(env: *const Vec<FieldTy>, name: str) -> Option<*const Typ> {
+    let n = env.length();
+    let sl = env.as_slice();
+    let mut i = n;
+    while i > 0 as u32 {
+        i = i - 1 as u32;
+        if str::eq(sl[i].name, name) { return Option::Some(sl[i].ty); }
+    }
+    return none_ty();
+}
+
+// An int literal adopts a fitting `TInt` expected type (bidirectional),
+// else defaults to i32.  (The fit check is deferred — examples are valid.)
+fn int_lit_ty(ar: *Arena, expected: Option<*const Typ>) -> *const Typ {
+    return match expected {
+        Option::Some(t) => pick_int_ty(ar, t)
+        | Option::None => t_i32(ar)
+    };
+}
+fn pick_int_ty(ar: *Arena, t: *const Typ) -> *const Typ {
+    if is_tint(t) { return t; }
+    return t_i32(ar);
+}
+
+fn elab_var(ar: *Arena, env: *const Vec<FieldTy>, name: str, p: Pos) -> *const Texpr {
+    let ty = match env_lookup(env, name) {
+        Option::Some(t) => t
+        | Option::None => ty_node(ar, Typ::TCVoid)
+    };
+    return te_node(ar, TexprNode::TVar(name), ty, p);
+}
+
+fn elab_neg(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+            expected: Option<*const Typ>, sub: *const Expr, p: Pos) -> *const Texpr {
+    let s = elab_expr(a, ar, env, expected, sub);
+    return te_node(ar, TexprNode::TNeg(s), s.ty, p);
+}
+fn elab_bitnot(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+               expected: Option<*const Typ>, sub: *const Expr, p: Pos) -> *const Texpr {
+    let s = elab_expr(a, ar, env, expected, sub);
+    return te_node(ar, TexprNode::TBitNot(s), s.ty, p);
+}
+fn elab_not(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+            sub: *const Expr, p: Pos) -> *const Texpr {
+    let s = elab_expr(a, ar, env, none_ty(), sub);
+    return te_node(ar, TexprNode::TNot(s), t_bool(ar), p);
+}
+
+// Push an int expected type into binop operands: arithmetic / bitwise →
+// both sides; shift → left only; comparison / logical → neither.
+fn left_expected(op: BinOp, expected: Option<*const Typ>) -> Option<*const Typ> {
+    return match op {
+        BinOp::Add => expected | BinOp::Sub => expected | BinOp::Mul => expected
+        | BinOp::Div => expected | BinOp::Mod => expected | BinOp::BitAnd => expected
+        | BinOp::BitOr => expected | BinOp::BitXor => expected
+        | BinOp::Shl => expected | BinOp::Shr => expected
+        | _e => none_ty()
+    };
+}
+fn right_expected(op: BinOp, expected: Option<*const Typ>) -> Option<*const Typ> {
+    return match op {
+        BinOp::Add => expected | BinOp::Sub => expected | BinOp::Mul => expected
+        | BinOp::Div => expected | BinOp::Mod => expected | BinOp::BitAnd => expected
+        | BinOp::BitOr => expected | BinOp::BitXor => expected
+        | _e => none_ty()
+    };
+}
+
+// Arithmetic / bitwise / shift take the left operand's type (matching-type
+// case; mixed-width promotion deferred); comparisons / logical → bool.
+fn binop_result_ty(ar: *Arena, op: BinOp, l: *const Texpr) -> *const Typ {
+    return match op {
+        BinOp::Lt => t_bool(ar) | BinOp::Gt => t_bool(ar) | BinOp::LtEq => t_bool(ar)
+        | BinOp::GtEq => t_bool(ar) | BinOp::EqEq => t_bool(ar) | BinOp::NotEq => t_bool(ar)
+        | BinOp::And => t_bool(ar) | BinOp::Or => t_bool(ar)
+        | _e => l.ty
+    };
+}
+
+fn elab_binop(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>, expected: Option<*const Typ>,
+              op: BinOp, l: *const Expr, r: *const Expr, p: Pos) -> *const Texpr {
+    let l2 = elab_expr(a, ar, env, left_expected(op, expected), l);
+    let r2 = elab_expr(a, ar, env, right_expected(op, expected), r);
+    let ty = binop_result_ty(ar, op, l2);
+    return te_node(ar, TexprNode::TBinOp(op, l2, r2), ty, p);
+}
+
+fn elab_args(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+             args: *const Vec<*const Expr>) -> Vec<*const Texpr> {
+    let mut out: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    let n = args.length();
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        out.push(elab_expr(a, ar, env, none_ty(), sl[i]));
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// `expr as T` — the sub keeps its own type; the cast node carries the
+// target annotation and takes the resolved annotation type.
+fn elab_cast(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+             sub: *const Expr, ann: *const TypeAnn, p: Pos) -> *const Texpr {
+    let s = elab_expr(a, ar, env, none_ty(), sub);
+    let ty = resolve_type_ann(a, ar, ann);
+    return te_node(ar, TexprNode::TCast(s, ann), ty, p);
+}
+
+fn elab_call(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+             callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    if callee.length() == 1 as u32 {
+        let name = callee.get(0 as u32) orelse "";
+        if str::eq(name, "println") || str::eq(name, "print") {
+            let targs = elab_args(a, ar, env, args);
+            return te_node(ar, TexprNode::TBuiltinCall { name: name, args: targs }, t_i32(ar), p);
+        }
+    }
+    return defer_expr(ar, p);
+}
+
+fn elab_expr(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+             expected: Option<*const Typ>, e: *const Expr) -> *const Texpr {
+    let p = expr_pos(e);
+    return match *e {
+        Expr::IntLit(n, _q) => te_node(ar, TexprNode::TIntLit(n), int_lit_ty(ar, expected), p)
+        | Expr::BoolLit(b, _q) => te_node(ar, TexprNode::TBoolLit(b), t_bool(ar), p)
+        | Expr::StringLit(s, _q) => te_node(ar, TexprNode::TStringLit(s), t_str(ar), p)
+        | Expr::NullLit(_q) => te_node(ar, TexprNode::TNullLit, ty_node(ar, Typ::TNullPtr), p)
+        | Expr::FloatLit(f, w, _q) => te_node(ar, TexprNode::TFloatLit(f, w), ty_node(ar, Typ::TFloat(w)), p)
+        | Expr::Var(name, _q) => elab_var(ar, env, name, p)
+        | Expr::Neg(sub, _q) => elab_neg(a, ar, env, expected, sub, p)
+        | Expr::BitNot(sub, _q) => elab_bitnot(a, ar, env, expected, sub, p)
+        | Expr::Not(sub, _q) => elab_not(a, ar, env, sub, p)
+        | Expr::BinOp(op, l, r, _q) => elab_binop(a, ar, env, expected, op, l, r, p)
+        | Expr::Cast(sub, ann, _q) => elab_cast(a, ar, env, sub, ann, p)
+        | Expr::Call { callee, args } => elab_call(a, ar, env, &callee, &args, p)
+        | _other => defer_expr(ar, p)
+    };
+}
+
+fn let_expected(a: Allocator, ar: *Arena, ty_ann: Option<*const TypeAnn>) -> Option<*const Typ> {
+    return match ty_ann {
+        Option::Some(t) => Option::Some(resolve_type_ann(a, ar, t))
+        | Option::None => none_ty()
+    };
+}
+
+// `return e` elaborates `e` against the fn's declared return type so a bare
+// literal adopts the annotated width; `return;` yields no value.
+fn none_texpr() -> Option<*const Texpr> {
+    let n: Option<*const Texpr> = Option::None;
+    return n;
+}
+
+fn elab_return_val(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+                   ret: Option<*const Typ>, val: Option<*const Expr>) -> Option<*const Texpr> {
+    return match val {
+        Option::Some(e) => Option::Some(elab_expr(a, ar, env, ret, e))
+        | Option::None => none_texpr()
+    };
+}
+
+fn elab_stmt(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+             s: *const Stmt, out: *Vec<Tstmt>) {
+    match *s {
+        Stmt::Let { name, value, ty_ann } => {
+            let exp = let_expected(a, ar, ty_ann);
+            let vl = elab_expr(a, ar, env, exp, value);
+            env.push(FieldTy { name: name, ty: vl.ty });
+            out.push(Tstmt::TLet { name: name, value: vl, pos: expr_pos(value) });
+        }
+        | Stmt::ExprStmt(e) => {
+            let ve = elab_expr(a, ar, env, none_ty(), e);
+            out.push(Tstmt::TExprStmt(ve));
+        }
+        | Stmt::Return(val, pos) => {
+            let tv = elab_return_val(a, ar, env, ret, val);
+            out.push(Tstmt::TReturn { value: tv, pos: pos });
+        }
+        | _other => {
+            // Unsupported statement — emit a VISIBLE deferral marker rather
+            // than silently dropping it (mirrors the expr-level marker).
+            out.push(Tstmt::TExprStmt(defer_expr(ar, zero_pos())));
+        }
+    }
+}
+
+fn elab_body(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+             body: *const Vec<Stmt>) -> Vec<Tstmt> {
+    let mut out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let n = body.length();
+    let sl = body.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        elab_stmt(a, ar, env, ret, &sl[i], &out);
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+fn build_param_env(a: Allocator, ar: *Arena, params: *const Vec<Param>, env: *Vec<FieldTy>) {
+    let n = params.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        env.push(FieldTy { name: sl[i].pname, ty: resolve_type_ann(a, ar, sl[i].pty) });
+        i = i + 1 as u32;
+    }
+}
+
 // ===== Function elaboration =====
 
 // The emitted C symbol (mirrors OCaml `ir.mangle` + the flatten-time rule):
@@ -105,7 +361,9 @@ fn elaborate_fn(a: Allocator, ar: *Arena, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
     let param_tys = resolve_param_tys(a, ar, &f.params);
     let ret_ty = resolve_ret(a, ar, f.ret_ty);
-    let body: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    build_param_env(a, ar, &f.params, &env);
+    let body = elab_body(a, ar, &env, ret_ty, &f.body);
     let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let no_pos: Option<Pos> = Option::None;
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
