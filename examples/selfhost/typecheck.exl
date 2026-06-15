@@ -155,6 +155,31 @@ fn pick_int_ty(ar: *Arena, t: *const Typ) -> *const Typ {
     return t_i32(ar);
 }
 
+// ===== Global function signature table (for direct calls) =====
+//
+// Built in a first pass over the items so a call `foo(...)` resolves to the
+// mangled C symbol + return type before any body is elaborated.  Holds only
+// what a call site needs; `GlobalFn` is fully copyable (str/str/Option-ptr).
+struct GlobalFn {
+    name: str,
+    mangled: str,
+    ret: Option<*const Typ>,
+}
+
+fn global_lookup(g: *const Vec<GlobalFn>, name: str) -> Option<GlobalFn> {
+    let n = g.length();
+    let sl = g.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].name, name) {
+            return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, ret: sl[i].ret });
+        }
+        i = i + 1 as u32;
+    }
+    let none: Option<GlobalFn> = Option::None;
+    return none;
+}
+
 fn elab_var(ar: *Arena, env: *const Vec<FieldTy>, name: str, p: Pos) -> *const Texpr {
     let ty = match env_lookup(env, name) {
         Option::Some(t) => t
@@ -163,19 +188,19 @@ fn elab_var(ar: *Arena, env: *const Vec<FieldTy>, name: str, p: Pos) -> *const T
     return te_node(ar, TexprNode::TVar(name), ty, p);
 }
 
-fn elab_neg(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+fn elab_neg(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
             expected: Option<*const Typ>, sub: *const Expr, p: Pos) -> *const Texpr {
-    let s = elab_expr(a, ar, env, expected, sub);
+    let s = elab_expr(a, ar, g, env, expected, sub);
     return te_node(ar, TexprNode::TNeg(s), s.ty, p);
 }
-fn elab_bitnot(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+fn elab_bitnot(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
                expected: Option<*const Typ>, sub: *const Expr, p: Pos) -> *const Texpr {
-    let s = elab_expr(a, ar, env, expected, sub);
+    let s = elab_expr(a, ar, g, env, expected, sub);
     return te_node(ar, TexprNode::TBitNot(s), s.ty, p);
 }
-fn elab_not(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+fn elab_not(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
             sub: *const Expr, p: Pos) -> *const Texpr {
-    let s = elab_expr(a, ar, env, none_ty(), sub);
+    let s = elab_expr(a, ar, g, env, none_ty(), sub);
     return te_node(ar, TexprNode::TNot(s), t_bool(ar), p);
 }
 
@@ -210,22 +235,22 @@ fn binop_result_ty(ar: *Arena, op: BinOp, l: *const Texpr) -> *const Typ {
     };
 }
 
-fn elab_binop(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>, expected: Option<*const Typ>,
+fn elab_binop(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>, expected: Option<*const Typ>,
               op: BinOp, l: *const Expr, r: *const Expr, p: Pos) -> *const Texpr {
-    let l2 = elab_expr(a, ar, env, left_expected(op, expected), l);
-    let r2 = elab_expr(a, ar, env, right_expected(op, expected), r);
+    let l2 = elab_expr(a, ar, g, env, left_expected(op, expected), l);
+    let r2 = elab_expr(a, ar, g, env, right_expected(op, expected), r);
     let ty = binop_result_ty(ar, op, l2);
     return te_node(ar, TexprNode::TBinOp(op, l2, r2), ty, p);
 }
 
-fn elab_args(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+fn elab_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
              args: *const Vec<*const Expr>) -> Vec<*const Texpr> {
     let mut out: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     let n = args.length();
     let sl = args.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        out.push(elab_expr(a, ar, env, none_ty(), sl[i]));
+        out.push(elab_expr(a, ar, g, env, none_ty(), sl[i]));
         i = i + 1 as u32;
     }
     return out;
@@ -233,26 +258,52 @@ fn elab_args(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
 
 // `expr as T` — the sub keeps its own type; the cast node carries the
 // target annotation and takes the resolved annotation type.
-fn elab_cast(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+fn elab_cast(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
              sub: *const Expr, ann: *const TypeAnn, p: Pos) -> *const Texpr {
-    let s = elab_expr(a, ar, env, none_ty(), sub);
+    let s = elab_expr(a, ar, g, env, none_ty(), sub);
     let ty = resolve_type_ann(a, ar, ann);
     return te_node(ar, TexprNode::TCast(s, ann), ty, p);
 }
 
-fn elab_call(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
-             callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
-    if callee.length() == 1 as u32 {
-        let name = callee.get(0 as u32) orelse "";
-        if str::eq(name, "println") || str::eq(name, "print") {
-            let targs = elab_args(a, ar, env, args);
-            return te_node(ar, TexprNode::TBuiltinCall { name: name, args: targs }, t_i32(ar), p);
-        }
-    }
-    return defer_expr(ar, p);
+// A call's result type: the declared return type, or — for a void fn used
+// in statement position (the common case) — i32, matching the oracle's
+// `None when allow_void -> t_i32`.
+fn ret_or_void(ar: *Arena, ret: Option<*const Typ>) -> *const Typ {
+    return match ret {
+        Option::Some(t) => t
+        | Option::None => t_i32(ar)
+    };
 }
 
-fn elab_expr(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+// Direct call to a user / top-level fn: mangled C symbol + return type from
+// the global table.  Arg-coercion against param types is deferred.
+fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+                gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let targs = elab_args(a, ar, g, env, args);
+    let ty = ret_or_void(ar, gf.ret);
+    return te_node(ar, TexprNode::TCall { mangled: gf.mangled, args: targs }, ty, p);
+}
+
+fn elab_user_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+                      name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    return match global_lookup(g, name) {
+        Option::Some(gf) => mk_user_call(a, ar, g, env, gf, args, p)
+        | Option::None => defer_expr(ar, p)
+    };
+}
+
+fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+             callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    if callee.length() != 1 as u32 { return defer_expr(ar, p); }
+    let name = callee.get(0 as u32) orelse "";
+    if str::eq(name, "println") || str::eq(name, "print") {
+        let targs = elab_args(a, ar, g, env, args);
+        return te_node(ar, TexprNode::TBuiltinCall { name: name, args: targs }, t_i32(ar), p);
+    }
+    return elab_user_or_defer(a, ar, g, env, name, args, p);
+}
+
+fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, e: *const Expr) -> *const Texpr {
     let p = expr_pos(e);
     return match *e {
@@ -262,12 +313,14 @@ fn elab_expr(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
         | Expr::NullLit(_q) => te_node(ar, TexprNode::TNullLit, ty_node(ar, Typ::TNullPtr), p)
         | Expr::FloatLit(f, w, _q) => te_node(ar, TexprNode::TFloatLit(f, w), ty_node(ar, Typ::TFloat(w)), p)
         | Expr::Var(name, _q) => elab_var(ar, env, name, p)
-        | Expr::Neg(sub, _q) => elab_neg(a, ar, env, expected, sub, p)
-        | Expr::BitNot(sub, _q) => elab_bitnot(a, ar, env, expected, sub, p)
-        | Expr::Not(sub, _q) => elab_not(a, ar, env, sub, p)
-        | Expr::BinOp(op, l, r, _q) => elab_binop(a, ar, env, expected, op, l, r, p)
-        | Expr::Cast(sub, ann, _q) => elab_cast(a, ar, env, sub, ann, p)
-        | Expr::Call { callee, args } => elab_call(a, ar, env, &callee, &args, p)
+        | Expr::Neg(sub, _q) => elab_neg(a, ar, g, env, expected, sub, p)
+        | Expr::BitNot(sub, _q) => elab_bitnot(a, ar, g, env, expected, sub, p)
+        | Expr::Not(sub, _q) => elab_not(a, ar, g, env, sub, p)
+        | Expr::BinOp(op, l, r, _q) => elab_binop(a, ar, g, env, expected, op, l, r, p)
+        | Expr::Cast(sub, ann, _q) => elab_cast(a, ar, g, env, sub, ann, p)
+        | Expr::Call { callee, args } => elab_call(a, ar, g, env, &callee, &args, p)
+        | Expr::If { cond, then_blk, else_blk } =>
+            mk_if_expr(a, ar, g, env, expected, cond, &then_blk, else_blk, p)
         | _other => defer_expr(ar, p)
     };
 }
@@ -286,10 +339,10 @@ fn none_texpr() -> Option<*const Texpr> {
     return n;
 }
 
-fn elab_return_val(a: Allocator, ar: *Arena, env: *const Vec<FieldTy>,
+fn elab_return_val(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
                    ret: Option<*const Typ>, val: Option<*const Expr>) -> Option<*const Texpr> {
     return match val {
-        Option::Some(e) => Option::Some(elab_expr(a, ar, env, ret, e))
+        Option::Some(e) => Option::Some(elab_expr(a, ar, g, env, ret, e))
         | Option::None => none_texpr()
     };
 }
@@ -299,10 +352,10 @@ fn empty_tstmts(a: Allocator) -> Vec<Tstmt> {
     return v;
 }
 
-fn elab_else_body(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_else_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                   else_blk: Option<Vec<Stmt>>) -> Vec<Tstmt> {
     return match else_blk {
-        Option::Some(blk) => elab_body(a, ar, env, ret, &blk)
+        Option::Some(blk) => elab_body(a, ar, g, env, ret, &blk)
         | Option::None => empty_tstmts(a)
     };
 }
@@ -310,37 +363,150 @@ fn elab_else_body(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*con
 // An expression used in statement (void) position.  `if` lowers to the
 // void `TIf` statement (branches are full stmt-blocks, sharing the env —
 // C hoists branch-local lets); everything else becomes a `TExprStmt`.
-fn elab_stmt_pos(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_stmt_pos(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                  e: *const Expr, out: *Vec<Tstmt>) {
     match *e {
         Expr::If { cond, then_blk, else_blk } => {
-            let tcond = elab_expr(a, ar, env, none_ty(), cond);
-            let tthen = elab_body(a, ar, env, ret, &then_blk);
-            let telse = elab_else_body(a, ar, env, ret, else_blk);
+            let tcond = elab_expr(a, ar, g, env, none_ty(), cond);
+            let tthen = elab_body(a, ar, g, env, ret, &then_blk);
+            let telse = elab_else_body(a, ar, g, env, ret, else_blk);
             out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
         }
         | _other => {
-            let ve = elab_expr(a, ar, env, none_ty(), e);
+            let ve = elab_expr(a, ar, g, env, none_ty(), e);
             out.push(Tstmt::TExprStmt(ve));
         }
     }
 }
 
-fn elab_stmt(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn is_some_ty(o: Option<*const Typ>) -> bool {
+    return match o { Option::Some(_t) => true | Option::None => false };
+}
+
+fn is_tail_stmt(s: *const Stmt) -> bool {
+    return match *s { Stmt::Tail(_e) => true | _other => false };
+}
+
+// A block yields a VALUE (vs diverging via returns) when its last statement
+// is a trailing expression (`Tail`).  Distinguishes a value-`if` (lowered to
+// `if-expr`) from a control-flow `if` whose branches `return`.
+fn block_is_value(blk: *const Vec<Stmt>) -> bool {
+    let n = blk.length();
+    if n == 0 as u32 { return false; }
+    let sl = blk.as_slice();
+    return is_tail_stmt(&sl[n - 1 as u32]);
+}
+
+// ===== Value-position elaboration (if-expr) =====
+//
+// A value-position `if` lowers to `TIfExpr` — handled directly in
+// `elab_expr` (statement-position `if` is caught by `elab_stmt_pos` first).
+
+// The trailing value of a single-`Tail` block; multi-statement value blocks
+// are deferred (a visible marker) for now.
+fn block_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+               expected: Option<*const Typ>, blk: *const Vec<Stmt>) -> *const Texpr {
+    if blk.length() != 1 as u32 { return defer_expr(ar, zero_pos()); }
+    let sl = blk.as_slice();
+    return tail_or_defer(a, ar, g, env, expected, &sl[0 as u32]);
+}
+fn tail_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+                 expected: Option<*const Typ>, s: *const Stmt) -> *const Texpr {
+    return match *s {
+        Stmt::Tail(e) => elab_expr(a, ar, g, env, expected, e)
+        | _other => defer_expr(ar, zero_pos())
+    };
+}
+fn else_block_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+                    expected: Option<*const Typ>, else_blk: Option<Vec<Stmt>>) -> *const Texpr {
+    return match else_blk {
+        Option::Some(blk) => block_value(a, ar, g, env, expected, &blk)
+        | Option::None => defer_expr(ar, zero_pos())
+    };
+}
+
+fn mk_if_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+              expected: Option<*const Typ>, cond: *const Expr, then_blk: *const Vec<Stmt>,
+              else_blk: Option<Vec<Stmt>>, p: Pos) -> *const Texpr {
+    let tcond = elab_expr(a, ar, g, env, none_ty(), cond);
+    let tthen = block_value(a, ar, g, env, expected, then_blk);
+    let telse = else_block_value(a, ar, g, env, expected, else_blk);
+    return te_node(ar, TexprNode::TIfExpr { cond: tcond, then_val: tthen, else_val: telse }, tthen.ty, p);
+}
+
+// A trailing block value in a return-typed fn is an implicit `return`.  A
+// value-`if` returns an `if-expr`; a control-flow `if` (diverging branches)
+// stays a `TIf` statement; anything else returns its value.
+fn elab_tail_if(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+                cond: *const Expr, then_blk: *const Vec<Stmt>, else_blk: Option<Vec<Stmt>>, p: Pos, out: *Vec<Tstmt>) {
+    if block_is_value(then_blk) {
+        let ifx = mk_if_expr(a, ar, g, env, ret, cond, then_blk, else_blk, p);
+        out.push(Tstmt::TReturn { value: Option::Some(ifx), pos: zero_pos() });
+    } else {
+        let tcond = elab_expr(a, ar, g, env, none_ty(), cond);
+        let tthen = elab_body(a, ar, g, env, ret, then_blk);
+        let telse = elab_else_body(a, ar, g, env, ret, else_blk);
+        out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
+    }
+}
+
+fn elab_tail_ret(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+                 e: *const Expr, out: *Vec<Tstmt>) {
+    let p = expr_pos(e);
+    match *e {
+        Expr::If { cond, then_blk, else_blk } => { elab_tail_if(a, ar, g, env, ret, cond, &then_blk, else_blk, p, out); }
+        | _other => {
+            let tv = elab_expr(a, ar, g, env, ret, e);
+            out.push(Tstmt::TReturn { value: Option::Some(tv), pos: zero_pos() });
+        }
+    }
+}
+
+// A trailing expression: an implicit `return` in a return-typed fn, else a
+// void statement (`if` → `TIf`, otherwise `TExprStmt`).
+fn elab_tail(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+             e: *const Expr, out: *Vec<Tstmt>) {
+    if is_some_ty(ret) { elab_tail_ret(a, ar, g, env, ret, e, out); }
+    else { elab_stmt_pos(a, ar, g, env, ret, e, out); }
+}
+
+fn copy_strs(a: Allocator, src: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let n = src.length();
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+
+fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              s: *const Stmt, out: *Vec<Tstmt>) {
     match *s {
         Stmt::Let { name, value, ty_ann } => {
             let exp = let_expected(a, ar, ty_ann);
-            let vl = elab_expr(a, ar, env, exp, value);
+            let vl = elab_expr(a, ar, g, env, exp, value);
             env.push(FieldTy { name: name, ty: vl.ty });
             out.push(Tstmt::TLet { name: name, value: vl, pos: expr_pos(value) });
         }
-        | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, env, ret, e, out); }
-        | Stmt::Tail(e) => { elab_stmt_pos(a, ar, env, ret, e, out); }
+        | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, env, ret, e, out); }
+        | Stmt::Tail(e) => { elab_tail(a, ar, g, env, ret, e, out); }
         | Stmt::Return(val, pos) => {
-            let tv = elab_return_val(a, ar, env, ret, val);
+            let tv = elab_return_val(a, ar, g, env, ret, val);
             out.push(Tstmt::TReturn { value: tv, pos: pos });
         }
+        | Stmt::While { cond, body } => {
+            let wcond = elab_expr(a, ar, g, env, none_ty(), cond);
+            let wbody = elab_body(a, ar, g, env, ret, &body);
+            let wpost: Vec<Tstmt> = empty_tstmts(a);
+            out.push(Tstmt::TWhile { cond: wcond, body: wbody, post: wpost });
+        }
+        | Stmt::Assign { path, value, pos } => {
+            let av = elab_expr(a, ar, g, env, none_ty(), value);
+            let apath = copy_strs(a, &path);
+            out.push(Tstmt::TAssign { path: apath, value: av, pos: pos });
+        }
+        | Stmt::Break(pos) => { out.push(Tstmt::TBreak(pos)); }
+        | Stmt::Continue(pos) => { out.push(Tstmt::TContinue(pos)); }
         | _other => {
             // Unsupported statement — emit a VISIBLE deferral marker rather
             // than silently dropping it (mirrors the expr-level marker).
@@ -349,14 +515,14 @@ fn elab_stmt(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Ty
     }
 }
 
-fn elab_body(a: Allocator, ar: *Arena, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              body: *const Vec<Stmt>) -> Vec<Tstmt> {
     let mut out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let n = body.length();
     let sl = body.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elab_stmt(a, ar, env, ret, &sl[i], &out);
+        elab_stmt(a, ar, g, env, ret, &sl[i], &out);
         i = i + 1 as u32;
     }
     return out;
@@ -387,13 +553,13 @@ fn mangle_fn(a: Allocator, ar: *Arena, f: *const Func) -> str {
     return str::from_slice(ar, sb.as_slice());
 }
 
-fn elaborate_fn(a: Allocator, ar: *Arena, f: *const Func) -> Tfunc {
+fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
     let param_tys = resolve_param_tys(a, ar, &f.params);
     let ret_ty = resolve_ret(a, ar, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     build_param_env(a, ar, &f.params, &env);
-    let body = elab_body(a, ar, &env, ret_ty, &f.body);
+    let body = elab_body(a, ar, g, &env, ret_ty, &f.body);
     let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let no_pos: Option<Pos> = Option::None;
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -415,11 +581,34 @@ fn elaborate_fn(a: Allocator, ar: *Arena, f: *const Func) -> Tfunc {
     };
 }
 
-fn elaborate_item(a: Allocator, ar: *Arena, it: *const Item, funcs: *Vec<Tfunc>) {
+fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, &f)); }
         | _e => { }
     }
+}
+
+// First pass: collect the signature of every top-level fn so a direct call
+// resolves to (mangled symbol, return type) before bodies are elaborated.
+fn collect_global_item(a: Allocator, ar: *Arena, it: *const Item, g: *Vec<GlobalFn>) {
+    match *it {
+        Item::Function(f) => {
+            g.push(GlobalFn { name: f.name, mangled: mangle_fn(a, ar, &f), ret: resolve_ret(a, ar, f.ret_ty) });
+        }
+        | _e => { }
+    }
+}
+
+fn collect_globals(a: Allocator, ar: *Arena, items: *const Vec<Item>) -> Vec<GlobalFn> {
+    let mut g: Vec<GlobalFn> = Vec::with_capacity(a, 16 as u32);
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        collect_global_item(a, ar, &sl[i], &g);
+        i = i + 1 as u32;
+    }
+    return g;
 }
 
 // ===== Prelude `mono-instances` footprint =====
@@ -480,12 +669,13 @@ fn prelude_enum_index(a: Allocator) -> Vec<EnumSig> {
 
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
+    let globals = collect_globals(a, ar, items);
     let mut funcs: Vec<Tfunc> = Vec::with_capacity(a, 16 as u32);
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_item(a, ar, &sl[i], &funcs);
+        elaborate_item(a, ar, &globals, &sl[i], &funcs);
         i = i + 1 as u32;
     }
 
