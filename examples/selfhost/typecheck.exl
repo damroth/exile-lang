@@ -155,15 +155,17 @@ fn pick_int_ty(ar: *Arena, t: *const Typ) -> *const Typ {
     return t_i32(ar);
 }
 
-// ===== Global function signature table (for direct calls) =====
+// ===== Global symbol table (top-level fns + consts) =====
 //
 // Built in a first pass over the items so a call `foo(...)` resolves to the
-// mangled C symbol + return type before any body is elaborated.  Holds only
-// what a call site needs; `GlobalFn` is fully copyable (str/str/Option-ptr).
+// mangled C symbol + return type, and a bare `WIDTH` to its mangled const,
+// before any body is elaborated.  `is_const` separates the two: a call
+// dispatches on fns, a value reference on consts.  Fully copyable.
 struct GlobalFn {
     name: str,
     mangled: str,
     ret: Option<*const Typ>,
+    is_const: bool,
 }
 
 fn global_lookup(g: *const Vec<GlobalFn>, name: str) -> Option<GlobalFn> {
@@ -172,7 +174,7 @@ fn global_lookup(g: *const Vec<GlobalFn>, name: str) -> Option<GlobalFn> {
     let mut i = 0 as u32;
     while i < n {
         if str::eq(sl[i].name, name) {
-            return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, ret: sl[i].ret });
+            return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, ret: sl[i].ret, is_const: sl[i].is_const });
         }
         i = i + 1 as u32;
     }
@@ -180,12 +182,25 @@ fn global_lookup(g: *const Vec<GlobalFn>, name: str) -> Option<GlobalFn> {
     return none;
 }
 
-fn elab_var(ar: *Arena, env: *const Vec<FieldTy>, name: str, p: Pos) -> *const Texpr {
-    let ty = match env_lookup(env, name) {
-        Option::Some(t) => t
-        | Option::None => ty_node(ar, Typ::TCVoid)
+// A local binding resolves to `TVar(name)`; otherwise a top-level `const`
+// resolves to `TVar(mangled)` with its declared type.  Unknown names defer.
+fn elab_var(ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>, name: str, p: Pos) -> *const Texpr {
+    return match env_lookup(env, name) {
+        Option::Some(t) => te_node(ar, TexprNode::TVar(name), t, p)
+        | Option::None => elab_var_global(ar, g, name, p)
     };
-    return te_node(ar, TexprNode::TVar(name), ty, p);
+}
+
+fn elab_var_global(ar: *Arena, g: *const Vec<GlobalFn>, name: str, p: Pos) -> *const Texpr {
+    return match global_lookup(g, name) {
+        Option::Some(gf) => const_ref(ar, gf, name, p)
+        | Option::None => te_node(ar, TexprNode::TVar(name), ty_node(ar, Typ::TCVoid), p)
+    };
+}
+
+fn const_ref(ar: *Arena, gf: GlobalFn, name: str, p: Pos) -> *const Texpr {
+    if gf.is_const { return te_node(ar, TexprNode::TVar(gf.mangled), ret_or_void(ar, gf.ret), p); }
+    return te_node(ar, TexprNode::TVar(name), ty_node(ar, Typ::TCVoid), p);
 }
 
 fn elab_neg(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
@@ -284,10 +299,16 @@ fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const V
     return te_node(ar, TexprNode::TCall { mangled: gf.mangled, args: targs }, ty, p);
 }
 
+fn call_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+                 gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    if gf.is_const { return defer_expr(ar, p); }
+    return mk_user_call(a, ar, g, env, gf, args, p);
+}
+
 fn elab_user_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
                       name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     return match global_lookup(g, name) {
-        Option::Some(gf) => mk_user_call(a, ar, g, env, gf, args, p)
+        Option::Some(gf) => call_or_defer(a, ar, g, env, gf, args, p)
         | Option::None => defer_expr(ar, p)
     };
 }
@@ -312,7 +333,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<
         | Expr::StringLit(s, _q) => te_node(ar, TexprNode::TStringLit(s), t_str(ar), p)
         | Expr::NullLit(_q) => te_node(ar, TexprNode::TNullLit, ty_node(ar, Typ::TNullPtr), p)
         | Expr::FloatLit(f, w, _q) => te_node(ar, TexprNode::TFloatLit(f, w), ty_node(ar, Typ::TFloat(w)), p)
-        | Expr::Var(name, _q) => elab_var(ar, env, name, p)
+        | Expr::Var(name, _q) => elab_var(ar, g, env, name, p)
         | Expr::Neg(sub, _q) => elab_neg(a, ar, g, env, expected, sub, p)
         | Expr::BitNot(sub, _q) => elab_bitnot(a, ar, g, env, expected, sub, p)
         | Expr::Not(sub, _q) => elab_not(a, ar, g, env, sub, p)
@@ -507,6 +528,10 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldT
         }
         | Stmt::Break(pos) => { out.push(Tstmt::TBreak(pos)); }
         | Stmt::Continue(pos) => { out.push(Tstmt::TContinue(pos)); }
+        | Stmt::Defer { body, pos } => {
+            let dbody = elab_body(a, ar, g, env, ret, &body);
+            out.push(Tstmt::TDefer { body: dbody, pos: pos });
+        }
         | _other => {
             // Unsupported statement — emit a VISIBLE deferral marker rather
             // than silently dropping it (mirrors the expr-level marker).
@@ -593,7 +618,16 @@ fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, it: *const 
 fn collect_global_item(a: Allocator, ar: *Arena, it: *const Item, g: *Vec<GlobalFn>) {
     match *it {
         Item::Function(f) => {
-            g.push(GlobalFn { name: f.name, mangled: mangle_fn(a, ar, &f), ret: resolve_ret(a, ar, f.ret_ty) });
+            g.push(GlobalFn { name: f.name, mangled: mangle_fn(a, ar, &f),
+                              ret: resolve_ret(a, ar, f.ret_ty), is_const: false });
+        }
+        | Item::Const(c) => {
+            let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+            sb.push_str("ex_");
+            sb.push_str(c.kname);
+            let mangled = str::from_slice(ar, sb.as_slice());
+            g.push(GlobalFn { name: c.kname, mangled: mangled,
+                              ret: Option::Some(resolve_type_ann(a, ar, c.kty)), is_const: true });
         }
         | _e => { }
     }
