@@ -286,10 +286,86 @@ fn binop_result_ty(ar: *Arena, op: BinOp, l: *const Texpr) -> *const Typ {
     };
 }
 
+// ===== Compile-time string concat (`++`) =====
+//
+// `typ_name` (IR's pure util, primitive slice): names a type for the
+// `type_name(x)` builtin, whose result folds into a `++` chain.
+
+fn int_typ_name(sgn: bool, width: IntWidth) -> str {
+    if sgn {
+        return match width { IntWidth::W8 => "i8" | IntWidth::W16 => "i16" | IntWidth::W32 => "i32" };
+    }
+    return match width { IntWidth::W8 => "u8" | IntWidth::W16 => "u16" | IntWidth::W32 => "u32" };
+}
+
+fn tcint_name(s: bool) -> str {
+    if s { return "c_int"; }
+    return "c_uint";
+}
+
+fn typ_name(t: *const Typ) -> str {
+    return match *t {
+        Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
+        | Typ::TBool => "bool"
+        | Typ::TString => "str"
+        | Typ::TFloat(w) => match w { FloatWidth::F32 => "f32" | FloatWidth::F64 => "f64" }
+        | Typ::TCInt { is_signed } => tcint_name(is_signed)
+        | Typ::TCVoid => "c_void"
+        | _other => "?"
+    };
+}
+
+fn none_str() -> Option<str> {
+    let n: Option<str> = Option::None;
+    return n;
+}
+
+// A compile-time string: a string literal, or a `type_name(x)` call (whose
+// value is the static type name).  Used to fold `++` chains.
+fn extract_concat_str(te: *const Texpr) -> Option<str> {
+    return match te.e {
+        TexprNode::TStringLit(s) => Option::Some(s)
+        | TexprNode::TBuiltinCall { name, args } => extract_type_name(name, &args)
+        | _other => none_str()
+    };
+}
+fn extract_type_name(name: str, args: *const Vec<*const Texpr>) -> Option<str> {
+    if str::eq(name, "type_name") && args.length() == 1 as u32 {
+        let sl = args.as_slice();
+        return Option::Some(typ_name(sl[0 as u32].ty));
+    }
+    return none_str();
+}
+
+fn mk_concat_str(a: Allocator, ar: *Arena, l: str, r: str, p: Pos) -> *const Texpr {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(l);
+    sb.push_str(r);
+    return te_node(ar, TexprNode::TStringLit(str::from_slice(ar, sb.as_slice())), t_str(ar), p);
+}
+
+fn fold_concat_r(a: Allocator, ar: *Arena, l: str, r2: *const Texpr, p: Pos) -> *const Texpr {
+    return match extract_concat_str(r2) {
+        Option::Some(r) => mk_concat_str(a, ar, l, r, p)
+        | Option::None => defer_expr(ar, p)
+    };
+}
+fn fold_concat(a: Allocator, ar: *Arena, l2: *const Texpr, r2: *const Texpr, p: Pos) -> *const Texpr {
+    return match extract_concat_str(l2) {
+        Option::Some(l) => fold_concat_r(a, ar, l, r2, p)
+        | Option::None => defer_expr(ar, p)
+    };
+}
+
+fn is_concat(op: BinOp) -> bool {
+    return match op { BinOp::Concat => true | _e => false };
+}
+
 fn elab_binop(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>, expected: Option<*const Typ>,
               op: BinOp, l: *const Expr, r: *const Expr, p: Pos) -> *const Texpr {
     let l2 = elab_expr(a, ar, g, env, left_expected(op, expected), l);
     let r2 = elab_expr(a, ar, g, env, right_expected(op, expected), r);
+    if is_concat(op) { return fold_concat(a, ar, l2, r2, p); }
     let ty = binop_result_ty(ar, op, l2);
     return te_node(ar, TexprNode::TBinOp(op, l2, r2), ty, p);
 }
@@ -356,6 +432,10 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<
     if str::eq(name, "println") || str::eq(name, "print") {
         let targs = elab_args(a, ar, g, env, args);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: targs }, t_i32(ar), p);
+    }
+    if str::eq(name, "type_name") {
+        let tn_args = elab_args(a, ar, g, env, args);
+        return te_node(ar, TexprNode::TBuiltinCall { name: name, args: tn_args }, t_str(ar), p);
     }
     return elab_user_or_defer(a, ar, g, env, name, args, p);
 }
