@@ -166,20 +166,56 @@ struct GlobalFn {
     mangled: str,
     ret: Option<*const Typ>,
     is_const: bool,
+    is_top: bool,
 }
 
+// A bare name resolves only against top-level symbols (a module-internal
+// symbol is reachable solely through its `mod::name` path → by mangled).
 fn global_lookup(g: *const Vec<GlobalFn>, name: str) -> Option<GlobalFn> {
     let n = g.length();
     let sl = g.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        if str::eq(sl[i].name, name) {
-            return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, ret: sl[i].ret, is_const: sl[i].is_const });
+        if sl[i].is_top && str::eq(sl[i].name, name) {
+            return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled,
+                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top });
         }
         i = i + 1 as u32;
     }
     let none: Option<GlobalFn> = Option::None;
     return none;
+}
+
+fn global_lookup_by_mangled(g: *const Vec<GlobalFn>, mangled: str) -> Option<GlobalFn> {
+    let n = g.length();
+    let sl = g.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].mangled, mangled) {
+            return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled,
+                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top });
+        }
+        i = i + 1 as u32;
+    }
+    let none: Option<GlobalFn> = Option::None;
+    return none;
+}
+
+// `mod::name` mangling (ir.mangle): top-level → `ex_name`, else the module
+// path joined by `__` then the name (`flags::RW` → `flags__RW`).
+fn mangle_path(a: Allocator, ar: *Arena, path: *const Vec<str>, name: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    if path.length() == 0 as u32 {
+        sb.push_str("ex_");
+        sb.push_str(name);
+    } else {
+        let n = path.length();
+        let sl = path.as_slice();
+        let mut i = 0 as u32;
+        while i < n { sb.push_str(sl[i]); sb.push_str("__"); i = i + 1 as u32; }
+        sb.push_str(name);
+    }
+    return str::from_slice(ar, sb.as_slice());
 }
 
 // A local binding resolves to `TVar(name)`; otherwise a top-level `const`
@@ -342,8 +378,25 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<
         | Expr::Call { callee, args } => elab_call(a, ar, g, env, &callee, &args, p)
         | Expr::If { cond, then_blk, else_blk } =>
             mk_if_expr(a, ar, g, env, expected, cond, &then_blk, else_blk, p)
+        | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, &tname, variant, p)
         | _other => defer_expr(ar, p)
     };
+}
+
+// `A::B` parses as an enum-literal; resolve it as a module-scoped `const`
+// reference when its mangled `A__B` names one, else defer (real enum
+// literals are not yet elaborated).
+fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>,
+                tname: *const Vec<str>, variant: str, p: Pos) -> *const Texpr {
+    let m = mangle_path(a, ar, tname, variant);
+    return match global_lookup_by_mangled(g, m) {
+        Option::Some(gf) => enumlit_const(ar, gf, p)
+        | Option::None => defer_expr(ar, p)
+    };
+}
+fn enumlit_const(ar: *Arena, gf: GlobalFn, p: Pos) -> *const Texpr {
+    if gf.is_const { return te_node(ar, TexprNode::TVar(gf.mangled), ret_or_void(ar, gf.ret), p); }
+    return defer_expr(ar, p);
 }
 
 fn let_expected(a: Allocator, ar: *Arena, ty_ann: Option<*const TypeAnn>) -> Option<*const Typ> {
@@ -615,33 +668,51 @@ fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, it: *const 
 
 // First pass: collect the signature of every top-level fn so a direct call
 // resolves to (mangled symbol, return type) before bodies are elaborated.
-fn collect_global_item(a: Allocator, ar: *Arena, it: *const Item, g: *Vec<GlobalFn>) {
+// `is_top` is true only at the top level (path empty); module-internal
+// symbols are reachable solely via their `mod::name` path.  An `extern fn`
+// keeps its C name; otherwise `mangle_path` applies.
+fn collect_one(a: Allocator, ar: *Arena, it: *const Item, path: *const Vec<str>, g: *Vec<GlobalFn>) {
+    let is_top = path.length() == 0 as u32;
     match *it {
         Item::Function(f) => {
-            g.push(GlobalFn { name: f.name, mangled: mangle_fn(a, ar, &f),
-                              ret: resolve_ret(a, ar, f.ret_ty), is_const: false });
+            let m = collect_fn_mangle(a, ar, &f, path);
+            g.push(GlobalFn { name: f.name, mangled: m, ret: resolve_ret(a, ar, f.ret_ty),
+                              is_const: false, is_top: is_top });
         }
         | Item::Const(c) => {
-            let mut sb = StringBuilder::with_capacity(a, 32 as u32);
-            sb.push_str("ex_");
-            sb.push_str(c.kname);
-            let mangled = str::from_slice(ar, sb.as_slice());
-            g.push(GlobalFn { name: c.kname, mangled: mangled,
-                              ret: Option::Some(resolve_type_ann(a, ar, c.kty)), is_const: true });
+            g.push(GlobalFn { name: c.kname, mangled: mangle_path(a, ar, path, c.kname),
+                              ret: Option::Some(resolve_type_ann(a, ar, c.kty)),
+                              is_const: true, is_top: is_top });
+        }
+        | Item::Module(md) => {
+            let mut p2: Vec<str> = copy_strs(a, path);
+            p2.push(md.mname);
+            collect_into(a, ar, &md.mitems, &p2, g);
         }
         | _e => { }
     }
 }
 
-fn collect_globals(a: Allocator, ar: *Arena, items: *const Vec<Item>) -> Vec<GlobalFn> {
-    let mut g: Vec<GlobalFn> = Vec::with_capacity(a, 16 as u32);
+fn collect_fn_mangle(a: Allocator, ar: *Arena, f: *const Func, path: *const Vec<str>) -> str {
+    if f.is_extern { return f.c_name; }
+    if path.length() == 0 as u32 && str::eq(f.name, "main") { return "main"; }
+    return mangle_path(a, ar, path, f.name);
+}
+
+fn collect_into(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: *const Vec<str>, g: *Vec<GlobalFn>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        collect_global_item(a, ar, &sl[i], &g);
+        collect_one(a, ar, &sl[i], path, g);
         i = i + 1 as u32;
     }
+}
+
+fn collect_globals(a: Allocator, ar: *Arena, items: *const Vec<Item>) -> Vec<GlobalFn> {
+    let mut g: Vec<GlobalFn> = Vec::with_capacity(a, 16 as u32);
+    let top: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_into(a, ar, items, &top, &g);
     return g;
 }
 
