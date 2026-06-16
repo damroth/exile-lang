@@ -435,6 +435,99 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<
     return elab_user_or_defer(a, ar, g, env, name, args, p);
 }
 
+// ===== Match elaboration (scalar scrutinee slice) =====
+//
+// SLICE: int / bool scrutinee (the scalar sentinel `ename_path = []`), with
+// `PBool` / `PLit` / `PVar` / `_` / or-patterns.  An enum scrutinee (needs
+// the enum index for variant tags) defers to a marker.
+
+fn is_scalar_ty(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(_k) => true
+        | Typ::TBool => true
+        | _other => false
+    };
+}
+
+fn copy_fieldtys(a: Allocator, src: *const Vec<FieldTy>) -> Vec<FieldTy> {
+    let mut out: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let n = src.length();
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(FieldTy { name: sl[i].name, ty: sl[i].ty }); i = i + 1 as u32; }
+    return out;
+}
+
+fn elab_pattern_list(a: Allocator, ar: *Arena, alts: *const Vec<Pattern>) -> Vec<Tpattern> {
+    let mut out: Vec<Tpattern> = Vec::with_capacity(a, 8 as u32);
+    let n = alts.length();
+    let sl = alts.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(elab_pattern(a, ar, &sl[i])); i = i + 1 as u32; }
+    return out;
+}
+fn elab_pattern(a: Allocator, ar: *Arena, pat: *const Pattern) -> Tpattern {
+    return match *pat {
+        Pattern::PWildcard(_q) => Tpattern::TPWildcard
+        | Pattern::PVar(n, _q) => Tpattern::TPVar(n)
+        | Pattern::PLit(n, _q) => Tpattern::TPLit(n)
+        | Pattern::PBool(b, _q) => Tpattern::TPBool(b)
+        | Pattern::POr(alts, _q) => Tpattern::TPOr(elab_pattern_list(a, ar, &alts))
+        | _other => Tpattern::TPWildcard
+    };
+}
+
+// A top-level `PVar` binds the scrutinee value into the arm body's scope.
+fn pattern_binds(pat: *const Pattern, scrut_ty: *const Typ, env_out: *Vec<FieldTy>) {
+    match *pat {
+        Pattern::PVar(n, _q) => { env_out.push(FieldTy { name: n, ty: scrut_ty }); }
+        | _other => { }
+    }
+}
+
+fn elab_guard(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+              guard: Option<*const Expr>) -> Option<*const Texpr> {
+    return match guard {
+        Option::Some(gx) => Option::Some(elab_expr(a, ar, g, env, none_ty(), gx))
+        | Option::None => none_texpr()
+    };
+}
+
+fn elab_one_arm(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+                expected: Option<*const Typ>, scrut_ty: *const Typ, arm: *const MatchArm, out: *Vec<TmatchArm>) {
+    let tpat = elab_pattern(a, ar, &arm.pat);
+    let mut arm_env = copy_fieldtys(a, env);
+    pattern_binds(&arm.pat, scrut_ty, &arm_env);
+    let tguard = elab_guard(a, ar, g, &arm_env, arm.guard);
+    let tbody = elab_expr(a, ar, g, &arm_env, expected, arm.body);
+    out.push(TmatchArm { tpat: tpat, tguard: tguard, tbody: tbody, tdiverges: false, tarm_pos: arm.arm_pos });
+}
+
+fn elab_arms(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+             expected: Option<*const Typ>, scrut_ty: *const Typ, arms: *const Vec<MatchArm>, out: *Vec<TmatchArm>) {
+    let n = arms.length();
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < n { elab_one_arm(a, ar, g, env, expected, scrut_ty, &sl[i], out); i = i + 1 as u32; }
+}
+
+fn match_result_ty(ar: *Arena, tarms: *const Vec<TmatchArm>) -> *const Typ {
+    if tarms.length() == 0 as u32 { return ty_node(ar, Typ::TCVoid); }
+    let sl = tarms.as_slice();
+    return sl[0 as u32].tbody.ty;
+}
+
+fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
+              expected: Option<*const Typ>, scrutinee: *const Expr, arms: *const Vec<MatchArm>, p: Pos) -> *const Texpr {
+    let tscrut = elab_expr(a, ar, g, env, none_ty(), scrutinee);
+    if !is_scalar_ty(tscrut.ty) { return defer_expr(ar, p); }
+    let epath: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut tarms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
+    elab_arms(a, ar, g, env, expected, tscrut.ty, arms, &tarms);
+    let mty = match_result_ty(ar, &tarms);
+    return te_node(ar, TexprNode::TMatch { scrutinee: tscrut, ename_path: epath, arms: tarms }, mty, p);
+}
+
 fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, e: *const Expr) -> *const Texpr {
     let p = expr_pos(e);
@@ -454,6 +547,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<
         | Expr::If { cond, then_blk, else_blk } =>
             mk_if_expr(a, ar, g, env, expected, cond, &then_blk, else_blk, p)
         | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, &tname, variant, p)
+        | Expr::Match { scrutinee, arms } => elab_match(a, ar, g, env, expected, scrutinee, &arms, p)
         | _other => defer_expr(ar, p)
     };
 }
