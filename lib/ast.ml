@@ -260,6 +260,10 @@ and pattern =
                                            (GATE-5a); scrutinee must be
                                            int-like and the match needs a
                                            final catch-all arm *)
+  | PBool of bool * Pos.t               (* `true` / `false` literal pattern
+                                           (GATE-5b); scrutinee must be bool.
+                                           `true | false` is exhaustive with
+                                           no catch-all arm. *)
   | PVariant of { tname : string list; variant : string;
                   binds : pat_binds; pos : Pos.t }
                                         (* tuple form: `Foo::V(p1, p2)`,

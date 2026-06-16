@@ -1432,6 +1432,8 @@ fn parse_pattern_atom(s: *Parser) -> Pattern {
     return match peek(s) {
         Token::Minus => pat_neg_lit(s, p)
         | Token::Int(n) => { bump(s); Pattern::PLit(n, p) }
+        | Token::True => { bump(s); Pattern::PBool(true, p) }
+        | Token::False => { bump(s); Pattern::PBool(false, p) }
         | Token::Ident(name) => pat_ident(s, name, p)
         | _ => {
             let mut sb = StringBuilder::with_capacity(s.a, 32 as u32);

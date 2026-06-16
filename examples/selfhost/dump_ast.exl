@@ -422,6 +422,11 @@ fn render_pattern(p: *const Pattern, out: *StringBuilder) {
             out.push_int(n);
             out.push_str(")");
         }
+        | Pattern::PBool(b, _) => {
+            out.push_str("(pat-bool ");
+            if b { out.push_str("true"); } else { out.push_str("false"); }
+            out.push_str(")");
+        }
         | Pattern::PVariant { tname, variant, binds } => {
             out.push_str("(pat-variant ");
             render_path(&tname, out);

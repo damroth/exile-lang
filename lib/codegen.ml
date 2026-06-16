@@ -1036,6 +1036,9 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
                     (Printf.sprintf "case %s_%s:\n" cname variant)
               | TPLit n ->
                   Buffer.add_string buf (Printf.sprintf "case %d:\n" n)
+              | TPBool b ->
+                  Buffer.add_string buf
+                    (Printf.sprintf "case %d:\n" (if b then 1 else 0))
               | TPOr _ | TPWildcard | TPVar _ -> assert false)
               alts;
             if arm_i = n_arms - 1 then begin
@@ -1082,7 +1085,7 @@ and emit_match_stmt ctx ?assign_to buf indent (m_expr : texpr) =
                             variant fname)
                    | _ -> ())
                  binds
-           | TPLit _ | TPWildcard | TPOr _ -> ());
+           | TPLit _ | TPBool _ | TPWildcard | TPOr _ -> ());
                                    (* TPOr alts bind no variables by MVP
                                       restriction; multiple case labels
                                       share the same (empty) bind block *)
@@ -1204,6 +1207,8 @@ and compile_pat ctx ~scrut ~ty tpat =
       (* Scalar literal in decision-chain context (guarded arms):
          plain equality test on the scrutinee value. *)
       ([ Printf.sprintf "%s == %d" scrut n ], [])
+  | TPBool b ->
+      ([ Printf.sprintf "%s == %d" scrut (if b then 1 else 0) ], [])
   | TPVariant { variant; binds; _ } ->
       let cname = mangle_typ ty in
       let tag_test = Printf.sprintf "%s.tag == %s_%s" scrut cname variant in

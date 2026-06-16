@@ -787,6 +787,8 @@ and tpattern =
   | TPLit of int                        (* integer / char-literal pattern
                                            (GATE-5a) — scalar match arm,
                                            lowers to a C `case` label *)
+  | TPBool of bool                      (* `true` / `false` pattern (GATE-5b)
+                                           — bool scrutinee, exhaustive pair *)
   | TPVariant of { variant : string; tag : int;
                    binds : (string * tpattern) list }
                                         (* field name + sub-pattern;

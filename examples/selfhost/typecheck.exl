@@ -298,18 +298,13 @@ fn int_typ_name(sgn: bool, width: IntWidth) -> str {
     return match width { IntWidth::W8 => "u8" | IntWidth::W16 => "u16" | IntWidth::W32 => "u32" };
 }
 
-fn tcint_name(s: bool) -> str {
-    if s { return "c_int"; }
-    return "c_uint";
-}
-
 fn typ_name(t: *const Typ) -> str {
     return match *t {
         Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
         | Typ::TBool => "bool"
         | Typ::TString => "str"
         | Typ::TFloat(w) => match w { FloatWidth::F32 => "f32" | FloatWidth::F64 => "f64" }
-        | Typ::TCInt { is_signed } => tcint_name(is_signed)
+        | Typ::TCInt { is_signed } => match is_signed { true => "c_int" | false => "c_uint" }
         | Typ::TCVoid => "c_void"
         | _other => "?"
     };

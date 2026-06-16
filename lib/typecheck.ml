@@ -1689,6 +1689,21 @@ let rec lower_pattern ?(allow_or = true) ?(top_level = true) ctx
            Error.failf ppos
              "literal pattern needs an integer scrutinee, got %s"
              (typ_name other))
+  | Ast.PBool (b, ppos) ->
+      (* GATE-5b boolean literal pattern: scrutinee must be bool.  Like
+         PLit it is a top-level scalar test (no payload binds); unlike PLit
+         the value domain is finite, so `true | false` is exhaustive with
+         no catch-all (handled in the completeness check). *)
+      if not top_level then
+        Error.failf ppos
+          "literal patterns are only supported at the top level of a \
+           match arm (v1) — bind the payload and compare in a guard";
+      (match value_ty with
+       | TBool -> (TPBool b, [])
+       | other ->
+           Error.failf ppos
+             "boolean pattern needs a bool scrutinee, got %s"
+             (typ_name other))
   | Ast.PVariant { tname; variant; binds; pos = ppos } ->
       let path =
         match value_ty with
@@ -1795,7 +1810,7 @@ let rec lower_pattern ?(allow_or = true) ?(top_level = true) ctx
          and complicate duplicate-tag detection here; we defer them. *)
       let talts = List.map fst lowered in
       List.iter (function
-        | TPWildcard | TPVar _ | TPLit _ -> ()
+        | TPWildcard | TPVar _ | TPLit _ | TPBool _ -> ()
         | TPVariant { binds = []; _ } -> ()
         | TPVariant { variant; _ } ->
             Error.failf opos
@@ -1830,8 +1845,8 @@ type cpat = CWild | CCon of { tag : int; args : cpat list }
 
 let rec cpat_of_tpat : tpattern -> cpat = function
   | TPWildcard | TPVar _ -> CWild
-  | TPLit _ ->
-      (* Unreachable: scalar matches bypass the Maranget matrix
+  | TPLit _ | TPBool _ ->
+      (* Unreachable: scalar / bool matches bypass the Maranget matrix
          entirely, and nested literal patterns are rejected in
          lower_pattern (top_level gate). *)
       assert false
@@ -2677,12 +2692,18 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                domains are not enumerated; a final catch-all arm is
                required instead). *)
             []
+        | TBool ->
+            (* GATE-5b bool match — same scalar sentinel / codegen path
+               (switch on 0/1), but a finite domain, so `true | false`
+               is exhaustive without a catch-all (see [bool_match]). *)
+            []
         | other ->
             Error.failf match_pos
-              "'match' requires an enum or integer value, got %s"
+              "'match' requires an enum, integer, or bool value, got %s"
               (typ_name other)
       in
       let scalar_match = ename_path = [] in
+      let bool_match = (match tscrut.ty with TBool -> true | _ -> false) in
       (* Freeze-audit B11: pattern binds reached THROUGH A BORROW are
          loans, not transfers — `match *e` with `e: *const E` must not
          hand out `own *T` children (a stolen child double-frees
@@ -2747,7 +2768,48 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
           { tpat; tguard; tbody; tdiverges = false; tarm_pos = a.arm_pos })
           arms
       in
-      if scalar_match then begin
+      if scalar_match && bool_match then begin
+        (* Bool exhaustiveness (GATE-5b): the domain is exactly
+           {true, false}, so unguarded coverage of BOTH closes the match
+           with no catch-all; a catch-all also closes it.  Duplicate
+           values and post-coverage arms are unreachable. *)
+        let bools_of = function
+          | TPBool b -> [ b ]
+          | TPOr alts ->
+              List.filter_map
+                (function TPBool b -> Some b | _ -> None) alts
+          | _ -> []
+        in
+        let is_catch_all = function
+          | TPVar _ | TPWildcard -> true
+          | TPOr alts ->
+              List.exists
+                (function TPVar _ | TPWildcard -> true | _ -> false) alts
+          | _ -> false
+        in
+        let seen_t = ref false and seen_f = ref false in
+        let covered = ref false in
+        List.iter (fun (a : tmatch_arm) ->
+          if !covered then
+            Error.failf a.tarm_pos
+              "unreachable match arm: an earlier arm already covers \
+               every value";
+          List.iter (fun b ->
+            if (if b then !seen_t else !seen_f) then
+              Error.failf a.tarm_pos
+                "unreachable match arm: '%b' is already covered" b;
+            if a.tguard = None then
+              (if b then seen_t := true else seen_f := true))
+            (bools_of a.tpat);
+          if a.tguard = None
+             && (is_catch_all a.tpat || (!seen_t && !seen_f)) then
+            covered := true)
+          tarms;
+        if not !covered then
+          Error.failf match_pos
+            "non-exhaustive 'match' on bool: cover both 'true' and \
+             'false' (or add a catch-all arm)"
+      end else if scalar_match then begin
         (* Scalar exhaustiveness (GATE-5a): the integer domain is too
            wide to enumerate, so the rule is simpler than Maranget —
            every literal may appear once (per unguarded coverage), and
@@ -4204,7 +4266,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                 "let-else pattern must be refutable (a qualified \
                  variant constructor like `Option::Some(v)`); use a \
                  plain `let` for irrefutable bindings"
-          | Ast.PLit _ ->
+          | Ast.PLit _ | Ast.PBool _ ->
               Error.failf pos
                 "let-else MVP does not support literal patterns; use \
                  a `match` or an `if`"
@@ -9980,7 +10042,7 @@ let expand_lambdas (program : Ast.program) : Ast.program =
         acc
   and pattern_bound_names (p : Ast.pattern) : string list =
     let rec go acc = function
-      | Ast.PWildcard _ | Ast.PLit _ -> acc
+      | Ast.PWildcard _ | Ast.PLit _ | Ast.PBool _ -> acc
       | Ast.PVar (n, _) ->
           if n = "_" || List.mem n acc then acc else n :: acc
       | Ast.PVariant { binds; _ } ->

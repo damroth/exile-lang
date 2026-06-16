@@ -177,6 +177,7 @@ pub enum Tpattern {
     TPWildcard
     | TPVar(str)
     | TPLit(int)
+    | TPBool(bool)
     | TPVariant { variant: str, tag: int, binds: Vec<TFieldPat> }
     | TPOr(Vec<Tpattern>)
 }

@@ -1,0 +1,30 @@
+// Boolean literal patterns (GATE-5b) — `match b { true => ... | false => ... }`.
+//
+// Literal patterns extend from the integer/char form (GATE-5a) to `true`
+// and `false`.  Because `bool` has a finite, two-value domain, a `true` /
+// `false` pair is exhaustive on its own — no catch-all `_` arm is needed
+// (and adding one would be flagged unreachable).  A match missing one of
+// the two values is a compile error.
+
+fn yes_no(b: bool) -> str {
+    return match b {
+        true => "yes"
+        | false => "no"
+    };
+}
+
+// A bool match can still carry a guard; the guarded arm doesn't prove
+// coverage, so the unguarded `false` arm is what closes the match.
+fn parity_word(n: int) -> str {
+    return match n % 2 == 0 {
+        true => "even"
+        | false => "odd"
+    };
+}
+
+fn main() {
+    println(yes_no(true));        // yes
+    println(yes_no(false));       // no
+    println(parity_word(4));      // even
+    println(parity_word(7));      // odd
+}

@@ -203,6 +203,7 @@ pub enum Pattern {
     PWildcard(Pos)
     | PVar(str, Pos)
     | PLit(int, Pos)
+    | PBool(bool, Pos)
     | PVariant { tname: Vec<str>, variant: str, binds: PatBinds, pos: Pos }
     | POr(Vec<Pattern>, Pos)
 }

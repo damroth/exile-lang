@@ -225,6 +225,11 @@ fn render_tpattern(p: *const Tpattern, out: *StringBuilder) {
             out.push_int(n);
             out.push_str(")");
         }
+        | Tpattern::TPBool(b) => {
+            out.push_str("(pat-bool ");
+            if b { out.push_str("true"); } else { out.push_str("false"); }
+            out.push_str(")");
+        }
         | Tpattern::TPVariant { variant, tag, binds } => {
             out.push_str("(pat-variant ");
             out.push_str(variant);

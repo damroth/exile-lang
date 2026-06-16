@@ -1,0 +1,4 @@
+;; exile-ast-dump v1 examples/bool_match.exl
+(fn yes_no (params (param b bool)) str (body (return (match (var b) (arm (pat-bool true) (string "yes")) (arm (pat-bool false) (string "no"))))))
+(fn parity_word (params (param n (int i32))) str (body (return (match (binop == (binop % (var n) (int 2)) (int 0)) (arm (pat-bool true) (string "even")) (arm (pat-bool false) (string "odd"))))))
+(fn main (params ) void (body (expr-stmt (call println (call yes_no (bool true)))) (expr-stmt (call println (call yes_no (bool false)))) (expr-stmt (call println (call parity_word (int 4)))) (expr-stmt (call println (call parity_word (int 7))))))

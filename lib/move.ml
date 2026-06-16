@@ -211,7 +211,7 @@ and stmts_diverge stmts =
 let rec affine_binds_of_pat ~structs ~enums (scrutinee_ty : typ)
     (p : tpattern) =
   match p with
-  | TPWildcard | TPLit _ -> []
+  | TPWildcard | TPLit _ | TPBool _ -> []
   | TPVar n ->
       if is_affine_typ ~structs scrutinee_ty then [(n, scrutinee_ty)]
       else []
@@ -258,7 +258,7 @@ let rec owning_slots_of_pat ~structs ~enums (scrutinee_ty : typ)
     | _ -> false
   in
   match p with
-  | TPLit _ -> []
+  | TPLit _ | TPBool _ -> []
   | TPWildcard -> if owning scrutinee_ty then [ None ] else []
   | TPVar n -> if owning scrutinee_ty then [ Some n ] else []
   | TPVariant { variant; binds; _ } ->

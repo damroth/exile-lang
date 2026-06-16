@@ -892,6 +892,8 @@ and parse_pattern_atom s =
       (* GATE-5a literal pattern — `match b { 'a' => ... | 0 => ... }`.
          Char literals already lexed to Token.Int. *)
       ignore (advance s); Ast.PLit (n, p)
+  | Token.True -> ignore (advance s); Ast.PBool (true, p)
+  | Token.False -> ignore (advance s); Ast.PBool (false, p)
   | Token.Minus ->
       ignore (advance s);
       (match peek s with

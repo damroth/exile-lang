@@ -1,0 +1,92 @@
+;; exile-tokens-dump v1 examples/bool_match.exl
+Fn @examples/bool_match.exl:9:1
+(Ident yes_no) @examples/bool_match.exl:9:4
+LParen @examples/bool_match.exl:9:10
+(Ident b) @examples/bool_match.exl:9:11
+Colon @examples/bool_match.exl:9:12
+(Ident bool) @examples/bool_match.exl:9:14
+RParen @examples/bool_match.exl:9:18
+Arrow @examples/bool_match.exl:9:20
+(Ident str) @examples/bool_match.exl:9:23
+LBrace @examples/bool_match.exl:9:27
+Return @examples/bool_match.exl:10:5
+Match @examples/bool_match.exl:10:12
+(Ident b) @examples/bool_match.exl:10:18
+LBrace @examples/bool_match.exl:10:20
+True @examples/bool_match.exl:11:9
+FatArrow @examples/bool_match.exl:11:14
+(String "yes") @examples/bool_match.exl:11:17
+Pipe @examples/bool_match.exl:12:9
+False @examples/bool_match.exl:12:11
+FatArrow @examples/bool_match.exl:12:17
+(String "no") @examples/bool_match.exl:12:20
+RBrace @examples/bool_match.exl:13:5
+Semicolon @examples/bool_match.exl:13:6
+RBrace @examples/bool_match.exl:14:1
+Fn @examples/bool_match.exl:18:1
+(Ident parity_word) @examples/bool_match.exl:18:4
+LParen @examples/bool_match.exl:18:15
+(Ident n) @examples/bool_match.exl:18:16
+Colon @examples/bool_match.exl:18:17
+(Ident int) @examples/bool_match.exl:18:19
+RParen @examples/bool_match.exl:18:22
+Arrow @examples/bool_match.exl:18:24
+(Ident str) @examples/bool_match.exl:18:27
+LBrace @examples/bool_match.exl:18:31
+Return @examples/bool_match.exl:19:5
+Match @examples/bool_match.exl:19:12
+(Ident n) @examples/bool_match.exl:19:18
+Percent @examples/bool_match.exl:19:20
+(Int 2) @examples/bool_match.exl:19:22
+EqEq @examples/bool_match.exl:19:24
+(Int 0) @examples/bool_match.exl:19:27
+LBrace @examples/bool_match.exl:19:29
+True @examples/bool_match.exl:20:9
+FatArrow @examples/bool_match.exl:20:14
+(String "even") @examples/bool_match.exl:20:17
+Pipe @examples/bool_match.exl:21:9
+False @examples/bool_match.exl:21:11
+FatArrow @examples/bool_match.exl:21:17
+(String "odd") @examples/bool_match.exl:21:20
+RBrace @examples/bool_match.exl:22:5
+Semicolon @examples/bool_match.exl:22:6
+RBrace @examples/bool_match.exl:23:1
+Fn @examples/bool_match.exl:25:1
+(Ident main) @examples/bool_match.exl:25:4
+LParen @examples/bool_match.exl:25:8
+RParen @examples/bool_match.exl:25:9
+LBrace @examples/bool_match.exl:25:11
+(Ident println) @examples/bool_match.exl:26:5
+LParen @examples/bool_match.exl:26:12
+(Ident yes_no) @examples/bool_match.exl:26:13
+LParen @examples/bool_match.exl:26:19
+True @examples/bool_match.exl:26:20
+RParen @examples/bool_match.exl:26:24
+RParen @examples/bool_match.exl:26:25
+Semicolon @examples/bool_match.exl:26:26
+(Ident println) @examples/bool_match.exl:27:5
+LParen @examples/bool_match.exl:27:12
+(Ident yes_no) @examples/bool_match.exl:27:13
+LParen @examples/bool_match.exl:27:19
+False @examples/bool_match.exl:27:20
+RParen @examples/bool_match.exl:27:25
+RParen @examples/bool_match.exl:27:26
+Semicolon @examples/bool_match.exl:27:27
+(Ident println) @examples/bool_match.exl:28:5
+LParen @examples/bool_match.exl:28:12
+(Ident parity_word) @examples/bool_match.exl:28:13
+LParen @examples/bool_match.exl:28:24
+(Int 4) @examples/bool_match.exl:28:25
+RParen @examples/bool_match.exl:28:26
+RParen @examples/bool_match.exl:28:27
+Semicolon @examples/bool_match.exl:28:28
+(Ident println) @examples/bool_match.exl:29:5
+LParen @examples/bool_match.exl:29:12
+(Ident parity_word) @examples/bool_match.exl:29:13
+LParen @examples/bool_match.exl:29:24
+(Int 7) @examples/bool_match.exl:29:25
+RParen @examples/bool_match.exl:29:26
+RParen @examples/bool_match.exl:29:27
+Semicolon @examples/bool_match.exl:29:28
+RBrace @examples/bool_match.exl:30:1
+Eof @examples/bool_match.exl:31:1

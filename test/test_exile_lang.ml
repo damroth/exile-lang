@@ -2517,7 +2517,7 @@ let () =
     (* integer scrutinees became legal with literal patterns
        (GATE-5a); everything else still rejects. *)
     "fn main() { let s = \"x\"; match s { _ => println(\"x\") } }\n"
-    "'match' requires an enum or integer value, got str";
+    "'match' requires an enum, integer, or bool value, got str";
 
   check_error "pattern enum mismatch with scrutinee rejected"
     "enum A { X }\nenum B { Y }\nfn main() { let a = A::X; match a { B::Y => println(\"b\") } }\n"

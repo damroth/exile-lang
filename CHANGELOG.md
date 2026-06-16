@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.6] - 2026-06-15
+
+Boolean literal patterns (GATE-5b) extend the literal-pattern family from
+integers/chars to `true` / `false`, so `match b { true => ... | false => ... }`
+matches a `bool` scrutinee directly. Because `bool` has a finite two-value
+domain, a `true` / `false` pair is exhaustive on its own — no catch-all `_`
+arm is required (and adding one is flagged unreachable), while a match missing
+either value is a non-exhaustive compile error. Booleans lower to the same
+scalar `switch` codegen path as integer literals (`case 1:` / `case 0:`).
+
+### Added
+- Boolean literal patterns: `true` and `false` are now pattern atoms, matchable
+  against a `bool` scrutinee. `true | false` is exhaustive without a catch-all;
+  a missing value is a non-exhaustive error and a duplicate value is flagged
+  unreachable. Guards are supported (a guarded arm doesn't prove coverage)
+- `examples/bool_match.exl` — boolean match demonstrating exhaustive
+  `true` / `false` coverage and a guarded bool match
+
 ## [0.11.5] - 2026-06-13
 
 Two threads land: the last own-pointer null soundness holes close (DR-054 /
@@ -803,4 +821,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.11.5]: https://github.com/damroth/exile-lang/releases/tag/v0.11.5
+[0.11.6]: https://github.com/damroth/exile-lang/releases/tag/v0.11.6
