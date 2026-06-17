@@ -52,18 +52,95 @@ fn resolve_type_ann(a: Allocator, ar: *Arena, ann: *const TypeAnn) -> *const Typ
     };
 }
 
-fn resolve_param_tys(a: Allocator, ar: *Arena, params: *const Vec<Param>) -> Vec<*const Typ> {
+// ===== Named-type resolution (signature path) =====
+//
+// Function bodies are still masked by the differential gate, so the body
+// resolver above keeps lowering named types to `c_void` there.  Signatures
+// ARE compared, so they resolve names properly: a single-segment name that
+// is a type-parameter in scope becomes `TVar`, a known user/prelude enum
+// becomes `TEnum`, anything else a `TStruct` (generic applications keep
+// their resolved arguments); tuples lower element-wise.
+
+struct TyScope {
+    sc_structs: *const Vec<str>,
+    sc_enums: *const Vec<str>,
+    sc_tparams: *const Vec<str>,
+}
+
+fn name_in(names: *const Vec<str>, n: str) -> bool {
+    let cnt = names.length();
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < cnt {
+        if str::eq(sl[i], n) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+fn resolve_sig_args(a: Allocator, ar: *Arena, sc: *const TyScope,
+                    args: *const Vec<*const TypeAnn>) -> Vec<*const Typ> {
     let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
-    let n = params.length();
-    let sl = params.as_slice();
+    let n = args.length();
+    let sl = args.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        out.push(resolve_type_ann(a, ar, sl[i].pty));
+        out.push(resolve_sig_ty(a, ar, sc, sl[i]));
         i = i + 1 as u32;
     }
     return out;
 }
 
+fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
+                    path: *const Vec<str>, args: *const Vec<*const TypeAnn>) -> *const Typ {
+    let plen = path.length();
+    let psl = path.as_slice();
+    let last = psl[plen - 1 as u32];
+    if plen == 1 as u32 {
+        if name_in(sc.sc_tparams, last) { return ty_node(ar, Typ::TVar(last)); }
+    }
+    let newpath = copy_strs(a, path);
+    let nargs = args.length();
+    if name_in(sc.sc_enums, last) {
+        if nargs == 0 as u32 { return ty_node(ar, Typ::TEnum(newpath)); }
+        return ty_node(ar, Typ::TEnumApp { path: newpath, args: resolve_sig_args(a, ar, sc, args) });
+    }
+    if nargs == 0 as u32 { return ty_node(ar, Typ::TStruct(newpath)); }
+    return ty_node(ar, Typ::TStructApp { path: newpath, args: resolve_sig_args(a, ar, sc, args) });
+}
+
+fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const TypeAnn) -> *const Typ {
+    return match *ann {
+        TypeAnn::TyPtr(t) => ty_node(ar, Typ::TPtr(resolve_sig_ty(a, ar, sc, t)))
+        | TypeAnn::TyOwnPtr(t) => ty_node(ar, Typ::TOwnPtr(resolve_sig_ty(a, ar, sc, t)))
+        | TypeAnn::TyConstPtr(t) => ty_node(ar, Typ::TConstPtr(resolve_sig_ty(a, ar, sc, t)))
+        | TypeAnn::TyStruct { path, args } => resolve_named_ty(a, ar, sc, &path, &args)
+        | TypeAnn::TyTuple(elems) => ty_node(ar, Typ::TTuple(resolve_sig_args(a, ar, sc, &elems)))
+        | _other => resolve_type_ann(a, ar, ann)
+    };
+}
+
+fn resolve_param_tys(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let n = params.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        out.push(resolve_sig_ty(a, ar, sc, sl[i].pty));
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+fn resolve_sig_ret(a: Allocator, ar: *Arena, sc: *const TyScope, ret: Option<*const TypeAnn>) -> Option<*const Typ> {
+    return match ret {
+        Option::Some(t) => Option::Some(resolve_sig_ty(a, ar, sc, t))
+        | Option::None => Option::None
+    };
+}
+
+// Body-path return resolver (masked): named types stay `c_void` until the
+// body elaborator can type their constructors.
 fn resolve_ret(a: Allocator, ar: *Arena, ret: Option<*const TypeAnn>) -> Option<*const Typ> {
     return match ret {
         Option::Some(t) => Option::Some(resolve_type_ann(a, ar, t))
@@ -378,11 +455,27 @@ fn elab_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<
     return out;
 }
 
+// Whether the body type resolver (`resolve_type_ann`) can stand behind a
+// type annotation.  Named types (struct / enum / tuple) need the program
+// type scope the body elaborator does not yet carry, so a cast to one is
+// deferred (visible marker) rather than silently typed as `c_void`.
+fn ann_body_supported(ann: *const TypeAnn) -> bool {
+    return match *ann {
+        TypeAnn::TyStruct { path, args } => false
+        | TypeAnn::TyTuple(_e) => false
+        | TypeAnn::TyPtr(t) => ann_body_supported(t)
+        | TypeAnn::TyOwnPtr(t) => ann_body_supported(t)
+        | TypeAnn::TyConstPtr(t) => ann_body_supported(t)
+        | _prim => true
+    };
+}
+
 // `expr as T` — the sub keeps its own type; the cast node carries the
 // target annotation and takes the resolved annotation type.
 fn elab_cast(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
              sub: *const Expr, ann: *const TypeAnn, p: Pos) -> *const Texpr {
     let s = elab_expr(a, ar, g, env, none_ty(), sub);
+    if !ann_body_supported(ann) { return defer_expr(ar, p); }
     let ty = resolve_type_ann(a, ar, ann);
     return te_node(ar, TexprNode::TCast(s, ann), ty, p);
 }
@@ -947,10 +1040,12 @@ fn mangle_fn(a: Allocator, ar: *Arena, f: *const Func) -> str {
     return str::from_slice(ar, sb.as_slice());
 }
 
-fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, f: *const Func) -> Tfunc {
+fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+                structs: *const Vec<str>, enums: *const Vec<str>, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
-    let param_tys = resolve_param_tys(a, ar, &f.params);
-    let ret_ty = resolve_ret(a, ar, f.ret_ty);
+    let sc = TyScope { sc_structs: structs, sc_enums: enums, sc_tparams: &f.tparams };
+    let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
+    let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     build_param_env(a, ar, &f.params, &env);
     let body = elab_body(a, ar, g, gensym, &env, ret_ty, &f.body);
@@ -975,10 +1070,32 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     };
 }
 
-fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, it: *const Item, funcs: *Vec<Tfunc>) {
+fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+                  structs: *const Vec<str>, enums: *const Vec<str>, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, &f)); }
         | _e => { }
+    }
+}
+
+// Collect every user-declared struct / enum name (recursing into modules)
+// so signatures resolve them and the mono-instances footer lists them.
+fn collect_type_names_one(it: *const Item, snames: *Vec<str>, enames: *Vec<str>) {
+    match *it {
+        Item::Struct(sd) => { snames.push(sd.sname); }
+        | Item::Enum(ed) => { enames.push(ed.ename); }
+        | Item::Module(md) => { collect_type_names(&md.mitems, snames, enames); }
+        | _e => { }
+    }
+}
+
+fn collect_type_names(items: *const Vec<Item>, snames: *Vec<str>, enames: *Vec<str>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        collect_type_names_one(&sl[i], snames, enames);
+        i = i + 1 as u32;
     }
 }
 
@@ -1091,6 +1208,11 @@ fn prelude_enum_index(a: Allocator) -> Vec<EnumSig> {
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
     let globals = collect_globals(a, ar, items);
+    // User-declared struct / enum names: signatures resolve them and they
+    // join the prelude in the sorted `mono-instances` footer.
+    let mut snames: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut enames: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_type_names(items, &snames, &enames);
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
@@ -1099,12 +1221,20 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_item(a, ar, &globals, &gensym, &sl[i], &funcs);
+        elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &sl[i], &funcs);
         i = i + 1 as u32;
     }
 
-    let structs = prelude_struct_index(a);
-    let enums = prelude_enum_index(a);
+    let mut structs = prelude_struct_index(a);
+    let mut enums = prelude_enum_index(a);
+    let sn = snames.length();
+    let ssl = snames.as_slice();
+    let mut si = 0 as u32;
+    while si < sn { push_struct_name(a, &structs, ssl[si]); si = si + 1 as u32; }
+    let en = enames.length();
+    let esl = enames.as_slice();
+    let mut ei = 0 as u32;
+    while ei < en { push_enum_name(a, &enums, esl[ei]); ei = ei + 1 as u32; }
 
     let sdecls: Vec<StructDeclEntry> = Vec::with_capacity(a, 8 as u32);
     let global: Vec<GlobalEntry> = Vec::with_capacity(a, 8 as u32);
