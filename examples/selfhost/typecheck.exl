@@ -68,11 +68,73 @@ struct IntConst {
     ic_val: int,
 }
 
+// One resolved struct field, keyed by its owning struct's path.  The index
+// is a flat list of these (rather than nested per-struct field vecs) so a
+// field-type lookup returns a pointer read one level deep from the index
+// parameter — the same shape `env_lookup` relies on to stay escape-clean.
+struct StructField {
+    sf_path: Vec<str>,
+    sf_name: str,
+    sf_ty: *const Typ,
+}
+
 struct TyScope {
     sc_structs: *const Vec<str>,
     sc_enums: *const Vec<str>,
     sc_tparams: *const Vec<str>,
     sc_iconsts: *const Vec<IntConst>,
+    sc_sinfo: *const Vec<StructField>,
+}
+
+fn path_eq(a: *const Vec<str>, b: *const Vec<str>) -> bool {
+    let n = a.length();
+    if n != b.length() { return false; }
+    let sa = a.as_slice();
+    let sb = b.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if !str::eq(sa[i], sb[i]) { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
+
+// The type of `<struct at path>.field`, or None if unknown.
+fn find_field_ty(sinfo: *const Vec<StructField>, path: *const Vec<str>, field: str) -> Option<*const Typ> {
+    let n = sinfo.length();
+    let sl = sinfo.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].sf_name, field) {
+            if path_eq(&sl[i].sf_path, path) { return Option::Some(sl[i].sf_ty); }
+        }
+        i = i + 1 as u32;
+    }
+    let none: Option<*const Typ> = Option::None;
+    return none;
+}
+
+// The pointee type of a pointer (any of the three pointer flavours).
+fn deref_pointee(t: *const Typ) -> Option<*const Typ> {
+    return match *t {
+        Typ::TPtr(inner) => Option::Some(inner)
+        | Typ::TConstPtr(inner) => Option::Some(inner)
+        | Typ::TOwnPtr(inner) => Option::Some(inner)
+        | _e => { let n: Option<*const Typ> = Option::None; n }
+    };
+}
+
+// The type of `target.field` where `target` may be a struct value or a
+// pointer to one (dot-access auto-derefs).  None if `target` is not a
+// known struct (e.g. its own elaboration deferred to a marker).
+fn struct_field_ty(sc: *const TyScope, target_ty: *const Typ, field: str) -> Option<*const Typ> {
+    return match *target_ty {
+        Typ::TStruct(path) => find_field_ty(sc.sc_sinfo, &path, field)
+        | Typ::TPtr(inner) => struct_field_ty(sc, inner, field)
+        | Typ::TConstPtr(inner) => struct_field_ty(sc, inner, field)
+        | Typ::TOwnPtr(inner) => struct_field_ty(sc, inner, field)
+        | _e => { let n: Option<*const Typ> = Option::None; n }
+    };
 }
 
 fn iconst_lookup(consts: *const Vec<IntConst>, name: str) -> int {
@@ -721,6 +783,67 @@ fn subst_body(a: Allocator, ar: *Arena, from: str, to: str, body: *const Vec<Stm
     return out;
 }
 
+// `target.field` — the access takes the field's declared type; an access
+// on a non-struct (a deferred marker) defers in turn so the gap stays
+// visible.
+fn elab_field_access(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                     env: *const Vec<FieldTy>, target: *const Expr, field: str, p: Pos) -> *const Texpr {
+    let tt = elab_expr(a, ar, g, sc, env, none_ty(), target);
+    return match struct_field_ty(sc, tt.ty, field) {
+        Option::Some(fty) => te_node(ar, TexprNode::TFieldAccess { target: tt, field: field }, fty, p)
+        | Option::None => defer_expr(ar, p)
+    };
+}
+
+// Each initialiser value elaborates against its declared field type.
+fn elab_struct_fields(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                      env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>) -> Vec<TexprField> {
+    let mut out: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
+    let n = fields.length();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let exp = find_field_ty(sc.sc_sinfo, tname, sl[i].name);
+        let tv = elab_expr(a, ar, g, sc, env, exp, sl[i].value);
+        out.push(TexprField { name: sl[i].name, value: tv });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+fn elab_opt_base(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                 env: *const Vec<FieldTy>, base: Option<*const Expr>) -> Option<*const Texpr> {
+    return match base {
+        Option::Some(e) => Option::Some(elab_expr(a, ar, g, sc, env, none_ty(), e))
+        | Option::None => { let n: Option<*const Texpr> = Option::None; n }
+    };
+}
+
+fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                   env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>,
+                   base: Option<*const Expr>, p: Pos) -> *const Texpr {
+    let tfields = elab_struct_fields(a, ar, g, sc, env, tname, fields);
+    let tbase = elab_opt_base(a, ar, g, sc, env, base);
+    let sty = ty_node(ar, Typ::TStruct(copy_strs(a, tname)));
+    return te_node(ar, TexprNode::TStructLit { sname_path: copy_strs(a, tname), fields: tfields, base: tbase }, sty, p);
+}
+
+fn elab_ref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+            env: *const Vec<FieldTy>, sub: *const Expr, p: Pos) -> *const Texpr {
+    let ts = elab_expr(a, ar, g, sc, env, none_ty(), sub);
+    let rty = ty_node(ar, Typ::TPtr(ts.ty));
+    return te_node(ar, TexprNode::TRef(ts), rty, p);
+}
+
+fn elab_deref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+              env: *const Vec<FieldTy>, sub: *const Expr, p: Pos) -> *const Texpr {
+    let ts = elab_expr(a, ar, g, sc, env, none_ty(), sub);
+    return match deref_pointee(ts.ty) {
+        Option::Some(inner) => te_node(ar, TexprNode::TDeref(ts), inner, p)
+        | Option::None => defer_expr(ar, p)
+    };
+}
+
 fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, e: *const Expr) -> *const Texpr {
     let p = expr_pos(e);
@@ -741,6 +864,10 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             mk_if_expr(a, ar, g, sc, env, expected, cond, &then_blk, else_blk, p)
         | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, &tname, variant, p)
         | Expr::Match { scrutinee, arms } => elab_match(a, ar, g, sc, env, expected, scrutinee, &arms, p)
+        | Expr::FieldAccess(target, field, _q) => elab_field_access(a, ar, g, sc, env, target, field, p)
+        | Expr::StructLit { tname, fields, base } => elab_struct_lit(a, ar, g, sc, env, &tname, &fields, base, p)
+        | Expr::Ref(sub, _q) => elab_ref(a, ar, g, sc, env, sub, p)
+        | Expr::Deref(sub, _q) => elab_deref(a, ar, g, sc, env, sub, p)
         | _other => defer_expr(ar, p)
     };
 }
@@ -1014,6 +1141,18 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             let apath = copy_strs(a, &path);
             out.push(Tstmt::TAssign { path: apath, value: av, pos: pos });
         }
+        | Stmt::AssignField { target, field, value, pos } => {
+            let taf = elab_expr(a, ar, g, sc, env, none_ty(), target);
+            let fexp = struct_field_ty(sc, taf.ty, field);
+            let vaf = elab_expr(a, ar, g, sc, env, fexp, value);
+            out.push(Tstmt::TAssignField { target: taf, field: field, value: vaf, pos: pos });
+        }
+        | Stmt::AssignDeref { target, value, pos } => {
+            let tad = elab_expr(a, ar, g, sc, env, none_ty(), target);
+            let dexp = deref_pointee(tad.ty);
+            let vad = elab_expr(a, ar, g, sc, env, dexp, value);
+            out.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
+        }
         | Stmt::Break(pos) => { out.push(Tstmt::TBreak(pos)); }
         | Stmt::Continue(pos) => { out.push(Tstmt::TContinue(pos)); }
         | Stmt::Defer { body, pos } => {
@@ -1044,12 +1183,12 @@ fn elab_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     return out;
 }
 
-fn build_param_env(a: Allocator, ar: *Arena, params: *const Vec<Param>, env: *Vec<FieldTy>) {
+fn build_param_env(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>, env: *Vec<FieldTy>) {
     let n = params.length();
     let sl = params.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        env.push(FieldTy { name: sl[i].pname, ty: resolve_type_ann(a, ar, sl[i].pty) });
+        env.push(FieldTy { name: sl[i].pname, ty: resolve_sig_ty(a, ar, sc, sl[i].pty) });
         i = i + 1 as u32;
     }
 }
@@ -1071,13 +1210,14 @@ fn mangle_fn(a: Allocator, ar: *Arena, f: *const Func) -> str {
 
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                 structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                mangled: str, f: *const Func) -> Tfunc {
+                sinfo: *const Vec<StructField>, mangled: str, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
-    let sc = TyScope { sc_structs: structs, sc_enums: enums, sc_tparams: &f.tparams, sc_iconsts: iconsts };
+    let sc = TyScope { sc_structs: structs, sc_enums: enums, sc_tparams: &f.tparams,
+                       sc_iconsts: iconsts, sc_sinfo: sinfo };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    build_param_env(a, ar, &f.params, &env);
+    build_param_env(a, ar, &sc, &f.params, &env);
     let body = elab_body(a, ar, g, &sc, gensym, &env, ret_ty, &f.body);
     let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let no_pos: Option<Pos> = Option::None;
@@ -1102,9 +1242,9 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
 
 fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                   structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                  it: *const Item, funcs: *Vec<Tfunc>) {
+                  sinfo: *const Vec<StructField>, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, mangle_fn(a, ar, &f), &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo, mangle_fn(a, ar, &f), &f)); }
         | _e => { }
     }
 }
@@ -1128,28 +1268,28 @@ fn method_mangle(a: Allocator, ar: *Arena, target: *const Vec<str>, name: str) -
 // satisfy the escape checker.
 fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                          structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                         target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
-    funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts,
+                         sinfo: *const Vec<StructField>, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+    funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo,
                             method_mangle(a, ar, target, f.name), f));
 }
 
 fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                   structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                  ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
+                  sinfo: *const Vec<StructField>, ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
     let n = ib.iitems.length();
     let sl = ib.iitems.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_method_into(a, ar, g, gensym, structs, enums, iconsts, &ib.itarget, &sl[i], funcs);
+        elaborate_method_into(a, ar, g, gensym, structs, enums, iconsts, sinfo, &ib.itarget, &sl[i], funcs);
         i = i + 1 as u32;
     }
 }
 
 fn elaborate_impl_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                        structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                       it: *const Item, funcs: *Vec<Tfunc>) {
+                       sinfo: *const Vec<StructField>, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, structs, enums, iconsts, &ib, funcs); }
+        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, structs, enums, iconsts, sinfo, &ib, funcs); }
         | _e => { }
     }
 }
@@ -1196,6 +1336,45 @@ fn collect_int_consts(items: *const Vec<Item>, out: *Vec<IntConst>) {
     let mut i = 0 as u32;
     while i < n {
         collect_int_consts_one(&sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+// Build the struct field-layout index: a flat list of (owning struct path,
+// field name, resolved field type).  Field types resolve through a
+// name-scope since they may reference other structs / enums.
+fn push_one_field(a: Allocator, ar: *Arena, sc: *const TyScope, sname: str,
+                  fd: *const FieldDef, out: *Vec<StructField>) {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(sname);
+    out.push(StructField { sf_path: path, sf_name: fd.name, sf_ty: resolve_sig_ty(a, ar, sc, fd.ty) });
+}
+
+fn push_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, sname: str,
+                      fields: *const Vec<FieldDef>, out: *Vec<StructField>) {
+    let n = fields.length();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        push_one_field(a, ar, sc, sname, &sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+fn collect_struct_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, out: *Vec<StructField>) {
+    match *it {
+        Item::Struct(sd) => { push_struct_fields(a, ar, sc, sd.sname, &sd.sfields, out); }
+        | Item::Module(md) => { collect_struct_info(a, ar, sc, &md.mitems, out); }
+        | _e => { }
+    }
+}
+
+fn collect_struct_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, out: *Vec<StructField>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        collect_struct_info_one(a, ar, sc, &sl[i], out);
         i = i + 1 as u32;
     }
 }
@@ -1316,6 +1495,15 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_type_names(items, &snames, &enames);
     let mut iconsts: Vec<IntConst> = Vec::with_capacity(a, 8 as u32);
     collect_int_consts(items, &iconsts);
+    // Struct field-layout index: built under a name-scope (field types may
+    // name other structs/enums), then carried in every fn's body scope so
+    // `s.field` and struct initialisers type-check.
+    let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let empty_sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
+    let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
+                               sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo };
+    let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
+    collect_struct_info(a, ar, &base_scope, items, &sinfo);
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
@@ -1324,13 +1512,13 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sl[i], &funcs);
+        elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &sl[i], &funcs);
         i = i + 1 as u32;
     }
     // Second pass: impl methods are flattened after the free functions.
     let mut j = 0 as u32;
     while j < n {
-        elaborate_impl_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sl[j], &funcs);
+        elaborate_impl_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &sl[j], &funcs);
         j = j + 1 as u32;
     }
 
