@@ -633,9 +633,82 @@ fn elab_user_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     };
 }
 
+// ===== Enum construction =====
+//
+// `Path::Variant` parses three ways: a unit variant as `EnumLit`, a tuple
+// variant `V(a, b)` as a `Call` whose callee is `[enum-path…, V]`, and a
+// struct variant `V { f: .. }` as a `StructLit` with the same path shape.
+// All three lower to a `TEnumLit` when the index knows the variant.
+
+fn path_last(callee: *const Vec<str>) -> str {
+    let n = callee.length();
+    if n == 0 as u32 { return ""; }
+    let sl = callee.as_slice();
+    return sl[n - 1 as u32];
+}
+
+fn path_init(a: Allocator, callee: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let n = callee.length();
+    let sl = callee.as_slice();
+    let mut i = 0 as u32;
+    while i + 1 as u32 < n { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+
+fn mk_enum_lit_node(a: Allocator, ar: *Arena, epath: *const Vec<str>, variant: str, tag: int,
+                    tfields: Vec<TexprField>, p: Pos) -> *const Texpr {
+    let ety = ty_node(ar, Typ::TEnum(copy_strs(a, epath)));
+    return te_node(ar, TexprNode::TEnumLit { ename_path: copy_strs(a, epath), variant: variant,
+                                             tag: tag, args: tfields }, ety, p);
+}
+
+// Tuple-variant payload: positional args get names `_0`, `_1`, … and
+// elaborate against their declared payload-field types.
+fn enum_tuple_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                   epath: *const Vec<str>, variant: str, args: *const Vec<*const Expr>) -> Vec<TexprField> {
+    let mut out: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
+    let n = args.length();
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let fname = tuple_field_name(a, ar, i);
+        let exp = enum_field_ty(sc.sc_efields, epath, variant, fname);
+        out.push(TexprField { name: fname, value: elab_expr(a, ar, g, sc, env, exp, sl[i]) });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// Struct-variant payload: declared field names, each elaborated against its
+// declared payload-field type.
+fn enum_struct_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                    epath: *const Vec<str>, variant: str, fields: *const Vec<Field>) -> Vec<TexprField> {
+    let mut out: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
+    let n = fields.length();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let exp = enum_field_ty(sc.sc_efields, epath, variant, sl[i].name);
+        out.push(TexprField { name: sl[i].name, value: elab_expr(a, ar, g, sc, env, exp, sl[i].value) });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
 fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
-    if callee.length() != 1 as u32 { return defer_expr(ar, p); }
+    if callee.length() != 1 as u32 {
+        // `Path::Variant(..)` — a tuple-enum constructor, else (module fn)
+        // not yet supported.
+        let last = path_last(callee);
+        let init = path_init(a, callee);
+        let tag = variant_tag(sc.sc_etags, &init, last);
+        if tag >= 0 as int {
+            return mk_enum_lit_node(a, ar, &init, last, tag, enum_tuple_args(a, ar, g, sc, env, &init, last, args), p);
+        }
+        return defer_expr(ar, p);
+    }
     let name = callee.get(0 as u32) orelse "";
     if str::eq(name, "println") || str::eq(name, "print") {
         let targs = elab_args(a, ar, g, sc, env, args);
@@ -962,6 +1035,16 @@ fn elab_opt_base(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
 fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>,
                    base: Option<*const Expr>, p: Pos) -> *const Texpr {
+    // `Enum::Variant { .. }` — a struct-variant constructor when the index
+    // knows the (enum-path, variant) split of `tname`.
+    if tname.length() >= 2 as u32 {
+        let last = path_last(tname);
+        let init = path_init(a, tname);
+        let tag = variant_tag(sc.sc_etags, &init, last);
+        if tag >= 0 as int {
+            return mk_enum_lit_node(a, ar, &init, last, tag, enum_struct_args(a, ar, g, sc, env, &init, last, fields), p);
+        }
+    }
     let tfields = elab_struct_fields(a, ar, g, sc, env, tname, fields);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
     let sty = ty_node(ar, Typ::TStruct(copy_strs(a, tname)));
@@ -1002,7 +1085,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::Call { callee, args } => elab_call(a, ar, g, sc, env, &callee, &args, p)
         | Expr::If { cond, then_blk, else_blk } =>
             mk_if_expr(a, ar, g, sc, env, expected, cond, &then_blk, else_blk, p)
-        | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, &tname, variant, p)
+        | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, sc, &tname, variant, p)
         | Expr::Match { scrutinee, arms } => elab_match(a, ar, g, sc, env, expected, scrutinee, &arms, p)
         | Expr::FieldAccess(target, field, _q) => elab_field_access(a, ar, g, sc, env, target, field, p)
         | Expr::StructLit { tname, fields, base } => elab_struct_lit(a, ar, g, sc, env, &tname, &fields, base, p)
@@ -1012,17 +1095,16 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     };
 }
 
-// `A::B` parses as an enum-literal; resolve it as a module-scoped `const`
-// reference when its mangled `A__B` names one, else defer (real enum
-// literals are not yet elaborated).
-// `Path::Variant` resolves as a module-scoped `const` reference
-// (`mod::CONST`) when its mangled name is known.  Real enum *construction*
-// (building a `TEnumLit`) is deferred until the block-expr lift pass lands:
-// without it, an enum literal in a non-top position (a call argument)
-// differs from the oracle's `__lift_N` temp, so it must stay a visible
-// marker.  Variant *patterns* and matches are already elaborated.
-fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>,
+// `Path::Variant` (no payload) is a unit enum constructor when the index
+// knows the variant; otherwise it is a module-scoped `const` reference
+// (`mod::CONST`) resolved by mangled name.
+fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                 tname: *const Vec<str>, variant: str, p: Pos) -> *const Texpr {
+    let tag = variant_tag(sc.sc_etags, tname, variant);
+    if tag >= 0 as int {
+        let empty: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
+        return mk_enum_lit_node(a, ar, tname, variant, tag, empty, p);
+    }
     let m = mangle_path(a, ar, tname, variant);
     return match global_lookup_by_mangled(g, m) {
         Option::Some(gf) => enumlit_const(ar, gf, p)
@@ -1354,6 +1436,218 @@ fn mangle_fn(a: Allocator, ar: *Arena, f: *const Func) -> str {
     return str::from_slice(ar, sb.as_slice());
 }
 
+// ===== Block-expr lift pass =====
+//
+// Post-elaboration, per function: hoist block-shaped sub-expressions
+// (struct / enum / tuple / array literals, match, if-expr) out of positions
+// codegen emits via `gen_expr` (call args, binop operands, …) into preceding
+// `__lift_N` temporaries.  The top-level value of let / return / assign / an
+// expr-stmt match stays block-shaped (codegen handles it directly).  The
+// `__lift_N` counter resets per function.  The typed-IR dump is post-lift,
+// so the port must reproduce it.
+//
+// v1 limits (no current example needs them): match-arm bodies are copied
+// but not walked (a block / `for` inside an arm body would need a TBlock
+// wrap), and a block-shaped `while` condition is not re-evaluated per
+// iteration.
+
+fn lift_name(a: Allocator, ar: *Arena, ctr: *u32) -> str {
+    let n = *ctr;
+    *ctr = *ctr + 1 as u32;
+    let mut sb = StringBuilder::with_capacity(a, 16 as u32);
+    sb.push_str("__lift_");
+    sb.push_int(n as int);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+fn is_block_texpr(te: *const Texpr) -> bool {
+    return match te.e {
+        TexprNode::TStructLit { sname_path, fields, base } => true
+        | TexprNode::TTupleLit(_es) => true
+        | TexprNode::TNew { sname_path, fields, base, alloc } => true
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => true
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => true
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => true
+        | TexprNode::TIfExpr { cond, then_val, else_val } => true
+        | TexprNode::TArrayLit(_es) => true
+        | TexprNode::TArrayRepeat { value, count } => true
+        | _other => false
+    };
+}
+
+fn is_match_texpr(te: *const Texpr) -> bool {
+    return match te.e {
+        TexprNode::TMatch { scrutinee, ename_path, arms } => true
+        | _o => false
+    };
+}
+
+// Deep-copy a pattern so a rebuilt match arm owns its `tpat` (the arm can't
+// be moved out of the borrowed source node).
+fn copy_tfieldpats(a: Allocator, ar: *Arena, binds: *const Vec<TFieldPat>) -> Vec<TFieldPat> {
+    let mut out: Vec<TFieldPat> = Vec::with_capacity(a, 8 as u32);
+    let n = binds.length();
+    let sl = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(TFieldPat { name: sl[i].name, pat: copy_tpattern(a, ar, &sl[i].pat) }); i = i + 1 as u32; }
+    return out;
+}
+fn copy_tpatterns(a: Allocator, ar: *Arena, alts: *const Vec<Tpattern>) -> Vec<Tpattern> {
+    let mut out: Vec<Tpattern> = Vec::with_capacity(a, 8 as u32);
+    let n = alts.length();
+    let sl = alts.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(copy_tpattern(a, ar, &sl[i])); i = i + 1 as u32; }
+    return out;
+}
+fn copy_tpattern(a: Allocator, ar: *Arena, p: *const Tpattern) -> Tpattern {
+    return match *p {
+        Tpattern::TPWildcard => Tpattern::TPWildcard
+        | Tpattern::TPVar(n) => Tpattern::TPVar(n)
+        | Tpattern::TPLit(n) => Tpattern::TPLit(n)
+        | Tpattern::TPBool(b) => Tpattern::TPBool(b)
+        | Tpattern::TPVariant { variant, tag, binds } =>
+            Tpattern::TPVariant { variant: variant, tag: tag, binds: copy_tfieldpats(a, ar, &binds) }
+        | Tpattern::TPOr(alts) => Tpattern::TPOr(copy_tpatterns(a, ar, &alts))
+    };
+}
+fn copy_one_arm(a: Allocator, ar: *Arena, arm: *const TmatchArm, out: *Vec<TmatchArm>) {
+    out.push(TmatchArm { tpat: copy_tpattern(a, ar, &arm.tpat), tguard: arm.tguard, tbody: arm.tbody,
+                         tdiverges: arm.tdiverges, tarm_pos: arm.tarm_pos });
+}
+fn copy_match_arms(a: Allocator, ar: *Arena, arms: *const Vec<TmatchArm>) -> Vec<TmatchArm> {
+    let mut out: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
+    let n = arms.length();
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < n { copy_one_arm(a, ar, &sl[i], &out); i = i + 1 as u32; }
+    return out;
+}
+
+fn walk_args(a: Allocator, ar: *Arena, ctr: *u32, args: *const Vec<*const Texpr>, prelude: *Vec<Tstmt>) -> Vec<*const Texpr> {
+    let mut out: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    let n = args.length();
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(walk_expr(a, ar, ctr, false, sl[i], prelude)); i = i + 1 as u32; }
+    return out;
+}
+fn walk_fields(a: Allocator, ar: *Arena, ctr: *u32, fields: *const Vec<TexprField>, prelude: *Vec<Tstmt>) -> Vec<TexprField> {
+    let mut out: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
+    let n = fields.length();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(TexprField { name: sl[i].name, value: walk_expr(a, ar, ctr, false, sl[i].value, prelude) }); i = i + 1 as u32; }
+    return out;
+}
+fn walk_opt(a: Allocator, ar: *Arena, ctr: *u32, o: Option<*const Texpr>, prelude: *Vec<Tstmt>) -> Option<*const Texpr> {
+    return match o {
+        Option::Some(e) => Option::Some(walk_expr(a, ar, ctr, false, e, prelude))
+        | Option::None => { let nn: Option<*const Texpr> = Option::None; nn }
+    };
+}
+
+fn walk_subs(a: Allocator, ar: *Arena, ctr: *u32, te: *const Texpr, prelude: *Vec<Tstmt>) -> *const Texpr {
+    let p = te.pos;
+    return match te.e {
+        TexprNode::TNeg(s) => te_node(ar, TexprNode::TNeg(walk_expr(a, ar, ctr, false, s, prelude)), te.ty, p)
+        | TexprNode::TBitNot(s) => te_node(ar, TexprNode::TBitNot(walk_expr(a, ar, ctr, false, s, prelude)), te.ty, p)
+        | TexprNode::TNot(s) => te_node(ar, TexprNode::TNot(walk_expr(a, ar, ctr, false, s, prelude)), te.ty, p)
+        | TexprNode::TBinOp(op, l, r) =>
+            te_node(ar, TexprNode::TBinOp(op, walk_expr(a, ar, ctr, false, l, prelude), walk_expr(a, ar, ctr, false, r, prelude)), te.ty, p)
+        | TexprNode::TCall { mangled, args } =>
+            te_node(ar, TexprNode::TCall { mangled: mangled, args: walk_args(a, ar, ctr, &args, prelude) }, te.ty, p)
+        | TexprNode::TBuiltinCall { name, args } =>
+            te_node(ar, TexprNode::TBuiltinCall { name: name, args: walk_args(a, ar, ctr, &args, prelude) }, te.ty, p)
+        | TexprNode::TCast(s, ann) => te_node(ar, TexprNode::TCast(walk_expr(a, ar, ctr, false, s, prelude), ann), te.ty, p)
+        | TexprNode::TFieldAccess { target, field } =>
+            te_node(ar, TexprNode::TFieldAccess { target: walk_expr(a, ar, ctr, false, target, prelude), field: field }, te.ty, p)
+        | TexprNode::TRef(s) => te_node(ar, TexprNode::TRef(walk_expr(a, ar, ctr, false, s, prelude)), te.ty, p)
+        | TexprNode::TDeref(s) => te_node(ar, TexprNode::TDeref(walk_expr(a, ar, ctr, false, s, prelude)), te.ty, p)
+        | TexprNode::TIndex { base, index } =>
+            te_node(ar, TexprNode::TIndex { base: walk_expr(a, ar, ctr, false, base, prelude), index: walk_expr(a, ar, ctr, false, index, prelude) }, te.ty, p)
+        | TexprNode::TStructLit { sname_path, fields, base } =>
+            te_node(ar, TexprNode::TStructLit { sname_path: copy_strs(a, &sname_path), fields: walk_fields(a, ar, ctr, &fields, prelude), base: walk_opt(a, ar, ctr, base, prelude) }, te.ty, p)
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } =>
+            te_node(ar, TexprNode::TEnumLit { ename_path: copy_strs(a, &ename_path), variant: variant, tag: tag, args: walk_fields(a, ar, ctr, &args, prelude) }, te.ty, p)
+        | TexprNode::TMatch { scrutinee, ename_path, arms } =>
+            te_node(ar, TexprNode::TMatch { scrutinee: walk_expr(a, ar, ctr, false, scrutinee, prelude), ename_path: copy_strs(a, &ename_path), arms: copy_match_arms(a, ar, &arms) }, te.ty, p)
+        | TexprNode::TIfExpr { cond, then_val, else_val } =>
+            te_node(ar, TexprNode::TIfExpr { cond: walk_expr(a, ar, ctr, false, cond, prelude), then_val: then_val, else_val: else_val }, te.ty, p)
+        | _other => te
+    };
+}
+
+fn walk_expr(a: Allocator, ar: *Arena, ctr: *u32, allow_top: bool, te: *const Texpr, prelude: *Vec<Tstmt>) -> *const Texpr {
+    let walked = walk_subs(a, ar, ctr, te, prelude);
+    if allow_top { return walked; }
+    if !is_block_texpr(walked) { return walked; }
+    let nm = lift_name(a, ar, ctr);
+    prelude.push(Tstmt::TLet { name: nm, value: walked, pos: walked.pos });
+    return te_node(ar, TexprNode::TVar(nm), walked.ty, walked.pos);
+}
+
+fn lift_stmt(a: Allocator, ar: *Arena, ctr: *u32, s: *const Tstmt, out: *Vec<Tstmt>) {
+    match *s {
+        Tstmt::TLet { name, value, pos } => {
+            let vlet = walk_expr(a, ar, ctr, true, value, out);
+            out.push(Tstmt::TLet { name: name, value: vlet, pos: pos });
+        }
+        | Tstmt::TAssign { path, value, pos } => {
+            let vasg = walk_expr(a, ar, ctr, true, value, out);
+            out.push(Tstmt::TAssign { path: copy_strs(a, &path), value: vasg, pos: pos });
+        }
+        | Tstmt::TAssignField { target, field, value, pos } => {
+            let taf = walk_expr(a, ar, ctr, false, target, out);
+            let vaf = walk_expr(a, ar, ctr, false, value, out);
+            out.push(Tstmt::TAssignField { target: taf, field: field, value: vaf, pos: pos });
+        }
+        | Tstmt::TAssignDeref { target, value, pos } => {
+            let tad = walk_expr(a, ar, ctr, false, target, out);
+            let vad = walk_expr(a, ar, ctr, false, value, out);
+            out.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
+        }
+        | Tstmt::TReturn { value, pos } => {
+            match value {
+                Option::Some(e) => {
+                    let vret = walk_expr(a, ar, ctr, true, e, out);
+                    out.push(Tstmt::TReturn { value: Option::Some(vret), pos: pos });
+                }
+                | Option::None => {
+                    let nv: Option<*const Texpr> = Option::None;
+                    out.push(Tstmt::TReturn { value: nv, pos: pos });
+                }
+            }
+        }
+        | Tstmt::TExprStmt(e) => {
+            let at = is_match_texpr(e);
+            let vexp = walk_expr(a, ar, ctr, at, e, out);
+            out.push(Tstmt::TExprStmt(vexp));
+        }
+        | Tstmt::TIf { cond, then_body, else_body } => {
+            let cif = walk_expr(a, ar, ctr, false, cond, out);
+            out.push(Tstmt::TIf { cond: cif, then_body: lift_stmts(a, ar, ctr, &then_body), else_body: lift_stmts(a, ar, ctr, &else_body) });
+        }
+        | Tstmt::TWhile { cond, body, post } => {
+            let cwh = walk_expr(a, ar, ctr, false, cond, out);
+            out.push(Tstmt::TWhile { cond: cwh, body: lift_stmts(a, ar, ctr, &body), post: lift_stmts(a, ar, ctr, &post) });
+        }
+        | Tstmt::TBreak(bp) => { out.push(Tstmt::TBreak(bp)); }
+        | Tstmt::TContinue(cp) => { out.push(Tstmt::TContinue(cp)); }
+        | Tstmt::TDefer { body, pos } => { out.push(Tstmt::TDefer { body: lift_stmts(a, ar, ctr, &body), pos: pos }); }
+        | _other => { }
+    }
+}
+
+fn lift_stmts(a: Allocator, ar: *Arena, ctr: *u32, stmts: *const Vec<Tstmt>) -> Vec<Tstmt> {
+    let mut out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let n = stmts.length();
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < n { lift_stmt(a, ar, ctr, &sl[i], &out); i = i + 1 as u32; }
+    return out;
+}
+
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                 structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
                 sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, mangled: str, f: *const Func) -> Tfunc {
@@ -1364,7 +1658,10 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     build_param_env(a, ar, &sc, &f.params, &env);
-    let body = elab_body(a, ar, g, &sc, gensym, &env, ret_ty, &f.body);
+    let raw_body = elab_body(a, ar, g, &sc, gensym, &env, ret_ty, &f.body);
+    // Lift block-shaped sub-expressions into `__lift_N` temps (per-fn).
+    let mut lift_ctr: u32 = 0 as u32;
+    let body = lift_stmts(a, ar, &lift_ctr, &raw_body);
     let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let no_pos: Option<Pos> = Option::None;
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
