@@ -1075,7 +1075,7 @@ fn mangle_fn(a: Allocator, ar: *Arena, f: *const Func) -> str {
 
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                 structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                f: *const Func) -> Tfunc {
+                mangled: str, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
     let sc = TyScope { sc_structs: structs, sc_enums: enums, sc_tparams: &f.tparams, sc_iconsts: iconsts };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
@@ -1099,7 +1099,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
         tier_hint: f.tier_hint, must_use: f.must_use, escapes_hatch: f.escapes_hatch, pos: f.pos,
     };
     return Tfunc {
-        tf_path: path, tf_func: tf_func, tf_mangled: mangle_fn(a, ar, f), tf_param_tys: param_tys,
+        tf_path: path, tf_func: tf_func, tf_mangled: mangled, tf_param_tys: param_tys,
         tf_ret_ty: ret_ty, tf_body: body, tf_lets: lets, tf_origin_pos: no_pos,
     };
 }
@@ -1108,7 +1108,52 @@ fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
                   structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
                   it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, mangle_fn(a, ar, &f), &f)); }
+        | _e => { }
+    }
+}
+
+// An inherent / trait method `impl T { fn m(...) }` elaborates as a free
+// function whose C symbol is `T__m` (the target path joined by `__`, then
+// the method name).  The oracle flattens every method AFTER the top-level
+// free functions, so impls are elaborated in a second pass.
+fn method_mangle(a: Allocator, ar: *Arena, target: *const Vec<str>, name: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let n = target.length();
+    let sl = target.as_slice();
+    let mut i = 0 as u32;
+    while i < n { sb.push_str(sl[i]); sb.push_str("__"); i = i + 1 as u32; }
+    sb.push_str(name);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// Push happens behind a fn boundary so `f` is a parameter (not the address
+// of a local slice element) — same shape the free-fn path relies on to
+// satisfy the escape checker.
+fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+                         structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
+                         target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+    funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts,
+                            method_mangle(a, ar, target, f.name), f));
+}
+
+fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+                  structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
+                  ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
+    let n = ib.iitems.length();
+    let sl = ib.iitems.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        elaborate_method_into(a, ar, g, gensym, structs, enums, iconsts, &ib.itarget, &sl[i], funcs);
+        i = i + 1 as u32;
+    }
+}
+
+fn elaborate_impl_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
+                       structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
+                       it: *const Item, funcs: *Vec<Tfunc>) {
+    match *it {
+        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, structs, enums, iconsts, &ib, funcs); }
         | _e => { }
     }
 }
@@ -1285,6 +1330,12 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     while i < n {
         elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sl[i], &funcs);
         i = i + 1 as u32;
+    }
+    // Second pass: impl methods are flattened after the free functions.
+    let mut j = 0 as u32;
+    while j < n {
+        elaborate_impl_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sl[j], &funcs);
+        j = j + 1 as u32;
     }
 
     let mut structs = prelude_struct_index(a);
