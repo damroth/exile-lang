@@ -234,15 +234,6 @@ fn resolve_sig_ret(a: Allocator, ar: *Arena, sc: *const TyScope, ret: Option<*co
     };
 }
 
-// Body-path return resolver (masked): named types stay `c_void` until the
-// body elaborator can type their constructors.
-fn resolve_ret(a: Allocator, ar: *Arena, ret: Option<*const TypeAnn>) -> Option<*const Typ> {
-    return match ret {
-        Option::Some(t) => Option::Some(resolve_type_ann(a, ar, t))
-        | Option::None => Option::None
-    };
-}
-
 // `Param` is fully copyable (str / pointer / bool / Option<str>), so the
 // param list can be rebuilt for the IR `Tfunc` without moving it out of
 // the affine `Vec<Item>` the parser owns.
@@ -1384,23 +1375,23 @@ fn collect_struct_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *con
 // `is_top` is true only at the top level (path empty); module-internal
 // symbols are reachable solely via their `mod::name` path.  An `extern fn`
 // keeps its C name; otherwise `mangle_path` applies.
-fn collect_one(a: Allocator, ar: *Arena, it: *const Item, path: *const Vec<str>, g: *Vec<GlobalFn>) {
+fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, path: *const Vec<str>, g: *Vec<GlobalFn>) {
     let is_top = path.length() == 0 as u32;
     match *it {
         Item::Function(f) => {
             let m = collect_fn_mangle(a, ar, &f, path);
-            g.push(GlobalFn { name: f.name, mangled: m, ret: resolve_ret(a, ar, f.ret_ty),
+            g.push(GlobalFn { name: f.name, mangled: m, ret: resolve_sig_ret(a, ar, sc, f.ret_ty),
                               is_const: false, is_top: is_top });
         }
         | Item::Const(c) => {
             g.push(GlobalFn { name: c.kname, mangled: mangle_path(a, ar, path, c.kname),
-                              ret: Option::Some(resolve_type_ann(a, ar, c.kty)),
+                              ret: Option::Some(resolve_sig_ty(a, ar, sc, c.kty)),
                               is_const: true, is_top: is_top });
         }
         | Item::Module(md) => {
             let mut p2: Vec<str> = copy_strs(a, path);
             p2.push(md.mname);
-            collect_into(a, ar, &md.mitems, &p2, g);
+            collect_into(a, ar, sc, &md.mitems, &p2, g);
         }
         | _e => { }
     }
@@ -1412,20 +1403,20 @@ fn collect_fn_mangle(a: Allocator, ar: *Arena, f: *const Func, path: *const Vec<
     return mangle_path(a, ar, path, f.name);
 }
 
-fn collect_into(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: *const Vec<str>, g: *Vec<GlobalFn>) {
+fn collect_into(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, path: *const Vec<str>, g: *Vec<GlobalFn>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        collect_one(a, ar, &sl[i], path, g);
+        collect_one(a, ar, sc, &sl[i], path, g);
         i = i + 1 as u32;
     }
 }
 
-fn collect_globals(a: Allocator, ar: *Arena, items: *const Vec<Item>) -> Vec<GlobalFn> {
+fn collect_globals(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>) -> Vec<GlobalFn> {
     let mut g: Vec<GlobalFn> = Vec::with_capacity(a, 16 as u32);
     let top: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    collect_into(a, ar, items, &top, &g);
+    collect_into(a, ar, sc, items, &top, &g);
     return g;
 }
 
@@ -1487,7 +1478,6 @@ fn prelude_enum_index(a: Allocator) -> Vec<EnumSig> {
 
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
-    let globals = collect_globals(a, ar, items);
     // User-declared struct / enum names: signatures resolve them and they
     // join the prelude in the sorted `mono-instances` footer.
     let mut snames: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -1495,13 +1485,17 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_type_names(items, &snames, &enames);
     let mut iconsts: Vec<IntConst> = Vec::with_capacity(a, 8 as u32);
     collect_int_consts(items, &iconsts);
-    // Struct field-layout index: built under a name-scope (field types may
-    // name other structs/enums), then carried in every fn's body scope so
-    // `s.field` and struct initialisers type-check.
+    // Name-scope used to resolve field / signature types (no per-fn tparams,
+    // no struct index needed at this stage).
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let empty_sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo };
+    // Global fn / const table — return types resolved through the name-scope
+    // so a call to a struct-returning fn types as that struct.
+    let globals = collect_globals(a, ar, &base_scope, items);
+    // Struct field-layout index, carried in every fn's body scope so
+    // `s.field` and struct initialisers type-check.
     let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     collect_struct_info(a, ar, &base_scope, items, &sinfo);
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
