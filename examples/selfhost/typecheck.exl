@@ -78,12 +78,62 @@ struct StructField {
     sf_ty: *const Typ,
 }
 
+// Enum variant → tag (declaration order), and a flat per-variant-field
+// index (tuple payloads get synthesised names `_0`, `_1`, …; struct
+// payloads keep their declared names).  Kept flat for the same
+// escape-clean one-level lookup as the struct field index.
+struct EnumVariantTag {
+    et_path: Vec<str>,
+    et_name: str,
+    et_tag: int,
+}
+
+struct EnumFieldE {
+    ef_path: Vec<str>,
+    ef_variant: str,
+    ef_name: str,
+    ef_ty: *const Typ,
+}
+
 struct TyScope {
     sc_structs: *const Vec<str>,
     sc_enums: *const Vec<str>,
     sc_tparams: *const Vec<str>,
     sc_iconsts: *const Vec<IntConst>,
     sc_sinfo: *const Vec<StructField>,
+    sc_etags: *const Vec<EnumVariantTag>,
+    sc_efields: *const Vec<EnumFieldE>,
+}
+
+// Variant tag for `Path::Variant`, or -1 if unknown.
+fn variant_tag(etags: *const Vec<EnumVariantTag>, path: *const Vec<str>, variant: str) -> int {
+    let n = etags.length();
+    let sl = etags.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].et_name, variant) {
+            if path_eq(&sl[i].et_path, path) { return sl[i].et_tag; }
+        }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+
+// Payload field type for `Path::Variant`'s field `fname`, or None.
+fn enum_field_ty(efields: *const Vec<EnumFieldE>, path: *const Vec<str>, variant: str, fname: str) -> Option<*const Typ> {
+    let n = efields.length();
+    let sl = efields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].ef_name, fname) {
+            if str::eq(sl[i].ef_variant, variant) {
+                if path_eq(&sl[i].ef_path, path) { return Option::Some(sl[i].ef_ty); }
+            }
+        }
+        i = i + 1 as u32;
+    }
+    let none: Option<*const Typ> = Option::None;
+    return none;
 }
 
 fn path_eq(a: *const Vec<str>, b: *const Vec<str>) -> bool {
@@ -621,29 +671,105 @@ fn copy_fieldtys(a: Allocator, src: *const Vec<FieldTy>) -> Vec<FieldTy> {
     return out;
 }
 
-fn elab_pattern_list(a: Allocator, ar: *Arena, alts: *const Vec<Pattern>) -> Vec<Tpattern> {
+fn elab_pattern_list(a: Allocator, ar: *Arena, sc: *const TyScope, alts: *const Vec<Pattern>) -> Vec<Tpattern> {
     let mut out: Vec<Tpattern> = Vec::with_capacity(a, 8 as u32);
     let n = alts.length();
     let sl = alts.as_slice();
     let mut i = 0 as u32;
-    while i < n { out.push(elab_pattern(a, ar, &sl[i])); i = i + 1 as u32; }
+    while i < n { out.push(elab_pattern(a, ar, sc, &sl[i])); i = i + 1 as u32; }
     return out;
 }
-fn elab_pattern(a: Allocator, ar: *Arena, pat: *const Pattern) -> Tpattern {
+
+// Variant payload sub-patterns become `TFieldPat`s: tuple positions get
+// synthesised names `_0`, `_1`, …; struct fields keep their names.
+fn elab_tbinds(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const PatBinds) -> Vec<TFieldPat> {
+    let mut out: Vec<TFieldPat> = Vec::with_capacity(a, 8 as u32);
+    match *binds {
+        PatBinds::PBTuple(pats) => {
+            let nt = pats.length();
+            let tsl = pats.as_slice();
+            let mut it = 0 as u32;
+            while it < nt {
+                out.push(TFieldPat { name: tuple_field_name(a, ar, it), pat: elab_pattern(a, ar, sc, &tsl[it]) });
+                it = it + 1 as u32;
+            }
+        }
+        | PatBinds::PBStruct(fps) => {
+            let ns = fps.length();
+            let ssl = fps.as_slice();
+            let mut is = 0 as u32;
+            while is < ns {
+                out.push(TFieldPat { name: ssl[is].name, pat: elab_pattern(a, ar, sc, &ssl[is].pat) });
+                is = is + 1 as u32;
+            }
+        }
+    }
+    return out;
+}
+
+fn elab_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern) -> Tpattern {
     return match *pat {
         Pattern::PWildcard(_q) => Tpattern::TPWildcard
         | Pattern::PVar(n, _q) => Tpattern::TPVar(n)
         | Pattern::PLit(n, _q) => Tpattern::TPLit(n)
         | Pattern::PBool(b, _q) => Tpattern::TPBool(b)
-        | Pattern::POr(alts, _q) => Tpattern::TPOr(elab_pattern_list(a, ar, &alts))
-        | _other => Tpattern::TPWildcard
+        | Pattern::POr(alts, _q) => Tpattern::TPOr(elab_pattern_list(a, ar, sc, &alts))
+        | Pattern::PVariant { tname, variant, binds } =>
+            Tpattern::TPVariant { variant: variant, tag: variant_tag(sc.sc_etags, &tname, variant),
+                                  binds: elab_tbinds(a, ar, sc, &binds) }
     };
 }
 
-// A top-level `PVar` binds the scrutinee value into the arm body's scope.
-fn pattern_binds(pat: *const Pattern, scrut_ty: *const Typ, env_out: *Vec<FieldTy>) {
+// Bind pattern variables into the arm's env: a top-level `PVar` binds the
+// whole scrutinee; a variant pattern binds each payload var to its field
+// type and recurses through nested variant patterns.
+fn voidable_ty(ar: *Arena, t: Option<*const Typ>) -> *const Typ {
+    return match t {
+        Option::Some(ty) => ty
+        | Option::None => ty_node(ar, Typ::TCVoid)
+    };
+}
+
+fn bind_one_payload(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, variant: str,
+                    fname: str, sub: *const Pattern, env_out: *Vec<FieldTy>) {
+    match *sub {
+        Pattern::PVar(n, _q) => {
+            let fty = voidable_ty(ar, enum_field_ty(sc.sc_efields, tname, variant, fname));
+            env_out.push(FieldTy { name: n, ty: fty });
+        }
+        | Pattern::PVariant { tname, variant, binds } => { bind_variant_payload(a, ar, sc, &tname, variant, &binds, env_out); }
+        | _other => { }
+    }
+}
+
+fn bind_variant_payload(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, variant: str,
+                        binds: *const PatBinds, env_out: *Vec<FieldTy>) {
+    match *binds {
+        PatBinds::PBTuple(pats) => {
+            let nt = pats.length();
+            let tsl = pats.as_slice();
+            let mut it = 0 as u32;
+            while it < nt {
+                bind_one_payload(a, ar, sc, tname, variant, tuple_field_name(a, ar, it), &tsl[it], env_out);
+                it = it + 1 as u32;
+            }
+        }
+        | PatBinds::PBStruct(fps) => {
+            let ns = fps.length();
+            let ssl = fps.as_slice();
+            let mut is = 0 as u32;
+            while is < ns {
+                bind_one_payload(a, ar, sc, tname, variant, ssl[is].name, &ssl[is].pat, env_out);
+                is = is + 1 as u32;
+            }
+        }
+    }
+}
+
+fn pattern_binds(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern, scrut_ty: *const Typ, env_out: *Vec<FieldTy>) {
     match *pat {
         Pattern::PVar(n, _q) => { env_out.push(FieldTy { name: n, ty: scrut_ty }); }
+        | Pattern::PVariant { tname, variant, binds } => { bind_variant_payload(a, ar, sc, &tname, variant, &binds, env_out); }
         | _other => { }
     }
 }
@@ -658,9 +784,9 @@ fn elab_guard(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
 
 fn elab_one_arm(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                 expected: Option<*const Typ>, scrut_ty: *const Typ, arm: *const MatchArm, out: *Vec<TmatchArm>) {
-    let tpat = elab_pattern(a, ar, &arm.pat);
+    let tpat = elab_pattern(a, ar, sc, &arm.pat);
     let mut arm_env = copy_fieldtys(a, env);
-    pattern_binds(&arm.pat, scrut_ty, &arm_env);
+    pattern_binds(a, ar, sc, &arm.pat, scrut_ty, &arm_env);
     let tguard = elab_guard(a, ar, g, sc, &arm_env, arm.guard);
     let tbody = elab_expr(a, ar, g, sc, &arm_env, expected, arm.body);
     out.push(TmatchArm { tpat: tpat, tguard: tguard, tbody: tbody, tdiverges: false, tarm_pos: arm.arm_pos });
@@ -680,15 +806,38 @@ fn match_result_ty(ar: *Arena, tarms: *const Vec<TmatchArm>) -> *const Typ {
     return sl[0 as u32].tbody.ty;
 }
 
-fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-              expected: Option<*const Typ>, scrutinee: *const Expr, arms: *const Vec<MatchArm>, p: Pos) -> *const Texpr {
-    let tscrut = elab_expr(a, ar, g, sc, env, none_ty(), scrutinee);
-    if !is_scalar_ty(tscrut.ty) { return defer_expr(ar, p); }
-    let epath: Vec<str> = Vec::with_capacity(a, 8 as u32);
+fn is_enum_ty(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TEnum(_p) => true
+        | _e => false
+    };
+}
+
+fn enum_ty_path(a: Allocator, t: *const Typ) -> Vec<str> {
+    return match *t {
+        Typ::TEnum(path) => copy_strs(a, &path)
+        | _e => Vec::with_capacity(a, 8 as u32)
+    };
+}
+
+fn emit_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+              expected: Option<*const Typ>, tscrut: *const Texpr, epath: Vec<str>,
+              arms: *const Vec<MatchArm>, p: Pos) -> *const Texpr {
     let mut tarms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
     elab_arms(a, ar, g, sc, env, expected, tscrut.ty, arms, &tarms);
     let mty = match_result_ty(ar, &tarms);
     return te_node(ar, TexprNode::TMatch { scrutinee: tscrut, ename_path: epath, arms: tarms }, mty, p);
+}
+
+fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+              expected: Option<*const Typ>, scrutinee: *const Expr, arms: *const Vec<MatchArm>, p: Pos) -> *const Texpr {
+    let tscrut = elab_expr(a, ar, g, sc, env, none_ty(), scrutinee);
+    if is_enum_ty(tscrut.ty) {
+        return emit_match(a, ar, g, sc, env, expected, tscrut, enum_ty_path(a, tscrut.ty), arms, p);
+    }
+    if !is_scalar_ty(tscrut.ty) { return defer_expr(ar, p); }
+    let epath: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    return emit_match(a, ar, g, sc, env, expected, tscrut, epath, arms, p);
 }
 
 // ===== Variable substitution (for-loop iter-var rename) =====
@@ -866,6 +1015,12 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
 // `A::B` parses as an enum-literal; resolve it as a module-scoped `const`
 // reference when its mangled `A__B` names one, else defer (real enum
 // literals are not yet elaborated).
+// `Path::Variant` resolves as a module-scoped `const` reference
+// (`mod::CONST`) when its mangled name is known.  Real enum *construction*
+// (building a `TEnumLit`) is deferred until the block-expr lift pass lands:
+// without it, an enum literal in a non-top position (a call argument)
+// differs from the oracle's `__lift_N` temp, so it must stay a visible
+// marker.  Variant *patterns* and matches are already elaborated.
 fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>,
                 tname: *const Vec<str>, variant: str, p: Pos) -> *const Texpr {
     let m = mangle_path(a, ar, tname, variant);
@@ -1201,10 +1356,10 @@ fn mangle_fn(a: Allocator, ar: *Arena, f: *const Func) -> str {
 
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                 structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                sinfo: *const Vec<StructField>, mangled: str, f: *const Func) -> Tfunc {
+                sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, mangled: str, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
     let sc = TyScope { sc_structs: structs, sc_enums: enums, sc_tparams: &f.tparams,
-                       sc_iconsts: iconsts, sc_sinfo: sinfo };
+                       sc_iconsts: iconsts, sc_sinfo: sinfo, sc_etags: etags, sc_efields: efields };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -1233,9 +1388,9 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
 
 fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                   structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                  sinfo: *const Vec<StructField>, it: *const Item, funcs: *Vec<Tfunc>) {
+                  sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo, mangle_fn(a, ar, &f), &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, mangle_fn(a, ar, &f), &f)); }
         | _e => { }
     }
 }
@@ -1259,28 +1414,28 @@ fn method_mangle(a: Allocator, ar: *Arena, target: *const Vec<str>, name: str) -
 // satisfy the escape checker.
 fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                          structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                         sinfo: *const Vec<StructField>, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
-    funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo,
+                         sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+    funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields,
                             method_mangle(a, ar, target, f.name), f));
 }
 
 fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                   structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                  sinfo: *const Vec<StructField>, ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
+                  sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
     let n = ib.iitems.length();
     let sl = ib.iitems.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_method_into(a, ar, g, gensym, structs, enums, iconsts, sinfo, &ib.itarget, &sl[i], funcs);
+        elaborate_method_into(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, &ib.itarget, &sl[i], funcs);
         i = i + 1 as u32;
     }
 }
 
 fn elaborate_impl_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                        structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                       sinfo: *const Vec<StructField>, it: *const Item, funcs: *Vec<Tfunc>) {
+                       sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, structs, enums, iconsts, sinfo, &ib, funcs); }
+        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, &ib, funcs); }
         | _e => { }
     }
 }
@@ -1366,6 +1521,90 @@ fn collect_struct_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *con
     let mut i = 0 as u32;
     while i < n {
         collect_struct_info_one(a, ar, sc, &sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+
+// Build the enum index: a variant→tag list plus a flat per-variant-field
+// list (tuple payloads named `_0`, `_1`, …; struct payloads by declared
+// name).  Tag is the variant's declaration order.
+fn tuple_field_name(a: Allocator, ar: *Arena, k: u32) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 8 as u32);
+    sb.push_str("_");
+    sb.push_int(k as int);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+fn push_etag(a: Allocator, ename: str, vname: str, tag: int, out: *Vec<EnumVariantTag>) {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(ename);
+    out.push(EnumVariantTag { et_path: path, et_name: vname, et_tag: tag });
+}
+
+fn push_efield(a: Allocator, ename: str, vname: str, fname: str, ty: *const Typ, out: *Vec<EnumFieldE>) {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(ename);
+    out.push(EnumFieldE { ef_path: path, ef_variant: vname, ef_name: fname, ef_ty: ty });
+}
+
+fn push_variant_fields(a: Allocator, ar: *Arena, sc: *const TyScope, ename: str, vname: str,
+                       vk: *const VariantKind, efields: *Vec<EnumFieldE>) {
+    match *vk {
+        VariantKind::VUnit => { }
+        | VariantKind::VTuple(tys) => {
+            let nt = tys.length();
+            let tsl = tys.as_slice();
+            let mut kt = 0 as u32;
+            while kt < nt {
+                push_efield(a, ename, vname, tuple_field_name(a, ar, kt), resolve_sig_ty(a, ar, sc, tsl[kt]), efields);
+                kt = kt + 1 as u32;
+            }
+        }
+        | VariantKind::VStruct(fds) => {
+            let ns = fds.length();
+            let fsl = fds.as_slice();
+            let mut ks = 0 as u32;
+            while ks < ns {
+                push_efield(a, ename, vname, fsl[ks].name, resolve_sig_ty(a, ar, sc, fsl[ks].ty), efields);
+                ks = ks + 1 as u32;
+            }
+        }
+    }
+}
+
+fn collect_one_variant(a: Allocator, ar: *Arena, sc: *const TyScope, ename: str, ev: *const EnumVariant,
+                       tag: int, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
+    push_etag(a, ename, ev.vname, tag, etags);
+    push_variant_fields(a, ar, sc, ename, ev.vname, &ev.vkind, efields);
+}
+
+fn collect_enum_variants(a: Allocator, ar: *Arena, sc: *const TyScope, ename: str,
+                         variants: *const Vec<EnumVariant>, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
+    let n = variants.length();
+    let sl = variants.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        collect_one_variant(a, ar, sc, ename, &sl[i], i as int, etags, efields);
+        i = i + 1 as u32;
+    }
+}
+
+fn collect_enum_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item,
+                         etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
+    match *it {
+        Item::Enum(ed) => { collect_enum_variants(a, ar, sc, ed.ename, &ed.evariants, etags, efields); }
+        | Item::Module(md) => { collect_enum_info(a, ar, sc, &md.mitems, etags, efields); }
+        | _e => { }
+    }
+}
+
+fn collect_enum_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+                     etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        collect_enum_info_one(a, ar, sc, &sl[i], etags, efields);
         i = i + 1 as u32;
     }
 }
@@ -1486,18 +1725,25 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut iconsts: Vec<IntConst> = Vec::with_capacity(a, 8 as u32);
     collect_int_consts(items, &iconsts);
     // Name-scope used to resolve field / signature types (no per-fn tparams,
-    // no struct index needed at this stage).
+    // no struct/enum index needed at this stage).
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let empty_sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
+    let empty_etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
+    let empty_efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
-                               sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo };
+                               sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
+                               sc_etags: &empty_etags, sc_efields: &empty_efields };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
-    // Struct field-layout index, carried in every fn's body scope so
-    // `s.field` and struct initialisers type-check.
+    // Struct field index + enum variant/field index, carried in every fn's
+    // body scope so `s.field`, struct/enum literals and variant patterns
+    // type-check.
     let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     collect_struct_info(a, ar, &base_scope, items, &sinfo);
+    let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
+    let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
+    collect_enum_info(a, ar, &base_scope, items, &etags, &efields);
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
@@ -1506,13 +1752,13 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &sl[i], &funcs);
+        elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &etags, &efields, &sl[i], &funcs);
         i = i + 1 as u32;
     }
     // Second pass: impl methods are flattened after the free functions.
     let mut j = 0 as u32;
     while j < n {
-        elaborate_impl_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &sl[j], &funcs);
+        elaborate_impl_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &etags, &efields, &sl[j], &funcs);
         j = j + 1 as u32;
     }
 
