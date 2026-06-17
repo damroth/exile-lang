@@ -61,10 +61,29 @@ fn resolve_type_ann(a: Allocator, ar: *Arena, ann: *const TypeAnn) -> *const Typ
 // becomes `TEnum`, anything else a `TStruct` (generic applications keep
 // their resolved arguments); tuples lower element-wise.
 
+// A top-level integer `const` whose value is a literal — enough to fold an
+// array size `[T; N]` where `N` is a named constant (the common case).
+struct IntConst {
+    ic_name: str,
+    ic_val: int,
+}
+
 struct TyScope {
     sc_structs: *const Vec<str>,
     sc_enums: *const Vec<str>,
     sc_tparams: *const Vec<str>,
+    sc_iconsts: *const Vec<IntConst>,
+}
+
+fn iconst_lookup(consts: *const Vec<IntConst>, name: str) -> int {
+    let n = consts.length();
+    let sl = consts.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].ic_name, name) { return sl[i].ic_val; }
+        i = i + 1 as u32;
+    }
+    return 0 as int;
 }
 
 fn name_in(names: *const Vec<str>, n: str) -> bool {
@@ -109,6 +128,18 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     return ty_node(ar, Typ::TStructApp { path: newpath, args: resolve_sig_args(a, ar, sc, args) });
 }
 
+// Array size is a const expression: a literal, or a reference to a
+// top-level integer constant (folded through the scope's const table).
+// Anything else defers to 0, leaving the sig visibly off rather than
+// crashing.
+fn array_size_of(size: *const Expr, sc: *const TyScope) -> int {
+    return match *size {
+        Expr::IntLit(n, _q) => n
+        | Expr::Var(nm, _q) => iconst_lookup(sc.sc_iconsts, nm)
+        | _e => 0 as int
+    };
+}
+
 fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const TypeAnn) -> *const Typ {
     return match *ann {
         TypeAnn::TyPtr(t) => ty_node(ar, Typ::TPtr(resolve_sig_ty(a, ar, sc, t)))
@@ -116,6 +147,8 @@ fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const Type
         | TypeAnn::TyConstPtr(t) => ty_node(ar, Typ::TConstPtr(resolve_sig_ty(a, ar, sc, t)))
         | TypeAnn::TyStruct { path, args } => resolve_named_ty(a, ar, sc, &path, &args)
         | TypeAnn::TyTuple(elems) => ty_node(ar, Typ::TTuple(resolve_sig_args(a, ar, sc, &elems)))
+        | TypeAnn::TyArray { elem, size } =>
+            ty_node(ar, Typ::TArray { elem: resolve_sig_ty(a, ar, sc, elem), size: array_size_of(size, sc) })
         | _other => resolve_type_ann(a, ar, ann)
     };
 }
@@ -1041,9 +1074,10 @@ fn mangle_fn(a: Allocator, ar: *Arena, f: *const Func) -> str {
 }
 
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                structs: *const Vec<str>, enums: *const Vec<str>, f: *const Func) -> Tfunc {
+                structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
+                f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
-    let sc = TyScope { sc_structs: structs, sc_enums: enums, sc_tparams: &f.tparams };
+    let sc = TyScope { sc_structs: structs, sc_enums: enums, sc_tparams: &f.tparams, sc_iconsts: iconsts };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -1071,9 +1105,10 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
 }
 
 fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                  structs: *const Vec<str>, enums: *const Vec<str>, it: *const Item, funcs: *Vec<Tfunc>) {
+                  structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
+                  it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, &f)); }
         | _e => { }
     }
 }
@@ -1095,6 +1130,31 @@ fn collect_type_names(items: *const Vec<Item>, snames: *Vec<str>, enames: *Vec<s
     let mut i = 0 as u32;
     while i < n {
         collect_type_names_one(&sl[i], snames, enames);
+        i = i + 1 as u32;
+    }
+}
+
+// Collect top-level integer constants with a literal value so array sizes
+// `[T; N]` and other size expressions can fold `N`.
+fn collect_int_consts_one(it: *const Item, out: *Vec<IntConst>) {
+    match *it {
+        Item::Const(c) => {
+            match *c.kvalue {
+                Expr::IntLit(n, _q) => { out.push(IntConst { ic_name: c.kname, ic_val: n }); }
+                | _e => { }
+            }
+        }
+        | Item::Module(md) => { collect_int_consts(&md.mitems, out); }
+        | _e => { }
+    }
+}
+
+fn collect_int_consts(items: *const Vec<Item>, out: *Vec<IntConst>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        collect_int_consts_one(&sl[i], out);
         i = i + 1 as u32;
     }
 }
@@ -1213,6 +1273,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut snames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut enames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_type_names(items, &snames, &enames);
+    let mut iconsts: Vec<IntConst> = Vec::with_capacity(a, 8 as u32);
+    collect_int_consts(items, &iconsts);
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
@@ -1221,7 +1283,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &sl[i], &funcs);
+        elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sl[i], &funcs);
         i = i + 1 as u32;
     }
 
