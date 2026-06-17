@@ -528,6 +528,89 @@ fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec
     return te_node(ar, TexprNode::TMatch { scrutinee: tscrut, ename_path: epath, arms: tarms }, mty, p);
 }
 
+// ===== Variable substitution (for-loop iter-var rename) =====
+//
+// `for IT in lo..hi { body }` renames `IT` to the gensym counter `__fvK`
+// in the body before elaboration (mirrors OCaml `subst_var_*`).  Rebuilds
+// the touched AST nodes; unhandled expr forms pass through unchanged, an
+// unhandled statement lowers to a visible `(var )` marker.
+
+fn ast_node(ar: *Arena, e: Expr) -> *const Expr {
+    let n: *Expr = ar.alloc_borrowed();
+    *n = e;
+    return n as *const Expr;
+}
+
+fn subst_var_one(ar: *Arena, from: str, to: str, n: str, p: Pos, orig: *const Expr) -> *const Expr {
+    if str::eq(n, from) { return ast_node(ar, Expr::Var(to, p)); }
+    return orig;
+}
+
+fn subst_call(a: Allocator, ar: *Arena, from: str, to: str,
+              callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Expr {
+    let new_callee = copy_strs(a, callee);
+    let mut new_args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let n = args.length();
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < n { new_args.push(subst_var_expr(a, ar, from, to, sl[i])); i = i + 1 as u32; }
+    return ast_node(ar, Expr::Call { callee: new_callee, args: new_args, pos: p });
+}
+
+fn subst_else(a: Allocator, ar: *Arena, from: str, to: str, else_blk: Option<Vec<Stmt>>) -> Option<Vec<Stmt>> {
+    return match else_blk {
+        Option::Some(blk) => Option::Some(subst_body(a, ar, from, to, &blk))
+        | Option::None => { let none: Option<Vec<Stmt>> = Option::None; none }
+    };
+}
+
+fn subst_if(a: Allocator, ar: *Arena, from: str, to: str, cond: *const Expr,
+            then_blk: *const Vec<Stmt>, else_blk: Option<Vec<Stmt>>, p: Pos) -> *const Expr {
+    let new_cond = subst_var_expr(a, ar, from, to, cond);
+    let new_then = subst_body(a, ar, from, to, then_blk);
+    let new_else = subst_else(a, ar, from, to, else_blk);
+    return ast_node(ar, Expr::If { cond: new_cond, then_blk: new_then, else_blk: new_else, pos: p });
+}
+
+fn subst_var_expr(a: Allocator, ar: *Arena, from: str, to: str, e: *const Expr) -> *const Expr {
+    let p = expr_pos(e);
+    return match *e {
+        Expr::Var(n, _q) => subst_var_one(ar, from, to, n, p, e)
+        | Expr::Neg(s, _q) => ast_node(ar, Expr::Neg(subst_var_expr(a, ar, from, to, s), p))
+        | Expr::BitNot(s, _q) => ast_node(ar, Expr::BitNot(subst_var_expr(a, ar, from, to, s), p))
+        | Expr::Not(s, _q) => ast_node(ar, Expr::Not(subst_var_expr(a, ar, from, to, s), p))
+        | Expr::BinOp(op, l, r, _q) =>
+            ast_node(ar, Expr::BinOp(op, subst_var_expr(a, ar, from, to, l), subst_var_expr(a, ar, from, to, r), p))
+        | Expr::Cast(s, t, _q) => ast_node(ar, Expr::Cast(subst_var_expr(a, ar, from, to, s), t, p))
+        | Expr::Call { callee, args } => subst_call(a, ar, from, to, &callee, &args, p)
+        | Expr::If { cond, then_blk, else_blk } => subst_if(a, ar, from, to, cond, &then_blk, else_blk, p)
+        | Expr::Index { base, index } =>
+            ast_node(ar, Expr::Index { base: subst_var_expr(a, ar, from, to, base), index: subst_var_expr(a, ar, from, to, index), pos: p })
+        | _other => e
+    };
+}
+
+fn subst_var_stmt(a: Allocator, ar: *Arena, from: str, to: str, s: *const Stmt) -> Stmt {
+    return match *s {
+        Stmt::ExprStmt(e) => Stmt::ExprStmt(subst_var_expr(a, ar, from, to, e))
+        | Stmt::Tail(e) => Stmt::Tail(subst_var_expr(a, ar, from, to, e))
+        | Stmt::Assign { path, value, pos } =>
+            Stmt::Assign { path: copy_strs(a, &path), value: subst_var_expr(a, ar, from, to, value), pos: pos }
+        | Stmt::Break(p) => Stmt::Break(p)
+        | Stmt::Continue(p) => Stmt::Continue(p)
+        | _other => Stmt::ExprStmt(ast_node(ar, Expr::Var("", zero_pos())))
+    };
+}
+
+fn subst_body(a: Allocator, ar: *Arena, from: str, to: str, body: *const Vec<Stmt>) -> Vec<Stmt> {
+    let mut out: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    let n = body.length();
+    let sl = body.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(subst_var_stmt(a, ar, from, to, &sl[i])); i = i + 1 as u32; }
+    return out;
+}
+
 fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, e: *const Expr) -> *const Texpr {
     let p = expr_pos(e);
@@ -595,10 +678,10 @@ fn empty_tstmts(a: Allocator) -> Vec<Tstmt> {
     return v;
 }
 
-fn elab_else_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_else_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                   else_blk: Option<Vec<Stmt>>) -> Vec<Tstmt> {
     return match else_blk {
-        Option::Some(blk) => elab_body(a, ar, g, env, ret, &blk)
+        Option::Some(blk) => elab_body(a, ar, g, gensym, env, ret, &blk)
         | Option::None => empty_tstmts(a)
     };
 }
@@ -606,13 +689,13 @@ fn elab_else_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<F
 // An expression used in statement (void) position.  `if` lowers to the
 // void `TIf` statement (branches are full stmt-blocks, sharing the env —
 // C hoists branch-local lets); everything else becomes a `TExprStmt`.
-fn elab_stmt_pos(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_stmt_pos(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                  e: *const Expr, out: *Vec<Tstmt>) {
     match *e {
         Expr::If { cond, then_blk, else_blk } => {
             let tcond = elab_expr(a, ar, g, env, none_ty(), cond);
-            let tthen = elab_body(a, ar, g, env, ret, &then_blk);
-            let telse = elab_else_body(a, ar, g, env, ret, else_blk);
+            let tthen = elab_body(a, ar, g, gensym, env, ret, &then_blk);
+            let telse = elab_else_body(a, ar, g, gensym, env, ret, else_blk);
             out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
         }
         | _other => {
@@ -680,24 +763,24 @@ fn mk_if_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec
 // A trailing block value in a return-typed fn is an implicit `return`.  A
 // value-`if` returns an `if-expr`; a control-flow `if` (diverging branches)
 // stays a `TIf` statement; anything else returns its value.
-fn elab_tail_if(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_tail_if(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                 cond: *const Expr, then_blk: *const Vec<Stmt>, else_blk: Option<Vec<Stmt>>, p: Pos, out: *Vec<Tstmt>) {
     if block_is_value(then_blk) {
         let ifx = mk_if_expr(a, ar, g, env, ret, cond, then_blk, else_blk, p);
         out.push(Tstmt::TReturn { value: Option::Some(ifx), pos: zero_pos() });
     } else {
         let tcond = elab_expr(a, ar, g, env, none_ty(), cond);
-        let tthen = elab_body(a, ar, g, env, ret, then_blk);
-        let telse = elab_else_body(a, ar, g, env, ret, else_blk);
+        let tthen = elab_body(a, ar, g, gensym, env, ret, then_blk);
+        let telse = elab_else_body(a, ar, g, gensym, env, ret, else_blk);
         out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
     }
 }
 
-fn elab_tail_ret(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_tail_ret(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                  e: *const Expr, out: *Vec<Tstmt>) {
     let p = expr_pos(e);
     match *e {
-        Expr::If { cond, then_blk, else_blk } => { elab_tail_if(a, ar, g, env, ret, cond, &then_blk, else_blk, p, out); }
+        Expr::If { cond, then_blk, else_blk } => { elab_tail_if(a, ar, g, gensym, env, ret, cond, &then_blk, else_blk, p, out); }
         | _other => {
             let tv = elab_expr(a, ar, g, env, ret, e);
             out.push(Tstmt::TReturn { value: Option::Some(tv), pos: zero_pos() });
@@ -707,10 +790,10 @@ fn elab_tail_ret(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<Fi
 
 // A trailing expression: an implicit `return` in a return-typed fn, else a
 // void statement (`if` → `TIf`, otherwise `TExprStmt`).
-fn elab_tail(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_tail(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              e: *const Expr, out: *Vec<Tstmt>) {
-    if is_some_ty(ret) { elab_tail_ret(a, ar, g, env, ret, e, out); }
-    else { elab_stmt_pos(a, ar, g, env, ret, e, out); }
+    if is_some_ty(ret) { elab_tail_ret(a, ar, g, gensym, env, ret, e, out); }
+    else { elab_stmt_pos(a, ar, g, gensym, env, ret, e, out); }
 }
 
 fn copy_strs(a: Allocator, src: *const Vec<str>) -> Vec<str> {
@@ -722,7 +805,68 @@ fn copy_strs(a: Allocator, src: *const Vec<str>) -> Vec<str> {
     return out;
 }
 
-fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+// ===== `for IT in lo..hi` → `while` lift =====
+//
+// A `for` over an integer range lowers to the oracle's post-lift shape:
+//   let __feK = hi; let __fvK = lo;
+//   while __fvK < __feK { body[IT->__fvK] } post { __fvK = __fvK + 1 }
+// (inclusive ranges compare with `<=`).  `K` is the program-global gensym
+// counter, so loops never collide; the iter-var is renamed in the body
+// before elaboration.  A non-range `for` (over a collection) is not yet
+// supported and leaves a visible deferral marker.
+
+fn gensym_name(a: Allocator, ar: *Arena, prefix: str, k: u32) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 16 as u32);
+    sb.push_str(prefix);
+    sb.push_int(k as int);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+fn mk_for_cond(ar: *Arena, fv: str, fe: str, cty: *const Typ, inclusive: bool) -> *const Texpr {
+    let vfv = te_node(ar, TexprNode::TVar(fv), cty, zero_pos());
+    let vfe = te_node(ar, TexprNode::TVar(fe), cty, zero_pos());
+    let op = if inclusive { BinOp::LtEq } else { BinOp::Lt };
+    return te_node(ar, TexprNode::TBinOp(op, vfv, vfe), t_bool(ar), zero_pos());
+}
+
+fn mk_for_post(a: Allocator, ar: *Arena, fv: str, cty: *const Typ) -> Vec<Tstmt> {
+    let vfv = te_node(ar, TexprNode::TVar(fv), cty, zero_pos());
+    let one = te_node(ar, TexprNode::TIntLit(1), cty, zero_pos());
+    let step = te_node(ar, TexprNode::TBinOp(BinOp::Add, vfv, one), cty, zero_pos());
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(fv);
+    let mut post: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    post.push(Tstmt::TAssign { path: path, value: step, pos: zero_pos() });
+    return post;
+}
+
+fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, env: *Vec<FieldTy>,
+            ret: Option<*const Typ>, iter_var: str, range: *const Expr, body: *const Vec<Stmt>, out: *Vec<Tstmt>) {
+    let k = *gensym;
+    *gensym = *gensym + 1 as u32;
+    let fv = gensym_name(a, ar, "__fv", k);
+    let fe = gensym_name(a, ar, "__fe", k);
+    match *range {
+        Expr::Range { lo, hi, inclusive } => {
+            let tlo = elab_expr(a, ar, g, env, none_ty(), lo);
+            let cty = tlo.ty;
+            let thi = elab_expr(a, ar, g, env, Option::Some(cty), hi);
+            let rbody = subst_body(a, ar, iter_var, fv, body);
+            env.push(FieldTy { name: fv, ty: cty });
+            let tbody = elab_body(a, ar, g, gensym, env, ret, &rbody);
+            out.push(Tstmt::TLet { name: fe, value: thi, pos: zero_pos() });
+            out.push(Tstmt::TLet { name: fv, value: tlo, pos: zero_pos() });
+            let cond = mk_for_cond(ar, fv, fe, cty, inclusive);
+            let post = mk_for_post(a, ar, fv, cty);
+            out.push(Tstmt::TWhile { cond: cond, body: tbody, post: post });
+        }
+        | _other => {
+            out.push(Tstmt::TExprStmt(defer_expr(ar, zero_pos())));
+        }
+    }
+}
+
+fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              s: *const Stmt, out: *Vec<Tstmt>) {
     match *s {
         Stmt::Let { name, value, ty_ann } => {
@@ -731,15 +875,15 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldT
             env.push(FieldTy { name: name, ty: vl.ty });
             out.push(Tstmt::TLet { name: name, value: vl, pos: expr_pos(value) });
         }
-        | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, env, ret, e, out); }
-        | Stmt::Tail(e) => { elab_tail(a, ar, g, env, ret, e, out); }
+        | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, gensym, env, ret, e, out); }
+        | Stmt::Tail(e) => { elab_tail(a, ar, g, gensym, env, ret, e, out); }
         | Stmt::Return(val, pos) => {
             let tv = elab_return_val(a, ar, g, env, ret, val);
             out.push(Tstmt::TReturn { value: tv, pos: pos });
         }
         | Stmt::While { cond, body } => {
             let wcond = elab_expr(a, ar, g, env, none_ty(), cond);
-            let wbody = elab_body(a, ar, g, env, ret, &body);
+            let wbody = elab_body(a, ar, g, gensym, env, ret, &body);
             let wpost: Vec<Tstmt> = empty_tstmts(a);
             out.push(Tstmt::TWhile { cond: wcond, body: wbody, post: wpost });
         }
@@ -751,8 +895,11 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldT
         | Stmt::Break(pos) => { out.push(Tstmt::TBreak(pos)); }
         | Stmt::Continue(pos) => { out.push(Tstmt::TContinue(pos)); }
         | Stmt::Defer { body, pos } => {
-            let dbody = elab_body(a, ar, g, env, ret, &body);
+            let dbody = elab_body(a, ar, g, gensym, env, ret, &body);
             out.push(Tstmt::TDefer { body: dbody, pos: pos });
+        }
+        | Stmt::For { iter_var, range, body } => {
+            elab_for(a, ar, g, gensym, env, ret, iter_var, range, &body, out);
         }
         | _other => {
             // Unsupported statement — emit a VISIBLE deferral marker rather
@@ -762,14 +909,14 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldT
     }
 }
 
-fn elab_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+fn elab_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              body: *const Vec<Stmt>) -> Vec<Tstmt> {
     let mut out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let n = body.length();
     let sl = body.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elab_stmt(a, ar, g, env, ret, &sl[i], &out);
+        elab_stmt(a, ar, g, gensym, env, ret, &sl[i], &out);
         i = i + 1 as u32;
     }
     return out;
@@ -800,13 +947,13 @@ fn mangle_fn(a: Allocator, ar: *Arena, f: *const Func) -> str {
     return str::from_slice(ar, sb.as_slice());
 }
 
-fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, f: *const Func) -> Tfunc {
+fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
     let param_tys = resolve_param_tys(a, ar, &f.params);
     let ret_ty = resolve_ret(a, ar, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     build_param_env(a, ar, &f.params, &env);
-    let body = elab_body(a, ar, g, &env, ret_ty, &f.body);
+    let body = elab_body(a, ar, g, gensym, &env, ret_ty, &f.body);
     let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let no_pos: Option<Pos> = Option::None;
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -828,9 +975,9 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, f: *const Fun
     };
 }
 
-fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, it: *const Item, funcs: *Vec<Tfunc>) {
+fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, &f)); }
         | _e => { }
     }
 }
@@ -944,12 +1091,15 @@ fn prelude_enum_index(a: Allocator) -> Vec<EnumSig> {
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
     let globals = collect_globals(a, ar, items);
+    // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
+    // once per program to match the oracle's `for_gensym := 0`.
+    let mut gensym: u32 = 0 as u32;
     let mut funcs: Vec<Tfunc> = Vec::with_capacity(a, 16 as u32);
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_item(a, ar, &globals, &sl[i], &funcs);
+        elaborate_item(a, ar, &globals, &gensym, &sl[i], &funcs);
         i = i + 1 as u32;
     }
 
