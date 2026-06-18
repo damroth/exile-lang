@@ -122,6 +122,7 @@ struct TyScope {
     // Substituted fields of struct instances, keyed by instance path, so
     // `instance.field` accesses resolve.
     sc_mono_fields: *Vec<StructField>,
+    sc_mono_efields: *Vec<EnumFieldE>,
 }
 
 // The program-global indices bundled for threading through the elaboration
@@ -139,6 +140,7 @@ struct ProgIdx {
     pi_mono_structs: *Vec<Vec<str>>,
     pi_mono_enums: *Vec<Vec<str>>,
     pi_mono_fields: *Vec<StructField>,
+    pi_mono_efields: *Vec<EnumFieldE>,
 }
 
 // Index of `(type-path, method-name)` in the method table, or -1.
@@ -413,6 +415,58 @@ fn register_mono_enum(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) 
     sc.sc_mono_enums.push(copy_strs(a, ipath));
 }
 
+// Type parameters of a generic enum, in declaration order (prelude enums
+// only for now; user generic enums would extend this).
+fn enum_tparams(a: Allocator, name: str) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    if str::eq(name, "Option") { out.push("T"); return out; }
+    if str::eq(name, "Result") { out.push("T"); out.push("E"); return out; }
+    return out;
+}
+
+fn zip_binds(a: Allocator, tparams: *const Vec<str>, args: *const Vec<*const Typ>) -> Vec<TVarBind> {
+    let mut out: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    let mut n = tparams.length();
+    if args.length() < n { n = args.length(); }
+    let tsl = tparams.as_slice();
+    let asl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(TVarBind { tvb_name: tsl[i], tvb_ty: asl[i] }); i = i + 1 as u32; }
+    return out;
+}
+
+fn push_mono_efield(a: Allocator, ar: *Arena, ipath: *const Vec<str>, variant: str, fname: str,
+                    binds: *const Vec<TVarBind>, sf_ty: *const Typ, out: *Vec<EnumFieldE>) {
+    out.push(EnumFieldE { ef_path: copy_strs(a, ipath), ef_variant: variant, ef_name: fname,
+                          ef_ty: subst_typ(ar, binds, sf_ty) });
+}
+
+// Register an enum instance's substituted variant fields so a match on the
+// instance binds payload variables to their concrete types.
+fn register_enum_instance_fields(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>,
+                                 args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
+    let tps = enum_tparams(a, path_last(skel));
+    let binds = zip_binds(a, &tps, args);
+    let n = sc.sc_efields.length();
+    let sl = sc.sc_efields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].ef_path, skel) {
+            push_mono_efield(a, ar, ipath, sl[i].ef_variant, sl[i].ef_name, &binds, sl[i].ef_ty, sc.sc_mono_efields);
+        }
+        i = i + 1 as u32;
+    }
+}
+
+// Payload field type of `Path::Variant`, preferring instance-substituted
+// fields over the generic skeleton.
+fn mono_enum_field_ty(sc: *const TyScope, epath: *const Vec<str>, variant: str, fname: str) -> Option<*const Typ> {
+    return match enum_field_ty(sc.sc_mono_efields, epath, variant, fname) {
+        Option::Some(t) => Option::Some(t)
+        | Option::None => enum_field_ty(sc.sc_efields, epath, variant, fname)
+    };
+}
+
 fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
                     path: *const Vec<str>, args: *const Vec<*const TypeAnn>) -> *const Typ {
     let plen = path.length();
@@ -433,6 +487,7 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     let ipath = instance_path(a, ar, path, &resolved);
     if is_enum {
         register_mono_enum(a, sc, &ipath);
+        register_enum_instance_fields(a, ar, sc, path, &resolved, &ipath);
         return ty_node(ar, Typ::TEnum(ipath));
     }
     register_mono_struct(a, sc, &ipath);
@@ -910,7 +965,7 @@ fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
 }
 
 fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-             callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+             expected: Option<*const Typ>, callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     if callee.length() != 1 as u32 {
         // `Path::Variant(..)` — a tuple-enum constructor; `Type::method(..)`
         // — a static / UFCS method call; else (module fn) not yet supported.
@@ -918,7 +973,9 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let init = path_init(a, callee);
         let tag = variant_tag(sc.sc_etags, &init, last);
         if tag >= 0 as int {
-            return mk_enum_lit_node(a, ar, &init, last, tag, enum_tuple_args(a, ar, g, sc, env, &init, last, args), p);
+            let tflds = enum_tuple_args(a, ar, g, sc, env, &init, last, args);
+            let inst = enum_instance_path(a, ar, sc, expected, &init, last, &tflds);
+            return mk_enum_lit_node(a, ar, &inst, last, tag, tflds, p);
         }
         let midx = find_method_idx(sc.sc_methods, &init, last);
         if midx >= 0 as int {
@@ -1071,7 +1128,7 @@ fn bind_one_payload(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const 
                     fname: str, sub: *const Pattern, env_out: *Vec<FieldTy>) {
     match *sub {
         Pattern::PVar(n, _q) => {
-            let fty = voidable_ty(ar, enum_field_ty(sc.sc_efields, tname, variant, fname));
+            let fty = voidable_ty(ar, mono_enum_field_ty(sc, tname, variant, fname));
             env_out.push(FieldTy { name: n, ty: fty });
         }
         | Pattern::PVariant { tname, variant, binds } => { bind_variant_payload(a, ar, sc, &tname, variant, &binds, env_out); }
@@ -1106,7 +1163,12 @@ fn bind_variant_payload(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *co
 fn pattern_binds(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern, scrut_ty: *const Typ, env_out: *Vec<FieldTy>) {
     match *pat {
         Pattern::PVar(n, _q) => { env_out.push(FieldTy { name: n, ty: scrut_ty }); }
-        | Pattern::PVariant { tname, variant, binds } => { bind_variant_payload(a, ar, sc, &tname, variant, &binds, env_out); }
+        | Pattern::PVariant { tname, variant, binds } => {
+            // Look up payload field types on the scrutinee's instance type
+            // (so an instance's substituted fields win over the skeleton).
+            let epath = enum_ty_path(a, scrut_ty);
+            bind_variant_payload(a, ar, sc, &epath, variant, &binds, env_out);
+        }
         | _other => { }
     }
 }
@@ -1389,6 +1451,42 @@ fn struct_lit_path(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const V
     };
 }
 
+// The instance path of an enum constructor `Enum::Variant(payload)`: infer
+// from the payload field types (a tparam reachable through the payload), or
+// — when the constructed enum's full type is already known from context (a
+// return type or annotation) — take that expected instance directly (it
+// seeds tparams the payload does not mention, e.g. `E` in `Result::Ok`).
+fn infer_enum_instance(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>,
+                       variant: str, tfields: *const Vec<TexprField>) -> Vec<str> {
+    let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    let n = tfields.length();
+    let sl = tfields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match enum_field_ty(sc.sc_efields, epath, variant, sl[i].name) {
+            Option::Some(fty) => { unify_typ(fty, sl[i].value.ty, &binds); }
+            | Option::None => { }
+        }
+        i = i + 1 as u32;
+    }
+    if binds.length() == 0 as u32 { return copy_strs(a, epath); }
+    let args = dedup_bind_tys(a, &binds);
+    let ipath = instance_path(a, ar, epath, &args);
+    register_mono_enum(a, sc, &ipath);
+    return ipath;
+}
+
+fn enum_instance_path(a: Allocator, ar: *Arena, sc: *const TyScope, expected: Option<*const Typ>,
+                      epath: *const Vec<str>, variant: str, tfields: *const Vec<TexprField>) -> Vec<str> {
+    return match expected {
+        Option::Some(et) => match *et {
+            Typ::TEnum(ep) => copy_strs(a, &ep)
+            | _e => infer_enum_instance(a, ar, sc, epath, variant, tfields)
+        }
+        | Option::None => infer_enum_instance(a, ar, sc, epath, variant, tfields)
+    };
+}
+
 fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>,
                    base: Option<*const Expr>, p: Pos) -> *const Texpr {
@@ -1480,12 +1578,12 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::Not(sub, _q) => elab_not(a, ar, g, sc, env, sub, p)
         | Expr::BinOp(op, l, r, _q) => elab_binop(a, ar, g, sc, env, expected, op, l, r, p)
         | Expr::Cast(sub, ann, _q) => elab_cast(a, ar, g, sc, env, sub, ann, p)
-        | Expr::Call { callee, args } => elab_call(a, ar, g, sc, env, &callee, &args, p)
+        | Expr::Call { callee, args } => elab_call(a, ar, g, sc, env, expected, &callee, &args, p)
         | Expr::MethodCall { receiver, name, args } => elab_method_call(a, ar, g, sc, env, receiver, name, &args, p)
         | Expr::Block(stmts, _q) => elab_block(a, ar, g, sc, env, expected, &stmts, p)
         | Expr::If { cond, then_blk, else_blk } =>
             mk_if_expr(a, ar, g, sc, env, expected, cond, &then_blk, else_blk, p)
-        | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, sc, &tname, variant, p)
+        | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, sc, expected, &tname, variant, p)
         | Expr::Match { scrutinee, arms } => elab_match(a, ar, g, sc, env, expected, scrutinee, &arms, p)
         | Expr::FieldAccess(target, field, _q) => elab_field_access(a, ar, g, sc, env, target, field, p)
         | Expr::StructLit { tname, fields, base } => elab_struct_lit(a, ar, g, sc, env, &tname, &fields, base, p)
@@ -1498,12 +1596,13 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
 // `Path::Variant` (no payload) is a unit enum constructor when the index
 // knows the variant; otherwise it is a module-scoped `const` reference
 // (`mod::CONST`) resolved by mangled name.
-fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, expected: Option<*const Typ>,
                 tname: *const Vec<str>, variant: str, p: Pos) -> *const Texpr {
     let tag = variant_tag(sc.sc_etags, tname, variant);
     if tag >= 0 as int {
         let empty: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
-        return mk_enum_lit_node(a, ar, tname, variant, tag, empty, p);
+        let inst = enum_instance_path(a, ar, sc, expected, tname, variant, &empty);
+        return mk_enum_lit_node(a, ar, &inst, variant, tag, empty, p);
     }
     let m = mangle_path(a, ar, tname, variant);
     return match global_lookup_by_mangled(g, m) {
@@ -2053,7 +2152,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let params = copy_params(a, &f.params);
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &f.tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
-                       sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields };
+                       sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -2208,7 +2307,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
-        sc_mono_fields: base.sc_mono_fields,
+        sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
     };
 }
 
@@ -2300,10 +2399,25 @@ fn collect_enum_variants(a: Allocator, ar: *Arena, sc: *const TyScope, ename: st
 fn collect_enum_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item,
                          etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
     match *it {
-        Item::Enum(ed) => { collect_enum_variants(a, ar, sc, ed.ename, &ed.evariants, etags, efields); }
+        Item::Enum(ed) => {
+            let sc2 = scope_with_tparams(sc, &ed.etparams);
+            collect_enum_variants(a, ar, &sc2, ed.ename, &ed.evariants, etags, efields);
+        }
         | Item::Module(md) => { collect_enum_info(a, ar, sc, &md.mitems, etags, efields); }
         | _e => { }
     }
+}
+
+// Register the prelude generic enums' variants so `Option::`/`Result::`
+// constructors and patterns resolve their tags + payload tparams.
+fn prelude_enum_variants(a: Allocator, ar: *Arena, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
+    push_etag(a, "Option", "None", 0 as int, etags);
+    push_etag(a, "Option", "Some", 1 as int, etags);
+    push_efield(a, "Option", "Some", "_0", ty_node(ar, Typ::TVar("T")), efields);
+    push_etag(a, "Result", "Ok", 0 as int, etags);
+    push_etag(a, "Result", "Err", 1 as int, etags);
+    push_efield(a, "Result", "Ok", "_0", ty_node(ar, Typ::TVar("T")), efields);
+    push_efield(a, "Result", "Err", "_0", ty_node(ar, Typ::TVar("E")), efields);
 }
 
 fn collect_enum_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
@@ -2513,10 +2627,11 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut mono_structs: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
     let mut mono_enums: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
     let mut mono_fields: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
+    let mut mono_efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
-                               sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields };
+                               sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -2528,11 +2643,12 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     collect_enum_info(a, ar, &base_scope, items, &etags, &efields);
+    prelude_enum_variants(a, ar, &etags, &efields);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
-                        pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields };
+                        pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
