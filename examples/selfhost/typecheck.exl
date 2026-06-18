@@ -161,6 +161,7 @@ struct TyScope {
     sc_genjobs: *Vec<GenJob>,
     sc_geninsts: *Vec<str>,
     sc_etps: *const Vec<EnumTP>,
+    sc_modpath: *const Vec<str>,
 }
 
 // The program-global indices bundled for threading through the elaboration
@@ -184,6 +185,7 @@ struct ProgIdx {
     pi_genjobs: *Vec<GenJob>,
     pi_geninsts: *Vec<str>,
     pi_etps: *const Vec<EnumTP>,
+    pi_modpath: *const Vec<str>,
 }
 
 // Index of `(type-path, method-name)` in the method table, or -1.
@@ -957,11 +959,28 @@ fn call_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     return mk_user_call(a, ar, g, sc, env, gf, args, p);
 }
 
-fn elab_user_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                      name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+// An unqualified call inside a module resolves to that module's `mod__name`
+// symbol first (module-internal scope), else a top-level fn.
+fn module_internal_lookup(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, name: str) -> Option<GlobalFn> {
+    if sc.sc_modpath.length() == 0 as u32 {
+        let none: Option<GlobalFn> = Option::None;
+        return none;
+    }
+    let m = mangle_path(a, ar, sc.sc_modpath, name);
+    return global_lookup_by_mangled(g, m);
+}
+fn elab_top_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                     name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     return match global_lookup(g, name) {
         Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, args, p)
         | Option::None => defer_expr(ar, p)
+    };
+}
+fn elab_user_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                      name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    return match module_internal_lookup(a, ar, g, sc, name) {
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, args, p)
+        | Option::None => elab_top_or_defer(a, ar, g, sc, env, name, args, p)
     };
 }
 
@@ -1093,6 +1112,17 @@ fn queue_gen_instance(a: Allocator, sc: *const TyScope, gi: u32, binds: *const V
     sc.sc_genjobs.push(GenJob { gj_idx: gi, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled });
 }
 
+// `mod::fn(args)` — a module-qualified call resolves to the `mod__fn` C
+// symbol via the global table; an unknown path defers to a marker.
+fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                       init: *const Vec<str>, last: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let m = mangle_path(a, ar, init, last);
+    return match global_lookup_by_mangled(g, m) {
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, args, p)
+        | Option::None => defer_expr(ar, p)
+    };
+}
+
 // `gen_fn(args)` → a monomorphic call `ex_fn_<args>(args)`, queuing the
 // instance for elaboration.
 fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
@@ -1129,7 +1159,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         if midx >= 0 as int {
             return mk_static_method_call(a, ar, g, sc, env, midx, args, p);
         }
-        return defer_expr(ar, p);
+        return elab_qualified_call(a, ar, g, sc, env, &init, last, args, p);
     }
     let name = callee.get(0 as u32) orelse "";
     if str::eq(name, "println") || str::eq(name, "print") {
@@ -2351,12 +2381,12 @@ fn elab_skeleton_or_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
 }
 
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                idx: *const ProgIdx, tbinds: *const Vec<TVarBind>, mangled: str, f: *const Func) -> Tfunc {
+                idx: *const ProgIdx, tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &f.tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_modpath: modpath };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -2389,10 +2419,44 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     };
 }
 
+// A module's functions are flattened with a `mod__name` C symbol (recursing
+// into nested modules), at the module's source position.
+fn path_push(a: Allocator, path: *const Vec<str>, name: str) -> Vec<str> {
+    let mut out = copy_strs(a, path);
+    out.push(name);
+    return out;
+}
+fn elaborate_module_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                       path: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, path, mangle_path(a, ar, path, f.name), f));
+}
+fn elaborate_module_items(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                          path: *const Vec<str>, items: *const Vec<Item>, funcs: *Vec<Tfunc>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match sl[i] {
+            Item::Function(f) => { elaborate_module_fn(a, ar, g, gensym, idx, path, &f, funcs); }
+            | Item::Module(md) => {
+                let p2 = path_push(a, path, md.mname);
+                elaborate_module_items(a, ar, g, gensym, idx, &p2, &md.mitems, funcs);
+            }
+            | _e => { }
+        }
+        i = i + 1 as u32;
+    }
+}
+
 fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                   idx: *const ProgIdx, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, mangle_fn(a, ar, &f), &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath, mangle_fn(a, ar, &f), &f)); }
+        | Item::Module(md) => {
+            let mut p: Vec<str> = Vec::with_capacity(a, 8 as u32);
+            p.push(md.mname);
+            elaborate_module_items(a, ar, g, gensym, idx, &p, &md.mitems, funcs);
+        }
         | _e => { }
     }
 }
@@ -2416,7 +2480,7 @@ fn method_mangle(a: Allocator, ar: *Arena, target: *const Vec<str>, name: str) -
 // satisfy the escape checker.
 fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                          idx: *const ProgIdx, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds,
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath,
                             method_mangle(a, ar, target, f.name), f));
 }
 
@@ -2516,7 +2580,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_modpath: base.sc_modpath,
     };
 }
 
@@ -2750,7 +2814,7 @@ fn elaborate_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym:
                       items: *const Vec<Item>, gi: u32, tbinds: *const Vec<TVarBind>, mangled: str, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
     match sl[gi] {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, mangled, &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, &f)); }
         | _e => { }
     }
 }
@@ -2778,8 +2842,28 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             p2.push(md.mname);
             collect_into(a, ar, sc, &md.mitems, &p2, g);
         }
+        | Item::Use { path, is_wildcard, is_pub } => { collect_use(a, ar, &path, is_wildcard, g); }
         | _e => { }
     }
+}
+
+// `use mod::name;` re-exports `name` into the enclosing scope: alias the
+// last segment to the target's already-collected symbol (wildcard
+// re-exports are not yet supported).
+fn push_use_alias(g: *Vec<GlobalFn>, target_mangled: str, alias: str) {
+    match global_lookup_by_mangled(g, target_mangled) {
+        Option::Some(gf) => { g.push(GlobalFn { name: alias, mangled: gf.mangled, ret: gf.ret,
+                                                is_const: gf.is_const, is_top: true }); }
+        | Option::None => { }
+    }
+}
+fn collect_use(a: Allocator, ar: *Arena, path: *const Vec<str>, is_wildcard: bool, g: *Vec<GlobalFn>) {
+    if is_wildcard { return; }
+    if path.length() < 2 as u32 { return; }
+    let last = path_last(path);
+    let init = path_init(a, path);
+    let m = mangle_path(a, ar, &init, last);
+    push_use_alias(g, m, last);
 }
 
 fn collect_fn_mangle(a: Allocator, ar: *Arena, f: *const Func, path: *const Vec<str>) -> str {
@@ -2917,7 +3001,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_modpath: &empty_tp };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -2935,7 +3019,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_modpath: &empty_tp };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
