@@ -119,6 +119,9 @@ struct TyScope {
     // Mutable accumulators for generated monomorphic instances (footer).
     sc_mono_structs: *Vec<Vec<str>>,
     sc_mono_enums: *Vec<Vec<str>>,
+    // Substituted fields of struct instances, keyed by instance path, so
+    // `instance.field` accesses resolve.
+    sc_mono_fields: *Vec<StructField>,
 }
 
 // The program-global indices bundled for threading through the elaboration
@@ -135,6 +138,7 @@ struct ProgIdx {
     pi_methods: *const Vec<MethodInfo>,
     pi_mono_structs: *Vec<Vec<str>>,
     pi_mono_enums: *Vec<Vec<str>>,
+    pi_mono_fields: *Vec<StructField>,
 }
 
 // Index of `(type-path, method-name)` in the method table, or -1.
@@ -247,7 +251,10 @@ fn recv_base_path(a: Allocator, t: *const Typ) -> Vec<str> {
 // known struct (e.g. its own elaboration deferred to a marker).
 fn struct_field_ty(sc: *const TyScope, target_ty: *const Typ, field: str) -> Option<*const Typ> {
     return match *target_ty {
-        Typ::TStruct(path) => find_field_ty(sc.sc_sinfo, &path, field)
+        Typ::TStruct(path) => match find_field_ty(sc.sc_sinfo, &path, field) {
+            Option::Some(t) => Option::Some(t)
+            | Option::None => find_field_ty(sc.sc_mono_fields, &path, field)
+        }
         | Typ::TPtr(inner) => struct_field_ty(sc, inner, field)
         | Typ::TConstPtr(inner) => struct_field_ty(sc, inner, field)
         | Typ::TOwnPtr(inner) => struct_field_ty(sc, inner, field)
@@ -351,6 +358,49 @@ fn instance_path(a: Allocator, ar: *Arena, decl_path: *const Vec<str>, args: *co
 
 fn is_prelude_enum(name: str) -> bool {
     return str::eq(name, "Option") || str::eq(name, "Result");
+}
+
+// A `TVar name → concrete type` binding inferred at a generic instantiation.
+struct TVarBind {
+    tvb_name: str,
+    tvb_ty: *const Typ,
+}
+
+fn bind_lookup(binds: *const Vec<TVarBind>, name: str) -> Option<*const Typ> {
+    let n = binds.length();
+    let sl = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].tvb_name, name) { return Option::Some(sl[i].tvb_ty); }
+        i = i + 1 as u32;
+    }
+    let none: Option<*const Typ> = Option::None;
+    return none;
+}
+
+// Substitute tparam bindings into a type (TVar → its binding; recurse
+// through pointers and arrays — the cases generic field/return types use).
+fn subst_typ(ar: *Arena, binds: *const Vec<TVarBind>, t: *const Typ) -> *const Typ {
+    return match *t {
+        Typ::TVar(n) => match bind_lookup(binds, n) { Option::Some(bt) => bt | Option::None => t }
+        | Typ::TPtr(inner) => ty_node(ar, Typ::TPtr(subst_typ(ar, binds, inner)))
+        | Typ::TConstPtr(inner) => ty_node(ar, Typ::TConstPtr(subst_typ(ar, binds, inner)))
+        | Typ::TOwnPtr(inner) => ty_node(ar, Typ::TOwnPtr(subst_typ(ar, binds, inner)))
+        | Typ::TArray { elem, size } => ty_node(ar, Typ::TArray { elem: subst_typ(ar, binds, elem), size: size })
+        | _other => t
+    };
+}
+
+// Infer tparam bindings by matching a declared (skeleton) type against an
+// actual type: a `TVar` binds to the actual; pointers/arrays recurse.
+fn unify_typ(decl: *const Typ, act: *const Typ, out: *Vec<TVarBind>) {
+    match *decl {
+        Typ::TVar(n) => { out.push(TVarBind { tvb_name: n, tvb_ty: act }); }
+        | Typ::TPtr(di) => { match *act { Typ::TPtr(ai) => unify_typ(di, ai, out) | _e => { } } }
+        | Typ::TConstPtr(di) => { match *act { Typ::TConstPtr(ai) => unify_typ(di, ai, out) | Typ::TPtr(ai) => unify_typ(di, ai, out) | _e => { } } }
+        | Typ::TOwnPtr(di) => { match *act { Typ::TOwnPtr(ai) => unify_typ(di, ai, out) | _e => { } } }
+        | _other => { }
+    }
 }
 
 // Register a generated instance for the `mono-instances` footer.  The accs
@@ -1246,6 +1296,99 @@ fn elab_opt_base(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     };
 }
 
+fn tfield_ty(tfields: *const Vec<TexprField>, fname: str) -> Option<*const Typ> {
+    let n = tfields.length();
+    let sl = tfields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].name, fname) { return Option::Some(sl[i].value.ty); }
+        i = i + 1 as u32;
+    }
+    let none: Option<*const Typ> = Option::None;
+    return none;
+}
+
+// Infer tparam bindings for `Struct { .. }` by unifying each declared field
+// type against the elaborated initialiser's type.
+fn infer_struct_binds(sc: *const TyScope, tname: *const Vec<str>, tfields: *const Vec<TexprField>, out: *Vec<TVarBind>) {
+    let n = sc.sc_sinfo.length();
+    let sl = sc.sc_sinfo.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].sf_path, tname) {
+            match tfield_ty(tfields, sl[i].sf_name) {
+                Option::Some(vt) => { unify_typ(sl[i].sf_ty, vt, out); }
+                | Option::None => { }
+            }
+        }
+        i = i + 1 as u32;
+    }
+}
+
+// Bindings → instance args in first-seen tparam order.
+fn dedup_bind_tys(a: Allocator, binds: *const Vec<TVarBind>) -> Vec<*const Typ> {
+    let mut seen: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let n = binds.length();
+    let sl = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if !name_in(&seen, sl[i].tvb_name) {
+            seen.push(sl[i].tvb_name);
+            out.push(sl[i].tvb_ty);
+        }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// Register the substituted fields of a struct instance so `inst.field` reads
+// resolve.  One push per field, behind a fn boundary (escape/affine clean).
+fn push_instance_field(a: Allocator, ar: *Arena, ipath: *const Vec<str>, fname: str,
+                       binds: *const Vec<TVarBind>, sf_ty: *const Typ, out: *Vec<StructField>) {
+    out.push(StructField { sf_path: copy_strs(a, ipath), sf_name: fname, sf_ty: subst_typ(ar, binds, sf_ty) });
+}
+fn register_instance_fields(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
+                            binds: *const Vec<TVarBind>, ipath: *const Vec<str>) {
+    let n = sc.sc_sinfo.length();
+    let sl = sc.sc_sinfo.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].sf_path, tname) {
+            push_instance_field(a, ar, ipath, sl[i].sf_name, binds, sl[i].sf_ty, sc.sc_mono_fields);
+        }
+        i = i + 1 as u32;
+    }
+}
+
+// The struct-lit's instance path: a generic struct infers its instance from
+// the field initialisers (and registers it + its substituted fields); a
+// `..base` spread reuses the base's already-resolved instance type.
+fn struct_ty_path(a: Allocator, t: *const Typ, fallback: *const Vec<str>) -> Vec<str> {
+    return match *t {
+        Typ::TStruct(pp) => copy_strs(a, &pp)
+        | _e => copy_strs(a, fallback)
+    };
+}
+fn build_struct_instance(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
+                         tfields: *const Vec<TexprField>) -> Vec<str> {
+    let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    infer_struct_binds(sc, tname, tfields, &binds);
+    if binds.length() == 0 as u32 { return copy_strs(a, tname); }
+    let args = dedup_bind_tys(a, &binds);
+    let ipath = instance_path(a, ar, tname, &args);
+    register_mono_struct(a, sc, &ipath);
+    register_instance_fields(a, ar, sc, tname, &binds, &ipath);
+    return ipath;
+}
+fn struct_lit_path(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
+                   tfields: *const Vec<TexprField>, tbase: Option<*const Texpr>) -> Vec<str> {
+    return match tbase {
+        Option::Some(b) => struct_ty_path(a, b.ty, tname)
+        | Option::None => build_struct_instance(a, ar, sc, tname, tfields)
+    };
+}
+
 fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>,
                    base: Option<*const Expr>, p: Pos) -> *const Texpr {
@@ -1261,8 +1404,9 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     }
     let tfields = elab_struct_fields(a, ar, g, sc, env, tname, fields);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
-    let sty = ty_node(ar, Typ::TStruct(copy_strs(a, tname)));
-    return te_node(ar, TexprNode::TStructLit { sname_path: copy_strs(a, tname), fields: tfields, base: tbase }, sty, p);
+    let ipath = struct_lit_path(a, ar, sc, tname, &tfields, tbase);
+    let sty = ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
+    return te_node(ar, TexprNode::TStructLit { sname_path: ipath, fields: tfields, base: tbase }, sty, p);
 }
 
 fn elab_ref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
@@ -1909,7 +2053,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let params = copy_params(a, &f.params);
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &f.tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
-                       sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums };
+                       sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -2056,9 +2200,24 @@ fn push_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, sname: str,
     }
 }
 
+// A copy of the scope with a different tparam list — used to resolve a
+// generic type's own field/variant types (where its tparams are in scope).
+fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
+    return TyScope {
+        sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
+        sc_efields: base.sc_efields, sc_methods: base.sc_methods,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
+        sc_mono_fields: base.sc_mono_fields,
+    };
+}
+
 fn collect_struct_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, out: *Vec<StructField>) {
     match *it {
-        Item::Struct(sd) => { push_struct_fields(a, ar, sc, sd.sname, &sd.sfields, out); }
+        Item::Struct(sd) => {
+            let sc2 = scope_with_tparams(sc, &sd.stparams);
+            push_struct_fields(a, ar, &sc2, sd.sname, &sd.sfields, out);
+        }
         | Item::Module(md) => { collect_struct_info(a, ar, sc, &md.mitems, out); }
         | _e => { }
     }
@@ -2353,10 +2512,11 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // the base scope and every per-fn scope so registration is program-wide.
     let mut mono_structs: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
     let mut mono_enums: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    let mut mono_fields: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
-                               sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums };
+                               sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -2372,7 +2532,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_method_info(a, ar, &base_scope, items, &methods);
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
-                        pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums };
+                        pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
