@@ -1563,6 +1563,24 @@ fn elab_block(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     return te_node(ar, TexprNode::TBlock { stmts: tstmts, trailing: trailing }, bty, p);
 }
 
+// `(e0, e1, …)` — each element keeps its own type; the tuple takes a
+// `TTuple` of the element types.
+fn elab_tuple_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                  env: *const Vec<FieldTy>, es: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let mut tes: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    let mut tys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let n = es.length();
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let te = elab_expr(a, ar, g, sc, env, none_ty(), sl[i]);
+        tys.push(te.ty);
+        tes.push(te);
+        i = i + 1 as u32;
+    }
+    return te_node(ar, TexprNode::TTupleLit(tes), ty_node(ar, Typ::TTuple(tys)), p);
+}
+
 fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, e: *const Expr) -> *const Texpr {
     let p = expr_pos(e);
@@ -1581,6 +1599,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::Call { callee, args } => elab_call(a, ar, g, sc, env, expected, &callee, &args, p)
         | Expr::MethodCall { receiver, name, args } => elab_method_call(a, ar, g, sc, env, receiver, name, &args, p)
         | Expr::Block(stmts, _q) => elab_block(a, ar, g, sc, env, expected, &stmts, p)
+        | Expr::TupleLit(es, _q) => elab_tuple_lit(a, ar, g, sc, env, &es, p)
         | Expr::If { cond, then_blk, else_blk } =>
             mk_if_expr(a, ar, g, sc, env, expected, cond, &then_blk, else_blk, p)
         | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, sc, expected, &tname, variant, p)
@@ -1841,6 +1860,25 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
     }
 }
 
+// Bind each name of a `let (a, b) = …` to the corresponding tuple element
+// type (no-op if the value is not a tuple).
+fn bind_tuple_names(names: *const Vec<str>, tty: *const Typ, env: *Vec<FieldTy>) {
+    match *tty {
+        Typ::TTuple(elems) => {
+            let n = names.length();
+            let nsl = names.as_slice();
+            let en = elems.length();
+            let esl = elems.as_slice();
+            let mut i = 0 as u32;
+            while i < n {
+                if i < en { env.push(FieldTy { name: nsl[i], ty: esl[i] }); }
+                i = i + 1 as u32;
+            }
+        }
+        | _e => { }
+    }
+}
+
 fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              s: *const Stmt, out: *Vec<Tstmt>) {
     match *s {
@@ -1879,6 +1917,11 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             let dexp = deref_pointee(tad.ty);
             let vad = elab_expr(a, ar, g, sc, env, dexp, value);
             out.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
+        }
+        | Stmt::LetTuple { names, value, is_mut } => {
+            let tvt = elab_expr(a, ar, g, sc, env, none_ty(), value);
+            bind_tuple_names(&names, tvt.ty, env);
+            out.push(Tstmt::TLetTuple { names: copy_strs(a, &names), value: tvt, pos: expr_pos(value) });
         }
         | Stmt::Break(pos) => { out.push(Tstmt::TBreak(pos)); }
         | Stmt::Continue(pos) => { out.push(Tstmt::TContinue(pos)); }
@@ -2091,6 +2134,10 @@ fn lift_stmt(a: Allocator, ar: *Arena, ctr: *u32, s: *const Tstmt, out: *Vec<Tst
         Tstmt::TLet { name, value, pos } => {
             let vlet = walk_expr(a, ar, ctr, true, value, out);
             out.push(Tstmt::TLet { name: name, value: vlet, pos: pos });
+        }
+        | Tstmt::TLetTuple { names, value, pos } => {
+            let vlt = walk_expr(a, ar, ctr, true, value, out);
+            out.push(Tstmt::TLetTuple { names: copy_strs(a, &names), value: vlt, pos: pos });
         }
         | Tstmt::TAssign { path, value, pos } => {
             let vasg = walk_expr(a, ar, ctr, true, value, out);
