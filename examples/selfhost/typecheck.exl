@@ -116,6 +116,9 @@ struct TyScope {
     sc_etags: *const Vec<EnumVariantTag>,
     sc_efields: *const Vec<EnumFieldE>,
     sc_methods: *const Vec<MethodInfo>,
+    // Mutable accumulators for generated monomorphic instances (footer).
+    sc_mono_structs: *Vec<Vec<str>>,
+    sc_mono_enums: *Vec<Vec<str>>,
 }
 
 // The program-global indices bundled for threading through the elaboration
@@ -130,6 +133,8 @@ struct ProgIdx {
     pi_etags: *const Vec<EnumVariantTag>,
     pi_efields: *const Vec<EnumFieldE>,
     pi_methods: *const Vec<MethodInfo>,
+    pi_mono_structs: *Vec<Vec<str>>,
+    pi_mono_enums: *Vec<Vec<str>>,
 }
 
 // Index of `(type-path, method-name)` in the method table, or -1.
@@ -285,6 +290,79 @@ fn resolve_sig_args(a: Allocator, ar: *Arena, sc: *const TyScope,
     return out;
 }
 
+fn str2(a: Allocator, ar: *Arena, x: str, y: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 16 as u32);
+    sb.push_str(x);
+    sb.push_str(y);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// C-name mangle of a named-type path: one segment gets the `ex_` prefix, a
+// module-qualified path joins with `__` (mirrors `ir.mangle`).
+fn mangle_named(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
+    let n = path.length();
+    let sl = path.as_slice();
+    if n == 1 as u32 { return str2(a, ar, "ex_", sl[0 as u32]); }
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { sb.push_str("__"); }
+        sb.push_str(sl[i]);
+        i = i + 1 as u32;
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// Mangle a type to its instance-name component (mirrors `ir.mangle_typ`).
+fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
+    return match *t {
+        Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
+        | Typ::TBool => "bool"
+        | Typ::TString => "str"
+        | Typ::TFloat(w) => match w { FloatWidth::F32 => "f32" | FloatWidth::F64 => "f64" }
+        | Typ::TStruct(pp) => mangle_named(a, ar, &pp)
+        | Typ::TEnum(pp) => mangle_named(a, ar, &pp)
+        | Typ::TPtr(inner) => str2(a, ar, "ptr_", mangle_typ(a, ar, inner))
+        | Typ::TConstPtr(inner) => str2(a, ar, "cptr_", mangle_typ(a, ar, inner))
+        | Typ::TOwnPtr(inner) => str2(a, ar, "ownptr_", mangle_typ(a, ar, inner))
+        | Typ::TCInt { is_signed } => match is_signed { true => "cint" | false => "cuint" }
+        | _other => "?"
+    };
+}
+
+// Monomorphic instance path of `decl_path<args>`: the last segment gains a
+// `_<arg-mangle>…` suffix (`Option<int>` → `Option_i32`).
+fn instance_path(a: Allocator, ar: *Arena, decl_path: *const Vec<str>, args: *const Vec<*const Typ>) -> Vec<str> {
+    let n = decl_path.length();
+    let dsl = decl_path.as_slice();
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(dsl[n - 1 as u32]);
+    let an = args.length();
+    let asl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < an { sb.push_str("_"); sb.push_str(mangle_typ(a, ar, asl[i])); i = i + 1 as u32; }
+    let last = str::from_slice(ar, sb.as_slice());
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut j = 0 as u32;
+    while j + 1 as u32 < n { out.push(dsl[j]); j = j + 1 as u32; }
+    out.push(last);
+    return out;
+}
+
+fn is_prelude_enum(name: str) -> bool {
+    return str::eq(name, "Option") || str::eq(name, "Result");
+}
+
+// Register a generated instance for the `mono-instances` footer.  The accs
+// ride in the (const) scope as mutable Vec pointers, so registration works
+// from any resolution site — signature or body — with no extra threading.
+fn register_mono_struct(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) {
+    sc.sc_mono_structs.push(copy_strs(a, ipath));
+}
+fn register_mono_enum(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) {
+    sc.sc_mono_enums.push(copy_strs(a, ipath));
+}
+
 fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
                     path: *const Vec<str>, args: *const Vec<*const TypeAnn>) -> *const Typ {
     let plen = path.length();
@@ -293,14 +371,22 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     if plen == 1 as u32 {
         if name_in(sc.sc_tparams, last) { return ty_node(ar, Typ::TVar(last)); }
     }
-    let newpath = copy_strs(a, path);
     let nargs = args.length();
-    if name_in(sc.sc_enums, last) {
-        if nargs == 0 as u32 { return ty_node(ar, Typ::TEnum(newpath)); }
-        return ty_node(ar, Typ::TEnumApp { path: newpath, args: resolve_sig_args(a, ar, sc, args) });
+    let is_enum = name_in(sc.sc_enums, last) || is_prelude_enum(last);
+    if nargs == 0 as u32 {
+        let newpath = copy_strs(a, path);
+        if is_enum { return ty_node(ar, Typ::TEnum(newpath)); }
+        return ty_node(ar, Typ::TStruct(newpath));
     }
-    if nargs == 0 as u32 { return ty_node(ar, Typ::TStruct(newpath)); }
-    return ty_node(ar, Typ::TStructApp { path: newpath, args: resolve_sig_args(a, ar, sc, args) });
+    // Generic application → monomorphic instance, registered for the footer.
+    let resolved = resolve_sig_args(a, ar, sc, args);
+    let ipath = instance_path(a, ar, path, &resolved);
+    if is_enum {
+        register_mono_enum(a, sc, &ipath);
+        return ty_node(ar, Typ::TEnum(ipath));
+    }
+    register_mono_struct(a, sc, &ipath);
+    return ty_node(ar, Typ::TStruct(ipath));
 }
 
 // Array size is a const expression: a literal, or a reference to a
@@ -1822,7 +1908,8 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                 idx: *const ProgIdx, mangled: str, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &f.tparams,
-                       sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods };
+                       sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
+                       sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -2200,6 +2287,26 @@ fn push_enum_name(a: Allocator, sigs: *Vec<EnumSig>, name: str) {
     });
 }
 
+// Register a generated instance (an already-mangled path) in the footer.
+fn push_struct_path(a: Allocator, sigs: *Vec<StructSig>, srcpath: *const Vec<str>) {
+    let fields: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let tparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let no_args: Option<Vec<*const Typ>> = Option::None;
+    sigs.push(StructSig {
+        sname_path: copy_strs(a, srcpath), sfields_ty: fields, sis_pub: true, stparams: tparams,
+        sinstance_args: no_args, sis_debug: false, ss_is_move: false,
+    });
+}
+fn push_enum_path(a: Allocator, sigs: *Vec<EnumSig>, srcpath: *const Vec<str>) {
+    let variants: Vec<VariantSig> = Vec::with_capacity(a, 8 as u32);
+    let tparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let no_args: Option<Vec<*const Typ>> = Option::None;
+    sigs.push(EnumSig {
+        ename_path: copy_strs(a, srcpath), evariants: variants, eis_pub: true, etparams: tparams,
+        einstance_args: no_args, eis_must_use: false, eis_debug: false,
+    });
+}
+
 fn prelude_struct_index(a: Allocator) -> Vec<StructSig> {
     let mut sigs: Vec<StructSig> = Vec::with_capacity(a, 16 as u32);
     push_struct_name(a, &sigs, "Enumerate");
@@ -2242,9 +2349,14 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let empty_etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let empty_efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     let empty_methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
+    // Accumulators for generated monomorphic instances (footer); shared by
+    // the base scope and every per-fn scope so registration is program-wide.
+    let mut mono_structs: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    let mut mono_enums: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
     let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
-                               sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods };
+                               sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
+                               sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -2259,7 +2371,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
-                        pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods };
+                        pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
+                        pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
@@ -2288,6 +2401,15 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let esl = enames.as_slice();
     let mut ei = 0 as u32;
     while ei < en { push_enum_name(a, &enums, esl[ei]); ei = ei + 1 as u32; }
+    // Generated monomorphic instances (the dumper sorts + dedups).
+    let mn = mono_structs.length();
+    let msl = mono_structs.as_slice();
+    let mut mi = 0 as u32;
+    while mi < mn { push_struct_path(a, &structs, &msl[mi]); mi = mi + 1 as u32; }
+    let men = mono_enums.length();
+    let mesl = mono_enums.as_slice();
+    let mut mei = 0 as u32;
+    while mei < men { push_enum_path(a, &enums, &mesl[mei]); mei = mei + 1 as u32; }
 
     let sdecls: Vec<StructDeclEntry> = Vec::with_capacity(a, 8 as u32);
     let global: Vec<GlobalEntry> = Vec::with_capacity(a, 8 as u32);
