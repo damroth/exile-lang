@@ -366,6 +366,9 @@ fn te_node(ar: *Arena, node: TexprNode, ty: *const Typ, pos: Pos) -> *const Texp
 fn t_i32(ar: *Arena) -> *const Typ {
     return ty_node(ar, Typ::TInt(IntKind { is_signed: true, width: IntWidth::W32 }));
 }
+fn t_u32(ar: *Arena) -> *const Typ {
+    return ty_node(ar, Typ::TInt(IntKind { is_signed: false, width: IntWidth::W32 }));
+}
 fn t_bool(ar: *Arena) -> *const Typ { return ty_node(ar, Typ::TBool); }
 fn t_str(ar: *Arena) -> *const Typ { return ty_node(ar, Typ::TString); }
 
@@ -782,6 +785,10 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let tn_args = elab_args(a, ar, g, sc, env, args);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: tn_args }, t_str(ar), p);
     }
+    if str::eq(name, "cstr_len") {
+        let cl_args = elab_args(a, ar, g, sc, env, args);
+        return te_node(ar, TexprNode::TBuiltinCall { name: name, args: cl_args }, t_u32(ar), p);
+    }
     return elab_user_or_defer(a, ar, g, sc, env, name, args, p);
 }
 
@@ -1174,6 +1181,46 @@ fn elab_deref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     };
 }
 
+// A block expression `{ stmts; trailing }`: the statements elaborate into a
+// block-local env (block lets extend the surrounding scope, no shadowing),
+// and a trailing expression — the last statement without `;` — becomes the
+// block's value.  A `for` inside a block is not yet supported here (it needs
+// the gensym counter the expr path does not carry) and defers.
+fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                   expected: Option<*const Typ>, s: *const Stmt, benv: *Vec<FieldTy>,
+                   tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
+    match *s {
+        Stmt::Let { name, value, ty_ann } => {
+            let vl = elab_expr(a, ar, g, sc, benv, let_expected(a, ar, ty_ann), value);
+            let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty);
+            benv.push(FieldTy { name: name, ty: ety });
+            tstmts.push(Tstmt::TLet { name: name, value: vl, pos: expr_pos(value) });
+        }
+        | Stmt::ExprStmt(e) => { tstmts.push(Tstmt::TExprStmt(elab_expr(a, ar, g, sc, benv, none_ty(), e))); }
+        | Stmt::Tail(e) => { *trailing = Option::Some(elab_expr(a, ar, g, sc, benv, expected, e)); }
+        | _other => { tstmts.push(Tstmt::TExprStmt(defer_expr(ar, zero_pos()))); }
+    }
+}
+
+fn elab_block(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+              expected: Option<*const Typ>, stmts: *const Vec<Stmt>, p: Pos) -> *const Texpr {
+    let mut benv = copy_fieldtys(a, env);
+    let mut tstmts: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let mut trailing: Option<*const Texpr> = Option::None;
+    let n = stmts.length();
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        elab_block_stmt(a, ar, g, sc, expected, &sl[i], &benv, &tstmts, &trailing);
+        i = i + 1 as u32;
+    }
+    let bty = match trailing {
+        Option::Some(t) => t.ty
+        | Option::None => t_i32(ar)
+    };
+    return te_node(ar, TexprNode::TBlock { stmts: tstmts, trailing: trailing }, bty, p);
+}
+
 fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, e: *const Expr) -> *const Texpr {
     let p = expr_pos(e);
@@ -1191,6 +1238,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::Cast(sub, ann, _q) => elab_cast(a, ar, g, sc, env, sub, ann, p)
         | Expr::Call { callee, args } => elab_call(a, ar, g, sc, env, &callee, &args, p)
         | Expr::MethodCall { receiver, name, args } => elab_method_call(a, ar, g, sc, env, receiver, name, &args, p)
+        | Expr::Block(stmts, _q) => elab_block(a, ar, g, sc, env, expected, &stmts, p)
         | Expr::If { cond, then_blk, else_blk } =>
             mk_if_expr(a, ar, g, sc, env, expected, cond, &then_blk, else_blk, p)
         | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, sc, &tname, variant, p)
