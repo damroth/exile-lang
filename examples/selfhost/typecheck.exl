@@ -118,6 +118,20 @@ struct TyScope {
     sc_methods: *const Vec<MethodInfo>,
 }
 
+// The program-global indices bundled for threading through the elaboration
+// pass (every fn's body scope is built from these plus its own tparams).
+// One pointer instead of seven keeps the elaborate_* signatures stable as
+// later passes add more indices.
+struct ProgIdx {
+    pi_snames: *const Vec<str>,
+    pi_enames: *const Vec<str>,
+    pi_iconsts: *const Vec<IntConst>,
+    pi_sinfo: *const Vec<StructField>,
+    pi_etags: *const Vec<EnumVariantTag>,
+    pi_efields: *const Vec<EnumFieldE>,
+    pi_methods: *const Vec<MethodInfo>,
+}
+
 // Index of `(type-path, method-name)` in the method table, or -1.
 fn find_method_idx(methods: *const Vec<MethodInfo>, type_path: *const Vec<str>, name: str) -> int {
     let n = methods.length();
@@ -1805,11 +1819,10 @@ fn lift_stmts(a: Allocator, ar: *Arena, ctr: *u32, stmts: *const Vec<Tstmt>) -> 
 }
 
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, methods: *const Vec<MethodInfo>, mangled: str, f: *const Func) -> Tfunc {
+                idx: *const ProgIdx, mangled: str, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
-    let sc = TyScope { sc_structs: structs, sc_enums: enums, sc_tparams: &f.tparams,
-                       sc_iconsts: iconsts, sc_sinfo: sinfo, sc_etags: etags, sc_efields: efields, sc_methods: methods };
+    let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &f.tparams,
+                       sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -1840,10 +1853,9 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
 }
 
 fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                  structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                  sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, methods: *const Vec<MethodInfo>, it: *const Item, funcs: *Vec<Tfunc>) {
+                  idx: *const ProgIdx, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, methods, mangle_fn(a, ar, &f), &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, mangle_fn(a, ar, &f), &f)); }
         | _e => { }
     }
 }
@@ -1866,29 +1878,26 @@ fn method_mangle(a: Allocator, ar: *Arena, target: *const Vec<str>, name: str) -
 // of a local slice element) — same shape the free-fn path relies on to
 // satisfy the escape checker.
 fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                         structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                         sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, methods: *const Vec<MethodInfo>, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
-    funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, methods,
+                         idx: *const ProgIdx, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx,
                             method_mangle(a, ar, target, f.name), f));
 }
 
 fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                  structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                  sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, methods: *const Vec<MethodInfo>, ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
+                  idx: *const ProgIdx, ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
     let n = ib.iitems.length();
     let sl = ib.iitems.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_method_into(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, methods, &ib.itarget, &sl[i], funcs);
+        elaborate_method_into(a, ar, g, gensym, idx, &ib.itarget, &sl[i], funcs);
         i = i + 1 as u32;
     }
 }
 
 fn elaborate_impl_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                       structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                       sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, methods: *const Vec<MethodInfo>, it: *const Item, funcs: *Vec<Tfunc>) {
+                       idx: *const ProgIdx, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, methods, &ib, funcs); }
+        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, idx, &ib, funcs); }
         | _e => { }
     }
 }
@@ -2249,6 +2258,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_enum_info(a, ar, &base_scope, items, &etags, &efields);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);
+    let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
+                        pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
@@ -2257,13 +2268,13 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &etags, &efields, &methods, &sl[i], &funcs);
+        elaborate_item(a, ar, &globals, &gensym, &idx, &sl[i], &funcs);
         i = i + 1 as u32;
     }
     // Second pass: impl methods are flattened after the free functions.
     let mut j = 0 as u32;
     while j < n {
-        elaborate_impl_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &etags, &efields, &methods, &sl[j], &funcs);
+        elaborate_impl_item(a, ar, &globals, &gensym, &idx, &sl[j], &funcs);
         j = j + 1 as u32;
     }
 
