@@ -95,6 +95,18 @@ struct EnumFieldE {
     ef_ty: *const Typ,
 }
 
+// One inherent / trait method, keyed by its owning type path + name.  Carries
+// the C symbol, resolved return type, and self shape so a call site can lower
+// `recv.m(..)` / `T::m(..)` to `T__m(<self>, ..)` and adjust the receiver.
+struct MethodInfo {
+    mi_path: Vec<str>,
+    mi_name: str,
+    mi_mangled: str,
+    mi_ret: Option<*const Typ>,
+    mi_has_self: bool,
+    mi_self_ptr: bool,
+}
+
 struct TyScope {
     sc_structs: *const Vec<str>,
     sc_enums: *const Vec<str>,
@@ -103,6 +115,21 @@ struct TyScope {
     sc_sinfo: *const Vec<StructField>,
     sc_etags: *const Vec<EnumVariantTag>,
     sc_efields: *const Vec<EnumFieldE>,
+    sc_methods: *const Vec<MethodInfo>,
+}
+
+// Index of `(type-path, method-name)` in the method table, or -1.
+fn find_method_idx(methods: *const Vec<MethodInfo>, type_path: *const Vec<str>, name: str) -> int {
+    let n = methods.length();
+    let sl = methods.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].mi_name, name) {
+            if path_eq(&sl[i].mi_path, type_path) { return i as int; }
+        }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
 }
 
 // Variant tag for `Path::Variant`, or -1 if unknown.
@@ -171,6 +198,28 @@ fn deref_pointee(t: *const Typ) -> Option<*const Typ> {
         | Typ::TConstPtr(inner) => Option::Some(inner)
         | Typ::TOwnPtr(inner) => Option::Some(inner)
         | _e => { let n: Option<*const Typ> = Option::None; n }
+    };
+}
+
+fn is_ptr_ty(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TPtr(_i) => true
+        | Typ::TConstPtr(_i) => true
+        | Typ::TOwnPtr(_i) => true
+        | _e => false
+    };
+}
+
+// The named-type path a method receiver resolves to, auto-dereferencing
+// through pointers (`*Point` and `Point` both dispatch on `Point`).
+fn recv_base_path(a: Allocator, t: *const Typ) -> Vec<str> {
+    return match *t {
+        Typ::TStruct(p) => copy_strs(a, &p)
+        | Typ::TEnum(p) => copy_strs(a, &p)
+        | Typ::TPtr(inner) => recv_base_path(a, inner)
+        | Typ::TConstPtr(inner) => recv_base_path(a, inner)
+        | Typ::TOwnPtr(inner) => recv_base_path(a, inner)
+        | _e => Vec::with_capacity(a, 8 as u32)
     };
 }
 
@@ -696,16 +745,31 @@ fn enum_struct_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     return out;
 }
 
+// Lower the call to a known method's mangled symbol, args passed verbatim
+// (UFCS / static form — the user supplies `self` explicitly, if any).
+fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                         env: *const Vec<FieldTy>, midx: int, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let sl = sc.sc_methods.as_slice();
+    let mm = sl[midx as u32].mi_mangled;
+    let mret = sl[midx as u32].mi_ret;
+    let targs = elab_args(a, ar, g, sc, env, args);
+    return te_node(ar, TexprNode::TCall { mangled: mm, args: targs }, ret_or_void(ar, mret), p);
+}
+
 fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     if callee.length() != 1 as u32 {
-        // `Path::Variant(..)` — a tuple-enum constructor, else (module fn)
-        // not yet supported.
+        // `Path::Variant(..)` — a tuple-enum constructor; `Type::method(..)`
+        // — a static / UFCS method call; else (module fn) not yet supported.
         let last = path_last(callee);
         let init = path_init(a, callee);
         let tag = variant_tag(sc.sc_etags, &init, last);
         if tag >= 0 as int {
             return mk_enum_lit_node(a, ar, &init, last, tag, enum_tuple_args(a, ar, g, sc, env, &init, last, args), p);
+        }
+        let midx = find_method_idx(sc.sc_methods, &init, last);
+        if midx >= 0 as int {
+            return mk_static_method_call(a, ar, g, sc, env, midx, args, p);
         }
         return defer_expr(ar, p);
     }
@@ -719,6 +783,49 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: tn_args }, t_str(ar), p);
     }
     return elab_user_or_defer(a, ar, g, sc, env, name, args, p);
+}
+
+// Adjust a method receiver to the self shape the method declares: a value
+// receiver to a `*self` method auto-refs (`&recv`); a pointer receiver to a
+// by-value `self` method auto-derefs (`*recv`).
+fn adjust_recv(ar: *Arena, trecv: *const Texpr, recv_ptr: bool, self_ptr: bool) -> *const Texpr {
+    if self_ptr {
+        if recv_ptr { return trecv; }
+        return te_node(ar, TexprNode::TRef(trecv), ty_node(ar, Typ::TPtr(trecv.ty)), trecv.pos);
+    }
+    if !recv_ptr { return trecv; }
+    let inner = match deref_pointee(trecv.ty) {
+        Option::Some(t) => t
+        | Option::None => trecv.ty
+    };
+    return te_node(ar, TexprNode::TDeref(trecv), inner, trecv.pos);
+}
+
+fn append_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+               args: *const Vec<*const Expr>, out: *Vec<*const Texpr>) {
+    let n = args.length();
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(elab_expr(a, ar, g, sc, env, none_ty(), sl[i])); i = i + 1 as u32; }
+}
+
+// `recv.m(args)` → `T__m(<adjusted recv>, args)` where `T` is the receiver's
+// (auto-dereferenced) type.  Defers if the method is unknown.
+fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                    recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let trecv = elab_expr(a, ar, g, sc, env, none_ty(), recv);
+    let tpath = recv_base_path(a, trecv.ty);
+    let idx = find_method_idx(sc.sc_methods, &tpath, name);
+    if idx < 0 as int { return defer_expr(ar, p); }
+    let sl = sc.sc_methods.as_slice();
+    let mm = sl[idx as u32].mi_mangled;
+    let mret = sl[idx as u32].mi_ret;
+    let sptr = sl[idx as u32].mi_self_ptr;
+    let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr);
+    let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    cargs.push(adj);
+    append_args(a, ar, g, sc, env, args, &cargs);
+    return te_node(ar, TexprNode::TCall { mangled: mm, args: cargs }, ret_or_void(ar, mret), p);
 }
 
 // ===== Match elaboration (scalar scrutinee slice) =====
@@ -1083,6 +1190,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::BinOp(op, l, r, _q) => elab_binop(a, ar, g, sc, env, expected, op, l, r, p)
         | Expr::Cast(sub, ann, _q) => elab_cast(a, ar, g, sc, env, sub, ann, p)
         | Expr::Call { callee, args } => elab_call(a, ar, g, sc, env, &callee, &args, p)
+        | Expr::MethodCall { receiver, name, args } => elab_method_call(a, ar, g, sc, env, receiver, name, &args, p)
         | Expr::If { cond, then_blk, else_blk } =>
             mk_if_expr(a, ar, g, sc, env, expected, cond, &then_blk, else_blk, p)
         | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, sc, &tname, variant, p)
@@ -1650,10 +1758,10 @@ fn lift_stmts(a: Allocator, ar: *Arena, ctr: *u32, stmts: *const Vec<Tstmt>) -> 
 
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                 structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, mangled: str, f: *const Func) -> Tfunc {
+                sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, methods: *const Vec<MethodInfo>, mangled: str, f: *const Func) -> Tfunc {
     let params = copy_params(a, &f.params);
     let sc = TyScope { sc_structs: structs, sc_enums: enums, sc_tparams: &f.tparams,
-                       sc_iconsts: iconsts, sc_sinfo: sinfo, sc_etags: etags, sc_efields: efields };
+                       sc_iconsts: iconsts, sc_sinfo: sinfo, sc_etags: etags, sc_efields: efields, sc_methods: methods };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -1685,9 +1793,9 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
 
 fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                   structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                  sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, it: *const Item, funcs: *Vec<Tfunc>) {
+                  sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, methods: *const Vec<MethodInfo>, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, mangle_fn(a, ar, &f), &f)); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, methods, mangle_fn(a, ar, &f), &f)); }
         | _e => { }
     }
 }
@@ -1711,28 +1819,28 @@ fn method_mangle(a: Allocator, ar: *Arena, target: *const Vec<str>, name: str) -
 // satisfy the escape checker.
 fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                          structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                         sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
-    funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields,
+                         sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, methods: *const Vec<MethodInfo>, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+    funcs.push(elaborate_fn(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, methods,
                             method_mangle(a, ar, target, f.name), f));
 }
 
 fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                   structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                  sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
+                  sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, methods: *const Vec<MethodInfo>, ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
     let n = ib.iitems.length();
     let sl = ib.iitems.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_method_into(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, &ib.itarget, &sl[i], funcs);
+        elaborate_method_into(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, methods, &ib.itarget, &sl[i], funcs);
         i = i + 1 as u32;
     }
 }
 
 fn elaborate_impl_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                        structs: *const Vec<str>, enums: *const Vec<str>, iconsts: *const Vec<IntConst>,
-                       sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, it: *const Item, funcs: *Vec<Tfunc>) {
+                       sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>, methods: *const Vec<MethodInfo>, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, &ib, funcs); }
+        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, structs, enums, iconsts, sinfo, etags, efields, methods, &ib, funcs); }
         | _e => { }
     }
 }
@@ -1906,6 +2014,55 @@ fn collect_enum_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const
     }
 }
 
+// Build the method index from every impl block (recursing into modules).
+fn is_ptr_ann(ann: *const TypeAnn) -> bool {
+    return match *ann {
+        TypeAnn::TyPtr(_t) => true
+        | TypeAnn::TyConstPtr(_t) => true
+        | TypeAnn::TyOwnPtr(_t) => true
+        | _e => false
+    };
+}
+fn method_has_self(f: *const Func) -> bool {
+    if f.params.length() == 0 as u32 { return false; }
+    let sl = f.params.as_slice();
+    return str::eq(sl[0 as u32].pname, "self");
+}
+fn method_self_ptr(f: *const Func) -> bool {
+    if !method_has_self(f) { return false; }
+    let sl = f.params.as_slice();
+    return is_ptr_ann(sl[0 as u32].pty);
+}
+fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
+                   f: *const Func, out: *Vec<MethodInfo>) {
+    out.push(MethodInfo {
+        mi_path: copy_strs(a, target), mi_name: f.name,
+        mi_mangled: method_mangle(a, ar, target, f.name),
+        mi_ret: resolve_sig_ret(a, ar, sc, f.ret_ty),
+        mi_has_self: method_has_self(f), mi_self_ptr: method_self_ptr(f),
+    });
+}
+fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
+                        methods: *const Vec<Func>, out: *Vec<MethodInfo>) {
+    let n = methods.length();
+    let sl = methods.as_slice();
+    let mut i = 0 as u32;
+    while i < n { push_one_method(a, ar, sc, target, &sl[i], out); i = i + 1 as u32; }
+}
+fn collect_method_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, out: *Vec<MethodInfo>) {
+    match *it {
+        Item::Impl(ib) => { collect_methods_impl(a, ar, sc, &ib.itarget, &ib.iitems, out); }
+        | Item::Module(md) => { collect_method_info(a, ar, sc, &md.mitems, out); }
+        | _e => { }
+    }
+}
+fn collect_method_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, out: *Vec<MethodInfo>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_method_info_one(a, ar, sc, &sl[i], out); i = i + 1 as u32; }
+}
+
 // First pass: collect the signature of every top-level fn so a direct call
 // resolves to (mangled symbol, return type) before bodies are elaborated.
 // `is_top` is true only at the top level (path empty); module-internal
@@ -2027,20 +2184,23 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let empty_sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     let empty_etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let empty_efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
+    let empty_methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
-                               sc_etags: &empty_etags, sc_efields: &empty_efields };
+                               sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
-    // Struct field index + enum variant/field index, carried in every fn's
-    // body scope so `s.field`, struct/enum literals and variant patterns
-    // type-check.
+    // Struct field index + enum variant/field index + method index, carried
+    // in every fn's body scope so `s.field`, struct/enum literals, variant
+    // patterns and method calls type-check.
     let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     collect_struct_info(a, ar, &base_scope, items, &sinfo);
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     collect_enum_info(a, ar, &base_scope, items, &etags, &efields);
+    let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
+    collect_method_info(a, ar, &base_scope, items, &methods);
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
@@ -2049,13 +2209,13 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &etags, &efields, &sl[i], &funcs);
+        elaborate_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &etags, &efields, &methods, &sl[i], &funcs);
         i = i + 1 as u32;
     }
     // Second pass: impl methods are flattened after the free functions.
     let mut j = 0 as u32;
     while j < n {
-        elaborate_impl_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &etags, &efields, &sl[j], &funcs);
+        elaborate_impl_item(a, ar, &globals, &gensym, &snames, &enames, &iconsts, &sinfo, &etags, &efields, &methods, &sl[j], &funcs);
         j = j + 1 as u32;
     }
 
