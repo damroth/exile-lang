@@ -402,7 +402,9 @@ fn lex_char(lx: *Lexer, toks: *Vec<TokenPos>, p: Pos)
 fn lex_string(lx: *Lexer, toks: *Vec<TokenPos>, p: Pos)
         -> Result<bool, *const CompileError> {
     lx.advance();                         // opening "
-    let sstart = lx.i;
+    // Decode escapes into the interned bytes (`\n` -> byte 0x0A), so the
+    // emitted `str` carries the real bytes — the dumper re-escapes them.
+    let mut sb = StringBuilder::with_capacity(lx.a, 32 as u32);
     while lx.i < lx.len && lx.cur() != 34 as u8 {
         if lx.cur() == 92 as u8 {         // backslash escape
             lx.advance();                 // consume backslash
@@ -416,22 +418,23 @@ fn lex_string(lx: *Lexer, toks: *Vec<TokenPos>, p: Pos)
                     "embedded \\0 would silently truncate the string (exile str is NUL-terminated) — use a byte buffer for binary data"));
             }
             if !is_string_escape(ec) {
-                let mut sb = StringBuilder::with_capacity(lx.a, 24 as u32);
-                sb.push_str("unknown escape \\");
-                sb.push_byte(ec);
-                return Result::Err(mk_dyn(lx, esc_pos, &sb));
+                let mut eb = StringBuilder::with_capacity(lx.a, 24 as u32);
+                eb.push_str("unknown escape \\");
+                eb.push_byte(ec);
+                return Result::Err(mk_dyn(lx, esc_pos, &eb));
             }
+            sb.push_byte(char_escape(ec) as u8);
             lx.advance();                 // consume escape char
         } else {
+            sb.push_byte(lx.cur());
             lx.advance();
         }
     }
     if lx.i >= lx.len {
         return Result::Err(alloc(lx.ar, p, "unterminated string literal"));
     }
-    let send = lx.i;
     lx.advance();                         // closing "
-    emit(toks, Token::String(str::from_slice(lx.ar, lx.bytes[sstart..send])), p);
+    emit(toks, Token::String(str::from_slice(lx.ar, sb.as_slice())), p);
     return Result::Ok(true);
 }
 
