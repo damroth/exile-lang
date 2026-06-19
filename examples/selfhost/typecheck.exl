@@ -185,6 +185,8 @@ struct TyScope {
     // The `Self` type while elaborating a synthesised trait default method
     // (impl methods are parser-stamped, so they never carry `TySelf`).
     sc_self: Option<*const Typ>,
+    // Free / module fn parameter types, for `own *T` → `*T` arg coercion.
+    sc_gsigs: *const Vec<FnSig>,
 }
 
 // The program-global indices bundled for threading through the elaboration
@@ -209,6 +211,7 @@ struct ProgIdx {
     pi_geninsts: *Vec<str>,
     pi_etps: *const Vec<EnumTP>,
     pi_modpath: *const Vec<str>,
+    pi_gsigs: *const Vec<FnSig>,
 }
 
 // Index of `(type-path, method-name)` in the method table, or -1.
@@ -501,6 +504,11 @@ fn unify_typ(decl: *const Typ, act: *const Typ, out: *Vec<TVarBind>) {
 // Register a generated instance for the `mono-instances` footer.  The accs
 // ride in the (const) scope as mutable Vec pointers, so registration works
 // from any resolution site — signature or body — with no extra threading.
+fn allocator_path(a: Allocator) -> Vec<str> {
+    let mut p: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    p.push("Allocator");
+    return p;
+}
 fn register_mono_struct(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) {
     sc.sc_mono_structs.push(copy_strs(a, ipath));
 }
@@ -740,6 +748,14 @@ struct GlobalFn {
     is_top: bool,
 }
 
+// A free / module fn's resolved parameter types, keyed by C symbol — read at a
+// call site to coerce an `own *T` argument to a `*T` / `*const T` parameter
+// (DR-030 borrow): the owner is passed by borrow, not consumed.
+struct FnSig {
+    fs_mangled: str,
+    fs_params: Vec<*const Typ>,
+}
+
 // A bare name resolves only against top-level symbols (a module-internal
 // symbol is reachable solely through its `mod::name` path → by mangled).
 fn global_lookup(g: *const Vec<GlobalFn>, name: str) -> Option<GlobalFn> {
@@ -970,9 +986,62 @@ fn ret_or_void(ar: *Arena, ret: Option<*const Typ>) -> *const Typ {
 
 // Direct call to a user / top-level fn: mangled C symbol + return type from
 // the global table.  Arg-coercion against param types is deferred.
+fn is_own_ptr(t: *const Typ) -> bool {
+    return match *t { Typ::TOwnPtr(_i) => true | _e => false };
+}
+fn ptr_or_constptr(t: *const Typ) -> bool {
+    return match *t { Typ::TPtr(_i) => true | Typ::TConstPtr(_i) => true | _e => false };
+}
+// Re-stamp a borrowed-owner argument to the parameter's pointer type.  Only a
+// `TVar` is re-typed (the call-site owner is always a binding); other shapes
+// flow through unchanged.
+fn retype_var(ar: *Arena, targ: *const Texpr, cty: *const Typ) -> *const Texpr {
+    return match targ.e {
+        TexprNode::TVar(n) => te_node(ar, TexprNode::TVar(n), cty, targ.pos)
+        | _other => targ
+    };
+}
+fn coerce_own_to(ar: *Arena, targ: *const Texpr, pty: *const Typ) -> *const Texpr {
+    if !is_own_ptr(targ.ty) { return targ; }
+    if ptr_or_constptr(pty) { return retype_var(ar, targ, pty); }
+    return targ;
+}
+// Coerce `targ` against the `i`-th parameter type of `params` (the param type
+// is only ever passed onward into a node, never returned, so no local slice
+// element escapes).
+fn coerce_against_params(ar: *Arena, params: *const Vec<*const Typ>, i: u32, targ: *const Texpr) -> *const Texpr {
+    if i >= params.length() { return targ; }
+    let ps = params.as_slice();
+    return coerce_own_to(ar, targ, ps[i]);
+}
+fn coerce_at(ar: *Arena, sc: *const TyScope, mangled: str, i: u32, targ: *const Texpr) -> *const Texpr {
+    let gsigs = sc.sc_gsigs;
+    let n = gsigs.length();
+    let sl = gsigs.as_slice();
+    let mut j = 0 as u32;
+    while j < n {
+        if str::eq(sl[j].fs_mangled, mangled) { return coerce_against_params(ar, &sl[j].fs_params, i, targ); }
+        j = j + 1 as u32;
+    }
+    return targ;
+}
+fn elab_args_coerced(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                     mangled: str, args: *const Vec<*const Expr>) -> Vec<*const Texpr> {
+    let mut out: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    let n = args.length();
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let targ = elab_expr(a, ar, g, sc, env, none_ty(), sl[i]);
+        out.push(coerce_at(ar, sc, mangled, i, targ));
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
 fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                 gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
-    let targs = elab_args(a, ar, g, sc, env, args);
+    let targs = elab_args_coerced(a, ar, g, sc, env, gf.mangled, args);
     let ty = ret_or_void(ar, gf.ret);
     return te_node(ar, TexprNode::TCall { mangled: gf.mangled, args: targs }, ty, p);
 }
@@ -1225,6 +1294,15 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: cl_args }, t_u32(ar), p);
     }
     if str::eq(name, "len") { return elab_len(a, ar, g, sc, env, args, p); }
+    if str::eq(name, "default_allocator") {
+        register_mono_struct(a, sc, &allocator_path(a));
+        let no_args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+        return te_node(ar, TexprNode::TBuiltinCall { name: name, args: no_args }, ty_node(ar, Typ::TStruct(allocator_path(a))), p);
+    }
+    if str::eq(name, "free") {
+        let fr_args = elab_args(a, ar, g, sc, env, args);
+        return te_node(ar, TexprNode::TBuiltinCall { name: name, args: fr_args }, t_i32(ar), p);
+    }
     let gfi = gen_fn_lookup(sc.sc_genfns, name);
     if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, expected, args, p); }
     return elab_user_or_defer(a, ar, g, sc, env, name, args, p);
@@ -1931,6 +2009,44 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     return te_node(ar, TexprNode::TStructLit { sname_path: ipath, fields: tfields, base: tbase }, sty, p);
 }
 
+// `new(alloc) ...` heap-allocates and yields `own *T` (DR-030/031).  The
+// allocator expression elaborates like any value (its type is Allocator).
+
+fn elab_alloc_opt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                  env: *const Vec<FieldTy>, alloc: Option<*const Expr>) -> Option<*const Texpr> {
+    return match alloc {
+        Option::Some(ae) => Option::Some(elab_expr(a, ar, g, sc, env, none_ty(), ae))
+        | Option::None => none_texpr()
+    };
+}
+
+// `new(a) S { .. }` → a heap struct of type `own *S`.
+fn elab_new_struct(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                   tname: *const Vec<str>, fields: *const Vec<Field>, base: Option<*const Expr>, alloc: Option<*const Expr>, p: Pos) -> *const Texpr {
+    let talloc = elab_alloc_opt(a, ar, g, sc, env, alloc);
+    let tfields = elab_struct_fields(a, ar, g, sc, env, tname, fields);
+    let tbase = elab_opt_base(a, ar, g, sc, env, base);
+    let ipath = struct_lit_path(a, ar, sc, tname, &tfields, tbase);
+    let sty = ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
+    let oty = ty_node(ar, Typ::TOwnPtr(sty));
+    return te_node(ar, TexprNode::TNew { sname_path: ipath, fields: tfields, base: tbase, alloc: talloc }, oty, p);
+}
+
+// `new(a) E::V(args)` → a heap-boxed enum tuple-variant of type `own *E`.
+fn elab_new_enum(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                 tname: *const Vec<str>, args: *const Vec<*const Expr>, alloc: Option<*const Expr>, p: Pos) -> *const Texpr {
+    let last = path_last(tname);
+    let init = path_init(a, tname);
+    let tag = variant_tag(sc.sc_etags, &init, last);
+    if tag < 0 as int { return defer_expr(ar, p); }
+    let talloc = elab_alloc_opt(a, ar, g, sc, env, alloc);
+    let tflds = enum_tuple_args(a, ar, g, sc, env, &init, last, args);
+    let inst = enum_instance_path(a, ar, sc, none_ty(), &init, last, &tflds);
+    let ety = ty_node(ar, Typ::TEnum(copy_strs(a, &inst)));
+    let oty = ty_node(ar, Typ::TOwnPtr(ety));
+    return te_node(ar, TexprNode::TNewEnum { ename_path: inst, variant: last, tag: tag, args: tflds, alloc: talloc }, oty, p);
+}
+
 fn elab_ref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
             env: *const Vec<FieldTy>, sub: *const Expr, p: Pos) -> *const Texpr {
     let ts = elab_expr(a, ar, g, sc, env, none_ty(), sub);
@@ -2108,6 +2224,8 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::Index { base, index } => elab_index(a, ar, g, sc, env, base, index, p)
         | Expr::Orelse(value, dflt, _q) => elab_orelse(a, ar, g, sc, env, expected, value, dflt, p)
         | Expr::Try(value, _q) => elab_try(a, ar, g, sc, env, value, p)
+        | Expr::New { tname, fields, base, alloc } => elab_new_struct(a, ar, g, sc, env, &tname, &fields, base, alloc, p)
+        | Expr::NewEnum { tname, args, alloc } => elab_new_enum(a, ar, g, sc, env, &tname, &args, alloc, p)
         | _other => defer_expr(ar, p)
     };
 }
@@ -2777,7 +2895,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &f.tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -3018,6 +3136,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_modpath: base.sc_modpath,
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
+        sc_gsigs: base.sc_gsigs,
     };
 }
 
@@ -3033,6 +3152,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_modpath: base.sc_modpath,
         sc_ret: ret,
         sc_self: base.sc_self,
+        sc_gsigs: base.sc_gsigs,
     };
 }
 
@@ -3475,6 +3595,25 @@ fn collect_globals(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const V
     return g;
 }
 
+fn collect_fn_sigs_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, path: *const Vec<str>, out: *Vec<FnSig>) {
+    match *it {
+        Item::Function(f) => {
+            out.push(FnSig { fs_mangled: collect_fn_mangle(a, ar, &f, path), fs_params: resolve_param_tys(a, ar, sc, &f.params) });
+        }
+        | Item::Module(md) => {
+            let p2 = path_push(a, path, md.mname);
+            collect_fn_sigs_into(a, ar, sc, &md.mitems, &p2, out);
+        }
+        | _e => { }
+    }
+}
+fn collect_fn_sigs_into(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, path: *const Vec<str>, out: *Vec<FnSig>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_fn_sigs_one(a, ar, sc, &sl[i], path, out); i = i + 1 as u32; }
+}
+
 // ===== Prelude `mono-instances` footprint =====
 //
 // Every IR dump carries the registered prelude struct / enum skeletons.
@@ -3583,14 +3722,19 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut etps: Vec<EnumTP> = Vec::with_capacity(a, 8 as u32);
     collect_enum_tps(a, items, &etps);
     prelude_enum_tps(a, &etps);
+    // Fn parameter-type index (for `own *T` → `*T` arg coercion); populated
+    // below once the scope can resolve param types, but referenced by the
+    // base scope now (collecting it doesn't read the index back).
+    let mut gsigs: Vec<FnSig> = Vec::with_capacity(a, 16 as u32);
     let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
+    collect_fn_sigs_into(a, ar, &base_scope, items, &empty_tp, &gsigs);
     // Struct field index + enum variant/field index + method index, carried
     // in every fn's body scope so `s.field`, struct/enum literals, variant
     // patterns and method calls type-check.
@@ -3606,7 +3750,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_modpath: &empty_tp };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_modpath: &empty_tp, pi_gsigs: &gsigs };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
