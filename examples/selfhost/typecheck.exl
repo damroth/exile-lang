@@ -1144,21 +1144,36 @@ fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     };
 }
 
+// Bidirectional seed: a tparam unreachable through arguments (`make_null<T>()`
+// returning `*T`) gets its binding from the surrounding expected type by
+// unifying the resolved return type against it.  Seeded after the argument
+// pairs so an argument-derived binding wins the dedup.
+fn seed_from_expected(cret: Option<*const Typ>, expected: Option<*const Typ>, out: *Vec<TVarBind>) {
+    match cret {
+        Option::Some(r) => match expected {
+            Option::Some(e) => unify_typ(r, e, out)
+            | Option::None => { }
+        }
+        | Option::None => { }
+    }
+}
+
 // `gen_fn(args)` → a monomorphic call `ex_fn_<args>(args)`, queuing the
 // instance for elaboration.
 fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                 gfidx: int, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                 gfidx: int, expected: Option<*const Typ>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let gsl = sc.sc_genfns.as_slice();
     let gi = gsl[gfidx as u32].gn_idx;
     let base = gsl[gfidx as u32].gn_mangled;
     let targs = elab_args(a, ar, g, sc, env, args);
     let cscope = scope_with_tparams(sc, &gsl[gfidx as u32].gn_tparams);
+    let cret = resolve_sig_ret(a, ar, &cscope, gsl[gfidx as u32].gn_ret);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_call_binds(a, ar, &cscope, &gsl[gfidx as u32].gn_params, &targs, &binds);
+    seed_from_expected(cret, expected, &binds);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     queue_gen_instance(a, sc, gi, &binds, inst);
-    let cret = resolve_sig_ret(a, ar, &cscope, gsl[gfidx as u32].gn_ret);
     let iret = subst_opt_ret(ar, &binds, cret);
     return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, iret), p);
 }
@@ -1196,7 +1211,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: cl_args }, t_u32(ar), p);
     }
     let gfi = gen_fn_lookup(sc.sc_genfns, name);
-    if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, args, p); }
+    if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, expected, args, p); }
     return elab_user_or_defer(a, ar, g, sc, env, name, args, p);
 }
 
