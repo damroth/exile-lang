@@ -770,7 +770,11 @@ fn pick_int_ty(ar: *Arena, t: *const Typ) -> *const Typ {
 // dispatches on fns, a value reference on consts.  Fully copyable.
 struct GlobalFn {
     name: str,
+    // The lookup key (path-mangled, so a `mod::fn` qualified call resolves).
     mangled: str,
+    // The emitted C symbol — equals `mangled` except for an `extern fn`, which
+    // keeps its raw C name even inside a module (`raw::add` emits `add`).
+    gf_emit: str,
     ret: Option<*const Typ>,
     is_const: bool,
     is_top: bool,
@@ -792,7 +796,7 @@ fn global_lookup(g: *const Vec<GlobalFn>, name: str) -> Option<GlobalFn> {
     let mut i = 0 as u32;
     while i < n {
         if sl[i].is_top && str::eq(sl[i].name, name) {
-            return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled,
+            return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, gf_emit: sl[i].gf_emit,
                 ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top });
         }
         i = i + 1 as u32;
@@ -807,7 +811,7 @@ fn global_lookup_by_mangled(g: *const Vec<GlobalFn>, mangled: str) -> Option<Glo
     let mut i = 0 as u32;
     while i < n {
         if str::eq(sl[i].mangled, mangled) {
-            return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled,
+            return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, gf_emit: sl[i].gf_emit,
                 ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top });
         }
         i = i + 1 as u32;
@@ -1071,7 +1075,7 @@ fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
                 gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let targs = elab_args_coerced(a, ar, g, sc, env, gf.mangled, args);
     let ty = ret_or_void(ar, gf.ret);
-    return te_node(ar, TexprNode::TCall { mangled: gf.mangled, args: targs }, ty, p);
+    return te_node(ar, TexprNode::TCall { mangled: gf.gf_emit, args: targs }, ty, p);
 }
 
 fn call_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
@@ -3009,7 +3013,9 @@ fn path_push(a: Allocator, path: *const Vec<str>, name: str) -> Vec<str> {
 }
 fn elaborate_module_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                        path: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, path, mangle_path(a, ar, path, f.name), f, none_ty()));
+    // An extern fn keeps its raw C name as the emitted symbol even in a module.
+    let m = if f.is_extern { f.c_name } else { mangle_path(a, ar, path, f.name) };
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, path, m, f, none_ty()));
 }
 fn elaborate_module_items(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                           path: *const Vec<str>, items: *const Vec<Item>, funcs: *Vec<Tfunc>) {
@@ -3603,12 +3609,16 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
     let is_top = path.length() == 0 as u32;
     match *it {
         Item::Function(f) => {
-            let m = collect_fn_mangle(a, ar, &f, path);
-            g.push(GlobalFn { name: f.name, mangled: m, ret: resolve_sig_ret(a, ar, sc, f.ret_ty),
+            // An extern fn keeps its C name when emitted, but a module-nested
+            // one still resolves via its `mod__name` path key.
+            let lk = if f.is_extern && !is_top { mangle_path(a, ar, path, f.name) } else { collect_fn_mangle(a, ar, &f, path) };
+            let em = if f.is_extern { f.c_name } else { lk };
+            g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, sc, f.ret_ty),
                               is_const: false, is_top: is_top });
         }
         | Item::Const(c) => {
-            g.push(GlobalFn { name: c.kname, mangled: mangle_path(a, ar, path, c.kname),
+            let cm = mangle_path(a, ar, path, c.kname);
+            g.push(GlobalFn { name: c.kname, mangled: cm, gf_emit: cm,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, c.kty)),
                               is_const: true, is_top: is_top });
         }
@@ -3627,7 +3637,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
 // re-exports are not yet supported).
 fn push_use_alias(g: *Vec<GlobalFn>, target_mangled: str, alias: str) {
     match global_lookup_by_mangled(g, target_mangled) {
-        Option::Some(gf) => { g.push(GlobalFn { name: alias, mangled: gf.mangled, ret: gf.ret,
+        Option::Some(gf) => { g.push(GlobalFn { name: alias, mangled: gf.mangled, gf_emit: gf.gf_emit, ret: gf.ret,
                                                 is_const: gf.is_const, is_top: true }); }
         | Option::None => { }
     }
