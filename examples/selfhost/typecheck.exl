@@ -105,6 +105,15 @@ struct MethodInfo {
     mi_ret: Option<*const Typ>,
     mi_has_self: bool,
     mi_self_ptr: bool,
+    // Generic-method inference data (mi_tparams empty => a plain method).
+    // The annotations resolve under mi_tparams at the call site; the impl /
+    // method indices re-derive the source fn in the drain (like GenFn's
+    // gn_idx) so the instance body elaborates under the inferred bindings.
+    mi_tparams: Vec<str>,
+    mi_params: Vec<*const TypeAnn>,
+    mi_ret_ann: Option<*const TypeAnn>,
+    mi_impl_idx: u32,
+    mi_meth_idx: u32,
 }
 
 // A top-level generic function.  Inference at a call site needs its type
@@ -126,6 +135,9 @@ struct GenFn {
 // instance C symbol.
 struct GenJob {
     gj_idx: u32,
+    // -1 for a free fn at top-level item `gj_idx`; otherwise the method index
+    // within the impl at item `gj_idx`.
+    gj_meth: int,
     gj_binds: Vec<TVarBind>,
     gj_mangled: str,
 }
@@ -1109,7 +1121,16 @@ fn infer_call_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *con
 fn queue_gen_instance(a: Allocator, sc: *const TyScope, gi: u32, binds: *const Vec<TVarBind>, mangled: str) {
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
-    sc.sc_genjobs.push(GenJob { gj_idx: gi, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled });
+    sc.sc_genjobs.push(GenJob { gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled });
+}
+
+// Queue a generic-method instance: the impl item index + the method index
+// within it locate the source fn for the drain.
+fn queue_method_instance(a: Allocator, sc: *const TyScope, impl_idx: u32, meth_idx: u32,
+                         binds: *const Vec<TVarBind>, mangled: str) {
+    if name_in(sc.sc_geninsts, mangled) { return; }
+    sc.sc_geninsts.push(mangled);
+    sc.sc_genjobs.push(GenJob { gj_idx: impl_idx, gj_meth: meth_idx as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled });
 }
 
 // `mod::fn(args)` — a module-qualified call resolves to the `mod__fn` C
@@ -1203,8 +1224,68 @@ fn append_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
     while i < n { out.push(elab_expr(a, ar, g, sc, env, none_ty(), sl[i])); i = i + 1 as u32; }
 }
 
+fn push_texprs(targs: *const Vec<*const Texpr>, out: *Vec<*const Texpr>) {
+    let n = targs.length();
+    let sl = targs.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(sl[i]); i = i + 1 as u32; }
+}
+
+// Infer a generic method's tparam bindings: the receiver type pins the self
+// param (index 0), the explicit arguments pin the rest.  Each declared type
+// resolves under the method's tparams (so its `TVar`s stay symbolic) before
+// unifying against the actual type.
+fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *const Vec<*const TypeAnn>,
+                      trecv: *const Texpr, targs: *const Vec<*const Texpr>, out: *Vec<TVarBind>) {
+    let np = anns.length();
+    let asl = anns.as_slice();
+    if np > 0 as u32 {
+        let p0 = resolve_sig_ty(a, ar, cscope, asl[0 as u32]);
+        unify_typ(p0, trecv.ty, out);
+    }
+    let na = targs.length();
+    let tsl = targs.as_slice();
+    let mut i = 0 as u32;
+    while i < na {
+        let pi = i + 1 as u32;
+        if pi < np {
+            let pt = resolve_sig_ty(a, ar, cscope, asl[pi]);
+            unify_typ(pt, tsl[i].ty, out);
+        }
+        i = i + 1 as u32;
+    }
+}
+
+// `recv.m<T..>(args)` → `T__m_<args>(<adjusted recv>, args)`: infer the
+// method's type parameters from the receiver + arguments, mangle the
+// instance, queue its body for the drain, and substitute the bindings into
+// the result type.
+fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                      midx: u32, trecv: *const Texpr, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let sl = sc.sc_methods.as_slice();
+    let base = sl[midx].mi_mangled;
+    let sptr = sl[midx].mi_self_ptr;
+    let iidx = sl[midx].mi_impl_idx;
+    let midx2 = sl[midx].mi_meth_idx;
+    let targs = elab_args(a, ar, g, sc, env, args);
+    let cscope = scope_with_tparams(sc, &sl[midx].mi_tparams);
+    let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    infer_method_binds(a, ar, &cscope, &sl[midx].mi_params, trecv, &targs, &binds);
+    let oargs = dedup_bind_tys(a, &binds);
+    let inst = fn_instance_mangled(a, ar, base, &oargs);
+    queue_method_instance(a, sc, iidx, midx2, &binds, inst);
+    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
+    let iret = subst_opt_ret(ar, &binds, cret);
+    let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr);
+    let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    cargs.push(adj);
+    push_texprs(&targs, &cargs);
+    return te_node(ar, TexprNode::TCall { mangled: inst, args: cargs }, ret_or_void(ar, iret), p);
+}
+
 // `recv.m(args)` → `T__m(<adjusted recv>, args)` where `T` is the receiver's
-// (auto-dereferenced) type.  Defers if the method is unknown.
+// (auto-dereferenced) type.  A generic method instantiates first.  Defers if
+// the method is unknown.
 fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                     recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let trecv = elab_expr(a, ar, g, sc, env, none_ty(), recv);
@@ -1212,6 +1293,9 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let idx = find_method_idx(sc.sc_methods, &tpath, name);
     if idx < 0 as int { return defer_expr(ar, p); }
     let sl = sc.sc_methods.as_slice();
+    if sl[idx as u32].mi_tparams.length() > 0 as u32 {
+        return mk_gen_method_call(a, ar, g, sc, env, idx as u32, trecv, args, p);
+    }
     let mm = sl[idx as u32].mi_mangled;
     let mret = sl[idx as u32].mi_ret;
     let sptr = sl[idx as u32].mi_self_ptr;
@@ -2724,33 +2808,45 @@ fn method_self_ptr(f: *const Func) -> bool {
     return is_ptr_ann(sl[0 as u32].pty);
 }
 fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
-                   f: *const Func, out: *Vec<MethodInfo>) {
+                   f: *const Func, impl_idx: u32, meth_idx: u32, out: *Vec<MethodInfo>) {
     out.push(MethodInfo {
         mi_path: copy_strs(a, target), mi_name: f.name,
         mi_mangled: method_mangle(a, ar, target, f.name),
         mi_ret: resolve_sig_ret(a, ar, sc, f.ret_ty),
         mi_has_self: method_has_self(f), mi_self_ptr: method_self_ptr(f),
+        mi_tparams: copy_strs(a, &f.tparams), mi_params: copy_param_anns(a, &f.params),
+        mi_ret_ann: f.ret_ty, mi_impl_idx: impl_idx, mi_meth_idx: meth_idx,
     });
 }
 fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
-                        methods: *const Vec<Func>, out: *Vec<MethodInfo>) {
+                        methods: *const Vec<Func>, impl_idx: u32, out: *Vec<MethodInfo>) {
     let n = methods.length();
     let sl = methods.as_slice();
     let mut i = 0 as u32;
-    while i < n { push_one_method(a, ar, sc, target, &sl[i], out); i = i + 1 as u32; }
+    while i < n { push_one_method(a, ar, sc, target, &sl[i], impl_idx, i, out); i = i + 1 as u32; }
 }
-fn collect_method_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, out: *Vec<MethodInfo>) {
+// `top_idx` is the index of the enclosing top-level item, so a generic
+// method's body can be re-derived in the drain.  Module-nested impls pass
+// the module's own top index (a nested generic method is out of scope for
+// v1, matching the top-level-only generic-fn registry).
+fn collect_method_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, top_idx: u32, out: *Vec<MethodInfo>) {
     match *it {
-        Item::Impl(ib) => { collect_methods_impl(a, ar, sc, &ib.itarget, &ib.iitems, out); }
-        | Item::Module(md) => { collect_method_info(a, ar, sc, &md.mitems, out); }
+        Item::Impl(ib) => { collect_methods_impl(a, ar, sc, &ib.itarget, &ib.iitems, top_idx, out); }
+        | Item::Module(md) => { collect_method_info_nested(a, ar, sc, &md.mitems, top_idx, out); }
         | _e => { }
     }
+}
+fn collect_method_info_nested(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, top_idx: u32, out: *Vec<MethodInfo>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_method_info_one(a, ar, sc, &sl[i], top_idx, out); i = i + 1 as u32; }
 }
 fn collect_method_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, out: *Vec<MethodInfo>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { collect_method_info_one(a, ar, sc, &sl[i], out); i = i + 1 as u32; }
+    while i < n { collect_method_info_one(a, ar, sc, &sl[i], i, out); i = i + 1 as u32; }
 }
 
 // Register every top-level generic function (a fn with type parameters),
@@ -2815,6 +2911,31 @@ fn elaborate_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym:
     let sl = items.as_slice();
     match sl[gi] {
         Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, &f)); }
+        | _e => { }
+    }
+}
+
+// Push happens behind a fn boundary so `f` is a parameter (not the address
+// of a local slice element) — same escape-checker shape as the free-fn path.
+fn push_method_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                    tbinds: *const Vec<TVarBind>, mangled: str, f: *const Func, funcs: *Vec<Tfunc>) {
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f));
+}
+fn elaborate_impl_method_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                            methods: *const Vec<Func>, meth_idx: u32, tbinds: *const Vec<TVarBind>,
+                            mangled: str, funcs: *Vec<Tfunc>) {
+    let msl = methods.as_slice();
+    push_method_inst(a, ar, g, gensym, idx, tbinds, mangled, &msl[meth_idx], funcs);
+}
+
+// Elaborate one generic-method instance: re-derive the method fn from its
+// impl item index + method index, then elaborate its body under the bindings.
+fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                             items: *const Vec<Item>, impl_idx: u32, meth_idx: u32, tbinds: *const Vec<TVarBind>,
+                             mangled: str, funcs: *Vec<Tfunc>) {
+    let sl = items.as_slice();
+    match sl[impl_idx] {
+        Item::Impl(ib) => { elaborate_impl_method_at(a, ar, g, gensym, idx, &ib.iitems, meth_idx, tbinds, mangled, funcs); }
         | _e => { }
     }
 }
@@ -3045,8 +3166,13 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         let gsl = genjobs.as_slice();
         let jm = gsl[k].gj_mangled;
         let ji = gsl[k].gj_idx;
+        let jmeth = gsl[k].gj_meth;
         let jb = copy_tvarbinds(a, &gsl[k].gj_binds);
-        elaborate_instance(a, ar, &globals, &gensym, &idx, items, ji, &jb, jm, &funcs);
+        if jmeth < 0 as int {
+            elaborate_instance(a, ar, &globals, &gensym, &idx, items, ji, &jb, jm, &funcs);
+        } else {
+            elaborate_method_instance(a, ar, &globals, &gensym, &idx, items, ji, jmeth as u32, &jb, jm, &funcs);
+        }
         k = k + 1 as u32;
     }
 
