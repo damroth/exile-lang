@@ -105,6 +105,7 @@ struct MethodInfo {
     mi_ret: Option<*const Typ>,
     mi_has_self: bool,
     mi_self_ptr: bool,
+    mi_self_const: bool,
     // Generic-method inference data (mi_tparams empty => a plain method).
     // The annotations resolve under mi_tparams at the call site; the impl /
     // method indices re-derive the source fn in the drain (like GenFn's
@@ -140,6 +141,10 @@ struct GenJob {
     gj_meth: int,
     gj_binds: Vec<TVarBind>,
     gj_mangled: str,
+    // The implementing type — empty for free fns / regular methods (self is
+    // parser-stamped); for a generic default (whose source fn lives in the
+    // trait at `gj_idx`) it pins `Self` in the instance body.
+    gj_target: Vec<str>,
 }
 
 // An enum's type parameters in declaration order (user enums + the prelude
@@ -1128,16 +1133,18 @@ fn infer_call_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *con
 fn queue_gen_instance(a: Allocator, sc: *const TyScope, gi: u32, binds: *const Vec<TVarBind>, mangled: str) {
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
-    sc.sc_genjobs.push(GenJob { gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled });
+    let no_target: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    sc.sc_genjobs.push(GenJob { gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: no_target });
 }
 
-// Queue a generic-method instance: the impl item index + the method index
-// within it locate the source fn for the drain.
+// Queue a generic-method instance: the impl (or trait, for a generic default)
+// item index + the method index locate the source fn for the drain; `target`
+// pins `Self` when the source is a trait default.
 fn queue_method_instance(a: Allocator, sc: *const TyScope, impl_idx: u32, meth_idx: u32,
-                         binds: *const Vec<TVarBind>, mangled: str) {
+                         binds: *const Vec<TVarBind>, mangled: str, target: *const Vec<str>) {
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
-    sc.sc_genjobs.push(GenJob { gj_idx: impl_idx, gj_meth: meth_idx as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled });
+    sc.sc_genjobs.push(GenJob { gj_idx: impl_idx, gj_meth: meth_idx as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: copy_strs(a, target) });
 }
 
 // `mod::fn(args)` — a module-qualified call resolves to the `mod__fn` C
@@ -1226,10 +1233,13 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
 // Adjust a method receiver to the self shape the method declares: a value
 // receiver to a `*self` method auto-refs (`&recv`); a pointer receiver to a
 // by-value `self` method auto-derefs (`*recv`).
-fn adjust_recv(ar: *Arena, trecv: *const Texpr, recv_ptr: bool, self_ptr: bool) -> *const Texpr {
+fn adjust_recv(ar: *Arena, trecv: *const Texpr, recv_ptr: bool, self_ptr: bool, self_const: bool) -> *const Texpr {
     if self_ptr {
         if recv_ptr { return trecv; }
-        return te_node(ar, TexprNode::TRef(trecv), ty_node(ar, Typ::TPtr(trecv.ty)), trecv.pos);
+        // Auto-ref a value receiver to the self shape: `*const self` borrows
+        // read-only (`&recv : *const T`), `*self` mutably (`&recv : *T`).
+        let pty = if self_const { ty_node(ar, Typ::TConstPtr(trecv.ty)) } else { ty_node(ar, Typ::TPtr(trecv.ty)) };
+        return te_node(ar, TexprNode::TRef(trecv), pty, trecv.pos);
     }
     if !recv_ptr { return trecv; }
     let inner = match deref_pointee(trecv.ty) {
@@ -1288,6 +1298,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     let sl = sc.sc_methods.as_slice();
     let base = sl[midx].mi_mangled;
     let sptr = sl[midx].mi_self_ptr;
+    let scst = sl[midx].mi_self_const;
     let iidx = sl[midx].mi_impl_idx;
     let midx2 = sl[midx].mi_meth_idx;
     let targs = elab_args(a, ar, g, sc, env, args);
@@ -1296,10 +1307,10 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     infer_method_binds(a, ar, &cscope, &sl[midx].mi_params, trecv, &targs, &binds);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
-    queue_method_instance(a, sc, iidx, midx2, &binds, inst);
+    queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
     let iret = subst_opt_ret(ar, &binds, cret);
-    let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr);
+    let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
     push_texprs(&targs, &cargs);
@@ -1322,7 +1333,8 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let mm = sl[idx as u32].mi_mangled;
     let mret = sl[idx as u32].mi_ret;
     let sptr = sl[idx as u32].mi_self_ptr;
-    let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr);
+    let scst = sl[idx as u32].mi_self_const;
+    let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
     append_args(a, ar, g, sc, env, args, &cargs);
@@ -3163,13 +3175,24 @@ fn method_self_ptr(f: *const Func) -> bool {
     let sl = f.params.as_slice();
     return is_ptr_ann(sl[0 as u32].pty);
 }
+fn is_const_ptr_ann(ann: *const TypeAnn) -> bool {
+    return match *ann {
+        TypeAnn::TyConstPtr(_t) => true
+        | _e => false
+    };
+}
+fn method_self_const(f: *const Func) -> bool {
+    if !method_has_self(f) { return false; }
+    let sl = f.params.as_slice();
+    return is_const_ptr_ann(sl[0 as u32].pty);
+}
 fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
                    f: *const Func, impl_idx: u32, meth_idx: u32, out: *Vec<MethodInfo>) {
     out.push(MethodInfo {
         mi_path: copy_strs(a, target), mi_name: f.name,
         mi_mangled: method_mangle(a, ar, target, f.name),
         mi_ret: resolve_sig_ret(a, ar, sc, f.ret_ty),
-        mi_has_self: method_has_self(f), mi_self_ptr: method_self_ptr(f),
+        mi_has_self: method_has_self(f), mi_self_ptr: method_self_ptr(f), mi_self_const: method_self_const(f),
         mi_tparams: copy_strs(a, &f.tparams), mi_params: copy_param_anns(a, &f.params),
         mi_ret_ann: f.ret_ty, mi_impl_idx: impl_idx, mi_meth_idx: meth_idx,
     });
@@ -3354,24 +3377,30 @@ fn elaborate_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym:
 // Push happens behind a fn boundary so `f` is a parameter (not the address
 // of a local slice element) — same escape-checker shape as the free-fn path.
 fn push_method_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                    tbinds: *const Vec<TVarBind>, mangled: str, f: *const Func, funcs: *Vec<Tfunc>) {
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, none_ty()));
+                    tbinds: *const Vec<TVarBind>, mangled: str, f: *const Func, self_ty: Option<*const Typ>, funcs: *Vec<Tfunc>) {
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, self_ty));
 }
 fn elaborate_impl_method_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                             methods: *const Vec<Func>, meth_idx: u32, tbinds: *const Vec<TVarBind>,
-                            mangled: str, funcs: *Vec<Tfunc>) {
+                            mangled: str, self_ty: Option<*const Typ>, funcs: *Vec<Tfunc>) {
     let msl = methods.as_slice();
-    push_method_inst(a, ar, g, gensym, idx, tbinds, mangled, &msl[meth_idx], funcs);
+    push_method_inst(a, ar, g, gensym, idx, tbinds, mangled, &msl[meth_idx], self_ty, funcs);
 }
 
 // Elaborate one generic-method instance: re-derive the method fn from its
-// impl item index + method index, then elaborate its body under the bindings.
+// source item + method index, then elaborate its body under the bindings.  A
+// regular impl method has its `self` parser-stamped; a generic default (whose
+// source fn is in the trait at `impl_idx`) gets `Self` from `target`.
 fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                              items: *const Vec<Item>, impl_idx: u32, meth_idx: u32, tbinds: *const Vec<TVarBind>,
-                             mangled: str, funcs: *Vec<Tfunc>) {
+                             mangled: str, target: *const Vec<str>, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
     match sl[impl_idx] {
-        Item::Impl(ib) => { elaborate_impl_method_at(a, ar, g, gensym, idx, &ib.iitems, meth_idx, tbinds, mangled, funcs); }
+        Item::Impl(ib) => { elaborate_impl_method_at(a, ar, g, gensym, idx, &ib.iitems, meth_idx, tbinds, mangled, none_ty(), funcs); }
+        | Item::Trait(td) => {
+            let sty = ty_node(ar, Typ::TStruct(copy_strs(a, target)));
+            elaborate_impl_method_at(a, ar, g, gensym, idx, &td.trmethods, meth_idx, tbinds, mangled, Option::Some(sty), funcs);
+        }
         | _e => { }
     }
 }
@@ -3605,10 +3634,13 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         let ji = gsl[k].gj_idx;
         let jmeth = gsl[k].gj_meth;
         let jb = copy_tvarbinds(a, &gsl[k].gj_binds);
+        // Copy the target out too: elaborating the body may queue more jobs,
+        // re-growing `genjobs` and dangling the slice borrow.
+        let jt = copy_strs(a, &gsl[k].gj_target);
         if jmeth < 0 as int {
             elaborate_instance(a, ar, &globals, &gensym, &idx, items, ji, &jb, jm, &funcs);
         } else {
-            elaborate_method_instance(a, ar, &globals, &gensym, &idx, items, ji, jmeth as u32, &jb, jm, &funcs);
+            elaborate_method_instance(a, ar, &globals, &gensym, &idx, items, ji, jmeth as u32, &jb, jm, &jt, &funcs);
         }
         k = k + 1 as u32;
     }
