@@ -1210,6 +1210,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let cl_args = elab_args(a, ar, g, sc, env, args);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: cl_args }, t_u32(ar), p);
     }
+    if str::eq(name, "len") { return elab_len(a, ar, g, sc, env, args, p); }
     let gfi = gen_fn_lookup(sc.sc_genfns, name);
     if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, expected, args, p); }
     return elab_user_or_defer(a, ar, g, sc, env, name, args, p);
@@ -1860,6 +1861,77 @@ fn elab_tuple_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     return te_node(ar, TexprNode::TTupleLit(tes), ty_node(ar, Typ::TTuple(tys)), p);
 }
 
+// A `[T; N]` expected type propagates its element type to each element / the
+// repeat value so integer-literal widths agree.
+fn array_elem_expected(expected: Option<*const Typ>) -> Option<*const Typ> {
+    return match expected {
+        Option::Some(t) => match *t { Typ::TArray { elem, size } => Option::Some(elem) | _e => none_ty() }
+        | Option::None => none_ty()
+    };
+}
+
+fn array_elem_ty(t: *const Typ) -> Option<*const Typ> {
+    return match *t {
+        Typ::TArray { elem, size } => Option::Some(elem)
+        | _e => none_ty()
+    };
+}
+
+// `[e0, e1, ..]` — every element shares one type; the size is the count.
+fn elab_array_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                  expected: Option<*const Typ>, es: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let eexp = array_elem_expected(expected);
+    let mut tes: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    let n = es.length();
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < n { tes.push(elab_expr(a, ar, g, sc, env, eexp, sl[i])); i = i + 1 as u32; }
+    let tsl = tes.as_slice();
+    let elem_ty = if n == 0 as u32 { t_i32(ar) } else { tsl[0 as u32].ty };
+    let aty = ty_node(ar, Typ::TArray { elem: elem_ty, size: n as int });
+    return te_node(ar, TexprNode::TArrayLit(tes), aty, p);
+}
+
+// `[v; N]` — N copies of the value; N folds at compile time.
+fn elab_array_repeat(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                     expected: Option<*const Typ>, value: *const Expr, count: *const Expr, p: Pos) -> *const Texpr {
+    let eexp = array_elem_expected(expected);
+    let tv = elab_expr(a, ar, g, sc, env, eexp, value);
+    let n = array_size_of(count, sc);
+    let aty = ty_node(ar, Typ::TArray { elem: tv.ty, size: n });
+    return te_node(ar, TexprNode::TArrayRepeat { value: tv, count: n }, aty, p);
+}
+
+// `base[i]` — read an element.  One layer of `*T` auto-derefs (mirrors the
+// field-access auto-deref); the element type comes from the array.  A
+// non-array base defers so the gap stays visible.
+fn elab_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+              base: *const Expr, index: *const Expr, p: Pos) -> *const Texpr {
+    let tb0 = elab_expr(a, ar, g, sc, env, none_ty(), base);
+    let tb = match deref_pointee(tb0.ty) {
+        Option::Some(inner) => te_node(ar, TexprNode::TDeref(tb0), inner, tb0.pos)
+        | Option::None => tb0
+    };
+    let ti = elab_expr(a, ar, g, sc, env, none_ty(), index);
+    return match array_elem_ty(tb.ty) {
+        Option::Some(elem) => te_node(ar, TexprNode::TIndex { base: tb, index: ti }, elem, p)
+        | Option::None => defer_expr(ar, p)
+    };
+}
+
+// `len(a)` folds to the array's compile-time size N (an `int` so `i < len(a)`
+// pairs with index loops).  A non-array argument defers.
+fn elab_len(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+            args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    if args.length() != 1 as u32 { return defer_expr(ar, p); }
+    let sl = args.as_slice();
+    let ta = elab_expr(a, ar, g, sc, env, none_ty(), sl[0 as u32]);
+    return match *ta.ty {
+        Typ::TArray { elem, size } => te_node(ar, TexprNode::TIntLit(size), t_i32(ar), p)
+        | _other => defer_expr(ar, p)
+    };
+}
+
 fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, e: *const Expr) -> *const Texpr {
     let p = expr_pos(e);
@@ -1887,6 +1959,9 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::StructLit { tname, fields, base } => elab_struct_lit(a, ar, g, sc, env, &tname, &fields, base, p)
         | Expr::Ref(sub, _q) => elab_ref(a, ar, g, sc, env, sub, p)
         | Expr::Deref(sub, _q) => elab_deref(a, ar, g, sc, env, sub, p)
+        | Expr::ArrayLit(es, _q) => elab_array_lit(a, ar, g, sc, env, expected, &es, p)
+        | Expr::ArrayRepeat { value, count } => elab_array_repeat(a, ar, g, sc, env, expected, value, count, p)
+        | Expr::Index { base, index } => elab_index(a, ar, g, sc, env, base, index, p)
         | _other => defer_expr(ar, p)
     };
 }
@@ -2197,6 +2272,12 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             let vad = elab_expr(a, ar, g, sc, env, dexp, value);
             out.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
         }
+        | Stmt::AssignIndex { base, index, value, pos } => {
+            let tbi = elab_expr(a, ar, g, sc, env, none_ty(), base);
+            let tii = elab_expr(a, ar, g, sc, env, none_ty(), index);
+            let tvi = elab_expr(a, ar, g, sc, env, none_ty(), value);
+            out.push(Tstmt::TAssignIndex { base: tbi, index: tii, value: tvi, pos: pos });
+        }
         | Stmt::LetTuple { names, value, is_mut } => {
             let tvt = elab_expr(a, ar, g, sc, env, none_ty(), value);
             bind_tuple_names(&names, tvt.ty, env);
@@ -2431,6 +2512,12 @@ fn lift_stmt(a: Allocator, ar: *Arena, ctr: *u32, s: *const Tstmt, out: *Vec<Tst
             let tad = walk_expr(a, ar, ctr, false, target, out);
             let vad = walk_expr(a, ar, ctr, false, value, out);
             out.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
+        }
+        | Tstmt::TAssignIndex { base, index, value, pos } => {
+            let tbi = walk_expr(a, ar, ctr, false, base, out);
+            let tii = walk_expr(a, ar, ctr, false, index, out);
+            let tvi = walk_expr(a, ar, ctr, false, value, out);
+            out.push(Tstmt::TAssignIndex { base: tbi, index: tii, value: tvi, pos: pos });
         }
         | Tstmt::TReturn { value, pos } => {
             match value {
