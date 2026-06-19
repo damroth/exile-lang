@@ -106,10 +106,10 @@ fn render_expr(e: *const Expr, out: *StringBuilder) {
             out.push_int(n);
             out.push_str(")");
         }
-        | Expr::FloatLit(_f, w, _) => {
-            // `%h` hex-float deferred (no prelude primitive); the tag
-            // keeps the node shape for the float-free corpus.
-            out.push_str("(float ?? ");
+        | Expr::FloatLit(f, w, _) => {
+            out.push_str("(float ");
+            fmt_hexfloat(out, f);
+            out.push_str(" ");
             out.push_str(float_width_tag(w));
             out.push_str(")");
         }

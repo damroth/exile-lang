@@ -23,6 +23,46 @@ pub fn escape_other(out: *StringBuilder, b: u8, code: int) {
     else { out.push_byte(b); }
 }
 
+// Render an f64 as a C99 hex-float (`%h`): `0x1.<frac>p<exp>`, frac trimmed of
+// trailing zeros.  Shared by the AST and IR dumpers.  Normalisation to [1,2)
+// and the 13-digit hex extraction are exact f64 ops (multiply / divide by
+// powers of two and sixteen), so the output matches the oracle's `%h`
+// bit-for-bit.
+pub fn fmt_hexfloat(out: *StringBuilder, x: f64) {
+    if x == 0.0 { out.push_str("0x0p+0"); return; }
+    let mut v = x;
+    if v < 0.0 { out.push_byte('-' as u8); v = 0.0 - v; }
+    let mut e: int = 0;
+    while v >= 2.0 { v = v / 2.0; e = e + 1; }
+    while v < 1.0 { v = v * 2.0; e = e - 1; }
+    out.push_str("0x1");
+    let mut f1 = v - 1.0;
+    let mut keep = 0;
+    let mut k1 = 0;
+    while k1 < 13 {
+        f1 = f1 * 16.0;
+        let d1 = f1 as int;
+        f1 = f1 - (d1 as f64);
+        k1 = k1 + 1;
+        if d1 != 0 { keep = k1; }
+    }
+    if keep > 0 {
+        out.push_byte('.' as u8);
+        let mut f2 = v - 1.0;
+        let mut k2 = 0;
+        while k2 < keep {
+            f2 = f2 * 16.0;
+            let d2 = f2 as int;
+            f2 = f2 - (d2 as f64);
+            out.push_byte(hex_digit(d2));
+            k2 = k2 + 1;
+        }
+    }
+    out.push_byte('p' as u8);
+    if e >= 0 as int { out.push_byte('+' as u8); } else { out.push_byte('-' as u8); e = 0 as int - e; }
+    out.push_int(e);
+}
+
 // C-style string escape for dump literals.  Named escapes for newline /
 // tab / quote / backslash; everything else below 0x20 or at/above 0x7f
 // goes through the byte-level `\xHH` form; printable 7-bit ASCII passes

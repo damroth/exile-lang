@@ -371,9 +371,10 @@ fn render_texpr_node(te: *const Texpr, out: *StringBuilder) {
             out.push_int(n);
             out.push_str(")");
         }
-        | TexprNode::TFloatLit(_f, w) => {
-            // `%h` hex-float deferred (no prelude primitive yet).
-            out.push_str("(float ?? ");
+        | TexprNode::TFloatLit(f, w) => {
+            out.push_str("(float ");
+            fmt_hexfloat(out, f);
+            out.push_str(" ");
             out.push_str(float_width_tag(w));
             out.push_str(")");
         }

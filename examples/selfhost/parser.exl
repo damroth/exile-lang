@@ -225,7 +225,9 @@ fn peek_is(s: *const Parser, t: Token) -> bool {
 // Append the OCaml `Token.pp` spelling, with the value for the payload
 // variants (`identifier 'x'` / `integer N` / `string "s"`) built into the
 // message — the parser-error counterpart of the lexer's dynamic messages.
-// Float's value is deferred (`??`, like the `%h`/`%g` dump deferral).
+// Float's value here uses OCaml `Token.pp`'s `%g` decimal format (distinct
+// from the `%h` hex the AST/IR/token dumps emit), which is still deferred —
+// no error fixture prints a float token.
 fn pp_into(out: *StringBuilder, t: Token) {
     match t {
         Token::Ident(n) => { out.push_str("identifier '"); out.push_str(n); out.push_str("'"); }

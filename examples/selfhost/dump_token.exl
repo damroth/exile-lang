@@ -27,8 +27,10 @@ fn render_token(t: *const Token, out: *StringBuilder) {
             out.push_int(n);
             out.push_str(")");
         }
-        | Token::Float(_f, is32) => {
-            out.push_str("(Float ?? ");
+        | Token::Float(f, is32) => {
+            out.push_str("(Float ");
+            fmt_hexfloat(out, f);
+            out.push_str(" ");
             if is32 { out.push_str("f32"); } else { out.push_str("f64"); }
             out.push_str(")");
         }
