@@ -264,6 +264,17 @@ let () =
     "fn main() {\n    let x = if 1 < 2 { let y = 3; y } else { 0 };\n    println(x);\n}\n"
     "`if` then branch must be a single expression to yield a value (block expressions in branches are not yet supported)";
 
+  (* Regression: an if-expression in value position whose branch is a call
+     taking a block-shaped argument (enum-ctor / struct-lit) must lift that
+     argument per-branch (into a TBlock that runs only when the branch is
+     taken).  Before the lift pass walked if-expr branches, the nested
+     enum-ctor reached codegen un-lifted and tripped its block-shaped
+     assert.  Repro: examples/selfhost discovered it via `ty_node(ar,
+     Typ::TConstPtr(..))` branches. *)
+  check "if-expr branch with a block-shaped call argument lifts per-branch"
+    "enum E { A(int) | B(int) }\nfn unwrap(e: E) -> int {\n    return match e { E::A(n) => n | E::B(n) => n };\n}\nfn choose(c: bool) -> int {\n    return if c { unwrap(E::A(7)) } else { unwrap(E::B(9)) };\n}\nfn main() {\n    println(choose(true));\n}\n"
+    "#include <stdio.h>\n\nenum ex_E_tag { ex_E_A, ex_E_B };\nstruct ex_E { enum ex_E_tag tag; union { struct { long _0; } A; struct { long _0; } B; } data; };\n\nstatic long ex_unwrap(struct ex_E e);\nstatic long ex_choose(int c);\n\nstatic long ex_unwrap(struct ex_E e) {\n    {\n        long __exile_ret;\n        {\n            struct ex_E __m;\n            __m = e;\n            switch (__m.tag) {\n            case ex_E_A:\n                {\n                    long n = __m.data.A._0;\n                    __exile_ret = n;\n                    break;\n                }\n            case ex_E_B:\n            default:\n                {\n                    long n = __m.data.B._0;\n                    __exile_ret = n;\n                    break;\n                }\n            }\n        }\n        return __exile_ret;\n    }\n}\n\nstatic long ex_choose(int c) {\n    struct ex_E __lift_0;\n    struct ex_E __lift_1;\n    {\n        long __exile_ret;\n        if (c) {\n            __lift_1.tag = ex_E_A;\n            __lift_1.data.A._0 = 7;\n            __exile_ret = ex_unwrap(__lift_1);\n        } else {\n            __lift_0.tag = ex_E_B;\n            __lift_0.data.B._0 = 9;\n            __exile_ret = ex_unwrap(__lift_0);\n        }\n        return __exile_ret;\n    }\n}\n\nint main(void) {\n    printf(\"%ld\\n\", (long)(ex_choose(1)));\n    return 0;\n}\n";
+
   check_error "dropped trailing value (`;` footgun) suggests dropping the `;`"
     "fn g() -> int { 1 }\nfn f() -> int { g(); }\nfn main() { println(f()); }\n"
     "function 'f' returns i32 but its last statement is a discarded expression — drop the trailing `;` to return its value, or add an explicit `return`";

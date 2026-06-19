@@ -743,6 +743,15 @@ let rec emit_value_into_temp ctx buf indent temp_name (value : texpr) =
       Buffer.add_string buf "}\n";
       Buffer.add_string buf indent;
       Buffer.add_string buf "}\n"
+  | TBlock { stmts; trailing } ->
+      (* Block-valued slot — the lift pass wraps an if-expr branch whose
+         value needed a `__lift` temp into `{ stmts; trailing }` so the
+         temp's construction runs only when that branch is taken.  Emit the
+         stmts, then the trailing value into the slot. *)
+      List.iter (emit_simple_stmt ctx buf indent) stmts;
+      (match trailing with
+       | Some tr -> emit_value_into_temp ctx buf indent temp_name tr
+       | None -> ())
   | _ -> assign ~lhs:temp_name value
 
 (* Statement emission with `defer` support.  `outer_scopes` is the list of

@@ -5189,10 +5189,22 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         ({ te with e = TMatch { scrutinee = scr'; ename_path;
                                 arms = arms' } }, p)
     | TIfExpr { cond; then_val; else_val } ->
-        (* Only the cond is lifted: hoisting a branch value above the `if`
-           would evaluate it unconditionally (same rule as match arms). *)
+        (* The cond lifts upward; each branch lifts independently with any
+           prelude wrapped into a TBlock so it runs only when that branch is
+           taken (hoisting a branch value above the `if` would evaluate it
+           unconditionally — same rule as match arms).  Without walking the
+           branches a block-shaped sub-expression nested in a branch (e.g. an
+           enum-ctor / struct-lit argument to a call) reached codegen
+           un-lifted and tripped its block-shaped assert. *)
         let (cond', p) = walk_expr ~allow_top:false cond in
-        ({ te with e = TIfExpr { cond = cond'; then_val; else_val } }, p)
+        let lift_branch (b : texpr) =
+          let (b', pb) = walk_expr ~allow_top:true b in
+          if pb = [] then b'
+          else { b' with e = TBlock { stmts = pb; trailing = Some b' } }
+        in
+        ({ te with e = TIfExpr { cond = cond';
+                                 then_val = lift_branch then_val;
+                                 else_val = lift_branch else_val } }, p)
     | TArrayLit es ->
         let (es', p) = map_args es in
         ({ te with e = TArrayLit es' }, p)
