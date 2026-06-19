@@ -174,6 +174,9 @@ struct TyScope {
     sc_geninsts: *Vec<str>,
     sc_etps: *const Vec<EnumTP>,
     sc_modpath: *const Vec<str>,
+    // The enclosing fn's resolved return type — `try` reads it to build the
+    // early-return value on the enclosing fn's own Option/Result instance.
+    sc_ret: Option<*const Typ>,
 }
 
 // The program-global indices bundled for threading through the elaboration
@@ -1519,6 +1522,120 @@ fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     return emit_match(a, ar, g, sc, env, expected, tscrut, epath, arms, p);
 }
 
+// ===== `try` / `orelse` desugar =====
+//
+// Both lower to a 2-arm match over the Option / Result value.  `orelse`
+// yields the payload on Ok/Some and the default on Err/None; `try` yields
+// the payload on Ok/Some and DIVERGES on Err/None — returning the error on
+// the enclosing fn's own instance.  Option vs Result is detected by probing
+// for a `Some` variant tag (no string-prefix matching).
+
+fn variant_pat_bind(a: Allocator, variant: str, tag: int, bind: str) -> Tpattern {
+    let mut fps: Vec<TFieldPat> = Vec::with_capacity(a, 8 as u32);
+    fps.push(TFieldPat { name: "_0", pat: Tpattern::TPVar(bind) });
+    return Tpattern::TPVariant { variant: variant, tag: tag, binds: fps };
+}
+fn variant_pat_unit(a: Allocator, variant: str, tag: int) -> Tpattern {
+    let fps: Vec<TFieldPat> = Vec::with_capacity(a, 8 as u32);
+    return Tpattern::TPVariant { variant: variant, tag: tag, binds: fps };
+}
+fn variant_pat_wild(a: Allocator, variant: str, tag: int) -> Tpattern {
+    let mut fps: Vec<TFieldPat> = Vec::with_capacity(a, 8 as u32);
+    fps.push(TFieldPat { name: "_0", pat: Tpattern::TPWildcard });
+    return Tpattern::TPVariant { variant: variant, tag: tag, binds: fps };
+}
+
+fn str_starts_with(s: str, prefix: str) -> bool {
+    let pn = str::length(prefix);
+    if str::length(s) < pn { return false; }
+    let sb = str::as_bytes(s);
+    let pb = str::as_bytes(prefix);
+    let mut i = 0 as u32;
+    while i < pn { if sb[i] != pb[i] { return false; } i = i + 1 as u32; }
+    return true;
+}
+
+// `try` / `orelse` accept only Option / Result.  Variant tags live under the
+// skeleton path (`Option` / `Result`), so detect the shape from the instance
+// name (`Option` / `Option_i32`) and look tags up under the skeleton.
+fn inst_is_option(path: *const Vec<str>) -> bool {
+    let name = path_last(path);
+    return str::eq(name, "Option") || str_starts_with(name, "Option_");
+}
+fn skel_path(a: Allocator, is_opt: bool) -> Vec<str> {
+    let mut sk: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    sk.push(if is_opt { "Option" } else { "Result" });
+    return sk;
+}
+
+fn elab_orelse(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+               expected: Option<*const Typ>, value: *const Expr, dflt: *const Expr, p: Pos) -> *const Texpr {
+    let tvalue = elab_expr(a, ar, g, sc, env, none_ty(), value);
+    if !is_enum_ty(tvalue.ty) { return defer_expr(ar, p); }
+    let path = enum_ty_path(a, tvalue.ty);
+    let is_opt = inst_is_option(&path);
+    let skel = skel_path(a, is_opt);
+    let ok_name = if is_opt { "Some" } else { "Ok" };
+    let err_name = if is_opt { "None" } else { "Err" };
+    let ok_tag = variant_tag(sc.sc_etags, &skel, ok_name);
+    let err_tag = variant_tag(sc.sc_etags, &skel, err_name);
+    let ok_pay = voidable_ty(ar, mono_enum_field_ty(sc, &path, ok_name, "_0"));
+    let ok_body = te_node(ar, TexprNode::TVar("__orelse_v"), ok_pay, p);
+    let ok_arm = TmatchArm { tpat: variant_pat_bind(a, ok_name, ok_tag, "__orelse_v"), tguard: none_texpr(), tbody: ok_body, tdiverges: false, tarm_pos: p };
+    let tdefault = elab_expr(a, ar, g, sc, env, expected, dflt);
+    let err_pat = if is_opt { variant_pat_unit(a, err_name, err_tag) } else { variant_pat_wild(a, err_name, err_tag) };
+    let err_arm = TmatchArm { tpat: err_pat, tguard: none_texpr(), tbody: tdefault, tdiverges: false, tarm_pos: p };
+    let mut arms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
+    arms.push(ok_arm);
+    arms.push(err_arm);
+    return te_node(ar, TexprNode::TMatch { scrutinee: tvalue, ename_path: path, arms: arms }, ok_pay, p);
+}
+
+fn ret_enum_path(a: Allocator, sc: *const TyScope) -> Vec<str> {
+    return match sc.sc_ret {
+        Option::Some(rt) => enum_ty_path(a, rt)
+        | Option::None => Vec::with_capacity(a, 8 as u32)
+    };
+}
+
+// The diverging Err/None arm: its pattern matches the inner instance's
+// variant; its body re-wraps the payload as the OUTER (enclosing fn's)
+// instance, which codegen returns.
+fn build_try_err_arm(a: Allocator, ar: *Arena, sc: *const TyScope, is_opt: bool, err_name: str,
+                     err_tag_in: int, outer_err_tag: int, ipath: *const Vec<str>, outer_path: *const Vec<str>, p: Pos) -> TmatchArm {
+    let pat = if is_opt { variant_pat_unit(a, err_name, err_tag_in) } else { variant_pat_bind(a, err_name, err_tag_in, "__try_e") };
+    let mut args: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
+    if !is_opt {
+        let e_ty = voidable_ty(ar, mono_enum_field_ty(sc, ipath, err_name, "_0"));
+        args.push(TexprField { name: "_0", value: te_node(ar, TexprNode::TVar("__try_e"), e_ty, p) });
+    }
+    let err_body = mk_enum_lit_node(a, ar, outer_path, err_name, outer_err_tag, args, p);
+    return TmatchArm { tpat: pat, tguard: none_texpr(), tbody: err_body, tdiverges: true, tarm_pos: p };
+}
+
+fn elab_try(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+            value: *const Expr, p: Pos) -> *const Texpr {
+    let tinner = elab_expr(a, ar, g, sc, env, none_ty(), value);
+    if !is_enum_ty(tinner.ty) { return defer_expr(ar, p); }
+    let ipath = enum_ty_path(a, tinner.ty);
+    let is_opt = inst_is_option(&ipath);
+    let skel = skel_path(a, is_opt);
+    let ok_name = if is_opt { "Some" } else { "Ok" };
+    let err_name = if is_opt { "None" } else { "Err" };
+    let ok_tag = variant_tag(sc.sc_etags, &skel, ok_name);
+    let err_tag_in = variant_tag(sc.sc_etags, &skel, err_name);
+    let ok_pay = voidable_ty(ar, mono_enum_field_ty(sc, &ipath, ok_name, "_0"));
+    let ok_body = te_node(ar, TexprNode::TVar("__try_v"), ok_pay, p);
+    let ok_arm = TmatchArm { tpat: variant_pat_bind(a, ok_name, ok_tag, "__try_v"), tguard: none_texpr(), tbody: ok_body, tdiverges: false, tarm_pos: p };
+    let outer_path = ret_enum_path(a, sc);
+    let outer_err_tag = variant_tag(sc.sc_etags, &skel, err_name);
+    let err_arm = build_try_err_arm(a, ar, sc, is_opt, err_name, err_tag_in, outer_err_tag, &ipath, &outer_path, p);
+    let mut arms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
+    arms.push(ok_arm);
+    arms.push(err_arm);
+    return te_node(ar, TexprNode::TMatch { scrutinee: tinner, ename_path: ipath, arms: arms }, ok_pay, p);
+}
+
 // ===== Variable substitution (for-loop iter-var rename) =====
 //
 // `for IT in lo..hi { body }` renames `IT` to the gensym counter `__fvK`
@@ -1962,6 +2079,8 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::ArrayLit(es, _q) => elab_array_lit(a, ar, g, sc, env, expected, &es, p)
         | Expr::ArrayRepeat { value, count } => elab_array_repeat(a, ar, g, sc, env, expected, value, count, p)
         | Expr::Index { base, index } => elab_index(a, ar, g, sc, env, base, index, p)
+        | Expr::Orelse(value, dflt, _q) => elab_orelse(a, ar, g, sc, env, expected, value, dflt, p)
+        | Expr::Try(value, _q) => elab_try(a, ar, g, sc, env, value, p)
         | _other => defer_expr(ar, p)
     };
 }
@@ -2572,7 +2691,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &f.tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_modpath: modpath };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_modpath: modpath, sc_ret: none_ty() };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -2580,7 +2699,10 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     // A generic skeleton (type params, no bindings) carries an empty body —
     // only its monomorphic instances have real bodies.
     let is_skeleton = f.tparams.length() > 0 as u32 && tbinds.length() == 0 as u32;
-    let raw_body = elab_skeleton_or_body(a, ar, g, &sc, gensym, &env, ret_ty, f, is_skeleton);
+    // Body scope carries the resolved return type so `try` can build its
+    // early-return value on the enclosing fn's instance.
+    let scb = scope_with_ret(&sc, ret_ty);
+    let raw_body = elab_skeleton_or_body(a, ar, g, &scb, gensym, &env, ret_ty, f, is_skeleton);
     // Lift block-shaped sub-expressions into `__lift_N` temps (per-fn).
     let mut lift_ctr: u32 = 0 as u32;
     let body = lift_stmts(a, ar, &lift_ctr, &raw_body);
@@ -2767,6 +2889,21 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
         sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_modpath: base.sc_modpath,
+        sc_ret: base.sc_ret,
+    };
+}
+
+// A copy of the scope carrying the enclosing fn's resolved return type.
+fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
+    return TyScope {
+        sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
+        sc_efields: base.sc_efields, sc_methods: base.sc_methods,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
+        sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
+        sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_modpath: base.sc_modpath,
+        sc_ret: ret,
     };
 }
 
@@ -3224,7 +3361,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_modpath: &empty_tp };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_modpath: &empty_tp, sc_ret: none_ty() };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
