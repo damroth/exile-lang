@@ -1698,6 +1698,9 @@ fn subst_var_expr(a: Allocator, ar: *Arena, from: str, to: str, e: *const Expr) 
         | Expr::If { cond, then_blk, else_blk } => subst_if(a, ar, from, to, cond, &then_blk, else_blk, p)
         | Expr::Index { base, index } =>
             ast_node(ar, Expr::Index { base: subst_var_expr(a, ar, from, to, base), index: subst_var_expr(a, ar, from, to, index), pos: p })
+        | Expr::Deref(s, _q) => ast_node(ar, Expr::Deref(subst_var_expr(a, ar, from, to, s), p))
+        | Expr::Ref(s, _q) => ast_node(ar, Expr::Ref(subst_var_expr(a, ar, from, to, s), p))
+        | Expr::FieldAccess(t, f, _q) => ast_node(ar, Expr::FieldAccess(subst_var_expr(a, ar, from, to, t), f, p))
         | _other => e
     };
 }
@@ -1708,6 +1711,14 @@ fn subst_var_stmt(a: Allocator, ar: *Arena, from: str, to: str, s: *const Stmt) 
         | Stmt::Tail(e) => Stmt::Tail(subst_var_expr(a, ar, from, to, e))
         | Stmt::Assign { path, value, pos } =>
             Stmt::Assign { path: copy_strs(a, &path), value: subst_var_expr(a, ar, from, to, value), pos: pos }
+        | Stmt::Let { name, value, ty_ann, is_mut, pos } =>
+            Stmt::Let { name: name, value: subst_var_expr(a, ar, from, to, value), ty_ann: ty_ann, is_mut: is_mut, pos: pos }
+        | Stmt::AssignDeref { target, value, pos } =>
+            Stmt::AssignDeref { target: subst_var_expr(a, ar, from, to, target), value: subst_var_expr(a, ar, from, to, value), pos: pos }
+        | Stmt::AssignField { target, field, value, pos } =>
+            Stmt::AssignField { target: subst_var_expr(a, ar, from, to, target), field: field, value: subst_var_expr(a, ar, from, to, value), pos: pos }
+        | Stmt::AssignIndex { base, index, value, pos } =>
+            Stmt::AssignIndex { base: subst_var_expr(a, ar, from, to, base), index: subst_var_expr(a, ar, from, to, index), value: subst_var_expr(a, ar, from, to, value), pos: pos }
         | Stmt::Break(p) => Stmt::Break(p)
         | Stmt::Continue(p) => Stmt::Continue(p)
         | _other => Stmt::ExprStmt(ast_node(ar, Expr::Var("", zero_pos())))
@@ -2157,6 +2168,62 @@ fn elab_else_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     };
 }
 
+// ===== `with` scoped projection (DR-012) =====
+//
+// `with x in <lvalue> { body }` desugars to a block `{ let x__withN =
+// &<lvalue>; body }` where the user-visible `x` is renamed to the gensym
+// pointer (the body is pointer-honest — it reads / writes through `*x`).  The
+// block isolates the binding so `x` is out of scope after the `with`.  Reuses
+// the program-global gensym counter; a fn that mixed `for` and `with` would
+// need a separate counter (none in the catalog — the oracle keeps them apart).
+
+fn is_slice_instance(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(path) => { let nm = path_last(&path); str::eq(nm, "Slice") || str_starts_with(nm, "Slice_") }
+        | _e => false
+    };
+}
+// A borrow of an index into a `Slice` (whose `.ptr` is `*const T`) inherits
+// read-only-ness so the projected pointer stays `*const T`.
+fn with_const_inherited(t: *const Texpr) -> bool {
+    return match t.e {
+        TexprNode::TIndex { base, index } => is_slice_instance(base.ty)
+        | _e => false
+    };
+}
+fn with_ptr_ty(ar: *Arena, t_target: *const Texpr) -> *const Typ {
+    if with_const_inherited(t_target) { return ty_node(ar, Typ::TConstPtr(t_target.ty)); }
+    return ty_node(ar, Typ::TPtr(t_target.ty));
+}
+fn with_name(a: Allocator, ar: *Arena, name: str, k: u32) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 16 as u32);
+    sb.push_str(name);
+    sb.push_str("__with");
+    sb.push_int(k as int);
+    return str::from_slice(ar, sb.as_slice());
+}
+fn elab_with(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>,
+             ret: Option<*const Typ>, target: *const Expr, name: str, body: *const Vec<Stmt>, pos: Pos, out: *Vec<Tstmt>) {
+    let t_target = elab_expr(a, ar, g, sc, env, none_ty(), target);
+    let pty = with_ptr_ty(ar, t_target);
+    let ref_e = te_node(ar, TexprNode::TRef(t_target), pty, pos);
+    let k = *gensym;
+    *gensym = *gensym + 1 as u32;
+    let internal = with_name(a, ar, name, k);
+    let rbody = subst_body(a, ar, name, internal, body);
+    let mut benv = copy_fieldtys(a, env);
+    benv.push(FieldTy { name: internal, ty: pty });
+    let mut bstmts: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    bstmts.push(Tstmt::TLet { name: internal, value: ref_e, pos: pos });
+    let n = rbody.length();
+    let rsl = rbody.as_slice();
+    let mut i = 0 as u32;
+    while i < n { elab_stmt(a, ar, g, sc, gensym, &benv, ret, &rsl[i], &bstmts); i = i + 1 as u32; }
+    let no_tr: Option<*const Texpr> = Option::None;
+    let blk = te_node(ar, TexprNode::TBlock { stmts: bstmts, trailing: no_tr }, t_bool(ar), pos);
+    out.push(Tstmt::TExprStmt(blk));
+}
+
 // An expression used in statement (void) position.  `if` lowers to the
 // void `TIf` statement (branches are full stmt-blocks, sharing the env —
 // C hoists branch-local lets); everything else becomes a `TExprStmt`.
@@ -2414,6 +2481,9 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         }
         | Stmt::For { iter_var, range, body } => {
             elab_for(a, ar, g, sc, gensym, env, ret, iter_var, range, &body, out);
+        }
+        | Stmt::With { target, name, body, pos } => {
+            elab_with(a, ar, g, sc, gensym, env, ret, target, name, &body, pos, out);
         }
         | _other => {
             // Unsupported statement — emit a VISIBLE deferral marker rather
