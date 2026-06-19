@@ -549,6 +549,26 @@ fn push_mono_efield(a: Allocator, ar: *Arena, ipath: *const Vec<str>, variant: s
 
 // Register an enum instance's substituted variant fields so a match on the
 // instance binds payload variables to their concrete types.
+// Register one Option/Result instance variant payload directly (the prelude
+// shape is fixed); `ty` is a parameter so the slice element never escapes.
+fn push_one_prelude_efield(a: Allocator, ipath: *const Vec<str>, variant: str, fname: str,
+                           ty: *const Typ, out: *Vec<EnumFieldE>) {
+    out.push(EnumFieldE { ef_path: copy_strs(a, ipath), ef_variant: variant, ef_name: fname, ef_ty: ty });
+}
+fn register_prelude_enum_efields(a: Allocator, sc: *const TyScope, name: str,
+                                 args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
+    let n = args.length();
+    let asl = args.as_slice();
+    if str::eq(name, "Option") {
+        if n >= 1 as u32 { push_one_prelude_efield(a, ipath, "Some", "_0", asl[0 as u32], sc.sc_mono_efields); }
+    } else {
+        if str::eq(name, "Result") {
+            if n >= 1 as u32 { push_one_prelude_efield(a, ipath, "Ok", "_0", asl[0 as u32], sc.sc_mono_efields); }
+            if n >= 2 as u32 { push_one_prelude_efield(a, ipath, "Err", "_0", asl[1 as u32], sc.sc_mono_efields); }
+        }
+    }
+}
+
 fn register_enum_instance_fields(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>,
                                  args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
     let binds = enum_instance_binds(a, sc.sc_etps, path_last(skel), args);
@@ -595,7 +615,15 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     let ipath = instance_path(a, ar, path, &resolved);
     if is_enum {
         register_mono_enum(a, sc, &ipath);
-        register_enum_instance_fields(a, ar, sc, path, &resolved, &ipath);
+        // Option / Result variant payloads come from the fixed prelude shape,
+        // so register them directly — a type-position resolution (a fn's
+        // return type) then binds `Some(v)` / `Ok(v)` even with no in-body
+        // construction.  User generic enums substitute from their skeleton.
+        if is_prelude_enum(last) {
+            register_prelude_enum_efields(a, sc, last, &resolved, &ipath);
+        } else {
+            register_enum_instance_fields(a, ar, sc, path, &resolved, &ipath);
+        }
         return ty_node(ar, Typ::TEnum(ipath));
     }
     register_mono_struct(a, sc, &ipath);
@@ -2068,6 +2096,23 @@ fn elab_deref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
 // and a trailing expression — the last statement without `;` — becomes the
 // block's value.  A `for` inside a block is not yet supported here (it needs
 // the gensym counter the expr path does not carry) and defers.
+// The type of a plain assignment's target (a local binding), so an `own *T`
+// value assigned to a `*T` / `*const T` slot coerces (the owner is moved /
+// borrowed into the slot, not kept as an owner).
+fn assign_target_ty(env: *const Vec<FieldTy>, path: *const Vec<str>) -> Option<*const Typ> {
+    if path.length() == 0 as u32 { return none_ty(); }
+    let psl = path.as_slice();
+    return env_lookup(env, psl[0 as u32]);
+}
+fn assign_coerced_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                        env: *const Vec<FieldTy>, path: *const Vec<str>, value: *const Expr) -> *const Texpr {
+    let av = elab_expr(a, ar, g, sc, env, none_ty(), value);
+    return match assign_target_ty(env, path) {
+        Option::Some(t) => coerce_own_to(ar, av, t)
+        | Option::None => av
+    };
+}
+
 fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    expected: Option<*const Typ>, s: *const Stmt, benv: *Vec<FieldTy>,
                    tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
@@ -2080,6 +2125,30 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         }
         | Stmt::ExprStmt(e) => { tstmts.push(Tstmt::TExprStmt(elab_expr(a, ar, g, sc, benv, none_ty(), e))); }
         | Stmt::Tail(e) => { *trailing = Option::Some(elab_expr(a, ar, g, sc, benv, expected, e)); }
+        | Stmt::Assign { path, value, pos } => {
+            let av = assign_coerced_value(a, ar, g, sc, benv, &path, value);
+            tstmts.push(Tstmt::TAssign { path: copy_strs(a, &path), value: av, pos: pos });
+        }
+        | Stmt::AssignField { target, field, value, pos } => {
+            let taf = elab_expr(a, ar, g, sc, benv, none_ty(), target);
+            let fexp = struct_field_ty(sc, taf.ty, field);
+            let vaf = elab_expr(a, ar, g, sc, benv, fexp, value);
+            tstmts.push(Tstmt::TAssignField { target: taf, field: field, value: vaf, pos: pos });
+        }
+        | Stmt::AssignDeref { target, value, pos } => {
+            let tad = elab_expr(a, ar, g, sc, benv, none_ty(), target);
+            let dexp = deref_pointee(tad.ty);
+            let vad = elab_expr(a, ar, g, sc, benv, dexp, value);
+            tstmts.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
+        }
+        | Stmt::AssignIndex { base, index, value, pos } => {
+            let tbi = elab_expr(a, ar, g, sc, benv, none_ty(), base);
+            let tii = elab_expr(a, ar, g, sc, benv, none_ty(), index);
+            let tvi = elab_expr(a, ar, g, sc, benv, none_ty(), value);
+            tstmts.push(Tstmt::TAssignIndex { base: tbi, index: tii, value: tvi, pos: pos });
+        }
+        | Stmt::Break(pos) => { tstmts.push(Tstmt::TBreak(pos)); }
+        | Stmt::Continue(pos) => { tstmts.push(Tstmt::TContinue(pos)); }
         | _other => { tstmts.push(Tstmt::TExprStmt(defer_expr(ar, zero_pos()))); }
     }
 }
@@ -2576,7 +2645,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             out.push(Tstmt::TWhile { cond: wcond, body: wbody, post: wpost });
         }
         | Stmt::Assign { path, value, pos } => {
-            let av = elab_expr(a, ar, g, sc, env, none_ty(), value);
+            let av = assign_coerced_value(a, ar, g, sc, env, &path, value);
             let apath = copy_strs(a, &path);
             out.push(Tstmt::TAssign { path: apath, value: av, pos: pos });
         }
