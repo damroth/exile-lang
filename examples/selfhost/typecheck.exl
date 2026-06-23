@@ -187,6 +187,10 @@ struct TyScope {
     sc_self: Option<*const Typ>,
     // Free / module fn parameter types, for `own *T` → `*T` arg coercion.
     sc_gsigs: *const Vec<FnSig>,
+    // `extern struct` / `extern type` names — resolve to TExtStruct / TExtAlias
+    // (an opaque C type / a raw C type alias), not a user struct.
+    sc_xstructs: *const Vec<str>,
+    sc_xaliases: *const Vec<str>,
 }
 
 // The program-global indices bundled for threading through the elaboration
@@ -212,6 +216,8 @@ struct ProgIdx {
     pi_etps: *const Vec<EnumTP>,
     pi_modpath: *const Vec<str>,
     pi_gsigs: *const Vec<FnSig>,
+    pi_xstructs: *const Vec<str>,
+    pi_xaliases: *const Vec<str>,
 }
 
 // Index of `(type-path, method-name)` in the method table, or -1.
@@ -604,6 +610,10 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         if name_in(sc.sc_tparams, last) { return ty_node(ar, Typ::TVar(last)); }
     }
     let nargs = args.length();
+    if nargs == 0 as u32 {
+        if plen == 1 as u32 && name_in(sc.sc_xstructs, last) { return ty_node(ar, Typ::TExtStruct(last)); }
+        if plen == 1 as u32 && name_in(sc.sc_xaliases, last) { return ty_node(ar, Typ::TExtAlias(last)); }
+    }
     let is_enum = name_in(sc.sc_enums, last) || is_prelude_enum(last);
     if nargs == 0 as u32 {
         let newpath = copy_strs(a, path);
@@ -3020,7 +3030,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &f.tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -3204,6 +3214,26 @@ fn collect_type_names(items: *const Vec<Item>, snames: *Vec<str>, enames: *Vec<s
     }
 }
 
+// Collect `extern struct` / `extern type` names (recursing into modules) so
+// signatures resolve them to TExtStruct / TExtAlias.
+fn collect_ext_types_one(it: *const Item, xstructs: *Vec<str>, xaliases: *Vec<str>) {
+    match *it {
+        Item::ExternStruct(es) => { xstructs.push(es.esname); }
+        | Item::ExternType(xt) => { xaliases.push(xt.xtname); }
+        | Item::Module(md) => { collect_ext_types(&md.mitems, xstructs, xaliases); }
+        | _e => { }
+    }
+}
+fn collect_ext_types(items: *const Vec<Item>, xstructs: *Vec<str>, xaliases: *Vec<str>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        collect_ext_types_one(&sl[i], xstructs, xaliases);
+        i = i + 1 as u32;
+    }
+}
+
 // Collect top-level integer constants with a literal value so array sizes
 // `[T; N]` and other size expressions can fold `N`.
 fn collect_int_consts_one(it: *const Item, out: *Vec<IntConst>) {
@@ -3264,6 +3294,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases,
     };
 }
 
@@ -3280,6 +3311,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_ret: ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases,
     };
 }
 
@@ -3674,6 +3706,18 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, c.kty)),
                               is_const: true, is_top: is_top });
         }
+        | Item::ExternConst(ec) => {
+            // A linker-resolved global value; its C symbol is visible
+            // unqualified everywhere (no module mangling).
+            g.push(GlobalFn { name: ec.ecname, mangled: ec.ecname, gf_emit: ec.ecname,
+                              ret: Option::Some(resolve_sig_ty(a, ar, sc, ec.ecty)),
+                              is_const: true, is_top: true });
+        }
+        | Item::ExternVar(ev) => {
+            g.push(GlobalFn { name: ev.evname, mangled: ev.evname, gf_emit: ev.evname,
+                              ret: Option::Some(resolve_sig_ty(a, ar, sc, ev.evty)),
+                              is_const: true, is_top: true });
+        }
         | Item::Module(md) => {
             let mut p2: Vec<str> = copy_strs(a, path);
             p2.push(md.mname);
@@ -3828,6 +3872,9 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut snames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut enames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_type_names(items, &snames, &enames);
+    let mut xstructs: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut xaliases: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_ext_types(items, &xstructs, &xaliases);
     let mut iconsts: Vec<IntConst> = Vec::with_capacity(a, 8 as u32);
     collect_int_consts(items, &iconsts);
     // Name-scope used to resolve field / signature types (no per-fn tparams,
@@ -3861,7 +3908,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -3881,7 +3928,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_modpath: &empty_tp, pi_gsigs: &gsigs };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
