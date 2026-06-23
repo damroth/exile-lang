@@ -4233,6 +4233,8 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     push_prelude_sg_method(a, ar, "Vec", "iter", true, true, true, Option::Some(ann_app1(a, ar, "VecIter", "T")), out);
     // VecIter<T>: next (*self) -> Option<T>, the iterator protocol `for` lowers to.
     push_prelude_sg_method(a, ar, "VecIter", "next", true, true, false, Option::Some(ann_app1(a, ar, "Option", "T")), out);
+    // Arena: with_capacity (static) -> Arena (the interning allocator).
+    push_prelude_method_ng(a, ar, "Arena", "with_capacity", false, false, false, Option::Some(prelude_struct_ty(a, ar, "Arena")), out);
 }
 
 // ===== Trait default methods =====
