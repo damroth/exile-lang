@@ -1036,8 +1036,27 @@ fn is_concat(op: BinOp) -> bool {
 fn expr_is_int_lit(e: *const Expr) -> bool {
     return match *e { Expr::IntLit(_n, _q) => true | _e => false };
 }
+fn is_str_eq_op(op: BinOp) -> bool {
+    return match op { BinOp::EqEq => true | BinOp::NotEq => true | _e => false };
+}
+fn is_str_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TString => true | _e => false };
+}
+// `==` / `!=` on `str` is a value (content) compare, lowered to the prelude
+// `str__eq` call (`!=` negates it) — never a pointer comparison.
+fn mk_str_eq(a: Allocator, ar: *Arena, op: BinOp, l2: *const Texpr, r2: *const Texpr, p: Pos) -> *const Texpr {
+    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    args.push(l2);
+    args.push(r2);
+    let call = te_node(ar, TexprNode::TCall { mangled: "str__eq", args: args }, t_bool(ar), p);
+    return match op {
+        BinOp::NotEq => te_node(ar, TexprNode::TNot(call), t_bool(ar), p)
+        | _e => call
+    };
+}
 fn finish_binop(a: Allocator, ar: *Arena, op: BinOp, l2: *const Texpr, r2: *const Texpr, p: Pos) -> *const Texpr {
     if is_concat(op) { return fold_concat(a, ar, l2, r2, p); }
+    if is_str_eq_op(op) && is_str_ty(l2.ty) && is_str_ty(r2.ty) { return mk_str_eq(a, ar, op, l2, r2, p); }
     let ty = binop_result_ty(ar, op, l2);
     return te_node(ar, TexprNode::TBinOp(op, l2, r2), ty, p);
 }
@@ -1377,6 +1396,37 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, iret), p);
 }
 
+// `str::*` free functions (OCaml-style, not methods).  `as_bytes` yields a
+// `Slice<u8>` view (registering the instance so `.len` / `[i]` resolve).
+fn t_u8(ar: *Arena) -> *const Typ {
+    return ty_node(ar, Typ::TInt(IntKind { is_signed: false, width: IntWidth::W8 }));
+}
+fn register_slice_u8(a: Allocator, ar: *Arena, sc: *const TyScope) -> *const Typ {
+    let mut args: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    args.push(t_u8(ar));
+    let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    skel.push("Slice");
+    let ipath = instance_path(a, ar, &skel, &args);
+    register_mono_struct(a, sc, &ipath);
+    register_prelude_struct_fields(a, ar, sc, "Slice", &args, &ipath);
+    return ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
+}
+fn str_method_ret(a: Allocator, ar: *Arena, sc: *const TyScope, method: str) -> *const Typ {
+    if str::eq(method, "length") { return t_u32(ar); }
+    if str::eq(method, "hash") { return t_u32(ar); }
+    if str::eq(method, "cmp") { return t_i32(ar); }
+    if str::eq(method, "eq") { return t_bool(ar); }
+    if str::eq(method, "from_slice") { return t_str(ar); }
+    if str::eq(method, "as_bytes") { return register_slice_u8(a, ar, sc); }
+    return ty_node(ar, Typ::TCVoid);
+}
+fn elab_str_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                 method: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let targs = elab_args(a, ar, g, sc, env, args);
+    let m = str2(a, ar, "str__", method);
+    return te_node(ar, TexprNode::TCall { mangled: m, args: targs }, str_method_ret(a, ar, sc, method), p);
+}
+
 fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     if callee.length() != 1 as u32 {
@@ -1384,6 +1434,9 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         // — a static / UFCS method call; else (module fn) not yet supported.
         let last = path_last(callee);
         let init = path_init(a, callee);
+        if callee.length() == 2 as u32 && str::eq(init.get(0 as u32) orelse "", "str") {
+            return elab_str_call(a, ar, g, sc, env, last, args, p);
+        }
         let tag = variant_tag(sc.sc_etags, &init, last);
         if tag >= 0 as int {
             let tflds = enum_tuple_args(a, ar, g, sc, env, &init, last, args);
