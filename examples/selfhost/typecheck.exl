@@ -1145,8 +1145,14 @@ fn retype_var(ar: *Arena, targ: *const Texpr, cty: *const Typ) -> *const Texpr {
     };
 }
 fn coerce_own_to(ar: *Arena, targ: *const Texpr, pty: *const Typ) -> *const Texpr {
-    if !is_own_ptr(targ.ty) { return targ; }
-    if ptr_or_constptr(pty) { return retype_var(ar, targ, pty); }
+    if is_own_ptr(targ.ty) {
+        if ptr_or_constptr(pty) { return retype_var(ar, targ, pty); }
+        return targ;
+    }
+    // A value passed where a `*T` / `*const T` is expected auto-refs (`&arg`).
+    if ptr_or_constptr(pty) && !is_ptr_ty(targ.ty) {
+        return te_node(ar, TexprNode::TRef(targ), pty, targ.pos);
+    }
     return targ;
 }
 // Coerce `targ` against the `i`-th parameter type of `params` (the param type
@@ -1182,10 +1188,31 @@ fn elab_args_coerced(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
     return out;
 }
 
+// Register a conditional prelude struct (Allocator / String / StringBuilder)
+// in the footer when a value of it is produced by a call (e.g. an extern
+// `make_c_allocator() -> Allocator`).
+fn is_named_prelude_ty(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(path) => { let nm = path_last(&path); str::eq(nm, "Allocator") || str::eq(nm, "String") || str::eq(nm, "StringBuilder") }
+        | _e => false
+    };
+}
+fn register_struct_ty(a: Allocator, sc: *const TyScope, t: *const Typ) {
+    match *t {
+        Typ::TStruct(path) => { register_mono_struct(a, sc, &path); }
+        | _e => { }
+    }
+    return;
+}
+fn register_named_prelude(a: Allocator, sc: *const TyScope, t: *const Typ) {
+    if is_named_prelude_ty(t) { register_struct_ty(a, sc, t); }
+    return;
+}
 fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                 gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let targs = elab_args_coerced(a, ar, g, sc, env, gf.mangled, args);
     let ty = ret_or_void(ar, gf.ret);
+    register_named_prelude(a, sc, ty);
     return te_node(ar, TexprNode::TCall { mangled: gf.gf_emit, args: targs }, ty, p);
 }
 
@@ -1285,11 +1312,22 @@ fn enum_struct_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
 
 // Lower the call to a known method's mangled symbol, args passed verbatim
 // (UFCS / static form — the user supplies `self` explicitly, if any).
+// Register the prelude structs a prelude-method call brings into the footer:
+// the receiver struct, plus a `Slice<u8>` return (as_slice) and its fields.
+fn mret_is_slice(mret: Option<*const Typ>) -> bool {
+    return match mret { Option::Some(t) => is_slice_instance(t) | Option::None => false };
+}
+fn register_prelude_method_use(a: Allocator, ar: *Arena, sc: *const TyScope, mpath: *const Vec<str>, mret: Option<*const Typ>) {
+    register_mono_struct(a, sc, mpath);
+    if mret_is_slice(mret) { register_slice_u8(a, ar, sc); }
+    return;
+}
 fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                          env: *const Vec<FieldTy>, midx: int, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let sl = sc.sc_methods.as_slice();
     let mm = sl[midx as u32].mi_mangled;
     let mret = sl[midx as u32].mi_ret;
+    if sl[midx as u32].mi_prelude { register_prelude_method_use(a, ar, sc, &sl[midx as u32].mi_path, mret); }
     let targs = elab_args(a, ar, g, sc, env, args);
     return te_node(ar, TexprNode::TCall { mangled: mm, args: targs }, ret_or_void(ar, mret), p);
 }
@@ -1528,12 +1566,21 @@ fn adjust_recv(ar: *Arena, trecv: *const Texpr, recv_ptr: bool, self_ptr: bool, 
     return te_node(ar, TexprNode::TDeref(trecv), inner, trecv.pos);
 }
 
-fn append_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-               args: *const Vec<*const Expr>, out: *Vec<*const Texpr>) {
+// Elaborate each explicit method argument, coercing it against the method's
+// registered signature (self occupies param 0, so explicit arg `i` checks
+// against param `i + 1`).  A value passed to a `*const self`-shaped param
+// (e.g. `String::eq`'s `other`) auto-refs; methods without a registered sig
+// pass through unchanged.
+fn append_args_meth(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                    mangled: str, args: *const Vec<*const Expr>, out: *Vec<*const Texpr>) {
     let n = args.length();
     let sl = args.as_slice();
     let mut i = 0 as u32;
-    while i < n { out.push(elab_expr(a, ar, g, sc, env, none_ty(), sl[i])); i = i + 1 as u32; }
+    while i < n {
+        let targ = elab_expr(a, ar, g, sc, env, none_ty(), sl[i]);
+        out.push(coerce_at(ar, sc, mangled, i + 1 as u32, targ));
+        i = i + 1 as u32;
+    }
 }
 
 fn push_texprs(targs: *const Vec<*const Texpr>, out: *Vec<*const Texpr>) {
@@ -1620,10 +1667,11 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let mret = sl[idx as u32].mi_ret;
     let sptr = sl[idx as u32].mi_self_ptr;
     let scst = sl[idx as u32].mi_self_const;
+    if sl[idx as u32].mi_prelude { register_prelude_method_use(a, ar, sc, &sl[idx as u32].mi_path, mret); }
     let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
-    append_args(a, ar, g, sc, env, args, &cargs);
+    append_args_meth(a, ar, g, sc, env, mm, args, &cargs);
     return te_node(ar, TexprNode::TCall { mangled: mm, args: cargs }, ret_or_void(ar, mret), p);
 }
 
@@ -3794,6 +3842,38 @@ fn push_prelude_method(a: Allocator, ar: *Arena, target: str, name: str,
         mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
     });
 }
+fn prelude_struct_ty(a: Allocator, ar: *Arena, name: str) -> *const Typ {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(name);
+    return ty_node(ar, Typ::TStruct(path));
+}
+// A non-generic prelude method (StringBuilder / String / ...): registered with
+// its self shape + resolved return type; the call resolves directly.
+fn push_prelude_method_ng(a: Allocator, ar: *Arena, target: str, name: str, has_self: bool,
+                          self_ptr: bool, self_const: bool, ret: Option<*const Typ>, out: *Vec<MethodInfo>) {
+    let mut tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    tp.push(target);
+    let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let empty_params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    let none_ann: Option<*const TypeAnn> = Option::None;
+    out.push(MethodInfo {
+        mi_path: tp, mi_name: name,
+        mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
+        mi_ret: ret, mi_has_self: has_self, mi_self_ptr: self_ptr, mi_self_const: self_const,
+        mi_tparams: empty_tp, mi_params: empty_params, mi_ret_ann: none_ann,
+        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+    });
+}
+// Param-type signatures for prelude methods whose explicit arguments need
+// coercion (auto-ref of a value to a `*const self`-shaped param).  Self is
+// param 0; `String::eq(*const self, other: *const String)` needs both.
+fn register_prelude_sigs(a: Allocator, ar: *Arena, out: *Vec<FnSig>) {
+    let cps = ty_node(ar, Typ::TConstPtr(prelude_struct_ty(a, ar, "String")));
+    let mut p: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    p.push(cps);
+    p.push(cps);
+    out.push(FnSig { fs_mangled: "String__eq", fs_params: p });
+}
 fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     // Allocator: alloc<T>(self) -> own *T ;  free<T>(self, p: own *T)
     let mut alloc_params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
@@ -3804,6 +3884,27 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     free_params.push(ann_own_t(a, ar));
     let none_ann: Option<*const TypeAnn> = Option::None;
     push_prelude_method(a, ar, "Allocator", "free", free_params, none_ann, out);
+    // StringBuilder: with_capacity(static) / push_*( *self ) / length+as_slice( *const self )
+    let none_ret: Option<*const Typ> = Option::None;
+    push_prelude_method_ng(a, ar, "StringBuilder", "with_capacity", false, false, false, Option::Some(prelude_struct_ty(a, ar, "StringBuilder")), out);
+    push_prelude_method_ng(a, ar, "StringBuilder", "push_byte", true, true, false, none_ret, out);
+    push_prelude_method_ng(a, ar, "StringBuilder", "push_str", true, true, false, none_ret, out);
+    push_prelude_method_ng(a, ar, "StringBuilder", "push_int", true, true, false, none_ret, out);
+    push_prelude_method_ng(a, ar, "StringBuilder", "length", true, true, true, Option::Some(t_u32(ar)), out);
+    push_prelude_method_ng(a, ar, "StringBuilder", "as_slice", true, true, true, Option::Some(prelude_struct_ty(a, ar, "Slice_u8")), out);
+    // String: with_str/empty/build (static) / length+as_slice+as_str ( *const self ) / free (by-value self)
+    let string_ty = prelude_struct_ty(a, ar, "String");
+    push_prelude_method_ng(a, ar, "String", "with_str", false, false, false, Option::Some(string_ty), out);
+    push_prelude_method_ng(a, ar, "String", "empty", false, false, false, Option::Some(string_ty), out);
+    push_prelude_method_ng(a, ar, "String", "build", false, false, false, Option::Some(string_ty), out);
+    push_prelude_method_ng(a, ar, "String", "length", true, true, true, Option::Some(t_u32(ar)), out);
+    push_prelude_method_ng(a, ar, "String", "as_slice", true, true, true, Option::Some(prelude_struct_ty(a, ar, "Slice_u8")), out);
+    push_prelude_method_ng(a, ar, "String", "as_str", true, true, true, Option::Some(t_str(ar)), out);
+    push_prelude_method_ng(a, ar, "String", "free", true, false, false, none_ret, out);
+    // String trait methods (Eq / Hash / Clone): content-equal delegating to str::*
+    push_prelude_method_ng(a, ar, "String", "eq", true, true, true, Option::Some(ty_node(ar, Typ::TBool)), out);
+    push_prelude_method_ng(a, ar, "String", "hash", true, true, true, Option::Some(t_u32(ar)), out);
+    push_prelude_method_ng(a, ar, "String", "clone", true, true, true, Option::Some(string_ty), out);
 }
 
 // ===== Trait default methods =====
@@ -4212,6 +4313,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
     collect_fn_sigs_into(a, ar, &base_scope, items, &empty_tp, &gsigs);
+    register_prelude_sigs(a, ar, &gsigs);
     // Struct field index + enum variant/field index + method index, carried
     // in every fn's body scope so `s.field`, struct/enum literals, variant
     // patterns and method calls type-check.
