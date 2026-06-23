@@ -648,6 +648,8 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
 
 fn prelude_struct_tparams(name: str, out: *Vec<str>) {
     if str::eq(name, "Slice") { out.push("T"); }
+    if str::eq(name, "Range") { out.push("T"); }
+    if str::eq(name, "RangeInclusive") { out.push("T"); }
 }
 fn register_prelude_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
                                   args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
@@ -2402,6 +2404,97 @@ fn elab_array_repeat(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
 // `base[i]` — read an element.  One layer of `*T` auto-derefs (mirrors the
 // field-access auto-deref); the element type comes from the array.  A
 // non-array base defers so the gap stays visible.
+fn ann_node(ar: *Arena, t: TypeAnn) -> *const TypeAnn {
+    let n: *TypeAnn = ar.alloc_borrowed();
+    *n = t;
+    return n as *const TypeAnn;
+}
+fn is_range_instance(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(path) => { let nm = path_last(&path); str::eq(nm, "Range") || str_starts_with(nm, "Range_") || str::eq(nm, "RangeInclusive") || str_starts_with(nm, "RangeInclusive_") }
+        | _e => false
+    };
+}
+fn is_range_inclusive_instance(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(path) => { let nm = path_last(&path); str::eq(nm, "RangeInclusive") || str_starts_with(nm, "RangeInclusive_") }
+        | _e => false
+    };
+}
+// A `[]` over a `Range` value sub-slices using the range's `lo` / `hi` fields.
+fn range_bound(ar: *Arena, sc: *const TyScope, range_te: *const Texpr, field: str, p: Pos) -> *const Texpr {
+    let fty = voidable_ty(ar, struct_field_ty(sc, range_te.ty, field));
+    return te_node(ar, TexprNode::TFieldAccess { target: range_te, field: field }, fty, p);
+}
+fn elab_scalar_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                     tb: *const Texpr, index: *const Expr, p: Pos) -> *const Texpr {
+    let ti = elab_expr(a, ar, g, sc, env, none_ty(), index);
+    if is_range_instance(ti.ty) {
+        let lo_te = range_bound(ar, sc, ti, "lo", p);
+        let hi_te = range_bound(ar, sc, ti, "hi", p);
+        return build_slice_from_bounds(a, ar, sc, tb, lo_te, hi_te, is_range_inclusive_instance(ti.ty), p);
+    }
+    return match index_elem_ty(sc, tb.ty) {
+        Option::Some(elem) => te_node(ar, TexprNode::TIndex { base: tb, index: ti }, elem, p)
+        | Option::None => defer_expr(ar, p)
+    };
+}
+// `base[lo..hi]` / `base[lo..=hi]` (DR-011) builds a read-only `Slice<T>` view:
+// `{ ptr: &base[lo], len: (hi - lo [+ 1]) as u32 }`.
+fn add_one(ar: *Arena, e: *const Texpr, p: Pos) -> *const Texpr {
+    let one = te_node(ar, TexprNode::TIntLit(1 as int), t_i32(ar), p);
+    return te_node(ar, TexprNode::TBinOp(BinOp::Add, e, one), t_i32(ar), p);
+}
+fn build_slice_from_bounds(a: Allocator, ar: *Arena, sc: *const TyScope, tb: *const Texpr,
+                           lo_te: *const Texpr, hi_te: *const Texpr, inclusive: bool, p: Pos) -> *const Texpr {
+    let elem = voidable_ty(ar, index_elem_ty(sc, tb.ty));
+    let idx = te_node(ar, TexprNode::TIndex { base: tb, index: lo_te }, elem, p);
+    let ptr = te_node(ar, TexprNode::TRef(idx), ty_node(ar, Typ::TConstPtr(elem)), p);
+    let diff = te_node(ar, TexprNode::TBinOp(BinOp::Sub, hi_te, lo_te), t_i32(ar), p);
+    let len_inner = if inclusive { add_one(ar, diff, p) } else { diff };
+    let u32ann = ann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 });
+    let len = te_node(ar, TexprNode::TCast(len_inner, u32ann), t_u32(ar), p);
+    let mut sargs: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    sargs.push(elem);
+    let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    skel.push("Slice");
+    let ipath = instance_path(a, ar, &skel, &sargs);
+    register_mono_struct(a, sc, &ipath);
+    register_prelude_struct_fields(a, ar, sc, "Slice", &sargs, &ipath);
+    let mut fields: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
+    fields.push(TexprField { name: "ptr", value: ptr });
+    fields.push(TexprField { name: "len", value: len });
+    let no_base: Option<*const Texpr> = Option::None;
+    let sty = ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
+    return te_node(ar, TexprNode::TStructLit { sname_path: ipath, fields: fields, base: no_base }, sty, p);
+}
+fn elab_sub_slice(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                  tb: *const Texpr, lo: *const Expr, hi: *const Expr, inclusive: bool, p: Pos) -> *const Texpr {
+    let lo_te = elab_expr(a, ar, g, sc, env, none_ty(), lo);
+    let hi_te = elab_expr(a, ar, g, sc, env, none_ty(), hi);
+    return build_slice_from_bounds(a, ar, sc, tb, lo_te, hi_te, inclusive, p);
+}
+// A `lo..hi` / `lo..=hi` value (outside `[]`) is a `Range<T>` /
+// `RangeInclusive<T>` struct with `lo` / `hi` fields.
+fn elab_range_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                    lo: *const Expr, hi: *const Expr, inclusive: bool, p: Pos) -> *const Texpr {
+    let lo_te = elab_expr(a, ar, g, sc, env, none_ty(), lo);
+    let hi_te = elab_expr(a, ar, g, sc, env, none_ty(), hi);
+    let name = if inclusive { "RangeInclusive" } else { "Range" };
+    let mut sargs: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    sargs.push(lo_te.ty);
+    let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    skel.push(name);
+    let ipath = instance_path(a, ar, &skel, &sargs);
+    register_mono_struct(a, sc, &ipath);
+    register_prelude_struct_fields(a, ar, sc, name, &sargs, &ipath);
+    let mut fields: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
+    fields.push(TexprField { name: "lo", value: lo_te });
+    fields.push(TexprField { name: "hi", value: hi_te });
+    let no_base: Option<*const Texpr> = Option::None;
+    let sty = ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
+    return te_node(ar, TexprNode::TStructLit { sname_path: ipath, fields: fields, base: no_base }, sty, p);
+}
 fn elab_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
               base: *const Expr, index: *const Expr, p: Pos) -> *const Texpr {
     let tb0 = elab_expr(a, ar, g, sc, env, none_ty(), base);
@@ -2409,10 +2502,9 @@ fn elab_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
         Option::Some(inner) => te_node(ar, TexprNode::TDeref(tb0), inner, tb0.pos)
         | Option::None => tb0
     };
-    let ti = elab_expr(a, ar, g, sc, env, none_ty(), index);
-    return match index_elem_ty(sc, tb.ty) {
-        Option::Some(elem) => te_node(ar, TexprNode::TIndex { base: tb, index: ti }, elem, p)
-        | Option::None => defer_expr(ar, p)
+    return match *index {
+        Expr::Range { lo, hi, inclusive } => elab_sub_slice(a, ar, g, sc, env, tb, lo, hi, inclusive, p)
+        | _other => elab_scalar_index(a, ar, g, sc, env, tb, index, p)
     };
 }
 // The element type of an indexable base: an array's element, or a `Slice`'s
@@ -2478,6 +2570,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::Try(value, _q) => elab_try(a, ar, g, sc, env, value, p)
         | Expr::New { tname, fields, base, alloc } => elab_new_struct(a, ar, g, sc, env, &tname, &fields, base, alloc, p)
         | Expr::NewEnum { tname, args, alloc } => elab_new_enum(a, ar, g, sc, env, &tname, &args, alloc, p)
+        | Expr::Range { lo, hi, inclusive } => elab_range_value(a, ar, g, sc, env, lo, hi, inclusive, p)
         | _other => defer_expr(ar, p)
     };
 }
@@ -3416,6 +3509,10 @@ fn push_prelude_field(a: Allocator, sname: str, fname: str, fty: *const Typ, out
 fn prelude_struct_info(a: Allocator, ar: *Arena, out: *Vec<StructField>) {
     push_prelude_field(a, "Slice", "ptr", ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TVar("T")))), out);
     push_prelude_field(a, "Slice", "len", t_u32(ar), out);
+    push_prelude_field(a, "Range", "lo", ty_node(ar, Typ::TVar("T")), out);
+    push_prelude_field(a, "Range", "hi", ty_node(ar, Typ::TVar("T")), out);
+    push_prelude_field(a, "RangeInclusive", "lo", ty_node(ar, Typ::TVar("T")), out);
+    push_prelude_field(a, "RangeInclusive", "hi", ty_node(ar, Typ::TVar("T")), out);
 }
 
 // A copy of the scope with a different tparam list — used to resolve a
