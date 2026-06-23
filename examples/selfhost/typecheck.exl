@@ -115,6 +115,9 @@ struct MethodInfo {
     mi_ret_ann: Option<*const TypeAnn>,
     mi_impl_idx: u32,
     mi_meth_idx: u32,
+    // A prelude method (Allocator / Vec / ...): its body is prelude-injected,
+    // so a generic call resolves + mangles but queues no instance to drain.
+    mi_prelude: bool,
 }
 
 // A top-level generic function.  Inference at a call site needs its type
@@ -191,6 +194,9 @@ struct TyScope {
     // (an opaque C type / a raw C type alias), not a user struct.
     sc_xstructs: *const Vec<str>,
     sc_xaliases: *const Vec<str>,
+    // True only while elaborating `fn main` — a bare `return;` there becomes
+    // `return 0` (C `int main` must return a value).
+    sc_is_main: bool,
 }
 
 // The program-global indices bundled for threading through the elaboration
@@ -1567,21 +1573,28 @@ fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *c
 // instance, queue its body for the drain, and substitute the bindings into
 // the result type.
 fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                      midx: u32, trecv: *const Texpr, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                      expected: Option<*const Typ>, midx: u32, trecv: *const Texpr, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let sl = sc.sc_methods.as_slice();
     let base = sl[midx].mi_mangled;
     let sptr = sl[midx].mi_self_ptr;
     let scst = sl[midx].mi_self_const;
     let iidx = sl[midx].mi_impl_idx;
     let midx2 = sl[midx].mi_meth_idx;
+    let prelude = sl[midx].mi_prelude;
     let targs = elab_args(a, ar, g, sc, env, args);
     let cscope = scope_with_tparams(sc, &sl[midx].mi_tparams);
+    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_method_binds(a, ar, &cscope, &sl[midx].mi_params, trecv, &targs, &binds);
+    // A tparam unreachable through self / args (e.g. `alloc<T>()`) is pinned by
+    // the surrounding expected type.
+    seed_from_expected(cret, expected, &binds);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
-    queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path);
-    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
+    // A prelude method's instance body is injected — register its type for the
+    // footer but queue no drain job; a user method elaborates an instance.
+    if prelude { register_mono_struct(a, sc, &sl[midx].mi_path); }
+    else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
     let iret = subst_opt_ret(ar, &binds, cret);
     let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
@@ -1594,14 +1607,14 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
 // (auto-dereferenced) type.  A generic method instantiates first.  Defers if
 // the method is unknown.
 fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                    recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                    expected: Option<*const Typ>, recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let trecv = elab_expr(a, ar, g, sc, env, none_ty(), recv);
     let tpath = recv_base_path(a, trecv.ty);
     let idx = find_method_idx(sc.sc_methods, &tpath, name);
     if idx < 0 as int { return defer_expr(ar, p); }
     let sl = sc.sc_methods.as_slice();
     if sl[idx as u32].mi_tparams.length() > 0 as u32 {
-        return mk_gen_method_call(a, ar, g, sc, env, idx as u32, trecv, args, p);
+        return mk_gen_method_call(a, ar, g, sc, env, expected, idx as u32, trecv, args, p);
     }
     let mm = sl[idx as u32].mi_mangled;
     let mret = sl[idx as u32].mi_ret;
@@ -2552,7 +2565,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::BinOp(op, l, r, _q) => elab_binop(a, ar, g, sc, env, expected, op, l, r, p)
         | Expr::Cast(sub, ann, _q) => elab_cast(a, ar, g, sc, env, sub, ann, p)
         | Expr::Call { callee, args } => elab_call(a, ar, g, sc, env, expected, &callee, &args, p)
-        | Expr::MethodCall { receiver, name, args } => elab_method_call(a, ar, g, sc, env, receiver, name, &args, p)
+        | Expr::MethodCall { receiver, name, args } => elab_method_call(a, ar, g, sc, env, expected, receiver, name, &args, p)
         | Expr::Block(stmts, _q) => elab_block(a, ar, g, sc, env, expected, &stmts, p)
         | Expr::TupleLit(es, _q) => elab_tuple_lit(a, ar, g, sc, env, &es, p)
         | Expr::If { cond, then_blk, else_blk } =>
@@ -2630,11 +2643,17 @@ fn none_texpr() -> Option<*const Texpr> {
     return n;
 }
 
+// A bare `return;` yields no value — except in `fn main`, which lowers to C
+// `int main` and must return `0`.
+fn bare_return_val(ar: *Arena, sc: *const TyScope, p: Pos) -> Option<*const Texpr> {
+    if sc.sc_is_main { return Option::Some(te_node(ar, TexprNode::TIntLit(0 as int), t_i32(ar), p)); }
+    return none_texpr();
+}
 fn elab_return_val(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                   ret: Option<*const Typ>, val: Option<*const Expr>) -> Option<*const Texpr> {
+                   ret: Option<*const Typ>, val: Option<*const Expr>, p: Pos) -> Option<*const Texpr> {
     return match val {
         Option::Some(e) => Option::Some(elab_expr(a, ar, g, sc, env, ret, e))
-        | Option::None => none_texpr()
+        | Option::None => bare_return_val(ar, sc, p)
     };
 }
 
@@ -2919,7 +2938,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Tail(e) => { elab_tail(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Return(val, pos) => {
-            let tv = elab_return_val(a, ar, g, sc, env, ret, val);
+            let tv = elab_return_val(a, ar, g, sc, env, ret, val, pos);
             out.push(Tstmt::TReturn { value: tv, pos: pos });
         }
         | Stmt::While { cond, body } => {
@@ -3248,7 +3267,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &f.tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases , sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -3530,6 +3549,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases,
+        sc_is_main: base.sc_is_main,
     };
 }
 
@@ -3547,6 +3567,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases,
+        sc_is_main: base.sc_is_main,
     };
 }
 
@@ -3708,7 +3729,7 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
         mi_ret: resolve_sig_ret(a, ar, sc, f.ret_ty),
         mi_has_self: method_has_self(f), mi_self_ptr: method_self_ptr(f), mi_self_const: method_self_const(f),
         mi_tparams: copy_strs(a, &f.tparams), mi_params: copy_param_anns(a, &f.params),
-        mi_ret_ann: f.ret_ty, mi_impl_idx: impl_idx, mi_meth_idx: meth_idx,
+        mi_ret_ann: f.ret_ty, mi_impl_idx: impl_idx, mi_meth_idx: meth_idx, mi_prelude: false,
     });
 }
 fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
@@ -3740,6 +3761,49 @@ fn collect_method_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *con
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n { collect_method_info_one(a, ar, sc, &sl[i], i, out); i = i + 1 as u32; }
+}
+
+// ===== Prelude methods =====
+//
+// Generic methods on the prelude structs (Allocator / Vec / ...).  Their
+// bodies are prelude-injected (filtered out of the `--user-only` dump), so a
+// call only resolves + mangles + types — no instance is queued to elaborate.
+fn ann_struct(a: Allocator, ar: *Arena, name: str) -> *const TypeAnn {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(name);
+    let args: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    return ann_node(ar, TypeAnn::TyStruct { path: path, args: args });
+}
+fn ann_own_t(a: Allocator, ar: *Arena) -> *const TypeAnn {
+    return ann_node(ar, TypeAnn::TyOwnPtr(ann_struct(a, ar, "T")));
+}
+fn one_tparam(a: Allocator) -> Vec<str> {
+    let mut t: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    t.push("T");
+    return t;
+}
+fn push_prelude_method(a: Allocator, ar: *Arena, target: str, name: str,
+                       params: Vec<*const TypeAnn>, ret_ann: Option<*const TypeAnn>, out: *Vec<MethodInfo>) {
+    let mut tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    tp.push(target);
+    out.push(MethodInfo {
+        mi_path: tp, mi_name: name,
+        mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
+        mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: false, mi_self_const: false,
+        mi_tparams: one_tparam(a), mi_params: params, mi_ret_ann: ret_ann,
+        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+    });
+}
+fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
+    // Allocator: alloc<T>(self) -> own *T ;  free<T>(self, p: own *T)
+    let mut alloc_params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    alloc_params.push(ann_struct(a, ar, "Allocator"));
+    push_prelude_method(a, ar, "Allocator", "alloc", alloc_params, Option::Some(ann_own_t(a, ar)), out);
+    let mut free_params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    free_params.push(ann_struct(a, ar, "Allocator"));
+    free_params.push(ann_own_t(a, ar));
+    let none_ann: Option<*const TypeAnn> = Option::None;
+    push_prelude_method(a, ar, "Allocator", "free", free_params, none_ann, out);
 }
 
 // ===== Trait default methods =====
@@ -4143,7 +4207,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases , sc_is_main: false };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -4161,6 +4225,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);
     collect_trait_default_methods(a, ar, &base_scope, items, &methods);
+    register_prelude_methods(a, ar, &methods);
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
