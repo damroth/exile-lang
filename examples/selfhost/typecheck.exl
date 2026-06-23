@@ -611,8 +611,10 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     }
     let nargs = args.length();
     if nargs == 0 as u32 {
-        if plen == 1 as u32 && name_in(sc.sc_xstructs, last) { return ty_node(ar, Typ::TExtStruct(last)); }
-        if plen == 1 as u32 && name_in(sc.sc_xaliases, last) { return ty_node(ar, Typ::TExtAlias(last)); }
+        // An extern struct / type resolves by its last path segment (the raw C
+        // symbol), whether named bare or module-qualified (`raw::Library`).
+        if name_in(sc.sc_xstructs, last) { return ty_node(ar, Typ::TExtStruct(last)); }
+        if name_in(sc.sc_xaliases, last) { return ty_node(ar, Typ::TExtAlias(last)); }
     }
     let is_enum = name_in(sc.sc_enums, last) || is_prelude_enum(last);
     if nargs == 0 as u32 {
@@ -2378,6 +2380,14 @@ fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
     }
     let m = mangle_path(a, ar, tname, variant);
     return match global_lookup_by_mangled(g, m) {
+        Option::Some(gf) => enumlit_const(ar, gf, p)
+        | Option::None => qualified_extern_ref(ar, g, variant, p)
+    };
+}
+// A `mod::NAME` reference that isn't a module const may be an extern const /
+// var, whose raw C symbol is the bare last segment (no module mangling).
+fn qualified_extern_ref(ar: *Arena, g: *const Vec<GlobalFn>, variant: str, p: Pos) -> *const Texpr {
+    return match global_lookup(g, variant) {
         Option::Some(gf) => enumlit_const(ar, gf, p)
         | Option::None => defer_expr(ar, p)
     };
