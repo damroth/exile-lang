@@ -118,6 +118,11 @@ struct MethodInfo {
     // A prelude method (Allocator / Vec / ...): its body is prelude-injected,
     // so a generic call resolves + mangles but queues no instance to drain.
     mi_prelude: bool,
+    // A method on a generic struct (`impl<T> Foo<T>`): mi_tparams are the
+    // impl's parameters, bound from the receiver instance's fields (not from
+    // self / arg annotations, which mangle opaquely).  The instance return
+    // type resolves with those bindings already in scope.
+    mi_struct_gen: bool,
 }
 
 // A top-level generic function.  Inference at a call site needs its type
@@ -156,6 +161,12 @@ struct EnumTP {
     etp_name: str,
     etp_params: Vec<str>,
 }
+// A generic struct's declared type parameters, so a monomorphic instance can
+// zip them against its resolved args to substitute the skeleton fields.
+struct StructTP {
+    stp_name: str,
+    stp_params: Vec<str>,
+}
 
 struct TyScope {
     sc_structs: *const Vec<str>,
@@ -181,6 +192,7 @@ struct TyScope {
     sc_genjobs: *Vec<GenJob>,
     sc_geninsts: *Vec<str>,
     sc_etps: *const Vec<EnumTP>,
+    sc_stps: *const Vec<StructTP>,
     sc_modpath: *const Vec<str>,
     // The enclosing fn's resolved return type — `try` reads it to build the
     // early-return value on the enclosing fn's own Option/Result instance.
@@ -220,6 +232,7 @@ struct ProgIdx {
     pi_genjobs: *Vec<GenJob>,
     pi_geninsts: *Vec<str>,
     pi_etps: *const Vec<EnumTP>,
+    pi_stps: *const Vec<StructTP>,
     pi_modpath: *const Vec<str>,
     pi_gsigs: *const Vec<FnSig>,
     pi_xstructs: *const Vec<str>,
@@ -227,6 +240,15 @@ struct ProgIdx {
 }
 
 // Index of `(type-path, method-name)` in the method table, or -1.
+// Is `inst_last` (`Pair_i32_bool`) a monomorphic instance of base `base_last`
+// (`Pair`)?  True when it is `base_last` followed by `_<args>`.
+fn inst_of_base(inst_last: str, base_last: str) -> bool {
+    let bn = str::length(base_last);
+    if str::length(inst_last) <= bn { return false; }
+    if !str_starts_with(inst_last, base_last) { return false; }
+    let ib = str::as_bytes(inst_last);
+    return ib[bn] == 95 as u8;
+}
 fn find_method_idx(methods: *const Vec<MethodInfo>, type_path: *const Vec<str>, name: str) -> int {
     let n = methods.length();
     let sl = methods.as_slice();
@@ -234,6 +256,11 @@ fn find_method_idx(methods: *const Vec<MethodInfo>, type_path: *const Vec<str>, 
     while i < n {
         if str::eq(sl[i].mi_name, name) {
             if path_eq(&sl[i].mi_path, type_path) { return i as int; }
+            // A method on a generic struct matches the receiver's monomorphic
+            // instance (`Pair_i32_bool` → the `impl<A,B> Pair<A,B>` methods).
+            if sl[i].mi_struct_gen {
+                if inst_of_base(path_last(type_path), path_last(&sl[i].mi_path)) { return i as int; }
+            }
         }
         i = i + 1 as u32;
     }
@@ -604,6 +631,57 @@ fn mono_enum_field_ty(sc: *const TyScope, epath: *const Vec<str>, variant: str, 
     };
 }
 
+// Does the type mention a free `TVar`?  A generic application whose args are
+// still abstract (a generic-struct method skeleton's `Pair<A, B>`) stays an
+// unresolved `TStructApp` rather than mangling to a bogus `Pair_A_B` instance.
+fn ty_has_tvar(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TVar(_n) => true
+        | Typ::TPtr(i) => ty_has_tvar(i)
+        | Typ::TConstPtr(i) => ty_has_tvar(i)
+        | Typ::TOwnPtr(i) => ty_has_tvar(i)
+        | Typ::TStructApp { path: _p, args } => tys_have_tvar(&args)
+        | Typ::TEnumApp { path: _p2, args: a2 } => tys_have_tvar(&a2)
+        | _e => false
+    };
+}
+fn tys_have_tvar(args: *const Vec<*const Typ>) -> bool {
+    let n = args.length();
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < n { if ty_has_tvar(sl[i]) { return true; } i = i + 1 as u32; }
+    return false;
+}
+// A user generic struct's tparam → arg bindings for a monomorphic instance.
+fn struct_instance_binds(a: Allocator, stps: *const Vec<StructTP>, name: str, args: *const Vec<*const Typ>) -> Vec<TVarBind> {
+    let n = stps.length();
+    let sl = stps.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].stp_name, name) { return zip_binds(a, &sl[i].stp_params, args); }
+        i = i + 1 as u32;
+    }
+    let empty: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    return empty;
+}
+// Register a user generic struct instance's substituted fields at type-position
+// resolution (a `Pair<bool, int>` reached through a method return, never a
+// literal), so a later `q.field` / generic-method dispatch finds its fields.
+// A non-generic / prelude / extern name has no entry in `sc_stps`, so this is
+// a no-op for them (prelude structs register via their own skeleton path).
+fn inst_has_fields(fields: *const Vec<StructField>, ipath: *const Vec<str>) -> bool {
+    let n = fields.length();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < n { if path_eq(&sl[i].sf_path, ipath) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn register_user_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope,
+                               base: *const Vec<str>, args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
+    if inst_has_fields(sc.sc_mono_fields, ipath) { return; }
+    let binds = struct_instance_binds(a, sc.sc_stps, path_last(base), args);
+    register_instance_fields(a, ar, sc, base, &binds, ipath);
+}
 fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
                     path: *const Vec<str>, args: *const Vec<*const TypeAnn>) -> *const Typ {
     let plen = path.length();
@@ -630,6 +708,13 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     }
     // Generic application → monomorphic instance, registered for the footer.
     let resolved = resolve_sig_args(a, ar, sc, args);
+    // A still-abstract application (a generic-struct method skeleton's
+    // `Pair<A, B>`) keeps its `TStructApp` / `TEnumApp` form — mangling it
+    // would invent a bogus `Pair_A_B` instance.
+    if tys_have_tvar(&resolved) {
+        if is_enum { return ty_node(ar, Typ::TEnumApp { path: copy_strs(a, path), args: resolved }); }
+        return ty_node(ar, Typ::TStructApp { path: copy_strs(a, path), args: resolved });
+    }
     let ipath = instance_path(a, ar, path, &resolved);
     if is_enum {
         register_mono_enum(a, sc, &ipath);
@@ -647,8 +732,10 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     register_mono_struct(a, sc, &ipath);
     // A generic prelude struct (Slice, ...) substitutes its skeleton fields
     // at type-position resolution, so `s.field` / `s[i]` work on a parameter
-    // before any construction.  User structs register at construction.
+    // before any construction.  A user generic struct does likewise when it is
+    // first seen as a type (a method-return instance never built by a literal).
     register_prelude_struct_fields(a, ar, sc, last, &resolved, &ipath);
+    register_user_struct_fields(a, ar, sc, path, &resolved, &ipath);
     return ty_node(ar, Typ::TStruct(ipath));
 }
 
@@ -1615,6 +1702,72 @@ fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *c
     }
 }
 
+// Recover a generic struct's tparam bindings by unifying its skeleton field
+// types (which mention the tparams) against the receiver instance's already-
+// registered field types — `Vec<T>.ptr : own *T` against `Vec_i32.ptr :
+// own *i32` yields `T = i32`.  The mangled instance name discards the args, so
+// the registered fields are where the bindings still live.
+fn bind_recv_tparams(sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>) {
+    let skel = sc.sc_sinfo;
+    let n = skel.length();
+    let sl = skel.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].sf_path, base_path) {
+            match find_field_ty(sc.sc_mono_fields, inst_path, sl[i].sf_name) {
+                Option::Some(it) => unify_typ(sl[i].sf_ty, it, out)
+                | Option::None => { }
+            }
+        }
+        i = i + 1 as u32;
+    }
+}
+
+// The bound types in tparam-declaration order (the mangling order), so the
+// instance name matches the oracle regardless of field order.
+fn binds_in_tparam_order(a: Allocator, ar: *Arena, tparams: *const Vec<str>, binds: *const Vec<TVarBind>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let n = tparams.length();
+    let sl = tparams.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match bind_lookup(binds, sl[i]) {
+            Option::Some(t) => out.push(t)
+            | Option::None => out.push(ty_node(ar, Typ::TVar(sl[i])))
+        }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// `recv.m(args)` on a generic struct (`impl<T> Foo<T>`): bind the impl's
+// tparams from the receiver instance, resolve the return type with those
+// bindings in scope (so a `Pair<B, A>` return mangles to its instance), queue
+// the body, and emit the monomorphic call.
+fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                             midx: u32, trecv: *const Texpr, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let sl = sc.sc_methods.as_slice();
+    let base = sl[midx].mi_mangled;
+    let sptr = sl[midx].mi_self_ptr;
+    let scst = sl[midx].mi_self_const;
+    let iidx = sl[midx].mi_impl_idx;
+    let midx2 = sl[midx].mi_meth_idx;
+    let inst_path = recv_base_path(a, trecv.ty);
+    let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    bind_recv_tparams(sc, &sl[midx].mi_path, &inst_path, &binds);
+    let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
+    let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
+    let inst = fn_instance_mangled(a, ar, base, &oargs);
+    queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path);
+    let targs = elab_args(a, ar, g, sc, env, args);
+    let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
+    let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    cargs.push(adj);
+    push_texprs(&targs, &cargs);
+    return te_node(ar, TexprNode::TCall { mangled: inst, args: cargs }, ret_or_void(ar, cret), p);
+}
+
 // `recv.m<T..>(args)` → `T__m_<args>(<adjusted recv>, args)`: infer the
 // method's type parameters from the receiver + arguments, mangle the
 // instance, queue its body for the drain, and substitute the bindings into
@@ -1660,6 +1813,9 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let idx = find_method_idx(sc.sc_methods, &tpath, name);
     if idx < 0 as int { return defer_expr(ar, p); }
     let sl = sc.sc_methods.as_slice();
+    if sl[idx as u32].mi_struct_gen {
+        return mk_struct_gen_method_call(a, ar, g, sc, env, idx as u32, trecv, args, p);
+    }
     if sl[idx as u32].mi_tparams.length() > 0 as u32 {
         return mk_gen_method_call(a, ar, g, sc, env, expected, idx as u32, trecv, args, p);
     }
@@ -3309,20 +3465,27 @@ fn elab_skeleton_or_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
     return elab_body(a, ar, g, sc, gensym, env, ret_ty, &f.body);
 }
 
+fn pick_tparams(xtparams: *const Vec<str>, fallback: *const Vec<str>) -> *const Vec<str> {
+    if xtparams.length() > 0 as u32 { return xtparams; }
+    return fallback;
+}
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                idx: *const ProgIdx, tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func, self_ty: Option<*const Typ>) -> Tfunc {
+                idx: *const ProgIdx, tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func, self_ty: Option<*const Typ>, xtparams: *const Vec<str>) -> Tfunc {
     let params = copy_params(a, &f.params);
-    let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &f.tparams,
+    // A generic-struct method skeleton borrows the impl's type parameters
+    // (the method itself declares none); everything else uses its own.
+    let eff_tparams = pick_tparams(xtparams, &f.tparams);
+    let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases , sc_is_main: str::eq(mangled, "main") };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases , sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     build_param_env(a, ar, &sc, &f.params, &env);
     // A generic skeleton (type params, no bindings) carries an empty body —
     // only its monomorphic instances have real bodies.
-    let is_skeleton = f.tparams.length() > 0 as u32 && tbinds.length() == 0 as u32;
+    let is_skeleton = eff_tparams.length() > 0 as u32 && tbinds.length() == 0 as u32;
     // Body scope carries the resolved return type so `try` can build its
     // early-return value on the enclosing fn's instance.
     let scb = scope_with_ret(&sc, ret_ty);
@@ -3362,7 +3525,7 @@ fn elaborate_module_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym
                        path: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
     // An extern fn keeps its raw C name as the emitted symbol even in a module.
     let m = if f.is_extern { f.c_name } else { mangle_path(a, ar, path, f.name) };
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, path, m, f, none_ty()));
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, path, m, f, none_ty(), &f.tparams));
 }
 fn elaborate_module_items(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                           path: *const Vec<str>, items: *const Vec<Item>, funcs: *Vec<Tfunc>) {
@@ -3385,7 +3548,7 @@ fn elaborate_module_items(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gen
 fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                   idx: *const ProgIdx, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath, mangle_fn(a, ar, &f), &f, none_ty())); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath, mangle_fn(a, ar, &f), &f, none_ty(), &f.tparams)); }
         | Item::Module(md) => {
             let mut p: Vec<str> = Vec::with_capacity(a, 8 as u32);
             p.push(md.mname);
@@ -3412,10 +3575,21 @@ fn method_mangle(a: Allocator, ar: *Arena, target: *const Vec<str>, name: str) -
 // Push happens behind a fn boundary so `f` is a parameter (not the address
 // of a local slice element) — same shape the free-fn path relies on to
 // satisfy the escape checker.
+// Override tparams for a method skeleton: the impl's parameters when the
+// method declares none of its own, else empty (use the method's own).
+fn skel_xtparams(f: *const Func, itparams: *const Vec<str>, empty: *const Vec<str>) -> *const Vec<str> {
+    if f.tparams.length() == 0 as u32 { return itparams; }
+    return empty;
+}
 fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                         idx: *const ProgIdx, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+                         idx: *const ProgIdx, target: *const Vec<str>, itparams: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+    // A method on a generic struct with no parameters of its own is emitted
+    // as a skeleton over the impl's type parameters (empty body, `struct-app`
+    // self type); its monomorphic instances carry the real bodies.
+    let no_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let xtp = skel_xtparams(f, itparams, &no_tp);
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath,
-                            method_mangle(a, ar, target, f.name), f, none_ty()));
+                            method_mangle(a, ar, target, f.name), f, none_ty(), xtp));
 }
 
 // Synthesise a trait default method for `target`: like an impl method but
@@ -3427,7 +3601,7 @@ fn elaborate_default_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gen
                           idx: *const ProgIdx, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
     let self_ty = ty_node(ar, Typ::TStruct(copy_strs(a, target)));
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath,
-                            method_mangle(a, ar, target, f.name), f, Option::Some(self_ty)));
+                            method_mangle(a, ar, target, f.name), f, Option::Some(self_ty), &f.tparams));
 }
 
 fn emit_one_default(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
@@ -3458,7 +3632,7 @@ fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let sl = ib.iitems.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_method_into(a, ar, g, gensym, idx, &ib.itarget, &sl[i], funcs);
+        elaborate_method_into(a, ar, g, gensym, idx, &ib.itarget, &ib.itparams, &sl[i], funcs);
         i = i + 1 as u32;
     }
     // Synthesised trait defaults follow the impl's own methods (matching the
@@ -3592,7 +3766,27 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_modpath: base.sc_modpath,
+        sc_ret: base.sc_ret,
+        sc_self: base.sc_self,
+        sc_gsigs: base.sc_gsigs,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases,
+        sc_is_main: base.sc_is_main,
+    };
+}
+
+// A copy of the scope with a tparam list AND concrete bindings for them, so a
+// type mentioning those tparams (a generic-struct method's return) resolves to
+// the monomorphic instance directly (no post-hoc substitution).
+fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *const Vec<TVarBind>) -> TyScope {
+    return TyScope {
+        sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
+        sc_efields: base.sc_efields, sc_methods: base.sc_methods,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
+        sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
+        sc_tbinds: tbinds, sc_genfns: base.sc_genfns,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_modpath: base.sc_modpath,
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -3610,7 +3804,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_modpath: base.sc_modpath,
         sc_ret: ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -3769,23 +3963,33 @@ fn method_self_const(f: *const Func) -> bool {
     let sl = f.params.as_slice();
     return is_const_ptr_ann(sl[0 as u32].pty);
 }
-fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
+fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>,
                    f: *const Func, impl_idx: u32, meth_idx: u32, out: *Vec<MethodInfo>) {
+    // A method on a generic struct with no parameters of its own carries the
+    // impl's type parameters, bound at the call site from the receiver
+    // instance.  A method-generic method keeps its own.
+    let struct_gen = itparams.length() > 0 as u32 && f.tparams.length() == 0 as u32;
+    let tparams = if struct_gen { copy_strs(a, itparams) } else { copy_strs(a, &f.tparams) };
+    // A generic-struct method's return mentions the impl tparams (out of scope
+    // here); the call site resolves it under the receiver's bindings, so leave
+    // it unresolved rather than mangle a bogus `Pair_B_A` instance.
+    let mret = if struct_gen { none_ty() } else { resolve_sig_ret(a, ar, sc, f.ret_ty) };
     out.push(MethodInfo {
         mi_path: copy_strs(a, target), mi_name: f.name,
         mi_mangled: method_mangle(a, ar, target, f.name),
-        mi_ret: resolve_sig_ret(a, ar, sc, f.ret_ty),
+        mi_ret: mret,
         mi_has_self: method_has_self(f), mi_self_ptr: method_self_ptr(f), mi_self_const: method_self_const(f),
-        mi_tparams: copy_strs(a, &f.tparams), mi_params: copy_param_anns(a, &f.params),
+        mi_tparams: tparams, mi_params: copy_param_anns(a, &f.params),
         mi_ret_ann: f.ret_ty, mi_impl_idx: impl_idx, mi_meth_idx: meth_idx, mi_prelude: false,
+        mi_struct_gen: struct_gen,
     });
 }
-fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
+fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>,
                         methods: *const Vec<Func>, impl_idx: u32, out: *Vec<MethodInfo>) {
     let n = methods.length();
     let sl = methods.as_slice();
     let mut i = 0 as u32;
-    while i < n { push_one_method(a, ar, sc, target, &sl[i], impl_idx, i, out); i = i + 1 as u32; }
+    while i < n { push_one_method(a, ar, sc, target, itparams, &sl[i], impl_idx, i, out); i = i + 1 as u32; }
 }
 // `top_idx` is the index of the enclosing top-level item, so a generic
 // method's body can be re-derived in the drain.  Module-nested impls pass
@@ -3793,7 +3997,7 @@ fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
 // v1, matching the top-level-only generic-fn registry).
 fn collect_method_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, top_idx: u32, out: *Vec<MethodInfo>) {
     match *it {
-        Item::Impl(ib) => { collect_methods_impl(a, ar, sc, &ib.itarget, &ib.iitems, top_idx, out); }
+        Item::Impl(ib) => { collect_methods_impl(a, ar, sc, &ib.itarget, &ib.itparams, &ib.iitems, top_idx, out); }
         | Item::Module(md) => { collect_method_info_nested(a, ar, sc, &md.mitems, top_idx, out); }
         | _e => { }
     }
@@ -3840,6 +4044,7 @@ fn push_prelude_method(a: Allocator, ar: *Arena, target: str, name: str,
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: false, mi_self_const: false,
         mi_tparams: one_tparam(a), mi_params: params, mi_ret_ann: ret_ann,
         mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+        mi_struct_gen: false,
     });
 }
 fn prelude_struct_ty(a: Allocator, ar: *Arena, name: str) -> *const Typ {
@@ -3862,6 +4067,7 @@ fn push_prelude_method_ng(a: Allocator, ar: *Arena, target: str, name: str, has_
         mi_ret: ret, mi_has_self: has_self, mi_self_ptr: self_ptr, mi_self_const: self_const,
         mi_tparams: empty_tp, mi_params: empty_params, mi_ret_ann: none_ann,
         mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+        mi_struct_gen: false,
     });
 }
 // Param-type signatures for prelude methods whose explicit arguments need
@@ -3947,7 +4153,8 @@ fn register_one_default(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
                         impl_methods: *const Vec<Func>, defaults: *const Vec<str>, f: *const Func, ti: u32, j: u32, out: *Vec<MethodInfo>) {
     if !name_in(defaults, f.name) { return; }
     if impl_has_method(impl_methods, f.name) { return; }
-    push_one_method(a, ar, sc, target, f, ti, j, out);
+    let no_itparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    push_one_method(a, ar, sc, target, &no_itparams, f, ti, j, out);
 }
 fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
                         impl_methods: *const Vec<Func>, td: *const TraitDecl, ti: u32, out: *Vec<MethodInfo>) {
@@ -4032,6 +4239,22 @@ fn collect_enum_tps(a: Allocator, items: *const Vec<Item>, out: *Vec<EnumTP>) {
     let mut i = 0 as u32;
     while i < n { collect_enum_tps_one(a, &sl[i], out); i = i + 1 as u32; }
 }
+fn push_struct_tp(a: Allocator, sname: str, params: *const Vec<str>, out: *Vec<StructTP>) {
+    out.push(StructTP { stp_name: sname, stp_params: copy_strs(a, params) });
+}
+fn collect_struct_tps_one(a: Allocator, it: *const Item, out: *Vec<StructTP>) {
+    match *it {
+        Item::Struct(sd) => { push_struct_tp(a, sd.sname, &sd.stparams, out); }
+        | Item::Module(md) => { collect_struct_tps(a, &md.mitems, out); }
+        | _e => { }
+    }
+}
+fn collect_struct_tps(a: Allocator, items: *const Vec<Item>, out: *Vec<StructTP>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_struct_tps_one(a, &sl[i], out); i = i + 1 as u32; }
+}
 fn prelude_enum_tps(a: Allocator, out: *Vec<EnumTP>) {
     let mut t1: Vec<str> = Vec::with_capacity(a, 8 as u32);
     t1.push("T");
@@ -4048,7 +4271,7 @@ fn elaborate_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym:
                       items: *const Vec<Item>, gi: u32, tbinds: *const Vec<TVarBind>, mangled: str, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
     match sl[gi] {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, &f, none_ty())); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, &f, none_ty(), &f.tparams)); }
         | _e => { }
     }
 }
@@ -4057,7 +4280,7 @@ fn elaborate_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym:
 // of a local slice element) — same escape-checker shape as the free-fn path.
 fn push_method_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                     tbinds: *const Vec<TVarBind>, mangled: str, f: *const Func, self_ty: Option<*const Typ>, funcs: *Vec<Tfunc>) {
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, self_ty));
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, self_ty, &f.tparams));
 }
 fn elaborate_impl_method_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                             methods: *const Vec<Func>, meth_idx: u32, tbinds: *const Vec<TVarBind>,
@@ -4300,6 +4523,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut etps: Vec<EnumTP> = Vec::with_capacity(a, 8 as u32);
     collect_enum_tps(a, items, &etps);
     prelude_enum_tps(a, &etps);
+    let mut stps: Vec<StructTP> = Vec::with_capacity(a, 8 as u32);
+    collect_struct_tps(a, items, &stps);
     // Fn parameter-type index (for `own *T` → `*T` arg coercion); populated
     // below once the scope can resolve param types, but referenced by the
     // base scope now (collecting it doesn't read the index back).
@@ -4308,7 +4533,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases , sc_is_main: false };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases , sc_is_main: false };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -4331,7 +4556,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
