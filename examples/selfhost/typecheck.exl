@@ -651,6 +651,8 @@ fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const Type
         | TypeAnn::TyTuple(elems) => ty_node(ar, Typ::TTuple(resolve_sig_args(a, ar, sc, &elems)))
         | TypeAnn::TyArray { elem, size } =>
             ty_node(ar, Typ::TArray { elem: resolve_sig_ty(a, ar, sc, elem), size: array_size_of(size, sc) })
+        | TypeAnn::TyFnPtr { params, ret } =>
+            ty_node(ar, Typ::TFnPtr { params: resolve_sig_args(a, ar, sc, &params), ret: resolve_sig_ret(a, ar, sc, ret) })
         | TypeAnn::TySelf => voidable_ty(ar, sc.sc_self)
         | _other => resolve_type_ann(a, ar, ann)
     };
@@ -837,25 +839,51 @@ fn mangle_path(a: Allocator, ar: *Arena, path: *const Vec<str>, name: str) -> st
     return str::from_slice(ar, sb.as_slice());
 }
 
-// A local binding resolves to `TVar(name)`; otherwise a top-level `const`
-// resolves to `TVar(mangled)` with its declared type.  Unknown names defer.
-fn elab_var(ar: *Arena, g: *const Vec<GlobalFn>, env: *const Vec<FieldTy>, name: str, p: Pos) -> *const Texpr {
+// Copy a parameter-type list out of the fn-sig index (the result is a fresh
+// Vec, so no slice element of the caller's table escapes).
+fn copy_typ_vec(a: Allocator, src: *const Vec<*const Typ>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let n = src.length();
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn gsig_params_copy(a: Allocator, gsigs: *const Vec<FnSig>, mangled: str) -> Vec<*const Typ> {
+    let n = gsigs.length();
+    let sl = gsigs.as_slice();
+    let mut j = 0 as u32;
+    while j < n {
+        if str::eq(sl[j].fs_mangled, mangled) { return copy_typ_vec(a, &sl[j].fs_params); }
+        j = j + 1 as u32;
+    }
+    return Vec::with_capacity(a, 8 as u32);
+}
+// The fn-ptr type of a top-level fn name used as a value.
+fn fn_ptr_of_global(a: Allocator, ar: *Arena, sc: *const TyScope, gf: GlobalFn) -> *const Typ {
+    return ty_node(ar, Typ::TFnPtr { params: gsig_params_copy(a, sc.sc_gsigs, gf.mangled), ret: gf.ret });
+}
+
+// A local binding resolves to `TVar(name)`; a top-level `const` to
+// `TVar(mangled)`; a top-level fn name used as a value to `TFnRef` carrying
+// its fn-ptr type (auto-converts to a fn-ptr in C).  Unknown names defer.
+fn elab_var(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>, name: str, p: Pos) -> *const Texpr {
     return match env_lookup(env, name) {
         Option::Some(t) => te_node(ar, TexprNode::TVar(name), t, p)
-        | Option::None => elab_var_global(ar, g, name, p)
+        | Option::None => elab_var_global(a, ar, g, sc, name, p)
     };
 }
 
-fn elab_var_global(ar: *Arena, g: *const Vec<GlobalFn>, name: str, p: Pos) -> *const Texpr {
+fn elab_var_global(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, name: str, p: Pos) -> *const Texpr {
     return match global_lookup(g, name) {
-        Option::Some(gf) => const_ref(ar, gf, name, p)
+        Option::Some(gf) => var_global_node(a, ar, sc, gf, p)
         | Option::None => te_node(ar, TexprNode::TVar(name), ty_node(ar, Typ::TCVoid), p)
     };
 }
 
-fn const_ref(ar: *Arena, gf: GlobalFn, name: str, p: Pos) -> *const Texpr {
+fn var_global_node(a: Allocator, ar: *Arena, sc: *const TyScope, gf: GlobalFn, p: Pos) -> *const Texpr {
     if gf.is_const { return te_node(ar, TexprNode::TVar(gf.mangled), ret_or_void(ar, gf.ret), p); }
-    return te_node(ar, TexprNode::TVar(name), ty_node(ar, Typ::TCVoid), p);
+    return te_node(ar, TexprNode::TFnRef(gf.gf_emit), fn_ptr_of_global(a, ar, sc, gf), p);
 }
 
 fn elab_neg(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
@@ -1335,9 +1363,33 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let fr_args = elab_args(a, ar, g, sc, env, args);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: fr_args }, t_i32(ar), p);
     }
+    if env_is_fnptr(env, name) { return mk_fnptr_call(a, ar, g, sc, env, name, args, p); }
     let gfi = gen_fn_lookup(sc.sc_genfns, name);
     if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, expected, args, p); }
     return elab_user_or_defer(a, ar, g, sc, env, name, args, p);
+}
+
+// A call `f(args)` where `f` is a local binding of fn-ptr type — emitted as a
+// direct `(call f ...)` (in C, calling a fn-ptr local is just `f(args)`).
+fn is_fnptr_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TFnPtr { params, ret } => true | _e => false };
+}
+fn env_is_fnptr(env: *const Vec<FieldTy>, name: str) -> bool {
+    return match env_lookup(env, name) {
+        Option::Some(t) => is_fnptr_ty(t)
+        | Option::None => false
+    };
+}
+fn fnptr_ret_of(env: *const Vec<FieldTy>, name: str) -> Option<*const Typ> {
+    return match env_lookup(env, name) {
+        Option::Some(t) => match *t { Typ::TFnPtr { params, ret } => ret | _e => none_ty() }
+        | Option::None => none_ty()
+    };
+}
+fn mk_fnptr_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                 name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let targs = elab_args(a, ar, g, sc, env, args);
+    return te_node(ar, TexprNode::TCall { mangled: name, args: targs }, ret_or_void(ar, fnptr_ret_of(env, name)), p);
 }
 
 // Adjust a method receiver to the self shape the method declares: a value
@@ -2274,7 +2326,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::StringLit(s, _q) => te_node(ar, TexprNode::TStringLit(s), t_str(ar), p)
         | Expr::NullLit(_q) => te_node(ar, TexprNode::TNullLit, ty_node(ar, Typ::TNullPtr), p)
         | Expr::FloatLit(f, w, _q) => te_node(ar, TexprNode::TFloatLit(f, w), ty_node(ar, Typ::TFloat(w)), p)
-        | Expr::Var(name, _q) => elab_var(ar, g, env, name, p)
+        | Expr::Var(name, _q) => elab_var(a, ar, g, sc, env, name, p)
         | Expr::Neg(sub, _q) => elab_neg(a, ar, g, sc, env, expected, sub, p)
         | Expr::BitNot(sub, _q) => elab_bitnot(a, ar, g, sc, env, expected, sub, p)
         | Expr::Not(sub, _q) => elab_not(a, ar, g, sc, env, sub, p)
