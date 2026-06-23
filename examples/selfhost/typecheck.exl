@@ -639,7 +639,25 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         return ty_node(ar, Typ::TEnum(ipath));
     }
     register_mono_struct(a, sc, &ipath);
+    // A generic prelude struct (Slice, ...) substitutes its skeleton fields
+    // at type-position resolution, so `s.field` / `s[i]` work on a parameter
+    // before any construction.  User structs register at construction.
+    register_prelude_struct_fields(a, ar, sc, last, &resolved, &ipath);
     return ty_node(ar, Typ::TStruct(ipath));
+}
+
+fn prelude_struct_tparams(name: str, out: *Vec<str>) {
+    if str::eq(name, "Slice") { out.push("T"); }
+}
+fn register_prelude_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
+                                  args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
+    let mut tps: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    prelude_struct_tparams(name, &tps);
+    if tps.length() == 0 as u32 { return; }
+    let binds = zip_binds(a, &tps, args);
+    let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    skel.push(name);
+    register_instance_fields(a, ar, sc, &skel, &binds, ipath);
 }
 
 // Array size is a const expression: a literal, or a reference to a
@@ -1015,13 +1033,39 @@ fn is_concat(op: BinOp) -> bool {
     return match op { BinOp::Concat => true | _e => false };
 }
 
-fn elab_binop(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>, expected: Option<*const Typ>,
-              op: BinOp, l: *const Expr, r: *const Expr, p: Pos) -> *const Texpr {
-    let l2 = elab_expr(a, ar, g, sc, env, left_expected(op, expected), l);
-    let r2 = elab_expr(a, ar, g, sc, env, right_expected(op, expected), r);
+fn expr_is_int_lit(e: *const Expr) -> bool {
+    return match *e { Expr::IntLit(_n, _q) => true | _e => false };
+}
+fn finish_binop(a: Allocator, ar: *Arena, op: BinOp, l2: *const Texpr, r2: *const Texpr, p: Pos) -> *const Texpr {
     if is_concat(op) { return fold_concat(a, ar, l2, r2, p); }
     let ty = binop_result_ty(ar, op, l2);
     return te_node(ar, TexprNode::TBinOp(op, l2, r2), ty, p);
+}
+// An int-expected (arithmetic op under an int annotation) drives both
+// operands; otherwise smart literal coercion makes a literal adopt its
+// sibling's width (`i + 1` with `i: u32` → the `1` is u32), so `i = i + 1`
+// keeps a single width.
+fn elab_binop(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>, expected: Option<*const Typ>,
+              op: BinOp, l: *const Expr, r: *const Expr, p: Pos) -> *const Texpr {
+    let le = left_expected(op, expected);
+    if is_some_ty(le) {
+        let la = elab_expr(a, ar, g, sc, env, le, l);
+        let ra = elab_expr(a, ar, g, sc, env, right_expected(op, expected), r);
+        return finish_binop(a, ar, op, la, ra, p);
+    }
+    if expr_is_int_lit(r) && !expr_is_int_lit(l) {
+        let lb = elab_expr(a, ar, g, sc, env, none_ty(), l);
+        let rb = elab_expr(a, ar, g, sc, env, Option::Some(lb.ty), r);
+        return finish_binop(a, ar, op, lb, rb, p);
+    }
+    if expr_is_int_lit(l) && !expr_is_int_lit(r) {
+        let rc = elab_expr(a, ar, g, sc, env, none_ty(), r);
+        let lc = elab_expr(a, ar, g, sc, env, Option::Some(rc.ty), l);
+        return finish_binop(a, ar, op, lc, rc, p);
+    }
+    let ld = elab_expr(a, ar, g, sc, env, none_ty(), l);
+    let rd = elab_expr(a, ar, g, sc, env, none_ty(), r);
+    return finish_binop(a, ar, op, ld, rd, p);
 }
 
 fn elab_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
@@ -1934,14 +1978,17 @@ fn elab_field_access(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
 
 // Each initialiser value elaborates against its declared field type.
 fn elab_struct_fields(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
-                      env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>) -> Vec<TexprField> {
+                      env: *const Vec<FieldTy>, _tname: *const Vec<str>, fields: *const Vec<Field>) -> Vec<TexprField> {
     let mut out: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
     let n = fields.length();
     let sl = fields.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        let exp = find_field_ty(sc.sc_sinfo, tname, sl[i].name);
-        let tv = elab_expr(a, ar, g, sc, env, exp, sl[i].value);
+        // Field values elaborate without a field-type expectation (matching
+        // the oracle): an `int` literal keeps its i32 default and coerces into
+        // a narrower / unsigned slot at the store, rather than adopting the
+        // field width here.
+        let tv = elab_expr(a, ar, g, sc, env, none_ty(), sl[i].value);
         out.push(TexprField { name: sl[i].name, value: tv });
         i = i + 1 as u32;
     }
@@ -2310,9 +2357,24 @@ fn elab_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
         | Option::None => tb0
     };
     let ti = elab_expr(a, ar, g, sc, env, none_ty(), index);
-    return match array_elem_ty(tb.ty) {
+    return match index_elem_ty(sc, tb.ty) {
         Option::Some(elem) => te_node(ar, TexprNode::TIndex { base: tb, index: ti }, elem, p)
         | Option::None => defer_expr(ar, p)
+    };
+}
+// The element type of an indexable base: an array's element, or a `Slice`'s
+// `ptr` pointee (`*const T` -> T).
+fn index_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
+    return match array_elem_ty(t) {
+        Option::Some(e) => Option::Some(e)
+        | Option::None => slice_elem_ty(sc, t)
+    };
+}
+fn slice_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
+    if !is_slice_instance(t) { return none_ty(); }
+    return match struct_field_ty(sc, t, "ptr") {
+        Option::Some(pt) => deref_pointee(pt)
+        | Option::None => none_ty()
     };
 }
 
@@ -3290,6 +3352,19 @@ fn push_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, sname: str,
     }
 }
 
+// Skeleton fields of the generic prelude structs, registered in the struct
+// index so construction infers the instance and a parameter's field / index
+// accesses resolve.  `ptr` is `*const T`, `len` a `u32`.
+fn push_prelude_field(a: Allocator, sname: str, fname: str, fty: *const Typ, out: *Vec<StructField>) {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(sname);
+    out.push(StructField { sf_path: path, sf_name: fname, sf_ty: fty });
+}
+fn prelude_struct_info(a: Allocator, ar: *Arena, out: *Vec<StructField>) {
+    push_prelude_field(a, "Slice", "ptr", ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TVar("T")))), out);
+    push_prelude_field(a, "Slice", "len", t_u32(ar), out);
+}
+
 // A copy of the scope with a different tparam list — used to resolve a
 // generic type's own field/variant types (where its tparams are in scope).
 fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
@@ -3928,6 +4003,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // patterns and method calls type-check.
     let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     collect_struct_info(a, ar, &base_scope, items, &sinfo);
+    prelude_struct_info(a, ar, &sinfo);
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     collect_enum_info(a, ar, &base_scope, items, &etags, &efields);
