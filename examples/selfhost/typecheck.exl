@@ -743,6 +743,8 @@ fn prelude_struct_tparams(name: str, out: *Vec<str>) {
     if str::eq(name, "Slice") { out.push("T"); }
     if str::eq(name, "Range") { out.push("T"); }
     if str::eq(name, "RangeInclusive") { out.push("T"); }
+    if str::eq(name, "Vec") { out.push("T"); }
+    if str::eq(name, "VecIter") { out.push("T"); }
 }
 fn register_prelude_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
                                   args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
@@ -1409,9 +1411,32 @@ fn register_prelude_method_use(a: Allocator, ar: *Arena, sc: *const TyScope, mpa
     if mret_is_slice(mret) { register_slice_u8(a, ar, sc); }
     return;
 }
-fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
-                         env: *const Vec<FieldTy>, midx: int, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+// A generic static prelude method (`Vec::with_capacity` -> `Vec<T>`): the
+// tparam is unreachable through the value arguments, so it is recovered from
+// the expected type's instance (the `let v: Vec<int>` annotation).
+fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                             env: *const Vec<FieldTy>, expected: Option<*const Typ>, midx: u32, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let sl = sc.sc_methods.as_slice();
+    let base = sl[midx].mi_mangled;
+    let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    match expected {
+        Option::Some(e) => bind_recv_tparams(sc, &sl[midx].mi_path, &recv_base_path(a, e), &binds)
+        | Option::None => { }
+    }
+    let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
+    let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
+    let inst = fn_instance_mangled(a, ar, base, &oargs);
+    if sl[midx].mi_prelude { register_mono_struct(a, sc, &sl[midx].mi_path); }
+    let targs = elab_args(a, ar, g, sc, env, args);
+    return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, cret), p);
+}
+fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                         env: *const Vec<FieldTy>, expected: Option<*const Typ>, midx: int, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let sl = sc.sc_methods.as_slice();
+    if sl[midx as u32].mi_tparams.length() > 0 as u32 {
+        return mk_static_gen_method_call(a, ar, g, sc, env, expected, midx as u32, args, p);
+    }
     let mm = sl[midx as u32].mi_mangled;
     let mret = sl[midx as u32].mi_ret;
     if sl[midx as u32].mi_prelude { register_prelude_method_use(a, ar, sc, &sl[midx as u32].mi_path, mret); }
@@ -1578,7 +1603,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         }
         let midx = find_method_idx(sc.sc_methods, &init, last);
         if midx >= 0 as int {
-            return mk_static_method_call(a, ar, g, sc, env, midx, args, p);
+            return mk_static_method_call(a, ar, g, sc, env, expected, midx, args, p);
         }
         return elab_qualified_call(a, ar, g, sc, env, &init, last, args, p);
     }
@@ -1759,7 +1784,10 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
-    queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path);
+    // A prelude method's instance body is injected (filtered from the dump), so
+    // register the receiver type for the footer but queue no drain.
+    if sl[midx].mi_prelude { register_mono_struct(a, sc, &sl[midx].mi_path); }
+    else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
     let targs = elab_args(a, ar, g, sc, env, args);
     let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
@@ -3105,9 +3133,51 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
             out.push(Tstmt::TWhile { cond: cond, body: tbody, post: post });
         }
         | _other => {
-            out.push(Tstmt::TExprStmt(defer_expr(ar, zero_pos())));
+            elab_for_iter(a, ar, g, sc, gensym, env, ret, k, fv, iter_var, range, body, out);
         }
     }
+}
+
+// `for x in <iter>` over a non-range value lowers to the iterator protocol:
+//   let __it = <iter>;
+//   while true { match __it.next() { Some(x) => { <body> } None => break } }
+// The iterator's `next()` is a normal prelude method, so the match / method
+// dispatch is reused wholesale.
+fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>,
+                 ret: Option<*const Typ>, k: u32, fv: str, iter_var: str, range: *const Expr, body: *const Vec<Stmt>, out: *Vec<Tstmt>) {
+    let itname = gensym_name(a, ar, "__it", k);
+    let trange = elab_expr(a, ar, g, sc, env, none_ty(), range);
+    env.push(FieldTy { name: itname, ty: trange.ty });
+    out.push(Tstmt::TLet { name: itname, value: trange, pos: zero_pos() });
+    // `__it.next()`
+    let recv = ast_node(ar, Expr::Var(itname, zero_pos()));
+    let no_args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let nextcall = ast_node(ar, Expr::MethodCall { receiver: recv, name: "next", args: no_args, pos: zero_pos() });
+    // `Some(__fv) => { <body, x renamed to __fv> }`
+    let rbody = subst_body(a, ar, iter_var, fv, body);
+    let mut some_binds: Vec<Pattern> = Vec::with_capacity(a, 8 as u32);
+    some_binds.push(Pattern::PVar(fv, zero_pos()));
+    let mut opt_path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    opt_path.push("Option");
+    let some_pat = Pattern::PVariant { tname: copy_strs(a, &opt_path), variant: "Some", binds: PatBinds::PBTuple(some_binds), pos: zero_pos() };
+    let some_body = ast_node(ar, Expr::Block(rbody, zero_pos()));
+    let no_guard: Option<*const Expr> = Option::None;
+    // `None => { break }`
+    let none_binds: Vec<Pattern> = Vec::with_capacity(a, 8 as u32);
+    let none_pat = Pattern::PVariant { tname: copy_strs(a, &opt_path), variant: "None", binds: PatBinds::PBTuple(none_binds), pos: zero_pos() };
+    let mut break_stmts: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    break_stmts.push(Stmt::Break(zero_pos()));
+    let none_body = ast_node(ar, Expr::Block(break_stmts, zero_pos()));
+    let mut arms: Vec<MatchArm> = Vec::with_capacity(a, 8 as u32);
+    arms.push(MatchArm { pat: some_pat, guard: no_guard, body: some_body, arm_pos: zero_pos() });
+    arms.push(MatchArm { pat: none_pat, guard: no_guard, body: none_body, arm_pos: zero_pos() });
+    let matchexpr = ast_node(ar, Expr::Match { scrutinee: nextcall, arms: arms, pos: zero_pos() });
+    let mut wbody_ast: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    wbody_ast.push(Stmt::ExprStmt(matchexpr));
+    let twbody = elab_body(a, ar, g, sc, gensym, env, ret, &wbody_ast);
+    let truecond = te_node(ar, TexprNode::TBoolLit(true), t_bool(ar), zero_pos());
+    let wpost = empty_tstmts(a);
+    out.push(Tstmt::TWhile { cond: truecond, body: twbody, post: wpost });
 }
 
 // Bind each name of a `let (a, b) = …` to the corresponding tuple element
@@ -3754,6 +3824,13 @@ fn prelude_struct_info(a: Allocator, ar: *Arena, out: *Vec<StructField>) {
     push_prelude_field(a, "Range", "hi", ty_node(ar, Typ::TVar("T")), out);
     push_prelude_field(a, "RangeInclusive", "lo", ty_node(ar, Typ::TVar("T")), out);
     push_prelude_field(a, "RangeInclusive", "hi", ty_node(ar, Typ::TVar("T")), out);
+    push_prelude_field(a, "Vec", "ptr", ty_node(ar, Typ::TOwnPtr(ty_node(ar, Typ::TVar("T")))), out);
+    push_prelude_field(a, "Vec", "count", t_u32(ar), out);
+    push_prelude_field(a, "Vec", "cap", t_u32(ar), out);
+    push_prelude_field(a, "Vec", "alloc", ty_node(ar, Typ::TStruct(allocator_path(a))), out);
+    push_prelude_field(a, "VecIter", "data", ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TVar("T")))), out);
+    push_prelude_field(a, "VecIter", "len", t_u32(ar), out);
+    push_prelude_field(a, "VecIter", "pos", t_u32(ar), out);
 }
 
 // A copy of the scope with a different tparam list — used to resolve a
@@ -4029,6 +4106,18 @@ fn ann_struct(a: Allocator, ar: *Arena, name: str) -> *const TypeAnn {
 fn ann_own_t(a: Allocator, ar: *Arena) -> *const TypeAnn {
     return ann_node(ar, TypeAnn::TyOwnPtr(ann_struct(a, ar, "T")));
 }
+fn ann_u32(ar: *Arena) -> *const TypeAnn {
+    return ann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 });
+}
+// `Name<Arg>` as an annotation — a generic application over a single tparam
+// name (`Option<T>`, `Slice<T>`, `VecIter<T>`).
+fn ann_app1(a: Allocator, ar: *Arena, name: str, argname: str) -> *const TypeAnn {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(name);
+    let mut args: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    args.push(ann_struct(a, ar, argname));
+    return ann_node(ar, TypeAnn::TyStruct { path: path, args: args });
+}
 fn one_tparam(a: Allocator) -> Vec<str> {
     let mut t: Vec<str> = Vec::with_capacity(a, 8 as u32);
     t.push("T");
@@ -4068,6 +4157,28 @@ fn push_prelude_method_ng(a: Allocator, ar: *Arena, target: str, name: str, has_
         mi_tparams: empty_tp, mi_params: empty_params, mi_ret_ann: none_ann,
         mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         mi_struct_gen: false,
+    });
+}
+// A struct-generic prelude method (`Vec<T>::push` / `get` / ...): its impl
+// tparam `T` is bound from the receiver instance and its body is prelude-
+// injected, so it carries `mi_struct_gen` + `mi_prelude`.  The return
+// annotation (`Option<T>` / `Slice<T>` / ...) resolves under that binding.
+fn push_prelude_sg_method(a: Allocator, ar: *Arena, target: str, name: str, has_self: bool,
+                          self_ptr: bool, self_const: bool, ret_ann: Option<*const TypeAnn>, out: *Vec<MethodInfo>) {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(target);
+    let mut tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    tp.push("T");
+    let empty_params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    // A static generic method (no self, e.g. `with_capacity`) is not
+    // receiver-dispatched; it recovers its tparam from the expected type.
+    out.push(MethodInfo {
+        mi_path: path, mi_name: name,
+        mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
+        mi_ret: none_ty(), mi_has_self: has_self, mi_self_ptr: self_ptr, mi_self_const: self_const,
+        mi_tparams: tp, mi_params: empty_params, mi_ret_ann: ret_ann,
+        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+        mi_struct_gen: has_self,
     });
 }
 // Param-type signatures for prelude methods whose explicit arguments need
@@ -4111,6 +4222,17 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     push_prelude_method_ng(a, ar, "String", "eq", true, true, true, Option::Some(ty_node(ar, Typ::TBool)), out);
     push_prelude_method_ng(a, ar, "String", "hash", true, true, true, Option::Some(t_u32(ar)), out);
     push_prelude_method_ng(a, ar, "String", "clone", true, true, true, Option::Some(string_ty), out);
+    // Vec<T>: push (*self, x: T) / length (*const self) -> u32 / get (*const
+    // self, i) -> Option<T> / as_slice -> Slice<T> / iter -> VecIter<T>.
+    let none_ret_ann: Option<*const TypeAnn> = Option::None;
+    push_prelude_sg_method(a, ar, "Vec", "with_capacity", false, false, false, Option::Some(ann_app1(a, ar, "Vec", "T")), out);
+    push_prelude_sg_method(a, ar, "Vec", "push", true, true, false, none_ret_ann, out);
+    push_prelude_sg_method(a, ar, "Vec", "length", true, true, true, Option::Some(ann_u32(ar)), out);
+    push_prelude_sg_method(a, ar, "Vec", "get", true, true, true, Option::Some(ann_app1(a, ar, "Option", "T")), out);
+    push_prelude_sg_method(a, ar, "Vec", "as_slice", true, true, true, Option::Some(ann_app1(a, ar, "Slice", "T")), out);
+    push_prelude_sg_method(a, ar, "Vec", "iter", true, true, true, Option::Some(ann_app1(a, ar, "VecIter", "T")), out);
+    // VecIter<T>: next (*self) -> Option<T>, the iterator protocol `for` lowers to.
+    push_prelude_sg_method(a, ar, "VecIter", "next", true, true, false, Option::Some(ann_app1(a, ar, "Option", "T")), out);
 }
 
 // ===== Trait default methods =====
