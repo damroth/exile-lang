@@ -1775,6 +1775,9 @@ fn env_has_call_method(a: Allocator, sc: *const TyScope, env: *const Vec<FieldTy
         | Option::None => false
     };
 }
+fn fnptr_ret_ty(t: *const Typ) -> Option<*const Typ> {
+    return match *t { Typ::TFnPtr { params, ret } => ret | _e => none_ty() };
+}
 fn fnptr_ret_of(env: *const Vec<FieldTy>, name: str) -> Option<*const Typ> {
     return match env_lookup(env, name) {
         Option::Some(t) => match *t { Typ::TFnPtr { params, ret } => ret | _e => none_ty() }
@@ -1971,6 +1974,13 @@ fn field_call_desugar(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
 }
 fn maybe_field_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                     expected: Option<*const Typ>, recv: *const Expr, fty: *const Typ, name: str, args: *const Vec<*const Expr>, p: Pos) -> Option<*const Texpr> {
+    // A fn-ptr field is called indirectly: `hooks.on_x(0)` -> an indirect call
+    // through the field access.
+    if is_fnptr_ty(fty) {
+        let tfld = elab_field_access(a, ar, g, sc, env, recv, name, p);
+        let targs = elab_args(a, ar, g, sc, env, args);
+        return Option::Some(te_node(ar, TexprNode::TIndirectCall { fn_expr: tfld, args: targs }, ret_or_void(ar, fnptr_ret_ty(fty)), p));
+    }
     if find_method_idx(sc.sc_methods, &recv_base_path(a, fty), "call") >= 0 as int {
         return Option::Some(elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::FieldAccess(recv, name, p)), "call", args, p));
     }
