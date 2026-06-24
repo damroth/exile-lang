@@ -1746,6 +1746,11 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: fr_args }, t_i32(ar), p);
     }
     if env_is_fnptr(env, name) { return mk_fnptr_call(a, ar, g, sc, env, name, args, p); }
+    // DR-018 call-desugar: `f(x)` on a local binding whose type implements an
+    // `FnN` trait (it has a `call` method) lowers to `f.call(x)`.
+    if env_has_call_method(a, sc, env, name) {
+        return elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::Var(name, p)), "call", args, p);
+    }
     let gfi = gen_fn_lookup(sc.sc_genfns, name);
     if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, expected, args, p); }
     return elab_user_or_defer(a, ar, g, sc, env, name, args, p);
@@ -1759,6 +1764,14 @@ fn is_fnptr_ty(t: *const Typ) -> bool {
 fn env_is_fnptr(env: *const Vec<FieldTy>, name: str) -> bool {
     return match env_lookup(env, name) {
         Option::Some(t) => is_fnptr_ty(t)
+        | Option::None => false
+    };
+}
+// Does the local binding `name` have a type that implements an FnN trait (a
+// `call` method)?  Drives the `f(x)` -> `f.call(x)` desugar.
+fn env_has_call_method(a: Allocator, sc: *const TyScope, env: *const Vec<FieldTy>, name: str) -> bool {
+    return match env_lookup(env, name) {
+        Option::Some(t) => find_method_idx(sc.sc_methods, &recv_base_path(a, t), "call") >= 0 as int
         | Option::None => false
     };
 }
@@ -1946,6 +1959,24 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     return te_node(ar, TexprNode::TCall { mangled: inst, args: cargs }, ret_or_void(ar, iret), p);
 }
 
+// DR-019 FieldAccess call-desugar: `recv.f(args)` where `f` is a field (not a
+// method) whose type implements an FnN trait lowers to `(recv.f).call(args)`.
+fn field_call_desugar(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                      expected: Option<*const Typ>, recv: *const Expr, trecv: *const Texpr, name: str, args: *const Vec<*const Expr>, p: Pos) -> Option<*const Texpr> {
+    let none: Option<*const Texpr> = Option::None;
+    return match struct_field_ty(sc, trecv.ty, name) {
+        Option::Some(fty) => maybe_field_call(a, ar, g, sc, env, expected, recv, fty, name, args, p)
+        | Option::None => none
+    };
+}
+fn maybe_field_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                    expected: Option<*const Typ>, recv: *const Expr, fty: *const Typ, name: str, args: *const Vec<*const Expr>, p: Pos) -> Option<*const Texpr> {
+    if find_method_idx(sc.sc_methods, &recv_base_path(a, fty), "call") >= 0 as int {
+        return Option::Some(elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::FieldAccess(recv, name, p)), "call", args, p));
+    }
+    let none: Option<*const Texpr> = Option::None;
+    return none;
+}
 // `recv.m(args)` → `T__m(<adjusted recv>, args)` where `T` is the receiver's
 // (auto-dereferenced) type.  A generic method instantiates first.  Defers if
 // the method is unknown.
@@ -1954,7 +1985,12 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let trecv = elab_expr(a, ar, g, sc, env, none_ty(), recv);
     let tpath = recv_base_path(a, trecv.ty);
     let idx = find_method_idx(sc.sc_methods, &tpath, name);
-    if idx < 0 as int { return defer_expr(ar, p); }
+    if idx < 0 as int {
+        return match field_call_desugar(a, ar, g, sc, env, expected, recv, trecv, name, args, p) {
+            Option::Some(te) => te
+            | Option::None => defer_expr(ar, p)
+        };
+    }
     let sl = sc.sc_methods.as_slice();
     if sl[idx as u32].mi_struct_gen {
         return mk_struct_gen_method_call(a, ar, g, sc, env, idx as u32, trecv, args, p);
