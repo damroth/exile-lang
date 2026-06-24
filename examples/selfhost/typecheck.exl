@@ -1710,6 +1710,92 @@ fn elab_str_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     return te_node(ar, TexprNode::TCall { mangled: m, args: targs }, str_method_ret(a, ar, sc, method), p);
 }
 
+// `println(x)` / `print(x)` where `x`'s type implements `Display` (its
+// path carries an `fmt` method) lowers to the writer pattern (DR-002):
+// a temp StringBuilder renders `x` through `fmt`, a String is built, its
+// `as_str()` printed, and the String freed.  Without this the print
+// builtin only accepts scalars — Display is the user-facing surface for
+// aggregates.  The temp names ride the program-global gensym counter.
+fn display_dispatch_target(sc: *const TyScope, t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(path) => find_method_idx(sc.sc_methods, &path, "fmt") >= 0 as int
+        | Typ::TEnum(path) => find_method_idx(sc.sc_methods, &path, "fmt") >= 0 as int
+        | _e => false
+    };
+}
+
+fn tyann_node(ar: *Arena, t: TypeAnn) -> *const TypeAnn {
+    let n: *TypeAnn = ar.alloc_borrowed();
+    *n = t;
+    return n as *const TypeAnn;
+}
+
+fn elab_display_println(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                        env: *const Vec<FieldTy>, expected: Option<*const Typ>, print_name: str,
+                        user_arg: *const Expr, p: Pos) -> *const Texpr {
+    let k = *sc.sc_gensym;
+    *sc.sc_gensym = *sc.sc_gensym + 1 as u32;
+    let sb_name = gensym_name(a, ar, "__disp_sb_", k);
+    let s_name = gensym_name(a, ar, "__disp_s_", k);
+    // Building a String through the writer pattern materializes its
+    // `Slice<u8>` view (the prelude `as_str` / `as_slice` surface), which
+    // the oracle's String prelude bodies always pull into the footer.
+    register_slice_u8(a, ar, sc);
+
+    // StringBuilder::with_capacity(default_allocator(), 32 as u32)
+    let mut alloc_callee: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    alloc_callee.push("default_allocator");
+    let no_args0: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let make_alloc = ast_node(ar, Expr::Call { callee: alloc_callee, args: no_args0, pos: p });
+    let u32ann = tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 });
+    let cap_arg = ast_node(ar, Expr::Cast(ast_node(ar, Expr::IntLit(32 as int, p)), u32ann, p));
+    let mut sb_callee: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    sb_callee.push("StringBuilder");
+    sb_callee.push("with_capacity");
+    let mut sb_args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    sb_args.push(make_alloc);
+    sb_args.push(cap_arg);
+    let sb_init = ast_node(ar, Expr::Call { callee: sb_callee, args: sb_args, pos: p });
+
+    // user_arg.fmt(&sb)
+    let sb_ref = ast_node(ar, Expr::Ref(ast_node(ar, Expr::Var(sb_name, p)), p));
+    let mut fmt_args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    fmt_args.push(sb_ref);
+    let fmt_call = ast_node(ar, Expr::MethodCall { receiver: user_arg, name: "fmt", args: fmt_args, pos: p });
+
+    // String::build(sb)
+    let mut build_callee: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    build_callee.push("String");
+    build_callee.push("build");
+    let mut build_args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    build_args.push(ast_node(ar, Expr::Var(sb_name, p)));
+    let build_call = ast_node(ar, Expr::Call { callee: build_callee, args: build_args, pos: p });
+
+    // println(s.as_str())
+    let no_args1: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let as_str_call = ast_node(ar, Expr::MethodCall { receiver: ast_node(ar, Expr::Var(s_name, p)), name: "as_str", args: no_args1, pos: p });
+    let mut print_callee: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    print_callee.push(print_name);
+    let mut print_args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    print_args.push(as_str_call);
+    let inner_print = ast_node(ar, Expr::Call { callee: print_callee, args: print_args, pos: p });
+
+    // s.free()
+    let no_args2: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let free_call = ast_node(ar, Expr::MethodCall { receiver: ast_node(ar, Expr::Var(s_name, p)), name: "free", args: no_args2, pos: p });
+
+    let no_ann: Option<*const TypeAnn> = Option::None;
+    let mut block_stmts: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    block_stmts.push(Stmt::Let { name: sb_name, value: sb_init, ty_ann: no_ann, is_mut: true, pos: p });
+    block_stmts.push(Stmt::ExprStmt(fmt_call));
+    block_stmts.push(Stmt::Let { name: s_name, value: build_call, ty_ann: no_ann, is_mut: false, pos: p });
+    block_stmts.push(Stmt::ExprStmt(inner_print));
+    block_stmts.push(Stmt::ExprStmt(free_call));
+    block_stmts.push(Stmt::Tail(ast_node(ar, Expr::IntLit(0 as int, p))));
+    let block = ast_node(ar, Expr::Block(block_stmts, p));
+    return elab_expr(a, ar, g, sc, env, expected, block);
+}
+
 fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     if callee.length() != 1 as u32 {
@@ -1734,7 +1820,17 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     }
     let name = callee.get(0 as u32) orelse "";
     if str::eq(name, "println") || str::eq(name, "print") {
+        // Elaborate the args once (avoids double side effects — e.g. a
+        // lambda argument would otherwise lift twice); then if the sole
+        // arg is a Display aggregate, re-route through the writer pattern.
         let targs = elab_args(a, ar, g, sc, env, args);
+        if targs.length() == 1 as u32 {
+            let tsl = targs.as_slice();
+            if display_dispatch_target(sc, tsl[0 as u32].ty) {
+                let asl = args.as_slice();
+                return elab_display_println(a, ar, g, sc, env, expected, name, asl[0 as u32], p);
+            }
+        }
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: targs }, t_i32(ar), p);
     }
     if str::eq(name, "type_name") {
