@@ -167,6 +167,16 @@ struct StructTP {
     stp_name: str,
     stp_params: Vec<str>,
 }
+// A trait impl's associated-type binding: `impl Iterator for Count { type
+// Item = int }` records (Count, Item) -> int.  `ab_tparams` are the impl's
+// type parameters (for a generic `type Item = T`, projected through the
+// concrete instance's args).
+struct AssocBind {
+    ab_target: str,
+    ab_name: str,
+    ab_ty: *const TypeAnn,
+    ab_tparams: Vec<str>,
+}
 
 struct TyScope {
     sc_structs: *const Vec<str>,
@@ -193,6 +203,7 @@ struct TyScope {
     sc_geninsts: *Vec<str>,
     sc_etps: *const Vec<EnumTP>,
     sc_stps: *const Vec<StructTP>,
+    sc_assoc: *const Vec<AssocBind>,
     sc_modpath: *const Vec<str>,
     // The enclosing fn's resolved return type — `try` reads it to build the
     // early-return value on the enclosing fn's own Option/Result instance.
@@ -233,6 +244,7 @@ struct ProgIdx {
     pi_geninsts: *Vec<str>,
     pi_etps: *const Vec<EnumTP>,
     pi_stps: *const Vec<StructTP>,
+    pi_assoc: *const Vec<AssocBind>,
     pi_modpath: *const Vec<str>,
     pi_gsigs: *const Vec<FnSig>,
     pi_xstructs: *const Vec<str>,
@@ -642,6 +654,7 @@ fn ty_has_tvar(t: *const Typ) -> bool {
         | Typ::TOwnPtr(i) => ty_has_tvar(i)
         | Typ::TStructApp { path: _p, args } => tys_have_tvar(&args)
         | Typ::TEnumApp { path: _p2, args: a2 } => tys_have_tvar(&a2)
+        | Typ::TAssocProj { head, assoc: _as } => ty_has_tvar(head)
         | _e => false
     };
 }
@@ -682,6 +695,32 @@ fn register_user_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope,
     let binds = struct_instance_binds(a, sc.sc_stps, path_last(base), args);
     register_instance_fields(a, ar, sc, base, &binds, ipath);
 }
+// Project `bound_ty::assoc` through the impl that binds it: `Count::Item` ->
+// the `type Item = int` RHS resolved (i32); a generic `type Item = T` is
+// resolved through the concrete instance's args (`Gen_i32::Item` -> i32).
+fn project_assoc(a: Allocator, ar: *Arena, sc: *const TyScope, bound_ty: *const Typ, assoc: str) -> *const Typ {
+    let inst_path = recv_base_path(a, bound_ty);
+    let inst_last = path_last(&inst_path);
+    let n = sc.sc_assoc.length();
+    let sl = sc.sc_assoc.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].ab_name, assoc) {
+            if str::eq(sl[i].ab_target, inst_last) || inst_of_base(inst_last, sl[i].ab_target) {
+                let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+                if sl[i].ab_tparams.length() > 0 as u32 {
+                    let mut base: Vec<str> = Vec::with_capacity(a, 8 as u32);
+                    base.push(sl[i].ab_target);
+                    bind_recv_tparams(sc, &base, &inst_path, &binds);
+                }
+                let cscope = scope_with_tbinds(sc, &sl[i].ab_tparams, &binds);
+                return resolve_sig_ty(a, ar, &cscope, sl[i].ab_ty);
+            }
+        }
+        i = i + 1 as u32;
+    }
+    return ty_node(ar, Typ::TCVoid);
+}
 fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
                     path: *const Vec<str>, args: *const Vec<*const TypeAnn>) -> *const Typ {
     let plen = path.length();
@@ -692,6 +731,15 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         // concrete type; otherwise it is the abstract `TVar` (skeleton).
         if has_tbind(sc, last) { return get_tbind(ar, sc, last); }
         if name_in(sc.sc_tparams, last) { return ty_node(ar, Typ::TVar(last)); }
+    }
+    // `Head::Assoc` where Head is a type parameter (or a bound one) is an
+    // associated-type projection: in an instance the head is concrete and the
+    // projection resolves through the impl's `type Assoc = ..`; in a skeleton
+    // it stays a `TAssocProj` marker, projected at instance time.
+    if plen == 2 as u32 && args.length() == 0 as u32 {
+        let head = psl[0 as u32];
+        if has_tbind(sc, head) { return project_assoc(a, ar, sc, get_tbind(ar, sc, head), last); }
+        if name_in(sc.sc_tparams, head) { return ty_node(ar, Typ::TAssocProj { head: ty_node(ar, Typ::TVar(head)), assoc: last }); }
     }
     let nargs = args.length();
     if nargs == 0 as u32 {
@@ -1550,7 +1598,11 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     queue_gen_instance(a, sc, gi, &binds, inst);
-    let iret = subst_opt_ret(ar, &binds, cret);
+    // Re-resolve the return with the inferred bindings IN SCOPE so a generic
+    // application (`Vec<T>`) or assoc projection (`Option<I::Item>`) lowers to
+    // its concrete instance, not a `subst` that leaves the app abstract.
+    let icscope = scope_with_tbinds(sc, &gsl[gfidx as u32].gn_tparams, &binds);
+    let iret = resolve_sig_ret(a, ar, &icscope, gsl[gfidx as u32].gn_ret);
     return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, iret), p);
 }
 
@@ -3548,7 +3600,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases , sc_is_main: str::eq(mangled, "main") };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases , sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -3843,7 +3895,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_modpath: base.sc_modpath,
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -3863,7 +3915,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_modpath: base.sc_modpath,
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -3881,7 +3933,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_modpath: base.sc_modpath,
         sc_ret: ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -4378,6 +4430,33 @@ fn collect_struct_tps(a: Allocator, items: *const Vec<Item>, out: *Vec<StructTP>
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n { collect_struct_tps_one(a, &sl[i], out); i = i + 1 as u32; }
+    return;
+}
+fn push_one_assoc(a: Allocator, target: str, name: str, ty: *const TypeAnn, tparams: *const Vec<str>, out: *Vec<AssocBind>) {
+    out.push(AssocBind { ab_target: target, ab_name: name, ab_ty: ty, ab_tparams: copy_strs(a, tparams) });
+}
+fn push_impl_assoc(a: Allocator, ib: *const ImplBlock, out: *Vec<AssocBind>) {
+    let n = ib.iassoc.length();
+    let sl = ib.iassoc.as_slice();
+    let tgt = path_last(&ib.itarget);
+    let mut i = 0 as u32;
+    while i < n {
+        push_one_assoc(a, tgt, sl[i].name, sl[i].ty, &ib.itparams, out);
+        i = i + 1 as u32;
+    }
+}
+fn collect_assoc_binds_one(a: Allocator, it: *const Item, out: *Vec<AssocBind>) {
+    match *it {
+        Item::Impl(ib) => { push_impl_assoc(a, &ib, out); }
+        | Item::Module(md) => { collect_assoc_binds(a, &md.mitems, out); }
+        | _e => { }
+    }
+}
+fn collect_assoc_binds(a: Allocator, items: *const Vec<Item>, out: *Vec<AssocBind>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_assoc_binds_one(a, &sl[i], out); i = i + 1 as u32; }
 }
 fn prelude_enum_tps(a: Allocator, out: *Vec<EnumTP>) {
     let mut t1: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -4649,6 +4728,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     prelude_enum_tps(a, &etps);
     let mut stps: Vec<StructTP> = Vec::with_capacity(a, 8 as u32);
     collect_struct_tps(a, items, &stps);
+    let mut assoc_binds: Vec<AssocBind> = Vec::with_capacity(a, 8 as u32);
+    collect_assoc_binds(a, items, &assoc_binds);
     // Fn parameter-type index (for `own *T` → `*T` arg coercion); populated
     // below once the scope can resolve param types, but referenced by the
     // base scope now (collecting it doesn't read the index back).
@@ -4657,7 +4738,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases , sc_is_main: false };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases , sc_is_main: false };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -4680,7 +4761,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
