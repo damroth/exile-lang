@@ -172,6 +172,7 @@ struct StructTP {
 // type parameters (for a generic `type Item = T`, projected through the
 // concrete instance's args).
 struct AssocBind {
+    ab_trait: str,
     ab_target: str,
     ab_name: str,
     ab_ty: *const TypeAnn,
@@ -560,6 +561,11 @@ fn allocator_path(a: Allocator) -> Vec<str> {
     p.push("Allocator");
     return p;
 }
+fn one_path(a: Allocator, name: str) -> Vec<str> {
+    let mut p: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    p.push(name);
+    return p;
+}
 fn register_mono_struct(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) {
     sc.sc_mono_structs.push(copy_strs(a, ipath));
 }
@@ -784,6 +790,10 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // first seen as a type (a method-return instance never built by a literal).
     register_prelude_struct_fields(a, ar, sc, last, &resolved, &ipath);
     register_user_struct_fields(a, ar, sc, path, &resolved, &ipath);
+    // A `Vec<T>` instance always carries its `Slice<T>` view (Vec's accessor
+    // methods return one), so the slice instance rides in the footer even when
+    // no `as_slice()` is called.
+    if str::eq(last, "Vec") { register_slice_of(a, ar, sc, &resolved); }
     return ty_node(ar, Typ::TStruct(ipath));
 }
 
@@ -1610,6 +1620,58 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
 // `Slice<u8>` view (registering the instance so `.len` / `[i]` resolve).
 fn t_u8(ar: *Arena) -> *const Typ {
     return ty_node(ar, Typ::TInt(IntKind { is_signed: false, width: IntWidth::W8 }));
+}
+// Register `Slice<elem>` (the first arg of a `Vec<elem>`) so the slice view a
+// Vec's accessors yield rides in the footer.
+fn register_slice_of(a: Allocator, ar: *Arena, sc: *const TyScope, args: *const Vec<*const Typ>) {
+    if args.length() == 0 as u32 { return; }
+    let sl = args.as_slice();
+    let mut sargs: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    sargs.push(sl[0 as u32]);
+    let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    skel.push("Slice");
+    let ipath = instance_path(a, ar, &skel, &sargs);
+    register_mono_struct(a, sc, &ipath);
+    register_prelude_struct_fields(a, ar, sc, "Slice", &sargs, &ipath);
+}
+// Register `Name<arg>` as a monomorphic instance (`Take<Count>` -> Take_ex_Count).
+fn register_app_mono(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, arg_ty: *const Typ) {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(name);
+    let mut args: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    args.push(arg_ty);
+    let ipath = instance_path(a, ar, &path, &args);
+    register_mono_struct(a, sc, &ipath);
+}
+// Every concrete `impl Iterator for X` carries the Self-pinned return types of
+// Iterator's default methods in the footer, even when none are called: `take`
+// -> Take<X>, `enumerate` -> Enumerate<X>, `collect` -> Vec<X::Item> (+ its
+// Slice view) over an Allocator.  Map / Filter need the call-site `F`, so they
+// stay base-only until used.
+fn register_iter_footprint(a: Allocator, ar: *Arena, sc: *const TyScope, target: str, item_ty: *const Typ) {
+    let tgt_ty = ty_node(ar, Typ::TStruct(one_path(a, target)));
+    register_app_mono(a, ar, sc, "Take", tgt_ty);
+    register_app_mono(a, ar, sc, "Enumerate", tgt_ty);
+    let mut vargs: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    vargs.push(item_ty);
+    register_app_mono(a, ar, sc, "Vec", item_ty);
+    register_slice_of(a, ar, sc, &vargs);
+    register_mono_struct(a, sc, &allocator_path(a));
+}
+fn register_iter_footprints(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, assoc: *const Vec<AssocBind>) {
+    // Only the prelude Iterator carries combinator defaults.  A user-declared
+    // `trait Iterator` shadows it (associated_types declares its own with no
+    // defaults), so its impls get no footprint.
+    if find_trait_idx(items, "Iterator") >= 0 as int { return; }
+    let n = assoc.length();
+    let sl = assoc.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].ab_trait, "Iterator") && sl[i].ab_tparams.length() == 0 as u32 {
+            register_iter_footprint(a, ar, sc, sl[i].ab_target, resolve_sig_ty(a, ar, sc, sl[i].ab_ty));
+        }
+        i = i + 1 as u32;
+    }
 }
 fn register_slice_u8(a: Allocator, ar: *Arena, sc: *const TyScope) -> *const Typ {
     let mut args: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
@@ -4432,16 +4494,17 @@ fn collect_struct_tps(a: Allocator, items: *const Vec<Item>, out: *Vec<StructTP>
     while i < n { collect_struct_tps_one(a, &sl[i], out); i = i + 1 as u32; }
     return;
 }
-fn push_one_assoc(a: Allocator, target: str, name: str, ty: *const TypeAnn, tparams: *const Vec<str>, out: *Vec<AssocBind>) {
-    out.push(AssocBind { ab_target: target, ab_name: name, ab_ty: ty, ab_tparams: copy_strs(a, tparams) });
+fn push_one_assoc(a: Allocator, trname: str, target: str, name: str, ty: *const TypeAnn, tparams: *const Vec<str>, out: *Vec<AssocBind>) {
+    out.push(AssocBind { ab_trait: trname, ab_target: target, ab_name: name, ab_ty: ty, ab_tparams: copy_strs(a, tparams) });
 }
 fn push_impl_assoc(a: Allocator, ib: *const ImplBlock, out: *Vec<AssocBind>) {
     let n = ib.iassoc.length();
     let sl = ib.iassoc.as_slice();
     let tgt = path_last(&ib.itarget);
+    let trn = impl_trait_name(ib);
     let mut i = 0 as u32;
     while i < n {
-        push_one_assoc(a, tgt, sl[i].name, sl[i].ty, &ib.itparams, out);
+        push_one_assoc(a, trn, tgt, sl[i].name, sl[i].ty, &ib.itparams, out);
         i = i + 1 as u32;
     }
 }
@@ -4523,7 +4586,12 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             // one still resolves via its `mod__name` path key.
             let lk = if f.is_extern && !is_top { mangle_path(a, ar, path, f.name) } else { collect_fn_mangle(a, ar, &f, path) };
             let em = if f.is_extern { f.c_name } else { lk };
-            g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, sc, f.ret_ty),
+            // Resolve the return under the fn's own type parameters so a generic
+            // fn's `Option<I::Item>` stays an assoc-projection marker (the real
+            // result types come per-instance via elab_gen_call) instead of
+            // mangling a bogus `Option_I__Item` instance into the footer.
+            let fsc = scope_with_tparams(sc, &f.tparams);
+            g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty),
                               is_const: false, is_top: is_top });
         }
         | Item::Const(c) => {
@@ -4744,6 +4812,9 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let globals = collect_globals(a, ar, &base_scope, items);
     collect_fn_sigs_into(a, ar, &base_scope, items, &empty_tp, &gsigs);
     register_prelude_sigs(a, ar, &gsigs);
+    // Every concrete `impl Iterator for X` eagerly carries its default
+    // methods' Self-pinned return types in the footer.
+    register_iter_footprints(a, ar, &base_scope, items, &assoc_binds);
     // Struct field index + enum variant/field index + method index, carried
     // in every fn's body scope so `s.field`, struct/enum literals, variant
     // patterns and method calls type-check.
