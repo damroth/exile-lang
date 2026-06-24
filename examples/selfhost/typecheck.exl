@@ -178,6 +178,16 @@ struct LiftedLambda {
     ll_mangled: str,
     ll_name: str,
     ll_expr: *const Expr,
+    // ll_kind 0 = A1 captureless lambda (ll_expr is the `Lambda` node, lifted
+    // at elab time); 1 = A2 capturing closure synthesised by the pre-pass
+    // (ll_expr is the capture-substituted `call` body).
+    ll_kind: int,
+    ll_closure: str,           // A2: the `__closure_N` env-struct name
+    ll_params: Vec<FieldDef>,  // A2: the lambda's own params (call gets self + these)
+    ll_ret: Option<*const TypeAnn>,
+    ll_caps: Vec<str>,         // A2: captured names, in struct-field order
+    ll_brefs: Vec<str>,        // A2: subset of ll_caps captured by-ref (`[&name]`, DR-033)
+    ll_lambda: *const Expr,    // A2: the original `Lambda` node, matched at elab time
 }
 struct AssocBind {
     ab_trait: str,
@@ -3100,8 +3110,231 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::New { tname, fields, base, alloc } => elab_new_struct(a, ar, g, sc, env, &tname, &fields, base, alloc, p)
         | Expr::NewEnum { tname, args, alloc } => elab_new_enum(a, ar, g, sc, env, &tname, &args, alloc, p)
         | Expr::Range { lo, hi, inclusive } => elab_range_value(a, ar, g, sc, env, lo, hi, inclusive, p)
-        | Expr::Lambda { params, ret_ty, body, captures } => elab_lambda(a, ar, sc, e, &params, ret_ty, p)
+        | Expr::Lambda { params, ret_ty, body, captures } => elab_lambda(a, ar, g, sc, env, e, &params, ret_ty, p)
         | _other => defer_expr(ar, p)
+    };
+}
+
+// ===== A2 capturing closures (DR-024 / DR-033) =====
+//
+// A lambda referencing an outer binding can't decay to a bare C function
+// pointer — the referenced value has to travel with it.  Mirroring the
+// oracle's `expand_lambdas`, a capturing lambda becomes an env struct
+// `__closure_N { caps.. }` implementing `Fn{arity}` (a `call` method whose
+// body is the lambda body with each capture rewritten to `self.<name>`),
+// and the lambda expression itself becomes a struct literal building the
+// env from the surrounding scope.  Unlike the oracle (a pre-typecheck
+// pass with no types), the self-host elaborates lambdas in place, so a
+// capture's type comes straight from the live `env`.
+
+// Free variables of an expression: names referenced as `Var` that are not
+// bound by `bound` (lambda params + internal lets/patterns).  Collected
+// into `acc` (dedup against existing entries).
+fn push_if_absent(out: *Vec<str>, n: str) {
+    if !name_in(out, n) { out.push(n); }
+    return;
+}
+fn pat_add_name(out: *Vec<str>, n: str) {
+    if !str::eq(n, "_") { push_if_absent(out, n); }
+    return;
+}
+fn fv_add(bound: *const Vec<str>, acc: *Vec<str>, n: str) {
+    if !name_in(bound, n) { push_if_absent(acc, n); }
+    return;
+}
+fn copy_tyanns(a: Allocator, src: *const Vec<*const TypeAnn>) -> Vec<*const TypeAnn> {
+    let mut out: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    let n = src.length();
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn fv_exprs(a: Allocator, bound: *const Vec<str>, es: *const Vec<*const Expr>, acc: *Vec<str>) {
+    let n = es.length();
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < n { fv_expr(a, bound, sl[i], acc); i = i + 1 as u32; }
+}
+fn fv_opt(a: Allocator, bound: *const Vec<str>, oe: Option<*const Expr>, acc: *Vec<str>) {
+    match oe { Option::Some(e) => fv_expr(a, bound, e, acc) | Option::None => {} }
+}
+fn fv_fields(a: Allocator, bound: *const Vec<str>, fields: *const Vec<Field>, acc: *Vec<str>) {
+    let n = fields.length();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < n { fv_expr(a, bound, sl[i].value, acc); i = i + 1 as u32; }
+}
+fn fv_enum_args(a: Allocator, bound: *const Vec<str>, args: *const EnumLitArgs, acc: *Vec<str>) {
+    match *args {
+        EnumLitArgs::EATuple(es) => fv_exprs(a, bound, &es, acc)
+        | EnumLitArgs::EAStruct(fields) => fv_fields(a, bound, &fields, acc)
+    }
+}
+fn pat_names_vec(a: Allocator, pats: *const Vec<Pattern>, out: *Vec<str>) {
+    let n = pats.length();
+    let sl = pats.as_slice();
+    let mut i = 0 as u32;
+    while i < n { pat_bound_names(a, &sl[i], out); i = i + 1 as u32; }
+}
+fn pat_names_fieldpats(a: Allocator, fps: *const Vec<FieldPat>, out: *Vec<str>) {
+    let n = fps.length();
+    let sl = fps.as_slice();
+    let mut i = 0 as u32;
+    while i < n { pat_bound_names(a, &sl[i].pat, out); i = i + 1 as u32; }
+}
+fn pat_bound_names(a: Allocator, pat: *const Pattern, out: *Vec<str>) {
+    match *pat {
+        Pattern::PVar(n, _q) => pat_add_name(out, n)
+        | Pattern::PVariant { tname, variant, binds } => {
+            match binds {
+                PatBinds::PBTuple(ps) => pat_names_vec(a, &ps, out)
+                | PatBinds::PBStruct(fps) => pat_names_fieldpats(a, &fps, out)
+            }
+        }
+        | Pattern::POr(alts, _q) => pat_names_vec(a, &alts, out)
+        | _other => {}
+    }
+}
+fn fv_arms(a: Allocator, bound: *const Vec<str>, arms: *const Vec<MatchArm>, acc: *Vec<str>) {
+    let n = arms.length();
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let mut b = copy_strs(a, bound);
+        pat_bound_names(a, &sl[i].pat, &b);
+        match sl[i].guard { Option::Some(ge) => fv_expr(a, &b, ge, acc) | Option::None => {} }
+        fv_expr(a, &b, sl[i].body, acc);
+        i = i + 1 as u32;
+    }
+}
+fn fv_else(a: Allocator, bound: *const Vec<str>, else_blk: Option<Vec<Stmt>>, acc: *Vec<str>) {
+    match else_blk { Option::Some(blk) => fv_stmts(a, bound, &blk, acc) | Option::None => {} }
+}
+fn fv_lambda(a: Allocator, bound: *const Vec<str>, params: *const Vec<FieldDef>, body: *const Expr, acc: *Vec<str>) {
+    let mut b = copy_strs(a, bound);
+    let n = params.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < n { b.push(sl[i].name); i = i + 1 as u32; }
+    fv_expr(a, &b, body, acc);
+}
+fn fv_expr(a: Allocator, bound: *const Vec<str>, e: *const Expr, acc: *Vec<str>) {
+    match *e {
+        Expr::Var(n, _q) => fv_add(bound, acc, n)
+        | Expr::Neg(s, _q) => fv_expr(a, bound, s, acc)
+        | Expr::BitNot(s, _q) => fv_expr(a, bound, s, acc)
+        | Expr::Not(s, _q) => fv_expr(a, bound, s, acc)
+        | Expr::Try(s, _q) => fv_expr(a, bound, s, acc)
+        | Expr::Cast(s, _t, _q) => fv_expr(a, bound, s, acc)
+        | Expr::FieldAccess(s, _f, _q) => fv_expr(a, bound, s, acc)
+        | Expr::Ref(s, _q) => fv_expr(a, bound, s, acc)
+        | Expr::Deref(s, _q) => fv_expr(a, bound, s, acc)
+        | Expr::BinOp(_op, l, r, _q) => { fv_expr(a, bound, l, acc); fv_expr(a, bound, r, acc); }
+        | Expr::Orelse(l, r, _q) => { fv_expr(a, bound, l, acc); fv_expr(a, bound, r, acc); }
+        | Expr::Index { base, index } => { fv_expr(a, bound, base, acc); fv_expr(a, bound, index, acc); }
+        | Expr::Range { lo, hi, inclusive } => { fv_expr(a, bound, lo, acc); fv_expr(a, bound, hi, acc); }
+        | Expr::Call { callee, args } => fv_exprs(a, bound, &args, acc)
+        | Expr::MethodCall { receiver, name, args } => { fv_expr(a, bound, receiver, acc); fv_exprs(a, bound, &args, acc); }
+        | Expr::TupleLit(es, _q) => fv_exprs(a, bound, &es, acc)
+        | Expr::ArrayLit(es, _q) => fv_exprs(a, bound, &es, acc)
+        | Expr::ArrayRepeat { value, count } => { fv_expr(a, bound, value, acc); fv_expr(a, bound, count, acc); }
+        | Expr::StructLit { tname, fields, base } => { fv_fields(a, bound, &fields, acc); fv_opt(a, bound, base, acc); }
+        | Expr::New { tname, fields, base, alloc } => { fv_fields(a, bound, &fields, acc); fv_opt(a, bound, base, acc); fv_opt(a, bound, alloc, acc); }
+        | Expr::NewEnum { tname, args, alloc } => { fv_exprs(a, bound, &args, acc); fv_opt(a, bound, alloc, acc); }
+        | Expr::EnumLit { tname, variant, args } => fv_enum_args(a, bound, &args, acc)
+        | Expr::Match { scrutinee, arms } => { fv_expr(a, bound, scrutinee, acc); fv_arms(a, bound, &arms, acc); }
+        | Expr::Block(stmts, _q) => fv_stmts(a, bound, &stmts, acc)
+        | Expr::If { cond, then_blk, else_blk } => { fv_expr(a, bound, cond, acc); fv_stmts(a, bound, &then_blk, acc); fv_else(a, bound, else_blk, acc); }
+        | Expr::Lambda { params, ret_ty, body, captures } => fv_lambda(a, bound, &params, body, acc)
+        | _other => {}
+    }
+}
+fn fv_stmts(a: Allocator, bound: *const Vec<str>, stmts: *const Vec<Stmt>, acc: *Vec<str>) {
+    let mut b = copy_strs(a, bound);
+    let n = stmts.length();
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match sl[i] {
+            Stmt::Let { name, value, ty_ann, is_mut } => { fv_expr(a, &b, value, acc); b.push(name); }
+            | Stmt::LetTuple { names, value, is_mut } => { fv_expr(a, &b, value, acc); let m = names.length(); let nsl = names.as_slice(); let mut k = 0 as u32; while k < m { b.push(nsl[k]); k = k + 1 as u32; } }
+            | Stmt::LetElse { pat, value, else_body } => { fv_expr(a, &b, value, acc); fv_stmts(a, &b, &else_body, acc); pat_bound_names(a, &pat, &b); }
+            | Stmt::Assign { path, value } => { let h = path.get(0 as u32) orelse ""; if !name_in(&b, h) { if !name_in(acc, h) { acc.push(h); } } fv_expr(a, &b, value, acc); }
+            | Stmt::AssignField { target, field, value } => { fv_expr(a, &b, target, acc); fv_expr(a, &b, value, acc); }
+            | Stmt::AssignIndex { base, index, value } => { fv_expr(a, &b, base, acc); fv_expr(a, &b, index, acc); fv_expr(a, &b, value, acc); }
+            | Stmt::AssignDeref { target, value } => { fv_expr(a, &b, target, acc); fv_expr(a, &b, value, acc); }
+            | Stmt::Return(oe, _q) => fv_opt(a, &b, oe, acc)
+            | Stmt::ExprStmt(e) => fv_expr(a, &b, e, acc)
+            | Stmt::Tail(e) => fv_expr(a, &b, e, acc)
+            | Stmt::While { cond, body } => { fv_expr(a, &b, cond, acc); fv_stmts(a, &b, &body, acc); }
+            | Stmt::For { iter_var, range, body } => { fv_expr(a, &b, range, acc); let mut bb = copy_strs(a, &b); bb.push(iter_var); fv_stmts(a, &bb, &body, acc); }
+            | Stmt::Defer { body } => fv_stmts(a, &b, &body, acc)
+            | Stmt::With { target, name, body } => { fv_expr(a, &b, target, acc); let mut wb = copy_strs(a, &b); wb.push(name); fv_stmts(a, &wb, &body, acc); }
+            | _other => {}
+        }
+        i = i + 1 as u32;
+    }
+}
+
+// Rewrite each captured `Var(name)` in the lambda body to `self.<name>`
+// (or `*self.<name>` for a by-ref capture), skipping names shadowed by a
+// tighter binding in `bound`.  Corpus lambda bodies are pure expressions
+// (no internal block / match / nested lambda), so those statement-bearing
+// forms pass through unchanged.
+fn subst_caps_one(ar: *Arena, caps: *const Vec<str>, brn: *const Vec<str>, bound: *const Vec<str>, n: str, p: Pos, orig: *const Expr) -> *const Expr {
+    if name_in(bound, n) { return orig; }
+    if !name_in(caps, n) { return orig; }
+    let selfv = ast_node(ar, Expr::Var("self", p));
+    let access = ast_node(ar, Expr::FieldAccess(selfv, n, p));
+    if name_in(brn, n) { return ast_node(ar, Expr::Deref(access, p)); }
+    return access;
+}
+fn subst_caps_exprs(a: Allocator, ar: *Arena, caps: *const Vec<str>, brn: *const Vec<str>, bound: *const Vec<str>, es: *const Vec<*const Expr>) -> Vec<*const Expr> {
+    let mut out: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let n = es.length();
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(subst_caps_expr(a, ar, caps, brn, bound, sl[i])); i = i + 1 as u32; }
+    return out;
+}
+fn subst_caps_fields(a: Allocator, ar: *Arena, caps: *const Vec<str>, brn: *const Vec<str>, bound: *const Vec<str>, fields: *const Vec<Field>) -> Vec<Field> {
+    let mut out: Vec<Field> = Vec::with_capacity(a, 8 as u32);
+    let n = fields.length();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(Field { name: sl[i].name, value: subst_caps_expr(a, ar, caps, brn, bound, sl[i].value) }); i = i + 1 as u32; }
+    return out;
+}
+fn subst_caps_opt(a: Allocator, ar: *Arena, caps: *const Vec<str>, brn: *const Vec<str>, bound: *const Vec<str>, oe: Option<*const Expr>) -> Option<*const Expr> {
+    return match oe {
+        Option::Some(e) => Option::Some(subst_caps_expr(a, ar, caps, brn, bound, e))
+        | Option::None => { let none: Option<*const Expr> = Option::None; none }
+    };
+}
+fn subst_caps_expr(a: Allocator, ar: *Arena, caps: *const Vec<str>, brn: *const Vec<str>, bound: *const Vec<str>, e: *const Expr) -> *const Expr {
+    let p = expr_pos(e);
+    return match *e {
+        Expr::Var(n, _q) => subst_caps_one(ar, caps, brn, bound, n, p, e)
+        | Expr::Neg(s, _q) => ast_node(ar, Expr::Neg(subst_caps_expr(a, ar, caps, brn, bound, s), p))
+        | Expr::BitNot(s, _q) => ast_node(ar, Expr::BitNot(subst_caps_expr(a, ar, caps, brn, bound, s), p))
+        | Expr::Not(s, _q) => ast_node(ar, Expr::Not(subst_caps_expr(a, ar, caps, brn, bound, s), p))
+        | Expr::Try(s, _q) => ast_node(ar, Expr::Try(subst_caps_expr(a, ar, caps, brn, bound, s), p))
+        | Expr::Cast(s, t, _q) => ast_node(ar, Expr::Cast(subst_caps_expr(a, ar, caps, brn, bound, s), t, p))
+        | Expr::FieldAccess(s, f, _q) => ast_node(ar, Expr::FieldAccess(subst_caps_expr(a, ar, caps, brn, bound, s), f, p))
+        | Expr::Ref(s, _q) => ast_node(ar, Expr::Ref(subst_caps_expr(a, ar, caps, brn, bound, s), p))
+        | Expr::Deref(s, _q) => ast_node(ar, Expr::Deref(subst_caps_expr(a, ar, caps, brn, bound, s), p))
+        | Expr::BinOp(op, l, r, _q) => ast_node(ar, Expr::BinOp(op, subst_caps_expr(a, ar, caps, brn, bound, l), subst_caps_expr(a, ar, caps, brn, bound, r), p))
+        | Expr::Orelse(l, r, _q) => ast_node(ar, Expr::Orelse(subst_caps_expr(a, ar, caps, brn, bound, l), subst_caps_expr(a, ar, caps, brn, bound, r), p))
+        | Expr::Index { base, index } => ast_node(ar, Expr::Index { base: subst_caps_expr(a, ar, caps, brn, bound, base), index: subst_caps_expr(a, ar, caps, brn, bound, index), pos: p })
+        | Expr::Call { callee, args } => ast_node(ar, Expr::Call { callee: copy_strs(a, &callee), args: subst_caps_exprs(a, ar, caps, brn, bound, &args), pos: p })
+        | Expr::MethodCall { receiver, name, args } => ast_node(ar, Expr::MethodCall { receiver: subst_caps_expr(a, ar, caps, brn, bound, receiver), name: name, args: subst_caps_exprs(a, ar, caps, brn, bound, &args), pos: p })
+        | Expr::TupleLit(es, _q) => ast_node(ar, Expr::TupleLit(subst_caps_exprs(a, ar, caps, brn, bound, &es), p))
+        | Expr::ArrayLit(es, _q) => ast_node(ar, Expr::ArrayLit(subst_caps_exprs(a, ar, caps, brn, bound, &es), p))
+        | Expr::ArrayRepeat { value, count } => ast_node(ar, Expr::ArrayRepeat { value: subst_caps_expr(a, ar, caps, brn, bound, value), count: subst_caps_expr(a, ar, caps, brn, bound, count), pos: p })
+        | Expr::StructLit { tname, fields, base } => ast_node(ar, Expr::StructLit { tname: copy_strs(a, &tname), fields: subst_caps_fields(a, ar, caps, brn, bound, &fields), base: subst_caps_opt(a, ar, caps, brn, bound, base), pos: p })
+        | Expr::Range { lo, hi, inclusive } => ast_node(ar, Expr::Range { lo: subst_caps_expr(a, ar, caps, brn, bound, lo), hi: subst_caps_expr(a, ar, caps, brn, bound, hi), inclusive: inclusive, pos: p })
+        | _other => e
     };
 }
 
@@ -3124,16 +3357,64 @@ fn lambda_fnptr_ty(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const 
     while i < n { ptys.push(resolve_sig_ty(a, ar, sc, sl[i].ty)); i = i + 1 as u32; }
     return ty_node(ar, Typ::TFnPtr { params: ptys, ret: resolve_sig_ret(a, ar, sc, ret_ty) });
 }
+// Index of the A2 closure pre-pass entry whose original `Lambda` node is
+// `e` (matched by arena-pointer identity), or -1 for a captureless lambda.
+fn find_closure_idx(lifted: *const Vec<LiftedLambda>, e: *const Expr) -> int {
+    let n = lifted.length();
+    let sl = lifted.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if sl[i].ll_kind == 1 as int { if sl[i].ll_lambda == e { return i as int; } }
+        i = i + 1 as u32;
+    }
+    return -1 as int;
+}
+fn count_a1(lifted: *const Vec<LiftedLambda>) -> u32 {
+    let n = lifted.length();
+    let sl = lifted.as_slice();
+    let mut c = 0 as u32;
+    let mut i = 0 as u32;
+    while i < n { if sl[i].ll_kind == 0 as int { c = c + 1 as u32; } i = i + 1 as u32; }
+    return c;
+}
+// A pre-synthesised capturing lambda becomes a struct literal building the
+// env `__closure_N { cap: cap, ... }` (by-ref captures take `&cap`); an
+// empty env gets a one-byte `_pad` so the C struct is non-empty.
+fn elab_closure_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>, ci: u32, p: Pos) -> *const Texpr {
+    let lls = sc.sc_lifted.as_slice();
+    let cn = lls[ci].ll_closure;
+    let nc = lls[ci].ll_caps.length();
+    let csl = lls[ci].ll_caps.as_slice();
+    let mut fields: Vec<Field> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < nc {
+        let v0 = ast_node(ar, Expr::Var(csl[i], p));
+        let v = if name_in(&lls[ci].ll_brefs, csl[i]) { ast_node(ar, Expr::Ref(v0, p)) } else { v0 };
+        fields.push(Field { name: csl[i], value: v });
+        i = i + 1 as u32;
+    }
+    if nc == 0 as u32 { fields.push(Field { name: "_pad", value: ast_node(ar, Expr::IntLit(0 as int, p)) }); }
+    let tname = single_str(a, cn);
+    let nb: Option<*const Expr> = Option::None;
+    return elab_struct_lit(a, ar, g, sc, env, &tname, &fields, nb, p);
+}
 // DR-008 A1: a captureless lambda is lifted to a fresh top-level fn
 // `__lambda_N` (drained after the user fns), and the expression becomes a
-// `TFnRef` to it — decaying to a C function pointer at the use site.  A
-// capturing lambda (A2 env-struct) is a later pass.
-fn elab_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, e: *const Expr, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, p: Pos) -> *const Texpr {
-    let n = sc.sc_lifted.length();
+// `TFnRef` to it — decaying to a C function pointer at the use site.
+// DR-024 A2: a capturing lambda was already synthesised by the pre-pass —
+// `find_closure_idx` routes it to the env struct-literal.
+fn elab_lambda(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>, e: *const Expr, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, p: Pos) -> *const Texpr {
+    let ci = find_closure_idx(sc.sc_lifted, e);
+    if ci >= 0 as int { return elab_closure_lit(a, ar, g, sc, env, ci as u32, p); }
+    let n = count_a1(sc.sc_lifted);
     let name = gensym_name(a, ar, "__lambda_", n);
     let empty_path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let sym = mangle_path(a, ar, &empty_path, name);
-    sc.sc_lifted.push(LiftedLambda { ll_mangled: sym, ll_name: name, ll_expr: e });
+    let no_params: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
+    let no_ret: Option<*const TypeAnn> = Option::None;
+    let no_caps: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let no_brefs: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    sc.sc_lifted.push(LiftedLambda { ll_mangled: sym, ll_name: name, ll_expr: e, ll_kind: 0 as int, ll_closure: "", ll_params: no_params, ll_ret: no_ret, ll_caps: no_caps, ll_brefs: no_brefs, ll_lambda: e });
     return te_node(ar, TexprNode::TFnRef(sym), lambda_fnptr_ty(a, ar, sc, params, ret_ty), p);
 }
 // Elaborate a lifted lambda directly into a `Tfunc` (no intermediate `Func` —
@@ -3141,7 +3422,7 @@ fn elab_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, e: *const Expr, par
 // that the produced `Tfunc` copies).  Mirrors `elaborate_fn` for a plain,
 // non-generic, body-bearing fn.
 fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                    mangled: str, name: str, params_fd: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body_expr: *const Expr, funcs: *Vec<Tfunc>) {
+                    mangled: str, name: str, params_fd: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body_expr: *const Expr, funcs: *Vec<Tfunc>, is_pub: bool) {
     let lparams = lam_to_params(a, params_fd);
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -3169,7 +3450,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let no_tier: Option<str> = Option::None;
     let tf_func = Func {
         name: name, c_name: name, tparams: tparams2, tbounds: tbounds,
-        params: params, ret_ty: ret_ty, body: dummy_body, is_pub: false,
+        params: params, ret_ty: ret_ty, body: dummy_body, is_pub: is_pub,
         is_extern: false, is_variadic: false, amiga_lib: no_lib,
         tier_hint: no_tier, must_use: false, escapes_hatch: false, pos: zero_pos(),
     };
@@ -3181,9 +3462,21 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
 fn drain_one_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                     mangled: str, name: str, e: *const Expr, funcs: *Vec<Tfunc>) {
     match *e {
-        Expr::Lambda { params, ret_ty, body, captures } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs)
+        Expr::Lambda { params, ret_ty, body, captures } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs, false)
         | _o => { }
     }
+}
+// The synthesised closure `call` params: `*const __closure_N self` followed
+// by the lambda's own params.
+fn closure_call_params(a: Allocator, ar: *Arena, cn: str, lam_params: *const Vec<FieldDef>) -> Vec<FieldDef> {
+    let self_ann = tyann_node(ar, TypeAnn::TyConstPtr(closure_struct_ann(a, ar, cn)));
+    let mut out: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
+    out.push(FieldDef { name: "self", ty: self_ann });
+    let n = lam_params.length();
+    let sl = lam_params.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(FieldDef { name: sl[i].name, ty: sl[i].ty }); i = i + 1 as u32; }
+    return out;
 }
 
 // `Path::Variant` (no payload) is a unit enum constructor when the index
@@ -4773,6 +5066,272 @@ fn collect_assoc_binds(a: Allocator, items: *const Vec<Item>, out: *Vec<AssocBin
     let mut i = 0 as u32;
     while i < n { collect_assoc_binds_one(a, &sl[i], out); i = i + 1 as u32; }
 }
+// ===== A2 closure pre-pass: synthesise env struct + impl FnN =====
+//
+// Run during check_program setup (the registries are still mutable).
+// Walks every fn body threading an annotation-scope (params + annotated
+// lets); at each capturing lambda it registers a `__closure_N` env struct,
+// a `Fn{arity}` `call` method and the trait's `Arg`/`Output` assoc bindings,
+// and records a drain entry whose body is the capture-substituted lambda
+// body.  The lambda expression itself is replaced (at elab time) with a
+// struct literal building the env — matched back by pointer identity.
+
+fn copy_fielddefs(a: Allocator, src: *const Vec<FieldDef>) -> Vec<FieldDef> {
+    let mut out: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
+    let n = src.length();
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(FieldDef { name: sl[i].name, ty: sl[i].ty }); i = i + 1 as u32; }
+    return out;
+}
+fn single_str(a: Allocator, s: str) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    out.push(s);
+    return out;
+}
+fn closure_struct_ann(a: Allocator, ar: *Arena, cn: str) -> *const TypeAnn {
+    let path = single_str(a, cn);
+    let args: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    return tyann_node(ar, TypeAnn::TyStruct { path: path, args: args });
+}
+fn push_closure_field(a: Allocator, cn: str, fname: str, fty: *const Typ, out: *Vec<StructField>) {
+    out.push(StructField { sf_path: single_str(a, cn), sf_name: fname, sf_ty: fty });
+}
+// MethodInfo for the synthetic `call(*const self, params..) -> ret`,
+// hand-built (no owned `Func`, which would pull drop instances the oracle
+// never synthesises for borrowed program items).
+fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpath: *const Vec<str>, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, out: *Vec<MethodInfo>) {
+    let self_ann = tyann_node(ar, TypeAnn::TyConstPtr(closure_struct_ann(a, ar, cn)));
+    let mut manns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    manns.push(self_ann);
+    let n = params.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < n { manns.push(sl[i].ty); i = i + 1 as u32; }
+    let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    out.push(MethodInfo {
+        mi_path: copy_strs(a, cnpath), mi_name: "call", mi_mangled: method_mangle(a, ar, cnpath, "call"),
+        mi_ret: resolve_sig_ret(a, ar, sc, ret_ty),
+        mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
+        mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: ret_ty,
+        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
+    });
+}
+fn cvoid_ann(ar: *Arena) -> *const TypeAnn {
+    return tyann_node(ar, TypeAnn::TyCVoid);
+}
+fn push_closure_assoc(a: Allocator, ar: *Arena, trname: str, cn: str, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, out: *Vec<AssocBind>) {
+    let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let n = params.length();
+    let sl = params.as_slice();
+    if n == 1 as u32 {
+        push_one_assoc(a, trname, cn, "Arg", sl[0 as u32].ty, &empty_tp, out);
+    } else {
+        let mut i = 0 as u32;
+        while i < n {
+            let an = gensym_name(a, ar, "Arg", i + 1 as u32);
+            push_one_assoc(a, trname, cn, an, sl[i].ty, &empty_tp, out);
+            i = i + 1 as u32;
+        }
+    }
+    let ret_ann = match ret_ty { Option::Some(t) => t | Option::None => cvoid_ann(ar) };
+    push_one_assoc(a, trname, cn, "Output", ret_ann, &empty_tp, out);
+}
+fn synth_closure(a: Allocator, ar: *Arena, sc: *const TyScope, num: u32,
+                 caps_names: *const Vec<str>, caps_anns: *const Vec<*const TypeAnn>, caps_brefs: *const Vec<str>,
+                 params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, subst_body: *const Expr, lambda: *const Expr,
+                 sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let cn = gensym_name(a, ar, "__closure_", num);
+    let cnpath = single_str(a, cn);
+    let ncap = caps_names.length();
+    let nsl = caps_names.as_slice();
+    let asl = caps_anns.as_slice();
+    let mut i = 0 as u32;
+    while i < ncap {
+        let fty0 = resolve_sig_ty(a, ar, sc, asl[i]);
+        let fty = if name_in(caps_brefs, nsl[i]) { ty_node(ar, Typ::TConstPtr(fty0)) } else { fty0 };
+        push_closure_field(a, cn, nsl[i], fty, sinfo);
+        i = i + 1 as u32;
+    }
+    if ncap == 0 as u32 { push_closure_field(a, cn, "_pad", t_u8(ar), sinfo); }
+    let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    push_struct_tp(a, cn, &empty_tp, stps);
+    register_mono_struct(a, sc, &cnpath);
+    push_call_method(a, ar, sc, cn, &cnpath, params, ret_ty, methods);
+    let trname = gensym_name(a, ar, "Fn", params.length());
+    push_closure_assoc(a, ar, trname, cn, params, ret_ty, assoc);
+    let mangled = method_mangle(a, ar, &cnpath, "call");
+    lifted.push(LiftedLambda {
+        ll_mangled: mangled, ll_name: mangled, ll_expr: subst_body, ll_kind: 1 as int,
+        ll_closure: cn, ll_params: copy_fielddefs(a, params), ll_ret: ret_ty,
+        ll_caps: copy_strs(a, caps_names), ll_brefs: copy_strs(a, caps_brefs), ll_lambda: lambda
+    });
+}
+
+// Index of `n` in the parallel annotation-scope (names), or -1.
+fn scope_index(names: *const Vec<str>, n: str) -> int {
+    let m = names.length();
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < m { if str::eq(sl[i], n) { return i as int; } i = i + 1 as u32; }
+    return -1 as int;
+}
+// By-ref capture names from a lambda's explicit `[&name]` capture list.
+fn byref_names(a: Allocator, caps: *const Vec<Capture>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let n = caps.length();
+    let sl = caps.as_slice();
+    let mut i = 0 as u32;
+    while i < n { if sl[i].by_ref { out.push(sl[i].name); } i = i + 1 as u32; }
+    return out;
+}
+fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+                     params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body: *const Expr, ecaps: *const Vec<Capture>,
+                     ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>, lambda: *const Expr) {
+    // Free vars of the body (lambda params are bound).
+    let mut pnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let pn = params.length();
+    let psl = params.as_slice();
+    let mut pi = 0 as u32;
+    while pi < pn { pnames.push(psl[pi].name); pi = pi + 1 as u32; }
+    let mut free: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    fv_expr(a, &pnames, body, &free);
+    // Captures = free vars visible in the annotation-scope; by-ref ones come
+    // from the explicit `[&name]` list (DR-033).
+    let brn = byref_names(a, ecaps);
+    let mut cnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut canns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    let fn2 = free.length();
+    let fsl = free.as_slice();
+    let asl = sca.as_slice();
+    let mut fi = 0 as u32;
+    while fi < fn2 {
+        let si = scope_index(scn, fsl[fi]);
+        if si >= 0 as int {
+            cnames.push(fsl[fi]);
+            canns.push(asl[si as u32]);
+        }
+        fi = fi + 1 as u32;
+    }
+    if cnames.length() == 0 as u32 { return; }
+    let sbody = subst_caps_expr(a, ar, &cnames, &brn, &pnames, body);
+    synth_closure(a, ar, sc, *ctr, &cnames, &canns, &brn, params, ret_ty, sbody, lambda, sinfo, methods, assoc, stps, lifted);
+    *ctr = *ctr + 1 as u32;
+}
+fn prepass_exprs(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+                 es: *const Vec<*const Expr>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let n = es.length();
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < n { prepass_expr(a, ar, sc, scn, sca, sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+}
+fn prepass_opt(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+               oe: Option<*const Expr>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    match oe { Option::Some(e) => prepass_expr(a, ar, sc, scn, sca, e, ctr, sinfo, methods, assoc, stps, lifted) | Option::None => {} }
+}
+fn prepass_fields(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+                  fields: *const Vec<Field>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let n = fields.length();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < n { prepass_expr(a, ar, sc, scn, sca, sl[i].value, ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+}
+fn prepass_expr(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+                e: *const Expr, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    match *e {
+        Expr::Neg(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::BitNot(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::Not(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::Try(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::Cast(s, _t, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::FieldAccess(s, _f, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::Ref(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::Deref(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::BinOp(_op, l, r, _q) => { prepass_expr(a, ar, sc, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Orelse(l, r, _q) => { prepass_expr(a, ar, sc, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Index { base, index } => { prepass_expr(a, ar, sc, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, scn, sca, index, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Range { lo, hi, inclusive } => { prepass_expr(a, ar, sc, scn, sca, lo, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, scn, sca, hi, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Call { callee, args } => prepass_exprs(a, ar, sc, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::MethodCall { receiver, name, args } => { prepass_expr(a, ar, sc, scn, sca, receiver, ctr, sinfo, methods, assoc, stps, lifted); prepass_exprs(a, ar, sc, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::TupleLit(es, _q) => prepass_exprs(a, ar, sc, scn, sca, &es, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::ArrayLit(es, _q) => prepass_exprs(a, ar, sc, scn, sca, &es, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::ArrayRepeat { value, count } => { prepass_expr(a, ar, sc, scn, sca, value, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, scn, sca, count, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::StructLit { tname, fields, base } => { prepass_fields(a, ar, sc, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::New { tname, fields, base, alloc } => { prepass_fields(a, ar, sc, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::NewEnum { tname, args, alloc } => { prepass_exprs(a, ar, sc, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Lambda { params, ret_ty, body, captures } => prepass_at_lambda(a, ar, sc, scn, sca, &params, ret_ty, body, &captures, ctr, sinfo, methods, assoc, stps, lifted, e)
+        | _other => {}
+    }
+}
+fn prepass_stmts(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+                 stmts: *const Vec<Stmt>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let mut ln: Vec<str> = copy_strs(a, scn);
+    let mut la: Vec<*const TypeAnn> = copy_tyanns(a, sca);
+    let n = stmts.length();
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match sl[i] {
+            Stmt::Let { name, value, ty_ann, is_mut } => {
+                prepass_expr(a, ar, sc, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted);
+                match ty_ann { Option::Some(t) => { ln.push(name); la.push(t); } | Option::None => {} }
+            }
+            | Stmt::ExprStmt(e) => prepass_expr(a, ar, sc, &ln, &la, e, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::Tail(e) => prepass_expr(a, ar, sc, &ln, &la, e, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::Return(oe, _q) => prepass_opt(a, ar, sc, &ln, &la, oe, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::Assign { path, value } => prepass_expr(a, ar, sc, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::AssignField { target, field, value } => { prepass_expr(a, ar, sc, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::AssignIndex { base, index, value } => { prepass_expr(a, ar, sc, &ln, &la, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, &ln, &la, index, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::AssignDeref { target, value } => { prepass_expr(a, ar, sc, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::While { cond, body } => { prepass_expr(a, ar, sc, &ln, &la, cond, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::For { iter_var, range, body } => { prepass_expr(a, ar, sc, &ln, &la, range, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::Defer { body } => prepass_stmts(a, ar, sc, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::With { target, name, body } => { prepass_expr(a, ar, sc, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
+            | _other => {}
+        }
+        i = i + 1 as u32;
+    }
+}
+fn params_scope(params: *const Vec<Param>, names: *Vec<str>, anns: *Vec<*const TypeAnn>) {
+    let n = params.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < n { names.push(sl[i].pname); anns.push(sl[i].pty); i = i + 1 as u32; }
+}
+fn prepass_fn(a: Allocator, ar: *Arena, sc: *const TyScope, f: *const Func, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut anns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    params_scope(&f.params, &names, &anns);
+    prepass_stmts(a, ar, sc, &names, &anns, &f.body, ctr, sinfo, methods, assoc, stps, lifted);
+}
+fn prepass_funcs(a: Allocator, ar: *Arena, sc: *const TyScope, funcs: *const Vec<Func>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let n = funcs.length();
+    let sl = funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < n { prepass_fn(a, ar, sc, &sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+}
+fn prepass_items(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { prepass_item(a, ar, sc, &sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+}
+fn prepass_item(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    match *it {
+        Item::Function(f) => prepass_fn(a, ar, sc, &f, ctr, sinfo, methods, assoc, stps, lifted)
+        | Item::Impl(ib) => prepass_funcs(a, ar, sc, &ib.iitems, ctr, sinfo, methods, assoc, stps, lifted)
+        | Item::Module(md) => prepass_items(a, ar, sc, &md.mitems, ctr, sinfo, methods, assoc, stps, lifted)
+        | _other => {}
+    }
+}
+fn prepass_closures(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let mut ctr: u32 = 0 as u32;
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { prepass_item(a, ar, sc, &sl[i], &ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+}
+
 fn prelude_enum_tps(a: Allocator, out: *Vec<EnumTP>) {
     let mut t1: Vec<str> = Vec::with_capacity(a, 8 as u32);
     t1.push("T");
@@ -5085,6 +5644,9 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_method_info(a, ar, &base_scope, items, &methods);
     collect_trait_default_methods(a, ar, &base_scope, items, &methods);
     register_prelude_methods(a, ar, &methods);
+    // A2 capturing closures: synthesise env struct / Fn impl / assoc bindings
+    // into the (still mutable) registries; lambda exprs are matched at elab.
+    prepass_closures(a, ar, &base_scope, items, &sinfo, &methods, &assoc_binds, &stps, &lifted_lambdas);
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
@@ -5106,6 +5668,23 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         elaborate_impl_item(a, ar, &globals, &gensym, &idx, items, &sl[j], &funcs);
         j = j + 1 as u32;
     }
+    // Drain lifted lambdas / closures BEFORE the generic instances so the
+    // `__closure_N__call` / `__lambda_N` fns precede the bounded-generic
+    // instances they dispatch into (matching the oracle's emission order).
+    // A1 (captureless) re-derive from the stored `Lambda` node; A2 closures
+    // elaborate the pre-pass's capture-substituted body under `self + params`.
+    let mut li = 0 as u32;
+    while li < lifted_lambdas.length() {
+        let lls = lifted_lambdas.as_slice();
+        if lls[li].ll_kind == 0 as int {
+            drain_one_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, lls[li].ll_expr, &funcs);
+        } else {
+            let cps = closure_call_params(a, ar, lls[li].ll_closure, &lls[li].ll_params);
+            elaborate_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, &funcs, true);
+        }
+        li = li + 1 as u32;
+    }
+
     // Drain the generic-fn instance queue (jobs may queue further jobs as
     // their bodies elaborate; re-read the length each round and copy each
     // job's bindings out so a queue re-grow can't dangle them).
@@ -5125,16 +5704,6 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
             elaborate_method_instance(a, ar, &globals, &gensym, &idx, items, ji, jmeth as u32, &jb, jm, &jt, &funcs);
         }
         k = k + 1 as u32;
-    }
-
-    // Drain the captureless lambdas lifted during elaboration into real
-    // top-level fns (after `main`, matching the oracle's order).  Re-read the
-    // length each round in case a lifted body lifts a further lambda.
-    let mut li = 0 as u32;
-    while li < lifted_lambdas.length() {
-        let lls = lifted_lambdas.as_slice();
-        drain_one_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, lls[li].ll_expr, &funcs);
-        li = li + 1 as u32;
     }
 
     let mut structs = prelude_struct_index(a);
