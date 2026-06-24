@@ -171,6 +171,14 @@ struct StructTP {
 // Item = int }` records (Count, Item) -> int.  `ab_tparams` are the impl's
 // type parameters (for a generic `type Item = T`, projected through the
 // concrete instance's args).
+// A captureless lambda lifted to a top-level fn at elaboration time (DR-008
+// A1).  Recorded when the `Expr::Lambda` is elaborated; drained into the fn
+// list after the user functions, so it follows `main` like the oracle's.
+struct LiftedLambda {
+    ll_mangled: str,
+    ll_name: str,
+    ll_expr: *const Expr,
+}
 struct AssocBind {
     ab_trait: str,
     ab_target: str,
@@ -205,6 +213,7 @@ struct TyScope {
     sc_etps: *const Vec<EnumTP>,
     sc_stps: *const Vec<StructTP>,
     sc_assoc: *const Vec<AssocBind>,
+    sc_lifted: *Vec<LiftedLambda>,
     sc_gensym: *u32,
     sc_modpath: *const Vec<str>,
     // The enclosing fn's resolved return type — `try` reads it to build the
@@ -247,6 +256,7 @@ struct ProgIdx {
     pi_etps: *const Vec<EnumTP>,
     pi_stps: *const Vec<StructTP>,
     pi_assoc: *const Vec<AssocBind>,
+    pi_lifted: *Vec<LiftedLambda>,
     pi_modpath: *const Vec<str>,
     pi_gsigs: *const Vec<FnSig>,
     pi_xstructs: *const Vec<str>,
@@ -2994,8 +3004,90 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::New { tname, fields, base, alloc } => elab_new_struct(a, ar, g, sc, env, &tname, &fields, base, alloc, p)
         | Expr::NewEnum { tname, args, alloc } => elab_new_enum(a, ar, g, sc, env, &tname, &args, alloc, p)
         | Expr::Range { lo, hi, inclusive } => elab_range_value(a, ar, g, sc, env, lo, hi, inclusive, p)
+        | Expr::Lambda { params, ret_ty, body, captures } => elab_lambda(a, ar, sc, e, &params, ret_ty, p)
         | _other => defer_expr(ar, p)
     };
+}
+
+// FieldDef list (a lambda's params) → fn Param list.
+fn lam_to_params(a: Allocator, params: *const Vec<FieldDef>) -> Vec<Param> {
+    let mut out: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    let n = params.length();
+    let sl = params.as_slice();
+    let none_reg: Option<str> = Option::None;
+    let mut i = 0 as u32;
+    while i < n { out.push(Param { pname: sl[i].name, pty: sl[i].ty, is_mut: false, preg: none_reg }); i = i + 1 as u32; }
+    return out;
+}
+// The fn-ptr type a lambda decays to.
+fn lambda_fnptr_ty(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>) -> *const Typ {
+    let mut ptys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let n = params.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < n { ptys.push(resolve_sig_ty(a, ar, sc, sl[i].ty)); i = i + 1 as u32; }
+    return ty_node(ar, Typ::TFnPtr { params: ptys, ret: resolve_sig_ret(a, ar, sc, ret_ty) });
+}
+// DR-008 A1: a captureless lambda is lifted to a fresh top-level fn
+// `__lambda_N` (drained after the user fns), and the expression becomes a
+// `TFnRef` to it — decaying to a C function pointer at the use site.  A
+// capturing lambda (A2 env-struct) is a later pass.
+fn elab_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, e: *const Expr, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, p: Pos) -> *const Texpr {
+    let n = sc.sc_lifted.length();
+    let name = gensym_name(a, ar, "__lambda_", n);
+    let empty_path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sym = mangle_path(a, ar, &empty_path, name);
+    sc.sc_lifted.push(LiftedLambda { ll_mangled: sym, ll_name: name, ll_expr: e });
+    return te_node(ar, TexprNode::TFnRef(sym), lambda_fnptr_ty(a, ar, sc, params, ret_ty), p);
+}
+// Elaborate a lifted lambda directly into a `Tfunc` (no intermediate `Func` —
+// reads the original arena `FieldDef` params + body expr, builds only locals
+// that the produced `Tfunc` copies).  Mirrors `elaborate_fn` for a plain,
+// non-generic, body-bearing fn.
+fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                    mangled: str, name: str, params_fd: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body_expr: *const Expr, funcs: *Vec<Tfunc>) {
+    let lparams = lam_to_params(a, params_fd);
+    let params = copy_params(a, &lparams);
+    let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
+                       sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
+                       sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_is_main: false };
+    let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
+    let ret = resolve_sig_ret(a, ar, &sc, ret_ty);
+    let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    build_param_env(a, ar, &sc, &lparams, &env);
+    let scb = scope_with_ret(&sc, ret);
+    let mut lbody: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    lbody.push(Stmt::Tail(body_expr));
+    let raw_body = elab_body(a, ar, g, &scb, gensym, &env, ret, &lbody);
+    let mut lift_ctr: u32 = 0 as u32;
+    let body = lift_stmts(a, ar, &lift_ctr, &raw_body);
+    let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let no_pos: Option<Pos> = Option::None;
+    let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let tparams2: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let tbounds: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
+    let dummy_body: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    let no_lib: Option<str> = Option::None;
+    let no_tier: Option<str> = Option::None;
+    let tf_func = Func {
+        name: name, c_name: name, tparams: tparams2, tbounds: tbounds,
+        params: params, ret_ty: ret_ty, body: dummy_body, is_pub: false,
+        is_extern: false, is_variadic: false, amiga_lib: no_lib,
+        tier_hint: no_tier, must_use: false, escapes_hatch: false, pos: zero_pos(),
+    };
+    funcs.push(Tfunc {
+        tf_path: path, tf_func: tf_func, tf_mangled: mangled, tf_param_tys: param_tys,
+        tf_ret_ty: ret, tf_body: body, tf_lets: lets, tf_origin_pos: no_pos,
+    });
+}
+fn drain_one_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                    mangled: str, name: str, e: *const Expr, funcs: *Vec<Tfunc>) {
+    match *e {
+        Expr::Lambda { params, ret_ty, body, captures } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs)
+        | _o => { }
+    }
 }
 
 // `Path::Variant` (no payload) is a unit enum constructor when the index
@@ -3726,7 +3818,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases , sc_is_main: str::eq(mangled, "main") };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases , sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -4021,7 +4113,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -4041,7 +4133,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -4059,7 +4151,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
         sc_ret: ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -4862,6 +4954,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_struct_tps(a, items, &stps);
     let mut assoc_binds: Vec<AssocBind> = Vec::with_capacity(a, 8 as u32);
     collect_assoc_binds(a, items, &assoc_binds);
+    let mut lifted_lambdas: Vec<LiftedLambda> = Vec::with_capacity(a, 8 as u32);
     // Fn parameter-type index (for `own *T` → `*T` arg coercion); populated
     // below once the scope can resolve param types, but referenced by the
     // base scope now (collecting it doesn't read the index back).
@@ -4873,7 +4966,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases , sc_is_main: false };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases , sc_is_main: false };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -4899,7 +4992,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
@@ -4936,6 +5029,16 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
             elaborate_method_instance(a, ar, &globals, &gensym, &idx, items, ji, jmeth as u32, &jb, jm, &jt, &funcs);
         }
         k = k + 1 as u32;
+    }
+
+    // Drain the captureless lambdas lifted during elaboration into real
+    // top-level fns (after `main`, matching the oracle's order).  Re-read the
+    // length each round in case a lifted body lifts a further lambda.
+    let mut li = 0 as u32;
+    while li < lifted_lambdas.length() {
+        let lls = lifted_lambdas.as_slice();
+        drain_one_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, lls[li].ll_expr, &funcs);
+        li = li + 1 as u32;
     }
 
     let mut structs = prelude_struct_index(a);
