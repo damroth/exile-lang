@@ -205,6 +205,7 @@ struct TyScope {
     sc_etps: *const Vec<EnumTP>,
     sc_stps: *const Vec<StructTP>,
     sc_assoc: *const Vec<AssocBind>,
+    sc_gensym: *u32,
     sc_modpath: *const Vec<str>,
     // The enclosing fn's resolved return type — `try` reads it to build the
     // early-return value on the enclosing fn's own Option/Result instance.
@@ -2642,6 +2643,23 @@ fn assign_coerced_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     };
 }
 
+// A bare `if` inside a value block (a match-arm body holding `if c { break }`)
+// is a control-flow statement, not a value: lower it to `TIf` (branches are
+// full stmt-blocks) rather than an if-expr with `null` arms.  The enclosing
+// fn's gensym + return type ride in the scope so the branch bodies elaborate
+// like any statement block.
+fn elab_block_expr_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                        benv: *Vec<FieldTy>, e: *const Expr, out: *Vec<Tstmt>) {
+    match *e {
+        Expr::If { cond, then_blk, else_blk } => {
+            let tcond = elab_expr(a, ar, g, sc, benv, none_ty(), cond);
+            let tthen = elab_body(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, &then_blk);
+            let telse = elab_else_body(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, else_blk);
+            out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
+        }
+        | _other => { out.push(Tstmt::TExprStmt(elab_expr(a, ar, g, sc, benv, none_ty(), e))); }
+    }
+}
 fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    expected: Option<*const Typ>, s: *const Stmt, benv: *Vec<FieldTy>,
                    tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
@@ -2652,7 +2670,7 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             benv.push(FieldTy { name: name, ty: ety });
             tstmts.push(Tstmt::TLet { name: name, value: vl, pos: expr_pos(value) });
         }
-        | Stmt::ExprStmt(e) => { tstmts.push(Tstmt::TExprStmt(elab_expr(a, ar, g, sc, benv, none_ty(), e))); }
+        | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
         | Stmt::Tail(e) => { *trailing = Option::Some(elab_expr(a, ar, g, sc, benv, expected, e)); }
         | Stmt::Assign { path, value, pos } => {
             let av = assign_coerced_value(a, ar, g, sc, benv, &path, value);
@@ -3662,7 +3680,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases , sc_is_main: str::eq(mangled, "main") };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases , sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -3957,7 +3975,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -3977,7 +3995,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -3995,7 +4013,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
-        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_modpath: base.sc_modpath,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
         sc_ret: ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
@@ -4802,11 +4820,14 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // below once the scope can resolve param types, but referenced by the
     // base scope now (collecting it doesn't read the index back).
     let mut gsigs: Vec<FnSig> = Vec::with_capacity(a, 16 as u32);
+    // The collection-phase scope never elaborates a body, so its gensym is a
+    // throwaway; the real per-fn counter rides through elaborate_fn.
+    let mut gensym_unused: u32 = 0 as u32;
     let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases , sc_is_main: false };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases , sc_is_main: false };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
