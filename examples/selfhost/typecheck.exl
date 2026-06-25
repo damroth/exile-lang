@@ -467,6 +467,21 @@ fn mangle_named(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
 }
 
 // Mangle a type to its instance-name component (mirrors `ir.mangle_typ`).
+// `(u32, i32)` -> `tup2_u32_i32` — a tuple's mangled instance fragment.
+fn mangle_tuple(a: Allocator, ar: *Arena, elems: *const Vec<*const Typ>) -> str {
+    let n = elems.length();
+    let sl = elems.as_slice();
+    let mut sb = StringBuilder::with_capacity(a, 16 as u32);
+    sb.push_str("tup");
+    sb.push_int(n as int);
+    let mut i = 0 as u32;
+    while i < n {
+        sb.push_str("_");
+        sb.push_str(mangle_typ(a, ar, sl[i]));
+        i = i + 1 as u32;
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
 fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
     return match *t {
         Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
@@ -479,6 +494,7 @@ fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TConstPtr(inner) => str2(a, ar, "cptr_", mangle_typ(a, ar, inner))
         | Typ::TOwnPtr(inner) => str2(a, ar, "ownptr_", mangle_typ(a, ar, inner))
         | Typ::TCInt { is_signed } => match is_signed { true => "cint" | false => "cuint" }
+        | Typ::TTuple(elems) => mangle_tuple(a, ar, &elems)
         | _other => "?"
     };
 }
@@ -2557,6 +2573,8 @@ fn subst_var_stmt(a: Allocator, ar: *Arena, from: str, to: str, s: *const Stmt) 
             Stmt::AssignField { target: subst_var_expr(a, ar, from, to, target), field: field, value: subst_var_expr(a, ar, from, to, value), pos: pos }
         | Stmt::AssignIndex { base, index, value, pos } =>
             Stmt::AssignIndex { base: subst_var_expr(a, ar, from, to, base), index: subst_var_expr(a, ar, from, to, index), value: subst_var_expr(a, ar, from, to, value), pos: pos }
+        | Stmt::LetTuple { names, value, is_mut, pos } =>
+            Stmt::LetTuple { names: copy_strs(a, &names), value: subst_var_expr(a, ar, from, to, value), is_mut: is_mut, pos: pos }
         | Stmt::Break(p) => Stmt::Break(p)
         | Stmt::Continue(p) => Stmt::Continue(p)
         | _other => Stmt::ExprStmt(ast_node(ar, Expr::Var("", zero_pos())))
@@ -2889,6 +2907,11 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         }
         | Stmt::Break(pos) => { tstmts.push(Tstmt::TBreak(pos)); }
         | Stmt::Continue(pos) => { tstmts.push(Tstmt::TContinue(pos)); }
+        | Stmt::LetTuple { names, value, is_mut } => {
+            let tvt = elab_expr(a, ar, g, sc, benv, none_ty(), value);
+            bind_tuple_names(&names, tvt.ty, benv);
+            tstmts.push(Tstmt::TLetTuple { names: copy_strs(a, &names), value: tvt, pos: expr_pos(value) });
+        }
         | _other => { tstmts.push(Tstmt::TExprStmt(defer_expr(ar, zero_pos()))); }
     }
 }
@@ -4817,6 +4840,17 @@ fn ann_app1(a: Allocator, ar: *Arena, name: str, argname: str) -> *const TypeAnn
     args.push(ann_struct(a, ar, argname));
     return ann_node(ar, TypeAnn::TyStruct { path: path, args: args });
 }
+// `name<tp1, tp2, ...>` — a generic application over bare tparam names.
+fn ann_app_tps(a: Allocator, ar: *Arena, name: str, tps: *const Vec<str>) -> *const TypeAnn {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(name);
+    let mut args: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    let n = tps.length();
+    let sl = tps.as_slice();
+    let mut i = 0 as u32;
+    while i < n { args.push(ann_struct(a, ar, sl[i])); i = i + 1 as u32; }
+    return ann_node(ar, TypeAnn::TyStruct { path: path, args: args });
+}
 // A two-segment associated-projection annotation, e.g. `F::Output`.
 fn ann_proj(a: Allocator, ar: *Arena, head: str, assoc: str) -> *const TypeAnn {
     let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -4858,20 +4892,80 @@ fn push_prelude_gen_method(a: Allocator, ar: *Arena, target: str, name: str, tpa
         mi_struct_gen: true,
     });
 }
-fn register_iter_map(a: Allocator, ar: *Arena, recv: str, recv_tp: str, out: *Vec<MethodInfo>) {
-    let mut tparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    tparams.push(recv_tp);
-    tparams.push("F");
+// An iterator adapter default method on receiver `recv`: binds the receiver's
+// own tparams by field-recovery plus an optional `extra_tp` (the callable's
+// type) from the argument, returning `Adapter<Self, extra_tp?>`.  Models the
+// DR-026 Iterator default methods (`.map`/`.filter`/`.take`/`.enumerate`),
+// available on every iterator so chains like `.filter(..).map(..)` compose.
+fn register_adapter(a: Allocator, ar: *Arena, recv: str, method: str, adapter: str,
+                    extra_tp: str, arg_ann: Option<*const TypeAnn>, out: *Vec<MethodInfo>) {
+    let mut recv_tps: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    prelude_struct_tparams(recv, &recv_tps);
+    let mut mtps = copy_strs(a, &recv_tps);
+    let has_extra = !str::eq(extra_tp, "");
+    if has_extra { mtps.push(extra_tp); }
     let mut params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
-    params.push(ann_app1(a, ar, recv, recv_tp));
-    params.push(ann_struct(a, ar, "F"));
-    let mut margs: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
-    margs.push(ann_app1(a, ar, recv, recv_tp));
-    margs.push(ann_struct(a, ar, "F"));
-    let mut mpath: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    mpath.push("Map");
-    let ret = ann_node(ar, TypeAnn::TyStruct { path: mpath, args: margs });
-    push_prelude_gen_method(a, ar, recv, "map", tparams, params, Option::Some(ret), false, false, out);
+    params.push(ann_app_tps(a, ar, recv, &recv_tps));
+    match arg_ann { Option::Some(aa) => params.push(aa) | Option::None => {} }
+    let mut radargs: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    radargs.push(ann_app_tps(a, ar, recv, &recv_tps));
+    if has_extra { radargs.push(ann_struct(a, ar, extra_tp)); }
+    let mut apath: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    apath.push(adapter);
+    let ret = ann_node(ar, TypeAnn::TyStruct { path: apath, args: radargs });
+    push_prelude_gen_method(a, ar, recv, method, mtps, params, Option::Some(ret), false, false, out);
+}
+// `fold<Acc, G>(self, init: Acc, g: G) -> Acc` — a consuming terminal.  Acc /
+// G bind from the args (the adapter-method unify path), the return is `Acc`.
+fn register_fold(a: Allocator, ar: *Arena, recv: str, out: *Vec<MethodInfo>) {
+    let mut recv_tps: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    prelude_struct_tparams(recv, &recv_tps);
+    let mut mtps = copy_strs(a, &recv_tps);
+    mtps.push("Acc");
+    mtps.push("G");
+    let mut params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    params.push(ann_app_tps(a, ar, recv, &recv_tps));
+    params.push(ann_struct(a, ar, "Acc"));
+    params.push(ann_struct(a, ar, "G"));
+    push_prelude_gen_method(a, ar, recv, "fold", mtps, params, Option::Some(ann_struct(a, ar, "Acc")), false, false, out);
+}
+// The `Iterator::Item` annotation for a prelude iterator (mirrors the assoc
+// bindings) — used by `collect`'s `Vec<Self::Item>` return.
+fn iter_item_ann(a: Allocator, ar: *Arena, recv: str) -> *const TypeAnn {
+    if str::eq(recv, "VecIter") { return ann_struct(a, ar, "T"); }
+    if str::eq(recv, "Map") { return ann_proj(a, ar, "F", "Output"); }
+    if str::eq(recv, "Filter") { return ann_proj(a, ar, "I", "Item"); }
+    if str::eq(recv, "Take") { return ann_proj(a, ar, "I", "Item"); }
+    let mut tup: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    tup.push(ann_u32(ar));
+    tup.push(ann_proj(a, ar, "I", "Item"));
+    return ann_node(ar, TypeAnn::TyTuple(tup));
+}
+// `collect<>(self, a: Allocator) -> Vec<Self::Item>` — a consuming terminal
+// draining the iterator into a fresh Vec.
+fn register_collect(a: Allocator, ar: *Arena, recv: str, out: *Vec<MethodInfo>) {
+    let mut recv_tps: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    prelude_struct_tparams(recv, &recv_tps);
+    let mtps = copy_strs(a, &recv_tps);
+    let mut params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    params.push(ann_app_tps(a, ar, recv, &recv_tps));
+    params.push(ann_struct(a, ar, "Allocator"));
+    let mut vargs: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    vargs.push(iter_item_ann(a, ar, recv));
+    let mut vpath: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    vpath.push("Vec");
+    let ret = ann_node(ar, TypeAnn::TyStruct { path: vpath, args: vargs });
+    push_prelude_gen_method(a, ar, recv, "collect", mtps, params, Option::Some(ret), false, false, out);
+}
+// Register the adapter-constructor + terminal default methods on one iterator.
+fn register_adapters_on(a: Allocator, ar: *Arena, recv: str, out: *Vec<MethodInfo>) {
+    let no_arg: Option<*const TypeAnn> = Option::None;
+    register_adapter(a, ar, recv, "map", "Map", "F", Option::Some(ann_struct(a, ar, "F")), out);
+    register_adapter(a, ar, recv, "filter", "Filter", "P", Option::Some(ann_struct(a, ar, "P")), out);
+    register_adapter(a, ar, recv, "take", "Take", "", Option::Some(ann_u32(ar)), out);
+    register_adapter(a, ar, recv, "enumerate", "Enumerate", "", no_arg, out);
+    register_fold(a, ar, recv, out);
+    register_collect(a, ar, recv, out);
 }
 fn push_prelude_method(a: Allocator, ar: *Arena, target: str, name: str,
                        params: Vec<*const TypeAnn>, ret_ann: Option<*const TypeAnn>, out: *Vec<MethodInfo>) {
@@ -4992,10 +5086,18 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     push_prelude_sg_method(a, ar, "Map", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "F", "Output"))), out);
     push_prelude_sg_method(a, ar, "Take", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "I", "Item"))), out);
     push_prelude_sg_method(a, ar, "Filter", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "I", "Item"))), out);
-    // DR-026 Step B — `Iterator.map` default method on VecIter: binds the
-    // receiver's `T` and the callable `F` at the call site, returns
-    // `Map<VecIter<T>, F>` (the dot-chain `v.iter().map(closure)`).
-    register_iter_map(a, ar, "VecIter", "T", out);
+    // Enumerate yields `(u32, I::Item)` pairs.
+    let mut enum_tup: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    enum_tup.push(ann_u32(ar));
+    enum_tup.push(ann_proj(a, ar, "I", "Item"));
+    push_prelude_sg_method(a, ar, "Enumerate", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_node(ar, TypeAnn::TyTuple(enum_tup)))), out);
+    // DR-026 Iterator adapter default methods (`.map`/`.filter`/`.take`/
+    // `.enumerate`) on every iterator type so dot-chains compose.
+    register_adapters_on(a, ar, "VecIter", out);
+    register_adapters_on(a, ar, "Map", out);
+    register_adapters_on(a, ar, "Filter", out);
+    register_adapters_on(a, ar, "Take", out);
+    register_adapters_on(a, ar, "Enumerate", out);
     // Arena: with_capacity (static) -> Arena (the interning allocator).
     push_prelude_method_ng(a, ar, "Arena", "with_capacity", false, false, false, Option::Some(prelude_struct_ty(a, ar, "Arena")), out);
 }
@@ -5163,6 +5265,28 @@ fn collect_assoc_binds_one(a: Allocator, it: *const Item, out: *Vec<AssocBind>) 
         | Item::Module(md) => { collect_assoc_binds(a, &md.mitems, out); }
         | _e => { }
     }
+}
+// The prelude iterators' `Iterator::Item` associated types, so an adapter's
+// `next` return (`Option<I::Item>`) projects through a chained inner iterator.
+fn register_prelude_assoc(a: Allocator, ar: *Arena, out: *Vec<AssocBind>) {
+    let tp_t = single_str(a, "T");
+    push_one_assoc(a, "Iterator", "VecIter", "Item", ann_struct(a, ar, "T"), &tp_t, out);
+    let mut tp_if: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    tp_if.push("I");
+    tp_if.push("F");
+    push_one_assoc(a, "Iterator", "Map", "Item", ann_proj(a, ar, "F", "Output"), &tp_if, out);
+    let mut tp_ip: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    tp_ip.push("I");
+    tp_ip.push("P");
+    push_one_assoc(a, "Iterator", "Filter", "Item", ann_proj(a, ar, "I", "Item"), &tp_ip, out);
+    let tp_i = single_str(a, "I");
+    push_one_assoc(a, "Iterator", "Take", "Item", ann_proj(a, ar, "I", "Item"), &tp_i, out);
+    let mut tupargs: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    tupargs.push(ann_u32(ar));
+    tupargs.push(ann_proj(a, ar, "I", "Item"));
+    let tup = ann_node(ar, TypeAnn::TyTuple(tupargs));
+    let tp_i2 = single_str(a, "I");
+    push_one_assoc(a, "Iterator", "Enumerate", "Item", tup, &tp_i2, out);
 }
 fn collect_assoc_binds(a: Allocator, items: *const Vec<Item>, out: *Vec<AssocBind>) {
     let n = items.length();
@@ -5713,6 +5837,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_struct_tps(a, items, &stps);
     let mut assoc_binds: Vec<AssocBind> = Vec::with_capacity(a, 8 as u32);
     collect_assoc_binds(a, items, &assoc_binds);
+    register_prelude_assoc(a, ar, &assoc_binds);
     let mut lifted_lambdas: Vec<LiftedLambda> = Vec::with_capacity(a, 8 as u32);
     // Fn parameter-type index (for `own *T` → `*T` arg coercion); populated
     // below once the scope can resolve param types, but referenced by the
