@@ -824,6 +824,11 @@ fn prelude_struct_tparams(name: str, out: *Vec<str>) {
     if str::eq(name, "RangeInclusive") { out.push("T"); }
     if str::eq(name, "Vec") { out.push("T"); }
     if str::eq(name, "VecIter") { out.push("T"); }
+    // DR-026 lazy iterator adapters.
+    if str::eq(name, "Map") { out.push("I"); out.push("F"); }
+    if str::eq(name, "Filter") { out.push("I"); out.push("P"); }
+    if str::eq(name, "Take") { out.push("I"); }
+    if str::eq(name, "Enumerate") { out.push("I"); }
 }
 fn register_prelude_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
                                   args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
@@ -2016,6 +2021,27 @@ fn binds_in_tparam_order(a: Allocator, ar: *Arena, tparams: *const Vec<str>, bin
 // tparams from the receiver instance, resolve the return type with those
 // bindings in scope (so a `Pair<B, A>` return mangles to its instance), queue
 // the body, and emit the monomorphic call.
+// Bind a struct-gen method's own tparams (those not recovered from the
+// receiver fields — e.g. an adapter `map`'s `F`) by unifying each param's
+// annotation against the elaborated argument type.  Params whose tparams are
+// already recovered resolve to a concrete type, so the unify is a no-op.
+fn unify_method_args(a: Allocator, ar: *Arena, sc: *const TyScope, tparams: *const Vec<str>,
+                     anns: *const Vec<*const TypeAnn>, targs: *const Vec<*const Texpr>, binds: *Vec<TVarBind>) {
+    let cscope = scope_with_tbinds(sc, tparams, binds);
+    let na = targs.length();
+    let np = anns.length();
+    let asl = anns.as_slice();
+    let tsl = targs.as_slice();
+    let mut i = 0 as u32;
+    while i < na {
+        let pi = i + 1 as u32;
+        if pi < np {
+            let pt = resolve_sig_ty(a, ar, &cscope, asl[pi]);
+            unify_typ(pt, tsl[i].ty, binds);
+        }
+        i = i + 1 as u32;
+    }
+}
 fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                              midx: u32, trecv: *const Texpr, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let sl = sc.sc_methods.as_slice();
@@ -2027,6 +2053,12 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     let inst_path = recv_base_path(a, trecv.ty);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     bind_recv_tparams(sc, &sl[midx].mi_path, &inst_path, &binds);
+    let targs = elab_args(a, ar, g, sc, env, args);
+    // Adapter methods carry a method-only tparam (`F`) bound from the args; for
+    // ordinary struct-gen methods every tparam is already recovered, so this is
+    // a no-op.  Binding it before `cret` lets the adapter return instance
+    // (`Map<VecIter<T>, F>`) resolve + register.
+    unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &targs, &binds);
     let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
@@ -2035,7 +2067,6 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // register the receiver type for the footer but queue no drain.
     if sl[midx].mi_prelude { register_mono_struct(a, sc, &sl[midx].mi_path); }
     else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
-    let targs = elab_args(a, ar, g, sc, env, args);
     let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
@@ -4490,6 +4521,15 @@ fn prelude_struct_info(a: Allocator, ar: *Arena, out: *Vec<StructField>) {
     push_prelude_field(a, "VecIter", "data", ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TVar("T")))), out);
     push_prelude_field(a, "VecIter", "len", t_u32(ar), out);
     push_prelude_field(a, "VecIter", "pos", t_u32(ar), out);
+    // DR-026 lazy iterator adapters: `inner: I` plus the per-adapter state.
+    push_prelude_field(a, "Map", "inner", ty_node(ar, Typ::TVar("I")), out);
+    push_prelude_field(a, "Map", "f", ty_node(ar, Typ::TVar("F")), out);
+    push_prelude_field(a, "Filter", "inner", ty_node(ar, Typ::TVar("I")), out);
+    push_prelude_field(a, "Filter", "p", ty_node(ar, Typ::TVar("P")), out);
+    push_prelude_field(a, "Take", "inner", ty_node(ar, Typ::TVar("I")), out);
+    push_prelude_field(a, "Take", "remaining", t_u32(ar), out);
+    push_prelude_field(a, "Enumerate", "inner", ty_node(ar, Typ::TVar("I")), out);
+    push_prelude_field(a, "Enumerate", "idx", t_u32(ar), out);
 }
 
 // A copy of the scope with a different tparam list — used to resolve a
@@ -4777,10 +4817,61 @@ fn ann_app1(a: Allocator, ar: *Arena, name: str, argname: str) -> *const TypeAnn
     args.push(ann_struct(a, ar, argname));
     return ann_node(ar, TypeAnn::TyStruct { path: path, args: args });
 }
+// A two-segment associated-projection annotation, e.g. `F::Output`.
+fn ann_proj(a: Allocator, ar: *Arena, head: str, assoc: str) -> *const TypeAnn {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(head);
+    path.push(assoc);
+    let args: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    return ann_node(ar, TypeAnn::TyStruct { path: path, args: args });
+}
+// `Option<inner>` wrapping an arbitrary annotation.
+fn ann_opt_of(a: Allocator, ar: *Arena, inner: *const TypeAnn) -> *const TypeAnn {
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push("Option");
+    let mut args: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    args.push(inner);
+    return ann_node(ar, TypeAnn::TyStruct { path: path, args: args });
+}
 fn one_tparam(a: Allocator) -> Vec<str> {
     let mut t: Vec<str> = Vec::with_capacity(a, 8 as u32);
     t.push("T");
     return t;
+}
+// A method-generic prelude method with an explicit tparam list and self
+// shape — used by the DR-026 iterator adapter default methods (`.map`,
+// `.take`, ...), which bind the receiver's tparam plus their own from the
+// call site and return an adapter instance.
+fn push_prelude_gen_method(a: Allocator, ar: *Arena, target: str, name: str, tparams: Vec<str>,
+                           params: Vec<*const TypeAnn>, ret_ann: Option<*const TypeAnn>,
+                           self_ptr: bool, self_const: bool, out: *Vec<MethodInfo>) {
+    let mut tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    tp.push(target);
+    out.push(MethodInfo {
+        mi_path: tp, mi_name: name,
+        mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
+        mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: self_ptr, mi_self_const: self_const,
+        mi_tparams: tparams, mi_params: params, mi_ret_ann: ret_ann,
+        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+        // Adapter methods bind the receiver's tparam by field-recovery (like a
+        // struct-gen method) plus their own from the args.
+        mi_struct_gen: true,
+    });
+}
+fn register_iter_map(a: Allocator, ar: *Arena, recv: str, recv_tp: str, out: *Vec<MethodInfo>) {
+    let mut tparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    tparams.push(recv_tp);
+    tparams.push("F");
+    let mut params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    params.push(ann_app1(a, ar, recv, recv_tp));
+    params.push(ann_struct(a, ar, "F"));
+    let mut margs: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    margs.push(ann_app1(a, ar, recv, recv_tp));
+    margs.push(ann_struct(a, ar, "F"));
+    let mut mpath: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    mpath.push("Map");
+    let ret = ann_node(ar, TypeAnn::TyStruct { path: mpath, args: margs });
+    push_prelude_gen_method(a, ar, recv, "map", tparams, params, Option::Some(ret), false, false, out);
 }
 fn push_prelude_method(a: Allocator, ar: *Arena, target: str, name: str,
                        params: Vec<*const TypeAnn>, ret_ann: Option<*const TypeAnn>, out: *Vec<MethodInfo>) {
@@ -4826,8 +4917,11 @@ fn push_prelude_sg_method(a: Allocator, ar: *Arena, target: str, name: str, has_
                           self_ptr: bool, self_const: bool, ret_ann: Option<*const TypeAnn>, out: *Vec<MethodInfo>) {
     let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     path.push(target);
+    // The method's tparams are the receiver struct's (Vec/VecIter → [T],
+    // Map → [I, F], ...), so `next`'s mangle picks up the full instance.
     let mut tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    tp.push("T");
+    prelude_struct_tparams(target, &tp);
+    if tp.length() == 0 as u32 { tp.push("T"); }
     let empty_params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     // A static generic method (no self, e.g. `with_capacity`) is not
     // receiver-dispatched; it recovers its tparam from the expected type.
@@ -4892,6 +4986,16 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     push_prelude_sg_method(a, ar, "Vec", "iter", true, true, true, Option::Some(ann_app1(a, ar, "VecIter", "T")), out);
     // VecIter<T>: next (*self) -> Option<T>, the iterator protocol `for` lowers to.
     push_prelude_sg_method(a, ar, "VecIter", "next", true, true, false, Option::Some(ann_app1(a, ar, "Option", "T")), out);
+    // DR-026 lazy adapters: `next(*self)` drives the fused `for` loop.  Map
+    // yields `F::Output`, Take/Enumerate/Filter pass `I::Item` through
+    // (Enumerate as a `(u32, I::Item)` pair).
+    push_prelude_sg_method(a, ar, "Map", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "F", "Output"))), out);
+    push_prelude_sg_method(a, ar, "Take", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "I", "Item"))), out);
+    push_prelude_sg_method(a, ar, "Filter", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "I", "Item"))), out);
+    // DR-026 Step B — `Iterator.map` default method on VecIter: binds the
+    // receiver's `T` and the callable `F` at the call site, returns
+    // `Map<VecIter<T>, F>` (the dot-chain `v.iter().map(closure)`).
+    register_iter_map(a, ar, "VecIter", "T", out);
     // Arena: with_capacity (static) -> Arena (the interning allocator).
     push_prelude_method_ng(a, ar, "Arena", "with_capacity", false, false, false, Option::Some(prelude_struct_ty(a, ar, "Arena")), out);
 }
