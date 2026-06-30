@@ -5300,6 +5300,28 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     push_prelude_sg_method(a, ar, "HashMapIter", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_node(ar, TypeAnn::TyTuple(hm_tup)))), out);
     // Arena: with_capacity (static) -> Arena (the interning allocator).
     push_prelude_method_ng(a, ar, "Arena", "with_capacity", false, false, false, Option::Some(prelude_struct_ty(a, ar, "Arena")), out);
+    // alloc_borrowed<T>(*self) -> *T : a plain borrow into the arena buffer.
+    // T is unreachable through self/args, so it pins from the expected type
+    // (`let n: *Expr = ar.alloc_borrowed()`), mangling Arena__alloc_borrowed_ex_<T>.
+    // Self is a `*Arena` (mi_self_ptr) so `ar.alloc_borrowed()` passes the ptr
+    // directly and `tiny.alloc_borrowed()` auto-refs the value receiver.
+    let mut ab_params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    ab_params.push(ann_node(ar, TypeAnn::TyPtr(ann_struct(a, ar, "Arena"))));
+    let ab_path: Vec<str> = arena_method_path(a);
+    out.push(MethodInfo {
+        mi_path: ab_path, mi_name: "alloc_borrowed",
+        mi_mangled: "Arena__alloc_borrowed",
+        mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: false,
+        mi_tparams: one_tparam(a), mi_params: ab_params,
+        mi_ret_ann: Option::Some(ann_node(ar, TypeAnn::TyPtr(ann_struct(a, ar, "T")))),
+        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+        mi_struct_gen: false,
+    });
+}
+fn arena_method_path(a: Allocator) -> Vec<str> {
+    let mut p: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    p.push("Arena");
+    return p;
 }
 fn ann_kv(a: Allocator, ar: *Arena, name: str) -> *const TypeAnn {
     let mut tps: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -6449,6 +6471,8 @@ fn collect_globals(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const V
     collect_into(a, ar, sc, items, &top, &g);
     return g;
 }
+
+
 
 fn collect_fn_sigs_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, path: *const Vec<str>, out: *Vec<FnSig>) {
     match *it {
