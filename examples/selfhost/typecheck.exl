@@ -5560,6 +5560,243 @@ fn prepass_closures(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const 
     while i < n { prepass_item(a, ar, sc, &sl[i], &ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
 }
 
+// ===== @derive synthesis (Eq / Hash / Clone / Debug) =====
+//
+// Mirrors the oracle's expand_derives pre-pass: a method per derived trait
+// is synthesised for each `@derive`'d struct/enum.  Bodies are built in
+// already-lowered form (`==` for field equality, `*31` hash fold, struct-lit
+// clone, nested match for enums), so the int-field corpus needs no primitive
+// `.eq()/.clone()` dispatch.  Each method registers a MethodInfo; all but the
+// Eq default `ne` (resolved here, emitted downstream) drain a Tfunc after the
+// user fns, before the generic instances.
+fn dv_var(ar: *Arena, n: str, p: Pos) -> *const Expr { return ast_node(ar, Expr::Var(n, p)); }
+fn dv_field(ar: *Arena, recv: str, f: str, p: Pos) -> *const Expr {
+    return ast_node(ar, Expr::FieldAccess(dv_var(ar, recv, p), f, p));
+}
+fn dv_cast_u32(ar: *Arena, e: *const Expr, p: Pos) -> *const Expr {
+    return ast_node(ar, Expr::Cast(e, tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), p));
+}
+fn ann_bool(ar: *Arena) -> *const TypeAnn { return tyann_node(ar, TypeAnn::TyBool); }
+fn dv_const_ptr(a: Allocator, ar: *Arena, target: str) -> *const TypeAnn {
+    return tyann_node(ar, TypeAnn::TyConstPtr(closure_struct_ann(a, ar, target)));
+}
+fn dv_and_fold(ar: *Arena, exprs: *const Vec<*const Expr>, p: Pos) -> *const Expr {
+    let n = exprs.length();
+    let sl = exprs.as_slice();
+    if n == 0 as u32 { return ast_node(ar, Expr::BoolLit(true, p)); }
+    let mut acc = sl[0 as u32];
+    let mut i = 1 as u32;
+    while i < n { acc = ast_node(ar, Expr::BinOp(BinOp::And, acc, sl[i], p)); i = i + 1 as u32; }
+    return acc;
+}
+// `acc = acc*31 + cast_u32(v)` folded over `vals` from `seed`.
+fn dv_hash_fold(ar: *Arena, seed: *const Expr, vals: *const Vec<*const Expr>, p: Pos) -> *const Expr {
+    let n = vals.length();
+    let sl = vals.as_slice();
+    let mut acc = seed;
+    let mut i = 0 as u32;
+    while i < n {
+        let m = ast_node(ar, Expr::BinOp(BinOp::Mul, acc, ast_node(ar, Expr::IntLit(31 as int, p)), p));
+        acc = ast_node(ar, Expr::BinOp(BinOp::Add, m, dv_cast_u32(ar, sl[i], p), p));
+        i = i + 1 as u32;
+    }
+    return acc;
+}
+fn derive_eq_struct_body(a: Allocator, ar: *Arena, sfields: *const Vec<FieldDef>, p: Pos) -> *const Expr {
+    let n = sfields.length();
+    let sl = sfields.as_slice();
+    let mut cmps: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < n {
+        cmps.push(ast_node(ar, Expr::BinOp(BinOp::EqEq, dv_field(ar, "self", sl[i].name, p), dv_field(ar, "other", sl[i].name, p), p)));
+        i = i + 1 as u32;
+    }
+    return dv_and_fold(ar, &cmps, p);
+}
+fn derive_hash_struct_body(a: Allocator, ar: *Arena, sfields: *const Vec<FieldDef>, p: Pos) -> *const Expr {
+    let n = sfields.length();
+    let sl = sfields.as_slice();
+    if n == 0 as u32 { return dv_cast_u32(ar, ast_node(ar, Expr::IntLit(0 as int, p)), p); }
+    let seed = dv_cast_u32(ar, dv_field(ar, "self", sl[0 as u32].name, p), p);
+    let mut vals: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 1 as u32;
+    while i < n { vals.push(dv_field(ar, "self", sl[i].name, p)); i = i + 1 as u32; }
+    return dv_hash_fold(ar, seed, &vals, p);
+}
+fn derive_clone_struct_body(a: Allocator, ar: *Arena, sname: str, sfields: *const Vec<FieldDef>, p: Pos) -> *const Expr {
+    let mut fields: Vec<Field> = Vec::with_capacity(a, 8 as u32);
+    let n = sfields.length();
+    let sl = sfields.as_slice();
+    let mut i = 0 as u32;
+    while i < n { fields.push(Field { name: sl[i].name, value: dv_field(ar, "self", sl[i].name, p) }); i = i + 1 as u32; }
+    let nb: Option<*const Expr> = Option::None;
+    return ast_node(ar, Expr::StructLit { tname: single_str(a, sname), fields: fields, base: nb, pos: p });
+}
+// Register a derived method's MethodInfo and (if `do_drain`) a kind-2 drain
+// entry; `has_other` adds the second `*const T` param (Eq's eq/ne).
+fn push_derive_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: str, mname: str,
+                      ret_ann: *const TypeAnn, has_other: bool, body: *const Expr, do_drain: bool,
+                      methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
+    let tp = single_str(a, target);
+    let mangled = method_mangle(a, ar, &tp, mname);
+    let mut manns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    manns.push(dv_const_ptr(a, ar, target));
+    if has_other { manns.push(dv_const_ptr(a, ar, target)); }
+    // Register the call signature so the arg coercion auto-refs a value
+    // `other` to `&other` (the `*const T` param).
+    let self_ty = resolve_sig_ty(a, ar, sc, dv_const_ptr(a, ar, target));
+    let mut fs_params: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    fs_params.push(self_ty);
+    if has_other { fs_params.push(resolve_sig_ty(a, ar, sc, dv_const_ptr(a, ar, target))); }
+    gsigs.push(FnSig { fs_mangled: mangled, fs_params: fs_params });
+    let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    methods.push(MethodInfo {
+        mi_path: single_str(a, target), mi_name: mname, mi_mangled: mangled,
+        mi_ret: resolve_sig_ret(a, ar, sc, Option::Some(ret_ann)),
+        mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
+        mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: Option::Some(ret_ann),
+        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
+    });
+    if do_drain {
+        let mut params: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
+        if has_other { params.push(FieldDef { name: "other", ty: dv_const_ptr(a, ar, target) }); }
+        let ec: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        let eb: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        lifted.push(LiftedLambda {
+            ll_mangled: mangled, ll_name: mangled, ll_expr: body, ll_kind: 2 as int,
+            ll_closure: target, ll_params: params, ll_ret: Option::Some(ret_ann),
+            ll_caps: ec, ll_brefs: eb, ll_lambda: body
+        });
+    }
+}
+fn collect_derives_struct(a: Allocator, ar: *Arena, sc: *const TyScope, sd: *const StructDecl, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
+    let n = sd.sderives.length();
+    let sl = sd.sderives.as_slice();
+    let p = sd.spos;
+    let mut i = 0 as u32;
+    while i < n {
+        let tr = sl[i];
+        if str::eq(tr, "Eq") {
+            push_derive_method(a, ar, sc, sd.sname, "eq", ann_bool(ar), true, derive_eq_struct_body(a, ar, &sd.sfields, p), true, methods, lifted, gsigs);
+            push_derive_method(a, ar, sc, sd.sname, "ne", ann_bool(ar), true, ast_node(ar, Expr::BoolLit(false, p)), false, methods, lifted, gsigs);
+        }
+        if str::eq(tr, "Hash") {
+            push_derive_method(a, ar, sc, sd.sname, "hash", tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), false, derive_hash_struct_body(a, ar, &sd.sfields, p), true, methods, lifted, gsigs);
+        }
+        if str::eq(tr, "Clone") {
+            push_derive_method(a, ar, sc, sd.sname, "clone", closure_struct_ann(a, ar, sd.sname), false, derive_clone_struct_body(a, ar, sd.sname, &sd.sfields, p), true, methods, lifted, gsigs);
+        }
+        i = i + 1 as u32;
+    }
+}
+fn dv_payload_tuple_name(a: Allocator, ar: *Arena, base: str, i: u32) -> str { return gensym_name(a, ar, base, i); }
+fn dv_payload_struct_name(a: Allocator, ar: *Arena, base: str, field: str) -> str { return str2(a, ar, str2(a, ar, base, "_"), field); }
+fn variant_binds(a: Allocator, ar: *Arena, vkind: *const VariantKind, base: str) -> PatBinds {
+    return match *vkind {
+        VariantKind::VUnit => { let e: Vec<Pattern> = Vec::with_capacity(a, 8 as u32); PatBinds::PBTuple(e) }
+        | VariantKind::VTuple(tys) => {
+            let mut ps: Vec<Pattern> = Vec::with_capacity(a, 8 as u32);
+            let nt = tys.length();
+            let mut it = 0 as u32;
+            while it < nt { ps.push(Pattern::PVar(dv_payload_tuple_name(a, ar, base, it), zero_pos())); it = it + 1 as u32; }
+            PatBinds::PBTuple(ps)
+        }
+        | VariantKind::VStruct(fields) => {
+            let mut fps: Vec<FieldPat> = Vec::with_capacity(a, 8 as u32);
+            let nf = fields.length();
+            let fsl = fields.as_slice();
+            let mut jf = 0 as u32;
+            while jf < nf { fps.push(FieldPat { name: fsl[jf].name, pat: Pattern::PVar(dv_payload_struct_name(a, ar, base, fsl[jf].name), zero_pos()) }); jf = jf + 1 as u32; }
+            PatBinds::PBStruct(fps)
+        }
+    };
+}
+fn variant_payload_vars(a: Allocator, ar: *Arena, vkind: *const VariantKind, base: str, p: Pos) -> Vec<*const Expr> {
+    let mut out: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    match *vkind {
+        VariantKind::VUnit => {}
+        | VariantKind::VTuple(tys) => { let nt = tys.length(); let mut it = 0 as u32; while it < nt { out.push(dv_var(ar, dv_payload_tuple_name(a, ar, base, it), p)); it = it + 1 as u32; } }
+        | VariantKind::VStruct(fields) => { let nf = fields.length(); let fsl = fields.as_slice(); let mut jf = 0 as u32; while jf < nf { out.push(dv_var(ar, dv_payload_struct_name(a, ar, base, fsl[jf].name), p)); jf = jf + 1 as u32; } }
+    }
+    return out;
+}
+fn build_variant_pat(a: Allocator, ar: *Arena, ename: str, vname: str, vkind: *const VariantKind, base: str) -> Pattern {
+    return Pattern::PVariant { tname: single_str(a, ename), variant: vname, binds: variant_binds(a, ar, vkind, base), pos: zero_pos() };
+}
+fn push_eq_arm(a: Allocator, ar: *Arena, ename: str, vname: str, vkind: *const VariantKind, nvar: u32, p: Pos, out: *Vec<MatchArm>) {
+    let no_guard: Option<*const Expr> = Option::None;
+    let self_pat = build_variant_pat(a, ar, ename, vname, vkind, "__de_a");
+    let inner_pat = build_variant_pat(a, ar, ename, vname, vkind, "__de_b");
+    let avars = variant_payload_vars(a, ar, vkind, "__de_a", p);
+    let bvars = variant_payload_vars(a, ar, vkind, "__de_b", p);
+    let mut cmps: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let np = avars.length();
+    let asl = avars.as_slice();
+    let bsl = bvars.as_slice();
+    let mut k = 0 as u32;
+    while k < np { cmps.push(ast_node(ar, Expr::BinOp(BinOp::EqEq, asl[k], bsl[k], p))); k = k + 1 as u32; }
+    let cmp = dv_and_fold(ar, &cmps, p);
+    let mut inner_arms: Vec<MatchArm> = Vec::with_capacity(a, 8 as u32);
+    inner_arms.push(MatchArm { pat: inner_pat, guard: no_guard, body: cmp, arm_pos: zero_pos() });
+    if nvar > 1 as u32 { inner_arms.push(MatchArm { pat: Pattern::PWildcard(zero_pos()), guard: no_guard, body: ast_node(ar, Expr::BoolLit(false, p)), arm_pos: zero_pos() }); }
+    let inner_match = ast_node(ar, Expr::Match { scrutinee: ast_node(ar, Expr::Deref(dv_var(ar, "other", p), p)), arms: inner_arms, pos: p });
+    out.push(MatchArm { pat: self_pat, guard: no_guard, body: inner_match, arm_pos: zero_pos() });
+}
+fn derive_eq_enum_body(a: Allocator, ar: *Arena, ename: str, variants: *const Vec<EnumVariant>, p: Pos) -> *const Expr {
+    let nvar = variants.length();
+    let vsl = variants.as_slice();
+    let mut outer_arms: Vec<MatchArm> = Vec::with_capacity(a, 8 as u32);
+    let mut vi = 0 as u32;
+    while vi < nvar { push_eq_arm(a, ar, ename, vsl[vi].vname, &vsl[vi].vkind, nvar, p, &outer_arms); vi = vi + 1 as u32; }
+    return ast_node(ar, Expr::Match { scrutinee: ast_node(ar, Expr::Deref(dv_var(ar, "self", p), p)), arms: outer_arms, pos: p });
+}
+fn push_hash_arm(a: Allocator, ar: *Arena, ename: str, vname: str, vkind: *const VariantKind, tag: u32, p: Pos, out: *Vec<MatchArm>) {
+    let no_guard: Option<*const Expr> = Option::None;
+    let self_pat = build_variant_pat(a, ar, ename, vname, vkind, "__dh");
+    let seed = dv_cast_u32(ar, ast_node(ar, Expr::IntLit(tag as int, p)), p);
+    let vals = variant_payload_vars(a, ar, vkind, "__dh", p);
+    let body = dv_hash_fold(ar, seed, &vals, p);
+    out.push(MatchArm { pat: self_pat, guard: no_guard, body: body, arm_pos: zero_pos() });
+}
+fn derive_hash_enum_body(a: Allocator, ar: *Arena, ename: str, variants: *const Vec<EnumVariant>, p: Pos) -> *const Expr {
+    let nvar = variants.length();
+    let vsl = variants.as_slice();
+    let mut outer_arms: Vec<MatchArm> = Vec::with_capacity(a, 8 as u32);
+    let mut vi = 0 as u32;
+    while vi < nvar { push_hash_arm(a, ar, ename, vsl[vi].vname, &vsl[vi].vkind, vi, p, &outer_arms); vi = vi + 1 as u32; }
+    return ast_node(ar, Expr::Match { scrutinee: ast_node(ar, Expr::Deref(dv_var(ar, "self", p), p)), arms: outer_arms, pos: p });
+}
+fn collect_derives_enum(a: Allocator, ar: *Arena, sc: *const TyScope, ed: *const EnumDecl, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
+    let n = ed.ederives.length();
+    let sl = ed.ederives.as_slice();
+    let p = ed.epos;
+    let mut i = 0 as u32;
+    while i < n {
+        let tr = sl[i];
+        if str::eq(tr, "Eq") {
+            push_derive_method(a, ar, sc, ed.ename, "eq", ann_bool(ar), true, derive_eq_enum_body(a, ar, ed.ename, &ed.evariants, p), true, methods, lifted, gsigs);
+            push_derive_method(a, ar, sc, ed.ename, "ne", ann_bool(ar), true, ast_node(ar, Expr::BoolLit(false, p)), false, methods, lifted, gsigs);
+        }
+        if str::eq(tr, "Hash") {
+            push_derive_method(a, ar, sc, ed.ename, "hash", tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), false, derive_hash_enum_body(a, ar, ed.ename, &ed.evariants, p), true, methods, lifted, gsigs);
+        }
+        i = i + 1 as u32;
+    }
+}
+fn collect_derives_item(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
+    match *it {
+        Item::Struct(sd) => collect_derives_struct(a, ar, sc, &sd, methods, lifted, gsigs)
+        | Item::Enum(ed) => collect_derives_enum(a, ar, sc, &ed, methods, lifted, gsigs)
+        | _other => {}
+    }
+}
+fn collect_derives(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_derives_item(a, ar, sc, &sl[i], methods, lifted, gsigs); i = i + 1 as u32; }
+}
+
 fn prelude_enum_tps(a: Allocator, out: *Vec<EnumTP>) {
     let mut t1: Vec<str> = Vec::with_capacity(a, 8 as u32);
     t1.push("T");
@@ -5876,6 +6113,9 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // A2 capturing closures: synthesise env struct / Fn impl / assoc bindings
     // into the (still mutable) registries; lambda exprs are matched at elab.
     prepass_closures(a, ar, &base_scope, items, &sinfo, &methods, &assoc_binds, &stps, &lifted_lambdas);
+    // @derive(Eq/Hash/Clone/Debug): synthesise the per-type methods into the
+    // method table + drain queue.
+    collect_derives(a, ar, &base_scope, items, &methods, &lifted_lambdas, &gsigs);
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
