@@ -3489,9 +3489,16 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     build_param_env(a, ar, &sc, &lparams, &env);
     let scb = scope_with_ret(&sc, ret);
-    let mut lbody: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
-    lbody.push(Stmt::Tail(body_expr));
-    let raw_body = elab_body(a, ar, g, &scb, gensym, &env, ret, &lbody);
+    // A `Block` body is a void statement sequence (a synthesised fmt_debug),
+    // emitted flat; any other body is the fn's tail value.
+    let raw_body = match *body_expr {
+        Expr::Block(stmts, _qb) => elab_body(a, ar, g, &scb, gensym, &env, ret, &stmts)
+        | _other => {
+            let mut lbody: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+            lbody.push(Stmt::Tail(body_expr));
+            elab_body(a, ar, g, &scb, gensym, &env, ret, &lbody)
+        }
+    };
     let mut lift_ctr: u32 = 0 as u32;
     let body = lift_stmts(a, ar, &lift_ctr, &raw_body);
     let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -5686,6 +5693,9 @@ fn collect_derives_struct(a: Allocator, ar: *Arena, sc: *const TyScope, sd: *con
         if str::eq(tr, "Clone") {
             push_derive_method(a, ar, sc, sd.sname, "clone", closure_struct_ann(a, ar, sd.sname), false, derive_clone_struct_body(a, ar, sd.sname, &sd.sfields, p), true, methods, lifted, gsigs);
         }
+        if str::eq(tr, "Debug") {
+            push_fmt_debug(a, ar, sd.sname, fmt_debug_struct_body(a, ar, sd.sname, &sd.sfields, p), methods, lifted);
+        }
         i = i + 1 as u32;
     }
 }
@@ -5780,8 +5790,129 @@ fn collect_derives_enum(a: Allocator, ar: *Arena, sc: *const TyScope, ed: *const
         if str::eq(tr, "Hash") {
             push_derive_method(a, ar, sc, ed.ename, "hash", tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), false, derive_hash_enum_body(a, ar, ed.ename, &ed.evariants, p), true, methods, lifted, gsigs);
         }
+        if str::eq(tr, "Debug") {
+            push_fmt_debug(a, ar, ed.ename, fmt_debug_enum_body(a, ar, ed.ename, &ed.evariants, p), methods, lifted);
+        }
         i = i + 1 as u32;
     }
+}
+// ----- @derive(Debug) → fmt_debug (writer-pattern, void) -----
+fn dv_cast_i32(ar: *Arena, e: *const Expr, p: Pos) -> *const Expr {
+    return ast_node(ar, Expr::Cast(e, tyann_node(ar, TypeAnn::TyInt { is_signed: true, width: IntWidth::W32 }), p));
+}
+fn is_str_ann(t: *const TypeAnn) -> bool {
+    return match *t { TypeAnn::TyStr => true | _other => false };
+}
+fn out_push_stmt(a: Allocator, ar: *Arena, mname: str, arg: *const Expr, p: Pos) -> Stmt {
+    let mut args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    args.push(arg);
+    return Stmt::ExprStmt(ast_node(ar, Expr::MethodCall { receiver: dv_var(ar, "out", p), name: mname, args: args, pos: p }));
+}
+fn push_lit(a: Allocator, ar: *Arena, s: str, p: Pos) -> Stmt {
+    return out_push_stmt(a, ar, "push_str", ast_node(ar, Expr::StringLit(s, p)), p);
+}
+fn push_byte_lit(a: Allocator, ar: *Arena, b: int, p: Pos) -> Stmt {
+    let bv = ast_node(ar, Expr::Cast(ast_node(ar, Expr::IntLit(b, p)), tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W8 }), p));
+    return out_push_stmt(a, ar, "push_byte", bv, p);
+}
+// Emit the formatting of one value (int → push_int; str → quoted push_str).
+fn push_value(a: Allocator, ar: *Arena, value: *const Expr, is_str: bool, p: Pos, out: *Vec<Stmt>) {
+    if is_str {
+        out.push(push_byte_lit(a, ar, 34 as int, p));
+        out.push(out_push_stmt(a, ar, "push_str", value, p));
+        out.push(push_byte_lit(a, ar, 34 as int, p));
+    } else {
+        out.push(out_push_stmt(a, ar, "push_int", dv_cast_i32(ar, value, p), p));
+    }
+}
+fn fmt_debug_struct_body(a: Allocator, ar: *Arena, sname: str, sfields: *const Vec<FieldDef>, p: Pos) -> *const Expr {
+    let mut stmts: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    stmts.push(push_lit(a, ar, str2(a, ar, sname, " { "), p));
+    let n = sfields.length();
+    let sl = sfields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if i > 0 as u32 { stmts.push(push_lit(a, ar, ", ", p)); }
+        stmts.push(push_lit(a, ar, str2(a, ar, sl[i].name, ": "), p));
+        push_value(a, ar, dv_field(ar, "self", sl[i].name, p), is_str_ann(sl[i].ty), p, &stmts);
+        i = i + 1 as u32;
+    }
+    stmts.push(push_lit(a, ar, " }", p));
+    return ast_node(ar, Expr::Block(stmts, p));
+}
+// One match arm formatting a variant into `out`.
+fn push_fmt_arm(a: Allocator, ar: *Arena, ename: str, v: *const EnumVariant, p: Pos, out: *Vec<MatchArm>) {
+    let no_guard: Option<*const Expr> = Option::None;
+    let qual = str2(a, ar, str2(a, ar, ename, "::"), v.vname);
+    let self_pat = build_variant_pat(a, ar, ename, v.vname, &v.vkind, "__dd");
+    let mut bstmts: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    match v.vkind {
+        VariantKind::VUnit => { bstmts.push(push_lit(a, ar, qual, p)); }
+        | VariantKind::VTuple(tys) => {
+            bstmts.push(push_lit(a, ar, str2(a, ar, qual, "("), p));
+            let nt = tys.length();
+            let tsl = tys.as_slice();
+            let mut it = 0 as u32;
+            while it < nt {
+                if it > 0 as u32 { bstmts.push(push_lit(a, ar, ", ", p)); }
+                push_value(a, ar, dv_var(ar, dv_payload_tuple_name(a, ar, "__dd", it), p), is_str_ann(tsl[it]), p, &bstmts);
+                it = it + 1 as u32;
+            }
+            bstmts.push(push_byte_lit(a, ar, 41 as int, p));
+        }
+        | VariantKind::VStruct(fields) => {
+            bstmts.push(push_lit(a, ar, str2(a, ar, qual, " { "), p));
+            let nf = fields.length();
+            let fsl = fields.as_slice();
+            let mut jf = 0 as u32;
+            while jf < nf {
+                if jf > 0 as u32 { bstmts.push(push_lit(a, ar, ", ", p)); }
+                bstmts.push(push_lit(a, ar, str2(a, ar, fsl[jf].name, ": "), p));
+                push_value(a, ar, dv_var(ar, dv_payload_struct_name(a, ar, "__dd", fsl[jf].name), p), is_str_ann(fsl[jf].ty), p, &bstmts);
+                jf = jf + 1 as u32;
+            }
+            bstmts.push(push_lit(a, ar, " }", p));
+        }
+    }
+    out.push(MatchArm { pat: self_pat, guard: no_guard, body: ast_node(ar, Expr::Block(bstmts, p)), arm_pos: zero_pos() });
+}
+fn fmt_debug_enum_body(a: Allocator, ar: *Arena, ename: str, variants: *const Vec<EnumVariant>, p: Pos) -> *const Expr {
+    let nvar = variants.length();
+    let vsl = variants.as_slice();
+    let mut arms: Vec<MatchArm> = Vec::with_capacity(a, 8 as u32);
+    let mut vi = 0 as u32;
+    while vi < nvar { push_fmt_arm(a, ar, ename, &vsl[vi], p, &arms); vi = vi + 1 as u32; }
+    let m = ast_node(ar, Expr::Match { scrutinee: ast_node(ar, Expr::Deref(dv_var(ar, "self", p), p)), arms: arms, pos: p });
+    let mut stmts: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    stmts.push(Stmt::ExprStmt(m));
+    return ast_node(ar, Expr::Block(stmts, p));
+}
+// Register fmt_debug (params self + `out: *StringBuilder`, void) and drain it.
+fn push_fmt_debug(a: Allocator, ar: *Arena, target: str, body: *const Expr,
+                  methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>) {
+    let tp = single_str(a, target);
+    let mangled = method_mangle(a, ar, &tp, "fmt_debug");
+    let out_ann = tyann_node(ar, TypeAnn::TyPtr(closure_struct_ann(a, ar, "StringBuilder")));
+    let mut manns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    manns.push(dv_const_ptr(a, ar, target));
+    manns.push(out_ann);
+    let none_ret: Option<*const TypeAnn> = Option::None;
+    let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    methods.push(MethodInfo {
+        mi_path: single_str(a, target), mi_name: "fmt_debug", mi_mangled: mangled,
+        mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
+        mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: none_ret,
+        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
+    });
+    let mut params: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
+    params.push(FieldDef { name: "out", ty: tyann_node(ar, TypeAnn::TyPtr(closure_struct_ann(a, ar, "StringBuilder"))) });
+    let ec: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let eb: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let nr: Option<*const TypeAnn> = Option::None;
+    lifted.push(LiftedLambda {
+        ll_mangled: mangled, ll_name: mangled, ll_expr: body, ll_kind: 2 as int,
+        ll_closure: target, ll_params: params, ll_ret: nr, ll_caps: ec, ll_brefs: eb, ll_lambda: body
+    });
 }
 fn collect_derives_item(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
     match *it {
