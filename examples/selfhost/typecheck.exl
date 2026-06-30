@@ -577,6 +577,39 @@ fn subst_typ(ar: *Arena, binds: *const Vec<TVarBind>, t: *const Typ) -> *const T
         | _other => t
     };
 }
+// Like subst_typ but resolves a nested generic application (`Slot<K,V>` inside
+// `HashMap<K,V>`'s `slots` field) to its mangled instance, registering that
+// instance + fields on the way — so `Slot_i32_i32` etc. ride the footer.
+fn subst_typs_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, args: *const Vec<*const Typ>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let n = args.length();
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(subst_typ_reg(a, ar, sc, binds, sl[i])); i = i + 1 as u32; }
+    return out;
+}
+fn subst_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, path: *const Vec<str>, args: *const Vec<*const Typ>) -> *const Typ {
+    let rargs = subst_typs_reg(a, ar, sc, binds, args);
+    if tys_have_tvar(&rargs) { return ty_node(ar, Typ::TStructApp { path: copy_strs(a, path), args: rargs }); }
+    let ipath = instance_path(a, ar, path, &rargs);
+    if !inst_has_fields(sc.sc_mono_fields, &ipath) {
+        register_mono_struct(a, sc, &ipath);
+        let binds2 = struct_instance_binds(a, sc.sc_stps, path_last(path), &rargs);
+        register_instance_fields(a, ar, sc, path, &binds2, &ipath);
+    }
+    return ty_node(ar, Typ::TStruct(ipath));
+}
+fn subst_typ_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, t: *const Typ) -> *const Typ {
+    return match *t {
+        Typ::TVar(n) => match bind_lookup(binds, n) { Option::Some(bt) => bt | Option::None => t }
+        | Typ::TPtr(inner) => ty_node(ar, Typ::TPtr(subst_typ_reg(a, ar, sc, binds, inner)))
+        | Typ::TConstPtr(inner) => ty_node(ar, Typ::TConstPtr(subst_typ_reg(a, ar, sc, binds, inner)))
+        | Typ::TOwnPtr(inner) => ty_node(ar, Typ::TOwnPtr(subst_typ_reg(a, ar, sc, binds, inner)))
+        | Typ::TArray { elem, size } => ty_node(ar, Typ::TArray { elem: subst_typ_reg(a, ar, sc, binds, elem), size: size })
+        | Typ::TStructApp { path, args } => subst_app_reg(a, ar, sc, binds, &path, &args)
+        | _other => t
+    };
+}
 
 // Infer tparam bindings by matching a declared (skeleton) type against an
 // actual type: a `TVar` binds to the actual; pointers/arrays recurse.
@@ -754,7 +787,7 @@ fn project_assoc(a: Allocator, ar: *Arena, sc: *const TyScope, bound_ty: *const 
                 if sl[i].ab_tparams.length() > 0 as u32 {
                     let mut base: Vec<str> = Vec::with_capacity(a, 8 as u32);
                     base.push(sl[i].ab_target);
-                    bind_recv_tparams(sc, &base, &inst_path, &binds);
+                    bind_recv_tparams(a, ar, sc, &base, &inst_path, &binds);
                 }
                 let cscope = scope_with_tbinds(sc, &sl[i].ab_tparams, &binds);
                 return resolve_sig_ty(a, ar, &cscope, sl[i].ab_ty);
@@ -831,6 +864,15 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // methods return one), so the slice instance rides in the footer even when
     // no `as_slice()` is called.
     if str::eq(last, "Vec") { register_slice_of(a, ar, sc, &resolved); }
+    // A `HashMap<K,V>` iterates its slot buffer as a `Slice<Slot<K,V>>`.
+    if str::eq(last, "HashMap") {
+        let mut slot_base: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        slot_base.push("Slot");
+        let slot_ipath = instance_path(a, ar, &slot_base, &resolved);
+        let mut slot_args: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+        slot_args.push(ty_node(ar, Typ::TStruct(slot_ipath)));
+        register_slice_of(a, ar, sc, &slot_args);
+    }
     return ty_node(ar, Typ::TStruct(ipath));
 }
 
@@ -845,6 +887,10 @@ fn prelude_struct_tparams(name: str, out: *Vec<str>) {
     if str::eq(name, "Filter") { out.push("I"); out.push("P"); }
     if str::eq(name, "Take") { out.push("I"); }
     if str::eq(name, "Enumerate") { out.push("I"); }
+    // DR-007 HashMap open-addressing table.
+    if str::eq(name, "HashMap") { out.push("K"); out.push("V"); }
+    if str::eq(name, "Slot") { out.push("K"); out.push("V"); }
+    if str::eq(name, "HashMapIter") { out.push("K"); out.push("V"); }
 }
 fn register_prelude_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
                                   args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
@@ -1531,7 +1577,7 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     let base = sl[midx].mi_mangled;
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     match expected {
-        Option::Some(e) => bind_recv_tparams(sc, &sl[midx].mi_path, &recv_base_path(a, e), &binds)
+        Option::Some(e) => bind_recv_tparams(a, ar, sc, &sl[midx].mi_path, &recv_base_path(a, e), &binds)
         | Option::None => { }
     }
     let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
@@ -2011,7 +2057,46 @@ fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *c
 // registered field types — `Vec<T>.ptr : own *T` against `Vec_i32.ptr :
 // own *i32` yields `T = i32`.  The mangled instance name discards the args, so
 // the registered fields are where the bindings still live.
-fn bind_recv_tparams(sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>) {
+// A nested generic field (`slots: own *Slot<K,V>` vs the instance's
+// `own *Slot_i32_i32`) recovers `K`/`V` by recursing into the inner
+// instance's own tparams — `unify_typ` can't un-mangle `Slot_i32_i32`.
+fn unify_app_inst(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, ipath: *const Vec<str>, out: *Vec<TVarBind>) {
+    if !inst_of_base(path_last(ipath), path_last(path)) { return; }
+    let mut rbinds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    bind_recv_tparams(a, ar, sc, path, ipath, &rbinds);
+    let stps = sc.sc_stps.as_slice();
+    let ns = sc.sc_stps.length();
+    let mut si = 0 as u32;
+    while si < ns {
+        if str::eq(stps[si].stp_name, path_last(path)) {
+            let inst_args = binds_in_tparam_order(a, ar, &stps[si].stp_params, &rbinds);
+            let na = args.length();
+            let asl = args.as_slice();
+            let isl = inst_args.as_slice();
+            let mut k = 0 as u32;
+            while k < na { if k < inst_args.length() { unify_nested(a, ar, sc, asl[k], isl[k], out); } k = k + 1 as u32; }
+        }
+        si = si + 1 as u32;
+    }
+    return;
+}
+fn unify_app_nested(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, inst: *const Typ, out: *Vec<TVarBind>) {
+    match *inst {
+        Typ::TStruct(ipath) => unify_app_inst(a, ar, sc, path, args, &ipath, out)
+        | _e => {}
+    }
+}
+fn unify_nested(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Typ, inst: *const Typ, out: *Vec<TVarBind>) {
+    match *skel {
+        Typ::TVar(n) => out.push(TVarBind { tvb_name: n, tvb_ty: inst })
+        | Typ::TOwnPtr(si) => match *inst { Typ::TOwnPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | _e => {} }
+        | Typ::TConstPtr(si) => match *inst { Typ::TConstPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | Typ::TPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | _e => {} }
+        | Typ::TPtr(si) => match *inst { Typ::TPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | _e => {} }
+        | Typ::TStructApp { path, args } => unify_app_nested(a, ar, sc, &path, &args, inst, out)
+        | _other => {}
+    }
+}
+fn bind_recv_tparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>) {
     let skel = sc.sc_sinfo;
     let n = skel.length();
     let sl = skel.as_slice();
@@ -2019,7 +2104,7 @@ fn bind_recv_tparams(sc: *const TyScope, base_path: *const Vec<str>, inst_path: 
     while i < n {
         if path_eq(&sl[i].sf_path, base_path) {
             match find_field_ty(sc.sc_mono_fields, inst_path, sl[i].sf_name) {
-                Option::Some(it) => unify_typ(sl[i].sf_ty, it, out)
+                Option::Some(it) => unify_nested(a, ar, sc, sl[i].sf_ty, it, out)
                 | Option::None => { }
             }
         }
@@ -2079,7 +2164,7 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     let midx2 = sl[midx].mi_meth_idx;
     let inst_path = recv_base_path(a, trecv.ty);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
-    bind_recv_tparams(sc, &sl[midx].mi_path, &inst_path, &binds);
+    bind_recv_tparams(a, ar, sc, &sl[midx].mi_path, &inst_path, &binds);
     let targs = elab_args(a, ar, g, sc, env, args);
     // Adapter methods carry a method-only tparam (`F`) bound from the args; for
     // ordinary struct-gen methods every tparam is already recovered, so this is
@@ -2732,9 +2817,9 @@ fn dedup_bind_tys(a: Allocator, binds: *const Vec<TVarBind>) -> Vec<*const Typ> 
 
 // Register the substituted fields of a struct instance so `inst.field` reads
 // resolve.  One push per field, behind a fn boundary (escape/affine clean).
-fn push_instance_field(a: Allocator, ar: *Arena, ipath: *const Vec<str>, fname: str,
-                       binds: *const Vec<TVarBind>, sf_ty: *const Typ, out: *Vec<StructField>) {
-    out.push(StructField { sf_path: copy_strs(a, ipath), sf_name: fname, sf_ty: subst_typ(ar, binds, sf_ty) });
+fn push_instance_field(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>, fname: str,
+                       binds: *const Vec<TVarBind>, sf_ty: *const Typ) {
+    sc.sc_mono_fields.push(StructField { sf_path: copy_strs(a, ipath), sf_name: fname, sf_ty: subst_typ_reg(a, ar, sc, binds, sf_ty) });
 }
 fn register_instance_fields(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
                             binds: *const Vec<TVarBind>, ipath: *const Vec<str>) {
@@ -2743,7 +2828,7 @@ fn register_instance_fields(a: Allocator, ar: *Arena, sc: *const TyScope, tname:
     let mut i = 0 as u32;
     while i < n {
         if path_eq(&sl[i].sf_path, tname) {
-            push_instance_field(a, ar, ipath, sl[i].sf_name, binds, sl[i].sf_ty, sc.sc_mono_fields);
+            push_instance_field(a, ar, sc, ipath, sl[i].sf_name, binds, sl[i].sf_ty);
         }
         i = i + 1 as u32;
     }
@@ -4632,6 +4717,26 @@ fn prelude_struct_info(a: Allocator, ar: *Arena, out: *Vec<StructField>) {
     push_prelude_field(a, "Take", "remaining", t_u32(ar), out);
     push_prelude_field(a, "Enumerate", "inner", ty_node(ar, Typ::TVar("I")), out);
     push_prelude_field(a, "Enumerate", "idx", t_u32(ar), out);
+    // DR-007 HashMap / Slot<K,V> open-addressing table.
+    push_prelude_field(a, "Slot", "state", t_u8(ar), out);
+    push_prelude_field(a, "Slot", "hash", t_u32(ar), out);
+    push_prelude_field(a, "Slot", "key", ty_node(ar, Typ::TVar("K")), out);
+    push_prelude_field(a, "Slot", "value", ty_node(ar, Typ::TVar("V")), out);
+    push_prelude_field(a, "HashMap", "slots", ty_node(ar, Typ::TOwnPtr(slot_kv_ty(a, ar))), out);
+    push_prelude_field(a, "HashMap", "count", t_u32(ar), out);
+    push_prelude_field(a, "HashMap", "cap", t_u32(ar), out);
+    push_prelude_field(a, "HashMap", "alloc", ty_node(ar, Typ::TStruct(allocator_path(a))), out);
+    push_prelude_field(a, "HashMapIter", "data", ty_node(ar, Typ::TConstPtr(slot_kv_ty(a, ar))), out);
+    push_prelude_field(a, "HashMapIter", "len", t_u32(ar), out);
+    push_prelude_field(a, "HashMapIter", "pos", t_u32(ar), out);
+}
+fn slot_kv_ty(a: Allocator, ar: *Arena) -> *const Typ {
+    let mut sp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    sp.push("Slot");
+    let mut sa: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    sa.push(ty_node(ar, Typ::TVar("K")));
+    sa.push(ty_node(ar, Typ::TVar("V")));
+    return ty_node(ar, Typ::TStructApp { path: sp, args: sa });
 }
 
 // A copy of the scope with a different tparam list — used to resolve a
@@ -5178,8 +5283,29 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     register_adapters_on(a, ar, "Filter", out);
     register_adapters_on(a, ar, "Take", out);
     register_adapters_on(a, ar, "Enumerate", out);
+    // DR-007 HashMap<K,V>: with_capacity(static) / insert / get->Option<V> /
+    // contains->bool / length->u32 / remove / iter->HashMapIter<K,V>; the
+    // iterator yields `(K, V)` pairs.
+    let hm_none: Option<*const TypeAnn> = Option::None;
+    push_prelude_sg_method(a, ar, "HashMap", "with_capacity", false, false, false, Option::Some(ann_kv(a, ar, "HashMap")), out);
+    push_prelude_sg_method(a, ar, "HashMap", "insert", true, true, false, hm_none, out);
+    push_prelude_sg_method(a, ar, "HashMap", "get", true, true, true, Option::Some(ann_app1(a, ar, "Option", "V")), out);
+    push_prelude_sg_method(a, ar, "HashMap", "contains", true, true, true, Option::Some(ann_bool(ar)), out);
+    push_prelude_sg_method(a, ar, "HashMap", "length", true, true, true, Option::Some(ann_u32(ar)), out);
+    push_prelude_sg_method(a, ar, "HashMap", "remove", true, true, false, hm_none, out);
+    push_prelude_sg_method(a, ar, "HashMap", "iter", true, true, true, Option::Some(ann_kv(a, ar, "HashMapIter")), out);
+    let mut hm_tup: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    hm_tup.push(ann_struct(a, ar, "K"));
+    hm_tup.push(ann_struct(a, ar, "V"));
+    push_prelude_sg_method(a, ar, "HashMapIter", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_node(ar, TypeAnn::TyTuple(hm_tup)))), out);
     // Arena: with_capacity (static) -> Arena (the interning allocator).
     push_prelude_method_ng(a, ar, "Arena", "with_capacity", false, false, false, Option::Some(prelude_struct_ty(a, ar, "Arena")), out);
+}
+fn ann_kv(a: Allocator, ar: *Arena, name: str) -> *const TypeAnn {
+    let mut tps: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    tps.push("K");
+    tps.push("V");
+    return ann_app_tps(a, ar, name, &tps);
 }
 
 // ===== Trait default methods =====
@@ -5318,6 +5444,25 @@ fn collect_struct_tps_one(a: Allocator, it: *const Item, out: *Vec<StructTP>) {
         | Item::Module(md) => { collect_struct_tps(a, &md.mitems, out); }
         | _e => { }
     }
+}
+// The prelude generic structs' tparams in the StructTP registry, so a nested
+// generic instance (`Slot<K,V>` inside `HashMap`) recovers + registers.
+fn push_prelude_stp(a: Allocator, name: str, out: *Vec<StructTP>) {
+    let mut tps: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    prelude_struct_tparams(name, &tps);
+    push_struct_tp(a, name, &tps, out);
+}
+fn prelude_struct_tps(a: Allocator, out: *Vec<StructTP>) {
+    push_prelude_stp(a, "Slice", out);
+    push_prelude_stp(a, "Vec", out);
+    push_prelude_stp(a, "VecIter", out);
+    push_prelude_stp(a, "Map", out);
+    push_prelude_stp(a, "Filter", out);
+    push_prelude_stp(a, "Take", out);
+    push_prelude_stp(a, "Enumerate", out);
+    push_prelude_stp(a, "HashMap", out);
+    push_prelude_stp(a, "Slot", out);
+    push_prelude_stp(a, "HashMapIter", out);
 }
 fn collect_struct_tps(a: Allocator, items: *const Vec<Item>, out: *Vec<StructTP>) {
     let n = items.length();
@@ -6442,6 +6587,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     prelude_enum_tps(a, &etps);
     let mut stps: Vec<StructTP> = Vec::with_capacity(a, 8 as u32);
     collect_struct_tps(a, items, &stps);
+    prelude_struct_tps(a, &stps);
     let mut assoc_binds: Vec<AssocBind> = Vec::with_capacity(a, 8 as u32);
     collect_assoc_binds(a, items, &assoc_binds);
     register_prelude_assoc(a, ar, &assoc_binds);
