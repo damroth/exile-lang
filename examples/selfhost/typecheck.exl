@@ -827,6 +827,15 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         if name_in(sc.sc_xstructs, last) { return ty_node(ar, Typ::TExtStruct(last)); }
         if name_in(sc.sc_xaliases, last) { return ty_node(ar, Typ::TExtAlias(last)); }
     }
+    // A bare type name inside `mod m { ... }` resolves module-relative: if
+    // `m::name` is a declared type (its marker is registered), qualify to the
+    // `m::name` path.  Otherwise fall through to the bare / outer-scope
+    // resolution, so a prelude `StringBuilder` used in a module stays itself.
+    if plen == 1 as u32 && nargs == 0 as u32 && sc.sc_modpath.length() > 0 as u32 {
+        let marker = join_colons(a, ar, sc.sc_modpath, last);
+        if name_in(sc.sc_enums, marker) { return ty_node(ar, Typ::TEnum(path_push(a, sc.sc_modpath, last))); }
+        if name_in(sc.sc_structs, marker) { return ty_node(ar, Typ::TStruct(path_push(a, sc.sc_modpath, last))); }
+    }
     let is_enum = name_in(sc.sc_enums, last) || is_prelude_enum(last);
     if nargs == 0 as u32 {
         let newpath = copy_strs(a, path);
@@ -2917,9 +2926,10 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             return mk_enum_lit_node(a, ar, &init, last, tag, enum_struct_args(a, ar, g, sc, env, &init, last, fields), p);
         }
     }
-    let tfields = elab_struct_fields(a, ar, g, sc, env, tname, fields);
+    let qtname = qualify_type_path(a, ar, sc, tname);
+    let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
-    let ipath = struct_lit_path(a, ar, sc, tname, &tfields, tbase);
+    let ipath = struct_lit_path(a, ar, sc, &qtname, &tfields, tbase);
     let sty = ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
     return te_node(ar, TexprNode::TStructLit { sname_path: ipath, fields: tfields, base: tbase }, sty, p);
 }
@@ -2939,9 +2949,10 @@ fn elab_alloc_opt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
 fn elab_new_struct(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                    tname: *const Vec<str>, fields: *const Vec<Field>, base: Option<*const Expr>, alloc: Option<*const Expr>, p: Pos) -> *const Texpr {
     let talloc = elab_alloc_opt(a, ar, g, sc, env, alloc);
-    let tfields = elab_struct_fields(a, ar, g, sc, env, tname, fields);
+    let qtname = qualify_type_path(a, ar, sc, tname);
+    let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
-    let ipath = struct_lit_path(a, ar, sc, tname, &tfields, tbase);
+    let ipath = struct_lit_path(a, ar, sc, &qtname, &tfields, tbase);
     let sty = ty_node(ar, Typ::TStruct(copy_strs(a, &ipath)));
     let oty = ty_node(ar, Typ::TOwnPtr(sty));
     return te_node(ar, TexprNode::TNew { sname_path: ipath, fields: tfields, base: tbase, alloc: talloc }, oty, p);
@@ -4458,6 +4469,45 @@ fn path_push(a: Allocator, path: *const Vec<str>, name: str) -> Vec<str> {
     out.push(name);
     return out;
 }
+// `modpath ++ suffix` — qualify an item path (struct / impl target) declared
+// inside `mod m { ... }` with its enclosing module path, so `mod pos { struct
+// Pos }` registers under `pos::Pos` (the path a `pos::Pos` reference resolves
+// to) rather than a bare `Pos`.  An empty modpath leaves the suffix unchanged.
+fn path_concat(a: Allocator, prefix: *const Vec<str>, suffix: *const Vec<str>) -> Vec<str> {
+    let mut out = copy_strs(a, prefix);
+    let n = suffix.length();
+    let sl = suffix.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+// `modpath ++ [name]` rendered `a::b::name` — the membership marker for a
+// module-nested type, registered alongside the bare name so resolution can
+// tell that a bare `Pos` inside `mod pos` denotes the module-local `pos::Pos`
+// (rather than blindly qualifying every bare name, which would mis-route a
+// prelude reference like `StringBuilder`).
+fn join_colons(a: Allocator, ar: *Arena, modpath: *const Vec<str>, name: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let n = modpath.length();
+    let sl = modpath.as_slice();
+    let mut i = 0 as u32;
+    while i < n { sb.push_str(sl[i]); sb.push_str("::"); i = i + 1 as u32; }
+    sb.push_str(name);
+    return str::from_slice(ar, sb.as_slice());
+}
+// Module-relative qualification for an expression-position type path (a struct
+// literal's name): a bare `Pos` inside `mod pos` becomes `pos::Pos` when that
+// marker is registered, mirroring resolve_named_ty for annotations.  Already-
+// qualified paths and prelude names pass through unchanged.
+fn qualify_type_path(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> Vec<str> {
+    if path.length() == 1 as u32 && sc.sc_modpath.length() > 0 as u32 {
+        let last = path_last(path);
+        let marker = join_colons(a, ar, sc.sc_modpath, last);
+        if name_in(sc.sc_structs, marker) { return path_push(a, sc.sc_modpath, last); }
+        if name_in(sc.sc_enums, marker) { return path_push(a, sc.sc_modpath, last); }
+    }
+    return copy_strs(a, path);
+}
 fn elaborate_module_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                        path: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
     // An extern fn keeps its raw C name as the emitted symbol even in a module.
@@ -4520,13 +4570,15 @@ fn skel_xtparams(f: *const Func, itparams: *const Vec<str>, empty: *const Vec<st
     return empty;
 }
 fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                         idx: *const ProgIdx, target: *const Vec<str>, itparams: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+                         idx: *const ProgIdx, modpath: *const Vec<str>, target: *const Vec<str>, itparams: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
     // A method on a generic struct with no parameters of its own is emitted
     // as a skeleton over the impl's type parameters (empty body, `struct-app`
-    // self type); its monomorphic instances carry the real bodies.
+    // self type); its monomorphic instances carry the real bodies.  The body
+    // elaborates under the impl's module path so a bare `Pos` in `mod pos`
+    // (the self type, a return type, a struct literal) resolves to `pos::Pos`.
     let no_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let xtp = skel_xtparams(f, itparams, &no_tp);
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath,
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, modpath,
                             method_mangle(a, ar, target, f.name), f, none_ty(), xtp));
 }
 
@@ -4536,41 +4588,44 @@ fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gens
 // that annotates a local with `Self` is not yet handled (none in the
 // catalog).
 fn elaborate_default_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                          idx: *const ProgIdx, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+                          idx: *const ProgIdx, modpath: *const Vec<str>, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
     let self_ty = ty_node(ar, Typ::TStruct(copy_strs(a, target)));
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath,
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, modpath,
                             method_mangle(a, ar, target, f.name), f, Option::Some(self_ty), &f.tparams));
 }
 
 fn emit_one_default(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                    target: *const Vec<str>, impl_methods: *const Vec<Func>, defaults: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+                    modpath: *const Vec<str>, target: *const Vec<str>, impl_methods: *const Vec<Func>, defaults: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
     if !name_in(defaults, f.name) { return; }
     if impl_has_method(impl_methods, f.name) { return; }
-    elaborate_default_into(a, ar, g, gensym, idx, target, f, funcs);
+    elaborate_default_into(a, ar, g, gensym, idx, modpath, target, f, funcs);
 }
 fn emit_td_defaults(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                    target: *const Vec<str>, impl_methods: *const Vec<Func>, td: *const TraitDecl, funcs: *Vec<Tfunc>) {
+                    modpath: *const Vec<str>, target: *const Vec<str>, impl_methods: *const Vec<Func>, td: *const TraitDecl, funcs: *Vec<Tfunc>) {
     let n = td.trmethods.length();
     let ms = td.trmethods.as_slice();
     let mut j = 0 as u32;
-    while j < n { emit_one_default(a, ar, g, gensym, idx, target, impl_methods, &td.trdefaults, &ms[j], funcs); j = j + 1 as u32; }
+    while j < n { emit_one_default(a, ar, g, gensym, idx, modpath, target, impl_methods, &td.trdefaults, &ms[j], funcs); j = j + 1 as u32; }
 }
 fn emit_impl_defaults(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                      items: *const Vec<Item>, ti: u32, target: *const Vec<str>, impl_methods: *const Vec<Func>, funcs: *Vec<Tfunc>) {
+                      items: *const Vec<Item>, modpath: *const Vec<str>, ti: u32, target: *const Vec<str>, impl_methods: *const Vec<Func>, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
     match sl[ti] {
-        Item::Trait(td) => { emit_td_defaults(a, ar, g, gensym, idx, target, impl_methods, &td, funcs); }
+        Item::Trait(td) => { emit_td_defaults(a, ar, g, gensym, idx, modpath, target, impl_methods, &td, funcs); }
         | _e => { }
     }
 }
 
 fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                  idx: *const ProgIdx, items: *const Vec<Item>, ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
+                  idx: *const ProgIdx, items: *const Vec<Item>, modpath: *const Vec<str>, ib: *const ImplBlock, funcs: *Vec<Tfunc>) {
+    // A module-nested impl's target qualifies with its enclosing module path,
+    // so `mod pos { impl Pos { fn zero } }` emits `pos__Pos__zero`.
+    let target = path_concat(a, modpath, &ib.itarget);
     let n = ib.iitems.length();
     let sl = ib.iitems.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elaborate_method_into(a, ar, g, gensym, idx, &ib.itarget, &ib.itparams, &sl[i], funcs);
+        elaborate_method_into(a, ar, g, gensym, idx, modpath, &target, &ib.itparams, &sl[i], funcs);
         i = i + 1 as u32;
     }
     // Synthesised trait defaults follow the impl's own methods (matching the
@@ -4578,36 +4633,64 @@ fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let tname = impl_trait_name(ib);
     if !str::eq(tname, "") {
         let ti = find_trait_idx(items, tname);
-        if ti >= 0 as int { emit_impl_defaults(a, ar, g, gensym, idx, items, ti as u32, &ib.itarget, &ib.iitems, funcs); }
+        if ti >= 0 as int { emit_impl_defaults(a, ar, g, gensym, idx, items, modpath, ti as u32, &target, &ib.iitems, funcs); }
     }
 }
 
 fn elaborate_impl_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                       idx: *const ProgIdx, items: *const Vec<Item>, it: *const Item, funcs: *Vec<Tfunc>) {
+                       idx: *const ProgIdx, items: *const Vec<Item>, modpath: *const Vec<str>, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, idx, items, &ib, funcs); }
+        Item::Impl(ib) => { elaborate_impl(a, ar, g, gensym, idx, items, modpath, &ib, funcs); }
+        | Item::Module(md) => {
+            // Module-nested impls flatten alongside top-level ones (second
+            // pass), their targets qualified by the module path.
+            let p2 = path_push(a, modpath, md.mname);
+            let mn = md.mitems.length();
+            let msl = md.mitems.as_slice();
+            let mut k = 0 as u32;
+            while k < mn { elaborate_impl_item(a, ar, g, gensym, idx, items, &p2, &msl[k], funcs); k = k + 1 as u32; }
+        }
         | _e => { }
     }
 }
 
 // Collect every user-declared struct / enum name (recursing into modules)
 // so signatures resolve them and the mono-instances footer lists them.
-fn collect_type_names_one(it: *const Item, snames: *Vec<str>, enames: *Vec<str>) {
+// Record each user type's bare name, plus — for a module-nested type — a
+// `mod::Name` marker so module-relative resolution can recognise it (see
+// resolve_named_ty).  The bare name keeps the existing last-segment membership
+// checks working; the marker is an additive entry only the qualifier queries.
+// `out` is the resolution registry (bare last segment for `mod::Name`
+// resolution, plus the `mod::Name` marker for module-relative bare refs);
+// `fout` is the footer registry, which lists only the canonical name (the
+// qualified form for a module-nested type), matching the oracle footer.
+fn push_type_name(a: Allocator, ar: *Arena, modpath: *const Vec<str>, name: str, out: *Vec<str>, fout: *Vec<str>) {
+    if modpath.length() == 0 as u32 {
+        out.push(name);
+        fout.push(name);
+        return;
+    }
+    let q = join_colons(a, ar, modpath, name);
+    out.push(name);
+    out.push(q);
+    fout.push(q);
+}
+fn collect_type_names_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it: *const Item, snames: *Vec<str>, enames: *Vec<str>, fstructs: *Vec<str>, fenums: *Vec<str>) {
     match *it {
-        Item::Struct(sd) => { snames.push(sd.sname); }
-        | Item::Enum(ed) => { enames.push(ed.ename); }
-        | Item::View(vd) => { enames.push(vd.vname); }
-        | Item::Module(md) => { collect_type_names(&md.mitems, snames, enames); }
+        Item::Struct(sd) => { push_type_name(a, ar, modpath, sd.sname, snames, fstructs); }
+        | Item::Enum(ed) => { push_type_name(a, ar, modpath, ed.ename, enames, fenums); }
+        | Item::View(vd) => { push_type_name(a, ar, modpath, vd.vname, enames, fenums); }
+        | Item::Module(md) => { collect_type_names(a, ar, &path_push(a, modpath, md.mname), &md.mitems, snames, enames, fstructs, fenums); }
         | _e => { }
     }
 }
 
-fn collect_type_names(items: *const Vec<Item>, snames: *Vec<str>, enames: *Vec<str>) {
+fn collect_type_names(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items: *const Vec<Item>, snames: *Vec<str>, enames: *Vec<str>, fstructs: *Vec<str>, fenums: *Vec<str>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        collect_type_names_one(&sl[i], snames, enames);
+        collect_type_names_one(a, ar, modpath, &sl[i], snames, enames, fstructs, fenums);
         i = i + 1 as u32;
     }
 }
@@ -4660,20 +4743,18 @@ fn collect_int_consts(items: *const Vec<Item>, out: *Vec<IntConst>) {
 // Build the struct field-layout index: a flat list of (owning struct path,
 // field name, resolved field type).  Field types resolve through a
 // name-scope since they may reference other structs / enums.
-fn push_one_field(a: Allocator, ar: *Arena, sc: *const TyScope, sname: str,
+fn push_one_field(a: Allocator, ar: *Arena, sc: *const TyScope, spath: *const Vec<str>,
                   fd: *const FieldDef, out: *Vec<StructField>) {
-    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    path.push(sname);
-    out.push(StructField { sf_path: path, sf_name: fd.name, sf_ty: resolve_sig_ty(a, ar, sc, fd.ty) });
+    out.push(StructField { sf_path: copy_strs(a, spath), sf_name: fd.name, sf_ty: resolve_sig_ty(a, ar, sc, fd.ty) });
 }
 
-fn push_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, sname: str,
+fn push_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, spath: *const Vec<str>,
                       fields: *const Vec<FieldDef>, out: *Vec<StructField>) {
     let n = fields.length();
     let sl = fields.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        push_one_field(a, ar, sc, sname, &sl[i], out);
+        push_one_field(a, ar, sc, spath, &sl[i], out);
         i = i + 1 as u32;
     }
 }
@@ -4748,6 +4829,25 @@ fn slot_kv_ty(a: Allocator, ar: *Arena) -> *const Typ {
 
 // A copy of the scope with a different tparam list — used to resolve a
 // generic type's own field/variant types (where its tparams are in scope).
+// A scope with its module path set, so type references collected / elaborated
+// inside `mod m { ... }` resolve module-relative (a bare `Pos` declared in `m`
+// resolves to `m::Pos`).  Used by the collectors + the method-body elaborator.
+fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope {
+    return TyScope {
+        sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
+        sc_efields: base.sc_efields, sc_methods: base.sc_methods,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
+        sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
+        sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: modpath,
+        sc_ret: base.sc_ret,
+        sc_self: base.sc_self,
+        sc_gsigs: base.sc_gsigs,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases,
+        sc_is_main: base.sc_is_main,
+    };
+}
 fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
     return TyScope {
         sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: tparams,
@@ -4803,23 +4903,25 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
     };
 }
 
-fn collect_struct_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, out: *Vec<StructField>) {
+fn collect_struct_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, it: *const Item, out: *Vec<StructField>) {
     match *it {
         Item::Struct(sd) => {
-            let sc2 = scope_with_tparams(sc, &sd.stparams);
-            push_struct_fields(a, ar, &sc2, sd.sname, &sd.sfields, out);
+            let msc = scope_with_modpath(sc, modpath);
+            let sc2 = scope_with_tparams(&msc, &sd.stparams);
+            let spath = path_push(a, modpath, sd.sname);
+            push_struct_fields(a, ar, &sc2, &spath, &sd.sfields, out);
         }
-        | Item::Module(md) => { collect_struct_info(a, ar, sc, &md.mitems, out); }
+        | Item::Module(md) => { collect_struct_info(a, ar, sc, &path_push(a, modpath, md.mname), &md.mitems, out); }
         | _e => { }
     }
 }
 
-fn collect_struct_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, out: *Vec<StructField>) {
+fn collect_struct_info(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<StructField>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        collect_struct_info_one(a, ar, sc, &sl[i], out);
+        collect_struct_info_one(a, ar, sc, modpath, &sl[i], out);
         i = i + 1 as u32;
     }
 }
@@ -4986,24 +5088,29 @@ fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
 // method's body can be re-derived in the drain.  Module-nested impls pass
 // the module's own top index (a nested generic method is out of scope for
 // v1, matching the top-level-only generic-fn registry).
-fn collect_method_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, top_idx: u32, out: *Vec<MethodInfo>) {
+fn collect_method_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, it: *const Item, top_idx: u32, out: *Vec<MethodInfo>) {
     match *it {
-        Item::Impl(ib) => { collect_methods_impl(a, ar, sc, &ib.itarget, &ib.itparams, &ib.iitems, top_idx, out); }
-        | Item::Module(md) => { collect_method_info_nested(a, ar, sc, &md.mitems, top_idx, out); }
+        Item::Impl(ib) => {
+            let msc = scope_with_modpath(sc, modpath);
+            let target = path_concat(a, modpath, &ib.itarget);
+            collect_methods_impl(a, ar, &msc, &target, &ib.itparams, &ib.iitems, top_idx, out);
+        }
+        | Item::Module(md) => { collect_method_info_nested(a, ar, sc, &path_push(a, modpath, md.mname), &md.mitems, top_idx, out); }
         | _e => { }
     }
 }
-fn collect_method_info_nested(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, top_idx: u32, out: *Vec<MethodInfo>) {
+fn collect_method_info_nested(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, items: *const Vec<Item>, top_idx: u32, out: *Vec<MethodInfo>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { collect_method_info_one(a, ar, sc, &sl[i], top_idx, out); i = i + 1 as u32; }
+    while i < n { collect_method_info_one(a, ar, sc, modpath, &sl[i], top_idx, out); i = i + 1 as u32; }
 }
 fn collect_method_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, out: *Vec<MethodInfo>) {
+    let empty: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { collect_method_info_one(a, ar, sc, &sl[i], i, out); i = i + 1 as u32; }
+    while i < n { collect_method_info_one(a, ar, sc, &empty, &sl[i], i, out); i = i + 1 as u32; }
 }
 
 // ===== Prelude methods =====
@@ -6610,7 +6717,10 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // join the prelude in the sorted `mono-instances` footer.
     let mut snames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut enames: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    collect_type_names(items, &snames, &enames);
+    let mut fstructs: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut fenums: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let top_modpath: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_type_names(a, ar, &top_modpath, items, &snames, &enames, &fstructs, &fenums);
     let mut xstructs: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut xaliases: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_ext_types(items, &xstructs, &xaliases);
@@ -6670,7 +6780,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // in every fn's body scope so `s.field`, struct/enum literals, variant
     // patterns and method calls type-check.
     let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
-    collect_struct_info(a, ar, &base_scope, items, &sinfo);
+    collect_struct_info(a, ar, &base_scope, &empty_tp, items, &sinfo);
     prelude_struct_info(a, ar, &sinfo);
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
@@ -6704,9 +6814,10 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         i = i + 1 as u32;
     }
     // Second pass: impl methods are flattened after the free functions.
+    let empty_mp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut j = 0 as u32;
     while j < n {
-        elaborate_impl_item(a, ar, &globals, &gensym, &idx, items, &sl[j], &funcs);
+        elaborate_impl_item(a, ar, &globals, &gensym, &idx, items, &empty_mp, &sl[j], &funcs);
         j = j + 1 as u32;
     }
     // Drain lifted lambdas / closures BEFORE the generic instances so the
@@ -6754,12 +6865,12 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
 
     let mut structs = prelude_struct_index(a);
     let mut enums = prelude_enum_index(a);
-    let sn = snames.length();
-    let ssl = snames.as_slice();
+    let sn = fstructs.length();
+    let ssl = fstructs.as_slice();
     let mut si = 0 as u32;
     while si < sn { push_struct_name(a, &structs, ssl[si]); si = si + 1 as u32; }
-    let en = enames.length();
-    let esl = enames.as_slice();
+    let en = fenums.length();
+    let esl = fenums.as_slice();
     let mut ei = 0 as u32;
     while ei < en { push_enum_name(a, &enums, esl[ei]); ei = ei + 1 as u32; }
     // Generated monomorphic instances (the dumper sorts + dedups).
