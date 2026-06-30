@@ -123,7 +123,7 @@ host-selfhost-lexer: examples/selfhost/lex_corpus.exl examples/selfhost/lexer.ex
 host-selfhost-parser: examples/selfhost/parse_corpus.exl examples/selfhost/parser.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/error.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_parser.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_parser $<
 
-host-selfhost-tc: examples/selfhost/tc_corpus.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+host-selfhost-tc: examples/selfhost/tc_corpus.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/loader.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_tc.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_tc $<
 
 # `make amiga-NAME` → build m68k Amiga binary

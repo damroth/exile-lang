@@ -14,6 +14,7 @@ use ast::*;
 use ir::*;
 use error::*;
 use parser::*;
+use loader::*;
 use typecheck::*;
 use dump_ir::*;
 
@@ -83,20 +84,17 @@ fn main() {
     sys::sys_close(fd);
 
     let mut ar = Arena::with_capacity(a, arena_cap_for(src_sb.length()));
-    let src = str::from_slice(&ar, src_sb.as_slice());
 
-    match tokenize(a, &ar, path, src) {
-        Result::Ok(toks) => {
-            match parse_program(a, &ar, toks.as_slice(), toks.length()) {
-                Result::Ok(prog) => {
-                    match check_program(a, &ar, &prog) {
-                        Result::Ok(tp) => {
-                            let mut out = StringBuilder::with_capacity(a, 16384 as u32);
-                            dump_typed_ir(&tp, path, true, &out);
-                            flush(&out);
-                        }
-                        | Result::Err(e) => { report_error(a, e); }
-                    }
+    // The loader reads the entry file (again) plus every `use`d module file,
+    // resolves them, and returns one flat program; check_program then runs as
+    // before.  A single-file example with no `use` flows straight through.
+    match load(a, &ar, path) {
+        Result::Ok(prog) => {
+            match check_program(a, &ar, &prog) {
+                Result::Ok(tp) => {
+                    let mut out = StringBuilder::with_capacity(a, 16384 as u32);
+                    dump_typed_ir(&tp, path, true, &out);
+                    flush(&out);
                 }
                 | Result::Err(e) => { report_error(a, e); }
             }
