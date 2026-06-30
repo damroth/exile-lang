@@ -18,12 +18,25 @@ pub struct CompileError {
     msg: str,
 }
 
+// Backstop for arena exhaustion, shared across the port's node allocators.
+// The arena contract returns null when full (the caller picks capacity — see
+// arena.exl, which deliberately exhausts a tiny arena and checks for null);
+// node construction REQUIRES success, so a null means the corpus under-sized
+// the arena for this input.  Abort loudly in the allocator frame rather than
+// writing through the null pointer: a silent `*0x0` reads as a generic crash
+// (root-caused 2026-06-30 via ASan — token sat 88 bytes under a fixed cap).
+// With tc_corpus's source-proportional sizing this never fires for real
+// inputs; it turns any future mis-size from UB into a clean SIGABRT.
+mod raw { extern fn abort(); }
+pub fn arena_oom() { raw::abort(); }
+
 // Allocate a `CompileError` in `ar` and hand back a read-only borrow —
 // the shape the fallible stages return as `Result::Err(...)`.  Dynamic
 // messages are built in a StringBuilder and interned with
 // `str::from_slice` before being passed in as `msg`.
 pub fn alloc(ar: *Arena, p: Pos, msg: str) -> *const CompileError {
     let e: *CompileError = ar.alloc_borrowed();
+    if e == null { arena_oom(); }
     *e = CompileError { pos: p, msg: msg };
     return e as *const CompileError;
 }

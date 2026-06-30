@@ -285,6 +285,7 @@ fn parse_path_tail(s: *Parser, head: str) -> Vec<str> {
 
 fn ty_node(s: *Parser, t: TypeAnn) -> *const TypeAnn {
     let n: *TypeAnn = s.ar.alloc_borrowed();
+    if n == null { arena_oom(); }
     *n = t;
     return n as *const TypeAnn;
 }
@@ -649,6 +650,7 @@ fn parse_params(s: *Parser) -> Vec<Param> {
 
 fn e_node(s: *Parser, e: Expr) -> *const Expr {
     let n: *Expr = s.ar.alloc_borrowed();
+    if n == null { arena_oom(); }
     *n = e;
     return n as *const Expr;
 }

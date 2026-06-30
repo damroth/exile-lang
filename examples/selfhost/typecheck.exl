@@ -18,18 +18,8 @@ use error::*;
 
 // ===== Typ node allocation =====
 
-// Backstop for arena exhaustion.  The arena contract returns null when full
-// (the caller picks capacity — see arena.exl, which deliberately exhausts a
-// tiny arena and checks for null); node construction REQUIRES success, so a
-// null here means the corpus under-sized the arena for this input.  Abort
-// loudly in the allocator frame rather than writing through the null pointer:
-// a silent `*0x0` reads as a generic crash / feature regression (this was
-// root-caused 2026-06-30 via ASan — token sat 88 bytes under a fixed cap).
-// With arena_cap_for's >3x headroom this never fires for real inputs; it turns
-// any future mis-size from UB into a clean, locatable SIGABRT.
-mod raw { extern fn abort(); }
-fn arena_oom() { raw::abort(); }
-
+// `arena_oom()` (the loud exhaustion backstop) lives in `error` and is shared
+// across every node allocator — see the comment there.
 fn ty_node(ar: *Arena, t: Typ) -> *const Typ {
     let n: *Typ = ar.alloc_borrowed();
     if n == null { arena_oom(); }
@@ -1828,6 +1818,7 @@ fn display_dispatch_target(sc: *const TyScope, t: *const Typ) -> bool {
 
 fn tyann_node(ar: *Arena, t: TypeAnn) -> *const TypeAnn {
     let n: *TypeAnn = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
     *n = t;
     return n as *const TypeAnn;
 }

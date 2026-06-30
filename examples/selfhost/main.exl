@@ -43,12 +43,14 @@ fn one_str(a: Allocator, s: str) -> Vec<str> {
 
 fn ty_i32(ar: *Arena) -> *const TypeAnn {
     let t: *TypeAnn = ar.alloc_borrowed();
+    if t == null { arena_oom(); }
     *t = TypeAnn::TyInt { is_signed: true, width: IntWidth::W32 };
     return t as *const TypeAnn;
 }
 
 fn ty_const_ptr(ar: *Arena, inner: *const TypeAnn) -> *const TypeAnn {
     let t: *TypeAnn = ar.alloc_borrowed();
+    if t == null { arena_oom(); }
     *t = TypeAnn::TyConstPtr(inner);
     return t as *const TypeAnn;
 }
@@ -56,6 +58,7 @@ fn ty_const_ptr(ar: *Arena, inner: *const TypeAnn) -> *const TypeAnn {
 fn ty_struct(a: Allocator, ar: *Arena, name: str) -> *const TypeAnn {
     let args: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     let t: *TypeAnn = ar.alloc_borrowed();
+    if t == null { arena_oom(); }
     *t = TypeAnn::TyStruct { path: one_str(a, name), args: args };
     return t as *const TypeAnn;
 }
@@ -64,24 +67,28 @@ fn ty_struct(a: Allocator, ar: *Arena, name: str) -> *const TypeAnn {
 
 fn mk_string_lit(ar: *Arena, s: str) -> *const Expr {
     let e: *Expr = ar.alloc_borrowed();
+    if e == null { arena_oom(); }
     *e = Expr::StringLit(s, pos::Pos::zero());
     return e as *const Expr;
 }
 
 fn mk_var(ar: *Arena, name: str) -> *const Expr {
     let e: *Expr = ar.alloc_borrowed();
+    if e == null { arena_oom(); }
     *e = Expr::Var(name, pos::Pos::zero());
     return e as *const Expr;
 }
 
 fn mk_deref(ar: *Arena, sub: *const Expr) -> *const Expr {
     let e: *Expr = ar.alloc_borrowed();
+    if e == null { arena_oom(); }
     *e = Expr::Deref(sub, pos::Pos::zero());
     return e as *const Expr;
 }
 
 fn mk_mul(ar: *Arena, l: *const Expr, r: *const Expr) -> *const Expr {
     let e: *Expr = ar.alloc_borrowed();
+    if e == null { arena_oom(); }
     *e = Expr::BinOp(BinOp::Mul, l, r, pos::Pos::zero());
     return e as *const Expr;
 }
@@ -91,6 +98,7 @@ fn mk_call1(a: Allocator, ar: *Arena, fn_name: str, arg: *const Expr) -> *const 
     let mut args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
     args.push(arg);
     let e: *Expr = ar.alloc_borrowed();
+    if e == null { arena_oom(); }
     *e = Expr::Call { callee: one_str(a, fn_name), args: args, pos: pos::Pos::zero() };
     return e as *const Expr;
 }
@@ -188,6 +196,7 @@ fn build_area_fn(a: Allocator, ar: *Arena) -> Func {
     arms.push(arm2);
 
     let match_expr: *Expr = ar.alloc_borrowed();
+    if match_expr == null { arena_oom(); }
     *match_expr = Expr::Match {
         scrutinee: mk_deref(ar, mk_var(ar, "s")), arms: arms, pos: pos::Pos::zero(),
     };
@@ -244,12 +253,14 @@ fn build_fixture(a: Allocator, ar: *Arena) -> Vec<Item> {
 
 fn ir_i32(ar: *Arena) -> *const Typ {
     let t: *Typ = ar.alloc_borrowed();
+    if t == null { arena_oom(); }
     *t = Typ::TInt(IntKind { is_signed: true, width: IntWidth::W32 });
     return t as *const Typ;
 }
 
 fn ir_node(ar: *Arena, node: TexprNode, ty: *const Typ) -> *const Texpr {
     let e: *Texpr = ar.alloc_borrowed();
+    if e == null { arena_oom(); }
     *e = Texpr { e: node, ty: ty, pos: pos::Pos::zero() };
     return e as *const Texpr;
 }
