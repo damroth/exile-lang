@@ -52,20 +52,37 @@ fn flush(sb: *const StringBuilder) {
     sys::sys_write(1 as c_int, &bytes[0] as *const c_uchar, sb.length() as c_ulong);
 }
 
+// Size the typecheck arena to the source.  An arena hands out borrows, so it
+// CANNOT grow — a realloc would dangle every node pointer it ever returned —
+// which means it must be right-sized up front.  A fixed cap silently exhausts
+// on larger inputs: alloc_borrowed returns null and the next node write hits
+// address 0x0 (root-caused 2026-06-30 via ASan: token sat 88 bytes under a
+// 256KB cap).  The typed IR grows ~linearly with source size; the 1MB floor
+// covers the fixed prelude-registration cost and +128x source (>3x over the
+// densest measured per-byte rate, 38.8x for lexer.exl) carries the largest
+// self-host module (typecheck.exl ~350KB -> ~46MB) with margin.
+fn arena_cap_for(srclen: u32) -> u32 {
+    return 1048576 as u32 + srclen * 128 as u32;
+}
+
 fn main() {
     let a = default_allocator();
-    let mut ar = Arena::with_capacity(a, 262144 as u32);
 
+    // The filename arrives on stdin; build the NUL-terminated path in a tiny
+    // dedicated arena so the main arena can be sized to the SOURCE below.
     let mut pbuf = StringBuilder::with_capacity(a, 256 as u32);
     read_all(0 as c_int, &pbuf);
     let plen = path_len(pbuf.as_slice(), pbuf.length());
-    let path = str::from_slice(&ar, pbuf.as_slice()[0 as u32..plen]);
+    let mut parena = Arena::with_capacity(a, 1024 as u32);
+    let path = str::from_slice(&parena, pbuf.as_slice()[0 as u32..plen]);
 
     let fd: c_int = sys::sys_open(path as *const c_char, 0 as c_int);
     if fd < 0 as c_int { return; }
     let mut src_sb = StringBuilder::with_capacity(a, 16384 as u32);
     read_all(fd, &src_sb);
     sys::sys_close(fd);
+
+    let mut ar = Arena::with_capacity(a, arena_cap_for(src_sb.length()));
     let src = str::from_slice(&ar, src_sb.as_slice());
 
     match tokenize(a, &ar, path, src) {

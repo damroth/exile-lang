@@ -18,8 +18,21 @@ use error::*;
 
 // ===== Typ node allocation =====
 
+// Backstop for arena exhaustion.  The arena contract returns null when full
+// (the caller picks capacity — see arena.exl, which deliberately exhausts a
+// tiny arena and checks for null); node construction REQUIRES success, so a
+// null here means the corpus under-sized the arena for this input.  Abort
+// loudly in the allocator frame rather than writing through the null pointer:
+// a silent `*0x0` reads as a generic crash / feature regression (this was
+// root-caused 2026-06-30 via ASan — token sat 88 bytes under a fixed cap).
+// With arena_cap_for's >3x headroom this never fires for real inputs; it turns
+// any future mis-size from UB into a clean, locatable SIGABRT.
+mod raw { extern fn abort(); }
+fn arena_oom() { raw::abort(); }
+
 fn ty_node(ar: *Arena, t: Typ) -> *const Typ {
     let n: *Typ = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
     *n = t;
     return n as *const Typ;
 }
@@ -976,6 +989,7 @@ fn copy_params(a: Allocator, src: *const Vec<Param>) -> Vec<Param> {
 
 fn te_node(ar: *Arena, node: TexprNode, ty: *const Typ, pos: Pos) -> *const Texpr {
     let n: *Texpr = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
     *n = Texpr { e: node, ty: ty, pos: pos };
     return n as *const Texpr;
 }
@@ -2643,6 +2657,7 @@ fn elab_try(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
 
 fn ast_node(ar: *Arena, e: Expr) -> *const Expr {
     let n: *Expr = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
     *n = e;
     return n as *const Expr;
 }
@@ -3139,6 +3154,7 @@ fn elab_array_repeat(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
 // non-array base defers so the gap stays visible.
 fn ann_node(ar: *Arena, t: TypeAnn) -> *const TypeAnn {
     let n: *TypeAnn = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
     *n = t;
     return n as *const TypeAnn;
 }
@@ -6469,10 +6485,33 @@ fn collect_globals(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const V
     let mut g: Vec<GlobalFn> = Vec::with_capacity(a, 16 as u32);
     let top: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_into(a, ar, sc, items, &top, &g);
+    register_prelude_globals(a, ar, &g);
     return g;
 }
 
+// An extern `sys` seam fn (DR-032): module-internal (reachable solely via
+// `sys::name` -> mangled `sys__name`), emitted by its raw C name.
+fn push_sys_fn(a: Allocator, ar: *Arena, name: str, ret: Option<*const Typ>, g: *Vec<GlobalFn>) {
+    g.push(GlobalFn { name: name, mangled: str2(a, ar, "sys__", name), gf_emit: name,
+                      ret: ret, is_const: false, is_top: false });
+}
 
+// The synthesised `sys` module — extern syscalls over the host/amiga seam.
+// Mirrors the oracle's prelude `sys` module: bodies are extern, so only the
+// return type participates in typecheck; `sys::sys_open(...)` resolves through
+// the `sys__sys_open` mangle to a `(call sys_open ...)` of the declared result.
+fn register_prelude_globals(a: Allocator, ar: *Arena, g: *Vec<GlobalFn>) {
+    let cint: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TCInt { is_signed: true }));
+    let clong: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TCLong { is_signed: true }));
+    let cvoidp: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid))));
+    let novoid: Option<*const Typ> = Option::None;
+    push_sys_fn(a, ar, "sys_alloc", cvoidp, g);
+    push_sys_fn(a, ar, "sys_free", novoid, g);
+    push_sys_fn(a, ar, "sys_write", clong, g);
+    push_sys_fn(a, ar, "sys_read", clong, g);
+    push_sys_fn(a, ar, "sys_open", cint, g);
+    push_sys_fn(a, ar, "sys_close", cint, g);
+}
 
 fn collect_fn_sigs_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, path: *const Vec<str>, out: *Vec<FnSig>) {
     match *it {
