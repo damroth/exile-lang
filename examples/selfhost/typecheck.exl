@@ -1330,6 +1330,9 @@ fn ptr_or_constptr(t: *const Typ) -> bool {
 fn retype_var(ar: *Arena, targ: *const Texpr, cty: *const Typ) -> *const Texpr {
     return match targ.e {
         TexprNode::TVar(n) => te_node(ar, TexprNode::TVar(n), cty, targ.pos)
+        // An own field lent out (`cur = cur.next` / `&own_field` arg) keeps
+        // the same access node but re-types to the borrow (`own *T` -> `*const T`).
+        | TexprNode::TFieldAccess { target, field } => te_node(ar, TexprNode::TFieldAccess { target: target, field: field }, cty, targ.pos)
         | _other => targ
     };
 }
@@ -1509,6 +1512,14 @@ fn mret_is_slice(mret: Option<*const Typ>) -> bool {
 fn register_prelude_method_use(a: Allocator, ar: *Arena, sc: *const TyScope, mpath: *const Vec<str>, mret: Option<*const Typ>) {
     register_mono_struct(a, sc, mpath);
     if mret_is_slice(mret) { register_slice_u8(a, ar, sc); }
+    // Any String use materialises the `Slice<u8>` byte view + StringBuilder.
+    let last = path_last(mpath);
+    if str::eq(last, "String") {
+        register_slice_u8(a, ar, sc);
+        let mut sbp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        sbp.push("StringBuilder");
+        register_mono_struct(a, sc, &sbp);
+    }
     return;
 }
 // A generic static prelude method (`Vec::with_capacity` -> `Vec<T>`): the
@@ -3165,7 +3176,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::NewEnum { tname, args, alloc } => elab_new_enum(a, ar, g, sc, env, &tname, &args, alloc, p)
         | Expr::Range { lo, hi, inclusive } => elab_range_value(a, ar, g, sc, env, lo, hi, inclusive, p)
         | Expr::Lambda { params, ret_ty, body, captures } => elab_lambda(a, ar, g, sc, env, e, &params, ret_ty, p)
-        | _other => defer_expr(ar, p)
+        | Expr::SizeOf(t, _q) => te_node(ar, TexprNode::TSizeOf(resolve_sig_ty(a, ar, sc, t)), ty_node(ar, Typ::TCInt { is_signed: false }), p)
     };
 }
 
@@ -4551,6 +4562,21 @@ fn prelude_struct_info(a: Allocator, ar: *Arena, out: *Vec<StructField>) {
     push_prelude_field(a, "VecIter", "data", ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TVar("T")))), out);
     push_prelude_field(a, "VecIter", "len", t_u32(ar), out);
     push_prelude_field(a, "VecIter", "pos", t_u32(ar), out);
+    // Allocator seam fields — needed by the synthesised `<Struct>__drop`
+    // bodies, which call `self.alloc.free_fn(self.alloc.state, ..)` directly
+    // (DR-030 drop synthesis; the only direct field-access on Allocator).
+    let cvoid_ptr = ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid)));
+    push_prelude_field(a, "Allocator", "state", cvoid_ptr, out);
+    let mut afp: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    afp.push(ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid))));
+    afp.push(t_u32(ar));
+    push_prelude_field(a, "Allocator", "alloc_fn", ty_node(ar, Typ::TFnPtr { params: afp, ret: Option::Some(ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid)))) }), out);
+    let mut ffp: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    ffp.push(ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid))));
+    ffp.push(ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid))));
+    ffp.push(t_u32(ar));
+    let none_fret: Option<*const Typ> = Option::None;
+    push_prelude_field(a, "Allocator", "free_fn", ty_node(ar, Typ::TFnPtr { params: ffp, ret: none_fret }), out);
     // DR-026 lazy iterator adapters: `inner: I` plus the per-adapter state.
     push_prelude_field(a, "Map", "inner", ty_node(ar, Typ::TVar("I")), out);
     push_prelude_field(a, "Map", "f", ty_node(ar, Typ::TVar("F")), out);
@@ -5928,6 +5954,91 @@ fn collect_derives(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const V
     while i < n { collect_derives_item(a, ar, sc, &sl[i], methods, lifted, gsigs); i = i + 1 as u32; }
 }
 
+// ===== DR-030 drop synthesis ===========================================
+// Every struct with an `own *T` field gets a `<Struct>__drop(*self)` that
+// frees each own field through the allocator seam:
+//   self.alloc.free_fn(self.alloc.state, self.<f> as *c_void, size_of(T) as u32)
+// (Auto-drop INJECTION at scope-exit is a post-typecheck pass, so the
+// typed-IR dump carries the method but no calls to it.)
+fn dv_field_of(ar: *Arena, recv: *const Expr, f: str, p: Pos) -> *const Expr {
+    return ast_node(ar, Expr::FieldAccess(recv, f, p));
+}
+fn dv_cvoid_ptr_ann(ar: *Arena) -> *const TypeAnn {
+    return tyann_node(ar, TypeAnn::TyPtr(tyann_node(ar, TypeAnn::TyCVoid)));
+}
+fn ann_is_own(t: *const TypeAnn) -> bool {
+    return match *t { TypeAnn::TyOwnPtr(inner) => true | _other => false };
+}
+fn push_drop_free(a: Allocator, ar: *Arena, fname: str, pointee: *const TypeAnn, p: Pos, out: *Vec<Stmt>) {
+    let recv = dv_field(ar, "self", "alloc", p);
+    let state_arg = dv_field_of(ar, dv_field(ar, "self", "alloc", p), "state", p);
+    let ptr_arg = ast_node(ar, Expr::Cast(dv_field(ar, "self", fname, p), dv_cvoid_ptr_ann(ar), p));
+    let size_arg = ast_node(ar, Expr::Cast(ast_node(ar, Expr::SizeOf(pointee, p)), tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), p));
+    let mut args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    args.push(state_arg);
+    args.push(ptr_arg);
+    args.push(size_arg);
+    out.push(Stmt::ExprStmt(ast_node(ar, Expr::MethodCall { receiver: recv, name: "free_fn", args: args, pos: p })));
+}
+fn drop_body(a: Allocator, ar: *Arena, sfields: *const Vec<FieldDef>, p: Pos) -> *const Expr {
+    let mut stmts: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    let n = sfields.length();
+    let sl = sfields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match *sl[i].ty { TypeAnn::TyOwnPtr(pointee) => push_drop_free(a, ar, sl[i].name, pointee, p, &stmts) | _other => {} }
+        i = i + 1 as u32;
+    }
+    return ast_node(ar, Expr::Block(stmts, p));
+}
+fn struct_has_own(sfields: *const Vec<FieldDef>) -> bool {
+    let n = sfields.length();
+    let sl = sfields.as_slice();
+    let mut i = 0 as u32;
+    while i < n { if ann_is_own(sl[i].ty) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn push_drop_method(a: Allocator, ar: *Arena, sname: str, body: *const Expr, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>) {
+    let tp = single_str(a, sname);
+    let mangled = method_mangle(a, ar, &tp, "drop");
+    let self_ann = tyann_node(ar, TypeAnn::TyPtr(closure_struct_ann(a, ar, sname)));
+    let mut manns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    manns.push(self_ann);
+    let none_ret: Option<*const TypeAnn> = Option::None;
+    let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    methods.push(MethodInfo {
+        mi_path: single_str(a, sname), mi_name: "drop", mi_mangled: mangled,
+        mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: false,
+        mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: none_ret,
+        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
+    });
+    let mut params: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
+    params.push(FieldDef { name: "self", ty: tyann_node(ar, TypeAnn::TyPtr(closure_struct_ann(a, ar, sname))) });
+    let nr: Option<*const TypeAnn> = Option::None;
+    let ec: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let eb: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    lifted.push(LiftedLambda {
+        ll_mangled: mangled, ll_name: mangled, ll_expr: body, ll_kind: 3 as int,
+        ll_closure: sname, ll_params: params, ll_ret: nr, ll_caps: ec, ll_brefs: eb, ll_lambda: body
+    });
+}
+fn collect_drops_struct(a: Allocator, ar: *Arena, sd: *const StructDecl, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>) {
+    if struct_has_own(&sd.sfields) { push_drop_method(a, ar, sd.sname, drop_body(a, ar, &sd.sfields, sd.spos), methods, lifted); }
+    return;
+}
+fn collect_drops_item(a: Allocator, ar: *Arena, it: *const Item, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>) {
+    match *it {
+        Item::Struct(sd) => collect_drops_struct(a, ar, &sd, methods, lifted)
+        | _other => {}
+    }
+}
+fn collect_drops(a: Allocator, ar: *Arena, items: *const Vec<Item>, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_drops_item(a, ar, &sl[i], methods, lifted); i = i + 1 as u32; }
+}
+
 fn prelude_enum_tps(a: Allocator, out: *Vec<EnumTP>) {
     let mut t1: Vec<str> = Vec::with_capacity(a, 8 as u32);
     t1.push("T");
@@ -6247,6 +6358,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // @derive(Eq/Hash/Clone/Debug): synthesise the per-type methods into the
     // method table + drain queue.
     collect_derives(a, ar, &base_scope, items, &methods, &lifted_lambdas, &gsigs);
+    // DR-030 drop synthesis: a `<Struct>__drop` for every own-field struct.
+    collect_drops(a, ar, items, &methods, &lifted_lambdas);
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
@@ -6279,8 +6392,13 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         if lls[li].ll_kind == 0 as int {
             drain_one_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, lls[li].ll_expr, &funcs);
         } else {
-            let cps = closure_call_params(a, ar, lls[li].ll_closure, &lls[li].ll_params);
-            elaborate_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, &funcs, true);
+            if lls[li].ll_kind == 3 as int {
+                // Drop method: `ll_params` already carries the full `*self`.
+                elaborate_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, &lls[li].ll_params, lls[li].ll_ret, lls[li].ll_expr, &funcs, true);
+            } else {
+                let cps = closure_call_params(a, ar, lls[li].ll_closure, &lls[li].ll_params);
+                elaborate_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, &funcs, true);
+            }
         }
         li = li + 1 as u32;
     }
