@@ -1712,10 +1712,23 @@ fn queue_method_instance(a: Allocator, sc: *const TyScope, impl_idx: u32, meth_i
 
 // `mod::fn(args)` — a module-qualified call resolves to the `mod__fn` C
 // symbol via the global table; an unknown path defers to a marker.
+// Resolve a `mod::fn` path to a global, trying the path as written first and
+// then module-relative (prepending the current module path), so a nested
+// `raw::abort` inside a hoisted `mod error` finds `error::raw::abort`.
+fn modrel_lookup(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, init: *const Vec<str>, last: str) -> Option<GlobalFn> {
+    if sc.sc_modpath.length() == 0 as u32 { let none: Option<GlobalFn> = Option::None; return none; }
+    let qinit = path_concat(a, sc.sc_modpath, init);
+    return global_lookup_by_mangled(g, mangle_path(a, ar, &qinit, last));
+}
+fn qualified_lookup(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, init: *const Vec<str>, last: str) -> Option<GlobalFn> {
+    return match global_lookup_by_mangled(g, mangle_path(a, ar, init, last)) {
+        Option::Some(gf) => Option::Some(gf)
+        | Option::None => modrel_lookup(a, ar, g, sc, init, last)
+    };
+}
 fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                        init: *const Vec<str>, last: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
-    let m = mangle_path(a, ar, init, last);
-    return match global_lookup_by_mangled(g, m) {
+    return match qualified_lookup(a, ar, g, sc, init, last) {
         Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, args, p)
         | Option::None => defer_expr(ar, p)
     };
@@ -3093,6 +3106,25 @@ fn assign_coerced_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
 // full stmt-blocks) rather than an if-expr with `null` arms.  The enclosing
 // fn's gensym + return type ride in the scope so the branch bodies elaborate
 // like any statement block.
+// A trailing block statement: a bare `if` (no else) can't yield a value on
+// every path, so even in tail position it lowers to a control-flow statement
+// (matching the oracle), not a trailing `if-expr`; anything else is the block's
+// trailing value.
+fn elab_tail_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                  expected: Option<*const Typ>, e: *const Expr, benv: *Vec<FieldTy>,
+                  tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
+    if is_bare_if(e) { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); return; }
+    *trailing = Option::Some(elab_expr(a, ar, g, sc, benv, expected, e));
+    return;
+}
+// An `if` with no else branch — a value can't exist on every path, so it is
+// always a control-flow statement, never a trailing value.
+fn is_bare_if(e: *const Expr) -> bool {
+    return match *e {
+        Expr::If { cond, then_blk, else_blk } => match else_blk { Option::None => true | Option::Some(b) => false }
+        | _other => false
+    };
+}
 fn elab_block_expr_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                         benv: *Vec<FieldTy>, e: *const Expr, out: *Vec<Tstmt>) {
     match *e {
@@ -3116,7 +3148,7 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             tstmts.push(Tstmt::TLet { name: name, value: vl, pos: expr_pos(value) });
         }
         | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
-        | Stmt::Tail(e) => { *trailing = Option::Some(elab_expr(a, ar, g, sc, benv, expected, e)); }
+        | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
         | Stmt::Assign { path, value, pos } => {
             let av = assign_coerced_value(a, ar, g, sc, benv, &path, value);
             tstmts.push(Tstmt::TAssign { path: copy_strs(a, &path), value: av, pos: pos });
@@ -4020,6 +4052,10 @@ fn elab_tail_ret(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
 // void statement (`if` → `TIf`, otherwise `TExprStmt`).
 fn elab_tail(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              e: *const Expr, out: *Vec<Tstmt>) {
+    // A bare `if` (no else) in tail position of a value-returning fn is
+    // control flow (its branches `return`), not an implicit-return value —
+    // elaborate it as a statement, matching the oracle.
+    if is_bare_if(e) { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); return; }
     if is_some_ty(ret) { elab_tail_ret(a, ar, g, sc, gensym, env, ret, e, out); }
     else { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); }
 }
