@@ -4554,8 +4554,12 @@ fn lift_stmt(a: Allocator, ar: *Arena, ctr: *u32, s: *const Tstmt, out: *Vec<Tst
             out.push(Tstmt::TExprStmt(vexp));
         }
         | Tstmt::TIf { cond, then_body, else_body } => {
+            // Lift the else branch before the then branch — the oracle numbers
+            // an if statement's `__lift_N` temps in that order.
             let cif = walk_expr(a, ar, ctr, false, cond, out);
-            out.push(Tstmt::TIf { cond: cif, then_body: lift_stmts(a, ar, ctr, &then_body), else_body: lift_stmts(a, ar, ctr, &else_body) });
+            let welse = lift_stmts(a, ar, ctr, &else_body);
+            let wthen = lift_stmts(a, ar, ctr, &then_body);
+            out.push(Tstmt::TIf { cond: cif, then_body: wthen, else_body: welse });
         }
         | Tstmt::TWhile { cond, body, post } => {
             let cwh = walk_expr(a, ar, ctr, false, cond, out);
