@@ -81,6 +81,17 @@ struct StructField {
     sf_ty: *const Typ,
 }
 
+// A `use foo::Bar;` (or wildcard-expanded `pub use foo::Bar;`) type alias:
+// the bare name `Bar` resolves to the qualified path `foo::Bar` when `Bar`
+// names a declared type.  This is the type-level counterpart to collect_use's
+// function aliasing — it lets a bare `Expr` in a file that does `use ast::*`
+// resolve to `ast::Expr` (cross-module type resolution, the fixpoint gap).
+struct TypeAlias {
+    ta_name: str,
+    ta_path: Vec<str>,
+    ta_is_enum: bool,
+}
+
 // Enum variant → tag (declaration order), and a flat per-variant-field
 // index (tuple payloads get synthesised names `_0`, `_1`, …; struct
 // payloads keep their declared names).  Kept flat for the same
@@ -241,6 +252,7 @@ struct TyScope {
     // (an opaque C type / a raw C type alias), not a user struct.
     sc_xstructs: *const Vec<str>,
     sc_xaliases: *const Vec<str>,
+    sc_taliases: *const Vec<TypeAlias>,
     // True only while elaborating `fn main` — a bare `return;` there becomes
     // `return 0` (C `int main` must return a value).
     sc_is_main: bool,
@@ -274,6 +286,7 @@ struct ProgIdx {
     pi_gsigs: *const Vec<FnSig>,
     pi_xstructs: *const Vec<str>,
     pi_xaliases: *const Vec<str>,
+    pi_taliases: *const Vec<TypeAlias>,
 }
 
 // Index of `(type-path, method-name)` in the method table, or -1.
@@ -800,6 +813,14 @@ fn project_assoc(a: Allocator, ar: *Arena, sc: *const TyScope, bound_ty: *const 
     }
     return ty_node(ar, Typ::TCVoid);
 }
+// Index of the `use foo::Bar;` type alias for bare `name`, or -1.
+fn talias_idx(sc: *const TyScope, name: str) -> int {
+    let n = sc.sc_taliases.length();
+    let sl = sc.sc_taliases.as_slice();
+    let mut i = 0 as u32;
+    while i < n { if str::eq(sl[i].ta_name, name) { return i as int; } i = i + 1 as u32; }
+    return -1 as int;
+}
 fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
                     path: *const Vec<str>, args: *const Vec<*const TypeAnn>) -> *const Typ {
     let plen = path.length();
@@ -835,6 +856,16 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         let marker = join_colons(a, ar, sc.sc_modpath, last);
         if name_in(sc.sc_enums, marker) { return ty_node(ar, Typ::TEnum(path_push(a, sc.sc_modpath, last))); }
         if name_in(sc.sc_structs, marker) { return ty_node(ar, Typ::TStruct(path_push(a, sc.sc_modpath, last))); }
+    }
+    // A bare name imported via `use foo::Bar;` resolves to `foo::Bar` (the
+    // cross-module type alias — see collect_type_aliases).
+    if plen == 1 as u32 && nargs == 0 as u32 {
+        let ti = talias_idx(sc, last);
+        if ti >= 0 as int {
+            let tsl = sc.sc_taliases.as_slice();
+            if tsl[ti as u32].ta_is_enum { return ty_node(ar, Typ::TEnum(copy_strs(a, &tsl[ti as u32].ta_path))); }
+            return ty_node(ar, Typ::TStruct(copy_strs(a, &tsl[ti as u32].ta_path)));
+        }
     }
     let is_enum = name_in(sc.sc_enums, last) || is_prelude_enum(last);
     if nargs == 0 as u32 {
@@ -2360,7 +2391,10 @@ fn elab_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Patter
         | Pattern::PBool(b, _q) => Tpattern::TPBool(b)
         | Pattern::POr(alts, _q) => Tpattern::TPOr(elab_pattern_list(a, ar, sc, &alts))
         | Pattern::PVariant { tname, variant, binds } =>
-            Tpattern::TPVariant { variant: variant, tag: variant_tag(sc.sc_etags, &tname, variant),
+            // Qualify a bare enum name (`BinOp` -> `ast::BinOp` in a module or
+            // via a `use ast::*` alias) so the tag matches the qualified etags;
+            // a generic `Option` (no marker/alias) stays itself.
+            Tpattern::TPVariant { variant: variant, tag: variant_tag(sc.sc_etags, &qualify_type_path(a, ar, sc, &tname), variant),
                                   binds: elab_tbinds(a, ar, sc, &binds) }
     };
 }
@@ -3641,7 +3675,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_is_main: false };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -4426,7 +4460,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases , sc_is_main: str::eq(mangled, "main") };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases , sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -4500,11 +4534,15 @@ fn join_colons(a: Allocator, ar: *Arena, modpath: *const Vec<str>, name: str) ->
 // marker is registered, mirroring resolve_named_ty for annotations.  Already-
 // qualified paths and prelude names pass through unchanged.
 fn qualify_type_path(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> Vec<str> {
-    if path.length() == 1 as u32 && sc.sc_modpath.length() > 0 as u32 {
+    if path.length() == 1 as u32 {
         let last = path_last(path);
-        let marker = join_colons(a, ar, sc.sc_modpath, last);
-        if name_in(sc.sc_structs, marker) { return path_push(a, sc.sc_modpath, last); }
-        if name_in(sc.sc_enums, marker) { return path_push(a, sc.sc_modpath, last); }
+        if sc.sc_modpath.length() > 0 as u32 {
+            let marker = join_colons(a, ar, sc.sc_modpath, last);
+            if name_in(sc.sc_structs, marker) { return path_push(a, sc.sc_modpath, last); }
+            if name_in(sc.sc_enums, marker) { return path_push(a, sc.sc_modpath, last); }
+        }
+        let ti = talias_idx(sc, last);
+        if ti >= 0 as int { return copy_strs(a, &sc.sc_taliases.as_slice()[ti as u32].ta_path); }
     }
     return copy_strs(a, path);
 }
@@ -4695,6 +4733,39 @@ fn collect_type_names(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items:
     }
 }
 
+// A `use foo::Bar;` where `foo::Bar` names a declared type registers the
+// bare→qualified type alias `Bar -> foo::Bar`.  The loader has already
+// expanded `use foo::*;` into per-name `pub use foo::Bar;`, so a plain 2+
+// segment `use` path is exactly one importable name; its marker
+// (`foo::Bar` in snames/enames) confirms it is a type, not a function.
+fn record_use_alias(a: Allocator, ar: *Arena, path: *const Vec<str>, snames: *const Vec<str>, enames: *const Vec<str>, out: *Vec<TypeAlias>) {
+    if path.length() < 2 as u32 { return; }
+    let last = path_last(path);
+    let init = path_init(a, path);
+    let marker = join_colons(a, ar, &init, last);
+    let is_e = name_in(enames, marker);
+    if is_e || name_in(snames, marker) {
+        out.push(TypeAlias { ta_name: last, ta_path: copy_strs(a, path), ta_is_enum: is_e });
+    }
+    return;
+}
+fn collect_type_aliases_one(a: Allocator, ar: *Arena, it: *const Item, snames: *const Vec<str>, enames: *const Vec<str>, out: *Vec<TypeAlias>) {
+    match *it {
+        Item::Use { path, is_wildcard, is_pub } => { record_use_alias(a, ar, &path, snames, enames, out); }
+        | Item::Module(md) => { collect_type_aliases(a, ar, &md.mitems, snames, enames, out); }
+        | _other => { }
+    }
+}
+fn collect_type_aliases(a: Allocator, ar: *Arena, items: *const Vec<Item>, snames: *const Vec<str>, enames: *const Vec<str>, out: *Vec<TypeAlias>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        collect_type_aliases_one(a, ar, &sl[i], snames, enames, out);
+        i = i + 1 as u32;
+    }
+}
+
 // Collect `extern struct` / `extern type` names (recursing into modules) so
 // signatures resolve them to TExtStruct / TExtAlias.
 fn collect_ext_types_one(it: *const Item, xstructs: *Vec<str>, xaliases: *Vec<str>) {
@@ -4844,7 +4915,7 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
         sc_is_main: base.sc_is_main,
     };
 }
@@ -4860,7 +4931,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
         sc_is_main: base.sc_is_main,
     };
 }
@@ -4880,7 +4951,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
         sc_is_main: base.sc_is_main,
     };
 }
@@ -4898,7 +4969,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_ret: ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
         sc_is_main: base.sc_is_main,
     };
 }
@@ -4936,19 +5007,15 @@ fn tuple_field_name(a: Allocator, ar: *Arena, k: u32) -> str {
     return str::from_slice(ar, sb.as_slice());
 }
 
-fn push_etag(a: Allocator, ename: str, vname: str, tag: int, out: *Vec<EnumVariantTag>) {
-    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    path.push(ename);
-    out.push(EnumVariantTag { et_path: path, et_name: vname, et_tag: tag });
+fn push_etag(a: Allocator, epath: *const Vec<str>, vname: str, tag: int, out: *Vec<EnumVariantTag>) {
+    out.push(EnumVariantTag { et_path: copy_strs(a, epath), et_name: vname, et_tag: tag });
 }
 
-fn push_efield(a: Allocator, ename: str, vname: str, fname: str, ty: *const Typ, out: *Vec<EnumFieldE>) {
-    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    path.push(ename);
-    out.push(EnumFieldE { ef_path: path, ef_variant: vname, ef_name: fname, ef_ty: ty });
+fn push_efield(a: Allocator, epath: *const Vec<str>, vname: str, fname: str, ty: *const Typ, out: *Vec<EnumFieldE>) {
+    out.push(EnumFieldE { ef_path: copy_strs(a, epath), ef_variant: vname, ef_name: fname, ef_ty: ty });
 }
 
-fn push_variant_fields(a: Allocator, ar: *Arena, sc: *const TyScope, ename: str, vname: str,
+fn push_variant_fields(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, vname: str,
                        vk: *const VariantKind, efields: *Vec<EnumFieldE>) {
     match *vk {
         VariantKind::VUnit => { }
@@ -4957,7 +5024,7 @@ fn push_variant_fields(a: Allocator, ar: *Arena, sc: *const TyScope, ename: str,
             let tsl = tys.as_slice();
             let mut kt = 0 as u32;
             while kt < nt {
-                push_efield(a, ename, vname, tuple_field_name(a, ar, kt), resolve_sig_ty(a, ar, sc, tsl[kt]), efields);
+                push_efield(a, epath, vname, tuple_field_name(a, ar, kt), resolve_sig_ty(a, ar, sc, tsl[kt]), efields);
                 kt = kt + 1 as u32;
             }
         }
@@ -4966,39 +5033,41 @@ fn push_variant_fields(a: Allocator, ar: *Arena, sc: *const TyScope, ename: str,
             let fsl = fds.as_slice();
             let mut ks = 0 as u32;
             while ks < ns {
-                push_efield(a, ename, vname, fsl[ks].name, resolve_sig_ty(a, ar, sc, fsl[ks].ty), efields);
+                push_efield(a, epath, vname, fsl[ks].name, resolve_sig_ty(a, ar, sc, fsl[ks].ty), efields);
                 ks = ks + 1 as u32;
             }
         }
     }
 }
 
-fn collect_one_variant(a: Allocator, ar: *Arena, sc: *const TyScope, ename: str, ev: *const EnumVariant,
+fn collect_one_variant(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, ev: *const EnumVariant,
                        tag: int, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
-    push_etag(a, ename, ev.vname, tag, etags);
-    push_variant_fields(a, ar, sc, ename, ev.vname, &ev.vkind, efields);
+    push_etag(a, epath, ev.vname, tag, etags);
+    push_variant_fields(a, ar, sc, epath, ev.vname, &ev.vkind, efields);
 }
 
-fn collect_enum_variants(a: Allocator, ar: *Arena, sc: *const TyScope, ename: str,
+fn collect_enum_variants(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>,
                          variants: *const Vec<EnumVariant>, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
     let n = variants.length();
     let sl = variants.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        collect_one_variant(a, ar, sc, ename, &sl[i], i as int, etags, efields);
+        collect_one_variant(a, ar, sc, epath, &sl[i], i as int, etags, efields);
         i = i + 1 as u32;
     }
 }
 
-fn collect_enum_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item,
+fn collect_enum_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, it: *const Item,
                          etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
     match *it {
         Item::Enum(ed) => {
-            let sc2 = scope_with_tparams(sc, &ed.etparams);
-            collect_enum_variants(a, ar, &sc2, ed.ename, &ed.evariants, etags, efields);
+            let msc = scope_with_modpath(sc, modpath);
+            let sc2 = scope_with_tparams(&msc, &ed.etparams);
+            let epath = path_push(a, modpath, ed.ename);
+            collect_enum_variants(a, ar, &sc2, &epath, &ed.evariants, etags, efields);
         }
-        | Item::View(vd) => collect_view_variants(a, ar, sc, vd.vname, &vd.vcases, etags, efields)
-        | Item::Module(md) => { collect_enum_info(a, ar, sc, &md.mitems, etags, efields); }
+        | Item::View(vd) => { let vpath = path_push(a, modpath, vd.vname); collect_view_variants(a, ar, sc, &vpath, &vd.vcases, etags, efields); }
+        | Item::Module(md) => { collect_enum_info(a, ar, sc, &path_push(a, modpath, md.mname), &md.mitems, etags, efields); }
         | _e => { }
     }
 }
@@ -5006,22 +5075,24 @@ fn collect_enum_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *cons
 // Register the prelude generic enums' variants so `Option::`/`Result::`
 // constructors and patterns resolve their tags + payload tparams.
 fn prelude_enum_variants(a: Allocator, ar: *Arena, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
-    push_etag(a, "Option", "None", 0 as int, etags);
-    push_etag(a, "Option", "Some", 1 as int, etags);
-    push_efield(a, "Option", "Some", "_0", ty_node(ar, Typ::TVar("T")), efields);
-    push_etag(a, "Result", "Ok", 0 as int, etags);
-    push_etag(a, "Result", "Err", 1 as int, etags);
-    push_efield(a, "Result", "Ok", "_0", ty_node(ar, Typ::TVar("T")), efields);
-    push_efield(a, "Result", "Err", "_0", ty_node(ar, Typ::TVar("E")), efields);
+    let opt_path = single_str(a, "Option");
+    let res_path = single_str(a, "Result");
+    push_etag(a, &opt_path, "None", 0 as int, etags);
+    push_etag(a, &opt_path, "Some", 1 as int, etags);
+    push_efield(a, &opt_path, "Some", "_0", ty_node(ar, Typ::TVar("T")), efields);
+    push_etag(a, &res_path, "Ok", 0 as int, etags);
+    push_etag(a, &res_path, "Err", 1 as int, etags);
+    push_efield(a, &res_path, "Ok", "_0", ty_node(ar, Typ::TVar("T")), efields);
+    push_efield(a, &res_path, "Err", "_0", ty_node(ar, Typ::TVar("E")), efields);
 }
 
-fn collect_enum_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+fn collect_enum_info(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, items: *const Vec<Item>,
                      etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        collect_enum_info_one(a, ar, sc, &sl[i], etags, efields);
+        collect_enum_info_one(a, ar, sc, modpath, &sl[i], etags, efields);
         i = i + 1 as u32;
     }
 }
@@ -6383,16 +6454,16 @@ fn view_case_kind(a: Allocator, c: *const ViewCase) -> VariantKind {
     while i < n { tys.push(sl[i].ty); i = i + 1 as u32; }
     return VariantKind::VTuple(tys);
 }
-fn collect_view_one(a: Allocator, ar: *Arena, sc: *const TyScope, vname: str, c: *const ViewCase, tag: int, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
-    push_etag(a, vname, c.vcname, tag, etags);
+fn collect_view_one(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, c: *const ViewCase, tag: int, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
+    push_etag(a, epath, c.vcname, tag, etags);
     let vk = view_case_kind(a, c);
-    push_variant_fields(a, ar, sc, vname, c.vcname, &vk, efields);
+    push_variant_fields(a, ar, sc, epath, c.vcname, &vk, efields);
 }
-fn collect_view_variants(a: Allocator, ar: *Arena, sc: *const TyScope, vname: str, vcases: *const Vec<ViewCase>, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
+fn collect_view_variants(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, vcases: *const Vec<ViewCase>, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
     let n = vcases.length();
     let sl = vcases.as_slice();
     let mut i = 0 as u32;
-    while i < n { collect_view_one(a, ar, sc, vname, &sl[i], i as int, etags, efields); i = i + 1 as u32; }
+    while i < n { collect_view_one(a, ar, sc, epath, &sl[i], i as int, etags, efields); i = i + 1 as u32; }
 }
 // Elaborate the view function `<vname>(p) -> <vname>` (mirrors elaborate_lifted
 // but its body is a statement list, not a single expr).
@@ -6407,7 +6478,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_is_main: false };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ann);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -6721,6 +6792,10 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut fenums: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let top_modpath: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_type_names(a, ar, &top_modpath, items, &snames, &enames, &fstructs, &fenums);
+    // Type-level `use foo::Bar;` aliases (collected after type names so the
+    // `foo::Bar` marker is available to confirm Bar is a declared type).
+    let mut taliases: Vec<TypeAlias> = Vec::with_capacity(a, 8 as u32);
+    collect_type_aliases(a, ar, items, &snames, &enames, &taliases);
     let mut xstructs: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut xaliases: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_ext_types(items, &xstructs, &xaliases);
@@ -6767,7 +6842,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases , sc_is_main: false };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases , sc_is_main: false };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -6784,7 +6859,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     prelude_struct_info(a, ar, &sinfo);
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
-    collect_enum_info(a, ar, &base_scope, items, &etags, &efields);
+    collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
     prelude_enum_variants(a, ar, &etags, &efields);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);
@@ -6801,7 +6876,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;

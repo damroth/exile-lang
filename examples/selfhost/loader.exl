@@ -1,0 +1,389 @@
+// Multi-file loader — port of `lib/loader.ml`.
+//
+// `load(entry_path)` walks the entry file's AST and resolves every `use`
+// item against sibling `.exl` files, producing a single flat `Vec<Item>`:
+//
+//   - `use foo;`        -> hoist `mod foo { ... }` once (qualified `foo::X`).
+//   - `use foo::*;`     -> hoist `mod foo` + alias foo's exported names in
+//                          (as `pub use foo::name;`, which typecheck's alias
+//                          table resolves — see collect_use).
+//   - `pub use foo::*;` -> re-export: inline foo's public items here so they
+//                          flatten into this module's own exports (the
+//                          prelude idiom — examples/reexport.exl).
+//   - `pub use foo::bar;` -> single-name re-export, passed through unchanged.
+//
+// Resolution: `use a::b` looks for `<dir>/a/b.exl`, then `<dir>/a/b/mod.exl`.
+// Each file is hoisted to the program root at most once (a shared module in a
+// DAG loads once); the load `stack` guards against circular imports.
+//
+// The qualified-name resolution the hoisted `mod foo { ... }` then needs is
+// the intra-file module resolution already in typecheck (DR loader-A).
+
+use pos::*;
+use ast::*;
+use error::*;
+use lexer::*;
+use parser::*;
+
+// ===== Small string / vector utilities =====
+
+fn str_in(v: *const Vec<str>, s: str) -> bool {
+    let n = v.length();
+    let sl = v.as_slice();
+    let mut i = 0 as u32;
+    while i < n { if str::eq(sl[i], s) { return true; } i = i + 1 as u32; }
+    return false;
+}
+
+@escapes
+fn cat2(a: Allocator, ar: *Arena, x: str, y: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str(x);
+    sb.push_str(y);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+fn last_seg(path: *const Vec<str>) -> str {
+    let n = path.length();
+    if n == 0 as u32 { return ""; }
+    return path.as_slice()[n - 1 as u32];
+}
+
+// ===== File I/O over the `sys` seam =====
+
+fn read_all_fd(fd: c_int, sb: *StringBuilder) {
+    let mut buf: [u8; 4096] = [0 as u8; 4096];
+    loop {
+        let n: c_long = sys::sys_read(fd, &buf as *u8 as *c_uchar, 4096 as c_ulong);
+        if n <= 0 as c_long { break; }
+        let mut k = 0 as u32;
+        while k < n as u32 { sb.push_byte(buf[k]); k = k + 1 as u32; }
+    }
+}
+
+fn file_exists(path: str) -> bool {
+    let fd: c_int = sys::sys_open(path as *const c_char, 0 as c_int);
+    if fd >= 0 as c_int { sys::sys_close(fd); return true; }
+    return false;
+}
+
+@escapes
+fn read_file_src(a: Allocator, ar: *Arena, path: str) -> str {
+    let fd: c_int = sys::sys_open(path as *const c_char, 0 as c_int);
+    let mut sb = StringBuilder::with_capacity(a, 16384 as u32);
+    if fd >= 0 as c_int {
+        read_all_fd(fd, &sb);
+        sys::sys_close(fd);
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// ===== Path resolution =====
+
+// `<dir>` of a file path — everything before the last `/` (or `.` if none).
+@escapes
+fn dirname(_a: Allocator, ar: *Arena, path: str) -> str {
+    let bytes = str::as_bytes(path);
+    let n = str::length(path);
+    let mut i = n;
+    while i > 0 as u32 {
+        if bytes[i - 1 as u32] == 47 as u8 {
+            return str::from_slice(ar, bytes[0 as u32..i - 1 as u32]);
+        }
+        i = i - 1 as u32;
+    }
+    return ".";
+}
+
+// `<dir>/seg0/seg1/...` (no suffix).
+@escapes
+fn join_segments(a: Allocator, ar: *Arena, dir: str, segs: *const Vec<str>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str(dir);
+    let n = segs.length();
+    let sl = segs.as_slice();
+    let mut i = 0 as u32;
+    while i < n { sb.push_str("/"); sb.push_str(sl[i]); i = i + 1 as u32; }
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// `use a::b` from `from_file` -> `<dir>/a/b.exl`, else `<dir>/a/b/mod.exl`,
+// else the `.exl` form (for the not-found diagnostic).
+@escapes
+fn resolve_use(a: Allocator, ar: *Arena, from_file: str, segs: *const Vec<str>) -> str {
+    let dir = dirname(a, ar, from_file);
+    let joined = join_segments(a, ar, dir, segs);
+    let direct = cat2(a, ar, joined, ".exl");
+    if file_exists(direct) { return direct; }
+    let modf = cat2(a, ar, joined, "/mod.exl");
+    if file_exists(modf) { return modf; }
+    return direct;
+}
+
+// ===== Parse a file to its item list =====
+
+// Errors are threaded through a shared cell rather than a `Result` return on
+// every recursive call (exile has no `?`/`try` here, and a `let x = match
+// result { Ok(v) => v | Err => return }` is not a legal value position).  A
+// helper records the first error; `load` reports it at the end.  On failure a
+// function returns an empty list, which simply yields an empty program.
+fn empty_items(a: Allocator) -> Vec<Item> {
+    return Vec::with_capacity(a, 8 as u32);
+}
+@escapes
+fn parse_file(a: Allocator, ar: *Arena, path: str, errs: *Vec<*const CompileError>) -> Vec<Item> {
+    let src = read_file_src(a, ar, path);
+    return match tokenize(a, ar, path, src) {
+        Result::Ok(toks) => match parse_program(a, ar, toks.as_slice(), toks.length()) {
+            Result::Ok(its) => its
+            | Result::Err(e) => { errs.push(e); empty_items(a) }
+        }
+        | Result::Err(e) => { errs.push(e); empty_items(a) }
+    };
+}
+
+// ===== Visibility / export-name policy (mirrors loader.ml) =====
+
+// Only items reachable from outside the file ride a `pub use foo::*;` inline:
+// `pub` user decls, plus extern items / impls (always C-visible).  `use`
+// items never propagate.
+fn item_visible_in_wildcard(it: *const Item) -> bool {
+    return match *it {
+        Item::Function(f) => f.is_pub
+        | Item::Module(m) => m.mis_pub
+        | Item::Struct(s) => s.sis_pub
+        | Item::Enum(e) => e.eis_pub
+        | Item::Const(c) => c.kis_pub
+        | Item::Trait(t) => t.tris_pub
+        | Item::View(v) => v.vis_pub
+        | Item::TypeAlias(ta) => ta.tais_pub
+        | Item::Use { path, is_wildcard, is_pub, pos } => false
+        | _other => true
+    };
+}
+
+// Push `name` only when `cond` — a void helper so the match arms below stay
+// statement-typed (a trailing bare `if` would otherwise read as a value).
+fn push_if(out: *Vec<str>, cond: bool, name: str) {
+    if cond { out.push(name); }
+    return;
+}
+// A top-level item's single exported name, pushed to `out` when it has one
+// and is exported.  Drives the alias list a `use foo::*;` expands to.
+fn push_export_name(it: *const Item, out: *Vec<str>) {
+    match *it {
+        Item::Function(f) => { push_if(out, f.is_pub, f.name); }
+        | Item::Struct(s) => { push_if(out, s.sis_pub, s.sname); }
+        | Item::Enum(e) => { push_if(out, e.eis_pub, e.ename); }
+        | Item::Trait(t) => { push_if(out, t.tris_pub, t.trname); }
+        | Item::Const(c) => { push_if(out, c.kis_pub, c.kname); }
+        | Item::TypeAlias(ta) => { push_if(out, ta.tais_pub, ta.taname); }
+        | Item::Module(m) => { push_if(out, m.mis_pub, m.mname); }
+        | Item::ExternStruct(es) => { out.push(es.esname); }
+        | Item::ExternType(xt) => { out.push(xt.xtname); }
+        | Item::ExternConst(ec) => { out.push(ec.ecname); }
+        | Item::ExternVar(ev) => { out.push(ev.evname); }
+        | _other => { }
+    }
+}
+
+// ===== Export-name computation (with cycle guard) =====
+
+// Names `file` exports to importers: own public items + transitive
+// `pub use Y::*` re-exports + `pub use Y::name` single re-exports.  Computed
+// from the source items, with a `visited` cycle guard (empty while in flight).
+// Accumulate the exports contributed by one `use` item (a void helper so the
+// `while` body stays statement-typed): a `pub use Y::*` pulls in Y's exports
+// transitively; a `pub use Y::name` contributes `name`; private uses nothing.
+@escapes
+fn exports_from_use(a: Allocator, ar: *Arena, file: str, path: *const Vec<str>, is_wildcard: bool, is_pub: bool,
+                    visited: *Vec<str>, errs: *Vec<*const CompileError>, out: *Vec<str>) {
+    if !is_pub { return; }
+    if is_wildcard {
+        let dep = resolve_use(a, ar, file, path);
+        let sub = exports_of(a, ar, dep, visited, errs);
+        let sn = sub.length();
+        let ssl = sub.as_slice();
+        let mut j = 0 as u32;
+        while j < sn { out.push(ssl[j]); j = j + 1 as u32; }
+    } else {
+        out.push(last_seg(path));
+    }
+    return;
+}
+@escapes
+fn exports_of(a: Allocator, ar: *Arena, file: str, visited: *Vec<str>, errs: *Vec<*const CompileError>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    if str_in(visited, file) { return out; }
+    visited.push(file);
+    let items = parse_file(a, ar, file, errs);
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match sl[i] {
+            Item::Use { path, is_wildcard, is_pub, pos } => { exports_from_use(a, ar, file, &path, is_wildcard, is_pub, visited, errs, &out); }
+            | _other => { push_export_name(&sl[i], &out); }
+        }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// ===== `use` expansion + module hoisting =====
+
+@escapes
+fn mk_use_alias(a: Allocator, _ar: *Arena, modname: str, name: str, pos: Pos) -> Item {
+    let mut p: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    p.push(modname);
+    p.push(name);
+    return Item::Use { path: p, is_wildcard: false, is_pub: true, pos: pos };
+}
+
+// Hoist `dep` as a root-level `mod modname { <expanded items> }`, once.
+@escapes
+fn hoist(a: Allocator, ar: *Arena, stack: *const Vec<str>, dep: str, modname: str, pos: Pos,
+         hoisted: *Vec<str>, hoisted_mods: *Vec<Item>, errs: *Vec<*const CompileError>) {
+    if str_in(hoisted, dep) { return; }
+    hoisted.push(dep);
+    if !file_exists(dep) {
+        errs.push(error::alloc(ar, pos, cat2(a, ar, "cannot find module file: ", dep)));
+        return;
+    }
+    let items = parse_file(a, ar, dep, errs);
+    let mut substack: Vec<str> = copy_path(a, stack);
+    substack.push(dep);
+    let inner = expand_items(a, ar, dep, &substack, &items, hoisted, hoisted_mods, errs);
+    hoisted_mods.push(Item::Module(ModuleDecl { mname: modname, mitems: inner, mpos: pos, mis_pub: true }));
+    return;
+}
+
+@escapes
+fn copy_path(a: Allocator, src: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let n = src.length();
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < n { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+
+// `pub use foo::*;` — inline foo's externally-visible items into `out`.
+@escapes
+fn inline_pub_use(a: Allocator, ar: *Arena, from_file: str, path: *const Vec<str>, pos: Pos, stack: *const Vec<str>,
+                  hoisted: *Vec<str>, hoisted_mods: *Vec<Item>, out: *Vec<Item>, errs: *Vec<*const CompileError>) {
+    let dep = resolve_use(a, ar, from_file, path);
+    if str_in(stack, dep) {
+        errs.push(error::alloc(ar, pos, cat2(a, ar, "circular import: ", dep)));
+        return;
+    }
+    let items = parse_file(a, ar, dep, errs);
+    let mut substack: Vec<str> = copy_path(a, stack);
+    substack.push(dep);
+    let inner = expand_items(a, ar, dep, &substack, &items, hoisted, hoisted_mods, errs);
+    let n = inner.length();
+    let isl = inner.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if item_visible_in_wildcard(&isl[i]) { out.push(isl[i]); }
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// `use foo;` / `use foo::*;` — hoist `mod foo` once, then (wildcard) alias
+// foo's exported names into the using scope as `pub use foo::name;`.
+@escapes
+fn hoist_use(a: Allocator, ar: *Arena, from_file: str, path: *const Vec<str>, is_wildcard: bool, pos: Pos, stack: *const Vec<str>,
+             hoisted: *Vec<str>, hoisted_mods: *Vec<Item>, out: *Vec<Item>, errs: *Vec<*const CompileError>) {
+    let dep = resolve_use(a, ar, from_file, path);
+    if str_in(stack, dep) {
+        errs.push(error::alloc(ar, pos, cat2(a, ar, "circular import: ", dep)));
+        return;
+    }
+    let mn = last_seg(path);
+    hoist(a, ar, stack, dep, mn, pos, hoisted, hoisted_mods, errs);
+    if is_wildcard {
+        let mut visited: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        let names = exports_of(a, ar, dep, &visited, errs);
+        let nn = names.length();
+        let nsl = names.as_slice();
+        let mut i = 0 as u32;
+        while i < nn { out.push(mk_use_alias(a, ar, mn, nsl[i], pos)); i = i + 1 as u32; }
+    }
+    return;
+}
+
+// Dispatch one `use` item (flat `if`/`return` so no branch sits in value
+// position): private `use` hoists; `pub use foo::*` inlines; `pub use
+// foo::bar` passes through for typecheck's alias table.
+@escapes
+fn expand_use(a: Allocator, ar: *Arena, from_file: str, it: *const Item, path: *const Vec<str>, is_wildcard: bool, is_pub: bool, pos: Pos,
+              stack: *const Vec<str>, hoisted: *Vec<str>, hoisted_mods: *Vec<Item>, out: *Vec<Item>, errs: *Vec<*const CompileError>) {
+    if !is_pub {
+        hoist_use(a, ar, from_file, path, is_wildcard, pos, stack, hoisted, hoisted_mods, out, errs);
+        return;
+    }
+    if is_wildcard {
+        inline_pub_use(a, ar, from_file, path, pos, stack, hoisted, hoisted_mods, out, errs);
+        return;
+    }
+    out.push(*it);
+    return;
+}
+// Expand the `use` items in one item, appending the result to `out`.
+@escapes
+fn expand_item(a: Allocator, ar: *Arena, from_file: str, stack: *const Vec<str>, it: *const Item,
+               hoisted: *Vec<str>, hoisted_mods: *Vec<Item>, out: *Vec<Item>, errs: *Vec<*const CompileError>) {
+    match *it {
+        Item::Use { path, is_wildcard, is_pub, pos } => { expand_use(a, ar, from_file, it, &path, is_wildcard, is_pub, pos, stack, hoisted, hoisted_mods, out, errs); }
+        | Item::Module(m) => {
+            let inner = expand_items(a, ar, from_file, stack, &m.mitems, hoisted, hoisted_mods, errs);
+            out.push(Item::Module(ModuleDecl { mname: m.mname, mitems: inner, mpos: m.mpos, mis_pub: m.mis_pub }));
+        }
+        | _other => { out.push(*it); }
+    }
+    return;
+}
+
+@escapes
+fn expand_items(a: Allocator, ar: *Arena, from_file: str, stack: *const Vec<str>, items: *const Vec<Item>,
+                hoisted: *Vec<str>, hoisted_mods: *Vec<Item>, errs: *Vec<*const CompileError>) -> Vec<Item> {
+    let mut out: Vec<Item> = Vec::with_capacity(a, 16 as u32);
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        expand_item(a, ar, from_file, stack, &sl[i], hoisted, hoisted_mods, &out, errs);
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// ===== Entry point =====
+
+// Load `entry_path` and all its transitive `use` dependencies into one flat
+// program: the hoisted modules (load order) followed by the entry file's own
+// (use-expanded) items.
+@escapes
+pub fn load(a: Allocator, ar: *Arena, entry_path: str) -> Result<Vec<Item>, *const CompileError> {
+    let mut hoisted: Vec<str> = Vec::with_capacity(a, 16 as u32);
+    let mut hoisted_mods: Vec<Item> = Vec::with_capacity(a, 16 as u32);
+    let mut stack: Vec<str> = Vec::with_capacity(a, 16 as u32);
+    let mut errs: Vec<*const CompileError> = Vec::with_capacity(a, 8 as u32);
+    stack.push(entry_path);
+    let items = parse_file(a, ar, entry_path, &errs);
+    let entry = expand_items(a, ar, entry_path, &stack, &items, &hoisted, &hoisted_mods, &errs);
+    if errs.length() > 0 as u32 { return Result::Err(errs.as_slice()[0 as u32]); }
+    // Hoisted modules first (load order), then the entry file's own items.
+    let mut out: Vec<Item> = Vec::with_capacity(a, 16 as u32);
+    let hn = hoisted_mods.length();
+    let hsl = hoisted_mods.as_slice();
+    let mut i = 0 as u32;
+    while i < hn { out.push(hsl[i]); i = i + 1 as u32; }
+    let en = entry.length();
+    let esl = entry.as_slice();
+    let mut j = 0 as u32;
+    while j < en { out.push(esl[j]); j = j + 1 as u32; }
+    return Result::Ok(out);
+}
