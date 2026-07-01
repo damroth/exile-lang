@@ -1939,10 +1939,14 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         if callee.length() == 2 as u32 && str::eq(init.get(0 as u32) orelse "", "str") {
             return elab_str_call(a, ar, g, sc, env, last, args, p);
         }
-        let tag = variant_tag(sc.sc_etags, &init, last);
+        // A bare enum name in a variant constructor (`Typ::TVar` for an
+        // `ir::Typ`) qualifies the same way a type reference does, so the tag
+        // + emitted enum path match the qualified etags.
+        let qinit = qualify_type_path(a, ar, sc, &init);
+        let tag = variant_tag(sc.sc_etags, &qinit, last);
         if tag >= 0 as int {
-            let tflds = enum_tuple_args(a, ar, g, sc, env, &init, last, args);
-            let inst = enum_instance_path(a, ar, sc, expected, &init, last, &tflds);
+            let tflds = enum_tuple_args(a, ar, g, sc, env, &qinit, last, args);
+            let inst = enum_instance_path(a, ar, sc, expected, &qinit, last, &tflds);
             return mk_enum_lit_node(a, ar, &inst, last, tag, tflds, p);
         }
         let midx = find_method_idx(sc.sc_methods, &init, last);
@@ -2954,7 +2958,7 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     // knows the (enum-path, variant) split of `tname`.
     if tname.length() >= 2 as u32 {
         let last = path_last(tname);
-        let init = path_init(a, tname);
+        let init = qualify_type_path(a, ar, sc, &path_init(a, tname));
         let tag = variant_tag(sc.sc_etags, &init, last);
         if tag >= 0 as int {
             return mk_enum_lit_node(a, ar, &init, last, tag, enum_struct_args(a, ar, g, sc, env, &init, last, fields), p);
@@ -2996,7 +3000,7 @@ fn elab_new_struct(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
 fn elab_new_enum(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                  tname: *const Vec<str>, args: *const Vec<*const Expr>, alloc: Option<*const Expr>, p: Pos) -> *const Texpr {
     let last = path_last(tname);
-    let init = path_init(a, tname);
+    let init = qualify_type_path(a, ar, sc, &path_init(a, tname));
     let tag = variant_tag(sc.sc_etags, &init, last);
     if tag < 0 as int { return defer_expr(ar, p); }
     let talloc = elab_alloc_opt(a, ar, g, sc, env, alloc);
@@ -3737,10 +3741,11 @@ fn closure_call_params(a: Allocator, ar: *Arena, cn: str, lam_params: *const Vec
 // (`mod::CONST`) resolved by mangled name.
 fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, expected: Option<*const Typ>,
                 tname: *const Vec<str>, variant: str, p: Pos) -> *const Texpr {
-    let tag = variant_tag(sc.sc_etags, tname, variant);
+    let qtname = qualify_type_path(a, ar, sc, tname);
+    let tag = variant_tag(sc.sc_etags, &qtname, variant);
     if tag >= 0 as int {
         let empty: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
-        let inst = enum_instance_path(a, ar, sc, expected, tname, variant, &empty);
+        let inst = enum_instance_path(a, ar, sc, expected, &qtname, variant, &empty);
         return mk_enum_lit_node(a, ar, &inst, variant, tag, empty, p);
     }
     let m = mangle_path(a, ar, tname, variant);
