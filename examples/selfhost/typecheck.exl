@@ -5052,6 +5052,26 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
         sc_is_main: base.sc_is_main,
     };
 }
+// A scope with the full struct-field skeleton in place, used for a second
+// field-type resolution pass that registers generic-instance fields (a
+// `Vec<TypeAlias>` struct field) into the shared mono-fields table so tparam
+// recovery works regardless of construction order.
+fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyScope {
+    return TyScope {
+        sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_iconsts: base.sc_iconsts, sc_sinfo: sinfo, sc_etags: base.sc_etags,
+        sc_efields: base.sc_efields, sc_methods: base.sc_methods,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
+        sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
+        sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
+        sc_ret: base.sc_ret,
+        sc_self: base.sc_self,
+        sc_gsigs: base.sc_gsigs,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_is_main: base.sc_is_main,
+    };
+}
 fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
     return TyScope {
         sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: tparams,
@@ -6990,6 +7010,14 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     collect_struct_info(a, ar, &base_scope, &empty_tp, items, &sinfo);
     prelude_struct_info(a, ar, &sinfo);
+    // Second field-type resolution with the skeleton in place: a generic
+    // struct-field type (`Vec<TypeAlias>`) registers its instance fields into
+    // the shared mono-fields table, so a `.length()` receiver's element tparam
+    // recovers even before the Vec is first constructed (the throwaway output
+    // is discarded — only the instance-field side effect matters).
+    let sinfo_scope = scope_with_sinfo(&base_scope, &sinfo);
+    let mut sinfo_throwaway: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
+    collect_struct_info(a, ar, &sinfo_scope, &empty_tp, items, &sinfo_throwaway);
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
