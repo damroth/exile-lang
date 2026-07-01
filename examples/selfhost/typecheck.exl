@@ -2362,7 +2362,7 @@ fn elab_pattern_list(a: Allocator, ar: *Arena, sc: *const TyScope, alts: *const 
 
 // Variant payload sub-patterns become `TFieldPat`s: tuple positions get
 // synthesised names `_0`, `_1`, …; struct fields keep their names.
-fn elab_tbinds(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const PatBinds) -> Vec<TFieldPat> {
+fn elab_tbinds(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, variant: str, binds: *const PatBinds) -> Vec<TFieldPat> {
     let mut out: Vec<TFieldPat> = Vec::with_capacity(a, 8 as u32);
     match *binds {
         PatBinds::PBTuple(pats) => {
@@ -2374,19 +2374,63 @@ fn elab_tbinds(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const PatBi
                 it = it + 1 as u32;
             }
         }
-        | PatBinds::PBStruct(fps) => {
-            let ns = fps.length();
-            let ssl = fps.as_slice();
-            let mut is = 0 as u32;
-            while is < ns {
-                out.push(TFieldPat { name: ssl[is].name, pat: elab_pattern(a, ar, sc, &ssl[is].pat) });
-                is = is + 1 as u32;
-            }
-        }
+        | PatBinds::PBStruct(fps) => { complete_struct_pat(a, ar, sc, epath, variant, &fps, &out); }
     }
     return out;
 }
+// Emit every variant field in declaration order (an omitted field becomes
+// `_`), matching the oracle; if the variant's fields aren't known (prelude /
+// unresolved), fall back to the written fields.
+fn complete_struct_pat(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, variant: str,
+                       fps: *const Vec<FieldPat>, out: *Vec<TFieldPat>) {
+    // Walk the enum-field table directly (its strings are arena-backed, so no
+    // local-vector escape); each field of `variant` becomes a TFieldPat with
+    // its written pattern or `_`.
+    let n = sc.sc_efields.length();
+    let sl = sc.sc_efields.as_slice();
+    let mut found = false;
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].ef_variant, variant) {
+            if path_eq(&sl[i].ef_path, epath) {
+                found = true;
+                let wi = field_pat_idx(fps, sl[i].ef_name);
+                out.push(TFieldPat { name: sl[i].ef_name, pat: complete_field_pat(a, ar, sc, fps, wi) });
+            }
+        }
+        i = i + 1 as u32;
+    }
+    if found { return; }
+    // Unknown variant fields (prelude / unresolved) — emit the written fields.
+    let ns = fps.length();
+    let ssl = fps.as_slice();
+    let mut is = 0 as u32;
+    while is < ns {
+        out.push(TFieldPat { name: ssl[is].name, pat: elab_pattern(a, ar, sc, &ssl[is].pat) });
+        is = is + 1 as u32;
+    }
+    return;
+}
 
+fn field_pat_idx(fps: *const Vec<FieldPat>, fname: str) -> int {
+    let n = fps.length();
+    let sl = fps.as_slice();
+    let mut i = 0 as u32;
+    while i < n { if str::eq(sl[i].name, fname) { return i as int; } i = i + 1 as u32; }
+    return -1 as int;
+}
+fn complete_field_pat(a: Allocator, ar: *Arena, sc: *const TyScope, fps: *const Vec<FieldPat>, wi: int) -> Tpattern {
+    if wi < 0 as int { return Tpattern::TPWildcard; }
+    return elab_pattern(a, ar, sc, &fps.as_slice()[wi as u32].pat);
+}
+fn elab_variant_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, variant: str, binds: *const PatBinds) -> Tpattern {
+    // Qualify a bare enum name (`BinOp` -> `ast::BinOp` in a module or via a
+    // `use ast::*` alias) so the tag + field completion resolve against the
+    // qualified etags/efields; a generic `Option` (no marker/alias) is left as-is.
+    let qpath = qualify_type_path(a, ar, sc, tname);
+    let tag = variant_tag(sc.sc_etags, &qpath, variant);
+    return Tpattern::TPVariant { variant: variant, tag: tag, binds: elab_tbinds(a, ar, sc, &qpath, variant, binds) };
+}
 fn elab_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern) -> Tpattern {
     return match *pat {
         Pattern::PWildcard(_q) => Tpattern::TPWildcard
@@ -2394,12 +2438,7 @@ fn elab_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Patter
         | Pattern::PLit(n, _q) => Tpattern::TPLit(n)
         | Pattern::PBool(b, _q) => Tpattern::TPBool(b)
         | Pattern::POr(alts, _q) => Tpattern::TPOr(elab_pattern_list(a, ar, sc, &alts))
-        | Pattern::PVariant { tname, variant, binds } =>
-            // Qualify a bare enum name (`BinOp` -> `ast::BinOp` in a module or
-            // via a `use ast::*` alias) so the tag matches the qualified etags;
-            // a generic `Option` (no marker/alias) stays itself.
-            Tpattern::TPVariant { variant: variant, tag: variant_tag(sc.sc_etags, &qualify_type_path(a, ar, sc, &tname), variant),
-                                  binds: elab_tbinds(a, ar, sc, &binds) }
+        | Pattern::PVariant { tname, variant, binds } => elab_variant_pattern(a, ar, sc, &tname, variant, &binds)
     };
 }
 
@@ -4769,9 +4808,15 @@ fn collect_type_names(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items:
 // expanded `use foo::*;` into per-name `pub use foo::Bar;`, so a plain 2+
 // segment `use` path is exactly one importable name; its marker
 // (`foo::Bar` in snames/enames) confirms it is a type, not a function.
-fn record_use_alias(a: Allocator, ar: *Arena, path: *const Vec<str>, snames: *const Vec<str>, enames: *const Vec<str>, out: *Vec<TypeAlias>) {
+fn record_use_alias(a: Allocator, ar: *Arena, path: *const Vec<str>, snames: *const Vec<str>, enames: *const Vec<str>,
+                    fstructs: *const Vec<str>, fenums: *const Vec<str>, out: *Vec<TypeAlias>) {
     if path.length() < 2 as u32 { return; }
     let last = path_last(path);
+    // A locally-declared root type shadows a `use`-imported one of the same
+    // name (the oracle resolves a bare name to the same-file definition
+    // first) — fstructs/fenums hold a root type under its bare name.
+    if name_in(fstructs, last) { return; }
+    if name_in(fenums, last) { return; }
     let init = path_init(a, path);
     let marker = join_colons(a, ar, &init, last);
     let is_e = name_in(enames, marker);
@@ -4780,19 +4825,21 @@ fn record_use_alias(a: Allocator, ar: *Arena, path: *const Vec<str>, snames: *co
     }
     return;
 }
-fn collect_type_aliases_one(a: Allocator, ar: *Arena, it: *const Item, snames: *const Vec<str>, enames: *const Vec<str>, out: *Vec<TypeAlias>) {
+fn collect_type_aliases_one(a: Allocator, ar: *Arena, it: *const Item, snames: *const Vec<str>, enames: *const Vec<str>,
+                            fstructs: *const Vec<str>, fenums: *const Vec<str>, out: *Vec<TypeAlias>) {
     match *it {
-        Item::Use { path, is_wildcard, is_pub } => { record_use_alias(a, ar, &path, snames, enames, out); }
-        | Item::Module(md) => { collect_type_aliases(a, ar, &md.mitems, snames, enames, out); }
+        Item::Use { path, is_wildcard, is_pub } => { record_use_alias(a, ar, &path, snames, enames, fstructs, fenums, out); }
+        | Item::Module(md) => { collect_type_aliases(a, ar, &md.mitems, snames, enames, fstructs, fenums, out); }
         | _other => { }
     }
 }
-fn collect_type_aliases(a: Allocator, ar: *Arena, items: *const Vec<Item>, snames: *const Vec<str>, enames: *const Vec<str>, out: *Vec<TypeAlias>) {
+fn collect_type_aliases(a: Allocator, ar: *Arena, items: *const Vec<Item>, snames: *const Vec<str>, enames: *const Vec<str>,
+                        fstructs: *const Vec<str>, fenums: *const Vec<str>, out: *Vec<TypeAlias>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        collect_type_aliases_one(a, ar, &sl[i], snames, enames, out);
+        collect_type_aliases_one(a, ar, &sl[i], snames, enames, fstructs, fenums, out);
         i = i + 1 as u32;
     }
 }
@@ -6826,7 +6873,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // Type-level `use foo::Bar;` aliases (collected after type names so the
     // `foo::Bar` marker is available to confirm Bar is a declared type).
     let mut taliases: Vec<TypeAlias> = Vec::with_capacity(a, 8 as u32);
-    collect_type_aliases(a, ar, items, &snames, &enames, &taliases);
+    collect_type_aliases(a, ar, items, &snames, &enames, &fstructs, &fenums, &taliases);
     let mut xstructs: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut xaliases: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_ext_types(items, &xstructs, &xaliases);
