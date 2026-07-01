@@ -4387,6 +4387,25 @@ fn walk_match_arms(a: Allocator, ar: *Arena, ctr: *u32, arms: *const Vec<TmatchA
     }
     return out;
 }
+// `&x` needs an addressable operand.  A call / other rvalue result is a
+// temporary, so taking its address requires materialising it into a
+// `__lift_N` temp first (matching the oracle: `&f(x)` -> `let __lift = f(x);
+// &__lift`).  Lvalues (var / field / index / deref) are addressed directly.
+fn is_addressable(te: *const Texpr) -> bool {
+    return match te.e {
+        TexprNode::TVar(_n) => true
+        | TexprNode::TFieldAccess { target, field } => true
+        | TexprNode::TIndex { base, index } => true
+        | TexprNode::TDeref(_s) => true
+        | _other => false
+    };
+}
+fn ref_operand(a: Allocator, ar: *Arena, ctr: *u32, ws: *const Texpr, prelude: *Vec<Tstmt>) -> *const Texpr {
+    if is_addressable(ws) { return ws; }
+    let nm = lift_name(a, ar, ctr);
+    prelude.push(Tstmt::TLet { name: nm, value: ws, pos: ws.pos });
+    return te_node(ar, TexprNode::TVar(nm), ws.ty, ws.pos);
+}
 fn walk_subs(a: Allocator, ar: *Arena, ctr: *u32, te: *const Texpr, prelude: *Vec<Tstmt>) -> *const Texpr {
     let p = te.pos;
     return match te.e {
@@ -4402,7 +4421,7 @@ fn walk_subs(a: Allocator, ar: *Arena, ctr: *u32, te: *const Texpr, prelude: *Ve
         | TexprNode::TCast(s, ann) => te_node(ar, TexprNode::TCast(walk_expr(a, ar, ctr, false, s, prelude), ann), te.ty, p)
         | TexprNode::TFieldAccess { target, field } =>
             te_node(ar, TexprNode::TFieldAccess { target: walk_expr(a, ar, ctr, false, target, prelude), field: field }, te.ty, p)
-        | TexprNode::TRef(s) => te_node(ar, TexprNode::TRef(walk_expr(a, ar, ctr, false, s, prelude)), te.ty, p)
+        | TexprNode::TRef(s) => te_node(ar, TexprNode::TRef(ref_operand(a, ar, ctr, walk_expr(a, ar, ctr, false, s, prelude), prelude)), te.ty, p)
         | TexprNode::TDeref(s) => te_node(ar, TexprNode::TDeref(walk_expr(a, ar, ctr, false, s, prelude)), te.ty, p)
         | TexprNode::TIndex { base, index } =>
             te_node(ar, TexprNode::TIndex { base: walk_expr(a, ar, ctr, false, base, prelude), index: walk_expr(a, ar, ctr, false, index, prelude) }, te.ty, p)
