@@ -3178,7 +3178,10 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             bind_tuple_names(&names, tvt.ty, benv);
             tstmts.push(Tstmt::TLetTuple { names: copy_strs(a, &names), value: tvt, pos: expr_pos(value) });
         }
-        | _other => { tstmts.push(Tstmt::TExprStmt(defer_expr(ar, zero_pos()))); }
+        // Control-flow statements (while / for / return / defer / with) that a
+        // block expression can also contain go through the function-body
+        // statement elaborator.
+        | _other => { elab_stmt(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, s, tstmts); }
     }
 }
 
@@ -4467,8 +4470,16 @@ fn walk_subs(a: Allocator, ar: *Arena, ctr: *u32, te: *const Texpr, prelude: *Ve
             te_node(ar, TexprNode::TEnumLit { ename_path: copy_strs(a, &ename_path), variant: variant, tag: tag, args: walk_fields(a, ar, ctr, &args, prelude) }, te.ty, p)
         | TexprNode::TMatch { scrutinee, ename_path, arms } =>
             te_node(ar, TexprNode::TMatch { scrutinee: walk_expr(a, ar, ctr, false, scrutinee, prelude), ename_path: copy_strs(a, &ename_path), arms: walk_match_arms(a, ar, ctr, &arms) }, te.ty, p)
-        | TexprNode::TIfExpr { cond, then_val, else_val } =>
-            te_node(ar, TexprNode::TIfExpr { cond: walk_expr(a, ar, ctr, false, cond, prelude), then_val: then_val, else_val: else_val }, te.ty, p)
+        | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            // The branches are values (like match-arm bodies): walk each,
+            // hoisting a block-shaped sub-expression into a `TBlock` in that
+            // branch.  The oracle numbers the else branch's lifts before the
+            // then branch's, so walk the else side first.
+            let wcond = walk_expr(a, ar, ctr, false, cond, prelude);
+            let welse = walk_arm_body(a, ar, ctr, else_val);
+            let wthen = walk_arm_body(a, ar, ctr, then_val);
+            te_node(ar, TexprNode::TIfExpr { cond: wcond, then_val: wthen, else_val: welse }, te.ty, p)
+        }
         | TexprNode::TBlock { stmts, trailing } => {
             // A block value (e.g. a statement-shaped match-arm body) lifts its
             // own statements + trailing value into its own scope.
