@@ -4299,18 +4299,6 @@ fn copy_tpattern(a: Allocator, ar: *Arena, p: *const Tpattern) -> Tpattern {
         | Tpattern::TPOr(alts) => Tpattern::TPOr(copy_tpatterns(a, ar, &alts))
     };
 }
-fn copy_one_arm(a: Allocator, ar: *Arena, arm: *const TmatchArm, out: *Vec<TmatchArm>) {
-    out.push(TmatchArm { tpat: copy_tpattern(a, ar, &arm.tpat), tguard: arm.tguard, tbody: arm.tbody,
-                         tdiverges: arm.tdiverges, tarm_pos: arm.tarm_pos });
-}
-fn copy_match_arms(a: Allocator, ar: *Arena, arms: *const Vec<TmatchArm>) -> Vec<TmatchArm> {
-    let mut out: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
-    let n = arms.length();
-    let sl = arms.as_slice();
-    let mut i = 0 as u32;
-    while i < n { copy_one_arm(a, ar, &sl[i], &out); i = i + 1 as u32; }
-    return out;
-}
 
 fn walk_args(a: Allocator, ar: *Arena, ctr: *u32, args: *const Vec<*const Texpr>, prelude: *Vec<Tstmt>) -> Vec<*const Texpr> {
     let mut out: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
@@ -4335,6 +4323,31 @@ fn walk_opt(a: Allocator, ar: *Arena, ctr: *u32, o: Option<*const Texpr>, prelud
     };
 }
 
+// A match-arm body is a value in its own right: walk its sub-expressions,
+// collecting any block-shaped ones into a local prelude, and — when the
+// prelude is non-empty — wrap the arm body in a `TBlock { lifts; trailing }`
+// (matching the oracle, which hoists e.g. an `enum-lit` argument inside an
+// arm into `__lift_N` temps before the arm's trailing call).  The lift
+// counter is the function's, so numbering stays sequential across arms.
+fn walk_arm_body(a: Allocator, ar: *Arena, ctr: *u32, tbody: *const Texpr) -> *const Texpr {
+    let mut prelude: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let walked = walk_expr(a, ar, ctr, true, tbody, &prelude);
+    if prelude.length() == 0 as u32 { return walked; }
+    return te_node(ar, TexprNode::TBlock { stmts: prelude, trailing: Option::Some(walked) }, walked.ty, walked.pos);
+}
+fn walk_match_arms(a: Allocator, ar: *Arena, ctr: *u32, arms: *const Vec<TmatchArm>) -> Vec<TmatchArm> {
+    let mut out: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
+    let n = arms.length();
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        out.push(TmatchArm { tpat: copy_tpattern(a, ar, &sl[i].tpat), tguard: sl[i].tguard,
+                             tbody: walk_arm_body(a, ar, ctr, sl[i].tbody),
+                             tdiverges: sl[i].tdiverges, tarm_pos: sl[i].tarm_pos });
+        i = i + 1 as u32;
+    }
+    return out;
+}
 fn walk_subs(a: Allocator, ar: *Arena, ctr: *u32, te: *const Texpr, prelude: *Vec<Tstmt>) -> *const Texpr {
     let p = te.pos;
     return match te.e {
@@ -4359,10 +4372,23 @@ fn walk_subs(a: Allocator, ar: *Arena, ctr: *u32, te: *const Texpr, prelude: *Ve
         | TexprNode::TEnumLit { ename_path, variant, tag, args } =>
             te_node(ar, TexprNode::TEnumLit { ename_path: copy_strs(a, &ename_path), variant: variant, tag: tag, args: walk_fields(a, ar, ctr, &args, prelude) }, te.ty, p)
         | TexprNode::TMatch { scrutinee, ename_path, arms } =>
-            te_node(ar, TexprNode::TMatch { scrutinee: walk_expr(a, ar, ctr, false, scrutinee, prelude), ename_path: copy_strs(a, &ename_path), arms: copy_match_arms(a, ar, &arms) }, te.ty, p)
+            te_node(ar, TexprNode::TMatch { scrutinee: walk_expr(a, ar, ctr, false, scrutinee, prelude), ename_path: copy_strs(a, &ename_path), arms: walk_match_arms(a, ar, ctr, &arms) }, te.ty, p)
         | TexprNode::TIfExpr { cond, then_val, else_val } =>
             te_node(ar, TexprNode::TIfExpr { cond: walk_expr(a, ar, ctr, false, cond, prelude), then_val: then_val, else_val: else_val }, te.ty, p)
+        | TexprNode::TBlock { stmts, trailing } => {
+            // A block value (e.g. a statement-shaped match-arm body) lifts its
+            // own statements + trailing value into its own scope.
+            let mut wstmts = lift_stmts(a, ar, ctr, &stmts);
+            let wtr = walk_trailing(a, ar, ctr, trailing, &wstmts);
+            te_node(ar, TexprNode::TBlock { stmts: wstmts, trailing: wtr }, te.ty, p)
+        }
         | _other => te
+    };
+}
+fn walk_trailing(a: Allocator, ar: *Arena, ctr: *u32, tr: Option<*const Texpr>, into: *Vec<Tstmt>) -> Option<*const Texpr> {
+    return match tr {
+        Option::Some(te) => Option::Some(walk_expr(a, ar, ctr, true, te, into))
+        | Option::None => { let n: Option<*const Texpr> = Option::None; n }
     };
 }
 
