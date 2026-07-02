@@ -3,20 +3,793 @@
 // body to release every owned binding exactly once at scope exit (L1), drop
 // the old value before an overwriting assignment (L2), and resurrect a
 // consumed binding on rebind (L3).  Consume detection is DELEGATED to the
-// move-pass walker (the OWN-D2 seam) so the compiler has one consume model.
+// move-pass walker (`move::states_by`, the OWN-D2 seam) so the compiler has
+// one consume model.
 //
-// STAGED PORT (2026-07-02): this module is filled in feature by feature
-// against `exilc --emit-typed-ir --after-drop --user-only` (the oracle
-// post-drop dump).  It currently performs the IDENTITY transform — every
-// user body flows through unchanged — so the differential surfaces exactly
-// the functions whose drop-insertion is not yet reproduced.
+// STAGED PORT: this slice reproduces the SHALLOW drops (bare `own *T` and
+// direct own-fields released inline through their sibling `alloc`).  The
+// deep-drop glue functions (recursive pointee / Vec-element / HashMap
+// element release) are a follow-up — a droppable pointee is skipped here,
+// leaving that example `unported` in the differential.
+//
+// Tracked entries carry the struct's INDEX in `tp_struct_index` rather than
+// its path, so a `DEntry` is copyable (no owned Vec field) and the live
+// list threads without any move-out-of-field.
 
-use pos;
+use pos::*;
 use ast::*;
 use ir::*;
+use error::*;
+use move::*;
 
-// Rewrite the program in place: insert auto-drop calls into user function
-// bodies and append the synthetic drop-glue functions.  Identity for now.
-pub fn drop_insert(_a: Allocator, _ar: *Arena, _tp: *Tprogram) {
-    // no-op (staged)
+// ---------- arena node builders ----------
+
+fn d_ty(ar: *Arena, t: Typ) -> *const Typ {
+    let n: *Typ = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
+    *n = t;
+    return n as *const Typ;
+}
+
+fn d_te(ar: *Arena, node: TexprNode, ty: *const Typ, pos: Pos) -> *const Texpr {
+    let n: *Texpr = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
+    *n = Texpr { e: node, ty: ty, pos: pos };
+    return n as *const Texpr;
+}
+
+fn d_ann(ar: *Arena, t: TypeAnn) -> *const TypeAnn {
+    let n: *TypeAnn = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
+    *n = t;
+    return n as *const TypeAnn;
+}
+
+fn one_str(a: Allocator, s: str) -> Vec<str> {
+    let mut v: Vec<str> = Vec::with_capacity(a, 2 as u32);
+    v.push(s);
+    return v;
+}
+
+// ---------- shared types ----------
+
+fn ty_cvoidptr(ar: *Arena) -> *const Typ {
+    return d_ty(ar, Typ::TPtr(d_ty(ar, Typ::TCVoid)));
+}
+fn ty_u32(ar: *Arena) -> *const Typ {
+    return d_ty(ar, Typ::TInt(IntKind { is_signed: false, width: IntWidth::W32 }));
+}
+fn ty_i32(ar: *Arena) -> *const Typ {
+    return d_ty(ar, Typ::TInt(IntKind { is_signed: true, width: IntWidth::W32 }));
+}
+fn ty_allocator(a: Allocator, ar: *Arena) -> *const Typ {
+    return d_ty(ar, Typ::TStruct(one_str(a, "Allocator")));
+}
+fn ty_free_fn_ptr(a: Allocator, ar: *Arena) -> *const Typ {
+    let mut ps: Vec<*const Typ> = Vec::with_capacity(a, 4 as u32);
+    ps.push(ty_cvoidptr(ar));
+    ps.push(ty_cvoidptr(ar));
+    ps.push(ty_u32(ar));
+    let nr: Option<*const Typ> = Option::None;
+    return d_ty(ar, Typ::TFnPtr { params: ps, ret: nr });
+}
+
+// `(alloc.free_fn)(alloc.state, ptr as *c_void, bytes)` (drop.ml:189).
+fn free_via(a: Allocator, ar: *Arena, alloc_expr: *const Texpr,
+            ptr_expr: *const Texpr, bytes: *const Texpr, pos: Pos) -> Tstmt {
+    let ffn = d_te(ar, TexprNode::TFieldAccess { target: alloc_expr, field: "free_fn" },
+                   ty_free_fn_ptr(a, ar), pos);
+    let stt = d_te(ar, TexprNode::TFieldAccess { target: alloc_expr, field: "state" },
+                   ty_cvoidptr(ar), pos);
+    let cvann = d_ann(ar, TypeAnn::TyPtr(d_ann(ar, TypeAnn::TyCVoid)));
+    let castp = d_te(ar, TexprNode::TCast(ptr_expr, cvann), ty_cvoidptr(ar), pos);
+    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 4 as u32);
+    args.push(stt);
+    args.push(castp);
+    args.push(bytes);
+    let ic = d_te(ar, TexprNode::TIndirectCall { fn_expr: ffn, args: args }, ty_i32(ar), pos);
+    return Tstmt::TExprStmt(ic);
+}
+
+// `(size-of inner) as u32` (drop.ml:181) — `(cast (size-of T) :c_int-unsigned :u32)`.
+fn size_of_u32(ar: *Arena, inner: *const Typ, pos: Pos) -> *const Texpr {
+    let so = d_te(ar, TexprNode::TSizeOf(inner), d_ty(ar, Typ::TCInt { is_signed: false }), pos);
+    let u32ann = d_ann(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 });
+    return d_te(ar, TexprNode::TCast(so, u32ann), ty_u32(ar), pos);
+}
+
+// ---------- struct-index lookup + droppability ----------
+
+fn find_struct_idx(structs: *const Vec<StructSig>, path: *const Vec<str>) -> int {
+    let sl = structs.as_slice();
+    let mut i = 0 as u32;
+    while i < structs.length() {
+        if mpath_eq2(&sl[i].sname_path, path) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 - 1;
+}
+
+fn mpath_eq2(a: *const Vec<str>, b: *const Vec<str>) -> bool {
+    if a.length() != b.length() { return false; }
+    let sa = a.as_slice();
+    let sb = b.as_slice();
+    let mut i = 0 as u32;
+    while i < a.length() {
+        if !str::eq(sa[i], sb[i]) { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
+
+// Transitive: the struct's field tree (through struct-VALUE fields) reaches
+// an `own *T` (drop.ml:108).  Droppable subset of is_affine (no @move-only).
+fn has_drop_deep(structs: *const Vec<StructSig>, t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(path) => struct_owns_by_path(structs, &path)
+        | _other => false
+    };
+}
+
+fn struct_owns_by_path(structs: *const Vec<StructSig>, path: *const Vec<str>) -> bool {
+    let idx = find_struct_idx(structs, path);
+    if idx < 0 as int { return false; }
+    let sl = structs.as_slice();
+    let fs = sl[idx as u32].sfields_ty.as_slice();
+    let mut i = 0 as u32;
+    let mut r = false;
+    while i < sl[idx as u32].sfields_ty.length() {
+        if field_owns(structs, fs[i].ty) { r = true; }
+        i = i + 1 as u32;
+    }
+    return r;
+}
+
+fn field_owns(structs: *const Vec<StructSig>, ft: *const Typ) -> bool {
+    return match *ft {
+        Typ::TOwnPtr(_i) => true
+        | Typ::TStruct(_p) => has_drop_deep(structs, ft)
+        | _other => false
+    };
+}
+
+// Does dropping a VALUE of this type require real work? (drop.ml:259).
+// Enums recurse through payloads; used to route own-fields to glue (which
+// this slice skips) vs an inline free.
+fn droppable_deep(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, t: *const Typ) -> bool {
+    return match *t {
+        Typ::TOwnPtr(_i) => true
+        | Typ::TStruct(_p) => has_drop_deep(structs, t)
+        | Typ::TEnum(path) => enum_owns(structs, enums, &path)
+        | Typ::TEnumApp { path, args } => enum_owns(structs, enums, &path)
+        | _other => false
+    };
+}
+
+fn enum_owns(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, path: *const Vec<str>) -> bool {
+    let el = enums.as_slice();
+    let mut i = 0 as u32;
+    while i < enums.length() {
+        if mpath_eq2(&el[i].ename_path, path) {
+            let vl = el[i].evariants.as_slice();
+            let mut j = 0 as u32;
+            while j < el[i].evariants.length() {
+                let fl = vl[j].vsfields.as_slice();
+                let mut k = 0 as u32;
+                while k < vl[j].vsfields.length() {
+                    if droppable_deep(structs, enums, fl[k].ty) { return true; }
+                    k = k + 1 as u32;
+                }
+                j = j + 1 as u32;
+            }
+            return false;
+        }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+// ---------- entry model (struct-index based → DEntry is copyable) ----------
+
+pub enum DStatus { DLive | DConsumed | DPartial }
+
+pub enum DKind {
+    DStructDrop(int)
+    | DArrayDrop { da_sidx: int, da_size: int }
+    | DBareOwn { bo_pointee: *const Typ, bo_prov: Option<str> }
+}
+
+pub struct DEntry {
+    den_name: str,
+    den_status: DStatus,
+    den_kind: DKind,
+    den_pos: Pos,
+}
+
+fn prov_of(value: *const Texpr) -> Option<str> {
+    return match value.e {
+        TexprNode::TNew { sname_path, fields, base, alloc } => prov_of_alloc(alloc)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => prov_of_alloc(alloc)
+        | TexprNode::TCall { mangled, args } => prov_of_call(mangled, &args)
+        | _other => { let x: Option<str> = Option::None; x }
+    };
+}
+
+fn prov_of_call(mangled: str, args: *const Vec<*const Texpr>) -> Option<str> {
+    let x: Option<str> = Option::None;
+    if !str_starts_with(mangled, "Allocator__alloc") { return x; }
+    if args.length() == 0 as u32 { return x; }
+    let al = args.as_slice();
+    return match al[0].e {
+        TexprNode::TVar(n) => Option::Some(n)
+        | _o => x
+    };
+}
+
+fn prov_of_alloc(alloc: Option<*const Texpr>) -> Option<str> {
+    let nn: Option<str> = Option::None;
+    return match alloc {
+        Option::Some(ae) => match ae.e {
+            TexprNode::TVar(n) => Option::Some(n)
+            | _o => nn
+        }
+        | Option::None => nn
+    };
+}
+
+fn entry_for(structs: *const Vec<StructSig>, name: str, ty: *const Typ, pos: Pos) -> Option<DEntry> {
+    let none_e: Option<DEntry> = Option::None;
+    return match *ty {
+        Typ::TStruct(path) => entry_for_struct(structs, name, ty, &path, pos)
+        | Typ::TOwnPtr(inner) => {
+            let np: Option<str> = Option::None;
+            Option::Some(DEntry { den_name: name, den_status: DStatus::DLive,
+                                  den_kind: DKind::DBareOwn { bo_pointee: inner, bo_prov: np }, den_pos: pos })
+        }
+        | _other => none_e
+    };
+}
+
+fn entry_for_struct(structs: *const Vec<StructSig>, name: str, ty: *const Typ,
+                    path: *const Vec<str>, pos: Pos) -> Option<DEntry> {
+    if !has_drop_deep(structs, ty) { let x: Option<DEntry> = Option::None; return x; }
+    let idx = find_struct_idx(structs, path);
+    return Option::Some(DEntry { den_name: name, den_status: DStatus::DLive,
+                                 den_kind: DKind::DStructDrop(idx), den_pos: pos });
+}
+
+// ---------- drop emission ----------
+
+fn field_access(ar: *Arena, base: *const Texpr, name: str, ty: *const Typ, pos: Pos) -> *const Texpr {
+    return d_te(ar, TexprNode::TFieldAccess { target: base, field: name }, ty, pos);
+}
+
+fn struct_has_field(sig: *const StructSig, name: str) -> bool {
+    let fs = sig.sfields_ty.as_slice();
+    let mut i = 0 as u32;
+    while i < sig.sfields_ty.length() {
+        if str::eq(fs[i].name, name) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+// Byte-count heuristic (drop.ml:370): cap -> cap*size / len -> len+1 / else size.
+fn bytes_expr(a: Allocator, ar: *Arena, sig: *const StructSig, base: *const Texpr,
+              inner: *const Typ, pos: Pos) -> *const Texpr {
+    if struct_has_field(sig, "cap") {
+        let cap = field_access(ar, base, "cap", ty_u32(ar), pos);
+        return d_te(ar, TexprNode::TBinOp(BinOp::Mul, cap, size_of_u32(ar, inner, pos)), ty_u32(ar), pos);
+    }
+    if struct_has_field(sig, "len") {
+        let len = field_access(ar, base, "len", ty_u32(ar), pos);
+        let one = d_te(ar, TexprNode::TIntLit(1), ty_u32(ar), pos);
+        return d_te(ar, TexprNode::TBinOp(BinOp::Add, len, one), ty_u32(ar), pos);
+    }
+    return size_of_u32(ar, inner, pos);
+}
+
+// Release everything [base] (a droppable struct value at struct index [sidx])
+// owns: free each direct own-field through the SAME level's `alloc`, then
+// recurse into droppable struct-value fields (drop.ml:310).  A droppable
+// pointee routes to glue (SKIPPED in this slice → nothing emitted).
+fn drop_stmts_for_struct(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>,
+                         enums: *const Vec<EnumSig>, base: *const Texpr, sidx: int,
+                         pos: Pos, out: *Vec<Tstmt>) {
+    if sidx < 0 as int { return; }
+    let sl = structs.as_slice();
+    let alloc_f = field_access(ar, base, "alloc", ty_allocator(a, ar), pos);
+    let fs = sl[sidx as u32].sfields_ty.as_slice();
+    let mut i = 0 as u32;
+    while i < sl[sidx as u32].sfields_ty.length() {
+        drop_one_field(a, ar, structs, enums, base, &sl[sidx as u32], alloc_f, fs[i].name, fs[i].ty, pos, out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// Emit `free_via(alloc, ptr, bytes)` unless the pointee needs recursive glue
+// (deferred in this slice → nothing emitted).  Guard-return avoids a value-if.
+fn maybe_free_own(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                  alloc_e: *const Texpr, ptr_e: *const Texpr, pointee: *const Typ,
+                  bytes: *const Texpr, pos: Pos, out: *Vec<Tstmt>) {
+    if droppable_deep(structs, enums, pointee) { return; }
+    out.push(free_via(a, ar, alloc_e, ptr_e, bytes, pos));
+    return;
+}
+
+fn drop_one_field(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                  base: *const Texpr, sig: *const StructSig, alloc_f: *const Texpr,
+                  fname: str, fty: *const Typ, pos: Pos, out: *Vec<Tstmt>) {
+    match *fty {
+        Typ::TOwnPtr(inner) => {
+            let fa = field_access(ar, base, fname, fty, pos);
+            maybe_free_own(a, ar, structs, enums, alloc_f, fa, inner, bytes_expr(a, ar, sig, base, inner, pos), pos, out);
+        }
+        | Typ::TStruct(p2) => emit_struct_field(a, ar, structs, enums, base, fname, fty, pos, out)
+        | _other => {}
+    }
+    return;
+}
+
+fn emit_struct_field(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                     base: *const Texpr, fname: str, fty: *const Typ, pos: Pos, out: *Vec<Tstmt>) {
+    if !has_drop_deep(structs, fty) { return; }
+    let sub = field_access(ar, base, fname, fty, pos);
+    drop_stmts_for_struct(a, ar, structs, enums, sub, struct_idx_of_ty(structs, fty), pos, out);
+    return;
+}
+
+fn struct_idx_of_ty(structs: *const Vec<StructSig>, ty: *const Typ) -> int {
+    return match *ty {
+        Typ::TStruct(p) => find_struct_idx(structs, &p)
+        | _other => 0 - 1
+    };
+}
+
+fn drop_stmts_for_entry(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>,
+                        enums: *const Vec<EnumSig>, e: *const DEntry, out: *Vec<Tstmt>) {
+    match e.den_kind {
+        DKind::DStructDrop(sidx) => {
+            let ty = d_ty(ar, Typ::TStruct(struct_path_at(a, structs, sidx)));
+            let base = d_te(ar, TexprNode::TVar(e.den_name), ty, e.den_pos);
+            drop_stmts_for_struct(a, ar, structs, enums, base, sidx, e.den_pos, out);
+        }
+        | DKind::DBareOwn { bo_pointee, bo_prov } => {
+            match bo_prov {
+                Option::Some(an) => {
+                    let alloc_e = d_te(ar, TexprNode::TVar(an), ty_allocator(a, ar), e.den_pos);
+                    let pty = d_ty(ar, Typ::TOwnPtr(bo_pointee));
+                    let ptr_e = d_te(ar, TexprNode::TVar(e.den_name), pty, e.den_pos);
+                    maybe_free_own(a, ar, structs, enums, alloc_e, ptr_e, bo_pointee,
+                                   size_of_u32(ar, bo_pointee, e.den_pos), e.den_pos, out);
+                }
+                | Option::None => {}   // L1 reject in oracle; valid source never reaches it
+            }
+        }
+        | DKind::DArrayDrop { da_sidx, da_size } => {}   // deferred (rare)
+    }
+    return;
+}
+
+fn struct_path_at(a: Allocator, structs: *const Vec<StructSig>, sidx: int) -> Vec<str> {
+    if sidx < 0 as int { return Vec::with_capacity(a, 1 as u32); }
+    let sl = structs.as_slice();
+    let src = sl[sidx as u32].sname_path.as_slice();
+    let mut v: Vec<str> = Vec::with_capacity(a, sl[sidx as u32].sname_path.length() + 1 as u32);
+    let mut i = 0 as u32;
+    while i < sl[sidx as u32].sname_path.length() { v.push(src[i]); i = i + 1 as u32; }
+    return v;
+}
+
+// Drops for every Live entry, newest-first (LIFO — st keeps newest at head).
+fn drops_for_live(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>,
+                  enums: *const Vec<EnumSig>, st: *const Vec<DEntry>, out: *Vec<Tstmt>) {
+    // LIFO — newest binding first.  The oracle keeps newest at the list head
+    // (`e :: st`); the port pushes newest at the tail, so iterate in reverse.
+    let sl = st.as_slice();
+    let mut i = st.length();
+    while i > 0 as u32 {
+        i = i - 1 as u32;
+        match sl[i].den_status {
+            DStatus::DLive => drop_stmts_for_entry(a, ar, structs, enums, &sl[i], out)
+            | _other => {}
+        }
+    }
+    return;
+}
+
+// ---------- entry-list state ----------
+
+fn copy_dentries(a: Allocator, st: *const Vec<DEntry>) -> Vec<DEntry> {
+    let mut out: Vec<DEntry> = Vec::with_capacity(a, st.length() + 1 as u32);
+    let sl = st.as_slice();
+    let mut i = 0 as u32;
+    while i < st.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+
+fn names_of(a: Allocator, st: *const Vec<DEntry>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, st.length() + 1 as u32);
+    let sl = st.as_slice();
+    let mut i = 0 as u32;
+    while i < st.length() { out.push(sl[i].den_name); i = i + 1 as u32; }
+    return out;
+}
+
+fn name_in(names: *const Vec<str>, n: str) -> bool {
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() { if str::eq(sl[i], n) { return true; } i = i + 1 as u32; }
+    return false;
+}
+
+fn mark_consumed(a: Allocator, st: *const Vec<DEntry>, names: *const Vec<str>) -> Vec<DEntry> {
+    let mut out: Vec<DEntry> = Vec::with_capacity(a, st.length() + 1 as u32);
+    let sl = st.as_slice();
+    let mut i = 0 as u32;
+    while i < st.length() {
+        let hit = name_in(names, sl[i].den_name);
+        let live_or_partial = match sl[i].den_status {
+            DStatus::DLive => true | DStatus::DPartial => true | DStatus::DConsumed => false
+        };
+        if hit && live_or_partial {
+            out.push(DEntry { den_name: sl[i].den_name, den_status: DStatus::DConsumed,
+                              den_kind: sl[i].den_kind, den_pos: sl[i].den_pos });
+        } else { out.push(sl[i]); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+fn mark_partial(a: Allocator, st: *const Vec<DEntry>, names: *const Vec<str>) -> Vec<DEntry> {
+    let mut out: Vec<DEntry> = Vec::with_capacity(a, st.length() + 1 as u32);
+    let sl = st.as_slice();
+    let mut i = 0 as u32;
+    while i < st.length() {
+        let hit = name_in(names, sl[i].den_name);
+        let is_live = match sl[i].den_status {
+            DStatus::DLive => true | _other => false
+        };
+        if hit && is_live {
+            out.push(DEntry { den_name: sl[i].den_name, den_status: DStatus::DPartial,
+                              den_kind: sl[i].den_kind, den_pos: sl[i].den_pos });
+        } else { out.push(sl[i]); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// Apply an expression's consume set (move::states_by seam) to the state.
+fn apply_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+              st: *const Vec<DEntry>, te: *const Texpr) -> Vec<DEntry> {
+    let names = names_of(a, st);
+    let res = states_by(structs, enums, a, &names, te);
+    let st2 = mark_consumed(a, st, &res.cr_consumed);
+    return mark_partial(a, &st2, &res.cr_partial);
+}
+
+// OWN-D2 consume parity: a transfer's bare affine TVar RHS is consumed by
+// Move.walk_stmt but not by walk_expr alone (drop.ml consume_rhs_var).
+fn consume_rhs_var(structs: *const Vec<StructSig>, a: Allocator,
+                   st: *const Vec<DEntry>, value: *const Texpr) -> Vec<DEntry> {
+    return match value.e {
+        TexprNode::TVar(n) => {
+            if is_affine_typ(structs, value.ty) { consume_one(a, st, n) }
+            else { copy_dentries(a, st) }
+        }
+        | _other => copy_dentries(a, st)
+    };
+}
+
+fn consume_one(a: Allocator, st: *const Vec<DEntry>, n: str) -> Vec<DEntry> {
+    let mut names: Vec<str> = Vec::with_capacity(a, 2 as u32);
+    names.push(n);
+    return mark_consumed(a, st, &names);
+}
+
+// ---------- statement rewriter ----------
+
+fn ends_in_return(out: *const Vec<Tstmt>) -> bool {
+    if out.length() == 0 as u32 { return false; }
+    let sl = out.as_slice();
+    return match sl[out.length() - 1 as u32] {
+        Tstmt::TReturn { value, pos } => true
+        | _other => false
+    };
+}
+
+// Walk a block: thread [st], emit rewritten statements into [out], drop this
+// block's surviving Live locals at close, return the survivors (entries that
+// existed on entry).
+fn walk_stmts(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+              st_in: *const Vec<DEntry>, stmts: *const Vec<Tstmt>, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    let baseline = names_of(a, st_in);
+    let mut st = copy_dentries(a, st_in);
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        // `st = step(st, ...)` moves st into the call (consumed), so the
+        // reassign is an L3 rebind — no drop-old-before-borrowed-read UAF,
+        // and no loop-local-consume false positive (st is not loop-local).
+        st = step(structs, enums, a, ar, st, &sl[i], out);
+        i = i + 1 as u32;
+    }
+    let ret = ends_in_return(out);
+    // partition: locals (not in baseline) vs survivors (in baseline)
+    let mut survivors: Vec<DEntry> = Vec::with_capacity(a, st.length() + 1 as u32);
+    let mut locals: Vec<DEntry> = Vec::with_capacity(a, st.length() + 1 as u32);
+    let es = st.as_slice();
+    let mut j = 0 as u32;
+    while j < st.length() {
+        if name_in(&baseline, es[j].den_name) { survivors.push(es[j]); }
+        else { locals.push(es[j]); }
+        j = j + 1 as u32;
+    }
+    if !ret { drops_for_live(a, ar, structs, enums, &locals, out); }
+    return survivors;
+}
+
+// By-value wrapper so the walk_stmts loop can rebind `st` without a
+// self-referential-borrow (see the loop comment).  Takes st owned, borrows
+// it to walk_stmt, returns the successor state.
+fn step(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+        st: Vec<DEntry>, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    return walk_stmt(structs, enums, a, ar, &st, s, out);
+}
+
+fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+             st: *const Vec<DEntry>, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    return match *s {
+        Tstmt::TLet { name, value, pos } => walk_let(structs, enums, a, ar, st, name, value, pos, s, out)
+        | Tstmt::TAssign { path, value, pos } => walk_assign(structs, enums, a, ar, st, &path, value, pos, s, out)
+        | Tstmt::TReturn { value, pos } => walk_return(structs, enums, a, ar, st, value, pos, out)
+        | Tstmt::TIf { cond, then_body, else_body } => walk_if(structs, enums, a, ar, st, cond, &then_body, &else_body, out)
+        | Tstmt::TWhile { cond, body, post } => walk_while(structs, enums, a, ar, st, cond, &body, &post, s, out)
+        | Tstmt::TExprStmt(e) => {
+            let st2 = apply_expr(structs, enums, a, st, e);
+            out.push(*s);
+            st2
+        }
+        | Tstmt::TAssignField { target, field, value, pos } => walk_apply_one(structs, enums, a, st, value, s, out)
+        | Tstmt::TAssignIndex { base, index, value, pos } => walk_apply_one(structs, enums, a, st, value, s, out)
+        | Tstmt::TAssignDeref { target, value, pos } => walk_apply_one(structs, enums, a, st, value, s, out)
+        | _other => { out.push(*s); copy_dentries(a, st) }
+    };
+}
+
+fn walk_apply_one(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                  st: *const Vec<DEntry>, value: *const Texpr, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    let st1 = apply_expr(structs, enums, a, st, value);
+    let st2 = consume_rhs_var(structs, a, &st1, value);
+    out.push(*s);
+    return st2;
+}
+
+fn walk_let(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+            st: *const Vec<DEntry>, name: str, value: *const Texpr, pos: Pos, s: *const Tstmt,
+            out: *Vec<Tstmt>) -> Vec<DEntry> {
+    let st1 = apply_expr(structs, enums, a, st, value);
+    let st2 = consume_rhs_var(structs, a, &st1, value);
+    // shadow-drop a still-Live tracked binding of the same name
+    let es = st2.as_slice();
+    let mut k = 0 as u32;
+    while k < st2.length() {
+        let same = str::eq(es[k].den_name, name);
+        let live = match es[k].den_status { DStatus::DLive => true | _o => false };
+        if same && live { drop_stmts_for_entry(a, ar, structs, enums, &es[k], out); }
+        k = k + 1 as u32;
+    }
+    out.push(*s);
+    // drop old entry of this name, register the new one
+    let mut st3: Vec<DEntry> = Vec::with_capacity(a, st2.length() + 1 as u32);
+    let es2 = st2.as_slice();
+    let mut m = 0 as u32;
+    while m < st2.length() {
+        if !str::eq(es2[m].den_name, name) { st3.push(es2[m]); }
+        m = m + 1 as u32;
+    }
+    match entry_for(structs, name, value.ty, pos) {
+        Option::Some(e) => {
+            let e2 = match e.den_kind {
+                DKind::DBareOwn { bo_pointee, bo_prov } =>
+                    DEntry { den_name: e.den_name, den_status: e.den_status,
+                             den_kind: DKind::DBareOwn { bo_pointee: bo_pointee, bo_prov: prov_of(value) },
+                             den_pos: e.den_pos }
+                | _o => e
+            };
+            st3.push(e2);
+        }
+        | Option::None => {}
+    }
+    return st3;
+}
+
+fn walk_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+               st: *const Vec<DEntry>, path: *const Vec<str>, value: *const Texpr, pos: Pos,
+               s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    // single-name assign to a tracked binding: L2 drop-old + L3 rebind
+    if path.length() == 1 as u32 {
+        let pl = path.as_slice();
+        let n = pl[0];
+        if entry_index(st, n) >= 0 as int {
+            let st1 = apply_expr(structs, enums, a, st, value);
+            let st2 = consume_rhs_var(structs, a, &st1, value);
+            let idx = entry_index(&st2, n);
+            let es = st2.as_slice();
+            let old_live = match es[idx as u32].den_status { DStatus::DLive => true | _o => false };
+            if old_live { drop_stmts_for_entry(a, ar, structs, enums, &es[idx as u32], out); }
+            out.push(*s);
+            // rebind: n becomes Live with new provenance
+            let mut st3: Vec<DEntry> = Vec::with_capacity(a, st2.length() + 1 as u32);
+            let mut i = 0 as u32;
+            while i < st2.length() {
+                if str::eq(es[i].den_name, n) {
+                    let nk = match es[i].den_kind {
+                        DKind::DBareOwn { bo_pointee, bo_prov } =>
+                            DKind::DBareOwn { bo_pointee: bo_pointee, bo_prov: prov_of(value) }
+                        | k => k
+                    };
+                    st3.push(DEntry { den_name: n, den_status: DStatus::DLive, den_kind: nk, den_pos: es[i].den_pos });
+                } else { st3.push(es[i]); }
+                i = i + 1 as u32;
+            }
+            return st3;
+        }
+    }
+    return walk_apply_one(structs, enums, a, st, value, s, out);
+}
+
+fn entry_index(st: *const Vec<DEntry>, n: str) -> int {
+    let sl = st.as_slice();
+    let mut i = 0 as u32;
+    while i < st.length() { if str::eq(sl[i].den_name, n) { return i as int; } i = i + 1 as u32; }
+    return 0 - 1;
+}
+
+fn walk_return(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+               st: *const Vec<DEntry>, value: Option<*const Texpr>, pos: Pos, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    // a returned bare TVar transfers ownership to the caller (consume it);
+    // any other return value may consume bindings inside.
+    let st1 = match value {
+        Option::Some(v) => match v.e {
+            TexprNode::TVar(n) => {
+                let mut names: Vec<str> = Vec::with_capacity(a, 2 as u32);
+                names.push(n);
+                mark_consumed(a, st, &names)
+            }
+            | _o => apply_expr(structs, enums, a, st, v)
+        }
+        | Option::None => copy_dentries(a, st)
+    };
+    // release every remaining Live owner before the return
+    let mut drop_buf: Vec<Tstmt> = Vec::with_capacity(a, 4 as u32);
+    drops_for_live(a, ar, structs, enums, &st1, &drop_buf);
+    // Sequencing (DR-044): the return VALUE may read a to-be-dropped binding
+    // (`return *buf.p`), so when there are drops and the value is not already
+    // a bare var, evaluate it into a temp BEFORE the drops.
+    if drop_buf.length() > 0 as u32 && ret_needs_temp(value) {
+        emit_ret_temp(a, ar, value, pos, &drop_buf, out);
+    } else {
+        push_all(&drop_buf, out);
+        out.push(Tstmt::TReturn { value: value, pos: pos });
+    }
+    return st1;
+}
+
+fn ret_needs_temp(value: Option<*const Texpr>) -> bool {
+    return match value {
+        Option::Some(v) => match v.e { TexprNode::TVar(_n) => false | _o => true }
+        | Option::None => false
+    };
+}
+
+fn push_all(src: *const Vec<Tstmt>, out: *Vec<Tstmt>) {
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return;
+}
+
+fn mk_drop_tmp(a: Allocator, ar: *Arena, pos: Pos) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 24 as u32);
+    sb.push_str("__drop_ret_");
+    sb.push_int(pos.line);
+    sb.push_str("_");
+    sb.push_int(pos.col);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+fn emit_ret_temp(a: Allocator, ar: *Arena, value: Option<*const Texpr>, pos: Pos,
+                 drop_buf: *const Vec<Tstmt>, out: *Vec<Tstmt>) {
+    match value {
+        Option::Some(v) => {
+            let tmp = mk_drop_tmp(a, ar, pos);
+            out.push(Tstmt::TLet { name: tmp, value: v, pos: pos });
+            push_all(drop_buf, out);
+            let tv = d_te(ar, TexprNode::TVar(tmp), v.ty, v.pos);
+            out.push(Tstmt::TReturn { value: Option::Some(tv), pos: pos });
+        }
+        | Option::None => {}
+    }
+    return;
+}
+
+fn walk_if(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+           st: *const Vec<DEntry>, cond: *const Texpr, then_body: *const Vec<Tstmt>,
+           else_body: *const Vec<Tstmt>, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    let st0 = apply_expr(structs, enums, a, st, cond);
+    let mut then_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let st_then = walk_stmts(structs, enums, a, ar, &st0, then_body, &then_out);
+    let mut else_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let st_else = walk_stmts(structs, enums, a, ar, &st0, else_body, &else_out);
+    out.push(Tstmt::TIf { cond: cond, then_body: then_out, else_body: else_out });
+    let td = stmts_diverge(then_body);
+    let ed = stmts_diverge(else_body);
+    // Return a FRESH copy in every branch so st0 / st_then / st_else are all
+    // dropped uniformly at fn exit — returning a different owned local per
+    // branch is a conditional-consume the static drop pass cannot track
+    // (it would free the returned buffer).
+    if td { if ed { copy_dentries(a, &st0) } else { copy_dentries(a, &st_else) } }
+    else { if ed { copy_dentries(a, &st_then) } else { merge_branches(a, &st_then, &st_else) } }
+}
+
+// OWN-D3: tracked states after two non-diverging branches must agree.  On a
+// mismatch the oracle errors; valid source never mismatches, so take then.
+fn merge_branches(a: Allocator, st_then: *const Vec<DEntry>, st_else: *const Vec<DEntry>) -> Vec<DEntry> {
+    return copy_dentries(a, st_then);
+}
+
+fn walk_while(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+              st: *const Vec<DEntry>, cond: *const Texpr, body: *const Vec<Tstmt>,
+              post: *const Vec<Tstmt>, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    // Move.check guarantees loop-invariant tracked states; one symbolic pass
+    // gives the exit state.  Bodies are walked into fresh buffers.
+    let st0 = apply_expr(structs, enums, a, st, cond);
+    let mut body_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let st_body = walk_stmts(structs, enums, a, ar, &st0, body, &body_out);
+    let mut post_out: Vec<Tstmt> = Vec::with_capacity(a, 4 as u32);
+    let st_post = walk_stmts(structs, enums, a, ar, &st_body, post, &post_out);
+    out.push(Tstmt::TWhile { cond: cond, body: body_out, post: post_out });
+    return st_post;
+}
+
+// ---------- per-fn / whole-program ----------
+
+fn rewrite_fn(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+              f: *Tfunc) {
+    // Skip prelude fns — they predate auto-drop and free by hand.
+    if str::eq(f.tf_func.pos.file, "<prelude>") { return; }
+    // Seed affine by-value params Live (S3 / L1).
+    let mut st: Vec<DEntry> = Vec::with_capacity(a, 8 as u32);
+    let ps = f.tf_func.params.as_slice();
+    let pts = f.tf_param_tys.as_slice();
+    let mut i = 0 as u32;
+    while i < f.tf_func.params.length() && i < f.tf_param_tys.length() {
+        match entry_for(structs, ps[i].pname, pts[i], f.tf_func.pos) {
+            Option::Some(e) => st.push(e)
+            | Option::None => {}
+        }
+        i = i + 1 as u32;
+    }
+    let mut body_out: Vec<Tstmt> = Vec::with_capacity(a, f.tf_body.length() + 4 as u32);
+    let survivors = walk_stmts(structs, enums, a, ar, &st, &f.tf_body, &body_out);
+    // params (the baseline) survive — release them unless the body returned.
+    if !ends_in_return(&body_out) {
+        drops_for_live(a, ar, structs, enums, &survivors, &body_out);
+    }
+    f.tf_body = body_out;
+    return;
+}
+
+pub fn drop_insert(a: Allocator, ar: *Arena, tp: *Tprogram) {
+    let n = tp.tp_funcs.length();
+    let mut i = 0 as u32;
+    while i < n {
+        with f in tp.tp_funcs[i] {
+            rewrite_fn(&tp.tp_struct_index, &tp.tp_enum_index, a, ar, f);
+        }
+        i = i + 1 as u32;
+    }
+    return;
 }

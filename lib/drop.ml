@@ -985,7 +985,26 @@ and walk_stmt ~structs ~enums ~defers st stmt
           else e)
           st
       in
-      (drop_old @ [stmt], st, defers)
+      (* Sequencing (mirrors the TReturn DR-044 rule): the RHS may READ the
+         old binding by borrow (`x = f(&x)`), so it must be evaluated into a
+         temp BEFORE the old value is dropped — otherwise `drop(x); x = f(&x)`
+         reads freed storage (use-after-free).  A bare-TVar RHS needs no temp
+         (it consumed the old binding, so drop_old is empty anyway). *)
+      let needs_temp =
+        drop_old <> [] &&
+        (match value.e with TVar _ -> false | _ -> true) in
+      let stmts =
+        if needs_temp then
+          let tmp = Printf.sprintf "__drop_old_%d_%d"
+              pos.Pos.line pos.Pos.col in
+          tmp_decls := (tmp, value.ty) :: !tmp_decls;
+          let tmp_let = TLet { name = tmp; value; pos } in
+          let tmp_var = { e = TVar tmp; ty = value.ty; pos = value.pos } in
+          let assign' = TAssign { path = [ n ]; value = tmp_var; pos } in
+          [ tmp_let ] @ drop_old @ [ assign' ]
+        else drop_old @ [ stmt ]
+      in
+      (stmts, st, defers)
   | TAssign { value; _ } | TAssignDeref { value; _ }
   | TAssignField { value; _ } | TAssignIndex { value; _ } ->
       (apply_one ~structs ~enums st stmt value, defers)

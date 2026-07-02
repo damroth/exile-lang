@@ -128,7 +128,7 @@ host-selfhost-tc: examples/selfhost/tc_corpus.exl examples/selfhost/typecheck.ex
 
 # Post-drop dumper — the tc pipeline plus the ported Drop pass.  Driven by
 # `selfhost-port-drop-ir` against the oracle `--after-drop` dump.
-host-selfhost-drop: examples/selfhost/drop_corpus.exl examples/selfhost/drop.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/loader.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+host-selfhost-drop: examples/selfhost/drop_corpus.exl examples/selfhost/drop.exl examples/selfhost/move.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/loader.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_drop.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_drop $<
 
 # `make amiga-NAME` → build m68k Amiga binary

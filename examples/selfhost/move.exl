@@ -189,13 +189,12 @@ fn merge_states(a: Allocator, s1: *const Vec<MoveBinding>, s2: *const Vec<MoveBi
 
 // ---------- divergence oracle (move.ml:178) ----------
 
-fn expr_diverges(te: *const Texpr) -> bool {
+pub fn expr_diverges(te: *const Texpr) -> bool {
     return match te.e {
         TexprNode::TMatch { scrutinee, ename_path, arms } => {
-            if arms.length() == 0 as u32 { return false; }
             let al = arms.as_slice();
             let mut i = 0 as u32;
-            let mut all = true;
+            let mut all = arms.length() > 0 as u32;
             while i < arms.length() {
                 if !(al[i].tdiverges || expr_diverges(al[i].tbody)) { all = false; }
                 i = i + 1 as u32;
@@ -205,17 +204,14 @@ fn expr_diverges(te: *const Texpr) -> bool {
         | TexprNode::TIfExpr { cond, then_val, else_val } =>
             expr_diverges(then_val) && expr_diverges(else_val)
         | TexprNode::TBlock { stmts, trailing } => {
-            if stmts_diverge(&stmts) { return true; }
-            match trailing {
-                Option::Some(t) => expr_diverges(t)
-                | Option::None => false
-            }
+            if stmts_diverge(&stmts) { true }
+            else { match trailing { Option::Some(t) => expr_diverges(t) | Option::None => false } }
         }
         | _other => false
     };
 }
 
-fn stmts_diverge(stmts: *const Vec<Tstmt>) -> bool {
+pub fn stmts_diverge(stmts: *const Vec<Tstmt>) -> bool {
     let sl = stmts.as_slice();
     let mut i = 0 as u32;
     while i < stmts.length() {
@@ -249,6 +245,10 @@ fn enum_path_of(t: *const Typ) -> Option<Vec<str>> {
 }
 
 // Payload-field type of [variant.field] in the enum at [path], if any.
+// @escapes: returns an arena-allocated `*const Typ` reached through nested
+// `.as_slice()` of the (borrowed) enum sig; the escape pass loses the
+// param-provenance through the nesting and conservatively flags the return.
+@escapes
 fn variant_field_ty(enums: *const Vec<EnumSig>, path: *const Vec<str>,
                     variant: str, field: str) -> Option<*const Typ> {
     let el = enums.as_slice();
@@ -313,7 +313,7 @@ fn affine_binds_into(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
 
 // ---------- string helpers ----------
 
-fn str_starts_with(s: str, pre: str) -> bool {
+pub fn str_starts_with(s: str, pre: str) -> bool {
     let slen = str::length(s);
     let plen = str::length(pre);
     if plen > slen { return false; }
