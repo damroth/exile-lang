@@ -50,7 +50,7 @@ AMIGA_BINS := $(addprefix $(AMIGA_OUT)/,$(AMIGA_EXAMPLES))
 
 .PHONY: all build test clean toolchain toolchain-clean
 .PHONY: host amiga examples
-.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file host-selfhost host-selfhost-lexer host-selfhost-parser host-selfhost-tc
+.PHONY: host-% amiga-% run-% run-host-% c-% host-multi_file host-selfhost host-selfhost-lexer host-selfhost-parser host-selfhost-tc host-selfhost-drop
 .PHONY: verify verify-host verify-amiga verify-host-% verify-amiga-%
 .PHONY: verify-freestanding verify-freestanding-%
 .PHONY: rebaseline-host rebaseline-host-%
@@ -125,6 +125,11 @@ host-selfhost-parser: examples/selfhost/parse_corpus.exl examples/selfhost/parse
 
 host-selfhost-tc: examples/selfhost/tc_corpus.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/loader.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_tc.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_tc $<
+
+# Post-drop dumper — the tc pipeline plus the ported Drop pass.  Driven by
+# `selfhost-port-drop-ir` against the oracle `--after-drop` dump.
+host-selfhost-drop: examples/selfhost/drop_corpus.exl examples/selfhost/drop.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/loader.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+	$(EXILE) --target host --c-out $(C_OUT)/selfhost_drop.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_drop $<
 
 # `make amiga-NAME` → build m68k Amiga binary
 amiga-%: examples/%.exl $(call stub_for,%) $(SYS_AMIGA) build
@@ -533,6 +538,35 @@ selfhost-port-ir: host-selfhost-tc
 	done; \
 	echo "selfhost-port-ir: $$clean clean; $$defer body-pending (marked); $$bodyregr BODY-REGRESSION; $$sig SIG-DIVERGE; $$skip skipped (oracle empty)"; \
 	if [ $$bodyregr -ne 0 ]; then exit 1; fi
+
+# Staged differential for the ported Drop pass.  The oracle runs
+# `--after-drop` (post Move/Escape/Drop); the port binary is `selfhost_drop`
+# (tc pipeline + ported Drop).  Drop has no deferral-marker mechanism — an
+# unported body is simply the valid pre-drop body missing its auto-drop
+# insertions — so the buckets are plain:
+#   clean       — port == oracle (drop insertion reproduced byte-for-byte).
+#   unported    — signature/footprint identical (body-masked equal), body
+#                 differs: drop insertion not yet reproduced (staged work).
+#   SIG-DIVERGE — differs even after body-masking: a real bug (wrong name,
+#                 type, or footprint, or a mangled body).  Printed.
+selfhost-port-drop-ir: host-selfhost-drop
+	@clean=0; unported=0; sig=0; skip=0; \
+	mask='s/(body .*$$/(body ))/'; \
+	for name in $(EXAMPLE_NAMES); do \
+		[ -f examples/$$name.exl ] || continue; \
+		oc=$$(mktemp); pt=$$(mktemp); ocm=$$(mktemp); ptm=$$(mktemp); \
+		$(EXILE) --emit-typed-ir --after-drop --user-only examples/$$name.exl >$$oc 2>/dev/null; \
+		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_drop >$$pt 2>/dev/null; \
+		if [ ! -s $$oc ]; then skip=$$((skip+1)); rm $$oc $$pt $$ocm $$ptm; continue; fi; \
+		sed "$$mask" $$oc >$$ocm; sed "$$mask" $$pt >$$ptm; \
+		if diff -q $$oc $$pt >/dev/null; then clean=$$((clean+1)); \
+		elif diff -q $$ocm $$ptm >/dev/null; then unported=$$((unported+1)); \
+		else sig=$$((sig+1)); \
+			echo "selfhost-port-drop-ir: SIG-DIVERGE $$name"; \
+			diff $$ocm $$ptm | head -4; fi; \
+		rm $$oc $$pt $$ocm $$ptm; \
+	done; \
+	echo "selfhost-port-drop-ir: $$clean clean; $$unported unported; $$sig SIG-DIVERGE; $$skip skipped (oracle empty)"
 
 # Build CI image locally and push to GHCR.  Requires
 # `docker login ghcr.io` (e.g. `gh auth token | docker login ghcr.io

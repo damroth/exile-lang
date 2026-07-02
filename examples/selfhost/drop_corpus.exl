@@ -1,0 +1,95 @@
+// Self-host drop — post-drop typed-IR verification driver.
+//
+// Read a source path on stdin, lex / parse / type-check it, run the ported
+// Drop pass, and dump the typed IR in `exilc --emit-typed-ir --after-drop
+// --user-only` format for the byte-diff against the live oracle.  Identical
+// to tc_corpus.exl except for the `drop_insert` step between check_program
+// and the dump — it isolates the Drop layer on top of the (fixpoint-ready)
+// typecheck layer.  Under `--user-only` the synthetic drop-glue functions
+// (which carry <prelude> positions) are filtered, leaving the drop
+// insertions in user bodies for a clean staged body-diff.
+
+use pos;
+use token::*;
+use lexer::*;
+use ast::*;
+use ir::*;
+use error::*;
+use parser::*;
+use loader::*;
+use typecheck::*;
+use drop::*;
+use dump_ir::*;
+
+fn read_all(fd: c_int, sb: *StringBuilder) {
+    let mut buf: [u8; 4096] = [0 as u8; 4096];
+    loop {
+        let n: c_long = sys::sys_read(fd, &buf as *u8 as *c_uchar, 4096 as c_ulong);
+        if n <= 0 as c_long { break; }
+        let mut k = 0 as u32;
+        while k < n as u32 {
+            sb.push_byte(buf[k]);
+            k = k + 1 as u32;
+        }
+    }
+}
+
+fn path_len(sl: Slice<u8>, n: u32) -> u32 {
+    let mut end = n;
+    while end > 0 as u32
+          && (sl[end - 1 as u32] == 10 as u8 || sl[end - 1 as u32] == 13 as u8) {
+        end = end - 1 as u32;
+    }
+    return end;
+}
+
+fn report_error(a: Allocator, e: *const CompileError) {
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    e.fmt(&sb);
+    sb.push_str("\n");
+    let sl = sb.as_slice();
+    sys::sys_write(2 as c_int, &sl[0] as *const c_uchar, sb.length() as c_ulong);
+}
+
+fn flush(sb: *const StringBuilder) {
+    let bytes = sb.as_slice();
+    sys::sys_write(1 as c_int, &bytes[0] as *const c_uchar, sb.length() as c_ulong);
+}
+
+fn arena_cap_for(srclen: u32) -> u32 {
+    return 1048576 as u32 + srclen * 128 as u32;
+}
+
+fn main() {
+    let a = default_allocator();
+
+    let mut pbuf = StringBuilder::with_capacity(a, 256 as u32);
+    read_all(0 as c_int, &pbuf);
+    let plen = path_len(pbuf.as_slice(), pbuf.length());
+    let mut parena = Arena::with_capacity(a, 1024 as u32);
+    let path = str::from_slice(&parena, pbuf.as_slice()[0 as u32..plen]);
+
+    let fd: c_int = sys::sys_open(path as *const c_char, 0 as c_int);
+    if fd < 0 as c_int { return; }
+    let mut src_sb = StringBuilder::with_capacity(a, 16384 as u32);
+    read_all(fd, &src_sb);
+    sys::sys_close(fd);
+
+    let mut ar = Arena::with_capacity(a, arena_cap_for(src_sb.length()));
+
+    match load(a, &ar, path) {
+        Result::Ok(prog) => {
+            match check_program(a, &ar, &prog) {
+                Result::Ok(tp) => {
+                    let mut tprog = tp;
+                    drop_insert(a, &ar, &tprog);
+                    let mut out = StringBuilder::with_capacity(a, 16384 as u32);
+                    dump_typed_ir(&tprog, path, true, &out);
+                    flush(&out);
+                }
+                | Result::Err(e) => { report_error(a, e); }
+            }
+        }
+        | Result::Err(e) => { report_error(a, e); }
+    }
+}

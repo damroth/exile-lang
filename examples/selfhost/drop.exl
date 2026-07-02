@@ -1,0 +1,22 @@
+// Self-host port of lib/drop.ml — GATE-2 unified auto-drop / own-lifecycle
+// pass.  Runs AFTER Move.check, BEFORE codegen; rewrites each user function
+// body to release every owned binding exactly once at scope exit (L1), drop
+// the old value before an overwriting assignment (L2), and resurrect a
+// consumed binding on rebind (L3).  Consume detection is DELEGATED to the
+// move-pass walker (the OWN-D2 seam) so the compiler has one consume model.
+//
+// STAGED PORT (2026-07-02): this module is filled in feature by feature
+// against `exilc --emit-typed-ir --after-drop --user-only` (the oracle
+// post-drop dump).  It currently performs the IDENTITY transform — every
+// user body flows through unchanged — so the differential surfaces exactly
+// the functions whose drop-insertion is not yet reproduced.
+
+use pos;
+use ast::*;
+use ir::*;
+
+// Rewrite the program in place: insert auto-drop calls into user function
+// bodies and append the synthetic drop-glue functions.  Identity for now.
+pub fn drop_insert(_a: Allocator, _ar: *Arena, _tp: *Tprogram) {
+    // no-op (staged)
+}

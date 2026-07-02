@@ -66,6 +66,7 @@ type args = {
   show_cc_warnings : bool;
   emit : emit_kind option;
   emit_user_only : bool;
+  emit_after_drop : bool;
   input : string;
 }
 
@@ -86,6 +87,7 @@ let parse_args argv =
   let show_cc_warnings = ref false in
   let emit = ref None in
   let emit_user_only = ref false in
+  let emit_after_drop = ref false in
   let set_emit k =
     if !emit <> None then begin
       Printf.eprintf
@@ -112,6 +114,7 @@ let parse_args argv =
     | "--emit-ast" :: rest -> set_emit EmitAst; loop rest
     | "--emit-typed-ir" :: rest -> set_emit EmitTypedIr; loop rest
     | "--user-only" :: rest -> emit_user_only := true; loop rest
+    | "--after-drop" :: rest -> emit_after_drop := true; loop rest
     | "--help" :: _ | "-h" :: _ -> usage ()
     | f :: rest when String.length f > 0 && f.[0] <> '-' ->
         if !input <> None then begin
@@ -143,6 +146,7 @@ let parse_args argv =
         show_cc_warnings = !show_cc_warnings;
         emit = !emit;
         emit_user_only = !emit_user_only;
+        emit_after_drop = !emit_after_drop;
         input = i }
 
 let toolchain_path () =
@@ -278,6 +282,16 @@ let run_emit (a : args) (kind : emit_kind) =
       let tp =
         Exile_lang.Loader.load file
         |> Exile_lang.Typecheck.check_program
+      in
+      (* `--after-drop` mirrors the real pipeline prefix so the dump shows
+         the drop-inserted IR (auto-drop calls + synthetic drop-glue fns).
+         The staged differential target for the ported Drop pass. *)
+      let tp =
+        if a.emit_after_drop then begin
+          Exile_lang.Move.check tp;
+          Exile_lang.Escape.check tp;
+          Exile_lang.Drop.insert tp
+        end else tp
       in
       write_dump a.output
         (Exile_lang.Dump.dump_typed_ir
