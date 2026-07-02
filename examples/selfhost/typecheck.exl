@@ -3375,7 +3375,10 @@ fn elab_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
 fn index_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
     return match array_elem_ty(t) {
         Option::Some(e) => Option::Some(e)
-        | Option::None => slice_elem_ty(sc, t)
+        | Option::None => match slice_elem_ty(sc, t) {
+            Option::Some(e) => Option::Some(e)
+            | Option::None => vec_elem_ty(sc, t)
+        }
     };
 }
 fn slice_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
@@ -3383,6 +3386,21 @@ fn slice_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
     return match struct_field_ty(sc, t, "ptr") {
         Option::Some(pt) => deref_pointee(pt)
         | Option::None => none_ty()
+    };
+}
+// `Vec<T>` indexing: element type from the mono'd `ptr : own *T` field.
+// Enables `v[i]` and `with x in v[i]` (DR-012 projection over a Vec).
+fn vec_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
+    if !is_vec_instance(t) { return none_ty(); }
+    return match struct_field_ty(sc, t, "ptr") {
+        Option::Some(pt) => deref_pointee(pt)
+        | Option::None => none_ty()
+    };
+}
+fn is_vec_instance(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(path) => { let nm = path_last(&path); str::eq(nm, "Vec") || str_starts_with(nm, "Vec_") }
+        | _e => false
     };
 }
 

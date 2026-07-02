@@ -36,6 +36,31 @@ let check label src expected =
     Printf.printf "ok: %s\n" label
   end
 
+(* Count `.free_fn)` heap releases in the compiled C.  A transfer form
+   (`let y = x`, `y = x`, `s.f = x`) that fails to consume its owned RHS
+   re-frees the moved-from storage at scope exit — the double-free class
+   (B1, 2026-07-02).  Asserting the exact release count guards the whole
+   family: a reintroduced miss bumps the count. *)
+let check_free_count label src expected =
+  let c = Exile_lang.Compiler.compile src in
+  let needle = ".free_fn)" in
+  let ln = String.length needle and n = String.length c in
+  let rec go i acc =
+    if i + ln > n then acc
+    else if String.sub c i ln = needle then go (i + ln) (acc + 1)
+    else go (i + 1) acc
+  in
+  let got = go 0 0 in
+  if got <> expected then begin
+    Printf.eprintf
+      "FAIL: %s — expected %d heap release(s), got %d\n--- C ---\n%s"
+      label expected got c;
+    exit 1
+  end else begin
+    cc_check label c;
+    Printf.printf "ok: %s\n" label
+  end
+
 (* Like `check`, but skip the cc compile step.  Use when the generated
    C deliberately references an unresolved external (extern type alias
    without its defining header, etc) — cc's job here is the user's,
@@ -773,6 +798,22 @@ let () =
     \    println(take(a));\n\
      }\n"
     "#include <stdio.h>\n\nstruct ex_Owner { long tag; };\n\nstatic long ex_read(const struct ex_Owner *o);\nstatic long ex_take(struct ex_Owner o);\n\nstatic long ex_read(const struct ex_Owner *o) {\n    return o->tag;\n}\n\nstatic long ex_take(struct ex_Owner o) {\n    return o.tag;\n}\n\nint main(void) {\n    struct ex_Owner a;\n    a.tag = 7;\n    printf(\"%ld\\n\", (long)(ex_read(&a)));\n    printf(\"%ld\\n\", (long)(ex_read(&a)));\n    printf(\"%ld\\n\", (long)(ex_take(a)));\n    return 0;\n}\n";
+
+  (* B1 (2026-07-02) — owned RHS of a transfer statement is consumed so
+     the moved-from storage is not freed a second time at scope exit.
+     Counts include one constant release inside the emitted `Vec__grow`
+     (its old-buffer free), so the fixed baselines are +1 over the drop
+     sites: `let y = x` drops only `y` → 2 total (was 3 with the
+     double-free); the reassign case → 3 (was 4). *)
+  check_free_count "own transfer via `let y = x` frees once (no double-free)"
+    "fn f(a: Allocator) {\nlet mut x: Vec<int> = Vec::with_capacity(a, 8 as u32); x.push(1);\nlet y = x;\n}\nfn main() { let a = default_allocator(); f(a); }\n"
+    2;
+
+  (* `y = x` reassign: L2 drops the OLD `y` once, then `x` is consumed so
+     the shared buffer is released exactly once more at scope exit. *)
+  check_free_count "own transfer via `y = x` reassign frees old + new once each"
+    "fn f(a: Allocator) {\nlet mut x: Vec<int> = Vec::with_capacity(a, 8 as u32); x.push(1);\nlet mut y: Vec<int> = Vec::with_capacity(a, 8 as u32); y.push(9);\ny = x;\n}\nfn main() { let a = default_allocator(); f(a); }\n"
+    3;
 
   (* Divergence oracle: a TIf branch that early-returns / breaks /
      continues doesn't reach the post-branch program point, so its

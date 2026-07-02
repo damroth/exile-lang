@@ -166,6 +166,21 @@ let apply_expr ~structs ~enums st (te : texpr) =
     states_by ~structs ~enums (names_of st) te in
   mark_partial partial (mark_consumed consumed st)
 
+(* OWN-D2 consume parity for a transfer statement's RHS.  [apply_expr]
+   replays only Move.walk_EXPR, which does not consume a top-level bare
+   affine TVar the way Move.walk_stmt's `consume_var` does at every
+   assignment/let/return site.  Without this, `let y = x` / `y = x` /
+   `s.f = x` leave `x` Live and the pass frees it at scope exit — a
+   double-free of storage the transfer moved into the destination.  Mark
+   it Consumed so Drop and Move agree.  (Dropping a destination's OLD
+   owned value before the overwrite is handled per-site where tracked;
+   an untracked destination field still leaks the old value — a
+   documented same-family limit.) *)
+let consume_rhs_var ~structs st (value : texpr) =
+  match value.e with
+  | TVar rn when Move.is_affine_typ ~structs value.ty -> mark_consumed [ rn ] st
+  | _ -> st
+
 (* ---------- drop emission ---------- *)
 
 let cvoid_ptr_ty = TPtr TCVoid
@@ -912,6 +927,7 @@ and walk_stmt ~structs ~enums ~defers st stmt
   match stmt with
   | TLet { name; value; pos } ->
       let st = apply_expr ~structs ~enums st value in
+      let st = consume_rhs_var ~structs st value in
       (* Same-scope shadowing of a still-Live tracked binding would
          silently leak the old value — release it before the new let
          takes the name over.  (If the RHS consumed it — `let s =
@@ -940,8 +956,12 @@ and walk_stmt ~structs ~enums ~defers st stmt
     when List.exists (fun e -> e.ename = n) st ->
       (* L2 + L3: drop the old value if it is still Live after the RHS
          (the RHS may itself consume it — `s = next(a, s)`), then the
-         binding is Live again with the new value's provenance. *)
+         binding is Live again with the new value's provenance.  A bare
+         affine TVar RHS (`y = x`) must also be consumed BEFORE the
+         old-value check so `x` is not freed at scope exit as well
+         (double-free); the drop-old below still releases the OLD `y`. *)
       let st = apply_expr ~structs ~enums st value in
+      let st = consume_rhs_var ~structs st value in
       let old = List.find (fun e -> e.ename = n) st in
       let drop_old =
         if old.status = Live then
@@ -1094,21 +1114,7 @@ and walk_stmt ~structs ~enums ~defers st stmt
 
 and apply_one ~structs ~enums st stmt value =
   let st = apply_expr ~structs ~enums st value in
-  (* OWN-D2 consume parity: an assignment's RHS is a consume site in
-     Move.walk_stmt (`consume_var value`), but [apply_expr] replays only
-     Move.walk_EXPR, which does not consume a top-level bare affine TVar.
-     Without this, `s.f = owned_local` leaves the local Live and the pass
-     frees it at scope exit — a use-after-move / double-free of storage now
-     owned by `s.f` (the field-assign moved it in).  Mark it Consumed here
-     so the two passes agree.  (Dropping the OLD field value before the
-     overwrite is not yet tracked — a same-family limit to the named-binding
-     L2 arm; owned field-assign leaks the prior value rather than double-
-     freeing it.) *)
-  let st =
-    match value.e with
-    | TVar n when Move.is_affine_typ ~structs value.ty -> mark_consumed [ n ] st
-    | _ -> st
-  in
+  let st = consume_rhs_var ~structs st value in
   ([ stmt ], st)
 
 (* ---------- per-fn / whole-program ---------- *)
