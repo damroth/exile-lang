@@ -1,0 +1,717 @@
+// Self-host port of lib/move.ml — the DR-002 move-pass consume model.
+//
+// Drop.insert (the OWN-D2 seam) delegates ALL expression-level consume
+// detection to this module's `walk_expr`, so the compiler has ONE consume
+// model, not two.  This file ports that walker plus the affine-type
+// predicates it rests on; the top-level `check` gating driver (which only
+// raises errors and shapes no output) rides in a later increment.
+//
+// STAGED PORT (2026-07-02): built feature by feature against the oracle
+// `--after-drop` dump via drop.exl.  The consume state threads as a
+// `Vec<MoveBinding>` association list (mirroring move.ml's `(name, state)
+// list`); a fresh Vec is built at each step — arena-cheap at compile time.
+
+use pos::*;
+use ast::*;
+use ir::*;
+
+// Per-binding state.  Only affine bindings are ever inserted, so the
+// zero-blast-radius guarantee is structural.  `Consumed` / `PartialMoved`
+// carry the move site for the diagnostic.
+pub enum MoveState {
+    Live
+    | Consumed(Pos)
+    | PartialMoved(Pos)
+}
+
+pub struct MoveBinding {
+    mb_name: str,
+    mb_state: MoveState,
+}
+
+// ---------- association-list helpers ----------
+
+// State of [name] in [live], defaulting to Live for untracked names
+// (mirrors `try List.assoc n live with Not_found -> Live`).
+pub fn mb_state_of(live: *const Vec<MoveBinding>, name: str) -> MoveState {
+    let sl = live.as_slice();
+    let mut i = 0 as u32;
+    while i < live.length() {
+        if str::eq(sl[i].mb_name, name) { return sl[i].mb_state; }
+        i = i + 1 as u32;
+    }
+    return MoveState::Live;
+}
+
+pub fn mb_is_tracked(live: *const Vec<MoveBinding>, name: str) -> bool {
+    let sl = live.as_slice();
+    let mut i = 0 as u32;
+    while i < live.length() {
+        if str::eq(sl[i].mb_name, name) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+// Copy the live map, flipping [name] (Live / PartialMoved) to Consumed at
+// [pos] (move.ml:80).  Builds a fresh Vec — arena-cheap at compile time,
+// and the construction site mono needs to instantiate Vec<MoveBinding>.
+pub fn set_consumed(a: Allocator, live: *const Vec<MoveBinding>, name: str, pos: Pos)
+        -> Vec<MoveBinding> {
+    let mut out: Vec<MoveBinding> = Vec::with_capacity(a, live.length() + 1 as u32);
+    let sl = live.as_slice();
+    let mut i = 0 as u32;
+    while i < live.length() {
+        let flip = match sl[i].mb_state {
+            MoveState::Live => str::eq(sl[i].mb_name, name)
+            | MoveState::PartialMoved(_p) => str::eq(sl[i].mb_name, name)
+            | MoveState::Consumed(_p) => false
+        };
+        if flip {
+            out.push(MoveBinding { mb_name: sl[i].mb_name, mb_state: MoveState::Consumed(pos) });
+        } else {
+            out.push(sl[i]);
+        }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// ---------- signature lookup ----------
+
+fn mpath_eq(a: *const Vec<str>, b: *const Vec<str>) -> bool {
+    if a.length() != b.length() { return false; }
+    let sa = a.as_slice();
+    let sb = b.as_slice();
+    let mut i = 0 as u32;
+    while i < a.length() {
+        if !str::eq(sa[i], sb[i]) { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
+
+// ---------- affine-type predicates (move.ml:38-71) ----------
+
+// True iff [t] should be tracked by the move-pass.  Borrowed pointers
+// (`*T`, `*const T`) are never affine.  `own *T` is unconditionally
+// affine.  Structs are affine when marked `@move` OR when at least one
+// field carries ownership (transitive).
+pub fn is_affine_typ(structs: *const Vec<StructSig>, t: *const Typ) -> bool {
+    return match *t {
+        Typ::TOwnPtr(_inner) => true
+        | Typ::TStruct(path) => {
+            let sl = structs.as_slice();
+            let mut i = 0 as u32;
+            let mut found = false;
+            let mut result = false;
+            while i < structs.length() {
+                if !found && mpath_eq(&sl[i].sname_path, &path) {
+                    found = true;
+                    if sl[i].ss_is_move {
+                        result = true;
+                    } else {
+                        let fs = sl[i].sfields_ty.as_slice();
+                        let mut j = 0 as u32;
+                        while j < sl[i].sfields_ty.length() {
+                            if is_affine_typ(structs, fs[j].ty) { result = true; }
+                            j = j + 1 as u32;
+                        }
+                    }
+                }
+                i = i + 1 as u32;
+            }
+            result
+        }
+        | _other => false
+    };
+}
+
+// ---------- consume state machine (move.ml walk_expr, gating elided) ----------
+//
+// Drop replays this on already-Move.check'd code, so every Error.failf gate
+// (check_reads, the S4 field-move reject, the free leak-gate, the match
+// owning-slot rejects, the loop re-consume reject) is OMITTED — they only
+// raise diagnostics and never fire on valid input, and none of them change
+// the consume STATE that Drop reads back.  What remains is the pure state
+// transition: which bindings a walk leaves Consumed / PartialMoved.
+
+// Fresh all-Live seed from a name list (drop seeds every tracked name Live).
+fn seed_live(a: Allocator, names: *const Vec<str>) -> Vec<MoveBinding> {
+    let mut out: Vec<MoveBinding> = Vec::with_capacity(a, names.length() + 1 as u32);
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() {
+        out.push(MoveBinding { mb_name: sl[i], mb_state: MoveState::Live });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// Merge two states for one name (may-consume union — move.ml:166).
+fn merge_two(sa: MoveState, sb: MoveState) -> MoveState {
+    return match sa {
+        MoveState::Consumed(p) => MoveState::Consumed(p)
+        | MoveState::PartialMoved(p) => match sb {
+            MoveState::Consumed(q) => MoveState::Consumed(q)
+            | _other => MoveState::PartialMoved(p)
+        }
+        | MoveState::Live => match sb {
+            MoveState::Consumed(q) => MoveState::Consumed(q)
+            | MoveState::PartialMoved(q) => MoveState::PartialMoved(q)
+            | MoveState::Live => MoveState::Live
+        }
+    };
+}
+
+// May-consume union of two branch states (move.ml:160).
+fn merge_states(a: Allocator, s1: *const Vec<MoveBinding>, s2: *const Vec<MoveBinding>)
+        -> Vec<MoveBinding> {
+    let mut out: Vec<MoveBinding> = Vec::with_capacity(a, s1.length() + s2.length());
+    let a1 = s1.as_slice();
+    let mut i = 0 as u32;
+    while i < s1.length() {
+        let merged = merge_two(a1[i].mb_state, mb_state_of(s2, a1[i].mb_name));
+        out.push(MoveBinding { mb_name: a1[i].mb_name, mb_state: merged });
+        i = i + 1 as u32;
+    }
+    let a2 = s2.as_slice();
+    let mut j = 0 as u32;
+    while j < s2.length() {
+        if !mb_is_tracked(s1, a2[j].mb_name) {
+            let merged2 = merge_two(MoveState::Live, a2[j].mb_state);
+            out.push(MoveBinding { mb_name: a2[j].mb_name, mb_state: merged2 });
+        }
+        j = j + 1 as u32;
+    }
+    return out;
+}
+
+// ---------- divergence oracle (move.ml:178) ----------
+
+fn expr_diverges(te: *const Texpr) -> bool {
+    return match te.e {
+        TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            if arms.length() == 0 as u32 { return false; }
+            let al = arms.as_slice();
+            let mut i = 0 as u32;
+            let mut all = true;
+            while i < arms.length() {
+                if !(al[i].tdiverges || expr_diverges(al[i].tbody)) { all = false; }
+                i = i + 1 as u32;
+            }
+            all
+        }
+        | TexprNode::TIfExpr { cond, then_val, else_val } =>
+            expr_diverges(then_val) && expr_diverges(else_val)
+        | TexprNode::TBlock { stmts, trailing } => {
+            if stmts_diverge(&stmts) { return true; }
+            match trailing {
+                Option::Some(t) => expr_diverges(t)
+                | Option::None => false
+            }
+        }
+        | _other => false
+    };
+}
+
+fn stmts_diverge(stmts: *const Vec<Tstmt>) -> bool {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        let d = match sl[i] {
+            Tstmt::TReturn { value, pos } => true
+            | Tstmt::TBreak(_p) => true
+            | Tstmt::TContinue(_p) => true
+            | Tstmt::TIf { cond, then_body, else_body } =>
+                stmts_diverge(&then_body) && stmts_diverge(&else_body)
+            | Tstmt::TExprStmt(e) => expr_diverges(e)
+            | _other => false
+        };
+        if d { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+// ---------- pattern binds (move.ml:211) ----------
+
+// Enum path a scrutinee type resolves to (bare or borrowed).
+fn enum_path_of(t: *const Typ) -> Option<Vec<str>> {
+    return match *t {
+        Typ::TEnum(p) => Option::Some(p)
+        | Typ::TEnumApp { path, args } => Option::Some(path)
+        | Typ::TPtr(inner) => enum_path_of(inner)
+        | Typ::TConstPtr(inner) => enum_path_of(inner)
+        | Typ::TOwnPtr(inner) => enum_path_of(inner)
+        | _other => Option::None
+    };
+}
+
+// Payload-field type of [variant.field] in the enum at [path], if any.
+fn variant_field_ty(enums: *const Vec<EnumSig>, path: *const Vec<str>,
+                    variant: str, field: str) -> Option<*const Typ> {
+    let el = enums.as_slice();
+    let mut i = 0 as u32;
+    while i < enums.length() {
+        if mpath_eq(&el[i].ename_path, path) {
+            let vl = el[i].evariants.as_slice();
+            let mut j = 0 as u32;
+            while j < el[i].evariants.length() {
+                if str::eq(vl[j].vsname, variant) {
+                    let fl = vl[j].vsfields.as_slice();
+                    let mut k = 0 as u32;
+                    while k < vl[j].vsfields.length() {
+                        if str::eq(fl[k].name, field) { return Option::Some(fl[k].ty); }
+                        k = k + 1 as u32;
+                    }
+                    return Option::None;
+                }
+                j = j + 1 as u32;
+            }
+            return Option::None;
+        }
+        i = i + 1 as u32;
+    }
+    return Option::None;
+}
+
+// Push each affine binding a match-arm pattern introduces into [out]
+// (name + concrete payload type), resolved against the scrutinee type.
+fn push_if_affine(structs: *const Vec<StructSig>, scrut_ty: *const Typ,
+                  n: str, out: *Vec<FieldTy>) {
+    if is_affine_typ(structs, scrut_ty) {
+        out.push(FieldTy { name: n, ty: scrut_ty });
+    }
+    return;
+}
+
+fn affine_binds_into(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                     scrut_ty: *const Typ, pat: *const Tpattern, out: *Vec<FieldTy>) {
+    match *pat {
+        Tpattern::TPVar(n) => push_if_affine(structs, scrut_ty, n, out)
+        | Tpattern::TPVariant { variant, tag, binds } => {
+            match enum_path_of(scrut_ty) {
+                Option::Some(path) => {
+                    let bl = binds.as_slice();
+                    let mut i = 0 as u32;
+                    while i < binds.length() {
+                        match variant_field_ty(enums, &path, variant, bl[i].name) {
+                            Option::Some(fty) =>
+                                affine_binds_into(structs, enums, fty, &bl[i].pat, out)
+                            | Option::None => {}
+                        }
+                        i = i + 1 as u32;
+                    }
+                }
+                | Option::None => {}
+            }
+        }
+        | _other => {}
+    }
+}
+
+// ---------- string helpers ----------
+
+fn str_starts_with(s: str, pre: str) -> bool {
+    let slen = str::length(s);
+    let plen = str::length(pre);
+    if plen > slen { return false; }
+    let sb = str::as_bytes(s);
+    let pb = str::as_bytes(pre);
+    let mut i = 0 as u32;
+    while i < plen {
+        if sb[i] != pb[i] { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
+
+fn str_ends_with(s: str, suf: str) -> bool {
+    let slen = str::length(s);
+    let flen = str::length(suf);
+    if flen > slen { return false; }
+    let sb = str::as_bytes(s);
+    let fb = str::as_bytes(suf);
+    let mut i = 0 as u32;
+    while i < flen {
+        if sb[slen - flen + i] != fb[i] { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
+
+fn str_contains(s: str, sub: str) -> bool {
+    let slen = str::length(s);
+    let ublen = str::length(sub);
+    if ublen > slen { return false; }
+    let sb = str::as_bytes(s);
+    let ub = str::as_bytes(sub);
+    let mut i = 0 as u32;
+    while i + ublen <= slen {
+        let mut j = 0 as u32;
+        let mut ok = true;
+        while j < ublen {
+            if sb[i + j] != ub[j] { ok = false; j = ublen; }
+            else { j = j + 1 as u32; }
+        }
+        if ok { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+// ---------- live-map utilities ----------
+
+fn copy_live(a: Allocator, live: *const Vec<MoveBinding>) -> Vec<MoveBinding> {
+    let mut out: Vec<MoveBinding> = Vec::with_capacity(a, live.length() + 1 as u32);
+    let sl = live.as_slice();
+    let mut i = 0 as u32;
+    while i < live.length() {
+        out.push(sl[i]);
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// Set [name] to [st] (replace), building a fresh map.  Used for the
+// scrutinee Consumed / PartialMoved marks (set_consumed only flips Live).
+fn set_state(a: Allocator, live: *const Vec<MoveBinding>, name: str, st: MoveState)
+        -> Vec<MoveBinding> {
+    let mut out: Vec<MoveBinding> = Vec::with_capacity(a, live.length() + 1 as u32);
+    let sl = live.as_slice();
+    let mut i = 0 as u32;
+    while i < live.length() {
+        if str::eq(sl[i].mb_name, name) {
+            out.push(MoveBinding { mb_name: name, mb_state: st });
+        } else {
+            out.push(sl[i]);
+        }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// The operand of a `&<inner>` first argument (drop-mangled receiver), if any.
+fn ref_operand_of(args: *const Vec<*const Texpr>) -> Option<*const Texpr> {
+    if args.length() == 0 as u32 { return Option::None; }
+    let al = args.as_slice();
+    return match al[0].e {
+        TexprNode::TRef(inner) => Option::Some(inner)
+        | _o => Option::None
+    };
+}
+
+fn is_drop_mangled(m: str) -> bool {
+    return str_ends_with(m, "__drop") || str_contains(m, "__drop_");
+}
+
+fn lookup_borrows_key(m: str) -> bool {
+    return str_starts_with(m, "HashMap__get_")
+        || str_starts_with(m, "HashMap__contains_")
+        || str_starts_with(m, "HashMap__remove_");
+}
+
+// ---------- consume-site walkers (move.ml:299-572, gating elided) ----------
+
+// Consume [te]'s binding iff it is a bare affine TVar in a by-value slot.
+fn consume_var(structs: *const Vec<StructSig>, a: Allocator,
+               live: *const Vec<MoveBinding>, te: *const Texpr) -> Vec<MoveBinding> {
+    return match te.e {
+        TexprNode::TVar(n) => {
+            if is_affine_typ(structs, te.ty) { set_consumed(a, live, n, te.pos) }
+            else { copy_live(a, live) }
+        }
+        | _other => copy_live(a, live)
+    };
+}
+
+// Walk each arg (no consume) — for lookup-borrows-key calls.
+fn fold_walk(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+             live: *const Vec<MoveBinding>, args: *const Vec<*const Texpr>)
+        -> Vec<MoveBinding> {
+    let mut acc = copy_live(a, live);
+    let al = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() {
+        acc = walk_expr(structs, enums, a, &acc, al[i]);
+        i = i + 1 as u32;
+    }
+    return acc;
+}
+
+// `free(a, x)` — walk the allocator arg, then consume x if a bare affine
+// TVar (consume_var also flips PartialMoved → Consumed, the free_tree case).
+fn walk_free(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+             live: *const Vec<MoveBinding>, args: *const Vec<*const Texpr>)
+        -> Vec<MoveBinding> {
+    let al = args.as_slice();
+    let acc = walk_expr(structs, enums, a, live, al[0]);
+    return consume_var(structs, a, &acc, al[1]);
+}
+
+// Walk each arg then consume its binding if a bare affine TVar.
+fn consume_args(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                live: *const Vec<MoveBinding>, args: *const Vec<*const Texpr>)
+        -> Vec<MoveBinding> {
+    let mut acc = copy_live(a, live);
+    let al = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() {
+        acc = walk_expr(structs, enums, a, &acc, al[i]);
+        acc = consume_var(structs, a, &acc, al[i]);
+        i = i + 1 as u32;
+    }
+    return acc;
+}
+
+// Push [te]'s direct sub-expression children (default-recursion set only —
+// explicitly-handled nodes never reach the caller's default arm).
+fn texpr_children_into(te: *const Texpr, out: *Vec<*const Texpr>) {
+    match te.e {
+        TexprNode::TNeg(e) => out.push(e)
+        | TexprNode::TBitNot(e) => out.push(e)
+        | TexprNode::TNot(e) => out.push(e)
+        | TexprNode::TDeref(e) => out.push(e)
+        | TexprNode::TRef(e) => out.push(e)
+        | TexprNode::TCast(e, ann) => out.push(e)
+        | TexprNode::TBinOp(op, l, r) => { out.push(l); out.push(r); }
+        | TexprNode::TFieldAccess { target, field } => out.push(target)
+        | TexprNode::TIndex { base, index } => { out.push(base); out.push(index); }
+        | TexprNode::TIndirectCall { fn_expr, args } => {
+            out.push(fn_expr);
+            let al = args.as_slice();
+            let mut i = 0 as u32;
+            while i < args.length() { out.push(al[i]); i = i + 1 as u32; }
+        }
+        | _other => {}
+    }
+}
+
+// The consume walker (move.ml:310).  Returns the live map after evaluating
+// [te]; only the state transitions survive (all diagnostics elided).
+fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+             live: *const Vec<MoveBinding>, te: *const Texpr) -> Vec<MoveBinding> {
+    return match te.e {
+        TexprNode::TCall { mangled, args } => {
+            let mut result = if lookup_borrows_key(mangled) {
+                fold_walk(structs, enums, a, live, &args)
+            } else {
+                consume_args(structs, enums, a, live, &args)
+            };
+            if is_drop_mangled(mangled) {
+                match ref_operand_of(&args) {
+                    Option::Some(inner) => { result = consume_var(structs, a, &result, inner); }
+                    | Option::None => {}
+                }
+            }
+            result
+        }
+        | TexprNode::TBuiltinCall { name, args } => {
+            if str::eq(name, "free") && args.length() == 2 as u32 {
+                walk_free(structs, enums, a, live, &args)
+            } else {
+                if str::eq(name, "mem_zero") {
+                    fold_walk(structs, enums, a, live, &args)
+                } else {
+                    consume_args(structs, enums, a, live, &args)
+                }
+            }
+        }
+        | TexprNode::TStructLit { sname_path, fields, base } =>
+            walk_lit_fields(structs, enums, a, live, &fields, base)
+        | TexprNode::TNew { sname_path, fields, base, alloc } =>
+            walk_lit_fields(structs, enums, a, live, &fields, base)
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } =>
+            walk_field_values(structs, enums, a, live, &args)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } =>
+            walk_field_values(structs, enums, a, live, &args)
+        | TexprNode::TTupleLit(es) => consume_args(structs, enums, a, live, &es)
+        | TexprNode::TArrayLit(es) => consume_args(structs, enums, a, live, &es)
+        | TexprNode::TArrayRepeat { value, count } => walk_expr(structs, enums, a, live, value)
+        | TexprNode::TBlock { stmts, trailing } => {
+            let after = walk_stmts_e(structs, enums, a, live, &stmts);
+            match trailing {
+                Option::Some(t) => walk_expr(structs, enums, a, &after, t)
+                | Option::None => copy_live(a, &after)
+            }
+        }
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            let base = walk_expr(structs, enums, a, live, scrutinee);
+            let mut have = false;
+            let mut acc = copy_live(a, &base);
+            let al = arms.as_slice();
+            let mut i = 0 as u32;
+            while i < arms.length() {
+                let after_arm = walk_expr(structs, enums, a, &base, al[i].tbody);
+                if !(al[i].tdiverges || expr_diverges(al[i].tbody)) {
+                    if have { acc = merge_states(a, &acc, &after_arm); }
+                    else { acc = copy_live(a, &after_arm); have = true; }
+                }
+                i = i + 1 as u32;
+            }
+            if have { acc } else { copy_live(a, &base) }
+        }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            let lc = walk_expr(structs, enums, a, live, cond);
+            let s_then = walk_expr(structs, enums, a, &lc, then_val);
+            let s_else = walk_expr(structs, enums, a, &lc, else_val);
+            let td = expr_diverges(then_val);
+            let ed = expr_diverges(else_val);
+            if td {
+                if ed { copy_live(a, &lc) } else { copy_live(a, &s_else) }
+            } else {
+                if ed { copy_live(a, &s_then) } else { merge_states(a, &s_then, &s_else) }
+            }
+        }
+        | _other => {
+            let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 4 as u32);
+            texpr_children_into(te, &kids);
+            let mut dacc = copy_live(a, live);
+            let kl = kids.as_slice();
+            let mut ki = 0 as u32;
+            while ki < kids.length() {
+                dacc = walk_expr(structs, enums, a, &dacc, kl[ki]);
+                ki = ki + 1 as u32;
+            }
+            dacc
+        }
+    };
+}
+
+// Aggregate-field consume: each field value shallow-copies, consuming a
+// bare affine field (move.ml:415).
+fn walk_field_values(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                     live: *const Vec<MoveBinding>, fields: *const Vec<TexprField>)
+        -> Vec<MoveBinding> {
+    let mut acc = copy_live(a, live);
+    let fl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() {
+        acc = walk_expr(structs, enums, a, &acc, fl[i].value);
+        acc = consume_var(structs, a, &acc, fl[i].value);
+        i = i + 1 as u32;
+    }
+    return acc;
+}
+
+// Struct-literal consume: fields, then `..base` consumes the base.
+fn walk_lit_fields(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                   live: *const Vec<MoveBinding>, fields: *const Vec<TexprField>,
+                   base: Option<*const Texpr>) -> Vec<MoveBinding> {
+    let mut acc = walk_field_values(structs, enums, a, live, fields);
+    match base {
+        Option::Some(b) => {
+            acc = walk_expr(structs, enums, a, &acc, b);
+            acc = consume_var(structs, a, &acc, b);
+        }
+        | Option::None => {}
+    }
+    return acc;
+}
+
+// Move's expr-context statement walker (move.ml:574) — for TBlock values.
+fn walk_stmts_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                live: *const Vec<MoveBinding>, stmts: *const Vec<Tstmt>) -> Vec<MoveBinding> {
+    let mut acc = copy_live(a, live);
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        acc = walk_stmt_e(structs, enums, a, &acc, &sl[i]);
+        i = i + 1 as u32;
+    }
+    return acc;
+}
+
+fn walk_stmt_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+               live: *const Vec<MoveBinding>, s: *const Tstmt) -> Vec<MoveBinding> {
+    return match *s {
+        Tstmt::TLet { name, value, pos } => walk_let_e(structs, enums, a, live, name, value)
+        | Tstmt::TLetTuple { names, value, pos } => walk_expr(structs, enums, a, live, value)
+        | Tstmt::TAssign { path, value, pos } => walk_assign_e(structs, enums, a, live, &path, value)
+        | Tstmt::TAssignField { target, field, value, pos } => {
+            let af = walk_expr(structs, enums, a, live, target);
+            let af2 = walk_expr(structs, enums, a, &af, value);
+            consume_var(structs, a, &af2, value)
+        }
+        | Tstmt::TAssignIndex { base, index, value, pos } => {
+            let ai = walk_expr(structs, enums, a, live, base);
+            let ai2 = walk_expr(structs, enums, a, &ai, index);
+            let ai3 = walk_expr(structs, enums, a, &ai2, value);
+            consume_var(structs, a, &ai3, value)
+        }
+        | Tstmt::TAssignDeref { target, value, pos } => {
+            let ad = walk_expr(structs, enums, a, live, target);
+            let ad2 = walk_expr(structs, enums, a, &ad, value);
+            consume_var(structs, a, &ad2, value)
+        }
+        | Tstmt::TExprStmt(e) => walk_expr(structs, enums, a, live, e)
+        | Tstmt::TReturn { value, pos } => match value {
+            Option::Some(v) => walk_expr(structs, enums, a, live, v)
+            | Option::None => copy_live(a, live)
+        }
+        | Tstmt::TIf { cond, then_body, else_body } => {
+            let lc = walk_expr(structs, enums, a, live, cond);
+            let s_then = walk_stmts_e(structs, enums, a, &lc, &then_body);
+            let s_else = walk_stmts_e(structs, enums, a, &lc, &else_body);
+            let td = stmts_diverge(&then_body);
+            let ed = stmts_diverge(&else_body);
+            if td {
+                if ed { copy_live(a, &lc) } else { copy_live(a, &s_else) }
+            } else {
+                if ed { copy_live(a, &s_then) } else { merge_states(a, &s_then, &s_else) }
+            }
+        }
+        | Tstmt::TWhile { cond, body, post } => walk_expr(structs, enums, a, live, cond)
+        | _other => copy_live(a, live)
+    };
+}
+
+fn walk_let_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+              live: *const Vec<MoveBinding>, name: str, value: *const Texpr) -> Vec<MoveBinding> {
+    let w = walk_expr(structs, enums, a, live, value);
+    let mut acc = consume_var(structs, a, &w, value);
+    if is_affine_typ(structs, value.ty) {
+        acc.push(MoveBinding { mb_name: name, mb_state: MoveState::Live });
+    }
+    return acc;
+}
+
+fn walk_assign_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                 live: *const Vec<MoveBinding>, path: *const Vec<str>, value: *const Texpr)
+        -> Vec<MoveBinding> {
+    let w = walk_expr(structs, enums, a, live, value);
+    let mut acc = consume_var(structs, a, &w, value);
+    if path.length() == 1 as u32 {
+        let pl = path.as_slice();
+        if mb_is_tracked(&acc, pl[0]) { acc = set_state(a, &acc, pl[0], MoveState::Live); }
+    }
+    return acc;
+}
+
+// ---------- drop seam (move.ml:56 states_by) ----------
+
+pub struct ConsumeResult {
+    cr_consumed: Vec<str>,
+    cr_partial: Vec<str>,
+}
+
+// Names from [names] left Consumed / PartialMoved by evaluating [te].
+pub fn states_by(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                 names: *const Vec<str>, te: *const Texpr) -> ConsumeResult {
+    let seed = seed_live(a, names);
+    let after = walk_expr(structs, enums, a, &seed, te);
+    let mut consumed: Vec<str> = Vec::with_capacity(a, 4 as u32);
+    let mut partial: Vec<str> = Vec::with_capacity(a, 4 as u32);
+    let al = after.as_slice();
+    let mut i = 0 as u32;
+    while i < after.length() {
+        match al[i].mb_state {
+            MoveState::Consumed(_p) => consumed.push(al[i].mb_name)
+            | MoveState::PartialMoved(_p) => partial.push(al[i].mb_name)
+            | MoveState::Live => {}
+        }
+        i = i + 1 as u32;
+    }
+    return ConsumeResult { cr_consumed: consumed, cr_partial: partial };
+}

@@ -2429,6 +2429,25 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
                  Error.failf idx_pos
                    "internal: `Slice` instance %s not in struct_index"
                    (String.concat "::" path))
+        | TStruct path when Mono.is_instance_of ["Vec"] path ->
+            (* `Vec<T>` — element type is T from the mono'd `ptr : own *T`
+               field.  Direct indexing (`v[i]`) reads/borrows the cell
+               through `v.ptr`; the primary consumer is `with x in v[i]`
+               (DR-012 scoped projection over a Vec), which needs a
+               mutable `*T` into the backing store — the enabler for a
+               program-rewriting pass. *)
+            (match resolve_struct_by_path ctx path with
+             | Some s ->
+                 (match List.assoc_opt "ptr" s.sfields_ty with
+                  | Some (TOwnPtr t) -> t
+                  | _ ->
+                      Error.failf idx_pos
+                        "internal: `Vec` instance %s has no `ptr` of \
+                         own shape" (String.concat "::" path))
+             | None ->
+                 Error.failf idx_pos
+                   "internal: `Vec` instance %s not in struct_index"
+                   (String.concat "::" path))
         | other ->
             Error.failf idx_pos
               "indexing `[...]` requires an array or Slice, got %s"

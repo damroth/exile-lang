@@ -1094,6 +1094,21 @@ and walk_stmt ~structs ~enums ~defers st stmt
 
 and apply_one ~structs ~enums st stmt value =
   let st = apply_expr ~structs ~enums st value in
+  (* OWN-D2 consume parity: an assignment's RHS is a consume site in
+     Move.walk_stmt (`consume_var value`), but [apply_expr] replays only
+     Move.walk_EXPR, which does not consume a top-level bare affine TVar.
+     Without this, `s.f = owned_local` leaves the local Live and the pass
+     frees it at scope exit — a use-after-move / double-free of storage now
+     owned by `s.f` (the field-assign moved it in).  Mark it Consumed here
+     so the two passes agree.  (Dropping the OLD field value before the
+     overwrite is not yet tracked — a same-family limit to the named-binding
+     L2 arm; owned field-assign leaks the prior value rather than double-
+     freeing it.) *)
+  let st =
+    match value.e with
+    | TVar n when Move.is_affine_typ ~structs value.ty -> mark_consumed [ n ] st
+    | _ -> st
+  in
   ([ stmt ], st)
 
 (* ---------- per-fn / whole-program ---------- *)

@@ -522,6 +522,7 @@ let rec gen_expr ctx buf (te : texpr) =
          parens so `.data` / `.ptr` binds to the whole base. *)
       let suffix = match base.ty with
         | TStruct path when Mono.is_instance_of ["Slice"] path -> ".ptr["
+        | TStruct path when Mono.is_instance_of ["Vec"] path -> ".ptr["
         | TPtr _ | TOwnPtr _ | TConstPtr _ ->
             (* Raw pointer base: plain C subscript (the deep-drop glue
                walks `v->ptr[i]` this way; the assign path always

@@ -60,4 +60,17 @@ fn main() {
     println(arr[0]);                    // 21
     println(arr[2]);                    // 1000
     println(arr[4]);                    // 51
+
+    // Projection also reaches `Vec<T>` elements (not just arrays and
+    // Slices): `v[i]` indexes through `v.ptr`, and `with x in v[i]`
+    // borrows the cell mutably.  This is the enabler for an in-place
+    // program-rewriting pass — a compiler stage that walks its Vec of
+    // functions and replaces each body without copying the whole program.
+    let alloc = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(alloc, 8 as u32);
+    v.push(100);
+    v.push(200);
+    with x in v[0] { *x = *x + 5; }
+    println(v[0]);                      // 105 (value index reads through v.ptr)
+    println(v[1]);                      // 200
 }
