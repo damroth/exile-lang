@@ -6961,6 +6961,70 @@ fn fill_struct_fields(a: Allocator, structs: *Vec<StructSig>, ci: u32,
     return;
 }
 
+// Enum variant backfill — the mirror of the struct field backfill, so the
+// drop pass can tell whether an enum owns anything (a variant payload of
+// `own *T` / droppable type).
+fn collect_efields_from(src: *const Vec<EnumFieldE>, path: *const Vec<str>, variant: str, out: *Vec<FieldTy>) {
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() {
+        if path_eq(&sl[i].ef_path, path) && str::eq(sl[i].ef_variant, variant) && !fieldty_has(out, sl[i].ef_name) {
+            out.push(FieldTy { name: sl[i].ef_name, ty: sl[i].ef_ty });
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+fn collect_variant_fields(a: Allocator, path: *const Vec<str>, variant: str,
+                          efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) -> Vec<FieldTy> {
+    let mut out: Vec<FieldTy> = Vec::with_capacity(a, 4 as u32);
+    collect_efields_from(efields, path, variant, &out);
+    collect_efields_from(mono_efields, path, variant, &out);
+    return out;
+}
+
+fn variant_seen(vs: *const Vec<VariantSig>, name: str) -> bool {
+    let sl = vs.as_slice();
+    let mut i = 0 as u32;
+    while i < vs.length() { if str::eq(sl[i].vsname, name) { return true; } i = i + 1 as u32; }
+    return false;
+}
+
+fn collect_variants(a: Allocator, path: *const Vec<str>, etags: *const Vec<EnumVariantTag>,
+                    efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) -> Vec<VariantSig> {
+    let mut out: Vec<VariantSig> = Vec::with_capacity(a, 4 as u32);
+    let tl = etags.as_slice();
+    let mut i = 0 as u32;
+    while i < etags.length() {
+        if path_eq(&tl[i].et_path, path) && !variant_seen(&out, tl[i].et_name) {
+            push_variant(a, &out, path, tl[i].et_name, efields, mono_efields);
+        }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+fn push_variant(a: Allocator, out: *Vec<VariantSig>, path: *const Vec<str>, name: str,
+                efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) {
+    let vf = collect_variant_fields(a, path, name, efields, mono_efields);
+    out.push(VariantSig { vsname: name, vsfields: vf, vsis_struct: false });
+    return;
+}
+
+fn fill_enum_one(a: Allocator, e: *EnumSig, etags: *const Vec<EnumVariantTag>,
+                 efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) {
+    if e.evariants.length() > 0 as u32 { return; }
+    e.evariants = collect_variants(a, &e.ename_path, etags, efields, mono_efields);
+    return;
+}
+
+fn fill_enum_variants(a: Allocator, enums: *Vec<EnumSig>, ci: u32, etags: *const Vec<EnumVariantTag>,
+                      efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) {
+    with e in enums[ci] { fill_enum_one(a, e, etags, efields, mono_efields); }
+    return;
+}
+
 fn fieldty_has(fields: *const Vec<FieldTy>, name: str) -> bool {
     let sl = fields.as_slice();
     let mut i = 0 as u32;
@@ -7219,6 +7283,11 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     while ci < structs.length() {
         fill_struct_fields(a, &structs, ci, &sinfo, &mono_fields);
         ci = ci + 1 as u32;
+    }
+    let mut cj = 0 as u32;
+    while cj < enums.length() {
+        fill_enum_variants(a, &enums, cj, &etags, &efields, &mono_efields);
+        cj = cj + 1 as u32;
     }
 
     let sdecls: Vec<StructDeclEntry> = Vec::with_capacity(a, 8 as u32);
