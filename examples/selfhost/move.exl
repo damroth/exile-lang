@@ -230,87 +230,6 @@ pub fn stmts_diverge(stmts: *const Vec<Tstmt>) -> bool {
     return false;
 }
 
-// ---------- pattern binds (move.ml:211) ----------
-
-// Enum path a scrutinee type resolves to (bare or borrowed).
-fn enum_path_of(t: *const Typ) -> Option<Vec<str>> {
-    return match *t {
-        Typ::TEnum(p) => Option::Some(p)
-        | Typ::TEnumApp { path, args } => Option::Some(path)
-        | Typ::TPtr(inner) => enum_path_of(inner)
-        | Typ::TConstPtr(inner) => enum_path_of(inner)
-        | Typ::TOwnPtr(inner) => enum_path_of(inner)
-        | _other => Option::None
-    };
-}
-
-// Payload-field type of [variant.field] in the enum at [path], if any.
-// @escapes: returns an arena-allocated `*const Typ` reached through nested
-// `.as_slice()` of the (borrowed) enum sig; the escape pass loses the
-// param-provenance through the nesting and conservatively flags the return.
-@escapes
-fn variant_field_ty(enums: *const Vec<EnumSig>, path: *const Vec<str>,
-                    variant: str, field: str) -> Option<*const Typ> {
-    let el = enums.as_slice();
-    let mut i = 0 as u32;
-    while i < enums.length() {
-        if mpath_eq(&el[i].ename_path, path) {
-            let vl = el[i].evariants.as_slice();
-            let mut j = 0 as u32;
-            while j < el[i].evariants.length() {
-                if str::eq(vl[j].vsname, variant) {
-                    let fl = vl[j].vsfields.as_slice();
-                    let mut k = 0 as u32;
-                    while k < vl[j].vsfields.length() {
-                        if str::eq(fl[k].name, field) { return Option::Some(fl[k].ty); }
-                        k = k + 1 as u32;
-                    }
-                    return Option::None;
-                }
-                j = j + 1 as u32;
-            }
-            return Option::None;
-        }
-        i = i + 1 as u32;
-    }
-    return Option::None;
-}
-
-// Push each affine binding a match-arm pattern introduces into [out]
-// (name + concrete payload type), resolved against the scrutinee type.
-fn push_if_affine(structs: *const Vec<StructSig>, scrut_ty: *const Typ,
-                  n: str, out: *Vec<FieldTy>) {
-    if is_affine_typ(structs, scrut_ty) {
-        out.push(FieldTy { name: n, ty: scrut_ty });
-    }
-    return;
-}
-
-fn affine_binds_into(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
-                     scrut_ty: *const Typ, pat: *const Tpattern, out: *Vec<FieldTy>) {
-    match *pat {
-        Tpattern::TPVar(n) => push_if_affine(structs, scrut_ty, n, out)
-        | Tpattern::TPVariant { variant, tag, binds } => {
-            match enum_path_of(scrut_ty) {
-                Option::Some(path) => {
-                    let bl = binds.as_slice();
-                    let mut i = 0 as u32;
-                    while i < binds.length() {
-                        match variant_field_ty(enums, &path, variant, bl[i].name) {
-                            Option::Some(fty) =>
-                                affine_binds_into(structs, enums, fty, &bl[i].pat, out)
-                            | Option::None => {}
-                        }
-                        i = i + 1 as u32;
-                    }
-                }
-                | Option::None => {}
-            }
-        }
-        | _other => {}
-    }
-}
-
 // ---------- string helpers ----------
 
 pub fn str_starts_with(s: str, pre: str) -> bool {
@@ -565,7 +484,7 @@ fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             }
         }
         | _other => {
-            let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 4 as u32);
+            let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
             texpr_children_into(te, &kids);
             let mut dacc = copy_live(a, live);
             let kl = kids.as_slice();
@@ -701,8 +620,8 @@ pub fn states_by(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: 
                  names: *const Vec<str>, te: *const Texpr) -> ConsumeResult {
     let seed = seed_live(a, names);
     let after = walk_expr(structs, enums, a, &seed, te);
-    let mut consumed: Vec<str> = Vec::with_capacity(a, 4 as u32);
-    let mut partial: Vec<str> = Vec::with_capacity(a, 4 as u32);
+    let mut consumed: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut partial: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let al = after.as_slice();
     let mut i = 0 as u32;
     while i < after.length() {

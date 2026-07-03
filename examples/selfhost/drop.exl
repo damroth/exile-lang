@@ -6,11 +6,11 @@
 // move-pass walker (`move::states_by`, the OWN-D2 seam) so the compiler has
 // one consume model.
 //
-// STAGED PORT: this slice reproduces the SHALLOW drops (bare `own *T` and
-// direct own-fields released inline through their sibling `alloc`).  The
-// deep-drop glue functions (recursive pointee / Vec-element / HashMap
-// element release) are a follow-up — a droppable pointee is skipped here,
-// leaving that example `unported` in the differential.
+// Reproduces the shallow drops (bare `own *T` and direct own-fields freed
+// inline through their sibling `alloc`) AND the deep-drop glue CALLS — a
+// droppable pointee / Vec-element / HashMap-slot emits a call to the
+// synthesized `__drop_{ptr,vec,hm}_N` helper (whose DEFINITION carries a
+// <prelude> position and is filtered from the --user-only dump).
 //
 // Tracked entries carry the struct's INDEX in `tp_struct_index` rather than
 // its path, so a `DEntry` is copyable (no owned Vec field) and the live
@@ -46,7 +46,7 @@ fn d_ann(ar: *Arena, t: TypeAnn) -> *const TypeAnn {
 }
 
 fn one_str(a: Allocator, s: str) -> Vec<str> {
-    let mut v: Vec<str> = Vec::with_capacity(a, 2 as u32);
+    let mut v: Vec<str> = Vec::with_capacity(a, 8 as u32);
     v.push(s);
     return v;
 }
@@ -66,7 +66,7 @@ fn ty_allocator(a: Allocator, ar: *Arena) -> *const Typ {
     return d_ty(ar, Typ::TStruct(one_str(a, "Allocator")));
 }
 fn ty_free_fn_ptr(a: Allocator, ar: *Arena) -> *const Typ {
-    let mut ps: Vec<*const Typ> = Vec::with_capacity(a, 4 as u32);
+    let mut ps: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     ps.push(ty_cvoidptr(ar));
     ps.push(ty_cvoidptr(ar));
     ps.push(ty_u32(ar));
@@ -83,7 +83,7 @@ fn free_via(a: Allocator, ar: *Arena, alloc_expr: *const Texpr,
                    ty_cvoidptr(ar), pos);
     let cvann = d_ann(ar, TypeAnn::TyPtr(d_ann(ar, TypeAnn::TyCVoid)));
     let castp = d_te(ar, TexprNode::TCast(ptr_expr, cvann), ty_cvoidptr(ar), pos);
-    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 4 as u32);
+    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     args.push(stt);
     args.push(castp);
     args.push(bytes);
@@ -357,7 +357,7 @@ fn struct_has_field(sig: *const StructSig, name: str) -> bool {
 }
 
 // Byte-count heuristic (drop.ml:370): cap -> cap*size / len -> len+1 / else size.
-fn bytes_expr(a: Allocator, ar: *Arena, sig: *const StructSig, base: *const Texpr,
+fn bytes_expr(_a: Allocator, ar: *Arena, sig: *const StructSig, base: *const Texpr,
               inner: *const Typ, pos: Pos) -> *const Texpr {
     if struct_has_field(sig, "cap") {
         let cap = field_access(ar, base, "cap", ty_u32(ar), pos);
@@ -445,7 +445,7 @@ fn drop_stmts_for_struct(a: Allocator, ar: *Arena, structs: *const Vec<StructSig
 // Divert a Vec / StringBuilder / HashMap value to its element-drop glue;
 // returns true when it emitted the glue call (caller then skips per-field).
 fn try_container_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
-                      gs: *GlueState, base: *const Texpr, sig: *const StructSig, sidx: int,
+                      gs: *GlueState, base: *const Texpr, sig: *const StructSig, _sidx: int,
                       pos: Pos, out: *Vec<Tstmt>) -> bool {
     if try_vec_glue(a, ar, structs, enums, gs, base, sig, pos, out) { return true; }
     if try_hm_glue(a, ar, structs, enums, gs, base, sig, pos, out) { return true; }
@@ -466,7 +466,7 @@ fn vec_glue_emit(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums
                  pos: Pos, out: *Vec<Tstmt>) -> bool {
     if !elem_droppable(structs, enums, elem) { return false; }
     let g = request_vec_glue(a, ar, gs, &sig.sname_path);
-    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 2 as u32);
+    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     args.push(base_ref_of(ar, base, pos));
     out.push(glue_call(ar, g, args, pos));
     return true;
@@ -486,7 +486,7 @@ fn hm_glue_emit(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums:
                 pos: Pos, out: *Vec<Tstmt>) -> bool {
     if !slot_kv_droppable(structs, enums, slot) { return false; }
     let g = request_hm_glue(a, ar, gs, &sig.sname_path);
-    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 2 as u32);
+    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     args.push(base_ref_of(ar, base, pos));
     out.push(glue_call(ar, g, args, pos));
     return true;
@@ -512,7 +512,7 @@ fn maybe_free_own(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enum
                   bytes: *const Texpr, pos: Pos, out: *Vec<Tstmt>) {
     if droppable_deep(structs, enums, pointee) {
         let g = request_ptr_glue(a, ar, gs, pointee);
-        let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 2 as u32);
+        let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
         args.push(alloc_e);
         args.push(ptr_e);
         out.push(glue_call(ar, g, args, pos));
@@ -687,7 +687,7 @@ fn consume_rhs_var(structs: *const Vec<StructSig>, a: Allocator,
 }
 
 fn consume_one(a: Allocator, st: *const Vec<DEntry>, n: str) -> Vec<DEntry> {
-    let mut names: Vec<str> = Vec::with_capacity(a, 2 as u32);
+    let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
     names.push(n);
     return mark_consumed(a, st, &names);
 }
@@ -810,8 +810,8 @@ fn walk_let(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloc
 }
 
 fn walk_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
-               st: *const Vec<DEntry>, path: *const Vec<str>, value: *const Texpr, pos: Pos,
-               s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+               st: *const Vec<DEntry>, path: *const Vec<str>, value: *const Texpr, _pos: Pos,
+               s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {  // pos used via stmt
     // single-name assign to a tracked binding: L2 drop-old + L3 rebind
     if path.length() == 1 as u32 {
         let pl = path.as_slice();
@@ -858,7 +858,7 @@ fn walk_return(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
     let st1 = match value {
         Option::Some(v) => match v.e {
             TexprNode::TVar(n) => {
-                let mut names: Vec<str> = Vec::with_capacity(a, 2 as u32);
+                let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
                 names.push(n);
                 mark_consumed(a, st, &names)
             }
@@ -867,7 +867,7 @@ fn walk_return(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
         | Option::None => copy_dentries(a, st)
     };
     // release every remaining Live owner before the return
-    let mut drop_buf: Vec<Tstmt> = Vec::with_capacity(a, 4 as u32);
+    let mut drop_buf: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     drops_for_live(a, ar, structs, enums, gs, &st1, &drop_buf);
     // Sequencing (DR-044): the return VALUE may read a to-be-dropped binding
     // (`return *buf.p`), so when there are drops and the value is not already
@@ -940,19 +940,19 @@ fn walk_if(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloca
 
 // OWN-D3: tracked states after two non-diverging branches must agree.  On a
 // mismatch the oracle errors; valid source never mismatches, so take then.
-fn merge_branches(a: Allocator, st_then: *const Vec<DEntry>, st_else: *const Vec<DEntry>) -> Vec<DEntry> {
+fn merge_branches(a: Allocator, st_then: *const Vec<DEntry>, _st_else: *const Vec<DEntry>) -> Vec<DEntry> {
     return copy_dentries(a, st_then);
 }
 
 fn walk_while(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
               st: *const Vec<DEntry>, cond: *const Texpr, body: *const Vec<Tstmt>,
-              post: *const Vec<Tstmt>, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+              post: *const Vec<Tstmt>, _s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
     // Move.check guarantees loop-invariant tracked states; one symbolic pass
     // gives the exit state.  Bodies are walked into fresh buffers.
     let st0 = apply_expr(structs, enums, a, st, cond);
     let mut body_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let st_body = walk_stmts(structs, enums, a, ar, gs, &st0, body, &body_out);
-    let mut post_out: Vec<Tstmt> = Vec::with_capacity(a, 4 as u32);
+    let mut post_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let st_post = walk_stmts(structs, enums, a, ar, gs, &st_body, post, &post_out);
     out.push(Tstmt::TWhile { cond: cond, body: body_out, post: post_out });
     return st_post;

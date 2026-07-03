@@ -1479,6 +1479,51 @@ fn is_named_prelude_ty(t: *const Typ) -> bool {
         | _e => false
     };
 }
+
+// Field shapes of the own-carrying named prelude structs, registered into
+// `sc_mono_fields` when the struct is registered so the drop pass (which
+// walks a struct's field tree) sees their `own *u8` buffer + sibling fields.
+// Mirrors the oracle's prelude struct definitions.
+fn pf_u8ptr(ar: *Arena) -> *const Typ {
+    return ty_node(ar, Typ::TOwnPtr(ty_node(ar, Typ::TInt(IntKind { is_signed: false, width: IntWidth::W8 }))));
+}
+fn pf_u32(ar: *Arena) -> *const Typ {
+    return ty_node(ar, Typ::TInt(IntKind { is_signed: false, width: IntWidth::W32 }));
+}
+fn pf_alloc(a: Allocator, ar: *Arena) -> *const Typ {
+    let mut ap: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    ap.push("Allocator");
+    return ty_node(ar, Typ::TStruct(ap));
+}
+fn pf(_a: Allocator, out: *Vec<FieldTy>, name: str, ty: *const Typ) {
+    out.push(FieldTy { name: name, ty: ty });
+    return;
+}
+
+fn is_named_prelude_name(nm: str) -> bool {
+    return str::eq(nm, "String") || str::eq(nm, "StringBuilder") || str::eq(nm, "Arena");
+}
+
+// Hardcoded field shapes of the own-carrying named prelude structs (String /
+// StringBuilder / Arena).  The port never resolves their fields by name (only
+// methods), so nothing registers them; the drop pass needs the `own *u8`
+// buffer + `len`/`cap`/`alloc` siblings to walk the field tree and size the
+// free.  Mirrors the oracle's prelude struct definitions.
+fn named_prelude_fields(a: Allocator, ar: *Arena, nm: str) -> Vec<FieldTy> {
+    let mut out: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    if str::eq(nm, "String") {
+        pf(a, &out, "ptr", pf_u8ptr(ar)); pf(a, &out, "len", pf_u32(ar)); pf(a, &out, "alloc", pf_alloc(a, ar));
+    }
+    if str::eq(nm, "StringBuilder") {
+        pf(a, &out, "buf", pf_u8ptr(ar)); pf(a, &out, "len", pf_u32(ar));
+        pf(a, &out, "cap", pf_u32(ar)); pf(a, &out, "alloc", pf_alloc(a, ar));
+    }
+    if str::eq(nm, "Arena") {
+        pf(a, &out, "buf", pf_u8ptr(ar)); pf(a, &out, "cap", pf_u32(ar));
+        pf(a, &out, "off", pf_u32(ar)); pf(a, &out, "alloc", pf_alloc(a, ar));
+    }
+    return out;
+}
 fn register_struct_ty(a: Allocator, sc: *const TyScope, t: *const Typ) {
     match *t {
         Typ::TStruct(path) => { register_mono_struct(a, sc, &path); }
@@ -6948,16 +6993,21 @@ fn collect_struct_fields(a: Allocator, path: *const Vec<str>,
 // Fill a struct sig's field list (if still empty — prelude + user structs
 // are pushed field-less) from the flat field tables, so the drop pass can
 // walk any struct's field tree hunting `own *T`.
-fn fill_one(a: Allocator, s: *StructSig, sinfo: *const Vec<StructField>,
+fn fill_one(a: Allocator, ar: *Arena, s: *StructSig, sinfo: *const Vec<StructField>,
             mono_fields: *const Vec<StructField>) {
     if s.sfields_ty.length() > 0 as u32 { return; }
+    let nm = path_last(&s.sname_path);
+    if is_named_prelude_name(nm) {
+        s.sfields_ty = named_prelude_fields(a, ar, nm);
+        return;
+    }
     s.sfields_ty = collect_struct_fields(a, &s.sname_path, sinfo, mono_fields);
     return;
 }
 
-fn fill_struct_fields(a: Allocator, structs: *Vec<StructSig>, ci: u32,
+fn fill_struct_fields(a: Allocator, ar: *Arena, structs: *Vec<StructSig>, ci: u32,
                       sinfo: *const Vec<StructField>, mono_fields: *const Vec<StructField>) {
-    with s in structs[ci] { fill_one(a, s, sinfo, mono_fields); }
+    with s in structs[ci] { fill_one(a, ar, s, sinfo, mono_fields); }
     return;
 }
 
@@ -6978,7 +7028,7 @@ fn collect_efields_from(src: *const Vec<EnumFieldE>, path: *const Vec<str>, vari
 
 fn collect_variant_fields(a: Allocator, path: *const Vec<str>, variant: str,
                           efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) -> Vec<FieldTy> {
-    let mut out: Vec<FieldTy> = Vec::with_capacity(a, 4 as u32);
+    let mut out: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     collect_efields_from(efields, path, variant, &out);
     collect_efields_from(mono_efields, path, variant, &out);
     return out;
@@ -6993,7 +7043,7 @@ fn variant_seen(vs: *const Vec<VariantSig>, name: str) -> bool {
 
 fn collect_variants(a: Allocator, path: *const Vec<str>, etags: *const Vec<EnumVariantTag>,
                     efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) -> Vec<VariantSig> {
-    let mut out: Vec<VariantSig> = Vec::with_capacity(a, 4 as u32);
+    let mut out: Vec<VariantSig> = Vec::with_capacity(a, 8 as u32);
     let tl = etags.as_slice();
     let mut i = 0 as u32;
     while i < etags.length() {
@@ -7281,7 +7331,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // each struct's `own *T` fields.
     let mut ci = 0 as u32;
     while ci < structs.length() {
-        fill_struct_fields(a, &structs, ci, &sinfo, &mono_fields);
+        fill_struct_fields(a, ar, &structs, ci, &sinfo, &mono_fields);
         ci = ci + 1 as u32;
     }
     let mut cj = 0 as u32;
