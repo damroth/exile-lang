@@ -110,15 +110,30 @@ fn find_struct_idx(structs: *const Vec<StructSig>, path: *const Vec<str>) -> int
     return 0 - 1;
 }
 
-fn mpath_eq2(a: *const Vec<str>, b: *const Vec<str>) -> bool {
-    if a.length() != b.length() { return false; }
-    let sa = a.as_slice();
-    let sb = b.as_slice();
+fn dp_join(a: Allocator, p: *const Vec<str>) -> StringBuilder {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let sl = p.as_slice();
     let mut i = 0 as u32;
-    while i < a.length() {
-        if !str::eq(sa[i], sb[i]) { return false; }
-        i = i + 1 as u32;
+    while i < p.length() { if i > 0 as u32 { sb.push_str("::"); } sb.push_str(sl[i]); i = i + 1 as u32; }
+    return sb;
+}
+
+fn mpath_eq2(a: *const Vec<str>, b: *const Vec<str>) -> bool {
+    if a.length() == b.length() {
+        let sa = a.as_slice();
+        let sb = b.as_slice();
+        let mut i = 0 as u32;
+        while i < a.length() { if !str::eq(sa[i], sb[i]) { return false; } i = i + 1 as u32; }
+        return true;
     }
+    let al = default_allocator();
+    let ja = dp_join(al, a);
+    let jb = dp_join(al, b);
+    if ja.length() != jb.length() { return false; }
+    let ba = ja.as_slice();
+    let bb = jb.as_slice();
+    let mut k = 0 as u32;
+    while k < ja.length() { if ba[k] != bb[k] { return false; } k = k + 1 as u32; }
     return true;
 }
 

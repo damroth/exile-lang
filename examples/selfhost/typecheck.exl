@@ -7014,11 +7014,34 @@ fn fill_struct_fields(a: Allocator, ar: *Arena, structs: *Vec<StructSig>, ci: u3
 // Enum variant backfill — the mirror of the struct field backfill, so the
 // drop pass can tell whether an enum owns anything (a variant payload of
 // `own *T` / droppable type).
-fn collect_efields_from(src: *const Vec<EnumFieldE>, path: *const Vec<str>, variant: str, out: *Vec<FieldTy>) {
+// A module path is stored both split (["ast","Stmt"]) and colon-joined
+// (["ast::Stmt"]) depending on source (type resolution vs name collection),
+// so the enum backfill compares the "::"-joined byte streams — otherwise a
+// module enum's variants never match its ename_path and stay empty.
+fn tc_join_sb(a: Allocator, p: *const Vec<str>) -> StringBuilder {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let sl = p.as_slice();
+    let mut i = 0 as u32;
+    while i < p.length() { if i > 0 as u32 { sb.push_str("::"); } sb.push_str(sl[i]); i = i + 1 as u32; }
+    return sb;
+}
+fn path_eq_norm(a: Allocator, x: *const Vec<str>, y: *const Vec<str>) -> bool {
+    if x.length() == y.length() { return path_eq(x, y); }
+    let jx = tc_join_sb(a, x);
+    let jy = tc_join_sb(a, y);
+    if jx.length() != jy.length() { return false; }
+    let bx = jx.as_slice();
+    let by = jy.as_slice();
+    let mut k = 0 as u32;
+    while k < jx.length() { if bx[k] != by[k] { return false; } k = k + 1 as u32; }
+    return true;
+}
+
+fn collect_efields_from(a: Allocator, src: *const Vec<EnumFieldE>, path: *const Vec<str>, variant: str, out: *Vec<FieldTy>) {
     let sl = src.as_slice();
     let mut i = 0 as u32;
     while i < src.length() {
-        if path_eq(&sl[i].ef_path, path) && str::eq(sl[i].ef_variant, variant) && !fieldty_has(out, sl[i].ef_name) {
+        if path_eq_norm(a, &sl[i].ef_path, path) && str::eq(sl[i].ef_variant, variant) && !fieldty_has(out, sl[i].ef_name) {
             out.push(FieldTy { name: sl[i].ef_name, ty: sl[i].ef_ty });
         }
         i = i + 1 as u32;
@@ -7029,8 +7052,8 @@ fn collect_efields_from(src: *const Vec<EnumFieldE>, path: *const Vec<str>, vari
 fn collect_variant_fields(a: Allocator, path: *const Vec<str>, variant: str,
                           efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) -> Vec<FieldTy> {
     let mut out: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    collect_efields_from(efields, path, variant, &out);
-    collect_efields_from(mono_efields, path, variant, &out);
+    collect_efields_from(a, efields, path, variant, &out);
+    collect_efields_from(a, mono_efields, path, variant, &out);
     return out;
 }
 
@@ -7047,7 +7070,7 @@ fn collect_variants(a: Allocator, path: *const Vec<str>, etags: *const Vec<EnumV
     let tl = etags.as_slice();
     let mut i = 0 as u32;
     while i < etags.length() {
-        if path_eq(&tl[i].et_path, path) && !variant_seen(&out, tl[i].et_name) {
+        if path_eq_norm(a, &tl[i].et_path, path) && !variant_seen(&out, tl[i].et_name) {
             push_variant(a, &out, path, tl[i].et_name, efields, mono_efields);
         }
         i = i + 1 as u32;
