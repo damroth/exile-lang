@@ -3175,8 +3175,8 @@ fn elab_block_expr_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     match *e {
         Expr::If { cond, then_blk, else_blk } => {
             let tcond = elab_expr(a, ar, g, sc, benv, none_ty(), cond);
-            let tthen = elab_body(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, &then_blk);
-            let telse = elab_else_body(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, else_blk);
+            let tthen = elab_stmt_body(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, &then_blk);
+            let telse = elab_else_stmt_body(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, else_blk);
             out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
         }
         | _other => { out.push(Tstmt::TExprStmt(elab_expr(a, ar, g, sc, benv, none_ty(), e))); }
@@ -3349,17 +3349,18 @@ fn elab_scalar_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
 }
 // `base[lo..hi]` / `base[lo..=hi]` (DR-011) builds a read-only `Slice<T>` view:
 // `{ ptr: &base[lo], len: (hi - lo [+ 1]) as u32 }`.
-fn add_one(ar: *Arena, e: *const Texpr, p: Pos) -> *const Texpr {
-    let one = te_node(ar, TexprNode::TIntLit(1 as int), t_i32(ar), p);
-    return te_node(ar, TexprNode::TBinOp(BinOp::Add, e, one), t_i32(ar), p);
+fn add_one(ar: *Arena, e: *const Texpr, bty: *const Typ, p: Pos) -> *const Texpr {
+    let one = te_node(ar, TexprNode::TIntLit(1 as int), bty, p);
+    return te_node(ar, TexprNode::TBinOp(BinOp::Add, e, one), bty, p);
 }
 fn build_slice_from_bounds(a: Allocator, ar: *Arena, sc: *const TyScope, tb: *const Texpr,
                            lo_te: *const Texpr, hi_te: *const Texpr, inclusive: bool, p: Pos) -> *const Texpr {
     let elem = voidable_ty(ar, index_elem_ty(sc, tb.ty));
     let idx = te_node(ar, TexprNode::TIndex { base: tb, index: lo_te }, elem, p);
     let ptr = te_node(ar, TexprNode::TRef(idx), ty_node(ar, Typ::TConstPtr(elem)), p);
-    let diff = te_node(ar, TexprNode::TBinOp(BinOp::Sub, hi_te, lo_te), t_i32(ar), p);
-    let len_inner = if inclusive { add_one(ar, diff, p) } else { diff };
+    let bty = lo_te.ty;
+    let diff = te_node(ar, TexprNode::TBinOp(BinOp::Sub, hi_te, lo_te), bty, p);
+    let len_inner = if inclusive { add_one(ar, diff, bty, p) } else { diff };
     let u32ann = ann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 });
     let len = te_node(ar, TexprNode::TCast(len_inner, u32ann), t_u32(ar), p);
     let mut sargs: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
@@ -3956,6 +3957,17 @@ fn elab_else_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     };
 }
 
+// The else branch of a STATEMENT-context `if` (a void control-flow `if`, not a
+// value-`if`) — its trailing bare expression is a void statement, so it walks
+// via the statement-context body elaborator.
+fn elab_else_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+                       else_blk: Option<Vec<Stmt>>) -> Vec<Tstmt> {
+    return match else_blk {
+        Option::Some(blk) => elab_stmt_body(a, ar, g, sc, gensym, env, ret, &blk)
+        | Option::None => empty_tstmts(a)
+    };
+}
+
 // ===== `with` scoped projection (DR-012) =====
 //
 // `with x in <lvalue> { body }` desugars to a block `{ let x__withN =
@@ -4020,8 +4032,8 @@ fn elab_stmt_pos(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     match *e {
         Expr::If { cond, then_blk, else_blk } => {
             let tcond = elab_expr(a, ar, g, sc, env, none_ty(), cond);
-            let tthen = elab_body(a, ar, g, sc, gensym, env, ret, &then_blk);
-            let telse = elab_else_body(a, ar, g, sc, gensym, env, ret, else_blk);
+            let tthen = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &then_blk);
+            let telse = elab_else_stmt_body(a, ar, g, sc, gensym, env, ret, else_blk);
             out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
         }
         | _other => {
@@ -4183,7 +4195,7 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
             let thi = elab_expr(a, ar, g, sc, env, Option::Some(cty), hi);
             let rbody = subst_body(a, ar, iter_var, fv, body);
             env.push(FieldTy { name: fv, ty: cty });
-            let tbody = elab_body(a, ar, g, sc, gensym, env, ret, &rbody);
+            let tbody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &rbody);
             out.push(Tstmt::TLet { name: fe, value: thi, pos: zero_pos() });
             out.push(Tstmt::TLet { name: fv, value: tlo, pos: zero_pos() });
             let cond = mk_for_cond(ar, fv, fe, cty, inclusive);
@@ -4275,7 +4287,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         }
         | Stmt::While { cond, body } => {
             let wcond = elab_expr(a, ar, g, sc, env, none_ty(), cond);
-            let wbody = elab_body(a, ar, g, sc, gensym, env, ret, &body);
+            let wbody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &body);
             let wpost: Vec<Tstmt> = empty_tstmts(a);
             out.push(Tstmt::TWhile { cond: wcond, body: wbody, post: wpost });
         }
@@ -4310,7 +4322,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Stmt::Break(pos) => { out.push(Tstmt::TBreak(pos)); }
         | Stmt::Continue(pos) => { out.push(Tstmt::TContinue(pos)); }
         | Stmt::Defer { body, pos } => {
-            let dbody = elab_body(a, ar, g, sc, gensym, env, ret, &body);
+            let dbody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &body);
             out.push(Tstmt::TDefer { body: dbody, pos: pos });
         }
         | Stmt::For { iter_var, range, body } => {
@@ -4335,6 +4347,27 @@ fn elab_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     let mut i = 0 as u32;
     while i < n {
         elab_stmt(a, ar, g, sc, gensym, env, ret, &sl[i], &out);
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+// A nested STATEMENT-context body (a `while` / `for` / `defer` body).  Unlike
+// a function body or value-`if` branch, its trailing bare expression is a VOID
+// statement, never an implicit return — mirroring the oracle's `walk`, where
+// `Tail e` and `ExprStmt e` are handled identically (the function-body
+// trailing value is peeled off before walking, so it never reaches here).
+fn elab_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
+                  body: *const Vec<Stmt>) -> Vec<Tstmt> {
+    let mut out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let n = body.length();
+    let sl = body.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match sl[i] {
+            Stmt::Tail(e) => { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, &out); }
+            | _other => { elab_stmt(a, ar, g, sc, gensym, env, ret, &sl[i], &out); }
+        }
         i = i + 1 as u32;
     }
     return out;
@@ -4569,6 +4602,34 @@ fn walk_expr(a: Allocator, ar: *Arena, ctr: *u32, allow_top: bool, te: *const Te
     return te_node(ar, TexprNode::TVar(nm), walked.ty, walked.pos);
 }
 
+// A while-condition whose lift-prelude is non-empty must NOT hoist that
+// prelude above the loop — hoisting evaluates it once and freezes the
+// condition (freeze-audit B2).  Mirror the oracle: rewrite to
+// `while true { <prelude>; if !c { break }; body }` so the prelude re-runs
+// each iteration.  Walk the condition into a fresh sink so its prelude can be
+// detected; an empty prelude keeps the plain `while c { body }` form.
+fn lift_while(a: Allocator, ar: *Arena, ctr: *u32, cond: *const Texpr,
+              body: *const Vec<Tstmt>, post: *const Vec<Tstmt>, out: *Vec<Tstmt>) {
+    let mut nb: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let cwh = walk_expr(a, ar, ctr, false, cond, &nb);
+    if nb.length() == 0 as u32 {
+        out.push(Tstmt::TWhile { cond: cwh, body: lift_stmts(a, ar, ctr, body), post: lift_stmts(a, ar, ctr, post) });
+        return;
+    }
+    let cp = cwh.pos;
+    let notc = te_node(ar, TexprNode::TNot(cwh), t_bool(ar), cp);
+    let mut brk: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    brk.push(Tstmt::TBreak(cp));
+    let ee: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    nb.push(Tstmt::TIf { cond: notc, then_body: brk, else_body: ee });
+    let bsl = body.as_slice();
+    let bn = body.length();
+    let mut bi = 0 as u32;
+    while bi < bn { lift_stmt(a, ar, ctr, &bsl[bi], &nb); bi = bi + 1 as u32; }
+    let truecond = te_node(ar, TexprNode::TBoolLit(true), t_bool(ar), cp);
+    out.push(Tstmt::TWhile { cond: truecond, body: nb, post: lift_stmts(a, ar, ctr, post) });
+}
+
 fn lift_stmt(a: Allocator, ar: *Arena, ctr: *u32, s: *const Tstmt, out: *Vec<Tstmt>) {
     match *s {
         Tstmt::TLet { name, value, pos } => {
@@ -4625,8 +4686,7 @@ fn lift_stmt(a: Allocator, ar: *Arena, ctr: *u32, s: *const Tstmt, out: *Vec<Tst
             out.push(Tstmt::TIf { cond: cif, then_body: wthen, else_body: welse });
         }
         | Tstmt::TWhile { cond, body, post } => {
-            let cwh = walk_expr(a, ar, ctr, false, cond, out);
-            out.push(Tstmt::TWhile { cond: cwh, body: lift_stmts(a, ar, ctr, &body), post: lift_stmts(a, ar, ctr, &post) });
+            lift_while(a, ar, ctr, cond, &body, &post, out);
         }
         | Tstmt::TBreak(bp) => { out.push(Tstmt::TBreak(bp)); }
         | Tstmt::TContinue(cp) => { out.push(Tstmt::TContinue(cp)); }
