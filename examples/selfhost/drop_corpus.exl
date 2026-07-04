@@ -71,11 +71,12 @@ fn main() {
 
     let fd: c_int = sys::sys_open(path as *const c_char, 0 as c_int);
     if fd < 0 as c_int { return; }
-    let mut src_sb = StringBuilder::with_capacity(a, 16384 as u32);
-    read_all(fd, &src_sb);
     sys::sys_close(fd);
 
-    let mut ar = Arena::with_capacity(a, arena_cap_for(src_sb.length()));
+    // Size the arena to the WHOLE `use` closure the loader will build, not just
+    // the entry file — a small entry pulling a large module would otherwise
+    // exhaust a source-sized arena mid-load.
+    let mut ar = Arena::with_capacity(a, arena_cap_for(total_source_bytes(a, path)));
 
     match load(a, &ar, path) {
         Result::Ok(prog) => {

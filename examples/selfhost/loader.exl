@@ -120,6 +120,104 @@ fn resolve_use(a: Allocator, ar: *Arena, from_file: str, segs: *const Vec<str>) 
     return direct;
 }
 
+// ===== Arena pre-sizing: transitive `use`-closure source size =====
+//
+// The typecheck arena hands out borrows and cannot grow, so it must be sized
+// up front to the WHOLE program `load` will build — not just the entry file.
+// A small entry that `use`s a large module (loader.exl 15KB pulls parser.exl
+// 128KB) would otherwise exhaust a source-sized arena mid-load.  This walks
+// the `use` graph with a lightweight textual scan and sums every reachable
+// file's byte length.  Over-counting (a `use` inside a comment) is safe — it
+// only enlarges the arena; the path resolution reuses `resolve_use` so the set
+// matches what `load` actually reads.
+
+fn is_ident_byte(b: u8) -> bool {
+    return (b >= 97 as u8 && b <= 122 as u8)     // a-z
+        || (b >= 65 as u8 && b <= 90 as u8)      // A-Z
+        || (b >= 48 as u8 && b <= 57 as u8)      // 0-9
+        || b == 95 as u8;                        // _
+}
+
+// Segments of a `use` path, from [start] to the line end [lend]: identifier
+// runs split on `::`, stopping at `;`, `*` (wildcard), or line end.
+fn parse_use_segments(a: Allocator, ar: *Arena, bytes: Slice<u8>, start: u32, lend: u32) -> Vec<str> {
+    let mut segs: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut i = start;
+    while i < lend {
+        while i < lend && (bytes[i] == 32 as u8 || bytes[i] == 9 as u8) { i = i + 1 as u32; }
+        if i >= lend { return segs; }
+        let b = bytes[i];
+        if b == 59 as u8 || b == 42 as u8 {          // ';' or '*'
+            return segs;
+        }
+        if is_ident_byte(b) {
+            let segstart = i;
+            while i < lend && is_ident_byte(bytes[i]) { i = i + 1 as u32; }
+            segs.push(str::from_slice(ar, bytes[segstart..i]));
+        } else {
+            i = i + 1 as u32;                        // skip `:` separators, etc.
+        }
+    }
+    return segs;
+}
+
+// Scan one file's source for top-level `use` / `pub use` lines and push each
+// resolved dependency path onto the worklist.
+fn scan_uses_into(a: Allocator, ar: *Arena, from_file: str, sb: *const StringBuilder, work: *Vec<str>) {
+    let bytes = sb.as_slice();
+    let n = sb.length();
+    let mut i = 0 as u32;
+    while i < n {
+        let lstart = i;
+        while i < n && bytes[i] != 10 as u8 { i = i + 1 as u32; }    // to '\n'
+        let lend = i;
+        if i < n { i = i + 1 as u32; }
+        let mut o = lstart;
+        while o < lend && (bytes[o] == 32 as u8 || bytes[o] == 9 as u8) { o = o + 1 as u32; }
+        // optional `pub ` prefix
+        if o + 4 as u32 <= lend && bytes[o] == 112 as u8 && bytes[o + 1 as u32] == 117 as u8
+           && bytes[o + 2 as u32] == 98 as u8 && bytes[o + 3 as u32] == 32 as u8 {
+            o = o + 4 as u32;
+            while o < lend && (bytes[o] == 32 as u8 || bytes[o] == 9 as u8) { o = o + 1 as u32; }
+        }
+        // `use ` keyword
+        if o + 4 as u32 <= lend && bytes[o] == 117 as u8 && bytes[o + 1 as u32] == 115 as u8
+           && bytes[o + 2 as u32] == 101 as u8 && bytes[o + 3 as u32] == 32 as u8 {
+            let segs = parse_use_segments(a, ar, bytes, o + 4 as u32, lend);
+            if segs.length() > 0 as u32 {
+                let dep = resolve_use(a, ar, from_file, &segs);
+                if file_exists(dep) { work.push(dep); }
+            }
+        }
+    }
+}
+
+// Total source bytes of [entry_path] plus every module reachable via `use`.
+pub fn total_source_bytes(a: Allocator, entry_path: str) -> u32 {
+    let mut scratch = Arena::with_capacity(a, 65536 as u32);
+    let mut visited: Vec<str> = Vec::with_capacity(a, 16 as u32);
+    let mut work: Vec<str> = Vec::with_capacity(a, 16 as u32);
+    work.push(entry_path);
+    let mut total = 0 as u32;
+    let mut wi = 0 as u32;
+    while wi < work.length() {
+        let path = work.as_slice()[wi];
+        wi = wi + 1 as u32;
+        if !str_in(&visited, path) {
+            visited.push(path);
+            let mut sb = StringBuilder::with_capacity(a, 16384 as u32);
+            let fd: c_int = sys::sys_open(path as *const c_char, 0 as c_int);
+            if fd >= 0 as c_int {
+                read_all_fd(fd, &sb);
+                sys::sys_close(fd);
+            }
+            total = total + sb.length();
+            scan_uses_into(a, &scratch, path, &sb, &work);
+        }
+    }
+    return total;
+}
+
 // ===== Parse a file to its item list =====
 
 // Errors are threaded through a shared cell rather than a `Result` return on
