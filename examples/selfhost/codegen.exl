@@ -1,0 +1,232 @@
+// Self-host port — `lib/codegen.ml` (+ the C-rendering utilities that live in
+// `lib/ir.ml`: mangle_typ / c_type_prefix / c_decl).
+//
+// The final pass: typed-IR (post Move / Escape / Drop) -> C89 text.  This file
+// is filled in STAGE by stage, mirroring how typecheck was sub-staged:
+//   (a) type rendering    — mangle_typ / c_type_prefix / c_decl  [THIS STAGE]
+//   (b) aggregate typedefs — struct / enum / tuple / array decls, topo-sorted
+//   (c) gen_expr           — expression -> C
+//   (d) stmt / block / if  — statement -> C
+//   (e) emit_match_stmt    — match -> C (the gnarliest, ~400 LOC)
+//   (f) gen_function       — signature + body
+//   (g) gen_program        — includes / sections / DCE / footer
+//   (h) @debug printers / default_allocator / builtin emitters
+//
+// The differential is the emitted C compared byte-for-byte against the oracle's
+// `--c-out`; a `codegen_corpus.exl` driver runs the pipeline and flushes C to
+// stdout, the same playbook that drove the tc and drop layers.
+
+use ast::*;
+use ir::*;
+
+// ===== Stage (a): type rendering =====
+
+// `i32` / `u16` / ... — the fixed-width integer mangled name.
+pub fn int_typ_name(is_signed: bool, width: IntWidth) -> str {
+    if is_signed {
+        return match width { IntWidth::W8 => "i8" | IntWidth::W16 => "i16" | IntWidth::W32 => "i32" };
+    }
+    return match width { IntWidth::W8 => "u8" | IntWidth::W16 => "u16" | IntWidth::W32 => "u32" };
+}
+
+// A named-type C symbol: top-level `name` -> `ex_name`, a module-nested path
+// `["parser","Deco"]` -> `parser__Deco` (segments joined by `__`).
+fn mangle_name(a: Allocator, ar: *Arena, path: *const Vec<str>, name: str) -> str {
+    if path.length() == 0 as u32 {
+        let mut eb = StringBuilder::with_capacity(a, 16 as u32);
+        eb.push_str("ex_");
+        eb.push_str(name);
+        return str::from_slice(ar, eb.as_slice());
+    }
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let sl = path.as_slice();
+    let mut i = 0 as u32;
+    while i < path.length() { sb.push_str(sl[i]); sb.push_str("__"); i = i + 1 as u32; }
+    sb.push_str(name);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// A named-type path `["a","b","Name"]` splits into the module prefix `["a","b"]`
+// and the final `Name`, then mangles as `a__b__Name`.
+fn mangle_named_path(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
+    let n = path.length();
+    if n == 0 as u32 { return "ex_"; }
+    let sl = path.as_slice();
+    let name = sl[n - 1 as u32];
+    let mut prefix: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < n - 1 as u32 { prefix.push(sl[i]); i = i + 1 as u32; }
+    return mangle_name(a, ar, &prefix, name);
+}
+
+// The C-identifier-safe mangle of a type (used to build emitted C symbol
+// names).  Distinct from `typ_name`, which reproduces source syntax for
+// diagnostics.  `TVar` / `TStructApp` / `TEnumApp` / `TAssocProj` / `TNullPtr`
+// are pre-mono / never-mangled and yield a visible `<mangle?>` marker (they
+// must not survive to codegen in concrete IR).
+pub fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
+    return match *t {
+        Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
+        | Typ::TCInt { is_signed } => { if is_signed { "cint" } else { "cuint" } }
+        | Typ::TCShort { is_signed } => { if is_signed { "cshort" } else { "cushort" } }
+        | Typ::TCLong { is_signed } => { if is_signed { "clong" } else { "culong" } }
+        | Typ::TCChar => "cchar"
+        | Typ::TCSChar => "cschar"
+        | Typ::TCUChar => "cuchar"
+        | Typ::TCVoid => "cvoid"
+        | Typ::TBool => "bool"
+        | Typ::TFloat(w) => { match w { FloatWidth::F32 => "f32" | FloatWidth::F64 => "f64" } }
+        | Typ::TString => "str"
+        | Typ::TTuple(ts) => {
+            let mut tb = StringBuilder::with_capacity(a, 32 as u32);
+            tb.push_str("tup");
+            tb.push_int(ts.length() as int);
+            let sl = ts.as_slice();
+            let mut ti = 0 as u32;
+            while ti < ts.length() { tb.push_str("_"); tb.push_str(mangle_typ(a, ar, sl[ti])); ti = ti + 1 as u32; }
+            str::from_slice(ar, tb.as_slice())
+        }
+        | Typ::TStruct(path) => mangle_named_path(a, ar, &path)
+        | Typ::TEnum(path) => mangle_named_path(a, ar, &path)
+        | Typ::TExtStruct(n) => n
+        | Typ::TExtAlias(n) => n
+        | Typ::TPtr(inner) => concat2(a, ar, "ptr_", mangle_typ(a, ar, inner))
+        | Typ::TOwnPtr(inner) => concat2(a, ar, "ownptr_", mangle_typ(a, ar, inner))
+        | Typ::TConstPtr(inner) => concat2(a, ar, "cptr_", mangle_typ(a, ar, inner))
+        | Typ::TArray { elem, size } => {
+            let mut arb = StringBuilder::with_capacity(a, 24 as u32);
+            arb.push_str("arr");
+            arb.push_int(size);
+            arb.push_str("_");
+            arb.push_str(mangle_typ(a, ar, elem));
+            str::from_slice(ar, arb.as_slice())
+        }
+        | Typ::TFnPtr { params, ret } => {
+            let mut fb = StringBuilder::with_capacity(a, 32 as u32);
+            fb.push_str("fn");
+            fb.push_int(params.length() as int);
+            fb.push_str("_");
+            let psl = params.as_slice();
+            let mut fi = 0 as u32;
+            while fi < params.length() { if fi > 0 as u32 { fb.push_str("_"); } fb.push_str(mangle_typ(a, ar, psl[fi])); fi = fi + 1 as u32; }
+            fb.push_str("_to_");
+            match ret { Option::Some(rt) => fb.push_str(mangle_typ(a, ar, rt)) | Option::None => fb.push_str("void") }
+            str::from_slice(ar, fb.as_slice())
+        }
+        | _other => "<mangle?>"
+    };
+}
+
+// `ex_tupN_...` — the C struct name of a tuple shape.
+pub fn tuple_struct_name(a: Allocator, ar: *Arena, ts: *const Vec<*const Typ>) -> str {
+    let tt = ty_node(ar, Typ::TTuple(copy_typs(a, ts)));
+    return concat2(a, ar, "ex_", mangle_typ(a, ar, tt));
+}
+
+fn concat2(a: Allocator, ar: *Arena, x: str, y: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(x);
+    sb.push_str(y);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+fn copy_typs(a: Allocator, src: *const Vec<*const Typ>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+
+fn ty_node(ar: *Arena, node: Typ) -> *const Typ {
+    let n: *Typ = ar.alloc_borrowed();
+    *n = node;
+    return n as *const Typ;
+}
+
+// Drop a single trailing space so `c_decl prefix name` reads `<base> *name`.
+fn strip_trailing_space(ar: *Arena, s: str) -> str {
+    let n = str::length(s);
+    if n > 0 as u32 {
+        let bytes = str::as_bytes(s);
+        if bytes[n - 1 as u32] == 32 as u8 {
+            return str::from_slice(ar, bytes[0 as u32..n - 1 as u32]);
+        }
+    }
+    return s;
+}
+
+fn str_starts_with_const(s: str) -> bool {
+    let n = str::length(s);
+    if n < 6 as u32 { return false; }
+    let b = str::as_bytes(s);
+    // "const "
+    return b[0 as u32] == 99 as u8 && b[1 as u32] == 111 as u8 && b[2 as u32] == 110 as u8
+        && b[3 as u32] == 115 as u8 && b[4 as u32] == 116 as u8 && b[5 as u32] == 32 as u8;
+}
+
+// The C declaration prefix for a type — width-variable c_* map to the target's
+// native int/short/long; fixed i32/u32 map to `long` for cross-compiler width
+// stability (C89 only guarantees int>=16, long>=32).  Own/const pointers erase
+// per DR-030 (ownership lives in the checker, not the C type).
+pub fn c_type_prefix(a: Allocator, ar: *Arena, t: *const Typ) -> str {
+    return match *t {
+        Typ::TCInt { is_signed } => { if is_signed { "int " } else { "unsigned int " } }
+        | Typ::TCShort { is_signed } => { if is_signed { "short " } else { "unsigned short " } }
+        | Typ::TCLong { is_signed } => { if is_signed { "long " } else { "unsigned long " } }
+        | Typ::TCChar => "char "
+        | Typ::TCSChar => "signed char "
+        | Typ::TCUChar => "unsigned char "
+        | Typ::TCVoid => "<cvoid?> "
+        | Typ::TInt(k) => {
+            let s = if k.is_signed { "" } else { "unsigned " };
+            let core = match k.width { IntWidth::W8 => "char" | IntWidth::W16 => "short" | IntWidth::W32 => "long" };
+            let signed_core = if k.is_signed { match k.width { IntWidth::W8 => "signed char " | _o => concat2(a, ar, core, " ") } } else { concat2(a, ar, core, " ") };
+            concat2(a, ar, s, signed_core)
+        }
+        | Typ::TBool => "int "
+        | Typ::TFloat(w) => { match w { FloatWidth::F32 => "float " | FloatWidth::F64 => "double " } }
+        | Typ::TString => "const char *"
+        | Typ::TTuple(ts) => concat3(a, ar, "struct ", tuple_struct_name(a, ar, &ts), " ")
+        | Typ::TStruct(_p) => concat3(a, ar, "struct ", mangle_typ(a, ar, t), " ")
+        | Typ::TEnum(_p) => concat3(a, ar, "struct ", mangle_typ(a, ar, t), " ")
+        | Typ::TExtStruct(n) => concat3(a, ar, "struct ", n, " ")
+        | Typ::TExtAlias(n) => concat2(a, ar, n, " ")
+        | Typ::TArray { elem: _e, size: _s } => concat3(a, ar, "struct ex_", mangle_typ(a, ar, t), " ")
+        | Typ::TPtr(inner) => c_ptr_prefix(a, ar, inner, false)
+        | Typ::TOwnPtr(inner) => c_ptr_prefix(a, ar, inner, false)
+        | Typ::TConstPtr(inner) => c_ptr_prefix(a, ar, inner, true)
+        | Typ::TFnPtr { params: _p, ret: _r } => concat2(a, ar, mangle_typ(a, ar, t), " ")
+        | _other => "<ctype?> "
+    };
+}
+
+// Shared pointer rendering.  `*c_void` -> `void *` (or `const void *`);
+// otherwise `<base> *`, with a single `const ` for const pointers (skipped
+// when the base already renders const, e.g. `str` = `const char *`).
+fn c_ptr_prefix(a: Allocator, ar: *Arena, inner: *const Typ, is_const: bool) -> str {
+    let is_void = match *inner { Typ::TCVoid => true | _o => false };
+    if is_void {
+        if is_const { return "const void *"; }
+        return "void *";
+    }
+    let inner_c = strip_trailing_space(ar, c_type_prefix(a, ar, inner));
+    if is_const {
+        if str_starts_with_const(inner_c) { return concat2(a, ar, inner_c, " *"); }
+        return concat3(a, ar, "const ", inner_c, " *");
+    }
+    return concat2(a, ar, inner_c, " *");
+}
+
+fn concat3(a: Allocator, ar: *Arena, x: str, y: str, z: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(x);
+    sb.push_str(y);
+    sb.push_str(z);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// `c_decl t name` = the full declarator, `<prefix>name`.
+pub fn c_decl(a: Allocator, ar: *Arena, t: *const Typ, name: str) -> str {
+    return concat2(a, ar, c_type_prefix(a, ar, t), name);
+}
