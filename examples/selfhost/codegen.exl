@@ -839,3 +839,345 @@ fn emit_binop_operand(a: Allocator, ar: *Arena, out: *StringBuilder, operand: *c
     if binop_operand_parens(operand, p, op, is_right) { out.push_str("("); gen_expr(a, ar, out, operand); out.push_str(")"); }
     else { gen_expr(a, ar, out, operand); }
 }
+
+// ===== Stage (d): statement / block / if emission =====
+//
+// emit_simple_stmt is the defer-body-leaf statement emitter (no return/defer);
+// emit_value_into_temp initialises an already-declared temp from a block-shaped
+// value (tuple/struct/new/enum-lit/if-expr/array/block) field-by-field.  The
+// function-body walker gen_block/gen_if (defer + return control flow) lands in
+// stage (f); TMatch lowering is stage (e) — stubbed here.
+
+fn cg_indent(a: Allocator, ar: *Arena, indent: str) -> str {
+    return concat2(a, ar, indent, "    ");
+}
+
+// `<indent><lhs> = <expr>;\n`
+fn asn(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, lhs: str, e: *const Texpr) {
+    out.push_str(indent); out.push_str(lhs); out.push_str(" = ");
+    gen_expr(a, ar, out, e);
+    out.push_str(";\n");
+}
+// `<base>._<i>`
+fn lhs_tup(a: Allocator, ar: *Arena, base: str, i: u32) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 24 as u32);
+    sb.push_str(base); sb.push_str("._"); sb.push_int(i as int);
+    return str::from_slice(ar, sb.as_slice());
+}
+fn lhs_dot(a: Allocator, ar: *Arena, base: str, field: str) -> str { return concat3(a, ar, base, ".", field); }
+fn lhs_arrow(a: Allocator, ar: *Arena, base: str, field: str) -> str { return concat3(a, ar, base, "->", field); }
+// `<base>.data.<variant>.<field>`
+fn lhs_variant(a: Allocator, ar: *Arena, base: str, sep: str, variant: str, field: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(base); sb.push_str(sep); sb.push_str("data."); sb.push_str(variant); sb.push_str("."); sb.push_str(field);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+fn struct_cname(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
+    return concat2(a, ar, "struct ", mangle_typ(a, ar, ty_node(ar, Typ::TStruct(copy_strs_cg(a, path)))));
+}
+fn enum_cname_str(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
+    return mangle_typ(a, ar, ty_node(ar, Typ::TEnum(copy_strs_cg(a, path))));
+}
+
+// `malloc(sizeof(<cname>))` or the DR-046 seam alloc `((<cname> *)(ae.alloc_fn)(ae.state, ((unsigned long)sizeof(<cname>))))`.
+fn emit_alloc_rhs(a: Allocator, ar: *Arena, out: *StringBuilder, cname: str, alloc: Option<*const Texpr>) {
+    match alloc {
+        Option::None => { out.push_str("malloc(sizeof("); out.push_str(cname); out.push_str("))"); }
+        | Option::Some(ae) => {
+            out.push_str("(("); out.push_str(cname); out.push_str(" *)(");
+            gen_expr(a, ar, out, ae);
+            out.push_str(".alloc_fn)(");
+            gen_expr(a, ar, out, ae);
+            out.push_str(".state, ((unsigned long)sizeof("); out.push_str(cname); out.push_str("))))");
+        }
+    }
+}
+
+fn emit_fields_into(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, temp: str, sep: str, fields: *const Vec<TexprField>) {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() {
+        let lhs = if str::eq(sep, "->") { lhs_arrow(a, ar, temp, sl[i].name) } else { lhs_dot(a, ar, temp, sl[i].name) };
+        asn(a, ar, out, indent, lhs, sl[i].value);
+        i = i + 1 as u32;
+    }
+}
+
+fn emit_variant_args(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, temp: str, sep: str, variant: str, args: *const Vec<TexprField>) {
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() {
+        asn(a, ar, out, indent, lhs_variant(a, ar, temp, sep, variant, sl[i].name), sl[i].value);
+        i = i + 1 as u32;
+    }
+}
+
+pub fn emit_value_into_temp(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, fillctr: *u32, temp: str, value: *const Texpr) {
+    match value.e {
+        TexprNode::TTupleLit(es) => {
+            let sl = es.as_slice();
+            let mut i = 0 as u32;
+            while i < es.length() { asn(a, ar, out, indent, lhs_tup(a, ar, temp, i), sl[i]); i = i + 1 as u32; }
+        }
+        | TexprNode::TStructLit { sname_path, fields, base } => {
+            match base { Option::Some(be) => asn(a, ar, out, indent, temp, be) | Option::None => {} }
+            emit_fields_into(a, ar, out, indent, temp, ".", &fields);
+        }
+        | TexprNode::TNew { sname_path, fields, base, alloc } => {
+            let cname = struct_cname(a, ar, &sname_path);
+            out.push_str(indent); out.push_str(temp); out.push_str(" = ");
+            emit_alloc_rhs(a, ar, out, cname, alloc);
+            out.push_str(";\n");
+            match base { Option::Some(be) => asn(a, ar, out, indent, concat2(a, ar, "*", temp), be) | Option::None => {} }
+            emit_fields_into(a, ar, out, indent, temp, "->", &fields);
+        }
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => {
+            let cn = enum_cname_str(a, ar, &ename_path);
+            out.push_str(indent); out.push_str(lhs_dot(a, ar, temp, "tag")); out.push_str(" = ");
+            out.push_str(cn); out.push_str("_"); out.push_str(variant); out.push_str(";\n");
+            emit_variant_args(a, ar, out, indent, temp, ".", variant, &args);
+        }
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => {
+            let necname = concat2(a, ar, "struct ", enum_cname_str(a, ar, &ename_path));
+            out.push_str(indent); out.push_str(temp); out.push_str(" = ");
+            emit_alloc_rhs(a, ar, out, necname, alloc);
+            out.push_str(";\n");
+            let necn = enum_cname_str(a, ar, &ename_path);
+            out.push_str(indent); out.push_str(lhs_arrow(a, ar, temp, "tag")); out.push_str(" = ");
+            out.push_str(necn); out.push_str("_"); out.push_str(variant); out.push_str(";\n");
+            emit_variant_args(a, ar, out, indent, temp, "->", variant, &args);
+        }
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => { out.push_str(indent); out.push_str("/*match@stage-e*/\n"); }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            let inner = cg_indent(a, ar, indent);
+            out.push_str(indent); out.push_str("if (");
+            gen_expr(a, ar, out, cond);
+            out.push_str(") {\n");
+            emit_value_into_temp(a, ar, out, inner, fillctr, temp, then_val);
+            out.push_str(indent); out.push_str("} else {\n");
+            emit_value_into_temp(a, ar, out, inner, fillctr, temp, else_val);
+            out.push_str(indent); out.push_str("}\n");
+        }
+        | TexprNode::TArrayLit(es) => {
+            let alsl = es.as_slice();
+            let mut ali = 0 as u32;
+            while ali < es.length() {
+                let mut lb = StringBuilder::with_capacity(a, 24 as u32);
+                lb.push_str(temp); lb.push_str(".data["); lb.push_int(ali as int); lb.push_str("]");
+                asn(a, ar, out, indent, str::from_slice(ar, lb.as_slice()), alsl[ali]);
+                ali = ali + 1 as u32;
+            }
+        }
+        | TexprNode::TArrayRepeat { value, count } => {
+            let k = *fillctr;
+            *fillctr = *fillctr + 1 as u32;
+            let iv = gensym_af(a, ar, k);
+            let arinner = cg_indent(a, ar, indent);
+            let arinner2 = cg_indent(a, ar, arinner);
+            out.push_str(indent); out.push_str("{\n");
+            out.push_str(arinner); out.push_str("int "); out.push_str(iv); out.push_str(";\n");
+            out.push_str(arinner); out.push_str("for ("); out.push_str(iv); out.push_str(" = 0; "); out.push_str(iv); out.push_str(" < ");
+            out.push_int(count); out.push_str("; "); out.push_str(iv); out.push_str(" = "); out.push_str(iv); out.push_str(" + 1) {\n");
+            let mut eb = StringBuilder::with_capacity(a, 32 as u32);
+            eb.push_str(temp); eb.push_str(".data["); eb.push_str(iv); eb.push_str("]");
+            emit_value_into_temp(a, ar, out, arinner2, fillctr, str::from_slice(ar, eb.as_slice()), value);
+            out.push_str(arinner); out.push_str("}\n");
+            out.push_str(indent); out.push_str("}\n");
+        }
+        | TexprNode::TBlock { stmts, trailing } => {
+            let bssl = stmts.as_slice();
+            let mut bi = 0 as u32;
+            while bi < stmts.length() { emit_simple_stmt(a, ar, out, indent, fillctr, &bssl[bi]); bi = bi + 1 as u32; }
+            match trailing { Option::Some(tr) => emit_value_into_temp(a, ar, out, indent, fillctr, temp, tr) | Option::None => {} }
+        }
+        | _other => asn(a, ar, out, indent, temp, value)
+    }
+}
+
+fn gensym_af(a: Allocator, ar: *Arena, k: u32) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 16 as u32);
+    sb.push_str("__af"); sb.push_int(k as int);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// Does any sub-expression read variable `name`?  Used for the L2/L3
+// loop-consume idiom (`head = new(a) Cons(i, head)`) where the allocation
+// overwrites the lvalue before the payload writes read it.
+fn texpr_has_var(te: *const Texpr, name: str) -> bool {
+    return match te.e {
+        TexprNode::TVar(n) => str::eq(n, name)
+        | TexprNode::TNeg(s) => texpr_has_var(s, name)
+        | TexprNode::TBitNot(s) => texpr_has_var(s, name)
+        | TexprNode::TNot(s) => texpr_has_var(s, name)
+        | TexprNode::TRef(s) => texpr_has_var(s, name)
+        | TexprNode::TDeref(s) => texpr_has_var(s, name)
+        | TexprNode::TCast(s, ann) => texpr_has_var(s, name)
+        | TexprNode::TBinOp(op, l, r) => texpr_has_var(l, name) || texpr_has_var(r, name)
+        | TexprNode::TFieldAccess { target, field } => texpr_has_var(target, name)
+        | TexprNode::TIndex { base, index } => texpr_has_var(base, name) || texpr_has_var(index, name)
+        | TexprNode::TCall { mangled, args } => args_have_var(&args, name)
+        | TexprNode::TBuiltinCall { name: bn, args } => args_have_var(&args, name)
+        | TexprNode::TIndirectCall { fn_expr, args } => texpr_has_var(fn_expr, name) || args_have_var(&args, name)
+        | TexprNode::TNew { sname_path, fields, base, alloc } => fields_have_var(&fields, name) || opt_has_var(base, name) || opt_has_var(alloc, name)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => fields_have_var(&args, name) || opt_has_var(alloc, name)
+        | TexprNode::TStructLit { sname_path, fields, base } => fields_have_var(&fields, name) || opt_has_var(base, name)
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => fields_have_var(&args, name)
+        | TexprNode::TTupleLit(es) => args_have_var(&es, name)
+        | TexprNode::TArrayLit(es) => args_have_var(&es, name)
+        | _other => false
+    };
+}
+fn args_have_var(args: *const Vec<*const Texpr>, name: str) -> bool {
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() { if texpr_has_var(sl[i], name) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn fields_have_var(fields: *const Vec<TexprField>, name: str) -> bool {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { if texpr_has_var(sl[i].value, name) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn opt_has_var(o: Option<*const Texpr>, name: str) -> bool {
+    return match o { Option::Some(e) => texpr_has_var(e, name) | Option::None => false };
+}
+
+fn last_seg_str(path: *const Vec<str>) -> str {
+    let n = path.length();
+    if n == 0 as u32 { return ""; }
+    return path.as_slice()[n - 1 as u32];
+}
+
+fn is_new_or_newenum(te: *const Texpr) -> bool {
+    return match te.e { TexprNode::TNew { sname_path, fields, base, alloc } => true | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => true | _o => false };
+}
+
+pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, fillctr: *u32, stmt: *const Tstmt) {
+    match *stmt {
+        Tstmt::TLet { name, value, pos } => emit_value_into_temp(a, ar, out, indent, fillctr, name, value)
+        | Tstmt::TAssign { path, value, pos } => emit_assign_stmt(a, ar, out, indent, fillctr, &path, value)
+        | Tstmt::TLetTuple { names, value, pos } => emit_let_tuple(a, ar, out, indent, fillctr, &names, value)
+        | Tstmt::TAssignField { target, field, value, pos } => {
+            let sep = if is_ptr_ty(target.ty) { "->" } else { "." };
+            out.push_str(indent);
+            if is_simple_field_target(&target.e) { gen_expr(a, ar, out, target); }
+            else { out.push_str("("); gen_expr(a, ar, out, target); out.push_str(")"); }
+            out.push_str(sep); out.push_str(field); out.push_str(" = ");
+            gen_expr(a, ar, out, value);
+            out.push_str(";\n");
+        }
+        | Tstmt::TAssignDeref { target, value, pos } => {
+            out.push_str(indent);
+            emit_unary(a, ar, out, "*", is_deref_simple(target.e), target);
+            out.push_str(" = ");
+            gen_expr(a, ar, out, value);
+            out.push_str(";\n");
+        }
+        | Tstmt::TAssignIndex { base, index, value, pos } => {
+            let mut lb = StringBuilder::with_capacity(a, 32 as u32);
+            gen_expr(a, ar, &lb, base);
+            match *base.ty { Typ::TPtr(_i) => lb.push_str("[") | Typ::TOwnPtr(_i) => lb.push_str("[") | _o => lb.push_str(".data[") }
+            gen_expr(a, ar, &lb, index);
+            lb.push_str("]");
+            emit_value_into_temp(a, ar, out, indent, fillctr, str::from_slice(ar, lb.as_slice()), value);
+        }
+        | Tstmt::TExprStmt(e) => {
+            match e.e {
+                TexprNode::TMatch { scrutinee, ename_path, arms } => { out.push_str(indent); out.push_str("/*match@stage-e*/\n"); }
+                | TexprNode::TBlock { stmts, trailing } => {
+                    let ssl = stmts.as_slice();
+                    let mut i = 0 as u32;
+                    while i < stmts.length() { emit_simple_stmt(a, ar, out, indent, fillctr, &ssl[i]); i = i + 1 as u32; }
+                }
+                | _o => { out.push_str(indent); gen_expr(a, ar, out, e); out.push_str(";\n"); }
+            }
+        }
+        | Tstmt::TIf { cond, then_body, else_body } => emit_if_stmt(a, ar, out, indent, fillctr, cond, &then_body, &else_body)
+        | Tstmt::TWhile { cond, body, post } => {
+            out.push_str(indent);
+            if post.length() == 0 as u32 {
+                out.push_str("while ("); gen_expr(a, ar, out, cond); out.push_str(") {\n");
+            } else {
+                out.push_str("for (; "); gen_expr(a, ar, out, cond); out.push_str("; ");
+                emit_for_post(a, ar, out, &post);
+                out.push_str(") {\n");
+            }
+            emit_stmts(a, ar, out, cg_indent(a, ar, indent), fillctr, &body);
+            out.push_str(indent); out.push_str("}\n");
+        }
+        | Tstmt::TBreak(p) => { out.push_str(indent); out.push_str("break;\n"); }
+        | Tstmt::TContinue(p) => { out.push_str(indent); out.push_str("continue;\n"); }
+        | _other => { out.push_str(indent); out.push_str("/*stmt?*/\n"); }
+    }
+}
+
+// Single-name assign; the L2/L3 read-by-value idiom (`head = new(a) Cons(i,
+// head)`) builds into a scratch and publishes last so the allocation does not
+// overwrite the lvalue before the payload writes read it.
+fn emit_assign_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, fillctr: *u32, path: *const Vec<str>, value: *const Texpr) {
+    let lhs = last_seg_str(path);
+    if is_new_or_newenum(value) && texpr_has_var(value, lhs) {
+        let inner = cg_indent(a, ar, indent);
+        out.push_str(indent); out.push_str("{\n");
+        out.push_str(inner); out.push_str(c_decl(a, ar, value.ty, "__newv")); out.push_str(";\n");
+        emit_value_into_temp(a, ar, out, inner, fillctr, "__newv", value);
+        out.push_str(inner); out.push_str(lhs); out.push_str(" = __newv;\n");
+        out.push_str(indent); out.push_str("}\n");
+        return;
+    }
+    emit_value_into_temp(a, ar, out, indent, fillctr, lhs, value);
+}
+
+// A statement-position `if` (defer-body leaf — no return/defer inside).
+fn emit_if_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, fillctr: *u32, cond: *const Texpr, then_body: *const Vec<Tstmt>, else_body: *const Vec<Tstmt>) {
+    out.push_str(indent); out.push_str("if ("); gen_expr(a, ar, out, cond); out.push_str(") {\n");
+    emit_stmts(a, ar, out, cg_indent(a, ar, indent), fillctr, then_body);
+    out.push_str(indent); out.push_str("}");
+    if else_body.length() == 0 as u32 { out.push_str("\n"); return; }
+    out.push_str(" else {\n");
+    emit_stmts(a, ar, out, cg_indent(a, ar, indent), fillctr, else_body);
+    out.push_str(indent); out.push_str("}\n");
+}
+
+fn is_deref_simple(n: TexprNode) -> bool {
+    return match n { TexprNode::TVar(_x) => true | TexprNode::TFieldAccess { target, field } => true | _o => false };
+}
+
+fn emit_stmts(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, fillctr: *u32, stmts: *const Vec<Tstmt>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { emit_simple_stmt(a, ar, out, indent, fillctr, &sl[i]); i = i + 1 as u32; }
+}
+
+// `for`-post rendered as the comma-joined third clause of `for (; cond; <here>)`.
+fn emit_for_post(a: Allocator, ar: *Arena, out: *StringBuilder, post: *const Vec<Tstmt>) {
+    let sl = post.as_slice();
+    let mut i = 0 as u32;
+    while i < post.length() {
+        if i > 0 as u32 { out.push_str(", "); }
+        match sl[i] {
+            Tstmt::TAssign { path, value, pos } => {
+                out.push_str(last_seg_str(&path)); out.push_str(" = "); gen_expr(a, ar, out, value);
+            }
+            | Tstmt::TExprStmt(e) => gen_expr(a, ar, out, e)
+            | _o => out.push_str("/*post?*/")
+        }
+        i = i + 1 as u32;
+    }
+}
+
+pub fn emit_let_tuple(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, fillctr: *u32, names: *const Vec<str>, value: *const Texpr) {
+    let inner = cg_indent(a, ar, indent);
+    out.push_str(indent); out.push_str("{\n");
+    out.push_str(inner); out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, value.ty))); out.push_str(" __t;\n");
+    emit_value_into_temp(a, ar, out, inner, fillctr, "__t", value);
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() {
+        out.push_str(inner); out.push_str(sl[i]); out.push_str(" = __t._"); out.push_int(i as int); out.push_str(";\n");
+        i = i + 1 as u32;
+    }
+    out.push_str(indent); out.push_str("}\n");
+}
