@@ -6866,8 +6866,12 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             // Resolve the return under the fn's own type parameters so a generic
             // fn's `Option<I::Item>` stays an assoc-projection marker (the real
             // result types come per-instance via elab_gen_call) instead of
-            // mangling a bogus `Option_I__Item` instance into the footer.
-            let fsc = scope_with_tparams(sc, &f.tparams);
+            // mangling a bogus `Option_I__Item` instance into the footer.  The
+            // module path must ride along too: a module fn's bare return type
+            // (`IdentPos` inside `mod parser`) resolves module-relative to
+            // `parser::IdentPos`, matching how the type is registered.
+            let msc = scope_with_modpath(sc, path);
+            let fsc = scope_with_tparams(&msc, &f.tparams);
             g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty),
                               is_const: false, is_top: is_top });
         }
