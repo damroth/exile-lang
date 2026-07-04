@@ -593,3 +593,249 @@ fn enum_concrete(e: *const EnumSig) -> bool {
     while i < e.evariants.length() { if !fields_concrete(&vs[i].vsfields) { return false; } i = i + 1 as u32; }
     return true;
 }
+
+// ===== Stage (c): gen_expr — expression -> C =====
+//
+// Block-shaped expressions (tuple/struct/new/enum-lit/match/if-expr/array
+// lit/repeat/block) never reach here: the typecheck lift pass hoisted them to
+// `__lift_N` temps.  TBuiltinCall dispatches to the builtin emitters (stage h);
+// TFloatLit's decimal-round-trip value format is deferred (same as the typed-IR
+// dump) — the self-host source is integer-only so no literal reaches codegen.
+
+fn prec(op: BinOp) -> int {
+    return match op {
+        BinOp::Mul => 10 | BinOp::Div => 10 | BinOp::Mod => 10
+        | BinOp::Add => 9 | BinOp::Sub => 9
+        | BinOp::Shl => 8 | BinOp::Shr => 8
+        | BinOp::Lt => 7 | BinOp::Gt => 7 | BinOp::LtEq => 7 | BinOp::GtEq => 7
+        | BinOp::EqEq => 6 | BinOp::NotEq => 6
+        | BinOp::BitAnd => 5
+        | BinOp::BitXor => 4
+        | BinOp::BitOr => 3
+        | BinOp::And => 2
+        | BinOp::Or => 1
+        | BinOp::Concat => 0
+    };
+}
+
+fn binop_str(op: BinOp) -> str {
+    return match op {
+        BinOp::Add => " + " | BinOp::Sub => " - " | BinOp::Mul => " * "
+        | BinOp::Div => " / " | BinOp::Mod => " % "
+        | BinOp::BitAnd => " & " | BinOp::BitOr => " | " | BinOp::BitXor => " ^ "
+        | BinOp::Shl => " << " | BinOp::Shr => " >> "
+        | BinOp::And => " && " | BinOp::Or => " || "
+        | BinOp::Lt => " < " | BinOp::Gt => " > "
+        | BinOp::LtEq => " <= " | BinOp::GtEq => " >= "
+        | BinOp::EqEq => " == " | BinOp::NotEq => " != "
+        | BinOp::Concat => " ?concat? "
+    };
+}
+
+// `a - (b - c)` / `/` / `%` / `<<` / `>>` change meaning without parens on a
+// same-precedence right operand; commutative ops are exempt.
+fn is_left_assoc(op: BinOp) -> bool {
+    return match op {
+        BinOp::Sub => true | BinOp::Div => true | BinOp::Mod => true
+        | BinOp::Shl => true | BinOp::Shr => true | _o => false
+    };
+}
+
+// `-Wparentheses` fires (Wall) on `&&` under `||` and on `+`/`-` under a
+// bitwise op even where C precedence is unambiguous — paren those children.
+fn nest_warn(op: BinOp, child: BinOp) -> bool {
+    let child_and = match child { BinOp::And => true | _o => false };
+    let child_addsub = match child { BinOp::Add => true | BinOp::Sub => true | _o => false };
+    return match op {
+        BinOp::Or => child_and
+        | BinOp::BitAnd => child_addsub
+        | BinOp::BitOr => child_addsub
+        | BinOp::BitXor => child_addsub
+        | _o => false
+    };
+}
+
+fn lvalue_like(n: *const TexprNode) -> bool {
+    return match *n { TexprNode::TVar(_x) => true | TexprNode::TFieldAccess { target, field } => true | TexprNode::TDeref(_s) => true | _o => false };
+}
+
+fn is_slice_path(path: *const Vec<str>) -> bool {
+    let n = path.length();
+    if n == 0 as u32 { return false; }
+    let last = path.as_slice()[n - 1 as u32];
+    return str::eq(last, "Slice") || str_starts_with_pfx(last, "Slice_");
+}
+fn is_vec_path(path: *const Vec<str>) -> bool {
+    let n = path.length();
+    if n == 0 as u32 { return false; }
+    let last = path.as_slice()[n - 1 as u32];
+    return str::eq(last, "Vec") || str_starts_with_pfx(last, "Vec_");
+}
+fn str_starts_with_pfx(s: str, pfx: str) -> bool {
+    let pn = str::length(pfx);
+    if str::length(s) < pn { return false; }
+    let sb = str::as_bytes(s);
+    let pb = str::as_bytes(pfx);
+    let mut i = 0 as u32;
+    while i < pn { if sb[i] != pb[i] { return false; } i = i + 1 as u32; }
+    return true;
+}
+
+fn escape_c_into(out: *StringBuilder, s: str) {
+    let b = str::as_bytes(s);
+    let n = str::length(s);
+    let mut i = 0 as u32;
+    while i < n {
+        let c = b[i];
+        if c == 10 as u8 { out.push_str("\\n"); }
+        else if c == 13 as u8 { out.push_str("\\r"); }
+        else if c == 9 as u8 { out.push_str("\\t"); }
+        else if c == 8 as u8 { out.push_str("\\b"); }
+        else if c == 0 as u8 { out.push_str("\\0"); }
+        else if c == 92 as u8 { out.push_str("\\\\"); }
+        else if c == 34 as u8 { out.push_str("\\\""); }
+        else { out.push_byte(c); }
+        i = i + 1 as u32;
+    }
+}
+
+// unary prefix; the operand is parenthesised unless `simple`.
+fn emit_unary(a: Allocator, ar: *Arena, out: *StringBuilder, prefix: str, simple: bool, sub: *const Texpr) {
+    out.push_str(prefix);
+    if simple { gen_expr(a, ar, out, sub); }
+    else { out.push_str("("); gen_expr(a, ar, out, sub); out.push_str(")"); }
+}
+
+fn is_atom_cast(n: *const TexprNode) -> bool {
+    return match *n {
+        TexprNode::TIntLit(_x) => true | TexprNode::TFloatLit(_f, _w) => true
+        | TexprNode::TBoolLit(_b) => true | TexprNode::TVar(_v) => true | _o => false
+    };
+}
+fn is_simple_field_target(n: *const TexprNode) -> bool {
+    return match *n {
+        TexprNode::TVar(_x) => true | TexprNode::TFieldAccess { target, field } => true
+        | TexprNode::TIndex { base, index } => true | TexprNode::TCall { mangled, args } => true
+        | TexprNode::TBuiltinCall { name, args } => true | TexprNode::TIndirectCall { fn_expr, args } => true
+        | _o => false
+    };
+}
+fn is_ptr_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TPtr(_i) => true | Typ::TOwnPtr(_i) => true | Typ::TConstPtr(_i) => true | _o => false };
+}
+
+fn emit_args(a: Allocator, ar: *Arena, out: *StringBuilder, args: *const Vec<*const Texpr>) {
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() {
+        if i > 0 as u32 { out.push_str(", "); }
+        gen_expr(a, ar, out, sl[i]);
+        i = i + 1 as u32;
+    }
+}
+
+pub fn gen_expr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texpr) {
+    match te.e {
+        TexprNode::TIntLit(n) => out.push_int(n)
+        | TexprNode::TFloatLit(f, w) => out.push_str("/*float?*/")
+        | TexprNode::TBoolLit(b) => { let s = if b { "1" } else { "0" }; out.push_str(s); }
+        | TexprNode::TNullLit => out.push_str("((void *)0)")
+        | TexprNode::TStringLit(s) => { out.push_str("\""); escape_c_into(out, s); out.push_str("\""); }
+        | TexprNode::TVar(name) => out.push_str(name)
+        | TexprNode::TFnRef(name) => out.push_str(name)
+        | TexprNode::TNeg(sub) => emit_unary(a, ar, out, "-", is_atom_int_var(sub.e), sub)
+        | TexprNode::TBitNot(sub) => emit_unary(a, ar, out, "~", is_atom_int_var(sub.e), sub)
+        | TexprNode::TNot(sub) => emit_unary(a, ar, out, "!", is_atom_bool_var(sub.e), sub)
+        | TexprNode::TRef(sub) => emit_unary(a, ar, out, "&", lvalue_like(&sub.e), sub)
+        | TexprNode::TDeref(sub) => emit_unary(a, ar, out, "*", lvalue_like(&sub.e), sub)
+        | TexprNode::TCast(sub, ann) => {
+            out.push_str("((");
+            out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, te.ty)));
+            out.push_str(")");
+            if is_atom_cast(&sub.e) { gen_expr(a, ar, out, sub); }
+            else { out.push_str("("); gen_expr(a, ar, out, sub); out.push_str(")"); }
+            out.push_str(")");
+        }
+        | TexprNode::TBinOp(op, l, r) => {
+            let p = prec(op);
+            emit_binop_operand(a, ar, out, l, p, op, false);
+            out.push_str(binop_str(op));
+            emit_binop_operand(a, ar, out, r, p, op, true);
+        }
+        | TexprNode::TBuiltinCall { name, args } => { out.push_str("/*builtin:"); out.push_str(name); out.push_str("*/"); }
+        | TexprNode::TCall { mangled, args } => {
+            out.push_str(mangled);
+            out.push_str("(");
+            emit_args(a, ar, out, &args);
+            out.push_str(")");
+        }
+        | TexprNode::TIndirectCall { fn_expr, args } => {
+            out.push_str("(");
+            gen_expr(a, ar, out, fn_expr);
+            out.push_str(")(");
+            emit_args(a, ar, out, &args);
+            out.push_str(")");
+        }
+        | TexprNode::TIndex { base, index } => {
+            let suffix = index_suffix(base.ty);
+            if is_index_simple_base(base.e) { gen_expr(a, ar, out, base); }
+            else { out.push_str("("); gen_expr(a, ar, out, base); out.push_str(")"); }
+            out.push_str(suffix);
+            gen_expr(a, ar, out, index);
+            out.push_str("]");
+        }
+        | TexprNode::TFieldAccess { target, field } => emit_field_access(a, ar, out, target, field)
+        | TexprNode::TSizeOf(t) => { out.push_str("sizeof("); out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, t))); out.push_str(")"); }
+        | _other => out.push_str("/*expr?*/")
+    }
+}
+
+fn is_atom_int_var(n: TexprNode) -> bool {
+    return match n { TexprNode::TIntLit(_x) => true | TexprNode::TVar(_v) => true | _o => false };
+}
+fn is_atom_bool_var(n: TexprNode) -> bool {
+    return match n { TexprNode::TBoolLit(_x) => true | TexprNode::TVar(_v) => true | _o => false };
+}
+fn is_index_simple_base(n: TexprNode) -> bool {
+    return match n { TexprNode::TVar(_x) => true | TexprNode::TFieldAccess { target, field } => true | TexprNode::TIndex { base, index } => true | _o => false };
+}
+
+fn index_suffix(bty: *const Typ) -> str {
+    return match *bty {
+        Typ::TStruct(path) => { if is_slice_path(&path) || is_vec_path(&path) { ".ptr[" } else { ".data[" } }
+        | Typ::TPtr(_i) => "["
+        | Typ::TOwnPtr(_i) => "["
+        | Typ::TConstPtr(_i) => "["
+        | _o => ".data["
+    };
+}
+
+// `(*p).field` -> `p->field` (C `.` binds tighter than leading `*`); a
+// pointer-typed target auto-derefs via `->`, else `.`; non-postfix targets
+// are parenthesised.
+fn emit_field_access(a: Allocator, ar: *Arena, out: *StringBuilder, target: *const Texpr, field: str) {
+    match target.e {
+        TexprNode::TDeref(inner) => { gen_expr(a, ar, out, inner); out.push_str("->"); out.push_str(field); }
+        | _o => {
+            let sep = if is_ptr_ty(target.ty) { "->" } else { "." };
+            if is_simple_field_target(&target.e) { gen_expr(a, ar, out, target); }
+            else { out.push_str("("); gen_expr(a, ar, out, target); out.push_str(")"); }
+            out.push_str(sep);
+            out.push_str(field);
+        }
+    }
+}
+
+fn binop_operand_parens(operand: *const Texpr, p: int, op: BinOp, is_right: bool) -> bool {
+    return match operand.e {
+        TexprNode::TBinOp(cop, cl, cr) => {
+            let cp = prec(cop);
+            cp < p || (is_right && cp == p && is_left_assoc(op)) || nest_warn(op, cop)
+        }
+        | _o => false
+    };
+}
+fn emit_binop_operand(a: Allocator, ar: *Arena, out: *StringBuilder, operand: *const Texpr, p: int, op: BinOp, is_right: bool) {
+    if binop_operand_parens(operand, p, op, is_right) { out.push_str("("); gen_expr(a, ar, out, operand); out.push_str(")"); }
+    else { gen_expr(a, ar, out, operand); }
+}
