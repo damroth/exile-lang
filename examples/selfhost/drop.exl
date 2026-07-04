@@ -825,8 +825,8 @@ fn walk_let(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloc
 }
 
 fn walk_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
-               st: *const Vec<DEntry>, path: *const Vec<str>, value: *const Texpr, _pos: Pos,
-               s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {  // pos used via stmt
+               st: *const Vec<DEntry>, path: *const Vec<str>, value: *const Texpr, pos: Pos,
+               s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
     // single-name assign to a tracked binding: L2 drop-old + L3 rebind
     if path.length() == 1 as u32 {
         let pl = path.as_slice();
@@ -837,8 +837,24 @@ fn walk_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
             let idx = entry_index(&st2, n);
             let es = st2.as_slice();
             let old_live = match es[idx as u32].den_status { DStatus::DLive => true | _o => false };
-            if old_live { drop_stmts_for_entry(a, ar, structs, enums, gs, &es[idx as u32], out); }
-            out.push(*s);
+            let mut drop_buf: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+            if old_live { drop_stmts_for_entry(a, ar, structs, enums, gs, &es[idx as u32], &drop_buf); }
+            // DR-044 sequencing (mirrors walk_return): the RHS may read the old
+            // binding by borrow (`x = f(&x)`), so with drops present and a
+            // non-bare-var RHS, evaluate it into a temp BEFORE the old value is
+            // dropped — otherwise `drop(x); x = f(&x)` reads freed storage.
+            if drop_buf.length() > 0 as u32 && assign_needs_temp(value) {
+                let tmp = mk_drop_old_tmp(a, ar, pos);
+                out.push(Tstmt::TLet { name: tmp, value: value, pos: pos });
+                push_all(&drop_buf, out);
+                let tv = d_te(ar, TexprNode::TVar(tmp), value.ty, value.pos);
+                let mut np: Vec<str> = Vec::with_capacity(a, 8 as u32);
+                np.push(n);
+                out.push(Tstmt::TAssign { path: np, value: tv, pos: pos });
+            } else {
+                push_all(&drop_buf, out);
+                out.push(*s);
+            }
             // rebind: n becomes Live with new provenance
             let mut st3: Vec<DEntry> = Vec::with_capacity(a, st2.length() + 1 as u32);
             let mut i = 0 as u32;
@@ -903,6 +919,12 @@ fn ret_needs_temp(value: Option<*const Texpr>) -> bool {
     };
 }
 
+// A bare-TVar RHS (`y = x`) needs no temp — it already consumed the old
+// binding, so drop_old is empty anyway; anything else may read the old value.
+fn assign_needs_temp(value: *const Texpr) -> bool {
+    return match value.e { TexprNode::TVar(_n) => false | _o => true };
+}
+
 fn push_all(src: *const Vec<Tstmt>, out: *Vec<Tstmt>) {
     let sl = src.as_slice();
     let mut i = 0 as u32;
@@ -913,6 +935,15 @@ fn push_all(src: *const Vec<Tstmt>, out: *Vec<Tstmt>) {
 fn mk_drop_tmp(a: Allocator, ar: *Arena, pos: Pos) -> str {
     let mut sb = StringBuilder::with_capacity(a, 24 as u32);
     sb.push_str("__drop_ret_");
+    sb.push_int(pos.line);
+    sb.push_str("_");
+    sb.push_int(pos.col);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+fn mk_drop_old_tmp(a: Allocator, ar: *Arena, pos: Pos) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 24 as u32);
+    sb.push_str("__drop_old_");
     sb.push_int(pos.line);
     sb.push_str("_");
     sb.push_int(pos.col);
