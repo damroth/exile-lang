@@ -46,9 +46,39 @@ fn mangle_name(a: Allocator, ar: *Arena, path: *const Vec<str>, name: str) -> st
     return str::from_slice(ar, sb.as_slice());
 }
 
+// Split any colon-joined path segment so `["pos::Pos"]` becomes `["pos","Pos"]`.
+// The port's typed-IR stores a module type path colon-joined in the struct/enum
+// index but the oracle mangles from the split form; normalising here keeps the
+// C symbol (`pos__Pos`, not `pos::Pos`) byte-identical.
+fn split_colons(a: Allocator, ar: *Arena, path: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = path.as_slice();
+    let mut i = 0 as u32;
+    while i < path.length() {
+        let seg = sl[i];
+        let bytes = str::as_bytes(seg);
+        let n = str::length(seg);
+        let mut start = 0 as u32;
+        let mut j = 0 as u32;
+        while j < n {
+            if j + 1 as u32 < n && bytes[j] == 58 as u8 && bytes[j + 1 as u32] == 58 as u8 {
+                if j > start { out.push(str::from_slice(ar, bytes[start..j])); }
+                j = j + 2 as u32;
+                start = j;
+            } else {
+                j = j + 1 as u32;
+            }
+        }
+        if n > start { out.push(str::from_slice(ar, bytes[start..n])); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
 // A named-type path `["a","b","Name"]` splits into the module prefix `["a","b"]`
 // and the final `Name`, then mangles as `a__b__Name`.
-fn mangle_named_path(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
+fn mangle_named_path(a: Allocator, ar: *Arena, path0: *const Vec<str>) -> str {
+    let path = split_colons(a, ar, path0);
     let n = path.length();
     if n == 0 as u32 { return "ex_"; }
     let sl = path.as_slice();
@@ -229,4 +259,337 @@ fn concat3(a: Allocator, ar: *Arena, x: str, y: str, z: str) -> str {
 // `c_decl t name` = the full declarator, `<prefix>name`.
 pub fn c_decl(a: Allocator, ar: *Arena, t: *const Typ, name: str) -> str {
     return concat2(a, ar, c_type_prefix(a, ar, t), name);
+}
+
+// ===== Stage (b): aggregate typedefs (struct / enum / tuple / array) =====
+//
+// Every C-level typedef the program needs, topologically ordered so each
+// precedes any other that embeds it BY VALUE (struct field / tuple element /
+// array element).  Ordering stops at pointers and fn-ptrs (a `*T` field needs
+// only a forward name, satisfied by C's incomplete-type rule).  Generic decls
+// (any field carrying a TVar) are skipped — the monomorphiser emits concrete
+// instances.
+
+// No TVar anywhere in the type — the codegen concreteness filter.
+fn is_concrete(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TVar(_n) => false
+        | Typ::TPtr(i) => is_concrete(i)
+        | Typ::TOwnPtr(i) => is_concrete(i)
+        | Typ::TConstPtr(i) => is_concrete(i)
+        | Typ::TTuple(ts) => all_concrete(&ts)
+        | Typ::TArray { elem, size } => is_concrete(elem)
+        | Typ::TFnPtr { params, ret } => all_concrete(&params) && match ret { Option::Some(rt) => is_concrete(rt) | Option::None => true }
+        | Typ::TStructApp { path, args } => all_concrete(&args)
+        | Typ::TEnumApp { path, args } => all_concrete(&args)
+        | Typ::TAssocProj { head, assoc } => is_concrete(head)
+        | _other => true
+    };
+}
+fn all_concrete(ts: *const Vec<*const Typ>) -> bool {
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < ts.length() { if !is_concrete(sl[i]) { return false; } i = i + 1 as u32; }
+    return true;
+}
+fn fields_concrete(fs: *const Vec<FieldTy>) -> bool {
+    let sl = fs.as_slice();
+    let mut i = 0 as u32;
+    while i < fs.length() { if !is_concrete(sl[i].ty) { return false; } i = i + 1 as u32; }
+    return true;
+}
+
+// `struct <cname> { <c_decl>; <c_decl>; };` on one line.
+fn emit_struct_decl(a: Allocator, ar: *Arena, out: *StringBuilder, cname: str, fields: *const Vec<FieldTy>) {
+    out.push_str("struct ");
+    out.push_str(cname);
+    out.push_str(" {");
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() {
+        out.push_str(" ");
+        out.push_str(c_decl(a, ar, sl[i].ty, sl[i].name));
+        out.push_str(";");
+        i = i + 1 as u32;
+    }
+    out.push_str(" };\n");
+}
+
+fn emit_named_struct(a: Allocator, ar: *Arena, out: *StringBuilder, s: *const StructSig) {
+    let cname = mangle_typ(a, ar, ty_node(ar, Typ::TStruct(copy_strs_cg(a, &s.sname_path))));
+    emit_struct_decl(a, ar, out, cname, &s.sfields_ty);
+}
+
+// Tuple wrapper `struct ex_tupN_... { T _0; T _1; };`.
+fn emit_tuple_struct(a: Allocator, ar: *Arena, out: *StringBuilder, ty: *const Typ) {
+    match *ty {
+        Typ::TTuple(ts) => {
+            let mut fields: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+            let sl = ts.as_slice();
+            let mut i = 0 as u32;
+            while i < ts.length() {
+                let mut nb = StringBuilder::with_capacity(a, 8 as u32);
+                nb.push_str("_");
+                nb.push_int(i as int);
+                fields.push(FieldTy { name: str::from_slice(ar, nb.as_slice()), ty: sl[i] });
+                i = i + 1 as u32;
+            }
+            emit_struct_decl(a, ar, out, tuple_struct_name(a, ar, &ts), &fields);
+        }
+        | _o => {}
+    }
+}
+
+// Array wrapper `struct ex_arrN_T { T data[N]; };`.
+fn emit_array_struct(a: Allocator, ar: *Arena, out: *StringBuilder, ty: *const Typ) {
+    match *ty {
+        Typ::TArray { elem, size } => {
+            out.push_str("struct ex_");
+            out.push_str(mangle_typ(a, ar, ty));
+            out.push_str(" { ");
+            out.push_str(c_decl(a, ar, elem, "data"));
+            out.push_str("[");
+            out.push_int(size);
+            out.push_str("]; };\n");
+        }
+        | _o => {}
+    }
+}
+
+// Tag enum + wrapper struct; a `union data` of per-variant inner structs when
+// any variant carries payload (unit variants stay out of the union — C89
+// forbids empty structs).
+fn emit_named_enum(a: Allocator, ar: *Arena, out: *StringBuilder, e: *const EnumSig) {
+    let cname = mangle_typ(a, ar, ty_node(ar, Typ::TEnum(copy_strs_cg(a, &e.ename_path))));
+    out.push_str("enum ");
+    out.push_str(cname);
+    out.push_str("_tag {");
+    let vs = e.evariants.as_slice();
+    let mut i = 0 as u32;
+    while i < e.evariants.length() {
+        if i > 0 as u32 { out.push_str(","); }
+        out.push_str(" ");
+        out.push_str(cname);
+        out.push_str("_");
+        out.push_str(vs[i].vsname);
+        i = i + 1 as u32;
+    }
+    out.push_str(" };\n");
+    out.push_str("struct ");
+    out.push_str(cname);
+    out.push_str(" { enum ");
+    out.push_str(cname);
+    out.push_str("_tag tag;");
+    let mut has_payload = false;
+    let mut j = 0 as u32;
+    while j < e.evariants.length() { if vs[j].vsfields.length() > 0 as u32 { has_payload = true; } j = j + 1 as u32; }
+    if has_payload {
+        out.push_str(" union {");
+        let mut k = 0 as u32;
+        while k < e.evariants.length() {
+            if vs[k].vsfields.length() > 0 as u32 {
+                out.push_str(" struct {");
+                let fsl = vs[k].vsfields.as_slice();
+                let mut f = 0 as u32;
+                while f < vs[k].vsfields.length() {
+                    out.push_str(" ");
+                    out.push_str(c_decl(a, ar, fsl[f].ty, fsl[f].name));
+                    out.push_str(";");
+                    f = f + 1 as u32;
+                }
+                out.push_str(" } ");
+                out.push_str(vs[k].vsname);
+                out.push_str(";");
+            }
+            k = k + 1 as u32;
+        }
+        out.push_str(" } data;");
+    }
+    out.push_str(" };\n");
+}
+
+fn copy_strs_cg(a: Allocator, src: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+
+// The unified aggregate view for topo-ordered emission.  Structs / enums are
+// referenced by pointer into the program's indices (avoids copying their
+// owned Vec fields); tuples / arrays carry their mangled name + shape.
+enum Agg {
+    AStruct(*const StructSig)
+    | AEnum(*const EnumSig)
+    | ATuple { aname: str, aty: *const Typ }
+    | AArray { aname: str, aty: *const Typ }
+}
+
+fn agg_cname(a: Allocator, ar: *Arena, agg: *const Agg) -> str {
+    return match *agg {
+        Agg::AStruct(s) => mangle_typ(a, ar, ty_node(ar, Typ::TStruct(copy_strs_cg(a, &s.sname_path))))
+        | Agg::AEnum(e) => mangle_typ(a, ar, ty_node(ar, Typ::TEnum(copy_strs_cg(a, &e.ename_path))))
+        | Agg::ATuple { aname, aty } => concat2(a, ar, "ex_", mangle_typ(a, ar, aty))
+        | Agg::AArray { aname, aty } => concat2(a, ar, "ex_", mangle_typ(a, ar, aty))
+    };
+}
+
+// C struct names this type embeds BY VALUE (stops at pointers / fn-ptrs).
+fn value_agg_keys(a: Allocator, ar: *Arena, t: *const Typ, out: *Vec<str>) {
+    match *t {
+        Typ::TStruct(_p) => out.push(mangle_typ(a, ar, t))
+        | Typ::TEnum(_p) => out.push(mangle_typ(a, ar, t))
+        | Typ::TTuple(ts) => {
+            out.push(concat2(a, ar, "ex_", mangle_typ(a, ar, t)));
+            let sl = ts.as_slice();
+            let mut i = 0 as u32;
+            while i < ts.length() { value_agg_keys(a, ar, sl[i], out); i = i + 1 as u32; }
+        }
+        | Typ::TArray { elem, size } => {
+            out.push(concat2(a, ar, "ex_", mangle_typ(a, ar, t)));
+            value_agg_keys(a, ar, elem, out);
+        }
+        | _o => {}
+    }
+}
+
+fn agg_deps(a: Allocator, ar: *Arena, agg: *const Agg) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    match *agg {
+        Agg::AStruct(s) => {
+            let ssl = s.sfields_ty.as_slice();
+            let mut si = 0 as u32;
+            while si < s.sfields_ty.length() { value_agg_keys(a, ar, ssl[si].ty, &out); si = si + 1 as u32; }
+        }
+        | Agg::AEnum(e) => {
+            let vs = e.evariants.as_slice();
+            let mut ei = 0 as u32;
+            while ei < e.evariants.length() {
+                let fsl = vs[ei].vsfields.as_slice();
+                let mut f = 0 as u32;
+                while f < vs[ei].vsfields.length() { value_agg_keys(a, ar, fsl[f].ty, &out); f = f + 1 as u32; }
+                ei = ei + 1 as u32;
+            }
+        }
+        | Agg::ATuple { aname, aty } => {
+            match *aty { Typ::TTuple(ts) => { let tsl = ts.as_slice(); let mut ti = 0 as u32; while ti < ts.length() { value_agg_keys(a, ar, tsl[ti], &out); ti = ti + 1 as u32; } } | _o => {} }
+        }
+        | Agg::AArray { aname, aty } => {
+            match *aty { Typ::TArray { elem, size } => value_agg_keys(a, ar, elem, &out) | _o => {} }
+        }
+    }
+    return out;
+}
+
+fn emit_agg(a: Allocator, ar: *Arena, out: *StringBuilder, agg: *const Agg) {
+    match *agg {
+        Agg::AStruct(s) => emit_named_struct(a, ar, out, s)
+        | Agg::AEnum(e) => emit_named_enum(a, ar, out, e)
+        | Agg::ATuple { aname, aty } => emit_tuple_struct(a, ar, out, aty)
+        | Agg::AArray { aname, aty } => emit_array_struct(a, ar, out, aty)
+    }
+}
+
+fn agg_index_by_key(a: Allocator, ar: *Arena, aggs: *const Vec<Agg>, key: str) -> int {
+    let sl = aggs.as_slice();
+    let mut i = 0 as u32;
+    while i < aggs.length() { if str::eq(agg_cname(a, ar, &sl[i]), key) { return i as int; } i = i + 1 as u32; }
+    return 0 - 1;
+}
+
+// DFS on the input list in source order, recursing into each entry's value
+// deps first (post-order emit); `done` dedups.  Deps not in the list are
+// primitives / externs / fn-ptrs and skip.
+fn visit_agg(a: Allocator, ar: *Arena, out: *StringBuilder, aggs: *const Vec<Agg>, idx: u32, done: *Vec<str>) {
+    let sl = aggs.as_slice();
+    let key = agg_cname(a, ar, &sl[idx]);
+    if str_in_cg(done, key) { return; }
+    done.push(key);
+    let deps = agg_deps(a, ar, &sl[idx]);
+    let dsl = deps.as_slice();
+    let mut i = 0 as u32;
+    while i < deps.length() {
+        let di = agg_index_by_key(a, ar, aggs, dsl[i]);
+        if di >= 0 as int { visit_agg(a, ar, out, aggs, di as u32, done); }
+        i = i + 1 as u32;
+    }
+    emit_agg(a, ar, out, &sl[idx]);
+}
+
+fn str_in_cg(v: *const Vec<str>, s: str) -> bool {
+    let sl = v.as_slice();
+    let mut i = 0 as u32;
+    while i < v.length() { if str::eq(sl[i], s) { return true; } i = i + 1 as u32; }
+    return false;
+}
+
+fn emit_aggs_topo(a: Allocator, ar: *Arena, out: *StringBuilder, aggs: *const Vec<Agg>) {
+    let mut done: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < aggs.length() { visit_agg(a, ar, out, aggs, i, &done); i = i + 1 as u32; }
+}
+
+// fn-ptr typedef: `typedef <r>(*<name>)(<ps>);`.
+fn emit_fnptr_typedef(a: Allocator, ar: *Arena, out: *StringBuilder, name: str, t: *const Typ) {
+    match *t {
+        Typ::TFnPtr { params, ret } => {
+            out.push_str("typedef ");
+            match ret { Option::Some(rt) => out.push_str(c_type_prefix(a, ar, rt)) | Option::None => out.push_str("void ") }
+            out.push_str("(*");
+            out.push_str(name);
+            out.push_str(")(");
+            if params.length() == 0 as u32 {
+                out.push_str("void");
+            } else {
+                let sl = params.as_slice();
+                let mut i = 0 as u32;
+                while i < params.length() {
+                    if i > 0 as u32 { out.push_str(", "); }
+                    out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, sl[i])));
+                    i = i + 1 as u32;
+                }
+            }
+            out.push_str(");\n");
+        }
+        | _o => {}
+    }
+}
+
+// Stage-(b) entry: the fn-ptr typedefs + topo-ordered aggregate typedefs.  The
+// concreteness filter drops generic skeletons; struct / enum indices seed the
+// aggregate list in source order (tuples then arrays after).
+pub fn emit_type_decls(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBuilder) {
+    let fpt = tp.tp_fnptr_types.as_slice();
+    let mut i = 0 as u32;
+    while i < tp.tp_fnptr_types.length() { emit_fnptr_typedef(a, ar, out, fpt[i].name, fpt[i].ty); i = i + 1 as u32; }
+
+    let mut aggs: Vec<Agg> = Vec::with_capacity(a, 8 as u32);
+    let ssl = tp.tp_struct_index.as_slice();
+    let mut si = 0 as u32;
+    while si < tp.tp_struct_index.length() {
+        if fields_concrete(&ssl[si].sfields_ty) { aggs.push(Agg::AStruct(&ssl[si])); }
+        si = si + 1 as u32;
+    }
+    let esl = tp.tp_enum_index.as_slice();
+    let mut ei = 0 as u32;
+    while ei < tp.tp_enum_index.length() {
+        if enum_concrete(&esl[ei]) { aggs.push(Agg::AEnum(&esl[ei])); }
+        ei = ei + 1 as u32;
+    }
+    let tsl = tp.tp_tuple_types.as_slice();
+    let mut ti = 0 as u32;
+    while ti < tp.tp_tuple_types.length() { aggs.push(Agg::ATuple { aname: tsl[ti].name, aty: tsl[ti].ty }); ti = ti + 1 as u32; }
+    let asl = tp.tp_array_types.as_slice();
+    let mut ai = 0 as u32;
+    while ai < tp.tp_array_types.length() { aggs.push(Agg::AArray { aname: asl[ai].name, aty: asl[ai].ty }); ai = ai + 1 as u32; }
+
+    emit_aggs_topo(a, ar, out, &aggs);
+}
+
+fn enum_concrete(e: *const EnumSig) -> bool {
+    let vs = e.evariants.as_slice();
+    let mut i = 0 as u32;
+    while i < e.evariants.length() { if !fields_concrete(&vs[i].vsfields) { return false; } i = i + 1 as u32; }
+    return true;
 }
