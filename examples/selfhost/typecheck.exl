@@ -7139,6 +7139,18 @@ fn collect_variants(a: Allocator, path: *const Vec<str>, etags: *const Vec<EnumV
         }
         i = i + 1 as u32;
     }
+    // Prelude enum instances (Option_i32, Result_x_y) carry no etags — their
+    // variants are fixed by the prelude shape, so synthesize them in tag order
+    // (the payload fields are already in mono_efields via
+    // register_prelude_enum_efields).
+    let last = path_last(path);
+    if str::eq(last, "Option") || str_starts_with(last, "Option_") {
+        if !variant_seen(&out, "None") { push_variant(a, &out, path, "None", efields, mono_efields); }
+        if !variant_seen(&out, "Some") { push_variant(a, &out, path, "Some", efields, mono_efields); }
+    } else if str::eq(last, "Result") || str_starts_with(last, "Result_") {
+        if !variant_seen(&out, "Ok") { push_variant(a, &out, path, "Ok", efields, mono_efields); }
+        if !variant_seen(&out, "Err") { push_variant(a, &out, path, "Err", efields, mono_efields); }
+    }
     return out;
 }
 
