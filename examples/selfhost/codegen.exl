@@ -762,7 +762,7 @@ pub fn gen_expr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texpr)
             out.push_str(binop_str(op));
             emit_binop_operand(a, ar, out, r, p, op, true);
         }
-        | TexprNode::TBuiltinCall { name, args } => { out.push_str("/*builtin:"); out.push_str(name); out.push_str("*/"); }
+        | TexprNode::TBuiltinCall { name, args } => emit_builtin(a, ar, out, name, &args)
         | TexprNode::TCall { mangled, args } => {
             out.push_str(mangled);
             out.push_str("(");
@@ -1787,4 +1787,93 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *S
         }
         i = i + 1 as u32;
     }
+}
+
+// ===== Stage (h): builtin call emitters =====
+//
+// Host (non-freestanding) lowering of the print/free/mem builtins.  print /
+// println of a scalar/string picks a printf format + optional widening cast
+// byte-exact with the oracle's emit_print_impl; a `@debug` aggregate dispatches
+// to its synthesized `<mangle>__debug` printer.  (Display-dispatched println is
+// lowered to a writer-pattern block in typed-IR before codegen; only the
+// primitive println reaches here.)  --freestanding routing is stage-g.
+
+struct Fmt { f_spec: str, f_cast: str }
+fn int_spec_k(k: IntKind) -> Fmt {
+    let w32 = match k.width { IntWidth::W32 => true | _o => false };
+    if w32 {
+        if k.is_signed { return Fmt { f_spec: "%ld", f_cast: "long" }; }
+        return Fmt { f_spec: "%lu", f_cast: "unsigned long" };
+    }
+    if k.is_signed { return Fmt { f_spec: "%d", f_cast: "" }; }
+    return Fmt { f_spec: "%u", f_cast: "" };
+}
+fn print_fmt(t: *const Typ) -> Fmt {
+    return match *t {
+        Typ::TBool => Fmt { f_spec: "%d", f_cast: "" }
+        | Typ::TString => Fmt { f_spec: "%s", f_cast: "" }
+        | Typ::TFloat(w) => match w { FloatWidth::F32 => Fmt { f_spec: "%g", f_cast: "double" } | FloatWidth::F64 => Fmt { f_spec: "%g", f_cast: "" } }
+        | Typ::TInt(k) => int_spec_k(k)
+        | Typ::TCInt { is_signed } => { if is_signed { Fmt { f_spec: "%d", f_cast: "" } } else { Fmt { f_spec: "%u", f_cast: "" } } }
+        | _o => Fmt { f_spec: "%d", f_cast: "" }
+    };
+}
+fn is_aggregate_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TStruct(_p) => true | Typ::TEnum(_p) => true | _o => false };
+}
+fn emit_print_impl(a: Allocator, ar: *Arena, out: *StringBuilder, newline: bool, args: *const Vec<*const Texpr>) {
+    let arg = args.as_slice()[0 as u32];
+    if is_aggregate_ty(arg.ty) {
+        out.push_str(mangle_typ(a, ar, arg.ty)); out.push_str("__debug(");
+        gen_expr(a, ar, out, arg);
+        out.push_str(")");
+        if newline { out.push_str("; printf(\"\\n\")"); }
+        return;
+    }
+    let fm = print_fmt(arg.ty);
+    out.push_str("printf(\""); out.push_str(fm.f_spec);
+    if newline { out.push_str("\\n"); }
+    out.push_str("\", ");
+    if str::eq(fm.f_cast, "") { gen_expr(a, ar, out, arg); }
+    else { out.push_str("("); out.push_str(fm.f_cast); out.push_str(")("); gen_expr(a, ar, out, arg); out.push_str(")"); }
+    out.push_str(")");
+}
+
+fn emit_free_builtin(a: Allocator, ar: *Arena, out: *StringBuilder, args: *const Vec<*const Texpr>) {
+    let sl = args.as_slice();
+    let alloc = sl[0 as u32];
+    let ptr = sl[1 as u32];
+    let pointee = match *ptr.ty { Typ::TOwnPtr(inner) => inner | _o => ptr.ty };
+    out.push_str("(");
+    gen_expr(a, ar, out, alloc); out.push_str(".free_fn)(");
+    gen_expr(a, ar, out, alloc); out.push_str(".state, ((void *)");
+    gen_expr(a, ar, out, ptr); out.push_str("), ((unsigned long)sizeof(");
+    out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, pointee)));
+    out.push_str(")))");
+}
+
+fn emit_builtin(a: Allocator, ar: *Arena, out: *StringBuilder, name: str, args: *const Vec<*const Texpr>) {
+    let sl = args.as_slice();
+    if str::eq(name, "print") { emit_print_impl(a, ar, out, false, args); return; }
+    if str::eq(name, "println") { emit_print_impl(a, ar, out, true, args); return; }
+    if str::eq(name, "free") { emit_free_builtin(a, ar, out, args); return; }
+    if str::eq(name, "ptr_offset") { out.push_str("("); gen_expr(a, ar, out, sl[0 as u32]); out.push_str(" + "); gen_expr(a, ar, out, sl[1 as u32]); out.push_str(")"); return; }
+    if str::eq(name, "cstr_len") { out.push_str("((unsigned long)strlen("); gen_expr(a, ar, out, sl[0 as u32]); out.push_str("))"); return; }
+    if str::eq(name, "mem_zero") { out.push_str("memset("); gen_expr(a, ar, out, sl[0 as u32]); out.push_str(", 0, "); gen_expr(a, ar, out, sl[1 as u32]); out.push_str(")"); return; }
+    if str::eq(name, "default_allocator") { out.push_str("exile_default_allocator()"); return; }
+    if str::eq(name, "type_name") {
+        // TODO: render_typ_user_facing for aggregates (needed at self-diff); typ_name covers scalars.
+        out.push_str("((void)sizeof("); gen_expr(a, ar, out, sl[0 as u32]); out.push_str("), \""); out.push_str(typ_name_cg(a, ar, sl[0 as u32].ty)); out.push_str("\")"); return;
+    }
+    out.push_str("/*builtin:"); out.push_str(name); out.push_str("*/");
+}
+// Minimal user-facing type name (scalars only; aggregates -> mangle as a
+// stand-in until render_typ_user_facing lands for the self-diff).
+fn typ_name_cg(a: Allocator, ar: *Arena, t: *const Typ) -> str {
+    return match *t {
+        Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
+        | Typ::TBool => "bool" | Typ::TString => "str"
+        | Typ::TFloat(w) => match w { FloatWidth::F32 => "f32" | FloatWidth::F64 => "f64" }
+        | _o => mangle_typ(a, ar, t)
+    };
 }

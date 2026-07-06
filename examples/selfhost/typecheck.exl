@@ -7312,9 +7312,24 @@ fn lets_stmts(stmts: *const Vec<Tstmt>, out: *Vec<FieldTy>) {
     let mut i = 0 as u32;
     while i < stmts.length() { lets_stmt(&sl[i], out); i = i + 1 as u32; }
 }
+fn lets_is_temp(name: str) -> bool {
+    let n = str::length(name);
+    if n < 2 as u32 { return false; }
+    let b = str::as_bytes(name);
+    return b[0 as u32] == 95 as u8 && b[1 as u32] == 95 as u8;
+}
 fn collect_body_lets(a: Allocator, body: *const Vec<Tstmt>) -> Vec<FieldTy> {
-    let mut out: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    lets_stmts(body, &out);
+    let mut raw: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    lets_stmts(body, &raw);
+    // Oracle order: user lets (collected during elaboration) precede the lift
+    // pass's `__lift_N` temps.  Reproduce by partitioning — user names first,
+    // then compiler `__`-prefixed temps, each in body (= creation) order.
+    let mut out: Vec<FieldTy> = Vec::with_capacity(a, raw.length() + 1 as u32);
+    let sl = raw.as_slice();
+    let mut i = 0 as u32;
+    while i < raw.length() { if !lets_is_temp(sl[i].name) { out.push(sl[i]); } i = i + 1 as u32; }
+    let mut j = 0 as u32;
+    while j < raw.length() { if lets_is_temp(sl[j].name) { out.push(sl[j]); } j = j + 1 as u32; }
     return out;
 }
 
