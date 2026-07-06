@@ -1735,20 +1735,35 @@ pub fn gen_block(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg:
     let mut my_defers: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
     let sl = stmts.as_slice();
     let mut i = 0 as u32;
+    let mut returned = false;
     while i < stmts.length() {
         let chain = flatten_defers(a, &my_defers, outer);
         set_defers(cg, &chain);
         match sl[i] {
             Tstmt::TDefer { body, pos } => my_defers.push(copy_tstmts(a, &body))
-            | Tstmt::TReturn { value, pos } => emit_return(a, ar, out, indent, cg, value, &chain)
+            | Tstmt::TReturn { value, pos } => {
+                // A return terminates the block: emit it (emit_return flushes
+                // the reversed defer chain).  The oracle discards any statements
+                // past the return and emits no fall-through cleanup.
+                emit_return(a, ar, out, indent, cg, value, &chain);
+                returned = true;
+            }
             | Tstmt::TLetTuple { names, value, pos } => emit_let_tuple(a, ar, out, indent, cg, &names, value)
             | Tstmt::TIf { cond, then_body, else_body } => { out.push_str(indent); gen_if(a, ar, out, indent, cg, outer, &my_defers, cond, &then_body, &else_body); }
             | Tstmt::TWhile { cond, body, post } => gen_while(a, ar, out, indent, cg, outer, &my_defers, cond, &body, &post)
             | _o => emit_simple_stmt(a, ar, out, indent, cg, &sl[i])
         }
+        if returned { break; }
         i = i + 1 as u32;
     }
-    emit_cleanups(a, ar, out, indent, cg, &my_defers);
+    if !returned {
+        // Fall-through cleanup: this block's own defers only, LIFO (reverse of
+        // registration order).  flatten_defers reverses my_defers; the empty
+        // outer keeps enclosing-scope defers for their own block-end.
+        let empty_outer: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
+        let endchain = flatten_defers(a, &my_defers, &empty_outer);
+        emit_cleanups(a, ar, out, indent, cg, &endchain);
+    }
 }
 
 fn gen_while(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, outer: *const Vec<Vec<Tstmt>>, my_defers: *const Vec<Vec<Tstmt>>, cond: *const Texpr, body: *const Vec<Tstmt>, post: *const Vec<Tstmt>) {
