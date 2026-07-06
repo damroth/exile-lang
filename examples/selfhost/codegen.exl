@@ -561,6 +561,7 @@ fn emit_fnptr_typedef(a: Allocator, ar: *Arena, out: *StringBuilder, name: str, 
 // aggregate list in source order (tuples then arrays after).
 pub fn emit_type_decls(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBuilder) {
     let fpt = tp.tp_fnptr_types.as_slice();
+    if tp.tp_fnptr_types.length() > 0 as u32 { out.push_str("\n"); }
     let mut i = 0 as u32;
     while i < tp.tp_fnptr_types.length() { emit_fnptr_typedef(a, ar, out, mangle_typ(a, ar, fpt[i].ty), fpt[i].ty); i = i + 1 as u32; }
 
@@ -584,6 +585,7 @@ pub fn emit_type_decls(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *Stri
     let mut ai = 0 as u32;
     while ai < tp.tp_array_types.length() { aggs.push(Agg::AArray { aname: asl[ai].name, aty: asl[ai].ty }); ai = ai + 1 as u32; }
 
+    if aggs.length() > 0 as u32 { out.push_str("\n"); }
     emit_aggs_topo(a, ar, out, &aggs);
 }
 
@@ -1038,8 +1040,44 @@ fn texpr_has_var(te: *const Texpr, name: str) -> bool {
         | TexprNode::TEnumLit { ename_path, variant, tag, args } => fields_have_var(&args, name)
         | TexprNode::TTupleLit(es) => args_have_var(&es, name)
         | TexprNode::TArrayLit(es) => args_have_var(&es, name)
+        | TexprNode::TArrayRepeat { value, count } => texpr_has_var(value, name)
+        | TexprNode::TIfExpr { cond, then_val, else_val } => texpr_has_var(cond, name) || texpr_has_var(then_val, name) || texpr_has_var(else_val, name)
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => texpr_has_var(scrutinee, name) || arms_have_var(&arms, name)
+        | TexprNode::TBlock { stmts, trailing } => stmts_have_var(&stmts, name) || (match trailing { Option::Some(t) => texpr_has_var(t, name) | Option::None => false })
         | _other => false
     };
+}
+fn arms_have_var(arms: *const Vec<TmatchArm>, name: str) -> bool {
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() {
+        if texpr_has_var(sl[i].tbody, name) { return true; }
+        let g = match sl[i].tguard { Option::Some(gg) => texpr_has_var(gg, name) | Option::None => false };
+        if g { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn stmt_has_var(s: *const Tstmt, name: str) -> bool {
+    return match *s {
+        Tstmt::TLet { name: ln, value, pos } => texpr_has_var(value, name)
+        | Tstmt::TLetTuple { names, value, pos } => texpr_has_var(value, name)
+        | Tstmt::TAssign { path, value, pos } => texpr_has_var(value, name)
+        | Tstmt::TExprStmt(e) => texpr_has_var(e, name)
+        | Tstmt::TReturn { value, pos } => match value { Option::Some(e) => texpr_has_var(e, name) | Option::None => false }
+        | Tstmt::TAssignField { target, field, value, pos } => texpr_has_var(target, name) || texpr_has_var(value, name)
+        | Tstmt::TAssignDeref { target, value, pos } => texpr_has_var(target, name) || texpr_has_var(value, name)
+        | Tstmt::TAssignIndex { base, index, value, pos } => texpr_has_var(base, name) || texpr_has_var(index, name) || texpr_has_var(value, name)
+        | Tstmt::TIf { cond, then_body, else_body } => texpr_has_var(cond, name) || stmts_have_var(&then_body, name) || stmts_have_var(&else_body, name)
+        | Tstmt::TWhile { cond, body, post } => texpr_has_var(cond, name) || stmts_have_var(&body, name) || stmts_have_var(&post, name)
+        | _o => false
+    };
+}
+fn stmts_have_var(stmts: *const Vec<Tstmt>, name: str) -> bool {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { if stmt_has_var(&sl[i], name) { return true; } i = i + 1 as u32; }
+    return false;
 }
 fn args_have_var(args: *const Vec<*const Texpr>, name: str) -> bool {
     let sl = args.as_slice();
@@ -1787,6 +1825,82 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *S
         }
         i = i + 1 as u32;
     }
+}
+
+// Stage (g): whole-file assembler.  Reproduces the oracle gen_program's
+// section order and blank-line choreography for the host (non-freestanding)
+// target: includes -> @c_include -> #define consts -> extern const/var ->
+// fnptr+aggregate typedefs -> non-main fwd-decls -> fn bodies.  Each optional
+// section is blank-prefixed when non-empty (oracle `emit_section`).  The
+// per-body `\n` in emit_all_functions reproduces the oracle's always-blank
+// after the fwd-decl section plus the blank-between-bodies.
+//
+// Workstream-B (prelude method bodies not yet elaborated into tp_funcs):
+// transitive DCE of dead prelude fns, @debug printer synthesis, and the
+// default_allocator helper's body-separation interaction are all no-ops today
+// because no prelude fn reaches tp_funcs; they land with prelude elaboration.
+pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBuilder) {
+    out.push_str("#include <stdio.h>\n");
+    if tp.tp_uses_heap { out.push_str("#include <stdlib.h>\n"); }
+    if tp.tp_uses_string_h { out.push_str("#include <string.h>\n"); }
+
+    let cin = tp.tp_c_includes.as_slice();
+    let mut ci = 0 as u32;
+    while ci < tp.tp_c_includes.length() {
+        out.push_str("#include \""); out.push_str(cin[ci]); out.push_str("\"\n");
+        ci = ci + 1 as u32;
+    }
+
+    if tp.tp_consts.length() > 0 as u32 {
+        out.push_str("\n");
+        let cs = tp.tp_consts.as_slice();
+        let mut di = 0 as u32;
+        while di < tp.tp_consts.length() {
+            out.push_str("#define "); out.push_str(cs[di].a); out.push_str(" "); out.push_str(cs[di].b); out.push_str("\n");
+            di = di + 1 as u32;
+        }
+    }
+    if tp.tp_ext_consts.length() > 0 as u32 {
+        out.push_str("\n");
+        let es = tp.tp_ext_consts.as_slice();
+        let mut eci = 0 as u32;
+        while eci < tp.tp_ext_consts.length() {
+            out.push_str("extern const "); out.push_str(c_decl(a, ar, es[eci].ty, es[eci].name)); out.push_str(";\n");
+            eci = eci + 1 as u32;
+        }
+    }
+    if tp.tp_ext_vars.length() > 0 as u32 {
+        out.push_str("\n");
+        let vs = tp.tp_ext_vars.as_slice();
+        let mut evi = 0 as u32;
+        while evi < tp.tp_ext_vars.length() {
+            out.push_str("extern "); out.push_str(c_decl(a, ar, vs[evi].ty, vs[evi].name)); out.push_str(";\n");
+            evi = evi + 1 as u32;
+        }
+    }
+
+    emit_type_decls(a, ar, tp, out);
+
+    let fsl = tp.tp_funcs.as_slice();
+    let mut nnm = 0 as u32;
+    let mut k = 0 as u32;
+    while k < tp.tp_funcs.length() {
+        if fn_concrete(&fsl[k]) && !str::eq(fsl[k].tf_func.name, "main") { nnm = nnm + 1 as u32; }
+        k = k + 1 as u32;
+    }
+    if nnm > 0 as u32 {
+        out.push_str("\n");
+        let mut j = 0 as u32;
+        while j < tp.tp_funcs.length() {
+            if fn_concrete(&fsl[j]) && !str::eq(fsl[j].tf_func.name, "main") {
+                emit_fn_sig(a, ar, out, &fsl[j]);
+                out.push_str(";\n");
+            }
+            j = j + 1 as u32;
+        }
+    }
+
+    emit_all_functions(a, ar, tp, out);
 }
 
 // ===== Stage (h): builtin call emitters =====
