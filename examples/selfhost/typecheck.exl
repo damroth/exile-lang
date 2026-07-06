@@ -348,16 +348,36 @@ fn enum_field_ty(efields: *const Vec<EnumFieldE>, path: *const Vec<str>, variant
     return none;
 }
 
+// Join-normalised path equality — the SINGLE comparison semantics for type
+// paths across the port.  A module type path is stored both split
+// (["ir","VariantSig"]) and colon-joined (["ir::VariantSig"]) depending on
+// source (name-collection vs type-resolution vs mono-mangling), so a same-count
+// scan is exact and a differing-count scan compares the "::"-joined byte
+// streams.  Aligning every path_eq site to this superset (matching move.exl's
+// mpath_eq and drop.exl's mpath_eq2) closes the recurring path-form family:
+// six distinct bugs traced to exact-vs-normalised mismatches, the worst
+// inter-pass (move vs drop) and soundness-class.  A join is injective on path
+// content, so this only ADDS the intended cross-form matches, never a false one.
 fn path_eq(a: *const Vec<str>, b: *const Vec<str>) -> bool {
     let n = a.length();
-    if n != b.length() { return false; }
-    let sa = a.as_slice();
-    let sb = b.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if !str::eq(sa[i], sb[i]) { return false; }
-        i = i + 1 as u32;
+    if n == b.length() {
+        let sa = a.as_slice();
+        let sb = b.as_slice();
+        let mut i = 0 as u32;
+        while i < n {
+            if !str::eq(sa[i], sb[i]) { return false; }
+            i = i + 1 as u32;
+        }
+        return true;
     }
+    let al = default_allocator();
+    let ja = tc_join_sb(al, a);
+    let jb = tc_join_sb(al, b);
+    if ja.length() != jb.length() { return false; }
+    let ba = ja.as_slice();
+    let bb = jb.as_slice();
+    let mut k = 0 as u32;
+    while k < ja.length() { if ba[k] != bb[k] { return false; } k = k + 1 as u32; }
     return true;
 }
 
@@ -7046,41 +7066,13 @@ fn collect_from(src: *const Vec<StructField>, path: *const Vec<str>, out: *Vec<F
     return;
 }
 
-// Split a colon-joined segment: `["parser::Deco"]` -> `["parser","Deco"]`.
-fn split_colon_segs(a: Allocator, ar: *Arena, path: *const Vec<str>) -> Vec<str> {
-    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let sl = path.as_slice();
-    let mut i = 0 as u32;
-    while i < path.length() {
-        let seg = sl[i];
-        let bytes = str::as_bytes(seg);
-        let n = str::length(seg);
-        let mut start = 0 as u32;
-        let mut j = 0 as u32;
-        while j < n {
-            if j + 1 as u32 < n && bytes[j] == 58 as u8 && bytes[j + 1 as u32] == 58 as u8 {
-                if j > start { out.push(str::from_slice(ar, bytes[start..j])); }
-                j = j + 2 as u32;
-                start = j;
-            } else { j = j + 1 as u32; }
-        }
-        if n > start { out.push(str::from_slice(ar, bytes[start..n])); }
-        i = i + 1 as u32;
-    }
-    return out;
-}
-
-fn collect_struct_fields(a: Allocator, ar: *Arena, path: *const Vec<str>,
+fn collect_struct_fields(a: Allocator, path: *const Vec<str>,
                          sinfo: *const Vec<StructField>, mono_fields: *const Vec<StructField>) -> Vec<FieldTy> {
     let mut out: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    // collect_from matches via the normalised path_eq, so a module struct's
+    // split-form field keys match its colon-joined sname_path directly.
     collect_from(sinfo, path, &out);
     collect_from(mono_fields, path, &out);
-    // A module struct's sig may carry a colon-joined sname_path while its
-    // fields are registered split; retry the sinfo table under the split form.
-    if out.length() == 0 as u32 {
-        let sp = split_colon_segs(a, ar, path);
-        if sp.length() != path.length() { collect_from(sinfo, &sp, &out); }
-    }
     return out;
 }
 
@@ -7095,7 +7087,7 @@ fn fill_one(a: Allocator, ar: *Arena, s: *StructSig, sinfo: *const Vec<StructFie
         s.sfields_ty = named_prelude_fields(a, ar, nm);
         return;
     }
-    s.sfields_ty = collect_struct_fields(a, ar, &s.sname_path, sinfo, mono_fields);
+    s.sfields_ty = collect_struct_fields(a, &s.sname_path, sinfo, mono_fields);
     return;
 }
 
