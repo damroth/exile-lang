@@ -81,6 +81,7 @@ fn main() {
                     drop_insert(a, &ar, &tprog);
                     let mut out = StringBuilder::with_capacity(a, 16384 as u32);
                     emit_type_decls(a, &ar, &tprog, &out);
+                    emit_all_functions(a, &ar, &tprog, &out);
                     flush(&out);
                 }
                 | Result::Err(e) => { report_error(a, e); }

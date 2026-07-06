@@ -3855,7 +3855,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     };
     let mut lift_ctr: u32 = 0 as u32;
     let body = lift_stmts(a, ar, &lift_ctr, &raw_body);
-    let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let lets = collect_body_lets(a, &body);
     let no_pos: Option<Pos> = Option::None;
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let tparams2: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -4758,7 +4758,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     // Lift block-shaped sub-expressions into `__lift_N` temps (per-fn).
     let mut lift_ctr: u32 = 0 as u32;
     let body = lift_stmts(a, ar, &lift_ctr, &raw_body);
-    let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let lets = collect_body_lets(a, &body);
     let no_pos: Option<Pos> = Option::None;
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     // `tf_func` only feeds the dump's flags + param names; rebuild it with
@@ -6798,7 +6798,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let raw_body = elab_body(a, ar, g, &scb, gensym, &env, ret, &vd.vbody);
     let mut lift_ctr: u32 = 0 as u32;
     let body = lift_stmts(a, ar, &lift_ctr, &raw_body);
-    let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let lets = collect_body_lets(a, &body);
     let no_pos: Option<Pos> = Option::None;
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let tparams2: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -7260,6 +7260,62 @@ fn prelude_enum_index(a: Allocator) -> Vec<EnumSig> {
     push_enum_name(a, &sigs, "Option");
     push_enum_name(a, &sigs, "Result");
     return sigs;
+}
+
+// ===== Hoisted let-declaration collection (codegen support) =====
+//
+// C89 requires locals declared at block top, so codegen emits every `let`
+// (user binding + lift temp) as a decl hoisted to the function top (tf_lets)
+// and the TLet itself becomes a plain assignment.  Collect them by walking the
+// elaborated body — TLet / TLetTuple names with their value types, deduped by
+// name, descending through nested blocks / if / while / match arm bodies.
+fn lets_push(out: *Vec<FieldTy>, name: str, ty: *const Typ) {
+    if !fieldty_has(out, name) { out.push(FieldTy { name: name, ty: ty }); }
+}
+fn lets_expr(te: *const Texpr, out: *Vec<FieldTy>) {
+    match te.e {
+        TexprNode::TBlock { stmts, trailing } => { lets_stmts(&stmts, out); match trailing { Option::Some(t) => lets_expr(t, out) | Option::None => {} } }
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => { let sl = arms.as_slice(); let mut i = 0 as u32; while i < arms.length() { lets_expr(sl[i].tbody, out); i = i + 1 as u32; } }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => { lets_expr(then_val, out); lets_expr(else_val, out); }
+        | _o => {}
+    }
+}
+fn lets_stmt(s: *const Tstmt, out: *Vec<FieldTy>) {
+    match *s {
+        Tstmt::TLet { name, value, pos } => { lets_push(out, name, value.ty); lets_expr(value, out); }
+        | Tstmt::TLetTuple { names, value, pos } => { lets_tuple(&names, value.ty, out); lets_expr(value, out); }
+        | Tstmt::TAssign { path, value, pos } => lets_expr(value, out)
+        | Tstmt::TAssignField { target, field, value, pos } => lets_expr(value, out)
+        | Tstmt::TAssignIndex { base, index, value, pos } => lets_expr(value, out)
+        | Tstmt::TAssignDeref { target, value, pos } => lets_expr(value, out)
+        | Tstmt::TExprStmt(e) => lets_expr(e, out)
+        | Tstmt::TReturn { value, pos } => match value { Option::Some(e) => lets_expr(e, out) | Option::None => {} }
+        | Tstmt::TIf { cond, then_body, else_body } => { lets_stmts(&then_body, out); lets_stmts(&else_body, out); }
+        | Tstmt::TWhile { cond, body, post } => { lets_stmts(&body, out); lets_stmts(&post, out); }
+        | Tstmt::TDefer { body, pos } => lets_stmts(&body, out)
+        | _o => {}
+    }
+}
+fn lets_tuple(names: *const Vec<str>, ty: *const Typ, out: *Vec<FieldTy>) {
+    match *ty {
+        Typ::TTuple(elems) => {
+            let nsl = names.as_slice();
+            let esl = elems.as_slice();
+            let mut i = 0 as u32;
+            while i < names.length() && i < elems.length() { lets_push(out, nsl[i], esl[i]); i = i + 1 as u32; }
+        }
+        | _o => {}
+    }
+}
+fn lets_stmts(stmts: *const Vec<Tstmt>, out: *Vec<FieldTy>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { lets_stmt(&sl[i], out); i = i + 1 as u32; }
+}
+fn collect_body_lets(a: Allocator, body: *const Vec<Tstmt>) -> Vec<FieldTy> {
+    let mut out: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    lets_stmts(body, &out);
+    return out;
 }
 
 // ===== Footer type collection (codegen support) =====
