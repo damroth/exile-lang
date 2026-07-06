@@ -79,15 +79,38 @@ pub fn set_consumed(a: Allocator, live: *const Vec<MoveBinding>, name: str, pos:
 
 // ---------- signature lookup ----------
 
-fn mpath_eq(a: *const Vec<str>, b: *const Vec<str>) -> bool {
-    if a.length() != b.length() { return false; }
-    let sa = a.as_slice();
-    let sb = b.as_slice();
+fn mp_join(al: Allocator, p: *const Vec<str>) -> StringBuilder {
+    let mut sb = StringBuilder::with_capacity(al, 32 as u32);
+    let sl = p.as_slice();
     let mut i = 0 as u32;
-    while i < a.length() {
-        if !str::eq(sa[i], sb[i]) { return false; }
-        i = i + 1 as u32;
+    while i < p.length() { if i > 0 as u32 { sb.push_str("::"); } sb.push_str(sl[i]); i = i + 1 as u32; }
+    return sb;
+}
+// Join-normalised path equality (mirrors drop.ml `mpath_eq2`): a module type
+// path is stored both split (["ir","VariantSig"]) and colon-joined
+// (["ir::VariantSig"]) depending on source, so compare the "::"-joined byte
+// streams when segment counts differ — otherwise is_affine_typ disagrees with
+// the drop pass's droppability lookup on a module struct (drop tracks it,
+// move never consumes it => spurious drop).
+fn mpath_eq(a: *const Vec<str>, b: *const Vec<str>) -> bool {
+    if a.length() == b.length() {
+        let sa = a.as_slice();
+        let sb = b.as_slice();
+        let mut i = 0 as u32;
+        while i < a.length() {
+            if !str::eq(sa[i], sb[i]) { return false; }
+            i = i + 1 as u32;
+        }
+        return true;
     }
+    let al = default_allocator();
+    let ja = mp_join(al, a);
+    let jb = mp_join(al, b);
+    if ja.length() != jb.length() { return false; }
+    let ba = ja.as_slice();
+    let bb = jb.as_slice();
+    let mut k = 0 as u32;
+    while k < ja.length() { if ba[k] != bb[k] { return false; } k = k + 1 as u32; }
     return true;
 }
 

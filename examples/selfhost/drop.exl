@@ -592,7 +592,7 @@ fn drop_stmts_for_entry(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>
 }
 
 fn struct_path_at(a: Allocator, structs: *const Vec<StructSig>, sidx: int) -> Vec<str> {
-    if sidx < 0 as int { return Vec::with_capacity(a, 1 as u32); }
+    if sidx < 0 as int { return Vec::with_capacity(a, 8 as u32); }
     let sl = structs.as_slice();
     let src = sl[sidx as u32].sname_path.as_slice();
     let mut v: Vec<str> = Vec::with_capacity(a, sl[sidx as u32].sname_path.length() + 1 as u32);
