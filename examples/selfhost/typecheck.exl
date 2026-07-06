@@ -5102,6 +5102,71 @@ fn collect_int_consts(items: *const Vec<Item>, out: *Vec<IntConst>) {
     }
 }
 
+// Compile-time constant folding for `#define` emission (tp_consts).  Each
+// `const NAME = <expr>` folds to an integer (bool -> 0/1); references to
+// earlier consts resolve through the running value table (source order, which
+// the common `const A = ...; const B = A * 2;` idiom follows).  Non-integer
+// forms fall through to 0 — visibly off rather than crashing, matching
+// array_size_of.  Ops mirror the C the value would compile to.
+fn eval_binop_c(op: BinOp, l: int, r: int) -> int {
+    return match op {
+        BinOp::Add => l + r | BinOp::Sub => l - r | BinOp::Mul => l * r
+        | BinOp::Div => if r == 0 as int { 0 as int } else { l / r }
+        | BinOp::Mod => if r == 0 as int { 0 as int } else { l % r }
+        | BinOp::BitAnd => l & r | BinOp::BitOr => { l | r } | BinOp::BitXor => l ^ r
+        | BinOp::Shl => l << r | BinOp::Shr => l >> r
+        | BinOp::And => if l != 0 as int && r != 0 as int { 1 as int } else { 0 as int }
+        | BinOp::Or => if l != 0 as int || r != 0 as int { 1 as int } else { 0 as int }
+        | BinOp::Lt => if l < r { 1 as int } else { 0 as int }
+        | BinOp::Gt => if l > r { 1 as int } else { 0 as int }
+        | BinOp::LtEq => if l <= r { 1 as int } else { 0 as int }
+        | BinOp::GtEq => if l >= r { 1 as int } else { 0 as int }
+        | BinOp::EqEq => if l == r { 1 as int } else { 0 as int }
+        | BinOp::NotEq => if l != r { 1 as int } else { 0 as int }
+        | _o => 0 as int
+    };
+}
+fn eval_const_c(e: *const Expr, table: *const Vec<IntConst>) -> int {
+    return match *e {
+        Expr::IntLit(n, _q) => n
+        | Expr::BoolLit(b, _q) => if b { 1 as int } else { 0 as int }
+        | Expr::Var(nm, _q) => iconst_lookup(table, nm)
+        | Expr::Neg(x, _q) => 0 as int - eval_const_c(x, table)
+        | Expr::BitNot(x, _q) => 0 as int - eval_const_c(x, table) - 1 as int
+        | Expr::Not(x, _q) => if eval_const_c(x, table) == 0 as int { 1 as int } else { 0 as int }
+        | Expr::BinOp(op, l, r, _q) => eval_binop_c(op, eval_const_c(l, table), eval_const_c(r, table))
+        | _o => 0 as int
+    };
+}
+fn int_to_str_c(a: Allocator, ar: *Arena, n: int) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 16 as u32);
+    sb.push_int(n);
+    return str::from_slice(ar, sb.as_slice());
+}
+// Fold every user `const` (recursing into modules, extending the mangle path)
+// into a `(mangled-name, literal)` pair for `#define` emission, threading the
+// running value table so later consts can reference earlier ones.
+fn collect_tp_consts(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: *const Vec<str>, table: *Vec<IntConst>, out: *Vec<StrPair>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        match sl[i] {
+            Item::Const(c) => {
+                let v = eval_const_c(c.kvalue, table);
+                out.push(StrPair { a: mangle_path(a, ar, path, c.kname), b: int_to_str_c(a, ar, v) });
+                table.push(IntConst { ic_name: c.kname, ic_val: v });
+            }
+            | Item::Module(md) => {
+                let mut sub: Vec<str> = copy_strs(a, path);
+                sub.push(md.mname);
+                collect_tp_consts(a, ar, &md.mitems, &sub, table, out);
+            }
+            | _o => {}
+        }
+        i = i + 1 as u32;
+    }
+}
+
 // Build the struct field-layout index: a flat list of (owning struct path,
 // field name, resolved field type).  Field types resolve through a
 // name-scope since they may reference other structs / enums.
@@ -7910,7 +7975,10 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let cincludes: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let econsts: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let evars: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    let consts: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
+    let mut consts: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
+    let mut const_vals: Vec<IntConst> = Vec::with_capacity(a, 8 as u32);
+    let empty_cpath: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_tp_consts(a, ar, items, &empty_cpath, &const_vals, &consts);
 
     // Footer type collection (codegen support): one post-pass over the checked
     // program gathering distinct tuple / fn-ptr / array shapes + include flags.
