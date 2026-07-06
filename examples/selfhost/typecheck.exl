@@ -7228,6 +7228,350 @@ fn prelude_enum_index(a: Allocator) -> Vec<EnumSig> {
     return sigs;
 }
 
+// ===== Footer type collection (codegen support) =====
+//
+// Codegen needs a typedef for every distinct tuple / fn-ptr / fixed-array
+// shape the program uses, plus include-gating flags.  Mirror the oracle's
+// `collect_tuple_types_of`: one post-pass walk over every tfn (resolved
+// signature + lets + body expression types) and struct/enum field types,
+// gathering unique shapes (dedup by structural equality; array-of-array is
+// post-order so the inner shape's typedef precedes it).  Generic skeletons
+// (any TVar-carrying shape) are skipped — only their mono instances reach
+// codegen.  Port-note: this runs WITHOUT DCE (that is codegen stage g), so a
+// dead prelude method's shapes over-collect vs the oracle — a known diff until
+// DCE lands; it never drops a shape the program actually uses.
+
+// Complete TVar check (the checker's `ty_has_tvar` stops at TTuple/TArray/TFnPtr).
+fn ftr_has_tvar(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TVar(_n) => true
+        | Typ::TAssocProj { head, assoc } => ftr_has_tvar(head)
+        | Typ::TPtr(i) => ftr_has_tvar(i)
+        | Typ::TOwnPtr(i) => ftr_has_tvar(i)
+        | Typ::TConstPtr(i) => ftr_has_tvar(i)
+        | Typ::TArray { elem, size } => ftr_has_tvar(elem)
+        | Typ::TTuple(ts) => tys_have_tvar(&ts)
+        | Typ::TFnPtr { params, ret } => tys_have_tvar(&params) || opt_ty_has_tvar(ret)
+        | Typ::TStructApp { path, args } => tys_have_tvar(&args)
+        | Typ::TEnumApp { path, args } => tys_have_tvar(&args)
+        | _e => false
+    };
+}
+fn opt_ty_has_tvar(o: Option<*const Typ>) -> bool {
+    return match o { Option::Some(t) => ftr_has_tvar(t) | Option::None => false };
+}
+
+// Structural type equality — the footer dedup key (avoids depending on
+// codegen's mangle_typ).
+fn typ_eq(x: *const Typ, y: *const Typ) -> bool {
+    return match *x {
+        Typ::TInt(kx) => match *y { Typ::TInt(ky) => (kx.is_signed == ky.is_signed) && intwidth_eq(kx.width, ky.width) | _e => false }
+        | Typ::TBool => match *y { Typ::TBool => true | _e => false }
+        | Typ::TString => match *y { Typ::TString => true | _e => false }
+        | Typ::TFloat(wx) => match *y { Typ::TFloat(wy) => floatwidth_eq(wx, wy) | _e => false }
+        | Typ::TCInt { is_signed } => match *y { Typ::TCInt { is_signed: s2 } => is_signed == s2 | _e => false }
+        | Typ::TCShort { is_signed } => match *y { Typ::TCShort { is_signed: s2 } => is_signed == s2 | _e => false }
+        | Typ::TCLong { is_signed } => match *y { Typ::TCLong { is_signed: s2 } => is_signed == s2 | _e => false }
+        | Typ::TCChar => match *y { Typ::TCChar => true | _e => false }
+        | Typ::TCSChar => match *y { Typ::TCSChar => true | _e => false }
+        | Typ::TCUChar => match *y { Typ::TCUChar => true | _e => false }
+        | Typ::TCVoid => match *y { Typ::TCVoid => true | _e => false }
+        | Typ::TStruct(px) => match *y { Typ::TStruct(py) => path_eq(&px, &py) | _e => false }
+        | Typ::TEnum(px) => match *y { Typ::TEnum(py) => path_eq(&px, &py) | _e => false }
+        | Typ::TExtStruct(nx) => match *y { Typ::TExtStruct(ny) => str::eq(nx, ny) | _e => false }
+        | Typ::TExtAlias(nx) => match *y { Typ::TExtAlias(ny) => str::eq(nx, ny) | _e => false }
+        | Typ::TPtr(ix) => match *y { Typ::TPtr(iy) => typ_eq(ix, iy) | _e => false }
+        | Typ::TOwnPtr(ix) => match *y { Typ::TOwnPtr(iy) => typ_eq(ix, iy) | _e => false }
+        | Typ::TConstPtr(ix) => match *y { Typ::TConstPtr(iy) => typ_eq(ix, iy) | _e => false }
+        | Typ::TTuple(tx) => match *y { Typ::TTuple(ty2) => tys_eq(&tx, &ty2) | _e => false }
+        | Typ::TArray { elem, size } => match *y { Typ::TArray { elem: e2, size: s2 } => (size == s2) && typ_eq(elem, e2) | _e => false }
+        | Typ::TFnPtr { params, ret } => match *y { Typ::TFnPtr { params: p2, ret: r2 } => tys_eq(&params, &p2) && opt_typ_eq(ret, r2) | _e => false }
+        | _e => false
+    };
+}
+fn opt_typ_eq(x: Option<*const Typ>, y: Option<*const Typ>) -> bool {
+    return match x {
+        Option::Some(xt) => match y { Option::Some(yt) => typ_eq(xt, yt) | Option::None => false }
+        | Option::None => match y { Option::Some(yt2) => false | Option::None => true }
+    };
+}
+fn tys_eq(xs: *const Vec<*const Typ>, ys: *const Vec<*const Typ>) -> bool {
+    if xs.length() != ys.length() { return false; }
+    let sx = xs.as_slice();
+    let sy = ys.as_slice();
+    let mut i = 0 as u32;
+    while i < xs.length() { if !typ_eq(sx[i], sy[i]) { return false; } i = i + 1 as u32; }
+    return true;
+}
+fn intwidth_eq(x: IntWidth, y: IntWidth) -> bool {
+    return match x {
+        IntWidth::W8 => match y { IntWidth::W8 => true | _e => false }
+        | IntWidth::W16 => match y { IntWidth::W16 => true | _e => false }
+        | IntWidth::W32 => match y { IntWidth::W32 => true | _e => false }
+    };
+}
+fn floatwidth_eq(x: FloatWidth, y: FloatWidth) -> bool {
+    return match x {
+        FloatWidth::F32 => match y { FloatWidth::F32 => true | _e => false }
+        | FloatWidth::F64 => match y { FloatWidth::F64 => true | _e => false }
+    };
+}
+
+fn ty_in(acc: *const Vec<*const Typ>, t: *const Typ) -> bool {
+    let sl = acc.as_slice();
+    let mut i = 0 as u32;
+    while i < acc.length() { if typ_eq(sl[i], t) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn add_uniq_ty(acc: *Vec<*const Typ>, t: *const Typ) {
+    if !ftr_has_tvar(t) && !ty_in(acc, t) { acc.push(t); }
+}
+
+struct FtrAcc {
+    tup: Vec<*const Typ>,
+    fnp: Vec<*const Typ>,
+    arr: Vec<*const Typ>,
+}
+
+// Collect tuple / fn-ptr / array shapes reachable by value from `t`.  Array is
+// post-order (inner shape's typedef must precede the array-of-array wrapper).
+fn walk_typ_collect(t: *const Typ, acc: *FtrAcc) {
+    match *t {
+        Typ::TTuple(ts) => {
+            add_uniq_ty(&acc.tup, t);
+            let tsl = ts.as_slice();
+            let mut ti = 0 as u32;
+            while ti < ts.length() { walk_typ_collect(tsl[ti], acc); ti = ti + 1 as u32; }
+        }
+        | Typ::TFnPtr { params, ret } => {
+            add_uniq_ty(&acc.fnp, t);
+            let psl = params.as_slice();
+            let mut pi = 0 as u32;
+            while pi < params.length() { walk_typ_collect(psl[pi], acc); pi = pi + 1 as u32; }
+            match ret { Option::Some(rt) => walk_typ_collect(rt, acc) | Option::None => {} }
+        }
+        | Typ::TArray { elem, size } => {
+            walk_typ_collect(elem, acc);
+            add_uniq_ty(&acc.arr, t);
+        }
+        | Typ::TPtr(pp) => walk_typ_collect(pp, acc)
+        | Typ::TOwnPtr(pp) => walk_typ_collect(pp, acc)
+        | Typ::TConstPtr(pp) => walk_typ_collect(pp, acc)
+        | _e => {}
+    }
+}
+
+fn collect_texpr(te: *const Texpr, acc: *FtrAcc) {
+    walk_typ_collect(te.ty, acc);
+    match te.e {
+        TexprNode::TSizeOf(t) => walk_typ_collect(t, acc)
+        | TexprNode::TNeg(s) => collect_texpr(s, acc)
+        | TexprNode::TBitNot(s) => collect_texpr(s, acc)
+        | TexprNode::TNot(s) => collect_texpr(s, acc)
+        | TexprNode::TRef(s) => collect_texpr(s, acc)
+        | TexprNode::TDeref(s) => collect_texpr(s, acc)
+        | TexprNode::TCast(s, ann) => collect_texpr(s, acc)
+        | TexprNode::TBinOp(op, l, r) => { collect_texpr(l, acc); collect_texpr(r, acc); }
+        | TexprNode::TCall { mangled, args } => collect_args(&args, acc)
+        | TexprNode::TBuiltinCall { name, args } => collect_args(&args, acc)
+        | TexprNode::TIndirectCall { fn_expr, args } => { collect_texpr(fn_expr, acc); collect_args(&args, acc); }
+        | TexprNode::TTupleLit(es) => collect_args(&es, acc)
+        | TexprNode::TArrayLit(es) => collect_args(&es, acc)
+        | TexprNode::TArrayRepeat { value, count } => collect_texpr(value, acc)
+        | TexprNode::TStructLit { sname_path, fields, base } => { collect_fields(&fields, acc); collect_opt(base, acc); }
+        | TexprNode::TNew { sname_path, fields, base, alloc } => { collect_fields(&fields, acc); collect_opt(base, acc); collect_opt(alloc, acc); }
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => collect_fields(&args, acc)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => { collect_fields(&args, acc); collect_opt(alloc, acc); }
+        | TexprNode::TFieldAccess { target, field } => collect_texpr(target, acc)
+        | TexprNode::TIndex { base, index } => { collect_texpr(base, acc); collect_texpr(index, acc); }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => { collect_texpr(cond, acc); collect_texpr(then_val, acc); collect_texpr(else_val, acc); }
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => { collect_texpr(scrutinee, acc); collect_arms(&arms, acc); }
+        | TexprNode::TBlock { stmts, trailing } => { collect_stmts(&stmts, acc); collect_opt(trailing, acc); }
+        | _leaf => {}
+    }
+}
+fn collect_args(args: *const Vec<*const Texpr>, acc: *FtrAcc) {
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() { collect_texpr(sl[i], acc); i = i + 1 as u32; }
+}
+fn collect_fields(fields: *const Vec<TexprField>, acc: *FtrAcc) {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { collect_texpr(sl[i].value, acc); i = i + 1 as u32; }
+}
+fn collect_opt(o: Option<*const Texpr>, acc: *FtrAcc) {
+    match o { Option::Some(e) => collect_texpr(e, acc) | Option::None => {} }
+}
+fn collect_arms(arms: *const Vec<TmatchArm>, acc: *FtrAcc) {
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() {
+        match sl[i].tguard { Option::Some(g) => collect_texpr(g, acc) | Option::None => {} }
+        collect_texpr(sl[i].tbody, acc);
+        i = i + 1 as u32;
+    }
+}
+fn collect_stmts(stmts: *const Vec<Tstmt>, acc: *FtrAcc) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { collect_tstmt(&sl[i], acc); i = i + 1 as u32; }
+}
+fn collect_tstmt(s: *const Tstmt, acc: *FtrAcc) {
+    match *s {
+        Tstmt::TLet { name, value, pos } => collect_texpr(value, acc)
+        | Tstmt::TLetTuple { names, value, pos } => collect_texpr(value, acc)
+        | Tstmt::TAssign { path, value, pos } => collect_texpr(value, acc)
+        | Tstmt::TAssignField { target, field, value, pos } => { collect_texpr(target, acc); collect_texpr(value, acc); }
+        | Tstmt::TAssignIndex { base, index, value, pos } => { collect_texpr(base, acc); collect_texpr(index, acc); collect_texpr(value, acc); }
+        | Tstmt::TAssignDeref { target, value, pos } => { collect_texpr(target, acc); collect_texpr(value, acc); }
+        | Tstmt::TReturn { value, pos } => match value { Option::Some(e) => collect_texpr(e, acc) | Option::None => {} }
+        | Tstmt::TExprStmt(e) => collect_texpr(e, acc)
+        | Tstmt::TIf { cond, then_body, else_body } => { collect_texpr(cond, acc); collect_stmts(&then_body, acc); collect_stmts(&else_body, acc); }
+        | Tstmt::TWhile { cond, body, post } => { collect_texpr(cond, acc); collect_stmts(&body, acc); collect_stmts(&post, acc); }
+        | Tstmt::TDefer { body, pos } => collect_stmts(&body, acc)
+        | _leaf => {}
+    }
+}
+
+fn collect_footer_types(a: Allocator, funcs: *const Vec<Tfunc>, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>) -> FtrAcc {
+    let tv: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let fv: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let av: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let mut acc = FtrAcc { tup: tv, fnp: fv, arr: av };
+    let fsl = funcs.as_slice();
+    let mut fi = 0 as u32;
+    while fi < funcs.length() {
+        match fsl[fi].tf_ret_ty { Option::Some(rt) => walk_typ_collect(rt, &acc) | Option::None => {} }
+        let psl = fsl[fi].tf_param_tys.as_slice();
+        let mut pi = 0 as u32;
+        while pi < fsl[fi].tf_param_tys.length() { walk_typ_collect(psl[pi], &acc); pi = pi + 1 as u32; }
+        collect_stmts(&fsl[fi].tf_body, &acc);
+        fi = fi + 1 as u32;
+    }
+    let ssl = structs.as_slice();
+    let mut si = 0 as u32;
+    while si < structs.length() {
+        let flsl = ssl[si].sfields_ty.as_slice();
+        let mut sj = 0 as u32;
+        while sj < ssl[si].sfields_ty.length() { walk_typ_collect(flsl[sj].ty, &acc); sj = sj + 1 as u32; }
+        si = si + 1 as u32;
+    }
+    let esl = enums.as_slice();
+    let mut ei = 0 as u32;
+    while ei < enums.length() {
+        let vsl = esl[ei].evariants.as_slice();
+        let mut ej = 0 as u32;
+        while ej < esl[ei].evariants.length() {
+            let vfl = vsl[ej].vsfields.as_slice();
+            let mut ek = 0 as u32;
+            while ek < vsl[ej].vsfields.length() { walk_typ_collect(vfl[ek].ty, &acc); ek = ek + 1 as u32; }
+            ej = ej + 1 as u32;
+        }
+        ei = ei + 1 as u32;
+    }
+    return acc;
+}
+
+fn ftr_to_fieldtys(a: Allocator, tys: *const Vec<*const Typ>) -> Vec<FieldTy> {
+    let mut out: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let sl = tys.as_slice();
+    let mut i = 0 as u32;
+    while i < tys.length() { out.push(FieldTy { name: "", ty: sl[i] }); i = i + 1 as u32; }
+    return out;
+}
+
+// Include-gating flags: does any tfn body use heap (TNew / free / default
+// allocator), the default allocator, or string.h (cstr_len / mem_zero)?
+// kind: 0 = heap, 1 = default_allocator, 2 = string.h.
+fn builtin_expr_hit(te: *const Texpr, kind: int) -> bool {
+    let here = match te.e {
+        TexprNode::TNew { sname_path, fields, base, alloc } => (kind == 0 as int)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => (kind == 0 as int)
+        | TexprNode::TBuiltinCall { name, args } => builtin_name_hit(name, kind)
+        | _e => false
+    };
+    if here { return true; }
+    return match te.e {
+        TexprNode::TNeg(s) => builtin_expr_hit(s, kind) | TexprNode::TBitNot(s) => builtin_expr_hit(s, kind)
+        | TexprNode::TNot(s) => builtin_expr_hit(s, kind) | TexprNode::TRef(s) => builtin_expr_hit(s, kind)
+        | TexprNode::TDeref(s) => builtin_expr_hit(s, kind) | TexprNode::TCast(s, ann) => builtin_expr_hit(s, kind)
+        | TexprNode::TBinOp(op, l, r) => builtin_expr_hit(l, kind) || builtin_expr_hit(r, kind)
+        | TexprNode::TCall { mangled, args } => builtin_args_hit(&args, kind)
+        | TexprNode::TBuiltinCall { name, args } => builtin_args_hit(&args, kind)
+        | TexprNode::TIndirectCall { fn_expr, args } => builtin_expr_hit(fn_expr, kind) || builtin_args_hit(&args, kind)
+        | TexprNode::TTupleLit(es) => builtin_args_hit(&es, kind) | TexprNode::TArrayLit(es) => builtin_args_hit(&es, kind)
+        | TexprNode::TArrayRepeat { value, count } => builtin_expr_hit(value, kind)
+        | TexprNode::TStructLit { sname_path, fields, base } => builtin_fields_hit(&fields, kind) || builtin_opt_hit(base, kind)
+        | TexprNode::TNew { sname_path, fields, base, alloc } => builtin_fields_hit(&fields, kind) || builtin_opt_hit(base, kind) || builtin_opt_hit(alloc, kind)
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => builtin_fields_hit(&args, kind)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => builtin_fields_hit(&args, kind) || builtin_opt_hit(alloc, kind)
+        | TexprNode::TFieldAccess { target, field } => builtin_expr_hit(target, kind)
+        | TexprNode::TIndex { base, index } => builtin_expr_hit(base, kind) || builtin_expr_hit(index, kind)
+        | TexprNode::TIfExpr { cond, then_val, else_val } => builtin_expr_hit(cond, kind) || builtin_expr_hit(then_val, kind) || builtin_expr_hit(else_val, kind)
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => builtin_expr_hit(scrutinee, kind) || builtin_arms_hit(&arms, kind)
+        | TexprNode::TBlock { stmts, trailing } => builtin_stmts_hit(&stmts, kind) || builtin_opt_hit(trailing, kind)
+        | _leaf => false
+    };
+}
+fn builtin_name_hit(name: str, kind: int) -> bool {
+    if kind == 0 as int { return str::eq(name, "free") || str::eq(name, "default_allocator"); }
+    if kind == 1 as int { return str::eq(name, "default_allocator"); }
+    return str::eq(name, "cstr_len") || str::eq(name, "mem_zero");
+}
+fn builtin_args_hit(args: *const Vec<*const Texpr>, kind: int) -> bool {
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() { if builtin_expr_hit(sl[i], kind) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn builtin_fields_hit(fields: *const Vec<TexprField>, kind: int) -> bool {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { if builtin_expr_hit(sl[i].value, kind) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn builtin_opt_hit(o: Option<*const Texpr>, kind: int) -> bool {
+    return match o { Option::Some(e) => builtin_expr_hit(e, kind) | Option::None => false };
+}
+fn builtin_arms_hit(arms: *const Vec<TmatchArm>, kind: int) -> bool {
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() { if builtin_expr_hit(sl[i].tbody, kind) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn builtin_stmts_hit(stmts: *const Vec<Tstmt>, kind: int) -> bool {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { if builtin_scan_stmt(&sl[i], kind) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn builtin_scan_stmt(s: *const Tstmt, kind: int) -> bool {
+    return match *s {
+        Tstmt::TLet { name, value, pos } => builtin_expr_hit(value, kind)
+        | Tstmt::TLetTuple { names, value, pos } => builtin_expr_hit(value, kind)
+        | Tstmt::TAssign { path, value, pos } => builtin_expr_hit(value, kind)
+        | Tstmt::TAssignField { target, field, value, pos } => builtin_expr_hit(target, kind) || builtin_expr_hit(value, kind)
+        | Tstmt::TAssignIndex { base, index, value, pos } => builtin_expr_hit(base, kind) || builtin_expr_hit(index, kind) || builtin_expr_hit(value, kind)
+        | Tstmt::TAssignDeref { target, value, pos } => builtin_expr_hit(target, kind) || builtin_expr_hit(value, kind)
+        | Tstmt::TReturn { value, pos } => builtin_opt_hit(value, kind)
+        | Tstmt::TExprStmt(e) => builtin_expr_hit(e, kind)
+        | Tstmt::TIf { cond, then_body, else_body } => builtin_expr_hit(cond, kind) || builtin_stmts_hit(&then_body, kind) || builtin_stmts_hit(&else_body, kind)
+        | Tstmt::TWhile { cond, body, post } => builtin_expr_hit(cond, kind) || builtin_stmts_hit(&body, kind) || builtin_stmts_hit(&post, kind)
+        | Tstmt::TDefer { body, pos } => builtin_stmts_hit(&body, kind)
+        | _leaf => false
+    };
+}
+fn any_builtin(funcs: *const Vec<Tfunc>, kind: int) -> bool {
+    let sl = funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < funcs.length() {
+        if builtin_stmts_hit(&sl[i].tf_body, kind) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
 // ===== Program assembly =====
 
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
@@ -7430,18 +7774,25 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let sdecls: Vec<StructDeclEntry> = Vec::with_capacity(a, 8 as u32);
     let global: Vec<GlobalEntry> = Vec::with_capacity(a, 8 as u32);
     let modules: Vec<ModuleEntry> = Vec::with_capacity(a, 8 as u32);
-    let tuples: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    let fnptrs: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let cincludes: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let econsts: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let evars: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    let arrays: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let consts: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
+
+    // Footer type collection (codegen support): one post-pass over the checked
+    // program gathering distinct tuple / fn-ptr / array shapes + include flags.
+    let ftr = collect_footer_types(a, &funcs, &structs, &enums);
+    let tuples = ftr_to_fieldtys(a, &ftr.tup);
+    let fnptrs = ftr_to_fieldtys(a, &ftr.fnp);
+    let arrays = ftr_to_fieldtys(a, &ftr.arr);
+    let uses_heap = any_builtin(&funcs, 0 as int);
+    let uses_default_alloc = any_builtin(&funcs, 1 as int);
+    let uses_string_h = any_builtin(&funcs, 2 as int);
 
     return Result::Ok(Tprogram {
         tp_funcs: funcs, tp_struct_decls: sdecls, tp_struct_index: structs,
         tp_enum_index: enums, tp_global: global, tp_modules: modules,
-        tp_uses_heap: false, tp_uses_string_h: false, tp_uses_default_allocator: false,
+        tp_uses_heap: uses_heap, tp_uses_string_h: uses_string_h, tp_uses_default_allocator: uses_default_alloc,
         tp_tuple_types: tuples, tp_fnptr_types: fnptrs, tp_c_includes: cincludes,
         tp_ext_consts: econsts, tp_ext_vars: evars, tp_array_types: arrays, tp_consts: consts,
     });

@@ -562,7 +562,7 @@ fn emit_fnptr_typedef(a: Allocator, ar: *Arena, out: *StringBuilder, name: str, 
 pub fn emit_type_decls(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBuilder) {
     let fpt = tp.tp_fnptr_types.as_slice();
     let mut i = 0 as u32;
-    while i < tp.tp_fnptr_types.length() { emit_fnptr_typedef(a, ar, out, fpt[i].name, fpt[i].ty); i = i + 1 as u32; }
+    while i < tp.tp_fnptr_types.length() { emit_fnptr_typedef(a, ar, out, mangle_typ(a, ar, fpt[i].ty), fpt[i].ty); i = i + 1 as u32; }
 
     let mut aggs: Vec<Agg> = Vec::with_capacity(a, 8 as u32);
     let ssl = tp.tp_struct_index.as_slice();
