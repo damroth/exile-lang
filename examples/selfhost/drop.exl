@@ -845,7 +845,7 @@ fn walk_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
             // dropped — otherwise `drop(x); x = f(&x)` reads freed storage.
             if drop_buf.length() > 0 as u32 && assign_needs_temp(value) {
                 let tmp = mk_drop_old_tmp(a, ar, pos);
-                out.push(Tstmt::TLet { name: tmp, value: value, pos: pos });
+                out.push(Tstmt::TLet { name: tmp, value: value, decl_ty: value.ty, pos: pos });
                 push_all(&drop_buf, out);
                 let tv = d_te(ar, TexprNode::TVar(tmp), value.ty, value.pos);
                 let mut np: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -955,7 +955,7 @@ fn emit_ret_temp(a: Allocator, ar: *Arena, value: Option<*const Texpr>, pos: Pos
     match value {
         Option::Some(v) => {
             let tmp = mk_drop_tmp(a, ar, pos);
-            out.push(Tstmt::TLet { name: tmp, value: v, pos: pos });
+            out.push(Tstmt::TLet { name: tmp, value: v, decl_ty: v.ty, pos: pos });
             push_all(drop_buf, out);
             let tv = d_te(ar, TexprNode::TVar(tmp), v.ty, v.pos);
             out.push(Tstmt::TReturn { value: Option::Some(tv), pos: pos });

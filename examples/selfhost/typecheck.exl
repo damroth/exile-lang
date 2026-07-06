@@ -3210,7 +3210,7 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             let vl = elab_expr(a, ar, g, sc, benv, let_expected(a, ar, sc, ty_ann), value);
             let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty);
             benv.push(FieldTy { name: name, ty: ety });
-            tstmts.push(Tstmt::TLet { name: name, value: vl, pos: expr_pos(value) });
+            tstmts.push(Tstmt::TLet { name: name, value: vl, decl_ty: ety, pos: expr_pos(value) });
         }
         | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
         | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
@@ -4034,7 +4034,7 @@ fn elab_with(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     let mut benv = copy_fieldtys(a, env);
     benv.push(FieldTy { name: internal, ty: pty });
     let mut bstmts: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
-    bstmts.push(Tstmt::TLet { name: internal, value: ref_e, pos: pos });
+    bstmts.push(Tstmt::TLet { name: internal, value: ref_e, decl_ty: pty, pos: pos });
     let n = rbody.length();
     let rsl = rbody.as_slice();
     let mut i = 0 as u32;
@@ -4216,8 +4216,8 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
             let rbody = subst_body(a, ar, iter_var, fv, body);
             env.push(FieldTy { name: fv, ty: cty });
             let tbody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &rbody);
-            out.push(Tstmt::TLet { name: fe, value: thi, pos: zero_pos() });
-            out.push(Tstmt::TLet { name: fv, value: tlo, pos: zero_pos() });
+            out.push(Tstmt::TLet { name: fe, value: thi, decl_ty: thi.ty, pos: zero_pos() });
+            out.push(Tstmt::TLet { name: fv, value: tlo, decl_ty: tlo.ty, pos: zero_pos() });
             let cond = mk_for_cond(ar, fv, fe, cty, inclusive);
             let post = mk_for_post(a, ar, fv, cty);
             out.push(Tstmt::TWhile { cond: cond, body: tbody, post: post });
@@ -4238,7 +4238,7 @@ fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let itname = gensym_name(a, ar, "__it", k);
     let trange = elab_expr(a, ar, g, sc, env, none_ty(), range);
     env.push(FieldTy { name: itname, ty: trange.ty });
-    out.push(Tstmt::TLet { name: itname, value: trange, pos: zero_pos() });
+    out.push(Tstmt::TLet { name: itname, value: trange, decl_ty: trange.ty, pos: zero_pos() });
     // `__it.next()`
     let recv = ast_node(ar, Expr::Var(itname, zero_pos()));
     let no_args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
@@ -4297,7 +4297,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             let vl = elab_expr(a, ar, g, sc, env, exp, value);
             let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty);
             env.push(FieldTy { name: name, ty: ety });
-            out.push(Tstmt::TLet { name: name, value: vl, pos: expr_pos(value) });
+            out.push(Tstmt::TLet { name: name, value: vl, decl_ty: ety, pos: expr_pos(value) });
         }
         | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Tail(e) => { elab_tail(a, ar, g, sc, gensym, env, ret, e, out); }
@@ -4558,7 +4558,7 @@ fn is_addressable(te: *const Texpr) -> bool {
 fn ref_operand(a: Allocator, ar: *Arena, ctr: *u32, ws: *const Texpr, prelude: *Vec<Tstmt>) -> *const Texpr {
     if is_addressable(ws) { return ws; }
     let nm = lift_name(a, ar, ctr);
-    prelude.push(Tstmt::TLet { name: nm, value: ws, pos: ws.pos });
+    prelude.push(Tstmt::TLet { name: nm, value: ws, decl_ty: ws.ty, pos: ws.pos });
     return te_node(ar, TexprNode::TVar(nm), ws.ty, ws.pos);
 }
 fn walk_subs(a: Allocator, ar: *Arena, ctr: *u32, te: *const Texpr, prelude: *Vec<Tstmt>) -> *const Texpr {
@@ -4618,7 +4618,7 @@ fn walk_expr(a: Allocator, ar: *Arena, ctr: *u32, allow_top: bool, te: *const Te
     if allow_top { return walked; }
     if !is_block_texpr(walked) { return walked; }
     let nm = lift_name(a, ar, ctr);
-    prelude.push(Tstmt::TLet { name: nm, value: walked, pos: walked.pos });
+    prelude.push(Tstmt::TLet { name: nm, value: walked, decl_ty: walked.ty, pos: walked.pos });
     return te_node(ar, TexprNode::TVar(nm), walked.ty, walked.pos);
 }
 
@@ -4652,9 +4652,9 @@ fn lift_while(a: Allocator, ar: *Arena, ctr: *u32, cond: *const Texpr,
 
 fn lift_stmt(a: Allocator, ar: *Arena, ctr: *u32, s: *const Tstmt, out: *Vec<Tstmt>) {
     match *s {
-        Tstmt::TLet { name, value, pos } => {
+        Tstmt::TLet { name, value, decl_ty, pos } => {
             let vlet = walk_expr(a, ar, ctr, true, value, out);
-            out.push(Tstmt::TLet { name: name, value: vlet, pos: pos });
+            out.push(Tstmt::TLet { name: name, value: vlet, decl_ty: decl_ty, pos: pos });
         }
         | Tstmt::TLetTuple { names, value, pos } => {
             let vlt = walk_expr(a, ar, ctr, true, value, out);
@@ -7282,7 +7282,7 @@ fn lets_expr(te: *const Texpr, out: *Vec<FieldTy>) {
 }
 fn lets_stmt(s: *const Tstmt, out: *Vec<FieldTy>) {
     match *s {
-        Tstmt::TLet { name, value, pos } => { lets_push(out, name, value.ty); lets_expr(value, out); }
+        Tstmt::TLet { name, value, decl_ty } => { lets_push(out, name, decl_ty); lets_expr(value, out); }
         | Tstmt::TLetTuple { names, value, pos } => { lets_tuple(&names, value.ty, out); lets_expr(value, out); }
         | Tstmt::TAssign { path, value, pos } => lets_expr(value, out)
         | Tstmt::TAssignField { target, field, value, pos } => lets_expr(value, out)
@@ -7312,18 +7312,39 @@ fn lets_stmts(stmts: *const Vec<Tstmt>, out: *Vec<FieldTy>) {
     let mut i = 0 as u32;
     while i < stmts.length() { lets_stmt(&sl[i], out); i = i + 1 as u32; }
 }
+// Only lift-pass `__lift_N` temps sort after the elaboration-order decls
+// (the oracle appends them post-elaboration).  For-loop `__fv/__fe/__it`
+// temps are created during elaboration and stay in body (= creation) order,
+// so the partition keys on the `__lift` prefix specifically, not any `__`.
 fn lets_is_temp(name: str) -> bool {
     let n = str::length(name);
-    if n < 2 as u32 { return false; }
+    if n < 6 as u32 { return false; }
     let b = str::as_bytes(name);
-    return b[0 as u32] == 95 as u8 && b[1 as u32] == 95 as u8;
+    return b[0 as u32] == 95 as u8 && b[1 as u32] == 95 as u8
+        && b[2 as u32] == 108 as u8 && b[3 as u32] == 105 as u8
+        && b[4 as u32] == 102 as u8 && b[5 as u32] == 116 as u8;
 }
 fn collect_body_lets(a: Allocator, body: *const Vec<Tstmt>) -> Vec<FieldTy> {
-    let mut raw: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    lets_stmts(body, &raw);
-    // Oracle order: user lets (collected during elaboration) precede the lift
-    // pass's `__lift_N` temps.  Reproduce by partitioning — user names first,
-    // then compiler `__`-prefixed temps, each in body (= creation) order.
+    let mut raw0: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    lets_stmts(body, &raw0);
+    // The for-desugar emits the `__feK` init before the `__fvK` init (bound is
+    // pinned first), but the oracle's decl list registers the counter before
+    // the end bound (`add_decl counter; add_decl end`).  TLet couples decl+init,
+    // so restore the counter-before-end decl order by swapping each adjacent
+    // (`__fe`, `__fv`) pair the body-walk produced.
+    let mut raw: Vec<FieldTy> = Vec::with_capacity(a, raw0.length() + 1 as u32);
+    let r0 = raw0.as_slice();
+    let mut k = 0 as u32;
+    while k < raw0.length() {
+        if k + 1 as u32 < raw0.length() && name4(r0[k].name, 102 as u8, 101 as u8) && name4(r0[k + 1 as u32].name, 102 as u8, 118 as u8) {
+            raw.push(r0[k + 1 as u32]); raw.push(r0[k]); k = k + 2 as u32;
+        } else {
+            raw.push(r0[k]); k = k + 1 as u32;
+        }
+    }
+    // Oracle order: elaboration-order decls (user + for-loop `__fv/__fe`)
+    // precede the lift pass's `__lift_N` temps (appended post-elaboration).
+    // Reproduce by partitioning on the `__lift` prefix specifically.
     let mut out: Vec<FieldTy> = Vec::with_capacity(a, raw.length() + 1 as u32);
     let sl = raw.as_slice();
     let mut i = 0 as u32;
@@ -7331,6 +7352,13 @@ fn collect_body_lets(a: Allocator, body: *const Vec<Tstmt>) -> Vec<FieldTy> {
     let mut j = 0 as u32;
     while j < raw.length() { if lets_is_temp(sl[j].name) { out.push(sl[j]); } j = j + 1 as u32; }
     return out;
+}
+// True when `name` is `__<c2><c3>...` (a 4-byte gensym prefix like `__fe`/`__fv`).
+fn name4(name: str, c2: u8, c3: u8) -> bool {
+    let n = str::length(name);
+    if n < 4 as u32 { return false; }
+    let b = str::as_bytes(name);
+    return b[0 as u32] == 95 as u8 && b[1 as u32] == 95 as u8 && b[2 as u32] == c2 && b[3 as u32] == c3;
 }
 
 // ===== Footer type collection (codegen support) =====

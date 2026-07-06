@@ -190,7 +190,7 @@ pub struct Texpr {
 }
 
 pub enum Tstmt {
-    TLet { name: str, value: *const Texpr, pos: Pos }
+    TLet { name: str, value: *const Texpr, decl_ty: *const Typ, pos: Pos }
     | TLetTuple { names: Vec<str>, value: *const Texpr, pos: Pos }
     | TAssign { path: Vec<str>, value: *const Texpr, pos: Pos }
     | TAssignField { target: *const Texpr, field: str, value: *const Texpr, pos: Pos }
