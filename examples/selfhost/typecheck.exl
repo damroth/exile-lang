@@ -7772,8 +7772,67 @@ fn any_builtin(funcs: *const Vec<Tfunc>, kind: int) -> bool {
 
 // ===== Program assembly =====
 
+// The Exile-source prelude (workstream-B): method bodies the compiler would
+// otherwise hand-build in OCaml.  Parsed by the port's own lexer/parser once at
+// check_program start (file "<prelude>", so `--user-only` drops it from the
+// typed-IR dump while codegen still emits the bodies).  Unlike the oracle,
+// which prepends the whole prelude and DCE-prunes it, the port keeps its
+// verified DEMAND-DRIVEN materialization: the parsed methods sit in a passive
+// registry and are elaborated into tp_funcs only when a use-site demands them.
+fn prelude_source() -> str {
+    return "struct StringBuilder {\n    buf: own *u8,\n    len: u32,\n    cap: u32,\n    alloc: Allocator,\n}\nimpl StringBuilder {\n    pub fn length(*const self) -> u32 { return self.len; }\n}\n";
+}
+// One prelude method, located by its (impl, method) index into the parsed
+// prelude items so the drain can re-derive its body (mirrors the GenJob idx
+// pattern; no dangling pointer into a match-bound copy).  `pm_order` is the
+// declaration-order key: emission lists prelude methods in impl-block order,
+// not demand-discovery order (measured against the oracle).
+struct PreludeMethod {
+    pm_type: str,
+    pm_name: str,
+    pm_impl_idx: u32,
+    pm_meth_idx: u32,
+    pm_order: u32,
+}
+fn parse_prelude_items(a: Allocator, ar: *Arena) -> Vec<Item> {
+    return match tokenize(a, ar, "<prelude>", prelude_source()) {
+        Result::Ok(toks) => match parse_program(a, ar, toks.as_slice(), toks.length()) {
+            Result::Ok(pit) => pit
+            | Result::Err(_e) => Vec::with_capacity(a, 8 as u32)
+        }
+        | Result::Err(_e) => Vec::with_capacity(a, 8 as u32)
+    };
+}
+fn build_prelude_registry(a: Allocator, items: *const Vec<Item>) -> Vec<PreludeMethod> {
+    let mut out: Vec<PreludeMethod> = Vec::with_capacity(a, 16 as u32);
+    let sl = items.as_slice();
+    let mut ord = 0 as u32;
+    let mut i = 0 as u32;
+    while i < items.length() {
+        match sl[i] {
+            Item::Impl(ib) => {
+                let ty = path_last(&ib.itarget);
+                let msl = ib.iitems.as_slice();
+                let mut j = 0 as u32;
+                while j < ib.iitems.length() {
+                    out.push(PreludeMethod { pm_type: ty, pm_name: msl[j].name, pm_impl_idx: i, pm_meth_idx: j, pm_order: ord });
+                    ord = ord + 1 as u32;
+                    j = j + 1 as u32;
+                }
+            }
+            | _o => {}
+        }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
+    // Parse the source prelude once; the registry is passive until a use-site
+    // demand enqueues a method for the drain (next increment).
+    let prelude_items: Vec<Item> = parse_prelude_items(a, ar);
+    let prelude_reg: Vec<PreludeMethod> = build_prelude_registry(a, &prelude_items);
     // User-declared struct / enum names: signatures resolve them and they
     // join the prelude in the sorted `mono-instances` footer.
     let mut snames: Vec<str> = Vec::with_capacity(a, 8 as u32);
