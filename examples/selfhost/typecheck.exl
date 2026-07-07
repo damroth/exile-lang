@@ -1664,8 +1664,41 @@ fn enum_struct_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
 fn mret_is_slice(mret: Option<*const Typ>) -> bool {
     return match mret { Option::Some(t) => is_slice_instance(t) | Option::None => false };
 }
+// Field shapes of the named prelude structs (StringBuilder/String/Arena) into
+// the field-access resolution table.  The port historically resolved these by
+// method only, so nothing registered their fields for name access; the source-
+// prelude method bodies (`self.len`, `self.buf[...]`) need them.  Not dumped
+// (sc_mono_fields feeds resolution, not the footer), so no SIG-DIVERGE.
+fn named_prelude_fields_present(sc: *const TyScope, nm: str) -> bool {
+    let sl = sc.sc_mono_fields.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_mono_fields.length() {
+        if sl[i].sf_path.length() == 1 as u32 && str::eq(sl[i].sf_path.as_slice()[0 as u32], nm) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn register_named_prelude_field_access(a: Allocator, ar: *Arena, sc: *const TyScope, nm: str) {
+    if !is_named_prelude_name(nm) { return; }
+    if named_prelude_fields_present(sc, nm) { return; }
+    let fs = named_prelude_fields(a, ar, nm);
+    let fsl = fs.as_slice();
+    let mut path0: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path0.push(nm);
+    let mut i = 0 as u32;
+    while i < fs.length() {
+        push_named_field(a, sc, &path0, fsl[i].name, fsl[i].ty);
+        i = i + 1 as u32;
+    }
+}
+// Push behind a fn boundary so the fresh `sf_path` copy is a parameter, not a
+// loop-body lifted temp the move-checker would flag as re-consumed.
+fn push_named_field(a: Allocator, sc: *const TyScope, path0: *const Vec<str>, nm: str, ty: *const Typ) {
+    sc.sc_mono_fields.push(StructField { sf_path: copy_strs(a, path0), sf_name: nm, sf_ty: ty });
+}
 fn register_prelude_method_use(a: Allocator, ar: *Arena, sc: *const TyScope, mpath: *const Vec<str>, mret: Option<*const Typ>) {
     register_mono_struct(a, sc, mpath);
+    register_named_prelude_field_access(a, ar, sc, path_last(mpath));
     if mret_is_slice(mret) { register_slice_u8(a, ar, sc); }
     // Any String use materialises the `Slice<u8>` byte view + StringBuilder.
     let last = path_last(mpath);
@@ -7827,10 +7860,128 @@ fn build_prelude_registry(a: Allocator, items: *const Vec<Item>) -> Vec<PreludeM
     return out;
 }
 
+// --- Workstream-B: demand-driven prelude materialization ---
+// Reachability scan: does any elaborated function body call the mangled symbol
+// `m`?  Mirrors the oracle's `referenced_mangled` BFS; the fixpoint below runs
+// it over a growing `funcs` so a prelude body that pulls in another prelude
+// method (push_str -> grow) is discovered transitively.
+fn args_call_m(args: *const Vec<*const Texpr>, m: str) -> bool {
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() { if expr_calls_m(sl[i], m) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn fields_call_m(fields: *const Vec<TexprField>, m: str) -> bool {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { if expr_calls_m(sl[i].value, m) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn opt_call_m(o: Option<*const Texpr>, m: str) -> bool {
+    return match o { Option::Some(e) => expr_calls_m(e, m) | Option::None => false };
+}
+fn arms_call_m(arms: *const Vec<TmatchArm>, m: str) -> bool {
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() {
+        if expr_calls_m(sl[i].tbody, m) { return true; }
+        let gh = match sl[i].tguard { Option::Some(gg) => expr_calls_m(gg, m) | Option::None => false };
+        if gh { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn stmts_call_m(stmts: *const Vec<Tstmt>, m: str) -> bool {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { if stmt_calls_m(&sl[i], m) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn stmt_calls_m(s: *const Tstmt, m: str) -> bool {
+    return match *s {
+        Tstmt::TLet { name, value, decl_ty, pos } => expr_calls_m(value, m)
+        | Tstmt::TLetTuple { names, value, pos } => expr_calls_m(value, m)
+        | Tstmt::TAssign { path, value, pos } => expr_calls_m(value, m)
+        | Tstmt::TAssignField { target, field, value, pos } => expr_calls_m(target, m) || expr_calls_m(value, m)
+        | Tstmt::TAssignDeref { target, value, pos } => expr_calls_m(target, m) || expr_calls_m(value, m)
+        | Tstmt::TAssignIndex { base, index, value, pos } => expr_calls_m(base, m) || expr_calls_m(index, m) || expr_calls_m(value, m)
+        | Tstmt::TReturn { value, pos } => match value { Option::Some(e) => expr_calls_m(e, m) | Option::None => false }
+        | Tstmt::TExprStmt(e) => expr_calls_m(e, m)
+        | Tstmt::TIf { cond, then_body, else_body } => expr_calls_m(cond, m) || stmts_call_m(&then_body, m) || stmts_call_m(&else_body, m)
+        | Tstmt::TWhile { cond, body, post } => expr_calls_m(cond, m) || stmts_call_m(&body, m) || stmts_call_m(&post, m)
+        | Tstmt::TDefer { body, pos } => stmts_call_m(&body, m)
+        | _leaf => false
+    };
+}
+fn expr_calls_m(te: *const Texpr, m: str) -> bool {
+    return match te.e {
+        TexprNode::TCall { mangled, args } => str::eq(mangled, m) || args_call_m(&args, m)
+        | TexprNode::TBuiltinCall { name, args } => args_call_m(&args, m)
+        | TexprNode::TIndirectCall { fn_expr, args } => expr_calls_m(fn_expr, m) || args_call_m(&args, m)
+        | TexprNode::TNeg(s) => expr_calls_m(s, m)
+        | TexprNode::TBitNot(s) => expr_calls_m(s, m)
+        | TexprNode::TNot(s) => expr_calls_m(s, m)
+        | TexprNode::TRef(s) => expr_calls_m(s, m)
+        | TexprNode::TDeref(s) => expr_calls_m(s, m)
+        | TexprNode::TCast(s, ann) => expr_calls_m(s, m)
+        | TexprNode::TBinOp(op, l, r) => expr_calls_m(l, m) || expr_calls_m(r, m)
+        | TexprNode::TFieldAccess { target, field } => expr_calls_m(target, m)
+        | TexprNode::TIndex { base, index } => expr_calls_m(base, m) || expr_calls_m(index, m)
+        | TexprNode::TTupleLit(es) => args_call_m(&es, m)
+        | TexprNode::TArrayLit(es) => args_call_m(&es, m)
+        | TexprNode::TArrayRepeat { value, count } => expr_calls_m(value, m)
+        | TexprNode::TIfExpr { cond, then_val, else_val } => expr_calls_m(cond, m) || expr_calls_m(then_val, m) || expr_calls_m(else_val, m)
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => expr_calls_m(scrutinee, m) || arms_call_m(&arms, m)
+        | TexprNode::TBlock { stmts, trailing } => stmts_call_m(&stmts, m) || opt_call_m(trailing, m)
+        | TexprNode::TNew { sname_path, fields, base, alloc } => fields_call_m(&fields, m) || opt_call_m(base, m) || opt_call_m(alloc, m)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => fields_call_m(&args, m) || opt_call_m(alloc, m)
+        | TexprNode::TStructLit { sname_path, fields, base } => fields_call_m(&fields, m) || opt_call_m(base, m)
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => fields_call_m(&args, m)
+        | _leaf => false
+    };
+}
+fn funcs_call_m(funcs: *const Vec<Tfunc>, m: str) -> bool {
+    let sl = funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < funcs.length() { if stmts_call_m(&sl[i].tf_body, m) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn pm_mangle(a: Allocator, ar: *Arena, ty: str, nm: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(ty); sb.push_str("__"); sb.push_str(nm);
+    return str::from_slice(ar, sb.as_slice());
+}
+// Elaborate every demanded prelude method body into `funcs` (reachability
+// fixpoint: a materialized body's own calls may demand further prelude
+// methods).  Bodies come from the parsed prelude items via
+// `elaborate_method_instance`; the type is already registered by the hand-
+// registration (the reason it was demanded), so the body typechecks.
+fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                       prelude_items: *const Vec<Item>, reg: *const Vec<PreludeMethod>, funcs: *Vec<Tfunc>) {
+    let mut done: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let rsl = reg.as_slice();
+    let mut progress = true;
+    while progress {
+        progress = false;
+        let mut i = 0 as u32;
+        while i < reg.length() {
+            let mm = pm_mangle(a, ar, rsl[i].pm_type, rsl[i].pm_name);
+            if !name_in(&done, mm) && funcs_call_m(funcs, mm) {
+                done.push(mm);
+                let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+                let tgt: Vec<str> = single_str(a, rsl[i].pm_type);
+                elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[i].pm_impl_idx, rsl[i].pm_meth_idx, &binds, mm, &tgt, funcs);
+                progress = true;
+            }
+            i = i + 1 as u32;
+        }
+    }
+}
+
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
-    // Parse the source prelude once; the registry is passive until a use-site
-    // demand enqueues a method for the drain (next increment).
+    // Parse the source prelude once; the registry is passive until the demand
+    // fixpoint (post-drain) materializes the methods a program actually uses.
     let prelude_items: Vec<Item> = parse_prelude_items(a, ar);
     let prelude_reg: Vec<PreludeMethod> = build_prelude_registry(a, &prelude_items);
     // User-declared struct / enum names: signatures resolve them and they
@@ -7994,6 +8145,9 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         }
         k = k + 1 as u32;
     }
+
+    // Materialize demanded source-prelude method bodies (workstream-B).
+    prelude_materialize(a, ar, &globals, &gensym, &idx, &prelude_items, &prelude_reg, &funcs);
 
     let mut structs = prelude_struct_index(a);
     let mut enums = prelude_enum_index(a);
