@@ -5830,6 +5830,7 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     // StringBuilder: with_capacity(static) / push_*( *self ) / length+as_slice( *const self )
     let none_ret: Option<*const Typ> = Option::None;
     push_prelude_method_ng(a, ar, "StringBuilder", "with_capacity", false, false, false, Option::Some(prelude_struct_ty(a, ar, "StringBuilder")), out);
+    push_prelude_method_ng(a, ar, "StringBuilder", "grow", true, true, false, none_ret, out);
     push_prelude_method_ng(a, ar, "StringBuilder", "push_byte", true, true, false, none_ret, out);
     push_prelude_method_ng(a, ar, "StringBuilder", "push_str", true, true, false, none_ret, out);
     push_prelude_method_ng(a, ar, "StringBuilder", "push_int", true, true, false, none_ret, out);
@@ -7821,7 +7822,50 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("        let buf: own *u8 = a.alloc_fn(a.state, cap) as own *u8;\n");
     sb.push_str("        return StringBuilder { buf: buf, len: 0 as u32, cap: cap, alloc: a };\n");
     sb.push_str("    }\n");
+    sb.push_str("    fn grow(*self, new_cap: u32) {\n");
+    sb.push_str("        let new_buf: own *u8 = self.alloc.alloc_fn(self.alloc.state, new_cap) as own *u8;\n");
+    sb.push_str("        let src: Slice<u8> = Slice { ptr: self.buf as *const u8, len: self.len };\n");
+    sb.push_str("        let mut i: u32 = 0 as u32;\n");
+    sb.push_str("        while i < self.len { new_buf[i] = src[i]; i = i + 1 as u32; }\n");
+    sb.push_str("        self.alloc.free_fn(self.alloc.state, self.buf as *c_void, self.cap);\n");
+    sb.push_str("        self.buf = new_buf;\n");
+    sb.push_str("        self.cap = new_cap;\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn push_byte(*self, b: u8) {\n");
+    sb.push_str("        if self.len + 1 as u32 > self.cap { self.grow(self.cap * 2 as u32); }\n");
+    sb.push_str("        self.buf[self.len] = b;\n");
+    sb.push_str("        self.len = self.len + 1 as u32;\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn push_str(*self, s: str) {\n");
+    sb.push_str("        let n: u32 = cstr_len(s);\n");
+    sb.push_str("        let need: u32 = self.len + n;\n");
+    sb.push_str("        if need > self.cap {\n");
+    sb.push_str("            let mut new_cap: u32 = self.cap;\n");
+    sb.push_str("            while new_cap < need { new_cap = new_cap * 2 as u32; }\n");
+    sb.push_str("            self.grow(new_cap);\n");
+    sb.push_str("        }\n");
+    sb.push_str("        let src: Slice<u8> = Slice { ptr: s as *const u8, len: n };\n");
+    sb.push_str("        let mut i: u32 = 0 as u32;\n");
+    sb.push_str("        while i < n { self.buf[self.len + i] = src[i]; i = i + 1 as u32; }\n");
+    sb.push_str("        self.len = self.len + n;\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn push_int(*self, n: int) {\n");
+    sb.push_str("        if n == 0 { self.push_byte(48 as u8); return; }\n");
+    sb.push_str("        let mut u: u32 = 0 as u32;\n");
+    sb.push_str("        if n < 0 { self.push_byte(45 as u8); u = 0 as u32 - n as u32; } else { u = n as u32; }\n");
+    sb.push_str("        let mut digits: [u8; 10] = [0 as u8; 10];\n");
+    sb.push_str("        let mut idx: u32 = 0 as u32;\n");
+    sb.push_str("        while u > 0 as u32 {\n");
+    sb.push_str("            digits[idx] = (48 as u32 + u % 10 as u32) as u8;\n");
+    sb.push_str("            u = u / 10 as u32;\n");
+    sb.push_str("            idx = idx + 1 as u32;\n");
+    sb.push_str("        }\n");
+    sb.push_str("        while idx > 0 as u32 { idx = idx - 1 as u32; self.push_byte(digits[idx]); }\n");
+    sb.push_str("    }\n");
     sb.push_str("    pub fn length(*const self) -> u32 { return self.len; }\n");
+    sb.push_str("    pub fn as_slice(*const self) -> Slice<u8> {\n");
+    sb.push_str("        return Slice { ptr: self.buf as *const u8, len: self.len };\n");
+    sb.push_str("    }\n");
     sb.push_str("}\n");
     return str::from_slice(ar, sb.as_slice());
 }
@@ -7966,28 +8010,135 @@ fn pm_mangle(a: Allocator, ar: *Arena, ty: str, nm: str) -> str {
 // methods).  Bodies come from the parsed prelude items via
 // `elaborate_method_instance`; the type is already registered by the hand-
 // registration (the reason it was demanded), so the body typechecks.
+// Source-AST scan: does the prelude method body call `self.<nm>(...)`?  Used
+// for transitive demand discovery WITHOUT elaborating (elaborating twice would
+// double-register footer types and drift gensym counters).  Under-approx (a
+// missed form) surfaces as a missing body at link time, never silently wrong.
+fn is_self_recv(e: *const Expr) -> bool {
+    return match *e { Expr::Var(n, _p) => str::eq(n, "self") | _o => false };
+}
+fn scall_args(args: *const Vec<*const Expr>, nm: str) -> bool {
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() { if scall_e(sl[i], nm) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn scall_fields(fields: *const Vec<Field>, nm: str) -> bool {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { if scall_e(sl[i].value, nm) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn scall_opt_body(o: Option<Vec<Stmt>>, nm: str) -> bool {
+    return match o { Option::Some(b) => body_calls_self(&b, nm) | Option::None => false };
+}
+fn scall_e(e: *const Expr, nm: str) -> bool {
+    return match *e {
+        Expr::MethodCall { receiver, name, args, pos } => (str::eq(name, nm) && is_self_recv(receiver)) || scall_e(receiver, nm) || scall_args(&args, nm)
+        | Expr::Call { callee, args, pos } => scall_args(&args, nm)
+        | Expr::BinOp(op, l, r, pos) => scall_e(l, nm) || scall_e(r, nm)
+        | Expr::Neg(x, pos) => scall_e(x, nm)
+        | Expr::BitNot(x, pos) => scall_e(x, nm)
+        | Expr::Not(x, pos) => scall_e(x, nm)
+        | Expr::Ref(x, pos) => scall_e(x, nm)
+        | Expr::Deref(x, pos) => scall_e(x, nm)
+        | Expr::Cast(x, ann, pos) => scall_e(x, nm)
+        | Expr::FieldAccess(x, f, pos) => scall_e(x, nm)
+        | Expr::Index { base, index, pos } => scall_e(base, nm) || scall_e(index, nm)
+        | Expr::If { cond, then_blk, else_blk } => scall_e(cond, nm) || body_calls_self(&then_blk, nm) || scall_opt_body(else_blk, nm)
+        | Expr::Block(stmts, pos) => body_calls_self(&stmts, nm)
+        | Expr::StructLit { tname, fields, base, pos } => scall_fields(&fields, nm)
+        | Expr::TupleLit(es, pos) => scall_args(&es, nm)
+        | Expr::ArrayLit(es, pos) => scall_args(&es, nm)
+        | Expr::ArrayRepeat { value, count, pos } => scall_e(value, nm) || scall_e(count, nm)
+        | _leaf => false
+    };
+}
+fn scall_stmt(s: *const Stmt, nm: str) -> bool {
+    return match *s {
+        Stmt::Let { name, value, ty_ann, is_mut, pos } => scall_e(value, nm)
+        | Stmt::LetTuple { names, value, is_mut, pos } => scall_e(value, nm)
+        | Stmt::Assign { path, value, pos } => scall_e(value, nm)
+        | Stmt::AssignField { target, field, value, pos } => scall_e(target, nm) || scall_e(value, nm)
+        | Stmt::AssignIndex { base, index, value, pos } => scall_e(base, nm) || scall_e(index, nm) || scall_e(value, nm)
+        | Stmt::AssignDeref { target, value, pos } => scall_e(target, nm) || scall_e(value, nm)
+        | Stmt::Return(o, pos) => match o { Option::Some(e) => scall_e(e, nm) | Option::None => false }
+        | Stmt::ExprStmt(e) => scall_e(e, nm)
+        | Stmt::Tail(e) => scall_e(e, nm)
+        | Stmt::While { cond, body } => scall_e(cond, nm) || body_calls_self(&body, nm)
+        | Stmt::For { iter_var, range, body, pos } => scall_e(range, nm) || body_calls_self(&body, nm)
+        | Stmt::Defer { body, pos } => body_calls_self(&body, nm)
+        | _leaf => false
+    };
+}
+fn body_calls_self(body: *const Vec<Stmt>, nm: str) -> bool {
+    let sl = body.as_slice();
+    let mut i = 0 as u32;
+    while i < body.length() { if scall_stmt(&sl[i], nm) { return true; } i = i + 1 as u32; }
+    return false;
+}
+// The source Func for a registry entry (index into the parsed prelude items).
+fn prelude_func_at(prelude_items: *const Vec<Item>, impl_idx: u32, meth_idx: u32) -> Option<*const Func> {
+    let sl = prelude_items.as_slice();
+    return match sl[impl_idx] {
+        Item::Impl(ib) => { let m = &ib.iitems.as_slice()[meth_idx] as *const Func; Option::Some(m) }
+        | _o => { let n: Option<*const Func> = Option::None; n }
+    };
+}
+fn has_u32(v: *const Vec<u32>, x: u32) -> bool {
+    let sl = v.as_slice();
+    let mut i = 0 as u32;
+    while i < v.length() { if sl[i] == x { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn prelude_func_calls(prelude_items: *const Vec<Item>, impl_idx: u32, meth_idx: u32, nm: str) -> bool {
+    return match prelude_func_at(prelude_items, impl_idx, meth_idx) {
+        Option::Some(f) => body_calls_self(&f.body, nm)
+        | Option::None => false
+    };
+}
+// Any already-demanded method of type `t` whose source body calls `self.nm(...)`.
+fn demanded_calls(reg: *const Vec<PreludeMethod>, demset: *const Vec<u32>, prelude_items: *const Vec<Item>, t: str, nm: str) -> bool {
+    let rsl = reg.as_slice();
+    let mut j = 0 as u32;
+    while j < reg.length() {
+        if has_u32(demset, j) && str::eq(rsl[j].pm_type, t) {
+            if prelude_func_calls(prelude_items, rsl[j].pm_impl_idx, rsl[j].pm_meth_idx, nm) { return true; }
+        }
+        j = j + 1 as u32;
+    }
+    return false;
+}
 fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                        prelude_items: *const Vec<Item>, reg: *const Vec<PreludeMethod>, funcs: *Vec<Tfunc>) {
-    let mut done: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let rsl = reg.as_slice();
+    let n = reg.length();
+    // Phase 1: discover the demanded set (a method is demanded if a user body
+    // calls its mangled name, or a demanded same-type method's SOURCE calls it).
+    let mut demset: Vec<u32> = Vec::with_capacity(a, n + 1 as u32);
     let mut progress = true;
     while progress {
         progress = false;
         let mut i = 0 as u32;
-        while i < reg.length() {
-            let mm = pm_mangle(a, ar, rsl[i].pm_type, rsl[i].pm_name);
-            // Iterating the registry in order gives declaration order for
-            // direct demands; transitive-demand ordering (grow) is handled when
-            // that method lands.
-            if !name_in(&done, mm) && funcs_call_m(funcs, mm) {
-                done.push(mm);
-                let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
-                let tgt: Vec<str> = single_str(a, rsl[i].pm_type);
-                elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[i].pm_impl_idx, rsl[i].pm_meth_idx, &binds, mm, &tgt, funcs);
-                progress = true;
+        while i < n {
+            if !has_u32(&demset, i) {
+                let mm = pm_mangle(a, ar, rsl[i].pm_type, rsl[i].pm_name);
+                let d = funcs_call_m(funcs, mm) || demanded_calls(reg, &demset, prelude_items, rsl[i].pm_type, rsl[i].pm_name);
+                if d { demset.push(i); progress = true; }
             }
             i = i + 1 as u32;
         }
+    }
+    // Phase 2: materialize demanded methods in registry (= declaration) order.
+    let mut mi = 0 as u32;
+    while mi < n {
+        if has_u32(&demset, mi) {
+            let mm2 = pm_mangle(a, ar, rsl[mi].pm_type, rsl[mi].pm_name);
+            let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+            let tgt: Vec<str> = single_str(a, rsl[mi].pm_type);
+            elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, funcs);
+        }
+        mi = mi + 1 as u32;
     }
 }
 
