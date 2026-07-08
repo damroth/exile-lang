@@ -7812,8 +7812,18 @@ fn any_builtin(funcs: *const Vec<Tfunc>, kind: int) -> bool {
 // which prepends the whole prelude and DCE-prunes it, the port keeps its
 // verified DEMAND-DRIVEN materialization: the parsed methods sit in a passive
 // registry and are elaborated into tp_funcs only when a use-site demands them.
-fn prelude_source() -> str {
-    return "struct StringBuilder {\n    buf: own *u8,\n    len: u32,\n    cap: u32,\n    alloc: Allocator,\n}\nimpl StringBuilder {\n    pub fn length(*const self) -> u32 { return self.len; }\n}\n";
+fn prelude_source(a: Allocator, ar: *Arena) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 1024 as u32);
+    sb.push_str("struct StringBuilder { buf: own *u8, len: u32, cap: u32, alloc: Allocator }\n");
+    sb.push_str("impl StringBuilder {\n");
+    sb.push_str("    pub fn with_capacity(a: Allocator, hint: u32) -> StringBuilder {\n");
+    sb.push_str("        let cap: u32 = if hint < 16 as u32 { 16 as u32 } else { hint };\n");
+    sb.push_str("        let buf: own *u8 = a.alloc_fn(a.state, cap) as own *u8;\n");
+    sb.push_str("        return StringBuilder { buf: buf, len: 0 as u32, cap: cap, alloc: a };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn length(*const self) -> u32 { return self.len; }\n");
+    sb.push_str("}\n");
+    return str::from_slice(ar, sb.as_slice());
 }
 // One prelude method, located by its (impl, method) index into the parsed
 // prelude items so the drain can re-derive its body (mirrors the GenJob idx
@@ -7828,7 +7838,7 @@ struct PreludeMethod {
     pm_order: u32,
 }
 fn parse_prelude_items(a: Allocator, ar: *Arena) -> Vec<Item> {
-    return match tokenize(a, ar, "<prelude>", prelude_source()) {
+    return match tokenize(a, ar, "<prelude>", prelude_source(a, ar)) {
         Result::Ok(toks) => match parse_program(a, ar, toks.as_slice(), toks.length()) {
             Result::Ok(pit) => pit
             | Result::Err(_e) => Vec::with_capacity(a, 8 as u32)
@@ -7966,6 +7976,9 @@ fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym
         let mut i = 0 as u32;
         while i < reg.length() {
             let mm = pm_mangle(a, ar, rsl[i].pm_type, rsl[i].pm_name);
+            // Iterating the registry in order gives declaration order for
+            // direct demands; transitive-demand ordering (grow) is handled when
+            // that method lands.
             if !name_in(&done, mm) && funcs_call_m(funcs, mm) {
                 done.push(mm);
                 let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
