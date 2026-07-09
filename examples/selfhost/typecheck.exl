@@ -167,6 +167,11 @@ struct GenJob {
     // parser-stamped); for a generic default (whose source fn lives in the
     // trait at `gj_idx`) it pins `Self` in the instance body.
     gj_target: Vec<str>,
+    // A prelude generic method instance (Vec/VecIter/HashMap/adapter): its body
+    // lives in the parsed source-prelude items, not the user `items`, so the
+    // drain re-derives it via (pm_type, pm_name) = `gj_target` looked up in the
+    // prelude registry.  gj_idx / gj_meth are unused for these.
+    gj_prelude: bool,
 }
 
 // An enum's type parameters in declaration order (user enums + the prelude
@@ -1726,7 +1731,10 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
-    if sl[midx].mi_prelude { register_mono_struct(a, sc, &sl[midx].mi_path); }
+    if sl[midx].mi_prelude {
+        register_mono_struct(a, sc, &sl[midx].mi_path);
+        queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst);
+    }
     let targs = elab_args(a, ar, g, sc, env, args);
     return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, cret), p);
 }
@@ -1795,7 +1803,20 @@ fn queue_gen_instance(a: Allocator, sc: *const TyScope, gi: u32, binds: *const V
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
     let no_target: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    sc.sc_genjobs.push(GenJob { gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: no_target });
+    sc.sc_genjobs.push(GenJob { gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: no_target, gj_prelude: false });
+}
+
+// Queue a prelude generic method instance (Vec/VecIter/adapter): its source
+// body is in the parsed prelude items, so `gj_target` carries (type, name) for
+// the drain to look up in the prelude registry.  Dedup by mangled name so a
+// second `v.push(...)` (or a transitive `self.grow`) queues once.
+fn queue_prelude_gen(a: Allocator, sc: *const TyScope, ty: str, nm: str, binds: *const Vec<TVarBind>, mangled: str) {
+    if name_in(sc.sc_geninsts, mangled) { return; }
+    sc.sc_geninsts.push(mangled);
+    let mut tgt: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    tgt.push(ty);
+    tgt.push(nm);
+    sc.sc_genjobs.push(GenJob { gj_idx: 0 as u32, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: tgt, gj_prelude: true });
 }
 
 // Queue a generic-method instance: the impl (or trait, for a generic default)
@@ -1805,7 +1826,7 @@ fn queue_method_instance(a: Allocator, sc: *const TyScope, impl_idx: u32, meth_i
                          binds: *const Vec<TVarBind>, mangled: str, target: *const Vec<str>) {
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
-    sc.sc_genjobs.push(GenJob { gj_idx: impl_idx, gj_meth: meth_idx as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: copy_strs(a, target) });
+    sc.sc_genjobs.push(GenJob { gj_idx: impl_idx, gj_meth: meth_idx as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: copy_strs(a, target), gj_prelude: false });
 }
 
 // `mod::fn(args)` — a module-qualified call resolves to the `mod__fn` C
@@ -5853,6 +5874,9 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     // self, i) -> Option<T> / as_slice -> Slice<T> / iter -> VecIter<T>.
     let none_ret_ann: Option<*const TypeAnn> = Option::None;
     push_prelude_sg_method(a, ar, "Vec", "with_capacity", false, false, false, Option::Some(ann_app1(a, ar, "Vec", "T")), out);
+    // grow is the private geometric-resize helper; register it so `self.grow`
+    // inside `push`'s materialized body resolves (never user-called).
+    push_prelude_sg_method(a, ar, "Vec", "grow", true, true, false, none_ret_ann, out);
     push_prelude_sg_method(a, ar, "Vec", "push", true, true, false, none_ret_ann, out);
     push_prelude_sg_method(a, ar, "Vec", "length", true, true, true, Option::Some(ann_u32(ar)), out);
     push_prelude_sg_method(a, ar, "Vec", "get", true, true, true, Option::Some(ann_app1(a, ar, "Option", "T")), out);
@@ -7919,6 +7943,98 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("    pub fn length(*const self) -> u32 { return self.len; }\n");
     sb.push_str("    pub fn as_slice(*const self) -> Slice<u8> {\n");
     sb.push_str("        return Slice { ptr: self.buf as *const u8, len: self.len };\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
+    sb.push_str("struct String { ptr: own *u8, len: u32, alloc: Allocator }\n");
+    sb.push_str("impl String {\n");
+    sb.push_str("    pub fn with_str(a: Allocator, s: str) -> String {\n");
+    sb.push_str("        let n: u32 = cstr_len(s);\n");
+    sb.push_str("        let buf: own *u8 = a.alloc_fn(a.state, n + 1 as u32) as own *u8;\n");
+    sb.push_str("        let src: Slice<u8> = Slice { ptr: s as *const u8, len: n };\n");
+    sb.push_str("        let mut i: u32 = 0 as u32;\n");
+    sb.push_str("        while i < n { buf[i] = src[i]; i = i + 1 as u32; }\n");
+    sb.push_str("        buf[n] = 0 as u8;\n");
+    sb.push_str("        return String { ptr: buf, len: n, alloc: a };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn empty(a: Allocator) -> String {\n");
+    sb.push_str("        let buf: own *u8 = a.alloc_fn(a.state, 1 as u32) as own *u8;\n");
+    sb.push_str("        buf[0 as u32] = 0 as u8;\n");
+    sb.push_str("        return String { ptr: buf, len: 0 as u32, alloc: a };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn build(sb: StringBuilder) -> String {\n");
+    sb.push_str("        sb.buf[sb.len] = 0 as u8;\n");
+    sb.push_str("        return String { ptr: sb.buf as own *u8, len: sb.len, alloc: sb.alloc };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn length(*const self) -> u32 { return self.len; }\n");
+    sb.push_str("    pub fn as_slice(*const self) -> Slice<u8> {\n");
+    sb.push_str("        return Slice { ptr: self.ptr as *const u8, len: self.len };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn as_str(*const self) -> str { return self.ptr as str; }\n");
+    sb.push_str("    pub fn free(self) {\n");
+    sb.push_str("        self.alloc.free_fn(self.alloc.state, self.ptr as *c_void, self.len + 1 as u32);\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
+    sb.push_str("impl Eq for String {\n");
+    sb.push_str("    pub fn eq(*const self, other: *const String) -> bool {\n");
+    sb.push_str("        return str::eq(self.as_str(), other.as_str());\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
+    sb.push_str("impl Hash for String {\n");
+    sb.push_str("    pub fn hash(*const self) -> u32 { return str::hash(self.as_str()); }\n");
+    sb.push_str("}\n");
+    sb.push_str("impl Clone for String {\n");
+    sb.push_str("    pub fn clone(*const self) -> String {\n");
+    sb.push_str("        return String::with_str(self.alloc, self.as_str());\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
+    sb.push_str("struct Vec<T> { ptr: own *T, count: u32, cap: u32, alloc: Allocator }\n");
+    sb.push_str("struct VecIter<T> { data: *const T, len: u32, pos: u32 }\n");
+    sb.push_str("impl Vec<T> {\n");
+    sb.push_str("    pub fn with_capacity(a: Allocator, hint: u32) -> Vec<T> {\n");
+    sb.push_str("        let cap: u32 = if hint < 8 as u32 { 8 as u32 } else { hint };\n");
+    sb.push_str("        let bytes: u32 = size_of(T) as u32 * cap;\n");
+    sb.push_str("        let p: own *T = a.alloc_fn(a.state, bytes) as own *T;\n");
+    sb.push_str("        return Vec { ptr: p, count: 0 as u32, cap: cap, alloc: a };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn length(*const self) -> u32 { return self.count; }\n");
+    sb.push_str("    fn grow(*self, new_cap: u32) {\n");
+    sb.push_str("        let bytes: u32 = size_of(T) as u32 * new_cap;\n");
+    sb.push_str("        let new_ptr: own *T = self.alloc.alloc_fn(self.alloc.state, bytes) as own *T;\n");
+    sb.push_str("        let src: Slice<T> = Slice { ptr: self.ptr as *const T, len: self.count };\n");
+    sb.push_str("        let mut i: u32 = 0 as u32;\n");
+    sb.push_str("        while i < self.count { new_ptr[i] = src[i] as T; i = i + 1 as u32; }\n");
+    sb.push_str("        let old_bytes: u32 = size_of(T) as u32 * self.cap;\n");
+    sb.push_str("        self.alloc.free_fn(self.alloc.state, self.ptr as *c_void, old_bytes);\n");
+    sb.push_str("        self.ptr = new_ptr;\n");
+    sb.push_str("        self.cap = new_cap;\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn push(*self, x: T) {\n");
+    sb.push_str("        if self.count + 1 as u32 > self.cap { self.grow(self.cap * 2 as u32); }\n");
+    sb.push_str("        self.ptr[self.count] = x;\n");
+    sb.push_str("        self.count = self.count + 1 as u32;\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn get(*const self, i: u32) -> Option<T> {\n");
+    sb.push_str("        if i >= self.count { return Option::None; }\n");
+    sb.push_str("        let s: Slice<T> = Slice { ptr: self.ptr as *const T, len: self.count };\n");
+    sb.push_str("        return Option::Some(s[i]);\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn as_slice(*const self) -> Slice<T> {\n");
+    sb.push_str("        return Slice { ptr: self.ptr as *const T, len: self.count };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn iter(*const self) -> VecIter<T> {\n");
+    sb.push_str("        return VecIter { data: self.ptr as *const T, len: self.count, pos: 0 as u32 };\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
+    sb.push_str("impl Slice<T> {\n");
+    sb.push_str("    pub fn length(*const self) -> u32 { return self.len; }\n");
+    sb.push_str("}\n");
+    sb.push_str("impl Iterator for VecIter<T> {\n");
+    sb.push_str("    pub fn next(*self) -> Option<T> {\n");
+    sb.push_str("        if self.pos >= self.len { return Option::None; }\n");
+    sb.push_str("        let s: Slice<T> = Slice { ptr: self.data, len: self.len };\n");
+    sb.push_str("        let v: T = s[self.pos];\n");
+    sb.push_str("        self.pos = self.pos + 1 as u32;\n");
+    sb.push_str("        return Option::Some(v);\n");
     sb.push_str("    }\n");
     sb.push_str("}\n");
     return str::from_slice(ar, sb.as_slice());
