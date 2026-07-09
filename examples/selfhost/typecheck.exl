@@ -2358,7 +2358,10 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     // A prelude method's instance body is injected (filtered from the dump), so
     // register the receiver type for the footer but queue no drain.
-    if sl[midx].mi_prelude { register_mono_struct(a, sc, &sl[midx].mi_path); }
+    if sl[midx].mi_prelude {
+        register_mono_struct(a, sc, &sl[midx].mi_path);
+        queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst);
+    }
     else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
     let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
@@ -2392,7 +2395,10 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     // A prelude method's instance body is injected — register its type for the
     // footer but queue no drain job; a user method elaborates an instance.
-    if prelude { register_mono_struct(a, sc, &sl[midx].mi_path); }
+    if prelude {
+        register_mono_struct(a, sc, &sl[midx].mi_path);
+        queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst);
+    }
     else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
     let iret = subst_opt_ret(ar, &binds, cret);
     let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
@@ -8083,6 +8089,19 @@ fn build_prelude_registry(a: Allocator, items: *const Vec<Item>) -> Vec<PreludeM
     }
     return out;
 }
+// Registry index for a prelude method by (type, name), or -1 when the type's
+// source is not yet in prelude_source (HashMap / adapters) — the drain skips
+// those, leaving them unmaterialized (a link error if actually used, never
+// silent-wrong), exactly as before this generic path existed.
+fn prelude_reg_find(reg: *const Vec<PreludeMethod>, ty: str, nm: str) -> int {
+    let sl = reg.as_slice();
+    let mut i = 0 as u32;
+    while i < reg.length() {
+        if str::eq(sl[i].pm_type, ty) && str::eq(sl[i].pm_name, nm) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
 
 // --- Workstream-B: demand-driven prelude materialization ---
 // Reachability scan: does any elaborated function body call the mangled symbol
@@ -8472,7 +8491,20 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         // Copy the target out too: elaborating the body may queue more jobs,
         // re-growing `genjobs` and dangling the slice borrow.
         let jt = copy_strs(a, &gsl[k].gj_target);
-        if jmeth < 0 as int {
+        let jprelude = gsl[k].gj_prelude;
+        if jprelude {
+            // Generic prelude instance: re-derive from the source-prelude items
+            // via (type, name) = jt.  Demand-order drain matches the oracle's
+            // generic emission order; `grow` (transitive from `push`) is queued
+            // mid-drain and picked up by the length re-read.
+            let jtsl = jt.as_slice();
+            let ri = prelude_reg_find(&prelude_reg, jtsl[0 as u32], jtsl[1 as u32]);
+            if ri >= 0 as int {
+                let rsl = prelude_reg.as_slice();
+                let no_tgt: Vec<str> = Vec::with_capacity(a, 8 as u32);
+                elaborate_method_instance(a, ar, &globals, &gensym, &idx, &prelude_items, rsl[ri as u32].pm_impl_idx, rsl[ri as u32].pm_meth_idx, &jb, jm, &no_tgt, &funcs);
+            }
+        } else if jmeth < 0 as int {
             elaborate_instance(a, ar, &globals, &gensym, &idx, items, ji, &jb, jm, &funcs);
         } else {
             elaborate_method_instance(a, ar, &globals, &gensym, &idx, items, ji, jmeth as u32, &jb, jm, &jt, &funcs);
