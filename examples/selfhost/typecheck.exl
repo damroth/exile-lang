@@ -7666,11 +7666,65 @@ fn collect_tstmt(s: *const Tstmt, acc: *FtrAcc) {
     }
 }
 
+fn str_ends_with(s: str, suffix: str) -> bool {
+    let sn = str::length(suffix);
+    let ln = str::length(s);
+    if ln < sn { return false; }
+    let sb = str::as_bytes(s);
+    let qb = str::as_bytes(suffix);
+    let off = ln - sn;
+    let mut i = 0 as u32;
+    while i < sn { if sb[off + i] != qb[i] { return false; } i = i + 1 as u32; }
+    return true;
+}
+
+// True once any owning prelude collection (StringBuilder / String / Vec /
+// HashMap / Arena) is materialized: they all expose `with_capacity`, and each
+// carries a synthesized `<T>__drop` the oracle keeps in `tp_funcs` at
+// footer-collection time.
+fn funcs_uses_owning_collection(funcs: *const Vec<Tfunc>) -> bool {
+    let sl = funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < funcs.length() {
+        if str_ends_with(sl[i].tf_mangled, "with_capacity") { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+// Walk the Allocator's `free_fn` field type into `acc` (seeds the free-seam
+// fn-ptr).  Void, not a `-> *const Typ`, so the borrow into `structs` is
+// consumed here rather than returned (which the escape pass rejects).
+fn seed_allocator_free_fn(structs: *const Vec<StructSig>, acc: *FtrAcc) {
+    let sl = structs.as_slice();
+    let mut i = 0 as u32;
+    while i < structs.length() {
+        if str::eq(path_last(&sl[i].sname_path), "Allocator") {
+            let fl = sl[i].sfields_ty.as_slice();
+            let mut j = 0 as u32;
+            while j < sl[i].sfields_ty.length() {
+                if str::eq(fl[j].name, "free_fn") { walk_typ_collect(fl[j].ty, acc); }
+                j = j + 1 as u32;
+            }
+        }
+        i = i + 1 as u32;
+    }
+}
+
 fn collect_footer_types(a: Allocator, funcs: *const Vec<Tfunc>, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>) -> FtrAcc {
     let tv: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let fv: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let av: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let mut acc = FtrAcc { tup: tv, fnp: fv, arr: av };
+    // Mirror the oracle's footer-collection order: it keeps the synthesized
+    // `<T>__drop` methods in `tp_funcs` (walked before `with_capacity`), and
+    // those free via `self.alloc.free_fn`, so the free-seam fn-ptr is
+    // discovered before the alloc-seam.  The port materializes prelude methods
+    // demand-driven and never builds those drop functions, so when an owning
+    // collection is in play, seed the free_fn discovery first.
+    if funcs_uses_owning_collection(funcs) {
+        seed_allocator_free_fn(structs, &acc);
+    }
     let fsl = funcs.as_slice();
     let mut fi = 0 as u32;
     while fi < funcs.length() {
