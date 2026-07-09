@@ -257,6 +257,12 @@ pub struct Tfunc {
 // The whole checked + elaborated program codegen consumes.
 pub struct Tprogram {
     tp_funcs: Vec<Tfunc>,
+    // Prelude FREE functions (`str::*`) materialized on demand.  Held apart
+    // from tp_funcs because the oracle prepends the prelude, so these emit in
+    // the free-function section BEFORE user free fns (e.g. `main`); codegen
+    // emits tp_pfree ahead of tp_funcs.  Prelude METHODS (StringBuilder /
+    // String / Vec) stay in tp_funcs — they emit in the impl-method section.
+    tp_pfree: Vec<Tfunc>,
     tp_struct_decls: Vec<StructDeclEntry>,
     tp_struct_index: Vec<StructSig>,
     tp_enum_index: Vec<EnumSig>,

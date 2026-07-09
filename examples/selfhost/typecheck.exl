@@ -6995,6 +6995,20 @@ fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
             let sty = ty_node(ar, Typ::TStruct(copy_strs(a, target)));
             elaborate_impl_method_at(a, ar, g, gensym, idx, &td.trmethods, meth_idx, tbinds, mangled, Option::Some(sty), funcs);
         }
+        // `mod str` free function: elaborate as a plain free fn under the module
+        // path so its body's sibling `str::*` calls resolve, with the mangled
+        // name fixed by the registry (str__eq / str__as_bytes / ...).
+        | Item::Module(md) => {
+            let mmsl = md.mitems.as_slice();
+            match mmsl[meth_idx] {
+                Item::Function(mf) => {
+                    let mut mp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+                    mp.push(md.mname);
+                    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, &mp, mangled, &mf, none_ty(), &mf.tparams));
+                }
+                | _mo => { }
+            }
+        }
         | _e => { }
     }
 }
@@ -7899,6 +7913,64 @@ fn any_builtin(funcs: *const Vec<Tfunc>, kind: int) -> bool {
 // registry and are elaborated into tp_funcs only when a use-site demands them.
 fn prelude_source(a: Allocator, ar: *Arena) -> str {
     let mut sb = StringBuilder::with_capacity(a, 1024 as u32);
+    sb.push_str("mod str {\n");
+    sb.push_str("    pub fn length(s: str) -> u32 { return cstr_len(s); }\n");
+    sb.push_str("    pub fn as_bytes(s: str) -> Slice<u8> {\n");
+    sb.push_str("        let n: u32 = cstr_len(s);\n");
+    sb.push_str("        return Slice { ptr: s as *const u8, len: n };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn eq(a: str, b: str) -> bool {\n");
+    sb.push_str("        let la: u32 = cstr_len(a);\n");
+    sb.push_str("        let lb: u32 = cstr_len(b);\n");
+    sb.push_str("        if la != lb { return false; }\n");
+    sb.push_str("        let ba: Slice<u8> = str::as_bytes(a);\n");
+    sb.push_str("        let bb: Slice<u8> = str::as_bytes(b);\n");
+    sb.push_str("        let mut i: u32 = 0 as u32;\n");
+    sb.push_str("        while i < la {\n");
+    sb.push_str("            if ba[i] != bb[i] { return false; }\n");
+    sb.push_str("            i = i + 1 as u32;\n");
+    sb.push_str("        }\n");
+    sb.push_str("        return true;\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn cmp(a: str, b: str) -> i32 {\n");
+    sb.push_str("        let la: u32 = cstr_len(a);\n");
+    sb.push_str("        let lb: u32 = cstr_len(b);\n");
+    sb.push_str("        let ba: Slice<u8> = str::as_bytes(a);\n");
+    sb.push_str("        let bb: Slice<u8> = str::as_bytes(b);\n");
+    sb.push_str("        let m: u32 = if la < lb { la } else { lb };\n");
+    sb.push_str("        let mut i: u32 = 0 as u32;\n");
+    sb.push_str("        while i < m {\n");
+    sb.push_str("            if ba[i] != bb[i] { return ba[i] as i32 - bb[i] as i32; }\n");
+    sb.push_str("            i = i + 1 as u32;\n");
+    sb.push_str("        }\n");
+    sb.push_str("        return la as i32 - lb as i32;\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn hash(s: str) -> u32 {\n");
+    sb.push_str("        let bytes: Slice<u8> = str::as_bytes(s);\n");
+    sb.push_str("        let n: u32 = bytes.len;\n");
+    sb.push_str("        let mut acc: u32 = 0 as u32;\n");
+    sb.push_str("        let mut i: u32 = 0 as u32;\n");
+    sb.push_str("        while i < n {\n");
+    sb.push_str("            acc = acc * 31 + bytes[i] as u32;\n");
+    sb.push_str("            i = i + 1 as u32;\n");
+    sb.push_str("        }\n");
+    sb.push_str("        return acc;\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn from_slice(arena: *Arena, s: Slice<u8>) -> str {\n");
+    sb.push_str("        let n: u32 = s.len;\n");
+    sb.push_str("        let start: u32 = arena.off;\n");
+    sb.push_str("        if start + n + 1 as u32 > arena.cap { return \"\"; }\n");
+    sb.push_str("        let mut i: u32 = 0 as u32;\n");
+    sb.push_str("        while i < n {\n");
+    sb.push_str("            arena.buf[start + i] = s[i];\n");
+    sb.push_str("            i = i + 1 as u32;\n");
+    sb.push_str("        }\n");
+    sb.push_str("        arena.buf[start + n] = 0 as u8;\n");
+    sb.push_str("        arena.off = start + n + 1 as u32;\n");
+    sb.push_str("        let p: *u8 = ptr_offset(arena.buf, start);\n");
+    sb.push_str("        return p as *const c_char as str;\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
     sb.push_str("struct StringBuilder { buf: own *u8, len: u32, cap: u32, alloc: Allocator }\n");
     sb.push_str("impl StringBuilder {\n");
     sb.push_str("    pub fn with_capacity(a: Allocator, hint: u32) -> StringBuilder {\n");
@@ -8083,6 +8155,23 @@ fn build_prelude_registry(a: Allocator, items: *const Vec<Item>) -> Vec<PreludeM
                     j = j + 1 as u32;
                 }
             }
+            // `mod str { fn ... }` — the prelude's free-function module.  Each
+            // member registers under pm_type = module name (str); pm_impl_idx is
+            // the module item index and pm_meth_idx the fn's position inside it.
+            | Item::Module(md) => {
+                let mmsl = md.mitems.as_slice();
+                let mut mj = 0 as u32;
+                while mj < md.mitems.length() {
+                    match mmsl[mj] {
+                        Item::Function(mf) => {
+                            out.push(PreludeMethod { pm_type: md.mname, pm_name: mf.name, pm_impl_idx: i, pm_meth_idx: mj, pm_order: ord });
+                            ord = ord + 1 as u32;
+                        }
+                        | _mo => {}
+                    }
+                    mj = mj + 1 as u32;
+                }
+            }
             | _o => {}
         }
         i = i + 1 as u32;
@@ -8206,73 +8295,69 @@ fn pm_mangle(a: Allocator, ar: *Arena, ty: str, nm: str) -> str {
 fn is_self_recv(e: *const Expr) -> bool {
     return match *e { Expr::Var(n, _p) => str::eq(n, "self") | _o => false };
 }
-fn scall_args(args: *const Vec<*const Expr>, nm: str) -> bool {
+// The scall family scans a source body for a demanded call.  `pm` selects the
+// mode: pm == "" matches a `self.<nm>(...)` method call (same-type transitive);
+// pm != "" matches a `pm::<nm>(...)` two-segment path call (cross-type, e.g.
+// String::eq's body calling `str::eq`, str::eq's calling `str::as_bytes`).
+fn scall_args(args: *const Vec<*const Expr>, nm: str, pm: str) -> bool {
     let sl = args.as_slice();
     let mut i = 0 as u32;
-    while i < args.length() { if scall_e(sl[i], nm) { return true; } i = i + 1 as u32; }
+    while i < args.length() { if scall_e(sl[i], nm, pm) { return true; } i = i + 1 as u32; }
     return false;
 }
-fn scall_fields(fields: *const Vec<Field>, nm: str) -> bool {
+fn scall_fields(fields: *const Vec<Field>, nm: str, pm: str) -> bool {
     let sl = fields.as_slice();
     let mut i = 0 as u32;
-    while i < fields.length() { if scall_e(sl[i].value, nm) { return true; } i = i + 1 as u32; }
+    while i < fields.length() { if scall_e(sl[i].value, nm, pm) { return true; } i = i + 1 as u32; }
     return false;
 }
-fn scall_opt_body(o: Option<Vec<Stmt>>, nm: str) -> bool {
-    return match o { Option::Some(b) => body_calls_self(&b, nm) | Option::None => false };
+fn scall_opt_body(o: Option<Vec<Stmt>>, nm: str, pm: str) -> bool {
+    return match o { Option::Some(b) => body_calls_self(&b, nm, pm) | Option::None => false };
 }
-fn scall_e(e: *const Expr, nm: str) -> bool {
+fn scall_e(e: *const Expr, nm: str, pm: str) -> bool {
     return match *e {
-        Expr::MethodCall { receiver, name, args, pos } => (str::eq(name, nm) && is_self_recv(receiver)) || scall_e(receiver, nm) || scall_args(&args, nm)
-        | Expr::Call { callee, args, pos } => scall_args(&args, nm)
-        | Expr::BinOp(op, l, r, pos) => scall_e(l, nm) || scall_e(r, nm)
-        | Expr::Neg(x, pos) => scall_e(x, nm)
-        | Expr::BitNot(x, pos) => scall_e(x, nm)
-        | Expr::Not(x, pos) => scall_e(x, nm)
-        | Expr::Ref(x, pos) => scall_e(x, nm)
-        | Expr::Deref(x, pos) => scall_e(x, nm)
-        | Expr::Cast(x, ann, pos) => scall_e(x, nm)
-        | Expr::FieldAccess(x, f, pos) => scall_e(x, nm)
-        | Expr::Index { base, index, pos } => scall_e(base, nm) || scall_e(index, nm)
-        | Expr::If { cond, then_blk, else_blk } => scall_e(cond, nm) || body_calls_self(&then_blk, nm) || scall_opt_body(else_blk, nm)
-        | Expr::Block(stmts, pos) => body_calls_self(&stmts, nm)
-        | Expr::StructLit { tname, fields, base, pos } => scall_fields(&fields, nm)
-        | Expr::TupleLit(es, pos) => scall_args(&es, nm)
-        | Expr::ArrayLit(es, pos) => scall_args(&es, nm)
-        | Expr::ArrayRepeat { value, count, pos } => scall_e(value, nm) || scall_e(count, nm)
+        Expr::MethodCall { receiver, name, args, pos } => (str::eq(pm, "") && str::eq(name, nm) && is_self_recv(receiver)) || scall_e(receiver, nm, pm) || scall_args(&args, nm, pm)
+        | Expr::Call { callee, args, pos } => (!str::eq(pm, "") && callee.length() == 2 as u32 && str::eq(callee.as_slice()[0 as u32], pm) && str::eq(callee.as_slice()[1 as u32], nm)) || scall_args(&args, nm, pm)
+        | Expr::BinOp(op, l, r, pos) => scall_e(l, nm, pm) || scall_e(r, nm, pm)
+        | Expr::Neg(x, pos) => scall_e(x, nm, pm)
+        | Expr::BitNot(x, pos) => scall_e(x, nm, pm)
+        | Expr::Not(x, pos) => scall_e(x, nm, pm)
+        | Expr::Ref(x, pos) => scall_e(x, nm, pm)
+        | Expr::Deref(x, pos) => scall_e(x, nm, pm)
+        | Expr::Cast(x, ann, pos) => scall_e(x, nm, pm)
+        | Expr::FieldAccess(x, f, pos) => scall_e(x, nm, pm)
+        | Expr::Index { base, index, pos } => scall_e(base, nm, pm) || scall_e(index, nm, pm)
+        | Expr::If { cond, then_blk, else_blk } => scall_e(cond, nm, pm) || body_calls_self(&then_blk, nm, pm) || scall_opt_body(else_blk, nm, pm)
+        | Expr::Block(stmts, pos) => body_calls_self(&stmts, nm, pm)
+        | Expr::StructLit { tname, fields, base, pos } => scall_fields(&fields, nm, pm)
+        | Expr::TupleLit(es, pos) => scall_args(&es, nm, pm)
+        | Expr::ArrayLit(es, pos) => scall_args(&es, nm, pm)
+        | Expr::ArrayRepeat { value, count, pos } => scall_e(value, nm, pm) || scall_e(count, nm, pm)
         | _leaf => false
     };
 }
-fn scall_stmt(s: *const Stmt, nm: str) -> bool {
+fn scall_stmt(s: *const Stmt, nm: str, pm: str) -> bool {
     return match *s {
-        Stmt::Let { name, value, ty_ann, is_mut, pos } => scall_e(value, nm)
-        | Stmt::LetTuple { names, value, is_mut, pos } => scall_e(value, nm)
-        | Stmt::Assign { path, value, pos } => scall_e(value, nm)
-        | Stmt::AssignField { target, field, value, pos } => scall_e(target, nm) || scall_e(value, nm)
-        | Stmt::AssignIndex { base, index, value, pos } => scall_e(base, nm) || scall_e(index, nm) || scall_e(value, nm)
-        | Stmt::AssignDeref { target, value, pos } => scall_e(target, nm) || scall_e(value, nm)
-        | Stmt::Return(o, pos) => match o { Option::Some(e) => scall_e(e, nm) | Option::None => false }
-        | Stmt::ExprStmt(e) => scall_e(e, nm)
-        | Stmt::Tail(e) => scall_e(e, nm)
-        | Stmt::While { cond, body } => scall_e(cond, nm) || body_calls_self(&body, nm)
-        | Stmt::For { iter_var, range, body, pos } => scall_e(range, nm) || body_calls_self(&body, nm)
-        | Stmt::Defer { body, pos } => body_calls_self(&body, nm)
+        Stmt::Let { name, value, ty_ann, is_mut, pos } => scall_e(value, nm, pm)
+        | Stmt::LetTuple { names, value, is_mut, pos } => scall_e(value, nm, pm)
+        | Stmt::Assign { path, value, pos } => scall_e(value, nm, pm)
+        | Stmt::AssignField { target, field, value, pos } => scall_e(target, nm, pm) || scall_e(value, nm, pm)
+        | Stmt::AssignIndex { base, index, value, pos } => scall_e(base, nm, pm) || scall_e(index, nm, pm) || scall_e(value, nm, pm)
+        | Stmt::AssignDeref { target, value, pos } => scall_e(target, nm, pm) || scall_e(value, nm, pm)
+        | Stmt::Return(o, pos) => match o { Option::Some(e) => scall_e(e, nm, pm) | Option::None => false }
+        | Stmt::ExprStmt(e) => scall_e(e, nm, pm)
+        | Stmt::Tail(e) => scall_e(e, nm, pm)
+        | Stmt::While { cond, body } => scall_e(cond, nm, pm) || body_calls_self(&body, nm, pm)
+        | Stmt::For { iter_var, range, body, pos } => scall_e(range, nm, pm) || body_calls_self(&body, nm, pm)
+        | Stmt::Defer { body, pos } => body_calls_self(&body, nm, pm)
         | _leaf => false
     };
 }
-fn body_calls_self(body: *const Vec<Stmt>, nm: str) -> bool {
+fn body_calls_self(body: *const Vec<Stmt>, nm: str, pm: str) -> bool {
     let sl = body.as_slice();
     let mut i = 0 as u32;
-    while i < body.length() { if scall_stmt(&sl[i], nm) { return true; } i = i + 1 as u32; }
+    while i < body.length() { if scall_stmt(&sl[i], nm, pm) { return true; } i = i + 1 as u32; }
     return false;
-}
-// The source Func for a registry entry (index into the parsed prelude items).
-fn prelude_func_at(prelude_items: *const Vec<Item>, impl_idx: u32, meth_idx: u32) -> Option<*const Func> {
-    let sl = prelude_items.as_slice();
-    return match sl[impl_idx] {
-        Item::Impl(ib) => { let m = &ib.iitems.as_slice()[meth_idx] as *const Func; Option::Some(m) }
-        | _o => { let n: Option<*const Func> = Option::None; n }
-    };
 }
 fn has_u32(v: *const Vec<u32>, x: u32) -> bool {
     let sl = v.as_slice();
@@ -8280,10 +8365,14 @@ fn has_u32(v: *const Vec<u32>, x: u32) -> bool {
     while i < v.length() { if sl[i] == x { return true; } i = i + 1 as u32; }
     return false;
 }
-fn prelude_func_calls(prelude_items: *const Vec<Item>, impl_idx: u32, meth_idx: u32, nm: str) -> bool {
-    return match prelude_func_at(prelude_items, impl_idx, meth_idx) {
-        Option::Some(f) => body_calls_self(&f.body, nm)
-        | Option::None => false
+// Scan the source body of registry entry (impl_idx, meth_idx) for a call —
+// handles both impl methods and `mod str` free functions.
+fn prelude_func_calls(prelude_items: *const Vec<Item>, impl_idx: u32, meth_idx: u32, nm: str, pm: str) -> bool {
+    let sl = prelude_items.as_slice();
+    return match sl[impl_idx] {
+        Item::Impl(ib) => body_calls_self(&ib.iitems.as_slice()[meth_idx].body, nm, pm)
+        | Item::Module(md) => match md.mitems.as_slice()[meth_idx] { Item::Function(mf) => body_calls_self(&mf.body, nm, pm) | _o => false }
+        | _o => false
     };
 }
 // Any already-demanded method of type `t` whose source body calls `self.nm(...)`.
@@ -8292,14 +8381,34 @@ fn demanded_calls(reg: *const Vec<PreludeMethod>, demset: *const Vec<u32>, prelu
     let mut j = 0 as u32;
     while j < reg.length() {
         if has_u32(demset, j) && str::eq(rsl[j].pm_type, t) {
-            if prelude_func_calls(prelude_items, rsl[j].pm_impl_idx, rsl[j].pm_meth_idx, nm) { return true; }
+            if prelude_func_calls(prelude_items, rsl[j].pm_impl_idx, rsl[j].pm_meth_idx, nm, "") { return true; }
         }
         j = j + 1 as u32;
     }
     return false;
 }
+// Any already-demanded method (ANY type) whose source body calls `m::nm(...)` —
+// the cross-type transitive path for `mod str` free functions (String::eq calls
+// str::eq; str::eq calls str::as_bytes).
+fn demanded_path_calls(reg: *const Vec<PreludeMethod>, demset: *const Vec<u32>, prelude_items: *const Vec<Item>, m: str, nm: str) -> bool {
+    let rsl = reg.as_slice();
+    let mut j = 0 as u32;
+    while j < reg.length() {
+        if has_u32(demset, j) {
+            if prelude_func_calls(prelude_items, rsl[j].pm_impl_idx, rsl[j].pm_meth_idx, nm, m) { return true; }
+        }
+        j = j + 1 as u32;
+    }
+    return false;
+}
+// Is the registry entry a `mod` free function (str::*), not an impl method?
+// Module free-fns route to `pfree` (emitted before user free-fns).
+fn is_module_entry(prelude_items: *const Vec<Item>, impl_idx: u32) -> bool {
+    let sl = prelude_items.as_slice();
+    return match sl[impl_idx] { Item::Module(_md) => true | _o => false };
+}
 fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                       prelude_items: *const Vec<Item>, reg: *const Vec<PreludeMethod>, funcs: *Vec<Tfunc>) {
+                       prelude_items: *const Vec<Item>, reg: *const Vec<PreludeMethod>, funcs: *Vec<Tfunc>, pfree: *Vec<Tfunc>) {
     let rsl = reg.as_slice();
     let n = reg.length();
     // Phase 1: discover the demanded set (a method is demanded if a user body
@@ -8312,7 +8421,10 @@ fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym
         while i < n {
             if !has_u32(&demset, i) {
                 let mm = pm_mangle(a, ar, rsl[i].pm_type, rsl[i].pm_name);
-                let d = funcs_call_m(funcs, mm) || demanded_calls(reg, &demset, prelude_items, rsl[i].pm_type, rsl[i].pm_name);
+                let is_mod = is_module_entry(prelude_items, rsl[i].pm_impl_idx);
+                let d = funcs_call_m(funcs, mm)
+                        || demanded_calls(reg, &demset, prelude_items, rsl[i].pm_type, rsl[i].pm_name)
+                        || (is_mod && demanded_path_calls(reg, &demset, prelude_items, rsl[i].pm_type, rsl[i].pm_name));
                 if d { demset.push(i); progress = true; }
             }
             i = i + 1 as u32;
@@ -8325,7 +8437,11 @@ fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym
             let mm2 = pm_mangle(a, ar, rsl[mi].pm_type, rsl[mi].pm_name);
             let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
             let tgt: Vec<str> = single_str(a, rsl[mi].pm_type);
-            elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, funcs);
+            if is_module_entry(prelude_items, rsl[mi].pm_impl_idx) {
+                elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, pfree);
+            } else {
+                elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, funcs);
+            }
         }
         mi = mi + 1 as u32;
     }
@@ -8512,8 +8628,10 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         k = k + 1 as u32;
     }
 
-    // Materialize demanded source-prelude method bodies (workstream-B).
-    prelude_materialize(a, ar, &globals, &gensym, &idx, &prelude_items, &prelude_reg, &funcs);
+    // Materialize demanded source-prelude method bodies (workstream-B).  Module
+    // free-fns (str::*) land in `pfree` (emitted ahead of user free-fns).
+    let mut pfree: Vec<Tfunc> = Vec::with_capacity(a, 8 as u32);
+    prelude_materialize(a, ar, &globals, &gensym, &idx, &prelude_items, &prelude_reg, &funcs, &pfree);
 
     let mut structs = prelude_struct_index(a);
     let mut enums = prelude_enum_index(a);
@@ -8565,12 +8683,12 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let tuples = ftr_to_fieldtys(a, &ftr.tup);
     let fnptrs = ftr_to_fieldtys(a, &ftr.fnp);
     let arrays = ftr_to_fieldtys(a, &ftr.arr);
-    let uses_heap = any_builtin(&funcs, 0 as int);
-    let uses_default_alloc = any_builtin(&funcs, 1 as int);
-    let uses_string_h = any_builtin(&funcs, 2 as int);
+    let uses_heap = any_builtin(&funcs, 0 as int) || any_builtin(&pfree, 0 as int);
+    let uses_default_alloc = any_builtin(&funcs, 1 as int) || any_builtin(&pfree, 1 as int);
+    let uses_string_h = any_builtin(&funcs, 2 as int) || any_builtin(&pfree, 2 as int);
 
     return Result::Ok(Tprogram {
-        tp_funcs: funcs, tp_struct_decls: sdecls, tp_struct_index: structs,
+        tp_funcs: funcs, tp_pfree: pfree, tp_struct_decls: sdecls, tp_struct_index: structs,
         tp_enum_index: enums, tp_global: global, tp_modules: modules,
         tp_uses_heap: uses_heap, tp_uses_string_h: uses_string_h, tp_uses_default_allocator: uses_default_alloc,
         tp_tuple_types: tuples, tp_fnptr_types: fnptrs, tp_c_includes: cincludes,

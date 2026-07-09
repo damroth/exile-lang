@@ -401,8 +401,10 @@ fn build_ir_program(a: Allocator, ar: *Arena) -> Tprogram {
     let ext_vars: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let array_types: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let consts: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
+    let pfree: Vec<Tfunc> = Vec::with_capacity(a, 8 as u32);
     return Tprogram {
         tp_funcs: funcs,
+        tp_pfree: pfree,
         tp_struct_decls: struct_decls,
         tp_struct_index: structs,
         tp_enum_index: enums,
