@@ -7381,6 +7381,16 @@ fn push_enum_path(a: Allocator, sigs: *Vec<EnumSig>, srcpath: *const Vec<str>) {
     });
 }
 
+// Declaration rank of a non-generic prelude struct (the order they are declared
+// in the oracle's prepended prelude), or -1 for anything else.  Used to emit
+// them ahead of the true generic mono instances in the struct index.
+fn nongeneric_prelude_rank(name: str) -> int {
+    if str::eq(name, "Allocator") { return 0 as int; }
+    if str::eq(name, "StringBuilder") { return 1 as int; }
+    if str::eq(name, "String") { return 2 as int; }
+    if str::eq(name, "Arena") { return 3 as int; }
+    return 0 as int - 1 as int;
+}
 fn prelude_struct_index(a: Allocator) -> Vec<StructSig> {
     let mut sigs: Vec<StructSig> = Vec::with_capacity(a, 16 as u32);
     push_struct_name(a, &sigs, "Enumerate");
@@ -8643,11 +8653,28 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let esl = fenums.as_slice();
     let mut ei = 0 as u32;
     while ei < en { push_enum_name(a, &enums, esl[ei]); ei = ei + 1 as u32; }
-    // Generated monomorphic instances (the dumper sorts + dedups).
+    // Generated monomorphic instances.  The non-generic prelude structs
+    // (Allocator / StringBuilder / String / Arena) are demand-registered here in
+    // use order, but the oracle prepends the whole prelude, so it emits them in
+    // DECLARATION order ahead of the true generic mono instances (Slice_u8,
+    // Vec_i32, ...).  Reproduce that: pass A pushes the demanded non-generic
+    // prelude structs by declaration rank, pass B the rest in registration order.
     let mn = mono_structs.length();
     let msl = mono_structs.as_slice();
-    let mut mi = 0 as u32;
-    while mi < mn { push_struct_path(a, &structs, &msl[mi], &mono_fields); mi = mi + 1 as u32; }
+    let mut rk = 0 as int;
+    while rk < 4 as int {
+        let mut mi = 0 as u32;
+        while mi < mn {
+            if nongeneric_prelude_rank(path_last(&msl[mi])) == rk { push_struct_path(a, &structs, &msl[mi], &mono_fields); }
+            mi = mi + 1 as u32;
+        }
+        rk = rk + 1 as int;
+    }
+    let mut mj = 0 as u32;
+    while mj < mn {
+        if nongeneric_prelude_rank(path_last(&msl[mj])) < 0 as int { push_struct_path(a, &structs, &msl[mj], &mono_fields); }
+        mj = mj + 1 as u32;
+    }
     let men = mono_enums.length();
     let mesl = mono_enums.as_slice();
     let mut mei = 0 as u32;
