@@ -30,6 +30,23 @@ pub struct CompileError {
 mod raw { extern fn abort(); }
 pub fn arena_oom() { raw::abort(); }
 
+// The source prelude is compiler-internal: a tokenize / parse failure there is
+// an ICE, never a user error.  Swallowing it (returning an empty item list)
+// silently disables the ENTIRE prelude registry, which surfaces downstream as a
+// mass diff with no stated cause — the failure mode `arena_oom`'s "never
+// silently" rule exists to prevent.  Print the position + message, then abort.
+// Writes straight to fd 2: `abort()` does not flush stdio, so a buffered
+// `print` would lose the message that makes this diagnosable at all.
+pub fn prelude_ice(a: Allocator, e: *const CompileError) {
+    let mut sb = StringBuilder::with_capacity(a, 160 as u32);
+    sb.push_str("exilc internal error: the source prelude failed to parse: ");
+    e.fmt(&sb);
+    sb.push_str("\n");
+    let sl = sb.as_slice();
+    sys::sys_write(2 as c_int, &sl[0] as *const c_uchar, sb.length() as c_ulong);
+    raw::abort();
+}
+
 // Allocate a `CompileError` in `ar` and hand back a read-only borrow —
 // the shape the fallible stages return as `Result::Err(...)`.  Dynamic
 // messages are built in a StringBuilder and interned with

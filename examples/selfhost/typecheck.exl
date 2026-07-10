@@ -921,13 +921,19 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         }
         return ty_node(ar, Typ::TEnum(ipath));
     }
-    register_mono_struct(a, sc, &ipath);
     // A generic prelude struct (Slice, ...) substitutes its skeleton fields
     // at type-position resolution, so `s.field` / `s[i]` work on a parameter
     // before any construction.  A user generic struct does likewise when it is
     // first seen as a type (a method-return instance never built by a literal).
+    //
+    // Fields BEFORE self: resolving them registers the instances they name
+    // (`HashMap<i32,i32>.slots: own *Slot<i32,i32>` registers Slot_i32_i32), and
+    // the oracle emits the nested instance first (measured: Slot_i32_i32 then
+    // HashMap_i32_i32).  register_mono_struct does not dedup, so this only moves
+    // the push; it introduces no recursion the old order did not already have.
     register_prelude_struct_fields(a, ar, sc, last, &resolved, &ipath);
     register_user_struct_fields(a, ar, sc, path, &resolved, &ipath);
+    register_mono_struct(a, sc, &ipath);
     // A `Vec<T>` instance always carries its `Slice<T>` view (Vec's accessor
     // methods return one), so the slice instance rides in the footer even when
     // no `as_slice()` is called.
@@ -8362,13 +8368,16 @@ struct PreludeMethod {
     pm_meth_idx: u32,
     pm_order: u32,
 }
+// A parse failure here is an ICE (the prelude is compiler source, not user
+// input): report it and abort rather than returning an empty registry, which
+// would silently disable the whole prelude.
 fn parse_prelude_items(a: Allocator, ar: *Arena) -> Vec<Item> {
     return match tokenize(a, ar, "<prelude>", prelude_source(a, ar)) {
         Result::Ok(toks) => match parse_program(a, ar, toks.as_slice(), toks.length()) {
             Result::Ok(pit) => pit
-            | Result::Err(_e) => Vec::with_capacity(a, 8 as u32)
+            | Result::Err(e) => { prelude_ice(a, e); Vec::with_capacity(a, 8 as u32) }
         }
-        | Result::Err(_e) => Vec::with_capacity(a, 8 as u32)
+        | Result::Err(e) => { prelude_ice(a, e); Vec::with_capacity(a, 8 as u32) }
     };
 }
 fn build_prelude_registry(a: Allocator, items: *const Vec<Item>) -> Vec<PreludeMethod> {
