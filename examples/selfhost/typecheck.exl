@@ -2123,6 +2123,13 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let cl_args = elab_args(a, ar, g, sc, env, args);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: cl_args }, t_u32(ar), p);
     }
+    // `ptr_offset(p, n)` -> `(p + n)`; steps a `u8` base by BYTES and yields a
+    // plain borrow into the same storage (a derived pointer is a view, never a
+    // second owner).  Arena::alloc_borrowed and str::from_slice ride it.
+    if str::eq(name, "ptr_offset") {
+        let po_args = elab_args(a, ar, g, sc, env, args);
+        return te_node(ar, TexprNode::TBuiltinCall { name: name, args: po_args }, ty_node(ar, Typ::TPtr(t_u8(ar))), p);
+    }
     // `mem_zero(ptr, n_bytes)` -> `memset(ptr, 0, n)`; zeroes a freshly-alloc'd
     // slot buffer so the discriminator byte reads Empty without forging a K / V.
     if str::eq(name, "mem_zero") {
@@ -8496,6 +8503,21 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("            }\n");
     sb.push_str("        }\n");
     sb.push_str("        result\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
+    sb.push_str("struct Arena { buf: own *u8, cap: u32, off: u32, alloc: Allocator }\n");
+    sb.push_str("impl Arena {\n");
+    sb.push_str("    pub fn with_capacity(a: Allocator, bytes: u32) -> Arena {\n");
+    sb.push_str("        let buf: own *u8 = a.alloc_fn(a.state, bytes) as own *u8;\n");
+    sb.push_str("        return Arena { buf: buf, cap: bytes, off: 0 as u32, alloc: a };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn alloc_borrowed<T>(*self) -> *T {\n");
+    sb.push_str("        let aligned: u32 = (self.off + 7 as u32) & ~(7 as u32);\n");
+    sb.push_str("        let need: u32 = size_of(T) as u32;\n");
+    sb.push_str("        if aligned + need > self.cap { return null; }\n");
+    sb.push_str("        let p: *u8 = ptr_offset(self.buf, aligned);\n");
+    sb.push_str("        self.off = aligned + need;\n");
+    sb.push_str("        return p as *T;\n");
     sb.push_str("    }\n");
     sb.push_str("}\n");
     return str::from_slice(ar, sb.as_slice());
