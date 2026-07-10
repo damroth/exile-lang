@@ -216,6 +216,10 @@ fn enum_owns(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, path: *
 pub struct GlueState {
     gs_keys: Vec<str>,
     gs_names: Vec<str>,
+    // Per request: the type to build the glue body from (vec/hm: the container
+    // instance as TStruct; ptr: the pointee), and the kind (0=vec, 1=hm, 2=ptr).
+    gs_meta: Vec<*const Typ>,
+    gs_kind: Vec<u32>,
 }
 
 fn join_colons(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
@@ -250,7 +254,7 @@ fn glue_find(gs: *const GlueState, key: str) -> int {
     return 0 - 1;
 }
 
-fn request_glue(a: Allocator, ar: *Arena, gs: *GlueState, key: str, prefix: str) -> str {
+fn request_glue(a: Allocator, ar: *Arena, gs: *GlueState, key: str, prefix: str, meta: *const Typ, kind: u32) -> str {
     let idx = glue_find(gs, key);
     if idx >= 0 as int { let nl = gs.gs_names.as_slice(); return nl[idx as u32]; }
     let mut sb = StringBuilder::with_capacity(a, 20 as u32);
@@ -261,6 +265,8 @@ fn request_glue(a: Allocator, ar: *Arena, gs: *GlueState, key: str, prefix: str)
     let name = str::from_slice(ar, sb.as_slice());
     gs.gs_keys.push(key);
     gs.gs_names.push(name);
+    gs.gs_meta.push(meta);
+    gs.gs_kind.push(kind);
     return name;
 }
 
@@ -272,18 +278,235 @@ fn key_with_prefix(a: Allocator, ar: *Arena, pfx: str, body: str) -> str {
 }
 
 fn request_ptr_glue(a: Allocator, ar: *Arena, gs: *GlueState, pointee: *const Typ) -> str {
-    return request_glue(a, ar, gs, key_with_prefix(a, ar, "ptr:", type_key(a, ar, pointee)), "ptr");
+    return request_glue(a, ar, gs, key_with_prefix(a, ar, "ptr:", type_key(a, ar, pointee)), "ptr", pointee, 2 as u32);
 }
 fn request_vec_glue(a: Allocator, ar: *Arena, gs: *GlueState, path: *const Vec<str>) -> str {
-    return request_glue(a, ar, gs, key_with_prefix(a, ar, "vec:", join_colons(a, ar, path)), "vec");
+    return request_glue(a, ar, gs, key_with_prefix(a, ar, "vec:", join_colons(a, ar, path)), "vec", d_ty(ar, Typ::TStruct(copy_strs_d(a, path))), 0 as u32);
 }
 fn request_hm_glue(a: Allocator, ar: *Arena, gs: *GlueState, path: *const Vec<str>) -> str {
-    return request_glue(a, ar, gs, key_with_prefix(a, ar, "hm:", join_colons(a, ar, path)), "hm");
+    return request_glue(a, ar, gs, key_with_prefix(a, ar, "hm:", join_colons(a, ar, path)), "hm", d_ty(ar, Typ::TStruct(copy_strs_d(a, path))), 1 as u32);
 }
 
 fn glue_call(ar: *Arena, name: str, args: Vec<*const Texpr>, pos: Pos) -> Tstmt {
     let ic = d_te(ar, TexprNode::TCall { mangled: name, args: args }, ty_i32(ar), pos);
     return Tstmt::TExprStmt(ic);
+}
+
+
+fn copy_strs_d(a: Allocator, src: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn glue_pos() -> Pos { return Pos { line: 0 as int, col: 0 as int, file: "<prelude>" }; }
+
+// A Typ -> TypeAnn for glue-fn parameters (mirrors the oracle's ann_of): only
+// the shapes glue params ever take (struct / the three pointer flavours).
+fn ann_of_ty(ar: *Arena, t: *const Typ) -> *const TypeAnn {
+    let no_args: Vec<*const TypeAnn> = Vec::with_capacity(default_allocator(), 8 as u32);
+    return match *t {
+        Typ::TStruct(p) => d_ann(ar, TypeAnn::TyStruct { path: p, args: no_args })
+        | Typ::TPtr(i) => d_ann(ar, TypeAnn::TyPtr(ann_of_ty(ar, i)))
+        | Typ::TOwnPtr(i) => d_ann(ar, TypeAnn::TyOwnPtr(ann_of_ty(ar, i)))
+        | Typ::TConstPtr(i) => d_ann(ar, TypeAnn::TyConstPtr(ann_of_ty(ar, i)))
+        | _o => d_ann(ar, TypeAnn::TyPtr(d_ann(ar, TypeAnn::TyCVoid)))
+    };
+}
+fn mk_glue_param(ar: *Arena, name: str, ty: *const Typ) -> Param {
+    let no_reg: Option<str> = Option::None;
+    return Param { pname: name, pty: ann_of_ty(ar, ty), is_mut: false, preg: no_reg };
+}
+// Assemble a glue Tfunc: <prelude>-positioned (filtered from the IR dump,
+// emitted in C), no return, a single `__i` u32 let for the count loop.
+fn mk_glue_tfunc(a: Allocator, _ar: *Arena, name: str, params: Vec<Param>, param_tys: Vec<*const Typ>,
+                 lets: Vec<FieldTy>, body: Vec<Tstmt>) -> Tfunc {
+    let none_ret: Option<*const TypeAnn> = Option::None;
+    let none_ret2: Option<*const Typ> = Option::None;
+    let none_str: Option<str> = Option::None;
+    let mut tpath: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    tpath.push(name);
+    let ftparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let ftbounds: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
+    let fbody: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    let f = Func { name: name, c_name: name, tparams: ftparams,
+                   tbounds: ftbounds, params: params, ret_ty: none_ret,
+                   body: fbody, is_pub: false, is_extern: false,
+                   is_variadic: false, amiga_lib: none_str, tier_hint: none_str, must_use: false,
+                   escapes_hatch: false, pos: glue_pos() };
+    let none_origin: Option<Pos> = Option::None;
+    return Tfunc { tf_path: tpath, tf_func: f, tf_mangled: name, tf_param_tys: param_tys,
+                   tf_ret_ty: none_ret2, tf_body: body, tf_lets: lets, tf_origin_pos: none_origin };
+}
+// `__i = 0; while __i < bound { <inner>; __i = __i + 1 }`.
+fn count_loop(a: Allocator, ar: *Arena, bound: *const Texpr, inner: Vec<Tstmt>, pos: Pos) -> Vec<Tstmt> {
+    let iv = d_te(ar, TexprNode::TVar("__i"), ty_u32(ar), pos);
+    let zero = d_te(ar, TexprNode::TIntLit(0 as int), ty_u32(ar), pos);
+    let one = d_te(ar, TexprNode::TIntLit(1 as int), ty_u32(ar), pos);
+    let cond = d_te(ar, TexprNode::TBinOp(BinOp::Lt, iv, bound), d_ty(ar, Typ::TBool), pos);
+    let stepv = d_te(ar, TexprNode::TBinOp(BinOp::Add, iv, one), ty_u32(ar), pos);
+    let mut ip: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    ip.push("__i");
+    let mut body: Vec<Tstmt> = Vec::with_capacity(a, inner.length() + 1 as u32);
+    let isl = inner.as_slice();
+    let mut k = 0 as u32;
+    while k < inner.length() { body.push(isl[k]); k = k + 1 as u32; }
+    body.push(Tstmt::TAssign { path: ip, value: stepv, pos: pos });
+    let empty_post: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let mut out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    out.push(Tstmt::TLet { name: "__i", value: zero, decl_ty: ty_u32(ar), pos: pos });
+    out.push(Tstmt::TWhile { cond: cond, body: body, post: empty_post });
+    return out;
+}
+// Drop one container element at lvalue `lv`: recurse for a droppable struct,
+// glue/free for an own-ptr (mirrors the oracle's elem_drop_stmts).
+fn elem_drop_stmts(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                   gs: *GlueState, container_alloc: *const Texpr, lv: *const Texpr, pos: Pos, out: *Vec<Tstmt>) {
+    match *lv.ty {
+        Typ::TStruct(p) => {
+            let sidx = find_struct_idx(structs, &p);
+            drop_stmts_for_struct(a, ar, structs, enums, gs, lv, sidx, pos, out);
+        }
+        | Typ::TOwnPtr(inner) => {
+            maybe_free_own(a, ar, structs, enums, gs, container_alloc, lv, inner, size_of_u32(ar, inner, pos), pos, out);
+        }
+        | _o => { }
+    }
+    return;
+}
+// __drop_vec_N(v): per-element drop over [0, count), then free the buffer.
+fn build_vec_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                  gs: *GlueState, name: str, inst_path: *const Vec<str>) -> Tfunc {
+    let pos = glue_pos();
+    let sidx = find_struct_idx(structs, inst_path);
+    let sl = structs.as_slice();
+    let sig: *const StructSig = &sl[sidx as u32];
+    let elem = match own_field_pointee(sig, "ptr") { Option::Some(e) => e | Option::None => ty_u32(ar) };
+    let count_field = if struct_has_field(sig, "count") { "count" } else { "len" };
+    let vty = d_ty(ar, Typ::TPtr(d_ty(ar, Typ::TStruct(copy_strs_d(a, inst_path)))));
+    let vv = d_te(ar, TexprNode::TVar("__v"), vty, pos);
+    let valloc = field_access(ar, vv, "alloc", ty_allocator(a, ar), pos);
+    let ptrf = field_access(ar, vv, "ptr", d_ty(ar, Typ::TOwnPtr(elem)), pos);
+    let iv = d_te(ar, TexprNode::TVar("__i"), ty_u32(ar), pos);
+    let elem_lv = d_te(ar, TexprNode::TIndex { base: ptrf, index: iv }, elem, pos);
+    let mut inner: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    elem_drop_stmts(a, ar, structs, enums, gs, valloc, elem_lv, pos, &inner);
+    let bound = field_access(ar, vv, count_field, ty_u32(ar), pos);
+    let mut body = count_loop(a, ar, bound, inner, pos);
+    let capf = field_access(ar, vv, "cap", ty_u32(ar), pos);
+    let bytes = d_te(ar, TexprNode::TBinOp(BinOp::Mul, capf, size_of_u32(ar, elem, pos)), ty_u32(ar), pos);
+    body.push(free_via(a, ar, valloc, ptrf, bytes, pos));
+    let mut params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    params.push(mk_glue_param(ar, "__v", vty));
+    let mut ptys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    ptys.push(vty);
+    let mut lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    lets.push(FieldTy { name: "__i", ty: ty_u32(ar) });
+    return mk_glue_tfunc(a, ar, name, params, ptys, lets, body);
+}
+// __drop_ptr_N(a, p): drop the pointee's owned fields, then free the box.
+fn build_ptr_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                  gs: *GlueState, name: str, pointee: *const Typ) -> Tfunc {
+    let pos = glue_pos();
+    let av = d_te(ar, TexprNode::TVar("__a"), ty_allocator(a, ar), pos);
+    let pty = d_ty(ar, Typ::TOwnPtr(pointee));
+    let pv = d_te(ar, TexprNode::TVar("__p"), pty, pos);
+    let deref = d_te(ar, TexprNode::TDeref(pv), pointee, pos);
+    let mut body: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    match *pointee {
+        Typ::TStruct(sp) => {
+            let sidx = find_struct_idx(structs, &sp);
+            drop_stmts_for_struct(a, ar, structs, enums, gs, deref, sidx, pos, &body);
+        }
+        | _o => { }
+    }
+    body.push(free_via(a, ar, av, pv, size_of_u32(ar, pointee, pos), pos));
+    let mut params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    params.push(mk_glue_param(ar, "__a", ty_allocator(a, ar)));
+    params.push(mk_glue_param(ar, "__p", pty));
+    let mut ptys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    ptys.push(ty_allocator(a, ar));
+    ptys.push(pty);
+    let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    return mk_glue_tfunc(a, ar, name, params, ptys, lets, body);
+}
+// __drop_hm_N(m): per-slot key/value drop over Occupied slots, then free buffer.
+fn build_hm_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                 gs: *GlueState, name: str, inst_path: *const Vec<str>) -> Tfunc {
+    let pos = glue_pos();
+    let sidx = find_struct_idx(structs, inst_path);
+    let sl = structs.as_slice();
+    let sig: *const StructSig = &sl[sidx as u32];
+    let slot = match own_field_pointee(sig, "slots") { Option::Some(e) => e | Option::None => ty_u32(ar) };
+    let mty = d_ty(ar, Typ::TPtr(d_ty(ar, Typ::TStruct(copy_strs_d(a, inst_path)))));
+    let mv = d_te(ar, TexprNode::TVar("__m"), mty, pos);
+    let malloc = field_access(ar, mv, "alloc", ty_allocator(a, ar), pos);
+    let slotsf = field_access(ar, mv, "slots", d_ty(ar, Typ::TOwnPtr(slot)), pos);
+    let iv = d_te(ar, TexprNode::TVar("__i"), ty_u32(ar), pos);
+    let slot_lv = d_te(ar, TexprNode::TIndex { base: slotsf, index: iv }, slot, pos);
+    let statef = field_access(ar, slot_lv, "state", d_ty(ar, Typ::TInt(IntKind { is_signed: false, width: IntWidth::W8 })), pos);
+    let one8 = d_te(ar, TexprNode::TIntLit(1 as int), d_ty(ar, Typ::TInt(IntKind { is_signed: false, width: IntWidth::W8 })), pos);
+    let occ = d_te(ar, TexprNode::TBinOp(BinOp::EqEq, statef, one8), d_ty(ar, Typ::TBool), pos);
+    let slot_sidx = find_struct_idx(structs, &slot_path_of(a, slot));
+    let ssl = structs.as_slice();
+    let mut kv: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    if slot_sidx >= 0 as int {
+        let kty = own_or_field_ty(&ssl[slot_sidx as u32], "key", ar);
+        let vty = own_or_field_ty(&ssl[slot_sidx as u32], "value", ar);
+        let klv = field_access(ar, slot_lv, "key", kty, pos);
+        elem_drop_stmts(a, ar, structs, enums, gs, malloc, klv, pos, &kv);
+        let vlv = field_access(ar, slot_lv, "value", vty, pos);
+        elem_drop_stmts(a, ar, structs, enums, gs, malloc, vlv, pos, &kv);
+    }
+    // hm glue is only requested when a K or V is droppable, so `kv` is never
+    // empty here — emit the Occupied-guarded drop unconditionally.
+    let mut inner: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let empty_else: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    inner.push(Tstmt::TIf { cond: occ, then_body: kv, else_body: empty_else });
+    let bound = field_access(ar, mv, "cap", ty_u32(ar), pos);
+    let mut body = count_loop(a, ar, bound, inner, pos);
+    let capf = field_access(ar, mv, "cap", ty_u32(ar), pos);
+    let bytes = d_te(ar, TexprNode::TBinOp(BinOp::Mul, capf, size_of_u32(ar, slot, pos)), ty_u32(ar), pos);
+    body.push(free_via(a, ar, malloc, slotsf, bytes, pos));
+    let mut params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    params.push(mk_glue_param(ar, "__m", mty));
+    let mut ptys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    ptys.push(mty);
+    let mut lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    lets.push(FieldTy { name: "__i", ty: ty_u32(ar) });
+    return mk_glue_tfunc(a, ar, name, params, ptys, lets, body);
+}
+fn slot_path_of(a: Allocator, slot: *const Typ) -> Vec<str> {
+    let empty: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    return match *slot { Typ::TStruct(p) => p | _o => empty };
+}
+fn own_or_field_ty(sig: *const StructSig, fname: str, ar: *Arena) -> *const Typ {
+    let fs = sig.sfields_ty.as_slice();
+    let mut i = 0 as u32;
+    while i < sig.sfields_ty.length() { if str::eq(fs[i].name, fname) { return fs[i].ty; } i = i + 1 as u32; }
+    return ty_u32(ar);
+}
+// Build every requested glue body to a fixpoint (a body may request more).
+fn drain_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+              gs: *GlueState, out: *Vec<Tfunc>) {
+    let mut i = 0 as u32;
+    while i < gs.gs_names.length() {
+        let name = gs.gs_names.as_slice()[i];
+        let kind = gs.gs_kind.as_slice()[i];
+        let meta = gs.gs_meta.as_slice()[i];
+        if kind == 0 as u32 {
+            match *meta { Typ::TStruct(pth) => { out.push(build_vec_glue(a, ar, structs, enums, gs, name, &pth)); } | _o => { } }
+        } else {
+            if kind == 1 as u32 {
+                match *meta { Typ::TStruct(pth) => { out.push(build_hm_glue(a, ar, structs, enums, gs, name, &pth)); } | _o => { } }
+            } else {
+                out.push(build_ptr_glue(a, ar, structs, enums, gs, name, meta));
+            }
+        }
+        i = i + 1 as u32;
+    }
+    return;
 }
 
 // ---------- entry model (struct-index based → DEntry is copyable) ----------
@@ -1077,7 +1300,9 @@ pub fn drop_insert(a: Allocator, ar: *Arena, tp: *Tprogram) {
     // so glue-fn names (`__drop_ptr_0`, ...) match the oracle's request order.
     let gk: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let gn: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let mut glue = GlueState { gs_keys: gk, gs_names: gn };
+    let gm: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let gkd: Vec<u32> = Vec::with_capacity(a, 8 as u32);
+    let mut glue = GlueState { gs_keys: gk, gs_names: gn, gs_meta: gm, gs_kind: gkd };
     let n = tp.tp_funcs.length();
     let mut i = 0 as u32;
     while i < n {
@@ -1086,5 +1311,10 @@ pub fn drop_insert(a: Allocator, ar: *Arena, tp: *Tprogram) {
         }
         i = i + 1 as u32;
     }
+    // Synthesize the deep-drop glue bodies whose calls were emitted above and
+    // append them to tp_funcs (mirrors the oracle's `funcs @ List.rev glue_fns`).
+    // drain_glue pushes each freshly-built Tfunc straight in — never copying one
+    // out of a slice (the affine-Vec-fields footgun).
+    drain_glue(a, ar, &tp.tp_struct_index, &tp.tp_enum_index, &glue, &tp.tp_funcs);
     return;
 }
