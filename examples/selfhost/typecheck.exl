@@ -34,6 +34,9 @@ fn ty_node(ar: *Arena, t: Typ) -> *const Typ {
 // to a `TCVoid` placeholder so a fn carrying one simply diverges from the
 // oracle and lands in the deferred bucket rather than crashing.
 
+fn has_self_ty(sc: *const TyScope) -> bool {
+    return match sc.sc_self { Option::Some(_t) => true | Option::None => false };
+}
 fn resolve_type_ann(a: Allocator, ar: *Arena, ann: *const TypeAnn) -> *const Typ {
     return match *ann {
         TypeAnn::TyInt { is_signed, width } =>
@@ -863,6 +866,9 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // it stays a `TAssocProj` marker, projected at instance time.
     if plen == 2 as u32 && args.length() == 0 as u32 {
         let head = psl[0 as u32];
+        // `Self::Assoc` inside a trait default projects through the implementing
+        // type the instance pinned (`Iterator::collect`'s `Vec<Self::Item>`).
+        if str::eq(head, "Self") && has_self_ty(sc) { return project_assoc(a, ar, sc, voidable_ty(ar, sc.sc_self), last); }
         if has_tbind(sc, head) { return project_assoc(a, ar, sc, get_tbind(ar, sc, head), last); }
         if name_in(sc.sc_tparams, head) { return ty_node(ar, Typ::TAssocProj { head: ty_node(ar, Typ::TVar(head)), assoc: last }); }
     }
@@ -1732,7 +1738,8 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     if sl[midx].mi_prelude {
         register_mono_struct(a, sc, &sl[midx].mi_path);
-        queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst);
+        let no_self: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst, &no_self);
     }
     let targs = elab_args(a, ar, g, sc, env, args);
     return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, cret), p);
@@ -1809,12 +1816,19 @@ fn queue_gen_instance(a: Allocator, sc: *const TyScope, gi: u32, binds: *const V
 // body is in the parsed prelude items, so `gj_target` carries (type, name) for
 // the drain to look up in the prelude registry.  Dedup by mangled name so a
 // second `v.push(...)` (or a transitive `self.grow`) queues once.
-fn queue_prelude_gen(a: Allocator, sc: *const TyScope, ty: str, nm: str, binds: *const Vec<TVarBind>, mangled: str) {
+fn queue_prelude_gen(a: Allocator, sc: *const TyScope, ty: str, nm: str, binds: *const Vec<TVarBind>, mangled: str, self_inst: *const Vec<str>) {
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
+    // gj_target = [pm_type, pm_name] ++ receiver-instance path.  The first two
+    // locate the source in the prelude registry; the rest pins `Self` when the
+    // source is an Iterator TRAIT DEFAULT (elaborate_method_instance's
+    // Item::Trait arm), whose body mentions Self in `Map<Self, F>` et al.
     let mut tgt: Vec<str> = Vec::with_capacity(a, 8 as u32);
     tgt.push(ty);
     tgt.push(nm);
+    let isl = self_inst.as_slice();
+    let mut i = 0 as u32;
+    while i < self_inst.length() { tgt.push(isl[i]); i = i + 1 as u32; }
     sc.sc_genjobs.push(GenJob { gj_idx: 0 as u32, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: tgt, gj_prelude: true });
 }
 
@@ -2365,7 +2379,7 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // register the receiver type for the footer but queue no drain.
     if sl[midx].mi_prelude {
         register_mono_struct(a, sc, &sl[midx].mi_path);
-        queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst);
+        queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst, &inst_path);
     }
     else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
     let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
@@ -2402,7 +2416,8 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     // footer but queue no drain job; a user method elaborates an instance.
     if prelude {
         register_mono_struct(a, sc, &sl[midx].mi_path);
-        queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst);
+        let rpath = recv_base_path(a, trecv.ty);
+        queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst, &rpath);
     }
     else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
     let iret = subst_opt_ret(ar, &binds, cret);
@@ -8347,6 +8362,24 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("        return Option::None;\n");
     sb.push_str("    }\n");
     sb.push_str("}\n");
+    sb.push_str("trait Iterator {\n");
+    sb.push_str("    type Item;\n");
+    sb.push_str("    fn next(*self) -> Option<Self::Item>;\n");
+    sb.push_str("    fn map<F: Fn1>(self, f: F) -> Map<Self, F> { Map { inner: self, f: f } }\n");
+    sb.push_str("    fn take(self, n: u32) -> Take<Self> { Take { inner: self, remaining: n } }\n");
+    sb.push_str("    fn enumerate(self) -> Enumerate<Self> { Enumerate { inner: self, idx: 0 as u32 } }\n");
+    sb.push_str("    fn filter<P: Fn1>(self, p: P) -> Filter<Self, P> { Filter { inner: self, p: p } }\n");
+    sb.push_str("    fn fold<Acc, G: Fn2>(self, init: Acc, f: G) -> Acc {\n");
+    sb.push_str("        let mut acc: Acc = init;\n");
+    sb.push_str("        for v in self { acc = f.call(acc, v); }\n");
+    sb.push_str("        acc\n");
+    sb.push_str("    }\n");
+    sb.push_str("    fn collect(self, a: Allocator) -> Vec<Self::Item> {\n");
+    sb.push_str("        let mut out: Vec<Self::Item> = Vec::with_capacity(a, 8 as u32);\n");
+    sb.push_str("        for v in self { out.push(v); }\n");
+    sb.push_str("        out\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
     sb.push_str("struct Map<I, F> { inner: I, f: F }\n");
     sb.push_str("impl<I: Iterator, F: Fn1> Iterator for Map<I, F> {\n");
     sb.push_str("    type Item = F::Output;\n");
@@ -8441,6 +8474,21 @@ fn build_prelude_registry(a: Allocator, items: *const Vec<Item>) -> Vec<PreludeM
                     j = j + 1 as u32;
                 }
             }
+            // `trait Iterator { fn map(..) { .. } }` — a trait DEFAULT method
+            // (body-bearing).  Registered under the trait name; the drain finds
+            // it by name when the receiver type has no own entry, and pins Self
+            // from the receiver instance.  Body-less signatures are skipped.
+            | Item::Trait(td) => {
+                let tsl = td.trmethods.as_slice();
+                let mut tj = 0 as u32;
+                while tj < td.trmethods.length() {
+                    if tsl[tj].body.length() > 0 as u32 {
+                        out.push(PreludeMethod { pm_type: td.trname, pm_name: tsl[tj].name, pm_impl_idx: i, pm_meth_idx: tj, pm_order: ord });
+                        ord = ord + 1 as u32;
+                    }
+                    tj = tj + 1 as u32;
+                }
+            }
             // `mod str { fn ... }` — the prelude's free-function module.  Each
             // member registers under pm_type = module name (str); pm_impl_idx is
             // the module item index and pm_meth_idx the fn's position inside it.
@@ -8476,6 +8524,32 @@ fn prelude_reg_find(reg: *const Vec<PreludeMethod>, ty: str, nm: str) -> int {
         i = i + 1 as u32;
     }
     return 0 as int - 1 as int;
+}
+// A trait DEFAULT method (`Iterator::map`) is demanded as `VecIter::map` — the
+// receiver type owns no entry, so fall back to the trait's registry entry by
+// method name.  Only body-bearing trait methods are registered, so a bare
+// signature (`next`) never matches here.
+fn prelude_reg_find_default(reg: *const Vec<PreludeMethod>, prelude_items: *const Vec<Item>, nm: str) -> int {
+    let sl = reg.as_slice();
+    let isl = prelude_items.as_slice();
+    let mut i = 0 as u32;
+    while i < reg.length() {
+        if str::eq(sl[i].pm_name, nm) {
+            let is_trait = match isl[sl[i].pm_impl_idx] { Item::Trait(_td) => true | _o => false };
+            if is_trait { return i as int; }
+        }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+// Drop the [pm_type, pm_name] prefix: the tail is the receiver instance path
+// used to pin `Self` in a trait default's body.
+fn gj_self_path(a: Allocator, jt: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = jt.as_slice();
+    let mut i = 2 as u32;
+    while i < jt.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
 }
 
 // --- Workstream-B: demand-driven prelude materialization ---
@@ -8900,11 +8974,12 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
             // generic emission order; `grow` (transitive from `push`) is queued
             // mid-drain and picked up by the length re-read.
             let jtsl = jt.as_slice();
-            let ri = prelude_reg_find(&prelude_reg, jtsl[0 as u32], jtsl[1 as u32]);
+            let mut ri = prelude_reg_find(&prelude_reg, jtsl[0 as u32], jtsl[1 as u32]);
+            if ri < 0 as int { ri = prelude_reg_find_default(&prelude_reg, &prelude_items, jtsl[1 as u32]); }
             if ri >= 0 as int {
                 let rsl = prelude_reg.as_slice();
-                let no_tgt: Vec<str> = Vec::with_capacity(a, 8 as u32);
-                elaborate_method_instance(a, ar, &globals, &gensym, &idx, &prelude_items, rsl[ri as u32].pm_impl_idx, rsl[ri as u32].pm_meth_idx, &jb, jm, &no_tgt, &funcs);
+                let self_tgt: Vec<str> = gj_self_path(a, &jt);
+                elaborate_method_instance(a, ar, &globals, &gensym, &idx, &prelude_items, rsl[ri as u32].pm_impl_idx, rsl[ri as u32].pm_meth_idx, &jb, jm, &self_tgt, &funcs);
             }
         } else if jmeth < 0 as int {
             elaborate_instance(a, ar, &globals, &gensym, &idx, items, ji, &jb, jm, &funcs);

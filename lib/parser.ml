@@ -170,6 +170,14 @@ let rec parse_type s =
   | (Token.Ident "bool", _) -> Ast.TyBool
   | (Token.Ident "f32", _) -> Ast.TyFloat Ast.F32
   | (Token.Ident "f64", _) -> Ast.TyFloat Ast.F64
+  | (Token.Ident "Self", _) when peek s <> Token.DoubleColon ->
+      (* Bare `Self` in type position is the implementing type — the same
+         TySelf a `self` receiver carries.  `Self::Item` keeps its path form
+         (the associated projection), so only an unqualified `Self` folds
+         here.  The prelude's `Map<Self, F>` / `Take<Self>` adapters build
+         this node directly; source that spells it out must resolve the
+         same way. *)
+      Ast.TySelf
   | (Token.Ident n, _) ->
       (* Any other identifier is a struct path, possibly qualified
          (`mod::Inner::Point`).  An optional generic argument list may

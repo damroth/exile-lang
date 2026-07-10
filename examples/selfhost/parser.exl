@@ -454,6 +454,10 @@ fn parse_type_ident(s: *Parser, name: str, _p: Pos) -> *const TypeAnn {
     if str::eq(name, "bool") { return ty_node(s, TypeAnn::TyBool); }
     if str::eq(name, "f32") { return ty_node(s, TypeAnn::TyFloat(FloatWidth::F32)); }
     if str::eq(name, "f64") { return ty_node(s, TypeAnn::TyFloat(FloatWidth::F64)); }
+    // Bare `Self` in type position is the implementing type — the same TySelf a
+    // `self` receiver carries.  `Self::Item` keeps its path form (the assoc
+    // projection), so only an un-qualified `Self` folds here.
+    if str::eq(name, "Self") && !peek_is(s, Token::DoubleColon) { return ty_node(s, TypeAnn::TySelf); }
     let path = parse_path_tail(s, name);
     let mut args: Vec<*const TypeAnn> = Vec::with_capacity(s.a, 8 as u32);
     if peek_is(s, Token::Lt) {
