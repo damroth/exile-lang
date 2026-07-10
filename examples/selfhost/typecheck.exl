@@ -7471,6 +7471,73 @@ fn fieldty_has(fields: *const Vec<FieldTy>, name: str) -> bool {
     return false;
 }
 
+// ===== Mono-instance DCE (mirrors the oracle's `mentioned_paths` pass) =====
+//
+// A demand-driven prelude leaves behind instances whose only consumer was never
+// materialized.  A mono struct/enum survives when its path is mentioned in a
+// surviving fn's signature or hoisted lets, in a top-level struct/enum (those
+// are always emitted), or — transitively — in the fields of anything already
+// reachable.  Premise: every prelude body that will ever exist already does
+// (true once the last family, the combinators, materializes).
+fn path_in_paths(ps: *const Vec<Vec<str>>, p: *const Vec<str>) -> bool {
+    let sl = ps.as_slice();
+    let mut i = 0 as u32;
+    while i < ps.length() { if path_eq(&sl[i], p) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn add_path_uniq(a: Allocator, out: *Vec<Vec<str>>, p: *const Vec<str>) {
+    if path_in_paths(out, p) { return; }
+    out.push(copy_strs(a, p));
+}
+fn mention_tys(a: Allocator, ts: *const Vec<*const Typ>, out: *Vec<Vec<str>>) {
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < ts.length() { mention_ty(a, sl[i], out); i = i + 1 as u32; }
+}
+fn mention_ty(a: Allocator, t: *const Typ, out: *Vec<Vec<str>>) {
+    match *t {
+        Typ::TStruct(p) => add_path_uniq(a, out, &p)
+        | Typ::TEnum(p) => add_path_uniq(a, out, &p)
+        | Typ::TStructApp { path, args } => { add_path_uniq(a, out, &path); mention_tys(a, &args, out); }
+        | Typ::TEnumApp { path, args } => { add_path_uniq(a, out, &path); mention_tys(a, &args, out); }
+        | Typ::TPtr(i) => mention_ty(a, i, out)
+        | Typ::TOwnPtr(i) => mention_ty(a, i, out)
+        | Typ::TConstPtr(i) => mention_ty(a, i, out)
+        | Typ::TArray { elem, size } => mention_ty(a, elem, out)
+        | Typ::TTuple(ts) => mention_tys(a, &ts, out)
+        | Typ::TFnPtr { params, ret } => {
+            mention_tys(a, &params, out);
+            match ret { Option::Some(r) => mention_ty(a, r, out) | Option::None => { } }
+        }
+        | _o => { }
+    }
+}
+fn mention_funcs(a: Allocator, funcs: *const Vec<Tfunc>, out: *Vec<Vec<str>>) {
+    let sl = funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < funcs.length() {
+        mention_tys(a, &sl[i].tf_param_tys, out);
+        match sl[i].tf_ret_ty { Option::Some(rt) => mention_ty(a, rt, out) | Option::None => { } }
+        let lsl = sl[i].tf_lets.as_slice();
+        let mut j = 0 as u32;
+        while j < sl[i].tf_lets.length() { mention_ty(a, lsl[j].ty, out); j = j + 1 as u32; }
+        i = i + 1 as u32;
+    }
+}
+fn mention_fields_round(a: Allocator, sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>, out: *Vec<Vec<str>>) {
+    let ssl = sinfo.as_slice();
+    let mut i = 0 as u32;
+    while i < sinfo.length() {
+        if path_in_paths(out, &ssl[i].sf_path) { mention_ty(a, ssl[i].sf_ty, out); }
+        i = i + 1 as u32;
+    }
+    let esl = efields.as_slice();
+    let mut j = 0 as u32;
+    while j < efields.length() {
+        if path_in_paths(out, &esl[j].ef_path) { mention_ty(a, esl[j].ef_ty, out); }
+        j = j + 1 as u32;
+    }
+}
 fn push_struct_path(a: Allocator, sigs: *Vec<StructSig>, srcpath: *const Vec<str>,
                     mono_fields: *const Vec<StructField>) {
     // Fill the mono instance's resolved fields (from the flat mono-field
@@ -8879,7 +8946,14 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     register_prelude_sigs(a, ar, &gsigs);
     // Every concrete `impl Iterator for X` eagerly carries its default
     // methods' Self-pinned return types in the footer.
+    // The oracle's tp_funcs still holds the eagerly-specialised Iterator trait
+    // defaults (`Count__enumerate`) at mentioned-paths time, even though it never
+    // emits them — so their Self-pinned return instances survive its DCE.  The
+    // port's mirror of that artifact is register_iter_footprints; record the
+    // window it registers so the DCE below exempts exactly those instances.
+    let fp_start = mono_structs.length();
     register_iter_footprints(a, ar, &base_scope, items, &assoc_binds);
+    let fp_end = mono_structs.length();
     // Struct field index + enum variant/field index + method index, carried
     // in every fn's body scope so `s.field`, struct/enum literals, variant
     // patterns and method calls type-check.
@@ -9004,6 +9078,24 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let esl = fenums.as_slice();
     let mut ei = 0 as u32;
     while ei < en { push_enum_name(a, &enums, esl[ei]); ei = ei + 1 as u32; }
+    // Mono-instance DCE (see the helper block).  Non-generic prelude structs
+    // (rank >= 0) are top-level in the oracle, so they are never pruned.
+    let mut mentioned: Vec<Vec<str>> = Vec::with_capacity(a, 32 as u32);
+    mention_funcs(a, &funcs, &mentioned);
+    mention_funcs(a, &pfree, &mentioned);
+    let tsl = structs.as_slice();
+    let mut ti = 0 as u32;
+    while ti < structs.length() { add_path_uniq(a, &mentioned, &tsl[ti].sname_path); ti = ti + 1 as u32; }
+    let tel = enums.as_slice();
+    let mut tj = 0 as u32;
+    while tj < enums.length() { add_path_uniq(a, &mentioned, &tel[tj].ename_path); tj = tj + 1 as u32; }
+    let mut mprog = true;
+    while mprog {
+        let n0 = mentioned.length();
+        mention_fields_round(a, &sinfo, &efields, &mentioned);
+        mention_fields_round(a, &mono_fields, &mono_efields, &mentioned);
+        mprog = mentioned.length() != n0;
+    }
     // Generated monomorphic instances.  The non-generic prelude structs
     // (Allocator / StringBuilder / String / Arena) are demand-registered here in
     // use order, but the oracle prepends the whole prelude, so it emits them in
@@ -9023,13 +9115,14 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     }
     let mut mj = 0 as u32;
     while mj < mn {
-        if nongeneric_prelude_rank(path_last(&msl[mj])) < 0 as int { push_struct_path(a, &structs, &msl[mj], &mono_fields); }
+        let is_footprint = mj >= fp_start && mj < fp_end;
+        if nongeneric_prelude_rank(path_last(&msl[mj])) < 0 as int && (is_footprint || path_in_paths(&mentioned, &msl[mj])) { push_struct_path(a, &structs, &msl[mj], &mono_fields); }
         mj = mj + 1 as u32;
     }
     let men = mono_enums.length();
     let mesl = mono_enums.as_slice();
     let mut mei = 0 as u32;
-    while mei < men { push_enum_path(a, &enums, &mesl[mei]); mei = mei + 1 as u32; }
+    while mei < men { if path_in_paths(&mentioned, &mesl[mei]) { push_enum_path(a, &enums, &mesl[mei]); } mei = mei + 1 as u32; }
     // Backfill field lists for every struct pushed field-less above (prelude
     // + user structs), so downstream field-tree walks (the drop pass) see
     // each struct's `own *T` fields.
