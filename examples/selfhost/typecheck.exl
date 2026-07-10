@@ -9070,6 +9070,20 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
 
     let mut structs = prelude_struct_index(a);
     let mut enums = prelude_enum_index(a);
+    // Non-generic prelude structs (Allocator / StringBuilder / String / Arena)
+    // are TOP-LEVEL declarations in the oracle, emitted ahead of user structs.
+    // Push them here, by declaration rank, before the user structs.
+    let mn = mono_structs.length();
+    let msl = mono_structs.as_slice();
+    let mut rk = 0 as int;
+    while rk < 4 as int {
+        let mut mi = 0 as u32;
+        while mi < mn {
+            if nongeneric_prelude_rank(path_last(&msl[mi])) == rk { push_struct_path(a, &structs, &msl[mi], &mono_fields); }
+            mi = mi + 1 as u32;
+        }
+        rk = rk + 1 as int;
+    }
     let sn = fstructs.length();
     let ssl = fstructs.as_slice();
     let mut si = 0 as u32;
@@ -9102,17 +9116,6 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // DECLARATION order ahead of the true generic mono instances (Slice_u8,
     // Vec_i32, ...).  Reproduce that: pass A pushes the demanded non-generic
     // prelude structs by declaration rank, pass B the rest in registration order.
-    let mn = mono_structs.length();
-    let msl = mono_structs.as_slice();
-    let mut rk = 0 as int;
-    while rk < 4 as int {
-        let mut mi = 0 as u32;
-        while mi < mn {
-            if nongeneric_prelude_rank(path_last(&msl[mi])) == rk { push_struct_path(a, &structs, &msl[mi], &mono_fields); }
-            mi = mi + 1 as u32;
-        }
-        rk = rk + 1 as int;
-    }
     let mut mj = 0 as u32;
     while mj < mn {
         let is_footprint = mj >= fp_start && mj < fp_end;

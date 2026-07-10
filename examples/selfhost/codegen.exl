@@ -170,6 +170,7 @@ fn copy_typs(a: Allocator, src: *const Vec<*const Typ>) -> Vec<*const Typ> {
 
 fn ty_node(ar: *Arena, node: Typ) -> *const Typ {
     let n: *Typ = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
     *n = node;
     return n as *const Typ;
 }
@@ -491,27 +492,38 @@ fn emit_agg(a: Allocator, ar: *Arena, out: *StringBuilder, agg: *const Agg) {
     }
 }
 
-fn agg_index_by_key(a: Allocator, ar: *Arena, aggs: *const Vec<Agg>, key: str) -> int {
+// Each aggregate's C name, computed ONCE.  `agg_cname` arena-allocates a Typ
+// node to mangle through, so recomputing it inside the DFS's per-dependency
+// lookup was quadratic in arena bytes — enough to exhaust the arena (and then
+// write through the null it returns) when the port compiles its own parser.
+fn agg_cnames(a: Allocator, ar: *Arena, aggs: *const Vec<Agg>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 16 as u32);
     let sl = aggs.as_slice();
     let mut i = 0 as u32;
-    while i < aggs.length() { if str::eq(agg_cname(a, ar, &sl[i]), key) { return i as int; } i = i + 1 as u32; }
+    while i < aggs.length() { out.push(agg_cname(a, ar, &sl[i])); i = i + 1 as u32; }
+    return out;
+}
+fn agg_index_by_key(names: *const Vec<str>, key: str) -> int {
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() { if str::eq(sl[i], key) { return i as int; } i = i + 1 as u32; }
     return 0 - 1;
 }
 
 // DFS on the input list in source order, recursing into each entry's value
 // deps first (post-order emit); `done` dedups.  Deps not in the list are
 // primitives / externs / fn-ptrs and skip.
-fn visit_agg(a: Allocator, ar: *Arena, out: *StringBuilder, aggs: *const Vec<Agg>, idx: u32, done: *Vec<str>) {
+fn visit_agg(a: Allocator, ar: *Arena, out: *StringBuilder, aggs: *const Vec<Agg>, names: *const Vec<str>, idx: u32, done: *Vec<str>) {
     let sl = aggs.as_slice();
-    let key = agg_cname(a, ar, &sl[idx]);
+    let key = names.as_slice()[idx];
     if str_in_cg(done, key) { return; }
     done.push(key);
     let deps = agg_deps(a, ar, &sl[idx]);
     let dsl = deps.as_slice();
     let mut i = 0 as u32;
     while i < deps.length() {
-        let di = agg_index_by_key(a, ar, aggs, dsl[i]);
-        if di >= 0 as int { visit_agg(a, ar, out, aggs, di as u32, done); }
+        let di = agg_index_by_key(names, dsl[i]);
+        if di >= 0 as int { visit_agg(a, ar, out, aggs, names, di as u32, done); }
         i = i + 1 as u32;
     }
     emit_agg(a, ar, out, &sl[idx]);
@@ -525,9 +537,10 @@ fn str_in_cg(v: *const Vec<str>, s: str) -> bool {
 }
 
 fn emit_aggs_topo(a: Allocator, ar: *Arena, out: *StringBuilder, aggs: *const Vec<Agg>) {
+    let names = agg_cnames(a, ar, aggs);
     let mut done: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut i = 0 as u32;
-    while i < aggs.length() { visit_agg(a, ar, out, aggs, i, &done); i = i + 1 as u32; }
+    while i < aggs.length() { visit_agg(a, ar, out, aggs, &names, i, &done); i = i + 1 as u32; }
 }
 
 // fn-ptr typedef: `typedef <r>(*<name>)(<ps>);`.
@@ -1920,8 +1933,15 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
         if fn_concrete(&fsl[k]) && !str::eq(fsl[k].tf_func.name, "main") { nnm = nnm + 1 as u32; }
         k = k + 1 as u32;
     }
-    if nnm > 0 as u32 {
+    if nnm > 0 as u32 || tp.tp_uses_default_allocator {
         out.push_str("\n");
+        // `default_allocator()` lowers to `exile_default_allocator()`, whose
+        // body wires the `sys_alloc` / `sys_free` seam.  Their extern decls head
+        // the forward-decl section so the helper below sees them.
+        if tp.tp_uses_default_allocator {
+            out.push_str("extern void *sys_alloc(void *state, unsigned long n);\n");
+            out.push_str("extern void sys_free(void *state, void *p, unsigned long n);\n");
+        }
         let mut jp = 0 as u32;
         while jp < tp.tp_pfree.length() {
             if fn_concrete(&pfl[jp]) && !str::eq(pfl[jp].tf_func.name, "main") {
@@ -1938,6 +1958,17 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
             }
             j = j + 1 as u32;
         }
+    }
+
+    // The helper is emitted AFTER the extern fwd-decls, before any fn body.
+    if tp.tp_uses_default_allocator {
+        out.push_str("\n\nstatic struct ex_Allocator exile_default_allocator(void) {\n");
+        out.push_str("    struct ex_Allocator a;\n");
+        out.push_str("    a.state = 0;\n");
+        out.push_str("    a.alloc_fn = sys_alloc;\n");
+        out.push_str("    a.free_fn = sys_free;\n");
+        out.push_str("    return a;\n");
+        out.push_str("}\n");
     }
 
     emit_all_functions(a, ar, tp, out);
