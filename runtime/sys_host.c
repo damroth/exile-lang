@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdio.h>
 
 /* Width-pin signatures match what the prelude declares:
  *   sys_alloc(state: *c_void, n: c_ulong) -> *c_void
@@ -59,4 +60,19 @@ int sys_open(const char *path, int flags) {
 
 int sys_close(int fd) {
     return close(fd);
+}
+
+/* Format an IEEE double to a round-trip decimal, the byte-exact string the
+ * codegen needs for a C float literal.  Mirrors the oracle's OCaml
+ * `Printf.sprintf "%.17g"` / `"%.9g"` (OCaml's float formatting is libc's), so
+ * the self-hosted codegen emits the same literal.  Writes into `buf` (caller
+ * sizes it >= 40) and returns the length; the `.0` / `f` decoration is applied
+ * by the caller, matching where the oracle applies it. */
+unsigned long sys_fmt_f64(double f, int is32, unsigned char *buf) {
+    /* sprintf, not snprintf: the runtime compiles under -ansi (C89), where
+     * snprintf is not declared.  `%.17g` of a double is at most ~24 bytes
+     * (sign + 17 digits + '.' + 'e' + sign + 3-digit exponent), well inside
+     * the caller's 40-byte buffer. */
+    int n = sprintf((char *)buf, is32 ? "%.9g" : "%.17g", f);
+    return (unsigned long)n;
 }

@@ -749,10 +749,30 @@ fn emit_args(a: Allocator, ar: *Arena, out: *StringBuilder, args: *const Vec<*co
     }
 }
 
+// A C float literal.  The seam's snprintf renders the round-trip decimal
+// (`%.9g` / `%.17g`, matching the oracle's OCaml Printf); then a decimal point
+// or exponent is forced so C parses it as float (`1` -> `1.0`), and an `f`
+// suffix tags f32 so the literal is not widened to double.
+fn emit_float_lit(out: *StringBuilder, f: f64, w: FloatWidth) {
+    let is32 = match w { FloatWidth::F32 => true | _o => false };
+    let mut buf: [u8; 40] = [0 as u8; 40];
+    let flag: c_int = if is32 { 1 as c_int } else { 0 as c_int };
+    let n = sys::sys_fmt_f64(f, flag, &buf[0] as *c_uchar) as u32;
+    let mut has_de = false;
+    let mut i = 0 as u32;
+    while i < n {
+        let c = buf[i];
+        if c == 46 as u8 || c == 101 as u8 || c == 69 as u8 { has_de = true; }
+        out.push_byte(c);
+        i = i + 1 as u32;
+    }
+    if !has_de { out.push_str(".0"); }
+    if is32 { out.push_str("f"); }
+}
 pub fn gen_expr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texpr) {
     match te.e {
         TexprNode::TIntLit(n) => out.push_int(n)
-        | TexprNode::TFloatLit(f, w) => out.push_str("/*float?*/")
+        | TexprNode::TFloatLit(f, w) => emit_float_lit(out, f, w)
         | TexprNode::TBoolLit(b) => { let s = if b { "1" } else { "0" }; out.push_str(s); }
         | TexprNode::TNullLit => out.push_str("((void *)0)")
         | TexprNode::TStringLit(s) => { out.push_str("\""); escape_c_into(out, s); out.push_str("\""); }

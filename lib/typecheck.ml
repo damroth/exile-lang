@@ -9448,6 +9448,17 @@ let prelude_items () =
       [ mk_param "fd" cint_ann ]
       (Some cint_ann)
   in
+  (* Round-trip float formatting for codegen's C literal emission — the seam's
+     libc `snprintf` so the self-hosted codegen matches the oracle's OCaml
+     `Printf` byte-for-byte.  Compile-time only (the compiler calls it while
+     emitting), so it never appears in a user program's output. *)
+  let sys_fmt_f64_fn =
+    mk_extern "sys_fmt_f64"
+      [ mk_param "f" (Ast.TyFloat Ast.F64);
+        mk_param "is32" cint_ann;
+        mk_param "buf" cuchar_ptr_ann ]
+      (Some culong_ann)
+  in
   let sys_mod = {
     Ast.mname = "sys";
     mitems = [
@@ -9457,6 +9468,7 @@ let prelude_items () =
       Ast.Function sys_read_fn;
       Ast.Function sys_open_fn;
       Ast.Function sys_close_fn;
+      Ast.Function sys_fmt_f64_fn;
     ];
     mpos = pos;
     mis_pub = true;

@@ -7270,6 +7270,10 @@ fn register_prelude_globals(a: Allocator, ar: *Arena, g: *Vec<GlobalFn>) {
     push_sys_fn(a, ar, "sys_read", clong, g);
     push_sys_fn(a, ar, "sys_open", cint, g);
     push_sys_fn(a, ar, "sys_close", cint, g);
+    // Round-trip float formatting for codegen (libc snprintf over the seam);
+    // compile-time only, never in a user program's output.
+    let culong: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TCLong { is_signed: false }));
+    push_sys_fn(a, ar, "sys_fmt_f64", culong, g);
 }
 
 fn collect_fn_sigs_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, path: *const Vec<str>, out: *Vec<FnSig>) {
