@@ -1006,6 +1006,45 @@ fn walk_while(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
 
 // ---------- per-fn / whole-program ----------
 
+// The drop pass inserts `__drop_ret_<pos>` / `__drop_old_<pos>` temps as TLets
+// in the rewritten body, but tf_lets was fixed in typecheck (before drop), so
+// codegen — which lowers a TLet to an assignment and declares the name from
+// tf_lets — would emit an undeclared temp.  Mirror the oracle's tmp_decls:
+// append each drop temp's (name, decl_ty) to tf_lets, in body (= creation)
+// order, after the existing lets.
+fn is_drop_temp(name: str) -> bool {
+    if str::length(name) < 7 as u32 { return false; }
+    let b = str::as_bytes(name);
+    // "__drop_"
+    return b[0 as u32] == 95 as u8 && b[1 as u32] == 95 as u8 && b[2 as u32] == 100 as u8
+        && b[3 as u32] == 114 as u8 && b[4 as u32] == 111 as u8 && b[5 as u32] == 112 as u8
+        && b[6 as u32] == 95 as u8;
+}
+fn drop_lets_has(lets: *const Vec<FieldTy>, name: str) -> bool {
+    let sl = lets.as_slice();
+    let mut i = 0 as u32;
+    while i < lets.length() { if str::eq(sl[i].name, name) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn maybe_push_drop_temp(lets: *Vec<FieldTy>, name: str, decl_ty: *const Typ) {
+    if is_drop_temp(name) && !drop_lets_has(lets, name) { lets.push(FieldTy { name: name, ty: decl_ty }); }
+    return;
+}
+fn collect_drop_temps(stmts: *const Vec<Tstmt>, lets: *Vec<FieldTy>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        match sl[i] {
+            Tstmt::TLet { name, value, decl_ty, pos } => maybe_push_drop_temp(lets, name, decl_ty)
+            | Tstmt::TIf { cond, then_body, else_body } => { collect_drop_temps(&then_body, lets); collect_drop_temps(&else_body, lets); }
+            | Tstmt::TWhile { cond, body, post } => { collect_drop_temps(&body, lets); collect_drop_temps(&post, lets); }
+            | Tstmt::TDefer { body, pos } => collect_drop_temps(&body, lets)
+            | _o => {}
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
 fn rewrite_fn(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
               gs: *GlueState, f: *Tfunc) {
     // Skip prelude fns — they predate auto-drop and free by hand.
@@ -1028,6 +1067,7 @@ fn rewrite_fn(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
     if !ends_in_return(&body_out) {
         drops_for_live(a, ar, structs, enums, gs, &survivors, &body_out);
     }
+    collect_drop_temps(&body_out, &f.tf_lets);
     f.tf_body = body_out;
     return;
 }
