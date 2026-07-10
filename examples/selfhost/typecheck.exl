@@ -934,19 +934,12 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     register_prelude_struct_fields(a, ar, sc, last, &resolved, &ipath);
     register_user_struct_fields(a, ar, sc, path, &resolved, &ipath);
     register_mono_struct(a, sc, &ipath);
-    // A `Vec<T>` instance always carries its `Slice<T>` view (Vec's accessor
-    // methods return one), so the slice instance rides in the footer even when
-    // no `as_slice()` is called.
-    if str::eq(last, "Vec") { register_slice_of(a, ar, sc, &resolved); }
-    // A `HashMap<K,V>` iterates its slot buffer as a `Slice<Slot<K,V>>`.
-    if str::eq(last, "HashMap") {
-        let mut slot_base: Vec<str> = Vec::with_capacity(a, 8 as u32);
-        slot_base.push("Slot");
-        let slot_ipath = instance_path(a, ar, &slot_base, &resolved);
-        let mut slot_args: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
-        slot_args.push(ty_node(ar, Typ::TStruct(slot_ipath)));
-        register_slice_of(a, ar, sc, &slot_args);
-    }
+    // Workstream-B: `Vec<T>` no longer eagerly carries a `Slice<T>` view, and
+    // `HashMap<K,V>` no longer eagerly carries `Slice<Slot<K,V>>`.  Those were
+    // stand-ins for prelude bodies that did not exist yet; the bodies now
+    // materialize and register the view where they build it (`as_slice` / the
+    // probe view), which is where the oracle registers it too — at the END of
+    // the mono section, not at instance-registration time.
     return ty_node(ar, Typ::TStruct(ipath));
 }
 
