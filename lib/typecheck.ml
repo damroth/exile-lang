@@ -7575,6 +7575,10 @@ let prelude_items () =
   } in
   let size_of_slot =
     Ast.Cast (Ast.SizeOf (slot_t_ann, pos), u32_t, pos) in
+  (* The probe locals below are named `sview`, not `view`: `view` is a reserved
+     keyword (DR-009 active patterns), so a hand-built AST can use it but the
+     same prelude written in Exile source cannot.  The self-host port parses its
+     prelude, which surfaced the collision. *)
   let local_slice_of self_v =
     Ast.StructLit {
       tname = ["Slice"];
@@ -7653,7 +7657,7 @@ let prelude_items () =
     [
       Ast.Let { name = "h"; is_mut = false; ty_ann = Some u32_t;
                 value = methcall k_v "hash" []; pos };
-      Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
+      Ast.Let { name = "sview"; is_mut = false; ty_ann = Some slice_slot_ann;
                 value = local_slice_of self_v; pos };
       Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
                 value = bin Ast.BitAnd (Ast.Var ("h", pos))
@@ -7662,7 +7666,7 @@ let prelude_items () =
                                           (u32_lit 1)); pos };
       Ast.While { cond = Ast.BoolLit (true, pos); body = [
         Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
-                  value = Ast.Index { base = Ast.Var ("view", pos);
+                  value = Ast.Index { base = Ast.Var ("sview", pos);
                                       index = Ast.Var ("i", pos); pos };
                   pos };
         Ast.ExprStmt (Ast.If {
@@ -7712,7 +7716,7 @@ let prelude_items () =
     [
       Ast.Let { name = "h"; is_mut = false; ty_ann = Some u32_t;
                 value = methcall k_v "hash" []; pos };
-      Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
+      Ast.Let { name = "sview"; is_mut = false; ty_ann = Some slice_slot_ann;
                 value = local_slice_of self_v; pos };
       Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
                 value = bin Ast.BitAnd (Ast.Var ("h", pos))
@@ -7721,7 +7725,7 @@ let prelude_items () =
                                           (u32_lit 1)); pos };
       Ast.While { cond = Ast.BoolLit (true, pos); body = [
         Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
-                  value = Ast.Index { base = Ast.Var ("view", pos);
+                  value = Ast.Index { base = Ast.Var ("sview", pos);
                                       index = Ast.Var ("i", pos); pos };
                   pos };
         Ast.ExprStmt (Ast.If {
@@ -7913,7 +7917,7 @@ let prelude_items () =
         else_blk = None; pos });
       Ast.Let { name = "h"; is_mut = false; ty_ann = Some u32_t;
                 value = methcall k_v "hash" []; pos };
-      Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
+      Ast.Let { name = "sview"; is_mut = false; ty_ann = Some slice_slot_ann;
                 value = local_slice_of self_v; pos };
       Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
                 value = bin Ast.BitAnd (Ast.Var ("h", pos))
@@ -7922,7 +7926,7 @@ let prelude_items () =
                                           (u32_lit 1)); pos };
       Ast.While { cond = Ast.BoolLit (true, pos); body = [
         Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
-                  value = Ast.Index { base = Ast.Var ("view", pos);
+                  value = Ast.Index { base = Ast.Var ("sview", pos);
                                       index = Ast.Var ("i", pos); pos };
                   pos };
         Ast.ExprStmt (Ast.If {
@@ -8003,7 +8007,7 @@ let prelude_items () =
     [
       Ast.Let { name = "h"; is_mut = false; ty_ann = Some u32_t;
                 value = methcall k_v "hash" []; pos };
-      Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
+      Ast.Let { name = "sview"; is_mut = false; ty_ann = Some slice_slot_ann;
                 value = local_slice_of self_v; pos };
       Ast.Let { name = "i"; is_mut = true; ty_ann = Some u32_t;
                 value = bin Ast.BitAnd (Ast.Var ("h", pos))
@@ -8012,7 +8016,7 @@ let prelude_items () =
                                           (u32_lit 1)); pos };
       Ast.While { cond = Ast.BoolLit (true, pos); body = [
         Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
-                  value = Ast.Index { base = Ast.Var ("view", pos);
+                  value = Ast.Index { base = Ast.Var ("sview", pos);
                                       index = Ast.Var ("i", pos); pos };
                   pos };
         Ast.ExprStmt (Ast.If {
@@ -8110,7 +8114,7 @@ let prelude_items () =
   let hashmap_iter_next_body =
     let self_v = Ast.Var ("self", pos) in
     [
-      Ast.Let { name = "view"; is_mut = false; ty_ann = Some slice_slot_ann;
+      Ast.Let { name = "sview"; is_mut = false; ty_ann = Some slice_slot_ann;
                 value = Ast.StructLit {
                   tname = ["Slice"];
                   fields = [
@@ -8122,7 +8126,7 @@ let prelude_items () =
         cond = bin Ast.Lt (field self_v "pos") (field self_v "len");
         body = [
           Ast.Let { name = "s"; is_mut = false; ty_ann = Some slot_t_ann;
-                    value = Ast.Index { base = Ast.Var ("view", pos);
+                    value = Ast.Index { base = Ast.Var ("sview", pos);
                                         index = field self_v "pos"; pos };
                     pos };
           Ast.AssignField { target = self_v; field = "pos";

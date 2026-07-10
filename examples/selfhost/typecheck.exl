@@ -2110,6 +2110,12 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let cl_args = elab_args(a, ar, g, sc, env, args);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: cl_args }, t_u32(ar), p);
     }
+    // `mem_zero(ptr, n_bytes)` -> `memset(ptr, 0, n)`; zeroes a freshly-alloc'd
+    // slot buffer so the discriminator byte reads Empty without forging a K / V.
+    if str::eq(name, "mem_zero") {
+        let mz_args = elab_args(a, ar, g, sc, env, args);
+        return te_node(ar, TexprNode::TBuiltinCall { name: name, args: mz_args }, t_i32(ar), p);
+    }
     if str::eq(name, "len") { return elab_len(a, ar, g, sc, env, args, p); }
     if str::eq(name, "default_allocator") {
         register_mono_struct(a, sc, &allocator_path(a));
@@ -2436,9 +2442,75 @@ fn maybe_field_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
 // `recv.m(args)` → `T__m(<adjusted recv>, args)` where `T` is the receiver's
 // (auto-dereferenced) type.  A generic method instantiates first.  Defers if
 // the method is unknown.
+// Receivers for which `.eq()` / `.ne()` / `.hash()` / `.clone()` are BUILT IN
+// (no `impl Eq for int`).  Mirrors the oracle's `is_primitive`: int-like, bool,
+// str, ext-alias and every pointer shape.  Structs / enums fall through to
+// their real (derived or hand-written) impl method.
+fn is_prim_recv_ty(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(_k) => true
+        | Typ::TCInt { is_signed } => true
+        | Typ::TCShort { is_signed } => true
+        | Typ::TCLong { is_signed } => true
+        | Typ::TCChar => true | Typ::TCSChar => true | Typ::TCUChar => true
+        | Typ::TBool => true | Typ::TString => true | Typ::TExtAlias(_n) => true
+        | Typ::TPtr(_i) => true | Typ::TOwnPtr(_i) => true | Typ::TConstPtr(_i) => true
+        | Typ::TNullPtr => true
+        | _o => false
+    };
+}
+fn is_string_ty(t: *const Typ) -> bool { return match *t { Typ::TString => true | _o => false }; }
+// `.hash()` reinterprets these as u32 with a cheap C cast; `str` dispatches to
+// the prelude content hash instead, and pointers have no content hash.
+fn prim_hash_castable(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(_k) => true
+        | Typ::TCInt { is_signed } => true
+        | Typ::TCShort { is_signed } => true
+        | Typ::TCLong { is_signed } => true
+        | Typ::TCChar => true | Typ::TCSChar => true | Typ::TCUChar => true
+        | Typ::TBool => true | Typ::TExtAlias(_n) => true
+        | _o => false
+    };
+}
+fn prim_builtin_applies(t: *const Typ, name: str, nargs: u32) -> bool {
+    if !is_prim_recv_ty(t) { return false; }
+    if (str::eq(name, "eq") || str::eq(name, "ne")) && nargs == 1 as u32 { return true; }
+    if str::eq(name, "hash") && nargs == 0 as u32 { return is_string_ty(t) || prim_hash_castable(t); }
+    if str::eq(name, "clone") && nargs == 0 as u32 { return true; }
+    return false;
+}
+fn prim_builtin_method(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                       trecv: *const Texpr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    if str::eq(name, "clone") { return trecv; }
+    if str::eq(name, "hash") {
+        if is_string_ty(trecv.ty) {
+            let mut hargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+            hargs.push(trecv);
+            return te_node(ar, TexprNode::TCall { mangled: "str__hash", args: hargs }, t_u32(ar), p);
+        }
+        return te_node(ar, TexprNode::TCast(trecv, ann_u32(ar)), t_u32(ar), p);
+    }
+    let targ = elab_expr(a, ar, g, sc, env, none_ty(), args.as_slice()[0 as u32]);
+    if is_string_ty(trecv.ty) {
+        // DR-007: `str.eq(other)` content-compares (HashMap<str, _> keys), the
+        // same path the `==` operator takes.
+        let mut eargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+        eargs.push(trecv);
+        eargs.push(targ);
+        let call = te_node(ar, TexprNode::TCall { mangled: "str__eq", args: eargs }, t_bool(ar), p);
+        if str::eq(name, "eq") { return call; }
+        return te_node(ar, TexprNode::TNot(call), t_bool(ar), p);
+    }
+    let op = if str::eq(name, "eq") { BinOp::EqEq } else { BinOp::NotEq };
+    return te_node(ar, TexprNode::TBinOp(op, trecv, targ), t_bool(ar), p);
+}
 fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                     expected: Option<*const Typ>, recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let trecv = elab_expr(a, ar, g, sc, env, none_ty(), recv);
+    if prim_builtin_applies(trecv.ty, name, args.length()) {
+        return prim_builtin_method(a, ar, g, sc, env, trecv, name, args, p);
+    }
     let tpath = recv_base_path(a, trecv.ty);
     let idx = find_method_idx(sc.sc_methods, &tpath, name);
     if idx < 0 as int {
@@ -3073,10 +3145,46 @@ fn struct_ty_path(a: Allocator, t: *const Typ, fallback: *const Vec<str>) -> Vec
         | _e => copy_strs(a, fallback)
     };
 }
+// A tparam nested inside another instance — `HashMap.slots: own *Slot<K, V>`
+// against an already-monomorphized `own *Slot_i32_i32` — cannot be recovered by
+// unifying the declared field type with the value type.  Fall back to the
+// ambient instance bindings for the struct's own declared tparams (the enclosing
+// method instance's K / V), filling only what inference left unbound.
+// Push behind a fn boundary so `n` is a parameter, not the address of a local
+// slice element (the escape pass rejects the latter).
+fn push_tvarbind(binds: *Vec<TVarBind>, n: str, t: *const Typ) {
+    binds.push(TVarBind { tvb_name: n, tvb_ty: t });
+}
+fn seed_struct_tparams(sc: *const TyScope, tname: *const Vec<str>, binds: *Vec<TVarBind>) {
+    let name = path_last(tname);
+    let sl = sc.sc_stps.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_stps.length() {
+        if str::eq(sl[i].stp_name, name) {
+            let psl = sl[i].stp_params.as_slice();
+            let mut j = 0 as u32;
+            while j < sl[i].stp_params.length() {
+                match bind_lookup(binds, psl[j]) {
+                    Option::Some(_t) => { }
+                    | Option::None => {
+                        match bind_lookup(sc.sc_tbinds, psl[j]) {
+                            Option::Some(bt) => { push_tvarbind(binds, psl[j], bt); }
+                            | Option::None => { }
+                        }
+                    }
+                }
+                j = j + 1 as u32;
+            }
+            return;
+        }
+        i = i + 1 as u32;
+    }
+}
 fn build_struct_instance(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
                          tfields: *const Vec<TexprField>) -> Vec<str> {
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_struct_binds(sc, tname, tfields, &binds);
+    seed_struct_tparams(sc, tname, &binds);
     if binds.length() == 0 as u32 { return copy_strs(a, tname); }
     let args = dedup_bind_tys(a, &binds);
     let ipath = instance_path(a, ar, tname, &args);
@@ -5913,6 +6021,9 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     // iterator yields `(K, V)` pairs.
     let hm_none: Option<*const TypeAnn> = Option::None;
     push_prelude_sg_method(a, ar, "HashMap", "with_capacity", false, false, false, Option::Some(ann_kv(a, ar, "HashMap")), out);
+    // Private geometric-rehash helper; registered so `self.grow` inside the
+    // materialized `insert` body resolves (never user-called).
+    push_prelude_sg_method(a, ar, "HashMap", "grow", true, true, false, hm_none, out);
     push_prelude_sg_method(a, ar, "HashMap", "insert", true, true, false, hm_none, out);
     push_prelude_sg_method(a, ar, "HashMap", "get", true, true, true, Option::Some(ann_app1(a, ar, "Option", "V")), out);
     push_prelude_sg_method(a, ar, "HashMap", "contains", true, true, true, Option::Some(ann_bool(ar)), out);
@@ -7720,27 +7831,20 @@ fn collect_tstmt(s: *const Tstmt, acc: *FtrAcc) {
     }
 }
 
-fn str_ends_with(s: str, suffix: str) -> bool {
-    let sn = str::length(suffix);
-    let ln = str::length(s);
-    if ln < sn { return false; }
-    let sb = str::as_bytes(s);
-    let qb = str::as_bytes(suffix);
-    let off = ln - sn;
+// True once a NON-GENERIC owning prelude struct (StringBuilder / String /
+// Arena) is in the struct index.  The oracle keeps their synthesized
+// `<T>__drop` in tp_funcs, walked ahead of their `with_capacity` (declaration
+// order), and those drops free via `self.alloc.free_fn` — so the free-seam
+// fn-ptr is discovered before the alloc-seam exactly in that case.  A program
+// using only the GENERIC collections (Vec / HashMap) has no such early drop:
+// its first discovery is `Vec__with_capacity_i32`'s alloc_fn, matching the
+// oracle.  Measured by oracle instrumentation (vec vs hashmap), not assumed.
+fn owning_prelude_struct_present(structs: *const Vec<StructSig>) -> bool {
+    let sl = structs.as_slice();
     let mut i = 0 as u32;
-    while i < sn { if sb[off + i] != qb[i] { return false; } i = i + 1 as u32; }
-    return true;
-}
-
-// True once any owning prelude collection (StringBuilder / String / Vec /
-// HashMap / Arena) is materialized: they all expose `with_capacity`, and each
-// carries a synthesized `<T>__drop` the oracle keeps in `tp_funcs` at
-// footer-collection time.
-fn funcs_uses_owning_collection(funcs: *const Vec<Tfunc>) -> bool {
-    let sl = funcs.as_slice();
-    let mut i = 0 as u32;
-    while i < funcs.length() {
-        if str_ends_with(sl[i].tf_mangled, "with_capacity") { return true; }
+    while i < structs.length() {
+        let n = path_last(&sl[i].sname_path);
+        if str::eq(n, "StringBuilder") || str::eq(n, "String") || str::eq(n, "Arena") { return true; }
         i = i + 1 as u32;
     }
     return false;
@@ -7776,7 +7880,7 @@ fn collect_footer_types(a: Allocator, funcs: *const Vec<Tfunc>, structs: *const 
     // discovered before the alloc-seam.  The port materializes prelude methods
     // demand-driven and never builds those drop functions, so when an owning
     // collection is in play, seed the free_fn discovery first.
-    if funcs_uses_owning_collection(funcs) {
+    if owning_prelude_struct_present(structs) {
         seed_allocator_free_fn(structs, &acc);
     }
     let fsl = funcs.as_slice();
@@ -8123,6 +8227,125 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("        let v: T = s[self.pos];\n");
     sb.push_str("        self.pos = self.pos + 1 as u32;\n");
     sb.push_str("        return Option::Some(v);\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
+    sb.push_str("struct Slot<K, V> { state: u8, hash: u32, key: K, value: V }\n");
+    sb.push_str("struct HashMap<K, V> { slots: own *Slot<K, V>, count: u32, cap: u32, alloc: Allocator }\n");
+    sb.push_str("struct HashMapIter<K, V> { data: *const Slot<K, V>, len: u32, pos: u32 }\n");
+    sb.push_str("impl HashMap<K, V> {\n");
+    sb.push_str("    pub fn with_capacity(a: Allocator, hint: u32) -> HashMap<K, V> {\n");
+    sb.push_str("        let raw: u32 = if hint < 8 as u32 { 8 as u32 } else { hint };\n");
+    sb.push_str("        let mut cap: u32 = 1 as u32;\n");
+    sb.push_str("        while cap < raw { cap = cap << 1 as u32; }\n");
+    sb.push_str("        let bytes: u32 = size_of(Slot<K, V>) as u32 * cap;\n");
+    sb.push_str("        let p: own *Slot<K, V> = a.alloc_fn(a.state, bytes) as own *Slot<K, V>;\n");
+    sb.push_str("        mem_zero(p, bytes);\n");
+    sb.push_str("        return HashMap { slots: p, count: 0 as u32, cap: cap, alloc: a };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn length(*const self) -> u32 { return self.count; }\n");
+    sb.push_str("    fn grow(*self, new_cap: u32) {\n");
+    sb.push_str("        let bytes: u32 = size_of(Slot<K, V>) as u32 * new_cap;\n");
+    sb.push_str("        let new_p: own *Slot<K, V> = self.alloc.alloc_fn(self.alloc.state, bytes) as own *Slot<K, V>;\n");
+    sb.push_str("        mem_zero(new_p, bytes);\n");
+    sb.push_str("        let old_cap: u32 = self.cap;\n");
+    sb.push_str("        let old_view: Slice<Slot<K, V>> = Slice { ptr: self.slots as *const Slot<K, V>, len: self.cap };\n");
+    sb.push_str("        let mut j: u32 = 0 as u32;\n");
+    sb.push_str("        while j < old_cap {\n");
+    sb.push_str("            let s: Slot<K, V> = old_view[j];\n");
+    sb.push_str("            if s.state == 1 as u8 {\n");
+    sb.push_str("                let new_view: Slice<Slot<K, V>> = Slice { ptr: new_p as *const Slot<K, V>, len: new_cap };\n");
+    sb.push_str("                let mut i: u32 = s.hash & (new_cap - 1 as u32);\n");
+    sb.push_str("                while true {\n");
+    sb.push_str("                    let n: Slot<K, V> = new_view[i];\n");
+    sb.push_str("                    if n.state != 1 as u8 {\n");
+    sb.push_str("                        new_p[i] = Slot { state: 1 as u8, hash: s.hash, key: s.key, value: s.value };\n");
+    sb.push_str("                        break;\n");
+    sb.push_str("                    }\n");
+    sb.push_str("                    i = (i + 1 as u32) & (new_cap - 1 as u32);\n");
+    sb.push_str("                }\n");
+    sb.push_str("            }\n");
+    sb.push_str("            j = j + 1 as u32;\n");
+    sb.push_str("        }\n");
+    sb.push_str("        let old_bytes: u32 = size_of(Slot<K, V>) as u32 * old_cap;\n");
+    sb.push_str("        self.alloc.free_fn(self.alloc.state, self.slots as *c_void, old_bytes);\n");
+    sb.push_str("        self.slots = new_p;\n");
+    sb.push_str("        self.cap = new_cap;\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn contains(*const self, k: K) -> bool {\n");
+    sb.push_str("        let h: u32 = k.hash();\n");
+    sb.push_str("        let sview: Slice<Slot<K, V>> = Slice { ptr: self.slots as *const Slot<K, V>, len: self.cap };\n");
+    sb.push_str("        let mut i: u32 = h & (self.cap - 1 as u32);\n");
+    sb.push_str("        while true {\n");
+    sb.push_str("            let s: Slot<K, V> = sview[i];\n");
+    sb.push_str("            if s.state == 0 as u8 { return false; }\n");
+    sb.push_str("            if s.state == 1 as u8 && s.hash == h {\n");
+    sb.push_str("                if k.eq(s.key) { return true; }\n");
+    sb.push_str("            }\n");
+    sb.push_str("            i = (i + 1 as u32) & (self.cap - 1 as u32);\n");
+    sb.push_str("        }\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn get(*const self, k: K) -> Option<V> {\n");
+    sb.push_str("        let h: u32 = k.hash();\n");
+    sb.push_str("        let sview: Slice<Slot<K, V>> = Slice { ptr: self.slots as *const Slot<K, V>, len: self.cap };\n");
+    sb.push_str("        let mut i: u32 = h & (self.cap - 1 as u32);\n");
+    sb.push_str("        while true {\n");
+    sb.push_str("            let s: Slot<K, V> = sview[i];\n");
+    sb.push_str("            if s.state == 0 as u8 { return Option::None; }\n");
+    sb.push_str("            if s.state == 1 as u8 && s.hash == h {\n");
+    sb.push_str("                if k.eq(s.key) { return Option::Some(s.value); }\n");
+    sb.push_str("            }\n");
+    sb.push_str("            i = (i + 1 as u32) & (self.cap - 1 as u32);\n");
+    sb.push_str("        }\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn insert(*self, k: K, v: V) {\n");
+    sb.push_str("        if (self.count + 1 as u32) * 4 as u32 > self.cap * 3 as u32 { self.grow(self.cap * 2 as u32); }\n");
+    sb.push_str("        let h: u32 = k.hash();\n");
+    sb.push_str("        let sview: Slice<Slot<K, V>> = Slice { ptr: self.slots as *const Slot<K, V>, len: self.cap };\n");
+    sb.push_str("        let mut i: u32 = h & (self.cap - 1 as u32);\n");
+    sb.push_str("        while true {\n");
+    sb.push_str("            let s: Slot<K, V> = sview[i];\n");
+    sb.push_str("            if s.state != 1 as u8 {\n");
+    sb.push_str("                self.slots[i] = Slot { state: 1 as u8, hash: h, key: k, value: v };\n");
+    sb.push_str("                self.count = self.count + 1 as u32;\n");
+    sb.push_str("                return;\n");
+    sb.push_str("            }\n");
+    sb.push_str("            if s.hash == h && k.eq(s.key) {\n");
+    sb.push_str("                self.slots[i] = Slot { state: 1 as u8, hash: h, key: k, value: v };\n");
+    sb.push_str("                return;\n");
+    sb.push_str("            }\n");
+    sb.push_str("            i = (i + 1 as u32) & (self.cap - 1 as u32);\n");
+    sb.push_str("        }\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn remove(*self, k: K) {\n");
+    sb.push_str("        let h: u32 = k.hash();\n");
+    sb.push_str("        let sview: Slice<Slot<K, V>> = Slice { ptr: self.slots as *const Slot<K, V>, len: self.cap };\n");
+    sb.push_str("        let mut i: u32 = h & (self.cap - 1 as u32);\n");
+    sb.push_str("        while true {\n");
+    sb.push_str("            let s: Slot<K, V> = sview[i];\n");
+    sb.push_str("            if s.state == 0 as u8 { return; }\n");
+    sb.push_str("            if s.state == 1 as u8 && s.hash == h {\n");
+    sb.push_str("                if k.eq(s.key) {\n");
+    sb.push_str("                    self.slots[i] = Slot { state: 2 as u8, hash: s.hash, key: s.key, value: s.value };\n");
+    sb.push_str("                    self.count = self.count - 1 as u32;\n");
+    sb.push_str("                    return;\n");
+    sb.push_str("                }\n");
+    sb.push_str("            }\n");
+    sb.push_str("            i = (i + 1 as u32) & (self.cap - 1 as u32);\n");
+    sb.push_str("        }\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn iter(*const self) -> HashMapIter<K, V> {\n");
+    sb.push_str("        return HashMapIter { data: self.slots as *const Slot<K, V>, len: self.cap, pos: 0 as u32 };\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
+    sb.push_str("impl Iterator for HashMapIter<K, V> {\n");
+    sb.push_str("    pub fn next(*self) -> Option<(K, V)> {\n");
+    sb.push_str("        let sview: Slice<Slot<K, V>> = Slice { ptr: self.data, len: self.len };\n");
+    sb.push_str("        while self.pos < self.len {\n");
+    sb.push_str("            let s: Slot<K, V> = sview[self.pos];\n");
+    sb.push_str("            self.pos = self.pos + 1 as u32;\n");
+    sb.push_str("            if s.state == 1 as u8 { return Option::Some((s.key, s.value)); }\n");
+    sb.push_str("        }\n");
+    sb.push_str("        return Option::None;\n");
     sb.push_str("    }\n");
     sb.push_str("}\n");
     return str::from_slice(ar, sb.as_slice());
