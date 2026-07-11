@@ -715,10 +715,10 @@ fn escape_c_into(out: *StringBuilder, s: str) {
 }
 
 // unary prefix; the operand is parenthesised unless `simple`.
-fn emit_unary(a: Allocator, ar: *Arena, out: *StringBuilder, prefix: str, simple: bool, sub: *const Texpr) {
+fn emit_unary(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, prefix: str, simple: bool, sub: *const Texpr) {
     out.push_str(prefix);
-    if simple { gen_expr(a, ar, out, sub); }
-    else { out.push_str("("); gen_expr(a, ar, out, sub); out.push_str(")"); }
+    if simple { gen_expr(a, ar, out, cg, sub); }
+    else { out.push_str("("); gen_expr(a, ar, out, cg, sub); out.push_str(")"); }
 }
 
 fn is_atom_cast(n: *const TexprNode) -> bool {
@@ -739,12 +739,12 @@ fn is_ptr_ty(t: *const Typ) -> bool {
     return match *t { Typ::TPtr(_i) => true | Typ::TOwnPtr(_i) => true | Typ::TConstPtr(_i) => true | _o => false };
 }
 
-fn emit_args(a: Allocator, ar: *Arena, out: *StringBuilder, args: *const Vec<*const Texpr>) {
+fn emit_args(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, args: *const Vec<*const Texpr>) {
     let sl = args.as_slice();
     let mut i = 0 as u32;
     while i < args.length() {
         if i > 0 as u32 { out.push_str(", "); }
-        gen_expr(a, ar, out, sl[i]);
+        gen_expr(a, ar, out, cg, sl[i]);
         i = i + 1 as u32;
     }
 }
@@ -769,7 +769,7 @@ fn emit_float_lit(out: *StringBuilder, f: f64, w: FloatWidth) {
     if !has_de { out.push_str(".0"); }
     if is32 { out.push_str("f"); }
 }
-pub fn gen_expr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texpr) {
+pub fn gen_expr(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, te: *const Texpr) {
     match te.e {
         TexprNode::TIntLit(n) => out.push_int(n)
         | TexprNode::TFloatLit(f, w) => emit_float_lit(out, f, w)
@@ -778,48 +778,48 @@ pub fn gen_expr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texpr)
         | TexprNode::TStringLit(s) => { out.push_str("\""); escape_c_into(out, s); out.push_str("\""); }
         | TexprNode::TVar(name) => out.push_str(name)
         | TexprNode::TFnRef(name) => out.push_str(name)
-        | TexprNode::TNeg(sub) => emit_unary(a, ar, out, "-", is_atom_int_var(sub.e), sub)
-        | TexprNode::TBitNot(sub) => emit_unary(a, ar, out, "~", is_atom_int_var(sub.e), sub)
-        | TexprNode::TNot(sub) => emit_unary(a, ar, out, "!", is_atom_bool_var(sub.e), sub)
-        | TexprNode::TRef(sub) => emit_unary(a, ar, out, "&", lvalue_like(&sub.e), sub)
-        | TexprNode::TDeref(sub) => emit_unary(a, ar, out, "*", lvalue_like(&sub.e), sub)
+        | TexprNode::TNeg(sub) => emit_unary(a, ar, out, cg, "-", is_atom_int_var(sub.e), sub)
+        | TexprNode::TBitNot(sub) => emit_unary(a, ar, out, cg, "~", is_atom_int_var(sub.e), sub)
+        | TexprNode::TNot(sub) => emit_unary(a, ar, out, cg, "!", is_atom_bool_var(sub.e), sub)
+        | TexprNode::TRef(sub) => emit_unary(a, ar, out, cg, "&", lvalue_like(&sub.e), sub)
+        | TexprNode::TDeref(sub) => emit_unary(a, ar, out, cg, "*", lvalue_like(&sub.e), sub)
         | TexprNode::TCast(sub, ann) => {
             out.push_str("((");
             out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, te.ty)));
             out.push_str(")");
-            if is_atom_cast(&sub.e) { gen_expr(a, ar, out, sub); }
-            else { out.push_str("("); gen_expr(a, ar, out, sub); out.push_str(")"); }
+            if is_atom_cast(&sub.e) { gen_expr(a, ar, out, cg, sub); }
+            else { out.push_str("("); gen_expr(a, ar, out, cg, sub); out.push_str(")"); }
             out.push_str(")");
         }
         | TexprNode::TBinOp(op, l, r) => {
             let p = prec(op);
-            emit_binop_operand(a, ar, out, l, p, op, false);
+            emit_binop_operand(a, ar, out, cg, l, p, op, false);
             out.push_str(binop_str(op));
-            emit_binop_operand(a, ar, out, r, p, op, true);
+            emit_binop_operand(a, ar, out, cg, r, p, op, true);
         }
-        | TexprNode::TBuiltinCall { name, args } => emit_builtin(a, ar, out, name, &args)
+        | TexprNode::TBuiltinCall { name, args } => emit_builtin(a, ar, out, cg, name, &args)
         | TexprNode::TCall { mangled, args } => {
             out.push_str(mangled);
             out.push_str("(");
-            emit_args(a, ar, out, &args);
+            emit_args(a, ar, out, cg, &args);
             out.push_str(")");
         }
         | TexprNode::TIndirectCall { fn_expr, args } => {
             out.push_str("(");
-            gen_expr(a, ar, out, fn_expr);
+            gen_expr(a, ar, out, cg, fn_expr);
             out.push_str(")(");
-            emit_args(a, ar, out, &args);
+            emit_args(a, ar, out, cg, &args);
             out.push_str(")");
         }
         | TexprNode::TIndex { base, index } => {
             let suffix = index_suffix(base.ty);
-            if is_index_simple_base(base.e) { gen_expr(a, ar, out, base); }
-            else { out.push_str("("); gen_expr(a, ar, out, base); out.push_str(")"); }
+            if is_index_simple_base(base.e) { gen_expr(a, ar, out, cg, base); }
+            else { out.push_str("("); gen_expr(a, ar, out, cg, base); out.push_str(")"); }
             out.push_str(suffix);
-            gen_expr(a, ar, out, index);
+            gen_expr(a, ar, out, cg, index);
             out.push_str("]");
         }
-        | TexprNode::TFieldAccess { target, field } => emit_field_access(a, ar, out, target, field)
+        | TexprNode::TFieldAccess { target, field } => emit_field_access(a, ar, out, cg, target, field)
         | TexprNode::TSizeOf(t) => { out.push_str("sizeof("); out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, t))); out.push_str(")"); }
         | _other => out.push_str("/*expr?*/")
     }
@@ -848,13 +848,13 @@ fn index_suffix(bty: *const Typ) -> str {
 // `(*p).field` -> `p->field` (C `.` binds tighter than leading `*`); a
 // pointer-typed target auto-derefs via `->`, else `.`; non-postfix targets
 // are parenthesised.
-fn emit_field_access(a: Allocator, ar: *Arena, out: *StringBuilder, target: *const Texpr, field: str) {
+fn emit_field_access(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, target: *const Texpr, field: str) {
     match target.e {
-        TexprNode::TDeref(inner) => { gen_expr(a, ar, out, inner); out.push_str("->"); out.push_str(field); }
+        TexprNode::TDeref(inner) => { gen_expr(a, ar, out, cg, inner); out.push_str("->"); out.push_str(field); }
         | _o => {
             let sep = if is_ptr_ty(target.ty) { "->" } else { "." };
-            if is_simple_field_target(&target.e) { gen_expr(a, ar, out, target); }
-            else { out.push_str("("); gen_expr(a, ar, out, target); out.push_str(")"); }
+            if is_simple_field_target(&target.e) { gen_expr(a, ar, out, cg, target); }
+            else { out.push_str("("); gen_expr(a, ar, out, cg, target); out.push_str(")"); }
             out.push_str(sep);
             out.push_str(field);
         }
@@ -870,9 +870,9 @@ fn binop_operand_parens(operand: *const Texpr, p: int, op: BinOp, is_right: bool
         | _o => false
     };
 }
-fn emit_binop_operand(a: Allocator, ar: *Arena, out: *StringBuilder, operand: *const Texpr, p: int, op: BinOp, is_right: bool) {
-    if binop_operand_parens(operand, p, op, is_right) { out.push_str("("); gen_expr(a, ar, out, operand); out.push_str(")"); }
-    else { gen_expr(a, ar, out, operand); }
+fn emit_binop_operand(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, operand: *const Texpr, p: int, op: BinOp, is_right: bool) {
+    if binop_operand_parens(operand, p, op, is_right) { out.push_str("("); gen_expr(a, ar, out, cg, operand); out.push_str(")"); }
+    else { gen_expr(a, ar, out, cg, operand); }
 }
 
 // Ambient codegen state threaded through the statement / match emitters:
@@ -881,6 +881,7 @@ fn emit_binop_operand(a: Allocator, ar: *Arena, out: *StringBuilder, operand: *c
 // gen_function).  Bundled so a single `cg` pointer rides the recursion.
 struct Cg {
     cg_enums: *const Vec<EnumSig>,
+    cg_structs: *const Vec<StructSig>,
     cg_fill: *u32,
     cg_ml: *u32,
     // Current defer chain (flattened, LIFO order) at the point being emitted;
@@ -901,9 +902,9 @@ fn cg_indent(a: Allocator, ar: *Arena, indent: str) -> str {
 }
 
 // `<indent><lhs> = <expr>;\n`
-fn asn(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, lhs: str, e: *const Texpr) {
+fn asn(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, indent: str, lhs: str, e: *const Texpr) {
     out.push_str(indent); out.push_str(lhs); out.push_str(" = ");
-    gen_expr(a, ar, out, e);
+    gen_expr(a, ar, out, cg, e);
     out.push_str(";\n");
 }
 // `<base>._<i>`
@@ -929,34 +930,34 @@ fn enum_cname_str(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
 }
 
 // `malloc(sizeof(<cname>))` or the DR-046 seam alloc `((<cname> *)(ae.alloc_fn)(ae.state, ((unsigned long)sizeof(<cname>))))`.
-fn emit_alloc_rhs(a: Allocator, ar: *Arena, out: *StringBuilder, cname: str, alloc: Option<*const Texpr>) {
+fn emit_alloc_rhs(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, cname: str, alloc: Option<*const Texpr>) {
     match alloc {
         Option::None => { out.push_str("malloc(sizeof("); out.push_str(cname); out.push_str("))"); }
         | Option::Some(ae) => {
             out.push_str("(("); out.push_str(cname); out.push_str(" *)(");
-            gen_expr(a, ar, out, ae);
+            gen_expr(a, ar, out, cg, ae);
             out.push_str(".alloc_fn)(");
-            gen_expr(a, ar, out, ae);
+            gen_expr(a, ar, out, cg, ae);
             out.push_str(".state, ((unsigned long)sizeof("); out.push_str(cname); out.push_str("))))");
         }
     }
 }
 
-fn emit_fields_into(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, temp: str, sep: str, fields: *const Vec<TexprField>) {
+fn emit_fields_into(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, indent: str, temp: str, sep: str, fields: *const Vec<TexprField>) {
     let sl = fields.as_slice();
     let mut i = 0 as u32;
     while i < fields.length() {
         let lhs = if str::eq(sep, "->") { lhs_arrow(a, ar, temp, sl[i].name) } else { lhs_dot(a, ar, temp, sl[i].name) };
-        asn(a, ar, out, indent, lhs, sl[i].value);
+        asn(a, ar, out, cg, indent, lhs, sl[i].value);
         i = i + 1 as u32;
     }
 }
 
-fn emit_variant_args(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, temp: str, sep: str, variant: str, args: *const Vec<TexprField>) {
+fn emit_variant_args(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, indent: str, temp: str, sep: str, variant: str, args: *const Vec<TexprField>) {
     let sl = args.as_slice();
     let mut i = 0 as u32;
     while i < args.length() {
-        asn(a, ar, out, indent, lhs_variant(a, ar, temp, sep, variant, sl[i].name), sl[i].value);
+        asn(a, ar, out, cg, indent, lhs_variant(a, ar, temp, sep, variant, sl[i].name), sl[i].value);
         i = i + 1 as u32;
     }
 }
@@ -966,41 +967,41 @@ pub fn emit_value_into_temp(a: Allocator, ar: *Arena, out: *StringBuilder, inden
         TexprNode::TTupleLit(es) => {
             let sl = es.as_slice();
             let mut i = 0 as u32;
-            while i < es.length() { asn(a, ar, out, indent, lhs_tup(a, ar, temp, i), sl[i]); i = i + 1 as u32; }
+            while i < es.length() { asn(a, ar, out, cg, indent, lhs_tup(a, ar, temp, i), sl[i]); i = i + 1 as u32; }
         }
         | TexprNode::TStructLit { sname_path, fields, base } => {
-            match base { Option::Some(be) => asn(a, ar, out, indent, temp, be) | Option::None => {} }
-            emit_fields_into(a, ar, out, indent, temp, ".", &fields);
+            match base { Option::Some(be) => asn(a, ar, out, cg, indent, temp, be) | Option::None => {} }
+            emit_fields_into(a, ar, out, cg, indent, temp, ".", &fields);
         }
         | TexprNode::TNew { sname_path, fields, base, alloc } => {
             let cname = struct_cname(a, ar, &sname_path);
             out.push_str(indent); out.push_str(temp); out.push_str(" = ");
-            emit_alloc_rhs(a, ar, out, cname, alloc);
+            emit_alloc_rhs(a, ar, out, cg, cname, alloc);
             out.push_str(";\n");
-            match base { Option::Some(be) => asn(a, ar, out, indent, concat2(a, ar, "*", temp), be) | Option::None => {} }
-            emit_fields_into(a, ar, out, indent, temp, "->", &fields);
+            match base { Option::Some(be) => asn(a, ar, out, cg, indent, concat2(a, ar, "*", temp), be) | Option::None => {} }
+            emit_fields_into(a, ar, out, cg, indent, temp, "->", &fields);
         }
         | TexprNode::TEnumLit { ename_path, variant, tag, args } => {
             let cn = enum_cname_str(a, ar, &ename_path);
             out.push_str(indent); out.push_str(lhs_dot(a, ar, temp, "tag")); out.push_str(" = ");
             out.push_str(cn); out.push_str("_"); out.push_str(variant); out.push_str(";\n");
-            emit_variant_args(a, ar, out, indent, temp, ".", variant, &args);
+            emit_variant_args(a, ar, out, cg, indent, temp, ".", variant, &args);
         }
         | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => {
             let necname = concat2(a, ar, "struct ", enum_cname_str(a, ar, &ename_path));
             out.push_str(indent); out.push_str(temp); out.push_str(" = ");
-            emit_alloc_rhs(a, ar, out, necname, alloc);
+            emit_alloc_rhs(a, ar, out, cg, necname, alloc);
             out.push_str(";\n");
             let necn = enum_cname_str(a, ar, &ename_path);
             out.push_str(indent); out.push_str(lhs_arrow(a, ar, temp, "tag")); out.push_str(" = ");
             out.push_str(necn); out.push_str("_"); out.push_str(variant); out.push_str(";\n");
-            emit_variant_args(a, ar, out, indent, temp, "->", variant, &args);
+            emit_variant_args(a, ar, out, cg, indent, temp, "->", variant, &args);
         }
         | TexprNode::TMatch { scrutinee, ename_path, arms } => emit_match_stmt(a, ar, out, indent, cg, Option::Some(temp), scrutinee, &ename_path, &arms)
         | TexprNode::TIfExpr { cond, then_val, else_val } => {
             let inner = cg_indent(a, ar, indent);
             out.push_str(indent); out.push_str("if (");
-            gen_expr(a, ar, out, cond);
+            gen_expr(a, ar, out, cg, cond);
             out.push_str(") {\n");
             emit_value_into_temp(a, ar, out, inner, cg, temp, then_val);
             out.push_str(indent); out.push_str("} else {\n");
@@ -1013,7 +1014,7 @@ pub fn emit_value_into_temp(a: Allocator, ar: *Arena, out: *StringBuilder, inden
             while ali < es.length() {
                 let mut lb = StringBuilder::with_capacity(a, 24 as u32);
                 lb.push_str(temp); lb.push_str(".data["); lb.push_int(ali as int); lb.push_str("]");
-                asn(a, ar, out, indent, str::from_slice(ar, lb.as_slice()), alsl[ali]);
+                asn(a, ar, out, cg, indent, str::from_slice(ar, lb.as_slice()), alsl[ali]);
                 ali = ali + 1 as u32;
             }
         }
@@ -1039,7 +1040,7 @@ pub fn emit_value_into_temp(a: Allocator, ar: *Arena, out: *StringBuilder, inden
             while bi < stmts.length() { emit_simple_stmt(a, ar, out, indent, cg, &bssl[bi]); bi = bi + 1 as u32; }
             match trailing { Option::Some(tr) => emit_value_into_temp(a, ar, out, indent, cg, temp, tr) | Option::None => {} }
         }
-        | _other => asn(a, ar, out, indent, temp, value)
+        | _other => asn(a, ar, out, cg, indent, temp, value)
     }
 }
 
@@ -1146,24 +1147,24 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
         | Tstmt::TAssignField { target, field, value, pos } => {
             let sep = if is_ptr_ty(target.ty) { "->" } else { "." };
             out.push_str(indent);
-            if is_simple_field_target(&target.e) { gen_expr(a, ar, out, target); }
-            else { out.push_str("("); gen_expr(a, ar, out, target); out.push_str(")"); }
+            if is_simple_field_target(&target.e) { gen_expr(a, ar, out, cg, target); }
+            else { out.push_str("("); gen_expr(a, ar, out, cg, target); out.push_str(")"); }
             out.push_str(sep); out.push_str(field); out.push_str(" = ");
-            gen_expr(a, ar, out, value);
+            gen_expr(a, ar, out, cg, value);
             out.push_str(";\n");
         }
         | Tstmt::TAssignDeref { target, value, pos } => {
             out.push_str(indent);
-            emit_unary(a, ar, out, "*", is_deref_simple(target.e), target);
+            emit_unary(a, ar, out, cg, "*", is_deref_simple(target.e), target);
             out.push_str(" = ");
-            gen_expr(a, ar, out, value);
+            gen_expr(a, ar, out, cg, value);
             out.push_str(";\n");
         }
         | Tstmt::TAssignIndex { base, index, value, pos } => {
             let mut lb = StringBuilder::with_capacity(a, 32 as u32);
-            gen_expr(a, ar, &lb, base);
+            gen_expr(a, ar, &lb, cg, base);
             match *base.ty { Typ::TPtr(_i) => lb.push_str("[") | Typ::TOwnPtr(_i) => lb.push_str("[") | _o => lb.push_str(".data[") }
-            gen_expr(a, ar, &lb, index);
+            gen_expr(a, ar, &lb, cg, index);
             lb.push_str("]");
             emit_value_into_temp(a, ar, out, indent, cg, str::from_slice(ar, lb.as_slice()), value);
         }
@@ -1175,17 +1176,17 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
                     let mut i = 0 as u32;
                     while i < stmts.length() { emit_simple_stmt(a, ar, out, indent, cg, &ssl[i]); i = i + 1 as u32; }
                 }
-                | _o => { out.push_str(indent); gen_expr(a, ar, out, e); out.push_str(";\n"); }
+                | _o => { out.push_str(indent); gen_expr(a, ar, out, cg, e); out.push_str(";\n"); }
             }
         }
         | Tstmt::TIf { cond, then_body, else_body } => emit_if_stmt(a, ar, out, indent, cg, cond, &then_body, &else_body)
         | Tstmt::TWhile { cond, body, post } => {
             out.push_str(indent);
             if post.length() == 0 as u32 {
-                out.push_str("while ("); gen_expr(a, ar, out, cond); out.push_str(") {\n");
+                out.push_str("while ("); gen_expr(a, ar, out, cg, cond); out.push_str(") {\n");
             } else {
-                out.push_str("for (; "); gen_expr(a, ar, out, cond); out.push_str("; ");
-                emit_for_post(a, ar, out, &post);
+                out.push_str("for (; "); gen_expr(a, ar, out, cg, cond); out.push_str("; ");
+                emit_for_post(a, ar, out, cg, &post);
                 out.push_str(") {\n");
             }
             emit_stmts(a, ar, out, cg_indent(a, ar, indent), cg, &body);
@@ -1216,7 +1217,7 @@ fn emit_assign_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, 
 
 // A statement-position `if` (defer-body leaf — no return/defer inside).
 fn emit_if_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, cond: *const Texpr, then_body: *const Vec<Tstmt>, else_body: *const Vec<Tstmt>) {
-    out.push_str(indent); out.push_str("if ("); gen_expr(a, ar, out, cond); out.push_str(") {\n");
+    out.push_str(indent); out.push_str("if ("); gen_expr(a, ar, out, cg, cond); out.push_str(") {\n");
     emit_stmts(a, ar, out, cg_indent(a, ar, indent), cg, then_body);
     out.push_str(indent); out.push_str("}");
     if else_body.length() == 0 as u32 { out.push_str("\n"); return; }
@@ -1236,16 +1237,16 @@ fn emit_stmts(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *c
 }
 
 // `for`-post rendered as the comma-joined third clause of `for (; cond; <here>)`.
-fn emit_for_post(a: Allocator, ar: *Arena, out: *StringBuilder, post: *const Vec<Tstmt>) {
+fn emit_for_post(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, post: *const Vec<Tstmt>) {
     let sl = post.as_slice();
     let mut i = 0 as u32;
     while i < post.length() {
         if i > 0 as u32 { out.push_str(", "); }
         match sl[i] {
             Tstmt::TAssign { path, value, pos } => {
-                out.push_str(last_seg_str(&path)); out.push_str(" = "); gen_expr(a, ar, out, value);
+                out.push_str(last_seg_str(&path)); out.push_str(" = "); gen_expr(a, ar, out, cg, value);
             }
-            | Tstmt::TExprStmt(e) => gen_expr(a, ar, out, e)
+            | Tstmt::TExprStmt(e) => gen_expr(a, ar, out, cg, e)
             | _o => out.push_str("/*post?*/")
         }
         i = i + 1 as u32;
@@ -1503,7 +1504,7 @@ fn emit_arm_value(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg
         | TexprNode::TArrayLit(es) => emit_value_into_temp(a, ar, out, indent, cg, lhs, tbody)
         | TexprNode::TArrayRepeat { value, count } => emit_value_into_temp(a, ar, out, indent, cg, lhs, tbody)
         | TexprNode::TIfExpr { cond, then_val, else_val } => emit_value_into_temp(a, ar, out, indent, cg, lhs, tbody)
-        | _o => { out.push_str(indent); out.push_str(lhs); out.push_str(" = "); gen_expr(a, ar, out, tbody); out.push_str(";\n"); }
+        | _o => { out.push_str(indent); out.push_str(lhs); out.push_str(" = "); gen_expr(a, ar, out, cg, tbody); out.push_str(";\n"); }
     }
 }
 fn emit_arm_void(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, tbody: *const Texpr) {
@@ -1513,7 +1514,7 @@ fn emit_arm_void(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg:
             emit_stmts(a, ar, out, indent, cg, &stmts);
             match trailing { Option::Some(te) => emit_arm_void(a, ar, out, indent, cg, te) | Option::None => {} }
         }
-        | _o => { out.push_str(indent); gen_expr(a, ar, out, tbody); out.push_str(";\n"); }
+        | _o => { out.push_str(indent); gen_expr(a, ar, out, cg, tbody); out.push_str(";\n"); }
     }
 }
 
@@ -1554,7 +1555,7 @@ fn emit_arms_goto(a: Allocator, ar: *Arena, out: *StringBuilder, inner: str, bod
         else { out.push_str("if ("); join_tests_amp(out, &pc.pc_tests); out.push_str(") {\n"); }
         emit_pat_binds(a, ar, out, body_indent, &sl[i], &pc.pc_binds);
         let stmt_indent = match sl[i].tguard {
-            Option::Some(g) => { out.push_str(body_indent); out.push_str("if ("); gen_expr(a, ar, out, g); out.push_str(") {\n"); cg_indent(a, ar, body_indent) }
+            Option::Some(g) => { out.push_str(body_indent); out.push_str("if ("); gen_expr(a, ar, out, cg, g); out.push_str(") {\n"); cg_indent(a, ar, body_indent) }
             | Option::None => body_indent
         };
         emit_arm_result(a, ar, out, stmt_indent, cg, assign_to, &sl[i]);
@@ -1734,7 +1735,7 @@ fn emit_return(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *
 }
 fn emit_return_value(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, v: *const Texpr, all: *const Vec<Vec<Tstmt>>) {
     let needs = all.length() > 0 as u32 || value_needs_block(v);
-    if !needs { out.push_str(indent); out.push_str("return "); gen_expr(a, ar, out, v); out.push_str(";\n"); return; }
+    if !needs { out.push_str(indent); out.push_str("return "); gen_expr(a, ar, out, cg, v); out.push_str(";\n"); return; }
     let inner = cg_indent(a, ar, indent);
     out.push_str(indent); out.push_str("{\n");
     out.push_str(inner); out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, v.ty))); out.push_str(" __exile_ret;\n");
@@ -1745,7 +1746,7 @@ fn emit_return_value(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str,
 }
 
 fn gen_if(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, outer: *const Vec<Vec<Tstmt>>, my_defers: *const Vec<Vec<Tstmt>>, cond: *const Texpr, then_body: *const Vec<Tstmt>, else_body: *const Vec<Tstmt>) {
-    out.push_str("if ("); gen_expr(a, ar, out, cond); out.push_str(") {\n");
+    out.push_str("if ("); gen_expr(a, ar, out, cg, cond); out.push_str(") {\n");
     let nested = flatten_defers(a, my_defers, outer);
     gen_block(a, ar, out, cg_indent(a, ar, indent), cg, &nested, then_body);
     out.push_str(indent); out.push_str("}");
@@ -1804,8 +1805,8 @@ pub fn gen_block(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg:
 
 fn gen_while(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, outer: *const Vec<Vec<Tstmt>>, my_defers: *const Vec<Vec<Tstmt>>, cond: *const Texpr, body: *const Vec<Tstmt>, post: *const Vec<Tstmt>) {
     out.push_str(indent);
-    if post.length() == 0 as u32 { out.push_str("while ("); gen_expr(a, ar, out, cond); out.push_str(") {\n"); }
-    else { out.push_str("for (; "); gen_expr(a, ar, out, cond); out.push_str("; "); emit_for_post(a, ar, out, post); out.push_str(") {\n"); }
+    if post.length() == 0 as u32 { out.push_str("while ("); gen_expr(a, ar, out, cg, cond); out.push_str(") {\n"); }
+    else { out.push_str("for (; "); gen_expr(a, ar, out, cg, cond); out.push_str("; "); emit_for_post(a, ar, out, cg, post); out.push_str(") {\n"); }
     let nested = flatten_defers(a, my_defers, outer);
     gen_block(a, ar, out, cg_indent(a, ar, indent), cg, &nested, body);
     out.push_str(indent); out.push_str("}\n");
@@ -1845,7 +1846,7 @@ pub fn gen_function(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg
     }
     let empty: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
     let mut dchain: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
-    let cg2 = Cg { cg_enums: cg.cg_enums, cg_fill: cg.cg_fill, cg_ml: cg.cg_ml, cg_defers: &dchain };
+    let cg2 = Cg { cg_enums: cg.cg_enums, cg_structs: cg.cg_structs, cg_fill: cg.cg_fill, cg_ml: cg.cg_ml, cg_defers: &dchain };
     gen_block(a, ar, out, "    ", &cg2, &empty, &tf.tf_body);
     if str::eq(tf.tf_func.name, "main") { out.push_str("    return 0;\n"); }
     out.push_str("}\n");
@@ -1968,7 +1969,7 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *S
     let mut fillctr: u32 = 0 as u32;
     let mut mlctr: u32 = 0 as u32;
     let mut dchain: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
-    let cg = Cg { cg_enums: &tp.tp_enum_index, cg_fill: &fillctr, cg_ml: &mlctr, cg_defers: &dchain };
+    let cg = Cg { cg_enums: &tp.tp_enum_index, cg_structs: &tp.tp_struct_index, cg_fill: &fillctr, cg_ml: &mlctr, cg_defers: &dchain };
     // Prelude free-fns (str::*) emit first — the oracle prepends the prelude, so
     // they precede user free-fns in the definition section.
     // Emission order (measured against the oracle's prepended prelude):
@@ -2438,11 +2439,11 @@ fn print_fmt(t: *const Typ) -> Fmt {
 fn is_aggregate_ty(t: *const Typ) -> bool {
     return match *t { Typ::TStruct(_p) => true | Typ::TEnum(_p) => true | _o => false };
 }
-fn emit_print_impl(a: Allocator, ar: *Arena, out: *StringBuilder, newline: bool, args: *const Vec<*const Texpr>) {
+fn emit_print_impl(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, newline: bool, args: *const Vec<*const Texpr>) {
     let arg = args.as_slice()[0 as u32];
     if is_aggregate_ty(arg.ty) {
         out.push_str(mangle_typ(a, ar, arg.ty)); out.push_str("__debug(");
-        gen_expr(a, ar, out, arg);
+        gen_expr(a, ar, out, cg, arg);
         out.push_str(")");
         if newline { out.push_str("; printf(\"\\n\")"); }
         return;
@@ -2451,36 +2452,39 @@ fn emit_print_impl(a: Allocator, ar: *Arena, out: *StringBuilder, newline: bool,
     out.push_str("printf(\""); out.push_str(fm.f_spec);
     if newline { out.push_str("\\n"); }
     out.push_str("\", ");
-    if str::eq(fm.f_cast, "") { gen_expr(a, ar, out, arg); }
-    else { out.push_str("("); out.push_str(fm.f_cast); out.push_str(")("); gen_expr(a, ar, out, arg); out.push_str(")"); }
+    if str::eq(fm.f_cast, "") { gen_expr(a, ar, out, cg, arg); }
+    else { out.push_str("("); out.push_str(fm.f_cast); out.push_str(")("); gen_expr(a, ar, out, cg, arg); out.push_str(")"); }
     out.push_str(")");
 }
 
-fn emit_free_builtin(a: Allocator, ar: *Arena, out: *StringBuilder, args: *const Vec<*const Texpr>) {
+fn emit_free_builtin(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, args: *const Vec<*const Texpr>) {
     let sl = args.as_slice();
     let alloc = sl[0 as u32];
     let ptr = sl[1 as u32];
     let pointee = match *ptr.ty { Typ::TOwnPtr(inner) => inner | _o => ptr.ty };
     out.push_str("(");
-    gen_expr(a, ar, out, alloc); out.push_str(".free_fn)(");
-    gen_expr(a, ar, out, alloc); out.push_str(".state, ((void *)");
-    gen_expr(a, ar, out, ptr); out.push_str("), ((unsigned long)sizeof(");
+    gen_expr(a, ar, out, cg, alloc); out.push_str(".free_fn)(");
+    gen_expr(a, ar, out, cg, alloc); out.push_str(".state, ((void *)");
+    gen_expr(a, ar, out, cg, ptr); out.push_str("), ((unsigned long)sizeof(");
     out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, pointee)));
     out.push_str(")))");
 }
 
-fn emit_builtin(a: Allocator, ar: *Arena, out: *StringBuilder, name: str, args: *const Vec<*const Texpr>) {
+fn emit_builtin(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, name: str, args: *const Vec<*const Texpr>) {
     let sl = args.as_slice();
-    if str::eq(name, "print") { emit_print_impl(a, ar, out, false, args); return; }
-    if str::eq(name, "println") { emit_print_impl(a, ar, out, true, args); return; }
-    if str::eq(name, "free") { emit_free_builtin(a, ar, out, args); return; }
-    if str::eq(name, "ptr_offset") { out.push_str("("); gen_expr(a, ar, out, sl[0 as u32]); out.push_str(" + "); gen_expr(a, ar, out, sl[1 as u32]); out.push_str(")"); return; }
-    if str::eq(name, "cstr_len") { out.push_str("((unsigned long)strlen("); gen_expr(a, ar, out, sl[0 as u32]); out.push_str("))"); return; }
-    if str::eq(name, "mem_zero") { out.push_str("memset("); gen_expr(a, ar, out, sl[0 as u32]); out.push_str(", 0, "); gen_expr(a, ar, out, sl[1 as u32]); out.push_str(")"); return; }
+    if str::eq(name, "print") { emit_print_impl(a, ar, out, cg, false, args); return; }
+    if str::eq(name, "println") { emit_print_impl(a, ar, out, cg, true, args); return; }
+    if str::eq(name, "free") { emit_free_builtin(a, ar, out, cg, args); return; }
+    if str::eq(name, "ptr_offset") { out.push_str("("); gen_expr(a, ar, out, cg, sl[0 as u32]); out.push_str(" + "); gen_expr(a, ar, out, cg, sl[1 as u32]); out.push_str(")"); return; }
+    if str::eq(name, "cstr_len") { out.push_str("((unsigned long)strlen("); gen_expr(a, ar, out, cg, sl[0 as u32]); out.push_str("))"); return; }
+    if str::eq(name, "mem_zero") { out.push_str("memset("); gen_expr(a, ar, out, cg, sl[0 as u32]); out.push_str(", 0, "); gen_expr(a, ar, out, cg, sl[1 as u32]); out.push_str(")"); return; }
     if str::eq(name, "default_allocator") { out.push_str("exile_default_allocator()"); return; }
     if str::eq(name, "type_name") {
-        // TODO: render_typ_user_facing for aggregates (needed at self-diff); typ_name covers scalars.
-        out.push_str("((void)sizeof("); gen_expr(a, ar, out, sl[0 as u32]); out.push_str("), \""); out.push_str(typ_name_cg(a, ar, sl[0 as u32].ty)); out.push_str("\")"); return;
+        // A mono instance reads back as the user wrote it (`Result<i32, str>`, not
+        // `Result_i32_str`), which needs the struct/enum indices for the instance
+        // args — they ride in Cg.
+        out.push_str("((void)sizeof("); gen_expr(a, ar, out, cg, sl[0 as u32]); out.push_str("), \"");
+        out.push_str(render_typ_user_facing(a, ar, cg.cg_structs, cg.cg_enums, sl[0 as u32].ty)); out.push_str("\")"); return;
     }
     out.push_str("/*builtin:"); out.push_str(name); out.push_str("*/");
 }
