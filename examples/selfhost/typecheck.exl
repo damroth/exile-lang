@@ -1934,7 +1934,7 @@ fn t_u8(ar: *Arena) -> *const Typ {
 }
 // Register `Slice<elem>` (the first arg of a `Vec<elem>`) so the slice view a
 // Vec's accessors yield rides in the footer.
-fn register_slice_of(a: Allocator, ar: *Arena, sc: *const TyScope, args: *const Vec<*const Typ>) {
+fn register_slice_of(a: Allocator, ar: *Arena, sc: *const TyScope, args: *const Vec<*const Typ>, fields_only: bool) {
     if args.length() == 0 as u32 { return; }
     let sl = args.as_slice();
     let mut sargs: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
@@ -1942,34 +1942,81 @@ fn register_slice_of(a: Allocator, ar: *Arena, sc: *const TyScope, args: *const 
     let mut skel: Vec<str> = Vec::with_capacity(a, 8 as u32);
     skel.push("Slice");
     let ipath = instance_path(a, ar, &skel, &sargs);
-    register_mono_struct(a, sc, &ipath);
+    if !fields_only { register_mono_struct_args(a, sc, &ipath, &sargs); }
     register_prelude_struct_fields(a, ar, sc, "Slice", &sargs, &ipath);
 }
 // Register `Name<arg>` as a monomorphic instance (`Take<Count>` -> Take_ex_Count).
-fn register_app_mono(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, arg_ty: *const Typ) {
+// `fields_only`: the prelude struct SKELETONS only reach `sinfo` after the
+// footprint window is registered, so the first pass has nothing to substitute
+// and the instance would emit as `struct ex_Vec_i32 { };`.  A second pass re-runs
+// the field substitution once the skeletons are in scope, without touching
+// mono_structs (whose order IS the emission order).
+fn register_app_mono(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, arg_ty: *const Typ, fields_only: bool) {
     let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     path.push(name);
     let mut args: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     args.push(arg_ty);
     let ipath = instance_path(a, ar, &path, &args);
-    register_mono_struct(a, sc, &ipath);
+    if fields_only {
+        register_prelude_struct_fields(a, ar, sc, name, &args, &ipath);
+        return;
+    }
+    register_mono_struct_args(a, sc, &ipath, &args);
 }
 // Every concrete `impl Iterator for X` carries the Self-pinned return types of
 // Iterator's default methods in the footer, even when none are called: `take`
 // -> Take<X>, `enumerate` -> Enumerate<X>, `collect` -> Vec<X::Item> (+ its
 // Slice view) over an Allocator.  Map / Filter need the call-site `F`, so they
 // stay base-only until used.
-fn register_iter_footprint(a: Allocator, ar: *Arena, sc: *const TyScope, target: str, item_ty: *const Typ) {
+fn register_iter_footprint(a: Allocator, ar: *Arena, sc: *const TyScope, target: str, item_ty: *const Typ, fields_only: bool) {
     let tgt_ty = ty_node(ar, Typ::TStruct(one_path(a, target)));
-    register_app_mono(a, ar, sc, "Take", tgt_ty);
-    register_app_mono(a, ar, sc, "Enumerate", tgt_ty);
+    register_app_mono(a, ar, sc, "Take", tgt_ty, fields_only);
+    register_app_mono(a, ar, sc, "Enumerate", tgt_ty, fields_only);
     let mut vargs: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     vargs.push(item_ty);
-    register_app_mono(a, ar, sc, "Vec", item_ty);
-    register_slice_of(a, ar, sc, &vargs);
-    register_mono_struct(a, sc, &allocator_path(a));
+    register_app_mono(a, ar, sc, "Vec", item_ty, fields_only);
+    // The Vec's Slice view is NOT part of the footprint: the oracle registers it
+    // where `as_slice` materializes — at the END of the mono section, after every
+    // footprint instance.  Register its fields only, never its position.
+    register_slice_of(a, ar, sc, &vargs, true);
+    if !fields_only { register_mono_struct(a, sc, &allocator_path(a)); }
 }
-fn register_iter_footprints(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, assoc: *const Vec<AssocBind>) {
+// The GHOST of a DCE'd `Vec::as_slice`: the oracle prepends the whole prelude, so
+// every `Vec<T>` instance materializes an `as_slice` whose return type registers
+// `Slice<T>` — and the struct survives the DCE that later deletes the method.
+// The port materializes on demand, so it never sees that method; replay the side
+// effect here, at the END of the mono list, which is where the oracle's prelude
+// materialization puts it.
+fn register_slice_elem(a: Allocator, ar: *Arena, sc: *const TyScope, elem: *const Typ) {
+    let mut args: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    args.push(elem);
+    register_slice_of(a, ar, sc, &args, false);
+    return;
+}
+fn register_vec_slice_views(a: Allocator, ar: *Arena, sc: *const TyScope,
+                            mono_structs: *const Vec<Vec<str>>, mono_sargs: *const Vec<Vec<*const Typ>>) {
+    // Collect FIRST, register second: registering pushes into mono_structs, and a
+    // grow reallocates the buffer the loop's slice points at (a use-after-free the
+    // port's own source triggered — the corpus never grew the Vec mid-walk).
+    let n = mono_structs.length();
+    let mut elems: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < n {
+        let msl = mono_structs.as_slice();
+        let sal = mono_sargs.as_slice();
+        if str_starts_with(path_last(&msl[i]), "Vec_") && sal[i].length() == 1 as u32 {
+            elems.push(sal[i].as_slice()[0 as u32]);
+        }
+        i = i + 1 as u32;
+    }
+    let mut j = 0 as u32;
+    while j < elems.length() {
+        register_slice_elem(a, ar, sc, elems.as_slice()[j]);
+        j = j + 1 as u32;
+    }
+    return;
+}
+fn register_iter_footprints(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, assoc: *const Vec<AssocBind>, fields_only: bool) {
     // Only the prelude Iterator carries combinator defaults.  A user-declared
     // `trait Iterator` shadows it (associated_types declares its own with no
     // defaults), so its impls get no footprint.
@@ -1979,7 +2026,7 @@ fn register_iter_footprints(a: Allocator, ar: *Arena, sc: *const TyScope, items:
     let mut i = 0 as u32;
     while i < n {
         if str::eq(sl[i].ab_trait, "Iterator") && sl[i].ab_tparams.length() == 0 as u32 {
-            register_iter_footprint(a, ar, sc, sl[i].ab_target, resolve_sig_ty(a, ar, sc, sl[i].ab_ty));
+            register_iter_footprint(a, ar, sc, sl[i].ab_target, resolve_sig_ty(a, ar, sc, sl[i].ab_ty), fields_only);
         }
         i = i + 1 as u32;
     }
@@ -3024,6 +3071,49 @@ fn subst_if(a: Allocator, ar: *Arena, from: str, to: str, cond: *const Expr,
     return ast_node(ar, Expr::If { cond: new_cond, then_blk: new_then, else_blk: new_else, pos: p });
 }
 
+fn subst_args(a: Allocator, ar: *Arena, from: str, to: str, args: *const Vec<*const Expr>) -> Vec<*const Expr> {
+    let mut out: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() { out.push(subst_var_expr(a, ar, from, to, sl[i])); i = i + 1 as u32; }
+    return out;
+}
+fn subst_fields(a: Allocator, ar: *Arena, from: str, to: str, fs: *const Vec<Field>) -> Vec<Field> {
+    let mut out: Vec<Field> = Vec::with_capacity(a, 8 as u32);
+    let sl = fs.as_slice();
+    let mut i = 0 as u32;
+    while i < fs.length() {
+        out.push(Field { name: sl[i].name, value: subst_var_expr(a, ar, from, to, sl[i].value) });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn subst_opt(a: Allocator, ar: *Arena, from: str, to: str, e: Option<*const Expr>) -> Option<*const Expr> {
+    return match e {
+        Option::Some(x) => Option::Some(subst_var_expr(a, ar, from, to, x))
+        | Option::None => { let n: Option<*const Expr> = Option::None; n }
+    };
+}
+fn subst_enum_args(a: Allocator, ar: *Arena, from: str, to: str, args: EnumLitArgs) -> EnumLitArgs {
+    return match args {
+        EnumLitArgs::EATuple(es) => EnumLitArgs::EATuple(subst_args(a, ar, from, to, &es))
+        | EnumLitArgs::EAStruct(fs) => EnumLitArgs::EAStruct(subst_fields(a, ar, from, to, &fs))
+    };
+}
+fn subst_arms(a: Allocator, ar: *Arena, from: str, to: str, arms: *const Vec<MatchArm>) -> Vec<MatchArm> {
+    let mut out: Vec<MatchArm> = Vec::with_capacity(a, 8 as u32);
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() {
+        out.push(MatchArm { pat: sl[i].pat, guard: subst_opt(a, ar, from, to, sl[i].guard),
+                            body: subst_var_expr(a, ar, from, to, sl[i].body), arm_pos: sl[i].arm_pos });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+// Every expr form is covered: an `_other => e` pass-through silently skipped the
+// body of a MethodCall / Match / Block, so a `for v in it { f(acc, v) }` in the
+// prelude kept a `v` that was never declared — invalid C, not a naming drift.
 fn subst_var_expr(a: Allocator, ar: *Arena, from: str, to: str, e: *const Expr) -> *const Expr {
     let p = expr_pos(e);
     return match *e {
@@ -3041,16 +3131,80 @@ fn subst_var_expr(a: Allocator, ar: *Arena, from: str, to: str, e: *const Expr) 
         | Expr::Deref(s, _q) => ast_node(ar, Expr::Deref(subst_var_expr(a, ar, from, to, s), p))
         | Expr::Ref(s, _q) => ast_node(ar, Expr::Ref(subst_var_expr(a, ar, from, to, s), p))
         | Expr::FieldAccess(t, f, _q) => ast_node(ar, Expr::FieldAccess(subst_var_expr(a, ar, from, to, t), f, p))
-        | _other => e
+        | Expr::MethodCall { receiver, name, args } =>
+            ast_node(ar, Expr::MethodCall { receiver: subst_var_expr(a, ar, from, to, receiver), name: name,
+                                            args: subst_args(a, ar, from, to, &args), pos: p })
+        | Expr::TupleLit(es, _q) => ast_node(ar, Expr::TupleLit(subst_args(a, ar, from, to, &es), p))
+        | Expr::ArrayLit(es, _q) => ast_node(ar, Expr::ArrayLit(subst_args(a, ar, from, to, &es), p))
+        | Expr::ArrayRepeat { value, count } =>
+            ast_node(ar, Expr::ArrayRepeat { value: subst_var_expr(a, ar, from, to, value),
+                                             count: subst_var_expr(a, ar, from, to, count), pos: p })
+        | Expr::Range { lo, hi, inclusive } =>
+            ast_node(ar, Expr::Range { lo: subst_var_expr(a, ar, from, to, lo), hi: subst_var_expr(a, ar, from, to, hi),
+                                       inclusive: inclusive, pos: p })
+        | Expr::StructLit { tname, fields, base } =>
+            ast_node(ar, Expr::StructLit { tname: copy_strs(a, &tname), fields: subst_fields(a, ar, from, to, &fields),
+                                           base: subst_opt(a, ar, from, to, base), pos: p })
+        | Expr::New { tname, fields, base, alloc } =>
+            ast_node(ar, Expr::New { tname: copy_strs(a, &tname), fields: subst_fields(a, ar, from, to, &fields),
+                                     base: subst_opt(a, ar, from, to, base), alloc: subst_opt(a, ar, from, to, alloc), pos: p })
+        | Expr::NewEnum { tname, args, alloc } =>
+            ast_node(ar, Expr::NewEnum { tname: copy_strs(a, &tname), args: subst_args(a, ar, from, to, &args),
+                                         alloc: subst_opt(a, ar, from, to, alloc), pos: p })
+        | Expr::EnumLit { tname, variant, args } =>
+            ast_node(ar, Expr::EnumLit { tname: copy_strs(a, &tname), variant: variant,
+                                         args: subst_enum_args(a, ar, from, to, args), pos: p })
+        | Expr::Match { scrutinee, arms } =>
+            ast_node(ar, Expr::Match { scrutinee: subst_var_expr(a, ar, from, to, scrutinee),
+                                       arms: subst_arms(a, ar, from, to, &arms), pos: p })
+        | Expr::Block(stmts, _q) => ast_node(ar, Expr::Block(subst_body(a, ar, from, to, &stmts), p))
+        | Expr::Orelse(l, r, _q) =>
+            ast_node(ar, Expr::Orelse(subst_var_expr(a, ar, from, to, l), subst_var_expr(a, ar, from, to, r), p))
+        | Expr::Try(s, _q) => ast_node(ar, Expr::Try(subst_var_expr(a, ar, from, to, s), p))
+        // A lambda body is its own scope (lifted to a top-level fn), but the
+        // pre-pass walks it separately, so substituting through is a safe no-op.
+        | Expr::Lambda { params, ret_ty, body, captures } =>
+            ast_node(ar, Expr::Lambda { params: params, ret_ty: ret_ty, body: subst_var_expr(a, ar, from, to, body),
+                                        captures: captures, pos: p })
+        | _leaf => e
     };
 }
 
+// A bare `i = ...` reassign renames too: the body's `i` IS the gensym in the
+// emitted code.  Single-segment paths matching `from` are remapped; qualified
+// paths stay.
+fn subst_path(a: Allocator, from: str, to: str, path: *const Vec<str>) -> Vec<str> {
+    if path.length() == 1 as u32 && str::eq(path.as_slice()[0 as u32], from) {
+        return single_str(a, to);
+    }
+    return copy_strs(a, path);
+}
+fn copy_stmts(a: Allocator, body: *const Vec<Stmt>) -> Vec<Stmt> {
+    let mut out: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    let sl = body.as_slice();
+    let mut i = 0 as u32;
+    while i < body.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+// A nested `for` that declares the same name shadows it: stop substituting
+// inside its body (Exile disallows shadowing, but the rewriter stays robust).
+fn subst_for(a: Allocator, ar: *Arena, from: str, to: str, iter_var: str,
+             range: *const Expr, body: *const Vec<Stmt>, pos: Pos) -> Stmt {
+    let nr = subst_var_expr(a, ar, from, to, range);
+    if str::eq(iter_var, from) {
+        return Stmt::For { iter_var: iter_var, range: nr, body: copy_stmts(a, body), pos: pos };
+    }
+    return Stmt::For { iter_var: iter_var, range: nr, body: subst_body(a, ar, from, to, body), pos: pos };
+}
+// Every statement form is covered too: the old `_other =>` fallback turned an
+// unhandled statement (Return / While / For / Defer / With / LetElse) into a
+// visible `(var )` marker — it would have DELETED a `return` inside a for-body.
 fn subst_var_stmt(a: Allocator, ar: *Arena, from: str, to: str, s: *const Stmt) -> Stmt {
     return match *s {
         Stmt::ExprStmt(e) => Stmt::ExprStmt(subst_var_expr(a, ar, from, to, e))
         | Stmt::Tail(e) => Stmt::Tail(subst_var_expr(a, ar, from, to, e))
         | Stmt::Assign { path, value, pos } =>
-            Stmt::Assign { path: copy_strs(a, &path), value: subst_var_expr(a, ar, from, to, value), pos: pos }
+            Stmt::Assign { path: subst_path(a, from, to, &path), value: subst_var_expr(a, ar, from, to, value), pos: pos }
         | Stmt::Let { name, value, ty_ann, is_mut, pos } =>
             Stmt::Let { name: name, value: subst_var_expr(a, ar, from, to, value), ty_ann: ty_ann, is_mut: is_mut, pos: pos }
         | Stmt::AssignDeref { target, value, pos } =>
@@ -3061,9 +3215,19 @@ fn subst_var_stmt(a: Allocator, ar: *Arena, from: str, to: str, s: *const Stmt) 
             Stmt::AssignIndex { base: subst_var_expr(a, ar, from, to, base), index: subst_var_expr(a, ar, from, to, index), value: subst_var_expr(a, ar, from, to, value), pos: pos }
         | Stmt::LetTuple { names, value, is_mut, pos } =>
             Stmt::LetTuple { names: copy_strs(a, &names), value: subst_var_expr(a, ar, from, to, value), is_mut: is_mut, pos: pos }
+        | Stmt::LetElse { pat, value, else_body, pos } =>
+            Stmt::LetElse { pat: pat, value: subst_var_expr(a, ar, from, to, value),
+                            else_body: subst_body(a, ar, from, to, &else_body), pos: pos }
+        | Stmt::Return(v, p) => Stmt::Return(subst_opt(a, ar, from, to, v), p)
+        | Stmt::While { cond, body } =>
+            Stmt::While { cond: subst_var_expr(a, ar, from, to, cond), body: subst_body(a, ar, from, to, &body) }
+        | Stmt::For { iter_var, range, body, pos } => subst_for(a, ar, from, to, iter_var, range, &body, pos)
+        | Stmt::Defer { body, pos } => Stmt::Defer { body: subst_body(a, ar, from, to, &body), pos: pos }
+        | Stmt::With { target, name, body, pos } =>
+            Stmt::With { target: subst_var_expr(a, ar, from, to, target), name: name,
+                         body: subst_body(a, ar, from, to, &body), pos: pos }
         | Stmt::Break(p) => Stmt::Break(p)
         | Stmt::Continue(p) => Stmt::Continue(p)
-        | _other => Stmt::ExprStmt(ast_node(ar, Expr::Var("", zero_pos())))
     };
 }
 
@@ -9225,7 +9389,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // port's mirror of that artifact is register_iter_footprints; record the
     // window it registers so the DCE below exempts exactly those instances.
     let fp_start = mono_structs.length();
-    register_iter_footprints(a, ar, &base_scope, items, &assoc_binds);
+    register_iter_footprints(a, ar, &base_scope, items, &assoc_binds, false);
     let fp_end = mono_structs.length();
     // Struct field index + enum variant/field index + method index, carried
     // in every fn's body scope so `s.field`, struct/enum literals, variant
@@ -9241,6 +9405,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let sinfo_scope = scope_with_sinfo(&base_scope, &sinfo);
     let mut sinfo_throwaway: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     collect_struct_info(a, ar, &sinfo_scope, &empty_tp, items, &sinfo_throwaway);
+    register_iter_footprints(a, ar, &sinfo_scope, items, &assoc_binds, true);
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
@@ -9344,6 +9509,11 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut pfree: Vec<Tfunc> = Vec::with_capacity(a, 8 as u32);
     let mut pmeth: Vec<Tfunc> = Vec::with_capacity(a, 8 as u32);
     prelude_materialize(a, ar, &globals, &gensym, &idx, &prelude_items, &prelude_reg, &pmeth, &pfree, &funcs);
+    // Same DCE exemption as the footprint window: these are ghosts of DCE'd
+    // prelude methods, so no surviving fn mentions them.
+    let sv_start = mono_structs.length();
+    register_vec_slice_views(a, ar, &sinfo_scope, &mono_structs, &mono_sargs);
+    let sv_end = mono_structs.length();
 
     let mut structs = prelude_struct_index(a);
     let mut enums = prelude_enum_index(a);
@@ -9395,10 +9565,25 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // DECLARATION order ahead of the true generic mono instances (Slice_u8,
     // Vec_i32, ...).  Reproduce that: pass A pushes the demanded non-generic
     // prelude structs by declaration rank, pass B the rest in registration order.
+    // `Slice<u8>` is the str seam's view type: it comes from `mod str`, the FIRST
+    // prelude module, so the oracle registers it ahead of every other mono
+    // instance.  The port materializes str's ops on demand, i.e. late — hoist it.
+    let mut ms = 0 as u32;
+    let mut su8_done = false;
+    while ms < mn {
+        let is_fp0 = (ms >= fp_start && ms < fp_end) || (ms >= sv_start && ms < sv_end);
+        if str::eq(path_last(&msl[ms]), "Slice_u8") && !su8_done
+           && (is_fp0 || path_in_paths(&mentioned, &msl[ms])) {
+            push_struct_path(a, &structs, &msl[ms], &mono_fields, &sasl[ms]);
+            su8_done = true;
+        }
+        ms = ms + 1 as u32;
+    }
     let mut mj = 0 as u32;
     while mj < mn {
-        let is_footprint = mj >= fp_start && mj < fp_end;
-        if nongeneric_prelude_rank(path_last(&msl[mj])) < 0 as int && (is_footprint || path_in_paths(&mentioned, &msl[mj])) { push_struct_path(a, &structs, &msl[mj], &mono_fields, &sasl[mj]); }
+        let is_footprint = (mj >= fp_start && mj < fp_end) || (mj >= sv_start && mj < sv_end);
+        let skip = str::eq(path_last(&msl[mj]), "Slice_u8") && su8_done;
+        if !skip && nongeneric_prelude_rank(path_last(&msl[mj])) < 0 as int && (is_footprint || path_in_paths(&mentioned, &msl[mj])) { push_struct_path(a, &structs, &msl[mj], &mono_fields, &sasl[mj]); }
         mj = mj + 1 as u32;
     }
     let men = mono_enums.length();

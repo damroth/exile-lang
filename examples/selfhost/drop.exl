@@ -676,9 +676,13 @@ fn build_hm_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums
     lets.push(FieldTy { name: "__i", ty: ty_u32(ar) });
     return mk_glue_tfunc(a, ar, name, params, ptys, lets, body);
 }
+// COPY the path out of the Typ node: binding `p` and returning it yields a
+// shallow Vec sharing the arena node's heap buffer, and the local's auto-drop
+// then frees it — the Typ is left dangling and later reads print whatever now
+// occupies that memory (a live heap-use-after-free, caught by ASan).
 fn slot_path_of(a: Allocator, slot: *const Typ) -> Vec<str> {
     let empty: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    return match *slot { Typ::TStruct(p) => p | _o => empty };
+    return match *slot { Typ::TStruct(p) => copy_strs_d(a, &p) | _o => empty };
 }
 fn own_or_field_ty(sig: *const StructSig, fname: str, ar: *Arena) -> *const Typ {
     let fs = sig.sfields_ty.as_slice();
