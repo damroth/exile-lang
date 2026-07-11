@@ -413,6 +413,35 @@ selfhost-port-tokens: host-selfhost-lexer
 # caret) are a driver-level presentation layer the lexer port doesn't
 # emit.  Exercises the `try`/Result error threading that the valid-only
 # token corpus can't reach.
+# ===== DR-010 escape pass — the port's differential gate =====
+#
+# The escape pass emits no code: its entire observable behaviour is its
+# diagnostics.  So the gate runs BOTH compilers over each probe and byte-compares
+# the message (position included) — and over every example, where both must stay
+# silent.  `escape_corpus` prints the first diagnostic in the oracle's format, or
+# "escape: ok".
+.PHONY: host-selfhost-escape selfhost-port-escape
+
+host-selfhost-escape: examples/selfhost/escape_corpus.exl examples/selfhost/escape.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/loader.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl $(SYS_HOST) build
+	$(EXILE) --target host --c-out $(C_OUT)/selfhost_escape.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_escape $<
+
+selfhost-port-escape: host-selfhost-escape
+	@fail=0; n=0; \
+	for f in $(patsubst %,examples/%.exl,$(EXAMPLE_NAMES)) tests/escape/*.exl; do \
+	  n=$$((n+1)); \
+	  port=$$(echo $$f | $(HOST_OUT)/selfhost_escape 2>&1 | head -1); \
+	  orac=$$($(EXILE) --target host --c-out /tmp/escgate.c $$f 2>&1 \
+	          | grep -m1 'embeds the address\|use of borrow' || echo 'escape: ok'); \
+	  port_msg=$$(printf '%s' "$$port" | sed 's/.*: error: //'); \
+	  orac_msg=$$(printf '%s' "$$orac" | sed 's/.*: error: //'); \
+	  if [ "$$port_msg" != "$$orac_msg" ]; then \
+	    fail=$$((fail+1)); echo "selfhost-port-escape: DIVERGE $$f"; \
+	    echo "  port:   $$port_msg"; echo "  oracle: $$orac_msg"; \
+	  fi; \
+	done; \
+	echo "selfhost-port-escape: $$((n-fail))/$$n agree; $$fail diverge"; \
+	[ $$fail -eq 0 ]
+
 selfhost-port-errors: host-selfhost-lexer
 	@fail=0; n=0; \
 	for f in examples/selfhost/lex_errors/*.exl; do \
