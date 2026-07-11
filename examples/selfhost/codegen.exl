@@ -1981,13 +1981,8 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
     }
     if nnm > 0 as u32 || tp.tp_uses_default_allocator {
         out.push_str("\n");
-        // `default_allocator()` lowers to `exile_default_allocator()`, whose
-        // body wires the `sys_alloc` / `sys_free` seam.  Their extern decls head
-        // the forward-decl section so the helper below sees them.
-        if tp.tp_uses_default_allocator {
-            out.push_str("extern void *sys_alloc(void *state, unsigned long n);\n");
-            out.push_str("extern void sys_free(void *state, void *p, unsigned long n);\n");
-        }
+        // The sys-seam externs are real Tfuncs in tp_pfree now (demand-driven,
+        // in `mod sys` declaration order), so they emit with everything else.
         let mut jp = 0 as u32;
         while jp < tp.tp_pfree.length() {
             if fn_concrete(&pfl[jp]) && !str::eq(pfl[jp].tf_func.name, "main") {

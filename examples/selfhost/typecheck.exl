@@ -7978,7 +7978,7 @@ fn walk_funcs_footer(funcs: *const Vec<Tfunc>, acc: *FtrAcc) {
 // Footer types over the WHOLE program: user fns, then the prelude non-generic
 // methods (they were at the tail of tp_funcs before tp_pmeth split them out —
 // `push_int`'s `[u8; 10]` array type is collected here), then the structs/enums.
-fn collect_footer_types2(a: Allocator, funcs: *const Vec<Tfunc>, pmeth: *const Vec<Tfunc>,
+fn collect_footer_types2(a: Allocator, ar: *Arena, funcs: *const Vec<Tfunc>, pmeth: *const Vec<Tfunc>,
                          structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>) -> FtrAcc {
     let tv: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let fv: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
@@ -7987,8 +7987,24 @@ fn collect_footer_types2(a: Allocator, funcs: *const Vec<Tfunc>, pmeth: *const V
     if owning_prelude_struct_present(structs) { seed_allocator_free_fn(structs, &acc); }
     walk_funcs_footer(funcs, &acc);
     walk_funcs_footer(pmeth, &acc);
+    // Ghost type: the oracle's prepended prelude puts EVERY StringBuilder method
+    // in tp_funcs at footer-collection time, so `push_int`'s `[u8; 10]` digit
+    // buffer is collected even in a program that never calls push_int (the
+    // method is DCE'd afterwards, but the array type stays).  The port only
+    // materializes DEMANDED methods, so seed the array type whenever
+    // StringBuilder is in play.  Deduped by add_uniq_ty when push_int IS
+    // demanded.  Measured on own_ptr (oracle emits ex_arr10_u8, no push_int).
+    if struct_named_present(structs, "StringBuilder") {
+        walk_typ_collect(ty_node(ar, Typ::TArray { elem: t_u8(ar), size: 10 as int }), &acc);
+    }
     walk_structs_enums_footer(structs, enums, &acc);
     return acc;
+}
+fn struct_named_present(structs: *const Vec<StructSig>, name: str) -> bool {
+    let sl = structs.as_slice();
+    let mut i = 0 as u32;
+    while i < structs.length() { if str::eq(path_last(&sl[i].sname_path), name) { return true; } i = i + 1 as u32; }
+    return false;
 }
 fn walk_structs_enums_footer(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, acc: *FtrAcc) {
     let ssl = structs.as_slice();
@@ -8124,6 +8140,14 @@ fn any_builtin(funcs: *const Vec<Tfunc>, kind: int) -> bool {
 // registry and are elaborated into tp_funcs only when a use-site demands them.
 fn prelude_source(a: Allocator, ar: *Arena) -> str {
     let mut sb = StringBuilder::with_capacity(a, 1024 as u32);
+    sb.push_str("impl Allocator {\n");
+    sb.push_str("    pub fn alloc<T>(self) -> own *T {\n");
+    sb.push_str("        return self.alloc_fn(self.state, size_of(T) as u32) as own *T;\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn free<T>(self, p: own *T) {\n");
+    sb.push_str("        self.free_fn(self.state, p as *c_void, size_of(T) as u32);\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
     sb.push_str("mod str {\n");
     sb.push_str("    pub fn length(s: str) -> u32 { return cstr_len(s); }\n");
     sb.push_str("    pub fn as_bytes(s: str) -> Slice<u8> {\n");
@@ -8907,6 +8931,109 @@ fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym
     }
 }
 
+
+// ===== sys seam extern decls =====
+//
+// The oracle declares `mod sys { extern fn sys_* }` in its prepended prelude, so
+// the referenced ones emit as extern fwd-decls in the prelude free-fn section —
+// measured: str__* , then extern sys_*, then Arena__* .  The port used to
+// hard-code the sys_alloc / sys_free pair at the head of the fwd-decl block
+// (LVII), which put them in the wrong place and missed read/open/close entirely.
+// Build them as real extern Tfuncs, demand-driven, appended to pfree: position
+// and completeness then fall out of the same mechanism as everything else.
+fn sys_extern_tfunc(a: Allocator, ar: *Arena, name: str, pnames: Vec<str>, ptys: Vec<*const Typ>,
+                    ret: Option<*const Typ>) -> Tfunc {
+    let no_ann: Option<*const TypeAnn> = Option::None;
+    let no_str: Option<str> = Option::None;
+    let no_pos: Option<Pos> = Option::None;
+    let mut params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    let nsl = pnames.as_slice();
+    let mut i = 0 as u32;
+    while i < pnames.length() {
+        params.push(Param { pname: nsl[i], pty: ann_struct(a, ar, "c_void"), is_mut: false, preg: no_str });
+        i = i + 1 as u32;
+    }
+    let tp0: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let tb0: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
+    let bd0: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    let f = Func { name: name, c_name: name, tparams: tp0, tbounds: tb0, params: params,
+                   ret_ty: no_ann, body: bd0, is_pub: true, is_extern: true, is_variadic: false,
+                   amiga_lib: no_str, tier_hint: no_str, must_use: false, escapes_hatch: false,
+                   pos: Pos { line: 0 as int, col: 0 as int, file: "<prelude>" } };
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    path.push(name);
+    let body0: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let lets0: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    return Tfunc { tf_path: path, tf_func: f, tf_mangled: name, tf_param_tys: ptys,
+                   tf_ret_ty: ret, tf_body: body0, tf_lets: lets0, tf_origin_pos: no_pos };
+}
+fn sys_p2(a: Allocator, n1: str, n2: str) -> Vec<str> {
+    let mut v: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    v.push(n1); v.push(n2);
+    return v;
+}
+fn sys_p3(a: Allocator, n1: str, n2: str, n3: str) -> Vec<str> {
+    let mut v: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    v.push(n1); v.push(n2); v.push(n3);
+    return v;
+}
+fn sys_t2(a: Allocator, t1: *const Typ, t2: *const Typ) -> Vec<*const Typ> {
+    let mut v: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    v.push(t1); v.push(t2);
+    return v;
+}
+fn sys_t3(a: Allocator, t1: *const Typ, t2: *const Typ, t3: *const Typ) -> Vec<*const Typ> {
+    let mut v: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    v.push(t1); v.push(t2); v.push(t3);
+    return v;
+}
+// A sys fn is emitted when a body calls it; `default_allocator()` lowers to a
+// helper whose body wires sys_alloc / sys_free, so it counts as a reference.
+fn sys_referenced(funcs: *const Vec<Tfunc>, pfree: *const Vec<Tfunc>, pmeth: *const Vec<Tfunc>,
+                  name: str, uses_da: bool) -> bool {
+    if uses_da && (str::eq(name, "sys_alloc") || str::eq(name, "sys_free")) { return true; }
+    return funcs_call_m(funcs, name) || funcs_call_m(pfree, name) || funcs_call_m(pmeth, name);
+}
+// Append the referenced sys externs, in `mod sys` declaration order, to pfree.
+fn append_sys_externs(a: Allocator, ar: *Arena, funcs: *const Vec<Tfunc>, pmeth: *const Vec<Tfunc>,
+                      uses_da: bool, pfree: *Vec<Tfunc>) {
+    let cvp = ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid)));
+    let culong = ty_node(ar, Typ::TCLong { is_signed: false });
+    let clong = ty_node(ar, Typ::TCLong { is_signed: true });
+    let cint = ty_node(ar, Typ::TCInt { is_signed: true });
+    let cucharc = ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TCUChar)));
+    let cucharp = ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCUChar)));
+    let ccharc = ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TCChar)));
+    let f64t = ty_node(ar, Typ::TFloat(FloatWidth::F64));
+    let novoid: Option<*const Typ> = Option::None;
+    if sys_referenced(funcs, pfree, pmeth, "sys_alloc", uses_da) {
+        pfree.push(sys_extern_tfunc(a, ar, "sys_alloc", sys_p2(a, "state", "n"), sys_t2(a, cvp, culong), Option::Some(cvp)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_free", uses_da) {
+        pfree.push(sys_extern_tfunc(a, ar, "sys_free", sys_p3(a, "state", "p", "n"), sys_t3(a, cvp, cvp, culong), novoid));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_write", uses_da) {
+        pfree.push(sys_extern_tfunc(a, ar, "sys_write", sys_p3(a, "fd", "buf", "n"), sys_t3(a, cint, cucharc, culong), Option::Some(clong)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_read", uses_da) {
+        pfree.push(sys_extern_tfunc(a, ar, "sys_read", sys_p3(a, "fd", "buf", "n"), sys_t3(a, cint, cucharp, culong), Option::Some(clong)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_open", uses_da) {
+        pfree.push(sys_extern_tfunc(a, ar, "sys_open", sys_p2(a, "path", "flags"), sys_t2(a, ccharc, cint), Option::Some(cint)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_close", uses_da) {
+        let mut p1: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        p1.push("fd");
+        let mut t1: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+        t1.push(cint);
+        pfree.push(sys_extern_tfunc(a, ar, "sys_close", p1, t1, Option::Some(cint)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_fmt_f64", uses_da) {
+        pfree.push(sys_extern_tfunc(a, ar, "sys_fmt_f64", sys_p3(a, "f", "is32", "buf"), sys_t3(a, f64t, cint, cucharp), Option::Some(culong)));
+    }
+    return;
+}
+
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
     // Parse the source prelude once; the registry is passive until the demand
@@ -9191,13 +9318,15 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
 
     // Footer type collection (codegen support): one post-pass over the checked
     // program gathering distinct tuple / fn-ptr / array shapes + include flags.
-    let ftr = collect_footer_types2(a, &funcs, &pmeth, &structs, &enums);
+    let ftr = collect_footer_types2(a, ar, &funcs, &pmeth, &structs, &enums);
     let tuples = ftr_to_fieldtys(a, &ftr.tup);
     let fnptrs = ftr_to_fieldtys(a, &ftr.fnp);
     let arrays = ftr_to_fieldtys(a, &ftr.arr);
     let uses_heap = any_builtin(&funcs, 0 as int) || any_builtin(&pfree, 0 as int) || any_builtin(&pmeth, 0 as int);
     let uses_default_alloc = any_builtin(&funcs, 1 as int) || any_builtin(&pfree, 1 as int) || any_builtin(&pmeth, 1 as int);
     let uses_string_h = any_builtin(&funcs, 2 as int) || any_builtin(&pfree, 2 as int) || any_builtin(&pmeth, 2 as int);
+    // The referenced sys-seam externs close the prelude free-fn section.
+    append_sys_externs(a, ar, &funcs, &pmeth, uses_default_alloc, &pfree);
 
     return Result::Ok(Tprogram {
         tp_funcs: funcs, tp_pfree: pfree, tp_pmeth: pmeth, tp_free_end: free_end, tp_struct_decls: sdecls, tp_struct_index: structs,
