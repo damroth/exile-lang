@@ -1297,7 +1297,7 @@ fn enum_sig_of(a: Allocator, ar: *Arena, enums: *const Vec<EnumSig>, path: *cons
     return n;
 }
 @escapes
-fn variant_field_ty(es: *const EnumSig, variant: str, fname: str) -> *const Typ {
+fn variant_field_ty(ar: *Arena, es: *const EnumSig, variant: str, fname: str) -> *const Typ {
     let vs = es.evariants.as_slice();
     let mut i = 0 as u32;
     while i < es.evariants.length() {
@@ -1308,7 +1308,10 @@ fn variant_field_ty(es: *const EnumSig, variant: str, fname: str) -> *const Typ 
         }
         i = i + 1 as u32;
     }
-    return es.evariants.as_slice()[0 as u32].vsfields.as_slice()[0 as u32].ty;
+    // No such (variant, field).  The old fallback indexed evariants[0].vsfields[0],
+    // which reads out of bounds when the first variant is field-less (`Nothing`)
+    // — a real SEGV, hit by tier.exl.  Fall back to a void type instead.
+    return ty_node(ar, Typ::TCVoid);
 }
 
 fn tpat_nested(pat: *const Tpattern) -> bool {
@@ -1401,7 +1404,7 @@ fn compile_pat(a: Allocator, ar: *Arena, enums: *const Vec<EnumSig>, scrut: str,
             let bsl = vbinds.as_slice();
             let mut i = 0 as u32;
             while i < vbinds.length() {
-                let ft = variant_field_ty(es, variant, bsl[i].name);
+                let ft = variant_field_ty(ar, es, variant, bsl[i].name);
                 let mut ss = StringBuilder::with_capacity(a, 32 as u32);
                 ss.push_str(scrut); ss.push_str(".data."); ss.push_str(variant); ss.push_str("."); ss.push_str(bsl[i].name);
                 let sub = compile_pat(a, ar, enums, str::from_slice(ar, ss.as_slice()), ft, &bsl[i].pat);
@@ -1637,7 +1640,7 @@ fn emit_variant_field_bind(a: Allocator, ar: *Arena, out: *StringBuilder, body_i
     let n = match fp.pat { Tpattern::TPVar(x) => x | _o => "" };
     if str::eq(n, "") { return; }
     if !arm_uses_bind(arm, n) { return; }
-    let ft = variant_field_ty(es, variant, fp.name);
+    let ft = variant_field_ty(ar, es, variant, fp.name);
     out.push_str(body_indent); out.push_str(c_decl(a, ar, ft, n)); out.push_str(" = __m.data."); out.push_str(variant); out.push_str("."); out.push_str(fp.name); out.push_str(";\n");
 }
 
@@ -2109,13 +2112,103 @@ fn emit_builtin(a: Allocator, ar: *Arena, out: *StringBuilder, name: str, args: 
     }
     out.push_str("/*builtin:"); out.push_str(name); out.push_str("*/");
 }
-// Minimal user-facing type name (scalars only; aggregates -> mangle as a
-// stand-in until render_typ_user_facing lands for the self-diff).
+// The SOURCE-facing type name `type_name(x)` renders (`Point`, `*const Vec<int>`)
+// — the user writes exile, so they read exile back, not the C mangling.  Full
+// port of ir.ml's typ_name.
+fn typ_names_join(a: Allocator, ar: *Arena, ts: *const Vec<*const Typ>, sep: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < ts.length() {
+        if i > 0 as u32 { sb.push_str(sep); }
+        sb.push_str(typ_name_cg(a, ar, sl[i]));
+        i = i + 1 as u32;
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn path_join_cg(a: Allocator, ar: *Arena, p: *const Vec<str>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let sl = p.as_slice();
+    let mut i = 0 as u32;
+    while i < p.length() {
+        if i > 0 as u32 { sb.push_str("::"); }
+        sb.push_str(sl[i]);
+        i = i + 1 as u32;
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_app(a: Allocator, ar: *Arena, p: *const Vec<str>, args: *const Vec<*const Typ>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(path_join_cg(a, ar, p));
+    sb.push_str("<");
+    sb.push_str(typ_names_join(a, ar, args, ", "));
+    sb.push_str(">");
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_pfx(a: Allocator, ar: *Arena, pfx: str, inner: *const Typ) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(pfx);
+    sb.push_str(typ_name_cg(a, ar, inner));
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_arr(a: Allocator, ar: *Arena, elem: *const Typ, size: int) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("[");
+    sb.push_str(typ_name_cg(a, ar, elem));
+    sb.push_str("; ");
+    sb.push_int(size);
+    sb.push_str("]");
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_fnptr(a: Allocator, ar: *Arena, params: *const Vec<*const Typ>, ret: Option<*const Typ>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("fn(");
+    sb.push_str(typ_names_join(a, ar, params, ", "));
+    sb.push_str(")");
+    match ret {
+        Option::Some(rt) => { sb.push_str(" -> "); sb.push_str(typ_name_cg(a, ar, rt)); }
+        | Option::None => { }
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_proj(a: Allocator, ar: *Arena, head: *const Typ, assoc: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(typ_name_cg(a, ar, head));
+    sb.push_str("::");
+    sb.push_str(assoc);
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_tuple(a: Allocator, ar: *Arena, ts: *const Vec<*const Typ>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("(");
+    sb.push_str(typ_names_join(a, ar, ts, ", "));
+    sb.push_str(")");
+    return str::from_slice(ar, sb.as_slice());
+}
 fn typ_name_cg(a: Allocator, ar: *Arena, t: *const Typ) -> str {
     return match *t {
         Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
+        | Typ::TCInt { is_signed } => { if is_signed { "c_int" } else { "c_uint" } }
+        | Typ::TCShort { is_signed } => { if is_signed { "c_short" } else { "c_ushort" } }
+        | Typ::TCLong { is_signed } => { if is_signed { "c_long" } else { "c_ulong" } }
+        | Typ::TCChar => "c_char" | Typ::TCSChar => "c_schar" | Typ::TCUChar => "c_uchar"
+        | Typ::TCVoid => "c_void"
         | Typ::TBool => "bool" | Typ::TString => "str"
         | Typ::TFloat(w) => match w { FloatWidth::F32 => "f32" | FloatWidth::F64 => "f64" }
-        | _o => mangle_typ(a, ar, t)
+        | Typ::TTuple(ts) => typ_name_tuple(a, ar, &ts)
+        | Typ::TStruct(p) => path_join_cg(a, ar, &p)
+        | Typ::TEnum(p) => path_join_cg(a, ar, &p)
+        | Typ::TExtStruct(n) => n
+        | Typ::TExtAlias(n) => n
+        | Typ::TStructApp { path, args } => typ_name_app(a, ar, &path, &args)
+        | Typ::TEnumApp { path, args } => typ_name_app(a, ar, &path, &args)
+        | Typ::TPtr(i) => typ_name_pfx(a, ar, "*", i)
+        | Typ::TOwnPtr(i) => typ_name_pfx(a, ar, "own *", i)
+        | Typ::TConstPtr(i) => typ_name_pfx(a, ar, "*const ", i)
+        | Typ::TArray { elem, size } => typ_name_arr(a, ar, elem, size)
+        | Typ::TFnPtr { params, ret } => typ_name_fnptr(a, ar, &params, ret)
+        | Typ::TNullPtr => "*<null>"
+        | Typ::TVar(n) => n
+        | Typ::TAssocProj { head, assoc } => typ_name_proj(a, ar, head, assoc)
     };
 }

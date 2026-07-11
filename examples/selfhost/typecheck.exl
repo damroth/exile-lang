@@ -7435,7 +7435,15 @@ fn collect_variants(a: Allocator, path: *const Vec<str>, etags: *const Vec<EnumV
     let tl = etags.as_slice();
     let mut i = 0 as u32;
     while i < etags.length() {
-        if path_eq_norm(a, &tl[i].et_path, path) && !variant_seen(&out, tl[i].et_name) {
+        // A mono instance of a USER generic enum (`Maybe_i32`) carries no etags
+        // of its own — they are registered under the SKELETON path (`Maybe`), so
+        // match the instance against its base too.  Without this the instance
+        // got zero variants: `enum ex_Maybe_i32_tag { };` (invalid C) and a SEGV
+        // in codegen's variant_field_ty fallback.  The prelude generic enums
+        // (Option / Result) already had their own special-case below.
+        let hit = path_eq_norm(a, &tl[i].et_path, path)
+                  || inst_of_base(path_last(path), path_last(&tl[i].et_path));
+        if hit && !variant_seen(&out, tl[i].et_name) {
             push_variant(a, &out, path, tl[i].et_name, efields, mono_efields);
         }
         i = i + 1 as u32;
