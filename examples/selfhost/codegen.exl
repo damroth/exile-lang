@@ -1866,6 +1866,9 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *S
     let cg = Cg { cg_enums: &tp.tp_enum_index, cg_fill: &fillctr, cg_ml: &mlctr, cg_defers: &dchain };
     // Prelude free-fns (str::*) emit first — the oracle prepends the prelude, so
     // they precede user free-fns in the definition section.
+    // Emission order (measured against the oracle's prepended prelude):
+    //   prelude free-fns | user free-fns | prelude non-generic methods |
+    //   user impls + lifted + generic instances
     let pfl = tp.tp_pfree.as_slice();
     let mut ip = 0 as u32;
     while ip < tp.tp_pfree.length() {
@@ -1877,12 +1880,29 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *S
     }
     let fsl = tp.tp_funcs.as_slice();
     let mut i = 0 as u32;
-    while i < tp.tp_funcs.length() {
+    while i < tp.tp_free_end && i < tp.tp_funcs.length() {
         if fn_concrete(&fsl[i]) && !fsl[i].tf_func.is_extern {
             out.push_str("\n");
             gen_function(a, ar, out, &cg, &fsl[i]);
         }
         i = i + 1 as u32;
+    }
+    let pml = tp.tp_pmeth.as_slice();
+    let mut im = 0 as u32;
+    while im < tp.tp_pmeth.length() {
+        if fn_concrete(&pml[im]) && !pml[im].tf_func.is_extern {
+            out.push_str("\n");
+            gen_function(a, ar, out, &cg, &pml[im]);
+        }
+        im = im + 1 as u32;
+    }
+    let mut j = tp.tp_free_end;
+    while j < tp.tp_funcs.length() {
+        if fn_concrete(&fsl[j]) && !fsl[j].tf_func.is_extern {
+            out.push_str("\n");
+            gen_function(a, ar, out, &cg, &fsl[j]);
+        }
+        j = j + 1 as u32;
     }
 }
 
@@ -1941,12 +1961,18 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
     emit_type_decls(a, ar, tp, out);
 
     let pfl = tp.tp_pfree.as_slice();
+    let pml = tp.tp_pmeth.as_slice();
     let fsl = tp.tp_funcs.as_slice();
     let mut nnm = 0 as u32;
     let mut kp = 0 as u32;
     while kp < tp.tp_pfree.length() {
         if fn_concrete(&pfl[kp]) && !str::eq(pfl[kp].tf_func.name, "main") { nnm = nnm + 1 as u32; }
         kp = kp + 1 as u32;
+    }
+    let mut km = 0 as u32;
+    while km < tp.tp_pmeth.length() {
+        if fn_concrete(&pml[km]) && !str::eq(pml[km].tf_func.name, "main") { nnm = nnm + 1 as u32; }
+        km = km + 1 as u32;
     }
     let mut k = 0 as u32;
     while k < tp.tp_funcs.length() {
@@ -1971,12 +1997,28 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
             jp = jp + 1 as u32;
         }
         let mut j = 0 as u32;
-        while j < tp.tp_funcs.length() {
+        while j < tp.tp_free_end && j < tp.tp_funcs.length() {
             if fn_concrete(&fsl[j]) && !str::eq(fsl[j].tf_func.name, "main") {
                 emit_fn_sig(a, ar, out, &fsl[j]);
                 out.push_str(";\n");
             }
             j = j + 1 as u32;
+        }
+        let mut jm = 0 as u32;
+        while jm < tp.tp_pmeth.length() {
+            if fn_concrete(&pml[jm]) && !str::eq(pml[jm].tf_func.name, "main") {
+                emit_fn_sig(a, ar, out, &pml[jm]);
+                out.push_str(";\n");
+            }
+            jm = jm + 1 as u32;
+        }
+        let mut jj = tp.tp_free_end;
+        while jj < tp.tp_funcs.length() {
+            if fn_concrete(&fsl[jj]) && !str::eq(fsl[jj].tf_func.name, "main") {
+                emit_fn_sig(a, ar, out, &fsl[jj]);
+                out.push_str(";\n");
+            }
+            jj = jj + 1 as u32;
         }
     }
 

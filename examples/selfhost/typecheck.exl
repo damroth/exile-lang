@@ -7961,36 +7961,42 @@ fn seed_allocator_free_fn(structs: *const Vec<StructSig>, acc: *FtrAcc) {
     }
 }
 
-fn collect_footer_types(a: Allocator, funcs: *const Vec<Tfunc>, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>) -> FtrAcc {
+// Walk one function list's signature + hoisted lets + body into the accumulator.
+fn walk_funcs_footer(funcs: *const Vec<Tfunc>, acc: *FtrAcc) {
+    let fsl = funcs.as_slice();
+    let mut fi = 0 as u32;
+    while fi < funcs.length() {
+        match fsl[fi].tf_ret_ty { Option::Some(rt) => walk_typ_collect(rt, acc) | Option::None => {} }
+        let psl = fsl[fi].tf_param_tys.as_slice();
+        let mut pi = 0 as u32;
+        while pi < fsl[fi].tf_param_tys.length() { walk_typ_collect(psl[pi], acc); pi = pi + 1 as u32; }
+        collect_stmts(&fsl[fi].tf_body, acc);
+        fi = fi + 1 as u32;
+    }
+    return;
+}
+// Footer types over the WHOLE program: user fns, then the prelude non-generic
+// methods (they were at the tail of tp_funcs before tp_pmeth split them out —
+// `push_int`'s `[u8; 10]` array type is collected here), then the structs/enums.
+fn collect_footer_types2(a: Allocator, funcs: *const Vec<Tfunc>, pmeth: *const Vec<Tfunc>,
+                         structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>) -> FtrAcc {
     let tv: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let fv: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let av: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let mut acc = FtrAcc { tup: tv, fnp: fv, arr: av };
-    // Mirror the oracle's footer-collection order: it keeps the synthesized
-    // `<T>__drop` methods in `tp_funcs` (walked before `with_capacity`), and
-    // those free via `self.alloc.free_fn`, so the free-seam fn-ptr is
-    // discovered before the alloc-seam.  The port materializes prelude methods
-    // demand-driven and never builds those drop functions, so when an owning
-    // collection is in play, seed the free_fn discovery first.
-    if owning_prelude_struct_present(structs) {
-        seed_allocator_free_fn(structs, &acc);
-    }
-    let fsl = funcs.as_slice();
-    let mut fi = 0 as u32;
-    while fi < funcs.length() {
-        match fsl[fi].tf_ret_ty { Option::Some(rt) => walk_typ_collect(rt, &acc) | Option::None => {} }
-        let psl = fsl[fi].tf_param_tys.as_slice();
-        let mut pi = 0 as u32;
-        while pi < fsl[fi].tf_param_tys.length() { walk_typ_collect(psl[pi], &acc); pi = pi + 1 as u32; }
-        collect_stmts(&fsl[fi].tf_body, &acc);
-        fi = fi + 1 as u32;
-    }
+    if owning_prelude_struct_present(structs) { seed_allocator_free_fn(structs, &acc); }
+    walk_funcs_footer(funcs, &acc);
+    walk_funcs_footer(pmeth, &acc);
+    walk_structs_enums_footer(structs, enums, &acc);
+    return acc;
+}
+fn walk_structs_enums_footer(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, acc: *FtrAcc) {
     let ssl = structs.as_slice();
     let mut si = 0 as u32;
     while si < structs.length() {
         let flsl = ssl[si].sfields_ty.as_slice();
         let mut sj = 0 as u32;
-        while sj < ssl[si].sfields_ty.length() { walk_typ_collect(flsl[sj].ty, &acc); sj = sj + 1 as u32; }
+        while sj < ssl[si].sfields_ty.length() { walk_typ_collect(flsl[sj].ty, acc); sj = sj + 1 as u32; }
         si = si + 1 as u32;
     }
     let esl = enums.as_slice();
@@ -8001,14 +8007,13 @@ fn collect_footer_types(a: Allocator, funcs: *const Vec<Tfunc>, structs: *const 
         while ej < esl[ei].evariants.length() {
             let vfl = vsl[ej].vsfields.as_slice();
             let mut ek = 0 as u32;
-            while ek < vsl[ej].vsfields.length() { walk_typ_collect(vfl[ek].ty, &acc); ek = ek + 1 as u32; }
+            while ek < vsl[ej].vsfields.length() { walk_typ_collect(vfl[ek].ty, acc); ek = ek + 1 as u32; }
             ej = ej + 1 as u32;
         }
         ei = ei + 1 as u32;
     }
-    return acc;
+    return;
 }
-
 fn ftr_to_fieldtys(a: Allocator, tys: *const Vec<*const Typ>) -> Vec<FieldTy> {
     let mut out: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let sl = tys.as_slice();
@@ -8861,7 +8866,7 @@ fn is_module_entry(prelude_items: *const Vec<Item>, impl_idx: u32) -> bool {
     return match sl[impl_idx] { Item::Module(_md) => true | _o => false };
 }
 fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                       prelude_items: *const Vec<Item>, reg: *const Vec<PreludeMethod>, funcs: *Vec<Tfunc>, pfree: *Vec<Tfunc>) {
+                       prelude_items: *const Vec<Item>, reg: *const Vec<PreludeMethod>, pmeth: *Vec<Tfunc>, pfree: *Vec<Tfunc>, funcs: *const Vec<Tfunc>) {
     let rsl = reg.as_slice();
     let n = reg.length();
     // Phase 1: discover the demanded set (a method is demanded if a user body
@@ -8893,7 +8898,9 @@ fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym
             if is_module_entry(prelude_items, rsl[mi].pm_impl_idx) {
                 elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, pfree);
             } else {
-                elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, funcs);
+                // Prelude non-generic impl methods emit at the HEAD of the impl
+                // section (measured: main, StringBuilder__*, then user impls).
+                elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, pmeth);
             }
         }
         mi = mi + 1 as u32;
@@ -9025,6 +9032,9 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         elaborate_item(a, ar, &globals, &gensym, &idx, &sl[i], &funcs);
         i = i + 1 as u32;
     }
+    // Boundary: everything pushed so far is a user FREE fn.  tp_pmeth (the
+    // prelude non-generic impl methods) is emitted here, ahead of the user impls.
+    let free_end: u32 = funcs.length();
     // Second pass: impl methods are flattened after the free functions.
     let empty_mp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut j = 0 as u32;
@@ -9092,7 +9102,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // Materialize demanded source-prelude method bodies (workstream-B).  Module
     // free-fns (str::*) land in `pfree` (emitted ahead of user free-fns).
     let mut pfree: Vec<Tfunc> = Vec::with_capacity(a, 8 as u32);
-    prelude_materialize(a, ar, &globals, &gensym, &idx, &prelude_items, &prelude_reg, &funcs, &pfree);
+    let mut pmeth: Vec<Tfunc> = Vec::with_capacity(a, 8 as u32);
+    prelude_materialize(a, ar, &globals, &gensym, &idx, &prelude_items, &prelude_reg, &pmeth, &pfree, &funcs);
 
     let mut structs = prelude_struct_index(a);
     let mut enums = prelude_enum_index(a);
@@ -9123,6 +9134,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut mentioned: Vec<Vec<str>> = Vec::with_capacity(a, 32 as u32);
     mention_funcs(a, &funcs, &mentioned);
     mention_funcs(a, &pfree, &mentioned);
+    mention_funcs(a, &pmeth, &mentioned);
     let tsl = structs.as_slice();
     let mut ti = 0 as u32;
     while ti < structs.length() { add_path_uniq(a, &mentioned, &tsl[ti].sname_path); ti = ti + 1 as u32; }
@@ -9179,16 +9191,16 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
 
     // Footer type collection (codegen support): one post-pass over the checked
     // program gathering distinct tuple / fn-ptr / array shapes + include flags.
-    let ftr = collect_footer_types(a, &funcs, &structs, &enums);
+    let ftr = collect_footer_types2(a, &funcs, &pmeth, &structs, &enums);
     let tuples = ftr_to_fieldtys(a, &ftr.tup);
     let fnptrs = ftr_to_fieldtys(a, &ftr.fnp);
     let arrays = ftr_to_fieldtys(a, &ftr.arr);
-    let uses_heap = any_builtin(&funcs, 0 as int) || any_builtin(&pfree, 0 as int);
-    let uses_default_alloc = any_builtin(&funcs, 1 as int) || any_builtin(&pfree, 1 as int);
-    let uses_string_h = any_builtin(&funcs, 2 as int) || any_builtin(&pfree, 2 as int);
+    let uses_heap = any_builtin(&funcs, 0 as int) || any_builtin(&pfree, 0 as int) || any_builtin(&pmeth, 0 as int);
+    let uses_default_alloc = any_builtin(&funcs, 1 as int) || any_builtin(&pfree, 1 as int) || any_builtin(&pmeth, 1 as int);
+    let uses_string_h = any_builtin(&funcs, 2 as int) || any_builtin(&pfree, 2 as int) || any_builtin(&pmeth, 2 as int);
 
     return Result::Ok(Tprogram {
-        tp_funcs: funcs, tp_pfree: pfree, tp_struct_decls: sdecls, tp_struct_index: structs,
+        tp_funcs: funcs, tp_pfree: pfree, tp_pmeth: pmeth, tp_free_end: free_end, tp_struct_decls: sdecls, tp_struct_index: structs,
         tp_enum_index: enums, tp_global: global, tp_modules: modules,
         tp_uses_heap: uses_heap, tp_uses_string_h: uses_string_h, tp_uses_default_allocator: uses_default_alloc,
         tp_tuple_types: tuples, tp_fnptr_types: fnptrs, tp_c_includes: cincludes,
