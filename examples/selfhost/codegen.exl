@@ -1921,6 +1921,275 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *S
 // transitive DCE of dead prelude fns, @debug printer synthesis, and the
 // default_allocator helper's body-separation interaction are all no-ops today
 // because no prelude fn reaches tp_funcs; they land with prelude elaboration.
+
+// ===== @debug printer synthesis =====
+//
+// `@debug` structs / enums get a synthesized `<mangle>__debug(self)` printer
+// (Rust-Debug shaped, printf-based).  Fwd-decls first so one printer can call
+// another regardless of declaration order, then the bodies.  The user-facing
+// header name comes from render_typ_user_facing: `Point` for a plain struct,
+// `Pair<i32, bool>` for a generic instance — not the mangled `Pair_i32_bool`.
+
+// Recover a mono instance's source-level rendering from the index: the sig's
+// instance args are the type arguments, and the mangled suffix is stripped off
+// the instance name to get the base.
+fn find_struct_sig(structs: *const Vec<StructSig>, path: *const Vec<str>) -> int {
+    let sl = structs.as_slice();
+    let mut i = 0 as u32;
+    while i < structs.length() { if path_eq_cg(&sl[i].sname_path, path) { return i as int; } i = i + 1 as u32; }
+    return 0 as int - 1 as int;
+}
+fn find_enum_sig(enums: *const Vec<EnumSig>, path: *const Vec<str>) -> int {
+    let sl = enums.as_slice();
+    let mut i = 0 as u32;
+    while i < enums.length() { if path_eq_cg(&sl[i].ename_path, path) { return i as int; } i = i + 1 as u32; }
+    return 0 as int - 1 as int;
+}
+fn path_eq_cg(a: *const Vec<str>, b: *const Vec<str>) -> bool {
+    if a.length() != b.length() { return false; }
+    let sa = a.as_slice();
+    let sb = b.as_slice();
+    let mut i = 0 as u32;
+    while i < a.length() { if !str::eq(sa[i], sb[i]) { return false; } i = i + 1 as u32; }
+    return true;
+}
+fn strip_suffix_cg(a: Allocator, ar: *Arena, name: str, suffix: str) -> str {
+    let nl = str::length(name);
+    let sl2 = str::length(suffix);
+    if nl <= sl2 { return name; }
+    let nb = str::as_bytes(name);
+    let sb2 = str::as_bytes(suffix);
+    let off = nl - sl2;
+    let mut i = 0 as u32;
+    while i < sl2 { if nb[off + i] != sb2[i] { return name; } i = i + 1 as u32; }
+    let mut out = StringBuilder::with_capacity(a, 32 as u32);
+    let mut k = 0 as u32;
+    while k < off { out.push_byte(nb[k]); k = k + 1 as u32; }
+    return str::from_slice(ar, out.as_slice());
+}
+fn render_named_with_args(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                          path: *const Vec<str>, args: *const Vec<*const Typ>) -> str {
+    let last = path_last_cg(path);
+    let mut suf = StringBuilder::with_capacity(a, 32 as u32);
+    let asl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() { suf.push_str("_"); suf.push_str(mangle_typ(a, ar, asl[i])); i = i + 1 as u32; }
+    let base = strip_suffix_cg(a, ar, last, str::from_slice(ar, suf.as_slice()));
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    let psl = path.as_slice();
+    let mut j = 0 as u32;
+    while j + 1 as u32 < path.length() { sb.push_str(psl[j]); sb.push_str("::"); j = j + 1 as u32; }
+    sb.push_str(base);
+    sb.push_str("<");
+    let mut k = 0 as u32;
+    while k < args.length() {
+        if k > 0 as u32 { sb.push_str(", "); }
+        sb.push_str(render_typ_user_facing(a, ar, structs, enums, asl[k]));
+        k = k + 1 as u32;
+    }
+    sb.push_str(">");
+    return str::from_slice(ar, sb.as_slice());
+}
+fn path_last_cg(p: *const Vec<str>) -> str {
+    if p.length() == 0 as u32 { return ""; }
+    return p.as_slice()[p.length() - 1 as u32];
+}
+fn render_typ_user_facing(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                          t: *const Typ) -> str {
+    return match *t {
+        Typ::TStruct(p) => {
+            let si = find_struct_sig(structs, &p);
+            if si < 0 as int { typ_name_cg(a, ar, t) }
+            else {
+                match structs.as_slice()[si as u32].sinstance_args {
+                    Option::Some(args) => { if args.length() > 0 as u32 { render_named_with_args(a, ar, structs, enums, &p, &args) } else { typ_name_cg(a, ar, t) } }
+                    | Option::None => typ_name_cg(a, ar, t)
+                }
+            }
+        }
+        | Typ::TEnum(p) => {
+            let ei = find_enum_sig(enums, &p);
+            if ei < 0 as int { typ_name_cg(a, ar, t) }
+            else {
+                match enums.as_slice()[ei as u32].einstance_args {
+                    Option::Some(args) => { if args.length() > 0 as u32 { render_named_with_args(a, ar, structs, enums, &p, &args) } else { typ_name_cg(a, ar, t) } }
+                    | Option::None => typ_name_cg(a, ar, t)
+                }
+            }
+        }
+        | Typ::TPtr(i) => rtuf_pfx(a, ar, structs, enums, "*", i)
+        | Typ::TOwnPtr(i) => rtuf_pfx(a, ar, structs, enums, "own *", i)
+        | Typ::TTuple(ts) => rtuf_tuple(a, ar, structs, enums, &ts)
+        | _o => typ_name_cg(a, ar, t)
+    };
+}
+fn rtuf_pfx(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+            pfx: str, inner: *const Typ) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(pfx);
+    sb.push_str(render_typ_user_facing(a, ar, structs, enums, inner));
+    return str::from_slice(ar, sb.as_slice());
+}
+fn rtuf_tuple(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+              ts: *const Vec<*const Typ>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("(");
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < ts.length() {
+        if i > 0 as u32 { sb.push_str(", "); }
+        sb.push_str(render_typ_user_facing(a, ar, structs, enums, sl[i]));
+        i = i + 1 as u32;
+    }
+    sb.push_str(")");
+    return str::from_slice(ar, sb.as_slice());
+}
+// `printf("<lit>");` with the literal C-escaped.
+fn emit_dbg_lit(out: *StringBuilder, indent: str, lit: str) {
+    out.push_str(indent);
+    out.push_str("printf(\"");
+    escape_c_into(out, lit);
+    out.push_str("\");\n");
+    return;
+}
+// One printf fragment rendering `access` (a C l-value of type `ty`), no newline.
+fn emit_field_debug(a: Allocator, ar: *Arena, out: *StringBuilder, ty: *const Typ, access: str) {
+    match *ty {
+        Typ::TBool => { out.push_str("printf(\"%s\", ("); out.push_str(access); out.push_str(") ? \"true\" : \"false\")"); }
+        | Typ::TString => { out.push_str("printf(\"\\\"%s\\\"\", "); out.push_str(access); out.push_str(")"); }
+        | Typ::TPtr(_i) => { out.push_str("printf(\"%p\", (void*)("); out.push_str(access); out.push_str("))"); }
+        | Typ::TOwnPtr(_i) => { out.push_str("printf(\"%p\", (void*)("); out.push_str(access); out.push_str("))"); }
+        | Typ::TStruct(_p) => { out.push_str(mangle_typ(a, ar, ty)); out.push_str("__debug("); out.push_str(access); out.push_str(")"); }
+        | Typ::TEnum(_p) => { out.push_str(mangle_typ(a, ar, ty)); out.push_str("__debug("); out.push_str(access); out.push_str(")"); }
+        | _o => {
+            let fm = print_fmt(ty);
+            out.push_str("printf(\""); out.push_str(fm.f_spec); out.push_str("\", ");
+            if str::eq(fm.f_cast, "") { out.push_str(access); }
+            else { out.push_str("("); out.push_str(fm.f_cast); out.push_str(")("); out.push_str(access); out.push_str(")"); }
+            out.push_str(")");
+        }
+    }
+    return;
+}
+fn dbg_access(a: Allocator, ar: *Arena, prefix: str, field: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(prefix);
+    sb.push_str(field);
+    return str::from_slice(ar, sb.as_slice());
+}
+fn emit_struct_debug_def(a: Allocator, ar: *Arena, out: *StringBuilder, structs: *const Vec<StructSig>,
+                         enums: *const Vec<EnumSig>, s: *const StructSig) {
+    let cname = mangle_typ(a, ar, ty_node(ar, Typ::TStruct(copy_strs_cg(a, &s.sname_path))));
+    let name = render_typ_user_facing(a, ar, structs, enums, ty_node(ar, Typ::TStruct(copy_strs_cg(a, &s.sname_path))));
+    out.push_str("static void "); out.push_str(cname); out.push_str("__debug(struct "); out.push_str(cname); out.push_str(" self) {\n");
+    emit_dbg_lit(out, "    ", concat2(a, ar, name, " { "));
+    let fs = s.sfields_ty.as_slice();
+    let mut i = 0 as u32;
+    while i < s.sfields_ty.length() {
+        if i > 0 as u32 { emit_dbg_lit(out, "    ", ", "); }
+        emit_dbg_lit(out, "    ", concat2(a, ar, fs[i].name, ": "));
+        out.push_str("    ");
+        emit_field_debug(a, ar, out, fs[i].ty, dbg_access(a, ar, "self.", fs[i].name));
+        out.push_str(";\n");
+        i = i + 1 as u32;
+    }
+    emit_dbg_lit(out, "    ", " }");
+    out.push_str("}\n");
+    return;
+}
+fn emit_enum_debug_def(a: Allocator, ar: *Arena, out: *StringBuilder, structs: *const Vec<StructSig>,
+                       enums: *const Vec<EnumSig>, e: *const EnumSig) {
+    let cname = mangle_typ(a, ar, ty_node(ar, Typ::TEnum(copy_strs_cg(a, &e.ename_path))));
+    let name = render_typ_user_facing(a, ar, structs, enums, ty_node(ar, Typ::TEnum(copy_strs_cg(a, &e.ename_path))));
+    out.push_str("static void "); out.push_str(cname); out.push_str("__debug(struct "); out.push_str(cname); out.push_str(" self) {\n");
+    out.push_str("    switch (self.tag) {\n");
+    let vs = e.evariants.as_slice();
+    let mut i = 0 as u32;
+    while i < e.evariants.length() {
+        out.push_str("    case "); out.push_str(cname); out.push_str("_"); out.push_str(vs[i].vsname); out.push_str(":\n");
+        emit_variant_debug(a, ar, out, cname, name, &vs[i]);
+        out.push_str("        break;\n");
+        i = i + 1 as u32;
+    }
+    out.push_str("    }\n");
+    out.push_str("}\n");
+    return;
+}
+fn emit_variant_debug(a: Allocator, ar: *Arena, out: *StringBuilder, _cname: str, name: str, v: *const VariantSig) {
+    let hdr = concat2(a, ar, concat2(a, ar, name, "::"), v.vsname);
+    if v.vsfields.length() == 0 as u32 { emit_dbg_lit(out, "        ", hdr); return; }
+    let opener = if v.vsis_struct { " { " } else { "(" };
+    emit_dbg_lit(out, "        ", concat2(a, ar, hdr, opener));
+    let mut pfx = StringBuilder::with_capacity(a, 32 as u32);
+    pfx.push_str("self.data."); pfx.push_str(v.vsname); pfx.push_str(".");
+    let prefix = str::from_slice(ar, pfx.as_slice());
+    let fs = v.vsfields.as_slice();
+    let mut i = 0 as u32;
+    while i < v.vsfields.length() {
+        if i > 0 as u32 { emit_dbg_lit(out, "        ", ", "); }
+        if v.vsis_struct { emit_dbg_lit(out, "        ", concat2(a, ar, fs[i].name, ": ")); }
+        out.push_str("        ");
+        emit_field_debug(a, ar, out, fs[i].ty, dbg_access(a, ar, prefix, fs[i].name));
+        out.push_str(";\n");
+        i = i + 1 as u32;
+    }
+    let closer = if v.vsis_struct { " }" } else { ")" };
+    emit_dbg_lit(out, "        ", closer);
+    return;
+}
+// The `@debug` section: fwd-decls then bodies, right after the aggregate typedefs.
+pub fn emit_debug_printers(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBuilder) {
+    let ssl = tp.tp_struct_index.as_slice();
+    let esl = tp.tp_enum_index.as_slice();
+    let mut n = 0 as u32;
+    let mut i = 0 as u32;
+    while i < tp.tp_struct_index.length() {
+        if ssl[i].sis_debug && fields_concrete(&ssl[i].sfields_ty) { n = n + 1 as u32; }
+        i = i + 1 as u32;
+    }
+    let mut j = 0 as u32;
+    while j < tp.tp_enum_index.length() {
+        if esl[j].eis_debug && enum_concrete(&esl[j]) { n = n + 1 as u32; }
+        j = j + 1 as u32;
+    }
+    if n == 0 as u32 { return; }
+    out.push_str("\n");
+    let mut k = 0 as u32;
+    while k < tp.tp_struct_index.length() {
+        if ssl[k].sis_debug && fields_concrete(&ssl[k].sfields_ty) {
+            let cn = mangle_typ(a, ar, ty_node(ar, Typ::TStruct(copy_strs_cg(a, &ssl[k].sname_path))));
+            out.push_str("static void "); out.push_str(cn); out.push_str("__debug(struct "); out.push_str(cn); out.push_str(" self);\n");
+        }
+        k = k + 1 as u32;
+    }
+    let mut m = 0 as u32;
+    while m < tp.tp_enum_index.length() {
+        if esl[m].eis_debug && enum_concrete(&esl[m]) {
+            let cne = mangle_typ(a, ar, ty_node(ar, Typ::TEnum(copy_strs_cg(a, &esl[m].ename_path))));
+            out.push_str("static void "); out.push_str(cne); out.push_str("__debug(struct "); out.push_str(cne); out.push_str(" self);\n");
+        }
+        m = m + 1 as u32;
+    }
+    out.push_str("\n");
+    let mut p = 0 as u32;
+    while p < tp.tp_struct_index.length() {
+        if ssl[p].sis_debug && fields_concrete(&ssl[p].sfields_ty) {
+            emit_struct_debug_def(a, ar, out, &tp.tp_struct_index, &tp.tp_enum_index, &ssl[p]);
+            out.push_str("\n");
+        }
+        p = p + 1 as u32;
+    }
+    let mut q = 0 as u32;
+    while q < tp.tp_enum_index.length() {
+        if esl[q].eis_debug && enum_concrete(&esl[q]) {
+            emit_enum_debug_def(a, ar, out, &tp.tp_struct_index, &tp.tp_enum_index, &esl[q]);
+            out.push_str("\n");
+        }
+        q = q + 1 as u32;
+    }
+    return;
+}
+
 pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBuilder) {
     out.push_str("#include <stdio.h>\n");
     if tp.tp_uses_heap { out.push_str("#include <stdlib.h>\n"); }
@@ -1962,6 +2231,7 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
     }
 
     emit_type_decls(a, ar, tp, out);
+    emit_debug_printers(a, ar, tp, out);
 
     let pfl = tp.tp_pfree.as_slice();
     let pml = tp.tp_pmeth.as_slice();

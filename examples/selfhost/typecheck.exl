@@ -103,6 +103,9 @@ struct EnumVariantTag {
     et_path: Vec<str>,
     et_name: str,
     et_tag: int,
+    // `Variant { a: T }` (struct payload) vs `Variant(T)` / unit — the @debug
+    // printer renders the two shapes differently (`Shape::Rect { w: .. }`).
+    et_is_struct: bool,
 }
 
 struct EnumFieldE {
@@ -230,6 +233,10 @@ struct TyScope {
     sc_methods: *const Vec<MethodInfo>,
     // Mutable accumulators for generated monomorphic instances (footer).
     sc_mono_structs: *Vec<Vec<str>>,
+    // Instance ARGS parallel to sc_mono_structs (empty for non-generic entries):
+    // the source-level type arguments a mono instance was built from, needed to
+    // render `Pair<i32, bool>` rather than the mangled `Pair_i32_bool`.
+    sc_mono_sargs: *Vec<Vec<*const Typ>>,
     sc_mono_enums: *Vec<Vec<str>>,
     // Substituted fields of struct instances, keyed by instance path, so
     // `instance.field` accesses resolve.
@@ -279,6 +286,7 @@ struct ProgIdx {
     pi_efields: *const Vec<EnumFieldE>,
     pi_methods: *const Vec<MethodInfo>,
     pi_mono_structs: *Vec<Vec<str>>,
+    pi_mono_sargs: *Vec<Vec<*const Typ>>,
     pi_mono_enums: *Vec<Vec<str>>,
     pi_mono_fields: *Vec<StructField>,
     pi_mono_efields: *Vec<EnumFieldE>,
@@ -682,6 +690,21 @@ fn one_path(a: Allocator, name: str) -> Vec<str> {
 }
 fn register_mono_struct(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) {
     sc.sc_mono_structs.push(copy_strs(a, ipath));
+    let no_args: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    sc.sc_mono_sargs.push(no_args);
+}
+// Same, but records the instance's source-level type ARGS (the generic-app site
+// is the only one that has them).  Keeps sc_mono_sargs index-aligned.
+fn register_mono_struct_args(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>, args: *const Vec<*const Typ>) {
+    sc.sc_mono_structs.push(copy_strs(a, ipath));
+    sc.sc_mono_sargs.push(copy_typs(a, args));
+}
+fn copy_typs(a: Allocator, src: *const Vec<*const Typ>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
 }
 fn register_mono_enum(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) {
     sc.sc_mono_enums.push(copy_strs(a, ipath));
@@ -939,7 +962,7 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // the push; it introduces no recursion the old order did not already have.
     register_prelude_struct_fields(a, ar, sc, last, &resolved, &ipath);
     register_user_struct_fields(a, ar, sc, path, &resolved, &ipath);
-    register_mono_struct(a, sc, &ipath);
+    register_mono_struct_args(a, sc, &ipath, &resolved);
     // Workstream-B: `Vec<T>` no longer eagerly carries a `Slice<T>` view, and
     // `HashMap<K,V>` no longer eagerly carries `Slice<Slot<K,V>>`.  Those were
     // stand-ins for prelude bodies that did not exist yet; the bodies now
@@ -3209,7 +3232,7 @@ fn build_struct_instance(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *c
     if binds.length() == 0 as u32 { return copy_strs(a, tname); }
     let args = dedup_bind_tys(a, &binds);
     let ipath = instance_path(a, ar, tname, &args);
-    register_mono_struct(a, sc, &ipath);
+    register_mono_struct_args(a, sc, &ipath, &args);
     register_instance_fields(a, ar, sc, tname, &binds, &ipath);
     return ipath;
 }
@@ -4025,7 +4048,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
-                       sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
+                       sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ty);
@@ -4931,7 +4954,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let eff_tparams = pick_tparams(xtparams, &f.tparams);
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
-                       sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
+                       sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases , sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
@@ -5453,7 +5476,7 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
         sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
-        sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
         sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: modpath,
@@ -5473,7 +5496,7 @@ fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyS
         sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
-        sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
         sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
@@ -5489,7 +5512,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
-        sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
         sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
@@ -5509,7 +5532,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
         sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
-        sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: tbinds, sc_genfns: base.sc_genfns,
         sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
@@ -5527,7 +5550,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
-        sc_mono_structs: base.sc_mono_structs, sc_mono_enums: base.sc_mono_enums,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums,
         sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
         sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
         sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
@@ -5573,7 +5596,14 @@ fn tuple_field_name(a: Allocator, ar: *Arena, k: u32) -> str {
 }
 
 fn push_etag(a: Allocator, epath: *const Vec<str>, vname: str, tag: int, out: *Vec<EnumVariantTag>) {
-    out.push(EnumVariantTag { et_path: copy_strs(a, epath), et_name: vname, et_tag: tag });
+    out.push(EnumVariantTag { et_path: copy_strs(a, epath), et_name: vname, et_tag: tag, et_is_struct: false });
+}
+fn push_etag_kind(a: Allocator, epath: *const Vec<str>, vname: str, tag: int, kind: *const VariantKind, out: *Vec<EnumVariantTag>) {
+    let is_struct = match *kind {
+        VariantKind::VStruct(_fds) => true
+        | _k => false
+    };
+    out.push(EnumVariantTag { et_path: copy_strs(a, epath), et_name: vname, et_tag: tag, et_is_struct: is_struct });
 }
 
 fn push_efield(a: Allocator, epath: *const Vec<str>, vname: str, fname: str, ty: *const Typ, out: *Vec<EnumFieldE>) {
@@ -5607,7 +5637,7 @@ fn push_variant_fields(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
 
 fn collect_one_variant(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, ev: *const EnumVariant,
                        tag: int, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
-    push_etag(a, epath, ev.vname, tag, etags);
+    push_etag_kind(a, epath, ev.vname, tag, &ev.vkind, etags);
     push_variant_fields(a, ar, sc, epath, ev.vname, &ev.vkind, efields);
 }
 
@@ -7049,7 +7079,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let ret_ann: Option<*const TypeAnn> = Option::Some(closure_struct_ann(a, ar, vd.vname));
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
-                       sc_mono_structs: idx.pi_mono_structs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
+                       sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ann);
@@ -7444,7 +7474,7 @@ fn collect_variants(a: Allocator, path: *const Vec<str>, etags: *const Vec<EnumV
         let hit = path_eq_norm(a, &tl[i].et_path, path)
                   || inst_of_base(path_last(path), path_last(&tl[i].et_path));
         if hit && !variant_seen(&out, tl[i].et_name) {
-            push_variant(a, &out, path, tl[i].et_name, efields, mono_efields);
+            push_variant(a, &out, path, tl[i].et_name, efields, mono_efields, tl[i].et_is_struct);
         }
         i = i + 1 as u32;
     }
@@ -7454,19 +7484,19 @@ fn collect_variants(a: Allocator, path: *const Vec<str>, etags: *const Vec<EnumV
     // register_prelude_enum_efields).
     let last = path_last(path);
     if str::eq(last, "Option") || str_starts_with(last, "Option_") {
-        if !variant_seen(&out, "None") { push_variant(a, &out, path, "None", efields, mono_efields); }
-        if !variant_seen(&out, "Some") { push_variant(a, &out, path, "Some", efields, mono_efields); }
+        if !variant_seen(&out, "None") { push_variant(a, &out, path, "None", efields, mono_efields, false); }
+        if !variant_seen(&out, "Some") { push_variant(a, &out, path, "Some", efields, mono_efields, false); }
     } else if str::eq(last, "Result") || str_starts_with(last, "Result_") {
-        if !variant_seen(&out, "Ok") { push_variant(a, &out, path, "Ok", efields, mono_efields); }
-        if !variant_seen(&out, "Err") { push_variant(a, &out, path, "Err", efields, mono_efields); }
+        if !variant_seen(&out, "Ok") { push_variant(a, &out, path, "Ok", efields, mono_efields, false); }
+        if !variant_seen(&out, "Err") { push_variant(a, &out, path, "Err", efields, mono_efields, false); }
     }
     return out;
 }
 
 fn push_variant(a: Allocator, out: *Vec<VariantSig>, path: *const Vec<str>, name: str,
-                efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>) {
+                efields: *const Vec<EnumFieldE>, mono_efields: *const Vec<EnumFieldE>, is_struct: bool) {
     let vf = collect_variant_fields(a, path, name, efields, mono_efields);
-    out.push(VariantSig { vsname: name, vsfields: vf, vsis_struct: false });
+    out.push(VariantSig { vsname: name, vsfields: vf, vsis_struct: is_struct });
     return;
 }
 
@@ -7557,8 +7587,56 @@ fn mention_fields_round(a: Allocator, sinfo: *const Vec<StructField>, efields: *
         j = j + 1 as u32;
     }
 }
+// `@debug` names, collected straight off the AST (the port has no struct-decl
+// table in Tprogram).  A mono instance inherits the flag from its skeleton, so
+// the lookup also matches `Pair_i32_bool` against the base name `Pair`.
+fn dbg_push_struct(ds: *Vec<str>, sd: *const StructDecl) {
+    if sd.sis_debug { ds.push(sd.sname); }
+    return;
+}
+fn dbg_push_enum(de: *Vec<str>, ed: *const EnumDecl) {
+    if ed.eis_debug { de.push(ed.ename); }
+    return;
+}
+fn collect_debug_names_one(a: Allocator, ar: *Arena, it: *const Item, ds: *Vec<str>, de: *Vec<str>) {
+    match *it {
+        Item::Struct(sd) => { dbg_push_struct(ds, &sd); }
+        | Item::Enum(ed) => { dbg_push_enum(de, &ed); }
+        | Item::Module(md) => { collect_debug_names(a, ar, &md.mitems, ds, de); }
+        | _e => { }
+    }
+}
+fn collect_debug_names(a: Allocator, ar: *Arena, items: *const Vec<Item>, ds: *Vec<str>, de: *Vec<str>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        collect_debug_names_one(a, ar, &sl[i], ds, de);
+        i = i + 1 as u32;
+    }
+}
+fn debug_name_hit(names: *const Vec<str>, last: str) -> bool {
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() {
+        if str::eq(sl[i], last) || inst_of_base(last, sl[i]) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn mark_struct_debug(structs: *Vec<StructSig>, ci: u32, names: *const Vec<str>) {
+    with s in structs[ci] {
+        if debug_name_hit(names, path_last(&s.sname_path)) { s.sis_debug = true; }
+    }
+    return;
+}
+fn mark_enum_debug(enums: *Vec<EnumSig>, ci: u32, names: *const Vec<str>) {
+    with e in enums[ci] {
+        if debug_name_hit(names, path_last(&e.ename_path)) { e.eis_debug = true; }
+    }
+    return;
+}
 fn push_struct_path(a: Allocator, sigs: *Vec<StructSig>, srcpath: *const Vec<str>,
-                    mono_fields: *const Vec<StructField>) {
+                    mono_fields: *const Vec<StructField>, args: *const Vec<*const Typ>) {
     // Fill the mono instance's resolved fields (from the flat mono-field
     // table, keyed by instance path) so downstream passes that walk a
     // struct's field tree — the drop pass in particular, hunting `own *T`
@@ -7576,10 +7654,11 @@ fn push_struct_path(a: Allocator, sigs: *Vec<StructSig>, srcpath: *const Vec<str
         fi = fi + 1 as u32;
     }
     let tparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let no_args: Option<Vec<*const Typ>> = Option::None;
+    let mut iargs: Option<Vec<*const Typ>> = Option::None;
+    if args.length() > 0 as u32 { iargs = Option::Some(copy_typs(a, args)); }
     sigs.push(StructSig {
         sname_path: copy_strs(a, srcpath), sfields_ty: fields, sis_pub: true, stparams: tparams,
-        sinstance_args: no_args, sis_debug: false, ss_is_move: false,
+        sinstance_args: iargs, sis_debug: false, ss_is_move: false,
     });
 }
 fn push_enum_path(a: Allocator, sigs: *Vec<EnumSig>, srcpath: *const Vec<str>) {
@@ -9075,6 +9154,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // Accumulators for generated monomorphic instances (footer); shared by
     // the base scope and every per-fn scope so registration is program-wide.
     let mut mono_structs: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    let mut mono_sargs: Vec<Vec<*const Typ>> = Vec::with_capacity(a, 8 as u32);
     let mut mono_enums: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
     let mut mono_fields: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     let mut mono_efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
@@ -9105,7 +9185,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
-                               sc_mono_structs: &mono_structs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
+                               sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
                                sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases , sc_is_main: false };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
@@ -9154,7 +9234,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_drops(a, ar, items, &methods, &lifted_lambdas);
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
-                        pi_mono_structs: &mono_structs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
+                        pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
                         pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
@@ -9247,11 +9327,12 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // Push them here, by declaration rank, before the user structs.
     let mn = mono_structs.length();
     let msl = mono_structs.as_slice();
+    let sasl = mono_sargs.as_slice();
     let mut rk = 0 as int;
     while rk < 4 as int {
         let mut mi = 0 as u32;
         while mi < mn {
-            if nongeneric_prelude_rank(path_last(&msl[mi])) == rk { push_struct_path(a, &structs, &msl[mi], &mono_fields); }
+            if nongeneric_prelude_rank(path_last(&msl[mi])) == rk { push_struct_path(a, &structs, &msl[mi], &mono_fields, &sasl[mi]); }
             mi = mi + 1 as u32;
         }
         rk = rk + 1 as int;
@@ -9292,7 +9373,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut mj = 0 as u32;
     while mj < mn {
         let is_footprint = mj >= fp_start && mj < fp_end;
-        if nongeneric_prelude_rank(path_last(&msl[mj])) < 0 as int && (is_footprint || path_in_paths(&mentioned, &msl[mj])) { push_struct_path(a, &structs, &msl[mj], &mono_fields); }
+        if nongeneric_prelude_rank(path_last(&msl[mj])) < 0 as int && (is_footprint || path_in_paths(&mentioned, &msl[mj])) { push_struct_path(a, &structs, &msl[mj], &mono_fields, &sasl[mj]); }
         mj = mj + 1 as u32;
     }
     let men = mono_enums.length();
@@ -9312,6 +9393,14 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         fill_enum_variants(a, &enums, cj, &etags, &efields, &mono_efields);
         cj = cj + 1 as u32;
     }
+
+    let mut dbg_snames: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut dbg_enames: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_debug_names(a, ar, items, &dbg_snames, &dbg_enames);
+    let mut di = 0 as u32;
+    while di < structs.length() { mark_struct_debug(&structs, di, &dbg_snames); di = di + 1 as u32; }
+    let mut dj = 0 as u32;
+    while dj < enums.length() { mark_enum_debug(&enums, dj, &dbg_enames); dj = dj + 1 as u32; }
 
     let sdecls: Vec<StructDeclEntry> = Vec::with_capacity(a, 8 as u32);
     let global: Vec<GlobalEntry> = Vec::with_capacity(a, 8 as u32);
