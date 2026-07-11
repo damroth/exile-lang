@@ -405,7 +405,205 @@ fn build_vec_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enum
     lets.push(FieldTy { name: "__i", ty: ty_u32(ar) });
     return mk_glue_tfunc(a, ar, name, params, ptys, lets, body);
 }
+// A field that owns the NEXT node of the same aggregate (`own *Self`).
+fn is_self_ptr(ft: *const Typ, path: *const Vec<str>, want_enum: bool) -> bool {
+    return match *ft {
+        Typ::TOwnPtr(inner) => match *inner {
+            Typ::TStruct(p2) => !want_enum && mpath_eq2(&p2, path)
+            | Typ::TEnum(p2) => want_enum && mpath_eq2(&p2, path)
+            | _i => false
+        }
+        | _o => false
+    };
+}
+fn self_struct_fields(a: Allocator, structs: *const Vec<StructSig>, sidx: int, sp: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    if sidx < 0 as int { return out; }
+    let sl = structs.as_slice();
+    let sig: *const StructSig = &sl[sidx as u32];
+    let fs = sig.sfields_ty.as_slice();
+    let mut i = 0 as u32;
+    while i < sig.sfields_ty.length() {
+        if is_self_ptr(fs[i].ty, sp, false) { out.push(fs[i].name); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn find_enum_idx(enums: *const Vec<EnumSig>, path: *const Vec<str>) -> int {
+    let el = enums.as_slice();
+    let mut i = 0 as u32;
+    while i < enums.length() {
+        if mpath_eq2(&el[i].ename_path, path) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+fn bind_name(a: Allocator, ar: *Arena, fname: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 16 as u32);
+    sb.push_str("__d_");
+    sb.push_str(fname);
+    return str::from_slice(ar, sb.as_slice());
+}
+fn null_lit_d(ar: *Arena, pos: Pos) -> *const Texpr {
+    return d_te(ar, TexprNode::TNullLit, d_ty(ar, Typ::TNullPtr), pos);
+}
+// `__p != null` / `__p == null`.
+fn p_null_cmp(ar: *Arena, pv: *const Texpr, op: BinOp, pos: Pos) -> *const Texpr {
+    return d_te(ar, TexprNode::TBinOp(op, pv, null_lit_d(ar, pos)), d_ty(ar, Typ::TBool), pos);
+}
+fn assign_var(a: Allocator, name: str, value: *const Texpr, pos: Pos) -> Tstmt {
+    let mut ip: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    ip.push(name);
+    return Tstmt::TAssign { path: ip, value: value, pos: pos };
+}
+// A null guard at the top of the recursive form: an `own *Self` can hold a raw
+// null (not just a terminator variant), and the recursive call re-enters this
+// same glue, so one guard makes every level null-safe.
+fn null_guard(a: Allocator, ar: *Arena, pv: *const Texpr, pos: Pos) -> Tstmt {
+    let mut then_body: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let no_val: Option<*const Texpr> = Option::None;
+    then_body.push(Tstmt::TReturn { value: no_val, pos: pos });
+    let else_body: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    return Tstmt::TIf { cond: p_null_cmp(ar, pv, BinOp::EqEq, pos), then_body: then_body, else_body: else_body };
+}
+// One arm per variant: bind every droppable payload field and drop it.  When
+// `self_next` is set, a field owning the next node of the SAME enum is not
+// recursed into — it is stashed in `__next` and the spine walks iteratively.
+fn build_enum_arm(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                  gs: *GlueState, av: *const Texpr, v: *const VariantSig, ep: *const Vec<str>,
+                  tag: int, self_next: bool, pos: Pos) -> TmatchArm {
+    let mut binds: Vec<TFieldPat> = Vec::with_capacity(a, 8 as u32);
+    let mut stmts: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let fl = v.vsfields.as_slice();
+    let mut fi = 0 as u32;
+    while fi < v.vsfields.length() {
+        let want = match *fl[fi].ty {
+            Typ::TOwnPtr(_i) => true
+            | Typ::TStruct(_p) => has_drop_deep(structs, fl[fi].ty)
+            | _o => false
+        };
+        if want {
+            let bn = bind_name(a, ar, fl[fi].name);
+            binds.push(TFieldPat { name: fl[fi].name, pat: Tpattern::TPVar(bn) });
+            let bv = d_te(ar, TexprNode::TVar(bn), fl[fi].ty, pos);
+            if self_next && is_self_ptr(fl[fi].ty, ep, true) {
+                stmts.push(assign_var(a, "__next", bv, pos));
+            } else {
+                elem_drop_stmts(a, ar, structs, enums, gs, av, bv, pos, &stmts);
+            }
+        }
+        fi = fi + 1 as u32;
+    }
+    let no_trail: Option<*const Texpr> = Option::None;
+    let body = d_te(ar, TexprNode::TBlock { stmts: stmts, trailing: no_trail }, ty_i32(ar), pos);
+    let no_guard: Option<*const Texpr> = Option::None;
+    return TmatchArm {
+        tpat: Tpattern::TPVariant { variant: v.vsname, tag: tag, binds: binds },
+        tguard: no_guard, tbody: body, tdiverges: false, tarm_pos: pos,
+    };
+}
+// One arm per variant: bind every droppable payload field and drop it.  When
+// `self_next` is set, a field owning the next node of the SAME enum is not
+// recursed into — it is stashed in `__next` and the spine walks iteratively.
+fn build_enum_arms(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                   gs: *GlueState, av: *const Texpr, es: *const EnumSig, ep: *const Vec<str>,
+                   self_next: bool, pos: Pos) -> Vec<TmatchArm> {
+    let mut arms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
+    let vl = es.evariants.as_slice();
+    let mut vi = 0 as u32;
+    while vi < es.evariants.length() {
+        arms.push(build_enum_arm(a, ar, structs, enums, gs, av, &vl[vi], ep, vi as int, self_next, pos));
+        vi = vi + 1 as u32;
+    }
+    return arms;
+}
+fn match_stmt_d(a: Allocator, ar: *Arena, deref: *const Texpr, ep: *const Vec<str>,
+                arms: Vec<TmatchArm>, pos: Pos) -> Tstmt {
+    let m = d_te(ar, TexprNode::TMatch { scrutinee: deref, ename_path: copy_strs_d(a, ep), arms: arms }, ty_i32(ar), pos);
+    return Tstmt::TExprStmt(m);
+}
+// Every variant owns at most one next-node of the same enum, and at least one
+// does: a linear list, torn down iteratively.  A genuine tree (a variant with
+// two self-owned children) keeps recursion — C-stack depth, a documented limit.
+fn enum_is_linear(es: *const EnumSig, ep: *const Vec<str>) -> bool {
+    let vl = es.evariants.as_slice();
+    let mut any = false;
+    let mut vi = 0 as u32;
+    while vi < es.evariants.length() {
+        let fl = vl[vi].vsfields.as_slice();
+        let mut n = 0 as u32;
+        let mut fi = 0 as u32;
+        while fi < vl[vi].vsfields.length() {
+            if is_self_ptr(fl[fi].ty, ep, true) { n = n + 1 as u32; }
+            fi = fi + 1 as u32;
+        }
+        if n > 1 as u32 { return false; }
+        if n == 1 as u32 { any = true; }
+        vi = vi + 1 as u32;
+    }
+    return any;
+}
 // __drop_ptr_N(a, p): drop the pointee's owned fields, then free the box.
+//
+// A pointee that owns the next node of its own type is a SPINE: recursing burns
+// one non-tail C frame per node, so a long owned list overruns a small (kernel)
+// stack at scope exit.  When the spine is linear — one self-owned next per
+// struct / per variant — tear it down iteratively with a `__next` cursor:
+// O(1) stack however long the list grows, and the `__p != null` loop guard also
+// covers the terminator the recursive form would have dereferenced.
+// The struct spine / tree body.  Returns true when it emitted the iterative form.
+fn ptr_glue_struct(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                   gs: *GlueState, av: *const Texpr, pv: *const Texpr, pty: *const Typ,
+                   deref: *const Texpr, pointee: *const Typ, sp: *const Vec<str>, pos: Pos,
+                   body: *Vec<Tstmt>, lets: *Vec<FieldTy>) -> bool {
+    let sidx = find_struct_idx(structs, sp);
+    let selfs = self_struct_fields(a, structs, sidx, sp);
+    if selfs.length() != 1 as u32 {
+        body.push(null_guard(a, ar, pv, pos));
+        drop_stmts_for_struct(a, ar, structs, enums, gs, deref, sidx, pos, body);
+        body.push(free_via(a, ar, av, pv, size_of_u32(ar, pointee, pos), pos));
+        return false;
+    }
+    let self_fn = selfs.as_slice()[0 as u32];
+    let mut wb: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    wb.push(assign_var(a, "__next", field_access(ar, deref, self_fn, pty, pos), pos));
+    drop_stmts_for_struct_skip(a, ar, structs, enums, gs, deref, sidx, self_fn, pos, &wb);
+    wb.push(free_via(a, ar, av, pv, size_of_u32(ar, pointee, pos), pos));
+    wb.push(assign_var(a, "__p", d_te(ar, TexprNode::TVar("__next"), pty, pos), pos));
+    let post: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    body.push(Tstmt::TWhile { cond: p_null_cmp(ar, pv, BinOp::NotEq, pos), body: wb, post: post });
+    lets.push(FieldTy { name: "__next", ty: pty });
+    return true;
+}
+fn ptr_glue_enum(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                 gs: *GlueState, av: *const Texpr, pv: *const Texpr, pty: *const Typ,
+                 deref: *const Texpr, pointee: *const Typ, ep: *const Vec<str>, pos: Pos,
+                 body: *Vec<Tstmt>, lets: *Vec<FieldTy>) -> bool {
+    let eidx = find_enum_idx(enums, ep);
+    if eidx < 0 as int {
+        body.push(free_via(a, ar, av, pv, size_of_u32(ar, pointee, pos), pos));
+        return false;
+    }
+    let el = enums.as_slice();
+    let es: *const EnumSig = &el[eidx as u32];
+    if !enum_is_linear(es, ep) {
+        let rec_arms = build_enum_arms(a, ar, structs, enums, gs, av, es, ep, false, pos);
+        body.push(null_guard(a, ar, pv, pos));
+        body.push(match_stmt_d(a, ar, deref, ep, rec_arms, pos));
+        body.push(free_via(a, ar, av, pv, size_of_u32(ar, pointee, pos), pos));
+        return false;
+    }
+    let arms = build_enum_arms(a, ar, structs, enums, gs, av, es, ep, true, pos);
+    let mut wb: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    wb.push(assign_var(a, "__next", null_lit_d(ar, pos), pos));
+    wb.push(match_stmt_d(a, ar, deref, ep, arms, pos));
+    wb.push(free_via(a, ar, av, pv, size_of_u32(ar, pointee, pos), pos));
+    wb.push(assign_var(a, "__p", d_te(ar, TexprNode::TVar("__next"), pty, pos), pos));
+    let post: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    body.push(Tstmt::TWhile { cond: p_null_cmp(ar, pv, BinOp::NotEq, pos), body: wb, post: post });
+    lets.push(FieldTy { name: "__next", ty: pty });
+    return true;
+}
 fn build_ptr_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
                   gs: *GlueState, name: str, pointee: *const Typ) -> Tfunc {
     let pos = glue_pos();
@@ -414,21 +612,22 @@ fn build_ptr_glue(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enum
     let pv = d_te(ar, TexprNode::TVar("__p"), pty, pos);
     let deref = d_te(ar, TexprNode::TDeref(pv), pointee, pos);
     let mut body: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    let mut lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     match *pointee {
         Typ::TStruct(sp) => {
-            let sidx = find_struct_idx(structs, &sp);
-            drop_stmts_for_struct(a, ar, structs, enums, gs, deref, sidx, pos, &body);
+            ptr_glue_struct(a, ar, structs, enums, gs, av, pv, pty, deref, pointee, &sp, pos, &body, &lets);
         }
-        | _o => { }
+        | Typ::TEnum(ep) => {
+            ptr_glue_enum(a, ar, structs, enums, gs, av, pv, pty, deref, pointee, &ep, pos, &body, &lets);
+        }
+        | _o => { body.push(free_via(a, ar, av, pv, size_of_u32(ar, pointee, pos), pos)); }
     }
-    body.push(free_via(a, ar, av, pv, size_of_u32(ar, pointee, pos), pos));
     let mut params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
     params.push(mk_glue_param(ar, "__a", ty_allocator(a, ar)));
     params.push(mk_glue_param(ar, "__p", pty));
     let mut ptys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     ptys.push(ty_allocator(a, ar));
     ptys.push(pty);
-    let lets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     return mk_glue_tfunc(a, ar, name, params, ptys, lets, body);
 }
 // __drop_hm_N(m): per-slot key/value drop over Occupied slots, then free buffer.
@@ -667,6 +866,13 @@ fn base_ref_of(ar: *Arena, base: *const Texpr, pos: Pos) -> *const Texpr {
 fn drop_stmts_for_struct(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>,
                          enums: *const Vec<EnumSig>, gs: *GlueState, base: *const Texpr, sidx: int,
                          pos: Pos, out: *Vec<Tstmt>) {
+    drop_stmts_for_struct_skip(a, ar, structs, enums, gs, base, sidx, "", pos, out);
+    return;
+}
+// `skip` names the spine field the iterative tear-down handles itself ("" = none).
+fn drop_stmts_for_struct_skip(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>,
+                              enums: *const Vec<EnumSig>, gs: *GlueState, base: *const Texpr, sidx: int,
+                              skip: str, pos: Pos, out: *Vec<Tstmt>) {
     if sidx < 0 as int { return; }
     let sl = structs.as_slice();
     if try_container_glue(a, ar, structs, enums, gs, base, &sl[sidx as u32], sidx, pos, out) { return; }
@@ -674,7 +880,9 @@ fn drop_stmts_for_struct(a: Allocator, ar: *Arena, structs: *const Vec<StructSig
     let fs = sl[sidx as u32].sfields_ty.as_slice();
     let mut i = 0 as u32;
     while i < sl[sidx as u32].sfields_ty.length() {
-        drop_one_field(a, ar, structs, enums, gs, base, &sl[sidx as u32], alloc_f, fs[i].name, fs[i].ty, pos, out);
+        if !str::eq(fs[i].name, skip) {
+            drop_one_field(a, ar, structs, enums, gs, base, &sl[sidx as u32], alloc_f, fs[i].name, fs[i].ty, pos, out);
+        }
         i = i + 1 as u32;
     }
     return;

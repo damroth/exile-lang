@@ -4041,8 +4041,9 @@ fn elab_lambda(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
 // reads the original arena `FieldDef` params + body expr, builds only locals
 // that the produced `Tfunc` copies).  Mirrors `elaborate_fn` for a plain,
 // non-generic, body-bearing fn.
+fn prelude_file_pos() -> Pos { return Pos { line: 0 as int, col: 0 as int, file: "<prelude>" }; }
 fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                    mangled: str, name: str, params_fd: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body_expr: *const Expr, funcs: *Vec<Tfunc>, is_pub: bool) {
+                    mangled: str, name: str, params_fd: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body_expr: *const Expr, funcs: *Vec<Tfunc>, is_pub: bool, fpos: Pos) {
     let lparams = lam_to_params(a, params_fd);
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -4079,7 +4080,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
         name: name, c_name: name, tparams: tparams2, tbounds: tbounds,
         params: params, ret_ty: ret_ty, body: dummy_body, is_pub: is_pub,
         is_extern: false, is_variadic: false, amiga_lib: no_lib,
-        tier_hint: no_tier, must_use: false, escapes_hatch: false, pos: zero_pos(),
+        tier_hint: no_tier, must_use: false, escapes_hatch: false, pos: fpos,
     };
     funcs.push(Tfunc {
         tf_path: path, tf_func: tf_func, tf_mangled: mangled, tf_param_tys: param_tys,
@@ -4089,7 +4090,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
 fn drain_one_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                     mangled: str, name: str, e: *const Expr, funcs: *Vec<Tfunc>) {
     match *e {
-        Expr::Lambda { params, ret_ty, body, captures } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs, false)
+        Expr::Lambda { params, ret_ty, body, captures } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs, false, zero_pos())
         | _o => { }
     }
 }
@@ -6669,9 +6670,23 @@ fn derive_clone_struct_body(a: Allocator, ar: *Arena, sname: str, sfields: *cons
 }
 // Register a derived method's MethodInfo and (if `do_drain`) a kind-2 drain
 // entry; `has_other` adds the second `*const T` param (Eq's eq/ne).
+// A synthesized method's home file.  `@derive(Eq)` writes a real `eq` into the
+// USER's file, but `ne` is the Eq trait's DEFAULT — it lives in the prelude, so
+// it is excluded from `--user-only` dumps and is DCE-able when nothing calls it
+// (`Point__ne` survives because `p.ne(r)` exists; `Shape__ne` does not).
+fn lifted_pos(kind: int) -> Pos {
+    if kind == 4 as int { return prelude_file_pos(); }
+    return zero_pos();
+}
 fn push_derive_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: str, mname: str,
                       ret_ann: *const TypeAnn, has_other: bool, body: *const Expr, do_drain: bool,
                       methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
+    push_derive_method_k(a, ar, sc, target, mname, ret_ann, has_other, body, do_drain, 2 as int, methods, lifted, gsigs);
+    return;
+}
+fn push_derive_method_k(a: Allocator, ar: *Arena, sc: *const TyScope, target: str, mname: str,
+                        ret_ann: *const TypeAnn, has_other: bool, body: *const Expr, do_drain: bool,
+                        kind: int, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
     let tp = single_str(a, target);
     let mangled = method_mangle(a, ar, &tp, mname);
     let mut manns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
@@ -6698,11 +6713,21 @@ fn push_derive_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: str,
         let ec: Vec<str> = Vec::with_capacity(a, 8 as u32);
         let eb: Vec<str> = Vec::with_capacity(a, 8 as u32);
         lifted.push(LiftedLambda {
-            ll_mangled: mangled, ll_name: mangled, ll_expr: body, ll_kind: 2 as int,
+            ll_mangled: mangled, ll_name: mangled, ll_expr: body, ll_kind: kind,
             ll_closure: target, ll_params: params, ll_ret: Option::Some(ret_ann),
             ll_caps: ec, ll_brefs: eb, ll_lambda: body
         });
     }
+}
+// `ne` defaults to `!(*self).eq(*other)`.  Both params are `*const Self`, so the
+// body derefs them — otherwise method dispatch sees a pointer receiver, hits the
+// built-in primitive-pointer eq path and silently lowers to a pointer compare.
+fn derive_ne_body(a: Allocator, ar: *Arena, p: Pos) -> *const Expr {
+    let mut args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    args.push(ast_node(ar, Expr::Deref(dv_var(ar, "other", p), p)));
+    let call = ast_node(ar, Expr::MethodCall {
+        receiver: ast_node(ar, Expr::Deref(dv_var(ar, "self", p), p)), name: "eq", args: args, pos: p });
+    return ast_node(ar, Expr::Not(call, p));
 }
 fn collect_derives_struct(a: Allocator, ar: *Arena, sc: *const TyScope, sd: *const StructDecl, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
     let n = sd.sderives.length();
@@ -6713,7 +6738,7 @@ fn collect_derives_struct(a: Allocator, ar: *Arena, sc: *const TyScope, sd: *con
         let tr = sl[i];
         if str::eq(tr, "Eq") {
             push_derive_method(a, ar, sc, sd.sname, "eq", ann_bool(ar), true, derive_eq_struct_body(a, ar, &sd.sfields, p), true, methods, lifted, gsigs);
-            push_derive_method(a, ar, sc, sd.sname, "ne", ann_bool(ar), true, ast_node(ar, Expr::BoolLit(false, p)), false, methods, lifted, gsigs);
+            push_derive_method_k(a, ar, sc, sd.sname, "ne", ann_bool(ar), true, derive_ne_body(a, ar, p), true, 4 as int, methods, lifted, gsigs);
         }
         if str::eq(tr, "Hash") {
             push_derive_method(a, ar, sc, sd.sname, "hash", tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), false, derive_hash_struct_body(a, ar, &sd.sfields, p), true, methods, lifted, gsigs);
@@ -6813,7 +6838,7 @@ fn collect_derives_enum(a: Allocator, ar: *Arena, sc: *const TyScope, ed: *const
         let tr = sl[i];
         if str::eq(tr, "Eq") {
             push_derive_method(a, ar, sc, ed.ename, "eq", ann_bool(ar), true, derive_eq_enum_body(a, ar, ed.ename, &ed.evariants, p), true, methods, lifted, gsigs);
-            push_derive_method(a, ar, sc, ed.ename, "ne", ann_bool(ar), true, ast_node(ar, Expr::BoolLit(false, p)), false, methods, lifted, gsigs);
+            push_derive_method_k(a, ar, sc, ed.ename, "ne", ann_bool(ar), true, derive_ne_body(a, ar, p), true, 4 as int, methods, lifted, gsigs);
         }
         if str::eq(tr, "Hash") {
             push_derive_method(a, ar, sc, ed.ename, "hash", tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), false, derive_hash_enum_body(a, ar, ed.ename, &ed.evariants, p), true, methods, lifted, gsigs);
@@ -9270,10 +9295,10 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         } else {
             if lls[li].ll_kind == 3 as int {
                 // Drop method: `ll_params` already carries the full `*self`.
-                elaborate_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, &lls[li].ll_params, lls[li].ll_ret, lls[li].ll_expr, &funcs, true);
+                elaborate_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, &lls[li].ll_params, lls[li].ll_ret, lls[li].ll_expr, &funcs, true, zero_pos());
             } else {
                 let cps = closure_call_params(a, ar, lls[li].ll_closure, &lls[li].ll_params);
-                elaborate_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, &funcs, true);
+                elaborate_lifted(a, ar, &globals, &gensym, &idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, &funcs, true, lifted_pos(lls[li].ll_kind));
             }
         }
         li = li + 1 as u32;

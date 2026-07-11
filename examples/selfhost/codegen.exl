@@ -1862,6 +1862,108 @@ fn fn_concrete(tf: *const Tfunc) -> bool {
 // (Full gen_program — includes / fwd-decls / DCE / ordering — is stage g; this
 // reaches gen_function so the match emitter's mono instances are generated and
 // the c/d/e/f emission is diffable per function.)
+// ===== DR-035 dead-prelude elision =====
+//
+// A prelude-positioned fn nobody references is not emitted.  The port
+// materializes the prelude on demand, so the only such fns are synthesized trait
+// DEFAULTS: `@derive(Eq)` writes `Foo__ne` for every deriving type, but the
+// oracle only emits the ones something calls.  Self-references do not count —
+// a fn that only calls itself is still unreachable.
+fn args_call_m_cg(args: *const Vec<*const Texpr>, m: str) -> bool {
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() { if expr_calls_m_cg(sl[i], m) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn arms_call_m_cg(arms: *const Vec<TmatchArm>, m: str) -> bool {
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() {
+        if expr_calls_m_cg(sl[i].tbody, m) { return true; }
+        let gh = match sl[i].tguard { Option::Some(gg) => expr_calls_m_cg(gg, m) | Option::None => false };
+        if gh { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn fields_call_m_cg(fields: *const Vec<TexprField>, m: str) -> bool {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { if expr_calls_m_cg(sl[i].value, m) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn opt_call_m_cg(o: Option<*const Texpr>, m: str) -> bool {
+    return match o { Option::Some(e) => expr_calls_m_cg(e, m) | Option::None => false };
+}
+fn stmts_call_m_cg(stmts: *const Vec<Tstmt>, m: str) -> bool {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { if stmt_calls_m_cg(&sl[i], m) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn stmt_calls_m_cg(s: *const Tstmt, m: str) -> bool {
+    return match *s {
+        Tstmt::TLet { name, value, decl_ty, pos } => expr_calls_m_cg(value, m)
+        | Tstmt::TLetTuple { names, value, pos } => expr_calls_m_cg(value, m)
+        | Tstmt::TAssign { path, value, pos } => expr_calls_m_cg(value, m)
+        | Tstmt::TAssignField { target, field, value, pos } => expr_calls_m_cg(target, m) || expr_calls_m_cg(value, m)
+        | Tstmt::TAssignDeref { target, value, pos } => expr_calls_m_cg(target, m) || expr_calls_m_cg(value, m)
+        | Tstmt::TAssignIndex { base, index, value, pos } => expr_calls_m_cg(base, m) || expr_calls_m_cg(index, m) || expr_calls_m_cg(value, m)
+        | Tstmt::TReturn { value, pos } => match value { Option::Some(e) => expr_calls_m_cg(e, m) | Option::None => false }
+        | Tstmt::TExprStmt(e) => expr_calls_m_cg(e, m)
+        | Tstmt::TIf { cond, then_body, else_body } => expr_calls_m_cg(cond, m) || stmts_call_m_cg(&then_body, m) || stmts_call_m_cg(&else_body, m)
+        | Tstmt::TWhile { cond, body, post } => expr_calls_m_cg(cond, m) || stmts_call_m_cg(&body, m) || stmts_call_m_cg(&post, m)
+        | Tstmt::TDefer { body, pos } => stmts_call_m_cg(&body, m)
+        | _leaf => false
+    };
+}
+fn expr_calls_m_cg(te: *const Texpr, m: str) -> bool {
+    return match te.e {
+        TexprNode::TCall { mangled, args } => str::eq(mangled, m) || args_call_m_cg(&args, m)
+        | TexprNode::TBuiltinCall { name, args } => args_call_m_cg(&args, m)
+        | TexprNode::TIndirectCall { fn_expr, args } => expr_calls_m_cg(fn_expr, m) || args_call_m_cg(&args, m)
+        | TexprNode::TNeg(s) => expr_calls_m_cg(s, m)
+        | TexprNode::TBitNot(s) => expr_calls_m_cg(s, m)
+        | TexprNode::TNot(s) => expr_calls_m_cg(s, m)
+        | TexprNode::TRef(s) => expr_calls_m_cg(s, m)
+        | TexprNode::TDeref(s) => expr_calls_m_cg(s, m)
+        | TexprNode::TCast(s, ann) => expr_calls_m_cg(s, m)
+        | TexprNode::TBinOp(op, l, r) => expr_calls_m_cg(l, m) || expr_calls_m_cg(r, m)
+        | TexprNode::TFieldAccess { target, field } => expr_calls_m_cg(target, m)
+        | TexprNode::TIndex { base, index } => expr_calls_m_cg(base, m) || expr_calls_m_cg(index, m)
+        | TexprNode::TTupleLit(es) => args_call_m_cg(&es, m)
+        | TexprNode::TArrayLit(es) => args_call_m_cg(&es, m)
+        | TexprNode::TArrayRepeat { value, count } => expr_calls_m_cg(value, m)
+        | TexprNode::TIfExpr { cond, then_val, else_val } => expr_calls_m_cg(cond, m) || expr_calls_m_cg(then_val, m) || expr_calls_m_cg(else_val, m)
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => expr_calls_m_cg(scrutinee, m) || arms_call_m_cg(&arms, m)
+        | TexprNode::TBlock { stmts, trailing } => stmts_call_m_cg(&stmts, m) || opt_call_m_cg(trailing, m)
+        | TexprNode::TNew { sname_path, fields, base, alloc } => fields_call_m_cg(&fields, m) || opt_call_m_cg(base, m) || opt_call_m_cg(alloc, m)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => fields_call_m_cg(&args, m) || opt_call_m_cg(alloc, m)
+        | TexprNode::TStructLit { sname_path, fields, base } => fields_call_m_cg(&fields, m) || opt_call_m_cg(base, m)
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => fields_call_m_cg(&args, m)
+        | _leaf => false
+    };
+}
+fn referenced_by(funcs: *const Vec<Tfunc>, m: str, skip: int) -> bool {
+    let sl = funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < funcs.length() {
+        if i as int != skip {
+            if stmts_call_m_cg(&sl[i].tf_body, m) { return true; }
+        }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn fn_dead(tp: *const Tprogram, tf: *const Tfunc, idx: int) -> bool {
+    if !str::eq(tf.tf_func.pos.file, "<prelude>") { return false; }
+    if referenced_by(&tp.tp_funcs, tf.tf_mangled, idx) { return false; }
+    let no_skip = 0 as int - 1 as int;
+    if referenced_by(&tp.tp_pfree, tf.tf_mangled, no_skip) { return false; }
+    if referenced_by(&tp.tp_pmeth, tf.tf_mangled, no_skip) { return false; }
+    return true;
+}
+
 pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBuilder) {
     let mut fillctr: u32 = 0 as u32;
     let mut mlctr: u32 = 0 as u32;
@@ -1884,7 +1986,7 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *S
     let fsl = tp.tp_funcs.as_slice();
     let mut i = 0 as u32;
     while i < tp.tp_free_end && i < tp.tp_funcs.length() {
-        if fn_concrete(&fsl[i]) && !fsl[i].tf_func.is_extern {
+        if fn_concrete(&fsl[i]) && !fsl[i].tf_func.is_extern && !fn_dead(tp, &fsl[i], i as int) {
             out.push_str("\n");
             gen_function(a, ar, out, &cg, &fsl[i]);
         }
@@ -1901,7 +2003,7 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *S
     }
     let mut j = tp.tp_free_end;
     while j < tp.tp_funcs.length() {
-        if fn_concrete(&fsl[j]) && !fsl[j].tf_func.is_extern {
+        if fn_concrete(&fsl[j]) && !fsl[j].tf_func.is_extern && !fn_dead(tp, &fsl[j], j as int) {
             out.push_str("\n");
             gen_function(a, ar, out, &cg, &fsl[j]);
         }
@@ -2249,7 +2351,7 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
     }
     let mut k = 0 as u32;
     while k < tp.tp_funcs.length() {
-        if fn_concrete(&fsl[k]) && !str::eq(fsl[k].tf_func.name, "main") { nnm = nnm + 1 as u32; }
+        if fn_concrete(&fsl[k]) && !str::eq(fsl[k].tf_func.name, "main") && !fn_dead(tp, &fsl[k], k as int) { nnm = nnm + 1 as u32; }
         k = k + 1 as u32;
     }
     if nnm > 0 as u32 || tp.tp_uses_default_allocator {
@@ -2266,7 +2368,7 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
         }
         let mut j = 0 as u32;
         while j < tp.tp_free_end && j < tp.tp_funcs.length() {
-            if fn_concrete(&fsl[j]) && !str::eq(fsl[j].tf_func.name, "main") {
+            if fn_concrete(&fsl[j]) && !str::eq(fsl[j].tf_func.name, "main") && !fn_dead(tp, &fsl[j], j as int) {
                 emit_fn_sig(a, ar, out, &fsl[j]);
                 out.push_str(";\n");
             }
@@ -2282,7 +2384,7 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
         }
         let mut jj = tp.tp_free_end;
         while jj < tp.tp_funcs.length() {
-            if fn_concrete(&fsl[jj]) && !str::eq(fsl[jj].tf_func.name, "main") {
+            if fn_concrete(&fsl[jj]) && !str::eq(fsl[jj].tf_func.name, "main") && !fn_dead(tp, &fsl[jj], jj as int) {
                 emit_fn_sig(a, ar, out, &fsl[jj]);
                 out.push_str(";\n");
             }
