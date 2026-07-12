@@ -52,10 +52,19 @@ pub struct Prov {
 fn prov_cs() -> Prov { return Prov { pk: PROV_CS, pmask: 0 as u32 }; }
 fn prov_local() -> Prov { return Prov { pk: PROV_LOCAL, pmask: 0 as u32 }; }
 fn prov_unknown() -> Prov { return Prov { pk: PROV_UNKNOWN, pmask: 0 as u32 }; }
-// A param index beyond the bitmask's width cannot be tracked precisely; widen
-// to Unknown, which is strictly more toxic — the conservative direction.
+
+// Bits 0..30 name a param exactly.  Bit 31 SATURATES: "the value derives from
+// some param with index >= 31".  A call site then meets over the tail args only.
+//
+// The first cut degraded a high param to `Unknown`, which projects to "every
+// param may carry the return" — so a `&local` passed at param 0 poisoned the
+// result of a fn that only ever returns param 32, and the port REJECTED a program
+// the oracle accepts.  Sound (over-rejection), but wrong, and precision lost on
+// the wrong side of the lattice.  Saturating confines the imprecision to the tail
+// params, where it belongs.
+const PARAM_HIGH: u32 = 31;
 fn prov_param(i: u32) -> Prov {
-    if i >= 32 as u32 { return prov_unknown(); }
+    if i >= PARAM_HIGH { return Prov { pk: PROV_PARAM, pmask: (1 as u32) << PARAM_HIGH }; }
     return Prov { pk: PROV_PARAM, pmask: (1 as u32) << i };
 }
 
@@ -364,11 +373,17 @@ fn prov_of_call(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
         return acc;
     }
     let mut i = 0 as u32;
-    while i < 32 as u32 {
+    while i < PARAM_HIGH {
         if (row.smask >> i) & (1 as u32) == 1 as u32 {
             if i < n { acc = meet(acc, prov_of(a, esc, live, al[i])); }
         }
         i = i + 1 as u32;
+    }
+    // The saturating bit: the carrier is SOME param at or past PARAM_HIGH, so meet
+    // over the tail — a superset of the true carrier, and no wider.
+    if (row.smask >> PARAM_HIGH) & (1 as u32) == 1 as u32 {
+        let mut hj = PARAM_HIGH;
+        while hj < n { acc = meet(acc, prov_of(a, esc, live, al[hj])); hj = hj + 1 as u32; }
     }
     return acc;
 }

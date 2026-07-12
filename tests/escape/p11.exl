@@ -1,0 +1,20 @@
+// 33 params.  `pick` returns ONLY p32 — its escape summary is exactly {32}.
+// p0 is a borrow of a local in the caller, but `pick` never returns it, so
+// returning pick's result is silent: the result derives from `caller`, a param.
+//
+// The port's summary is a u32 bitmask, so param 32 does not fit: it degrades to
+// `Unknown`, which widens the summary to EVERY param — including p0.  That turns
+// the caller's `&loc` into the return's provenance and reports an escape the
+// oracle does not.  Precision loss on the wrong side of the lattice.
+fn pick(p0: *const int, p1: int, p2: int, p3: int, p4: int, p5: int, p6: int, p7: int, p8: int, p9: int, p10: int, p11: int, p12: int, p13: int, p14: int, p15: int, p16: int, p17: int, p18: int, p19: int, p20: int, p21: int, p22: int, p23: int, p24: int, p25: int, p26: int, p27: int, p28: int, p29: int, p30: int, p31: int, p32: *const int) -> *const int {
+    return p32;
+}
+fn outer(caller: *const int) -> *const int {
+    let mut loc: int = 5;
+    return pick(&loc, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, caller);
+}
+fn main() {
+    let mut base: int = 9;
+    let r = outer(&base);
+    println(*r);
+}
