@@ -1740,6 +1740,50 @@ let () =
        has "long v;" && has "long v__1;"
      with _ -> false);
 
+  (* F1 — a diagnostic must never name a binding the user did not write.  The
+     compiler mints names in three shapes (sibling renames, `for` counters, `with`
+     projections) and every one of them used to leak.  `tf_srcnames` maps them back. *)
+  check_error "a move diagnostic names the binding the USER wrote, not the rename"
+    "struct Node { v: int }\n\
+     fn run(a: Allocator, b: bool) {\n\
+    \    if b { let p = new(a) Node { v: 1 }; free(a, p); }\n\
+    \    if !b { let p = new(a) Node { v: 2 }; free(a, p); free(a, p); }\n\
+     }\n\
+     fn main() { run(default_allocator(), true); }\n"
+    "double free: 'p' was already consumed at <input>:4:51";
+
+  check_error "a `with` projection reports the user's name, not `x__with0`"
+    "fn main() {\n\
+    \    let a = default_allocator();\n\
+    \    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);\n\
+    \    v.push(1);\n\
+    \    with x in v[0] { x = 5; }\n\
+    \    println(v[0]);\n\
+     }\n"
+    "cannot assign to immutable 'x' — declare it with `let mut`";
+
+  (* F2 — the mint must skip a name the user already spoke for: with `v__1` in
+     scope, the sibling rename of `v` lands on `v__2`. *)
+  check_assert "the sibling rename skips a name the user already took"
+    (try
+       let c = Exile_lang.Compiler.compile
+         "fn f(b: bool) -> int {\n\
+         \    let v__1 = 99;\n\
+         \    let mut out = 0;\n\
+         \    if b { let v = 1; out = v + v__1; }\n\
+         \    if !b { let v = 2; out = v + v__1; }\n\
+         \    return out;\n\
+          }\n\
+          fn main() { println(f(true)); }\n"
+       in
+       let has sub =
+         let n = String.length sub and m = String.length c in
+         let rec go i = i + n <= m && (String.sub c i n = sub || go (i + 1)) in
+         go 0
+       in
+       has "long v__1;" && has "long v;" && has "long v__2;"
+     with _ -> false);
+
   check_assert "sibling shadowing: the same name in two match arms"
     (try
        ignore (Exile_lang.Compiler.compile

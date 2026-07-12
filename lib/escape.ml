@@ -472,6 +472,9 @@ let check_container_insert ~report live (args : texpr list) pos =
 (* Phase C — use-after-invalidation check.  Walks any expression
    reachable from an enforcement site; a TVar whose binding has a
    stamped [binvalid] is a hard error pointing at the kill site. *)
+let cur_srcnames : (string * string) list ref = ref []
+let disp n = Ir.src_name !cur_srcnames n
+
 let fail_use_after_invalidation pos name reason kill_pos =
   Error.failf pos
     "use of borrow '%s' after it was invalidated by '%s' at %s:%d:%d \
@@ -479,7 +482,7 @@ let fail_use_after_invalidation pos name reason kill_pos =
      pointed into, so subsequent reads dangle (rebuild the borrow \
      after the mutation, or use a copy that doesn't share the \
      buffer)"
-    name reason kill_pos.Pos.file kill_pos.Pos.line kill_pos.Pos.col
+    (disp name) reason kill_pos.Pos.file kill_pos.Pos.line kill_pos.Pos.col
 
 let rec check_uses ~report (live : state) (te : texpr) =
   if report then begin
@@ -662,6 +665,7 @@ let project_to_summary ~num_params = function
       IntSet.of_list (range 0)
 
 let analyze_fn ~report (tf : tfunc) : prov =
+  cur_srcnames := tf.tf_srcnames;
   Hashtbl.clear params_idx;
   Hashtbl.clear params_own;
   List.iteri (fun i (p : Ast.param) ->

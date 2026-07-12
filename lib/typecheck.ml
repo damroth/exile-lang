@@ -424,14 +424,23 @@ type scope_st = {
   params : string list;                 (* kept apart: they get their own message *)
   mutable taken : string list;          (* every C name minted in this fn *)
   mutable mint : (string * int) list;   (* source name -> next suffix *)
+  renamed : (string * string) list ref; (* C name -> the name the user wrote *)
 }
 
+(* Skip a candidate the user already spoke for: `let v__1 = ...` in scope means the
+   sibling rename of `v` must land on `v__2`.  Without this the mint collides with a
+   real binding and the user gets an error naming something they did write, about a
+   name they did not. *)
 let fresh_c_name st name =
-  let n = try List.assoc name st.mint with Not_found -> 0 in
-  let n = n + 1 in
+  let rec pick n =
+    let candidate = Printf.sprintf "%s__%d" name n in
+    if List.mem candidate st.taken then pick (n + 1) else (n, candidate)
+  in
+  let start = (try List.assoc name st.mint with Not_found -> 0) + 1 in
+  let (n, candidate) = pick start in
   st.mint <- (name, n) :: List.remove_assoc name st.mint;
-  let candidate = Printf.sprintf "%s__%d" name n in
   st.taken <- candidate :: st.taken;
+  st.renamed := (candidate, name) :: !(st.renamed);
   candidate
 
 (* Bind [name] in the scope that is being walked.  Returns the C name to use.
@@ -629,9 +638,12 @@ and scope_expr st ~visible (e : Ast.expr) : Ast.expr =
 
 (* Entry: rewrite one function body.  [params] seeds the visible set, so a `let`
    shadowing a parameter is still rejected. *)
-let resolve_scopes ~(params : string list) (body : Ast.stmt list) : Ast.stmt list =
-  let st = { params; taken = params; mint = List.map (fun p -> (p, 0)) params } in
-  scope_block st ~visible:params body
+let resolve_scopes ~(params : string list) (body : Ast.stmt list)
+    : Ast.stmt list * (string * string) list =
+  let st = { params; taken = params; mint = List.map (fun p -> (p, 0)) params;
+             renamed = ref [] } in
+  let body = scope_block st ~visible:params body in
+  (body, List.rev !(st.renamed))
 
 let lookup_const ctx path =
   walk_scope_up ctx path ~resolve:(fun mod_path name ->
@@ -4418,11 +4430,12 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
    `check_program` calls this once per function. *)
 let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
     ?(mut_params = []) ctx param_env stmts
-    : (string * typ) list * tstmt list =
+    : (string * typ) list * tstmt list * (string * string) list =
   (* Resolve scopes FIRST: reject shadowing of a visible binding / a parameter,
      and rename disjoint siblings apart.  Everything below this line sees names
      that are unique per function, exactly as before the rule was relaxed. *)
-  let stmts = resolve_scopes ~params:(List.map fst param_env) stmts in
+  let (stmts, renamed) = resolve_scopes ~params:(List.map fst param_env) stmts in
+  let srcnames = ref renamed in
   let decls = ref [] in
   (* Loop nesting depth — `break` / `continue` are legal only when > 0.
      Bumped around `while` / `for` / `loop` bodies as they are walked. *)
@@ -4445,11 +4458,12 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
     | Ast.Index { base; _ } -> root_local base
     | _ -> None
   in
+  let disp n = Ir.src_name !srcnames n in
   let require_mut name pos ~what =
     if not (Hashtbl.mem mut_names name) then
       Error.failf pos
         "cannot %s immutable '%s' — declare it with `let mut`%s"
-        what name
+        what (disp name)
         (if List.mem_assoc name param_env
          then " (or mark the parameter `mut`)" else "")
   in
@@ -5002,6 +5016,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
           let trange = Option.get pre_elab in
           let it_var = Printf.sprintf "__it%d" k in
           let elem_var = Printf.sprintf "__fv%d" k in
+          srcnames := (elem_var, var) :: !srcnames;
           add_decl it_var trange.ty pos;
           Hashtbl.replace mut_names it_var ();
           let it_env = (it_var, trange.ty) :: env in
@@ -5034,6 +5049,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         end else begin
         let counter = Printf.sprintf "__fv%d" k in
         let end_var = Printf.sprintf "__fe%d" k in
+        srcnames := (counter, var) :: !srcnames;
         let (counter_ty, inclusive, tlo, thi, range_temp, hi_for_overflow) =
           match range, pre_elab with
           | Ast.Range { lo; hi; inclusive; _ }, _ ->
@@ -5191,6 +5207,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
           incr with_gensym;
           Printf.sprintf "%s__with%d" name n
         in
+        srcnames := (internal, name) :: !srcnames;
         let body =
           List.map (subst_var_stmt ~from:name ~to_:internal) body in
         add_decl internal ptr_ty pos;
@@ -5635,7 +5652,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
   let lifted = lift_stmts tstmts in
   walk_stmts_hook := prev_hook;
   is_mut_lvalue_hook := prev_mut_hook;
-  (List.rev !decls, lifted)
+  (List.rev !decls, lifted, !srcnames)
 
 (* Result of one walk over the program tree: every function (with its
    absolute module path and mangled C name), every struct, and every
@@ -11912,8 +11929,8 @@ let check_program program : tprogram =
       List.filter_map (fun (p : Ast.param) ->
         if p.is_mut then Some p.pname else None) f.params
     in
-    let (lets, tbody) =
-      if f.is_extern || is_skeleton then ([], [])
+    let (lets, tbody, srcnames) =
+      if f.is_extern || is_skeleton then ([], [], [])
       else elab_body ~ret_ty:effective_ret_ty ~is_main:(f.name = "main")
              ~mut_params ctx param_env f.body
     in
@@ -11948,7 +11965,7 @@ let check_program program : tprogram =
        | _ -> ());
     { tf_path = path; tf_func = f; tf_mangled = mangled;
       tf_param_tys = param_tys; tf_ret_ty = ret_ty;
-      tf_body = tbody; tf_lets = lets;
+      tf_body = tbody; tf_lets = lets; tf_srcnames = srcnames;
       tf_origin_pos = None }
   in
   let skeleton_tfuncs =

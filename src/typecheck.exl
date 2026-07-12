@@ -5136,8 +5136,17 @@ fn names_has(v: *const Vec<str>, n: str) -> bool {
     while i < v.length() { if str::eq(sl[i], n) { return true; } i = i + 1 as u32; }
     return false;
 }
+fn suffixed(a: Allocator, ar: *Arena, name: str, n: int) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 24 as u32);
+    sb.push_str(name);
+    sb.push_str("__");
+    sb.push_int(n);
+    return str::from_slice(ar, sb.as_slice());
+}
+// Skips a candidate the user already spoke for: `let v__1 = ...` in scope means the
+// sibling rename of `v` must land on `v__2`.  Without this the mint collides with a
+// real binding.
 fn mint_next(a: Allocator, ar: *Arena, st: *const ScopeSt, name: str) -> str {
-    // The suffix counter per source name.  Stored as text so it rides a StrPair.
     let sl = st.ss_mint.as_slice();
     let mut i = 0 as u32;
     let mut n = 0 as int;
@@ -5146,11 +5155,11 @@ fn mint_next(a: Allocator, ar: *Arena, st: *const ScopeSt, name: str) -> str {
         i = i + 1 as u32;
     }
     n = n + 1 as int;
-    let mut sb = StringBuilder::with_capacity(a, 24 as u32);
-    sb.push_str(name);
-    sb.push_str("__");
-    sb.push_int(n);
-    let fresh = str::from_slice(ar, sb.as_slice());
+    let mut fresh = suffixed(a, ar, name, n);
+    while names_has(st.ss_taken, fresh) {
+        n = n + 1 as int;
+        fresh = suffixed(a, ar, name, n);
+    }
     let mut nb = StringBuilder::with_capacity(a, 8 as u32);
     nb.push_int(n);
     st.ss_mint.push(StrPair { a: name, b: str::from_slice(ar, nb.as_slice()) });

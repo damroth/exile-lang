@@ -12,6 +12,12 @@
 
 open Ir
 
+(* The binding names the compiler renamed in the function under check.  Every
+   diagnostic below renders through [disp]: an error that names a binding the user
+   never wrote (`p__1`, `__fv1`, `x__with0`) is a bug in the compiler, not a hint. *)
+let cur_srcnames : (string * string) list ref = ref []
+let disp n = Ir.src_name !cur_srcnames n
+
 (* Per-binding state.  Tracked names live in an association list keyed
    by binding name; only `@move` bindings are ever inserted, so the
    zero-blast-radius guarantee is structural. *)
@@ -101,13 +107,13 @@ let rec check_reads live (te : texpr) =
               "use of '%s' after it was consumed at %s:%d:%d \
                (move-marked types are use-at-most-once — borrow with \
                '&%s' / take '*const %s' or clone to keep the source live)"
-              n mv.file mv.line mv.col n (typ_name te.ty)
+              (disp n) mv.file mv.line mv.col (disp n) (typ_name te.ty)
         | Some (PartialMoved mv) ->
             Error.failf te.pos
               "use of '%s' after its payload was moved out at %s:%d:%d \
                — the children are gone, only releasing the storage is \
                left: `free(alloc, %s)`"
-              n mv.file mv.line mv.col n
+              (disp n) mv.file mv.line mv.col (disp n)
         | _ -> ())
    | _ -> ());
   (match te.e with
@@ -368,7 +374,7 @@ and walk_expr ~structs ~enums live (te : texpr) =
        | Some (Consumed mv) ->
            Error.failf ptr_arg.pos
              "double free: '%s' was already consumed at %s:%d:%d"
-             n mv.Pos.file mv.Pos.line mv.Pos.col
+             (disp n) mv.Pos.file mv.Pos.line mv.Pos.col
        | _ -> ());
       (* Re-audit F2: `free(a, p)` releases ONLY p's node.  On a root
          whose payload may still own children (Live, owning pointee),
@@ -386,7 +392,7 @@ and walk_expr ~structs ~enums live (te : texpr) =
               silently leak; move them out first (match and consume \
               every owned payload), or let auto-drop release the \
               whole tree"
-             n (typ_name inner)
+             (disp n) (typ_name inner)
        | _ -> ());
       if is_affine_typ ~structs ptr_arg.ty
       then set_consumed live n ptr_arg.pos
@@ -527,7 +533,7 @@ and walk_expr ~structs ~enums live (te : texpr) =
                           moves out its sibling — after the arm the \
                           matched value keeps only its shell, so '%s' \
                           would silently leak; free or move it in this \
-                          arm too" bn bn
+                          arm too" (disp bn) (disp bn)
                    | _ -> ()))
               (owning_slots_of_pat ~structs ~enums scrutinee.ty a.tpat);
           let after =
@@ -662,7 +668,7 @@ and walk_stmt ~structs ~enums ~ret_ty live = function
           | Live, Consumed pos ->
               Error.failf pos
                 "'%s' is consumed inside a loop body — the next iteration \
-                 would re-consume the (already-moved) binding" n
+                 would re-consume the (already-moved) binding" (disp n)
           | _ -> ())
           after;
       live
@@ -670,6 +676,7 @@ and walk_stmt ~structs ~enums ~ret_ty live = function
 
 (* Per-fn entry: seed live map with affine parameters, walk body. *)
 let check_fn ~structs ~enums (tf : tfunc) =
+  cur_srcnames := tf.tf_srcnames;
   let params = tf.tf_func.Ast.params in
   let init_live =
     List.filter_map (fun (p, ty) ->

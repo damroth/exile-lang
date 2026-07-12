@@ -986,6 +986,16 @@ type tfunc = {
   tf_ret_ty : typ option;           (* mirrors tf_func.ret_ty, scope-resolved *)
   tf_body : tstmt list;
   tf_lets : (string * typ) list;
+  tf_srcnames : (string * string) list;
+                                    (* C name -> the name the USER wrote, for the
+                                       bindings the compiler renamed: disjoint
+                                       siblings (`v` -> `v__1`), the `for`
+                                       counter (`i` -> `__fv1`), a scoped
+                                       projection (`x` -> `x__with0`).  Only the
+                                       entries that differ.  Diagnostics render
+                                       through it — an error that names a binding
+                                       the user never wrote is a bug in the
+                                       compiler, not a hint to them. *)
   tf_origin_pos : Pos.t option;     (* call site that triggered this instance,
                                        for generic-fn instances only.  None
                                        for skeleton tfuncs and originally-mono
@@ -1040,3 +1050,8 @@ type tprogram = {
                                           mangled TVars) and array sizes
                                           resolve at the C level. *)
 }
+
+(* Render a binding name as the user wrote it.  Compiler-minted names (sibling
+   renames, `for` counters, `with` projections) must never reach a diagnostic. *)
+let src_name (srcnames : (string * string) list) (n : string) : string =
+  match List.assoc_opt n srcnames with Some s -> s | None -> n

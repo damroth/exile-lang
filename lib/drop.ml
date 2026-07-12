@@ -523,6 +523,7 @@ let mk_glue_tfunc ~name ~params ~lets ~body : tfunc =
     tf_ret_ty = None;
     tf_body = body;
     tf_lets = lets;
+    tf_srcnames = [];   (* synthesized glue: every name is the compiler's own *)
     tf_origin_pos = None }
 
 let build_ptr_glue ~structs ~enums ~name pointee : tfunc =
