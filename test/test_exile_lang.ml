@@ -1695,9 +1695,64 @@ let () =
      fn main() { println(1); }\n"
     "return: expected str, got i32";
 
-  check_error "duplicate let"
+  (* Sibling shadowing (2026-07-12): the rule is per-SCOPE, not per-function.
+     A duplicate in the SAME scope is still an error — only the wording moved. *)
+  check_error "duplicate let in the same scope"
     "fn main() {\n    let x = 1;\n    let x = 2;\n    println(x);\n}\n"
-    "variable 'x' already declared in this function";
+    "variable 'x' already declared in this scope";
+
+  check_error "let shadows an enclosing binding"
+    "fn main() {\n    let x = 1;\n    if x == 1 { let x = 2; println(x); }\n    println(x);\n}\n"
+    "variable 'x' shadows a binding that is still visible here — two DISJOINT \
+     blocks may reuse a name, but this one is nested inside the binding it \
+     would hide";
+
+  (* A block's bindings no longer leak into the continuation: `let` is scoped to
+     the block it sits in, which is what makes "disjoint" mean anything. *)
+  check_error "a block's binding does not escape the block"
+    "fn main() {\n    if true { let x = 1; println(x); }\n    println(x);\n}\n"
+    "undefined variable 'x'";
+
+  (* The wall this removes: two DISJOINT blocks binding the same name.  The port
+     was writing `cn` / `cne` and `v` / `v2` for exactly this. *)
+  (* The wall this removes: two DISJOINT blocks binding the same name.  The port
+     was writing `cn` / `cne` and `v` / `v2` for exactly this.  Behaviour lives in
+     examples/sibling_shadowing.exl; here we pin the C: the first `v` keeps its
+     name, the disjoint sibling is renamed apart for the C89 hoist. *)
+  check_assert "sibling shadowing: the same name in two disjoint loops"
+    (try
+       let c = Exile_lang.Compiler.compile
+         "fn f(n: int) -> int {\n\
+         \    let mut s = 0;\n\
+         \    let mut i = 0;\n\
+         \    while i < n { let v = i * 2; s = s + v; i = i + 1; }\n\
+         \    let mut j = 0;\n\
+         \    while j < n { let v = j * 3; s = s + v; j = j + 1; }\n\
+         \    return s;\n\
+          }\n\
+          fn main() { println(f(3)); }\n"
+       in
+       let has sub =
+         let n = String.length sub and m = String.length c in
+         let rec go i = i + n <= m && (String.sub c i n = sub || go (i + 1)) in
+         go 0
+       in
+       has "long v;" && has "long v__1;"
+     with _ -> false);
+
+  check_assert "sibling shadowing: the same name in two match arms"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "enum E { A(int) | B(int) }\n\
+          fn f(e: E) -> int {\n\
+         \    return match e {\n\
+         \        E::A(x) => { let v = x * 2; v }\n\
+         \        | E::B(x) => { let v = x * 3; v }\n\
+         \    };\n\
+          }\n\
+          fn main() { println(f(E::A(5))); }\n");
+       true
+     with _ -> false);
 
   check_error "let shadows parameter"
     "fn foo(x: int) -> int {\n    let x = 5;\n    return x;\n}\nfn main() {\n    println(foo(1));\n}\n"
@@ -5067,16 +5122,23 @@ let () =
      }\n"
     "block expression `{ ... }` must end with a trailing value expression (no `;` after the last expression) when used in a value position";
 
-  check_error "multi-stmt arm body: arm-local `let` shares fn decl namespace"
-    "enum E { A | B }\n\
-     fn main() {\n\
-    \    let e = E::A;\n\
-    \    match e {\n\
-    \        E::A => { let x = 1; println(x); }\n\
-    \        | E::B => { let x = 2; println(x); }\n\
-    \    }\n\
-     }\n"
-    "variable 'x' already declared in this function";
+  (* Sibling shadowing (2026-07-12) INVERTS this: arm bodies are disjoint blocks,
+     so an arm-local `let x` in each is now legal.  They no longer share the fn's
+     decl namespace — the scope pre-pass renames the second apart for the C89
+     hoist, which is why the emitted C carries `x` and `x__1`. *)
+  check_assert "multi-stmt arm body: arm-local `let` may repeat across arms"
+    (try
+       ignore (Exile_lang.Compiler.compile
+         "enum E { A | B }\n\
+          fn main() {\n\
+         \    let e = E::A;\n\
+         \    match e {\n\
+         \        E::A => { let x = 1; println(x); }\n\
+         \        | E::B => { let x = 2; println(x); }\n\
+         \    }\n\
+          }\n");
+       true
+     with _ -> false);
 
   check "const-ptr: read through *const T emits `const T *`"
     "fn main() {\n\

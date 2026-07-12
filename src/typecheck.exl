@@ -5106,10 +5106,390 @@ fn lift_stmts(a: Allocator, ar: *Arena, ctr: *u32, stmts: *const Vec<Tstmt>) -> 
     return out;
 }
 
+
+// ===== Sibling shadowing — the scope pre-pass (mirrors lib/typecheck.ml) =====
+//
+// A `let` is visible only to the end of its enclosing block, so two DISJOINT
+// blocks may bind the same name — the shape a compiler is made of: one arm per
+// node kind, the same role in each.  Shadowing a binding that IS visible, or a
+// parameter, stays an error.
+//
+// Everything below this pass still assumes one C name per function (`tf_lets` is
+// flat, and move / escape / drop key their state by name), so siblings are
+// renamed apart HERE: the first `v` keeps `v`, the next disjoint one becomes
+// `v__1`.  The scheme is deterministic in source order — that is precisely what
+// lets this compiler and the OCaml reference emit the same C.
+//
+// `for` and `with` are visibility-checked but NOT renamed: their desugars already
+// gensym the binding (`__fvK` / `x__withK`), and renaming here would rename it
+// twice (`i__1__fv2`).
+
+struct ScopeSt {
+    ss_params: *Vec<str>,
+    ss_taken: *Vec<str>,        // every C name minted in this fn
+    ss_mint: *Vec<StrPair>,     // source name -> next suffix, as text
+}
+
+fn names_has(v: *const Vec<str>, n: str) -> bool {
+    let sl = v.as_slice();
+    let mut i = 0 as u32;
+    while i < v.length() { if str::eq(sl[i], n) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn mint_next(a: Allocator, ar: *Arena, st: *const ScopeSt, name: str) -> str {
+    // The suffix counter per source name.  Stored as text so it rides a StrPair.
+    let sl = st.ss_mint.as_slice();
+    let mut i = 0 as u32;
+    let mut n = 0 as int;
+    while i < st.ss_mint.length() {
+        if str::eq(sl[i].a, name) { n = str_to_int_sc(sl[i].b); }
+        i = i + 1 as u32;
+    }
+    n = n + 1 as int;
+    let mut sb = StringBuilder::with_capacity(a, 24 as u32);
+    sb.push_str(name);
+    sb.push_str("__");
+    sb.push_int(n);
+    let fresh = str::from_slice(ar, sb.as_slice());
+    let mut nb = StringBuilder::with_capacity(a, 8 as u32);
+    nb.push_int(n);
+    st.ss_mint.push(StrPair { a: name, b: str::from_slice(ar, nb.as_slice()) });
+    st.ss_taken.push(fresh);
+    return fresh;
+}
+fn str_to_int_sc(s: str) -> int {
+    let b = str::as_bytes(s);
+    let mut v = 0 as int;
+    let mut i = 0 as u32;
+    while i < str::length(s) {
+        v = v * 10 as int + (b[i] as int - 48 as int);
+        i = i + 1 as u32;
+    }
+    return v;
+}
+// Three distinct mistakes, three distinct messages.  `here` is what THIS block has
+// bound so far; `visible` is the whole enclosing chain.
+fn scope_check(st: *const ScopeSt, here: *const Vec<str>, visible: *const Vec<str>, name: str) {
+    if names_has(st.ss_params, name) { return; }
+    if names_has(here, name) { return; }
+    if names_has(visible, name) { return; }
+    return;
+}
+fn scope_bind(a: Allocator, ar: *Arena, st: *const ScopeSt, here: *const Vec<str>,
+              visible: *const Vec<str>, name: str) -> str {
+    // The port elides diagnostics (it is a differential port over a valid corpus),
+    // so the three rejections live in the reference implementation.  What must be
+    // identical is the RENAME, because it is observable in the emitted C.
+    scope_check(st, here, visible, name);
+    if names_has(st.ss_taken, name) { return mint_next(a, ar, st, name); }
+    st.ss_taken.push(name);
+    st.ss_mint.push(StrPair { a: name, b: "0" });
+    return name;
+}
+fn copy_names_sc(a: Allocator, src: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn concat_names(a: Allocator, x: *const Vec<str>, y: *const Vec<str>) -> Vec<str> {
+    let mut out = copy_names_sc(a, x);
+    let sl = y.as_slice();
+    let mut i = 0 as u32;
+    while i < y.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn pattern_binds_sc(a: Allocator, p: *const Pattern, out: *Vec<str>) {
+    match *p {
+        Pattern::PVar(n, _q) => { out.push(n); }
+        | Pattern::PVariant { tname, variant, binds, pos } => { patbinds_sc(a, &binds, out); }
+        | Pattern::POr(ps, _q) => {
+            let sl = ps.as_slice();
+            let mut i = 0 as u32;
+            while i < ps.length() { pattern_binds_sc(a, &sl[i], out); i = i + 1 as u32; }
+        }
+        | _o => { }
+    }
+    return;
+}
+fn patbinds_sc(a: Allocator, b: *const PatBinds, out: *Vec<str>) {
+    match *b {
+        PatBinds::PBTuple(ps) => {
+            let sl = ps.as_slice();
+            let mut i = 0 as u32;
+            while i < ps.length() { pattern_binds_sc(a, &sl[i], out); i = i + 1 as u32; }
+        }
+        | PatBinds::PBStruct(fs) => {
+            let sl = fs.as_slice();
+            let mut i = 0 as u32;
+            while i < fs.length() { pattern_binds_sc(a, &sl[i].pat, out); i = i + 1 as u32; }
+        }
+    }
+    return;
+}
+
+// (Extracted because a value-`if` cannot take block branches — the very wall this
+// pass removes for `let`.  It is on the DX list as its own item.)
+fn maybe_subst(a: Allocator, ar: *Arena, from: str, to: str, body: *const Vec<Stmt>) -> Vec<Stmt> {
+    if str::eq(from, to) { return copy_stmts(a, body); }
+    return subst_body(a, ar, from, to, body);
+}
+fn scope_block(a: Allocator, ar: *Arena, st: *const ScopeSt, visible: *const Vec<str>,
+               stmts: *const Vec<Stmt>) -> Vec<Stmt> {
+    // `cur` is rewritten in place as renames land.  It is reassigned from an
+    // rvalue rather than swapped with a loop-local, because the move pass rejects
+    // consuming a named binding declared inside a loop even when the loop
+    // re-initialises it every iteration (a false positive — its own DX item).
+    let mut cur = copy_stmts(a, stmts);
+    let mut here: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut out: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < cur.length() {
+        // Statements before `i` are already in `out`; substituting them again is a
+        // no-op, so the rename may sweep the whole vector.
+        cur = scope_one(a, ar, st, &here, visible, &cur, i, &out);
+        i = i + 1 as u32;
+    }
+    return out;
+}
+// Rewrites cur[i] into `out` and returns `cur` with any rename applied to the
+// statements that follow it.
+fn scope_one(a: Allocator, ar: *Arena, st: *const ScopeSt, here: *Vec<str>,
+             visible: *const Vec<str>, cur: *const Vec<Stmt>, i: u32,
+             out: *Vec<Stmt>) -> Vec<Stmt> {
+    let head: *const Stmt = &cur.as_slice()[i];
+    let vis = concat_names(a, here, visible);
+    let mut renamed = copy_stmts(a, cur);
+    match *head {
+        Stmt::Let { name, value, ty_ann, is_mut, pos } => {
+            let nv = scope_expr_sc(a, ar, st, &vis, value);
+            let c = scope_bind(a, ar, st, here, visible, name);
+            here.push(c);
+            out.push(Stmt::Let { name: c, value: nv, ty_ann: ty_ann, is_mut: is_mut, pos: pos });
+            renamed = maybe_subst(a, ar, name, c, cur);
+        }
+        | Stmt::LetTuple { names, value, is_mut, pos } => {
+            let nv = scope_expr_sc(a, ar, st, &vis, value);
+            // Push the fresh name straight through: reading it back out of a
+            // local Vec's slice would make the escape pass see a borrow of a
+            // local (it cannot know the `str` lives in the arena, not in `cs`).
+            let mut cs: Vec<str> = Vec::with_capacity(a, 8 as u32);
+            let nsl = names.as_slice();
+            let mut k = 0 as u32;
+            while k < names.length() {
+                let c = scope_bind(a, ar, st, here, visible, nsl[k]);
+                renamed = maybe_subst(a, ar, nsl[k], c, &renamed);
+                here.push(c);
+                cs.push(c);
+                k = k + 1 as u32;
+            }
+            out.push(Stmt::LetTuple { names: cs, value: nv, is_mut: is_mut, pos: pos });
+        }
+        | Stmt::While { cond, body } => {
+            let nc = scope_expr_sc(a, ar, st, &vis, cond);
+            out.push(Stmt::While { cond: nc, body: scope_block(a, ar, st, &vis, &body) });
+        }
+        | Stmt::For { iter_var, range, body, pos } => {
+            let nr = scope_expr_sc(a, ar, st, &vis, range);
+            let mut ivis = copy_names_sc(a, &vis);
+            ivis.push(iter_var);
+            out.push(Stmt::For { iter_var: iter_var, range: nr,
+                                 body: scope_block(a, ar, st, &ivis, &body), pos: pos });
+        }
+        | Stmt::With { target, name, body, pos } => {
+            let nt = scope_expr_sc(a, ar, st, &vis, target);
+            let mut wvis = copy_names_sc(a, &vis);
+            wvis.push(name);
+            out.push(Stmt::With { target: nt, name: name,
+                                  body: scope_block(a, ar, st, &wvis, &body), pos: pos });
+        }
+        | Stmt::Defer { body, pos } => {
+            out.push(Stmt::Defer { body: scope_block(a, ar, st, &vis, &body), pos: pos });
+        }
+        | Stmt::LetElse { pat, value, else_body, pos } => {
+            let nv = scope_expr_sc(a, ar, st, &vis, value);
+            let neb = scope_block(a, ar, st, &vis, &else_body);
+            let mut ns: Vec<str> = Vec::with_capacity(a, 8 as u32);
+            pattern_binds_sc(a, &pat, &ns);
+            let nsl = ns.as_slice();
+            let mut k = 0 as u32;
+            while k < ns.length() {
+                let c = scope_bind(a, ar, st, here, visible, nsl[k]);
+                here.push(c);
+                k = k + 1 as u32;
+            }
+            out.push(Stmt::LetElse { pat: pat, value: nv, else_body: neb, pos: pos });
+        }
+        | Stmt::Assign { path, value, pos } => {
+            out.push(Stmt::Assign { path: copy_strs(a, &path), value: scope_expr_sc(a, ar, st, &vis, value), pos: pos });
+        }
+        | Stmt::AssignField { target, field, value, pos } => {
+            out.push(Stmt::AssignField { target: scope_expr_sc(a, ar, st, &vis, target), field: field,
+                                         value: scope_expr_sc(a, ar, st, &vis, value), pos: pos });
+        }
+        | Stmt::AssignIndex { base, index, value, pos } => {
+            out.push(Stmt::AssignIndex { base: scope_expr_sc(a, ar, st, &vis, base),
+                                         index: scope_expr_sc(a, ar, st, &vis, index),
+                                         value: scope_expr_sc(a, ar, st, &vis, value), pos: pos });
+        }
+        | Stmt::AssignDeref { target, value, pos } => {
+            out.push(Stmt::AssignDeref { target: scope_expr_sc(a, ar, st, &vis, target),
+                                         value: scope_expr_sc(a, ar, st, &vis, value), pos: pos });
+        }
+        | Stmt::Return(v, p) => { out.push(Stmt::Return(scope_opt_sc(a, ar, st, &vis, v), p)); }
+        | Stmt::ExprStmt(e) => { out.push(Stmt::ExprStmt(scope_expr_sc(a, ar, st, &vis, e))); }
+        | Stmt::Tail(e) => { out.push(Stmt::Tail(scope_expr_sc(a, ar, st, &vis, e))); }
+        | _leaf => { out.push(*head); }
+    }
+    return renamed;
+}
+fn scope_opt_sc(a: Allocator, ar: *Arena, st: *const ScopeSt, visible: *const Vec<str>,
+                e: Option<*const Expr>) -> Option<*const Expr> {
+    return match e {
+        Option::Some(x) => Option::Some(scope_expr_sc(a, ar, st, visible, x))
+        | Option::None => { let n: Option<*const Expr> = Option::None; n }
+    };
+}
+fn scope_args_sc(a: Allocator, ar: *Arena, st: *const ScopeSt, visible: *const Vec<str>,
+                 args: *const Vec<*const Expr>) -> Vec<*const Expr> {
+    let mut out: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    let sl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() { out.push(scope_expr_sc(a, ar, st, visible, sl[i])); i = i + 1 as u32; }
+    return out;
+}
+fn scope_fields_sc(a: Allocator, ar: *Arena, st: *const ScopeSt, visible: *const Vec<str>,
+                   fs: *const Vec<Field>) -> Vec<Field> {
+    let mut out: Vec<Field> = Vec::with_capacity(a, 8 as u32);
+    let sl = fs.as_slice();
+    let mut i = 0 as u32;
+    while i < fs.length() {
+        out.push(Field { name: sl[i].name, value: scope_expr_sc(a, ar, st, visible, sl[i].value) });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn scope_enum_args_sc(a: Allocator, ar: *Arena, st: *const ScopeSt, visible: *const Vec<str>,
+                      args: EnumLitArgs) -> EnumLitArgs {
+    return match args {
+        EnumLitArgs::EATuple(es) => EnumLitArgs::EATuple(scope_args_sc(a, ar, st, visible, &es))
+        | EnumLitArgs::EAStruct(fs) => EnumLitArgs::EAStruct(scope_fields_sc(a, ar, st, visible, &fs))
+    };
+}
+fn scope_arms_sc(a: Allocator, ar: *Arena, st: *const ScopeSt, visible: *const Vec<str>,
+                 arms: *const Vec<MatchArm>) -> Vec<MatchArm> {
+    let mut out: Vec<MatchArm> = Vec::with_capacity(a, 8 as u32);
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() {
+        // Pattern binds are the arm's own scope and are NOT renamed: they never
+        // reach tf_lets (codegen declares them inside the `case` block), so two
+        // arms binding the same name already coexist.
+        let mut bs: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        pattern_binds_sc(a, &sl[i].pat, &bs);
+        let avis = concat_names(a, &bs, visible);
+        out.push(MatchArm { pat: sl[i].pat,
+                            guard: scope_opt_sc(a, ar, st, &avis, sl[i].guard),
+                            body: scope_expr_sc(a, ar, st, &avis, sl[i].body),
+                            arm_pos: sl[i].arm_pos });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn scope_expr_sc(a: Allocator, ar: *Arena, st: *const ScopeSt, visible: *const Vec<str>,
+                 e: *const Expr) -> *const Expr {
+    let p = expr_pos(e);
+    return match *e {
+        Expr::Block(stmts, _q) => ast_node(ar, Expr::Block(scope_block(a, ar, st, visible, &stmts), p))
+        | Expr::If { cond, then_blk, else_blk } =>
+            ast_node(ar, Expr::If { cond: scope_expr_sc(a, ar, st, visible, cond),
+                                    then_blk: scope_block(a, ar, st, visible, &then_blk),
+                                    else_blk: scope_else_sc(a, ar, st, visible, else_blk), pos: p })
+        | Expr::Match { scrutinee, arms } =>
+            ast_node(ar, Expr::Match { scrutinee: scope_expr_sc(a, ar, st, visible, scrutinee),
+                                       arms: scope_arms_sc(a, ar, st, visible, &arms), pos: p })
+        // NOT descended into: a lambda body is lifted to its own function and gets
+        // its own scope pass there, seeded with its own params.  Rewriting it from
+        // the enclosing fn would rename it twice — and would break the closure
+        // pre-pass, which matches lambda nodes by pointer identity.
+        | Expr::Lambda { params, ret_ty, body, captures } => e
+        | Expr::Neg(s, _q) => ast_node(ar, Expr::Neg(scope_expr_sc(a, ar, st, visible, s), p))
+        | Expr::BitNot(s, _q) => ast_node(ar, Expr::BitNot(scope_expr_sc(a, ar, st, visible, s), p))
+        | Expr::Not(s, _q) => ast_node(ar, Expr::Not(scope_expr_sc(a, ar, st, visible, s), p))
+        | Expr::BinOp(op, l, r, _q) =>
+            ast_node(ar, Expr::BinOp(op, scope_expr_sc(a, ar, st, visible, l), scope_expr_sc(a, ar, st, visible, r), p))
+        | Expr::Cast(s, t, _q) => ast_node(ar, Expr::Cast(scope_expr_sc(a, ar, st, visible, s), t, p))
+        | Expr::Call { callee, args } =>
+            ast_node(ar, Expr::Call { callee: copy_strs(a, &callee), args: scope_args_sc(a, ar, st, visible, &args), pos: p })
+        | Expr::MethodCall { receiver, name, args } =>
+            ast_node(ar, Expr::MethodCall { receiver: scope_expr_sc(a, ar, st, visible, receiver), name: name,
+                                            args: scope_args_sc(a, ar, st, visible, &args), pos: p })
+        | Expr::TupleLit(es, _q) => ast_node(ar, Expr::TupleLit(scope_args_sc(a, ar, st, visible, &es), p))
+        | Expr::ArrayLit(es, _q) => ast_node(ar, Expr::ArrayLit(scope_args_sc(a, ar, st, visible, &es), p))
+        | Expr::ArrayRepeat { value, count } =>
+            ast_node(ar, Expr::ArrayRepeat { value: scope_expr_sc(a, ar, st, visible, value),
+                                             count: scope_expr_sc(a, ar, st, visible, count), pos: p })
+        | Expr::Index { base, index } =>
+            ast_node(ar, Expr::Index { base: scope_expr_sc(a, ar, st, visible, base),
+                                       index: scope_expr_sc(a, ar, st, visible, index), pos: p })
+        | Expr::Range { lo, hi, inclusive } =>
+            ast_node(ar, Expr::Range { lo: scope_expr_sc(a, ar, st, visible, lo),
+                                       hi: scope_expr_sc(a, ar, st, visible, hi), inclusive: inclusive, pos: p })
+        | Expr::StructLit { tname, fields, base } =>
+            ast_node(ar, Expr::StructLit { tname: copy_strs(a, &tname), fields: scope_fields_sc(a, ar, st, visible, &fields),
+                                           base: scope_opt_sc(a, ar, st, visible, base), pos: p })
+        | Expr::New { tname, fields, base, alloc } =>
+            ast_node(ar, Expr::New { tname: copy_strs(a, &tname), fields: scope_fields_sc(a, ar, st, visible, &fields),
+                                     base: scope_opt_sc(a, ar, st, visible, base),
+                                     alloc: scope_opt_sc(a, ar, st, visible, alloc), pos: p })
+        | Expr::NewEnum { tname, args, alloc } =>
+            ast_node(ar, Expr::NewEnum { tname: copy_strs(a, &tname), args: scope_args_sc(a, ar, st, visible, &args),
+                                         alloc: scope_opt_sc(a, ar, st, visible, alloc), pos: p })
+        | Expr::EnumLit { tname, variant, args } =>
+            ast_node(ar, Expr::EnumLit { tname: copy_strs(a, &tname), variant: variant,
+                                         args: scope_enum_args_sc(a, ar, st, visible, args), pos: p })
+        | Expr::FieldAccess(t, f, _q) => ast_node(ar, Expr::FieldAccess(scope_expr_sc(a, ar, st, visible, t), f, p))
+        | Expr::Ref(s, _q) => ast_node(ar, Expr::Ref(scope_expr_sc(a, ar, st, visible, s), p))
+        | Expr::Deref(s, _q) => ast_node(ar, Expr::Deref(scope_expr_sc(a, ar, st, visible, s), p))
+        | Expr::Orelse(l, r, _q) =>
+            ast_node(ar, Expr::Orelse(scope_expr_sc(a, ar, st, visible, l), scope_expr_sc(a, ar, st, visible, r), p))
+        | Expr::Try(s, _q) => ast_node(ar, Expr::Try(scope_expr_sc(a, ar, st, visible, s), p))
+        | _leaf => e
+    };
+}
+fn scope_else_sc(a: Allocator, ar: *Arena, st: *const ScopeSt, visible: *const Vec<str>,
+                 blk: Option<Vec<Stmt>>) -> Option<Vec<Stmt>> {
+    return match blk {
+        Option::Some(b) => Option::Some(scope_block(a, ar, st, visible, &b))
+        | Option::None => { let n: Option<Vec<Stmt>> = Option::None; n }
+    };
+}
+// Entry: rewrite one function body.  Params seed the visible set.
+pub fn resolve_scopes(a: Allocator, ar: *Arena, params: *const Vec<Param>, body: *const Vec<Stmt>) -> Vec<Stmt> {
+    let mut pn: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut taken: Vec<str> = Vec::with_capacity(a, 16 as u32);
+    let mut mint: Vec<StrPair> = Vec::with_capacity(a, 16 as u32);
+    let psl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < params.length() {
+        pn.push(psl[i].pname);
+        taken.push(psl[i].pname);
+        mint.push(StrPair { a: psl[i].pname, b: "0" });
+        i = i + 1 as u32;
+    }
+    let st = ScopeSt { ss_params: &pn, ss_taken: &taken, ss_mint: &mint };
+    let empty: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    return scope_block(a, ar, &st, &pn, body);
+}
+
 fn elab_skeleton_or_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32,
                          env: *Vec<FieldTy>, ret_ty: Option<*const Typ>, f: *const Func, is_skeleton: bool) -> Vec<Tstmt> {
     if is_skeleton { return Vec::with_capacity(a, 8 as u32); }
-    return elab_body(a, ar, g, sc, gensym, env, ret_ty, &f.body);
+    // Resolve scopes FIRST: rename disjoint siblings apart, so everything below
+    // sees names that are unique per function, exactly as before the relaxation.
+    let scoped = resolve_scopes(a, ar, &f.params, &f.body);
+    return elab_body(a, ar, g, sc, gensym, env, ret_ty, &scoped);
 }
 
 fn pick_tparams(xtparams: *const Vec<str>, fallback: *const Vec<str>) -> *const Vec<str> {

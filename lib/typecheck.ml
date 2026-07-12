@@ -371,6 +371,268 @@ and subst_var_stmt ~from ~to_ (s : Ast.stmt) : Ast.stmt =
       Ast.With { target = sub target; name; body = sub_block body; pos }
   | Ast.Break _ | Ast.Continue _ -> s
 
+(* ===== Sibling shadowing — the scope pre-pass (2026-07-12) =====
+
+   A `let` is visible only to the end of its enclosing block, so two DISJOINT
+   blocks may bind the same name.  That is the shape a compiler is made of: one
+   arm per node kind, the same role in each.  Before this, the rule was one name
+   per FUNCTION, which forced `cn` / `cne` / `sl` / `ssl` / `esl` — names that
+   say "the second one" rather than what they hold.
+
+   The language was already inconsistent with itself here: a match-arm PATTERN
+   bind (`E::A(x)` / `E::B(x)`) could repeat across arms — codegen emits it as a
+   block-scoped C declaration inside each `case` — while a `let x` in those same
+   two arms could not.
+
+   Shadowing a binding that IS visible, or a parameter, stays an error.  The
+   invariant a reader relies on holds: along any path you can actually execute,
+   a name means one thing.
+
+   Everything below this pass still assumes one C name per function — `tf_lets`
+   is flat (the C89 hoist), and move / escape / drop key their state by name — so
+   siblings are renamed apart HERE, and nothing downstream learns about scopes.
+   The first `v` keeps `v`; the next disjoint one becomes `v__1`.  The scheme is
+   deterministic in source order, which is what lets the self-hosted compiler and
+   this one emit the same C. *)
+
+let rec subst_pat_name (p : Ast.pattern) ~from ~to_ : Ast.pattern =
+  let go p = subst_pat_name p ~from ~to_ in
+  match p with
+  | Ast.PVar (n, pos) when n = from -> Ast.PVar (to_, pos)
+  | Ast.PVariant { tname; variant; binds; pos } ->
+      let binds = match binds with
+        | Ast.PBTuple ps -> Ast.PBTuple (List.map go ps)
+        | Ast.PBStruct fs -> Ast.PBStruct (List.map (fun (f, p) -> (f, go p)) fs)
+      in
+      Ast.PVariant { tname; variant; binds; pos }
+  | Ast.POr (ps, pos) -> Ast.POr (List.map go ps, pos)
+  | Ast.PVar _ | Ast.PWildcard _ | Ast.PLit _ | Ast.PBool _ -> p
+
+let rec pattern_binds (p : Ast.pattern) : string list =
+  match p with
+  | Ast.PVar (n, _) -> [ n ]
+  | Ast.PVariant { binds; _ } ->
+      (match binds with
+       | Ast.PBTuple ps -> List.concat_map pattern_binds ps
+       | Ast.PBStruct fs -> List.concat_map (fun (_, p) -> pattern_binds p) fs)
+  | Ast.POr (ps, _) -> List.concat_map pattern_binds ps
+  | Ast.PWildcard _ | Ast.PLit _ | Ast.PBool _ -> []
+
+(* Per-function state: which C names are already spoken for, and how many
+   variants of a given source name have been minted. *)
+type scope_st = {
+  params : string list;                 (* kept apart: they get their own message *)
+  mutable taken : string list;          (* every C name minted in this fn *)
+  mutable mint : (string * int) list;   (* source name -> next suffix *)
+}
+
+let fresh_c_name st name =
+  let n = try List.assoc name st.mint with Not_found -> 0 in
+  let n = n + 1 in
+  st.mint <- (name, n) :: List.remove_assoc name st.mint;
+  let candidate = Printf.sprintf "%s__%d" name n in
+  st.taken <- candidate :: st.taken;
+  candidate
+
+(* Bind [name] in the scope that is being walked.  Returns the C name to use.
+   [visible] is the enclosing scope chain (params included). *)
+(* Three distinct mistakes, three distinct messages — they used to be one.
+   [here] is what THIS block has bound so far; [visible] is the whole chain. *)
+let check_not_visible st ~here ~visible name pos =
+  if List.mem name st.params then
+    Error.failf pos "variable '%s' shadows a parameter" name;
+  if List.mem name here then
+    Error.failf pos "variable '%s' already declared in this scope" name;
+  if List.mem name visible then
+    Error.failf pos
+      "variable '%s' shadows a binding that is still visible here — two \
+       DISJOINT blocks may reuse a name, but this one is nested inside the \
+       binding it would hide"
+      name
+
+let bind_name st ~here ~visible name pos =
+  check_not_visible st ~here ~visible name pos;
+  if List.mem name st.taken then fresh_c_name st name
+  else begin
+    st.taken <- name :: st.taken;
+    st.mint <- (name, 0) :: List.remove_assoc name st.mint;
+    name
+  end
+
+let rec scope_block st ~visible (stmts : Ast.stmt list) : Ast.stmt list =
+  scope_stmts st ~here:[] ~visible stmts
+
+and scope_stmts st ~here ~visible (stmts : Ast.stmt list) : Ast.stmt list =
+  match stmts with
+  | [] -> []
+  | s :: rest ->
+      let (s', here', rest) = scope_stmt st ~here ~visible s rest in
+      s' :: scope_stmts st ~here:here' ~visible rest
+
+(* Returns the rewritten statement, the visible set for the REST of this block,
+   and the rest (already substituted if this statement renamed a binding). *)
+and scope_stmt st ~here ~visible (s : Ast.stmt) (rest : Ast.stmt list)
+    : Ast.stmt * string list * Ast.stmt list =
+  let visible = here @ visible in
+  (* A binder renames -> every use of the old name in the remainder of THIS
+     block refers to it (shadowing a visible name is rejected above, so nothing
+     else in this block can mean the old name). *)
+  let rename_rest from to_ rest =
+    if from = to_ then rest
+    else List.map (subst_var_stmt ~from ~to_:to_) rest
+  in
+  match s with
+  | Ast.Let { name; value; ty_ann; is_mut; pos } ->
+      let value = scope_expr st ~visible value in
+      let c = bind_name st ~here ~visible name pos in
+      let rest = rename_rest name c rest in
+      (Ast.Let { name = c; value; ty_ann; is_mut; pos }, c :: here, rest)
+  | Ast.LetTuple { names; value; is_mut; pos } ->
+      let value = scope_expr st ~visible value in
+      (* The names of ONE destructure bind simultaneously in the same scope — a
+         repeat is a duplicate, not a disjoint sibling.  Caught here so the
+         dedicated message survives the rename pass. *)
+      List.iteri (fun i n ->
+        if List.exists (fun m -> m = n) (List.filteri (fun j _ -> j < i) names)
+        then Error.failf pos "duplicate name '%s' in 'let (...)'" n)
+        names;
+      let cs = List.map (fun n -> bind_name st ~here ~visible n pos) names in
+      let rest =
+        List.fold_left2 (fun r n c -> rename_rest n c r) rest names cs in
+      (Ast.LetTuple { names = cs; value; is_mut; pos }, cs @ here, rest)
+  | Ast.LetElse { pat; value; else_body; pos } ->
+      let value = scope_expr st ~visible value in
+      (* The else-block diverges and sees the pre-binding scope. *)
+      let else_body = scope_block st ~visible else_body in
+      let ns = pattern_binds pat in
+      let cs = List.map (fun n -> bind_name st ~here ~visible n pos) ns in
+      let rest =
+        List.fold_left2 (fun r n c -> rename_rest n c r) rest ns cs in
+      let pat =
+        List.fold_left2 (fun p n c -> subst_pat_name p ~from:n ~to_:c) pat ns cs in
+      (Ast.LetElse { pat; value; else_body; pos }, cs @ here, rest)
+  | Ast.For { var; range; body; pos } ->
+      let range = scope_expr st ~visible range in
+      (* The counter is scoped to the loop body, and the `for` desugar already
+         gensyms it (`__fvK`) — so check visibility, but do NOT mint a name here
+         or it would be renamed twice (`i__1__fv2`). *)
+      check_not_visible st ~here ~visible var pos;
+      let body = scope_block st ~visible:(var :: visible) body in
+      (Ast.For { var; range; body; pos }, here, rest)
+  | Ast.While { cond; body } ->
+      let cond = scope_expr st ~visible cond in
+      (Ast.While { cond; body = scope_block st ~visible body }, here, rest)
+  | Ast.Defer { body; pos } ->
+      (Ast.Defer { body = scope_block st ~visible body; pos }, here, rest)
+  | Ast.With { target; name; body; pos } ->
+      let target = scope_expr st ~visible target in
+      (* Same as `for`: the projection desugar gensyms the binding (`x__withK`). *)
+      check_not_visible st ~here ~visible name pos;
+      let body = scope_block st ~visible:(name :: visible) body in
+      (Ast.With { target; name; body; pos }, here, rest)
+  | Ast.Assign { path; value; pos } ->
+      (Ast.Assign { path; value = scope_expr st ~visible value; pos }, here, rest)
+  | Ast.AssignField { target; field; value; pos } ->
+      (Ast.AssignField { target = scope_expr st ~visible target; field;
+                         value = scope_expr st ~visible value; pos }, here, rest)
+  | Ast.AssignIndex { base; index; value; pos } ->
+      (Ast.AssignIndex { base = scope_expr st ~visible base;
+                         index = scope_expr st ~visible index;
+                         value = scope_expr st ~visible value; pos }, here, rest)
+  | Ast.AssignDeref { target; value; pos } ->
+      (Ast.AssignDeref { target = scope_expr st ~visible target;
+                         value = scope_expr st ~visible value; pos }, here, rest)
+  | Ast.Return (e, pos) ->
+      (Ast.Return ((match e with None -> None | Some e -> Some (scope_expr st ~visible e)), pos),
+       visible, rest)
+  | Ast.ExprStmt e -> (Ast.ExprStmt (scope_expr st ~visible e), here, rest)
+  | Ast.Tail e -> (Ast.Tail (scope_expr st ~visible e), here, rest)
+  | Ast.Break _ | Ast.Continue _ -> (s, here, rest)
+
+and scope_expr st ~visible (e : Ast.expr) : Ast.expr =
+  let go = scope_expr st ~visible in
+  let goo = function None -> None | Some e -> Some (go e) in
+  match e with
+  | Ast.Block (stmts, p) -> Ast.Block (scope_block st ~visible stmts, p)
+  | Ast.If { cond; then_blk; else_blk; pos } ->
+      (* Sequenced with `let`, NOT built as a record in one go: OCaml leaves the
+         evaluation order of record fields unspecified (in practice right-to-left),
+         which would scope the ELSE branch first and hand it the unsuffixed name.
+         The rename must follow SOURCE order, or this compiler and the self-hosted
+         one mint different names for the same program. *)
+      let cond = go cond in
+      let then_blk = scope_block st ~visible then_blk in
+      let else_blk =
+        match else_blk with
+        | None -> None
+        | Some b -> Some (scope_block st ~visible b)
+      in
+      Ast.If { cond; then_blk; else_blk; pos }
+  | Ast.Match { scrutinee; arms; pos } ->
+      let arms =
+        List.map (fun (a : Ast.match_arm) ->
+          (* Pattern binds are the arm's own scope.  They are NOT renamed: they
+             never reach `tf_lets` — codegen declares them inside the `case`
+             block — so two arms binding the same name already coexist. *)
+          let bs = pattern_binds a.pat in
+          let visible = bs @ visible in
+          { a with guard = (match a.guard with
+                            | None -> None
+                            | Some g -> Some (scope_expr st ~visible g));
+                   body = scope_expr st ~visible a.body })
+          arms
+      in
+      Ast.Match { scrutinee = go scrutinee; arms; pos }
+  | Ast.Lambda _ ->
+      (* NOT descended into.  A lambda body is lifted to its own function and gets
+         its own `elab_body` — hence its own scope pass, seeded with its own
+         params.  Rewriting it from the enclosing function would rename it twice,
+         and (in the self-hosted compiler) would also break the closure pre-pass,
+         which matches lambda nodes by identity. *)
+      e
+  | Ast.Neg (s, p) -> Ast.Neg (go s, p)
+  | Ast.BitNot (s, p) -> Ast.BitNot (go s, p)
+  | Ast.Not (s, p) -> Ast.Not (go s, p)
+  | Ast.BinOp (op, l, r, p) -> Ast.BinOp (op, go l, go r, p)
+  | Ast.Cast (s, t, p) -> Ast.Cast (go s, t, p)
+  | Ast.Call { callee; args; pos } -> Ast.Call { callee; args = List.map go args; pos }
+  | Ast.MethodCall { receiver; name; args; pos } ->
+      Ast.MethodCall { receiver = go receiver; name; args = List.map go args; pos }
+  | Ast.TupleLit (es, p) -> Ast.TupleLit (List.map go es, p)
+  | Ast.ArrayLit (es, p) -> Ast.ArrayLit (List.map go es, p)
+  | Ast.ArrayRepeat { value; count; pos } ->
+      Ast.ArrayRepeat { value = go value; count = go count; pos }
+  | Ast.Index { base; index; pos } -> Ast.Index { base = go base; index = go index; pos }
+  | Ast.Range { lo; hi; inclusive; pos } ->
+      Ast.Range { lo = go lo; hi = go hi; inclusive; pos }
+  | Ast.StructLit { tname; fields; base; pos } ->
+      Ast.StructLit { tname; fields = List.map (fun (n, e) -> (n, go e)) fields;
+                      base = goo base; pos }
+  | Ast.New { tname; fields; base; alloc; pos } ->
+      Ast.New { tname; fields = List.map (fun (n, e) -> (n, go e)) fields;
+                base = goo base; alloc = goo alloc; pos }
+  | Ast.NewEnum { tname; args; alloc; pos } ->
+      Ast.NewEnum { tname; args = List.map go args; alloc = goo alloc; pos }
+  | Ast.EnumLit { tname; variant; args; pos } ->
+      let args = match args with
+        | Ast.EATuple es -> Ast.EATuple (List.map go es)
+        | Ast.EAStruct fs -> Ast.EAStruct (List.map (fun (n, e) -> (n, go e)) fs)
+      in
+      Ast.EnumLit { tname; variant; args; pos }
+  | Ast.FieldAccess (e, n, p) -> Ast.FieldAccess (go e, n, p)
+  | Ast.Ref (e, p) -> Ast.Ref (go e, p)
+  | Ast.Deref (e, p) -> Ast.Deref (go e, p)
+  | Ast.Orelse (a, b, p) -> Ast.Orelse (go a, go b, p)
+  | Ast.Try (e, p) -> Ast.Try (go e, p)
+  | Ast.IntLit _ | Ast.FloatLit _ | Ast.BoolLit _ | Ast.StringLit _
+  | Ast.NullLit _ | Ast.Var _ | Ast.SizeOf _ -> e
+
+(* Entry: rewrite one function body.  [params] seeds the visible set, so a `let`
+   shadowing a parameter is still rejected. *)
+let resolve_scopes ~(params : string list) (body : Ast.stmt list) : Ast.stmt list =
+  let st = { params; taken = params; mint = List.map (fun p -> (p, 0)) params } in
+  scope_block st ~visible:params body
+
 let lookup_const ctx path =
   walk_scope_up ctx path ~resolve:(fun mod_path name ->
     List.find_map
@@ -4157,6 +4419,10 @@ let rec elab_expr ?(allow_void = false) ?expected ctx env e : texpr =
 let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
     ?(mut_params = []) ctx param_env stmts
     : (string * typ) list * tstmt list =
+  (* Resolve scopes FIRST: reject shadowing of a visible binding / a parameter,
+     and rename disjoint siblings apart.  Everything below this line sees names
+     that are unique per function, exactly as before the rule was relaxed. *)
+  let stmts = resolve_scopes ~params:(List.map fst param_env) stmts in
   let decls = ref [] in
   (* Loop nesting depth — `break` / `continue` are legal only when > 0.
      Bumped around `while` / `for` / `loop` bodies as they are walked. *)
@@ -4688,7 +4954,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         incr loop_depth;
         let (_, tbody) = walk env body in
         decr loop_depth;
-        (List.rev !decls @ env,
+        (env,
          TWhile { cond = tcond; body = tbody; post = [] })
     | Ast.Break bpos ->
         if !loop_depth = 0 then
@@ -4763,7 +5029,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
           incr loop_depth;
           let (_, match_tstmt) = elab_stmt_position it_env match_ast in
           decr loop_depth;
-          (List.rev !decls @ env,
+          (env,
            TForEach { it_var; it_init = trange; body = [ match_tstmt ]; pos })
         end else begin
         let counter = Printf.sprintf "__fv%d" k in
@@ -4867,7 +5133,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         incr loop_depth;
         let (_, tbody) = walk body_env renamed_body in
         decr loop_depth;
-        (List.rev !decls @ env,
+        (env,
          TFor { counter; end_var; range_temp; lo = tlo; hi = thi;
                 inclusive; body = tbody; pos })
         end
@@ -4948,7 +5214,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
         let tcond = elab_expr ctx env cond in
         let (_, t_then) = walk env then_blk in
         let (_, t_else) = walk env (Option.value ~default:[] else_blk) in
-        (List.rev !decls @ env,
+        (env,
          TIf { cond = tcond; then_body = t_then; else_body = t_else })
     | _ ->
         let tvalue = elab_expr ~allow_void:true ctx env e in

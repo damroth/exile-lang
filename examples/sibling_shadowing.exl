@@ -1,0 +1,67 @@
+// Sibling shadowing — the same name in two DISJOINT blocks.
+//
+// A `let` is visible only to the end of the block it sits in.  Two blocks that
+// can never both be entered — two match arms, two loops, the branches of an
+// `if` — are disjoint, so each may bind the same name.  This is the shape a
+// compiler is made of: one arm per node kind, the same role in each.
+//
+// What is still an error, and why: shadowing a binding that IS visible.  The
+// invariant a reader relies on holds — along any path you can actually execute,
+// a name means one thing.  (`let x = 1; if b { let x = 2; }` is rejected: that
+// second `x` is nested inside the first, not disjoint from it.)
+//
+// Under the hood the C89 hoist still wants one name per function, so the
+// compiler renames disjoint siblings apart: the first `v` stays `v`, the next
+// becomes `v__1`.  That is invisible in exile and visible in the emitted C.
+
+enum Shape {
+    Circle(int)
+    | Square(int)
+}
+
+// Two arms, the same `v` — each arm is its own block.
+fn area(s: Shape) -> int {
+    return match s {
+        Shape::Circle(r) => { let v = 3 * r * r; v }
+        | Shape::Square(w) => { let v = w * w; v }
+    };
+}
+
+// Two loops, the same `step` — neither loop's body outlives itself.
+fn weighted(n: int) -> int {
+    let mut total = 0;
+    let mut i = 0;
+    while i < n {
+        let step = i * 2;
+        total = total + step;
+        i = i + 1;
+    }
+    let mut j = 0;
+    while j < n {
+        let step = j * 3;
+        total = total + step;
+        j = j + 1;
+    }
+    return total;
+}
+
+// Both branches of an `if` are disjoint too.
+fn pick(b: bool) -> int {
+    let mut out = 0;
+    if b {
+        let chosen = 10;
+        out = chosen;
+    } else {
+        let chosen = 20;
+        out = chosen;
+    }
+    return out;
+}
+
+fn main() {
+    println(area(Shape::Circle(2)));    // 12
+    println(area(Shape::Square(4)));    // 16
+    println(weighted(3));               // 6 + 9 = 15
+    println(pick(true));                // 10
+    println(pick(false));               // 20
+}
