@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-07-12
+
+**exile-lang compiles itself.** `src/` is the exile compiler written in exile:
+lexer, parser, typechecker, move pass, escape pass, drop pass, codegen. It is
+self-hosted in the strict sense, and the claim is a gate rather than a story —
+`make bootstrap-fixpoint` builds the port with the OCaml compiler, has it emit C
+for its own source, compiles *that*, and has the result emit C for the same
+source again. The two outputs are byte-identical (50 681 lines, zero diff). A
+non-empty diff fails the build.
+
+The second claim is just as checkable: across all 89 examples, the C emitted by
+the exile compiler is byte-identical to the C emitted by the OCaml reference —
+whole-file, not modulo whitespace. Every intermediate layer is diffed too
+(tokens, AST, typed IR, post-drop IR), including the diagnostics of passes that
+emit no code: `make selfhost-verify` runs the lot, and CI runs it on every push.
+
+That is what 1.0 asserts. It does not assert the OCaml compiler is retired — it
+is not. The port reproduces the *transformation* on valid input; it does not yet
+carry the typechecker's diagnostics, so the reference implementation remains the
+compiler you hand a broken program to. Closing that gap is the next arc, and
+until it closes the two compilers ship together, with the reference as the
+oracle every gate above measures against.
+
+### Added
+- **A self-hosted exile compiler** in `src/` (~10 000 lines of exile), covering
+  the full pipeline: `lex -> parse -> typecheck -> move -> escape -> drop -> codegen`
+- `make bootstrap-fixpoint` — the self-host proof as a build gate: the compiler
+  built by the compiler must emit byte-identical C for its own source
+- `make selfhost-verify` — every differential gate in one target (fixpoint,
+  tokens, lexer errors, AST, parser errors, typed IR, post-drop IR, escape
+  diagnostics), wired into CI
+- Boolean literal patterns: `true` and `false` are pattern atoms, matchable
+  against a `bool` scrutinee. `true | false` is exhaustive without a catch-all
+  (see 0.11.6 below)
+- `str::from_slice(arena, slice)` — the string-interning primitive: copy a
+  `Slice<u8>` into an arena as a NUL-terminated `str`. A tokenizer holds
+  identifiers as slices of its source buffer and materialises each one once
+- `examples/bool_match.exl`, `examples/str_from_slice.exl`
+
+### Changed
+- The compiler source moved out of `examples/selfhost/` into `src/`. `examples/`
+  is the language's example catalogue again; the compiler is not an example
+- `docs/exile-by-example.md` no longer teaches a hand-written `free_tree` for
+  owned recursive types — the drop glue is synthesized. A linear spine (a list)
+  is torn down with a loop, so it costs constant stack however long it grows; a
+  genuine tree keeps the recursive form and its depth lives on the C stack
+
+### Fixed
+- **Escape pass**: a param beyond the summary bitmask's width degraded to
+  `Unknown`, which projects to "every param may carry the return" — so a
+  `&local` passed at an unrelated position poisoned the result of a function that
+  never returns it, and the pass rejected valid code. The high bit now saturates
+  ("some param at or past 31") and the call site meets over the tail arguments
+  only, keeping the imprecision where the unrepresentable index actually lives
+- **Move / drop**: owned-transfer consume parity across `let` and reassignment;
+  an owned RHS of a field / deref / index assignment is now consumed; a
+  reassignment drops the old value *after* the RHS is evaluated, not before
+- **Lift**: `if`-expression branches lift per-branch, so a block-shaped call
+  argument hoists correctly instead of tripping an internal error
+
 ## [0.11.6] - 2026-06-15
 
 Boolean literal patterns (GATE-5b) extend the literal-pattern family from
@@ -821,4 +881,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[0.11.6]: https://github.com/damroth/exile-lang/releases/tag/v0.11.6
+[1.0.0]: https://github.com/damroth/exile-lang/releases/tag/v1.0.0
