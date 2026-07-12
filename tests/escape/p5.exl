@@ -1,0 +1,5 @@
+fn make() -> *int {
+    let mut x: int = 7;
+    return &x;
+}
+fn main() { let _p = make(); println(0); }

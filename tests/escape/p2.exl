@@ -1,0 +1,6 @@
+struct Box { p: *const int }
+fn make(al: Allocator) -> own *Box {
+    let x: int = 7;
+    return new(al) Box { p: &x };
+}
+fn main() { let al = default_allocator(); let _b = make(al); println(0); }

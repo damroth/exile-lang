@@ -1,0 +1,11 @@
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn stash(v: *Vec<*int>) {
+    let mut x: int = 7;
+    v.push(&x);
+}
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut v: Vec<*int> = Vec::with_capacity(a, 4 as u32);
+    stash(&v);
+    println(0);
+}

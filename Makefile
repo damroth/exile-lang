@@ -106,29 +106,29 @@ host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_
 # entry point main.exl `use`s the dump/ir/ast/pos module chain and emits a
 # canonical AST dump + typed-IR dump for the bundled fixtures; verify diffs
 # that against examples/selfhost.expected (the OCaml oracle).
-host-selfhost: examples/selfhost/main.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl examples/selfhost/ir.exl examples/selfhost/token.exl examples/selfhost/lexer.exl examples/selfhost/error.exl examples/selfhost/ast.exl examples/selfhost/pos.exl examples/selfhost/fixture.exl examples/selfhost/ir_fixture.exl examples/selfhost/token_fixture.exl $(SYS_HOST) build
+host-selfhost: src/main.exl src/dump_ast.exl src/dump_type.exl src/dump_ir.exl src/dump_token.exl src/dump_util.exl src/ir.exl src/token.exl src/lexer.exl src/error.exl src/ast.exl src/pos.exl src/fixture.exl src/ir_fixture.exl src/token_fixture.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost $<
 
 # The lexer corpus harness: read a source path on stdin, lex it with the
 # ported `lexer::tokenize`, emit the token dump.  Token-only, so it pulls
 # in just the lexer + token dumper (dump_token / dump_util) — not the
 # AST/IR dumpers.  Driven by `selfhost-port-tokens`.
-host-selfhost-lexer: examples/selfhost/lex_corpus.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/error.exl examples/selfhost/dump_token.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+host-selfhost-lexer: src/lex_corpus.exl src/lexer.exl src/token.exl src/pos.exl src/error.exl src/dump_token.exl src/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_lexer.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_lexer $<
 
 # The parser corpus harness: read a source path on stdin, lex + parse it
 # with the ported `parser::parse_program`, emit the AST dump.  Pulls in
 # the lexer + parser + AST dumper (dump_ast / dump_util) — not the IR
 # dumper.  Driven by `selfhost-port-ast`.
-host-selfhost-parser: examples/selfhost/parse_corpus.exl examples/selfhost/parser.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/error.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+host-selfhost-parser: src/parse_corpus.exl src/parser.exl src/lexer.exl src/token.exl src/pos.exl src/ast.exl src/error.exl src/dump_ast.exl src/dump_type.exl src/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_parser.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_parser $<
 
-host-selfhost-tc: examples/selfhost/tc_corpus.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/loader.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+host-selfhost-tc: src/tc_corpus.exl src/typecheck.exl src/parser.exl src/loader.exl src/lexer.exl src/token.exl src/pos.exl src/ast.exl src/ir.exl src/error.exl src/dump_ir.exl src/dump_ast.exl src/dump_type.exl src/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_tc.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_tc $<
 
 # Post-drop dumper — the tc pipeline plus the ported Drop pass.  Driven by
 # `selfhost-port-drop-ir` against the oracle `--after-drop` dump.
-host-selfhost-drop: examples/selfhost/drop_corpus.exl examples/selfhost/drop.exl examples/selfhost/move.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/loader.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl examples/selfhost/dump_ir.exl examples/selfhost/dump_ast.exl examples/selfhost/dump_type.exl examples/selfhost/dump_util.exl $(SYS_HOST) build
+host-selfhost-drop: src/drop_corpus.exl src/drop.exl src/move.exl src/typecheck.exl src/parser.exl src/loader.exl src/lexer.exl src/token.exl src/pos.exl src/ast.exl src/ir.exl src/error.exl src/dump_ir.exl src/dump_ast.exl src/dump_type.exl src/dump_util.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_drop.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_drop $<
 
 # `make amiga-NAME` → build m68k Amiga binary
@@ -422,7 +422,7 @@ selfhost-port-tokens: host-selfhost-lexer
 # "escape: ok".
 .PHONY: host-selfhost-escape selfhost-port-escape
 
-host-selfhost-escape: examples/selfhost/escape_corpus.exl examples/selfhost/escape.exl examples/selfhost/typecheck.exl examples/selfhost/parser.exl examples/selfhost/loader.exl examples/selfhost/lexer.exl examples/selfhost/token.exl examples/selfhost/pos.exl examples/selfhost/ast.exl examples/selfhost/ir.exl examples/selfhost/error.exl $(SYS_HOST) build
+host-selfhost-escape: src/escape_corpus.exl src/escape.exl src/typecheck.exl src/parser.exl src/loader.exl src/lexer.exl src/token.exl src/pos.exl src/ast.exl src/ir.exl src/error.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_escape.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_escape $<
 
 selfhost-port-escape: host-selfhost-escape
@@ -444,7 +444,7 @@ selfhost-port-escape: host-selfhost-escape
 
 selfhost-port-errors: host-selfhost-lexer
 	@fail=0; n=0; \
-	for f in examples/selfhost/lex_errors/*.exl; do \
+	for f in src/lex_errors/*.exl; do \
 		n=$$((n+1)); \
 		oc=$$($(EXILE) --emit-tokens $$f 2>&1 >/dev/null | head -1); \
 		pt=$$(echo $$f | $(HOST_OUT)/selfhost_lexer 2>&1 >/dev/null | head -1); \
@@ -503,7 +503,7 @@ selfhost-port-ast: host-selfhost-parser
 # so these match byte-for-byte.
 selfhost-port-parse-errors: host-selfhost-parser
 	@fail=0; n=0; \
-	for f in examples/selfhost/parse_errors/*.exl; do \
+	for f in src/parse_errors/*.exl; do \
 		n=$$((n+1)); \
 		oc=$$($(EXILE) --emit-ast $$f 2>&1 >/dev/null | head -1); \
 		pt=$$(echo $$f | $(HOST_OUT)/selfhost_parser 2>&1 >/dev/null | head -1); \

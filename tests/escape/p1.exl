@@ -1,0 +1,5 @@
+fn make() -> Slice<int> {
+    let arr: [int; 3] = [1, 2, 3];
+    return Slice { ptr: &arr[0], len: 3 as u32 };
+}
+fn main() { let s = make(); println(s[0]); }

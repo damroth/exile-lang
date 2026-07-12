@@ -1,0 +1,8 @@
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut s: String = String::with_str(a, "hello");
+    let vw = s.as_str();
+    s.free();
+    println(vw);
+}

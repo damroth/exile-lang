@@ -1,6 +1,21 @@
 # dune build artifacts
 _build/
 
+# ad-hoc `-o out/...` scratch binaries.  The real build output lives in
+# _build/out (see OUT in the Makefile); a top-level out/ is always junk.
+/out/
+
+# The self-host compiler (src/) is Exile SOURCE — only .exl belongs in git.
+# Generated .c / binaries dropped next to a source file stay excluded.
+src/*
+!src/*.exl
+!src/lex_errors/
+src/lex_errors/*
+!src/lex_errors/*.exl
+!src/parse_errors/
+src/parse_errors/*
+!src/parse_errors/*.exl
+
 # everything in examples/ except .exl sources, .expected stdout
 # snapshots, and FFI stub C files (`_stub.c` / `_stub.h`).  Generated
 # .c and per-target binaries stay excluded.
@@ -16,15 +31,6 @@ examples/multi_file/*
 !examples/prelude/
 examples/prelude/*
 !examples/prelude/*.exl
-!examples/selfhost/
-examples/selfhost/*
-!examples/selfhost/*.exl
-!examples/selfhost/lex_errors/
-examples/selfhost/lex_errors/*
-!examples/selfhost/lex_errors/*.exl
-!examples/selfhost/parse_errors/
-examples/selfhost/parse_errors/*
-!examples/selfhost/parse_errors/*.exl
 
 # opam
 *.install

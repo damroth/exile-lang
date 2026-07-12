@@ -1,0 +1,1273 @@
+// Self-host port — `lib/escape.ml` (the DR-010 escape pass).
+//
+// A sound conservative barrier on values whose pointer / Slice payload roots in
+// a local binding: the four canonical escape sites (TReturn, store through a
+// non-local `*ptr`, container-insert, TNew/TStructLit as a return value), plus
+// Phase-C borrow invalidation (`let s = v.as_slice(); v.push(x); s[0]`).
+//
+// Runs after `Move.check` and before `Drop.insert` — it reads the typed IR and
+// emits no output, so its whole observable behaviour IS its diagnostics.  This
+// is therefore the port's first REPORTING pass: lexer/parser carry errors, but
+// typecheck's port assumes well-typed input.  The messages here are byte-exact
+// with the oracle's (see escape_corpus + the negative probes).
+//
+// Two representation choices where the OCaml uses structures Exile lacks:
+//
+//   * `IntSet` of param indices -> a u32 BITMASK.  A fn with 32+ params cannot
+//     be represented; those degrade to `Unknown`, which is the top of the
+//     escape-toxicity lattice, i.e. the conservative direction (sound).
+//   * `Hashtbl` summary / params tables -> flat Vecs scanned linearly.  The
+//     fixpoint is over a few hundred fns; linear scan is not the bottleneck.
+//
+// `Prov` is a plain copyable struct (no Vec inside) precisely so it can be
+// passed by value everywhere without tripping the affine copy-out footgun.
+// `Binding` DOES carry a Vec (its owner chain), so it is only ever read through
+// a `*const Binding` borrow, never copied out of the state.
+
+use pos::*;
+use ast::*;
+use ir::*;
+use error::*;
+
+// ===== The provenance lattice =====
+//
+// Ordering (bottom -> top, increasing escape-toxicity):
+//     CallerOrStatic  <  Param S  <  Unknown  <  Local
+//
+// Meet = least-upper-bound: at composition / branch-merge sites we keep the
+// MOST-LOCAL provenance among the inputs, because a single tainted source is
+// enough to taint the result.
+
+const PROV_CS: int = 0;
+const PROV_PARAM: int = 1;
+const PROV_LOCAL: int = 2;
+const PROV_UNKNOWN: int = 3;
+
+pub struct Prov {
+    pk: int,
+    // Param-index bitmask; meaningful only when pk == PROV_PARAM.
+    pmask: u32,
+}
+
+fn prov_cs() -> Prov { return Prov { pk: PROV_CS, pmask: 0 as u32 }; }
+fn prov_local() -> Prov { return Prov { pk: PROV_LOCAL, pmask: 0 as u32 }; }
+fn prov_unknown() -> Prov { return Prov { pk: PROV_UNKNOWN, pmask: 0 as u32 }; }
+// A param index beyond the bitmask's width cannot be tracked precisely; widen
+// to Unknown, which is strictly more toxic — the conservative direction.
+fn prov_param(i: u32) -> Prov {
+    if i >= 32 as u32 { return prov_unknown(); }
+    return Prov { pk: PROV_PARAM, pmask: (1 as u32) << i };
+}
+
+fn meet(a: Prov, b: Prov) -> Prov {
+    if a.pk == PROV_LOCAL || b.pk == PROV_LOCAL { return prov_local(); }
+    if a.pk == PROV_UNKNOWN || b.pk == PROV_UNKNOWN { return prov_unknown(); }
+    if a.pk == PROV_PARAM && b.pk == PROV_PARAM {
+        return Prov { pk: PROV_PARAM, pmask: a.pmask | b.pmask };
+    }
+    if a.pk == PROV_PARAM { return a; }
+    if b.pk == PROV_PARAM { return b; }
+    return prov_cs();
+}
+
+// ===== Per-binding state =====
+//
+// `bowners`  — local names this binding's pointer-content borrows from.  A
+//              `let s = v.as_slice()` records ["v"]; a later mutation of `v`
+//              invalidates `s`.
+// `bkilled`  — a tracked invalidator ran since the binding was created; every
+//              subsequent read is a hard error, pointing at the kill site.
+// `bown`     — the binding holds an `own *T`.  Its POINTEE is released inside
+//              this fn (auto-drop / explicit free) unless the own is
+//              transferred out, so any borrow taken from it is as local as
+//              `&local`.
+
+pub struct Binding {
+    bname: str,
+    bprov: Prov,
+    bowners: Vec<str>,
+    bkilled: bool,
+    bkill_reason: str,
+    bkill_pos: Pos,
+    bown: bool,
+}
+
+// One summary row: the param indices that may appear (transitively) in any
+// return value of `sname`.  `sknown` distinguishes "no entry" (an unanalyzable
+// callee -> CallerOrStatic) from "empty set".
+struct SumEntry {
+    sname: str,
+    smask: u32,
+    swiden: bool,
+}
+
+// The pass context.  Everything the OCaml keeps in module-level Hashtbls rides
+// here as a borrow, so the walkers stay pure w.r.t. the caller's storage.
+struct Esc {
+    e_sum: *Vec<SumEntry>,
+    // Param names of the fn under analysis, in declaration order (index = param
+    // index), plus a parallel `own *T` flag.
+    e_pnames: *Vec<str>,
+    e_pown: *Vec<bool>,
+    // Compute phase runs silent (report = false); the enforcement phase reports.
+    e_report: bool,
+    // First error wins, exactly as the OCaml's raise-on-first does: the walk
+    // order is identical, so latching the first is the same diagnostic.
+    e_err: *Option<*const CompileError>,
+    // Accumulated return-prov of the fn under analysis.
+    e_ret: *Prov,
+}
+
+fn err_node(ar: *Arena, pos: Pos, msg: str) -> *const CompileError {
+    let n: *CompileError = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
+    *n = CompileError { pos: pos, msg: msg };
+    return n as *const CompileError;
+}
+
+fn raise_esc(ar: *Arena, esc: *const Esc, pos: Pos, msg: str) {
+    if !esc.e_report { return; }
+    match *esc.e_err {
+        Option::Some(_e) => { }
+        | Option::None => { *esc.e_err = Option::Some(err_node(ar, pos, msg)); }
+    }
+    return;
+}
+
+// ===== State helpers =====
+//
+// The state is an assoc-Vec keyed by name; a rebind REPLACES in place (the
+// OCaml's `(n, b) :: List.remove_assoc n live`).  Bindings are read through a
+// borrow — a Binding carries a Vec, so copying one out of the state would
+// shallow-share its owner buffer.
+
+fn find_binding(live: *const Vec<Binding>, n: str) -> int {
+    let sl = live.as_slice();
+    let mut i = 0 as u32;
+    while i < live.length() {
+        if str::eq(sl[i].bname, n) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+fn is_local_name(live: *const Vec<Binding>, n: str) -> bool {
+    return find_binding(live, n) >= 0 as int;
+}
+fn copy_names(a: Allocator, src: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn names_have(v: *const Vec<str>, n: str) -> bool {
+    let sl = v.as_slice();
+    let mut i = 0 as u32;
+    while i < v.length() { if str::eq(sl[i], n) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn push_uniq_name(out: *Vec<str>, n: str) {
+    if !names_have(out, n) { out.push(n); }
+    return;
+}
+fn append_names(out: *Vec<str>, src: *const Vec<str>) {
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { push_uniq_name(out, sl[i]); i = i + 1 as u32; }
+    return;
+}
+
+// Bind (or rebind) `n`.  A rebind drops the old row's owner chain and kill
+// stamp — the OCaml's remove_assoc does the same.
+fn bind_var(a: Allocator, live: *Vec<Binding>, n: str, p: Prov, owners: *const Vec<str>, is_own: bool) {
+    let idx = find_binding(live, n);
+    let fresh = Binding {
+        bname: n, bprov: p, bowners: copy_names(a, owners), bkilled: false,
+        bkill_reason: "", bkill_pos: zero_pos_e(), bown: is_own,
+    };
+    if idx < 0 as int { live.push(fresh); return; }
+    with b in live[idx as u32] { *b = fresh; }
+    return;
+}
+fn zero_pos_e() -> Pos { return Pos { line: 0 as int, col: 0 as int, file: "" }; }
+fn no_owners(a: Allocator) -> Vec<str> { return Vec::with_capacity(a, 8 as u32); }
+
+fn param_index(esc: *const Esc, n: str) -> int {
+    let sl = esc.e_pnames.as_slice();
+    let mut i = 0 as u32;
+    while i < esc.e_pnames.length() {
+        if str::eq(sl[i], n) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+fn param_is_own(esc: *const Esc, n: str) -> bool {
+    let i = param_index(esc, n);
+    if i < 0 as int { return false; }
+    return esc.e_pown.as_slice()[i as u32];
+}
+
+// A TVar use of an own binding/param whose stamped type is a borrow pointer is a
+// LOAN of locally-released storage (typecheck restamps own -> `*T` / `*const T`
+// at every borrow slot).  The pointee dies in this fn — treat the borrow exactly
+// like `&local`.
+fn ty_is_borrow_ptr(t: *const Typ) -> bool {
+    return match *t { Typ::TPtr(_i) => true | Typ::TConstPtr(_i) => true | _o => false };
+}
+fn var_use_is_own_borrow(esc: *const Esc, live: *const Vec<Binding>, n: str, use_ty: *const Typ) -> bool {
+    if !ty_is_borrow_ptr(use_ty) { return false; }
+    let i = find_binding(live, n);
+    if i >= 0 as int { return live.as_slice()[i as u32].bown; }
+    return param_is_own(esc, n);
+}
+
+// ===== Lvalue roots =====
+//
+// TDeref sub means the rvalue lives THROUGH a pointer, so the root is the
+// pointer's referent, not a stack slot: not local.
+fn lvalue_root(te: *const Texpr) -> Option<str> {
+    let none: Option<str> = Option::None;
+    return match te.e {
+        TexprNode::TVar(n) => Option::Some(n)
+        | TexprNode::TFieldAccess { target, field } => lvalue_root(target)
+        | TexprNode::TIndex { base, index } => lvalue_root(base)
+        | _o => none
+    };
+}
+fn receiver_root(te: *const Texpr) -> Option<str> {
+    return match te.e {
+        TexprNode::TVar(n) => Option::Some(n)
+        | TexprNode::TRef(sub) => lvalue_root(sub)
+        | TexprNode::TDeref(sub) => lvalue_root(sub)
+        | _o => lvalue_root(te)
+    };
+}
+
+// ===== The hardcoded method lists =====
+//
+// ward / the Owner-sigil turns these into a structural property once the
+// capability model lands; until then they are the swap-points.
+
+fn mangled_has_prefix(prefix: str, mangled: str) -> bool {
+    let pl = str::length(prefix);
+    if str::length(mangled) < pl { return false; }
+    let mb = str::as_bytes(mangled);
+    let pb = str::as_bytes(prefix);
+    let mut i = 0 as u32;
+    while i < pl { if mb[i] != pb[i] { return false; } i = i + 1 as u32; }
+    return true;
+}
+
+// Methods that return a borrow rooted in the receiver (`*self` / `*const self`).
+// Deliberately narrow: only methods whose body literally wraps `self.ptr` /
+// `self.buf` in a view struct (or a self-rooted iterator).  `clone` / `with_str`
+// / `with_capacity` return INDEPENDENT storage and must NOT propagate owners —
+// without the filter, Phase C false-positives `let h2 = h1.clone(); h1.name.free();`.
+fn returns_borrow_from_receiver(m: str) -> bool {
+    if mangled_has_prefix("Vec__as_slice", m) { return true; }
+    if mangled_has_prefix("Vec__iter", m) { return true; }
+    if mangled_has_prefix("String__as_str", m) { return true; }
+    if mangled_has_prefix("String__as_slice", m) { return true; }
+    if mangled_has_prefix("StringBuilder__as_slice", m) { return true; }
+    if mangled_has_prefix("HashMap__iter", m) { return true; }
+    // An arena node is a borrow INTO the arena's buffer: returning one from the
+    // fn that owns the arena dangles after the arena's auto-drop.
+    if mangled_has_prefix("Arena__alloc_borrowed", m) { return true; }
+    return false;
+}
+
+fn is_container_insert(m: str) -> bool {
+    if mangled_has_prefix("Vec__push", m) { return true; }
+    if mangled_has_prefix("HashMap__insert", m) { return true; }
+    if mangled_has_prefix("StringBuilder__push_str", m) { return true; }
+    return false;
+}
+
+// A call whose mangled name starts with one of these "may have reallocated /
+// released the owner's storage": every binding rooted in the receiver is killed.
+// push/grow/insert grow buffers (Vec.ptr / HashMap.slots move -> an outstanding
+// Slice<T> dangles); free releases storage outright.
+fn invalidating_prefix(m: str) -> str {
+    if mangled_has_prefix("Vec__push", m) { return "Vec__push"; }
+    if mangled_has_prefix("Vec__grow", m) { return "Vec__grow"; }
+    if mangled_has_prefix("Vec__pop", m) { return "Vec__pop"; }
+    if mangled_has_prefix("Vec__clear", m) { return "Vec__clear"; }
+    if mangled_has_prefix("Vec__free", m) { return "Vec__free"; }
+    if mangled_has_prefix("HashMap__insert", m) { return "HashMap__insert"; }
+    if mangled_has_prefix("HashMap__remove", m) { return "HashMap__remove"; }
+    if mangled_has_prefix("HashMap__grow", m) { return "HashMap__grow"; }
+    if mangled_has_prefix("HashMap__free", m) { return "HashMap__free"; }
+    if mangled_has_prefix("StringBuilder__push_str", m) { return "StringBuilder__push_str"; }
+    if mangled_has_prefix("StringBuilder__push_byte", m) { return "StringBuilder__push_byte"; }
+    if mangled_has_prefix("StringBuilder__push_int", m) { return "StringBuilder__push_int"; }
+    if mangled_has_prefix("StringBuilder__grow", m) { return "StringBuilder__grow"; }
+    if mangled_has_prefix("StringBuilder__free", m) { return "StringBuilder__free"; }
+    if mangled_has_prefix("String__free", m) { return "String__free"; }
+    if mangled_has_prefix("String__clear", m) { return "String__clear"; }
+    return "";
+}
+fn is_invalidating_call(m: str) -> bool {
+    return !str::eq(invalidating_prefix(m), "");
+}
+// `Vec__push` reads back to the user as `Vec::push`.
+fn invalidation_reason(a: Allocator, ar: *Arena, m: str) -> str {
+    let p = invalidating_prefix(m);
+    if str::eq(p, "") { return m; }
+    let bs = str::as_bytes(p);
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let mut i = 0 as u32;
+    while i < str::length(p) {
+        if bs[i] == 95 as u8 { sb.push_byte(58 as u8); } else { sb.push_byte(bs[i]); }
+        i = i + 1 as u32;
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// ===== The summary table =====
+
+fn sum_find(esc: *const Esc, m: str) -> int {
+    let sl = esc.e_sum.as_slice();
+    let mut i = 0 as u32;
+    while i < esc.e_sum.length() {
+        if str::eq(sl[i].sname, m) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+
+// ===== Provenance =====
+
+fn prov_of_var(esc: *const Esc, live: *const Vec<Binding>, n: str) -> Prov {
+    let i = find_binding(live, n);
+    if i >= 0 as int { return live.as_slice()[i as u32].bprov; }
+    let pi = param_index(esc, n);
+    if pi >= 0 as int { return prov_param(pi as u32); }
+    return prov_cs();
+}
+
+// Project a call's return-prov from the callee's summary and the caller's
+// argument provs: each param index in summary[callee] contributes the prov of
+// args[i] under meet; no summary entry -> CallerOrStatic.
+fn prov_of_call(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                m: str, args: *const Vec<*const Texpr>) -> Prov {
+    let si = sum_find(esc, m);
+    if si < 0 as int { return prov_cs(); }
+    let row: *const SumEntry = &esc.e_sum.as_slice()[si as u32];
+    let mut acc = prov_cs();
+    let al = args.as_slice();
+    let n = args.length();
+    if row.swiden {
+        // The callee's return derives from an untracked source: every argument
+        // is a potential carrier.
+        let mut j = 0 as u32;
+        while j < n { acc = meet(acc, prov_of(a, esc, live, al[j])); j = j + 1 as u32; }
+        return acc;
+    }
+    let mut i = 0 as u32;
+    while i < 32 as u32 {
+        if (row.smask >> i) & (1 as u32) == 1 as u32 {
+            if i < n { acc = meet(acc, prov_of(a, esc, live, al[i])); }
+        }
+        i = i + 1 as u32;
+    }
+    return acc;
+}
+
+fn prov_of_fields(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                  fields: *const Vec<TexprField>) -> Prov {
+    let mut acc = prov_cs();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { acc = meet(acc, prov_of(a, esc, live, sl[i].value)); i = i + 1 as u32; }
+    return acc;
+}
+fn prov_of_list(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                es: *const Vec<*const Texpr>) -> Prov {
+    let mut acc = prov_cs();
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < es.length() { acc = meet(acc, prov_of(a, esc, live, sl[i])); i = i + 1 as u32; }
+    return acc;
+}
+fn prov_of_opt(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+               e: Option<*const Texpr>, base: Prov) -> Prov {
+    return match e {
+        Option::Some(x) => meet(base, prov_of(a, esc, live, x))
+        | Option::None => base
+    };
+}
+fn prov_of_arms(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                arms: *const Vec<TmatchArm>) -> Prov {
+    let mut acc = prov_cs();
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() { acc = meet(acc, prov_of(a, esc, live, sl[i].tbody)); i = i + 1 as u32; }
+    return acc;
+}
+fn prov_of_root(esc: *const Esc, live: *const Vec<Binding>, n: str) -> Prov {
+    if is_local_name(live, n) { return prov_local(); }
+    let pi = param_index(esc, n);
+    if pi >= 0 as int { return prov_param(pi as u32); }
+    return prov_cs();
+}
+fn prov_of_ref(esc: *const Esc, live: *const Vec<Binding>, sub: *const Texpr) -> Prov {
+    return match lvalue_root(sub) {
+        Option::Some(n) => prov_of_root(esc, live, n)
+        | Option::None => prov_cs()
+    };
+}
+// Pointer arithmetic derives from its base — a bump-allocated arena node is a
+// borrow INTO the arena buffer, so the param-SET summary of a bump allocator
+// carries return-derives-from-self and returning a node out of the fn that owns
+// the arena is the dangling-borrow error.
+fn prov_of_builtin(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                   name: str, args: *const Vec<*const Texpr>) -> Prov {
+    if str::eq(name, "ptr_offset") && args.length() > 0 as u32 {
+        return prov_of(a, esc, live, args.as_slice()[0 as u32]);
+    }
+    return prov_cs();
+}
+
+fn prov_of(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr) -> Prov {
+    return match te.e {
+        TexprNode::TVar(n) => {
+            if var_use_is_own_borrow(esc, live, n, te.ty) { prov_local() }
+            else { prov_of_var(esc, live, n) }
+        }
+        | TexprNode::TRef(sub) => prov_of_ref(esc, live, sub)
+        | TexprNode::TStructLit { sname_path, fields, base } =>
+            prov_of_opt(a, esc, live, base, prov_of_fields(a, esc, live, &fields))
+        | TexprNode::TNew { sname_path, fields, base, alloc } =>
+            prov_of_opt(a, esc, live, base, prov_of_fields(a, esc, live, &fields))
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => prov_of_fields(a, esc, live, &args)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => prov_of_fields(a, esc, live, &args)
+        | TexprNode::TTupleLit(es) => prov_of_list(a, esc, live, &es)
+        | TexprNode::TArrayLit(es) => prov_of_list(a, esc, live, &es)
+        | TexprNode::TArrayRepeat { value, count } => prov_of(a, esc, live, value)
+        | TexprNode::TFieldAccess { target, field } => prov_of(a, esc, live, target)
+        | TexprNode::TIndex { base, index } => prov_of(a, esc, live, base)
+        | TexprNode::TDeref(sub) => prov_of(a, esc, live, sub)
+        | TexprNode::TNeg(sub) => prov_of(a, esc, live, sub)
+        | TexprNode::TBitNot(sub) => prov_of(a, esc, live, sub)
+        | TexprNode::TNot(sub) => prov_of(a, esc, live, sub)
+        | TexprNode::TCast(sub, ann) => prov_of(a, esc, live, sub)
+        | TexprNode::TBinOp(op, l, r) => meet(prov_of(a, esc, live, l), prov_of(a, esc, live, r))
+        | TexprNode::TIfExpr { cond, then_val, else_val } =>
+            meet(prov_of(a, esc, live, then_val), prov_of(a, esc, live, else_val))
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => prov_of_arms(a, esc, live, &arms)
+        | TexprNode::TBlock { stmts, trailing } =>
+            match trailing { Option::Some(t) => prov_of(a, esc, live, t) | Option::None => prov_cs() }
+        | TexprNode::TCall { mangled, args } => prov_of_call(a, esc, live, mangled, &args)
+        | TexprNode::TBuiltinCall { name, args } => prov_of_builtin(a, esc, live, name, &args)
+        | _leaf => prov_cs()
+    };
+}
+
+// ===== Owner chains (Phase C) =====
+//
+// Mirrors prov_of's structural recursion; diverges on calls (the receiver-borrow
+// list), so `let s = pass_through(&v)` still records ["v"] as s's owner.
+
+fn owners_of_into(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                  te: *const Texpr, out: *Vec<str>) {
+    match te.e {
+        TexprNode::TVar(n) => { owners_of_var(esc, live, n, te.ty, out); }
+        | TexprNode::TRef(sub) => { owners_of_ref(live, sub, out); }
+        | TexprNode::TStructLit { sname_path, fields, base } => {
+            owners_of_fields(a, esc, live, &fields, out);
+            owners_of_optional(a, esc, live, base, out);
+        }
+        | TexprNode::TNew { sname_path, fields, base, alloc } => {
+            owners_of_fields(a, esc, live, &fields, out);
+            owners_of_optional(a, esc, live, base, out);
+        }
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => { owners_of_fields(a, esc, live, &args, out); }
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => { owners_of_fields(a, esc, live, &args, out); }
+        | TexprNode::TTupleLit(es) => { owners_of_list(a, esc, live, &es, out); }
+        | TexprNode::TArrayLit(es) => { owners_of_list(a, esc, live, &es, out); }
+        | TexprNode::TArrayRepeat { value, count } => { owners_of_into(a, esc, live, value, out); }
+        | TexprNode::TFieldAccess { target, field } => { owners_of_into(a, esc, live, target, out); }
+        | TexprNode::TIndex { base, index } => { owners_of_into(a, esc, live, base, out); }
+        | TexprNode::TDeref(sub) => { owners_of_into(a, esc, live, sub, out); }
+        | TexprNode::TCast(sub, ann) => { owners_of_into(a, esc, live, sub, out); }
+        | TexprNode::TNeg(sub) => { owners_of_into(a, esc, live, sub, out); }
+        | TexprNode::TBitNot(sub) => { owners_of_into(a, esc, live, sub, out); }
+        | TexprNode::TNot(sub) => { owners_of_into(a, esc, live, sub, out); }
+        | TexprNode::TBinOp(op, l, r) => {
+            owners_of_into(a, esc, live, l, out);
+            owners_of_into(a, esc, live, r, out);
+        }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            owners_of_into(a, esc, live, then_val, out);
+            owners_of_into(a, esc, live, else_val, out);
+        }
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => { owners_of_arms(a, esc, live, &arms, out); }
+        | TexprNode::TBlock { stmts, trailing } => { owners_of_optional(a, esc, live, trailing, out); }
+        | TexprNode::TCall { mangled, args } => { owners_of_call(live, mangled, &args, out); }
+        | _leaf => { }
+    }
+    return;
+}
+fn owners_of_var(esc: *const Esc, live: *const Vec<Binding>, n: str, use_ty: *const Typ, out: *Vec<str>) {
+    if var_use_is_own_borrow(esc, live, n, use_ty) { push_uniq_name(out, n); return; }
+    let i = find_binding(live, n);
+    if i >= 0 as int { append_names(out, &live.as_slice()[i as u32].bowners); }
+    return;
+}
+fn push_if_local(live: *const Vec<Binding>, n: str, out: *Vec<str>) {
+    if is_local_name(live, n) { push_uniq_name(out, n); }
+    return;
+}
+fn owners_of_ref(live: *const Vec<Binding>, sub: *const Texpr, out: *Vec<str>) {
+    match lvalue_root(sub) {
+        Option::Some(n) => { push_if_local(live, n, out); }
+        | Option::None => { }
+    }
+    return;
+}
+fn owners_of_call(live: *const Vec<Binding>, m: str, args: *const Vec<*const Texpr>, out: *Vec<str>) {
+    if !returns_borrow_from_receiver(m) { return; }
+    if args.length() == 0 as u32 { return; }
+    match receiver_root(args.as_slice()[0 as u32]) {
+        Option::Some(n) => { push_if_local(live, n, out); }
+        | Option::None => { }
+    }
+    return;
+}
+fn owners_of_fields(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                    fields: *const Vec<TexprField>, out: *Vec<str>) {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { owners_of_into(a, esc, live, sl[i].value, out); i = i + 1 as u32; }
+    return;
+}
+fn owners_of_list(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                  es: *const Vec<*const Texpr>, out: *Vec<str>) {
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < es.length() { owners_of_into(a, esc, live, sl[i], out); i = i + 1 as u32; }
+    return;
+}
+fn owners_of_arms(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                  arms: *const Vec<TmatchArm>, out: *Vec<str>) {
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() { owners_of_into(a, esc, live, sl[i].tbody, out); i = i + 1 as u32; }
+    return;
+}
+fn owners_of_optional(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                      e: Option<*const Texpr>, out: *Vec<str>) {
+    match e {
+        Option::Some(x) => { owners_of_into(a, esc, live, x, out); }
+        | Option::None => { }
+    }
+    return;
+}
+fn owners_of(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    owners_of_into(a, esc, live, te, &out);
+    return out;
+}
+
+// ===== Escape-site enforcement =====
+
+fn fail_escape(ar: *Arena, esc: *const Esc, a: Allocator, pos: Pos, kind: str) {
+    let mut sb = StringBuilder::with_capacity(a, 256 as u32);
+    sb.push_str(kind);
+    sb.push_str(" embeds the address of a local binding — the local goes out of scope at the end of its enclosing block, leaving the caller with a dangling borrow.  Wrap the storage in a caller-owned region, return a copy / `String::with_str(...)` instead of a borrow, or — for arena/region-allocated returns — mark the fn `@escapes` (forward-compat hatch)");
+    raise_esc(ar, esc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+fn ret_typ_is_pure_value(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(_k) => true
+        | Typ::TBool => true
+        | Typ::TString => true
+        | Typ::TCInt { is_signed } => true
+        | Typ::TCShort { is_signed } => true
+        | Typ::TCLong { is_signed } => true
+        | Typ::TCChar => true
+        | Typ::TCSChar => true
+        | Typ::TCUChar => true
+        | _o => false
+    };
+}
+
+fn check_return(a: Allocator, ar: *Arena, esc: *const Esc, live: *const Vec<Binding>,
+                te: *const Texpr, pos: Pos) {
+    if !esc.e_report { return; }
+    if ret_typ_is_pure_value(te.ty) { return; }
+    if prov_of(a, esc, live, te).pk == PROV_LOCAL {
+        fail_escape(ar, esc, a, pos, "returning a value that");
+    }
+    return;
+}
+
+fn check_store_through_pointer(a: Allocator, ar: *Arena, esc: *const Esc, live: *const Vec<Binding>,
+                               target: *const Texpr, value: *const Texpr, pos: Pos) {
+    if !esc.e_report { return; }
+    let dest_is_local = match lvalue_root(target) {
+        Option::Some(n) => is_local_name(live, n)
+        | Option::None => false
+    };
+    if dest_is_local { return; }
+    if prov_of(a, esc, live, value).pk == PROV_LOCAL {
+        fail_escape(ar, esc, a, pos, "storing through a non-local pointer a value that");
+    }
+    return;
+}
+
+fn receiver_is_local(live: *const Vec<Binding>, recv: *const Texpr) -> bool {
+    return match receiver_root(recv) {
+        Option::Some(n) => is_local_name(live, n)
+        | Option::None => false
+    };
+}
+
+fn check_container_insert(a: Allocator, ar: *Arena, esc: *const Esc, live: *const Vec<Binding>,
+                          args: *const Vec<*const Texpr>, pos: Pos) {
+    if !esc.e_report { return; }
+    if args.length() == 0 as u32 { return; }
+    let sl = args.as_slice();
+    if receiver_is_local(live, sl[0 as u32]) { return; }
+    let mut i = 1 as u32;
+    while i < args.length() {
+        if prov_of(a, esc, live, sl[i]).pk == PROV_LOCAL {
+            fail_escape(ar, esc, a, pos, "inserting into a non-local container an argument that");
+            return;
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// ===== Use-after-invalidation (Phase C) =====
+
+fn fail_use_after_invalidation(a: Allocator, ar: *Arena, esc: *const Esc, pos: Pos,
+                               name: str, reason: str, kill_pos: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 256 as u32);
+    sb.push_str("use of borrow '"); sb.push_str(name);
+    sb.push_str("' after it was invalidated by '"); sb.push_str(reason);
+    sb.push_str("' at "); sb.push_str(kill_pos.file);
+    sb.push_str(":"); sb.push_int(kill_pos.line);
+    sb.push_str(":"); sb.push_int(kill_pos.col);
+    sb.push_str(" — growing / freeing the owner reallocates the buffer the borrow pointed into, so subsequent reads dangle (rebuild the borrow after the mutation, or use a copy that doesn't share the buffer)");
+    raise_esc(ar, esc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+fn check_use_var(a: Allocator, ar: *Arena, esc: *const Esc, live: *const Vec<Binding>, n: str, pos: Pos) {
+    let i = find_binding(live, n);
+    if i < 0 as int { return; }
+    let b: *const Binding = &live.as_slice()[i as u32];
+    if b.bkilled { fail_use_after_invalidation(a, ar, esc, pos, n, b.bkill_reason, b.bkill_pos); }
+    return;
+}
+fn check_uses(a: Allocator, ar: *Arena, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr) {
+    if !esc.e_report { return; }
+    match te.e {
+        TexprNode::TVar(n) => { check_use_var(a, ar, esc, live, n, te.pos); }
+        | _o => { }
+    }
+    let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    esc_children(a, te, &kids);
+    let kl = kids.as_slice();
+    let mut i = 0 as u32;
+    while i < kids.length() { check_uses(a, ar, esc, live, kl[i]); i = i + 1 as u32; }
+    return;
+}
+
+// ===== Child enumeration (ir.ml's texpr_children) =====
+
+fn push_field_values(fields: *const Vec<TexprField>, out: *Vec<*const Texpr>) {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { out.push(sl[i].value); i = i + 1 as u32; }
+    return;
+}
+fn push_all(es: *const Vec<*const Texpr>, out: *Vec<*const Texpr>) {
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < es.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return;
+}
+fn push_opt(e: Option<*const Texpr>, out: *Vec<*const Texpr>) {
+    match e { Option::Some(x) => { out.push(x); } | Option::None => { } }
+    return;
+}
+// Exprs living DIRECTLY in [s] — cond, value, target.  Not the ones nested in
+// sub-statement bodies.
+pub fn stmt_own_exprs(s: *const Tstmt, out: *Vec<*const Texpr>) {
+    match *s {
+        Tstmt::TLet { name, value, decl_ty, pos } => { out.push(value); }
+        | Tstmt::TLetTuple { names, value, pos } => { out.push(value); }
+        | Tstmt::TAssign { path, value, pos } => { out.push(value); }
+        | Tstmt::TExprStmt(e) => { out.push(e); }
+        | Tstmt::TReturn { value, pos } => { push_opt(value, out); }
+        | Tstmt::TAssignField { target, field, value, pos } => { out.push(target); out.push(value); }
+        | Tstmt::TAssignDeref { target, value, pos } => { out.push(target); out.push(value); }
+        | Tstmt::TAssignIndex { base, index, value, pos } => { out.push(base); out.push(index); out.push(value); }
+        | Tstmt::TIf { cond, then_body, else_body } => { out.push(cond); }
+        | Tstmt::TWhile { cond, body, post } => { out.push(cond); }
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => { out.push(lo); out.push(hi); }
+        | Tstmt::TForEach { it_var, it_init, body, pos } => { out.push(it_init); }
+        | _o => { }
+    }
+    return;
+}
+// A block's children are every texpr inside it — each stmt's own exprs, plus
+// (recursively) those of its sub-statement bodies — and the trailing value.  The
+// recursion matters: arm-body blocks lift in place, so a loop inside a match arm
+// carries calls in its BODY and a shallow walk would miss them.
+fn deep_stmt(a: Allocator, s: *const Tstmt, out: *Vec<*const Texpr>) {
+    stmt_own_exprs(s, out);
+    match *s {
+        Tstmt::TIf { cond, then_body, else_body } => {
+            deep_stmts(a, &then_body, out);
+            deep_stmts(a, &else_body, out);
+        }
+        | Tstmt::TWhile { cond, body, post } => {
+            deep_stmts(a, &body, out);
+            deep_stmts(a, &post, out);
+        }
+        | Tstmt::TDefer { body, pos } => { deep_stmts(a, &body, out); }
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => { deep_stmts(a, &body, out); }
+        | Tstmt::TForEach { it_var, it_init, body, pos } => { deep_stmts(a, &body, out); }
+        | _o => { }
+    }
+    return;
+}
+fn deep_stmts(a: Allocator, stmts: *const Vec<Tstmt>, out: *Vec<*const Texpr>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { deep_stmt(a, &sl[i], out); i = i + 1 as u32; }
+    return;
+}
+pub fn esc_children(a: Allocator, te: *const Texpr, out: *Vec<*const Texpr>) {
+    match te.e {
+        TexprNode::TNeg(s) => { out.push(s); }
+        | TexprNode::TBitNot(s) => { out.push(s); }
+        | TexprNode::TNot(s) => { out.push(s); }
+        | TexprNode::TRef(s) => { out.push(s); }
+        | TexprNode::TDeref(s) => { out.push(s); }
+        | TexprNode::TCast(s, ann) => { out.push(s); }
+        | TexprNode::TBinOp(op, l, r) => { out.push(l); out.push(r); }
+        | TexprNode::TCall { mangled, args } => { push_all(&args, out); }
+        | TexprNode::TBuiltinCall { name, args } => { push_all(&args, out); }
+        | TexprNode::TIndirectCall { fn_expr, args } => { out.push(fn_expr); push_all(&args, out); }
+        | TexprNode::TTupleLit(es) => { push_all(&es, out); }
+        | TexprNode::TArrayLit(es) => { push_all(&es, out); }
+        | TexprNode::TArrayRepeat { value, count } => { out.push(value); }
+        | TexprNode::TStructLit { sname_path, fields, base } => {
+            push_field_values(&fields, out); push_opt(base, out);
+        }
+        | TexprNode::TNew { sname_path, fields, base, alloc } => {
+            push_field_values(&fields, out); push_opt(base, out); push_opt(alloc, out);
+        }
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => { push_field_values(&args, out); }
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => {
+            push_field_values(&args, out); push_opt(alloc, out);
+        }
+        | TexprNode::TFieldAccess { target, field } => { out.push(target); }
+        | TexprNode::TIndex { base, index } => { out.push(base); out.push(index); }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => { out.push(cond); out.push(then_val); out.push(else_val); }
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            out.push(scrutinee);
+            let sl = arms.as_slice();
+            let mut i = 0 as u32;
+            while i < arms.length() { out.push(sl[i].tbody); i = i + 1 as u32; }
+        }
+        | TexprNode::TBlock { stmts, trailing } => {
+            deep_stmts(a, &stmts, out);
+            push_opt(trailing, out);
+        }
+        | _leaf => { }
+    }
+    return;
+}
+
+// ===== Branch merge =====
+//
+// prov: meet.  owners: INTERSECTION (only owners both branches agree on survive
+// — if one branch lost an owner, the post-merge view shouldn't pretend it is
+// still tracked).  killed: UNION (if either branch killed it, treat it as killed
+// — strictest, minimises silent UB).
+
+fn intersect_names(a: Allocator, x: *const Vec<str>, y: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = x.as_slice();
+    let mut i = 0 as u32;
+    while i < x.length() { if names_have(y, sl[i]) { push_uniq_name(&out, sl[i]); } i = i + 1 as u32; }
+    return out;
+}
+fn merged_binding(a: Allocator, ba: *const Binding, bb: *const Binding) -> Binding {
+    let mut kr = ba.bkill_reason;
+    let mut kp = ba.bkill_pos;
+    if !ba.bkilled && bb.bkilled { kr = bb.bkill_reason; kp = bb.bkill_pos; }
+    return Binding {
+        bname: ba.bname,
+        bprov: meet(ba.bprov, bb.bprov),
+        bowners: intersect_names(a, &ba.bowners, &bb.bowners),
+        bkilled: ba.bkilled || bb.bkilled,
+        bkill_reason: kr, bkill_pos: kp,
+        bown: ba.bown || bb.bown,
+    };
+}
+fn clone_binding(a: Allocator, b: *const Binding) -> Binding {
+    return Binding {
+        bname: b.bname, bprov: b.bprov, bowners: copy_names(a, &b.bowners),
+        bkilled: b.bkilled, bkill_reason: b.bkill_reason, bkill_pos: b.bkill_pos, bown: b.bown,
+    };
+}
+fn merge_states(a: Allocator, sa: *const Vec<Binding>, sb: *const Vec<Binding>) -> Vec<Binding> {
+    let mut out: Vec<Binding> = Vec::with_capacity(a, 8 as u32);
+    let al = sa.as_slice();
+    let mut i = 0 as u32;
+    while i < sa.length() {
+        let j = find_binding(sb, al[i].bname);
+        if j >= 0 as int { out.push(merged_binding(a, &al[i], &sb.as_slice()[j as u32])); }
+        else { out.push(clone_binding(a, &al[i])); }
+        i = i + 1 as u32;
+    }
+    let bl = sb.as_slice();
+    let mut k = 0 as u32;
+    while k < sb.length() {
+        if find_binding(sa, bl[k].bname) < 0 as int { out.push(clone_binding(a, &bl[k])); }
+        k = k + 1 as u32;
+    }
+    return out;
+}
+fn clone_state(a: Allocator, s: *const Vec<Binding>) -> Vec<Binding> {
+    let mut out: Vec<Binding> = Vec::with_capacity(a, 8 as u32);
+    let sl = s.as_slice();
+    let mut i = 0 as u32;
+    while i < s.length() { out.push(clone_binding(a, &sl[i])); i = i + 1 as u32; }
+    return out;
+}
+
+// Kill every binding whose owner chain contains [owner], stamping the site.
+fn invalidate_borrows_of(live: *Vec<Binding>, owner: str, reason: str, pos: Pos) {
+    let n = live.length();
+    let mut i = 0 as u32;
+    while i < n {
+        with b in live[i] {
+            if !b.bkilled && names_have(&b.bowners, owner) {
+                b.bkilled = true;
+                b.bkill_reason = reason;
+                b.bkill_pos = pos;
+            }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// ===== Call effects (Phase C) =====
+//
+// Applied AFTER the use/escape checks ran on the expression, so a use of an
+// already-invalidated binding nested in the same statement still reports first.
+// Children before the parent's own call: `vec.push(m(other))` invalidates
+// `other` first, then `vec` — evaluation order.
+
+fn kill_from_call(a: Allocator, ar: *Arena, live: *Vec<Binding>, m: str,
+                  args: *const Vec<*const Texpr>, pos: Pos) {
+    if !is_invalidating_call(m) { return; }
+    if args.length() == 0 as u32 { return; }
+    match receiver_root(args.as_slice()[0 as u32]) {
+        Option::Some(owner) => { kill_owner(a, ar, live, owner, invalidation_reason(a, ar, m), pos); }
+        | Option::None => { }
+    }
+    return;
+}
+fn kill_owner(_a: Allocator, _ar: *Arena, live: *Vec<Binding>, owner: str, reason: str, pos: Pos) {
+    if is_local_name(live, owner) { invalidate_borrows_of(live, owner, reason, pos); }
+    return;
+}
+// `free(a, q)` releases q's pointee — every borrow rooted in q dangles from here
+// on (the same kill rule as the method-level frees).
+fn kill_from_free(_a: Allocator, _ar: *Arena, live: *Vec<Binding>, name: str,
+                  args: *const Vec<*const Texpr>, pos: Pos) {
+    if !str::eq(name, "free") { return; }
+    if args.length() != 2 as u32 { return; }
+    match args.as_slice()[1 as u32].e {
+        TexprNode::TVar(owner) => { invalidate_borrows_of(live, owner, "free", pos); }
+        | _o => { }
+    }
+    return;
+}
+fn apply_call_effects(a: Allocator, ar: *Arena, live: *Vec<Binding>, te: *const Texpr) {
+    let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    esc_children(a, te, &kids);
+    let kl = kids.as_slice();
+    let mut i = 0 as u32;
+    while i < kids.length() { apply_call_effects(a, ar, live, kl[i]); i = i + 1 as u32; }
+    match te.e {
+        TexprNode::TCall { mangled, args } => { kill_from_call(a, ar, live, mangled, &args, te.pos); }
+        | TexprNode::TBuiltinCall { name, args } => { kill_from_free(a, ar, live, name, &args, te.pos); }
+        | _o => { }
+    }
+    return;
+}
+
+// ===== Forward dataflow walk =====
+
+fn walk_stmts(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, stmts: *const Vec<Tstmt>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        walk_stmt(a, ar, esc, live, &sl[i]);
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// Visit an expression as a value: use-check, nested escape sites, then its call
+// effects.  The three always run in this order (see apply_call_effects).
+fn visit_value(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, e: *const Texpr) {
+    check_uses(a, ar, esc, live, e);
+    walk_expr_for_sites(a, ar, esc, live, e);
+    apply_call_effects(a, ar, live, e);
+    return;
+}
+fn ty_is_own(t: *const Typ) -> bool {
+    return match *t { Typ::TOwnPtr(_i) => true | _o => false };
+}
+
+fn walk_let(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, name: str, value: *const Texpr) {
+    check_uses(a, ar, esc, live, value);
+    let p = prov_of(a, esc, live, value);
+    let owners = owners_of(a, esc, live, value);
+    let is_own = ty_is_own(value.ty);
+    walk_expr_for_sites(a, ar, esc, live, value);
+    apply_call_effects(a, ar, live, value);
+    bind_var(a, live, name, p, &owners, is_own);
+    return;
+}
+fn walk_let_tuple(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+                  names: *const Vec<str>, value: *const Texpr) {
+    check_uses(a, ar, esc, live, value);
+    let p = prov_of(a, esc, live, value);
+    let owners = owners_of(a, esc, live, value);
+    walk_expr_for_sites(a, ar, esc, live, value);
+    apply_call_effects(a, ar, live, value);
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() { bind_var(a, live, sl[i], p, &owners, false); i = i + 1 as u32; }
+    return;
+}
+fn walk_assign(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+               path: *const Vec<str>, value: *const Texpr) {
+    check_uses(a, ar, esc, live, value);
+    walk_expr_for_sites(a, ar, esc, live, value);
+    apply_call_effects(a, ar, live, value);
+    if path.length() != 1 as u32 { return; }
+    let p = prov_of(a, esc, live, value);
+    let owners = owners_of(a, esc, live, value);
+    bind_var(a, live, path.as_slice()[0 as u32], p, &owners, ty_is_own(value.ty));
+    return;
+}
+fn walk_return(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+               v: *const Texpr, pos: Pos) {
+    check_uses(a, ar, esc, live, v);
+    walk_expr_for_sites(a, ar, esc, live, v);
+    if !ret_typ_is_pure_value(v.ty) {
+        *esc.e_ret = meet(*esc.e_ret, prov_of(a, esc, live, v));
+        check_return(a, ar, esc, live, v, pos);
+    }
+    apply_call_effects(a, ar, live, v);
+    return;
+}
+fn walk_if(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+           cond: *const Texpr, then_body: *const Vec<Tstmt>, else_body: *const Vec<Tstmt>) {
+    visit_value(a, ar, esc, live, cond);
+    let mut s_then = clone_state(a, live);
+    walk_stmts(a, ar, esc, &s_then, then_body);
+    let mut s_else = clone_state(a, live);
+    walk_stmts(a, ar, esc, &s_else, else_body);
+    let merged = merge_states(a, &s_then, &s_else);
+    *live = merged;
+    return;
+}
+fn walk_while(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+              cond: *const Texpr, body: *const Vec<Tstmt>, post: *const Vec<Tstmt>) {
+    visit_value(a, ar, esc, live, cond);
+    walk_stmts(a, ar, esc, live, body);
+    walk_stmts(a, ar, esc, live, post);
+    return;
+}
+// A `for` counter is a fresh CallerOrStatic binding scoped to the body; the
+// body's state does not survive the loop (the OCaml discards it).
+fn walk_for(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+            counter: str, lo: *const Texpr, hi: *const Texpr, body: *const Vec<Tstmt>) {
+    check_uses(a, ar, esc, live, lo);
+    check_uses(a, ar, esc, live, hi);
+    walk_expr_for_sites(a, ar, esc, live, lo);
+    walk_expr_for_sites(a, ar, esc, live, hi);
+    let mut inner = clone_state(a, live);
+    let none: Vec<str> = no_owners(a);
+    bind_var(a, &inner, counter, prov_cs(), &none, false);
+    walk_stmts(a, ar, esc, &inner, body);
+    return;
+}
+fn walk_foreach(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+                it_var: str, it_init: *const Texpr, body: *const Vec<Tstmt>) {
+    check_uses(a, ar, esc, live, it_init);
+    walk_expr_for_sites(a, ar, esc, live, it_init);
+    let p = prov_of(a, esc, live, it_init);
+    let owners = owners_of(a, esc, live, it_init);
+    let mut inner = clone_state(a, live);
+    bind_var(a, &inner, it_var, p, &owners, false);
+    walk_stmts(a, ar, esc, &inner, body);
+    return;
+}
+fn walk_store(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+              target: *const Texpr, value: *const Texpr, pos: Pos) {
+    check_uses(a, ar, esc, live, target);
+    check_uses(a, ar, esc, live, value);
+    walk_expr_for_sites(a, ar, esc, live, target);
+    walk_expr_for_sites(a, ar, esc, live, value);
+    check_store_through_pointer(a, ar, esc, live, target, value, pos);
+    apply_call_effects(a, ar, live, target);
+    apply_call_effects(a, ar, live, value);
+    return;
+}
+
+fn walk_stmt(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, s: *const Tstmt) {
+    match *s {
+        Tstmt::TLet { name, value, decl_ty, pos } => { walk_let(a, ar, esc, live, name, value); }
+        | Tstmt::TLetTuple { names, value, pos } => { walk_let_tuple(a, ar, esc, live, &names, value); }
+        | Tstmt::TAssign { path, value, pos } => { walk_assign(a, ar, esc, live, &path, value); }
+        | Tstmt::TAssignField { target, field, value, pos } => { walk_store(a, ar, esc, live, target, value, pos); }
+        | Tstmt::TAssignDeref { target, value, pos } => { walk_store(a, ar, esc, live, target, value, pos); }
+        | Tstmt::TAssignIndex { base, index, value, pos } => {
+            check_uses(a, ar, esc, live, index);
+            walk_expr_for_sites(a, ar, esc, live, index);
+            walk_store(a, ar, esc, live, base, value, pos);
+            apply_call_effects(a, ar, live, index);
+        }
+        | Tstmt::TReturn { value, pos } => {
+            match value {
+                Option::Some(v) => { walk_return(a, ar, esc, live, v, pos); }
+                | Option::None => { }
+            }
+        }
+        | Tstmt::TExprStmt(e) => { visit_value(a, ar, esc, live, e); }
+        | Tstmt::TIf { cond, then_body, else_body } => { walk_if(a, ar, esc, live, cond, &then_body, &else_body); }
+        | Tstmt::TWhile { cond, body, post } => { walk_while(a, ar, esc, live, cond, &body, &post); }
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => {
+            walk_for(a, ar, esc, live, counter, lo, hi, &body);
+        }
+        | Tstmt::TForEach { it_var, it_init, body, pos } => { walk_foreach(a, ar, esc, live, it_var, it_init, &body); }
+        | Tstmt::TDefer { body, pos } => {
+            let mut inner = clone_state(a, live);
+            walk_stmts(a, ar, esc, &inner, &body);
+        }
+        | _o => { }
+    }
+    return;
+}
+
+// Pre-order scan for nested escape sites: container-insert calls live anywhere;
+// TBlock and TMatch arm-bodies carry stmt-level sites that need the dataflow
+// walker.
+fn maybe_check_insert(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+                      m: str, args: *const Vec<*const Texpr>, pos: Pos) {
+    if is_container_insert(m) { check_container_insert(a, ar, esc, live, args, pos); }
+    return;
+}
+fn walk_expr_for_sites(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, te: *const Texpr) {
+    match te.e {
+        TexprNode::TCall { mangled, args } => { maybe_check_insert(a, ar, esc, live, mangled, &args, te.pos); }
+        | TexprNode::TBuiltinCall { name, args } => { maybe_check_insert(a, ar, esc, live, name, &args, te.pos); }
+        | _o => { }
+    }
+    let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    esc_children(a, te, &kids);
+    let kl = kids.as_slice();
+    let mut i = 0 as u32;
+    while i < kids.length() { walk_expr_for_sites(a, ar, esc, live, kl[i]); i = i + 1 as u32; }
+    match te.e {
+        TexprNode::TBlock { stmts, trailing } => {
+            let mut inner = clone_state(a, live);
+            walk_stmts(a, ar, esc, &inner, &stmts);
+        }
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            let sl = arms.as_slice();
+            let mut j = 0 as u32;
+            while j < arms.length() {
+                match sl[j].tguard {
+                    Option::Some(g) => { walk_expr_for_sites(a, ar, esc, live, g); }
+                    | Option::None => { }
+                }
+                walk_expr_for_sites(a, ar, esc, live, sl[j].tbody);
+                j = j + 1 as u32;
+            }
+        }
+        | _o => { }
+    }
+    return;
+}
+
+// ===== Per-fn analysis =====
+
+fn load_params(_a: Allocator, tf: *const Tfunc, pnames: *Vec<str>, pown: *Vec<bool>) {
+    let ps = tf.tf_func.params.as_slice();
+    let tys = tf.tf_param_tys.as_slice();
+    let n = tf.tf_func.params.length();
+    let mut i = 0 as u32;
+    while i < n {
+        pnames.push(ps[i].pname);
+        if i < tf.tf_param_tys.length() { pown.push(ty_is_own(tys[i])); } else { pown.push(false); }
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+fn analyze_fn(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, tf: *const Tfunc,
+              report: bool, err: *Option<*const CompileError>) -> Prov {
+    let mut pnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut pown: Vec<bool> = Vec::with_capacity(a, 8 as u32);
+    load_params(a, tf, &pnames, &pown);
+    let mut ret = prov_cs();
+    let esc = Esc { e_sum: sum, e_pnames: &pnames, e_pown: &pown, e_report: report,
+                    e_err: err, e_ret: &ret };
+    let mut live: Vec<Binding> = Vec::with_capacity(a, 8 as u32);
+    walk_stmts(a, ar, &esc, &live, &tf.tf_body);
+    return ret;
+}
+
+// The body's accumulated return-prov, projected to a summary row.  `Unknown`
+// widens to "every param may carry the return" — the sound over-approximation.
+fn project_to_summary(p: Prov, row: *SumEntry) {
+    row.swiden = false;
+    row.smask = 0 as u32;
+    if p.pk == PROV_PARAM { row.smask = p.pmask; return; }
+    if p.pk == PROV_UNKNOWN { row.swiden = true; return; }
+    return;
+}
+
+fn fn_is_analyzable(tf: *const Tfunc) -> bool {
+    if tf.tf_func.is_extern { return false; }
+    if tf.tf_func.escapes_hatch { return false; }
+    if !all_concrete_esc(&tf.tf_param_tys) { return false; }
+    return match tf.tf_ret_ty {
+        Option::Some(t) => is_concrete_esc(t)
+        | Option::None => true
+    };
+}
+fn all_concrete_esc(ts: *const Vec<*const Typ>) -> bool {
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < ts.length() { if !is_concrete_esc(sl[i]) { return false; } i = i + 1 as u32; }
+    return true;
+}
+fn is_concrete_esc(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TVar(_n) => false
+        | Typ::TPtr(i) => is_concrete_esc(i)
+        | Typ::TOwnPtr(i) => is_concrete_esc(i)
+        | Typ::TConstPtr(i) => is_concrete_esc(i)
+        | Typ::TTuple(ts) => all_concrete_esc(&ts)
+        | Typ::TArray { elem, size } => is_concrete_esc(elem)
+        | Typ::TFnPtr { params, ret } => {
+            if !all_concrete_esc(&params) { false }
+            else { match ret { Option::Some(rt) => is_concrete_esc(rt) | Option::None => true } }
+        }
+        | Typ::TStructApp { path, args } => all_concrete_esc(&args)
+        | Typ::TEnumApp { path, args } => all_concrete_esc(&args)
+        | Typ::TAssocProj { head, assoc } => is_concrete_esc(head)
+        | _o => true
+    };
+}
+
+// ===== Whole-program summary fixpoint =====
+
+fn sum_row_index(sum: *Vec<SumEntry>, m: str) -> u32 {
+    let sl = sum.as_slice();
+    let mut i = 0 as u32;
+    while i < sum.length() {
+        if str::eq(sl[i].sname, m) { return i; }
+        i = i + 1 as u32;
+    }
+    sum.push(SumEntry { sname: m, smask: 0 as u32, swiden: false });
+    return sum.length() - 1 as u32;
+}
+
+fn compute_summaries(a: Allocator, ar: *Arena, tp: *const Tprogram, sum: *Vec<SumEntry>,
+                     err: *Option<*const CompileError>) {
+    // The summary starts at bottom (no row = CallerOrStatic) and only grows, so
+    // the fixpoint terminates; the iteration cap is the OCaml's, a backstop
+    // against a non-monotone edit rather than an expected outcome.
+    let fl = tp.tp_funcs.as_slice();
+    let n = tp.tp_funcs.length();
+    let mut max_iter = 16 as u32;
+    let mut mp = 0 as u32;
+    let mut c = 0 as u32;
+    let mut k = 0 as u32;
+    while k < n {
+        if fn_is_analyzable(&fl[k]) {
+            c = c + 1 as u32;
+            if fl[k].tf_func.params.length() > mp { mp = fl[k].tf_func.params.length(); }
+        }
+        k = k + 1 as u32;
+    }
+    max_iter = c * (mp + 1 as u32) + 16 as u32;
+    let mut iter = 0 as u32;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        iter = iter + 1 as u32;
+        if iter > max_iter { escape_ice(); }
+        let mut i = 0 as u32;
+        while i < n {
+            if fn_is_analyzable(&fl[i]) {
+                let ret = analyze_fn(a, ar, sum, &fl[i], false, err);
+                let ri = sum_row_index(sum, fl[i].tf_mangled);
+                let mut nrow = SumEntry { sname: fl[i].tf_mangled, smask: 0 as u32, swiden: false };
+                project_to_summary(ret, &nrow);
+                with row in sum[ri] {
+                    if row.smask != nrow.smask || row.swiden != nrow.swiden {
+                        row.smask = nrow.smask;
+                        row.swiden = nrow.swiden;
+                        changed = true;
+                    }
+                }
+            }
+            i = i + 1 as u32;
+        }
+    }
+    return;
+}
+
+// The fixpoint is monotone by construction; failing to converge is an internal
+// error, never a user one — abort loudly rather than silently under-analysing.
+// Reuses error.exl's arena_oom abort seam rather than a second `mod raw`.
+fn escape_ice() { arena_oom(); }
+
+// ===== Entry =====
+
+// The enforcement phase discards the return-prov: the summary is already at its
+// fixpoint, so only the diagnostics matter here.
+fn analyze_fn_reporting(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, tf: *const Tfunc,
+                        err: *Option<*const CompileError>) {
+    let _p = analyze_fn(a, ar, sum, tf, true, err);
+    return;
+}
+
+// Run the pass.  Returns the FIRST diagnostic (the OCaml raises on it), or None.
+// Prelude / extern / `@escapes` fns are skipped, exactly as the oracle skips them.
+pub fn check(a: Allocator, ar: *Arena, tp: *const Tprogram) -> Option<*const CompileError> {
+    let mut err: Option<*const CompileError> = Option::None;
+    let mut sum: Vec<SumEntry> = Vec::with_capacity(a, 64 as u32);
+    compute_summaries(a, ar, tp, &sum, &err);
+    let fl = tp.tp_funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < tp.tp_funcs.length() {
+        let skip = str::eq(fl[i].tf_func.pos.file, "<prelude>")
+                   || fl[i].tf_func.is_extern || fl[i].tf_func.escapes_hatch;
+        if !skip { analyze_fn_reporting(a, ar, &sum, &fl[i], &err); }
+        i = i + 1 as u32;
+    }
+    return err;
+}
