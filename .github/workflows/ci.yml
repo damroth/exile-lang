@@ -54,6 +54,19 @@ jobs:
     - name: Verify selfhost dumps byte-stable (Faza -1 oracle)
       run: opam exec -- make selfhost-diff
 
+    # ===== The self-host proof, as a gate =====
+    #
+    # Everything above checks the ORACLE.  `selfhost-verify` checks the PORT: the
+    # bootstrap fixpoint (the port compiled by the port emits byte-identical C for
+    # its own source) plus every differential layer — tokens, lexer errors, AST,
+    # parser errors, typed IR, post-drop IR, and the escape pass's diagnostics.
+    #
+    # Until now the fixpoint was reproduced by hand in sessions.  That is exactly
+    # the kind of proof that silently rots: the first regression to slip in would
+    # not have failed anything.
+    - name: Verify the self-host proof (fixpoint + every port gate)
+      run: opam exec -- make selfhost-verify
+
   amiga-verify:
     runs-on: ubuntu-latest
     container:

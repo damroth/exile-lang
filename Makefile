@@ -413,6 +413,50 @@ selfhost-port-tokens: host-selfhost-lexer
 # caret) are a driver-level presentation layer the lexer port doesn't
 # emit.  Exercises the `try`/Result error threading that the valid-only
 # token corpus can't reach.
+# ===== The bootstrap fixpoint — the self-host proof, as a gate =====
+#
+# The port compiles the port, and the compiler THAT produces emits byte-identical
+# C for the same source.  That is what "self-hosted" means here, and until now it
+# was reproduced by hand in sessions — so the first regression would have gone
+# unnoticed.  Chain:
+#
+#   gen-1 = the oracle compiles src/codegen_corpus.exl        (OCaml -> a port binary)
+#   C1    = gen-1 emits C for src/codegen_corpus.exl          (port -> its own source)
+#   gen-2 = cc C1 + runtime/sys_host.c                        (that C, built)
+#   C2    = gen-2 emits C for src/codegen_corpus.exl          (the port built BY the port)
+#   diff C1 C2 must be EMPTY.
+#
+# A non-empty diff means the port's output depends on which compiler built it —
+# i.e. the port is not a fixpoint of itself.  Hard failure.
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify
+
+host-selfhost-cg: src/codegen_corpus.exl src/codegen.exl src/drop.exl src/move.exl src/typecheck.exl src/parser.exl src/loader.exl src/lexer.exl src/token.exl src/pos.exl src/ast.exl src/ir.exl src/error.exl $(SYS_HOST) build
+	$(EXILE) --target host --c-out $(C_OUT)/selfhost_cg.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_cg $<
+
+bootstrap-fixpoint: host-selfhost-cg
+	@mkdir -p $(C_OUT)/fixpoint
+	@echo src/codegen_corpus.exl | $(HOST_OUT)/selfhost_cg > $(C_OUT)/fixpoint/C1.c
+	@if [ ! -s $(C_OUT)/fixpoint/C1.c ]; then \
+	  echo "bootstrap-fixpoint: FAIL — gen-1 emitted nothing (crash?)"; exit 1; \
+	fi
+	@cc -ansi -pedantic -w -I src -o $(C_OUT)/fixpoint/gen2 \
+	   $(C_OUT)/fixpoint/C1.c $(SYS_HOST)
+	@echo src/codegen_corpus.exl | $(C_OUT)/fixpoint/gen2 > $(C_OUT)/fixpoint/C2.c
+	@if cmp -s $(C_OUT)/fixpoint/C1.c $(C_OUT)/fixpoint/C2.c; then \
+	  echo "bootstrap-fixpoint: ok — gen-2 reproduces gen-1's C byte for byte ($$(wc -l < $(C_OUT)/fixpoint/C1.c) lines)"; \
+	else \
+	  echo "bootstrap-fixpoint: FAIL — the port is not a fixpoint of itself"; \
+	  diff $(C_OUT)/fixpoint/C1.c $(C_OUT)/fixpoint/C2.c | head -40; \
+	  exit 1; \
+	fi
+
+# Everything that guards the self-host proof, in one target.  `make test` /
+# `verify-host` / `selfhost-diff` check the ORACLE; these check the PORT.
+selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
+                 selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
+                 selfhost-port-drop-ir selfhost-port-escape
+	@echo "selfhost-verify: all port gates green"
+
 # ===== DR-010 escape pass — the port's differential gate =====
 #
 # The escape pass emits no code: its entire observable behaviour is its
