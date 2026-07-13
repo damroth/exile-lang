@@ -440,11 +440,17 @@ fn deref_pointee(t: *const Typ) -> Option<*const Typ> {
     };
 }
 
+// `null` IS a pointer for the purposes of "does this value need auto-ref'ing into a
+// pointer slot" — it has no pointee, but it is not a value to take the address of.
+// (Omitting it made `let p: *c_void = null` auto-ref to `&null` and lift.  Same
+// shape as typ_eq's missing TNullPtr case: a relation that did not know about the
+// null literal, invisible until something asked it.)
 fn is_ptr_ty(t: *const Typ) -> bool {
     return match *t {
         Typ::TPtr(_i) => true
         | Typ::TConstPtr(_i) => true
         | Typ::TOwnPtr(_i) => true
+        | Typ::TNullPtr => true
         | _e => false
     };
 }
@@ -1509,9 +1515,30 @@ fn retype_var(ar: *Arena, targ: *const Texpr, cty: *const Typ) -> *const Texpr {
         | _other => targ
     };
 }
-fn coerce_own_to(ar: *Arena, targ: *const Texpr, pty: *const Typ) -> *const Texpr {
+// Only a PLACE can lend: the owner keeps living somewhere else, so the loan has
+// something to outlive.  A fresh owned RVALUE (`new(a) ...`, an own-returning call)
+// in a borrow slot would leave the allocation with NO owner — nothing tracks it,
+// nothing releases it.
+fn is_place_expr(te: *const Texpr) -> bool {
+    return match te.e {
+        TexprNode::TVar(_n) => true
+        | TexprNode::TFieldAccess { target, field } => true
+        | TexprNode::TIndex { base, index } => true
+        | TexprNode::TDeref(_s) => true
+        | _o => false
+    };
+}
+// An `own *T` flowing into a borrow slot (`*T` / `*const T`) is a LOAN: restamp it
+// to the slot's type so the move pass (which keys consume on the STAMPED type) keeps
+// the owner live for its own free/drop.  Applied at every borrow slot — call args,
+// method receivers, let/assign, struct-literal fields, enum-variant args.  `own *T`
+// and `*T` are the same `T*` in C: type-level only, zero codegen change.
+fn coerce_own_to(_a: Allocator, ar: *Arena, sc: *const TyScope, targ: *const Texpr, pty: *const Typ) -> *const Texpr {
     if is_own_ptr(targ.ty) {
-        if ptr_or_constptr(pty) { return retype_var(ar, targ, pty); }
+        if !ptr_or_constptr(pty) { return targ; }
+        if is_place_expr(targ) { return retype_var(ar, targ, pty); }
+        tc_fail(ar, sc, targ.pos,
+                "this owned value is only borrowed here, so nothing would own (or ever release) the allocation — bind it first (`let x: own *T = ...;`), then lend `x`");
         return targ;
     }
     // A value passed where a `*T` / `*const T` is expected auto-refs (`&arg`).
@@ -1523,18 +1550,18 @@ fn coerce_own_to(ar: *Arena, targ: *const Texpr, pty: *const Typ) -> *const Texp
 // Coerce `targ` against the `i`-th parameter type of `params` (the param type
 // is only ever passed onward into a node, never returned, so no local slice
 // element escapes).
-fn coerce_against_params(ar: *Arena, params: *const Vec<*const Typ>, i: u32, targ: *const Texpr) -> *const Texpr {
+fn coerce_against_params(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<*const Typ>, i: u32, targ: *const Texpr) -> *const Texpr {
     if i >= params.length() { return targ; }
     let ps = params.as_slice();
-    return coerce_own_to(ar, targ, ps[i]);
+    return coerce_own_to(a, ar, sc, targ, ps[i]);
 }
-fn coerce_at(ar: *Arena, sc: *const TyScope, mangled: str, i: u32, targ: *const Texpr) -> *const Texpr {
+fn coerce_at(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str, i: u32, targ: *const Texpr) -> *const Texpr {
     let gsigs = sc.sc_gsigs;
     let n = gsigs.length();
     let sl = gsigs.as_slice();
     let mut j = 0 as u32;
     while j < n {
-        if str::eq(sl[j].fs_mangled, mangled) { return coerce_against_params(ar, &sl[j].fs_params, i, targ); }
+        if str::eq(sl[j].fs_mangled, mangled) { return coerce_against_params(a, ar, sc, &sl[j].fs_params, i, targ); }
         j = j + 1 as u32;
     }
     return targ;
@@ -1547,7 +1574,7 @@ fn elab_args_coerced(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
     let mut i = 0 as u32;
     while i < n {
         let targ = elab_expr(a, ar, g, sc, env, none_ty(), sl[i]);
-        out.push(coerce_at(ar, sc, mangled, i, targ));
+        out.push(coerce_at(a, ar, sc, mangled, i, targ));
         i = i + 1 as u32;
     }
     return out;
@@ -1702,7 +1729,8 @@ fn enum_tuple_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     while i < n {
         let fname = tuple_field_name(a, ar, i);
         let exp = enum_field_ty(sc.sc_efields, epath, variant, fname);
-        out.push(TexprField { name: fname, value: elab_expr(a, ar, g, sc, env, exp, sl[i]) });
+        // A variant payload is a borrow slot too.
+        out.push(TexprField { name: fname, value: loan_into(a, ar, sc, elab_expr(a, ar, g, sc, env, exp, sl[i]), exp) });
         i = i + 1 as u32;
     }
     return out;
@@ -1718,7 +1746,7 @@ fn enum_struct_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let mut i = 0 as u32;
     while i < n {
         let exp = enum_field_ty(sc.sc_efields, epath, variant, sl[i].name);
-        out.push(TexprField { name: sl[i].name, value: elab_expr(a, ar, g, sc, env, exp, sl[i].value) });
+        out.push(TexprField { name: sl[i].name, value: loan_into(a, ar, sc, elab_expr(a, ar, g, sc, env, exp, sl[i].value), exp) });
         i = i + 1 as u32;
     }
     return out;
@@ -2295,12 +2323,23 @@ fn mk_fnptr_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     return te_node(ar, TexprNode::TCall { mangled: name, args: targs }, ret_or_void(ar, fnptr_ret_of(env, name)), p);
 }
 
+// The borrow type `self` declares, built from the receiver's pointee.
+fn self_slot_ty(ar: *Arena, trecv: *const Texpr, self_const: bool) -> *const Typ {
+    let inner = match deref_pointee(trecv.ty) {
+        Option::Some(t) => t
+        | Option::None => trecv.ty
+    };
+    if self_const { return ty_node(ar, Typ::TConstPtr(inner)); }
+    return ty_node(ar, Typ::TPtr(inner));
+}
 // Adjust a method receiver to the self shape the method declares: a value
 // receiver to a `*self` method auto-refs (`&recv`); a pointer receiver to a
 // by-value `self` method auto-derefs (`*recv`).
-fn adjust_recv(ar: *Arena, trecv: *const Texpr, recv_ptr: bool, self_ptr: bool, self_const: bool) -> *const Texpr {
+fn adjust_recv(a: Allocator, ar: *Arena, sc: *const TyScope, trecv: *const Texpr, recv_ptr: bool, self_ptr: bool, self_const: bool) -> *const Texpr {
     if self_ptr {
-        if recv_ptr { return trecv; }
+        // A pointer receiver already has the right shape — but an `own *T` receiver
+        // on a `*self` method is a LOAN, and a fresh owned rvalue there owns nothing.
+        if recv_ptr { return coerce_own_to(a, ar, sc, trecv, self_slot_ty(ar, trecv, self_const)); }
         // Auto-ref a value receiver to the self shape: `*const self` borrows
         // read-only (`&recv : *const T`), `*self` mutably (`&recv : *T`).
         let pty = if self_const { ty_node(ar, Typ::TConstPtr(trecv.ty)) } else { ty_node(ar, Typ::TPtr(trecv.ty)) };
@@ -2326,7 +2365,7 @@ fn append_args_meth(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let mut i = 0 as u32;
     while i < n {
         let targ = elab_expr(a, ar, g, sc, env, none_ty(), sl[i]);
-        out.push(coerce_at(ar, sc, mangled, i + 1 as u32, targ));
+        out.push(coerce_at(a, ar, sc, mangled, i + 1 as u32, targ));
         i = i + 1 as u32;
     }
 }
@@ -2493,7 +2532,7 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
         queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst, &inst_path);
     }
     else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
-    let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
+    let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
     push_texprs(&targs, &cargs);
@@ -2532,7 +2571,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     }
     else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
     let iret = subst_opt_ret(ar, &binds, cret);
-    let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
+    let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
     push_texprs(&targs, &cargs);
@@ -2656,7 +2695,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let sptr = sl[idx as u32].mi_self_ptr;
     let scst = sl[idx as u32].mi_self_const;
     if sl[idx as u32].mi_prelude { register_prelude_method_use(a, ar, sc, &sl[idx as u32].mi_path, mret); }
-    let adj = adjust_recv(ar, trecv, is_ptr_ty(trecv.ty), sptr, scst);
+    let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
     append_args_meth(a, ar, g, sc, env, mm, args, &cargs);
@@ -3315,7 +3354,7 @@ fn no_such_field(a: Allocator, ar: *Arena, sc: *const TyScope, target_ty: *const
 
 // Each initialiser value elaborates against its declared field type.
 fn elab_struct_fields(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
-                      env: *const Vec<FieldTy>, _tname: *const Vec<str>, fields: *const Vec<Field>) -> Vec<TexprField> {
+                      env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>) -> Vec<TexprField> {
     let mut out: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
     let n = fields.length();
     let sl = fields.as_slice();
@@ -3326,10 +3365,37 @@ fn elab_struct_fields(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
         // a narrower / unsigned slot at the store, rather than adopting the
         // field width here.
         let tv = elab_expr(a, ar, g, sc, env, none_ty(), sl[i].value);
-        out.push(TexprField { name: sl[i].name, value: tv });
+        // A struct-literal field is a borrow slot like any other: an `own *T` lent
+        // into a `*T` field restamps, and a fresh owned RVALUE there is rejected.
+        out.push(TexprField { name: sl[i].name, value: field_loan(a, ar, sc, tname, sl[i].name, tv) });
         i = i + 1 as u32;
     }
     return out;
+}
+// The slot type may be unknown (a deferred lookup); with no slot there is nothing
+// to lend into, so pass the value through.
+// The element type an indexed assignment writes into.
+fn elem_of(t: *const Typ) -> Option<*const Typ> {
+    let none: Option<*const Typ> = Option::None;
+    return match *t {
+        Typ::TArray { elem, size } => Option::Some(elem)
+        | Typ::TPtr(i) => Option::Some(i)
+        | Typ::TOwnPtr(i) => Option::Some(i)
+        | _o => none
+    };
+}
+fn loan_into(a: Allocator, ar: *Arena, sc: *const TyScope, tv: *const Texpr, slot: Option<*const Typ>) -> *const Texpr {
+    return match slot {
+        Option::Some(t) => coerce_own_to(a, ar, sc, tv, t)
+        | Option::None => tv
+    };
+}
+fn field_loan(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
+              fname: str, tv: *const Texpr) -> *const Texpr {
+    return match find_field_ty(sc.sc_sinfo, tname, fname) {
+        Option::Some(fty) => coerce_own_to(a, ar, sc, tv, fty)
+        | Option::None => tv
+    };
 }
 
 fn elab_opt_base(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
@@ -3598,7 +3664,7 @@ fn assign_coerced_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
                         env: *const Vec<FieldTy>, path: *const Vec<str>, value: *const Expr) -> *const Texpr {
     let av = elab_expr(a, ar, g, sc, env, none_ty(), value);
     return match assign_target_ty(env, path) {
-        Option::Some(t) => coerce_own_to(ar, av, t)
+        Option::Some(t) => coerce_own_to(a, ar, sc, av, t)
         | Option::None => av
     };
 }
@@ -3647,9 +3713,10 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             let vl = elab_expr(a, ar, g, sc, benv, let_expected(a, ar, sc, ty_ann), value);
             let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty);
             check_let_ty(a, ar, sc, name, value, ty_ann, vl.ty, pos);
+            let lent = coerce_own_to(a, ar, sc, vl, ety);
             if is_mut { note_let_mut(sc, name); }
             benv.push(FieldTy { name: name, ty: ety });
-            tstmts.push(Tstmt::TLet { name: name, value: vl, decl_ty: ety, pos: expr_pos(value) });
+            tstmts.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: expr_pos(value) });
         }
         | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
         | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
@@ -3662,13 +3729,13 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             let taf = elab_expr(a, ar, g, sc, benv, none_ty(), target);
             require_mut_root(a, ar, sc, taf, "mutate field of", pos);
             let fexp = struct_field_ty(sc, taf.ty, field);
-            let vaf = elab_expr(a, ar, g, sc, benv, fexp, value);
+            let vaf = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, fexp, value), fexp);
             tstmts.push(Tstmt::TAssignField { target: taf, field: field, value: vaf, pos: pos });
         }
         | Stmt::AssignDeref { target, value, pos } => {
             let tad = elab_expr(a, ar, g, sc, benv, none_ty(), target);
             let dexp = deref_pointee(tad.ty);
-            let vad = elab_expr(a, ar, g, sc, benv, dexp, value);
+            let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, dexp, value), dexp);
             tstmts.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
         }
         | Stmt::AssignIndex { base, index, value, pos } => {
@@ -4828,9 +4895,10 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             // The diagnostic points at the `let`, not at the value: that is where
             // the annotation the user wrote lives.
             check_let_ty(a, ar, sc, name, value, ty_ann, vl.ty, pos);
+            let lent = coerce_own_to(a, ar, sc, vl, ety);
             if is_mut { note_let_mut(sc, name); }
             env.push(FieldTy { name: name, ty: ety });
-            out.push(Tstmt::TLet { name: name, value: vl, decl_ty: ety, pos: expr_pos(value) });
+            out.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: expr_pos(value) });
         }
         | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Tail(e) => { elab_tail(a, ar, g, sc, gensym, env, ret, e, out); }
@@ -4854,20 +4922,20 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             let taf = elab_expr(a, ar, g, sc, env, none_ty(), target);
             require_mut_root(a, ar, sc, taf, "mutate field of", pos);
             let fexp = struct_field_ty(sc, taf.ty, field);
-            let vaf = elab_expr(a, ar, g, sc, env, fexp, value);
+            let vaf = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, env, fexp, value), fexp);
             out.push(Tstmt::TAssignField { target: taf, field: field, value: vaf, pos: pos });
         }
         | Stmt::AssignDeref { target, value, pos } => {
             let tad = elab_expr(a, ar, g, sc, env, none_ty(), target);
             let dexp = deref_pointee(tad.ty);
-            let vad = elab_expr(a, ar, g, sc, env, dexp, value);
+            let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, env, dexp, value), dexp);
             out.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
         }
         | Stmt::AssignIndex { base, index, value, pos } => {
             let tbi = elab_expr(a, ar, g, sc, env, none_ty(), base);
             require_mut_root(a, ar, sc, tbi, "assign into", pos);
             let tii = elab_expr(a, ar, g, sc, env, none_ty(), index);
-            let tvi = elab_expr(a, ar, g, sc, env, none_ty(), value);
+            let tvi = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, env, none_ty(), value), elem_of(tbi.ty));
             out.push(Tstmt::TAssignIndex { base: tbi, index: tii, value: tvi, pos: pos });
         }
         | Stmt::LetTuple { names, value, is_mut } => {
