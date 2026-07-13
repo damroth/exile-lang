@@ -273,6 +273,27 @@ struct TyScope {
     // True only while elaborating `fn main` — a bare `return;` there becomes
     // `return 0` (C `int main` must return a value).
     sc_is_main: bool,
+    // Names the compiler MINTED, mapped back to what the user wrote: disjoint
+    // siblings (`v` -> `v__1`), the `for` counter (`i` -> `__fv1`), a scoped
+    // projection (`x` -> `x__with0`).  Diagnostics render through it — an error
+    // naming a binding the user never wrote is a bug in the compiler, not a hint.
+    // Reset per function.  (The reference keeps the same map on `tfunc`; the port
+    // needs it only in typecheck so far, because move / drop / escape still elide
+    // their diagnostics.  It moves to the IR contract when they stop.)
+    sc_srcnames: *Vec<StrPair>,
+    // Index of the first entry belonging to the function being elaborated.  `Vec`
+    // is append-only by design, so the map is not cleared between functions —
+    // lookup simply starts here.  It has to be per-function: `v__1` minted in one
+    // fn can be a name the USER wrote in another, and a global map would render
+    // theirs as `v`.
+    sc_srcbase: *u32,
+    // Every binding in the function under elaboration, tagged: "p" = param,
+    // "P" = `mut` param, "m" = `let mut`.  (An immutable `let` needs no entry: it
+    // is the absence of one.)  The tag carries what the diagnostic needs — the
+    // message differs for a parameter ("or mark the parameter `mut`").  Same
+    // append-only + base-index idiom as sc_srcnames.
+    sc_binds: *Vec<StrPair>,
+    sc_bindbase: *u32,
     // The FIRST diagnostic raised while elaborating this program.
     //
     // The reference implementation raises an exception and unwinds; exile has no
@@ -318,6 +339,10 @@ struct ProgIdx {
     pi_xaliases: *const Vec<str>,
     pi_taliases: *const Vec<TypeAlias>,
     pi_err: *Option<*const CompileError>,
+    pi_srcnames: *Vec<StrPair>,
+    pi_srcbase: *u32,
+    pi_binds: *Vec<StrPair>,
+    pi_bindbase: *u32,
 }
 
 // Index of `(type-path, method-name)` in the method table, or -1.
@@ -3657,20 +3682,23 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
                    expected: Option<*const Typ>, s: *const Stmt, benv: *Vec<FieldTy>,
                    tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
     match *s {
-        Stmt::Let { name, value, ty_ann } => {
+        Stmt::Let { name, value, ty_ann, is_mut } => {
             let vl = elab_expr(a, ar, g, sc, benv, let_expected(a, ar, sc, ty_ann), value);
             let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty);
+            if is_mut { note_let_mut(sc, name); }
             benv.push(FieldTy { name: name, ty: ety });
             tstmts.push(Tstmt::TLet { name: name, value: vl, decl_ty: ety, pos: expr_pos(value) });
         }
         | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
         | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
         | Stmt::Assign { path, value, pos } => {
+            if path.length() == 1 as u32 { require_mut(a, ar, sc, path.as_slice()[0 as u32], "assign to", pos); }
             let av = assign_coerced_value(a, ar, g, sc, benv, &path, value);
             tstmts.push(Tstmt::TAssign { path: copy_strs(a, &path), value: av, pos: pos });
         }
         | Stmt::AssignField { target, field, value, pos } => {
             let taf = elab_expr(a, ar, g, sc, benv, none_ty(), target);
+            require_mut_root(a, ar, sc, taf, "mutate field of", pos);
             let fexp = struct_field_ty(sc, taf.ty, field);
             let vaf = elab_expr(a, ar, g, sc, benv, fexp, value);
             tstmts.push(Tstmt::TAssignField { target: taf, field: field, value: vaf, pos: pos });
@@ -4289,7 +4317,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_is_main: false };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -4482,6 +4510,7 @@ fn elab_with(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     let k = *gensym;
     *gensym = *gensym + 1 as u32;
     let internal = with_name(a, ar, name, k);
+    note_rename(sc, internal, name);
     let rbody = subst_body(a, ar, name, internal, body);
     let mut benv = copy_fieldtys(a, env);
     benv.push(FieldTy { name: internal, ty: pty });
@@ -4659,9 +4688,14 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
     let k = *gensym;
     *gensym = *gensym + 1 as u32;
     let fv = gensym_name(a, ar, "__fv", k);
+    note_rename(sc, fv, iter_var);
     let fe = gensym_name(a, ar, "__fe", k);
     match *range {
         Expr::Range { lo, hi, inclusive } => {
+            // The RANGE counter is mutable — `for i in 0..2 { i = 5; }` is legal.
+            // The ITERATOR element is not: it is a pattern bind, and assigning to
+            // it is an error.  Two different desugars, two different answers.
+            note_let_mut(sc, fv);
             let tlo = elab_expr(a, ar, g, sc, env, none_ty(), lo);
             let cty = tlo.ty;
             let thi = elab_expr(a, ar, g, sc, env, Option::Some(cty), hi);
@@ -4688,6 +4722,7 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
 fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>,
                  ret: Option<*const Typ>, k: u32, fv: str, iter_var: str, range: *const Expr, body: *const Vec<Stmt>, out: *Vec<Tstmt>) {
     let itname = gensym_name(a, ar, "__it", k);
+    note_let_mut(sc, itname);
     let trange = elab_expr(a, ar, g, sc, env, none_ty(), range);
     env.push(FieldTy { name: itname, ty: trange.ty });
     out.push(Tstmt::TLet { name: itname, value: trange, decl_ty: trange.ty, pos: zero_pos() });
@@ -4744,10 +4779,11 @@ fn bind_tuple_names(names: *const Vec<str>, tty: *const Typ, env: *Vec<FieldTy>)
 fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              s: *const Stmt, out: *Vec<Tstmt>) {
     match *s {
-        Stmt::Let { name, value, ty_ann } => {
+        Stmt::Let { name, value, ty_ann, is_mut } => {
             let exp = let_expected(a, ar, sc, ty_ann);
             let vl = elab_expr(a, ar, g, sc, env, exp, value);
             let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty);
+            if is_mut { note_let_mut(sc, name); }
             env.push(FieldTy { name: name, ty: ety });
             out.push(Tstmt::TLet { name: name, value: vl, decl_ty: ety, pos: expr_pos(value) });
         }
@@ -4764,12 +4800,14 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             out.push(Tstmt::TWhile { cond: wcond, body: wbody, post: wpost });
         }
         | Stmt::Assign { path, value, pos } => {
+            if path.length() == 1 as u32 { require_mut(a, ar, sc, path.as_slice()[0 as u32], "assign to", pos); }
             let av = assign_coerced_value(a, ar, g, sc, env, &path, value);
             let apath = copy_strs(a, &path);
             out.push(Tstmt::TAssign { path: apath, value: av, pos: pos });
         }
         | Stmt::AssignField { target, field, value, pos } => {
             let taf = elab_expr(a, ar, g, sc, env, none_ty(), target);
+            require_mut_root(a, ar, sc, taf, "mutate field of", pos);
             let fexp = struct_field_ty(sc, taf.ty, field);
             let vaf = elab_expr(a, ar, g, sc, env, fexp, value);
             out.push(Tstmt::TAssignField { target: taf, field: field, value: vaf, pos: pos });
@@ -4782,12 +4820,14 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         }
         | Stmt::AssignIndex { base, index, value, pos } => {
             let tbi = elab_expr(a, ar, g, sc, env, none_ty(), base);
+            require_mut_root(a, ar, sc, tbi, "assign into", pos);
             let tii = elab_expr(a, ar, g, sc, env, none_ty(), index);
             let tvi = elab_expr(a, ar, g, sc, env, none_ty(), value);
             out.push(Tstmt::TAssignIndex { base: tbi, index: tii, value: tvi, pos: pos });
         }
         | Stmt::LetTuple { names, value, is_mut } => {
             let tvt = elab_expr(a, ar, g, sc, env, none_ty(), value);
+            if is_mut { note_let_muts(sc, &names); }
             bind_tuple_names(&names, tvt.ty, env);
             out.push(Tstmt::TLetTuple { names: copy_strs(a, &names), value: tvt, pos: expr_pos(value) });
         }
@@ -5198,6 +5238,7 @@ struct ScopeSt {
     ss_params: *Vec<str>,
     ss_taken: *Vec<str>,        // every C name minted in this fn
     ss_mint: *Vec<StrPair>,     // source name -> next suffix, as text
+    ss_srcnames: *Vec<StrPair>, // minted C name -> the name the user wrote
 }
 
 fn names_has(v: *const Vec<str>, n: str) -> bool {
@@ -5234,6 +5275,7 @@ fn mint_next(a: Allocator, ar: *Arena, st: *const ScopeSt, name: str) -> str {
     nb.push_int(n);
     st.ss_mint.push(StrPair { a: name, b: str::from_slice(ar, nb.as_slice()) });
     st.ss_taken.push(fresh);
+    st.ss_srcnames.push(StrPair { a: fresh, b: name });
     return fresh;
 }
 fn str_to_int_sc(s: str) -> int {
@@ -5545,7 +5587,7 @@ fn scope_else_sc(a: Allocator, ar: *Arena, st: *const ScopeSt, visible: *const V
     };
 }
 // Entry: rewrite one function body.  Params seed the visible set.
-pub fn resolve_scopes(a: Allocator, ar: *Arena, params: *const Vec<Param>, body: *const Vec<Stmt>) -> Vec<Stmt> {
+pub fn resolve_scopes(a: Allocator, ar: *Arena, srcnames: *Vec<StrPair>, params: *const Vec<Param>, body: *const Vec<Stmt>) -> Vec<Stmt> {
     let mut pn: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut taken: Vec<str> = Vec::with_capacity(a, 16 as u32);
     let mut mint: Vec<StrPair> = Vec::with_capacity(a, 16 as u32);
@@ -5557,7 +5599,7 @@ pub fn resolve_scopes(a: Allocator, ar: *Arena, params: *const Vec<Param>, body:
         mint.push(StrPair { a: psl[i].pname, b: "0" });
         i = i + 1 as u32;
     }
-    let st = ScopeSt { ss_params: &pn, ss_taken: &taken, ss_mint: &mint };
+    let st = ScopeSt { ss_params: &pn, ss_taken: &taken, ss_mint: &mint, ss_srcnames: srcnames };
     let empty: Vec<str> = Vec::with_capacity(a, 8 as u32);
     return scope_block(a, ar, &st, &pn, body);
 }
@@ -5567,7 +5609,11 @@ fn elab_skeleton_or_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
     if is_skeleton { return Vec::with_capacity(a, 8 as u32); }
     // Resolve scopes FIRST: rename disjoint siblings apart, so everything below
     // sees names that are unique per function, exactly as before the relaxation.
-    let scoped = resolve_scopes(a, ar, &f.params, &f.body);
+    // A fresh map per function: minted names are function-local, and so is the
+    // mapping back to what the user wrote.
+    rebase_srcnames(sc);
+    rebase_binds(sc, &f.params);
+    let scoped = resolve_scopes(a, ar, sc.sc_srcnames, &f.params, &f.body);
     return elab_body(a, ar, g, sc, gensym, env, ret_ty, &scoped);
 }
 
@@ -5584,7 +5630,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_is_main: str::eq(mangled, "main") };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -6137,7 +6183,7 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 // A scope with the full struct-field skeleton in place, used for a second
@@ -6157,7 +6203,7 @@ fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyS
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
@@ -6173,7 +6219,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 
@@ -6193,7 +6239,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 
@@ -6211,7 +6257,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 
@@ -7757,7 +7803,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_is_main: false };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ann);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -9809,6 +9855,102 @@ fn tc_fail(ar: *Arena, sc: *const TyScope, pos: Pos, msg: str) {
     }
     return;
 }
+fn rebase_srcnames(sc: *const TyScope) {
+    *sc.sc_srcbase = sc.sc_srcnames.length();
+    return;
+}
+// Seed the binding registry for one function: its params, tagged by mutability.
+// `let mut` bindings register as they elaborate.
+fn rebase_binds(sc: *const TyScope, params: *const Vec<Param>) {
+    *sc.sc_bindbase = sc.sc_binds.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < params.length() {
+        let tag = if sl[i].is_mut { "P" } else { "p" };
+        sc.sc_binds.push(StrPair { a: sl[i].pname, b: tag });
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn note_let_mut(sc: *const TyScope, n: str) {
+    sc.sc_binds.push(StrPair { a: n, b: "m" });
+    return;
+}
+fn note_let_muts(sc: *const TyScope, names: *const Vec<str>) {
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() { note_let_mut(sc, sl[i]); i = i + 1 as u32; }
+    return;
+}
+// `cannot <what> immutable 'x' — declare it with `let mut`[ (or mark the parameter
+// `mut`)]`.  The name is rendered as the USER wrote it: the scope pass may have
+// minted `v__1`, and an error naming that is a bug in the compiler, not a hint.
+fn require_mut(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, what: str, pos: Pos) {
+    let tag = bind_tag(sc, name);
+    if str::eq(tag, "P") { return; }
+    if str::eq(tag, "m") { return; }
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("cannot "); sb.push_str(what);
+    sb.push_str(" immutable '"); sb.push_str(src_name(sc, name));
+    sb.push_str("' — declare it with `let mut`");
+    if str::eq(tag, "p") { sb.push_str(" (or mark the parameter `mut`)"); }
+    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+// The local an l-value path roots at: `x` / `x.f` / `x[i]` all root at `x`.
+fn assign_root(t: *const Texpr) -> Option<str> {
+    let none: Option<str> = Option::None;
+    return match t.e {
+        TexprNode::TVar(n) => Option::Some(n)
+        | TexprNode::TFieldAccess { target, field } => assign_root(target)
+        | TexprNode::TIndex { base, index } => assign_root(base)
+        | _o => none
+    };
+}
+// Mutating an OWNED value needs a mutable root binding.  THROUGH A POINTER it is
+// pointee mutation — governed by the pointer's own constness, not the binding's —
+// and the reference leaves that axis ungated (same as `*p = v`).  Without this the
+// prelude fails to elaborate: `Vec::push(self: *Vec<T>)` writes `self.ptr[i]`, and
+// `self` is not a `mut` param.
+fn ty_is_value(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TPtr(_i) => false
+        | Typ::TConstPtr(_i) => false
+        | Typ::TOwnPtr(_i) => false
+        | _o => true
+    };
+}
+fn require_mut_root(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Texpr, what: str, pos: Pos) {
+    if !ty_is_value(t.ty) { return; }
+    match assign_root(t) {
+        Option::Some(n) => { require_mut(a, ar, sc, n, what, pos); }
+        | Option::None => { }
+    }
+    return;
+}
+fn bind_tag(sc: *const TyScope, n: str) -> str {
+    let sl = sc.sc_binds.as_slice();
+    let mut i = *sc.sc_bindbase;
+    while i < sc.sc_binds.length() {
+        if str::eq(sl[i].a, n) { return sl[i].b; }
+        i = i + 1 as u32;
+    }
+    return "";
+}
+fn note_rename(sc: *const TyScope, minted: str, user: str) {
+    sc.sc_srcnames.push(StrPair { a: minted, b: user });
+    return;
+}
+// Render a binding name as the USER wrote it.
+pub fn src_name(sc: *const TyScope, n: str) -> str {
+    let sl = sc.sc_srcnames.as_slice();
+    let mut i = *sc.sc_srcbase;
+    while i < sc.sc_srcnames.length() {
+        if str::eq(sl[i].a, n) { return sl[i].b; }
+        i = i + 1 as u32;
+    }
+    return n;
+}
 fn err_latched(e: *const Option<*const CompileError>) -> bool {
     return match *e { Option::Some(_x) => true | Option::None => false };
 }
@@ -9828,6 +9970,10 @@ fn mk_err(ar: *Arena, pos: Pos, msg: str) -> *const CompileError {
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
     let mut tc_err: Option<*const CompileError> = Option::None;
+    let mut tc_srcnames: Vec<StrPair> = Vec::with_capacity(a, 16 as u32);
+    let mut tc_srcbase: u32 = 0 as u32;
+    let mut tc_binds: Vec<StrPair> = Vec::with_capacity(a, 16 as u32);
+    let mut tc_bindbase: u32 = 0 as u32;
     // Parse the source prelude once; the registry is passive until the demand
     // fixpoint (post-drain) materializes the methods a program actually uses.
     let prelude_items: Vec<Item> = parse_prelude_items(a, ar);
@@ -9892,7 +10038,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_err: &tc_err, sc_is_main: false };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_err: &tc_err, sc_srcnames: &tc_srcnames, sc_srcbase: &tc_srcbase, sc_binds: &tc_binds, sc_bindbase: &tc_bindbase, sc_is_main: false };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -9942,7 +10088,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_err: &tc_err };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_err: &tc_err, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
