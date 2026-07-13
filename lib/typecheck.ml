@@ -4521,7 +4521,7 @@ let elab_body ?(ret_ty : typ option = None) ?(is_main = false)
                    else
                      Error.failf pos
                        "variable '%s' declared as %s but initializer has type %s"
-                       name (typ_name t_ann) (typ_name t_inferred))
+                       (disp name) (typ_name t_ann) (typ_name t_inferred))
         in
         (* DR-055: an owning binding cannot start as `null`.  An `own
            *T` must own an allocation; a null-initialized owner owns

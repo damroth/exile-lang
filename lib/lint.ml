@@ -181,6 +181,10 @@ let must_use_warnings (tp : tprogram) : warning list =
    Shadowing is rare in practice and harmless here: if any of the
    shadow chain is read, none of them warn (false negative we accept). *)
 let unused_lets_for (tf : tfunc) : warning list =
+  (* Render the name the USER wrote: the scope pass mints `v__1` for a disjoint
+     sibling, and telling someone their unused variable is `v__1` when they wrote
+     `v` is a bug in the compiler, not a hint. *)
+  let disp n = Ir.src_name tf.tf_srcnames n in
   let lets = List.rev (lets_in_stmts [] tf.tf_body) in
   if lets = [] then []
   else begin
@@ -191,7 +195,7 @@ let unused_lets_for (tf : tfunc) : warning list =
       if Hashtbl.mem read_set name then None
       else
         let msg = Printf.sprintf
-          "unused variable '%s' (prefix name with '_' to silence)" name
+          "unused variable '%s' (prefix name with '_' to silence)" (disp name)
         in
         Some { pos; msg })
       lets

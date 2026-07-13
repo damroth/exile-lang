@@ -1752,6 +1752,43 @@ let () =
      fn main() { run(default_allocator(), true); }\n"
     "double free: 'p' was already consumed at <input>:4:51";
 
+  (* F1, closed as a FAMILY.  The compiler mints names the user never wrote, and
+     every pass that names a binding must render back through tf_srcnames.  move.ml
+     was fixed when the map landed; drop.ml, lint.ml and typecheck's own
+     type-mismatch message were missed, and the leak was LIVE for users of the
+     released compiler.  One fixture per pass, so a new pass that forgets the map
+     fails here rather than in someone's terminal. *)
+  check_error "drop: `never consumed` reports the user's name"
+    "struct Node { v: int }\n\
+     fn make(a: Allocator, k: int) -> own *Node { return new(a) Node { v: k }; }\n\
+     fn run(a: Allocator, b: bool) {\n\
+    \    if b { let p = make(a, 1); free(a, p); }\n\
+    \    if !b { let p = make(a, 2); println(p.v); }\n\
+     }\n\
+     fn main() { run(default_allocator(), true); }\n"
+    "own value 'p' is never consumed — free it, move it, or return it (its allocator is not known here, so it cannot be auto-dropped)";
+
+  check_error "typecheck: a type mismatch reports the user's name"
+    "fn f(b: bool) -> int {\n\
+    \    let mut out = 0;\n\
+    \    if b { let v: int = 1; out = v; }\n\
+    \    if !b { let v: int = true; out = 2; }\n\
+    \    return out;\n\
+     }\n\
+     fn main() { println(f(true)); }\n"
+    "variable 'v' declared as i32 but initializer has type bool";
+
+  check_lint "lint: `unused variable` reports the user's name"
+    "fn f(b: bool) -> int {\n\
+    \    let mut out = 0;\n\
+    \    if b { let v = 1; out = v; }\n\
+    \    if !b { let v = 2; out = 7; }\n\
+    \    return out;\n\
+     }\n\
+     fn main() { println(f(true)); }\n"
+    ~profile:Exile_lang.Profile.Full
+    [ "unused variable 'v' (prefix name with '_' to silence)" ];
+
   check_error "a `with` projection reports the user's name, not `x__with0`"
     "fn main() {\n\
     \    let a = default_allocator();\n\

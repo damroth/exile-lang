@@ -47,6 +47,14 @@
 
 open Ir
 
+(* The binding names the compiler renamed in the function being rewritten.  Every
+   diagnostic below renders through [disp]: an error that names a binding the user
+   never wrote (`p__1`, `__fv1`, `x__with0`) is a bug in the compiler, not a hint.
+   Same seam as move.ml — drop.ml was simply missed when that landed, and the leak
+   was live for users of the released compiler, not merely a future hazard. *)
+let cur_srcnames : (string * string) list ref = ref []
+let disp n = Ir.src_name !cur_srcnames n
+
 (* ---------- consume delegation (the OWN-D2 seam) ---------- *)
 
 (* Names from [names] consumed by evaluating [te], per the move-pass's
@@ -456,7 +464,7 @@ let drop_stmts_for_entry ~structs ~enums (e : entry) : tstmt list =
         "own value '%s' is never consumed — free it, move it, or \
          return it (its allocator is not known here, so it cannot \
          be auto-dropped)"
-        e.ename
+        (disp e.ename)
 
 (* Drops for every Live entry, newest-first (LIFO declaration order —
    st keeps newest at the head). *)
@@ -468,7 +476,7 @@ let drops_for_live ~structs ~enums st : tstmt list =
         Error.failf e.epos
           "'%s' had its payload moved out and still owns its storage \
            at scope exit — release it explicitly with `free(alloc, %s)`"
-          e.ename e.ename
+          (disp e.ename) (disp e.ename)
     | Consumed -> [])
     st
 
@@ -887,7 +895,7 @@ let merge_branches pos st_then st_else =
           "'%s' is moved out on one branch but stays owned on the \
            other — auto-drop is static (no runtime drop flags); \
            consume it on every path or on none"
-          a.ename)
+          (disp a.ename))
     st_then st_else
 
 (* walk_stmts: rewrite a block.  [st] holds ALL tracked entries
@@ -1140,6 +1148,7 @@ and apply_one ~structs ~enums st stmt value =
 (* ---------- per-fn / whole-program ---------- *)
 
 let rewrite_fn ~structs ~enums (tf : tfunc) : tfunc =
+  cur_srcnames := tf.tf_srcnames;
   (* The prelude predates auto-drop and frees by hand (String::free,
      Vec::grow's old-buffer release, ...) — inserting drops there
      would double-fire.  Only user code gets the pass. *)
