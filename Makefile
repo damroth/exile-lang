@@ -413,6 +413,27 @@ selfhost-port-tokens: host-selfhost-lexer
 # caret) are a driver-level presentation layer the lexer port doesn't
 # emit.  Exercises the `try`/Result error threading that the valid-only
 # token corpus can't reach.
+# ===== The no-fabrication policy =====
+#
+# A fallback that emits something LOOKING like a result is worse than a crash: it
+# turns a compiler bug into a confusing error from `cc`, or into code that runs.
+# `<ctype?>` / `<mangle?>` / `/*expr?*/` / `/*stmt?*/` and friends were all dead on
+# the whole valid corpus (measured), so they never helped a real program — they only
+# ever hid a bug.  They are `ice()` now, and this gate keeps them from coming back.
+#
+# The reference does the same thing (`failwith "TNullPtr should never reach
+# c_type_prefix"`); the port had drifted into plausible tokens instead.
+.PHONY: selfhost-no-fabrication
+
+selfhost-no-fabrication:
+	@hits=$$(grep -nE '"<[a-z]+\?>"|/\*[a-z]+\?\*/' src/*.exl | grep -v '^src/[a-z_]*\.exl:[0-9]*: *//' || true); \
+	if [ -n "$$hits" ]; then \
+	  echo "selfhost-no-fabrication: a fallback emits a plausible-looking token instead of ice():"; \
+	  echo "$$hits"; \
+	  exit 1; \
+	fi; \
+	echo "selfhost-no-fabrication: clean (no fallback fabricates output)"
+
 # ===== Faza A — typecheck diagnostics =====
 #
 # Same shape as selfhost-port-errors (lexer, 12) and -parse-errors (46): each
@@ -484,7 +505,8 @@ bootstrap-fixpoint: host-selfhost-cg
 # `verify-host` / `selfhost-diff` check the ORACLE; these check the PORT.
 selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
-                 selfhost-port-drop-ir selfhost-port-escape selfhost-port-tc-errors
+                 selfhost-port-drop-ir selfhost-port-escape selfhost-port-tc-errors \
+                 selfhost-no-fabrication
 	@echo "selfhost-verify: all port gates green"
 
 # ===== DR-010 escape pass — the port's differential gate =====

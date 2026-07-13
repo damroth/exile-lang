@@ -138,7 +138,7 @@ pub fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
             match ret { Option::Some(rt) => fb.push_str(mangle_typ(a, ar, rt)) | Option::None => fb.push_str("void") }
             str::from_slice(ar, fb.as_slice())
         }
-        | _other => "<mangle?>"
+        | _other => { ice("internal: no C mangling for this IR type"); "" }
     };
 }
 
@@ -820,7 +820,7 @@ pub fn gen_expr(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, te
         }
         | TexprNode::TFieldAccess { target, field } => emit_field_access(a, ar, out, cg, target, field)
         | TexprNode::TSizeOf(t) => { out.push_str("sizeof("); out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, t))); out.push_str(")"); }
-        | _other => out.push_str("/*expr?*/")
+        | _other => { ice("internal: no C form for this IR expression"); }
     }
 }
 
@@ -1193,7 +1193,7 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
         }
         | Tstmt::TBreak(p) => { out.push_str(indent); out.push_str("break;\n"); }
         | Tstmt::TContinue(p) => { out.push_str(indent); out.push_str("continue;\n"); }
-        | _other => { out.push_str(indent); out.push_str("/*stmt?*/\n"); }
+        | _other => { ice("internal: no C form for this IR statement — did a transient node survive the lift pass?"); }
     }
 }
 
@@ -1246,7 +1246,7 @@ fn emit_for_post(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, p
                 out.push_str(last_seg_str(&path)); out.push_str(" = "); gen_expr(a, ar, out, cg, value);
             }
             | Tstmt::TExprStmt(e) => gen_expr(a, ar, out, cg, e)
-            | _o => out.push_str("/*post?*/")
+            | _o => { ice("internal: no C form for this loop-post statement"); }
         }
         i = i + 1 as u32;
     }
@@ -1479,7 +1479,7 @@ fn emit_arm_result(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, c
                 out.push_str(indent); out.push_str("return __try_ret;\n");
             }
             | TexprNode::TBlock { stmts, trailing } => emit_stmts(a, ar, out, indent, cg, &stmts)
-            | _o => { out.push_str(indent); out.push_str("/*diverge?*/\n"); }
+            | _o => { ice("internal: no C form for this diverging match arm"); }
         }
         return;
     }
