@@ -414,28 +414,6 @@ fn enum_field_ty(efields: *const Vec<EnumFieldE>, path: *const Vec<str>, variant
 // six distinct bugs traced to exact-vs-normalised mismatches, the worst
 // inter-pass (move vs drop) and soundness-class.  A join is injective on path
 // content, so this only ADDS the intended cross-form matches, never a false one.
-fn path_eq(a: *const Vec<str>, b: *const Vec<str>) -> bool {
-    let n = a.length();
-    if n == b.length() {
-        let sa = a.as_slice();
-        let sb = b.as_slice();
-        let mut i = 0 as u32;
-        while i < n {
-            if !str::eq(sa[i], sb[i]) { return false; }
-            i = i + 1 as u32;
-        }
-        return true;
-    }
-    let al = default_allocator();
-    let ja = tc_join_sb(al, a);
-    let jb = tc_join_sb(al, b);
-    if ja.length() != jb.length() { return false; }
-    let ba = ja.as_slice();
-    let bb = jb.as_slice();
-    let mut k = 0 as u32;
-    while k < ja.length() { if ba[k] != bb[k] { return false; } k = k + 1 as u32; }
-    return true;
-}
 
 // The type of `<struct at path>.field`, or None if unknown.
 fn find_field_ty(sinfo: *const Vec<StructField>, path: *const Vec<str>, field: str) -> Option<*const Typ> {
@@ -1377,24 +1355,7 @@ fn binop_result_ty(ar: *Arena, op: BinOp, l: *const Texpr) -> *const Typ {
 // `typ_name` (IR's pure util, primitive slice): names a type for the
 // `type_name(x)` builtin, whose result folds into a `++` chain.
 
-fn int_typ_name(sgn: bool, width: IntWidth) -> str {
-    if sgn {
-        return match width { IntWidth::W8 => "i8" | IntWidth::W16 => "i16" | IntWidth::W32 => "i32" };
-    }
-    return match width { IntWidth::W8 => "u8" | IntWidth::W16 => "u16" | IntWidth::W32 => "u32" };
-}
 
-fn typ_name(t: *const Typ) -> str {
-    return match *t {
-        Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
-        | Typ::TBool => "bool"
-        | Typ::TString => "str"
-        | Typ::TFloat(w) => match w { FloatWidth::F32 => "f32" | FloatWidth::F64 => "f64" }
-        | Typ::TCInt { is_signed } => match is_signed { true => "c_int" | false => "c_uint" }
-        | Typ::TCVoid => "c_void"
-        | _other => "?"
-    };
-}
 
 fn none_str() -> Option<str> {
     let n: Option<str> = Option::None;
@@ -1403,17 +1364,17 @@ fn none_str() -> Option<str> {
 
 // A compile-time string: a string literal, or a `type_name(x)` call (whose
 // value is the static type name).  Used to fold `++` chains.
-fn extract_concat_str(te: *const Texpr) -> Option<str> {
+fn extract_concat_str(a: Allocator, ar: *Arena, te: *const Texpr) -> Option<str> {
     return match te.e {
         TexprNode::TStringLit(s) => Option::Some(s)
-        | TexprNode::TBuiltinCall { name, args } => extract_type_name(name, &args)
+        | TexprNode::TBuiltinCall { name, args } => extract_type_name(a, ar, name, &args)
         | _other => none_str()
     };
 }
-fn extract_type_name(name: str, args: *const Vec<*const Texpr>) -> Option<str> {
+fn extract_type_name(a: Allocator, ar: *Arena, name: str, args: *const Vec<*const Texpr>) -> Option<str> {
     if str::eq(name, "type_name") && args.length() == 1 as u32 {
         let sl = args.as_slice();
-        return Option::Some(typ_name(sl[0 as u32].ty));
+        return Option::Some(typ_name(a, ar, sl[0 as u32].ty));
     }
     return none_str();
 }
@@ -1426,13 +1387,13 @@ fn mk_concat_str(a: Allocator, ar: *Arena, l: str, r: str, p: Pos) -> *const Tex
 }
 
 fn fold_concat_r(a: Allocator, ar: *Arena, l: str, r2: *const Texpr, p: Pos) -> *const Texpr {
-    return match extract_concat_str(r2) {
+    return match extract_concat_str(a, ar, r2) {
         Option::Some(r) => mk_concat_str(a, ar, l, r, p)
         | Option::None => defer_expr(ar, p)
     };
 }
 fn fold_concat(a: Allocator, ar: *Arena, l2: *const Texpr, r2: *const Texpr, p: Pos) -> *const Texpr {
-    return match extract_concat_str(l2) {
+    return match extract_concat_str(a, ar, l2) {
         Option::Some(l) => fold_concat_r(a, ar, l, r2, p)
         | Option::None => defer_expr(ar, p)
     };
@@ -3682,9 +3643,10 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
                    expected: Option<*const Typ>, s: *const Stmt, benv: *Vec<FieldTy>,
                    tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
     match *s {
-        Stmt::Let { name, value, ty_ann, is_mut } => {
+        Stmt::Let { name, value, ty_ann, is_mut, pos } => {
             let vl = elab_expr(a, ar, g, sc, benv, let_expected(a, ar, sc, ty_ann), value);
             let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty);
+            check_let_ty(a, ar, sc, name, value, ty_ann, vl.ty, pos);
             if is_mut { note_let_mut(sc, name); }
             benv.push(FieldTy { name: name, ty: ety });
             tstmts.push(Tstmt::TLet { name: name, value: vl, decl_ty: ety, pos: expr_pos(value) });
@@ -4415,12 +4377,92 @@ fn let_expected(a: Allocator, ar: *Arena, sc: *const TyScope, ty_ann: Option<*co
 // The type a `let` binding takes in the env: its declared annotation when
 // present (resolving named types through the scope), else the value's type.
 // A `let x: *T = null` binds `x` as `*T`, not the value's bare `null-ptr`.
+// An integer literal, seen through `-` and `as` (`255 as u8` is still the literal
+// 255 as far as fitting goes).
+fn expr_int_lit(e: *const Expr) -> Option<int> {
+    let none: Option<int> = Option::None;
+    return match *e {
+        Expr::IntLit(n, _q) => Option::Some(n)
+        | Expr::Neg(sub, _q) => negate_lit(expr_int_lit(sub))
+        | Expr::Cast(sub, _t, _q) => expr_int_lit(sub)
+        | _o => none
+    };
+}
+fn negate_lit(v: Option<int>) -> Option<int> {
+    let none: Option<int> = Option::None;
+    return match v { Option::Some(n) => Option::Some(0 as int - n) | Option::None => none };
+}
+fn is_int_like_ty(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(_k) => true
+        | Typ::TCInt { is_signed } => true
+        | Typ::TCShort { is_signed } => true
+        | Typ::TCLong { is_signed } => true
+        | Typ::TCChar => true
+        | Typ::TCSChar => true
+        | Typ::TCUChar => true
+        | _o => false
+    };
+}
+
+// The declared type wins, but only if the value can actually take it: an integer
+// literal must FIT (`let x: i8 = 5` is fine, `= 300` is not), and anything else must
+// be coercible.  Before this the port took the annotation on faith and emitted C for
+// `let x: int = true`.
 fn let_env_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
               ty_ann: Option<*const TypeAnn>, value_ty: *const Typ) -> *const Typ {
     return match ty_ann {
         Option::Some(t) => resolve_sig_ty(a, ar, sc, t)
         | Option::None => value_ty
     };
+}
+fn check_let_ty(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
+                value: *const Expr, ann: Option<*const TypeAnn>, vty: *const Typ, pos: Pos) {
+    match ann {
+        Option::Some(t) => { check_let_ann(a, ar, sc, name, value, resolve_sig_ty(a, ar, sc, t), vty, pos); }
+        | Option::None => { }
+    }
+    return;
+}
+fn check_let_ann(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, value: *const Expr,
+                 tann: *const Typ, vty: *const Typ, pos: Pos) {
+    match expr_int_lit(value) {
+        Option::Some(n) => { check_int_lit_fits(a, ar, sc, n, tann, pos); }
+        | Option::None => { check_coercible(a, ar, sc, name, tann, vty, pos); }
+    }
+    return;
+}
+fn check_int_lit_fits(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, tann: *const Typ, pos: Pos) {
+    if !is_int_like_ty(tann) { return; }
+    if int_fits(n, tann) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    if n < 0 as int && !is_signed_ty(tann) { sb.push_str("negative literal "); }
+    else { sb.push_str("literal "); }
+    sb.push_int(n);
+    if n < 0 as int && !is_signed_ty(tann) { sb.push_str(" cannot fit in "); }
+    else { sb.push_str(" does not fit in "); }
+    sb.push_str(typ_name(a, ar, tann));
+    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn is_signed_ty(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(k) => k.is_signed
+        | Typ::TCInt { is_signed } => is_signed
+        | Typ::TCShort { is_signed } => is_signed
+        | Typ::TCLong { is_signed } => is_signed
+        | _o => true
+    };
+}
+fn check_coercible(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
+                   tann: *const Typ, vty: *const Typ, pos: Pos) {
+    if coercible_to(vty, tann) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("variable '"); sb.push_str(src_name(sc, name));
+    sb.push_str("' declared as "); sb.push_str(typ_name(a, ar, tann));
+    sb.push_str(" but initializer has type "); sb.push_str(typ_name(a, ar, vty));
+    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
 }
 
 // `return e` elaborates `e` against the fn's declared return type so a bare
@@ -4779,10 +4821,13 @@ fn bind_tuple_names(names: *const Vec<str>, tty: *const Typ, env: *Vec<FieldTy>)
 fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              s: *const Stmt, out: *Vec<Tstmt>) {
     match *s {
-        Stmt::Let { name, value, ty_ann, is_mut } => {
+        Stmt::Let { name, value, ty_ann, is_mut, pos } => {
             let exp = let_expected(a, ar, sc, ty_ann);
             let vl = elab_expr(a, ar, g, sc, env, exp, value);
             let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty);
+            // The diagnostic points at the `let`, not at the value: that is where
+            // the annotation the user wrote lives.
+            check_let_ty(a, ar, sc, name, value, ty_ann, vl.ty, pos);
             if is_mut { note_let_mut(sc, name); }
             env.push(FieldTy { name: name, ty: ety });
             out.push(Tstmt::TLet { name: name, value: vl, decl_ty: ety, pos: expr_pos(value) });
@@ -8136,13 +8181,6 @@ fn fill_struct_fields(a: Allocator, ar: *Arena, structs: *Vec<StructSig>, ci: u3
 // (["ast::Stmt"]) depending on source (type resolution vs name collection),
 // so the enum backfill compares the "::"-joined byte streams — otherwise a
 // module enum's variants never match its ename_path and stay empty.
-fn tc_join_sb(a: Allocator, p: *const Vec<str>) -> StringBuilder {
-    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
-    let sl = p.as_slice();
-    let mut i = 0 as u32;
-    while i < p.length() { if i > 0 as u32 { sb.push_str("::"); } sb.push_str(sl[i]); i = i + 1 as u32; }
-    return sb;
-}
 fn path_eq_norm(a: Allocator, x: *const Vec<str>, y: *const Vec<str>) -> bool {
     if x.length() == y.length() { return path_eq(x, y); }
     let jx = tc_join_sb(a, x);
@@ -8563,59 +8601,6 @@ fn opt_ty_has_tvar(o: Option<*const Typ>) -> bool {
 
 // Structural type equality — the footer dedup key (avoids depending on
 // codegen's mangle_typ).
-fn typ_eq(x: *const Typ, y: *const Typ) -> bool {
-    return match *x {
-        Typ::TInt(kx) => match *y { Typ::TInt(ky) => (kx.is_signed == ky.is_signed) && intwidth_eq(kx.width, ky.width) | _e => false }
-        | Typ::TBool => match *y { Typ::TBool => true | _e => false }
-        | Typ::TString => match *y { Typ::TString => true | _e => false }
-        | Typ::TFloat(wx) => match *y { Typ::TFloat(wy) => floatwidth_eq(wx, wy) | _e => false }
-        | Typ::TCInt { is_signed } => match *y { Typ::TCInt { is_signed: s2 } => is_signed == s2 | _e => false }
-        | Typ::TCShort { is_signed } => match *y { Typ::TCShort { is_signed: s2 } => is_signed == s2 | _e => false }
-        | Typ::TCLong { is_signed } => match *y { Typ::TCLong { is_signed: s2 } => is_signed == s2 | _e => false }
-        | Typ::TCChar => match *y { Typ::TCChar => true | _e => false }
-        | Typ::TCSChar => match *y { Typ::TCSChar => true | _e => false }
-        | Typ::TCUChar => match *y { Typ::TCUChar => true | _e => false }
-        | Typ::TCVoid => match *y { Typ::TCVoid => true | _e => false }
-        | Typ::TStruct(px) => match *y { Typ::TStruct(py) => path_eq(&px, &py) | _e => false }
-        | Typ::TEnum(px) => match *y { Typ::TEnum(py) => path_eq(&px, &py) | _e => false }
-        | Typ::TExtStruct(nx) => match *y { Typ::TExtStruct(ny) => str::eq(nx, ny) | _e => false }
-        | Typ::TExtAlias(nx) => match *y { Typ::TExtAlias(ny) => str::eq(nx, ny) | _e => false }
-        | Typ::TPtr(ix) => match *y { Typ::TPtr(iy) => typ_eq(ix, iy) | _e => false }
-        | Typ::TOwnPtr(ix) => match *y { Typ::TOwnPtr(iy) => typ_eq(ix, iy) | _e => false }
-        | Typ::TConstPtr(ix) => match *y { Typ::TConstPtr(iy) => typ_eq(ix, iy) | _e => false }
-        | Typ::TTuple(tx) => match *y { Typ::TTuple(ty2) => tys_eq(&tx, &ty2) | _e => false }
-        | Typ::TArray { elem, size } => match *y { Typ::TArray { elem: e2, size: s2 } => (size == s2) && typ_eq(elem, e2) | _e => false }
-        | Typ::TFnPtr { params, ret } => match *y { Typ::TFnPtr { params: p2, ret: r2 } => tys_eq(&params, &p2) && opt_typ_eq(ret, r2) | _e => false }
-        | _e => false
-    };
-}
-fn opt_typ_eq(x: Option<*const Typ>, y: Option<*const Typ>) -> bool {
-    return match x {
-        Option::Some(xt) => match y { Option::Some(yt) => typ_eq(xt, yt) | Option::None => false }
-        | Option::None => match y { Option::Some(yt2) => false | Option::None => true }
-    };
-}
-fn tys_eq(xs: *const Vec<*const Typ>, ys: *const Vec<*const Typ>) -> bool {
-    if xs.length() != ys.length() { return false; }
-    let sx = xs.as_slice();
-    let sy = ys.as_slice();
-    let mut i = 0 as u32;
-    while i < xs.length() { if !typ_eq(sx[i], sy[i]) { return false; } i = i + 1 as u32; }
-    return true;
-}
-fn intwidth_eq(x: IntWidth, y: IntWidth) -> bool {
-    return match x {
-        IntWidth::W8 => match y { IntWidth::W8 => true | _e => false }
-        | IntWidth::W16 => match y { IntWidth::W16 => true | _e => false }
-        | IntWidth::W32 => match y { IntWidth::W32 => true | _e => false }
-    };
-}
-fn floatwidth_eq(x: FloatWidth, y: FloatWidth) -> bool {
-    return match x {
-        FloatWidth::F32 => match y { FloatWidth::F32 => true | _e => false }
-        | FloatWidth::F64 => match y { FloatWidth::F64 => true | _e => false }
-    };
-}
 
 fn ty_in(acc: *const Vec<*const Typ>, t: *const Typ) -> bool {
     let sl = acc.as_slice();

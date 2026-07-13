@@ -290,3 +290,288 @@ pub struct Tprogram {
     tp_array_types: Vec<FieldTy>,
     tp_consts: Vec<StrPair>,
 }
+
+
+// ===== The user-facing type renderer =====
+//
+// `typ_name` prints a type the way the SOURCE spells it (`*const Vec<int>`,
+// `Result<i32, str>`), which is what a diagnostic and `type_name(x)` must show — a
+// user writes exile, so they read exile back, not the C mangling (that is
+// `mangle_typ`'s job, and it lives with codegen).
+//
+// It sits HERE, in the IR, because both consumers need it and neither may depend on
+// the other: typecheck names types in its diagnostics, codegen names them in
+// `type_name`.  Mirrors the reference, where it lives in `ir.ml`.
+pub fn int_typ_name(is_signed: bool, width: IntWidth) -> str {
+    if is_signed {
+        return match width { IntWidth::W8 => "i8" | IntWidth::W16 => "i16" | IntWidth::W32 => "i32" };
+    }
+    return match width { IntWidth::W8 => "u8" | IntWidth::W16 => "u16" | IntWidth::W32 => "u32" };
+}
+
+fn typ_names_join(a: Allocator, ar: *Arena, ts: *const Vec<*const Typ>, sep: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < ts.length() {
+        if i > 0 as u32 { sb.push_str(sep); }
+        sb.push_str(typ_name(a, ar, sl[i]));
+        i = i + 1 as u32;
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn path_join_cg(a: Allocator, ar: *Arena, p: *const Vec<str>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let sl = p.as_slice();
+    let mut i = 0 as u32;
+    while i < p.length() {
+        if i > 0 as u32 { sb.push_str("::"); }
+        sb.push_str(sl[i]);
+        i = i + 1 as u32;
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_app(a: Allocator, ar: *Arena, p: *const Vec<str>, args: *const Vec<*const Typ>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(path_join_cg(a, ar, p));
+    sb.push_str("<");
+    sb.push_str(typ_names_join(a, ar, args, ", "));
+    sb.push_str(">");
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_pfx(a: Allocator, ar: *Arena, pfx: str, inner: *const Typ) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(pfx);
+    sb.push_str(typ_name(a, ar, inner));
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_arr(a: Allocator, ar: *Arena, elem: *const Typ, size: int) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("[");
+    sb.push_str(typ_name(a, ar, elem));
+    sb.push_str("; ");
+    sb.push_int(size);
+    sb.push_str("]");
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_fnptr(a: Allocator, ar: *Arena, params: *const Vec<*const Typ>, ret: Option<*const Typ>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("fn(");
+    sb.push_str(typ_names_join(a, ar, params, ", "));
+    sb.push_str(")");
+    match ret {
+        Option::Some(rt) => { sb.push_str(" -> "); sb.push_str(typ_name(a, ar, rt)); }
+        | Option::None => { }
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_proj(a: Allocator, ar: *Arena, head: *const Typ, assoc: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(typ_name(a, ar, head));
+    sb.push_str("::");
+    sb.push_str(assoc);
+    return str::from_slice(ar, sb.as_slice());
+}
+fn typ_name_tuple(a: Allocator, ar: *Arena, ts: *const Vec<*const Typ>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("(");
+    sb.push_str(typ_names_join(a, ar, ts, ", "));
+    sb.push_str(")");
+    return str::from_slice(ar, sb.as_slice());
+}
+pub fn typ_name(a: Allocator, ar: *Arena, t: *const Typ) -> str {
+    return match *t {
+        Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
+        | Typ::TCInt { is_signed } => { if is_signed { "c_int" } else { "c_uint" } }
+        | Typ::TCShort { is_signed } => { if is_signed { "c_short" } else { "c_ushort" } }
+        | Typ::TCLong { is_signed } => { if is_signed { "c_long" } else { "c_ulong" } }
+        | Typ::TCChar => "c_char" | Typ::TCSChar => "c_schar" | Typ::TCUChar => "c_uchar"
+        | Typ::TCVoid => "c_void"
+        | Typ::TBool => "bool" | Typ::TString => "str"
+        | Typ::TFloat(w) => match w { FloatWidth::F32 => "f32" | FloatWidth::F64 => "f64" }
+        | Typ::TTuple(ts) => typ_name_tuple(a, ar, &ts)
+        | Typ::TStruct(p) => path_join_cg(a, ar, &p)
+        | Typ::TEnum(p) => path_join_cg(a, ar, &p)
+        | Typ::TExtStruct(n) => n
+        | Typ::TExtAlias(n) => n
+        | Typ::TStructApp { path, args } => typ_name_app(a, ar, &path, &args)
+        | Typ::TEnumApp { path, args } => typ_name_app(a, ar, &path, &args)
+        | Typ::TPtr(i) => typ_name_pfx(a, ar, "*", i)
+        | Typ::TOwnPtr(i) => typ_name_pfx(a, ar, "own *", i)
+        | Typ::TConstPtr(i) => typ_name_pfx(a, ar, "*const ", i)
+        | Typ::TArray { elem, size } => typ_name_arr(a, ar, elem, size)
+        | Typ::TFnPtr { params, ret } => typ_name_fnptr(a, ar, &params, ret)
+        | Typ::TNullPtr => "*<null>"
+        | Typ::TVar(n) => n
+        | Typ::TAssocProj { head, assoc } => typ_name_proj(a, ar, head, assoc)
+    };
+}
+
+
+// ===== The type-compatibility relation =====
+//
+// Where the reference keeps it (`ir.ml`), and for the same reason `typ_name` is
+// here: typecheck needs it to VALIDATE, codegen needs `typ_eq` to dedup, and
+// neither module may depend on the other.
+
+pub fn intwidth_eq(x: IntWidth, y: IntWidth) -> bool {
+    return match x {
+        IntWidth::W8 => match y { IntWidth::W8 => true | _e => false }
+        | IntWidth::W16 => match y { IntWidth::W16 => true | _e => false }
+        | IntWidth::W32 => match y { IntWidth::W32 => true | _e => false }
+    };
+}
+
+pub fn floatwidth_eq(x: FloatWidth, y: FloatWidth) -> bool {
+    return match x {
+        FloatWidth::F32 => match y { FloatWidth::F32 => true | _e => false }
+        | FloatWidth::F64 => match y { FloatWidth::F64 => true | _e => false }
+    };
+}
+
+pub fn tc_join_sb(a: Allocator, p: *const Vec<str>) -> StringBuilder {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let sl = p.as_slice();
+    let mut i = 0 as u32;
+    while i < p.length() { if i > 0 as u32 { sb.push_str("::"); } sb.push_str(sl[i]); i = i + 1 as u32; }
+    return sb;
+}
+
+pub fn path_eq(a: *const Vec<str>, b: *const Vec<str>) -> bool {
+    let n = a.length();
+    if n == b.length() {
+        let sa = a.as_slice();
+        let sb = b.as_slice();
+        let mut i = 0 as u32;
+        while i < n {
+            if !str::eq(sa[i], sb[i]) { return false; }
+            i = i + 1 as u32;
+        }
+        return true;
+    }
+    let al = default_allocator();
+    let ja = tc_join_sb(al, a);
+    let jb = tc_join_sb(al, b);
+    if ja.length() != jb.length() { return false; }
+    let ba = ja.as_slice();
+    let bb = jb.as_slice();
+    let mut k = 0 as u32;
+    while k < ja.length() { if ba[k] != bb[k] { return false; } k = k + 1 as u32; }
+    return true;
+}
+
+pub fn opt_typ_eq(x: Option<*const Typ>, y: Option<*const Typ>) -> bool {
+    return match x {
+        Option::Some(xt) => match y { Option::Some(yt) => typ_eq(xt, yt) | Option::None => false }
+        | Option::None => match y { Option::Some(yt2) => false | Option::None => true }
+    };
+}
+
+pub fn tys_eq(xs: *const Vec<*const Typ>, ys: *const Vec<*const Typ>) -> bool {
+    if xs.length() != ys.length() { return false; }
+    let sx = xs.as_slice();
+    let sy = ys.as_slice();
+    let mut i = 0 as u32;
+    while i < xs.length() { if !typ_eq(sx[i], sy[i]) { return false; } i = i + 1 as u32; }
+    return true;
+}
+
+// Equality used for type-MATCH decisions (let / return / arg / field / assign).
+// Plain structural equality would reject `null` against any concrete pointer type;
+// the null literal is polymorphic over pointer types, so it is matched here rather
+// than special-cased at every site.  (The port's own typ_eq lacked this until the
+// let-annotation check exposed it: `let p: *c_void = null` was rejected.)
+pub fn typ_eq(x: *const Typ, y: *const Typ) -> bool {
+    if is_nullish(x) { return is_ptr_like(y); }
+    if is_nullish(y) { return is_ptr_like(x); }
+    return match *x {
+        Typ::TInt(kx) => match *y { Typ::TInt(ky) => (kx.is_signed == ky.is_signed) && intwidth_eq(kx.width, ky.width) | _e => false }
+        | Typ::TBool => match *y { Typ::TBool => true | _e => false }
+        | Typ::TString => match *y { Typ::TString => true | _e => false }
+        | Typ::TFloat(wx) => match *y { Typ::TFloat(wy) => floatwidth_eq(wx, wy) | _e => false }
+        | Typ::TCInt { is_signed } => match *y { Typ::TCInt { is_signed: s2 } => is_signed == s2 | _e => false }
+        | Typ::TCShort { is_signed } => match *y { Typ::TCShort { is_signed: s2 } => is_signed == s2 | _e => false }
+        | Typ::TCLong { is_signed } => match *y { Typ::TCLong { is_signed: s2 } => is_signed == s2 | _e => false }
+        | Typ::TCChar => match *y { Typ::TCChar => true | _e => false }
+        | Typ::TCSChar => match *y { Typ::TCSChar => true | _e => false }
+        | Typ::TCUChar => match *y { Typ::TCUChar => true | _e => false }
+        | Typ::TCVoid => match *y { Typ::TCVoid => true | _e => false }
+        | Typ::TStruct(px) => match *y { Typ::TStruct(py) => path_eq(&px, &py) | _e => false }
+        | Typ::TEnum(px) => match *y { Typ::TEnum(py) => path_eq(&px, &py) | _e => false }
+        | Typ::TExtStruct(nx) => match *y { Typ::TExtStruct(ny) => str::eq(nx, ny) | _e => false }
+        | Typ::TExtAlias(nx) => match *y { Typ::TExtAlias(ny) => str::eq(nx, ny) | _e => false }
+        | Typ::TPtr(ix) => match *y { Typ::TPtr(iy) => typ_eq(ix, iy) | _e => false }
+        | Typ::TOwnPtr(ix) => match *y { Typ::TOwnPtr(iy) => typ_eq(ix, iy) | _e => false }
+        | Typ::TConstPtr(ix) => match *y { Typ::TConstPtr(iy) => typ_eq(ix, iy) | _e => false }
+        | Typ::TTuple(tx) => match *y { Typ::TTuple(ty2) => tys_eq(&tx, &ty2) | _e => false }
+        | Typ::TArray { elem, size } => match *y { Typ::TArray { elem: e2, size: s2 } => (size == s2) && typ_eq(elem, e2) | _e => false }
+        | Typ::TFnPtr { params, ret } => match *y { Typ::TFnPtr { params: p2, ret: r2 } => tys_eq(&params, &p2) && opt_typ_eq(ret, r2) | _e => false }
+        | _e => false
+    };
+}
+
+fn is_nullish(t: *const Typ) -> bool {
+    return match *t { Typ::TNullPtr => true | _o => false };
+}
+fn is_ptr_like(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TPtr(_i) => true
+        | Typ::TOwnPtr(_i) => true
+        | Typ::TConstPtr(_i) => true
+        | Typ::TNullPtr => true
+        | _o => false
+    };
+}
+// A `*T` may be handed to a `*const T` slot (you can always drop write capability),
+// and an `own *T` may lend itself out as a borrow — never the reverse: ownership
+// cannot be fabricated from a loan.  Pointer-to-pointer through nested `*` keeps
+// strict identity (no deep const-ification — that would change C aliasing rules).
+pub fn coercible_to(from: *const Typ, to: *const Typ) -> bool {
+    if typ_eq(from, to) { return true; }
+    return match *from {
+        Typ::TPtr(x) => match *to { Typ::TConstPtr(y) => typ_eq(x, y) | _o => false }
+        | Typ::TOwnPtr(x) => match *to {
+            Typ::TPtr(y) => typ_eq(x, y)
+            | Typ::TConstPtr(y) => typ_eq(x, y)
+            | _o => false
+        }
+        | _o => false
+    };
+}
+
+// Does an integer literal fit the slot it is being written into?  `c_long` is >= 32
+// bits per the C standard, so any literal an exile `int` can hold is accepted and the
+// C compiler catches overflow against the real target width.  An `extern type` alias
+// is opaque — allow anything an i32 holds and let C decide.
+pub fn int_fits(n: int, t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(k) => int_fits_width(n, k.is_signed, k.width)
+        | Typ::TCInt { is_signed } => int_fits_bounds(n, is_signed, 32 as u32)
+        | Typ::TCShort { is_signed } => int_fits_bounds(n, is_signed, 16 as u32)
+        | Typ::TCLong { is_signed } => { if is_signed { true } else { n >= 0 as int } }
+        | Typ::TCChar => n >= 0 as int - 128 as int && n <= 255 as int
+        | Typ::TCSChar => n >= 0 as int - 128 as int && n <= 127 as int
+        | Typ::TCUChar => n >= 0 as int && n <= 255 as int
+        | Typ::TExtAlias(_x) => int_fits_bounds(n, true, 32 as u32)
+        | _o => false
+    };
+}
+fn int_fits_width(n: int, is_signed: bool, w: IntWidth) -> bool {
+    return match w {
+        IntWidth::W8 => int_fits_bounds(n, is_signed, 8 as u32)
+        | IntWidth::W16 => int_fits_bounds(n, is_signed, 16 as u32)
+        | IntWidth::W32 => int_fits_bounds(n, is_signed, 32 as u32)
+    };
+}
+fn int_fits_bounds(n: int, is_signed: bool, bits: u32) -> bool {
+    if bits == 8 as u32 {
+        if is_signed { return n >= 0 as int - 128 as int && n <= 127 as int; }
+        return n >= 0 as int && n <= 255 as int;
+    }
+    if bits == 16 as u32 {
+        if is_signed { return n >= 0 as int - 32768 as int && n <= 32767 as int; }
+        return n >= 0 as int && n <= 65535 as int;
+    }
+    if is_signed { return n >= 0 as int - 2147483648 as int && n <= 2147483647 as int; }
+    return n >= 0 as int && n <= 4294967295 as int;
+}
