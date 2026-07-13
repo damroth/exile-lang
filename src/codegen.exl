@@ -87,8 +87,8 @@ fn mangle_named_path(a: Allocator, ar: *Arena, path0: *const Vec<str>) -> str {
 // The C-identifier-safe mangle of a type (used to build emitted C symbol
 // names).  Distinct from `typ_name`, which reproduces source syntax for
 // diagnostics.  `TVar` / `TStructApp` / `TEnumApp` / `TAssocProj` / `TNullPtr`
-// are pre-mono / never-mangled and yield a visible `<mangle?>` marker (they
-// must not survive to codegen in concrete IR).
+// are pre-mono / never-mangled: reaching this function with one is a compiler bug,
+// so it aborts (`ice`) rather than emitting a marker that would look like output.
 pub fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
     return match *t {
         Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
@@ -203,7 +203,9 @@ pub fn c_type_prefix(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TCChar => "char "
         | Typ::TCSChar => "signed char "
         | Typ::TCUChar => "unsigned char "
-        | Typ::TCVoid => "<cvoid?> "
+        // Naked `c_void` has no C spelling — only `*c_void` does, and that goes
+        // through c_ptr_prefix.  The reference asserts here for the same reason.
+        | Typ::TCVoid => { ice("internal: naked c_void reached c_type_prefix — only *c_void is allowed; typecheck should have caught this"); "" }
         | Typ::TInt(k) => {
             let s = if k.is_signed { "" } else { "unsigned " };
             let core = match k.width { IntWidth::W8 => "char" | IntWidth::W16 => "short" | IntWidth::W32 => "long" };
@@ -642,7 +644,9 @@ fn binop_str(op: BinOp) -> str {
         | BinOp::Lt => " < " | BinOp::Gt => " > "
         | BinOp::LtEq => " <= " | BinOp::GtEq => " >= "
         | BinOp::EqEq => " == " | BinOp::NotEq => " != "
-        | BinOp::Concat => " ?concat? "
+        // `++` is constant-folded to a string literal during typecheck; a
+        // TBinOp(Concat) in the IR means the fold did not happen.
+        | BinOp::Concat => { ice("internal: `++` reached codegen — it is folded to a string literal at typecheck"); "" }
     };
 }
 

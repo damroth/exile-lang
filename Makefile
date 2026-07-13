@@ -417,22 +417,33 @@ selfhost-port-tokens: host-selfhost-lexer
 #
 # A fallback that emits something LOOKING like a result is worse than a crash: it
 # turns a compiler bug into a confusing error from `cc`, or into code that runs.
-# `<ctype?>` / `<mangle?>` / `/*expr?*/` / `/*stmt?*/` and friends were all dead on
+# `<ctype?>` / `<mangle?>` / `/*stmt?*/` / `?concat?` / `<cvoid?>` were all dead on
 # the whole valid corpus (measured), so they never helped a real program — they only
 # ever hid a bug.  They are `ice()` now, and this gate keeps them from coming back.
 #
-# The reference does the same thing (`failwith "TNullPtr should never reach
-# c_type_prefix"`); the port had drifted into plausible tokens instead.
+# The signature is `?` in an emitted literal, and it is chosen because it is
+# EXHAUSTIVE rather than conventional: `?` appears ZERO times in the C the reference
+# emits for all 90 examples, so any `?` a codegen literal can put into the output is
+# a marker by construction.  A first cut grepped for the marker SHAPE (`"<...?>"`)
+# and let the historical `"<ctype?> "` back in on a trailing space — the shape is not
+# the invariant, the character is.
+#
+# The one legitimate `?` is the ternary in `println(<bool>)`, which is spelled with
+# an escaped quote (`) ? \"`); it is excluded by name, not by pattern, so a new
+# exception has to be argued for rather than slipped in.
 .PHONY: selfhost-no-fabrication
 
 selfhost-no-fabrication:
-	@hits=$$(grep -nE '"<[a-z]+\?>"|/\*[a-z]+\?\*/' src/*.exl | grep -v '^src/[a-z_]*\.exl:[0-9]*: *//' || true); \
+	@hits=$$(grep -noE '"[^"]*\?[^"]*"' src/codegen.exl \
+	         | grep -vF ') ? \"' \
+	         | grep -vF 'internal:' || true); \
 	if [ -n "$$hits" ]; then \
-	  echo "selfhost-no-fabrication: a fallback emits a plausible-looking token instead of ice():"; \
-	  echo "$$hits"; \
+	  echo "selfhost-no-fabrication: a codegen literal would put '?' into the output —"; \
+	  echo "  a fallback that fabricates a plausible token instead of calling ice():"; \
+	  echo "$$hits" | sed 's/^/  src\/codegen.exl:/'; \
 	  exit 1; \
 	fi; \
-	echo "selfhost-no-fabrication: clean (no fallback fabricates output)"
+	echo "selfhost-no-fabrication: clean (no codegen literal can fabricate output)"
 
 # ===== Faza A — typecheck diagnostics =====
 #
