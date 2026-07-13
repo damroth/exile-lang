@@ -2,8 +2,9 @@
 (tfn math__double pub (params (param n (int i32))) (int i32) (body (return (binop * (var n) :ty (int i32) (int 2) :ty (int i32)) :ty (int i32))))
 (tfn math__bump (params (param n (int i32))) (int i32) (body (return (binop + (var n) :ty (int i32) (int 1) :ty (int i32)) :ty (int i32))))
 (tfn math__double_then_bump pub (params (param n (int i32))) (int i32) (body (return (call math__bump (call math__double (var n) :ty (int i32)) :ty (int i32)) :ty (int i32))))
+(tfn geom__norm pub (params (param p (const-ptr (struct geom::Point)))) (int i32) (body (return (binop + (binop * (field-access (var p) :ty (const-ptr (struct geom::Point)) x) :ty (int i32) (field-access (var p) :ty (const-ptr (struct geom::Point)) x) :ty (int i32)) :ty (int i32) (binop * (field-access (var p) :ty (const-ptr (struct geom::Point)) y) :ty (int i32) (field-access (var p) :ty (const-ptr (struct geom::Point)) y) :ty (int i32)) :ty (int i32)) :ty (int i32))))
 (tfn greet__hi pub (params (param name str)) void (body (expr-stmt (builtin-call println (var name) :ty str) :ty (int i32))))
-(tfn main (params ) void (body (expr-stmt (builtin-call println (call math__double (int 21) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call math__double_then_bump (int 10) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call math__double (int 15) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (call greet__hi (string "hello from modules") :ty str) :ty (int i32))))
+(tfn main (params ) void (body (expr-stmt (builtin-call println (call math__double (int 21) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call math__double_then_bump (int 10) :ty (int i32)) :ty (int i32)) :ty (int i32)) (expr-stmt (builtin-call println (call math__double (int 15) :ty (int i32)) :ty (int i32)) :ty (int i32)) (let pt (struct-lit geom::Point (field x (int 3) :ty (int i32)) (field y (int 4) :ty (int i32))) :ty (struct geom::Point)) (expr-stmt (builtin-call println (call geom__norm (ref (var pt) :ty (struct geom::Point)) :ty (ptr (struct geom::Point))) :ty (int i32)) :ty (int i32)) (expr-stmt (call greet__hi (string "hello from modules") :ty str) :ty (int i32))))
 (mono-instances
   (struct Enumerate)
   (struct Filter)
@@ -17,6 +18,7 @@
   (struct Take)
   (struct Vec)
   (struct VecIter)
+  (struct geom::Point)
   (enum Option)
   (enum Result)
 )

@@ -3,7 +3,10 @@
   (fn double pub (params (param n (int i32))) (int i32) (body (return (binop * (var n) (int 2)))))
   (fn bump (params (param n (int i32))) (int i32) (body (return (binop + (var n) (int 1)))))
   (fn double_then_bump pub (params (param n (int i32))) (int i32) (body (return (call bump (call double (var n)))))))
+(module geom
+  (struct Point pub (fields (field x (int i32)) (field y (int i32))))
+  (fn norm pub (params (param p (const-ptr (struct Point)))) (int i32) (body (return (binop + (binop * (field-access (var p) x) (field-access (var p) x)) (binop * (field-access (var p) y) (field-access (var p) y)))))))
 (module greet
   (fn hi pub (params (param name str)) void (body (expr-stmt (call println (var name))))))
 (use pub math::double)
-(fn main (params ) void (body (expr-stmt (call println (call math::double (int 21)))) (expr-stmt (call println (call math::double_then_bump (int 10)))) (expr-stmt (call println (call double (int 15)))) (expr-stmt (call greet::hi (string "hello from modules")))))
+(fn main (params ) void (body (expr-stmt (call println (call math::double (int 21)))) (expr-stmt (call println (call math::double_then_bump (int 10)))) (expr-stmt (call println (call double (int 15)))) (let pt (struct-lit geom::Point (field x (int 3)) (field y (int 4)))) (expr-stmt (call println (call geom::norm (ref (var pt))))) (expr-stmt (call greet::hi (string "hello from modules")))))

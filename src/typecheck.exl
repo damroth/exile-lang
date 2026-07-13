@@ -1199,6 +1199,9 @@ struct GlobalFn {
     ret: Option<*const Typ>,
     is_const: bool,
     is_top: bool,
+    // An `extern fn ... , ...` (printf and friends): the arity check accepts AT
+    // LEAST the declared parameters, not exactly.
+    gf_variadic: bool,
 }
 
 // A free / module fn's resolved parameter types, keyed by C symbol — read at a
@@ -1218,7 +1221,7 @@ fn global_lookup(g: *const Vec<GlobalFn>, name: str) -> Option<GlobalFn> {
     while i < n {
         if sl[i].is_top && str::eq(sl[i].name, name) {
             return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, gf_emit: sl[i].gf_emit,
-                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top });
+                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top, gf_variadic: sl[i].gf_variadic });
         }
         i = i + 1 as u32;
     }
@@ -1233,7 +1236,7 @@ fn global_lookup_by_mangled(g: *const Vec<GlobalFn>, mangled: str) -> Option<Glo
     while i < n {
         if str::eq(sl[i].mangled, mangled) {
             return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, gf_emit: sl[i].gf_emit,
-                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top });
+                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top, gf_variadic: sl[i].gf_variadic });
         }
         i = i + 1 as u32;
     }
@@ -1566,6 +1569,71 @@ fn coerce_at(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str, i: u32,
     }
     return targ;
 }
+// `<kind> '<name>' expects N argument(s), got M` — or "at least N" when variadic.
+fn check_arity(a: Allocator, ar: *Arena, sc: *const TyScope, kind: str, name: str,
+               expected: u32, got: u32, variadic: bool, pos: Pos) {
+    let ok = if variadic { got >= expected } else { got == expected };
+    if ok { return; }
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    if !str::eq(kind, "") { sb.push_str(kind); sb.push_str(" "); }
+    sb.push_str("'"); sb.push_str(name); sb.push_str("' expects ");
+    if variadic { sb.push_str("at least "); }
+    sb.push_int(expected as int);
+    sb.push_str(" argument(s), got ");
+    sb.push_int(got as int);
+    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+// `argument N of 'f': expected X, got Y`.  An integer LITERAL that fits the slot is
+// accepted even when its default i32 type is not coercible — `f(5)` into an `u8`
+// param is the same rule as `let x: u8 = 5`.
+fn check_arg_ty(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, i: u32,
+                exp: *const Typ, raw: *const Expr, act: *const Typ, pos: Pos) {
+    if coercible_to(act, exp) { return; }
+    if lit_fits_slot(raw, exp) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("argument "); sb.push_int(i as int + 1 as int);
+    sb.push_str(" of '"); sb.push_str(name);
+    sb.push_str("': expected "); sb.push_str(typ_name(a, ar, exp));
+    sb.push_str(", got "); sb.push_str(typ_name(a, ar, act));
+    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn lit_fits_slot(raw: *const Expr, exp: *const Typ) -> bool {
+    if !is_int_like_ty(exp) { return false; }
+    return match expr_int_lit(raw) {
+        Option::Some(n) => int_fits(n, exp)
+        | Option::None => false
+    };
+}
+// Every argument of every call passes here.  The reference has one such
+// choke-point (`check_call_args`); the port had none.
+fn check_call(a: Allocator, ar: *Arena, sc: *const TyScope, kind: str, name: str, mangled: str,
+              raw: *const Vec<*const Expr>, targs: *const Vec<*const Texpr>, variadic: bool, pos: Pos) {
+    let si = sig_index(sc, mangled);
+    if si < 0 as int { return; }
+    let sg: *const FnSig = &sc.sc_gsigs.as_slice()[si as u32];
+    check_arity(a, ar, sc, kind, name, sg.fs_params.length(), raw.length(), variadic, pos);
+    let ps = sg.fs_params.as_slice();
+    let rs = raw.as_slice();
+    let ts = targs.as_slice();
+    let mut i = 0 as u32;
+    while i < sg.fs_params.length() {
+        if i < targs.length() { check_arg_ty(a, ar, sc, name, i, ps[i], rs[i], ts[i].ty, pos); }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn sig_index(sc: *const TyScope, mangled: str) -> int {
+    let sl = sc.sc_gsigs.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_gsigs.length() {
+        if str::eq(sl[i].fs_mangled, mangled) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+
 fn elab_args_coerced(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                      mangled: str, args: *const Vec<*const Expr>) -> Vec<*const Texpr> {
     let mut out: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
@@ -1648,6 +1716,7 @@ fn register_named_prelude(a: Allocator, sc: *const TyScope, t: *const Typ) {
 fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                 gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let targs = elab_args_coerced(a, ar, g, sc, env, gf.mangled, args);
+    check_call(a, ar, sc, "function", gf.name, gf.mangled, args, &targs, gf.gf_variadic, p);
     let ty = ret_or_void(ar, gf.ret);
     register_named_prelude(a, sc, ty);
     return te_node(ar, TexprNode::TCall { mangled: gf.gf_emit, args: targs }, ty, p);
@@ -2680,7 +2749,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     if idx < 0 as int {
         return match field_call_desugar(a, ar, g, sc, env, expected, recv, trecv, name, args, p) {
             Option::Some(te) => te
-            | Option::None => defer_expr(ar, p)
+            | Option::None => no_such_method(a, ar, sc, name, trecv.ty, p)
         };
     }
     let sl = sc.sc_methods.as_slice();
@@ -3335,6 +3404,15 @@ fn struct_path_of(t: *const Typ) -> Option<Vec<str>> {
         | Typ::TOwnPtr(i) => struct_path_of(i)
         | _e => none
     };
+}
+fn no_such_method(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
+                  recv_ty: *const Typ, p: Pos) -> *const Texpr {
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("no method '"); sb.push_str(name);
+    sb.push_str("' on type '"); sb.push_str(typ_name(a, ar, recv_ty));
+    sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, p);
 }
 fn no_such_field(a: Allocator, ar: *Arena, sc: *const TyScope, target_ty: *const Typ,
                  field: str, p: Pos) -> *const Texpr {
@@ -4559,12 +4637,38 @@ fn bare_return_val(ar: *Arena, sc: *const TyScope, p: Pos) -> Option<*const Texp
     if sc.sc_is_main { return Option::Some(te_node(ar, TexprNode::TIntLit(0 as int), t_i32(ar), p)); }
     return none_texpr();
 }
+// The bidirectional `expected` seeds inner inference (literal widths, generic
+// params, tuple/struct shape) but does NOT constrain the result — the contract is
+// enforced here, by EQUALITY.  Not `coercible_to`: a `*T` may be lent into a
+// `*const T` slot, but a fn declaring `*T` must return a `*T`.
+fn check_return_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
+                   ret: Option<*const Typ>, tv: *const Texpr, p: Pos) {
+    match ret {
+        Option::Some(exp) => { check_ret_against(a, ar, sc, exp, tv, p); }
+        | Option::None => { }
+    }
+    return;
+}
+fn check_ret_against(a: Allocator, ar: *Arena, sc: *const TyScope, exp: *const Typ,
+                     tv: *const Texpr, p: Pos) {
+    if typ_eq(tv.ty, exp) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("return: expected "); sb.push_str(typ_name(a, ar, exp));
+    sb.push_str(", got "); sb.push_str(typ_name(a, ar, tv.ty));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn elab_return_val(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                    ret: Option<*const Typ>, val: Option<*const Expr>, p: Pos) -> Option<*const Texpr> {
     return match val {
-        Option::Some(e) => Option::Some(elab_expr(a, ar, g, sc, env, ret, e))
+        Option::Some(e) => Option::Some(returned(a, ar, sc, ret, elab_expr(a, ar, g, sc, env, ret, e), p))
         | Option::None => bare_return_val(ar, sc, p)
     };
+}
+fn returned(a: Allocator, ar: *Arena, sc: *const TyScope, ret: Option<*const Typ>,
+            tv: *const Texpr, p: Pos) -> *const Texpr {
+    check_return_ty(a, ar, sc, ret, tv, p);
+    return tv;
 }
 
 fn empty_tstmts(a: Allocator) -> Vec<Tstmt> {
@@ -8048,32 +8152,32 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             let msc = scope_with_modpath(sc, path);
             let fsc = scope_with_tparams(&msc, &f.tparams);
             g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty),
-                              is_const: false, is_top: is_top });
+                              is_const: false, is_top: is_top, gf_variadic: f.is_variadic });
         }
         | Item::View(vd) => {
             // The view fn `Name(p) -> Name` (DR-009); the choice enum shares its name.
             let vm = mangle_path(a, ar, path, vd.vname);
             g.push(GlobalFn { name: vd.vname, mangled: vm, gf_emit: vm,
                               ret: Option::Some(ty_node(ar, Typ::TEnum(single_str(a, vd.vname)))),
-                              is_const: false, is_top: is_top });
+                              is_const: false, is_top: is_top, gf_variadic: false });
         }
         | Item::Const(c) => {
             let cm = mangle_path(a, ar, path, c.kname);
             g.push(GlobalFn { name: c.kname, mangled: cm, gf_emit: cm,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, c.kty)),
-                              is_const: true, is_top: is_top });
+                              is_const: true, is_top: is_top, gf_variadic: false });
         }
         | Item::ExternConst(ec) => {
             // A linker-resolved global value; its C symbol is visible
             // unqualified everywhere (no module mangling).
             g.push(GlobalFn { name: ec.ecname, mangled: ec.ecname, gf_emit: ec.ecname,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, ec.ecty)),
-                              is_const: true, is_top: true });
+                              is_const: true, is_top: true , gf_variadic: false });
         }
         | Item::ExternVar(ev) => {
             g.push(GlobalFn { name: ev.evname, mangled: ev.evname, gf_emit: ev.evname,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, ev.evty)),
-                              is_const: true, is_top: true });
+                              is_const: true, is_top: true , gf_variadic: false });
         }
         | Item::Module(md) => {
             let mut p2: Vec<str> = copy_strs(a, path);
@@ -8091,7 +8195,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
 fn push_use_alias(g: *Vec<GlobalFn>, target_mangled: str, alias: str) {
     match global_lookup_by_mangled(g, target_mangled) {
         Option::Some(gf) => { g.push(GlobalFn { name: alias, mangled: gf.mangled, gf_emit: gf.gf_emit, ret: gf.ret,
-                                                is_const: gf.is_const, is_top: true }); }
+                                                is_const: gf.is_const, is_top: true , gf_variadic: false }); }
         | Option::None => { }
     }
 }
@@ -8132,7 +8236,7 @@ fn collect_globals(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const V
 // `sys::name` -> mangled `sys__name`), emitted by its raw C name.
 fn push_sys_fn(a: Allocator, ar: *Arena, name: str, ret: Option<*const Typ>, g: *Vec<GlobalFn>) {
     g.push(GlobalFn { name: name, mangled: str2(a, ar, "sys__", name), gf_emit: name,
-                      ret: ret, is_const: false, is_top: false });
+                      ret: ret, is_const: false, is_top: false , gf_variadic: false });
 }
 
 // The synthesised `sys` module — extern syscalls over the host/amiga seam.
@@ -8156,14 +8260,19 @@ fn register_prelude_globals(a: Allocator, ar: *Arena, g: *Vec<GlobalFn>) {
     push_sys_fn(a, ar, "sys_fmt_f64", culong, g);
 }
 
+// A signature is resolved in ITS OWN module's scope, exactly like the body that
+// declares it: a bare `Lexer` written inside `mod lexer` names `lexer::Lexer`.
+// Resolving it against the root scope instead yields a second, bare path for the
+// same type — invisible until a check finally compares the two.
 fn collect_fn_sigs_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, path: *const Vec<str>, out: *Vec<FnSig>) {
+    let msc = scope_with_modpath(sc, path);
     match *it {
         Item::Function(f) => {
-            out.push(FnSig { fs_mangled: collect_fn_mangle(a, ar, &f, path), fs_params: resolve_param_tys(a, ar, sc, &f.params) });
+            out.push(FnSig { fs_mangled: collect_fn_mangle(a, ar, &f, path), fs_params: resolve_param_tys(a, ar, &msc, &f.params) });
         }
         | Item::View(vd) => {
             let mut vp: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
-            vp.push(resolve_sig_ty(a, ar, sc, vd.vparam.pty));
+            vp.push(resolve_sig_ty(a, ar, &msc, vd.vparam.pty));
             out.push(FnSig { fs_mangled: mangle_path(a, ar, path, vd.vname), fs_params: vp });
         }
         | Item::Module(md) => {

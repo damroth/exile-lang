@@ -12,6 +12,20 @@ mod math {
     }
 }
 
+// A type declared inside a module is named module-relative from within it: the
+// bare `Point` in `norm`'s signature IS `geom::Point`.  A signature resolves in
+// its own module's scope, exactly like the body that declares it.
+mod geom {
+    pub struct Point {
+        x: int,
+        y: int,
+    }
+
+    pub fn norm(p: *const Point) -> int {
+        return p.x * p.x + p.y * p.y;
+    }
+}
+
 mod greet {
     pub fn hi(name: str) {
         println(name);
@@ -28,5 +42,7 @@ fn main() {
     println(math::double(21));
     println(math::double_then_bump(10));
     println(double(15));                       // 30 — same fn, no `math::`
+    let pt = geom::Point { x: 3, y: 4 };
+    println(geom::norm(&pt));                  // 25 — `*Point` lent as `*const Point`
     greet::hi("hello from modules");
 }
