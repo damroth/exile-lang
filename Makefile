@@ -471,6 +471,11 @@ selfhost-port-tc-errors: host-selfhost-tc
 	    fail=1; \
 	  fi; \
 	done; \
+	if [ $$n -lt 30 ]; then \
+	  echo "selfhost-port-tc-errors: only $$n fixtures — the corpus is missing files."; \
+	  echo "  A gate with nothing to check reads as clean.  Floor the count."; \
+	  exit 1; \
+	fi; \
 	if [ $$fail -eq 0 ]; then \
 	  echo "selfhost-port-tc-errors: clean ($$n fixtures, port == oracle line 1)"; \
 	else exit 1; fi

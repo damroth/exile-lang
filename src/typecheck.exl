@@ -215,6 +215,7 @@ struct LiftedLambda {
     ll_lambda: *const Expr,    // A2: the original `Lambda` node, matched at elab time
 }
 struct AssocBind {
+    ab_pos: Pos,
     ab_trait: str,
     ab_target: str,
     ab_name: str,
@@ -507,13 +508,13 @@ fn name_in(names: *const Vec<str>, n: str) -> bool {
 }
 
 fn resolve_sig_args(a: Allocator, ar: *Arena, sc: *const TyScope,
-                    args: *const Vec<*const TypeAnn>) -> Vec<*const Typ> {
+                    args: *const Vec<*const TypeAnn>, p: Pos) -> Vec<*const Typ> {
     let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let n = args.length();
     let sl = args.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        out.push(resolve_sig_ty(a, ar, sc, sl[i]));
+        out.push(resolve_sig_ty(a, ar, sc, sl[i], p));
         i = i + 1 as u32;
     }
     return out;
@@ -606,6 +607,45 @@ fn fn_instance_mangled(a: Allocator, ar: *Arena, base: str, args: *const Vec<*co
     return str::from_slice(ar, sb.as_slice());
 }
 
+// The port's prelude types are BUILT-IN; the reference's prelude is SOURCE, so
+// its struct table holds them and ours does not.  Name them, or `unknown type`
+// would reject every `StringBuilder`.  Closure environments are synthesised
+// during lowering and never registered, so they go by their reserved prefix.
+fn tc_starts_with(s: str, pre: str) -> bool {
+    let n = str::length(pre);
+    if str::length(s) < n { return false; }
+    let sb = str::as_bytes(s);
+    let pb = str::as_bytes(pre);
+    let mut i = 0 as u32;
+    while i < n {
+        if sb[i] != pb[i] { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
+fn is_builtin_struct(name: str) -> bool {
+    return str::eq(name, "String") || str::eq(name, "StringBuilder")
+        || str::eq(name, "Allocator") || str::eq(name, "Arena")
+        || str::eq(name, "Vec") || str::eq(name, "Slice") || str::eq(name, "VecIter")
+        || str::eq(name, "HashMap") || str::eq(name, "HashMapIter") || str::eq(name, "Slot")
+        || str::eq(name, "Map") || str::eq(name, "Filter") || str::eq(name, "Take")
+        || str::eq(name, "Enumerate")
+        || tc_starts_with(name, "__closure");
+}
+fn struct_known(sc: *const TyScope, last: str) -> bool {
+    return name_in(sc.sc_structs, last) || name_in(sc.sc_enums, last)
+        || is_prelude_enum(last) || is_builtin_struct(last);
+}
+fn unknown_type(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, generic: bool, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    sb.push_str("unknown ");
+    if generic { sb.push_str("generic "); }
+    sb.push_str("type '");
+    sb.push_str(path_display(a, ar, path));
+    sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn is_prelude_enum(name: str) -> bool {
     return str::eq(name, "Option") || str::eq(name, "Result");
 }
@@ -867,7 +907,7 @@ fn register_user_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope,
 // Project `bound_ty::assoc` through the impl that binds it: `Count::Item` ->
 // the `type Item = int` RHS resolved (i32); a generic `type Item = T` is
 // resolved through the concrete instance's args (`Gen_i32::Item` -> i32).
-fn project_assoc(a: Allocator, ar: *Arena, sc: *const TyScope, bound_ty: *const Typ, assoc: str) -> *const Typ {
+fn project_assoc(a: Allocator, ar: *Arena, sc: *const TyScope, bound_ty: *const Typ, assoc: str, p: Pos) -> *const Typ {
     let inst_path = recv_base_path(a, bound_ty);
     let inst_last = path_last(&inst_path);
     let n = sc.sc_assoc.length();
@@ -883,7 +923,7 @@ fn project_assoc(a: Allocator, ar: *Arena, sc: *const TyScope, bound_ty: *const 
                     bind_recv_tparams(a, ar, sc, &base, &inst_path, &binds);
                 }
                 let cscope = scope_with_tbinds(sc, &sl[i].ab_tparams, &binds);
-                return resolve_sig_ty(a, ar, &cscope, sl[i].ab_ty);
+                return resolve_sig_ty(a, ar, &cscope, sl[i].ab_ty, p);
             }
         }
         i = i + 1 as u32;
@@ -899,7 +939,7 @@ fn talias_idx(sc: *const TyScope, name: str) -> int {
     return -1 as int;
 }
 fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
-                    path: *const Vec<str>, args: *const Vec<*const TypeAnn>) -> *const Typ {
+                    path: *const Vec<str>, args: *const Vec<*const TypeAnn>, p: Pos) -> *const Typ {
     let plen = path.length();
     let psl = path.as_slice();
     let last = psl[plen - 1 as u32];
@@ -917,8 +957,8 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         let head = psl[0 as u32];
         // `Self::Assoc` inside a trait default projects through the implementing
         // type the instance pinned (`Iterator::collect`'s `Vec<Self::Item>`).
-        if str::eq(head, "Self") && has_self_ty(sc) { return project_assoc(a, ar, sc, voidable_ty(ar, sc.sc_self), last); }
-        if has_tbind(sc, head) { return project_assoc(a, ar, sc, get_tbind(ar, sc, head), last); }
+        if str::eq(head, "Self") && has_self_ty(sc) { return project_assoc(a, ar, sc, voidable_ty(ar, sc.sc_self), last, p); }
+        if has_tbind(sc, head) { return project_assoc(a, ar, sc, get_tbind(ar, sc, head), last, p); }
         if name_in(sc.sc_tparams, head) { return ty_node(ar, Typ::TAssocProj { head: ty_node(ar, Typ::TVar(head)), assoc: last }); }
     }
     let nargs = args.length();
@@ -951,10 +991,12 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     if nargs == 0 as u32 {
         let newpath = copy_strs(a, path);
         if is_enum { return ty_node(ar, Typ::TEnum(newpath)); }
+        if !struct_known(sc, last) { unknown_type(a, ar, sc, path, false, p); }
         return ty_node(ar, Typ::TStruct(newpath));
     }
     // Generic application → monomorphic instance, registered for the footer.
-    let resolved = resolve_sig_args(a, ar, sc, args);
+    if !struct_known(sc, last) { unknown_type(a, ar, sc, path, true, p); }
+    let resolved = resolve_sig_args(a, ar, sc, args, p);
     // A still-abstract application (a generic-struct method skeleton's
     // `Pair<A, B>`) keeps its `TStructApp` / `TEnumApp` form — mangling it
     // would invent a bogus `Pair_A_B` instance.
@@ -1037,37 +1079,37 @@ fn array_size_of(size: *const Expr, sc: *const TyScope) -> int {
     };
 }
 
-fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const TypeAnn) -> *const Typ {
+fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const TypeAnn, p: Pos) -> *const Typ {
     return match *ann {
-        TypeAnn::TyPtr(t) => ty_node(ar, Typ::TPtr(resolve_sig_ty(a, ar, sc, t)))
-        | TypeAnn::TyOwnPtr(t) => ty_node(ar, Typ::TOwnPtr(resolve_sig_ty(a, ar, sc, t)))
-        | TypeAnn::TyConstPtr(t) => ty_node(ar, Typ::TConstPtr(resolve_sig_ty(a, ar, sc, t)))
-        | TypeAnn::TyStruct { path, args } => resolve_named_ty(a, ar, sc, &path, &args)
-        | TypeAnn::TyTuple(elems) => ty_node(ar, Typ::TTuple(resolve_sig_args(a, ar, sc, &elems)))
+        TypeAnn::TyPtr(t) => ty_node(ar, Typ::TPtr(resolve_sig_ty(a, ar, sc, t, p)))
+        | TypeAnn::TyOwnPtr(t) => ty_node(ar, Typ::TOwnPtr(resolve_sig_ty(a, ar, sc, t, p)))
+        | TypeAnn::TyConstPtr(t) => ty_node(ar, Typ::TConstPtr(resolve_sig_ty(a, ar, sc, t, p)))
+        | TypeAnn::TyStruct { path, args } => resolve_named_ty(a, ar, sc, &path, &args, p)
+        | TypeAnn::TyTuple(elems) => ty_node(ar, Typ::TTuple(resolve_sig_args(a, ar, sc, &elems, p)))
         | TypeAnn::TyArray { elem, size } =>
-            ty_node(ar, Typ::TArray { elem: resolve_sig_ty(a, ar, sc, elem), size: array_size_of(size, sc) })
+            ty_node(ar, Typ::TArray { elem: resolve_sig_ty(a, ar, sc, elem, p), size: array_size_of(size, sc) })
         | TypeAnn::TyFnPtr { params, ret } =>
-            ty_node(ar, Typ::TFnPtr { params: resolve_sig_args(a, ar, sc, &params), ret: resolve_sig_ret(a, ar, sc, ret) })
+            ty_node(ar, Typ::TFnPtr { params: resolve_sig_args(a, ar, sc, &params, p), ret: resolve_sig_ret(a, ar, sc, ret, p) })
         | TypeAnn::TySelf => voidable_ty(ar, sc.sc_self)
         | _other => resolve_type_ann(a, ar, ann)
     };
 }
 
-fn resolve_param_tys(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>) -> Vec<*const Typ> {
+fn resolve_param_tys(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>, p: Pos) -> Vec<*const Typ> {
     let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let n = params.length();
     let sl = params.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        out.push(resolve_sig_ty(a, ar, sc, sl[i].pty));
+        out.push(resolve_sig_ty(a, ar, sc, sl[i].pty, p));
         i = i + 1 as u32;
     }
     return out;
 }
 
-fn resolve_sig_ret(a: Allocator, ar: *Arena, sc: *const TyScope, ret: Option<*const TypeAnn>) -> Option<*const Typ> {
+fn resolve_sig_ret(a: Allocator, ar: *Arena, sc: *const TyScope, ret: Option<*const TypeAnn>, p: Pos) -> Option<*const Typ> {
     return match ret {
-        Option::Some(t) => Option::Some(resolve_sig_ty(a, ar, sc, t))
+        Option::Some(t) => Option::Some(resolve_sig_ty(a, ar, sc, t, p))
         | Option::None => Option::None
     };
 }
@@ -1484,7 +1526,7 @@ fn elab_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
 fn elab_cast(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              sub: *const Expr, ann: *const TypeAnn, p: Pos) -> *const Texpr {
     let s = elab_expr(a, ar, g, sc, env, none_ty(), sub);
-    let ty = resolve_sig_ty(a, ar, sc, ann);
+    let ty = resolve_sig_ty(a, ar, sc, ann, p);
     return te_node(ar, TexprNode::TCast(s, ann), ty, p);
 }
 
@@ -1887,7 +1929,7 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
         | Option::None => { }
     }
     let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
-    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
+    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     if sl[midx].mi_prelude {
@@ -1943,7 +1985,7 @@ fn gen_fn_lookup(genfns: *const Vec<GenFn>, name: str) -> int {
 // Infer tparam bindings for a generic-fn call by unifying each parameter's
 // declared type (resolved under the callee's tparams) against the argument.
 fn infer_call_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *const Vec<*const TypeAnn>,
-                    targs: *const Vec<*const Texpr>, out: *Vec<TVarBind>) {
+                    targs: *const Vec<*const Texpr>, out: *Vec<TVarBind>, p: Pos) {
     let n = anns.length();
     let asl_ann = anns.as_slice();
     let an = targs.length();
@@ -1951,7 +1993,7 @@ fn infer_call_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *con
     let mut i = 0 as u32;
     while i < n {
         if i < an {
-            let ptype = resolve_sig_ty(a, ar, cscope, asl_ann[i]);
+            let ptype = resolve_sig_ty(a, ar, cscope, asl_ann[i], p);
             unify_typ(ptype, asl[i].ty, out);
         }
         i = i + 1 as u32;
@@ -2043,9 +2085,9 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let base = gsl[gfidx as u32].gn_mangled;
     let targs = elab_args(a, ar, g, sc, env, args);
     let cscope = scope_with_tparams(sc, &gsl[gfidx as u32].gn_tparams);
-    let cret = resolve_sig_ret(a, ar, &cscope, gsl[gfidx as u32].gn_ret);
+    let cret = resolve_sig_ret(a, ar, &cscope, gsl[gfidx as u32].gn_ret, p);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
-    infer_call_binds(a, ar, &cscope, &gsl[gfidx as u32].gn_params, &targs, &binds);
+    infer_call_binds(a, ar, &cscope, &gsl[gfidx as u32].gn_params, &targs, &binds, p);
     seed_from_expected(cret, expected, &binds);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
@@ -2054,7 +2096,7 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     // application (`Vec<T>`) or assoc projection (`Option<I::Item>`) lowers to
     // its concrete instance, not a `subst` that leaves the app abstract.
     let icscope = scope_with_tbinds(sc, &gsl[gfidx as u32].gn_tparams, &binds);
-    let iret = resolve_sig_ret(a, ar, &icscope, gsl[gfidx as u32].gn_ret);
+    let iret = resolve_sig_ret(a, ar, &icscope, gsl[gfidx as u32].gn_ret, p);
     return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, iret), p);
 }
 
@@ -2157,7 +2199,7 @@ fn register_iter_footprints(a: Allocator, ar: *Arena, sc: *const TyScope, items:
     let mut i = 0 as u32;
     while i < n {
         if str::eq(sl[i].ab_trait, "Iterator") && sl[i].ab_tparams.length() == 0 as u32 {
-            register_iter_footprint(a, ar, sc, sl[i].ab_target, resolve_sig_ty(a, ar, sc, sl[i].ab_ty), fields_only);
+            register_iter_footprint(a, ar, sc, sl[i].ab_target, resolve_sig_ty(a, ar, sc, sl[i].ab_ty, sl[i].ab_pos), fields_only);
         }
         i = i + 1 as u32;
     }
@@ -2451,11 +2493,11 @@ fn push_texprs(targs: *const Vec<*const Texpr>, out: *Vec<*const Texpr>) {
 // resolves under the method's tparams (so its `TVar`s stay symbolic) before
 // unifying against the actual type.
 fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *const Vec<*const TypeAnn>,
-                      trecv: *const Texpr, targs: *const Vec<*const Texpr>, out: *Vec<TVarBind>) {
+                      trecv: *const Texpr, targs: *const Vec<*const Texpr>, out: *Vec<TVarBind>, p: Pos) {
     let np = anns.length();
     let asl = anns.as_slice();
     if np > 0 as u32 {
-        let p0 = resolve_sig_ty(a, ar, cscope, asl[0 as u32]);
+        let p0 = resolve_sig_ty(a, ar, cscope, asl[0 as u32], p);
         unify_typ(p0, trecv.ty, out);
     }
     let na = targs.length();
@@ -2464,7 +2506,7 @@ fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *c
     while i < na {
         let pi = i + 1 as u32;
         if pi < np {
-            let pt = resolve_sig_ty(a, ar, cscope, asl[pi]);
+            let pt = resolve_sig_ty(a, ar, cscope, asl[pi], p);
             unify_typ(pt, tsl[i].ty, out);
         }
         i = i + 1 as u32;
@@ -2557,7 +2599,7 @@ fn binds_in_tparam_order(a: Allocator, ar: *Arena, tparams: *const Vec<str>, bin
 // annotation against the elaborated argument type.  Params whose tparams are
 // already recovered resolve to a concrete type, so the unify is a no-op.
 fn unify_method_args(a: Allocator, ar: *Arena, sc: *const TyScope, tparams: *const Vec<str>,
-                     anns: *const Vec<*const TypeAnn>, targs: *const Vec<*const Texpr>, binds: *Vec<TVarBind>) {
+                     anns: *const Vec<*const TypeAnn>, targs: *const Vec<*const Texpr>, binds: *Vec<TVarBind>, p: Pos) {
     let cscope = scope_with_tbinds(sc, tparams, binds);
     let na = targs.length();
     let np = anns.length();
@@ -2567,7 +2609,7 @@ fn unify_method_args(a: Allocator, ar: *Arena, sc: *const TyScope, tparams: *con
     while i < na {
         let pi = i + 1 as u32;
         if pi < np {
-            let pt = resolve_sig_ty(a, ar, &cscope, asl[pi]);
+            let pt = resolve_sig_ty(a, ar, &cscope, asl[pi], p);
             unify_typ(pt, tsl[i].ty, binds);
         }
         i = i + 1 as u32;
@@ -2589,9 +2631,9 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // ordinary struct-gen methods every tparam is already recovered, so this is
     // a no-op.  Binding it before `cret` lets the adapter return instance
     // (`Map<VecIter<T>, F>`) resolve + register.
-    unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &targs, &binds);
+    unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &targs, &binds, p);
     let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
-    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
+    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     // A prelude method's instance body is injected (filtered from the dump), so
@@ -2623,9 +2665,9 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     let prelude = sl[midx].mi_prelude;
     let targs = elab_args(a, ar, g, sc, env, args);
     let cscope = scope_with_tparams(sc, &sl[midx].mi_tparams);
-    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann);
+    let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
-    infer_method_binds(a, ar, &cscope, &sl[midx].mi_params, trecv, &targs, &binds);
+    infer_method_binds(a, ar, &cscope, &sl[midx].mi_params, trecv, &targs, &binds, p);
     // A tparam unreachable through self / args (e.g. `alloc<T>()`) is pinned by
     // the surrounding expected type.
     seed_from_expected(cret, expected, &binds);
@@ -3789,8 +3831,8 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
                    tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
     match *s {
         Stmt::Let { name, value, ty_ann, is_mut, pos } => {
-            let vl = elab_expr(a, ar, g, sc, benv, let_expected(a, ar, sc, ty_ann), value);
-            let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty);
+            let vl = elab_expr(a, ar, g, sc, benv, let_expected(a, ar, sc, ty_ann, pos), value);
+            let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty, pos);
             check_let_ty(a, ar, sc, name, value, ty_ann, vl.ty, pos);
             let lent = coerce_own_to(a, ar, sc, vl, ety);
             if is_mut { note_let_mut(sc, name); }
@@ -4106,7 +4148,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::NewEnum { tname, args, alloc } => elab_new_enum(a, ar, g, sc, env, &tname, &args, alloc, p)
         | Expr::Range { lo, hi, inclusive } => elab_range_value(a, ar, g, sc, env, lo, hi, inclusive, p)
         | Expr::Lambda { params, ret_ty, body, captures } => elab_lambda(a, ar, g, sc, env, e, &params, ret_ty, p)
-        | Expr::SizeOf(t, _q) => te_node(ar, TexprNode::TSizeOf(resolve_sig_ty(a, ar, sc, t)), ty_node(ar, Typ::TCInt { is_signed: false }), p)
+        | Expr::SizeOf(t, _q) => te_node(ar, TexprNode::TSizeOf(resolve_sig_ty(a, ar, sc, t, p)), ty_node(ar, Typ::TCInt { is_signed: false }), p)
     };
 }
 
@@ -4344,13 +4386,13 @@ fn lam_to_params(a: Allocator, params: *const Vec<FieldDef>) -> Vec<Param> {
     return out;
 }
 // The fn-ptr type a lambda decays to.
-fn lambda_fnptr_ty(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>) -> *const Typ {
+fn lambda_fnptr_ty(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, p: Pos) -> *const Typ {
     let mut ptys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let n = params.length();
     let sl = params.as_slice();
     let mut i = 0 as u32;
-    while i < n { ptys.push(resolve_sig_ty(a, ar, sc, sl[i].ty)); i = i + 1 as u32; }
-    return ty_node(ar, Typ::TFnPtr { params: ptys, ret: resolve_sig_ret(a, ar, sc, ret_ty) });
+    while i < n { ptys.push(resolve_sig_ty(a, ar, sc, sl[i].ty, p)); i = i + 1 as u32; }
+    return ty_node(ar, Typ::TFnPtr { params: ptys, ret: resolve_sig_ret(a, ar, sc, ret_ty, p) });
 }
 // Index of the A2 closure pre-pass entry whose original `Lambda` node is
 // `e` (matched by arena-pointer identity), or -1 for a captureless lambda.
@@ -4410,7 +4452,7 @@ fn elab_lambda(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
     let no_caps: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let no_brefs: Vec<str> = Vec::with_capacity(a, 8 as u32);
     sc.sc_lifted.push(LiftedLambda { ll_mangled: sym, ll_name: name, ll_expr: e, ll_kind: 0 as int, ll_closure: "", ll_params: no_params, ll_ret: no_ret, ll_caps: no_caps, ll_brefs: no_brefs, ll_lambda: e });
-    return te_node(ar, TexprNode::TFnRef(sym), lambda_fnptr_ty(a, ar, sc, params, ret_ty), p);
+    return te_node(ar, TexprNode::TFnRef(sym), lambda_fnptr_ty(a, ar, sc, params, ret_ty, p), p);
 }
 // Elaborate a lifted lambda directly into a `Tfunc` (no intermediate `Func` —
 // reads the original arena `FieldDef` params + body expr, builds only locals
@@ -4426,10 +4468,10 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
-    let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
-    let ret = resolve_sig_ret(a, ar, &sc, ret_ty);
+    let param_tys = resolve_param_tys(a, ar, &sc, &lparams, fpos);
+    let ret = resolve_sig_ret(a, ar, &sc, ret_ty, fpos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    build_param_env(a, ar, &sc, &lparams, &env);
+    build_param_env(a, ar, &sc, &lparams, &env, fpos);
     let scb = scope_with_ret(&sc, ret);
     // A `Block` body is a void statement sequence (a synthesised fmt_debug),
     // emitted flat; any other body is the fn's tail value.
@@ -4513,9 +4555,9 @@ fn enumlit_const(ar: *Arena, gf: GlobalFn, p: Pos) -> *const Texpr {
     return defer_expr(ar, p);
 }
 
-fn let_expected(a: Allocator, ar: *Arena, sc: *const TyScope, ty_ann: Option<*const TypeAnn>) -> Option<*const Typ> {
+fn let_expected(a: Allocator, ar: *Arena, sc: *const TyScope, ty_ann: Option<*const TypeAnn>, p: Pos) -> Option<*const Typ> {
     return match ty_ann {
-        Option::Some(t) => Option::Some(resolve_sig_ty(a, ar, sc, t))
+        Option::Some(t) => Option::Some(resolve_sig_ty(a, ar, sc, t, p))
         | Option::None => none_ty()
     };
 }
@@ -4556,16 +4598,16 @@ fn is_int_like_ty(t: *const Typ) -> bool {
 // be coercible.  Before this the port took the annotation on faith and emitted C for
 // `let x: int = true`.
 fn let_env_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
-              ty_ann: Option<*const TypeAnn>, value_ty: *const Typ) -> *const Typ {
+              ty_ann: Option<*const TypeAnn>, value_ty: *const Typ, p: Pos) -> *const Typ {
     return match ty_ann {
-        Option::Some(t) => resolve_sig_ty(a, ar, sc, t)
+        Option::Some(t) => resolve_sig_ty(a, ar, sc, t, p)
         | Option::None => value_ty
     };
 }
 fn check_let_ty(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
                 value: *const Expr, ann: Option<*const TypeAnn>, vty: *const Typ, pos: Pos) {
     match ann {
-        Option::Some(t) => { check_let_ann(a, ar, sc, name, value, resolve_sig_ty(a, ar, sc, t), vty, pos); }
+        Option::Some(t) => { check_let_ann(a, ar, sc, name, value, resolve_sig_ty(a, ar, sc, t, pos), vty, pos); }
         // `null` carries no pointee, so an unannotated `let n = null;` has nothing to
         // infer from — and the type would reach codegen, which has no C spelling for
         // it.  The reference asserts that far down (`TNullPtr should never reach
@@ -5007,9 +5049,9 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
              s: *const Stmt, out: *Vec<Tstmt>) {
     match *s {
         Stmt::Let { name, value, ty_ann, is_mut, pos } => {
-            let exp = let_expected(a, ar, sc, ty_ann);
+            let exp = let_expected(a, ar, sc, ty_ann, pos);
             let vl = elab_expr(a, ar, g, sc, env, exp, value);
-            let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty);
+            let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty, pos);
             // The diagnostic points at the `let`, not at the value: that is where
             // the annotation the user wrote lives.
             check_let_ty(a, ar, sc, name, value, ty_ann, vl.ty, pos);
@@ -5116,12 +5158,12 @@ fn elab_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     return out;
 }
 
-fn build_param_env(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>, env: *Vec<FieldTy>) {
+fn build_param_env(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>, env: *Vec<FieldTy>, p: Pos) {
     let n = params.length();
     let sl = params.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        env.push(FieldTy { name: sl[i].pname, ty: resolve_sig_ty(a, ar, sc, sl[i].pty) });
+        env.push(FieldTy { name: sl[i].pname, ty: resolve_sig_ty(a, ar, sc, sl[i].pty, p) });
         i = i + 1 as u32;
     }
 }
@@ -5862,10 +5904,10 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: str::eq(mangled, "main") };
-    let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
-    let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
+    let param_tys = resolve_param_tys(a, ar, &sc, &f.params, f.pos);
+    let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty, f.pos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    build_param_env(a, ar, &sc, &f.params, &env);
+    build_param_env(a, ar, &sc, &f.params, &env, f.pos);
     // A generic skeleton (type params, no bindings) carries an empty body —
     // only its monomorphic instances have real bodies.
     let is_skeleton = eff_tparams.length() > 0 as u32 && tbinds.length() == 0 as u32;
@@ -6185,8 +6227,8 @@ fn collect_ffi_decls_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *cons
                          cincludes: *Vec<str>, econsts: *Vec<FieldTy>, evars: *Vec<FieldTy>) {
     match *it {
         Item::CInclude { path, pos } => { cincludes.push(path); }
-        | Item::ExternConst(ec) => { econsts.push(FieldTy { name: ec.ecname, ty: resolve_sig_ty(a, ar, sc, ec.ecty) }); }
-        | Item::ExternVar(ev) => { evars.push(FieldTy { name: ev.evname, ty: resolve_sig_ty(a, ar, sc, ev.evty) }); }
+        | Item::ExternConst(ec) => { econsts.push(FieldTy { name: ec.ecname, ty: resolve_sig_ty(a, ar, sc, ec.ecty, ec.ecpos) }); }
+        | Item::ExternVar(ev) => { evars.push(FieldTy { name: ev.evname, ty: resolve_sig_ty(a, ar, sc, ev.evty, ev.evpos) }); }
         | Item::Module(md) => { collect_ffi_decls(a, ar, sc, &md.mitems, cincludes, econsts, evars); }
         | _e => { }
     }
@@ -6313,17 +6355,17 @@ fn collect_tp_consts(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: *c
 // field name, resolved field type).  Field types resolve through a
 // name-scope since they may reference other structs / enums.
 fn push_one_field(a: Allocator, ar: *Arena, sc: *const TyScope, spath: *const Vec<str>,
-                  fd: *const FieldDef, out: *Vec<StructField>) {
-    out.push(StructField { sf_path: copy_strs(a, spath), sf_name: fd.name, sf_ty: resolve_sig_ty(a, ar, sc, fd.ty) });
+                  fd: *const FieldDef, out: *Vec<StructField>, p: Pos) {
+    out.push(StructField { sf_path: copy_strs(a, spath), sf_name: fd.name, sf_ty: resolve_sig_ty(a, ar, sc, fd.ty, p) });
 }
 
 fn push_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, spath: *const Vec<str>,
-                      fields: *const Vec<FieldDef>, out: *Vec<StructField>) {
+                      fields: *const Vec<FieldDef>, out: *Vec<StructField>, p: Pos) {
     let n = fields.length();
     let sl = fields.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        push_one_field(a, ar, sc, spath, &sl[i], out);
+        push_one_field(a, ar, sc, spath, &sl[i], out, p);
         i = i + 1 as u32;
     }
 }
@@ -6498,7 +6540,7 @@ fn collect_struct_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, modpath
             let msc = scope_with_modpath(sc, modpath);
             let sc2 = scope_with_tparams(&msc, &sd.stparams);
             let spath = path_push(a, modpath, sd.sname);
-            push_struct_fields(a, ar, &sc2, &spath, &sd.sfields, out);
+            push_struct_fields(a, ar, &sc2, &spath, &sd.sfields, out, sd.spos);
         }
         | Item::Module(md) => { collect_struct_info(a, ar, sc, &path_push(a, modpath, md.mname), &md.mitems, out); }
         | _e => { }
@@ -6541,7 +6583,7 @@ fn push_efield(a: Allocator, epath: *const Vec<str>, vname: str, fname: str, ty:
 }
 
 fn push_variant_fields(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, vname: str,
-                       vk: *const VariantKind, efields: *Vec<EnumFieldE>) {
+                       vk: *const VariantKind, efields: *Vec<EnumFieldE>, p: Pos) {
     match *vk {
         VariantKind::VUnit => { }
         | VariantKind::VTuple(tys) => {
@@ -6549,7 +6591,7 @@ fn push_variant_fields(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
             let tsl = tys.as_slice();
             let mut kt = 0 as u32;
             while kt < nt {
-                push_efield(a, epath, vname, tuple_field_name(a, ar, kt), resolve_sig_ty(a, ar, sc, tsl[kt]), efields);
+                push_efield(a, epath, vname, tuple_field_name(a, ar, kt), resolve_sig_ty(a, ar, sc, tsl[kt], p), efields);
                 kt = kt + 1 as u32;
             }
         }
@@ -6558,26 +6600,26 @@ fn push_variant_fields(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
             let fsl = fds.as_slice();
             let mut ks = 0 as u32;
             while ks < ns {
-                push_efield(a, epath, vname, fsl[ks].name, resolve_sig_ty(a, ar, sc, fsl[ks].ty), efields);
+                push_efield(a, epath, vname, fsl[ks].name, resolve_sig_ty(a, ar, sc, fsl[ks].ty, p), efields);
                 ks = ks + 1 as u32;
             }
         }
     }
 }
 
-fn collect_one_variant(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, ev: *const EnumVariant,
+fn collect_one_variant(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, p: Pos, ev: *const EnumVariant,
                        tag: int, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
     push_etag_kind(a, epath, ev.vname, tag, &ev.vkind, etags);
-    push_variant_fields(a, ar, sc, epath, ev.vname, &ev.vkind, efields);
+    push_variant_fields(a, ar, sc, epath, ev.vname, &ev.vkind, efields, p);
 }
 
-fn collect_enum_variants(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>,
+fn collect_enum_variants(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, p: Pos,
                          variants: *const Vec<EnumVariant>, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
     let n = variants.length();
     let sl = variants.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        collect_one_variant(a, ar, sc, epath, &sl[i], i as int, etags, efields);
+        collect_one_variant(a, ar, sc, epath, p, &sl[i], i as int, etags, efields);
         i = i + 1 as u32;
     }
 }
@@ -6589,9 +6631,9 @@ fn collect_enum_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: 
             let msc = scope_with_modpath(sc, modpath);
             let sc2 = scope_with_tparams(&msc, &ed.etparams);
             let epath = path_push(a, modpath, ed.ename);
-            collect_enum_variants(a, ar, &sc2, &epath, &ed.evariants, etags, efields);
+            collect_enum_variants(a, ar, &sc2, &epath, ed.epos, &ed.evariants, etags, efields);
         }
-        | Item::View(vd) => { let vpath = path_push(a, modpath, vd.vname); collect_view_variants(a, ar, sc, &vpath, &vd.vcases, etags, efields); }
+        | Item::View(vd) => { let vpath = path_push(a, modpath, vd.vname); collect_view_variants(a, ar, sc, &vpath, vd.vpos, &vd.vcases, etags, efields); }
         | Item::Module(md) => { collect_enum_info(a, ar, sc, &path_push(a, modpath, md.mname), &md.mitems, etags, efields); }
         | _e => { }
     }
@@ -6662,7 +6704,8 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     // A generic-struct method's return mentions the impl tparams (out of scope
     // here); the call site resolves it under the receiver's bindings, so leave
     // it unresolved rather than mangle a bogus `Pair_B_A` instance.
-    let mret = if struct_gen { none_ty() } else { resolve_sig_ret(a, ar, sc, f.ret_ty) };
+    let msc = scope_with_tparams(sc, &f.tparams);
+    let mret = if struct_gen { none_ty() } else { resolve_sig_ret(a, ar, &msc, f.ret_ty, f.pos) };
     out.push(MethodInfo {
         mi_path: copy_strs(a, target), mi_name: f.name,
         mi_mangled: method_mangle(a, ar, target, f.name),
@@ -7210,8 +7253,8 @@ fn collect_struct_tps(a: Allocator, items: *const Vec<Item>, out: *Vec<StructTP>
     while i < n { collect_struct_tps_one(a, &sl[i], out); i = i + 1 as u32; }
     return;
 }
-fn push_one_assoc(a: Allocator, trname: str, target: str, name: str, ty: *const TypeAnn, tparams: *const Vec<str>, out: *Vec<AssocBind>) {
-    out.push(AssocBind { ab_trait: trname, ab_target: target, ab_name: name, ab_ty: ty, ab_tparams: copy_strs(a, tparams) });
+fn push_one_assoc(a: Allocator, trname: str, target: str, name: str, ty: *const TypeAnn, tparams: *const Vec<str>, out: *Vec<AssocBind>, pos: Pos) {
+    out.push(AssocBind { ab_pos: pos, ab_trait: trname, ab_target: target, ab_name: name, ab_ty: ty, ab_tparams: copy_strs(a, tparams) });
 }
 fn push_impl_assoc(a: Allocator, ib: *const ImplBlock, out: *Vec<AssocBind>) {
     let n = ib.iassoc.length();
@@ -7220,7 +7263,7 @@ fn push_impl_assoc(a: Allocator, ib: *const ImplBlock, out: *Vec<AssocBind>) {
     let trn = impl_trait_name(ib);
     let mut i = 0 as u32;
     while i < n {
-        push_one_assoc(a, trn, tgt, sl[i].name, sl[i].ty, &ib.itparams, out);
+        push_one_assoc(a, trn, tgt, sl[i].name, sl[i].ty, &ib.itparams, out, ib.ipos);
         i = i + 1 as u32;
     }
 }
@@ -7235,23 +7278,23 @@ fn collect_assoc_binds_one(a: Allocator, it: *const Item, out: *Vec<AssocBind>) 
 // `next` return (`Option<I::Item>`) projects through a chained inner iterator.
 fn register_prelude_assoc(a: Allocator, ar: *Arena, out: *Vec<AssocBind>) {
     let tp_t = single_str(a, "T");
-    push_one_assoc(a, "Iterator", "VecIter", "Item", ann_struct(a, ar, "T"), &tp_t, out);
+    push_one_assoc(a, "Iterator", "VecIter", "Item", ann_struct(a, ar, "T"), &tp_t, out, prelude_file_pos());
     let mut tp_if: Vec<str> = Vec::with_capacity(a, 8 as u32);
     tp_if.push("I");
     tp_if.push("F");
-    push_one_assoc(a, "Iterator", "Map", "Item", ann_proj(a, ar, "F", "Output"), &tp_if, out);
+    push_one_assoc(a, "Iterator", "Map", "Item", ann_proj(a, ar, "F", "Output"), &tp_if, out, prelude_file_pos());
     let mut tp_ip: Vec<str> = Vec::with_capacity(a, 8 as u32);
     tp_ip.push("I");
     tp_ip.push("P");
-    push_one_assoc(a, "Iterator", "Filter", "Item", ann_proj(a, ar, "I", "Item"), &tp_ip, out);
+    push_one_assoc(a, "Iterator", "Filter", "Item", ann_proj(a, ar, "I", "Item"), &tp_ip, out, prelude_file_pos());
     let tp_i = single_str(a, "I");
-    push_one_assoc(a, "Iterator", "Take", "Item", ann_proj(a, ar, "I", "Item"), &tp_i, out);
+    push_one_assoc(a, "Iterator", "Take", "Item", ann_proj(a, ar, "I", "Item"), &tp_i, out, prelude_file_pos());
     let mut tupargs: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     tupargs.push(ann_u32(ar));
     tupargs.push(ann_proj(a, ar, "I", "Item"));
     let tup = ann_node(ar, TypeAnn::TyTuple(tupargs));
     let tp_i2 = single_str(a, "I");
-    push_one_assoc(a, "Iterator", "Enumerate", "Item", tup, &tp_i2, out);
+    push_one_assoc(a, "Iterator", "Enumerate", "Item", tup, &tp_i2, out, prelude_file_pos());
 }
 fn collect_assoc_binds(a: Allocator, items: *const Vec<Item>, out: *Vec<AssocBind>) {
     let n = items.length();
@@ -7293,7 +7336,7 @@ fn push_closure_field(a: Allocator, cn: str, fname: str, fty: *const Typ, out: *
 // MethodInfo for the synthetic `call(*const self, params..) -> ret`,
 // hand-built (no owned `Func`, which would pull drop instances the oracle
 // never synthesises for borrowed program items).
-fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpath: *const Vec<str>, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, out: *Vec<MethodInfo>) {
+fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpath: *const Vec<str>, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, out: *Vec<MethodInfo>, p: Pos) {
     let self_ann = tyann_node(ar, TypeAnn::TyConstPtr(closure_struct_ann(a, ar, cn)));
     let mut manns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     manns.push(self_ann);
@@ -7304,7 +7347,7 @@ fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpat
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     out.push(MethodInfo {
         mi_path: copy_strs(a, cnpath), mi_name: "call", mi_mangled: method_mangle(a, ar, cnpath, "call"),
-        mi_ret: resolve_sig_ret(a, ar, sc, ret_ty),
+        mi_ret: resolve_sig_ret(a, ar, sc, ret_ty, p),
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: ret_ty,
         mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
@@ -7318,22 +7361,22 @@ fn push_closure_assoc(a: Allocator, ar: *Arena, trname: str, cn: str, params: *c
     let n = params.length();
     let sl = params.as_slice();
     if n == 1 as u32 {
-        push_one_assoc(a, trname, cn, "Arg", sl[0 as u32].ty, &empty_tp, out);
+        push_one_assoc(a, trname, cn, "Arg", sl[0 as u32].ty, &empty_tp, out, prelude_file_pos());
     } else {
         let mut i = 0 as u32;
         while i < n {
             let an = gensym_name(a, ar, "Arg", i + 1 as u32);
-            push_one_assoc(a, trname, cn, an, sl[i].ty, &empty_tp, out);
+            push_one_assoc(a, trname, cn, an, sl[i].ty, &empty_tp, out, prelude_file_pos());
             i = i + 1 as u32;
         }
     }
     let ret_ann = match ret_ty { Option::Some(t) => t | Option::None => cvoid_ann(ar) };
-    push_one_assoc(a, trname, cn, "Output", ret_ann, &empty_tp, out);
+    push_one_assoc(a, trname, cn, "Output", ret_ann, &empty_tp, out, prelude_file_pos());
 }
 fn synth_closure(a: Allocator, ar: *Arena, sc: *const TyScope, num: u32,
                  caps_names: *const Vec<str>, caps_anns: *const Vec<*const TypeAnn>, caps_brefs: *const Vec<str>,
                  params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, subst_body: *const Expr, lambda: *const Expr,
-                 sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+                 sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>, p: Pos) {
     let cn = gensym_name(a, ar, "__closure_", num);
     let cnpath = single_str(a, cn);
     let ncap = caps_names.length();
@@ -7341,7 +7384,7 @@ fn synth_closure(a: Allocator, ar: *Arena, sc: *const TyScope, num: u32,
     let asl = caps_anns.as_slice();
     let mut i = 0 as u32;
     while i < ncap {
-        let fty0 = resolve_sig_ty(a, ar, sc, asl[i]);
+        let fty0 = resolve_sig_ty(a, ar, sc, asl[i], p);
         let fty = if name_in(caps_brefs, nsl[i]) { ty_node(ar, Typ::TConstPtr(fty0)) } else { fty0 };
         push_closure_field(a, cn, nsl[i], fty, sinfo);
         i = i + 1 as u32;
@@ -7350,7 +7393,7 @@ fn synth_closure(a: Allocator, ar: *Arena, sc: *const TyScope, num: u32,
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     push_struct_tp(a, cn, &empty_tp, stps);
     register_mono_struct(a, sc, &cnpath);
-    push_call_method(a, ar, sc, cn, &cnpath, params, ret_ty, methods);
+    push_call_method(a, ar, sc, cn, &cnpath, params, ret_ty, methods, p);
     let trname = gensym_name(a, ar, "Fn", params.length());
     push_closure_assoc(a, ar, trname, cn, params, ret_ty, assoc);
     let mangled = method_mangle(a, ar, &cnpath, "call");
@@ -7408,7 +7451,7 @@ fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const V
     }
     if cnames.length() == 0 as u32 { return; }
     let sbody = subst_caps_expr(a, ar, &cnames, &brn, &pnames, body);
-    synth_closure(a, ar, sc, *ctr, &cnames, &canns, &brn, params, ret_ty, sbody, lambda, sinfo, methods, assoc, stps, lifted);
+    synth_closure(a, ar, sc, *ctr, &cnames, &canns, &brn, params, ret_ty, sbody, lambda, sinfo, methods, assoc, stps, lifted, expr_pos(lambda));
     *ctr = *ctr + 1 as u32;
 }
 fn prepass_exprs(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
@@ -7609,13 +7652,13 @@ fn lifted_pos(kind: int) -> Pos {
 }
 fn push_derive_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: str, mname: str,
                       ret_ann: *const TypeAnn, has_other: bool, body: *const Expr, do_drain: bool,
-                      methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
-    push_derive_method_k(a, ar, sc, target, mname, ret_ann, has_other, body, do_drain, 2 as int, methods, lifted, gsigs);
+                      methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>, p: Pos) {
+    push_derive_method_k(a, ar, sc, target, mname, ret_ann, has_other, body, do_drain, 2 as int, methods, lifted, gsigs, p);
     return;
 }
 fn push_derive_method_k(a: Allocator, ar: *Arena, sc: *const TyScope, target: str, mname: str,
                         ret_ann: *const TypeAnn, has_other: bool, body: *const Expr, do_drain: bool,
-                        kind: int, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
+                        kind: int, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>, p: Pos) {
     let tp = single_str(a, target);
     let mangled = method_mangle(a, ar, &tp, mname);
     let mut manns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
@@ -7623,15 +7666,15 @@ fn push_derive_method_k(a: Allocator, ar: *Arena, sc: *const TyScope, target: st
     if has_other { manns.push(dv_const_ptr(a, ar, target)); }
     // Register the call signature so the arg coercion auto-refs a value
     // `other` to `&other` (the `*const T` param).
-    let self_ty = resolve_sig_ty(a, ar, sc, dv_const_ptr(a, ar, target));
+    let self_ty = resolve_sig_ty(a, ar, sc, dv_const_ptr(a, ar, target), p);
     let mut fs_params: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     fs_params.push(self_ty);
-    if has_other { fs_params.push(resolve_sig_ty(a, ar, sc, dv_const_ptr(a, ar, target))); }
+    if has_other { fs_params.push(resolve_sig_ty(a, ar, sc, dv_const_ptr(a, ar, target), p)); }
     gsigs.push(FnSig { fs_mangled: mangled, fs_params: fs_params });
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     methods.push(MethodInfo {
         mi_path: single_str(a, target), mi_name: mname, mi_mangled: mangled,
-        mi_ret: resolve_sig_ret(a, ar, sc, Option::Some(ret_ann)),
+        mi_ret: resolve_sig_ret(a, ar, sc, Option::Some(ret_ann), p),
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: Option::Some(ret_ann),
         mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
@@ -7666,14 +7709,14 @@ fn collect_derives_struct(a: Allocator, ar: *Arena, sc: *const TyScope, sd: *con
     while i < n {
         let tr = sl[i];
         if str::eq(tr, "Eq") {
-            push_derive_method(a, ar, sc, sd.sname, "eq", ann_bool(ar), true, derive_eq_struct_body(a, ar, &sd.sfields, p), true, methods, lifted, gsigs);
-            push_derive_method_k(a, ar, sc, sd.sname, "ne", ann_bool(ar), true, derive_ne_body(a, ar, p), true, 4 as int, methods, lifted, gsigs);
+            push_derive_method(a, ar, sc, sd.sname, "eq", ann_bool(ar), true, derive_eq_struct_body(a, ar, &sd.sfields, p), true, methods, lifted, gsigs, p);
+            push_derive_method_k(a, ar, sc, sd.sname, "ne", ann_bool(ar), true, derive_ne_body(a, ar, p), true, 4 as int, methods, lifted, gsigs, p);
         }
         if str::eq(tr, "Hash") {
-            push_derive_method(a, ar, sc, sd.sname, "hash", tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), false, derive_hash_struct_body(a, ar, &sd.sfields, p), true, methods, lifted, gsigs);
+            push_derive_method(a, ar, sc, sd.sname, "hash", tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), false, derive_hash_struct_body(a, ar, &sd.sfields, p), true, methods, lifted, gsigs, p);
         }
         if str::eq(tr, "Clone") {
-            push_derive_method(a, ar, sc, sd.sname, "clone", closure_struct_ann(a, ar, sd.sname), false, derive_clone_struct_body(a, ar, sd.sname, &sd.sfields, p), true, methods, lifted, gsigs);
+            push_derive_method(a, ar, sc, sd.sname, "clone", closure_struct_ann(a, ar, sd.sname), false, derive_clone_struct_body(a, ar, sd.sname, &sd.sfields, p), true, methods, lifted, gsigs, p);
         }
         if str::eq(tr, "Debug") {
             push_fmt_debug(a, ar, sd.sname, fmt_debug_struct_body(a, ar, sd.sname, &sd.sfields, p), methods, lifted);
@@ -7766,11 +7809,11 @@ fn collect_derives_enum(a: Allocator, ar: *Arena, sc: *const TyScope, ed: *const
     while i < n {
         let tr = sl[i];
         if str::eq(tr, "Eq") {
-            push_derive_method(a, ar, sc, ed.ename, "eq", ann_bool(ar), true, derive_eq_enum_body(a, ar, ed.ename, &ed.evariants, p), true, methods, lifted, gsigs);
-            push_derive_method_k(a, ar, sc, ed.ename, "ne", ann_bool(ar), true, derive_ne_body(a, ar, p), true, 4 as int, methods, lifted, gsigs);
+            push_derive_method(a, ar, sc, ed.ename, "eq", ann_bool(ar), true, derive_eq_enum_body(a, ar, ed.ename, &ed.evariants, p), true, methods, lifted, gsigs, p);
+            push_derive_method_k(a, ar, sc, ed.ename, "ne", ann_bool(ar), true, derive_ne_body(a, ar, p), true, 4 as int, methods, lifted, gsigs, p);
         }
         if str::eq(tr, "Hash") {
-            push_derive_method(a, ar, sc, ed.ename, "hash", tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), false, derive_hash_enum_body(a, ar, ed.ename, &ed.evariants, p), true, methods, lifted, gsigs);
+            push_derive_method(a, ar, sc, ed.ename, "hash", tyann_node(ar, TypeAnn::TyInt { is_signed: false, width: IntWidth::W32 }), false, derive_hash_enum_body(a, ar, ed.ename, &ed.evariants, p), true, methods, lifted, gsigs, p);
         }
         if str::eq(tr, "Debug") {
             push_fmt_debug(a, ar, ed.ename, fmt_debug_enum_body(a, ar, ed.ename, &ed.evariants, p), methods, lifted);
@@ -8010,16 +8053,16 @@ fn view_case_kind(a: Allocator, c: *const ViewCase) -> VariantKind {
     while i < n { tys.push(sl[i].ty); i = i + 1 as u32; }
     return VariantKind::VTuple(tys);
 }
-fn collect_view_one(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, c: *const ViewCase, tag: int, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
+fn collect_view_one(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, p: Pos, c: *const ViewCase, tag: int, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
     push_etag(a, epath, c.vcname, tag, etags);
     let vk = view_case_kind(a, c);
-    push_variant_fields(a, ar, sc, epath, c.vcname, &vk, efields);
+    push_variant_fields(a, ar, sc, epath, c.vcname, &vk, efields, p);
 }
-fn collect_view_variants(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, vcases: *const Vec<ViewCase>, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
+fn collect_view_variants(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>, p: Pos, vcases: *const Vec<ViewCase>, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
     let n = vcases.length();
     let sl = vcases.as_slice();
     let mut i = 0 as u32;
-    while i < n { collect_view_one(a, ar, sc, epath, &sl[i], i as int, etags, efields); i = i + 1 as u32; }
+    while i < n { collect_view_one(a, ar, sc, epath, p, &sl[i], i as int, etags, efields); i = i + 1 as u32; }
 }
 // Elaborate the view function `<vname>(p) -> <vname>` (mirrors elaborate_lifted
 // but its body is a statement list, not a single expr).
@@ -8035,10 +8078,10 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
-    let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
-    let ret = resolve_sig_ret(a, ar, &sc, ret_ann);
+    let param_tys = resolve_param_tys(a, ar, &sc, &lparams, vd.vpos);
+    let ret = resolve_sig_ret(a, ar, &sc, ret_ann, vd.vpos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
-    build_param_env(a, ar, &sc, &lparams, &env);
+    build_param_env(a, ar, &sc, &lparams, &env, vd.vpos);
     let scb = scope_with_ret(&sc, ret);
     let raw_body = elab_body(a, ar, g, &scb, gensym, &env, ret, &vd.vbody);
     let mut lift_ctr: u32 = 0 as u32;
@@ -8151,7 +8194,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             // `parser::IdentPos`, matching how the type is registered.
             let msc = scope_with_modpath(sc, path);
             let fsc = scope_with_tparams(&msc, &f.tparams);
-            g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty),
+            g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty, f.pos),
                               is_const: false, is_top: is_top, gf_variadic: f.is_variadic });
         }
         | Item::View(vd) => {
@@ -8164,19 +8207,19 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
         | Item::Const(c) => {
             let cm = mangle_path(a, ar, path, c.kname);
             g.push(GlobalFn { name: c.kname, mangled: cm, gf_emit: cm,
-                              ret: Option::Some(resolve_sig_ty(a, ar, sc, c.kty)),
+                              ret: Option::Some(resolve_sig_ty(a, ar, sc, c.kty, c.kpos)),
                               is_const: true, is_top: is_top, gf_variadic: false });
         }
         | Item::ExternConst(ec) => {
             // A linker-resolved global value; its C symbol is visible
             // unqualified everywhere (no module mangling).
             g.push(GlobalFn { name: ec.ecname, mangled: ec.ecname, gf_emit: ec.ecname,
-                              ret: Option::Some(resolve_sig_ty(a, ar, sc, ec.ecty)),
+                              ret: Option::Some(resolve_sig_ty(a, ar, sc, ec.ecty, ec.ecpos)),
                               is_const: true, is_top: true , gf_variadic: false });
         }
         | Item::ExternVar(ev) => {
             g.push(GlobalFn { name: ev.evname, mangled: ev.evname, gf_emit: ev.evname,
-                              ret: Option::Some(resolve_sig_ty(a, ar, sc, ev.evty)),
+                              ret: Option::Some(resolve_sig_ty(a, ar, sc, ev.evty, ev.evpos)),
                               is_const: true, is_top: true , gf_variadic: false });
         }
         | Item::Module(md) => {
@@ -8268,11 +8311,12 @@ fn collect_fn_sigs_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const 
     let msc = scope_with_modpath(sc, path);
     match *it {
         Item::Function(f) => {
-            out.push(FnSig { fs_mangled: collect_fn_mangle(a, ar, &f, path), fs_params: resolve_param_tys(a, ar, &msc, &f.params) });
+            let fsc = scope_with_tparams(&msc, &f.tparams);
+            out.push(FnSig { fs_mangled: collect_fn_mangle(a, ar, &f, path), fs_params: resolve_param_tys(a, ar, &fsc, &f.params, f.pos) });
         }
         | Item::View(vd) => {
             let mut vp: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
-            vp.push(resolve_sig_ty(a, ar, &msc, vd.vparam.pty));
+            vp.push(resolve_sig_ty(a, ar, &msc, vd.vparam.pty, vd.vpos));
             out.push(FnSig { fs_mangled: mangle_path(a, ar, path, vd.vname), fs_params: vp });
         }
         | Item::Module(md) => {

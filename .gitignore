@@ -15,6 +15,10 @@ src/lex_errors/*
 !src/parse_errors/
 src/parse_errors/*
 !src/parse_errors/*.exl
+!src/tc_errors/
+src/tc_errors/*
+!src/tc_errors/*.exl
+!src/tc_errors/README.md
 
 # everything in examples/ except .exl sources, .expected stdout
 # snapshots, and FFI stub C files (`_stub.c` / `_stub.h`).  Generated
