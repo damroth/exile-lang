@@ -413,6 +413,36 @@ selfhost-port-tokens: host-selfhost-lexer
 # caret) are a driver-level presentation layer the lexer port doesn't
 # emit.  Exercises the `try`/Result error threading that the valid-only
 # token corpus can't reach.
+# ===== Faza A — typecheck diagnostics =====
+#
+# Same shape as selfhost-port-errors (lexer, 12) and -parse-errors (46): each
+# fixture is a program the reference implementation REJECTS, and both compilers
+# must produce the SAME first line — message and position.
+#
+# The corpus grows one error FAMILY at a time.  A family is done when its fixtures
+# agree; a family not yet ported simply has no fixtures here yet, so the gate stays
+# meaningful (green) instead of permanently red.
+.PHONY: selfhost-port-tc-errors
+
+selfhost-port-tc-errors: host-selfhost-tc
+	@fail=0; n=0; \
+	for f in src/tc_errors/*.exl; do \
+	  n=$$((n+1)); \
+	  oc=$$($(EXILE) --target c $$f 2>&1 >/dev/null | head -1); \
+	  pt=$$(echo $$f | $(HOST_OUT)/selfhost_tc 2>&1 >/dev/null | head -1); \
+	  if [ "$$oc" = "$$pt" ] && [ -n "$$pt" ]; then \
+	    : ; \
+	  else \
+	    echo "selfhost-port-tc-errors: MISMATCH $$(basename $$f)"; \
+	    echo "  oracle: $$oc"; \
+	    echo "  port:   $$pt"; \
+	    fail=1; \
+	  fi; \
+	done; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-port-tc-errors: clean ($$n fixtures, port == oracle line 1)"; \
+	else exit 1; fi
+
 # ===== The bootstrap fixpoint — the self-host proof, as a gate =====
 #
 # The port compiles the port, and the compiler THAT produces emits byte-identical
@@ -454,7 +484,7 @@ bootstrap-fixpoint: host-selfhost-cg
 # `verify-host` / `selfhost-diff` check the ORACLE; these check the PORT.
 selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
-                 selfhost-port-drop-ir selfhost-port-escape
+                 selfhost-port-drop-ir selfhost-port-escape selfhost-port-tc-errors
 	@echo "selfhost-verify: all port gates green"
 
 # ===== DR-010 escape pass — the port's differential gate =====

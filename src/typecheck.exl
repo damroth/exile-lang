@@ -273,6 +273,17 @@ struct TyScope {
     // True only while elaborating `fn main` — a bare `return;` there becomes
     // `return 0` (C `int main` must return a value).
     sc_is_main: bool,
+    // The FIRST diagnostic raised while elaborating this program.
+    //
+    // The reference implementation raises an exception and unwinds; exile has no
+    // exceptions, and threading `Result` through elaboration would mean rewriting
+    // every one of the hundreds of functions below.  So the error is LATCHED here
+    // — first one wins — and elaboration carries on with whatever placeholder the
+    // failing site produced.  The traversal order is identical to the reference's,
+    // so "the first error" means the same error, and check_program returns it
+    // instead of a Tprogram.  Same shape as escape.exl's `e_err`, which this
+    // follows deliberately.
+    sc_err: *Option<*const CompileError>,
 }
 
 // The program-global indices bundled for threading through the elaboration
@@ -306,6 +317,7 @@ struct ProgIdx {
     pi_xstructs: *const Vec<str>,
     pi_xaliases: *const Vec<str>,
     pi_taliases: *const Vec<TypeAlias>,
+    pi_err: *Option<*const CompileError>,
 }
 
 // Index of `(type-path, method-name)` in the method table, or -1.
@@ -1097,6 +1109,29 @@ fn t_str(ar: *Arena) -> *const Typ { return ty_node(ar, Typ::TString); }
 // incompleteness is always VISIBLE at the source / dump level — a dropped
 // statement leaves a `(expr-stmt null :ty c_void)` placeholder rather than
 // silently vanishing, keeping the deferred-work-must-be-visible invariant.
+// `["mod"; "T"]` -> `mod::T`, the form every diagnostic shows a path in.
+fn path_display(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let sl = path.as_slice();
+    let mut i = 0 as u32;
+    while i < path.length() {
+        if i > 0 as u32 { sb.push_str("::"); }
+        sb.push_str(sl[i]);
+        i = i + 1 as u32;
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn msg2(a: Allocator, ar: *Arena, pre: str, x: str, post: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str(pre); sb.push_str(x); sb.push_str(post);
+    return str::from_slice(ar, sb.as_slice());
+}
+fn msg3(a: Allocator, ar: *Arena, pre: str, x: str, mid: str, y: str, post: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str(pre); sb.push_str(x); sb.push_str(mid); sb.push_str(y); sb.push_str(post);
+    return str::from_slice(ar, sb.as_slice());
+}
+
 fn defer_expr(ar: *Arena, p: Pos) -> *const Texpr {
     return te_node(ar, TexprNode::TNullLit, ty_node(ar, Typ::TCVoid), p);
 }
@@ -1252,8 +1287,12 @@ fn elab_var(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
 fn elab_var_global(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, name: str, p: Pos) -> *const Texpr {
     return match global_lookup(g, name) {
         Option::Some(gf) => var_global_node(a, ar, sc, gf, p)
-        | Option::None => te_node(ar, TexprNode::TVar(name), ty_node(ar, Typ::TCVoid), p)
+        | Option::None => undefined_var(a, ar, sc, name, p)
     };
+}
+fn undefined_var(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, p: Pos) -> *const Texpr {
+    tc_fail(ar, sc, p, msg2(a, ar, "undefined variable '", name, "'"));
+    return defer_expr(ar, p);
 }
 
 fn var_global_node(a: Allocator, ar: *Arena, sc: *const TyScope, gf: GlobalFn, p: Pos) -> *const Texpr {
@@ -1617,11 +1656,15 @@ fn module_internal_lookup(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc:
     let m = mangle_path(a, ar, sc.sc_modpath, name);
     return global_lookup_by_mangled(g, m);
 }
+fn unknown_fn(a: Allocator, ar: *Arena, sc: *const TyScope, display: str, p: Pos) -> *const Texpr {
+    tc_fail(ar, sc, p, msg2(a, ar, "unknown function '", display, "'"));
+    return defer_expr(ar, p);
+}
 fn elab_top_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                      name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     return match global_lookup(g, name) {
         Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, args, p)
-        | Option::None => defer_expr(ar, p)
+        | Option::None => unknown_fn(a, ar, sc, name, p)
     };
 }
 fn elab_user_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
@@ -1890,7 +1933,7 @@ fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
                        init: *const Vec<str>, last: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     return match qualified_lookup(a, ar, g, sc, init, last) {
         Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, args, p)
-        | Option::None => defer_expr(ar, p)
+        | Option::None => unknown_fn(a, ar, sc, path_display(a, ar, &path_push(a, init, last)), p)
     };
 }
 
@@ -3253,8 +3296,35 @@ fn elab_field_access(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
     let tt = elab_expr(a, ar, g, sc, env, none_ty(), target);
     return match struct_field_ty(sc, tt.ty, field) {
         Option::Some(fty) => te_node(ar, TexprNode::TFieldAccess { target: tt, field: field }, fty, p)
-        | Option::None => defer_expr(ar, p)
+        | Option::None => no_such_field(a, ar, sc, tt.ty, field, p)
     };
+}
+// The struct a field access is reaching THROUGH: `p.f`, `(*p).f` and `p->f` all
+// name the same struct, so peel the pointer before reporting.
+fn struct_path_of(t: *const Typ) -> Option<Vec<str>> {
+    let none: Option<Vec<str>> = Option::None;
+    return match *t {
+        Typ::TStruct(path) => Option::Some(path)
+        | Typ::TPtr(i) => struct_path_of(i)
+        | Typ::TConstPtr(i) => struct_path_of(i)
+        | Typ::TOwnPtr(i) => struct_path_of(i)
+        | _e => none
+    };
+}
+fn no_such_field(a: Allocator, ar: *Arena, sc: *const TyScope, target_ty: *const Typ,
+                 field: str, p: Pos) -> *const Texpr {
+    match struct_path_of(target_ty) {
+        Option::Some(path) => {
+            tc_fail(ar, sc, p, msg3(a, ar, "struct '", path_display(a, ar, &path),
+                                    "' has no field '", field, "'"));
+        }
+        // Not a struct at all: the reference implementation reports the missing
+        // field against the type it did find, and so must we once `typ_name` is
+        // ported.  Until then this stays a fabrication site — deliberately
+        // visible rather than silently plausible.
+        | Option::None => { }
+    }
+    return defer_expr(ar, p);
 }
 
 // Each initialiser value elaborates against its declared field type.
@@ -4219,7 +4289,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_is_main: false };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -5514,7 +5584,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases , sc_is_main: str::eq(mangled, "main") };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -6067,7 +6137,7 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
-        sc_is_main: base.sc_is_main,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err,
     };
 }
 // A scope with the full struct-field skeleton in place, used for a second
@@ -6087,7 +6157,7 @@ fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyS
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
-        sc_is_main: base.sc_is_main,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err,
     };
 }
 fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
@@ -6103,7 +6173,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
-        sc_is_main: base.sc_is_main,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err,
     };
 }
 
@@ -6123,7 +6193,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
-        sc_is_main: base.sc_is_main,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err,
     };
 }
 
@@ -6141,7 +6211,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
-        sc_is_main: base.sc_is_main,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err,
     };
 }
 
@@ -7687,7 +7757,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_is_main: false };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ann);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -9729,8 +9799,35 @@ fn append_sys_externs(a: Allocator, ar: *Arena, funcs: *const Vec<Tfunc>, pmeth:
     return;
 }
 
+// Raise a diagnostic.  First one wins: later sites see the latch already set and
+// leave it alone, so the error reported is the one the reference implementation
+// would have raised first (the traversal order is the same).
+fn tc_fail(ar: *Arena, sc: *const TyScope, pos: Pos, msg: str) {
+    match *sc.sc_err {
+        Option::Some(_e) => { }
+        | Option::None => { *sc.sc_err = Option::Some(mk_err(ar, pos, msg)); }
+    }
+    return;
+}
+fn err_latched(e: *const Option<*const CompileError>) -> bool {
+    return match *e { Option::Some(_x) => true | Option::None => false };
+}
+fn err_unwrap(ar: *Arena, e: Option<*const CompileError>) -> *const CompileError {
+    return match e {
+        Option::Some(x) => x
+        | Option::None => mk_err(ar, zero_pos(), "internal: no diagnostic latched")
+    };
+}
+fn mk_err(ar: *Arena, pos: Pos, msg: str) -> *const CompileError {
+    let n: *CompileError = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
+    *n = CompileError { pos: pos, msg: msg };
+    return n as *const CompileError;
+}
+
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
+    let mut tc_err: Option<*const CompileError> = Option::None;
     // Parse the source prelude once; the registry is passive until the demand
     // fixpoint (post-drain) materializes the methods a program actually uses.
     let prelude_items: Vec<Item> = parse_prelude_items(a, ar);
@@ -9795,7 +9892,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases , sc_is_main: false };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_err: &tc_err, sc_is_main: false };
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -9845,7 +9942,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_err: &tc_err };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;
@@ -10057,6 +10154,10 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // The referenced sys-seam externs close the prelude free-fn section.
     append_sys_externs(a, ar, &funcs, &pmeth, uses_default_alloc, &pfree);
 
+    // A latched diagnostic wins over the elaborated program: the placeholders the
+    // failing sites produced are meaningless, and emitting C from them is exactly
+    // the silent-miscompile this pass exists to stop.
+    if err_latched(&tc_err) { return Result::Err(err_unwrap(ar, tc_err)); }
     return Result::Ok(Tprogram {
         tp_funcs: funcs, tp_pfree: pfree, tp_pmeth: pmeth, tp_free_end: free_end, tp_struct_decls: sdecls, tp_struct_index: structs,
         tp_enum_index: enums, tp_global: global, tp_modules: modules,
