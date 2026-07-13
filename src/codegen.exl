@@ -18,6 +18,7 @@
 
 use ast::*;
 use ir::*;
+use error::*;
 
 // ===== Stage (a): type rendering =====
 
@@ -222,7 +223,11 @@ pub fn c_type_prefix(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TOwnPtr(inner) => c_ptr_prefix(a, ar, inner, false)
         | Typ::TConstPtr(inner) => c_ptr_prefix(a, ar, inner, true)
         | Typ::TFnPtr { params: _p, ret: _r } => concat2(a, ar, mangle_typ(a, ar, t), " ")
-        | _other => "<ctype?> "
+        // `null` has no C spelling: it is the type of the literal, always consumed
+        // under a concrete pointer.  Reaching here means typecheck let it through —
+        // a compiler bug, not a user error, so say so instead of emitting `<ctype?>`
+        // and letting `cc` produce the confusing message.
+        | _other => { ice("internal: no C type for this IR type (typecheck should have rejected it)"); "" }
     };
 }
 

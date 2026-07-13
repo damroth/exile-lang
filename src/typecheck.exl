@@ -3641,6 +3641,7 @@ fn elab_ref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
 fn elab_deref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
               env: *const Vec<FieldTy>, sub: *const Expr, p: Pos) -> *const Texpr {
     let ts = elab_expr(a, ar, g, sc, env, none_ty(), sub);
+    if is_nullish(ts.ty) { tc_fail(ar, sc, p, "cannot deref 'null'"); }
     return match deref_pointee(ts.ty) {
         Option::Some(inner) => te_node(ar, TexprNode::TDeref(ts), inner, p)
         | Option::None => defer_expr(ar, p)
@@ -4487,8 +4488,21 @@ fn check_let_ty(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
                 value: *const Expr, ann: Option<*const TypeAnn>, vty: *const Typ, pos: Pos) {
     match ann {
         Option::Some(t) => { check_let_ann(a, ar, sc, name, value, resolve_sig_ty(a, ar, sc, t), vty, pos); }
-        | Option::None => { }
+        // `null` carries no pointee, so an unannotated `let n = null;` has nothing to
+        // infer from — and the type would reach codegen, which has no C spelling for
+        // it.  The reference asserts that far down (`TNullPtr should never reach
+        // c_type_prefix`); it is a user error, so it belongs here.
+        | Option::None => { check_infer_null(a, ar, sc, name, vty, pos); }
     }
+    return;
+}
+fn check_infer_null(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, vty: *const Typ, pos: Pos) {
+    if !is_nullish(vty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("cannot infer pointer type for 'null'; add a type annotation like 'let ");
+    sb.push_str(src_name(sc, name));
+    sb.push_str(": *T = null;'");
+    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
     return;
 }
 fn check_let_ann(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, value: *const Expr,

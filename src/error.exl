@@ -30,6 +30,19 @@ pub struct CompileError {
 mod raw { extern fn abort(); }
 pub fn arena_oom() { raw::abort(); }
 
+// A state the compiler believes cannot happen.  Abort LOUDLY rather than emit
+// something plausible: a placeholder that reaches the output ("<ctype?>", a NULL
+// where a value was wanted) turns a compiler bug into a confusing error from `cc`,
+// or worse into code that runs.  The reference does the same (`failwith "TNullPtr
+// should never reach c_type_prefix"`).
+pub fn ice(msg: str) {
+    let m = str::as_bytes(msg);
+    sys::sys_write(2 as c_int, &m[0] as *const c_uchar, str::length(msg) as c_ulong);
+    let nl = str::as_bytes("\n");
+    sys::sys_write(2 as c_int, &nl[0] as *const c_uchar, 1 as c_ulong);
+    raw::abort();
+}
+
 // The source prelude is compiler-internal: a tokenize / parse failure there is
 // an ICE, never a user error.  Swallowing it (returning an empty item list)
 // silently disables the ENTIRE prelude registry, which surfaces downstream as a

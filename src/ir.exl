@@ -510,10 +510,15 @@ pub fn typ_eq(x: *const Typ, y: *const Typ) -> bool {
     };
 }
 
-fn is_nullish(t: *const Typ) -> bool {
+// The `null` literal's type.  Every relation that reasons about pointers must ask
+// THROUGH these two rather than matching `TNullPtr` inline: three separate relations
+// (typ_eq, is_ptr_ty, and the let-inference path) each shipped without a null case
+// and each was found only when something finally asked.  Centralising the question
+// is what makes a fourth instance structurally harder.
+pub fn is_nullish(t: *const Typ) -> bool {
     return match *t { Typ::TNullPtr => true | _o => false };
 }
-fn is_ptr_like(t: *const Typ) -> bool {
+pub fn is_ptr_like(t: *const Typ) -> bool {
     return match *t {
         Typ::TPtr(_i) => true
         | Typ::TOwnPtr(_i) => true
