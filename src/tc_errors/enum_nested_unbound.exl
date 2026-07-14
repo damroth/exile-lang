@@ -1,0 +1,7 @@
+// A constructor argument gets no inference seed: the inner literal must pin its
+// own type parameters.  `Option::None` alone pins nothing — even under the
+// outer annotation.
+fn main() {
+    let b: Option<Option<int>> = Option::Some(Option::None);
+    println(1);
+}

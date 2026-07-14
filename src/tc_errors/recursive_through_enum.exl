@@ -1,0 +1,3 @@
+enum E { A(S) | B }
+struct S { e: E }
+fn main() { println(1); }

@@ -1,0 +1,6 @@
+// A trait method the impl does not provide and the trait does not default is a
+// hole in the contract, not an omission to paper over.
+trait T { fn m(self: *const Self) -> int; }
+struct P { x: int }
+impl T for P { }
+fn main() { println(1); }

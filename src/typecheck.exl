@@ -4824,7 +4824,11 @@ fn infer_enum_instance(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
         }
         i = i + 1 as u32;
     }
-    if binds.length() == 0 as u32 { return copy_strs(a, epath); }
+    if binds.length() == 0 as u32 {
+        let tps0 = enum_tps(a, sc, path_last(epath));
+        if tps0.length() > 0 as u32 { unbound_tparam(a, ar, sc, tps0.as_slice()[0 as u32], p); }
+        return copy_strs(a, epath);
+    }
     let tps = enum_tps(a, sc, path_last(epath));
     let args = if tps.length() == 0 as u32 { dedup_bind_tys(a, &binds) }
                else { infer_enum_args(a, ar, sc, &tps, &binds, p) };
@@ -9063,17 +9067,28 @@ fn register_one_default(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
     push_one_method(a, ar, sc, target, &no_itparams, trait_name, f, ti, j, out);
 }
 fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
-                        impl_methods: *const Vec<Func>, td: *const TraitDecl, ti: u32, out: *Vec<MethodInfo>) {
+                        impl_methods: *const Vec<Func>, td: *const TraitDecl, ti: u32, ipos: Pos, out: *Vec<MethodInfo>) {
     let n = td.trmethods.length();
     let ms = td.trmethods.as_slice();
     let mut j = 0 as u32;
-    while j < n { register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, td.trname, &ms[j], ti, j, out); j = j + 1 as u32; }
+    while j < n {
+        // A trait method the impl does not provide and the trait does not
+        // default is a hole in the contract, not an omission to paper over.
+        if !impl_has_method(impl_methods, ms[j].name) && !name_in(&td.trdefaults, ms[j].name) {
+            let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+            sb.push_str("missing method '"); sb.push_str(ms[j].name);
+            sb.push_str("' required by trait '"); sb.push_str(td.trname); sb.push_str("'");
+            tc_fail(ar, sc, ipos, str::from_slice(ar, sb.as_slice()));
+        }
+        register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, td.trname, &ms[j], ti, j, out);
+        j = j + 1 as u32;
+    }
 }
 fn register_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, ti: u32,
-                          target: *const Vec<str>, impl_methods: *const Vec<Func>, out: *Vec<MethodInfo>) {
+                          target: *const Vec<str>, impl_methods: *const Vec<Func>, ipos: Pos, out: *Vec<MethodInfo>) {
     let sl = items.as_slice();
     match sl[ti] {
-        Item::Trait(td) => { register_td_defaults(a, ar, sc, target, impl_methods, &td, ti, out); }
+        Item::Trait(td) => { register_td_defaults(a, ar, sc, target, impl_methods, &td, ti, ipos, out); }
         | _e => { }
     }
 }
@@ -9082,7 +9097,7 @@ fn collect_one_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items
     if str::eq(tname, "") { return; }
     let ti = find_trait_idx(items, tname);
     if ti < 0 as int { return; }
-    register_impl_defaults(a, ar, sc, items, ti as u32, &ib.itarget, &ib.iitems, out);
+    register_impl_defaults(a, ar, sc, items, ti as u32, &ib.itarget, &ib.iitems, ib.ipos, out);
 }
 fn collect_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, it: *const Item, out: *Vec<MethodInfo>) {
     match *it {
@@ -12161,6 +12176,213 @@ fn mk_err(ar: *Arena, pos: Pos, msg: str) -> *const CompileError {
     return n as *const CompileError;
 }
 
+// ===== Recursive value types =====
+//
+// A struct that embeds itself by value has no finite size — the C compiler would
+// say "field has incomplete type" three passes too late.  A pointer breaks the
+// cycle (it embeds only an address).  Structs walk first, then enums, both in
+// declaration order — that order decides WHICH node of a cycle gets the report,
+// so it is part of the byte-exact contract.
+
+struct DeclPos {
+    dp_path: Vec<str>,
+    dp_pos: Pos,
+    dp_is_enum: bool,
+}
+fn collect_decl_pos(a: Allocator, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<DeclPos>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_decl_pos_one(a, modpath, &sl[i], out); i = i + 1 as u32; }
+    return;
+}
+fn collect_decl_pos_one(a: Allocator, modpath: *const Vec<str>, it: *const Item, out: *Vec<DeclPos>) {
+    match *it {
+        Item::Struct(sd) => { out.push(DeclPos { dp_path: path_push(a, modpath, sd.sname), dp_pos: sd.spos, dp_is_enum: false }); }
+        | Item::Enum(ed) => { out.push(DeclPos { dp_path: path_push(a, modpath, ed.ename), dp_pos: ed.epos, dp_is_enum: true }); }
+        | Item::Module(md) => { collect_decl_pos(a, &path_push(a, modpath, md.mname), &md.mitems, out); }
+        | _e => { }
+    }
+    return;
+}
+// Value edges out of a type: what it embeds BY VALUE.  An array embeds its
+// element; a still-generic application counts as an edge to the applied type
+// AND into its arguments.
+fn refs_of_typ(a: Allocator, t: *const Typ, out: *Vec<Vec<str>>) {
+    match *t {
+        Typ::TStruct(path) => { out.push(copy_strs(a, &path)); }
+        | Typ::TEnum(path) => { out.push(copy_strs(a, &path)); }
+        | Typ::TStructApp { path, args } => { out.push(copy_strs(a, &path)); refs_of_tys(a, &args, out); }
+        | Typ::TEnumApp { path, args } => { out.push(copy_strs(a, &path)); refs_of_tys(a, &args, out); }
+        | Typ::TTuple(ts) => { refs_of_tys(a, &ts, out); }
+        | Typ::TArray { elem, size } => { refs_of_typ(a, elem, out); }
+        | _o => { }
+    }
+    return;
+}
+fn refs_of_tys(a: Allocator, ts: *const Vec<*const Typ>, out: *Vec<Vec<str>>) {
+    let n = ts.length();
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < n { refs_of_typ(a, sl[i], out); i = i + 1 as u32; }
+    return;
+}
+// The tables come in EXPLICITLY: at this point in check_program the base scope
+// still carries the empty placeholders, and the filled vectors are locals.
+fn cycle_edges(a: Allocator, sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>,
+               path: *const Vec<str>, out: *Vec<Vec<str>>) {
+    let n = sinfo.length();
+    let sl = sinfo.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].sf_path, path) { refs_of_typ(a, sl[i].sf_ty, out); }
+        i = i + 1 as u32;
+    }
+    let m = efields.length();
+    let el = efields.as_slice();
+    let mut j = 0 as u32;
+    while j < m {
+        if path_eq(&el[j].ef_path, path) { refs_of_typ(a, el[j].ef_ty, out); }
+        j = j + 1 as u32;
+    }
+    return;
+}
+fn path_in(paths: *const Vec<Vec<str>>, p: *const Vec<str>) -> bool {
+    let n = paths.length();
+    let sl = paths.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i], p) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn decl_pos_of(decls: *const Vec<DeclPos>, p: *const Vec<str>) -> Pos {
+    let n = decls.length();
+    let sl = decls.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].dp_path, p) { return sl[i].dp_pos; }
+        i = i + 1 as u32;
+    }
+    return zero_pos();
+}
+fn detect_value_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+                       sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>) {
+    let mut decls: Vec<DeclPos> = Vec::with_capacity(a, 8 as u32);
+    let empty_mp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_decl_pos(a, &empty_mp, items, &decls);
+    let mut cleared: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    let dl = decls.as_slice();
+    // structs first, then enums — the report lands on the FIRST root that
+    // closes the cycle.
+    let mut pass = 0 as u32;
+    while pass < 2 as u32 {
+        let want_enum = pass == 1 as u32;
+        let mut i = 0 as u32;
+        while i < decls.length() {
+            if dl[i].dp_is_enum == want_enum {
+                let empty_stack: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+                cycle_dfs(a, ar, sc, sinfo, efields, &decls, &dl[i].dp_path, &empty_stack, &cleared);
+            }
+            i = i + 1 as u32;
+        }
+        pass = pass + 1 as u32;
+    }
+    return;
+}
+// The stack is an immutable parent chain, copied per level — Vec has no pop,
+// the chains are a handful of entries, and the copy makes each frame own its
+// view with nothing to unwind.
+fn cycle_dfs(a: Allocator, ar: *Arena, sc: *const TyScope, sinfo: *const Vec<StructField>,
+             efields: *const Vec<EnumFieldE>, decls: *const Vec<DeclPos>,
+             path: *const Vec<str>, stack: *const Vec<Vec<str>>, cleared: *Vec<Vec<str>>) {
+    if path_in(stack, path) {
+        report_cycle(a, ar, sc, decls, path, stack);
+        return;
+    }
+    if path_in(cleared, path) { return; }
+    let child = paths_plus(a, stack, path);
+    let mut es: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    cycle_edges(a, sinfo, efields, path, &es);
+    let esl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < es.length() {
+        cycle_dfs(a, ar, sc, sinfo, efields, decls, &esl[i], &child, cleared);
+        i = i + 1 as u32;
+    }
+    cleared.push(copy_strs(a, path));
+    return;
+}
+fn paths_plus(a: Allocator, base: *const Vec<Vec<str>>, extra: *const Vec<str>) -> Vec<Vec<str>> {
+    let mut out: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    let sl = base.as_slice();
+    let mut i = 0 as u32;
+    while i < base.length() { out.push(copy_strs(a, &sl[i])); i = i + 1 as u32; }
+    out.push(copy_strs(a, extra));
+    return out;
+}
+fn report_cycle(a: Allocator, ar: *Arena, sc: *const TyScope, decls: *const Vec<DeclPos>,
+                path: *const Vec<str>, stack: *const Vec<Vec<str>>) {
+    // chain = the stack from the repeated node down, plus the node again:
+    // `A -> B -> A`, printed the way the walk found it.
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    sb.push_str("recursive value type '"); sb.push_str(path_display(a, ar, path));
+    sb.push_str("' (cycle: ");
+    let n = stack.length();
+    let sl = stack.as_slice();
+    let mut start = 0 as u32;
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i], path) { start = i; }
+        i = i + 1 as u32;
+    }
+    let mut j = start;
+    while j < n {
+        sb.push_str(path_display(a, ar, &sl[j])); sb.push_str(" -> ");
+        j = j + 1 as u32;
+    }
+    sb.push_str(path_display(a, ar, path));
+    sb.push_str(") — a field embeds the type by value, making it infinitely sized; break the cycle with a pointer (`*T`)");
+    tc_fail(ar, sc, decl_pos_of(decls, path), str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+// ===== Constant expressions =====
+//
+// A `const` folds at compile time; the shapes the evaluator accepts are the
+// grammar, and anything else is named at ITS position, not the const's.
+fn check_const_items(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { check_const_item(a, ar, sc, &sl[i]); i = i + 1 as u32; }
+    return;
+}
+fn check_const_item(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item) {
+    match *it {
+        Item::Const(c) => { check_const_expr(a, ar, sc, c.kvalue); }
+        | Item::Module(md) => { check_const_items(a, ar, sc, &md.mitems); }
+        | _e => { }
+    }
+    return;
+}
+fn check_const_expr(a: Allocator, ar: *Arena, sc: *const TyScope, e: *const Expr) {
+    match *e {
+        Expr::IntLit(v, _q) => { }
+        | Expr::BoolLit(b, _q) => { }
+        | Expr::Var(nm, _q) => { }
+        | Expr::Neg(sub, _q) => { check_const_expr(a, ar, sc, sub); }
+        | Expr::BitNot(sub, _q) => { check_const_expr(a, ar, sc, sub); }
+        | Expr::Not(sub, _q) => { check_const_expr(a, ar, sc, sub); }
+        | Expr::Cast(sub, ann, _q) => { check_const_expr(a, ar, sc, sub); }
+        | Expr::BinOp(op, l, r, _q) => { check_const_expr(a, ar, sc, l); check_const_expr(a, ar, sc, r); }
+        | Expr::EnumLit { tname, variant } => { }
+        | Expr::SizeOf(t, _q) => { }
+        | _o => { tc_fail(ar, sc, expr_pos(e), "not a constant expression"); }
+    }
+    return;
+}
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         -> Result<Tprogram, *const CompileError> {
     let mut tc_err: Option<*const CompileError> = Option::None;
@@ -12236,6 +12458,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
                                sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_err: &tc_err, sc_srcnames: &tc_srcnames, sc_srcbase: &tc_srcbase, sc_binds: &tc_binds, sc_bindbase: &tc_bindbase, sc_is_main: false };
+    check_const_items(a, ar, &base_scope, items);
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
@@ -12269,6 +12492,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
+    // Runs once the field tables exist — the edges are read from them.
+    detect_value_cycles(a, ar, &base_scope, items, &sinfo, &efields);
     prelude_enum_variants(a, ar, &etags, &efields);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);

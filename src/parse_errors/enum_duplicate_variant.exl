@@ -1,0 +1,3 @@
+// Two variants with one name would share a C tag; reported at the EARLIER one.
+enum E { A | A }
+fn main() { println(1); }

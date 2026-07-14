@@ -2326,6 +2326,7 @@ fn parse_enum_decl(s: *Parser, is_pub: bool) -> EnumDecl {
     parse_tparams(s, &etparams);
     expect(s, Token::LBrace);
     let variants = parse_variants(s, np.pos);
+    check_dup_variants(s, &variants, np.name);
     let no_str: Option<str> = Option::None;
     let derives: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     return EnumDecl {
@@ -2336,6 +2337,28 @@ fn parse_enum_decl(s: *Parser, is_pub: bool) -> EnumDecl {
 }
 
 // `A | B(T) | C { f: T }` — variants SEPARATED by `|`, `}` ends.
+// Two variants with one name would share a C tag; reported at the EARLIER of
+// the pair, mirroring the reference.
+fn check_dup_variants(s: *Parser, vs: *const Vec<EnumVariant>, ename: str) {
+    let n = vs.length();
+    let sl = vs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let mut j = i + 1 as u32;
+        while j < n {
+            if str::eq(sl[i].vname, sl[j].vname) {
+                let mut sb = StringBuilder::with_capacity(s.a, 56 as u32);
+                sb.push_str("duplicate variant '"); sb.push_str(sl[i].vname);
+                sb.push_str("' in enum '"); sb.push_str(ename); sb.push_str("'");
+                fail(s, sl[i].vpos, str::from_slice(s.ar, sb.as_slice()));
+                return;
+            }
+            j = j + 1 as u32;
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
 fn parse_variants(s: *Parser, epos: Pos) -> Vec<EnumVariant> {
     let mut out: Vec<EnumVariant> = Vec::with_capacity(s.a, 8 as u32);
     if peek_is(s, Token::RBrace) {

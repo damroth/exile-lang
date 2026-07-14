@@ -1,0 +1,5 @@
+// A struct that embeds itself by value has no finite size — the C compiler
+// would say "field has incomplete type" three passes too late.  A pointer
+// breaks the cycle: it embeds only an address.
+struct P { p: P }
+fn main() { println(1); }
