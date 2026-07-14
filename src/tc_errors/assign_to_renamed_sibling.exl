@@ -1,0 +1,9 @@
+// The binding is `v` in BOTH arms; the scope pass mints `v__1` for the second.
+// The diagnostic must name `v` — the compiler's internal name is not a hint.
+fn f(b: bool) -> int {
+    let mut out = 0;
+    if b { let v = 1; out = v; }
+    if !b { let v = 2; v = 3; out = v; }
+    return out;
+}
+fn main() { println(f(true)); }

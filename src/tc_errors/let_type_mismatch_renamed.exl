@@ -1,0 +1,8 @@
+// The second `v` is minted as `v__1`; the diagnostic must still say `v`.
+fn f(b: bool) -> int {
+    let mut out = 0;
+    if b { let v: int = 1; out = v; }
+    if !b { let v: int = true; out = 2; }
+    return out;
+}
+fn main() { println(f(true)); }

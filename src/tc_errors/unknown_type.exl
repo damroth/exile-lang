@@ -1,0 +1,8 @@
+// The resolver had no failure mode: an unresolved name became a struct out of
+// thin air, and codegen emitted `struct ex_Nieznany x;` — C that does not
+// compile.  Every other type check reads this relation, so it is the base of
+// the type system, not a leaf.
+fn main() {
+    let x: Nieznany = 1;
+    println(1);
+}

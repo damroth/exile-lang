@@ -1,0 +1,4 @@
+struct S {
+    f: Nieznany,
+}
+fn main() { println(1); }

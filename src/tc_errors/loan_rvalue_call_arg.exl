@@ -1,0 +1,6 @@
+struct P { x: int }
+fn use_it(p: *P) -> int { return p.x; }
+fn main() {
+    let al = default_allocator();
+    println(use_it(new(al) P { x: 1 }));
+}

@@ -1,0 +1,7 @@
+struct P { x: int }
+enum E { Ref(*P) | Nothing }
+fn main() {
+    let al = default_allocator();
+    let e = E::Ref(new(al) P { x: 1 });
+    println(match e { E::Ref(r) => r.x | E::Nothing => 0 });
+}

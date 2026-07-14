@@ -1,0 +1,7 @@
+// `null` carries no pointee, so there is nothing to infer from.  Left unchecked, the
+// type reaches codegen, which has no C spelling for it — the reference asserts that
+// far down; it is a user error, so it belongs in typecheck.
+fn main() {
+    let n = null;
+    println(0);
+}

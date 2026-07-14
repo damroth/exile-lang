@@ -1,0 +1,7 @@
+// Was a FABRICATION: the port emitted `printf("%d\n", ((void *)0))` — a NULL invented
+// where the call's value should be, compiled, and printed garbage.
+struct P { x: int }
+fn main() {
+    let p = P { x: 1 };
+    println(p.nie_ma());
+}

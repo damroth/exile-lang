@@ -1,0 +1,6 @@
+struct P { x: int }
+impl P { pub fn get(self: *const P) -> int { return self.x; } }
+fn main() {
+    let al = default_allocator();
+    println(new(al) P { x: 1 }.get());
+}

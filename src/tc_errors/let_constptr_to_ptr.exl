@@ -1,0 +1,8 @@
+// `*T` may be handed to a `*const T` slot — you can always drop write capability.
+// The reverse cannot: a borrow does not become a write capability.
+fn main() {
+    let mut n = 5;
+    let p: *const int = &n;
+    let q: *int = p;
+    println(*q);
+}

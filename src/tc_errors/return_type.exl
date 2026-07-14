@@ -1,0 +1,4 @@
+// The return contract is EQUALITY, not coercion: a `*T` may be lent into a
+// `*const T` slot, but a fn declaring `*T` must return a `*T`.
+fn f() -> int { return true; }
+fn main() { println(f()); }

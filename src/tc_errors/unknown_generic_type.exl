@@ -1,0 +1,4 @@
+fn main() {
+    let v: Nieznany<int> = 1;
+    println(1);
+}

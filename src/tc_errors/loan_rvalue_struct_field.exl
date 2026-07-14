@@ -1,0 +1,7 @@
+struct P { x: int }
+struct Holder { r: *P }
+fn main() {
+    let al = default_allocator();
+    let h = Holder { r: new(al) P { x: 1 } };
+    println(h.r.x);
+}

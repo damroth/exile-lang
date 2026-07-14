@@ -1,0 +1,8 @@
+// The element of a `for x in <iterator>` is a pattern bind, not the mutable
+// counter a `for i in 0..n` desugars to.  The diagnostic names `x`, not `__fv1`.
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(1);
+    for x in v.iter() { x = 5; println(x); }
+}

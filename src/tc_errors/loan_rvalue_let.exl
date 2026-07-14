@@ -1,0 +1,9 @@
+// Only a PLACE can lend: the owner keeps living somewhere else, so the loan has
+// something to outlive.  A fresh owned RVALUE in a borrow slot would leave the
+// allocation with NO owner — nothing tracks it, nothing releases it.
+struct P { x: int }
+fn main() {
+    let al = default_allocator();
+    let q: *P = new(al) P { x: 1 };
+    println(q.x);
+}

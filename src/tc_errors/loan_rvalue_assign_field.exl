@@ -1,0 +1,9 @@
+struct P { x: int }
+struct H { r: *P }
+fn main() {
+    let al = default_allocator();
+    let p0 = new(al) P { x: 0 };
+    let mut h = H { r: p0 };
+    h.r = new(al) P { x: 1 };
+    println(h.r.x);
+}

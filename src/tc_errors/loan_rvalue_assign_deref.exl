@@ -1,0 +1,9 @@
+struct P { x: int }
+fn main() {
+    let al = default_allocator();
+    let p0 = new(al) P { x: 0 };
+    let mut slot: *P = p0;
+    let ps: *(*P) = &slot;
+    *ps = new(al) P { x: 1 };
+    println(slot.x);
+}
