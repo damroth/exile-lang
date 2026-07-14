@@ -1,0 +1,5 @@
+fn f() -> int {
+    let Option::Some(v) = 5 else { return 0; };
+    return v;
+}
+fn main() { println(f()); }

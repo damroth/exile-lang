@@ -1,0 +1,7 @@
+enum One { Only(int) }
+fn g() -> One { return One::Only(1); }
+fn f() -> int {
+    let One::Only(v) = g() else { return 0; };
+    return v;
+}
+fn main() { println(f()); }

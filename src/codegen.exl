@@ -1197,6 +1197,10 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
         }
         | Tstmt::TBreak(p) => { out.push_str(indent); out.push_str("break;\n"); }
         | Tstmt::TContinue(p) => { out.push_str(indent); out.push_str("continue;\n"); }
+        // A `return` inside a nested statement list (a diverging match arm's
+        // block — `let-else`) flushes the defer chain active HERE; the arm has
+        // no defer scope of its own.
+        | Tstmt::TReturn { value, pos } => emit_return(a, ar, out, indent, cg, value, cg.cg_defers)
         | _other => { ice("internal: no C form for this IR statement — did a transient node survive the lift pass?"); }
     }
 }

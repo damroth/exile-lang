@@ -1,0 +1,7 @@
+;; exile-ast-dump v1 examples/let_else.exl
+(enum Parsed (variants (variant Num (field value (int i32)) (field digits (int i32))) (variant Bad)))
+(fn parse (params (param ok bool)) (struct Parsed) (body (expr-stmt (if (var ok) (then (return (struct-lit Parsed::Num (field value (int 42)) (field digits (int 2))))))) (return (enum-lit Parsed::Bad))))
+(fn find (params (param ok bool)) (struct-app Option (int i32)) (body (expr-stmt (if (var ok) (then (return (call Option::Some (int 7)))))) (return (enum-lit Option::None))))
+(fn doubled (params (param ok bool)) (int i32) (body (let-else (pat-variant Option::Some (pat-var v)) (call find (var ok)) (else (return (binop - (int 0) (int 1))))) (return (binop * (var v) (int 2)))))
+(fn describe (params (param ok bool)) (int i32) (body (let-else (pat-variant Parsed::Num (field value (pat-var value)) (field digits (pat-var digits))) (call parse (var ok)) (else (expr-stmt (call println (string "not a number"))) (return (int 0)))) (expr-stmt (call println (var value))) (return (var digits))))
+(fn main (params ) void (body (expr-stmt (call println (call doubled (bool true)))) (expr-stmt (call println (call doubled (bool false)))) (expr-stmt (call println (call describe (bool true)))) (expr-stmt (call println (call describe (bool false))))))

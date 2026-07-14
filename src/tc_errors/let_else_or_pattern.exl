@@ -1,0 +1,7 @@
+enum E { A(int) | B(int) | C }
+fn g() -> E { return E::C; }
+fn f() -> int {
+    let E::A(v) | E::B(v) = g() else { return 0; };
+    return v;
+}
+fn main() { println(f()); }

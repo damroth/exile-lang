@@ -1,0 +1,6 @@
+fn get(b: bool) -> Option<int> { if b { return Option::Some(7); } return Option::None; }
+fn f(b: bool) -> int {
+    let Option::Nope(v) = get(b) else { return 0; };
+    return v;
+}
+fn main() { println(f(true)); }

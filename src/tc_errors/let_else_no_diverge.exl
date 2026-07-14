@@ -1,0 +1,9 @@
+// The else branch must diverge.  If it could fall through, the binding would
+// have no value on that path — the compiler rejects the form rather than
+// inventing one.
+fn get(b: bool) -> Option<int> { if b { return Option::Some(7); } return Option::None; }
+fn f(b: bool) -> int {
+    let Option::Some(v) = get(b) else { println(0); };
+    return v;
+}
+fn main() { println(f(true)); }

@@ -1,0 +1,56 @@
+// `let <variant> = expr else { ... };` — bind the payload, or leave.
+//
+// The point of the form is where the binding LANDS: `v` is in scope for the
+// rest of the enclosing block, not just inside a match arm.  That is what a
+// `match` cannot give you, and it is why the else branch must DIVERGE — if it
+// could fall through, `v` would have no value on that path, and the compiler
+// rejects the form rather than inventing one.
+//
+// Rules, all of them mechanical consequences of that: the pattern is a variant
+// constructor (an irrefutable one would make the else branch dead), the enum
+// has at least two variants (same reason), the binds are plain names, and the
+// else block must return / break / continue.
+
+enum Parsed {
+    Num { value: int, digits: int }
+    | Bad
+}
+
+fn parse(ok: bool) -> Parsed {
+    if ok {
+        return Parsed::Num { value: 42, digits: 2 };
+    }
+    return Parsed::Bad;
+}
+
+fn find(ok: bool) -> Option<int> {
+    if ok {
+        return Option::Some(7);
+    }
+    return Option::None;
+}
+
+// One bind, from a tuple variant.  Without let-else this is a match whose
+// success arm has to carry the whole rest of the function.
+fn doubled(ok: bool) -> int {
+    let Option::Some(v) = find(ok) else { return 0 - 1; };
+    return v * 2;
+}
+
+// Two binds, from a struct variant — the names land side by side, and the
+// code after reads like the failure case simply does not exist.
+fn describe(ok: bool) -> int {
+    let Parsed::Num { value, digits } = parse(ok) else {
+        println("not a number");
+        return 0;
+    };
+    println(value);
+    return digits;
+}
+
+fn main() {
+    println(doubled(true));      // 14
+    println(doubled(false));     // -1
+    println(describe(true));     // 42, then 2
+    println(describe(false));    // "not a number", then 0
+}

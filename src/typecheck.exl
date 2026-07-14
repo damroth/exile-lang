@@ -4384,8 +4384,20 @@ fn elab_scalar_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
                      tb: *const Texpr, index: *const Expr, p: Pos) -> *const Texpr {
     return match index_elem_ty(sc, tb.ty) {
         Option::Some(elem) => indexed_at(a, ar, g, sc, env, tb, index, elem, p)
-        | Option::None => bad_index_base(a, ar, sc, tb.ty, p)
+        | Option::None => index_unresolved(a, ar, g, sc, env, tb, index, p)
     };
+}
+// A type still carrying a `TVar` is a generic SKELETON — `Slice<T>` IS a Slice,
+// the element type just is not known until the instance.  A diagnostic must not
+// pass judgement on a type the compiler has not finished resolving, so the
+// skeleton defers exactly as before and the instance is what gets checked.
+fn index_unresolved(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                    env: *const Vec<FieldTy>, tb: *const Texpr, index: *const Expr, p: Pos) -> *const Texpr {
+    if ty_has_tvar(tb.ty) {
+        let _ti = elab_expr(a, ar, g, sc, env, none_ty(), index);
+        return defer_expr(ar, p);
+    }
+    return bad_index_base(a, ar, sc, tb.ty, p);
 }
 fn bad_index_base(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) -> *const Texpr {
     let mut sb = StringBuilder::with_capacity(a, 64 as u32);
@@ -4433,6 +4445,7 @@ fn check_assign_index(a: Allocator, ar: *Arena, sc: *const TyScope, tb: *const T
 }
 fn is_assignable_index_base(sc: *const TyScope, t: *const Typ) -> bool {
     if is_ptr_ty(t) { return true; }
+    if ty_has_tvar(t) { return true; }
     return match index_elem_ty(sc, t) {
         Option::Some(_e) => true
         | Option::None => false
@@ -5523,6 +5536,252 @@ fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
 
 // Bind each name of a `let (a, b) = …` to the corresponding tuple element
 // type (no-op if the value is not a tuple).
+// ===== `let <variant-pattern> = expr else { diverge };` (FP-2) =====
+//
+// Desugars to a TMatch wrapped in TLet / TLetTuple, so the pattern's binds
+// escape into the ENCLOSING scope — that is the whole point of the form, and
+// the reason it cannot simply be a `match` statement.  The success arm extracts
+// each payload field into a local; the else arm is flagged `tdiverges`, so the
+// match's value type comes from the success arm alone.
+//
+// MVP rules, all of them the reference's: the pattern is a non-or variant
+// constructor with flat name binds, the enum has ≥2 variants (otherwise the
+// else branch is unreachable), and the else block must diverge.
+
+// (payload field name, user's bind name, the local the arm extracts into)
+struct LeBind {
+    lb_field: str,
+    lb_name: str,
+    lb_local: str,
+    lb_ty: *const Typ,
+}
+
+fn le_fail(ar: *Arena, sc: *const TyScope, p: Pos, msg: str) {
+    tc_fail(ar, sc, p, msg);
+    return;
+}
+fn le_pat_parts(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern,
+                p: Pos) -> Option<VariantPat> {
+    let none: Option<VariantPat> = Option::None;
+    return match *pat {
+        Pattern::PVariant { tname, variant, binds } =>
+            Option::Some(VariantPat { vp_tname: copy_strs(a, &tname), vp_variant: variant, vp_binds: binds })
+        | Pattern::PWildcard(_q) => { le_fail(ar, sc, p, "let-else pattern must be refutable (a qualified variant constructor like `Option::Some(v)`); use a plain `let` for irrefutable bindings"); none }
+        | Pattern::PVar(_n, _q) => { le_fail(ar, sc, p, "let-else pattern must be refutable (a qualified variant constructor like `Option::Some(v)`); use a plain `let` for irrefutable bindings"); none }
+        | Pattern::PLit(_n, _q) => { le_fail(ar, sc, p, "let-else MVP does not support literal patterns; use a `match` or an `if`"); none }
+        | Pattern::PBool(_b, _q) => { le_fail(ar, sc, p, "let-else MVP does not support literal patterns; use a `match` or an `if`"); none }
+        | Pattern::POr(_alts, _q) => { le_fail(ar, sc, p, "let-else MVP does not support or-patterns; spell out one variant or use a `match`"); none }
+    };
+}
+struct VariantPat {
+    vp_tname: Vec<str>,
+    vp_variant: str,
+    vp_binds: PatBinds,
+}
+fn le_bind_name(ar: *Arena, sc: *const TyScope, pat: *const Pattern, p: Pos) -> str {
+    return match *pat {
+        Pattern::PVar(n, _q) => n
+        | _o => { le_fail(ar, sc, p, "let-else MVP only supports flat name binds in the pattern — got a nested sub-pattern"); "" }
+    };
+}
+fn le_collect_binds(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const PatBinds,
+                    p: Pos) -> Vec<LeBind> {
+    let mut out: Vec<LeBind> = Vec::with_capacity(a, 8 as u32);
+    match *binds {
+        PatBinds::PBTuple(ps) => {
+            let sl = ps.as_slice();
+            let mut i = 0 as u32;
+            while i < ps.length() {
+                let n = le_bind_name(ar, sc, &sl[i], p);
+                out.push(LeBind { lb_field: tuple_field_name(a, ar, i), lb_name: n,
+                                  lb_local: le_local_idx(a, ar, i), lb_ty: t_i32(ar) });
+                i = i + 1 as u32;
+            }
+        }
+        | PatBinds::PBStruct(fps) => {
+            let sl = fps.as_slice();
+            let mut i = 0 as u32;
+            while i < fps.length() {
+                let n = le_bind_name(ar, sc, &sl[i].pat, p);
+                out.push(LeBind { lb_field: sl[i].name, lb_name: n,
+                                  lb_local: str2(a, ar, "__le_a_", sl[i].name), lb_ty: t_i32(ar) });
+                i = i + 1 as u32;
+            }
+        }
+    }
+    return out;
+}
+// How many variants the enum declares — the else branch of a single-variant enum
+// is unreachable, so the form is rejected there.
+fn enum_variant_count(sc: *const TyScope, epath: *const Vec<str>) -> u32 {
+    let n = sc.sc_etags.length();
+    let sl = sc.sc_etags.as_slice();
+    let mut c = 0 as u32;
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].et_path, epath) { c = c + 1 as u32; }
+        i = i + 1 as u32;
+    }
+    return c;
+}
+fn le_local_idx(a: Allocator, ar: *Arena, i: u32) -> str {
+    return str2(a, ar, "__le_a", int_to_str_c(a, ar, i as int));
+}
+// Fill each bind's payload type; a field the variant does not carry is an error.
+fn le_type_binds(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>,
+                 variant: str, binds: *const Vec<LeBind>, p: Pos) -> Vec<LeBind> {
+    let n = binds.length();
+    let sl = binds.as_slice();
+    let mut out: Vec<LeBind> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    let mut ok = true;
+    while i < n {
+        match mono_enum_field_ty(sc, epath, variant, sl[i].lb_field) {
+            Option::Some(t) =>
+                out.push(LeBind { lb_field: sl[i].lb_field, lb_name: sl[i].lb_name,
+                                  lb_local: sl[i].lb_local, lb_ty: t })
+            | Option::None => {
+                let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+                sb.push_str("field '"); sb.push_str(sl[i].lb_field);
+                sb.push_str("' not found in variant '"); sb.push_str(path_display(a, ar, epath));
+                sb.push_str("::"); sb.push_str(variant); sb.push_str("'");
+                tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+                ok = false;
+            }
+        }
+        i = i + 1 as u32;
+    }
+    // Empty signals failure: a let-else always binds at least one name (the unit
+    // -variant case is rejected before this).
+    if !ok { return Vec::with_capacity(a, 8 as u32); }
+    return out;
+}
+fn le_result_ty(a: Allocator, ar: *Arena, binds: *const Vec<LeBind>) -> *const Typ {
+    let sl = binds.as_slice();
+    if binds.length() == 1 as u32 { return sl[0 as u32].lb_ty; }
+    let mut ts: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < binds.length() { ts.push(sl[i].lb_ty); i = i + 1 as u32; }
+    return ty_node(ar, Typ::TTuple(ts));
+}
+fn le_success_body(a: Allocator, ar: *Arena, binds: *const Vec<LeBind>, rty: *const Typ, p: Pos) -> *const Texpr {
+    let sl = binds.as_slice();
+    if binds.length() == 1 as u32 {
+        return te_node(ar, TexprNode::TVar(sl[0 as u32].lb_local), sl[0 as u32].lb_ty, p);
+    }
+    let mut es: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < binds.length() {
+        es.push(te_node(ar, TexprNode::TVar(sl[i].lb_local), sl[i].lb_ty, p));
+        i = i + 1 as u32;
+    }
+    return te_node(ar, TexprNode::TTupleLit(es), rty, p);
+}
+fn le_success_pat(a: Allocator, binds: *const Vec<LeBind>, variant: str, tag: int) -> Tpattern {
+    let mut fps: Vec<TFieldPat> = Vec::with_capacity(a, 8 as u32);
+    let sl = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < binds.length() {
+        fps.push(TFieldPat { name: sl[i].lb_field, pat: Tpattern::TPVar(sl[i].lb_local) });
+        i = i + 1 as u32;
+    }
+    return Tpattern::TPVariant { variant: variant, tag: tag, binds: fps };
+}
+fn le_bind_env(binds: *const Vec<LeBind>, env: *Vec<FieldTy>) {
+    let sl = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < binds.length() {
+        env.push(FieldTy { name: sl[i].lb_name, ty: sl[i].lb_ty });
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn le_names(a: Allocator, binds: *const Vec<LeBind>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < binds.length() { out.push(sl[i].lb_name); i = i + 1 as u32; }
+    return out;
+}
+fn le_push(a: Allocator, binds: *const Vec<LeBind>, tmatch: *const Texpr, p: Pos, out: *Vec<Tstmt>) {
+    let sl = binds.as_slice();
+    if binds.length() == 1 as u32 {
+        out.push(Tstmt::TLet { name: sl[0 as u32].lb_name, value: tmatch, decl_ty: sl[0 as u32].lb_ty, pos: p });
+        return;
+    }
+    out.push(Tstmt::TLetTuple { names: le_names(a, binds), value: tmatch, pos: p });
+    return;
+}
+fn elab_let_else(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32,
+                 env: *Vec<FieldTy>, ret: Option<*const Typ>, pat: *const Pattern, value: *const Expr,
+                 else_body: *const Vec<Stmt>, p: Pos, out: *Vec<Tstmt>) {
+    match le_pat_parts(a, ar, sc, pat, p) {
+        Option::Some(vp) => { let_else_typed(a, ar, g, sc, gensym, env, ret, &vp, value, else_body, p, out); }
+        | Option::None => { }
+    }
+    return;
+}
+fn let_else_typed(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32,
+                  env: *Vec<FieldTy>, ret: Option<*const Typ>, vp: *const VariantPat, value: *const Expr,
+                  else_body: *const Vec<Stmt>, p: Pos, out: *Vec<Tstmt>) {
+    let binds = le_collect_binds(a, ar, sc, &vp.vp_binds, p);
+    if binds.length() == 0 as u32 {
+        tc_fail(ar, sc, p, "let-else on a unit variant binds nothing — use a plain `match` instead");
+        return;
+    }
+    let tvalue = elab_expr(a, ar, g, sc, env, none_ty(), value);
+    if !is_enum_ty(tvalue.ty) {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("let-else scrutinee must be enum-typed, got ");
+        sb.push_str(typ_name(a, ar, tvalue.ty));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    // The TMatch carries the INSTANCE path (`Option_i32`), but tags and variant
+    // counts are registered under the path the user wrote (`Option`) — the same
+    // split `elab_variant_pattern` already lives with.
+    let epath = enum_ty_path(a, tvalue.ty);
+    let qpath = qualify_type_path(a, ar, sc, &vp.vp_tname);
+    if enum_variant_count(sc, &qpath) < 2 as u32 {
+        let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+        sb.push_str("let-else else-branch is unreachable: enum '");
+        sb.push_str(path_display(a, ar, &epath));
+        sb.push_str("' has only one variant — use a plain `let` instead");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    let tag = variant_tag(sc.sc_etags, &qpath, vp.vp_variant);
+    if tag < 0 as int {
+        let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+        sb.push_str("variant '"); sb.push_str(vp.vp_variant);
+        sb.push_str("' not found in enum '"); sb.push_str(path_display(a, ar, &epath));
+        sb.push_str("'");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    let typed = le_type_binds(a, ar, sc, &epath, vp.vp_variant, &binds, p);
+    if typed.length() == 0 as u32 { return; }
+    let rty = le_result_ty(a, ar, &typed);
+    // The else body walks in the OUTER env — the binds are not in scope inside it,
+    // because the divergent branch never sees them.
+    let ebody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, else_body);
+    if !stmts_diverge(&ebody) {
+        tc_fail(ar, sc, p, "let-else else-block must diverge (return / break / continue / never-returning fn)");
+        return;
+    }
+    le_bind_env(&typed, env);
+    let succ = TmatchArm { tpat: le_success_pat(a, &typed, vp.vp_variant, tag), tguard: none_texpr(),
+                           tbody: le_success_body(a, ar, &typed, rty, p), tdiverges: false, tarm_pos: p };
+    let eblk = te_node(ar, TexprNode::TBlock { stmts: ebody, trailing: none_texpr() }, rty, p);
+    let elsa = TmatchArm { tpat: Tpattern::TPWildcard, tguard: none_texpr(), tbody: eblk,
+                           tdiverges: true, tarm_pos: p };
+    let mut arms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
+    arms.push(succ);
+    arms.push(elsa);
+    let tmatch = te_node(ar, TexprNode::TMatch { scrutinee: tvalue, ename_path: epath, arms: arms }, rty, p);
+    le_push(a, &typed, tmatch, p, out);
+    return;
+}
 fn bind_tuple_names(names: *const Vec<str>, tty: *const Typ, env: *Vec<FieldTy>) {
     match *tty {
         Typ::TTuple(elems) => {
@@ -5600,6 +5859,9 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             bind_tuple_names(&names, tvt.ty, env);
             out.push(Tstmt::TLetTuple { names: copy_strs(a, &names), value: tvt, pos: expr_pos(value) });
         }
+        | Stmt::LetElse { pat, value, else_body, pos } => {
+            elab_let_else(a, ar, g, sc, gensym, env, ret, &pat, value, &else_body, pos, out);
+        }
         | Stmt::Break(pos) => { out.push(Tstmt::TBreak(pos)); }
         | Stmt::Continue(pos) => { out.push(Tstmt::TContinue(pos)); }
         | Stmt::Defer { body, pos } => {
@@ -5611,11 +5873,6 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         }
         | Stmt::With { target, name, body, pos } => {
             elab_with(a, ar, g, sc, gensym, env, ret, target, name, &body, pos, out);
-        }
-        | _other => {
-            // Unsupported statement — emit a VISIBLE deferral marker rather
-            // than silently dropping it (mirrors the expr-level marker).
-            out.push(Tstmt::TExprStmt(defer_expr(ar, zero_pos())));
         }
     }
 }
@@ -11045,4 +11302,55 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         tp_tuple_types: tuples, tp_fnptr_types: fnptrs, tp_c_includes: cincludes,
         tp_ext_consts: econsts, tp_ext_vars: evars, tp_array_types: arrays, tp_consts: consts,
     });
+}
+
+// ---------- divergence oracle (move.ml:178) ----------
+//
+// Does this statement list always leave the enclosing block?  typecheck asks it
+// (`let-else`'s else-block must diverge) and so does the move pass, so it is
+// answered ONCE, here.  It lives in this module rather than a leaf one because
+// the port registers a generic instance when the type is first RESOLVED, and a
+// module that only reads `Vec<TmatchArm>` without ever naming it as a type
+// elaborates before `Slice<TmatchArm>` exists.  (That fragility is a real port
+// bug of its own — it bit twice while moving this code — and it is recorded in
+// the worklog rather than worked around silently.)
+pub fn expr_diverges(te: *const Texpr) -> bool {
+    return match te.e {
+        TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            let al = arms.as_slice();
+            let mut i = 0 as u32;
+            let mut all = arms.length() > 0 as u32;
+            while i < arms.length() {
+                if !(al[i].tdiverges || expr_diverges(al[i].tbody)) { all = false; }
+                i = i + 1 as u32;
+            }
+            all
+        }
+        | TexprNode::TIfExpr { cond, then_val, else_val } =>
+            expr_diverges(then_val) && expr_diverges(else_val)
+        | TexprNode::TBlock { stmts, trailing } => {
+            if stmts_diverge(&stmts) { true }
+            else { match trailing { Option::Some(t) => expr_diverges(t) | Option::None => false } }
+        }
+        | _other => false
+    };
+}
+
+pub fn stmts_diverge(stmts: *const Vec<Tstmt>) -> bool {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        let d = match sl[i] {
+            Tstmt::TReturn { value, pos } => true
+            | Tstmt::TBreak(_p) => true
+            | Tstmt::TContinue(_p) => true
+            | Tstmt::TIf { cond, then_body, else_body } =>
+                stmts_diverge(&then_body) && stmts_diverge(&else_body)
+            | Tstmt::TExprStmt(e) => expr_diverges(e)
+            | _other => false
+        };
+        if d { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
 }
