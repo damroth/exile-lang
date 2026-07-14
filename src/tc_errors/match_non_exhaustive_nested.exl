@@ -1,0 +1,9 @@
+// A flat variant-count cannot find this: `Some(None)` is a witness only the
+// usefulness matrix produces.
+fn f(o: Option<Option<int>>) -> int {
+    return match o {
+        Option::Some(Option::Some(v)) => v
+        | Option::None => 0
+    };
+}
+fn main() { println(f(Option::None)); }

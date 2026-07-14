@@ -1,0 +1,8 @@
+// The pillar of the language's `match` guarantee: every value the scrutinee can
+// hold is covered, or the compiler NAMES one that is not.
+enum E { A | B | C }
+fn main() {
+    let e = E::A;
+    let r = match e { E::A => 1 | E::B => 2 };
+    println(r);
+}

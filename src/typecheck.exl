@@ -3405,12 +3405,16 @@ fn voidable_ty(ar: *Arena, t: Option<*const Typ>) -> *const Typ {
 
 fn bind_one_payload(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, variant: str,
                     fname: str, sub: *const Pattern, env_out: *Vec<FieldTy>) {
+    // The payload's own type, from the INSTANCE.  A nested variant pattern must
+    // descend through it — not through the path the user wrote, which is the
+    // skeleton and whose fields are still `TVar`s.
+    let fty = voidable_ty(ar, mono_enum_field_ty(sc, tname, variant, fname));
     match *sub {
-        Pattern::PVar(n, _q) => {
-            let fty = voidable_ty(ar, mono_enum_field_ty(sc, tname, variant, fname));
-            env_out.push(FieldTy { name: n, ty: fty });
+        Pattern::PVar(n, _q) => { env_out.push(FieldTy { name: n, ty: fty }); }
+        | Pattern::PVariant { tname, variant, binds } => {
+            let ipath = enum_ty_path(a, fty);
+            bind_variant_payload(a, ar, sc, &ipath, variant, &binds, env_out);
         }
-        | Pattern::PVariant { tname, variant, binds } => { bind_variant_payload(a, ar, sc, &tname, variant, &binds, env_out); }
         | _other => { }
     }
 }
@@ -3452,12 +3456,334 @@ fn pattern_binds(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Patte
     }
 }
 
+// ===== Exhaustiveness (Maranget's usefulness matrix) =====
+//
+// The pillar of the language's `match` guarantee: every value the scrutinee can
+// hold is covered, or the compiler names one that is not.  Nested patterns mean
+// a flat variant-count is not enough — `Some(None)` is a witness no counting
+// finds — so the port carries the same matrix the reference does.
+//
+// Guarded arms never prove coverage: `if` can fail at runtime, so an arm behind
+// one covers nothing.
+
+enum Cpat {
+    CWild
+    | CCon { ctag: int, cargs: Vec<*const Cpat> }
+}
+struct Ctor {
+    ct_tag: int,
+    ct_ftys: Vec<*const Typ>,
+}
+
+fn cp_node(ar: *Arena, c: Cpat) -> *const Cpat {
+    let n: *Cpat = ar.alloc_borrowed();
+    if n == null { arena_oom(); }
+    *n = c;
+    return n as *const Cpat;
+}
+fn cpat_of_tpat(a: Allocator, ar: *Arena, tp: *const Tpattern) -> *const Cpat {
+    return match *tp {
+        Tpattern::TPVariant { variant, tag, binds } => {
+            let mut args: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+            let bl = binds.as_slice();
+            let mut i = 0 as u32;
+            while i < binds.length() { args.push(cpat_of_tpat(a, ar, &bl[i].pat)); i = i + 1 as u32; }
+            cp_node(ar, Cpat::CCon { ctag: tag, cargs: args })
+        }
+        | _o => cp_node(ar, Cpat::CWild)
+    };
+}
+// An or-pattern is several rows, not one.
+fn cpat_rows_of(a: Allocator, ar: *Arena, tp: *const Tpattern, out: *Vec<*const Cpat>) {
+    match *tp {
+        Tpattern::TPOr(alts) => {
+            let al = alts.as_slice();
+            let mut i = 0 as u32;
+            while i < alts.length() { cpat_rows_of(a, ar, &al[i], out); i = i + 1 as u32; }
+        }
+        | _o => { out.push(cpat_of_tpat(a, ar, tp)); }
+    }
+    return;
+}
+fn cpat_is_wild(c: *const Cpat) -> bool {
+    return match *c { Cpat::CWild => true | _o => false };
+}
+fn cpat_tag(c: *const Cpat) -> int {
+    return match *c { Cpat::CCon { ctag, cargs } => ctag | _o => 0 - 1 as int };
+}
+fn cpat_args(a: Allocator, c: *const Cpat) -> Vec<*const Cpat> {
+    return match *c {
+        Cpat::CCon { ctag, cargs } => copy_cpats(a, &cargs)
+        | _o => Vec::with_capacity(a, 8 as u32)
+    };
+}
+fn copy_cpats(a: Allocator, src: *const Vec<*const Cpat>) -> Vec<*const Cpat> {
+    let mut out: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn copy_tys(a: Allocator, src: *const Vec<*const Typ>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn wilds(a: Allocator, ar: *Arena, n: u32) -> Vec<*const Cpat> {
+    let mut out: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < n { out.push(cp_node(ar, Cpat::CWild)); i = i + 1 as u32; }
+    return out;
+}
+fn row_tail(a: Allocator, row: *const Vec<*const Cpat>) -> Vec<*const Cpat> {
+    let mut out: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    let sl = row.as_slice();
+    let mut i = 1 as u32;
+    while i < row.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn tys_tail(a: Allocator, ts: *const Vec<*const Typ>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let sl = ts.as_slice();
+    let mut i = 1 as u32;
+    while i < ts.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn cats_cpats(a: Allocator, x: *const Vec<*const Cpat>, y: *const Vec<*const Cpat>) -> Vec<*const Cpat> {
+    let mut out: Vec<*const Cpat> = copy_cpats(a, x);
+    let sl = y.as_slice();
+    let mut i = 0 as u32;
+    while i < y.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn cats_tys(a: Allocator, x: *const Vec<*const Typ>, y: *const Vec<*const Typ>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = copy_tys(a, x);
+    let sl = y.as_slice();
+    let mut i = 0 as u32;
+    while i < y.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+// Keep rows whose first column is this constructor, expanding its fields into
+// the leading columns; a wildcard row expands to `arity` wildcards.
+fn specialize(a: Allocator, ar: *Arena, matrix: *const Vec<Vec<*const Cpat>>, tag: int, arity: u32) -> Vec<Vec<*const Cpat>> {
+    let mut out: Vec<Vec<*const Cpat>> = Vec::with_capacity(a, 8 as u32);
+    let n = matrix.length();
+    let ml = matrix.as_slice();
+    let mut i = 0 as u32;
+    while i < n { spec_row(a, ar, &ml[i], tag, arity, &out); i = i + 1 as u32; }
+    return out;
+}
+fn spec_row(a: Allocator, ar: *Arena, row: *const Vec<*const Cpat>, tag: int, arity: u32,
+            out: *Vec<Vec<*const Cpat>>) {
+    if row.length() == 0 as u32 { return; }
+    let head = row.as_slice()[0 as u32];
+    let tail = row_tail(a, row);
+    if cpat_is_wild(head) {
+        let w = wilds(a, ar, arity);
+        out.push(cats_cpats(a, &w, &tail));
+        return;
+    }
+    if cpat_tag(head) != tag { return; }
+    let args = cpat_args(a, head);
+    out.push(cats_cpats(a, &args, &tail));
+    return;
+}
+fn default_matrix(a: Allocator, matrix: *const Vec<Vec<*const Cpat>>) -> Vec<Vec<*const Cpat>> {
+    let mut out: Vec<Vec<*const Cpat>> = Vec::with_capacity(a, 8 as u32);
+    let n = matrix.length();
+    let ml = matrix.as_slice();
+    let mut i = 0 as u32;
+    while i < n { default_row(a, &ml[i], &out); i = i + 1 as u32; }
+    return out;
+}
+fn default_row(a: Allocator, row: *const Vec<*const Cpat>, out: *Vec<Vec<*const Cpat>>) {
+    if row.length() == 0 as u32 { return; }
+    if !cpat_is_wild(row.as_slice()[0 as u32]) { return; }
+    out.push(row_tail(a, row));
+    return;
+}
+fn col0_has_tag(matrix: *const Vec<Vec<*const Cpat>>, tag: int) -> bool {
+    let n = matrix.length();
+    let ml = matrix.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let row = &ml[i];
+        if row.length() > 0 as u32 {
+            if cpat_tag(row.as_slice()[0 as u32]) == tag { return true; }
+        }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// The enum's constructors, in tag order, each with its payload types.
+// Tags live under the SKELETON path (`Option`); payload types under the INSTANCE
+// (`Option_i32`).  A constructor needs both, so it asks both.  Getting this wrong
+// is what made a nested witness render as `_`.
+fn etags_path_for(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) -> Vec<str> {
+    let n = sc.sc_etags.length();
+    let sl = sc.sc_etags.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].et_path, ipath) { return copy_strs(a, ipath); }
+        i = i + 1 as u32;
+    }
+    let last = path_last(ipath);
+    let mut j = 0 as u32;
+    while j < n {
+        let sk = path_last(&sl[j].et_path);
+        if str_starts_with(last, sk) && is_inst_suffix(last, sk) { return copy_strs(a, &sl[j].et_path); }
+        j = j + 1 as u32;
+    }
+    return copy_strs(a, ipath);
+}
+fn enum_ctors(a: Allocator, sc: *const TyScope, t: *const Typ) -> Vec<Ctor> {
+    let mut out: Vec<Ctor> = Vec::with_capacity(a, 8 as u32);
+    if !is_enum_ty(t) { return out; }
+    let ipath = enum_ty_path(a, t);
+    let spath = etags_path_for(a, sc, &ipath);
+    let n = sc.sc_etags.length();
+    let sl = sc.sc_etags.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].et_path, &spath) { push_ctor(a, sc, &spath, &ipath, sl[i].et_tag, sl[i].et_name, &out); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+// The construction lives in its own fn: a Vec built inline in a loop body would
+// be a fresh binding consumed every iteration, which the move pass rejects.
+fn push_ctor(a: Allocator, sc: *const TyScope, spath: *const Vec<str>, ipath: *const Vec<str>,
+             tag: int, name: str, out: *Vec<Ctor>) {
+    out.push(Ctor { ct_tag: tag, ct_ftys: inst_field_tys(a, sc, spath, ipath, name) });
+    return;
+}
+// Field NAMES come from the skeleton; each field's TYPE from the instance (the
+// skeleton's is still a `TVar`).
+fn inst_field_tys(a: Allocator, sc: *const TyScope, spath: *const Vec<str>, ipath: *const Vec<str>,
+                  variant: str) -> Vec<*const Typ> {
+    let names = variant_field_names(a, sc, spath, variant);
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let nl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() {
+        push_inst_fty(a, sc, spath, ipath, variant, nl[i], &out);
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn push_inst_fty(a: Allocator, sc: *const TyScope, spath: *const Vec<str>, ipath: *const Vec<str>,
+                 variant: str, fname: str, out: *Vec<*const Typ>) {
+    match mono_enum_field_ty(sc, ipath, variant, fname) {
+        Option::Some(t) => { out.push(t); }
+        | Option::None => { push_skel_fty(a, sc, spath, variant, fname, out); }
+    }
+    return;
+}
+fn push_skel_fty(_a: Allocator, sc: *const TyScope, spath: *const Vec<str>, variant: str,
+                 fname: str, out: *Vec<*const Typ>) {
+    match enum_field_ty(sc.sc_efields, spath, variant, fname) {
+        Option::Some(t) => { out.push(t); }
+        | Option::None => { }
+    }
+    return;
+}
+fn ctor_by_tag(a: Allocator, ctors: *const Vec<Ctor>, tag: int) -> Vec<*const Typ> {
+    let sl = ctors.as_slice();
+    let mut i = 0 as u32;
+    while i < ctors.length() {
+        if sl[i].ct_tag == tag { return copy_tys(a, &sl[i].ct_ftys); }
+        i = i + 1 as u32;
+    }
+    return Vec::with_capacity(a, 8 as u32);
+}
+// A value the matrix does not match, or an empty result when it is exhaustive.
+// (`found` distinguishes "no witness" from "the empty witness" — an
+// Option<Vec<..>> would move the Vec out of a match arm.)
+struct Witness {
+    w_found: bool,
+    w_pats: Vec<*const Cpat>,
+}
+fn missing(a: Allocator, ar: *Arena, sc: *const TyScope, types: *const Vec<*const Typ>,
+           matrix: *const Vec<Vec<*const Cpat>>) -> Witness {
+    if types.length() == 0 as u32 {
+        let empty: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+        return Witness { w_found: matrix.length() == 0 as u32, w_pats: empty };
+    }
+    let t0 = types.as_slice()[0 as u32];
+    let rest_t = tys_tail(a, types);
+    let ctors = enum_ctors(a, sc, t0);
+    if ctors.length() == 0 as u32 { return missing_default(a, ar, sc, &rest_t, matrix); }
+    let absent = absent_tag(&ctors, matrix);
+    if absent < 0 as int { return missing_try_ctors(a, ar, sc, &ctors, &rest_t, matrix); }
+    let w = missing_default(a, ar, sc, &rest_t, matrix);
+    if !w.w_found { return w; }
+    let arity = ctor_by_tag(a, &ctors, absent).length();
+    let mut row: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    row.push(cp_node(ar, Cpat::CCon { ctag: absent, cargs: wilds(a, ar, arity) }));
+    return Witness { w_found: true, w_pats: cats_cpats(a, &row, &w.w_pats) };
+}
+fn missing_default(a: Allocator, ar: *Arena, sc: *const TyScope, rest_t: *const Vec<*const Typ>,
+                   matrix: *const Vec<Vec<*const Cpat>>) -> Witness {
+    let dm = default_matrix(a, matrix);
+    let w = missing(a, ar, sc, rest_t, &dm);
+    if !w.w_found { return w; }
+    let mut row: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    row.push(cp_node(ar, Cpat::CWild));
+    return Witness { w_found: true, w_pats: cats_cpats(a, &row, &w.w_pats) };
+}
+fn absent_tag(ctors: *const Vec<Ctor>, matrix: *const Vec<Vec<*const Cpat>>) -> int {
+    let sl = ctors.as_slice();
+    let mut i = 0 as u32;
+    while i < ctors.length() {
+        if !col0_has_tag(matrix, sl[i].ct_tag) { return sl[i].ct_tag; }
+        i = i + 1 as u32;
+    }
+    return 0 - 1 as int;
+}
+// All constructors present: the witness, if any, is INSIDE one of them.
+fn missing_try_ctors(a: Allocator, ar: *Arena, sc: *const TyScope, ctors: *const Vec<Ctor>,
+                     rest_t: *const Vec<*const Typ>, matrix: *const Vec<Vec<*const Cpat>>) -> Witness {
+    let sl = ctors.as_slice();
+    let mut i = 0 as u32;
+    while i < ctors.length() {
+        let fts = copy_tys(a, &sl[i].ct_ftys);
+        let arity = fts.length();
+        let sm = specialize(a, ar, matrix, sl[i].ct_tag, arity);
+        let w = missing(a, ar, sc, &cats_tys(a, &fts, rest_t), &sm);
+        if w.w_found { return witness_wrap(a, ar, sl[i].ct_tag, arity, &w.w_pats); }
+        i = i + 1 as u32;
+    }
+    let empty: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    return Witness { w_found: false, w_pats: empty };
+}
+fn witness_wrap(a: Allocator, ar: *Arena, tag: int, arity: u32, w: *const Vec<*const Cpat>) -> Witness {
+    let mut args: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    let sl = w.as_slice();
+    let mut i = 0 as u32;
+    while i < arity { args.push(sl[i]); i = i + 1 as u32; }
+    let mut rest: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    let mut j = arity;
+    while j < w.length() { rest.push(sl[j]); j = j + 1 as u32; }
+    let mut row: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    row.push(cp_node(ar, Cpat::CCon { ctag: tag, cargs: args }));
+    return Witness { w_found: true, w_pats: cats_cpats(a, &row, &rest) };
+}
 fn elab_guard(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
               guard: Option<*const Expr>) -> Option<*const Texpr> {
     return match guard {
-        Option::Some(gx) => Option::Some(elab_expr(a, ar, g, sc, env, none_ty(), gx))
+        Option::Some(gx) => Option::Some(guard_checked(a, ar, sc, elab_expr(a, ar, g, sc, env, none_ty(), gx), expr_pos(gx)))
         | Option::None => none_texpr()
     };
+}
+fn guard_checked(a: Allocator, ar: *Arena, sc: *const TyScope, tg: *const Texpr, p: Pos) -> *const Texpr {
+    if is_bool_ty(tg.ty) || ty_has_tvar(tg.ty) { return tg; }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("match-arm guard `if ...` must be of type bool, got ");
+    sb.push_str(typ_name(a, ar, tg.ty));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return tg;
 }
 
 fn elab_one_arm(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
@@ -3499,6 +3825,192 @@ fn bool_pat_reject(a: Allocator, ar: *Arena, sc: *const TyScope, scrut: *const T
     return;
 }
 
+// Every non-diverging arm yields the match's value, so they must agree.  A
+// diverging arm (`try`'s early return, `let-else`'s block) yields nothing and is
+// exempt — it never reaches the join.
+// A guarded arm covers nothing: its `if` can fail at runtime.
+fn arm_is_unguarded(arm: *const TmatchArm) -> bool {
+    return match arm.tguard { Option::Some(_gx) => false | Option::None => true };
+}
+fn tpat_is_catchall(tp: *const Tpattern) -> bool {
+    return match *tp {
+        Tpattern::TPWildcard => true
+        | Tpattern::TPVar(_n) => true
+        | _o => false
+    };
+}
+fn check_exhaustive(a: Allocator, ar: *Arena, sc: *const TyScope, scrut: *const Typ,
+                    _arms: *const Vec<MatchArm>, tarms: *const Vec<TmatchArm>, p: Pos) {
+    if ty_has_tvar(scrut) { return; }
+    if is_bool_ty(scrut) { check_exh_bool(a, ar, sc, tarms, p); return; }
+    if !is_enum_ty(scrut) {
+        if is_scalar_ty(scrut) { check_exh_scalar(a, ar, sc, tarms, p); }
+        return;
+    }
+    check_exh_enum(a, ar, sc, scrut, tarms, p);
+    return;
+}
+// 1 = `true`, 0 = `false`, -1 = not a bool pattern.
+fn tpat_bool(tp: *const Tpattern) -> int {
+    return match *tp {
+        Tpattern::TPBool(b) => if b { 1 as int } else { 0 as int }
+        | _o => 0 - 1 as int
+    };
+}
+fn check_exh_bool(_a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const Vec<TmatchArm>, p: Pos) {
+    let n = tarms.length();
+    let sl = tarms.as_slice();
+    let mut seen_t = false;
+    let mut seen_f = false;
+    let mut covered = false;
+    let mut i = 0 as u32;
+    while i < n {
+        if arm_is_unguarded(&sl[i]) {
+            let bs = tpat_bool(&sl[i].tpat);
+            if bs == 1 as int { seen_t = true; }
+            if bs == 0 as int { seen_f = true; }
+            if tpat_is_catchall(&sl[i].tpat) || (seen_t && seen_f) { covered = true; }
+        }
+        i = i + 1 as u32;
+    }
+    if covered { return; }
+    tc_fail(ar, sc, p, "non-exhaustive 'match' on bool: cover both 'true' and 'false' (or add a catch-all arm)");
+    return;
+}
+// The integer domain cannot be enumerated, so only an unguarded catch-all closes it.
+fn check_exh_scalar(_a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const Vec<TmatchArm>, p: Pos) {
+    let n = tarms.length();
+    let sl = tarms.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if arm_is_unguarded(&sl[i]) && tpat_is_catchall(&sl[i].tpat) { return; }
+        i = i + 1 as u32;
+    }
+    tc_fail(ar, sc, p, "non-exhaustive 'match' on an integer: add a final catch-all arm ('_' or a binding) — the integer domain cannot be enumerated");
+    return;
+}
+fn check_exh_enum(a: Allocator, ar: *Arena, sc: *const TyScope, scrut: *const Typ,
+                  tarms: *const Vec<TmatchArm>, p: Pos) {
+    let mut matrix: Vec<Vec<*const Cpat>> = Vec::with_capacity(a, 8 as u32);
+    let n = tarms.length();
+    let sl = tarms.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if arm_is_unguarded(&sl[i]) { push_arm_rows(a, ar, &sl[i].tpat, &matrix); }
+        i = i + 1 as u32;
+    }
+    let mut types: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    types.push(scrut);
+    let w = missing(a, ar, sc, &types, &matrix);
+    if !w.w_found { return; }
+    if w.w_pats.length() == 0 as u32 { return; }
+    let mut sb = StringBuilder::with_capacity(a, 88 as u32);
+    sb.push_str("non-exhaustive 'match': pattern '");
+    sb.push_str(render_cpat(a, ar, sc, scrut, w.w_pats.as_slice()[0 as u32]));
+    sb.push_str("' is not covered (add an arm or '_')");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn push_arm_rows(a: Allocator, ar: *Arena, tp: *const Tpattern, matrix: *Vec<Vec<*const Cpat>>) {
+    let mut heads: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    cpat_rows_of(a, ar, tp, &heads);
+    let hl = heads.as_slice();
+    let mut i = 0 as u32;
+    while i < heads.length() { push_one_row(a, hl[i], matrix); i = i + 1 as u32; }
+    return;
+}
+fn push_one_row(a: Allocator, c: *const Cpat, matrix: *Vec<Vec<*const Cpat>>) {
+    let mut row: Vec<*const Cpat> = Vec::with_capacity(a, 8 as u32);
+    row.push(c);
+    matrix.push(row);
+    return;
+}
+// The witness, printed the way the user would have written it.
+fn render_cpat(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, c: *const Cpat) -> str {
+    if cpat_is_wild(c) { return "_"; }
+    if !is_enum_ty(t) { return "_"; }
+    let ipath = enum_ty_path(a, t);
+    let path = etags_path_for(a, sc, &ipath);
+    let tag = cpat_tag(c);
+    let vname = variant_name_of(sc, &path, tag);
+    if str::eq(vname, "") { return "_"; }
+    let args = cpat_args(a, c);
+    if args.length() == 0 as u32 { return vname; }
+    let ftys = inst_field_tys(a, sc, &path, &ipath, vname);
+    let fnames = variant_field_names(a, sc, &path, vname);
+    let is_struct = variant_is_struct(sc, &path, vname);
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str(vname);
+    if is_struct { sb.push_str(" { "); } else { sb.push_str("("); }
+    let al = args.as_slice();
+    let tl = ftys.as_slice();
+    let nl = fnames.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() {
+        if i > 0 as u32 { sb.push_str(", "); }
+        if is_struct { sb.push_str(nl[i]); sb.push_str(": "); }
+        sb.push_str(render_cpat(a, ar, sc, tl[i], al[i]));
+        i = i + 1 as u32;
+    }
+    if is_struct { sb.push_str(" }"); } else { sb.push_str(")"); }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn variant_name_of(sc: *const TyScope, path: *const Vec<str>, tag: int) -> str {
+    let n = sc.sc_etags.length();
+    let sl = sc.sc_etags.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].et_path, path) && sl[i].et_tag == tag { return sl[i].et_name; }
+        i = i + 1 as u32;
+    }
+    return "";
+}
+fn variant_is_struct(sc: *const TyScope, path: *const Vec<str>, variant: str) -> bool {
+    let n = sc.sc_etags.length();
+    let sl = sc.sc_etags.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].et_path, path) && str::eq(sl[i].et_name, variant) { return sl[i].et_is_struct; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn variant_field_names(a: Allocator, sc: *const TyScope, path: *const Vec<str>, variant: str) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let n = sc.sc_efields.length();
+    let sl = sc.sc_efields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].ef_path, path) && str::eq(sl[i].ef_variant, variant) { out.push(sl[i].ef_name); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn check_arm_types(a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const Vec<TmatchArm>, p: Pos) {
+    let n = tarms.length();
+    let sl = tarms.as_slice();
+    let mut wit: Option<*const Typ> = Option::None;
+    let mut i = 0 as u32;
+    while i < n {
+        if !sl[i].tdiverges {
+            match wit {
+                Option::Some(w) => { arm_ty_agree(a, ar, sc, w, sl[i].tbody.ty, p); }
+                | Option::None => { wit = Option::Some(sl[i].tbody.ty); }
+            }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn arm_ty_agree(a: Allocator, ar: *Arena, sc: *const TyScope, w: *const Typ, t: *const Typ, p: Pos) {
+    if typ_eq(w, t) { return; }
+    if ty_has_tvar(w) || ty_has_tvar(t) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+    sb.push_str("match arms have inconsistent types: ");
+    sb.push_str(typ_name(a, ar, w)); sb.push_str(" vs "); sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn match_result_ty(ar: *Arena, tarms: *const Vec<TmatchArm>) -> *const Typ {
     if tarms.length() == 0 as u32 { return ty_node(ar, Typ::TCVoid); }
     let sl = tarms.as_slice();
@@ -3524,6 +4036,8 @@ fn emit_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
               arms: *const Vec<MatchArm>, p: Pos) -> *const Texpr {
     let mut tarms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
     elab_arms(a, ar, g, sc, env, expected, tscrut.ty, arms, &tarms);
+    check_exhaustive(a, ar, sc, tscrut.ty, arms, &tarms, p);
+    check_arm_types(a, ar, sc, &tarms, p);
     let mty = match_result_ty(ar, &tarms);
     return te_node(ar, TexprNode::TMatch { scrutinee: tscrut, ename_path: epath, arms: tarms }, mty, p);
 }
@@ -4348,6 +4862,78 @@ fn enum_instance_path(a: Allocator, ar: *Arena, sc: *const TyScope, expected: Op
     };
 }
 
+// A struct literal names every field, once.  `..base` supplies the rest, so the
+// missing-field rule only applies without it.
+fn decl_field_names(a: Allocator, sc: *const TyScope, path: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let n = sc.sc_sinfo.length();
+    let sl = sc.sc_sinfo.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].sf_path, path) { out.push(sl[i].sf_name); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn check_lit_fields(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>,
+                    fields: *const Vec<Field>, has_base: bool, p: Pos) {
+    let decl = decl_field_names(a, sc, path);
+    if decl.length() == 0 as u32 { return; }
+    let disp = path_display(a, ar, path);
+    let mut given: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let fsl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() {
+        if name_in(&given, fsl[i].name) {
+            lit_field_err(a, ar, sc, "duplicate field '", fsl[i].name, "' in struct literal '", disp, p);
+            return;
+        }
+        given.push(fsl[i].name);
+        i = i + 1 as u32;
+    }
+    let extra = names_not_in(a, &given, &decl);
+    if extra.length() > 0 as u32 {
+        lit_field_list(a, ar, sc, disp, "' has unknown field(s): ", &extra, p);
+        return;
+    }
+    if has_base { return; }
+    let missing = names_not_in(a, &decl, &given);
+    if missing.length() > 0 as u32 {
+        lit_field_list(a, ar, sc, disp, "' missing field(s): ", &missing, p);
+    }
+    return;
+}
+fn names_not_in(a: Allocator, xs: *const Vec<str>, ys: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < xs.length() {
+        if !name_in(ys, sl[i]) { out.push(sl[i]); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn lit_field_err(a: Allocator, ar: *Arena, sc: *const TyScope, pre: str, name: str,
+                 mid: str, disp: str, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str(pre); sb.push_str(name); sb.push_str(mid); sb.push_str(disp); sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn lit_field_list(a: Allocator, ar: *Arena, sc: *const TyScope, disp: str, mid: str,
+                  names: *const Vec<str>, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("struct literal '"); sb.push_str(disp); sb.push_str(mid);
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() {
+        if i > 0 as u32 { sb.push_str(", "); }
+        sb.push_str(sl[i]);
+        i = i + 1 as u32;
+    }
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn is_some_expr(e: Option<*const Expr>) -> bool {
     return match e { Option::Some(_x) => true | Option::None => false };
 }
@@ -4368,6 +4954,7 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         }
     }
     let qtname = qualify_type_path(a, ar, sc, tname);
+    check_lit_fields(a, ar, sc, &qtname, fields, is_some_expr(base), p);
     let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
     let ipath = struct_lit_path(a, ar, sc, &qtname, &tfields, tbase);

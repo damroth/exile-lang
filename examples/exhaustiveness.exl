@@ -1,0 +1,67 @@
+// `match` covers everything, or the compiler names what it missed.
+//
+// This is not a lint.  A `match` that does not cover its scrutinee has no value
+// to yield on the uncovered path, and the compiler will not invent one — so the
+// guarantee is what lets an arm's body BE the value, with no fallthrough and no
+// default.  The price is that you must say what happens; the reward is that the
+// compiler tells you exactly what you did not say:
+//
+//     match e { E::A => 1 | E::B => 2 };
+//     error: non-exhaustive 'match': pattern 'C' is not covered (add an arm or '_')
+//
+// Counting variants is not enough.  Patterns nest, so the missing case can be
+// buried:
+//
+//     match o { Option::Some(Option::Some(v)) => v | Option::None => 0 };
+//     error: non-exhaustive 'match': pattern 'Some(None)' is not covered
+//
+// The witness is printed the way you would have written it.
+
+enum Shape {
+    Circle(int)
+    | Rect { w: int, h: int }
+    | Point
+}
+
+fn area(s: Shape) -> int {
+    return match s {
+        Shape::Circle(r) => 3 * r * r
+        | Shape::Rect { w, h } => w * h
+        | Shape::Point => 0
+    };
+}
+
+// A guarded arm covers NOTHING: its `if` can fail at runtime, so the compiler
+// cannot count it as coverage.  The catch-all is what closes this match.
+fn classify(n: int) -> int {
+    return match n {
+        x if x < 0 => 0 - 1
+        | 0 => 0
+        | _x => 1
+    };
+}
+
+// Nested: every combination is spelled out, so the match is closed.
+fn depth(o: Option<Option<int>>) -> int {
+    return match o {
+        Option::Some(Option::Some(v)) => v
+        | Option::Some(Option::None) => 0
+        | Option::None => 0 - 1
+    };
+}
+
+fn main() {
+    println(area(Shape::Circle(2)));                        // 12
+    println(area(Shape::Rect { w: 3, h: 4 }));              // 12
+    println(area(Shape::Point));                            // 0
+    println(classify(0 - 5));                               // -1
+    println(classify(7));                                   // 1
+
+    // `Option::None` alone pins nothing — say what it is empty OF.  (The
+    // compiler asks for this; a half-inferred instance is not a type.)
+    let inner: Option<int> = Option::None;
+    let outer: Option<Option<int>> = Option::None;
+    println(depth(Option::Some(Option::Some(9))));          // 9
+    println(depth(Option::Some(inner)));                    // 0
+    println(depth(outer));                                  // -1
+}

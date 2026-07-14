@@ -1,0 +1,7 @@
+// A guarded arm covers nothing: its `if` can fail at runtime.
+enum E { A | B }
+fn main() {
+    let e = E::A;
+    let r = match e { E::A => 1 | E::B if true => 2 };
+    println(r);
+}

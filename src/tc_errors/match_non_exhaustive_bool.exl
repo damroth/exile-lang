@@ -1,0 +1,5 @@
+fn main() {
+    let b = true;
+    let r = match b { true => 1 };
+    println(r);
+}
