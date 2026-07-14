@@ -1,0 +1,5 @@
+fn make<T>() -> *T { return null; }
+fn main() {
+    let p = make();
+    println(1);
+}

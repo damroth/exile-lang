@@ -1,0 +1,9 @@
+// A static generic method has no receiver to infer from — the expected type is
+// the only source.  Without it, T stays free and the abstract `Vec<T>` is what
+// later surfaces as a `c_void`.
+fn f(a: Allocator) -> int {
+    let mut v = Vec::with_capacity(a, 8 as u32);
+    v.push(7);
+    return v.as_slice()[0 as u32];
+}
+fn main() { let a = default_allocator(); println(f(a)); }

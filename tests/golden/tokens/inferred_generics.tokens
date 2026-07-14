@@ -1,0 +1,175 @@
+;; exile-tokens-dump v1 examples/inferred_generics.exl
+Enum @examples/inferred_generics.exl:12:1
+(Ident Pair) @examples/inferred_generics.exl:12:6
+Lt @examples/inferred_generics.exl:12:10
+(Ident A) @examples/inferred_generics.exl:12:11
+Comma @examples/inferred_generics.exl:12:12
+(Ident B) @examples/inferred_generics.exl:12:14
+Gt @examples/inferred_generics.exl:12:15
+LBrace @examples/inferred_generics.exl:12:17
+(Ident Both) @examples/inferred_generics.exl:13:5
+LParen @examples/inferred_generics.exl:13:9
+(Ident A) @examples/inferred_generics.exl:13:10
+Comma @examples/inferred_generics.exl:13:11
+(Ident B) @examples/inferred_generics.exl:13:13
+RParen @examples/inferred_generics.exl:13:14
+Pipe @examples/inferred_generics.exl:14:5
+(Ident Neither) @examples/inferred_generics.exl:14:7
+RBrace @examples/inferred_generics.exl:15:1
+Fn @examples/inferred_generics.exl:17:1
+(Ident from_payload) @examples/inferred_generics.exl:17:4
+LParen @examples/inferred_generics.exl:17:16
+RParen @examples/inferred_generics.exl:17:17
+Arrow @examples/inferred_generics.exl:17:19
+(Ident int) @examples/inferred_generics.exl:17:22
+LBrace @examples/inferred_generics.exl:17:26
+Let @examples/inferred_generics.exl:18:5
+(Ident o) @examples/inferred_generics.exl:18:9
+Eq @examples/inferred_generics.exl:18:11
+(Ident Option) @examples/inferred_generics.exl:18:13
+DoubleColon @examples/inferred_generics.exl:18:19
+(Ident Some) @examples/inferred_generics.exl:18:21
+LParen @examples/inferred_generics.exl:18:25
+(Int 5) @examples/inferred_generics.exl:18:26
+RParen @examples/inferred_generics.exl:18:27
+Semicolon @examples/inferred_generics.exl:18:28
+Let @examples/inferred_generics.exl:19:5
+(Ident Option) @examples/inferred_generics.exl:19:9
+DoubleColon @examples/inferred_generics.exl:19:15
+(Ident Some) @examples/inferred_generics.exl:19:17
+LParen @examples/inferred_generics.exl:19:21
+(Ident v) @examples/inferred_generics.exl:19:22
+RParen @examples/inferred_generics.exl:19:23
+Eq @examples/inferred_generics.exl:19:25
+(Ident o) @examples/inferred_generics.exl:19:27
+Else @examples/inferred_generics.exl:19:29
+LBrace @examples/inferred_generics.exl:19:34
+Return @examples/inferred_generics.exl:19:36
+(Int 0) @examples/inferred_generics.exl:19:43
+Minus @examples/inferred_generics.exl:19:45
+(Int 1) @examples/inferred_generics.exl:19:47
+Semicolon @examples/inferred_generics.exl:19:48
+RBrace @examples/inferred_generics.exl:19:50
+Semicolon @examples/inferred_generics.exl:19:51
+Return @examples/inferred_generics.exl:20:5
+(Ident v) @examples/inferred_generics.exl:20:12
+Semicolon @examples/inferred_generics.exl:20:13
+RBrace @examples/inferred_generics.exl:21:1
+Fn @examples/inferred_generics.exl:23:1
+(Ident two_params) @examples/inferred_generics.exl:23:4
+LParen @examples/inferred_generics.exl:23:14
+RParen @examples/inferred_generics.exl:23:15
+Arrow @examples/inferred_generics.exl:23:17
+(Ident int) @examples/inferred_generics.exl:23:20
+LBrace @examples/inferred_generics.exl:23:24
+Let @examples/inferred_generics.exl:24:5
+(Ident p) @examples/inferred_generics.exl:24:9
+Eq @examples/inferred_generics.exl:24:11
+(Ident Pair) @examples/inferred_generics.exl:24:13
+DoubleColon @examples/inferred_generics.exl:24:17
+(Ident Both) @examples/inferred_generics.exl:24:19
+LParen @examples/inferred_generics.exl:24:23
+(Int 3) @examples/inferred_generics.exl:24:24
+Comma @examples/inferred_generics.exl:24:25
+True @examples/inferred_generics.exl:24:27
+RParen @examples/inferred_generics.exl:24:31
+Semicolon @examples/inferred_generics.exl:24:32
+Return @examples/inferred_generics.exl:25:5
+Match @examples/inferred_generics.exl:25:12
+(Ident p) @examples/inferred_generics.exl:25:18
+LBrace @examples/inferred_generics.exl:25:20
+(Ident Pair) @examples/inferred_generics.exl:26:9
+DoubleColon @examples/inferred_generics.exl:26:13
+(Ident Both) @examples/inferred_generics.exl:26:15
+LParen @examples/inferred_generics.exl:26:19
+(Ident x) @examples/inferred_generics.exl:26:20
+Comma @examples/inferred_generics.exl:26:21
+(Ident _y) @examples/inferred_generics.exl:26:23
+RParen @examples/inferred_generics.exl:26:25
+FatArrow @examples/inferred_generics.exl:26:27
+(Ident x) @examples/inferred_generics.exl:26:30
+Pipe @examples/inferred_generics.exl:27:9
+(Ident Pair) @examples/inferred_generics.exl:27:11
+DoubleColon @examples/inferred_generics.exl:27:15
+(Ident Neither) @examples/inferred_generics.exl:27:17
+FatArrow @examples/inferred_generics.exl:27:25
+(Int 0) @examples/inferred_generics.exl:27:28
+RBrace @examples/inferred_generics.exl:28:5
+Semicolon @examples/inferred_generics.exl:28:6
+RBrace @examples/inferred_generics.exl:29:1
+Fn @examples/inferred_generics.exl:31:1
+(Ident needs_annotation) @examples/inferred_generics.exl:31:4
+LParen @examples/inferred_generics.exl:31:20
+RParen @examples/inferred_generics.exl:31:21
+Arrow @examples/inferred_generics.exl:31:23
+(Ident int) @examples/inferred_generics.exl:31:26
+LBrace @examples/inferred_generics.exl:31:30
+Let @examples/inferred_generics.exl:33:5
+(Ident r) @examples/inferred_generics.exl:33:9
+Colon @examples/inferred_generics.exl:33:10
+(Ident Result) @examples/inferred_generics.exl:33:12
+Lt @examples/inferred_generics.exl:33:18
+(Ident int) @examples/inferred_generics.exl:33:19
+Comma @examples/inferred_generics.exl:33:22
+(Ident str) @examples/inferred_generics.exl:33:24
+Gt @examples/inferred_generics.exl:33:27
+Eq @examples/inferred_generics.exl:33:29
+(Ident Result) @examples/inferred_generics.exl:33:31
+DoubleColon @examples/inferred_generics.exl:33:37
+(Ident Ok) @examples/inferred_generics.exl:33:39
+LParen @examples/inferred_generics.exl:33:41
+(Int 7) @examples/inferred_generics.exl:33:42
+RParen @examples/inferred_generics.exl:33:43
+Semicolon @examples/inferred_generics.exl:33:44
+Return @examples/inferred_generics.exl:34:5
+Match @examples/inferred_generics.exl:34:12
+(Ident r) @examples/inferred_generics.exl:34:18
+LBrace @examples/inferred_generics.exl:34:20
+(Ident Result) @examples/inferred_generics.exl:35:9
+DoubleColon @examples/inferred_generics.exl:35:15
+(Ident Ok) @examples/inferred_generics.exl:35:17
+LParen @examples/inferred_generics.exl:35:19
+(Ident v) @examples/inferred_generics.exl:35:20
+RParen @examples/inferred_generics.exl:35:21
+FatArrow @examples/inferred_generics.exl:35:23
+(Ident v) @examples/inferred_generics.exl:35:26
+Pipe @examples/inferred_generics.exl:36:9
+(Ident Result) @examples/inferred_generics.exl:36:11
+DoubleColon @examples/inferred_generics.exl:36:17
+(Ident Err) @examples/inferred_generics.exl:36:19
+LParen @examples/inferred_generics.exl:36:22
+(Ident _e) @examples/inferred_generics.exl:36:23
+RParen @examples/inferred_generics.exl:36:25
+FatArrow @examples/inferred_generics.exl:36:27
+(Int 0) @examples/inferred_generics.exl:36:30
+RBrace @examples/inferred_generics.exl:37:5
+Semicolon @examples/inferred_generics.exl:37:6
+RBrace @examples/inferred_generics.exl:38:1
+Fn @examples/inferred_generics.exl:40:1
+(Ident main) @examples/inferred_generics.exl:40:4
+LParen @examples/inferred_generics.exl:40:8
+RParen @examples/inferred_generics.exl:40:9
+LBrace @examples/inferred_generics.exl:40:11
+(Ident println) @examples/inferred_generics.exl:41:5
+LParen @examples/inferred_generics.exl:41:12
+(Ident from_payload) @examples/inferred_generics.exl:41:13
+LParen @examples/inferred_generics.exl:41:25
+RParen @examples/inferred_generics.exl:41:26
+RParen @examples/inferred_generics.exl:41:27
+Semicolon @examples/inferred_generics.exl:41:28
+(Ident println) @examples/inferred_generics.exl:42:5
+LParen @examples/inferred_generics.exl:42:12
+(Ident two_params) @examples/inferred_generics.exl:42:13
+LParen @examples/inferred_generics.exl:42:23
+RParen @examples/inferred_generics.exl:42:24
+RParen @examples/inferred_generics.exl:42:25
+Semicolon @examples/inferred_generics.exl:42:26
+(Ident println) @examples/inferred_generics.exl:43:5
+LParen @examples/inferred_generics.exl:43:12
+(Ident needs_annotation) @examples/inferred_generics.exl:43:13
+LParen @examples/inferred_generics.exl:43:29
+RParen @examples/inferred_generics.exl:43:30
+RParen @examples/inferred_generics.exl:43:31
+Semicolon @examples/inferred_generics.exl:43:32
+RBrace @examples/inferred_generics.exl:44:1
+Eof @examples/inferred_generics.exl:45:1

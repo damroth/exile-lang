@@ -1,0 +1,7 @@
+// `Result::Ok(7)` pins T and leaves E free.  There is no instance to mint, and
+// inventing one silently is exactly how a `c_void` reaches codegen.
+fn f() -> int {
+    let r = Result::Ok(7);
+    return match r { Result::Ok(v) => v | Result::Err(e) => e };
+}
+fn main() { println(f()); }

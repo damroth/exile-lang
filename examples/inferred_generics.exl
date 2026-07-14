@@ -1,0 +1,44 @@
+// A generic instance is born where it is CONSTRUCTED, not where it is named.
+//
+// `let o = Option::Some(5);` mints `Option<i32>` from the payload alone — there
+// is no annotation anywhere in the program saying so.  The variant's payload
+// types have to be registered at that point, or a later `match o` would find no
+// `_0` field to bind and the arm's value would have no type.
+//
+// The rule has a limit, and the limit is honest: every type parameter must be
+// pinned by the arguments.  `Result::Ok(7)` binds T and leaves E free, so it is
+// rejected — a half-inferred instance is not a type.  Annotate, and it is fine.
+
+enum Pair<A, B> {
+    Both(A, B)
+    | Neither
+}
+
+fn from_payload() -> int {
+    let o = Option::Some(5);              // Option<i32>, inferred
+    let Option::Some(v) = o else { return 0 - 1; };
+    return v;
+}
+
+fn two_params() -> int {
+    let p = Pair::Both(3, true);          // Pair<i32, bool>, both inferred
+    return match p {
+        Pair::Both(x, _y) => x
+        | Pair::Neither => 0
+    };
+}
+
+fn needs_annotation() -> int {
+    // `Result::Ok(7)` alone cannot pin E — say what the error side is.
+    let r: Result<int, str> = Result::Ok(7);
+    return match r {
+        Result::Ok(v) => v
+        | Result::Err(_e) => 0
+    };
+}
+
+fn main() {
+    println(from_payload());     // 5
+    println(two_params());       // 3
+    println(needs_annotation()); // 7
+}

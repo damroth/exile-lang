@@ -2218,6 +2218,10 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
         Option::Some(e) => bind_recv_tparams(a, ar, sc, &sl[midx].mi_path, &recv_base_path(a, e), &binds)
         | Option::None => { }
     }
+    // A static generic method has no receiver to infer from — the expected type
+    // is the ONLY source (`let v: Vec<int> = Vec::with_capacity(..)`).  Without
+    // it, T stays free and the abstract `Vec<T>` is what later surfaces as c_void.
+    check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
@@ -2356,6 +2360,24 @@ fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
 // returning `*T`) gets its binding from the surrounding expected type by
 // unifying the resolved return type against it.  Seeded after the argument
 // pairs so an argument-derived binding wins the dedup.
+// Every declared type parameter must end up pinned — by an argument, or by the
+// expected type seeded from the surrounding let / return.  A half-inferred
+// instance is not a type: `Vec::with_capacity(a, 8)` with nothing to say what it
+// holds mints `Vec<T>`, and the abstract T is what later surfaces as `c_void`.
+fn check_tparams_bound(a: Allocator, ar: *Arena, sc: *const TyScope, tparams: *const Vec<str>,
+                       binds: *const Vec<TVarBind>, p: Pos) {
+    let n = tparams.length();
+    let sl = tparams.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match bind_of(binds, sl[i]) {
+            Option::Some(_t) => { }
+            | Option::None => { unbound_tparam(a, ar, sc, sl[i], p); }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
 fn seed_from_expected(cret: Option<*const Typ>, expected: Option<*const Typ>, out: *Vec<TVarBind>) {
     match cret {
         Option::Some(r) => match expected {
@@ -2379,6 +2401,7 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_call_binds(a, ar, &cscope, &gsl[gfidx as u32].gn_params, &targs, &binds, p);
     seed_from_expected(cret, expected, &binds);
+    check_tparams_bound(a, ar, sc, &gsl[gfidx as u32].gn_tparams, &binds, p);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     queue_gen_instance(a, sc, gi, &binds, inst);
@@ -2624,7 +2647,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let tag = variant_tag(sc.sc_etags, &qinit, last);
         if tag >= 0 as int {
             let tflds = enum_tuple_args(a, ar, g, sc, env, &qinit, last, args);
-            let inst = enum_instance_path(a, ar, sc, expected, &qinit, last, &tflds);
+            let inst = enum_instance_path(a, ar, sc, expected, &qinit, last, &tflds, p);
             return mk_enum_lit_node(a, ar, &inst, last, tag, tflds, p);
         }
         if is_known_enum(sc, &qinit) { return no_such_variant(a, ar, sc, &qinit, last, p); }
@@ -2962,6 +2985,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     // A tparam unreachable through self / args (e.g. `alloc<T>()`) is pinned by
     // the surrounding expected type.
     seed_from_expected(cret, expected, &binds);
+    check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     // A prelude method's instance body is injected — register its type for the
@@ -3809,6 +3833,10 @@ fn struct_path_of(t: *const Typ) -> Option<Vec<str>> {
 // i32 the reference says something else entirely, and so must we.
 fn method_miss(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
                t: *const Typ, p: Pos) -> *const Texpr {
+    // An abstract receiver (`Vec<T>` in a skeleton, or an instance whose tparam
+    // never got pinned) is not a shape error — the compiler has not finished
+    // resolving it, and the real complaint is upstream.  Same rule as indexing.
+    if ty_has_tvar(t) { return defer_expr(ar, p); }
     if !is_recv_shape(t) { return bad_recv_shape(a, ar, sc, name, t, p); }
     return no_such_method(a, ar, sc, name, t, p);
 }
@@ -4050,8 +4078,56 @@ fn struct_lit_path(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const V
 // — when the constructed enum's full type is already known from context (a
 // return type or annotation) — take that expected instance directly (it
 // seeds tparams the payload does not mention, e.g. `E` in `Result::Ok`).
+// The enum's DECLARED type parameters, in declaration order.
+fn enum_tps(a: Allocator, sc: *const TyScope, name: str) -> Vec<str> {
+    let n = sc.sc_etps.length();
+    let sl = sc.sc_etps.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].etp_name, name) { return copy_strs(a, &sl[i].etp_params); }
+        i = i + 1 as u32;
+    }
+    return Vec::with_capacity(a, 8 as u32);
+}
+fn bind_of(binds: *const Vec<TVarBind>, name: str) -> Option<*const Typ> {
+    let none: Option<*const Typ> = Option::None;
+    let n = binds.length();
+    let sl = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].tvb_name, name) { return Option::Some(sl[i].tvb_ty); }
+        i = i + 1 as u32;
+    }
+    return none;
+}
+// Every declared parameter must be pinned by the constructor's arguments.
+// `Result::Ok(7)` binds T and leaves E free — there is no instance to mint, and
+// inventing one silently is how `c_void` reaches codegen.  Args come back in
+// DECLARED order, not in the order the payload happened to mention them.
+fn infer_enum_args(a: Allocator, ar: *Arena, sc: *const TyScope, tps: *const Vec<str>,
+                   binds: *const Vec<TVarBind>, p: Pos) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let n = tps.length();
+    let sl = tps.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match bind_of(binds, sl[i]) {
+            Option::Some(t) => out.push(t)
+            | Option::None => { unbound_tparam(a, ar, sc, sl[i], p); }
+        }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn unbound_tparam(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+    sb.push_str("could not infer type parameter '"); sb.push_str(name);
+    sb.push_str("' from arguments (add a type annotation on the surrounding let / return)");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn infer_enum_instance(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>,
-                       variant: str, tfields: *const Vec<TexprField>) -> Vec<str> {
+                       variant: str, tfields: *const Vec<TexprField>, p: Pos) -> Vec<str> {
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     let n = tfields.length();
     let sl = tfields.as_slice();
@@ -4064,20 +4140,40 @@ fn infer_enum_instance(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
         i = i + 1 as u32;
     }
     if binds.length() == 0 as u32 { return copy_strs(a, epath); }
-    let args = dedup_bind_tys(a, &binds);
+    let tps = enum_tps(a, sc, path_last(epath));
+    let args = if tps.length() == 0 as u32 { dedup_bind_tys(a, &binds) }
+               else { infer_enum_args(a, ar, sc, &tps, &binds, p) };
+    if args.length() != tps.length() && tps.length() > 0 as u32 { return copy_strs(a, epath); }
     let ipath = instance_path(a, ar, epath, &args);
     register_mono_enum_args(a, sc, &ipath, &args);
+    // An instance registers where it is BORN, not where someone happens to name
+    // it as a type.  `let o = Option::Some(5);` mints Option_i32 by inference and
+    // may be the only mention of it in the program — without its variant payloads
+    // registered here, `match o { Option::Some(v) => ... }` finds no `_0` field
+    // and the payload type comes out `c_void`.  resolve_named_ty registers both
+    // halves; this path used to register only the first.
+    register_enum_instance_efields(a, ar, sc, epath, &args, &ipath);
     return ipath;
+}
+fn register_enum_instance_efields(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>,
+                                  args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
+    let last = path_last(skel);
+    if is_prelude_enum(last) {
+        register_prelude_enum_efields(a, sc, last, args, ipath);
+        return;
+    }
+    register_enum_instance_fields(a, ar, sc, skel, args, ipath);
+    return;
 }
 
 fn enum_instance_path(a: Allocator, ar: *Arena, sc: *const TyScope, expected: Option<*const Typ>,
-                      epath: *const Vec<str>, variant: str, tfields: *const Vec<TexprField>) -> Vec<str> {
+                      epath: *const Vec<str>, variant: str, tfields: *const Vec<TexprField>, p: Pos) -> Vec<str> {
     return match expected {
         Option::Some(et) => match *et {
             Typ::TEnum(ep) => copy_strs(a, &ep)
-            | _e => infer_enum_instance(a, ar, sc, epath, variant, tfields)
+            | _e => infer_enum_instance(a, ar, sc, epath, variant, tfields, p)
         }
-        | Option::None => infer_enum_instance(a, ar, sc, epath, variant, tfields)
+        | Option::None => infer_enum_instance(a, ar, sc, epath, variant, tfields, p)
     };
 }
 
@@ -4138,7 +4234,7 @@ fn elab_new_enum(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     }
     let talloc = elab_alloc_opt(a, ar, g, sc, env, alloc);
     let tflds = enum_tuple_args(a, ar, g, sc, env, &init, last, args);
-    let inst = enum_instance_path(a, ar, sc, none_ty(), &init, last, &tflds);
+    let inst = enum_instance_path(a, ar, sc, none_ty(), &init, last, &tflds, p);
     let ety = ty_node(ar, Typ::TEnum(copy_strs(a, &inst)));
     let oty = ty_node(ar, Typ::TOwnPtr(ety));
     return te_node(ar, TexprNode::TNewEnum { ename_path: inst, variant: last, tag: tag, args: tflds, alloc: talloc }, oty, p);
@@ -4998,7 +5094,7 @@ fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
     let tag = variant_tag(sc.sc_etags, &qtname, variant);
     if tag >= 0 as int {
         let empty: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
-        let inst = enum_instance_path(a, ar, sc, expected, &qtname, variant, &empty);
+        let inst = enum_instance_path(a, ar, sc, expected, &qtname, variant, &empty, p);
         return mk_enum_lit_node(a, ar, &inst, variant, tag, empty, p);
     }
     if is_known_enum(sc, &qtname) { return no_such_variant(a, ar, sc, &qtname, variant, p); }

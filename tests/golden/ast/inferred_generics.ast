@@ -1,0 +1,6 @@
+;; exile-ast-dump v1 examples/inferred_generics.exl
+(enum Pair (tparams A B) (variants (variant Both (struct A) (struct B)) (variant Neither)))
+(fn from_payload (params ) (int i32) (body (let o (call Option::Some (int 5))) (let-else (pat-variant Option::Some (pat-var v)) (var o) (else (return (binop - (int 0) (int 1))))) (return (var v))))
+(fn two_params (params ) (int i32) (body (let p (call Pair::Both (int 3) (bool true))) (return (match (var p) (arm (pat-variant Pair::Both (pat-var x) (pat-var _y)) (var x)) (arm (pat-variant Pair::Neither) (int 0))))))
+(fn needs_annotation (params ) (int i32) (body (let r (ty (struct-app Result (int i32) str)) (call Result::Ok (int 7))) (return (match (var r) (arm (pat-variant Result::Ok (pat-var v)) (var v)) (arm (pat-variant Result::Err (pat-var _e)) (int 0))))))
+(fn main (params ) void (body (expr-stmt (call println (call from_payload ))) (expr-stmt (call println (call two_params ))) (expr-stmt (call println (call needs_annotation )))))
