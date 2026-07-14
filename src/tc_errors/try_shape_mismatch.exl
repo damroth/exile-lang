@@ -1,0 +1,8 @@
+// `try` returns EARLY on the error side, so the enclosing fn must be able to
+// carry that error: the same Option/Result shape, or there is nowhere to return to.
+fn f() -> int {
+    let o: Option<int> = Option::Some(1);
+    let v = try o;
+    return v;
+}
+fn main() { println(f()); }

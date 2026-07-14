@@ -109,3 +109,21 @@ Positions match the reference by construction: it reports the ENCLOSING construc
 item's own pos.  The port's prelude types are BUILT-IN where the reference's are
 prelude SOURCE — so its struct table holds them and ours does not.  `is_builtin_struct`
 names them; without it the check would reject every `StringBuilder`.
+
+## Family 9+10 — try / orelse / match
+
+`try` and `orelse` both lower to a two-arm match, and `match` is what they lower
+into — so the three land together.
+
+The port's guard was `is_enum_ty`, not "is an Option or a Result".  A user enum
+sailed into the desugar and was matched against the prelude's `Ok`/`Err` tags —
+C emitted for a value the scrutinee never had.  `try` is the one construct that
+returns from a function you are not looking at; the shape rule is what makes that
+sound, which is why it carries three separate messages (not an Option/Result, no
+return type at all, wrong Option/Result shape).
+
+Writing the check found the mirror bug in the relation under it: the reference
+accepts `enum | integer | c_int | bool` as a scrutinee, and the port's
+`is_scalar_ty` had no `TCInt` case.  Shipping the diagnostic without that would
+have rejected `match c { 65 => ... }` on a c_int — a program the reference
+accepts.  Third instance of the same lesson (see the null note above).

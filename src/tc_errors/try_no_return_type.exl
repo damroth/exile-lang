@@ -1,0 +1,5 @@
+fn f() {
+    let o: Option<int> = Option::Some(1);
+    let v = try o;
+}
+fn main() { f(); }

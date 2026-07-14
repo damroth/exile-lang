@@ -1,0 +1,9 @@
+// Not any enum — an Option or a Result.  A user enum reaching the desugar would
+// be matched against the prelude's Ok/Err tags and emit C for a value it never had.
+enum E { A(int) | B }
+fn f() -> Result<int, int> {
+    let e = E::A(1);
+    let v = try e;
+    return Result::Ok(v);
+}
+fn main() { println(1); }

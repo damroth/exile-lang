@@ -2822,6 +2822,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
 fn is_scalar_ty(t: *const Typ) -> bool {
     return match *t {
         Typ::TInt(_k) => true
+        | Typ::TCInt { is_signed } => true
         | Typ::TBool => true
         | _other => false
     };
@@ -3091,7 +3092,13 @@ fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     if is_enum_ty(tscrut.ty) {
         return emit_match(a, ar, g, sc, env, expected, tscrut, enum_ty_path(a, tscrut.ty), arms, p);
     }
-    if !is_scalar_ty(tscrut.ty) { return defer_expr(ar, p); }
+    if !is_scalar_ty(tscrut.ty) {
+        let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+        sb.push_str("'match' requires an enum, integer, or bool value, got ");
+        sb.push_str(typ_name(a, ar, tscrut.ty));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return defer_expr(ar, p);
+    }
     let epath: Vec<str> = Vec::with_capacity(a, 8 as u32);
     return emit_match(a, ar, g, sc, env, expected, tscrut, epath, arms, p);
 }
@@ -3136,6 +3143,56 @@ fn inst_is_option(path: *const Vec<str>) -> bool {
     let name = path_last(path);
     return str::eq(name, "Option") || str_starts_with(name, "Option_");
 }
+fn enum_path_or_empty(a: Allocator, t: *const Typ) -> Vec<str> {
+    if is_enum_ty(t) { return enum_ty_path(a, t); }
+    return Vec::with_capacity(a, 8 as u32);
+}
+// `try` returns EARLY on the error side, so the enclosing fn must be able to
+// carry that error: same Option/Result shape, or there is nowhere to return to.
+fn check_try_ret(a: Allocator, ar: *Arena, sc: *const TyScope, ity: *const Typ,
+                 ipath: *const Vec<str>, p: Pos) -> bool {
+    return match sc.sc_ret {
+        Option::Some(rt) => try_ret_shape(a, ar, sc, ity, ipath, rt, p)
+        | Option::None => try_ret_missing(a, ar, sc, p)
+    };
+}
+fn try_ret_missing(_a: Allocator, ar: *Arena, sc: *const TyScope, p: Pos) -> bool {
+    tc_fail(ar, sc, p, "'try' is only allowed in fns that return Option or Result (this fn has no return type)");
+    return false;
+}
+fn try_ret_shape(a: Allocator, ar: *Arena, sc: *const TyScope, ity: *const Typ,
+                 ipath: *const Vec<str>, rt: *const Typ, p: Pos) -> bool {
+    let rpath = enum_path_or_empty(a, rt);
+    let inner_opt = inst_is_option(ipath);
+    let same = is_enum_ty(rt) && (if inner_opt { inst_is_option(&rpath) } else { inst_is_result(&rpath) });
+    if same { return true; }
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("'try' on "); sb.push_str(typ_name(a, ar, ity));
+    sb.push_str(" value but enclosing fn returns "); sb.push_str(typ_name(a, ar, rt));
+    sb.push_str(" — they must share the same Option/Result shape");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return false;
+}
+fn inst_is_result(path: *const Vec<str>) -> bool {
+    let name = path_last(path);
+    return str::eq(name, "Result") || str_starts_with(name, "Result_");
+}
+// `try` / `orelse` take an Option or a Result — NOT any enum.  A user enum
+// reaching the desugar would be matched against the prelude's Ok/Err tags and
+// emit C for a value it never had.
+fn is_opt_or_res(t: *const Typ, path: *const Vec<str>) -> bool {
+    if !is_enum_ty(t) { return false; }
+    return inst_is_option(path) || inst_is_result(path);
+}
+fn require_opt_or_res(a: Allocator, ar: *Arena, sc: *const TyScope, kw: str, t: *const Typ, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("'"); sb.push_str(kw); sb.push_str("' requires ");
+    if str::eq(kw, "orelse") { sb.push_str("an Option or Result value, got "); }
+    else { sb.push_str("Option or Result, got "); }
+    sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn skel_path(a: Allocator, is_opt: bool) -> Vec<str> {
     let mut sk: Vec<str> = Vec::with_capacity(a, 8 as u32);
     sk.push(if is_opt { "Option" } else { "Result" });
@@ -3145,7 +3202,11 @@ fn skel_path(a: Allocator, is_opt: bool) -> Vec<str> {
 fn elab_orelse(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                expected: Option<*const Typ>, value: *const Expr, dflt: *const Expr, p: Pos) -> *const Texpr {
     let tvalue = elab_expr(a, ar, g, sc, env, none_ty(), value);
-    if !is_enum_ty(tvalue.ty) { return defer_expr(ar, p); }
+    let vpath = enum_path_or_empty(a, tvalue.ty);
+    if !is_opt_or_res(tvalue.ty, &vpath) {
+        require_opt_or_res(a, ar, sc, "orelse", tvalue.ty, p);
+        return defer_expr(ar, p);
+    }
     let path = enum_ty_path(a, tvalue.ty);
     let is_opt = inst_is_option(&path);
     let skel = skel_path(a, is_opt);
@@ -3190,7 +3251,12 @@ fn build_try_err_arm(a: Allocator, ar: *Arena, sc: *const TyScope, is_opt: bool,
 fn elab_try(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
             value: *const Expr, p: Pos) -> *const Texpr {
     let tinner = elab_expr(a, ar, g, sc, env, none_ty(), value);
-    if !is_enum_ty(tinner.ty) { return defer_expr(ar, p); }
+    let vpath = enum_path_or_empty(a, tinner.ty);
+    if !is_opt_or_res(tinner.ty, &vpath) {
+        require_opt_or_res(a, ar, sc, "try", tinner.ty, p);
+        return defer_expr(ar, p);
+    }
+    if !check_try_ret(a, ar, sc, tinner.ty, &vpath, p) { return defer_expr(ar, p); }
     let ipath = enum_ty_path(a, tinner.ty);
     let is_opt = inst_is_option(&ipath);
     let skel = skel_path(a, is_opt);

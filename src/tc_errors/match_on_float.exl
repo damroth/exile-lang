@@ -1,0 +1,5 @@
+fn main() {
+    let f = 1.5;
+    let r = match f { _o => 9 };
+    println(r);
+}

@@ -1,0 +1,6 @@
+fn f() -> int {
+    let x = 5;
+    let y = try x;
+    return y;
+}
+fn main() { println(f()); }
