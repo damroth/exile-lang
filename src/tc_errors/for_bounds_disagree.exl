@@ -1,0 +1,7 @@
+// This one compiled and the loop ran ZERO times — silently wrong output.
+fn main() {
+    let n = 5 as u8;
+    for i in 0..n {
+        println(i as int);
+    }
+}

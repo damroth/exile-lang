@@ -1,0 +1,4 @@
+fn main() {
+    let c = 5 as c_long;
+    println(c);
+}

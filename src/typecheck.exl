@@ -230,6 +230,8 @@ struct AssocBind {
 
 struct TyScope {
     sc_structs: *const Vec<str>,
+    sc_dbg: *const Vec<str>,
+    sc_loops: *u32,
     sc_enums: *const Vec<str>,
     sc_tparams: *const Vec<str>,
     sc_iconsts: *const Vec<IntConst>,
@@ -319,6 +321,8 @@ struct TyScope {
 // later passes add more indices.
 struct ProgIdx {
     pi_snames: *const Vec<str>,
+    pi_dbg: *const Vec<str>,
+    pi_loops: *u32,
     pi_enames: *const Vec<str>,
     pi_iconsts: *const Vec<IntConst>,
     pi_sinfo: *const Vec<StructField>,
@@ -1815,7 +1819,41 @@ fn elab_cast(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
              sub: *const Expr, ann: *const TypeAnn, p: Pos) -> *const Texpr {
     let s = elab_expr(a, ar, g, sc, env, none_ty(), sub);
     let ty = resolve_sig_ty(a, ar, sc, ann, p);
+    check_cast_kinds(a, ar, sc, s.ty, ty, p);
     return te_node(ar, TexprNode::TCast(s, ann), ty, p);
+}
+// `as` crosses KINDS deliberately and only in the directions C can honour.  An
+// identity cast on an aggregate is a no-op the reference tolerates (an
+// instantiated generic body can produce `src[i] as T` with T a struct).
+fn check_cast_kinds(a: Allocator, ar: *Arena, sc: *const TyScope, from: *const Typ,
+                    to: *const Typ, p: Pos) {
+    if cast_kind_ok(from, to) { return; }
+    if typ_eq(from, to) { return; }
+    if ty_has_tvar(from) || ty_has_tvar(to) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+    sb.push_str("cannot cast "); sb.push_str(typ_name(a, ar, from));
+    sb.push_str(" to "); sb.push_str(typ_name(a, ar, to));
+    sb.push_str(" (supported: int↔int, int↔float, float↔float, ptr↔ptr, int→ptr)");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+// The reference's `is_ptr` — pointer-like AS C SEES IT, which includes `str`
+// (a `const char *`).  Deliberately NOT `is_ptr_ty`: that one answers the
+// ownership question (auto-ref, loans), where a `str` is not a pointer you may
+// lend.  Two questions, two predicates; conflating them is how `str as *const
+// c_char` — which the port's own loader does — got rejected.
+fn is_c_ptr(t: *const Typ) -> bool {
+    if is_ptr_ty(t) { return true; }
+    return match *t { Typ::TString => true | _o => false };
+}
+fn cast_kind_ok(from: *const Typ, to: *const Typ) -> bool {
+    if is_int_like_ty(from) && is_int_like_ty(to) { return true; }
+    if is_c_ptr(from) && is_c_ptr(to) { return true; }
+    if is_int_like_ty(from) && is_c_ptr(to) { return true; }
+    if is_int_like_ty(from) && is_float_ty(to) { return true; }
+    if is_float_ty(from) && is_int_like_ty(to) { return true; }
+    if is_float_ty(from) && is_float_ty(to) { return true; }
+    return false;
 }
 
 // A call's result type: the declared return type, or — for a void fn used
@@ -2549,6 +2587,103 @@ fn elab_str_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
 // `as_str()` printed, and the String freed.  Without this the print
 // builtin only accepts scalars — Display is the user-facing surface for
 // aggregates.  The temp names ride the program-global gensym counter.
+// ===== `println` / `print`: an ALLOWLIST, not a fallback =====
+//
+// Only the shapes codegen knows how to format may reach it.  Everything else is
+// named and rejected — a pointer printed as `%d` compiles cleanly and prints a
+// stack address, which is the worst failure mode there is: plausible garbage.
+// The marker lives on the SKELETON; a mono instance (`Pair_i32_bool`) inherits it.
+// The reference copies the flag into the instance; the port carries no flags on
+// instances, so it asks the skeleton — same question, same answer.
+fn is_debug_ty(sc: *const TyScope, path: *const Vec<str>) -> bool {
+    let last = path_last(path);
+    if name_in(sc.sc_dbg, last) { return true; }
+    let n = sc.sc_dbg.length();
+    let sl = sc.sc_dbg.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str_starts_with(last, sl[i]) && is_inst_suffix(last, sl[i]) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// `Pair_i32_bool` is an instance of `Pair`; `Pairs` is not.
+fn is_inst_suffix(inst: str, skel: str) -> bool {
+    let sn = str::length(skel);
+    if str::length(inst) <= sn { return false; }
+    let ib = str::as_bytes(inst);
+    return ib[sn] == 95 as u8;
+}
+fn print_reject(a: Allocator, ar: *Arena, sc: *const TyScope, pre: str, t: *const Typ, post: str, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+    sb.push_str(pre); sb.push_str(typ_name(a, ar, t)); sb.push_str(post);
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn check_printable(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
+                   targs: *const Vec<*const Texpr>, p: Pos) {
+    if targs.length() != 1 as u32 {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str(name); sb.push_str("() takes exactly one argument, got ");
+        sb.push_str(int_to_str_c(a, ar, targs.length() as int));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    check_printable_ty(a, ar, sc, targs.as_slice()[0 as u32].ty, p);
+    return;
+}
+fn check_printable_ty(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    match *t {
+        Typ::TInt(_k) => { }
+        | Typ::TCInt { is_signed } => { }
+        | Typ::TBool => { }
+        | Typ::TString => { }
+        | Typ::TFloat(_w) => { }
+        | Typ::TTuple(_ts) => { tc_fail(ar, sc, p, "cannot print a tuple; destructure with 'let (...)' first"); }
+        | Typ::TNullPtr => { tc_fail(ar, sc, p, "cannot print 'null'"); }
+        | Typ::TStruct(path) => { print_struct_reject(a, ar, sc, t, &path, p); }
+        | Typ::TEnum(path) => { print_enum_reject(a, ar, sc, t, &path, p); }
+        | Typ::TPtr(_i) => { print_reject(a, ar, sc, "cannot print a pointer value (", t, "); deref or print a field", p); }
+        | Typ::TConstPtr(_i) => { print_reject(a, ar, sc, "cannot print a const-pointer value (", t, "); deref or print a field", p); }
+        | Typ::TOwnPtr(_i) => { print_reject(a, ar, sc, "cannot print a pointer value (", t, "); deref or print a field", p); }
+        | Typ::TFnPtr { params, ret } => { print_reject(a, ar, sc, "cannot print a function-pointer value (", t, "); call it or cast to an int first", p); }
+        | Typ::TArray { elem, size } => { print_reject(a, ar, sc, "cannot print an array value (", t, "); iterate and print each element", p); }
+        | Typ::TExtAlias(_n) => { print_reject(a, ar, sc, "cannot print an 'extern type' value (", t, "); cast to a known type first (e.g. `as int`)", p); }
+        | Typ::TExtStruct(_n) => { print_reject(a, ar, sc, "cannot print an 'extern struct' value (", t, "); only pointers to opaque types are usable", p); }
+        | Typ::TCShort { is_signed } => { print_c_reject(a, ar, sc, t, p); }
+        | Typ::TCLong { is_signed } => { print_c_reject(a, ar, sc, t, p); }
+        | Typ::TCChar => { print_c_reject(a, ar, sc, t, p); }
+        | Typ::TCSChar => { print_c_reject(a, ar, sc, t, p); }
+        | Typ::TCUChar => { print_c_reject(a, ar, sc, t, p); }
+        | _o => { print_reject(a, ar, sc, "cannot print a value of type ", t, "; convert it to a printable type first (int / bool / str, or `@debug`-mark the type)", p); }
+    }
+    return;
+}
+fn print_c_reject(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("cannot directly print a "); sb.push_str(typ_name(a, ar, t));
+    sb.push_str(" value; cast to a known type first (e.g. `as int`)");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn print_struct_reject(a: Allocator, ar: *Arena, sc: *const TyScope, _t: *const Typ,
+                       path: *const Vec<str>, p: Pos) {
+    if is_debug_ty(sc, path) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+    sb.push_str("cannot print a struct value ("); sb.push_str(path_display(a, ar, path));
+    sb.push_str("); print individual fields, or mark the struct with `@debug`");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn print_enum_reject(a: Allocator, ar: *Arena, sc: *const TyScope, _t: *const Typ,
+                     path: *const Vec<str>, p: Pos) {
+    if is_debug_ty(sc, path) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    sb.push_str("cannot print an enum value ("); sb.push_str(path_display(a, ar, path));
+    sb.push_str("); match on it and print per variant, or mark the enum with `@debug`");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn display_dispatch_target(sc: *const TyScope, t: *const Typ) -> bool {
     return match *t {
         Typ::TStruct(path) => find_method_idx(sc.sc_methods, &path, "fmt") >= 0 as int
@@ -2670,6 +2805,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
                 return elab_display_println(a, ar, g, sc, env, expected, name, asl[0 as u32], p);
             }
         }
+        check_printable(a, ar, sc, name, &targs, p);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: targs }, t_i32(ar), p);
     }
     if str::eq(name, "type_name") {
@@ -4247,13 +4383,21 @@ fn elab_ref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
     return te_node(ar, TexprNode::TRef(ts), rty, p);
 }
 
+fn bad_deref(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) -> *const Texpr {
+    if ty_has_tvar(t) { return defer_expr(ar, p); }
+    let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+    sb.push_str("deref '*' requires a pointer, got ");
+    sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, p);
+}
 fn elab_deref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
               env: *const Vec<FieldTy>, sub: *const Expr, p: Pos) -> *const Texpr {
     let ts = elab_expr(a, ar, g, sc, env, none_ty(), sub);
     if is_nullish(ts.ty) { tc_fail(ar, sc, p, "cannot deref 'null'"); }
     return match deref_pointee(ts.ty) {
         Option::Some(inner) => te_node(ar, TexprNode::TDeref(ts), inner, p)
-        | Option::None => defer_expr(ar, p)
+        | Option::None => bad_deref(a, ar, sc, ts.ty, p)
     };
 }
 
@@ -5025,7 +5169,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let lparams = lam_to_params(a, params_fd);
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
+    let sc = TyScope { sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
@@ -5165,6 +5309,8 @@ fn negate_lit(v: Option<int>) -> Option<int> {
 fn is_int_like_ty(t: *const Typ) -> bool {
     return match *t {
         Typ::TInt(_k) => true
+        // `type ULONG` from FFI is a C integer typedef; the reference counts it.
+        | Typ::TExtAlias(_n) => true
         | Typ::TCInt { is_signed } => true
         | Typ::TCShort { is_signed } => true
         | Typ::TCLong { is_signed } => true
@@ -5556,8 +5702,43 @@ fn mk_for_post(a: Allocator, ar: *Arena, fv: str, cty: *const Typ) -> Vec<Tstmt>
     return post;
 }
 
+fn check_loop_cond(a: Allocator, ar: *Arena, sc: *const TyScope, cond: *const Texpr, p: Pos) {
+    if is_bool_ty(cond.ty) { return; }
+    if ty_has_tvar(cond.ty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("'while' condition must be of type bool, got ");
+    sb.push_str(typ_name(a, ar, cond.ty));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+// `break` / `continue` need a loop to leave.  The desugars (`for`, iterator
+// protocol) bump the same counter, so a `break` inside a `for` body is legal
+// exactly as it is inside a `while`.
+fn check_in_loop(ar: *Arena, sc: *const TyScope, kw: str, p: Pos) {
+    if *sc.sc_loops > 0 as u32 { return; }
+    if str::eq(kw, "break") { tc_fail(ar, sc, p, "'break' outside a loop"); return; }
+    tc_fail(ar, sc, p, "'continue' outside a loop");
+    return;
+}
+fn check_for_bounds(a: Allocator, ar: *Arena, sc: *const TyScope, tlo: *const Texpr,
+                    thi: *const Texpr, p: Pos) {
+    if ty_has_tvar(tlo.ty) || ty_has_tvar(thi.ty) { return; }
+    if !is_int_like_ty(tlo.ty) {
+        let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+        sb.push_str("'for' loop bound must be an integer, got ");
+        sb.push_str(typ_name(a, ar, tlo.ty));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    if typ_eq(thi.ty, tlo.ty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+    sb.push_str("'for' bounds disagree: lo is "); sb.push_str(typ_name(a, ar, tlo.ty));
+    sb.push_str(", hi is "); sb.push_str(typ_name(a, ar, thi.ty));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>,
-            ret: Option<*const Typ>, iter_var: str, range: *const Expr, body: *const Vec<Stmt>, out: *Vec<Tstmt>) {
+            ret: Option<*const Typ>, iter_var: str, range: *const Expr, body: *const Vec<Stmt>, fpos: Pos, out: *Vec<Tstmt>) {
     let k = *gensym;
     *gensym = *gensym + 1 as u32;
     let fv = gensym_name(a, ar, "__fv", k);
@@ -5572,9 +5753,12 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
             let tlo = elab_expr(a, ar, g, sc, env, none_ty(), lo);
             let cty = tlo.ty;
             let thi = elab_expr(a, ar, g, sc, env, Option::Some(cty), hi);
+            check_for_bounds(a, ar, sc, tlo, thi, fpos);
             let rbody = subst_body(a, ar, iter_var, fv, body);
             env.push(FieldTy { name: fv, ty: cty });
+            *sc.sc_loops = *sc.sc_loops + 1 as u32;
             let tbody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &rbody);
+            *sc.sc_loops = *sc.sc_loops - 1 as u32;
             out.push(Tstmt::TLet { name: fe, value: thi, decl_ty: thi.ty, pos: zero_pos() });
             out.push(Tstmt::TLet { name: fv, value: tlo, decl_ty: tlo.ty, pos: zero_pos() });
             let cond = mk_for_cond(ar, fv, fe, cty, inclusive);
@@ -5597,6 +5781,7 @@ fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let itname = gensym_name(a, ar, "__it", k);
     note_let_mut(sc, itname);
     let trange = elab_expr(a, ar, g, sc, env, none_ty(), range);
+    *sc.sc_loops = *sc.sc_loops + 1 as u32;
     env.push(FieldTy { name: itname, ty: trange.ty });
     out.push(Tstmt::TLet { name: itname, value: trange, decl_ty: trange.ty, pos: zero_pos() });
     // `__it.next()`
@@ -5628,6 +5813,7 @@ fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let truecond = te_node(ar, TexprNode::TBoolLit(true), t_bool(ar), zero_pos());
     let wpost = empty_tstmts(a);
     out.push(Tstmt::TWhile { cond: truecond, body: twbody, post: wpost });
+    *sc.sc_loops = *sc.sc_loops - 1 as u32;
 }
 
 // Bind each name of a `let (a, b) = …` to the corresponding tuple element
@@ -5918,7 +6104,10 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         }
         | Stmt::While { cond, body } => {
             let wcond = elab_expr(a, ar, g, sc, env, none_ty(), cond);
+            check_loop_cond(a, ar, sc, wcond, expr_pos(cond));
+            *sc.sc_loops = *sc.sc_loops + 1 as u32;
             let wbody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &body);
+            *sc.sc_loops = *sc.sc_loops - 1 as u32;
             let wpost: Vec<Tstmt> = empty_tstmts(a);
             out.push(Tstmt::TWhile { cond: wcond, body: wbody, post: wpost });
         }
@@ -5958,14 +6147,14 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Stmt::LetElse { pat, value, else_body, pos } => {
             elab_let_else(a, ar, g, sc, gensym, env, ret, &pat, value, &else_body, pos, out);
         }
-        | Stmt::Break(pos) => { out.push(Tstmt::TBreak(pos)); }
-        | Stmt::Continue(pos) => { out.push(Tstmt::TContinue(pos)); }
+        | Stmt::Break(pos) => { check_in_loop(ar, sc, "break", pos); out.push(Tstmt::TBreak(pos)); }
+        | Stmt::Continue(pos) => { check_in_loop(ar, sc, "continue", pos); out.push(Tstmt::TContinue(pos)); }
         | Stmt::Defer { body, pos } => {
             let dbody = elab_stmt_body(a, ar, g, sc, gensym, env, ret, &body);
             out.push(Tstmt::TDefer { body: dbody, pos: pos });
         }
-        | Stmt::For { iter_var, range, body } => {
-            elab_for(a, ar, g, sc, gensym, env, ret, iter_var, range, &body, out);
+        | Stmt::For { iter_var, range, body, pos } => {
+            elab_for(a, ar, g, sc, gensym, env, ret, iter_var, range, &body, pos, out);
         }
         | Stmt::With { target, name, body, pos } => {
             elab_with(a, ar, g, sc, gensym, env, ret, target, name, &body, pos, out);
@@ -6749,7 +6938,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     // A generic-struct method skeleton borrows the impl's type parameters
     // (the method itself declares none); everything else uses its own.
     let eff_tparams = pick_tparams(xtparams, &f.tparams);
-    let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
+    let sc = TyScope { sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: str::eq(mangled, "main") };
@@ -7013,6 +7202,33 @@ fn collect_type_names_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it
         | Item::Module(md) => { collect_type_names(a, ar, &path_push(a, modpath, md.mname), &md.mitems, snames, enames, fstructs, fenums); }
         | _e => { }
     }
+}
+// `@debug` marks a type printable — codegen emits a formatter for it.  typecheck
+// only ever passed the flag through to the IR; the print allowlist has to ASK.
+fn collect_debug_types_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it: *const Item, out: *Vec<str>) {
+    match *it {
+        Item::Struct(sd) => { push_dbg_if(a, ar, modpath, sd.sname, sd.sis_debug, out); }
+        | Item::Enum(ed) => { push_dbg_if(a, ar, modpath, ed.ename, ed.eis_debug, out); }
+        | Item::Module(md) => { collect_debug_types(a, ar, &path_push(a, modpath, md.mname), &md.mitems, out); }
+        | _e => { }
+    }
+}
+fn push_dbg_if(a: Allocator, ar: *Arena, modpath: *const Vec<str>, name: str, flag: bool, out: *Vec<str>) {
+    if !flag { return; }
+    push_dbg_name(a, ar, modpath, name, out);
+    return;
+}
+fn push_dbg_name(a: Allocator, ar: *Arena, modpath: *const Vec<str>, name: str, out: *Vec<str>) {
+    out.push(name);
+    if modpath.length() > 0 as u32 { out.push(join_colons(a, ar, modpath, name)); }
+    return;
+}
+fn collect_debug_types(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<str>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_debug_types_one(a, ar, modpath, &sl[i], out); i = i + 1 as u32; }
+    return;
 }
 
 fn collect_type_names(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items: *const Vec<Item>, snames: *Vec<str>, enames: *Vec<str>, fstructs: *Vec<str>, fenums: *Vec<str>) {
@@ -7294,7 +7510,7 @@ fn slot_kv_ty(a: Allocator, ar: *Arena) -> *const Typ {
 // resolves to `m::Pos`).  Used by the collectors + the method-body elaborator.
 fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope {
     return TyScope {
-        sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -7314,7 +7530,7 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
 // recovery works regardless of construction order.
 fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyScope {
     return TyScope {
-        sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -7330,7 +7546,7 @@ fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyS
 }
 fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
     return TyScope {
-        sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -7350,7 +7566,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
 // the monomorphic instance directly (no post-hoc substitution).
 fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *const Vec<TVarBind>) -> TyScope {
     return TyScope {
-        sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -7368,7 +7584,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
 // A copy of the scope carrying the enclosing fn's resolved return type.
 fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
     return TyScope {
-        sc_structs: base.sc_structs, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -8941,7 +9157,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let ret_ann: Option<*const TypeAnn> = Option::Some(closure_struct_ann(a, ar, vd.vname));
-    let sc = TyScope { sc_structs: idx.pi_snames, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
+    let sc = TyScope { sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
@@ -11073,6 +11289,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut fenums: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let top_modpath: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_type_names(a, ar, &top_modpath, items, &snames, &enames, &fstructs, &fenums);
+    let mut dbgnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_debug_types(a, ar, &top_modpath, items, &dbgnames);
     // Type-level `use foo::Bar;` aliases (collected after type names so the
     // `foo::Bar` marker is available to confirm Bar is a declared type).
     let mut taliases: Vec<TypeAlias> = Vec::with_capacity(a, 8 as u32);
@@ -11121,7 +11339,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // The collection-phase scope never elaborates a body, so its gensym is a
     // throwaway; the real per-fn counter rides through elaborate_fn.
     let mut gensym_unused: u32 = 0 as u32;
-    let base_scope = TyScope { sc_structs: &snames, sc_enums: &enames, sc_tparams: &empty_tp,
+    let mut loopdepth = 0 as u32;
+    let base_scope = TyScope { sc_structs: &snames, sc_dbg: &dbgnames, sc_loops: &loopdepth, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
@@ -11172,7 +11391,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_derives(a, ar, &base_scope, items, &methods, &lifted_lambdas, &gsigs);
     // DR-030 drop synthesis: a `<Struct>__drop` for every own-field struct.
     collect_drops(a, ar, items, &methods, &lifted_lambdas);
-    let idx = ProgIdx { pi_snames: &snames, pi_enames: &enames, pi_iconsts: &iconsts,
+    let idx = ProgIdx { pi_snames: &snames, pi_dbg: &dbgnames, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
                         pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_err: &tc_err, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };

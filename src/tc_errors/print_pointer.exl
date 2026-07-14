@@ -1,0 +1,7 @@
+// The worst failure mode there is: a pointer printed as %d compiles cleanly and
+// prints a stack address.  Plausible garbage.
+fn main() {
+    let x = 5;
+    let p = &x;
+    println(p);
+}

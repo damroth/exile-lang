@@ -1,0 +1,4 @@
+fn main() {
+    let x = true as int;
+    println(x);
+}
