@@ -1,0 +1,6 @@
+// c_void is the C `void`: it has no values.  Only `*c_void` — a pointer to
+// something the compiler is not allowed to look inside — is usable.
+fn main() {
+    let x: c_void = 5;
+    println(1);
+}

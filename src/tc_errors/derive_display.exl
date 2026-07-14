@@ -1,0 +1,5 @@
+// Display is deliberately not derivable: it is a hand-written surface, and
+// generating one would be inventing a formatter the author never chose.
+@derive(Display)
+struct P { x: int }
+fn main() { println(1); }

@@ -1080,6 +1080,16 @@ fn register_prelude_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, 
 // top-level integer constant (folded through the scope's const table).
 // Anything else defers to 0, leaving the sig visibly off rather than
 // crashing.
+// A `[T; 0]` has no values and no C spelling; the size must be positive.
+fn checked_array_size(a: Allocator, ar: *Arena, sc: *const TyScope, size: *const Expr, p: Pos) -> int {
+    let n = array_size_of(size, sc);
+    if n > 0 as int { return n; }
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    sb.push_str("array size must be positive, got ");
+    sb.push_str(int_to_str_c(a, ar, n));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return n;
+}
 fn array_size_of(size: *const Expr, sc: *const TyScope) -> int {
     return match *size {
         Expr::IntLit(n, _q) => n
@@ -1096,7 +1106,7 @@ fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const Type
         | TypeAnn::TyStruct { path, args } => resolve_named_ty(a, ar, sc, &path, &args, p)
         | TypeAnn::TyTuple(elems) => ty_node(ar, Typ::TTuple(resolve_sig_args(a, ar, sc, &elems, p)))
         | TypeAnn::TyArray { elem, size } =>
-            ty_node(ar, Typ::TArray { elem: resolve_sig_ty(a, ar, sc, elem, p), size: array_size_of(size, sc) })
+            ty_node(ar, Typ::TArray { elem: resolve_sig_ty(a, ar, sc, elem, p), size: checked_array_size(a, ar, sc, size, p) })
         | TypeAnn::TyFnPtr { params, ret } =>
             ty_node(ar, Typ::TFnPtr { params: resolve_sig_args(a, ar, sc, &params, p), ret: resolve_sig_ret(a, ar, sc, ret, p) })
         | TypeAnn::TySelf => voidable_ty(ar, sc.sc_self)
@@ -2814,6 +2824,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     }
     if str::eq(name, "cstr_len") {
         let cl_args = elab_args(a, ar, g, sc, env, args);
+        check_cstr_len(a, ar, sc, &cl_args, p);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: cl_args }, t_u32(ar), p);
     }
     // `ptr_offset(p, n)` -> `(p + n)`; steps a `u8` base by BYTES and yields a
@@ -2827,16 +2838,19 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     // slot buffer so the discriminator byte reads Empty without forging a K / V.
     if str::eq(name, "mem_zero") {
         let mz_args = elab_args(a, ar, g, sc, env, args);
+        check_mem_zero(a, ar, sc, &mz_args, p);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: mz_args }, t_i32(ar), p);
     }
     if str::eq(name, "len") { return elab_len(a, ar, g, sc, env, args, p); }
     if str::eq(name, "default_allocator") {
+        check_no_args(a, ar, sc, "default_allocator", args.length(), p);
         register_mono_struct(a, sc, &allocator_path(a));
         let no_args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: no_args }, ty_node(ar, Typ::TStruct(allocator_path(a))), p);
     }
     if str::eq(name, "free") {
         let fr_args = elab_args(a, ar, g, sc, env, args);
+        check_free(a, ar, sc, args, &fr_args, p);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: fr_args }, t_i32(ar), p);
     }
     if env_is_fnptr(env, name) { return mk_fnptr_call(a, ar, g, sc, env, name, args, p); }
@@ -3461,7 +3475,28 @@ fn elab_arms(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     let n = arms.length();
     let sl = arms.as_slice();
     let mut i = 0 as u32;
-    while i < n { elab_one_arm(a, ar, g, sc, env, expected, scrut_ty, &sl[i], out); i = i + 1 as u32; }
+    while i < n {
+        check_bool_pat(a, ar, sc, &sl[i].pat, scrut_ty);
+        elab_one_arm(a, ar, g, sc, env, expected, scrut_ty, &sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+// `match x { true => ... }` on an i32: the pattern names a value the scrutinee
+// cannot hold.
+fn check_bool_pat(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern, scrut: *const Typ) {
+    if is_bool_ty(scrut) || ty_has_tvar(scrut) { return; }
+    match *pat {
+        Pattern::PBool(_b, ppos) => { bool_pat_reject(a, ar, sc, scrut, ppos); }
+        | _o => { }
+    }
+    return;
+}
+fn bool_pat_reject(a: Allocator, ar: *Arena, sc: *const TyScope, scrut: *const Typ, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+    sb.push_str("boolean pattern needs a bool scrutinee, got ");
+    sb.push_str(typ_name(a, ar, scrut));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
 }
 
 fn match_result_ty(ar: *Arena, tarms: *const Vec<TmatchArm>) -> *const Typ {
@@ -4313,6 +4348,9 @@ fn enum_instance_path(a: Allocator, ar: *Arena, sc: *const TyScope, expected: Op
     };
 }
 
+fn is_some_expr(e: Option<*const Expr>) -> bool {
+    return match e { Option::Some(_x) => true | Option::None => false };
+}
 fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>,
                    base: Option<*const Expr>, p: Pos) -> *const Texpr {
@@ -4323,6 +4361,9 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         let init = qualify_type_path(a, ar, sc, &path_init(a, tname));
         let tag = variant_tag(sc.sc_etags, &init, last);
         if tag >= 0 as int {
+            // `..base` copies the REST of a struct's fields.  A variant is not a
+            // struct: the rest of an enum is the other variants.
+            if is_some_expr(base) { tc_fail(ar, sc, p, "'..base' functional update is not supported on enum variants"); }
             return mk_enum_lit_node(a, ar, &init, last, tag, enum_struct_args(a, ar, g, sc, env, &init, last, fields), p);
         }
     }
@@ -4413,6 +4454,52 @@ fn assign_target_ty(env: *const Vec<FieldTy>, path: *const Vec<str>) -> Option<*
     if path.length() == 0 as u32 { return none_ty(); }
     let psl = path.as_slice();
     return env_lookup(env, psl[0 as u32]);
+}
+// A bare `x = 5` with no `x` in scope is not a declaration — exile has no
+// implicit binding.  Qualified paths and extern vars are mutable globals.
+fn global_known(g: *const Vec<GlobalFn>, name: str) -> bool {
+    return match global_lookup(g, name) {
+        Option::Some(_gf) => true
+        | Option::None => false
+    };
+}
+fn check_assign_deref(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    if ty_has_tvar(t) { return; }
+    match *t {
+        Typ::TConstPtr(_i) => { assign_const_ptr(a, ar, sc, t, p); }
+        | Typ::TPtr(_i) => { }
+        | Typ::TOwnPtr(_i) => { }
+        | Typ::TNullPtr => { }
+        | _o => { assign_non_ptr(a, ar, sc, t, p); }
+    }
+    return;
+}
+fn assign_const_ptr(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("cannot assign through '*const' pointer ");
+    sb.push_str(typ_name(a, ar, t));
+    sb.push_str(" (pointee is read-only)");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn assign_non_ptr(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("assignment through '*' requires a pointer, got ");
+    sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn check_assign_target(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                       env: *const Vec<FieldTy>, path: *const Vec<str>, p: Pos) {
+    if path.length() != 1 as u32 { return; }
+    let name = path.as_slice()[0 as u32];
+    if is_some_ty(env_lookup(env, name)) { return; }
+    if global_known(g, name) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+    sb.push_str("assignment to undefined variable '");
+    sb.push_str(src_name(sc, name)); sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
 }
 fn assign_coerced_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                         env: *const Vec<FieldTy>, path: *const Vec<str>, value: *const Expr) -> *const Texpr {
@@ -4567,6 +4654,41 @@ fn array_elem_ty(t: *const Typ) -> Option<*const Typ> {
 }
 
 // `[e0, e1, ..]` — every element shares one type; the size is the count.
+// An array is ONE type repeated; `[1, true]` is not a shorter way to write a
+// tuple.  The first element sets the type and every other must match it.
+fn check_array_elems(a: Allocator, ar: *Arena, sc: *const TyScope, tes: *const Vec<*const Texpr>,
+                     elem: *const Typ, _p: Pos) {
+    if ty_has_tvar(elem) { return; }
+    let n = tes.length();
+    let sl = tes.as_slice();
+    let mut i = 1 as u32;
+    while i < n {
+        if !typ_eq(sl[i].ty, elem) && !ty_has_tvar(sl[i].ty) {
+            let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+            sb.push_str("array elements must share one type: ");
+            sb.push_str(typ_name(a, ar, elem)); sb.push_str(" vs ");
+            sb.push_str(typ_name(a, ar, sl[i].ty));
+            tc_fail(ar, sc, sl[i].pos, str::from_slice(ar, sb.as_slice()));
+            return;
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn repeat_count_of(count: *const Expr, folded: int) -> int {
+    return match expr_int_lit(count) {
+        Option::Some(k) => k
+        | Option::None => folded
+    };
+}
+fn check_repeat_count(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, p: Pos) {
+    if n > 0 as int { return; }
+    let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+    sb.push_str("array repeat count must be positive, got ");
+    sb.push_str(int_to_str_c(a, ar, n));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn elab_array_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                   expected: Option<*const Typ>, es: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let eexp = array_elem_expected(expected);
@@ -4577,6 +4699,7 @@ fn elab_array_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     while i < n { tes.push(elab_expr(a, ar, g, sc, env, eexp, sl[i])); i = i + 1 as u32; }
     let tsl = tes.as_slice();
     let elem_ty = if n == 0 as u32 { t_i32(ar) } else { tsl[0 as u32].ty };
+    check_array_elems(a, ar, sc, &tes, elem_ty, p);
     let aty = ty_node(ar, Typ::TArray { elem: elem_ty, size: n as int });
     return te_node(ar, TexprNode::TArrayLit(tes), aty, p);
 }
@@ -4587,6 +4710,9 @@ fn elab_array_repeat(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
     let eexp = array_elem_expected(expected);
     let tv = elab_expr(a, ar, g, sc, env, eexp, value);
     let n = array_size_of(count, sc);
+    // `array_size_of` folds only what can BE a size; a negative literal comes back
+    // 0, which would report the wrong number.  The message quotes what was written.
+    check_repeat_count(a, ar, sc, repeat_count_of(count, n), p);
     let aty = ty_node(ar, Typ::TArray { elem: tv.ty, size: n });
     return te_node(ar, TexprNode::TArrayRepeat { value: tv, count: n }, aty, p);
 }
@@ -4796,6 +4922,109 @@ fn is_vec_instance(t: *const Typ) -> bool {
 
 // `len(a)` folds to the array's compile-time size N (an `int` so `i < len(a)`
 // pairs with index loops).  A non-array argument defers.
+// ===== Builtin contracts =====
+//
+// Each of these was a bare `elab_args` + emit: whatever you passed, it took.
+// `free(a, &x)` on a stack address would have corrupted the allocator.
+
+fn builtin_arity(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, want: str,
+                 got: u32, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str(name); sb.push_str("() takes "); sb.push_str(want);
+    sb.push_str(", got "); sb.push_str(int_to_str_c(a, ar, got as int));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn check_no_args(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, n: u32, p: Pos) {
+    if n == 0 as u32 { return; }
+    builtin_arity(a, ar, sc, name, "no arguments", n, p);
+    return;
+}
+fn check_cstr_len(a: Allocator, ar: *Arena, sc: *const TyScope, targs: *const Vec<*const Texpr>, p: Pos) {
+    if targs.length() != 1 as u32 {
+        builtin_arity(a, ar, sc, "cstr_len", "exactly one argument", targs.length(), p);
+        return;
+    }
+    let t = targs.as_slice()[0 as u32].ty;
+    if is_str_ty(t) { return; }
+    if ty_has_tvar(t) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    sb.push_str("'cstr_len' expects a `str`, got "); sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn check_mem_zero(a: Allocator, ar: *Arena, sc: *const TyScope, targs: *const Vec<*const Texpr>, p: Pos) {
+    if targs.length() != 2 as u32 {
+        builtin_arity(a, ar, sc, "mem_zero", "exactly 2 arguments", targs.length(), p);
+        return;
+    }
+    let sl = targs.as_slice();
+    let pt = sl[0 as u32].ty;
+    let nt = sl[1 as u32].ty;
+    if ty_has_tvar(pt) || ty_has_tvar(nt) { return; }
+    if !is_c_ptr(pt) {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("'mem_zero' expects a pointer first argument, got ");
+        sb.push_str(typ_name(a, ar, pt));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    if is_int_like_ty(nt) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("'mem_zero' expects an integer byte count, got ");
+    sb.push_str(typ_name(a, ar, nt));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+// `free(a, p)` — the allocator that produced the pointer, and an OWNED pointer.
+// `&x` is a stack or field address; freeing it corrupts the allocator's
+// bookkeeping, so it is rejected on the SYNTAX, before types are even consulted.
+//
+// Deliberately not ported: `'free' returns void, cannot use as a value`.  It needs
+// the `allow_void` signal (statement position vs value position), which the port
+// does not thread through elab_expr.  Recorded rather than faked.
+fn check_free(a: Allocator, ar: *Arena, sc: *const TyScope, raw: *const Vec<*const Expr>,
+              targs: *const Vec<*const Texpr>, p: Pos) {
+    if targs.length() != 2 as u32 {
+        builtin_arity(a, ar, sc, "free", "exactly 2 arguments (the allocator and the pointer)", targs.length(), p);
+        return;
+    }
+    let sl = targs.as_slice();
+    if !is_allocator_ty(sl[0 as u32].ty) {
+        let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+        sb.push_str("first argument of 'free' must be the Allocator that produced the pointer (symmetric with `new(alloc)`), got ");
+        sb.push_str(typ_name(a, ar, sl[0 as u32].ty));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    if expr_is_ref(raw.as_slice()[1 as u32]) {
+        tc_fail(ar, sc, p, "'free' expects an owned pointer `own *T` (from 'new(alloc)'); got '&...' which is a stack or field address — this would corrupt the allocator");
+        return;
+    }
+    let pt = sl[1 as u32].ty;
+    if is_own_ptr(pt) { return; }
+    if ty_has_tvar(pt) { return; }
+    if ptr_or_constptr(pt) {
+        let mut sb = StringBuilder::with_capacity(a, 176 as u32);
+        sb.push_str("'free' expects an owned pointer `own *T`, got "); sb.push_str(typ_name(a, ar, pt));
+        sb.push_str(" — a borrow cannot be freed (the owner releases it).  Owned pointers come from `new(alloc) T { ... }` or `Allocator.alloc`.");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("'free' expects an owned pointer `own *T`, got "); sb.push_str(typ_name(a, ar, pt));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn is_allocator_ty(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(path) => str::eq(path_last(&path), "Allocator")
+        | _o => false
+    };
+}
+fn expr_is_ref(e: *const Expr) -> bool {
+    return match *e { Expr::Ref(_s, _q) => true | _o => false };
+}
 fn elab_len(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
             args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     if args.length() != 1 as u32 {
@@ -5281,11 +5510,33 @@ fn enumlit_const(a: Allocator, ar: *Arena, sc: *const TyScope, gf: GlobalFn,
     return unknown_enum(a, ar, sc, tname, p);
 }
 
+// `c_void` is the C `void`: it has no values.  Only `*c_void` — a pointer to
+// something the compiler is not allowed to look inside — is usable.
+fn forbid_naked_void(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    match *t {
+        Typ::TCVoid => { tc_fail(ar, sc, p, "'c_void' has no values — only `*c_void` is usable as a type"); }
+        | Typ::TArray { elem, size } => { forbid_naked_void(a, ar, sc, elem, p); }
+        | Typ::TTuple(ts) => { forbid_naked_void_all(a, ar, sc, &ts, p); }
+        | _o => { }
+    }
+    return;
+}
+fn forbid_naked_void_all(a: Allocator, ar: *Arena, sc: *const TyScope, ts: *const Vec<*const Typ>, p: Pos) {
+    let n = ts.length();
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < n { forbid_naked_void(a, ar, sc, sl[i], p); i = i + 1 as u32; }
+    return;
+}
 fn let_expected(a: Allocator, ar: *Arena, sc: *const TyScope, ty_ann: Option<*const TypeAnn>, p: Pos) -> Option<*const Typ> {
     return match ty_ann {
-        Option::Some(t) => Option::Some(resolve_sig_ty(a, ar, sc, t, p))
+        Option::Some(t) => Option::Some(void_checked(a, ar, sc, resolve_sig_ty(a, ar, sc, t, p), p))
         | Option::None => none_ty()
     };
+}
+fn void_checked(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) -> *const Typ {
+    forbid_naked_void(a, ar, sc, t, p);
+    return t;
 }
 
 // The type a `let` binding takes in the env: its declared annotation when
@@ -5407,6 +5658,23 @@ fn bare_return_val(ar: *Arena, sc: *const TyScope, p: Pos) -> Option<*const Texp
     if sc.sc_is_main { return Option::Some(te_node(ar, TexprNode::TIntLit(0 as int), t_i32(ar), p)); }
     return none_texpr();
 }
+// `return;` where the signature promises a value.  main is exempt: its bare
+// return is the implicit `return 0`.
+fn check_bare_return(a: Allocator, ar: *Arena, sc: *const TyScope, ret: Option<*const Typ>, p: Pos) {
+    if sc.sc_is_main { return; }
+    match ret {
+        Option::Some(t) => { bare_return_needs_value(a, ar, sc, t, p); }
+        | Option::None => { }
+    }
+    return;
+}
+fn bare_return_needs_value(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("`return` needs a value — function returns ");
+    sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 // The bidirectional `expected` seeds inner inference (literal widths, generic
 // params, tuple/struct shape) but does NOT constrain the result — the contract is
 // enforced here, by EQUALITY.  Not `coercible_to`: a `*T` may be lent into a
@@ -5432,8 +5700,12 @@ fn elab_return_val(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
                    ret: Option<*const Typ>, val: Option<*const Expr>, p: Pos) -> Option<*const Texpr> {
     return match val {
         Option::Some(e) => Option::Some(returned(a, ar, sc, ret, elab_expr(a, ar, g, sc, env, ret, e), p))
-        | Option::None => bare_return_val(ar, sc, p)
+        | Option::None => no_value_return(a, ar, sc, ret, p)
     };
+}
+fn no_value_return(a: Allocator, ar: *Arena, sc: *const TyScope, ret: Option<*const Typ>, p: Pos) -> Option<*const Texpr> {
+    check_bare_return(a, ar, sc, ret, p);
+    return bare_return_val(ar, sc, p);
 }
 fn returned(a: Allocator, ar: *Arena, sc: *const TyScope, ret: Option<*const Typ>,
             tv: *const Texpr, p: Pos) -> *const Texpr {
@@ -6112,6 +6384,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             out.push(Tstmt::TWhile { cond: wcond, body: wbody, post: wpost });
         }
         | Stmt::Assign { path, value, pos } => {
+            check_assign_target(a, ar, g, sc, env, &path, pos);
             if path.length() == 1 as u32 { require_mut(a, ar, sc, path.as_slice()[0 as u32], "assign to", pos); }
             let av = assign_coerced_value(a, ar, g, sc, env, &path, value);
             let apath = copy_strs(a, &path);
@@ -6126,6 +6399,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         }
         | Stmt::AssignDeref { target, value, pos } => {
             let tad = elab_expr(a, ar, g, sc, env, none_ty(), target);
+            check_assign_deref(a, ar, sc, tad.ty, pos);
             let dexp = deref_pointee(tad.ty);
             let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, env, dexp, value), dexp);
             out.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
@@ -8782,6 +9056,34 @@ fn derive_ne_body(a: Allocator, ar: *Arena, p: Pos) -> *const Expr {
         receiver: ast_node(ar, Expr::Deref(dv_var(ar, "self", p), p)), name: "eq", args: args, pos: p });
     return ast_node(ar, Expr::Not(call, p));
 }
+// `@derive` names a fixed catalogue.  Display is deliberately NOT in it: it is a
+// hand-written surface, and generating one would be inventing a formatter the
+// author never chose.  A generic target is out of scope until derives can be
+// monomorphised.
+fn check_derive_name(a: Allocator, ar: *Arena, sc: *const TyScope, tr: str, kind: str,
+                     name: str, generic: bool, p: Pos) {
+    if str::eq(tr, "Display") {
+        tc_fail(ar, sc, p, "cannot derive 'Display' — Display is a hand-written surface; use `@derive(Debug)` for an automatically-generated formatter");
+        return;
+    }
+    if !is_derivable(tr) {
+        let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+        sb.push_str("cannot derive '"); sb.push_str(tr);
+        sb.push_str("' (supported: Eq, Hash, Clone, Debug)");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    if !generic { return; }
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("@derive("); sb.push_str(tr); sb.push_str(") on a generic ");
+    sb.push_str(kind); sb.push_str(" '"); sb.push_str(name);
+    sb.push_str("' is not supported yet");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn is_derivable(tr: str) -> bool {
+    return str::eq(tr, "Eq") || str::eq(tr, "Hash") || str::eq(tr, "Clone") || str::eq(tr, "Debug");
+}
 fn collect_derives_struct(a: Allocator, ar: *Arena, sc: *const TyScope, sd: *const StructDecl, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>) {
     let n = sd.sderives.length();
     let sl = sd.sderives.as_slice();
@@ -8789,6 +9091,7 @@ fn collect_derives_struct(a: Allocator, ar: *Arena, sc: *const TyScope, sd: *con
     let mut i = 0 as u32;
     while i < n {
         let tr = sl[i];
+        check_derive_name(a, ar, sc, tr, "struct", sd.sname, sd.stparams.length() > 0 as u32, p);
         if str::eq(tr, "Eq") {
             push_derive_method(a, ar, sc, sd.sname, "eq", ann_bool(ar), true, derive_eq_struct_body(a, ar, &sd.sfields, p), true, methods, lifted, gsigs, p);
             push_derive_method_k(a, ar, sc, sd.sname, "ne", ann_bool(ar), true, derive_ne_body(a, ar, p), true, 4 as int, methods, lifted, gsigs, p);
@@ -8889,6 +9192,7 @@ fn collect_derives_enum(a: Allocator, ar: *Arena, sc: *const TyScope, ed: *const
     let mut i = 0 as u32;
     while i < n {
         let tr = sl[i];
+        check_derive_name(a, ar, sc, tr, "enum", ed.ename, ed.etparams.length() > 0 as u32, p);
         if str::eq(tr, "Eq") {
             push_derive_method(a, ar, sc, ed.ename, "eq", ann_bool(ar), true, derive_eq_enum_body(a, ar, ed.ename, &ed.evariants, p), true, methods, lifted, gsigs, p);
             push_derive_method_k(a, ar, sc, ed.ename, "ne", ann_bool(ar), true, derive_ne_body(a, ar, p), true, 4 as int, methods, lifted, gsigs, p);

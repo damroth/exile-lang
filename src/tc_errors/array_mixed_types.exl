@@ -1,0 +1,5 @@
+// An array is ONE type repeated; `[1, true]` is not a shorter way to write a tuple.
+fn main() {
+    let v = [1, true];
+    println(1);
+}

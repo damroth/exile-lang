@@ -1,0 +1,4 @@
+fn f(p: *const int) {
+    *p = 9;
+}
+fn main() { let x = 5; f(&x); }

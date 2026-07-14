@@ -1,0 +1,5 @@
+fn main() {
+    let x = 5;
+    mem_zero(x, 4 as c_ulong);
+    println(1);
+}

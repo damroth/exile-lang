@@ -1,0 +1,4 @@
+fn main() {
+    let a = default_allocator(1);
+    println(1);
+}

@@ -1,0 +1,4 @@
+fn f() -> int {
+    return;
+}
+fn main() { println(f()); }

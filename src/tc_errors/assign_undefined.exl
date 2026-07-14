@@ -1,0 +1,6 @@
+// exile has no implicit binding: a bare `x = 5` with no `x` in scope is not a
+// declaration.
+fn main() {
+    x = 5;
+    println(1);
+}

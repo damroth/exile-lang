@@ -1,0 +1,8 @@
+// `..base` copies the REST of a struct's fields.  A variant is not a struct: the
+// rest of an enum is the other variants.
+enum E { A { x: int } | B }
+fn main() {
+    let e = E::A { x: 1 };
+    let f = E::A { x: 2, ..e };
+    println(1);
+}
