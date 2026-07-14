@@ -12229,21 +12229,37 @@ fn refs_of_tys(a: Allocator, ts: *const Vec<*const Typ>, out: *Vec<Vec<str>>) {
 }
 // The tables come in EXPLICITLY: at this point in check_program the base scope
 // still carries the empty placeholders, and the filled vectors are locals.
+// Mono tables ride along because a resolved field names the INSTANCE
+// (`o: Option<A>` is `Option_A`), and its payload embeds the arg by value —
+// skipping it let the broken type reach cc, which rejected it "three passes
+// too late".
 fn cycle_edges(a: Allocator, sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>,
+               mfields: *const Vec<StructField>, mefields: *const Vec<EnumFieldE>,
                path: *const Vec<str>, out: *Vec<Vec<str>>) {
-    let n = sinfo.length();
-    let sl = sinfo.as_slice();
+    edges_from_structs(a, sinfo, path, out);
+    edges_from_enums(a, efields, path, out);
+    if out.length() > 0 as u32 { return; }
+    edges_from_structs(a, mfields, path, out);
+    edges_from_enums(a, mefields, path, out);
+    return;
+}
+fn edges_from_structs(a: Allocator, tbl: *const Vec<StructField>, path: *const Vec<str>, out: *Vec<Vec<str>>) {
+    let n = tbl.length();
+    let sl = tbl.as_slice();
     let mut i = 0 as u32;
     while i < n {
         if path_eq(&sl[i].sf_path, path) { refs_of_typ(a, sl[i].sf_ty, out); }
         i = i + 1 as u32;
     }
-    let m = efields.length();
-    let el = efields.as_slice();
-    let mut j = 0 as u32;
-    while j < m {
-        if path_eq(&el[j].ef_path, path) { refs_of_typ(a, el[j].ef_ty, out); }
-        j = j + 1 as u32;
+    return;
+}
+fn edges_from_enums(a: Allocator, tbl: *const Vec<EnumFieldE>, path: *const Vec<str>, out: *Vec<Vec<str>>) {
+    let n = tbl.length();
+    let sl = tbl.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].ef_path, path) { refs_of_typ(a, sl[i].ef_ty, out); }
+        i = i + 1 as u32;
     }
     return;
 }
@@ -12268,7 +12284,8 @@ fn decl_pos_of(decls: *const Vec<DeclPos>, p: *const Vec<str>) -> Pos {
     return zero_pos();
 }
 fn detect_value_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
-                       sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>) {
+                       sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>,
+                       mfields: *const Vec<StructField>, mefields: *const Vec<EnumFieldE>) {
     let mut decls: Vec<DeclPos> = Vec::with_capacity(a, 8 as u32);
     let empty_mp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_decl_pos(a, &empty_mp, items, &decls);
@@ -12283,7 +12300,7 @@ fn detect_value_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, items: *con
         while i < decls.length() {
             if dl[i].dp_is_enum == want_enum {
                 let empty_stack: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
-                cycle_dfs(a, ar, sc, sinfo, efields, &decls, &dl[i].dp_path, &empty_stack, &cleared);
+                cycle_dfs(a, ar, sc, sinfo, efields, mfields, mefields, &decls, &dl[i].dp_path, &empty_stack, &cleared);
             }
             i = i + 1 as u32;
         }
@@ -12295,7 +12312,8 @@ fn detect_value_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, items: *con
 // the chains are a handful of entries, and the copy makes each frame own its
 // view with nothing to unwind.
 fn cycle_dfs(a: Allocator, ar: *Arena, sc: *const TyScope, sinfo: *const Vec<StructField>,
-             efields: *const Vec<EnumFieldE>, decls: *const Vec<DeclPos>,
+             efields: *const Vec<EnumFieldE>, mfields: *const Vec<StructField>,
+             mefields: *const Vec<EnumFieldE>, decls: *const Vec<DeclPos>,
              path: *const Vec<str>, stack: *const Vec<Vec<str>>, cleared: *Vec<Vec<str>>) {
     if path_in(stack, path) {
         report_cycle(a, ar, sc, decls, path, stack);
@@ -12304,11 +12322,11 @@ fn cycle_dfs(a: Allocator, ar: *Arena, sc: *const TyScope, sinfo: *const Vec<Str
     if path_in(cleared, path) { return; }
     let child = paths_plus(a, stack, path);
     let mut es: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
-    cycle_edges(a, sinfo, efields, path, &es);
+    cycle_edges(a, sinfo, efields, mfields, mefields, path, &es);
     let esl = es.as_slice();
     let mut i = 0 as u32;
     while i < es.length() {
-        cycle_dfs(a, ar, sc, sinfo, efields, decls, &esl[i], &child, cleared);
+        cycle_dfs(a, ar, sc, sinfo, efields, mfields, mefields, decls, &esl[i], &child, cleared);
         i = i + 1 as u32;
     }
     cleared.push(copy_strs(a, path));
@@ -12493,7 +12511,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
     // Runs once the field tables exist — the edges are read from them.
-    detect_value_cycles(a, ar, &base_scope, items, &sinfo, &efields);
+    detect_value_cycles(a, ar, &base_scope, items, &sinfo, &efields, &mono_fields, &mono_efields);
     prelude_enum_variants(a, ar, &etags, &efields);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);

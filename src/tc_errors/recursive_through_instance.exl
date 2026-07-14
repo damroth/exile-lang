@@ -1,0 +1,7 @@
+// The cycle runs through a generic INSTANCE's payload: A embeds Option<A>,
+// whose Some variant embeds A by value inside the union.  A skeleton-only walk
+// cannot see it — the resolved field names `Option_A`, and its concrete fields
+// are the edges.  Both compilers used to accept this and emit C that cc
+// rejected with "field '_0' has incomplete type" — three passes too late.
+struct A { o: Option<A> }
+fn main() { println(1); }

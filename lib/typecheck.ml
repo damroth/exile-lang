@@ -5993,7 +5993,7 @@ let build_enum_index ~instances ~ext_structs ~ext_types ~ext_consts
    counts as a value edge to the applied type (`A<T> { b: B<T> }` and
    `B<T> { a: A<T> }` is a cycle); the args are walked too for nested
    references.  [pos_of] anchors the error at the decl. *)
-let detect_value_cycles ~structs ~enums ~pos_of =
+let detect_value_cycles ~structs ~enums ~instances ~pos_of =
   let rec refs_of_typ = function
     | TStruct p | TEnum p -> [ p ]
     | TStructApp { path; args } | TEnumApp { path; args } ->
@@ -6003,16 +6003,31 @@ let detect_value_cycles ~structs ~enums ~pos_of =
     | _ -> []
   in
   let name path = String.concat "::" path in
+  let enum_edges (e : enum_sig) =
+    List.concat_map (fun (v : variant_sig) ->
+      List.concat_map (fun (_, t) -> refs_of_typ t) v.vsfields)
+      e.evariants
+  in
   let edges path =
     match List.find_opt (fun (s : struct_sig) -> s.sname_path = path) structs with
     | Some s -> List.concat_map (fun (_, t) -> refs_of_typ t) s.sfields_ty
     | None ->
         (match List.find_opt (fun (e : enum_sig) -> e.ename_path = path) enums with
-         | Some e ->
-             List.concat_map (fun (v : variant_sig) ->
-               List.concat_map (fun (_, t) -> refs_of_typ t) v.vsfields)
-               e.evariants
-         | None -> [])
+         | Some e -> enum_edges e
+         | None ->
+             (* A resolved field names the INSTANCE (`o: Option<A>` is
+                `Option_A`), which lives in the mono state, not the skeleton
+                indexes.  Its payload embeds the arg by value — skipping it
+                let `struct A { o: Option<A> }` reach cc, which rejected the
+                union field "three passes too late".  The instance's fields
+                are the concrete edges. *)
+             (match Mono.find_struct instances path with
+              | Some s ->
+                  List.concat_map (fun (_, t) -> refs_of_typ t) s.sfields_ty
+              | None ->
+                  (match Mono.find_enum instances path with
+                   | Some e -> enum_edges e
+                   | None -> [])))
   in
   let cleared = Hashtbl.create 32 in
   let rec dfs stack path =
@@ -11807,7 +11822,8 @@ let check_program program : tprogram =
          | Some (_, d) -> d.epos
          | None -> Pos.zero)
   in
-  detect_value_cycles ~structs:struct_index ~enums:enum_index ~pos_of;
+  detect_value_cycles ~structs:struct_index ~enums:enum_index
+    ~instances:mono_state ~pos_of;
   let (impl_funcs, virtual_modules) =
     expand_impls ~instances:mono_state ~ext_structs ~ext_types ~ext_consts
       flat struct_index enum_index flat.modules
