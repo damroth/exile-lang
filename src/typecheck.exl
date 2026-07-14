@@ -2337,6 +2337,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             let inst = enum_instance_path(a, ar, sc, expected, &qinit, last, &tflds);
             return mk_enum_lit_node(a, ar, &inst, last, tag, tflds, p);
         }
+        if is_known_enum(sc, &qinit) { return no_such_variant(a, ar, sc, &qinit, last, p); }
         let midx = find_method_idx(sc.sc_methods, &init, last);
         if midx >= 0 as int {
             return mk_static_method_call(a, ar, g, sc, env, expected, midx, args, p);
@@ -2791,7 +2792,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     if idx < 0 as int {
         return match field_call_desugar(a, ar, g, sc, env, expected, recv, trecv, name, args, p) {
             Option::Some(te) => te
-            | Option::None => no_such_method(a, ar, sc, name, trecv.ty, p)
+            | Option::None => method_miss(a, ar, sc, name, trecv.ty, p)
         };
     }
     let sl = sc.sc_methods.as_slice();
@@ -3513,6 +3514,43 @@ fn struct_path_of(t: *const Typ) -> Option<Vec<str>> {
         | _e => none
     };
 }
+// A method / field target is a struct or (for methods) an enum, possibly behind
+// a pointer.  `no method 'm' on T` only makes sense once T is one of those; on an
+// i32 the reference says something else entirely, and so must we.
+fn method_miss(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
+               t: *const Typ, p: Pos) -> *const Texpr {
+    if !is_recv_shape(t) { return bad_recv_shape(a, ar, sc, name, t, p); }
+    return no_such_method(a, ar, sc, name, t, p);
+}
+fn is_recv_shape(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(_p) => true
+        | Typ::TEnum(_p) => true
+        | Typ::TExtStruct(_n) => true
+        | Typ::TPtr(i) => is_recv_shape(i)
+        | Typ::TConstPtr(i) => is_recv_shape(i)
+        | Typ::TOwnPtr(i) => is_recv_shape(i)
+        | _e => false
+    };
+}
+fn bad_recv_shape(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
+                  t: *const Typ, p: Pos) -> *const Texpr {
+    let mut sb = StringBuilder::with_capacity(a, 88 as u32);
+    sb.push_str("method call '."); sb.push_str(name);
+    sb.push_str("()' requires a struct or enum value (or a pointer to one), got ");
+    sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, p);
+}
+fn bad_field_shape(a: Allocator, ar: *Arena, sc: *const TyScope, field: str,
+                   t: *const Typ, p: Pos) -> *const Texpr {
+    let mut sb = StringBuilder::with_capacity(a, 88 as u32);
+    sb.push_str("field access '."); sb.push_str(field);
+    sb.push_str("' requires a struct value or pointer to struct, got ");
+    sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, p);
+}
 fn no_such_method(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
                   recv_ty: *const Typ, p: Pos) -> *const Texpr {
     let mut sb = StringBuilder::with_capacity(a, 64 as u32);
@@ -3529,11 +3567,7 @@ fn no_such_field(a: Allocator, ar: *Arena, sc: *const TyScope, target_ty: *const
             tc_fail(ar, sc, p, msg3(a, ar, "struct '", path_display(a, ar, &path),
                                     "' has no field '", field, "'"));
         }
-        // Not a struct at all: the reference implementation reports the missing
-        // field against the type it did find, and so must we once `typ_name` is
-        // ported.  Until then this stays a fabrication site — deliberately
-        // visible rather than silently plausible.
-        | Option::None => { }
+        | Option::None => { bad_field_shape(a, ar, sc, field, target_ty, p); }
     }
     return defer_expr(ar, p);
 }
@@ -3929,6 +3963,7 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             let tbi = elab_expr(a, ar, g, sc, benv, none_ty(), base);
             let tii = elab_expr(a, ar, g, sc, benv, none_ty(), index);
             let tvi = elab_expr(a, ar, g, sc, benv, none_ty(), value);
+            check_assign_index(a, ar, sc, tbi, tii, pos);
             tstmts.push(Tstmt::TAssignIndex { base: tbi, index: tii, value: tvi, pos: pos });
         }
         | Stmt::Break(pos) => { tstmts.push(Tstmt::TBreak(pos)); }
@@ -4049,17 +4084,65 @@ fn range_bound(ar: *Arena, sc: *const TyScope, range_te: *const Texpr, field: st
     let fty = voidable_ty(ar, struct_field_ty(sc, range_te.ty, field));
     return te_node(ar, TexprNode::TFieldAccess { target: range_te, field: field }, fty, p);
 }
+// The reference resolves the BASE first, so `x[true]` on an i32 reports the base,
+// not the index.  Error precedence is part of the contract: a fixture pins the
+// first line, and the first line is whichever check runs first.
 fn elab_scalar_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                      tb: *const Texpr, index: *const Expr, p: Pos) -> *const Texpr {
+    return match index_elem_ty(sc, tb.ty) {
+        Option::Some(elem) => indexed_at(a, ar, g, sc, env, tb, index, elem, p)
+        | Option::None => bad_index_base(a, ar, sc, tb.ty, p)
+    };
+}
+fn bad_index_base(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) -> *const Texpr {
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("indexing `[...]` requires an array or Slice, got ");
+    sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, p);
+}
+fn indexed_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+              tb: *const Texpr, index: *const Expr, elem: *const Typ, p: Pos) -> *const Texpr {
     let ti = elab_expr(a, ar, g, sc, env, none_ty(), index);
     if is_range_instance(ti.ty) {
         let lo_te = range_bound(ar, sc, ti, "lo", p);
         let hi_te = range_bound(ar, sc, ti, "hi", p);
         return build_slice_from_bounds(a, ar, sc, tb, lo_te, hi_te, is_range_inclusive_instance(ti.ty), p);
     }
-    return match index_elem_ty(sc, tb.ty) {
-        Option::Some(elem) => te_node(ar, TexprNode::TIndex { base: tb, index: ti }, elem, p)
-        | Option::None => defer_expr(ar, p)
+    if !is_int_like_ty(ti.ty) {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("index must be an integer or a Range, got ");
+        sb.push_str(typ_name(a, ar, ti.ty));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return defer_expr(ar, p);
+    }
+    return te_node(ar, TexprNode::TIndex { base: tb, index: ti }, elem, p);
+}
+
+// `a[i] = v` — the base may also be a `*T` pointer (pointee mutation), which a
+// read-index cannot be, so this carries its own message.
+fn check_assign_index(a: Allocator, ar: *Arena, sc: *const TyScope, tb: *const Texpr,
+                      ti: *const Texpr, p: Pos) {
+    if !is_assignable_index_base(sc, tb.ty) {
+        let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+        sb.push_str("indexed assignment `a[i] = ...` requires an array or '*T' pointer, got ");
+        sb.push_str(typ_name(a, ar, tb.ty));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    if !is_int_like_ty(ti.ty) {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("array index must be an integer, got ");
+        sb.push_str(typ_name(a, ar, ti.ty));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    }
+    return;
+}
+fn is_assignable_index_base(sc: *const TyScope, t: *const Typ) -> bool {
+    if is_ptr_ty(t) { return true; }
+    return match index_elem_ty(sc, t) {
+        Option::Some(_e) => true
+        | Option::None => false
     };
 }
 // `base[lo..hi]` / `base[lo..=hi]` (DR-011) builds a read-only `Slice<T>` view:
@@ -4602,11 +4685,24 @@ fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
         let inst = enum_instance_path(a, ar, sc, expected, &qtname, variant, &empty);
         return mk_enum_lit_node(a, ar, &inst, variant, tag, empty, p);
     }
+    if is_known_enum(sc, &qtname) { return no_such_variant(a, ar, sc, &qtname, variant, p); }
     let m = mangle_path(a, ar, tname, variant);
     return match global_lookup_by_mangled(g, m) {
         Option::Some(gf) => enumlit_const(ar, gf, p)
         | Option::None => qualified_extern_ref(ar, g, variant, p)
     };
+}
+// `E::C` where E IS an enum but has no `C`.  Only then — a `mod::CONST` path that
+// happens not to name an enum is a constant lookup, not a bad variant.
+fn is_known_enum(sc: *const TyScope, path: *const Vec<str>) -> bool {
+    let last = path_last(path);
+    return name_in(sc.sc_enums, last) || is_prelude_enum(last);
+}
+fn no_such_variant(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>,
+                   variant: str, p: Pos) -> *const Texpr {
+    tc_fail(ar, sc, p, msg3(a, ar, "enum '", path_display(a, ar, path),
+                            "' has no variant '", variant, "'"));
+    return defer_expr(ar, p);
 }
 // A `mod::NAME` reference that isn't a module const may be an extern const /
 // var, whose raw C symbol is the bare last segment (no module mangling).
@@ -5161,6 +5257,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             let tbi = elab_expr(a, ar, g, sc, env, none_ty(), base);
             require_mut_root(a, ar, sc, tbi, "assign into", pos);
             let tii = elab_expr(a, ar, g, sc, env, none_ty(), index);
+            check_assign_index(a, ar, sc, tbi, tii, pos);
             let tvi = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, env, none_ty(), value), elem_of(tbi.ty));
             out.push(Tstmt::TAssignIndex { base: tbi, index: tii, value: tvi, pos: pos });
         }

@@ -127,3 +127,28 @@ accepts `enum | integer | c_int | bool` as a scrutinee, and the port's
 `is_scalar_ty` had no `TCInt` case.  Shipping the diagnostic without that would
 have rejected `match c { 65 => ... }` on a c_int — a program the reference
 accepts.  Third instance of the same lesson (see the null note above).
+
+## Family 11 — the value shapes
+
+What a value must BE for a construct to touch it: field access and method calls
+need a struct (or an enum, for methods), indexing needs an array or Slice, `E::C`
+needs `C` to exist.
+
+This closed the last known fabrication.  `println(x.foo)` on an i32 emitted
+`printf("%d\n", ((void *)0))` — 109 bytes of C that compiles and prints garbage.
+It walked past the no-fabrication gate because nothing in CODEGEN fabricated: the
+typecheck placeholder did (`defer_expr` → `TNullLit` → a perfectly legal
+`((void *)0)` at a value site).  Same failure class, different mechanism.  The fix
+is not a wider gate — it is the diagnostic.  A placeholder that never survives
+cannot fabricate.
+
+Two things this family says about the contract:
+
+- `no method 'm' on T` is only right once T IS a struct or enum.  On an i32 the
+  reference says `method call '.m()' requires a struct or enum value` — there is
+  no method table for i32 to be missing from.  (Family 6 got this wrong; the
+  shape probe caught it.)
+- Error PRECEDENCE is pinned, not incidental.  The reference resolves an index's
+  BASE before its index, so `x[true]` on an i32 reports the base.  The gate
+  compares the first line, so the order IS the contract —
+  `index_base_before_index.exl` exists to say so.
