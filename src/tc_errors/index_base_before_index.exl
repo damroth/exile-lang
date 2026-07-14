@@ -1,0 +1,7 @@
+// Error PRECEDENCE is part of the contract: the reference resolves the base
+// first, so this reports the base (i32), not the bool index.  A fixture pins
+// the first line, and the first line is whichever check runs first.
+fn main() {
+    let x = 5;
+    println(x[true]);
+}

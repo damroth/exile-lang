@@ -1,0 +1,9 @@
+// THE last known fabrication: the port emitted `printf("%d\n", ((void *)0))` —
+// a NULL invented where the field's value belongs.  It walked past the
+// no-fabrication gate because nothing in codegen fabricated: the TYPECHECK
+// placeholder did (defer_expr → TNullLit → a perfectly legal `((void *)0)`).
+// A placeholder that never survives cannot fabricate.
+fn main() {
+    let x = 5;
+    println(x.foo);
+}

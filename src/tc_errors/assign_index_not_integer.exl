@@ -1,0 +1,5 @@
+fn main() {
+    let mut v = [1, 2, 3];
+    v[true] = 9;
+    println(v[0]);
+}

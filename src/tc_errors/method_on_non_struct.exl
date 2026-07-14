@@ -1,0 +1,5 @@
+// `no method 'm' on T` only makes sense once T is a struct or an enum.
+fn main() {
+    let x = 5;
+    println(x.len() as int);
+}

@@ -1,0 +1,7 @@
+// The base of an indexed ASSIGNMENT may also be a `*T` pointer (pointee
+// mutation), which a read-index cannot be — so it carries its own message.
+fn main() {
+    let mut x = 5;
+    x[0] = 9;
+    println(x);
+}
