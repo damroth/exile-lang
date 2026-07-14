@@ -1,0 +1,4 @@
+fn main() {
+    let f = 1.5 % 2.0;
+    println(f as int);
+}

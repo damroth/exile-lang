@@ -152,3 +152,31 @@ Two things this family says about the contract:
   BASE before its index, so `x[true]` on an i32 reports the base.  The gate
   compares the first line, so the order IS the contract —
   `index_base_before_index.exl` exists to say so.
+
+## Family 12 — the operators, and the bottom of the arc
+
+One choke-point (`finish_binop`) carried the result-type table and none of its
+rejections.  Eleven messages: integer operands, incompatible widths, division and
+modulo by zero, `%` on floats, shift range, `==` between incompatible types, `==`
+without an Eq impl, mixed-width float comparison, logical operands, `!`, `~`.
+
+Behind one of them sat a feature that was never ported.  `==` on a struct is not a
+C `==` (cc rejects aggregate comparison) — it lowers to `P__eq(&a, &b)`.  The port
+emitted raw `a == b` EVEN WITH `@derive(Eq)`: the derive generated the function and
+the operator never called it.  C that does not compile, on a valid program, and no
+example does `a == b` on a struct — so nothing ever asked.
+
+"Does T implement Eq" is answered by a registry, not a name-match: `MethodInfo`
+carries `mi_trait`, the trait a method came FROM.  A method merely NAMED `eq` in a
+bare `impl P { ... }` is not an Eq impl, and both compilers reject the operator
+for it.
+
+The rest of this family is the arc's accounting: every remaining `defer_expr` got a
+behavioural PROBE rather than a reading, which turned up eight more live silences
+nobody had listed — `++` on a non-literal (reported at the operand), calling a
+`const`, `new(a) E::C(...)`, `m::NIEZNANY`, `len` arity and `len` on a non-array,
+and value-`if` without an else / with a block branch / with disagreeing branches.
+
+One placeholder remains and it is NOT dead: the statement catch-all swallows
+`let ... else`, which the port never implemented.  That is a feature gap, not a
+diagnostic gap, and it is recorded rather than papered over.

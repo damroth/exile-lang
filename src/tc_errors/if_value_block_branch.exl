@@ -1,0 +1,4 @@
+fn main() {
+    let x = if true { let y = 1; y } else { 2 };
+    println(x);
+}

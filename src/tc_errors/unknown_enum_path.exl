@@ -1,0 +1,4 @@
+mod m { pub const K: int = 1; }
+fn main() {
+    println(m::NIEZNANY);
+}

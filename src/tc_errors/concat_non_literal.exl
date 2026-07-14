@@ -1,0 +1,6 @@
+// The reference reports at the OPERAND, not the operator.
+fn main() {
+    let s = "a";
+    let t = s ++ "b";
+    println(t);
+}

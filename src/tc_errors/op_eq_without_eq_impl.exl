@@ -1,0 +1,8 @@
+// `==` on a struct is not a C `==` (cc rejects aggregate comparison) — it lowers
+// to the Eq impl.  A method merely NAMED `eq` in a bare impl is not an Eq impl.
+struct P { x: int }
+fn main() {
+    let a = P { x: 1 };
+    let b = P { x: 2 };
+    println(a == b);
+}

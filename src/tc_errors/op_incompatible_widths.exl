@@ -1,0 +1,7 @@
+// C-style promotion needs matching signedness; mixed kinds need an explicit `as`.
+// The cast is where the user opts into the change.
+fn main() {
+    let a = 5;
+    let b = 7 as u8;
+    println(a + b);
+}

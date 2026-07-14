@@ -1,0 +1,6 @@
+// A `const` is a value, not a callable — reported as an unknown FUNCTION,
+// because that is the namespace the call site looked in.
+const X: int = 5;
+fn main() {
+    println(X());
+}

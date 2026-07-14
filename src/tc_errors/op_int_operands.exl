@@ -1,0 +1,4 @@
+fn main() {
+    let s = 5 + "a";
+    println(s);
+}

@@ -120,6 +120,11 @@ struct EnumFieldE {
 // `recv.m(..)` / `T::m(..)` to `T__m(<self>, ..)` and adjust the receiver.
 struct MethodInfo {
     mi_path: Vec<str>,
+    // The trait this method came FROM ("" for a bare `impl T { ... }`).  `==` on
+    // a struct lowers to `T__eq` only when T actually implements Eq — a method
+    // merely NAMED `eq` in a bare impl is not an Eq impl, and the reference
+    // rejects the operator for it.
+    mi_trait: str,
     mi_name: str,
     mi_mangled: str,
     mi_ret: Option<*const Typ>,
@@ -1362,11 +1367,23 @@ fn elab_neg(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
 fn elab_bitnot(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                expected: Option<*const Typ>, sub: *const Expr, p: Pos) -> *const Texpr {
     let s = elab_expr(a, ar, g, sc, env, expected, sub);
+    if !is_int_like_ty(s.ty) {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("bitwise complement '~' requires an integer, got ");
+        sb.push_str(typ_name(a, ar, s.ty));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    }
     return te_node(ar, TexprNode::TBitNot(s), s.ty, p);
 }
 fn elab_not(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
             sub: *const Expr, p: Pos) -> *const Texpr {
     let s = elab_expr(a, ar, g, sc, env, none_ty(), sub);
+    if !is_bool_ty(s.ty) {
+        let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+        sb.push_str("logical negation '!' requires a bool, got ");
+        sb.push_str(typ_name(a, ar, s.ty));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    }
     return te_node(ar, TexprNode::TNot(s), t_bool(ar), p);
 }
 
@@ -1437,17 +1454,27 @@ fn mk_concat_str(a: Allocator, ar: *Arena, l: str, r: str, p: Pos) -> *const Tex
     return te_node(ar, TexprNode::TStringLit(str::from_slice(ar, sb.as_slice())), t_str(ar), p);
 }
 
-fn fold_concat_r(a: Allocator, ar: *Arena, l: str, r2: *const Texpr, p: Pos) -> *const Texpr {
+fn fold_concat_r(a: Allocator, ar: *Arena, sc: *const TyScope, l: str, r2: *const Texpr, p: Pos) -> *const Texpr {
     return match extract_concat_str(a, ar, r2) {
         Option::Some(r) => mk_concat_str(a, ar, l, r, p)
-        | Option::None => defer_expr(ar, p)
+        | Option::None => bad_concat(a, ar, sc, "right", r2)
     };
 }
-fn fold_concat(a: Allocator, ar: *Arena, l2: *const Texpr, r2: *const Texpr, p: Pos) -> *const Texpr {
+fn fold_concat(a: Allocator, ar: *Arena, sc: *const TyScope, l2: *const Texpr, r2: *const Texpr, p: Pos) -> *const Texpr {
     return match extract_concat_str(a, ar, l2) {
-        Option::Some(l) => fold_concat_r(a, ar, l, r2, p)
-        | Option::None => defer_expr(ar, p)
+        Option::Some(l) => fold_concat_r(a, ar, sc, l, r2, p)
+        | Option::None => bad_concat(a, ar, sc, "left", l2)
     };
+}
+// The reference reports at the OPERAND, not the operator.
+fn bad_concat(a: Allocator, ar: *Arena, sc: *const TyScope, side: str, t: *const Texpr) -> *const Texpr {
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    sb.push_str("'++' requires a compile-time string literal on both sides; got ");
+    sb.push_str(typ_name(a, ar, t.ty));
+    sb.push_str(" on the "); sb.push_str(side);
+    sb.push_str(" (for runtime concat use an Allocator method)");
+    tc_fail(ar, sc, t.pos, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, t.pos);
 }
 
 fn is_concat(op: BinOp) -> bool {
@@ -1475,9 +1502,270 @@ fn mk_str_eq(a: Allocator, ar: *Arena, op: BinOp, l2: *const Texpr, r2: *const T
         | _e => call
     };
 }
-fn finish_binop(a: Allocator, ar: *Arena, op: BinOp, l2: *const Texpr, r2: *const Texpr, p: Pos) -> *const Texpr {
-    if is_concat(op) { return fold_concat(a, ar, l2, r2, p); }
+// ===== Operator type rules =====
+//
+// The reference funnels every binary operator through one result-type table, and
+// every arm of it can reject.  The port had the table but none of the rejections:
+// `5 + "a"` typechecked and emitted C that does not compile.
+
+fn binop_sym(op: BinOp) -> str {
+    return match op {
+        BinOp::Add => "+" | BinOp::Sub => "-" | BinOp::Mul => "*" | BinOp::Div => "/"
+        | BinOp::Mod => "%" | BinOp::BitAnd => "&" | BinOp::BitOr => "|" | BinOp::BitXor => "^"
+        | BinOp::Shl => "<<" | BinOp::Shr => ">>" | BinOp::And => "&&" | BinOp::Or => "||"
+        | BinOp::Lt => "<" | BinOp::Gt => ">" | BinOp::LtEq => "<=" | BinOp::GtEq => ">="
+        | BinOp::EqEq => "==" | BinOp::NotEq => "!=" | BinOp::Concat => "++"
+    };
+}
+fn is_float_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TFloat(_w) => true | _o => false };
+}
+fn float_width_of(t: *const Typ) -> int {
+    return match *t {
+        Typ::TFloat(w) => match w { FloatWidth::F32 => 32 as int | FloatWidth::F64 => 64 as int }
+        | _o => 0 as int
+    };
+}
+fn both_same_float(l: *const Typ, r: *const Typ) -> bool {
+    return is_float_ty(l) && is_float_ty(r) && float_width_of(l) == float_width_of(r);
+}
+fn int_bits_of(t: *const Typ) -> int {
+    return match *t {
+        Typ::TInt(k) => match k.width {
+            IntWidth::W8 => 8 as int | IntWidth::W16 => 16 as int | IntWidth::W32 => 32 as int
+        }
+        | _o => 0 as int
+    };
+}
+fn is_arith_op(op: BinOp) -> bool {
+    return match op {
+        BinOp::Add => true | BinOp::Sub => true | BinOp::Mul => true | BinOp::Div => true
+        | BinOp::Mod => true | _o => false
+    };
+}
+fn is_bit_op(op: BinOp) -> bool {
+    return match op {
+        BinOp::BitAnd => true | BinOp::BitOr => true | BinOp::BitXor => true | _o => false
+    };
+}
+fn is_shift_op(op: BinOp) -> bool {
+    return match op { BinOp::Shl => true | BinOp::Shr => true | _o => false };
+}
+fn is_rel_op(op: BinOp) -> bool {
+    return match op {
+        BinOp::Lt => true | BinOp::Gt => true | BinOp::LtEq => true | BinOp::GtEq => true | _o => false
+    };
+}
+fn is_eq_op(op: BinOp) -> bool {
+    return match op { BinOp::EqEq => true | BinOp::NotEq => true | _o => false };
+}
+fn is_logic_op(op: BinOp) -> bool {
+    return match op { BinOp::And => true | BinOp::Or => true | _o => false };
+}
+fn need_int_operands(a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp,
+                     lt: *const Typ, rt: *const Typ, p: Pos) -> bool {
+    if is_int_like_ty(lt) && is_int_like_ty(rt) { return true; }
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("operator '"); sb.push_str(binop_sym(op));
+    sb.push_str("' requires integer operands, got "); sb.push_str(typ_name(a, ar, lt));
+    sb.push_str(" and "); sb.push_str(typ_name(a, ar, rt));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return false;
+}
+// C-style promotion: same signedness, mixed width takes the wider.  Anything else
+// needs an explicit `as` — the cast is where the user opts into the change.
+fn promote_int_widen(a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp,
+                     lt: *const Typ, rt: *const Typ, p: Pos) {
+    if same_signedness_ints(lt, rt) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 88 as u32);
+    sb.push_str("operator '"); sb.push_str(binop_sym(op));
+    sb.push_str("' between incompatible types "); sb.push_str(typ_name(a, ar, lt));
+    sb.push_str(" and "); sb.push_str(typ_name(a, ar, rt));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn same_signedness_ints(lt: *const Typ, rt: *const Typ) -> bool {
+    return match *lt {
+        Typ::TInt(lk) => match *rt {
+            Typ::TInt(rk) => lk.is_signed == rk.is_signed
+            | _o => false
+        }
+        | _o => false
+    };
+}
+fn check_shift_amount(a: Allocator, ar: *Arena, sc: *const TyScope, lt: *const Typ,
+                      r: *const Expr, p: Pos) {
+    match expr_int_lit(r) {
+        Option::Some(k) => { shift_amount_range(a, ar, sc, lt, k, p); }
+        | Option::None => { }
+    }
+    return;
+}
+fn shift_amount_range(a: Allocator, ar: *Arena, sc: *const TyScope, lt: *const Typ, k: int, p: Pos) {
+    if k < 0 as int {
+        let mut sn = StringBuilder::with_capacity(a, 48 as u32);
+        sn.push_str("shift amount "); sn.push_str(int_to_str_c(a, ar, k));
+        sn.push_str(" is negative");
+        tc_fail(ar, sc, p, str::from_slice(ar, sn.as_slice()));
+        return;
+    }
+    let bits = int_bits_of(lt);
+    if bits == 0 as int { return; }
+    if k < bits { return; }
+    let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+    sb.push_str("shift amount "); sb.push_str(int_to_str_c(a, ar, k));
+    sb.push_str(" is out of range for "); sb.push_str(typ_name(a, ar, lt));
+    sb.push_str(" ("); sb.push_str(int_to_str_c(a, ar, bits)); sb.push_str(" bits)");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn op_msg2(a: Allocator, ar: *Arena, sc: *const TyScope, pre: str, op: BinOp, mid: str,
+           lt: *const Typ, rt: *const Typ, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str(pre); sb.push_str(binop_sym(op)); sb.push_str(mid);
+    sb.push_str(typ_name(a, ar, lt)); sb.push_str(" and "); sb.push_str(typ_name(a, ar, rt));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn check_binop_tys(a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp,
+                   l2: *const Texpr, r2: *const Texpr, rexpr: *const Expr, p: Pos) {
+    let lt = l2.ty;
+    let rt = r2.ty;
+    if is_logic_op(op) {
+        if !is_bool_ty(lt) || !is_bool_ty(rt) {
+            op_msg2(a, ar, sc, "logical '", op, "' requires bool operands, got ", lt, rt, p);
+        }
+        return;
+    }
+    if is_eq_op(op) {
+        if !typ_eq(lt, rt) {
+            op_msg2(a, ar, sc, "equality '", op, "' between incompatible types ", lt, rt, p);
+        }
+        return;
+    }
+    if is_arith_op(op) {
+        if div_mod_by_zero(op, rexpr) { report_div_zero(a, ar, sc, op, p); return; }
+        if both_same_float(lt, rt) && !is_mod_op(op) { return; }
+        if is_mod_op(op) && (is_float_ty(lt) || is_float_ty(rt)) {
+            tc_fail(ar, sc, p, "operator '%' is not built-in for float (use the libm `fmod`/`fmodf` extern fn when binding it lands)");
+            return;
+        }
+        if !need_int_operands(a, ar, sc, op, lt, rt, p) { return; }
+        if !typ_eq(lt, rt) { promote_int_widen(a, ar, sc, op, lt, rt, p); }
+        return;
+    }
+    if is_bit_op(op) {
+        if !need_int_operands(a, ar, sc, op, lt, rt, p) { return; }
+        if !typ_eq(lt, rt) { promote_int_widen(a, ar, sc, op, lt, rt, p); }
+        return;
+    }
+    if is_shift_op(op) {
+        if !need_int_operands(a, ar, sc, op, lt, rt, p) { return; }
+        check_shift_amount(a, ar, sc, lt, rexpr, p);
+        return;
+    }
+    if is_rel_op(op) {
+        if both_same_float(lt, rt) { return; }
+        if is_float_ty(lt) || is_float_ty(rt) {
+            let mut sb = StringBuilder::with_capacity(a, 104 as u32);
+            sb.push_str("comparison '"); sb.push_str(binop_sym(op));
+            sb.push_str("' between "); sb.push_str(typ_name(a, ar, lt));
+            sb.push_str(" and "); sb.push_str(typ_name(a, ar, rt));
+            sb.push_str(" — mixed-width float comparison requires an explicit `as` cast");
+            tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+            return;
+        }
+        if !need_int_operands(a, ar, sc, op, lt, rt, p) { return; }
+        if !typ_eq(lt, rt) { promote_int_widen(a, ar, sc, op, lt, rt, p); }
+        return;
+    }
+    return;
+}
+fn is_mod_op(op: BinOp) -> bool { return match op { BinOp::Mod => true | _o => false }; }
+fn is_bool_ty(t: *const Typ) -> bool { return match *t { Typ::TBool => true | _o => false }; }
+fn div_mod_by_zero(op: BinOp, r: *const Expr) -> bool {
+    if !is_div_or_mod(op) { return false; }
+    return match expr_int_lit(r) {
+        Option::Some(k) => k == 0 as int
+        | Option::None => false
+    };
+}
+fn is_div_or_mod(op: BinOp) -> bool {
+    return match op { BinOp::Div => true | BinOp::Mod => true | _o => false };
+}
+fn report_div_zero(_a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp, p: Pos) {
+    if is_mod_op(op) { tc_fail(ar, sc, p, "modulo by zero"); return; }
+    tc_fail(ar, sc, p, "division by zero");
+    return;
+}
+// `==` on a struct / enum is NOT a C `==` — that would compare aggregates, which
+// cc rejects.  It lowers to the `Eq` impl (`T__eq(&l, &r)`), and only when T has
+// one: a method merely NAMED `eq` in a bare impl is not an Eq impl.
+fn impls_eq(sc: *const TyScope, path: *const Vec<str>) -> bool {
+    let n = sc.sc_methods.length();
+    let sl = sc.sc_methods.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].mi_trait, "Eq") && str::eq(sl[i].mi_name, "eq")
+           && paths_eq(&sl[i].mi_path, path) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn paths_eq(x: *const Vec<str>, y: *const Vec<str>) -> bool {
+    if x.length() != y.length() { return false; }
+    let xs = x.as_slice();
+    let ys = y.as_slice();
+    let mut i = 0 as u32;
+    while i < x.length() {
+        if !str::eq(xs[i], ys[i]) { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
+fn is_aggregate_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TStruct(_p) => true | Typ::TEnum(_p) => true | _o => false };
+}
+fn aggregate_path(a: Allocator, t: *const Typ) -> Vec<str> {
+    return match *t {
+        Typ::TStruct(p) => copy_strs(a, &p)
+        | Typ::TEnum(p) => copy_strs(a, &p)
+        | _o => Vec::with_capacity(a, 8 as u32)
+    };
+}
+fn mk_eq_call(a: Allocator, ar: *Arena, op: BinOp, path: *const Vec<str>,
+              l2: *const Texpr, r2: *const Texpr, p: Pos) -> *const Texpr {
+    let mangled = method_mangle(a, ar, path, "eq");
+    let lref = te_node(ar, TexprNode::TRef(l2), ty_node(ar, Typ::TConstPtr(l2.ty)), l2.pos);
+    let rref = te_node(ar, TexprNode::TRef(r2), ty_node(ar, Typ::TConstPtr(r2.ty)), r2.pos);
+    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    args.push(lref);
+    args.push(rref);
+    let call = te_node(ar, TexprNode::TCall { mangled: mangled, args: args }, t_bool(ar), p);
+    if is_not_eq(op) { return te_node(ar, TexprNode::TNot(call), t_bool(ar), p); }
+    return call;
+}
+fn is_not_eq(op: BinOp) -> bool { return match op { BinOp::NotEq => true | _o => false }; }
+fn no_eq_impl(a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp, t: *const Typ, p: Pos) -> *const Texpr {
+    let tn = typ_name(a, ar, t);
+    let mut sb = StringBuilder::with_capacity(a, 160 as u32);
+    sb.push_str("type '"); sb.push_str(tn);
+    sb.push_str("' does not implement Eq, so `"); sb.push_str(binop_sym(op));
+    sb.push_str("` cannot compare two values of it (add `@derive(Eq)` to the decl or write `impl Eq for ");
+    sb.push_str(tn); sb.push_str("` to define content equality)");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, p);
+}
+fn finish_binop(a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp, l2: *const Texpr, r2: *const Texpr,
+                rexpr: *const Expr, p: Pos) -> *const Texpr {
+    if is_concat(op) { return fold_concat(a, ar, sc, l2, r2, p); }
     if is_str_eq_op(op) && is_str_ty(l2.ty) && is_str_ty(r2.ty) { return mk_str_eq(a, ar, op, l2, r2, p); }
+    if is_eq_op(op) && typ_eq(l2.ty, r2.ty) && is_aggregate_ty(l2.ty) {
+        let apath = aggregate_path(a, l2.ty);
+        if !impls_eq(sc, &apath) { return no_eq_impl(a, ar, sc, op, l2.ty, p); }
+        return mk_eq_call(a, ar, op, &apath, l2, r2, p);
+    }
+    check_binop_tys(a, ar, sc, op, l2, r2, rexpr, p);
     let ty = binop_result_ty(ar, op, l2);
     return te_node(ar, TexprNode::TBinOp(op, l2, r2), ty, p);
 }
@@ -1491,21 +1779,21 @@ fn elab_binop(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     if is_some_ty(le) {
         let la = elab_expr(a, ar, g, sc, env, le, l);
         let ra = elab_expr(a, ar, g, sc, env, right_expected(op, expected), r);
-        return finish_binop(a, ar, op, la, ra, p);
+        return finish_binop(a, ar, sc, op, la, ra, r, p);
     }
     if expr_is_int_lit(r) && !expr_is_int_lit(l) {
         let lb = elab_expr(a, ar, g, sc, env, none_ty(), l);
         let rb = elab_expr(a, ar, g, sc, env, Option::Some(lb.ty), r);
-        return finish_binop(a, ar, op, lb, rb, p);
+        return finish_binop(a, ar, sc, op, lb, rb, r, p);
     }
     if expr_is_int_lit(l) && !expr_is_int_lit(r) {
         let rc = elab_expr(a, ar, g, sc, env, none_ty(), r);
         let lc = elab_expr(a, ar, g, sc, env, Option::Some(rc.ty), l);
-        return finish_binop(a, ar, op, lc, rc, p);
+        return finish_binop(a, ar, sc, op, lc, rc, r, p);
     }
     let ld = elab_expr(a, ar, g, sc, env, none_ty(), l);
     let rd = elab_expr(a, ar, g, sc, env, none_ty(), r);
-    return finish_binop(a, ar, op, ld, rd, p);
+    return finish_binop(a, ar, sc, op, ld, rd, r, p);
 }
 
 fn elab_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
@@ -1764,9 +2052,11 @@ fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
     return te_node(ar, TexprNode::TCall { mangled: gf.gf_emit, args: targs }, ty, p);
 }
 
+// A `const` is a value, not a callable — the reference reports it as an unknown
+// FUNCTION, because that is the namespace the call site looked in.
 fn call_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                  gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
-    if gf.is_const { return defer_expr(ar, p); }
+    if gf.is_const { return unknown_fn(a, ar, sc, gf.name, p); }
     return mk_user_call(a, ar, g, sc, env, gf, args, p);
 }
 
@@ -3842,7 +4132,10 @@ fn elab_new_enum(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let last = path_last(tname);
     let init = qualify_type_path(a, ar, sc, &path_init(a, tname));
     let tag = variant_tag(sc.sc_etags, &init, last);
-    if tag < 0 as int { return defer_expr(ar, p); }
+    if tag < 0 as int {
+        if is_known_enum(sc, &init) { return no_such_variant(a, ar, sc, &init, last, p); }
+        return defer_expr(ar, p);
+    }
     let talloc = elab_alloc_opt(a, ar, g, sc, env, alloc);
     let tflds = enum_tuple_args(a, ar, g, sc, env, &init, last, args);
     let inst = enum_instance_path(a, ar, sc, none_ty(), &init, last, &tflds);
@@ -4252,13 +4545,23 @@ fn is_vec_instance(t: *const Typ) -> bool {
 // pairs with index loops).  A non-array argument defers.
 fn elab_len(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
             args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
-    if args.length() != 1 as u32 { return defer_expr(ar, p); }
+    if args.length() != 1 as u32 {
+        tc_fail(ar, sc, p, "len(...) takes exactly one argument");
+        return defer_expr(ar, p);
+    }
     let sl = args.as_slice();
     let ta = elab_expr(a, ar, g, sc, env, none_ty(), sl[0 as u32]);
     return match *ta.ty {
         Typ::TArray { elem, size } => te_node(ar, TexprNode::TIntLit(size), t_i32(ar), p)
-        | _other => defer_expr(ar, p)
+        | _other => bad_len_arg(a, ar, sc, ta, p)
     };
+}
+fn bad_len_arg(a: Allocator, ar: *Arena, sc: *const TyScope, ta: *const Texpr, p: Pos) -> *const Texpr {
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    sb.push_str("len(...) requires an array, got ");
+    sb.push_str(typ_name(a, ar, ta.ty));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, p);
 }
 
 fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
@@ -4688,8 +4991,8 @@ fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
     if is_known_enum(sc, &qtname) { return no_such_variant(a, ar, sc, &qtname, variant, p); }
     let m = mangle_path(a, ar, tname, variant);
     return match global_lookup_by_mangled(g, m) {
-        Option::Some(gf) => enumlit_const(ar, gf, p)
-        | Option::None => qualified_extern_ref(ar, g, variant, p)
+        Option::Some(gf) => enumlit_const(a, ar, sc, gf, tname, p)
+        | Option::None => qualified_extern_ref(a, ar, g, sc, tname, variant, p)
     };
 }
 // `E::C` where E IS an enum but has no `C`.  Only then — a `mod::CONST` path that
@@ -4706,15 +5009,23 @@ fn no_such_variant(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Ve
 }
 // A `mod::NAME` reference that isn't a module const may be an extern const /
 // var, whose raw C symbol is the bare last segment (no module mangling).
-fn qualified_extern_ref(ar: *Arena, g: *const Vec<GlobalFn>, variant: str, p: Pos) -> *const Texpr {
+fn qualified_extern_ref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                        tname: *const Vec<str>, variant: str, p: Pos) -> *const Texpr {
     return match global_lookup(g, variant) {
-        Option::Some(gf) => enumlit_const(ar, gf, p)
-        | Option::None => defer_expr(ar, p)
+        Option::Some(gf) => enumlit_const(a, ar, sc, gf, tname, p)
+        | Option::None => unknown_enum(a, ar, sc, tname, p)
     };
 }
-fn enumlit_const(ar: *Arena, gf: GlobalFn, p: Pos) -> *const Texpr {
-    if gf.is_const { return te_node(ar, TexprNode::TVar(gf.mangled), ret_or_void(ar, gf.ret), p); }
+fn unknown_enum(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, p: Pos) -> *const Texpr {
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    sb.push_str("unknown enum '"); sb.push_str(path_display(a, ar, tname)); sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return defer_expr(ar, p);
+}
+fn enumlit_const(a: Allocator, ar: *Arena, sc: *const TyScope, gf: GlobalFn,
+                 tname: *const Vec<str>, p: Pos) -> *const Texpr {
+    if gf.is_const { return te_node(ar, TexprNode::TVar(gf.mangled), ret_or_void(ar, gf.ret), p); }
+    return unknown_enum(a, ar, sc, tname, p);
 }
 
 fn let_expected(a: Allocator, ar: *Arena, sc: *const TyScope, ty_ann: Option<*const TypeAnn>, p: Pos) -> Option<*const Typ> {
@@ -5001,32 +5312,54 @@ fn block_is_value(blk: *const Vec<Stmt>) -> bool {
 // The trailing value of a single-`Tail` block; multi-statement value blocks
 // are deferred (a visible marker) for now.
 fn block_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-               expected: Option<*const Typ>, blk: *const Vec<Stmt>) -> *const Texpr {
-    if blk.length() != 1 as u32 { return defer_expr(ar, zero_pos()); }
+               expected: Option<*const Typ>, blk: *const Vec<Stmt>, side: str, p: Pos) -> *const Texpr {
+    if blk.length() != 1 as u32 { return not_single_expr(a, ar, sc, side, p); }
     let sl = blk.as_slice();
-    return tail_or_defer(a, ar, g, sc, env, expected, &sl[0 as u32]);
+    return tail_or_defer(a, ar, g, sc, env, expected, &sl[0 as u32], side, p);
 }
 fn tail_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                 expected: Option<*const Typ>, s: *const Stmt) -> *const Texpr {
+                 expected: Option<*const Typ>, s: *const Stmt, side: str, p: Pos) -> *const Texpr {
     return match *s {
         Stmt::Tail(e) => elab_expr(a, ar, g, sc, env, expected, e)
-        | _other => defer_expr(ar, zero_pos())
+        | _other => not_single_expr(a, ar, sc, side, p)
     };
+}
+fn not_single_expr(a: Allocator, ar: *Arena, sc: *const TyScope, side: str, p: Pos) -> *const Texpr {
+    let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+    sb.push_str("`if` "); sb.push_str(side);
+    sb.push_str(" branch must be a single expression to yield a value (block expressions in branches are not yet supported)");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, p);
 }
 fn else_block_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                    expected: Option<*const Typ>, else_blk: Option<Vec<Stmt>>) -> *const Texpr {
+                    expected: Option<*const Typ>, else_blk: Option<Vec<Stmt>>, p: Pos) -> *const Texpr {
     return match else_blk {
-        Option::Some(blk) => block_value(a, ar, g, sc, env, expected, &blk)
-        | Option::None => defer_expr(ar, zero_pos())
+        Option::Some(blk) => block_value(a, ar, g, sc, env, expected, &blk, "else", p)
+        | Option::None => no_else_value(ar, sc, p)
     };
 }
+fn no_else_value(ar: *Arena, sc: *const TyScope, p: Pos) -> *const Texpr {
+    tc_fail(ar, sc, p, "`if` used as a value needs an `else` branch (a value must exist on every path)");
+    return defer_expr(ar, p);
+}
 
+fn check_if_branches(a: Allocator, ar: *Arena, sc: *const TyScope, tthen: *const Texpr,
+                     telse: *const Texpr, p: Pos) {
+    if typ_eq(tthen.ty, telse.ty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("`if` branches have inconsistent types: ");
+    sb.push_str(typ_name(a, ar, tthen.ty));
+    sb.push_str(" vs "); sb.push_str(typ_name(a, ar, telse.ty));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn mk_if_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
               expected: Option<*const Typ>, cond: *const Expr, then_blk: *const Vec<Stmt>,
               else_blk: Option<Vec<Stmt>>, p: Pos) -> *const Texpr {
     let tcond = elab_expr(a, ar, g, sc, env, none_ty(), cond);
-    let tthen = block_value(a, ar, g, sc, env, expected, then_blk);
-    let telse = else_block_value(a, ar, g, sc, env, expected, else_blk);
+    let tthen = block_value(a, ar, g, sc, env, expected, then_blk, "then", p);
+    let telse = else_block_value(a, ar, g, sc, env, expected, else_blk, p);
+    check_if_branches(a, ar, sc, tthen, telse, p);
     return te_node(ar, TexprNode::TIfExpr { cond: tcond, then_val: tthen, else_val: telse }, tthen.ty, p);
 }
 
@@ -6858,7 +7191,7 @@ fn method_self_const(f: *const Func) -> bool {
     return is_const_ptr_ann(sl[0 as u32].pty);
 }
 fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>,
-                   f: *const Func, impl_idx: u32, meth_idx: u32, out: *Vec<MethodInfo>) {
+                   trait_name: str, f: *const Func, impl_idx: u32, meth_idx: u32, out: *Vec<MethodInfo>) {
     // A method on a generic struct with no parameters of its own carries the
     // impl's type parameters, bound at the call site from the receiver
     // instance.  A method-generic method keeps its own.
@@ -6870,7 +7203,7 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     let msc = scope_with_tparams(sc, &f.tparams);
     let mret = if struct_gen { none_ty() } else { resolve_sig_ret(a, ar, &msc, f.ret_ty, f.pos) };
     out.push(MethodInfo {
-        mi_path: copy_strs(a, target), mi_name: f.name,
+        mi_path: copy_strs(a, target), mi_trait: trait_name, mi_name: f.name,
         mi_mangled: method_mangle(a, ar, target, f.name),
         mi_ret: mret,
         mi_has_self: method_has_self(f), mi_self_ptr: method_self_ptr(f), mi_self_const: method_self_const(f),
@@ -6880,11 +7213,11 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     });
 }
 fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>,
-                        methods: *const Vec<Func>, impl_idx: u32, out: *Vec<MethodInfo>) {
+                        trait_name: str, methods: *const Vec<Func>, impl_idx: u32, out: *Vec<MethodInfo>) {
     let n = methods.length();
     let sl = methods.as_slice();
     let mut i = 0 as u32;
-    while i < n { push_one_method(a, ar, sc, target, itparams, &sl[i], impl_idx, i, out); i = i + 1 as u32; }
+    while i < n { push_one_method(a, ar, sc, target, itparams, trait_name, &sl[i], impl_idx, i, out); i = i + 1 as u32; }
 }
 // `top_idx` is the index of the enclosing top-level item, so a generic
 // method's body can be re-derived in the drain.  Module-nested impls pass
@@ -6895,7 +7228,7 @@ fn collect_method_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, modpath
         Item::Impl(ib) => {
             let msc = scope_with_modpath(sc, modpath);
             let target = path_concat(a, modpath, &ib.itarget);
-            collect_methods_impl(a, ar, &msc, &target, &ib.itparams, &ib.iitems, top_idx, out);
+            collect_methods_impl(a, ar, &msc, &target, &ib.itparams, impl_trait_name(&ib), &ib.iitems, top_idx, out);
         }
         | Item::Module(md) => { collect_method_info_nested(a, ar, sc, &path_push(a, modpath, md.mname), &md.mitems, top_idx, out); }
         | _e => { }
@@ -6983,7 +7316,7 @@ fn push_prelude_gen_method(a: Allocator, ar: *Arena, target: str, name: str, tpa
     let mut tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     tp.push(target);
     out.push(MethodInfo {
-        mi_path: tp, mi_name: name,
+        mi_path: tp, mi_trait: "", mi_name: name,
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: self_ptr, mi_self_const: self_const,
         mi_tparams: tparams, mi_params: params, mi_ret_ann: ret_ann,
@@ -7073,7 +7406,7 @@ fn push_prelude_method(a: Allocator, ar: *Arena, target: str, name: str,
     let mut tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     tp.push(target);
     out.push(MethodInfo {
-        mi_path: tp, mi_name: name,
+        mi_path: tp, mi_trait: "", mi_name: name,
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: false, mi_self_const: false,
         mi_tparams: one_tparam(a), mi_params: params, mi_ret_ann: ret_ann,
@@ -7096,7 +7429,7 @@ fn push_prelude_method_ng(a: Allocator, ar: *Arena, target: str, name: str, has_
     let empty_params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     let none_ann: Option<*const TypeAnn> = Option::None;
     out.push(MethodInfo {
-        mi_path: tp, mi_name: name,
+        mi_path: tp, mi_trait: "", mi_name: name,
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: ret, mi_has_self: has_self, mi_self_ptr: self_ptr, mi_self_const: self_const,
         mi_tparams: empty_tp, mi_params: empty_params, mi_ret_ann: none_ann,
@@ -7122,6 +7455,7 @@ fn push_prelude_sg_method(a: Allocator, ar: *Arena, target: str, name: str, has_
     // receiver-dispatched; it recovers its tparam from the expected type.
     out.push(MethodInfo {
         mi_path: path, mi_name: name,
+        mi_trait: "",
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: none_ty(), mi_has_self: has_self, mi_self_ptr: self_ptr, mi_self_const: self_const,
         mi_tparams: tp, mi_params: empty_params, mi_ret_ann: ret_ann,
@@ -7233,6 +7567,7 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     let ab_path: Vec<str> = arena_method_path(a);
     out.push(MethodInfo {
         mi_path: ab_path, mi_name: "alloc_borrowed",
+        mi_trait: "",
         mi_mangled: "Arena__alloc_borrowed",
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: false,
         mi_tparams: one_tparam(a), mi_params: ab_params,
@@ -7290,18 +7625,19 @@ fn impl_trait_name(ib: *const ImplBlock) -> str {
 }
 
 fn register_one_default(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
-                        impl_methods: *const Vec<Func>, defaults: *const Vec<str>, f: *const Func, ti: u32, j: u32, out: *Vec<MethodInfo>) {
+                        impl_methods: *const Vec<Func>, defaults: *const Vec<str>, trait_name: str,
+                        f: *const Func, ti: u32, j: u32, out: *Vec<MethodInfo>) {
     if !name_in(defaults, f.name) { return; }
     if impl_has_method(impl_methods, f.name) { return; }
     let no_itparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    push_one_method(a, ar, sc, target, &no_itparams, f, ti, j, out);
+    push_one_method(a, ar, sc, target, &no_itparams, trait_name, f, ti, j, out);
 }
 fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
                         impl_methods: *const Vec<Func>, td: *const TraitDecl, ti: u32, out: *Vec<MethodInfo>) {
     let n = td.trmethods.length();
     let ms = td.trmethods.as_slice();
     let mut j = 0 as u32;
-    while j < n { register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, &ms[j], ti, j, out); j = j + 1 as u32; }
+    while j < n { register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, td.trname, &ms[j], ti, j, out); j = j + 1 as u32; }
 }
 fn register_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, ti: u32,
                           target: *const Vec<str>, impl_methods: *const Vec<Func>, out: *Vec<MethodInfo>) {
@@ -7510,6 +7846,7 @@ fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpat
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     out.push(MethodInfo {
         mi_path: copy_strs(a, cnpath), mi_name: "call", mi_mangled: method_mangle(a, ar, cnpath, "call"),
+        mi_trait: "",
         mi_ret: resolve_sig_ret(a, ar, sc, ret_ty, p),
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: ret_ty,
@@ -7819,6 +8156,17 @@ fn push_derive_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: str,
     push_derive_method_k(a, ar, sc, target, mname, ret_ann, has_other, body, do_drain, 2 as int, methods, lifted, gsigs, p);
     return;
 }
+// A `@derive(X)` synthesises a real `impl X for T`, so the method it registers
+// belongs to that trait — the operator lowering asks the same question of a
+// derived impl and a hand-written one.
+fn derive_trait_of(mname: str) -> str {
+    if str::eq(mname, "eq") || str::eq(mname, "ne") { return "Eq"; }
+    if str::eq(mname, "hash") { return "Hash"; }
+    if str::eq(mname, "clone") { return "Clone"; }
+    if str::eq(mname, "fmt") { return "Display"; }
+    if str::eq(mname, "fmt_debug") { return "Debug"; }
+    return "";
+}
 fn push_derive_method_k(a: Allocator, ar: *Arena, sc: *const TyScope, target: str, mname: str,
                         ret_ann: *const TypeAnn, has_other: bool, body: *const Expr, do_drain: bool,
                         kind: int, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>, gsigs: *Vec<FnSig>, p: Pos) {
@@ -7837,6 +8185,7 @@ fn push_derive_method_k(a: Allocator, ar: *Arena, sc: *const TyScope, target: st
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     methods.push(MethodInfo {
         mi_path: single_str(a, target), mi_name: mname, mi_mangled: mangled,
+        mi_trait: derive_trait_of(mname),
         mi_ret: resolve_sig_ret(a, ar, sc, Option::Some(ret_ann), p),
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: Option::Some(ret_ann),
@@ -8088,6 +8437,7 @@ fn push_fmt_debug(a: Allocator, ar: *Arena, target: str, body: *const Expr,
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     methods.push(MethodInfo {
         mi_path: single_str(a, target), mi_name: "fmt_debug", mi_mangled: mangled,
+        mi_trait: "",
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: none_ret,
         mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
@@ -8170,6 +8520,7 @@ fn push_drop_method(a: Allocator, ar: *Arena, sname: str, body: *const Expr, met
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     methods.push(MethodInfo {
         mi_path: single_str(a, sname), mi_name: "drop", mi_mangled: mangled,
+        mi_trait: "",
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: false,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: none_ret,
         mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false

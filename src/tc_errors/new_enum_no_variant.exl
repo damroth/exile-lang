@@ -1,0 +1,6 @@
+enum E { A(int) | B }
+fn main() {
+    let a = default_allocator();
+    let e = new(a) E::C(1);
+    println(1);
+}
