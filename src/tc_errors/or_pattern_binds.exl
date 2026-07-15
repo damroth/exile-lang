@@ -1,0 +1,7 @@
+// An or-pattern is one arm with several spellings — a bind would have a value
+// on some spellings and none on others.
+enum E { A(int) | B(int) | C }
+fn f(e: E) -> int {
+    return match e { E::A(v) | E::B(v) if v > 0 => v | _o => 0 };
+}
+fn main() { println(f(E::A(5))); }

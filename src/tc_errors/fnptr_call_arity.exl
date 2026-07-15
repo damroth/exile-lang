@@ -1,0 +1,6 @@
+// An indirect call has its signature in the TYPE, not the globals table.
+fn add(a: int, b: int) -> int { return a + b; }
+fn main() {
+    let f: fn(int, int) -> int = add;
+    println(f(1));
+}

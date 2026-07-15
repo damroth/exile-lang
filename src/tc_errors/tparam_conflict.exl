@@ -1,0 +1,6 @@
+// One name, two concrete answers: the call is ambiguous, and both are named in
+// the order they were inferred.
+fn f<T>(a: T, b: T) -> T { return a; }
+fn main() {
+    println(f(1, true));
+}

@@ -1,0 +1,2 @@
+pub use nie_ma::cos;
+fn main() { println(1); }

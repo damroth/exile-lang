@@ -1,0 +1,8 @@
+fn f(b: bool) -> Option<int> {
+    if b { return Option::Some(1); }
+    return Option::None;
+}
+fn main() {
+    let v = f(true) orelse "x";
+    println(1);
+}

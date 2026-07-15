@@ -1,0 +1,6 @@
+// `lo..hi` is one Range<T>: both bounds pin the same T.
+fn main() {
+    let v = [1, 2, 3];
+    let s = v[true..2];
+    println(1);
+}

@@ -1,0 +1,6 @@
+struct S { cb: fn(int) -> int }
+fn dbl(x: int) -> int { return x * 2; }
+fn main() {
+    let s = S { cb: dbl };
+    println(s.cb(1, 2));
+}

@@ -84,6 +84,76 @@ struct StructField {
     sf_ty: *const Typ,
 }
 
+// A `pub use` re-exports a NAME; the name has to exist.  The reference probes
+// every namespace the alias could land in — fn, struct, enum, type alias.
+fn check_pub_uses(a: Allocator, ar: *Arena, sc: *const TyScope, g: *const Vec<GlobalFn>, items: *const Vec<Item>) {
+    let mut tads: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_type_alias_names(a, items, &tads);
+    check_pub_uses_in(a, ar, sc, g, items, &tads);
+    return;
+}
+fn collect_type_alias_names(a: Allocator, items: *const Vec<Item>, out: *Vec<str>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_type_alias_one(a, &sl[i], out); i = i + 1 as u32; }
+    return;
+}
+fn collect_type_alias_one(a: Allocator, it: *const Item, out: *Vec<str>) {
+    match *it {
+        Item::TypeAlias(ta) => { out.push(ta.taname); }
+        | Item::Module(md) => { collect_type_alias_names(a, &md.mitems, out); }
+        | _e => { }
+    }
+    return;
+}
+fn check_pub_uses_in(a: Allocator, ar: *Arena, sc: *const TyScope, g: *const Vec<GlobalFn>,
+                     items: *const Vec<Item>, tads: *const Vec<str>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { check_pub_use_one(a, ar, sc, g, &sl[i], tads); i = i + 1 as u32; }
+    return;
+}
+fn check_pub_use_one(a: Allocator, ar: *Arena, sc: *const TyScope, g: *const Vec<GlobalFn>, it: *const Item, tads: *const Vec<str>) {
+    match *it {
+        Item::Use { path, is_wildcard, is_pub, pos } => {
+            pub_use_gate(a, ar, sc, g, &path, is_wildcard, is_pub, pos, tads);
+        }
+        | Item::Module(md) => { check_pub_uses_in(a, ar, sc, g, &md.mitems, tads); }
+        | _e => { }
+    }
+    return;
+}
+fn pub_use_gate(a: Allocator, ar: *Arena, sc: *const TyScope, g: *const Vec<GlobalFn>,
+                path: *const Vec<str>, is_wildcard: bool, is_pub: bool, pos: Pos, tads: *const Vec<str>) {
+    if !is_pub { return; }
+    if is_wildcard { return; }
+    check_use_target(a, ar, sc, g, path, pos, tads);
+    return;
+}
+fn check_use_target(a: Allocator, ar: *Arena, sc: *const TyScope, g: *const Vec<GlobalFn>,
+                    path: *const Vec<str>, p: Pos, tads: *const Vec<str>) {
+    if path.length() < 2 as u32 { return; }
+    let joined = path_display(a, ar, path);
+    if name_in(sc.sc_structs, joined) { return; }
+    if name_in(sc.sc_enums, joined) { return; }
+    let last = path_last(path);
+    if talias_idx(sc, last) >= 0 as int { return; }
+    // A `type Name = ...` decl is a fourth namespace the alias can land in —
+    // `pub use ast::Program` in the port's own ir.exl re-exports one.
+    if name_in(tads, last) { return; }
+    let mangled = mangle_path(a, ar, &path_init(a, path), last);
+    if is_some_gf(global_lookup_by_mangled(g, mangled)) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 144 as u32);
+    sb.push_str("'pub use "); sb.push_str(joined);
+    sb.push_str("' refers to unknown item — no fn, struct, enum, or type alias with that path is visible from this scope");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn is_some_gf(o: Option<GlobalFn>) -> bool {
+    return match o { Option::Some(_g) => true | Option::None => false };
+}
 // A `use foo::Bar;` (or wildcard-expanded `pub use foo::Bar;`) type alias:
 // the bare name `Bar` resolves to the qualified path `foo::Bar` when `Bar`
 // names a declared type.  This is the type-level counterpart to collect_use's
@@ -2477,6 +2547,7 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_call_binds(a, ar, &cscope, &gsl[gfidx as u32].gn_params, &targs, &binds, p);
     seed_from_expected(cret, expected, &binds);
+    check_bind_conflicts(a, ar, sc, &binds, p);
     check_tparams_bound(a, ar, sc, &gsl[gfidx as u32].gn_tparams, &binds, p);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
@@ -2924,7 +2995,44 @@ fn fnptr_ret_of(env: *const Vec<FieldTy>, name: str) -> Option<*const Typ> {
 fn mk_fnptr_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                  name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let targs = elab_args(a, ar, g, sc, env, args);
+    check_fnptr_call(a, ar, sc, env, "function pointer", name, name, &targs, args, p);
     return te_node(ar, TexprNode::TCall { mangled: name, args: targs }, ret_or_void(ar, fnptr_ret_of(env, name)), p);
+}
+// An indirect call has its signature in the TYPE, not the globals table — the
+// declared params come off the TFnPtr.
+fn check_fnptr_call(a: Allocator, ar: *Arena, sc: *const TyScope, env: *const Vec<FieldTy>,
+                    kind: str, name: str, disp: str, targs: *const Vec<*const Texpr>,
+                    raw: *const Vec<*const Expr>, p: Pos) {
+    match env_lookup(env, name) {
+        Option::Some(t) => { check_fnptr_sig(a, ar, sc, kind, disp, t, targs, raw, p); }
+        | Option::None => { }
+    }
+    return;
+}
+fn check_fnptr_sig(a: Allocator, ar: *Arena, sc: *const TyScope, kind: str, disp: str,
+                   t: *const Typ, targs: *const Vec<*const Texpr>, raw: *const Vec<*const Expr>, p: Pos) {
+    match *t {
+        Typ::TFnPtr { params, ret } => { fnptr_sig_args(a, ar, sc, kind, disp, &params, targs, raw, p); }
+        | _o => { }
+    }
+    return;
+}
+fn fnptr_sig_args(a: Allocator, ar: *Arena, sc: *const TyScope, kind: str, disp: str,
+                  params: *const Vec<*const Typ>, targs: *const Vec<*const Texpr>,
+                  raw: *const Vec<*const Expr>, p: Pos) {
+    if targs.length() != params.length() {
+        check_arity(a, ar, sc, kind, disp, params.length(), targs.length(), false, p);
+        return;
+    }
+    let psl = params.as_slice();
+    let tsl = targs.as_slice();
+    let rsl = raw.as_slice();
+    let mut i = 0 as u32;
+    while i < params.length() {
+        check_arg_ty(a, ar, sc, disp, i, psl[i], rsl[i], tsl[i].ty, p);
+        i = i + 1 as u32;
+    }
+    return;
 }
 
 // The borrow type `self` declares, built from the receiver's pointee.
@@ -3164,6 +3272,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     // A tparam unreachable through self / args (e.g. `alloc<T>()`) is pinned by
     // the surrounding expected type.
     seed_from_expected(cret, expected, &binds);
+    check_bind_conflicts(a, ar, sc, &binds, p);
     check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
@@ -3193,6 +3302,17 @@ fn field_call_desugar(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
         | Option::None => none
     };
 }
+// `S.cb` — the owning struct's bare name plus the field, as the reference
+// renders an indirect-call-through-field site.
+fn fnptr_field_disp(a: Allocator, ar: *Arena, tfld: *const Texpr, fname: str) -> str {
+    let owner = match tfld.e {
+        TexprNode::TFieldAccess { target, field } => path_last(&recv_base_path(a, target.ty))
+        | _o => ""
+    };
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(owner); sb.push_str("."); sb.push_str(fname);
+    return str::from_slice(ar, sb.as_slice());
+}
 fn maybe_field_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                     expected: Option<*const Typ>, recv: *const Expr, fty: *const Typ, name: str, args: *const Vec<*const Expr>, p: Pos) -> Option<*const Texpr> {
     // A fn-ptr field is called indirectly: `hooks.on_x(0)` -> an indirect call
@@ -3200,6 +3320,7 @@ fn maybe_field_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     if is_fnptr_ty(fty) {
         let tfld = elab_field_access(a, ar, g, sc, env, recv, name, p);
         let targs = elab_args(a, ar, g, sc, env, args);
+        check_fnptr_sig(a, ar, sc, "fn-pointer field", fnptr_field_disp(a, ar, tfld, name), fty, &targs, args, p);
         return Option::Some(te_node(ar, TexprNode::TIndirectCall { fn_expr: tfld, args: targs }, ret_or_void(ar, fnptr_ret_ty(fty)), p));
     }
     if find_method_idx(sc.sc_methods, &recv_base_path(a, fty), "call") >= 0 as int {
@@ -3483,8 +3604,31 @@ fn pattern_binds(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Patte
             let epath = enum_ty_path(a, scrut_ty);
             bind_variant_payload(a, ar, sc, &epath, variant, &binds, env_out);
         }
+        | Pattern::POr(alts, q) => { check_or_pattern(a, ar, sc, scrut_ty, &alts, q); }
         | _other => { }
     }
+}
+// An or-pattern is one arm with several spellings — a bind would have a value
+// on some spellings and none on others, so alternatives must bind nothing.
+fn check_or_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, _scrut_ty: *const Typ,
+                    alts: *const Vec<Pattern>, p: Pos) {
+    let n = alts.length();
+    let sl = alts.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        pat_bound_names(a, &sl[i], &names);
+        if names.length() > 0 as u32 {
+            let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+            sb.push_str("or-pattern alternatives must bind zero variables (got bind '");
+            sb.push_str(names.as_slice()[0 as u32]);
+            sb.push_str("'); use separate arms if you need to bind");
+            tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+            return;
+        }
+        i = i + 1 as u32;
+    }
+    return;
 }
 // The pattern's own contract: it names an enum the value actually has, an
 // existing variant, and binds that fit the payload.  Every message lands at the
@@ -4314,6 +4458,16 @@ fn skel_path(a: Allocator, is_opt: bool) -> Vec<str> {
     return sk;
 }
 
+// The Ok/Some payload and the default are the two arms of one value.
+fn check_orelse_arms(a: Allocator, ar: *Arena, sc: *const TyScope, okty: *const Typ, dfl: *const Typ, p: Pos) {
+    if typ_eq(okty, dfl) { return; }
+    if ty_has_tvar(okty) || ty_has_tvar(dfl) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+    sb.push_str("orelse arms have inconsistent types: ");
+    sb.push_str(typ_name(a, ar, okty)); sb.push_str(" vs "); sb.push_str(typ_name(a, ar, dfl));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn elab_orelse(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                expected: Option<*const Typ>, value: *const Expr, dflt: *const Expr, p: Pos) -> *const Texpr {
     let tvalue = elab_expr(a, ar, g, sc, env, none_ty(), value);
@@ -4333,6 +4487,7 @@ fn elab_orelse(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
     let ok_body = te_node(ar, TexprNode::TVar("__orelse_v"), ok_pay, p);
     let ok_arm = TmatchArm { tpat: variant_pat_bind(a, ok_name, ok_tag, "__orelse_v"), tguard: none_texpr(), tbody: ok_body, tdiverges: false, tarm_pos: p };
     let tdefault = elab_expr(a, ar, g, sc, env, expected, dflt);
+    check_orelse_arms(a, ar, sc, ok_pay, tdefault.ty, p);
     let err_pat = if is_opt { variant_pat_unit(a, err_name, err_tag) } else { variant_pat_wild(a, err_name, err_tag) };
     let err_arm = TmatchArm { tpat: err_pat, tguard: none_texpr(), tbody: tdefault, tdiverges: false, tarm_pos: p };
     let mut arms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
@@ -4802,6 +4957,35 @@ fn infer_struct_binds(sc: *const TyScope, tname: *const Vec<str>, tfields: *cons
 }
 
 // Bindings → instance args in first-seen tparam order.
+// One name, two concrete answers: the call is ambiguous and the reference says
+// so with both, in the order they were inferred.
+fn check_bind_conflicts(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, p: Pos) {
+    let n = binds.length();
+    let sl = binds.as_slice();
+    let mut i = 1 as u32;
+    while i < n {
+        let mut j = 0 as u32;
+        while j < i {
+            if str::eq(sl[j].tvb_name, sl[i].tvb_name) {
+                if bind_conflict(sl[j].tvb_ty, sl[i].tvb_ty) {
+                    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+                    sb.push_str("type parameter '"); sb.push_str(sl[i].tvb_name);
+                    sb.push_str("' inferred as both '"); sb.push_str(typ_name(a, ar, sl[j].tvb_ty));
+                    sb.push_str("' and '"); sb.push_str(typ_name(a, ar, sl[i].tvb_ty)); sb.push_str("'");
+                    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+                    return;
+                }
+            }
+            j = j + 1 as u32;
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn bind_conflict(x: *const Typ, y: *const Typ) -> bool {
+    if ty_has_tvar(x) || ty_has_tvar(y) { return false; }
+    return !typ_eq(x, y);
+}
 fn dedup_bind_tys(a: Allocator, binds: *const Vec<TVarBind>) -> Vec<*const Typ> {
     let mut seen: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
@@ -5595,7 +5779,19 @@ fn elab_sub_slice(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
                   tb: *const Texpr, lo: *const Expr, hi: *const Expr, inclusive: bool, p: Pos) -> *const Texpr {
     let lo_te = elab_expr(a, ar, g, sc, env, none_ty(), lo);
     let hi_te = elab_expr(a, ar, g, sc, env, none_ty(), hi);
+    check_range_bounds(a, ar, sc, lo_te.ty, hi_te.ty, p);
     return build_slice_from_bounds(a, ar, sc, tb, lo_te, hi_te, inclusive, p);
+}
+// `lo..hi` is one Range<T>: both bounds pin the same T.
+fn check_range_bounds(a: Allocator, ar: *Arena, sc: *const TyScope, lt: *const Typ, ht: *const Typ, p: Pos) {
+    if typ_eq(lt, ht) { return; }
+    if ty_has_tvar(lt) || ty_has_tvar(ht) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("type parameter 'T' inferred as both '");
+    sb.push_str(typ_name(a, ar, lt)); sb.push_str("' and '");
+    sb.push_str(typ_name(a, ar, ht)); sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
 }
 // A `lo..hi` / `lo..=hi` value (outside `[]`) is a `Range<T>` /
 // `RangeInclusive<T>` struct with `lo` / `hi` fields.
@@ -5603,6 +5799,7 @@ fn elab_range_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
                     lo: *const Expr, hi: *const Expr, inclusive: bool, p: Pos) -> *const Texpr {
     let lo_te = elab_expr(a, ar, g, sc, env, none_ty(), lo);
     let hi_te = elab_expr(a, ar, g, sc, env, none_ty(), hi);
+    check_range_bounds(a, ar, sc, lo_te.ty, hi_te.ty, p);
     let name = if inclusive { "RangeInclusive" } else { "Range" };
     let mut sargs: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     sargs.push(lo_te.ty);
@@ -5626,7 +5823,7 @@ fn elab_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
         | Option::None => tb0
     };
     return match *index {
-        Expr::Range { lo, hi, inclusive } => elab_sub_slice(a, ar, g, sc, env, tb, lo, hi, inclusive, p)
+        Expr::Range { lo, hi, inclusive } => elab_sub_slice(a, ar, g, sc, env, tb, lo, hi, inclusive, expr_pos(index))
         | _other => elab_scalar_index(a, ar, g, sc, env, tb, index, p)
     };
 }
@@ -13031,6 +13228,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
     // Runs once the field tables exist — the edges are read from them.
     detect_value_cycles(a, ar, &base_scope, items, &sinfo, &efields, &mono_fields, &mono_efields);
+    check_pub_uses(a, ar, &base_scope, &globals, items);
     prelude_enum_variants(a, ar, &etags, &efields);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);
