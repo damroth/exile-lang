@@ -1,0 +1,8 @@
+// An arm is unreachable iff none of its rows is useful against the rows of the
+// unguarded arms before it — the other half of the usefulness matrix.
+enum E { A | B }
+fn main() {
+    let e = E::A;
+    let r = match e { E::A => 1 | E::A => 2 | E::B => 3 };
+    println(r);
+}

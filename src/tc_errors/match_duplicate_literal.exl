@@ -1,0 +1,5 @@
+fn main() {
+    let x = 5;
+    let r = match x { 1 => 1 | 1 => 2 | _o => 0 };
+    println(r);
+}

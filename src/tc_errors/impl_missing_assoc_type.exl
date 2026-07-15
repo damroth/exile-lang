@@ -1,0 +1,5 @@
+trait T { type Item; fn m(self: *const Self) -> int; }
+struct P { x: int }
+impl T for P { type Nie = int;
+    fn m(self: *const P) -> int { return 1; } }
+fn main() { println(1); }

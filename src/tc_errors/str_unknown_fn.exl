@@ -1,0 +1,1 @@
+fn main() { println(str::nie_ma("a") as int); }

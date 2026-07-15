@@ -1,0 +1,5 @@
+fn main() {
+    let a = default_allocator();
+    let p = new(a) NieMa { x: 1 };
+    println(1);
+}

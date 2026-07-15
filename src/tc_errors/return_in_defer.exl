@@ -1,0 +1,6 @@
+// A defer body runs at scope exit; a `return` inside it has no frame to leave.
+fn f() -> int {
+    defer { return 5; }
+    return 1;
+}
+fn main() { println(f()); }

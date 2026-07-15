@@ -1,0 +1,3 @@
+// `Self` names the impl target; a free fn has none.
+fn f() -> Self { return 1; }
+fn main() { println(1); }
