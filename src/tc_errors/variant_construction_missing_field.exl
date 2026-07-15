@@ -1,0 +1,5 @@
+enum E { A { x: int, y: int } | B }
+fn main() {
+    let e = E::A { x: 1 };
+    println(1);
+}

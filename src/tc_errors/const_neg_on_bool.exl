@@ -1,0 +1,2 @@
+const K: int = -true;
+fn main() { println(K); }

@@ -1,0 +1,6 @@
+fn main() {
+    let a = default_allocator();
+    let x = 5;
+    free(a, &x, 1);
+    println(1);
+}

@@ -1,0 +1,6 @@
+// The one-argument form is gone by design: it bypassed the allocator seam.
+fn main() {
+    let a = default_allocator();
+    free(a);
+    println(1);
+}

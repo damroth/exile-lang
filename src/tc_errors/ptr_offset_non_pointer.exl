@@ -1,0 +1,4 @@
+fn main() {
+    let p = ptr_offset(5, 1);
+    println(1);
+}

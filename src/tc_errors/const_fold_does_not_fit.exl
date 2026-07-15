@@ -1,0 +1,5 @@
+// The folder always existed (it feeds #define emission); the diagnostics never
+// asked it.  Without this, `#define ex_K 400` shipped from a const declared u8
+// — the type contract silently broken.
+const K: u8 = 200 + 200;
+fn main() { println(K as int); }

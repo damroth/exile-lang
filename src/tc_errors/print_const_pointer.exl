@@ -1,0 +1,2 @@
+fn f(p: *const int) { println(p); }
+fn main() { let x = 5; f(&x); }

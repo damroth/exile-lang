@@ -1192,6 +1192,10 @@ fn array_size_of(size: *const Expr, sc: *const TyScope) -> int {
     return match *size {
         Expr::IntLit(n, _q) => n
         | Expr::Var(nm, _q) => iconst_lookup(sc.sc_iconsts, nm)
+        // `[T; 1 + 2]` folds like any const — the same folder the #define
+        // emission uses, so the two can never disagree on a size.
+        | Expr::BinOp(op, l, r, _q) => eval_const_c(size, sc.sc_iconsts)
+        | Expr::Neg(x, _q) => eval_const_c(size, sc.sc_iconsts)
         | _e => 0 as int
     };
 }
@@ -1471,9 +1475,18 @@ fn var_global_node(a: Allocator, ar: *Arena, sc: *const TyScope, gf: GlobalFn, p
     return te_node(ar, TexprNode::TFnRef(gf.gf_emit), fn_ptr_of_global(a, ar, sc, gf), p);
 }
 
+fn check_neg_operand(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    if is_int_like_ty(t) || is_float_ty(t) || ty_has_tvar(t) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("negation '-' requires an integer or float, got ");
+    sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn elab_neg(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
             expected: Option<*const Typ>, sub: *const Expr, p: Pos) -> *const Texpr {
     let s = elab_expr(a, ar, g, sc, env, expected, sub);
+    check_neg_operand(a, ar, sc, s.ty, p);
     return te_node(ar, TexprNode::TNeg(s), s.ty, p);
 }
 fn elab_bitnot(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
@@ -2960,6 +2973,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     }
     if str::eq(name, "type_name") {
         let tn_args = elab_args(a, ar, g, sc, env, args);
+        check_type_name(a, ar, sc, &tn_args, p);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: tn_args }, t_str(ar), p);
     }
     if str::eq(name, "cstr_len") {
@@ -3649,10 +3663,34 @@ fn pattern_binds(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Patte
         | _other => { }
     }
 }
+// A variant twice in one or-pattern is a copy, not a case.
+fn check_or_variants(a: Allocator, ar: *Arena, sc: *const TyScope, alts: *const Vec<Pattern>, p: Pos) {
+    let mut seen: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let n = alts.length();
+    let sl = alts.as_slice();
+    let mut i = 0 as u32;
+    let mut dup = "";
+    while i < n {
+        match sl[i] {
+            Pattern::PVariant { tname, variant, binds, pos } => {
+                if str::eq(dup, "") && name_in(&seen, variant) { dup = variant; }
+                seen.push(variant);
+            }
+            | _o => { }
+        }
+        i = i + 1 as u32;
+    }
+    if str::eq(dup, "") { return; }
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    sb.push_str("or-pattern lists '"); sb.push_str(dup); sb.push_str("' more than once");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 // An or-pattern is one arm with several spellings — a bind would have a value
 // on some spellings and none on others, so alternatives must bind nothing.
 fn check_or_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, _scrut_ty: *const Typ,
                     alts: *const Vec<Pattern>, p: Pos) {
+    check_or_variants(a, ar, sc, alts, p);
     let n = alts.length();
     let sl = alts.as_slice();
     let mut i = 0 as u32;
@@ -4103,7 +4141,12 @@ fn elab_arms(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     let mut i = 0 as u32;
     while i < n {
         check_bool_pat(a, ar, sc, &sl[i].pat, scrut_ty);
+        check_lit_pat(a, ar, sc, &sl[i].pat, scrut_ty);
         elab_one_arm(a, ar, g, sc, env, expected, scrut_ty, &sl[i], out);
+        // AFTER the arm elaborates: the or-pattern zero-bind rule and the
+        // duplicate-FIELD rule own their shapes; this one takes what is left
+        // (a tuple pattern binding one name twice).
+        check_arm_binds(a, ar, sc, &sl[i]);
         i = i + 1 as u32;
     }
 }
@@ -4114,6 +4157,100 @@ fn check_bool_pat(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Patt
     match *pat {
         Pattern::PBool(_b, ppos) => { bool_pat_reject(a, ar, sc, scrut, ppos); }
         | _o => { }
+    }
+    return;
+}
+// A literal pattern needs an integer to compare against, and the literal has to
+// FIT the scrutinee's width — `300` can never equal a u8.
+fn check_lit_pat(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern, scrut: *const Typ) {
+    match *pat {
+        Pattern::PLit(v, ppos) => { lit_pat_rules(a, ar, sc, v, scrut, ppos); }
+        | Pattern::POr(alts, _q) => { lit_pat_list(a, ar, sc, &alts, scrut); }
+        | _o => { }
+    }
+    return;
+}
+fn lit_pat_list(a: Allocator, ar: *Arena, sc: *const TyScope, alts: *const Vec<Pattern>, scrut: *const Typ) {
+    let n = alts.length();
+    let sl = alts.as_slice();
+    let mut i = 0 as u32;
+    while i < n { check_lit_pat(a, ar, sc, &sl[i], scrut); i = i + 1 as u32; }
+    return;
+}
+fn lit_pat_rules(a: Allocator, ar: *Arena, sc: *const TyScope, v: int, scrut: *const Typ, p: Pos) {
+    if ty_has_tvar(scrut) { return; }
+    if !is_int_like_ty(scrut) {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("literal pattern needs an integer scrutinee, got ");
+        sb.push_str(typ_name(a, ar, scrut));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    if is_int_ty_strict(scrut) && !int_fits(v, scrut) {
+        let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+        sb.push_str("literal pattern "); sb.push_str(int_to_str_c(a, ar, v));
+        sb.push_str(" does not fit the matched type "); sb.push_str(typ_name(a, ar, scrut));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    }
+    return;
+}
+fn pat_all_binds(a: Allocator, pat: *const Pattern, out: *Vec<str>) {
+    match *pat {
+        Pattern::PVar(n, _q) => { pat_all_push(out, n); }
+        | Pattern::PVariant { tname, variant, binds, pos } => { pat_all_pb(a, &binds, out); }
+        // POr stays opaque: its alternatives must bind ZERO variables, and that
+        // rule owns the diagnostic.
+        | _o => { }
+    }
+    return;
+}
+fn pat_all_push(out: *Vec<str>, n: str) {
+    if str::eq(n, "_") { return; }
+    out.push(n);
+    return;
+}
+fn pat_all_pb(a: Allocator, binds: *const PatBinds, out: *Vec<str>) {
+    match *binds {
+        PatBinds::PBTuple(ps) => { pat_all_list(a, &ps, out); }
+        | PatBinds::PBStruct(fps) => { pat_all_fps(a, &fps, out); }
+    }
+    return;
+}
+fn pat_all_list(a: Allocator, ps: *const Vec<Pattern>, out: *Vec<str>) {
+    let n = ps.length();
+    let sl = ps.as_slice();
+    let mut i = 0 as u32;
+    while i < n { pat_all_binds(a, &sl[i], out); i = i + 1 as u32; }
+    return;
+}
+fn pat_all_fps(a: Allocator, fps: *const Vec<FieldPat>, out: *Vec<str>) {
+    let n = fps.length();
+    let sl = fps.as_slice();
+    let mut i = 0 as u32;
+    while i < n { pat_all_binds(a, &sl[i].pat, out); i = i + 1 as u32; }
+    return;
+}
+// One arm, one namespace of binds.
+fn check_arm_binds(a: Allocator, ar: *Arena, sc: *const TyScope, arm: *const MatchArm) {
+    // NOT pat_bound_names — that one deduplicates, which is precisely the
+    // information this check needs to keep.
+    let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    pat_all_binds(a, &arm.pat, &names);
+    let n = names.length();
+    let sl = names.as_slice();
+    let mut i = 1 as u32;
+    while i < n {
+        let mut j = 0 as u32;
+        while j < i {
+            if str::eq(sl[j], sl[i]) {
+                let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+                sb.push_str("duplicate bind name '"); sb.push_str(sl[i]); sb.push_str("' in pattern");
+                tc_fail(ar, sc, arm.arm_pos, str::from_slice(ar, sb.as_slice()));
+                return;
+            }
+            j = j + 1 as u32;
+        }
+        i = i + 1 as u32;
     }
     return;
 }
@@ -5463,6 +5600,39 @@ fn lit_field_list(a: Allocator, ar: *Arena, sc: *const TyScope, disp: str, mid: 
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
+// A struct-variant construction names every payload field, once.
+fn check_variant_construction(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>,
+                              variant: str, fields: *const Vec<Field>, p: Pos) {
+    let want = variant_field_names(a, sc, epath, variant);
+    if want.length() == 0 as u32 { return; }
+    let mut disp = StringBuilder::with_capacity(a, 32 as u32);
+    disp.push_str(path_display(a, ar, epath)); disp.push_str("::"); disp.push_str(variant);
+    let dn = str::from_slice(ar, disp.as_slice());
+    let mut given: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let fsl = fields.as_slice();
+    let mut i = 0 as u32;
+    let mut dup = "";
+    while i < fields.length() {
+        if str::eq(dup, "") && name_in(&given, fsl[i].name) { dup = fsl[i].name; }
+        given.push(fsl[i].name);
+        i = i + 1 as u32;
+    }
+    if !str::eq(dup, "") {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("duplicate field '"); sb.push_str(dup);
+        sb.push_str("' in '"); sb.push_str(dn); sb.push_str("' construction");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    let missing = names_not_in(a, &want, &given);
+    if missing.length() > 0 as u32 {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("missing field '"); sb.push_str(missing.as_slice()[0 as u32]);
+        sb.push_str("' in '"); sb.push_str(dn); sb.push_str("' construction");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    }
+    return;
+}
 fn is_some_expr(e: Option<*const Expr>) -> bool {
     return match e { Option::Some(_x) => true | Option::None => false };
 }
@@ -5479,6 +5649,7 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             // `..base` copies the REST of a struct's fields.  A variant is not a
             // struct: the rest of an enum is the other variants.
             if is_some_expr(base) { tc_fail(ar, sc, p, "'..base' functional update is not supported on enum variants"); }
+            check_variant_construction(a, ar, sc, &init, last, fields, p);
             return mk_enum_lit_node(a, ar, &init, last, tag, enum_struct_args(a, ar, g, sc, env, &init, last, fields), p);
         }
     }
@@ -5578,6 +5749,27 @@ fn assign_target_ty(env: *const Vec<FieldTy>, path: *const Vec<str>) -> Option<*
 }
 // A bare `x = 5` with no `x` in scope is not a declaration — exile has no
 // implicit binding.  Qualified paths and extern vars are mutable globals.
+// The written value must fit the pointee — same rules as any slot.
+fn check_deref_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                     env: *const Vec<FieldTy>, dexp: Option<*const Typ>, value: *const Expr, p: Pos) {
+    match dexp {
+        Option::Some(want) => { deref_value_agree(a, ar, g, sc, env, want, value, p); }
+        | Option::None => { }
+    }
+    return;
+}
+fn deref_value_agree(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                     env: *const Vec<FieldTy>, want: *const Typ, value: *const Expr, p: Pos) {
+    let tv = elab_expr(a, ar, g, sc, env, Option::Some(want), value);
+    if coercible_to(tv.ty, want) { return; }
+    if lit_fits_slot(value, want) { return; }
+    if ty_has_tvar(want) || ty_has_tvar(tv.ty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+    sb.push_str("deref assignment: expected "); sb.push_str(typ_name(a, ar, want));
+    sb.push_str(", got "); sb.push_str(typ_name(a, ar, tv.ty));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn check_assign_deref(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
     if ty_has_tvar(t) { return; }
     match *t {
@@ -5812,6 +6004,31 @@ fn repeat_count_of(count: *const Expr, folded: int) -> int {
         | Option::None => folded
     };
 }
+// The annotation said how many; the literal / repeat must produce exactly that.
+fn check_array_count(a: Allocator, ar: *Arena, sc: *const TyScope, expected: Option<*const Typ>,
+                     n: int, what: str, p: Pos) {
+    match expected {
+        Option::Some(t) => { array_count_agree(a, ar, sc, t, n, what, p); }
+        | Option::None => { }
+    }
+    return;
+}
+fn array_count_agree(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, n: int, what: str, p: Pos) {
+    match *t {
+        Typ::TArray { elem, size } => { array_count_msg(a, ar, sc, size, n, what, p); }
+        | _o => { }
+    }
+    return;
+}
+fn array_count_msg(a: Allocator, ar: *Arena, sc: *const TyScope, size: int, n: int, what: str, p: Pos) {
+    if size == n { return; }
+    if n <= 0 as int { return; }
+    let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+    sb.push_str(what); sb.push_str(" "); sb.push_str(int_to_str_c(a, ar, n));
+    sb.push_str(" element(s) but type expects "); sb.push_str(int_to_str_c(a, ar, size));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn check_repeat_count(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, p: Pos) {
     if n > 0 as int { return; }
     let mut sb = StringBuilder::with_capacity(a, 56 as u32);
@@ -5831,6 +6048,7 @@ fn elab_array_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     let tsl = tes.as_slice();
     let elem_ty = if n == 0 as u32 { t_i32(ar) } else { tsl[0 as u32].ty };
     check_array_elems(a, ar, sc, &tes, elem_ty, p);
+    check_array_count(a, ar, sc, expected, n as int, "array literal has", p);
     let aty = ty_node(ar, Typ::TArray { elem: elem_ty, size: n as int });
     return te_node(ar, TexprNode::TArrayLit(tes), aty, p);
 }
@@ -5844,6 +6062,7 @@ fn elab_array_repeat(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
     // `array_size_of` folds only what can BE a size; a negative literal comes back
     // 0, which would report the wrong number.  The message quotes what was written.
     check_repeat_count(a, ar, sc, repeat_count_of(count, n), p);
+    check_array_count(a, ar, sc, expected, n, "array repeat produces", p);
     let aty = ty_node(ar, Typ::TArray { elem: tv.ty, size: n });
     return te_node(ar, TexprNode::TArrayRepeat { value: tv, count: n }, aty, p);
 }
@@ -6079,6 +6298,16 @@ fn builtin_arity(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, want: 
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
+fn check_type_name(a: Allocator, ar: *Arena, sc: *const TyScope, targs: *const Vec<*const Texpr>, p: Pos) {
+    if targs.length() != 1 as u32 {
+        builtin_arity(a, ar, sc, "type_name", "exactly one argument", targs.length(), p);
+        return;
+    }
+    if is_nullish(targs.as_slice()[0 as u32].ty) {
+        tc_fail(ar, sc, p, "type_name() needs a typed expression — 'null' has no statically-known target type");
+    }
+    return;
+}
 fn check_no_args(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, n: u32, p: Pos) {
     if n == 0 as u32 { return; }
     builtin_arity(a, ar, sc, name, "no arguments", n, p);
@@ -6169,8 +6398,12 @@ fn is_u8_ty(t: *const Typ) -> bool {
 }
 fn check_free(a: Allocator, ar: *Arena, sc: *const TyScope, raw: *const Vec<*const Expr>,
               targs: *const Vec<*const Texpr>, p: Pos) {
+    if targs.length() == 1 as u32 {
+        tc_fail(ar, sc, p, "'free' takes the allocator and the owned pointer: `free(alloc, p)` — the one-argument form is gone (it bypassed the allocator seam; with an arena or Amiga allocator that corrupts the heap)");
+        return;
+    }
     if targs.length() != 2 as u32 {
-        builtin_arity(a, ar, sc, "free", "exactly 2 arguments (the allocator and the pointer)", targs.length(), p);
+        builtin_arity(a, ar, sc, "free", "exactly two arguments", targs.length(), p);
         return;
     }
     let sl = targs.as_slice();
@@ -7241,7 +7474,7 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
             out.push(Tstmt::TWhile { cond: cond, body: tbody, post: post });
         }
         | _other => {
-            elab_for_iter(a, ar, g, sc, gensym, env, ret, k, fv, iter_var, range, body, out);
+            elab_for_iter(a, ar, g, sc, gensym, env, ret, k, fv, iter_var, range, body, fpos, out);
         }
     }
 }
@@ -7251,11 +7484,29 @@ fn elab_for(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
 //   while true { match __it.next() { Some(x) => { <body> } None => break } }
 // The iterator's `next()` is a normal prelude method, so the match / method
 // dispatch is reused wholesale.
+// A Range VALUE driving a `for` still counts in integers.
+fn check_range_counter(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    if !is_range_instance(t) && !is_range_inclusive_instance(t) { return; }
+    match struct_field_ty(sc, t, "lo") {
+        Option::Some(ct) => { range_counter_int(a, ar, sc, ct, p); }
+        | Option::None => { }
+    }
+    return;
+}
+fn range_counter_int(a: Allocator, ar: *Arena, sc: *const TyScope, ct: *const Typ, p: Pos) {
+    if is_int_like_ty(ct) || ty_has_tvar(ct) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+    sb.push_str("'for' counter must be an integer, got ");
+    sb.push_str(typ_name(a, ar, ct));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>,
-                 ret: Option<*const Typ>, k: u32, fv: str, iter_var: str, range: *const Expr, body: *const Vec<Stmt>, out: *Vec<Tstmt>) {
+                 ret: Option<*const Typ>, k: u32, fv: str, iter_var: str, range: *const Expr, body: *const Vec<Stmt>, fpos: Pos, out: *Vec<Tstmt>) {
     let itname = gensym_name(a, ar, "__it", k);
     note_let_mut(sc, itname);
     let trange = elab_expr(a, ar, g, sc, env, none_ty(), range);
+    check_range_counter(a, ar, sc, trange.ty, fpos);
     *sc.sc_loops = *sc.sc_loops + 1 as u32;
     env.push(FieldTy { name: itname, ty: trange.ty });
     out.push(Tstmt::TLet { name: itname, value: trange, decl_ty: trange.ty, pos: zero_pos() });
@@ -7627,6 +7878,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             let tad = elab_expr(a, ar, g, sc, env, none_ty(), target);
             check_assign_deref(a, ar, sc, tad.ty, pos);
             let dexp = deref_pointee(tad.ty);
+            check_deref_value(a, ar, g, sc, env, dexp, value, pos);
             let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, env, dexp, value), dexp);
             out.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
         }
@@ -13275,13 +13527,17 @@ struct ConstDeclInfo {
     cd_pos: Pos,
 }
 fn check_const_items(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>) {
+    // Lazy evaluation over the FULL decl list: a forward reference is legal
+    // (the reference memoises), and a cycle reports on RE-ENTRY — one engine
+    // answers both, so there is no separate cycle DFS to keep in agreement.
+    let mut cds: Vec<ConstDeclInfo> = Vec::with_capacity(a, 8 as u32);
+    collect_const_decls(a, items, &cds);
+    let mut ctab: Vec<CTabEntry> = Vec::with_capacity(a, 8 as u32);
+    let mut inprog: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { check_const_item(a, ar, sc, &sl[i]); i = i + 1 as u32; }
-    let mut cds: Vec<ConstDeclInfo> = Vec::with_capacity(a, 8 as u32);
-    collect_const_decls(a, items, &cds);
-    check_const_cycles(a, ar, sc, &cds);
+    while i < n { check_const_item(a, ar, sc, &sl[i], &cds, &ctab, &inprog); i = i + 1 as u32; }
     return;
 }
 fn collect_const_decls(a: Allocator, items: *const Vec<Item>, out: *Vec<ConstDeclInfo>) {
@@ -13301,18 +13557,6 @@ fn collect_const_decl_one(a: Allocator, it: *const Item, out: *Vec<ConstDeclInfo
 }
 // The reference evaluates consts in declaration order and errors on RE-ENTRY —
 // so the report lands on the const whose evaluation came back to itself.
-fn check_const_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, cds: *const Vec<ConstDeclInfo>) {
-    let mut done: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let n = cds.length();
-    let sl = cds.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        let empty: Vec<str> = Vec::with_capacity(a, 8 as u32);
-        const_dfs(a, ar, sc, cds, sl[i].cd_name, &empty, &done);
-        i = i + 1 as u32;
-    }
-    return;
-}
 fn const_idx(cds: *const Vec<ConstDeclInfo>, name: str) -> int {
     let n = cds.length();
     let sl = cds.as_slice();
@@ -13323,77 +13567,178 @@ fn const_idx(cds: *const Vec<ConstDeclInfo>, name: str) -> int {
     }
     return 0 - 1 as int;
 }
-fn const_dfs(a: Allocator, ar: *Arena, sc: *const TyScope, cds: *const Vec<ConstDeclInfo>,
-             name: str, stack: *const Vec<str>, done: *Vec<str>) {
-    let ci = const_idx(cds, name);
-    if ci < 0 as int { return; }
-    if name_in(stack, name) {
-        let mut sb = StringBuilder::with_capacity(a, 56 as u32);
-        sb.push_str("cyclic constant definition involving '"); sb.push_str(name); sb.push_str("'");
-        tc_fail(ar, sc, cds.as_slice()[ci as u32].cd_pos, str::from_slice(ar, sb.as_slice()));
-        return;
-    }
-    if name_in(done, name) { return; }
-    let mut child: Vec<str> = copy_strs_plus(a, stack, name);
-    let mut refs: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    const_var_refs(a, cds.as_slice()[ci as u32].cd_value, &refs);
-    let rl = refs.as_slice();
-    let mut i = 0 as u32;
-    while i < refs.length() {
-        const_dfs(a, ar, sc, cds, rl[i], &child, done);
-        i = i + 1 as u32;
-    }
-    done.push(name);
-    return;
-}
-fn copy_strs_plus(a: Allocator, base: *const Vec<str>, extra: str) -> Vec<str> {
-    let mut out: Vec<str> = copy_strs(a, base);
-    out.push(extra);
-    return out;
-}
-fn const_var_refs(a: Allocator, e: *const Expr, out: *Vec<str>) {
-    match *e {
-        Expr::Var(nm, _q) => { out.push(nm); }
-        | Expr::Neg(sub, _q) => { const_var_refs(a, sub, out); }
-        | Expr::BitNot(sub, _q) => { const_var_refs(a, sub, out); }
-        | Expr::Not(sub, _q) => { const_var_refs(a, sub, out); }
-        | Expr::Cast(sub, ann, _q) => { const_var_refs(a, sub, out); }
-        | Expr::BinOp(op, l, r, _q) => { const_var_refs(a, l, out); const_var_refs(a, r, out); }
-        | _o => { }
-    }
-    return;
-}
-fn check_const_item(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item) {
+fn check_const_item(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item,
+                    cds: *const Vec<ConstDeclInfo>, tab: *Vec<CTabEntry>, inprog: *Vec<str>) {
     match *it {
         Item::Const(c) => {
             check_const_expr(a, ar, sc, c.kvalue);
-            check_const_fit(a, ar, sc, &c);
+            check_const_value(a, ar, sc, &c, cds, tab, inprog);
         }
-        | Item::Module(md) => { check_const_subitems(a, ar, sc, &md.mitems); }
+        | Item::Module(md) => { check_const_subitems(a, ar, sc, &md.mitems, cds, tab, inprog); }
         | _e => { }
     }
     return;
 }
+// The evaluated value, with its KIND: 0 = int, 1 = bool, 2 = opaque (sizeof,
+// enum tag — a value cc computes), 3 = an error already reported.
+struct CEval { ck: int, cv: int }
+struct CTabEntry { ct_name: str, ct_kind: int, ct_val: int }
+fn cev(k: int, v: int) -> CEval { return CEval { ck: k, cv: v }; }
+fn ctab_find(tab: *const Vec<CTabEntry>, name: str) -> int {
+    let n = tab.length();
+    let sl = tab.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].ct_name, name) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 - 1 as int;
+}
+fn ceval(a: Allocator, ar: *Arena, sc: *const TyScope, cds: *const Vec<ConstDeclInfo>,
+         tab: *Vec<CTabEntry>, inprog: *Vec<str>, e: *const Expr) -> CEval {
+    return match *e {
+        Expr::IntLit(n, _q) => cev(0 as int, n)
+        | Expr::BoolLit(b, _q) => cev(1 as int, if b { 1 as int } else { 0 as int })
+        | Expr::Var(nm, q) => ceval_var(a, ar, sc, cds, tab, inprog, nm, q)
+        | Expr::Neg(x, q) => ceval_intop(a, ar, sc, ceval(a, ar, sc, cds, tab, inprog, x), "'-' requires an integer constant", q, 0 as int)
+        | Expr::BitNot(x, q) => ceval_intop(a, ar, sc, ceval(a, ar, sc, cds, tab, inprog, x), "'~' requires an integer constant", q, 1 as int)
+        | Expr::Not(x, q) => ceval_not(a, ar, sc, ceval(a, ar, sc, cds, tab, inprog, x), q)
+        | Expr::Cast(x, ann, q) => ceval_cast(a, ar, sc, ceval(a, ar, sc, cds, tab, inprog, x), q)
+        | Expr::BinOp(op, l, r, q) => ceval_binop(a, ar, sc, op, ceval(a, ar, sc, cds, tab, inprog, l), ceval(a, ar, sc, cds, tab, inprog, r), q)
+        | _o => cev(2 as int, 0 as int)
+    };
+}
+fn ceval_var(a: Allocator, ar: *Arena, sc: *const TyScope, cds: *const Vec<ConstDeclInfo>,
+             tab: *Vec<CTabEntry>, inprog: *Vec<str>, nm: str, q: Pos) -> CEval {
+    let i = ctab_find(tab, nm);
+    if i >= 0 as int {
+        let e = &tab.as_slice()[i as u32];
+        return cev(e.ct_kind, e.ct_val);
+    }
+    let di = const_idx(cds, nm);
+    if di >= 0 as int {
+        if name_in(inprog, nm) {
+            let mut cb = StringBuilder::with_capacity(a, 56 as u32);
+            cb.push_str("cyclic constant definition involving '"); cb.push_str(nm); cb.push_str("'");
+            tc_fail(ar, sc, cds.as_slice()[di as u32].cd_pos, str::from_slice(ar, cb.as_slice()));
+            return cev(3 as int, 0 as int);
+        }
+        return ceval_named(a, ar, sc, nm, cds.as_slice()[di as u32].cd_value, cds, tab, inprog);
+    }
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    sb.push_str("unknown constant '"); sb.push_str(nm); sb.push_str("'");
+    tc_fail(ar, sc, q, str::from_slice(ar, sb.as_slice()));
+    return cev(3 as int, 0 as int);
+}
+fn ceval_intop(_a: Allocator, ar: *Arena, sc: *const TyScope, x: CEval, msg: str, q: Pos, which: int) -> CEval {
+    if x.ck == 3 as int || x.ck == 2 as int { return cev(x.ck, 0 as int); }
+    if x.ck == 1 as int {
+        tc_fail(ar, sc, q, msg);
+        return cev(3 as int, 0 as int);
+    }
+    if which == 0 as int { return cev(0 as int, 0 as int - x.cv); }
+    return cev(0 as int, 0 as int - x.cv - 1 as int);
+}
+fn ceval_not(_a: Allocator, ar: *Arena, sc: *const TyScope, x: CEval, q: Pos) -> CEval {
+    if x.ck == 3 as int || x.ck == 2 as int { return cev(x.ck, 0 as int); }
+    if x.ck == 0 as int {
+        tc_fail(ar, sc, q, "'!' requires a bool constant");
+        return cev(3 as int, 0 as int);
+    }
+    return cev(1 as int, if x.cv == 0 as int { 1 as int } else { 0 as int });
+}
+// The reference truncates an int cast to the target width; the port returns
+// OPAQUE instead — the fit check abstains rather than judging an approximated
+// value.  A bool cast is rejected either way.
+fn ceval_cast(_a: Allocator, ar: *Arena, sc: *const TyScope, x: CEval, q: Pos) -> CEval {
+    if x.ck == 1 as int {
+        tc_fail(ar, sc, q, "cannot cast a bool constant");
+        return cev(3 as int, 0 as int);
+    }
+    if x.ck == 3 as int { return x; }
+    return cev(2 as int, 0 as int);
+}
+fn ceval_binop(a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp, l: CEval, r: CEval, q: Pos) -> CEval {
+    if l.ck == 3 as int || r.ck == 3 as int { return cev(3 as int, 0 as int); }
+    if l.ck == 2 as int || r.ck == 2 as int { return cev(2 as int, 0 as int); }
+    if is_logic_op(op) {
+        if l.ck != 1 as int || r.ck != 1 as int {
+            return ceval_op_err(a, ar, sc, "logical '", op, "' requires bool constants", q);
+        }
+        return cev(1 as int, eval_binop_c(op, l.cv, r.cv));
+    }
+    if is_arith_op(op) || is_bit_op(op) || is_shift_op(op) {
+        if l.ck != 0 as int || r.ck != 0 as int {
+            return ceval_op_err(a, ar, sc, "operator '", op, "' requires integer constants", q);
+        }
+        if is_div_or_mod(op) && r.cv == 0 as int {
+            if is_mod_op(op) { tc_fail(ar, sc, q, "modulo by zero"); } else { tc_fail(ar, sc, q, "division by zero"); }
+            return cev(3 as int, 0 as int);
+        }
+        return cev(0 as int, eval_binop_c(op, l.cv, r.cv));
+    }
+    if is_rel_op(op) || is_eq_op(op) {
+        if l.ck == r.ck { return cev(1 as int, eval_binop_c(op, l.cv, r.cv)); }
+        return cev(2 as int, 0 as int);
+    }
+    return cev(2 as int, 0 as int);
+}
+fn ceval_op_err(a: Allocator, ar: *Arena, sc: *const TyScope, pre: str, op: BinOp, post: str, q: Pos) -> CEval {
+    let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+    sb.push_str(pre); sb.push_str(binop_sym(op)); sb.push_str(post);
+    tc_fail(ar, sc, q, str::from_slice(ar, sb.as_slice()));
+    return cev(3 as int, 0 as int);
+}
+// The verdicts: an int value fit-checks against a declared int width; a bool
+// value against an int declaration names the mismatch.
+fn check_const_value(a: Allocator, ar: *Arena, sc: *const TyScope, c: *const ConstDecl,
+                     cds: *const Vec<ConstDeclInfo>, tab: *Vec<CTabEntry>, inprog: *Vec<str>) {
+    if ctab_find(tab, c.kname) >= 0 as int { return; }
+    let v = ceval_named(a, ar, sc, c.kname, c.kvalue, cds, tab, inprog);
+    let ty = resolve_sig_ty(a, ar, sc, c.kty, c.kpos);
+    if v.ck == 0 as int && is_int_ty_strict(ty) { const_fit_check(a, ar, sc, c.kname, v.cv, ty, c.kpos); }
+    if v.ck == 1 as int && is_int_ty_strict(ty) {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("constant '"); sb.push_str(c.kname);
+        sb.push_str("' is bool but declared "); sb.push_str(typ_name(a, ar, ty));
+        tc_fail(ar, sc, c.kpos, str::from_slice(ar, sb.as_slice()));
+    }
+    return;
+}
+// Evaluate a NAMED const: mark in-progress, evaluate, memoise.
+fn ceval_named(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, value: *const Expr,
+               cds: *const Vec<ConstDeclInfo>, tab: *Vec<CTabEntry>, inprog: *Vec<str>) -> CEval {
+    inprog.push(name);
+    let v = ceval(a, ar, sc, cds, tab, inprog, value);
+    drop_inprog(inprog, name);
+    tab.push(CTabEntry { ct_name: name, ct_kind: v.ck, ct_val: v.cv });
+    return v;
+}
+// The in-progress set has no pop; rebuild without the name (sets are tiny).
+fn drop_inprog(inprog: *Vec<str>, name: str) {
+    let n = inprog.length();
+    let sl = inprog.as_slice();
+    let mut keep: Vec<str> = Vec::with_capacity(default_allocator(), 8 as u32);
+    let mut i = 0 as u32;
+    while i < n {
+        if !str::eq(sl[i], name) { keep.push(sl[i]); }
+        i = i + 1 as u32;
+    }
+    *inprog = keep;
+    return;
+}
 // Module recursion for the per-decl checks only — the cycle pass runs once at
 // the top with the full flattened list.
-fn check_const_subitems(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>) {
+fn check_const_subitems(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+                        cds: *const Vec<ConstDeclInfo>, tab: *Vec<CTabEntry>, inprog: *Vec<str>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { check_const_item(a, ar, sc, &sl[i]); i = i + 1 as u32; }
+    while i < n { check_const_item(a, ar, sc, &sl[i], cds, tab, inprog); i = i + 1 as u32; }
     return;
 }
 // A LITERAL value is checkable without the evaluator; a folded expression's
 // value would need the arithmetic the port deliberately does not carry yet.
-fn check_const_fit(a: Allocator, ar: *Arena, sc: *const TyScope, c: *const ConstDecl) {
-    let ty = resolve_sig_ty(a, ar, sc, c.kty, c.kpos);
-    if !is_int_ty_strict(ty) { return; }
-    match expr_int_lit(c.kvalue) {
-        Option::Some(n) => { const_fit_check(a, ar, sc, c.kname, n, ty, c.kpos); }
-        | Option::None => { }
-    }
-    return;
-}
 fn is_int_ty_strict(t: *const Typ) -> bool {
     return match *t { Typ::TInt(_k) => true | _o => false };
 }

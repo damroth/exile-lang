@@ -1,0 +1,4 @@
+fn main() {
+    mem_zero(1 as c_ulong);
+    println(1);
+}

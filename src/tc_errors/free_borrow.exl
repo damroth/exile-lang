@@ -1,0 +1,5 @@
+// A borrow cannot be freed — the owner releases it.
+fn f(a: Allocator, p: *int) {
+    free(a, p);
+}
+fn main() { println(1); }

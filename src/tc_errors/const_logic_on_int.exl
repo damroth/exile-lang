@@ -1,0 +1,2 @@
+const K: int = 1 && 2;
+fn main() { println(K); }

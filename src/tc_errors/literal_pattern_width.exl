@@ -1,0 +1,6 @@
+// 300 can never equal a u8 — the pattern is dead on arrival.
+fn main() {
+    let x = 5 as u8;
+    let r = match x { 300 => 1 | _o => 0 };
+    println(r);
+}

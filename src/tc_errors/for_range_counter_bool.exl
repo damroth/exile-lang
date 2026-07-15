@@ -1,0 +1,5 @@
+// A Range value driving a `for` still counts in integers.
+fn main() {
+    let r = false..true;
+    for i in r { println(1); }
+}

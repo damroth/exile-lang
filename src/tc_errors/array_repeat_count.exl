@@ -1,0 +1,4 @@
+fn main() {
+    let v: [int; 3] = [0; 2];
+    println(1);
+}

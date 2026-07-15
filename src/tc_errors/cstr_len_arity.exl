@@ -1,0 +1,1 @@
+fn main() { println(cstr_len("a", "b") as int); }

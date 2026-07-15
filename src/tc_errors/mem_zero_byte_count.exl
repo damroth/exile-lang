@@ -1,0 +1,5 @@
+fn main() {
+    let p: *c_void = null;
+    mem_zero(p, true);
+    println(1);
+}

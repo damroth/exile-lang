@@ -1,0 +1,2 @@
+const A: int = NIEZNANA;
+fn main() { println(A); }

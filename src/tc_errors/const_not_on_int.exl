@@ -1,0 +1,2 @@
+const K: bool = !5;
+fn main() { println(K); }
