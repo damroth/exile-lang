@@ -519,7 +519,28 @@ bootstrap-fixpoint: host-selfhost-cg
 
 # Everything that guards the self-host proof, in one target.  `make test` /
 # `verify-host` / `selfhost-diff` check the ORACLE; these check the PORT.
+# ===== Standalone module roots =====
+#
+# The CLI makes ANY file a compilation root.  Prelude/instance registration used
+# to be lazy (populated at first method-use), so a module file compiled alone
+# could drain a prelude body before its tables existed — four documented
+# manifestations, all invisible to the corpus gates because those only exercise
+# corpus roots.  Every library module must typecheck as its own root.
+MODULE_ROOTS := pos token error lexer ast parser ir typecheck move drop escape codegen loader
+selfhost-port-module-roots: host-selfhost-tc
+	@fail=0; \
+	for m in $(MODULE_ROOTS); do \
+	  out=$$(echo src/$$m.exl | $(HOST_OUT)/selfhost_tc 2>&1 >/dev/null | head -1); \
+	  if [ -n "$$out" ]; then \
+	    echo "selfhost-port-module-roots: FAIL $$m.exl: $$out"; fail=1; \
+	  fi; \
+	done; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-port-module-roots: clean (13 module files typecheck as standalone roots)"; \
+	else exit 1; fi
+
 selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
+	selfhost-port-module-roots \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-tc-errors \
                  selfhost-no-fabrication

@@ -15,6 +15,11 @@ use pos::*;
 use ast::*;
 use ir::*;
 use error::*;
+// The prelude is parsed as SOURCE (parse_prelude_items) — these are real
+// dependencies, previously masked by every corpus root loading them first.
+use token::*;
+use lexer::*;
+use parser::*;
 
 // ===== Typ node allocation =====
 
@@ -14134,6 +14139,14 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
+    // The named prelude types (String / StringBuilder / Arena) have a FIXED
+    // field catalogue.  Registering them lazily at first method-use made body
+    // elaboration order-dependent — a standalone module root could drain a
+    // prelude body before anything had registered Arena's fields (four
+    // documented manifestations).  Eager registration retires the class.
+    register_named_prelude_field_access(a, ar, &base_scope, "String");
+    register_named_prelude_field_access(a, ar, &base_scope, "StringBuilder");
+    register_named_prelude_field_access(a, ar, &base_scope, "Arena");
     collect_xfield_info(a, ar, &base_scope, items, &xfields);
     check_method_clashes(a, ar, &base_scope, items, &empty_tp, &sinfo);
     // Runs once the field tables exist — the edges are read from them.
