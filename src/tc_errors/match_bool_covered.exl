@@ -1,0 +1,6 @@
+// Two values in the domain: once both are covered, every later arm is dead.
+fn main() {
+    let b = true;
+    let r = match b { true => 1 | false => 0 | _o => 9 };
+    println(r);
+}

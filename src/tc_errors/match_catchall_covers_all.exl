@@ -1,0 +1,7 @@
+// An unguarded catch-all covers the whole integer domain: everything after it —
+// literal, catch-all, or guarded — can never fire.
+fn main() {
+    let x = 5;
+    let r = match x { _o => 0 | 5 => 1 };
+    println(r);
+}

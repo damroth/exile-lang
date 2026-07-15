@@ -1,0 +1,8 @@
+// The guard rule is asymmetric: a guarded arm's rows never ACCUMULATE (its
+// guard may fail), but a covered literal convicts a guarded duplicate too — it
+// can never fire regardless of the guard.
+fn main() {
+    let x = 5;
+    let r = match x { 1 => 1 | 1 if true => 2 | _o => 0 };
+    println(r);
+}

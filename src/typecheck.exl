@@ -4165,8 +4165,16 @@ fn check_exh_bool(_a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const V
     let mut covered = false;
     let mut i = 0 as u32;
     while i < n {
+        // The domain has two values: once both (or a catch-all) are covered by
+        // unguarded arms, EVERY later arm — guarded or not — is unreachable.
+        if covered {
+            tc_fail(ar, sc, sl[i].tarm_pos, "unreachable match arm: an earlier arm already covers every value");
+            return;
+        }
+        let bs = tpat_bool(&sl[i].tpat);
+        if bs == 1 as int && seen_t { bool_dup(ar, sc, "true", sl[i].tarm_pos); return; }
+        if bs == 0 as int && seen_f { bool_dup(ar, sc, "false", sl[i].tarm_pos); return; }
         if arm_is_unguarded(&sl[i]) {
-            let bs = tpat_bool(&sl[i].tpat);
             if bs == 1 as int { seen_t = true; }
             if bs == 0 as int { seen_f = true; }
             if tpat_is_catchall(&sl[i].tpat) || (seen_t && seen_f) { covered = true; }
@@ -4177,14 +4185,28 @@ fn check_exh_bool(_a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const V
     tc_fail(ar, sc, p, "non-exhaustive 'match' on bool: cover both 'true' and 'false' (or add a catch-all arm)");
     return;
 }
+fn bool_dup(ar: *Arena, sc: *const TyScope, which: str, p: Pos) {
+    if str::eq(which, "true") {
+        tc_fail(ar, sc, p, "unreachable match arm: 'true' is already covered");
+        return;
+    }
+    tc_fail(ar, sc, p, "unreachable match arm: 'false' is already covered");
+    return;
+}
 // The integer domain cannot be enumerated, so only an unguarded catch-all closes it.
 fn check_exh_scalar(a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const Vec<TmatchArm>, p: Pos) {
     let mut seen: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    let mut caught_all = false;
     let n = tarms.length();
     let sl = tarms.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        if arm_is_unguarded(&sl[i]) { scalar_arm_lits(a, ar, sc, &sl[i], &seen); }
+        if caught_all {
+            tc_fail(ar, sc, sl[i].tarm_pos, "unreachable match arm: an earlier catch-all already covers every value");
+            return;
+        }
+        tpat_lits_check(a, ar, sc, &sl[i].tpat, sl[i].tarm_pos, &seen, arm_is_unguarded(&sl[i]));
+        if arm_is_unguarded(&sl[i]) && tpat_is_catchall(&sl[i].tpat) { caught_all = true; }
         i = i + 1 as u32;
     }
     let mut j = 0 as u32;
@@ -4244,26 +4266,22 @@ fn useful_any_ctor(a: Allocator, ar: *Arena, sc: *const TyScope, ctors: *const V
     return false;
 }
 // A literal may appear once; a repeat can never fire.
-fn scalar_arm_lits(a: Allocator, ar: *Arena, sc: *const TyScope, arm: *const TmatchArm, seen: *Vec<int>) {
-    tpat_lits_check(a, ar, sc, &arm.tpat, arm.tarm_pos, seen);
-    return;
-}
-fn tpat_lits_check(a: Allocator, ar: *Arena, sc: *const TyScope, tp: *const Tpattern, p: Pos, seen: *Vec<int>) {
+fn tpat_lits_check(a: Allocator, ar: *Arena, sc: *const TyScope, tp: *const Tpattern, p: Pos, seen: *Vec<int>, record: bool) {
     match *tp {
-        Tpattern::TPLit(v) => { lit_seen_check(a, ar, sc, v, p, seen); }
-        | Tpattern::TPOr(alts) => { tpat_lits_list(a, ar, sc, &alts, p, seen); }
+        Tpattern::TPLit(v) => { lit_seen_check(a, ar, sc, v, p, seen, record); }
+        | Tpattern::TPOr(alts) => { tpat_lits_list(a, ar, sc, &alts, p, seen, record); }
         | _o => { }
     }
     return;
 }
-fn tpat_lits_list(a: Allocator, ar: *Arena, sc: *const TyScope, alts: *const Vec<Tpattern>, p: Pos, seen: *Vec<int>) {
+fn tpat_lits_list(a: Allocator, ar: *Arena, sc: *const TyScope, alts: *const Vec<Tpattern>, p: Pos, seen: *Vec<int>, record: bool) {
     let n = alts.length();
     let sl = alts.as_slice();
     let mut i = 0 as u32;
-    while i < n { tpat_lits_check(a, ar, sc, &sl[i], p, seen); i = i + 1 as u32; }
+    while i < n { tpat_lits_check(a, ar, sc, &sl[i], p, seen, record); i = i + 1 as u32; }
     return;
 }
-fn lit_seen_check(a: Allocator, ar: *Arena, sc: *const TyScope, v: int, p: Pos, seen: *Vec<int>) {
+fn lit_seen_check(a: Allocator, ar: *Arena, sc: *const TyScope, v: int, p: Pos, seen: *Vec<int>, record: bool) {
     if int_in(seen, v) {
         let mut sb = StringBuilder::with_capacity(a, 56 as u32);
         sb.push_str("unreachable match arm: literal "); sb.push_str(int_to_str_c(a, ar, v));
@@ -4271,7 +4289,7 @@ fn lit_seen_check(a: Allocator, ar: *Arena, sc: *const TyScope, v: int, p: Pos, 
         tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
         return;
     }
-    seen.push(v);
+    if record { seen.push(v); }
     return;
 }
 fn int_in(xs: *const Vec<int>, v: int) -> bool {
@@ -4293,10 +4311,11 @@ fn check_exh_enum(a: Allocator, ar: *Arena, sc: *const TyScope, scrut: *const Ty
     let sl = tarms.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        if arm_is_unguarded(&sl[i]) {
-            check_arm_reachable(a, ar, sc, &types, &matrix, &sl[i]);
-            push_arm_rows(a, ar, &sl[i].tpat, &matrix);
-        }
+        // Every arm is TESTED (a guarded duplicate of a covered case can never
+        // fire), but only unguarded rows ACCUMULATE (a guard may fail, so it
+        // proves no coverage against later arms).
+        check_arm_reachable(a, ar, sc, &types, &matrix, &sl[i]);
+        if arm_is_unguarded(&sl[i]) { push_arm_rows(a, ar, &sl[i].tpat, &matrix); }
         i = i + 1 as u32;
     }
     let w = missing(a, ar, sc, &types, &matrix);
