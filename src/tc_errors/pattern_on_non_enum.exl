@@ -1,0 +1,5 @@
+fn main() {
+    let x = 5;
+    let r = match x { Nie::Ma(v) => v | _o => 0 };
+    println(r);
+}

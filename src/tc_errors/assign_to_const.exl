@@ -1,0 +1,5 @@
+const K: int = 5;
+fn main() {
+    K = 9;
+    println(K);
+}

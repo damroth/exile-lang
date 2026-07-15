@@ -1,0 +1,7 @@
+// A function name is not an assignable place — in the value namespace it is an
+// undefined variable.
+fn f() -> int { return 1; }
+fn main() {
+    f = 5;
+    println(1);
+}

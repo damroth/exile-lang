@@ -1,0 +1,3 @@
+struct P { x: int }
+impl NieMa for P { fn m(self: *const P) -> int { return 1; } }
+fn main() { println(1); }

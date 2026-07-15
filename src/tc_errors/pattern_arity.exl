@@ -1,0 +1,6 @@
+enum E { A(int, int) | B }
+fn main() {
+    let e = E::A(1, 2);
+    let r = match e { E::A(x) => x | E::B => 0 };
+    println(r);
+}

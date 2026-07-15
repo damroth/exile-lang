@@ -1,0 +1,6 @@
+enum E { A | B }
+fn main() {
+    let e = E::A;
+    let r = match e { Nie::Ma(v) => v | _o => 0 };
+    println(r);
+}

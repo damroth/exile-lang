@@ -1,0 +1,7 @@
+enum E { A | B }
+enum F { C | D }
+fn main() {
+    let e = E::A;
+    let r = match e { F::C => 1 | _o => 0 };
+    println(r);
+}
