@@ -1,0 +1,3 @@
+// The trailing value IS the return; the signature is its contract.
+fn f() -> int { true }
+fn main() { println(f()); }

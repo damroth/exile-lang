@@ -190,6 +190,9 @@ struct EnumFieldE {
 // `recv.m(..)` / `T::m(..)` to `T__m(<self>, ..)` and adjust the receiver.
 struct MethodInfo {
     mi_path: Vec<str>,
+    // A non-pub method is the impl's own business: callable only where the
+    // current `self` IS the target.  Prelude and derived methods are pub.
+    mi_pub: bool,
     // The trait this method came FROM ("" for a bare `impl T { ... }`).  `==` on
     // a struct lowers to `T__eq` only when T actually implements Eq — a method
     // merely NAMED `eq` in a bare impl is not an Eq impl, and the reference
@@ -302,6 +305,7 @@ struct TyScope {
     sc_structs: *const Vec<str>,
     sc_dbg: *const Vec<str>,
     sc_consts: *const Vec<str>,
+    sc_xfields: *const Vec<StructField>,
     sc_loops: *u32,
     sc_enums: *const Vec<str>,
     sc_tparams: *const Vec<str>,
@@ -394,6 +398,7 @@ struct ProgIdx {
     pi_snames: *const Vec<str>,
     pi_dbg: *const Vec<str>,
     pi_consts: *const Vec<str>,
+    pi_xfields: *const Vec<StructField>,
     pi_loops: *u32,
     pi_enames: *const Vec<str>,
     pi_iconsts: *const Vec<IntConst>,
@@ -559,6 +564,7 @@ fn struct_field_ty(sc: *const TyScope, target_ty: *const Typ, field: str) -> Opt
             Option::Some(t) => Option::Some(t)
             | Option::None => find_field_ty(sc.sc_mono_fields, &path, field)
         }
+        | Typ::TExtStruct(n) => xfield_ty(sc, n, field)
         | Typ::TPtr(inner) => struct_field_ty(sc, inner, field)
         | Typ::TConstPtr(inner) => struct_field_ty(sc, inner, field)
         | Typ::TOwnPtr(inner) => struct_field_ty(sc, inner, field)
@@ -1165,6 +1171,7 @@ fn register_prelude_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, 
 // A `[T; 0]` has no values and no C spelling; the size must be positive.
 fn checked_array_size(a: Allocator, ar: *Arena, sc: *const TyScope, size: *const Expr, p: Pos) -> int {
     if array_size_unknown_var(a, ar, sc, size) { return 1 as int; }
+    if array_size_bad_op(a, ar, sc, size) { return 1 as int; }
     let n = array_size_of(size, sc);
     if n > 0 as int { return n; }
     let mut sb = StringBuilder::with_capacity(a, 48 as u32);
@@ -1174,6 +1181,17 @@ fn checked_array_size(a: Allocator, ar: *Arena, sc: *const TyScope, size: *const
     return n;
 }
 // A `let`-bound variable is not a size: only a literal or a `const` folds.
+fn array_size_bad_op(a: Allocator, ar: *Arena, sc: *const TyScope, size: *const Expr) -> bool {
+    return match *size {
+        Expr::BinOp(op, l, r, q) => report_bad_size_op(a, ar, sc, op, q)
+        | _o => false
+    };
+}
+fn report_bad_size_op(_a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp, q: Pos) -> bool {
+    if size_op_ok(op) { return false; }
+    tc_fail(ar, sc, q, "array size must be a constant integer expression");
+    return true;
+}
 fn array_size_unknown_var(a: Allocator, ar: *Arena, sc: *const TyScope, size: *const Expr) -> bool {
     return match *size {
         Expr::Var(nm, q) => report_unknown_size(a, ar, sc, nm, q)
@@ -1182,19 +1200,31 @@ fn array_size_unknown_var(a: Allocator, ar: *Arena, sc: *const TyScope, size: *c
 }
 fn report_unknown_size(a: Allocator, ar: *Arena, sc: *const TyScope, nm: str, p: Pos) -> bool {
     if iconst_known(sc, nm) { return false; }
+    if name_in(sc.sc_consts, nm) {
+        // Declared, but not an integer the compiler can count with.
+        let mut cb = StringBuilder::with_capacity(a, 144 as u32);
+        cb.push_str("array size '"); cb.push_str(nm);
+        cb.push_str("' is not a known integer at exile time (a bool const, or a `sizeof`/`as`-based value that folds to a C expression)");
+        tc_fail(ar, sc, p, str::from_slice(ar, cb.as_slice()));
+        return true;
+    }
     let mut sb = StringBuilder::with_capacity(a, 72 as u32);
     sb.push_str("array size must be an integer literal or `const`, got '");
     sb.push_str(nm); sb.push_str("'");
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return true;
 }
+fn size_op_ok(op: BinOp) -> bool {
+    return is_arith_op(op) || is_bit_op(op) || is_shift_op(op);
+}
 fn array_size_of(size: *const Expr, sc: *const TyScope) -> int {
     return match *size {
         Expr::IntLit(n, _q) => n
         | Expr::Var(nm, _q) => iconst_lookup(sc.sc_iconsts, nm)
         // `[T; 1 + 2]` folds like any const — the same folder the #define
-        // emission uses, so the two can never disagree on a size.
-        | Expr::BinOp(op, l, r, _q) => eval_const_c(size, sc.sc_iconsts)
+        // emission uses, so the two can never disagree on a size.  Only the
+        // ARITHMETIC ops are sizes; `1 < 2` folds to a bool, not a count.
+        | Expr::BinOp(op, l, r, _q) => if size_op_ok(op) { eval_const_c(size, sc.sc_iconsts) } else { 0 as int }
         | Expr::Neg(x, _q) => eval_const_c(size, sc.sc_iconsts)
         | _e => 0 as int
     };
@@ -3450,6 +3480,33 @@ fn prim_builtin_method(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     let op = if str::eq(name, "eq") { BinOp::EqEq } else { BinOp::NotEq };
     return te_node(ar, TexprNode::TBinOp(op, trecv, targ), t_bool(ar), p);
 }
+// A non-pub method is callable only where the current `self` IS its target —
+// the impl's own methods, and nowhere else.
+fn check_method_visible(a: Allocator, ar: *Arena, sc: *const TyScope, env: *const Vec<FieldTy>, idx: u32, p: Pos) {
+    let sl = sc.sc_methods.as_slice();
+    if sl[idx].mi_pub { return; }
+    if self_is_target(a, sc, env, &sl[idx].mi_path) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+    sb.push_str("method '"); sb.push_str(sl[idx].mi_name);
+    sb.push_str("' is private to '"); sb.push_str(path_display(a, ar, &sl[idx].mi_path)); sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+// "Inside the impl" reads off the `self` binding: method bodies carry it in the
+// env (sc_self is only pinned for trait defaults).
+fn self_is_target(a: Allocator, sc: *const TyScope, env: *const Vec<FieldTy>, target: *const Vec<str>) -> bool {
+    if self_ty_matches(a, sc.sc_self, target) { return true; }
+    return match env_lookup(env, "self") {
+        Option::Some(st) => str::eq(path_last(&recv_base_path(a, st)), path_last(target))
+        | Option::None => false
+    };
+}
+fn self_ty_matches(a: Allocator, st: Option<*const Typ>, target: *const Vec<str>) -> bool {
+    return match st {
+        Option::Some(t) => str::eq(path_last(&recv_base_path(a, t)), path_last(target))
+        | Option::None => false
+    };
+}
 fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                     expected: Option<*const Typ>, recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let trecv = elab_expr(a, ar, g, sc, env, none_ty(), recv);
@@ -3464,6 +3521,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
             | Option::None => method_miss(a, ar, sc, name, trecv.ty, p)
         };
     }
+    check_method_visible(a, ar, sc, env, idx as u32, p);
     let sl = sc.sc_methods.as_slice();
     if sl[idx as u32].mi_struct_gen {
         return mk_struct_gen_method_call(a, ar, g, sc, env, idx as u32, trecv, args, p);
@@ -5110,6 +5168,27 @@ fn elab_field_access(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
         | Option::None => no_such_field(a, ar, sc, tt.ty, field, p)
     };
 }
+fn xfield_ty(sc: *const TyScope, name: str, field: str) -> Option<*const Typ> {
+    let none: Option<*const Typ> = Option::None;
+    let n = sc.sc_xfields.length();
+    let sl = sc.sc_xfields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].sf_name, field) && str::eq(path_last(&sl[i].sf_path), name) { return Option::Some(sl[i].sf_ty); }
+        i = i + 1 as u32;
+    }
+    return none;
+}
+fn xstruct_has_fields(sc: *const TyScope, name: str) -> bool {
+    let n = sc.sc_xfields.length();
+    let sl = sc.sc_xfields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(path_last(&sl[i].sf_path), name) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
 // The struct a field access is reaching THROUGH: `p.f`, `(*p).f` and `p->f` all
 // name the same struct, so peel the pointer before reporting.
 fn struct_path_of(t: *const Typ) -> Option<Vec<str>> {
@@ -5163,6 +5242,42 @@ fn bad_field_shape(a: Allocator, ar: *Arena, sc: *const TyScope, field: str,
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return defer_expr(ar, p);
 }
+fn is_ext_struct_ty(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TExtStruct(n) => true
+        | Typ::TPtr(i) => is_ext_struct_ty(i)
+        | Typ::TConstPtr(i) => is_ext_struct_ty(i)
+        | Typ::TOwnPtr(i) => is_ext_struct_ty(i)
+        | _o => false
+    };
+}
+fn ext_name_of(t: *const Typ) -> str {
+    return match *t {
+        Typ::TExtStruct(n) => n
+        | Typ::TPtr(i) => ext_name_of(i)
+        | Typ::TConstPtr(i) => ext_name_of(i)
+        | Typ::TOwnPtr(i) => ext_name_of(i)
+        | _o => ""
+    };
+}
+// Declared fields make it a known layout with a missing member; no declared
+// fields make it OPAQUE, and the message says how to open it.
+fn ext_field_reject(a: Allocator, ar: *Arena, sc: *const TyScope, xn: str, field: str, p: Pos) -> *const Texpr {
+    if xstruct_has_fields(sc, xn) {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("extern struct '"); sb.push_str(xn);
+        sb.push_str("' has no field '"); sb.push_str(field); sb.push_str("'");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return defer_expr(ar, p);
+    }
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    sb.push_str("field access '."); sb.push_str(field);
+    sb.push_str("' on opaque type '"); sb.push_str(xn);
+    sb.push_str("' — declare fields with `extern struct "); sb.push_str(xn);
+    sb.push_str(" { ... }` to access them");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, p);
+}
 fn no_such_method(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
                   recv_ty: *const Typ, p: Pos) -> *const Texpr {
     let mut sb = StringBuilder::with_capacity(a, 64 as u32);
@@ -5174,6 +5289,9 @@ fn no_such_method(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
 }
 fn no_such_field(a: Allocator, ar: *Arena, sc: *const TyScope, target_ty: *const Typ,
                  field: str, p: Pos) -> *const Texpr {
+    if is_ext_struct_ty(target_ty) {
+        return ext_field_reject(a, ar, sc, ext_name_of(target_ty), field, p);
+    }
     match struct_path_of(target_ty) {
         Option::Some(path) => {
             tc_fail(ar, sc, p, msg3(a, ar, "struct '", path_display(a, ar, &path),
@@ -6159,6 +6277,26 @@ fn check_assign_index(a: Allocator, ar: *Arena, sc: *const TyScope, tb: *const T
     }
     return;
 }
+// The written element must fit the slot — same rules as any store.
+fn check_elem_value(a: Allocator, ar: *Arena, sc: *const TyScope, base_ty: *const Typ,
+                    raw: *const Expr, act: *const Typ, p: Pos) {
+    match elem_of(base_ty) {
+        Option::Some(want) => { elem_value_agree(a, ar, sc, want, raw, act, p); }
+        | Option::None => { }
+    }
+    return;
+}
+fn elem_value_agree(a: Allocator, ar: *Arena, sc: *const TyScope, want: *const Typ,
+                    raw: *const Expr, act: *const Typ, p: Pos) {
+    if coercible_to(act, want) { return; }
+    if lit_fits_slot(raw, want) { return; }
+    if ty_has_tvar(want) || ty_has_tvar(act) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+    sb.push_str("array element: expected "); sb.push_str(typ_name(a, ar, want));
+    sb.push_str(", got "); sb.push_str(typ_name(a, ar, act));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn is_assignable_index_base(sc: *const TyScope, t: *const Typ) -> bool {
     if is_ptr_ty(t) { return true; }
     if ty_has_tvar(t) { return true; }
@@ -6815,7 +6953,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let lparams = lam_to_params(a, params_fd);
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let sc = TyScope { sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
+    let sc = TyScope { sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
@@ -7330,6 +7468,7 @@ fn elab_tail_ret(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
         Expr::If { cond, then_blk, else_blk } => { elab_tail_if(a, ar, g, sc, gensym, env, ret, cond, &then_blk, else_blk, p, out); }
         | _other => {
             let tv = elab_expr(a, ar, g, sc, env, ret, e);
+            check_trailing_ty(a, ar, sc, ret, tv, p);
             out.push(Tstmt::TReturn { value: Option::Some(tv), pos: p });
         }
     }
@@ -7337,6 +7476,24 @@ fn elab_tail_ret(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
 
 // A trailing expression: an implicit `return` in a return-typed fn, else a
 // void statement (`if` → `TIf`, otherwise `TExprStmt`).
+// The trailing value IS the return; the signature is its contract.
+fn check_trailing_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ret: Option<*const Typ>,
+                     tv: *const Texpr, p: Pos) {
+    match ret {
+        Option::Some(t) => { trailing_agree(a, ar, sc, t, tv, p); }
+        | Option::None => { }
+    }
+    return;
+}
+fn trailing_agree(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, tv: *const Texpr, p: Pos) {
+    if typ_eq(tv.ty, t) { return; }
+    if ty_has_tvar(t) || ty_has_tvar(tv.ty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+    sb.push_str("trailing expression: expected "); sb.push_str(typ_name(a, ar, t));
+    sb.push_str(", got "); sb.push_str(typ_name(a, ar, tv.ty));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn elab_tail(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
              e: *const Expr, out: *Vec<Tstmt>) {
     // A bare `if` (no else) in tail position of a value-returning fn is
@@ -7887,7 +8044,9 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             require_mut_root(a, ar, sc, tbi, "assign into", pos);
             let tii = elab_expr(a, ar, g, sc, env, none_ty(), index);
             check_assign_index(a, ar, sc, tbi, tii, pos);
-            let tvi = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, env, none_ty(), value), elem_of(tbi.ty));
+            let tvi0 = elab_expr(a, ar, g, sc, env, none_ty(), value);
+            check_elem_value(a, ar, sc, tbi.ty, value, tvi0.ty, pos);
+            let tvi = loan_into(a, ar, sc, tvi0, elem_of(tbi.ty));
             out.push(Tstmt::TAssignIndex { base: tbi, index: tii, value: tvi, pos: pos });
         }
         | Stmt::LetTuple { names, value, is_mut, pos } => {
@@ -8692,7 +8851,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     // A generic-struct method skeleton borrows the impl's type parameters
     // (the method itself declares none); everything else uses its own.
     let eff_tparams = pick_tparams(xtparams, &f.tparams);
-    let sc = TyScope { sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
+    let sc = TyScope { sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: str::eq(mangled, "main") };
@@ -9070,6 +9229,43 @@ fn collect_ffi_decls_in(a: Allocator, ar: *Arena, sc: *const TyScope, items: *co
     }
     return;
 }
+// DECLARED extern-struct fields (`extern struct Point { x: c_int }`) — the C
+// layout the FFI exposes.  An opaque one (no braces) stays opaque.
+fn collect_xfield_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, out: *Vec<StructField>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_xfield_one(a, ar, sc, &sl[i], out); i = i + 1 as u32; }
+    return;
+}
+fn collect_xfield_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, out: *Vec<StructField>) {
+    match *it {
+        Item::ExternStruct(es) => { xfield_push(a, ar, sc, es.esname, es.esfields, es.espos, out); }
+        | Item::Module(md) => { collect_xfield_info(a, ar, sc, &md.mitems, out); }
+        | _e => { }
+    }
+    return;
+}
+fn xfield_push(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, fields: Option<Vec<FieldDef>>, p: Pos, out: *Vec<StructField>) {
+    match fields {
+        Option::Some(fs) => {
+            let sl = fs.as_slice();
+            let mut i = 0 as u32;
+            while i < fs.length() {
+                xfield_push_one(a, ar, sc, name, sl[i].name, sl[i].ty, p, out);
+                i = i + 1 as u32;
+            }
+        }
+        | Option::None => { }
+    }
+    return;
+}
+fn xfield_push_one(a: Allocator, ar: *Arena, sc: *const TyScope, owner: str, fname: str,
+                   fty: *const TypeAnn, p: Pos, out: *Vec<StructField>) {
+    out.push(StructField { sf_path: single_str(a, owner), sf_name: fname,
+                           sf_ty: resolve_sig_ty(a, ar, sc, fty, p) });
+    return;
+}
 fn collect_ext_types_one(it: *const Item, xstructs: *Vec<str>, xaliases: *Vec<str>) {
     match *it {
         Item::ExternStruct(es) => { xstructs.push(es.esname); }
@@ -9272,7 +9468,7 @@ fn slot_kv_ty(a: Allocator, ar: *Arena) -> *const Typ {
 // resolves to `m::Pos`).  Used by the collectors + the method-body elaborator.
 fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope {
     return TyScope {
-        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -9292,7 +9488,7 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
 // recovery works regardless of construction order.
 fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyScope {
     return TyScope {
-        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -9308,7 +9504,7 @@ fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyS
 }
 fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
     return TyScope {
-        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -9328,7 +9524,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
 // the monomorphic instance directly (no post-hoc substitution).
 fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *const Vec<TVarBind>) -> TyScope {
     return TyScope {
-        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -9346,7 +9542,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
 // A copy of the scope carrying the enclosing fn's resolved return type.
 fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
     return TyScope {
-        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -9534,7 +9730,7 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     let msc = scope_with_tparams(sc, &f.tparams);
     let mret = if struct_gen { none_ty() } else { resolve_sig_ret(a, ar, &msc, f.ret_ty, f.pos) };
     out.push(MethodInfo {
-        mi_path: copy_strs(a, target), mi_trait: trait_name, mi_name: f.name,
+        mi_path: copy_strs(a, target), mi_pub: f.is_pub, mi_trait: trait_name, mi_name: f.name,
         mi_mangled: method_mangle(a, ar, target, f.name),
         mi_ret: mret,
         mi_has_self: method_has_self(f), mi_self_ptr: method_self_ptr(f), mi_self_const: method_self_const(f),
@@ -9647,7 +9843,7 @@ fn push_prelude_gen_method(a: Allocator, ar: *Arena, target: str, name: str, tpa
     let mut tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     tp.push(target);
     out.push(MethodInfo {
-        mi_path: tp, mi_trait: "", mi_name: name,
+        mi_path: tp, mi_pub: true, mi_trait: "", mi_name: name,
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: self_ptr, mi_self_const: self_const,
         mi_tparams: tparams, mi_params: params, mi_ret_ann: ret_ann,
@@ -9737,7 +9933,7 @@ fn push_prelude_method(a: Allocator, ar: *Arena, target: str, name: str,
     let mut tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     tp.push(target);
     out.push(MethodInfo {
-        mi_path: tp, mi_trait: "", mi_name: name,
+        mi_path: tp, mi_pub: true, mi_trait: "", mi_name: name,
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: false, mi_self_const: false,
         mi_tparams: one_tparam(a), mi_params: params, mi_ret_ann: ret_ann,
@@ -9760,7 +9956,7 @@ fn push_prelude_method_ng(a: Allocator, ar: *Arena, target: str, name: str, has_
     let empty_params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     let none_ann: Option<*const TypeAnn> = Option::None;
     out.push(MethodInfo {
-        mi_path: tp, mi_trait: "", mi_name: name,
+        mi_path: tp, mi_pub: true, mi_trait: "", mi_name: name,
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: ret, mi_has_self: has_self, mi_self_ptr: self_ptr, mi_self_const: self_const,
         mi_tparams: empty_tp, mi_params: empty_params, mi_ret_ann: none_ann,
@@ -9786,6 +9982,7 @@ fn push_prelude_sg_method(a: Allocator, ar: *Arena, target: str, name: str, has_
     // receiver-dispatched; it recovers its tparam from the expected type.
     out.push(MethodInfo {
         mi_path: path, mi_name: name,
+        mi_pub: true,
         mi_trait: "",
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: none_ty(), mi_has_self: has_self, mi_self_ptr: self_ptr, mi_self_const: self_const,
@@ -9898,6 +10095,7 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     let ab_path: Vec<str> = arena_method_path(a);
     out.push(MethodInfo {
         mi_path: ab_path, mi_name: "alloc_borrowed",
+        mi_pub: true,
         mi_trait: "",
         mi_mangled: "Arena__alloc_borrowed",
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: false,
@@ -10369,6 +10567,7 @@ fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpat
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     out.push(MethodInfo {
         mi_path: copy_strs(a, cnpath), mi_name: "call", mi_mangled: method_mangle(a, ar, cnpath, "call"),
+        mi_pub: true,
         mi_trait: "",
         mi_ret: resolve_sig_ret(a, ar, sc, ret_ty, p),
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
@@ -10718,7 +10917,7 @@ fn push_derive_method_k(a: Allocator, ar: *Arena, sc: *const TyScope, target: st
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     methods.push(MethodInfo {
         mi_path: single_str(a, target), mi_name: mname, mi_mangled: mangled,
-        mi_trait: derive_trait_of(mname),
+        mi_pub: true, mi_trait: derive_trait_of(mname),
         mi_ret: resolve_sig_ret(a, ar, sc, Option::Some(ret_ann), p),
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: Option::Some(ret_ann),
@@ -11000,6 +11199,7 @@ fn push_fmt_debug(a: Allocator, ar: *Arena, target: str, body: *const Expr,
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     methods.push(MethodInfo {
         mi_path: single_str(a, target), mi_name: "fmt_debug", mi_mangled: mangled,
+        mi_pub: true,
         mi_trait: "",
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: none_ret,
@@ -11083,6 +11283,7 @@ fn push_drop_method(a: Allocator, ar: *Arena, sname: str, body: *const Expr, met
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     methods.push(MethodInfo {
         mi_path: single_str(a, sname), mi_name: "drop", mi_mangled: mangled,
+        mi_pub: true,
         mi_trait: "",
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: false,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: none_ret,
@@ -11151,7 +11352,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let ret_ann: Option<*const TypeAnn> = Option::Some(closure_struct_ann(a, ar, vd.vname));
-    let sc = TyScope { sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
+    let sc = TyScope { sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
@@ -13419,6 +13620,56 @@ fn decl_pos_of(decls: *const Vec<DeclPos>, p: *const Vec<str>) -> Pos {
     }
     return zero_pos();
 }
+// A field and a method with one name would make `p.m` ambiguous.  Runs as its
+// own pass because method COLLECTION sees the empty sinfo placeholder — the
+// same scope trap as the cycle walk, taken the same way: the table rides in.
+fn check_method_clashes(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+                        modpath: *const Vec<str>, sinfo: *const Vec<StructField>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { check_method_clash_one(a, ar, sc, &sl[i], modpath, sinfo); i = i + 1 as u32; }
+    return;
+}
+fn check_method_clash_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item,
+                          modpath: *const Vec<str>, sinfo: *const Vec<StructField>) {
+    match *it {
+        Item::Impl(ib) => { clash_scan_impl(a, ar, sc, &ib, modpath, sinfo); }
+        | Item::Module(md) => { check_method_clashes(a, ar, sc, &md.mitems, &path_push(a, modpath, md.mname), sinfo); }
+        | _e => { }
+    }
+    return;
+}
+fn clash_scan_impl(a: Allocator, ar: *Arena, sc: *const TyScope, ib: *const ImplBlock,
+                   modpath: *const Vec<str>, sinfo: *const Vec<StructField>) {
+    let target = qualify_impl_target(a, modpath, &ib.itarget);
+    let n = ib.iitems.length();
+    let sl = ib.iitems.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        clash_scan_method(a, ar, sc, &target, &sl[i], sinfo);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn qualify_impl_target(a: Allocator, modpath: *const Vec<str>, target: *const Vec<str>) -> Vec<str> {
+    if target.length() > 1 as u32 { return copy_strs(a, target); }
+    if modpath.length() == 0 as u32 { return copy_strs(a, target); }
+    return path_push(a, modpath, path_last(target));
+}
+fn clash_scan_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
+                     f: *const Func, sinfo: *const Vec<StructField>) {
+    match find_field_ty(sinfo, target, f.name) {
+        Option::Some(_t) => {
+            let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+            sb.push_str("method name '"); sb.push_str(f.name);
+            sb.push_str("' clashes with a field on '"); sb.push_str(path_display(a, ar, target)); sb.push_str("'");
+            tc_fail(ar, sc, f.pos, str::from_slice(ar, sb.as_slice()));
+        }
+        | Option::None => { }
+    }
+    return;
+}
 fn detect_value_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
                        sinfo: *const Vec<StructField>, efields: *const Vec<EnumFieldE>,
                        mfields: *const Vec<StructField>, mefields: *const Vec<EnumFieldE>) {
@@ -13681,6 +13932,10 @@ fn ceval_binop(a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp, l: CEval
         if l.ck == r.ck { return cev(1 as int, eval_binop_c(op, l.cv, r.cv)); }
         return cev(2 as int, 0 as int);
     }
+    if is_concat(op) {
+        tc_fail(ar, sc, q, "'++' is not a constant expression");
+        return cev(3 as int, 0 as int);
+    }
     return cev(2 as int, 0 as int);
 }
 fn ceval_op_err(a: Allocator, ar: *Arena, sc: *const TyScope, pre: str, op: BinOp, post: str, q: Pos) -> CEval {
@@ -13790,6 +14045,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_debug_types(a, ar, &top_modpath, items, &dbgnames);
     let mut constnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_const_names(a, ar, &top_modpath, items, &constnames);
+    let mut xfields: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     // Type-level `use foo::Bar;` aliases (collected after type names so the
     // `foo::Bar` marker is available to confirm Bar is a declared type).
     let mut taliases: Vec<TypeAlias> = Vec::with_capacity(a, 8 as u32);
@@ -13839,7 +14095,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // throwaway; the real per-fn counter rides through elaborate_fn.
     let mut gensym_unused: u32 = 0 as u32;
     let mut loopdepth = 0 as u32;
-    let base_scope = TyScope { sc_structs: &snames, sc_dbg: &dbgnames, sc_consts: &constnames, sc_loops: &loopdepth, sc_enums: &enames, sc_tparams: &empty_tp,
+    let base_scope = TyScope { sc_structs: &snames, sc_dbg: &dbgnames, sc_consts: &constnames, sc_xfields: &xfields, sc_loops: &loopdepth, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods,
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
@@ -13878,6 +14134,8 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
     let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
     collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
+    collect_xfield_info(a, ar, &base_scope, items, &xfields);
+    check_method_clashes(a, ar, &base_scope, items, &empty_tp, &sinfo);
     // Runs once the field tables exist — the edges are read from them.
     detect_value_cycles(a, ar, &base_scope, items, &sinfo, &efields, &mono_fields, &mono_efields);
     check_pub_uses(a, ar, &base_scope, &globals, items);
@@ -13894,7 +14152,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_derives(a, ar, &base_scope, items, &methods, &lifted_lambdas, &gsigs);
     // DR-030 drop synthesis: a `<Struct>__drop` for every own-field struct.
     collect_drops(a, ar, items, &methods, &lifted_lambdas);
-    let idx = ProgIdx { pi_snames: &snames, pi_dbg: &dbgnames, pi_consts: &constnames, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
+    let idx = ProgIdx { pi_snames: &snames, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
                         pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_err: &tc_err, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };

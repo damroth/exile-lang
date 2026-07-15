@@ -1,0 +1,6 @@
+// No declared fields make it OPAQUE, and the message says how to open it.
+mod raw {
+    extern struct Screen;
+}
+fn f(p: *raw::Screen) -> int { return p.w as int; }
+fn main() { println(1); }

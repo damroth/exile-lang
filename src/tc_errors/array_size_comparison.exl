@@ -1,0 +1,5 @@
+// `1 < 2` folds to a bool, not a count.
+fn main() {
+    let v: [int; 1 < 2] = [0; 1];
+    println(1);
+}

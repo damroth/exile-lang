@@ -1,0 +1,5 @@
+const B: bool = true;
+fn main() {
+    let v: [int; B] = [0; 1];
+    println(1);
+}

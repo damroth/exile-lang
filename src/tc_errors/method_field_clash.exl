@@ -1,0 +1,3 @@
+struct P { m: int }
+impl P { fn m(self: *const P) -> int { return 1; } }
+fn main() { println(1); }

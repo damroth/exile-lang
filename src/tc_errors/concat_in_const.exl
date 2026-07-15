@@ -1,0 +1,3 @@
+const A: int = 1;
+const K: int = A ++ A;
+fn main() { println(K); }

@@ -1,0 +1,5 @@
+mod raw {
+    extern struct Point { x: c_int }
+}
+fn f(p: *raw::Point) -> int { return p.y as int; }
+fn main() { println(1); }
