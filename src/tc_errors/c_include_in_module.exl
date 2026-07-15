@@ -1,0 +1,2 @@
+mod m { @c_include("stdio.h") }
+fn main() { println(1); }

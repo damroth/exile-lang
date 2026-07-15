@@ -1,0 +1,8 @@
+// Same skeleton is not enough: `try` moves the Err payload into the OUTER
+// instance, so the instances must agree whole.
+fn g() -> Result<int, str> { return Result::Err("e"); }
+fn f() -> Result<int, bool> {
+    let v = try g();
+    return Result::Ok(v);
+}
+fn main() { println(1); }

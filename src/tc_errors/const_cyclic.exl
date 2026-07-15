@@ -1,0 +1,3 @@
+const A: int = B;
+const B: int = A;
+fn main() { println(A); }

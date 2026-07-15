@@ -1,0 +1,6 @@
+// A let-bound variable is not a size: only a literal or a `const` folds.
+fn main() {
+    let n = 3;
+    let v: [int; n] = [0; 3];
+    println(1);
+}

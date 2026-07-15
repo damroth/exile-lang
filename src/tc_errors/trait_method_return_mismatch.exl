@@ -1,0 +1,4 @@
+trait T { fn m(self: *const Self) -> int; }
+struct P { x: int }
+impl T for P { fn m(self: *const P) -> bool { return true; } }
+fn main() { println(1); }

@@ -496,6 +496,16 @@ fn struct_field_ty(sc: *const TyScope, target_ty: *const Typ, field: str) -> Opt
     };
 }
 
+fn iconst_known(sc: *const TyScope, name: str) -> bool {
+    let n = sc.sc_iconsts.length();
+    let sl = sc.sc_iconsts.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].ic_name, name) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
 fn iconst_lookup(consts: *const Vec<IntConst>, name: str) -> int {
     let n = consts.length();
     let sl = consts.as_slice();
@@ -1084,6 +1094,7 @@ fn register_prelude_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, 
 // crashing.
 // A `[T; 0]` has no values and no C spelling; the size must be positive.
 fn checked_array_size(a: Allocator, ar: *Arena, sc: *const TyScope, size: *const Expr, p: Pos) -> int {
+    if array_size_unknown_var(a, ar, sc, size) { return 1 as int; }
     let n = array_size_of(size, sc);
     if n > 0 as int { return n; }
     let mut sb = StringBuilder::with_capacity(a, 48 as u32);
@@ -1091,6 +1102,21 @@ fn checked_array_size(a: Allocator, ar: *Arena, sc: *const TyScope, size: *const
     sb.push_str(int_to_str_c(a, ar, n));
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return n;
+}
+// A `let`-bound variable is not a size: only a literal or a `const` folds.
+fn array_size_unknown_var(a: Allocator, ar: *Arena, sc: *const TyScope, size: *const Expr) -> bool {
+    return match *size {
+        Expr::Var(nm, q) => report_unknown_size(a, ar, sc, nm, q)
+        | _o => false
+    };
+}
+fn report_unknown_size(a: Allocator, ar: *Arena, sc: *const TyScope, nm: str, p: Pos) -> bool {
+    if iconst_known(sc, nm) { return false; }
+    let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+    sb.push_str("array size must be an integer literal or `const`, got '");
+    sb.push_str(nm); sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return true;
 }
 fn array_size_of(size: *const Expr, sc: *const TyScope) -> int {
     return match *size {
@@ -2834,6 +2860,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     // second owner).  Arena::alloc_borrowed and str::from_slice ride it.
     if str::eq(name, "ptr_offset") {
         let po_args = elab_args(a, ar, g, sc, env, args);
+        check_ptr_offset(a, ar, sc, &po_args, p);
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: po_args }, ty_node(ar, Typ::TPtr(t_u8(ar))), p);
     }
     // `mem_zero(ptr, n_bytes)` -> `memset(ptr, 0, n)`; zeroes a freshly-alloc'd
@@ -4314,6 +4341,22 @@ fn elab_orelse(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
     return te_node(ar, TexprNode::TMatch { scrutinee: tvalue, ename_path: path, arms: arms }, ok_pay, p);
 }
 
+fn try_err_payload_ok(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>, opath: *const Vec<str>) -> bool {
+    let err_name = if inst_is_option(ipath) { "None" } else { "Err" };
+    let iskel = etags_path_for(a, sc, ipath);
+    let oskel = etags_path_for(a, sc, opath);
+    let itys = inst_field_tys(a, sc, &iskel, ipath, err_name);
+    let otys = inst_field_tys(a, sc, &oskel, opath, err_name);
+    if itys.length() != otys.length() { return false; }
+    let il = itys.as_slice();
+    let ol = otys.as_slice();
+    let mut i = 0 as u32;
+    while i < itys.length() {
+        if !typ_eq(il[i], ol[i]) { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
 fn ret_enum_path(a: Allocator, sc: *const TyScope) -> Vec<str> {
     return match sc.sc_ret {
         Option::Some(rt) => enum_ty_path(a, rt)
@@ -4346,6 +4389,18 @@ fn elab_try(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
     }
     if !check_try_ret(a, ar, sc, tinner.ty, &vpath, p) { return defer_expr(ar, p); }
     let ipath = enum_ty_path(a, tinner.ty);
+    // Only the ERR/None payload must agree: `try` moves it into the OUTER
+    // instance verbatim, while the Ok side flows through the binding.  Comparing
+    // whole instances would reject `try g()` on Result<bool, E> inside a fn
+    // returning Result<Vec<T>, E> — the port's own lexer does exactly that.
+    let opath = ret_enum_path(a, sc);
+    if !try_err_payload_ok(a, sc, &ipath, &opath) {
+        let mut sb = StringBuilder::with_capacity(a, 88 as u32);
+        sb.push_str("'try' Err/None payload mismatch: inner "); sb.push_str(path_display(a, ar, &ipath));
+        sb.push_str(" vs outer "); sb.push_str(path_display(a, ar, &opath));
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return defer_expr(ar, p);
+    }
     let is_opt = inst_is_option(&ipath);
     let skel = skel_path(a, is_opt);
     let ok_name = if is_opt { "Some" } else { "Ok" };
@@ -5672,6 +5727,46 @@ fn check_mem_zero(a: Allocator, ar: *Arena, sc: *const TyScope, targs: *const Ve
 // Deliberately not ported: `'free' returns void, cannot use as a value`.  It needs
 // the `allow_void` signal (statement position vs value position), which the port
 // does not thread through elab_expr.  Recorded rather than faked.
+// The reference cascade, exactly: a u8 pointer with an int offset passes; a
+// pointer to anything else names the pointee (`steps in BYTES`); a non-pointer
+// (or a non-int offset — same arm) names the base type.
+fn check_ptr_offset(a: Allocator, ar: *Arena, sc: *const TyScope, targs: *const Vec<*const Texpr>, p: Pos) {
+    if targs.length() != 2 as u32 {
+        builtin_arity(a, ar, sc, "ptr_offset(p, n)", "exactly two arguments", targs.length(), p);
+        return;
+    }
+    let sl = targs.as_slice();
+    let bt = sl[0 as u32].ty;
+    let nt = sl[1 as u32].ty;
+    if ty_has_tvar(bt) || ty_has_tvar(nt) { return; }
+    if is_ptr_ty(bt) && is_int_like_ty(nt) {
+        match deref_pointee(bt) {
+            Option::Some(inner) => { ptr_offset_pointee(a, ar, sc, inner, p); }
+            | Option::None => { }
+        }
+        return;
+    }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("'ptr_offset' expects a u8 pointer base, got ");
+    sb.push_str(typ_name(a, ar, bt));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn ptr_offset_pointee(a: Allocator, ar: *Arena, sc: *const TyScope, inner: *const Typ, p: Pos) {
+    if is_u8_ty(inner) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 104 as u32);
+    sb.push_str("'ptr_offset' steps in BYTES, so the base must be a u8 pointer, got a pointer to ");
+    sb.push_str(typ_name(a, ar, inner));
+    sb.push_str(" — cast first");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn is_u8_ty(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(k) => !k.is_signed && int_bits_of(t) == 8 as int
+        | _o => false
+    };
+}
 fn check_free(a: Allocator, ar: *Arena, sc: *const TyScope, raw: *const Vec<*const Expr>,
               targs: *const Vec<*const Texpr>, p: Pos) {
     if targs.length() != 2 as u32 {
@@ -8275,22 +8370,30 @@ fn collect_type_aliases(a: Allocator, ar: *Arena, items: *const Vec<Item>, sname
 // emitted verbatim in the C preamble.  They recurse into modules (the FFI
 // hygiene rule keeps them inside a `pub mod raw`), and their names stay
 // unmangled: the linker resolves them against real C symbols.
-fn collect_ffi_decls_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item,
+fn collect_ffi_decls_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, in_mod: bool,
                          cincludes: *Vec<str>, econsts: *Vec<FieldTy>, evars: *Vec<FieldTy>) {
     match *it {
-        Item::CInclude { path, pos } => { cincludes.push(path); }
+        Item::CInclude { path, pos } => {
+            if in_mod { tc_fail(ar, sc, pos, "'@c_include' must be at top level, not inside a module"); }
+            cincludes.push(path);
+        }
         | Item::ExternConst(ec) => { econsts.push(FieldTy { name: ec.ecname, ty: resolve_sig_ty(a, ar, sc, ec.ecty, ec.ecpos) }); }
         | Item::ExternVar(ev) => { evars.push(FieldTy { name: ev.evname, ty: resolve_sig_ty(a, ar, sc, ev.evty, ev.evpos) }); }
-        | Item::Module(md) => { collect_ffi_decls(a, ar, sc, &md.mitems, cincludes, econsts, evars); }
+        | Item::Module(md) => { collect_ffi_decls_in(a, ar, sc, &md.mitems, true, cincludes, econsts, evars); }
         | _e => { }
     }
 }
 fn collect_ffi_decls(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
                      cincludes: *Vec<str>, econsts: *Vec<FieldTy>, evars: *Vec<FieldTy>) {
+    collect_ffi_decls_in(a, ar, sc, items, false, cincludes, econsts, evars);
+    return;
+}
+fn collect_ffi_decls_in(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, in_mod: bool,
+                        cincludes: *Vec<str>, econsts: *Vec<FieldTy>, evars: *Vec<FieldTy>) {
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < items.length() {
-        collect_ffi_decls_one(a, ar, sc, &sl[i], cincludes, econsts, evars);
+        collect_ffi_decls_one(a, ar, sc, &sl[i], in_mod, cincludes, econsts, evars);
         i = i + 1 as u32;
     }
     return;
@@ -9189,7 +9292,8 @@ fn register_one_default(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
     push_one_method(a, ar, sc, target, &no_itparams, trait_name, f, ti, j, out);
 }
 fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
-                        impl_methods: *const Vec<Func>, td: *const TraitDecl, ti: u32, ipos: Pos, out: *Vec<MethodInfo>) {
+                        impl_methods: *const Vec<Func>, td: *const TraitDecl, ti: u32, ipos: Pos,
+                        itparams: *const Vec<str>, out: *Vec<MethodInfo>) {
     let n = td.trmethods.length();
     let ms = td.trmethods.as_slice();
     let mut j = 0 as u32;
@@ -9202,15 +9306,142 @@ fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
             sb.push_str("' required by trait '"); sb.push_str(td.trname); sb.push_str("'");
             tc_fail(ar, sc, ipos, str::from_slice(ar, sb.as_slice()));
         }
+        check_impl_method_sig(a, ar, sc, target, td.trname, &ms[j], itparams, impl_methods);
         register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, td.trname, &ms[j], ti, j, out);
         j = j + 1 as u32;
     }
 }
+// A provided method must MATCH the trait's declaration, with `Self` read as the
+// target.  The comparison is on resolved types, so the message names what the
+// user sees (`expected i32, got bool`), and it lands at the impl's method.
+fn check_impl_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
+                         trname: str, tm: *const Func, itparams: *const Vec<str>, impl_methods: *const Vec<Func>) {
+    let ii = impl_method_idx(impl_methods, tm.name);
+    if ii < 0 as int { return; }
+    let im: *const Func = &impl_methods.as_slice()[ii as u32];
+    if tm.params.length() != im.params.length() { return; }
+    // Scope cut, recorded: the comparison resolves annotations, and RESOLUTION
+    // fires the unknown-type diagnostic — so a shape mentioning a type
+    // parameter or `Self::Assoc` cannot be resolved in this collection scope
+    // without lying.  Concrete signatures are checked; generic ones abstain
+    // until the comparison can run under the impl's own bindings.
+    if !sig_check_applicable(tm, im, itparams) { return; }
+    let tsl = tm.params.as_slice();
+    let isl = im.params.as_slice();
+    let mut k = 0 as u32;
+    while k < tm.params.length() {
+        let tt = resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, tsl[k].pty, target), im.pos);
+        let it = resolve_sig_ty(a, ar, sc, isl[k].pty, im.pos);
+        if !typ_eq(tt, it) {
+            let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+            sb.push_str("method '"); sb.push_str(tm.name);
+            sb.push_str("': parameter '"); sb.push_str(tsl[k].pname);
+            sb.push_str("' type does not match trait '"); sb.push_str(trname);
+            sb.push_str("' (expected "); sb.push_str(typ_name(a, ar, tt));
+            sb.push_str(", got "); sb.push_str(typ_name(a, ar, it)); sb.push_str(")");
+            tc_fail(ar, sc, im.pos, str::from_slice(ar, sb.as_slice()));
+            return;
+        }
+        k = k + 1 as u32;
+    }
+    if !ret_ann_matches(a, ar, sc, target, tm.ret_ty, im.ret_ty, im.pos) {
+        let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+        sb.push_str("method '"); sb.push_str(tm.name);
+        sb.push_str("' return type does not match trait '"); sb.push_str(trname); sb.push_str("'");
+        tc_fail(ar, sc, im.pos, str::from_slice(ar, sb.as_slice()));
+    }
+    return;
+}
+fn sig_check_applicable(tm: *const Func, im: *const Func, itparams: *const Vec<str>) -> bool {
+    if itparams.length() > 0 as u32 { return false; }
+    if tm.tparams.length() > 0 as u32 { return false; }
+    if im.tparams.length() > 0 as u32 { return false; }
+    if anns_mention_abstract(&tm.params, tm.ret_ty) { return false; }
+    if anns_mention_abstract(&im.params, im.ret_ty) { return false; }
+    return true;
+}
+fn anns_mention_abstract(params: *const Vec<Param>, ret: Option<*const TypeAnn>) -> bool {
+    let n = params.length();
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if ann_mentions_abstract(sl[i].pty) { return true; }
+        i = i + 1 as u32;
+    }
+    return match ret {
+        Option::Some(t) => ann_mentions_abstract(t)
+        | Option::None => false
+    };
+}
+// `Self::Item` and friends: a qualified path headed by Self is an associated
+// projection, resolvable only under the impl's pinned Self.
+fn ann_mentions_abstract(ann: *const TypeAnn) -> bool {
+    return match *ann {
+        TypeAnn::TyStruct { path, args } => struct_ann_abstract(&path, &args)
+        | TypeAnn::TyPtr(t) => ann_mentions_abstract(t)
+        | TypeAnn::TyOwnPtr(t) => ann_mentions_abstract(t)
+        | TypeAnn::TyConstPtr(t) => ann_mentions_abstract(t)
+        | TypeAnn::TyTuple(ts) => ann_list_abstract(&ts)
+        | TypeAnn::TyArray { elem, size } => ann_mentions_abstract(elem)
+        | TypeAnn::TyFnPtr { params, ret } => fnptr_ann_abstract(&params, ret)
+        | _o => false
+    };
+}
+fn struct_ann_abstract(path: *const Vec<str>, args: *const Vec<*const TypeAnn>) -> bool {
+    if path.length() > 1 as u32 && str::eq(path.as_slice()[0 as u32], "Self") { return true; }
+    return ann_list_abstract(args);
+}
+fn ann_list_abstract(ts: *const Vec<*const TypeAnn>) -> bool {
+    let n = ts.length();
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if ann_mentions_abstract(sl[i]) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn fnptr_ann_abstract(params: *const Vec<*const TypeAnn>, ret: Option<*const TypeAnn>) -> bool {
+    if ann_list_abstract(params) { return true; }
+    return match ret {
+        Option::Some(t) => ann_mentions_abstract(t)
+        | Option::None => false
+    };
+}
+fn impl_method_idx(methods: *const Vec<Func>, name: str) -> int {
+    let n = methods.length();
+    let sl = methods.as_slice();
+    let mut i = 0 as u32;
+    while i < n { if str::eq(sl[i].name, name) { return i as int; } i = i + 1 as u32; }
+    return 0 - 1 as int;
+}
+fn ret_ann_matches(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
+                   tret: Option<*const TypeAnn>, iret: Option<*const TypeAnn>, p: Pos) -> bool {
+    return match tret {
+        Option::Some(ta) => match iret {
+            Option::Some(ia) => typ_eq(resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, ta, target), p),
+                                       resolve_sig_ty(a, ar, sc, ia, p))
+            | Option::None => false
+        }
+        | Option::None => match iret { Option::Some(_x) => false | Option::None => true }
+    };
+}
+// `Self` in a trait declaration reads as the impl's target.
+fn subst_self_ann(a: Allocator, ar: *Arena, ann: *const TypeAnn, target: *const Vec<str>) -> *const TypeAnn {
+    return match *ann {
+        TypeAnn::TySelf => ann_struct(a, ar, path_last(target))
+        | TypeAnn::TyPtr(t) => tyann_node(ar, TypeAnn::TyPtr(subst_self_ann(a, ar, t, target)))
+        | TypeAnn::TyOwnPtr(t) => tyann_node(ar, TypeAnn::TyOwnPtr(subst_self_ann(a, ar, t, target)))
+        | TypeAnn::TyConstPtr(t) => tyann_node(ar, TypeAnn::TyConstPtr(subst_self_ann(a, ar, t, target)))
+        | _o => ann
+    };
+}
 fn register_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, ti: u32,
-                          target: *const Vec<str>, impl_methods: *const Vec<Func>, ipos: Pos, out: *Vec<MethodInfo>) {
+                          target: *const Vec<str>, impl_methods: *const Vec<Func>, ipos: Pos,
+                          itparams: *const Vec<str>, out: *Vec<MethodInfo>) {
     let sl = items.as_slice();
     match sl[ti] {
-        Item::Trait(td) => { register_td_defaults(a, ar, sc, target, impl_methods, &td, ti, ipos, out); }
+        Item::Trait(td) => { register_td_defaults(a, ar, sc, target, impl_methods, &td, ti, ipos, itparams, out); }
         | _e => { }
     }
 }
@@ -9236,7 +9467,7 @@ fn collect_one_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items
         }
         return;
     }
-    register_impl_defaults(a, ar, sc, items, ti as u32, &ib.itarget, &ib.iitems, ib.ipos, out);
+    register_impl_defaults(a, ar, sc, items, ti as u32, &ib.itarget, &ib.iitems, ib.ipos, &ib.itparams, out);
 }
 fn collect_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, it: *const Item, out: *Vec<MethodInfo>) {
     match *it {
@@ -9662,6 +9893,12 @@ fn prepass_closures(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const 
 // Eq default `ne` (resolved here, emitted downstream) drain a Tfunc after the
 // user fns, before the generic instances.
 fn dv_var(ar: *Arena, n: str, p: Pos) -> *const Expr { return ast_node(ar, Expr::Var(n, p)); }
+// `a.eq(b)` — the derive bodies' per-field comparison, as the reference builds it.
+fn dv_eq_call(a: Allocator, ar: *Arena, lhs: *const Expr, rhs: *const Expr, p: Pos) -> *const Expr {
+    let mut args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
+    args.push(rhs);
+    return ast_node(ar, Expr::MethodCall { receiver: lhs, name: "eq", args: args, pos: p });
+}
 fn dv_field(ar: *Arena, recv: str, f: str, p: Pos) -> *const Expr {
     return ast_node(ar, Expr::FieldAccess(dv_var(ar, recv, p), f, p));
 }
@@ -9700,7 +9937,11 @@ fn derive_eq_struct_body(a: Allocator, ar: *Arena, sfields: *const Vec<FieldDef>
     let mut cmps: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
     let mut i = 0 as u32;
     while i < n {
-        cmps.push(ast_node(ar, Expr::BinOp(BinOp::EqEq, dv_field(ar, "self", sl[i].name, p), dv_field(ar, "other", sl[i].name, p), p)));
+        // `.eq()` per field, as the reference derives it: on scalars the prim
+        // builtin lowers straight back to `==` (same C), and on a type with no
+        // Eq — a float, by design — the receiver-shape diagnostic fires instead
+        // of silently comparing bits.
+        cmps.push(dv_eq_call(a, ar, dv_field(ar, "self", sl[i].name, p), dv_field(ar, "other", sl[i].name, p), p));
         i = i + 1 as u32;
     }
     return dv_and_fold(ar, &cmps, p);
@@ -9894,7 +10135,7 @@ fn push_eq_arm(a: Allocator, ar: *Arena, ename: str, vname: str, vkind: *const V
     let asl = avars.as_slice();
     let bsl = bvars.as_slice();
     let mut k = 0 as u32;
-    while k < np { cmps.push(ast_node(ar, Expr::BinOp(BinOp::EqEq, asl[k], bsl[k], p))); k = k + 1 as u32; }
+    while k < np { cmps.push(dv_eq_call(a, ar, asl[k], bsl[k], p)); k = k + 1 as u32; }
     let cmp = dv_and_fold(ar, &cmps, p);
     let mut inner_arms: Vec<MatchArm> = Vec::with_capacity(a, 8 as u32);
     inner_arms.push(MatchArm { pat: inner_pat, guard: no_guard, body: cmp, arm_pos: zero_pos() });
@@ -12524,19 +12765,141 @@ fn collect_const_name_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it
     }
     return;
 }
+struct ConstDeclInfo {
+    cd_name: str,
+    cd_value: *const Expr,
+    cd_pos: Pos,
+}
 fn check_const_items(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { check_const_item(a, ar, sc, &sl[i]); i = i + 1 as u32; }
+    let mut cds: Vec<ConstDeclInfo> = Vec::with_capacity(a, 8 as u32);
+    collect_const_decls(a, items, &cds);
+    check_const_cycles(a, ar, sc, &cds);
+    return;
+}
+fn collect_const_decls(a: Allocator, items: *const Vec<Item>, out: *Vec<ConstDeclInfo>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_const_decl_one(a, &sl[i], out); i = i + 1 as u32; }
+    return;
+}
+fn collect_const_decl_one(a: Allocator, it: *const Item, out: *Vec<ConstDeclInfo>) {
+    match *it {
+        Item::Const(c) => { out.push(ConstDeclInfo { cd_name: c.kname, cd_value: c.kvalue, cd_pos: c.kpos }); }
+        | Item::Module(md) => { collect_const_decls(a, &md.mitems, out); }
+        | _e => { }
+    }
+    return;
+}
+// The reference evaluates consts in declaration order and errors on RE-ENTRY —
+// so the report lands on the const whose evaluation came back to itself.
+fn check_const_cycles(a: Allocator, ar: *Arena, sc: *const TyScope, cds: *const Vec<ConstDeclInfo>) {
+    let mut done: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let n = cds.length();
+    let sl = cds.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let empty: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        const_dfs(a, ar, sc, cds, sl[i].cd_name, &empty, &done);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn const_idx(cds: *const Vec<ConstDeclInfo>, name: str) -> int {
+    let n = cds.length();
+    let sl = cds.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].cd_name, name) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 - 1 as int;
+}
+fn const_dfs(a: Allocator, ar: *Arena, sc: *const TyScope, cds: *const Vec<ConstDeclInfo>,
+             name: str, stack: *const Vec<str>, done: *Vec<str>) {
+    let ci = const_idx(cds, name);
+    if ci < 0 as int { return; }
+    if name_in(stack, name) {
+        let mut sb = StringBuilder::with_capacity(a, 56 as u32);
+        sb.push_str("cyclic constant definition involving '"); sb.push_str(name); sb.push_str("'");
+        tc_fail(ar, sc, cds.as_slice()[ci as u32].cd_pos, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    if name_in(done, name) { return; }
+    let mut child: Vec<str> = copy_strs_plus(a, stack, name);
+    let mut refs: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    const_var_refs(a, cds.as_slice()[ci as u32].cd_value, &refs);
+    let rl = refs.as_slice();
+    let mut i = 0 as u32;
+    while i < refs.length() {
+        const_dfs(a, ar, sc, cds, rl[i], &child, done);
+        i = i + 1 as u32;
+    }
+    done.push(name);
+    return;
+}
+fn copy_strs_plus(a: Allocator, base: *const Vec<str>, extra: str) -> Vec<str> {
+    let mut out: Vec<str> = copy_strs(a, base);
+    out.push(extra);
+    return out;
+}
+fn const_var_refs(a: Allocator, e: *const Expr, out: *Vec<str>) {
+    match *e {
+        Expr::Var(nm, _q) => { out.push(nm); }
+        | Expr::Neg(sub, _q) => { const_var_refs(a, sub, out); }
+        | Expr::BitNot(sub, _q) => { const_var_refs(a, sub, out); }
+        | Expr::Not(sub, _q) => { const_var_refs(a, sub, out); }
+        | Expr::Cast(sub, ann, _q) => { const_var_refs(a, sub, out); }
+        | Expr::BinOp(op, l, r, _q) => { const_var_refs(a, l, out); const_var_refs(a, r, out); }
+        | _o => { }
+    }
+    return;
+}
+fn check_const_item(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item) {
+    match *it {
+        Item::Const(c) => {
+            check_const_expr(a, ar, sc, c.kvalue);
+            check_const_fit(a, ar, sc, &c);
+        }
+        | Item::Module(md) => { check_const_subitems(a, ar, sc, &md.mitems); }
+        | _e => { }
+    }
+    return;
+}
+// Module recursion for the per-decl checks only — the cycle pass runs once at
+// the top with the full flattened list.
+fn check_const_subitems(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n { check_const_item(a, ar, sc, &sl[i]); i = i + 1 as u32; }
     return;
 }
-fn check_const_item(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item) {
-    match *it {
-        Item::Const(c) => { check_const_expr(a, ar, sc, c.kvalue); }
-        | Item::Module(md) => { check_const_items(a, ar, sc, &md.mitems); }
-        | _e => { }
+// A LITERAL value is checkable without the evaluator; a folded expression's
+// value would need the arithmetic the port deliberately does not carry yet.
+fn check_const_fit(a: Allocator, ar: *Arena, sc: *const TyScope, c: *const ConstDecl) {
+    let ty = resolve_sig_ty(a, ar, sc, c.kty, c.kpos);
+    if !is_int_ty_strict(ty) { return; }
+    match expr_int_lit(c.kvalue) {
+        Option::Some(n) => { const_fit_check(a, ar, sc, c.kname, n, ty, c.kpos); }
+        | Option::None => { }
     }
+    return;
+}
+fn is_int_ty_strict(t: *const Typ) -> bool {
+    return match *t { Typ::TInt(_k) => true | _o => false };
+}
+fn const_fit_check(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, n: int, ty: *const Typ, p: Pos) {
+    if int_fits(n, ty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("constant '"); sb.push_str(name); sb.push_str("' = ");
+    sb.push_str(int_to_str_c(a, ar, n)); sb.push_str(" does not fit in ");
+    sb.push_str(typ_name(a, ar, ty));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
 fn check_const_expr(a: Allocator, ar: *Arena, sc: *const TyScope, e: *const Expr) {

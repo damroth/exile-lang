@@ -1,0 +1,6 @@
+// ptr_offset steps in BYTES; a typed pointer must be cast down first.
+fn main() {
+    let x = 5;
+    let p = ptr_offset(&x, 1);
+    println(1);
+}

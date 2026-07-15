@@ -1,0 +1,6 @@
+// Floats carry no Eq by design (NaN makes total equality a lie), so the derived
+// per-field `.eq()` has nothing to call — same as the reference, where the
+// derive expands to `.eq()` and the receiver-shape check fires.
+@derive(Eq)
+struct F { v: f64 }
+fn main() { println(1); }
