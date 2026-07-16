@@ -7466,7 +7466,7 @@ fn elab_tail_if(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
                 cond: *const Expr, then_blk: *const Vec<Stmt>, else_blk: Option<Vec<Stmt>>, p: Pos, out: *Vec<Tstmt>) {
     if block_is_value(then_blk) {
         let ifx = mk_if_expr(a, ar, g, sc, env, ret, cond, then_blk, else_blk, p);
-        out.push(Tstmt::TReturn { value: Option::Some(ifx), pos: zero_pos() });
+        out.push(Tstmt::TReturn { value: Option::Some(ifx), pos: p });
     } else {
         let tcond = elab_expr(a, ar, g, sc, env, none_ty(), cond);
         let tthen = elab_body(a, ar, g, sc, gensym, env, ret, then_blk);
@@ -12138,9 +12138,38 @@ fn collect_body_lets(a: Allocator, body: *const Vec<Tstmt>) -> Vec<FieldTy> {
     let sl = raw.as_slice();
     let mut i = 0 as u32;
     while i < raw.length() { if !lets_is_temp(sl[i].name) { out.push(sl[i]); } i = i + 1 as u32; }
+    // The oracle appends the `__lift_N` temps in CREATION order (ascending index),
+    // but a body-walk finds them in nesting order (inner-first).  Emit by ascending
+    // `__lift` index so the decl block matches the oracle byte for byte.
+    let mut lifts: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let mut j = 0 as u32;
-    while j < raw.length() { if lets_is_temp(sl[j].name) { out.push(sl[j]); } j = j + 1 as u32; }
+    while j < raw.length() { if lets_is_temp(sl[j].name) { lifts.push(sl[j]); } j = j + 1 as u32; }
+    let m = lifts.length();
+    let mut maxi = 0 as int - 1 as int;
+    let mut t = 0 as u32;
+    while t < m { let v = lift_index(lifts.as_slice()[t].name); if v > maxi { maxi = v; } t = t + 1 as u32; }
+    let mut idx = 0 as int;
+    while idx <= maxi {
+        let lfs = lifts.as_slice();
+        let mut kk = 0 as u32;
+        while kk < m { if lift_index(lfs[kk].name) == idx { out.push(lfs[kk]); } kk = kk + 1 as u32; }
+        idx = idx + 1 as int;
+    }
     return out;
+}
+// The numeric suffix of a `__lift_N` temp name (the lift pass's creation index).
+fn lift_index(name: str) -> int {
+    let b = str::as_bytes(name);
+    let n = str::length(name);
+    let mut i = 7 as u32;
+    let mut v = 0 as int;
+    while i < n {
+        let c = b[i];
+        if c < 48 as u8 || c > 57 as u8 { break; }
+        v = v * 10 as int + (c - 48 as u8) as int;
+        i = i + 1 as u32;
+    }
+    return v;
 }
 // True when `name` is `__<c2><c3>...` (a 4-byte gensym prefix like `__fe`/`__fv`).
 fn name4(name: str, c2: u8, c3: u8) -> bool {
