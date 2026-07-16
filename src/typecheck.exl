@@ -11598,6 +11598,10 @@ fn register_prelude_globals(a: Allocator, ar: *Arena, g: *Vec<GlobalFn>) {
     let ccharp: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TCChar))));
     push_sys_fn(a, ar, "sys_argc", cint, g);
     push_sys_fn(a, ar, "sys_argv", ccharp, g);
+    // cc-invoke seam: spawn a child (argv) and wait — for `exilc --target host`.
+    push_sys_fn(a, ar, "sys_spawn", cint, g);
+    // Process exit — non-zero status on a failed build, like the oracle's exit 1.
+    push_sys_fn(a, ar, "sys_exit", novoid, g);
 }
 
 // A signature is resolved in ITS OWN module's scope, exactly like the body that
@@ -13418,6 +13422,19 @@ fn append_sys_externs(a: Allocator, ar: *Arena, funcs: *const Vec<Tfunc>, pmeth:
         let mut t1: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
         t1.push(cint);
         pfree.push(sys_extern_tfunc(a, ar, "sys_argv", p1, t1, Option::Some(ccharc)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_spawn", uses_da) {
+        // argv: *const str — str lowers to `const char*`, so `*const str` is
+        // `const char* const*`, a ready argv (no shell, no quoting).
+        let cstrp = ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TString)));
+        pfree.push(sys_extern_tfunc(a, ar, "sys_spawn", sys_p2(a, "argv", "n"), sys_t2(a, cstrp, cint), Option::Some(cint)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_exit", uses_da) {
+        let mut pe: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        pe.push("code");
+        let mut te: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+        te.push(cint);
+        pfree.push(sys_extern_tfunc(a, ar, "sys_exit", pe, te, novoid));
     }
     return;
 }

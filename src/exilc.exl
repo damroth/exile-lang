@@ -74,15 +74,18 @@ fn err_line(msg: str) {
 
 // ===== flags =====
 
-// 0 = full pipeline to C; 1 = tokens; 2 = ast; 3 = typed-ir.
+// ca_emit: 0 = full pipeline; 1 = tokens; 2 = ast; 3 = typed-ir.
+// ca_target: 0 = c (transpile only); 1 = host (transpile + cc-invoke).
 struct CliArgs {
     ca_emit: int,
     ca_user_only: bool,
     ca_after_drop: bool,
-    ca_target_c: bool,
+    ca_target: int,
+    ca_show_cc: bool,
     ca_input: str,
     ca_output: Option<str>,
     ca_c_out: Option<str>,
+    ca_links: Vec<str>,
     ca_ok: bool,
 }
 
@@ -92,11 +95,12 @@ fn arg_str(i: c_int) -> str {
 
 // Every accepted flag, in the oracle's dispatch order.  An unknown flag or a
 // second input file is an error the same way the reference reports it.
-fn parse_cli(_a: Allocator) -> CliArgs {
+fn parse_cli(a: Allocator) -> CliArgs {
     let none_s: Option<str> = Option::None;
+    let links0: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut ca = CliArgs { ca_emit: 0 as int, ca_user_only: false, ca_after_drop: false,
-                           ca_target_c: false, ca_input: "", ca_output: none_s,
-                           ca_c_out: none_s, ca_ok: true };
+                           ca_target: 0 as int, ca_show_cc: false, ca_input: "", ca_output: none_s,
+                           ca_c_out: none_s, ca_links: links0, ca_ok: true };
     let argc = sys::sys_argc();
     let mut i = 1 as c_int;
     while i < argc {
@@ -105,9 +109,9 @@ fn parse_cli(_a: Allocator) -> CliArgs {
             i = i + 1 as c_int;
             if i >= argc { err_line("--target needs an argument"); ca.ca_ok = false; return ca; }
             let t = arg_str(i);
-            if str::eq(t, "c") { ca.ca_target_c = true; }
-            else if str::eq(t, "host") { ca.ca_target_c = false; }
-            else { err_line("this round supports only --target c"); ca.ca_ok = false; return ca; }
+            if str::eq(t, "c") { ca.ca_target = 0 as int; }
+            else if str::eq(t, "host") { ca.ca_target = 1 as int; }
+            else { err_line("unknown target (expected: c, host)"); ca.ca_ok = false; return ca; }
         }
         else if str::eq(arg, "-o") {
             i = i + 1 as c_int;
@@ -119,6 +123,12 @@ fn parse_cli(_a: Allocator) -> CliArgs {
             if i >= argc { err_line("--c-out needs an argument"); ca.ca_ok = false; return ca; }
             ca.ca_c_out = Option::Some(arg_str(i));
         }
+        else if str::eq(arg, "--link") {
+            i = i + 1 as c_int;
+            if i >= argc { err_line("--link needs an argument"); ca.ca_ok = false; return ca; }
+            ca.ca_links.push(arg_str(i));
+        }
+        else if str::eq(arg, "--show-cc-warnings") { ca.ca_show_cc = true; }
         else if str::eq(arg, "--emit-tokens") { ca.ca_emit = set_emit(&ca, 1 as int); }
         else if str::eq(arg, "--emit-ast") { ca.ca_emit = set_emit(&ca, 2 as int); }
         else if str::eq(arg, "--emit-typed-ir") { ca.ca_emit = set_emit(&ca, 3 as int); }
@@ -131,7 +141,7 @@ fn parse_cli(_a: Allocator) -> CliArgs {
         else { unknown_flag(arg); ca.ca_ok = false; return ca; }
         i = i + 1 as c_int;
     }
-    if str::eq(ca.ca_input, "") { err_line("usage: exilc [--target c] [--emit-tokens|--emit-ast|--emit-typed-ir [--user-only] [--after-drop]] [-o out] [--c-out c] <file.exl>"); ca.ca_ok = false; }
+    if str::eq(ca.ca_input, "") { err_line("usage: exilc [--target c|host] [--emit-tokens|--emit-ast|--emit-typed-ir [--user-only] [--after-drop]] [-o out] [--c-out c] [--link stub]... [--show-cc-warnings] <file.exl>"); ca.ca_ok = false; }
     return ca;
 }
 
@@ -213,7 +223,62 @@ fn run_emit_ir_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
     return;
 }
 
-// `--target c`: the full pipeline to C, written to `--c-out` (or stdout).
+// `<dir>` of a path — everything before the last `/`, or `.` if none.  The
+// oracle adds `-I <dir>` so `@c_include("local.h")` resolves next to the source.
+fn input_dir(ar: *Arena, path: str) -> str {
+    let bytes = str::as_bytes(path);
+    let n = str::length(path);
+    let mut i = n;
+    while i > 0 as u32 {
+        if bytes[i - 1 as u32] == 47 as u8 {
+            return str::from_slice(ar, bytes[0 as u32..i - 1 as u32]);
+        }
+        i = i - 1 as u32;
+    }
+    return ".";
+}
+
+// `<path>` without its extension — strip after the last `.` in the basename.
+fn strip_ext(ar: *Arena, path: str) -> str {
+    let bytes = str::as_bytes(path);
+    let n = str::length(path);
+    let mut i = n;
+    while i > 0 as u32 {
+        let c = bytes[i - 1 as u32];
+        if c == 47 as u8 { break; }                                   // '/'
+        if c == 46 as u8 { return str::from_slice(ar, bytes[0 as u32..i - 1 as u32]); }  // '.'
+        i = i - 1 as u32;
+    }
+    return path;
+}
+
+// c_path = `--c-out`, else `<input>.c` — matching the oracle; the C is always a
+// file (never stdout) on the transpile/build path.
+fn resolve_cpath(a: Allocator, ar: *Arena, ca: *const CliArgs) -> str {
+    let mut have = false;
+    let mut r: str = "";
+    match ca.ca_c_out {
+        Option::Some(p) => { r = p; have = true; }
+        | Option::None => { }
+    }
+    if have { return r; }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str(strip_ext(ar, ca.ca_input)); sb.push_str(".c");
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// binary path = `-o`, else `<input>` without extension — the oracle's default.
+fn resolve_out(ar: *Arena, ca: *const CliArgs) -> str {
+    let mut r = strip_ext(ar, ca.ca_input);
+    match ca.ca_output {
+        Option::Some(p) => { r = p; }
+        | Option::None => { }
+    }
+    return r;
+}
+
+// `--target c`/`host`: full pipeline to C.  c goes to a file and reports
+// `wrote`; host additionally cc-invokes that C into a binary.
 fn run_codegen(a: Allocator, ar: *Arena, ca: *const CliArgs) {
     match load(a, ar, ca.ca_input) {
         Result::Ok(prog) => { run_codegen_checked(a, ar, ca, &prog); }
@@ -228,15 +293,65 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
             drop_insert(a, ar, &tprog);
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             gen_program(a, ar, &tprog, &out);
-            // Codegen writes to --c-out when given (matching how the gates
-            // capture the .c), else -o, else stdout.
-            match ca.ca_c_out {
-                Option::Some(p) => { write_file(p, &out); }
-                | Option::None => { write_dump(ca.ca_output, &out); }
-            }
+            let cpath = resolve_cpath(a, ar, ca);
+            write_file(cpath, &out);
+            emit_output(a, ar, ca, cpath);
         }
         | Result::Err(e) => { report_error(a, e); }
     }
+    return;
+}
+
+// Transpile reports `wrote`; host hands the C to cc and reports `built`.
+fn emit_output(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
+    if ca.ca_target == 1 as int { build_host(a, ar, ca, cpath); return; }
+    report_wrote(a, cpath);
+    return;
+}
+
+// The cc argv — the SAME flags the oracle hands to Sys.command, but as a real
+// argv (no shell, no quoting).  The flag DATA mirrors the oracle byte for byte;
+// the PLUMBING (argv array vs shell string) is the driver-zone divergence, gated
+// behaviorally, not by comparing a command string.
+fn build_cc_argv(a: Allocator, ar: *Arena, ca: *const CliArgs, out: str, cpath: str) -> Vec<str> {
+    let mut v: Vec<str> = Vec::with_capacity(a, 16 as u32);
+    v.push("cc"); v.push("-ansi"); v.push("-pedantic"); v.push("-Wall");
+    if !ca.ca_show_cc {
+        v.push("-Wno-unused-variable");
+        v.push("-Wno-unused-but-set-variable");
+        v.push("-Wno-unused-function");
+    }
+    let dir = input_dir(ar, ca.ca_input);
+    if !str::eq(dir, "") && !str::eq(dir, ".") { v.push("-I"); v.push(dir); }
+    v.push("-o"); v.push(out); v.push(cpath);
+    let links = ca.ca_links.as_slice();
+    let mut i = 0 as u32;
+    while i < ca.ca_links.length() { v.push(links[i]); i = i + 1 as u32; }
+    return v;
+}
+
+fn build_host(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
+    let out = resolve_out(ar, ca);
+    let argv = build_cc_argv(a, ar, ca, out, cpath);
+    let sl = argv.as_slice();
+    let rc: c_int = sys::sys_spawn(&sl[0] as *const str, argv.length() as c_int);
+    // cc failed — report and exit non-zero, like the oracle's `exit 1`.
+    // sys_exit terminates, so report_built runs only on success.
+    if rc != 0 as c_int { err_line("command failed: cc"); sys::sys_exit(1 as c_int); }
+    report_built(a, out);
+    return;
+}
+
+fn report_wrote(a: Allocator, cpath: str) {
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    sb.push_str("wrote "); sb.push_str(cpath); sb.push_str(" [profile=full, target=c]\n");
+    flush_stdout(&sb);
+    return;
+}
+fn report_built(a: Allocator, out: str) {
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    sb.push_str("built host binary: "); sb.push_str(out); sb.push_str(" [profile=full, target=host]\n");
+    flush_stdout(&sb);
     return;
 }
 

@@ -16,6 +16,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 /* Width-pin signatures match what the prelude declares:
  *   sys_alloc(state: *c_void, n: c_ulong) -> *c_void
@@ -125,4 +127,43 @@ const char *sys_argv(int i) {
     sys_argv_init();
     if (i < 0 || i >= sys_argv_count) return (const char *)0;
     return sys_argv_ptr[i];
+}
+
+/* cc-invoke seam — spawn argv[0] with argv[0..n-1], searching PATH, and
+ * wait.  No shell: the caller (exilc --target host) hands an argv array
+ * built as a Vec<str>, so there is nothing to quote.  This is the port's
+ * fork of the oracle's `Sys.command` (= libc system()) — a driver-zone
+ * divergence: better plumbing than the oracle's shell, gated behaviorally
+ * (both compilers build or both fail), not by byte-comparing a command
+ * string.
+ *
+ * Returns the child's exit status: 0 on success, the program's exit code
+ * otherwise, 127 if exec itself failed (the shell convention, so an
+ * exec-not-found is distinguishable from a clean build), or -1 on a fork /
+ * wait / arity-limit error. */
+#define SYS_SPAWN_MAX 256
+int sys_spawn(const char *const *argv, int n) {
+    char *local[SYS_SPAWN_MAX + 1];
+    pid_t pid;
+    int status, i;
+    if (n <= 0 || n > SYS_SPAWN_MAX) return -1;
+    for (i = 0; i < n; i++) local[i] = (char *)argv[i];
+    local[n] = (char *)0;
+    pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        execvp(local[0], local);
+        _exit(127);
+    }
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return -1;
+}
+
+/* Terminate the process with `code` — the port fork of the oracle's `exit 1`,
+ * so a self-hosted exilc fails a build with a non-zero status the way the
+ * reference does (a Makefile calling exilc can tell a failed build from a
+ * clean one). */
+void sys_exit(int code) {
+    exit(code);
 }

@@ -9769,6 +9769,24 @@ let prelude_items () =
       [ mk_param "i" cint_ann ]
       (Some cchar_const_ptr_ann)
   in
+  (* cc-invoke seam — spawn a child process (argv[0..n-1], PATH-searched) and
+     wait, for a self-hosted `exilc --target host`.  The port fork uses this in
+     place of the oracle's own `Sys.command`; the oracle registers it only so it
+     can COMPILE src/exilc.exl.  `argv` is `*const str` — a Vec<str>'s backing
+     is already a valid argv, so no shell and no quoting. *)
+  let sys_spawn_fn =
+    mk_extern "sys_spawn"
+      [ mk_param "argv" (Ast.TyConstPtr Ast.TyStr);
+        mk_param "n" cint_ann ]
+      (Some cint_ann)
+  in
+  (* Process exit — the port fork of the oracle's `exit 1`, so a self-hosted
+     exilc fails a build with a non-zero status like the reference. *)
+  let sys_exit_fn =
+    mk_extern "sys_exit"
+      [ mk_param "code" cint_ann ]
+      None
+  in
   let sys_mod = {
     Ast.mname = "sys";
     mitems = [
@@ -9781,6 +9799,8 @@ let prelude_items () =
       Ast.Function sys_fmt_f64_fn;
       Ast.Function sys_argc_fn;
       Ast.Function sys_argv_fn;
+      Ast.Function sys_spawn_fn;
+      Ast.Function sys_exit_fn;
     ];
     mpos = pos;
     mis_pub = true;

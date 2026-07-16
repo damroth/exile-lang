@@ -43,6 +43,7 @@ examples/prelude/*
 # internal worklog
 WORKLOG.md
 SELFHOST-WORKLOG.md
+SELFHOST-PLUMBING-REGISTER.md
 
 # editor
 .merlin

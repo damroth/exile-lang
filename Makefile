@@ -553,9 +553,26 @@ selfhost-exilc-driver: $(EXILC_BIN)
 	  elif ! diff -q $(C_OUT)/exilc_o.c $(C_OUT)/exilc_e.c >/dev/null; then \
 	    echo "selfhost-exilc-driver: DRIFT $$name [--target c]"; fail=1; \
 	  fi; \
+	  $(EXILC_BIN) --target host --c-out $(C_OUT)/exilc_he.c -o $(HOST_OUT)/exilc_he --link $(SYS_HOST) $$f > $(C_OUT)/exilc_he.line 2>/dev/null; rce=$$?; \
+	  $(EXILE)     --target host --c-out $(C_OUT)/exilc_ho.c -o $(HOST_OUT)/exilc_ho --link $(SYS_HOST) $$f > $(C_OUT)/exilc_ho.line 2>/dev/null; rco=$$?; \
+	  sed 's#exilc_h[eo]#exilc_hX#' $(C_OUT)/exilc_ho.line > $(C_OUT)/exilc_ho.norm; \
+	  sed 's#exilc_h[eo]#exilc_hX#' $(C_OUT)/exilc_he.line > $(C_OUT)/exilc_he.norm; \
+	  if [ $$rco -ne 0 ]; then \
+	    echo "selfhost-exilc-driver: reference build failed $$name [--target host] (mutual-failure floor)"; fail=1; \
+	  elif [ $$rce -ne $$rco ]; then \
+	    echo "selfhost-exilc-driver: DRIFT $$name [--target host: build-result exilc=$$rce oracle=$$rco]"; fail=1; \
+	  elif ! diff -q $(C_OUT)/exilc_ho.norm $(C_OUT)/exilc_he.norm >/dev/null; then \
+	    echo "selfhost-exilc-driver: DRIFT $$name [--target host: success line]"; fail=1; \
+	  else \
+	    $(HOST_OUT)/exilc_ho > $(C_OUT)/exilc_ho.run 2>&1; \
+	    $(HOST_OUT)/exilc_he > $(C_OUT)/exilc_he.run 2>&1; \
+	    if ! diff -q $(C_OUT)/exilc_ho.run $(C_OUT)/exilc_he.run >/dev/null; then \
+	      echo "selfhost-exilc-driver: DRIFT $$name [--target host: run output]"; fail=1; \
+	    fi; \
+	  fi; \
 	done; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-exilc-driver: clean (exilc == oracle on tokens/ast/typed-ir/after-drop/c)"; \
+	  echo "selfhost-exilc-driver: clean (exilc == oracle on tokens/ast/typed-ir/after-drop/c; host build+run parity)"; \
 	else exit 1; fi
 
 # ===== Standalone module roots =====
