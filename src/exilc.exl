@@ -1,0 +1,270 @@
+// exilc — the self-hosted compiler driver (Faza B).
+//
+// Stitches the pipeline the six corpus drivers exercised separately into one
+// argv-driven binary, matching the OCaml oracle's `bin/main.ml` flag surface.
+// This round covers the read-only emit modes and `--target c` transpile — the
+// flags the differential gates stand on — so the gate contract can migrate to
+// one binary without a byte moving.  `--target host` (the cc call over a
+// `sys_exec` seam) is the next round.
+//
+// The command line arrives through the DR-006 argv seam: `sys_argv(i)` hands
+// back a NUL-terminated `*const c_char`, which is a valid `str` (and a valid
+// path for `load` / `sys_open`) with no copy.
+//
+// Output goes to stdout by default, or to `-o <path>` — matching the oracle's
+// `write_dump`, whose emit modes print to stdout unless `-o` redirects them.
+
+use pos;
+use token::*;
+use lexer::*;
+use ast::*;
+use ir::*;
+use error::*;
+use parser::*;
+use loader::*;
+use typecheck::*;
+use drop::*;
+use codegen::*;
+use dump_token::*;
+use dump_ast::*;
+use dump_ir::*;
+
+// ===== output =====
+
+fn flush_stdout(sb: *const StringBuilder) {
+    let bytes = sb.as_slice();
+    sys::sys_write(1 as c_int, &bytes[0] as *const c_uchar, sb.length() as c_ulong);
+    return;
+}
+
+// `-o <path>` — O_WRONLY | O_CREAT | O_TRUNC = 1 | 64 | 512 = 577 (Linux).
+fn write_file(path: str, sb: *const StringBuilder) -> bool {
+    let fd: c_int = sys::sys_open(path as *const c_char, 577 as c_int);
+    if fd < 0 as c_int { return false; }
+    let bytes = sb.as_slice();
+    sys::sys_write(fd, &bytes[0] as *const c_uchar, sb.length() as c_ulong);
+    sys::sys_close(fd);
+    return true;
+}
+
+fn write_dump(out: Option<str>, sb: *const StringBuilder) {
+    match out {
+        Option::Some(p) => { write_file(p, sb); }
+        | Option::None => { flush_stdout(sb); }
+    }
+    return;
+}
+
+fn report_error(a: Allocator, e: *const CompileError) {
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    e.fmt(&sb);
+    sb.push_str("\n");
+    let sl = sb.as_slice();
+    sys::sys_write(2 as c_int, &sl[0] as *const c_uchar, sb.length() as c_ulong);
+    return;
+}
+
+fn err_line(msg: str) {
+    let m = str::as_bytes(msg);
+    sys::sys_write(2 as c_int, &m[0] as *const c_uchar, str::length(msg) as c_ulong);
+    let nl = str::as_bytes("\n");
+    sys::sys_write(2 as c_int, &nl[0] as *const c_uchar, 1 as c_ulong);
+    return;
+}
+
+// ===== flags =====
+
+// 0 = full pipeline to C; 1 = tokens; 2 = ast; 3 = typed-ir.
+struct CliArgs {
+    ca_emit: int,
+    ca_user_only: bool,
+    ca_after_drop: bool,
+    ca_target_c: bool,
+    ca_input: str,
+    ca_output: Option<str>,
+    ca_c_out: Option<str>,
+    ca_ok: bool,
+}
+
+fn arg_str(i: c_int) -> str {
+    return sys::sys_argv(i) as str;
+}
+
+// Every accepted flag, in the oracle's dispatch order.  An unknown flag or a
+// second input file is an error the same way the reference reports it.
+fn parse_cli(_a: Allocator) -> CliArgs {
+    let none_s: Option<str> = Option::None;
+    let mut ca = CliArgs { ca_emit: 0 as int, ca_user_only: false, ca_after_drop: false,
+                           ca_target_c: false, ca_input: "", ca_output: none_s,
+                           ca_c_out: none_s, ca_ok: true };
+    let argc = sys::sys_argc();
+    let mut i = 1 as c_int;
+    while i < argc {
+        let arg = arg_str(i);
+        if str::eq(arg, "--target") {
+            i = i + 1 as c_int;
+            if i >= argc { err_line("--target needs an argument"); ca.ca_ok = false; return ca; }
+            let t = arg_str(i);
+            if str::eq(t, "c") { ca.ca_target_c = true; }
+            else if str::eq(t, "host") { ca.ca_target_c = false; }
+            else { err_line("this round supports only --target c"); ca.ca_ok = false; return ca; }
+        }
+        else if str::eq(arg, "-o") {
+            i = i + 1 as c_int;
+            if i >= argc { err_line("-o needs an argument"); ca.ca_ok = false; return ca; }
+            ca.ca_output = Option::Some(arg_str(i));
+        }
+        else if str::eq(arg, "--c-out") {
+            i = i + 1 as c_int;
+            if i >= argc { err_line("--c-out needs an argument"); ca.ca_ok = false; return ca; }
+            ca.ca_c_out = Option::Some(arg_str(i));
+        }
+        else if str::eq(arg, "--emit-tokens") { ca.ca_emit = set_emit(&ca, 1 as int); }
+        else if str::eq(arg, "--emit-ast") { ca.ca_emit = set_emit(&ca, 2 as int); }
+        else if str::eq(arg, "--emit-typed-ir") { ca.ca_emit = set_emit(&ca, 3 as int); }
+        else if str::eq(arg, "--user-only") { ca.ca_user_only = true; }
+        else if str::eq(arg, "--after-drop") { ca.ca_after_drop = true; }
+        else if is_input_arg(arg) {
+            if !str::eq(ca.ca_input, "") { err_line("multiple input files given"); ca.ca_ok = false; return ca; }
+            ca.ca_input = arg;
+        }
+        else { unknown_flag(arg); ca.ca_ok = false; return ca; }
+        i = i + 1 as c_int;
+    }
+    if str::eq(ca.ca_input, "") { err_line("usage: exilc [--target c] [--emit-tokens|--emit-ast|--emit-typed-ir [--user-only] [--after-drop]] [-o out] [--c-out c] <file.exl>"); ca.ca_ok = false; }
+    return ca;
+}
+
+fn set_emit(ca: *const CliArgs, kind: int) -> int {
+    if ca.ca_emit != 0 as int {
+        err_line("only one of --emit-tokens / --emit-ast / --emit-typed-ir at a time");
+    }
+    return kind;
+}
+
+// A non-flag token (not starting with '-') is the input file.
+fn is_input_arg(arg: str) -> bool {
+    if str::length(arg) == 0 as u32 { return false; }
+    return str::as_bytes(arg)[0 as u32] != 45 as u8;
+}
+
+fn unknown_flag(arg: str) {
+    let mut sb = StringBuilder::with_capacity(default_allocator(), 48 as u32);
+    sb.push_str("unknown flag: "); sb.push_str(arg);
+    err_line(str::from_slice(&mk_tmp_arena(), sb.as_slice()));
+    return;
+}
+fn mk_tmp_arena() -> Arena {
+    return Arena::with_capacity(default_allocator(), 256 as u32);
+}
+
+// ===== pipeline =====
+
+fn arena_cap_for(srclen: u32) -> u32 {
+    return 1048576 as u32 + srclen * 128 as u32;
+}
+
+fn run_emit_tokens(a: Allocator, ar: *Arena, ca: *const CliArgs) {
+    let src = read_source(a, ar, ca.ca_input);
+    match tokenize(a, ar, ca.ca_input, src) {
+        Result::Ok(toks) => {
+            let mut out = StringBuilder::with_capacity(a, 16384 as u32);
+            dump_tokens(&toks, ca.ca_input, &out);
+            write_dump(ca.ca_output, &out);
+        }
+        | Result::Err(e) => { report_error(a, e); }
+    }
+    return;
+}
+
+fn run_emit_ast(a: Allocator, ar: *Arena, ca: *const CliArgs) {
+    match load(a, ar, ca.ca_input) {
+        Result::Ok(prog) => {
+            let mut out = StringBuilder::with_capacity(a, 16384 as u32);
+            dump_ast(&prog, ca.ca_input, &out);
+            write_dump(ca.ca_output, &out);
+        }
+        | Result::Err(e) => { report_error(a, e); }
+    }
+    return;
+}
+
+fn run_emit_ir(a: Allocator, ar: *Arena, ca: *const CliArgs) {
+    match load(a, ar, ca.ca_input) {
+        Result::Ok(prog) => { run_emit_ir_checked(a, ar, ca, &prog); }
+        | Result::Err(e) => { report_error(a, e); }
+    }
+    return;
+}
+fn run_emit_ir_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *const Vec<Item>) {
+    match check_program(a, ar, prog) {
+        Result::Ok(tp) => {
+            let mut tprog = tp;
+            // `--after-drop` shows the drop-inserted IR (move / escape are pure
+            // checkers — the drop_corpus gate proves check + drop_insert alone
+            // reproduces the reference's post-drop dump).
+            if ca.ca_after_drop { drop_insert(a, ar, &tprog); }
+            let mut out = StringBuilder::with_capacity(a, 16384 as u32);
+            dump_typed_ir(&tprog, ca.ca_input, ca.ca_user_only, &out);
+            write_dump(ca.ca_output, &out);
+        }
+        | Result::Err(e) => { report_error(a, e); }
+    }
+    return;
+}
+
+// `--target c`: the full pipeline to C, written to `--c-out` (or stdout).
+fn run_codegen(a: Allocator, ar: *Arena, ca: *const CliArgs) {
+    match load(a, ar, ca.ca_input) {
+        Result::Ok(prog) => { run_codegen_checked(a, ar, ca, &prog); }
+        | Result::Err(e) => { report_error(a, e); }
+    }
+    return;
+}
+fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *const Vec<Item>) {
+    match check_program(a, ar, prog) {
+        Result::Ok(tp) => {
+            let mut tprog = tp;
+            drop_insert(a, ar, &tprog);
+            let mut out = StringBuilder::with_capacity(a, 16384 as u32);
+            gen_program(a, ar, &tprog, &out);
+            // Codegen writes to --c-out when given (matching how the gates
+            // capture the .c), else -o, else stdout.
+            match ca.ca_c_out {
+                Option::Some(p) => { write_file(p, &out); }
+                | Option::None => { write_dump(ca.ca_output, &out); }
+            }
+        }
+        | Result::Err(e) => { report_error(a, e); }
+    }
+    return;
+}
+
+fn read_source(a: Allocator, ar: *Arena, path: str) -> str {
+    // The lexer path needs the raw bytes; load() re-reads for the AST/IR paths.
+    let fd: c_int = sys::sys_open(path as *const c_char, 0 as c_int);
+    if fd < 0 as c_int { return ""; }
+    let mut sb = StringBuilder::with_capacity(a, 8192 as u32);
+    let mut buf: [u8; 4096] = [0 as u8; 4096];
+    loop {
+        let n: c_long = sys::sys_read(fd, &buf as *u8 as *c_uchar, 4096 as c_ulong);
+        if n <= 0 as c_long { break; }
+        let mut k = 0 as u32;
+        while k < n as u32 { sb.push_byte(buf[k]); k = k + 1 as u32; }
+    }
+    sys::sys_close(fd);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+fn main() {
+    let a = default_allocator();
+    let ca = parse_cli(a);
+    if !ca.ca_ok { return; }
+
+    let mut ar = Arena::with_capacity(a, arena_cap_for(total_source_bytes(a, ca.ca_input)));
+
+    if ca.ca_emit == 1 as int { run_emit_tokens(a, &ar, &ca); }
+    else if ca.ca_emit == 2 as int { run_emit_ast(a, &ar, &ca); }
+    else if ca.ca_emit == 3 as int { run_emit_ir(a, &ar, &ca); }
+    else { run_codegen(a, &ar, &ca); }
+}
