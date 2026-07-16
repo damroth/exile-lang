@@ -596,11 +596,35 @@ selfhost-port-module-roots: host-selfhost-tc
 	else exit 1; fi
 
 selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
-	selfhost-port-module-roots selfhost-exilc-driver \
+	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-tc-errors \
                  selfhost-no-fabrication
 	@echo "selfhost-verify: all port gates green"
+
+# ===== exilc whole-C fixpoint — the compiler as its own fixture =====
+#
+# The bootstrap fixpoint compares port-built-by-port against ITSELF, so it is
+# blind to a port-vs-ORACLE divergence by construction; the corpus C comparison
+# is byte-exact but too small to exercise the ordering and position paths a
+# compiler-sized program hits.  This gate closes that axis: the port's own
+# codegen must reproduce the ORACLE's C for the compiler's own source, byte for
+# byte.  Nothing else measures it — and it found four classes every other gate
+# missed (__lift order, aggregate typedef topo order, __drop_ret position,
+# excess Slice instances).  It stays so the registration interleave cannot
+# silently drift back.
+selfhost-exilc-fixpoint: $(EXILC_BIN)
+	@$(EXILE) --target c --c-out $(C_OUT)/xfx_oracle.c src/exilc.exl >/dev/null 2>&1; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/xfx_port.c src/exilc.exl >/dev/null 2>&1; \
+	if [ ! -s $(C_OUT)/xfx_oracle.c ]; then \
+	  echo "selfhost-exilc-fixpoint: EMPTY reference (mutual-failure floor)"; exit 1; fi; \
+	if [ ! -s $(C_OUT)/xfx_port.c ]; then \
+	  echo "selfhost-exilc-fixpoint: EMPTY port output (mutual-failure floor)"; exit 1; fi; \
+	if cmp -s $(C_OUT)/xfx_oracle.c $(C_OUT)/xfx_port.c; then \
+	  echo "selfhost-exilc-fixpoint: clean (port codegen == oracle on src/exilc.exl, `wc -l < $(C_OUT)/xfx_port.c` lines)"; \
+	else \
+	  echo "selfhost-exilc-fixpoint: DRIFT — port codegen != oracle on src/exilc.exl"; \
+	  diff $(C_OUT)/xfx_oracle.c $(C_OUT)/xfx_port.c | head -20; exit 1; fi
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

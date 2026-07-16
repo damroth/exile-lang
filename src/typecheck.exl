@@ -2683,8 +2683,22 @@ fn register_slice_elem(a: Allocator, ar: *Arena, sc: *const TyScope, elem: *cons
     register_slice_of(a, ar, sc, &args, false);
     return;
 }
+// True when sv-window entry `idx` is a slice view of a FOOTPRINT-derived Vec.
+// Those are the ghosts the oracle keeps unmentioned (an `impl Iterator`'s
+// `collect` materialises `Vec<Item>` + its Slice view, and the struct survives
+// the DCE that deletes the method).  A slice view of any OTHER Vec — e.g. a Vec
+// that is only ever a struct field — must earn its place by being mentioned,
+// exactly as the oracle's DCE requires.
+fn sv_is_ghost(sv_fp: *const Vec<bool>, sv_start: u32, sv_end: u32, idx: u32) -> bool {
+    if idx < sv_start { return false; }
+    if idx >= sv_end { return false; }
+    let k = idx - sv_start;
+    if k >= sv_fp.length() { return false; }
+    return sv_fp.as_slice()[k];
+}
 fn register_vec_slice_views(a: Allocator, ar: *Arena, sc: *const TyScope,
-                            mono_structs: *const Vec<Vec<str>>, mono_sargs: *const Vec<Vec<*const Typ>>) {
+                            mono_structs: *const Vec<Vec<str>>, mono_sargs: *const Vec<Vec<*const Typ>>,
+                            fp_start: u32, fp_end: u32, elem_fp: *Vec<bool>) {
     // Collect FIRST, register second: registering pushes into mono_structs, and a
     // grow reallocates the buffer the loop's slice points at (a use-after-free the
     // port's own source triggered — the corpus never grew the Vec mid-walk).
@@ -2696,6 +2710,9 @@ fn register_vec_slice_views(a: Allocator, ar: *Arena, sc: *const TyScope,
         let sal = mono_sargs.as_slice();
         if str_starts_with(path_last(&msl[i]), "Vec_") && sal[i].length() == 1 as u32 {
             elems.push(sal[i].as_slice()[0 as u32]);
+            // Registration is 1:1 with `elems`, so sv entry k mirrors elems[k]:
+            // record whether this Vec came from the iter-footprint window.
+            elem_fp.push(i >= fp_start && i < fp_end);
         }
         i = i + 1 as u32;
     }
@@ -11608,6 +11625,15 @@ fn register_prelude_globals(a: Allocator, ar: *Arena, g: *Vec<GlobalFn>) {
 // declares it: a bare `Lexer` written inside `mod lexer` names `lexer::Lexer`.
 // Resolving it against the root scope instead yields a second, bare path for the
 // same type — invisible until a check finally compares the two.
+// Resolve a fn's return annotation purely for its mono-registration side effect
+// (the result is discarded — collect_globals builds the real table).
+fn resolve_ret_for_order(a: Allocator, ar: *Arena, sc: *const TyScope, f: *const Func) {
+    match f.ret_ty {
+        Option::Some(rt) => { let _t = resolve_sig_ty(a, ar, sc, rt, f.pos); }
+        | Option::None => { }
+    }
+    return;
+}
 fn collect_fn_sigs_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, path: *const Vec<str>, out: *Vec<FnSig>) {
     let msc = scope_with_modpath(sc, path);
     match *it {
@@ -11615,6 +11641,11 @@ fn collect_fn_sigs_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const 
             check_free_fn_self(a, ar, sc, &f);
             let fsc = scope_with_tparams(&msc, &f.tparams);
             out.push(FnSig { fs_mangled: collect_fn_mangle(a, ar, &f, path), fs_params: resolve_param_tys(a, ar, &fsc, &f.params, f.pos) });
+            // The oracle resolves a fn's return type immediately after its params
+            // (elab_one_fn), so instance registration interleaves per-fn rather
+            // than all-params-then-all-returns.  Resolve it here for that
+            // side effect; collect_globals re-resolves it for the global table.
+            resolve_ret_for_order(a, ar, &fsc, &f);
         }
         | Item::View(vd) => {
             let mut vp: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
@@ -12020,11 +12051,15 @@ fn push_enum_path(a: Allocator, sigs: *Vec<EnumSig>, srcpath: *const Vec<str>, a
 // Declaration rank of a non-generic prelude struct (the order they are declared
 // in the oracle's prepended prelude), or -1 for anything else.  Used to emit
 // them ahead of the true generic mono instances in the struct index.
+// Emission rank = the oracle's PRELUDE DECLARATION order (lib/typecheck.ml:
+// alloc_struct, arena_struct, sb_struct, string_struct).  The oracle prepends
+// the whole prelude and emits these in declaration order; the port demand-
+// registers them, so the rank restores that order.
 fn nongeneric_prelude_rank(name: str) -> int {
     if str::eq(name, "Allocator") { return 0 as int; }
-    if str::eq(name, "StringBuilder") { return 1 as int; }
-    if str::eq(name, "String") { return 2 as int; }
-    if str::eq(name, "Arena") { return 3 as int; }
+    if str::eq(name, "Arena") { return 1 as int; }
+    if str::eq(name, "StringBuilder") { return 2 as int; }
+    if str::eq(name, "String") { return 3 as int; }
     return 0 as int - 1 as int;
 }
 fn prelude_struct_index(a: Allocator) -> Vec<StructSig> {
@@ -12071,8 +12106,11 @@ fn lets_expr(te: *const Texpr, out: *Vec<FieldTy>) {
 }
 fn lets_stmt(s: *const Tstmt, out: *Vec<FieldTy>) {
     match *s {
-        Tstmt::TLet { name, value, decl_ty } => { lets_push(out, name, decl_ty); lets_expr(value, out); }
-        | Tstmt::TLetTuple { names, value, pos } => { lets_tuple(&names, value.ty, out); lets_expr(value, out); }
+        // Value BEFORE the binding: the oracle elaborates a let's RHS (adding any
+        // decl nested inside it) and only then declares the bound name, so a
+        // `let outer = { ... let inner ... }` yields inner-then-outer.
+        Tstmt::TLet { name, value, decl_ty } => { lets_expr(value, out); lets_push(out, name, decl_ty); }
+        | Tstmt::TLetTuple { names, value, pos } => { lets_expr(value, out); lets_tuple(&names, value.ty, out); }
         | Tstmt::TAssign { path, value, pos } => lets_expr(value, out)
         | Tstmt::TAssignField { target, field, value, pos } => lets_expr(value, out)
         | Tstmt::TAssignIndex { base, index, value, pos } => lets_expr(value, out)
@@ -12615,6 +12653,21 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("        return p as *const c_char as str;\n");
     sb.push_str("    }\n");
     sb.push_str("}\n");
+    sb.push_str("struct Arena { buf: own *u8, cap: u32, off: u32, alloc: Allocator }\n");
+    sb.push_str("impl Arena {\n");
+    sb.push_str("    pub fn with_capacity(a: Allocator, bytes: u32) -> Arena {\n");
+    sb.push_str("        let buf: own *u8 = a.alloc_fn(a.state, bytes) as own *u8;\n");
+    sb.push_str("        return Arena { buf: buf, cap: bytes, off: 0 as u32, alloc: a };\n");
+    sb.push_str("    }\n");
+    sb.push_str("    pub fn alloc_borrowed<T>(*self) -> *T {\n");
+    sb.push_str("        let aligned: u32 = (self.off + 7 as u32) & ~(7 as u32);\n");
+    sb.push_str("        let need: u32 = size_of(T) as u32;\n");
+    sb.push_str("        if aligned + need > self.cap { return null; }\n");
+    sb.push_str("        let p: *u8 = ptr_offset(self.buf, aligned);\n");
+    sb.push_str("        self.off = aligned + need;\n");
+    sb.push_str("        return p as *T;\n");
+    sb.push_str("    }\n");
+    sb.push_str("}\n");
     sb.push_str("struct StringBuilder { buf: own *u8, len: u32, cap: u32, alloc: Allocator }\n");
     sb.push_str("impl StringBuilder {\n");
     sb.push_str("    pub fn with_capacity(a: Allocator, hint: u32) -> StringBuilder {\n");
@@ -12945,21 +12998,6 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("            }\n");
     sb.push_str("        }\n");
     sb.push_str("        result\n");
-    sb.push_str("    }\n");
-    sb.push_str("}\n");
-    sb.push_str("struct Arena { buf: own *u8, cap: u32, off: u32, alloc: Allocator }\n");
-    sb.push_str("impl Arena {\n");
-    sb.push_str("    pub fn with_capacity(a: Allocator, bytes: u32) -> Arena {\n");
-    sb.push_str("        let buf: own *u8 = a.alloc_fn(a.state, bytes) as own *u8;\n");
-    sb.push_str("        return Arena { buf: buf, cap: bytes, off: 0 as u32, alloc: a };\n");
-    sb.push_str("    }\n");
-    sb.push_str("    pub fn alloc_borrowed<T>(*self) -> *T {\n");
-    sb.push_str("        let aligned: u32 = (self.off + 7 as u32) & ~(7 as u32);\n");
-    sb.push_str("        let need: u32 = size_of(T) as u32;\n");
-    sb.push_str("        if aligned + need > self.cap { return null; }\n");
-    sb.push_str("        let p: *u8 = ptr_offset(self.buf, aligned);\n");
-    sb.push_str("        self.off = aligned + need;\n");
-    sb.push_str("        return p as *T;\n");
     sb.push_str("    }\n");
     sb.push_str("}\n");
     return str::from_slice(ar, sb.as_slice());
@@ -14178,10 +14216,28 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
                                sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_err: &tc_err, sc_srcnames: &tc_srcnames, sc_srcbase: &tc_srcbase, sc_binds: &tc_binds, sc_bindbase: &tc_bindbase, sc_is_main: false };
     check_const_items(a, ar, &base_scope, items);
+    // Struct field index + enum variant/field index + method index, carried
+    // in every fn's body scope so `s.field`, struct/enum literals, variant
+    // patterns and method calls type-check.  Resolved BEFORE signatures: the
+    // oracle builds its struct_index first and only then resolves each fn's
+    // signature (inline with its body), so field-type instances must reach the
+    // mono list ahead of signature-type instances or the footer reorders.
+    let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
+    collect_struct_info(a, ar, &base_scope, &empty_tp, items, &sinfo);
+    prelude_struct_info(a, ar, &sinfo);
+    // Enum variant/field types resolve with the struct fields, ahead of any
+    // signature: the oracle builds struct_index and enum_index together, before
+    // it touches a fn signature.
+    let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
+    let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
+    collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
+    // Signatures before the global table: the oracle resolves a fn's PARAM
+    // types before its return type (elab_one_fn), so params must reach the mono
+    // list ahead of the return-type-only pass.
+    collect_fn_sigs_into(a, ar, &base_scope, items, &empty_tp, &gsigs);
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &base_scope, items);
-    collect_fn_sigs_into(a, ar, &base_scope, items, &empty_tp, &gsigs);
     register_prelude_sigs(a, ar, &gsigs);
     // Every concrete `impl Iterator for X` eagerly carries its default
     // methods' Self-pinned return types in the footer.
@@ -14193,12 +14249,6 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let fp_start = mono_structs.length();
     register_iter_footprints(a, ar, &base_scope, items, &assoc_binds, false);
     let fp_end = mono_structs.length();
-    // Struct field index + enum variant/field index + method index, carried
-    // in every fn's body scope so `s.field`, struct/enum literals, variant
-    // patterns and method calls type-check.
-    let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
-    collect_struct_info(a, ar, &base_scope, &empty_tp, items, &sinfo);
-    prelude_struct_info(a, ar, &sinfo);
     // Second field-type resolution with the skeleton in place: a generic
     // struct-field type (`Vec<TypeAlias>`) registers its instance fields into
     // the shared mono-fields table, so a `.length()` receiver's element tparam
@@ -14208,9 +14258,6 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut sinfo_throwaway: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     collect_struct_info(a, ar, &sinfo_scope, &empty_tp, items, &sinfo_throwaway);
     register_iter_footprints(a, ar, &sinfo_scope, items, &assoc_binds, true);
-    let mut etags: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
-    let mut efields: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
-    collect_enum_info(a, ar, &base_scope, &top_modpath, items, &etags, &efields);
     // The named prelude types (String / StringBuilder / Arena) have a FIXED
     // field catalogue.  Registering them lazily at first method-use made body
     // elaboration order-dependent — a standalone module root could drain a
@@ -14326,8 +14373,9 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     prelude_materialize(a, ar, &globals, &gensym, &idx, &prelude_items, &prelude_reg, &pmeth, &pfree, &funcs);
     // Same DCE exemption as the footprint window: these are ghosts of DCE'd
     // prelude methods, so no surviving fn mentions them.
+    let mut sv_fp: Vec<bool> = Vec::with_capacity(a, 8 as u32);
     let sv_start = mono_structs.length();
-    register_vec_slice_views(a, ar, &sinfo_scope, &mono_structs, &mono_sargs);
+    register_vec_slice_views(a, ar, &sinfo_scope, &mono_structs, &mono_sargs, fp_start, fp_end, &sv_fp);
     let sv_end = mono_structs.length();
 
     let mut structs = prelude_struct_index(a);
@@ -14386,7 +14434,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut ms = 0 as u32;
     let mut su8_done = false;
     while ms < mn {
-        let is_fp0 = (ms >= fp_start && ms < fp_end) || (ms >= sv_start && ms < sv_end);
+        let is_fp0 = (ms >= fp_start && ms < fp_end) || sv_is_ghost(&sv_fp, sv_start, sv_end, ms);
         if str::eq(path_last(&msl[ms]), "Slice_u8") && !su8_done
            && (is_fp0 || path_in_paths(&mentioned, &msl[ms])) {
             push_struct_path(a, &structs, &msl[ms], &mono_fields, &sasl[ms]);
@@ -14396,7 +14444,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     }
     let mut mj = 0 as u32;
     while mj < mn {
-        let is_footprint = (mj >= fp_start && mj < fp_end) || (mj >= sv_start && mj < sv_end);
+        let is_footprint = (mj >= fp_start && mj < fp_end) || sv_is_ghost(&sv_fp, sv_start, sv_end, mj);
         let skip = str::eq(path_last(&msl[mj]), "Slice_u8") && su8_done;
         if !skip && nongeneric_prelude_rank(path_last(&msl[mj])) < 0 as int && (is_footprint || path_in_paths(&mentioned, &msl[mj])) { push_struct_path(a, &structs, &msl[mj], &mono_fields, &sasl[mj]); }
         mj = mj + 1 as u32;
