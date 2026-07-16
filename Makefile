@@ -519,6 +519,41 @@ bootstrap-fixpoint: host-selfhost-cg
 
 # Everything that guards the self-host proof, in one target.  `make test` /
 # `verify-host` / `selfhost-diff` check the ORACLE; these check the PORT.
+# ===== exilc driver — the unified CLI vs the oracle =====
+#
+# Faza B stitches the six corpus drivers into one argv-driven `exilc`.  Its
+# emit modes are the differential-gate contract, so it must reproduce the
+# ORACLE byte-for-byte on every mode.  This gate builds exilc (oracle host
+# build) and diffs its output against `dune exec exilc` — the reference — over
+# a representative slice of the corpus.  Byte-drift is a driver bug.
+EXILC_BIN := $(HOST_OUT)/exilc
+EXILC_SAMPLE := enums traity generics closures let_else exhaustiveness \
+                match_reachability pattern_guards modules reexport derive floats
+$(EXILC_BIN): src/exilc.exl build
+	@$(EXILE) --target host --c-out $(C_OUT)/exilc.c --link $(SYS_HOST) -o $(EXILC_BIN) src/exilc.exl >/dev/null
+
+selfhost-exilc-driver: $(EXILC_BIN)
+	@fail=0; \
+	for name in $(EXILC_SAMPLE); do \
+	  f=examples/$$name.exl; \
+	  [ -f $$f ] || continue; \
+	  for mode in "--emit-tokens" "--emit-ast" "--emit-typed-ir --user-only" "--emit-typed-ir --user-only --after-drop"; do \
+	    $(EXILC_BIN) $$mode $$f > $(C_OUT)/exilc_e.out 2>/dev/null; \
+	    $(EXILE) $$mode $$f -o $(C_OUT)/exilc_o.out 2>/dev/null; \
+	    if ! diff -q $(C_OUT)/exilc_o.out $(C_OUT)/exilc_e.out >/dev/null; then \
+	      echo "selfhost-exilc-driver: DRIFT $$name [$$mode]"; fail=1; \
+	    fi; \
+	  done; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/exilc_e.c $$f 2>/dev/null; \
+	  $(EXILE) --target c --c-out $(C_OUT)/exilc_o.c $$f 2>/dev/null; \
+	  if ! diff -q $(C_OUT)/exilc_o.c $(C_OUT)/exilc_e.c >/dev/null; then \
+	    echo "selfhost-exilc-driver: DRIFT $$name [--target c]"; fail=1; \
+	  fi; \
+	done; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-exilc-driver: clean (exilc == oracle on tokens/ast/typed-ir/after-drop/c)"; \
+	else exit 1; fi
+
 # ===== Standalone module roots =====
 #
 # The CLI makes ANY file a compilation root.  Prelude/instance registration used
@@ -540,7 +575,7 @@ selfhost-port-module-roots: host-selfhost-tc
 	else exit 1; fi
 
 selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
-	selfhost-port-module-roots \
+	selfhost-port-module-roots selfhost-exilc-driver \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-tc-errors \
                  selfhost-no-fabrication

@@ -1975,6 +1975,15 @@ fn elab_cast(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
              sub: *const Expr, ann: *const TypeAnn, p: Pos) -> *const Texpr {
     let s = elab_expr(a, ar, g, sc, env, none_ty(), sub);
     let ty = resolve_sig_ty(a, ar, sc, ann, p);
+    // A cast that crosses a C-honoured KIND boundary (scalar/ptr) keeps its node
+    // — the prelude vec_grow's `src[i] as T` relies on the emitted pointer cast
+    // to strip the slice-read const.  An IDENTITY cast on an aggregate is a
+    // semantic no-op, and C89 forbids casting to a struct/enum type, so the node
+    // is ELIDED (the reference does the same in elab_cast).  This is invisible on
+    // the corpus but shows up the moment a compiler-sized program grows a
+    // `Vec<aggregate>`: the port emitted `((struct X)(v))`, the oracle a bare `v`.
+    if cast_kind_ok(s.ty, ty) { return te_node(ar, TexprNode::TCast(s, ann), ty, p); }
+    if typ_eq(s.ty, ty) { return s; }
     check_cast_kinds(a, ar, sc, s.ty, ty, p);
     return te_node(ar, TexprNode::TCast(s, ann), ty, p);
 }
