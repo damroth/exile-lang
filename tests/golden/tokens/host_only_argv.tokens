@@ -1,0 +1,97 @@
+;; exile-tokens-dump v1 examples/host_only_argv.exl
+Fn @examples/host_only_argv.exl:16:1
+(Ident main) @examples/host_only_argv.exl:16:4
+LParen @examples/host_only_argv.exl:16:8
+RParen @examples/host_only_argv.exl:16:9
+LBrace @examples/host_only_argv.exl:16:11
+Let @examples/host_only_argv.exl:17:5
+(Ident argc) @examples/host_only_argv.exl:17:9
+Eq @examples/host_only_argv.exl:17:14
+(Ident sys) @examples/host_only_argv.exl:17:16
+DoubleColon @examples/host_only_argv.exl:17:19
+(Ident sys_argc) @examples/host_only_argv.exl:17:21
+LParen @examples/host_only_argv.exl:17:29
+RParen @examples/host_only_argv.exl:17:30
+Semicolon @examples/host_only_argv.exl:17:31
+(Ident print) @examples/host_only_argv.exl:18:5
+LParen @examples/host_only_argv.exl:18:10
+(String "argc = ") @examples/host_only_argv.exl:18:11
+RParen @examples/host_only_argv.exl:18:20
+Semicolon @examples/host_only_argv.exl:18:21
+(Ident println) @examples/host_only_argv.exl:19:5
+LParen @examples/host_only_argv.exl:19:12
+(Ident argc) @examples/host_only_argv.exl:19:13
+As @examples/host_only_argv.exl:19:18
+(Ident int) @examples/host_only_argv.exl:19:21
+RParen @examples/host_only_argv.exl:19:24
+Semicolon @examples/host_only_argv.exl:19:25
+Let @examples/host_only_argv.exl:23:5
+Mut @examples/host_only_argv.exl:23:9
+(Ident total) @examples/host_only_argv.exl:23:13
+Eq @examples/host_only_argv.exl:23:19
+(Int 0) @examples/host_only_argv.exl:23:21
+As @examples/host_only_argv.exl:23:23
+(Ident int) @examples/host_only_argv.exl:23:26
+Semicolon @examples/host_only_argv.exl:23:29
+Let @examples/host_only_argv.exl:24:5
+Mut @examples/host_only_argv.exl:24:9
+(Ident i) @examples/host_only_argv.exl:24:13
+Eq @examples/host_only_argv.exl:24:15
+(Int 0) @examples/host_only_argv.exl:24:17
+As @examples/host_only_argv.exl:24:19
+(Ident c_int) @examples/host_only_argv.exl:24:22
+Semicolon @examples/host_only_argv.exl:24:27
+While @examples/host_only_argv.exl:25:5
+(Ident i) @examples/host_only_argv.exl:25:11
+Lt @examples/host_only_argv.exl:25:13
+(Ident argc) @examples/host_only_argv.exl:25:15
+LBrace @examples/host_only_argv.exl:25:20
+Let @examples/host_only_argv.exl:26:9
+(Ident arg) @examples/host_only_argv.exl:26:13
+Eq @examples/host_only_argv.exl:26:17
+(Ident sys) @examples/host_only_argv.exl:26:19
+DoubleColon @examples/host_only_argv.exl:26:22
+(Ident sys_argv) @examples/host_only_argv.exl:26:24
+LParen @examples/host_only_argv.exl:26:32
+(Ident i) @examples/host_only_argv.exl:26:33
+RParen @examples/host_only_argv.exl:26:34
+As @examples/host_only_argv.exl:26:36
+(Ident str) @examples/host_only_argv.exl:26:39
+Semicolon @examples/host_only_argv.exl:26:42
+(Ident println) @examples/host_only_argv.exl:27:9
+LParen @examples/host_only_argv.exl:27:16
+(Ident arg) @examples/host_only_argv.exl:27:17
+RParen @examples/host_only_argv.exl:27:20
+Semicolon @examples/host_only_argv.exl:27:21
+(Ident total) @examples/host_only_argv.exl:28:9
+Eq @examples/host_only_argv.exl:28:15
+(Ident total) @examples/host_only_argv.exl:28:17
+Plus @examples/host_only_argv.exl:28:23
+(Ident cstr_len) @examples/host_only_argv.exl:28:25
+LParen @examples/host_only_argv.exl:28:33
+(Ident arg) @examples/host_only_argv.exl:28:34
+RParen @examples/host_only_argv.exl:28:37
+As @examples/host_only_argv.exl:28:39
+(Ident int) @examples/host_only_argv.exl:28:42
+Semicolon @examples/host_only_argv.exl:28:45
+(Ident i) @examples/host_only_argv.exl:29:9
+Eq @examples/host_only_argv.exl:29:11
+(Ident i) @examples/host_only_argv.exl:29:13
+Plus @examples/host_only_argv.exl:29:15
+(Int 1) @examples/host_only_argv.exl:29:17
+As @examples/host_only_argv.exl:29:19
+(Ident c_int) @examples/host_only_argv.exl:29:22
+Semicolon @examples/host_only_argv.exl:29:27
+RBrace @examples/host_only_argv.exl:30:5
+(Ident print) @examples/host_only_argv.exl:32:5
+LParen @examples/host_only_argv.exl:32:10
+(String "total bytes = ") @examples/host_only_argv.exl:32:11
+RParen @examples/host_only_argv.exl:32:27
+Semicolon @examples/host_only_argv.exl:32:28
+(Ident println) @examples/host_only_argv.exl:33:5
+LParen @examples/host_only_argv.exl:33:12
+(Ident total) @examples/host_only_argv.exl:33:13
+RParen @examples/host_only_argv.exl:33:18
+Semicolon @examples/host_only_argv.exl:33:19
+RBrace @examples/host_only_argv.exl:34:1
+Eof @examples/host_only_argv.exl:35:1

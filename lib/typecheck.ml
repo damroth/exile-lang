@@ -9757,6 +9757,18 @@ let prelude_items () =
         mk_param "buf" cuchar_ptr_ann ]
       (Some culong_ann)
   in
+  (* DR-006 argv seam — the command line, for a self-hosted `exilc`.  The host
+     backend reads /proc/self/cmdline; the generated entry point stays
+     `int main(void)`, so no program's C output changes.  `sys_argv(i)` returns
+     a `*const c_char` (NUL-terminated), or null past the end. *)
+  let sys_argc_fn =
+    mk_extern "sys_argc" [] (Some cint_ann)
+  in
+  let sys_argv_fn =
+    mk_extern "sys_argv"
+      [ mk_param "i" cint_ann ]
+      (Some cchar_const_ptr_ann)
+  in
   let sys_mod = {
     Ast.mname = "sys";
     mitems = [
@@ -9767,6 +9779,8 @@ let prelude_items () =
       Ast.Function sys_open_fn;
       Ast.Function sys_close_fn;
       Ast.Function sys_fmt_f64_fn;
+      Ast.Function sys_argc_fn;
+      Ast.Function sys_argv_fn;
     ];
     mpos = pos;
     mis_pub = true;

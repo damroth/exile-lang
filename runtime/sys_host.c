@@ -76,3 +76,53 @@ unsigned long sys_fmt_f64(double f, int is32, unsigned char *buf) {
     int n = sprintf((char *)buf, is32 ? "%.9g" : "%.17g", f);
     return (unsigned long)n;
 }
+
+/* DR-006 argv seam — the host backend reads the command line from
+ * /proc/self/cmdline (Linux) once, on first use, and caches the parsed
+ * vector.  This keeps the generated `int main(void)` untouched: argv never
+ * has to be threaded through the entry point, so every existing C dump and
+ * the bootstrap fixpoint stay byte-identical.  A program that never calls
+ * sys_argc/sys_argv pays nothing (the cmdline file is opened lazily).
+ *
+ * The amiga backend will implement these against its own argument source;
+ * the exile caller is target-agnostic. */
+#define SYS_ARGV_MAX 256
+#define SYS_ARGV_BUF 8192
+static int   sys_argv_ready = 0;
+static int   sys_argv_count = 0;
+static char  sys_argv_buf[SYS_ARGV_BUF];
+static char *sys_argv_ptr[SYS_ARGV_MAX];
+
+static void sys_argv_init(void) {
+    FILE *f;
+    unsigned long n, i;
+    int started;
+    if (sys_argv_ready) return;
+    sys_argv_ready = 1;
+    f = fopen("/proc/self/cmdline", "rb");
+    if (!f) return;
+    n = fread(sys_argv_buf, 1, (size_t)(SYS_ARGV_BUF - 1), f);
+    fclose(f);
+    sys_argv_buf[n] = '\0';
+    /* cmdline is NUL-separated; each run of non-NUL bytes is one argument. */
+    started = 0;
+    for (i = 0; i < n && sys_argv_count < SYS_ARGV_MAX; i++) {
+        if (!started && sys_argv_buf[i] != '\0') {
+            sys_argv_ptr[sys_argv_count++] = &sys_argv_buf[i];
+            started = 1;
+        } else if (sys_argv_buf[i] == '\0') {
+            started = 0;
+        }
+    }
+}
+
+int sys_argc(void) {
+    sys_argv_init();
+    return sys_argv_count;
+}
+
+const char *sys_argv(int i) {
+    sys_argv_init();
+    if (i < 0 || i >= sys_argv_count) return (const char *)0;
+    return sys_argv_ptr[i];
+}

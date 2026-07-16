@@ -1,0 +1,34 @@
+// The command line, read through the `sys` seam (DR-006).
+//
+// `sys::sys_argc()` is the argument count and `sys::sys_argv(i)` the i-th
+// argument as a NUL-terminated C string (`*const c_char`).  argv[0] is the
+// program's own path; the real arguments start at 1.
+//
+// The seam keeps the generated entry point `int main(void)`: the host backend
+// (runtime/sys_host.c) reads the command line from the OS on first use, so a
+// program never has to thread argc/argv through main.  A `str` is a
+// `const char *` at the C level, so a raw argument casts to one directly —
+// that is what lets `println` and `cstr_len` accept it.
+//
+// This is the seam a self-hosted `exilc` stands on: argv is how a compiler
+// learns which file to compile and which flags to honour.
+
+fn main() {
+    let argc = sys::sys_argc();
+    print("argc = ");
+    println(argc as int);
+
+    // Total bytes across all arguments — a small computation over argv that
+    // proves each string is real and reachable.
+    let mut total = 0 as int;
+    let mut i = 0 as c_int;
+    while i < argc {
+        let arg = sys::sys_argv(i) as str;
+        println(arg);
+        total = total + cstr_len(arg) as int;
+        i = i + 1 as c_int;
+    }
+
+    print("total bytes = ");
+    println(total);
+}

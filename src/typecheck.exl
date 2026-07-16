@@ -11584,6 +11584,11 @@ fn register_prelude_globals(a: Allocator, ar: *Arena, g: *Vec<GlobalFn>) {
     // compile-time only, never in a user program's output.
     let culong: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TCLong { is_signed: false }));
     push_sys_fn(a, ar, "sys_fmt_f64", culong, g);
+    // DR-006 argv seam: the command line for a self-hosted exilc.  Host backend
+    // reads /proc/self/cmdline; the generated `int main(void)` is untouched.
+    let ccharp: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TCChar))));
+    push_sys_fn(a, ar, "sys_argc", cint, g);
+    push_sys_fn(a, ar, "sys_argv", ccharp, g);
 }
 
 // A signature is resolved in ITS OWN module's scope, exactly like the body that
@@ -13392,6 +13397,18 @@ fn append_sys_externs(a: Allocator, ar: *Arena, funcs: *const Vec<Tfunc>, pmeth:
     }
     if sys_referenced(funcs, pfree, pmeth, "sys_fmt_f64", uses_da) {
         pfree.push(sys_extern_tfunc(a, ar, "sys_fmt_f64", sys_p3(a, "f", "is32", "buf"), sys_t3(a, f64t, cint, cucharp), Option::Some(culong)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_argc", uses_da) {
+        let p0: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        let t0: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+        pfree.push(sys_extern_tfunc(a, ar, "sys_argc", p0, t0, Option::Some(cint)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_argv", uses_da) {
+        let mut p1: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        p1.push("i");
+        let mut t1: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+        t1.push(cint);
+        pfree.push(sys_extern_tfunc(a, ar, "sys_argv", p1, t1, Option::Some(ccharc)));
     }
     return;
 }
