@@ -527,8 +527,8 @@ bootstrap-fixpoint: host-selfhost-cg
 # build) and diffs its output against `dune exec exilc` — the reference — over
 # a representative slice of the corpus.  Byte-drift is a driver bug.
 EXILC_BIN := $(HOST_OUT)/exilc
-EXILC_SAMPLE := enums traity generics closures let_else exhaustiveness \
-                match_reachability pattern_guards modules reexport derive floats
+EXILC_SAMPLE := enums traits generics closures_a2 let_else exhaustiveness \
+                combinator_map pattern_guards modules reexport derive floats
 $(EXILC_BIN): src/exilc.exl build
 	@$(EXILE) --target host --c-out $(C_OUT)/exilc.c --link $(SYS_HOST) -o $(EXILC_BIN) src/exilc.exl >/dev/null
 
@@ -536,17 +536,21 @@ selfhost-exilc-driver: $(EXILC_BIN)
 	@fail=0; \
 	for name in $(EXILC_SAMPLE); do \
 	  f=examples/$$name.exl; \
-	  [ -f $$f ] || continue; \
+	  if [ ! -f $$f ]; then echo "selfhost-exilc-driver: MISSING sample $$f"; fail=1; continue; fi; \
 	  for mode in "--emit-tokens" "--emit-ast" "--emit-typed-ir --user-only" "--emit-typed-ir --user-only --after-drop"; do \
 	    $(EXILC_BIN) $$mode $$f > $(C_OUT)/exilc_e.out 2>/dev/null; \
 	    $(EXILE) $$mode $$f -o $(C_OUT)/exilc_o.out 2>/dev/null; \
-	    if ! diff -q $(C_OUT)/exilc_o.out $(C_OUT)/exilc_e.out >/dev/null; then \
+	    if [ ! -s $(C_OUT)/exilc_o.out ]; then \
+	      echo "selfhost-exilc-driver: EMPTY reference $$name [$$mode] (mutual-failure floor)"; fail=1; \
+	    elif ! diff -q $(C_OUT)/exilc_o.out $(C_OUT)/exilc_e.out >/dev/null; then \
 	      echo "selfhost-exilc-driver: DRIFT $$name [$$mode]"; fail=1; \
 	    fi; \
 	  done; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/exilc_e.c $$f 2>/dev/null; \
 	  $(EXILE) --target c --c-out $(C_OUT)/exilc_o.c $$f 2>/dev/null; \
-	  if ! diff -q $(C_OUT)/exilc_o.c $(C_OUT)/exilc_e.c >/dev/null; then \
+	  if [ ! -s $(C_OUT)/exilc_o.c ]; then \
+	    echo "selfhost-exilc-driver: EMPTY reference $$name [--target c] (mutual-failure floor)"; fail=1; \
+	  elif ! diff -q $(C_OUT)/exilc_o.c $(C_OUT)/exilc_e.c >/dev/null; then \
 	    echo "selfhost-exilc-driver: DRIFT $$name [--target c]"; fail=1; \
 	  fi; \
 	done; \
