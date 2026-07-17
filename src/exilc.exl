@@ -23,6 +23,7 @@ use error::*;
 use parser::*;
 use loader::*;
 use typecheck::*;
+use escape::*;
 use drop::*;
 use codegen::*;
 use dump_token::*;
@@ -213,13 +214,9 @@ fn run_emit_ir_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
     match check_program(a, ar, prog) {
         Result::Ok(tp) => {
             let mut tprog = tp;
-            // `--after-drop` mirrors the reference's pipeline prefix: Move.check;
-            // Escape.check; Drop.insert.  Move and Escape are not wired yet —
-            // `use escape::*` trips a pre-existing name-resolution gap (a
-            // module-private const is invisible to a bare lookup from inside its
-            // own module: global_lookup requires is_top, and collect_one gives a
-            // module's items is_top:false).  escape.exl has five such consts.
-            if ca.ca_after_drop { drop_insert(a, ar, &tprog); }
+            // `--after-drop` mirrors the reference's pipeline prefix:
+            // Move.check; Escape.check; Drop.insert.  Move is not ported yet.
+            if ca.ca_after_drop { check_escape(a, ar, &tprog); drop_insert(a, ar, &tprog); }
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             dump_typed_ir(&tprog, ca.ca_input, ca.ca_user_only, &out);
             write_dump(ca.ca_output, &out);
@@ -297,7 +294,8 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
         Result::Ok(tp) => {
             let mut tprog = tp;
             // The reference's order: Move.check -> Escape.check -> Drop.insert
-            // -> Lint.lint.  None of the three are wired yet (Faza D).
+            // -> Lint.lint.  Move and Lint are not ported yet (Faza D).
+            check_escape(a, ar, &tprog);
             drop_insert(a, ar, &tprog);
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             gen_program(a, ar, &tprog, &out);
@@ -347,6 +345,16 @@ fn build_host(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
     // sys_exit terminates, so report_built runs only on success.
     if rc != 0 as c_int { err_line("command failed: cc"); sys::sys_exit(1 as c_int); }
     report_built(a, out);
+    return;
+}
+
+// escape::check returns the FIRST diagnostic (the reference raises on it).
+// report_error exits 1, so a rejected program never reaches codegen.
+fn check_escape(a: Allocator, ar: *Arena, tprog: *Tprogram) {
+    match escape::check(a, ar, tprog) {
+        Option::Some(e) => { report_error(a, e); }
+        | Option::None => { }
+    }
     return;
 }
 
