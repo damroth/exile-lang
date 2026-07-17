@@ -21,3 +21,12 @@ may carry the return" — so p11 was REJECTED by the port and accepted by the or
 (a false positive: precision lost on the wrong side of the lattice).  Bit 31 now
 saturates to "some param >= 31", and the call site meets over the tail args only.
 p12 is the mirror: confining the imprecision must not lose the real leak.
+
+  p13 diagnostic on a RENAMED binding (`s` -> `s__1`)  -> reject, quoting `s`
+
+p13 pins the srcnames contract.  p1..p12 only ever name bindings the compiler
+left alone, so they pass whether or not the renaming map reaches the pass — the
+port printed the minted `s__1` for two years and every one of them stayed green.
+The IR carries `tf_srcnames` (C name -> the user's name, only the entries that
+differ) and the pass renders through `ir::src_name`; p13 is the shape that fails
+if either half goes missing.

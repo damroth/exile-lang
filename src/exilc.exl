@@ -61,6 +61,9 @@ fn report_error(a: Allocator, e: *const CompileError) {
     sb.push_str("\n");
     let sl = sb.as_slice();
     sys::sys_write(2 as c_int, &sl[0] as *const c_uchar, sb.length() as c_ulong);
+    // The oracle ends a failed compile with `exit 1`.  Reporting a rejected
+    // program with a success status is a bug a Makefile cannot see.
+    sys::sys_exit(1 as c_int);
     return;
 }
 
@@ -210,9 +213,12 @@ fn run_emit_ir_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
     match check_program(a, ar, prog) {
         Result::Ok(tp) => {
             let mut tprog = tp;
-            // `--after-drop` shows the drop-inserted IR (move / escape are pure
-            // checkers — the drop_corpus gate proves check + drop_insert alone
-            // reproduces the reference's post-drop dump).
+            // `--after-drop` mirrors the reference's pipeline prefix: Move.check;
+            // Escape.check; Drop.insert.  Move and Escape are not wired yet —
+            // `use escape::*` trips a pre-existing name-resolution gap (a
+            // module-private const is invisible to a bare lookup from inside its
+            // own module: global_lookup requires is_top, and collect_one gives a
+            // module's items is_top:false).  escape.exl has five such consts.
             if ca.ca_after_drop { drop_insert(a, ar, &tprog); }
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             dump_typed_ir(&tprog, ca.ca_input, ca.ca_user_only, &out);
@@ -290,6 +296,8 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
     match check_program(a, ar, prog) {
         Result::Ok(tp) => {
             let mut tprog = tp;
+            // The reference's order: Move.check -> Escape.check -> Drop.insert
+            // -> Lint.lint.  None of the three are wired yet (Faza D).
             drop_insert(a, ar, &tprog);
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             gen_program(a, ar, &tprog, &out);

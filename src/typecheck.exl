@@ -5963,7 +5963,7 @@ fn check_assign_target(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     if global_is_const(g, name) { return; }
     let mut sb = StringBuilder::with_capacity(a, 56 as u32);
     sb.push_str("assignment to undefined variable '");
-    sb.push_str(src_name(sc, name)); sb.push_str("'");
+    sb.push_str(sc_src_name(sc, name)); sb.push_str("'");
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
@@ -7007,6 +7007,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let body = lift_stmts(a, ar, &lift_ctr, &raw_body);
     let lets = collect_body_lets(a, &body);
     let no_pos: Option<Pos> = Option::None;
+    let no_srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let tparams2: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let tbounds: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
@@ -7021,7 +7022,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     };
     funcs.push(Tfunc {
         tf_path: path, tf_func: tf_func, tf_mangled: mangled, tf_param_tys: param_tys,
-        tf_ret_ty: ret, tf_body: body, tf_lets: lets, tf_origin_pos: no_pos,
+        tf_ret_ty: ret, tf_body: body, tf_lets: lets, tf_srcnames: no_srcnames, tf_origin_pos: no_pos,
     });
 }
 fn drain_one_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
@@ -7185,7 +7186,7 @@ fn check_infer_null(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, vty
     if !is_nullish(vty) { return; }
     let mut sb = StringBuilder::with_capacity(a, 96 as u32);
     sb.push_str("cannot infer pointer type for 'null'; add a type annotation like 'let ");
-    sb.push_str(src_name(sc, name));
+    sb.push_str(sc_src_name(sc, name));
     sb.push_str(": *T = null;'");
     tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
     return;
@@ -7224,7 +7225,7 @@ fn check_coercible(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
                    tann: *const Typ, vty: *const Typ, pos: Pos) {
     if coercible_to(vty, tann) { return; }
     let mut sb = StringBuilder::with_capacity(a, 96 as u32);
-    sb.push_str("variable '"); sb.push_str(src_name(sc, name));
+    sb.push_str("variable '"); sb.push_str(sc_src_name(sc, name));
     sb.push_str("' declared as "); sb.push_str(typ_name(a, ar, tann));
     sb.push_str(" but initializer has type "); sb.push_str(typ_name(a, ar, vty));
     tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
@@ -8860,7 +8861,8 @@ pub fn resolve_scopes(a: Allocator, ar: *Arena, srcnames: *Vec<StrPair>, params:
 }
 
 fn elab_skeleton_or_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32,
-                         env: *Vec<FieldTy>, ret_ty: Option<*const Typ>, f: *const Func, is_skeleton: bool) -> Vec<Tstmt> {
+                         env: *Vec<FieldTy>, ret_ty: Option<*const Typ>, f: *const Func, is_skeleton: bool,
+                         srcnames_out: *Vec<StrPair>) -> Vec<Tstmt> {
     if is_skeleton { return Vec::with_capacity(a, 8 as u32); }
     // Resolve scopes FIRST: rename disjoint siblings apart, so everything below
     // sees names that are unique per function, exactly as before the relaxation.
@@ -8869,7 +8871,20 @@ fn elab_skeleton_or_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
     rebase_srcnames(sc);
     rebase_binds(sc, &f.params);
     let scoped = resolve_scopes(a, ar, sc.sc_srcnames, &f.params, &f.body);
+    // Snapshot THIS fn's renames now, while the window is unambiguous: the base
+    // was just set and resolve_scopes appended exactly this fn's entries.  Taking
+    // it after elab_body would risk a nested elaboration moving the base.
+    snapshot_srcnames(sc, srcnames_out);
     return elab_body(a, ar, g, sc, gensym, env, ret_ty, &scoped);
+}
+// `sc_srcnames` is program-wide and append-only; a fn's own entries are the
+// window from its rebase point to the end.
+fn snapshot_srcnames(sc: *const TyScope, out: *Vec<StrPair>) {
+    let n = sc.sc_srcnames.length();
+    let sl = sc.sc_srcnames.as_slice();
+    let mut i = *sc.sc_srcbase;
+    while i < n { out.push(sl[i]); i = i + 1 as u32; }
+    return;
 }
 
 fn pick_tparams(xtparams: *const Vec<str>, fallback: *const Vec<str>) -> *const Vec<str> {
@@ -8896,12 +8911,14 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     // Body scope carries the resolved return type so `try` can build its
     // early-return value on the enclosing fn's instance.
     let scb = scope_with_ret(&sc, ret_ty);
-    let raw_body = elab_skeleton_or_body(a, ar, g, &scb, gensym, &env, ret_ty, f, is_skeleton);
+    let mut srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
+    let raw_body = elab_skeleton_or_body(a, ar, g, &scb, gensym, &env, ret_ty, f, is_skeleton, &srcnames);
     // Lift block-shaped sub-expressions into `__lift_N` temps (per-fn).
     let mut lift_ctr: u32 = 0 as u32;
     let body = lift_stmts(a, ar, &lift_ctr, &raw_body);
     let lets = collect_body_lets(a, &body);
     let no_pos: Option<Pos> = Option::None;
+    let no_srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     // `tf_func` only feeds the dump's flags + param names; rebuild it with
     // copied params and empty generic / body fields (the elaborated body
@@ -8917,7 +8934,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     };
     return Tfunc {
         tf_path: path, tf_func: tf_func, tf_mangled: mangled, tf_param_tys: param_tys,
-        tf_ret_ty: ret_ty, tf_body: body, tf_lets: lets, tf_origin_pos: no_pos,
+        tf_ret_ty: ret_ty, tf_body: body, tf_lets: lets, tf_srcnames: srcnames, tf_origin_pos: no_pos,
     };
 }
 
@@ -11397,6 +11414,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let body = lift_stmts(a, ar, &lift_ctr, &raw_body);
     let lets = collect_body_lets(a, &body);
     let no_pos: Option<Pos> = Option::None;
+    let no_srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let tparams2: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let tbounds: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
@@ -11411,7 +11429,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     };
     funcs.push(Tfunc {
         tf_path: path, tf_func: tf_func, tf_mangled: name, tf_param_tys: param_tys,
-        tf_ret_ty: ret, tf_body: body, tf_lets: lets, tf_origin_pos: no_pos,
+        tf_ret_ty: ret, tf_body: body, tf_lets: lets, tf_srcnames: no_srcnames, tf_origin_pos: no_pos,
     });
 }
 
@@ -13393,6 +13411,7 @@ fn sys_extern_tfunc(a: Allocator, ar: *Arena, name: str, pnames: Vec<str>, ptys:
     let no_ann: Option<*const TypeAnn> = Option::None;
     let no_str: Option<str> = Option::None;
     let no_pos: Option<Pos> = Option::None;
+    let no_srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     let mut params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
     let nsl = pnames.as_slice();
     let mut i = 0 as u32;
@@ -13411,8 +13430,9 @@ fn sys_extern_tfunc(a: Allocator, ar: *Arena, name: str, pnames: Vec<str>, ptys:
     path.push(name);
     let body0: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let lets0: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let no_srcnames3: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     return Tfunc { tf_path: path, tf_func: f, tf_mangled: name, tf_param_tys: ptys,
-                   tf_ret_ty: ret, tf_body: body0, tf_lets: lets0, tf_origin_pos: no_pos };
+                   tf_ret_ty: ret, tf_body: body0, tf_lets: lets0, tf_srcnames: no_srcnames3, tf_origin_pos: no_pos };
 }
 fn sys_p2(a: Allocator, n1: str, n2: str) -> Vec<str> {
     let mut v: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -13552,7 +13572,7 @@ fn require_mut(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, what: st
     if str::eq(tag, "m") { return; }
     let mut sb = StringBuilder::with_capacity(a, 96 as u32);
     sb.push_str("cannot "); sb.push_str(what);
-    sb.push_str(" immutable '"); sb.push_str(src_name(sc, name));
+    sb.push_str(" immutable '"); sb.push_str(sc_src_name(sc, name));
     sb.push_str("' — declare it with `let mut`");
     if str::eq(tag, "p") { sb.push_str(" (or mark the parameter `mut`)"); }
     tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
@@ -13603,7 +13623,9 @@ fn note_rename(sc: *const TyScope, minted: str, user: str) {
     return;
 }
 // Render a binding name as the USER wrote it.
-pub fn src_name(sc: *const TyScope, n: str) -> str {
+// Typecheck-time: a TyScope is in hand, so read the live window directly.
+// The post-typecheck passes use `ir::src_name` over the Tfunc's tf_srcnames.
+pub fn sc_src_name(sc: *const TyScope, n: str) -> str {
     let sl = sc.sc_srcnames.as_slice();
     let mut i = *sc.sc_srcbase;
     while i < sc.sc_srcnames.length() {

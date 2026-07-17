@@ -307,10 +307,11 @@ fn build_add_tfunc(a: Allocator, ar: *Arena) -> Tfunc {
     let ir_ret: Option<*const Typ> = Option::Some(ir_i32(ar));
     let tlets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let no_origin: Option<pos::Pos> = Option::None;
+    let no_srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     return Tfunc {
         tf_path: empty_strs(a), tf_func: f, tf_mangled: "ex_add",
         tf_param_tys: ptys, tf_ret_ty: ir_ret, tf_body: body,
-        tf_lets: tlets, tf_origin_pos: no_origin,
+        tf_lets: tlets, tf_srcnames: no_srcnames, tf_origin_pos: no_origin,
     };
 }
 
@@ -336,10 +337,11 @@ fn build_main_tfunc(a: Allocator, ar: *Arena) -> Tfunc {
     let ptys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let tlets: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let no_origin: Option<pos::Pos> = Option::None;
+    let no_srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     return Tfunc {
         tf_path: empty_strs(a), tf_func: f, tf_mangled: "main",
         tf_param_tys: ptys, tf_ret_ty: no_ret_ty, tf_body: body,
-        tf_lets: tlets, tf_origin_pos: no_origin,
+        tf_lets: tlets, tf_srcnames: no_srcnames, tf_origin_pos: no_origin,
     };
 }
 

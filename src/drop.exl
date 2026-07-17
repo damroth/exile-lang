@@ -336,8 +336,11 @@ fn mk_glue_tfunc(a: Allocator, _ar: *Arena, name: str, params: Vec<Param>, param
                    is_variadic: false, amiga_lib: none_str, tier_hint: none_str, must_use: false,
                    escapes_hatch: false, pos: glue_pos() };
     let none_origin: Option<Pos> = Option::None;
+    // Synthesized glue: every name here is the compiler's own, so there is
+    // nothing to map back to a user's source name.
+    let no_srcnames2: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     return Tfunc { tf_path: tpath, tf_func: f, tf_mangled: name, tf_param_tys: param_tys,
-                   tf_ret_ty: none_ret2, tf_body: body, tf_lets: lets, tf_origin_pos: none_origin };
+                   tf_ret_ty: none_ret2, tf_body: body, tf_lets: lets, tf_srcnames: no_srcnames2, tf_origin_pos: none_origin };
 }
 // `__i = 0; while __i < bound { <inner>; __i = __i + 1 }`.
 fn count_loop(a: Allocator, ar: *Arena, bound: *const Texpr, inner: Vec<Tstmt>, pos: Pos) -> Vec<Tstmt> {

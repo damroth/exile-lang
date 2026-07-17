@@ -251,8 +251,15 @@ pub struct Tfunc {
     tf_ret_ty: Option<*const Typ>,
     tf_body: Vec<Tstmt>,
     tf_lets: Vec<FieldTy>,
+    // C name -> the name the USER wrote, for the bindings the compiler renamed:
+    // disjoint siblings (`v` -> `v__1`), the `for` counter (`i` -> `__fv1`), a
+    // scoped projection (`x` -> `x__with0`).  Only the entries that differ.
+    // Diagnostics render through `src_name` so they quote the user's source, not
+    // the compiler's bookkeeping.  Never emitted — codegen uses the C names.
+    tf_srcnames: Vec<StrPair>,
     tf_origin_pos: Option<Pos>,
 }
+
 
 // The whole checked + elaborated program codegen consumes.
 pub struct Tprogram {

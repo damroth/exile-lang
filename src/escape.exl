@@ -125,6 +125,10 @@ struct Esc {
     e_err: *Option<*const CompileError>,
     // Accumulated return-prov of the fn under analysis.
     e_ret: *Prov,
+    // The fn's C-name -> user-name map, so a diagnostic quotes what the user
+    // wrote (`v`) and not what the compiler minted (`v__1`).  The oracle keeps
+    // this in a `cur_srcnames` global set per fn; the context carries it here.
+    e_srcnames: *const Vec<StrPair>,
 }
 
 fn err_node(ar: *Arena, pos: Pos, msg: str) -> *const CompileError {
@@ -657,12 +661,29 @@ fn check_container_insert(a: Allocator, ar: *Arena, esc: *const Esc, live: *cons
     return;
 }
 
+// The user's name for a binding the compiler renamed; `n` itself when it was
+// left alone (tf_srcnames only carries the entries that differ).  Lives here,
+// not in `ir`, because escape is its only caller: a `pub` helper in `ir` is
+// emitted into every module that imports it, and the reference emits such a fn
+// WITHOUT instantiating the generics it calls (main.exl then fails to link its
+// `Vec<StrPair>::as_slice`).  Noted as a reference bug; keeping the helper at
+// its use site sidesteps it.
+fn src_name(srcnames: *const Vec<StrPair>, n: str) -> str {
+    let sl = srcnames.as_slice();
+    let mut i = 0 as u32;
+    while i < srcnames.length() {
+        if str::eq(sl[i].a, n) { return sl[i].b; }
+        i = i + 1 as u32;
+    }
+    return n;
+}
+
 // ===== Use-after-invalidation (Phase C) =====
 
 fn fail_use_after_invalidation(a: Allocator, ar: *Arena, esc: *const Esc, pos: Pos,
                                name: str, reason: str, kill_pos: Pos) {
     let mut sb = StringBuilder::with_capacity(a, 256 as u32);
-    sb.push_str("use of borrow '"); sb.push_str(name);
+    sb.push_str("use of borrow '"); sb.push_str(src_name(esc.e_srcnames, name));
     sb.push_str("' after it was invalidated by '"); sb.push_str(reason);
     sb.push_str("' at "); sb.push_str(kill_pos.file);
     sb.push_str(":"); sb.push_int(kill_pos.line);
@@ -1146,7 +1167,7 @@ fn analyze_fn(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, tf: *const Tfunc,
     load_params(a, tf, &pnames, &pown);
     let mut ret = prov_cs();
     let esc = Esc { e_sum: sum, e_pnames: &pnames, e_pown: &pown, e_report: report,
-                    e_err: err, e_ret: &ret };
+                    e_err: err, e_ret: &ret, e_srcnames: &tf.tf_srcnames };
     let mut live: Vec<Binding> = Vec::with_capacity(a, 8 as u32);
     walk_stmts(a, ar, &esc, &live, &tf.tf_body);
     return ret;
