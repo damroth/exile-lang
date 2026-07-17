@@ -1,0 +1,18 @@
+// A `const` declared inside a module is named module-relative from within it:
+// the bare `K` in `scale`'s body IS `factors::K`.  A name resolves by walking
+// the scope outward — the module's own item first, then the enclosing scopes —
+// so a module-local `const` shadows a same-named one outside it.
+const K: int = 1;
+
+pub mod factors {
+    const K: int = 5;
+
+    pub fn scale(n: int) -> int {
+        return n * K;          // factors::K — 5, not the root's 1
+    }
+}
+
+fn main() {
+    println(factors::scale(3));   // 15
+    println(K);                   // 1 — the root const is untouched
+}

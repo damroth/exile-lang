@@ -1495,10 +1495,41 @@ fn elab_var(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
 }
 
 fn elab_var_global(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, name: str, p: Pos) -> *const Texpr {
-    return match global_lookup(g, name) {
+    return match global_lookup_scoped(a, ar, g, sc, name) {
         Option::Some(gf) => var_global_node(a, ar, sc, gf, p)
         | Option::None => undefined_var(a, ar, sc, name, p)
     };
+}
+// The reference resolves a bare name by walking the scope UP from the current
+// module to the root (`walk_scope_up`): `K` inside `mod m` names `m::K` first,
+// and only then a root-level `K` — so a module's own item shadows a same-named
+// one outside it.  The port only ever tried the root (`global_lookup` matches
+// `is_top`, and `collect_one` marks a module's items `is_top:false`), so a
+// module-private const was invisible from inside the very module that declares
+// it.  Walking innermost-first is what makes the shadowing match.
+fn global_lookup_scoped(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, name: str) -> Option<GlobalFn> {
+    let mut res: Option<GlobalFn> = Option::None;
+    let mut found = false;
+    let mut d = sc.sc_modpath.length();
+    while d > 0 as u32 {
+        if !found {
+            let pfx = path_prefix(a, sc.sc_modpath, d);
+            match global_lookup_by_mangled(g, mangle_path(a, ar, &pfx, name)) {
+                Option::Some(gf) => { res = Option::Some(gf); found = true; }
+                | Option::None => { }
+            }
+        }
+        d = d - 1 as u32;
+    }
+    if found { return res; }
+    return global_lookup(g, name);
+}
+fn path_prefix(a: Allocator, path: *const Vec<str>, d: u32) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = path.as_slice();
+    let mut i = 0 as u32;
+    while i < d { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
 }
 fn undefined_var(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, p: Pos) -> *const Texpr {
     tc_fail(ar, sc, p, msg2(a, ar, "undefined variable '", name, "'"));
