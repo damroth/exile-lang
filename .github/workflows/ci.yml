@@ -67,6 +67,37 @@ jobs:
     - name: Verify the self-host proof (fixpoint + every port gate)
       run: opam exec -- make selfhost-verify
 
+  # ===== Faza C — the seed bootstrap, on a runner with no OCaml =====
+  #
+  # Every other job builds exilc through opam + dune.  This one proves the claim
+  # the seed exists to make: a fresh clone builds a working exilc with nothing
+  # but a C compiler.  It deliberately runs on the PLAIN runner — no
+  # exile-lang-ci container, no opam switch — so the proof cannot quietly lean on
+  # a toolchain that happens to be lying around.
+  #
+  # The absence check is not ceremony: if a future runner image ever ships OCaml,
+  # this job would still pass while proving strictly less than it claims.  Better
+  # to fail loudly and rethink the proof than to keep a badge that has stopped
+  # meaning anything.
+  seed-bootstrap:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Assert no OCaml toolchain is present
+      run: |
+        for t in opam dune ocaml ocamlfind; do
+          if command -v "$t" >/dev/null 2>&1; then
+            echo "::error::$t is on PATH — this job no longer proves an OCaml-free build"
+            exit 1
+          fi
+        done
+        echo "no opam / dune / ocaml / ocamlfind on PATH; cc = $(cc --version | head -1)"
+
+    - name: Bootstrap exilc from the committed seed (cc only)
+      run: make bootstrap-from-seed
+
   amiga-verify:
     runs-on: ubuntu-latest
     container:

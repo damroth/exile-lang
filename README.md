@@ -10,7 +10,10 @@
 
 A toy programming language that compiles to C, targeting Amiga m68k.
 
-Work in progress. Compiler written in OCaml.
+Work in progress. The reference compiler is written in OCaml; exile-lang is also
+**self-hosting** — `src/*.exl` is the compiler written in Exile, and it emits C
+byte-identical to the reference for its own source. So you can build it either
+way: through OCaml, or from the committed seed with nothing but a C compiler.
 
 ## Setup
 
@@ -21,6 +24,24 @@ make build       # build the exile compiler
 make toolchain   # one-time: build the bundled m68k-amigaos cross-compiler
                  # (~30-60 minutes; output goes to _build/toolchain/)
 ```
+
+### Build without OCaml (from the seed)
+
+`seed/exilc.c` is the self-hosted compiler's own C output, committed so a fresh
+clone can bootstrap with no OCaml, no opam, and no dune:
+
+```sh
+make bootstrap-from-seed   # cc seed/exilc.c -> exilc -> rebuilds itself
+```
+
+This walks the ladder and checks it lands: the seed builds a compiler, that
+compiler compiles the current `src/*.exl`, the result compiles the source again,
+and the last two outputs must be byte-identical. CI runs it on a plain runner
+with no OCaml on `PATH`.
+
+The seed is a deliberate snapshot, not a mirror of `HEAD` — it is allowed to lag,
+and is refreshed (`make seed`) only when `bootstrap-from-seed` reports it can no
+longer build the current source.
 
 If you cloned without `--recurse-submodules`:
 ```sh
