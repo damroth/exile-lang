@@ -1,0 +1,6 @@
+fn main() {
+    let a = default_allocator();
+    let v: own *int = a.alloc();
+    free(a, v);
+    free(a, v);
+}

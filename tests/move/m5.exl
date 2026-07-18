@@ -1,0 +1,7 @@
+enum Tree { Leaf(int) | Node(own *Tree) }
+fn main() {
+    let a = default_allocator();
+    let leaf: own *Tree = new(a) Tree::Leaf(1);
+    let root: own *Tree = new(a) Tree::Node(leaf);
+    free(a, root);
+}

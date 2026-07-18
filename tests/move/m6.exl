@@ -1,0 +1,8 @@
+struct Box { p: own *int, alloc: Allocator }
+fn main() {
+    let a = default_allocator();
+    let q: own *int = a.alloc();
+    let b = Box { p: q, alloc: a };
+    let arr: [Box; 3] = [b; 3];
+    println(0);
+}

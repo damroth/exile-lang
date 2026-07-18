@@ -1,0 +1,9 @@
+struct P { x: int, p: own *int, alloc: Allocator }
+fn take(z: own *P) { }
+fn main() {
+    let a = default_allocator();
+    let q: own *int = a.alloc();
+    let v: own *P = new(a) P { x: 1, p: q, alloc: a };
+    take(v);
+    free(a, (*v).p);
+}

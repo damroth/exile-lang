@@ -1,0 +1,13 @@
+enum Tree { Leaf(int) | Node(own *Tree) }
+fn take(q: own *Tree) { }
+fn use_root(r: *const Tree) { }
+fn main() {
+    let a = default_allocator();
+    let leaf: own *Tree = new(a) Tree::Leaf(1);
+    let root: own *Tree = new(a) Tree::Node(leaf);
+    match *root {
+        Tree::Node(k) => { take(k); }
+        | Tree::Leaf(_n) => { }
+    }
+    use_root(root);
+}

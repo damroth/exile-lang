@@ -1,0 +1,8 @@
+struct Holder { p: own *int, alloc: Allocator }
+fn take(q: own *int) { }
+fn main() {
+    let a = default_allocator();
+    let q: own *int = a.alloc();
+    let h = Holder { p: q, alloc: a };
+    take(h.p);
+}

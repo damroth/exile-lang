@@ -1,0 +1,12 @@
+enum Pair { Two(own *int, own *int) | Nil }
+fn take(q: own *int) { }
+fn main() {
+    let a = default_allocator();
+    let x: own *int = a.alloc();
+    let y: own *int = a.alloc();
+    let p: own *Pair = new(a) Pair::Two(x, y);
+    match *p {
+        Pair::Two(u, _) => { take(u); }
+        | Pair::Nil => { }
+    }
+}
