@@ -1023,7 +1023,12 @@ fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             result
         }
         | TexprNode::TBuiltinCall { name, args } => {
-            if str::eq(name, "free") && args.length() == 2 as u32 {
+            // The reference's free arm matches only a BARE binding in the ptr
+            // slot; anything else (`free(a, (*v).p)`) falls through to the
+            // generic path, which walks the argument and so read-checks what is
+            // inside it.  Without this guard the port skipped that walk and
+            // reported the wrong diagnostic on a consumed root.
+            if free_tail_is_var(name, &args) {
                 walk_free(structs, enums, a, ar, mv, live, &args)
             } else {
                 if str::eq(name, "mem_zero") {
