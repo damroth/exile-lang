@@ -571,8 +571,27 @@ selfhost-exilc-driver: $(EXILC_BIN)
 	    fi; \
 	  fi; \
 	done; \
+	for probe in "--emit-tokens" "--emit-ast" "--emit-typed-ir" "--target c --c-out $(C_OUT)/mi.c"; do \
+	  rm -f $(C_OUT)/mi_o.err $(C_OUT)/mi_p.err $(C_OUT)/mi.c; \
+	  $(EXILE) $$probe $(C_OUT)/no_such_input.exl >/dev/null 2>$(C_OUT)/mi_o.err; mo=$$?; \
+	  $(EXILC_BIN) $$probe $(C_OUT)/no_such_input.exl >/dev/null 2>$(C_OUT)/mi_p.err; mp=$$?; \
+	  if [ $$mo -eq 0 ]; then \
+	    echo "selfhost-exilc-driver: reference ACCEPTED a missing input [$$probe] (floor)"; fail=1; \
+	  elif [ ! -s $(C_OUT)/mi_o.err ]; then \
+	    echo "selfhost-exilc-driver: EMPTY reference diagnostic for a missing input [$$probe] (floor)"; fail=1; \
+	  elif [ $$mo -ne $$mp ]; then \
+	    echo "selfhost-exilc-driver: MISSING-INPUT STATUS [$$probe] (oracle=$$mo exilc=$$mp)"; fail=1; \
+	  elif grep -q "internal compiler error" $(C_OUT)/mi_o.err; then \
+	    grep -q "cannot read file" $(C_OUT)/mi_p.err \
+	      || { echo "selfhost-exilc-driver: MISSING-INPUT [$$probe] — reference ICEs here (register #2); the port must still give a clean diagnostic"; fail=1; }; \
+	  elif ! diff -q <(head -1 $(C_OUT)/mi_o.err) <(head -1 $(C_OUT)/mi_p.err) >/dev/null; then \
+	    echo "selfhost-exilc-driver: MISSING-INPUT TEXT [$$probe]"; \
+	    echo "  oracle: `head -1 $(C_OUT)/mi_o.err`"; \
+	    echo "  port:   `head -1 $(C_OUT)/mi_p.err`"; fail=1; \
+	  fi; \
+	done; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-exilc-driver: clean (exilc == oracle on tokens/ast/typed-ir/after-drop/c; host build+run parity)"; \
+	  echo "selfhost-exilc-driver: clean (exilc == oracle on tokens/ast/typed-ir/after-drop/c; host build+run parity; missing-input text+status)"; \
 	else exit 1; fi
 
 # ===== Move pass — text AND exit status =====

@@ -386,7 +386,14 @@ fn report_built(a: Allocator, out: str) {
 fn read_source(a: Allocator, ar: *Arena, path: str) -> str {
     // The lexer path needs the raw bytes; load() re-reads for the AST/IR paths.
     let fd: c_int = sys::sys_open(path as *const c_char, 0 as c_int);
-    if fd < 0 as c_int { return ""; }
+    // Same contract as the loader: an unreadable input is an error, not an
+    // empty program.  This path bypasses the loader, so it needs its own gate.
+    if fd < 0 as c_int {
+        let mut eb = StringBuilder::with_capacity(a, 64 as u32);
+        eb.push_str("cannot read file: "); eb.push_str(path);
+        report_error(a, error::alloc(ar, pos::Pos::zero(), str::from_slice(ar, eb.as_slice())));
+        return "";
+    }
     let mut sb = StringBuilder::with_capacity(a, 8192 as u32);
     let mut buf: [u8; 4096] = [0 as u8; 4096];
     loop {
@@ -402,7 +409,9 @@ fn read_source(a: Allocator, ar: *Arena, path: str) -> str {
 fn main() {
     let a = default_allocator();
     let ca = parse_cli(a);
-    if !ca.ca_ok { return; }
+    // A rejected command line ends non-zero, like the reference: usage and
+    // unknown-flag errors were reported on stderr and then exited 0.
+    if !ca.ca_ok { sys::sys_exit(1 as c_int); }
 
     let mut ar = Arena::with_capacity(a, arena_cap_for(total_source_bytes(a, ca.ca_input)));
 

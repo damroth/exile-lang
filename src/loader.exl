@@ -230,6 +230,13 @@ fn empty_items(a: Allocator) -> Vec<Item> {
 }
 @escapes
 fn parse_file(a: Allocator, ar: *Arena, path: str, errs: *Vec<*const CompileError>) -> Vec<Item> {
+    // An unreadable input is an ERROR, not an empty program.  Without this a
+    // typo in the path compiled silently to an empty translation unit and
+    // exited 0 — a failure reported as success (loader.ml:71).
+    if !file_exists(path) {
+        errs.push(error::alloc(ar, pos::Pos::zero(), cat2(a, ar, "cannot read file: ", path)));
+        return empty_items(a);
+    }
     let src = read_file_src(a, ar, path);
     return match tokenize(a, ar, path, src) {
         Result::Ok(toks) => match parse_program(a, ar, toks.as_slice(), toks.length()) {
