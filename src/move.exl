@@ -16,6 +16,29 @@ use ast::*;
 use ir::*;
 use typecheck::*;
 
+// Reporting context.  The walker runs in two modes, exactly as escape does:
+// `states_by` (drop's OWN-D2 seam) walks SILENT, so drop's consume model is
+// unchanged; `check` walks reporting.  The reference keeps the equivalent state
+// in globals (`cur_srcnames`); carrying it here keeps the walker re-entrant.
+struct Mv {
+    // Silent for the drop seam; reporting for the enforcement pass.
+    mv_report: bool,
+    // First error wins, matching the reference's raise-on-first: the walk order
+    // is identical, so latching the first is the same diagnostic.
+    mv_err: *Option<*const CompileError>,
+    // C name -> the name the user wrote, so a diagnostic quotes the source.
+    mv_srcnames: *const Vec<StrPair>,
+}
+
+fn raise_mv(ar: *Arena, mv: *const Mv, pos: Pos, msg: str) {
+    if !mv.mv_report { return; }
+    match *mv.mv_err {
+        Option::Some(_e) => { }
+        | Option::None => { *mv.mv_err = Option::Some(error::alloc(ar, pos, msg)); }
+    }
+    return;
+}
+
 // Per-binding state.  Only affine bindings are ever inserted, so the
 // zero-blast-radius guarantee is structural.  `Consumed` / `PartialMoved`
 // carry the move site for the diagnostic.
@@ -315,7 +338,97 @@ fn lookup_borrows_key(m: str) -> bool {
 // ---------- consume-site walkers (move.ml:299-572, gating elided) ----------
 
 // Consume [te]'s binding iff it is a bare affine TVar in a by-value slot.
-fn consume_var(structs: *const Vec<StructSig>, a: Allocator,
+// The name the user wrote, for a binding the compiler renamed.  The reference
+// gives each pass its own `disp` over a shared `Ir.src_name` (move.ml:19,
+// escape.ml:476); the port keeps a per-pass copy because a `pub` helper in `ir`
+// is emitted without its generic callees being instantiated (a reference bug
+// recorded in the worklog), so sharing it would break other drivers' builds.
+fn mv_disp(mv: *const Mv, n: str) -> str {
+    let sl = mv.mv_srcnames.as_slice();
+    let mut i = 0 as u32;
+    while i < mv.mv_srcnames.length() {
+        if str::eq(sl[i].a, n) { return sl[i].b; }
+        i = i + 1 as u32;
+    }
+    return n;
+}
+
+fn fail_use_after_consumed(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos,
+                           n: str, at: Pos, ty: *const Typ) {
+    let d = mv_disp(mv, n);
+    let mut sb = StringBuilder::with_capacity(a, 256 as u32);
+    sb.push_str("use of '"); sb.push_str(d);
+    sb.push_str("' after it was consumed at "); sb.push_str(at.file);
+    sb.push_str(":"); sb.push_int(at.line);
+    sb.push_str(":"); sb.push_int(at.col);
+    sb.push_str(" (move-marked types are use-at-most-once — borrow with '&");
+    sb.push_str(d); sb.push_str("' / take '*const ");
+    sb.push_str(typ_name(a, ar, ty));
+    sb.push_str("' or clone to keep the source live)");
+    raise_mv(ar, mv, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+fn fail_use_after_partial(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, n: str, at: Pos) {
+    let d = mv_disp(mv, n);
+    let mut sb = StringBuilder::with_capacity(a, 256 as u32);
+    sb.push_str("use of '"); sb.push_str(d);
+    sb.push_str("' after its payload was moved out at "); sb.push_str(at.file);
+    sb.push_str(":"); sb.push_int(at.line);
+    sb.push_str(":"); sb.push_int(at.col);
+    sb.push_str(" — the children are gone, only releasing the storage is left: `free(alloc, ");
+    sb.push_str(d); sb.push_str(")`");
+    raise_mv(ar, mv, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+// `free(a, x)` with a bare `x` in the ptr slot — that slot is the consume site,
+// judged by walk_free rather than the generic read check.
+fn free_tail_is_var(name: str, args: *const Vec<*const Texpr>) -> bool {
+    if !str::eq(name, "free") { return false; }
+    if args.length() != 2 as u32 { return false; }
+    return match args.as_slice()[1 as u32].e {
+        TexprNode::TVar(_v) => true
+        | _o => false
+    };
+}
+
+// Report a read of a consumed / partially-moved binding.  The ptr slot of
+// `free(a, x)` is the consume site itself — its legality is decided by
+// walk_free, not here — so only the allocator arg is an ordinary read.
+fn check_reads(a: Allocator, ar: *Arena, mv: *const Mv, live: *const Vec<MoveBinding>, te: *const Texpr) {
+    if !mv.mv_report { return; }
+    let mut is_free = false;
+    match te.e {
+        TexprNode::TBuiltinCall { name, args } => { is_free = free_tail_is_var(name, &args); }
+        | _o => { }
+    }
+    if is_free {
+        match te.e {
+            TexprNode::TBuiltinCall { name, args } => { check_reads(a, ar, mv, live, args.as_slice()[0 as u32]); }
+            | _o => { }
+        }
+        return;
+    }
+    match te.e {
+        TexprNode::TVar(n) => {
+            match mb_state_of(live, n) {
+                MoveState::Consumed(at) => { fail_use_after_consumed(a, ar, mv, te.pos, n, at, te.ty); }
+                | MoveState::PartialMoved(at) => { fail_use_after_partial(a, ar, mv, te.pos, n, at); }
+                | MoveState::Live => { }
+            }
+        }
+        | _o => { }
+    }
+    let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    texpr_children_into(te, &kids);
+    let ks = kids.as_slice();
+    let mut i = 0 as u32;
+    while i < kids.length() { check_reads(a, ar, mv, live, ks[i]); i = i + 1 as u32; }
+    return;
+}
+
+fn consume_var(structs: *const Vec<StructSig>, a: Allocator, ar: *Arena, mv: *const Mv,
                live: *const Vec<MoveBinding>, te: *const Texpr) -> Vec<MoveBinding> {
     return match te.e {
         TexprNode::TVar(n) => {
@@ -327,14 +440,14 @@ fn consume_var(structs: *const Vec<StructSig>, a: Allocator,
 }
 
 // Walk each arg (no consume) — for lookup-borrows-key calls.
-fn fold_walk(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn fold_walk(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
              live: *const Vec<MoveBinding>, args: *const Vec<*const Texpr>)
         -> Vec<MoveBinding> {
     let mut acc = copy_live(a, live);
     let al = args.as_slice();
     let mut i = 0 as u32;
     while i < args.length() {
-        acc = walk_expr(structs, enums, a, &acc, al[i]);
+        acc = walk_expr(structs, enums, a, ar, mv, &acc, al[i]);
         i = i + 1 as u32;
     }
     return acc;
@@ -342,24 +455,24 @@ fn fold_walk(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
 
 // `free(a, x)` — walk the allocator arg, then consume x if a bare affine
 // TVar (consume_var also flips PartialMoved → Consumed, the free_tree case).
-fn walk_free(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn walk_free(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
              live: *const Vec<MoveBinding>, args: *const Vec<*const Texpr>)
         -> Vec<MoveBinding> {
     let al = args.as_slice();
-    let acc = walk_expr(structs, enums, a, live, al[0]);
-    return consume_var(structs, a, &acc, al[1]);
+    let acc = walk_expr(structs, enums, a, ar, mv, live, al[0]);
+    return consume_var(structs, a, ar, mv, &acc, al[1]);
 }
 
 // Walk each arg then consume its binding if a bare affine TVar.
-fn consume_args(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn consume_args(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
                 live: *const Vec<MoveBinding>, args: *const Vec<*const Texpr>)
         -> Vec<MoveBinding> {
     let mut acc = copy_live(a, live);
     let al = args.as_slice();
     let mut i = 0 as u32;
     while i < args.length() {
-        acc = walk_expr(structs, enums, a, &acc, al[i]);
-        acc = consume_var(structs, a, &acc, al[i]);
+        acc = walk_expr(structs, enums, a, ar, mv, &acc, al[i]);
+        acc = consume_var(structs, a, ar, mv, &acc, al[i]);
         i = i + 1 as u32;
     }
     return acc;
@@ -390,18 +503,21 @@ fn texpr_children_into(te: *const Texpr, out: *Vec<*const Texpr>) {
 
 // The consume walker (move.ml:310).  Returns the live map after evaluating
 // [te]; only the state transitions survive (all diagnostics elided).
-fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
              live: *const Vec<MoveBinding>, te: *const Texpr) -> Vec<MoveBinding> {
+    // Reads are judged before the node's own consume effect, exactly as the
+    // reference does (move.ml:317) — the order decides which diagnostic wins.
+    check_reads(a, ar, mv, live, te);
     return match te.e {
         TexprNode::TCall { mangled, args } => {
             let mut result = if lookup_borrows_key(mangled) {
-                fold_walk(structs, enums, a, live, &args)
+                fold_walk(structs, enums, a, ar, mv, live, &args)
             } else {
-                consume_args(structs, enums, a, live, &args)
+                consume_args(structs, enums, a, ar, mv, live, &args)
             };
             if is_drop_mangled(mangled) {
                 match ref_operand_of(&args) {
-                    Option::Some(inner) => { result = consume_var(structs, a, &result, inner); }
+                    Option::Some(inner) => { result = consume_var(structs, a, ar, mv, &result, inner); }
                     | Option::None => {}
                 }
             }
@@ -409,41 +525,44 @@ fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
         }
         | TexprNode::TBuiltinCall { name, args } => {
             if str::eq(name, "free") && args.length() == 2 as u32 {
-                walk_free(structs, enums, a, live, &args)
+                walk_free(structs, enums, a, ar, mv, live, &args)
             } else {
                 if str::eq(name, "mem_zero") {
-                    fold_walk(structs, enums, a, live, &args)
+                    fold_walk(structs, enums, a, ar, mv, live, &args)
                 } else {
-                    consume_args(structs, enums, a, live, &args)
+                    consume_args(structs, enums, a, ar, mv, live, &args)
                 }
             }
         }
         | TexprNode::TStructLit { sname_path, fields, base } =>
-            walk_lit_fields(structs, enums, a, live, &fields, base)
+            walk_lit_fields(structs, enums, a, ar, mv, live, &fields, base)
         | TexprNode::TNew { sname_path, fields, base, alloc } =>
-            walk_lit_fields(structs, enums, a, live, &fields, base)
+            walk_lit_fields(structs, enums, a, ar, mv, live, &fields, base)
         | TexprNode::TEnumLit { ename_path, variant, tag, args } =>
-            walk_field_values(structs, enums, a, live, &args)
+            walk_field_values(structs, enums, a, ar, mv, live, &args)
         | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } =>
-            walk_field_values(structs, enums, a, live, &args)
-        | TexprNode::TTupleLit(es) => consume_args(structs, enums, a, live, &es)
-        | TexprNode::TArrayLit(es) => consume_args(structs, enums, a, live, &es)
-        | TexprNode::TArrayRepeat { value, count } => walk_expr(structs, enums, a, live, value)
+            walk_field_values(structs, enums, a, ar, mv, live, &args)
+        | TexprNode::TTupleLit(es) => consume_args(structs, enums, a, ar, mv, live, &es)
+        | TexprNode::TArrayLit(es) => consume_args(structs, enums, a, ar, mv, live, &es)
+        | TexprNode::TArrayRepeat { value, count } => walk_expr(structs, enums, a, ar, mv, live, value)
         | TexprNode::TBlock { stmts, trailing } => {
-            let after = walk_stmts_e(structs, enums, a, live, &stmts);
+            // An expression-level block has no enclosing return type to consume
+            // against — the reference passes `~ret_ty:None` here (move.ml:449).
+            let no_ret: Option<*const Typ> = Option::None;
+            let after = walk_stmts_e(structs, enums, a, ar, mv, no_ret, live, &stmts);
             match trailing {
-                Option::Some(t) => walk_expr(structs, enums, a, &after, t)
+                Option::Some(t) => walk_expr(structs, enums, a, ar, mv, &after, t)
                 | Option::None => copy_live(a, &after)
             }
         }
         | TexprNode::TMatch { scrutinee, ename_path, arms } => {
-            let base = walk_expr(structs, enums, a, live, scrutinee);
+            let base = walk_expr(structs, enums, a, ar, mv, live, scrutinee);
             let mut have = false;
             let mut acc = copy_live(a, &base);
             let al = arms.as_slice();
             let mut i = 0 as u32;
             while i < arms.length() {
-                let after_arm = walk_expr(structs, enums, a, &base, al[i].tbody);
+                let after_arm = walk_expr(structs, enums, a, ar, mv, &base, al[i].tbody);
                 if !(al[i].tdiverges || expr_diverges(al[i].tbody)) {
                     if have { acc = merge_states(a, &acc, &after_arm); }
                     else { acc = copy_live(a, &after_arm); have = true; }
@@ -453,9 +572,9 @@ fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             if have { acc } else { copy_live(a, &base) }
         }
         | TexprNode::TIfExpr { cond, then_val, else_val } => {
-            let lc = walk_expr(structs, enums, a, live, cond);
-            let s_then = walk_expr(structs, enums, a, &lc, then_val);
-            let s_else = walk_expr(structs, enums, a, &lc, else_val);
+            let lc = walk_expr(structs, enums, a, ar, mv, live, cond);
+            let s_then = walk_expr(structs, enums, a, ar, mv, &lc, then_val);
+            let s_else = walk_expr(structs, enums, a, ar, mv, &lc, else_val);
             let td = expr_diverges(then_val);
             let ed = expr_diverges(else_val);
             if td {
@@ -471,7 +590,7 @@ fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             let kl = kids.as_slice();
             let mut ki = 0 as u32;
             while ki < kids.length() {
-                dacc = walk_expr(structs, enums, a, &dacc, kl[ki]);
+                dacc = walk_expr(structs, enums, a, ar, mv, &dacc, kl[ki]);
                 ki = ki + 1 as u32;
             }
             dacc
@@ -481,29 +600,29 @@ fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
 
 // Aggregate-field consume: each field value shallow-copies, consuming a
 // bare affine field (move.ml:415).
-fn walk_field_values(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn walk_field_values(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
                      live: *const Vec<MoveBinding>, fields: *const Vec<TexprField>)
         -> Vec<MoveBinding> {
     let mut acc = copy_live(a, live);
     let fl = fields.as_slice();
     let mut i = 0 as u32;
     while i < fields.length() {
-        acc = walk_expr(structs, enums, a, &acc, fl[i].value);
-        acc = consume_var(structs, a, &acc, fl[i].value);
+        acc = walk_expr(structs, enums, a, ar, mv, &acc, fl[i].value);
+        acc = consume_var(structs, a, ar, mv, &acc, fl[i].value);
         i = i + 1 as u32;
     }
     return acc;
 }
 
 // Struct-literal consume: fields, then `..base` consumes the base.
-fn walk_lit_fields(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn walk_lit_fields(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
                    live: *const Vec<MoveBinding>, fields: *const Vec<TexprField>,
                    base: Option<*const Texpr>) -> Vec<MoveBinding> {
-    let mut acc = walk_field_values(structs, enums, a, live, fields);
+    let mut acc = walk_field_values(structs, enums, a, ar, mv, live, fields);
     match base {
         Option::Some(b) => {
-            acc = walk_expr(structs, enums, a, &acc, b);
-            acc = consume_var(structs, a, &acc, b);
+            acc = walk_expr(structs, enums, a, ar, mv, &acc, b);
+            acc = consume_var(structs, a, ar, mv, &acc, b);
         }
         | Option::None => {}
     }
@@ -511,49 +630,52 @@ fn walk_lit_fields(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a
 }
 
 // Move's expr-context statement walker (move.ml:574) — for TBlock values.
-fn walk_stmts_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
-                live: *const Vec<MoveBinding>, stmts: *const Vec<Tstmt>) -> Vec<MoveBinding> {
+fn walk_stmts_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
+                ret_ty: Option<*const Typ>, live: *const Vec<MoveBinding>, stmts: *const Vec<Tstmt>) -> Vec<MoveBinding> {
     let mut acc = copy_live(a, live);
     let sl = stmts.as_slice();
     let mut i = 0 as u32;
     while i < stmts.length() {
-        acc = walk_stmt_e(structs, enums, a, &acc, &sl[i]);
+        acc = walk_stmt_e(structs, enums, a, ar, mv, ret_ty, &acc, &sl[i]);
         i = i + 1 as u32;
     }
     return acc;
 }
 
-fn walk_stmt_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
-               live: *const Vec<MoveBinding>, s: *const Tstmt) -> Vec<MoveBinding> {
+fn walk_stmt_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
+               ret_ty: Option<*const Typ>, live: *const Vec<MoveBinding>, s: *const Tstmt) -> Vec<MoveBinding> {
     return match *s {
-        Tstmt::TLet { name, value, pos } => walk_let_e(structs, enums, a, live, name, value)
-        | Tstmt::TLetTuple { names, value, pos } => walk_expr(structs, enums, a, live, value)
-        | Tstmt::TAssign { path, value, pos } => walk_assign_e(structs, enums, a, live, &path, value)
+        Tstmt::TLet { name, value, pos } => walk_let_e(structs, enums, a, ar, mv, live, name, value)
+        | Tstmt::TLetTuple { names, value, pos } => walk_expr(structs, enums, a, ar, mv, live, value)
+        | Tstmt::TAssign { path, value, pos } => walk_assign_e(structs, enums, a, ar, mv, live, &path, value)
         | Tstmt::TAssignField { target, field, value, pos } => {
-            let af = walk_expr(structs, enums, a, live, target);
-            let af2 = walk_expr(structs, enums, a, &af, value);
-            consume_var(structs, a, &af2, value)
+            let af = walk_expr(structs, enums, a, ar, mv, live, target);
+            let af2 = walk_expr(structs, enums, a, ar, mv, &af, value);
+            consume_var(structs, a, ar, mv, &af2, value)
         }
         | Tstmt::TAssignIndex { base, index, value, pos } => {
-            let ai = walk_expr(structs, enums, a, live, base);
-            let ai2 = walk_expr(structs, enums, a, &ai, index);
-            let ai3 = walk_expr(structs, enums, a, &ai2, value);
-            consume_var(structs, a, &ai3, value)
+            let ai = walk_expr(structs, enums, a, ar, mv, live, base);
+            let ai2 = walk_expr(structs, enums, a, ar, mv, &ai, index);
+            let ai3 = walk_expr(structs, enums, a, ar, mv, &ai2, value);
+            consume_var(structs, a, ar, mv, &ai3, value)
         }
         | Tstmt::TAssignDeref { target, value, pos } => {
-            let ad = walk_expr(structs, enums, a, live, target);
-            let ad2 = walk_expr(structs, enums, a, &ad, value);
-            consume_var(structs, a, &ad2, value)
+            let ad = walk_expr(structs, enums, a, ar, mv, live, target);
+            let ad2 = walk_expr(structs, enums, a, ar, mv, &ad, value);
+            consume_var(structs, a, ar, mv, &ad2, value)
         }
-        | Tstmt::TExprStmt(e) => walk_expr(structs, enums, a, live, e)
+        | Tstmt::TExprStmt(e) => walk_expr(structs, enums, a, ar, mv, live, e)
         | Tstmt::TReturn { value, pos } => match value {
-            Option::Some(v) => walk_expr(structs, enums, a, live, v)
+            // Returning an affine value consumes its binding — the callee hands
+            // ownership out (move.ml:639-642).  `states_by` walks expressions,
+            // never statements, so the drop seam never reached this arm.
+            Option::Some(v) => ret_consume(structs, enums, a, ar, mv, ret_ty, live, v)
             | Option::None => copy_live(a, live)
         }
         | Tstmt::TIf { cond, then_body, else_body } => {
-            let lc = walk_expr(structs, enums, a, live, cond);
-            let s_then = walk_stmts_e(structs, enums, a, &lc, &then_body);
-            let s_else = walk_stmts_e(structs, enums, a, &lc, &else_body);
+            let lc = walk_expr(structs, enums, a, ar, mv, live, cond);
+            let s_then = walk_stmts_e(structs, enums, a, ar, mv, ret_ty, &lc, &then_body);
+            let s_else = walk_stmts_e(structs, enums, a, ar, mv, ret_ty, &lc, &else_body);
             let td = stmts_diverge(&then_body);
             let ed = stmts_diverge(&else_body);
             if td {
@@ -562,26 +684,26 @@ fn walk_stmt_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
                 if ed { copy_live(a, &s_then) } else { merge_states(a, &s_then, &s_else) }
             }
         }
-        | Tstmt::TWhile { cond, body, post } => walk_expr(structs, enums, a, live, cond)
+        | Tstmt::TWhile { cond, body, post } => walk_expr(structs, enums, a, ar, mv, live, cond)
         | _other => copy_live(a, live)
     };
 }
 
-fn walk_let_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn walk_let_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
               live: *const Vec<MoveBinding>, name: str, value: *const Texpr) -> Vec<MoveBinding> {
-    let w = walk_expr(structs, enums, a, live, value);
-    let mut acc = consume_var(structs, a, &w, value);
+    let w = walk_expr(structs, enums, a, ar, mv, live, value);
+    let mut acc = consume_var(structs, a, ar, mv, &w, value);
     if is_affine_typ(structs, value.ty) {
         acc.push(MoveBinding { mb_name: name, mb_state: MoveState::Live });
     }
     return acc;
 }
 
-fn walk_assign_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn walk_assign_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
                  live: *const Vec<MoveBinding>, path: *const Vec<str>, value: *const Texpr)
         -> Vec<MoveBinding> {
-    let w = walk_expr(structs, enums, a, live, value);
-    let mut acc = consume_var(structs, a, &w, value);
+    let w = walk_expr(structs, enums, a, ar, mv, live, value);
+    let mut acc = consume_var(structs, a, ar, mv, &w, value);
     if path.length() == 1 as u32 {
         let pl = path.as_slice();
         if mb_is_tracked(&acc, pl[0]) { acc = set_state(a, &acc, pl[0], MoveState::Live); }
@@ -597,10 +719,27 @@ pub struct ConsumeResult {
 }
 
 // Names from [names] left Consumed / PartialMoved by evaluating [te].
-pub fn states_by(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn ret_consume(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+               mv: *const Mv, ret_ty: Option<*const Typ>, live: *const Vec<MoveBinding>,
+               v: *const Texpr) -> Vec<MoveBinding> {
+    let after = walk_expr(structs, enums, a, ar, mv, live, v);
+    let mut affine = false;
+    match ret_ty {
+        Option::Some(rt) => { affine = is_affine_typ(structs, rt); }
+        | Option::None => { }
+    }
+    if affine { return consume_var(structs, a, ar, mv, &after, v); }
+    return after;
+}
+
+pub fn states_by(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
                  names: *const Vec<str>, te: *const Texpr) -> ConsumeResult {
+    // The drop seam walks silent: no diagnostic may come out of this path.
+    let mut no_err: Option<*const CompileError> = Option::None;
+    let no_names: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
+    let mv = Mv { mv_report: false, mv_err: &no_err, mv_srcnames: &no_names };
     let seed = seed_live(a, names);
-    let after = walk_expr(structs, enums, a, &seed, te);
+    let after = walk_expr(structs, enums, a, ar, &mv, &seed, te);
     let mut consumed: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut partial: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let al = after.as_slice();
@@ -614,4 +753,52 @@ pub fn states_by(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: 
         i = i + 1 as u32;
     }
     return ConsumeResult { cr_consumed: consumed, cr_partial: partial };
+}
+
+// Per-fn entry: seed the live map with affine parameters, then walk the body.
+fn check_fn(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+            err: *Option<*const CompileError>, tf: *const Tfunc) {
+    let mv = Mv { mv_report: true, mv_err: err, mv_srcnames: &tf.tf_srcnames };
+    let mut live: Vec<MoveBinding> = Vec::with_capacity(a, 8 as u32);
+    let ps = tf.tf_func.params.as_slice();
+    let ts = tf.tf_param_tys.as_slice();
+    let mut i = 0 as u32;
+    while i < tf.tf_func.params.length() && i < tf.tf_param_tys.length() {
+        if is_affine_typ(structs, ts[i]) {
+            live.push(MoveBinding { mb_name: ps[i].pname, mb_state: MoveState::Live });
+        }
+        i = i + 1 as u32;
+    }
+    let _after = walk_stmts_e(structs, enums, a, ar, &mv, tf.tf_ret_ty, &live, &tf.tf_body);
+    return;
+}
+
+// Whole-program entry.  Skipped when no struct is affine — `is_affine_typ` is
+// false everywhere then, so the walk could raise nothing anyway (move.ml:694).
+pub fn check(a: Allocator, ar: *Arena, tp: *const Tprogram) -> Option<*const CompileError> {
+    let mut err: Option<*const CompileError> = Option::None;
+    if !any_affine(&tp.tp_struct_index) { return err; }
+    let fl = tp.tp_funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < tp.tp_funcs.length() {
+        check_fn(&tp.tp_struct_index, &tp.tp_enum_index, a, ar, &err, &fl[i]);
+        i = i + 1 as u32;
+    }
+    return err;
+}
+
+fn any_affine(structs: *const Vec<StructSig>) -> bool {
+    let sl = structs.as_slice();
+    let mut i = 0 as u32;
+    while i < structs.length() {
+        if sl[i].ss_is_move { return true; }
+        let fs = sl[i].sfields_ty.as_slice();
+        let mut j = 0 as u32;
+        while j < sl[i].sfields_ty.length() {
+            if is_affine_typ(structs, fs[j].ty) { return true; }
+            j = j + 1 as u32;
+        }
+        i = i + 1 as u32;
+    }
+    return false;
 }

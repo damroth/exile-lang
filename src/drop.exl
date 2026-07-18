@@ -1118,10 +1118,10 @@ fn mark_partial(a: Allocator, st: *const Vec<DEntry>, names: *const Vec<str>) ->
 }
 
 // Apply an expression's consume set (move::states_by seam) to the state.
-fn apply_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn apply_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
               st: *const Vec<DEntry>, te: *const Texpr) -> Vec<DEntry> {
     let names = names_of(a, st);
-    let res = states_by(structs, enums, a, &names, te);
+    let res = states_by(structs, enums, a, ar, &names, te);
     let st2 = mark_consumed(a, st, &res.cr_consumed);
     return mark_partial(a, &st2, &res.cr_partial);
 }
@@ -1204,20 +1204,20 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
         | Tstmt::TIf { cond, then_body, else_body } => walk_if(structs, enums, a, ar, gs, st, cond, &then_body, &else_body, out)
         | Tstmt::TWhile { cond, body, post } => walk_while(structs, enums, a, ar, gs, st, cond, &body, &post, s, out)
         | Tstmt::TExprStmt(e) => {
-            let st2 = apply_expr(structs, enums, a, st, e);
+            let st2 = apply_expr(structs, enums, a, ar, st, e);
             out.push(*s);
             st2
         }
-        | Tstmt::TAssignField { target, field, value, pos } => walk_apply_one(structs, enums, a, st, value, s, out)
-        | Tstmt::TAssignIndex { base, index, value, pos } => walk_apply_one(structs, enums, a, st, value, s, out)
-        | Tstmt::TAssignDeref { target, value, pos } => walk_apply_one(structs, enums, a, st, value, s, out)
+        | Tstmt::TAssignField { target, field, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
+        | Tstmt::TAssignIndex { base, index, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
+        | Tstmt::TAssignDeref { target, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
         | _other => { out.push(*s); copy_dentries(a, st) }
     };
 }
 
-fn walk_apply_one(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+fn walk_apply_one(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
                   st: *const Vec<DEntry>, value: *const Texpr, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
-    let st1 = apply_expr(structs, enums, a, st, value);
+    let st1 = apply_expr(structs, enums, a, ar, st, value);
     let st2 = consume_rhs_var(structs, a, &st1, value);
     out.push(*s);
     return st2;
@@ -1226,7 +1226,7 @@ fn walk_apply_one(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a:
 fn walk_let(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
             st: *const Vec<DEntry>, name: str, value: *const Texpr, pos: Pos, s: *const Tstmt,
             out: *Vec<Tstmt>) -> Vec<DEntry> {
-    let st1 = apply_expr(structs, enums, a, st, value);
+    let st1 = apply_expr(structs, enums, a, ar, st, value);
     let st2 = consume_rhs_var(structs, a, &st1, value);
     // shadow-drop a still-Live tracked binding of the same name
     let es = st2.as_slice();
@@ -1270,7 +1270,7 @@ fn walk_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
         let pl = path.as_slice();
         let n = pl[0];
         if entry_index(st, n) >= 0 as int {
-            let st1 = apply_expr(structs, enums, a, st, value);
+            let st1 = apply_expr(structs, enums, a, ar, st, value);
             let st2 = consume_rhs_var(structs, a, &st1, value);
             let idx = entry_index(&st2, n);
             let es = st2.as_slice();
@@ -1310,7 +1310,7 @@ fn walk_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
             return st3;
         }
     }
-    return walk_apply_one(structs, enums, a, st, value, s, out);
+    return walk_apply_one(structs, enums, a, ar, st, value, s, out);
 }
 
 fn entry_index(st: *const Vec<DEntry>, n: str) -> int {
@@ -1331,7 +1331,7 @@ fn walk_return(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
                 names.push(n);
                 mark_consumed(a, st, &names)
             }
-            | _o => apply_expr(structs, enums, a, st, v)
+            | _o => apply_expr(structs, enums, a, ar, st, v)
         }
         | Option::None => copy_dentries(a, st)
     };
@@ -1406,7 +1406,7 @@ fn emit_ret_temp(a: Allocator, ar: *Arena, value: Option<*const Texpr>, pos: Pos
 fn walk_if(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
            st: *const Vec<DEntry>, cond: *const Texpr, then_body: *const Vec<Tstmt>,
            else_body: *const Vec<Tstmt>, out: *Vec<Tstmt>) -> Vec<DEntry> {
-    let st0 = apply_expr(structs, enums, a, st, cond);
+    let st0 = apply_expr(structs, enums, a, ar, st, cond);
     let mut then_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let st_then = walk_stmts(structs, enums, a, ar, gs, &st0, then_body, &then_out);
     let mut else_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
@@ -1433,7 +1433,7 @@ fn walk_while(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
               post: *const Vec<Tstmt>, _s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
     // Move.check guarantees loop-invariant tracked states; one symbolic pass
     // gives the exit state.  Bodies are walked into fresh buffers.
-    let st0 = apply_expr(structs, enums, a, st, cond);
+    let st0 = apply_expr(structs, enums, a, ar, st, cond);
     let mut body_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let st_body = walk_stmts(structs, enums, a, ar, gs, &st0, body, &body_out);
     let mut post_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
