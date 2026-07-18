@@ -428,12 +428,448 @@ fn check_reads(a: Allocator, ar: *Arena, mv: *const Mv, live: *const Vec<MoveBin
     return;
 }
 
+// Does the pointee still OWN memory?  `free(a, p)` releases only p's node, so a
+// payload that owns children would leak them.  Enum recursion is guarded by a
+// visited-path set (a self-referential enum would otherwise loop).
+fn path_in_list(v: *const Vec<Vec<str>>, p: *const Vec<str>) -> bool {
+    let sl = v.as_slice();
+    let mut i = 0 as u32;
+    while i < v.length() { if mpath_eq(&sl[i], p) { return true; } i = i + 1 as u32; }
+    return false;
+}
+
+fn enum_owns(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+             visited: *const Vec<Vec<str>>, p: *const Vec<str>) -> bool {
+    if path_in_list(visited, p) { return false; }
+    let el = enums.as_slice();
+    let mut i = 0 as u32;
+    while i < enums.length() {
+        if mpath_eq(&el[i].ename_path, p) {
+            let mut v2: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+            let vs = visited.as_slice();
+            let mut k = 0 as u32;
+            while k < visited.length() { v2.push(vs[k]); k = k + 1 as u32; }
+            let mut pc: Vec<str> = Vec::with_capacity(a, 8 as u32);
+            let ps = p.as_slice();
+            let mut q = 0 as u32;
+            while q < p.length() { pc.push(ps[q]); q = q + 1 as u32; }
+            v2.push(pc);
+            let vars = el[i].evariants.as_slice();
+            let mut j = 0 as u32;
+            while j < el[i].evariants.length() {
+                let fs = vars[j].vsfields.as_slice();
+                let mut f = 0 as u32;
+                while f < vars[j].vsfields.length() {
+                    if pointee_owns_go(structs, enums, a, &v2, fs[f].ty) { return true; }
+                    f = f + 1 as u32;
+                }
+                j = j + 1 as u32;
+            }
+            return false;
+        }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+fn pointee_owns_go(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                   visited: *const Vec<Vec<str>>, t: *const Typ) -> bool {
+    return match *t {
+        Typ::TOwnPtr(_i) => true
+        | Typ::TStruct(_p) => is_affine_typ(structs, t)
+        | Typ::TEnum(p) => enum_owns(structs, enums, a, visited, &p)
+        | Typ::TEnumApp { path, args } => enum_owns(structs, enums, a, visited, &path)
+        | _o => false
+    };
+}
+
+fn pointee_owns(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                t: *const Typ) -> bool {
+    let seen: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    return pointee_owns_go(structs, enums, a, &seen, t);
+}
+
+fn fail_repeat_affine(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos) {
+    raise_mv(ar, mv, pos, "cannot use a @move value in `[expr; N]` — the array-repeat lowering shallow-copies the same value into every slot, aliasing the heap-owning source N times (build each element explicitly or use a non-@move element type)");
+    return;
+}
+
+fn fail_loop_consume(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, n: str) {
+    let mut sb = StringBuilder::with_capacity(a, 160 as u32);
+    sb.push_str("'"); sb.push_str(mv_disp(mv, n));
+    sb.push_str("' is consumed inside a loop body — the next iteration would re-consume the (already-moved) binding");
+    raise_mv(ar, mv, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+fn loop_gate_one(a: Allocator, ar: *Arena, mv: *const Mv, was_live: bool, at: Pos, n: str) {
+    if was_live { fail_loop_consume(a, ar, mv, at, n); }
+    return;
+}
+
+// A binding that was Live before the loop and Consumed after it would be
+// re-consumed on the next iteration.
+fn loop_consume_gate(a: Allocator, ar: *Arena, mv: *const Mv,
+                     before: *const Vec<MoveBinding>, after: *const Vec<MoveBinding>) {
+    if !mv.mv_report { return; }
+    let sl = after.as_slice();
+    let mut i = 0 as u32;
+    while i < after.length() {
+        let was_live = match mb_state_of(before, sl[i].mb_name) { MoveState::Live => true | _o => false };
+        match sl[i].mb_state {
+            MoveState::Consumed(at) => { loop_gate_one(a, ar, mv, was_live, at, sl[i].mb_name); }
+            | _o2 => { }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// An owning slot of a pattern: bound to a name, or left unbound (a wildcard).
+struct OwnSlot { os_bound: bool, os_name: str }
+
+// The pattern helpers below pass a field type straight into the next call
+// instead of collecting types in a container: inserting a borrow into a
+// caller-owned Vec reads as an escaping local, while passing it as an argument
+// keeps the provenance (the same shape drop.exl uses to walk variant fields).
+
+// One borrow hop, then the enum's path — mirroring the reference's scrutinee
+// shapes (TEnum / TEnumApp, optionally behind TPtr / TConstPtr).
+fn slots_variant(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                 sty: *const Typ, variant: str, binds: *const Vec<TFieldPat>, out: *Vec<OwnSlot>) {
+    match *sty {
+        Typ::TEnum(p) => { slots_with_path(structs, enums, a, &p, variant, binds, out); }
+        | Typ::TEnumApp { path, args } => { slots_with_path(structs, enums, a, &path, variant, binds, out); }
+        | Typ::TPtr(i) => { slots_hop(structs, enums, a, i, variant, binds, out); }
+        | Typ::TConstPtr(i) => { slots_hop(structs, enums, a, i, variant, binds, out); }
+        | _o => { }
+    }
+    return;
+}
+fn slots_hop(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+             sty: *const Typ, variant: str, binds: *const Vec<TFieldPat>, out: *Vec<OwnSlot>) {
+    match *sty {
+        Typ::TEnum(p) => { slots_with_path(structs, enums, a, &p, variant, binds, out); }
+        | Typ::TEnumApp { path, args } => { slots_with_path(structs, enums, a, &path, variant, binds, out); }
+        | _o => { }
+    }
+    return;
+}
+fn slots_with_path(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                   path: *const Vec<str>, variant: str, binds: *const Vec<TFieldPat>, out: *Vec<OwnSlot>) {
+    let bs = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < binds.length() {
+        slot_for_bind(structs, enums, a, path, variant, bs[i].name, &bs[i].pat, out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn slot_for_bind(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                 path: *const Vec<str>, variant: str, bname: str, sub: *const Tpattern, out: *Vec<OwnSlot>) {
+    let el = enums.as_slice();
+    let mut i = 0 as u32;
+    while i < enums.length() {
+        if mpath_eq(&el[i].ename_path, path) {
+            let vs = el[i].evariants.as_slice();
+            let mut j = 0 as u32;
+            while j < el[i].evariants.length() {
+                if str::eq(vs[j].vsname, variant) {
+                    let fs = vs[j].vsfields.as_slice();
+                    let mut f = 0 as u32;
+                    while f < vs[j].vsfields.length() {
+                        if str::eq(fs[f].name, bname) {
+                            owning_slots_of_pat(structs, enums, a, fs[f].ty, sub, out);
+                            return;
+                        }
+                        f = f + 1 as u32;
+                    }
+                    return;
+                }
+                j = j + 1 as u32;
+            }
+            return;
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+fn binds_variant(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                 sty: *const Typ, variant: str, binds: *const Vec<TFieldPat>, out: *Vec<FieldTy>) {
+    match *sty {
+        Typ::TEnum(p) => { binds_with_path(structs, enums, a, &p, variant, binds, out); }
+        | Typ::TEnumApp { path, args } => { binds_with_path(structs, enums, a, &path, variant, binds, out); }
+        | Typ::TPtr(i) => { binds_hop(structs, enums, a, i, variant, binds, out); }
+        | Typ::TConstPtr(i) => { binds_hop(structs, enums, a, i, variant, binds, out); }
+        | _o => { }
+    }
+    return;
+}
+fn binds_hop(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+             sty: *const Typ, variant: str, binds: *const Vec<TFieldPat>, out: *Vec<FieldTy>) {
+    match *sty {
+        Typ::TEnum(p) => { binds_with_path(structs, enums, a, &p, variant, binds, out); }
+        | Typ::TEnumApp { path, args } => { binds_with_path(structs, enums, a, &path, variant, binds, out); }
+        | _o => { }
+    }
+    return;
+}
+fn binds_with_path(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                   path: *const Vec<str>, variant: str, binds: *const Vec<TFieldPat>, out: *Vec<FieldTy>) {
+    let bs = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < binds.length() {
+        bind_for_field(structs, enums, a, path, variant, bs[i].name, &bs[i].pat, out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn bind_for_field(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                  path: *const Vec<str>, variant: str, bname: str, sub: *const Tpattern, out: *Vec<FieldTy>) {
+    let el = enums.as_slice();
+    let mut i = 0 as u32;
+    while i < enums.length() {
+        if mpath_eq(&el[i].ename_path, path) {
+            let vs = el[i].evariants.as_slice();
+            let mut j = 0 as u32;
+            while j < el[i].evariants.length() {
+                if str::eq(vs[j].vsname, variant) {
+                    let fs = vs[j].vsfields.as_slice();
+                    let mut f = 0 as u32;
+                    while f < vs[j].vsfields.length() {
+                        if str::eq(fs[f].name, bname) {
+                            affine_binds_of_pat(structs, enums, a, fs[f].ty, sub, out);
+                            return;
+                        }
+                        f = f + 1 as u32;
+                    }
+                    return;
+                }
+                j = j + 1 as u32;
+            }
+            return;
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// Does a slot of this type own storage the arm must account for?
+fn slot_owning(structs: *const Vec<StructSig>, t: *const Typ) -> bool {
+    return match *t {
+        Typ::TOwnPtr(_i) => true
+        | Typ::TStruct(_p) => is_affine_typ(structs, t)
+        | _o => false
+    };
+}
+
+fn mark_root_if(a: Allocator, live: *const Vec<MoveBinding>, scrutinee: *const Texpr,
+                binds: *const Vec<FieldTy>, after: *const Vec<MoveBinding>) -> Vec<MoveBinding> {
+    let bs = binds.as_slice();
+    let mut any = false;
+    let mut i = 0 as u32;
+    while i < binds.length() {
+        match mb_state_of(after, bs[i].name) {
+            MoveState::Consumed(_p) => { any = true; }
+            | _o => { }
+        }
+        i = i + 1 as u32;
+    }
+    if any { return mark_root(a, live, scrutinee); }
+    return copy_live(a, live);
+}
+
+fn seed_arm(a: Allocator, base: *const Vec<MoveBinding>, binds: *const Vec<FieldTy>) -> Vec<MoveBinding> {
+    let mut out = copy_live(a, base);
+    let bs = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < binds.length() {
+        out.push(MoveBinding { mb_name: bs[i].name, mb_state: MoveState::Live });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+fn drop_binds(a: Allocator, live: *const Vec<MoveBinding>, binds: *const Vec<FieldTy>) -> Vec<MoveBinding> {
+    let mut out: Vec<MoveBinding> = Vec::with_capacity(a, 8 as u32);
+    let sl = live.as_slice();
+    let bs = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < live.length() {
+        let mut is_bind = false;
+        let mut j = 0 as u32;
+        while j < binds.length() { if str::eq(bs[j].name, sl[i].mb_name) { is_bind = true; } j = j + 1 as u32; }
+        if !is_bind { out.push(sl[i]); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
+fn walk_guard(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+              mv: *const Mv, live: *const Vec<MoveBinding>, g: Option<*const Texpr>) {
+    match g {
+        Option::Some(ge) => { let _x = walk_expr(structs, enums, a, ar, mv, live, ge); }
+        | Option::None => { }
+    }
+    return;
+}
+
+fn fail_arm_unbound(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos) {
+    raise_mv(ar, mv, pos, "this arm moves out part of the matched payload but leaves an owned field unbound — after the arm the matched value keeps only its shell, so that field would silently leak; bind and consume every owned payload of the variant");
+    return;
+}
+
+fn fail_arm_sibling(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, bn: str) {
+    let d = mv_disp(mv, bn);
+    let mut sb = StringBuilder::with_capacity(a, 256 as u32);
+    sb.push_str("own payload '"); sb.push_str(d);
+    sb.push_str("' stays alive in an arm that moves out its sibling — after the arm the matched value keeps only its shell, so '");
+    sb.push_str(d); sb.push_str("' would silently leak; free or move it in this arm too");
+    raise_mv(ar, mv, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+// Partial move is all-or-nothing per arm: once one owning payload is moved out
+// the root is a shell, so a sibling left Live (or wildcarded) has no owner left.
+fn arm_leak_gates(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                  mv: *const Mv, scrutinee: *const Texpr, pat: *const Tpattern,
+                  binds: *const Vec<FieldTy>, after: *const Vec<MoveBinding>, borrowed: bool) {
+    if !mv.mv_report { return; }
+    if borrowed { return; }
+    let bs = binds.as_slice();
+    let mut any = false;
+    let mut i = 0 as u32;
+    while i < binds.length() {
+        match mb_state_of(after, bs[i].name) {
+            MoveState::Consumed(_p) => { any = true; }
+            | _o => { }
+        }
+        i = i + 1 as u32;
+    }
+    if !any { return; }
+    let mut slots: Vec<OwnSlot> = Vec::with_capacity(a, 8 as u32);
+    owning_slots_of_pat(structs, enums, a, scrutinee.ty, pat, &slots);
+    let ss = slots.as_slice();
+    let mut k = 0 as u32;
+    while k < slots.length() {
+        arm_slot_gate(a, ar, mv, scrutinee.pos, &ss[k], after);
+        k = k + 1 as u32;
+    }
+    return;
+}
+
+fn arm_slot_gate(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, slot: *const OwnSlot,
+                 after: *const Vec<MoveBinding>) {
+    if !slot.os_bound { fail_arm_unbound(a, ar, mv, pos); return; }
+    match mb_state_of(after, slot.os_name) {
+        MoveState::Live => { fail_arm_sibling(a, ar, mv, pos, slot.os_name); }
+        | _o => { }
+    }
+    return;
+}
+
+fn push_slot(structs: *const Vec<StructSig>, sty: *const Typ, bound: bool, n: str, out: *Vec<OwnSlot>) {
+    if slot_owning(structs, sty) { out.push(OwnSlot { os_bound: bound, os_name: n }); }
+    return;
+}
+fn push_bind(structs: *const Vec<StructSig>, sty: *const Typ, n: str, out: *Vec<FieldTy>) {
+    if is_affine_typ(structs, sty) { out.push(FieldTy { name: n, ty: sty }); }
+    return;
+}
+
+// The owning slots a pattern exposes — `os_bound=false` marks one left unbound.
+fn owning_slots_of_pat(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                       sty: *const Typ, p: *const Tpattern, out: *Vec<OwnSlot>) {
+    match *p {
+        Tpattern::TPWildcard => { push_slot(structs, sty, false, "", out); }
+        | Tpattern::TPVar(n) => { push_slot(structs, sty, true, n, out); }
+        | Tpattern::TPVariant { variant, tag, binds } => { slots_variant(structs, enums, a, sty, variant, &binds, out); }
+        | _o => { }
+    }
+    return;
+}
+// Affine bindings a pattern introduces, with their types.
+fn affine_binds_of_pat(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator,
+                       sty: *const Typ, p: *const Tpattern, out: *Vec<FieldTy>) {
+    match *p {
+        Tpattern::TPVar(n) => { push_bind(structs, sty, n, out); }
+        | Tpattern::TPVariant { variant, tag, binds } => { binds_variant(structs, enums, a, sty, variant, &binds, out); }
+        | _o => { }
+    }
+    return;
+}
+// A scrutinee reached through a borrow hop: the match reads through a pointer,
+// so the arm binds views, not owners, and the leak gates do not apply.
+fn borrowed_hop(te: *const Texpr) -> bool {
+    return match te.e {
+        TexprNode::TDeref(i) => borrowed_hop_ty(i)
+        | TexprNode::TFieldAccess { target, field } => borrowed_hop_ty(target)
+        | TexprNode::TIndex { base, index } => borrowed_hop_ty(base)
+        | _o => false
+    };
+}
+
+// The owning binding a scrutinee is rooted at, through deref / field / index.
+fn scrutinee_root(te: *const Texpr, out: *Vec<str>) {
+    match te.e {
+        TexprNode::TVar(n) => { out.push(n); }
+        | TexprNode::TDeref(i) => { scrutinee_root(i, out); }
+        | TexprNode::TFieldAccess { target, field } => { scrutinee_root(target, out); }
+        | TexprNode::TIndex { base, index } => { scrutinee_root(base, out); }
+        | _o => { }
+    }
+    return;
+}
+
+// After an arm consumed an owning payload the ROOT changes state: a value
+// scrutinee (`match h`) is fully Consumed, a deref-rooted owned tree
+// (`match *e`) keeps releasable storage — PartialMoved, the free_tree idiom.
+fn mark_root(a: Allocator, live: *const Vec<MoveBinding>, scrutinee: *const Texpr) -> Vec<MoveBinding> {
+    let mut is_var = false;
+    let mut vn: str = "";
+    match scrutinee.e {
+        TexprNode::TVar(sn) => { is_var = true; vn = sn; }
+        | _o => { }
+    }
+    if is_var { return set_state(a, live, vn, MoveState::Consumed(scrutinee.pos)); }
+    let mut root: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    scrutinee_root(scrutinee, &root);
+    if root.length() == 0 as u32 { return copy_live(a, live); }
+    return set_state(a, live, root.as_slice()[0 as u32], MoveState::PartialMoved(scrutinee.pos));
+}
+fn borrowed_hop_ty(inner: *const Texpr) -> bool {
+    return match *inner.ty {
+        Typ::TPtr(_i) => true
+        | Typ::TConstPtr(_i) => true
+        | _o => borrowed_hop(inner)
+    };
+}
+
+fn fail_move_out_of_field(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, ty: *const Typ) {
+    let mut sb = StringBuilder::with_capacity(a, 192 as u32);
+    sb.push_str("cannot move "); sb.push_str(typ_name(a, ar, ty));
+    sb.push_str(" out of a field — the parent struct still owns (and will drop) this storage; move the whole struct, or borrow the field instead");
+    raise_mv(ar, mv, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
 fn consume_var(structs: *const Vec<StructSig>, a: Allocator, ar: *Arena, mv: *const Mv,
                live: *const Vec<MoveBinding>, te: *const Texpr) -> Vec<MoveBinding> {
     return match te.e {
         TexprNode::TVar(n) => {
             if is_affine_typ(structs, te.ty) { set_consumed(a, live, n, te.pos) }
             else { copy_live(a, live) }
+        }
+        // Moving an affine value out of a FIELD would make a second owner of
+        // storage the parent still drops.  Prelude bodies (HashMap slot
+        // shuffles, String::build's buf transfer) do this deliberately as part
+        // of hand-written memory management, so the reject is a USER-code gate.
+        | TexprNode::TFieldAccess { target, field } => {
+            if is_affine_typ(structs, te.ty) && !str::eq(te.pos.file, "<prelude>") {
+                fail_move_out_of_field(a, ar, mv, te.pos, te.ty);
+            }
+            copy_live(a, live)
         }
         | _other => copy_live(a, live)
     };
@@ -455,12 +891,75 @@ fn fold_walk(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
 
 // `free(a, x)` — walk the allocator arg, then consume x if a bare affine
 // TVar (consume_var also flips PartialMoved → Consumed, the free_tree case).
+fn fail_double_free(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, n: str, at: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    sb.push_str("double free: '"); sb.push_str(mv_disp(mv, n));
+    sb.push_str("' was already consumed at "); sb.push_str(at.file);
+    sb.push_str(":"); sb.push_int(at.line);
+    sb.push_str(":"); sb.push_int(at.col);
+    raise_mv(ar, mv, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+fn fail_free_leaks(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, n: str, inner: *const Typ) {
+    let mut sb = StringBuilder::with_capacity(a, 256 as u32);
+    sb.push_str("free("); sb.push_str(mv_disp(mv, n));
+    sb.push_str(") releases only this node's storage, but its payload may still own memory (");
+    sb.push_str(typ_name(a, ar, inner));
+    sb.push_str(") — its children would silently leak; move them out first (match and consume every owned payload), or let auto-drop release the whole tree");
+    raise_mv(ar, mv, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+// `free(a, x)` releases x's STORAGE — legal on a Live owner and on a
+// PartialMoved root (children already moved out).  The ptr slot is consumed
+// directly, bypassing the read-check that would reject PartialMoved.
 fn walk_free(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
              live: *const Vec<MoveBinding>, args: *const Vec<*const Texpr>)
         -> Vec<MoveBinding> {
     let al = args.as_slice();
     let acc = walk_expr(structs, enums, a, ar, mv, live, al[0]);
+    free_gates(structs, enums, a, ar, mv, &acc, al[1]);
     return consume_var(structs, a, ar, mv, &acc, al[1]);
+}
+
+// The two free gates, applied only when the ptr slot is a bare binding — the
+// shape the reference's arm matches.  In silent mode raise_mv drops them, which
+// is exactly the reference's `not !replaying` guard: drop replays this walk with
+// every name seeded Live, so a state-dependent gate would false-positive there.
+fn free_gates(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+              mv: *const Mv, live: *const Vec<MoveBinding>, ptr: *const Texpr) {
+    if !mv.mv_report { return; }
+    match ptr.e {
+        TexprNode::TVar(n) => { free_gates_var(structs, enums, a, ar, mv, live, ptr, n); }
+        | _o => { }
+    }
+    return;
+}
+
+fn free_gates_var(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                  mv: *const Mv, live: *const Vec<MoveBinding>, ptr: *const Texpr, n: str) {
+    let st = mb_state_of(live, n);
+    match st {
+        MoveState::Consumed(at) => { fail_double_free(a, ar, mv, ptr.pos, n, at); }
+        | _o => { }
+    }
+    // A payload that still owns children would leak: `free` frees one node.
+    // Legal once the payload was moved out (PartialMoved), or if it owns nothing.
+    let live_or_absent = match st { MoveState::Live => true | _o2 => false };
+    if !live_or_absent { return; }
+    if str::eq(ptr.pos.file, "<prelude>") { return; }
+    match *ptr.ty {
+        Typ::TOwnPtr(inner) => { leak_gate(structs, enums, a, ar, mv, ptr, n, inner); }
+        | _o => { }
+    }
+    return;
+}
+
+fn leak_gate(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+             mv: *const Mv, ptr: *const Texpr, n: str, inner: *const Typ) {
+    if pointee_owns(structs, enums, a, inner) { fail_free_leaks(a, ar, mv, ptr.pos, n, inner); }
+    return;
 }
 
 // Walk each arg then consume its binding if a bare affine TVar.
@@ -544,7 +1043,14 @@ fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             walk_field_values(structs, enums, a, ar, mv, live, &args)
         | TexprNode::TTupleLit(es) => consume_args(structs, enums, a, ar, mv, live, &es)
         | TexprNode::TArrayLit(es) => consume_args(structs, enums, a, ar, mv, live, &es)
-        | TexprNode::TArrayRepeat { value, count } => walk_expr(structs, enums, a, ar, mv, live, value)
+        | TexprNode::TArrayRepeat { value, count } => {
+            let w = walk_expr(structs, enums, a, ar, mv, live, value);
+            // `[v; N]` lowers to a fill loop that shallow-copies the evaluated
+            // value into every slot — for an affine type that aliases the same
+            // heap-owning source N times.  Refuse before the copy ships.
+            if is_affine_typ(structs, value.ty) { fail_repeat_affine(a, ar, mv, value.pos); }
+            w
+        }
         | TexprNode::TBlock { stmts, trailing } => {
             // An expression-level block has no enclosing return type to consume
             // against — the reference passes `~ret_ty:None` here (move.ml:449).
@@ -557,15 +1063,25 @@ fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
         }
         | TexprNode::TMatch { scrutinee, ename_path, arms } => {
             let base = walk_expr(structs, enums, a, ar, mv, live, scrutinee);
+            let borrowed = borrowed_hop(scrutinee);
             let mut have = false;
             let mut acc = copy_live(a, &base);
             let al = arms.as_slice();
             let mut i = 0 as u32;
             while i < arms.length() {
-                let after_arm = walk_expr(structs, enums, a, ar, mv, &base, al[i].tbody);
+                // Seed the arm's own affine bindings Live, walk guard + body,
+                // then drop those bindings from the result — they are arm-local.
+                let mut binds: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+                if !borrowed { affine_binds_of_pat(structs, enums, a, scrutinee.ty, &al[i].tpat, &binds); }
+                let seeded = seed_arm(a, &base, &binds);
+                walk_guard(structs, enums, a, ar, mv, &seeded, al[i].tguard);
+                let after_arm = walk_expr(structs, enums, a, ar, mv, &seeded, al[i].tbody);
                 if !(al[i].tdiverges || expr_diverges(al[i].tbody)) {
-                    if have { acc = merge_states(a, &acc, &after_arm); }
-                    else { acc = copy_live(a, &after_arm); have = true; }
+                    arm_leak_gates(structs, enums, a, ar, mv, scrutinee, &al[i].tpat, &binds, &after_arm, borrowed);
+                    let cleaned0 = drop_binds(a, &after_arm, &binds);
+                    let cleaned = mark_root_if(a, &cleaned0, scrutinee, &binds, &after_arm);
+                    if have { acc = merge_states(a, &acc, &cleaned); }
+                    else { acc = copy_live(a, &cleaned); have = true; }
                 }
                 i = i + 1 as u32;
             }
@@ -684,7 +1200,16 @@ fn walk_stmt_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
                 if ed { copy_live(a, &s_then) } else { merge_states(a, &s_then, &s_else) }
             }
         }
-        | Tstmt::TWhile { cond, body, post } => walk_expr(structs, enums, a, ar, mv, live, cond)
+        | Tstmt::TWhile { cond, body, post } => {
+            let lc = walk_expr(structs, enums, a, ar, mv, live, cond);
+            let ab = walk_stmts_e(structs, enums, a, ar, mv, ret_ty, &lc, &body);
+            let after = walk_stmts_e(structs, enums, a, ar, mv, ret_ty, &ab, &post);
+            // If every fall-through path diverges (break / return) there is no
+            // re-iteration, so a consume is safe.  Otherwise a Live -> Consumed
+            // transition would re-consume the moved binding next time round.
+            if !stmts_diverge(&body) { loop_consume_gate(a, ar, mv, &lc, &after); }
+            after
+        }
         | _other => copy_live(a, live)
     };
 }

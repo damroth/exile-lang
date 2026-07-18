@@ -575,6 +575,21 @@ selfhost-exilc-driver: $(EXILC_BIN)
 	  echo "selfhost-exilc-driver: clean (exilc == oracle on tokens/ast/typed-ir/after-drop/c; host build+run parity)"; \
 	else exit 1; fi
 
+# ===== Move pass — text AND exit status =====
+#
+# The move contract is nine diagnostics that must match the reference byte for
+# byte, and a rejected program must also EXIT non-zero: tc-errors compares only
+# the message, which is how a compiler that printed an error and exited 0 stayed
+# green for months.  This gate compares both from birth.
+#
+# tests/move/ pins one fixture per diagnostic (text + status).  examples/ is the
+# FOREIGN set — the pass was derived from tests/move, so a false positive shows
+# up there; those are compared on STATUS only, because the reference also emits
+# Lint warnings the port does not have yet (Lint is the last unported pass), so
+# its first stderr line is not always the error.
+selfhost-port-move: $(EXILC_BIN)
+	@fail=0; n=0; 	rm -f $(C_OUT)/mv_o.c $(C_OUT)/mv_p.c $(C_OUT)/mv_o.err $(C_OUT)/mv_p.err; 	ls tests/move/*.exl >/dev/null 2>&1 || { echo "selfhost-port-move: MISSING tests/move fixtures"; exit 1; }; 	for f in tests/move/*.exl; do 	  n=$$((n+1)); 	  rm -f $(C_OUT)/mv_o.c $(C_OUT)/mv_p.c $(C_OUT)/mv_o.err $(C_OUT)/mv_p.err; 	  $(EXILE) --target c --c-out $(C_OUT)/mv_o.c $$f >/dev/null 2>$(C_OUT)/mv_o.err; ro=$$?; 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/mv_p.c $$f >/dev/null 2>$(C_OUT)/mv_p.err; rp=$$?; 	  if [ $$ro -eq 0 ]; then 	    echo "selfhost-port-move: reference ACCEPTED $$f — a move fixture must be rejected"; fail=1; 	  elif [ ! -s $(C_OUT)/mv_o.err ]; then 	    echo "selfhost-port-move: EMPTY reference diagnostic for $$f (mutual-failure floor)"; fail=1; 	  elif [ $$ro -ne $$rp ]; then 	    echo "selfhost-port-move: STATUS $$f (oracle=$$ro exilc=$$rp)"; fail=1; 	  elif ! diff -q <(head -1 $(C_OUT)/mv_o.err) <(head -1 $(C_OUT)/mv_p.err) >/dev/null; then 	    echo "selfhost-port-move: TEXT $$f"; 	    echo "  oracle: `head -1 $(C_OUT)/mv_o.err`"; 	    echo "  port:   `head -1 $(C_OUT)/mv_p.err`"; fail=1; 	  fi; 	done; 	for f in $(patsubst %,examples/%.exl,$(EXAMPLE_NAMES)); do 	  [ -f $$f ] || { echo "selfhost-port-move: MISSING sample $$f"; fail=1; continue; }; 	  n=$$((n+1)); 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/mv_p.c $$f >/dev/null 2>&1 	    || { echo "selfhost-port-move: FALSE POSITIVE — exilc rejects valid $$f"; fail=1; }; 	done; 	if [ $$fail -eq 0 ]; then echo "selfhost-port-move: clean ($$n checked; 9 diagnostics text+status, examples status-only)"; 	else exit 1; fi
+
 # ===== Standalone module roots =====
 #
 # The CLI makes ANY file a compilation root.  Prelude/instance registration used
@@ -598,7 +613,7 @@ selfhost-port-module-roots: host-selfhost-tc
 selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
-                 selfhost-port-drop-ir selfhost-port-escape selfhost-port-tc-errors \
+                 selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-no-fabrication
 	@echo "selfhost-verify: all port gates green"
 

@@ -23,6 +23,7 @@ use error::*;
 use parser::*;
 use loader::*;
 use typecheck::*;
+use move::*;
 use escape::*;
 use drop::*;
 use codegen::*;
@@ -215,8 +216,8 @@ fn run_emit_ir_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
         Result::Ok(tp) => {
             let mut tprog = tp;
             // `--after-drop` mirrors the reference's pipeline prefix:
-            // Move.check; Escape.check; Drop.insert.  Move is not ported yet.
-            if ca.ca_after_drop { check_escape(a, ar, &tprog); drop_insert(a, ar, &tprog); }
+            // Move.check; Escape.check; Drop.insert.
+            if ca.ca_after_drop { check_move(a, ar, &tprog); check_escape(a, ar, &tprog); drop_insert(a, ar, &tprog); }
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             dump_typed_ir(&tprog, ca.ca_input, ca.ca_user_only, &out);
             write_dump(ca.ca_output, &out);
@@ -294,7 +295,8 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
         Result::Ok(tp) => {
             let mut tprog = tp;
             // The reference's order: Move.check -> Escape.check -> Drop.insert
-            // -> Lint.lint.  Move and Lint are not ported yet (Faza D).
+            // -> Lint.lint.  Lint is not ported yet (Faza D).
+            check_move(a, ar, &tprog);
             check_escape(a, ar, &tprog);
             drop_insert(a, ar, &tprog);
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
@@ -345,6 +347,16 @@ fn build_host(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
     // sys_exit terminates, so report_built runs only on success.
     if rc != 0 as c_int { err_line("command failed: cc"); sys::sys_exit(1 as c_int); }
     report_built(a, out);
+    return;
+}
+
+// move::check returns the FIRST diagnostic; report_error exits 1, so a rejected
+// program never reaches escape, drop, or codegen.
+fn check_move(a: Allocator, ar: *Arena, tprog: *Tprogram) {
+    match move::check(a, ar, tprog) {
+        Option::Some(e) => { report_error(a, e); }
+        | Option::None => { }
+    }
     return;
 }
 
