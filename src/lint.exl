@@ -1,0 +1,444 @@
+// Self-host port of lib/lint.ml — the tier-aware diagnostics pass.
+//
+// Runs after Drop, before codegen.  Unlike move / escape this pass produces
+// WARNINGS: every one is emitted (not first-wins), the ORDER is part of the
+// contract, and the exit status stays 0 — warnings never block a compile.
+//
+// The reference concatenates six categories in a fixed order:
+//   tier @ unused_let @ unused_param @ unused_fn @ must_use @ with_capacity
+// The tier slot is provably EMPTY here: `Tier.exceeds` is `item_tier > profile`
+// and the highest tier is Full, so nothing exceeds a Full profile — and exilc
+// has no `--profile` flag, so it always compiles at Full.  The slot is kept in
+// the concatenation (and named) so that adding `--profile` later has an obvious
+// place to fill rather than a silent gap.
+
+use pos::*;
+use ast::*;
+use ir::*;
+use typecheck::*;
+use escape::*;
+use codegen::*;
+
+pub struct LWarn {
+    lw_pos: Pos,
+    lw_msg: str,
+}
+
+// The name the user wrote, for a binding the compiler renamed.  Per-pass copy,
+// as move and escape each keep one (the reference gives each module its own
+// `disp` over a shared `Ir.src_name`).
+fn lint_disp(srcnames: *const Vec<StrPair>, n: str) -> str {
+    let sl = srcnames.as_slice();
+    let mut i = 0 as u32;
+    while i < srcnames.length() {
+        if str::eq(sl[i].a, n) { return sl[i].b; }
+        i = i + 1 as u32;
+    }
+    return n;
+}
+
+fn is_silenced_name(n: str) -> bool {
+    if str::length(n) == 0 as u32 { return false; }
+    return str::as_bytes(n)[0 as u32] == 95 as u8;
+}
+
+fn is_prelude_fn(tf: *const Tfunc) -> bool {
+    return str::eq(tf.tf_func.pos.file, "<prelude>");
+}
+
+// ===== Read collection =====
+//
+// Every name that could refer to a local binding (TVar), a globally visible fn
+// (TFnRef, TCall.mangled), or a let-bound fn pointer (also TCall.mangled).
+// Writes are not collected.  One pass serves the unused-let, unused-param and
+// unused-fn checks.
+
+fn reads_in_expr(a: Allocator, te: *const Texpr, out: *Vec<str>) {
+    match te.e {
+        TexprNode::TVar(n) => { out.push(n); }
+        | TexprNode::TFnRef(n) => { out.push(n); }
+        | TexprNode::TCall { mangled, args } => { out.push(mangled); }
+        | _o => { }
+    }
+    // A multi-statement match arm wraps its stmts in a TBlock, which the child
+    // walker does not surface — dive in explicitly or reads nested there are
+    // invisible (the reference makes the same note).
+    match te.e {
+        TexprNode::TBlock { stmts, trailing } => {
+            reads_in_stmts(a, &stmts, out);
+            match trailing {
+                Option::Some(t) => { reads_in_expr(a, t, out); }
+                | Option::None => { }
+            }
+        }
+        | _o2 => {
+            let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+            esc_children(a, te, &kids);
+            let ks = kids.as_slice();
+            let mut i = 0 as u32;
+            while i < kids.length() { reads_in_expr(a, ks[i], out); i = i + 1 as u32; }
+        }
+    }
+    return;
+}
+
+fn reads_in_stmts(a: Allocator, stmts: *const Vec<Tstmt>, out: *Vec<str>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        let mut es: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+        stmt_own_exprs(&sl[i], &es);
+        let esl = es.as_slice();
+        let mut j = 0 as u32;
+        while j < es.length() { reads_in_expr(a, esl[j], out); j = j + 1 as u32; }
+        reads_substmts(a, &sl[i], out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// Recurse into the statement lists nested inside a statement.  These are passed
+// straight to the walker rather than collected: pushing a `Vec<Tstmt>` VALUE
+// into a container copies the vector struct, giving the same buffer a second
+// owner — which is a double free at scope exit (observed as a crash on any
+// input large enough to have branches).
+fn reads_substmts(a: Allocator, s: *const Tstmt, out: *Vec<str>) {
+    match *s {
+        Tstmt::TIf { cond, then_body, else_body } => {
+            reads_in_stmts(a, &then_body, out); reads_in_stmts(a, &else_body, out);
+        }
+        | Tstmt::TWhile { cond, body, post } => {
+            reads_in_stmts(a, &body, out); reads_in_stmts(a, &post, out);
+        }
+        | Tstmt::TDefer { body, pos } => { reads_in_stmts(a, &body, out); }
+        | _o => { }
+    }
+    return;
+}
+fn lets_substmts(a: Allocator, s: *const Tstmt, out: *Vec<NamePos>) {
+    match *s {
+        Tstmt::TIf { cond, then_body, else_body } => {
+            lets_in_stmts(a, &then_body, out); lets_in_stmts(a, &else_body, out);
+        }
+        | Tstmt::TWhile { cond, body, post } => {
+            lets_in_stmts(a, &body, out); lets_in_stmts(a, &post, out);
+        }
+        | Tstmt::TDefer { body, pos } => { lets_in_stmts(a, &body, out); }
+        | _o => { }
+    }
+    return;
+}
+fn wcap_substmts(a: Allocator, ar: *Arena, s: *const Tstmt, out: *Vec<LWarn>) {
+    match *s {
+        Tstmt::TIf { cond, then_body, else_body } => {
+            with_cap_in_stmts(a, ar, &then_body, out); with_cap_in_stmts(a, ar, &else_body, out);
+        }
+        | Tstmt::TWhile { cond, body, post } => {
+            with_cap_in_stmts(a, ar, &body, out); with_cap_in_stmts(a, ar, &post, out);
+        }
+        | Tstmt::TDefer { body, pos } => { with_cap_in_stmts(a, ar, &body, out); }
+        | _o => { }
+    }
+    return;
+}
+
+fn name_in(v: *const Vec<str>, n: str) -> bool {
+    let sl = v.as_slice();
+    let mut i = 0 as u32;
+    while i < v.length() { if str::eq(sl[i], n) { return true; } i = i + 1 as u32; }
+    return false;
+}
+
+// ===== unused let =====
+
+struct NamePos { np_name: str, np_pos: Pos }
+
+fn lets_in_stmts(a: Allocator, stmts: *const Vec<Tstmt>, out: *Vec<NamePos>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        lets_in_stmt(a, &sl[i], out);
+        lets_substmts(a, &sl[i], out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn lets_in_stmt(a: Allocator, s: *const Tstmt, out: *Vec<NamePos>) {
+    match *s {
+        Tstmt::TLet { name, value, decl_ty, pos } => { push_let(name, pos, out); }
+        | Tstmt::TLetTuple { names, value, pos } => {
+            let ns = names.as_slice();
+            let mut i = 0 as u32;
+            while i < names.length() { push_let(ns[i], pos, out); i = i + 1 as u32; }
+        }
+        | _o => { }
+    }
+    return;
+}
+fn push_let(name: str, pos: Pos, out: *Vec<NamePos>) {
+    if !is_silenced_name(name) { out.push(NamePos { np_name: name, np_pos: pos }); }
+    return;
+}
+
+fn unused_lets_for(a: Allocator, ar: *Arena, tf: *const Tfunc, out: *Vec<LWarn>) {
+    let mut lets: Vec<NamePos> = Vec::with_capacity(a, 8 as u32);
+    lets_in_stmts(a, &tf.tf_body, &lets);
+    if lets.length() == 0 as u32 { return; }
+    let mut reads: Vec<str> = Vec::with_capacity(a, 32 as u32);
+    reads_in_stmts(a, &tf.tf_body, &reads);
+    let ls = lets.as_slice();
+    let mut i = 0 as u32;
+    while i < lets.length() {
+        if !name_in(&reads, ls[i].np_name) {
+            // Pass the position as an ARGUMENT rather than reading it through
+            // the local slice inside the push: inserting a value read that way
+            // into a caller-owned container reads as an escaping borrow.
+            emit_unused_let(a, ar, tf, ls[i].np_name, ls[i].np_pos, out);
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn emit_unused_let(a: Allocator, ar: *Arena, tf: *const Tfunc, name: str, pos: Pos, out: *Vec<LWarn>) {
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("unused variable '");
+    sb.push_str(lint_disp(&tf.tf_srcnames, name));
+    sb.push_str("' (prefix name with '_' to silence)");
+    out.push(LWarn { lw_pos: pos, lw_msg: str::from_slice(ar, sb.as_slice()) });
+    return;
+}
+
+// ===== unused parameter =====
+//
+// `self` is exempt: a method may keep the receiver for shape consistency even
+// when a body does not touch it.  The reference renders the RAW param name here
+// (no srcnames lookup) — mirrored.
+
+fn unused_params_for(a: Allocator, ar: *Arena, tf: *const Tfunc, out: *Vec<LWarn>) {
+    if tf.tf_func.params.length() == 0 as u32 { return; }
+    let mut reads: Vec<str> = Vec::with_capacity(a, 32 as u32);
+    reads_in_stmts(a, &tf.tf_body, &reads);
+    let ps = tf.tf_func.params.as_slice();
+    let mut i = 0 as u32;
+    while i < tf.tf_func.params.length() {
+        let pn = ps[i].pname;
+        let skip = str::eq(pn, "self") || is_silenced_name(pn) || name_in(&reads, pn);
+        if !skip {
+            let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+            sb.push_str("unused parameter '"); sb.push_str(pn);
+            sb.push_str("' (prefix name with '_' to silence)");
+            out.push(LWarn { lw_pos: tf.tf_func.pos, lw_msg: str::from_slice(ar, sb.as_slice()) });
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// ===== with_capacity hint =====
+//
+// The prelude clamps a growable collection to cap = max(hint, 8), so a literal
+// hint below 8 only hides intent.  `4 as u32` lowers to a cast around an int
+// literal; peel casts and look for the literal.  Computed hints flow through.
+
+fn is_with_capacity_call(mangled: str) -> bool {
+    return str_contains_sub(mangled, "__with_capacity");
+}
+fn str_contains_sub(s: str, sub: str) -> bool {
+    let n = str::length(s);
+    let m = str::length(sub);
+    if m > n { return false; }
+    let sb = str::as_bytes(s);
+    let ub = str::as_bytes(sub);
+    let mut i = 0 as u32;
+    while i + m <= n {
+        let mut j = 0 as u32;
+        let mut ok = true;
+        while j < m { if sb[i + j] != ub[j] { ok = false; } j = j + 1 as u32; }
+        if ok { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+fn literal_hint(te: *const Texpr, out: *Vec<int>) {
+    match te.e {
+        TexprNode::TIntLit(n) => { out.push(n); }
+        | TexprNode::TCast(sub, ann) => { literal_hint(sub, out); }
+        | _o => { }
+    }
+    return;
+}
+
+fn with_cap_in_expr(a: Allocator, ar: *Arena, te: *const Texpr, out: *Vec<LWarn>) {
+    match te.e {
+        TexprNode::TCall { mangled, args } => { with_cap_check(a, ar, te, mangled, &args, out); }
+        | _o => { }
+    }
+    let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    esc_children(a, te, &kids);
+    let ks = kids.as_slice();
+    let mut i = 0 as u32;
+    while i < kids.length() { with_cap_in_expr(a, ar, ks[i], out); i = i + 1 as u32; }
+    return;
+}
+fn with_cap_check(a: Allocator, ar: *Arena, te: *const Texpr, mangled: str,
+                  args: *const Vec<*const Texpr>, out: *Vec<LWarn>) {
+    if !is_with_capacity_call(mangled) { return; }
+    if args.length() < 2 as u32 { return; }
+    let mut hint: Vec<int> = Vec::with_capacity(a, 2 as u32);
+    literal_hint(args.as_slice()[1 as u32], &hint);
+    if hint.length() == 0 as u32 { return; }
+    let n = hint.as_slice()[0 as u32];
+    if n >= 8 as int { return; }
+    let mut sb = StringBuilder::with_capacity(a, 256 as u32);
+    sb.push_str("'"); sb.push_str(mangled);
+    sb.push_str("' called with hint "); sb.push_int(n);
+    sb.push_str("; the prelude clamps growable collections to a minimum of 8, so any hint < 8 only hides intent (use 8 if you want the default, or a realistic estimate to avoid the first one or two `grow` calls)");
+    out.push(LWarn { lw_pos: te.pos, lw_msg: str::from_slice(ar, sb.as_slice()) });
+    return;
+}
+
+fn with_cap_in_stmts(a: Allocator, ar: *Arena, stmts: *const Vec<Tstmt>, out: *Vec<LWarn>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        let mut es: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+        stmt_own_exprs(&sl[i], &es);
+        let esl = es.as_slice();
+        let mut j = 0 as u32;
+        while j < es.length() { with_cap_in_expr(a, ar, esl[j], out); j = j + 1 as u32; }
+        wcap_substmts(a, ar, &sl[i], out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// ===== the collector =====
+
+// A generic SKELETON: its signature still mentions a type variable.  The
+// reference skips generic fns via `tparams <> []`, which for it covers both the
+// skeleton and its instances; the port's method Tfuncs do not carry the impl's
+// tparams, so the observable equivalent is "the signature is not yet concrete".
+fn ty_mentions_tvar(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TVar(_n) => true
+        | Typ::TAssocProj { head, assoc } => ty_mentions_tvar(head)
+        | Typ::TPtr(i) => ty_mentions_tvar(i)
+        | Typ::TOwnPtr(i) => ty_mentions_tvar(i)
+        | Typ::TConstPtr(i) => ty_mentions_tvar(i)
+        | Typ::TArray { elem, size } => ty_mentions_tvar(elem)
+        | Typ::TStructApp { path, args } => tys_mention_tvar(&args)
+        | Typ::TEnumApp { path, args } => tys_mention_tvar(&args)
+        | Typ::TTuple(es) => tys_mention_tvar(&es)
+        | _o => false
+    };
+}
+fn tys_mention_tvar(ts: *const Vec<*const Typ>) -> bool {
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < ts.length() { if ty_mentions_tvar(sl[i]) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn is_skeleton(tf: *const Tfunc) -> bool {
+    if tys_mention_tvar(&tf.tf_param_tys) { return true; }
+    return match tf.tf_ret_ty {
+        Option::Some(rt) => ty_mentions_tvar(rt)
+        | Option::None => false
+    };
+}
+
+fn is_generic(tf: *const Tfunc) -> bool {
+    return tf.tf_func.tparams.length() > 0 as u32 || is_skeleton(tf);
+}
+
+pub fn collect(a: Allocator, ar: *Arena, tp: *const Tprogram) -> Vec<LWarn> {
+    let mut out: Vec<LWarn> = Vec::with_capacity(a, 16 as u32);
+    let fl = tp.tp_funcs.as_slice();
+    // Slot 1 — tier warnings.  Provably empty: `exceeds` is item_tier > profile
+    // and exilc always compiles at Full, the maximum.  Kept as a named slot.
+
+    // Slot 2 — unused lets.  Walk the source-level fn; skip the prelude and
+    // generic instances (the skeleton carries the original names / positions).
+    let mut i = 0 as u32;
+    while i < tp.tp_funcs.length() {
+        if !is_prelude_fn(&fl[i]) && !is_generic(&fl[i]) { unused_lets_for(a, ar, &fl[i], &out); }
+        i = i + 1 as u32;
+    }
+    // Slot 3 — unused parameters.  Mono user fns only: a generic skeleton has an
+    // empty body, and each instance would re-flag the same source parameter.
+    let mut j = 0 as u32;
+    while j < tp.tp_funcs.length() {
+        if !is_prelude_fn(&fl[j]) && !fl[j].tf_func.is_extern && !is_generic(&fl[j]) {
+            unused_params_for(a, ar, &fl[j], &out);
+        }
+        j = j + 1 as u32;
+    }
+    // Slot 4 — unused fns (below).  Slot 5 — must_use (below).
+    unused_fn_warnings(a, ar, tp, &out);
+    // Slot 6 — with_capacity hints; never warn about prelude bodies.
+    let mut k = 0 as u32;
+    while k < tp.tp_funcs.length() {
+        if !is_prelude_fn(&fl[k]) { with_cap_in_stmts(a, ar, &fl[k].tf_body, &out); }
+        k = k + 1 as u32;
+    }
+    return out;
+}
+
+// A mono user fn whose mangled name no OTHER fn body mentions.  Self-reference
+// does not count, matching gcc's -Wunused-function.
+fn unused_fn_warnings(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *Vec<LWarn>) {
+    let fl = tp.tp_funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < tp.tp_funcs.length() {
+        if fn_warn_candidate(&fl[i]) && !referenced_outside(a, tp, &fl[i]) {
+            let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+            sb.push_str("unused function '"); sb.push_str(fl[i].tf_func.name);
+            sb.push_str("' (mark `pub` if intended for external use)");
+            out.push(LWarn { lw_pos: fl[i].tf_func.pos, lw_msg: str::from_slice(ar, sb.as_slice()) });
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn fn_warn_candidate(tf: *const Tfunc) -> bool {
+    if str::eq(tf.tf_func.name, "main") { return false; }
+    if tf.tf_func.is_pub { return false; }
+    if tf.tf_func.is_extern { return false; }
+    if is_prelude_fn(tf) { return false; }
+    return !is_generic(tf);
+}
+fn referenced_outside(a: Allocator, tp: *const Tprogram, tf: *const Tfunc) -> bool {
+    let fl = tp.tp_funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < tp.tp_funcs.length() {
+        if !str::eq(fl[i].tf_mangled, tf.tf_mangled) {
+            let mut reads: Vec<str> = Vec::with_capacity(a, 32 as u32);
+            reads_in_stmts(a, &fl[i].tf_body, &reads);
+            if name_in(&reads, tf.tf_mangled) { return true; }
+        }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+// ===== emission =====
+//
+// `<file>:<line>:<col>: warning: <msg>` on stderr, one per line.  Warnings never
+// change the exit status.
+pub fn lint(a: Allocator, ar: *Arena, tp: *const Tprogram) {
+    let ws = collect(a, ar, tp);
+    let sl = ws.as_slice();
+    let mut i = 0 as u32;
+    while i < ws.length() {
+        let mut sb = StringBuilder::with_capacity(a, 256 as u32);
+        sb.push_str(sl[i].lw_pos.file);
+        sb.push_str(":"); sb.push_int(sl[i].lw_pos.line);
+        sb.push_str(":"); sb.push_int(sl[i].lw_pos.col);
+        sb.push_str(": warning: "); sb.push_str(sl[i].lw_msg);
+        sb.push_str("\n");
+        let bs = sb.as_slice();
+        sys::sys_write(2 as c_int, &bs[0 as u32] as *const c_uchar, sb.length() as c_ulong);
+        i = i + 1 as u32;
+    }
+    return;
+}

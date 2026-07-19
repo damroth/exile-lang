@@ -6060,7 +6060,10 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             let lent = coerce_own_to(a, ar, sc, vl, ety);
             if is_mut { note_let_mut(sc, name); }
             benv.push(FieldTy { name: name, ty: ety });
-            tstmts.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: expr_pos(value) });
+            // The LET's position, not the value's: the reference reports an unused
+            // variable at the binding site.  Invisible until lint rendered it —
+            // the IR dump does not print TLet's pos.
+            tstmts.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: pos });
         }
         | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
         | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
@@ -8063,7 +8066,10 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             let lent = coerce_own_to(a, ar, sc, vl, ety);
             if is_mut { note_let_mut(sc, name); }
             env.push(FieldTy { name: name, ty: ety });
-            out.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: expr_pos(value) });
+            // The LET's position, not the value's — the reference binds the
+            // statement pos here (typecheck.ml:4550).  Invisible until lint
+            // rendered it: the IR dump does not print TLet's pos.
+            out.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: pos });
         }
         | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Tail(e) => { elab_tail(a, ar, g, sc, gensym, env, ret, e, out); }
