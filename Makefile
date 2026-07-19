@@ -634,7 +634,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
-                 selfhost-port-lint selfhost-no-fabrication
+                 selfhost-port-lint selfhost-mono-modules selfhost-no-fabrication
 	@echo "selfhost-verify: all port gates green"
 
 # ===== exilc whole-C fixpoint — the compiler as its own fixture =====
@@ -742,6 +742,64 @@ selfhost-port-escape: host-selfhost-escape
 	  fi; \
 	done; \
 	echo "selfhost-port-escape: $$((n-fail))/$$n agree; $$fail diverge"; \
+	[ $$fail -eq 0 ]
+
+# ===== mono instances of module-scoped generics =====
+#
+# A generic declared inside a `mod` must instantiate under the DECLARATION's
+# path, so `Box<i32>` written inside `mod inner` is `inner::Box_i32`.  Under an
+# unqualified instance path the failure has a loud face (a type that will not
+# unify with itself, a pattern that will not match its own value) and a SILENT
+# one: two modules' instances collapse into one C type emitted without its data
+# union, dropping the payload on a clean exit-0 compile.
+#
+# The silent face is why this gate byte-compares the emitted C and not just the
+# exit status: the evidence is the struct layout, and both compilers succeed.
+# Run-output parity is checked too, so a divergence that survives the layout is
+# still caught.  Fixtures are named, not globbed — a deleted one is MISSING.
+MONO_FIXTURES := enum_two_modules struct_two_modules enum_mixed_qualification \
+                 enum_silent_layout \
+                 struct_nested_module
+
+selfhost-mono-modules: $(EXILC_BIN)
+	@fail=0; n=0; \
+	for name in $(MONO_FIXTURES); do \
+	  f=tests/mono/$$name.exl; \
+	  if [ ! -f $$f ]; then \
+	    echo "selfhost-mono-modules: MISSING fixture $$f"; fail=$$((fail+1)); continue; \
+	  fi; \
+	  n=$$((n+1)); \
+	  rm -f $(C_OUT)/mono_o.c $(C_OUT)/mono_p.c $(HOST_OUT)/mono_o $(HOST_OUT)/mono_p \
+	        $(C_OUT)/mono_o.run $(C_OUT)/mono_p.run; \
+	  $(EXILE) --target c --c-out $(C_OUT)/mono_o.c $$f >/dev/null 2>&1; oe=$$?; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/mono_p.c $$f >/dev/null 2>&1; pe=$$?; \
+	  if [ ! -s $(C_OUT)/mono_o.c ]; then \
+	    echo "selfhost-mono-modules: EMPTY reference C for $$f (fixture floor)"; fail=$$((fail+1)); continue; \
+	  fi; \
+	  if [ "$$oe" != "$$pe" ]; then \
+	    echo "selfhost-mono-modules: STATUS $$f oracle=$$oe port=$$pe"; fail=$$((fail+1)); continue; \
+	  fi; \
+	  if ! cmp -s $(C_OUT)/mono_o.c $(C_OUT)/mono_p.c; then \
+	    echo "selfhost-mono-modules: C DIVERGE $$f"; \
+	    diff $(C_OUT)/mono_o.c $(C_OUT)/mono_p.c | head -8; fail=$$((fail+1)); continue; \
+	  fi; \
+	  $(EXILE) --target host -o $(HOST_OUT)/mono_o $$f >/dev/null 2>&1; \
+	  $(EXILC_BIN) --target host -o $(HOST_OUT)/mono_p $$f >/dev/null 2>&1; \
+	  if [ ! -x $(HOST_OUT)/mono_o ] || [ ! -x $(HOST_OUT)/mono_p ]; then \
+	    echo "selfhost-mono-modules: BUILD $$f (oracle or port produced no binary)"; fail=$$((fail+1)); continue; \
+	  fi; \
+	  $(HOST_OUT)/mono_o > $(C_OUT)/mono_o.run 2>&1; \
+	  $(HOST_OUT)/mono_p > $(C_OUT)/mono_p.run 2>&1; \
+	  if [ ! -s $(C_OUT)/mono_o.run ]; then \
+	    echo "selfhost-mono-modules: SILENT reference run for $$f (fixture must observe its payload)"; \
+	    fail=$$((fail+1)); continue; \
+	  fi; \
+	  if ! cmp -s $(C_OUT)/mono_o.run $(C_OUT)/mono_p.run; then \
+	    echo "selfhost-mono-modules: RUN DIVERGE $$f"; \
+	    diff $(C_OUT)/mono_o.run $(C_OUT)/mono_p.run | head -6; fail=$$((fail+1)); \
+	  fi; \
+	done; \
+	echo "selfhost-mono-modules: $$((n-fail))/$$n agree; $$fail diverge"; \
 	[ $$fail -eq 0 ]
 
 # ===== lint — the WHOLE stderr, not its first line =====

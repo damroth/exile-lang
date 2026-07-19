@@ -447,6 +447,22 @@ fn inst_of_base(inst_last: str, base_last: str) -> bool {
     let ib = str::as_bytes(inst_last);
     return ib[bn] == 95 as u8;
 }
+// Equal up to the last segment: the module prefix an instance shares with its
+// skeleton.  The allocator-free half of `joined_inst_of`, for the lookups that
+// have no allocator in hand; both paths here are built by the same code, so
+// they always have the same shape.  If that ever stops holding the match is
+// LOST rather than mis-taken — a loud failure, not a wrong binding.
+fn path_init_eq(x: *const Vec<str>, y: *const Vec<str>) -> bool {
+    if x.length() != y.length() { return false; }
+    let xs = x.as_slice();
+    let ys = y.as_slice();
+    let mut i = 0 as u32;
+    while i + 1 as u32 < x.length() {
+        if !str::eq(xs[i], ys[i]) { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
 fn find_method_idx(methods: *const Vec<MethodInfo>, type_path: *const Vec<str>, name: str) -> int {
     let n = methods.length();
     let sl = methods.as_slice();
@@ -456,8 +472,12 @@ fn find_method_idx(methods: *const Vec<MethodInfo>, type_path: *const Vec<str>, 
             if path_eq(&sl[i].mi_path, type_path) { return i as int; }
             // A method on a generic struct matches the receiver's monomorphic
             // instance (`Pair_i32_bool` → the `impl<A,B> Pair<A,B>` methods).
+            // The module prefix counts: two modules may each declare a generic
+            // `Holder` with its own `get`, and matching on the last segment
+            // alone dispatches one module's call to the other's method.
             if sl[i].mi_struct_gen {
-                if inst_of_base(path_last(type_path), path_last(&sl[i].mi_path)) { return i as int; }
+                if path_init_eq(&sl[i].mi_path, type_path)
+                   && inst_of_base(path_last(type_path), path_last(&sl[i].mi_path)) { return i as int; }
             }
         }
         i = i + 1 as u32;
@@ -1099,14 +1119,27 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // Generic application → monomorphic instance, registered for the footer.
     if !struct_known(sc, last) { unknown_type(a, ar, sc, path, true, p); }
     let resolved = resolve_sig_args(a, ar, sc, args, p);
+    // Module-relative, exactly as for the non-generic case above — the mono
+    // instance inherits the DECLARATION's prefix, so `Box<i32>` written inside
+    // `mod inner` is `inner::Box_i32`.  The reference gets this for free by
+    // resolving through the declaration (lookup_struct / lookup_enum hand back
+    // sname_path / ename_path); qualifying only the arg-less branch left the
+    // generic one minting a bare `Box_i32` that every module's `Box` shares.
+    let mut gpath: Vec<str> = copy_strs(a, path);
+    if plen == 1 as u32 && sc.sc_modpath.length() > 0 as u32 {
+        let marker = join_colons(a, ar, sc.sc_modpath, last);
+        if name_in(sc.sc_enums, marker) || name_in(sc.sc_structs, marker) {
+            gpath = path_push(a, sc.sc_modpath, last);
+        }
+    }
     // A still-abstract application (a generic-struct method skeleton's
     // `Pair<A, B>`) keeps its `TStructApp` / `TEnumApp` form — mangling it
     // would invent a bogus `Pair_A_B` instance.
     if tys_have_tvar(&resolved) {
-        if is_enum { return ty_node(ar, Typ::TEnumApp { path: copy_strs(a, path), args: resolved }); }
-        return ty_node(ar, Typ::TStructApp { path: copy_strs(a, path), args: resolved });
+        if is_enum { return ty_node(ar, Typ::TEnumApp { path: copy_strs(a, &gpath), args: resolved }); }
+        return ty_node(ar, Typ::TStructApp { path: copy_strs(a, &gpath), args: resolved });
     }
-    let ipath = instance_path(a, ar, path, &resolved);
+    let ipath = instance_path(a, ar, &gpath, &resolved);
     if is_enum {
         register_mono_enum_args(a, sc, &ipath, &resolved);
         // Option / Result variant payloads come from the fixed prelude shape,
@@ -1116,7 +1149,7 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         if is_prelude_enum(last) {
             register_prelude_enum_efields(a, sc, last, &resolved, &ipath);
         } else {
-            register_enum_instance_fields(a, ar, sc, path, &resolved, &ipath);
+            register_enum_instance_fields(a, ar, sc, &gpath, &resolved, &ipath);
         }
         return ty_node(ar, Typ::TEnum(ipath));
     }
@@ -1131,7 +1164,7 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // HashMap_i32_i32).  register_mono_struct does not dedup, so this only moves
     // the push; it introduces no recursion the old order did not already have.
     register_prelude_struct_fields(a, ar, sc, last, &resolved, &ipath);
-    register_user_struct_fields(a, ar, sc, path, &resolved, &ipath);
+    register_user_struct_fields(a, ar, sc, &gpath, &resolved, &ipath);
     register_mono_struct_args(a, sc, &ipath, &resolved);
     // Workstream-B: `Vec<T>` no longer eagerly carries a `Slice<T>` view, and
     // `HashMap<K,V>` no longer eagerly carries `Slice<Slot<K,V>>`.  Those were
@@ -3270,6 +3303,7 @@ fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *c
 // `own *Slot_i32_i32`) recovers `K`/`V` by recursing into the inner
 // instance's own tparams — `unify_typ` can't un-mangle `Slot_i32_i32`.
 fn unify_app_inst(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, ipath: *const Vec<str>, out: *Vec<TVarBind>) {
+    if !path_init_eq(path, ipath) { return; }
     if !inst_of_base(path_last(ipath), path_last(path)) { return; }
     let mut rbinds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     bind_recv_tparams(a, ar, sc, path, ipath, &rbinds);
@@ -4079,6 +4113,22 @@ fn col0_has_tag(matrix: *const Vec<Vec<*const Cpat>>, tag: int) -> bool {
 // Tags live under the SKELETON path (`Option`); payload types under the INSTANCE
 // (`Option_i32`).  A constructor needs both, so it asks both.  Getting this wrong
 // is what made a nested witness render as `_`.
+// `inst` is a mono instance of `skel`: the FULL paths agree up to a `_<args>`
+// suffix on the last segment (`Mono.is_instance_of`).  Compared on the joined
+// form, so an entry stored as one `mod::Name` segment and one stored as two
+// still match — and a same-named generic in another module does not, which a
+// last-segment-only test cannot tell apart.
+fn joined_inst_of(a: Allocator, inst: *const Vec<str>, skel: *const Vec<str>) -> bool {
+    let ji = tc_join_sb(a, inst);
+    let js = tc_join_sb(a, skel);
+    let ns = js.length();
+    if ji.length() <= ns { return false; }
+    let bi = ji.as_slice();
+    let bs = js.as_slice();
+    let mut k = 0 as u32;
+    while k < ns { if bi[k] != bs[k] { return false; } k = k + 1 as u32; }
+    return bi[ns] == 95 as u8;
+}
 fn etags_path_for(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) -> Vec<str> {
     let n = sc.sc_etags.length();
     let sl = sc.sc_etags.as_slice();
@@ -4087,11 +4137,13 @@ fn etags_path_for(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) -> V
         if path_eq(&sl[i].et_path, ipath) { return copy_strs(a, ipath); }
         i = i + 1 as u32;
     }
-    let last = path_last(ipath);
     let mut j = 0 as u32;
     while j < n {
-        let sk = path_last(&sl[j].et_path);
-        if str_starts_with(last, sk) && is_inst_suffix(last, sk) { return copy_strs(a, &sl[j].et_path); }
+        // The PREFIX has to match as well: with two modules declaring a
+        // same-named generic enum, a last-segment-only test hands back whichever
+        // skeleton was registered first, and the pattern check then rejects a
+        // legal match against the other one.
+        if joined_inst_of(a, ipath, &sl[j].et_path) { return copy_strs(a, &sl[j].et_path); }
         j = j + 1 as u32;
     }
     return copy_strs(a, ipath);
@@ -11903,7 +11955,7 @@ fn collect_variants(a: Allocator, path: *const Vec<str>, etags: *const Vec<EnumV
         // in codegen's variant_field_ty fallback.  The prelude generic enums
         // (Option / Result) already had their own special-case below.
         let hit = path_eq_norm(a, &tl[i].et_path, path)
-                  || inst_of_base(path_last(path), path_last(&tl[i].et_path));
+                  || joined_inst_of(a, path, &tl[i].et_path);
         if hit && !variant_seen(&out, tl[i].et_name) {
             push_variant(a, &out, path, tl[i].et_name, efields, mono_efields, tl[i].et_is_struct);
         }

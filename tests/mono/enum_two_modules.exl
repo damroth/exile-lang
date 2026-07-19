@@ -1,0 +1,32 @@
+// The silent face: two modules declare a same-named generic enum.  Registered
+// under the unqualified base name they collapse into ONE C type, emitted
+// without its data union — the payload has nowhere to live, and both compilers
+// still exit 0.  The layout is the evidence, so the gate byte-compares the C.
+
+mod inner {
+    pub enum Box<T> { Empty | Full(T) }
+    pub fn wrap(x: i32) -> Box<i32> { return Box::Full(x); }
+    pub fn open(b: Box<i32>) -> i32 {
+        return match b {
+            Box::Full(v) => v
+            | Box::Empty => 0 as i32
+        };
+    }
+}
+
+mod other {
+    pub enum Box<T> { Empty | Full(T) }
+    pub fn wrap(s: str) -> Box<str> { return Box::Full(s); }
+    pub fn open(b: Box<str>) -> str {
+        return match b {
+            Box::Full(v) => v
+            | Box::Empty => "empty"
+        };
+    }
+}
+
+fn main() {
+    println(inner::open(inner::wrap(42 as i32)));
+    println(other::open(other::wrap("hello")));
+    return;
+}

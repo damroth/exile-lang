@@ -1,0 +1,22 @@
+// Same shape for structs: two modules, one generic name.  Under an unqualified
+// instance path both `P<i32>` collapse, and a field read lands in the wrong
+// layout; the loud face is a type that refuses to unify with itself
+// (`expected P_i32, got pair::P_i32`).
+
+mod pair {
+    pub struct P<T> { first: T, second: T }
+    pub fn make(x: i32, y: i32) -> P<i32> { return P { first: x, second: y }; }
+    pub fn sum(p: P<i32>) -> i32 { return p.first + p.second; }
+}
+
+mod duo {
+    pub struct P<T> { first: T, second: T }
+    pub fn make(x: str, y: str) -> P<str> { return P { first: x, second: y }; }
+    pub fn head(p: P<str>) -> str { return p.first; }
+}
+
+fn main() {
+    println(pair::sum(pair::make(20 as i32, 22 as i32)));
+    println(duo::head(duo::make("first", "second")));
+    return;
+}

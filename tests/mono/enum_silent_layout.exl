@@ -1,0 +1,24 @@
+// The silent face, isolated.  Two modules declare a same-named generic enum
+// with DIFFERENT shapes, and both instantiate at the same argument.  Nothing is
+// destructured, so no type error can fire: under an unqualified instance path
+// the two collapse into ONE C type and both compilers still exit 0.  One of the
+// two layouts is then a lie — the emitted C is the only evidence, which is why
+// this gate byte-compares it.  The fixture exists so the gate is proven to catch
+// that class and not only the loud ones.
+
+mod inner {
+    pub enum Box<T> { Empty | Full(T) }
+    pub fn wrap(x: i32) -> Box<i32> { return Box::Full(x); }
+}
+
+mod other {
+    pub enum Box<T> { Full(T) | Pair(T, T) }
+    pub fn wrap(x: i32) -> Box<i32> { return Box::Pair(x, x); }
+}
+
+fn main() {
+    inner::wrap(7 as i32);
+    other::wrap(8 as i32);
+    println("built");
+    return;
+}

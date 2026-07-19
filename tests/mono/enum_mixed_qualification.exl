@@ -1,0 +1,23 @@
+// The same instance named two ways: bare inside the module, qualified from
+// outside.  Both spellings have to resolve to ONE instance — qualifying only
+// one of them is how `expected Box_i32, got inner::Box_i32` happens on a
+// program that never leaves a single type.
+
+mod inner {
+    pub enum Box<T> { Empty | Full(T) }
+    pub fn wrap(x: i32) -> Box<i32> { return Box::Full(x); }
+    pub fn open(b: Box<i32>) -> i32 {
+        return match b {
+            Box::Full(v) => v
+            | Box::Empty => 0 as i32
+        };
+    }
+}
+
+fn take(b: inner::Box<i32>) -> i32 { return inner::open(b); }
+
+fn main() {
+    let b: inner::Box<i32> = inner::wrap(11 as i32);
+    println(take(b));
+    return;
+}

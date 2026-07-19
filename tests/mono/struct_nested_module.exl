@@ -1,0 +1,15 @@
+// A generic declared two modules deep: the instance inherits the whole prefix,
+// not just the innermost segment.
+
+mod outer {
+    pub mod deep {
+        pub struct Cell<T> { it: T }
+        pub fn make(x: i32) -> Cell<i32> { return Cell { it: x }; }
+    }
+}
+
+fn main() {
+    let c: outer::deep::Cell<i32> = outer::deep::make(5 as i32);
+    println(c.it);
+    return;
+}
