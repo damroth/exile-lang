@@ -1,0 +1,25 @@
+// Two modules, one generic struct name, one method name, different bodies.
+// Matching a receiver instance to its impl on the last path segment alone
+// dispatches one module's call into the other module's method.
+
+mod alpha {
+    pub struct Holder<T> { it: T }
+    impl<T> Holder<T> {
+        pub fn get(self: *const Holder<T>) -> T { return self.it; }
+    }
+    pub fn make(x: i32) -> Holder<i32> { return Holder { it: x }; }
+}
+
+mod beta {
+    pub struct Holder<T> { it: T }
+    impl<T> Holder<T> {
+        pub fn get(self: *const Holder<T>) -> T { return self.it + 100 as i32; }
+    }
+    pub fn make(x: i32) -> Holder<i32> { return Holder { it: x }; }
+}
+
+fn main() {
+    println(alpha::make(1 as i32).get());
+    println(beta::make(2 as i32).get());
+    return;
+}

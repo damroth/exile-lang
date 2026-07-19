@@ -216,6 +216,10 @@ struct MethodInfo {
     mi_tparams: Vec<str>,
     mi_params: Vec<*const TypeAnn>,
     mi_ret_ann: Option<*const TypeAnn>,
+    // The impl's index WITHIN its enclosing item list, plus the module path
+    // that list lives under — an index alone cannot name a list, and a
+    // module-nested impl used to be located by its module's top-level index.
+    mi_modpath: Vec<str>,
     mi_impl_idx: u32,
     mi_meth_idx: u32,
     // A prelude method (Allocator / Vec / ...): its body is prelude-injected,
@@ -246,6 +250,8 @@ struct GenFn {
 // fn's item index, the tparam bindings to elaborate it under, and the
 // instance C symbol.
 struct GenJob {
+    // Module path of the item list `gj_idx` indexes; empty for top level.
+    gj_modpath: Vec<str>,
     gj_idx: u32,
     // -1 for a free fn at top-level item `gj_idx`; otherwise the method index
     // within the impl at item `gj_idx`.
@@ -2566,7 +2572,8 @@ fn queue_gen_instance(a: Allocator, sc: *const TyScope, gi: u32, binds: *const V
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
     let no_target: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    sc.sc_genjobs.push(GenJob { gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: no_target, gj_prelude: false });
+    let no_modpath: Vec<str> = empty_strs(a);
+    sc.sc_genjobs.push(GenJob { gj_modpath: no_modpath, gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: no_target, gj_prelude: false });
 }
 
 // Queue a prelude generic method instance (Vec/VecIter/adapter): its source
@@ -2586,17 +2593,18 @@ fn queue_prelude_gen(a: Allocator, sc: *const TyScope, ty: str, nm: str, binds: 
     let isl = self_inst.as_slice();
     let mut i = 0 as u32;
     while i < self_inst.length() { tgt.push(isl[i]); i = i + 1 as u32; }
-    sc.sc_genjobs.push(GenJob { gj_idx: 0 as u32, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: tgt, gj_prelude: true });
+    let no_modpath: Vec<str> = empty_strs(a);
+    sc.sc_genjobs.push(GenJob { gj_modpath: no_modpath, gj_idx: 0 as u32, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: tgt, gj_prelude: true });
 }
 
 // Queue a generic-method instance: the impl (or trait, for a generic default)
 // item index + the method index locate the source fn for the drain; `target`
 // pins `Self` when the source is a trait default.
-fn queue_method_instance(a: Allocator, sc: *const TyScope, impl_idx: u32, meth_idx: u32,
+fn queue_method_instance(a: Allocator, sc: *const TyScope, modpath: *const Vec<str>, impl_idx: u32, meth_idx: u32,
                          binds: *const Vec<TVarBind>, mangled: str, target: *const Vec<str>) {
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
-    sc.sc_genjobs.push(GenJob { gj_idx: impl_idx, gj_meth: meth_idx as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: copy_strs(a, target), gj_prelude: false });
+    sc.sc_genjobs.push(GenJob { gj_modpath: copy_strs(a, modpath), gj_idx: impl_idx, gj_meth: meth_idx as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: copy_strs(a, target), gj_prelude: false });
 }
 
 // `mod::fn(args)` — a module-qualified call resolves to the `mod__fn` C
@@ -3424,7 +3432,7 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
         register_mono_struct(a, sc, &sl[midx].mi_path);
         queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst, &inst_path);
     }
-    else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
+    else { queue_method_instance(a, sc, &sl[midx].mi_modpath, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
     let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
@@ -3464,7 +3472,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
         let rpath = recv_base_path(a, trecv.ty);
         queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst, &rpath);
     }
-    else { queue_method_instance(a, sc, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
+    else { queue_method_instance(a, sc, &sl[midx].mi_modpath, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
     let iret = subst_opt_ret(ar, &binds, cret);
     let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
@@ -7622,6 +7630,10 @@ fn elab_tail(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     else { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); }
 }
 
+fn empty_strs(a: Allocator) -> Vec<str> {
+    let out: Vec<str> = Vec::with_capacity(a, 1 as u32);
+    return out;
+}
 fn copy_strs(a: Allocator, src: *const Vec<str>) -> Vec<str> {
     let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let n = src.length();
@@ -9855,7 +9867,7 @@ fn method_self_const(f: *const Func) -> bool {
     return is_const_ptr_ann(sl[0 as u32].pty);
 }
 fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>,
-                   trait_name: str, f: *const Func, impl_idx: u32, meth_idx: u32, out: *Vec<MethodInfo>) {
+                   trait_name: str, f: *const Func, modpath: *const Vec<str>, impl_idx: u32, meth_idx: u32, out: *Vec<MethodInfo>) {
     // A method on a generic struct with no parameters of its own carries the
     // impl's type parameters, bound at the call site from the receiver
     // instance.  A method-generic method keeps its own.
@@ -9872,37 +9884,39 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
         mi_ret: mret,
         mi_has_self: method_has_self(f), mi_self_ptr: method_self_ptr(f), mi_self_const: method_self_const(f),
         mi_tparams: tparams, mi_params: copy_param_anns(a, &f.params),
-        mi_ret_ann: f.ret_ty, mi_impl_idx: impl_idx, mi_meth_idx: meth_idx, mi_prelude: false,
+        mi_ret_ann: f.ret_ty, mi_modpath: copy_strs(a, modpath), mi_impl_idx: impl_idx, mi_meth_idx: meth_idx, mi_prelude: false,
         mi_struct_gen: struct_gen,
     });
 }
 fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>,
-                        trait_name: str, methods: *const Vec<Func>, impl_idx: u32, out: *Vec<MethodInfo>) {
+                        trait_name: str, methods: *const Vec<Func>, modpath: *const Vec<str>, impl_idx: u32, out: *Vec<MethodInfo>) {
     let n = methods.length();
     let sl = methods.as_slice();
     let mut i = 0 as u32;
-    while i < n { push_one_method(a, ar, sc, target, itparams, trait_name, &sl[i], impl_idx, i, out); i = i + 1 as u32; }
+    while i < n { push_one_method(a, ar, sc, target, itparams, trait_name, &sl[i], modpath, impl_idx, i, out); i = i + 1 as u32; }
 }
-// `top_idx` is the index of the enclosing top-level item, so a generic
-// method's body can be re-derived in the drain.  Module-nested impls pass
-// the module's own top index (a nested generic method is out of scope for
-// v1, matching the top-level-only generic-fn registry).
-fn collect_method_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, it: *const Item, top_idx: u32, out: *Vec<MethodInfo>) {
+// `own_idx` is the item's index WITHIN the list it was found in, and `modpath`
+// names that list — together they locate the impl at any depth, so a generic
+// method's body can be re-derived in the drain.  An index alone cannot: a
+// module-nested impl used to be recorded under its MODULE's top-level index,
+// and the drain then elaborated whatever item happened to sit at the method
+// index inside that module.
+fn collect_method_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, it: *const Item, own_idx: u32, out: *Vec<MethodInfo>) {
     match *it {
         Item::Impl(ib) => {
             let msc = scope_with_modpath(sc, modpath);
             let target = path_concat(a, modpath, &ib.itarget);
-            collect_methods_impl(a, ar, &msc, &target, &ib.itparams, impl_trait_name(&ib), &ib.iitems, top_idx, out);
+            collect_methods_impl(a, ar, &msc, &target, &ib.itparams, impl_trait_name(&ib), &ib.iitems, modpath, own_idx, out);
         }
-        | Item::Module(md) => { collect_method_info_nested(a, ar, sc, &path_push(a, modpath, md.mname), &md.mitems, top_idx, out); }
+        | Item::Module(md) => { collect_method_info_nested(a, ar, sc, &path_push(a, modpath, md.mname), &md.mitems, out); }
         | _e => { }
     }
 }
-fn collect_method_info_nested(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, items: *const Vec<Item>, top_idx: u32, out: *Vec<MethodInfo>) {
+fn collect_method_info_nested(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<MethodInfo>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { collect_method_info_one(a, ar, sc, modpath, &sl[i], top_idx, out); i = i + 1 as u32; }
+    while i < n { collect_method_info_one(a, ar, sc, modpath, &sl[i], i, out); i = i + 1 as u32; }
 }
 fn collect_method_info(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, out: *Vec<MethodInfo>) {
     let empty: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -9984,7 +9998,7 @@ fn push_prelude_gen_method(a: Allocator, ar: *Arena, target: str, name: str, tpa
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: self_ptr, mi_self_const: self_const,
         mi_tparams: tparams, mi_params: params, mi_ret_ann: ret_ann,
-        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+        mi_modpath: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         // Adapter methods bind the receiver's tparam by field-recovery (like a
         // struct-gen method) plus their own from the args.
         mi_struct_gen: true,
@@ -10074,7 +10088,7 @@ fn push_prelude_method(a: Allocator, ar: *Arena, target: str, name: str,
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: false, mi_self_const: false,
         mi_tparams: one_tparam(a), mi_params: params, mi_ret_ann: ret_ann,
-        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+        mi_modpath: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         mi_struct_gen: false,
     });
 }
@@ -10097,7 +10111,7 @@ fn push_prelude_method_ng(a: Allocator, ar: *Arena, target: str, name: str, has_
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: ret, mi_has_self: has_self, mi_self_ptr: self_ptr, mi_self_const: self_const,
         mi_tparams: empty_tp, mi_params: empty_params, mi_ret_ann: none_ann,
-        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+        mi_modpath: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         mi_struct_gen: false,
     });
 }
@@ -10124,7 +10138,7 @@ fn push_prelude_sg_method(a: Allocator, ar: *Arena, target: str, name: str, has_
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: none_ty(), mi_has_self: has_self, mi_self_ptr: self_ptr, mi_self_const: self_const,
         mi_tparams: tp, mi_params: empty_params, mi_ret_ann: ret_ann,
-        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+        mi_modpath: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         mi_struct_gen: has_self,
     });
 }
@@ -10238,7 +10252,7 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: false,
         mi_tparams: one_tparam(a), mi_params: ab_params,
         mi_ret_ann: Option::Some(ann_node(ar, TypeAnn::TyPtr(ann_struct(a, ar, "T")))),
-        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
+        mi_modpath: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         mi_struct_gen: false,
     });
 }
@@ -10296,7 +10310,11 @@ fn register_one_default(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
     if !name_in(defaults, f.name) { return; }
     if impl_has_method(impl_methods, f.name) { return; }
     let no_itparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    push_one_method(a, ar, sc, target, &no_itparams, trait_name, f, ti, j, out);
+    // Trait defaults locate their source in the TRAIT item, which this pass
+    // only ever sees at top level — a trait declared inside a module keeps the
+    // old, index-only locator and is out of scope here.
+    let td_modpath: Vec<str> = empty_strs(a);
+    push_one_method(a, ar, sc, target, &no_itparams, trait_name, f, &td_modpath, ti, j, out);
 }
 fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
                         impl_methods: *const Vec<Func>, td: *const TraitDecl, ti: u32, ipos: Pos,
@@ -10709,7 +10727,7 @@ fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpat
         mi_ret: resolve_sig_ret(a, ar, sc, ret_ty, p),
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: ret_ty,
-        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
+        mi_modpath: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
     });
 }
 fn cvoid_ann(ar: *Arena) -> *const TypeAnn {
@@ -11058,7 +11076,7 @@ fn push_derive_method_k(a: Allocator, ar: *Arena, sc: *const TyScope, target: st
         mi_ret: resolve_sig_ret(a, ar, sc, Option::Some(ret_ann), p),
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: Option::Some(ret_ann),
-        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
+        mi_modpath: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
     });
     if do_drain {
         let mut params: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
@@ -11340,7 +11358,7 @@ fn push_fmt_debug(a: Allocator, ar: *Arena, target: str, body: *const Expr,
         mi_trait: "",
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: none_ret,
-        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
+        mi_modpath: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
     });
     let mut params: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
     params.push(FieldDef { name: "out", ty: tyann_node(ar, TypeAnn::TyPtr(closure_struct_ann(a, ar, "StringBuilder"))) });
@@ -11424,7 +11442,7 @@ fn push_drop_method(a: Allocator, ar: *Arena, sname: str, body: *const Expr, met
         mi_trait: "",
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: false,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: none_ret,
-        mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
+        mi_modpath: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false
     });
     let mut params: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
     params.push(FieldDef { name: "self", ty: tyann_node(ar, TypeAnn::TyPtr(closure_struct_ann(a, ar, sname))) });
@@ -11545,30 +11563,78 @@ fn elaborate_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym:
 
 // Push happens behind a fn boundary so `f` is a parameter (not the address
 // of a local slice element) — same escape-checker shape as the free-fn path.
+// `modpath` is the module the source impl lives in: the body's own type names
+// resolve module-relative, so elaborating it under the program-level (empty)
+// path leaves `Holder<T>` unqualified and its fields unreachable.
 fn push_method_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                    tbinds: *const Vec<TVarBind>, mangled: str, f: *const Func, self_ty: Option<*const Typ>, funcs: *Vec<Tfunc>) {
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, self_ty, &f.tparams));
+                    tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func,
+                    self_ty: Option<*const Typ>, funcs: *Vec<Tfunc>) {
+    if modpath.length() == 0 as u32 {
+        funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, self_ty, &f.tparams));
+        return;
+    }
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, modpath, mangled, f, self_ty, &f.tparams));
 }
 fn elaborate_impl_method_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                             methods: *const Vec<Func>, meth_idx: u32, tbinds: *const Vec<TVarBind>,
-                            mangled: str, self_ty: Option<*const Typ>, funcs: *Vec<Tfunc>) {
+                            modpath: *const Vec<str>, mangled: str, self_ty: Option<*const Typ>, funcs: *Vec<Tfunc>) {
     let msl = methods.as_slice();
-    push_method_inst(a, ar, g, gensym, idx, tbinds, mangled, &msl[meth_idx], self_ty, funcs);
+    push_method_inst(a, ar, g, gensym, idx, tbinds, modpath, mangled, &msl[meth_idx], self_ty, funcs);
 }
 
 // Elaborate one generic-method instance: re-derive the method fn from its
 // source item + method index, then elaborate its body under the bindings.  A
 // regular impl method has its `self` parser-stamped; a generic default (whose
 // source fn is in the trait at `impl_idx`) gets `Self` from `target`.
+// Walk to the item list `modpath` names, then elaborate there.  Descending in a
+// continuation rather than returning the nested list keeps the borrow local: a
+// `&md.mitems` handed back to the caller outlives the match binding it came
+// from.  An unmatched segment elaborates nothing, which is the same outcome as
+// today's silence — but it can only happen if the collector and the drain
+// disagree about the tree, which is what this locator exists to prevent.
+fn elaborate_method_at_path(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                            items: *const Vec<Item>, modpath: *const Vec<str>, depth: u32, impl_idx: u32,
+                            meth_idx: u32, tbinds: *const Vec<TVarBind>, mangled: str, target: *const Vec<str>,
+                            funcs: *Vec<Tfunc>) {
+    if depth == modpath.length() {
+        elaborate_method_instance(a, ar, g, gensym, idx, items, modpath, impl_idx, meth_idx, tbinds, mangled, target, funcs);
+        return;
+    }
+    let want = modpath.as_slice()[depth];
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    let mut done = false;
+    while i < items.length() {
+        match sl[i] {
+            Item::Module(md) => {
+                done = descend_module(a, ar, g, gensym, idx, md.mname, &md.mitems, want, modpath,
+                                      depth, impl_idx, meth_idx, tbinds, mangled, target, funcs);
+            }
+            | _e => { }
+        }
+        if done { return; }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn descend_module(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                  mname: str, mitems: *const Vec<Item>, want: str, modpath: *const Vec<str>, depth: u32,
+                  impl_idx: u32, meth_idx: u32, tbinds: *const Vec<TVarBind>, mangled: str,
+                  target: *const Vec<str>, funcs: *Vec<Tfunc>) -> bool {
+    if !str::eq(mname, want) { return false; }
+    elaborate_method_at_path(a, ar, g, gensym, idx, mitems, modpath, depth + 1 as u32,
+                             impl_idx, meth_idx, tbinds, mangled, target, funcs);
+    return true;
+}
 fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                             items: *const Vec<Item>, impl_idx: u32, meth_idx: u32, tbinds: *const Vec<TVarBind>,
-                             mangled: str, target: *const Vec<str>, funcs: *Vec<Tfunc>) {
+                             items: *const Vec<Item>, modpath: *const Vec<str>, impl_idx: u32, meth_idx: u32,
+                             tbinds: *const Vec<TVarBind>, mangled: str, target: *const Vec<str>, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
     match sl[impl_idx] {
-        Item::Impl(ib) => { elaborate_impl_method_at(a, ar, g, gensym, idx, &ib.iitems, meth_idx, tbinds, mangled, none_ty(), funcs); }
+        Item::Impl(ib) => { elaborate_impl_method_at(a, ar, g, gensym, idx, &ib.iitems, meth_idx, tbinds, modpath, mangled, none_ty(), funcs); }
         | Item::Trait(td) => {
             let sty = ty_node(ar, Typ::TStruct(copy_strs(a, target)));
-            elaborate_impl_method_at(a, ar, g, gensym, idx, &td.trmethods, meth_idx, tbinds, mangled, Option::Some(sty), funcs);
+            elaborate_impl_method_at(a, ar, g, gensym, idx, &td.trmethods, meth_idx, tbinds, modpath, mangled, Option::Some(sty), funcs);
         }
         // `mod str` free function: elaborate as a plain free fn under the module
         // path so its body's sibling `str::*` calls resolve, with the mangled
@@ -13538,12 +13604,13 @@ fn prelude_materialize(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym
             let mm2 = pm_mangle(a, ar, rsl[mi].pm_type, rsl[mi].pm_name);
             let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
             let tgt: Vec<str> = single_str(a, rsl[mi].pm_type);
+            let pre_mp: Vec<str> = empty_strs(a);
             if is_module_entry(prelude_items, rsl[mi].pm_impl_idx) {
-                elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, pfree);
+                elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, &pre_mp, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, pfree);
             } else {
                 // Prelude non-generic impl methods emit at the HEAD of the impl
                 // section (measured: main, StringBuilder__*, then user impls).
-                elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, pmeth);
+                elaborate_method_instance(a, ar, g, gensym, idx, prelude_items, &pre_mp, rsl[mi].pm_impl_idx, rsl[mi].pm_meth_idx, &binds, mm2, &tgt, pmeth);
             }
         }
         mi = mi + 1 as u32;
@@ -14520,6 +14587,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
         // Copy the target out too: elaborating the body may queue more jobs,
         // re-growing `genjobs` and dangling the slice borrow.
         let jt = copy_strs(a, &gsl[k].gj_target);
+        let jmp = copy_strs(a, &gsl[k].gj_modpath);
         let jprelude = gsl[k].gj_prelude;
         if jprelude {
             // Generic prelude instance: re-derive from the source-prelude items
@@ -14532,12 +14600,12 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
             if ri >= 0 as int {
                 let rsl = prelude_reg.as_slice();
                 let self_tgt: Vec<str> = gj_self_path(a, &jt);
-                elaborate_method_instance(a, ar, &globals, &gensym, &idx, &prelude_items, rsl[ri as u32].pm_impl_idx, rsl[ri as u32].pm_meth_idx, &jb, jm, &self_tgt, &funcs);
+                elaborate_method_instance(a, ar, &globals, &gensym, &idx, &prelude_items, &jmp, rsl[ri as u32].pm_impl_idx, rsl[ri as u32].pm_meth_idx, &jb, jm, &self_tgt, &funcs);
             }
         } else if jmeth < 0 as int {
             elaborate_instance(a, ar, &globals, &gensym, &idx, items, ji, &jb, jm, &funcs);
         } else {
-            elaborate_method_instance(a, ar, &globals, &gensym, &idx, items, ji, jmeth as u32, &jb, jm, &jt, &funcs);
+            elaborate_method_at_path(a, ar, &globals, &gensym, &idx, items, &jmp, 0 as u32, ji, jmeth as u32, &jb, jm, &jt, &funcs);
         }
         k = k + 1 as u32;
     }

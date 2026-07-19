@@ -1,0 +1,17 @@
+// A generic `impl` inside a `mod`: the drain has to LOCATE the impl, not index
+// a list it cannot name.  Recorded under its module's top-level index, the
+// method body was never elaborated and cc failed on the undefined symbol.
+
+mod alpha {
+    pub struct Holder<T> { it: T }
+    impl<T> Holder<T> {
+        pub fn get(self: *const Holder<T>) -> T { return self.it; }
+    }
+    pub fn make(x: i32) -> Holder<i32> { return Holder { it: x }; }
+}
+
+fn main() {
+    let h = alpha::make(3 as i32);
+    println(h.get());
+    return;
+}

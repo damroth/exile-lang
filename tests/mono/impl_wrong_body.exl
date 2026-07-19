@@ -1,0 +1,26 @@
+// The silent face of the same root.  With the impl located by its MODULE's
+// index, the drain read the method index against the MODULE's item list — and
+// when a plain fn happened to sit there, it emitted THAT function's body under
+// the method's mangled name.  The program builds (cc only warns about the
+// argument type) and prints the decoy's answer instead of the method's.
+//
+// The decoys come first so the method index lands on one of them: `second` is
+// method 1, and item 1 of the module is `decoy1`.
+
+mod alpha {
+    pub fn decoy0(_x: i32) -> i32 { return 1000 as i32; }
+    pub fn decoy1(_x: i32) -> i32 { return 2000 as i32; }
+    pub struct Holder<T> { it: T }
+    impl<T> Holder<T> {
+        pub fn first(self: *const Holder<T>) -> T { return self.it; }
+        pub fn second(self: *const Holder<T>) -> T { return self.it; }
+    }
+    pub fn make(x: i32) -> Holder<i32> { return Holder { it: x }; }
+}
+
+fn main() {
+    let h = alpha::make(5 as i32);
+    println(h.second());
+    println(alpha::decoy1(0 as i32));
+    return;
+}
