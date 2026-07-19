@@ -1,0 +1,25 @@
+// Two same-named enums in different modules, one `@must_use`.  The flag is
+// per-declaration: a linter matching on the bare name would either warn about
+// both or silence both, and that is the failure a green corpus never shows.
+
+mod tracked {
+    @must_use
+    pub enum Ticket { Open | Closed }
+    pub fn issue() -> Ticket { return Ticket::Open; }
+}
+
+mod loose {
+    pub enum Ticket { Red | Blue }
+    pub fn issue() -> Ticket { return Ticket::Red; }
+}
+
+pub fn run() {
+    tracked::issue();
+    loose::issue();
+    return;
+}
+
+fn main() {
+    run();
+    return;
+}

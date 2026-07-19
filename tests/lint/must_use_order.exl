@@ -1,0 +1,24 @@
+// The must-use slot's emission order is part of the contract: the reference
+// prepends as it folds, so within one function the warnings come out in REVERSE
+// source order, while the functions themselves stay in source order.
+
+fn first() -> Result<i32, str> { return Result::Ok(1 as i32); }
+fn second() -> Option<i32> { return Option::Some(2 as i32); }
+
+pub fn alpha() {
+    first();
+    second();
+    return;
+}
+
+pub fn beta() {
+    second();
+    first();
+    return;
+}
+
+fn main() {
+    alpha();
+    beta();
+    return;
+}

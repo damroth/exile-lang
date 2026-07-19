@@ -6,6 +6,8 @@
 //
 // The reference concatenates six categories in a fixed order:
 //   tier @ unused_let @ unused_param @ unused_fn @ must_use @ with_capacity
+// The order is mirrored slot by slot, including the must-use slot's per-function
+// reversal (see there) — a lint gate diffs the whole stderr, not its first line.
 // The tier slot is provably EMPTY here: `Tier.exceeds` is `item_tier > profile`
 // and the highest tier is Full, so nothing exceeds a Full profile — and exilc
 // has no `--profile` flag, so it always compiles at Full.  The slot is kept in
@@ -163,7 +165,7 @@ fn lets_in_stmts(a: Allocator, stmts: *const Vec<Tstmt>, out: *Vec<NamePos>) {
     }
     return;
 }
-fn lets_in_stmt(a: Allocator, s: *const Tstmt, out: *Vec<NamePos>) {
+fn lets_in_stmt(_a: Allocator, s: *const Tstmt, out: *Vec<NamePos>) {
     match *s {
         Tstmt::TLet { name, value, decl_ty, pos } => { push_let(name, pos, out); }
         | Tstmt::TLetTuple { names, value, pos } => {
@@ -285,7 +287,7 @@ fn with_cap_check(a: Allocator, ar: *Arena, te: *const Texpr, mangled: str,
                   args: *const Vec<*const Texpr>, out: *Vec<LWarn>) {
     if !is_with_capacity_call(mangled) { return; }
     if args.length() < 2 as u32 { return; }
-    let mut hint: Vec<int> = Vec::with_capacity(a, 2 as u32);
+    let mut hint: Vec<int> = Vec::with_capacity(a, 8 as u32);
     literal_hint(args.as_slice()[1 as u32], &hint);
     if hint.length() == 0 as u32 { return; }
     let n = hint.as_slice()[0 as u32];
@@ -308,6 +310,180 @@ fn with_cap_in_stmts(a: Allocator, ar: *Arena, stmts: *const Vec<Tstmt>, out: *V
         let mut j = 0 as u32;
         while j < es.length() { with_cap_in_expr(a, ar, esl[j], out); j = j + 1 as u32; }
         wcap_substmts(a, ar, &sl[i], out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+// ===== must-use =====
+//
+// A statement-position expression whose value is dropped: warn when the callee
+// is `@must_use`, or the value's type is an enum marked `@must_use` (Result and
+// Option, from the prelude).  Opting out is `let _ = call()` — the unused-let
+// pass already silences `_`-prefixed names.
+//
+// The reference prepends as it folds, so within one function the warnings come
+// out in REVERSE source order, while functions stay in source order.  That is
+// visible in stderr, so it is mirrored, not tidied.
+
+fn mu_path_str(a: Allocator, ar: *Arena, p: *const Vec<str>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    let sl = p.as_slice();
+    let mut i = 0 as u32;
+    while i < p.length() {
+        if i > 0 as u32 { sb.push_str("::"); }
+        sb.push_str(sl[i]);
+        i = i + 1 as u32;
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn mu_ends_with(s: str, suf: str) -> bool {
+    let n = str::length(s);
+    let m = str::length(suf);
+    if m > n { return false; }
+    let sb = str::as_bytes(s);
+    let fb = str::as_bytes(suf);
+    let mut i = 0 as u32;
+    while i < m {
+        if sb[n - m + i] != fb[i] { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
+
+// Render a generic instance as `Result<i32, str>` rather than the mangled
+// `Result_i32_str`, stripping the suffix with the same encoder that built it.
+fn mu_render_enum_name(a: Allocator, ar: *Arena, es: *const EnumSig) -> str {
+    let full = mu_path_str(a, ar, &es.ename_path);
+    return match es.einstance_args {
+        Option::Some(ia) => mu_render_inst(a, ar, full, &ia)
+        | Option::None => full
+    };
+}
+fn mu_render_inst(a: Allocator, ar: *Arena, full: str, args: *const Vec<*const Typ>) -> str {
+    if args.length() == 0 as u32 { return full; }
+    let asl = args.as_slice();
+    let mut suf = StringBuilder::with_capacity(a, 32 as u32);
+    let mut i = 0 as u32;
+    while i < args.length() {
+        suf.push_str("_");
+        suf.push_str(mangle_typ(a, ar, asl[i]));
+        i = i + 1 as u32;
+    }
+    let suffix = str::from_slice(ar, suf.as_slice());
+    let mut base = full;
+    if mu_ends_with(full, suffix) {
+        base = str::from_slice(ar, str::as_bytes(full)[0 as u32 .. str::length(full) - str::length(suffix)]);
+    }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str(base);
+    sb.push_str("<");
+    let mut j = 0 as u32;
+    while j < args.length() {
+        if j > 0 as u32 { sb.push_str(", "); }
+        sb.push_str(typ_name(a, ar, asl[j]));
+        j = j + 1 as u32;
+    }
+    sb.push_str(">");
+    return str::from_slice(ar, sb.as_slice());
+}
+
+fn mu_fn_hit(tp: *const Tprogram, mangled: str) -> bool {
+    let fl = tp.tp_funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < tp.tp_funcs.length() {
+        if str::eq(fl[i].tf_mangled, mangled) { return fl[i].tf_func.must_use; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// Index of the `@must_use` enum sig this type names, or -1.
+fn mu_enum_idx(a: Allocator, ar: *Arena, tp: *const Tprogram, t: *const Typ) -> int {
+    let path = match *t {
+        Typ::TEnum(p) => mu_path_str(a, ar, &p)
+        | _o => ""
+    };
+    if str::length(path) == 0 as u32 { return -1 as int; }
+    let el = tp.tp_enum_index.as_slice();
+    let mut i = 0 as u32;
+    while i < tp.tp_enum_index.length() {
+        if el[i].eis_must_use && str::eq(mu_path_str(a, ar, &el[i].ename_path), path) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return -1 as int;
+}
+// The warning text for a dropped value, or "" when it is fine to drop.
+fn mu_reason(a: Allocator, ar: *Arena, tp: *const Tprogram, te: *const Texpr) -> str {
+    let callee_must_use = match te.e {
+        TexprNode::TCall { mangled, args } => mu_fn_hit(tp, mangled)
+        | _o => false
+    };
+    if callee_must_use { return "call result is `@must_use`; bind it or use `let _ = ...`"; }
+    let ei = mu_enum_idx(a, ar, tp, te.ty);
+    if ei < 0 as int { return ""; }
+    let el = tp.tp_enum_index.as_slice();
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("unused '");
+    sb.push_str(mu_render_enum_name(a, ar, &el[ei as u32]));
+    sb.push_str("' value (marked `@must_use`); bind it or use `let _ = ...`");
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// Pre-order, source order — the reversal happens once per function, below.
+// `TFor` / `TForEach` are lifted away before this pass runs, so the reference's
+// arms for them have no counterpart here.
+fn mu_substmts(a: Allocator, ar: *Arena, tp: *const Tprogram, s: *const Tstmt, out: *Vec<LWarn>) {
+    match *s {
+        Tstmt::TIf { cond, then_body, else_body } => {
+            mu_in_stmts(a, ar, tp, &then_body, out); mu_in_stmts(a, ar, tp, &else_body, out);
+        }
+        | Tstmt::TWhile { cond, body, post } => {
+            mu_in_stmts(a, ar, tp, &body, out); mu_in_stmts(a, ar, tp, &post, out);
+        }
+        | Tstmt::TDefer { body, pos } => { mu_in_stmts(a, ar, tp, &body, out); }
+        | _o => { }
+    }
+    return;
+}
+fn mu_emit(a: Allocator, ar: *Arena, tp: *const Tprogram, e: *const Texpr, out: *Vec<LWarn>) {
+    let msg = mu_reason(a, ar, tp, e);
+    if str::length(msg) > 0 as u32 { out.push(LWarn { lw_pos: e.pos, lw_msg: msg }); }
+    return;
+}
+fn mu_in_stmts(a: Allocator, ar: *Arena, tp: *const Tprogram, stmts: *const Vec<Tstmt>, out: *Vec<LWarn>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        match sl[i] {
+            Tstmt::TExprStmt(e) => { mu_emit(a, ar, tp, e, out); }
+            | _o => { }
+        }
+        mu_substmts(a, ar, tp, &sl[i], out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn mu_push(out: *Vec<LWarn>, p: Pos, m: str) {
+    out.push(LWarn { lw_pos: p, lw_msg: m });
+    return;
+}
+fn must_use_warnings(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *Vec<LWarn>) {
+    let fl = tp.tp_funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < tp.tp_funcs.length() {
+        if !is_prelude_fn(&fl[i]) {
+            let mut per_fn: Vec<LWarn> = Vec::with_capacity(a, 8 as u32);
+            mu_in_stmts(a, ar, tp, &fl[i].tf_body, &per_fn);
+            let psl = per_fn.as_slice();
+            let mut k = per_fn.length();
+            while k > 0 as u32 {
+                k = k - 1 as u32;
+                // Passed as arguments, not inserted from the slice: a value read
+                // through a local slice chain and put into a caller-owned
+                // container reads as an escaping borrow.
+                mu_push(out, psl[k].lw_pos, psl[k].lw_msg);
+            }
+        }
         i = i + 1 as u32;
     }
     return;
@@ -373,8 +549,10 @@ pub fn collect(a: Allocator, ar: *Arena, tp: *const Tprogram) -> Vec<LWarn> {
         }
         j = j + 1 as u32;
     }
-    // Slot 4 — unused fns (below).  Slot 5 — must_use (below).
+    // Slot 4 — unused fns.
     unused_fn_warnings(a, ar, tp, &out);
+    // Slot 5 — dropped `@must_use` values.
+    must_use_warnings(a, ar, tp, &out);
     // Slot 6 — with_capacity hints; never warn about prelude bodies.
     let mut k = 0 as u32;
     while k < tp.tp_funcs.length() {

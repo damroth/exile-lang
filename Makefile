@@ -634,7 +634,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
-                 selfhost-no-fabrication
+                 selfhost-port-lint selfhost-no-fabrication
 	@echo "selfhost-verify: all port gates green"
 
 # ===== exilc whole-C fixpoint — the compiler as its own fixture =====
@@ -742,6 +742,55 @@ selfhost-port-escape: host-selfhost-escape
 	  fi; \
 	done; \
 	echo "selfhost-port-escape: $$((n-fail))/$$n agree; $$fail diverge"; \
+	[ $$fail -eq 0 ]
+
+# ===== lint — the WHOLE stderr, not its first line =====
+#
+# Unlike move / escape, lint emits every warning it finds rather than the first,
+# so the ORDER the six category slots are concatenated in is as much a part of
+# the contract as the texts.  This gate therefore byte-diffs the entire warning
+# stream (only the `wrote ...` build line is dropped) and asserts exit-status
+# parity — warnings must never fail a build.
+#
+# Two populations: the corpus proves no false positives on 95 real programs, the
+# fixtures cover the categories the corpus never exercises.  Fixtures are listed
+# by name, not globbed, so a deleted one is a hard MISSING rather than a silent
+# skip, and each is required to produce a NON-EMPTY reference stream — a fixture
+# that quietly stopped warning would otherwise agree with a port that also says
+# nothing.
+LINT_FIXTURES := must_use_prelude must_use_attr must_use_order must_use_modules slot_order
+
+selfhost-port-lint: $(EXILC_BIN)
+	@fail=0; n=0; \
+	for name in $(LINT_FIXTURES); do \
+	  if [ ! -f tests/lint/$$name.exl ]; then \
+	    echo "selfhost-port-lint: MISSING fixture tests/lint/$$name.exl"; fail=$$((fail+1)); \
+	  fi; \
+	done; \
+	for f in $(patsubst %,examples/%.exl,$(EXAMPLE_NAMES)) $(patsubst %,tests/lint/%.exl,$(LINT_FIXTURES)); do \
+	  [ -f $$f ] || continue; \
+	  n=$$((n+1)); \
+	  rm -f $(C_OUT)/lint_o.c $(C_OUT)/lint_p.c $(C_OUT)/lint_o.raw $(C_OUT)/lint_p.raw \
+	        $(C_OUT)/lint_o.err $(C_OUT)/lint_p.err; \
+	  $(EXILE) --target c --c-out $(C_OUT)/lint_o.c $$f > $(C_OUT)/lint_o.raw 2>&1; oe=$$?; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/lint_p.c $$f > $(C_OUT)/lint_p.raw 2>&1; pe=$$?; \
+	  grep -v '^wrote ' $(C_OUT)/lint_o.raw > $(C_OUT)/lint_o.err || true; \
+	  grep -v '^wrote ' $(C_OUT)/lint_p.raw > $(C_OUT)/lint_p.err || true; \
+	  case $$f in tests/lint/*) \
+	    if [ ! -s $(C_OUT)/lint_o.err ]; then \
+	      echo "selfhost-port-lint: EMPTY reference $$f (fixture floor)"; fail=$$((fail+1)); continue; \
+	    fi;; \
+	  esac; \
+	  if [ "$$oe" != "$$pe" ] || [ "$$oe" != "0" ]; then \
+	    echo "selfhost-port-lint: STATUS $$f oracle=$$oe port=$$pe (warnings must not fail a build)"; \
+	    fail=$$((fail+1)); continue; \
+	  fi; \
+	  if ! cmp -s $(C_OUT)/lint_o.err $(C_OUT)/lint_p.err; then \
+	    echo "selfhost-port-lint: DIVERGE $$f"; \
+	    diff $(C_OUT)/lint_o.err $(C_OUT)/lint_p.err | head -8; fail=$$((fail+1)); \
+	  fi; \
+	done; \
+	echo "selfhost-port-lint: $$((n-fail))/$$n agree; $$fail diverge"; \
 	[ $$fail -eq 0 ]
 
 selfhost-port-errors: host-selfhost-lexer

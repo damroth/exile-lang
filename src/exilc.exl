@@ -26,6 +26,7 @@ use typecheck::*;
 use move::*;
 use escape::*;
 use drop::*;
+use lint::*;
 use codegen::*;
 use dump_token::*;
 use dump_ast::*;
@@ -295,14 +296,11 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
         Result::Ok(tp) => {
             let mut tprog = tp;
             // The reference's order: Move.check -> Escape.check -> Drop.insert
-            // -> Lint.lint.  Lint is ported but unwired (see below).
+            // -> Lint.lint.
             check_move(a, ar, &tprog);
             check_escape(a, ar, &tprog);
             drop_insert(a, ar, &tprog);
-            // Lint is NOT wired: `must_use` (one of its six warning categories)
-            // is not ported yet, and a linter that emits some of its warnings
-            // reads as complete — silence looks like "clean".  lint::lint
-            // exists and is callable; it goes in when the category lands.
+            lint(a, ar, &tprog);
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             gen_program(a, ar, &tprog, &out);
             let cpath = resolve_cpath(a, ar, ca);

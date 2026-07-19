@@ -12066,6 +12066,71 @@ fn mark_enum_debug(enums: *Vec<EnumSig>, ci: u32, names: *const Vec<str>) {
     }
     return;
 }
+// `@must_use` enum names, re-derived from the AST like the `@debug` names —
+// Tprogram has no enum-decl table.  Qualified exactly as `push_type_name`
+// records them (bare at top level, `mod::Name` inside), so two same-named enums
+// in different modules stay distinct: marking by bare name would silence the
+// wrong one, or warn on it.
+fn mu_push_enum(a: Allocator, ar: *Arena, modpath: *const Vec<str>, ed: *const EnumDecl, out: *Vec<str>) {
+    if !ed.emust_use { return; }
+    if modpath.length() == 0 as u32 { out.push(ed.ename); return; }
+    out.push(join_colons(a, ar, modpath, ed.ename));
+    return;
+}
+fn collect_must_use_enums_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it: *const Item, out: *Vec<str>) {
+    match *it {
+        Item::Enum(ed) => { mu_push_enum(a, ar, modpath, &ed, out); }
+        | Item::Module(md) => { collect_must_use_enums(a, ar, &path_push(a, modpath, md.mname), &md.mitems, out); }
+        | _e => { }
+    }
+}
+fn collect_must_use_enums(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<str>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        collect_must_use_enums_one(a, ar, modpath, &sl[i], out);
+        i = i + 1 as u32;
+    }
+}
+// A mono instance inherits the flag from its skeleton (the oracle copies it in
+// Mono.instance).  Here the link is the mangled name — but only an entry that
+// carries instance args may match that way, so a hand-written `Ticket_i32`
+// living next to a `@must_use` `Ticket` is not mistaken for its instance.
+fn mu_name_hit(names: *const Vec<str>, last: str, is_inst: bool) -> bool {
+    let sl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() {
+        if is_inst {
+            if inst_of_base(last, sl[i]) { return true; }
+        } else {
+            if str::eq(last, sl[i]) { return true; }
+        }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// Compared on the whole path joined with `::`, not on its last segment: an
+// entry may hold `["inner::Box_i32"]` or `["inner", "Box_i32"]` depending on
+// which pusher built it, and only the joined form is the same in both.
+fn mu_joined(a: Allocator, ar: *Arena, p: *const Vec<str>) -> str {
+    let n = p.length();
+    if n == 0 as u32 { return ""; }
+    let sl = p.as_slice();
+    let mut pre: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i + 1 as u32 < n { pre.push(sl[i]); i = i + 1 as u32; }
+    return join_colons(a, ar, &pre, sl[n - 1 as u32]);
+}
+fn mark_enum_must_use(a: Allocator, ar: *Arena, enums: *Vec<EnumSig>, ci: u32, names: *const Vec<str>) {
+    with e in enums[ci] {
+        let is_inst = match e.einstance_args {
+            Option::Some(_ia) => true
+            | Option::None => false
+        };
+        if mu_name_hit(names, mu_joined(a, ar, &e.ename_path), is_inst) { e.eis_must_use = true; }
+    }
+    return;
+}
 fn push_struct_path(a: Allocator, sigs: *Vec<StructSig>, srcpath: *const Vec<str>,
                     mono_fields: *const Vec<StructField>, args: *const Vec<*const Typ>) {
     // Fill the mono instance's resolved fields (from the flat mono-field
@@ -14534,6 +14599,15 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     while di < structs.length() { mark_struct_debug(&structs, di, &dbg_snames); di = di + 1 as u32; }
     let mut dj = 0 as u32;
     while dj < enums.length() { mark_enum_debug(&enums, dj, &dbg_enames); dj = dj + 1 as u32; }
+
+    // Seeded with the two prelude enums: the oracle marks Option / Result on
+    // their prelude decls, which the port hardcodes rather than parses.
+    let mut mu_enames: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    mu_enames.push("Option");
+    mu_enames.push("Result");
+    collect_must_use_enums(a, ar, &top_modpath, items, &mu_enames);
+    let mut mue = 0 as u32;
+    while mue < enums.length() { mark_enum_must_use(a, ar, &enums, mue, &mu_enames); mue = mue + 1 as u32; }
 
     let sdecls: Vec<StructDeclEntry> = Vec::with_capacity(a, 8 as u32);
     let global: Vec<GlobalEntry> = Vec::with_capacity(a, 8 as u32);

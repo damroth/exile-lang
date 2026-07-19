@@ -1,0 +1,24 @@
+// Discarding a prelude `@must_use` value warns; `let _ =` opts out.
+
+fn divide(x: i32, y: i32) -> Result<i32, str> {
+    if y == 0 as i32 { return Result::Err("division by zero"); }
+    return Result::Ok(x / y);
+}
+
+fn lookup(hit: bool) -> Option<i32> {
+    if hit { return Option::Some(7 as i32); }
+    return Option::None;
+}
+
+pub fn run() {
+    divide(10 as i32, 2 as i32);
+    lookup(true);
+    let _ = divide(1 as i32, 1 as i32);
+    let _unused = lookup(false);
+    return;
+}
+
+fn main() {
+    run();
+    return;
+}

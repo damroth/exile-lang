@@ -1,0 +1,25 @@
+// `@must_use` on a fn and on user enum decls, mono and generic.
+
+@must_use
+fn checksum(x: i32) -> i32 { return x * 3 as i32; }
+
+@must_use
+enum Ticket { Open | Closed }
+
+@must_use
+enum Cell<T> { Empty | Full(T) }
+
+fn issue() -> Ticket { return Ticket::Open; }
+fn fill(x: i32) -> Cell<i32> { return Cell::Full(x); }
+
+pub fn run() {
+    checksum(2 as i32);
+    issue();
+    fill(1 as i32);
+    return;
+}
+
+fn main() {
+    run();
+    return;
+}

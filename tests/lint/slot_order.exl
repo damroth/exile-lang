@@ -1,0 +1,26 @@
+// One file exercising every slot the linter can fill, so the gate pins the
+// order the categories are concatenated in — not just their texts.
+//
+// Slot 1 (tier) is provably empty: `exceeds` is item_tier > profile and Full is
+// the maximum, so nothing can fire without a `--profile` flag.
+
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+}
+
+@must_use
+fn tagged() -> i32 { return 1 as i32; }
+
+fn never_called(unused_param: i32) -> i32 {
+    let unused_let = 5 as i32;
+    return 0 as i32;
+}
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 2 as u32);
+    v.push(1);
+    println(v.length() as int);
+    tagged();
+    return;
+}
