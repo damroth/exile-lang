@@ -1,0 +1,17 @@
+// A generic FREE fn inside a `mod`: the registry that drives instantiation was
+// top-level only, so the qualified call resolved through the ordinary global
+// table instead — against a signature that still mentions `T`, which rejects
+// every argument.
+
+mod util {
+    pub fn pick<T>(a: T, b: T, first: bool) -> T {
+        if first { return a; }
+        return b;
+    }
+}
+
+fn main() {
+    println(util::pick(3 as i32, 9 as i32, false));
+    println(util::pick(1 as i32, 2 as i32, true));
+    return;
+}

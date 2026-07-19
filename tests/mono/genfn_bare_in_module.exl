@@ -1,0 +1,18 @@
+// A bare call inside the module resolves to the module's own generic fn, not to
+// the same-named one at top level.  Both are instantiated at the same argument
+// type, so a registry that matched on the bare name alone would silently pick
+// one of them for both call sites.
+
+fn label<T>(x: T) -> i32 { return 1 as i32; }
+
+mod inner {
+    pub fn label<T>(x: T) -> i32 { return 2 as i32; }
+    pub fn call_local() -> i32 { return label(0 as i32); }
+}
+
+fn main() {
+    println(label(0 as i32));
+    println(inner::call_local());
+    println(inner::label(0 as i32));
+    return;
+}

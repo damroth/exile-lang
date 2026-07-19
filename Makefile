@@ -759,7 +759,9 @@ selfhost-port-escape: host-selfhost-escape
 # still caught.  Fixtures are named, not globbed — a deleted one is MISSING.
 MONO_FIXTURES := enum_two_modules struct_two_modules enum_mixed_qualification \
                  enum_silent_layout struct_nested_module \
-                 impl_in_module impl_two_modules impl_wrong_body
+                 impl_in_module impl_two_modules impl_wrong_body \
+                 genfn_in_module genfn_two_modules genfn_bare_in_module \
+                 genfn_nested_module
 
 selfhost-mono-modules: $(EXILC_BIN)
 	@fail=0; n=0; \

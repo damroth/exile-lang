@@ -1,0 +1,16 @@
+// Two modules deep: the instance is located by the whole path, not the
+// innermost segment.
+
+mod outer {
+    pub mod deep {
+        pub fn twice<T>(x: T, f: bool) -> i32 {
+            if f { return 2 as i32; }
+            return 4 as i32;
+        }
+    }
+}
+
+fn main() {
+    println(outer::deep::twice(0 as i32, false));
+    return;
+}

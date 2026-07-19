@@ -240,6 +240,10 @@ struct MethodInfo {
 struct GenFn {
     gn_name: str,
     gn_mangled: str,
+    // The module the source fn lives in, and its index WITHIN that module's
+    // item list — the same locator the method registry carries, for the same
+    // reason: an index cannot name the list it indexes.
+    gn_modpath: Vec<str>,
     gn_idx: u32,
     gn_tparams: Vec<str>,
     gn_params: Vec<*const TypeAnn>,
@@ -2538,15 +2542,39 @@ fn subst_opt_ret(ar: *Arena, binds: *const Vec<TVarBind>, ret: Option<*const Typ
     };
 }
 
-fn gen_fn_lookup(genfns: *const Vec<GenFn>, name: str) -> int {
+// A bare name resolves to the generic fn in the CURRENT module first, then to a
+// top-level one — two modules may each declare a generic `pick`, and a
+// name-only match would hand the caller whichever was registered first.
+fn gen_fn_lookup_in(genfns: *const Vec<GenFn>, name: str, modpath: *const Vec<str>) -> int {
     let n = genfns.length();
     let sl = genfns.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        if str::eq(sl[i].gn_name, name) { return i as int; }
+        if str::eq(sl[i].gn_name, name) && path_eq(&sl[i].gn_modpath, modpath) { return i as int; }
         i = i + 1 as u32;
     }
     return 0 as int - 1 as int;
+}
+fn gen_fn_lookup(genfns: *const Vec<GenFn>, name: str, modpath: *const Vec<str>) -> int {
+    let here = gen_fn_lookup_in(genfns, name, modpath);
+    if here >= 0 as int { return here; }
+    let n = genfns.length();
+    let sl = genfns.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].gn_name, name) && sl[i].gn_modpath.length() == 0 as u32 { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+// `mod::name` — the written path, then module-relative (the same two-step the
+// global table does for a qualified call inside a nested module).
+fn gen_fn_lookup_qual(a: Allocator, genfns: *const Vec<GenFn>, sc: *const TyScope, init: *const Vec<str>, last: str) -> int {
+    let hit = gen_fn_lookup_in(genfns, last, init);
+    if hit >= 0 as int { return hit; }
+    if sc.sc_modpath.length() == 0 as u32 { return 0 as int - 1 as int; }
+    let qinit = path_concat(a, sc.sc_modpath, init);
+    return gen_fn_lookup_in(genfns, last, &qinit);
 }
 
 // Infer tparam bindings for a generic-fn call by unifying each parameter's
@@ -2568,12 +2596,11 @@ fn infer_call_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *con
 }
 
 // Queue a generic-fn instance for the post-pass drain, once per mangled name.
-fn queue_gen_instance(a: Allocator, sc: *const TyScope, gi: u32, binds: *const Vec<TVarBind>, mangled: str) {
+fn queue_gen_instance(a: Allocator, sc: *const TyScope, modpath: *const Vec<str>, gi: u32, binds: *const Vec<TVarBind>, mangled: str) {
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
     let no_target: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let no_modpath: Vec<str> = empty_strs(a);
-    sc.sc_genjobs.push(GenJob { gj_modpath: no_modpath, gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: no_target, gj_prelude: false });
+    sc.sc_genjobs.push(GenJob { gj_modpath: copy_strs(a, modpath), gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: no_target, gj_prelude: false });
 }
 
 // Queue a prelude generic method instance (Vec/VecIter/adapter): its source
@@ -2625,6 +2652,11 @@ fn qualified_lookup(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
 }
 fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                        init: *const Vec<str>, last: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    // A generic callee is instantiated, not called through the global table:
+    // its registered signature still mentions its type parameters, so resolving
+    // it as an ordinary global rejects every argument as "expected T".
+    let gfi = gen_fn_lookup_qual(a, sc.sc_genfns, sc, init, last);
+    if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, none_ty(), args, p); }
     return match qualified_lookup(a, ar, g, sc, init, last) {
         Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, args, p)
         | Option::None => unknown_fn(a, ar, sc, path_display(a, ar, &path_push(a, init, last)), p)
@@ -2680,7 +2712,7 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     check_tparams_bound(a, ar, sc, &gsl[gfidx as u32].gn_tparams, &binds, p);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
-    queue_gen_instance(a, sc, gi, &binds, inst);
+    queue_gen_instance(a, sc, &gsl[gfidx as u32].gn_modpath, gi, &binds, inst);
     // Re-resolve the return with the inferred bindings IN SCOPE so a generic
     // application (`Vec<T>`) or assoc projection (`Option<I::Item>`) lowers to
     // its concrete instance, not a `subst` that leaves the app abstract.
@@ -3147,7 +3179,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     if env_has_call_method(a, sc, env, name) {
         return elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::Var(name, p)), "call", args, p);
     }
-    let gfi = gen_fn_lookup(sc.sc_genfns, name);
+    let gfi = gen_fn_lookup(sc.sc_genfns, name, sc.sc_modpath);
     if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, expected, args, p); }
     return elab_user_or_defer(a, ar, g, sc, env, name, args, p);
 }
@@ -10556,23 +10588,32 @@ fn copy_param_anns(a: Allocator, params: *const Vec<Param>) -> Vec<*const TypeAn
     while i < n { out.push(sl[i].pty); i = i + 1 as u32; }
     return out;
 }
-fn push_gen_fn(a: Allocator, ar: *Arena, f: *const Func, gidx: u32, out: *Vec<GenFn>) {
+// `mangle_path` with an empty path is exactly what `mangle_fn` produced for a
+// top-level generic fn (`ex_<name>`; neither `extern` nor `main` can be
+// generic), so module awareness costs no byte at top level.
+fn push_gen_fn(a: Allocator, ar: *Arena, f: *const Func, modpath: *const Vec<str>, gidx: u32, out: *Vec<GenFn>) {
     if f.tparams.length() == 0 as u32 { return; }
-    out.push(GenFn { gn_name: f.name, gn_mangled: mangle_fn(a, ar, f), gn_idx: gidx,
+    out.push(GenFn { gn_name: f.name, gn_mangled: mangle_path(a, ar, modpath, f.name),
+                     gn_modpath: copy_strs(a, modpath), gn_idx: gidx,
                      gn_tparams: copy_strs(a, &f.tparams), gn_params: copy_param_anns(a, &f.params),
                      gn_ret: f.ret_ty });
 }
-fn collect_gen_fns_one(a: Allocator, ar: *Arena, it: *const Item, gidx: u32, out: *Vec<GenFn>) {
+fn collect_gen_fns_one(a: Allocator, ar: *Arena, it: *const Item, modpath: *const Vec<str>, gidx: u32, out: *Vec<GenFn>) {
     match *it {
-        Item::Function(f) => { push_gen_fn(a, ar, &f, gidx, out); }
+        Item::Function(f) => { push_gen_fn(a, ar, &f, modpath, gidx, out); }
+        | Item::Module(md) => { collect_gen_fns_in(a, ar, &md.mitems, &path_push(a, modpath, md.mname), out); }
         | _e => { }
     }
 }
-fn collect_gen_fns(a: Allocator, ar: *Arena, items: *const Vec<Item>, out: *Vec<GenFn>) {
+fn collect_gen_fns_in(a: Allocator, ar: *Arena, items: *const Vec<Item>, modpath: *const Vec<str>, out: *Vec<GenFn>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { collect_gen_fns_one(a, ar, &sl[i], i, out); i = i + 1 as u32; }
+    while i < n { collect_gen_fns_one(a, ar, &sl[i], modpath, i, out); i = i + 1 as u32; }
+}
+fn collect_gen_fns(a: Allocator, ar: *Arena, items: *const Vec<Item>, out: *Vec<GenFn>) {
+    let top: Vec<str> = empty_strs(a);
+    collect_gen_fns_in(a, ar, items, &top, out);
 }
 
 fn push_enum_tp(a: Allocator, ename: str, params: *const Vec<str>, out: *Vec<EnumTP>) {
@@ -11553,12 +11594,53 @@ fn prelude_enum_tps(a: Allocator, out: *Vec<EnumTP>) {
 // Elaborate one generic-fn instance: re-derive the source fn from its item
 // index (a stable borrow into `items`) and elaborate it under the bindings.
 fn elaborate_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                      items: *const Vec<Item>, gi: u32, tbinds: *const Vec<TVarBind>, mangled: str, funcs: *Vec<Tfunc>) {
+                      items: *const Vec<Item>, modpath: *const Vec<str>, gi: u32, tbinds: *const Vec<TVarBind>,
+                      mangled: str, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
     match sl[gi] {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, &f, none_ty(), &f.tparams)); }
+        Item::Function(f) => { push_free_inst(a, ar, g, gensym, idx, tbinds, modpath, mangled, &f, funcs); }
         | _e => { }
     }
+}
+fn push_free_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                  tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func,
+                  funcs: *Vec<Tfunc>) {
+    if modpath.length() == 0 as u32 {
+        funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, none_ty(), &f.tparams));
+        return;
+    }
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, modpath, mangled, f, none_ty(), &f.tparams));
+}
+// Walk to the item list `modpath` names, then elaborate the free fn there.
+fn elaborate_instance_at_path(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                              items: *const Vec<Item>, modpath: *const Vec<str>, depth: u32, gi: u32,
+                              tbinds: *const Vec<TVarBind>, mangled: str, funcs: *Vec<Tfunc>) {
+    if depth == modpath.length() {
+        elaborate_instance(a, ar, g, gensym, idx, items, modpath, gi, tbinds, mangled, funcs);
+        return;
+    }
+    let want = modpath.as_slice()[depth];
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    let mut done = false;
+    while i < items.length() {
+        match sl[i] {
+            Item::Module(md) => {
+                done = descend_free(a, ar, g, gensym, idx, md.mname, &md.mitems, want, modpath, depth, gi, tbinds, mangled, funcs);
+            }
+            | _e => { }
+        }
+        if done { return; }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn descend_free(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
+                mname: str, mitems: *const Vec<Item>, want: str, modpath: *const Vec<str>, depth: u32,
+                gi: u32, tbinds: *const Vec<TVarBind>, mangled: str, funcs: *Vec<Tfunc>) -> bool {
+    if !str::eq(mname, want) { return false; }
+    elaborate_instance_at_path(a, ar, g, gensym, idx, mitems, modpath, depth + 1 as u32, gi, tbinds, mangled, funcs);
+    return true;
 }
 
 // Push happens behind a fn boundary so `f` is a parameter (not the address
@@ -14603,7 +14685,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
                 elaborate_method_instance(a, ar, &globals, &gensym, &idx, &prelude_items, &jmp, rsl[ri as u32].pm_impl_idx, rsl[ri as u32].pm_meth_idx, &jb, jm, &self_tgt, &funcs);
             }
         } else if jmeth < 0 as int {
-            elaborate_instance(a, ar, &globals, &gensym, &idx, items, ji, &jb, jm, &funcs);
+            elaborate_instance_at_path(a, ar, &globals, &gensym, &idx, items, &jmp, 0 as u32, ji, &jb, jm, &funcs);
         } else {
             elaborate_method_at_path(a, ar, &globals, &gensym, &idx, items, &jmp, 0 as u32, ji, jmeth as u32, &jb, jm, &jt, &funcs);
         }

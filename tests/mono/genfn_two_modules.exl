@@ -1,0 +1,17 @@
+// Two modules, one generic fn name, different bodies.  A name-only registry
+// lookup hands the caller whichever was registered first — and both calls
+// then compute the same answer, which is the quiet way to be wrong.
+
+mod alpha {
+    pub fn tag<T>(x: T) -> i32 { return 10 as i32; }
+}
+
+mod beta {
+    pub fn tag<T>(x: T) -> i32 { return 20 as i32; }
+}
+
+fn main() {
+    println(alpha::tag(1 as i32));
+    println(beta::tag(1 as i32));
+    return;
+}
