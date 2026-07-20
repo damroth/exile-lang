@@ -1,0 +1,16 @@
+// Crossing: trait x nested module x a type path written RELATIVE to the module
+// that names it.  `make` sits in the middle module and says `inner::R`, whose
+// absolute path is `outer::inner::R`.  Qualified on the annotation side only,
+// the signature and the body's struct literal resolve to two different types;
+// qualified on neither, the method lookup misses and reports `no method 'show'
+// on type 'inner::R'` — a path missing its own prefix.
+
+mod outer {
+    pub mod inner {
+        pub trait Show { fn show(self) -> int; }
+        pub struct R { v: int }
+        impl Show for R { fn show(self) -> int { return self.v; } }
+    }
+    pub fn make(v: int) -> inner::R { return inner::R { v: v }; }
+}
+fn main() { println(outer::make(11).show()); return; }
