@@ -48,3 +48,8 @@ SELFHOST-PLUMBING-REGISTER.md
 # editor
 .merlin
 *.annot
+
+# Emitted C next to a fixture: a `--target host` build without `--c-out` drops
+# its C beside the source.  The gates now pass `--c-out` into _build, and this
+# is the belt: a fixture directory holds .exl, never build output.
+tests/*/*.c

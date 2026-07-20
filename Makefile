@@ -812,7 +812,8 @@ selfhost-xprod: $(EXILC_BIN)
 	    echo "selfhost-xprod: MISSING fixture $$f"; fail=$$((fail+1)); continue; \
 	  fi; \
 	  n=$$((n+1)); \
-	  rm -f $(C_OUT)/xp_o.c $(C_OUT)/xp_p.c $(HOST_OUT)/xp_o $(HOST_OUT)/xp_p \
+	  rm -f $(C_OUT)/xp_o.c $(C_OUT)/xp_p.c $(C_OUT)/xp_o_host.c $(C_OUT)/xp_p_host.c \
+	        $(HOST_OUT)/xp_o $(HOST_OUT)/xp_p \
 	        $(C_OUT)/xp_o.run $(C_OUT)/xp_p.run; \
 	  $(EXILE) --target c --c-out $(C_OUT)/xp_o.c $$f >/dev/null 2>&1; oe=$$?; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/xp_p.c $$f >/dev/null 2>&1; pe=$$?; \
@@ -826,8 +827,8 @@ selfhost-xprod: $(EXILC_BIN)
 	    echo "selfhost-xprod: C DIVERGE $$f"; \
 	    diff $(C_OUT)/xp_o.c $(C_OUT)/xp_p.c | head -8; fail=$$((fail+1)); continue; \
 	  fi; \
-	  $(EXILE) --target host -o $(HOST_OUT)/xp_o $$f >/dev/null 2>&1; \
-	  $(EXILC_BIN) --target host -o $(HOST_OUT)/xp_p $$f >/dev/null 2>&1; \
+	  $(EXILE) --target host --c-out $(C_OUT)/xp_o_host.c -o $(HOST_OUT)/xp_o $$f >/dev/null 2>&1; \
+	  $(EXILC_BIN) --target host --c-out $(C_OUT)/xp_p_host.c -o $(HOST_OUT)/xp_p $$f >/dev/null 2>&1; \
 	  if [ ! -x $(HOST_OUT)/xp_o ] || [ ! -x $(HOST_OUT)/xp_p ]; then \
 	    echo "selfhost-xprod: BUILD $$f"; fail=$$((fail+1)); continue; \
 	  fi; \
@@ -872,7 +873,8 @@ selfhost-mono-modules: $(EXILC_BIN)
 	    echo "selfhost-mono-modules: MISSING fixture $$f"; fail=$$((fail+1)); continue; \
 	  fi; \
 	  n=$$((n+1)); \
-	  rm -f $(C_OUT)/mono_o.c $(C_OUT)/mono_p.c $(HOST_OUT)/mono_o $(HOST_OUT)/mono_p \
+	  rm -f $(C_OUT)/mono_o.c $(C_OUT)/mono_p.c $(C_OUT)/mono_o_host.c $(C_OUT)/mono_p_host.c \
+	        $(HOST_OUT)/mono_o $(HOST_OUT)/mono_p \
 	        $(C_OUT)/mono_o.run $(C_OUT)/mono_p.run; \
 	  $(EXILE) --target c --c-out $(C_OUT)/mono_o.c $$f >/dev/null 2>&1; oe=$$?; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/mono_p.c $$f >/dev/null 2>&1; pe=$$?; \
@@ -886,8 +888,8 @@ selfhost-mono-modules: $(EXILC_BIN)
 	    echo "selfhost-mono-modules: C DIVERGE $$f"; \
 	    diff $(C_OUT)/mono_o.c $(C_OUT)/mono_p.c | head -8; fail=$$((fail+1)); continue; \
 	  fi; \
-	  $(EXILE) --target host -o $(HOST_OUT)/mono_o $$f >/dev/null 2>&1; \
-	  $(EXILC_BIN) --target host -o $(HOST_OUT)/mono_p $$f >/dev/null 2>&1; \
+	  $(EXILE) --target host --c-out $(C_OUT)/mono_o_host.c -o $(HOST_OUT)/mono_o $$f >/dev/null 2>&1; \
+	  $(EXILC_BIN) --target host --c-out $(C_OUT)/mono_p_host.c -o $(HOST_OUT)/mono_p $$f >/dev/null 2>&1; \
 	  if [ ! -x $(HOST_OUT)/mono_o ] || [ ! -x $(HOST_OUT)/mono_p ]; then \
 	    echo "selfhost-mono-modules: BUILD $$f (oracle or port produced no binary)"; fail=$$((fail+1)); continue; \
 	  fi; \
