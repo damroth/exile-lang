@@ -2789,7 +2789,8 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let gi = gsl[gfidx as u32].gn_idx;
     let base = gsl[gfidx as u32].gn_mangled;
     let targs = elab_args(a, ar, g, sc, env, args);
-    let cscope = scope_with_tparams(sc, &gsl[gfidx as u32].gn_tparams);
+    let cvis = tbinds_visible(a, sc.sc_tbinds, &gsl[gfidx as u32].gn_tparams);
+    let cscope = scope_with_tparams_binds(sc, &gsl[gfidx as u32].gn_tparams, &cvis);
     let cret = resolve_sig_ret(a, ar, &cscope, gsl[gfidx as u32].gn_ret, p);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_call_binds(a, ar, &cscope, &gsl[gfidx as u32].gn_params, &targs, &binds, p);
@@ -3572,7 +3573,8 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     let midx2 = sl[midx].mi_meth_idx;
     let prelude = sl[midx].mi_prelude;
     let targs = elab_args(a, ar, g, sc, env, args);
-    let cscope = scope_with_tparams(sc, &sl[midx].mi_tparams);
+    let mvis = tbinds_visible(a, sc.sc_tbinds, &sl[midx].mi_tparams);
+    let cscope = scope_with_tparams_binds(sc, &sl[midx].mi_tparams, &mvis);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_method_binds(a, ar, &cscope, &sl[midx].mi_params, trecv, &targs, &binds, p);
@@ -9773,6 +9775,28 @@ fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyS
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
+}
+// The tparams of the scope being resolved SHADOW an inherited binding of the
+// same name.  Two generic fns independently calling their parameter `T` is the
+// common case, and without this the callee's annotation `T` resolved through
+// the CALLER's binding: elaborating `wrap<T>` at T=i32, a call to `ident<T>`
+// saw its own parameter already "bound" to i32, so unification pushed nothing
+// and T was reported unbound.  Renaming the callee's parameter to `U` made the
+// same program compile — which is what named the defect.
+fn tbinds_visible(a: Allocator, binds: *const Vec<TVarBind>, shadowed: *const Vec<str>) -> Vec<TVarBind> {
+    let mut out: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    let sl = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < binds.length() {
+        if !name_in(shadowed, sl[i].tvb_name) { out.push(TVarBind { tvb_name: sl[i].tvb_name, tvb_ty: sl[i].tvb_ty }); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn scope_with_tparams_binds(base: *const TyScope, tparams: *const Vec<str>, binds: *const Vec<TVarBind>) -> TyScope {
+    let mut sc2 = scope_with_tparams(base, tparams);
+    sc2.sc_tbinds = binds;
+    return sc2;
 }
 fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
     return TyScope {

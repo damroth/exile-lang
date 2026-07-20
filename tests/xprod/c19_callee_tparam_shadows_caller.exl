@@ -1,0 +1,17 @@
+// Crossing: generic fn x generic fn, with the two type parameters sharing a
+// NAME.  `collides` and `renamed` are the same program twice; only the callee's
+// parameter letter differs, and before the fix the port compiled the second and
+// rejected the first with "could not infer type parameter 'T'".  A callee's
+// tparam is its own — an inherited binding of the same name must not reach it.
+
+fn pick_same<T>(a: T, b: T, f: bool) -> T { if f { return a; } return b; }
+fn pick_other<U>(a: U, b: U, f: bool) -> U { if f { return a; } return b; }
+
+fn collides<T>(x: T, y: T) -> T { return pick_same(x, y, false); }
+fn renamed<T>(x: T, y: T) -> T { return pick_other(x, y, false); }
+
+fn main() {
+    println(collides(4, 6));
+    println(renamed(7, 9));
+    return;
+}
