@@ -1,0 +1,21 @@
+// An inherent `fmt` is NOT a Display impl.  The port used to answer "does this
+// type implement Display?" by asking "does it have a method named `fmt`?" —
+// a different question, and the difference reached the user: with `pub fn fmt`
+// this program compiled and printed, while the reference refused it.
+//
+// Lives in the tc-errors corpus: the program is REJECTED, and the contract is
+// the first line — message and position — byte-exact with the reference.
+
+struct Point { x: i32 }
+
+impl Point {
+    pub fn fmt(*const self, out: *StringBuilder) {
+        out.push_str("NOT-DISPLAY");
+    }
+}
+
+fn main() {
+    let p = Point { x: 1 };
+    println(p);
+    return;
+}

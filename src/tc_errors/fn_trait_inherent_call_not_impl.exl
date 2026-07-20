@@ -1,0 +1,19 @@
+// The Fn-trait twin of `display_inherent_fmt_not_impl`, and the shape that
+// proved the defect was a CLASS rather than one site: an inherent `call` is not
+// an `impl FnN for`, so `f(x)` must not desugar to `f.call(x)`.  The old port
+// accepted and built this; the reference never treated `f` as callable.
+//
+// Lives in the tc-errors corpus: the program is REJECTED, and the contract is
+// the first line — message and position — byte-exact with the reference.
+
+struct NotCallable { _tag: int }
+
+impl NotCallable {
+    pub fn call(*const self, a: int) -> int { a + 1 }
+}
+
+fn main() {
+    let f = NotCallable { _tag: 0 };
+    println(f(1));
+    return;
+}
