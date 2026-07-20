@@ -3,6 +3,12 @@
 // parameter letter differs, and before the fix the port compiled the second and
 // rejected the first with "could not infer type parameter 'T'".  A callee's
 // tparam is its own — an inherited binding of the same name must not reach it.
+//
+// Two further properties, from the review, that the pair above does not pin:
+//   - TRANSITIVE: a three-level chain where every level calls its parameter T,
+//     so the shadowing has to hold through a binding introduced two frames up;
+//   - PARTIAL: a callee with two parameters where only one collides, so the
+//     shadowed one must not take the other's inference down with it.
 
 fn pick_same<T>(a: T, b: T, f: bool) -> T { if f { return a; } return b; }
 fn pick_other<U>(a: U, b: U, f: bool) -> U { if f { return a; } return b; }
@@ -10,8 +16,19 @@ fn pick_other<U>(a: U, b: U, f: bool) -> U { if f { return a; } return b; }
 fn collides<T>(x: T, y: T) -> T { return pick_same(x, y, false); }
 fn renamed<T>(x: T, y: T) -> T { return pick_other(x, y, false); }
 
+// transitive: base<T> <- mid<T> <- top<T>, one letter all the way down
+fn base<T>(x: T) -> T { return x; }
+fn mid<T>(x: T) -> T { return base(x); }
+fn top<T>(x: T) -> T { return mid(x); }
+
+// partial: T collides with the caller's, U is inferred from the second argument
+fn pair_pick<T, U>(a: T, b: U, f: bool) -> T { if f { return a; } return a; }
+fn partial<T>(x: T) -> T { return pair_pick(x, 99, false); }
+
 fn main() {
     println(collides(4, 6));
     println(renamed(7, 9));
+    println(top(21));
+    println(partial(9));
     return;
 }
