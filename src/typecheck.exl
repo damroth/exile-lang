@@ -1179,14 +1179,22 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         if name_in(sc.sc_xstructs, last) { return ty_node(ar, Typ::TExtStruct(last)); }
         if name_in(sc.sc_xaliases, last) { return ty_node(ar, Typ::TExtAlias(last)); }
     }
-    // A bare type name inside `mod m { ... }` resolves module-relative: if
-    // `m::name` is a declared type (its marker is registered), qualify to the
-    // `m::name` path.  Otherwise fall through to the bare / outer-scope
-    // resolution, so a prelude `StringBuilder` used in a module stays itself.
-    if plen == 1 as u32 && nargs == 0 as u32 && sc.sc_modpath.length() > 0 as u32 {
-        let marker = join_colons(a, ar, sc.sc_modpath, last);
-        if name_in(sc.sc_enums, marker) { return ty_node(ar, Typ::TEnum(path_push(a, sc.sc_modpath, last))); }
-        if name_in(sc.sc_structs, marker) { return ty_node(ar, Typ::TStruct(path_push(a, sc.sc_modpath, last))); }
+    // A type path written inside `mod m { ... }` resolves module-relative when
+    // the qualified form names a declared type; otherwise it falls through to
+    // the bare / outer-scope resolution, so a prelude `StringBuilder` used in a
+    // module stays itself.
+    //
+    // Stated as a PROPERTY of the qualified form — "is `m::<path>` registered" —
+    // rather than as a shape.  The shape version was too narrow three times: it
+    // asked for a single segment (so `inner::R` written one module up kept the
+    // relative path and its methods were unreachable), and for no generic
+    // arguments (so `Box<i32>` minted a bare instance every module shared).  A
+    // condition that names no shape has none to be narrow about.
+    if sc.sc_modpath.length() > 0 as u32 && nargs == 0 as u32 {
+        let q = path_concat(a, sc.sc_modpath, path);
+        let marker = mu_joined(a, ar, &q);
+        if name_in(sc.sc_enums, marker) { return ty_node(ar, Typ::TEnum(q)); }
+        if name_in(sc.sc_structs, marker) { return ty_node(ar, Typ::TStruct(copy_strs(a, &q))); }
     }
     // A bare name imported via `use foo::Bar;` resolves to `foo::Bar` (the
     // cross-module type alias — see collect_type_aliases).
@@ -1215,11 +1223,10 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // sname_path / ename_path); qualifying only the arg-less branch left the
     // generic one minting a bare `Box_i32` that every module's `Box` shares.
     let mut gpath: Vec<str> = copy_strs(a, path);
-    if plen == 1 as u32 && sc.sc_modpath.length() > 0 as u32 {
-        let marker = join_colons(a, ar, sc.sc_modpath, last);
-        if name_in(sc.sc_enums, marker) || name_in(sc.sc_structs, marker) {
-            gpath = path_push(a, sc.sc_modpath, last);
-        }
+    if sc.sc_modpath.length() > 0 as u32 {
+        let gq = path_concat(a, sc.sc_modpath, path);
+        let gmarker = mu_joined(a, ar, &gq);
+        if name_in(sc.sc_enums, gmarker) || name_in(sc.sc_structs, gmarker) { gpath = copy_strs(a, &gq); }
     }
     // A still-abstract application (a generic-struct method skeleton's
     // `Pair<A, B>`) keeps its `TStructApp` / `TEnumApp` form — mangling it
@@ -9188,14 +9195,19 @@ fn join_colons(a: Allocator, ar: *Arena, modpath: *const Vec<str>, name: str) ->
 // marker is registered, mirroring resolve_named_ty for annotations.  Already-
 // qualified paths and prelude names pass through unchanged.
 fn qualify_type_path(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> Vec<str> {
+    // Same property as the annotation side (`resolve_named_ty`): whatever its
+    // segment count, a path written inside a module means the qualified form
+    // when that form is registered.  Kept in step deliberately — with only the
+    // annotation generalised, `fn make() -> inner::R` and its body's
+    // `inner::R { .. }` resolved to two different types one module up.
+    if sc.sc_modpath.length() > 0 as u32 {
+        let q = path_concat(a, sc.sc_modpath, path);
+        let marker = mu_joined(a, ar, &q);
+        if name_in(sc.sc_structs, marker) { return q; }
+        if name_in(sc.sc_enums, marker) { return copy_strs(a, &q); }
+    }
     if path.length() == 1 as u32 {
-        let last = path_last(path);
-        if sc.sc_modpath.length() > 0 as u32 {
-            let marker = join_colons(a, ar, sc.sc_modpath, last);
-            if name_in(sc.sc_structs, marker) { return path_push(a, sc.sc_modpath, last); }
-            if name_in(sc.sc_enums, marker) { return path_push(a, sc.sc_modpath, last); }
-        }
-        let ti = talias_idx(sc, last);
+        let ti = talias_idx(sc, path_last(path));
         if ti >= 0 as int { return copy_strs(a, &sc.sc_taliases.as_slice()[ti as u32].ta_path); }
     }
     return copy_strs(a, path);

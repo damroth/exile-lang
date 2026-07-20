@@ -802,7 +802,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c11_trait_generic_both_in_mod \
                   c12_closure_capture_annotated \
                   c14_enum_generic_in_mod_match_outside \
-                  c16_generic_fn_over_generic_type c17_tuple_param_inference
+                  c16_generic_fn_over_generic_type c17_tuple_param_inference \
+                  c18_relative_path_in_middle_module
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \
