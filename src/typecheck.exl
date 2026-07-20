@@ -2026,19 +2026,43 @@ fn report_div_zero(_a: Allocator, ar: *Arena, sc: *const TyScope, op: BinOp, p: 
     tc_fail(ar, sc, p, "division by zero");
     return;
 }
-// `==` on a struct / enum is NOT a C `==` — that would compare aggregates, which
-// cc rejects.  It lowers to the `Eq` impl (`T__eq(&l, &r)`), and only when T has
-// one: a method merely NAMED `eq` in a bare impl is not an Eq impl.
-fn impls_eq(sc: *const TyScope, path: *const Vec<str>) -> bool {
+// Does `path` have an `impl <trait_name> for <path>` registered?  The reference
+// keeps a dedicated `trait_impl_table`; the port's substrate for the same fact
+// is `MethodInfo.mi_trait`, which names the impl block a method came from ("" for
+// a bare `impl T`).
+//
+// Asking by METHOD NAME instead — "does it have `fmt`?" — is a DIFFERENT
+// question, and the difference is observable: a struct with an inherent
+// `pub fn fmt` and no `impl Display for` compiled and ran under the port while
+// the reference refused it.  Every consumer that means "implements the trait"
+// goes through here.
+fn type_impls_trait(sc: *const TyScope, trait_name: str, path: *const Vec<str>) -> bool {
     let n = sc.sc_methods.length();
     let sl = sc.sc_methods.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        if str::eq(sl[i].mi_trait, "Eq") && str::eq(sl[i].mi_name, "eq")
-           && paths_eq(&sl[i].mi_path, path) { return true; }
+        if str::eq(sl[i].mi_trait, trait_name) && paths_eq(&sl[i].mi_path, path) { return true; }
         i = i + 1 as u32;
     }
     return false;
+}
+// The reference matches Fn-traits by NAME PREFIX, not against an enumerated
+// list, so a new arity needs no new case here.
+fn type_impls_fn_trait(sc: *const TyScope, path: *const Vec<str>) -> bool {
+    let n = sc.sc_methods.length();
+    let sl = sc.sc_methods.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if tc_starts_with(sl[i].mi_trait, "Fn") && paths_eq(&sl[i].mi_path, path) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// `==` on a struct / enum is NOT a C `==` — that would compare aggregates, which
+// cc rejects.  It lowers to the `Eq` impl (`T__eq(&l, &r)`), and only when T has
+// one: a method merely NAMED `eq` in a bare impl is not an Eq impl.
+fn impls_eq(sc: *const TyScope, path: *const Vec<str>) -> bool {
+    return type_impls_trait(sc, "Eq", path);
 }
 fn paths_eq(x: *const Vec<str>, y: *const Vec<str>) -> bool {
     if x.length() != y.length() { return false; }
@@ -3109,8 +3133,8 @@ fn print_enum_reject(a: Allocator, ar: *Arena, sc: *const TyScope, _t: *const Ty
 }
 fn display_dispatch_target(sc: *const TyScope, t: *const Typ) -> bool {
     return match *t {
-        Typ::TStruct(path) => find_method_idx(sc.sc_methods, &path, "fmt") >= 0 as int
-        | Typ::TEnum(path) => find_method_idx(sc.sc_methods, &path, "fmt") >= 0 as int
+        Typ::TStruct(path) => type_impls_trait(sc, "Display", &path)
+        | Typ::TEnum(path) => type_impls_trait(sc, "Display", &path)
         | _e => false
     };
 }
@@ -3294,7 +3318,7 @@ fn env_is_fnptr(env: *const Vec<FieldTy>, name: str) -> bool {
 // `call` method)?  Drives the `f(x)` -> `f.call(x)` desugar.
 fn env_has_call_method(a: Allocator, sc: *const TyScope, env: *const Vec<FieldTy>, name: str) -> bool {
     return match env_lookup(env, name) {
-        Option::Some(t) => find_method_idx(sc.sc_methods, &recv_base_path(a, t), "call") >= 0 as int
+        Option::Some(t) => type_impls_fn_trait(sc, &recv_base_path(a, t))
         | Option::None => false
     };
 }
@@ -3640,7 +3664,7 @@ fn maybe_field_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
         check_fnptr_sig(a, ar, sc, "fn-pointer field", fnptr_field_disp(a, ar, tfld, name), fty, &targs, args, p);
         return Option::Some(te_node(ar, TexprNode::TIndirectCall { fn_expr: tfld, args: targs }, ret_or_void(ar, fnptr_ret_ty(fty)), p));
     }
-    if find_method_idx(sc.sc_methods, &recv_base_path(a, fty), "call") >= 0 as int {
+    if type_impls_fn_trait(sc, &recv_base_path(a, fty)) {
         return Option::Some(elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::FieldAccess(recv, name, p)), "call", args, p));
     }
     let none: Option<*const Texpr> = Option::None;
@@ -10875,7 +10899,11 @@ fn push_closure_field(a: Allocator, cn: str, fname: str, fty: *const Typ, out: *
 // MethodInfo for the synthetic `call(*const self, params..) -> ret`,
 // hand-built (no owned `Func`, which would pull drop instances the oracle
 // never synthesises for borrowed program items).
-fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpath: *const Vec<str>, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, out: *Vec<MethodInfo>, p: Pos) {
+// `trname` is the synthesised impl's trait ("Fn2" for a two-parameter closure).
+// It has to be RECORDED, not just used for the assoc bindings: a closure is an
+// `impl FnN for __closure_N`, and anything asking "does this type implement an
+// Fn trait" reads the same field a hand-written impl fills.
+fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpath: *const Vec<str>, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, trname: str, out: *Vec<MethodInfo>, p: Pos) {
     let self_ann = tyann_node(ar, TypeAnn::TyConstPtr(closure_struct_ann(a, ar, cn)));
     let mut manns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     manns.push(self_ann);
@@ -10887,7 +10915,7 @@ fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpat
     out.push(MethodInfo {
         mi_path: copy_strs(a, cnpath), mi_name: "call", mi_mangled: method_mangle(a, ar, cnpath, "call"),
         mi_pub: true,
-        mi_trait: "",
+        mi_trait: trname,
         mi_ret: resolve_sig_ret(a, ar, sc, ret_ty, p),
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: ret_ty,
@@ -10934,8 +10962,8 @@ fn synth_closure(a: Allocator, ar: *Arena, sc: *const TyScope, num: u32,
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     push_struct_tp(a, cn, &empty_tp, stps);
     register_mono_struct(a, sc, &cnpath);
-    push_call_method(a, ar, sc, cn, &cnpath, params, ret_ty, methods, p);
     let trname = gensym_name(a, ar, "Fn", params.length());
+    push_call_method(a, ar, sc, cn, &cnpath, params, ret_ty, trname, methods, p);
     push_closure_assoc(a, ar, trname, cn, params, ret_ty, assoc);
     let mangled = method_mangle(a, ar, &cnpath, "call");
     lifted.push(LiftedLambda {
