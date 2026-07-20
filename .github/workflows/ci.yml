@@ -98,6 +98,13 @@ jobs:
     - name: Bootstrap exilc from the committed seed (cc only)
       run: make bootstrap-from-seed
 
+    # The five gates that never compare against the reference — they build from
+    # the seed, so this runner can run them.  They live here rather than in
+    # `selfhost-verify`'s job so the OCaml-free claim is PROVEN on the runner
+    # that asserts the absence, instead of resting on a comment in the Makefile.
+    - name: Run the gates that need no OCaml
+      run: make selfhost-seed-gates
+
   amiga-verify:
     runs-on: ubuntu-latest
     container:
