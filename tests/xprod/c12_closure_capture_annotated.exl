@@ -1,0 +1,11 @@
+// Crossing: closure capture x generic fn with a closure bound.  The captured
+// binding is annotated; the unannotated variant is a NAMED open divergence
+// (the port rejects it, the reference infers the type) — see the worklog.
+
+fn apply2<F: |int|->int>(f: F, n: int) -> int { f(n) }
+fn main() {
+    let base: int = 10;
+    let g = |x: int| -> int x + base;
+    println(apply2(g, 5));
+    return;
+}

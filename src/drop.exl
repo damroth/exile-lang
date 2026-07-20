@@ -243,8 +243,15 @@ fn type_key(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TEnum(p) => join_colons(a, ar, &p)
         | Typ::TEnumApp { path, args } => join_colons(a, ar, &path)
         | Typ::TStructApp { path, args } => join_colons(a, ar, &path)
-        | _other => "?"
+        // A shared constant here is worse than an abort: two unnameable pointee
+        // shapes would DEDUP to one glue function.  The comment above claims
+        // glue only ever sees named types — this is that claim, enforced.
+        | _other => drop_key_unnameable()
     };
+}
+fn drop_key_unnameable() -> str {
+    ice("internal: deep-drop glue reached a pointee with no named type key");
+    return "";
 }
 
 fn glue_find(gs: *const GlueState, key: str) -> int {

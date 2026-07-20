@@ -1,0 +1,10 @@
+// Crossing: generic type x generic type.  `Box<Pair<int>>` — an instance whose
+// argument is itself an instance, so the mangled name nests.
+
+struct Pair<T> { a: T, b: T }
+struct Box<T> { it: T }
+fn main() {
+    let x = Box { it: Pair { a: 1, b: 2 } };
+    println(x.it.b);
+    return;
+}

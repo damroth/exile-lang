@@ -1,0 +1,9 @@
+// Crossing: trait x generic type x module, all three at once.
+
+mod m {
+    pub trait Show { fn show(self) -> int; }
+    pub struct Box<T> { it: T }
+    impl<T> Show for Box<T> { fn show(self) -> int { return 2; } }
+    pub fn make(x: int) -> Box<int> { return Box { it: x }; }
+}
+fn main() { println(m::make(1).show()); return; }

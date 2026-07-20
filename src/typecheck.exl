@@ -691,6 +691,12 @@ fn mangle_tuple(a: Allocator, ar: *Arena, elems: *const Vec<*const Typ>) -> str 
     }
     return str::from_slice(ar, sb.as_slice());
 }
+// Every C-nameable type gets a name; the rest ABORT.  The catch-all used to
+// return "?", which is not a diagnostic — it is an identifier fragment, and it
+// travelled into the emitted C as `ex_apply2_?(...)`, a fabrication `cc` had to
+// discover.  The reference `failwith`s on exactly the same shapes (an app / a
+// projection / a tvar reaching a C name means monomorphization did not run), so
+// mirror that: loud here, or confusing three layers downstream.
 fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
     return match *t {
         Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
@@ -699,14 +705,61 @@ fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TFloat(w) => match w { FloatWidth::F32 => "f32" | FloatWidth::F64 => "f64" }
         | Typ::TStruct(pp) => mangle_named(a, ar, &pp)
         | Typ::TEnum(pp) => mangle_named(a, ar, &pp)
+        | Typ::TExtStruct(n) => n
+        | Typ::TExtAlias(n) => n
         | Typ::TPtr(inner) => str2(a, ar, "ptr_", mangle_typ(a, ar, inner))
         | Typ::TConstPtr(inner) => str2(a, ar, "cptr_", mangle_typ(a, ar, inner))
         | Typ::TOwnPtr(inner) => str2(a, ar, "ownptr_", mangle_typ(a, ar, inner))
         | Typ::TCInt { is_signed } => match is_signed { true => "cint" | false => "cuint" }
+        | Typ::TCShort { is_signed } => match is_signed { true => "cshort" | false => "cushort" }
+        | Typ::TCLong { is_signed } => match is_signed { true => "clong" | false => "culong" }
+        | Typ::TCChar => "cchar"
+        | Typ::TCSChar => "cschar"
+        | Typ::TCUChar => "cuchar"
+        | Typ::TCVoid => "cvoid"
         | Typ::TTuple(elems) => mangle_tuple(a, ar, &elems)
-        | _other => "?"
+        | Typ::TArray { elem, size } => mangle_arr(a, ar, elem, size)
+        | Typ::TFnPtr { params, ret } => mangle_fnptr(a, ar, &params, ret)
+        | _other => mangle_unnameable()
     };
 }
+fn mangle_arr(a: Allocator, ar: *Arena, elem: *const Typ, size: int) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 24 as u32);
+    sb.push_str("arr");
+    sb.push_int(size);
+    sb.push_str("_");
+    sb.push_str(mangle_typ(a, ar, elem));
+    return str::from_slice(ar, sb.as_slice());
+}
+fn mangle_fnptr(a: Allocator, ar: *Arena, params: *const Vec<*const Typ>, ret: Option<*const Typ>) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("fn");
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < params.length() { sb.push_str("_"); sb.push_str(mangle_typ(a, ar, sl[i])); i = i + 1 as u32; }
+    sb.push_str("_to_");
+    match ret {
+        Option::Some(rt) => { sb.push_str(mangle_typ(a, ar, rt)); }
+        | Option::None => { sb.push_str("void"); }
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+// NOT an ice(), and the tc-errors corpus is what says so: `vec_unbound_tparam`
+// latches "could not infer type parameter 'T'" and then KEEPS ELABORATING —
+// that is the port's error model, first-wins-and-continue, where the reference
+// raises on the spot.  Aborting here replaced the user's diagnostic with a
+// compiler crash.  So the marker stays, and the guarantee moves to where it can
+// actually be checked: `selfhost-no-fabrication` scans the emitted C of every
+// corpus and fixture file, so a marker that ever reaches output is a red gate
+// rather than something `cc` discovers.  It shipped once exactly because no
+// gate looked at the artifact.
+fn mangle_unnameable() -> str {
+    return unnameable_marker();
+}
+// The ONE place allowed to produce the marker, whitelisted in the gate by this
+// tag rather than by file — any other `?` literal in a name-producing source is
+// still a fabrication.
+fn unnameable_marker() -> str { return "?"; }   // no-fabrication: sole marker
 
 // Monomorphic instance path of `decl_path<args>`: the last segment gains a
 // `_<arg-mangle>…` suffix (`Option<int>` → `Option_i32`).

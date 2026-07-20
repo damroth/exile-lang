@@ -1,0 +1,10 @@
+// Crossing: trait declaration x module.  The trait, the type and the impl all
+// live inside one `mod`, and the method is called from outside it.
+
+mod shapes {
+    pub trait Shape { fn area(self) -> int; }
+    pub struct Rect { w: int, h: int }
+    impl Shape for Rect { fn area(self) -> int { self.w * self.h } }
+    pub fn make(w: int, h: int) -> Rect { return Rect { w: w, h: h }; }
+}
+fn main() { println(shapes::make(3, 4).area()); return; }

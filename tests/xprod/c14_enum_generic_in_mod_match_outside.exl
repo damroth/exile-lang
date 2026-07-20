@@ -1,0 +1,16 @@
+// Crossing: generic enum x module x pattern match.  The enum is declared and
+// constructed inside the module; the match happens outside, through the
+// qualified variant path.
+
+mod opt {
+    pub enum Maybe<T> { Nothing | Just(T) }
+    pub fn some(x: int) -> Maybe<int> { return Maybe::Just(x); }
+}
+fn main() {
+    let m = opt::some(8);
+    match m {
+        opt::Maybe::Just(v) => println(v)
+        | opt::Maybe::Nothing => println(0)
+    }
+    return;
+}

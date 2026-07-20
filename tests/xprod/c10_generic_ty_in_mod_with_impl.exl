@@ -1,0 +1,9 @@
+// Crossing: generic type x module x impl.  The shape that hid three separate
+// locator bugs: a generic declared inside a `mod`, with methods.
+
+mod store {
+    pub struct Box<T> { it: T }
+    impl<T> Box<T> { pub fn get(self: *const Box<T>) -> T { return self.it; } }
+    pub fn make(x: int) -> Box<int> { return Box { it: x }; }
+}
+fn main() { println(store::make(9).get()); return; }

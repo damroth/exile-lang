@@ -1,0 +1,10 @@
+// Crossing: trait at top level x impl inside a module.  The conformance is
+// registered in one scope and the implementing type in another.
+
+trait Shape { fn area(self) -> int; }
+mod shapes {
+    pub struct Rect { w: int, h: int }
+    impl Shape for Rect { fn area(self) -> int { self.w * self.h } }
+    pub fn make(w: int, h: int) -> Rect { return Rect { w: w, h: h }; }
+}
+fn main() { println(shapes::make(3, 5).area()); return; }

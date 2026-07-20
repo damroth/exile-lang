@@ -1,0 +1,7 @@
+// Crossing: trait x generic type.  `impl<T> Show for Box<T>` — one impl covering
+// every instance, dispatched from a concrete one.
+
+trait Show { fn show(self) -> int; }
+struct Box<T> { it: T }
+impl<T> Show for Box<T> { fn show(self) -> int { return 1; } }
+fn main() { println(Box { it: 5 }.show()); return; }
