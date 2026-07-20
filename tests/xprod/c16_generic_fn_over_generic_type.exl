@@ -1,0 +1,9 @@
+// Crossing: generic fn x generic TYPE.  The parameter annotation is still an
+// APPLICATION (`Box<T>`) while the argument is already a mono INSTANCE
+// (`Box_int`); binding T needs the instance's arguments recovered through the
+// registry.  The machinery existed for method receivers only, so the argument
+// side of a free call could not bind its parameter at all.
+
+struct Box<T> { it: T }
+fn unwrap<T>(b: Box<T>) -> T { return b.it; }
+fn main() { let b: Box<int> = Box { it: 7 }; println(unwrap(b)); return; }

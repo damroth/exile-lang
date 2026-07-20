@@ -914,12 +914,38 @@ fn subst_typ_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec
 
 // Infer tparam bindings by matching a declared (skeleton) type against an
 // actual type: a `TVar` binds to the actual; pointers/arrays recurse.
-fn unify_typ(decl: *const Typ, act: *const Typ, out: *Vec<TVarBind>) {
+fn unify_tuples(a: Allocator, ar: *Arena, sc: *const TyScope, dts: *const Vec<*const Typ>, ats: *const Vec<*const Typ>, out: *Vec<TVarBind>) {
+    if dts.length() != ats.length() { return; }
+    let dsl = dts.as_slice();
+    let asl = ats.as_slice();
+    let mut i = 0 as u32;
+    while i < dts.length() { unify_typ(a, ar, sc, dsl[i], asl[i], out); i = i + 1 as u32; }
+    return;
+}
+// A still-generic APPLICATION on the declared side (`Box<T>` inside
+// `fn unwrap<T>`) against a mono INSTANCE on the actual side (`Box_i32`):
+// recover the instance's arguments through the registry and bind pairwise.
+// The machinery already existed for method receivers; the argument side of a
+// free call never reached it, so `unwrap(Box { it: 7 })` could not bind T.
+fn unify_app(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, act: *const Typ, out: *Vec<TVarBind>) {
+    match *act {
+        Typ::TStruct(ipath) => { unify_app_inst(a, ar, sc, path, args, &ipath, out); }
+        | Typ::TEnum(ipath) => { unify_app_inst(a, ar, sc, path, args, &ipath, out); }
+        | _e => { }
+    }
+    return;
+}
+fn unify_typ(a: Allocator, ar: *Arena, sc: *const TyScope, decl: *const Typ, act: *const Typ, out: *Vec<TVarBind>) {
     match *decl {
         Typ::TVar(n) => { out.push(TVarBind { tvb_name: n, tvb_ty: act }); }
-        | Typ::TPtr(di) => { match *act { Typ::TPtr(ai) => unify_typ(di, ai, out) | _e => { } } }
-        | Typ::TConstPtr(di) => { match *act { Typ::TConstPtr(ai) => unify_typ(di, ai, out) | Typ::TPtr(ai) => unify_typ(di, ai, out) | _e => { } } }
-        | Typ::TOwnPtr(di) => { match *act { Typ::TOwnPtr(ai) => unify_typ(di, ai, out) | _e => { } } }
+        | Typ::TPtr(di) => { match *act { Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
+        | Typ::TConstPtr(di) => { match *act { Typ::TConstPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
+        | Typ::TOwnPtr(di) => { match *act { Typ::TOwnPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
+        // The reference unifies tuples element-wise; without this arm a generic
+        // fn taking `(A, B)` cannot bind either parameter from its argument.
+        | Typ::TTuple(dts) => { match *act { Typ::TTuple(ats) => unify_tuples(a, ar, sc, &dts, &ats, out) | _e => { } } }
+        | Typ::TStructApp { path, args } => { unify_app(a, ar, sc, &path, &args, act, out); }
+        | Typ::TEnumApp { path, args } => { unify_app(a, ar, sc, &path, &args, act, out); }
         | _other => { }
     }
 }
@@ -2642,7 +2668,7 @@ fn infer_call_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *con
     while i < n {
         if i < an {
             let ptype = resolve_sig_ty(a, ar, cscope, asl_ann[i], p);
-            unify_typ(ptype, asl[i].ty, out);
+            unify_typ(a, ar, cscope, ptype, asl[i].ty, out);
         }
         i = i + 1 as u32;
     }
@@ -2738,10 +2764,10 @@ fn check_tparams_bound(a: Allocator, ar: *Arena, sc: *const TyScope, tparams: *c
     }
     return;
 }
-fn seed_from_expected(cret: Option<*const Typ>, expected: Option<*const Typ>, out: *Vec<TVarBind>) {
+fn seed_from_expected(a: Allocator, ar: *Arena, sc: *const TyScope, cret: Option<*const Typ>, expected: Option<*const Typ>, out: *Vec<TVarBind>) {
     match cret {
         Option::Some(r) => match expected {
-            Option::Some(e) => unify_typ(r, e, out)
+            Option::Some(e) => unify_typ(a, ar, sc, r, e, out)
             | Option::None => { }
         }
         | Option::None => { }
@@ -2760,7 +2786,7 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let cret = resolve_sig_ret(a, ar, &cscope, gsl[gfidx as u32].gn_ret, p);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_call_binds(a, ar, &cscope, &gsl[gfidx as u32].gn_params, &targs, &binds, p);
-    seed_from_expected(cret, expected, &binds);
+    seed_from_expected(a, ar, sc, cret, expected, &binds);
     check_bind_conflicts(a, ar, sc, &binds, p);
     check_tparams_bound(a, ar, sc, &gsl[gfidx as u32].gn_tparams, &binds, p);
     let oargs = dedup_bind_tys(a, &binds);
@@ -3372,7 +3398,7 @@ fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *c
     let asl = anns.as_slice();
     if np > 0 as u32 {
         let p0 = resolve_sig_ty(a, ar, cscope, asl[0 as u32], p);
-        unify_typ(p0, trecv.ty, out);
+        unify_typ(a, ar, cscope, p0, trecv.ty, out);
     }
     let na = targs.length();
     let tsl = targs.as_slice();
@@ -3381,7 +3407,7 @@ fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *c
         let pi = i + 1 as u32;
         if pi < np {
             let pt = resolve_sig_ty(a, ar, cscope, asl[pi], p);
-            unify_typ(pt, tsl[i].ty, out);
+            unify_typ(a, ar, cscope, pt, tsl[i].ty, out);
         }
         i = i + 1 as u32;
     }
@@ -3485,7 +3511,7 @@ fn unify_method_args(a: Allocator, ar: *Arena, sc: *const TyScope, tparams: *con
         let pi = i + 1 as u32;
         if pi < np {
             let pt = resolve_sig_ty(a, ar, &cscope, asl[pi], p);
-            unify_typ(pt, tsl[i].ty, binds);
+            unify_typ(a, ar, sc, pt, tsl[i].ty, binds);
         }
         i = i + 1 as u32;
     }
@@ -3545,7 +3571,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     infer_method_binds(a, ar, &cscope, &sl[midx].mi_params, trecv, &targs, &binds, p);
     // A tparam unreachable through self / args (e.g. `alloc<T>()`) is pinned by
     // the surrounding expected type.
-    seed_from_expected(cret, expected, &binds);
+    seed_from_expected(a, ar, sc, cret, expected, &binds);
     check_bind_conflicts(a, ar, sc, &binds, p);
     check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     let oargs = dedup_bind_tys(a, &binds);
@@ -5578,14 +5604,14 @@ fn tfield_ty(tfields: *const Vec<TexprField>, fname: str) -> Option<*const Typ> 
 
 // Infer tparam bindings for `Struct { .. }` by unifying each declared field
 // type against the elaborated initialiser's type.
-fn infer_struct_binds(sc: *const TyScope, tname: *const Vec<str>, tfields: *const Vec<TexprField>, out: *Vec<TVarBind>) {
+fn infer_struct_binds(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, tfields: *const Vec<TexprField>, out: *Vec<TVarBind>) {
     let n = sc.sc_sinfo.length();
     let sl = sc.sc_sinfo.as_slice();
     let mut i = 0 as u32;
     while i < n {
         if path_eq(&sl[i].sf_path, tname) {
             match tfield_ty(tfields, sl[i].sf_name) {
-                Option::Some(vt) => { unify_typ(sl[i].sf_ty, vt, out); }
+                Option::Some(vt) => { unify_typ(a, ar, sc, sl[i].sf_ty, vt, out); }
                 | Option::None => { }
             }
         }
@@ -5705,7 +5731,7 @@ fn seed_struct_tparams(sc: *const TyScope, tname: *const Vec<str>, binds: *Vec<T
 fn build_struct_instance(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
                          tfields: *const Vec<TexprField>) -> Vec<str> {
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
-    infer_struct_binds(sc, tname, tfields, &binds);
+    infer_struct_binds(a, ar, sc, tname, tfields, &binds);
     seed_struct_tparams(sc, tname, &binds);
     if binds.length() == 0 as u32 { return copy_strs(a, tname); }
     let args = dedup_bind_tys(a, &binds);
@@ -5783,7 +5809,7 @@ fn infer_enum_instance(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
     let mut i = 0 as u32;
     while i < n {
         match enum_field_ty(sc.sc_efields, epath, variant, sl[i].name) {
-            Option::Some(fty) => { unify_typ(fty, sl[i].value.ty, &binds); }
+            Option::Some(fty) => { unify_typ(a, ar, sc, fty, sl[i].value.ty, &binds); }
             | Option::None => { }
         }
         i = i + 1 as u32;

@@ -1,0 +1,5 @@
+// Crossing: generic fn x tuple.  The reference unifies tuples element-wise;
+// without that arm neither `A` nor `B` can be bound from `(A, B)`.
+
+fn firstof<A, B>(p: (A, B)) -> A { let (x, y) = p; return x; }
+fn main() { println(firstof((7, 9))); return; }
