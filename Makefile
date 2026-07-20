@@ -809,7 +809,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c16_generic_fn_over_generic_type c17_tuple_param_inference \
                   c18_relative_path_in_middle_module \
                   c19_callee_tparam_shadows_caller \
-                  c20_own_param_in_generic_struct c21_generic_owner_nested_in_owner
+                  c20_own_param_in_generic_struct c21_generic_owner_nested_in_owner \
+                  c22_capture_untyped_let
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

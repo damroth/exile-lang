@@ -1,0 +1,18 @@
+// The named diagnostic for an explicit `[&name]` capture the pre-pass cannot
+// type.  `u` comes out of a tuple destructuring, which neither compiler infers
+// before typecheck, so the by-ref list is a claim about a name that is not
+// there — and saying so beats letting the name fall through to `undefined
+// variable` from inside the substituted body.
+//
+// Lives in the tc-errors corpus: the program is REJECTED, and the contract is
+// the first line — message and position — byte-exact with the reference.
+
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+
+fn main() {
+    let t = (1, 2);
+    let (u, w) = t;
+    let g = [&u] |x: int| -> int x + u;
+    println(run(g, 5));
+    return;
+}

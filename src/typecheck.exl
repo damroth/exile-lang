@@ -232,6 +232,14 @@ struct MethodInfo {
     mi_struct_gen: bool,
 }
 
+// Top-level fn name -> its return ANNOTATION, for the capture pre-pass's
+// mini-inferencer (the reference's `fn_ret_index`).  Annotations, not resolved
+// types: the pre-pass runs before typecheck.
+struct FnRet {
+    fr_name: str,
+    fr_ret: Option<*const TypeAnn>,
+}
+
 // A top-level generic function.  Inference at a call site needs its type
 // parameters, parameter annotations and return annotation — all stored here
 // (the annotations are arena-stable pointers; copying a `*const Func` from a
@@ -10954,7 +10962,36 @@ fn byref_names(a: Allocator, caps: *const Vec<Capture>) -> Vec<str> {
     while i < n { if sl[i].by_ref { out.push(sl[i].name); } i = i + 1 as u32; }
     return out;
 }
-fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+// An EXPLICIT `[&name]` capture is a claim about a name the user can see; when
+// it is not in the pre-pass scope, saying so beats letting the name fall through
+// to `undefined variable` from somewhere inside the substituted body.  Both
+// checks and both texts mirror the reference.
+fn check_byref_caps(a: Allocator, ar: *Arena, sc: *const TyScope, ecaps: *const Vec<Capture>,
+                    scn: *const Vec<str>, free: *const Vec<str>, p: Pos) {
+    let sl = ecaps.as_slice();
+    let mut i = 0 as u32;
+    while i < ecaps.length() {
+        if sl[i].by_ref {
+            if scope_index(scn, sl[i].name) < 0 as int {
+                let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+                sb.push_str("by-ref capture `&"); sb.push_str(sl[i].name);
+                sb.push_str("`: name not in scope at lambda (captures must be fn params or type-annotated lets)");
+                tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+                return;
+            }
+            if !name_in(free, sl[i].name) {
+                let mut sb2 = StringBuilder::with_capacity(a, 96 as u32);
+                sb2.push_str("by-ref capture `&"); sb2.push_str(sl[i].name);
+                sb2.push_str("` has no reference in lambda body");
+                tc_fail(ar, sc, p, str::from_slice(ar, sb2.as_slice()));
+                return;
+            }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
                      params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body: *const Expr, ecaps: *const Vec<Capture>,
                      ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>, lambda: *const Expr) {
     // Free vars of the body (lambda params are bound).
@@ -10968,6 +11005,7 @@ fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const V
     // Captures = free vars visible in the annotation-scope; by-ref ones come
     // from the explicit `[&name]` list (DR-033).
     let brn = byref_names(a, ecaps);
+    check_byref_caps(a, ar, sc, ecaps, scn, &free, expr_pos(lambda));
     let mut cnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut canns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     let fn2 = free.length();
@@ -10987,52 +11025,162 @@ fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const V
     synth_closure(a, ar, sc, *ctr, &cnames, &canns, &brn, params, ret_ty, sbody, lambda, sinfo, methods, assoc, stps, lifted, expr_pos(lambda));
     *ctr = *ctr + 1 as u32;
 }
-fn prepass_exprs(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+fn prepass_exprs(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
                  es: *const Vec<*const Expr>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
     let n = es.length();
     let sl = es.as_slice();
     let mut i = 0 as u32;
-    while i < n { prepass_expr(a, ar, sc, scn, sca, sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+    while i < n { prepass_expr(a, ar, sc, rets, scn, sca, sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
 }
-fn prepass_opt(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+fn prepass_opt(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
                oe: Option<*const Expr>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
-    match oe { Option::Some(e) => prepass_expr(a, ar, sc, scn, sca, e, ctr, sinfo, methods, assoc, stps, lifted) | Option::None => {} }
+    match oe { Option::Some(e) => prepass_expr(a, ar, sc, rets, scn, sca, e, ctr, sinfo, methods, assoc, stps, lifted) | Option::None => {} }
 }
-fn prepass_fields(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+fn prepass_fields(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
                   fields: *const Vec<Field>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
     let n = fields.length();
     let sl = fields.as_slice();
     let mut i = 0 as u32;
-    while i < n { prepass_expr(a, ar, sc, scn, sca, sl[i].value, ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+    while i < n { prepass_expr(a, ar, sc, rets, scn, sca, sl[i].value, ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
 }
-fn prepass_expr(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+fn prepass_expr(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
                 e: *const Expr, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
     match *e {
-        Expr::Neg(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::BitNot(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Not(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Try(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Cast(s, _t, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::FieldAccess(s, _f, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Ref(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::Deref(s, _q) => prepass_expr(a, ar, sc, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::BinOp(_op, l, r, _q) => { prepass_expr(a, ar, sc, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Orelse(l, r, _q) => { prepass_expr(a, ar, sc, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Index { base, index } => { prepass_expr(a, ar, sc, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, scn, sca, index, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Range { lo, hi, inclusive } => { prepass_expr(a, ar, sc, scn, sca, lo, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, scn, sca, hi, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Call { callee, args } => prepass_exprs(a, ar, sc, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::MethodCall { receiver, name, args } => { prepass_expr(a, ar, sc, scn, sca, receiver, ctr, sinfo, methods, assoc, stps, lifted); prepass_exprs(a, ar, sc, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::TupleLit(es, _q) => prepass_exprs(a, ar, sc, scn, sca, &es, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::ArrayLit(es, _q) => prepass_exprs(a, ar, sc, scn, sca, &es, ctr, sinfo, methods, assoc, stps, lifted)
-        | Expr::ArrayRepeat { value, count } => { prepass_expr(a, ar, sc, scn, sca, value, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, scn, sca, count, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::StructLit { tname, fields, base } => { prepass_fields(a, ar, sc, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::New { tname, fields, base, alloc } => { prepass_fields(a, ar, sc, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::NewEnum { tname, args, alloc } => { prepass_exprs(a, ar, sc, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Lambda { params, ret_ty, body, captures } => prepass_at_lambda(a, ar, sc, scn, sca, &params, ret_ty, body, &captures, ctr, sinfo, methods, assoc, stps, lifted, e)
+        Expr::Neg(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::BitNot(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::Not(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::Try(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::Cast(s, _t, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::FieldAccess(s, _f, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::Ref(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::Deref(s, _q) => prepass_expr(a, ar, sc, rets, scn, sca, s, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::BinOp(_op, l, r, _q) => { prepass_expr(a, ar, sc, rets, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Orelse(l, r, _q) => { prepass_expr(a, ar, sc, rets, scn, sca, l, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, r, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Index { base, index } => { prepass_expr(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, index, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Range { lo, hi, inclusive } => { prepass_expr(a, ar, sc, rets, scn, sca, lo, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, hi, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Call { callee, args } => prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::MethodCall { receiver, name, args } => { prepass_expr(a, ar, sc, rets, scn, sca, receiver, ctr, sinfo, methods, assoc, stps, lifted); prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::TupleLit(es, _q) => prepass_exprs(a, ar, sc, rets, scn, sca, &es, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::ArrayLit(es, _q) => prepass_exprs(a, ar, sc, rets, scn, sca, &es, ctr, sinfo, methods, assoc, stps, lifted)
+        | Expr::ArrayRepeat { value, count } => { prepass_expr(a, ar, sc, rets, scn, sca, value, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, scn, sca, count, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::StructLit { tname, fields, base } => { prepass_fields(a, ar, sc, rets, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::New { tname, fields, base, alloc } => { prepass_fields(a, ar, sc, rets, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::NewEnum { tname, args, alloc } => { prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); }
+        | Expr::Lambda { params, ret_ty, body, captures } => prepass_at_lambda(a, ar, sc, rets, scn, sca, &params, ret_ty, body, &captures, ctr, sinfo, methods, assoc, stps, lifted, e)
         | _other => {}
     }
 }
-fn prepass_stmts(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+// ===== DR-036/DR-041 mini-inferencer for an untyped `let` RHS =====
+//
+// The capture pre-pass runs BEFORE typecheck, so the only bindings whose type
+// it knows are params and annotated lets.  A free variable outside that scope
+// is not turned into a capture at all: the reference lets the lambda decay to a
+// bare fn-ptr, which then fails its `Fn1` bound.  Widening the scope cheaply is
+// what makes `let a = 10; |x| x + a` work at all.
+//
+// Mirrors the reference arm for arm — deliberately NOT further.  Inferring more
+// than the reference would make the port build a capture where the reference
+// decays, which is a different closure-struct layout and a C divergence; the
+// acceptance probe for this pass is that an un-inferable RHS is still NOT
+// captured.  Complex shapes (container literals, generic struct lits with type
+// arguments) stay un-inferred on both sides.
+fn ann_int_default(ar: *Arena) -> *const TypeAnn {
+    return tyann_node(ar, TypeAnn::TyInt { is_signed: true, width: IntWidth::W32 });
+}
+fn binop_is_bool(op: BinOp) -> bool {
+    return match op {
+        BinOp::Lt => true | BinOp::Gt => true | BinOp::LtEq => true | BinOp::GtEq => true
+        | BinOp::EqEq => true | BinOp::NotEq => true | BinOp::And => true | BinOp::Or => true
+        | _o => false
+    };
+}
+fn scope_ann_of(scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, n: str) -> Option<*const TypeAnn> {
+    let names = scn.as_slice();
+    let anns = sca.as_slice();
+    let mut i = 0 as u32;
+    let none: Option<*const TypeAnn> = Option::None;
+    while i < scn.length() {
+        if str::eq(names[i], n) { return Option::Some(anns[i]); }
+        i = i + 1 as u32;
+    }
+    return none;
+}
+fn ann_struct_path(a: Allocator, ar: *Arena, path: *const Vec<str>) -> *const TypeAnn {
+    let args: Vec<*const TypeAnn> = Vec::with_capacity(a, 1 as u32);
+    return tyann_node(ar, TypeAnn::TyStruct { path: copy_strs(a, path), args: args });
+}
+fn ann_range(a: Allocator, ar: *Arena) -> *const TypeAnn {
+    let mut args: Vec<*const TypeAnn> = Vec::with_capacity(a, 2 as u32);
+    args.push(ann_int_default(ar));
+    return tyann_node(ar, TypeAnn::TyStruct { path: single_str(a, "Range"), args: args });
+}
+// The receiver's inferred annotation names a single-segment struct: the key the
+// method index is built under.
+fn recv_struct_name(t: *const TypeAnn) -> str {
+    return match *t {
+        TypeAnn::TyStruct { path, args } => { if path.length() == 1 as u32 { path.as_slice()[0 as u32] } else { "" } }
+        | _o => ""
+    };
+}
+fn method_ret_ann(sc: *const TyScope, target: str, name: str) -> Option<*const TypeAnn> {
+    let sl = sc.sc_methods.as_slice();
+    let mut i = 0 as u32;
+    let none: Option<*const TypeAnn> = Option::None;
+    while i < sc.sc_methods.length() {
+        if str::eq(sl[i].mi_name, name) && str::eq(path_last(&sl[i].mi_path), target) { return sl[i].mi_ret_ann; }
+        i = i + 1 as u32;
+    }
+    return none;
+}
+fn fn_ret_ann(rets: *const Vec<FnRet>, name: str) -> Option<*const TypeAnn> {
+    let sl = rets.as_slice();
+    let mut i = 0 as u32;
+    let none: Option<*const TypeAnn> = Option::None;
+    while i < rets.length() {
+        if str::eq(sl[i].fr_name, name) { return sl[i].fr_ret; }
+        i = i + 1 as u32;
+    }
+    return none;
+}
+fn infer_let_ann(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>,
+                 scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, e: *const Expr) -> Option<*const TypeAnn> {
+    let none: Option<*const TypeAnn> = Option::None;
+    return match *e {
+        Expr::IntLit(_n, _p) => Option::Some(ann_int_default(ar))
+        | Expr::BoolLit(_b, _p) => Option::Some(tyann_node(ar, TypeAnn::TyBool))
+        | Expr::StringLit(_s, _p) => Option::Some(tyann_node(ar, TypeAnn::TyStr))
+        | Expr::FloatLit(_f, w, _p) => Option::Some(tyann_node(ar, TypeAnn::TyFloat(w)))
+        | Expr::Cast(_s, t, _p) => Option::Some(t)
+        | Expr::Var(n, _p) => scope_ann_of(scn, sca, n)
+        | Expr::Not(_s, _p) => Option::Some(tyann_node(ar, TypeAnn::TyBool))
+        | Expr::Neg(s, _p) => infer_let_ann(a, ar, sc, rets, scn, sca, s)
+        | Expr::BitNot(s, _p) => infer_let_ann(a, ar, sc, rets, scn, sca, s)
+        | Expr::BinOp(op, l, r, _p) => infer_binop_ann(a, ar, sc, rets, scn, sca, op, l, r)
+        | Expr::Call { callee, args } => { if callee.length() == 1 as u32 { fn_ret_ann(rets, callee.as_slice()[0 as u32]) } else { none } }
+        | Expr::MethodCall { receiver, name, args } => infer_method_ann(a, ar, sc, rets, scn, sca, receiver, name)
+        | Expr::StructLit { tname, fields, base } => Option::Some(ann_struct_path(a, ar, &tname))
+        | Expr::EnumLit { tname, variant, args, pos } => Option::Some(ann_struct_path(a, ar, &tname))
+        | Expr::Range { lo, hi, inclusive } => Option::Some(ann_range(a, ar))
+        | _o => none
+    };
+}
+fn infer_binop_ann(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>,
+                   scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, op: BinOp, l: *const Expr, r: *const Expr) -> Option<*const TypeAnn> {
+    if binop_is_bool(op) { return Option::Some(tyann_node(ar, TypeAnn::TyBool)); }
+    return match infer_let_ann(a, ar, sc, rets, scn, sca, l) {
+        Option::Some(t) => Option::Some(t)
+        | Option::None => infer_let_ann(a, ar, sc, rets, scn, sca, r)
+    };
+}
+fn infer_method_ann(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>,
+                    scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, receiver: *const Expr, name: str) -> Option<*const TypeAnn> {
+    let none: Option<*const TypeAnn> = Option::None;
+    return match infer_let_ann(a, ar, sc, rets, scn, sca, receiver) {
+        Option::Some(rt) => { let target = recv_struct_name(rt); if str::length(target) == 0 as u32 { none } else { method_ret_ann(sc, target, name) } }
+        | Option::None => none
+    };
+}
+fn prepass_stmts(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
                  stmts: *const Vec<Stmt>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
     let mut ln: Vec<str> = copy_strs(a, scn);
     let mut la: Vec<*const TypeAnn> = copy_tyanns(a, sca);
@@ -11042,20 +11190,31 @@ fn prepass_stmts(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<s
     while i < n {
         match sl[i] {
             Stmt::Let { name, value, ty_ann, is_mut } => {
-                prepass_expr(a, ar, sc, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted);
-                match ty_ann { Option::Some(t) => { ln.push(name); la.push(t); } | Option::None => {} }
+                prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted);
+                match ty_ann {
+                    Option::Some(t) => { ln.push(name); la.push(t); }
+                    | Option::None => {
+                        // Untyped: infer cheaply, exactly as far as the reference
+                        // does.  An RHS neither side can type stays out of scope,
+                        // and the lambda decays instead of capturing it.
+                        match infer_let_ann(a, ar, sc, rets, &ln, &la, value) {
+                            Option::Some(t2) => { ln.push(name); la.push(t2); }
+                            | Option::None => { }
+                        }
+                    }
+                }
             }
-            | Stmt::ExprStmt(e) => prepass_expr(a, ar, sc, &ln, &la, e, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::Tail(e) => prepass_expr(a, ar, sc, &ln, &la, e, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::Return(oe, _q) => prepass_opt(a, ar, sc, &ln, &la, oe, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::Assign { path, value } => prepass_expr(a, ar, sc, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::AssignField { target, field, value } => { prepass_expr(a, ar, sc, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::AssignIndex { base, index, value } => { prepass_expr(a, ar, sc, &ln, &la, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, &ln, &la, index, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::AssignDeref { target, value } => { prepass_expr(a, ar, sc, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::While { cond, body } => { prepass_expr(a, ar, sc, &ln, &la, cond, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::For { iter_var, range, body } => { prepass_expr(a, ar, sc, &ln, &la, range, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
-            | Stmt::Defer { body } => prepass_stmts(a, ar, sc, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted)
-            | Stmt::With { target, name, body } => { prepass_expr(a, ar, sc, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::ExprStmt(e) => prepass_expr(a, ar, sc, rets, &ln, &la, e, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::Tail(e) => prepass_expr(a, ar, sc, rets, &ln, &la, e, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::Return(oe, _q) => prepass_opt(a, ar, sc, rets, &ln, &la, oe, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::Assign { path, value } => prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::AssignField { target, field, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::AssignIndex { base, index, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, index, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::AssignDeref { target, value } => { prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_expr(a, ar, sc, rets, &ln, &la, value, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::While { cond, body } => { prepass_expr(a, ar, sc, rets, &ln, &la, cond, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::For { iter_var, range, body } => { prepass_expr(a, ar, sc, rets, &ln, &la, range, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
+            | Stmt::Defer { body } => prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::With { target, name, body } => { prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
             | _other => {}
         }
         i = i + 1 as u32;
@@ -11067,38 +11226,55 @@ fn params_scope(params: *const Vec<Param>, names: *Vec<str>, anns: *Vec<*const T
     let mut i = 0 as u32;
     while i < n { names.push(sl[i].pname); anns.push(sl[i].pty); i = i + 1 as u32; }
 }
-fn prepass_fn(a: Allocator, ar: *Arena, sc: *const TyScope, f: *const Func, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+fn prepass_fn(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, f: *const Func, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
     let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut anns: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     params_scope(&f.params, &names, &anns);
-    prepass_stmts(a, ar, sc, &names, &anns, &f.body, ctr, sinfo, methods, assoc, stps, lifted);
+    prepass_stmts(a, ar, sc, rets, &names, &anns, &f.body, ctr, sinfo, methods, assoc, stps, lifted);
 }
-fn prepass_funcs(a: Allocator, ar: *Arena, sc: *const TyScope, funcs: *const Vec<Func>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+fn prepass_funcs(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, funcs: *const Vec<Func>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
     let n = funcs.length();
     let sl = funcs.as_slice();
     let mut i = 0 as u32;
-    while i < n { prepass_fn(a, ar, sc, &sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+    while i < n { prepass_fn(a, ar, sc, rets, &sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
 }
-fn prepass_items(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+// Top-level fns only, keyed by bare name — the reference indexes exactly those
+// (`methods and qualified paths are skipped, their receiver types aren't known
+// pre-typecheck`).
+fn collect_fn_rets(a: Allocator, items: *const Vec<Item>, out: *Vec<FnRet>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        match sl[i] {
+            Item::Function(f) => { out.push(FnRet { fr_name: f.name, fr_ret: f.ret_ty }); }
+            | _o => { }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn prepass_items(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, items: *const Vec<Item>, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { prepass_item(a, ar, sc, &sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+    while i < n { prepass_item(a, ar, sc, rets, &sl[i], ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
 }
-fn prepass_item(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+fn prepass_item(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, it: *const Item, ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
     match *it {
-        Item::Function(f) => prepass_fn(a, ar, sc, &f, ctr, sinfo, methods, assoc, stps, lifted)
-        | Item::Impl(ib) => prepass_funcs(a, ar, sc, &ib.iitems, ctr, sinfo, methods, assoc, stps, lifted)
-        | Item::Module(md) => prepass_items(a, ar, sc, &md.mitems, ctr, sinfo, methods, assoc, stps, lifted)
+        Item::Function(f) => prepass_fn(a, ar, sc, rets, &f, ctr, sinfo, methods, assoc, stps, lifted)
+        | Item::Impl(ib) => prepass_funcs(a, ar, sc, rets, &ib.iitems, ctr, sinfo, methods, assoc, stps, lifted)
+        | Item::Module(md) => prepass_items(a, ar, sc, rets, &md.mitems, ctr, sinfo, methods, assoc, stps, lifted)
         | _other => {}
     }
 }
 fn prepass_closures(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
+    let mut rets: Vec<FnRet> = Vec::with_capacity(a, 16 as u32);
+    collect_fn_rets(a, items, &rets);
     let mut ctr: u32 = 0 as u32;
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { prepass_item(a, ar, sc, &sl[i], &ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
+    while i < n { prepass_item(a, ar, sc, &rets, &sl[i], &ctr, sinfo, methods, assoc, stps, lifted); i = i + 1 as u32; }
 }
 
 // ===== @derive synthesis (Eq / Hash / Clone / Debug) =====

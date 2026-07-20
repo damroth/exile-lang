@@ -1,0 +1,34 @@
+// Crossing: closure capture x an UNTYPED let.  The capture pre-pass runs before
+// typecheck, so the only bindings it knows are params and annotated lets — a
+// free variable outside that scope is not captured at all, and the reference
+// lets the lambda decay to a bare fn-ptr that then fails its `Fn1` bound.  A
+// cheap mini-inferencer over the RHS is what makes the everyday shape work.
+//
+// The five shapes the reference infers, and only those: an integer literal, a
+// call with a known return type, a binop over two inferred operands, a struct
+// literal, and a name already in scope (so `let b = a;` chains flow).
+
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+fn get() -> int { return 7; }
+struct P { v: int }
+
+fn main() {
+    let a = 10;
+    let b = get();
+    let c = a + b;
+    let p = P { v: 3 };
+    let d = a;
+
+    let g1 = |x: int| -> int x + a;
+    let g2 = |x: int| -> int x + b;
+    let g3 = |x: int| -> int x + c;
+    let g4 = |x: int| -> int x + p.v;
+    let g5 = |x: int| -> int x + d;
+
+    println(run(g1, 5));
+    println(run(g2, 5));
+    println(run(g3, 5));
+    println(run(g4, 5));
+    println(run(g5, 5));
+    return;
+}
