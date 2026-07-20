@@ -792,6 +792,10 @@ selfhost-port-escape: host-selfhost-escape
 # fixture set: one program per pair of features, checked for build status, run
 # output and byte-exact C.
 #
+# A fixture needing a C companion (an allocator bridge, say) gets
+# `tests/xprod/<name>_stub.c`, linked automatically — the same convention the
+# examples use.
+#
 # Named, not globbed — and the list is deliberately short of the cells that do
 # NOT agree yet; those are named in the worklog with their repro, not silently
 # absent.  `c13_bare_lambda_to_bound` is in the directory but NOT in this list:
@@ -804,7 +808,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c14_enum_generic_in_mod_match_outside \
                   c16_generic_fn_over_generic_type c17_tuple_param_inference \
                   c18_relative_path_in_middle_module \
-                  c19_callee_tparam_shadows_caller
+                  c19_callee_tparam_shadows_caller \
+                  c20_own_param_in_generic_struct c21_generic_owner_nested_in_owner
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \
@@ -829,8 +834,10 @@ selfhost-xprod: $(EXILC_BIN)
 	    echo "selfhost-xprod: C DIVERGE $$f"; \
 	    diff $(C_OUT)/xp_o.c $(C_OUT)/xp_p.c | head -8; fail=$$((fail+1)); continue; \
 	  fi; \
-	  $(EXILE) --target host --c-out $(C_OUT)/xp_o_host.c -o $(HOST_OUT)/xp_o $$f >/dev/null 2>&1; \
-	  $(EXILC_BIN) --target host --c-out $(C_OUT)/xp_p_host.c -o $(HOST_OUT)/xp_p $$f >/dev/null 2>&1; \
+	  stub=""; \
+	  if [ -f tests/xprod/$${name}_stub.c ]; then stub="--link tests/xprod/$${name}_stub.c"; fi; \
+	  $(EXILE) --target host --c-out $(C_OUT)/xp_o_host.c $$stub -o $(HOST_OUT)/xp_o $$f >/dev/null 2>&1; \
+	  $(EXILC_BIN) --target host --c-out $(C_OUT)/xp_p_host.c $$stub -o $(HOST_OUT)/xp_p $$f >/dev/null 2>&1; \
 	  if [ ! -x $(HOST_OUT)/xp_o ] || [ ! -x $(HOST_OUT)/xp_p ]; then \
 	    echo "selfhost-xprod: BUILD $$f"; fail=$$((fail+1)); continue; \
 	  fi; \

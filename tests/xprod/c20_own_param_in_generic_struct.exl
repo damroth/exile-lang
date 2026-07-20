@@ -1,0 +1,17 @@
+// Crossing: generic type x owner sigil.  The own field's pointee IS the type
+// parameter, so a monomorphic synthesised drop cannot even be typed — the port
+// rejected the DECLARATION with `unknown type 'T'`.  The sibling face, an
+// `own *int` beside a `tag: T`, emitted a drop declaration referencing a struct
+// that never exists; both are the same root, and neither is a language bug (an
+// earlier report of "fails in both compilers" was a missing --link in the
+// probe, not a defect in the reference).
+
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+struct Cell<T> { v: own *T, alloc: Allocator }
+fn build(a: Allocator, x: int) -> Cell<int> {
+    let q: own *int = a.alloc();
+    let c = Cell { v: q, alloc: a };
+    *c.v = x;
+    c
+}
+fn main() { let a = raw::make_c_allocator(); let mut c = build(a, 5); println(*c.v); return; }

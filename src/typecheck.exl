@@ -11611,6 +11611,21 @@ fn push_drop_method(a: Allocator, ar: *Arena, sname: str, body: *const Expr, met
     });
 }
 fn collect_drops_struct(a: Allocator, ar: *Arena, sd: *const StructDecl, methods: *Vec<MethodInfo>, lifted: *Vec<LiftedLambda>) {
+    // A GENERIC struct gets no synthesised drop.  The one this pass would build
+    // is monomorphic — `Cell__drop(self: *Cell)` — and `*Cell` is a type that
+    // never exists: only instances (`Cell_i32`) are ever emitted.  The two faces
+    // of building it anyway were `unknown type 'T'` when the own field's pointee
+    // IS the parameter, and C with a declaration referencing an undefined struct
+    // when it is not.
+    //
+    // Not synthesising is also what the REFERENCE effectively does: it builds an
+    // `impl<T> Cell<T>` whose drop is registered under the skeleton, the drop
+    // pass looks the method up by the INSTANCE path, finds none, and inlines the
+    // field frees at the drop site instead — verified byte-identical here,
+    // including the nested case where an owning struct holds a generic owning
+    // struct by value and the recursion has to reach through it.  The mono path
+    // is untouched: `Buffer__drop` is still synthesised and still called.
+    if sd.stparams.length() > 0 as u32 { return; }
     if struct_has_own(&sd.sfields) { push_drop_method(a, ar, sd.sname, drop_body(a, ar, &sd.sfields, sd.spos), methods, lifted); }
     return;
 }

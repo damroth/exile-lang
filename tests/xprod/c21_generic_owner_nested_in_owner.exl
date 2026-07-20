@@ -1,0 +1,19 @@
+// Crossing: generic type x owner sigil x nesting.  A plain owning struct holds a
+// GENERIC owning struct by value, so the drop recursion has to reach through the
+// instance.  Neither compiler emits a drop symbol for the generic type: the
+// reference registers its synthesised drop under the skeleton, the drop pass
+// looks up by the instance path, and both inline the frees at the drop site.
+// This fixture is what makes "do not synthesise" a mechanism rather than an
+// agreement that happens to hold on flat shapes.
+
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+struct Cell<T> { v: own *T, alloc: Allocator }
+struct Outer { inner: Cell<int>, alloc: Allocator, mark: int }
+fn build(a: Allocator, x: int) -> Outer {
+    let q: own *int = a.alloc();
+    let c = Cell { v: q, alloc: a };
+    *c.v = x;
+    let o = Outer { inner: c, alloc: a, mark: 1 };
+    o
+}
+fn main() { let a = raw::make_c_allocator(); let mut o = build(a, 5); println(*o.inner.v + o.mark); return; }

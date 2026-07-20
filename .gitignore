@@ -53,3 +53,7 @@ SELFHOST-PLUMBING-REGISTER.md
 # its C beside the source.  The gates now pass `--c-out` into _build, and this
 # is the belt: a fixture directory holds .exl, never build output.
 tests/*/*.c
+# ...but a hand-written C companion is not build output.  The rule above was
+# written to stop emitted C and would have silently swallowed these: the gate
+# would stay green locally and fail on a fresh clone with a missing stub.
+!tests/*/*_stub.c
