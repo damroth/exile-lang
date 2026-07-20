@@ -91,6 +91,75 @@ link_args = $(if $(call stub_for,$(1)),--link $(call stub_for,$(1)))
 SYS_HOST := runtime/sys_host.c
 SYS_AMIGA := runtime/sys_amiga.c
 
+# Defined here, ahead of the gates, because five of them take the seed as a
+# prerequisite and a prerequisite is expanded where the rule is READ.  What the
+# snapshot is and when it is refreshed: see the seed bootstrap section below.
+SEED_C := seed/exilc.c
+# The same warning mask exilc itself passes to cc (exilc's own Lint already
+# covers these), so a seed build is as quiet as a normal one.
+CC_QUIET := -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function
+
+# ===== The gates that need no OCaml =====
+#
+# `selfhost-verify` splits in two.  Twelve gates COMPARE the port against the
+# reference, so they need opam by construction.  Five do not: `-port-tokens` and
+# `-port-ast` diff against the committed goldens under tests/golden,
+# `-port-module-roots` and `-no-fabrication` assert a property of the port alone,
+# and `bootstrap-fixpoint` compares the port against itself.  In those five the
+# oracle only ever BUILT the binary — so they build from the seed instead, and
+# run on a machine that has never seen opam (`make selfhost-seed-gates`).
+#
+# The builder is stage B of the ladder — the compiler built from the CURRENT
+# source by the seed-built compiler — never the seed binary itself.  The seed is
+# a snapshot and is allowed to lag; a driver built from it would carry the lag,
+# stage B never does.
+#
+# These binaries are deliberately SEPARATE from the oracle-built `selfhost_*`
+# ones, even where the source root is identical.  An independent builder is the
+# reason a codegen bug in the port cannot hide itself in the run that judges the
+# port's semantics — the twelve comparing gates keep that property.
+SEEDC_SRCS   := $(wildcard src/*.exl)
+SEEDC_A      := $(HOST_OUT)/seedc_a
+SEEDC_EXILC  := $(HOST_OUT)/seedc_b
+SEEDC_LEXER  := $(HOST_OUT)/seedc_lexer
+SEEDC_PARSER := $(HOST_OUT)/seedc_parser
+SEEDC_TC     := $(HOST_OUT)/seedc_tc
+SEEDC_CG     := $(HOST_OUT)/seedc_cg
+
+# Stage A (the seed's own codegen) then stage B (current source).  Both floors
+# are hard: an empty seed, and a seed that can no longer build the source, are
+# the two ways this rots — each names itself here rather than surfacing later as
+# a gate failing for an unrelated-looking reason.
+$(SEEDC_EXILC): $(SEED_C) $(SEEDC_SRCS) $(SYS_HOST)
+	@if [ ! -s $(SEED_C) ]; then echo "seedc: MISSING or EMPTY $(SEED_C)"; exit 1; fi
+	@mkdir -p $(HOST_OUT) $(C_OUT)
+	@rm -f $(SEEDC_A) $@ $(C_OUT)/seedc_b.c
+	@$(CC) $(CFLAGS) $(CC_QUIET) -o $(SEEDC_A) $(SEED_C) $(SYS_HOST) 2>/dev/null \
+	  || { echo "seedc: cc could not build $(SEED_C)"; exit 1; }
+	@$(SEEDC_A) --target host --c-out $(C_OUT)/seedc_b.c --link $(SYS_HOST) \
+	   -o $@ src/exilc.exl >/dev/null 2>&1 \
+	  || { echo "seedc: the seed cannot build the current source — refresh it (make seed)"; exit 1; }
+	@if [ ! -s $@ ]; then echo "seedc: stage B produced no binary"; exit 1; fi
+
+seedc_build = rm -f $(1); \
+	$(SEEDC_EXILC) --target host --c-out $(C_OUT)/$(notdir $(1)).c --link $(SYS_HOST) \
+	   -o $(1) $(2) >/dev/null \
+	  || { echo "seedc: stage B could not build $(2)"; exit 1; }; \
+	if [ ! -s $(1) ]; then echo "seedc: no binary for $(2)"; exit 1; fi
+
+# The four corpus drivers, same roots as the `host-selfhost-*` rules above, this
+# time compiled by stage B.  Every driver depends on the whole of src/: the port
+# modules are interconnected enough that a curated list is a maintenance trap,
+# and over-rebuilding is the cheap direction to be wrong in.
+$(SEEDC_LEXER):  src/lex_corpus.exl     $(SEEDC_EXILC) $(SEEDC_SRCS) $(SYS_HOST)
+	@$(call seedc_build,$@,$<)
+$(SEEDC_PARSER): src/parse_corpus.exl   $(SEEDC_EXILC) $(SEEDC_SRCS) $(SYS_HOST)
+	@$(call seedc_build,$@,$<)
+$(SEEDC_TC):     src/tc_corpus.exl      $(SEEDC_EXILC) $(SEEDC_SRCS) $(SYS_HOST)
+	@$(call seedc_build,$@,$<)
+$(SEEDC_CG):     src/codegen_corpus.exl $(SEEDC_EXILC) $(SEEDC_SRCS) $(SYS_HOST)
+	@$(call seedc_build,$@,$<)
+
 # `make host-NAME`  → build host binary for examples/NAME.exl
 host-%: examples/%.exl $(call stub_for,%) $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/$*.c --link $(SYS_HOST) $(call link_args,$*) -o $(HOST_OUT)/$* $<
@@ -385,13 +454,13 @@ selfhost-diff-%: examples/%.exl build
 # divergence on anything else — token type, position, count, ordering,
 # or the f32/f64 width tag — still fails.  The deferring examples are
 # printed every run so the debt stays visible, never silently passed.
-selfhost-port-tokens: host-selfhost-lexer
+selfhost-port-tokens: $(SEEDC_LEXER)
 	@mask='s/\(Float [^ ]+ /(Float /; s/\(String .*\) @/(String) @/'; \
 	fail=0; clean=0; defer=""; \
 	for name in $(EXAMPLE_NAMES); do \
 		[ -f $(SELFHOST_TOKENS)/$$name.tokens ] || continue; \
 		actual=$$(mktemp); \
-		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_lexer > $$actual 2>/dev/null; \
+		echo "examples/$$name.exl" | $(SEEDC_LEXER) > $$actual 2>/dev/null; \
 		if diff -q $(SELFHOST_TOKENS)/$$name.tokens $$actual >/dev/null; then \
 			clean=$$((clean+1)); \
 		elif diff <(sed -E "$$mask" $(SELFHOST_TOKENS)/$$name.tokens) <(sed -E "$$mask" $$actual) >/dev/null; then \
@@ -448,7 +517,7 @@ selfhost-port-tokens: host-selfhost-lexer
 # contain a `?` glued to an identifier, whatever file the literal lived in.
 NAME_SOURCES := src/codegen.exl src/typecheck.exl src/drop.exl
 
-selfhost-no-fabrication: $(EXILC_BIN)
+selfhost-no-fabrication: $(SEEDC_EXILC)
 	@hits=""; \
 	for src in $(NAME_SOURCES); do \
 	  h=$$(sed 's,^[[:space:]]*//.*,,' $$src \
@@ -469,7 +538,7 @@ selfhost-no-fabrication: $(EXILC_BIN)
 	  [ -f $$f ] || continue; \
 	  scanned=$$((scanned+1)); \
 	  rm -f $(C_OUT)/fabscan.c; \
-	  $(EXILC_BIN) --target c --c-out $(C_OUT)/fabscan.c $$f >/dev/null 2>&1; \
+	  $(SEEDC_EXILC) --target c --c-out $(C_OUT)/fabscan.c $$f >/dev/null 2>&1; \
 	  if [ ! -s $(C_OUT)/fabscan.c ]; then \
 	    echo "selfhost-no-fabrication: EMPTY C for $$f (scan floor)"; bad=$$((bad+1)); continue; \
 	  fi; \
@@ -532,14 +601,17 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity
 
+# The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
+# consumer and now builds from the seed; kept as the manual entry point, and its
+# oracle codegen path stays measured by `selfhost-seed-parity`.
 host-selfhost-cg: src/codegen_corpus.exl src/codegen.exl src/drop.exl src/move.exl src/typecheck.exl src/parser.exl src/loader.exl src/lexer.exl src/token.exl src/pos.exl src/ast.exl src/ir.exl src/error.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_cg.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_cg $<
 
-bootstrap-fixpoint: host-selfhost-cg
+bootstrap-fixpoint: $(SEEDC_CG)
 	@mkdir -p $(C_OUT)/fixpoint
-	@echo src/codegen_corpus.exl | $(HOST_OUT)/selfhost_cg > $(C_OUT)/fixpoint/C1.c
+	@echo src/codegen_corpus.exl | $(SEEDC_CG) > $(C_OUT)/fixpoint/C1.c
 	@if [ ! -s $(C_OUT)/fixpoint/C1.c ]; then \
 	  echo "bootstrap-fixpoint: FAIL — gen-1 emitted nothing (crash?)"; exit 1; \
 	fi
@@ -655,10 +727,10 @@ selfhost-port-move: $(EXILC_BIN)
 # manifestations, all invisible to the corpus gates because those only exercise
 # corpus roots.  Every library module must typecheck as its own root.
 MODULE_ROOTS := pos token error lexer ast parser ir typecheck move drop escape codegen loader
-selfhost-port-module-roots: host-selfhost-tc
+selfhost-port-module-roots: $(SEEDC_TC)
 	@fail=0; \
 	for m in $(MODULE_ROOTS); do \
-	  out=$$(echo src/$$m.exl | $(HOST_OUT)/selfhost_tc 2>&1 >/dev/null | head -1); \
+	  out=$$(echo src/$$m.exl | $(SEEDC_TC) 2>&1 >/dev/null | head -1); \
 	  if [ -n "$$out" ]; then \
 	    echo "selfhost-port-module-roots: FAIL $$m.exl: $$out"; fail=1; \
 	  fi; \
@@ -674,6 +746,39 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication
 	@echo "selfhost-verify: all port gates green"
+
+# The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
+# Same five recipes `selfhost-verify` runs; this target only names them as a
+# group so the OCaml-free path is one command rather than a claim in a comment.
+selfhost-seed-gates: bootstrap-fixpoint selfhost-port-tokens selfhost-port-ast \
+                     selfhost-port-module-roots selfhost-no-fabrication
+	@echo "selfhost-seed-gates: five gates green, built from the seed — no OCaml on the path"
+
+# The transition floor, kept re-provable.  Moving these five off the oracle is
+# sound only while the seed-built compiler emits, for every gate root, EXACTLY
+# the C the oracle emits — otherwise the five would be judging a different
+# program from the twelve.  Needs opam by construction, so it stays OUT of
+# `selfhost-verify`; its moment is a seed refresh (`make seed`).
+selfhost-seed-parity: $(SEEDC_EXILC) build
+	@fail=0; n=0; \
+	for root in exilc lex_corpus parse_corpus tc_corpus codegen_corpus; do \
+	  n=$$((n+1)); \
+	  rm -f $(C_OUT)/par_o.c $(C_OUT)/par_s.c; \
+	  $(EXILE) --target c --c-out $(C_OUT)/par_o.c src/$$root.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-seed-parity: the oracle cannot build src/$$root.exl"; fail=1; continue; }; \
+	  $(SEEDC_EXILC) --target c --c-out $(C_OUT)/par_s.c src/$$root.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-seed-parity: the seed-built compiler cannot build src/$$root.exl"; fail=1; continue; }; \
+	  if [ ! -s $(C_OUT)/par_o.c ] || [ ! -s $(C_OUT)/par_s.c ]; then \
+	    echo "selfhost-seed-parity: EMPTY C for src/$$root.exl (mutual-failure floor)"; fail=1; continue; \
+	  fi; \
+	  if ! cmp -s $(C_OUT)/par_o.c $(C_OUT)/par_s.c; then \
+	    echo "selfhost-seed-parity: DIVERGENCE on src/$$root.exl"; \
+	    diff $(C_OUT)/par_o.c $(C_OUT)/par_s.c | head -10; fail=1; \
+	  fi; \
+	done; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-seed-parity: clean ($$n roots — oracle and seed-built emit identical C)"; \
+	else exit 1; fi
 
 # ===== exilc whole-C fixpoint — the compiler as its own fixture =====
 #
@@ -695,11 +800,8 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 # to buy a property nobody needs: the seed's job is to let you in without OCaml,
 # not to mirror HEAD.  It is generated by the PORT, not the oracle
 # (selfhost-exilc-fixpoint proves the two emit identical C), so OCaml stays out
-# of the refresh loop too.
-SEED_C := seed/exilc.c
-# The same warning mask exilc itself passes to cc (exilc's own Lint already
-# covers these), so a seed build is as quiet as a normal one.
-CC_QUIET := -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function
+# of the refresh loop too.  `SEED_C` and `CC_QUIET` are defined near the top of
+# this file, where the gates that consume them can see them.
 
 seed: $(EXILC_BIN)
 	@$(EXILC_BIN) --target c --c-out $(SEED_C) src/exilc.exl >/dev/null
@@ -999,14 +1101,14 @@ selfhost-port-errors: host-selfhost-lexer
 # so a raw-vs-decoded escape difference reads as the documented
 # string-escape-decode deferral, while clean examples still verify their
 # string content exactly.
-selfhost-port-ast: host-selfhost-parser
+selfhost-port-ast: $(SEEDC_PARSER)
 	@mask='s/\(float [^ ]+ /(float /g; s/\(string "(\\.|[^"\\])*"\)/(string)/g'; \
 	clean=0; defer=""; notp=0; mf=0; fail=0; \
 	for name in $(EXAMPLE_NAMES); do \
 		[ -f $(SELFHOST_AST)/$$name.ast ] || continue; \
 		if [ "$$name" = "reexport" ]; then mf=$$((mf+1)); continue; fi; \
 		actual=$$(mktemp); errf=$$(mktemp); \
-		echo "examples/$$name.exl" | $(HOST_OUT)/selfhost_parser > $$actual 2>$$errf; \
+		echo "examples/$$name.exl" | $(SEEDC_PARSER) > $$actual 2>$$errf; \
 		if [ -s $$errf ]; then \
 			if grep -q "not yet ported" $$errf; then notp=$$((notp+1)); \
 			else echo "selfhost-port-ast: REGRESSION (parse error) $$name"; cat $$errf; fail=1; fi; \
