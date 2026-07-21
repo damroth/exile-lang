@@ -51,6 +51,15 @@ pub enum FloatWidth {
     | F64
 }
 
+// The direction sigil on a `rune` (DR-030 Faza-1.5, RUNE-SPEC I-R2): a rune is
+// declared `read`, `write`, or `readwrite`, and the direction gates its method
+// set.  Always explicit — a bare `rune` is a parse error (RUNE-SPEC axis 2).
+pub enum Direction {
+    DRead
+    | DWrite
+    | DReadWrite
+}
+
 // Binary operators.  Bitwise / shift take integer operands; `And` / `Or`
 // short-circuit on `bool`; `Concat` (`++`) is compile-time string concat.
 pub enum BinOp {
@@ -238,6 +247,11 @@ pub enum Stmt {
     | Break(Pos)
     | With { target: *const Expr, name: str, body: Vec<Stmt>, pos: Pos }
     | Continue(Pos)
+    // `rune name: T at ADDR dir` — DR-030 Faza-1.5 MMIO-window binding (RUNE-SPEC
+    // §3).  `elem` is the register width T; `addr` is the compile-time-constant
+    // base (§2); `dir` gates the method set (I-R2).  A local declaration in v1
+    // (RUNE-SPEC axis 4); it lowers to a `volatile T *` binding.
+    | RuneDecl { name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction, pos: Pos }
 }
 
 // ===== Declarations =====

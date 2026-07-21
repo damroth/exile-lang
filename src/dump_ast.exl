@@ -495,6 +495,17 @@ fn render_stmt(s: *const Stmt, out: *StringBuilder) {
             render_expr(value, out);
             out.push_str(")");
         }
+        | Stmt::RuneDecl { name, elem, addr, dir } => {
+            out.push_str("(rune ");
+            out.push_str(name);
+            out.push_str(" (ty ");
+            render_type_ann(elem, out);
+            out.push_str(") ");
+            render_expr(addr, out);
+            out.push_str(" ");
+            out.push_str(match dir { Direction::DRead => "read" | Direction::DWrite => "write" | Direction::DReadWrite => "readwrite" });
+            out.push_str(")");
+        }
         | Stmt::LetTuple { names, value, is_mut } => {
             out.push_str("(let-tuple");
             if is_mut { out.push_str(" mut"); }

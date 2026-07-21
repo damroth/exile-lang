@@ -118,6 +118,7 @@ pub fn mangle_typ(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TPtr(inner) => concat2(a, ar, "ptr_", mangle_typ(a, ar, inner))
         | Typ::TOwnPtr(inner) => concat2(a, ar, "ownptr_", mangle_typ(a, ar, inner))
         | Typ::TConstPtr(inner) => concat2(a, ar, "cptr_", mangle_typ(a, ar, inner))
+        | Typ::TRune { elem, dir } => concat2(a, ar, "rune_", mangle_typ(a, ar, elem))
         | Typ::TArray { elem, size } => {
             let mut arb = StringBuilder::with_capacity(a, 24 as u32);
             arb.push_str("arr");
@@ -224,6 +225,7 @@ pub fn c_type_prefix(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TPtr(inner) => c_ptr_prefix(a, ar, inner, false)
         | Typ::TOwnPtr(inner) => c_ptr_prefix(a, ar, inner, false)
         | Typ::TConstPtr(inner) => c_ptr_prefix(a, ar, inner, true)
+        | Typ::TRune { elem, dir } => c_rune_prefix(a, ar, elem)
         | Typ::TFnPtr { params: _p, ret: _r } => concat2(a, ar, mangle_typ(a, ar, t), " ")
         // `null` has no C spelling: it is the type of the literal, always consumed
         // under a concrete pointer.  Reaching here means typecheck let it through —
@@ -248,6 +250,14 @@ fn c_ptr_prefix(a: Allocator, ar: *Arena, inner: *const Typ, is_const: bool) -> 
         return concat3(a, ar, "const ", inner_c, " *");
     }
     return concat2(a, ar, inner_c, " *");
+}
+
+// A rune lowers to a pointer whose POINTEE is volatile — `volatile <T> *`
+// (RUNE-SPEC §6).  The volatile qualifier IS the guarantee (I-R1): a store
+// through this pointer is a volatile access the backend may not elide or
+// reorder.  Ownership/direction are erased; only volatile survives into C.
+fn c_rune_prefix(a: Allocator, ar: *Arena, elem: *const Typ) -> str {
+    return concat2(a, ar, "volatile ", c_ptr_prefix(a, ar, elem, false));
 }
 
 fn concat3(a: Allocator, ar: *Arena, x: str, y: str, z: str) -> str {
@@ -824,7 +834,25 @@ pub fn gen_expr(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, te
         }
         | TexprNode::TFieldAccess { target, field } => emit_field_access(a, ar, out, cg, target, field)
         | TexprNode::TSizeOf(t) => { out.push_str("sizeof("); out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, t))); out.push_str(")"); }
+        | TexprNode::TRuneAddr(addr) => emit_rune_addr(a, ar, out, te, addr)
         | _other => { ice("internal: no C form for this IR expression"); }
+    }
+}
+
+// The base address of a rune, materialised as its `volatile <T> *` value:
+// `(volatile <T> *)<addr>UL`.  The `UL` suffix keeps the integer constant
+// pointer-width, so a 64-bit host cc raises no int-to-pointer size warning
+// while the m68k build (int == pointer == 32-bit) is unaffected.
+fn emit_rune_addr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texpr, addr: int) {
+    match *te.ty {
+        Typ::TRune { elem, dir } => {
+            out.push_str("(volatile ");
+            out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, elem)));
+            out.push_str(" *)");
+            out.push_int(addr);
+            out.push_str("UL");
+        }
+        | _o => { ice("internal: TRuneAddr node without a rune type"); }
     }
 }
 

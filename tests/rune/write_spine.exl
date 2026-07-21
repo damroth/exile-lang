@@ -1,0 +1,16 @@
+// Increment 1 — the rune spine (RUNE-SPEC §6 golden-C witness).
+//
+// A standalone write-rune plus its `.write` stores.  The `selfhost-rune` gate
+// asserts the emitted C carries the `volatile <T> *` binding (presence) AND
+// that each `.write` lowers to EXACTLY ONE volatile store (multiplicity) —
+// both directions of I-R1, since elision and duplication are distinct betrayals.
+//
+// The address is a real custom-chip register (COP1LC, $DFF080), so this compiles
+// under `cc -ansi -pedantic -Wall` but is NOT run on the host: a store to
+// $DFF080 moves no copper here.  The runnable rune-over-RAM witness is Increment 2.
+
+fn main() {
+    rune cop1lc: u32 at 0xDFF080 write;
+    cop1lc.write(0x12345);
+    cop1lc.write(0);
+}

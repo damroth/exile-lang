@@ -178,6 +178,7 @@ fn tok_tag(t: Token) -> int {
         | Token::At => 72 | Token::Type => 73 | Token::Const => 74 | Token::Var => 75
         | Token::SizeOf => 76 | Token::Ident(_s) => 77 | Token::Int(_n) => 78
         | Token::Float(_f, _is32) => 79 | Token::String(_s) => 80 | Token::Eof => 81
+        | Token::Rune => 82
     }
 }
 
@@ -215,6 +216,7 @@ fn pp(t: Token) -> str {
         | Token::Ident(_s) => "identifier" | Token::Int(_n) => "integer"
         | Token::Float(_f, _is32) => "float" | Token::String(_s) => "string"
         | Token::Eof => "end of file"
+        | Token::Rune => "'rune'"
     }
 }
 
@@ -1615,6 +1617,7 @@ fn parse_stmt(s: *Parser) -> Stmt {
     if is_err(s) { return mk_exprstmt(s, dummy_expr(s)); }
     return match peek(s) {
         Token::Let => stmt_let(s)
+        | Token::Rune => stmt_rune(s)
         | Token::Return => stmt_return(s)
         | Token::Defer => stmt_defer(s)
         | Token::With => stmt_with(s)
@@ -1673,6 +1676,38 @@ fn stmt_let_else(s: *Parser, is_mut: bool, pos: Pos) -> Stmt {
     let else_body = parse_block(s);
     expect(s, Token::Semicolon);
     return Stmt::LetElse { pat: pat, value: value, else_body: else_body, pos: pos };
+}
+
+// `rune name: T at ADDR dir;` — DR-030 Faza-1.5 MMIO window (RUNE-SPEC §3).
+// `at` and the direction (`read` / `write` / `readwrite`) are CONTEXTUAL
+// identifiers consumed by grammatical position, so they stay free as ordinary
+// names everywhere else (and `write` doubles as the `.write()` method name).
+fn stmt_rune(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    let np = expect_ident(s, "rune name after 'rune'");
+    expect(s, Token::Colon);
+    let elem = parse_type(s);
+    let at = expect_ident(s, "'at' before a rune address");
+    if !str::eq(at.name, "at") {
+        fail(s, at.pos, "expected 'at' before a rune address");
+    }
+    let addr = parse_expr(s);
+    let dir = parse_rune_dir(s);
+    expect(s, Token::Semicolon);
+    return Stmt::RuneDecl { name: np.name, elem: elem, addr: addr, dir: dir, pos: pos };
+}
+
+// The direction sigil that suffixes a rune declaration (RUNE-SPEC axis 2): it
+// is always explicit, so a missing / misspelled word is a parse error naming
+// the three options rather than a silent default.
+fn parse_rune_dir(s: *Parser) -> Direction {
+    let id = expect_ident(s, "rune direction ('read', 'write', or 'readwrite') after the address");
+    if str::eq(id.name, "read") { return Direction::DRead; }
+    if str::eq(id.name, "write") { return Direction::DWrite; }
+    if str::eq(id.name, "readwrite") { return Direction::DReadWrite; }
+    fail(s, id.pos, "expected a rune direction: 'read', 'write', or 'readwrite'");
+    return Direction::DWrite;
 }
 
 fn stmt_return(s: *Parser) -> Stmt {

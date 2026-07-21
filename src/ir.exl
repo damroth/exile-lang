@@ -73,6 +73,11 @@ pub enum Typ {
     | TPtr(*const Typ)
     | TOwnPtr(*const Typ)
     | TConstPtr(*const Typ)
+    // DR-030 Faza-1.5: an MMIO window (RUNE-SPEC).  Lowers to `volatile T *`;
+    // `dir` gates its method set (I-R2).  The base address is NOT in the type —
+    // it lives in the emitted pointer value, so a rune is a first-class value
+    // (I-R3) whose address flows at runtime, not compiler metadata.
+    | TRune { elem: *const Typ, dir: Direction }
     | TArray { elem: *const Typ, size: int }
     | TFnPtr { params: Vec<*const Typ>, ret: Option<*const Typ> }
     | TNullPtr
@@ -161,6 +166,12 @@ pub enum TexprNode {
     | TIfExpr { cond: *const Texpr, then_val: *const Texpr, else_val: *const Texpr }
     | TSizeOf(*const Typ)
     | TBlock { stmts: Vec<Tstmt>, trailing: Option<*const Texpr> }
+    // DR-030 Faza-1.5: the folded base address of a rune, materialised as the
+    // pointer value of its `volatile T *` binding.  Carries only the address;
+    // the element width comes from the node's `ty` (a `TRune`).  Emits
+    // `(volatile <T> *)<addr>UL` — the `UL` keeps the cast pointer-width so a
+    // 64-bit host cc raises no int-to-pointer size warning.
+    | TRuneAddr(int)
 }
 
 // A match arm.  `tdiverges` marks `try`-desugar arms that `return`
@@ -352,6 +363,15 @@ fn typ_name_pfx(a: Allocator, ar: *Arena, pfx: str, inner: *const Typ) -> str {
     sb.push_str(typ_name(a, ar, inner));
     return str::from_slice(ar, sb.as_slice());
 }
+// `rune<T>` — the direction is not shown (RUNE-SPEC §3: the signature form is
+// `rune<u32>`); it participates in type identity but not the user-facing name.
+fn typ_name_rune(a: Allocator, ar: *Arena, elem: *const Typ) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("rune<");
+    sb.push_str(typ_name(a, ar, elem));
+    sb.push_str(">");
+    return str::from_slice(ar, sb.as_slice());
+}
 fn typ_name_arr(a: Allocator, ar: *Arena, elem: *const Typ, size: int) -> str {
     let mut sb = StringBuilder::with_capacity(a, 32 as u32);
     sb.push_str("[");
@@ -406,6 +426,7 @@ pub fn typ_name(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TPtr(i) => typ_name_pfx(a, ar, "*", i)
         | Typ::TOwnPtr(i) => typ_name_pfx(a, ar, "own *", i)
         | Typ::TConstPtr(i) => typ_name_pfx(a, ar, "*const ", i)
+        | Typ::TRune { elem, dir } => typ_name_rune(a, ar, elem)
         | Typ::TArray { elem, size } => typ_name_arr(a, ar, elem, size)
         | Typ::TFnPtr { params, ret } => typ_name_fnptr(a, ar, &params, ret)
         | Typ::TNullPtr => "*<null>"
@@ -433,6 +454,14 @@ pub fn floatwidth_eq(x: FloatWidth, y: FloatWidth) -> bool {
     return match x {
         FloatWidth::F32 => match y { FloatWidth::F32 => true | _e => false }
         | FloatWidth::F64 => match y { FloatWidth::F64 => true | _e => false }
+    };
+}
+
+pub fn dir_eq(x: Direction, y: Direction) -> bool {
+    return match x {
+        Direction::DRead => match y { Direction::DRead => true | _e => false }
+        | Direction::DWrite => match y { Direction::DWrite => true | _e => false }
+        | Direction::DReadWrite => match y { Direction::DReadWrite => true | _e => false }
     };
 }
 
@@ -510,6 +539,7 @@ pub fn typ_eq(x: *const Typ, y: *const Typ) -> bool {
         | Typ::TPtr(ix) => match *y { Typ::TPtr(iy) => typ_eq(ix, iy) | _e => false }
         | Typ::TOwnPtr(ix) => match *y { Typ::TOwnPtr(iy) => typ_eq(ix, iy) | _e => false }
         | Typ::TConstPtr(ix) => match *y { Typ::TConstPtr(iy) => typ_eq(ix, iy) | _e => false }
+        | Typ::TRune { elem, dir } => match *y { Typ::TRune { elem: e2, dir: d2 } => typ_eq(elem, e2) && dir_eq(dir, d2) | _e => false }
         | Typ::TTuple(tx) => match *y { Typ::TTuple(ty2) => tys_eq(&tx, &ty2) | _e => false }
         | Typ::TArray { elem, size } => match *y { Typ::TArray { elem: e2, size: s2 } => (size == s2) && typ_eq(elem, e2) | _e => false }
         | Typ::TFnPtr { params, ret } => match *y { Typ::TFnPtr { params: p2, ret: r2 } => tys_eq(&params, &p2) && opt_typ_eq(ret, r2) | _e => false }

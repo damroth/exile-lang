@@ -657,7 +657,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -800,7 +800,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
-                 selfhost-no-fabrication
+                 selfhost-no-fabrication selfhost-rune
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -910,6 +910,40 @@ selfhost-exilc-fixpoint: $(EXILC_BIN)
 	else \
 	  echo "selfhost-exilc-fixpoint: DRIFT — port codegen != oracle on src/exilc.exl"; \
 	  diff $(C_OUT)/xfx_oracle.c $(C_OUT)/xfx_port.c | head -20; exit 1; fi
+
+# ===== rune — the first kernel-era feature's golden-C witness (RUNE-SPEC §7) =====
+#
+# rune is judged by RUNE-SPEC.md, not the frozen oracle (kernel-era features have
+# no reference).  Increment 1 ships the SPINE — a standalone write-rune — and its
+# witness is golden C: the port compiles the fixture and this gate asserts both
+# directions of I-R1.  PRESENCE — the `volatile <T> *` binding and its UL-suffixed
+# base address are emitted; MULTIPLICITY — the count of volatile stores EQUALS the
+# count of source `.write`s (a count, not a grep: elision drops it below, a
+# duplicated store lifts it above — two distinct betrayals).  The emitted C must
+# also be valid C89 with zero warnings.  It is NOT run: the fixture points at a
+# real custom-chip register, so a store moves no copper here — the runnable
+# rune-over-RAM witness is Increment 2.  Port-only, so it lives outside the
+# oracle-comparing gates; needs only cc, so it rides in `selfhost-verify`.
+RUNE_FIXTURE := tests/rune/write_spine.exl
+selfhost-rune: $(EXILC_BIN)
+	@rm -f $(C_OUT)/rune_spine.c $(C_OUT)/rune_spine.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_spine.c $(RUNE_FIXTURE) >/dev/null 2>&1 \
+	  || { echo "selfhost-rune: port rejected the rune fixture"; exit 1; }; \
+	if [ ! -s $(C_OUT)/rune_spine.c ]; then \
+	  echo "selfhost-rune: EMPTY emitted C (mutual-failure floor)"; exit 1; fi; \
+	grep -q 'volatile unsigned long \*cop1lc;' $(C_OUT)/rune_spine.c \
+	  || { echo "selfhost-rune: MISSING volatile rune binding (I-R1 presence)"; exit 1; }; \
+	grep -q '(volatile unsigned long \*)14676096UL;' $(C_OUT)/rune_spine.c \
+	  || { echo "selfhost-rune: MISSING UL-suffixed base address (I-R1 address / no-cast-warning)"; exit 1; }; \
+	writes=`grep -c '\.write(' $(RUNE_FIXTURE)`; \
+	stores=`grep -c '\*cop1lc = ' $(C_OUT)/rune_spine.c`; \
+	if [ "$$stores" -eq 0 ]; then \
+	  echo "selfhost-rune: zero volatile stores (floor)"; exit 1; fi; \
+	if [ "$$writes" != "$$stores" ]; then \
+	  echo "selfhost-rune: I-R1 multiplicity — $$writes source writes but $$stores volatile stores (elision or duplication)"; exit 1; fi; \
+	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_spine.c -o $(C_OUT)/rune_spine.o \
+	  || { echo "selfhost-rune: emitted C is not clean C89 (-ansi -pedantic -Wall -Werror)"; exit 1; }; \
+	echo "selfhost-rune: golden-C clean (I-R1 presence + address + multiplicity: $$writes writes == $$stores stores; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

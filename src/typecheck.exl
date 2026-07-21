@@ -5619,6 +5619,8 @@ fn subst_var_stmt(a: Allocator, ar: *Arena, from: str, to: str, s: *const Stmt) 
                          body: subst_body(a, ar, from, to, &body), pos: pos }
         | Stmt::Break(p) => Stmt::Break(p)
         | Stmt::Continue(p) => Stmt::Continue(p)
+        | Stmt::RuneDecl { name, elem, addr, dir, pos } =>
+            Stmt::RuneDecl { name: name, elem: elem, addr: subst_var_expr(a, ar, from, to, addr), dir: dir, pos: pos }
     };
 }
 
@@ -6449,6 +6451,55 @@ fn is_bare_if(e: *const Expr) -> bool {
         | _other => false
     };
 }
+// The pointee (register-width) type of a rune, else the type itself.
+fn rune_elem_ty(t: *const Typ) -> *const Typ {
+    return match *t { Typ::TRune { elem, dir } => elem | _o => t };
+}
+fn is_rune_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TRune { elem, dir } => true | _o => false };
+}
+// Is `e` a bare variable currently bound to a rune?  A PURE benv lookup — no
+// elaboration, so a non-rune `.write` never pays a double-elaboration (which
+// would advance gensym / prelude registration and diverge from the oracle).
+// v1 runes are only ever named directly; passing a rune value is a later slice.
+fn expr_is_rune_var(benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
+    return match *e {
+        Expr::Var(vname, _p) => match env_lookup(benv, vname) {
+            Option::Some(t) => is_rune_ty(t)
+            | Option::None => false
+        }
+        | _o => false
+    };
+}
+// `rune.write(v)` (RUNE-SPEC §6) lowers to a volatile store `*rune = v`: a
+// `TAssignDeref` through the rune's `volatile T *` value.  The receiver is
+// elaborated exactly once (the caller already proved it is a rune var).
+fn elab_rune_write(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                   benv: *const Vec<FieldTy>, receiver: *const Expr,
+                   args: *const Vec<*const Expr>, p: Pos) -> Tstmt {
+    let trecv = elab_expr(a, ar, g, sc, benv, none_ty(), receiver);
+    let elem = rune_elem_ty(trecv.ty);
+    if args.length() != 1 as u32 {
+        tc_fail(ar, sc, p, "a rune `.write` takes exactly one value");
+        return Tstmt::TExprStmt(trecv);
+    }
+    let vexp: Option<*const Typ> = Option::Some(elem);
+    let arg0 = args.as_slice()[0 as u32];
+    let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, vexp, arg0), vexp);
+    return Tstmt::TAssignDeref { target: trecv, value: vad, pos: p };
+}
+// Statement-position method call: a rune `.write` becomes a volatile store
+// (RUNE-SPEC §6); everything else is an ordinary expression statement.  Shared
+// by both statement-body walkers so the rune interception lives in one place.
+fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                        env: *const Vec<FieldTy>, receiver: *const Expr, name: str,
+                        args: *const Vec<*const Expr>, whole: *const Expr) -> Tstmt {
+    if str::eq(name, "write") && expr_is_rune_var(env, receiver) {
+        return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole));
+    }
+    return Tstmt::TExprStmt(elab_expr(a, ar, g, sc, env, none_ty(), whole));
+}
+
 fn elab_block_expr_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                         benv: *Vec<FieldTy>, e: *const Expr, out: *Vec<Tstmt>) {
     match *e {
@@ -6458,9 +6509,40 @@ fn elab_block_expr_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
             let telse = elab_else_stmt_body(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, else_blk);
             out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
         }
+        // A rune `.write` in statement position lowers to a volatile store, not a
+        // method call (RUNE-SPEC §6); everything else stays an expr statement.
+        | Expr::MethodCall { receiver, name, args } => {
+            out.push(elab_stmt_methodcall(a, ar, g, sc, benv, receiver, name, &args, e));
+        }
         | _other => { out.push(Tstmt::TExprStmt(elab_expr(a, ar, g, sc, benv, none_ty(), e))); }
     }
 }
+// `rune name: T at ADDR dir` (RUNE-SPEC §3) elaborates to a `volatile T *`
+// binding.  The name is registered as a `TRune` value and lowered to a `TLet`
+// whose value is the folded base address (`TRuneAddr`).  Reusing `TLet` means
+// the hoist pass declares `volatile T *name;` and the assignment materialises
+// the address, exactly like an ordinary local — the address lives in the
+// emitted pointer value, so a rune is a first-class value (I-R3).
+fn elab_rune_decl(a: Allocator, ar: *Arena, sc: *const TyScope, benv: *Vec<FieldTy>,
+                  name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction,
+                  pos: Pos, out: *Vec<Tstmt>) {
+    let elem_ty = resolve_sig_ty(a, ar, sc, elem, pos);
+    let rune_ty = ty_node(ar, Typ::TRune { elem: elem_ty, dir: dir });
+    let base = rune_addr_const(ar, sc, addr, pos);
+    let value = te_node(ar, TexprNode::TRuneAddr(base), rune_ty, pos);
+    benv.push(FieldTy { name: name, ty: rune_ty });
+    out.push(Tstmt::TLet { name: name, value: value, decl_ty: rune_ty, pos: pos });
+}
+// v1 accepts a bare integer-literal base (RUNE-SPEC §2, R3): the address must
+// be a compile-time constant.  A named const or a computed base is rejected —
+// dynamic bases arrive with the ward era.
+fn rune_addr_const(ar: *Arena, sc: *const TyScope, addr: *const Expr, pos: Pos) -> int {
+    return match *addr {
+        Expr::IntLit(n, _p) => n
+        | _o => { tc_fail(ar, sc, pos, "a rune address must be a compile-time integer constant (dynamic bases arrive in the ward era)"); 0 }
+    };
+}
+
 fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    expected: Option<*const Typ>, s: *const Stmt, benv: *Vec<FieldTy>,
                    tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
@@ -6476,6 +6558,9 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             // variable at the binding site.  Invisible until lint rendered it —
             // the IR dump does not print TLet's pos.
             tstmts.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: pos });
+        }
+        | Stmt::RuneDecl { name, elem, addr, dir, pos } => {
+            elab_rune_decl(a, ar, sc, benv, name, elem, addr, dir, pos, tstmts);
         }
         | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
         | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
@@ -7839,6 +7924,11 @@ fn elab_stmt_pos(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
             let telse = elab_else_stmt_body(a, ar, g, sc, gensym, env, ret, else_blk);
             out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
         }
+        // A rune `.write` in statement position lowers to a volatile store, not a
+        // method call (RUNE-SPEC §6); everything else stays an expr statement.
+        | Expr::MethodCall { receiver, name, args } => {
+            out.push(elab_stmt_methodcall(a, ar, g, sc, env, receiver, name, &args, e));
+        }
         | _other => {
             let ve = elab_expr(a, ar, g, sc, env, none_ty(), e);
             out.push(Tstmt::TExprStmt(ve));
@@ -8486,6 +8576,9 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             // statement pos here (typecheck.ml:4550).  Invisible until lint
             // rendered it: the IR dump does not print TLet's pos.
             out.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: pos });
+        }
+        | Stmt::RuneDecl { name, elem, addr, dir, pos } => {
+            elab_rune_decl(a, ar, sc, env, name, elem, addr, dir, pos, out);
         }
         | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Tail(e) => { elab_tail(a, ar, g, sc, gensym, env, ret, e, out); }

@@ -74,6 +74,7 @@ fn render_token(t: *const Token, out: *StringBuilder) {
         | Token::Amp => { out.push_str("Amp"); }
         | Token::New => { out.push_str("New"); }
         | Token::Own => { out.push_str("Own"); }
+        | Token::Rune => { out.push_str("Rune"); }
         | Token::Null => { out.push_str("Null"); }
         | Token::LParen => { out.push_str("LParen"); }
         | Token::RParen => { out.push_str("RParen"); }

@@ -126,6 +126,13 @@ fn render_typ_canonical(t: *const Typ, out: *StringBuilder) {
             render_typ_canonical(inner, out);
             out.push_str(")");
         }
+        | Typ::TRune { elem, dir } => {
+            out.push_str("(rune ");
+            out.push_str(match dir { Direction::DRead => "read" | Direction::DWrite => "write" | Direction::DReadWrite => "readwrite" });
+            out.push_str(" ");
+            render_typ_canonical(elem, out);
+            out.push_str(")");
+        }
         | Typ::TArray { elem, size } => {
             out.push_str("(array ");
             render_typ_canonical(elem, out);
@@ -536,6 +543,11 @@ fn render_texpr_node(te: *const Texpr, out: *StringBuilder) {
         | TexprNode::TSizeOf(t) => {
             out.push_str("(size-of ");
             render_typ_canonical(t, out);
+            out.push_str(")");
+        }
+        | TexprNode::TRuneAddr(addr) => {
+            out.push_str("(rune-addr ");
+            out.push_int(addr);
             out.push_str(")");
         }
         | TexprNode::TBlock { stmts, trailing } => {
