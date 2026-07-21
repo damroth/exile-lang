@@ -319,8 +319,21 @@ selfhost-amiga: $(EXILC_BIN)
 	  out=$$(vamos $(AMIGA_OUT)/am_p 2>/dev/null); exp=$$(cat examples/$$name.expected); \
 	  if [ "$$out" != "$$exp" ]; then echo "selfhost-amiga: VAMOS $$name (identical binaries must also RUN correctly)"; diff <(echo "$$exp") <(echo "$$out") | head; fail=1; continue; fi; \
 	done; \
+	rm -f $(C_OUT)/rune_am.c $(AMIGA_OUT)/rune_am; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-amiga: clean ($$n examples across the driver axes; port==oracle on C, m68k binary, stdout and stderr; vamos==expected)"; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/rune_am.c tests/rune/ram_roundtrip.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-amiga: PORT rejected the rune-over-RAM witness"; fail=1; }; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  $(AMIGA_GCC) -noixemul -O2 $(CC_QUIET) -I src -o $(AMIGA_OUT)/rune_am $(C_OUT)/rune_am.c tests/rune/ram_roundtrip_stub.c $(SYS_AMIGA) -lm \
+	    || { echo "selfhost-amiga: rune-over-RAM cross-compile failed"; fail=1; }; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  rout=$$(vamos $(AMIGA_OUT)/rune_am 2>/dev/null); rexp=$$(printf '11\n22\n0\n305419896'); \
+	  if [ "$$rout" != "$$rexp" ]; then echo "selfhost-amiga: rune-over-RAM VAMOS round-trip WRONG (m68k volatile lowering):"; echo "$$rout"; fail=1; fi; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; rune-over-RAM runs 11/22/0/305419896 on m68k under vamos)"; \
 	else exit 1; fi
 
 # ===== Freestanding codegen mode (--freestanding) =====
@@ -943,7 +956,36 @@ selfhost-rune: $(EXILC_BIN)
 	  echo "selfhost-rune: I-R1 multiplicity — $$writes source writes but $$stores volatile stores (elision or duplication)"; exit 1; fi; \
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_spine.c -o $(C_OUT)/rune_spine.o \
 	  || { echo "selfhost-rune: emitted C is not clean C89 (-ansi -pedantic -Wall -Werror)"; exit 1; }; \
-	echo "selfhost-rune: golden-C clean (I-R1 presence + address + multiplicity: $$writes writes == $$stores stores; cc -Wall -Werror)"
+	rm -f $(C_OUT)/rune_read.c $(C_OUT)/rune_read.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_read.c tests/rune/read_load.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-rune: port rejected the read fixture"; exit 1; }; \
+	grep -q '\*out = \*status;' $(C_OUT)/rune_read.c \
+	  || { echo "selfhost-rune: MISSING volatile load feeding store (I-R1 read: *out = *status)"; exit 1; }; \
+	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_read.c -o $(C_OUT)/rune_read.o \
+	  || { echo "selfhost-rune: read_load C is not clean C89"; exit 1; }; \
+	rm -f $(C_OUT)/r1.c $(C_OUT)/r1.err $(C_OUT)/r2.c $(C_OUT)/r2.err; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/r1.c tests/rune/reject_write_on_read.exl >/dev/null 2>$(C_OUT)/r1.err; then \
+	  echo "selfhost-rune: R1 — port ACCEPTED a write on a read-only rune"; exit 1; fi; \
+	if [ ! -s $(C_OUT)/r1.err ]; then echo "selfhost-rune: R1 empty diagnostic (floor)"; exit 1; fi; \
+	grep -q 'cannot write a read-only rune' $(C_OUT)/r1.err \
+	  || { echo "selfhost-rune: R1 wrong message: `head -1 $(C_OUT)/r1.err`"; exit 1; }; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/r2.c tests/rune/reject_read_on_write.exl >/dev/null 2>$(C_OUT)/r2.err; then \
+	  echo "selfhost-rune: R2 — port ACCEPTED a read on a write-only rune"; exit 1; fi; \
+	if [ ! -s $(C_OUT)/r2.err ]; then echo "selfhost-rune: R2 empty diagnostic (floor)"; exit 1; fi; \
+	grep -q 'cannot read a write-only rune' $(C_OUT)/r2.err \
+	  || { echo "selfhost-rune: R2 wrong message: `head -1 $(C_OUT)/r2.err`"; exit 1; }; \
+	rm -f $(C_OUT)/rune_rr.c $(HOST_OUT)/rune_rr $(C_OUT)/rune_rr.out $(C_OUT)/rune_rr.expected; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_rr.c tests/rune/ram_roundtrip.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-rune: port rejected the rune-over-RAM witness"; exit 1; }; \
+	grep -q '(volatile unsigned long \*)(&SCRATCH))' $(C_OUT)/rune_rr.c \
+	  || { echo "selfhost-rune: MISSING &global rune base ((volatile T*)(&SCRATCH))"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/rune_rr $(C_OUT)/rune_rr.c tests/rune/ram_roundtrip_stub.c $(SYS_HOST) \
+	  || { echo "selfhost-rune: rune-over-RAM C is not clean C89 at -O2"; exit 1; }; \
+	$(HOST_OUT)/rune_rr > $(C_OUT)/rune_rr.out 2>&1; \
+	printf '11\n22\n0\n305419896\n' > $(C_OUT)/rune_rr.expected; \
+	if ! diff -q $(C_OUT)/rune_rr.expected $(C_OUT)/rune_rr.out >/dev/null; then \
+	  echo "selfhost-rune: rune-over-RAM round-trip WRONG (volatile lowering broken at -O2):"; cat $(C_OUT)/rune_rr.out; exit 1; fi; \
+	echo "selfhost-rune: clean (I-R1 golden $$writes==$$stores + read volatile-load + R1/R2 gating + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

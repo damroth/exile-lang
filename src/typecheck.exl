@@ -3966,6 +3966,9 @@ fn self_ty_matches(a: Allocator, st: Option<*const Typ>, target: *const Vec<str>
 fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                     expected: Option<*const Typ>, recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     let trecv = elab_expr(a, ar, g, sc, env, none_ty(), recv);
+    if is_rune_ty(trecv.ty) {
+        return elab_rune_method_expr(a, ar, sc, trecv, name, args, p);
+    }
     if prim_builtin_applies(trecv.ty, name, args.length()) {
         return prim_builtin_method(a, ar, g, sc, env, trecv, name, args, p);
     }
@@ -6458,6 +6461,34 @@ fn rune_elem_ty(t: *const Typ) -> *const Typ {
 fn is_rune_ty(t: *const Typ) -> bool {
     return match *t { Typ::TRune { elem, dir } => true | _o => false };
 }
+// The direction sigil of a rune (RUNE-SPEC I-R2); readwrite when not a rune.
+fn rune_dir(t: *const Typ) -> Direction {
+    return match *t { Typ::TRune { elem, dir } => dir | _o => Direction::DReadWrite };
+}
+fn dir_can_read(d: Direction) -> bool {
+    return match d { Direction::DRead => true | Direction::DReadWrite => true | Direction::DWrite => false };
+}
+fn dir_can_write(d: Direction) -> bool {
+    return match d { Direction::DWrite => true | Direction::DReadWrite => true | Direction::DRead => false };
+}
+// A rune method used as an EXPRESSION (RUNE-SPEC §6).  `.read()` is a volatile
+// load `*p : T`, gated by direction (R2); `.write` is a statement, so seeing it
+// here is a misuse — the direction gate (R1) still runs, then a clear diagnostic.
+fn elab_rune_method_expr(a: Allocator, ar: *Arena, sc: *const TyScope, trecv: *const Texpr,
+                         name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let d = rune_dir(trecv.ty);
+    let elem = rune_elem_ty(trecv.ty);
+    if str::eq(name, "read") {
+        if !dir_can_read(d) { tc_fail(ar, sc, p, "cannot read a write-only rune"); }
+        return te_node(ar, TexprNode::TDeref(trecv), elem, p);
+    }
+    if str::eq(name, "write") {
+        if !dir_can_write(d) { tc_fail(ar, sc, p, "cannot write a read-only rune"); }
+        tc_fail(ar, sc, p, "a rune `.write` is a statement, not an expression");
+        return trecv;
+    }
+    return method_miss(a, ar, sc, name, trecv.ty, p);
+}
 // Is `e` a bare variable currently bound to a rune?  A PURE benv lookup — no
 // elaboration, so a non-rune `.write` never pays a double-elaboration (which
 // would advance gensym / prelude registration and diverge from the oracle).
@@ -6479,6 +6510,10 @@ fn elab_rune_write(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
                    args: *const Vec<*const Expr>, p: Pos) -> Tstmt {
     let trecv = elab_expr(a, ar, g, sc, benv, none_ty(), receiver);
     let elem = rune_elem_ty(trecv.ty);
+    if !dir_can_write(rune_dir(trecv.ty)) {
+        tc_fail(ar, sc, p, "cannot write a read-only rune");
+        return Tstmt::TExprStmt(trecv);
+    }
     if args.length() != 1 as u32 {
         tc_fail(ar, sc, p, "a rune `.write` takes exactly one value");
         return Tstmt::TExprStmt(trecv);
@@ -6523,24 +6558,44 @@ fn elab_block_expr_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
 // the hoist pass declares `volatile T *name;` and the assignment materialises
 // the address, exactly like an ordinary local — the address lives in the
 // emitted pointer value, so a rune is a first-class value (I-R3).
-fn elab_rune_decl(a: Allocator, ar: *Arena, sc: *const TyScope, benv: *Vec<FieldTy>,
+fn elab_rune_decl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, benv: *Vec<FieldTy>,
                   name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction,
                   pos: Pos, out: *Vec<Tstmt>) {
     let elem_ty = resolve_sig_ty(a, ar, sc, elem, pos);
     let rune_ty = ty_node(ar, Typ::TRune { elem: elem_ty, dir: dir });
-    let base = rune_addr_const(ar, sc, addr, pos);
-    let value = te_node(ar, TexprNode::TRuneAddr(base), rune_ty, pos);
+    let value = rune_base_value(a, ar, g, sc, benv, addr, elem, rune_ty, pos);
     benv.push(FieldTy { name: name, ty: rune_ty });
     out.push(Tstmt::TLet { name: name, value: value, decl_ty: rune_ty, pos: pos });
 }
-// v1 accepts a bare integer-literal base (RUNE-SPEC §2, R3): the address must
-// be a compile-time constant.  A named const or a computed base is rejected —
-// dynamic bases arrive with the ward era.
-fn rune_addr_const(ar: *Arena, sc: *const TyScope, addr: *const Expr, pos: Pos) -> int {
+// The rune's value = its base address as a `volatile T *` (RUNE-SPEC §2, R3).
+// Two compile-time-constant forms: an integer literal → `(volatile T*)NUL`, or
+// the address of a GLOBAL → `(volatile T*)&NAME`.  A global's address is
+// link-time-fixed and static-lifetime, so it never dangles — exactly like an
+// MMIO register, and unlike a runtime-DISCOVERED base (Zorro → ward era).
+fn rune_base_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                   benv: *const Vec<FieldTy>, addr: *const Expr, elem_ann: *const TypeAnn,
+                   rune_ty: *const Typ, pos: Pos) -> *const Texpr {
     return match *addr {
-        Expr::IntLit(n, _p) => n
-        | _o => { tc_fail(ar, sc, pos, "a rune address must be a compile-time integer constant (dynamic bases arrive in the ward era)"); 0 }
+        Expr::IntLit(n, _p) => te_node(ar, TexprNode::TRuneAddr(n), rune_ty, pos)
+        | Expr::Ref(inner, _p) => rune_sym_base(a, ar, g, sc, benv, addr, inner, elem_ann, rune_ty, pos)
+        | _o => { tc_fail(ar, sc, pos, "a rune address must be a compile-time constant: an integer literal or `&NAME` (dynamic bases arrive in the ward era)"); te_node(ar, TexprNode::TRuneAddr(0 as int), rune_ty, pos) }
     };
+}
+// `&NAME` base: only a GLOBAL is a compile-time constant — a `&local` would be a
+// stack address (runtime, and dangling once the fn returns), which R3/I-R3
+// forbid.  Elaborate `&NAME` (checks it exists) and cast to the rune's pointer.
+fn rune_sym_base(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                 benv: *const Vec<FieldTy>, addr: *const Expr, inner: *const Expr,
+                 elem_ann: *const TypeAnn, rune_ty: *const Typ, pos: Pos) -> *const Texpr {
+    let is_global = match *inner {
+        Expr::Var(vname, _vp) => !is_some_ty(env_lookup(benv, vname))
+        | _o => false
+    };
+    if !is_global {
+        tc_fail(ar, sc, pos, "a rune `&` address must name a global; a local's address would dangle and a computed address is not a compile-time constant");
+    }
+    let tref = elab_expr(a, ar, g, sc, benv, none_ty(), addr);
+    return te_node(ar, TexprNode::TCast(tref, elem_ann), rune_ty, pos);
 }
 
 fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
@@ -6560,7 +6615,7 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             tstmts.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: pos });
         }
         | Stmt::RuneDecl { name, elem, addr, dir, pos } => {
-            elab_rune_decl(a, ar, sc, benv, name, elem, addr, dir, pos, tstmts);
+            elab_rune_decl(a, ar, g, sc, benv, name, elem, addr, dir, pos, tstmts);
         }
         | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
         | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
@@ -8578,7 +8633,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             out.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: pos });
         }
         | Stmt::RuneDecl { name, elem, addr, dir, pos } => {
-            elab_rune_decl(a, ar, sc, env, name, elem, addr, dir, pos, out);
+            elab_rune_decl(a, ar, g, sc, env, name, elem, addr, dir, pos, out);
         }
         | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Tail(e) => { elab_tail(a, ar, g, sc, gensym, env, ret, e, out); }

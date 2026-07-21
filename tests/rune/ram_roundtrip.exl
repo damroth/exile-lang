@@ -1,0 +1,21 @@
+// Increment 2 — the runnable rune-over-RAM witness (RUNE-SPEC §7b).
+//
+// Volatile mechanics proven by EXECUTION, not just C shape: a readwrite rune
+// points at a real static cell (`&SCRATCH`, storage from the C stub), and the
+// write -> read-back round-trip is checked at runtime, at -O2. A strobe pattern
+// (distinct values, read after each) proves the stores land in sequence at the
+// right width — a broken lowering (wrong address / width / elided store) would
+// print the wrong numbers.
+extern var SCRATCH: c_ulong;
+
+fn main() {
+    rune cell: c_ulong at &SCRATCH readwrite;
+    cell.write(11);
+    println(cell.read() as i32);   // 11  — round-trip through the rune
+    cell.write(22);
+    println(SCRATCH as i32);       // 22  — the store is visible in the aliased global
+    cell.write(0);
+    println(cell.read() as i32);   // 0
+    cell.write(305419896);         // 0x12345678 — exercises the full width;
+    println(cell.read() as i32);   // 305419896 — a narrower store would truncate
+}

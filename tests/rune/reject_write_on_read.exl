@@ -1,0 +1,6 @@
+// R1 (RUNE-SPEC §5, I-R2): a read-only rune has no `.write` — a status register
+// you can accidentally write is exactly the class of bug rune exists to catch.
+fn main() {
+    rune status: u32 at 0xDFF002 read;
+    status.write(5);
+}
