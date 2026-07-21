@@ -1,0 +1,20 @@
+// A marker trait (no methods) under a `<T: Marker>` bound.  `Q` does not
+// implement it.  The fact that `P` DOES — via an empty `impl Marker for P {}`
+// that registers no method — is exactly why the registry is impl-block level
+// (`sc_impls`), not a by-product of methods; see the accepting twin in
+// tests/xprod/c23.
+//
+// Lives in the tc-errors corpus: REJECTED, first line byte-exact.
+
+trait Marker { }
+struct P { x: i32 }
+struct Q { x: i32 }
+impl Marker for P { }
+
+fn take<T: Marker>(v: T) -> i32 { 1 }
+
+fn main() {
+    let q = Q { x: 1 };
+    println(take(q));
+    return;
+}

@@ -1,0 +1,24 @@
+// A `*const Fake` handed to a `<F: Fn1>` bound.  `Fake` DOES implement Fn1, but
+// a POINTER to it does not — the conformance check reads the type's head path
+// without dereferencing (the reference's `typ_head_path`, not the port's
+// pointer-dereferencing `recv_base_path`), so `&g` is rejected and the message
+// names the pointer type.
+//
+// Lives in the tc-errors corpus: REJECTED, first line byte-exact.
+
+struct Fake { _tag: int }
+
+impl Fn1 for Fake {
+    type Arg = int;
+    type Output = int;
+    fn call(*const self, a: int) -> int { a + 1 }
+}
+
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+
+fn main() {
+    let g = Fake { _tag: 0 };
+    let pg = &g;
+    println(run(pg, 5));
+    return;
+}

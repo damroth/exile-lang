@@ -1,0 +1,21 @@
+// A `<F: Fn1>` bound at a free-fn call site, given a type with an inherent
+// `pub fn call` and NO `impl Fn1 for`.  The conformance check speaks at the
+// CALL, byte-exact with the reference — the port used to fail deeper, inside
+// the instance body, with `unknown function 'f'`.
+//
+// Lives in the tc-errors corpus: REJECTED, first line byte-exact with the
+// reference.
+
+struct Fake { _tag: int }
+
+impl Fake {
+    pub fn call(*const self, a: int) -> int { a + 1 }
+}
+
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+
+fn main() {
+    let g = Fake { _tag: 0 };
+    println(run(g, 5));
+    return;
+}

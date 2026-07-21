@@ -1,0 +1,20 @@
+// A `<F: Fn1>` bound on a generic METHOD, not a free fn.  Method bounds travel
+// on `mi_tbounds` and are enforced at the method choke point — without which
+// free-fn bounds were checked and method bounds were not, the half-wired shape.
+//
+// Lives in the tc-errors corpus: REJECTED, first line byte-exact.
+
+struct Holder { x: i32 }
+struct Fake { _tag: int }
+impl Fake { pub fn call(*const self, a: int) -> int { a + 1 } }
+
+impl Holder {
+    pub fn run<F: |int|->int>(*const self, f: F, x: int) -> int { f(x) }
+}
+
+fn main() {
+    let h = Holder { x: 0 };
+    let g = Fake { _tag: 0 };
+    println(h.run(g, 5));
+    return;
+}

@@ -1,0 +1,15 @@
+// The `c13` cell — the open divergence the (C) arc was named to close.  Was
+// tests/xprod/c13_bare_lambda_to_bound.exl, a "known divergence kept for the
+// fabrication scan" while the port wrongly ACCEPTED it (emitting `ex_apply2_?`,
+// then a named-but-still-accepted fn-ptr).  Bound conformance now REJECTS it, so
+// it is a plain parity fixture and moves to where rejection cases live.
+//
+// A bare non-capturing lambda has fn-ptr type, which does not implement the
+// closure bound.  REJECTED, first line byte-exact with the reference.
+
+fn apply2<F: |int|->int>(f: F, n: int) -> int { f(n) }
+fn main() {
+    let g = |x: int| -> int x + 1;
+    println(apply2(g, 5));
+    return;
+}

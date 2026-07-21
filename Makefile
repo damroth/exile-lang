@@ -900,8 +900,11 @@ selfhost-port-escape: host-selfhost-escape
 #
 # Named, not globbed — and the list is deliberately short of the cells that do
 # NOT agree yet; those are named in the worklog with their repro, not silently
-# absent.  `c13_bare_lambda_to_bound` is in the directory but NOT in this list:
-# it is a known divergence kept for the fabrication scan.
+# absent.  `c13_bare_lambda_to_bound` used to live here as a known divergence
+# kept for the fabrication scan (the port wrongly accepted it, so it emitted C);
+# bound conformance now rejects it, so it moved to src/tc_errors as a parity
+# fixture.  c23 is the marker-trait acceptance twin of that closure — an empty
+# `impl Marker for P {}` satisfying a `<T: Marker>` bound.
 XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c04_trait_impl_for_generic c05_generic_fn_bound \
                   c07_generic_in_generic c10_generic_ty_in_mod_with_impl \
@@ -912,7 +915,7 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c18_relative_path_in_middle_module \
                   c19_callee_tparam_shadows_caller \
                   c20_own_param_in_generic_struct c21_generic_owner_nested_in_owner \
-                  c22_capture_untyped_let
+                  c22_capture_untyped_let c23_marker_bound_satisfied
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

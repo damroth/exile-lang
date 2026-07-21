@@ -1,0 +1,16 @@
+// An un-inferable IMPLICIT capture: `u` comes from a tuple destructuring the
+// pre-pass cannot type, so the lambda decays to a bare fn-ptr, which does not
+// implement `Fn1`.  The bound is what speaks — closing the divergence that was
+// registered in the plumbing register (port used to say `undefined variable`).
+//
+// Lives in the tc-errors corpus: REJECTED, first line byte-exact.
+
+fn run<F: |int|->int>(f: F, x: int) -> int { f(x) }
+
+fn main() {
+    let t = (1, 2);
+    let (u, w) = t;
+    let g = |x: int| -> int x + u;
+    println(run(g, 5));
+    return;
+}

@@ -1,0 +1,17 @@
+// The accepting twin of tc_errors/bound_marker_not_implemented: a marker trait
+// implemented by an EMPTY `impl Marker for P {}` satisfies a `<T: Marker>`
+// bound.  The acceptance probe for the registry — a check built only on method
+// presence would reject this, because the impl registers no method.  Must be
+// ACCEPTED and produce byte-identical C on both compilers.
+
+trait Marker { }
+struct P { x: i32 }
+impl Marker for P { }
+
+fn take<T: Marker>(v: T) -> i32 { return v.x; }
+
+fn main() {
+    let p = P { x: 7 };
+    println(take(p));
+    return;
+}
