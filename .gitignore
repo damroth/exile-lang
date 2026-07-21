@@ -41,9 +41,6 @@ examples/prelude/*
 .opam-switch/
 
 # internal worklog
-WORKLOG.md
-SELFHOST-WORKLOG.md
-SELFHOST-PLUMBING-REGISTER.md
 
 # editor
 .merlin
@@ -57,3 +54,4 @@ tests/*/*.c
 # written to stop emitted C and would have silently swallowed these: the gate
 # would stay green locally and fail on a fresh clone with a missing stub.
 !tests/*/*_stub.c
+notes/
