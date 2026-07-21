@@ -122,3 +122,10 @@ jobs:
 
     - name: Cross-compile examples + verify under vamos
       run: opam exec -- make verify-amiga
+
+    # The port's --target amiga vs the oracle's, on the same toolchain + vamos.
+    # Proves the self-hosted driver cross-compiles to a byte-identical, correctly
+    # running m68k binary. Lives here (not in selfhost-verify) because it needs
+    # the cross toolchain the toolchain-free port suite deliberately avoids.
+    - name: Port amiga driver parity (selfhost-amiga)
+      run: opam exec -- make selfhost-amiga

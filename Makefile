@@ -267,6 +267,62 @@ verify-host:  $(HOST_EXAMPLES:%=verify-host-%)
 verify-amiga: $(AMIGA_EXAMPLES:%=verify-amiga-%)
 verify: verify-host verify-amiga
 
+# ===== selfhost-amiga — the port's --target amiga vs the oracle's =====
+#
+# Faza E: the port gained `--target amiga` (the DR-006 driver seam — m68k-
+# amigaos-gcc, -noixemul, -lm, sys_amiga link).  The emitted C is target-
+# INDEPENDENT (codegen branches on neither target nor profile), and its byte
+# parity is already gated corpus-wide by `selfhost-verify`; this gate proves the
+# DRIVER — that the port's gcc invocation produces the same running m68k binary
+# the oracle's does.
+#
+# The set is tier-CLEAN examples (nothing above the amiga default profile
+# `standard`), so parity holds in EVERY channel — emitted C, the cross-compiled
+# binary, stdout, AND stderr.  Collection/closure examples (own_ptr, closures_a2)
+# are deliberately excluded: under `--profile=standard` the oracle's linter emits
+# tier warnings the full-only port does not, a stderr divergence that belongs to
+# the DEFERRED profile-lint round, not the driver.  The chosen six cover the
+# axes that DO reach the driver: amiga.lib linking (amiga_hello), soft-float -lm
+# (floats), the freestanding source shape (freestanding_print), plain code
+# (enums), monomorphisation (generics) and match lowering (pattern_guards).
+#
+# Requires the cross toolchain + vamos, so it is a STANDALONE target (like
+# verify-amiga), NOT part of the toolchain-free `selfhost-verify`.
+AMIGA_GATE := amiga_hello enums floats freestanding_print generics pattern_guards
+
+.PHONY: selfhost-amiga
+selfhost-amiga: $(EXILC_BIN)
+	@if [ ! -x $(AMIGA_GCC) ]; then echo "selfhost-amiga: MISSING cross toolchain ($(AMIGA_GCC)) — run 'make toolchain'"; exit 1; fi
+	@command -v vamos >/dev/null 2>&1 || { echo "selfhost-amiga: vamos not on PATH"; exit 1; }
+	@mkdir -p $(C_OUT) $(AMIGA_OUT)
+	@fail=0; n=0; \
+	for name in $(AMIGA_GATE); do \
+	  f=examples/$$name.exl; \
+	  [ -f $$f ] || { echo "selfhost-amiga: MISSING $$f"; fail=1; continue; }; \
+	  [ -f examples/$$name.expected ] || { echo "selfhost-amiga: MISSING examples/$$name.expected"; fail=1; continue; }; \
+	  stub=""; [ -f examples/$${name}_stub.c ] && stub="--link examples/$${name}_stub.c"; \
+	  rm -f $(C_OUT)/am_o.c $(C_OUT)/am_p.c $(AMIGA_OUT)/am_o $(AMIGA_OUT)/am_p \
+	        $(C_OUT)/am_o.msg $(C_OUT)/am_p.msg $(C_OUT)/am_o.err $(C_OUT)/am_p.err; \
+	  n=$$((n+1)); \
+	  $(EXILE) --target amiga --c-out $(C_OUT)/am_o.c --link $(SYS_AMIGA) $$stub -o $(AMIGA_OUT)/am_o $$f >$(C_OUT)/am_o.msg 2>$(C_OUT)/am_o.err \
+	    || { echo "selfhost-amiga: ORACLE build failed $$name"; cat $(C_OUT)/am_o.err; fail=1; continue; }; \
+	  $(EXILC_BIN) --target amiga --c-out $(C_OUT)/am_p.c --link $(SYS_AMIGA) $$stub -o $(AMIGA_OUT)/am_p $$f >$(C_OUT)/am_p.msg 2>$(C_OUT)/am_p.err \
+	    || { echo "selfhost-amiga: PORT build failed $$name"; cat $(C_OUT)/am_p.err; fail=1; continue; }; \
+	  if [ ! -s $(C_OUT)/am_o.c ]; then echo "selfhost-amiga: EMPTY oracle C $$name (mutual-failure floor)"; fail=1; continue; fi; \
+	  if ! cmp -s $(C_OUT)/am_o.c $(C_OUT)/am_p.c; then echo "selfhost-amiga: C DIVERGE $$name"; diff $(C_OUT)/am_o.c $(C_OUT)/am_p.c | head -6; fail=1; continue; fi; \
+	  if [ ! -s $(AMIGA_OUT)/am_o ] || [ ! -s $(AMIGA_OUT)/am_p ]; then echo "selfhost-amiga: EMPTY binary $$name"; fail=1; continue; fi; \
+	  if ! cmp -s $(AMIGA_OUT)/am_o $(AMIGA_OUT)/am_p; then echo "selfhost-amiga: BINARY DIVERGE $$name"; fail=1; continue; fi; \
+	  o_msg=$$(sed 's|am_o|am_X|' $(C_OUT)/am_o.msg); p_msg=$$(sed 's|am_p|am_X|' $(C_OUT)/am_p.msg); \
+	  if [ "$$o_msg" != "$$p_msg" ]; then echo "selfhost-amiga: MESSAGE $$name"; echo "  o: $$o_msg"; echo "  p: $$p_msg"; fail=1; continue; fi; \
+	  case "$$p_msg" in *"[profile=standard, target=amiga]"*) ;; *) echo "selfhost-amiga: message lost the amiga profile tag $$name: $$p_msg"; fail=1; continue;; esac; \
+	  if ! cmp -s $(C_OUT)/am_o.err $(C_OUT)/am_p.err; then echo "selfhost-amiga: STDERR DIVERGE $$name (tier-clean set must match on stderr too)"; diff $(C_OUT)/am_o.err $(C_OUT)/am_p.err | head; fail=1; continue; fi; \
+	  out=$$(vamos $(AMIGA_OUT)/am_p 2>/dev/null); exp=$$(cat examples/$$name.expected); \
+	  if [ "$$out" != "$$exp" ]; then echo "selfhost-amiga: VAMOS $$name (identical binaries must also RUN correctly)"; diff <(echo "$$exp") <(echo "$$out") | head; fail=1; continue; fi; \
+	done; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-amiga: clean ($$n examples across the driver axes; port==oracle on C, m68k binary, stdout and stderr; vamos==expected)"; \
+	else exit 1; fi
+
 # ===== Freestanding codegen mode (--freestanding) =====
 #
 # `freestanding_*.exl` examples are gated two ways:

@@ -81,7 +81,10 @@ fn err_line(msg: str) {
 // ===== flags =====
 
 // ca_emit: 0 = full pipeline; 1 = tokens; 2 = ast; 3 = typed-ir.
-// ca_target: 0 = c (transpile only); 1 = host (transpile + cc-invoke).
+// ca_target: 0 = c (transpile only); 1 = host (cc-invoke); 2 = amiga
+// (m68k-amigaos-gcc cross-invoke).  The emitted C is identical across targets —
+// codegen branches on neither target nor profile — so amiga is a pure driver
+// seam (DR-006): which compiler, which flags, which sys backend.
 struct CliArgs {
     ca_emit: int,
     ca_user_only: bool,
@@ -117,7 +120,8 @@ fn parse_cli(a: Allocator) -> CliArgs {
             let t = arg_str(i);
             if str::eq(t, "c") { ca.ca_target = 0 as int; }
             else if str::eq(t, "host") { ca.ca_target = 1 as int; }
-            else { err_line("unknown target (expected: c, host)"); ca.ca_ok = false; return ca; }
+            else if str::eq(t, "amiga") { ca.ca_target = 2 as int; }
+            else { err_line("unknown target (expected: c, host, amiga)"); ca.ca_ok = false; return ca; }
         }
         else if str::eq(arg, "-o") {
             i = i + 1 as c_int;
@@ -147,7 +151,7 @@ fn parse_cli(a: Allocator) -> CliArgs {
         else { unknown_flag(arg); ca.ca_ok = false; return ca; }
         i = i + 1 as c_int;
     }
-    if str::eq(ca.ca_input, "") { err_line("usage: exilc [--target c|host] [--emit-tokens|--emit-ast|--emit-typed-ir [--user-only] [--after-drop]] [-o out] [--c-out c] [--link stub]... [--show-cc-warnings] <file.exl>"); ca.ca_ok = false; }
+    if str::eq(ca.ca_input, "") { err_line("usage: exilc [--target c|host|amiga] [--emit-tokens|--emit-ast|--emit-typed-ir [--user-only] [--after-drop]] [-o out] [--c-out c] [--link stub]... [--show-cc-warnings] <file.exl>"); ca.ca_ok = false; }
     return ca;
 }
 
@@ -312,9 +316,11 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
     return;
 }
 
-// Transpile reports `wrote`; host hands the C to cc and reports `built`.
+// Transpile reports `wrote`; host hands the C to cc and reports `built`; amiga
+// cross-compiles with m68k-amigaos-gcc.
 fn emit_output(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
     if ca.ca_target == 1 as int { build_host(a, ar, ca, cpath); return; }
+    if ca.ca_target == 2 as int { build_amiga(a, ar, ca, cpath); return; }
     report_wrote(a, cpath);
     return;
 }
@@ -352,6 +358,43 @@ fn build_host(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
     return;
 }
 
+// The m68k-amigaos-gcc argv, mirroring the oracle's `compile_amiga` flag DATA
+// (the PLUMBING — argv vs shell string — is the registered driver divergence):
+//   gcc -noixemul <warn-suppress> <-I dir> -o out cpath links -lm
+// No `-ansi -pedantic -Wall` (unlike host cc); `-noixemul` keeps libnix's POSIX
+// shim out, and `-lm` at the tail pulls Bebbo's soft-float thunks for the FPU-
+// less 68000.  The toolchain lives at the fixed `_build/toolchain` prefix; the
+// oracle also honours `$EXILE_TOOLCHAIN` (a dev override no gate exercises) —
+// registered as a driver divergence rather than ported in this round.
+fn build_amiga_argv(a: Allocator, ar: *Arena, ca: *const CliArgs, out: str, cpath: str) -> Vec<str> {
+    let mut v: Vec<str> = Vec::with_capacity(a, 16 as u32);
+    v.push("_build/toolchain/bin/m68k-amigaos-gcc");
+    v.push("-noixemul");
+    if !ca.ca_show_cc {
+        v.push("-Wno-unused-variable");
+        v.push("-Wno-unused-but-set-variable");
+        v.push("-Wno-unused-function");
+    }
+    let dir = input_dir(ar, ca.ca_input);
+    if !str::eq(dir, "") && !str::eq(dir, ".") { v.push("-I"); v.push(dir); }
+    v.push("-o"); v.push(out); v.push(cpath);
+    let links = ca.ca_links.as_slice();
+    let mut i = 0 as u32;
+    while i < ca.ca_links.length() { v.push(links[i]); i = i + 1 as u32; }
+    v.push("-lm");
+    return v;
+}
+
+fn build_amiga(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
+    let out = resolve_out(ar, ca);
+    let argv = build_amiga_argv(a, ar, ca, out, cpath);
+    let sl = argv.as_slice();
+    let rc: c_int = sys::sys_spawn(&sl[0] as *const str, argv.length() as c_int);
+    if rc != 0 as c_int { err_line("command failed: m68k-amigaos-gcc"); sys::sys_exit(1 as c_int); }
+    report_amiga(a, out);
+    return;
+}
+
 // move::check returns the FIRST diagnostic; report_error exits 1, so a rejected
 // program never reaches escape, drop, or codegen.
 fn check_move(a: Allocator, ar: *Arena, tprog: *Tprogram) {
@@ -381,6 +424,16 @@ fn report_wrote(a: Allocator, cpath: str) {
 fn report_built(a: Allocator, out: str) {
     let mut sb = StringBuilder::with_capacity(a, 128 as u32);
     sb.push_str("built host binary: "); sb.push_str(out); sb.push_str(" [profile=full, target=host]\n");
+    flush_stdout(&sb);
+    return;
+}
+// The amiga default profile is `standard` (the oracle's per-target default) —
+// spelled here as a fixed string because this round adds no `--profile` parsing
+// and no lint tiers; profile affects only which lint warnings fire, never the
+// emitted C.  The message is byte-exact with the oracle's build line.
+fn report_amiga(a: Allocator, out: str) {
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    sb.push_str("built amiga binary: "); sb.push_str(out); sb.push_str(" [profile=standard, target=amiga]\n");
     flush_stdout(&sb);
     return;
 }
