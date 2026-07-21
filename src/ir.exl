@@ -73,7 +73,7 @@ pub enum Typ {
     | TPtr(*const Typ)
     | TOwnPtr(*const Typ)
     | TConstPtr(*const Typ)
-    // DR-030 Faza-1.5: an MMIO window (RUNE-SPEC).  Lowers to `volatile T *`;
+    // DR-030 Phase-1.5: an MMIO window (RUNE-SPEC).  Lowers to `volatile T *`;
     // `dir` gates its method set (I-R2).  The base address is NOT in the type —
     // it lives in the emitted pointer value, so a rune is a first-class value
     // (I-R3) whose address flows at runtime, not compiler metadata.
@@ -166,7 +166,7 @@ pub enum TexprNode {
     | TIfExpr { cond: *const Texpr, then_val: *const Texpr, else_val: *const Texpr }
     | TSizeOf(*const Typ)
     | TBlock { stmts: Vec<Tstmt>, trailing: Option<*const Texpr> }
-    // DR-030 Faza-1.5: the folded base address of a rune, materialised as the
+    // DR-030 Phase-1.5: the folded base address of a rune, materialised as the
     // pointer value of its `volatile T *` binding.  Carries only the address;
     // the element width comes from the node's `ty` (a `TRune`).  Emits
     // `(volatile <T> *)<addr>UL` — the `UL` keeps the cast pointer-width so a

@@ -1678,7 +1678,7 @@ fn stmt_let_else(s: *Parser, is_mut: bool, pos: Pos) -> Stmt {
     return Stmt::LetElse { pat: pat, value: value, else_body: else_body, pos: pos };
 }
 
-// `rune name: T at ADDR dir;` — DR-030 Faza-1.5 MMIO window (RUNE-SPEC §3).
+// `rune name: T at ADDR dir;` — DR-030 Phase-1.5 MMIO window (RUNE-SPEC §3).
 // `at` and the direction (`read` / `write` / `readwrite`) are CONTEXTUAL
 // identifiers consumed by grammatical position, so they stay free as ordinary
 // names everywhere else (and `write` doubles as the `.write()` method name).

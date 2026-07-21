@@ -53,8 +53,8 @@ pub enum Token {
     | DotDotEq
     | Amp
     | New
-    | Own           // DR-030 Faza-1a: `own *T` owner-sigil pointer type
-    | Rune          // DR-030 Faza-1.5: `rune name: T at ADDR dir` MMIO window
+    | Own           // DR-030 Phase-1a: `own *T` owner-sigil pointer type
+    | Rune          // DR-030 Phase-1.5: `rune name: T at ADDR dir` MMIO window
     | Null
     | LParen
     | RParen
