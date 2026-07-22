@@ -1003,6 +1003,19 @@ selfhost-rune: $(EXILC_BIN)
 	if [ ! -s $(C_OUT)/rune_r4.err ]; then echo "selfhost-rune: R4 empty diagnostic (floor)"; exit 1; fi; \
 	grep -q 'index 40 out of rune extent 32' $(C_OUT)/rune_r4.err \
 	  || { echo "selfhost-rune: R4 wrong message: `head -1 $(C_OUT)/rune_r4.err`"; exit 1; }; \
+	rm -f $(C_OUT)/rune_tl.c $(C_OUT)/rune_tl.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_tl.c tests/rune/top_level.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-rune: port rejected the top-level fixture (item kind not yet ported?)"; exit 1; }; \
+	tlg=`grep -c '\*const .* = (volatile' $(C_OUT)/rune_tl.c`; \
+	if [ "$$tlg" != "3" ]; then echo "selfhost-rune: expected 3 top-level 'volatile T *const' globals, got $$tlg"; exit 1; fi; \
+	grep -q 'volatile unsigned long \*const cop1lc = (volatile unsigned long \*)14676096UL;' $(C_OUT)/rune_tl.c \
+	  || { echo "selfhost-rune: MISSING top-level *const global (cop1lc)"; exit 1; }; \
+	grep -q '\*cop1lc = list_addr;' $(C_OUT)/rune_tl.c \
+	  || { echo "selfhost-rune: MISSING top-level rune use across functions (*cop1lc = list_addr)"; exit 1; }; \
+	grep -q 'color\[i\] = 0;' $(C_OUT)/rune_tl.c \
+	  || { echo "selfhost-rune: MISSING top-level register-file use (color[i])"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_tl.c -o $(C_OUT)/rune_tl.o \
+	  || { echo "selfhost-rune: top-level rune C is not clean C89 at -O2"; exit 1; }; \
 	rm -f $(C_OUT)/rune_rr.c $(HOST_OUT)/rune_rr $(C_OUT)/rune_rr.out $(C_OUT)/rune_rr.expected; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_rr.c tests/rune/ram_roundtrip.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-rune: port rejected the rune-over-RAM witness"; exit 1; }; \
@@ -1014,7 +1027,7 @@ selfhost-rune: $(EXILC_BIN)
 	printf '11\n22\n0\n305419896\n' > $(C_OUT)/rune_rr.expected; \
 	if ! diff -q $(C_OUT)/rune_rr.expected $(C_OUT)/rune_rr.out >/dev/null; then \
 	  echo "selfhost-rune: rune-over-RAM round-trip WRONG (volatile lowering broken at -O2):"; cat $(C_OUT)/rune_rr.out; exit 1; fi; \
-	echo "selfhost-rune: clean (I-R1 golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i]+R4 + R1/R2 gating + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
+	echo "selfhost-rune: clean (I-R1 golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i]+R4 + top-level $$tlg *const globals + R1/R2 gating + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

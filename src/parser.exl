@@ -1682,7 +1682,16 @@ fn stmt_let_else(s: *Parser, is_mut: bool, pos: Pos) -> Stmt {
 // `at` and the direction (`read` / `write` / `readwrite`) are CONTEXTUAL
 // identifiers consumed by grammatical position, so they stay free as ordinary
 // names everywhere else (and `write` doubles as the `.write()` method name).
-fn stmt_rune(s: *Parser) -> Stmt {
+// The four pieces are parsed in ONE place so the local (`Stmt`) and top-level
+// (`Item`) forms cannot drift.
+pub struct RuneParts {
+    rp_name: str,
+    rp_elem: *const TypeAnn,
+    rp_addr: *const Expr,
+    rp_dir: Direction,
+    rp_pos: Pos,
+}
+fn parse_rune_parts(s: *Parser) -> RuneParts {
     let pos = peek_pos(s);
     bump(s);
     let np = expect_ident(s, "rune name after 'rune'");
@@ -1695,7 +1704,11 @@ fn stmt_rune(s: *Parser) -> Stmt {
     let addr = parse_expr(s);
     let dir = parse_rune_dir(s);
     expect(s, Token::Semicolon);
-    return Stmt::RuneDecl { name: np.name, elem: elem, addr: addr, dir: dir, pos: pos };
+    return RuneParts { rp_name: np.name, rp_elem: elem, rp_addr: addr, rp_dir: dir, rp_pos: pos };
+}
+fn stmt_rune(s: *Parser) -> Stmt {
+    let rp = parse_rune_parts(s);
+    return Stmt::RuneDecl { name: rp.rp_name, elem: rp.rp_elem, addr: rp.rp_addr, dir: rp.rp_dir, pos: rp.rp_pos };
 }
 
 // The direction sigil that suffixes a rune declaration (RUNE-SPEC axis 2): it
@@ -3138,6 +3151,13 @@ fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool, seen: *Vec<str>) {
             let nco = cd.kname;
             out.push(Item::Const(cd));
             seen.push(nco);
+        }
+        | Token::Rune => {
+            let rp = parse_rune_parts(s);
+            check_scope_name(s, rp.rp_name, rp.rp_pos, seen);
+            let nru = rp.rp_name;
+            out.push(Item::RuneDecl { name: rp.rp_name, elem: rp.rp_elem, addr: rp.rp_addr, dir: rp.rp_dir, pos: rp.rp_pos });
+            seen.push(nru);
         }
         | Token::Type => {
             let td = parse_type_alias_decl(s, is_pub);

@@ -752,6 +752,17 @@ fn render_item(it: *const Item, out: *StringBuilder) {
             render_expr(c.kvalue, out);
             out.push_str(")");
         }
+        | Item::RuneDecl { name, elem, addr, dir, pos } => {
+            out.push_str("(rune-item ");
+            out.push_str(name);
+            out.push_str(" (ty ");
+            render_type_ann(elem, out);
+            out.push_str(") ");
+            render_expr(addr, out);
+            out.push_str(" ");
+            out.push_str(match dir { Direction::DRead => "read" | Direction::DWrite => "write" | Direction::DReadWrite => "readwrite" });
+            out.push_str(")");
+        }
         | Item::TypeAlias(ta) => {
             out.push_str("(type-alias ");
             out.push_str(ta.taname);

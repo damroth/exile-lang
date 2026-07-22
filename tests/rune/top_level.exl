@@ -1,0 +1,27 @@
+// Increment 4 Half B — top-level rune placement (RUNE-SPEC §3).
+//
+// A register map shared across functions: the declaration stands at file scope,
+// emitting a `volatile T *const` global that every function sees. This is the
+// consumer the §3 increment note named as top-level's reason to exist — a
+// standalone control register AND a register file, each used from more than one
+// function. The copper-start pair the whole era opened to express, now at the
+// natural placement.
+rune cop1lc:  u32 at 0xDFF080 write;
+rune copjmp1: u16 at 0xDFF088 write;
+rune color:  [u16; 32] at 0xDFF180 write;
+
+fn program_copper(list_addr: u32) {
+    cop1lc.write(list_addr);
+}
+fn start_copper() {
+    copjmp1.strobe();
+}
+fn clear_palette() {
+    let mut i = 0 as u32;
+    while i < 32 as u32 { color[i].write(0); i = i + 1 as u32; }
+}
+fn main() {
+    program_copper(4096);
+    clear_palette();
+    start_copper();
+}

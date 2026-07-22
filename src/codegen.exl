@@ -856,6 +856,23 @@ fn emit_rune_addr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texp
     }
 }
 
+// A top-level rune (RUNE-SPEC §3, Increment 4 Half B): a file-scope
+// `volatile T *const NAME = (volatile T*)ADDR;`.  The `const` on the pointer is
+// stronger than the local form's plain binding — a global register handle is
+// never rebound.  Typecheck restricts the base to an integer, so the value is
+// always a `TRuneAddr`.
+fn emit_rune_global(a: Allocator, ar: *Arena, out: *StringBuilder, rg: *const RuneGlobal) {
+    out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, rg.rg_ty)));
+    out.push_str("const ");
+    out.push_str(rg.rg_name);
+    out.push_str(" = ");
+    match rg.rg_value.e {
+        TexprNode::TRuneAddr(addr) => emit_rune_addr(a, ar, out, rg.rg_value, addr)
+        | _o => { ice("internal: top-level rune value is not an address literal (typecheck restricts it to an integer)"); }
+    }
+    out.push_str(";\n");
+}
+
 fn is_atom_int_var(n: TexprNode) -> bool {
     return match n { TexprNode::TIntLit(_x) => true | TexprNode::TVar(_v) => true | _o => false };
 }
@@ -2369,6 +2386,15 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
         while evi < tp.tp_ext_vars.length() {
             out.push_str("extern "); out.push_str(c_decl(a, ar, vs[evi].ty, vs[evi].name)); out.push_str(";\n");
             evi = evi + 1 as u32;
+        }
+    }
+    if tp.tp_runes.length() > 0 as u32 {
+        out.push_str("\n");
+        let rs = tp.tp_runes.as_slice();
+        let mut ri = 0 as u32;
+        while ri < tp.tp_runes.length() {
+            emit_rune_global(a, ar, out, &rs[ri]);
+            ri = ri + 1 as u32;
         }
     }
 

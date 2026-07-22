@@ -251,6 +251,15 @@ pub struct StrPair {
     b: str,
 }
 
+// A top-level `rune` (RUNE-SPEC §3, Increment 4 Half B): emitted as a file-scope
+// `volatile T *const NAME = <value>;`.  `rg_ty` is the `TRune` (its C type is the
+// `volatile T *`); `rg_value` is the base-address cast (`(volatile T*)ADDR`).
+pub struct RuneGlobal {
+    rg_name: str,
+    rg_ty: *const Typ,
+    rg_value: *const Texpr,
+}
+
 // Per-function codegen payload: the original `ast::Func` for user trivia,
 // the resolved C name, scope-resolved param/return types, the elaborated
 // body, and the hoisted let-decl list.
@@ -307,6 +316,7 @@ pub struct Tprogram {
     tp_ext_vars: Vec<FieldTy>,
     tp_array_types: Vec<FieldTy>,
     tp_consts: Vec<StrPair>,
+    tp_runes: Vec<RuneGlobal>,
 }
 
 

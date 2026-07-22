@@ -390,6 +390,10 @@ pub enum Item {
     | Trait(TraitDecl)
     | View(ViewDecl)
     | CInclude { path: str, pos: Pos }
+    // A top-level `rune name: T at ADDR dir;` — DR-030 Phase-1.5 (RUNE-SPEC §3,
+    // Increment 4 Half B).  Same fields as the local `Stmt::RuneDecl`; a
+    // register map shared across functions needs an above-function declaration.
+    | RuneDecl { name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction, pos: Pos }
 }
 
 pub struct ModuleDecl {
