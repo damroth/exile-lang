@@ -257,7 +257,7 @@ fn c_ptr_prefix(a: Allocator, ar: *Arena, inner: *const Typ, is_const: bool) -> 
 // through this pointer is a volatile access the backend may not elide or
 // reorder.  Ownership/direction are erased; only volatile survives into C.
 fn c_rune_prefix(a: Allocator, ar: *Arena, elem: *const Typ) -> str {
-    return concat2(a, ar, "volatile ", c_ptr_prefix(a, ar, elem, false));
+    return concat2(a, ar, "volatile ", c_ptr_prefix(a, ar, rune_ptr_pointee(elem), false));
 }
 
 fn concat3(a: Allocator, ar: *Arena, x: str, y: str, z: str) -> str {
@@ -847,7 +847,7 @@ fn emit_rune_addr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texp
     match *te.ty {
         Typ::TRune { elem, dir } => {
             out.push_str("(volatile ");
-            out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, elem)));
+            out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, rune_ptr_pointee(elem))));
             out.push_str(" *)");
             out.push_int(addr);
             out.push_str("UL");
@@ -872,6 +872,10 @@ fn index_suffix(bty: *const Typ) -> str {
         | Typ::TPtr(_i) => "["
         | Typ::TOwnPtr(_i) => "["
         | Typ::TConstPtr(_i) => "["
+        // A register-file rune is a `volatile T *`; index it straight (RUNE-SPEC
+        // §6).  Only a register file ever reaches here — typecheck rejects
+        // indexing a standalone rune.
+        | Typ::TRune { elem, dir } => "["
         | _o => ".data["
     };
 }
@@ -1194,7 +1198,7 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
         | Tstmt::TAssignIndex { base, index, value, pos } => {
             let mut lb = StringBuilder::with_capacity(a, 32 as u32);
             gen_expr(a, ar, &lb, cg, base);
-            match *base.ty { Typ::TPtr(_i) => lb.push_str("[") | Typ::TOwnPtr(_i) => lb.push_str("[") | _o => lb.push_str(".data[") }
+            match *base.ty { Typ::TPtr(_i) => lb.push_str("[") | Typ::TOwnPtr(_i) => lb.push_str("[") | Typ::TRune { elem, dir } => lb.push_str("[") | _o => lb.push_str(".data[") }
             gen_expr(a, ar, &lb, cg, index);
             lb.push_str("]");
             emit_value_into_temp(a, ar, out, indent, cg, str::from_slice(ar, lb.as_slice()), value);

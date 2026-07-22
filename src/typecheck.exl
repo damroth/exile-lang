@@ -3965,6 +3965,9 @@ fn self_ty_matches(a: Allocator, st: Option<*const Typ>, target: *const Vec<str>
 }
 fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                     expected: Option<*const Typ>, recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    if is_rune_reg_index(env, recv) {
+        return elab_rune_reg_method_expr(a, ar, g, sc, env, recv, name, args, p);
+    }
     let trecv = elab_expr(a, ar, g, sc, env, none_ty(), recv);
     if is_rune_ty(trecv.ty) {
         return elab_rune_method_expr(a, ar, sc, trecv, name, args, p);
@@ -6548,6 +6551,124 @@ fn elab_rune_strobe(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let zero = te_node(ar, TexprNode::TIntLit(0 as int), elem, p);
     return Tstmt::TAssignDeref { target: trecv, value: zero, pos: p };
 }
+// ===== Register file: `color[i].write/read/strobe` (RUNE-SPEC §6, I-R4) =====
+//
+// A register-file rune is a `TRune` whose element is an ARRAY (`[T; N]`); the
+// receiver of the access is `Index{rune-file-var, i}`.  `.write`/`.strobe` are
+// stores (`color[i] = v/0`), `.read` a load (`color[i]`).  A static index is
+// checked against the extent (I-R4/R4); a runtime index is NOT bounds-checked
+// (the performance compass — consistent with the raw `[T; N]` index model).
+
+fn is_array_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TArray { elem, size } => true | _o => false };
+}
+fn is_rune_reg_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TRune { elem, dir } => is_array_ty(elem) | _o => false };
+}
+// `e` is `Index{v, i}` where v is a register-file rune var — a PURE benv lookup.
+fn is_rune_reg_index(benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
+    return match *e {
+        Expr::Index { base, index } => rune_reg_var_ty(benv, base)
+        | _o => false
+    };
+}
+fn rune_reg_var_ty(benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
+    return match *e {
+        Expr::Var(vname, _p) => match env_lookup(benv, vname) {
+            Option::Some(t) => is_rune_reg_ty(t)
+            | Option::None => false
+        }
+        | _o => false
+    };
+}
+fn ix_base(e: *const Expr) -> *const Expr {
+    return match *e { Expr::Index { base, index } => base | _o => e };
+}
+fn ix_index(e: *const Expr) -> *const Expr {
+    return match *e { Expr::Index { base, index } => index | _o => e };
+}
+// I-R4/R4: a STATIC (literal) index >= the extent is a compile error; a runtime
+// index is left unchecked.  (`-5` parses as `Neg(IntLit)`, not `IntLit`, so it
+// is treated as runtime here — negative-constant folding is not v1's concern.)
+fn rune_check_lit_index(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, extent: int, p: Pos) {
+    if n >= extent {
+        let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+        sb.push_str("index "); sb.push_int(n); sb.push_str(" out of rune extent "); sb.push_int(extent);
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    }
+}
+fn rune_static_index_check(a: Allocator, ar: *Arena, sc: *const TyScope, idx: *const Expr, extent: int, p: Pos) {
+    match *idx {
+        Expr::IntLit(n, _q) => rune_check_lit_index(a, ar, sc, n, extent, p)
+        | _o => { }
+    }
+}
+// `color[i].write(v)` -> `TAssignIndex{color, i, v}` -> `color[i] = v`.
+fn elab_rune_reg_write(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                       benv: *const Vec<FieldTy>, recv: *const Expr,
+                       args: *const Vec<*const Expr>, p: Pos) -> Tstmt {
+    let tbase = elab_expr(a, ar, g, sc, benv, none_ty(), ix_base(recv));
+    let arr = rune_elem_ty(tbase.ty);
+    let scalar = rune_ptr_pointee(arr);
+    if !dir_can_write(rune_dir(tbase.ty)) {
+        tc_fail(ar, sc, p, "cannot write a read-only rune");
+        return Tstmt::TExprStmt(tbase);
+    }
+    if args.length() != 1 as u32 {
+        tc_fail(ar, sc, p, "a rune `.write` takes exactly one value");
+        return Tstmt::TExprStmt(tbase);
+    }
+    let tidx = elab_expr(a, ar, g, sc, benv, none_ty(), ix_index(recv));
+    rune_static_index_check(a, ar, sc, ix_index(recv), rune_extent(arr), p);
+    let vexp: Option<*const Typ> = Option::Some(scalar);
+    let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, vexp, args.as_slice()[0 as u32]), vexp);
+    return Tstmt::TAssignIndex { base: tbase, index: tidx, value: vad, pos: p };
+}
+// `color[i].strobe()` -> `color[i] = 0`.
+fn elab_rune_reg_strobe(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                        benv: *const Vec<FieldTy>, recv: *const Expr,
+                        args: *const Vec<*const Expr>, p: Pos) -> Tstmt {
+    let tbase = elab_expr(a, ar, g, sc, benv, none_ty(), ix_base(recv));
+    let arr = rune_elem_ty(tbase.ty);
+    let scalar = rune_ptr_pointee(arr);
+    if !dir_can_write(rune_dir(tbase.ty)) {
+        tc_fail(ar, sc, p, "cannot write a read-only rune");
+        return Tstmt::TExprStmt(tbase);
+    }
+    if args.length() != 0 as u32 {
+        tc_fail(ar, sc, p, "a rune `.strobe` takes no arguments");
+        return Tstmt::TExprStmt(tbase);
+    }
+    let tidx = elab_expr(a, ar, g, sc, benv, none_ty(), ix_index(recv));
+    rune_static_index_check(a, ar, sc, ix_index(recv), rune_extent(arr), p);
+    let zero = te_node(ar, TexprNode::TIntLit(0 as int), scalar, p);
+    return Tstmt::TAssignIndex { base: tbase, index: tidx, value: zero, pos: p };
+}
+// `color[i].read()` -> `TIndex{color, i}` -> `color[i]` (a volatile load : T).
+fn elab_rune_reg_read(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                      benv: *const Vec<FieldTy>, recv: *const Expr, p: Pos) -> *const Texpr {
+    let tbase = elab_expr(a, ar, g, sc, benv, none_ty(), ix_base(recv));
+    let arr = rune_elem_ty(tbase.ty);
+    let scalar = rune_ptr_pointee(arr);
+    if !dir_can_read(rune_dir(tbase.ty)) { tc_fail(ar, sc, p, "cannot read a write-only rune"); }
+    let tidx = elab_expr(a, ar, g, sc, benv, none_ty(), ix_index(recv));
+    rune_static_index_check(a, ar, sc, ix_index(recv), rune_extent(arr), p);
+    return te_node(ar, TexprNode::TIndex { base: tbase, index: tidx }, scalar, p);
+}
+// A register-file element used as an EXPRESSION: `.read()` is the load; `.write`
+// / `.strobe` here are the statement-not-expression misuse; anything else misses.
+fn elab_rune_reg_method_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                             benv: *const Vec<FieldTy>, recv: *const Expr, name: str,
+                             args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    if str::eq(name, "read") { return elab_rune_reg_read(a, ar, g, sc, benv, recv, p); }
+    if str::eq(name, "write") || str::eq(name, "strobe") {
+        tc_fail(ar, sc, p, "a rune `.write` / `.strobe` is a statement, not an expression");
+        return elab_expr(a, ar, g, sc, benv, none_ty(), ix_base(recv));
+    }
+    let tbase = elab_expr(a, ar, g, sc, benv, none_ty(), ix_base(recv));
+    return method_miss(a, ar, sc, name, rune_ptr_pointee(rune_elem_ty(tbase.ty)), p);
+}
+
 // Statement-position method call: a rune `.write` / `.strobe` becomes a volatile
 // store (RUNE-SPEC §6/§3); everything else is an ordinary expression statement.
 // Shared by both statement-body walkers so the rune interception lives in one
@@ -6558,6 +6679,9 @@ fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     let is_rune = expr_is_rune_var(env, receiver);
     if is_rune && str::eq(name, "write") { return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_rune && str::eq(name, "strobe") { return elab_rune_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
+    let is_reg = is_rune_reg_index(env, receiver);
+    if is_reg && str::eq(name, "write") { return elab_rune_reg_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
+    if is_reg && str::eq(name, "strobe") { return elab_rune_reg_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     return Tstmt::TExprStmt(elab_expr(a, ar, g, sc, env, none_ty(), whole));
 }
 
@@ -7021,6 +7145,12 @@ fn elab_range_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
 fn elab_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
               base: *const Expr, index: *const Expr, p: Pos) -> *const Texpr {
     let tb0 = elab_expr(a, ar, g, sc, env, none_ty(), base);
+    // A register-file element is reached only through `.read()`/`.write()`/
+    // `.strobe()` (intercepted upstream); a BARE `color[i]` is not a value.
+    if is_rune_ty(tb0.ty) {
+        tc_fail(ar, sc, p, "a rune register file is accessed through .read() / .write() / .strobe(), not by a bare index");
+        return tb0;
+    }
     let tb = match deref_pointee(tb0.ty) {
         Option::Some(inner) => te_node(ar, TexprNode::TDeref(tb0), inner, tb0.pos)
         | Option::None => tb0

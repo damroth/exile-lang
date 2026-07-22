@@ -984,6 +984,25 @@ selfhost-rune: $(EXILC_BIN)
 	  echo "selfhost-rune: I-R1 strobe multiplicity — $$strobes strobes but $$zstores '= 0;' stores (a duplicated strobe is two copper starts)"; exit 1; fi; \
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_strobe.c -o $(C_OUT)/rune_strobe.o \
 	  || { echo "selfhost-rune: strobe C is not clean C89"; exit 1; }; \
+	rm -f $(C_OUT)/rune_rf.c $(C_OUT)/rune_rf.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_rf.c tests/rune/reg_file.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-rune: port rejected the register-file fixture"; exit 1; }; \
+	grep -q 'volatile unsigned short \*color;' $(C_OUT)/rune_rf.c \
+	  || { echo "selfhost-rune: MISSING register-file volatile binding"; exit 1; }; \
+	grep -q 'color\[0\] = 4095;' $(C_OUT)/rune_rf.c \
+	  || { echo "selfhost-rune: MISSING static indexed store color[0]=4095 (RUNE-SPEC §6)"; exit 1; }; \
+	grep -q 'color\[i\] = 0;' $(C_OUT)/rune_rf.c \
+	  || { echo "selfhost-rune: MISSING runtime indexed store color[i] (I-R4 unchecked index)"; exit 1; }; \
+	grep -q '= color\[0\];' $(C_OUT)/rune_rf.c \
+	  || { echo "selfhost-rune: MISSING register-file read load color[0]"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_rf.c -o $(C_OUT)/rune_rf.o \
+	  || { echo "selfhost-rune: register-file C is not clean C89 at -O2"; exit 1; }; \
+	rm -f $(C_OUT)/rune_r4.c $(C_OUT)/rune_r4.err; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/rune_r4.c tests/rune/reject_index_over_extent.exl >/dev/null 2>$(C_OUT)/rune_r4.err; then \
+	  echo "selfhost-rune: R4 — port ACCEPTED a static index past the extent"; exit 1; fi; \
+	if [ ! -s $(C_OUT)/rune_r4.err ]; then echo "selfhost-rune: R4 empty diagnostic (floor)"; exit 1; fi; \
+	grep -q 'index 40 out of rune extent 32' $(C_OUT)/rune_r4.err \
+	  || { echo "selfhost-rune: R4 wrong message: `head -1 $(C_OUT)/rune_r4.err`"; exit 1; }; \
 	rm -f $(C_OUT)/rune_rr.c $(HOST_OUT)/rune_rr $(C_OUT)/rune_rr.out $(C_OUT)/rune_rr.expected; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_rr.c tests/rune/ram_roundtrip.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-rune: port rejected the rune-over-RAM witness"; exit 1; }; \
@@ -995,7 +1014,7 @@ selfhost-rune: $(EXILC_BIN)
 	printf '11\n22\n0\n305419896\n' > $(C_OUT)/rune_rr.expected; \
 	if ! diff -q $(C_OUT)/rune_rr.expected $(C_OUT)/rune_rr.out >/dev/null; then \
 	  echo "selfhost-rune: rune-over-RAM round-trip WRONG (volatile lowering broken at -O2):"; cat $(C_OUT)/rune_rr.out; exit 1; fi; \
-	echo "selfhost-rune: clean (I-R1 golden $$writes==$$stores + read volatile-load + strobe $$strobes==$$zstores + R1/R2 gating + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
+	echo "selfhost-rune: clean (I-R1 golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i]+R4 + R1/R2 gating + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

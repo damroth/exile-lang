@@ -564,6 +564,17 @@ pub fn is_ptr_like(t: *const Typ) -> bool {
         | _o => false
     };
 }
+// The pointee of a rune's `volatile T *` — the register's SCALAR width.  For a
+// standalone rune it is the element itself; for a register file (`rune x: [T;N]`)
+// it is the array's element — the pointer is to one register, indexed by
+// position (RUNE-SPEC §6).  The extent lives in the `TArray.size` (I-R4).
+pub fn rune_ptr_pointee(elem: *const Typ) -> *const Typ {
+    return match *elem { Typ::TArray { elem: e, size } => e | _o => elem };
+}
+// A register-file rune's extent (`N` in `[T; N]`), or 0 for a standalone rune.
+pub fn rune_extent(elem: *const Typ) -> int {
+    return match *elem { Typ::TArray { elem: e, size } => size | _o => 0 as int };
+}
 // A `*T` may be handed to a `*const T` slot (you can always drop write capability),
 // and an `own *T` may lend itself out as a borrow — never the reverse: ownership
 // cannot be fabricated from a loan.  Pointer-to-pointer through nested `*` keeps
