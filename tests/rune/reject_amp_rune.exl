@@ -1,0 +1,8 @@
+// R5 (RUNE-SPEC §5, I-R3): a rune is foreign — not an ordinary pointer, so it is
+// never the target of `&`. Reach the register through .read()/.write(), never by
+// taking the handle's address.
+fn main() {
+    rune r: u32 at 0xDFF080 write;
+    let p = &r;
+    r.write(0);
+}

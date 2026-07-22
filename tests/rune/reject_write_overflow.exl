@@ -1,0 +1,7 @@
+// R7 (RUNE-SPEC §5, I-R1): a rune access is fixed to its declared width. Writing
+// a value too wide for the register would truncate SILENTLY into hardware — a
+// plain `let x: u16 = 70000` is rejected, and so is this.
+fn main() {
+    rune r: u16 at 0xDFF002 write;
+    r.write(70000);
+}

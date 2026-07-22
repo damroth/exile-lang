@@ -1003,6 +1003,27 @@ selfhost-rune: $(EXILC_BIN)
 	if [ ! -s $(C_OUT)/rune_r4.err ]; then echo "selfhost-rune: R4 empty diagnostic (floor)"; exit 1; fi; \
 	grep -q 'index 40 out of rune extent 32' $(C_OUT)/rune_r4.err \
 	  || { echo "selfhost-rune: R4 wrong message: `head -1 $(C_OUT)/rune_r4.err`"; exit 1; }; \
+	rm -f $(C_OUT)/rjA.c $(C_OUT)/rjA.err; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/rjA.c tests/rune/reject_amp_rune.exl >/dev/null 2>$(C_OUT)/rjA.err; then \
+	  echo "selfhost-rune: R5 — port ACCEPTED &rune"; exit 1; fi; \
+	grep -q 'a rune is not an ordinary pointer' $(C_OUT)/rjA.err \
+	  || { echo "selfhost-rune: R5 wrong message: `head -1 $(C_OUT)/rjA.err`"; exit 1; }; \
+	rm -f $(C_OUT)/rjB.c $(C_OUT)/rjB.err; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/rjB.c tests/rune/reject_free_rune.exl >/dev/null 2>$(C_OUT)/rjB.err; then \
+	  echo "selfhost-rune: R6 — port ACCEPTED free(rune)"; exit 1; fi; \
+	grep -q 'got rune' $(C_OUT)/rjB.err \
+	  || { echo "selfhost-rune: R6 wrong message: `head -1 $(C_OUT)/rjB.err`"; exit 1; }; \
+	rm -f $(C_OUT)/rjC.c $(C_OUT)/rjC.err; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/rjC.c tests/rune/reject_write_overflow.exl >/dev/null 2>$(C_OUT)/rjC.err; then \
+	  echo "selfhost-rune: R7 — port ACCEPTED a too-wide rune write"; exit 1; fi; \
+	grep -q "does not fit the rune's width" $(C_OUT)/rjC.err \
+	  || { echo "selfhost-rune: R7 wrong message: `head -1 $(C_OUT)/rjC.err`"; exit 1; }; \
+	rm -f $(C_OUT)/rjD.c $(C_OUT)/rjD.err; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/rjD.c tests/rune/reject_toplevel_ampglobal.exl >/dev/null 2>$(C_OUT)/rjD.err; then \
+	  echo "selfhost-rune: R3b — port ACCEPTED a top-level &GLOBAL rune"; exit 1; fi; \
+	if grep -q 'internal:' $(C_OUT)/rjD.err; then echo "selfhost-rune: R3b is ICE-enforced, not a clean diagnostic (tl3)"; exit 1; fi; \
+	grep -q 'top-level rune base must be an integer' $(C_OUT)/rjD.err \
+	  || { echo "selfhost-rune: R3b wrong message: `head -1 $(C_OUT)/rjD.err`"; exit 1; }; \
 	rm -f $(C_OUT)/rune_tl.c $(C_OUT)/rune_tl.o; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_tl.c tests/rune/top_level.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-rune: port rejected the top-level fixture (item kind not yet ported?)"; exit 1; }; \
@@ -1027,7 +1048,7 @@ selfhost-rune: $(EXILC_BIN)
 	printf '11\n22\n0\n305419896\n' > $(C_OUT)/rune_rr.expected; \
 	if ! diff -q $(C_OUT)/rune_rr.expected $(C_OUT)/rune_rr.out >/dev/null; then \
 	  echo "selfhost-rune: rune-over-RAM round-trip WRONG (volatile lowering broken at -O2):"; cat $(C_OUT)/rune_rr.out; exit 1; fi; \
-	echo "selfhost-rune: clean (I-R1 golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i]+R4 + top-level $$tlg *const globals + R1/R2 gating + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
+	echo "selfhost-rune: clean (golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R7 (R1/R2/R3b/R4/R5/R6/R7) + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

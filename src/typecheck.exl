@@ -6326,6 +6326,12 @@ fn elab_new_enum(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
 fn elab_ref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
             env: *const Vec<FieldTy>, sub: *const Expr, p: Pos) -> *const Texpr {
     let ts = elab_expr(a, ar, g, sc, env, none_ty(), sub);
+    // R5 (I-R3): a rune is foreign — never the target of `&`.  `&r` would hand out
+    // a pointer INTO the rune handle, an ordinary-pointer view the model forbids.
+    if is_rune_ty(ts.ty) {
+        tc_fail(ar, sc, p, "a rune is not an ordinary pointer; it cannot be the target of `&` (use .read() / .write())");
+        return ts;
+    }
     let rty = ty_node(ar, Typ::TPtr(ts.ty));
     return te_node(ar, TexprNode::TRef(ts), rty, p);
 }
@@ -6488,6 +6494,33 @@ fn dir_can_read(d: Direction) -> bool {
 fn dir_can_write(d: Direction) -> bool {
     return match d { Direction::DWrite => true | Direction::DReadWrite => true | Direction::DRead => false };
 }
+// R7 (I-R1): a rune access is fixed to its declared width, so a write value must
+// match the register scalar exactly — a too-wide literal or a wider-typed value
+// would truncate SILENTLY into a hardware register (`*r = 70000` on a `u16` rune).
+// A plain `let x: u16 = 70000` is already rejected; the rune write must be too.
+fn rune_value_bad(arg: *const Expr, vty: *const Typ, elem: *const Typ) -> bool {
+    return match *arg {
+        Expr::IntLit(n, _q) => !int_fits(n, elem)
+        | _o => !typ_eq(vty, elem)
+    };
+}
+fn rune_value_msg(a: Allocator, ar: *Arena, arg: *const Expr, vty: *const Typ, elem: *const Typ) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 88 as u32);
+    match *arg {
+        Expr::IntLit(n, _q) => {
+            sb.push_str("literal "); sb.push_int(n); sb.push_str(" does not fit the rune's width ("); sb.push_str(typ_name(a, ar, elem)); sb.push_str(")");
+        }
+        | _o => {
+            sb.push_str("a rune access is fixed to its declared width: expected "); sb.push_str(typ_name(a, ar, elem)); sb.push_str(", got "); sb.push_str(typ_name(a, ar, vty));
+        }
+    }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn check_rune_value(a: Allocator, ar: *Arena, sc: *const TyScope, arg: *const Expr, vty: *const Typ, elem: *const Typ, p: Pos) {
+    if rune_value_bad(arg, vty, elem) {
+        tc_fail(ar, sc, p, rune_value_msg(a, ar, arg, vty, elem));
+    }
+}
 // A rune method used as an EXPRESSION (RUNE-SPEC §6).  `.read()` is a volatile
 // load `*p : T`, gated by direction (R2); `.write` is a statement, so seeing it
 // here is a misuse — the direction gate (R1) still runs, then a clear diagnostic.
@@ -6543,6 +6576,7 @@ fn elab_rune_write(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     let vexp: Option<*const Typ> = Option::Some(elem);
     let arg0 = args.as_slice()[0 as u32];
     let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, vexp, arg0), vexp);
+    check_rune_value(a, ar, sc, arg0, vad.ty, elem, p);
     return Tstmt::TAssignDeref { target: trecv, value: vad, pos: p };
 }
 // `rune.strobe()` (RUNE-SPEC §3) is sugar for `write(0)` on a write-capable rune:
@@ -6635,7 +6669,9 @@ fn elab_rune_reg_write(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     let tidx = elab_expr(a, ar, g, sc, benv, none_ty(), ix_index(recv));
     rune_static_index_check(a, ar, sc, ix_index(recv), rune_extent(arr), p);
     let vexp: Option<*const Typ> = Option::Some(scalar);
-    let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, vexp, args.as_slice()[0 as u32]), vexp);
+    let arg0 = args.as_slice()[0 as u32];
+    let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, vexp, arg0), vexp);
+    check_rune_value(a, ar, sc, arg0, vad.ty, scalar, p);
     return Tstmt::TAssignIndex { base: tbase, index: tidx, value: vad, pos: p };
 }
 // `color[i].strobe()` -> `color[i] = 0`.
@@ -8942,7 +8978,7 @@ fn build_rune_globals(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
         // ward era.  Restricting top-level to an integer keeps the file-scope
         // emission a plain `(volatile T*)ADDR` with no runtime initialiser.
         if !rune_addr_is_int(sl[i].tr_addr) {
-            tc_fail(ar, sc, sl[i].tr_pos, "a top-level rune address must be a compile-time integer (an MMIO base); use a local `rune` for `&GLOBAL`");
+            tc_fail(ar, sc, sl[i].tr_pos, "a top-level rune base must be an integer address; &NAME is local-only (a discovered base is the ward era)");
         }
         let elem_ty = resolve_sig_ty(a, ar, sc, sl[i].tr_elem, sl[i].tr_pos);
         let rune_ty = ty_node(ar, Typ::TRune { elem: elem_ty, dir: sl[i].tr_dir });
@@ -15767,12 +15803,20 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // The referenced sys-seam externs close the prelude free-fn section.
     append_sys_externs(a, ar, &funcs, &pmeth, uses_default_alloc, &pfree);
 
+    // Build the top-level rune globals BEFORE the latched-error check: a bad base
+    // (a non-integer top-level address, R3b) tc_fails here, and that diagnostic
+    // must reach `err_latched` — otherwise it latches uselessly and codegen aborts
+    // on the placeholder (the tl3 ICE).  Placement of a diagnostic is part of it.
+    // Build the top-level rune globals BEFORE the latched-error check: a bad base
+    // (a non-integer top-level address, R3b) tc_fails here, and that diagnostic
+    // must reach `err_latched` — otherwise it latches uselessly and codegen aborts
+    // on the placeholder (the tl3 ICE).  Placement of a diagnostic is part of it.
+    let mut tprunes: Vec<RuneGlobal> = Vec::with_capacity(a, 4 as u32);
+    build_rune_globals(a, ar, &globals, &base_scope, &tprunes);
     // A latched diagnostic wins over the elaborated program: the placeholders the
     // failing sites produced are meaningless, and emitting C from them is exactly
     // the silent-miscompile this pass exists to stop.
     if err_latched(&tc_err) { return Result::Err(err_unwrap(ar, tc_err)); }
-    let mut tprunes: Vec<RuneGlobal> = Vec::with_capacity(a, 4 as u32);
-    build_rune_globals(a, ar, &globals, &base_scope, &tprunes);
     return Result::Ok(Tprogram {
         tp_funcs: funcs, tp_pfree: pfree, tp_pmeth: pmeth, tp_free_end: free_end, tp_struct_decls: sdecls, tp_struct_index: structs,
         tp_enum_index: enums, tp_global: global, tp_modules: modules,
