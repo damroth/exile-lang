@@ -1,0 +1,11 @@
+// Increment 3 — the strobe method = write(0) on a write-capable rune (RUNE-SPEC §3).
+//
+// Starting the copper is a single strobe: the WRITE is the act, the value is
+// irrelevant. The golden asserts EXACTLY ONE `= 0;` volatile store per source
+// strobe call (a count, not a grep) — a duplicated strobe would start the copper
+// twice, an elided one never at all.
+fn main() {
+    rune copjmp1: u16 at 0xDFF088 write;
+    copjmp1.strobe();
+    copjmp1.strobe();
+}

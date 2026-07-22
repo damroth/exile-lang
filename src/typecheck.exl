@@ -6487,6 +6487,11 @@ fn elab_rune_method_expr(a: Allocator, ar: *Arena, sc: *const TyScope, trecv: *c
         tc_fail(ar, sc, p, "a rune `.write` is a statement, not an expression");
         return trecv;
     }
+    if str::eq(name, "strobe") {
+        if !dir_can_write(d) { tc_fail(ar, sc, p, "cannot write a read-only rune"); }
+        tc_fail(ar, sc, p, "a rune `.strobe` is a statement, not an expression");
+        return trecv;
+    }
     return method_miss(a, ar, sc, name, trecv.ty, p);
 }
 // Is `e` a bare variable currently bound to a rune?  A PURE benv lookup — no
@@ -6523,15 +6528,36 @@ fn elab_rune_write(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, vexp, arg0), vexp);
     return Tstmt::TAssignDeref { target: trecv, value: vad, pos: p };
 }
-// Statement-position method call: a rune `.write` becomes a volatile store
-// (RUNE-SPEC §6); everything else is an ordinary expression statement.  Shared
-// by both statement-body walkers so the rune interception lives in one place.
+// `rune.strobe()` (RUNE-SPEC §3) is sugar for `write(0)` on a write-capable rune:
+// the WRITE is the act — starting a copper — and the value is irrelevant.  Same
+// store as a write of 0 (a `TAssignDeref` of a zero), gated by direction (it
+// shares R1 with `.write`).  Takes no arguments.
+fn elab_rune_strobe(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                    benv: *const Vec<FieldTy>, receiver: *const Expr,
+                    args: *const Vec<*const Expr>, p: Pos) -> Tstmt {
+    let trecv = elab_expr(a, ar, g, sc, benv, none_ty(), receiver);
+    let elem = rune_elem_ty(trecv.ty);
+    if !dir_can_write(rune_dir(trecv.ty)) {
+        tc_fail(ar, sc, p, "cannot write a read-only rune");
+        return Tstmt::TExprStmt(trecv);
+    }
+    if args.length() != 0 as u32 {
+        tc_fail(ar, sc, p, "a rune `.strobe` takes no arguments");
+        return Tstmt::TExprStmt(trecv);
+    }
+    let zero = te_node(ar, TexprNode::TIntLit(0 as int), elem, p);
+    return Tstmt::TAssignDeref { target: trecv, value: zero, pos: p };
+}
+// Statement-position method call: a rune `.write` / `.strobe` becomes a volatile
+// store (RUNE-SPEC §6/§3); everything else is an ordinary expression statement.
+// Shared by both statement-body walkers so the rune interception lives in one
+// place.  The rune check is a PURE benv lookup, computed once.
 fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                         env: *const Vec<FieldTy>, receiver: *const Expr, name: str,
                         args: *const Vec<*const Expr>, whole: *const Expr) -> Tstmt {
-    if str::eq(name, "write") && expr_is_rune_var(env, receiver) {
-        return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole));
-    }
+    let is_rune = expr_is_rune_var(env, receiver);
+    if is_rune && str::eq(name, "write") { return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
+    if is_rune && str::eq(name, "strobe") { return elab_rune_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     return Tstmt::TExprStmt(elab_expr(a, ar, g, sc, env, none_ty(), whole));
 }
 
