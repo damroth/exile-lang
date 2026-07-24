@@ -1,0 +1,31 @@
+// ward Increment 2 — the runnable ward-over-RAM witness (WARD-SPEC §7b).
+//
+// A ward instance over a real static cell (&SCRATCH), MIXED-WIDTH fields with a
+// GAP between them, written and read back — proving the offsets land AND that a
+// u16 field and its neighbours do not collide (disjoint layout I-W2), by
+// execution. Pattern: field -> gap -> field -> field.
+//
+// Host-faithful widths only (u16 = 2 bytes, u8 = 1): exile's u32 maps to C
+// `unsigned long`, which is 8 bytes on a 64-bit HOST (4 on the m68k target), so a
+// u32 field would overlap its neighbours on the host test platform — a host
+// quirk, not a ward defect (the golden proves the u32 shape at an integer MMIO
+// base). The fields fit inside the c_ulong backing (>= 4 bytes) with room to
+// spare on the host.
+extern var SCRATCH: c_ulong;
+
+ward Regs {
+    a: u16 at 0x00 readwrite;   // [0, 2)
+    // gap [2, 4) — a hole in the overlay, touched by nothing
+    b: u16 at 0x04 readwrite;   // [4, 6)
+    c: u8  at 0x06 readwrite;   // [6, 7) — a narrower field, right against b
+}
+
+fn main() {
+    ward regs: Regs at &SCRATCH;
+    regs.a.write(43981);              // 0xABCD
+    regs.b.write(4660);              // 0x1234
+    regs.c.write(255);               // 0xFF
+    println(regs.a.read() as i32);   // 43981 — u16, not spilled into the gap
+    println(regs.b.read() as i32);   // 4660  — u16, disjoint from a and c
+    println(regs.c.read() as i32);   // 255   — u8, right against b, no collision
+}

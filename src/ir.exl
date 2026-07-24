@@ -88,7 +88,9 @@ pub enum Typ {
     // in the ward registry); `base` is the instance's fixed integer base.  A field
     // access `w.f` folds to a rune at `base + offset`; the instance itself is never
     // a C value (W5).
-    | TWard { path: Vec<str>, base: int }
+    // `base_sym` is "" for an integer (MMIO) base, or a global symbol name for a
+    // `&GLOBAL` (RAM) base — the field then folds to `(char*)&SYM + offset`.
+    | TWard { path: Vec<str>, base: int, base_sym: str }
 }
 
 // ===== Signatures =====
@@ -182,7 +184,7 @@ pub enum TexprNode {
     // base and offset kept SEPARATE (not folded), readable and the shape the
     // 68000's `d16(An)` mode wants once the base is a value (v2).  Node `ty` is the
     // field's `rune<T>`; `elem` is the register scalar.
-    | TWardAddr { elem: *const Typ, base: int, offset: int }
+    | TWardAddr { elem: *const Typ, base: int, base_sym: str, offset: int }
 }
 
 // A match arm.  `tdiverges` marks `try`-desugar arms that `return`
@@ -453,7 +455,7 @@ pub fn typ_name(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TNullPtr => "*<null>"
         | Typ::TVar(n) => n
         | Typ::TAssocProj { head, assoc } => typ_name_proj(a, ar, head, assoc)
-        | Typ::TWard { path, base } => path_join_cg(a, ar, &path)
+        | Typ::TWard { path, base, base_sym } => path_join_cg(a, ar, &path)
     };
 }
 
@@ -565,7 +567,7 @@ pub fn typ_eq(x: *const Typ, y: *const Typ) -> bool {
         | Typ::TTuple(tx) => match *y { Typ::TTuple(ty2) => tys_eq(&tx, &ty2) | _e => false }
         | Typ::TArray { elem, size } => match *y { Typ::TArray { elem: e2, size: s2 } => (size == s2) && typ_eq(elem, e2) | _e => false }
         | Typ::TFnPtr { params, ret } => match *y { Typ::TFnPtr { params: p2, ret: r2 } => tys_eq(&params, &p2) && opt_typ_eq(ret, r2) | _e => false }
-        | Typ::TWard { path, base } => match *y { Typ::TWard { path: p2, base: b2 } => (base == b2) && path_eq(&path, &p2) | _e => false }
+        | Typ::TWard { path, base, base_sym } => match *y { Typ::TWard { path: p2, base: b2, base_sym: s2 } => (base == b2) && str::eq(base_sym, s2) && path_eq(&path, &p2) | _e => false }
         | _e => false
     };
 }

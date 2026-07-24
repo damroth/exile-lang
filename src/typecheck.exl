@@ -368,6 +368,7 @@ struct WardFieldEntry {
     wfe_elem: *const TypeAnn,
     wfe_offset: *const Expr,
     wfe_dir: Direction,
+    wfe_pos: Pos,
 }
 
 struct TyScope {
@@ -5674,12 +5675,12 @@ fn subst_body(a: Allocator, ar: *Arena, from: str, to: str, body: *const Vec<Stm
 // on a non-struct (a deferred marker) defers in turn so the gap stays
 // visible.
 fn is_ward_ty(t: *const Typ) -> bool {
-    return match *t { Typ::TWard { path, base } => true | _o => false };
+    return match *t { Typ::TWard { path, base, base_sym } => true | _o => false };
 }
 // `w.f` on a ward instance extracts the field as a `rune<T>` at base+offset (§6).
 fn ward_field_from_type(a: Allocator, ar: *Arena, sc: *const TyScope, wty: *const Typ, field: str, p: Pos) -> *const Texpr {
     return match *wty {
-        Typ::TWard { path, base } => ward_field_rune(a, ar, sc, path_last(&path), base, field, p)
+        Typ::TWard { path, base, base_sym } => ward_field_rune(a, ar, sc, path_last(&path), base, base_sym, field, p)
         | _o => defer_expr(ar, p)
     };
 }
@@ -9048,7 +9049,7 @@ fn push_ward_fields(wname: str, fields: *const Vec<WardField>, out: *Vec<WardFie
     let sl = fields.as_slice();
     let mut i = 0 as u32;
     while i < fields.length() {
-        out.push(WardFieldEntry { wfe_ward: wname, wfe_name: sl[i].wf_name, wfe_elem: sl[i].wf_elem, wfe_offset: sl[i].wf_offset, wfe_dir: sl[i].wf_dir });
+        out.push(WardFieldEntry { wfe_ward: wname, wfe_name: sl[i].wf_name, wfe_elem: sl[i].wf_elem, wfe_offset: sl[i].wf_offset, wfe_dir: sl[i].wf_dir, wfe_pos: sl[i].wf_pos });
         i = i + 1 as u32;
     }
 }
@@ -9065,6 +9066,56 @@ fn collect_ward_types(items: *const Vec<Item>, out: *Vec<WardFieldEntry>) {
     let mut i = 0 as u32;
     while i < n { collect_ward_one(&sl[i], out); i = i + 1 as u32; }
 }
+// The byte size of a ward field's element (I-W2 range formula): a scalar's width,
+// or `N·sizeof(T)` for a register-file field.  Fixed int widths are exact; the
+// c_* family uses its common 68k/host size (a ward field is normally a fixed
+// hardware-register width, not a c_int).
+fn intwidth_bytes(w: IntWidth) -> int {
+    return match w { IntWidth::W8 => 1 as int | IntWidth::W16 => 2 as int | IntWidth::W32 => 4 as int };
+}
+fn ward_field_size(elem: *const Typ) -> int {
+    return match *elem {
+        Typ::TInt(k) => intwidth_bytes(k.width)
+        | Typ::TArray { elem: e, size } => size * ward_field_size(e)
+        | Typ::TCChar => 1 as int | Typ::TCSChar => 1 as int | Typ::TCUChar => 1 as int
+        | Typ::TCShort { is_signed } => 2 as int
+        | Typ::TCInt { is_signed } => 4 as int
+        | Typ::TCLong { is_signed } => 4 as int
+        | Typ::TBool => 4 as int
+        | _o => 4 as int
+    };
+}
+// I-W2 (disjoint layout): no two fields of one ward overlap.  Ranges are
+// `[offset, offset + size)`; the diagnostic names BOTH colliding fields.  Runs
+// before `err_latched`, so it is a clean diagnostic, never an ICE (the R3b lesson).
+fn ward_overlap_msg(a: Allocator, ar: *Arena, wname: str, an: str, ao: int, asz: int, bn: str, bo: int, bsz: int) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+    sb.push_str("ward '"); sb.push_str(wname); sb.push_str("' fields '"); sb.push_str(an); sb.push_str("' [");
+    sb.push_int(ao); sb.push_str(", "); sb.push_int(ao + asz); sb.push_str(") and '"); sb.push_str(bn); sb.push_str("' [");
+    sb.push_int(bo); sb.push_str(", "); sb.push_int(bo + bsz); sb.push_str(") overlap");
+    return str::from_slice(ar, sb.as_slice());
+}
+fn check_ward_overlaps(a: Allocator, ar: *Arena, sc: *const TyScope) {
+    let sl = sc.sc_wards.as_slice();
+    let n = sc.sc_wards.length();
+    let mut i = 0 as u32;
+    while i < n {
+        let oi = ward_offset_int(ar, sc, sl[i].wfe_offset, sl[i].wfe_pos);
+        let si = ward_field_size(resolve_sig_ty(a, ar, sc, sl[i].wfe_elem, sl[i].wfe_pos));
+        let mut j = i + 1 as u32;
+        while j < n {
+            if str::eq(sl[i].wfe_ward, sl[j].wfe_ward) {
+                let oj = ward_offset_int(ar, sc, sl[j].wfe_offset, sl[j].wfe_pos);
+                let sj = ward_field_size(resolve_sig_ty(a, ar, sc, sl[j].wfe_elem, sl[j].wfe_pos));
+                if oi < oj + sj && oj < oi + si {
+                    tc_fail(ar, sc, sl[j].wfe_pos, ward_overlap_msg(a, ar, sl[i].wfe_ward, sl[i].wfe_name, oi, si, sl[j].wfe_name, oj, sj));
+                }
+            }
+            j = j + 1 as u32;
+        }
+        i = i + 1 as u32;
+    }
+}
 fn ward_type_exists(sc: *const TyScope, name: str) -> bool {
     let sl = sc.sc_wards.as_slice();
     let mut i = 0 as u32;
@@ -9076,8 +9127,28 @@ fn ward_type_exists(sc: *const TyScope, name: str) -> bool {
 fn ward_base_int(ar: *Arena, sc: *const TyScope, addr: *const Expr, p: Pos) -> int {
     return match *addr {
         Expr::IntLit(n, _q) => n
-        | _o => { tc_fail(ar, sc, p, "a ward instance base must be a compile-time integer (an MMIO base) in v1"); 0 as int }
+        | _o => 0 as int
     };
+}
+// A ward instance base inherits rune's forms (axis 1): an integer (MMIO) or
+// `&GLOBAL` (RAM).  Returns the global symbol for `&NAME`, "" for an integer.  A
+// `&local` would dangle (zero-lifetime overlay onto a stack frame) — rejected.
+fn ward_base_sym(ar: *Arena, sc: *const TyScope, benv: *const Vec<FieldTy>, addr: *const Expr, p: Pos) -> str {
+    return match *addr {
+        Expr::IntLit(n, _q) => ""
+        | Expr::Ref(inner, _q) => ward_base_sym_ref(ar, sc, benv, inner, p)
+        | _o => { tc_fail(ar, sc, p, "a ward instance base must be an integer (MMIO) or `&GLOBAL` (RAM)"); "" }
+    };
+}
+fn ward_base_sym_ref(ar: *Arena, sc: *const TyScope, benv: *const Vec<FieldTy>, inner: *const Expr, p: Pos) -> str {
+    return match *inner {
+        Expr::Var(vname, _vp) => if is_some_ty(env_lookup(benv, vname)) { local_ward_base_err(ar, sc, p) } else { vname }
+        | _o => { tc_fail(ar, sc, p, "a ward `&` base must name a global (`&NAME`)"); "" }
+    };
+}
+fn local_ward_base_err(ar: *Arena, sc: *const TyScope, p: Pos) -> str {
+    tc_fail(ar, sc, p, "a ward base must be a global; the address of a local would dangle");
+    return "";
 }
 fn ward_offset_int(ar: *Arena, sc: *const TyScope, off: *const Expr, p: Pos) -> int {
     return match *off {
@@ -9088,7 +9159,7 @@ fn ward_offset_int(ar: *Arena, sc: *const TyScope, off: *const Expr, p: Pos) -> 
 // `w.f` (WARD-SPEC §6): extract field `fname` of ward type `wname` (base `wbase`)
 // as a `rune<T>` at `base + offset` — the ward composes rune, so the extracted
 // value inherits every rune rule (I-W3).
-fn ward_field_rune(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str, wbase: int, fname: str, p: Pos) -> *const Texpr {
+fn ward_field_rune(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str, wbase: int, wsym: str, fname: str, p: Pos) -> *const Texpr {
     let sl = sc.sc_wards.as_slice();
     let mut i = 0 as u32;
     while i < sc.sc_wards.length() {
@@ -9097,7 +9168,7 @@ fn ward_field_rune(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str, wba
             let foff = ward_offset_int(ar, sc, sl[i].wfe_offset, p);
             let rune_ty = ty_node(ar, Typ::TRune { elem: felem, dir: sl[i].wfe_dir });
             let scalar = rune_ptr_pointee(felem);
-            return te_node(ar, TexprNode::TWardAddr { elem: scalar, base: wbase, offset: foff }, rune_ty, p);
+            return te_node(ar, TexprNode::TWardAddr { elem: scalar, base: wbase, base_sym: wsym, offset: foff }, rune_ty, p);
         }
         i = i + 1 as u32;
     }
@@ -9115,9 +9186,10 @@ fn elab_ward_inst(a: Allocator, ar: *Arena, sc: *const TyScope, benv: *Vec<Field
         tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
     }
     let base = ward_base_int(ar, sc, addr, pos);
+    let bsym = ward_base_sym(ar, sc, benv, addr, pos);
     let mut path: Vec<str> = Vec::with_capacity(a, 1 as u32);
     path.push(ward_ty);
-    benv.push(FieldTy { name: name, ty: ty_node(ar, Typ::TWard { path: path, base: base }) });
+    benv.push(FieldTy { name: name, ty: ty_node(ar, Typ::TWard { path: path, base: base, base_sym: bsym }) });
 }
 
 // Gather every top-level `rune` (recursing into modules) into a raw list — the
@@ -15943,6 +16015,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // (a non-integer top-level address, R3b) tc_fails here, and that diagnostic
     // must reach `err_latched` — otherwise it latches uselessly and codegen aborts
     // on the placeholder (the tl3 ICE).  Placement of a diagnostic is part of it.
+    check_ward_overlaps(a, ar, &base_scope);
     let mut tprunes: Vec<RuneGlobal> = Vec::with_capacity(a, 4 as u32);
     build_rune_globals(a, ar, &globals, &base_scope, &tprunes);
     // A latched diagnostic wins over the elaborated program: the placeholders the

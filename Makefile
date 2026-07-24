@@ -1071,7 +1071,24 @@ selfhost-ward: $(EXILC_BIN)
 	  echo "selfhost-ward: instance 'custom' leaked into C (I-W1 zero-storage violated)"; exit 1; fi; \
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/ward_spine.c -o $(C_OUT)/ward_spine.o \
 	  || { echo "selfhost-ward: emitted C is not clean C89 (-ansi -pedantic -Wall -Werror)"; exit 1; }; \
-	echo "selfhost-ward: clean (type+instance+field spine: base+offset fold, I-W1 zero-storage, I-W3 field=rune; cc -Wall -Werror)"
+	rm -f $(C_OUT)/ward_ov.c $(C_OUT)/ward_ov.err; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/ward_ov.c tests/ward/reject_overlap.exl >/dev/null 2>$(C_OUT)/ward_ov.err; then \
+	  echo "selfhost-ward: W1 — port ACCEPTED overlapping ward fields"; exit 1; fi; \
+	if grep -q 'internal:' $(C_OUT)/ward_ov.err; then echo "selfhost-ward: W1 is ICE-enforced, not a clean diagnostic"; exit 1; fi; \
+	grep -q "fields 'a' \[0, 4) and 'b' \[2, 4) overlap" $(C_OUT)/ward_ov.err \
+	  || { echo "selfhost-ward: W1 wrong message (must name both fields + ranges): `head -1 $(C_OUT)/ward_ov.err`"; exit 1; }; \
+	rm -f $(C_OUT)/ward_rr.c $(HOST_OUT)/ward_rr $(C_OUT)/ward_rr.out $(C_OUT)/ward_rr.expected; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_rr.c tests/ward/ward_roundtrip.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-ward: port rejected the ward-over-RAM witness"; exit 1; }; \
+	grep -q '(char \*)&SCRATCH + 4UL' $(C_OUT)/ward_rr.c \
+	  || { echo "selfhost-ward: MISSING &global field address ((char*)&SCRATCH + offset)"; exit 1; }; \
+	cc -O2 -fno-strict-aliasing -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/ward_rr $(C_OUT)/ward_rr.c tests/ward/ward_roundtrip_stub.c $(SYS_HOST) \
+	  || { echo "selfhost-ward: ward-over-RAM C is not clean at -O2 (-fno-strict-aliasing: MMIO overlays untyped memory)"; exit 1; }; \
+	$(HOST_OUT)/ward_rr > $(C_OUT)/ward_rr.out 2>&1; \
+	printf '43981\n4660\n255\n' > $(C_OUT)/ward_rr.expected; \
+	if ! diff -q $(C_OUT)/ward_rr.expected $(C_OUT)/ward_rr.out >/dev/null; then \
+	  echo "selfhost-ward: ward-over-RAM WRONG (offsets/disjointness broken at -O2):"; cat $(C_OUT)/ward_rr.out; exit 1; fi; \
+	echo "selfhost-ward: clean (spine base+offset fold, I-W1 zero-storage, I-W3 field=rune + W1 overlap-reject + ward-over-RAM 43981/4660/255 mixed-width+gap at -O2; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #
