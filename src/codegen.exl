@@ -835,6 +835,7 @@ pub fn gen_expr(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, te
         | TexprNode::TFieldAccess { target, field } => emit_field_access(a, ar, out, cg, target, field)
         | TexprNode::TSizeOf(t) => { out.push_str("sizeof("); out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, t))); out.push_str(")"); }
         | TexprNode::TRuneAddr(addr) => emit_rune_addr(a, ar, out, te, addr)
+        | TexprNode::TWardAddr { elem, base, offset } => emit_ward_addr(a, ar, out, elem, base, offset)
         | _other => { ice("internal: no C form for this IR expression"); }
     }
 }
@@ -854,6 +855,19 @@ fn emit_rune_addr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texp
         }
         | _o => { ice("internal: TRuneAddr node without a rune type"); }
     }
+}
+
+// A ward field's address (WARD-SPEC §6): `(volatile <elem>*)(base + offset)`, base
+// and offset kept separate — readable, and the `d16(An)` shape the 68k wants once
+// the base is a value.  `UL` on each keeps the constants pointer-width.
+fn emit_ward_addr(a: Allocator, ar: *Arena, out: *StringBuilder, elem: *const Typ, base: int, offset: int) {
+    out.push_str("(volatile ");
+    out.push_str(strip_trailing_space(ar, c_type_prefix(a, ar, elem)));
+    out.push_str(" *)(");
+    out.push_int(base);
+    out.push_str("UL + ");
+    out.push_int(offset);
+    out.push_str("UL)");
 }
 
 // A top-level rune (RUNE-SPEC §3, Increment 4 Half B): a file-scope

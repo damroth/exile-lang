@@ -102,6 +102,18 @@ pub struct Capture {
     by_ref: bool,
 }
 
+// A field of a `ward` overlay (WARD-SPEC §3, Phase 2): a rune-implicit register
+// at an OFFSET from the ward's base.  Same shape as a rune declaration, but `at`
+// binds a relative offset (`wf_offset`), not an absolute address.  The extracted
+// field is a `rune<T>` (I-W3).
+pub struct WardField {
+    wf_name: str,
+    wf_elem: *const TypeAnn,
+    wf_offset: *const Expr,
+    wf_dir: Direction,
+    wf_pos: Pos,
+}
+
 // A single trait bound: `<T: A + B>` is one entry with `traits = [A, B]`.
 // `assoc` carries the DR-021 sugar's associated-type bindings (`<F:
 // |int|->int>` lowers to traits=[Fn1], assoc=[Arg, Output]); plain
@@ -252,6 +264,10 @@ pub enum Stmt {
     // base (§2); `dir` gates the method set (I-R2).  A local declaration in v1
     // (RUNE-SPEC axis 4); it lowers to a `volatile T *` binding.
     | RuneDecl { name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction, pos: Pos }
+    // A local `ward name: Type at ADDR;` — binds a ward-overlay instance to a base
+    // (WARD-SPEC §3, Phase 2).  Zero runtime storage (I-W1): the base folds into
+    // each field access.  `addr` is an integer (MMIO) or `&GLOBAL` (RAM), as rune.
+    | WardInst { name: str, ward_ty: str, addr: *const Expr, pos: Pos }
 }
 
 // ===== Declarations =====
@@ -394,6 +410,9 @@ pub enum Item {
     // Increment 4 Half B).  Same fields as the local `Stmt::RuneDecl`; a
     // register map shared across functions needs an above-function declaration.
     | RuneDecl { name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction, pos: Pos }
+    // A `ward Name { fields }` overlay TYPE — layout only, no base, emits nothing
+    // (WARD-SPEC §3, Phase 2).  An instance binds the base separately.
+    | WardDecl { name: str, fields: Vec<WardField>, pos: Pos }
 }
 
 pub struct ModuleDecl {

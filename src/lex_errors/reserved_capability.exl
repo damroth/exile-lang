@@ -1,3 +1,3 @@
 fn main() {
-    let ward = 5;
+    let sigil = 5;
 }

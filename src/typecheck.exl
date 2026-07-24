@@ -358,9 +358,23 @@ struct TopRune {
     tr_pos: Pos,
 }
 
+// A `ward` overlay field, registered FLAT (one row per field, keyed by the ward
+// type name) for field-access resolution (WARD-SPEC §3, Phase 2).  Every field is
+// Copy (str / pointers / Direction), so the registry is copy-safe — a nested
+// owned `Vec` would be auto-dropped on copy and free the shared backing.
+struct WardFieldEntry {
+    wfe_ward: str,
+    wfe_name: str,
+    wfe_elem: *const TypeAnn,
+    wfe_offset: *const Expr,
+    wfe_dir: Direction,
+}
+
 struct TyScope {
     // Top-level runes, visible in every function (prepended to each benv).
     sc_runes: *const Vec<TopRune>,
+    // Ward overlay fields (flat, keyed by ward type name), for `w.f` resolution.
+    sc_wards: *const Vec<WardFieldEntry>,
     sc_structs: *const Vec<str>,
     sc_dbg: *const Vec<str>,
     sc_consts: *const Vec<str>,
@@ -462,6 +476,7 @@ struct TyScope {
 // later passes add more indices.
 struct ProgIdx {
     pi_runes: *const Vec<TopRune>,
+    pi_wards: *const Vec<WardFieldEntry>,
     pi_snames: *const Vec<str>,
     pi_dbg: *const Vec<str>,
     pi_consts: *const Vec<str>,
@@ -5641,6 +5656,8 @@ fn subst_var_stmt(a: Allocator, ar: *Arena, from: str, to: str, s: *const Stmt) 
         | Stmt::Continue(p) => Stmt::Continue(p)
         | Stmt::RuneDecl { name, elem, addr, dir, pos } =>
             Stmt::RuneDecl { name: name, elem: elem, addr: subst_var_expr(a, ar, from, to, addr), dir: dir, pos: pos }
+        | Stmt::WardInst { name, ward_ty, addr, pos } =>
+            Stmt::WardInst { name: name, ward_ty: ward_ty, addr: subst_var_expr(a, ar, from, to, addr), pos: pos }
     };
 }
 
@@ -5656,9 +5673,20 @@ fn subst_body(a: Allocator, ar: *Arena, from: str, to: str, body: *const Vec<Stm
 // `target.field` — the access takes the field's declared type; an access
 // on a non-struct (a deferred marker) defers in turn so the gap stays
 // visible.
+fn is_ward_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TWard { path, base } => true | _o => false };
+}
+// `w.f` on a ward instance extracts the field as a `rune<T>` at base+offset (§6).
+fn ward_field_from_type(a: Allocator, ar: *Arena, sc: *const TyScope, wty: *const Typ, field: str, p: Pos) -> *const Texpr {
+    return match *wty {
+        Typ::TWard { path, base } => ward_field_rune(a, ar, sc, path_last(&path), base, field, p)
+        | _o => defer_expr(ar, p)
+    };
+}
 fn elab_field_access(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                      env: *const Vec<FieldTy>, target: *const Expr, field: str, p: Pos) -> *const Texpr {
     let tt = elab_expr(a, ar, g, sc, env, none_ty(), target);
+    if is_ward_ty(tt.ty) { return ward_field_from_type(a, ar, sc, tt.ty, field, p); }
     return match struct_field_ty(sc, tt.ty, field) {
         Option::Some(fty) => te_node(ar, TexprNode::TFieldAccess { target: tt, field: field }, fty, p)
         | Option::None => no_such_field(a, ar, sc, tt.ty, field, p)
@@ -6557,6 +6585,19 @@ fn expr_is_rune_var(benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
         | _o => false
     };
 }
+// Is `e` a ward field access `w.f` (w a ward instance)?  A PURE benv lookup.
+fn is_ward_field_access(benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
+    return match *e {
+        Expr::FieldAccess(t, f, _q) => match *t {
+            Expr::Var(vname, _p) => match env_lookup(benv, vname) {
+                Option::Some(ty) => is_ward_ty(ty)
+                | Option::None => false
+            }
+            | _o => false
+        }
+        | _o => false
+    };
+}
 // `rune.write(v)` (RUNE-SPEC §6) lowers to a volatile store `*rune = v`: a
 // `TAssignDeref` through the rune's `volatile T *` value.  The receiver is
 // elaborated exactly once (the caller already proved it is a rune var).
@@ -6729,6 +6770,11 @@ fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     let is_rune = expr_is_rune_var(env, receiver);
     if is_rune && str::eq(name, "write") { return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_rune && str::eq(name, "strobe") { return elab_rune_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
+    // `w.f.write/strobe` on a ward field: the receiver `w.f` elaborates to a rune
+    // (base+offset), so the rune store path handles it unchanged (I-W3).
+    let is_wardf = is_ward_field_access(env, receiver);
+    if is_wardf && str::eq(name, "write") { return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
+    if is_wardf && str::eq(name, "strobe") { return elab_rune_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     let is_reg = is_rune_reg_index(env, receiver);
     if is_reg && str::eq(name, "write") { return elab_rune_reg_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_reg && str::eq(name, "strobe") { return elab_rune_reg_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
@@ -6816,6 +6862,9 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         }
         | Stmt::RuneDecl { name, elem, addr, dir, pos } => {
             elab_rune_decl(a, ar, g, sc, benv, name, elem, addr, dir, pos, tstmts);
+        }
+        | Stmt::WardInst { name, ward_ty, addr, pos } => {
+            elab_ward_inst(a, ar, sc, benv, name, ward_ty, addr, pos);
         }
         | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
         | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
@@ -7776,7 +7825,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let lparams = lam_to_params(a, params_fd);
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let sc = TyScope { sc_runes: idx.pi_runes, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
+    let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
@@ -8841,6 +8890,9 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Stmt::RuneDecl { name, elem, addr, dir, pos } => {
             elab_rune_decl(a, ar, g, sc, env, name, elem, addr, dir, pos, out);
         }
+        | Stmt::WardInst { name, ward_ty, addr, pos } => {
+            elab_ward_inst(a, ar, sc, env, name, ward_ty, addr, pos);
+        }
         | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Tail(e) => { elab_tail(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Return(val, pos) => {
@@ -8990,6 +9042,84 @@ fn build_rune_globals(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
 fn rune_addr_is_int(e: *const Expr) -> bool {
     return match *e { Expr::IntLit(n, _p) => true | _o => false };
 }
+// ===== Ward overlay: types, instances, field access (WARD-SPEC, Phase 2) =====
+
+fn push_ward_fields(wname: str, fields: *const Vec<WardField>, out: *Vec<WardFieldEntry>) {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() {
+        out.push(WardFieldEntry { wfe_ward: wname, wfe_name: sl[i].wf_name, wfe_elem: sl[i].wf_elem, wfe_offset: sl[i].wf_offset, wfe_dir: sl[i].wf_dir });
+        i = i + 1 as u32;
+    }
+}
+fn collect_ward_one(it: *const Item, out: *Vec<WardFieldEntry>) {
+    match *it {
+        Item::WardDecl { name, fields, pos } => { push_ward_fields(name, &fields, out); }
+        | Item::Module(md) => { collect_ward_types(&md.mitems, out); }
+        | _e => { }
+    }
+}
+fn collect_ward_types(items: *const Vec<Item>, out: *Vec<WardFieldEntry>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_ward_one(&sl[i], out); i = i + 1 as u32; }
+}
+fn ward_type_exists(sc: *const TyScope, name: str) -> bool {
+    let sl = sc.sc_wards.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_wards.length() { if str::eq(sl[i].wfe_ward, name) { return true; } i = i + 1 as u32; }
+    return false;
+}
+// A ward instance base is a compile-time integer (MMIO) in v1; `&GLOBAL` (RAM,
+// the runnable witness) and a base-as-value (Zorro) arrive in later increments.
+fn ward_base_int(ar: *Arena, sc: *const TyScope, addr: *const Expr, p: Pos) -> int {
+    return match *addr {
+        Expr::IntLit(n, _q) => n
+        | _o => { tc_fail(ar, sc, p, "a ward instance base must be a compile-time integer (an MMIO base) in v1"); 0 as int }
+    };
+}
+fn ward_offset_int(ar: *Arena, sc: *const TyScope, off: *const Expr, p: Pos) -> int {
+    return match *off {
+        Expr::IntLit(n, _q) => n
+        | _o => { tc_fail(ar, sc, p, "a ward field offset must be a compile-time integer"); 0 as int }
+    };
+}
+// `w.f` (WARD-SPEC §6): extract field `fname` of ward type `wname` (base `wbase`)
+// as a `rune<T>` at `base + offset` — the ward composes rune, so the extracted
+// value inherits every rune rule (I-W3).
+fn ward_field_rune(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str, wbase: int, fname: str, p: Pos) -> *const Texpr {
+    let sl = sc.sc_wards.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_wards.length() {
+        if str::eq(sl[i].wfe_ward, wname) && str::eq(sl[i].wfe_name, fname) {
+            let felem = resolve_sig_ty(a, ar, sc, sl[i].wfe_elem, p);
+            let foff = ward_offset_int(ar, sc, sl[i].wfe_offset, p);
+            let rune_ty = ty_node(ar, Typ::TRune { elem: felem, dir: sl[i].wfe_dir });
+            let scalar = rune_ptr_pointee(felem);
+            return te_node(ar, TexprNode::TWardAddr { elem: scalar, base: wbase, offset: foff }, rune_ty, p);
+        }
+        i = i + 1 as u32;
+    }
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    sb.push_str("no field '"); sb.push_str(fname); sb.push_str("' on ward '"); sb.push_str(wname); sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return defer_expr(ar, p);
+}
+// `ward name: Type at ADDR;` — bind a zero-storage instance in the benv (I-W1).
+fn elab_ward_inst(a: Allocator, ar: *Arena, sc: *const TyScope, benv: *Vec<FieldTy>,
+                  name: str, ward_ty: str, addr: *const Expr, pos: Pos) {
+    if !ward_type_exists(sc, ward_ty) {
+        let mut sb = StringBuilder::with_capacity(a, 40 as u32);
+        sb.push_str("unknown ward type '"); sb.push_str(ward_ty); sb.push_str("'");
+        tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    }
+    let base = ward_base_int(ar, sc, addr, pos);
+    let mut path: Vec<str> = Vec::with_capacity(a, 1 as u32);
+    path.push(ward_ty);
+    benv.push(FieldTy { name: name, ty: ty_node(ar, Typ::TWard { path: path, base: base }) });
+}
+
 // Gather every top-level `rune` (recursing into modules) into a raw list — the
 // scope carries it, and build_param_env resolves + prepends per function.
 fn collect_top_runes(items: *const Vec<Item>, out: *Vec<TopRune>) {
@@ -9762,7 +9892,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     // A generic-struct method skeleton borrows the impl's type parameters
     // (the method itself declares none); everything else uses its own.
     let eff_tparams = pick_tparams(xtparams, &f.tparams);
-    let sc = TyScope { sc_runes: idx.pi_runes, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
+    let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: str::eq(mangled, "main") };
@@ -10386,7 +10516,7 @@ fn slot_kv_ty(a: Allocator, ar: *Arena) -> *const Typ {
 // resolves to `m::Pos`).  Used by the collectors + the method-body elaborator.
 fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope {
     return TyScope {
-        sc_runes: base.sc_runes, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -10406,7 +10536,7 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
 // recovery works regardless of construction order.
 fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyScope {
     return TyScope {
-        sc_runes: base.sc_runes, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -10444,7 +10574,7 @@ fn scope_with_tparams_binds(base: *const TyScope, tparams: *const Vec<str>, bind
 }
 fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
     return TyScope {
-        sc_runes: base.sc_runes, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -10464,7 +10594,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
 // the monomorphic instance directly (no post-hoc substitution).
 fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *const Vec<TVarBind>) -> TyScope {
     return TyScope {
-        sc_runes: base.sc_runes, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -10482,7 +10612,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
 // A copy of the scope carrying the enclosing fn's resolved return type.
 fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
     return TyScope {
-        sc_runes: base.sc_runes, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -12508,7 +12638,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let ret_ann: Option<*const TypeAnn> = Option::Some(closure_struct_ann(a, ar, vd.vname));
-    let sc = TyScope { sc_runes: idx.pi_runes, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
+    let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
@@ -15498,7 +15628,9 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut loopdepth = 0 as u32;
     let mut toprunes: Vec<TopRune> = Vec::with_capacity(a, 4 as u32);
     collect_top_runes(items, &toprunes);
-    let base_scope = TyScope { sc_runes: &toprunes, sc_structs: &snames, sc_dbg: &dbgnames, sc_consts: &constnames, sc_xfields: &xfields, sc_loops: &loopdepth, sc_enums: &enames, sc_tparams: &empty_tp,
+    let mut topwards: Vec<WardFieldEntry> = Vec::with_capacity(a, 8 as u32);
+    collect_ward_types(items, &topwards);
+    let base_scope = TyScope { sc_runes: &toprunes, sc_wards: &topwards, sc_structs: &snames, sc_dbg: &dbgnames, sc_consts: &constnames, sc_xfields: &xfields, sc_loops: &loopdepth, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods, sc_impls: &empty_impls,
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
@@ -15577,7 +15709,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // impl-block walk.
     let mut impls: Vec<ImplReg> = Vec::with_capacity(a, 8 as u32);
     build_impl_regs(a, &methods, items, &impls);
-    let idx = ProgIdx { pi_runes: &toprunes, pi_snames: &snames, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
+    let idx = ProgIdx { pi_runes: &toprunes, pi_wards: &topwards, pi_snames: &snames, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods, pi_impls: &impls,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
                         pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_err: &tc_err, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };

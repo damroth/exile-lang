@@ -670,7 +670,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -813,7 +813,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
-                 selfhost-no-fabrication selfhost-rune
+                 selfhost-no-fabrication selfhost-rune selfhost-ward
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1049,6 +1049,29 @@ selfhost-rune: $(EXILC_BIN)
 	if ! diff -q $(C_OUT)/rune_rr.expected $(C_OUT)/rune_rr.out >/dev/null; then \
 	  echo "selfhost-rune: rune-over-RAM round-trip WRONG (volatile lowering broken at -O2):"; cat $(C_OUT)/rune_rr.out; exit 1; fi; \
 	echo "selfhost-rune: clean (golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R7 (R1/R2/R3b/R4/R5/R6/R7) + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
+
+# ===== ward capability — the port's golden gate (WARD-SPEC, Phase 2) =====
+#
+# The ward era's differential gate.  Ward composes rune: a field access folds to
+# a rune at (base + offset), the base and offset kept SEPARATE (§6).  Inc1 (the
+# type+instance+field spine) asserts the fold shape, I-W1 zero-storage (the
+# instance leaks no C variable), and clean C89.  Grows with the feature — offset
+# overlap (W1), the runnable ward-over-RAM witness, and the full W table ride
+# later increments.
+selfhost-ward: $(EXILC_BIN)
+	@rm -f $(C_OUT)/ward_spine.c $(C_OUT)/ward_spine.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_spine.c tests/ward/ward_spine.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-ward: port rejected the ward spine"; exit 1; }; \
+	if [ ! -s $(C_OUT)/ward_spine.c ]; then echo "selfhost-ward: EMPTY emitted C (floor)"; exit 1; fi; \
+	grep -q '(volatile unsigned long \*)(14675968UL + 128UL)) = 74565;' $(C_OUT)/ward_spine.c \
+	  || { echo "selfhost-ward: MISSING ward field write as base+offset (§6, I-W3)"; exit 1; }; \
+	grep -q '(volatile unsigned short \*)(14675968UL + 136UL)) = 0;' $(C_OUT)/ward_spine.c \
+	  || { echo "selfhost-ward: MISSING ward field strobe as base+offset"; exit 1; }; \
+	if grep -q 'custom' $(C_OUT)/ward_spine.c; then \
+	  echo "selfhost-ward: instance 'custom' leaked into C (I-W1 zero-storage violated)"; exit 1; fi; \
+	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/ward_spine.c -o $(C_OUT)/ward_spine.o \
+	  || { echo "selfhost-ward: emitted C is not clean C89 (-ansi -pedantic -Wall -Werror)"; exit 1; }; \
+	echo "selfhost-ward: clean (type+instance+field spine: base+offset fold, I-W1 zero-storage, I-W3 field=rune; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

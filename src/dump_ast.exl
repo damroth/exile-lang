@@ -506,6 +506,15 @@ fn render_stmt(s: *const Stmt, out: *StringBuilder) {
             out.push_str(match dir { Direction::DRead => "read" | Direction::DWrite => "write" | Direction::DReadWrite => "readwrite" });
             out.push_str(")");
         }
+        | Stmt::WardInst { name, ward_ty, addr, pos } => {
+            out.push_str("(ward-inst ");
+            out.push_str(name);
+            out.push_str(" ");
+            out.push_str(ward_ty);
+            out.push_str(" ");
+            render_expr(addr, out);
+            out.push_str(")");
+        }
         | Stmt::LetTuple { names, value, is_mut } => {
             out.push_str("(let-tuple");
             if is_mut { out.push_str(" mut"); }
@@ -761,6 +770,25 @@ fn render_item(it: *const Item, out: *StringBuilder) {
             render_expr(addr, out);
             out.push_str(" ");
             out.push_str(match dir { Direction::DRead => "read" | Direction::DWrite => "write" | Direction::DReadWrite => "readwrite" });
+            out.push_str(")");
+        }
+        | Item::WardDecl { name, fields, pos } => {
+            out.push_str("(ward ");
+            out.push_str(name);
+            let fs = fields.as_slice();
+            let mut wi = 0 as u32;
+            while wi < fields.length() {
+                out.push_str(" (field ");
+                out.push_str(fs[wi].wf_name);
+                out.push_str(" (ty ");
+                render_type_ann(fs[wi].wf_elem, out);
+                out.push_str(") ");
+                render_expr(fs[wi].wf_offset, out);
+                out.push_str(" ");
+                out.push_str(match fs[wi].wf_dir { Direction::DRead => "read" | Direction::DWrite => "write" | Direction::DReadWrite => "readwrite" });
+                out.push_str(")");
+                wi = wi + 1 as u32;
+            }
             out.push_str(")");
         }
         | Item::TypeAlias(ta) => {

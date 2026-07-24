@@ -179,6 +179,7 @@ fn tok_tag(t: Token) -> int {
         | Token::SizeOf => 76 | Token::Ident(_s) => 77 | Token::Int(_n) => 78
         | Token::Float(_f, _is32) => 79 | Token::String(_s) => 80 | Token::Eof => 81
         | Token::Rune => 82
+        | Token::Ward => 83
     }
 }
 
@@ -217,6 +218,7 @@ fn pp(t: Token) -> str {
         | Token::Float(_f, _is32) => "float" | Token::String(_s) => "string"
         | Token::Eof => "end of file"
         | Token::Rune => "'rune'"
+        | Token::Ward => "'ward'"
     }
 }
 
@@ -1618,6 +1620,7 @@ fn parse_stmt(s: *Parser) -> Stmt {
     return match peek(s) {
         Token::Let => stmt_let(s)
         | Token::Rune => stmt_rune(s)
+        | Token::Ward => stmt_ward_inst(s)
         | Token::Return => stmt_return(s)
         | Token::Defer => stmt_defer(s)
         | Token::With => stmt_with(s)
@@ -1709,6 +1712,55 @@ fn parse_rune_parts(s: *Parser) -> RuneParts {
 fn stmt_rune(s: *Parser) -> Stmt {
     let rp = parse_rune_parts(s);
     return Stmt::RuneDecl { name: rp.rp_name, elem: rp.rp_elem, addr: rp.rp_addr, dir: rp.rp_dir, pos: rp.rp_pos };
+}
+
+// `ward name: Type at ADDR;` — a LOCAL ward-overlay instance (WARD-SPEC §3).
+fn stmt_ward_inst(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    let np = expect_ident(s, "ward instance name after 'ward'");
+    expect(s, Token::Colon);
+    let tp = expect_ident(s, "ward type name after ':'");
+    let at = expect_ident(s, "'at' before a ward instance base");
+    if !str::eq(at.name, "at") {
+        fail(s, at.pos, "expected 'at' before a ward instance base");
+    }
+    let addr = parse_expr(s);
+    expect(s, Token::Semicolon);
+    return Stmt::WardInst { name: np.name, ward_ty: tp.name, addr: addr, pos: pos };
+}
+
+// `ward Name { f: T at OFF dir; … }` — a ward overlay TYPE (WARD-SPEC §3).  A
+// field reuses the rune-declaration grammar, but `at` binds an OFFSET from the
+// ward base, not an absolute address (§3).  Fields are `;`-terminated.
+fn parse_ward_field(s: *Parser) -> WardField {
+    let pos = peek_pos(s);
+    let np = expect_ident(s, "ward field name");
+    expect(s, Token::Colon);
+    let elem = parse_type(s);
+    let at = expect_ident(s, "'at' before a ward field offset");
+    if !str::eq(at.name, "at") {
+        fail(s, at.pos, "expected 'at' before a ward field offset");
+    }
+    let off = parse_expr(s);
+    let dir = parse_rune_dir(s);
+    expect(s, Token::Semicolon);
+    return WardField { wf_name: np.name, wf_elem: elem, wf_offset: off, wf_dir: dir, wf_pos: pos };
+}
+fn parse_ward_decl(s: *Parser) -> Item {
+    let pos = peek_pos(s);
+    bump(s);
+    let np = expect_ident(s, "ward type name after 'ward'");
+    expect(s, Token::LBrace);
+    let mut fields: Vec<WardField> = Vec::with_capacity(default_allocator(), 8 as u32);
+    while !peek_is(s, Token::RBrace) && !is_err(s) {
+        fields.push(parse_ward_field(s));
+    }
+    expect(s, Token::RBrace);
+    return Item::WardDecl { name: np.name, fields: fields, pos: pos };
+}
+fn ward_decl_name(it: *const Item) -> str {
+    return match *it { Item::WardDecl { name, fields, pos } => name | _o => "" };
 }
 
 // The direction sigil that suffixes a rune declaration (RUNE-SPEC axis 2): it
@@ -3158,6 +3210,14 @@ fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool, seen: *Vec<str>) {
             let nru = rp.rp_name;
             out.push(Item::RuneDecl { name: rp.rp_name, elem: rp.rp_elem, addr: rp.rp_addr, dir: rp.rp_dir, pos: rp.rp_pos });
             seen.push(nru);
+        }
+        | Token::Ward => {
+            let wpos = peek_pos(s);
+            let wd = parse_ward_decl(s);
+            let nwa = ward_decl_name(&wd);
+            check_scope_name(s, nwa, wpos, seen);
+            out.push(wd);
+            seen.push(nwa);
         }
         | Token::Type => {
             let td = parse_type_alias_decl(s, is_pub);

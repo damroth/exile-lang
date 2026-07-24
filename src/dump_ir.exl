@@ -133,6 +133,13 @@ fn render_typ_canonical(t: *const Typ, out: *StringBuilder) {
             render_typ_canonical(elem, out);
             out.push_str(")");
         }
+        | Typ::TWard { path, base } => {
+            out.push_str("(ward ");
+            render_path(&path, out);
+            out.push_str(" ");
+            out.push_int(base);
+            out.push_str(")");
+        }
         | Typ::TArray { elem, size } => {
             out.push_str("(array ");
             render_typ_canonical(elem, out);
@@ -548,6 +555,13 @@ fn render_texpr_node(te: *const Texpr, out: *StringBuilder) {
         | TexprNode::TRuneAddr(addr) => {
             out.push_str("(rune-addr ");
             out.push_int(addr);
+            out.push_str(")");
+        }
+        | TexprNode::TWardAddr { elem, base, offset } => {
+            out.push_str("(ward-addr ");
+            out.push_int(base);
+            out.push_str(" ");
+            out.push_int(offset);
             out.push_str(")");
         }
         | TexprNode::TBlock { stmts, trailing } => {
