@@ -1077,6 +1077,20 @@ selfhost-ward: $(EXILC_BIN)
 	if grep -q 'internal:' $(C_OUT)/ward_ov.err; then echo "selfhost-ward: W1 is ICE-enforced, not a clean diagnostic"; exit 1; fi; \
 	grep -q "fields 'a' \[0, 4) and 'b' \[2, 4) overlap" $(C_OUT)/ward_ov.err \
 	  || { echo "selfhost-ward: W1 wrong message (must name both fields + ranges): `head -1 $(C_OUT)/ward_ov.err`"; exit 1; }; \
+	rm -f $(C_OUT)/ward_rf.c $(C_OUT)/ward_rf.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_rf.c tests/ward/reg_field.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-ward: port rejected the register-file field fixture"; exit 1; }; \
+	grep -q '((volatile unsigned short \*)(14675968UL + 384UL))\[31\] = 0;' $(C_OUT)/ward_rf.c \
+	  || { echo "selfhost-ward: MISSING register-file field extreme index color[31] at 0x180"; exit 1; }; \
+	grep -q '((volatile unsigned short \*)(14675968UL + 384UL))\[0\] = 4095;' $(C_OUT)/ward_rf.c \
+	  || { echo "selfhost-ward: MISSING register-file field color[0]"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/ward_rf.c -o $(C_OUT)/ward_rf.o \
+	  || { echo "selfhost-ward: register-file field C is not clean C89 at -O2"; exit 1; }; \
+	rm -f $(C_OUT)/ward_fo.c $(C_OUT)/ward_fo.err; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/ward_fo.c tests/ward/reject_file_overlap.exl >/dev/null 2>$(C_OUT)/ward_fo.err; then \
+	  echo "selfhost-ward: W1(file) — port ACCEPTED a file overlapping a scalar"; exit 1; fi; \
+	grep -q "fields 'bank' \[0, 16) and 'x' \[8, 10) overlap" $(C_OUT)/ward_fo.err \
+	  || { echo "selfhost-ward: W1(file) wrong message (file range N·size): `head -1 $(C_OUT)/ward_fo.err`"; exit 1; }; \
 	rm -f $(C_OUT)/ward_rr.c $(HOST_OUT)/ward_rr $(C_OUT)/ward_rr.out $(C_OUT)/ward_rr.expected; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_rr.c tests/ward/ward_roundtrip.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-ward: port rejected the ward-over-RAM witness"; exit 1; }; \
@@ -1088,7 +1102,7 @@ selfhost-ward: $(EXILC_BIN)
 	printf '43981\n4660\n255\n' > $(C_OUT)/ward_rr.expected; \
 	if ! diff -q $(C_OUT)/ward_rr.expected $(C_OUT)/ward_rr.out >/dev/null; then \
 	  echo "selfhost-ward: ward-over-RAM WRONG (offsets/disjointness broken at -O2):"; cat $(C_OUT)/ward_rr.out; exit 1; fi; \
-	echo "selfhost-ward: clean (spine base+offset fold, I-W1 zero-storage, I-W3 field=rune + W1 overlap-reject + ward-over-RAM 43981/4660/255 mixed-width+gap at -O2; cc -Wall -Werror)"
+	echo "selfhost-ward: clean (spine base+offset fold, I-W1 zero-storage, I-W3 field=rune + W1 overlap-reject (scalar+file) + register-file field color[31]@0x180 + ward-over-RAM 43981/4660/255 mixed-width+gap at -O2; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

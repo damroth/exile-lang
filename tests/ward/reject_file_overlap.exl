@@ -1,0 +1,10 @@
+// W1 on a register-FILE field (WARD-SPEC §5, I-W2): a file spans [offset, offset
+// + N·sizeof(T)). bank: [u32; 4] spans [0, 16); x: u16 at 0x08 falls inside it.
+ward Bad {
+    bank: [u32; 4] at 0x00 write;
+    x:    u16      at 0x08 write;
+}
+fn main() {
+    ward w: Bad at 0xDFF000;
+    w.bank[0].write(0);
+}

@@ -906,6 +906,9 @@ fn is_atom_bool_var(n: TexprNode) -> bool {
 fn is_index_simple_base(n: TexprNode) -> bool {
     return match n { TexprNode::TVar(_x) => true | TexprNode::TFieldAccess { target, field } => true | TexprNode::TIndex { base, index } => true | _o => false };
 }
+fn is_ward_addr_node(n: TexprNode) -> bool {
+    return match n { TexprNode::TWardAddr { elem, base, base_sym, offset } => true | _o => false };
+}
 
 fn index_suffix(bty: *const Typ) -> str {
     return match *bty {
@@ -1238,7 +1241,11 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
         }
         | Tstmt::TAssignIndex { base, index, value, pos } => {
             let mut lb = StringBuilder::with_capacity(a, 32 as u32);
-            gen_expr(a, ar, &lb, cg, base);
+            // A ward register-file field's base is a `(volatile T*)(...)` CAST, and
+            // `[i]` would bind to the cast's operand without parens — wrap only that
+            // node, so every existing base's bytes are unchanged.
+            if is_ward_addr_node(base.e) { lb.push_str("("); gen_expr(a, ar, &lb, cg, base); lb.push_str(")"); }
+            else { gen_expr(a, ar, &lb, cg, base); }
             match *base.ty { Typ::TPtr(_i) => lb.push_str("[") | Typ::TOwnPtr(_i) => lb.push_str("[") | Typ::TRune { elem, dir } => lb.push_str("[") | _o => lb.push_str(".data[") }
             gen_expr(a, ar, &lb, cg, index);
             lb.push_str("]");

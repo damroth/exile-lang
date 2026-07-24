@@ -3995,7 +3995,7 @@ fn self_ty_matches(a: Allocator, st: Option<*const Typ>, target: *const Vec<str>
 }
 fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                     expected: Option<*const Typ>, recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
-    if is_rune_reg_index(env, recv) {
+    if is_rune_reg_index(sc, env, recv) {
         return elab_rune_reg_method_expr(a, ar, g, sc, env, recv, name, args, p);
     }
     let trecv = elab_expr(a, ar, g, sc, env, none_ty(), recv);
@@ -6656,18 +6656,42 @@ fn is_rune_reg_ty(t: *const Typ) -> bool {
     return match *t { Typ::TRune { elem, dir } => is_array_ty(elem) | _o => false };
 }
 // `e` is `Index{v, i}` where v is a register-file rune var — a PURE benv lookup.
-fn is_rune_reg_index(benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
+fn is_rune_reg_index(sc: *const TyScope, benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
     return match *e {
-        Expr::Index { base, index } => rune_reg_var_ty(benv, base)
+        Expr::Index { base, index } => rune_reg_var_ty(sc, benv, base)
         | _o => false
     };
 }
-fn rune_reg_var_ty(benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
+fn typeann_is_array(t: *const TypeAnn) -> bool {
+    return match *t { TypeAnn::TyArray { elem, size } => true | _o => false };
+}
+// Is ward type `wname`'s field `fname` a register file (its elem an array)?
+fn ward_reg_field(sc: *const TyScope, wname: str, fname: str) -> bool {
+    let sl = sc.sc_wards.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_wards.length() {
+        if str::eq(sl[i].wfe_ward, wname) && str::eq(sl[i].wfe_name, fname) { return typeann_is_array(sl[i].wfe_elem); }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// `w.f` where f is a register-file field — the index base for `w.f[i]`.
+fn ward_field_is_reg(sc: *const TyScope, benv: *const Vec<FieldTy>, t: *const Expr, f: str) -> bool {
+    return match *t {
+        Expr::Var(vname, _p) => match env_lookup(benv, vname) {
+            Option::Some(ty) => match *ty { Typ::TWard { path, base, base_sym } => ward_reg_field(sc, path_last(&path), f) | _o => false }
+            | Option::None => false
+        }
+        | _o => false
+    };
+}
+fn rune_reg_var_ty(sc: *const TyScope, benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
     return match *e {
         Expr::Var(vname, _p) => match env_lookup(benv, vname) {
             Option::Some(t) => is_rune_reg_ty(t)
             | Option::None => false
         }
+        | Expr::FieldAccess(t, f, _q) => ward_field_is_reg(sc, benv, t, f)
         | _o => false
     };
 }
@@ -6776,7 +6800,7 @@ fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     let is_wardf = is_ward_field_access(env, receiver);
     if is_wardf && str::eq(name, "write") { return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_wardf && str::eq(name, "strobe") { return elab_rune_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
-    let is_reg = is_rune_reg_index(env, receiver);
+    let is_reg = is_rune_reg_index(sc, env, receiver);
     if is_reg && str::eq(name, "write") { return elab_rune_reg_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_reg && str::eq(name, "strobe") { return elab_rune_reg_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     return Tstmt::TExprStmt(elab_expr(a, ar, g, sc, env, none_ty(), whole));
