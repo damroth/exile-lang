@@ -1,0 +1,20 @@
+// ward Increment 4 — top-level ward instances (WARD-SPEC §3; mirror rune Inc4
+// Half B). A ward instance at file scope is visible in every function, zero
+// storage (I-W1): no C object, and each field access folds to (baseUL + offsetUL)
+// at its use-site, IDENTICALLY from every function. Two instances of one type at
+// two bases — the NDK case, the reason type-instance are separate.
+ward Custom {
+    cop1lc:  u32 at 0x080 write;
+    copjmp1: u16 at 0x088 write;
+}
+ward chipa: Custom at 0xDFF000;
+ward chipb: Custom at 0xDE0000;
+
+fn program_a(list_addr: u32) { chipa.cop1lc.write(list_addr); }   // (14675968 + 128)
+fn restart_a() { chipa.cop1lc.write(0); }                        // SAME field, SAME fold
+fn program_b(list_addr: u32) { chipb.cop1lc.write(list_addr); }   // (14548992 + 128), different base
+fn main() {
+    program_a(4096);
+    restart_a();
+    program_b(8192);
+}
