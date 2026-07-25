@@ -1,0 +1,9 @@
+// W2 (WARD-SPEC §5): an instance base must be a compile-time constant — an
+// integer (MMIO) or &GLOBAL (RAM). A runtime value is not a base in v1
+// (a discovered base is a later era). Inherited from rune R3.
+ward C { a: u32 at 0x00 write; }
+fn main() {
+    let b = 100;
+    ward c: C at b;
+    c.a.write(1);
+}

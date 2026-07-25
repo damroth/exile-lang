@@ -1107,6 +1107,27 @@ selfhost-ward: $(EXILC_BIN)
 	if grep -q 'internal:' $(C_OUT)/ward_tg.err; then echo "selfhost-ward: top-level &GLOBAL is ICE-enforced, not clean (R3b mirror)"; exit 1; fi; \
 	grep -q 'top-level ward base must be an integer' $(C_OUT)/ward_tg.err \
 	  || { echo "selfhost-ward: top-level &GLOBAL wrong message: `head -1 $(C_OUT)/ward_tg.err`"; exit 1; }; \
+	for row in \
+	  "W2|reject_nonconst_base|must be an integer (MMIO) or \`&GLOBAL\` (RAM)" \
+	  "W3|reject_unknown_field|no field 'zzz' on ward 'C'" \
+	  "W5|reject_ward_as_value|a ward is an overlay, not a value" \
+	  "W4-R1|reject_field_r1|cannot write a read-only rune" \
+	  "W4-R7|reject_field_r7|does not fit the rune's width" \
+	  "W4-R5|reject_field_r5|a rune is not an ordinary pointer" ; do \
+	  id=`echo "$$row" | cut -d'|' -f1`; fx=`echo "$$row" | cut -d'|' -f2`; msg=`echo "$$row" | cut -d'|' -f3`; \
+	  rm -f $(C_OUT)/wrow.c $(C_OUT)/wrow.err; \
+	  if $(EXILC_BIN) --target c --c-out $(C_OUT)/wrow.c tests/ward/$$fx.exl >/dev/null 2>$(C_OUT)/wrow.err; then \
+	    echo "selfhost-ward: $$id — port ACCEPTED tests/ward/$$fx.exl"; exit 1; fi; \
+	  if [ ! -s $(C_OUT)/wrow.err ]; then echo "selfhost-ward: $$id empty diagnostic (floor)"; exit 1; fi; \
+	  if grep -q 'internal:' $(C_OUT)/wrow.err; then echo "selfhost-ward: $$id is ICE-enforced, not a clean diagnostic"; exit 1; fi; \
+	  grep -qF "$$msg" $(C_OUT)/wrow.err \
+	    || { echo "selfhost-ward: $$id wrong message: `head -1 $(C_OUT)/wrow.err`"; exit 1; }; \
+	done; \
+	rm -f $(C_OUT)/ward_ai.c $(C_OUT)/ward_ai.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_ai.c tests/ward/accept_runtime_index.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-ward: ACCEPT-probe — port REJECTED a runtime register-file index (I-R4 is deliberately unchecked; the limit is a contract)"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/ward_ai.c -o $(C_OUT)/ward_ai.o \
+	  || { echo "selfhost-ward: ACCEPT-probe C is not clean at -O2"; exit 1; }; \
 	rm -f $(C_OUT)/ward_rr.c $(HOST_OUT)/ward_rr $(C_OUT)/ward_rr.out $(C_OUT)/ward_rr.expected; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_rr.c tests/ward/ward_roundtrip.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-ward: port rejected the ward-over-RAM witness"; exit 1; }; \
@@ -1118,7 +1139,7 @@ selfhost-ward: $(EXILC_BIN)
 	printf '43981\n4660\n255\n' > $(C_OUT)/ward_rr.expected; \
 	if ! diff -q $(C_OUT)/ward_rr.expected $(C_OUT)/ward_rr.out >/dev/null; then \
 	  echo "selfhost-ward: ward-over-RAM WRONG (offsets/disjointness broken at -O2):"; cat $(C_OUT)/ward_rr.out; exit 1; fi; \
-	echo "selfhost-ward: clean (spine + W1 overlap-reject (scalar+file) + register-file field color[31]@0x180 + top-level instances (identical fold ×2 + NDK 2-base + &global-reject + I-W1 zero-storage) + ward-over-RAM 43981/4660/255 at -O2; cc -Wall -Werror)"
+	echo "selfhost-ward: clean (spine + register-file field color[31]@0x180 + top-level instances (fold ×2 + NDK 2-base + I-W1 zero-storage) + rejection table W1-W5 (W1 scalar+file, W2, W3, W4→R1/R5/R7 through a FIELD, W5) + ACCEPT runtime-index limit + ward-over-RAM 43981/4660/255 at -O2; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

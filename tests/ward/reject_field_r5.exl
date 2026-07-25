@@ -1,0 +1,7 @@
+// W4 → R5 (I-W3): the extracted field is foreign — never the target of `&`.
+ward C { reg: u32 at 0x00 write; }
+fn main() {
+    ward c: C at 0xDFF000;
+    let p = &c.reg;
+    c.reg.write(1);
+}

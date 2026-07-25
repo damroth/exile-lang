@@ -1,0 +1,12 @@
+// MIRROR-THE-LIMITS (WARD-SPEC §5 note): a RUNTIME index into a ward register
+// file is deliberately NOT bounds-checked (I-R4, the performance compass — the
+// 68000 does not pay for a check on a palette loop). This fixture pins the
+// DECLINING case: it must keep COMPILING, so the boundary is a contract rather
+// than a silence. A static out-of-extent index is still R4 (reject_*).
+ward C { color: [u16; 32] at 0x180 write; }
+ward custom: C at 0xDFF000;
+fn clear() {
+    let mut i = 0 as u32;
+    while i < 32 as u32 { custom.color[i].write(0); i = i + 1 as u32; }
+}
+fn main() { clear(); }

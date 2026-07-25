@@ -1699,9 +1699,22 @@ fn fn_ptr_of_global(a: Allocator, ar: *Arena, sc: *const TyScope, gf: GlobalFn) 
 // its fn-ptr type (auto-converts to a fn-ptr in C).  Unknown names defer.
 fn elab_var(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>, name: str, p: Pos) -> *const Texpr {
     return match env_lookup(env, name) {
-        Option::Some(t) => te_node(ar, TexprNode::TVar(name), t, p)
+        Option::Some(t) => elab_var_bound(ar, sc, name, t, p)
         | Option::None => elab_var_global(a, ar, g, sc, name, p)
     };
+}
+// W5 (I-W1): a ward instance is an OVERLAY, not a value.  A fixed-base instance
+// has zero runtime storage, so there is nothing to copy, point at, or pass — a
+// ward var resolves ONLY as the target of a field access (which looks it up in the
+// benv directly, never through here).  Reaching this with a ward type means the
+// instance was used as a value; say so, rather than letting codegen ICE on a type
+// that has no C form.
+fn elab_var_bound(ar: *Arena, sc: *const TyScope, name: str, t: *const Typ, p: Pos) -> *const Texpr {
+    if is_ward_ty(t) {
+        tc_fail(ar, sc, p, "a ward is an overlay, not a value; access its fields");
+        return defer_expr(ar, p);
+    }
+    return te_node(ar, TexprNode::TVar(name), t, p);
 }
 
 fn elab_var_global(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, name: str, p: Pos) -> *const Texpr {
@@ -5696,8 +5709,29 @@ fn ward_field_from_type(a: Allocator, ar: *Arena, sc: *const TyScope, wty: *cons
         | _o => defer_expr(ar, p)
     };
 }
+// The ward type a bare var is bound to — a PURE benv lookup, so a ward instance
+// is never elaborated as a VALUE (that is W5, rejected in elab_var).
+fn ward_var_ty(benv: *const Vec<FieldTy>, e: *const Expr) -> Option<*const Typ> {
+    let none: Option<*const Typ> = Option::None;
+    return match *e {
+        Expr::Var(vname, _p) => match env_lookup(benv, vname) {
+            Option::Some(t) => if is_ward_ty(t) { Option::Some(t) } else { none }
+            | Option::None => none
+        }
+        | _o => none
+    };
+}
+// A ward instance's field is resolved from the benv WITHOUT elaborating the
+// instance as a value (I-W1 — it has no value form; using one is W5).
 fn elab_field_access(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                      env: *const Vec<FieldTy>, target: *const Expr, field: str, p: Pos) -> *const Texpr {
+    return match ward_var_ty(env, target) {
+        Option::Some(wty) => ward_field_from_type(a, ar, sc, wty, field, p)
+        | Option::None => elab_field_access_value(a, ar, g, sc, env, target, field, p)
+    };
+}
+fn elab_field_access_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+                           env: *const Vec<FieldTy>, target: *const Expr, field: str, p: Pos) -> *const Texpr {
     let tt = elab_expr(a, ar, g, sc, env, none_ty(), target);
     if is_ward_ty(tt.ty) { return ward_field_from_type(a, ar, sc, tt.ty, field, p); }
     return match struct_field_ty(sc, tt.ty, field) {

@@ -1,0 +1,7 @@
+// W4 → R7 (I-W3): a too-wide value into a u16 field would truncate silently into
+// hardware — rejected through the field, exactly as on a standalone rune.
+ward C { reg: u16 at 0x02 write; }
+fn main() {
+    ward c: C at 0xDFF000;
+    c.reg.write(70000);
+}

@@ -1,0 +1,9 @@
+// W5 (WARD-SPEC §5, I-W1): a ward instance is an overlay, not a value. With zero
+// runtime storage there is nothing to point at — `&inst` has no referent. This
+// names the impossible instead of letting codegen ICE on a type with no C form.
+ward C { a: u32 at 0x00 write; }
+fn main() {
+    ward c: C at 0xDFF000;
+    let p = &c;
+    c.a.write(1);
+}

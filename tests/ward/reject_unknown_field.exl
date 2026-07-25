@@ -1,0 +1,6 @@
+// W3 (WARD-SPEC §5, I-W1): the overlay names exactly its declared fields.
+ward C { a: u32 at 0x00 write; }
+fn main() {
+    ward c: C at 0xDFF000;
+    c.zzz.write(1);
+}
