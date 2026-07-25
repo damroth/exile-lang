@@ -772,6 +772,15 @@ fn render_item(it: *const Item, out: *StringBuilder) {
             out.push_str(match dir { Direction::DRead => "read" | Direction::DWrite => "write" | Direction::DReadWrite => "readwrite" });
             out.push_str(")");
         }
+        | Item::WardInstDecl { name, ward_ty, addr, pos } => {
+            out.push_str("(ward-inst-item ");
+            out.push_str(name);
+            out.push_str(" ");
+            out.push_str(ward_ty);
+            out.push_str(" ");
+            render_expr(addr, out);
+            out.push_str(")");
+        }
         | Item::WardDecl { name, fields, pos } => {
             out.push_str("(ward ");
             out.push_str(name);

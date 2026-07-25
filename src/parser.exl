@@ -1762,6 +1762,45 @@ fn parse_ward_decl(s: *Parser) -> Item {
 fn ward_decl_name(it: *const Item) -> str {
     return match *it { Item::WardDecl { name, fields, pos } => name | _o => "" };
 }
+// A top-level `ward name: Type at ADDR;` instance (WARD-SPEC §3, Increment 4).
+fn parse_ward_inst_item(s: *Parser) -> Item {
+    let pos = peek_pos(s);
+    bump(s);
+    let np = expect_ident(s, "ward instance name after 'ward'");
+    expect(s, Token::Colon);
+    let tp = expect_ident(s, "ward type name after ':'");
+    let at = expect_ident(s, "'at' before a ward instance base");
+    if !str::eq(at.name, "at") {
+        fail(s, at.pos, "expected 'at' before a ward instance base");
+    }
+    let addr = parse_expr(s);
+    expect(s, Token::Semicolon);
+    return Item::WardInstDecl { name: np.name, ward_ty: tp.name, addr: addr, pos: pos };
+}
+fn ward_inst_item_name(it: *const Item) -> str {
+    return match *it { Item::WardInstDecl { name, ward_ty, addr, pos } => name | _o => "" };
+}
+// `ward Ident { … }` is a TYPE; `ward ident : Type …` is a top-level INSTANCE —
+// disambiguated by the token after the name (peek3, past `ward` and the name).
+fn is_ward_type_item(s: *const Parser) -> bool {
+    return match peek3(s) { Token::LBrace => true | _o => false };
+}
+fn parse_ward_item(s: *Parser, out: *Vec<Item>, seen: *Vec<str>) {
+    let wpos = peek_pos(s);
+    if is_ward_type_item(s) {
+        let wd = parse_ward_decl(s);
+        let nwa = ward_decl_name(&wd);
+        check_scope_name(s, nwa, wpos, seen);
+        out.push(wd);
+        seen.push(nwa);
+    } else {
+        let wi = parse_ward_inst_item(s);
+        let nwi = ward_inst_item_name(&wi);
+        check_scope_name(s, nwi, wpos, seen);
+        out.push(wi);
+        seen.push(nwi);
+    }
+}
 
 // The direction sigil that suffixes a rune declaration (RUNE-SPEC axis 2): it
 // is always explicit, so a missing / misspelled word is a parse error naming
@@ -3211,14 +3250,7 @@ fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool, seen: *Vec<str>) {
             out.push(Item::RuneDecl { name: rp.rp_name, elem: rp.rp_elem, addr: rp.rp_addr, dir: rp.rp_dir, pos: rp.rp_pos });
             seen.push(nru);
         }
-        | Token::Ward => {
-            let wpos = peek_pos(s);
-            let wd = parse_ward_decl(s);
-            let nwa = ward_decl_name(&wd);
-            check_scope_name(s, nwa, wpos, seen);
-            out.push(wd);
-            seen.push(nwa);
-        }
+        | Token::Ward => { parse_ward_item(s, out, seen); }
         | Token::Type => {
             let td = parse_type_alias_decl(s, is_pub);
             check_scope_name(s, td.taname, td.tapos, seen);

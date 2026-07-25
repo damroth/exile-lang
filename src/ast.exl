@@ -413,6 +413,11 @@ pub enum Item {
     // A `ward Name { fields }` overlay TYPE — layout only, no base, emits nothing
     // (WARD-SPEC §3, Phase 2).  An instance binds the base separately.
     | WardDecl { name: str, fields: Vec<WardField>, pos: Pos }
+    // A TOP-LEVEL `ward name: Type at ADDR;` instance — visible in every function
+    // (WARD-SPEC §3, Increment 4).  Zero storage (I-W1): emits nothing; the base
+    // folds into each field access.  Int MMIO base only (a top-level `&GLOBAL` is
+    // rejected, mirroring rune R3b).  Same fields as the local `Stmt::WardInst`.
+    | WardInstDecl { name: str, ward_ty: str, addr: *const Expr, pos: Pos }
 }
 
 pub struct ModuleDecl {

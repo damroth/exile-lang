@@ -1091,6 +1091,22 @@ selfhost-ward: $(EXILC_BIN)
 	  echo "selfhost-ward: W1(file) — port ACCEPTED a file overlapping a scalar"; exit 1; fi; \
 	grep -q "fields 'bank' \[0, 16) and 'x' \[8, 10) overlap" $(C_OUT)/ward_fo.err \
 	  || { echo "selfhost-ward: W1(file) wrong message (file range N·size): `head -1 $(C_OUT)/ward_fo.err`"; exit 1; }; \
+	rm -f $(C_OUT)/ward_tl.c $(C_OUT)/ward_tl.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_tl.c tests/ward/top_level.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-ward: port rejected the top-level ward fixture"; exit 1; }; \
+	tla=`grep -c '(14675968UL + 128UL))' $(C_OUT)/ward_tl.c`; \
+	if [ "$$tla" != "2" ]; then echo "selfhost-ward: top-level field fold not identical per use-site — expected 2 (chipa.cop1lc from 2 fns), got $$tla"; exit 1; fi; \
+	grep -q '(14548992UL + 128UL))' $(C_OUT)/ward_tl.c \
+	  || { echo "selfhost-ward: NDK second-instance fold missing (chipb at a different base)"; exit 1; }; \
+	if grep -qE 'chipa|chipb' $(C_OUT)/ward_tl.c; then echo "selfhost-ward: top-level ward instance leaked into C (I-W1 zero-storage violated)"; exit 1; fi; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/ward_tl.c -o $(C_OUT)/ward_tl.o \
+	  || { echo "selfhost-ward: top-level ward C is not clean C89 at -O2"; exit 1; }; \
+	rm -f $(C_OUT)/ward_tg.c $(C_OUT)/ward_tg.err; \
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/ward_tg.c tests/ward/reject_toplevel_ampglobal.exl >/dev/null 2>$(C_OUT)/ward_tg.err; then \
+	  echo "selfhost-ward: top-level &GLOBAL — port ACCEPTED"; exit 1; fi; \
+	if grep -q 'internal:' $(C_OUT)/ward_tg.err; then echo "selfhost-ward: top-level &GLOBAL is ICE-enforced, not clean (R3b mirror)"; exit 1; fi; \
+	grep -q 'top-level ward base must be an integer' $(C_OUT)/ward_tg.err \
+	  || { echo "selfhost-ward: top-level &GLOBAL wrong message: `head -1 $(C_OUT)/ward_tg.err`"; exit 1; }; \
 	rm -f $(C_OUT)/ward_rr.c $(HOST_OUT)/ward_rr $(C_OUT)/ward_rr.out $(C_OUT)/ward_rr.expected; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_rr.c tests/ward/ward_roundtrip.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-ward: port rejected the ward-over-RAM witness"; exit 1; }; \
@@ -1102,7 +1118,7 @@ selfhost-ward: $(EXILC_BIN)
 	printf '43981\n4660\n255\n' > $(C_OUT)/ward_rr.expected; \
 	if ! diff -q $(C_OUT)/ward_rr.expected $(C_OUT)/ward_rr.out >/dev/null; then \
 	  echo "selfhost-ward: ward-over-RAM WRONG (offsets/disjointness broken at -O2):"; cat $(C_OUT)/ward_rr.out; exit 1; fi; \
-	echo "selfhost-ward: clean (spine base+offset fold, I-W1 zero-storage, I-W3 field=rune + W1 overlap-reject (scalar+file) + register-file field color[31]@0x180 + ward-over-RAM 43981/4660/255 mixed-width+gap at -O2; cc -Wall -Werror)"
+	echo "selfhost-ward: clean (spine + W1 overlap-reject (scalar+file) + register-file field color[31]@0x180 + top-level instances (identical fold ×2 + NDK 2-base + &global-reject + I-W1 zero-storage) + ward-over-RAM 43981/4660/255 at -O2; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #
