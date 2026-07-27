@@ -1,0 +1,9 @@
+// The other half of attenuation: WIDENING is forbidden. A `write` rune handed to a
+// `readwrite` parameter would fabricate read capability out of a loan — the same
+// sentence that forbids making an `own *T` from a borrow.
+fn both(r: readwrite rune<u16>) { r.write(1); }
+
+fn main() {
+    rune wo: u16 at 0xDFF058 write;
+    both(wo);
+}

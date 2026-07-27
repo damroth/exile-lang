@@ -1,0 +1,23 @@
+// P1 — the rune type in a SIGNATURE (RUNE-SPEC §3): `<dir> rune<T>`, the
+// capability adjective preceding the type exactly as `own *T` does.
+//
+// This is what makes delegation expressible: a rune is first-class (I-R3), but
+// until now it could only be named by a local `let`, so it could never cross a
+// function boundary. Params, return types and register files, all here.
+fn burst(r: write rune<u16>) { r.write(64); }
+
+fn lend() -> write rune<u16> {
+    rune bltsize: u16 at 0xDFF058 write;
+    return bltsize;
+}
+
+fn clear_bank(p: write rune<[u16; 8]>) {
+    let mut i = 0 as u32;
+    while i < 8 as u32 { p[i].write(0); i = i + 1 as u32; }
+}
+
+fn main() {
+    burst(lend());
+    rune bank: [u16; 8] at 0xDFF180 write;
+    clear_bank(bank);
+}

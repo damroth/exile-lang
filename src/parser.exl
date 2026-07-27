@@ -374,6 +374,25 @@ fn mk_own_ty(s: *Parser, inner: *const TypeAnn) -> *const TypeAnn {
     return ty_node(s, TypeAnn::TyOwnPtr(inner));
 }
 
+fn is_dir_word(w: str) -> bool {
+    return str::eq(w, "read") || str::eq(w, "write") || str::eq(w, "readwrite");
+}
+fn dir_of_word(w: str) -> Direction {
+    if str::eq(w, "read") { return Direction::DRead; }
+    if str::eq(w, "write") { return Direction::DWrite; }
+    return Direction::DReadWrite;
+}
+// `rune<T>` with the direction already consumed.  The angle-bracket pair is the
+// same shape `Vec<T>` uses; the element may itself be a register file
+// (`write rune<[u16; 8]>`), which parse_type handles recursively.
+fn parse_rune_ty(s: *Parser, dir: Direction) -> *const TypeAnn {
+    bump(s);
+    expect(s, Token::Lt);
+    let elem = parse_type(s);
+    expect(s, Token::Gt);
+    return ty_node(s, TypeAnn::TyRune { elem: elem, dir: dir });
+}
+
 fn parse_type(s: *Parser) -> *const TypeAnn {
     if is_err(s) { return dummy_ty(s); }
     let tp = advance(s);
@@ -385,6 +404,12 @@ fn parse_type(s: *Parser) -> *const TypeAnn {
             }
             let own_inner = parse_type(s);
             mk_own_ty(s, own_inner)
+        }
+        // A bare `rune<T>` has no direction, and a direction is never implicit
+        // (RUNE-SPEC axis 2 — the same decision as the declaration form).
+        | Token::Rune => {
+            fail(s, tp.pos, "a rune type needs its direction: write `read rune<T>`, `write rune<T>`, or `readwrite rune<T>`");
+            dummy_ty(s)
         }
         | Token::Star => {
             let is_const = peek_is(s, Token::Const);
@@ -464,6 +489,11 @@ fn parse_type_ident(s: *Parser, name: str, _p: Pos) -> *const TypeAnn {
     // `self` receiver carries.  `Self::Item` keeps its path form (the assoc
     // projection), so only an un-qualified `Self` folds here.
     if str::eq(name, "Self") && !peek_is(s, Token::DoubleColon) { return ty_node(s, TypeAnn::TySelf); }
+    // `write rune<T>` (P1): a direction word immediately before `rune` is the
+    // capability adjective, mirroring `own *T`.  `read`/`write`/`readwrite` stay
+    // CONTEXTUAL — only this adjacency gives them meaning, so they remain free as
+    // ordinary names everywhere else.
+    if is_dir_word(name) && peek_is(s, Token::Rune) { return parse_rune_ty(s, dir_of_word(name)); }
     let path = parse_path_tail(s, name);
     let mut args: Vec<*const TypeAnn> = Vec::with_capacity(s.a, 8 as u32);
     if peek_is(s, Token::Lt) {

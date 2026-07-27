@@ -1011,7 +1011,7 @@ selfhost-rune: $(EXILC_BIN)
 	rm -f $(C_OUT)/rjB.c $(C_OUT)/rjB.err; \
 	if $(EXILC_BIN) --target c --c-out $(C_OUT)/rjB.c tests/rune/reject_free_rune.exl >/dev/null 2>$(C_OUT)/rjB.err; then \
 	  echo "selfhost-rune: R6 — port ACCEPTED free(rune)"; exit 1; fi; \
-	grep -q 'got rune' $(C_OUT)/rjB.err \
+	grep -q 'got write rune<u32>' $(C_OUT)/rjB.err \
 	  || { echo "selfhost-rune: R6 wrong message: `head -1 $(C_OUT)/rjB.err`"; exit 1; }; \
 	rm -f $(C_OUT)/rjC.c $(C_OUT)/rjC.err; \
 	if $(EXILC_BIN) --target c --c-out $(C_OUT)/rjC.c tests/rune/reject_write_overflow.exl >/dev/null 2>$(C_OUT)/rjC.err; then \
@@ -1037,6 +1037,28 @@ selfhost-rune: $(EXILC_BIN)
 	  || { echo "selfhost-rune: MISSING top-level register-file use (color[i])"; exit 1; }; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_tl.c -o $(C_OUT)/rune_tl.o \
 	  || { echo "selfhost-rune: top-level rune C is not clean C89 at -O2"; exit 1; }; \
+	rm -f $(C_OUT)/rune_sig.c $(C_OUT)/rune_sig.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_sig.c tests/rune/sig_annotation.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-rune: P1 — port rejected the signature annotation"; exit 1; }; \
+	grep -q 'volatile unsigned short \*r' $(C_OUT)/rune_sig.c \
+	  || { echo "selfhost-rune: P1 param did not lower to a volatile T* (the annotation must be the same type, not a new one)"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_sig.c -o $(C_OUT)/rune_sig.o \
+	  || { echo "selfhost-rune: P1 signature C is not clean C89 at -O2"; exit 1; }; \
+	rm -f $(C_OUT)/rune_att.c; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_att.c tests/rune/accept_attenuation.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-rune: ACCEPT-probe — port REJECTED attenuation (readwrite lent as read/write is FEWER rights)"; exit 1; }; \
+	for row in \
+	  "P1-dir|reject_sig_direction|expected write rune<u16>, got read rune<u16>" \
+	  "P1-widen|reject_sig_widening|expected readwrite rune<u16>, got write rune<u16>" \
+	  "P1-bare|reject_bare_rune_ty|a rune type needs its direction" ; do \
+	  id=`echo "$$row" | cut -d'|' -f1`; fx=`echo "$$row" | cut -d'|' -f2`; msg=`echo "$$row" | cut -d'|' -f3`; \
+	  rm -f $(C_OUT)/prow.c $(C_OUT)/prow.err; \
+	  if $(EXILC_BIN) --target c --c-out $(C_OUT)/prow.c tests/rune/$$fx.exl >/dev/null 2>$(C_OUT)/prow.err; then \
+	    echo "selfhost-rune: $$id — port ACCEPTED tests/rune/$$fx.exl"; exit 1; fi; \
+	  if grep -q 'internal:' $(C_OUT)/prow.err; then echo "selfhost-rune: $$id is ICE-enforced"; exit 1; fi; \
+	  grep -qF "$$msg" $(C_OUT)/prow.err \
+	    || { echo "selfhost-rune: $$id wrong message: `head -1 $(C_OUT)/prow.err`"; exit 1; }; \
+	done; \
 	rm -f $(C_OUT)/rune_rr.c $(HOST_OUT)/rune_rr $(C_OUT)/rune_rr.out $(C_OUT)/rune_rr.expected; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_rr.c tests/rune/ram_roundtrip.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-rune: port rejected the rune-over-RAM witness"; exit 1; }; \
@@ -1048,7 +1070,7 @@ selfhost-rune: $(EXILC_BIN)
 	printf '11\n22\n0\n305419896\n' > $(C_OUT)/rune_rr.expected; \
 	if ! diff -q $(C_OUT)/rune_rr.expected $(C_OUT)/rune_rr.out >/dev/null; then \
 	  echo "selfhost-rune: rune-over-RAM round-trip WRONG (volatile lowering broken at -O2):"; cat $(C_OUT)/rune_rr.out; exit 1; fi; \
-	echo "selfhost-rune: clean (golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R7 (R1/R2/R3b/R4/R5/R6/R7) + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
+	echo "selfhost-rune: clean (golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R7 + P1 signatures (dir across the call boundary, widening, bare) + ACCEPT attenuation + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
 
 # ===== ward capability — the port's golden gate (WARD-SPEC, Phase 2) =====
 #

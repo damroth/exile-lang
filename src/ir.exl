@@ -386,10 +386,13 @@ fn typ_name_pfx(a: Allocator, ar: *Arena, pfx: str, inner: *const Typ) -> str {
     sb.push_str(typ_name(a, ar, inner));
     return str::from_slice(ar, sb.as_slice());
 }
-// `rune<T>` — the direction is not shown (RUNE-SPEC §3: the signature form is
-// `rune<u32>`); it participates in type identity but not the user-facing name.
-fn typ_name_rune(a: Allocator, ar: *Arena, elem: *const Typ) -> str {
+// `write rune<T>` — the SIGNATURE form (RUNE-SPEC §3, P1), direction included.
+// It has to be: the direction is part of type identity (`typ_eq` compares it), so
+// a printer that dropped it would render a direction mismatch as
+// "expected rune<u16>, got rune<u16>".  Printed form == source form.
+fn typ_name_rune(a: Allocator, ar: *Arena, elem: *const Typ, dir: Direction) -> str {
     let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(match dir { Direction::DRead => "read " | Direction::DWrite => "write " | Direction::DReadWrite => "readwrite " });
     sb.push_str("rune<");
     sb.push_str(typ_name(a, ar, elem));
     sb.push_str(">");
@@ -449,7 +452,7 @@ pub fn typ_name(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TPtr(i) => typ_name_pfx(a, ar, "*", i)
         | Typ::TOwnPtr(i) => typ_name_pfx(a, ar, "own *", i)
         | Typ::TConstPtr(i) => typ_name_pfx(a, ar, "*const ", i)
-        | Typ::TRune { elem, dir } => typ_name_rune(a, ar, elem)
+        | Typ::TRune { elem, dir } => typ_name_rune(a, ar, elem, dir)
         | Typ::TArray { elem, size } => typ_name_arr(a, ar, elem, size)
         | Typ::TFnPtr { params, ret } => typ_name_fnptr(a, ar, &params, ret)
         | Typ::TNullPtr => "*<null>"
@@ -613,7 +616,22 @@ pub fn coercible_to(from: *const Typ, to: *const Typ) -> bool {
             | Typ::TConstPtr(y) => typ_eq(x, y)
             | _o => false
         }
+        // Direction ATTENUATION (P1): a `readwrite` rune may be lent where a
+        // `read` or `write` one is expected — fewer rights than you hold.  The
+        // reverse would fabricate a capability from a loan, forbidden by the same
+        // sentence that forbids making an `own *T` out of a borrow.
+        | Typ::TRune { elem, dir } => match *to {
+            Typ::TRune { elem: e2, dir: d2 } => typ_eq(elem, e2) && dir_attenuates(dir, d2)
+            | _o => false
+        }
         | _o => false
+    };
+}
+// `readwrite` covers both, so it may narrow to either; anything else must match.
+pub fn dir_attenuates(from: Direction, to: Direction) -> bool {
+    return match from {
+        Direction::DReadWrite => true
+        | _o => dir_eq(from, to)
     };
 }
 

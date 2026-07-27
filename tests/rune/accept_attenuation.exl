@@ -1,0 +1,12 @@
+// ATTENUATION (P1): a `readwrite` rune may be lent where a `read` or a `write` one
+// is expected — you lend FEWER rights than you hold. This is the same relation
+// `coercible_to` already implements for `own *T -> *T`; the reverse (fabricating a
+// capability from a loan) stays forbidden, pinned by reject_sig_widening.exl.
+fn writer(r: write rune<u16>) { r.write(1); }
+fn reader(r: read rune<u16>) -> u16 { return r.read(); }
+
+fn main() {
+    rune rw: u16 at 0xDFF058 readwrite;
+    writer(rw);
+    println(reader(rw) as i32);
+}

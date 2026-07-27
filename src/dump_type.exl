@@ -136,6 +136,13 @@ pub fn render_type_ann(ann: *const TypeAnn, out: *StringBuilder) {
             render_type_ann(t, out);
             out.push_str(")");
         }
+        | TypeAnn::TyRune { elem, dir } => {
+            out.push_str("(rune-ty ");
+            out.push_str(match dir { Direction::DRead => "read" | Direction::DWrite => "write" | Direction::DReadWrite => "readwrite" });
+            out.push_str(" ");
+            render_type_ann(elem, out);
+            out.push_str(")");
+        }
         | TypeAnn::TyOwnPtr(t) => {
             out.push_str("(own-ptr ");
             render_type_ann(t, out);

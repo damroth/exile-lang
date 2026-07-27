@@ -1,0 +1,12 @@
+// The teeth of P1: R1/R2 must survive the CALL BOUNDARY. A read-only rune passed
+// where a writer is expected is rejected AT THE CALL SITE — without the direction
+// in the type, this program would compile and write a read-only register.
+//
+// It also proves the printer: the diagnostic names both directions, where a
+// direction-dropping printer would say "expected rune<u16>, got rune<u16>".
+fn burst(r: write rune<u16>) { r.write(64); }
+
+fn main() {
+    rune status: u16 at 0xDFF002 read;
+    burst(status);
+}

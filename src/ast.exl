@@ -159,6 +159,10 @@ pub enum TypeAnn {
     | TyArray { elem: *const TypeAnn, size: *const Expr }
     | TySelf
     | TyFnPtr { params: Vec<*const TypeAnn>, ret: Option<*const TypeAnn> }
+    // `write rune<T>` — an MMIO handle in a SIGNATURE (RUNE-SPEC §3, P1).  The
+    // direction is part of the type, so R1/R2 survive the call boundary; the
+    // capability adjective PRECEDES the type it qualifies, exactly as `own *T`.
+    | TyRune { elem: *const TypeAnn, dir: Direction }
 }
 
 // ===== Expressions =====

@@ -58,6 +58,7 @@ fn resolve_type_ann(a: Allocator, ar: *Arena, ann: *const TypeAnn) -> *const Typ
         | TypeAnn::TyFloat(w) => ty_node(ar, Typ::TFloat(w))
         | TypeAnn::TyPtr(t) => ty_node(ar, Typ::TPtr(resolve_type_ann(a, ar, t)))
         | TypeAnn::TyOwnPtr(t) => ty_node(ar, Typ::TOwnPtr(resolve_type_ann(a, ar, t)))
+        | TypeAnn::TyRune { elem, dir } => ty_node(ar, Typ::TRune { elem: resolve_type_ann(a, ar, elem), dir: dir })
         | TypeAnn::TyConstPtr(t) => ty_node(ar, Typ::TConstPtr(resolve_type_ann(a, ar, t)))
         | _other => ty_node(ar, Typ::TCVoid)
     };
@@ -1479,6 +1480,7 @@ fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const Type
     return match *ann {
         TypeAnn::TyPtr(t) => ty_node(ar, Typ::TPtr(resolve_sig_ty(a, ar, sc, t, p)))
         | TypeAnn::TyOwnPtr(t) => ty_node(ar, Typ::TOwnPtr(resolve_sig_ty(a, ar, sc, t, p)))
+        | TypeAnn::TyRune { elem, dir } => ty_node(ar, Typ::TRune { elem: resolve_sig_ty(a, ar, sc, elem, p), dir: dir })
         | TypeAnn::TyConstPtr(t) => ty_node(ar, Typ::TConstPtr(resolve_sig_ty(a, ar, sc, t, p)))
         | TypeAnn::TyStruct { path, args } => resolve_named_ty(a, ar, sc, &path, &args, p)
         | TypeAnn::TyTuple(elems) => ty_node(ar, Typ::TTuple(resolve_sig_args(a, ar, sc, &elems, p)))
