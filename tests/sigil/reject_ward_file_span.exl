@@ -1,0 +1,14 @@
+// The ward-register-file x sigil CROSSING: a file field whose BASE is outside the
+// resource but whose SPAN reaches in. [u16; 8] at 0xDFF038 covers
+// [0xDFF038, 0xDFF048), intersecting Blitter's [0xDFF040, …). Both span rules —
+// ward's N.sizeof(T) and sigil's intersection — have to be right at once.
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+ward Custom { bank: [u16; 8] at 0x038 write; }
+
+mod gfx   { own Blitter; }
+mod sound {
+    ward custom: Custom at 0xDFF000;
+    pub fn steal() { custom.bank[0].write(1); }
+}
+
+fn main() { sound::steal(); }

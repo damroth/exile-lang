@@ -1,0 +1,13 @@
+// S2 through a WARD FIELD (SIGIL-SPEC §4.2): the second materialisation site.
+// custom.bltsize folds to 0xDFF000 + 0x058 = 0xDFF058, inside Blitter — the gate
+// is on the ADDRESS, so re-cutting the map as an overlay changes nothing.
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+ward Custom { bltsize: u16 at 0x058 write; }
+
+mod gfx   { own Blitter; }
+mod sound {
+    ward custom: Custom at 0xDFF000;
+    pub fn steal() { custom.bltsize.write(64); }
+}
+
+fn main() { sound::steal(); }

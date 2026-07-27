@@ -1161,10 +1161,23 @@ selfhost-sigil: $(EXILC_BIN)
 	rm -f $(C_OUT)/sig_ab.c; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/sig_ab.c tests/sigil/accept_boundary.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-sigil: ACCEPT-probe — port REJECTED a boundary-adjacent materialisation (ranges are half-open)"; exit 1; }; \
+	rm -f $(C_OUT)/sig_ow.c $(C_OUT)/sig_ow.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/sig_ow.c tests/sigil/accept_owner_ward.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-sigil: the OWNER's ward-field access was rejected (the gate must not break the owner)"; exit 1; }; \
+	grep -q '(14675968UL + 88UL)) = 64;' $(C_OUT)/sig_ow.c \
+	  || { echo "selfhost-sigil: the owner's ward-field access did not emit its volatile store"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/sig_ow.c -o $(C_OUT)/sig_ow.o \
+	  || { echo "selfhost-sigil: owner ward-field C is not clean C89 at -O2"; exit 1; }; \
+	rm -f $(C_OUT)/sig_fa.c; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/sig_fa.c tests/sigil/accept_file_adjacent.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-sigil: ACCEPT-probe — port REJECTED a register file ending exactly at the resource's lower bound (half-open on the SPAN side)"; exit 1; }; \
 	for row in \
 	  "S2|reject_non_owner|address 0xDFF058 belongs to resource 'Blitter', claimed by 'gfx'" \
 	  "S2-span|reject_span_below|address 0xDFF03E belongs to resource 'Blitter', claimed by 'gfx'" \
-	  "claim|reject_unknown_claim|unknown resource 'Blittter'" ; do \
+	  "claim|reject_unknown_claim|unknown resource 'Blittter'" \
+	  "S2-ward|reject_ward_field|address 0xDFF058 belongs to resource 'Blitter', claimed by 'gfx'" \
+	  "S2-wardfile|reject_ward_file_span|address 0xDFF038 belongs to resource 'Blitter', claimed by 'gfx'" \
+	  "S2-file|reject_file_below|address 0xDFF038 belongs to resource 'Blitter', claimed by 'gfx'" ; do \
 	  id=`echo "$$row" | cut -d'|' -f1`; fx=`echo "$$row" | cut -d'|' -f2`; msg=`echo "$$row" | cut -d'|' -f3`; \
 	  rm -f $(C_OUT)/srow.c $(C_OUT)/srow.err; \
 	  if $(EXILC_BIN) --target c --c-out $(C_OUT)/srow.c tests/sigil/$$fx.exl >/dev/null 2>$(C_OUT)/srow.err; then \
@@ -1174,7 +1187,7 @@ selfhost-sigil: $(EXILC_BIN)
 	  grep -qF "$$msg" $(C_OUT)/srow.err \
 	    || { echo "selfhost-sigil: $$id wrong message: `head -1 $(C_OUT)/srow.err`"; exit 1; }; \
 	done; \
-	echo "selfhost-sigil: clean (owner materialises + uses; S2 teeth (non-owner + span-intersection-from-below) + unknown-claim; ACCEPT boundary-adjacent; zero emission for sigil/claim; cc -Wall -Werror)"
+	echo "selfhost-sigil: clean (owner materialises + uses, bare rune AND ward field; S2 teeth x5 (non-owner, span-from-below, ward field, ward register-file span, standalone file) + unknown-claim; ACCEPT x3 (boundary-adjacent scalar, file ending at the bound, owner ward field); zero emission for sigil/claim; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

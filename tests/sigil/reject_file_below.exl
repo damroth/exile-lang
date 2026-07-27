@@ -1,0 +1,9 @@
+// A STANDALONE register file entering the resource from below: [u16; 8] at
+// 0xDFF038 spans 16 bytes to 0xDFF048. Its base is outside Blitter; a
+// base-membership test would pass it, an intersection test catches it.
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+
+mod gfx   { own Blitter; }
+mod sound { pub fn steal() { rune bank: [u16; 8] at 0xDFF038 write; bank[0].write(1); } }
+
+fn main() { sound::steal(); }

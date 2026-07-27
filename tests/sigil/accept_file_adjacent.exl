@@ -1,0 +1,14 @@
+// MIRROR-THE-LIMITS for spans: a register file ending exactly where the resource
+// begins is DISJOINT and must keep compiling outside the owner. [u16; 8] at
+// 0xDFF030 covers [0xDFF030, 0xDFF040) — touching Blitter's lower bound without
+// intersecting it. Pins half-openness on the SPAN side, not just the scalar side.
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+ward Custom { bank: [u16; 8] at 0x030 write; }
+
+mod gfx   { own Blitter; }
+mod sound {
+    ward custom: Custom at 0xDFF000;
+    pub fn adjacent() { custom.bank[7].write(1); }
+}
+
+fn main() { sound::adjacent(); }
