@@ -1,0 +1,16 @@
+// Correction A, direction 2 (the GREEN side): what the NDK may ship. A top-level
+// ward INSTANCE is safe — it has zero storage and materialises nothing; each FIELD
+// ACCESS materialises at its use-site, so the gate still fires in the USER's
+// module. The owner's access compiles.
+mod ndk {
+    sigil Blitter { 0xDFF040 .. 0xDFF05A }
+    ward Custom { bltsize: u16 at 0x058 write; }
+    ward custom: Custom at 0xDFF000;
+}
+
+mod gfx {
+    own Blitter;
+    pub fn blit() { custom.bltsize.write(64); }
+}
+
+fn main() { gfx::blit(); }

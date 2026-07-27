@@ -1,0 +1,24 @@
+// The DELEGATION witness (SIGIL-SPEC §4.2, §7) on P1's syntax — the story that
+// makes the materialisation gate coherent rather than merely restrictive.
+//
+// The owner MATERIALISES the covered handle and hands it out; the receiver, which
+// owns nothing, writes through it. That is legal and explicit: the owner wrote the
+// code that lent it. v1 proves "only the owner can OBTAIN a handle", not "only the
+// owner can touch the register" — this fixture pins that limit as a contract.
+//
+// It also exercises ATTENUATION at the call site: `paint` holds a readwrite rune
+// and lends it as `write` — fewer rights than it has.
+mod ndk { sigil Blitter { 0xDFF040 .. 0xDFF05A } }
+
+mod gfx {
+    own Blitter;
+    rune bltsize: u16 at 0xDFF058 write;
+    rune bltcon0: u16 at 0xDFF040 readwrite;
+    pub fn lend_size() -> write rune<u16> { return bltsize; }
+    pub fn paint() { fx::burst(bltcon0); }        // readwrite lent as write
+}
+mod fx {
+    pub fn burst(r: write rune<u16>) { r.write(64); }
+}
+
+fn main() { fx::burst(gfx::lend_size()); gfx::paint(); }

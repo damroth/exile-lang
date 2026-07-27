@@ -1,0 +1,14 @@
+// Correction A, direction 2 (the RED side): the same NDK-supplied overlay, the
+// same field, accessed from a module that owns nothing — S2. This is why a
+// chip-wide ward is the right NDK shape and a chip-wide top-level RUNE bank is
+// not: the overlay is gated per register, at the user's access.
+mod ndk {
+    sigil Blitter { 0xDFF040 .. 0xDFF05A }
+    ward Custom { bltsize: u16 at 0x058 write; }
+    ward custom: Custom at 0xDFF000;
+}
+
+mod gfx   { own Blitter; }
+mod sound { pub fn steal() { custom.bltsize.write(64); } }
+
+fn main() { sound::steal(); }

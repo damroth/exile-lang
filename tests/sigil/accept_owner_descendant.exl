@@ -1,0 +1,16 @@
+// Owner scope is the module AND ITS DESCENDANTS (SIGIL-SPEC §4.3): a driver split
+// into submodules is still one owner. Without this fixture the prefix match has no
+// floor — removing descendant support left the gate green, which is how this
+// fixture came to exist (a RED proof revealing missing coverage, not a defect).
+mod ndk { sigil Blitter { 0xDFF040 .. 0xDFF05A } }
+
+mod gfx {
+    own Blitter;
+    mod blit_engine {
+        rune bltsize: u16 at 0xDFF058 write;
+        pub fn go() { bltsize.write(64); }
+    }
+    pub fn run() { blit_engine::go(); }
+}
+
+fn main() { gfx::run(); }

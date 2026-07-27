@@ -1,0 +1,28 @@
+// sigil Increment 4 — the NDK shape (SIGIL-SPEC §4.5): resources are declared by a
+// LIBRARY module, and claimed by whoever owns the silicon. The compiler ships no
+// list of Amiga resources; exile-ndk does, written from the HRM.
+//
+// A multi-resource program with three separate owners — the real driver topology.
+mod ndk {
+    sigil Blitter { 0xDFF040 .. 0xDFF05A }
+    sigil Copper  { 0xDFF080 .. 0xDFF08C }
+    sigil Audio0  { 0xDFF0A0 .. 0xDFF0AA }
+}
+
+mod gfx {
+    own Blitter;
+    rune bltsize: u16 at 0xDFF058 write;
+    pub fn blit() { bltsize.write(64); }
+}
+mod vid {
+    own Copper;
+    rune cop1lc: u32 at 0xDFF080 write;
+    pub fn program(list: u32) { cop1lc.write(list); }
+}
+mod snd {
+    own Audio0;
+    rune aud0vol: u16 at 0xDFF0A8 write;
+    pub fn quiet() { aud0vol.write(0); }
+}
+
+fn main() { vid::program(4096); gfx::blit(); snd::quiet(); }

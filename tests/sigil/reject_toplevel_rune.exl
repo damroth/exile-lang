@@ -1,0 +1,10 @@
+// Correction A, direction 1: a covered TOP-LEVEL rune materialises at its
+// DECLARATION and then sits in every function's benv — an AMBIENT handle nobody
+// delegated. Declared outside the owner, it is S2; without this the whole gate
+// could be bypassed by moving one declaration to file scope.
+mod ndk { sigil Blitter { 0xDFF040 .. 0xDFF05A } }
+
+mod gfx   { own Blitter; }
+mod sound { rune bltsize: u16 at 0xDFF058 write; pub fn steal() { bltsize.write(64); } }
+
+fn main() { sound::steal(); }
