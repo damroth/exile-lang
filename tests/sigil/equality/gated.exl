@@ -1,0 +1,21 @@
+// §8b — the artifact-equality witness, GATED half. Compiled against
+// ungated.exl, which is this file MINUS the sigil declaration and the claim.
+// The emitted C must be byte-identical: a claim is a compile-time fact (I-S5).
+//
+// The program exercises a COVERED access inside the owner (correction C): it
+// proves zero cost on the path ownership GOVERNS, not the erasure of an unused
+// claim.
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+
+mod gfx {
+    own Blitter;
+    rune bltsize: u16 at 0xDFF058 write;
+    rune bltcon0: u16 at 0xDFF040 readwrite;
+    pub fn blit() {
+        bltcon0.write(4095);
+        bltsize.write(64);
+    }
+    pub fn state() -> u16 { return bltcon0.read(); }
+}
+
+fn main() { gfx::blit(); println(gfx::state() as i32); }

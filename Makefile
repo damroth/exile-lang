@@ -1190,7 +1190,9 @@ selfhost-sigil: $(EXILC_BIN)
 	  || { echo "selfhost-sigil: the owner's ward-field access did not emit its volatile store"; exit 1; }; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/sig_ow.c -o $(C_OUT)/sig_ow.o \
 	  || { echo "selfhost-sigil: owner ward-field C is not clean C89 at -O2"; exit 1; }; \
-	for ok in accept_ndk_shape accept_delegation accept_ndk_ward accept_owner_descendant ; do \
+	for ok in accept_ndk_shape accept_delegation accept_ndk_ward accept_owner_descendant \
+	          accept_limit_rawcast accept_limit_standing_delegation accept_limit_redelegation \
+	          accept_limit_mint_narrow accept_limit_intra_owner ; do \
 	  rm -f $(C_OUT)/sig_$$ok.c $(C_OUT)/sig_$$ok.o; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/sig_$$ok.c tests/sigil/$$ok.exl >/dev/null 2>&1 \
 	    || { echo "selfhost-sigil: ACCEPT — port REJECTED tests/sigil/$$ok.exl"; exit 1; }; \
@@ -1235,7 +1237,17 @@ selfhost-sigil: $(EXILC_BIN)
 	  grep -qF "$$msg" $(C_OUT)/srow.err \
 	    || { echo "selfhost-sigil: $$id wrong message: `head -1 $(C_OUT)/srow.err`"; exit 1; }; \
 	done; \
-	echo "selfhost-sigil: clean (owner materialises + uses, bare rune AND ward field; rejection table S1/S2 x5/S3/S5 x2/correction-A x2 + unknown-claim; ACCEPT x8 (boundary-adjacent scalar, file at the bound, owner ward field, touching resources, NDK 3-owner shape, delegation+attenuation, NDK ward instance, owner's descendant module); zero emission for sigil/claim; cc -Wall -Werror)"
+	rm -f $(C_OUT)/sig_eq_g.c $(C_OUT)/sig_eq_u.c; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/sig_eq_g.c tests/sigil/equality/gated.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-sigil: equality witness — the GATED half did not compile"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/sig_eq_u.c tests/sigil/equality/ungated.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-sigil: equality witness — the UNGATED half did not compile"; exit 1; }; \
+	if [ ! -s $(C_OUT)/sig_eq_g.c ]; then echo "selfhost-sigil: equality witness EMPTY C (floor)"; exit 1; fi; \
+	grep -q '\*bltsize = 64;' $(C_OUT)/sig_eq_g.c \
+	  || { echo "selfhost-sigil: equality witness does not exercise a COVERED access (correction C)"; exit 1; }; \
+	if ! cmp -s $(C_OUT)/sig_eq_g.c $(C_OUT)/sig_eq_u.c; then \
+	  echo "selfhost-sigil: I-S5 — a claim changed the emitted C:"; diff $(C_OUT)/sig_eq_g.c $(C_OUT)/sig_eq_u.c | head -6; exit 1; fi; \
+	echo "selfhost-sigil: clean (owner materialises + uses, bare rune AND ward field; rejection table S1/S2 x5/S3/S5 x2/correction-A x2 + unknown-claim; ACCEPT x12 (4 boundary/owner probes + NDK shape, delegation+attenuation, NDK ward, descendant module + the five §7 limits) + I-S5 artifact equality (gated == ungated, byte for byte); zero emission for sigil/claim; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

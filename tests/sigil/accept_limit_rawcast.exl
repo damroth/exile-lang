@@ -1,0 +1,11 @@
+// §7 LIMIT (contract, not hole): sigil gates the CHECKED path — rune and ward
+// materialisation. A raw `int as *T` cast plus a deref reaches the same register
+// and compiles, because that is the unchecked escape hatch the language already
+// has, and closing it here would be a different feature (and a false promise if
+// half-done). The claim's value is that the CHECKED route is exclusive.
+mod ndk { sigil Blitter { 0xDFF040 .. 0xDFF05A } }
+
+mod gfx   { own Blitter; }
+mod sound { pub fn raw() { let p = 0xDFF058 as *u16; *p = 64 as u16; } }
+
+fn main() { sound::raw(); }

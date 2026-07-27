@@ -1,0 +1,12 @@
+// §7 LIMIT: delegation is UNRESTRICTED once the handle exists. The owner lends to
+// one module, which passes it to a third — no tracking follows it, by design
+// (shape A: zero flow analysis, "capabilities not lifetimes"). Restricting this
+// is shape B's job, and shape B is deferred with a named consumer.
+mod ndk { sigil Blitter { 0xDFF040 .. 0xDFF05A } }
+
+mod gfx { own Blitter; rune bs: u16 at 0xDFF058 write;
+          pub fn lend() -> write rune<u16> { return bs; } }
+mod mid { pub fn relay(r: write rune<u16>) { far::sink(r); } }
+mod far { pub fn sink(r: write rune<u16>) { r.write(1); } }
+
+fn main() { mid::relay(gfx::lend()); }

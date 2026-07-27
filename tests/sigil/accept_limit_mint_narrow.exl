@@ -1,0 +1,21 @@
+// §7 LIMIT + the IDIOM it implies. Attenuation holds on arguments and on `let`
+// annotations, but NOT on `return` — and `own *T` has the same asymmetry, which
+// the frozen oracle agrees with, so it is return-path semantics rather than a rune
+// gap (decided 2026-07-27: keep the asymmetry, one coercion story for own and
+// rune).
+//
+// The idiom that makes the limit cost nothing: an owner does not attenuate a wide
+// handle on the way out — it MINTS a narrow one. Rights are fixed when the handle
+// is created, which is cleaner capability thinking than narrowing at the boundary.
+mod ndk { sigil Blitter { 0xDFF040 .. 0xDFF05A } }
+
+mod gfx {
+    own Blitter;
+    rune full:   u16 at 0xDFF058 readwrite;   // what the owner uses itself
+    rune narrow: u16 at 0xDFF058 write;       // what it lends out
+    pub fn lend() -> write rune<u16> { return narrow; }
+    pub fn check() -> u16 { return full.read(); }
+}
+mod fx { pub fn burst(r: write rune<u16>) { r.write(64); } }
+
+fn main() { fx::burst(gfx::lend()); println(gfx::check() as i32); }
