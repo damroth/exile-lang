@@ -1,0 +1,7 @@
+// S5 (SIGIL-SPEC §5): an empty range covers nothing, so it would silently disable
+// the gate for the resource it claims to describe — the worst failure mode a
+// capability check has. The degenerate entry is one of SEVERAL here, so a
+// per-range check is required, not a check of the first.
+sigil Bad { 0xDFF040 .. 0xDFF05A, 0xDFF080 .. 0xDFF080 }
+
+fn main() { }

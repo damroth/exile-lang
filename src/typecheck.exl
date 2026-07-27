@@ -9335,6 +9335,7 @@ fn collect_sigil_one(ar: *Arena, sc: *const TyScope, it: *const Item, out: *Vec<
             while j < ranges.length() {
                 let lo = sigil_addr_int(ar, sc, rl[j].sg_lo, pos);
                 let hi = sigil_addr_int(ar, sc, rl[j].sg_hi, pos);
+                check_sigil_range_sane(ar, sc, name, lo, hi, pos);
                 out.push(SigilRangeEntry { sr_name: name, sr_lo: lo, sr_hi: hi, sr_pos: pos });
                 j = j + 1 as u32;
             }
@@ -9343,6 +9344,78 @@ fn collect_sigil_one(ar: *Arena, sc: *const TyScope, it: *const Item, out: *Vec<
         | _e => { }
     }
 }
+// S5 (I-S4): a range must describe real bytes.  `lo == hi` covers nothing and
+// `hi < lo` is inverted — both are typos that would silently disable coverage,
+// which is the worst failure mode for a gate.  Checked per range, so one bad
+// entry in a LIST is caught even when its siblings are fine.
+fn check_sigil_range_sane(ar: *Arena, sc: *const TyScope, name: str, lo: int, hi: int, p: Pos) {
+    if hi > lo { return; }
+    let a = default_allocator();
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("sigil '"); sb.push_str(name);
+    if hi == lo { sb.push_str("' has an EMPTY range ["); } else { sb.push_str("' has an INVERTED range ["); }
+    sb.push_str("0x"); push_hex_upper(&sb, lo); sb.push_str(", 0x"); push_hex_upper(&sb, hi); sb.push_str(")");
+    if hi < lo { sb.push_str(" — the high bound is below the low"); }
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+}
+// S1 (I-S1): exactly one claimant per resource.  Reported at the SECOND claim and
+// naming BOTH claimants, so the diagnostic is the same fact whichever module the
+// file happens to list first.
+fn check_claim_uniqueness(a: Allocator, ar: *Arena, sc: *const TyScope) {
+    let sl = sc.sc_claims.as_slice();
+    let n = sc.sc_claims.length();
+    let mut i = 0 as u32;
+    while i < n {
+        let mut j = 0 as u32;
+        while j < i {
+            if str::eq(sl[i].cl_name, sl[j].cl_name) {
+                let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+                sb.push_str("resource '"); sb.push_str(sl[i].cl_name);
+                sb.push_str("' is already claimed by '"); sb.push_str(owner_display(sl[j].cl_path));
+                sb.push_str("'; '"); sb.push_str(owner_display(sl[i].cl_path));
+                sb.push_str("' cannot claim it too");
+                tc_fail(ar, sc, sl[i].cl_pos, str::from_slice(ar, sb.as_slice()));
+            }
+            j = j + 1 as u32;
+        }
+        i = i + 1 as u32;
+    }
+}
+fn owner_display(p: str) -> str {
+    if str::eq(p, "") { return "<root>"; }
+    return p;
+}
+// S3 (I-S4): two RESOURCES may not cover overlapping bytes — the mirror of ward's
+// W1, naming both objects and both ranges.  The registry is FLAT (one row per
+// range), so this walks every PAIR of ranges: a collision between the second range
+// of one non-contiguous resource and the first of another is caught like any
+// other.  Same-resource pairs are skipped (I-S4 is about two resources).
+fn check_sigil_overlaps(a: Allocator, ar: *Arena, sc: *const TyScope) {
+    let sl = sc.sc_sigils.as_slice();
+    let n = sc.sc_sigils.length();
+    let mut i = 0 as u32;
+    while i < n {
+        let mut j = i + 1 as u32;
+        while j < n {
+            if !str::eq(sl[i].sr_name, sl[j].sr_name) {
+                if sl[i].sr_lo < sl[j].sr_hi && sl[j].sr_lo < sl[i].sr_hi {
+                    tc_fail(ar, sc, sl[j].sr_pos, sigil_overlap_msg(a, ar, sl[i].sr_name, sl[i].sr_lo, sl[i].sr_hi, sl[j].sr_name, sl[j].sr_lo, sl[j].sr_hi));
+                }
+            }
+            j = j + 1 as u32;
+        }
+        i = i + 1 as u32;
+    }
+}
+fn sigil_overlap_msg(a: Allocator, ar: *Arena, an: str, alo: int, ahi: int, bn: str, blo: int, bhi: int) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    sb.push_str("resources '"); sb.push_str(an); sb.push_str("' [0x"); push_hex_upper(&sb, alo);
+    sb.push_str(", 0x"); push_hex_upper(&sb, ahi); sb.push_str(") and '"); sb.push_str(bn);
+    sb.push_str("' [0x"); push_hex_upper(&sb, blo); sb.push_str(", 0x"); push_hex_upper(&sb, bhi);
+    sb.push_str(") overlap");
+    return str::from_slice(ar, sb.as_slice());
+}
+
 // Claims carry the module path they were written in — the owner scope.
 fn collect_claims(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: str, out: *Vec<ClaimEntry>) {
     let n = items.length();
@@ -16027,6 +16100,9 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // The coverage map must exist BEFORE any function body elaborates — a
     // materialisation gate that runs against an empty registry checks nothing.
     collect_sigils(ar, &base_scope, items, &sigils);
+    check_claims_resolve(a, ar, &base_scope);
+    check_claim_uniqueness(a, ar, &base_scope);
+    check_sigil_overlaps(a, ar, &base_scope);
     check_const_items(a, ar, &base_scope, items);
     // Struct field index + enum variant/field index + method index, carried
     // in every fn's body scope so `s.field`, struct/enum literals, variant
@@ -16335,7 +16411,6 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // (a non-integer top-level address, R3b) tc_fails here, and that diagnostic
     // must reach `err_latched` — otherwise it latches uselessly and codegen aborts
     // on the placeholder (the tl3 ICE).  Placement of a diagnostic is part of it.
-    check_claims_resolve(a, ar, &base_scope);
     check_ward_overlaps(a, ar, &base_scope);
     check_ward_inst_bases(a, ar, &base_scope);
     let mut tprunes: Vec<RuneGlobal> = Vec::with_capacity(a, 4 as u32);

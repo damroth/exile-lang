@@ -1,0 +1,9 @@
+// S1 (SIGIL-SPEC §5, I-S1): exactly one claimant per resource. Reported at the
+// second claim and naming BOTH claimants, so the diagnostic states the same fact
+// whichever module the file lists first.
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+
+mod gfx   { own Blitter; }
+mod sound { own Blitter; }
+
+fn main() { }

@@ -1,0 +1,5 @@
+// S5, the other degenerate shape: hi below lo. Half-open arithmetic would make
+// this cover nothing at all, exactly like the empty case.
+sigil Bad { 0xDFF05A .. 0xDFF040 }
+
+fn main() { }

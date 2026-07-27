@@ -1,0 +1,8 @@
+// MIRROR-THE-LIMITS for S3: two resources that TOUCH are disjoint, because ranges
+// are half-open on both sides. Copper ends exactly where Blitter's neighbour
+// begins; this must keep compiling, so the boundary is a contract.
+sigil A { 0xDFF040 .. 0xDFF050 }
+sigil B { 0xDFF050 .. 0xDFF060 }
+
+mod gfx { own A; rune r: u16 at 0xDFF042 write; pub fn f() { r.write(1); } }
+fn main() { gfx::f(); }

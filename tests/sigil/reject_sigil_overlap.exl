@@ -1,0 +1,10 @@
+// S3 (SIGIL-SPEC §5, I-S4): two RESOURCES may not cover overlapping bytes — the
+// mirror of ward's W1, naming both objects and both ranges.
+//
+// Deliberately the HARD pairing: the collision is between Sprite0's SECOND range
+// and Other's FIRST. A check that compared only the first range of each resource
+// would pass this file, so the fixture pins all-pairs walking, not just overlap.
+sigil Sprite0 { 0xDFF120 .. 0xDFF124, 0xDFF140 .. 0xDFF148 }
+sigil Other   { 0xDFF144 .. 0xDFF150 }
+
+fn main() { }
