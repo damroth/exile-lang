@@ -781,6 +781,26 @@ fn render_item(it: *const Item, out: *StringBuilder) {
             render_expr(addr, out);
             out.push_str(")");
         }
+        | Item::SigilDecl { name, ranges, pos } => {
+            out.push_str("(sigil ");
+            out.push_str(name);
+            let rs = ranges.as_slice();
+            let mut si = 0 as u32;
+            while si < ranges.length() {
+                out.push_str(" (range ");
+                render_expr(rs[si].sg_lo, out);
+                out.push_str(" ");
+                render_expr(rs[si].sg_hi, out);
+                out.push_str(")");
+                si = si + 1 as u32;
+            }
+            out.push_str(")");
+        }
+        | Item::ClaimDecl { name, pos } => {
+            out.push_str("(own ");
+            out.push_str(name);
+            out.push_str(")");
+        }
         | Item::WardDecl { name, fields, pos } => {
             out.push_str("(ward ");
             out.push_str(name);

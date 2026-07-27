@@ -1,0 +1,7 @@
+// A claim on a resource nobody declares is a typo, and gets a clean diagnostic
+// from birth (the R3b lesson: the placement of a diagnostic is the diagnostic).
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+
+mod gfx { own Blittter; }
+
+fn main() { }

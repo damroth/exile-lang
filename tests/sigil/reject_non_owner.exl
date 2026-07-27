@@ -1,0 +1,9 @@
+// S2 (SIGIL-SPEC §5, I-S3) — the anti-tag row. A module that does not own the
+// resource may not MATERIALISE a handle into it; without this the claim would be
+// a tag, not a capability.
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+
+mod gfx   { own Blitter; }
+mod sound { pub fn steal() { rune bltsize: u16 at 0xDFF058 write; bltsize.write(64); } }
+
+fn main() { sound::steal(); }

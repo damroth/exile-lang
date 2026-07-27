@@ -114,6 +114,13 @@ pub struct WardField {
     wf_pos: Pos,
 }
 
+// One half-open byte range `lo .. hi` of a `sigil` declaration (SIGIL-SPEC §11).
+// A LIST is required: Sprite 0 is genuinely two disjoint ranges (HRM).
+pub struct SigilRange {
+    sg_lo: *const Expr,
+    sg_hi: *const Expr,
+}
+
 // A single trait bound: `<T: A + B>` is one entry with `traits = [A, B]`.
 // `assoc` carries the DR-021 sugar's associated-type bindings (`<F:
 // |int|->int>` lowers to traits=[Fn1], assoc=[Arg, Output]); plain
@@ -418,6 +425,12 @@ pub enum Item {
     // folds into each field access.  Int MMIO base only (a top-level `&GLOBAL` is
     // rejected, mirroring rune R3b).  Same fields as the local `Stmt::WardInst`.
     | WardInstDecl { name: str, ward_ty: str, addr: *const Expr, pos: Pos }
+    // `sigil Name { lo .. hi, … }` — a named hardware resource covering byte
+    // ranges (SIGIL-SPEC §4.1/§11).  Declares a capability; emits nothing.
+    | SigilDecl { name: str, ranges: Vec<SigilRange>, pos: Pos }
+    // `own Name;` — the CLAIM: this module (and its descendants) owns the
+    // resource (SIGIL-SPEC §4.3/§11).  Exactly one claimant per resource (I-S1).
+    | ClaimDecl { name: str, pos: Pos }
 }
 
 pub struct ModuleDecl {

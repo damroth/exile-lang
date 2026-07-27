@@ -1,0 +1,10 @@
+// MIRROR-THE-LIMITS: half-open ranges mean boundary-adjacent is LEGAL. This u16
+// ends exactly where Blitter begins (0xDFF03E + 2 == 0xDFF040), so it does not
+// intersect and must keep COMPILING outside the owner — pinning the boundary as a
+// contract, not a silence.
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+
+mod gfx   { own Blitter; }
+mod sound { pub fn adjacent() { rune ok: u16 at 0xDFF03E write; ok.write(1); } }
+
+fn main() { sound::adjacent(); }

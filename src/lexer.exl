@@ -97,6 +97,7 @@ fn keyword_or_ident(word: str) -> Token {
     if str::eq(word, "own") { return Token::Own; }
     if str::eq(word, "rune") { return Token::Rune; }
     if str::eq(word, "ward") { return Token::Ward; }
+    if str::eq(word, "sigil") { return Token::Sigil; }
     if str::eq(word, "null") { return Token::Null; }
     if str::eq(word, "true") { return Token::True; }
     if str::eq(word, "false") { return Token::False; }
@@ -268,8 +269,7 @@ fn is_string_escape(b: u8) -> bool {
 // valid identifiers lexically, rejected so no source claims them before
 // they become real syntax.
 fn is_reserved_capability(w: str) -> bool {
-    return str::eq(w, "sigil")
-        || str::eq(w, "seal") || str::eq(w, "shared");
+    return str::eq(w, "seal") || str::eq(w, "shared");
 }
 
 fn is_reserved_intwidth(w: str) -> bool {

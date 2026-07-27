@@ -670,7 +670,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -813,7 +813,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
-                 selfhost-no-fabrication selfhost-rune selfhost-ward
+                 selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1140,6 +1140,41 @@ selfhost-ward: $(EXILC_BIN)
 	if ! diff -q $(C_OUT)/ward_rr.expected $(C_OUT)/ward_rr.out >/dev/null; then \
 	  echo "selfhost-ward: ward-over-RAM WRONG (offsets/disjointness broken at -O2):"; cat $(C_OUT)/ward_rr.out; exit 1; fi; \
 	echo "selfhost-ward: clean (spine + register-file field color[31]@0x180 + top-level instances (fold ×2 + NDK 2-base + I-W1 zero-storage) + rejection table W1-W5 (W1 scalar+file, W2, W3, W4→R1/R5/R7 through a FIELD, W5) + ACCEPT runtime-index limit + ward-over-RAM 43981/4660/255 at -O2; cc -Wall -Werror)"
+
+# ===== sigil capability — the port's gate (SIGIL-SPEC, Phase 2) =====
+#
+# The anti-tag gate, present from Increment 1 on purpose: a claim that does not
+# GATE something is a tag, and a tag that looks like protection is worse than
+# none.  So S2 (materialising a covered address outside the owner) has teeth in
+# the same increment that introduces the syntax.
+selfhost-sigil: $(EXILC_BIN)
+	@rm -f $(C_OUT)/sig_ok.c $(C_OUT)/sig_ok.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/sig_ok.c tests/sigil/accept_owner.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-sigil: port rejected the owner's own materialisation"; exit 1; }; \
+	if [ ! -s $(C_OUT)/sig_ok.c ]; then echo "selfhost-sigil: EMPTY emitted C (floor)"; exit 1; fi; \
+	if grep -qE 'Blitter|Sprite0' $(C_OUT)/sig_ok.c; then \
+	  echo "selfhost-sigil: a sigil/claim leaked into the emitted C (I-S5 zero-cost violated)"; exit 1; fi; \
+	grep -q '\*bltsize = 64;' $(C_OUT)/sig_ok.c \
+	  || { echo "selfhost-sigil: the owner's covered access did not emit (gate must not break the owner)"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/sig_ok.c -o $(C_OUT)/sig_ok.o \
+	  || { echo "selfhost-sigil: emitted C is not clean C89 at -O2"; exit 1; }; \
+	rm -f $(C_OUT)/sig_ab.c; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/sig_ab.c tests/sigil/accept_boundary.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-sigil: ACCEPT-probe — port REJECTED a boundary-adjacent materialisation (ranges are half-open)"; exit 1; }; \
+	for row in \
+	  "S2|reject_non_owner|address 0xDFF058 belongs to resource 'Blitter', claimed by 'gfx'" \
+	  "S2-span|reject_span_below|address 0xDFF03E belongs to resource 'Blitter', claimed by 'gfx'" \
+	  "claim|reject_unknown_claim|unknown resource 'Blittter'" ; do \
+	  id=`echo "$$row" | cut -d'|' -f1`; fx=`echo "$$row" | cut -d'|' -f2`; msg=`echo "$$row" | cut -d'|' -f3`; \
+	  rm -f $(C_OUT)/srow.c $(C_OUT)/srow.err; \
+	  if $(EXILC_BIN) --target c --c-out $(C_OUT)/srow.c tests/sigil/$$fx.exl >/dev/null 2>$(C_OUT)/srow.err; then \
+	    echo "selfhost-sigil: $$id — port ACCEPTED tests/sigil/$$fx.exl"; exit 1; fi; \
+	  if [ ! -s $(C_OUT)/srow.err ]; then echo "selfhost-sigil: $$id empty diagnostic (floor)"; exit 1; fi; \
+	  if grep -q 'internal:' $(C_OUT)/srow.err; then echo "selfhost-sigil: $$id is ICE-enforced, not a clean diagnostic"; exit 1; fi; \
+	  grep -qF "$$msg" $(C_OUT)/srow.err \
+	    || { echo "selfhost-sigil: $$id wrong message: `head -1 $(C_OUT)/srow.err`"; exit 1; }; \
+	done; \
+	echo "selfhost-sigil: clean (owner materialises + uses; S2 teeth (non-owner + span-intersection-from-below) + unknown-claim; ACCEPT boundary-adjacent; zero emission for sigil/claim; cc -Wall -Werror)"
 
 # ===== DR-010 escape pass — the port's differential gate =====
 #

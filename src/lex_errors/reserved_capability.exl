@@ -1,3 +1,3 @@
 fn main() {
-    let sigil = 5;
+    let seal = 5;
 }

@@ -180,6 +180,7 @@ fn tok_tag(t: Token) -> int {
         | Token::Float(_f, _is32) => 79 | Token::String(_s) => 80 | Token::Eof => 81
         | Token::Rune => 82
         | Token::Ward => 83
+        | Token::Sigil => 84
     }
 }
 
@@ -219,6 +220,7 @@ fn pp(t: Token) -> str {
         | Token::Eof => "end of file"
         | Token::Rune => "'rune'"
         | Token::Ward => "'ward'"
+        | Token::Sigil => "'sigil'"
     }
 }
 
@@ -1785,6 +1787,53 @@ fn ward_inst_item_name(it: *const Item) -> str {
 fn is_ward_type_item(s: *const Parser) -> bool {
     return match peek3(s) { Token::LBrace => true | _o => false };
 }
+// `sigil Name { lo .. hi, … }` — a resource capability over byte ranges
+// (SIGIL-SPEC §11).  The `..` is exile's existing range syntax, so the body needs
+// no new lexical machinery; a LIST is required because a resource may be
+// non-contiguous (Sprite 0 is two ranges).
+// `parse_expr` already yields `Expr::Range` for `lo .. hi` (the `for`-loop
+// syntax), so a sigil range is just that expression destructured — no new
+// grammar at all.  `..=` is rejected: sigil ranges are half-open (I-S4/§4.1).
+fn parse_sigil_range(s: *Parser) -> SigilRange {
+    let e = parse_expr(s);
+    let p = expr_pos(e);
+    return match *e {
+        Expr::Range { lo, hi, inclusive } => sigil_range_of(s, lo, hi, inclusive, p)
+        | _o => { fail(s, p, "expected a byte range `lo .. hi` in a sigil body"); SigilRange { sg_lo: e, sg_hi: e } }
+    };
+}
+fn sigil_range_of(s: *Parser, lo: *const Expr, hi: *const Expr, inclusive: bool, p: Pos) -> SigilRange {
+    if inclusive {
+        fail(s, p, "a sigil range is half-open: use `lo .. hi`, not `..=`");
+    }
+    return SigilRange { sg_lo: lo, sg_hi: hi };
+}
+fn parse_sigil_decl(s: *Parser) -> Item {
+    let pos = peek_pos(s);
+    bump(s);
+    let np = expect_ident(s, "sigil name after 'sigil'");
+    expect(s, Token::LBrace);
+    let mut ranges: Vec<SigilRange> = Vec::with_capacity(default_allocator(), 4 as u32);
+    while !peek_is(s, Token::RBrace) && !is_err(s) {
+        ranges.push(parse_sigil_range(s));
+        if peek_is(s, Token::Comma) { bump(s); }
+    }
+    expect(s, Token::RBrace);
+    return Item::SigilDecl { name: np.name, ranges: ranges, pos: pos };
+}
+fn sigil_decl_name(it: *const Item) -> str {
+    return match *it { Item::SigilDecl { name, ranges, pos } => name | _o => "" };
+}
+// `own Name;` — the claim (SIGIL-SPEC §11).  `own` in ITEM position; the TYPE
+// position (`own *T`) is untouched, the two never meet.
+fn parse_claim_item(s: *Parser) -> Item {
+    let pos = peek_pos(s);
+    bump(s);
+    let np = expect_ident(s, "resource name after 'own'");
+    expect(s, Token::Semicolon);
+    return Item::ClaimDecl { name: np.name, pos: pos };
+}
+
 fn parse_ward_item(s: *Parser, out: *Vec<Item>, seen: *Vec<str>) {
     let wpos = peek_pos(s);
     if is_ward_type_item(s) {
@@ -3251,6 +3300,15 @@ fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool, seen: *Vec<str>) {
             seen.push(nru);
         }
         | Token::Ward => { parse_ward_item(s, out, seen); }
+        | Token::Sigil => {
+            let spos = peek_pos(s);
+            let sd = parse_sigil_decl(s);
+            let nsg = sigil_decl_name(&sd);
+            check_scope_name(s, nsg, spos, seen);
+            out.push(sd);
+            seen.push(nsg);
+        }
+        | Token::Own => { out.push(parse_claim_item(s)); }
         | Token::Type => {
             let td = parse_type_alias_decl(s, is_pub);
             check_scope_name(s, td.taname, td.tapos, seen);

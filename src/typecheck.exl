@@ -356,6 +356,9 @@ struct TopRune {
     tr_addr: *const Expr,
     tr_dir: Direction,
     tr_pos: Pos,
+    // The module the rune was DECLARED in — its materialisation site
+    // (SIGIL-SPEC §4.2 correction A).  Joined path, Copy-only.
+    tr_modpath: str,
 }
 
 // A `ward` overlay field, registered FLAT (one row per field, keyed by the ward
@@ -369,6 +372,27 @@ struct WardFieldEntry {
     wfe_offset: *const Expr,
     wfe_dir: Direction,
     wfe_pos: Pos,
+}
+
+// One byte range of a declared resource (SIGIL-SPEC §4.1), folded to integers,
+// with the module path the `sigil` was declared in.  Flat + Copy-only (the
+// copy-drop lesson): one row per range, never a nested owned Vec.
+struct SigilRangeEntry {
+    sr_name: str,
+    sr_lo: int,
+    sr_hi: int,
+    sr_pos: Pos,
+}
+
+// A claim `own Name;` (SIGIL-SPEC §4.3): the resource and the module that owns
+// it.  Owner scope is that module PLUS its descendants (prefix match).
+// COPY-ONLY row: the owner module is the JOINED path ("gfx", "a::b", "" = root),
+// never a nested owned Vec — a by-value read of a row with an owned Vec frees the
+// table's backing (the copy-drop trap, hit once in ward Inc1 and again here).
+struct ClaimEntry {
+    cl_name: str,
+    cl_path: str,
+    cl_pos: Pos,
 }
 
 // A TOP-LEVEL ward instance (WARD-SPEC §3, Increment 4), gathered raw — resolved
@@ -387,6 +411,10 @@ struct TyScope {
     sc_wards: *const Vec<WardFieldEntry>,
     // Top-level ward instances, prepended to every function's benv (like sc_runes).
     sc_wardinsts: *const Vec<TopWardInst>,
+    // Declared resource ranges + their claims (SIGIL-SPEC §4): the coverage map
+    // the materialisation gate consults.
+    sc_sigils: *const Vec<SigilRangeEntry>,
+    sc_claims: *const Vec<ClaimEntry>,
     sc_structs: *const Vec<str>,
     sc_dbg: *const Vec<str>,
     sc_consts: *const Vec<str>,
@@ -490,6 +518,8 @@ struct ProgIdx {
     pi_runes: *const Vec<TopRune>,
     pi_wards: *const Vec<WardFieldEntry>,
     pi_wardinsts: *const Vec<TopWardInst>,
+    pi_sigils: *const Vec<SigilRangeEntry>,
+    pi_claims: *const Vec<ClaimEntry>,
     pi_snames: *const Vec<str>,
     pi_dbg: *const Vec<str>,
     pi_consts: *const Vec<str>,
@@ -6880,7 +6910,8 @@ fn elab_rune_decl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
                   pos: Pos, out: *Vec<Tstmt>) {
     let elem_ty = resolve_sig_ty(a, ar, sc, elem, pos);
     let rune_ty = ty_node(ar, Typ::TRune { elem: elem_ty, dir: dir });
-    let value = rune_base_value(a, ar, g, sc, benv, addr, elem, rune_ty, pos);
+    sigil_gate(a, ar, sc, addr_int_or_zero(addr), rune_span_of(rune_ty), pos);
+    let value = rune_base_value_ungated(a, ar, g, sc, benv, addr, elem, rune_ty, pos);
     benv.push(FieldTy { name: name, ty: rune_ty });
     out.push(Tstmt::TLet { name: name, value: value, decl_ty: rune_ty, pos: pos });
 }
@@ -6889,7 +6920,7 @@ fn elab_rune_decl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
 // the address of a GLOBAL → `(volatile T*)&NAME`.  A global's address is
 // link-time-fixed and static-lifetime, so it never dangles — exactly like an
 // MMIO register, and unlike a runtime-DISCOVERED base (Zorro → ward era).
-fn rune_base_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
+fn rune_base_value_ungated(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    benv: *const Vec<FieldTy>, addr: *const Expr, elem_ann: *const TypeAnn,
                    rune_ty: *const Typ, pos: Pos) -> *const Texpr {
     return match *addr {
@@ -6901,6 +6932,19 @@ fn rune_base_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
 // `&NAME` base: only a GLOBAL is a compile-time constant — a `&local` would be a
 // stack address (runtime, and dangling once the fn returns), which R3/I-R3
 // forbid.  Elaborate `&NAME` (checks it exists) and cast to the rune's pointer.
+// A rune materialised at an integer base passes the sigil gate first (SIGIL-SPEC
+// §4.2): the span is the pointee's width, or N·sizeof(T) for a register file.
+fn rune_addr_gated(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, elem_ann: *const TypeAnn,
+                   rune_ty: *const Typ, pos: Pos) -> *const Texpr {
+    sigil_gate(a, ar, sc, n, rune_span_of(rune_ty), pos);
+    return te_node(ar, TexprNode::TRuneAddr(n), rune_ty, pos);
+}
+fn addr_int_or_zero(e: *const Expr) -> int {
+    return match *e { Expr::IntLit(n, _p) => n | _o => 0 as int };
+}
+fn rune_span_of(rune_ty: *const Typ) -> int {
+    return match *rune_ty { Typ::TRune { elem, dir } => ward_field_size(elem) | _o => 1 as int };
+}
 fn rune_sym_base(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                  benv: *const Vec<FieldTy>, addr: *const Expr, inner: *const Expr,
                  elem_ann: *const TypeAnn, rune_ty: *const Typ, pos: Pos) -> *const Texpr {
@@ -7896,7 +7940,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let lparams = lam_to_params(a, params_fd);
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
+    let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
@@ -9105,7 +9149,11 @@ fn build_rune_globals(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
         }
         let elem_ty = resolve_sig_ty(a, ar, sc, sl[i].tr_elem, sl[i].tr_pos);
         let rune_ty = ty_node(ar, Typ::TRune { elem: elem_ty, dir: sl[i].tr_dir });
-        let value = rune_base_value(a, ar, g, sc, &empty_benv, sl[i].tr_addr, sl[i].tr_elem, rune_ty, sl[i].tr_pos);
+        // Gate the DECLARATION against the module that wrote it (correction A):
+        // a top-level rune materialises here, once, not at each function that
+        // inherits it through the benv.
+        sigil_gate_in(a, ar, sc, sl[i].tr_modpath, addr_int_or_zero(sl[i].tr_addr), rune_span_of(rune_ty), sl[i].tr_pos);
+        let value = rune_base_value_ungated(a, ar, g, sc, &empty_benv, sl[i].tr_addr, sl[i].tr_elem, rune_ty, sl[i].tr_pos);
         out.push(RuneGlobal { rg_name: sl[i].tr_name, rg_ty: rune_ty, rg_value: value });
         i = i + 1 as u32;
     }
@@ -9238,6 +9286,9 @@ fn ward_field_rune(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str, wba
             let foff = ward_offset_int(ar, sc, sl[i].wfe_offset, p);
             let rune_ty = ty_node(ar, Typ::TRune { elem: felem, dir: sl[i].wfe_dir });
             let scalar = rune_ptr_pointee(felem);
+            // The other materialisation site (SIGIL-SPEC §4.2).  Only an integer
+            // base has a static address; a `&GLOBAL` ward base is outside coverage.
+            if str::eq(wsym, "") { sigil_gate(a, ar, sc, wbase + foff, ward_field_size(felem), p); }
             return te_node(ar, TexprNode::TWardAddr { elem: scalar, base: wbase, base_sym: wsym, offset: foff }, rune_ty, p);
         }
         i = i + 1 as u32;
@@ -9260,6 +9311,145 @@ fn elab_ward_inst(a: Allocator, ar: *Arena, sc: *const TyScope, benv: *Vec<Field
     let mut path: Vec<str> = Vec::with_capacity(a, 1 as u32);
     path.push(ward_ty);
     benv.push(FieldTy { name: name, ty: ty_node(ar, Typ::TWard { path: path, base: base, base_sym: bsym }) });
+}
+
+// ===== sigil: resource coverage + the materialisation gate (SIGIL-SPEC §4) =====
+
+fn sigil_addr_int(ar: *Arena, sc: *const TyScope, e: *const Expr, p: Pos) -> int {
+    return match *e {
+        Expr::IntLit(n, _q) => n
+        | _o => { tc_fail(ar, sc, p, "a sigil range bound must be a compile-time integer address"); 0 as int }
+    };
+}
+fn collect_sigils(ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, out: *Vec<SigilRangeEntry>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_sigil_one(ar, sc, &sl[i], out); i = i + 1 as u32; }
+}
+fn collect_sigil_one(ar: *Arena, sc: *const TyScope, it: *const Item, out: *Vec<SigilRangeEntry>) {
+    match *it {
+        Item::SigilDecl { name, ranges, pos } => {
+            let rl = ranges.as_slice();
+            let mut j = 0 as u32;
+            while j < ranges.length() {
+                let lo = sigil_addr_int(ar, sc, rl[j].sg_lo, pos);
+                let hi = sigil_addr_int(ar, sc, rl[j].sg_hi, pos);
+                out.push(SigilRangeEntry { sr_name: name, sr_lo: lo, sr_hi: hi, sr_pos: pos });
+                j = j + 1 as u32;
+            }
+        }
+        | Item::Module(md) => { collect_sigils(ar, sc, &md.mitems, out); }
+        | _e => { }
+    }
+}
+// Claims carry the module path they were written in — the owner scope.
+fn collect_claims(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: str, out: *Vec<ClaimEntry>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_claim_one(a, ar, &sl[i], path, out); i = i + 1 as u32; }
+}
+fn collect_claim_one(a: Allocator, ar: *Arena, it: *const Item, path: str, out: *Vec<ClaimEntry>) {
+    match *it {
+        Item::ClaimDecl { name, pos } => { out.push(ClaimEntry { cl_name: name, cl_path: path, cl_pos: pos }); }
+        | Item::Module(md) => { collect_claims(a, ar, &md.mitems, mod_path_join(a, ar, path, md.mname), out); }
+        | _e => { }
+    }
+}
+fn mod_path_join(a: Allocator, ar: *Arena, path: str, name: str) -> str {
+    if str::eq(path, "") { return name; }
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str(path); sb.push_str("::"); sb.push_str(name);
+    return str::from_slice(ar, sb.as_slice());
+}
+// Is the CURRENT module inside the owner's scope (the owner module or a
+// descendant)?  Root ("") owns everything below it — the §4.3 tautology.
+fn mod_within(owner: str, cur: str) -> bool {
+    if str::eq(owner, "") { return true; }
+    if str::eq(cur, owner) { return true; }
+    let on = str::length(owner);
+    if str::length(cur) < on + 3 as u32 { return false; }
+    let cb = str::as_bytes(cur);
+    let ob = str::as_bytes(owner);
+    let mut i = 0 as u32;
+    while i < on { if cb[i] != ob[i] { return false; } i = i + 1 as u32; }
+    return cb[on] == ':' as u8 && cb[on + 1 as u32] == ':' as u8;
+}
+// S4-adjacent, delivered here because a claim on nothing is a typo, not a design
+// question: `own Nonexistent;` is a clean diagnostic from birth (the R3b lesson).
+fn check_claims_resolve(a: Allocator, ar: *Arena, sc: *const TyScope) {
+    let sl = sc.sc_claims.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_claims.length() {
+        if !sigil_exists(sc, sl[i].cl_name) {
+            let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+            sb.push_str("unknown resource '"); sb.push_str(sl[i].cl_name); sb.push_str("' — no `sigil` declares it");
+            tc_fail(ar, sc, sl[i].cl_pos, str::from_slice(ar, sb.as_slice()));
+        }
+        i = i + 1 as u32;
+    }
+}
+fn sigil_exists(sc: *const TyScope, name: str) -> bool {
+    let sl = sc.sc_sigils.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_sigils.length() { if str::eq(sl[i].sr_name, name) { return true; } i = i + 1 as u32; }
+    return false;
+}
+// The owner of `name`, as a module path; `found=false` when unclaimed (free).
+fn claim_path_of(sc: *const TyScope, name: str) -> int {
+    let sl = sc.sc_claims.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_claims.length() { if str::eq(sl[i].cl_name, name) { return i as int; } i = i + 1 as u32; }
+    return 0 as int - 1 as int;
+}
+// S2 (I-S3): a materialised span `[a, a+span)` intersecting a covered range may
+// only be created inside the owner.  INTERSECTION, not base membership — a wide
+// scalar or a register file can enter a range from below (correction B).
+fn sigil_gate(a: Allocator, ar: *Arena, sc: *const TyScope, addr: int, span: int, p: Pos) {
+    sigil_gate_in(a, ar, sc, path_join_or_root(a, ar, sc.sc_modpath), addr, span, p);
+}
+// `here` is the module the materialisation is written in — the ambient one for a
+// local rune / ward field, the DECLARING one for a top-level rune.
+fn sigil_gate_in(a: Allocator, ar: *Arena, sc: *const TyScope, here: str, addr: int, span: int, p: Pos) {
+    let sl = sc.sc_sigils.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_sigils.length() {
+        if addr < sl[i].sr_hi && sl[i].sr_lo < addr + span {
+            sigil_gate_one(a, ar, sc, here, sl[i].sr_name, addr, p);
+        }
+        i = i + 1 as u32;
+    }
+}
+fn sigil_gate_one(a: Allocator, ar: *Arena, sc: *const TyScope, here: str, res: str, addr: int, p: Pos) {
+    let ci = claim_path_of(sc, res);
+    if ci < 0 as int { return; }
+    let owner = sc.sc_claims.as_slice()[ci as u32].cl_path;
+    if mod_within(owner, here) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("address 0x"); push_hex_upper(&sb, addr);
+    sb.push_str(" belongs to resource '"); sb.push_str(res);
+    sb.push_str("', claimed by '"); sb.push_str(owner); sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+}
+fn path_join_or_root(a: Allocator, ar: *Arena, p: *const Vec<str>) -> str {
+    if p.length() == 0 as u32 { return ""; }
+    let jb = tc_join_sb(a, p);
+    return str::from_slice(ar, jb.as_slice());
+}
+fn push_hex_upper(sb: *StringBuilder, n: int) {
+    if n == 0 as int { sb.push_str("0"); return; }
+    let mut digits: [u8; 16] = [0 as u8; 16];
+    let mut v = n;
+    let mut k = 0 as u32;
+    while v > 0 as int {
+        let d = v % 16 as int;
+        let c = if d < 10 as int { 48 as int + d } else { 55 as int + d };
+        digits[k] = c as u8;
+        v = v / 16 as int;
+        k = k + 1 as u32;
+    }
+    while k > 0 as u32 { k = k - 1 as u32; sb.push_byte(digits[k]); }
 }
 
 // Top-level ward instances (WARD-SPEC §3, Increment 4): gathered raw, then bound
@@ -9315,14 +9505,14 @@ fn prepend_top_ward_insts(a: Allocator, ar: *Arena, sc: *const TyScope, env: *Ve
 }
 // Gather every top-level `rune` (recursing into modules) into a raw list — the
 // scope carries it, and build_param_env resolves + prepends per function.
-fn collect_top_runes(items: *const Vec<Item>, out: *Vec<TopRune>) {
+fn collect_top_runes(a: Allocator, ar: *Arena, items: *const Vec<Item>, path: str, out: *Vec<TopRune>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
         match sl[i] {
-            Item::RuneDecl { name, elem, addr, dir, pos } => { out.push(TopRune { tr_name: name, tr_elem: elem, tr_addr: addr, tr_dir: dir, tr_pos: pos }); }
-            | Item::Module(md) => { collect_top_runes(&md.mitems, out); }
+            Item::RuneDecl { name, elem, addr, dir, pos } => { out.push(TopRune { tr_name: name, tr_elem: elem, tr_addr: addr, tr_dir: dir, tr_pos: pos, tr_modpath: path }); }
+            | Item::Module(md) => { collect_top_runes(a, ar, &md.mitems, mod_path_join(a, ar, path, md.mname), out); }
             | _e => { }
         }
         i = i + 1 as u32;
@@ -10086,7 +10276,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     // A generic-struct method skeleton borrows the impl's type parameters
     // (the method itself declares none); everything else uses its own.
     let eff_tparams = pick_tparams(xtparams, &f.tparams);
-    let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
+    let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: str::eq(mangled, "main") };
@@ -10710,7 +10900,7 @@ fn slot_kv_ty(a: Allocator, ar: *Arena) -> *const Typ {
 // resolves to `m::Pos`).  Used by the collectors + the method-body elaborator.
 fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope {
     return TyScope {
-        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -10730,7 +10920,7 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
 // recovery works regardless of construction order.
 fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyScope {
     return TyScope {
-        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -10768,7 +10958,7 @@ fn scope_with_tparams_binds(base: *const TyScope, tparams: *const Vec<str>, bind
 }
 fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope {
     return TyScope {
-        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -10788,7 +10978,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
 // the monomorphic instance directly (no post-hoc substitution).
 fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *const Vec<TVarBind>) -> TyScope {
     return TyScope {
-        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -10806,7 +10996,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
 // A copy of the scope carrying the enclosing fn's resolved return type.
 fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
     return TyScope {
-        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -12832,7 +13022,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let ret_ann: Option<*const TypeAnn> = Option::Some(closure_struct_ann(a, ar, vd.vname));
-    let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
+    let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
                        sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
@@ -15821,16 +16011,22 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let mut gensym_unused: u32 = 0 as u32;
     let mut loopdepth = 0 as u32;
     let mut toprunes: Vec<TopRune> = Vec::with_capacity(a, 4 as u32);
-    collect_top_runes(items, &toprunes);
+    collect_top_runes(a, ar, items, "", &toprunes);
     let mut topwards: Vec<WardFieldEntry> = Vec::with_capacity(a, 8 as u32);
     collect_ward_types(items, &topwards);
     let mut topwardinsts: Vec<TopWardInst> = Vec::with_capacity(a, 4 as u32);
     collect_top_ward_insts(items, &topwardinsts);
-    let base_scope = TyScope { sc_runes: &toprunes, sc_wards: &topwards, sc_wardinsts: &topwardinsts, sc_structs: &snames, sc_dbg: &dbgnames, sc_consts: &constnames, sc_xfields: &xfields, sc_loops: &loopdepth, sc_enums: &enames, sc_tparams: &empty_tp,
+    let mut sigils: Vec<SigilRangeEntry> = Vec::with_capacity(a, 8 as u32);
+    let mut claims: Vec<ClaimEntry> = Vec::with_capacity(a, 4 as u32);
+    collect_claims(a, ar, items, "", &claims);
+    let base_scope = TyScope { sc_runes: &toprunes, sc_wards: &topwards, sc_wardinsts: &topwardinsts, sc_sigils: &sigils, sc_claims: &claims, sc_structs: &snames, sc_dbg: &dbgnames, sc_consts: &constnames, sc_xfields: &xfields, sc_loops: &loopdepth, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods, sc_impls: &empty_impls,
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
                                sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_err: &tc_err, sc_srcnames: &tc_srcnames, sc_srcbase: &tc_srcbase, sc_binds: &tc_binds, sc_bindbase: &tc_bindbase, sc_is_main: false };
+    // The coverage map must exist BEFORE any function body elaborates — a
+    // materialisation gate that runs against an empty registry checks nothing.
+    collect_sigils(ar, &base_scope, items, &sigils);
     check_const_items(a, ar, &base_scope, items);
     // Struct field index + enum variant/field index + method index, carried
     // in every fn's body scope so `s.field`, struct/enum literals, variant
@@ -15905,7 +16101,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // impl-block walk.
     let mut impls: Vec<ImplReg> = Vec::with_capacity(a, 8 as u32);
     build_impl_regs(a, &methods, items, &impls);
-    let idx = ProgIdx { pi_runes: &toprunes, pi_wards: &topwards, pi_wardinsts: &topwardinsts, pi_snames: &snames, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
+    let idx = ProgIdx { pi_runes: &toprunes, pi_wards: &topwards, pi_wardinsts: &topwardinsts, pi_sigils: &sigils, pi_claims: &claims, pi_snames: &snames, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods, pi_impls: &impls,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
                         pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_err: &tc_err, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };
@@ -16139,6 +16335,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // (a non-integer top-level address, R3b) tc_fails here, and that diagnostic
     // must reach `err_latched` — otherwise it latches uselessly and codegen aborts
     // on the placeholder (the tl3 ICE).  Placement of a diagnostic is part of it.
+    check_claims_resolve(a, ar, &base_scope);
     check_ward_overlaps(a, ar, &base_scope);
     check_ward_inst_bases(a, ar, &base_scope);
     let mut tprunes: Vec<RuneGlobal> = Vec::with_capacity(a, 4 as u32);
