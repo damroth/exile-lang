@@ -405,6 +405,7 @@ fn build_ir_program(a: Allocator, ar: *Arena) -> Tprogram {
     let consts: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     let pfree: Vec<Tfunc> = Vec::with_capacity(a, 8 as u32);
     let pmeth: Vec<Tfunc> = Vec::with_capacity(a, 8 as u32);
+    let runes: Vec<RuneGlobal> = Vec::with_capacity(a, 8 as u32);
     return Tprogram {
         tp_funcs: funcs,
         tp_pfree: pfree,
@@ -425,6 +426,7 @@ fn build_ir_program(a: Allocator, ar: *Arena) -> Tprogram {
         tp_ext_vars: ext_vars,
         tp_array_types: array_types,
         tp_consts: consts,
+        tp_runes: runes,
     };
 }
 

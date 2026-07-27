@@ -966,6 +966,12 @@ struct Cg {
     // Current defer chain (flattened, LIFO order) at the point being emitted;
     // gen_block keeps it in sync so a `try` desugar's return flushes defers.
     cg_defers: *Vec<Vec<Tstmt>>,
+    // How many chain entries belong OUTSIDE the innermost enclosing loop — the
+    // watermark `break` / `continue` flush down to (P3).  A loop jump must run the
+    // defers registered INSIDE the loop and leave the enclosing scope's alone; the
+    // chain is LIFO with the innermost first, so those are exactly its first
+    // `length - cg_loopmark` entries.
+    cg_loopmark: *u32,
 }
 
 // ===== Stage (d): statement / block / if emission =====
@@ -1777,6 +1783,14 @@ fn emit_cleanups(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg:
     while i < defers.length() { emit_stmts(a, ar, out, indent, cg, &sl[i]); i = i + 1 as u32; }
 }
 
+// The first `k` entries of a LIFO chain — the defers registered since the innermost
+// loop began, which is what a `break` / `continue` must run (P3).
+fn emit_cleanups_upto(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, defers: *const Vec<Vec<Tstmt>>, k: u32) {
+    let sl = defers.as_slice();
+    let mut i = 0 as u32;
+    while i < k && i < defers.length() { emit_stmts(a, ar, out, indent, cg, &sl[i]); i = i + 1 as u32; }
+}
+
 // reverse(my_defers) ++ outer — the full LIFO defer chain at a point.
 fn flatten_defers(a: Allocator, my_defers: *const Vec<Vec<Tstmt>>, outer: *const Vec<Vec<Tstmt>>) -> Vec<Vec<Tstmt>> {
     let mut out: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
@@ -1872,6 +1886,19 @@ pub fn gen_block(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg:
                 emit_return(a, ar, out, indent, cg, value, &chain);
                 returned = true;
             }
+            // A loop jump leaves every scope opened inside the loop, so it runs
+            // their defers — LIFO, down to the loop's watermark — before jumping
+            // (P3; before this, `break` silently swallowed them).
+            | Tstmt::TBreak(bp) => {
+                emit_cleanups_upto(a, ar, out, indent, cg, &chain, chain.length() - *cg.cg_loopmark);
+                out.push_str(indent); out.push_str("break;\n");
+                returned = true;
+            }
+            | Tstmt::TContinue(cp) => {
+                emit_cleanups_upto(a, ar, out, indent, cg, &chain, chain.length() - *cg.cg_loopmark);
+                out.push_str(indent); out.push_str("continue;\n");
+                returned = true;
+            }
             | Tstmt::TLetTuple { names, value, pos } => emit_let_tuple(a, ar, out, indent, cg, &names, value)
             | Tstmt::TIf { cond, then_body, else_body } => { out.push_str(indent); gen_if(a, ar, out, indent, cg, outer, &my_defers, cond, &then_body, &else_body); }
             | Tstmt::TWhile { cond, body, post } => gen_while(a, ar, out, indent, cg, outer, &my_defers, cond, &body, &post)
@@ -1895,7 +1922,12 @@ fn gen_while(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *co
     if post.length() == 0 as u32 { out.push_str("while ("); gen_expr(a, ar, out, cg, cond); out.push_str(") {\n"); }
     else { out.push_str("for (; "); gen_expr(a, ar, out, cg, cond); out.push_str("; "); emit_for_post(a, ar, out, cg, post); out.push_str(") {\n"); }
     let nested = flatten_defers(a, my_defers, outer);
+    // Everything already on the chain belongs OUTSIDE this loop; a `break` must not
+    // run it.  Saved and restored so nested loops each get their own watermark.
+    let saved_mark = *cg.cg_loopmark;
+    *cg.cg_loopmark = nested.length();
     gen_block(a, ar, out, cg_indent(a, ar, indent), cg, &nested, body);
+    *cg.cg_loopmark = saved_mark;
     out.push_str(indent); out.push_str("}\n");
 }
 
@@ -1933,7 +1965,7 @@ pub fn gen_function(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg
     }
     let empty: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
     let mut dchain: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
-    let cg2 = Cg { cg_enums: cg.cg_enums, cg_structs: cg.cg_structs, cg_fill: cg.cg_fill, cg_ml: cg.cg_ml, cg_defers: &dchain };
+    let cg2 = Cg { cg_enums: cg.cg_enums, cg_structs: cg.cg_structs, cg_fill: cg.cg_fill, cg_ml: cg.cg_ml, cg_defers: &dchain, cg_loopmark: cg.cg_loopmark };
     gen_block(a, ar, out, "    ", &cg2, &empty, &tf.tf_body);
     if str::eq(tf.tf_func.name, "main") { out.push_str("    return 0;\n"); }
     out.push_str("}\n");
@@ -2056,7 +2088,8 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *S
     let mut fillctr: u32 = 0 as u32;
     let mut mlctr: u32 = 0 as u32;
     let mut dchain: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
-    let cg = Cg { cg_enums: &tp.tp_enum_index, cg_structs: &tp.tp_struct_index, cg_fill: &fillctr, cg_ml: &mlctr, cg_defers: &dchain };
+    let mut loopmark = 0 as u32;
+    let cg = Cg { cg_enums: &tp.tp_enum_index, cg_structs: &tp.tp_struct_index, cg_fill: &fillctr, cg_ml: &mlctr, cg_defers: &dchain, cg_loopmark: &loopmark };
     // Prelude free-fns (str::*) emit first — the oracle prepends the prelude, so
     // they precede user free-fns in the definition section.
     // Emission order (measured against the oracle's prepended prelude):

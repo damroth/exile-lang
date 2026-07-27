@@ -670,7 +670,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -813,7 +813,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
-                 selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil
+                 selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1162,6 +1162,27 @@ selfhost-ward: $(EXILC_BIN)
 	if ! diff -q $(C_OUT)/ward_rr.expected $(C_OUT)/ward_rr.out >/dev/null; then \
 	  echo "selfhost-ward: ward-over-RAM WRONG (offsets/disjointness broken at -O2):"; cat $(C_OUT)/ward_rr.out; exit 1; fi; \
 	echo "selfhost-ward: clean (spine + register-file field color[31]@0x180 + top-level instances (fold ×2 + NDK 2-base + I-W1 zero-storage) + rejection table W1-W5 (W1 scalar+file, W2, W3, W4→R1/R5/R7 through a FIELD, W5) + ACCEPT runtime-index limit + ward-over-RAM 43981/4660/255 at -O2; cc -Wall -Werror)"
+
+# ===== defer x loop jumps (P3) — the exit guarantee, on EVERY path =====
+#
+# `defer` used to be swallowed by `break` / `continue`: a registered hole (WORKLOG
+# 2026-05-28) that seal turns from a wart into a hazard, since a seal left by a
+# `break` would leave interrupts masked forever.  Port-only: the FROZEN oracle
+# still has the old behaviour, so this is a deliberate, registered divergence —
+# see SELFHOST-PLUMBING-REGISTER.md #5.  The corpus was measured neutral before
+# the fix (no function anywhere pairs defer with a loop jump), which is why no
+# comparing gate moves.
+selfhost-defer: $(EXILC_BIN)
+	@rm -f $(C_OUT)/defer_exits.c $(HOST_OUT)/defer_exits $(C_OUT)/defer_exits.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/defer_exits.c tests/defer/exits.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-defer: port rejected the exits fixture"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/defer_exits $(C_OUT)/defer_exits.c $(SYS_HOST) \
+	  || { echo "selfhost-defer: emitted C is not clean C89 at -O2"; exit 1; }; \
+	$(HOST_OUT)/defer_exits > $(C_OUT)/defer_exits.out 2>&1; \
+	if ! diff -q tests/defer/exits.expected $(C_OUT)/defer_exits.out >/dev/null; then \
+	  echo "selfhost-defer: WRONG defer trace (an exit path lost or gained a defer):"; \
+	  diff tests/defer/exits.expected $(C_OUT)/defer_exits.out | head -8; exit 1; fi; \
+	echo "selfhost-defer: clean (defer fires on normal exit, continue, break, return, and through nesting — inner jumps leave outer defers alone)"
 
 # ===== sigil capability — the port's gate (SIGIL-SPEC, Phase 2) =====
 #

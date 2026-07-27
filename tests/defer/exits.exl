@@ -1,0 +1,52 @@
+// P3 — `defer` must fire on EVERY exit from the scope that registered it,
+// including the loop jumps. Before this, `break` and `continue` silently swallowed
+// it: a registered, documented hole (WORKLOG 2026-05-28, "break/continue + defer
+// interaction deliberately not done") that seal turns from a wart into a hazard —
+// a `seal { }` in a loop body left by `break` would leave interrupts masked
+// forever, which is exactly the catastrophic-and-silent class seal exists against.
+//
+// Every exit kind, and nesting: normal fall-through, continue, break, return, an
+// inner loop's break (which must NOT run the outer loop's defers), and a defer
+// registered outside a loop (which must NOT run on the loop's jumps).
+fn each_exit() {
+    let mut i = 0;
+    while i < 4 {
+        defer println(10 + i);
+        if i == 1 { i = i + 1; continue; }
+        if i == 2 { break; }
+        i = i + 1;
+    }
+    println(19);
+}
+
+fn nested() {
+    defer println(20);                 // outer scope: must NOT run on inner jumps
+    let mut i = 0;
+    while i < 2 {
+        defer println(30 + i);         // per-iteration of the OUTER loop
+        let mut j = 0;
+        while j < 2 {
+            defer println(40 + j);     // per-iteration of the INNER loop
+            if j == 0 { j = j + 1; continue; }
+            break;                     // leaves inner only: 4x, not 3x/2x
+        }
+        i = i + 1;
+    }
+    println(29);
+}
+
+fn with_return() -> int {
+    let mut i = 0;
+    while i < 3 {
+        defer println(50 + i);
+        if i == 1 { return 7; }        // return through a loop: BOTH defers
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main() {
+    each_exit();
+    nested();
+    println(with_return());
+}
