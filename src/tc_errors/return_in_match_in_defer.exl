@@ -1,0 +1,3 @@
+// Silent acceptance again, through the match-arm shape.
+fn f() { defer { match 1 { 1 => { return; } | _o => { } } } }
+fn main() { f(); }

@@ -1,0 +1,3 @@
+// The same property through a foreign shape the probe did not use: a match ARM
+// body. Crossing shapes are how a shape-fix is told apart from a property-fix.
+fn main() { defer { match 1 { 1 => { defer println(3); } | _o => { } } } }

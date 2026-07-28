@@ -1,0 +1,5 @@
+// The worse face of the same gap, and one no probe had shown: `return` under an
+// `if` inside a defer body was not ICEd but ACCEPTED IN SILENCE — the port
+// compiled a program the reference rejects. A crash is loud; this was not.
+fn f() { defer { if 1 == 1 { return; } } }
+fn main() { f(); }

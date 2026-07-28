@@ -8582,20 +8582,55 @@ fn check_defer_body(a: Allocator, ar: *Arena, sc: *const TyScope, body: *const V
     while i < n { check_defer_stmt(a, ar, sc, &sl[i]); i = i + 1 as u32; }
     return;
 }
+// The walk carries the "inside a defer body" property through EVERY statement
+// position, at every depth, rather than enumerating the parents that happen to
+// nest one. Written EXHAUSTIVELY on purpose — no `_o` arm — because the previous
+// version had one, and a catch-all is how `if` and `match` (which are
+// EXPRESSIONS here, not statements) escaped the walk entirely: `defer` under them
+// reached codegen and ICEd, and `return` under them was accepted in silence,
+// which is worse. The exhaustiveness checker now forces every future statement
+// kind to be considered here.
 fn check_defer_stmt(a: Allocator, ar: *Arena, sc: *const TyScope, st: *const Stmt) {
     match *st {
         Stmt::Return(v, q) => { tc_fail(ar, sc, q, "'return' inside a defer body is not supported"); }
+        | Stmt::Defer { body, pos } => { tc_fail(ar, sc, pos, "'defer' inside a defer body is not supported"); }
         | Stmt::While { cond, body } => { check_defer_body(a, ar, sc, &body); }
         | Stmt::For { iter_var, range, body, pos } => { check_defer_body(a, ar, sc, &body); }
-        // A defer inside a defer body is REJECTED, not descended into: the
-        // reference stops here, and mirroring its stopping points is the
-        // contract. Descending instead let the node reach codegen, which had no
-        // C form for it — found by the fuzzer, in exactly the shape seal
-        // Increment 4 declined to fixture.
-        | Stmt::Defer { body, pos } => { tc_fail(ar, sc, pos, "'defer' inside a defer body is not supported"); }
         | Stmt::Seal { body, pos } => { check_defer_body(a, ar, sc, &body); }
         | Stmt::With { target, name, body, pos } => { check_defer_body(a, ar, sc, &body); }
-        | _o => { }
+        // `if` and `match` are expressions, so the statement walk alone cannot
+        // see the bodies they carry.
+        | Stmt::ExprStmt(e) => { check_defer_expr(a, ar, sc, e); }
+        | Stmt::Tail(e) => { check_defer_expr(a, ar, sc, e); }
+        | Stmt::Let { name, value, ty_ann, is_mut, pos } => { check_defer_expr(a, ar, sc, value); }
+        | Stmt::LetTuple { names, value, is_mut, pos } => { check_defer_expr(a, ar, sc, value); }
+        | Stmt::LetElse { pat, value, else_body, pos } => {
+            check_defer_expr(a, ar, sc, value); check_defer_body(a, ar, sc, &else_body);
+        }
+        | Stmt::Assign { path, value, pos } => { check_defer_expr(a, ar, sc, value); }
+        | Stmt::AssignField { target, field, value, pos } => { check_defer_expr(a, ar, sc, value); }
+        | Stmt::AssignIndex { base, index, value, pos } => { check_defer_expr(a, ar, sc, value); }
+        | Stmt::AssignDeref { target, value, pos } => { check_defer_expr(a, ar, sc, value); }
+        | Stmt::Break(bp) => { }
+        | Stmt::Continue(cp) => { }
+        | Stmt::RuneDecl { name, elem, addr, dir, pos } => { }
+        | Stmt::WardInst { name, ward_ty, addr, pos } => { }
+    }
+    return;
+}
+fn check_defer_expr(a: Allocator, ar: *Arena, sc: *const TyScope, e: *const Expr) {
+    match *e {
+        Expr::Block(stmts, p) => { check_defer_body(a, ar, sc, &stmts); }
+        | Expr::If { cond, then_blk, else_blk, pos } => {
+            check_defer_body(a, ar, sc, &then_blk);
+            match else_blk { Option::Some(b) => check_defer_body(a, ar, sc, &b) | Option::None => { } }
+        }
+        | Expr::Match { scrutinee, arms, pos } => {
+            let sl = arms.as_slice();
+            let mut i = 0 as u32;
+            while i < arms.length() { check_defer_expr(a, ar, sc, sl[i].body); i = i + 1 as u32; }
+        }
+        | _leaf => { }
     }
     return;
 }

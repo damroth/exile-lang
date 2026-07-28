@@ -1,0 +1,5 @@
+// Found by review's probe after the differential fuzzer's finding was fixed as a
+// SHAPE rather than a property: the first fix rejected a defer that was a DIRECT
+// child of a defer body, and `if` is an EXPRESSION here, so the walk never saw
+// under it. The node reached codegen and ICEd.
+fn main() { defer { if 1 == 1 { defer println(3); } } }

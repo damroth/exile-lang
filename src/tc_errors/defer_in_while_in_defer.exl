@@ -1,0 +1,4 @@
+// PARITY fixture: this shape was already handled before the walk was rewritten
+// exhaustively, so it is pinned to prove the rewrite did not trade one hole for
+// another. A property fix must keep what the shape fix already had.
+fn main() { defer { let mut i = 0; while i < 1 { defer println(3); i = i + 1; } } }
