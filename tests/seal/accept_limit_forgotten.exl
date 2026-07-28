@@ -1,0 +1,22 @@
+// SEAL-SPEC §6 limit 1, as a CONTRACT: a forgotten seal is not diagnosed.
+//
+// This is the same multi-register sequence blitter_setup.exl seals, written with
+// no seal at all. v1 masks where you say; it does not know what should have been
+// masked (that is shape B, blocked on P2 + ISR-in-exile). So this MUST COMPILE —
+// the limit is a boundary the language states, not a silence it hides.
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+ward Custom {
+    bltcon0: u16 at 0x040 write;
+    bltapt:  u32 at 0x050 write;
+    bltsize: u16 at 0x058 write;
+}
+ward custom: Custom at 0xDFF000;
+mod gfx {
+    own Blitter;
+    pub fn blit_unsealed(src: u32) {
+        custom.bltcon0.write(2544);
+        custom.bltapt.write(src);
+        custom.bltsize.write(64);   // an interrupt anywhere above tears this
+    }
+}
+fn main() { gfx::blit_unsealed(65536); }

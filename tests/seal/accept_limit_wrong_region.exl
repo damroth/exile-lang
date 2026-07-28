@@ -1,0 +1,37 @@
+// SEAL-SPEC §6 limit 5, as a CONTRACT — and the sharpest one, because it is the
+// only §6 limit that Increment 3's real consumer actually walked into.
+//
+// NOTHING VERIFIES THE SEALED REGION IS THE RIGHT REGION. Here the DMACON save
+// is read OUTSIDE the region and only the restore is inside — the save torn from
+// its restore, which is precisely the bug a seal exists to prevent. It compiles
+// clean. It runs. The balance is 0 and mis-nesting is 0, so the witness is blind
+// to it as well: I-T1 and I-T2 both hold, and the program is still wrong.
+//
+// POST-ERA ROUND CANDIDATE. If any part of §6 earns its own round, it is this
+// one, and the shape to start from is the one below: the information a checker
+// would need is not flow analysis but a statement that these two accesses form a
+// PAIR. Pinned as ACCEPT so the blindness is a contract rather than a memory —
+// when a future round closes it, this fixture goes red and forces the decision to
+// be made deliberately.
+extern var SCRATCH: c_ulong;
+
+ward Regs {
+    dmaconr: u16 at 0x00 readwrite;
+    dmacon:  u16 at 0x02 readwrite;
+}
+
+fn torn(bits: u16) -> u16 {
+    ward regs: Regs at &SCRATCH;
+    let old = regs.dmaconr.read();      // OUTSIDE — an interrupt here changes it
+    seal {
+        let keep = old & bits;
+        regs.dmacon.write(32768 as u16 | keep);
+    }
+    return regs.dmacon.read();
+}
+
+fn main() {
+    ward regs: Regs at &SCRATCH;
+    regs.dmaconr.write(207 as u16);
+    println(torn(64 as u16) as int);    // 32832 — the RIGHT answer, from the WRONG shape
+}

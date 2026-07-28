@@ -1,0 +1,14 @@
+// SEAL-SPEC §6 limit 2, as a CONTRACT: masking is ALL interrupts, not per level.
+//
+// There is deliberately no syntax here for "mask only level 3" — the seam takes
+// no level and the construct offers no place to put one. Correct but blunt;
+// priority-level masking is deferred WITH its consumer (audio). The fixture pins
+// that a region protecting something that only races one level still compiles,
+// and still costs the whole mask, with no way to say otherwise.
+fn copper_wait() {
+    seal {
+        rune copjmp1: u16 at 0xDFF088 write;
+        copjmp1.strobe();
+    }
+}
+fn main() { copper_wait(); }

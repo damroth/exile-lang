@@ -1,0 +1,16 @@
+// SEAL-SPEC §6 limit 4, as a CONTRACT: seal LENGTH is neither measured nor
+// limited.
+//
+// Entering a region is cheap on the 68000; HOLDING one costs interrupt latency —
+// audio glitches, missed disk DMA. This region holds across a loop, which is
+// exactly the shape that hurts, and the language says nothing. The performance
+// compass asks for that to be stated plainly rather than policed badly, so the
+// fixture pins the silence as deliberate.
+fn slow_clear() {
+    seal {
+        rune bank: [u16; 32] at 0xDFF180 write;
+        let mut i = 0 as u32;
+        while i < 32 as u32 { bank[i].write(0); i = i + 1 as u32; }
+    }
+}
+fn main() { slow_clear(); }

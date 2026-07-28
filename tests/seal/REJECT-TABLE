@@ -1,0 +1,9 @@
+# SEAL-SPEC §5, the T-series, as data. One row per rejection the era claims.
+# Format:  fixture | expected message fragment | row label
+# The gate iterates this file, so adding a row means adding a line and a fixture
+# — and a row with no fixture, or a fixture with no row, is a hard failure.
+reject_expr|reject_expr.exl:3:13: error: expected expression|T1 a seal is a statement, not a value
+reject_seam_enter|error: the seal seam is not callable directly|T2 sys::sys_seal_enter written by hand
+reject_seam_exit|error: the seal seam is not callable directly|T3 sys::sys_seal_exit written by hand
+reject_seam_extern|error: the seal seam is not declarable|T4 a raw extern re-declaring a seam symbol
+reject_sealed_theft|belongs to resource 'Blitter', claimed by 'gfx'|S2 x seal a non-owner cannot seal its way in

@@ -1,0 +1,18 @@
+// SEAL-SPEC §6 limit 3 (I-T5), as a CONTRACT: a seal does not disprove a race.
+//
+// Two callers reach the same register; one seals, one does not. The seal makes
+// its OWN sequence indivisible and says nothing whatever about the other party,
+// who is invisible to it. This compiles, and it must: the invariant is about what
+// a seal guarantees, and pretending otherwise would be the tag sigil refuses to
+// be. What the language cannot see, it does not claim.
+fn guarded() {
+    seal {
+        rune bltsize: u16 at 0xDFF058 write;
+        bltsize.write(64);
+    }
+}
+fn unguarded() {
+    rune bltsize: u16 at 0xDFF058 write;
+    bltsize.write(128);
+}
+fn main() { guarded(); unguarded(); }
