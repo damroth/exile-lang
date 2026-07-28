@@ -1,0 +1,18 @@
+// Found by the differential fuzzer (FUZZ-SPEC Increment 1), seed 1, shrunk from
+// tests/defer/exits.exl. The oracle rejects a defer inside a defer body; the
+// port descended into it instead, so the node reached codegen, which had no C
+// form for it and ICEd. Bucket B1 — a port defect, since the reference defines
+// the rejection. The expected side is the ORACLE's, captured rather than
+// authored (I-F3).
+//
+// Seal Increment 4 declined to fixture exactly this shape, reasoning that the
+// crossing shape already exercised a chain within a chain. That reasoning was
+// wrong, and no human wrote the program that showed it.
+fn f() {
+    defer {
+        defer println(2);
+        println(1);
+    }
+    println(0);
+}
+fn main() { f(); }

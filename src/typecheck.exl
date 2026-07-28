@@ -8587,7 +8587,12 @@ fn check_defer_stmt(a: Allocator, ar: *Arena, sc: *const TyScope, st: *const Stm
         Stmt::Return(v, q) => { tc_fail(ar, sc, q, "'return' inside a defer body is not supported"); }
         | Stmt::While { cond, body } => { check_defer_body(a, ar, sc, &body); }
         | Stmt::For { iter_var, range, body, pos } => { check_defer_body(a, ar, sc, &body); }
-        | Stmt::Defer { body, pos } => { check_defer_body(a, ar, sc, &body); }
+        // A defer inside a defer body is REJECTED, not descended into: the
+        // reference stops here, and mirroring its stopping points is the
+        // contract. Descending instead let the node reach codegen, which had no
+        // C form for it — found by the fuzzer, in exactly the shape seal
+        // Increment 4 declined to fixture.
+        | Stmt::Defer { body, pos } => { tc_fail(ar, sc, pos, "'defer' inside a defer body is not supported"); }
         | Stmt::Seal { body, pos } => { check_defer_body(a, ar, sc, &body); }
         | Stmt::With { target, name, body, pos } => { check_defer_body(a, ar, sc, &body); }
         | _o => { }

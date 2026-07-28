@@ -1242,6 +1242,41 @@ selfhost-defer: $(EXILC_BIN)
 	  diff tests/defer/exits.expected $(C_OUT)/defer_exits.out | head -8; exit 1; fi; \
 	echo "selfhost-defer: clean (defer fires on normal exit, continue, break, return, and through nesting — inner jumps leave outer defers alone)"
 
+# ===== differential fuzzing (FUZZ-SPEC, Increment 1) =====
+#
+# A6: `make fuzz` is a SEPARATE seeded target, deterministic per seed, outside
+# `selfhost-verify` — the verification suite must stay deterministic.
+FUZZ_SEED  ?= 1
+FUZZ_N     ?= 150
+FUZZ_RATE  ?= 0
+.PHONY: fuzz fuzz-witness
+fuzz: $(EXILC_BIN)
+	@python3 tools/fuzz/fuzz.py --seed $(FUZZ_SEED) -n $(FUZZ_N) --graft-rate $(FUZZ_RATE) --cc --shrink
+
+# FUZZ-SPEC 7(a) — the witness, and the reason it is shaped this way: a run that
+# finds nothing is indistinguishable from a run that did nothing, so the gate
+# does NOT assert "no findings". It asserts that the fuzzer REDISCOVERS a defect
+# deliberately planted in the port. A fuzzer that has never rediscovered a defect
+# is not a fuzzer; it is a green light.
+#
+# E1: the seed is part of the gate. It selects a STREAM, so when the generator
+# changes the seed must be RE-HUNTED and re-pinned here. A failed hunt — no seed
+# within budget rediscovers the plant — is itself a finding ABOUT THE GENERATOR,
+# never grounds for widening the budget or weakening the plant.
+FUZZ_WITNESS_SEED ?= 1
+fuzz-witness: $(EXILC_BIN)
+	@test -f tools/fuzz/plant.py || { echo "fuzz-witness: MISSING tools/fuzz/plant.py"; exit 1; }; \
+	python3 tools/fuzz/plant.py plant || exit 1; \
+	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
+	out=`python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) --graft-rate $(FUZZ_RATE) 2>&1`; \
+	python3 tools/fuzz/plant.py restore; \
+	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
+	echo "$$out" | grep -q 'F1:emitted-c' \
+	  || { echo "fuzz-witness: seed $(FUZZ_WITNESS_SEED) did NOT rediscover the planted defect."; \
+	       echo "  Per E1 this is a finding ABOUT THE GENERATOR — re-hunt the seed, do not widen the budget."; \
+	       echo "$$out" | tail -3; exit 1; }; \
+	echo "fuzz-witness: clean (seed $(FUZZ_WITNESS_SEED) rediscovers the planted codegen defect as F1:emitted-c within $(FUZZ_N) inputs)"
+
 # ===== register #7 — the port's parenthesised emission (B2 divergence) =====
 #
 # The first deliberate byte-exact divergence in the LANGUAGE zone, so it is gated
