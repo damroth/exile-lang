@@ -1,0 +1,48 @@
+// seal Increment 3, witness level (b) — the SEALED SEQUENCE, executed.
+//
+// The golden proves the shape of tests/seal/blitter_setup.exl; this proves it
+// RUNS: the same ordering, the same rune handed across a call boundary, the same
+// DMACON save/restore arithmetic — over RAM, because neither a host nor vamos has
+// custom chips. It carries a four-register SUBSET: the backing is one c_ulong, the
+// same idiom the rune and ward over-RAM witnesses use, and exile's u32 is C
+// `unsigned long` (8 bytes on a 64-bit host, 4 on m68k), so wide fields would
+// overlap here — the host quirk WARD-SPEC §7b already records. The golden carries
+// all nine registers at their real HRM addresses.
+//
+// Read-back proves the stores LANDED and where; the trace counter proves every
+// stage of the sealed sequence ran; the balance line proves the region was left
+// exactly once. The fields are `readwrite` only so the witness can read them
+// back — the golden keeps the write-only directions the hardware really has.
+extern var SCRATCH: c_ulong;
+
+ward Regs {
+    dmaconr: u16 at 0x00 readwrite;   // stands in for the $DFF002 read port
+    bltcon0: u16 at 0x02 readwrite;
+    bltsize: u16 at 0x04 readwrite;   // the write that starts the blit
+    dmacon:  u16 at 0x06 readwrite;   // stands in for the $DFF096 write port
+}
+
+fn start(size: readwrite rune<u16>, v: u16) { size.write(v); }
+
+fn setup(size: u16) -> u16 {
+    ward regs: Regs at &SCRATCH;   // zero storage (I-W1), so naming it twice costs nothing
+    let mut trace = 0 as u16;
+    seal {
+        let old = regs.dmaconr.read();
+        regs.bltcon0.write(2544 as u16);   trace = trace + 1 as u16;
+        start(regs.bltsize, size);         trace = trace + 1 as u16;
+        let bits = old & 64 as u16;
+        regs.dmacon.write(32768 as u16 | bits);
+        trace = trace + 1 as u16;
+    }
+    return trace;
+}
+
+fn main() {
+    ward regs: Regs at &SCRATCH;
+    regs.dmaconr.write(207 as u16);       // 0x00CF — BLTEN among other bits on
+    println(setup(64 as u16) as int);     // 3     — every stage of the sequence ran
+    println(regs.bltcon0.read() as int);  // 2544
+    println(regs.bltsize.read() as int);  // 64    — written through the borrowed rune
+    println(regs.dmacon.read() as int);   // 32832 = 0x8040 — SETCLR | (0x00CF & 0x40)
+}

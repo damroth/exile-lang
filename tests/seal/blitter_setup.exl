@@ -1,0 +1,68 @@
+// seal Increment 3 — the real consumer (SEAL-SPEC §9.3).
+//
+// The first program in which all four constructs of the capability model carry
+// weight at once: a `sigil` owns the hardware, a `ward` lays a typed overlay over
+// it, the fields ARE runes (I-W3) and one crosses a call boundary as
+// `write rune<u16>`, and a `seal` makes the multi-register sequence indivisible.
+// The addresses are the HRM's own.
+
+mod ndk {
+    sigil Blitter    { 0xDFF040 .. 0xDFF05A }
+    sigil DmaControl { 0xDFF002 .. 0xDFF004, 0xDFF096 .. 0xDFF098 }
+
+    ward Custom {
+        dmaconr: u16 at 0x002 read;    // the READ port; DMACON itself is write-only
+        bltcon0: u16 at 0x040 write;
+        bltcon1: u16 at 0x042 write;
+        bltafwm: u16 at 0x044 write;
+        bltalwm: u16 at 0x046 write;
+        bltapt:  u32 at 0x050 write;
+        bltdpt:  u32 at 0x054 write;
+        bltsize: u16 at 0x058 write;   // the write that STARTS the blit
+        dmacon:  u16 at 0x096 write;
+    }
+    ward custom: Custom at 0xDFF000;
+
+    pub const DMAF_SETCLR:  u16 = 32768;   // 0x8000 — the SET/CLR bit
+    pub const DMAF_BLITTER: u16 = 64;      // 0x0040
+}
+
+mod gfx {
+    own Blitter;
+    own DmaControl;
+
+    // The start register handed across a boundary as a bare rune (P1).
+    fn start(size: write rune<u16>, v: u16) { size.write(v); }
+
+    pub fn blit(src: u32, dst: u32, size: u16) {
+        seal {
+            // DMACON save/restore, NDK shape.  DMACON ($DFF096) is WRITE-ONLY:
+            // bit 15 is SET/CLR, so one write SETS the 1-bits when that bit is on
+            // and CLEARS them when it is off.  The live state is therefore read
+            // from the separate DMACONR port ($DFF002) — never back from DMACON.
+            //
+            // That same SET/CLR bit is why ENABLING a channel needs no seal at
+            // all: `dmacon.write(SETCLR | BLTEN)` touches BLTEN and leaves every
+            // other bit alone, so there is no read-modify-write to interrupt.
+            // What needs the seal is this whole SEQUENCE — save, set up, restore —
+            // which an interrupt landing between any two of these stores tears
+            // apart.
+            let old = custom.dmaconr.read();
+            custom.bltcon0.write(2544);      // 0x09F0 — minterm D = A
+            custom.bltcon1.write(0);
+            custom.bltafwm.write(65535);
+            custom.bltalwm.write(65535);
+            custom.bltapt.write(src);
+            custom.bltdpt.write(dst);
+            start(custom.bltsize, size);
+            // The mask is bound first, not for style: codegen drops the source's
+            // parentheses, so `SETCLR | (old & BLTEN)` in one expression emits C
+            // that -Wall -Werror rejects (-Wparentheses). Pre-existing and
+            // oracle-identical — register #7.
+            let bits = old & ndk::DMAF_BLITTER;
+            custom.dmacon.write(ndk::DMAF_SETCLR | bits);
+        }
+    }
+}
+
+fn main() { gfx::blit(65536, 131072, 64); }

@@ -369,8 +369,28 @@ selfhost-amiga: $(EXILC_BIN)
 	  elif [ "$$none" != "0" ]; then \
 	    echo "selfhost-amiga: PAY-FOR-USE broken — a seal-free program's object names $$none seam symbols"; fail=1; fi; \
 	fi; \
+	rm -f $(C_OUT)/seal_cram.c $(AMIGA_OUT)/seal_cram; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; rune-over-RAM runs 11/22/0/305419896 on m68k under vamos; seal call-path runs nested on m68k through exec Disable/Enable — the SEAM, not the masking: vamos has nothing to race, interleaving stays registered for FS-UAE (SEAL-SPEC 7d); pay-for-use measured on the OBJECT, 2 vs 0)"; \
+	  test -s tests/seal/consumer_ram.amiga.expected \
+	    || { echo "selfhost-amiga: MISSING/EMPTY tests/seal/consumer_ram.amiga.expected"; fail=1; }; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/seal_cram.c tests/seal/consumer_ram.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-amiga: PORT rejected the sealed-sequence witness"; fail=1; }; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  $(AMIGA_GCC) -noixemul -O2 -fno-strict-aliasing $(CC_QUIET) -I src -o $(AMIGA_OUT)/seal_cram \
+	    $(C_OUT)/seal_cram.c tests/seal/consumer_ram_stub.c $(SYS_AMIGA) -lm \
+	    || { echo "selfhost-amiga: sealed-sequence cross-compile failed"; fail=1; }; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  cout=$$(vamos $(AMIGA_OUT)/seal_cram 2>/dev/null); cexp=$$(cat tests/seal/consumer_ram.amiga.expected); \
+	  if [ "$$cout" != "$$cexp" ]; then \
+	    echo "selfhost-amiga: sealed SEQUENCE ran wrong on m68k (order, offset, or DMACON restore):"; \
+	    diff <(echo "$$cexp") <(echo "$$cout") | head -8; fail=1; fi; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; rune-over-RAM runs 11/22/0/305419896 on m68k under vamos; seal call-path runs nested on m68k through exec Disable/Enable — the SEAM, not the masking: vamos has nothing to race, interleaving stays registered for FS-UAE (SEAL-SPEC 7d); pay-for-use measured on the OBJECT, 2 vs 0; the sealed blitter sequence RUNS on m68k 3/2544/64/32832 over RAM — the chipset itself is above vamos, so this proves the SEQUENCE and the seam, not the registers)"; \
 	else exit 1; fi
 
 # ===== Freestanding codegen mode (--freestanding) =====
@@ -1288,14 +1308,41 @@ selfhost-seal: $(EXILC_BIN)
 	  || { echo "selfhost-seal: ACCEPT — T4 widened from the emitted SYMBOL into a ban on a NAME"; exit 1; }; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_namesake.c -o $(C_OUT)/seal_namesake.o \
 	  || { echo "selfhost-seal: namesake C is not clean C89 at -O2"; exit 1; }; \
-	for q in exits nested amiga_callpath accept_seam_namesake ; do \
+	test -f tests/seal/blitter_setup.exl || { echo "selfhost-seal: MISSING tests/seal/blitter_setup.exl"; exit 1; }; \
+	test -s tests/seal/blitter_setup.golden || { echo "selfhost-seal: MISSING/EMPTY tests/seal/blitter_setup.golden"; exit 1; }; \
+	rm -f $(C_OUT)/seal_bl.c $(C_OUT)/seal_bl.o $(C_OUT)/seal_bl.seq; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_bl.c tests/seal/blitter_setup.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: port rejected the composed consumer (sigil+ward+rune+seal)"; exit 1; }; \
+	if [ ! -s $(C_OUT)/seal_bl.c ]; then echo "selfhost-seal: EMPTY consumer C (floor)"; exit 1; fi; \
+	sed -n '/sys_seal_enter();/,/sys_seal_exit(/p' $(C_OUT)/seal_bl.c | sed 's/^[ \t]*//' > $(C_OUT)/seal_bl.seq; \
+	if ! diff -q tests/seal/blitter_setup.golden $(C_OUT)/seal_bl.seq >/dev/null; then \
+	  echo "selfhost-seal: the sealed BLITTER SEQUENCE changed (order, address or seam placement):"; \
+	  diff tests/seal/blitter_setup.golden $(C_OUT)/seal_bl.seq | head -10; exit 1; fi; \
+	grep -q '\*size = v;' $(C_OUT)/seal_bl.c \
+	  || { echo "selfhost-seal: the borrowed rune's write did not emit (BLTSIZE crosses the call boundary)"; exit 1; }; \
+	if grep -qE 'Blitter|DmaControl|Custom' $(C_OUT)/seal_bl.c; then \
+	  echo "selfhost-seal: a sigil/ward name leaked into the consumer's C (I-S5 zero-cost)"; exit 1; fi; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_bl.c -o $(C_OUT)/seal_bl.o \
+	  || { echo "selfhost-seal: consumer C is not clean C89 at -O2"; exit 1; }; \
+	test -s tests/seal/consumer_ram.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/consumer_ram.expected"; exit 1; }; \
+	rm -f $(C_OUT)/seal_cr.c $(HOST_OUT)/seal_cr $(C_OUT)/seal_cr.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_cr.c tests/seal/consumer_ram.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: port rejected the runnable consumer"; exit 1; }; \
+	cc -O2 -fno-strict-aliasing -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_cr \
+	   $(C_OUT)/seal_cr.c tests/seal/consumer_ram_stub.c $(SYS_HOST) \
+	  || { echo "selfhost-seal: runnable consumer C is not clean at -O2 (-fno-strict-aliasing: MMIO overlays untyped memory)"; exit 1; }; \
+	$(HOST_OUT)/seal_cr > $(C_OUT)/seal_cr.out 2>&1; \
+	if ! diff -q tests/seal/consumer_ram.expected $(C_OUT)/seal_cr.out >/dev/null; then \
+	  echo "selfhost-seal: the sealed sequence RAN wrong (a store missed, or the DMACON restore miscomputed):"; \
+	  diff tests/seal/consumer_ram.expected $(C_OUT)/seal_cr.out | head -8; exit 1; fi; \
+	for q in exits nested amiga_callpath accept_seam_namesake blitter_setup consumer_ram ; do \
 	  rm -f $(C_OUT)/seal_q.msg; \
 	  $(EXILC_BIN) --target c --c-out /dev/null tests/seal/$$q.exl 2>&1 | grep -v '^wrote ' > $(C_OUT)/seal_q.msg; \
 	  if [ -s $(C_OUT)/seal_q.msg ]; then \
 	    echo "selfhost-seal: tests/seal/$$q.exl is not DIAGNOSTIC-FREE (a seal must not make the linter blind):"; \
 	    head -3 $(C_OUT)/seal_q.msg; exit 1; fi; \
 	done; \
-	echo "selfhost-seal: clean (one enter/four exits from the defer machinery; nesting legal and balanced through return+break+continue crossing both levels; T1-T4 rejected cleanly; a same-NAME non-extern still accepted)"
+	echo "selfhost-seal: clean (one enter/four exits from the defer machinery; nesting legal and balanced through return+break+continue crossing both levels; T1-T4 rejected cleanly; a same-NAME non-extern still accepted; the composed consumer (sigil owns + ward overlays + rune crosses the boundary + seal brackets) emits its HRM sequence byte for byte and RUNS 3/2544/64/32832)"
 
 # ===== sigil capability — the port's gate (SIGIL-SPEC, Phase 2) =====
 #

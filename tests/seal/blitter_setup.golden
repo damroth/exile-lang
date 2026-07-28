@@ -1,0 +1,12 @@
+__seal0 = sys_seal_enter();
+old = *((volatile unsigned short *)(14675968UL + 2UL));
+*((volatile unsigned short *)(14675968UL + 64UL)) = 2544;
+*((volatile unsigned short *)(14675968UL + 66UL)) = 0;
+*((volatile unsigned short *)(14675968UL + 68UL)) = 65535;
+*((volatile unsigned short *)(14675968UL + 70UL)) = 65535;
+*((volatile unsigned long *)(14675968UL + 80UL)) = src;
+*((volatile unsigned long *)(14675968UL + 84UL)) = dst;
+gfx__start((volatile unsigned short *)(14675968UL + 88UL), size);
+bits = old & ndk__DMAF_BLITTER;
+*((volatile unsigned short *)(14675968UL + 150UL)) = ndk__DMAF_SETCLR | bits;
+sys_seal_exit(__seal0);
