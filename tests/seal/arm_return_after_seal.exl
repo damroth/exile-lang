@@ -1,0 +1,15 @@
+// seal Increment 4 — a region in a diverging match arm, with a `return` AFTER it.
+//
+// The second of the two scopes `emit_simple_stmt` serves. `gen_block` publishes
+// its chain into `cg` as it walks, and this walker has no republish step to undo
+// that, so before the fix the region's exit outlived the region: the `return`
+// re-ran `sys_seal_exit` on a token already spent. Measured `seal-balance -1
+// misnest 1` — an I-T1 violation, and under AmigaOS a surplus `Enable()` with the
+// caller still believing it is protected.
+fn f(n: int) -> int {
+    match n {
+        0 => { seal { println(1); } return 10; }
+        | _o => { return 20; }
+    }
+}
+fn main() { println(f(0)); }

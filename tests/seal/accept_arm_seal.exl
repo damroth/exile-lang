@@ -1,0 +1,12 @@
+// seal Increment 4 — the control that stayed clean throughout, pinned as ACCEPT.
+//
+// The same arm, WITHOUT the return. It measured 0/0 before the fix and after it,
+// which is what localised the defect to the return path rather than to seals in
+// match arms as such. Pinned so a future fix cannot buy balance by rejecting or
+// mangling the shape that was never broken.
+fn f(n: int) -> int {
+    let mut r = 0;
+    match n { 0 => { seal { r = 1; } } | _o => { r = 2; } }
+    return r;
+}
+fn main() { println(f(0)); println(f(1)); }

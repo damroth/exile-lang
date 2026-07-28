@@ -1,0 +1,21 @@
+// seal Increment 4 — the property, not the two faces that bit.
+//
+// The defect was "a nested gen_block leaves the chain published, so a region's
+// exit outlives the region". The two shapes that surfaced it were a return after
+// a seal in a match arm and a sibling arm's return. This pins the CROSSING of the
+// neighbouring shapes reachable through the same chainless walker — a region
+// inside an `if` inside an arm, a region inside a `defer` body, and an arm with
+// more than one return — so the fix is gated as a property rather than as the
+// pair of cases that happened to be measured.
+fn g() -> int {
+    defer { seal { println(8); } println(9); }
+    return 5;
+}
+fn f(n: int) -> int {
+    match n {
+        0 => { if n == 0 { seal { println(1); } } return 10; }
+        | 1 => { seal { println(2); } if n == 1 { return 11; } return 12; }
+        | _o => { return 20; }
+    }
+}
+fn main() { println(g()); println(f(0)); println(f(1)); println(f(2)); }

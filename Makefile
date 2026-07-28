@@ -1335,6 +1335,19 @@ selfhost-seal: $(EXILC_BIN)
 	if ! diff -q tests/seal/consumer_ram.expected $(C_OUT)/seal_cr.out >/dev/null; then \
 	  echo "selfhost-seal: the sealed sequence RAN wrong (a store missed, or the DMACON restore miscomputed):"; \
 	  diff tests/seal/consumer_ram.expected $(C_OUT)/seal_cr.out | head -8; exit 1; fi; \
+	for m in arm_return_after_seal arm_sibling_return accept_arm_seal arm_nested_returns ; do \
+	  test -f tests/seal/$$m.exl || { echo "selfhost-seal: MISSING tests/seal/$$m.exl"; exit 1; }; \
+	  test -s tests/seal/$$m.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$m.expected"; exit 1; }; \
+	  rm -f $(C_OUT)/seal_$$m.c $(HOST_OUT)/seal_$$m $(C_OUT)/seal_$$m.out; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/seal_$$m.c tests/seal/$$m.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-seal: port rejected tests/seal/$$m.exl (a region in a match arm)"; exit 1; }; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_$$m $(C_OUT)/seal_$$m.c $(SYS_HOST) \
+	    || { echo "selfhost-seal: $$m C is not clean at -O2 (a spent or unassigned token reaches the seam)"; exit 1; }; \
+	  $(HOST_OUT)/seal_$$m > $(C_OUT)/seal_$$m.out 2>&1; \
+	  if ! diff -q tests/seal/$$m.expected $(C_OUT)/seal_$$m.out >/dev/null; then \
+	    echo "selfhost-seal: $$m RAN unbalanced (the region's exit outlived the region):"; \
+	    diff tests/seal/$$m.expected $(C_OUT)/seal_$$m.out | head -8; exit 1; fi; \
+	done; \
 	for k in defer_in_seal seal_in_defer cross_nest ; do \
 	  test -f tests/seal/$$k.exl || { echo "selfhost-seal: MISSING tests/seal/$$k.exl"; exit 1; }; \
 	  test -s tests/seal/$$k.golden || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$k.golden"; exit 1; }; \
@@ -1371,14 +1384,15 @@ selfhost-seal: $(EXILC_BIN)
 	if grep -q 'internal:' $(C_OUT)/seal_theft.err; then \
 	  echo "selfhost-seal: the sealed theft is an ICE, not a diagnostic"; exit 1; fi; \
 	for q in exits nested amiga_callpath accept_seam_namesake blitter_setup consumer_ram \
-	         defer_in_seal seal_in_defer cross_nest ; do \
+	         defer_in_seal seal_in_defer cross_nest \
+	         arm_return_after_seal arm_sibling_return accept_arm_seal arm_nested_returns ; do \
 	  rm -f $(C_OUT)/seal_q.msg; \
 	  $(EXILC_BIN) --target c --c-out /dev/null tests/seal/$$q.exl 2>&1 | grep -v '^wrote ' > $(C_OUT)/seal_q.msg; \
 	  if [ -s $(C_OUT)/seal_q.msg ]; then \
 	    echo "selfhost-seal: tests/seal/$$q.exl is not DIAGNOSTIC-FREE (a seal must not make the linter blind):"; \
 	    head -3 $(C_OUT)/seal_q.msg; exit 1; fi; \
 	done; \
-	echo "selfhost-seal: clean (one enter/four exits from the defer machinery; nesting legal and balanced through return+break+continue crossing both levels; T1-T4 rejected cleanly; a same-NAME non-extern still accepted; the composed consumer (sigil owns + ward overlays + rune crosses the boundary + seal brackets) emits its HRM sequence byte for byte and RUNS 3/2544/64/32832; defer x seal both ways and the seal->defer->seal crossing hold their ORDER in artifact and in execution; a non-owner cannot seal its way past S2)"
+	echo "selfhost-seal: clean (one enter/four exits from the defer machinery; nesting legal and balanced through return+break+continue crossing both levels; T1-T4 rejected cleanly; a same-NAME non-extern still accepted; the composed consumer (sigil owns + ward overlays + rune crosses the boundary + seal brackets) emits its HRM sequence byte for byte and RUNS 3/2544/64/32832; defer x seal both ways and the seal->defer->seal crossing hold their ORDER in artifact and in execution; a non-owner cannot seal its way past S2; a region in a diverging match arm does not leak its exit into the arm's return or into a sibling arm that never sealed)"
 
 # ===== sigil capability — the port's gate (SIGIL-SPEC, Phase 2) =====
 #
