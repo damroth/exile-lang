@@ -1,0 +1,5 @@
+// The property is "declares the seam's C SYMBOL", not "is spelled like it": a
+// plain fn mangles away and collides with nothing.  ACCEPT, so T4 cannot quietly
+// widen into a ban on a name.
+fn sys_seal_exit(state: u32) -> u32 { return state + 1 as u32; }
+fn main() { println(sys_seal_exit(7 as u32) as int); }

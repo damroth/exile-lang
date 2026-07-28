@@ -11,6 +11,7 @@ CFLAGS  := -ansi -pedantic -Wall
 # point at /opt/amiga-gcc without editing the Makefile.
 TOOLCHAIN_PREFIX ?= $(CURDIR)/_build/toolchain
 AMIGA_GCC        ?= $(TOOLCHAIN_PREFIX)/bin/m68k-amigaos-gcc
+AMIGA_NM         ?= $(TOOLCHAIN_PREFIX)/bin/m68k-amigaos-nm
 
 # Out-of-tree build artefacts.  `_build/` is already gitignored (dune
 # owns it), so generated C and per-target binaries live under it too.
@@ -332,8 +333,44 @@ selfhost-amiga: $(EXILC_BIN)
 	  rout=$$(vamos $(AMIGA_OUT)/rune_am 2>/dev/null); rexp=$$(printf '11\n22\n0\n305419896'); \
 	  if [ "$$rout" != "$$rexp" ]; then echo "selfhost-amiga: rune-over-RAM VAMOS round-trip WRONG (m68k volatile lowering):"; echo "$$rout"; fail=1; fi; \
 	fi; \
+	rm -f $(C_OUT)/seal_am.c $(AMIGA_OUT)/seal_am $(AMIGA_OUT)/seal_am0 $(C_OUT)/seal_am.o \
+	      $(C_OUT)/seal_none.c $(AMIGA_OUT)/seal_none0 $(C_OUT)/seal_none.o; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; rune-over-RAM runs 11/22/0/305419896 on m68k under vamos)"; \
+	  test -s tests/seal/amiga_callpath.expected || { echo "selfhost-amiga: MISSING/EMPTY tests/seal/amiga_callpath.expected"; fail=1; }; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  $(EXILC_BIN) --target amiga --c-out $(C_OUT)/seal_am.c --link $(SYS_AMIGA) -o $(AMIGA_OUT)/seal_am0 tests/seal/amiga_callpath.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-amiga: PORT rejected the seal call-path witness"; fail=1; }; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  $(AMIGA_GCC) -noixemul -O2 $(CC_QUIET) -I src -o $(AMIGA_OUT)/seal_am $(C_OUT)/seal_am.c $(SYS_AMIGA) -lm \
+	    || { echo "selfhost-amiga: seal call-path cross-compile failed (Disable/Enable seam)"; fail=1; }; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  sout=$$(vamos $(AMIGA_OUT)/seal_am 2>/dev/null); sexp=$$(cat tests/seal/amiga_callpath.expected); \
+	  if [ "$$sout" != "$$sexp" ]; then \
+	    echo "selfhost-amiga: seal call-path VAMOS run WRONG (exec Disable/Enable pairing):"; \
+	    diff <(echo "$$sexp") <(echo "$$sout") | head -6; fail=1; fi; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  $(AMIGA_GCC) -noixemul -O2 $(CC_QUIET) -I src -c -o $(C_OUT)/seal_am.o $(C_OUT)/seal_am.c \
+	    || { echo "selfhost-amiga: seal object compile failed"; fail=1; }; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  $(EXILC_BIN) --target amiga --c-out $(C_OUT)/seal_none.c --link $(SYS_AMIGA) -o $(AMIGA_OUT)/seal_none0 examples/amiga_hello.exl >/dev/null 2>&1 \
+	    && $(AMIGA_GCC) -noixemul -O2 $(CC_QUIET) -I src -c -o $(C_OUT)/seal_none.o $(C_OUT)/seal_none.c \
+	    || { echo "selfhost-amiga: pay-for-use CONTROL build failed (examples/amiga_hello.exl)"; fail=1; }; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  used=`$(AMIGA_NM) $(C_OUT)/seal_am.o 2>/dev/null | grep -c '_sys_seal_'`; \
+	  none=`$(AMIGA_NM) $(C_OUT)/seal_none.o 2>/dev/null | grep -c '_sys_seal_'`; \
+	  if [ "$$used" != "2" ]; then \
+	    echo "selfhost-amiga: the seal program's OBJECT names $$used seam symbols, expected 2"; fail=1; \
+	  elif [ "$$none" != "0" ]; then \
+	    echo "selfhost-amiga: PAY-FOR-USE broken — a seal-free program's object names $$none seam symbols"; fail=1; fi; \
+	fi; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; rune-over-RAM runs 11/22/0/305419896 on m68k under vamos; seal call-path runs nested on m68k through exec Disable/Enable — the SEAM, not the masking: vamos has nothing to race, interleaving stays registered for FS-UAE (SEAL-SPEC 7d); pay-for-use measured on the OBJECT, 2 vs 0)"; \
 	else exit 1; fi
 
 # ===== Freestanding codegen mode (--freestanding) =====
@@ -1221,7 +1258,44 @@ selfhost-seal: $(EXILC_BIN)
 	  echo "selfhost-seal: T1 diagnostic is not clean/positioned:"; cat $(C_OUT)/seal_t1.err | head -3; exit 1; fi; \
 	if grep -q 'internal:' $(C_OUT)/seal_t1.err; then \
 	  echo "selfhost-seal: T1 is an ICE, not a diagnostic"; exit 1; fi; \
-	echo "selfhost-seal: clean (one enter, four exits placed by the defer machinery; runs balanced with no mis-nesting; T1 rejected cleanly)"
+	test -f tests/seal/nested.exl || { echo "selfhost-seal: MISSING tests/seal/nested.exl"; exit 1; }; \
+	test -s tests/seal/nested.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/nested.expected"; exit 1; }; \
+	rm -f $(C_OUT)/seal_nest.c $(HOST_OUT)/seal_nest $(C_OUT)/seal_nest.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_nest.c tests/seal/nested.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: port REJECTED nesting — I-T2 is a guarantee, not a prohibition on depth"; exit 1; }; \
+	nent=`sed 's|//.*||' $(C_OUT)/seal_nest.c | grep -c 'sys_seal_enter();'`; \
+	if [ "$$nent" != "2" ]; then \
+	  echo "selfhost-seal: nested region expected 2 enters, found $$nent"; exit 1; fi; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_nest $(C_OUT)/seal_nest.c $(SYS_HOST) \
+	  || { echo "selfhost-seal: nested C is not clean C89 at -O2"; exit 1; }; \
+	$(HOST_OUT)/seal_nest > $(C_OUT)/seal_nest.out 2>&1; \
+	if ! diff -q tests/seal/nested.expected $(C_OUT)/seal_nest.out >/dev/null; then \
+	  echo "selfhost-seal: WRONG nested run (an inner exit crossed its outer, or a token was restored out of order):"; \
+	  diff tests/seal/nested.expected $(C_OUT)/seal_nest.out | head -8; exit 1; fi; \
+	for t in reject_seam_enter reject_seam_exit reject_seam_extern ; do \
+	  test -f tests/seal/$$t.exl || { echo "selfhost-seal: MISSING tests/seal/$$t.exl"; exit 1; }; \
+	  rm -f $(C_OUT)/seal_$$t.err; \
+	  $(EXILC_BIN) --target c --c-out /dev/null tests/seal/$$t.exl > $(C_OUT)/seal_$$t.err 2>&1; \
+	  if [ $$? -eq 0 ]; then \
+	    echo "selfhost-seal: T2-T4 — tests/seal/$$t.exl was ACCEPTED (the seam is reachable by hand)"; exit 1; fi; \
+	  grep -q 'error: the seal seam is not' $(C_OUT)/seal_$$t.err \
+	    || { echo "selfhost-seal: $$t rejected for the WRONG reason:"; head -2 $(C_OUT)/seal_$$t.err; exit 1; }; \
+	  if grep -q 'internal:' $(C_OUT)/seal_$$t.err; then \
+	    echo "selfhost-seal: $$t is an ICE, not a diagnostic"; exit 1; fi; \
+	done; \
+	rm -f $(C_OUT)/seal_namesake.c $(C_OUT)/seal_namesake.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_namesake.c tests/seal/accept_seam_namesake.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: ACCEPT — T4 widened from the emitted SYMBOL into a ban on a NAME"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_namesake.c -o $(C_OUT)/seal_namesake.o \
+	  || { echo "selfhost-seal: namesake C is not clean C89 at -O2"; exit 1; }; \
+	for q in exits nested amiga_callpath accept_seam_namesake ; do \
+	  rm -f $(C_OUT)/seal_q.msg; \
+	  $(EXILC_BIN) --target c --c-out /dev/null tests/seal/$$q.exl 2>&1 | grep -v '^wrote ' > $(C_OUT)/seal_q.msg; \
+	  if [ -s $(C_OUT)/seal_q.msg ]; then \
+	    echo "selfhost-seal: tests/seal/$$q.exl is not DIAGNOSTIC-FREE (a seal must not make the linter blind):"; \
+	    head -3 $(C_OUT)/seal_q.msg; exit 1; fi; \
+	done; \
+	echo "selfhost-seal: clean (one enter/four exits from the defer machinery; nesting legal and balanced through return+break+continue crossing both levels; T1-T4 rejected cleanly; a same-NAME non-extern still accepted)"
 
 # ===== sigil capability — the port's gate (SIGIL-SPEC, Phase 2) =====
 #

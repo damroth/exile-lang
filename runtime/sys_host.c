@@ -185,13 +185,14 @@ static int ex_seal_misnest = 0;
 /* Reported at exit, but only by a program that actually entered a seal: the
    report registers itself on first enter, so the seam stays two functions wide
    and non-seal programs keep their exact stdout.                               */
+static int ex_seal_armed = 0;
 static void ex_seal_report(void) {
     printf("seal-balance %d misnest %d\n", ex_seal_enters - ex_seal_exits, ex_seal_misnest);
 }
 
 unsigned long sys_seal_enter(void) {
     unsigned long tok = ex_seal_next++;
-    if (ex_seal_enters == 0) { atexit(ex_seal_report); }
+    if (!ex_seal_armed) { ex_seal_armed = 1; atexit(ex_seal_report); }
     if (ex_seal_depth < EX_SEAL_MAX) { ex_seal_stack[ex_seal_depth] = tok; }
     ex_seal_depth++;
     ex_seal_enters++;
@@ -199,6 +200,7 @@ unsigned long sys_seal_enter(void) {
 }
 
 void sys_seal_exit(unsigned long tok) {
+    if (!ex_seal_armed) { ex_seal_armed = 1; atexit(ex_seal_report); }
     ex_seal_exits++;
     if (ex_seal_depth <= 0) { ex_seal_misnest++; return; }
     ex_seal_depth--;

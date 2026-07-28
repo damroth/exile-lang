@@ -64,3 +64,28 @@ int sys_close(int _fd) {
     (void)_fd;
     return -1;
 }
+
+/* ---- seal seam (SEAL-SPEC §3.3) --------------------------------------------
+   Under AmigaOS the language must NOT write SR: exec's scheduler keeps its own
+   Disable nesting, and touching SR behind its back breaks it.  So the seam is
+   Disable()/Enable(), which nests in exec's counter — and the token the seam
+   hands back is the DEPTH exec is at, not a saved SR.  That is the whole point
+   of the token being opaque: two targets, two different things saved, one
+   guarantee.
+
+   Enable() is not "unmask" — it decrements exec's counter and only re-enables
+   at zero.  So an inner seal restoring the outer seal's state is exactly what
+   the pairing already does, and I-T2 holds here for exec's reason rather than
+   for the stub's.                                                              */
+static unsigned long ex_seal_depth = 0;
+
+unsigned long sys_seal_enter(void) {
+    Disable();
+    return ++ex_seal_depth;
+}
+
+void sys_seal_exit(unsigned long state) {
+    (void)state;
+    if (ex_seal_depth > 0) ex_seal_depth--;
+    Enable();
+}

@@ -113,6 +113,7 @@ fn reads_substmts(a: Allocator, s: *const Tstmt, out: *Vec<str>) {
             reads_in_stmts(a, &body, out); reads_in_stmts(a, &post, out);
         }
         | Tstmt::TDefer { body, pos } => { reads_in_stmts(a, &body, out); }
+        | Tstmt::TSeal { body, pos } => { reads_in_stmts(a, &body, out); }
         | _o => { }
     }
     return;
@@ -126,6 +127,7 @@ fn lets_substmts(a: Allocator, s: *const Tstmt, out: *Vec<NamePos>) {
             lets_in_stmts(a, &body, out); lets_in_stmts(a, &post, out);
         }
         | Tstmt::TDefer { body, pos } => { lets_in_stmts(a, &body, out); }
+        | Tstmt::TSeal { body, pos } => { lets_in_stmts(a, &body, out); }
         | _o => { }
     }
     return;
@@ -139,6 +141,7 @@ fn wcap_substmts(a: Allocator, ar: *Arena, s: *const Tstmt, out: *Vec<LWarn>) {
             with_cap_in_stmts(a, ar, &body, out); with_cap_in_stmts(a, ar, &post, out);
         }
         | Tstmt::TDefer { body, pos } => { with_cap_in_stmts(a, ar, &body, out); }
+        | Tstmt::TSeal { body, pos } => { with_cap_in_stmts(a, ar, &body, out); }
         | _o => { }
     }
     return;
@@ -441,6 +444,7 @@ fn mu_substmts(a: Allocator, ar: *Arena, tp: *const Tprogram, s: *const Tstmt, o
             mu_in_stmts(a, ar, tp, &body, out); mu_in_stmts(a, ar, tp, &post, out);
         }
         | Tstmt::TDefer { body, pos } => { mu_in_stmts(a, ar, tp, &body, out); }
+        | Tstmt::TSeal { body, pos } => { mu_in_stmts(a, ar, tp, &body, out); }
         | _o => { }
     }
     return;

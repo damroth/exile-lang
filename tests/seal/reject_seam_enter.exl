@@ -1,0 +1,5 @@
+// SEAL-SPEC T2: the seam reached by hand — a mask acquired that nothing restores.
+fn main() {
+    let t = sys::sys_seal_enter();
+    println(t as int);
+}

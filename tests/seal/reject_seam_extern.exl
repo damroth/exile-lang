@@ -1,0 +1,6 @@
+// SEAL-SPEC T4: the same property reached without naming `sys` at all.
+extern fn sys_seal_exit(state: u32);
+fn main() {
+    sys_seal_exit(7 as u32);
+    println(1);
+}

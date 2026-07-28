@@ -2628,11 +2628,33 @@ fn register_named_prelude(a: Allocator, sc: *const TyScope, t: *const Typ) {
 }
 fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                 gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    seal_seam_guard(a, ar, sc, gf.mangled, p);
     let targs = elab_args_coerced(a, ar, g, sc, env, gf.mangled, args);
     check_call(a, ar, sc, "function", gf.name, gf.mangled, args, &targs, gf.gf_variadic, p);
     let ty = ret_or_void(ar, gf.ret);
     register_named_prelude(a, sc, ty);
     return te_node(ar, TexprNode::TCall { mangled: gf.gf_emit, args: targs }, ty, p);
+}
+
+// SEAL-SPEC T2/T3 (§5.1): the seam of a guaranteed construct is reachable only
+// through that construct's lowering.  Reached by hand the token discipline is
+// defeated — a bare exit is a naked Enable(), a bare enter never restores.  This
+// sees USER syntax only: the desugar builds its calls as IR directly.
+fn is_seal_seam(mangled: str) -> bool {
+    return str::eq(mangled, "sys__sys_seal_enter") || str::eq(mangled, "sys__sys_seal_exit");
+}
+// SEAL-SPEC T4: the same property reached without naming `sys` — a raw extern
+// binds the identical C symbol.  The test is on the EMITTED symbol, not on the
+// source name: a plain `fn sys_seal_exit` mangles away and collides with nothing.
+fn seal_seam_decl_guard(a: Allocator, ar: *Arena, sc: *const TyScope, emit: str, p: Pos) {
+    if str::eq(emit, "sys_seal_enter") || str::eq(emit, "sys_seal_exit") {
+        tc_fail(ar, sc, p, "the seal seam is not declarable; use `seal { ... }`");
+    }
+}
+fn seal_seam_guard(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str, p: Pos) {
+    if is_seal_seam(mangled) {
+        tc_fail(ar, sc, p, "the seal seam is not callable directly; use `seal { ... }`");
+    }
 }
 
 // A `const` is a value, not a callable — the reference reports it as an unknown
@@ -13365,6 +13387,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             // `parser::IdentPos`, matching how the type is registered.
             let msc = scope_with_modpath(sc, path);
             let fsc = scope_with_tparams(&msc, &f.tparams);
+            seal_seam_decl_guard(a, ar, &fsc, em, f.pos);
             g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty, f.pos),
                               is_const: false, is_top: is_top, gf_variadic: f.is_variadic });
         }

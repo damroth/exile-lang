@@ -1,0 +1,28 @@
+// SEAL-SPEC I-T2 at DEPTH: nesting is legal and composes by construction, so the
+// witness leaves nested regions every way there is — return and break and
+// continue all crossing an inner seal AND its outer.  The token makes the inner
+// exit restore the OUTER's state, never "enabled", so no counter is needed.
+fn run(n: int) -> int {
+    let mut acc = 0;
+    let mut i = 0;
+    while i < 3 {
+        seal {
+            acc = acc + 1;
+            seal {
+                acc = acc + 10;
+                if n == 0 { return acc; }
+                if n == 1 { break; }
+                if n == 2 { i = i + 1; continue; }
+            }
+            acc = acc + 100;
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+fn main() {
+    println(run(0));
+    println(run(1));
+    println(run(2));
+    println(run(3));
+}
