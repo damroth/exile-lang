@@ -167,3 +167,40 @@ int sys_spawn(const char *const *argv, int n) {
 void sys_exit(int code) {
     exit(code);
 }
+
+/* ---- seal seam (SEAL-SPEC §3.3) --------------------------------------------
+   The host has no interrupts to mask, so the stub exists to WITNESS the
+   guarantee rather than to provide it.  It keeps a counter AND a stack of
+   handed-out tokens: balance alone proves I-T1 (every enter has an exit) but
+   cannot see MIS-NESTING, which is what I-T2 forbids — so exit asserts it was
+   handed exactly the top of the stack (correction A).                          */
+#define EX_SEAL_MAX 64
+static unsigned long ex_seal_stack[EX_SEAL_MAX];
+static int ex_seal_depth = 0;
+static unsigned long ex_seal_next = 1;
+static int ex_seal_enters = 0;
+static int ex_seal_exits = 0;
+static int ex_seal_misnest = 0;
+
+/* Reported at exit, but only by a program that actually entered a seal: the
+   report registers itself on first enter, so the seam stays two functions wide
+   and non-seal programs keep their exact stdout.                               */
+static void ex_seal_report(void) {
+    printf("seal-balance %d misnest %d\n", ex_seal_enters - ex_seal_exits, ex_seal_misnest);
+}
+
+unsigned long sys_seal_enter(void) {
+    unsigned long tok = ex_seal_next++;
+    if (ex_seal_enters == 0) { atexit(ex_seal_report); }
+    if (ex_seal_depth < EX_SEAL_MAX) { ex_seal_stack[ex_seal_depth] = tok; }
+    ex_seal_depth++;
+    ex_seal_enters++;
+    return tok;
+}
+
+void sys_seal_exit(unsigned long tok) {
+    ex_seal_exits++;
+    if (ex_seal_depth <= 0) { ex_seal_misnest++; return; }
+    ex_seal_depth--;
+    if (ex_seal_depth < EX_SEAL_MAX && ex_seal_stack[ex_seal_depth] != tok) { ex_seal_misnest++; }
+}

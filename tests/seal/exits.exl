@@ -1,0 +1,21 @@
+// SEAL-SPEC I-T1: the region is left EXACTLY once per entry, on every exit
+// path.  The shape is the one that breaks hand-written enter/exit pairs: a
+// seal inside a loop with a return, a break and a continue leaving it.
+fn seq(n: int) -> Option<int> {
+    let mut i = 0;
+    while i < 3 {
+        seal {
+            println(1);
+            if n == 0 { return Option::None; }
+            if n == 1 { break; }
+            if n == 2 { i = i + 1; continue; }
+            println(2);
+        }
+        i = i + 1;
+    }
+    return Option::Some(9);
+}
+fn main() {
+    match seq(3) { Option::Some(v) => println(v) | Option::None => println(0) }
+    match seq(1) { Option::Some(v) => println(v) | Option::None => println(0) }
+}

@@ -506,6 +506,11 @@ fn render_stmt(s: *const Stmt, out: *StringBuilder) {
             out.push_str(match dir { Direction::DRead => "read" | Direction::DWrite => "write" | Direction::DReadWrite => "readwrite" });
             out.push_str(")");
         }
+        | Stmt::Seal { body, pos } => {
+            out.push_str("(seal ");
+            render_stmt_list(&body, out);
+            out.push_str(")");
+        }
         | Stmt::WardInst { name, ward_ty, addr, pos } => {
             out.push_str("(ward-inst ");
             out.push_str(name);

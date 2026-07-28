@@ -77,6 +77,7 @@ fn render_token(t: *const Token, out: *StringBuilder) {
         | Token::Rune => { out.push_str("Rune"); }
         | Token::Ward => { out.push_str("Ward"); }
         | Token::Sigil => { out.push_str("Sigil"); }
+        | Token::Seal => { out.push_str("Seal"); }
         | Token::Null => { out.push_str("Null"); }
         | Token::LParen => { out.push_str("LParen"); }
         | Token::RParen => { out.push_str("RParen"); }

@@ -235,6 +235,11 @@ pub enum Tstmt {
              body: Vec<Tstmt>, pos: Pos }
     | TForEach { it_var: str, it_init: *const Texpr, body: Vec<Tstmt>, pos: Pos }
     | TDefer { body: Vec<Tstmt>, pos: Pos }
+    // `seal { … }` (SEAL-SPEC §3.1).  A scope whose body ALREADY begins with the
+    // seam token binding and the `defer` that restores it, so every exit path —
+    // fall-through, return, break, continue, try — is handled by the defer
+    // machinery and NOT by a second mechanism.  Codegen only opens the scope.
+    | TSeal { body: Vec<Tstmt>, pos: Pos }
 }
 
 // ===== Function + program =====

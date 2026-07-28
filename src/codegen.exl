@@ -1899,6 +1899,15 @@ pub fn gen_block(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg:
                 out.push_str(indent); out.push_str("continue;\n");
                 returned = true;
             }
+            // The seal's body already carries its token binding and the `defer`
+            // that restores it, so this opens a C scope and hands the body to
+            // gen_block — every exit path is served by the defer machinery, and
+            // seal contributes no exit code of its own (SEAL-SPEC §3.1).
+            | Tstmt::TSeal { body, pos } => {
+                out.push_str(indent); out.push_str("{\n");
+                gen_block(a, ar, out, cg_indent(a, ar, indent), cg, &chain, &body);
+                out.push_str(indent); out.push_str("}\n");
+            }
             | Tstmt::TLetTuple { names, value, pos } => emit_let_tuple(a, ar, out, indent, cg, &names, value)
             | Tstmt::TIf { cond, then_body, else_body } => { out.push_str(indent); gen_if(a, ar, out, indent, cg, outer, &my_defers, cond, &then_body, &else_body); }
             | Tstmt::TWhile { cond, body, post } => gen_while(a, ar, out, indent, cg, outer, &my_defers, cond, &body, &post)

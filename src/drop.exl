@@ -1484,6 +1484,7 @@ fn collect_drop_temps(stmts: *const Vec<Tstmt>, lets: *Vec<FieldTy>) {
             | Tstmt::TIf { cond, then_body, else_body } => { collect_drop_temps(&then_body, lets); collect_drop_temps(&else_body, lets); }
             | Tstmt::TWhile { cond, body, post } => { collect_drop_temps(&body, lets); collect_drop_temps(&post, lets); }
             | Tstmt::TDefer { body, pos } => collect_drop_temps(&body, lets)
+            | Tstmt::TSeal { body, pos } => collect_drop_temps(&body, lets)
             | _o => {}
         }
         i = i + 1 as u32;

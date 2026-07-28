@@ -181,6 +181,7 @@ fn tok_tag(t: Token) -> int {
         | Token::Rune => 82
         | Token::Ward => 83
         | Token::Sigil => 84
+        | Token::Seal => 85
     }
 }
 
@@ -221,6 +222,7 @@ fn pp(t: Token) -> str {
         | Token::Rune => "'rune'"
         | Token::Ward => "'ward'"
         | Token::Sigil => "'sigil'"
+        | Token::Seal => "'seal'"
     }
 }
 
@@ -1653,6 +1655,7 @@ fn parse_stmt(s: *Parser) -> Stmt {
         Token::Let => stmt_let(s)
         | Token::Rune => stmt_rune(s)
         | Token::Ward => stmt_ward_inst(s)
+        | Token::Seal => stmt_seal(s)
         | Token::Return => stmt_return(s)
         | Token::Defer => stmt_defer(s)
         | Token::With => stmt_with(s)
@@ -1747,6 +1750,14 @@ fn stmt_rune(s: *Parser) -> Stmt {
 }
 
 // `ward name: Type at ADDR;` — a LOCAL ward-overlay instance (WARD-SPEC §3).
+// `seal { … }` — statement-shaped (SEAL-SPEC T1: a seal is not a value).
+fn stmt_seal(s: *Parser) -> Stmt {
+    let pos = peek_pos(s);
+    bump(s);
+    let body = parse_block(s);
+    return Stmt::Seal { body: body, pos: pos };
+}
+
 fn stmt_ward_inst(s: *Parser) -> Stmt {
     let pos = peek_pos(s);
     bump(s);

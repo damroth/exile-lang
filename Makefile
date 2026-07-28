@@ -670,7 +670,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -813,7 +813,8 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
-                 selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer
+                 selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
+                 selfhost-seal
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1183,6 +1184,44 @@ selfhost-defer: $(EXILC_BIN)
 	  echo "selfhost-defer: WRONG defer trace (an exit path lost or gained a defer):"; \
 	  diff tests/defer/exits.expected $(C_OUT)/defer_exits.out | head -8; exit 1; fi; \
 	echo "selfhost-defer: clean (defer fires on normal exit, continue, break, return, and through nesting — inner jumps leave outer defers alone)"
+
+# ===== seal capability — the port's gate (SEAL-SPEC, Increment 1) =====
+#
+# Two levels, because either alone lies.  The GOLDEN level counts the seam
+# calls in the emitted C: one enter, and one exit per exit path (the defer
+# machinery must have placed them, not the author).  The RUNNABLE level then
+# executes it, and the host stub reports the balance and mis-nesting it saw —
+# a count that is right in the text but wrong at run time cannot pass both.
+selfhost-seal: $(EXILC_BIN)
+	@test -f tests/seal/exits.exl || { echo "selfhost-seal: MISSING tests/seal/exits.exl"; exit 1; }; \
+	test -s tests/seal/exits.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/exits.expected"; exit 1; }; \
+	test -f tests/seal/reject_expr.exl || { echo "selfhost-seal: MISSING tests/seal/reject_expr.exl"; exit 1; }; \
+	rm -f $(C_OUT)/seal_exits.c $(HOST_OUT)/seal_exits $(C_OUT)/seal_exits.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_exits.c tests/seal/exits.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: port rejected the exits fixture"; exit 1; }; \
+	if [ ! -s $(C_OUT)/seal_exits.c ]; then echo "selfhost-seal: EMPTY emitted C (floor)"; exit 1; fi; \
+	ent=`sed 's|//.*||' $(C_OUT)/seal_exits.c | grep -c 'sys_seal_enter();'`; \
+	if [ "$$ent" != "1" ]; then \
+	  echo "selfhost-seal: expected 1 seam enter, found $$ent (a seal must be entered exactly once)"; exit 1; fi; \
+	ext=`sed 's|//.*||' $(C_OUT)/seal_exits.c | grep -c 'sys_seal_exit(__seal'`; \
+	if [ "$$ext" != "4" ]; then \
+	  echo "selfhost-seal: expected 4 seam exits (fallthrough, return, break, continue), found $$ext"; exit 1; fi; \
+	grep -q 'extern unsigned long sys_seal_enter(void);' $(C_OUT)/seal_exits.c \
+	  || { echo "selfhost-seal: the seam extern was not emitted (pay-for-use is not paying)"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_exits $(C_OUT)/seal_exits.c $(SYS_HOST) \
+	  || { echo "selfhost-seal: emitted C is not clean C89 at -O2"; exit 1; }; \
+	$(HOST_OUT)/seal_exits > $(C_OUT)/seal_exits.out 2>&1; \
+	if ! diff -q tests/seal/exits.expected $(C_OUT)/seal_exits.out >/dev/null; then \
+	  echo "selfhost-seal: WRONG run (an exit path lost its seam call, or the region is left unbalanced):"; \
+	  diff tests/seal/exits.expected $(C_OUT)/seal_exits.out | head -8; exit 1; fi; \
+	rm -f $(C_OUT)/seal_t1.err; \
+	$(EXILC_BIN) --target c --c-out /dev/null tests/seal/reject_expr.exl > $(C_OUT)/seal_t1.err 2>&1; \
+	if [ $$? -eq 0 ]; then echo "selfhost-seal: T1 — a seal in expression position was ACCEPTED"; exit 1; fi; \
+	if ! grep -q 'reject_expr.exl:3:13: error:' $(C_OUT)/seal_t1.err; then \
+	  echo "selfhost-seal: T1 diagnostic is not clean/positioned:"; cat $(C_OUT)/seal_t1.err | head -3; exit 1; fi; \
+	if grep -q 'internal:' $(C_OUT)/seal_t1.err; then \
+	  echo "selfhost-seal: T1 is an ICE, not a diagnostic"; exit 1; fi; \
+	echo "selfhost-seal: clean (one enter, four exits placed by the defer machinery; runs balanced with no mis-nesting; T1 rejected cleanly)"
 
 # ===== sigil capability — the port's gate (SIGIL-SPEC, Phase 2) =====
 #

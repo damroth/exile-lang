@@ -279,6 +279,10 @@ pub enum Stmt {
     // (WARD-SPEC §3, Phase 2).  Zero runtime storage (I-W1): the base folds into
     // each field access.  `addr` is an integer (MMIO) or `&GLOBAL` (RAM), as rune.
     | WardInst { name: str, ward_ty: str, addr: *const Expr, pos: Pos }
+    // `seal { … }` — a masked critical region (SEAL-SPEC §10).  The block IS the
+    // region, so its braces are the mask's boundaries.  Lowered onto `defer`, so
+    // there is exactly ONE exit mechanism in the language (§3.1).
+    | Seal { body: Vec<Stmt>, pos: Pos }
 }
 
 // ===== Declarations =====

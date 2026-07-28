@@ -686,6 +686,11 @@ fn render_tstmt(s: *const Tstmt, out: *StringBuilder) {
             render_tstmt_list(&body, out);
             out.push_str(")");
         }
+        | Tstmt::TSeal { body } => {
+            out.push_str("(seal ");
+            render_tstmt_list(&body, out);
+            out.push_str(")");
+        }
         | Tstmt::TBreak(_) => { out.push_str("(break)"); }
         | Tstmt::TContinue(_) => { out.push_str("(continue)"); }
     }

@@ -5716,6 +5716,7 @@ fn subst_var_stmt(a: Allocator, ar: *Arena, from: str, to: str, s: *const Stmt) 
             Stmt::RuneDecl { name: name, elem: elem, addr: subst_var_expr(a, ar, from, to, addr), dir: dir, pos: pos }
         | Stmt::WardInst { name, ward_ty, addr, pos } =>
             Stmt::WardInst { name: name, ward_ty: ward_ty, addr: subst_var_expr(a, ar, from, to, addr), pos: pos }
+        | Stmt::Seal { body, pos } => Stmt::Seal { body: subst_body(a, ar, from, to, &body), pos: pos }
     };
 }
 
@@ -6983,6 +6984,9 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         | Stmt::WardInst { name, ward_ty, addr, pos } => {
             elab_ward_inst(a, ar, sc, benv, name, ward_ty, addr, pos);
         }
+        | Stmt::Seal { body, pos } => {
+            tstmts.push(elab_seal(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, &body, pos));
+        }
         | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
         | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
         | Stmt::Assign { path, value, pos } => {
@@ -7785,6 +7789,7 @@ fn fv_stmts(a: Allocator, bound: *const Vec<str>, stmts: *const Vec<Stmt>, acc: 
             | Stmt::While { cond, body } => { fv_expr(a, &b, cond, acc); fv_stmts(a, &b, &body, acc); }
             | Stmt::For { iter_var, range, body } => { fv_expr(a, &b, range, acc); let mut bb = copy_strs(a, &b); bb.push(iter_var); fv_stmts(a, &bb, &body, acc); }
             | Stmt::Defer { body } => fv_stmts(a, &b, &body, acc)
+            | Stmt::Seal { body } => fv_stmts(a, &b, &body, acc)
             | Stmt::With { target, name, body } => { fv_expr(a, &b, target, acc); let mut wb = copy_strs(a, &b); wb.push(name); fv_stmts(a, &wb, &body, acc); }
             | _other => {}
         }
@@ -8561,6 +8566,7 @@ fn check_defer_stmt(a: Allocator, ar: *Arena, sc: *const TyScope, st: *const Stm
         | Stmt::While { cond, body } => { check_defer_body(a, ar, sc, &body); }
         | Stmt::For { iter_var, range, body, pos } => { check_defer_body(a, ar, sc, &body); }
         | Stmt::Defer { body, pos } => { check_defer_body(a, ar, sc, &body); }
+        | Stmt::Seal { body, pos } => { check_defer_body(a, ar, sc, &body); }
         | Stmt::With { target, name, body, pos } => { check_defer_body(a, ar, sc, &body); }
         | _o => { }
     }
@@ -9010,6 +9016,9 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Stmt::WardInst { name, ward_ty, addr, pos } => {
             elab_ward_inst(a, ar, sc, env, name, ward_ty, addr, pos);
         }
+        | Stmt::Seal { body, pos } => {
+            out.push(elab_seal(a, ar, g, sc, gensym, env, ret, &body, pos));
+        }
         | Stmt::ExprStmt(e) => { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Tail(e) => { elab_tail(a, ar, g, sc, gensym, env, ret, e, out); }
         | Stmt::Return(val, pos) => {
@@ -9313,6 +9322,50 @@ fn elab_ward_inst(a: Allocator, ar: *Arena, sc: *const TyScope, benv: *Vec<Field
     let mut path: Vec<str> = Vec::with_capacity(a, 1 as u32);
     path.push(ward_ty);
     benv.push(FieldTy { name: name, ty: ty_node(ar, Typ::TWard { path: path, base: base, base_sym: bsym }) });
+}
+
+// ===== seal: a masked region, lowered onto `defer` (SEAL-SPEC §3.1) =====
+//
+// The desugar is the whole implementation: the region's body BEGINS with the seam
+// token binding and the `defer` that restores it, so every exit path — fall-through,
+// return, break, continue, try — is served by the defer machinery and there is no
+// second exit mechanism anywhere.  Codegen for `TSeal` only opens a scope.
+fn seal_tok_name(a: Allocator, ar: *Arena, sc: *const TyScope) -> str {
+    let n = *sc.sc_gensym;
+    *sc.sc_gensym = n + 1 as u32;
+    let mut sb = StringBuilder::with_capacity(a, 24 as u32);
+    sb.push_str("__seal"); sb.push_int(n as int);
+    return str::from_slice(ar, sb.as_slice());
+}
+fn seal_enter_call(a: Allocator, ar: *Arena, p: Pos) -> *const Texpr {
+    let no_args: Vec<*const Texpr> = Vec::with_capacity(a, 1 as u32);
+    return te_node(ar, TexprNode::TCall { mangled: "sys_seal_enter", args: no_args },
+                   ty_node(ar, Typ::TCLong { is_signed: false }), p);
+}
+fn seal_exit_stmt(a: Allocator, ar: *Arena, tok: str, p: Pos) -> Tstmt {
+    let culong = ty_node(ar, Typ::TCLong { is_signed: false });
+    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 2 as u32);
+    args.push(te_node(ar, TexprNode::TVar(tok), culong, p));
+    return Tstmt::TExprStmt(te_node(ar, TexprNode::TCall { mangled: "sys_seal_exit", args: args },
+                                    ty_node(ar, Typ::TCVoid), p));
+}
+fn elab_seal(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32,
+             env: *Vec<FieldTy>, ret: Option<*const Typ>, body: *const Vec<Stmt>, p: Pos) -> Tstmt {
+    let tok = seal_tok_name(a, ar, sc);
+    let mut inner: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    seal_prologue(a, ar, tok, p, &inner);
+    let user = elab_stmt_body(a, ar, g, sc, gensym, env, ret, body);
+    let usl = user.as_slice();
+    let mut i = 0 as u32;
+    while i < user.length() { inner.push(usl[i]); i = i + 1 as u32; }
+    return Tstmt::TSeal { body: inner, pos: p };
+}
+fn seal_prologue(a: Allocator, ar: *Arena, tok: str, p: Pos, out: *Vec<Tstmt>) {
+    let culong = ty_node(ar, Typ::TCLong { is_signed: false });
+    out.push(Tstmt::TLet { name: tok, value: seal_enter_call(a, ar, p), decl_ty: culong, pos: p });
+    let mut dbody: Vec<Tstmt> = Vec::with_capacity(a, 2 as u32);
+    dbody.push(seal_exit_stmt(a, ar, tok, p));
+    out.push(Tstmt::TDefer { body: dbody, pos: p });
 }
 
 // ===== sigil: resource coverage + the materialisation gate (SIGIL-SPEC §4) =====
@@ -9913,6 +9966,7 @@ fn lift_stmt(a: Allocator, ar: *Arena, ctr: *u32, s: *const Tstmt, out: *Vec<Tst
         | Tstmt::TBreak(bp) => { out.push(Tstmt::TBreak(bp)); }
         | Tstmt::TContinue(cp) => { out.push(Tstmt::TContinue(cp)); }
         | Tstmt::TDefer { body, pos } => { out.push(Tstmt::TDefer { body: lift_stmts(a, ar, ctr, &body), pos: pos }); }
+        | Tstmt::TSeal { body, pos } => { out.push(Tstmt::TSeal { body: lift_stmts(a, ar, ctr, &body), pos: pos }); }
         | _other => { }
     }
 }
@@ -10137,6 +10191,9 @@ fn scope_one(a: Allocator, ar: *Arena, st: *const ScopeSt, here: *Vec<str>,
         }
         | Stmt::Defer { body, pos } => {
             out.push(Stmt::Defer { body: scope_block(a, ar, st, &vis, &body), pos: pos });
+        }
+        | Stmt::Seal { body, pos } => {
+            out.push(Stmt::Seal { body: scope_block(a, ar, st, &vis, &body), pos: pos });
         }
         | Stmt::LetElse { pat, value, else_body, pos } => {
             let nv = scope_expr_sc(a, ar, st, &vis, value);
@@ -12454,6 +12511,7 @@ fn prepass_stmts(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<
             | Stmt::While { cond, body } => { prepass_expr(a, ar, sc, rets, &ln, &la, cond, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
             | Stmt::For { iter_var, range, body } => { prepass_expr(a, ar, sc, rets, &ln, &la, range, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
             | Stmt::Defer { body } => prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted)
+            | Stmt::Seal { body } => prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted)
             | Stmt::With { target, name, body } => { prepass_expr(a, ar, sc, rets, &ln, &la, target, ctr, sinfo, methods, assoc, stps, lifted); prepass_stmts(a, ar, sc, rets, &ln, &la, &body, ctr, sinfo, methods, assoc, stps, lifted); }
             | _other => {}
         }
@@ -13414,6 +13472,10 @@ fn register_prelude_globals(a: Allocator, ar: *Arena, g: *Vec<GlobalFn>) {
     // compile-time only, never in a user program's output.
     let culong: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TCLong { is_signed: false }));
     push_sys_fn(a, ar, "sys_fmt_f64", culong, g);
+    // SEAL-SPEC §3.2: enter RETURNS the previous state and exit RESTORES it, so a
+    // blind unmask is unexpressible and nesting is safe by construction.
+    push_sys_fn(a, ar, "sys_seal_enter", culong, g);
+    push_sys_fn(a, ar, "sys_seal_exit", none_ty(), g);
     // DR-006 argv seam: the command line for a self-hosted exilc.  Host backend
     // reads /proc/self/cmdline; the generated `int main(void)` is untouched.
     let ccharp: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TCChar))));
@@ -13989,6 +14051,7 @@ fn lets_stmt(s: *const Tstmt, out: *Vec<FieldTy>) {
         | Tstmt::TIf { cond, then_body, else_body } => { lets_stmts(&then_body, out); lets_stmts(&else_body, out); }
         | Tstmt::TWhile { cond, body, post } => { lets_stmts(&body, out); lets_stmts(&post, out); }
         | Tstmt::TDefer { body, pos } => lets_stmts(&body, out)
+        | Tstmt::TSeal { body, pos } => lets_stmts(&body, out)
         | _o => {}
     }
 }
@@ -14235,6 +14298,7 @@ fn collect_tstmt(s: *const Tstmt, acc: *FtrAcc) {
         | Tstmt::TIf { cond, then_body, else_body } => { collect_texpr(cond, acc); collect_stmts(&then_body, acc); collect_stmts(&else_body, acc); }
         | Tstmt::TWhile { cond, body, post } => { collect_texpr(cond, acc); collect_stmts(&body, acc); collect_stmts(&post, acc); }
         | Tstmt::TDefer { body, pos } => collect_stmts(&body, acc)
+        | Tstmt::TSeal { body, pos } => collect_stmts(&body, acc)
         | _leaf => {}
     }
 }
@@ -15040,6 +15104,7 @@ fn stmt_calls_m(s: *const Tstmt, m: str) -> bool {
         | Tstmt::TIf { cond, then_body, else_body } => expr_calls_m(cond, m) || stmts_call_m(&then_body, m) || stmts_call_m(&else_body, m)
         | Tstmt::TWhile { cond, body, post } => expr_calls_m(cond, m) || stmts_call_m(&body, m) || stmts_call_m(&post, m)
         | Tstmt::TDefer { body, pos } => stmts_call_m(&body, m)
+        | Tstmt::TSeal { body, pos } => stmts_call_m(&body, m)
         | _leaf => false
     };
 }
@@ -15148,6 +15213,7 @@ fn scall_stmt(s: *const Stmt, nm: str, pm: str) -> bool {
         | Stmt::While { cond, body } => scall_e(cond, nm, pm) || body_calls_self(&body, nm, pm)
         | Stmt::For { iter_var, range, body, pos } => scall_e(range, nm, pm) || body_calls_self(&body, nm, pm)
         | Stmt::Defer { body, pos } => body_calls_self(&body, nm, pm)
+        | Stmt::Seal { body, pos } => body_calls_self(&body, nm, pm)
         | _leaf => false
     };
 }
@@ -15349,6 +15415,18 @@ fn append_sys_externs(a: Allocator, ar: *Arena, funcs: *const Vec<Tfunc>, pmeth:
     }
     if sys_referenced(funcs, pfree, pmeth, "sys_fmt_f64", uses_da) {
         pfree.push(sys_extern_tfunc(a, ar, "sys_fmt_f64", sys_p3(a, "f", "is32", "buf"), sys_t3(a, f64t, cint, cucharp), Option::Some(culong)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_seal_enter", uses_da) {
+        let sp0: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        let st0: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+        pfree.push(sys_extern_tfunc(a, ar, "sys_seal_enter", sp0, st0, Option::Some(culong)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_seal_exit", uses_da) {
+        let mut sp1: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        sp1.push("state");
+        let mut st1: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+        st1.push(culong);
+        pfree.push(sys_extern_tfunc(a, ar, "sys_seal_exit", sp1, st1, novoid));
     }
     if sys_referenced(funcs, pfree, pmeth, "sys_argc", uses_da) {
         let p0: Vec<str> = Vec::with_capacity(a, 8 as u32);
