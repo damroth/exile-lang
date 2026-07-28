@@ -1,0 +1,16 @@
+// seal Increment 4 — defer INSIDE a seal (SEAL-SPEC §9.4).
+//
+// The order is the whole claim: a user `defer` declared inside the region must
+// run BEFORE `sys_seal_exit`, because its body is cleanup that may still touch
+// the protected registers. It falls out of the chain being LIFO — the desugar
+// registers the seam exit FIRST, so it runs LAST — but "falls out of" is a
+// hypothesis until the trace says so.
+fn f() {
+    seal {
+        println(1);
+        defer { println(3); }   // cleanup, still inside the region
+        println(2);
+    }
+    println(4);                 // the region is closed by here
+}
+fn main() { f(); }

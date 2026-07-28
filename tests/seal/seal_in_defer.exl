@@ -1,0 +1,16 @@
+// seal Increment 4 — a seal inside a DEFER body: a region in cleanup code.
+//
+// This is the direction that had no C form at all before this increment: the
+// walker for scopes with no defer chain of their own (defer bodies, diverging
+// match arms) had no seal arm and reached codegen's ICE. The region needs a real
+// chain of its own, since its own exit rides a defer.
+fn f() {
+    defer {
+        println(3);
+        seal { println(4); }   // the cleanup path needs indivisibility too
+        println(5);
+    }
+    println(1);
+    println(2);
+}
+fn main() { f(); println(6); }

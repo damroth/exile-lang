@@ -1335,14 +1335,50 @@ selfhost-seal: $(EXILC_BIN)
 	if ! diff -q tests/seal/consumer_ram.expected $(C_OUT)/seal_cr.out >/dev/null; then \
 	  echo "selfhost-seal: the sealed sequence RAN wrong (a store missed, or the DMACON restore miscomputed):"; \
 	  diff tests/seal/consumer_ram.expected $(C_OUT)/seal_cr.out | head -8; exit 1; fi; \
-	for q in exits nested amiga_callpath accept_seam_namesake blitter_setup consumer_ram ; do \
+	for k in defer_in_seal seal_in_defer cross_nest ; do \
+	  test -f tests/seal/$$k.exl || { echo "selfhost-seal: MISSING tests/seal/$$k.exl"; exit 1; }; \
+	  test -s tests/seal/$$k.golden || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$k.golden"; exit 1; }; \
+	  test -s tests/seal/$$k.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$k.expected"; exit 1; }; \
+	  rm -f $(C_OUT)/seal_$$k.c $(HOST_OUT)/seal_$$k $(C_OUT)/seal_$$k.out $(C_OUT)/seal_$$k.seq; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/seal_$$k.c tests/seal/$$k.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-seal: port rejected tests/seal/$$k.exl (defer x seal composition)"; exit 1; }; \
+	  if [ ! -s $(C_OUT)/seal_$$k.c ]; then echo "selfhost-seal: EMPTY C for $$k (floor)"; exit 1; fi; \
+	  sed -n '/sys_seal_enter();/,/^}/p' $(C_OUT)/seal_$$k.c | sed 's/^[ \t]*//' \
+	    | grep -E 'sys_seal|printf' > $(C_OUT)/seal_$$k.seq; \
+	  if ! diff -q tests/seal/$$k.golden $(C_OUT)/seal_$$k.seq >/dev/null; then \
+	    echo "selfhost-seal: $$k ORDER changed (a defer body crossed the seam call, or a region moved):"; \
+	    diff tests/seal/$$k.golden $(C_OUT)/seal_$$k.seq | head -10; exit 1; fi; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_$$k $(C_OUT)/seal_$$k.c $(SYS_HOST) \
+	    || { echo "selfhost-seal: $$k C is not clean C89 at -O2"; exit 1; }; \
+	  $(HOST_OUT)/seal_$$k > $(C_OUT)/seal_$$k.out 2>&1; \
+	  if ! diff -q tests/seal/$$k.expected $(C_OUT)/seal_$$k.out >/dev/null; then \
+	    echo "selfhost-seal: $$k RAN in the wrong order (or left a region unbalanced):"; \
+	    diff tests/seal/$$k.expected $(C_OUT)/seal_$$k.out | head -8; exit 1; fi; \
+	done; \
+	# No enter-count or token-name grep for the crossing shape on purpose: the
+	# golden fragment already pins both regions, in order, with their token
+	# names, so any mutation reddens the diff FIRST and those greps could never
+	# be reddened on their own. A check that cannot go red is decoration, and a
+	# token collision is caught where it belongs anyway — by the stub's LIFO
+	# assertion in the `nested` run (measured, by mutating gensym).
+	test -f tests/seal/reject_sealed_theft.exl || { echo "selfhost-seal: MISSING tests/seal/reject_sealed_theft.exl"; exit 1; }; \
+	rm -f $(C_OUT)/seal_theft.err; \
+	$(EXILC_BIN) --target c --c-out /dev/null tests/seal/reject_sealed_theft.exl > $(C_OUT)/seal_theft.err 2>&1; \
+	if [ $$? -eq 0 ]; then \
+	  echo "selfhost-seal: a NON-OWNER sealed its way to a covered address (seal shadowed the sigil claim)"; exit 1; fi; \
+	grep -q "belongs to resource 'Blitter', claimed by 'gfx'" $(C_OUT)/seal_theft.err \
+	  || { echo "selfhost-seal: the sealed theft was rejected, but not by S2:"; head -2 $(C_OUT)/seal_theft.err; exit 1; }; \
+	if grep -q 'internal:' $(C_OUT)/seal_theft.err; then \
+	  echo "selfhost-seal: the sealed theft is an ICE, not a diagnostic"; exit 1; fi; \
+	for q in exits nested amiga_callpath accept_seam_namesake blitter_setup consumer_ram \
+	         defer_in_seal seal_in_defer cross_nest ; do \
 	  rm -f $(C_OUT)/seal_q.msg; \
 	  $(EXILC_BIN) --target c --c-out /dev/null tests/seal/$$q.exl 2>&1 | grep -v '^wrote ' > $(C_OUT)/seal_q.msg; \
 	  if [ -s $(C_OUT)/seal_q.msg ]; then \
 	    echo "selfhost-seal: tests/seal/$$q.exl is not DIAGNOSTIC-FREE (a seal must not make the linter blind):"; \
 	    head -3 $(C_OUT)/seal_q.msg; exit 1; fi; \
 	done; \
-	echo "selfhost-seal: clean (one enter/four exits from the defer machinery; nesting legal and balanced through return+break+continue crossing both levels; T1-T4 rejected cleanly; a same-NAME non-extern still accepted; the composed consumer (sigil owns + ward overlays + rune crosses the boundary + seal brackets) emits its HRM sequence byte for byte and RUNS 3/2544/64/32832)"
+	echo "selfhost-seal: clean (one enter/four exits from the defer machinery; nesting legal and balanced through return+break+continue crossing both levels; T1-T4 rejected cleanly; a same-NAME non-extern still accepted; the composed consumer (sigil owns + ward overlays + rune crosses the boundary + seal brackets) emits its HRM sequence byte for byte and RUNS 3/2544/64/32832; defer x seal both ways and the seal->defer->seal crossing hold their ORDER in artifact and in execution; a non-owner cannot seal its way past S2)"
 
 # ===== sigil capability — the port's gate (SIGIL-SPEC, Phase 2) =====
 #

@@ -1,0 +1,4 @@
+__seal0 = sys_seal_enter();
+printf("%ld\n", (long)(4));
+sys_seal_exit(__seal0);
+printf("%ld\n", (long)(5));

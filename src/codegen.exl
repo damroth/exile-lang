@@ -1287,6 +1287,14 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
         // block — `let-else`) flushes the defer chain active HERE; the arm has
         // no defer scope of its own.
         | Tstmt::TReturn { value, pos } => emit_return(a, ar, out, indent, cg, value, cg.cg_defers)
+        // A seal in a scope that has no defer chain of its own — a defer body, or
+        // a diverging match arm's block. The region still needs one (its own exit
+        // rides a defer), so it opens a real block over the chain active HERE.
+        | Tstmt::TSeal { body, pos } => {
+            out.push_str(indent); out.push_str("{\n");
+            gen_block(a, ar, out, cg_indent(a, ar, indent), cg, cg.cg_defers, &body);
+            out.push_str(indent); out.push_str("}\n");
+        }
         | _other => { ice("internal: no C form for this IR statement — did a transient node survive the lift pass?"); }
     }
 }

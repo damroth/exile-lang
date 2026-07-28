@@ -1,0 +1,17 @@
+// seal Increment 4 — the thief who seals the theft (S2 x seal composition).
+//
+// A non-owner materialising a covered address does not become an owner by making
+// the access indivisible. Two gates from two different eras have to hold at once,
+// and the composition deserves a floor of its own rather than a one-off probe:
+// seal must not shadow the sigil claim, and the diagnostic must stay S2's.
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+mod gfx { own Blitter; }
+mod thief {
+    pub fn steal() {
+        seal {
+            rune bltsize: u16 at 0xDFF058 write;
+            bltsize.write(64);
+        }
+    }
+}
+fn main() { thief::steal(); }

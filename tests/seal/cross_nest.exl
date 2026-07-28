@@ -1,0 +1,20 @@
+// seal Increment 4 — the crossing shape: seal -> defer -> seal.
+//
+// A region, inside whose cleanup there is another region. This is where crossed
+// token pairs are easiest to produce if the lowering has a seam anywhere, so the
+// stub's LIFO assertion is the point: `sys_seal_exit` must be handed exactly the
+// top of the stack, and mis-nesting must stay 0 rather than merely balancing.
+fn f() {
+    seal {
+        println(1);
+        defer {
+            println(4);
+            seal { println(5); }
+            println(6);
+        }
+        println(2);
+        println(3);
+    }
+    println(7);
+}
+fn main() { f(); }
