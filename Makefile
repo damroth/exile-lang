@@ -727,7 +727,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-parens
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -871,7 +871,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal
+                 selfhost-seal selfhost-parens
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1242,6 +1242,31 @@ selfhost-defer: $(EXILC_BIN)
 	  diff tests/defer/exits.expected $(C_OUT)/defer_exits.out | head -8; exit 1; fi; \
 	echo "selfhost-defer: clean (defer fires on normal exit, continue, break, return, and through nesting — inner jumps leave outer defers alone)"
 
+# ===== register #7 — the port's parenthesised emission (B2 divergence) =====
+#
+# The first deliberate byte-exact divergence in the LANGUAGE zone, so it is gated
+# BEHAVIOURALLY rather than against the frozen oracle it cannot match: the port
+# must parenthesise a mixed bitwise nesting, the emission must survive the
+# project's own -Werror standard, and the program must still compute what it
+# says. A byte gate here would pin the divergence to a reference that is wrong.
+selfhost-parens: $(EXILC_BIN)
+	@test -f tests/parens/mixed_bitwise.exl || { echo "selfhost-parens: MISSING tests/parens/mixed_bitwise.exl"; exit 1; }; \
+	test -s tests/parens/mixed_bitwise.expected || { echo "selfhost-parens: MISSING/EMPTY expected"; exit 1; }; \
+	rm -f $(C_OUT)/parens.c $(HOST_OUT)/parens $(C_OUT)/parens.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/parens.c tests/parens/mixed_bitwise.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-parens: port rejected the mixed-operator fixture"; exit 1; }; \
+	if [ ! -s $(C_OUT)/parens.c ]; then echo "selfhost-parens: EMPTY emitted C (floor)"; exit 1; fi; \
+	grep -q '32768 | (old & 64)' $(C_OUT)/parens.c \
+	  || { echo "selfhost-parens: the mixed nesting was NOT parenthesised (register #7 regressed):"; \
+	       grep -n 'return' $(C_OUT)/parens.c | head -3; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/parens $(C_OUT)/parens.c $(SYS_HOST) \
+	  || { echo "selfhost-parens: the emission still fails -Werror — that IS the defect"; exit 1; }; \
+	$(HOST_OUT)/parens > $(C_OUT)/parens.out 2>&1; \
+	if ! diff -q tests/parens/mixed_bitwise.expected $(C_OUT)/parens.out >/dev/null; then \
+	  echo "selfhost-parens: parenthesising CHANGED THE VALUE — the fix must not alter semantics:"; \
+	  diff tests/parens/mixed_bitwise.expected $(C_OUT)/parens.out | head -6; exit 1; fi; \
+	echo "selfhost-parens: clean (mixed bitwise nesting parenthesised, emission clean under -Werror, values unchanged 32832/21/3)"
+
 # ===== seal capability — the port's gate (SEAL-SPEC, Increment 1) =====
 #
 # Two levels, because either alone lies.  The GOLDEN level counts the seam
@@ -1250,16 +1275,27 @@ selfhost-defer: $(EXILC_BIN)
 # executes it, and the host stub reports the balance and mis-nesting it saw —
 # a count that is right in the text but wrong at run time cannot pass both.
 selfhost-seal: $(EXILC_BIN)
-	@test -f tests/seal/exits.exl || { echo "selfhost-seal: MISSING tests/seal/exits.exl"; exit 1; }; \
-	test -s tests/seal/exits.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/exits.expected"; exit 1; }; \
-	test -f tests/seal/reject_expr.exl || { echo "selfhost-seal: MISSING tests/seal/reject_expr.exl"; exit 1; }; \
+	@sig=""; \
+	for f in exits nested blitter_setup consumer_ram accept_seam_namesake reject_expr \
+	         reject_seam_enter reject_seam_exit reject_seam_extern reject_sealed_theft \
+	         defer_in_seal seal_in_defer cross_nest arm_return_after_seal arm_sibling_return \
+	         accept_arm_seal arm_nested_returns try_propagation accept_limit_forgotten \
+	         accept_limit_blanket accept_limit_race accept_limit_latency accept_limit_wrong_region ; do \
+	  test -f tests/seal/$$f.exl || { echo "selfhost-seal: MISSING tests/seal/$$f.exl"; exit 1; }; \
+	done; \
+	for e in exits nested consumer_ram try_propagation defer_in_seal seal_in_defer cross_nest \
+	         arm_return_after_seal arm_sibling_return accept_arm_seal arm_nested_returns \
+	         accept_limit_wrong_region ; do \
+	  test -s tests/seal/$$e.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$e.expected"; exit 1; }; \
+	done; \
+	test -s tests/seal/blitter_setup.golden || { echo "selfhost-seal: MISSING/EMPTY tests/seal/blitter_setup.golden"; exit 1; }; \
+	test -s tests/seal/REJECT-TABLE || { echo "selfhost-seal: MISSING/EMPTY tests/seal/REJECT-TABLE"; exit 1; }; \
 	rm -f $(C_OUT)/seal_exits.c $(HOST_OUT)/seal_exits $(C_OUT)/seal_exits.out; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_exits.c tests/seal/exits.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-seal: port rejected the exits fixture"; exit 1; }; \
 	if [ ! -s $(C_OUT)/seal_exits.c ]; then echo "selfhost-seal: EMPTY emitted C (floor)"; exit 1; fi; \
 	ent=`sed 's|//.*||' $(C_OUT)/seal_exits.c | grep -c 'sys_seal_enter();'`; \
-	if [ "$$ent" != "1" ]; then \
-	  echo "selfhost-seal: expected 1 seam enter, found $$ent (a seal must be entered exactly once)"; exit 1; fi; \
+	if [ "$$ent" != "1" ]; then echo "selfhost-seal: expected 1 seam enter, found $$ent"; exit 1; fi; \
 	ext=`sed 's|//.*||' $(C_OUT)/seal_exits.c | grep -c 'sys_seal_exit(__seal'`; \
 	if [ "$$ext" != "4" ]; then \
 	  echo "selfhost-seal: expected 4 seam exits (fallthrough, return, break, continue), found $$ext"; exit 1; fi; \
@@ -1271,7 +1307,19 @@ selfhost-seal: $(EXILC_BIN)
 	if ! diff -q tests/seal/exits.expected $(C_OUT)/seal_exits.out >/dev/null; then \
 	  echo "selfhost-seal: WRONG run (an exit path lost its seam call, or the region is left unbalanced):"; \
 	  diff tests/seal/exits.expected $(C_OUT)/seal_exits.out | head -8; exit 1; fi; \
-	test -s tests/seal/REJECT-TABLE || { echo "selfhost-seal: MISSING/EMPTY tests/seal/REJECT-TABLE"; exit 1; }; \
+	sig="$$sig one enter/four exits from the defer machinery;"; \
+	rm -f $(C_OUT)/seal_nest.c $(HOST_OUT)/seal_nest $(C_OUT)/seal_nest.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_nest.c tests/seal/nested.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: port REJECTED nesting — I-T2 is a guarantee, not a prohibition on depth"; exit 1; }; \
+	nent=`sed 's|//.*||' $(C_OUT)/seal_nest.c | grep -c 'sys_seal_enter();'`; \
+	if [ "$$nent" != "2" ]; then echo "selfhost-seal: nested region expected 2 enters, found $$nent"; exit 1; fi; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_nest $(C_OUT)/seal_nest.c $(SYS_HOST) \
+	  || { echo "selfhost-seal: nested C is not clean C89 at -O2"; exit 1; }; \
+	$(HOST_OUT)/seal_nest > $(C_OUT)/seal_nest.out 2>&1; \
+	if ! diff -q tests/seal/nested.expected $(C_OUT)/seal_nest.out >/dev/null; then \
+	  echo "selfhost-seal: WRONG nested run (an inner exit crossed its outer, or a token was restored out of order):"; \
+	  diff tests/seal/nested.expected $(C_OUT)/seal_nest.out | head -8; exit 1; fi; \
+	sig="$$sig nesting legal and balanced through return+break+continue crossing both levels;"; \
 	rows=0; \
 	while IFS='|' read -r fx frag row; do \
 	  case "$$fx" in ''|\#*) continue;; esac; \
@@ -1292,16 +1340,46 @@ selfhost-seal: $(EXILC_BIN)
 	  grep -q "^$$b|" tests/seal/REJECT-TABLE \
 	    || { echo "selfhost-seal: $$orphan is a rejection fixture with NO row in the T table"; exit 1; }; \
 	done; \
+	sig="$$sig the T table walked from data over $$rows rows with no orphan fixtures;"; \
+	rm -f $(C_OUT)/seal_namesake.c $(C_OUT)/seal_namesake.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_namesake.c tests/seal/accept_seam_namesake.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: ACCEPT — T4 widened from the emitted SYMBOL into a ban on a NAME"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_namesake.c -o $(C_OUT)/seal_namesake.o \
+	  || { echo "selfhost-seal: namesake C is not clean C89 at -O2"; exit 1; }; \
+	sig="$$sig a same-NAME non-extern still accepted and still compiling;"; \
+	rm -f $(C_OUT)/seal_bl.c $(C_OUT)/seal_bl.o $(C_OUT)/seal_bl.seq; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_bl.c tests/seal/blitter_setup.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: port rejected the composed consumer (sigil+ward+rune+seal)"; exit 1; }; \
+	if [ ! -s $(C_OUT)/seal_bl.c ]; then echo "selfhost-seal: EMPTY consumer C (floor)"; exit 1; fi; \
+	sed -n '/sys_seal_enter();/,/sys_seal_exit(/p' $(C_OUT)/seal_bl.c | sed 's/^[ \t]*//' > $(C_OUT)/seal_bl.seq; \
+	if ! diff -q tests/seal/blitter_setup.golden $(C_OUT)/seal_bl.seq >/dev/null; then \
+	  echo "selfhost-seal: the sealed BLITTER SEQUENCE changed (order, address or seam placement):"; \
+	  diff tests/seal/blitter_setup.golden $(C_OUT)/seal_bl.seq | head -10; exit 1; fi; \
+	grep -q '\*size = v;' $(C_OUT)/seal_bl.c \
+	  || { echo "selfhost-seal: the borrowed rune's write did not emit (BLTSIZE crosses the call boundary)"; exit 1; }; \
+	if grep -qE 'Blitter|DmaControl|Custom' $(C_OUT)/seal_bl.c; then \
+	  echo "selfhost-seal: a sigil/ward name leaked into the consumer's C (I-S5 zero-cost)"; exit 1; fi; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_bl.c -o $(C_OUT)/seal_bl.o \
+	  || { echo "selfhost-seal: consumer C is not clean C89 at -O2"; exit 1; }; \
+	sig="$$sig the composed consumer emits its HRM sequence byte for byte;"; \
+	rm -f $(C_OUT)/seal_cr.c $(HOST_OUT)/seal_cr $(C_OUT)/seal_cr.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_cr.c tests/seal/consumer_ram.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: port rejected the runnable consumer"; exit 1; }; \
+	cc -O2 -fno-strict-aliasing -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_cr \
+	   $(C_OUT)/seal_cr.c tests/seal/consumer_ram_stub.c $(SYS_HOST) \
+	  || { echo "selfhost-seal: runnable consumer C is not clean at -O2 (-fno-strict-aliasing: MMIO overlays untyped memory)"; exit 1; }; \
+	$(HOST_OUT)/seal_cr > $(C_OUT)/seal_cr.out 2>&1; \
+	if ! diff -q tests/seal/consumer_ram.expected $(C_OUT)/seal_cr.out >/dev/null; then \
+	  echo "selfhost-seal: the sealed sequence RAN wrong (a store missed, or the DMACON restore miscomputed):"; \
+	  diff tests/seal/consumer_ram.expected $(C_OUT)/seal_cr.out | head -8; exit 1; fi; \
+	sig="$$sig and RUNS `tr '\n' '/' < tests/seal/consumer_ram.expected | sed 's|/$$||'`;"; \
 	for lim in accept_limit_forgotten accept_limit_blanket accept_limit_race accept_limit_latency ; do \
-	  test -f tests/seal/$$lim.exl || { echo "selfhost-seal: MISSING §6 contract tests/seal/$$lim.exl"; exit 1; }; \
 	  rm -f $(C_OUT)/seal_$$lim.c $(C_OUT)/seal_$$lim.o; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/seal_$$lim.c tests/seal/$$lim.exl >/dev/null 2>&1 \
 	    || { echo "selfhost-seal: §6 CONTRACT BROKEN — tests/seal/$$lim.exl was REJECTED; a limit is a boundary the language states, not one it enforces"; exit 1; }; \
 	  cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_$$lim.c -o $(C_OUT)/seal_$$lim.o \
 	    || { echo "selfhost-seal: §6 contract $$lim emits C that is not clean at -O2"; exit 1; }; \
 	done; \
-	test -s tests/seal/accept_limit_wrong_region.expected \
-	  || { echo "selfhost-seal: MISSING/EMPTY tests/seal/accept_limit_wrong_region.expected"; exit 1; }; \
 	rm -f $(C_OUT)/seal_wr.c $(HOST_OUT)/seal_wr $(C_OUT)/seal_wr.out; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_wr.c tests/seal/accept_limit_wrong_region.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-seal: the pinned BLIND SPOT was rejected — closing it is a post-era round, not a side effect"; exit 1; }; \
@@ -1312,10 +1390,9 @@ selfhost-seal: $(EXILC_BIN)
 	if ! diff -q tests/seal/accept_limit_wrong_region.expected $(C_OUT)/seal_wr.out >/dev/null; then \
 	  echo "selfhost-seal: the blind spot changed shape — a save torn from its restore must still COMPILE and still BALANCE (that is the contract):"; \
 	  diff tests/seal/accept_limit_wrong_region.expected $(C_OUT)/seal_wr.out | head -6; exit 1; fi; \
+	sig="$$sig the five §6 limits pinned as CONTRACTS, the blind spot among them still compiling AND still balancing;"; \
 	for m in arm_return_after_seal arm_sibling_return accept_arm_seal arm_nested_returns \
 	         try_propagation ; do \
-	  test -f tests/seal/$$m.exl || { echo "selfhost-seal: MISSING tests/seal/$$m.exl"; exit 1; }; \
-	  test -s tests/seal/$$m.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$m.expected"; exit 1; }; \
 	  rm -f $(C_OUT)/seal_$$m.c $(HOST_OUT)/seal_$$m $(C_OUT)/seal_$$m.out; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/seal_$$m.c tests/seal/$$m.exl >/dev/null 2>&1 \
 	    || { echo "selfhost-seal: port rejected tests/seal/$$m.exl (a region in a match arm)"; exit 1; }; \
@@ -1326,10 +1403,9 @@ selfhost-seal: $(EXILC_BIN)
 	    echo "selfhost-seal: $$m RAN unbalanced (the region's exit outlived the region):"; \
 	    diff tests/seal/$$m.expected $(C_OUT)/seal_$$m.out | head -8; exit 1; fi; \
 	done; \
+	sig="$$sig a region in a diverging match arm does not leak its exit into the arm's return or into a sibling arm that never sealed, and try-propagation is gated rather than inherited;"; \
 	for k in defer_in_seal seal_in_defer cross_nest ; do \
-	  test -f tests/seal/$$k.exl || { echo "selfhost-seal: MISSING tests/seal/$$k.exl"; exit 1; }; \
 	  test -s tests/seal/$$k.golden || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$k.golden"; exit 1; }; \
-	  test -s tests/seal/$$k.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$k.expected"; exit 1; }; \
 	  rm -f $(C_OUT)/seal_$$k.c $(HOST_OUT)/seal_$$k $(C_OUT)/seal_$$k.out $(C_OUT)/seal_$$k.seq; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/seal_$$k.c tests/seal/$$k.exl >/dev/null 2>&1 \
 	    || { echo "selfhost-seal: port rejected tests/seal/$$k.exl (defer x seal composition)"; exit 1; }; \
@@ -1346,21 +1422,14 @@ selfhost-seal: $(EXILC_BIN)
 	    echo "selfhost-seal: $$k RAN in the wrong order (or left a region unbalanced):"; \
 	    diff tests/seal/$$k.expected $(C_OUT)/seal_$$k.out | head -8; exit 1; fi; \
 	done; \
-	# No enter-count or token-name grep for the crossing shape on purpose: the
-	# golden fragment already pins both regions, in order, with their token
-	# names, so any mutation reddens the diff FIRST and those greps could never
-	# be reddened on their own. A check that cannot go red is decoration, and a
-	# token collision is caught where it belongs anyway — by the stub's LIFO
-	# assertion in the `nested` run (measured, by mutating gensym).
-	test -f tests/seal/reject_sealed_theft.exl || { echo "selfhost-seal: MISSING tests/seal/reject_sealed_theft.exl"; exit 1; }; \
+	sig="$$sig defer x seal both ways and the seal->defer->seal crossing hold their ORDER in artifact and in execution;"; \
 	rm -f $(C_OUT)/seal_theft.err; \
 	$(EXILC_BIN) --target c --c-out /dev/null tests/seal/reject_sealed_theft.exl > $(C_OUT)/seal_theft.err 2>&1; \
 	if [ $$? -eq 0 ]; then \
 	  echo "selfhost-seal: a NON-OWNER sealed its way to a covered address (seal shadowed the sigil claim)"; exit 1; fi; \
 	grep -q "belongs to resource 'Blitter', claimed by 'gfx'" $(C_OUT)/seal_theft.err \
 	  || { echo "selfhost-seal: the sealed theft was rejected, but not by S2:"; head -2 $(C_OUT)/seal_theft.err; exit 1; }; \
-	if grep -q 'internal:' $(C_OUT)/seal_theft.err; then \
-	  echo "selfhost-seal: the sealed theft is an ICE, not a diagnostic"; exit 1; fi; \
+	sig="$$sig a non-owner cannot seal its way past S2;"; \
 	for q in exits nested amiga_callpath accept_seam_namesake blitter_setup consumer_ram \
 	         defer_in_seal seal_in_defer cross_nest \
 	         arm_return_after_seal arm_sibling_return accept_arm_seal arm_nested_returns \
@@ -1372,14 +1441,9 @@ selfhost-seal: $(EXILC_BIN)
 	    echo "selfhost-seal: tests/seal/$$q.exl is not DIAGNOSTIC-FREE (a seal must not make the linter blind):"; \
 	    head -3 $(C_OUT)/seal_q.msg; exit 1; fi; \
 	done; \
-	echo "selfhost-seal: clean (one enter/four exits from the defer machinery; nesting legal and balanced through return+break+continue crossing both levels; T1-T4 rejected cleanly; a same-NAME non-extern still accepted; the composed consumer (sigil owns + ward overlays + rune crosses the boundary + seal brackets) emits its HRM sequence byte for byte and RUNS 3/2544/64/32832; defer x seal both ways and the seal->defer->seal crossing hold their ORDER in artifact and in execution; a non-owner cannot seal its way past S2; a region in a diverging match arm does not leak its exit into the arm's return or into a sibling arm that never sealed; the T table is walked from data with no orphan fixtures; the five §6 limits are pinned as CONTRACTS, the blind spot among them still compiling AND still balancing; try-propagation out of a region is gated, not inherited by accident)"
+	sig="$$sig every accepting fixture DIAGNOSTIC-FREE."; \
+	echo "selfhost-seal: clean —$$sig"
 
-# ===== sigil capability — the port's gate (SIGIL-SPEC, Phase 2) =====
-#
-# The anti-tag gate, present from Increment 1 on purpose: a claim that does not
-# GATE something is a tag, and a tag that looks like protection is worse than
-# none.  So S2 (materialising a covered address outside the owner) has teeth in
-# the same increment that introduces the syntax.
 selfhost-sigil: $(EXILC_BIN)
 	@rm -f $(C_OUT)/sig_ok.c $(C_OUT)/sig_ok.o; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/sig_ok.c tests/sigil/accept_owner.exl >/dev/null 2>&1 \

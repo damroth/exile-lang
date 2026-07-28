@@ -55,12 +55,7 @@ mod gfx {
             custom.bltapt.write(src);
             custom.bltdpt.write(dst);
             start(custom.bltsize, size);
-            // The mask is bound first, not for style: codegen drops the source's
-            // parentheses, so `SETCLR | (old & BLTEN)` in one expression emits C
-            // that -Wall -Werror rejects (-Wparentheses). Pre-existing and
-            // oracle-identical — register #7.
-            let bits = old & ndk::DMAF_BLITTER;
-            custom.dmacon.write(ndk::DMAF_SETCLR | bits);
+            custom.dmacon.write(ndk::DMAF_SETCLR | (old & ndk::DMAF_BLITTER));
         }
     }
 }

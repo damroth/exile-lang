@@ -674,11 +674,24 @@ fn is_left_assoc(op: BinOp) -> bool {
 fn nest_warn(op: BinOp, child: BinOp) -> bool {
     let child_and = match child { BinOp::And => true | _o => false };
     let child_addsub = match child { BinOp::Add => true | BinOp::Sub => true | _o => false };
+    // Register #7: a bitwise or shift operand under a bitwise parent of DIFFERENT
+    // precedence. gcc warns there too — `SETCLR | (old & BLTEN)`, the shape a
+    // driver writes constantly, emitted unparenthesised and failed -Werror.
+    // CANONICAL rather than source-driven: the source's own parentheses are not
+    // recorded in the AST, and emission should follow what C needs rather than
+    // how the program happened to be formatted.
+    let child_bits = match child {
+        BinOp::BitAnd => true | BinOp::BitOr => true | BinOp::BitXor => true
+        | BinOp::Shl => true | BinOp::Shr => true | _o => false
+    };
+    let mixed = child_bits && prec(op) != prec(child);
     return match op {
         BinOp::Or => child_and
-        | BinOp::BitAnd => child_addsub
-        | BinOp::BitOr => child_addsub
-        | BinOp::BitXor => child_addsub
+        | BinOp::BitAnd => child_addsub || mixed
+        | BinOp::BitOr => child_addsub || mixed
+        | BinOp::BitXor => child_addsub || mixed
+        | BinOp::Shl => child_addsub
+        | BinOp::Shr => child_addsub
         | _o => false
     };
 }

@@ -7,6 +7,5 @@ old = *((volatile unsigned short *)(14675968UL + 2UL));
 *((volatile unsigned long *)(14675968UL + 80UL)) = src;
 *((volatile unsigned long *)(14675968UL + 84UL)) = dst;
 gfx__start((volatile unsigned short *)(14675968UL + 88UL), size);
-bits = old & ndk__DMAF_BLITTER;
-*((volatile unsigned short *)(14675968UL + 150UL)) = ndk__DMAF_SETCLR | bits;
+*((volatile unsigned short *)(14675968UL + 150UL)) = ndk__DMAF_SETCLR | (old & ndk__DMAF_BLITTER);
 sys_seal_exit(__seal0);

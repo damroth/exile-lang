@@ -378,14 +378,20 @@ fn prov_of_call(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
     }
     let mut i = 0 as u32;
     while i < PARAM_HIGH {
-        if (row.smask >> i) & (1 as u32) == 1 as u32 {
+        // The shift is bound out so the `&` operand is not itself a binop:
+        // register #7 has the port parenthesise a mixed bitwise nesting, and the
+        // frozen oracle does not, which would put src/exilc.exl's own emission
+        // outside byte-identity. Neutral by construction rather than by luck.
+        let sbit = row.smask >> i;
+        if sbit & (1 as u32) == 1 as u32 {
             if i < n { acc = meet(acc, prov_of(a, esc, live, al[i])); }
         }
         i = i + 1 as u32;
     }
     // The saturating bit: the carrier is SOME param at or past PARAM_HIGH, so meet
     // over the tail — a superset of the true carrier, and no wider.
-    if (row.smask >> PARAM_HIGH) & (1 as u32) == 1 as u32 {
+    let hbit = row.smask >> PARAM_HIGH;   // same reason as above (register #7)
+    if hbit & (1 as u32) == 1 as u32 {
         let mut hj = PARAM_HIGH;
         while hj < n { acc = meet(acc, prov_of(a, esc, live, al[hj])); hj = hj + 1 as u32; }
     }

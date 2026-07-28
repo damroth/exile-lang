@@ -1,0 +1,13 @@
+// Register #7 — the shape a driver writes constantly, and the first deliberate
+// byte-exact divergence in the LANGUAGE zone. The port parenthesises a mixed
+// bitwise nesting; the frozen oracle does not, so this is gated BEHAVIOURALLY —
+// the emission must compile clean under the project's own -Werror standard —
+// rather than by bytes against a reference that cannot be corrected.
+fn restore(old: u16) -> u16 { return 32768 | (old & 64); }
+fn shifted(a: u16) -> u16 { return (a << 2) | (a & 3); }
+fn triple(a: u16) -> u16 { return (a & 12) ^ (a | 1); }
+fn main() {
+    println(restore(64) as int);   // 32832
+    println(shifted(5) as int);    // 21
+    println(triple(6) as int);     // 3
+}
