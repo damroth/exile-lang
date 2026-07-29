@@ -1,0 +1,2 @@
+// The else arm: the same funnel, the other branch.
+fn main() { if false { } else { let e = 5; } println(e); }

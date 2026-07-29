@@ -1,0 +1,1 @@
+fn main() { for k in 0..2 { let f = 5; } println(f); }

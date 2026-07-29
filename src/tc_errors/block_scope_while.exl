@@ -1,0 +1,4 @@
+// Review's FOREIGN shape — a loop body rather than the `if` the finding came
+// from. A criterion checked only on the fixture that motivated it proves
+// nothing, so the property is pinned on a construct it was not derived from.
+fn main() { let mut i = 0; while i < 1 { let y = 5; i = i + 1; } println(y); }

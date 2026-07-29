@@ -9172,16 +9172,32 @@ fn elab_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
 // statement, never an implicit return — mirroring the oracle's `walk`, where
 // `Tail e` and `ExprStmt e` are handled identically (the function-body
 // trailing value is peeled off before walking, so it never reaches here).
+// Bindings die when their block ends. The property lives HERE, in the single
+// funnel every statement-list body passes through — `if` (both arms), `while`,
+// `for`, `defer`, `seal`, `let ... else` — rather than in a list of constructs
+// that would need extending for every future one.
+//
+// Match arms never had the bug, and the reason pointed straight at it: `elab_arms`
+// takes the environment by `*const`, so an arm CANNOT append to its caller's, while
+// this function takes it mutably and nothing ever undid the appends.
+fn env_copy(a: Allocator, env: *const Vec<FieldTy>) -> Vec<FieldTy> {
+    let mut out: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let sl = env.as_slice();
+    let mut i = 0 as u32;
+    while i < env.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
 fn elab_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, gensym: *u32, env: *Vec<FieldTy>, ret: Option<*const Typ>,
                   body: *const Vec<Stmt>) -> Vec<Tstmt> {
+    let mut scope = env_copy(a, env);
     let mut out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let n = body.length();
     let sl = body.as_slice();
     let mut i = 0 as u32;
     while i < n {
         match sl[i] {
-            Stmt::Tail(e) => { elab_stmt_pos(a, ar, g, sc, gensym, env, ret, e, &out); }
-            | _other => { elab_stmt(a, ar, g, sc, gensym, env, ret, &sl[i], &out); }
+            Stmt::Tail(e) => { elab_stmt_pos(a, ar, g, sc, gensym, &scope, ret, e, &out); }
+            | _other => { elab_stmt(a, ar, g, sc, gensym, &scope, ret, &sl[i], &out); }
         }
         i = i + 1 as u32;
     }

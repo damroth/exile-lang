@@ -1,0 +1,2 @@
+// A defer body is a block too, and it goes through the same single funnel.
+fn main() { defer { let d = 5; } println(d); }

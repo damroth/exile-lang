@@ -1,0 +1,2 @@
+// Depth: the inner block's binding must not survive into the outer one.
+fn main() { if true { if true { let n = 5; } println(n); } }
