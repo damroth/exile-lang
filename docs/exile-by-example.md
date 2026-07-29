@@ -43,33 +43,26 @@ a lifetime/borrow checker (ownership is `own *T` plus move tracking —
 ```sh
 git clone --recurse-submodules <repo-url>
 cd exile-lang
-make build        # build the exilc compiler (OCaml + dune)
+make compiler     # ~90 s — builds ./exilc using nothing but cc
 make toolchain    # optional, ~30-60 min — Bebbo amiga-gcc for .adf-able binaries
 ```
 
+exile is written in exile, and `seed/exilc.c` — the compiler's own C
+output — is committed, so building it needs no package manager and no
+language runtime: `cc` builds the seed, the seed compiles `src/*.exl`,
+and `cc` builds that into `./exilc`. Every `./exilc` below is that
+binary.
+
 If you only want to write and run on the host (Linux/macOS), `make
-build` is enough. `make toolchain` is needed only when you want to
+compiler` is enough. `make toolchain` is needed only when you want to
 produce m68k binaries.
 
-`make build` leaves the compiler in dune's install tree, so put that on
-your `PATH` and every `exilc` below works verbatim:
+The same ladder, run one stage further, is also the proof that the
+compiler reproduces itself:
 
 ```sh
-export PATH="$PWD/_build/install/default/bin:$PATH"
-exilc --help
-```
-
-If you bootstrapped from the seed instead (`make bootstrap-from-seed` —
-no OCaml involved), the compiler is `_build/out/host/exilc_seed_b`;
-symlink it as `exilc` somewhere on your `PATH`, or read every `exilc`
-below as that binary.
-
-Handy Makefile targets:
-
-```sh
-make build              # the compiler
-make verify-host        # build and run all host examples, diff against .expected
-make verify-amiga       # the same under vamos m68k (requires toolchain)
+make bootstrap-from-seed   # ~3.5 min — and the last two stages must
+                           # emit byte-identical C, or the build fails
 ```
 
 ---
@@ -87,24 +80,24 @@ fn main() {
 Build and run on the host:
 
 ```sh
-exilc --target host examples/hello_world.exl -o hello
+./exilc --target host examples/hello_world.exl -o hello
 ./hello
 ```
 
 For Amiga (with the toolchain):
 
 ```sh
-exilc --target amiga examples/hello_world.exl -o hello
+./exilc --target amiga examples/hello_world.exl -o hello
 # produces an m68k binary runnable under WinUAE / FS-UAE / vamos
 ```
 
 Or stop at the C and go no further:
 
 ```sh
-exilc --target c examples/hello_world.exl
+./exilc --target c examples/hello_world.exl
 # writes examples/hello_world.c — C89, next to the source
 
-exilc --target c --c-out /tmp/hello.c examples/hello_world.exl
+./exilc --target c --c-out /tmp/hello.c examples/hello_world.exl
 # same C, at a path you choose
 ```
 
@@ -119,7 +112,7 @@ self-host port.
 `--freestanding` emits C that does not use libc at all:
 
 ```sh
-exilc --target c --freestanding --c-out out.fs.c examples/freestanding_print.exl
+./exilc --target c --freestanding --c-out out.fs.c examples/freestanding_print.exl
 
 # the floor is defined by what the object still needs:
 cc -ffreestanding -fno-stack-protector -fno-pic -I runtime -c out.fs.c -o out.o
@@ -1873,7 +1866,7 @@ fn main() {
 ```
 
 The bodies of `add` and `shout` live on the C side — you link them via
-`exilc --link my_stub.c ...`.
+`./exilc --link my_stub.c ...`.
 
 [examples/ffi.exl](../examples/ffi.exl) | [examples/ffi_stub.c](../examples/ffi_stub.c)
 
@@ -2288,9 +2281,9 @@ exile has a "comfort tier" — three ergonomics levels, orthogonal to the
 target:
 
 ```sh
-exilc --profile core     ...    # cheapest features only, warns on generics
-exilc --profile standard ...    # generics silent, some comfort still in lint
-exilc --profile full     ...    # everything, default
+./exilc --profile core     ...    # cheapest features only, warns on generics
+./exilc --profile standard ...    # generics silent, some comfort still in lint
+./exilc --profile full     ...    # everything, default
 ```
 
 The `@tier(...)` annotation pins a level to a declaration:

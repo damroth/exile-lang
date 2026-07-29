@@ -20,6 +20,9 @@ src/tc_errors/*
 !src/tc_errors/*.exl
 !src/tc_errors/README.md
 
+# the compiler `make compiler` hands the user
+/exilc
+
 # everything in examples/ except .exl sources, .expected stdout
 # snapshots, and FFI stub C files (`_stub.c` / `_stub.h`).  Generated
 # .c and per-target binaries stay excluded.

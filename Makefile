@@ -934,6 +934,30 @@ seed: $(EXILC_BIN)
 	@$(EXILC_BIN) --target c --c-out $(SEED_C) src/exilc.exl >/dev/null
 	@echo "seed: regenerated $(SEED_C) (`wc -l < $(SEED_C)` lines) — commit it deliberately"
 
+# The compiler, for someone who just wants to write exile.  `seed/exilc.c` is
+# the self-hosted compiler's own C output, so this needs no OCaml, no opam and
+# no dune: cc builds the seed, the seed compiles the current `src/*.exl`, and cc
+# builds THAT into `./exilc`.  Two stages, because two is what a user needs —
+# the third stage and the byte-equality check are the PROOF, and they live in
+# `bootstrap-from-seed`, which is the gate.  This target must therefore never be
+# cited as evidence of anything; it only hands you a compiler.
+.PHONY: compiler
+compiler:
+	@if [ ! -s $(SEED_C) ]; then echo "compiler: MISSING or EMPTY $(SEED_C)"; exit 1; fi; \
+	mkdir -p $(C_OUT) $(HOST_OUT); \
+	rm -f $(C_OUT)/user_a.c $(C_OUT)/user_smoke.c $(HOST_OUT)/exilc_user_a ./exilc; \
+	cc -ansi -pedantic -Wall $(CC_QUIET) -o $(HOST_OUT)/exilc_user_a $(SEED_C) $(SYS_HOST) 2>/dev/null \
+	  || { echo "compiler: cc could not build the seed"; exit 1; }; \
+	$(HOST_OUT)/exilc_user_a --target c --c-out $(C_OUT)/user_a.c src/exilc.exl >/dev/null 2>&1 \
+	  || { echo "compiler: the seed cannot build the current source — refresh it (make seed)"; exit 1; }; \
+	if [ ! -s $(C_OUT)/user_a.c ]; then echo "compiler: EMPTY C from the seed compiler"; exit 1; fi; \
+	cc -ansi -pedantic -Wall $(CC_QUIET) -o ./exilc $(C_OUT)/user_a.c $(SYS_HOST) 2>/dev/null \
+	  || { echo "compiler: cc could not build the compiler"; exit 1; }; \
+	./exilc --target c --c-out $(C_OUT)/user_smoke.c examples/hello_world.exl >/dev/null 2>&1 \
+	  || { echo "compiler: the built binary cannot compile hello_world"; exit 1; }; \
+	if [ ! -s $(C_OUT)/user_smoke.c ]; then echo "compiler: the built binary emitted EMPTY C"; exit 1; fi; \
+	echo "compiler: ./exilc ready (`wc -l < $(C_OUT)/user_a.c` lines of C, built by cc; no OCaml involved)"
+
 # The bootstrap ladder, using cc and the seed ONLY (no dune, no opam):
 #   S  = compiler built from the seed        (seed's codegen — may be older)
 #   Cb = S's C for the CURRENT source        (current codegen, emitted by old)
