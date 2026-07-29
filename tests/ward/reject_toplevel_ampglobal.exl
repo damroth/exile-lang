@@ -1,7 +1,7 @@
 // W: a TOP-LEVEL ward base must be an integer MMIO address; &GLOBAL is local-only
 // (a discovered base is a later era), mirroring rune R3b. A clean diagnostic, not
 // an ICE — the check runs before err_latched.
-extern var SCRATCH: c_ulong;
+mod raw { extern var SCRATCH: c_ulong; }
 ward Custom { a: u32 at 0x00 write; }
-ward bad: Custom at &SCRATCH;
+ward bad: Custom at &raw::SCRATCH;
 fn main() { bad.a.write(0); }

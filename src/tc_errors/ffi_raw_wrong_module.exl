@@ -1,0 +1,4 @@
+// A module is not the quarantine; the LAST path segment must be `raw` (or the
+// compiler-shipped `sys` seam).
+mod ffi { extern fn puts(s: *const c_char) -> c_int; }
+fn main() { println(1); }

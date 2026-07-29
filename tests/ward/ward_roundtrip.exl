@@ -1,6 +1,6 @@
 // ward Increment 2 — the runnable ward-over-RAM witness (WARD-SPEC §7b).
 //
-// A ward instance over a real static cell (&SCRATCH), MIXED-WIDTH fields with a
+// A ward instance over a real static cell (&raw::SCRATCH), MIXED-WIDTH fields with a
 // GAP between them, written and read back — proving the offsets land AND that a
 // u16 field and its neighbours do not collide (disjoint layout I-W2), by
 // execution. Pattern: field -> gap -> field -> field.
@@ -11,7 +11,7 @@
 // quirk, not a ward defect (the golden proves the u32 shape at an integer MMIO
 // base). The fields fit inside the c_ulong backing (>= 4 bytes) with room to
 // spare on the host.
-extern var SCRATCH: c_ulong;
+mod raw { extern var SCRATCH: c_ulong; }
 
 ward Regs {
     a: u16 at 0x00 readwrite;   // [0, 2)
@@ -21,7 +21,7 @@ ward Regs {
 }
 
 fn main() {
-    ward regs: Regs at &SCRATCH;
+    ward regs: Regs at &raw::SCRATCH;
     regs.a.write(43981);              // 0xABCD
     regs.b.write(4660);              // 0x1234
     regs.c.write(255);               // 0xFF

@@ -1,0 +1,2 @@
+extern type Handle;
+fn main() { println(1); }

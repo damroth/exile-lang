@@ -1,6 +1,13 @@
 // SEAL-SPEC T4: the same property reached without naming `sys` at all.
-extern fn sys_seal_exit(state: u32);
+//
+// The extern sits inside `mod raw` on purpose. At top level it is rejected by
+// the FFI hygiene rule instead, and this fixture would then be passing on a
+// verdict that has nothing to do with the seam — which is what it did for the
+// whole seal era, while the port had no hygiene rule to fire. Quarantined, the
+// program is legal everywhere the frozen oracle can see it, and T4 is the only
+// thing left that can reject it.
+mod raw { extern fn sys_seal_exit(state: u32); }
 fn main() {
-    sys_seal_exit(7 as u32);
+    raw::sys_seal_exit(7 as u32);
     println(1);
 }

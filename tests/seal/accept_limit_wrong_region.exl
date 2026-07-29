@@ -13,7 +13,7 @@
 // PAIR. Pinned as ACCEPT so the blindness is a contract rather than a memory —
 // when a future round closes it, this fixture goes red and forces the decision to
 // be made deliberately.
-extern var SCRATCH: c_ulong;
+mod raw { extern var SCRATCH: c_ulong; }
 
 ward Regs {
     dmaconr: u16 at 0x00 readwrite;
@@ -21,7 +21,7 @@ ward Regs {
 }
 
 fn torn(bits: u16) -> u16 {
-    ward regs: Regs at &SCRATCH;
+    ward regs: Regs at &raw::SCRATCH;
     let old = regs.dmaconr.read();      // OUTSIDE — an interrupt here changes it
     seal {
         let keep = old & bits;
@@ -31,7 +31,7 @@ fn torn(bits: u16) -> u16 {
 }
 
 fn main() {
-    ward regs: Regs at &SCRATCH;
+    ward regs: Regs at &raw::SCRATCH;
     regs.dmaconr.write(207 as u16);
     println(torn(64 as u16) as int);    // 32832 — the RIGHT answer, from the WRONG shape
 }

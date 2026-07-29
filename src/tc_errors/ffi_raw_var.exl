@@ -1,0 +1,2 @@
+extern var SCRATCH: c_ulong;
+fn main() { println(1); }

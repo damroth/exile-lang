@@ -1,0 +1,2 @@
+extern struct FILE { dummy: c_int }
+fn main() { println(1); }

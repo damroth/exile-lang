@@ -6975,6 +6975,9 @@ fn rune_sym_base(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
                  elem_ann: *const TypeAnn, rune_ty: *const Typ, pos: Pos) -> *const Texpr {
     let is_global = match *inner {
         Expr::Var(vname, _vp) => !is_some_ty(env_lookup(benv, vname))
+        // `&raw::SCRATCH` — the same widening the ward base needed, and for the
+        // same reason: the FFI hygiene rule puts the cell inside `mod raw`.
+        | Expr::EnumLit { tname, variant, args, pos } => !str::eq(qualified_global_sym(sc, &tname, variant), "")
         | _o => false
     };
     if !is_global {
@@ -9347,11 +9350,32 @@ fn ward_base_sym(ar: *Arena, sc: *const TyScope, benv: *const Vec<FieldTy>, addr
         | _o => { tc_fail(ar, sc, p, "a ward instance base must be an integer (MMIO) or `&GLOBAL` (RAM)"); "" }
     };
 }
+// A module-qualified global — `raw::SCRATCH`.  The parser cannot tell a module
+// path from an enum path, so both arrive as `EnumLit`; a tname that names no
+// enum is the module reading.  This form EXISTS because the FFI hygiene rule
+// requires an `extern var` to live in `mod raw`, which leaves a bare `&NAME`
+// unable to reach it: the base and the quarantine had no common spelling until
+// this arm.  An extern keeps its unmangled C symbol, so the last segment IS the
+// symbol.
+fn qualified_global_sym(sc: *const TyScope, tname: *const Vec<str>, variant: str) -> str {
+    let n = tname.length();
+    if n == 0 as u32 { return ""; }
+    if name_in(sc.sc_enums, tname.as_slice()[n - 1 as u32]) { return ""; }
+    return variant;
+}
 fn ward_base_sym_ref(ar: *Arena, sc: *const TyScope, benv: *const Vec<FieldTy>, inner: *const Expr, p: Pos) -> str {
     return match *inner {
         Expr::Var(vname, _vp) => if is_some_ty(env_lookup(benv, vname)) { local_ward_base_err(ar, sc, p) } else { vname }
+        | Expr::EnumLit { tname, variant, args, pos } => ward_base_qualified(ar, sc, &tname, variant, p)
         | _o => { tc_fail(ar, sc, p, "a ward `&` base must name a global (`&NAME`)"); "" }
     };
+}
+fn ward_base_qualified(ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, variant: str, p: Pos) -> str {
+    let sym = qualified_global_sym(sc, tname, variant);
+    if str::eq(sym, "") {
+        tc_fail(ar, sc, p, "a ward `&` base must name a global (`&NAME`)");
+    }
+    return sym;
 }
 fn local_ward_base_err(ar: *Arena, sc: *const TyScope, p: Pos) -> str {
     tc_fail(ar, sc, p, "a ward base must be a global; the address of a local would dangle");
@@ -13612,6 +13636,11 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             // `parser::IdentPos`, matching how the type is registered.
             let msc = scope_with_modpath(sc, path);
             let fsc = scope_with_tparams(&msc, &f.tparams);
+            // The hygiene rule FIRST, then the port-only seam guard.  Both reject
+            // `extern fn sys_seal_exit` at top level, but only one of them is a
+            // verdict the frozen oracle also gives — and the port adds verdicts
+            // where the oracle is silent, it does not change the ones it gives.
+            if f.is_extern { require_raw(a, ar, &fsc, path, "fn", f.name, f.pos); }
             seal_seam_decl_guard(a, ar, &fsc, em, f.pos);
             g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty, f.pos),
                               is_const: false, is_top: is_top, gf_variadic: f.is_variadic });
@@ -13632,15 +13661,19 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
         | Item::ExternConst(ec) => {
             // A linker-resolved global value; its C symbol is visible
             // unqualified everywhere (no module mangling).
+            require_raw(a, ar, sc, path, "const", ec.ecname, ec.ecpos);
             g.push(GlobalFn { name: ec.ecname, mangled: ec.ecname, gf_emit: ec.ecname,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, ec.ecty, ec.ecpos)),
                               is_const: true, is_top: true , gf_variadic: false });
         }
         | Item::ExternVar(ev) => {
+            require_raw(a, ar, sc, path, "var", ev.evname, ev.evpos);
             g.push(GlobalFn { name: ev.evname, mangled: ev.evname, gf_emit: ev.evname,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, ev.evty, ev.evpos)),
                               is_const: true, is_top: true , gf_variadic: false });
         }
+        | Item::ExternStruct(es) => { require_raw(a, ar, sc, path, "struct", es.esname, es.espos); }
+        | Item::ExternType(xt) => { require_raw(a, ar, sc, path, "type", xt.xtname, xt.xtpos); }
         | Item::Module(md) => {
             let mut p2: Vec<str> = copy_strs(a, path);
             p2.push(md.mname);
@@ -13670,6 +13703,27 @@ fn collect_use(a: Allocator, ar: *Arena, path: *const Vec<str>, is_wildcard: boo
     push_use_alias(g, m, last);
 }
 
+// `mod raw` is the user-facing FFI quarantine; `mod sys` is the compiler-shipped
+// target seam (DR-006), whose extern fns are hand-vetted and target-portable and
+// so do not need the gate.  The LAST path segment decides, so a `mod raw` nested
+// anywhere qualifies.
+fn in_raw_module(path: *const Vec<str>) -> bool {
+    let n = path.length();
+    if n == 0 as u32 { return false; }
+    let last = path.as_slice()[n - 1 as u32];
+    return str::eq(last, "raw") || str::eq(last, "sys");
+}
+fn require_raw(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>,
+               kind: str, name: str, pos: Pos) {
+    if in_raw_module(path) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 160 as u32);
+    sb.push_str("'extern "); sb.push_str(kind); sb.push_str(" "); sb.push_str(name);
+    sb.push_str("' must live inside a `mod raw { ... }` block (FFI hygiene rule); wrap with `mod raw { ... }` and call as `raw::");
+    sb.push_str(name);
+    sb.push_str("` or import via `use raw::*;`");
+    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn collect_fn_mangle(a: Allocator, ar: *Arena, f: *const Func, path: *const Vec<str>) -> str {
     if f.is_extern { return f.c_name; }
     if path.length() == 0 as u32 && str::eq(f.name, "main") { return "main"; }

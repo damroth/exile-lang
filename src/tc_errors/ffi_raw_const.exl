@@ -1,0 +1,2 @@
+extern const LIMIT: int;
+fn main() { println(1); }

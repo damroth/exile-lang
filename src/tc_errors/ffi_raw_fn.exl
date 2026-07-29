@@ -1,0 +1,4 @@
+// The FFI quarantine: an `extern` item lives inside `mod raw { ... }`, so every
+// call site reads `raw::` and the foreign surface is one grep away.
+extern fn some_c_thing(state: u32);
+fn main() { println(1); }

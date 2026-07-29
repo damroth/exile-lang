@@ -13,7 +13,7 @@
 // stage of the sealed sequence ran; the balance line proves the region was left
 // exactly once. The fields are `readwrite` only so the witness can read them
 // back — the golden keeps the write-only directions the hardware really has.
-extern var SCRATCH: c_ulong;
+mod raw { extern var SCRATCH: c_ulong; }
 
 ward Regs {
     dmaconr: u16 at 0x00 readwrite;   // stands in for the $DFF002 read port
@@ -25,7 +25,7 @@ ward Regs {
 fn start(size: readwrite rune<u16>, v: u16) { size.write(v); }
 
 fn setup(size: u16) -> u16 {
-    ward regs: Regs at &SCRATCH;   // zero storage (I-W1), so naming it twice costs nothing
+    ward regs: Regs at &raw::SCRATCH;   // zero storage (I-W1), so naming it twice costs nothing
     let mut trace = 0 as u16;
     seal {
         let old = regs.dmaconr.read();
@@ -39,7 +39,7 @@ fn setup(size: u16) -> u16 {
 }
 
 fn main() {
-    ward regs: Regs at &SCRATCH;
+    ward regs: Regs at &raw::SCRATCH;
     regs.dmaconr.write(207 as u16);       // 0x00CF — BLTEN among other bits on
     println(setup(64 as u16) as int);     // 3     — every stage of the sequence ran
     println(regs.bltcon0.read() as int);  // 2544
