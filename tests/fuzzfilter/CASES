@@ -9,3 +9,5 @@ closure_bar|none
 mixed_bitwise|R7-mixed-bitwise-parens
 multi_error|multi-error-pass-order
 plain|none
+arm_return|R12-arm-return
+defer_return|none

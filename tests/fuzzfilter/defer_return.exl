@@ -1,0 +1,9 @@
+// The SAME wording from the reference, and NOT register #12: this `return`
+// really is inside a `defer`, so the port rejects it too. The false-positive
+// floor for the #12 recogniser - a filter keyed on the message alone would eat
+// this one, and it is a genuine agreement rather than a divergence.
+fn f() -> int {
+    defer { return 1; }
+    return 2;
+}
+fn main() { println(f()); }

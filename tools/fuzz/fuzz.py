@@ -65,6 +65,13 @@ CAP_RESERVED = re.compile(r"'(seal|ward|rune|sigil|own)' is a reserved word")
 CAP_SEAM = re.compile(r"unknown function 'sys::sys_seal_(enter|exit)'")
 NOT_PORTED = re.compile(r"not yet ported")
 PARENS = re.compile(r"[()]")
+# Register #12 — the two barriers the frozen reference puts in front of a
+# `return` inside a `match` arm: its typecheck in value position, its codegen as
+# a statement. The codegen one names `defer` because `emit_simple_stmt` was
+# written for defer bodies and the TMatch lowering routes arm bodies through it.
+ARM_RETURN = re.compile(
+    r"'return' inside a defer body is not supported"
+    r"|block expression `\{ \.\.\. \}` must end with a trailing value expression")
 
 
 def registered_divergence(ev):
@@ -81,6 +88,13 @@ def registered_divergence(ev):
         return "kernel-era-superset"          # register #9
     if NOT_PORTED.search(ev["port_diag"]):
         return "not-yet-ported"               # register #10
+    # #12 — `return` inside a match arm: the port lowers it, the reference
+    # refuses it. The discriminator is BEHAVIOURAL, not the message: a `return`
+    # that really is inside a `defer` is rejected by the PORT too (it carries the
+    # same check), so "the port accepted" is what separates the arm case from the
+    # defer case that shares the wording.
+    if ev["port_status"] == 0 and ARM_RETURN.search(ev["oracle_diag"]):
+        return "R12-arm-return"               # register #12
     # #11 — both reject, at DIFFERENT positions: each side found a different
     # error first, because their passes run in a different order. Same position
     # with different text is a real message divergence and stays B1.

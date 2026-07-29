@@ -1,0 +1,51 @@
+// Registered divergence #12: `return` inside a `match` arm.
+//
+// The port lowers it: each arm becomes a C `case` with a real `return` in it.
+// The FROZEN reference cannot, and refuses it at two different barriers - in
+// value position its typecheck wants each arm block to end in a value, and as a
+// statement its codegen reaches `emit_simple_stmt`, which was written for
+// `defer` bodies and still says so. A program with no `defer` is told about
+// `defer`.
+//
+// This is the shape the seal era is built on (`return` crossing a region inside
+// an arm), so the port keeps it and the divergence is registered rather than
+// removed. The gate below pins BOTH sides: the port runs, the reference refuses.
+
+enum E { A | B | C }
+
+// Statement position, void function: the reference dies in codegen here.
+fn report(e: E) {
+    match e {
+        E::A => { println(1); return; }
+        | E::B => { println(2); return; }
+        | E::C => { println(3); }
+    }
+}
+
+// Value position: the reference dies in typecheck here instead.
+fn pick(e: E) -> int {
+    match e {
+        E::A => { return 10; }
+        | E::B => { return 20; }
+        | E::C => { return 30; }
+    }
+}
+
+// A `return` in one arm and a value in another - the arms need not agree on
+// which way they leave.
+fn mixed(e: E) -> int {
+    match e {
+        E::A => { return 40; }
+        | E::B => { 50 }
+        | E::C => { return 60; }
+    }
+}
+
+fn main() {
+    report(E::A);
+    report(E::C);
+    println(pick(E::A));
+    println(pick(E::C));
+    println(mixed(E::A));
+    println(mixed(E::B));
+}

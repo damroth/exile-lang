@@ -1,0 +1,5 @@
+// Register #12: the port lowers `return` inside a match arm, the frozen
+// reference refuses it. Must be recognised.
+enum E { A | B }
+fn pick(e: E) -> int { match e { E::A => { return 1; } | E::B => { return 2; } } }
+fn main() { println(pick(E::A)); }

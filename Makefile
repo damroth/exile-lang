@@ -739,7 +739,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-parens
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -882,7 +882,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-parens
+                 selfhost-seal selfhost-parens selfhost-armreturn
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1344,6 +1344,40 @@ fuzz-witness: $(EXILC_BIN)
 	       echo "  Per E1 this is a finding ABOUT THE GENERATOR — re-hunt the seed, do not widen the budget."; \
 	       echo "$$out" | tail -3; exit 1; }; \
 	echo "fuzz-witness: clean (seed $(FUZZ_WITNESS_SEED) rediscovers the planted codegen defect as F1:emitted-c within $(FUZZ_N) inputs)"
+
+# ===== register #12 - `return` inside a `match` arm (B2 divergence) =====
+#
+# The port lowers it; the FROZEN reference cannot, at two different barriers, and
+# the codegen one names `defer` in a program that has none (`emit_simple_stmt`
+# was written for defer bodies and the TMatch lowering routes arms through it).
+# The seal era is built on this shape, so the port keeps it - which makes the
+# gate mandatory rather than optional, per the same argument register #7 made: a
+# divergence nothing measures is a divergence that rots.
+#
+# BOTH sides are pinned. The port must compile, emit a real `return` inside the
+# switch, survive -Werror and RUN to the expected trace; the reference must still
+# REFUSE it. If the frozen oracle ever accepted this, the register entry would be
+# stale and this gate is what would say so.
+selfhost-armreturn: $(EXILC_BIN)
+	@test -f tests/armreturn/arm_returns.exl || { echo "selfhost-armreturn: MISSING tests/armreturn/arm_returns.exl"; exit 1; }; \
+	test -s tests/armreturn/arm_returns.expected || { echo "selfhost-armreturn: MISSING/EMPTY expected"; exit 1; }; \
+	if $(EXILE) --target c --c-out $(C_OUT)/armret_oracle.c tests/armreturn/arm_returns.exl >/dev/null 2>&1; then \
+	  echo "selfhost-armreturn: the FROZEN reference now ACCEPTS this - register #12 is stale, re-measure it"; exit 1; fi; \
+	rm -f $(C_OUT)/armret_oracle.c; \
+	rm -f $(C_OUT)/armret.c $(HOST_OUT)/armret $(C_OUT)/armret.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/armret.c tests/armreturn/arm_returns.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-armreturn: the port REJECTED `return` in a match arm - the seal era rests on this shape"; exit 1; }; \
+	if [ ! -s $(C_OUT)/armret.c ]; then echo "selfhost-armreturn: EMPTY emitted C (floor)"; exit 1; fi; \
+	n=`sed 's|//.*||' $(C_OUT)/armret.c | grep -c 'return 10;\|return 20;\|return 30;'`; \
+	if [ "$$n" != "3" ]; then \
+	  echo "selfhost-armreturn: expected 3 arm returns lowered into the switch, found $$n"; exit 1; fi; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/armret $(C_OUT)/armret.c $(SYS_HOST) \
+	  || { echo "selfhost-armreturn: the emission is not clean C89 at -O2"; exit 1; }; \
+	$(HOST_OUT)/armret > $(C_OUT)/armret.out 2>&1; \
+	if ! diff -q tests/armreturn/arm_returns.expected $(C_OUT)/armret.out >/dev/null; then \
+	  echo "selfhost-armreturn: an arm left by the wrong path:"; \
+	  diff tests/armreturn/arm_returns.expected $(C_OUT)/armret.out | head -6; exit 1; fi; \
+	echo "selfhost-armreturn: clean (3 arm returns lowered into the switch, -Werror clean, RUNS 1/3/10/30/40/50; the frozen reference still refuses it)"
 
 # ===== register #7 — the port's parenthesised emission (B2 divergence) =====
 #
