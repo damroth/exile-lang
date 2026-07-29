@@ -10,8 +10,8 @@ AmigaOS.
 
 > Language status: feature set as of **v0.11.2** (2026-06-10). Every
 > feature shown below is implemented and backed by a runnable example;
-> the full list and design decisions live in
-> [`WORKLOG.md`](../WORKLOG.md).
+> what landed when, and why, is recorded in
+> [`CHANGELOG.md`](../CHANGELOG.md).
 
 ---
 
@@ -51,6 +51,19 @@ If you only want to write and run on the host (Linux/macOS), `make
 build` is enough. `make toolchain` is needed only when you want to
 produce m68k binaries.
 
+`make build` leaves the compiler in dune's install tree, so put that on
+your `PATH` and every `exilc` below works verbatim:
+
+```sh
+export PATH="$PWD/_build/install/default/bin:$PATH"
+exilc --help
+```
+
+If you bootstrapped from the seed instead (`make bootstrap-from-seed` —
+no OCaml involved), the compiler is `_build/out/host/exilc_seed_b`;
+symlink it as `exilc` somewhere on your `PATH`, or read every `exilc`
+below as that binary.
+
 Handy Makefile targets:
 
 ```sh
@@ -74,22 +87,25 @@ fn main() {
 Build and run on the host:
 
 ```sh
-./exilc --target host examples/hello_world.exl -o hello
+exilc --target host examples/hello_world.exl -o hello
 ./hello
 ```
 
 For Amiga (with the toolchain):
 
 ```sh
-./exilc --target amiga examples/hello_world.exl -o hello
+exilc --target amiga examples/hello_world.exl -o hello
 # produces an m68k binary runnable under WinUAE / FS-UAE / vamos
 ```
 
-Or emit C straight away without compiling further:
+Or stop at the C and go no further:
 
 ```sh
-./exilc --target c examples/hello_world.exl
-# spits C89 to stdout
+exilc --target c examples/hello_world.exl
+# writes examples/hello_world.c — C89, next to the source
+
+exilc --target c --c-out /tmp/hello.c examples/hello_world.exl
+# same C, at a path you choose
 ```
 
 A few more build-surface flags: `--c-out <path>` writes the generated C
@@ -103,7 +119,7 @@ self-host port.
 `--freestanding` emits C that does not use libc at all:
 
 ```sh
-./exilc --target c --freestanding --c-out out.fs.c examples/freestanding_print.exl
+exilc --target c --freestanding --c-out out.fs.c examples/freestanding_print.exl
 
 # the floor is defined by what the object still needs:
 cc -ffreestanding -fno-stack-protector -fno-pic -I runtime -c out.fs.c -o out.o
@@ -1857,7 +1873,7 @@ fn main() {
 ```
 
 The bodies of `add` and `shout` live on the C side — you link them via
-`./exilc --link my_stub.c ...`.
+`exilc --link my_stub.c ...`.
 
 [examples/ffi.exl](../examples/ffi.exl) | [examples/ffi_stub.c](../examples/ffi_stub.c)
 
@@ -2272,9 +2288,9 @@ exile has a "comfort tier" — three ergonomics levels, orthogonal to the
 target:
 
 ```sh
-./exilc --profile core     ...    # cheapest features only, warns on generics
-./exilc --profile standard ...    # generics silent, some comfort still in lint
-./exilc --profile full     ...    # everything, default
+exilc --profile core     ...    # cheapest features only, warns on generics
+exilc --profile standard ...    # generics silent, some comfort still in lint
+exilc --profile full     ...    # everything, default
 ```
 
 The `@tier(...)` annotation pins a level to a declaration:
@@ -2570,8 +2586,8 @@ path:
 5. Out into the world: `ffi` -> `ffi_libc` -> `ffi_opaque` -> `ffi_full` ->
    `ffi_callback` -> `ctypes` -> `allocator_demo` -> `amiga_hello`.
 
-For the full discussion of design decisions, what's been done, the
-roadmap, and known limitations — see [`WORKLOG.md`](../WORKLOG.md). For
-a terse release history — [`CHANGELOG.md`](../CHANGELOG.md).
+For what has landed and why — release by release — see
+[`CHANGELOG.md`](../CHANGELOG.md); for what is deliberately absent,
+[sec 1](#1-what-is-exile-lang).
 
 Good luck. Write for the 68k.
