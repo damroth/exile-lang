@@ -1,0 +1,33 @@
+// A port-only decision, because the frozen oracle cannot parse `seal` at all
+// (register #9): does a `seal` region answer for its enclosing function's
+// exhaustive-return check?
+//
+// It does.  The region's body runs INLINE and UNCONDITIONALLY — unlike a
+// `defer` body, which is cleanup and redirects nothing — so a `seal` whose body
+// ends in `return` leaves no path that falls off the end.  The alternative,
+// treating `seal` as an unknown statement that never returns, would reject this
+// program: valid code, refused for a construct the reference has no opinion on.
+//
+// The superset rule the capability model is held to: the port may ADD verdicts
+// where the oracle is silent, never CHANGE one the oracle gives.
+fn guarded(n: int) -> int {
+    seal {
+        return n + 1;
+    }
+}
+
+// The same shape one level in: the seal answers for the `if` arm it sits in,
+// and the arms together answer for the function.
+fn either(b: bool, n: int) -> int {
+    if b {
+        seal { return n * 2; }
+    } else {
+        return n;
+    }
+}
+
+fn main() {
+    println(guarded(41));       // 42
+    println(either(true, 21));  // 42
+    println(either(false, 7));  // 7
+}

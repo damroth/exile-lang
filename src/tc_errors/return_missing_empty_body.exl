@@ -1,0 +1,4 @@
+// A value-returning fn with nothing to return: the caller would read whatever
+// the C compiler left in the result register.
+fn f() -> int { }
+fn main() { println(f()); }

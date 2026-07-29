@@ -43,6 +43,15 @@ fn cat2(a: Allocator, ar: *Arena, x: str, y: str) -> str {
     return str::from_slice(ar, sb.as_slice());
 }
 
+fn cat4(a: Allocator, ar: *Arena, x: str, y: str, z: str, w: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str(x);
+    sb.push_str(y);
+    sb.push_str(z);
+    sb.push_str(w);
+    return str::from_slice(ar, sb.as_slice());
+}
+
 fn last_seg(path: *const Vec<str>) -> str {
     let n = path.length();
     if n == 0 as u32 { return ""; }
@@ -352,7 +361,8 @@ fn hoist(a: Allocator, ar: *Arena, stack: *const Vec<str>, dep: str, modname: st
     if str_in(hoisted, dep) { return; }
     hoisted.push(dep);
     if !file_exists(dep) {
-        errs.push(error::alloc(ar, pos, cat2(a, ar, "cannot find module file: ", dep)));
+        errs.push(error::alloc(ar, pos, cat4(a, ar, "cannot find module '", modname,
+                                             "' (looked for ", cat2(a, ar, dep, ")"))));
         return;
     }
     let items = parse_file(a, ar, dep, errs);

@@ -1,0 +1,3 @@
+// The message names the declared type, pointers included.
+fn f() -> *const int { if true { } }
+fn main() { let p = f(); println(1); }

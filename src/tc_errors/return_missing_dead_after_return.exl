@@ -1,0 +1,4 @@
+// Only the LAST statement decides fall-through: an earlier `return` makes what
+// follows dead, and dead code is not a return.
+fn f() -> int { return 1; defer { println(9); } }
+fn main() { println(f()); }

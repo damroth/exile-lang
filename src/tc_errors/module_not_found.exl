@@ -1,0 +1,3 @@
+// The loader names the MODULE as well as the path it looked in.
+use nosuchmodule::*;
+fn main() { println(1); }

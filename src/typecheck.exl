@@ -10524,6 +10524,124 @@ fn pick_tparams(xtparams: *const Vec<str>, fallback: *const Vec<str>) -> *const 
     if xtparams.length() > 0 as u32 { return xtparams; }
     return fallback;
 }
+
+// True when a body ends in a `return` on every control-flow path that reaches
+// its end.  Only the LAST statement matters for fall-through: an earlier
+// `return` makes what follows dead, and dead code never reaches the end.
+//
+// The walk is written EXHAUSTIVELY — no catch-all arm.  A future statement kind
+// would silently answer "does not return" through a `_`, and this is a check
+// whose failure mode is ACCEPTING a function that falls off its end.
+fn always_returns(stmts: *const Vec<Tstmt>) -> bool {
+    let n = stmts.length();
+    if n == 0 as u32 { return false; }
+    return stmt_returns(&stmts.as_slice()[n - 1 as u32]);
+}
+fn cond_is_true(e: *const Texpr) -> bool {
+    return match e.e { TexprNode::TBoolLit(b) => b | _o => false };
+}
+fn stmt_returns(s: *const Tstmt) -> bool {
+    return match *s {
+        Tstmt::TReturn { value, pos } => true
+        | Tstmt::TIf { cond, then_body, else_body } =>
+            always_returns(&then_body) && always_returns(&else_body)
+        // `while true { … }` with no `break` is an infinite loop: the only way
+        // out is a `return` from inside, so it never falls through.  A `break`
+        // anywhere in it restores the fall-through path.
+        | Tstmt::TWhile { cond, body, post } =>
+            cond_is_true(cond) && !stmts_have_break(&body)
+        // Port-only (register #9): the reference has no `seal`.  The region's
+        // body runs inline and unconditionally, so it answers for the seal —
+        // the alternative would reject `seal { return x; }`, a program the
+        // frozen oracle cannot judge either way.
+        | Tstmt::TSeal { body, pos } => always_returns(&body)
+        // `defer` registers cleanup; it does not redirect control flow.  A
+        // `while` that is not the infinite form may run zero times or exit
+        // normally.  `for` / `for-each` are the same, and are still transient
+        // here because this check runs BEFORE the lift, exactly where the
+        // reference runs it.
+        | Tstmt::TLet { name, value, decl_ty, pos } => false
+        | Tstmt::TLetTuple { names, value, pos } => false
+        | Tstmt::TAssign { path, value, pos } => false
+        | Tstmt::TAssignField { target, field, value, pos } => false
+        | Tstmt::TAssignIndex { base, index, value, pos } => false
+        | Tstmt::TAssignDeref { target, value, pos } => false
+        | Tstmt::TExprStmt(e) => false
+        | Tstmt::TBreak(p) => false
+        | Tstmt::TContinue(p) => false
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => false
+        | Tstmt::TForEach { it_var, it_init, body, pos } => false
+        | Tstmt::TDefer { body, pos } => false
+    };
+}
+fn stmts_have_break(stmts: *const Vec<Tstmt>) -> bool {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        if stmt_has_break(&sl[i]) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn stmt_has_break(s: *const Tstmt) -> bool {
+    return match *s {
+        Tstmt::TBreak(p) => true
+        | Tstmt::TIf { cond, then_body, else_body } =>
+            stmts_have_break(&then_body) || stmts_have_break(&else_body)
+        // A `break` inside a NESTED loop belongs to that loop, not to this one.
+        | Tstmt::TWhile { cond, body, post } => false
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => false
+        | Tstmt::TForEach { it_var, it_init, body, pos } => false
+        | Tstmt::TDefer { body, pos } => stmts_have_break(&body)
+        | Tstmt::TSeal { body, pos } => stmts_have_break(&body)
+        | Tstmt::TLet { name, value, decl_ty, pos } => false
+        | Tstmt::TLetTuple { names, value, pos } => false
+        | Tstmt::TAssign { path, value, pos } => false
+        | Tstmt::TAssignField { target, field, value, pos } => false
+        | Tstmt::TAssignIndex { base, index, value, pos } => false
+        | Tstmt::TAssignDeref { target, value, pos } => false
+        | Tstmt::TReturn { value, pos } => false
+        | Tstmt::TExprStmt(e) => false
+        | Tstmt::TContinue(p) => false
+    };
+}
+fn tail_is_dropped_expr(body: *const Vec<Tstmt>, t: *const Typ) -> bool {
+    let n = body.length();
+    if n == 0 as u32 { return false; }
+    return match body.as_slice()[n - 1 as u32] {
+        Tstmt::TExprStmt(e) => typ_eq(e.ty, t)
+        | _o => false
+    };
+}
+// A value-returning fn must `return` on every control-flow path.  Without this
+// a non-returning path falls off the end and the caller reads whatever the C
+// compiler left in the result register — undefined behaviour that compiles.
+fn check_exhaustive_return(a: Allocator, ar: *Arena, sc: *const TyScope,
+                           name: str, ret_ty: Option<*const Typ>,
+                           body: *const Vec<Tstmt>, pos: Pos) {
+    match ret_ty {
+        Option::Some(t) => { check_returns_ty(a, ar, sc, name, t, body, pos); }
+        | Option::None => { }
+    }
+    return;
+}
+fn check_returns_ty(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
+                    t: *const Typ, body: *const Vec<Tstmt>, pos: Pos) {
+    if always_returns(body) { return; }
+    // The `;`-footgun: a trailing `e;` whose value already has the return type
+    // is almost always a dropped trailing expression, so point at THAT rather
+    // than at the generic missing-return.
+    if tail_is_dropped_expr(body, t) {
+        tc_fail(ar, sc, pos, msg3(a, ar, "function '", name, "' returns ",
+            typ_name(a, ar, t),
+            " but its last statement is a discarded expression — drop the trailing `;` to return its value, or add an explicit `return`"));
+        return;
+    }
+    tc_fail(ar, sc, pos, msg3(a, ar, "function '", name,
+        "' declared with return type ", typ_name(a, ar, t),
+        ", but not every control-flow path ends in `return`"));
+    return;
+}
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                 idx: *const ProgIdx, tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func, self_ty: Option<*const Typ>, xtparams: *const Vec<str>) -> Tfunc {
     let params = copy_params(a, &f.params);
@@ -10546,6 +10664,13 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let scb = scope_with_ret(&sc, ret_ty);
     let mut srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     let raw_body = elab_skeleton_or_body(a, ar, g, &scb, gensym, &env, ret_ty, f, is_skeleton, &srcnames);
+    // On the PRE-lift body, where the reference runs it: its own walk names
+    // `TFor` / `TForEach`, which only exist before the lift.  Extern fns have no
+    // body, and a skeleton's body is its instances' problem — each is checked
+    // when it is elaborated.
+    if !f.is_extern && !is_skeleton {
+        check_exhaustive_return(a, ar, &scb, f.name, ret_ty, &raw_body, f.pos);
+    }
     // Lift block-shaped sub-expressions into `__lift_N` temps (per-fn).
     let mut lift_ctr: u32 = 0 as u32;
     let body = lift_stmts(a, ar, &lift_ctr, &raw_body);

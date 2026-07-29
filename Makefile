@@ -1372,12 +1372,13 @@ selfhost-seal: $(EXILC_BIN)
 	         reject_seam_enter reject_seam_exit reject_seam_extern reject_sealed_theft \
 	         defer_in_seal seal_in_defer cross_nest arm_return_after_seal arm_sibling_return \
 	         accept_arm_seal arm_nested_returns try_propagation accept_limit_forgotten \
-	         accept_limit_blanket accept_limit_race accept_limit_latency accept_limit_wrong_region ; do \
+	         accept_limit_blanket accept_limit_race accept_limit_latency accept_limit_wrong_region \
+	         accept_seal_returns ; do \
 	  test -f tests/seal/$$f.exl || { echo "selfhost-seal: MISSING tests/seal/$$f.exl"; exit 1; }; \
 	done; \
 	for e in exits nested consumer_ram try_propagation defer_in_seal seal_in_defer cross_nest \
 	         arm_return_after_seal arm_sibling_return accept_arm_seal arm_nested_returns \
-	         accept_limit_wrong_region ; do \
+	         accept_limit_wrong_region accept_seal_returns ; do \
 	  test -s tests/seal/$$e.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$e.expected"; exit 1; }; \
 	done; \
 	test -s tests/seal/blitter_setup.golden || { echo "selfhost-seal: MISSING/EMPTY tests/seal/blitter_setup.golden"; exit 1; }; \
@@ -1483,6 +1484,16 @@ selfhost-seal: $(EXILC_BIN)
 	  echo "selfhost-seal: the blind spot changed shape — a save torn from its restore must still COMPILE and still BALANCE (that is the contract):"; \
 	  diff tests/seal/accept_limit_wrong_region.expected $(C_OUT)/seal_wr.out | head -6; exit 1; fi; \
 	sig="$$sig the five §6 limits pinned as CONTRACTS, the blind spot among them still compiling AND still balancing;"; \
+	rm -f $(C_OUT)/seal_ret.c $(HOST_OUT)/seal_ret $(C_OUT)/seal_ret.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_ret.c tests/seal/accept_seal_returns.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: a seal whose body RETURNS was rejected — the region runs inline and unconditionally, so it answers for the enclosing fn's exhaustive-return check (port-only, the oracle cannot parse seal at all)"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_ret $(C_OUT)/seal_ret.c $(SYS_HOST) \
+	  || { echo "selfhost-seal: accept_seal_returns C is not clean at -O2"; exit 1; }; \
+	$(HOST_OUT)/seal_ret > $(C_OUT)/seal_ret.out 2>&1; \
+	if ! diff -q tests/seal/accept_seal_returns.expected $(C_OUT)/seal_ret.out >/dev/null; then \
+	  echo "selfhost-seal: a returning seal region ran to the wrong value:"; \
+	  diff tests/seal/accept_seal_returns.expected $(C_OUT)/seal_ret.out | head -6; exit 1; fi; \
+	sig="$$sig a seal that RETURNS answers for its function (bare and inside an if arm), compiled and RUN;"; \
 	for m in arm_return_after_seal arm_sibling_return accept_arm_seal arm_nested_returns \
 	         try_propagation ; do \
 	  rm -f $(C_OUT)/seal_$$m.c $(HOST_OUT)/seal_$$m $(C_OUT)/seal_$$m.out; \

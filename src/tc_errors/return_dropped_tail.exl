@@ -1,0 +1,5 @@
+// The `;`-footgun gets its own message: a trailing `e;` whose value already has
+// the return type is a dropped trailing expression, not a missing return.
+fn g() -> int { return 7; }
+fn f() -> int { g(); }
+fn main() { println(f()); }

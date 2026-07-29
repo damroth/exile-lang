@@ -1,0 +1,4 @@
+// `while true { ... }` counts as returning ONLY when nothing breaks out of it.
+// A `break` restores the fall-through path, and this fn has no value for it.
+fn f(n: int) -> int { let mut i = 0; while true { if i >= n { break; } i = i + 1; } }
+fn main() { println(f(3)); }
