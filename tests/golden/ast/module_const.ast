@@ -1,0 +1,6 @@
+;; exile-ast-dump v1 examples/module_const.exl
+(const K (int i32) (int 1))
+(module factors
+  (const K (int i32) (int 5))
+  (fn scale pub (params (param n (int i32))) (int i32) (body (return (binop * (var n) (var K))))))
+(fn main (params ) void (body (expr-stmt (call println (call factors::scale (int 3)))) (expr-stmt (call println (var K)))))

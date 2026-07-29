@@ -1,0 +1,59 @@
+;; exile-tokens-dump v1 examples/module_const.exl
+Const @examples/module_const.exl:5:1
+(Ident K) @examples/module_const.exl:5:7
+Colon @examples/module_const.exl:5:8
+(Ident int) @examples/module_const.exl:5:10
+Eq @examples/module_const.exl:5:14
+(Int 1) @examples/module_const.exl:5:16
+Semicolon @examples/module_const.exl:5:17
+Pub @examples/module_const.exl:7:1
+Mod @examples/module_const.exl:7:5
+(Ident factors) @examples/module_const.exl:7:9
+LBrace @examples/module_const.exl:7:17
+Const @examples/module_const.exl:8:5
+(Ident K) @examples/module_const.exl:8:11
+Colon @examples/module_const.exl:8:12
+(Ident int) @examples/module_const.exl:8:14
+Eq @examples/module_const.exl:8:18
+(Int 5) @examples/module_const.exl:8:20
+Semicolon @examples/module_const.exl:8:21
+Pub @examples/module_const.exl:10:5
+Fn @examples/module_const.exl:10:9
+(Ident scale) @examples/module_const.exl:10:12
+LParen @examples/module_const.exl:10:17
+(Ident n) @examples/module_const.exl:10:18
+Colon @examples/module_const.exl:10:19
+(Ident int) @examples/module_const.exl:10:21
+RParen @examples/module_const.exl:10:24
+Arrow @examples/module_const.exl:10:26
+(Ident int) @examples/module_const.exl:10:29
+LBrace @examples/module_const.exl:10:33
+Return @examples/module_const.exl:11:9
+(Ident n) @examples/module_const.exl:11:16
+Star @examples/module_const.exl:11:18
+(Ident K) @examples/module_const.exl:11:20
+Semicolon @examples/module_const.exl:11:21
+RBrace @examples/module_const.exl:12:5
+RBrace @examples/module_const.exl:13:1
+Fn @examples/module_const.exl:15:1
+(Ident main) @examples/module_const.exl:15:4
+LParen @examples/module_const.exl:15:8
+RParen @examples/module_const.exl:15:9
+LBrace @examples/module_const.exl:15:11
+(Ident println) @examples/module_const.exl:16:5
+LParen @examples/module_const.exl:16:12
+(Ident factors) @examples/module_const.exl:16:13
+DoubleColon @examples/module_const.exl:16:20
+(Ident scale) @examples/module_const.exl:16:22
+LParen @examples/module_const.exl:16:27
+(Int 3) @examples/module_const.exl:16:28
+RParen @examples/module_const.exl:16:29
+RParen @examples/module_const.exl:16:30
+Semicolon @examples/module_const.exl:16:31
+(Ident println) @examples/module_const.exl:17:5
+LParen @examples/module_const.exl:17:12
+(Ident K) @examples/module_const.exl:17:13
+RParen @examples/module_const.exl:17:14
+Semicolon @examples/module_const.exl:17:15
+RBrace @examples/module_const.exl:18:1
+Eof @examples/module_const.exl:19:1
