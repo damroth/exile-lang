@@ -1,0 +1,5 @@
+// The names of ONE destructure bind simultaneously, so a repeat is a duplicate
+// rather than a redeclaration — a distinct message, checked over the whole list
+// before any of the names binds.
+fn split(n: int) -> (int, int) { return (n, n + 1); }
+fn main() { let (a, a) = split(5); println(a); }

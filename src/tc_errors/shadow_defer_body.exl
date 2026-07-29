@@ -1,0 +1,3 @@
+// Same rule reached through a `defer` body — the block runs later, but it is
+// still nested inside the binding it would hide.
+fn main() { let s = 1; defer { let s = 9; println(s); } println(s); }

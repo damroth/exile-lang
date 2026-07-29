@@ -193,60 +193,271 @@ Return @examples/sibling_shadowing.exl:58:5
 (Ident out) @examples/sibling_shadowing.exl:58:12
 Semicolon @examples/sibling_shadowing.exl:58:15
 RBrace @examples/sibling_shadowing.exl:59:1
-Fn @examples/sibling_shadowing.exl:61:1
-(Ident main) @examples/sibling_shadowing.exl:61:4
-LParen @examples/sibling_shadowing.exl:61:8
-RParen @examples/sibling_shadowing.exl:61:9
-LBrace @examples/sibling_shadowing.exl:61:11
-(Ident println) @examples/sibling_shadowing.exl:62:5
-LParen @examples/sibling_shadowing.exl:62:12
-(Ident area) @examples/sibling_shadowing.exl:62:13
-LParen @examples/sibling_shadowing.exl:62:17
-(Ident Shape) @examples/sibling_shadowing.exl:62:18
-DoubleColon @examples/sibling_shadowing.exl:62:23
-(Ident Circle) @examples/sibling_shadowing.exl:62:25
-LParen @examples/sibling_shadowing.exl:62:31
-(Int 2) @examples/sibling_shadowing.exl:62:32
-RParen @examples/sibling_shadowing.exl:62:33
-RParen @examples/sibling_shadowing.exl:62:34
-RParen @examples/sibling_shadowing.exl:62:35
-Semicolon @examples/sibling_shadowing.exl:62:36
-(Ident println) @examples/sibling_shadowing.exl:63:5
-LParen @examples/sibling_shadowing.exl:63:12
-(Ident area) @examples/sibling_shadowing.exl:63:13
-LParen @examples/sibling_shadowing.exl:63:17
-(Ident Shape) @examples/sibling_shadowing.exl:63:18
-DoubleColon @examples/sibling_shadowing.exl:63:23
-(Ident Square) @examples/sibling_shadowing.exl:63:25
-LParen @examples/sibling_shadowing.exl:63:31
-(Int 4) @examples/sibling_shadowing.exl:63:32
-RParen @examples/sibling_shadowing.exl:63:33
-RParen @examples/sibling_shadowing.exl:63:34
-RParen @examples/sibling_shadowing.exl:63:35
-Semicolon @examples/sibling_shadowing.exl:63:36
-(Ident println) @examples/sibling_shadowing.exl:64:5
-LParen @examples/sibling_shadowing.exl:64:12
-(Ident weighted) @examples/sibling_shadowing.exl:64:13
-LParen @examples/sibling_shadowing.exl:64:21
-(Int 3) @examples/sibling_shadowing.exl:64:22
-RParen @examples/sibling_shadowing.exl:64:23
-RParen @examples/sibling_shadowing.exl:64:24
-Semicolon @examples/sibling_shadowing.exl:64:25
-(Ident println) @examples/sibling_shadowing.exl:65:5
-LParen @examples/sibling_shadowing.exl:65:12
-(Ident pick) @examples/sibling_shadowing.exl:65:13
-LParen @examples/sibling_shadowing.exl:65:17
-True @examples/sibling_shadowing.exl:65:18
-RParen @examples/sibling_shadowing.exl:65:22
-RParen @examples/sibling_shadowing.exl:65:23
-Semicolon @examples/sibling_shadowing.exl:65:24
-(Ident println) @examples/sibling_shadowing.exl:66:5
-LParen @examples/sibling_shadowing.exl:66:12
-(Ident pick) @examples/sibling_shadowing.exl:66:13
-LParen @examples/sibling_shadowing.exl:66:17
-False @examples/sibling_shadowing.exl:66:18
-RParen @examples/sibling_shadowing.exl:66:23
-RParen @examples/sibling_shadowing.exl:66:24
-Semicolon @examples/sibling_shadowing.exl:66:25
-RBrace @examples/sibling_shadowing.exl:67:1
-Eof @examples/sibling_shadowing.exl:68:1
+Fn @examples/sibling_shadowing.exl:63:1
+(Ident counted) @examples/sibling_shadowing.exl:63:4
+LParen @examples/sibling_shadowing.exl:63:11
+(Ident n) @examples/sibling_shadowing.exl:63:12
+Colon @examples/sibling_shadowing.exl:63:13
+(Ident int) @examples/sibling_shadowing.exl:63:15
+RParen @examples/sibling_shadowing.exl:63:18
+Arrow @examples/sibling_shadowing.exl:63:20
+(Ident int) @examples/sibling_shadowing.exl:63:23
+LBrace @examples/sibling_shadowing.exl:63:27
+Let @examples/sibling_shadowing.exl:64:5
+Mut @examples/sibling_shadowing.exl:64:9
+(Ident total) @examples/sibling_shadowing.exl:64:13
+Eq @examples/sibling_shadowing.exl:64:19
+(Int 0) @examples/sibling_shadowing.exl:64:21
+Semicolon @examples/sibling_shadowing.exl:64:22
+For @examples/sibling_shadowing.exl:65:5
+(Ident i) @examples/sibling_shadowing.exl:65:9
+In @examples/sibling_shadowing.exl:65:11
+(Int 0) @examples/sibling_shadowing.exl:65:14
+DotDot @examples/sibling_shadowing.exl:65:15
+(Ident n) @examples/sibling_shadowing.exl:65:17
+LBrace @examples/sibling_shadowing.exl:65:19
+(Ident total) @examples/sibling_shadowing.exl:65:21
+Eq @examples/sibling_shadowing.exl:65:27
+(Ident total) @examples/sibling_shadowing.exl:65:29
+Plus @examples/sibling_shadowing.exl:65:35
+(Ident i) @examples/sibling_shadowing.exl:65:37
+Semicolon @examples/sibling_shadowing.exl:65:38
+RBrace @examples/sibling_shadowing.exl:65:40
+For @examples/sibling_shadowing.exl:66:5
+(Ident i) @examples/sibling_shadowing.exl:66:9
+In @examples/sibling_shadowing.exl:66:11
+(Int 0) @examples/sibling_shadowing.exl:66:14
+DotDot @examples/sibling_shadowing.exl:66:15
+(Ident n) @examples/sibling_shadowing.exl:66:17
+LBrace @examples/sibling_shadowing.exl:66:19
+(Ident total) @examples/sibling_shadowing.exl:66:21
+Eq @examples/sibling_shadowing.exl:66:27
+(Ident total) @examples/sibling_shadowing.exl:66:29
+Plus @examples/sibling_shadowing.exl:66:35
+(Ident i) @examples/sibling_shadowing.exl:66:37
+Star @examples/sibling_shadowing.exl:66:39
+(Int 10) @examples/sibling_shadowing.exl:66:41
+Semicolon @examples/sibling_shadowing.exl:66:43
+RBrace @examples/sibling_shadowing.exl:66:45
+Return @examples/sibling_shadowing.exl:67:5
+(Ident total) @examples/sibling_shadowing.exl:67:12
+Semicolon @examples/sibling_shadowing.exl:67:17
+RBrace @examples/sibling_shadowing.exl:68:1
+Fn @examples/sibling_shadowing.exl:73:1
+(Ident arm_over_visible) @examples/sibling_shadowing.exl:73:4
+LParen @examples/sibling_shadowing.exl:73:20
+(Ident s) @examples/sibling_shadowing.exl:73:21
+Colon @examples/sibling_shadowing.exl:73:22
+(Ident Shape) @examples/sibling_shadowing.exl:73:24
+RParen @examples/sibling_shadowing.exl:73:29
+Arrow @examples/sibling_shadowing.exl:73:31
+(Ident int) @examples/sibling_shadowing.exl:73:34
+LBrace @examples/sibling_shadowing.exl:73:38
+Let @examples/sibling_shadowing.exl:74:5
+(Ident v) @examples/sibling_shadowing.exl:74:9
+Eq @examples/sibling_shadowing.exl:74:11
+(Int 100) @examples/sibling_shadowing.exl:74:13
+Semicolon @examples/sibling_shadowing.exl:74:16
+Let @examples/sibling_shadowing.exl:75:5
+(Ident inner) @examples/sibling_shadowing.exl:75:9
+Eq @examples/sibling_shadowing.exl:75:15
+Match @examples/sibling_shadowing.exl:75:17
+(Ident s) @examples/sibling_shadowing.exl:75:23
+LBrace @examples/sibling_shadowing.exl:75:25
+(Ident Shape) @examples/sibling_shadowing.exl:76:9
+DoubleColon @examples/sibling_shadowing.exl:76:14
+(Ident Circle) @examples/sibling_shadowing.exl:76:16
+LParen @examples/sibling_shadowing.exl:76:22
+(Ident v) @examples/sibling_shadowing.exl:76:23
+RParen @examples/sibling_shadowing.exl:76:24
+FatArrow @examples/sibling_shadowing.exl:76:26
+LBrace @examples/sibling_shadowing.exl:76:29
+(Ident v) @examples/sibling_shadowing.exl:76:31
+Plus @examples/sibling_shadowing.exl:76:33
+(Int 1) @examples/sibling_shadowing.exl:76:35
+RBrace @examples/sibling_shadowing.exl:76:37
+Pipe @examples/sibling_shadowing.exl:77:9
+(Ident Shape) @examples/sibling_shadowing.exl:77:11
+DoubleColon @examples/sibling_shadowing.exl:77:16
+(Ident Square) @examples/sibling_shadowing.exl:77:18
+LParen @examples/sibling_shadowing.exl:77:24
+(Ident v) @examples/sibling_shadowing.exl:77:25
+RParen @examples/sibling_shadowing.exl:77:26
+FatArrow @examples/sibling_shadowing.exl:77:28
+LBrace @examples/sibling_shadowing.exl:77:31
+(Ident v) @examples/sibling_shadowing.exl:77:33
+Plus @examples/sibling_shadowing.exl:77:35
+(Int 2) @examples/sibling_shadowing.exl:77:37
+RBrace @examples/sibling_shadowing.exl:77:39
+RBrace @examples/sibling_shadowing.exl:78:5
+Semicolon @examples/sibling_shadowing.exl:78:6
+Return @examples/sibling_shadowing.exl:79:5
+(Ident v) @examples/sibling_shadowing.exl:79:12
+Plus @examples/sibling_shadowing.exl:79:14
+(Ident inner) @examples/sibling_shadowing.exl:79:16
+Semicolon @examples/sibling_shadowing.exl:79:21
+RBrace @examples/sibling_shadowing.exl:80:1
+Fn @examples/sibling_shadowing.exl:82:1
+(Ident twice) @examples/sibling_shadowing.exl:82:4
+LParen @examples/sibling_shadowing.exl:82:9
+(Ident f) @examples/sibling_shadowing.exl:82:10
+Colon @examples/sibling_shadowing.exl:82:11
+Fn @examples/sibling_shadowing.exl:82:13
+LParen @examples/sibling_shadowing.exl:82:15
+(Ident int) @examples/sibling_shadowing.exl:82:16
+RParen @examples/sibling_shadowing.exl:82:19
+Arrow @examples/sibling_shadowing.exl:82:21
+(Ident int) @examples/sibling_shadowing.exl:82:24
+Comma @examples/sibling_shadowing.exl:82:27
+(Ident x) @examples/sibling_shadowing.exl:82:29
+Colon @examples/sibling_shadowing.exl:82:30
+(Ident int) @examples/sibling_shadowing.exl:82:32
+RParen @examples/sibling_shadowing.exl:82:35
+Arrow @examples/sibling_shadowing.exl:82:37
+(Ident int) @examples/sibling_shadowing.exl:82:40
+LBrace @examples/sibling_shadowing.exl:82:44
+Return @examples/sibling_shadowing.exl:82:46
+(Ident f) @examples/sibling_shadowing.exl:82:53
+LParen @examples/sibling_shadowing.exl:82:54
+(Ident f) @examples/sibling_shadowing.exl:82:55
+LParen @examples/sibling_shadowing.exl:82:56
+(Ident x) @examples/sibling_shadowing.exl:82:57
+RParen @examples/sibling_shadowing.exl:82:58
+RParen @examples/sibling_shadowing.exl:82:59
+Semicolon @examples/sibling_shadowing.exl:82:60
+RBrace @examples/sibling_shadowing.exl:82:62
+Fn @examples/sibling_shadowing.exl:86:1
+(Ident lambda_over_visible) @examples/sibling_shadowing.exl:86:4
+LParen @examples/sibling_shadowing.exl:86:23
+RParen @examples/sibling_shadowing.exl:86:24
+Arrow @examples/sibling_shadowing.exl:86:26
+(Ident int) @examples/sibling_shadowing.exl:86:29
+LBrace @examples/sibling_shadowing.exl:86:33
+Let @examples/sibling_shadowing.exl:87:5
+(Ident v) @examples/sibling_shadowing.exl:87:9
+Eq @examples/sibling_shadowing.exl:87:11
+(Int 100) @examples/sibling_shadowing.exl:87:13
+Semicolon @examples/sibling_shadowing.exl:87:16
+Let @examples/sibling_shadowing.exl:88:5
+(Ident bump) @examples/sibling_shadowing.exl:88:9
+Eq @examples/sibling_shadowing.exl:88:14
+Pipe @examples/sibling_shadowing.exl:88:16
+(Ident v) @examples/sibling_shadowing.exl:88:17
+Colon @examples/sibling_shadowing.exl:88:18
+(Ident int) @examples/sibling_shadowing.exl:88:20
+Pipe @examples/sibling_shadowing.exl:88:23
+Arrow @examples/sibling_shadowing.exl:88:25
+(Ident int) @examples/sibling_shadowing.exl:88:28
+(Ident v) @examples/sibling_shadowing.exl:88:32
+Plus @examples/sibling_shadowing.exl:88:34
+(Int 1) @examples/sibling_shadowing.exl:88:36
+Semicolon @examples/sibling_shadowing.exl:88:37
+Return @examples/sibling_shadowing.exl:89:5
+(Ident v) @examples/sibling_shadowing.exl:89:12
+Plus @examples/sibling_shadowing.exl:89:14
+(Ident twice) @examples/sibling_shadowing.exl:89:16
+LParen @examples/sibling_shadowing.exl:89:21
+(Ident bump) @examples/sibling_shadowing.exl:89:22
+Comma @examples/sibling_shadowing.exl:89:26
+(Int 5) @examples/sibling_shadowing.exl:89:28
+RParen @examples/sibling_shadowing.exl:89:29
+Semicolon @examples/sibling_shadowing.exl:89:30
+RBrace @examples/sibling_shadowing.exl:90:1
+Fn @examples/sibling_shadowing.exl:92:1
+(Ident main) @examples/sibling_shadowing.exl:92:4
+LParen @examples/sibling_shadowing.exl:92:8
+RParen @examples/sibling_shadowing.exl:92:9
+LBrace @examples/sibling_shadowing.exl:92:11
+(Ident println) @examples/sibling_shadowing.exl:93:5
+LParen @examples/sibling_shadowing.exl:93:12
+(Ident area) @examples/sibling_shadowing.exl:93:13
+LParen @examples/sibling_shadowing.exl:93:17
+(Ident Shape) @examples/sibling_shadowing.exl:93:18
+DoubleColon @examples/sibling_shadowing.exl:93:23
+(Ident Circle) @examples/sibling_shadowing.exl:93:25
+LParen @examples/sibling_shadowing.exl:93:31
+(Int 2) @examples/sibling_shadowing.exl:93:32
+RParen @examples/sibling_shadowing.exl:93:33
+RParen @examples/sibling_shadowing.exl:93:34
+RParen @examples/sibling_shadowing.exl:93:35
+Semicolon @examples/sibling_shadowing.exl:93:36
+(Ident println) @examples/sibling_shadowing.exl:94:5
+LParen @examples/sibling_shadowing.exl:94:12
+(Ident area) @examples/sibling_shadowing.exl:94:13
+LParen @examples/sibling_shadowing.exl:94:17
+(Ident Shape) @examples/sibling_shadowing.exl:94:18
+DoubleColon @examples/sibling_shadowing.exl:94:23
+(Ident Square) @examples/sibling_shadowing.exl:94:25
+LParen @examples/sibling_shadowing.exl:94:31
+(Int 4) @examples/sibling_shadowing.exl:94:32
+RParen @examples/sibling_shadowing.exl:94:33
+RParen @examples/sibling_shadowing.exl:94:34
+RParen @examples/sibling_shadowing.exl:94:35
+Semicolon @examples/sibling_shadowing.exl:94:36
+(Ident println) @examples/sibling_shadowing.exl:95:5
+LParen @examples/sibling_shadowing.exl:95:12
+(Ident weighted) @examples/sibling_shadowing.exl:95:13
+LParen @examples/sibling_shadowing.exl:95:21
+(Int 3) @examples/sibling_shadowing.exl:95:22
+RParen @examples/sibling_shadowing.exl:95:23
+RParen @examples/sibling_shadowing.exl:95:24
+Semicolon @examples/sibling_shadowing.exl:95:25
+(Ident println) @examples/sibling_shadowing.exl:96:5
+LParen @examples/sibling_shadowing.exl:96:12
+(Ident pick) @examples/sibling_shadowing.exl:96:13
+LParen @examples/sibling_shadowing.exl:96:17
+True @examples/sibling_shadowing.exl:96:18
+RParen @examples/sibling_shadowing.exl:96:22
+RParen @examples/sibling_shadowing.exl:96:23
+Semicolon @examples/sibling_shadowing.exl:96:24
+(Ident println) @examples/sibling_shadowing.exl:97:5
+LParen @examples/sibling_shadowing.exl:97:12
+(Ident pick) @examples/sibling_shadowing.exl:97:13
+LParen @examples/sibling_shadowing.exl:97:17
+False @examples/sibling_shadowing.exl:97:18
+RParen @examples/sibling_shadowing.exl:97:23
+RParen @examples/sibling_shadowing.exl:97:24
+Semicolon @examples/sibling_shadowing.exl:97:25
+(Ident println) @examples/sibling_shadowing.exl:98:5
+LParen @examples/sibling_shadowing.exl:98:12
+(Ident counted) @examples/sibling_shadowing.exl:98:13
+LParen @examples/sibling_shadowing.exl:98:20
+(Int 3) @examples/sibling_shadowing.exl:98:21
+RParen @examples/sibling_shadowing.exl:98:22
+RParen @examples/sibling_shadowing.exl:98:23
+Semicolon @examples/sibling_shadowing.exl:98:24
+(Ident println) @examples/sibling_shadowing.exl:99:5
+LParen @examples/sibling_shadowing.exl:99:12
+(Ident arm_over_visible) @examples/sibling_shadowing.exl:99:13
+LParen @examples/sibling_shadowing.exl:99:29
+(Ident Shape) @examples/sibling_shadowing.exl:99:30
+DoubleColon @examples/sibling_shadowing.exl:99:35
+(Ident Circle) @examples/sibling_shadowing.exl:99:37
+LParen @examples/sibling_shadowing.exl:99:43
+(Int 2) @examples/sibling_shadowing.exl:99:44
+RParen @examples/sibling_shadowing.exl:99:45
+RParen @examples/sibling_shadowing.exl:99:46
+RParen @examples/sibling_shadowing.exl:99:47
+Semicolon @examples/sibling_shadowing.exl:99:48
+(Ident println) @examples/sibling_shadowing.exl:100:5
+LParen @examples/sibling_shadowing.exl:100:12
+(Ident arm_over_visible) @examples/sibling_shadowing.exl:100:13
+LParen @examples/sibling_shadowing.exl:100:29
+(Ident Shape) @examples/sibling_shadowing.exl:100:30
+DoubleColon @examples/sibling_shadowing.exl:100:35
+(Ident Square) @examples/sibling_shadowing.exl:100:37
+LParen @examples/sibling_shadowing.exl:100:43
+(Int 4) @examples/sibling_shadowing.exl:100:44
+RParen @examples/sibling_shadowing.exl:100:45
+RParen @examples/sibling_shadowing.exl:100:46
+RParen @examples/sibling_shadowing.exl:100:47
+Semicolon @examples/sibling_shadowing.exl:100:48
+(Ident println) @examples/sibling_shadowing.exl:101:5
+LParen @examples/sibling_shadowing.exl:101:12
+(Ident lambda_over_visible) @examples/sibling_shadowing.exl:101:13
+LParen @examples/sibling_shadowing.exl:101:32
+RParen @examples/sibling_shadowing.exl:101:33
+RParen @examples/sibling_shadowing.exl:101:34
+Semicolon @examples/sibling_shadowing.exl:101:35
+RBrace @examples/sibling_shadowing.exl:102:1
+Eof @examples/sibling_shadowing.exl:103:1

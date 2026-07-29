@@ -10081,6 +10081,7 @@ struct ScopeSt {
     ss_taken: *Vec<str>,        // every C name minted in this fn
     ss_mint: *Vec<StrPair>,     // source name -> next suffix, as text
     ss_srcnames: *Vec<StrPair>, // minted C name -> the name the user wrote
+    ss_sc: *const TyScope,      // the diagnostic latch, so this pass can reject
 }
 
 fn names_has(v: *const Vec<str>, n: str) -> bool {
@@ -10131,19 +10132,34 @@ fn str_to_int_sc(s: str) -> int {
     return v;
 }
 // Three distinct mistakes, three distinct messages.  `here` is what THIS block has
-// bound so far; `visible` is the whole enclosing chain.
-fn scope_check(st: *const ScopeSt, here: *const Vec<str>, visible: *const Vec<str>, name: str) {
-    if names_has(st.ss_params, name) { return; }
-    if names_has(here, name) { return; }
-    if names_has(visible, name) { return; }
+// bound so far; `visible` is the whole enclosing chain.  The ORDER is the contract:
+// a name that is both a parameter and visible must be reported as the parameter,
+// and everything in `here` is also in `visible`, so `here` has to be asked first
+// or the specific message would never fire.
+fn scope_check(a: Allocator, ar: *Arena, st: *const ScopeSt, here: *const Vec<str>,
+               visible: *const Vec<str>, name: str, pos: Pos) {
+    let sc = st.ss_sc;
+    if names_has(st.ss_params, name) {
+        tc_fail(ar, sc, pos, msg2(a, ar, "variable '", name, "' shadows a parameter"));
+        return;
+    }
+    if names_has(here, name) {
+        tc_fail(ar, sc, pos, msg2(a, ar, "variable '", name, "' already declared in this scope"));
+        return;
+    }
+    if names_has(visible, name) {
+        tc_fail(ar, sc, pos, msg2(a, ar, "variable '", name,
+            "' shadows a binding that is still visible here — two DISJOINT blocks may reuse a name, but this one is nested inside the binding it would hide"));
+        return;
+    }
     return;
 }
 fn scope_bind(a: Allocator, ar: *Arena, st: *const ScopeSt, here: *const Vec<str>,
-              visible: *const Vec<str>, name: str) -> str {
-    // The port elides diagnostics (it is a differential port over a valid corpus),
-    // so the three rejections live in the reference implementation.  What must be
-    // identical is the RENAME, because it is observable in the emitted C.
-    scope_check(st, here, visible, name);
+              visible: *const Vec<str>, name: str, pos: Pos) -> str {
+    // The rejection latches and the walk continues (the reference aborts here).
+    // Minting still happens, so everything downstream sees a well-formed body
+    // instead of the shadowed one that produced the diagnostic.
+    scope_check(a, ar, st, here, visible, name, pos);
     if names_has(st.ss_taken, name) { return mint_next(a, ar, st, name); }
     st.ss_taken.push(name);
     st.ss_mint.push(StrPair { a: name, b: "0" });
@@ -10227,13 +10243,33 @@ fn scope_one(a: Allocator, ar: *Arena, st: *const ScopeSt, here: *Vec<str>,
     match *head {
         Stmt::Let { name, value, ty_ann, is_mut, pos } => {
             let nv = scope_expr_sc(a, ar, st, &vis, value);
-            let c = scope_bind(a, ar, st, here, visible, name);
+            let c = scope_bind(a, ar, st, here, &vis, name, pos);
             here.push(c);
             out.push(Stmt::Let { name: c, value: nv, ty_ann: ty_ann, is_mut: is_mut, pos: pos });
             renamed = maybe_subst(a, ar, name, c, cur);
         }
         | Stmt::LetTuple { names, value, is_mut, pos } => {
             let nv = scope_expr_sc(a, ar, st, &vis, value);
+            // The names of ONE destructure bind simultaneously in the same scope —
+            // a repeat is a duplicate, not a disjoint sibling.  Checked over the
+            // whole list before any of them binds, so this message survives.
+            let nsl0 = names.as_slice();
+            let mut d = 0 as u32;
+            while d < names.length() {
+                let mut e = 0 as u32;
+                while e < d {
+                    if str::eq(nsl0[e], nsl0[d]) {
+                        tc_fail(ar, st.ss_sc, pos,
+                                msg2(a, ar, "duplicate name '", nsl0[d], "' in 'let (...)'"));
+                    }
+                    e = e + 1 as u32;
+                }
+                d = d + 1 as u32;
+            }
+            // Every name of the destructure is checked against the scope as it
+            // stood BEFORE the statement — its own siblings are the duplicate
+            // case above, not a redeclaration.
+            let here0 = copy_names_sc(a, here);
             // Push the fresh name straight through: reading it back out of a
             // local Vec's slice would make the escape pass see a borrow of a
             // local (it cannot know the `str` lives in the arena, not in `cs`).
@@ -10241,7 +10277,7 @@ fn scope_one(a: Allocator, ar: *Arena, st: *const ScopeSt, here: *Vec<str>,
             let nsl = names.as_slice();
             let mut k = 0 as u32;
             while k < names.length() {
-                let c = scope_bind(a, ar, st, here, visible, nsl[k]);
+                let c = scope_bind(a, ar, st, &here0, &vis, nsl[k], pos);
                 renamed = maybe_subst(a, ar, nsl[k], c, &renamed);
                 here.push(c);
                 cs.push(c);
@@ -10255,6 +10291,10 @@ fn scope_one(a: Allocator, ar: *Arena, st: *const ScopeSt, here: *Vec<str>,
         }
         | Stmt::For { iter_var, range, body, pos } => {
             let nr = scope_expr_sc(a, ar, st, &vis, range);
+            // The counter is scoped to the loop body and the `for` desugar already
+            // gensyms it (`__fvK`) — so check visibility, but do NOT mint here or
+            // it would be renamed twice (`i__1__fv2`).
+            scope_check(a, ar, st, here, &vis, iter_var, pos);
             let mut ivis = copy_names_sc(a, &vis);
             ivis.push(iter_var);
             out.push(Stmt::For { iter_var: iter_var, range: nr,
@@ -10262,6 +10302,8 @@ fn scope_one(a: Allocator, ar: *Arena, st: *const ScopeSt, here: *Vec<str>,
         }
         | Stmt::With { target, name, body, pos } => {
             let nt = scope_expr_sc(a, ar, st, &vis, target);
+            // Same as `for`: the projection desugar gensyms the binding (`x__withK`).
+            scope_check(a, ar, st, here, &vis, name, pos);
             let mut wvis = copy_names_sc(a, &vis);
             wvis.push(name);
             out.push(Stmt::With { target: nt, name: name,
@@ -10278,10 +10320,11 @@ fn scope_one(a: Allocator, ar: *Arena, st: *const ScopeSt, here: *Vec<str>,
             let neb = scope_block(a, ar, st, &vis, &else_body);
             let mut ns: Vec<str> = Vec::with_capacity(a, 8 as u32);
             pattern_binds_sc(a, &pat, &ns);
+            let here1 = copy_names_sc(a, here);
             let nsl = ns.as_slice();
             let mut k = 0 as u32;
             while k < ns.length() {
-                let c = scope_bind(a, ar, st, here, visible, nsl[k]);
+                let c = scope_bind(a, ar, st, &here1, &vis, nsl[k], pos);
                 here.push(c);
                 k = k + 1 as u32;
             }
@@ -10432,7 +10475,7 @@ fn scope_else_sc(a: Allocator, ar: *Arena, st: *const ScopeSt, visible: *const V
     };
 }
 // Entry: rewrite one function body.  Params seed the visible set.
-pub fn resolve_scopes(a: Allocator, ar: *Arena, srcnames: *Vec<StrPair>, params: *const Vec<Param>, body: *const Vec<Stmt>) -> Vec<Stmt> {
+pub fn resolve_scopes(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>, body: *const Vec<Stmt>) -> Vec<Stmt> {
     let mut pn: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut taken: Vec<str> = Vec::with_capacity(a, 16 as u32);
     let mut mint: Vec<StrPair> = Vec::with_capacity(a, 16 as u32);
@@ -10444,7 +10487,8 @@ pub fn resolve_scopes(a: Allocator, ar: *Arena, srcnames: *Vec<StrPair>, params:
         mint.push(StrPair { a: psl[i].pname, b: "0" });
         i = i + 1 as u32;
     }
-    let st = ScopeSt { ss_params: &pn, ss_taken: &taken, ss_mint: &mint, ss_srcnames: srcnames };
+    let st = ScopeSt { ss_params: &pn, ss_taken: &taken, ss_mint: &mint,
+                       ss_srcnames: sc.sc_srcnames, ss_sc: sc };
     let empty: Vec<str> = Vec::with_capacity(a, 8 as u32);
     return scope_block(a, ar, &st, &pn, body);
 }
@@ -10459,7 +10503,7 @@ fn elab_skeleton_or_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
     // mapping back to what the user wrote.
     rebase_srcnames(sc);
     rebase_binds(sc, &f.params);
-    let scoped = resolve_scopes(a, ar, sc.sc_srcnames, &f.params, &f.body);
+    let scoped = resolve_scopes(a, ar, sc, &f.params, &f.body);
     // Snapshot THIS fn's renames now, while the window is unambiguous: the base
     // was just set and resolve_scopes appended exactly this fn's entries.  Taking
     // it after elab_body would risk a nested elaboration moving the base.

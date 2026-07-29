@@ -1,0 +1,4 @@
+// Two `let`s of one name in one block.  `here` is asked before `visible`, and
+// everything in `here` is also visible — so without that order this specific
+// message could never fire.
+fn main() { let s = 1; let s = 2; println(s); }

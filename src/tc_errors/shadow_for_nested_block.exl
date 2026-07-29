@@ -1,0 +1,2 @@
+// A `for` counter inside a nested block, hiding a binding from the enclosing one.
+fn main() { let i = 1; if true { for i in 0..3 { println(i); } } println(i); }

@@ -1,0 +1,3 @@
+// One name of a destructure collides with a binding already in this block.
+fn split(n: int) -> (int, int) { return (n, n + 1); }
+fn main() { let a = 1; let (a, b) = split(5); println(a + b); }

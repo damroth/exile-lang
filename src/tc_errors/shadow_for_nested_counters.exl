@@ -1,0 +1,3 @@
+// Two `for` loops one inside the other cannot share a counter: the inner is
+// nested in the outer, not disjoint from it.
+fn main() { for i in 0..2 { for i in 0..2 { println(i); } } }

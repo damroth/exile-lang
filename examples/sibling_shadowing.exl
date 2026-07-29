@@ -58,10 +58,45 @@ fn pick(b: bool) -> int {
     return out;
 }
 
+// Two disjoint `for` loops may reuse a counter, for the same reason two disjoint
+// blocks may reuse a `let`.
+fn counted(n: int) -> int {
+    let mut total = 0;
+    for i in 0..n { total = total + i; }
+    for i in 0..n { total = total + i * 10; }
+    return total;
+}
+
+// A `match` arm binds its own name.  The rule is about `let` bindings and the
+// blocks they live in; a pattern binding is not one of them, so an arm may name
+// something the enclosing block has already bound.
+fn arm_over_visible(s: Shape) -> int {
+    let v = 100;
+    let inner = match s {
+        Shape::Circle(v) => { v + 1 }
+        | Shape::Square(v) => { v + 2 }
+    };
+    return v + inner;
+}
+
+fn twice(f: fn(int) -> int, x: int) -> int { return f(f(x)); }
+
+// A lambda parameter is a parameter of its own function, not a binding in this
+// block — so it may name something visible here too.
+fn lambda_over_visible() -> int {
+    let v = 100;
+    let bump = |v: int| -> int v + 1;
+    return v + twice(bump, 5);
+}
+
 fn main() {
     println(area(Shape::Circle(2)));    // 12
     println(area(Shape::Square(4)));    // 16
     println(weighted(3));               // 6 + 9 = 15
     println(pick(true));                // 10
     println(pick(false));               // 20
+    println(counted(3));                // 3 + 30 = 33
+    println(arm_over_visible(Shape::Circle(2)));  // 103
+    println(arm_over_visible(Shape::Square(4)));  // 106
+    println(lambda_over_visible());     // 107
 }

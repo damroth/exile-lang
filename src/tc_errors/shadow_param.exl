@@ -1,0 +1,4 @@
+// A `let` over a parameter.  Parameters are asked FIRST: the name is visible
+// too, and the generic message would hide which of the two it collided with.
+fn f(s: int) -> int { let s = 2; return s; }
+fn main() { println(f(1)); }

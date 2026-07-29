@@ -1,0 +1,4 @@
+// The same collision from a nested block, where `here` is empty and only the
+// parameter list and the visible chain can answer.  Still the parameter message.
+fn f(s: int) -> int { if true { let s = 2; return s; } return s; }
+fn main() { println(f(1)); }

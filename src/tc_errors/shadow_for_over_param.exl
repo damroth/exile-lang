@@ -1,0 +1,4 @@
+// A `for` counter over a parameter — the counter site reports the same three
+// messages as a `let`, in the same order.
+fn f(i: int) -> int { for i in 0..3 { println(i); } return i; }
+fn main() { println(f(1)); }

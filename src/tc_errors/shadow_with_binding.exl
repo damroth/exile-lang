@@ -1,0 +1,8 @@
+// `with` binds a projection for the length of its body; like `for`, the desugar
+// gensyms the name, so this site checks visibility without minting.
+fn main() {
+    let mut arr = [1, 2, 3];
+    let x = 9;
+    with x in arr[0] { *x = 5; }
+    println(x);
+}

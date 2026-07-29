@@ -1,0 +1,3 @@
+// The `for` counter is not minted here (the desugar gensyms it), but it is still
+// visibility-checked, or the loop could quietly hide a live binding.
+fn main() { let i = 1; for i in 0..3 { println(i); } println(i); }

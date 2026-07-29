@@ -1,0 +1,2 @@
+// Same rule reached through a `while` body rather than an `if`.
+fn main() { let s = 1; let mut i = 0; while i < 2 { let s = 9; println(s); i = i + 1; } println(s); }

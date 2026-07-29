@@ -1,0 +1,4 @@
+// Nested, not disjoint: the inner `s` would hide an `s` that is still live after
+// the block ends.  Two blocks that cannot both be entered may reuse a name; this
+// one is inside the binding it would hide.
+fn main() { let s = 1; if true { let s = 2; println(s); } println(s); }

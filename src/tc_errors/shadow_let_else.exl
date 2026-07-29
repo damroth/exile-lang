@@ -1,0 +1,9 @@
+// `let ... else` binds into the enclosing block, so its names face the same
+// check as a plain `let`.
+enum P { Num(int) | Bad }
+fn parse(ok: bool) -> P { if ok { return P::Num(42); } return P::Bad; }
+fn main() {
+    let v = 1;
+    let P::Num(v) = parse(true) else { return; };
+    println(v);
+}
