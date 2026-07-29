@@ -1,0 +1,15 @@
+// The seed reads a type parameter out of the surrounding annotation, and it has
+// to see through `own`: `alloc` returns `own *T`, the annotation says `*int`, so
+// T is int. Refusing to look answers "could not infer type parameter 'T' ... add
+// a type annotation" about a `let` that has one - sending the user to fix the
+// only part that was already right, instead of naming the real repair.
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+}
+fn main() {
+    let a = raw::make_c_allocator();
+    let p: *int = a.alloc();
+    *p = 42;
+    println(*p);
+    a.free(p);
+}

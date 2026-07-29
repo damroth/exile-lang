@@ -3110,10 +3110,31 @@ fn splice_tbounds(a: Allocator, itbounds: *const Vec<TraitBound>, own_b: *const 
     while j < no { out.push(one_tbound(a, &osl[j])); j = j + 1 as u32; }
     return out;
 }
+// The SEED reads a type parameter out of the surrounding annotation, and it must
+// see through `own`: a fn returning `own *T` bound to a `let p: *int` still says
+// T = int.  Refusing to look is how the port answered "could not infer type
+// parameter 'T' ... add a type annotation" about a let that HAD one, sending the
+// user to fix the one thing that was already right - while the reference infers
+// T, reaches the ownership check, and names the actual repair.
+//
+// Only the seed peels.  Argument unification stays strict on purpose: it feeds
+// the slot that decides own-vs-borrow, and a peel there turns `free(<borrow>)`
+// from rejected into accepted.  Measured, both ways.
+fn seed_unify(a: Allocator, ar: *Arena, sc: *const TyScope, decl: *const Typ, act: *const Typ, out: *Vec<TVarBind>) {
+    match *decl {
+        Typ::TOwnPtr(di) => match *act {
+            Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out)
+            | Typ::TConstPtr(ai) => unify_typ(a, ar, sc, di, ai, out)
+            | _e => unify_typ(a, ar, sc, decl, act, out)
+        }
+        | _o => { unify_typ(a, ar, sc, decl, act, out); }
+    }
+    return;
+}
 fn seed_from_expected(a: Allocator, ar: *Arena, sc: *const TyScope, cret: Option<*const Typ>, expected: Option<*const Typ>, out: *Vec<TVarBind>) {
     match cret {
         Option::Some(r) => match expected {
-            Option::Some(e) => unify_typ(a, ar, sc, r, e, out)
+            Option::Some(e) => seed_unify(a, ar, sc, r, e, out)
             | Option::None => { }
         }
         | Option::None => { }
