@@ -8,10 +8,15 @@ diff. The path runs from "what is this" through setup, basic syntax, the
 type system, ADTs, generics, traits, modules, all the way to FFI and
 AmigaOS.
 
-> Language status: feature set as of **v0.11.2** (2026-06-10). Every
-> feature shown below is implemented and backed by a runnable example;
-> what landed when, and why, is recorded in
-> [`CHANGELOG.md`](../CHANGELOG.md).
+> Language status: the feature set as of **July 2026**. The capability
+> model in section 22 landed after the `v1.0.0` tag, which marked the
+> compiler self-hosting rather than a frozen language. Everything shown
+> below is implemented and pinned by a checked-in fixture, and most of
+> it also has a runnable example in [`examples/`](../examples/). Section
+> 22 is the exception: a store to `$DFF000` runs on no host, and the
+> chipset sits above what vamos emulates, so those fixtures live in
+> [`tests/`](../tests/) and are checked by the C they emit. What landed
+> when, and why, is recorded in [`CHANGELOG.md`](../CHANGELOG.md).
 
 ---
 
@@ -420,7 +425,7 @@ buffers without hardcoding integers.
 `if`/`else` works in both statement and expression position. Braces
 mandatory, no parens around the condition. Every value-returning fn
 must return on every branch — there's no implicit fall-through to a
-default value (see [sec 22](#22-where-to-next)).
+default value (see [sec 23](#23-where-to-next)).
 
 ```rust
 fn classify(n: int) -> int {
@@ -2556,7 +2561,308 @@ today.
 
 ---
 
-## 22. Where to next
+## 22. Owning the hardware - `rune`, `ward`, `sigil`, `seal`
+
+On the Amiga the chipset is simply there, at a fixed address, and any code in
+the program can reach it. C hands you a pointer and steps aside: nothing records
+that `$DFF040` belongs to the blitter driver, nothing forces the `volatile` that
+stops the compiler folding your stores away, and nothing notices when two
+register writes that must happen together are pulled apart by an interrupt.
+
+exile turns those into declarations a compiler can check. It does so without
+lifetimes and without a borrow checker: a module *claims* a range of silicon,
+and the claim is a compile-time fact that leaves nothing behind at run time.
+
+Four constructs, smallest first.
+
+### `rune` - one access, with its width and direction in the type
+
+A `rune` names a single hardware register: the address, the width of an access,
+and whether that access may read, write, or both.
+
+```rust
+rune cop1lc:  u32 at 0xDFF080 write;   // COP1LC - the copper list pointer
+rune copjmp1: u16 at 0xDFF088 write;   // COPJMP1 - strobe to restart it
+
+fn program_copper(list_addr: u32) { cop1lc.write(list_addr); }
+fn start_copper()                 { copjmp1.strobe(); }
+
+fn main() { program_copper(4096); start_copper(); }
+```
+
+At file scope a rune emits a `const` pointer the whole file shares:
+
+```c
+volatile unsigned long *const cop1lc = (volatile unsigned long *)14676096UL;
+volatile unsigned short *const copjmp1 = (volatile unsigned short *)14676104UL;
+```
+
+`volatile` here is not an option you remember to pass - it is what a rune *is*.
+`.write(v)` lowers to exactly one store of exactly that width, and `.strobe()`
+covers the registers the hardware only cares about the timing of, lowering to a
+store of zero (`*copjmp1 = 0;`).
+
+Direction is part of the type, so it is checked:
+
+```rust
+fn main() {
+    rune cop1lc: u32 at 0xDFF080 write;
+    cop1lc.write(cop1lc.read());
+}
+```
+
+```
+error: cannot read a write-only rune
+```
+
+Runes are first class. `write rune<u16>` is a type, so a register can cross a
+function boundary without shedding what it is:
+
+```rust
+fn burst(r: write rune<u16>) { r.write(64); }
+```
+
+[tests/rune/](../tests/rune/)
+
+### `ward` - a typed overlay on a register block
+
+Registers arrive in blocks, and the NDK's answer is one large `struct Custom`
+pointed at `$DFF000`. A `ward` is that struct with the parts C leaves to
+discipline turned into rules.
+
+```rust
+ward Custom {
+    bltcon0: u16 at 0x040 write;
+    bltsize: u16 at 0x058 write;
+}
+
+fn main() {
+    ward custom: Custom at 0xDFF000;
+    custom.bltcon0.write(0x09F0);
+    custom.bltsize.write(64);
+}
+```
+
+The instance is not a variable. It occupies no storage whatsoever, and the
+program above emits exactly two stores and nothing else:
+
+```c
+*((volatile unsigned short *)(14675968UL + 64UL)) = 2544;
+*((volatile unsigned short *)(14675968UL + 88UL)) = 64;
+```
+
+Base and offset stay separate in the output instead of being folded into one
+constant, so the register you meant is still legible in the generated C.
+
+A field *is* a rune and inherits every rune rule - width, direction, one store
+per write. What the ward adds is layout, and layout is checked: no two fields
+may overlap.
+
+```rust
+ward Bad {
+    a: u32 at 0x00 write;
+    b: u16 at 0x02 write;
+}
+```
+
+```
+error: ward 'Bad' fields 'a' [0, 4) and 'b' [2, 4) overlap
+```
+
+[tests/ward/](../tests/ward/)
+
+### `sigil` - the claim, and who may hold it
+
+A rune or a ward says what a register is. A `sigil` says whose it is.
+
+```rust
+sigil Blitter { 0xDFF040 .. 0xDFF05A }
+
+mod gfx {
+    own Blitter;
+    rune bltsize: u16 at 0xDFF058 write;
+    pub fn go() { bltsize.write(64); }
+}
+
+mod sound {
+    pub fn steal() { rune bltsize: u16 at 0xDFF058 write; }
+}
+```
+
+```
+error: address 0xDFF058 belongs to resource 'Blitter', claimed by 'gfx'
+```
+
+Read where that error lands. It fires on the *declaration*, not on the write:
+a module that does not own the range cannot form a handle into it at all, so
+there is never a window in which a stray pointer exists and merely happens not
+to have been used yet.
+
+The claim also costs nothing, and the repository keeps that as a diff rather
+than a paragraph - the same program in two halves, one with the ownership
+declared and one with it stripped out:
+
+```sh
+./exilc --target c --c-out /tmp/gated.c   tests/sigil/equality/gated.exl
+./exilc --target c --c-out /tmp/ungated.c tests/sigil/equality/ungated.exl
+cmp /tmp/gated.c /tmp/ungated.c    # silent: identical
+```
+
+That is the design in one line. Ownership is settled while you compile, and
+none of it survives into the binary: no lifetime to annotate, no borrow to
+prove, no descriptor to carry.
+
+[tests/sigil/](../tests/sigil/)
+
+### `seal` - a sequence an interrupt cannot tear apart
+
+Programming a blit takes eight register writes. An interrupt landing between
+any two of them leaves the hardware half-set-up. `seal` marks the region that
+has to be indivisible.
+
+The guarantee is that the region is left exactly once per entry, on *every*
+exit path - including the ones that break hand-written enter/exit pairs:
+
+```rust
+fn seq(n: int) -> Option<int> {
+    let mut i = 0;
+    while i < 3 {
+        seal {
+            println(1);
+            if n == 0 { return Option::None; }
+            if n == 1 { break; }
+            if n == 2 { i = i + 1; continue; }
+            println(2);
+        }
+        i = i + 1;
+    }
+    return Option::Some(9);
+}
+```
+
+`return`, `break` and `continue` all leave the region and all restore, as does
+a propagating `try`. On the host you can watch that happen: the runtime seam
+counts entries against exits and reports at process exit.
+
+```sh
+./exilc --target host --link runtime/sys_host.c -o seq tests/seal/exits.exl
+./seq
+```
+
+```
+1
+2
+...
+seal-balance 0 misnest 0
+```
+
+What a seal lowers to depends on the target, deliberately. The construct emits
+a call into a seam two functions wide:
+
+```c
+__seal0 = sys_seal_enter();
+/* the region */
+sys_seal_exit(__seal0);
+```
+
+On bare metal that seam masks interrupts in the status register, and the token
+is the saved mask. Under AmigaOS it cannot be: exec keeps its own nesting count
+inside `Disable()`/`Enable()`, and writing SR behind its back breaks it - so
+there the seam *is* `Disable()`/`Enable()`, and the token carries exec's depth
+instead. The token is opaque exactly so that two targets can save two different
+things behind one guarantee.
+
+[tests/seal/](../tests/seal/)
+
+### All four at once
+
+[tests/seal/blitter_setup.exl](../tests/seal/blitter_setup.exl) programs a blit
+at the addresses the Hardware Reference Manual gives. A `sigil` owns the chip
+range, a `ward` lays the NDK's layout over it, the fields are runes and one
+crosses a call boundary as `write rune<u16>`, and a `seal` makes the sequence
+indivisible.
+
+```rust
+mod gfx {
+    own Blitter;
+    own DmaControl;
+
+    fn start(size: write rune<u16>, v: u16) { size.write(v); }
+
+    pub fn blit(src: u32, dst: u32, size: u16) {
+        seal {
+            let old = custom.dmaconr.read();
+            custom.bltcon0.write(2544);      // 0x09F0 - minterm D = A
+            custom.bltcon1.write(0);
+            custom.bltafwm.write(65535);
+            custom.bltalwm.write(65535);
+            custom.bltapt.write(src);
+            custom.bltdpt.write(dst);
+            start(custom.bltsize, size);
+            custom.dmacon.write(ndk::DMAF_SETCLR | (old & ndk::DMAF_BLITTER));
+        }
+    }
+}
+```
+
+The C it emits, checked line for line against a golden file by
+`make selfhost-seal`:
+
+```c
+__seal0 = sys_seal_enter();
+old = *((volatile unsigned short *)(14675968UL + 2UL));
+*((volatile unsigned short *)(14675968UL + 64UL)) = 2544;
+*((volatile unsigned short *)(14675968UL + 66UL)) = 0;
+*((volatile unsigned short *)(14675968UL + 68UL)) = 65535;
+*((volatile unsigned short *)(14675968UL + 70UL)) = 65535;
+*((volatile unsigned long *)(14675968UL + 80UL)) = src;
+*((volatile unsigned long *)(14675968UL + 84UL)) = dst;
+gfx__start((volatile unsigned short *)(14675968UL + 88UL), size);
+*((volatile unsigned short *)(14675968UL + 150UL)) = ndk__DMAF_SETCLR | (old & ndk__DMAF_BLITTER);
+sys_seal_exit(__seal0);
+```
+
+Ten stores and one seam pair. No descriptor, no ownership token, no residual
+check: all four constructs are gone, and what is left is the driver you would
+have written by hand.
+
+Notice what the `dmaconr` read is for. `DMACON` at `$DFF096` is write-only and
+its bit 15 is SET/CLR, so the live state must be read from the separate
+`DMACONR` port at `$DFF002`, never back from `DMACON`. That same SET/CLR bit is
+why *enabling* a channel needs no seal at all - one write touches the bits you
+name and leaves every other bit alone. What needs the seal is the sequence.
+
+### What it will not do
+
+A capability that quietly protects the empty set is worse than none, so the
+limits are written down, and each is pinned by a fixture that must keep
+compiling. Five of them:
+
+1. **A forgotten seal is not diagnosed.** The compiler masks where you say it
+   should; it does not know what ought to have been masked. The blitter
+   sequence written with no seal at all compiles fine.
+2. **Masking is all interrupts, not one level.** There is no syntax for "mask
+   only level 3" - correct, but blunt. Per-level masking waits for a consumer
+   that needs it.
+3. **A seal does not disprove a race.** It makes *its own* sequence
+   indivisible and says nothing about another party reaching the same register
+   without one. What the language cannot see, it does not claim.
+4. **Region length is neither measured nor limited.** Entering is cheap on the
+   68000; *holding* costs interrupt latency - audio glitches, missed disk DMA.
+   A seal wrapped around a loop compiles in silence.
+5. **Nothing verifies that the sealed region is the right region.** A `DMACON`
+   save read outside the region with only the restore inside - precisely the
+   bug a seal exists to prevent - compiles clean, runs, and balances. The
+   host witness is blind to it too.
+
+The fifth is the sharpest, and it is checked in as
+[tests/seal/accept_limit_wrong_region.exl](../tests/seal/accept_limit_wrong_region.exl)
+with its expected output beside it: a runnable statement of what the model does
+not catch yet.
+
+---
+
+## 23. Where to next
 
 Every feature covered here has a working example in
 [`examples/`](../examples/) (one file = one feature). A recommended
