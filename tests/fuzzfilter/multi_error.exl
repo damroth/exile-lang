@@ -1,0 +1,7 @@
+// Register #11: two errors, and the two implementations name different ones
+// because their passes run in a different order.
+fn f() -> int {
+    defer { return 1; }
+    return undefined_thing;
+}
+fn main() { println(f()); }

@@ -1,0 +1,2 @@
+// A clean program: nothing to recognise, and nothing must be.
+fn main() { println(42); }

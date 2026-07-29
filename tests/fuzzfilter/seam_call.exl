@@ -1,0 +1,4 @@
+// FALSE NEGATIVE that Increment 1's line-anchored regex let through: the seam is
+// named mid-line, so the pattern never saw it, and the oracle's refusal was
+// reported as a finding.
+fn main() { sys::sys_seal_exit(7 as u32); }

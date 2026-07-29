@@ -1,0 +1,1 @@
+fn main() { rune r: u16 at 0xDFF058 write; r.write(1); }

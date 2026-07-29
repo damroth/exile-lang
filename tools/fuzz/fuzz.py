@@ -28,27 +28,61 @@ PORT = os.path.join(ROOT, "_build/out/host/exilc")
 # manufactures these in bulk (a defer from one file, a loop from another), so
 # without an explicit filter real findings drown in deliberate divergence. The
 # filter is COUNTED, never silent (I-F4).
-REGISTERED_DIVERGENCES = [
-    # The capability model itself, and it is the BIGGEST one in the project: the
-    # kernel era added rune/ward/sigil/seal to the PORT while the oracle stayed
-    # frozen, where those words are still reserved. The port is a strict superset
-    # of the language the oracle can judge, so every input naming one of them
-    # diverges by construction — the oracle rejects, the port compiles. Measured
-    # on the first run, where it accounted for nearly every "finding".
-    ("kernel-era-superset",            # register #9
-     re.compile(r"^[ \t]*(seal|ward|rune|sigil|own)\b", re.M),
-     re.compile(r".", re.S)),
-    ("not-yet-ported",                 # register #10 — matched on the DIAGNOSTIC
-     None, None),
-    # #7 — the port parenthesises a mixed bitwise nesting and the frozen oracle
-    # does not. Registered as B2 in the same commit as the fix, exactly so that
-    # no fuzz run between the two mistakes a deliberate improvement for a finding.
-    ("R7-mixed-bitwise-parens",
-     re.compile(r"[|^&]|<<|>>", re.S),
-     re.compile(r"[|^&]|<<|>>", re.S)),
-    # #5 — defer fires on break/continue in the port, not in the oracle.
-    ("R5-defer-loopjump", re.compile(r"\bdefer\b", re.S), re.compile(r"\b(break|continue)\b", re.S)),
-]
+# FUZZ-SPEC 3.3 / Z1 — shapes where the two sides differ BY DESIGN.
+#
+# Increment 1 matched these with regexes over the SOURCE, and both of its
+# patterns were wrong in opposite directions: the capability pattern anchored at
+# line start, so `sys::sys_seal_*` calls slipped past it (false negative → noise),
+# and the parenthesis pattern matched any `|`, including enum-variant separators
+# and closure heads (false positive → eaten budget). A pattern guesses; Z4 asks
+# for a mechanism.
+#
+# So a registered divergence is now recognised from what was OBSERVED — the two
+# diagnostics and the two emissions — never from the shape of the input.
+
+DIAG_POS = re.compile(r"INPUT:(\d+):(\d+):")
+
+
+def diag_pos(diag):
+    m = DIAG_POS.search(diag)
+    return (m.group(1), m.group(2)) if m else None
+
+
+CAP_RESERVED = re.compile(r"'(seal|ward|rune|sigil|own)' is a reserved word")
+CAP_SEAM = re.compile(r"unknown function 'sys::sys_seal_(enter|exit)'")
+NOT_PORTED = re.compile(r"not yet ported")
+PARENS = re.compile(r"[()]")
+
+
+def registered_divergence(ev):
+    """Name the registered divergence that explains this evidence, or None.
+
+    Each test is a MECHANISM on observed behaviour:
+      #9  the oracle refuses a word the port implements — its own diagnostic says so
+      #10 the port announces its own border in its own diagnostic
+      #7  both compiled, and the emissions differ ONLY in parentheses
+      #5  reserved for defer x loop-jump, which is a semantic difference rather
+          than a lexical one and is still recognised from the source
+    """
+    if CAP_RESERVED.search(ev["oracle_diag"]) or CAP_SEAM.search(ev["oracle_diag"]):
+        return "kernel-era-superset"          # register #9
+    if NOT_PORTED.search(ev["port_diag"]):
+        return "not-yet-ported"               # register #10
+    # #11 — both reject, at DIFFERENT positions: each side found a different
+    # error first, because their passes run in a different order. Same position
+    # with different text is a real message divergence and stays B1.
+    if (ev["oracle_status"] not in (0, None) and ev["port_status"] not in (0, None)
+            and ev["oracle_diag"] != ev["port_diag"]
+            and diag_pos(ev["oracle_diag"]) != diag_pos(ev["port_diag"])):
+        return "multi-error-pass-order"       # register #11
+    co, cp = ev["oracle_c"], ev["port_c"]
+    if co is not None and cp is not None and co != cp:
+        if PARENS.sub("", co) == PARENS.sub("", cp):
+            return "R7-mixed-bitwise-parens"  # register #7 — parens ALONE differ
+    if re.search(r"\bdefer\b", ev["src"]) and re.search(r"\b(break|continue)\b", ev["src"]):
+        return "R5-defer-loopjump"            # register #5
+    return None
+
 
 # FUZZ-SPEC 3.1 — Increment 1's single strategy: CONSTRUCT-WRAPPING. A run of
 # statements in a recipient body is wrapped in one construct, which composes that
@@ -286,82 +320,94 @@ def strip_pos(line, path):
     return line.replace(path, "INPUT")
 
 
-def filtered_as(src):
-    """Which registered divergence, if any, blocks F1 for this input (never the input)."""
-    for name, a, b in REGISTERED_DIVERGENCES:
-        if a is None:
-            continue
-        if a.search(src) and b.search(src):
-            return name
-    return None
+def cc_check(c):
+    """FUZZ-SPEC F3: does this emission survive the project's own standard?"""
+    r = subprocess.run(
+        ["cc", "-O2", "-ansi", "-pedantic", "-Wall", "-Werror", "-I", "src",
+         "-c", "-x", "c", "-", "-o", "/dev/null"],
+        input=c, capture_output=True, text=True, cwd=ROOT)
+    if r.returncode == 0:
+        return None
+    first = next((ln for ln in r.stderr.splitlines() if ": error:" in ln), "")
+    return first.split(": error:")[-1].strip()[:90]
 
 
-def classify(src, tmp_o, tmp_p, args, f1_blocked=None):
-    """Return (kind, signature) or (None, None). Signature drives the shrinker (Z5).
-
-    FUZZ-SPEC 3.3: `f1_blocked` names a registered divergence that disqualifies
-    this input from F1 — and from F1 ONLY. F2/F3/F4 are properties of one side,
-    so they stay live; binning the whole input would throw away exactly the
-    findings this round promised (the seal-in-defer ICE is an F2 on an input a
-    per-input filter would have discarded).
-    """
+def observe(src, tmp_o, tmp_p, args):
+    """Run both sides and record WHAT HAPPENED. No judgement here on purpose —
+    triage is a separate step so its verdicts rest on evidence rather than on
+    whatever the classifier happened to notice first (Z4)."""
     so, eo, co, ko = run(ORACLE, tmp_o, tmp_o + ".c", args.budget, args.rss)
     sp, ep, cp, kp = run(PORT, tmp_p, tmp_p + ".c", args.budget, args.rss)
+    return {
+        "src": src,
+        "oracle_status": so, "port_status": sp,
+        "oracle_diag": strip_pos(eo, tmp_o), "port_diag": strip_pos(ep, tmp_p),
+        "oracle_c": co, "port_c": cp,
+        "oracle_kind": ko, "port_kind": kp,
+    }
 
+
+def classify(ev, args):
+    """(kind, signature) or (None, None). Signature drives the shrinker (Z5).
+
+    A registered divergence disqualifies F1 and F1 ONLY (3.3): F2/F3/F4 are
+    properties of one side, so they stay live.
+    """
+    ko, kp = ev["oracle_kind"], ev["port_kind"]
     if ko in ("timeout", "rss") or kp in ("timeout", "rss"):
         side = "oracle" if ko else "port"
         return "F4", f"F4:{side}:{ko or kp}"
     if ko == "ice" or kp == "ice":
         side = "oracle" if ko == "ice" else "port"
-        msg = (eo if ko == "ice" else ep)
-        return "F2", f"F2:{side}:{strip_pos(msg, tmp_o if ko else tmp_p)[:90]}"
+        msg = ev["oracle_diag"] if ko == "ice" else ev["port_diag"]
+        return "F2", f"F2:{side}:{msg[:90]}"
 
-    eo_n, ep_n = strip_pos(eo, tmp_o), strip_pos(ep, tmp_p)
-    if "not yet ported" in ep_n:
-        f1_blocked = f1_blocked or "not-yet-ported"
-    if f1_blocked:
-        return f3_only(cp, so, args)
-    if so != sp:
-        return "F1", f"F1:status:{so}vs{sp}"
-    if eo_n != ep_n:
-        return "F1", f"F1:diag:oracle[{eo_n[:60]}]port[{ep_n[:60]}]"
-    if so == 0 and co is not None and cp is not None and co != cp:
-        return "F1", "F1:emitted-c"
-    if so == 0 and cp is not None and args.cc:
-        r = subprocess.run(
-            ["cc", "-O2", "-ansi", "-pedantic", "-Wall", "-Werror", "-I", "src",
-             "-c", "-x", "c", "-", "-o", "/dev/null"],
-            input=cp, capture_output=True, text=True, cwd=ROOT)
-        if r.returncode != 0:
-            first = next((ln for ln in r.stderr.splitlines() if ": error:" in ln), "")
-            key = first.split(": error:")[-1].strip()[:90]
+    blocked = registered_divergence(ev)
+    so, sp = ev["oracle_status"], ev["port_status"]
+    if not blocked:
+        if so != sp:
+            return "F1", f"F1:status:{so}vs{sp}"
+        if ev["oracle_diag"] != ev["port_diag"]:
+            return "F1", f"F1:diag:oracle[{ev['oracle_diag'][:60]}]port[{ev['port_diag'][:60]}]"
+        if so == 0 and ev["oracle_c"] is not None and ev["port_c"] is not None \
+                and ev["oracle_c"] != ev["port_c"]:
+            return "F1", "F1:emitted-c"
+    if sp == 0 and ev["port_c"] is not None and args.cc:
+        key = cc_check(ev["port_c"])
+        if key:
             return "F3", f"F3:{key}"
     return None, None
 
 
-def f3_only(cp, so, args):
-    """The port-side classes for an input F1 cannot judge (register #9/#10)."""
-    if so == 0 and cp is not None and args.cc:
-        r = subprocess.run(
-            ["cc", "-O2", "-ansi", "-pedantic", "-Wall", "-Werror", "-I", "src",
-             "-c", "-x", "c", "-", "-o", "/dev/null"],
-            input=cp, capture_output=True, text=True, cwd=ROOT)
-        if r.returncode != 0:
-            first = next((ln for ln in r.stderr.splitlines() if ": error:" in ln), "")
-            return "F3", f"F3:{first.split(': error:')[-1].strip()[:90]}"
-    return None, None
+def triage(kind, sig, ev):
+    """FUZZ-SPEC §6 — three buckets, assigned by MECHANISM (Z4).
 
-
-def triage(kind, sig):
-    """FUZZ-SPEC 6 — Increment 1 ships a STUB, and says so.
-
-    The three buckets exist from day one because #7 proved B3 must, but assigning
-    them by MECHANISM (Z4) is Increment 2's work. Until then everything lands in
-    B?, which is an honest absence rather than a guess wearing a bucket's name.
+    "The port differs" is an observation. Each verdict below is a narrowing
+    measurement that ends in one variable: WHICH SIDE misbehaved, or WHICH
+    registered mechanism explains the difference. Where no measurement decides,
+    the answer is B? — an honest absence, never a guess wearing a bucket's name.
     """
-    if kind in ("F2", "F4") and sig.startswith(("F2:oracle", "F4:oracle")):
-        return "B3?"
-    return "B?"
+    reg = registered_divergence(ev)
+
+    # F2/F4 are properties of ONE side, so the side IS the one variable.
+    if kind in ("F2", "F4"):
+        side = "oracle" if sig.split(":")[1] == "oracle" else "port"
+        if side == "oracle":
+            return "B3", "the FROZEN reference crashed or hung; it cannot be fixed, only registered"
+        return "B1", "the port crashed or hung where the reference completed"
+
+    # F3 needs no divergence, so the one variable is whether the two agree.
+    if kind == "F3":
+        if ev["oracle_c"] is not None and ev["oracle_c"] == ev["port_c"]:
+            return "B3", "both emit the same C and it fails -Werror — the defect is the reference's, and it is frozen"
+        if reg:
+            return "B2", f"emissions differ only by {reg}; the failing side is the port's improvement"
+        return "B1", "the port's emission alone fails -Werror"
+
+    # F1: the one variable is whether a registered mechanism explains it.
+    if reg:
+        return "B2", f"explained by {reg}, recognised from observed behaviour"
+    return "B1", "the reference defines the behaviour and the port does not reproduce it"
 
 
 def write_tmp(d, name, src):
@@ -371,7 +417,7 @@ def write_tmp(d, name, src):
     return path
 
 
-def shrink(src, sig, tmpdir, args, rounds=200, blocked=None):
+def shrink(src, sig, tmpdir, args, rounds=200):
     """Line-wise minimisation that preserves the SIGNATURE, not just the predicate.
 
     Z5: a reduction that still fails but fails DIFFERENTLY is rejected, because a
@@ -394,7 +440,7 @@ def shrink(src, sig, tmpdir, args, rounds=200, blocked=None):
                 continue
             o = write_tmp(tmpdir, "shrink_o.exl", cand)
             p = write_tmp(tmpdir, "shrink_p.exl", cand)
-            k, s = classify(cand, o, p, args, f1_blocked=blocked or filtered_as(cand))
+            k, s = classify(observe(cand, o, p, args), args)
             if s == sig:
                 best = cand
                 lines = cand.split("\n")
@@ -402,6 +448,53 @@ def shrink(src, sig, tmpdir, args, rounds=200, blocked=None):
             else:
                 i += 1
     return best
+
+
+
+def selftest(args):
+    """Recogniser floors, both directions (FUZZ-SPEC 3.3).
+
+    A filter's false POSITIVE eats budget in silence; its false NEGATIVE drowns
+    real findings in noise. Increment 1 shipped one of each, so the cases below
+    assert what MUST be recognised AND what must NOT be.
+    """
+    cases_path = os.path.join(ROOT, "tests/fuzzfilter/CASES")
+    if not os.path.exists(cases_path):
+        print("fuzz-filters: MISSING tests/fuzzfilter/CASES", file=sys.stderr)
+        return 2
+    tmp = os.path.join(ROOT, "_build/out/fuzz")
+    os.makedirs(tmp, exist_ok=True)
+    rows, bad = 0, 0
+    for line in read(cases_path).split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, want = [x.strip() for x in line.split("|")]
+        fx = os.path.join(ROOT, "tests/fuzzfilter", name + ".exl")
+        if not os.path.exists(fx):
+            print(f"fuzz-filters: case '{name}' has no fixture {fx}")
+            return 1
+        rows += 1
+        src = read(fx)
+        o = write_tmp(tmp, "sel_o.exl", src)
+        pp = write_tmp(tmp, "sel_p.exl", src)
+        got = registered_divergence(observe(src, o, pp, args)) or "none"
+        if got != want:
+            bad += 1
+            direction = ("FALSE POSITIVE — filtered something that must stay live"
+                         if want == "none" else
+                         "FALSE NEGATIVE — did not recognise a registered divergence"
+                         if got == "none" else "WRONG recogniser")
+            print(f"fuzz-filters: {name}: wanted {want}, got {got}  ({direction})")
+    for fx in sorted(os.listdir(os.path.join(ROOT, "tests/fuzzfilter"))):
+        if fx.endswith(".exl") and f"\n{fx[:-4]}|" not in "\n" + read(cases_path):
+            print(f"fuzz-filters: tests/fuzzfilter/{fx} has NO row in CASES")
+            return 1
+    if bad:
+        return 1
+    print(f"fuzz-filters: clean ({rows} recogniser cases, both directions: "
+          f"every registered shape recognised, every non-shape left live)")
+    return 0
 
 
 def main():
@@ -417,7 +510,16 @@ def main():
     ap.add_argument("--out", default=None, help="directory for findings")
     ap.add_argument("--shrink", action="store_true")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run the recogniser floors instead of fuzzing")
     args = ap.parse_args()
+
+    if args.selftest:
+        for b in (ORACLE, PORT):
+            if not os.path.exists(b):
+                print(f"fuzz: MISSING {b}", file=sys.stderr)
+                return 2
+        return selftest(args)
 
     for b in (ORACLE, PORT):
         if not os.path.exists(b):
@@ -452,14 +554,15 @@ def main():
             continue
         src, base, notes = got
 
-        # Per-CLASS, never per-input: this blocks F1 and leaves F2/F3/F4 live.
-        skip = filtered_as(src)
-        if skip:
-            filtered[skip] = filtered.get(skip, 0) + 1
-
         o = write_tmp(tmpdir, "cand_o.exl", src)
         p = write_tmp(tmpdir, "cand_p.exl", src)
-        kind, sig = classify(src, o, p, args, f1_blocked=skip)
+        ev = observe(src, o, p, args)
+        # Per-CLASS, never per-input: a registered divergence blocks F1 and
+        # leaves F2/F3/F4 live. Counted, never silent (I-F4).
+        skip = registered_divergence(ev)
+        if skip:
+            filtered[skip] = filtered.get(skip, 0) + 1
+        kind, sig = classify(ev, args)
 
         # death-per-stage (Z2), read off the PORT's own behaviour
         st, first, _c, _k = run(PORT, p, p + ".c", args.budget, args.rss)
@@ -471,10 +574,12 @@ def main():
             stages["typecheck"] += 1
 
         if kind:
-            body = shrink(src, sig, tmpdir, args, blocked=skip) if args.shrink else src
-            findings.append((kind, triage(kind, sig), sig, base, notes, body))
+            body = shrink(src, sig, tmpdir, args) if args.shrink else src
+            bucket, why = triage(kind, sig, ev)
+            findings.append((kind, bucket, sig, base, notes, body, why))
             if not args.quiet:
-                print(f"fuzz: {kind} [{triage(kind, sig)}] {sig}  (from {base}, {'+'.join(notes)})")
+                print(f"fuzz: {kind} [{bucket}] {sig}  (from {base}, {'+'.join(notes)})")
+                print(f"fuzz:      mechanism: {why}")
 
     dt = time.time() - t0
     total = sum(stages.values())
@@ -489,10 +594,16 @@ def main():
         print("fuzz: filtered (registered divergences) none")
     print(f"fuzz: findings={len(findings)}")
 
-    for idx, (kind, bucket, sig, base, notes, body) in enumerate(findings):
+    buckets = {}
+    for f in findings:
+        buckets[f[1]] = buckets.get(f[1], 0) + 1
+    if findings:
+        print("fuzz: buckets " + " ".join(f"{k}={v}" for k, v in sorted(buckets.items())))
+    for idx, (kind, bucket, sig, base, notes, body, why) in enumerate(findings):
         path = os.path.join(tmpdir, f"finding_{args.seed}_{idx}_{kind}.exl")
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(f"// fuzz finding: {kind} [{bucket}] {sig}\n"
+                     f"// bucket by mechanism: {why}\n"
                      f"// seed {args.seed}, from {base}, wraps {'+'.join(notes)}\n"
                      f"// FUZZ-SPEC I-F3: the expected side is CAPTURED from whichever\n"
                      f"// implementation triage judges correct — never authored here.\n"

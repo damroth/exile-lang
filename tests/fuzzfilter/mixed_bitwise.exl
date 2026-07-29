@@ -1,0 +1,4 @@
+// The real R7 shape — and the recogniser must see it in the EMISSIONS (parens
+// alone differ), not in the source text.
+fn mix(a: u16) -> u16 { return 32768 | (a & 64); }
+fn main() { println(mix(64) as int); }

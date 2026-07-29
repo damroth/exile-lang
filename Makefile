@@ -1249,7 +1249,10 @@ selfhost-defer: $(EXILC_BIN)
 FUZZ_SEED  ?= 1
 FUZZ_N     ?= 150
 FUZZ_RATE  ?= 0
-.PHONY: fuzz fuzz-witness
+.PHONY: fuzz fuzz-witness fuzz-filters
+fuzz-filters: $(EXILC_BIN)
+	@python3 tools/fuzz/fuzz.py --seed 0 --selftest --cc
+
 fuzz: $(EXILC_BIN)
 	@python3 tools/fuzz/fuzz.py --seed $(FUZZ_SEED) -n $(FUZZ_N) --graft-rate $(FUZZ_RATE) --cc --shrink
 
