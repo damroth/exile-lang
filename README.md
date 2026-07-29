@@ -167,6 +167,8 @@ git submodule update --init
 
 ## Where to go next
 
+- **[docs/getting-started.md](docs/getting-started.md)** - from a clone to a
+  program of your own running on an Amiga, cross-compiler and vamos included.
 - **[docs/exile-by-example.md](docs/exile-by-example.md)** - the language, one
   feature at a time, from hello world to FFI and AmigaOS.
 - **[examples/](examples/)** - one file per feature, each with its `.expected`
