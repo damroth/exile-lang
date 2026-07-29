@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://github.com/damroth/exile-lang/actions/workflows/ci.yml/badge.svg?branch=master" />
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" />
-  <img src="https://img.shields.io/badge/status-WIP-orange" />
+  <img src="https://img.shields.io/badge/status-experimental-blueviolet" />
   <a href="https://github.com/damroth/exile-lang/releases"><img src="https://img.shields.io/github/v/release/damroth/exile-lang?include_prereleases&display_name=tag&sort=semver" /></a>
 
 </p>
