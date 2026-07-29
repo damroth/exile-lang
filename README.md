@@ -53,7 +53,7 @@ error: address 0xDFF058 belongs to resource 'Blitter', claimed by 'gfx'
 ```
 
 And the guarantee costs nothing. The same program with the ownership declared
-and with it stripped out emits the same C — byte for byte:
+and with it stripped out emits the same C - byte for byte:
 
 ```sh
 ./exilc --target c --c-out /tmp/gated.c   tests/sigil/equality/gated.exl
@@ -93,7 +93,7 @@ byte-identical or the build fails. CI runs it on a plain runner.
 
 ### Ergonomics that cost no runtime
 
-`defer` runs on every exit path — `return`, `break`, `continue`, `try` - not
+`defer` runs on every exit path - `return`, `break`, `continue`, `try` - not
 only the one you happened to think about. Traits dispatch statically, generics
 are monomorphised, `match` is checked for exhaustiveness.
 
@@ -156,7 +156,7 @@ make toolchain   # one-time, ~30-60 min: builds the bundled m68k-amigaos
 ```
 
 The bundled cross-compiler is [Bebbo's amiga-gcc](https://codeberg.org/bebbo/amiga-gcc),
-producing 68000 binaries by default — compatible with Amiga 1000 through 4000,
+producing 68000 binaries by default - compatible with Amiga 1000 through 4000,
 and runnable under WinUAE, FS-UAE or vamos.
 
 If you cloned without `--recurse-submodules`:
@@ -167,15 +167,15 @@ git submodule update --init
 
 ## Where to go next
 
-- **[docs/exile-by-example.md](docs/exile-by-example.md)** — the language, one
+- **[docs/exile-by-example.md](docs/exile-by-example.md)** - the language, one
   feature at a time, from hello world to FFI and AmigaOS.
-- **[examples/](examples/)** — one file per feature, each with its `.expected`
+- **[examples/](examples/)** - one file per feature, each with its `.expected`
   output, so you can build it, run it and diff.
-- **[CHANGELOG.md](CHANGELOG.md)** — what landed when, and why.
+- **[CHANGELOG.md](CHANGELOG.md)** - what landed when, and why.
 
 ## Status
 
-`v1.0.0` marks a compiler milestone — exile compiling itself, byte for byte —
+`v1.0.0` marks a compiler milestone - exile compiling itself, byte for byte -
 not a frozen language. The language is still moving, and the version number
 tracks it, so expect the surface to change. Tagged releases live on the
 [Releases page](https://github.com/damroth/exile-lang/releases).
