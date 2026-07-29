@@ -584,7 +584,12 @@ selfhost-port-tokens: $(SEEDC_LEXER)
 	@mask='s/\(Float [^ ]+ /(Float /; s/\(String .*\) @/(String) @/'; \
 	fail=0; clean=0; defer=""; \
 	for name in $(EXAMPLE_NAMES); do \
-		[ -f $(SELFHOST_TOKENS)/$$name.tokens ] || continue; \
+		if [ ! -f $(SELFHOST_TOKENS)/$$name.tokens ]; then \
+			echo "selfhost-port-tokens: MISSING $(SELFHOST_TOKENS)/$$name.tokens"; \
+			echo "  This used to skip, and a skipped example still counted as a checked"; \
+			echo "  one. Run 'make selfhost-corpus-$$name'."; \
+			fail=1; continue; \
+		fi; \
 		actual=$$(mktemp); \
 		echo "examples/$$name.exl" | $(SEEDC_LEXER) > $$actual 2>/dev/null; \
 		if diff -q $(SELFHOST_TOKENS)/$$name.tokens $$actual >/dev/null; then \
@@ -1880,7 +1885,11 @@ selfhost-port-ast: $(SEEDC_PARSER)
 	@mask='s/\(float [^ ]+ /(float /g; s/\(string "(\\.|[^"\\])*"\)/(string)/g'; \
 	clean=0; defer=""; notp=0; mf=0; fail=0; \
 	for name in $(EXAMPLE_NAMES); do \
-		[ -f $(SELFHOST_AST)/$$name.ast ] || continue; \
+		if [ ! -f $(SELFHOST_AST)/$$name.ast ]; then \
+			echo "selfhost-port-ast: MISSING $(SELFHOST_AST)/$$name.ast"; \
+			echo "  This used to skip. Run 'make selfhost-corpus-$$name'."; \
+			fail=1; continue; \
+		fi; \
 		if [ "$$name" = "reexport" ]; then mf=$$((mf+1)); continue; fi; \
 		actual=$$(mktemp); errf=$$(mktemp); \
 		echo "examples/$$name.exl" | $(SEEDC_PARSER) > $$actual 2>$$errf; \
