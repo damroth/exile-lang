@@ -2,13 +2,13 @@
 // module boundary — `private_helper` stays invisible to importers even
 // under `use lib::*`.
 pub fn greet(name: str) {
-    println(name);
+    private_helper(name);
 }
 
 pub fn shout() {
     println("HEY!");
 }
 
-fn private_helper() {
-    println("you cannot see me");
+fn private_helper(name: str) {
+    println(name);
 }

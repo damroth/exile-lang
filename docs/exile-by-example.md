@@ -1987,7 +1987,7 @@ pub mod raw {
 fn main() {
     let a = raw::make_c_allocator();
 
-    let p: *int = a.alloc();                 // T pinned by the annotation
+    let p: own *int = a.alloc();             // T pinned by the annotation
     if p != null {
         *p = 42;
         println(*p);
@@ -2416,7 +2416,7 @@ struct Point { x: int, y: int }
 
 @debug
 enum Shape {
-    | Circle(int)
+    Circle(int)
     | Rect { w: int, h: int }
 }
 
