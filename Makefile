@@ -20,6 +20,13 @@ C_OUT    := $(OUT)/c
 HOST_OUT := $(OUT)/host
 AMIGA_OUT:= $(OUT)/amiga
 
+# The port compiler, built by the oracle (rule near EXILC_SAMPLE below).  It is
+# defined HERE, not beside its rule, because `:=` expands where it is written:
+# a gate naming it as a PREREQUISITE above the assignment gets an empty string
+# and silently loses the dependency, while the same `$(EXILC_BIN)` inside the
+# recipe expands at run time and points at a binary nobody built.
+EXILC_BIN := $(HOST_OUT)/exilc
+
 EXAMPLES_SRC := $(filter-out examples/error_%.exl, $(wildcard examples/*.exl))
 EXAMPLE_NAMES:= $(notdir $(EXAMPLES_SRC:.exl=))
 
@@ -766,7 +773,6 @@ bootstrap-fixpoint: $(SEEDC_CG)
 # ORACLE byte-for-byte on every mode.  This gate builds exilc (oracle host
 # build) and diffs its output against `dune exec exilc` — the reference — over
 # a representative slice of the corpus.  Byte-drift is a driver bug.
-EXILC_BIN := $(HOST_OUT)/exilc
 EXILC_SAMPLE := enums traits generics closures_a2 let_else exhaustiveness \
                 combinator_map pattern_guards modules reexport derive floats
 $(EXILC_BIN): src/exilc.exl build
