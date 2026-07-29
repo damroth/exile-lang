@@ -1248,13 +1248,18 @@ selfhost-defer: $(EXILC_BIN)
 # `selfhost-verify` — the verification suite must stay deterministic.
 FUZZ_SEED  ?= 1
 FUZZ_N     ?= 150
+# Increment 3: the mix is STEERED by the measured death-per-stage split, so the
+# hand-set rate is no longer the default. `FUZZ_STEER=0` reproduces the
+# Increment 2 stream shape and is what `FUZZ_RATE` is for.
+FUZZ_STEER ?= 1
 FUZZ_RATE  ?= 0
-.PHONY: fuzz fuzz-witness fuzz-filters
+FUZZ_FLAGS := $(if $(filter 0,$(FUZZ_STEER)),--no-steer --graft-rate $(FUZZ_RATE),)
+.PHONY: fuzz fuzz-witness fuzz-filters fuzz-seed-hunt
 fuzz-filters: $(EXILC_BIN)
 	@python3 tools/fuzz/fuzz.py --seed 0 --selftest --cc
 
 fuzz: $(EXILC_BIN)
-	@python3 tools/fuzz/fuzz.py --seed $(FUZZ_SEED) -n $(FUZZ_N) --graft-rate $(FUZZ_RATE) --cc --shrink
+	@python3 tools/fuzz/fuzz.py --seed $(FUZZ_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) --cc --shrink
 
 # FUZZ-SPEC 7(a) — the witness, and the reason it is shaped this way: a run that
 # finds nothing is indistinguishable from a run that did nothing, so the gate
@@ -1267,11 +1272,36 @@ fuzz: $(EXILC_BIN)
 # within budget rediscovers the plant — is itself a finding ABOUT THE GENERATOR,
 # never grounds for widening the budget or weakening the plant.
 FUZZ_WITNESS_SEED ?= 1
+FUZZ_HUNT_SEEDS   ?= 12
+
+# E1 made operational: the hunt is a TARGET, not a session activity, so the seed
+# a future generator change re-pins is chosen by a recipe anyone can re-run and
+# whose budget is printed. It reports every seed it tried, hit or miss — a hunt
+# that showed only its winner would hide how thin the margin was.
+fuzz-seed-hunt: $(EXILC_BIN)
+	@test -f tools/fuzz/plant.py || { echo "fuzz-seed-hunt: MISSING tools/fuzz/plant.py"; exit 1; }; \
+	python3 tools/fuzz/plant.py plant || exit 1; \
+	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
+	hits=""; \
+	for s in `seq 1 $(FUZZ_HUNT_SEEDS)`; do \
+	  if python3 tools/fuzz/fuzz.py --seed $$s -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1 | grep -q 'F1:emitted-c'; then \
+	    echo "  seed $$s: rediscovers the plant"; hits="$$hits $$s"; \
+	  else echo "  seed $$s: misses"; fi; \
+	done; \
+	python3 tools/fuzz/plant.py restore; \
+	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
+	if [ -z "$$hits" ]; then \
+	  echo "fuzz-seed-hunt: NO seed in 1..$(FUZZ_HUNT_SEEDS) at n=$(FUZZ_N) rediscovers the plant."; \
+	  echo "  Per E1 that is a finding ABOUT THE GENERATOR — diagnose it, do not widen the budget."; \
+	  exit 1; fi; \
+	echo "fuzz-seed-hunt: budget $(FUZZ_HUNT_SEEDS) seeds x $(FUZZ_N) inputs; hits:$$hits"; \
+	echo "  pin FUZZ_WITNESS_SEED to the first of these."
+
 fuzz-witness: $(EXILC_BIN)
 	@test -f tools/fuzz/plant.py || { echo "fuzz-witness: MISSING tools/fuzz/plant.py"; exit 1; }; \
 	python3 tools/fuzz/plant.py plant || exit 1; \
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
-	out=`python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) --graft-rate $(FUZZ_RATE) 2>&1`; \
+	out=`python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1`; \
 	python3 tools/fuzz/plant.py restore; \
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
 	echo "$$out" | grep -q 'F1:emitted-c' \
