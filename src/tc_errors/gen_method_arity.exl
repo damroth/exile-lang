@@ -1,0 +1,10 @@
+// Arity on a generic struct method - counted INCLUDING the receiver, which is
+// how the reference reports it.
+struct Box<T> { v: T }
+impl<T> Box<T> {
+    pub fn set(self: *Box<T>, x: T, n: int) { self.v = x; println(n); }
+}
+fn main() {
+    let mut b = Box { v: 1 };
+    b.set(2);
+}

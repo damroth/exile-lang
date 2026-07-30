@@ -1,0 +1,4 @@
+// Arity on the generic path. Unchecked, this reached codegen and the diagnostic
+// came from the C compiler: `too few arguments to ex_pair_i32`.
+fn pair<T>(x: *T, n: int) -> int { return n; }
+fn main() { let mut v = 5; println(pair(&v)); }

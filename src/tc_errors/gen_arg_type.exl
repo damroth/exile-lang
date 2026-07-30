@@ -1,0 +1,8 @@
+// A generic fn's CONCRETE parameter is a slot like any other. The generic path
+// used to check no argument at all, so this passed a bool into an `i32` and
+// compiled silently - both are `int` in C, so even the C compiler said nothing.
+fn pair<T>(x: *T, n: int) -> int { return n; }
+fn main() {
+    let mut v = 5;
+    println(pair(&v, true));
+}

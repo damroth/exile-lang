@@ -2512,6 +2512,51 @@ fn check_arg_ty(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, i: u32,
     tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
     return;
 }
+// Arity and argument types on the GENERIC call path.  Neither was checked here:
+// only the T-conflict test ran, so `pair(&v)` reached codegen and the C compiler
+// answered `too few arguments to ex_pair_i32`, while `pair(&v, true)` passed a
+// bool into an `i32` slot and compiled silently, because both are `int` in C.
+// Inference failure had been standing in for a check that did not exist - and
+// the round that repaired inference is what uncovered that.
+//
+// `skip` is the receiver: a method's annotations lead with `self`, its arguments
+// do not.
+// `Box::set` - the receiver path and the method name, as the reference spells it
+// in the per-argument message.
+fn method_disp(a: Allocator, ar: *Arena, mpath: *const Vec<str>, name: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    sb.push_str(path_last(mpath));
+    sb.push_str("::");
+    sb.push_str(name);
+    return str::from_slice(ar, sb.as_slice());
+}
+fn check_gen_call_args(a: Allocator, ar: *Arena, sc: *const TyScope, cscope: *const TyScope,
+                       aname: str, name: str, anns: *const Vec<*const TypeAnn>, skip: u32,
+                       targs: *const Vec<*const Texpr>, raw: *const Vec<*const Expr>, p: Pos) {
+    let total = anns.length();
+    let np = if total > skip { total - skip } else { 0 as u32 };
+    let na = targs.length();
+    // The reference names the two messages differently and the arity one counts
+    // the receiver: `'Box__set' expects 3 argument(s), got 2` against `argument 2
+    // of 'Box::set'`. Mirrored rather than unified.
+    if na != np {
+        check_arity(a, ar, sc, "", aname, total, na + skip, false, p);
+        return;
+    }
+    let asl = anns.as_slice();
+    let tsl = targs.as_slice();
+    let rsl = raw.as_slice();
+    let nr = raw.length();
+    let mut i = 0 as u32;
+    while i < na {
+        if i < nr {
+            let pt = resolve_sig_ty(a, ar, cscope, asl[i + skip], p);
+            check_arg_ty(a, ar, sc, name, i, pt, rsl[i], tsl[i].ty, p);
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
 fn lit_fits_slot(raw: *const Expr, exp: *const Typ) -> bool {
     if !is_int_like_ty(exp) { return false; }
     return match expr_int_lit(raw) {
@@ -3165,6 +3210,8 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     // application (`Vec<T>`) or assoc projection (`Option<I::Item>`) lowers to
     // its concrete instance, not a `subst` that leaves the app abstract.
     let icscope = scope_with_tbinds(sc, &gsl[gfidx as u32].gn_tparams, &binds);
+    check_gen_call_args(a, ar, sc, &icscope, gsl[gfidx as u32].gn_name, gsl[gfidx as u32].gn_name,
+                        &gsl[gfidx as u32].gn_params, 0 as u32, &targs, args, p);
     let iret = resolve_sig_ret(a, ar, &icscope, gsl[gfidx as u32].gn_ret, p);
     return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, iret), p);
 }
@@ -3903,6 +3950,16 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // (`Map<VecIter<T>, F>`) resolve + register.
     unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &targs, &binds, p);
     let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    // A PRELUDE method's `mi_params` does not describe its arguments (its
+    // signature is injected elsewhere), so checking against it would reject
+    // correct calls. Excluded here and named in the queue rather than guessed at:
+    // `v.push(true)` on a `Vec<int>` is still accepted by the port where the
+    // reference reports T inferred as both i32 and bool.
+    if !sl[midx].mi_prelude {
+        check_gen_call_args(a, ar, sc, &cscope, sl[midx].mi_mangled,
+                            method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
+                            &sl[midx].mi_params, 1 as u32, &targs, args, p);
+    }
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);

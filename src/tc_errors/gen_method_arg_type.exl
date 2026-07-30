@@ -1,0 +1,10 @@
+// The same slot on a generic STRUCT method. The reference names it `Box::set`
+// here and `Box__set` in the arity message; both spellings are mirrored.
+struct Box<T> { v: T }
+impl<T> Box<T> {
+    pub fn set(self: *Box<T>, x: T, n: int) { self.v = x; println(n); }
+}
+fn main() {
+    let mut b = Box { v: 1 };
+    b.set(2, true);
+}
