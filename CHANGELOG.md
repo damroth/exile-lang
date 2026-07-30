@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-07-30
+
+**The capability model.** 1.0.0 was the compiler's milestone — exile compiling
+itself. 1.1.0 is the language growing its reason to exist: four constructs
+that let a driver own hardware in the source and have the compiler prove it,
+at zero cost in the output. All four shipped in five measured increments each,
+with a ratified spec per construct and every claim below backed by a gate.
+
+### Added
+
+- **`rune`** — one register access, of declared width and direction:
+  `rune bltsize: u16 at 0xDFF058 write;` with `.read()` / `.write()` /
+  `.strobe()`, register files (`[u16; 32]`), and a rejection table (R1–R7)
+  that keeps misuse a compile error. Direction lives in the type and is
+  spelled in signatures — `fn kick(r: write rune<u16>)` — so a rune crosses
+  a call boundary and `readwrite` attenuates to `read` or `write` on the way.
+- **`ward`** — a typed overlay over MMIO or RAM: fields are runes at explicit
+  offsets, overlaps are rejected with both fields and ranges named, instances
+  occupy zero storage, and a top-level ward is a map every function reads.
+- **`sigil`** — ownership of silicon: `sigil Blitter { 0xDFF040 .. 0xDFF05A }`
+  declares the resource, `own Blitter;` claims it for a module, and no other
+  module can materialise a handle into that range. The claim erases: with and
+  without it, the emitted C is byte-identical.
+- **`seal`** — an interrupt-atomic region: `seal { … }` masks interrupts and
+  restores them on *every* exit path — fall-through, `return`, `break`,
+  `continue`, `try` — nests safely by construction, and is true on both
+  targets (SR mask bare-metal, `Disable()`/`Enable()` under AmigaOS).
+- `tests/seal/blitter_setup.exl` — all four constructs in one NDK-shaped
+  blitter program at the HRM's own addresses; composing them needed zero
+  compiler changes.
+- `defer` now fires on `break` and `continue` (closing a hole documented at
+  their birth) and on `try`-propagation — every exit path, not most of them.
+- `&raw::SCRATCH` — module-qualified globals as rune/ward bases.
+- Six new examples with expected outputs (`exhaustiveness`, `host_only_argv`,
+  `inferred_generics`, `let_else`, `module_const`, `sibling_shadowing`) and an
+  `examples/README.md` index.
+- A differential fuzzer (`tools/fuzz/`): the frozen OCaml reference and the
+  self-hosted port disagree on an input, or either one crashes, and that is a
+  finding — no expected outputs authored by anyone. Its gate plants a defect
+  and must rediscover it, so a run that finds nothing is never mistaken for
+  proof.
+- Docs: a rewritten `README.md`, a new `docs/getting-started.md` (clone to a
+  binary running under vamos), and a capability-model chapter in
+  `docs/exile-by-example.md`.
+
+### Changed
+
+- FFI hygiene is enforced: `extern` declarations live inside `mod raw` (or
+  `mod sys`) and are called through the module path — the quarantine the
+  reference always required and the port silently didn't.
+- Mixed bitwise nestings are parenthesised in the emitted C, which is now
+  clean under `-Wparentheses` (registered divergence #7 — the frozen
+  reference drops the parentheses; the port is deliberately better).
+- `return` inside a match arm is legal (registered divergence #12 — the
+  reference refuses the shape with a message about a construct that is not
+  in the program; the seal era's fixtures are built on it).
+
+### Fixed
+
+- A function returning a value can no longer fall off its end — the
+  exhaustive-return check covers every statement kind, mirrored from the
+  reference down to its deliberate limits.
+- Bindings die with their block: a `let` inside `if`/`while`/`for`/`defer`
+  no longer leaks into the enclosing scope, and shadowing is rejected with
+  the reference's three distinct messages.
+- Generic calls check arity and argument types on all three generic paths,
+  including prelude collection methods — `v.push(true)` on a `Vec<int>` and
+  a borrowed pointer passed to `Allocator::free` are compile errors with the
+  reference's exact wording, and arity answers before inference.
+- A `defer` nested anywhere inside a defer body is rejected cleanly at any
+  depth (previously an internal error), and `T`-inference reads through
+  `own`, so the allocator opening shape gets the reference's repair hint.
+- The tc-errors corpus grew 221 → 270; every added fixture reproduces a
+  machine-found defect, none written by hand from theory.
+
 ## [1.0.0] - 2026-07-12
 
 **exile-lang compiles itself.** `src/` is the exile compiler written in exile:
@@ -881,4 +956,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[1.0.0]: https://github.com/damroth/exile-lang/releases/tag/v1.0.0
+[1.1.0]: https://github.com/damroth/exile-lang/releases/tag/v1.1.0
