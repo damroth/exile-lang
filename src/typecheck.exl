@@ -3928,7 +3928,12 @@ fn binds_in_tparam_order(a: Allocator, ar: *Arena, tparams: *const Vec<str>, bin
 // already recovered resolve to a concrete type, so the unify is a no-op.
 fn unify_method_args(a: Allocator, ar: *Arena, sc: *const TyScope, tparams: *const Vec<str>,
                      anns: *const Vec<*const TypeAnn>, targs: *const Vec<*const Texpr>, binds: *Vec<TVarBind>, p: Pos) {
-    let cscope = scope_with_tbinds(sc, tparams, binds);
+    // The declaration is unified with the method's tparams still ABSTRACT, which
+    // is what lets a second, different binding for the same tparam surface as a
+    // conflict. Resolving under the bindings already recovered from the receiver
+    // substitutes T away first, and then `T` vs `bool` is only ever `i32` vs
+    // `bool` - a slot mismatch, reported one check too late.
+    let cscope = scope_with_tparams(sc, tparams);
     let na = targs.length();
     let np = anns.length();
     let asl = anns.as_slice();
@@ -3961,6 +3966,12 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // (`Map<VecIter<T>, F>`) resolve + register.
     unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &targs, &binds, p);
     let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    // A tparam bound twice, differently, is the reference's FIRST answer here:
+    // `v.push(true)` on a `Vec<int>` reads T from the receiver and again from the
+    // argument, and reports the conflict rather than the slot mismatch. This path
+    // had no conflict check at all, so the order only became visible once the
+    // arguments were unified against a real parameter list.
+    check_bind_conflicts(a, ar, sc, &binds, p);
     check_gen_call_args(a, ar, sc, &cscope, sl[midx].mi_mangled,
                         method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
                         &sl[midx].mi_params, 1 as u32, &targs, args, p);
@@ -11919,8 +11930,35 @@ fn push_prelude_method_ng(a: Allocator, ar: *Arena, target: str, name: str, has_
 // tparam `T` is bound from the receiver instance and its body is prelude-
 // injected, so it carries `mi_struct_gen` + `mi_prelude`.  The return
 // annotation (`Option<T>` / `Slice<T>` / ...) resolves under that binding.
+// A parameter list for a prelude struct-gen method whose arguments the port has
+// no other record of.  Registered EMPTY, these methods were the one shape the
+// argument check could not reach: `v.push(true)` on a `Vec<int>` was accepted
+// where the reference reports T inferred as both i32 and bool - and it reports
+// that because its own `Vec::push` carries `[self, x: T]`, which is what the
+// port now carries too.  `self` is the receiver type without the pointer, the
+// same shape the Allocator methods already used.
+fn no_params(a: Allocator) -> Vec<*const TypeAnn> {
+    let e: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    return e;
+}
+fn params1(a: Allocator, x: *const TypeAnn) -> Vec<*const TypeAnn> {
+    let mut v: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
+    v.push(x);
+    return v;
+}
+fn params2(a: Allocator, x: *const TypeAnn, y: *const TypeAnn) -> Vec<*const TypeAnn> {
+    let mut v = params1(a, x);
+    v.push(y);
+    return v;
+}
+fn params3(a: Allocator, x: *const TypeAnn, y: *const TypeAnn, z: *const TypeAnn) -> Vec<*const TypeAnn> {
+    let mut v = params2(a, x, y);
+    v.push(z);
+    return v;
+}
 fn push_prelude_sg_method(a: Allocator, ar: *Arena, target: str, name: str, has_self: bool,
-                          self_ptr: bool, self_const: bool, ret_ann: Option<*const TypeAnn>, out: *Vec<MethodInfo>) {
+                          self_ptr: bool, self_const: bool, ret_ann: Option<*const TypeAnn>,
+                          params: Vec<*const TypeAnn>, out: *Vec<MethodInfo>) {
     let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     path.push(target);
     // The method's tparams are the receiver struct's (Vec/VecIter → [T],
@@ -11928,7 +11966,6 @@ fn push_prelude_sg_method(a: Allocator, ar: *Arena, target: str, name: str, has_
     let mut tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     prelude_struct_tparams(target, &tp);
     if tp.length() == 0 as u32 { tp.push("T"); }
-    let empty_params: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     // A static generic method (no self, e.g. `with_capacity`) is not
     // receiver-dispatched; it recovers its tparam from the expected type.
     out.push(MethodInfo {
@@ -11937,7 +11974,7 @@ fn push_prelude_sg_method(a: Allocator, ar: *Arena, target: str, name: str, has_
         mi_trait: "",
         mi_mangled: str2(a, ar, str2(a, ar, target, "__"), name),
         mi_ret: none_ty(), mi_has_self: has_self, mi_self_ptr: self_ptr, mi_self_const: self_const,
-        mi_tparams: tp, mi_params: empty_params, mi_ret_ann: ret_ann,
+        mi_tparams: tp, mi_params: params, mi_ret_ann: ret_ann,
         mi_modpath: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         mi_struct_gen: has_self,
         mi_tbounds: no_tbounds(a),
@@ -11988,28 +12025,28 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     // Vec<T>: push (*self, x: T) / length (*const self) -> u32 / get (*const
     // self, i) -> Option<T> / as_slice -> Slice<T> / iter -> VecIter<T>.
     let none_ret_ann: Option<*const TypeAnn> = Option::None;
-    push_prelude_sg_method(a, ar, "Vec", "with_capacity", false, false, false, Option::Some(ann_app1(a, ar, "Vec", "T")), out);
+    push_prelude_sg_method(a, ar, "Vec", "with_capacity", false, false, false, Option::Some(ann_app1(a, ar, "Vec", "T")), no_params(a), out);
     // grow is the private geometric-resize helper; register it so `self.grow`
     // inside `push`'s materialized body resolves (never user-called).
-    push_prelude_sg_method(a, ar, "Vec", "grow", true, true, false, none_ret_ann, out);
-    push_prelude_sg_method(a, ar, "Vec", "push", true, true, false, none_ret_ann, out);
-    push_prelude_sg_method(a, ar, "Vec", "length", true, true, true, Option::Some(ann_u32(ar)), out);
-    push_prelude_sg_method(a, ar, "Vec", "get", true, true, true, Option::Some(ann_app1(a, ar, "Option", "T")), out);
-    push_prelude_sg_method(a, ar, "Vec", "as_slice", true, true, true, Option::Some(ann_app1(a, ar, "Slice", "T")), out);
-    push_prelude_sg_method(a, ar, "Vec", "iter", true, true, true, Option::Some(ann_app1(a, ar, "VecIter", "T")), out);
+    push_prelude_sg_method(a, ar, "Vec", "grow", true, true, false, none_ret_ann, params2(a, ann_app1(a, ar, "Vec", "T"), ann_u32(ar)), out);
+    push_prelude_sg_method(a, ar, "Vec", "push", true, true, false, none_ret_ann, params2(a, ann_app1(a, ar, "Vec", "T"), ann_struct(a, ar, "T")), out);
+    push_prelude_sg_method(a, ar, "Vec", "length", true, true, true, Option::Some(ann_u32(ar)), no_params(a), out);
+    push_prelude_sg_method(a, ar, "Vec", "get", true, true, true, Option::Some(ann_app1(a, ar, "Option", "T")), params2(a, ann_app1(a, ar, "Vec", "T"), ann_u32(ar)), out);
+    push_prelude_sg_method(a, ar, "Vec", "as_slice", true, true, true, Option::Some(ann_app1(a, ar, "Slice", "T")), no_params(a), out);
+    push_prelude_sg_method(a, ar, "Vec", "iter", true, true, true, Option::Some(ann_app1(a, ar, "VecIter", "T")), no_params(a), out);
     // VecIter<T>: next (*self) -> Option<T>, the iterator protocol `for` lowers to.
-    push_prelude_sg_method(a, ar, "VecIter", "next", true, true, false, Option::Some(ann_app1(a, ar, "Option", "T")), out);
+    push_prelude_sg_method(a, ar, "VecIter", "next", true, true, false, Option::Some(ann_app1(a, ar, "Option", "T")), no_params(a), out);
     // DR-026 lazy adapters: `next(*self)` drives the fused `for` loop.  Map
     // yields `F::Output`, Take/Enumerate/Filter pass `I::Item` through
     // (Enumerate as a `(u32, I::Item)` pair).
-    push_prelude_sg_method(a, ar, "Map", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "F", "Output"))), out);
-    push_prelude_sg_method(a, ar, "Take", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "I", "Item"))), out);
-    push_prelude_sg_method(a, ar, "Filter", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "I", "Item"))), out);
+    push_prelude_sg_method(a, ar, "Map", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "F", "Output"))), no_params(a), out);
+    push_prelude_sg_method(a, ar, "Take", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "I", "Item"))), no_params(a), out);
+    push_prelude_sg_method(a, ar, "Filter", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "I", "Item"))), no_params(a), out);
     // Enumerate yields `(u32, I::Item)` pairs.
     let mut enum_tup: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     enum_tup.push(ann_u32(ar));
     enum_tup.push(ann_proj(a, ar, "I", "Item"));
-    push_prelude_sg_method(a, ar, "Enumerate", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_node(ar, TypeAnn::TyTuple(enum_tup)))), out);
+    push_prelude_sg_method(a, ar, "Enumerate", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_node(ar, TypeAnn::TyTuple(enum_tup)))), no_params(a), out);
     // DR-026 Iterator adapter default methods (`.map`/`.filter`/`.take`/
     // `.enumerate`) on every iterator type so dot-chains compose.
     register_adapters_on(a, ar, "VecIter", out);
@@ -12021,20 +12058,22 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     // contains->bool / length->u32 / remove / iter->HashMapIter<K,V>; the
     // iterator yields `(K, V)` pairs.
     let hm_none: Option<*const TypeAnn> = Option::None;
-    push_prelude_sg_method(a, ar, "HashMap", "with_capacity", false, false, false, Option::Some(ann_kv(a, ar, "HashMap")), out);
+    let mut hm_tps: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    prelude_struct_tparams("HashMap", &hm_tps);
+    push_prelude_sg_method(a, ar, "HashMap", "with_capacity", false, false, false, Option::Some(ann_kv(a, ar, "HashMap")), no_params(a), out);
     // Private geometric-rehash helper; registered so `self.grow` inside the
     // materialized `insert` body resolves (never user-called).
-    push_prelude_sg_method(a, ar, "HashMap", "grow", true, true, false, hm_none, out);
-    push_prelude_sg_method(a, ar, "HashMap", "insert", true, true, false, hm_none, out);
-    push_prelude_sg_method(a, ar, "HashMap", "get", true, true, true, Option::Some(ann_app1(a, ar, "Option", "V")), out);
-    push_prelude_sg_method(a, ar, "HashMap", "contains", true, true, true, Option::Some(ann_bool(ar)), out);
-    push_prelude_sg_method(a, ar, "HashMap", "length", true, true, true, Option::Some(ann_u32(ar)), out);
-    push_prelude_sg_method(a, ar, "HashMap", "remove", true, true, false, hm_none, out);
-    push_prelude_sg_method(a, ar, "HashMap", "iter", true, true, true, Option::Some(ann_kv(a, ar, "HashMapIter")), out);
+    push_prelude_sg_method(a, ar, "HashMap", "grow", true, true, false, hm_none, no_params(a), out);
+    push_prelude_sg_method(a, ar, "HashMap", "insert", true, true, false, hm_none, params3(a, ann_app_tps(a, ar, "HashMap", &hm_tps), ann_struct(a, ar, "K"), ann_struct(a, ar, "V")), out);
+    push_prelude_sg_method(a, ar, "HashMap", "get", true, true, true, Option::Some(ann_app1(a, ar, "Option", "V")), params2(a, ann_app_tps(a, ar, "HashMap", &hm_tps), ann_struct(a, ar, "K")), out);
+    push_prelude_sg_method(a, ar, "HashMap", "contains", true, true, true, Option::Some(ann_bool(ar)), params2(a, ann_app_tps(a, ar, "HashMap", &hm_tps), ann_struct(a, ar, "K")), out);
+    push_prelude_sg_method(a, ar, "HashMap", "length", true, true, true, Option::Some(ann_u32(ar)), no_params(a), out);
+    push_prelude_sg_method(a, ar, "HashMap", "remove", true, true, false, hm_none, params2(a, ann_app_tps(a, ar, "HashMap", &hm_tps), ann_struct(a, ar, "K")), out);
+    push_prelude_sg_method(a, ar, "HashMap", "iter", true, true, true, Option::Some(ann_kv(a, ar, "HashMapIter")), no_params(a), out);
     let mut hm_tup: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     hm_tup.push(ann_struct(a, ar, "K"));
     hm_tup.push(ann_struct(a, ar, "V"));
-    push_prelude_sg_method(a, ar, "HashMapIter", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_node(ar, TypeAnn::TyTuple(hm_tup)))), out);
+    push_prelude_sg_method(a, ar, "HashMapIter", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_node(ar, TypeAnn::TyTuple(hm_tup)))), no_params(a), out);
     // Arena: with_capacity (static) -> Arena (the interning allocator).
     push_prelude_method_ng(a, ar, "Arena", "with_capacity", false, false, false, Option::Some(prelude_struct_ty(a, ar, "Arena")), out);
     // alloc_borrowed<T>(*self) -> *T : a plain borrow into the arena buffer.

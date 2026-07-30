@@ -1,0 +1,10 @@
+// The same list, on a slot whose type is concrete: the index is a u32, and the
+// mismatch is reported against the slot rather than through inference.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(7);
+    let g = v.get(true);
+    println(1);
+}
