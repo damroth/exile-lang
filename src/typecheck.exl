@@ -1050,9 +1050,14 @@ fn unify_app(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>
 fn unify_typ(a: Allocator, ar: *Arena, sc: *const TyScope, decl: *const Typ, act: *const Typ, out: *Vec<TVarBind>) {
     match *decl {
         Typ::TVar(n) => { out.push(TVarBind { tvb_name: n, tvb_ty: act }); }
-        | Typ::TPtr(di) => { match *act { Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
-        | Typ::TConstPtr(di) => { match *act { Typ::TConstPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
-        | Typ::TOwnPtr(di) => { match *act { Typ::TOwnPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
+        | Typ::TPtr(di) => { match *act { Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TOwnPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
+        | Typ::TConstPtr(di) => { match *act { Typ::TConstPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TOwnPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
+        // Ownership is narrowed by the CALL-SITE COERCION, so inference reads
+        // through it and takes T from the pointees; the argument check that runs
+        // after it is what decides whether the lend is legal. CLXI confined this
+        // peel to the seed because that check did not exist yet and widening it
+        // turned `free(<borrow>)` from wrongly-worded into silently accepted.
+        | Typ::TOwnPtr(di) => { match *act { Typ::TOwnPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TConstPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
         // The reference unifies tuples element-wise; without this arm a generic
         // fn taking `(A, B)` cannot bind either parameter from its argument.
         | Typ::TTuple(dts) => { match *act { Typ::TTuple(ats) => unify_tuples(a, ar, sc, &dts, &ats, out) | _e => { } } }
@@ -2536,6 +2541,12 @@ fn check_gen_call_args(a: Allocator, ar: *Arena, sc: *const TyScope, cscope: *co
     let total = anns.length();
     let np = if total > skip { total - skip } else { 0 as u32 };
     let na = targs.length();
+    // Some prelude methods carry no argument annotations at all (`Vec::push` is
+    // registered with an empty list; its body is injected elsewhere). Checking a
+    // call against that list reports "expects 0" for a correct call, so the test
+    // is DATA AVAILABILITY, not "is this a prelude method" - which was the first
+    // cut and excluded `Allocator::free`, whose signature is right there.
+    if total <= skip && na > 0 as u32 { return; }
     // The reference names the two messages differently and the arity one counts
     // the receiver: `'Box__set' expects 3 argument(s), got 2` against `argument 2
     // of 'Box::set'`. Mirrored rather than unified.
@@ -3950,16 +3961,9 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // (`Map<VecIter<T>, F>`) resolve + register.
     unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &targs, &binds, p);
     let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
-    // A PRELUDE method's `mi_params` does not describe its arguments (its
-    // signature is injected elsewhere), so checking against it would reject
-    // correct calls. Excluded here and named in the queue rather than guessed at:
-    // `v.push(true)` on a `Vec<int>` is still accepted by the port where the
-    // reference reports T inferred as both i32 and bool.
-    if !sl[midx].mi_prelude {
-        check_gen_call_args(a, ar, sc, &cscope, sl[midx].mi_mangled,
-                            method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
-                            &sl[midx].mi_params, 1 as u32, &targs, args, p);
-    }
+    check_gen_call_args(a, ar, sc, &cscope, sl[midx].mi_mangled,
+                        method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
+                        &sl[midx].mi_params, 1 as u32, &targs, args, p);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
@@ -4002,6 +4006,10 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     check_bind_conflicts(a, ar, sc, &binds, p);
     check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     check_bound_conformance(a, ar, sc, &sl[midx].mi_tbounds, &binds, sl[midx].mi_name, p);
+    let iscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    check_gen_call_args(a, ar, sc, &iscope, sl[midx].mi_mangled,
+                        method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
+                        &sl[midx].mi_params, 1 as u32, &targs, args, p);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     // A prelude method's instance body is injected — register its type for the

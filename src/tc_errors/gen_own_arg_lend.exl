@@ -1,0 +1,12 @@
+// Ownership is narrowed by the call-site coercion, so inference reads through
+// `own` and takes T from the pointees - and the ARGUMENT check that runs after
+// it is what decides the lend is illegal. Before that check existed, peeling
+// here turned this from a wrongly-worded rejection into a silent acceptance.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let p: own *int = a.alloc();
+    *p = 1;
+    let q: *int = p;
+    a.free(q);
+}
