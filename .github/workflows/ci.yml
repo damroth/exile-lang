@@ -127,5 +127,17 @@ jobs:
     # Proves the self-hosted driver cross-compiles to a byte-identical, correctly
     # running m68k binary. Lives here (not in selfhost-verify) because it needs
     # the cross toolchain the toolchain-free port suite deliberately avoids.
+    #
+    # The port invokes the FIXED prefix _build/toolchain (plumbing register #3:
+    # $EXILE_TOOLCHAIN is honoured by the oracle and the Makefile, not yet by
+    # the port). The container bakes the toolchain at $EXILE_TOOLCHAIN, so
+    # materialise it at the prefix the port's contract names. This step goes
+    # away when register #3 closes (sys_getenv in the seam).
+    - name: Materialise the toolchain at the port's fixed prefix (register #3)
+      run: |
+        mkdir -p _build
+        ln -sfn "$EXILE_TOOLCHAIN" _build/toolchain
+        test -x _build/toolchain/bin/m68k-amigaos-gcc
+
     - name: Port amiga driver parity (selfhost-amiga)
       run: opam exec -- make selfhost-amiga
