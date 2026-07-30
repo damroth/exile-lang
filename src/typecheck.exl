@@ -13933,6 +13933,13 @@ fn register_prelude_globals(a: Allocator, ar: *Arena, g: *Vec<GlobalFn>) {
     push_sys_fn(a, ar, "sys_spawn", cint, g);
     // Process exit — non-zero status on a failed build, like the oracle's exit 1.
     push_sys_fn(a, ar, "sys_exit", novoid, g);
+    // Environment + cwd: what the amiga driver needs to resolve its toolchain
+    // prefix the way the reference does (`$EXILE_TOOLCHAIN`, else
+    // `getcwd()/_build/toolchain`). `sys_getenv` returns NULL when unset, which
+    // is NOT the same as set-and-empty — the reference honours an empty override
+    // as an empty prefix, and so does the port.
+    push_sys_fn(a, ar, "sys_getenv", ccharp, g);
+    push_sys_fn(a, ar, "sys_getcwd", ccharp, g);
 }
 
 // A signature is resolved in ITS OWN module's scope, exactly like the body that
@@ -15893,6 +15900,22 @@ fn append_sys_externs(a: Allocator, ar: *Arena, funcs: *const Vec<Tfunc>, pmeth:
         // `const char* const*`, a ready argv (no shell, no quoting).
         let cstrp = ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TString)));
         pfree.push(sys_extern_tfunc(a, ar, "sys_spawn", sys_p2(a, "argv", "n"), sys_t2(a, cstrp, cint), Option::Some(cint)));
+    }
+    // Pay-for-use, like every other seam entry: a program that never asks for the
+    // environment carries no declaration for it.  The amiga driver is the only
+    // caller today, and it is what made these two visible in the fixpoint - the
+    // oracle emitted both, the port emitted neither.
+    if sys_referenced(funcs, pfree, pmeth, "sys_getenv", uses_da) {
+        let mut pg: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        pg.push("name");
+        let mut tg: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+        tg.push(ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TCChar))));
+        pfree.push(sys_extern_tfunc(a, ar, "sys_getenv", pg, tg, Option::Some(ccharc)));
+    }
+    if sys_referenced(funcs, pfree, pmeth, "sys_getcwd", uses_da) {
+        let pw: Vec<str> = Vec::with_capacity(a, 8 as u32);
+        let tw: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+        pfree.push(sys_extern_tfunc(a, ar, "sys_getcwd", pw, tw, Option::Some(ccharc)));
     }
     if sys_referenced(funcs, pfree, pmeth, "sys_exit", uses_da) {
         let mut pe: Vec<str> = Vec::with_capacity(a, 8 as u32);

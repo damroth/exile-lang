@@ -358,17 +358,54 @@ fn build_host(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
     return;
 }
 
+// `$EXILE_TOOLCHAIN`, else `getcwd()/_build/toolchain` — the reference's
+// `toolchain_path`, including the part that reads like an accident and is not:
+// an override that is SET BUT EMPTY is honoured as an empty prefix, so the gcc
+// path becomes `bin/m68k-amigaos-gcc`. `Sys.getenv` raises only when the name is
+// unset, and `sys_getenv` returns NULL only then, so the distinction survives.
+fn toolchain_path(a: Allocator, ar: *Arena) -> str {
+    let env: *const c_char = sys::sys_getenv("EXILE_TOOLCHAIN" as *const c_char);
+    if env != null { return env as str; }
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str(sys::sys_getcwd() as str);
+    sb.push_str("/_build/toolchain");
+    return str::from_slice(ar, sb.as_slice());
+}
+// The cross-compiler, checked for existence before it is spawned — the
+// reference names the path it looked at and how to fix it, which a bare
+// `command failed: m68k-amigaos-gcc` from the spawn does not.
+fn amiga_gcc(a: Allocator, ar: *Arena) -> str {
+    let prefix = toolchain_path(a, ar);
+    let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+    // `Filename.concat "" x` is `x`, not `/x` - so an EMPTY override names a
+    // relative `bin/m68k-amigaos-gcc`, and the separator has to be dropped with
+    // it. One character, and it is the only thing that separated the two sides
+    // once the override was honoured at all.
+    sb.push_str(prefix);
+    if !str::eq(prefix, "") { sb.push_str("/"); }
+    sb.push_str("bin/m68k-amigaos-gcc");
+    let gcc = str::from_slice(ar, sb.as_slice());
+    let fd: c_int = sys::sys_open(gcc as *const c_char, 0 as c_int);
+    if fd < 0 as c_int {
+        let mut eb = StringBuilder::with_capacity(a, 128 as u32);
+        eb.push_str("amiga cross-compiler not found at: ");
+        eb.push_str(gcc);
+        err_line(str::from_slice(ar, eb.as_slice()));
+        err_line("run 'make toolchain' to build it, or set EXILE_TOOLCHAIN to its prefix");
+        sys::sys_exit(1 as c_int);
+    }
+    sys::sys_close(fd);
+    return gcc;
+}
 // The m68k-amigaos-gcc argv, mirroring the oracle's `compile_amiga` flag DATA
 // (the PLUMBING — argv vs shell string — is the registered driver divergence):
 //   gcc -noixemul <warn-suppress> <-I dir> -o out cpath links -lm
 // No `-ansi -pedantic -Wall` (unlike host cc); `-noixemul` keeps libnix's POSIX
 // shim out, and `-lm` at the tail pulls Bebbo's soft-float thunks for the FPU-
-// less 68000.  The toolchain lives at the fixed `_build/toolchain` prefix; the
-// oracle also honours `$EXILE_TOOLCHAIN` (a dev override no gate exercises) —
-// registered as a driver divergence rather than ported in this round.
+// less 68000.
 fn build_amiga_argv(a: Allocator, ar: *Arena, ca: *const CliArgs, out: str, cpath: str) -> Vec<str> {
     let mut v: Vec<str> = Vec::with_capacity(a, 16 as u32);
-    v.push("_build/toolchain/bin/m68k-amigaos-gcc");
+    v.push(amiga_gcc(a, ar));
     v.push("-noixemul");
     if !ca.ca_show_cc {
         v.push("-Wno-unused-variable");

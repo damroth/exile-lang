@@ -396,8 +396,21 @@ selfhost-amiga: $(EXILC_BIN)
 	    echo "selfhost-amiga: sealed SEQUENCE ran wrong on m68k (order, offset, or DMACON restore):"; \
 	    diff <(echo "$$cexp") <(echo "$$cout") | head -8; fail=1; fi; \
 	fi; \
+	tcd=$(C_OUT)/tcprefix; rm -rf $$tcd; mkdir -p $$tcd/bin; \
+	printf '#!/bin/sh\ntouch %s/called\nexit 0\n' "$$tcd" > $$tcd/bin/m68k-amigaos-gcc; \
+	chmod +x $$tcd/bin/m68k-amigaos-gcc; \
+	EXILE_TOOLCHAIN=$$tcd $(EXILC_BIN) --target amiga --c-out $(C_OUT)/tcenv.c \
+	   -o $(AMIGA_OUT)/tcenv examples/amiga_hello.exl >/dev/null 2>&1; \
+	if [ ! -f $$tcd/called ]; then \
+	  echo "selfhost-amiga: \$$EXILE_TOOLCHAIN was NOT honoured — the override named a prefix and the driver went elsewhere (register #3 regressed)"; fail=1; fi; \
+	rm -f $$tcd/called; \
+	$(EXILC_BIN) --target amiga --c-out $(C_OUT)/tcenv.c \
+	   -o $(AMIGA_OUT)/tcenv examples/amiga_hello.exl >/dev/null 2>&1; \
+	if [ -f $$tcd/called ]; then \
+	  echo "selfhost-amiga: the stub was invoked with NO override set — the fallback is not the fallback"; fail=1; fi; \
+	rm -rf $$tcd; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; rune-over-RAM runs 11/22/0/305419896 on m68k under vamos; seal call-path runs nested on m68k through exec Disable/Enable — the SEAM, not the masking: vamos has nothing to race, interleaving stays registered for FS-UAE (SEAL-SPEC 7d); pay-for-use measured on the OBJECT, 2 vs 0; the sealed blitter sequence RUNS on m68k 3/2544/64/32832 over RAM — the chipset itself is above vamos, so this proves the SEQUENCE and the seam, not the registers)"; \
+	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; \$$EXILE_TOOLCHAIN honoured (a stub prefix RECORDS the call) and ignored when unset; rune-over-RAM runs 11/22/0/305419896 on m68k under vamos; seal call-path runs nested on m68k through exec Disable/Enable — the SEAM, not the masking: vamos has nothing to race, interleaving stays registered for FS-UAE (SEAL-SPEC 7d); pay-for-use measured on the OBJECT, 2 vs 0; the sealed blitter sequence RUNS on m68k 3/2544/64/32832 over RAM — the chipset itself is above vamos, so this proves the SEQUENCE and the seam, not the registers)"; \
 	else exit 1; fi
 
 # ===== Freestanding codegen mode (--freestanding) =====

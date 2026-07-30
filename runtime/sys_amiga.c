@@ -89,3 +89,15 @@ void sys_seal_exit(unsigned long state) {
     if (ex_seal_depth > 0) ex_seal_depth--;
     Enable();
 }
+
+/* No POSIX environment or cwd on the amiga side of the seam, and nothing on
+ * that target resolves a cross-toolchain: the amiga driver runs on the HOST.
+ * Stubbed so the seam is total, returning "unset" and an empty cwd. */
+const char *sys_getenv(const char *_name) {
+    (void)_name;
+    return 0;
+}
+
+const char *sys_getcwd(void) {
+    return "";
+}

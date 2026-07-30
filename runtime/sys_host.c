@@ -206,3 +206,20 @@ void sys_seal_exit(unsigned long tok) {
     ex_seal_depth--;
     if (ex_seal_depth < EX_SEAL_MAX && ex_seal_stack[ex_seal_depth] != tok) { ex_seal_misnest++; }
 }
+
+/* Environment + cwd for the amiga driver's toolchain resolution.  `getenv`
+ * returns NULL when the name is unset; the caller distinguishes that from a
+ * set-but-empty value, because the reference does.  `getcwd` writes into a
+ * static buffer: the driver reads it once, at startup, to build one path. */
+const char *sys_getenv(const char *name) {
+    return getenv(name);
+}
+
+static char sys_cwd_buf[4096];
+
+const char *sys_getcwd(void) {
+    if (getcwd(sys_cwd_buf, sizeof sys_cwd_buf) == 0) {
+        sys_cwd_buf[0] = '\0';
+    }
+    return sys_cwd_buf;
+}

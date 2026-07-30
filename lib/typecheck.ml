@@ -9780,6 +9780,21 @@ let prelude_items () =
         mk_param "n" cint_ann ]
       (Some cint_ann)
   in
+  (* Environment + cwd — what the port's amiga driver needs to resolve its
+     toolchain prefix the way `toolchain_path` here does ($EXILE_TOOLCHAIN, else
+     getcwd()/_build/toolchain).  Registered for the same reason as sys_spawn:
+     so the oracle can COMPILE src/exilc.exl.  `sys_getenv` yields NULL when the
+     name is unset, which the caller must distinguish from set-and-empty —
+     `Sys.getenv` raises only in the unset case, and an empty override is
+     honoured as an empty prefix. *)
+  let sys_getenv_fn =
+    mk_extern "sys_getenv"
+      [ mk_param "name" (Ast.TyConstPtr Ast.TyCChar) ]
+      (Some cchar_const_ptr_ann)
+  in
+  let sys_getcwd_fn =
+    mk_extern "sys_getcwd" [] (Some cchar_const_ptr_ann)
+  in
   (* Process exit — the port fork of the oracle's `exit 1`, so a self-hosted
      exilc fails a build with a non-zero status like the reference. *)
   let sys_exit_fn =
@@ -9800,6 +9815,8 @@ let prelude_items () =
       Ast.Function sys_argc_fn;
       Ast.Function sys_argv_fn;
       Ast.Function sys_spawn_fn;
+      Ast.Function sys_getenv_fn;
+      Ast.Function sys_getcwd_fn;
       Ast.Function sys_exit_fn;
     ];
     mpos = pos;
