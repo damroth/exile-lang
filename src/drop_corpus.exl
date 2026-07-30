@@ -60,6 +60,18 @@ fn arena_cap_for(srclen: u32) -> u32 {
     return 1048576 as u32 + srclen * 128 as u32;
 }
 
+
+// Drop's diagnostics arrive as a latch rather than a raise: the pass rewrites a
+// whole program and the reference stops at the first, so the port latches the
+// first and the driver reports it here.
+fn drop_report(a: Allocator, e: Option<*const CompileError>) {
+    match e {
+        Option::Some(err) => { report_error(a, err); }
+        | Option::None => { }
+    }
+    return;
+}
+
 fn main() {
     let a = default_allocator();
 
@@ -83,7 +95,7 @@ fn main() {
             match check_program(a, &ar, &prog) {
                 Result::Ok(tp) => {
                     let mut tprog = tp;
-                    drop_insert(a, &ar, &tprog);
+                    drop_report(a, drop_insert(a, &ar, &tprog));
                     let mut out = StringBuilder::with_capacity(a, 16384 as u32);
                     dump_typed_ir(&tprog, path, true, &out);
                     flush(&out);

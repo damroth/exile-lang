@@ -222,7 +222,7 @@ fn run_emit_ir_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
             let mut tprog = tp;
             // `--after-drop` mirrors the reference's pipeline prefix:
             // Move.check; Escape.check; Drop.insert.
-            if ca.ca_after_drop { check_move(a, ar, &tprog); check_escape(a, ar, &tprog); drop_insert(a, ar, &tprog); }
+            if ca.ca_after_drop { check_move(a, ar, &tprog); check_escape(a, ar, &tprog); drop_report(a, drop_insert(a, ar, &tprog)); }
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             dump_typed_ir(&tprog, ca.ca_input, ca.ca_user_only, &out);
             write_dump(ca.ca_output, &out);
@@ -303,7 +303,7 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
             // -> Lint.lint.
             check_move(a, ar, &tprog);
             check_escape(a, ar, &tprog);
-            drop_insert(a, ar, &tprog);
+            drop_report(a, drop_insert(a, ar, &tprog));
             lint(a, ar, &tprog);
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             gen_program(a, ar, &tprog, &out);
@@ -496,6 +496,18 @@ fn read_source(a: Allocator, ar: *Arena, path: str) -> str {
     }
     sys::sys_close(fd);
     return str::from_slice(ar, sb.as_slice());
+}
+
+
+// Drop's diagnostics arrive as a latch rather than a raise: the pass rewrites a
+// whole program and the reference stops at the first, so the port latches the
+// first and the driver reports it here.
+fn drop_report(a: Allocator, e: Option<*const CompileError>) {
+    match e {
+        Option::Some(err) => { report_error(a, err); }
+        | Option::None => { }
+    }
+    return;
 }
 
 fn main() {

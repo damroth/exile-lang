@@ -214,6 +214,18 @@ fn enum_owns(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, path: *
 // order as the oracle, so the counters line up.
 
 pub struct GlueState {
+    // The drop pass had NO error channel: fourteen `Error.failf` sites in the
+    // reference against zero here, and `merge_branches` said so in its own
+    // comment ("valid source never mismatches, so take then"). The latch rides
+    // in the glue state because that already reaches every reporting site -
+    // threading a parameter through fourteen functions to reach nine of them
+    // would have been the same change, spelt longer.
+    //
+    // First error wins, like `move.exl`'s `Mv`: the walk order matches the
+    // reference's, so the first latched IS the one it would have raised.
+    gs_err: *Option<*const CompileError>,
+    // Minted C name -> what the user wrote, so a diagnostic quotes the source.
+    gs_srcnames: *Vec<StrPair>,
     gs_keys: Vec<str>,
     gs_names: Vec<str>,
     // Per request: the type to build the glue body from (vec/hm: the container
@@ -770,6 +782,70 @@ fn prov_of_alloc(alloc: Option<*const Texpr>) -> Option<str> {
     };
 }
 
+fn raise_dp(ar: *Arena, gs: *GlueState, pos: Pos, msg: str) {
+    match *gs.gs_err {
+        Option::Some(_e) => { }
+        | Option::None => { *gs.gs_err = Option::Some(error::alloc(ar, pos, msg)); }
+    }
+    return;
+}
+fn dp_disp(gs: *const GlueState, n: str) -> str {
+    let sl = gs.gs_srcnames.as_slice();
+    let mut i = 0 as u32;
+    while i < gs.gs_srcnames.length() {
+        if str::eq(sl[i].a, n) { return sl[i].b; }
+        i = i + 1 as u32;
+    }
+    return n;
+}
+// An expression statement that produces an owning value: nothing tracks it and
+// nothing releases it.
+fn check_discarded_own(a: Allocator, ar: *Arena, gs: *GlueState, e: *const Texpr) {
+    match *e.ty {
+        Typ::TOwnPtr(_i) => {
+            raise_dp(ar, gs, e.pos, "this call returns an owned pointer that is silently discarded (and leaked) — bind it with `let`, then free, move, or return it");
+        }
+        | _o => { }
+    }
+    return;
+}
+// Assigning over a live owner whose allocator is not known drops the old value
+// on the floor - there is nothing to release it with.
+fn check_assign_leak(a: Allocator, ar: *Arena, gs: *GlueState, e: *const DEntry, pos: Pos) {
+    match e.den_kind {
+        DKind::DBareOwn { bo_pointee, bo_prov } => {
+            match bo_prov {
+                Option::Some(_an) => { }
+                | Option::None => {
+                    let d = dp_disp(gs, e.den_name);
+                    let mut sb = StringBuilder::with_capacity(a, 200 as u32);
+                    sb.push_str("assigning to '"); sb.push_str(d);
+                    sb.push_str("' would silently leak its current value (allocator provenance unknown) — free it or move it first");
+                    raise_dp(ar, gs, pos, str::from_slice(ar, sb.as_slice()));
+                }
+            }
+        }
+        | _o => { }
+    }
+    return;
+}
+// An array of bare `own *T` has no allocator at hand to release its elements
+// with - silent-leak territory, so the reference rejects it rather than emitting
+// a drop it cannot write.
+fn check_array_of_own(a: Allocator, ar: *Arena, gs: *GlueState, ty: *const Typ, pos: Pos) {
+    match *ty {
+        Typ::TArray { elem, size } => {
+            match *elem {
+                Typ::TOwnPtr(_i) => {
+                    raise_dp(ar, gs, pos, "an array of bare `own *T` cannot be auto-dropped (no allocator at hand for the elements) — wrap the pointers in an allocator-carrying struct, or use a Vec");
+                }
+                | _o => { }
+            }
+        }
+        | _o => { }
+    }
+    return;
+}
 fn entry_for(structs: *const Vec<StructSig>, name: str, ty: *const Typ, pos: Pos) -> Option<DEntry> {
     let none_e: Option<DEntry> = Option::None;
     return match *ty {
@@ -1028,7 +1104,17 @@ fn drop_stmts_for_entry(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>
                     maybe_free_own(a, ar, structs, enums, gs, alloc_e, ptr_e, bo_pointee,
                                    size_of_u32(ar, bo_pointee, e.den_pos), e.den_pos, out);
                 }
-                | Option::None => {}   // L1 reject in oracle; valid source never reaches it
+                // L1 (NOT wired, and the reason is measured): the reference
+                // threads the enclosing `defer` bodies through this walk and
+                // applies their consumes BEFORE deciding drops. This port does
+                // not thread them at all, so `let q = ...; defer free(a, q);` -
+                // examples/heap.exl - reaches here Live and the rule fires on
+                // valid code. `selfhost-port-move` caught exactly that.
+                //
+                // The same missing threading is what blocks the defer-reads rule
+                // (lib/drop.ml:1134). They are one prerequisite, not two, and it
+                // is its own round.
+                | Option::None => {}
             }
         }
         | DKind::DArrayDrop { da_sidx, da_size } => {}   // deferred (rare)
@@ -1211,6 +1297,10 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
         | Tstmt::TIf { cond, then_body, else_body } => walk_if(structs, enums, a, ar, gs, st, cond, &then_body, &else_body, out)
         | Tstmt::TWhile { cond, body, post } => walk_while(structs, enums, a, ar, gs, st, cond, &body, &post, s, out)
         | Tstmt::TExprStmt(e) => {
+            // Freeze-audit B12: an expression statement whose value owns
+            // discards that ownership on the floor - the never-consumed check
+            // only ever sees BINDINGS, so nothing else would catch it.
+            check_discarded_own(a, ar, gs, e);
             let st2 = apply_expr(structs, enums, a, ar, st, e);
             out.push(*s);
             st2
@@ -1253,6 +1343,7 @@ fn walk_let(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloc
         if !str::eq(es2[m].den_name, name) { st3.push(es2[m]); }
         m = m + 1 as u32;
     }
+    check_array_of_own(a, ar, gs, value.ty, pos);
     match entry_for(structs, name, value.ty, pos) {
         Option::Some(e) => {
             let e2 = match e.den_kind {
@@ -1282,6 +1373,7 @@ fn walk_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
             let idx = entry_index(&st2, n);
             let es = st2.as_slice();
             let old_live = match es[idx as u32].den_status { DStatus::DLive => true | _o => false };
+            if old_live { check_assign_leak(a, ar, gs, &es[idx as u32], pos); }
             let mut drop_buf: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
             if old_live { drop_stmts_for_entry(a, ar, structs, enums, gs, &es[idx as u32], &drop_buf); }
             // DR-044 sequencing (mirrors walk_return): the RHS may read the old
@@ -1426,13 +1518,42 @@ fn walk_if(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloca
     // branch is a conditional-consume the static drop pass cannot track
     // (it would free the returned buffer).
     if td { if ed { copy_dentries(a, &st0) } else { copy_dentries(a, &st_else) } }
-    else { if ed { copy_dentries(a, &st_then) } else { merge_branches(a, &st_then, &st_else) } }
+    else { if ed { copy_dentries(a, &st_then) } else { merge_branches(a, ar, gs, cond.pos, &st_then, &st_else) } }
 }
 
-// OWN-D3: tracked states after two non-diverging branches must agree.  On a
-// mismatch the oracle errors; valid source never mismatches, so take then.
-fn merge_branches(a: Allocator, st_then: *const Vec<DEntry>, _st_else: *const Vec<DEntry>) -> Vec<DEntry> {
+// OWN-D3: tracked states after two non-diverging branches must agree — a static
+// drop cannot follow a runtime-dependent owner state.  This used to assume
+// "valid source never mismatches" and take `then`, which made the port compile
+// programs the reference rejects: an `own` freed inside a null-guard and left
+// owned outside it is the shape every allocator example starts from.
+//
+// The rule is the PROPERTY, not a list of constructs: every tracked entry's
+// status must agree across the join, whatever produced the branches.
+fn merge_branches(a: Allocator, ar: *Arena, gs: *GlueState, pos: Pos,
+                  st_then: *const Vec<DEntry>, st_else: *const Vec<DEntry>) -> Vec<DEntry> {
+    let tl = st_then.as_slice();
+    let el = st_else.as_slice();
+    let n = if st_then.length() < st_else.length() { st_then.length() } else { st_else.length() };
+    let mut i = 0 as u32;
+    while i < n {
+        if !dstatus_eq(tl[i].den_status, el[i].den_status) {
+            let d = dp_disp(gs, tl[i].den_name);
+            let mut sb = StringBuilder::with_capacity(a, 200 as u32);
+            sb.push_str("'"); sb.push_str(d);
+            sb.push_str("' is moved out on one branch but stays owned on the other — auto-drop is static (no runtime drop flags); consume it on every path or on none");
+            raise_dp(ar, gs, pos, str::from_slice(ar, sb.as_slice()));
+            return copy_dentries(a, st_then);
+        }
+        i = i + 1 as u32;
+    }
     return copy_dentries(a, st_then);
+}
+fn dstatus_eq(x: DStatus, y: DStatus) -> bool {
+    return match x {
+        DStatus::DLive => match y { DStatus::DLive => true | _o => false }
+        | DStatus::DConsumed => match y { DStatus::DConsumed => true | _o => false }
+        | DStatus::DPartial => match y { DStatus::DPartial => true | _o => false }
+    };
 }
 
 fn walk_while(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
@@ -1501,6 +1622,7 @@ fn rewrite_fn(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
     let pts = f.tf_param_tys.as_slice();
     let mut i = 0 as u32;
     while i < f.tf_func.params.length() && i < f.tf_param_tys.length() {
+        check_array_of_own(a, ar, gs, pts[i], f.tf_func.pos);
         match entry_for(structs, ps[i].pname, pts[i], f.tf_func.pos) {
             Option::Some(e) => st.push(e)
             | Option::None => {}
@@ -1518,18 +1640,25 @@ fn rewrite_fn(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
     return;
 }
 
-pub fn drop_insert(a: Allocator, ar: *Arena, tp: *Tprogram) {
+pub fn drop_insert(a: Allocator, ar: *Arena, tp: *Tprogram) -> Option<*const CompileError> {
     // One glue table for the whole program — the request counter is global,
     // so glue-fn names (`__drop_ptr_0`, ...) match the oracle's request order.
     let gk: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let gn: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let gm: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let gkd: Vec<u32> = Vec::with_capacity(a, 8 as u32);
-    let mut glue = GlueState { gs_keys: gk, gs_names: gn, gs_meta: gm, gs_kind: gkd };
+    let mut err: Option<*const CompileError> = Option::None;
+    let mut srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
+    let mut glue = GlueState { gs_err: &err, gs_srcnames: &srcnames,
+                               gs_keys: gk, gs_names: gn, gs_meta: gm, gs_kind: gkd };
     let n = tp.tp_funcs.length();
     let mut i = 0 as u32;
     while i < n {
         with f in tp.tp_funcs[i] {
+            // Display names are per-FUNCTION; point the latch at this one's
+            // before walking it, so a diagnostic quotes what the user wrote
+            // rather than the minted `v__1`.
+            glue.gs_srcnames = &f.tf_srcnames;
             rewrite_fn(&tp.tp_struct_index, &tp.tp_enum_index, a, ar, &glue, f);
         }
         i = i + 1 as u32;
@@ -1539,5 +1668,5 @@ pub fn drop_insert(a: Allocator, ar: *Arena, tp: *Tprogram) {
     // drain_glue pushes each freshly-built Tfunc straight in — never copying one
     // out of a slice (the affine-Vec-fields footgun).
     drain_glue(a, ar, &tp.tp_struct_index, &tp.tp_enum_index, &glue, &tp.tp_funcs);
-    return;
+    return err;
 }

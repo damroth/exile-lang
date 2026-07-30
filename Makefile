@@ -892,7 +892,7 @@ selfhost-port-module-roots: $(SEEDC_TC)
 selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
-                 selfhost-port-drop-ir selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
+                 selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
                  selfhost-seal selfhost-parens selfhost-armreturn
@@ -2041,6 +2041,27 @@ selfhost-port-ir: host-selfhost-tc
 #                 differs: drop insertion not yet reproduced (staged work).
 #   SIG-DIVERGE — differs even after body-masking: a real bug (wrong name,
 #                 type, or footprint, or a mangled body).  Printed.
+# The drop pass's DIAGNOSTIC half, which the port had none of: fourteen
+# `Error.failf` sites in the reference against zero here. These fixtures compare
+# the first line through the drop-running drivers on both sides - `tc-errors`
+# cannot host them, because its port driver stops before drop and would compare
+# the oracle's rejection against the port's silence.
+selfhost-port-drop-errors: host-selfhost-drop
+	@fail=0; n=0; \
+	for f in src/drop_errors/*.exl; do \
+		n=$$((n+1)); \
+		oc=$$($(EXILE) --emit-typed-ir --after-drop --user-only $$f 2>&1 >/dev/null | head -1); \
+		pt=$$(echo $$f | $(HOST_OUT)/selfhost_drop 2>&1 >/dev/null | head -1); \
+		if [ "$$oc" = "$$pt" ] && [ -n "$$pt" ]; then : ; else \
+			echo "selfhost-port-drop-errors: MISMATCH $$(basename $$f)"; \
+			echo "  oracle: $$oc"; echo "  port:   $$pt"; fail=1; fi; \
+	done; \
+	if [ $$n -lt 4 ]; then \
+	  echo "selfhost-port-drop-errors: only $$n fixtures — the corpus is missing files."; exit 1; fi; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-port-drop-errors: clean ($$n fixtures, port == oracle line 1)"; \
+	else exit 1; fi
+
 selfhost-port-drop-ir: host-selfhost-drop
 	@clean=0; unported=0; sig=0; skip=0; \
 	mask='s/(body .*$$/(body ))/'; \

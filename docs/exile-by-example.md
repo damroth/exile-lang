@@ -1991,10 +1991,21 @@ fn main() {
     if p != null {
         *p = 42;
         println(*p);
-        a.free(p);
     }
+    a.free(p);                               // on EVERY path, not just the guarded one
 }
 ```
+
+The `free` sits outside the guard on purpose. Auto-drop is static — there are
+no runtime drop flags — so an owner that is consumed on one branch and still
+owned on the other has no single answer the compiler can emit, and that is
+rejected:
+
+    'p' is moved out on one branch but stays owned on the other — auto-drop is
+    static (no runtime drop flags); consume it on every path or on none
+
+Freeing a null pointer is a no-op, so moving the `free` out of the guard costs
+nothing and keeps one owner with one lifetime.
 
 [examples/allocator_demo.exl](../examples/allocator_demo.exl)
 
