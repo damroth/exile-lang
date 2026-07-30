@@ -1,0 +1,11 @@
+// Arity answers before the arguments are unified. An EXTRA argument binds a type
+// parameter a SECOND time, so with the checks in the other order the conflict
+// spoke first and this read `T inferred as both 'i32' and 'Allocator'`. A missing
+// argument binds nothing, which is why only this side of the count diverged.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(a, 7);
+    println(v.length() as int);
+}

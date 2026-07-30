@@ -1,0 +1,6 @@
+// The same order on the free-generic path, where it already held: this fixture
+// is COVERAGE, not a floor for the round that added it - reverting that round
+// leaves it green. It reddens if this path ever acquires the ordering mistake
+// the prelude path had.
+fn pair<T>(x: *T, n: int) -> int { return n; }
+fn main() { let mut v = 5; println(pair(&v, 1, true)); }

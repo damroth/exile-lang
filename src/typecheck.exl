@@ -2535,6 +2535,27 @@ fn method_disp(a: Allocator, ar: *Arena, mpath: *const Vec<str>, name: str) -> s
     sb.push_str(name);
     return str::from_slice(ar, sb.as_slice());
 }
+// Arity runs BEFORE the arguments are unified, because an EXTRA argument binds a
+// type parameter a second time and the conflict would otherwise answer first:
+// `v.push(a, 7)` reported `T inferred as both 'i32' and 'Allocator'` where the
+// reference reports `'Vec__push' expects 2 argument(s), got 3`. A missing
+// argument binds nothing, which is why only the extra-argument side diverged and
+// why the order is easy to get wrong in one direction only.
+//
+// The reference names the two messages differently and the arity one counts the
+// receiver: `'Box__set' expects 3 argument(s), got 2` against `argument 2 of
+// 'Box::set'`. Mirrored rather than unified.
+fn check_gen_call_arity(a: Allocator, ar: *Arena, sc: *const TyScope, aname: str,
+                        anns: *const Vec<*const TypeAnn>, skip: u32,
+                        targs: *const Vec<*const Texpr>, p: Pos) {
+    let total = anns.length();
+    let np = if total > skip { total - skip } else { 0 as u32 };
+    let na = targs.length();
+    if total <= skip && na > 0 as u32 { return; }
+    if na == np { return; }
+    check_arity(a, ar, sc, "", aname, total, na + skip, false, p);
+    return;
+}
 fn check_gen_call_args(a: Allocator, ar: *Arena, sc: *const TyScope, cscope: *const TyScope,
                        aname: str, name: str, anns: *const Vec<*const TypeAnn>, skip: u32,
                        targs: *const Vec<*const Texpr>, raw: *const Vec<*const Expr>, p: Pos) {
@@ -2547,13 +2568,7 @@ fn check_gen_call_args(a: Allocator, ar: *Arena, sc: *const TyScope, cscope: *co
     // is DATA AVAILABILITY, not "is this a prelude method" - which was the first
     // cut and excluded `Allocator::free`, whose signature is right there.
     if total <= skip && na > 0 as u32 { return; }
-    // The reference names the two messages differently and the arity one counts
-    // the receiver: `'Box__set' expects 3 argument(s), got 2` against `argument 2
-    // of 'Box::set'`. Mirrored rather than unified.
-    if na != np {
-        check_arity(a, ar, sc, "", aname, total, na + skip, false, p);
-        return;
-    }
+    if na != np { return; }
     let asl = anns.as_slice();
     let tsl = targs.as_slice();
     let rsl = raw.as_slice();
@@ -3205,6 +3220,8 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let gi = gsl[gfidx as u32].gn_idx;
     let base = gsl[gfidx as u32].gn_mangled;
     let targs = elab_args(a, ar, g, sc, env, args);
+    check_gen_call_arity(a, ar, sc, gsl[gfidx as u32].gn_name,
+                         &gsl[gfidx as u32].gn_params, 0 as u32, &targs, p);
     let cvis = tbinds_visible(a, sc.sc_tbinds, &gsl[gfidx as u32].gn_tparams);
     let cscope = scope_with_tparams_binds(sc, &gsl[gfidx as u32].gn_tparams, &cvis);
     let cret = resolve_sig_ret(a, ar, &cscope, gsl[gfidx as u32].gn_ret, p);
@@ -3960,6 +3977,8 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     bind_recv_tparams(a, ar, sc, &sl[midx].mi_path, &inst_path, &binds);
     let targs = elab_args(a, ar, g, sc, env, args);
+    check_gen_call_arity(a, ar, sc, sl[midx].mi_mangled, &sl[midx].mi_params,
+                         1 as u32, &targs, p);
     // Adapter methods carry a method-only tparam (`F`) bound from the args; for
     // ordinary struct-gen methods every tparam is already recovered, so this is
     // a no-op.  Binding it before `cret` lets the adapter return instance
@@ -4006,6 +4025,8 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     let midx2 = sl[midx].mi_meth_idx;
     let prelude = sl[midx].mi_prelude;
     let targs = elab_args(a, ar, g, sc, env, args);
+    check_gen_call_arity(a, ar, sc, sl[midx].mi_mangled, &sl[midx].mi_params,
+                         1 as u32, &targs, p);
     let mvis = tbinds_visible(a, sc.sc_tbinds, &sl[midx].mi_tparams);
     let cscope = scope_with_tparams_binds(sc, &sl[midx].mi_tparams, &mvis);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
