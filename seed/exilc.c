@@ -456,6 +456,8 @@ static void ir__collect_vars_fields(const struct ex_Vec_ir__TexprField *fs, stru
 static void ir__collect_vars_opt(struct ex_Option_cptr_ir__Texpr e, struct ex_Vec_str *out);
 void ir__collect_tstmts_vars(const struct ex_Vec_ir__Tstmt *stmts, struct ex_Vec_str *out);
 static void ir__collect_tstmt_vars(const struct ir__Tstmt *s, struct ex_Vec_str *out);
+void ir__collect_tstmts_vars_own(const struct ex_Vec_ir__Tstmt *stmts, struct ex_Vec_str *out);
+static void ir__collect_tstmt_vars_own(const struct ir__Tstmt *s, struct ex_Vec_str *out);
 static struct parser__Parser parser__new_parser(struct ex_Allocator a, struct ex_Arena *ar, struct ex_Slice_token__TokenPos toks, unsigned long n);
 static int parser__is_err(const struct parser__Parser *s);
 static void parser__fail(struct parser__Parser *s, struct pos__Pos p, const char *msg);
@@ -6717,6 +6719,127 @@ static void ir__collect_tstmt_vars(const struct ir__Tstmt *s, struct ex_Vec_str 
                 struct ex_Vec_ir__Tstmt body = __m.data.TForEach.body;
                 ir__collect_texpr_vars(it_init, out);
                 ir__collect_tstmts_vars(&body, out);
+                break;
+            }
+        case ir__Tstmt_TBreak:
+            {
+                break;
+            }
+        case ir__Tstmt_TContinue:
+        default:
+            {
+                break;
+            }
+        }
+    }
+    return;
+}
+
+void ir__collect_tstmts_vars_own(const struct ex_Vec_ir__Tstmt *stmts, struct ex_Vec_str *out) {
+    struct ex_Slice_ir__Tstmt sl;
+    unsigned long i;
+    sl = Vec__as_slice_ir__Tstmt(stmts);
+    i = ((unsigned long)0);
+    while (i < Vec__length_ir__Tstmt(stmts)) {
+        ir__collect_tstmt_vars_own(&(sl.ptr[i]), out);
+        i = i + ((unsigned long)1);
+    }
+    return;
+}
+
+static void ir__collect_tstmt_vars_own(const struct ir__Tstmt *s, struct ex_Vec_str *out) {
+    {
+        struct ir__Tstmt __m;
+        __m = *s;
+        switch (__m.tag) {
+        case ir__Tstmt_TLet:
+            {
+                const struct ir__Texpr *value = __m.data.TLet.value;
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TLetTuple:
+            {
+                const struct ir__Texpr *value = __m.data.TLetTuple.value;
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TAssign:
+            {
+                const struct ir__Texpr *value = __m.data.TAssign.value;
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TAssignField:
+            {
+                const struct ir__Texpr *target = __m.data.TAssignField.target;
+                const struct ir__Texpr *value = __m.data.TAssignField.value;
+                ir__collect_texpr_vars(target, out);
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TAssignDeref:
+            {
+                const struct ir__Texpr *target = __m.data.TAssignDeref.target;
+                const struct ir__Texpr *value = __m.data.TAssignDeref.value;
+                ir__collect_texpr_vars(target, out);
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TAssignIndex:
+            {
+                const struct ir__Texpr *base = __m.data.TAssignIndex.base;
+                const struct ir__Texpr *index = __m.data.TAssignIndex.index;
+                const struct ir__Texpr *value = __m.data.TAssignIndex.value;
+                ir__collect_texpr_vars(base, out);
+                ir__collect_texpr_vars(index, out);
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TReturn:
+            {
+                struct ex_Option_cptr_ir__Texpr value = __m.data.TReturn.value;
+                ir__collect_vars_opt(value, out);
+                break;
+            }
+        case ir__Tstmt_TExprStmt:
+            {
+                const struct ir__Texpr *e = __m.data.TExprStmt._0;
+                ir__collect_texpr_vars(e, out);
+                break;
+            }
+        case ir__Tstmt_TIf:
+            {
+                const struct ir__Texpr *cond = __m.data.TIf.cond;
+                ir__collect_texpr_vars(cond, out);
+                break;
+            }
+        case ir__Tstmt_TWhile:
+            {
+                const struct ir__Texpr *cond = __m.data.TWhile.cond;
+                ir__collect_texpr_vars(cond, out);
+                break;
+            }
+        case ir__Tstmt_TFor:
+            {
+                const struct ir__Texpr *lo = __m.data.TFor.lo;
+                const struct ir__Texpr *hi = __m.data.TFor.hi;
+                ir__collect_texpr_vars(lo, out);
+                ir__collect_texpr_vars(hi, out);
+                break;
+            }
+        case ir__Tstmt_TForEach:
+            {
+                const struct ir__Texpr *it_init = __m.data.TForEach.it_init;
+                ir__collect_texpr_vars(it_init, out);
+                break;
+            }
+        case ir__Tstmt_TDefer:
+            {
+                break;
+            }
+        case ir__Tstmt_TSeal:
+            {
                 break;
             }
         case ir__Tstmt_TBreak:
@@ -61546,7 +61669,7 @@ static void drop__check_defer_reads(const struct ex_Vec_ir__StructSig *structs, 
     struct ex_StringBuilder sb;
     after = drop__apply_stmts_consumes(structs, enums, a, ar, st, body);
     reads = Vec__with_capacity_str(a, ((unsigned long)8));
-    ir__collect_tstmts_vars(body, &reads);
+    ir__collect_tstmts_vars_own(body, &reads);
     sl = Vec__as_slice_drop__DEntry(st);
     asl = Vec__as_slice_drop__DEntry(&after);
     i = ((unsigned long)0);

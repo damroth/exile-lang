@@ -1340,7 +1340,7 @@ fn check_defer_reads(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
                      gs: *GlueState, st: *const Vec<DEntry>, body: *const Vec<Tstmt>, pos: Pos) {
     let after = apply_stmts_consumes(structs, enums, a, ar, st, body);
     let mut reads: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    collect_tstmts_vars(body, &reads);
+    collect_tstmts_vars_own(body, &reads);
     let sl = st.as_slice();
     let asl = after.as_slice();
     let mut i = 0 as u32;

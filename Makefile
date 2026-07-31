@@ -2058,8 +2058,23 @@ selfhost-port-drop-errors: host-selfhost-drop
 	done; \
 	if [ $$n -lt 4 ]; then \
 	  echo "selfhost-port-drop-errors: only $$n fixtures — the corpus is missing files."; exit 1; fi; \
+	an=0; \
+	for f in src/drop_accepts/*.exl; do \
+		an=$$((an+1)); \
+		$(EXILE) --emit-typed-ir --after-drop --user-only $$f >/dev/null 2>$(C_OUT)/dacc_o.err; ro=$$?; \
+		echo $$f | $(HOST_OUT)/selfhost_drop >/dev/null 2>$(C_OUT)/dacc_p.err; rp=$$?; \
+		if [ $$ro -ne 0 ]; then \
+			echo "selfhost-port-drop-errors: the REFERENCE rejects $$(basename $$f) — an accept fixture must be accepted by both"; \
+			head -1 $(C_OUT)/dacc_o.err; fail=1; \
+		elif [ -s $(C_OUT)/dacc_p.err ]; then \
+			echo "selfhost-port-drop-errors: NARROWING — the port rejects $$(basename $$f), which the reference accepts"; \
+			head -1 $(C_OUT)/dacc_p.err; fail=1; \
+		fi; \
+	done; \
+	if [ $$an -lt 4 ]; then \
+	  echo "selfhost-port-drop-errors: only $$an accept fixtures — the rule's non-narrowing side is unmeasured."; exit 1; fi; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-port-drop-errors: clean ($$n fixtures, port == oracle line 1)"; \
+	  echo "selfhost-port-drop-errors: clean ($$n rejections + $$an accepts, port == oracle line 1; the accepts pin that the rule does not narrow the language)"; \
 	else exit 1; fi
 
 selfhost-port-drop-ir: host-selfhost-drop
