@@ -1332,6 +1332,35 @@ fn apply_block_defers(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>
     }
     return cur;
 }
+// A `defer` body that READS a tracked owner which it does not also consume runs
+// against storage the auto-drop already released - the drop is emitted at scope
+// exit, the deferred code runs after it. A defer that CONSUMES the binding
+// (`free(a, p)`, `s.free()`) elides that drop and stays legal.
+fn check_defer_reads(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                     gs: *GlueState, st: *const Vec<DEntry>, body: *const Vec<Tstmt>, pos: Pos) {
+    let after = apply_stmts_consumes(structs, enums, a, ar, st, body);
+    let mut reads: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_tstmts_vars(body, &reads);
+    let sl = st.as_slice();
+    let asl = after.as_slice();
+    let mut i = 0 as u32;
+    while i < st.length() {
+        let n = sl[i].den_name;
+        let was_live = match sl[i].den_status { DStatus::DConsumed => false | _o => true };
+        let now_consumed = match asl[i].den_status { DStatus::DConsumed => true | _o => false };
+        if was_live && !now_consumed && name_in(&reads, n) {
+            let d = dp_disp(gs, n);
+            let mut sb = StringBuilder::with_capacity(a, 200 as u32);
+            sb.push_str("defer body reads '"); sb.push_str(d);
+            sb.push_str("', but '"); sb.push_str(d);
+            sb.push_str("' is auto-dropped before deferred code runs — consume it inside the defer (free/drop) or restructure without defer");
+            raise_dp(ar, gs, pos, str::from_slice(ar, sb.as_slice()));
+            return;
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
 fn walk_stmts(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
               st_in: *const Vec<DEntry>, stmts: *const Vec<Tstmt>, out: *Vec<Tstmt>) -> Vec<DEntry> {
     let baseline = names_of(a, st_in);
@@ -1387,6 +1416,11 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             let st2 = apply_expr(structs, enums, a, ar, st, e);
             out.push(*s);
             st2
+        }
+        | Tstmt::TDefer { body, pos } => {
+            check_defer_reads(structs, enums, a, ar, gs, st, &body, pos);
+            out.push(*s);
+            copy_dentries(a, st)
         }
         | Tstmt::TAssignField { target, field, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
         | Tstmt::TAssignIndex { base, index, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)

@@ -183,7 +183,7 @@ struct escape__Binding { const char *bname; struct escape__Prov bprov; struct ex
 struct escape__SumEntry { const char *sname; unsigned long smask; int swiden; };
 struct escape__Esc { struct ex_Vec_escape__SumEntry *e_sum; struct ex_Vec_str *e_pnames; struct ex_Vec_bool *e_pown; int e_report; struct ex_Option_cptr_error__CompileError *e_err; struct escape__Prov *e_ret; const struct ex_Vec_ir__StrPair *e_srcnames; };
 struct ex_Vec_u32 { unsigned long *ptr; unsigned long count; unsigned long cap; struct ex_Allocator alloc; };
-struct drop__GlueState { struct ex_Vec_str gs_keys; struct ex_Vec_str gs_names; struct ex_Vec_cptr_ir__Typ gs_meta; struct ex_Vec_u32 gs_kind; };
+struct drop__GlueState { struct ex_Option_cptr_error__CompileError *gs_err; struct ex_Vec_ir__StrPair *gs_srcnames; struct ex_Vec_str gs_keys; struct ex_Vec_str gs_names; struct ex_Vec_cptr_ir__Typ gs_meta; struct ex_Vec_u32 gs_kind; };
 enum drop__DStatus_tag { drop__DStatus_DLive, drop__DStatus_DConsumed, drop__DStatus_DPartial };
 struct drop__DStatus { enum drop__DStatus_tag tag; };
 enum drop__DKind_tag { drop__DKind_DStructDrop, drop__DKind_DArrayDrop, drop__DKind_DBareOwn };
@@ -247,6 +247,10 @@ struct ex_Vec_lint__NamePos { struct lint__NamePos *ptr; unsigned long count; un
 struct ex_Vec_lint__LWarn { struct lint__LWarn *ptr; unsigned long count; unsigned long cap; struct ex_Allocator alloc; };
 struct ex_Slice_cptr_ir__Typ { const struct ir__Typ * *ptr; unsigned long len; };
 struct ex_Slice_str { const char * *ptr; unsigned long len; };
+struct ex_Slice_ir__TmatchArm { const struct ir__TmatchArm *ptr; unsigned long len; };
+struct ex_Slice_cptr_ir__Texpr { const struct ir__Texpr * *ptr; unsigned long len; };
+struct ex_Slice_ir__TexprField { const struct ir__TexprField *ptr; unsigned long len; };
+struct ex_Slice_ir__Tstmt { const struct ir__Tstmt *ptr; unsigned long len; };
 struct ex_Slice_cptr_ast__TypeAnn { const struct ast__TypeAnn * *ptr; unsigned long len; };
 struct ex_Slice_cptr_ast__Expr { const struct ast__Expr * *ptr; unsigned long len; };
 struct ex_Slice_ast__FieldDef { const struct ast__FieldDef *ptr; unsigned long len; };
@@ -267,7 +271,6 @@ struct ex_Slice_typecheck__TypeAlias { const struct typecheck__TypeAlias *ptr; u
 struct ex_Slice_ir__FieldTy { const struct ir__FieldTy *ptr; unsigned long len; };
 struct ex_Slice_typecheck__GlobalFn { const struct typecheck__GlobalFn *ptr; unsigned long len; };
 struct ex_Slice_typecheck__FnSig { const struct typecheck__FnSig *ptr; unsigned long len; };
-struct ex_Slice_cptr_ir__Texpr { const struct ir__Texpr * *ptr; unsigned long len; };
 struct ex_Slice_typecheck__ImplReg { const struct typecheck__ImplReg *ptr; unsigned long len; };
 struct ex_Slice_ast__Field { const struct ast__Field *ptr; unsigned long len; };
 struct ex_Slice_typecheck__GenFn { const struct typecheck__GenFn *ptr; unsigned long len; };
@@ -283,16 +286,13 @@ struct ex_Slice_cptr_typecheck__Cpat { const struct typecheck__Cpat * *ptr; unsi
 struct ex_Slice_ex_Vec_cptr_typecheck__Cpat { const struct ex_Vec_cptr_typecheck__Cpat *ptr; unsigned long len; };
 struct ex_Slice_typecheck__Ctor { const struct typecheck__Ctor *ptr; unsigned long len; };
 struct ex_Slice_ast__MatchArm { const struct ast__MatchArm *ptr; unsigned long len; };
-struct ex_Slice_ir__TmatchArm { const struct ir__TmatchArm *ptr; unsigned long len; };
 struct ex_Slice_i32 { const long *ptr; unsigned long len; };
 struct ex_Slice_ast__Stmt { const struct ast__Stmt *ptr; unsigned long len; };
-struct ex_Slice_ir__TexprField { const struct ir__TexprField *ptr; unsigned long len; };
 struct ex_Slice_typecheck__WardFieldEntry { const struct typecheck__WardFieldEntry *ptr; unsigned long len; };
 struct ex_Slice_typecheck__LiftedLambda { const struct typecheck__LiftedLambda *ptr; unsigned long len; };
 struct ex_Slice_typecheck__LeBind { const struct typecheck__LeBind *ptr; unsigned long len; };
 struct ex_Slice_typecheck__TopRune { const struct typecheck__TopRune *ptr; unsigned long len; };
 struct ex_Slice_ast__WardField { const struct ast__WardField *ptr; unsigned long len; };
-struct ex_Slice_ir__Tstmt { const struct ir__Tstmt *ptr; unsigned long len; };
 struct ex_Slice_ast__SigilRange { const struct ast__SigilRange *ptr; unsigned long len; };
 struct ex_Slice_typecheck__ClaimEntry { const struct typecheck__ClaimEntry *ptr; unsigned long len; };
 struct ex_Slice_typecheck__SigilRangeEntry { const struct typecheck__SigilRangeEntry *ptr; unsigned long len; };
@@ -449,6 +449,13 @@ int ir__dir_attenuates(struct ast__Direction from, struct ast__Direction to);
 int ir__int_fits(long n, const struct ir__Typ *t);
 static int ir__int_fits_width(long n, int is_signed, struct ast__IntWidth w);
 static int ir__int_fits_bounds(long n, int is_signed, unsigned long bits);
+void ir__collect_texpr_vars(const struct ir__Texpr *te, struct ex_Vec_str *out);
+static void ir__collect_vars_arms(const struct ex_Vec_ir__TmatchArm *arms, struct ex_Vec_str *out);
+static void ir__collect_vars_args(const struct ex_Vec_cptr_ir__Texpr *es, struct ex_Vec_str *out);
+static void ir__collect_vars_fields(const struct ex_Vec_ir__TexprField *fs, struct ex_Vec_str *out);
+static void ir__collect_vars_opt(struct ex_Option_cptr_ir__Texpr e, struct ex_Vec_str *out);
+void ir__collect_tstmts_vars(const struct ex_Vec_ir__Tstmt *stmts, struct ex_Vec_str *out);
+static void ir__collect_tstmt_vars(const struct ir__Tstmt *s, struct ex_Vec_str *out);
 static struct parser__Parser parser__new_parser(struct ex_Allocator a, struct ex_Arena *ar, struct ex_Slice_token__TokenPos toks, unsigned long n);
 static int parser__is_err(const struct parser__Parser *s);
 static void parser__fail(struct parser__Parser *s, struct pos__Pos p, const char *msg);
@@ -1272,7 +1279,11 @@ static void typecheck__assign_const_ptr(struct ex_Allocator a, struct ex_Arena *
 static void typecheck__assign_non_ptr(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ir__Typ *t, struct pos__Pos p);
 static void typecheck__check_assign_target(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, const struct ex_Vec_str *path, struct pos__Pos p);
 static int typecheck__global_is_const(const struct ex_Vec_typecheck__GlobalFn *g, const char *name);
-static const struct ir__Texpr *typecheck__assign_coerced_value(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, const struct ex_Vec_str *path, const struct ast__Expr *value);
+static int typecheck__lit_overflows_slot(const struct ast__Expr *raw, const struct ir__Typ *t);
+static const struct ir__Typ *typecheck__none_typ(struct ex_Arena *ar);
+static int typecheck__is_none_typ(const struct ir__Typ *t);
+static void typecheck__check_assign_value(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ex_Vec_str *path, const struct ast__Expr *raw, const struct ir__Texpr *av, struct ex_Option_cptr_ir__Typ exp, struct pos__Pos pos);
+static const struct ir__Texpr *typecheck__assign_coerced_value(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, const struct ex_Vec_str *path, const struct ast__Expr *value, struct pos__Pos pos);
 static void typecheck__elab_tail_stmt(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, struct ex_Option_cptr_ir__Typ expected, const struct ast__Expr *e, struct ex_Vec_ir__FieldTy *benv, struct ex_Vec_ir__Tstmt *tstmts, struct ex_Option_cptr_ir__Texpr *trailing);
 static int typecheck__is_bare_if(const struct ast__Expr *e);
 static const struct ir__Typ *typecheck__rune_elem_ty(const struct ir__Typ *t);
@@ -1628,6 +1639,8 @@ static const char *typecheck__int_to_str_c(struct ex_Allocator a, struct ex_Aren
 static void typecheck__collect_tp_consts(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_ast__Item *items, const struct ex_Vec_str *path, struct ex_Vec_typecheck__IntConst *table, struct ex_Vec_ir__StrPair *out);
 static void typecheck__push_one_field(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ex_Vec_str *spath, const struct ast__FieldDef *fd, struct ex_Vec_typecheck__StructField *out, struct pos__Pos p);
 static void typecheck__push_struct_fields(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ex_Vec_str *spath, const struct ex_Vec_ast__FieldDef *fields, struct ex_Vec_typecheck__StructField *out, struct pos__Pos p);
+static void typecheck__check_own_field_allocator(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ex_Vec_str *spath, const struct ex_Vec_ast__FieldDef *fields, struct pos__Pos p);
+static int typecheck__is_own_ptr_ty(const struct ir__Typ *t);
 static void typecheck__push_prelude_field(struct ex_Allocator a, const char *sname, const char *fname, const struct ir__Typ *fty, struct ex_Vec_typecheck__StructField *out);
 static void typecheck__prelude_struct_info(struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_typecheck__StructField *out);
 static const struct ir__Typ *typecheck__slot_kv_ty(struct ex_Allocator a, struct ex_Arena *ar);
@@ -2087,6 +2100,8 @@ static struct ex_Vec_move__MoveBinding move__walk_expr(const struct ex_Vec_ir__S
 static struct ex_Vec_move__MoveBinding move__walk_field_values(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, const struct ex_Vec_move__MoveBinding *live, const struct ex_Vec_ir__TexprField *fields);
 static struct ex_Vec_move__MoveBinding move__walk_lit_fields(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, const struct ex_Vec_move__MoveBinding *live, const struct ex_Vec_ir__TexprField *fields, struct ex_Option_cptr_ir__Texpr base);
 static struct ex_Vec_move__MoveBinding move__walk_stmts_e(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, struct ex_Option_cptr_ir__Typ ret_ty, const struct ex_Vec_move__MoveBinding *live, const struct ex_Vec_ir__Tstmt *stmts);
+static struct ex_Vec_move__MoveBinding move__walk_non_defer(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, struct ex_Option_cptr_ir__Typ ret_ty, struct ex_Vec_move__MoveBinding acc, const struct ir__Tstmt *s);
+static struct ex_Vec_move__MoveBinding move__walk_defer_body(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, struct ex_Option_cptr_ir__Typ ret_ty, struct ex_Vec_move__MoveBinding acc, const struct ir__Tstmt *s);
 static struct ex_Vec_move__MoveBinding move__walk_stmt_e(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, struct ex_Option_cptr_ir__Typ ret_ty, const struct ex_Vec_move__MoveBinding *live, const struct ir__Tstmt *s);
 static struct ex_Vec_move__MoveBinding move__walk_let_e(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, const struct ex_Vec_move__MoveBinding *live, const char *name, const struct ir__Texpr *value);
 static struct ex_Vec_move__MoveBinding move__walk_assign_e(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, const struct ex_Vec_move__MoveBinding *live, const struct ex_Vec_str *path, const struct ir__Texpr *value);
@@ -2256,6 +2271,11 @@ static void drop__drain_glue(struct ex_Allocator a, struct ex_Arena *ar, const s
 static struct ex_Option_str drop__prov_of(const struct ir__Texpr *value);
 static struct ex_Option_str drop__prov_of_call(const char *mangled, const struct ex_Vec_cptr_ir__Texpr *args);
 static struct ex_Option_str drop__prov_of_alloc(struct ex_Option_cptr_ir__Texpr alloc);
+static void drop__raise_dp(struct ex_Arena *ar, struct drop__GlueState *gs, struct pos__Pos pos, const char *msg);
+static const char *drop__dp_disp(const struct drop__GlueState *gs, const char *n);
+static void drop__check_discarded_own(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ir__Texpr *e);
+static void drop__check_assign_leak(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct drop__DEntry *e, struct pos__Pos pos);
+static void drop__check_array_of_own(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ir__Typ *ty, struct pos__Pos pos);
 static struct ex_Option_drop__DEntry drop__entry_for(const struct ex_Vec_ir__StructSig *structs, const char *name, const struct ir__Typ *ty, struct pos__Pos pos);
 static struct ex_Option_drop__DEntry drop__entry_for_struct(const struct ex_Vec_ir__StructSig *structs, const char *name, const struct ir__Typ *ty, const struct ex_Vec_str *path, struct pos__Pos pos);
 static const struct ir__Texpr *drop__field_access(struct ex_Arena *ar, const struct ir__Texpr *base, const char *name, const struct ir__Typ *ty, struct pos__Pos pos);
@@ -2291,6 +2311,13 @@ static struct ex_Vec_drop__DEntry drop__apply_expr(const struct ex_Vec_ir__Struc
 static struct ex_Vec_drop__DEntry drop__consume_rhs_var(const struct ex_Vec_ir__StructSig *structs, struct ex_Allocator a, const struct ex_Vec_drop__DEntry *st, const struct ir__Texpr *value);
 static struct ex_Vec_drop__DEntry drop__consume_one(struct ex_Allocator a, const struct ex_Vec_drop__DEntry *st, const char *n);
 static int drop__ends_in_return(const struct ex_Vec_ir__Tstmt *out);
+static struct ex_Vec_drop__DEntry drop__apply_stmts_consumes(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_drop__DEntry *st, const struct ex_Vec_ir__Tstmt *stmts);
+static struct ex_Vec_drop__DEntry drop__apply_stmt_consumes(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, const struct ir__Tstmt *s);
+static struct ex_Vec_drop__DEntry drop__apply_two(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, const struct ir__Texpr *x, const struct ir__Texpr *y);
+static struct ex_Vec_drop__DEntry drop__apply_three(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, const struct ir__Texpr *x, const struct ir__Texpr *y, const struct ir__Texpr *z);
+static struct ex_Vec_drop__DEntry drop__apply_opt(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, struct ex_Option_cptr_ir__Texpr v);
+static struct ex_Vec_drop__DEntry drop__apply_block_defers(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_drop__DEntry *st, const struct ex_Vec_ir__Tstmt *stmts);
+static void drop__check_defer_reads(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st, const struct ex_Vec_ir__Tstmt *body, struct pos__Pos pos);
 static struct ex_Vec_drop__DEntry drop__walk_stmts(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st_in, const struct ex_Vec_ir__Tstmt *stmts, struct ex_Vec_ir__Tstmt *out);
 static struct ex_Vec_drop__DEntry drop__step(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, struct ex_Vec_drop__DEntry st, const struct ir__Tstmt *s, struct ex_Vec_ir__Tstmt *out);
 static struct ex_Vec_drop__DEntry drop__walk_stmt(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st, const struct ir__Tstmt *s, struct ex_Vec_ir__Tstmt *out);
@@ -2306,14 +2333,15 @@ static const char *drop__mk_drop_tmp(struct ex_Allocator a, struct ex_Arena *ar,
 static const char *drop__mk_drop_old_tmp(struct ex_Allocator a, struct ex_Arena *ar, struct pos__Pos pos);
 static void drop__emit_ret_temp(struct ex_Allocator a, struct ex_Arena *ar, struct ex_Option_cptr_ir__Texpr value, struct pos__Pos pos, const struct ex_Vec_ir__Tstmt *drop_buf, struct ex_Vec_ir__Tstmt *out);
 static struct ex_Vec_drop__DEntry drop__walk_if(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st, const struct ir__Texpr *cond, const struct ex_Vec_ir__Tstmt *then_body, const struct ex_Vec_ir__Tstmt *else_body, struct ex_Vec_ir__Tstmt *out);
-static struct ex_Vec_drop__DEntry drop__merge_branches(struct ex_Allocator a, const struct ex_Vec_drop__DEntry *st_then, const struct ex_Vec_drop__DEntry *_st_else);
+static struct ex_Vec_drop__DEntry drop__merge_branches(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, struct pos__Pos pos, const struct ex_Vec_drop__DEntry *st_then, const struct ex_Vec_drop__DEntry *st_else);
+static int drop__dstatus_eq(struct drop__DStatus x, struct drop__DStatus y);
 static struct ex_Vec_drop__DEntry drop__walk_while(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st, const struct ir__Texpr *cond, const struct ex_Vec_ir__Tstmt *body, const struct ex_Vec_ir__Tstmt *post, const struct ir__Tstmt *_s, struct ex_Vec_ir__Tstmt *out);
 static int drop__is_drop_temp(const char *name);
 static int drop__drop_lets_has(const struct ex_Vec_ir__FieldTy *lets, const char *name);
 static void drop__maybe_push_drop_temp(struct ex_Vec_ir__FieldTy *lets, const char *name, const struct ir__Typ *decl_ty);
 static void drop__collect_drop_temps(const struct ex_Vec_ir__Tstmt *stmts, struct ex_Vec_ir__FieldTy *lets);
 static void drop__rewrite_fn(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, struct ir__Tfunc *f);
-void drop__drop_insert(struct ex_Allocator a, struct ex_Arena *ar, struct ir__Tprogram *tp);
+struct ex_Option_cptr_error__CompileError drop__drop_insert(struct ex_Allocator a, struct ex_Arena *ar, struct ir__Tprogram *tp);
 static const char *codegen__mangle_name(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_str *path, const char *name);
 static struct ex_Vec_str codegen__split_colons(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_str *path);
 static const char *codegen__mangle_named_path(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_str *path0);
@@ -2645,6 +2673,7 @@ static void ex_report_wrote(struct ex_Allocator a, const char *cpath);
 static void ex_report_built(struct ex_Allocator a, const char *out);
 static void ex_report_amiga(struct ex_Allocator a, const char *out);
 static const char *ex_read_source(struct ex_Allocator a, struct ex_Arena *ar, const char *path);
+static void ex_drop_report(struct ex_Allocator a, struct ex_Option_cptr_error__CompileError e);
 struct ex_Arena Arena__with_capacity(struct ex_Allocator a, unsigned long bytes);
 struct ex_StringBuilder StringBuilder__with_capacity(struct ex_Allocator a, unsigned long hint);
 static void StringBuilder__grow(struct ex_StringBuilder *self, unsigned long new_cap);
@@ -2669,8 +2698,16 @@ struct ex_Slice_cptr_ir__Typ Vec__as_slice_cptr_ir__Typ(const struct ex_Vec_cptr
 unsigned long Vec__length_cptr_ir__Typ(const struct ex_Vec_cptr_ir__Typ *self);
 struct ex_Slice_str Vec__as_slice_str(const struct ex_Vec_str *self);
 unsigned long Vec__length_str(const struct ex_Vec_str *self);
-struct ex_Vec_str Vec__with_capacity_str(struct ex_Allocator a, unsigned long hint);
 void Vec__push_str(struct ex_Vec_str *self, const char *x);
+struct ex_Slice_ir__TmatchArm Vec__as_slice_ir__TmatchArm(const struct ex_Vec_ir__TmatchArm *self);
+unsigned long Vec__length_ir__TmatchArm(const struct ex_Vec_ir__TmatchArm *self);
+struct ex_Slice_cptr_ir__Texpr Vec__as_slice_cptr_ir__Texpr(const struct ex_Vec_cptr_ir__Texpr *self);
+unsigned long Vec__length_cptr_ir__Texpr(const struct ex_Vec_cptr_ir__Texpr *self);
+struct ex_Slice_ir__TexprField Vec__as_slice_ir__TexprField(const struct ex_Vec_ir__TexprField *self);
+unsigned long Vec__length_ir__TexprField(const struct ex_Vec_ir__TexprField *self);
+struct ex_Slice_ir__Tstmt Vec__as_slice_ir__Tstmt(const struct ex_Vec_ir__Tstmt *self);
+unsigned long Vec__length_ir__Tstmt(const struct ex_Vec_ir__Tstmt *self);
+struct ex_Vec_str Vec__with_capacity_str(struct ex_Allocator a, unsigned long hint);
 struct ast__TypeAnn *Arena__alloc_borrowed_ast__TypeAnn(struct ex_Arena *self);
 struct ex_Vec_cptr_ast__TypeAnn Vec__with_capacity_cptr_ast__TypeAnn(struct ex_Allocator a, unsigned long hint);
 void Vec__push_cptr_ast__TypeAnn(struct ex_Vec_cptr_ast__TypeAnn *self, const struct ast__TypeAnn *x);
@@ -2764,8 +2801,6 @@ unsigned long Vec__length_typecheck__GlobalFn(const struct ex_Vec_typecheck__Glo
 struct ex_Slice_typecheck__GlobalFn Vec__as_slice_typecheck__GlobalFn(const struct ex_Vec_typecheck__GlobalFn *self);
 unsigned long Vec__length_typecheck__FnSig(const struct ex_Vec_typecheck__FnSig *self);
 struct ex_Slice_typecheck__FnSig Vec__as_slice_typecheck__FnSig(const struct ex_Vec_typecheck__FnSig *self);
-unsigned long Vec__length_cptr_ir__Texpr(const struct ex_Vec_cptr_ir__Texpr *self);
-struct ex_Slice_cptr_ir__Texpr Vec__as_slice_cptr_ir__Texpr(const struct ex_Vec_cptr_ir__Texpr *self);
 struct ex_Vec_cptr_ir__Texpr Vec__with_capacity_cptr_ir__Texpr(struct ex_Allocator a, unsigned long hint);
 void Vec__push_cptr_ir__Texpr(struct ex_Vec_cptr_ir__Texpr *self, const struct ir__Texpr *x);
 void Vec__push_typecheck__ImplReg(struct ex_Vec_typecheck__ImplReg *self, struct typecheck__ImplReg x);
@@ -2817,8 +2852,6 @@ unsigned long Vec__length_typecheck__Ctor(const struct ex_Vec_typecheck__Ctor *s
 void Vec__push_ir__TmatchArm(struct ex_Vec_ir__TmatchArm *self, struct ir__TmatchArm x);
 unsigned long Vec__length_ast__MatchArm(const struct ex_Vec_ast__MatchArm *self);
 struct ex_Slice_ast__MatchArm Vec__as_slice_ast__MatchArm(const struct ex_Vec_ast__MatchArm *self);
-unsigned long Vec__length_ir__TmatchArm(const struct ex_Vec_ir__TmatchArm *self);
-struct ex_Slice_ir__TmatchArm Vec__as_slice_ir__TmatchArm(const struct ex_Vec_ir__TmatchArm *self);
 struct ex_Vec_i32 Vec__with_capacity_i32(struct ex_Allocator a, unsigned long hint);
 void Vec__push_i32(struct ex_Vec_i32 *self, long x);
 unsigned long Vec__length_i32(const struct ex_Vec_i32 *self);
@@ -2826,8 +2859,6 @@ struct ex_Slice_i32 Vec__as_slice_i32(const struct ex_Vec_i32 *self);
 struct ex_Vec_ir__TmatchArm Vec__with_capacity_ir__TmatchArm(struct ex_Allocator a, unsigned long hint);
 struct ex_Slice_ast__Stmt Vec__as_slice_ast__Stmt(const struct ex_Vec_ast__Stmt *self);
 unsigned long Vec__length_ast__Stmt(const struct ex_Vec_ast__Stmt *self);
-unsigned long Vec__length_ir__TexprField(const struct ex_Vec_ir__TexprField *self);
-struct ex_Slice_ir__TexprField Vec__as_slice_ir__TexprField(const struct ex_Vec_ir__TexprField *self);
 struct ex_Slice_typecheck__WardFieldEntry Vec__as_slice_typecheck__WardFieldEntry(const struct ex_Vec_typecheck__WardFieldEntry *self);
 unsigned long Vec__length_typecheck__WardFieldEntry(const struct ex_Vec_typecheck__WardFieldEntry *self);
 void Vec__push_ir__Tstmt(struct ex_Vec_ir__Tstmt *self, struct ir__Tstmt x);
@@ -2847,8 +2878,6 @@ void Vec__push_ir__RuneGlobal(struct ex_Vec_ir__RuneGlobal *self, struct ir__Run
 struct ex_Slice_ast__WardField Vec__as_slice_ast__WardField(const struct ex_Vec_ast__WardField *self);
 unsigned long Vec__length_ast__WardField(const struct ex_Vec_ast__WardField *self);
 void Vec__push_typecheck__WardFieldEntry(struct ex_Vec_typecheck__WardFieldEntry *self, struct typecheck__WardFieldEntry x);
-struct ex_Slice_ir__Tstmt Vec__as_slice_ir__Tstmt(const struct ex_Vec_ir__Tstmt *self);
-unsigned long Vec__length_ir__Tstmt(const struct ex_Vec_ir__Tstmt *self);
 struct ex_Slice_ast__SigilRange Vec__as_slice_ast__SigilRange(const struct ex_Vec_ast__SigilRange *self);
 unsigned long Vec__length_ast__SigilRange(const struct ex_Vec_ast__SigilRange *self);
 void Vec__push_typecheck__SigilRangeEntry(struct ex_Vec_typecheck__SigilRangeEntry *self, struct typecheck__SigilRangeEntry x);
@@ -6300,6 +6329,408 @@ static int ir__int_fits_bounds(long n, int is_signed, unsigned long bits) {
         return n >= ((long)0) - ((long)2147483648) && n <= ((long)2147483647);
     }
     return n >= ((long)0) && n <= ((long)4294967295);
+}
+
+void ir__collect_texpr_vars(const struct ir__Texpr *te, struct ex_Vec_str *out) {
+    {
+        struct ir__TexprNode __m;
+        __m = te->e;
+        switch (__m.tag) {
+        case ir__TexprNode_TIntLit:
+            {
+                break;
+            }
+        case ir__TexprNode_TFloatLit:
+            {
+                break;
+            }
+        case ir__TexprNode_TBoolLit:
+            {
+                break;
+            }
+        case ir__TexprNode_TNullLit:
+            {
+                break;
+            }
+        case ir__TexprNode_TStringLit:
+            {
+                break;
+            }
+        case ir__TexprNode_TVar:
+            {
+                const char *n = __m.data.TVar._0;
+                Vec__push_str(out, n);
+                break;
+            }
+        case ir__TexprNode_TFnRef:
+            {
+                break;
+            }
+        case ir__TexprNode_TNeg:
+            {
+                const struct ir__Texpr *i = __m.data.TNeg._0;
+                ir__collect_texpr_vars(i, out);
+                break;
+            }
+        case ir__TexprNode_TBitNot:
+            {
+                const struct ir__Texpr *i = __m.data.TBitNot._0;
+                ir__collect_texpr_vars(i, out);
+                break;
+            }
+        case ir__TexprNode_TNot:
+            {
+                const struct ir__Texpr *i = __m.data.TNot._0;
+                ir__collect_texpr_vars(i, out);
+                break;
+            }
+        case ir__TexprNode_TBinOp:
+            {
+                const struct ir__Texpr *l = __m.data.TBinOp._1;
+                const struct ir__Texpr *r = __m.data.TBinOp._2;
+                ir__collect_texpr_vars(l, out);
+                ir__collect_texpr_vars(r, out);
+                break;
+            }
+        case ir__TexprNode_TCall:
+            {
+                struct ex_Vec_cptr_ir__Texpr args = __m.data.TCall.args;
+                ir__collect_vars_args(&args, out);
+                break;
+            }
+        case ir__TexprNode_TBuiltinCall:
+            {
+                struct ex_Vec_cptr_ir__Texpr args = __m.data.TBuiltinCall.args;
+                ir__collect_vars_args(&args, out);
+                break;
+            }
+        case ir__TexprNode_TIndirectCall:
+            {
+                const struct ir__Texpr *fn_expr = __m.data.TIndirectCall.fn_expr;
+                struct ex_Vec_cptr_ir__Texpr args = __m.data.TIndirectCall.args;
+                ir__collect_texpr_vars(fn_expr, out);
+                ir__collect_vars_args(&args, out);
+                break;
+            }
+        case ir__TexprNode_TCast:
+            {
+                const struct ir__Texpr *i = __m.data.TCast._0;
+                ir__collect_texpr_vars(i, out);
+                break;
+            }
+        case ir__TexprNode_TTupleLit:
+            {
+                struct ex_Vec_cptr_ir__Texpr es = __m.data.TTupleLit._0;
+                ir__collect_vars_args(&es, out);
+                break;
+            }
+        case ir__TexprNode_TStructLit:
+            {
+                struct ex_Vec_ir__TexprField fields = __m.data.TStructLit.fields;
+                struct ex_Option_cptr_ir__Texpr base = __m.data.TStructLit.base;
+                ir__collect_vars_fields(&fields, out);
+                ir__collect_vars_opt(base, out);
+                break;
+            }
+        case ir__TexprNode_TFieldAccess:
+            {
+                const struct ir__Texpr *target = __m.data.TFieldAccess.target;
+                ir__collect_texpr_vars(target, out);
+                break;
+            }
+        case ir__TexprNode_TRef:
+            {
+                const struct ir__Texpr *i = __m.data.TRef._0;
+                ir__collect_texpr_vars(i, out);
+                break;
+            }
+        case ir__TexprNode_TDeref:
+            {
+                const struct ir__Texpr *i = __m.data.TDeref._0;
+                ir__collect_texpr_vars(i, out);
+                break;
+            }
+        case ir__TexprNode_TNew:
+            {
+                struct ex_Vec_ir__TexprField fields = __m.data.TNew.fields;
+                struct ex_Option_cptr_ir__Texpr base = __m.data.TNew.base;
+                struct ex_Option_cptr_ir__Texpr alloc = __m.data.TNew.alloc;
+                ir__collect_vars_fields(&fields, out);
+                ir__collect_vars_opt(base, out);
+                ir__collect_vars_opt(alloc, out);
+                break;
+            }
+        case ir__TexprNode_TEnumLit:
+            {
+                struct ex_Vec_ir__TexprField args = __m.data.TEnumLit.args;
+                ir__collect_vars_fields(&args, out);
+                break;
+            }
+        case ir__TexprNode_TNewEnum:
+            {
+                struct ex_Vec_ir__TexprField args = __m.data.TNewEnum.args;
+                struct ex_Option_cptr_ir__Texpr alloc = __m.data.TNewEnum.alloc;
+                ir__collect_vars_fields(&args, out);
+                ir__collect_vars_opt(alloc, out);
+                break;
+            }
+        case ir__TexprNode_TMatch:
+            {
+                const struct ir__Texpr *scrutinee = __m.data.TMatch.scrutinee;
+                struct ex_Vec_ir__TmatchArm arms = __m.data.TMatch.arms;
+                ir__collect_texpr_vars(scrutinee, out);
+                ir__collect_vars_arms(&arms, out);
+                break;
+            }
+        case ir__TexprNode_TArrayLit:
+            {
+                struct ex_Vec_cptr_ir__Texpr es = __m.data.TArrayLit._0;
+                ir__collect_vars_args(&es, out);
+                break;
+            }
+        case ir__TexprNode_TArrayRepeat:
+            {
+                const struct ir__Texpr *value = __m.data.TArrayRepeat.value;
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__TexprNode_TIndex:
+            {
+                const struct ir__Texpr *base = __m.data.TIndex.base;
+                const struct ir__Texpr *index = __m.data.TIndex.index;
+                ir__collect_texpr_vars(base, out);
+                ir__collect_texpr_vars(index, out);
+                break;
+            }
+        case ir__TexprNode_TIfExpr:
+            {
+                const struct ir__Texpr *cond = __m.data.TIfExpr.cond;
+                const struct ir__Texpr *then_val = __m.data.TIfExpr.then_val;
+                const struct ir__Texpr *else_val = __m.data.TIfExpr.else_val;
+                ir__collect_texpr_vars(cond, out);
+                ir__collect_texpr_vars(then_val, out);
+                ir__collect_texpr_vars(else_val, out);
+                break;
+            }
+        case ir__TexprNode_TSizeOf:
+            {
+                break;
+            }
+        case ir__TexprNode_TBlock:
+            {
+                struct ex_Vec_ir__Tstmt stmts = __m.data.TBlock.stmts;
+                struct ex_Option_cptr_ir__Texpr trailing = __m.data.TBlock.trailing;
+                ir__collect_tstmts_vars(&stmts, out);
+                ir__collect_vars_opt(trailing, out);
+                break;
+            }
+        case ir__TexprNode_TRuneAddr:
+            {
+                break;
+            }
+        case ir__TexprNode_TWardAddr:
+        default:
+            {
+                break;
+            }
+        }
+    }
+    return;
+}
+
+static void ir__collect_vars_arms(const struct ex_Vec_ir__TmatchArm *arms, struct ex_Vec_str *out) {
+    struct ex_Slice_ir__TmatchArm sl;
+    unsigned long i;
+    sl = Vec__as_slice_ir__TmatchArm(arms);
+    i = ((unsigned long)0);
+    while (i < Vec__length_ir__TmatchArm(arms)) {
+        ir__collect_vars_opt(sl.ptr[i].tguard, out);
+        ir__collect_texpr_vars(sl.ptr[i].tbody, out);
+        i = i + ((unsigned long)1);
+    }
+    return;
+}
+
+static void ir__collect_vars_args(const struct ex_Vec_cptr_ir__Texpr *es, struct ex_Vec_str *out) {
+    struct ex_Slice_cptr_ir__Texpr sl;
+    unsigned long i;
+    sl = Vec__as_slice_cptr_ir__Texpr(es);
+    i = ((unsigned long)0);
+    while (i < Vec__length_cptr_ir__Texpr(es)) {
+        ir__collect_texpr_vars(sl.ptr[i], out);
+        i = i + ((unsigned long)1);
+    }
+    return;
+}
+
+static void ir__collect_vars_fields(const struct ex_Vec_ir__TexprField *fs, struct ex_Vec_str *out) {
+    struct ex_Slice_ir__TexprField sl;
+    unsigned long i;
+    sl = Vec__as_slice_ir__TexprField(fs);
+    i = ((unsigned long)0);
+    while (i < Vec__length_ir__TexprField(fs)) {
+        ir__collect_texpr_vars(sl.ptr[i].value, out);
+        i = i + ((unsigned long)1);
+    }
+    return;
+}
+
+static void ir__collect_vars_opt(struct ex_Option_cptr_ir__Texpr e, struct ex_Vec_str *out) {
+    {
+        struct ex_Option_cptr_ir__Texpr __m;
+        __m = e;
+        switch (__m.tag) {
+        case ex_Option_cptr_ir__Texpr_Some:
+            {
+                const struct ir__Texpr *x = __m.data.Some._0;
+                ir__collect_texpr_vars(x, out);
+                break;
+            }
+        case ex_Option_cptr_ir__Texpr_None:
+        default:
+            {
+                break;
+            }
+        }
+    }
+    return;
+}
+
+void ir__collect_tstmts_vars(const struct ex_Vec_ir__Tstmt *stmts, struct ex_Vec_str *out) {
+    struct ex_Slice_ir__Tstmt sl;
+    unsigned long i;
+    sl = Vec__as_slice_ir__Tstmt(stmts);
+    i = ((unsigned long)0);
+    while (i < Vec__length_ir__Tstmt(stmts)) {
+        ir__collect_tstmt_vars(&(sl.ptr[i]), out);
+        i = i + ((unsigned long)1);
+    }
+    return;
+}
+
+static void ir__collect_tstmt_vars(const struct ir__Tstmt *s, struct ex_Vec_str *out) {
+    {
+        struct ir__Tstmt __m;
+        __m = *s;
+        switch (__m.tag) {
+        case ir__Tstmt_TLet:
+            {
+                const struct ir__Texpr *value = __m.data.TLet.value;
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TLetTuple:
+            {
+                const struct ir__Texpr *value = __m.data.TLetTuple.value;
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TAssign:
+            {
+                const struct ir__Texpr *value = __m.data.TAssign.value;
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TAssignField:
+            {
+                const struct ir__Texpr *target = __m.data.TAssignField.target;
+                const struct ir__Texpr *value = __m.data.TAssignField.value;
+                ir__collect_texpr_vars(target, out);
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TAssignDeref:
+            {
+                const struct ir__Texpr *target = __m.data.TAssignDeref.target;
+                const struct ir__Texpr *value = __m.data.TAssignDeref.value;
+                ir__collect_texpr_vars(target, out);
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TAssignIndex:
+            {
+                const struct ir__Texpr *base = __m.data.TAssignIndex.base;
+                const struct ir__Texpr *index = __m.data.TAssignIndex.index;
+                const struct ir__Texpr *value = __m.data.TAssignIndex.value;
+                ir__collect_texpr_vars(base, out);
+                ir__collect_texpr_vars(index, out);
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TReturn:
+            {
+                struct ex_Option_cptr_ir__Texpr value = __m.data.TReturn.value;
+                ir__collect_vars_opt(value, out);
+                break;
+            }
+        case ir__Tstmt_TExprStmt:
+            {
+                const struct ir__Texpr *e = __m.data.TExprStmt._0;
+                ir__collect_texpr_vars(e, out);
+                break;
+            }
+        case ir__Tstmt_TIf:
+            {
+                const struct ir__Texpr *cond = __m.data.TIf.cond;
+                struct ex_Vec_ir__Tstmt then_body = __m.data.TIf.then_body;
+                struct ex_Vec_ir__Tstmt else_body = __m.data.TIf.else_body;
+                ir__collect_texpr_vars(cond, out);
+                ir__collect_tstmts_vars(&then_body, out);
+                ir__collect_tstmts_vars(&else_body, out);
+                break;
+            }
+        case ir__Tstmt_TWhile:
+            {
+                const struct ir__Texpr *cond = __m.data.TWhile.cond;
+                struct ex_Vec_ir__Tstmt body = __m.data.TWhile.body;
+                struct ex_Vec_ir__Tstmt post = __m.data.TWhile.post;
+                ir__collect_texpr_vars(cond, out);
+                ir__collect_tstmts_vars(&body, out);
+                ir__collect_tstmts_vars(&post, out);
+                break;
+            }
+        case ir__Tstmt_TDefer:
+            {
+                struct ex_Vec_ir__Tstmt body = __m.data.TDefer.body;
+                ir__collect_tstmts_vars(&body, out);
+                break;
+            }
+        case ir__Tstmt_TSeal:
+            {
+                struct ex_Vec_ir__Tstmt body = __m.data.TSeal.body;
+                ir__collect_tstmts_vars(&body, out);
+                break;
+            }
+        case ir__Tstmt_TFor:
+            {
+                const struct ir__Texpr *lo = __m.data.TFor.lo;
+                const struct ir__Texpr *hi = __m.data.TFor.hi;
+                struct ex_Vec_ir__Tstmt body = __m.data.TFor.body;
+                ir__collect_texpr_vars(lo, out);
+                ir__collect_texpr_vars(hi, out);
+                ir__collect_tstmts_vars(&body, out);
+                break;
+            }
+        case ir__Tstmt_TForEach:
+            {
+                const struct ir__Texpr *it_init = __m.data.TForEach.it_init;
+                struct ex_Vec_ir__Tstmt body = __m.data.TForEach.body;
+                ir__collect_texpr_vars(it_init, out);
+                ir__collect_tstmts_vars(&body, out);
+                break;
+            }
+        case ir__Tstmt_TBreak:
+            {
+                break;
+            }
+        case ir__Tstmt_TContinue:
+        default:
+            {
+                break;
+            }
+        }
+    }
+    return;
 }
 
 static struct parser__Parser parser__new_parser(struct ex_Allocator a, struct ex_Arena *ar, struct ex_Slice_token__TokenPos toks, unsigned long n) {
@@ -29335,14 +29766,131 @@ static int typecheck__global_is_const(const struct ex_Vec_typecheck__GlobalFn *g
     }
 }
 
-static const struct ir__Texpr *typecheck__assign_coerced_value(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, const struct ex_Vec_str *path, const struct ast__Expr *value) {
+static int typecheck__lit_overflows_slot(const struct ast__Expr *raw, const struct ir__Typ *t) {
+    if (!(typecheck__is_int_like_ty(t))) {
+        return 0;
+    }
+    {
+        int __exile_ret;
+        {
+            struct ex_Option_i32 __m;
+            __m = typecheck__expr_int_lit(raw);
+            switch (__m.tag) {
+            case ex_Option_i32_Some:
+                {
+                    long n = __m.data.Some._0;
+                    __exile_ret = !(ir__int_fits(n, t));
+                    break;
+                }
+            case ex_Option_i32_None:
+            default:
+                {
+                    __exile_ret = 0;
+                    break;
+                }
+            }
+        }
+        return __exile_ret;
+    }
+}
+
+static const struct ir__Typ *typecheck__none_typ(struct ex_Arena *ar) {
+    struct ir__Typ __lift_0;
+    __lift_0.tag = ir__Typ_TCVoid;
+    return typecheck__ty_node(ar, __lift_0);
+}
+
+static int typecheck__is_none_typ(const struct ir__Typ *t) {
+    {
+        int __exile_ret;
+        {
+            struct ir__Typ __m;
+            __m = *t;
+            switch (__m.tag) {
+            case ir__Typ_TCVoid:
+                {
+                    __exile_ret = 1;
+                    break;
+                }
+            default:
+                {
+                    __exile_ret = 0;
+                    break;
+                }
+            }
+        }
+        return __exile_ret;
+    }
+}
+
+static void typecheck__check_assign_value(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ex_Vec_str *path, const struct ast__Expr *raw, const struct ir__Texpr *av, struct ex_Option_cptr_ir__Typ exp, struct pos__Pos pos) {
+    const struct ir__Typ *t;
+    struct ex_StringBuilder ob;
+    struct ex_StringBuilder sb;
+    {
+        struct ex_Option_cptr_ir__Typ __m;
+        __m = exp;
+        switch (__m.tag) {
+        case ex_Option_cptr_ir__Typ_Some:
+            {
+                const struct ir__Typ *x = __m.data.Some._0;
+                t = x;
+                break;
+            }
+        case ex_Option_cptr_ir__Typ_None:
+        default:
+            {
+                t = typecheck__none_typ(ar);
+                break;
+            }
+        }
+    }
+    if (typecheck__is_none_typ(t)) {
+        return;
+    }
+    if (typecheck__lit_overflows_slot(raw, t)) {
+        ob = StringBuilder__with_capacity(a, ((unsigned long)112));
+        StringBuilder__push_str(&ob, "cannot assign ");
+        StringBuilder__push_str(&ob, ir__typ_name(a, ar, typecheck__t_i32(ar)));
+        StringBuilder__push_str(&ob, " to '");
+        StringBuilder__push_str(&ob, typecheck__path_display(a, ar, path));
+        StringBuilder__push_str(&ob, "' (declared as ");
+        StringBuilder__push_str(&ob, ir__typ_name(a, ar, t));
+        StringBuilder__push_str(&ob, ")");
+        typecheck__tc_fail(ar, sc, pos, str__from_slice(ar, StringBuilder__as_slice(&ob)));
+        (ob.alloc.free_fn)(ob.alloc.state, ((void *)(ob.buf)), ob.cap * ((unsigned long)(sizeof(unsigned char))));
+        return;
+    }
+    if (ir__coercible_to(av->ty, t)) {
+        return;
+    }
+    if (typecheck__lit_fits_slot(raw, t)) {
+        return;
+    }
+    sb = StringBuilder__with_capacity(a, ((unsigned long)112));
+    StringBuilder__push_str(&sb, "cannot assign ");
+    StringBuilder__push_str(&sb, ir__typ_name(a, ar, av->ty));
+    StringBuilder__push_str(&sb, " to '");
+    StringBuilder__push_str(&sb, typecheck__path_display(a, ar, path));
+    StringBuilder__push_str(&sb, "' (declared as ");
+    StringBuilder__push_str(&sb, ir__typ_name(a, ar, t));
+    StringBuilder__push_str(&sb, ")");
+    typecheck__tc_fail(ar, sc, pos, str__from_slice(ar, StringBuilder__as_slice(&sb)));
+    (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
+    return;
+}
+
+static const struct ir__Texpr *typecheck__assign_coerced_value(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, const struct ex_Vec_str *path, const struct ast__Expr *value, struct pos__Pos pos) {
+    struct ex_Option_cptr_ir__Typ exp;
     const struct ir__Texpr *av;
-    av = typecheck__elab_expr(a, ar, g, sc, env, typecheck__none_ty(), value);
+    exp = typecheck__assign_target_ty(env, path);
+    av = typecheck__elab_expr(a, ar, g, sc, env, exp, value);
+    typecheck__check_assign_value(a, ar, sc, path, value, av, exp, pos);
     {
         const struct ir__Texpr * __exile_ret;
         {
             struct ex_Option_cptr_ir__Typ __m;
-            __m = typecheck__assign_target_ty(env, path);
+            __m = exp;
             switch (__m.tag) {
             case ex_Option_cptr_ir__Typ_Some:
                 {
@@ -29569,7 +30117,7 @@ static int typecheck__rune_value_bad(const struct ast__Expr *arg, const struct i
 
 static const char *typecheck__rune_value_msg(struct ex_Allocator a, struct ex_Arena *ar, const struct ast__Expr *arg, const struct ir__Typ *vty, const struct ir__Typ *elem) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_6765_5;
+    const char *__drop_ret_6816_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)88));
     {
         struct ast__Expr __m;
@@ -29595,9 +30143,9 @@ static const char *typecheck__rune_value_msg(struct ex_Allocator a, struct ex_Ar
             }
         }
     }
-    __drop_ret_6765_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_6816_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_6765_5;
+    return __drop_ret_6816_5;
 }
 
 static void typecheck__check_rune_value(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ast__Expr *arg, const struct ir__Typ *vty, const struct ir__Typ *elem, struct pos__Pos p) {
@@ -30563,7 +31111,7 @@ static void typecheck__elab_block_stmt(struct ex_Allocator a, struct ex_Arena *a
                 if (Vec__length_str(&path) == ((unsigned long)1)) {
                     typecheck__require_mut(a, ar, sc, (Vec__as_slice_str(&path)).ptr[((unsigned long)0)], "assign to", pos);
                 }
-                av = typecheck__assign_coerced_value(a, ar, g, sc, benv, &path, value);
+                av = typecheck__assign_coerced_value(a, ar, g, sc, benv, &path, value, pos);
                 __lift_2.tag = ir__Tstmt_TAssign;
                 __lift_2.data.TAssign.path = typecheck__copy_strs(a, &path);
                 __lift_2.data.TAssign.value = av;
@@ -30669,7 +31217,7 @@ static const struct ir__Texpr *typecheck__elab_block(struct ex_Allocator a, stru
     unsigned long i;
     const struct ir__Typ *bty;
     struct ir__TexprNode __lift_0;
-    const struct ir__Texpr *__drop_ret_7190_5;
+    const struct ir__Texpr *__drop_ret_7241_5;
     benv = typecheck__copy_fieldtys(a, env);
     tstmts = Vec__with_capacity_ir__Tstmt(a, ((unsigned long)8));
     trailing.tag = ex_Option_cptr_ir__Texpr_None;
@@ -30701,9 +31249,9 @@ static const struct ir__Texpr *typecheck__elab_block(struct ex_Allocator a, stru
     __lift_0.tag = ir__TexprNode_TBlock;
     __lift_0.data.TBlock.stmts = tstmts;
     __lift_0.data.TBlock.trailing = trailing;
-    __drop_ret_7190_5 = typecheck__te_node(ar, __lift_0, bty, p);
+    __drop_ret_7241_5 = typecheck__te_node(ar, __lift_0, bty, p);
     (benv.alloc.free_fn)(benv.alloc.state, ((void *)(benv.ptr)), benv.cap * ((unsigned long)(sizeof(struct ir__FieldTy))));
-    return __drop_ret_7190_5;
+    return __drop_ret_7241_5;
 }
 
 static const struct ir__Texpr *typecheck__elab_tuple_lit(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, const struct ex_Vec_cptr_ast__Expr *es, struct pos__Pos p) {
@@ -31092,14 +31640,14 @@ static const struct ir__Texpr *typecheck__index_unresolved(struct ex_Allocator a
 
 static const struct ir__Texpr *typecheck__bad_index_base(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ir__Typ *t, struct pos__Pos p) {
     struct ex_StringBuilder sb;
-    const struct ir__Texpr *__drop_ret_7371_5;
+    const struct ir__Texpr *__drop_ret_7422_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)64));
     StringBuilder__push_str(&sb, "indexing `[...]` requires an array or Slice, got ");
     StringBuilder__push_str(&sb, ir__typ_name(a, ar, t));
     typecheck__tc_fail(ar, sc, p, str__from_slice(ar, StringBuilder__as_slice(&sb)));
-    __drop_ret_7371_5 = typecheck__defer_expr(ar, p);
+    __drop_ret_7422_5 = typecheck__defer_expr(ar, p);
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_7371_5;
+    return __drop_ret_7422_5;
 }
 
 static const struct ir__Texpr *typecheck__indexed_at(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, const struct ir__Texpr *tb, const struct ast__Expr *index, const struct ir__Typ *elem, struct pos__Pos p) {
@@ -31108,7 +31656,7 @@ static const struct ir__Texpr *typecheck__indexed_at(struct ex_Allocator a, stru
     const struct ir__Texpr *hi_te;
     struct ex_StringBuilder sb;
     struct ir__TexprNode __lift_0;
-    const struct ir__Texpr *__drop_ret_7386_9;
+    const struct ir__Texpr *__drop_ret_7437_9;
     ti = typecheck__elab_expr(a, ar, g, sc, env, typecheck__none_ty(), index);
     if (typecheck__is_range_instance(ti->ty)) {
         lo_te = typecheck__range_bound(ar, sc, ti, "lo", p);
@@ -31120,9 +31668,9 @@ static const struct ir__Texpr *typecheck__indexed_at(struct ex_Allocator a, stru
         StringBuilder__push_str(&sb, "index must be an integer or a Range, got ");
         StringBuilder__push_str(&sb, ir__typ_name(a, ar, ti->ty));
         typecheck__tc_fail(ar, sc, p, str__from_slice(ar, StringBuilder__as_slice(&sb)));
-        __drop_ret_7386_9 = typecheck__defer_expr(ar, p);
+        __drop_ret_7437_9 = typecheck__defer_expr(ar, p);
         (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-        return __drop_ret_7386_9;
+        return __drop_ret_7437_9;
     }
     __lift_0.tag = ir__TexprNode_TIndex;
     __lift_0.data.TIndex.base = tb;
@@ -31266,7 +31814,7 @@ static const struct ir__Texpr *typecheck__build_slice_from_bounds(struct ex_Allo
     struct ir__TexprField __lift_9;
     struct ir__Typ __lift_10;
     struct ir__TexprNode __lift_11;
-    const struct ir__Texpr *__drop_ret_7466_5;
+    const struct ir__Texpr *__drop_ret_7517_5;
     elem = typecheck__voidable_ty(ar, typecheck__index_elem_ty(sc, tb->ty));
     __lift_0.tag = ir__TexprNode_TIndex;
     __lift_0.data.TIndex.base = tb;
@@ -31320,10 +31868,10 @@ static const struct ir__Texpr *typecheck__build_slice_from_bounds(struct ex_Allo
     __lift_11.data.TStructLit.sname_path = ipath;
     __lift_11.data.TStructLit.fields = fields;
     __lift_11.data.TStructLit.base = no_base;
-    __drop_ret_7466_5 = typecheck__te_node(ar, __lift_11, sty, p);
+    __drop_ret_7517_5 = typecheck__te_node(ar, __lift_11, sty, p);
     (skel.alloc.free_fn)(skel.alloc.state, ((void *)(skel.ptr)), skel.cap * ((unsigned long)(sizeof(const char *))));
     (sargs.alloc.free_fn)(sargs.alloc.state, ((void *)(sargs.ptr)), sargs.cap * ((unsigned long)(sizeof(const struct ir__Typ *))));
-    return __drop_ret_7466_5;
+    return __drop_ret_7517_5;
 }
 
 static const struct ir__Texpr *typecheck__elab_sub_slice(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, const struct ir__Texpr *tb, const struct ast__Expr *lo, const struct ast__Expr *hi, int inclusive, struct pos__Pos p) {
@@ -31368,7 +31916,7 @@ static const struct ir__Texpr *typecheck__elab_range_value(struct ex_Allocator a
     struct ir__TexprField __lift_1;
     struct ir__Typ __lift_2;
     struct ir__TexprNode __lift_3;
-    const struct ir__Texpr *__drop_ret_7506_5;
+    const struct ir__Texpr *__drop_ret_7557_5;
     lo_te = typecheck__elab_expr(a, ar, g, sc, env, typecheck__none_ty(), lo);
     hi_te = typecheck__elab_expr(a, ar, g, sc, env, typecheck__none_ty(), hi);
     typecheck__check_range_bounds(a, ar, sc, lo_te->ty, hi_te->ty, p);
@@ -31399,10 +31947,10 @@ static const struct ir__Texpr *typecheck__elab_range_value(struct ex_Allocator a
     __lift_3.data.TStructLit.sname_path = ipath;
     __lift_3.data.TStructLit.fields = fields;
     __lift_3.data.TStructLit.base = no_base;
-    __drop_ret_7506_5 = typecheck__te_node(ar, __lift_3, sty, p);
+    __drop_ret_7557_5 = typecheck__te_node(ar, __lift_3, sty, p);
     (skel.alloc.free_fn)(skel.alloc.state, ((void *)(skel.ptr)), skel.cap * ((unsigned long)(sizeof(const char *))));
     (sargs.alloc.free_fn)(sargs.alloc.state, ((void *)(sargs.ptr)), sargs.cap * ((unsigned long)(sizeof(const struct ir__Typ *))));
-    return __drop_ret_7506_5;
+    return __drop_ret_7557_5;
 }
 
 static const struct ir__Texpr *typecheck__elab_index(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, const struct ast__Expr *base, const struct ast__Expr *index, struct pos__Pos p) {
@@ -31890,14 +32438,14 @@ static const struct ir__Texpr *typecheck__elab_len(struct ex_Allocator a, struct
 
 static const struct ir__Texpr *typecheck__bad_len_arg(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ir__Texpr *ta, struct pos__Pos p) {
     struct ex_StringBuilder sb;
-    const struct ir__Texpr *__drop_ret_7737_5;
+    const struct ir__Texpr *__drop_ret_7788_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)48));
     StringBuilder__push_str(&sb, "len(...) requires an array, got ");
     StringBuilder__push_str(&sb, ir__typ_name(a, ar, ta->ty));
     typecheck__tc_fail(ar, sc, p, str__from_slice(ar, StringBuilder__as_slice(&sb)));
-    __drop_ret_7737_5 = typecheck__defer_expr(ar, p);
+    __drop_ret_7788_5 = typecheck__defer_expr(ar, p);
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_7737_5;
+    return __drop_ret_7788_5;
 }
 
 static const struct ir__Texpr *typecheck__elab_expr(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, struct ex_Option_cptr_ir__Typ expected, const struct ast__Expr *e) {
@@ -33206,7 +33754,7 @@ static const struct ir__Texpr *typecheck__elab_closure_lit(struct ex_Allocator a
     struct ast__Field __lift_2;
     struct ast__Expr __lift_3;
     struct ast__Field __lift_4;
-    const struct ir__Texpr *__drop_ret_8062_5;
+    const struct ir__Texpr *__drop_ret_8113_5;
     lls = Vec__as_slice_typecheck__LiftedLambda(sc->sc_lifted);
     cn = lls.ptr[ci].ll_closure;
     nc = Vec__length_str(&lls.ptr[ci].ll_caps);
@@ -33241,10 +33789,10 @@ static const struct ir__Texpr *typecheck__elab_closure_lit(struct ex_Allocator a
     }
     tname = typecheck__single_str(a, cn);
     nb.tag = ex_Option_cptr_ast__Expr_None;
-    __drop_ret_8062_5 = typecheck__elab_struct_lit(a, ar, g, sc, env, &tname, &fields, nb, p);
+    __drop_ret_8113_5 = typecheck__elab_struct_lit(a, ar, g, sc, env, &tname, &fields, nb, p);
     (tname.alloc.free_fn)(tname.alloc.state, ((void *)(tname.ptr)), tname.cap * ((unsigned long)(sizeof(const char *))));
     (fields.alloc.free_fn)(fields.alloc.state, ((void *)(fields.ptr)), fields.cap * ((unsigned long)(sizeof(struct ast__Field))));
-    return __drop_ret_8062_5;
+    return __drop_ret_8113_5;
 }
 
 static const struct ir__Texpr *typecheck__elab_lambda(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, const struct ast__Expr *e, const struct ex_Vec_ast__FieldDef *params, struct ex_Option_cptr_ast__TypeAnn ret_ty, struct pos__Pos p) {
@@ -33259,7 +33807,7 @@ static const struct ir__Texpr *typecheck__elab_lambda(struct ex_Allocator a, str
     struct ex_Vec_str no_brefs;
     struct typecheck__LiftedLambda __lift_0;
     struct ir__TexprNode __lift_1;
-    const struct ir__Texpr *__drop_ret_8081_5;
+    const struct ir__Texpr *__drop_ret_8132_5;
     ci = typecheck__find_closure_idx(sc->sc_lifted, e);
     if (ci >= ((long)0)) {
         return typecheck__elab_closure_lit(a, ar, g, sc, env, ((unsigned long)ci), p);
@@ -33285,9 +33833,9 @@ static const struct ir__Texpr *typecheck__elab_lambda(struct ex_Allocator a, str
     Vec__push_typecheck__LiftedLambda(sc->sc_lifted, __lift_0);
     __lift_1.tag = ir__TexprNode_TFnRef;
     __lift_1.data.TFnRef._0 = sym;
-    __drop_ret_8081_5 = typecheck__te_node(ar, __lift_1, typecheck__lambda_fnptr_ty(a, ar, sc, params, ret_ty, p), p);
+    __drop_ret_8132_5 = typecheck__te_node(ar, __lift_1, typecheck__lambda_fnptr_ty(a, ar, sc, params, ret_ty, p), p);
     (empty_path.alloc.free_fn)(empty_path.alloc.state, ((void *)(empty_path.ptr)), empty_path.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_8081_5;
+    return __drop_ret_8132_5;
 }
 
 static struct pos__Pos typecheck__prelude_file_pos(void) {
@@ -33497,23 +34045,23 @@ static const struct ir__Texpr *typecheck__elab_enumlit(struct ex_Allocator a, st
     struct ex_Vec_ir__TexprField empty;
     struct ex_Vec_str inst;
     const char *m;
-    const struct ir__Texpr *__drop_ret_8164_9;
-    const struct ir__Texpr *__drop_ret_8166_37;
-    const struct ir__Texpr *__drop_ret_8168_5;
+    const struct ir__Texpr *__drop_ret_8215_9;
+    const struct ir__Texpr *__drop_ret_8217_37;
+    const struct ir__Texpr *__drop_ret_8219_5;
     qtname = typecheck__qualify_type_path(a, ar, sc, tname);
     tag = typecheck__variant_tag(sc->sc_etags, &qtname, variant);
     if (tag >= ((long)0)) {
         empty = Vec__with_capacity_ir__TexprField(a, ((unsigned long)8));
         inst = typecheck__enum_instance_path(a, ar, sc, expected, &qtname, variant, &empty, p);
-        __drop_ret_8164_9 = typecheck__mk_enum_lit_node(a, ar, &inst, variant, tag, empty, p);
+        __drop_ret_8215_9 = typecheck__mk_enum_lit_node(a, ar, &inst, variant, tag, empty, p);
         (inst.alloc.free_fn)(inst.alloc.state, ((void *)(inst.ptr)), inst.cap * ((unsigned long)(sizeof(const char *))));
         (qtname.alloc.free_fn)(qtname.alloc.state, ((void *)(qtname.ptr)), qtname.cap * ((unsigned long)(sizeof(const char *))));
-        return __drop_ret_8164_9;
+        return __drop_ret_8215_9;
     }
     if (typecheck__is_known_enum(sc, &qtname)) {
-        __drop_ret_8166_37 = typecheck__no_such_variant(a, ar, sc, &qtname, variant, p);
+        __drop_ret_8217_37 = typecheck__no_such_variant(a, ar, sc, &qtname, variant, p);
         (qtname.alloc.free_fn)(qtname.alloc.state, ((void *)(qtname.ptr)), qtname.cap * ((unsigned long)(sizeof(const char *))));
-        return __drop_ret_8166_37;
+        return __drop_ret_8217_37;
     }
     m = typecheck__mangle_path(a, ar, tname, variant);
     {
@@ -33523,19 +34071,19 @@ static const struct ir__Texpr *typecheck__elab_enumlit(struct ex_Allocator a, st
         case ex_Option_typecheck__GlobalFn_Some:
             {
                 struct typecheck__GlobalFn gf = __m.data.Some._0;
-                __drop_ret_8168_5 = typecheck__enumlit_const(a, ar, sc, gf, tname, p);
+                __drop_ret_8219_5 = typecheck__enumlit_const(a, ar, sc, gf, tname, p);
                 break;
             }
         case ex_Option_typecheck__GlobalFn_None:
         default:
             {
-                __drop_ret_8168_5 = typecheck__qualified_extern_ref(a, ar, g, sc, tname, variant, p);
+                __drop_ret_8219_5 = typecheck__qualified_extern_ref(a, ar, g, sc, tname, variant, p);
                 break;
             }
         }
     }
     (qtname.alloc.free_fn)(qtname.alloc.state, ((void *)(qtname.ptr)), qtname.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_8168_5;
+    return __drop_ret_8219_5;
 }
 
 static int typecheck__is_known_enum(const struct typecheck__TyScope *sc, const struct ex_Vec_str *path) {
@@ -33576,15 +34124,15 @@ static const struct ir__Texpr *typecheck__qualified_extern_ref(struct ex_Allocat
 
 static const struct ir__Texpr *typecheck__unknown_enum(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ex_Vec_str *tname, struct pos__Pos p) {
     struct ex_StringBuilder sb;
-    const struct ir__Texpr *__drop_ret_8198_5;
+    const struct ir__Texpr *__drop_ret_8249_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)48));
     StringBuilder__push_str(&sb, "unknown enum '");
     StringBuilder__push_str(&sb, typecheck__path_display(a, ar, tname));
     StringBuilder__push_str(&sb, "'");
     typecheck__tc_fail(ar, sc, p, str__from_slice(ar, StringBuilder__as_slice(&sb)));
-    __drop_ret_8198_5 = typecheck__defer_expr(ar, p);
+    __drop_ret_8249_5 = typecheck__defer_expr(ar, p);
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_8198_5;
+    return __drop_ret_8249_5;
 }
 
 static const struct ir__Texpr *typecheck__enumlit_const(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, struct typecheck__GlobalFn gf, const struct ex_Vec_str *tname, struct pos__Pos p) {
@@ -34214,14 +34762,14 @@ static const struct ir__Typ *typecheck__with_ptr_ty(struct ex_Arena *ar, const s
 
 static const char *typecheck__with_name(struct ex_Allocator a, struct ex_Arena *ar, const char *name, unsigned long k) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_8465_5;
+    const char *__drop_ret_8516_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)16));
     StringBuilder__push_str(&sb, name);
     StringBuilder__push_str(&sb, "__with");
     StringBuilder__push_int(&sb, ((long)k));
-    __drop_ret_8465_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_8516_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_8465_5;
+    return __drop_ret_8516_5;
 }
 
 static void typecheck__elab_with(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, unsigned long *gensym, struct ex_Vec_ir__FieldTy *env, struct ex_Option_cptr_ir__Typ ret, const struct ast__Expr *target, const char *name, const struct ex_Vec_ast__Stmt *body, struct pos__Pos pos, struct ex_Vec_ir__Tstmt *out) {
@@ -34422,15 +34970,15 @@ static const struct ir__Texpr *typecheck__tail_or_defer(struct ex_Allocator a, s
 
 static const struct ir__Texpr *typecheck__not_single_expr(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const char *side, struct pos__Pos p) {
     struct ex_StringBuilder sb;
-    const struct ir__Texpr *__drop_ret_8557_5;
+    const struct ir__Texpr *__drop_ret_8608_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)112));
     StringBuilder__push_str(&sb, "`if` ");
     StringBuilder__push_str(&sb, side);
     StringBuilder__push_str(&sb, " branch must be a single expression to yield a value (block expressions in branches are not yet supported)");
     typecheck__tc_fail(ar, sc, p, str__from_slice(ar, StringBuilder__as_slice(&sb)));
-    __drop_ret_8557_5 = typecheck__defer_expr(ar, p);
+    __drop_ret_8608_5 = typecheck__defer_expr(ar, p);
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_8557_5;
+    return __drop_ret_8608_5;
 }
 
 static const struct ir__Texpr *typecheck__else_block_value(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, const struct ex_Vec_ir__FieldTy *env, struct ex_Option_cptr_ir__Typ expected, struct ex_Option_ex_Vec_ast__Stmt else_blk, struct pos__Pos p) {
@@ -34631,13 +35179,13 @@ static struct ex_Vec_str typecheck__copy_strs(struct ex_Allocator a, const struc
 
 static const char *typecheck__gensym_name(struct ex_Allocator a, struct ex_Arena *ar, const char *prefix, unsigned long k) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_8677_5;
+    const char *__drop_ret_8728_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)16));
     StringBuilder__push_str(&sb, prefix);
     StringBuilder__push_int(&sb, ((long)k));
-    __drop_ret_8677_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_8728_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_8677_5;
+    return __drop_ret_8728_5;
 }
 
 static const struct ir__Texpr *typecheck__mk_for_cond(struct ex_Arena *ar, const char *fv, const char *fe, const struct ir__Typ *cty, int inclusive) {
@@ -35361,7 +35909,7 @@ static struct ex_Vec_typecheck__LeBind typecheck__le_type_binds(struct ex_Alloca
     int ok;
     struct ex_StringBuilder sb;
     struct typecheck__LeBind __lift_0;
-    struct ex_Vec_typecheck__LeBind __drop_ret_9009_14;
+    struct ex_Vec_typecheck__LeBind __drop_ret_9060_14;
     n = Vec__length_typecheck__LeBind(binds);
     sl = Vec__as_slice_typecheck__LeBind(binds);
     out = Vec__with_capacity_typecheck__LeBind(a, ((unsigned long)8));
@@ -35402,9 +35950,9 @@ static struct ex_Vec_typecheck__LeBind typecheck__le_type_binds(struct ex_Alloca
         i = i + ((unsigned long)1);
     }
     if (!ok) {
-        __drop_ret_9009_14 = Vec__with_capacity_typecheck__LeBind(a, ((unsigned long)8));
+        __drop_ret_9060_14 = Vec__with_capacity_typecheck__LeBind(a, ((unsigned long)8));
         (out.alloc.free_fn)(out.alloc.state, ((void *)(out.ptr)), out.cap * ((unsigned long)(sizeof(struct typecheck__LeBind))));
-        return __drop_ret_9009_14;
+        return __drop_ret_9060_14;
     }
     return out;
 }
@@ -35890,7 +36438,7 @@ static void typecheck__elab_stmt(struct ex_Allocator a, struct ex_Arena *ar, con
                 if (Vec__length_str(&path) == ((unsigned long)1)) {
                     typecheck__require_mut(a, ar, sc, (Vec__as_slice_str(&path)).ptr[((unsigned long)0)], "assign to", pos);
                 }
-                av = typecheck__assign_coerced_value(a, ar, g, sc, env, &path, value);
+                av = typecheck__assign_coerced_value(a, ar, g, sc, env, &path, value, pos);
                 apath = typecheck__copy_strs(a, &path);
                 __lift_4.tag = ir__Tstmt_TAssign;
                 __lift_4.data.TAssign.path = apath;
@@ -36336,7 +36884,7 @@ static long typecheck__ward_field_size(const struct ir__Typ *elem) {
 
 static const char *typecheck__ward_overlap_msg(struct ex_Allocator a, struct ex_Arena *ar, const char *wname, const char *an, long ao, long asz, const char *bn, long bo, long bsz) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_9424_5;
+    const char *__drop_ret_9475_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)112));
     StringBuilder__push_str(&sb, "ward '");
     StringBuilder__push_str(&sb, wname);
@@ -36353,9 +36901,9 @@ static const char *typecheck__ward_overlap_msg(struct ex_Allocator a, struct ex_
     StringBuilder__push_str(&sb, ", ");
     StringBuilder__push_int(&sb, bo + bsz);
     StringBuilder__push_str(&sb, ") overlap");
-    __drop_ret_9424_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_9475_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_9424_5;
+    return __drop_ret_9475_5;
 }
 
 static void typecheck__check_ward_overlaps(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc) {
@@ -36553,7 +37101,7 @@ static const struct ir__Texpr *typecheck__ward_field_rune(struct ex_Allocator a,
     struct ex_StringBuilder sb;
     struct ir__Typ __lift_0;
     struct ir__TexprNode __lift_1;
-    const struct ir__Texpr *__drop_ret_9530_5;
+    const struct ir__Texpr *__drop_ret_9581_5;
     sl = Vec__as_slice_typecheck__WardFieldEntry(sc->sc_wards);
     i = ((unsigned long)0);
     while (i < Vec__length_typecheck__WardFieldEntry(sc->sc_wards)) {
@@ -36584,9 +37132,9 @@ static const struct ir__Texpr *typecheck__ward_field_rune(struct ex_Allocator a,
     StringBuilder__push_str(&sb, wname);
     StringBuilder__push_str(&sb, "'");
     typecheck__tc_fail(ar, sc, p, str__from_slice(ar, StringBuilder__as_slice(&sb)));
-    __drop_ret_9530_5 = typecheck__defer_expr(ar, p);
+    __drop_ret_9581_5 = typecheck__defer_expr(ar, p);
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_9530_5;
+    return __drop_ret_9581_5;
 }
 
 static void typecheck__elab_ward_inst(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, struct ex_Vec_ir__FieldTy *benv, const char *name, const char *ward_ty, const struct ast__Expr *addr, struct pos__Pos pos) {
@@ -36620,15 +37168,15 @@ static void typecheck__elab_ward_inst(struct ex_Allocator a, struct ex_Arena *ar
 static const char *typecheck__seal_tok_name(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc) {
     unsigned long n;
     struct ex_StringBuilder sb;
-    const char *__drop_ret_9558_5;
+    const char *__drop_ret_9609_5;
     n = *sc->sc_gensym;
     *sc->sc_gensym = n + ((unsigned long)1);
     sb = StringBuilder__with_capacity(a, ((unsigned long)24));
     StringBuilder__push_str(&sb, "__seal");
     StringBuilder__push_int(&sb, ((long)n));
-    __drop_ret_9558_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_9609_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_9558_5;
+    return __drop_ret_9609_5;
 }
 
 static const struct ir__Texpr *typecheck__seal_enter_call(struct ex_Allocator a, struct ex_Arena *ar, struct pos__Pos p) {
@@ -36676,7 +37224,7 @@ static struct ir__Tstmt typecheck__elab_seal(struct ex_Allocator a, struct ex_Ar
     struct ex_Vec_ir__Tstmt user;
     struct ex_Slice_ir__Tstmt usl;
     unsigned long i;
-    struct ir__Tstmt __drop_ret_9581_5;
+    struct ir__Tstmt __drop_ret_9632_5;
     tok = typecheck__seal_tok_name(a, ar, sc);
     inner = Vec__with_capacity_ir__Tstmt(a, ((unsigned long)8));
     typecheck__seal_prologue(a, ar, tok, p, &inner);
@@ -36687,11 +37235,11 @@ static struct ir__Tstmt typecheck__elab_seal(struct ex_Allocator a, struct ex_Ar
         Vec__push_ir__Tstmt(&inner, usl.ptr[i]);
         i = i + ((unsigned long)1);
     }
-    __drop_ret_9581_5.tag = ir__Tstmt_TSeal;
-    __drop_ret_9581_5.data.TSeal.body = inner;
-    __drop_ret_9581_5.data.TSeal.pos = p;
+    __drop_ret_9632_5.tag = ir__Tstmt_TSeal;
+    __drop_ret_9632_5.data.TSeal.body = inner;
+    __drop_ret_9632_5.data.TSeal.pos = p;
     __drop_vec_4(&user);
-    return __drop_ret_9581_5;
+    return __drop_ret_9632_5;
 }
 
 static void typecheck__seal_prologue(struct ex_Allocator a, struct ex_Arena *ar, const char *tok, struct pos__Pos p, struct ex_Vec_ir__Tstmt *out) {
@@ -36887,7 +37435,7 @@ static void typecheck__check_sigil_overlaps(struct ex_Allocator a, struct ex_Are
 
 static const char *typecheck__sigil_overlap_msg(struct ex_Allocator a, struct ex_Arena *ar, const char *an, long alo, long ahi, const char *bn, long blo, long bhi) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_9691_5;
+    const char *__drop_ret_9742_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)128));
     StringBuilder__push_str(&sb, "resources '");
     StringBuilder__push_str(&sb, an);
@@ -36902,9 +37450,9 @@ static const char *typecheck__sigil_overlap_msg(struct ex_Allocator a, struct ex
     StringBuilder__push_str(&sb, ", 0x");
     typecheck__push_hex_upper(&sb, bhi);
     StringBuilder__push_str(&sb, ") overlap");
-    __drop_ret_9691_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_9742_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_9691_5;
+    return __drop_ret_9742_5;
 }
 
 static void typecheck__collect_claims(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_ast__Item *items, const char *path, struct ex_Vec_typecheck__ClaimEntry *out) {
@@ -36952,7 +37500,7 @@ static void typecheck__collect_claim_one(struct ex_Allocator a, struct ex_Arena 
 
 static const char *typecheck__mod_path_join(struct ex_Allocator a, struct ex_Arena *ar, const char *path, const char *name) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_9712_5;
+    const char *__drop_ret_9763_5;
     if (str__eq(path, "")) {
         return name;
     }
@@ -36960,9 +37508,9 @@ static const char *typecheck__mod_path_join(struct ex_Allocator a, struct ex_Are
     StringBuilder__push_str(&sb, path);
     StringBuilder__push_str(&sb, "::");
     StringBuilder__push_str(&sb, name);
-    __drop_ret_9712_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_9763_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_9712_5;
+    return __drop_ret_9763_5;
 }
 
 static int typecheck__mod_within(const char *owner, const char *cur) {
@@ -37082,14 +37630,14 @@ static void typecheck__sigil_gate_one(struct ex_Allocator a, struct ex_Arena *ar
 
 static const char *typecheck__path_join_or_root(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_str *p) {
     struct ex_StringBuilder jb;
-    const char *__drop_ret_9786_5;
+    const char *__drop_ret_9837_5;
     if (Vec__length_str(p) == ((unsigned long)0)) {
         return "";
     }
     jb = ir__tc_join_sb(a, p);
-    __drop_ret_9786_5 = str__from_slice(ar, StringBuilder__as_slice(&jb));
+    __drop_ret_9837_5 = str__from_slice(ar, StringBuilder__as_slice(&jb));
     (jb.alloc.free_fn)(jb.alloc.state, ((void *)(jb.buf)), jb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_9786_5;
+    return __drop_ret_9837_5;
 }
 
 static void typecheck__push_hex_upper(struct ex_StringBuilder *sb, long n) {
@@ -37284,7 +37832,7 @@ static void typecheck__build_param_env(struct ex_Allocator a, struct ex_Arena *a
 
 static const char *typecheck__mangle_fn(struct ex_Allocator a, struct ex_Arena *ar, const struct ast__Func *f) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_9893_5;
+    const char *__drop_ret_9944_5;
     if (f->is_extern) {
         return f->c_name;
     }
@@ -37294,23 +37842,23 @@ static const char *typecheck__mangle_fn(struct ex_Allocator a, struct ex_Arena *
     sb = StringBuilder__with_capacity(a, ((unsigned long)32));
     StringBuilder__push_str(&sb, "ex_");
     StringBuilder__push_str(&sb, f->name);
-    __drop_ret_9893_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_9944_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_9893_5;
+    return __drop_ret_9944_5;
 }
 
 static const char *typecheck__lift_name(struct ex_Allocator a, struct ex_Arena *ar, unsigned long *ctr) {
     unsigned long n;
     struct ex_StringBuilder sb;
-    const char *__drop_ret_9917_5;
+    const char *__drop_ret_9968_5;
     n = *ctr;
     *ctr = *ctr + ((unsigned long)1);
     sb = StringBuilder__with_capacity(a, ((unsigned long)16));
     StringBuilder__push_str(&sb, "__lift_");
     StringBuilder__push_int(&sb, ((long)n));
-    __drop_ret_9917_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_9968_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_9917_5;
+    return __drop_ret_9968_5;
 }
 
 static int typecheck__is_block_texpr(const struct ir__Texpr *te) {
@@ -38240,14 +38788,14 @@ static int typecheck__names_has(const struct ex_Vec_str *v, const char *n) {
 
 static const char *typecheck__suffixed(struct ex_Allocator a, struct ex_Arena *ar, const char *name, long n) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_10240_5;
+    const char *__drop_ret_10291_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)24));
     StringBuilder__push_str(&sb, name);
     StringBuilder__push_str(&sb, "__");
     StringBuilder__push_int(&sb, n);
-    __drop_ret_10240_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_10291_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_10240_5;
+    return __drop_ret_10291_5;
 }
 
 static const char *typecheck__mint_next(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__ScopeSt *st, const char *name) {
@@ -38447,15 +38995,15 @@ static struct ex_Vec_ast__Stmt typecheck__scope_block(struct ex_Allocator a, str
     struct ex_Vec_str here;
     struct ex_Vec_ast__Stmt out;
     unsigned long i;
-    struct ex_Vec_ast__Stmt __drop_old_10372_9;
+    struct ex_Vec_ast__Stmt __drop_old_10423_9;
     cur = typecheck__copy_stmts(a, stmts);
     here = Vec__with_capacity_str(a, ((unsigned long)8));
     out = Vec__with_capacity_ast__Stmt(a, ((unsigned long)8));
     i = ((unsigned long)0);
     while (i < Vec__length_ast__Stmt(&cur)) {
-        __drop_old_10372_9 = typecheck__scope_one(a, ar, st, &here, visible, &cur, i, &out);
+        __drop_old_10423_9 = typecheck__scope_one(a, ar, st, &here, visible, &cur, i, &out);
         __drop_vec_0(&cur);
-        cur = __drop_old_10372_9;
+        cur = __drop_old_10423_9;
         i = i + ((unsigned long)1);
     }
     (here.alloc.free_fn)(here.alloc.state, ((void *)(here.ptr)), here.cap * ((unsigned long)(sizeof(const char *))));
@@ -39215,7 +39763,7 @@ struct ex_Vec_ast__Stmt typecheck__resolve_scopes(struct ex_Allocator a, struct 
     struct typecheck__ScopeSt st;
     struct ex_Vec_str empty;
     struct ir__StrPair __lift_0;
-    struct ex_Vec_ast__Stmt __drop_ret_10635_5;
+    struct ex_Vec_ast__Stmt __drop_ret_10686_5;
     pn = Vec__with_capacity_str(a, ((unsigned long)8));
     taken = Vec__with_capacity_str(a, ((unsigned long)16));
     mint = Vec__with_capacity_ir__StrPair(a, ((unsigned long)16));
@@ -39235,17 +39783,17 @@ struct ex_Vec_ast__Stmt typecheck__resolve_scopes(struct ex_Allocator a, struct 
     st.ss_srcnames = sc->sc_srcnames;
     st.ss_sc = sc;
     empty = Vec__with_capacity_str(a, ((unsigned long)8));
-    __drop_ret_10635_5 = typecheck__scope_block(a, ar, &st, &pn, body);
+    __drop_ret_10686_5 = typecheck__scope_block(a, ar, &st, &pn, body);
     (empty.alloc.free_fn)(empty.alloc.state, ((void *)(empty.ptr)), empty.cap * ((unsigned long)(sizeof(const char *))));
     (mint.alloc.free_fn)(mint.alloc.state, ((void *)(mint.ptr)), mint.cap * ((unsigned long)(sizeof(struct ir__StrPair))));
     (taken.alloc.free_fn)(taken.alloc.state, ((void *)(taken.ptr)), taken.cap * ((unsigned long)(sizeof(const char *))));
     (pn.alloc.free_fn)(pn.alloc.state, ((void *)(pn.ptr)), pn.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_10635_5;
+    return __drop_ret_10686_5;
 }
 
 static struct ex_Vec_ir__Tstmt typecheck__elab_skeleton_or_body(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_typecheck__GlobalFn *g, const struct typecheck__TyScope *sc, unsigned long *gensym, struct ex_Vec_ir__FieldTy *env, struct ex_Option_cptr_ir__Typ ret_ty, const struct ast__Func *f, int is_skeleton, struct ex_Vec_ir__StrPair *srcnames_out) {
     struct ex_Vec_ast__Stmt scoped;
-    struct ex_Vec_ir__Tstmt __drop_ret_10653_5;
+    struct ex_Vec_ir__Tstmt __drop_ret_10704_5;
     if (is_skeleton) {
         return Vec__with_capacity_ir__Tstmt(a, ((unsigned long)8));
     }
@@ -39253,9 +39801,9 @@ static struct ex_Vec_ir__Tstmt typecheck__elab_skeleton_or_body(struct ex_Alloca
     typecheck__rebase_binds(sc, &f->params);
     scoped = typecheck__resolve_scopes(a, ar, sc, &f->params, &f->body);
     typecheck__snapshot_srcnames(sc, srcnames_out);
-    __drop_ret_10653_5 = typecheck__elab_body(a, ar, g, sc, gensym, env, ret_ty, &scoped);
+    __drop_ret_10704_5 = typecheck__elab_body(a, ar, g, sc, gensym, env, ret_ty, &scoped);
     __drop_vec_0(&scoped);
-    return __drop_ret_10653_5;
+    return __drop_ret_10704_5;
 }
 
 static void typecheck__snapshot_srcnames(const struct typecheck__TyScope *sc, struct ex_Vec_ir__StrPair *out) {
@@ -39606,7 +40154,7 @@ static struct ir__Tfunc typecheck__elaborate_fn(struct ex_Allocator a, struct ex
     struct ex_Vec_ast__TraitBound tbounds;
     struct ex_Vec_ast__Stmt dummy_body;
     struct ast__Func tf_func;
-    struct ir__Tfunc __drop_ret_10835_5;
+    struct ir__Tfunc __drop_ret_10886_5;
     params = typecheck__copy_params(a, &f->params);
     eff_tparams = typecheck__pick_tparams(xtparams, &f->tparams);
     sc.sc_runes = idx->pi_runes;
@@ -39690,19 +40238,19 @@ static struct ir__Tfunc typecheck__elaborate_fn(struct ex_Allocator a, struct ex
     tf_func.must_use = f->must_use;
     tf_func.escapes_hatch = f->escapes_hatch;
     tf_func.pos = f->pos;
-    __drop_ret_10835_5.tf_path = path;
-    __drop_ret_10835_5.tf_func = tf_func;
-    __drop_ret_10835_5.tf_mangled = mangled;
-    __drop_ret_10835_5.tf_param_tys = param_tys;
-    __drop_ret_10835_5.tf_ret_ty = ret_ty;
-    __drop_ret_10835_5.tf_body = body;
-    __drop_ret_10835_5.tf_lets = lets;
-    __drop_ret_10835_5.tf_srcnames = srcnames;
-    __drop_ret_10835_5.tf_origin_pos = no_pos;
+    __drop_ret_10886_5.tf_path = path;
+    __drop_ret_10886_5.tf_func = tf_func;
+    __drop_ret_10886_5.tf_mangled = mangled;
+    __drop_ret_10886_5.tf_param_tys = param_tys;
+    __drop_ret_10886_5.tf_ret_ty = ret_ty;
+    __drop_ret_10886_5.tf_body = body;
+    __drop_ret_10886_5.tf_lets = lets;
+    __drop_ret_10886_5.tf_srcnames = srcnames;
+    __drop_ret_10886_5.tf_origin_pos = no_pos;
     (no_srcnames.alloc.free_fn)(no_srcnames.alloc.state, ((void *)(no_srcnames.ptr)), no_srcnames.cap * ((unsigned long)(sizeof(struct ir__StrPair))));
     __drop_vec_4(&raw_body);
     (env.alloc.free_fn)(env.alloc.state, ((void *)(env.ptr)), env.cap * ((unsigned long)(sizeof(struct ir__FieldTy))));
-    return __drop_ret_10835_5;
+    return __drop_ret_10886_5;
 }
 
 static struct ex_Vec_str typecheck__path_push(struct ex_Allocator a, const struct ex_Vec_str *path, const char *name) {
@@ -39733,7 +40281,7 @@ static const char *typecheck__join_colons(struct ex_Allocator a, struct ex_Arena
     unsigned long n;
     struct ex_Slice_str sl;
     unsigned long i;
-    const char *__drop_ret_10872_5;
+    const char *__drop_ret_10923_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)32));
     n = Vec__length_str(modpath);
     sl = Vec__as_slice_str(modpath);
@@ -39744,16 +40292,16 @@ static const char *typecheck__join_colons(struct ex_Allocator a, struct ex_Arena
         i = i + ((unsigned long)1);
     }
     StringBuilder__push_str(&sb, name);
-    __drop_ret_10872_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_10923_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_10872_5;
+    return __drop_ret_10923_5;
 }
 
 static struct ex_Vec_str typecheck__qualify_type_path(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ex_Vec_str *path) {
     struct ex_Vec_str q;
     const char *marker;
     long ti;
-    struct ex_Vec_str __drop_ret_10888_43;
+    struct ex_Vec_str __drop_ret_10939_43;
     if (Vec__length_str(sc->sc_modpath) > ((unsigned long)0)) {
         q = typecheck__path_concat(a, sc->sc_modpath, path);
         marker = typecheck__mu_joined(a, ar, &q);
@@ -39761,9 +40309,9 @@ static struct ex_Vec_str typecheck__qualify_type_path(struct ex_Allocator a, str
             return q;
         }
         if (typecheck__name_in(sc->sc_enums, marker)) {
-            __drop_ret_10888_43 = typecheck__copy_strs(a, &q);
+            __drop_ret_10939_43 = typecheck__copy_strs(a, &q);
             (q.alloc.free_fn)(q.alloc.state, ((void *)(q.ptr)), q.cap * ((unsigned long)(sizeof(const char *))));
-            return __drop_ret_10888_43;
+            return __drop_ret_10939_43;
         }
         (q.alloc.free_fn)(q.alloc.state, ((void *)(q.ptr)), q.cap * ((unsigned long)(sizeof(const char *))));
     }
@@ -39861,7 +40409,7 @@ static const char *typecheck__method_mangle(struct ex_Allocator a, struct ex_Are
     unsigned long n;
     struct ex_Slice_str sl;
     unsigned long i;
-    const char *__drop_ret_10945_5;
+    const char *__drop_ret_10996_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)32));
     n = Vec__length_str(target);
     sl = Vec__as_slice_str(target);
@@ -39872,9 +40420,9 @@ static const char *typecheck__method_mangle(struct ex_Allocator a, struct ex_Are
         i = i + ((unsigned long)1);
     }
     StringBuilder__push_str(&sb, name);
-    __drop_ret_10945_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_10996_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_10945_5;
+    return __drop_ret_10996_5;
 }
 
 static const struct ex_Vec_str *typecheck__skel_xtparams(const struct ast__Func *f, const struct ex_Vec_str *itparams, const struct ex_Vec_str *empty) {
@@ -40666,12 +41214,12 @@ static long typecheck__eval_const_c(const struct ast__Expr *e, const struct ex_V
 
 static const char *typecheck__int_to_str_c(struct ex_Allocator a, struct ex_Arena *ar, long n) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_11304_5;
+    const char *__drop_ret_11355_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)16));
     StringBuilder__push_int(&sb, n);
-    __drop_ret_11304_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_11355_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_11304_5;
+    return __drop_ret_11355_5;
 }
 
 static void typecheck__collect_tp_consts(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_ast__Item *items, const struct ex_Vec_str *path, struct ex_Vec_typecheck__IntConst *table, struct ex_Vec_ir__StrPair *out) {
@@ -40736,6 +41284,68 @@ static void typecheck__push_struct_fields(struct ex_Allocator a, struct ex_Arena
     while (i < n) {
         typecheck__push_one_field(a, ar, sc, spath, &(sl.ptr[i]), out, p);
         i = i + ((unsigned long)1);
+    }
+    typecheck__check_own_field_allocator(a, ar, sc, spath, fields, p);
+}
+
+static void typecheck__check_own_field_allocator(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ex_Vec_str *spath, const struct ex_Vec_ast__FieldDef *fields, struct pos__Pos p) {
+    unsigned long n;
+    struct ex_Slice_ast__FieldDef sl;
+    int has_own;
+    int has_alloc;
+    unsigned long i;
+    const struct ir__Typ *ft;
+    struct ex_StringBuilder sb;
+    n = Vec__length_ast__FieldDef(fields);
+    sl = Vec__as_slice_ast__FieldDef(fields);
+    has_own = 0;
+    has_alloc = 0;
+    i = ((unsigned long)0);
+    while (i < n) {
+        ft = typecheck__resolve_sig_ty(a, ar, sc, sl.ptr[i].ty, p);
+        if (typecheck__is_own_ptr_ty(ft)) {
+            has_own = 1;
+        }
+        if (typecheck__is_allocator_ty(ft)) {
+            has_alloc = 1;
+        }
+        i = i + ((unsigned long)1);
+    }
+    if (!has_own) {
+        return;
+    }
+    if (has_alloc) {
+        return;
+    }
+    sb = StringBuilder__with_capacity(a, ((unsigned long)224));
+    StringBuilder__push_str(&sb, "struct '");
+    StringBuilder__push_str(&sb, typecheck__path_last(spath));
+    StringBuilder__push_str(&sb, "' has an `own *T` field but no `alloc: Allocator` field — the owner-drop synthesis needs an allocator to release the storage through; add `alloc: Allocator` to the struct so the drop pass knows where to send the free");
+    typecheck__tc_fail(ar, sc, p, str__from_slice(ar, StringBuilder__as_slice(&sb)));
+    (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
+    return;
+}
+
+static int typecheck__is_own_ptr_ty(const struct ir__Typ *t) {
+    {
+        int __exile_ret;
+        {
+            struct ir__Typ __m;
+            __m = *t;
+            switch (__m.tag) {
+            case ir__Typ_TOwnPtr:
+                {
+                    __exile_ret = 1;
+                    break;
+                }
+            default:
+                {
+                    __exile_ret = 0;
+                    break;
+                }
+            }
+        }
+        return __exile_ret;
     }
 }
 
@@ -41263,13 +41873,13 @@ static void typecheck__collect_struct_info(struct ex_Allocator a, struct ex_Aren
 
 static const char *typecheck__tuple_field_name(struct ex_Allocator a, struct ex_Arena *ar, unsigned long k) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_11565_5;
+    const char *__drop_ret_11647_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)8));
     StringBuilder__push_str(&sb, "_");
     StringBuilder__push_int(&sb, ((long)k));
-    __drop_ret_11565_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_11647_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_11565_5;
+    return __drop_ret_11647_5;
 }
 
 static void typecheck__push_etag(struct ex_Allocator a, const struct ex_Vec_str *epath, const char *vname, long tag, struct ex_Vec_typecheck__EnumVariantTag *out) {
@@ -42287,13 +42897,13 @@ static struct ex_Vec_str typecheck__arena_method_path(struct ex_Allocator a) {
 
 static const struct ast__TypeAnn *typecheck__ann_kv(struct ex_Allocator a, struct ex_Arena *ar, const char *name) {
     struct ex_Vec_str tps;
-    const struct ast__TypeAnn *__drop_ret_12130_5;
+    const struct ast__TypeAnn *__drop_ret_12212_5;
     tps = Vec__with_capacity_str(a, ((unsigned long)8));
     Vec__push_str(&tps, "K");
     Vec__push_str(&tps, "V");
-    __drop_ret_12130_5 = typecheck__ann_app_tps(a, ar, name, &tps);
+    __drop_ret_12212_5 = typecheck__ann_app_tps(a, ar, name, &tps);
     (tps.alloc.free_fn)(tps.alloc.state, ((void *)(tps.ptr)), tps.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_12130_5;
+    return __drop_ret_12212_5;
 }
 
 static int typecheck__impl_has_method(const struct ex_Vec_ast__Func *methods, const char *name) {
@@ -44537,7 +45147,7 @@ static const struct ast__Expr *typecheck__derive_eq_struct_body(struct ex_Alloca
     struct ex_Slice_ast__FieldDef sl;
     struct ex_Vec_cptr_ast__Expr cmps;
     unsigned long i;
-    const struct ast__Expr *__drop_ret_13056_5;
+    const struct ast__Expr *__drop_ret_13138_5;
     n = Vec__length_ast__FieldDef(sfields);
     sl = Vec__as_slice_ast__FieldDef(sfields);
     cmps = Vec__with_capacity_cptr_ast__Expr(a, ((unsigned long)8));
@@ -44546,9 +45156,9 @@ static const struct ast__Expr *typecheck__derive_eq_struct_body(struct ex_Alloca
         Vec__push_cptr_ast__Expr(&cmps, typecheck__dv_eq_call(a, ar, typecheck__dv_field(ar, "self", sl.ptr[i].name, p), typecheck__dv_field(ar, "other", sl.ptr[i].name, p), p));
         i = i + ((unsigned long)1);
     }
-    __drop_ret_13056_5 = typecheck__dv_and_fold(ar, &cmps, p);
+    __drop_ret_13138_5 = typecheck__dv_and_fold(ar, &cmps, p);
     (cmps.alloc.free_fn)(cmps.alloc.state, ((void *)(cmps.ptr)), cmps.cap * ((unsigned long)(sizeof(const struct ast__Expr *))));
-    return __drop_ret_13056_5;
+    return __drop_ret_13138_5;
 }
 
 static const struct ast__Expr *typecheck__derive_hash_struct_body(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_ast__FieldDef *sfields, struct pos__Pos p) {
@@ -44558,7 +45168,7 @@ static const struct ast__Expr *typecheck__derive_hash_struct_body(struct ex_Allo
     struct ex_Vec_cptr_ast__Expr vals;
     unsigned long i;
     struct ast__Expr __lift_0;
-    const struct ast__Expr *__drop_ret_13066_5;
+    const struct ast__Expr *__drop_ret_13148_5;
     n = Vec__length_ast__FieldDef(sfields);
     sl = Vec__as_slice_ast__FieldDef(sfields);
     if (n == ((unsigned long)0)) {
@@ -44574,9 +45184,9 @@ static const struct ast__Expr *typecheck__derive_hash_struct_body(struct ex_Allo
         Vec__push_cptr_ast__Expr(&vals, typecheck__dv_field(ar, "self", sl.ptr[i].name, p));
         i = i + ((unsigned long)1);
     }
-    __drop_ret_13066_5 = typecheck__dv_hash_fold(ar, seed, &vals, p);
+    __drop_ret_13148_5 = typecheck__dv_hash_fold(ar, seed, &vals, p);
     (vals.alloc.free_fn)(vals.alloc.state, ((void *)(vals.ptr)), vals.cap * ((unsigned long)(sizeof(const struct ast__Expr *))));
-    return __drop_ret_13066_5;
+    return __drop_ret_13148_5;
 }
 
 static const struct ast__Expr *typecheck__derive_clone_struct_body(struct ex_Allocator a, struct ex_Arena *ar, const char *sname, const struct ex_Vec_ast__FieldDef *sfields, struct pos__Pos p) {
@@ -46742,36 +47352,36 @@ static int typecheck__path_eq_norm(struct ex_Allocator a, const struct ex_Vec_st
     struct ex_Slice_u8 bx;
     struct ex_Slice_u8 by;
     unsigned long k;
-    int __drop_ret_14124_37;
-    int __drop_ret_14128_49;
-    int __drop_ret_14129_5;
+    int __drop_ret_14206_37;
+    int __drop_ret_14210_49;
+    int __drop_ret_14211_5;
     if (Vec__length_str(x) == Vec__length_str(y)) {
         return ir__path_eq(x, y);
     }
     jx = ir__tc_join_sb(a, x);
     jy = ir__tc_join_sb(a, y);
     if (StringBuilder__length(&jx) != StringBuilder__length(&jy)) {
-        __drop_ret_14124_37 = 0;
+        __drop_ret_14206_37 = 0;
         (jy.alloc.free_fn)(jy.alloc.state, ((void *)(jy.buf)), jy.cap * ((unsigned long)(sizeof(unsigned char))));
         (jx.alloc.free_fn)(jx.alloc.state, ((void *)(jx.buf)), jx.cap * ((unsigned long)(sizeof(unsigned char))));
-        return __drop_ret_14124_37;
+        return __drop_ret_14206_37;
     }
     bx = StringBuilder__as_slice(&jx);
     by = StringBuilder__as_slice(&jy);
     k = ((unsigned long)0);
     while (k < StringBuilder__length(&jx)) {
         if (bx.ptr[k] != by.ptr[k]) {
-            __drop_ret_14128_49 = 0;
+            __drop_ret_14210_49 = 0;
             (jy.alloc.free_fn)(jy.alloc.state, ((void *)(jy.buf)), jy.cap * ((unsigned long)(sizeof(unsigned char))));
             (jx.alloc.free_fn)(jx.alloc.state, ((void *)(jx.buf)), jx.cap * ((unsigned long)(sizeof(unsigned char))));
-            return __drop_ret_14128_49;
+            return __drop_ret_14210_49;
         }
         k = k + ((unsigned long)1);
     }
-    __drop_ret_14129_5 = 1;
+    __drop_ret_14211_5 = 1;
     (jy.alloc.free_fn)(jy.alloc.state, ((void *)(jy.buf)), jy.cap * ((unsigned long)(sizeof(unsigned char))));
     (jx.alloc.free_fn)(jx.alloc.state, ((void *)(jx.buf)), jx.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_14129_5;
+    return __drop_ret_14211_5;
 }
 
 static void typecheck__collect_efields_from(struct ex_Allocator a, const struct ex_Vec_typecheck__EnumFieldE *src, const struct ex_Vec_str *path, const char *variant, struct ex_Vec_ir__FieldTy *out) {
@@ -47235,7 +47845,7 @@ static const char *typecheck__mu_joined(struct ex_Allocator a, struct ex_Arena *
     struct ex_Slice_str sl;
     struct ex_Vec_str pre;
     unsigned long i;
-    const char *__drop_ret_14388_5;
+    const char *__drop_ret_14470_5;
     n = Vec__length_str(p);
     if (n == ((unsigned long)0)) {
         return "";
@@ -47247,9 +47857,9 @@ static const char *typecheck__mu_joined(struct ex_Allocator a, struct ex_Arena *
         Vec__push_str(&pre, sl.ptr[i]);
         i = i + ((unsigned long)1);
     }
-    __drop_ret_14388_5 = typecheck__join_colons(a, ar, &pre, sl.ptr[n - ((unsigned long)1)]);
+    __drop_ret_14470_5 = typecheck__join_colons(a, ar, &pre, sl.ptr[n - ((unsigned long)1)]);
     (pre.alloc.free_fn)(pre.alloc.state, ((void *)(pre.ptr)), pre.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_14388_5;
+    return __drop_ret_14470_5;
 }
 
 static void typecheck__mark_enum_must_use(struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_ir__EnumSig *enums, unsigned long ci, const struct ex_Vec_str *names) {
@@ -48858,7 +49468,7 @@ static int typecheck__any_builtin(const struct ex_Vec_ir__Tfunc *funcs, long kin
 
 static const char *typecheck__prelude_source(struct ex_Allocator a, struct ex_Arena *ar) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_15391_5;
+    const char *__drop_ret_15473_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)1024));
     StringBuilder__push_str(&sb, "impl Allocator {\n");
     StringBuilder__push_str(&sb, "    pub fn alloc<T>(self) -> own *T {\n");
@@ -49273,9 +49883,9 @@ static const char *typecheck__prelude_source(struct ex_Allocator a, struct ex_Ar
     StringBuilder__push_str(&sb, "        result\n");
     StringBuilder__push_str(&sb, "    }\n");
     StringBuilder__push_str(&sb, "}\n");
-    __drop_ret_15391_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_15473_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_15391_5;
+    return __drop_ret_15473_5;
 }
 
 static struct ex_Vec_ast__Item typecheck__parse_prelude_items(struct ex_Allocator a, struct ex_Arena *ar) {
@@ -49887,14 +50497,14 @@ static int typecheck__funcs_call_m(const struct ex_Vec_ir__Tfunc *funcs, const c
 
 static const char *typecheck__pm_mangle(struct ex_Allocator a, struct ex_Arena *ar, const char *ty, const char *nm) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_15602_5;
+    const char *__drop_ret_15684_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)32));
     StringBuilder__push_str(&sb, ty);
     StringBuilder__push_str(&sb, "__");
     StringBuilder__push_str(&sb, nm);
-    __drop_ret_15602_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_15684_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_15602_5;
+    return __drop_ret_15684_5;
 }
 
 static int typecheck__is_self_recv(const struct ast__Expr *e) {
@@ -50427,7 +51037,7 @@ static struct ir__Tfunc typecheck__sys_extern_tfunc(struct ex_Allocator a, struc
     struct ex_Vec_ir__StrPair no_srcnames3;
     struct ast__Param __lift_0;
     struct pos__Pos __lift_1;
-    struct ir__Tfunc __drop_ret_15807_5;
+    struct ir__Tfunc __drop_ret_15889_5;
     no_ann.tag = ex_Option_cptr_ast__TypeAnn_None;
     no_str.tag = ex_Option_str_None;
     no_pos.tag = ex_Option_pos__Pos_None;
@@ -50469,18 +51079,18 @@ static struct ir__Tfunc typecheck__sys_extern_tfunc(struct ex_Allocator a, struc
     body0 = Vec__with_capacity_ir__Tstmt(a, ((unsigned long)8));
     lets0 = Vec__with_capacity_ir__FieldTy(a, ((unsigned long)8));
     no_srcnames3 = Vec__with_capacity_ir__StrPair(a, ((unsigned long)8));
-    __drop_ret_15807_5.tf_path = path;
-    __drop_ret_15807_5.tf_func = f;
-    __drop_ret_15807_5.tf_mangled = name;
-    __drop_ret_15807_5.tf_param_tys = ptys;
-    __drop_ret_15807_5.tf_ret_ty = ret;
-    __drop_ret_15807_5.tf_body = body0;
-    __drop_ret_15807_5.tf_lets = lets0;
-    __drop_ret_15807_5.tf_srcnames = no_srcnames3;
-    __drop_ret_15807_5.tf_origin_pos = no_pos;
+    __drop_ret_15889_5.tf_path = path;
+    __drop_ret_15889_5.tf_func = f;
+    __drop_ret_15889_5.tf_mangled = name;
+    __drop_ret_15889_5.tf_param_tys = ptys;
+    __drop_ret_15889_5.tf_ret_ty = ret;
+    __drop_ret_15889_5.tf_body = body0;
+    __drop_ret_15889_5.tf_lets = lets0;
+    __drop_ret_15889_5.tf_srcnames = no_srcnames3;
+    __drop_ret_15889_5.tf_origin_pos = no_pos;
     (no_srcnames.alloc.free_fn)(no_srcnames.alloc.state, ((void *)(no_srcnames.ptr)), no_srcnames.cap * ((unsigned long)(sizeof(struct ir__StrPair))));
     (pnames.alloc.free_fn)(pnames.alloc.state, ((void *)(pnames.ptr)), pnames.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_15807_5;
+    return __drop_ret_15889_5;
 }
 
 static struct ex_Vec_str typecheck__sys_p2(struct ex_Allocator a, const char *n1, const char *n2) {
@@ -51672,8 +52282,8 @@ static struct typecheck__CEval typecheck__ceval_var(struct ex_Allocator a, struc
     long di;
     struct ex_StringBuilder cb;
     struct ex_StringBuilder sb;
-    struct typecheck__CEval __drop_ret_16413_13;
-    struct typecheck__CEval __drop_ret_16420_5;
+    struct typecheck__CEval __drop_ret_16495_13;
+    struct typecheck__CEval __drop_ret_16502_5;
     i = typecheck__ctab_find(tab, nm);
     if (i >= ((long)0)) {
         e = &((Vec__as_slice_typecheck__CTabEntry(tab)).ptr[((unsigned long)i)]);
@@ -51687,9 +52297,9 @@ static struct typecheck__CEval typecheck__ceval_var(struct ex_Allocator a, struc
             StringBuilder__push_str(&cb, nm);
             StringBuilder__push_str(&cb, "'");
             typecheck__tc_fail(ar, sc, (Vec__as_slice_typecheck__ConstDeclInfo(cds)).ptr[((unsigned long)di)].cd_pos, str__from_slice(ar, StringBuilder__as_slice(&cb)));
-            __drop_ret_16413_13 = typecheck__cev(((long)3), ((long)0));
+            __drop_ret_16495_13 = typecheck__cev(((long)3), ((long)0));
             (cb.alloc.free_fn)(cb.alloc.state, ((void *)(cb.buf)), cb.cap * ((unsigned long)(sizeof(unsigned char))));
-            return __drop_ret_16413_13;
+            return __drop_ret_16495_13;
         }
         return typecheck__ceval_named(a, ar, sc, nm, (Vec__as_slice_typecheck__ConstDeclInfo(cds)).ptr[((unsigned long)di)].cd_value, cds, tab, inprog);
     }
@@ -51698,9 +52308,9 @@ static struct typecheck__CEval typecheck__ceval_var(struct ex_Allocator a, struc
     StringBuilder__push_str(&sb, nm);
     StringBuilder__push_str(&sb, "'");
     typecheck__tc_fail(ar, sc, q, str__from_slice(ar, StringBuilder__as_slice(&sb)));
-    __drop_ret_16420_5 = typecheck__cev(((long)3), ((long)0));
+    __drop_ret_16502_5 = typecheck__cev(((long)3), ((long)0));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_16420_5;
+    return __drop_ret_16502_5;
 }
 
 static struct typecheck__CEval typecheck__ceval_intop(struct ex_Allocator _a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, struct typecheck__CEval x, const char *msg, struct pos__Pos q, long which) {
@@ -51787,15 +52397,15 @@ static struct typecheck__CEval typecheck__ceval_binop(struct ex_Allocator a, str
 
 static struct typecheck__CEval typecheck__ceval_op_err(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const char *pre, struct ast__BinOp op, const char *post, struct pos__Pos q) {
     struct ex_StringBuilder sb;
-    struct typecheck__CEval __drop_ret_16483_5;
+    struct typecheck__CEval __drop_ret_16565_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)56));
     StringBuilder__push_str(&sb, pre);
     StringBuilder__push_str(&sb, typecheck__binop_sym(op));
     StringBuilder__push_str(&sb, post);
     typecheck__tc_fail(ar, sc, q, str__from_slice(ar, StringBuilder__as_slice(&sb)));
-    __drop_ret_16483_5 = typecheck__cev(((long)3), ((long)0));
+    __drop_ret_16565_5 = typecheck__cev(((long)3), ((long)0));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_16483_5;
+    return __drop_ret_16565_5;
 }
 
 static void typecheck__check_const_value(struct ex_Allocator a, struct ex_Arena *ar, const struct typecheck__TyScope *sc, const struct ast__ConstDecl *c, const struct ex_Vec_typecheck__ConstDeclInfo *cds, struct ex_Vec_typecheck__CTabEntry *tab, struct ex_Vec_str *inprog) {
@@ -52120,8 +52730,8 @@ struct ex_Result_ir__Tprogram_cptr_error__CompileError typecheck__check_program(
     int uses_string_h;
     struct ex_Vec_ir__RuneGlobal tprunes;
     struct ir__Tprogram __lift_0;
-    struct ex_Result_ir__Tprogram_cptr_error__CompileError __drop_ret_16972_31;
-    struct ex_Result_ir__Tprogram_cptr_error__CompileError __drop_ret_16973_5;
+    struct ex_Result_ir__Tprogram_cptr_error__CompileError __drop_ret_17054_31;
+    struct ex_Result_ir__Tprogram_cptr_error__CompileError __drop_ret_17055_5;
     tc_err.tag = ex_Option_cptr_error__CompileError_None;
     tc_srcnames = Vec__with_capacity_ir__StrPair(a, ((unsigned long)16));
     tc_srcbase = ((unsigned long)0);
@@ -52518,8 +53128,8 @@ struct ex_Result_ir__Tprogram_cptr_error__CompileError typecheck__check_program(
     tprunes = Vec__with_capacity_ir__RuneGlobal(a, ((unsigned long)4));
     typecheck__build_rune_globals(a, ar, &globals, &base_scope, &tprunes);
     if (typecheck__err_latched(&tc_err)) {
-        __drop_ret_16972_31.tag = ex_Result_ir__Tprogram_cptr_error__CompileError_Err;
-        __drop_ret_16972_31.data.Err._0 = typecheck__err_unwrap(ar, tc_err);
+        __drop_ret_17054_31.tag = ex_Result_ir__Tprogram_cptr_error__CompileError_Err;
+        __drop_ret_17054_31.data.Err._0 = typecheck__err_unwrap(ar, tc_err);
         (tprunes.alloc.free_fn)(tprunes.alloc.state, ((void *)(tprunes.ptr)), tprunes.cap * ((unsigned long)(sizeof(struct ir__RuneGlobal))));
         (arrays.alloc.free_fn)(arrays.alloc.state, ((void *)(arrays.ptr)), arrays.cap * ((unsigned long)(sizeof(struct ir__FieldTy))));
         (fnptrs.alloc.free_fn)(fnptrs.alloc.state, ((void *)(fnptrs.ptr)), fnptrs.cap * ((unsigned long)(sizeof(struct ir__FieldTy))));
@@ -52596,7 +53206,7 @@ struct ex_Result_ir__Tprogram_cptr_error__CompileError typecheck__check_program(
         __drop_vec_1(&prelude_items);
         (tc_binds.alloc.free_fn)(tc_binds.alloc.state, ((void *)(tc_binds.ptr)), tc_binds.cap * ((unsigned long)(sizeof(struct ir__StrPair))));
         (tc_srcnames.alloc.free_fn)(tc_srcnames.alloc.state, ((void *)(tc_srcnames.ptr)), tc_srcnames.cap * ((unsigned long)(sizeof(struct ir__StrPair))));
-        return __drop_ret_16972_31;
+        return __drop_ret_17054_31;
     }
     __lift_0.tp_funcs = funcs;
     __lift_0.tp_pfree = pfree;
@@ -52618,8 +53228,8 @@ struct ex_Result_ir__Tprogram_cptr_error__CompileError typecheck__check_program(
     __lift_0.tp_array_types = arrays;
     __lift_0.tp_consts = consts;
     __lift_0.tp_runes = tprunes;
-    __drop_ret_16973_5.tag = ex_Result_ir__Tprogram_cptr_error__CompileError_Ok;
-    __drop_ret_16973_5.data.Ok._0 = __lift_0;
+    __drop_ret_17055_5.tag = ex_Result_ir__Tprogram_cptr_error__CompileError_Ok;
+    __drop_ret_17055_5.data.Ok._0 = __lift_0;
     (ftr.tup.alloc.free_fn)(ftr.tup.alloc.state, ((void *)(ftr.tup.ptr)), ftr.tup.cap * ((unsigned long)(sizeof(const struct ir__Typ *))));
     (ftr.fnp.alloc.free_fn)(ftr.fnp.alloc.state, ((void *)(ftr.fnp.ptr)), ftr.fnp.cap * ((unsigned long)(sizeof(const struct ir__Typ *))));
     (ftr.arr.alloc.free_fn)(ftr.arr.alloc.state, ((void *)(ftr.arr.ptr)), ftr.arr.cap * ((unsigned long)(sizeof(const struct ir__Typ *))));
@@ -52680,7 +53290,7 @@ struct ex_Result_ir__Tprogram_cptr_error__CompileError typecheck__check_program(
     __drop_vec_1(&prelude_items);
     (tc_binds.alloc.free_fn)(tc_binds.alloc.state, ((void *)(tc_binds.ptr)), tc_binds.cap * ((unsigned long)(sizeof(struct ir__StrPair))));
     (tc_srcnames.alloc.free_fn)(tc_srcnames.alloc.state, ((void *)(tc_srcnames.ptr)), tc_srcnames.cap * ((unsigned long)(sizeof(struct ir__StrPair))));
-    return __drop_ret_16973_5;
+    return __drop_ret_17055_5;
 }
 
 int typecheck__expr_diverges(const struct ir__Texpr *te) {
@@ -54959,17 +55569,65 @@ static struct ex_Vec_move__MoveBinding move__walk_stmts_e(const struct ex_Vec_ir
     struct ex_Vec_move__MoveBinding acc;
     struct ex_Slice_ir__Tstmt sl;
     unsigned long i;
-    struct ex_Vec_move__MoveBinding __drop_old_1160_9;
+    unsigned long k;
     acc = move__copy_live(a, live);
     sl = Vec__as_slice_ir__Tstmt(stmts);
     i = ((unsigned long)0);
     while (i < Vec__length_ir__Tstmt(stmts)) {
-        __drop_old_1160_9 = move__walk_stmt_e(structs, enums, a, ar, mv, ret_ty, &acc, &(sl.ptr[i]));
-        (acc.alloc.free_fn)(acc.alloc.state, ((void *)(acc.ptr)), acc.cap * ((unsigned long)(sizeof(struct move__MoveBinding))));
-        acc = __drop_old_1160_9;
+        acc = move__walk_non_defer(structs, enums, a, ar, mv, ret_ty, acc, &(sl.ptr[i]));
         i = i + ((unsigned long)1);
     }
+    k = Vec__length_ir__Tstmt(stmts);
+    while (k > ((unsigned long)0)) {
+        k = k - ((unsigned long)1);
+        acc = move__walk_defer_body(structs, enums, a, ar, mv, ret_ty, acc, &(sl.ptr[k]));
+    }
     return acc;
+}
+
+static struct ex_Vec_move__MoveBinding move__walk_non_defer(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, struct ex_Option_cptr_ir__Typ ret_ty, struct ex_Vec_move__MoveBinding acc, const struct ir__Tstmt *s) {
+    struct ex_Vec_move__MoveBinding __drop_ret_1179_5;
+    {
+        struct ir__Tstmt __m;
+        __m = *s;
+        switch (__m.tag) {
+        case ir__Tstmt_TDefer:
+            {
+                __drop_ret_1179_5 = move__copy_live(a, &acc);
+                break;
+            }
+        default:
+            {
+                __drop_ret_1179_5 = move__walk_stmt_e(structs, enums, a, ar, mv, ret_ty, &acc, s);
+                break;
+            }
+        }
+    }
+    (acc.alloc.free_fn)(acc.alloc.state, ((void *)(acc.ptr)), acc.cap * ((unsigned long)(sizeof(struct move__MoveBinding))));
+    return __drop_ret_1179_5;
+}
+
+static struct ex_Vec_move__MoveBinding move__walk_defer_body(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, struct ex_Option_cptr_ir__Typ ret_ty, struct ex_Vec_move__MoveBinding acc, const struct ir__Tstmt *s) {
+    struct ex_Vec_move__MoveBinding __drop_ret_1186_5;
+    {
+        struct ir__Tstmt __m;
+        __m = *s;
+        switch (__m.tag) {
+        case ir__Tstmt_TDefer:
+            {
+                struct ex_Vec_ir__Tstmt body = __m.data.TDefer.body;
+                __drop_ret_1186_5 = move__walk_stmts_e(structs, enums, a, ar, mv, ret_ty, &acc, &body);
+                break;
+            }
+        default:
+            {
+                __drop_ret_1186_5 = move__copy_live(a, &acc);
+                break;
+            }
+        }
+    }
+    (acc.alloc.free_fn)(acc.alloc.state, ((void *)(acc.ptr)), acc.cap * ((unsigned long)(sizeof(struct move__MoveBinding))));
+    return __drop_ret_1186_5;
 }
 
 static struct ex_Vec_move__MoveBinding move__walk_stmt_e(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, struct ex_Option_cptr_ir__Typ ret_ty, const struct ex_Vec_move__MoveBinding *live, const struct ir__Tstmt *s) {
@@ -55144,16 +55802,16 @@ static struct ex_Vec_move__MoveBinding move__walk_assign_e(const struct ex_Vec_i
     struct ex_Vec_move__MoveBinding acc;
     struct ex_Slice_str pl;
     struct move__MoveState __lift_0;
-    struct ex_Vec_move__MoveBinding __drop_old_1239_41;
+    struct ex_Vec_move__MoveBinding __drop_old_1265_41;
     w = move__walk_expr(structs, enums, a, ar, mv, live, value);
     acc = move__consume_var(structs, a, ar, mv, &w, value);
     if (Vec__length_str(path) == ((unsigned long)1)) {
         pl = Vec__as_slice_str(path);
         if (move__mb_is_tracked(&acc, pl.ptr[0])) {
             __lift_0.tag = move__MoveState_Live;
-            __drop_old_1239_41 = move__set_state(a, &acc, pl.ptr[0], __lift_0);
+            __drop_old_1265_41 = move__set_state(a, &acc, pl.ptr[0], __lift_0);
             (acc.alloc.free_fn)(acc.alloc.state, ((void *)(acc.ptr)), acc.cap * ((unsigned long)(sizeof(struct move__MoveBinding))));
-            acc = __drop_old_1239_41;
+            acc = __drop_old_1265_41;
         }
     }
     (w.alloc.free_fn)(w.alloc.state, ((void *)(w.ptr)), w.cap * ((unsigned long)(sizeof(struct move__MoveBinding))));
@@ -55163,7 +55821,7 @@ static struct ex_Vec_move__MoveBinding move__walk_assign_e(const struct ex_Vec_i
 static struct ex_Vec_move__MoveBinding move__ret_consume(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct move__Mv *mv, struct ex_Option_cptr_ir__Typ ret_ty, const struct ex_Vec_move__MoveBinding *live, const struct ir__Texpr *v) {
     struct ex_Vec_move__MoveBinding after;
     int affine;
-    struct ex_Vec_move__MoveBinding __drop_ret_1261_17;
+    struct ex_Vec_move__MoveBinding __drop_ret_1287_17;
     after = move__walk_expr(structs, enums, a, ar, mv, live, v);
     affine = 0;
     {
@@ -55184,9 +55842,9 @@ static struct ex_Vec_move__MoveBinding move__ret_consume(const struct ex_Vec_ir_
         }
     }
     if (affine) {
-        __drop_ret_1261_17 = move__consume_var(structs, a, ar, mv, &after, v);
+        __drop_ret_1287_17 = move__consume_var(structs, a, ar, mv, &after, v);
         (after.alloc.free_fn)(after.alloc.state, ((void *)(after.ptr)), after.cap * ((unsigned long)(sizeof(struct move__MoveBinding))));
-        return __drop_ret_1261_17;
+        return __drop_ret_1287_17;
     }
     return after;
 }
@@ -55201,7 +55859,7 @@ struct move__ConsumeResult move__states_by(const struct ex_Vec_ir__StructSig *st
     struct ex_Vec_str partial;
     struct ex_Slice_move__MoveBinding al;
     unsigned long i;
-    struct move__ConsumeResult __drop_ret_1285_5;
+    struct move__ConsumeResult __drop_ret_1311_5;
     no_err.tag = ex_Option_cptr_error__CompileError_None;
     no_names = Vec__with_capacity_ir__StrPair(a, ((unsigned long)8));
     mv.mv_report = 0;
@@ -55237,12 +55895,12 @@ struct move__ConsumeResult move__states_by(const struct ex_Vec_ir__StructSig *st
         }
         i = i + ((unsigned long)1);
     }
-    __drop_ret_1285_5.cr_consumed = consumed;
-    __drop_ret_1285_5.cr_partial = partial;
+    __drop_ret_1311_5.cr_consumed = consumed;
+    __drop_ret_1311_5.cr_partial = partial;
     (after.alloc.free_fn)(after.alloc.state, ((void *)(after.ptr)), after.cap * ((unsigned long)(sizeof(struct move__MoveBinding))));
     (seed.alloc.free_fn)(seed.alloc.state, ((void *)(seed.ptr)), seed.cap * ((unsigned long)(sizeof(struct move__MoveBinding))));
     (no_names.alloc.free_fn)(no_names.alloc.state, ((void *)(no_names.ptr)), no_names.cap * ((unsigned long)(sizeof(struct ir__StrPair))));
-    return __drop_ret_1285_5;
+    return __drop_ret_1311_5;
 }
 
 static void move__check_fn(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Option_cptr_error__CompileError *err, const struct ir__Tfunc *tf) {
@@ -58403,7 +59061,7 @@ static const char *drop__join_colons(struct ex_Allocator a, struct ex_Arena *ar,
     struct ex_StringBuilder sb;
     struct ex_Slice_str sl;
     unsigned long i;
-    const char *__drop_ret_234_5;
+    const char *__drop_ret_246_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)16));
     sl = Vec__as_slice_str(path);
     i = ((unsigned long)0);
@@ -58414,9 +59072,9 @@ static const char *drop__join_colons(struct ex_Allocator a, struct ex_Arena *ar,
         StringBuilder__push_str(&sb, sl.ptr[i]);
         i = i + ((unsigned long)1);
     }
-    __drop_ret_234_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_246_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_234_5;
+    return __drop_ret_246_5;
 }
 
 static const char *drop__type_key(struct ex_Allocator a, struct ex_Arena *ar, const struct ir__Typ *t) {
@@ -58506,13 +59164,13 @@ static const char *drop__request_glue(struct ex_Allocator a, struct ex_Arena *ar
 
 static const char *drop__key_with_prefix(struct ex_Allocator a, struct ex_Arena *ar, const char *pfx, const char *body) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_284_5;
+    const char *__drop_ret_296_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)20));
     StringBuilder__push_str(&sb, pfx);
     StringBuilder__push_str(&sb, body);
-    __drop_ret_284_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_296_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_284_5;
+    return __drop_ret_296_5;
 }
 
 static const char *drop__request_ptr_glue(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ir__Typ *pointee) {
@@ -58986,13 +59644,13 @@ static long drop__find_enum_idx(const struct ex_Vec_ir__EnumSig *enums, const st
 
 static const char *drop__bind_name(struct ex_Allocator a, struct ex_Arena *ar, const char *fname) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_455_5;
+    const char *__drop_ret_467_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)16));
     StringBuilder__push_str(&sb, "__d_");
     StringBuilder__push_str(&sb, fname);
-    __drop_ret_455_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_467_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_455_5;
+    return __drop_ret_467_5;
 }
 
 static const struct ir__Texpr *drop__null_lit_d(struct ex_Arena *ar, struct pos__Pos pos) {
@@ -59204,17 +59862,17 @@ static int drop__ptr_glue_struct(struct ex_Allocator a, struct ex_Arena *ar, con
     struct ast__BinOp __lift_1;
     struct ir__Tstmt __lift_2;
     struct ir__FieldTy __lift_3;
-    int __drop_ret_575_9;
-    int __drop_ret_586_5;
+    int __drop_ret_587_9;
+    int __drop_ret_598_5;
     sidx = drop__find_struct_idx(structs, sp);
     selfs = drop__self_struct_fields(a, structs, sidx, sp);
     if (Vec__length_str(&selfs) != ((unsigned long)1)) {
         Vec__push_ir__Tstmt(body, drop__null_guard(a, ar, pv, pos));
         drop__drop_stmts_for_struct(a, ar, structs, enums, gs, deref, sidx, pos, body);
         Vec__push_ir__Tstmt(body, drop__free_via(a, ar, av, pv, drop__size_of_u32(ar, pointee, pos), pos));
-        __drop_ret_575_9 = 0;
+        __drop_ret_587_9 = 0;
         (selfs.alloc.free_fn)(selfs.alloc.state, ((void *)(selfs.ptr)), selfs.cap * ((unsigned long)(sizeof(const char *))));
-        return __drop_ret_575_9;
+        return __drop_ret_587_9;
     }
     self_fn = (Vec__as_slice_str(&selfs)).ptr[((unsigned long)0)];
     wb = Vec__with_capacity_ir__Tstmt(a, ((unsigned long)8));
@@ -59234,9 +59892,9 @@ static int drop__ptr_glue_struct(struct ex_Allocator a, struct ex_Arena *ar, con
     __lift_3.name = "__next";
     __lift_3.ty = pty;
     Vec__push_ir__FieldTy(lets, __lift_3);
-    __drop_ret_586_5 = 1;
+    __drop_ret_598_5 = 1;
     (selfs.alloc.free_fn)(selfs.alloc.state, ((void *)(selfs.ptr)), selfs.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_586_5;
+    return __drop_ret_598_5;
 }
 
 static int drop__ptr_glue_enum(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct drop__GlueState *gs, const struct ir__Texpr *av, const struct ir__Texpr *pv, const struct ir__Typ *pty, const struct ir__Texpr *deref, const struct ir__Typ *pointee, const struct ex_Vec_str *ep, struct pos__Pos pos, struct ex_Vec_ir__Tstmt *body, struct ex_Vec_ir__FieldTy *lets) {
@@ -59399,7 +60057,7 @@ static struct ir__Tfunc drop__build_hm_glue(struct ex_Allocator a, struct ex_Are
     struct ast__BinOp __lift_18;
     struct ir__TexprNode __lift_19;
     struct ir__FieldTy __lift_20;
-    struct ir__Tfunc __drop_ret_687_5;
+    struct ir__Tfunc __drop_ret_699_5;
     pos = drop__glue_pos();
     sidx = drop__find_struct_idx(structs, inst_path);
     sl = Vec__as_slice_ir__StructSig(structs);
@@ -59499,14 +60157,14 @@ static struct ir__Tfunc drop__build_hm_glue(struct ex_Allocator a, struct ex_Are
     __lift_20.name = "__i";
     __lift_20.ty = drop__ty_u32(ar);
     Vec__push_ir__FieldTy(&lets, __lift_20);
-    __drop_ret_687_5 = drop__mk_glue_tfunc(a, ar, name, params, ptys, lets, body);
+    __drop_ret_699_5 = drop__mk_glue_tfunc(a, ar, name, params, ptys, lets, body);
     (__lift_16.alloc.free_fn)(__lift_16.alloc.state, ((void *)(__lift_16.ptr)), __lift_16.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_687_5;
+    return __drop_ret_699_5;
 }
 
 static struct ex_Vec_str drop__slot_path_of(struct ex_Allocator a, const struct ir__Typ *slot) {
     struct ex_Vec_str empty;
-    struct ex_Vec_str __drop_ret_695_5;
+    struct ex_Vec_str __drop_ret_707_5;
     empty = Vec__with_capacity_str(a, ((unsigned long)8));
     {
         struct ir__Typ __m;
@@ -59515,18 +60173,18 @@ static struct ex_Vec_str drop__slot_path_of(struct ex_Allocator a, const struct 
         case ir__Typ_TStruct:
             {
                 struct ex_Vec_str p = __m.data.TStruct._0;
-                __drop_ret_695_5 = drop__copy_strs_d(a, &p);
+                __drop_ret_707_5 = drop__copy_strs_d(a, &p);
                 break;
             }
         default:
             {
-                __drop_ret_695_5 = empty;
+                __drop_ret_707_5 = empty;
                 break;
             }
         }
     }
     (empty.alloc.free_fn)(empty.alloc.state, ((void *)(empty.ptr)), empty.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_695_5;
+    return __drop_ret_707_5;
 }
 
 static const struct ir__Typ *drop__own_or_field_ty(const struct ir__StructSig *sig, const char *fname, struct ex_Arena *ar) {
@@ -59711,6 +60369,138 @@ static struct ex_Option_str drop__prov_of_alloc(struct ex_Option_cptr_ir__Texpr 
         }
         return __exile_ret;
     }
+}
+
+static void drop__raise_dp(struct ex_Arena *ar, struct drop__GlueState *gs, struct pos__Pos pos, const char *msg) {
+    struct ex_Option_cptr_error__CompileError __lift_0;
+    {
+        struct ex_Option_cptr_error__CompileError __m;
+        __m = *gs->gs_err;
+        switch (__m.tag) {
+        case ex_Option_cptr_error__CompileError_Some:
+            {
+                break;
+            }
+        case ex_Option_cptr_error__CompileError_None:
+        default:
+            {
+                __lift_0.tag = ex_Option_cptr_error__CompileError_Some;
+                __lift_0.data.Some._0 = error__alloc(ar, pos, msg);
+                *gs->gs_err = __lift_0;
+                break;
+            }
+        }
+    }
+    return;
+}
+
+static const char *drop__dp_disp(const struct drop__GlueState *gs, const char *n) {
+    struct ex_Slice_ir__StrPair sl;
+    unsigned long i;
+    sl = Vec__as_slice_ir__StrPair(gs->gs_srcnames);
+    i = ((unsigned long)0);
+    while (i < Vec__length_ir__StrPair(gs->gs_srcnames)) {
+        if (str__eq(sl.ptr[i].a, n)) {
+            return sl.ptr[i].b;
+        }
+        i = i + ((unsigned long)1);
+    }
+    return n;
+}
+
+static void drop__check_discarded_own(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ir__Texpr *e) {
+    {
+        struct ir__Typ __m;
+        __m = *e->ty;
+        switch (__m.tag) {
+        case ir__Typ_TOwnPtr:
+            {
+                drop__raise_dp(ar, gs, e->pos, "this call returns an owned pointer that is silently discarded (and leaked) — bind it with `let`, then free, move, or return it");
+                break;
+            }
+        default:
+            {
+                break;
+            }
+        }
+    }
+    return;
+}
+
+static void drop__check_assign_leak(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct drop__DEntry *e, struct pos__Pos pos) {
+    const char *d;
+    struct ex_StringBuilder sb;
+    {
+        struct drop__DKind __m;
+        __m = e->den_kind;
+        switch (__m.tag) {
+        case drop__DKind_DBareOwn:
+            {
+                struct ex_Option_str bo_prov = __m.data.DBareOwn.bo_prov;
+                {
+                    struct ex_Option_str __m;
+                    __m = bo_prov;
+                    switch (__m.tag) {
+                    case ex_Option_str_Some:
+                        {
+                            break;
+                        }
+                    case ex_Option_str_None:
+                    default:
+                        {
+                            d = drop__dp_disp(gs, e->den_name);
+                            sb = StringBuilder__with_capacity(a, ((unsigned long)200));
+                            StringBuilder__push_str(&sb, "assigning to '");
+                            StringBuilder__push_str(&sb, d);
+                            StringBuilder__push_str(&sb, "' would silently leak its current value (allocator provenance unknown) — free it or move it first");
+                            drop__raise_dp(ar, gs, pos, str__from_slice(ar, StringBuilder__as_slice(&sb)));
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+        default:
+            {
+                break;
+            }
+        }
+    }
+    return;
+}
+
+static void drop__check_array_of_own(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ir__Typ *ty, struct pos__Pos pos) {
+    {
+        struct ir__Typ __m;
+        __m = *ty;
+        switch (__m.tag) {
+        case ir__Typ_TArray:
+            {
+                const struct ir__Typ *elem = __m.data.TArray.elem;
+                {
+                    struct ir__Typ __m;
+                    __m = *elem;
+                    switch (__m.tag) {
+                    case ir__Typ_TOwnPtr:
+                        {
+                            drop__raise_dp(ar, gs, pos, "an array of bare `own *T` cannot be auto-dropped (no allocator at hand for the elements) — wrap the pointers in an allocator-carrying struct, or use a Vec");
+                            break;
+                        }
+                    default:
+                        {
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+        default:
+            {
+                break;
+            }
+        }
+    }
+    return;
 }
 
 static struct ex_Option_drop__DEntry drop__entry_for(const struct ex_Vec_ir__StructSig *structs, const char *name, const struct ir__Typ *ty, struct pos__Pos pos) {
@@ -60199,6 +60989,8 @@ static void drop__drop_stmts_for_entry(struct ex_Allocator a, struct ex_Arena *a
     const struct ir__Texpr *alloc_e;
     const struct ir__Typ *pty;
     const struct ir__Texpr *ptr_e;
+    const char *d;
+    struct ex_StringBuilder sb;
     struct ir__Typ __lift_0;
     struct ir__TexprNode __lift_1;
     struct ir__TexprNode __lift_2;
@@ -60246,6 +61038,12 @@ static void drop__drop_stmts_for_entry(struct ex_Allocator a, struct ex_Arena *a
                     case ex_Option_str_None:
                     default:
                         {
+                            d = drop__dp_disp(gs, e->den_name);
+                            sb = StringBuilder__with_capacity(a, ((unsigned long)176));
+                            StringBuilder__push_str(&sb, "own value '");
+                            StringBuilder__push_str(&sb, d);
+                            StringBuilder__push_str(&sb, "' is never consumed — free it, move it, or return it (its allocator is not known here, so it cannot be auto-dropped)");
+                            drop__raise_dp(ar, gs, e->den_pos, str__from_slice(ar, StringBuilder__as_slice(&sb)));
                             break;
                         }
                     }
@@ -60447,16 +61245,16 @@ static struct ex_Vec_drop__DEntry drop__apply_expr(const struct ex_Vec_ir__Struc
     struct ex_Vec_str names;
     struct move__ConsumeResult res;
     struct ex_Vec_drop__DEntry st2;
-    struct ex_Vec_drop__DEntry __drop_ret_1133_5;
+    struct ex_Vec_drop__DEntry __drop_ret_1219_5;
     names = drop__names_of(a, st);
     res = move__states_by(structs, enums, a, ar, &names, te);
     st2 = drop__mark_consumed(a, st, &res.cr_consumed);
-    __drop_ret_1133_5 = drop__mark_partial(a, &st2, &res.cr_partial);
+    __drop_ret_1219_5 = drop__mark_partial(a, &st2, &res.cr_partial);
     (st2.alloc.free_fn)(st2.alloc.state, ((void *)(st2.ptr)), st2.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
     (res.cr_consumed.alloc.free_fn)(res.cr_consumed.alloc.state, ((void *)(res.cr_consumed.ptr)), res.cr_consumed.cap * ((unsigned long)(sizeof(const char *))));
     (res.cr_partial.alloc.free_fn)(res.cr_partial.alloc.state, ((void *)(res.cr_partial.ptr)), res.cr_partial.cap * ((unsigned long)(sizeof(const char *))));
     (names.alloc.free_fn)(names.alloc.state, ((void *)(names.ptr)), names.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_1133_5;
+    return __drop_ret_1219_5;
 }
 
 static struct ex_Vec_drop__DEntry drop__consume_rhs_var(const struct ex_Vec_ir__StructSig *structs, struct ex_Allocator a, const struct ex_Vec_drop__DEntry *st, const struct ir__Texpr *value) {
@@ -60489,12 +61287,12 @@ static struct ex_Vec_drop__DEntry drop__consume_rhs_var(const struct ex_Vec_ir__
 
 static struct ex_Vec_drop__DEntry drop__consume_one(struct ex_Allocator a, const struct ex_Vec_drop__DEntry *st, const char *n) {
     struct ex_Vec_str names;
-    struct ex_Vec_drop__DEntry __drop_ret_1152_5;
+    struct ex_Vec_drop__DEntry __drop_ret_1238_5;
     names = Vec__with_capacity_str(a, ((unsigned long)8));
     Vec__push_str(&names, n);
-    __drop_ret_1152_5 = drop__mark_consumed(a, st, &names);
+    __drop_ret_1238_5 = drop__mark_consumed(a, st, &names);
     (names.alloc.free_fn)(names.alloc.state, ((void *)(names.ptr)), names.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_1152_5;
+    return __drop_ret_1238_5;
 }
 
 static int drop__ends_in_return(const struct ex_Vec_ir__Tstmt *out) {
@@ -60525,6 +61323,288 @@ static int drop__ends_in_return(const struct ex_Vec_ir__Tstmt *out) {
     }
 }
 
+static struct ex_Vec_drop__DEntry drop__apply_stmts_consumes(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_drop__DEntry *st, const struct ex_Vec_ir__Tstmt *stmts) {
+    struct ex_Vec_drop__DEntry cur;
+    struct ex_Slice_ir__Tstmt sl;
+    unsigned long i;
+    cur = drop__copy_dentries(a, st);
+    sl = Vec__as_slice_ir__Tstmt(stmts);
+    i = ((unsigned long)0);
+    while (i < Vec__length_ir__Tstmt(stmts)) {
+        cur = drop__apply_stmt_consumes(structs, enums, a, ar, cur, &(sl.ptr[i]));
+        i = i + ((unsigned long)1);
+    }
+    return cur;
+}
+
+static struct ex_Vec_drop__DEntry drop__apply_stmt_consumes(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, const struct ir__Tstmt *s) {
+    struct ex_Vec_drop__DEntry s1;
+    struct ex_Vec_drop__DEntry s2;
+    struct ex_Vec_drop__DEntry s1__1;
+    struct ex_Vec_drop__DEntry s2__1;
+    {
+        struct ex_Vec_drop__DEntry __exile_ret;
+        {
+            struct ir__Tstmt __m;
+            __m = *s;
+            switch (__m.tag) {
+            case ir__Tstmt_TLet:
+                {
+                    const struct ir__Texpr *value = __m.data.TLet.value;
+                    __exile_ret = drop__apply_expr(structs, enums, a, ar, &st, value);
+                    break;
+                }
+            case ir__Tstmt_TLetTuple:
+                {
+                    const struct ir__Texpr *value = __m.data.TLetTuple.value;
+                    __exile_ret = drop__apply_expr(structs, enums, a, ar, &st, value);
+                    break;
+                }
+            case ir__Tstmt_TAssign:
+                {
+                    const struct ir__Texpr *value = __m.data.TAssign.value;
+                    __exile_ret = drop__apply_expr(structs, enums, a, ar, &st, value);
+                    break;
+                }
+            case ir__Tstmt_TAssignField:
+                {
+                    const struct ir__Texpr *target = __m.data.TAssignField.target;
+                    const struct ir__Texpr *value = __m.data.TAssignField.value;
+                    __exile_ret = drop__apply_two(structs, enums, a, ar, st, target, value);
+                    break;
+                }
+            case ir__Tstmt_TAssignDeref:
+                {
+                    const struct ir__Texpr *target = __m.data.TAssignDeref.target;
+                    const struct ir__Texpr *value = __m.data.TAssignDeref.value;
+                    __exile_ret = drop__apply_two(structs, enums, a, ar, st, target, value);
+                    break;
+                }
+            case ir__Tstmt_TAssignIndex:
+                {
+                    const struct ir__Texpr *base = __m.data.TAssignIndex.base;
+                    const struct ir__Texpr *index = __m.data.TAssignIndex.index;
+                    const struct ir__Texpr *value = __m.data.TAssignIndex.value;
+                    __exile_ret = drop__apply_three(structs, enums, a, ar, st, base, index, value);
+                    break;
+                }
+            case ir__Tstmt_TReturn:
+                {
+                    struct ex_Option_cptr_ir__Texpr value = __m.data.TReturn.value;
+                    __exile_ret = drop__apply_opt(structs, enums, a, ar, st, value);
+                    break;
+                }
+            case ir__Tstmt_TExprStmt:
+                {
+                    const struct ir__Texpr *e = __m.data.TExprStmt._0;
+                    __exile_ret = drop__apply_expr(structs, enums, a, ar, &st, e);
+                    break;
+                }
+            case ir__Tstmt_TIf:
+                {
+                    const struct ir__Texpr *cond = __m.data.TIf.cond;
+                    struct ex_Vec_ir__Tstmt then_body = __m.data.TIf.then_body;
+                    struct ex_Vec_ir__Tstmt else_body = __m.data.TIf.else_body;
+                    s1 = drop__apply_expr(structs, enums, a, ar, &st, cond);
+                    s2 = drop__apply_stmts_consumes(structs, enums, a, ar, &s1, &then_body);
+                    __exile_ret = drop__apply_stmts_consumes(structs, enums, a, ar, &s2, &else_body);
+                    break;
+                }
+            case ir__Tstmt_TWhile:
+                {
+                    const struct ir__Texpr *cond = __m.data.TWhile.cond;
+                    struct ex_Vec_ir__Tstmt body = __m.data.TWhile.body;
+                    struct ex_Vec_ir__Tstmt post = __m.data.TWhile.post;
+                    s1__1 = drop__apply_expr(structs, enums, a, ar, &st, cond);
+                    s2__1 = drop__apply_stmts_consumes(structs, enums, a, ar, &s1__1, &body);
+                    __exile_ret = drop__apply_stmts_consumes(structs, enums, a, ar, &s2__1, &post);
+                    break;
+                }
+            case ir__Tstmt_TDefer:
+                {
+                    struct ex_Vec_ir__Tstmt body = __m.data.TDefer.body;
+                    __exile_ret = drop__apply_stmts_consumes(structs, enums, a, ar, &st, &body);
+                    break;
+                }
+            case ir__Tstmt_TSeal:
+                {
+                    struct ex_Vec_ir__Tstmt body = __m.data.TSeal.body;
+                    __exile_ret = drop__apply_stmts_consumes(structs, enums, a, ar, &st, &body);
+                    break;
+                }
+            case ir__Tstmt_TFor:
+                {
+                    struct ex_Vec_ir__Tstmt body = __m.data.TFor.body;
+                    __exile_ret = drop__apply_stmts_consumes(structs, enums, a, ar, &st, &body);
+                    break;
+                }
+            case ir__Tstmt_TForEach:
+                {
+                    struct ex_Vec_ir__Tstmt body = __m.data.TForEach.body;
+                    __exile_ret = drop__apply_stmts_consumes(structs, enums, a, ar, &st, &body);
+                    break;
+                }
+            case ir__Tstmt_TBreak:
+                {
+                    __exile_ret = drop__copy_dentries(a, &st);
+                    break;
+                }
+            case ir__Tstmt_TContinue:
+            default:
+                {
+                    __exile_ret = drop__copy_dentries(a, &st);
+                    break;
+                }
+            }
+        }
+        return __exile_ret;
+    }
+}
+
+static struct ex_Vec_drop__DEntry drop__apply_two(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, const struct ir__Texpr *x, const struct ir__Texpr *y) {
+    struct ex_Vec_drop__DEntry s1;
+    struct ex_Vec_drop__DEntry __drop_ret_1304_5;
+    s1 = drop__apply_expr(structs, enums, a, ar, &st, x);
+    __drop_ret_1304_5 = drop__apply_expr(structs, enums, a, ar, &s1, y);
+    (s1.alloc.free_fn)(s1.alloc.state, ((void *)(s1.ptr)), s1.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
+    (st.alloc.free_fn)(st.alloc.state, ((void *)(st.ptr)), st.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
+    return __drop_ret_1304_5;
+}
+
+static struct ex_Vec_drop__DEntry drop__apply_three(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, const struct ir__Texpr *x, const struct ir__Texpr *y, const struct ir__Texpr *z) {
+    struct ex_Vec_drop__DEntry s1;
+    struct ex_Vec_drop__DEntry __drop_ret_1309_5;
+    s1 = drop__apply_two(structs, enums, a, ar, st, x, y);
+    __drop_ret_1309_5 = drop__apply_expr(structs, enums, a, ar, &s1, z);
+    (s1.alloc.free_fn)(s1.alloc.state, ((void *)(s1.ptr)), s1.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
+    return __drop_ret_1309_5;
+}
+
+static struct ex_Vec_drop__DEntry drop__apply_opt(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, struct ex_Option_cptr_ir__Texpr v) {
+    struct ex_Vec_drop__DEntry __drop_ret_1313_5;
+    {
+        struct ex_Option_cptr_ir__Texpr __m;
+        __m = v;
+        switch (__m.tag) {
+        case ex_Option_cptr_ir__Texpr_Some:
+            {
+                const struct ir__Texpr *e = __m.data.Some._0;
+                __drop_ret_1313_5 = drop__apply_expr(structs, enums, a, ar, &st, e);
+                break;
+            }
+        case ex_Option_cptr_ir__Texpr_None:
+        default:
+            {
+                __drop_ret_1313_5 = drop__copy_dentries(a, &st);
+                break;
+            }
+        }
+    }
+    (st.alloc.free_fn)(st.alloc.state, ((void *)(st.ptr)), st.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
+    return __drop_ret_1313_5;
+}
+
+static struct ex_Vec_drop__DEntry drop__apply_block_defers(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_drop__DEntry *st, const struct ex_Vec_ir__Tstmt *stmts) {
+    struct ex_Vec_drop__DEntry cur;
+    struct ex_Slice_ir__Tstmt sl;
+    unsigned long i;
+    cur = drop__copy_dentries(a, st);
+    sl = Vec__as_slice_ir__Tstmt(stmts);
+    i = ((unsigned long)0);
+    while (i < Vec__length_ir__Tstmt(stmts)) {
+        {
+            struct ir__Tstmt __m;
+            __m = sl.ptr[i];
+            switch (__m.tag) {
+            case ir__Tstmt_TDefer:
+                {
+                    struct ex_Vec_ir__Tstmt body = __m.data.TDefer.body;
+                    cur = drop__apply_stmts_consumes(structs, enums, a, ar, &cur, &body);
+                    break;
+                }
+            default:
+                {
+                    break;
+                }
+            }
+        }
+        i = i + ((unsigned long)1);
+    }
+    return cur;
+}
+
+static void drop__check_defer_reads(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st, const struct ex_Vec_ir__Tstmt *body, struct pos__Pos pos) {
+    struct ex_Vec_drop__DEntry after;
+    struct ex_Vec_str reads;
+    struct ex_Slice_drop__DEntry sl;
+    struct ex_Slice_drop__DEntry asl;
+    unsigned long i;
+    const char *n;
+    int was_live;
+    int now_consumed;
+    const char *d;
+    struct ex_StringBuilder sb;
+    after = drop__apply_stmts_consumes(structs, enums, a, ar, st, body);
+    reads = Vec__with_capacity_str(a, ((unsigned long)8));
+    ir__collect_tstmts_vars(body, &reads);
+    sl = Vec__as_slice_drop__DEntry(st);
+    asl = Vec__as_slice_drop__DEntry(&after);
+    i = ((unsigned long)0);
+    while (i < Vec__length_drop__DEntry(st)) {
+        n = sl.ptr[i].den_name;
+        {
+            struct drop__DStatus __m;
+            __m = sl.ptr[i].den_status;
+            switch (__m.tag) {
+            case drop__DStatus_DConsumed:
+                {
+                    was_live = 0;
+                    break;
+                }
+            default:
+                {
+                    was_live = 1;
+                    break;
+                }
+            }
+        }
+        {
+            struct drop__DStatus __m;
+            __m = asl.ptr[i].den_status;
+            switch (__m.tag) {
+            case drop__DStatus_DConsumed:
+                {
+                    now_consumed = 1;
+                    break;
+                }
+            default:
+                {
+                    now_consumed = 0;
+                    break;
+                }
+            }
+        }
+        if (was_live && !now_consumed && drop__name_in(&reads, n)) {
+            d = drop__dp_disp(gs, n);
+            sb = StringBuilder__with_capacity(a, ((unsigned long)200));
+            StringBuilder__push_str(&sb, "defer body reads '");
+            StringBuilder__push_str(&sb, d);
+            StringBuilder__push_str(&sb, "', but '");
+            StringBuilder__push_str(&sb, d);
+            StringBuilder__push_str(&sb, "' is auto-dropped before deferred code runs — consume it inside the defer (free/drop) or restructure without defer");
+            drop__raise_dp(ar, gs, pos, str__from_slice(ar, StringBuilder__as_slice(&sb)));
+            (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
+            (reads.alloc.free_fn)(reads.alloc.state, ((void *)(reads.ptr)), reads.cap * ((unsigned long)(sizeof(const char *))));
+            (after.alloc.free_fn)(after.alloc.state, ((void *)(after.ptr)), after.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
+            return;
+        }
+        i = i + ((unsigned long)1);
+    }
+    (reads.alloc.free_fn)(reads.alloc.state, ((void *)(reads.ptr)), reads.cap * ((unsigned long)(sizeof(const char *))));
+    (after.alloc.free_fn)(after.alloc.state, ((void *)(after.ptr)), after.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
+    return;
+}
+
 static struct ex_Vec_drop__DEntry drop__walk_stmts(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st_in, const struct ex_Vec_ir__Tstmt *stmts, struct ex_Vec_ir__Tstmt *out) {
     struct ex_Vec_str baseline;
     struct ex_Vec_drop__DEntry st;
@@ -60535,6 +61615,7 @@ static struct ex_Vec_drop__DEntry drop__walk_stmts(const struct ex_Vec_ir__Struc
     struct ex_Vec_drop__DEntry locals;
     struct ex_Slice_drop__DEntry es;
     unsigned long j;
+    struct ex_Vec_drop__DEntry __drop_old_1380_5;
     baseline = drop__names_of(a, st_in);
     st = drop__copy_dentries(a, st_in);
     sl = Vec__as_slice_ir__Tstmt(stmts);
@@ -60544,6 +61625,9 @@ static struct ex_Vec_drop__DEntry drop__walk_stmts(const struct ex_Vec_ir__Struc
         i = i + ((unsigned long)1);
     }
     ret = drop__ends_in_return(out);
+    __drop_old_1380_5 = drop__apply_block_defers(structs, enums, a, ar, &st, stmts);
+    (st.alloc.free_fn)(st.alloc.state, ((void *)(st.ptr)), st.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
+    st = __drop_old_1380_5;
     survivors = Vec__with_capacity_drop__DEntry(a, Vec__length_drop__DEntry(&st) + ((unsigned long)1));
     locals = Vec__with_capacity_drop__DEntry(a, Vec__length_drop__DEntry(&st) + ((unsigned long)1));
     es = Vec__as_slice_drop__DEntry(&st);
@@ -60566,10 +61650,10 @@ static struct ex_Vec_drop__DEntry drop__walk_stmts(const struct ex_Vec_ir__Struc
 }
 
 static struct ex_Vec_drop__DEntry drop__step(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, struct ex_Vec_drop__DEntry st, const struct ir__Tstmt *s, struct ex_Vec_ir__Tstmt *out) {
-    struct ex_Vec_drop__DEntry __drop_ret_1202_5;
-    __drop_ret_1202_5 = drop__walk_stmt(structs, enums, a, ar, gs, &st, s, out);
+    struct ex_Vec_drop__DEntry __drop_ret_1400_5;
+    __drop_ret_1400_5 = drop__walk_stmt(structs, enums, a, ar, gs, &st, s, out);
     (st.alloc.free_fn)(st.alloc.state, ((void *)(st.ptr)), st.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
-    return __drop_ret_1202_5;
+    return __drop_ret_1400_5;
 }
 
 static struct ex_Vec_drop__DEntry drop__walk_stmt(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st, const struct ir__Tstmt *s, struct ex_Vec_ir__Tstmt *out) {
@@ -60622,9 +61706,19 @@ static struct ex_Vec_drop__DEntry drop__walk_stmt(const struct ex_Vec_ir__Struct
             case ir__Tstmt_TExprStmt:
                 {
                     const struct ir__Texpr *e = __m.data.TExprStmt._0;
+                    drop__check_discarded_own(a, ar, gs, e);
                     st2 = drop__apply_expr(structs, enums, a, ar, st, e);
                     Vec__push_ir__Tstmt(out, *s);
                     __exile_ret = st2;
+                    break;
+                }
+            case ir__Tstmt_TDefer:
+                {
+                    struct ex_Vec_ir__Tstmt body = __m.data.TDefer.body;
+                    struct pos__Pos pos = __m.data.TDefer.pos;
+                    drop__check_defer_reads(structs, enums, a, ar, gs, st, &body, pos);
+                    Vec__push_ir__Tstmt(out, *s);
+                    __exile_ret = drop__copy_dentries(a, st);
                     break;
                 }
             case ir__Tstmt_TAssignField:
@@ -60716,6 +61810,7 @@ static struct ex_Vec_drop__DEntry drop__walk_let(const struct ex_Vec_ir__StructS
         }
         m = m + ((unsigned long)1);
     }
+    drop__check_array_of_own(a, ar, gs, value->ty, pos);
     {
         struct ex_Option_drop__DEntry __m;
         __m = drop__entry_for(structs, name, value->ty, pos);
@@ -60804,6 +61899,9 @@ static struct ex_Vec_drop__DEntry drop__walk_assign(const struct ex_Vec_ir__Stru
                         break;
                     }
                 }
+            }
+            if (old_live) {
+                drop__check_assign_leak(a, ar, gs, &(es.ptr[((unsigned long)idx)]), pos);
             }
             drop_buf = Vec__with_capacity_ir__Tstmt(a, ((unsigned long)8));
             if (old_live) {
@@ -61023,28 +62121,28 @@ static void drop__push_all(const struct ex_Vec_ir__Tstmt *src, struct ex_Vec_ir_
 
 static const char *drop__mk_drop_tmp(struct ex_Allocator a, struct ex_Arena *ar, struct pos__Pos pos) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_1386_5;
+    const char *__drop_ret_1595_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)24));
     StringBuilder__push_str(&sb, "__drop_ret_");
     StringBuilder__push_int(&sb, pos.line);
     StringBuilder__push_str(&sb, "_");
     StringBuilder__push_int(&sb, pos.col);
-    __drop_ret_1386_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_1595_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_1386_5;
+    return __drop_ret_1595_5;
 }
 
 static const char *drop__mk_drop_old_tmp(struct ex_Allocator a, struct ex_Arena *ar, struct pos__Pos pos) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_1395_5;
+    const char *__drop_ret_1604_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)24));
     StringBuilder__push_str(&sb, "__drop_old_");
     StringBuilder__push_int(&sb, pos.line);
     StringBuilder__push_str(&sb, "_");
     StringBuilder__push_int(&sb, pos.col);
-    __drop_ret_1395_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_1604_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_1395_5;
+    return __drop_ret_1604_5;
 }
 
 static void drop__emit_ret_temp(struct ex_Allocator a, struct ex_Arena *ar, struct ex_Option_cptr_ir__Texpr value, struct pos__Pos pos, const struct ex_Vec_ir__Tstmt *drop_buf, struct ex_Vec_ir__Tstmt *out) {
@@ -61099,7 +62197,7 @@ static struct ex_Vec_drop__DEntry drop__walk_if(const struct ex_Vec_ir__StructSi
     int td;
     int ed;
     struct ir__Tstmt __lift_0;
-    struct ex_Vec_drop__DEntry __drop_ret_1428_5;
+    struct ex_Vec_drop__DEntry __drop_ret_1637_5;
     st0 = drop__apply_expr(structs, enums, a, ar, st, cond);
     then_out = Vec__with_capacity_ir__Tstmt(a, ((unsigned long)8));
     st_then = drop__walk_stmts(structs, enums, a, ar, gs, &st0, then_body, &then_out);
@@ -61114,25 +62212,128 @@ static struct ex_Vec_drop__DEntry drop__walk_if(const struct ex_Vec_ir__StructSi
     ed = typecheck__stmts_diverge(else_body);
     if (td) {
         if (ed) {
-            __drop_ret_1428_5 = drop__copy_dentries(a, &st0);
+            __drop_ret_1637_5 = drop__copy_dentries(a, &st0);
         } else {
-            __drop_ret_1428_5 = drop__copy_dentries(a, &st_else);
+            __drop_ret_1637_5 = drop__copy_dentries(a, &st_else);
         }
     } else {
         if (ed) {
-            __drop_ret_1428_5 = drop__copy_dentries(a, &st_then);
+            __drop_ret_1637_5 = drop__copy_dentries(a, &st_then);
         } else {
-            __drop_ret_1428_5 = drop__merge_branches(a, &st_then, &st_else);
+            __drop_ret_1637_5 = drop__merge_branches(a, ar, gs, cond->pos, &st_then, &st_else);
         }
     }
     (st_else.alloc.free_fn)(st_else.alloc.state, ((void *)(st_else.ptr)), st_else.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
     (st_then.alloc.free_fn)(st_then.alloc.state, ((void *)(st_then.ptr)), st_then.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
     (st0.alloc.free_fn)(st0.alloc.state, ((void *)(st0.ptr)), st0.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
-    return __drop_ret_1428_5;
+    return __drop_ret_1637_5;
 }
 
-static struct ex_Vec_drop__DEntry drop__merge_branches(struct ex_Allocator a, const struct ex_Vec_drop__DEntry *st_then, const struct ex_Vec_drop__DEntry *_st_else) {
+static struct ex_Vec_drop__DEntry drop__merge_branches(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, struct pos__Pos pos, const struct ex_Vec_drop__DEntry *st_then, const struct ex_Vec_drop__DEntry *st_else) {
+    struct ex_Slice_drop__DEntry tl;
+    struct ex_Slice_drop__DEntry el;
+    unsigned long n;
+    unsigned long i;
+    const char *d;
+    struct ex_StringBuilder sb;
+    struct ex_Vec_drop__DEntry __drop_ret_1662_13;
+    tl = Vec__as_slice_drop__DEntry(st_then);
+    el = Vec__as_slice_drop__DEntry(st_else);
+    if (Vec__length_drop__DEntry(st_then) < Vec__length_drop__DEntry(st_else)) {
+        n = Vec__length_drop__DEntry(st_then);
+    } else {
+        n = Vec__length_drop__DEntry(st_else);
+    }
+    i = ((unsigned long)0);
+    while (i < n) {
+        if (!(drop__dstatus_eq(tl.ptr[i].den_status, el.ptr[i].den_status))) {
+            d = drop__dp_disp(gs, tl.ptr[i].den_name);
+            sb = StringBuilder__with_capacity(a, ((unsigned long)200));
+            StringBuilder__push_str(&sb, "'");
+            StringBuilder__push_str(&sb, d);
+            StringBuilder__push_str(&sb, "' is moved out on one branch but stays owned on the other — auto-drop is static (no runtime drop flags); consume it on every path or on none");
+            drop__raise_dp(ar, gs, pos, str__from_slice(ar, StringBuilder__as_slice(&sb)));
+            __drop_ret_1662_13 = drop__copy_dentries(a, st_then);
+            (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
+            return __drop_ret_1662_13;
+        }
+        i = i + ((unsigned long)1);
+    }
     return drop__copy_dentries(a, st_then);
+}
+
+static int drop__dstatus_eq(struct drop__DStatus x, struct drop__DStatus y) {
+    {
+        int __exile_ret;
+        {
+            struct drop__DStatus __m;
+            __m = x;
+            switch (__m.tag) {
+            case drop__DStatus_DLive:
+                {
+                    {
+                        struct drop__DStatus __m;
+                        __m = y;
+                        switch (__m.tag) {
+                        case drop__DStatus_DLive:
+                            {
+                                __exile_ret = 1;
+                                break;
+                            }
+                        default:
+                            {
+                                __exile_ret = 0;
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+            case drop__DStatus_DConsumed:
+                {
+                    {
+                        struct drop__DStatus __m;
+                        __m = y;
+                        switch (__m.tag) {
+                        case drop__DStatus_DConsumed:
+                            {
+                                __exile_ret = 1;
+                                break;
+                            }
+                        default:
+                            {
+                                __exile_ret = 0;
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+            case drop__DStatus_DPartial:
+            default:
+                {
+                    {
+                        struct drop__DStatus __m;
+                        __m = y;
+                        switch (__m.tag) {
+                        case drop__DStatus_DPartial:
+                            {
+                                __exile_ret = 1;
+                                break;
+                            }
+                        default:
+                            {
+                                __exile_ret = 0;
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        return __exile_ret;
+    }
 }
 
 static struct ex_Vec_drop__DEntry drop__walk_while(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st, const struct ir__Texpr *cond, const struct ex_Vec_ir__Tstmt *body, const struct ex_Vec_ir__Tstmt *post, const struct ir__Tstmt *_s, struct ex_Vec_ir__Tstmt *out) {
@@ -61261,6 +62462,7 @@ static void drop__rewrite_fn(const struct ex_Vec_ir__StructSig *structs, const s
     pts = Vec__as_slice_cptr_ir__Typ(&f->tf_param_tys);
     i = ((unsigned long)0);
     while (i < Vec__length_ast__Param(&f->tf_func.params) && i < Vec__length_cptr_ir__Typ(&f->tf_param_tys)) {
+        drop__check_array_of_own(a, ar, gs, pts.ptr[i], f->tf_func.pos);
         {
             struct ex_Option_drop__DEntry __m;
             __m = drop__entry_for(structs, ps.ptr[i].pname, pts.ptr[i], f->tf_func.pos);
@@ -61292,11 +62494,13 @@ static void drop__rewrite_fn(const struct ex_Vec_ir__StructSig *structs, const s
     return;
 }
 
-void drop__drop_insert(struct ex_Allocator a, struct ex_Arena *ar, struct ir__Tprogram *tp) {
+struct ex_Option_cptr_error__CompileError drop__drop_insert(struct ex_Allocator a, struct ex_Arena *ar, struct ir__Tprogram *tp) {
     struct ex_Vec_str gk;
     struct ex_Vec_str gn;
     struct ex_Vec_cptr_ir__Typ gm;
     struct ex_Vec_u32 gkd;
+    struct ex_Option_cptr_error__CompileError err;
+    struct ex_Vec_ir__StrPair srcnames;
     struct drop__GlueState glue;
     unsigned long n;
     unsigned long i;
@@ -61305,6 +62509,10 @@ void drop__drop_insert(struct ex_Allocator a, struct ex_Arena *ar, struct ir__Tp
     gn = Vec__with_capacity_str(a, ((unsigned long)8));
     gm = Vec__with_capacity_cptr_ir__Typ(a, ((unsigned long)8));
     gkd = Vec__with_capacity_u32(a, ((unsigned long)8));
+    err.tag = ex_Option_cptr_error__CompileError_None;
+    srcnames = Vec__with_capacity_ir__StrPair(a, ((unsigned long)8));
+    glue.gs_err = &err;
+    glue.gs_srcnames = &srcnames;
     glue.gs_keys = gk;
     glue.gs_names = gn;
     glue.gs_meta = gm;
@@ -61313,6 +62521,7 @@ void drop__drop_insert(struct ex_Allocator a, struct ex_Arena *ar, struct ir__Tp
     i = ((unsigned long)0);
     while (i < n) {
         f__with8 = &(tp->tp_funcs.ptr[i]);
+        glue.gs_srcnames = &f__with8->tf_srcnames;
         drop__rewrite_fn(&tp->tp_struct_index, &tp->tp_enum_index, a, ar, &glue, f__with8);
         i = i + ((unsigned long)1);
     }
@@ -61321,7 +62530,8 @@ void drop__drop_insert(struct ex_Allocator a, struct ex_Arena *ar, struct ir__Tp
     (glue.gs_names.alloc.free_fn)(glue.gs_names.alloc.state, ((void *)(glue.gs_names.ptr)), glue.gs_names.cap * ((unsigned long)(sizeof(const char *))));
     (glue.gs_meta.alloc.free_fn)(glue.gs_meta.alloc.state, ((void *)(glue.gs_meta.ptr)), glue.gs_meta.cap * ((unsigned long)(sizeof(const struct ir__Typ *))));
     (glue.gs_kind.alloc.free_fn)(glue.gs_kind.alloc.state, ((void *)(glue.gs_kind.ptr)), glue.gs_kind.cap * ((unsigned long)(sizeof(unsigned long))));
-    return;
+    (srcnames.alloc.free_fn)(srcnames.alloc.state, ((void *)(srcnames.ptr)), srcnames.cap * ((unsigned long)(sizeof(struct ir__StrPair))));
+    return err;
 }
 
 static const char *codegen__mangle_name(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_str *path, const char *name) {
@@ -73558,7 +74768,7 @@ static void ex_run_emit_ir_checked(struct ex_Allocator a, struct ex_Arena *ar, c
                 if (ca->ca_after_drop) {
                     ex_check_move(a, ar, &tprog);
                     ex_check_escape(a, ar, &tprog);
-                    drop__drop_insert(a, ar, &tprog);
+                    ex_drop_report(a, drop__drop_insert(a, ar, &tprog));
                 }
                 out = StringBuilder__with_capacity(a, ((unsigned long)16384));
                 dump_ir__dump_typed_ir(&tprog, ca->ca_input, ca->ca_user_only, &out);
@@ -73716,7 +74926,7 @@ static void ex_run_codegen_checked(struct ex_Allocator a, struct ex_Arena *ar, c
                 tprog = tp;
                 ex_check_move(a, ar, &tprog);
                 ex_check_escape(a, ar, &tprog);
-                drop__drop_insert(a, ar, &tprog);
+                ex_drop_report(a, drop__drop_insert(a, ar, &tprog));
                 lint__lint(a, ar, &tprog);
                 out = StringBuilder__with_capacity(a, ((unsigned long)16384));
                 codegen__gen_program(a, ar, &tprog, &out);
@@ -74012,6 +75222,27 @@ static const char *ex_read_source(struct ex_Allocator a, struct ex_Arena *ar, co
     return __drop_ret_498_5;
 }
 
+static void ex_drop_report(struct ex_Allocator a, struct ex_Option_cptr_error__CompileError e) {
+    {
+        struct ex_Option_cptr_error__CompileError __m;
+        __m = e;
+        switch (__m.tag) {
+        case ex_Option_cptr_error__CompileError_Some:
+            {
+                const struct error__CompileError *err = __m.data.Some._0;
+                ex_report_error(a, err);
+                break;
+            }
+        case ex_Option_cptr_error__CompileError_None:
+        default:
+            {
+                break;
+            }
+        }
+    }
+    return;
+}
+
 int main(void) {
     struct ex_Allocator a;
     struct ex_CliArgs ca;
@@ -74300,6 +75531,66 @@ unsigned long Vec__length_str(const struct ex_Vec_str *self) {
     return self->count;
 }
 
+void Vec__push_str(struct ex_Vec_str *self, const char *x) {
+    if (self->count + ((unsigned long)1) > self->cap) {
+        Vec__grow_str(self, self->cap * ((unsigned long)2));
+    }
+    self->ptr[self->count] = x;
+    self->count = self->count + ((unsigned long)1);
+}
+
+struct ex_Slice_ir__TmatchArm Vec__as_slice_ir__TmatchArm(const struct ex_Vec_ir__TmatchArm *self) {
+    {
+        struct ex_Slice_ir__TmatchArm __exile_ret;
+        __exile_ret.ptr = ((const struct ir__TmatchArm *)(self->ptr));
+        __exile_ret.len = self->count;
+        return __exile_ret;
+    }
+}
+
+unsigned long Vec__length_ir__TmatchArm(const struct ex_Vec_ir__TmatchArm *self) {
+    return self->count;
+}
+
+struct ex_Slice_cptr_ir__Texpr Vec__as_slice_cptr_ir__Texpr(const struct ex_Vec_cptr_ir__Texpr *self) {
+    {
+        struct ex_Slice_cptr_ir__Texpr __exile_ret;
+        __exile_ret.ptr = ((const struct ir__Texpr * *)(self->ptr));
+        __exile_ret.len = self->count;
+        return __exile_ret;
+    }
+}
+
+unsigned long Vec__length_cptr_ir__Texpr(const struct ex_Vec_cptr_ir__Texpr *self) {
+    return self->count;
+}
+
+struct ex_Slice_ir__TexprField Vec__as_slice_ir__TexprField(const struct ex_Vec_ir__TexprField *self) {
+    {
+        struct ex_Slice_ir__TexprField __exile_ret;
+        __exile_ret.ptr = ((const struct ir__TexprField *)(self->ptr));
+        __exile_ret.len = self->count;
+        return __exile_ret;
+    }
+}
+
+unsigned long Vec__length_ir__TexprField(const struct ex_Vec_ir__TexprField *self) {
+    return self->count;
+}
+
+struct ex_Slice_ir__Tstmt Vec__as_slice_ir__Tstmt(const struct ex_Vec_ir__Tstmt *self) {
+    {
+        struct ex_Slice_ir__Tstmt __exile_ret;
+        __exile_ret.ptr = ((const struct ir__Tstmt *)(self->ptr));
+        __exile_ret.len = self->count;
+        return __exile_ret;
+    }
+}
+
+unsigned long Vec__length_ir__Tstmt(const struct ex_Vec_ir__Tstmt *self) {
+    return self->count;
+}
+
 struct ex_Vec_str Vec__with_capacity_str(struct ex_Allocator a, unsigned long hint) {
     unsigned long cap;
     unsigned long bytes;
@@ -74319,14 +75610,6 @@ struct ex_Vec_str Vec__with_capacity_str(struct ex_Allocator a, unsigned long hi
         __exile_ret.alloc = a;
         return __exile_ret;
     }
-}
-
-void Vec__push_str(struct ex_Vec_str *self, const char *x) {
-    if (self->count + ((unsigned long)1) > self->cap) {
-        Vec__grow_str(self, self->cap * ((unsigned long)2));
-    }
-    self->ptr[self->count] = x;
-    self->count = self->count + ((unsigned long)1);
 }
 
 struct ast__TypeAnn *Arena__alloc_borrowed_ast__TypeAnn(struct ex_Arena *self) {
@@ -75340,19 +76623,6 @@ struct ex_Slice_typecheck__FnSig Vec__as_slice_typecheck__FnSig(const struct ex_
     }
 }
 
-unsigned long Vec__length_cptr_ir__Texpr(const struct ex_Vec_cptr_ir__Texpr *self) {
-    return self->count;
-}
-
-struct ex_Slice_cptr_ir__Texpr Vec__as_slice_cptr_ir__Texpr(const struct ex_Vec_cptr_ir__Texpr *self) {
-    {
-        struct ex_Slice_cptr_ir__Texpr __exile_ret;
-        __exile_ret.ptr = ((const struct ir__Texpr * *)(self->ptr));
-        __exile_ret.len = self->count;
-        return __exile_ret;
-    }
-}
-
 struct ex_Vec_cptr_ir__Texpr Vec__with_capacity_cptr_ir__Texpr(struct ex_Allocator a, unsigned long hint) {
     unsigned long cap;
     unsigned long bytes;
@@ -75830,19 +77100,6 @@ struct ex_Slice_ast__MatchArm Vec__as_slice_ast__MatchArm(const struct ex_Vec_as
     }
 }
 
-unsigned long Vec__length_ir__TmatchArm(const struct ex_Vec_ir__TmatchArm *self) {
-    return self->count;
-}
-
-struct ex_Slice_ir__TmatchArm Vec__as_slice_ir__TmatchArm(const struct ex_Vec_ir__TmatchArm *self) {
-    {
-        struct ex_Slice_ir__TmatchArm __exile_ret;
-        __exile_ret.ptr = ((const struct ir__TmatchArm *)(self->ptr));
-        __exile_ret.len = self->count;
-        return __exile_ret;
-    }
-}
-
 struct ex_Vec_i32 Vec__with_capacity_i32(struct ex_Allocator a, unsigned long hint) {
     unsigned long cap;
     unsigned long bytes;
@@ -75917,19 +77174,6 @@ struct ex_Slice_ast__Stmt Vec__as_slice_ast__Stmt(const struct ex_Vec_ast__Stmt 
 
 unsigned long Vec__length_ast__Stmt(const struct ex_Vec_ast__Stmt *self) {
     return self->count;
-}
-
-unsigned long Vec__length_ir__TexprField(const struct ex_Vec_ir__TexprField *self) {
-    return self->count;
-}
-
-struct ex_Slice_ir__TexprField Vec__as_slice_ir__TexprField(const struct ex_Vec_ir__TexprField *self) {
-    {
-        struct ex_Slice_ir__TexprField __exile_ret;
-        __exile_ret.ptr = ((const struct ir__TexprField *)(self->ptr));
-        __exile_ret.len = self->count;
-        return __exile_ret;
-    }
 }
 
 struct ex_Slice_typecheck__WardFieldEntry Vec__as_slice_typecheck__WardFieldEntry(const struct ex_Vec_typecheck__WardFieldEntry *self) {
@@ -76106,19 +77350,6 @@ void Vec__push_typecheck__WardFieldEntry(struct ex_Vec_typecheck__WardFieldEntry
     }
     self->ptr[self->count] = x;
     self->count = self->count + ((unsigned long)1);
-}
-
-struct ex_Slice_ir__Tstmt Vec__as_slice_ir__Tstmt(const struct ex_Vec_ir__Tstmt *self) {
-    {
-        struct ex_Slice_ir__Tstmt __exile_ret;
-        __exile_ret.ptr = ((const struct ir__Tstmt *)(self->ptr));
-        __exile_ret.len = self->count;
-        return __exile_ret;
-    }
-}
-
-unsigned long Vec__length_ir__Tstmt(const struct ex_Vec_ir__Tstmt *self) {
-    return self->count;
 }
 
 struct ex_Slice_ast__SigilRange Vec__as_slice_ast__SigilRange(const struct ex_Vec_ast__SigilRange *self) {

@@ -676,3 +676,136 @@ fn int_fits_bounds(n: int, is_signed: bool, bits: u32) -> bool {
     if is_signed { return n >= 0 as int - 2147483648 as int && n <= 2147483647 as int; }
     return n >= 0 as int && n <= 4294967295 as int;
 }
+
+// ===== Variable-read collection over a typed expression =====
+//
+// Every `TVar` occurrence in an expression tree, for the passes that need to
+// know what a body READS rather than what it consumes. Shared here because the
+// first consumer (drop's defer-reads rule) will not be the last, and building it
+// inside one rule would make the next one build it again.
+//
+// EXHAUSTIVE, with no catch-all, and the reason is the failure mode: a missing
+// arm does not crash and does not mis-name anything - it silently drops a read,
+// and a rule keyed on reads then fails to fire. A checker that goes quiet is the
+// hardest kind of wrong to notice.
+pub fn collect_texpr_vars(te: *const Texpr, out: *Vec<str>) {
+    match te.e {
+        TexprNode::TIntLit(_v) => { }
+        | TexprNode::TFloatLit(_v, _w) => { }
+        | TexprNode::TBoolLit(_v) => { }
+        | TexprNode::TNullLit => { }
+        | TexprNode::TStringLit(_v) => { }
+        | TexprNode::TVar(n) => { out.push(n); }
+        | TexprNode::TFnRef(_n) => { }
+        | TexprNode::TNeg(i) => { collect_texpr_vars(i, out); }
+        | TexprNode::TBitNot(i) => { collect_texpr_vars(i, out); }
+        | TexprNode::TNot(i) => { collect_texpr_vars(i, out); }
+        | TexprNode::TBinOp(_op, l, r) => { collect_texpr_vars(l, out); collect_texpr_vars(r, out); }
+        | TexprNode::TCall { mangled, args } => { collect_vars_args(&args, out); }
+        | TexprNode::TBuiltinCall { name, args } => { collect_vars_args(&args, out); }
+        | TexprNode::TIndirectCall { fn_expr, args } => { collect_texpr_vars(fn_expr, out); collect_vars_args(&args, out); }
+        | TexprNode::TCast(i, _ann) => { collect_texpr_vars(i, out); }
+        | TexprNode::TTupleLit(es) => { collect_vars_args(&es, out); }
+        | TexprNode::TStructLit { sname_path, fields, base } => {
+            collect_vars_fields(&fields, out); collect_vars_opt(base, out);
+        }
+        | TexprNode::TFieldAccess { target, field } => { collect_texpr_vars(target, out); }
+        | TexprNode::TRef(i) => { collect_texpr_vars(i, out); }
+        | TexprNode::TDeref(i) => { collect_texpr_vars(i, out); }
+        | TexprNode::TNew { sname_path, fields, base, alloc } => {
+            collect_vars_fields(&fields, out); collect_vars_opt(base, out); collect_vars_opt(alloc, out);
+        }
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => { collect_vars_fields(&args, out); }
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => {
+            collect_vars_fields(&args, out); collect_vars_opt(alloc, out);
+        }
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            collect_texpr_vars(scrutinee, out);
+            collect_vars_arms(&arms, out);
+        }
+        | TexprNode::TArrayLit(es) => { collect_vars_args(&es, out); }
+        | TexprNode::TArrayRepeat { value, count } => { collect_texpr_vars(value, out); }
+        | TexprNode::TIndex { base, index } => { collect_texpr_vars(base, out); collect_texpr_vars(index, out); }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            collect_texpr_vars(cond, out); collect_texpr_vars(then_val, out); collect_texpr_vars(else_val, out);
+        }
+        | TexprNode::TSizeOf(_t) => { }
+        | TexprNode::TBlock { stmts, trailing } => {
+            collect_tstmts_vars(&stmts, out); collect_vars_opt(trailing, out);
+        }
+        | TexprNode::TRuneAddr(_addr) => { }
+        | TexprNode::TWardAddr { elem, base, base_sym, offset } => { }
+    }
+    return;
+}
+// Through a POINTER, not `arms.as_slice()[i].field` at the match site: the port
+// cannot resolve the element type of a Vec bound by a pattern that way and
+// answers `got c_void`. Measured on itself - the oracle compiles that shape, the
+// port does not, so src/ has to stay inside what BOTH accept.
+fn collect_vars_arms(arms: *const Vec<TmatchArm>, out: *Vec<str>) {
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() {
+        collect_vars_opt(sl[i].tguard, out);
+        collect_texpr_vars(sl[i].tbody, out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn collect_vars_args(es: *const Vec<*const Texpr>, out: *Vec<str>) {
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < es.length() { collect_texpr_vars(sl[i], out); i = i + 1 as u32; }
+    return;
+}
+fn collect_vars_fields(fs: *const Vec<TexprField>, out: *Vec<str>) {
+    let sl = fs.as_slice();
+    let mut i = 0 as u32;
+    while i < fs.length() { collect_texpr_vars(sl[i].value, out); i = i + 1 as u32; }
+    return;
+}
+fn collect_vars_opt(e: Option<*const Texpr>, out: *Vec<str>) {
+    match e {
+        Option::Some(x) => { collect_texpr_vars(x, out); }
+        | Option::None => { }
+    }
+    return;
+}
+// Statements, for the `TBlock` arm above and for callers holding a body.
+pub fn collect_tstmts_vars(stmts: *const Vec<Tstmt>, out: *Vec<str>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { collect_tstmt_vars(&sl[i], out); i = i + 1 as u32; }
+    return;
+}
+fn collect_tstmt_vars(s: *const Tstmt, out: *Vec<str>) {
+    match *s {
+        Tstmt::TLet { name, value, decl_ty, pos } => { collect_texpr_vars(value, out); }
+        | Tstmt::TLetTuple { names, value, pos } => { collect_texpr_vars(value, out); }
+        | Tstmt::TAssign { path, value, pos } => { collect_texpr_vars(value, out); }
+        | Tstmt::TAssignField { target, field, value, pos } => { collect_texpr_vars(target, out); collect_texpr_vars(value, out); }
+        | Tstmt::TAssignDeref { target, value, pos } => { collect_texpr_vars(target, out); collect_texpr_vars(value, out); }
+        | Tstmt::TAssignIndex { base, index, value, pos } => {
+            collect_texpr_vars(base, out); collect_texpr_vars(index, out); collect_texpr_vars(value, out);
+        }
+        | Tstmt::TReturn { value, pos } => { collect_vars_opt(value, out); }
+        | Tstmt::TExprStmt(e) => { collect_texpr_vars(e, out); }
+        | Tstmt::TIf { cond, then_body, else_body } => {
+            collect_texpr_vars(cond, out); collect_tstmts_vars(&then_body, out); collect_tstmts_vars(&else_body, out);
+        }
+        | Tstmt::TWhile { cond, body, post } => {
+            collect_texpr_vars(cond, out); collect_tstmts_vars(&body, out); collect_tstmts_vars(&post, out);
+        }
+        | Tstmt::TDefer { body, pos } => { collect_tstmts_vars(&body, out); }
+        | Tstmt::TSeal { body, pos } => { collect_tstmts_vars(&body, out); }
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => {
+            collect_texpr_vars(lo, out); collect_texpr_vars(hi, out); collect_tstmts_vars(&body, out);
+        }
+        | Tstmt::TForEach { it_var, it_init, body, pos } => {
+            collect_texpr_vars(it_init, out); collect_tstmts_vars(&body, out);
+        }
+        | Tstmt::TBreak(_q) => { }
+        | Tstmt::TContinue(_q) => { }
+    }
+    return;
+}
