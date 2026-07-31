@@ -810,13 +810,17 @@ fn collect_tstmt_vars(s: *const Tstmt, out: *Vec<str>) {
     return;
 }
 
-// A second DESCENT MODE, not a second walker: expression descent is unchanged
-// (a `match` is an expression, so its arms count), but nested STATEMENT bodies
-// are not entered. That is the reference's shape, measured rather than reasoned:
-// direct reads, a block's sequence and match arms are counted, while `if`,
-// `if/else`, `while` and `for` bodies are not - and `if/else` with the read in
-// BOTH branches is accepted too, which rules out "some branch always runs" as
-// the explanation. What is counted is each statement's OWN expressions.
+// A MIRROR of the reference's `stmt_exprs` (lib/drop.ml:91), not a model of it.
+// Two models were fitted to the observed behaviour and both died: reachability
+// (killed by `if/else` with the read in both branches, accepted), then
+// "each statement's own expressions" (killed by a read in an `if` or `while`
+// CONDITION, also accepted). The source is an explicit list of six statement
+// forms; everything else - `TIf`, `TWhile`, `TFor`, `TForEach`, `TReturn`,
+// `TDefer`, `TSeal`, `TBreak`, `TContinue` - contributes nothing at all.
+//
+// So a `match`'s arms are counted not because arms are special but because a
+// match in statement position IS a `TExprStmt`, and expression descent reaches
+// its arms.
 pub fn collect_tstmts_vars_own(stmts: *const Vec<Tstmt>, out: *Vec<str>) {
     let sl = stmts.as_slice();
     let mut i = 0 as u32;
@@ -828,22 +832,19 @@ fn collect_tstmt_vars_own(s: *const Tstmt, out: *Vec<str>) {
         Tstmt::TLet { name, value, decl_ty, pos } => { collect_texpr_vars(value, out); }
         | Tstmt::TLetTuple { names, value, pos } => { collect_texpr_vars(value, out); }
         | Tstmt::TAssign { path, value, pos } => { collect_texpr_vars(value, out); }
-        | Tstmt::TAssignField { target, field, value, pos } => { collect_texpr_vars(target, out); collect_texpr_vars(value, out); }
-        | Tstmt::TAssignDeref { target, value, pos } => { collect_texpr_vars(target, out); collect_texpr_vars(value, out); }
+        | Tstmt::TAssignDeref { target, value, pos } => { collect_texpr_vars(value, out); }
+        | Tstmt::TExprStmt(e) => { collect_texpr_vars(e, out); }
+        | Tstmt::TAssignField { target, field, value, pos } => {
+            collect_texpr_vars(target, out); collect_texpr_vars(value, out);
+        }
         | Tstmt::TAssignIndex { base, index, value, pos } => {
             collect_texpr_vars(base, out); collect_texpr_vars(index, out); collect_texpr_vars(value, out);
         }
-        | Tstmt::TReturn { value, pos } => { collect_vars_opt(value, out); }
-        | Tstmt::TExprStmt(e) => { collect_texpr_vars(e, out); }
-        // Conditions and ranges are evaluated; the BODIES are not entered.
-        | Tstmt::TIf { cond, then_body, else_body } => { collect_texpr_vars(cond, out); }
-        | Tstmt::TWhile { cond, body, post } => { collect_texpr_vars(cond, out); }
-        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => {
-            collect_texpr_vars(lo, out); collect_texpr_vars(hi, out);
-        }
-        | Tstmt::TForEach { it_var, it_init, body, pos } => { collect_texpr_vars(it_init, out); }
-        // A nested `defer` / `seal` is a scope of its own, not part of this
-        // statement's evaluation.
+        | Tstmt::TReturn { value, pos } => { }
+        | Tstmt::TIf { cond, then_body, else_body } => { }
+        | Tstmt::TWhile { cond, body, post } => { }
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => { }
+        | Tstmt::TForEach { it_var, it_init, body, pos } => { }
         | Tstmt::TDefer { body, pos } => { }
         | Tstmt::TSeal { body, pos } => { }
         | Tstmt::TBreak(_q) => { }

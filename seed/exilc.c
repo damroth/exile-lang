@@ -6770,18 +6770,22 @@ static void ir__collect_tstmt_vars_own(const struct ir__Tstmt *s, struct ex_Vec_
                 ir__collect_texpr_vars(value, out);
                 break;
             }
+        case ir__Tstmt_TAssignDeref:
+            {
+                const struct ir__Texpr *value = __m.data.TAssignDeref.value;
+                ir__collect_texpr_vars(value, out);
+                break;
+            }
+        case ir__Tstmt_TExprStmt:
+            {
+                const struct ir__Texpr *e = __m.data.TExprStmt._0;
+                ir__collect_texpr_vars(e, out);
+                break;
+            }
         case ir__Tstmt_TAssignField:
             {
                 const struct ir__Texpr *target = __m.data.TAssignField.target;
                 const struct ir__Texpr *value = __m.data.TAssignField.value;
-                ir__collect_texpr_vars(target, out);
-                ir__collect_texpr_vars(value, out);
-                break;
-            }
-        case ir__Tstmt_TAssignDeref:
-            {
-                const struct ir__Texpr *target = __m.data.TAssignDeref.target;
-                const struct ir__Texpr *value = __m.data.TAssignDeref.value;
                 ir__collect_texpr_vars(target, out);
                 ir__collect_texpr_vars(value, out);
                 break;
@@ -6798,40 +6802,22 @@ static void ir__collect_tstmt_vars_own(const struct ir__Tstmt *s, struct ex_Vec_
             }
         case ir__Tstmt_TReturn:
             {
-                struct ex_Option_cptr_ir__Texpr value = __m.data.TReturn.value;
-                ir__collect_vars_opt(value, out);
-                break;
-            }
-        case ir__Tstmt_TExprStmt:
-            {
-                const struct ir__Texpr *e = __m.data.TExprStmt._0;
-                ir__collect_texpr_vars(e, out);
                 break;
             }
         case ir__Tstmt_TIf:
             {
-                const struct ir__Texpr *cond = __m.data.TIf.cond;
-                ir__collect_texpr_vars(cond, out);
                 break;
             }
         case ir__Tstmt_TWhile:
             {
-                const struct ir__Texpr *cond = __m.data.TWhile.cond;
-                ir__collect_texpr_vars(cond, out);
                 break;
             }
         case ir__Tstmt_TFor:
             {
-                const struct ir__Texpr *lo = __m.data.TFor.lo;
-                const struct ir__Texpr *hi = __m.data.TFor.hi;
-                ir__collect_texpr_vars(lo, out);
-                ir__collect_texpr_vars(hi, out);
                 break;
             }
         case ir__Tstmt_TForEach:
             {
-                const struct ir__Texpr *it_init = __m.data.TForEach.it_init;
-                ir__collect_texpr_vars(it_init, out);
                 break;
             }
         case ir__Tstmt_TDefer:
