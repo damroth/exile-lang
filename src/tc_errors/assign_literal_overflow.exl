@@ -1,0 +1,5 @@
+// Seeding the slot into the elaboration makes a literal ADOPT it, so this
+// arrived at the check already typed u8 and coercible to itself. The reference
+// keeps it i32 because 300 does not fit, and reports that. The `let` and
+// argument sites already had their own answers; assignment had none.
+fn main() { let mut x: u8 = 1; x = 300; println(x as int); }

@@ -6692,6 +6692,14 @@ fn global_is_const(g: *const Vec<GlobalFn>, name: str) -> bool {
         | Option::None => false
     };
 }
+// An int literal whose value does NOT fit the slot it is being assigned into.
+fn lit_overflows_slot(raw: *const Expr, t: *const Typ) -> bool {
+    if !is_int_like_ty(t) { return false; }
+    return match expr_int_lit(raw) {
+        Option::Some(n) => !int_fits(n, t)
+        | Option::None => false
+    };
+}
 fn none_typ(ar: *Arena) -> *const Typ { return ty_node(ar, Typ::TCVoid); }
 fn is_none_typ(t: *const Typ) -> bool { return match *t { Typ::TCVoid => true | _o => false }; }
 fn check_assign_value(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>,
@@ -6700,6 +6708,20 @@ fn check_assign_value(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const
     // and the frozen oracle does not, and the oracle is what compiles this file.
     let t = match exp { Option::Some(x) => x | Option::None => none_typ(ar) };
     if is_none_typ(t) { return; }
+    // The literal check comes FIRST and reports the literal's own default type.
+    // Seeding the slot into the elaboration makes the value ADOPT that slot, so
+    // `x = 300` into a `u8` arrives here already typed `u8` and coercible to
+    // itself - the reference keeps it `i32`, because 300 does not fit, and says
+    // so. `let` and argument sites answer this with their own messages already;
+    // assignment was the one that had none.
+    if lit_overflows_slot(raw, t) {
+        let mut ob = StringBuilder::with_capacity(a, 112 as u32);
+        ob.push_str("cannot assign "); ob.push_str(typ_name(a, ar, t_i32(ar)));
+        ob.push_str(" to '"); ob.push_str(path_display(a, ar, path));
+        ob.push_str("' (declared as "); ob.push_str(typ_name(a, ar, t)); ob.push_str(")");
+        tc_fail(ar, sc, pos, str::from_slice(ar, ob.as_slice()));
+        return;
+    }
     if coercible_to(av.ty, t) { return; }
     if lit_fits_slot(raw, t) { return; }
     let mut sb = StringBuilder::with_capacity(a, 112 as u32);
