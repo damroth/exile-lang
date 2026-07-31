@@ -11395,7 +11395,38 @@ fn push_struct_fields(a: Allocator, ar: *Arena, sc: *const TyScope, spath: *cons
         push_one_field(a, ar, sc, spath, &sl[i], out, p);
         i = i + 1 as u32;
     }
+    check_own_field_allocator(a, ar, sc, spath, fields, p);
 }
+// An `own *T` field needs an allocator to be released THROUGH: the owner-drop
+// synthesis has no other source for the free. The rule lives at the DECLARATION,
+// which is also why it answers before anything in a body does - the port had
+// neither the rule nor that ordering, and reported a failed inference from the
+// construction site instead.
+fn check_own_field_allocator(a: Allocator, ar: *Arena, sc: *const TyScope, spath: *const Vec<str>,
+                             fields: *const Vec<FieldDef>, p: Pos) {
+    let n = fields.length();
+    let sl = fields.as_slice();
+    let mut has_own = false;
+    let mut has_alloc = false;
+    let mut i = 0 as u32;
+    while i < n {
+        let ft = resolve_sig_ty(a, ar, sc, sl[i].ty, p);
+        if is_own_ptr_ty(ft) { has_own = true; }
+        if is_allocator_ty(ft) { has_alloc = true; }
+        i = i + 1 as u32;
+    }
+    if !has_own { return; }
+    if has_alloc { return; }
+    let mut sb = StringBuilder::with_capacity(a, 224 as u32);
+    sb.push_str("struct '"); sb.push_str(path_last(spath));
+    sb.push_str("' has an `own *T` field but no `alloc: Allocator` field — the owner-drop synthesis needs an allocator to release the storage through; add `alloc: Allocator` to the struct so the drop pass knows where to send the free");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn is_own_ptr_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TOwnPtr(_i) => true | _o => false };
+}
+
 
 // Skeleton fields of the generic prelude structs, registered in the struct
 // index so construction infers the instance and a parameter's field / index

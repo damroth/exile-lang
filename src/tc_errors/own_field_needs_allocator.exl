@@ -1,0 +1,12 @@
+// An `own *T` field has to be released THROUGH something, and the owner-drop
+// synthesis has no other source for the free. The rule lives at the DECLARATION,
+// which is why it answers before anything in a body does - the port had neither
+// the rule nor that ordering, and reported a failed inference from the
+// construction site instead.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+struct Holder { q: own *int }
+fn main() {
+    let a = raw::make_c_allocator();
+    let h = Holder { q: a.alloc() };
+    println(*h.q);
+}
