@@ -1,0 +1,15 @@
+// A `defer` in a loop body consumes on every iteration, so the next one would
+// re-consume an already-moved binding. The consume was invisible: move's
+// statement dispatcher had no TDefer arm, so a defer body fell into its
+// catch-all and never reached the loop gate that already existed.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut i = 0;
+    while i < 2 {
+        let q: own *int = a.alloc();
+        defer a.free(q);
+        *q = i; println(*q);
+        i = i + 1;
+    }
+}

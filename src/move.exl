@@ -1151,16 +1151,42 @@ fn walk_lit_fields(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a
 }
 
 // Move's expr-context statement walker (move.ml:574) — for TBlock values.
+// Two-phase, so a `defer` body sees END-OF-SCOPE state: gather the defers while
+// walking the regular statements, then fire their bodies against the settled
+// map, newest-first (a later defer's consume can affect what an earlier one
+// sees). Without this a `defer` fell into the dispatcher's catch-all and its
+// consume was invisible - so `defer a.free(q)` inside a loop body never reached
+// the loop gate, and a binding the next iteration would re-consume compiled.
 fn walk_stmts_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
                 ret_ty: Option<*const Typ>, live: *const Vec<MoveBinding>, stmts: *const Vec<Tstmt>) -> Vec<MoveBinding> {
     let mut acc = copy_live(a, live);
     let sl = stmts.as_slice();
     let mut i = 0 as u32;
     while i < stmts.length() {
-        acc = walk_stmt_e(structs, enums, a, ar, mv, ret_ty, &acc, &sl[i]);
+        acc = walk_non_defer(structs, enums, a, ar, mv, ret_ty, acc, &sl[i]);
         i = i + 1 as u32;
     }
+    // newest-first
+    let mut k = stmts.length();
+    while k > 0 as u32 {
+        k = k - 1 as u32;
+        acc = walk_defer_body(structs, enums, a, ar, mv, ret_ty, acc, &sl[k]);
+    }
     return acc;
+}
+fn walk_non_defer(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
+                  ret_ty: Option<*const Typ>, acc: Vec<MoveBinding>, s: *const Tstmt) -> Vec<MoveBinding> {
+    return match *s {
+        Tstmt::TDefer { body, pos } => copy_live(a, &acc)
+        | _o => walk_stmt_e(structs, enums, a, ar, mv, ret_ty, &acc, s)
+    };
+}
+fn walk_defer_body(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
+                   ret_ty: Option<*const Typ>, acc: Vec<MoveBinding>, s: *const Tstmt) -> Vec<MoveBinding> {
+    return match *s {
+        Tstmt::TDefer { body, pos } => walk_stmts_e(structs, enums, a, ar, mv, ret_ty, &acc, &body)
+        | _o => copy_live(a, &acc)
+    };
 }
 
 fn walk_stmt_e(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, mv: *const Mv,
