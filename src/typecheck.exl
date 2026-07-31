@@ -6692,10 +6692,39 @@ fn global_is_const(g: *const Vec<GlobalFn>, name: str) -> bool {
         | Option::None => false
     };
 }
+fn none_typ(ar: *Arena) -> *const Typ { return ty_node(ar, Typ::TCVoid); }
+fn is_none_typ(t: *const Typ) -> bool { return match *t { Typ::TCVoid => true | _o => false }; }
+fn check_assign_value(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>,
+                      raw: *const Expr, av: *const Texpr, exp: Option<*const Typ>, pos: Pos) {
+    // No `return` inside the match arms: register #12 says the port lowers that
+    // and the frozen oracle does not, and the oracle is what compiles this file.
+    let t = match exp { Option::Some(x) => x | Option::None => none_typ(ar) };
+    if is_none_typ(t) { return; }
+    if coercible_to(av.ty, t) { return; }
+    if lit_fits_slot(raw, t) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+    sb.push_str("cannot assign "); sb.push_str(typ_name(a, ar, av.ty));
+    sb.push_str(" to '"); sb.push_str(path_display(a, ar, path));
+    sb.push_str("' (declared as "); sb.push_str(typ_name(a, ar, t)); sb.push_str(")");
+    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn assign_coerced_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
-                        env: *const Vec<FieldTy>, path: *const Vec<str>, value: *const Expr) -> *const Texpr {
-    let av = elab_expr(a, ar, g, sc, env, none_ty(), value);
-    return match assign_target_ty(env, path) {
+                        env: *const Vec<FieldTy>, path: *const Vec<str>, value: *const Expr, pos: Pos) -> *const Texpr {
+    // The target's type is the EXPECTED type, exactly as it is for a `let`
+    // annotation - it was already being looked up here, just one step too late
+    // to seed inference: `p = a.alloc()` asked for an annotation on a statement
+    // that has no room for one, while `let p: own *int = a.alloc()` was fine.
+    // The sibling arms (`AssignField`, `AssignDeref`) already pass theirs down.
+    let exp = assign_target_ty(env, path);
+    let av = elab_expr(a, ar, g, sc, env, exp, value);
+    // The reference seeds AND checks in the same block, and the port had only
+    // the seed's absence to show for it: assignment never type-checked its RHS
+    // at all, so `x = true` with `x: int` sailed through. Measured at HEAD
+    // before this round touched the seed, so it is a hole rather than a
+    // regression - and it is the same contract as the annotated-`let` site.
+    check_assign_value(a, ar, sc, path, value, av, exp, pos);
+    return match exp {
         Option::Some(t) => coerce_own_to(a, ar, sc, av, t)
         | Option::None => av
     };
@@ -7134,7 +7163,7 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
         | Stmt::Assign { path, value, pos } => {
             if path.length() == 1 as u32 { require_mut(a, ar, sc, path.as_slice()[0 as u32], "assign to", pos); }
-            let av = assign_coerced_value(a, ar, g, sc, benv, &path, value);
+            let av = assign_coerced_value(a, ar, g, sc, benv, &path, value, pos);
             tstmts.push(Tstmt::TAssign { path: copy_strs(a, &path), value: av, pos: pos });
         }
         | Stmt::AssignField { target, field, value, pos } => {
@@ -9220,7 +9249,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Stmt::Assign { path, value, pos } => {
             check_assign_target(a, ar, g, sc, env, &path, pos);
             if path.length() == 1 as u32 { require_mut(a, ar, sc, path.as_slice()[0 as u32], "assign to", pos); }
-            let av = assign_coerced_value(a, ar, g, sc, env, &path, value);
+            let av = assign_coerced_value(a, ar, g, sc, env, &path, value, pos);
             let apath = copy_strs(a, &path);
             out.push(Tstmt::TAssign { path: apath, value: av, pos: pos });
         }

@@ -1,0 +1,4 @@
+// Assignment never type-checked its RHS: the reference seeds the target type
+// into the elaboration AND checks the result against it, in one block. The port
+// had neither, so this sailed through into invalid C.
+fn main() { let mut x: int = 1; x = true; println(x); }
