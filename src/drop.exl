@@ -1104,17 +1104,17 @@ fn drop_stmts_for_entry(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>
                     maybe_free_own(a, ar, structs, enums, gs, alloc_e, ptr_e, bo_pointee,
                                    size_of_u32(ar, bo_pointee, e.den_pos), e.den_pos, out);
                 }
-                // L1 (NOT wired, and the reason is measured): the reference
-                // threads the enclosing `defer` bodies through this walk and
-                // applies their consumes BEFORE deciding drops. This port does
-                // not thread them at all, so `let q = ...; defer free(a, q);` -
-                // examples/heap.exl - reaches here Live and the rule fires on
-                // valid code. `selfhost-port-move` caught exactly that.
-                //
-                // The same missing threading is what blocks the defer-reads rule
-                // (lib/drop.ml:1134). They are one prerequisite, not two, and it
-                // is its own round.
-                | Option::None => {}
+                // L1: nothing to release it with, and silence here IS the leak.
+                // This needed the defer threading above: `let q = ...; defer
+                // free(a, q);` reaches scope exit Live without it, and the rule
+                // fires on valid code - measured, on examples/heap.exl.
+                | Option::None => {
+                    let d = dp_disp(gs, e.den_name);
+                    let mut sb = StringBuilder::with_capacity(a, 176 as u32);
+                    sb.push_str("own value '"); sb.push_str(d);
+                    sb.push_str("' is never consumed — free it, move it, or return it (its allocator is not known here, so it cannot be auto-dropped)");
+                    raise_dp(ar, gs, e.den_pos, str::from_slice(ar, sb.as_slice()));
+                }
             }
         }
         | DKind::DArrayDrop { da_sidx, da_size } => {}   // deferred (rare)
@@ -1252,6 +1252,86 @@ fn ends_in_return(out: *const Vec<Tstmt>) -> bool {
 // Walk a block: thread [st], emit rewritten statements into [out], drop this
 // block's surviving Live locals at close, return the survivors (entries that
 // existed on entry).
+// The consumes a statement list performs, applied to the tracked state. Written
+// EXHAUSTIVELY: a missed arm here does not lose a diagnostic, it INVENTS one -
+// an owner whose `free` this walk failed to see is reported as never consumed,
+// and that is a rejection of valid code.
+fn apply_stmts_consumes(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                        st: *const Vec<DEntry>, stmts: *const Vec<Tstmt>) -> Vec<DEntry> {
+    let mut cur = copy_dentries(a, st);
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        cur = apply_stmt_consumes(structs, enums, a, ar, cur, &sl[i]);
+        i = i + 1 as u32;
+    }
+    return cur;
+}
+fn apply_stmt_consumes(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                       st: Vec<DEntry>, s: *const Tstmt) -> Vec<DEntry> {
+    return match *s {
+        Tstmt::TLet { name, value, decl_ty, pos } => apply_expr(structs, enums, a, ar, &st, value)
+        | Tstmt::TLetTuple { names, value, pos } => apply_expr(structs, enums, a, ar, &st, value)
+        | Tstmt::TAssign { path, value, pos } => apply_expr(structs, enums, a, ar, &st, value)
+        | Tstmt::TAssignField { target, field, value, pos } => apply_two(structs, enums, a, ar, st, target, value)
+        | Tstmt::TAssignDeref { target, value, pos } => apply_two(structs, enums, a, ar, st, target, value)
+        | Tstmt::TAssignIndex { base, index, value, pos } => apply_three(structs, enums, a, ar, st, base, index, value)
+        | Tstmt::TReturn { value, pos } => apply_opt(structs, enums, a, ar, st, value)
+        | Tstmt::TExprStmt(e) => apply_expr(structs, enums, a, ar, &st, e)
+        | Tstmt::TIf { cond, then_body, else_body } => {
+            let s1 = apply_expr(structs, enums, a, ar, &st, cond);
+            let s2 = apply_stmts_consumes(structs, enums, a, ar, &s1, &then_body);
+            apply_stmts_consumes(structs, enums, a, ar, &s2, &else_body)
+        }
+        | Tstmt::TWhile { cond, body, post } => {
+            let s1 = apply_expr(structs, enums, a, ar, &st, cond);
+            let s2 = apply_stmts_consumes(structs, enums, a, ar, &s1, &body);
+            apply_stmts_consumes(structs, enums, a, ar, &s2, &post)
+        }
+        | Tstmt::TDefer { body, pos } => apply_stmts_consumes(structs, enums, a, ar, &st, &body)
+        | Tstmt::TSeal { body, pos } => apply_stmts_consumes(structs, enums, a, ar, &st, &body)
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } =>
+            apply_stmts_consumes(structs, enums, a, ar, &st, &body)
+        | Tstmt::TForEach { it_var, it_init, body, pos } =>
+            apply_stmts_consumes(structs, enums, a, ar, &st, &body)
+        | Tstmt::TBreak(q) => copy_dentries(a, &st)
+        | Tstmt::TContinue(q) => copy_dentries(a, &st)
+    };
+}
+fn apply_two(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+             st: Vec<DEntry>, x: *const Texpr, y: *const Texpr) -> Vec<DEntry> {
+    let s1 = apply_expr(structs, enums, a, ar, &st, x);
+    return apply_expr(structs, enums, a, ar, &s1, y);
+}
+fn apply_three(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+               st: Vec<DEntry>, x: *const Texpr, y: *const Texpr, z: *const Texpr) -> Vec<DEntry> {
+    let s1 = apply_two(structs, enums, a, ar, st, x, y);
+    return apply_expr(structs, enums, a, ar, &s1, z);
+}
+fn apply_opt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+             st: Vec<DEntry>, v: Option<*const Texpr>) -> Vec<DEntry> {
+    return match v {
+        Option::Some(e) => apply_expr(structs, enums, a, ar, &st, e)
+        | Option::None => copy_dentries(a, &st)
+    };
+}
+// A block's own `defer` bodies run at its exit, so their consumes land BEFORE
+// the surviving locals are dropped - which is what makes `let q = ...; defer
+// free(a, q);` a consumed owner rather than a leaked one.
+fn apply_block_defers(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                      st: *const Vec<DEntry>, stmts: *const Vec<Tstmt>) -> Vec<DEntry> {
+    let mut cur = copy_dentries(a, st);
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        match sl[i] {
+            Tstmt::TDefer { body, pos } => { cur = apply_stmts_consumes(structs, enums, a, ar, &cur, &body); }
+            | _o => { }
+        }
+        i = i + 1 as u32;
+    }
+    return cur;
+}
 fn walk_stmts(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
               st_in: *const Vec<DEntry>, stmts: *const Vec<Tstmt>, out: *Vec<Tstmt>) -> Vec<DEntry> {
     let baseline = names_of(a, st_in);
@@ -1266,6 +1346,9 @@ fn walk_stmts(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
         i = i + 1 as u32;
     }
     let ret = ends_in_return(out);
+    // Block close: the defer consumes land first, then this block's surviving
+    // locals drop.
+    st = apply_block_defers(structs, enums, a, ar, &st, stmts);
     // partition: locals (not in baseline) vs survivors (in baseline)
     let mut survivors: Vec<DEntry> = Vec::with_capacity(a, st.length() + 1 as u32);
     let mut locals: Vec<DEntry> = Vec::with_capacity(a, st.length() + 1 as u32);
