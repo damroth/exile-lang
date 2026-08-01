@@ -18,6 +18,8 @@ use error::*;
 use parser::*;
 use loader::*;
 use typecheck::*;
+use move;
+use escape;
 use drop::*;
 use dump_ir::*;
 
@@ -64,6 +66,15 @@ fn arena_cap_for(srclen: u32) -> u32 {
 // Drop's diagnostics arrive as a latch rather than a raise: the pass rewrites a
 // whole program and the reference stops at the first, so the port latches the
 // first and the driver reports it here.
+// Move / Escape report the same way Drop does here: a latch the driver turns
+// into the one diagnostic the reference would have raised first.
+fn pass_report(a: Allocator, e: Option<*const CompileError>) {
+    match e {
+        Option::Some(err) => { report_error(a, err); }
+        | Option::None => { }
+    }
+    return;
+}
 fn drop_report(a: Allocator, e: Option<*const CompileError>) {
     match e {
         Option::Some(err) => { report_error(a, err); }
@@ -95,6 +106,15 @@ fn main() {
             match check_program(a, &ar, &prog) {
                 Result::Ok(tp) => {
                     let mut tprog = tp;
+                    // The same prefix bin/main.ml runs for `--after-drop`:
+                    // Move.check, Escape.check, Drop.insert. This driver ran only
+                    // the last one, so the gate built on it was comparing the
+                    // oracle's three passes against the port's one - a shape the
+                    // reference rejects in Move looked like a port divergence,
+                    // and a port that regressed in Move would still have passed
+                    // the accepting half.
+                    pass_report(a, move::check(a, &ar, &tprog));
+                    pass_report(a, escape::check(a, &ar, &tprog));
                     drop_report(a, drop_insert(a, &ar, &tprog));
                     let mut out = StringBuilder::with_capacity(a, 16384 as u32);
                     dump_typed_ir(&tprog, path, true, &out);
