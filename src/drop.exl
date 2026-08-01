@@ -800,11 +800,19 @@ fn dp_disp(gs: *const GlueState, n: str) -> str {
 }
 // An expression statement that produces an owning value: nothing tracks it and
 // nothing releases it.
-fn check_discarded_own(a: Allocator, ar: *Arena, gs: *GlueState, e: *const Texpr) {
+fn discarded_struct(structs: *const Vec<StructSig>, ar: *Arena, gs: *GlueState, e: *const Texpr) {
+    if !has_drop_deep(structs, e.ty) { return; }
+    raise_dp(ar, gs, e.pos, "this expression produces an owning value that is silently discarded (and leaked) — bind it with `let` so it can be dropped or consumed");
+    return;
+}
+fn check_discarded_own(structs: *const Vec<StructSig>, a: Allocator, ar: *Arena, gs: *GlueState, e: *const Texpr) {
     match *e.ty {
         Typ::TOwnPtr(_i) => {
             raise_dp(ar, gs, e.pos, "this call returns an owned pointer that is silently discarded (and leaked) — bind it with `let`, then free, move, or return it");
         }
+        // A struct whose field tree reaches an `own *T` owns just as much as a
+        // bare pointer does, and dropping it on the floor leaks the same way.
+        | Typ::TStruct(_p) => { discarded_struct(structs, ar, gs, e); }
         | _o => { }
     }
     return;
@@ -1412,7 +1420,7 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             // Freeze-audit B12: an expression statement whose value owns
             // discards that ownership on the floor - the never-consumed check
             // only ever sees BINDINGS, so nothing else would catch it.
-            check_discarded_own(a, ar, gs, e);
+            check_discarded_own(structs, a, ar, gs, e);
             let st2 = apply_expr(structs, enums, a, ar, st, e);
             out.push(*s);
             st2
