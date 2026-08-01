@@ -2304,6 +2304,7 @@ static void drop__emit_struct_field(struct ex_Allocator a, struct ex_Arena *ar, 
 static long drop__struct_idx_of_ty(const struct ex_Vec_ir__StructSig *structs, const struct ir__Typ *ty);
 static void drop__drop_stmts_for_entry(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct drop__GlueState *gs, const struct drop__DEntry *e, struct ex_Vec_ir__Tstmt *out);
 static struct ex_Vec_str drop__struct_path_at(struct ex_Allocator a, const struct ex_Vec_ir__StructSig *structs, long sidx);
+static void drop__partial_at_exit(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct drop__DEntry *e);
 static void drop__drops_for_live(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st, struct ex_Vec_ir__Tstmt *out);
 static struct ex_Vec_drop__DEntry drop__copy_dentries(struct ex_Allocator a, const struct ex_Vec_drop__DEntry *st);
 static struct ex_Vec_str drop__names_of(struct ex_Allocator a, const struct ex_Vec_drop__DEntry *st);
@@ -61202,6 +61203,21 @@ static struct ex_Vec_str drop__struct_path_at(struct ex_Allocator a, const struc
     return v;
 }
 
+static void drop__partial_at_exit(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct drop__DEntry *e) {
+    const char *d;
+    struct ex_StringBuilder sb;
+    d = drop__dp_disp(gs, e->den_name);
+    sb = StringBuilder__with_capacity(a, ((unsigned long)176));
+    StringBuilder__push_str(&sb, "'");
+    StringBuilder__push_str(&sb, d);
+    StringBuilder__push_str(&sb, "' had its payload moved out and still owns its storage at scope exit — release it explicitly with `free(alloc, ");
+    StringBuilder__push_str(&sb, d);
+    StringBuilder__push_str(&sb, ")`");
+    drop__raise_dp(ar, gs, e->den_pos, str__from_slice(ar, StringBuilder__as_slice(&sb)));
+    (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
+    return;
+}
+
 static void drop__drops_for_live(struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st, struct ex_Vec_ir__Tstmt *out) {
     struct ex_Slice_drop__DEntry sl;
     unsigned long i;
@@ -61218,6 +61234,12 @@ static void drop__drops_for_live(struct ex_Allocator a, struct ex_Arena *ar, con
                     drop__drop_stmts_for_entry(a, ar, structs, enums, gs, &(sl.ptr[i]), out);
                     break;
                 }
+            case drop__DStatus_DPartial:
+                {
+                    drop__partial_at_exit(a, ar, gs, &(sl.ptr[i]));
+                    break;
+                }
+            case drop__DStatus_DConsumed:
             default:
                 {
                     break;
@@ -61368,16 +61390,16 @@ static struct ex_Vec_drop__DEntry drop__apply_expr(const struct ex_Vec_ir__Struc
     struct ex_Vec_str names;
     struct move__ConsumeResult res;
     struct ex_Vec_drop__DEntry st2;
-    struct ex_Vec_drop__DEntry __drop_ret_1227_5;
+    struct ex_Vec_drop__DEntry __drop_ret_1242_5;
     names = drop__names_of(a, st);
     res = move__states_by(structs, enums, a, ar, &names, te);
     st2 = drop__mark_consumed(a, st, &res.cr_consumed);
-    __drop_ret_1227_5 = drop__mark_partial(a, &st2, &res.cr_partial);
+    __drop_ret_1242_5 = drop__mark_partial(a, &st2, &res.cr_partial);
     (st2.alloc.free_fn)(st2.alloc.state, ((void *)(st2.ptr)), st2.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
     (res.cr_consumed.alloc.free_fn)(res.cr_consumed.alloc.state, ((void *)(res.cr_consumed.ptr)), res.cr_consumed.cap * ((unsigned long)(sizeof(const char *))));
     (res.cr_partial.alloc.free_fn)(res.cr_partial.alloc.state, ((void *)(res.cr_partial.ptr)), res.cr_partial.cap * ((unsigned long)(sizeof(const char *))));
     (names.alloc.free_fn)(names.alloc.state, ((void *)(names.ptr)), names.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_1227_5;
+    return __drop_ret_1242_5;
 }
 
 static struct ex_Vec_drop__DEntry drop__consume_rhs_var(const struct ex_Vec_ir__StructSig *structs, struct ex_Allocator a, const struct ex_Vec_drop__DEntry *st, const struct ir__Texpr *value) {
@@ -61410,12 +61432,12 @@ static struct ex_Vec_drop__DEntry drop__consume_rhs_var(const struct ex_Vec_ir__
 
 static struct ex_Vec_drop__DEntry drop__consume_one(struct ex_Allocator a, const struct ex_Vec_drop__DEntry *st, const char *n) {
     struct ex_Vec_str names;
-    struct ex_Vec_drop__DEntry __drop_ret_1246_5;
+    struct ex_Vec_drop__DEntry __drop_ret_1261_5;
     names = Vec__with_capacity_str(a, ((unsigned long)8));
     Vec__push_str(&names, n);
-    __drop_ret_1246_5 = drop__mark_consumed(a, st, &names);
+    __drop_ret_1261_5 = drop__mark_consumed(a, st, &names);
     (names.alloc.free_fn)(names.alloc.state, ((void *)(names.ptr)), names.cap * ((unsigned long)(sizeof(const char *))));
-    return __drop_ret_1246_5;
+    return __drop_ret_1261_5;
 }
 
 static int drop__ends_in_return(const struct ex_Vec_ir__Tstmt *out) {
@@ -61586,25 +61608,25 @@ static struct ex_Vec_drop__DEntry drop__apply_stmt_consumes(const struct ex_Vec_
 
 static struct ex_Vec_drop__DEntry drop__apply_two(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, const struct ir__Texpr *x, const struct ir__Texpr *y) {
     struct ex_Vec_drop__DEntry s1;
-    struct ex_Vec_drop__DEntry __drop_ret_1312_5;
+    struct ex_Vec_drop__DEntry __drop_ret_1327_5;
     s1 = drop__apply_expr(structs, enums, a, ar, &st, x);
-    __drop_ret_1312_5 = drop__apply_expr(structs, enums, a, ar, &s1, y);
+    __drop_ret_1327_5 = drop__apply_expr(structs, enums, a, ar, &s1, y);
     (s1.alloc.free_fn)(s1.alloc.state, ((void *)(s1.ptr)), s1.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
     (st.alloc.free_fn)(st.alloc.state, ((void *)(st.ptr)), st.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
-    return __drop_ret_1312_5;
+    return __drop_ret_1327_5;
 }
 
 static struct ex_Vec_drop__DEntry drop__apply_three(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, const struct ir__Texpr *x, const struct ir__Texpr *y, const struct ir__Texpr *z) {
     struct ex_Vec_drop__DEntry s1;
-    struct ex_Vec_drop__DEntry __drop_ret_1317_5;
+    struct ex_Vec_drop__DEntry __drop_ret_1332_5;
     s1 = drop__apply_two(structs, enums, a, ar, st, x, y);
-    __drop_ret_1317_5 = drop__apply_expr(structs, enums, a, ar, &s1, z);
+    __drop_ret_1332_5 = drop__apply_expr(structs, enums, a, ar, &s1, z);
     (s1.alloc.free_fn)(s1.alloc.state, ((void *)(s1.ptr)), s1.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
-    return __drop_ret_1317_5;
+    return __drop_ret_1332_5;
 }
 
 static struct ex_Vec_drop__DEntry drop__apply_opt(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct ex_Vec_drop__DEntry st, struct ex_Option_cptr_ir__Texpr v) {
-    struct ex_Vec_drop__DEntry __drop_ret_1321_5;
+    struct ex_Vec_drop__DEntry __drop_ret_1336_5;
     {
         struct ex_Option_cptr_ir__Texpr __m;
         __m = v;
@@ -61612,19 +61634,19 @@ static struct ex_Vec_drop__DEntry drop__apply_opt(const struct ex_Vec_ir__Struct
         case ex_Option_cptr_ir__Texpr_Some:
             {
                 const struct ir__Texpr *e = __m.data.Some._0;
-                __drop_ret_1321_5 = drop__apply_expr(structs, enums, a, ar, &st, e);
+                __drop_ret_1336_5 = drop__apply_expr(structs, enums, a, ar, &st, e);
                 break;
             }
         case ex_Option_cptr_ir__Texpr_None:
         default:
             {
-                __drop_ret_1321_5 = drop__copy_dentries(a, &st);
+                __drop_ret_1336_5 = drop__copy_dentries(a, &st);
                 break;
             }
         }
     }
     (st.alloc.free_fn)(st.alloc.state, ((void *)(st.ptr)), st.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
-    return __drop_ret_1321_5;
+    return __drop_ret_1336_5;
 }
 
 static struct ex_Vec_drop__DEntry drop__apply_block_defers(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, const struct ex_Vec_drop__DEntry *st, const struct ex_Vec_ir__Tstmt *stmts) {
@@ -61738,7 +61760,7 @@ static struct ex_Vec_drop__DEntry drop__walk_stmts(const struct ex_Vec_ir__Struc
     struct ex_Vec_drop__DEntry locals;
     struct ex_Slice_drop__DEntry es;
     unsigned long j;
-    struct ex_Vec_drop__DEntry __drop_old_1388_5;
+    struct ex_Vec_drop__DEntry __drop_old_1403_5;
     baseline = drop__names_of(a, st_in);
     st = drop__copy_dentries(a, st_in);
     sl = Vec__as_slice_ir__Tstmt(stmts);
@@ -61748,9 +61770,9 @@ static struct ex_Vec_drop__DEntry drop__walk_stmts(const struct ex_Vec_ir__Struc
         i = i + ((unsigned long)1);
     }
     ret = drop__ends_in_return(out);
-    __drop_old_1388_5 = drop__apply_block_defers(structs, enums, a, ar, &st, stmts);
+    __drop_old_1403_5 = drop__apply_block_defers(structs, enums, a, ar, &st, stmts);
     (st.alloc.free_fn)(st.alloc.state, ((void *)(st.ptr)), st.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
-    st = __drop_old_1388_5;
+    st = __drop_old_1403_5;
     survivors = Vec__with_capacity_drop__DEntry(a, Vec__length_drop__DEntry(&st) + ((unsigned long)1));
     locals = Vec__with_capacity_drop__DEntry(a, Vec__length_drop__DEntry(&st) + ((unsigned long)1));
     es = Vec__as_slice_drop__DEntry(&st);
@@ -61773,10 +61795,10 @@ static struct ex_Vec_drop__DEntry drop__walk_stmts(const struct ex_Vec_ir__Struc
 }
 
 static struct ex_Vec_drop__DEntry drop__step(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, struct ex_Vec_drop__DEntry st, const struct ir__Tstmt *s, struct ex_Vec_ir__Tstmt *out) {
-    struct ex_Vec_drop__DEntry __drop_ret_1408_5;
-    __drop_ret_1408_5 = drop__walk_stmt(structs, enums, a, ar, gs, &st, s, out);
+    struct ex_Vec_drop__DEntry __drop_ret_1423_5;
+    __drop_ret_1423_5 = drop__walk_stmt(structs, enums, a, ar, gs, &st, s, out);
     (st.alloc.free_fn)(st.alloc.state, ((void *)(st.ptr)), st.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
-    return __drop_ret_1408_5;
+    return __drop_ret_1423_5;
 }
 
 static struct ex_Vec_drop__DEntry drop__walk_stmt(const struct ex_Vec_ir__StructSig *structs, const struct ex_Vec_ir__EnumSig *enums, struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, const struct ex_Vec_drop__DEntry *st, const struct ir__Tstmt *s, struct ex_Vec_ir__Tstmt *out) {
@@ -62244,28 +62266,28 @@ static void drop__push_all(const struct ex_Vec_ir__Tstmt *src, struct ex_Vec_ir_
 
 static const char *drop__mk_drop_tmp(struct ex_Allocator a, struct ex_Arena *ar, struct pos__Pos pos) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_1603_5;
+    const char *__drop_ret_1618_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)24));
     StringBuilder__push_str(&sb, "__drop_ret_");
     StringBuilder__push_int(&sb, pos.line);
     StringBuilder__push_str(&sb, "_");
     StringBuilder__push_int(&sb, pos.col);
-    __drop_ret_1603_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_1618_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_1603_5;
+    return __drop_ret_1618_5;
 }
 
 static const char *drop__mk_drop_old_tmp(struct ex_Allocator a, struct ex_Arena *ar, struct pos__Pos pos) {
     struct ex_StringBuilder sb;
-    const char *__drop_ret_1612_5;
+    const char *__drop_ret_1627_5;
     sb = StringBuilder__with_capacity(a, ((unsigned long)24));
     StringBuilder__push_str(&sb, "__drop_old_");
     StringBuilder__push_int(&sb, pos.line);
     StringBuilder__push_str(&sb, "_");
     StringBuilder__push_int(&sb, pos.col);
-    __drop_ret_1612_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
+    __drop_ret_1627_5 = str__from_slice(ar, StringBuilder__as_slice(&sb));
     (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-    return __drop_ret_1612_5;
+    return __drop_ret_1627_5;
 }
 
 static void drop__emit_ret_temp(struct ex_Allocator a, struct ex_Arena *ar, struct ex_Option_cptr_ir__Texpr value, struct pos__Pos pos, const struct ex_Vec_ir__Tstmt *drop_buf, struct ex_Vec_ir__Tstmt *out) {
@@ -62320,7 +62342,7 @@ static struct ex_Vec_drop__DEntry drop__walk_if(const struct ex_Vec_ir__StructSi
     int td;
     int ed;
     struct ir__Tstmt __lift_0;
-    struct ex_Vec_drop__DEntry __drop_ret_1645_5;
+    struct ex_Vec_drop__DEntry __drop_ret_1660_5;
     st0 = drop__apply_expr(structs, enums, a, ar, st, cond);
     then_out = Vec__with_capacity_ir__Tstmt(a, ((unsigned long)8));
     st_then = drop__walk_stmts(structs, enums, a, ar, gs, &st0, then_body, &then_out);
@@ -62335,21 +62357,21 @@ static struct ex_Vec_drop__DEntry drop__walk_if(const struct ex_Vec_ir__StructSi
     ed = typecheck__stmts_diverge(else_body);
     if (td) {
         if (ed) {
-            __drop_ret_1645_5 = drop__copy_dentries(a, &st0);
+            __drop_ret_1660_5 = drop__copy_dentries(a, &st0);
         } else {
-            __drop_ret_1645_5 = drop__copy_dentries(a, &st_else);
+            __drop_ret_1660_5 = drop__copy_dentries(a, &st_else);
         }
     } else {
         if (ed) {
-            __drop_ret_1645_5 = drop__copy_dentries(a, &st_then);
+            __drop_ret_1660_5 = drop__copy_dentries(a, &st_then);
         } else {
-            __drop_ret_1645_5 = drop__merge_branches(a, ar, gs, cond->pos, &st_then, &st_else);
+            __drop_ret_1660_5 = drop__merge_branches(a, ar, gs, cond->pos, &st_then, &st_else);
         }
     }
     (st_else.alloc.free_fn)(st_else.alloc.state, ((void *)(st_else.ptr)), st_else.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
     (st_then.alloc.free_fn)(st_then.alloc.state, ((void *)(st_then.ptr)), st_then.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
     (st0.alloc.free_fn)(st0.alloc.state, ((void *)(st0.ptr)), st0.cap * ((unsigned long)(sizeof(struct drop__DEntry))));
-    return __drop_ret_1645_5;
+    return __drop_ret_1660_5;
 }
 
 static struct ex_Vec_drop__DEntry drop__merge_branches(struct ex_Allocator a, struct ex_Arena *ar, struct drop__GlueState *gs, struct pos__Pos pos, const struct ex_Vec_drop__DEntry *st_then, const struct ex_Vec_drop__DEntry *st_else) {
@@ -62359,7 +62381,7 @@ static struct ex_Vec_drop__DEntry drop__merge_branches(struct ex_Allocator a, st
     unsigned long i;
     const char *d;
     struct ex_StringBuilder sb;
-    struct ex_Vec_drop__DEntry __drop_ret_1670_13;
+    struct ex_Vec_drop__DEntry __drop_ret_1685_13;
     tl = Vec__as_slice_drop__DEntry(st_then);
     el = Vec__as_slice_drop__DEntry(st_else);
     if (Vec__length_drop__DEntry(st_then) < Vec__length_drop__DEntry(st_else)) {
@@ -62376,9 +62398,9 @@ static struct ex_Vec_drop__DEntry drop__merge_branches(struct ex_Allocator a, st
             StringBuilder__push_str(&sb, d);
             StringBuilder__push_str(&sb, "' is moved out on one branch but stays owned on the other — auto-drop is static (no runtime drop flags); consume it on every path or on none");
             drop__raise_dp(ar, gs, pos, str__from_slice(ar, StringBuilder__as_slice(&sb)));
-            __drop_ret_1670_13 = drop__copy_dentries(a, st_then);
+            __drop_ret_1685_13 = drop__copy_dentries(a, st_then);
             (sb.alloc.free_fn)(sb.alloc.state, ((void *)(sb.buf)), sb.cap * ((unsigned long)(sizeof(unsigned char))));
-            return __drop_ret_1670_13;
+            return __drop_ret_1685_13;
         }
         i = i + ((unsigned long)1);
     }

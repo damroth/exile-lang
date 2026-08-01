@@ -1140,6 +1140,15 @@ fn struct_path_at(a: Allocator, structs: *const Vec<StructSig>, sidx: int) -> Ve
     return v;
 }
 
+fn partial_at_exit(a: Allocator, ar: *Arena, gs: *GlueState, e: *const DEntry) {
+    let d = dp_disp(gs, e.den_name);
+    let mut sb = StringBuilder::with_capacity(a, 176 as u32);
+    sb.push_str("'"); sb.push_str(d);
+    sb.push_str("' had its payload moved out and still owns its storage at scope exit — release it explicitly with `free(alloc, ");
+    sb.push_str(d); sb.push_str(")`");
+    raise_dp(ar, gs, e.den_pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 // Drops for every Live entry, newest-first (LIFO — st keeps newest at head).
 fn drops_for_live(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>,
                   enums: *const Vec<EnumSig>, gs: *GlueState, st: *const Vec<DEntry>, out: *Vec<Tstmt>) {
@@ -1151,7 +1160,13 @@ fn drops_for_live(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>,
         i = i - 1 as u32;
         match sl[i].den_status {
             DStatus::DLive => drop_stmts_for_entry(a, ar, structs, enums, gs, &sl[i], out)
-            | _other => {}
+            // The eighth rule, and the only route to this state is narrow: a
+            // `match` over a DEREF-rooted owned tree (`match *t`) moves the
+            // children out and leaves the root storage releasable. Nothing else
+            // in the reference produces PartialMoved, which is why the shape had
+            // to come from reading that producer rather than from guessing.
+            | DStatus::DPartial => partial_at_exit(a, ar, gs, &sl[i])
+            | DStatus::DConsumed => {}
         }
     }
     return;
