@@ -1,0 +1,11 @@
+// Register #13, the divergence at its simplest: no entry point, no seam use.
+// The reference walks reachability from `main`, has no root here, and falls back
+// to declaring the whole seam - thirteen externs for a file that references none
+// of them. The port keys on what the emitted code actually names, so it declares
+// nothing. Both emissions compile clean; the reference's thirteen lines are dead
+// declarations rather than an error.
+
+pub fn goodbye() {
+    while false {
+    }
+}

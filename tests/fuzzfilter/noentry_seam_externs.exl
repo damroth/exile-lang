@@ -1,0 +1,8 @@
+// Register #13, positive: a translation unit with no entry point. The reference
+// loses its reachability root and declares the whole seam; the port declares
+// what the emitted code references, which here is nothing. The recogniser must
+// name this, or every run rediscovers a divergence that was already decided.
+
+pub fn goodbye() -> int {
+    return 7;
+}

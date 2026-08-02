@@ -788,7 +788,12 @@ bootstrap-fixpoint: $(SEEDC_CG)
 # a representative slice of the corpus.  Byte-drift is a driver bug.
 EXILC_SAMPLE := enums traits generics closures_a2 let_else exhaustiveness \
                 combinator_map pattern_guards modules reexport derive floats
-$(EXILC_BIN): src/exilc.exl build
+# Every port module, not just the driver's own file: `src/exilc.exl` merely
+# `use`s the rest, so a change to codegen / typecheck / drop left this binary
+# stale. That made the plant in `fuzz-witness` land in the source and never reach
+# the artifact under test - the witness was passing on a compiler built before
+# the defect it was meant to rediscover.
+$(EXILC_BIN): src/exilc.exl $(SEEDC_SRCS) build
 	@$(EXILE) --target host --c-out $(C_OUT)/exilc.c --link $(SYS_HOST) -o $(EXILC_BIN) src/exilc.exl >/dev/null
 
 selfhost-exilc-driver: $(EXILC_BIN)
@@ -895,7 +900,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-parens selfhost-armreturn
+                 selfhost-seal selfhost-parens selfhost-armreturn selfhost-noentry-externs
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1302,9 +1307,21 @@ FUZZ_N     ?= 150
 FUZZ_STEER ?= 1
 FUZZ_RATE  ?= 0
 FUZZ_FLAGS := $(if $(filter 0,$(FUZZ_STEER)),--no-steer --graft-rate $(FUZZ_RATE),)
-.PHONY: fuzz fuzz-witness fuzz-filters fuzz-seed-hunt
+.PHONY: fuzz fuzz-witness fuzz-filters fuzz-seed-hunt fuzz-budget-witness fuzz-limits fuzz-gates
 fuzz-filters: $(EXILC_BIN)
 	@python3 tools/fuzz/fuzz.py --seed 0 --selftest --cc
+
+# The fuzzer's stated limits, executable. A limit nobody measures
+# drifts into folklore, and one measured here goes red the day a future round
+# closes it, so closing it has to be a decision rather than a side effect.
+fuzz-limits: $(EXILC_BIN)
+	@python3 tools/fuzz/limits.py
+
+# The era's four gates as one command. They are deliberately outside
+# `selfhost-verify`, which must stay deterministic input-for-input; each of these
+# is deterministic per seed, which is a weaker property.
+fuzz-gates: fuzz-filters fuzz-limits fuzz-witness fuzz-budget-witness
+	@echo "fuzz-gates: four green - filters, limits, planted-defect witness, budget witness"
 
 fuzz: $(EXILC_BIN)
 	@python3 tools/fuzz/fuzz.py --seed $(FUZZ_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) --cc --shrink
@@ -1345,18 +1362,55 @@ fuzz-seed-hunt: $(EXILC_BIN)
 	echo "fuzz-seed-hunt: budget $(FUZZ_HUNT_SEEDS) seeds x $(FUZZ_N) inputs; hits:$$hits"; \
 	echo "  pin FUZZ_WITNESS_SEED to the first of these."
 
+# FUZZ-SPEC Z3 — the budgets, witnessed. A class that has never fired is a green
+# light, and F4 had never fired: its two early-return paths still handed back
+# 4-tuples after Increment 3 added a fifth field, so the first input to trip a
+# budget would have taken the fuzzer down with it. That sat undetected precisely
+# because nothing exercised the class.
+#
+# Both directions, with the numbers stated: a time budget below any real compile
+# must produce F4; a memory cap below the compiler's own floor must produce F4;
+# and at the SHIPPED budgets neither may fire.
+FUZZ_TINY_BUDGET ?= 0.002
+FUZZ_TINY_RSS    ?= 2
+fuzz-budget-witness: $(EXILC_BIN)
+	@t=`python3 tools/fuzz/fuzz.py --seed 3 -n 20 --budget $(FUZZ_TINY_BUDGET) --quiet 2>&1 | grep -oE 'budget=[0-9]+' | tail -1`; \
+	if [ "$$t" = "budget=0" ] || [ -z "$$t" ]; then \
+	  echo "fuzz-budget-witness: the TIME budget did not fire at $(FUZZ_TINY_BUDGET)s — F4's timeout path is not reachable"; exit 1; fi; \
+	m=`python3 tools/fuzz/fuzz.py --seed 3 -n 20 --rss $(FUZZ_TINY_RSS) --quiet 2>&1 | grep -oE 'budget=[0-9]+' | tail -1`; \
+	if [ "$$m" = "budget=0" ] || [ -z "$$m" ]; then \
+	  echo "fuzz-budget-witness: the MEMORY cap did not fire at $(FUZZ_TINY_RSS)MB — F4's rss path is not reachable"; exit 1; fi; \
+	q=`python3 tools/fuzz/fuzz.py --seed 3 -n 40 --quiet 2>&1 | grep -oE 'budget=[0-9]+' | tail -1`; \
+	if [ "$$q" != "budget=0" ]; then \
+	  echo "fuzz-budget-witness: a budget fired at the SHIPPED limits ($$q) — the caps are too tight to distinguish a finding from the machine"; exit 1; fi; \
+	echo "fuzz-budget-witness: clean (time $(FUZZ_TINY_BUDGET)s -> $$t, memory $(FUZZ_TINY_RSS)MB -> $$m, shipped limits -> $$q)"
+
 fuzz-witness: $(EXILC_BIN)
 	@test -f tools/fuzz/plant.py || { echo "fuzz-witness: MISSING tools/fuzz/plant.py"; exit 1; }; \
+	base=`python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1 | grep -c 'F1:emitted-c'`; \
 	python3 tools/fuzz/plant.py plant || exit 1; \
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
+	printf 'fn main() { let mut i = 0; while i < 2 { println(i); i = i + 1; } }\n' > $(C_OUT)/canary.exl; \
+	rm -f $(C_OUT)/canary.c; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/canary.c $(C_OUT)/canary.exl >/dev/null 2>&1; \
+	if ! grep -q 'while ( ' $(C_OUT)/canary.c 2>/dev/null; then \
+	  python3 tools/fuzz/plant.py restore; $(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
+	  echo "fuzz-witness: THE PLANT DID NOT REACH THE ARTIFACT - the compiler under test does not carry the defect,"; \
+	  echo "  so anything the run finds is a real finding and the witness would be green for the wrong reason."; \
+	  echo "  (This floor exists because exactly that happened: a later round added a TWhile arm ABOVE gen_while,"; \
+	  echo "   the replace-first plant moved into the defer-body emitter, and the string-existence guard was happy.)"; \
+	  exit 1; fi; \
 	out=`python3 tools/fuzz/fuzz.py --seed $(FUZZ_WITNESS_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) 2>&1`; \
 	python3 tools/fuzz/plant.py restore; \
 	$(MAKE) -s $(EXILC_BIN) >/dev/null 2>&1; \
-	echo "$$out" | grep -q 'F1:emitted-c' \
-	  || { echo "fuzz-witness: seed $(FUZZ_WITNESS_SEED) did NOT rediscover the planted defect."; \
-	       echo "  Per E1 this is a finding ABOUT THE GENERATOR — re-hunt the seed, do not widen the budget."; \
-	       echo "$$out" | tail -3; exit 1; }; \
-	echo "fuzz-witness: clean (seed $(FUZZ_WITNESS_SEED) rediscovers the planted codegen defect as F1:emitted-c within $(FUZZ_N) inputs)"
+	got=`echo "$$out" | grep -c 'F1:emitted-c'`; \
+	if [ "$$got" -le "$$base" ]; then \
+	  echo "fuzz-witness: seed $(FUZZ_WITNESS_SEED) produced $$got emitted-c findings WITH the plant and $$base without it."; \
+	  echo "  The signature alone proves nothing: this stream already carries a REAL emitted-c divergence, so"; \
+	  echo "  \`grep -q\` would pass with no plant at all. The witness asks for the DIFFERENCE the plant makes."; \
+	  echo "  Per E1 a shortfall is a finding ABOUT THE GENERATOR - re-hunt the seed, do not widen the budget."; \
+	  exit 1; fi; \
+	echo "fuzz-witness: clean (seed $(FUZZ_WITNESS_SEED): $$base emitted-c findings without the plant, $$got with it - the difference is the plant, and the canary proved it reached the artifact)"
 
 # ===== register #12 - `return` inside a `match` arm (B2 divergence) =====
 #
@@ -1391,6 +1445,64 @@ selfhost-armreturn: $(EXILC_BIN)
 	  echo "selfhost-armreturn: an arm left by the wrong path:"; \
 	  diff tests/armreturn/arm_returns.expected $(C_OUT)/armret.out | head -6; exit 1; fi; \
 	echo "selfhost-armreturn: clean (3 arm returns lowered into the switch, -Werror clean, RUNS 1/3/10/30/40/50; the frozen reference still refuses it)"
+
+# ===== register #13 - seam externs in a file with no entry point =====
+#
+# The reference walks reachability from `main`; with no entry point it has no
+# root and declares the whole seam.  The port keys on what the emitted code
+# names, so it declares exactly that - with an entry point or without one.
+#
+# THREE facts, because a divergence with only one side measured is one that can
+# widen quietly.  The third is the one that carries the reading: "the two merely
+# differ" would also pass on a port that emitted nothing, which is precisely the
+# misreading this gate exists to make unrepresentable.
+selfhost-noentry-externs: $(EXILC_BIN)
+	@sig=""; pin=13; \
+	for f in entry_uses_seam noentry_plain noentry_uses_seam; do \
+	  test -f tests/noentry/$$f.exl || { echo "selfhost-noentry-externs: MISSING tests/noentry/$$f.exl"; exit 1; }; \
+	done; \
+	rm -f $(C_OUT)/ne_*.c; \
+	for f in entry_uses_seam noentry_plain noentry_uses_seam; do \
+	  $(EXILE) --target c --c-out $(C_OUT)/ne_$$f.o.c tests/noentry/$$f.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-noentry-externs: the REFERENCE rejected tests/noentry/$$f.exl"; exit 1; }; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/ne_$$f.p.c tests/noentry/$$f.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-noentry-externs: the PORT rejected tests/noentry/$$f.exl"; exit 1; }; \
+	  test -s $(C_OUT)/ne_$$f.o.c || { echo "selfhost-noentry-externs: EMPTY reference emission for $$f (floor)"; exit 1; }; \
+	  test -s $(C_OUT)/ne_$$f.p.c || { echo "selfhost-noentry-externs: EMPTY port emission for $$f (floor)"; exit 1; }; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -c -o /dev/null $(C_OUT)/ne_$$f.o.c \
+	    || { echo "selfhost-noentry-externs: the REFERENCE emission for $$f fails the project -Werror standard"; exit 1; }; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -c -o /dev/null $(C_OUT)/ne_$$f.p.c \
+	    || { echo "selfhost-noentry-externs: the PORT emission for $$f fails the project -Werror standard"; exit 1; }; \
+	done; \
+	if ! diff -q $(C_OUT)/ne_entry_uses_seam.o.c $(C_OUT)/ne_entry_uses_seam.p.c >/dev/null; then \
+	  echo "selfhost-noentry-externs: WITH an entry point the two emissions must be byte-identical - the divergence has escaped its confinement:"; \
+	  diff $(C_OUT)/ne_entry_uses_seam.o.c $(C_OUT)/ne_entry_uses_seam.p.c | head -8; exit 1; fi; \
+	n=`grep -c '^extern .*sys_' $(C_OUT)/ne_entry_uses_seam.p.c`; \
+	if [ "$$n" != "1" ]; then echo "selfhost-noentry-externs: with an entry point both sides should declare the ONE called seam fn, found $$n"; exit 1; fi; \
+	sig="$$sig entry=byte-identical(1 extern)"; \
+	o=`grep -c '^extern .*sys_' $(C_OUT)/ne_noentry_plain.o.c`; \
+	p=`grep -c '^extern .*sys_' $(C_OUT)/ne_noentry_plain.p.c`; \
+	if [ "$$o" != "$$pin" ]; then echo "selfhost-noentry-externs: the reference's no-root fallback emitted $$o seam externs, not the pinned $$pin - the divergence changed size"; exit 1; fi; \
+	if [ "$$p" != "0" ]; then echo "selfhost-noentry-externs: the port declared $$p seam externs for a file that references none"; exit 1; fi; \
+	grep -v '^extern .*sys_' $(C_OUT)/ne_noentry_plain.o.c > $(C_OUT)/ne_plain.stripped; \
+	if ! diff -q $(C_OUT)/ne_plain.stripped $(C_OUT)/ne_noentry_plain.p.c >/dev/null; then \
+	  echo "selfhost-noentry-externs: with no entry point the difference must be EXACTLY the seam-extern block, but something else moved too:"; \
+	  diff $(C_OUT)/ne_plain.stripped $(C_OUT)/ne_noentry_plain.p.c | head -8; exit 1; fi; \
+	sig="$$sig plain=$$pin-vs-0(nothing-else-differs)"; \
+	o=`grep -c '^extern .*sys_' $(C_OUT)/ne_noentry_uses_seam.o.c`; \
+	if [ "$$o" != "$$pin" ]; then echo "selfhost-noentry-externs: the reference emitted $$o seam externs for the one-call file, not the pinned $$pin"; exit 1; fi; \
+	used=`grep -c '^extern int sys_close(int fd);' $(C_OUT)/ne_noentry_uses_seam.p.c`; \
+	if [ "$$used" != "1" ]; then \
+	  echo "selfhost-noentry-externs: the CALLED seam extern is missing from the port's emission - pay-for-use has become emit-nothing:"; \
+	  grep -n '^extern ' $(C_OUT)/ne_noentry_uses_seam.p.c | head -4; exit 1; fi; \
+	unused=`grep '^extern .*sys_' $(C_OUT)/ne_noentry_uses_seam.p.c | grep -vc 'sys_close'`; \
+	if [ "$$unused" != "0" ]; then echo "selfhost-noentry-externs: the port declared $$unused of the $$pin seam fns the file never calls"; exit 1; fi; \
+	sed '/^extern .*sys_/{ /sys_close/!d; }' $(C_OUT)/ne_noentry_uses_seam.o.c > $(C_OUT)/ne_used.stripped; \
+	if ! diff -q $(C_OUT)/ne_used.stripped $(C_OUT)/ne_noentry_uses_seam.p.c >/dev/null; then \
+	  echo "selfhost-noentry-externs: the port's emission is not the reference minus exactly the 12 UNCALLED externs:"; \
+	  diff $(C_OUT)/ne_used.stripped $(C_OUT)/ne_noentry_uses_seam.p.c | head -8; exit 1; fi; \
+	sig="$$sig used=1-kept/12-dropped(exact-referenced-set)"; \
+	echo "selfhost-noentry-externs: clean -$$sig, both sides -Werror clean"
 
 # ===== register #7 — the port's parenthesised emission (B2 divergence) =====
 #

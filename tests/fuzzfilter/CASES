@@ -11,3 +11,5 @@ multi_error|multi-error-pass-order
 plain|none
 arm_return|R12-arm-return
 defer_return|none
+noentry_seam_externs|R13-noentry-seam-externs
+noentry_plus_parens|none

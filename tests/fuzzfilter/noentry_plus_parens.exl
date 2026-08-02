@@ -1,0 +1,9 @@
+// Register #13, negative: no entry point AND a mixed bitwise nesting, so the two
+// emissions differ in the seam-extern block and in the function body at once.
+// Neither recogniser may claim it - #13's asks that everything outside the
+// externs be identical, #7's that only parentheses moved. A finding that is two
+// registered shapes at the same time is still a finding until someone reads it.
+
+pub fn restore(old: u16) -> u16 {
+    return 32768 | (old & 64);
+}

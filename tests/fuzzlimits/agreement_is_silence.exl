@@ -1,0 +1,16 @@
+// A STATED LIMIT of differential fuzzing, kept executable: a shared miss is
+// invisible, and so is semantic wrongness with matching bytes. The comparator
+// asks whether the two implementations agree, never whether the agreement is
+// correct.
+//
+// This program compiles on both sides to byte-identical C, so the fuzzer reports
+// nothing about it - not because it is right, but because they concur. If a
+// future round teaches the comparator to judge rather than to compare, this
+// fixture goes red and forces that to be a decision rather than a side effect.
+fn main() {
+    let mut i = 0;
+    while i < 3 {
+        println(i);
+        i = i + 1;
+    }
+}

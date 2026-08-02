@@ -1,0 +1,11 @@
+// A STATED LIMIT, kept executable: the port's not-yet-ported boundary is a
+// difference the fuzzer must recognise from the DIAGNOSTIC the port prints, not
+// from the shape of the input - it is a border the port announces in its own
+// words (register #10), unlike the silent name-resolution gap of register #6.
+// It must keep being counted rather than dropped quietly, or a run's totals stop
+// meaning what they say.
+//
+// If the port ever ports this item kind, the fixture goes red and the register
+// entry is re-measured instead of quietly outliving its subject.
+static X: int = 1;
+fn main() { println(1); }

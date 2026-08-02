@@ -59,3 +59,7 @@ tests/*/*.c
 # would stay green locally and fail on a fresh clone with a missing stub.
 !tests/*/*_stub.c
 notes/
+
+# The fuzz tooling is Python, so running any of its gates leaves a bytecode
+# cache next to the sources.  It is build output that happens to live in tools/.
+__pycache__/

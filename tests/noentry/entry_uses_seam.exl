@@ -1,0 +1,14 @@
+// Register #13, the agreeing side - and the control that gives the other two
+// fixtures their meaning. With an entry point, the frozen reference and the port
+// both declare exactly the seam functions the code references (here one), and
+// the two emissions are byte-identical. So the divergence gated alongside this
+// file is confined to translation units with no entry point; it is not a general
+// disagreement about when a declaration is owed.
+
+pub fn shut(fd: c_int) -> c_int {
+    return sys::sys_close(fd);
+}
+
+fn main() {
+    shut(0 as c_int);
+}

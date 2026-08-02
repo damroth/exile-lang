@@ -1,0 +1,18 @@
+// A STATED LIMIT, kept executable: the capability model is outside the
+// emitted-C comparison entirely (register #9). The port is a strict superset of
+// the language the frozen reference can judge, so `rune` / `ward` / `sigil` and
+// `seal` have no differential semantics at all.
+//
+// That is a limit on ONE finding class, not on the fuzzer. These constructs stay
+// in the generator's vocabulary and are hunted with the classes that need no
+// second opinion - the port's own crashes, its emissions failing the C compiler,
+// and its time and memory budgets. Turning the limit into a blanket exclusion
+// would write a per-input fact into the contract, and the era's own defects
+// lived exactly here. The gate therefore checks BOTH halves: the byte comparison
+// blocked, and the port-side classes still live on the same input.
+fn main() {
+    seal {
+        println(1);
+    }
+    println(2);
+}

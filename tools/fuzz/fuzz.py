@@ -73,6 +73,25 @@ ARM_RETURN = re.compile(
     r"'return' inside a defer body is not supported"
     r"|block expression `\{ \.\.\. \}` must end with a trailing value expression")
 
+# Register #13 - a translation unit with no entry point. The reference walks
+# reachability from `main`, has no root, and declares the whole seam; the port
+# declares what the emitted code references. Recognised from the EMISSIONS, and
+# confined the way the register is: no entry point on either side, everything
+# outside the seam-extern block identical, and the port's declarations a PROPER
+# SUBSET of the reference's. A port that declared one the reference did not, or
+# that dropped one in a program WITH an entry point, is a real finding and stays
+# live - which is why neither is expressible through this test.
+SEAM_EXTERN = re.compile(r"^\s*extern\b.*\bsys_\w+\s*\(")
+C_ENTRY = re.compile(r"^\s*int main\s*\(", re.M)
+
+
+def _seam_extern_lines(c):
+    return set(l.strip() for l in c.splitlines() if SEAM_EXTERN.match(l))
+
+
+def _without_seam_externs(c):
+    return "\n".join(l for l in c.splitlines() if not SEAM_EXTERN.match(l))
+
 
 def registered_divergence(ev):
     """Name the registered divergence that explains this evidence, or None.
@@ -106,6 +125,10 @@ def registered_divergence(ev):
     if co is not None and cp is not None and co != cp:
         if PARENS.sub("", co) == PARENS.sub("", cp):
             return "R7-mixed-bitwise-parens"  # register #7 — parens ALONE differ
+        if (not C_ENTRY.search(co) and not C_ENTRY.search(cp)
+                and _without_seam_externs(co) == _without_seam_externs(cp)
+                and _seam_extern_lines(cp) < _seam_extern_lines(co)):
+            return "R13-noentry-seam-externs"  # register #13
     if re.search(r"\bdefer\b", ev["src"]) and re.search(r"\b(break|continue)\b", ev["src"]):
         return "R5-defer-loopjump"            # register #5
     return None
@@ -639,7 +662,7 @@ def generate(seeds, rng, wraps, pool=None, rate=0.25,
     return src, rel, notes, ops
 
 
-def run(binary, path, cout, budget_s, rss_mb):
+def run(binary, path, cout, budget_s, rss_mb, _uncapped=False):
     """Run one compiler. Returns (status, first_stderr_line, c_text, kind).
 
     kind is '' normally, 'ice' for FUZZ-SPEC F2, 'timeout'/'rss' for F4 — each
@@ -647,16 +670,31 @@ def run(binary, path, cout, budget_s, rss_mb):
     """
     def limit():
         resource.setrlimit(resource.RLIMIT_AS, (rss_mb * 1024 * 1024,) * 2)
+    cap = None if _uncapped else limit
 
+    # Peak RSS is read from the CHILDREN accounting, not from a parent-side
+    # MemoryError: the cap bounds the child's address space, so the child is the
+    # one that fails, and `except MemoryError` here could never fire. It sat as
+    # dead code because the class it belongs to had never been exercised.
     try:
         p = subprocess.run(
             [binary, "--target", "c", "--c-out", cout, path],
-            capture_output=True, text=True, timeout=budget_s, preexec_fn=limit,
+            capture_output=True, text=True, timeout=budget_s, preexec_fn=cap,
         )
     except subprocess.TimeoutExpired:
-        return (None, "", None, "timeout")
-    except MemoryError:
-        return (None, "", None, "rss")
+        return (None, "", None, "timeout", 0)
+    # The cap DOES bite - a child over it dies on a signal - but so does an ICE,
+    # and `ru_maxrss` is a running maximum over all children so it cannot
+    # attribute a peak to this one. Signal alone would therefore report every
+    # memory kill as an ICE. Separated by a one-variable experiment instead: on a
+    # signal death, run the same input ONCE more with the cap lifted. Recovering
+    # means the cap was the cause (F4); dying again means the compiler was (F2).
+    # It costs an extra run only on the rare failure path.
+    if p.returncode is not None and p.returncode < 0 and not _uncapped:
+        again = run(binary, path, cout, budget_s, rss_mb, _uncapped=True)
+        if again[0] == 0:
+            return (None, "", None, "rss", 0)
+        return again
 
     err = p.stderr or ""
     lines = [ln for ln in err.splitlines() if ln.strip()]

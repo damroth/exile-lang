@@ -1,0 +1,17 @@
+// Register #13, the row that decides how the entry is read. No entry point, and
+// the code calls exactly one seam function. The reference still emits all
+// thirteen; the port emits exactly the one that is called.
+//
+// That is what rules out reading this as "the port degrades to nothing without a
+// `main`". It does the same reference-driven accounting with an entry point and
+// without one - the reference is the side that loses precision when its root
+// disappears.
+//
+// The gate therefore asserts the CALLED extern is present and the other twelve
+// are absent. A weaker check - that the two emissions merely differ - would pass
+// on a port that emitted nothing at all, which is the reading this fixture
+// exists to refute.
+
+pub fn shut(fd: c_int) -> c_int {
+    return sys::sys_close(fd);
+}
