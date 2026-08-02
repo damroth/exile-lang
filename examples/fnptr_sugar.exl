@@ -1,6 +1,6 @@
-// `|A|->R` sugar in type-annotation position (DR-028).
+// `|A|->R` sugar in type-annotation position.
 //
-// Symmetry with the DR-021 bound sugar: the same `|A|->R` mirror
+// Symmetry with the bound-position sugar: the same `|A|->R` mirror
 // surface that describes "any callable taking A returning R" in
 // `<F: |A|->R>` bound position is now a concrete function-pointer
 // type `fn(A) -> R` (TyFnPtr) wherever a type annotation can stand.
@@ -11,9 +11,9 @@
 //   - `fn run(cb: |int|->int, ...) { ... }`   (parameter type)
 //   - `struct Hooks { on_x: |int|->int }`   (struct field)
 //
-// Captureless lambdas decay through the DR-008 A1 pathway, so the
+// Captureless lambdas decay to a plain function pointer, so the
 // closure-literal shape feeds the slot directly.  A captured
-// closure has its own synthesised struct type (DR-024) that
+// closure has its own synthesised struct type that
 // doesn't fit a fn-ptr slot - the user gets a type-mismatch error
 // at the assignment site, correctly steering them toward an
 // existential bound or a struct-impl-Fn1 dispatch instead.

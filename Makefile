@@ -900,7 +900,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-parens selfhost-armreturn selfhost-noentry-externs
+                 selfhost-seal selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1445,6 +1445,47 @@ selfhost-armreturn: $(EXILC_BIN)
 	  echo "selfhost-armreturn: an arm left by the wrong path:"; \
 	  diff tests/armreturn/arm_returns.expected $(C_OUT)/armret.out | head -6; exit 1; fi; \
 	echo "selfhost-armreturn: clean (3 arm returns lowered into the switch, -Werror clean, RUNS 1/3/10/30/40/50; the frozen reference still refuses it)"
+
+# ===== publicly-facing text must stand on its own =====
+#
+# Design records, phase names and step labels live in a directory that is not
+# part of the repository, so a reader who meets `DR-042` or `Faza 1` in an
+# example has nowhere to resolve it. The rule is not "do not mention the
+# internals" - it is that a sentence must carry its own meaning, which for these
+# labels means saying the thing instead of naming its record.
+#
+# Scoped to what a reader meets first: the feature catalogue, the tutorial, the
+# changelog and the README. Compiler sources are a separate class with a
+# separate clock and are deliberately NOT covered here.
+DOCS_INTERNAL_RX := DR-0[0-9][0-9]|(FUZZ|SEAL|RUNE|WARD|SIGIL)-SPEC|WORKLOG|Faza|§[ ]*[0-9]|GATE-[0-9]|Site-[0-9]|Delta-[A-Z]\b|graft G[0-9]|\bS5[a-d]\b|Tier-[0-9]
+
+# The compiler sources get the same rule with one term removed: `typecheck.exl`
+# says "Phase 1:" / "Phase 2:" to describe a LOCAL two-phase algorithm in the
+# same comment, and those sentences already carry their own meaning.
+#
+# R1-R7, W1-W5, S1-S5 are deliberately ABSENT from both patterns. They resolve
+# inside this repository - each names a fixture whose header states the rule, and
+# the rune/ward/sigil gate signatures cite them as a table. An identifier with a
+# definition in the repo is not a reference that leaves it.
+SRC_INTERNAL_RX := DR-0[0-9][0-9]|(FUZZ|SEAL|RUNE|WARD|SIGIL)-SPEC|WORKLOG|Faza|§[ ]*[0-9]|GATE-[0-9]|I-[RWS][0-9]|axis [0-9]|correction [A-Z]|Increment [0-9]
+
+.PHONY: docs-selfsufficient
+docs-selfsufficient:
+	@for f in examples docs README.md CHANGELOG.md src; do \
+	  test -e $$f || { echo "docs-selfsufficient: MISSING $$f - the scope moved, re-aim the gate"; exit 1; }; \
+	done; \
+	n=`grep -rInE '$(DOCS_INTERNAL_RX)' examples docs README.md CHANGELOG.md 2>/dev/null | wc -l`; \
+	if [ "$$n" != "0" ]; then \
+	  echo "docs-selfsufficient: $$n publicly-facing reference(s) a reader cannot resolve -"; \
+	  echo "  the record they name is not in this repository. Say the thing, not its label:"; \
+	  grep -rInE '$(DOCS_INTERNAL_RX)' examples docs README.md CHANGELOG.md 2>/dev/null | head -10; \
+	  exit 1; fi; \
+	m=`grep -rInE '$(SRC_INTERNAL_RX)' src --include=*.exl 2>/dev/null | wc -l`; \
+	if [ "$$m" != "0" ]; then \
+	  echo "docs-selfsufficient: $$m compiler-source comment(s) naming a record this repository does not ship:"; \
+	  grep -rInE '$(SRC_INTERNAL_RX)' src --include=*.exl 2>/dev/null | head -10; \
+	  exit 1; fi; \
+	echo "docs-selfsufficient: clean (examples/ + docs/ + README + CHANGELOG + src/*.exl carry no reference that leaves the repository)"
 
 # ===== register #13 - seam externs in a file with no entry point =====
 #

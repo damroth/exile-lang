@@ -1,12 +1,10 @@
-// String — owned, NUL-terminated buffer in the prelude (Faza 1
-// of the OwnedStr/String design).  Sits next to `StringBuilder`:
+// String — the prelude's owned, NUL-terminated buffer.  Sits next to `StringBuilder`:
 // SB is mutable / growable, `String` is the frozen owner you
 // hand around (Vec<String>, HashMap<String, ...>, etc.).
 //
 // Surface: `with_str`, `empty`, `build`, `length`, `as_slice`,
 // `as_str`, `free`.  Every constructor writes the trailing NUL so
-// `as_str()` hands back a libc-`%s`-safe pointer by construction
-// (graft G1 from the design).
+// `as_str()` hands back a libc-`%s`-safe pointer by construction.
 //
 // `String` and `StringBuilder` are both `@move`: the move-pass
 // rejects silent by-value copies of the buffer.  `let s2 = s;`
@@ -27,7 +25,7 @@ fn main() {
     let a = raw::make_c_allocator();
 
     // `with_str(a, s)` allocates `len(s)+1` bytes through the
-    // allocator seam, copies through a Slice<u8> + Delta-B, and
+    // allocator seam, copies through a `Slice<u8>` write, and
     // writes NUL at [len].
     let hi = String::with_str(a, "Hello, exile!");
     println(hi.length() as int);          // 13

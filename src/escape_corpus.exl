@@ -1,4 +1,4 @@
-// Self-host escape — the DR-010 escape-pass verification driver.
+// Self-host escape — the escape-pass verification driver.
 //
 // Read a source path on stdin, lex / parse / type-check it, run `Move.check`'s
 // position in the pipeline (the port's move pass is a pure checker and elides

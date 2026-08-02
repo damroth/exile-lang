@@ -1,325 +1,325 @@
 ;; exile-tokens-dump v1 examples/string.exl
-Pub @examples/string.exl:22:1
-Mod @examples/string.exl:22:5
-(Ident raw) @examples/string.exl:22:9
-LBrace @examples/string.exl:22:13
-Extern @examples/string.exl:23:5
-Fn @examples/string.exl:23:12
-(Ident make_c_allocator) @examples/string.exl:23:15
-LParen @examples/string.exl:23:31
-RParen @examples/string.exl:23:32
-Arrow @examples/string.exl:23:34
-(Ident Allocator) @examples/string.exl:23:37
-Semicolon @examples/string.exl:23:46
-RBrace @examples/string.exl:24:1
-Fn @examples/string.exl:26:1
-(Ident main) @examples/string.exl:26:4
-LParen @examples/string.exl:26:8
-RParen @examples/string.exl:26:9
-LBrace @examples/string.exl:26:11
-Let @examples/string.exl:27:5
-(Ident a) @examples/string.exl:27:9
-Eq @examples/string.exl:27:11
-(Ident raw) @examples/string.exl:27:13
-DoubleColon @examples/string.exl:27:16
-(Ident make_c_allocator) @examples/string.exl:27:18
-LParen @examples/string.exl:27:34
-RParen @examples/string.exl:27:35
-Semicolon @examples/string.exl:27:36
-Let @examples/string.exl:32:5
-(Ident hi) @examples/string.exl:32:9
-Eq @examples/string.exl:32:12
-(Ident String) @examples/string.exl:32:14
-DoubleColon @examples/string.exl:32:20
-(Ident with_str) @examples/string.exl:32:22
-LParen @examples/string.exl:32:30
-(Ident a) @examples/string.exl:32:31
-Comma @examples/string.exl:32:32
-(String "Hello, exile!") @examples/string.exl:32:34
-RParen @examples/string.exl:32:49
-Semicolon @examples/string.exl:32:50
-(Ident println) @examples/string.exl:33:5
-LParen @examples/string.exl:33:12
-(Ident hi) @examples/string.exl:33:13
-Dot @examples/string.exl:33:15
-(Ident length) @examples/string.exl:33:16
-LParen @examples/string.exl:33:22
-RParen @examples/string.exl:33:23
-As @examples/string.exl:33:25
-(Ident int) @examples/string.exl:33:28
-RParen @examples/string.exl:33:31
-Semicolon @examples/string.exl:33:32
-Let @examples/string.exl:37:5
-(Ident v) @examples/string.exl:37:9
-Eq @examples/string.exl:37:11
-(Ident hi) @examples/string.exl:37:13
-Dot @examples/string.exl:37:15
-(Ident as_slice) @examples/string.exl:37:16
-LParen @examples/string.exl:37:24
-RParen @examples/string.exl:37:25
-Semicolon @examples/string.exl:37:26
+Pub @examples/string.exl:20:1
+Mod @examples/string.exl:20:5
+(Ident raw) @examples/string.exl:20:9
+LBrace @examples/string.exl:20:13
+Extern @examples/string.exl:21:5
+Fn @examples/string.exl:21:12
+(Ident make_c_allocator) @examples/string.exl:21:15
+LParen @examples/string.exl:21:31
+RParen @examples/string.exl:21:32
+Arrow @examples/string.exl:21:34
+(Ident Allocator) @examples/string.exl:21:37
+Semicolon @examples/string.exl:21:46
+RBrace @examples/string.exl:22:1
+Fn @examples/string.exl:24:1
+(Ident main) @examples/string.exl:24:4
+LParen @examples/string.exl:24:8
+RParen @examples/string.exl:24:9
+LBrace @examples/string.exl:24:11
+Let @examples/string.exl:25:5
+(Ident a) @examples/string.exl:25:9
+Eq @examples/string.exl:25:11
+(Ident raw) @examples/string.exl:25:13
+DoubleColon @examples/string.exl:25:16
+(Ident make_c_allocator) @examples/string.exl:25:18
+LParen @examples/string.exl:25:34
+RParen @examples/string.exl:25:35
+Semicolon @examples/string.exl:25:36
+Let @examples/string.exl:30:5
+(Ident hi) @examples/string.exl:30:9
+Eq @examples/string.exl:30:12
+(Ident String) @examples/string.exl:30:14
+DoubleColon @examples/string.exl:30:20
+(Ident with_str) @examples/string.exl:30:22
+LParen @examples/string.exl:30:30
+(Ident a) @examples/string.exl:30:31
+Comma @examples/string.exl:30:32
+(String "Hello, exile!") @examples/string.exl:30:34
+RParen @examples/string.exl:30:49
+Semicolon @examples/string.exl:30:50
+(Ident println) @examples/string.exl:31:5
+LParen @examples/string.exl:31:12
+(Ident hi) @examples/string.exl:31:13
+Dot @examples/string.exl:31:15
+(Ident length) @examples/string.exl:31:16
+LParen @examples/string.exl:31:22
+RParen @examples/string.exl:31:23
+As @examples/string.exl:31:25
+(Ident int) @examples/string.exl:31:28
+RParen @examples/string.exl:31:31
+Semicolon @examples/string.exl:31:32
+Let @examples/string.exl:35:5
+(Ident v) @examples/string.exl:35:9
+Eq @examples/string.exl:35:11
+(Ident hi) @examples/string.exl:35:13
+Dot @examples/string.exl:35:15
+(Ident as_slice) @examples/string.exl:35:16
+LParen @examples/string.exl:35:24
+RParen @examples/string.exl:35:25
+Semicolon @examples/string.exl:35:26
+(Ident println) @examples/string.exl:36:5
+LParen @examples/string.exl:36:12
+(Ident v) @examples/string.exl:36:13
+LBracket @examples/string.exl:36:14
+(Int 0) @examples/string.exl:36:15
+RBracket @examples/string.exl:36:16
+As @examples/string.exl:36:18
+(Ident int) @examples/string.exl:36:21
+RParen @examples/string.exl:36:24
+Semicolon @examples/string.exl:36:25
+(Ident println) @examples/string.exl:37:5
+LParen @examples/string.exl:37:12
+(Ident v) @examples/string.exl:37:13
+LBracket @examples/string.exl:37:14
+(Int 7) @examples/string.exl:37:15
+RBracket @examples/string.exl:37:16
+As @examples/string.exl:37:18
+(Ident int) @examples/string.exl:37:21
+RParen @examples/string.exl:37:24
+Semicolon @examples/string.exl:37:25
 (Ident println) @examples/string.exl:38:5
 LParen @examples/string.exl:38:12
 (Ident v) @examples/string.exl:38:13
 LBracket @examples/string.exl:38:14
-(Int 0) @examples/string.exl:38:15
-RBracket @examples/string.exl:38:16
-As @examples/string.exl:38:18
-(Ident int) @examples/string.exl:38:21
-RParen @examples/string.exl:38:24
-Semicolon @examples/string.exl:38:25
-(Ident println) @examples/string.exl:39:5
-LParen @examples/string.exl:39:12
-(Ident v) @examples/string.exl:39:13
-LBracket @examples/string.exl:39:14
-(Int 7) @examples/string.exl:39:15
-RBracket @examples/string.exl:39:16
-As @examples/string.exl:39:18
-(Ident int) @examples/string.exl:39:21
-RParen @examples/string.exl:39:24
-Semicolon @examples/string.exl:39:25
-(Ident println) @examples/string.exl:40:5
-LParen @examples/string.exl:40:12
-(Ident v) @examples/string.exl:40:13
-LBracket @examples/string.exl:40:14
-(Int 12) @examples/string.exl:40:15
-RBracket @examples/string.exl:40:17
-As @examples/string.exl:40:19
-(Ident int) @examples/string.exl:40:22
-RParen @examples/string.exl:40:25
-Semicolon @examples/string.exl:40:26
-(Ident hi) @examples/string.exl:44:5
-Dot @examples/string.exl:44:7
-(Ident free) @examples/string.exl:44:8
-LParen @examples/string.exl:44:12
-RParen @examples/string.exl:44:13
-Semicolon @examples/string.exl:44:14
-Let @examples/string.exl:48:5
-(Ident e) @examples/string.exl:48:9
-Eq @examples/string.exl:48:11
-(Ident String) @examples/string.exl:48:13
-DoubleColon @examples/string.exl:48:19
-(Ident empty) @examples/string.exl:48:21
-LParen @examples/string.exl:48:26
-(Ident a) @examples/string.exl:48:27
-RParen @examples/string.exl:48:28
-Semicolon @examples/string.exl:48:29
-(Ident println) @examples/string.exl:49:5
-LParen @examples/string.exl:49:12
-(Ident e) @examples/string.exl:49:13
-Dot @examples/string.exl:49:14
-(Ident length) @examples/string.exl:49:15
-LParen @examples/string.exl:49:21
-RParen @examples/string.exl:49:22
-As @examples/string.exl:49:24
-(Ident int) @examples/string.exl:49:27
-RParen @examples/string.exl:49:30
-Semicolon @examples/string.exl:49:31
-(Ident e) @examples/string.exl:50:5
-Dot @examples/string.exl:50:6
-(Ident free) @examples/string.exl:50:7
-LParen @examples/string.exl:50:11
-RParen @examples/string.exl:50:12
-Semicolon @examples/string.exl:50:13
-Let @examples/string.exl:56:5
-Mut @examples/string.exl:56:9
-(Ident sb) @examples/string.exl:56:13
-Eq @examples/string.exl:56:16
-(Ident StringBuilder) @examples/string.exl:56:18
-DoubleColon @examples/string.exl:56:31
-(Ident with_capacity) @examples/string.exl:56:33
-LParen @examples/string.exl:56:46
-(Ident a) @examples/string.exl:56:47
-Comma @examples/string.exl:56:48
-(Int 8) @examples/string.exl:56:50
-As @examples/string.exl:56:52
-(Ident u32) @examples/string.exl:56:55
-RParen @examples/string.exl:56:58
-Semicolon @examples/string.exl:56:59
-(Ident sb) @examples/string.exl:57:5
-Dot @examples/string.exl:57:7
-(Ident push_str) @examples/string.exl:57:8
-LParen @examples/string.exl:57:16
-(String "built ") @examples/string.exl:57:17
-RParen @examples/string.exl:57:25
-Semicolon @examples/string.exl:57:26
-(Ident sb) @examples/string.exl:58:5
-Dot @examples/string.exl:58:7
-(Ident push_int) @examples/string.exl:58:8
-LParen @examples/string.exl:58:16
-(Int 2026) @examples/string.exl:58:17
-RParen @examples/string.exl:58:21
-Semicolon @examples/string.exl:58:22
+(Int 12) @examples/string.exl:38:15
+RBracket @examples/string.exl:38:17
+As @examples/string.exl:38:19
+(Ident int) @examples/string.exl:38:22
+RParen @examples/string.exl:38:25
+Semicolon @examples/string.exl:38:26
+(Ident hi) @examples/string.exl:42:5
+Dot @examples/string.exl:42:7
+(Ident free) @examples/string.exl:42:8
+LParen @examples/string.exl:42:12
+RParen @examples/string.exl:42:13
+Semicolon @examples/string.exl:42:14
+Let @examples/string.exl:46:5
+(Ident e) @examples/string.exl:46:9
+Eq @examples/string.exl:46:11
+(Ident String) @examples/string.exl:46:13
+DoubleColon @examples/string.exl:46:19
+(Ident empty) @examples/string.exl:46:21
+LParen @examples/string.exl:46:26
+(Ident a) @examples/string.exl:46:27
+RParen @examples/string.exl:46:28
+Semicolon @examples/string.exl:46:29
+(Ident println) @examples/string.exl:47:5
+LParen @examples/string.exl:47:12
+(Ident e) @examples/string.exl:47:13
+Dot @examples/string.exl:47:14
+(Ident length) @examples/string.exl:47:15
+LParen @examples/string.exl:47:21
+RParen @examples/string.exl:47:22
+As @examples/string.exl:47:24
+(Ident int) @examples/string.exl:47:27
+RParen @examples/string.exl:47:30
+Semicolon @examples/string.exl:47:31
+(Ident e) @examples/string.exl:48:5
+Dot @examples/string.exl:48:6
+(Ident free) @examples/string.exl:48:7
+LParen @examples/string.exl:48:11
+RParen @examples/string.exl:48:12
+Semicolon @examples/string.exl:48:13
+Let @examples/string.exl:54:5
+Mut @examples/string.exl:54:9
+(Ident sb) @examples/string.exl:54:13
+Eq @examples/string.exl:54:16
+(Ident StringBuilder) @examples/string.exl:54:18
+DoubleColon @examples/string.exl:54:31
+(Ident with_capacity) @examples/string.exl:54:33
+LParen @examples/string.exl:54:46
+(Ident a) @examples/string.exl:54:47
+Comma @examples/string.exl:54:48
+(Int 8) @examples/string.exl:54:50
+As @examples/string.exl:54:52
+(Ident u32) @examples/string.exl:54:55
+RParen @examples/string.exl:54:58
+Semicolon @examples/string.exl:54:59
+(Ident sb) @examples/string.exl:55:5
+Dot @examples/string.exl:55:7
+(Ident push_str) @examples/string.exl:55:8
+LParen @examples/string.exl:55:16
+(String "built ") @examples/string.exl:55:17
+RParen @examples/string.exl:55:25
+Semicolon @examples/string.exl:55:26
+(Ident sb) @examples/string.exl:56:5
+Dot @examples/string.exl:56:7
+(Ident push_int) @examples/string.exl:56:8
+LParen @examples/string.exl:56:16
+(Int 2026) @examples/string.exl:56:17
+RParen @examples/string.exl:56:21
+Semicolon @examples/string.exl:56:22
+Let @examples/string.exl:57:5
+(Ident s) @examples/string.exl:57:9
+Eq @examples/string.exl:57:11
+(Ident String) @examples/string.exl:57:13
+DoubleColon @examples/string.exl:57:19
+(Ident build) @examples/string.exl:57:21
+LParen @examples/string.exl:57:26
+(Ident sb) @examples/string.exl:57:27
+RParen @examples/string.exl:57:29
+Semicolon @examples/string.exl:57:30
+(Ident println) @examples/string.exl:58:5
+LParen @examples/string.exl:58:12
+(Ident s) @examples/string.exl:58:13
+Dot @examples/string.exl:58:14
+(Ident length) @examples/string.exl:58:15
+LParen @examples/string.exl:58:21
+RParen @examples/string.exl:58:22
+As @examples/string.exl:58:24
+(Ident int) @examples/string.exl:58:27
+RParen @examples/string.exl:58:30
+Semicolon @examples/string.exl:58:31
 Let @examples/string.exl:59:5
-(Ident s) @examples/string.exl:59:9
-Eq @examples/string.exl:59:11
-(Ident String) @examples/string.exl:59:13
-DoubleColon @examples/string.exl:59:19
-(Ident build) @examples/string.exl:59:21
-LParen @examples/string.exl:59:26
-(Ident sb) @examples/string.exl:59:27
-RParen @examples/string.exl:59:29
-Semicolon @examples/string.exl:59:30
+(Ident v2) @examples/string.exl:59:9
+Eq @examples/string.exl:59:12
+(Ident s) @examples/string.exl:59:14
+Dot @examples/string.exl:59:15
+(Ident as_slice) @examples/string.exl:59:16
+LParen @examples/string.exl:59:24
+RParen @examples/string.exl:59:25
+Semicolon @examples/string.exl:59:26
 (Ident println) @examples/string.exl:60:5
 LParen @examples/string.exl:60:12
-(Ident s) @examples/string.exl:60:13
-Dot @examples/string.exl:60:14
-(Ident length) @examples/string.exl:60:15
-LParen @examples/string.exl:60:21
-RParen @examples/string.exl:60:22
-As @examples/string.exl:60:24
-(Ident int) @examples/string.exl:60:27
-RParen @examples/string.exl:60:30
-Semicolon @examples/string.exl:60:31
-Let @examples/string.exl:61:5
-(Ident v2) @examples/string.exl:61:9
-Eq @examples/string.exl:61:12
-(Ident s) @examples/string.exl:61:14
-Dot @examples/string.exl:61:15
-(Ident as_slice) @examples/string.exl:61:16
-LParen @examples/string.exl:61:24
+(Ident v2) @examples/string.exl:60:13
+LBracket @examples/string.exl:60:15
+(Int 0) @examples/string.exl:60:16
+RBracket @examples/string.exl:60:17
+As @examples/string.exl:60:19
+(Ident int) @examples/string.exl:60:22
+RParen @examples/string.exl:60:25
+Semicolon @examples/string.exl:60:26
+(Ident println) @examples/string.exl:61:5
+LParen @examples/string.exl:61:12
+(Ident v2) @examples/string.exl:61:13
+LBracket @examples/string.exl:61:15
+(Int 6) @examples/string.exl:61:16
+RBracket @examples/string.exl:61:17
+As @examples/string.exl:61:19
+(Ident int) @examples/string.exl:61:22
 RParen @examples/string.exl:61:25
 Semicolon @examples/string.exl:61:26
-(Ident println) @examples/string.exl:62:5
-LParen @examples/string.exl:62:12
-(Ident v2) @examples/string.exl:62:13
-LBracket @examples/string.exl:62:15
-(Int 0) @examples/string.exl:62:16
-RBracket @examples/string.exl:62:17
-As @examples/string.exl:62:19
-(Ident int) @examples/string.exl:62:22
-RParen @examples/string.exl:62:25
-Semicolon @examples/string.exl:62:26
-(Ident println) @examples/string.exl:63:5
-LParen @examples/string.exl:63:12
-(Ident v2) @examples/string.exl:63:13
-LBracket @examples/string.exl:63:15
-(Int 6) @examples/string.exl:63:16
-RBracket @examples/string.exl:63:17
-As @examples/string.exl:63:19
-(Ident int) @examples/string.exl:63:22
-RParen @examples/string.exl:63:25
-Semicolon @examples/string.exl:63:26
-Let @examples/string.exl:69:5
-(Ident s2) @examples/string.exl:69:9
-Eq @examples/string.exl:69:12
-(Ident String) @examples/string.exl:69:14
-DoubleColon @examples/string.exl:69:20
-(Ident with_str) @examples/string.exl:69:22
-LParen @examples/string.exl:69:30
-(Ident a) @examples/string.exl:69:31
-Comma @examples/string.exl:69:32
-(String "built 2026") @examples/string.exl:69:34
-RParen @examples/string.exl:69:46
-Semicolon @examples/string.exl:69:47
-If @examples/string.exl:70:5
-(Ident s) @examples/string.exl:70:8
-Dot @examples/string.exl:70:9
-(Ident eq) @examples/string.exl:70:10
-LParen @examples/string.exl:70:12
-(Ident s2) @examples/string.exl:70:13
-RParen @examples/string.exl:70:15
-LBrace @examples/string.exl:70:17
-(Ident println) @examples/string.exl:70:19
-LParen @examples/string.exl:70:26
-(Int 1) @examples/string.exl:70:27
-RParen @examples/string.exl:70:28
-Semicolon @examples/string.exl:70:29
-RBrace @examples/string.exl:70:31
-Else @examples/string.exl:70:33
-LBrace @examples/string.exl:70:38
-(Ident println) @examples/string.exl:70:40
-LParen @examples/string.exl:70:47
-(Int 0) @examples/string.exl:70:48
-RParen @examples/string.exl:70:49
-Semicolon @examples/string.exl:70:50
-RBrace @examples/string.exl:70:52
-If @examples/string.exl:71:5
-(Ident s) @examples/string.exl:71:8
-Dot @examples/string.exl:71:9
-(Ident hash) @examples/string.exl:71:10
-LParen @examples/string.exl:71:14
-RParen @examples/string.exl:71:15
-EqEq @examples/string.exl:71:17
-(Ident s2) @examples/string.exl:71:20
-Dot @examples/string.exl:71:22
-(Ident hash) @examples/string.exl:71:23
-LParen @examples/string.exl:71:27
-RParen @examples/string.exl:71:28
-LBrace @examples/string.exl:71:30
-(Ident println) @examples/string.exl:71:32
-LParen @examples/string.exl:71:39
-(Int 1) @examples/string.exl:71:40
-RParen @examples/string.exl:71:41
-Semicolon @examples/string.exl:71:42
-RBrace @examples/string.exl:71:44
-Else @examples/string.exl:71:46
-LBrace @examples/string.exl:71:51
-(Ident println) @examples/string.exl:71:53
-LParen @examples/string.exl:71:60
-(Int 0) @examples/string.exl:71:61
-RParen @examples/string.exl:71:62
-Semicolon @examples/string.exl:71:63
-RBrace @examples/string.exl:71:65
-Let @examples/string.exl:72:5
-(Ident s3) @examples/string.exl:72:9
-Eq @examples/string.exl:72:12
-(Ident s) @examples/string.exl:72:14
-Dot @examples/string.exl:72:15
-(Ident clone) @examples/string.exl:72:16
-LParen @examples/string.exl:72:21
-RParen @examples/string.exl:72:22
-Semicolon @examples/string.exl:72:23
-(Ident println) @examples/string.exl:73:5
-LParen @examples/string.exl:73:12
-(Ident s3) @examples/string.exl:73:13
-Dot @examples/string.exl:73:15
-(Ident length) @examples/string.exl:73:16
-LParen @examples/string.exl:73:22
-RParen @examples/string.exl:73:23
-As @examples/string.exl:73:25
-(Ident int) @examples/string.exl:73:28
-RParen @examples/string.exl:73:31
-Semicolon @examples/string.exl:73:32
-If @examples/string.exl:74:5
-(Ident s) @examples/string.exl:74:8
-Dot @examples/string.exl:74:9
-(Ident eq) @examples/string.exl:74:10
-LParen @examples/string.exl:74:12
-(Ident s3) @examples/string.exl:74:13
-RParen @examples/string.exl:74:15
-LBrace @examples/string.exl:74:17
-(Ident println) @examples/string.exl:74:19
-LParen @examples/string.exl:74:26
-(Int 1) @examples/string.exl:74:27
-RParen @examples/string.exl:74:28
-Semicolon @examples/string.exl:74:29
-RBrace @examples/string.exl:74:31
-Else @examples/string.exl:74:33
-LBrace @examples/string.exl:74:38
-(Ident println) @examples/string.exl:74:40
-LParen @examples/string.exl:74:47
-(Int 0) @examples/string.exl:74:48
-RParen @examples/string.exl:74:49
-Semicolon @examples/string.exl:74:50
-RBrace @examples/string.exl:74:52
-(Ident s) @examples/string.exl:76:5
-Dot @examples/string.exl:76:6
-(Ident free) @examples/string.exl:76:7
-LParen @examples/string.exl:76:11
-RParen @examples/string.exl:76:12
-Semicolon @examples/string.exl:76:13
-(Ident s2) @examples/string.exl:76:15
-Dot @examples/string.exl:76:17
-(Ident free) @examples/string.exl:76:18
-LParen @examples/string.exl:76:22
-RParen @examples/string.exl:76:23
-Semicolon @examples/string.exl:76:24
-(Ident s3) @examples/string.exl:76:26
-Dot @examples/string.exl:76:28
-(Ident free) @examples/string.exl:76:29
-LParen @examples/string.exl:76:33
-RParen @examples/string.exl:76:34
-Semicolon @examples/string.exl:76:35
-RBrace @examples/string.exl:77:1
-Eof @examples/string.exl:78:1
+Let @examples/string.exl:67:5
+(Ident s2) @examples/string.exl:67:9
+Eq @examples/string.exl:67:12
+(Ident String) @examples/string.exl:67:14
+DoubleColon @examples/string.exl:67:20
+(Ident with_str) @examples/string.exl:67:22
+LParen @examples/string.exl:67:30
+(Ident a) @examples/string.exl:67:31
+Comma @examples/string.exl:67:32
+(String "built 2026") @examples/string.exl:67:34
+RParen @examples/string.exl:67:46
+Semicolon @examples/string.exl:67:47
+If @examples/string.exl:68:5
+(Ident s) @examples/string.exl:68:8
+Dot @examples/string.exl:68:9
+(Ident eq) @examples/string.exl:68:10
+LParen @examples/string.exl:68:12
+(Ident s2) @examples/string.exl:68:13
+RParen @examples/string.exl:68:15
+LBrace @examples/string.exl:68:17
+(Ident println) @examples/string.exl:68:19
+LParen @examples/string.exl:68:26
+(Int 1) @examples/string.exl:68:27
+RParen @examples/string.exl:68:28
+Semicolon @examples/string.exl:68:29
+RBrace @examples/string.exl:68:31
+Else @examples/string.exl:68:33
+LBrace @examples/string.exl:68:38
+(Ident println) @examples/string.exl:68:40
+LParen @examples/string.exl:68:47
+(Int 0) @examples/string.exl:68:48
+RParen @examples/string.exl:68:49
+Semicolon @examples/string.exl:68:50
+RBrace @examples/string.exl:68:52
+If @examples/string.exl:69:5
+(Ident s) @examples/string.exl:69:8
+Dot @examples/string.exl:69:9
+(Ident hash) @examples/string.exl:69:10
+LParen @examples/string.exl:69:14
+RParen @examples/string.exl:69:15
+EqEq @examples/string.exl:69:17
+(Ident s2) @examples/string.exl:69:20
+Dot @examples/string.exl:69:22
+(Ident hash) @examples/string.exl:69:23
+LParen @examples/string.exl:69:27
+RParen @examples/string.exl:69:28
+LBrace @examples/string.exl:69:30
+(Ident println) @examples/string.exl:69:32
+LParen @examples/string.exl:69:39
+(Int 1) @examples/string.exl:69:40
+RParen @examples/string.exl:69:41
+Semicolon @examples/string.exl:69:42
+RBrace @examples/string.exl:69:44
+Else @examples/string.exl:69:46
+LBrace @examples/string.exl:69:51
+(Ident println) @examples/string.exl:69:53
+LParen @examples/string.exl:69:60
+(Int 0) @examples/string.exl:69:61
+RParen @examples/string.exl:69:62
+Semicolon @examples/string.exl:69:63
+RBrace @examples/string.exl:69:65
+Let @examples/string.exl:70:5
+(Ident s3) @examples/string.exl:70:9
+Eq @examples/string.exl:70:12
+(Ident s) @examples/string.exl:70:14
+Dot @examples/string.exl:70:15
+(Ident clone) @examples/string.exl:70:16
+LParen @examples/string.exl:70:21
+RParen @examples/string.exl:70:22
+Semicolon @examples/string.exl:70:23
+(Ident println) @examples/string.exl:71:5
+LParen @examples/string.exl:71:12
+(Ident s3) @examples/string.exl:71:13
+Dot @examples/string.exl:71:15
+(Ident length) @examples/string.exl:71:16
+LParen @examples/string.exl:71:22
+RParen @examples/string.exl:71:23
+As @examples/string.exl:71:25
+(Ident int) @examples/string.exl:71:28
+RParen @examples/string.exl:71:31
+Semicolon @examples/string.exl:71:32
+If @examples/string.exl:72:5
+(Ident s) @examples/string.exl:72:8
+Dot @examples/string.exl:72:9
+(Ident eq) @examples/string.exl:72:10
+LParen @examples/string.exl:72:12
+(Ident s3) @examples/string.exl:72:13
+RParen @examples/string.exl:72:15
+LBrace @examples/string.exl:72:17
+(Ident println) @examples/string.exl:72:19
+LParen @examples/string.exl:72:26
+(Int 1) @examples/string.exl:72:27
+RParen @examples/string.exl:72:28
+Semicolon @examples/string.exl:72:29
+RBrace @examples/string.exl:72:31
+Else @examples/string.exl:72:33
+LBrace @examples/string.exl:72:38
+(Ident println) @examples/string.exl:72:40
+LParen @examples/string.exl:72:47
+(Int 0) @examples/string.exl:72:48
+RParen @examples/string.exl:72:49
+Semicolon @examples/string.exl:72:50
+RBrace @examples/string.exl:72:52
+(Ident s) @examples/string.exl:74:5
+Dot @examples/string.exl:74:6
+(Ident free) @examples/string.exl:74:7
+LParen @examples/string.exl:74:11
+RParen @examples/string.exl:74:12
+Semicolon @examples/string.exl:74:13
+(Ident s2) @examples/string.exl:74:15
+Dot @examples/string.exl:74:17
+(Ident free) @examples/string.exl:74:18
+LParen @examples/string.exl:74:22
+RParen @examples/string.exl:74:23
+Semicolon @examples/string.exl:74:24
+(Ident s3) @examples/string.exl:74:26
+Dot @examples/string.exl:74:28
+(Ident free) @examples/string.exl:74:29
+LParen @examples/string.exl:74:33
+RParen @examples/string.exl:74:34
+Semicolon @examples/string.exl:74:35
+RBrace @examples/string.exl:75:1
+Eof @examples/string.exl:76:1

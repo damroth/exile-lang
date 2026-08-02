@@ -1,4 +1,4 @@
-// Iterator combinator stdlib v1, Step D (DR-026).
+// Iterator combinator stdlib v1: `take` and `enumerate`.
 //
 // Two more lazy adapters land on top of `Map<I, F>` (Step A+B):
 //
@@ -20,7 +20,7 @@
 // and mono inlines the entire chain into a single fused next-loop.
 //
 // Item-type plumbing: `Take` keeps `I::Item` (single-hop assoc-proj,
-// Site-1 fix in DR-027's 2026-06-06 refinement); `Enumerate` adds
+// associated-type projection); `Enumerate` adds
 // a `(u32, I::Item)` tuple — the same single-hop resolver fires
 // at every use site, no extra machinery.
 //

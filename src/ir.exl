@@ -13,7 +13,7 @@
 // only consumer at this stage, the IR dumper, is self-contained (it has
 // its own `render_typ_canonical`), so it needs none of them.
 //
-// Representation idioms follow `ast` (see SELFHOST-WORKLOG): `Typ` and
+// Representation idioms follow `ast`: `Typ` and
 // `Texpr` recurse through `*const T` (read-only borrows into the arena),
 // node lists are `Vec<*const T>`, name/payload pairs are named structs.
 
@@ -73,21 +73,21 @@ pub enum Typ {
     | TPtr(*const Typ)
     | TOwnPtr(*const Typ)
     | TConstPtr(*const Typ)
-    // DR-030 Phase-1.5: an MMIO window (RUNE-SPEC).  Lowers to `volatile T *`;
-    // `dir` gates its method set (I-R2).  The base address is NOT in the type —
-    // it lives in the emitted pointer value, so a rune is a first-class value
-    // (I-R3) whose address flows at runtime, not compiler metadata.
+    // An MMIO window.  Lowers to `volatile T *`; `dir` gates its method set.
+    // The base address is NOT in the type — it lives in the emitted pointer
+    // value, so a rune is a first-class value whose address flows at runtime,
+    // not compiler metadata.
     | TRune { elem: *const Typ, dir: Direction }
     | TArray { elem: *const Typ, size: int }
     | TFnPtr { params: Vec<*const Typ>, ret: Option<*const Typ> }
     | TNullPtr
     | TVar(str)
     | TAssocProj { head: *const Typ, assoc: str }
-    // A `ward` overlay INSTANCE (WARD-SPEC, Phase 2): a typed view at `base`, zero
-    // runtime storage (I-W1).  `path` names the ward TYPE (its field layout lives
+    // A `ward` overlay INSTANCE: a typed view at `base`, zero
+    // runtime storage.  `path` names the ward TYPE (its field layout lives
     // in the ward registry); `base` is the instance's fixed integer base.  A field
     // access `w.f` folds to a rune at `base + offset`; the instance itself is never
-    // a C value (W5).
+    // a C value.
     // `base_sym` is "" for an integer (MMIO) base, or a global symbol name for a
     // `&GLOBAL` (RAM) base — the field then folds to `(char*)&SYM + offset`.
     | TWard { path: Vec<str>, base: int, base_sym: str }
@@ -174,13 +174,13 @@ pub enum TexprNode {
     | TIfExpr { cond: *const Texpr, then_val: *const Texpr, else_val: *const Texpr }
     | TSizeOf(*const Typ)
     | TBlock { stmts: Vec<Tstmt>, trailing: Option<*const Texpr> }
-    // DR-030 Phase-1.5: the folded base address of a rune, materialised as the
+    // The folded base address of a rune, materialised as the
     // pointer value of its `volatile T *` binding.  Carries only the address;
     // the element width comes from the node's `ty` (a `TRune`).  Emits
     // `(volatile <T> *)<addr>UL` — the `UL` keeps the cast pointer-width so a
     // 64-bit host cc raises no int-to-pointer size warning.
     | TRuneAddr(int)
-    // Phase-2: a ward field's address `(volatile <elem>*)(base + offset)` — the
+    // A ward field's address `(volatile <elem>*)(base + offset)` — the
     // base and offset kept SEPARATE (not folded), readable and the shape the
     // 68000's `d16(An)` mode wants once the base is a value (v2).  Node `ty` is the
     // field's `rune<T>`; `elem` is the register scalar.
@@ -235,7 +235,7 @@ pub enum Tstmt {
              body: Vec<Tstmt>, pos: Pos }
     | TForEach { it_var: str, it_init: *const Texpr, body: Vec<Tstmt>, pos: Pos }
     | TDefer { body: Vec<Tstmt>, pos: Pos }
-    // `seal { … }` (SEAL-SPEC §3.1).  A scope whose body ALREADY begins with the
+    // `seal { … }`.  A scope whose body ALREADY begins with the
     // seam token binding and the `defer` that restores it, so every exit path —
     // fall-through, return, break, continue, try — is handled by the defer
     // machinery and NOT by a second mechanism.  Codegen only opens the scope.
@@ -269,7 +269,7 @@ pub struct StrPair {
     b: str,
 }
 
-// A top-level `rune` (RUNE-SPEC §3, Increment 4 Half B): emitted as a file-scope
+// A top-level `rune`: emitted as a file-scope
 // `volatile T *const NAME = <value>;`.  `rg_ty` is the `TRune` (its C type is the
 // `volatile T *`); `rg_value` is the base-address cast (`(volatile T*)ADDR`).
 pub struct RuneGlobal {
@@ -391,7 +391,7 @@ fn typ_name_pfx(a: Allocator, ar: *Arena, pfx: str, inner: *const Typ) -> str {
     sb.push_str(typ_name(a, ar, inner));
     return str::from_slice(ar, sb.as_slice());
 }
-// `write rune<T>` — the SIGNATURE form (RUNE-SPEC §3, P1), direction included.
+// `write rune<T>` — the SIGNATURE form, direction included.
 // It has to be: the direction is part of type identity (`typ_eq` compares it), so
 // a printer that dropped it would render a direction mismatch as
 // "expected rune<u16>, got rune<u16>".  Printed form == source form.
@@ -600,7 +600,7 @@ pub fn is_ptr_like(t: *const Typ) -> bool {
 // The pointee of a rune's `volatile T *` — the register's SCALAR width.  For a
 // standalone rune it is the element itself; for a register file (`rune x: [T;N]`)
 // it is the array's element — the pointer is to one register, indexed by
-// position (RUNE-SPEC §6).  The extent lives in the `TArray.size` (I-R4).
+// position.  The extent lives in the `TArray.size`.
 pub fn rune_ptr_pointee(elem: *const Typ) -> *const Typ {
     return match *elem { Typ::TArray { elem: e, size } => e | _o => elem };
 }

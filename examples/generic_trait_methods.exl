@@ -1,4 +1,4 @@
-// Generic trait methods (DR-014).
+// Generic trait methods.
 //
 // A trait method may carry its own type parameters:
 //
@@ -13,7 +13,7 @@
 // the rest of the machinery (generic-impl dispatch, Mono.infer_tparams)
 // was already in place.
 //
-// Prereq for iterator combinators (DR-015 `.map(...).filter(...)`)
+// Prereq for iterator combinators (`.map(...).filter(...)`)
 // but useful on its own.
 //
 // Three flavours of generic-method use covered below:

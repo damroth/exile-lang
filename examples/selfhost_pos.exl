@@ -1,4 +1,4 @@
-// Self-host Faza 0 — first foundation port.
+// Self-host port — the first of the foundation data modules.
 //
 // Ports `lib/pos.ml` (the OCaml exilc oracle) to exile.  Pos is a
 // leaf module: a 3-field record + one helper that renders it as
@@ -8,7 +8,7 @@
 //
 //   - Records map straight to `struct ... { f: T, ... }` with no
 //     hidden indirection; field order matters at the dump layer
-//     (declaration order is canonical per Faza −1 ratification).
+//     (declaration order is canonical).
 //
 //   - OCaml's `Printf.sprintf "%s:%d:%d"` lowers to a Display impl
 //     that writes through the prelude StringBuilder.  Writer-pattern

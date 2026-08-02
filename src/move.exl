@@ -1,4 +1,4 @@
-// Self-host port of lib/move.ml — the DR-002 move-pass consume model.
+// Self-host port of lib/move.ml — the move-pass consume model.
 //
 // Drop.insert (the OWN-D2 seam) delegates ALL expression-level consume
 // detection to this module's `walk_expr`, so the compiler has ONE consume

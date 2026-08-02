@@ -266,7 +266,7 @@ fn is_string_escape(b: u8) -> bool {
         || b == 92 as u8 || b == 34 as u8;
 }
 
-// GATE-5 reserved words (capability model + future integer widths) —
+// Reserved words (capability model + future integer widths) —
 // valid identifiers lexically, rejected so no source claims them before
 // they become real syntax.
 fn is_reserved_capability(w: str) -> bool {

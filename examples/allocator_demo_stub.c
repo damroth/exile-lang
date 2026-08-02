@@ -3,7 +3,7 @@
  * factory C-side keeps the size_t skew on the C side: exile
  * passes a u32 byte-count through the seam, the thunk casts to
  * size_t on its way to malloc.  The free thunk receives the
- * matching byte-count (DR-004 size-on-free) but libc free
+ * matching byte-count (size-on-free) but libc free
  * ignores it — the size is what an Amiga FreeMem / arena / pool
  * / kernel ward-region backend actually needs. */
 

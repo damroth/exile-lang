@@ -1,4 +1,4 @@
-// `HashMap<K, V>` — open-addressing linear-probing table (DR-007).
+// `HashMap<K, V>` — open-addressing linear-probing table.
 // Flat `*Slot<K,V>` buffer over `Allocator`; `@move` so the
 // backing storage can't be silently aliased.  v1 ships:
 //

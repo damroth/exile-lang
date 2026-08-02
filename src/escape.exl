@@ -1,4 +1,4 @@
-// Self-host port — `lib/escape.ml` (the DR-010 escape pass).
+// Self-host port — `lib/escape.ml`, the escape pass.
 //
 // A sound conservative barrier on values whose pointer / Slice payload roots in
 // a local binding: the four canonical escape sites (TReturn, store through a

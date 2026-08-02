@@ -1,4 +1,4 @@
-// Owner-sigil end-to-end (DR-030 Faza-1a + DR-042/DR-043).
+// Owner-sigil end-to-end.
 //
 // `own *T` marks unique ownership of the pointee — a third pointer
 // type sitting alongside `*T` (mutable borrow) and `*const T`

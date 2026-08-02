@@ -1,4 +1,4 @@
-// exilc — the self-hosted compiler driver (Faza B).
+// exilc — the self-hosted compiler driver.
 //
 // Stitches the pipeline the six corpus drivers exercised separately into one
 // argv-driven binary, matching the OCaml oracle's `bin/main.ml` flag surface.
@@ -7,7 +7,7 @@
 // one binary without a byte moving.  `--target host` (the cc call over a
 // `sys_exec` seam) is the next round.
 //
-// The command line arrives through the DR-006 argv seam: `sys_argv(i)` hands
+// The command line arrives through the argv seam: `sys_argv(i)` hands
 // back a NUL-terminated `*const c_char`, which is a valid `str` (and a valid
 // path for `load` / `sys_open`) with no copy.
 //
@@ -84,7 +84,7 @@ fn err_line(msg: str) {
 // ca_target: 0 = c (transpile only); 1 = host (cc-invoke); 2 = amiga
 // (m68k-amigaos-gcc cross-invoke).  The emitted C is identical across targets —
 // codegen branches on neither target nor profile — so amiga is a pure driver
-// seam (DR-006): which compiler, which flags, which sys backend.
+// seam: which compiler, which flags, which sys backend.
 struct CliArgs {
     ca_emit: int,
     ca_user_only: bool,

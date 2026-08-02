@@ -1,6 +1,6 @@
-// Boolean literal patterns (GATE-5b) — `match b { true => ... | false => ... }`.
+// Boolean literal patterns — `match b { true => ... | false => ... }`.
 //
-// Literal patterns extend from the integer/char form (GATE-5a) to `true`
+// Literal patterns extend from the integer/char form to `true`
 // and `false`.  Because `bool` has a finite, two-value domain, a `true` /
 // `false` pair is exhaustive on its own — no catch-all `_` arm is needed
 // (and adding one would be flagged unreachable).  A match missing one of

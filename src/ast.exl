@@ -2,7 +2,7 @@
 //
 // The abstract syntax tree: the frozen contract between the parser
 // (which builds it) and typecheck (which consumes it).  This is the
-// largest of the Faza-0 data modules and the first to exercise the
+// largest of the foundation data modules and the first to exercise the
 // language's recursive-ADT story at scale, so a few representation
 // decisions are pinned here and reused by every later stage:
 //
@@ -51,9 +51,9 @@ pub enum FloatWidth {
     | F64
 }
 
-// The direction sigil on a `rune` (DR-030 Phase-1.5, RUNE-SPEC I-R2): a rune is
-// declared `read`, `write`, or `readwrite`, and the direction gates its method
-// set.  Always explicit — a bare `rune` is a parse error (RUNE-SPEC axis 2).
+// The direction sigil on a `rune`: a rune is declared `read`, `write`, or
+// `readwrite`, and the direction gates its method set.  Always explicit — a
+// bare `rune` is a parse error.
 pub enum Direction {
     DRead
     | DWrite
@@ -102,10 +102,10 @@ pub struct Capture {
     by_ref: bool,
 }
 
-// A field of a `ward` overlay (WARD-SPEC §3, Phase 2): a rune-implicit register
+// A field of a `ward` overlay: a rune-implicit register
 // at an OFFSET from the ward's base.  Same shape as a rune declaration, but `at`
 // binds a relative offset (`wf_offset`), not an absolute address.  The extracted
-// field is a `rune<T>` (I-W3).
+// field is a `rune<T>`.
 pub struct WardField {
     wf_name: str,
     wf_elem: *const TypeAnn,
@@ -114,7 +114,7 @@ pub struct WardField {
     wf_pos: Pos,
 }
 
-// One half-open byte range `lo .. hi` of a `sigil` declaration (SIGIL-SPEC §11).
+// One half-open byte range `lo .. hi` of a `sigil` declaration.
 // A LIST is required: Sprite 0 is genuinely two disjoint ranges (HRM).
 pub struct SigilRange {
     sg_lo: *const Expr,
@@ -122,7 +122,7 @@ pub struct SigilRange {
 }
 
 // A single trait bound: `<T: A + B>` is one entry with `traits = [A, B]`.
-// `assoc` carries the DR-021 sugar's associated-type bindings (`<F:
+// `assoc` carries the function-type sugar's associated-type bindings (`<F:
 // |int|->int>` lowers to traits=[Fn1], assoc=[Arg, Output]); plain
 // trait-path bounds leave it empty.
 pub struct TraitBound {
@@ -159,8 +159,9 @@ pub enum TypeAnn {
     | TyArray { elem: *const TypeAnn, size: *const Expr }
     | TySelf
     | TyFnPtr { params: Vec<*const TypeAnn>, ret: Option<*const TypeAnn> }
-    // `write rune<T>` — an MMIO handle in a SIGNATURE (RUNE-SPEC §3, P1).  The
-    // direction is part of the type, so R1/R2 survive the call boundary; the
+    // `write rune<T>` — an MMIO handle in a SIGNATURE.  The
+    // direction is part of the type, so volatility and direction survive the
+    // call boundary; the
     // capability adjective PRECEDES the type it qualifies, exactly as `own *T`.
     | TyRune { elem: *const TypeAnn, dir: Direction }
 }
@@ -270,18 +271,18 @@ pub enum Stmt {
     | Break(Pos)
     | With { target: *const Expr, name: str, body: Vec<Stmt>, pos: Pos }
     | Continue(Pos)
-    // `rune name: T at ADDR dir` — DR-030 Phase-1.5 MMIO-window binding (RUNE-SPEC
-    // §3).  `elem` is the register width T; `addr` is the compile-time-constant
-    // base (§2); `dir` gates the method set (I-R2).  A local declaration in v1
-    // (RUNE-SPEC axis 4); it lowers to a `volatile T *` binding.
+    // `rune name: T at ADDR dir` — an MMIO-window binding.  `elem` is the
+    // register width T; `addr` is the compile-time-constant base; `dir` gates
+    // the method set.  A local declaration in v1; it lowers to a
+    // `volatile T *` binding.
     | RuneDecl { name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction, pos: Pos }
     // A local `ward name: Type at ADDR;` — binds a ward-overlay instance to a base
-    // (WARD-SPEC §3, Phase 2).  Zero runtime storage (I-W1): the base folds into
+    // instance.  Zero runtime storage: the base folds into
     // each field access.  `addr` is an integer (MMIO) or `&GLOBAL` (RAM), as rune.
     | WardInst { name: str, ward_ty: str, addr: *const Expr, pos: Pos }
-    // `seal { … }` — a masked critical region (SEAL-SPEC §10).  The block IS the
+    // `seal { … }` — a masked critical region.  The block IS the
     // region, so its braces are the mask's boundaries.  Lowered onto `defer`, so
-    // there is exactly ONE exit mechanism in the language (§3.1).
+    // there is exactly ONE exit mechanism in the language.
     | Seal { body: Vec<Stmt>, pos: Pos }
 }
 
@@ -421,23 +422,23 @@ pub enum Item {
     | Trait(TraitDecl)
     | View(ViewDecl)
     | CInclude { path: str, pos: Pos }
-    // A top-level `rune name: T at ADDR dir;` — DR-030 Phase-1.5 (RUNE-SPEC §3,
-    // Increment 4 Half B).  Same fields as the local `Stmt::RuneDecl`; a
+    // A top-level `rune name: T at ADDR dir;`.  Same fields as the local
+    // `Stmt::RuneDecl`; a
     // register map shared across functions needs an above-function declaration.
     | RuneDecl { name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction, pos: Pos }
     // A `ward Name { fields }` overlay TYPE — layout only, no base, emits nothing
-    // (WARD-SPEC §3, Phase 2).  An instance binds the base separately.
+    // at all.  An instance binds the base separately.
     | WardDecl { name: str, fields: Vec<WardField>, pos: Pos }
     // A TOP-LEVEL `ward name: Type at ADDR;` instance — visible in every function
-    // (WARD-SPEC §3, Increment 4).  Zero storage (I-W1): emits nothing; the base
+    // in the file.  Zero storage: emits nothing; the base
     // folds into each field access.  Int MMIO base only (a top-level `&GLOBAL` is
-    // rejected, mirroring rune R3b).  Same fields as the local `Stmt::WardInst`.
+    // rejected, mirroring the rune rule).  Same fields as the local `Stmt::WardInst`.
     | WardInstDecl { name: str, ward_ty: str, addr: *const Expr, pos: Pos }
     // `sigil Name { lo .. hi, … }` — a named hardware resource covering byte
-    // ranges (SIGIL-SPEC §4.1/§11).  Declares a capability; emits nothing.
+    // ranges.  Declares a capability; emits nothing.
     | SigilDecl { name: str, ranges: Vec<SigilRange>, pos: Pos }
     // `own Name;` — the CLAIM: this module (and its descendants) owns the
-    // resource (SIGIL-SPEC §4.3/§11).  Exactly one claimant per resource (I-S1).
+    // resource.  Exactly one claimant per resource.
     | ClaimDecl { name: str, pos: Pos }
 }
 
@@ -473,7 +474,7 @@ pub struct TraitDecl {
     tris_pub: bool,
 }
 
-// `view Name(p: T) -> A | B(U) { body }` — DR-009 active patterns.  A
+// `view Name(p: T) -> A | B(U) { body }` — an active pattern.  A
 // pre-typecheck pass lowers it to a choice-enum + a function.
 pub struct ViewDecl {
     vname: str,

@@ -1,4 +1,4 @@
-// Self-host Faza 0 — third foundation port.
+// Self-host port — the third of the foundation data modules.
 //
 // Ports `lib/token.ml` (121 OCaml lines).  Token is a wide enum:
 // 78 variants — most unit (keywords + punctuation), four carry
@@ -13,7 +13,7 @@
 //   - OCaml `type t = | Fn | Let | ... | Ident of string | ...` →
 //     `enum Token { Fn | Let | ... | Ident(str) | ... }`.  Variant
 //     order matters at the dump layer (declaration order is
-//     canonical per Faza −1), so we keep the OCaml ordering
+//     canonical), so the OCaml ordering is kept
 //     verbatim.
 //
 //   - OCaml `pp` becomes `impl Display for Token` with one match

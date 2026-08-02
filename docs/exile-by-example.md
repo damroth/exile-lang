@@ -2013,8 +2013,7 @@ The backing implementation lives on the C side — on the host it's
 malloc/free, on Amiga you can drop in `AllocMem`/`FreeMem` without
 touching any exile call site.
 
-The free seam carries the byte count back to the allocator (DR-004
-size-on-free): the compiler passes `size_of(T)` automatically, so the
+The free seam carries the byte count back to the allocator: the compiler passes `size_of(T)` automatically, so the
 `a.free(p)` call site is unchanged, but a custom allocator's `free`
 hook receives `(state, ptr, size)`. libc ignores the size; Amiga
 `FreeMem` and arena/pool allocators need it to reclaim.
@@ -2069,8 +2068,8 @@ fn main() {
 ## 19. Prelude collections
 
 The prelude ships growable, allocator-backed collections built on top of
-the `Allocator` seam ([sec 18](#18-allocator--pluggable-memory)). Per
-DR-001 the read side and growth math are pure exile; only `alloc`/`free`
+the `Allocator` seam ([sec 18](#18-allocator--pluggable-memory)). The
+read side and the growth math are pure exile; only `alloc`/`free`
 cross the FFI seam, so the data structures themselves compile to the
 Amiga target unchanged.
 
@@ -2144,7 +2143,7 @@ fn main() {
 
 ### `Vec<T>` — growable array
 
-The copy-out value-`T` workhorse (DR-003).
+The copy-out value-`T` workhorse.
 
 ```rust
 fn main() {
@@ -2209,7 +2208,7 @@ fn main() {
 
 ### `HashMap<K, V>` — open-addressing table
 
-Linear-probing symbol table (DR-007); `K` must `impl Hash + Eq`.
+Linear-probing symbol table; `K` must `impl Hash + Eq`.
 
 ```rust
 fn main() {
@@ -2237,8 +2236,8 @@ fn main() {
 
 ### `mod str` — string operations
 
-Pure-exile ops over `cstr_len` + `Slice<u8>`. Only `cstr_len` (a narrow
-`strlen` seam, DR-001) crosses the FFI boundary.
+Pure-exile ops over `cstr_len` + `Slice<u8>`. Only `cstr_len`, a narrow
+`strlen` seam, crosses the FFI boundary.
 
 ```rust
 fn main() {

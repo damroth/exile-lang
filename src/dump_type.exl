@@ -73,7 +73,7 @@ pub fn render_type_list(xs: *const Vec<*const TypeAnn>, out: *StringBuilder) {
 // `Foo` (no args) renders as `(struct Foo)`; a generic application
 // `Option<int>` as `(struct-app Option (int i32))`.  Pulled out of the
 // `render_type_ann` arm so the branching `if` lives in a fn body, not
-// as a match-arm trailing value (a parser deferral — see WORKLOG).
+// as a match-arm trailing value (a parser deferral).
 fn render_struct_ty(path: *const Vec<str>, args: *const Vec<*const TypeAnn>,
                         out: *StringBuilder) {
     if args.length() == 0 as u32 {

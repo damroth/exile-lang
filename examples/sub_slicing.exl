@@ -1,4 +1,4 @@
-// `a[lo..hi]` / `a[lo..=hi]` — sub-slicing (DR-011).
+// `a[lo..hi]` / `a[lo..=hi]` — sub-slicing.
 //
 // When the index expression is a Range value, `[]` produces a fresh
 // `Slice<T>` view instead of a scalar element copy.  Works on arrays

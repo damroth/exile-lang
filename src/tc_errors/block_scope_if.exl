@@ -1,4 +1,4 @@
-// Found by the differential fuzzer (Increment 2 triage, bucket B1 by mechanism),
+// Found by the differential fuzzer and triaged as a port defect,
 // shrunk from a sys_open/sys_read program to these four lines. A binding declared
 // inside a block was still visible after it, so the port compiled a program that
 // reads an out-of-scope name. The oracle rejects it.

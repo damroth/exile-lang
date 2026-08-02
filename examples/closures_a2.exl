@@ -1,4 +1,4 @@
-// A2 closures with capture (DR-024).
+// Capturing closures.
 //
 // `|x: int| -> int x + t` referencing an outer `t: int` no longer
 // errors "undefined variable"; instead `expand_lambdas` (the
@@ -17,8 +17,8 @@
 //
 // then replaces the lambda expression with `__closure_N { c1: c1,
 // c2: c2 }` — a plain struct literal that constructs the env from
-// the surrounding scope.  All of the DR-016 / DR-017 / DR-018 /
-// DR-019 / DR-020 / DR-021 / DR-022 / DR-023 surface kicks in on
+// the surrounding scope.  The whole bounded-impl / Fn-trait /
+// call-desugar / bound-sugar surface kicks in on
 // top: the bound `<F: |int|->int>` reads naturally, `f(x)` desugars
 // to `f.call(x)`, and `F::Output` projects via the bound shortcut.
 //
@@ -26,7 +26,7 @@
 // captured names must come from a binding whose type is visible
 // without elaboration — `fn` params or `let name: T = ...`
 // annotated lets.  A capture from an untyped `let name = ...` falls
-// through to the DR-008 "undefined variable" error (the synthesis
+// through to the "undefined variable" error (the synthesis
 // finds no type for it).
 //
 // Three flavours of capture below.

@@ -1,4 +1,4 @@
-// Active patterns (DR-009) — `view Name(p: T) -> Case1 | Case2 { body }`.
+// Active patterns — `view Name(p: T) -> Case1 | Case2 { body }`.
 //
 // A `view` is syntactic sugar over an existing `enum` plus an
 // ordinary function.  The decl

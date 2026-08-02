@@ -1,4 +1,4 @@
-// Heap-boxed enum tuple-variants (DR-031) + Owner-sigil ownership.
+// Heap-boxed enum tuple-variants + Owner-sigil ownership.
 //
 // `new(alloc) Enum::Variant(args)` heap-allocates the enum value and
 // yields `own *Enum` - mirror of `new(alloc) Struct { ... }` for
@@ -18,7 +18,7 @@
 // needs.
 
 // Recursive enum AST: the inner constructors OWN their subtrees, so
-// each payload is `own *Expr` (DR-030 Owner-sigil).  A node owning its
+// each payload is `own *Expr`, an Owner-sigil.  A node owning its
 // children is what lets `free_tree` release the whole tree exactly
 // once, and is what a synthesised recursive drop will eventually do
 // automatically.
@@ -31,7 +31,7 @@ enum Expr {
 
 // `eval` only reads, so it borrows the tree as `*const Expr`.  An
 // `own *Expr` argument is lent to the borrow parameter without being
-// consumed (DR-030 own-borrow rule), so the caller keeps ownership.
+// consumed (the own-borrow rule), so the caller keeps ownership.
 fn eval(e: *const Expr) -> int {
     match *e {
         Expr::Lit(n) => n

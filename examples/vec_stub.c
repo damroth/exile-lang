@@ -1,6 +1,6 @@
 /* Companion stub for vec.exl — wires Allocator to libc malloc/free.
  * Same shape as the other allocator stubs.  The free thunk receives
- * the byte-count (DR-004 size-on-free) but libc ignores it. */
+ * the byte-count (size-on-free) but libc ignores it. */
 
 #include <stdlib.h>
 

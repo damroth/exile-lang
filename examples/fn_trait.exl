@@ -1,8 +1,8 @@
-// Fn-trait prelude (DR-017).
+// The Fn-trait prelude.
 //
 // `Fn1` and `Fn2` are now in the prelude — synthesized alongside
-// Iterator / Display / Eq / Hash / Clone.  Per the DR-015 reality-
-// check (2026-06-04), Fn is encoded as a real per-arity trait whose
+// Iterator / Display / Eq / Hash / Clone.  Fn is encoded as a real
+// per-arity trait whose
 // argument and result types are associated types, not trait tparams:
 //
 //   trait Fn1 {
@@ -22,8 +22,8 @@
 //   - `<F: Fn1>` bound + `F::Arg` / `F::Output` projection in a
 //     bounded free fn or a generic adapter.
 //   - `f.call(x)` dispatches via the trait — direct call, no vtable
-//     (DR-014 generic-trait methods + mono).
-//   - DR-016 bounded impls let an adapter like `Map<I, F>` constrain
+//     (generic trait methods + mono).
+//   - Bounded impls let an adapter like `Map<I, F>` constrain
 //     `I: Iterator, F: Fn1` and project `F::Output` through to its
 //     own `Item`.
 //
@@ -47,12 +47,12 @@ impl Fn1 for AddOne {
     fn call(*const self, a: int) -> int { a + 1 }
 }
 
-// DR-018 call-desugar — `f(x)` on a Fn-bound tparam (or a concrete
+// Call-desugar — `f(x)` on a Fn-bound tparam (or a concrete
 // type with `impl FnN`) lowers to `f.call(x)` so users don't need to
 // spell out the trait method.  Without the sugar, `f(x)` would error
 // with "unknown function 'f'" because the elab path looks up free fns
 // first.  Same applies to `f(x, y)` for Fn2.
-// DR-021 sugar: `|int|->int` in bound position is parser sugar for
+// Bound sugar: `|int|->int` in bound position is parser sugar for
 // `Fn1` plus assoc bindings `Arg=int, Output=int`.  Mirror-closure
 // surface — the bound shape echoes the eventual closure-literal
 // type, which is exile's distinctive Fn surface (no `Fn(int)->int`
@@ -72,14 +72,14 @@ impl Fn2 for AddPair {
     fn call(*const self, a: int, b: int) -> int { a + b }
 }
 
-// DR-021 sugar for Fn2: `|A, B|->R` parses to Fn2<Arg1=A, Arg2=B,
+// The same sugar for Fn2: `|A, B|->R` parses to Fn2<Arg1=A, Arg2=B,
 // Output=R>.  Same mirror-closure surface for the binary case.
 fn apply2<F: |int, int|->int>(f: F, x: int, y: int) -> int {
     f(x, y)
 }
 
-// 3. Map<I, F> — the lazy adapter pattern from DR-015.  Requires
-// DR-016 bounded impls plus the prelude Fn1.  `Self::Item = F::Output`
+// 3. Map<I, F> — the lazy adapter pattern.  Requires
+// bounded impls plus the prelude Fn1.  `Self::Item = F::Output`
 // chains the inner closure's output through to the outer Iterator.
 //
 // The `try` idiom on `self.inner.next()` propagates None up through
@@ -92,14 +92,14 @@ struct Map<I, F> { inner: I, f: F }
 impl<I: Iterator, F: Fn1> Iterator for Map<I, F> {
     type Item = F::Output;
     fn next(*self) -> Option<F::Output> {
-        // Natural match — DR-020 propagates the fn's `Option<F::Output>`
+        // Natural match — the return type propagates the fn's `Option<F::Output>`
         // expected through the match into each arm, so `Option::None`
-        // picks up its T from the bidirectional seed.  Pre-DR-020 this
+        // picks up its T from the bidirectional seed.  Before that seeding, this
         // arm errored "could not infer type parameter 'T'" because the
         // seed pattern only matched flat TEnum mono-instances, not the
         // TEnumApp shape that carries an assoc-projection arg.
         //
-        // DR-019 FieldAccess call-desugar lets `self.f(v)` lower to
+        // Field-access call-desugar lets `self.f(v)` lower to
         // `(self.f).call(v)` because field `f` carries a Fn1-impl value
         // (its bound `F: Fn1` makes the desugar fire on the tparam-typed
         // field).

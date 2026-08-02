@@ -1,4 +1,4 @@
-// Bounded generic impls (DR-016).
+// Bounded generic impls.
 //
 // An `impl` over a generic type can constrain its tparams with trait
 // bounds — same shape as `fn f<T: Bound>(...)` but on `impl<T: Bound>`.
@@ -16,10 +16,10 @@
 //   error: type 'Bare' does not implement trait 'Show'
 //          (required by bound 'T: Show' on 'show')
 //
-// This is the keystone for DR-015 lazy iterator combinators — the
+// This is the keystone for lazy iterator combinators — the
 // adapter struct's `impl<I: Iterator, F: Fn1> Iterator for Map<I, F>`
 // shape needs exactly this feature, and the dot-method chain
-// (`.map(f).filter(p)`) already shipped with DR-014 generic trait
+// (`.map(f).filter(p)`) already shipped with generic trait
 // methods.
 
 trait Show {

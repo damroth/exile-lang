@@ -1,4 +1,4 @@
-// Captureless lambdas (DR-008 A1).
+// Captureless lambdas.
 //
 // `|p: T, q: U| -> R body` is an anonymous lambda expression.  A
 // pre-typecheck pass lifts each one to a fresh top-level fn named

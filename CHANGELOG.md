@@ -142,7 +142,7 @@ oracle every gate above measures against.
 
 ## [0.11.6] - 2026-06-15
 
-Boolean literal patterns (GATE-5b) extend the literal-pattern family from
+Boolean literal patterns extend the literal-pattern family from
 integers/chars to `true` / `false`, so `match b { true => ... | false => ... }`
 matches a `bool` scrutinee directly. Because `bool` has a finite two-value
 domain, a `true` / `false` pair is exhaustive on its own — no catch-all `_`
@@ -160,8 +160,8 @@ scalar `switch` codegen path as integer literals (`case 1:` / `case 0:`).
 
 ## [0.11.5] - 2026-06-13
 
-Two threads land: the last own-pointer null soundness holes close (DR-054 /
-DR-055), and a `--freestanding` codegen mode (DR-056) gives the libc-free
+Two threads land: the last own-pointer null soundness holes close, and a
+`--freestanding` codegen mode gives the libc-free
 output floor for exOS / bare-metal targets. An owned intrusive struct list
 whose tail was a `null` terminator could segfault on teardown, and an `own *T`
 binding initialized to `null` owned nothing yet escaped drop tracking, leaking
@@ -199,7 +199,7 @@ nm-clean (only `__ex_*` + the `sys_*` seam). 768 tests pass.
   a tree) is safe (BUG-A)
 - leak: an `own *T` binding initialized to `null` owned nothing and was not
   tracked by the drop pass, so a later `new(a) ...` reassignment leaked at scope
-  exit. Such an initializer is now rejected at type-check (DR-055), pointing at
+  exit. Such an initializer is now rejected at type-check, pointing at
   `new(a) ...` — a `null` terminator belongs in a field, not an owning binding
 - `--freestanding` output no longer needs `-I runtime` to compile: the `__ex_*`
   prototypes are emitted inline rather than via an `#include`, so the C is
@@ -207,7 +207,7 @@ nm-clean (only `__ex_*` + the `sys_*` seam). 768 tests pass.
 
 ## [0.11.4] - 2026-06-13
 
-The kernel-foundation freeze gate (DR-053): the final hardening pass before
+The kernel-foundation freeze gate: the final hardening pass before
 self-host bring-up, closing the three gating decisions from the 2026-06-11
 freeze audit. A C cast of a binary operation lost its precedence; the
 sanctioned rebind-after-consume list idiom miscompiled into a self-referential
@@ -251,7 +251,7 @@ The freeze-hardening patch: the no-way-back freeze audit before self-host
 bring-up rejected the freeze — despite a fully green suite it found ~18
 root causes (38 findings) of silent use-after-free, double-free, leaks,
 ICEs, and invalid C in the move/drop/escape ring and codegen. Two sprints
-(DR-051, DR-052) closed every one structurally — each finding reproduced
+closed every one structurally — each finding reproduced
 under ASan before the fix, then locked in with adversarial regressions.
 740 tests, verify-host 84/84, selfhost-diff 3/3 clean, ASan+UBSan sweep
 clean on all 85 examples (the shipped `hashmap.exl` had been leaking).
@@ -334,37 +334,37 @@ self-host bring-up to begin. 702 tests, verify-host 84/84, selfhost-diff
 3/3 clean, ASan clean.
 
 ### Added
-- DR-049 GATE-5a literal patterns in `match` plus char literals: `'a'` is
+- literal patterns in `match` plus char literals: `'a'` is
   sugar for a byte int-literal (string-style escapes), usable in patterns,
   `==`, and arithmetic. An int-like scrutinee compiles to a C `switch`
   (a jump table on 68k — the lexer hot path), or-patterns become stacked
   `case` labels, guards a decision chain; scalar exhaustiveness requires
   an unguarded catch-all arm. New example: `literal_match.exl`
-- DR-050 `Arena` bump allocator in the prelude (`with_capacity` /
+- `Arena` bump allocator in the prelude (`with_capacity` /
   `alloc_borrowed`): nodes are plain `*T` borrows owned by the arena, and
   the whole buffer releases in a single `free_fn` call on scope exit via
   the existing auto-drop machinery; align-8 bumps, `null` on exhaustion.
   New example: `arena.exl`
-- DR-050 `ptr_offset(p, n)` builtin — emits C `(p + n)` (one ADDA on 68k);
+- `ptr_offset(p, n)` builtin — emits C `(p + n)` (one ADDA on 68k);
   u8-pointer base only, result is a plain borrow into the same storage
-- DR-049 GATE-5b captureless lambdas in method-argument position now route
+- captureless lambdas in method-argument position now route
   through the A2 closure machinery with an empty env, so they satisfy
   `Fn`-bounds: `.filter(|n| n > 1).map(|n| n * 10)` works end-to-end
-- DR-049 GATE-5c `rune` / `ward` / `sigil` / `seal` / `shared` reserved at
+- `rune` / `ward` / `sigil` / `seal` / `shared` reserved at
   the lexer level for future capability-model syntax
 
 ### Changed
-- DR-049 GATE-3 `free(alloc, p)` is now two-argument, releasing through the
+- `free(alloc, p)` is now two-argument, releasing through the
   allocator seam (`free_fn`) in symmetry with `new(alloc)`; the one-arg form
   errors with guidance. One-arg `free` emitted libc `free()` while
   `new(alloc)` allocated through `alloc_fn` — correct on the host by
   coincidence, heap corruption with an arena or Amiga allocator
-- DR-049 GATE-5d pre-freeze naming sweep: `Vec.len` / `HashMap.len` (and
+- pre-freeze naming sweep: `Vec.len` / `HashMap.len` (and
   friends) renamed to `length`; the `Debug` trait method renamed `fmt` →
   `fmt_debug` so `Display` and `Debug` can coexist on one type
 
 ### Fixed
-- DR-049 GATE-4 lift-pass matrix audit (one systematic pass instead of a
+- lift-pass matrix audit (one systematic pass instead of a
   patch per ICE): `for` in a match arm ICE'd — arm bodies now lift in
   place; shallow `texpr_children` blinded program scans, so dead-code
   elimination dropped functions called from loops inside arms (invalid
@@ -386,40 +386,39 @@ but never silently leaks or frees twice. 684 tests, verify-host 82/82,
 selfhost-diff 3/3 clean, ASan/LeakSanitizer clean on the probe corpus.
 
 ### Added
-- DR-046 `new(alloc) T{}` and `new(alloc) Enum::V(...)` — allocator-explicit
+- `new(alloc) T{}` and `new(alloc) Enum::V(...)` — allocator-explicit
   heap construction as the sanctioned origin of `own *T`, with `free()`
   accepting owning pointers
-- DR-047 first-class `own *T`: passing one to a `*T` / `*const T` parameter
+- first-class `own *T`: passing one to a `*T` / `*const T` parameter
   is a borrow (a loan — the value stays live), as opposed to an `own *T`
   parameter (a transfer); method dispatch and field assignment work through
   the owner pointer
-- DR-048 own-lifecycle completion: bare `own *T` bindings auto-drop at end
+- own-lifecycle completion: bare `own *T` bindings auto-drop at end
   of scope via static allocation-site provenance, reassigning a live `own`
   drops the old value first, and rebinding after consumption is legal
   (enables `s = next(s)` loops and `root = insert(a, root, v)` tree building)
 
 ### Changed
-- DR-047 option-1 clean break: bare `new T{}` (no allocator) is removed —
+- option-1 clean break: bare `new T{}` (no allocator) is removed —
   every heap construction names its allocator
-- DR-048 unified drop pass: `drop.ml` rewritten to delegate consumption
+- unified drop pass: `drop.ml` rewritten to delegate consumption
   detection to the move pass (`Move.walk_expr`), so both passes share one
   liveness model instead of two drifting ones
 
 ### Fixed
 - Auto-drop emitted `sizeof(unsigned char)` instead of the real buffer byte
-  count (DR-046)
+  count
 - `free()` accepted borrowed `*T` pointers — a latent double-free; it is now
-  own-only (DR-047)
+  own-only
 - ICE on nested enum boxing in argument position, e.g.
-  `new(a) E::Add(new(a) E::Num(2), ...)` (DR-047)
+  `new(a) E::Add(new(a) E::Num(2), ...)`
 - `Vec<T>` grow regression for aggregate element types ("cannot cast T to
   T"): identity casts on non-scalar types are now elided entirely, since C89
-  has no aggregate casts (DR-048 GATE-1)
+  has no aggregate casts
 - Five drop-pass symptoms rooted in consumption-model drift — double frees
   and missed drops around callee-consumed and transitively-freed values
-  (DR-048 GATE-2)
 - Two silent leaks: reassigning a live `own` binding leaked the old value,
-  and a bare `own` from `new(alloc)` was never dropped at all (DR-048 GATE-2)
+  and a bare `own` from `new(alloc)` was never dropped at all
 
 ## [0.11.0] - 2026-06-07
 
@@ -437,38 +436,38 @@ With this, the language surface and memory model needed to port the compiler
 into Exile are complete.
 
 ### Added
-- DR-024 closures with capture (A2): a capturing closure lowers to an
+- closures with capture (A2): a capturing closure lowers to an
   env-struct plus a synthesized `impl FnN`, with the body substituted over the
   captured fields — zero heap, monomorphized inline. Captureless (A1) lambdas
   still decay to a plain function pointer
-- DR-017 / DR-023 / DR-029 `Fn0`..`Fn4` prelude callable traits, with
-  `f(x)` desugaring to `f.call(x)` on any `Fn`-bounded value (DR-018) and
-  `self.f(v)` to `(self.f).call(v)` (DR-019)
-- DR-021 / DR-028 `|A| -> R` function-type source sugar in both bound and
-  type-annotation position; DR-023 `|| -> R` for the nullary `Fn0`
-- DR-033 `[&x]` explicit by-ref capture lists — opt-in borrow of a captured
+- `Fn0`..`Fn4` prelude callable traits, with
+  `f(x)` desugaring to `f.call(x)` on any `Fn`-bounded value and
+  `self.f(v)` to `(self.f).call(v)`
+- `|A| -> R` function-type source sugar in both bound and
+  type-annotation position; `|| -> R` for the nullary `Fn0`
+- `[&x]` explicit by-ref capture lists — opt-in borrow of a captured
   binding instead of by-value
-- DR-016 bounded generic impls (`impl<I: Iterator, F: Fn1> Iterator for Map`),
+- bounded generic impls (`impl<I: Iterator, F: Fn1> Iterator for Map`),
   the extension that unlocks lazy adapters
-- DR-026 iterator combinators: lazy, method-chained adapters `Map<I, F>` /
+- iterator combinators: lazy, method-chained adapters `Map<I, F>` /
   `Filter<I, P>` / `Take<I>` / `Enumerate<I>` plus the consuming terminals
   `fold` and `collect`, exposed as `Iterator` default methods
-- DR-030 Owner-sigil memory model (Faza-1a): `own *T`, a third owning pointer
+- Owner-sigil memory model: `own *T`, a third owning pointer
   type that retires `@move` and auto-drops at end of scope via a new pass
   (`drop.ml`), LIFO-unified with user `defer`. `own *T` coerces to `*T` /
   `*const T` but never the reverse (a soundness tooth); drop is shallow,
   by-field. Full owner-sigil coverage across the Vec / StringBuilder / HashMap
   stdlib
-- DR-031 / DR-030 Faza-1.1 enum heap boxing: `new Enum::Variant(args)` lowers
+- Enum heap boxing: `new Enum::Variant(args)` lowers
   to a malloc'd `own *Enum`, with drop synthesis over recursive enum trees —
   the representation path for the self-hosted AST
-- DR-032 `sys::sys_open` / `sys::sys_close` prelude file-handle seam: the host
+- `sys::sys_open` / `sys::sys_close` prelude file-handle seam: the host
   backend wraps libc `open`/`close`, the amiga backend stubs them — the seam
   future module-loading will read source files through
-- DR-040 transitive `pub use foo::*` re-export
-- DR-036 / DR-038 untyped-let mini-inferencer: `let x = expr` infers its type
+- transitive `pub use foo::*` re-export
+- untyped-let mini-inferencer: `let x = expr` infers its type
   past bare literals
-- DR-035 transitive codegen dead-code elimination for prelude-emitted functions
+- transitive codegen dead-code elimination for prelude-emitted functions
 - New examples: `closures_a2.exl`, `closure_byref.exl`, `fn_trait.exl`,
   `fnptr_sugar.exl`, `bounded_impls.exl`, `combinator_map.exl`,
   `combinator_filter.exl`, `combinator_take_enumerate.exl`,
@@ -476,11 +475,11 @@ into Exile are complete.
   `host_only_sys_open_demo.exl`
 
 ### Changed
-- DR-034 struct literals may appear inline as a call argument and inside
+- struct literals may appear inline as a call argument and inside
   parenthesized grouping without extra binding
-- DR-020 generic enum constructors in `match` arms get a bidirectional type
+- generic enum constructors in `match` arms get a bidirectional type
   seed, so the scrutinee's type parameters flow into the arm
-- DR-022 / DR-025 / DR-027 associated-type projection hardened for the
+- associated-type projection hardened for the
   combinator stack: bound-driven impl assoc-equality checking, a
   `try_resolve_assoc_proj` trait-decl shortcut, and bound-order /
   mono-instance fixes
@@ -488,13 +487,13 @@ into Exile are complete.
   filtered out of the amiga verify pipeline
 
 ### Fixed
-- DR-039 multi-hop `I::Item` associated-type projection over iterators with a
+- multi-hop `I::Item` associated-type projection over iterators with a
   generic `Item`, plus a closure-escape regression suite closing the
   outstanding escape hole
 
 ## [0.10.0] - 2026-06-04
 
-The escape-analysis and self-host bring-up release. The keystone is DR-010,
+The escape-analysis and self-host bring-up release. The keystone is the
 a static escape/non-escape pass that closes the last four self-host soundness
 blockers — it proves which values outlive their scope without being a borrow
 checker. Around it lands the code-elevating feature wave queued ahead of
@@ -506,39 +505,39 @@ first three ports of the compiler's own modules into Exile. Rounded out by
 compile-time perf introspection (`--perf-report`) and two 68k perf wins.
 
 ### Added
-- DR-010 escape pass (`escape.ml`), in three phases: Phase A Tier-1 floor
-  (S5a folded to a hard error), Phase B param-SET-summary with an SCC fixpoint
-  over recursion (S5b), Phase C borrow invalidation (S5c/S5d). A static
+- escape pass (`escape.ml`), in three phases: a floor that turns a returned
+  borrow of a local into a hard error, a param-SET summary with an SCC fixpoint
+  over recursion, and borrow invalidation. A static
   escape/non-escape analysis — not a borrow checker — closing the last four
   self-host soundness blockers
-- DR-011 sub-slicing: `a[lo..hi]` and `a[lo..=hi]` yield a `Slice<T>` view
+- sub-slicing: `a[lo..hi]` and `a[lo..=hi]` yield a `Slice<T>` view
   (`{ ptr, len }`); a `Range` is now usable inside `[]`
-- DR-012 scoped projection: `with <name> in <lvalue> { body }` binds a `*T`
+- scoped projection: `with <name> in <lvalue> { body }` binds a `*T`
   pointer to an lvalue for the block — read and write through `*name`
-- DR-009 active patterns: `view Name(p: T) -> A | B { body }`, total-only
+- active patterns: `view Name(p: T) -> A | B { body }`, total-only
   sugar over a synthesised `enum` plus a function, with full Maranget
   exhaustiveness on the synthesised variants
-- DR-008 A1 captureless lambdas: `|p: T| -> R body`; a lambda that captures
+- A1 captureless lambdas: `|p: T| -> R body`; a lambda that captures
   nothing decays to a plain function pointer (zero heap)
-- DR-014 generic trait methods
+- generic trait methods
 - Floating point `f32` / `f64` with IEEE built-in operators; `Eq` / `Ord` /
   `Hash` are deliberately not implemented (distinct float identity)
 - Type aliases (FP-1): `type Name<T...> = Type;`
 - let-else (FP-2): `let <pat> = expr else { <divergent> };`
 - Receiver mutability: `*self` / `*const self` method receivers
   (pointer-honest mutability)
-- DR-007 follow-up: builtin `str.hash()` / `str.eq()` dispatch, enabling
+- follow-up: builtin `str.hash()` / `str.eq()` dispatch, enabling
   `HashMap<str, _>`
-- DR-006 `mod sys` seam with per-target backends (`runtime/sys_host.c`,
+- `mod sys` seam with per-target backends (`runtime/sys_host.c`,
   `runtime/sys_amiga.c`, the latter linking `-lm` for soft float)
 - `default_allocator()` builtin; `println(x)` dispatches through `Display`
 - Self-host bring-up harness: `--emit-tokens` / `--emit-ast` /
   `--emit-typed-ir` emit canonical dumps (`dump.ml`) — position-elided,
   collection-sorted, golden-stable — plus a golden corpus and
   `selfhost-corpus` / `selfhost-diff` Make targets
-- First three Faza-0 ports of the compiler's own modules:
+- First three ports of the compiler's own modules:
   `selfhost_pos.exl`, `selfhost_error.exl`, `selfhost_token.exl`
-- DR-013 perf-introspection: `--perf-report` (also `=json` / `=human`) — a
+- perf-introspection: `--perf-report` (also `=json` / `=human`) — a
   compile-time budget-vs-actual cost report read from the typed IR
   (`perf_report.ml`)
 - M1 `with_capacity` lint to size growable collections up front
@@ -557,31 +556,31 @@ compile-time perf introspection (`--perf-report`) and two 68k perf wins.
 
 The stdlib-backbone release. Exile gains owned heap data structures —
 `String`, `StringBuilder`, `Vec<T>`, and `HashMap<K, V>` — built on a new
-affine move-checker (`@move`, DR-002) that statically enforces use-at-most-once
+affine move-checker (`@move`) that statically enforces use-at-most-once
 for owned values, so the heap types free exactly once with no double-free or
 use-after-free. Rounding it out: the `Display` / `Debug` writer-pattern traits
-with `@derive(Debug)`, an Allocator size-on-free seam (DR-004), and a
+with `@derive(Debug)`, an Allocator size-on-free seam, and a
 feature-interaction retrospective that closed eight self-host blockers,
 restoring self-host-readiness.
 
 ### Added
-- `@move` affine ownership (DR-002): the move-checker (`move.ml`) enforces
+- `@move` affine ownership: the move-checker (`move.ml`) enforces
   use-at-most-once dataflow over owned values, with a divergence oracle,
   `match` / `if`-expression fork-and-merge (may-consume union), and a LIFO
   `defer` end-of-scope check. Aggregate literals consume their `@move` fields;
   `[expr; N]` rejects a `@move` element
-- Prelude `String` (Faza 1): owned NUL-terminated buffer with deep-copy (A2)
+- Prelude `String`: owned NUL-terminated buffer with deep-copy (A2)
   semantics, content-based `Eq` / `Hash` / `Clone`, and `String::build`
 - Prelude `StringBuilder`: `buf` / `len` / `cap` with `push_byte`, `push_str`,
   `push_int` (decimal render), `length`, and `as_slice`
-- Prelude `Vec<T>` (DR-003): the copy-out value-`T` workhorse collection
-- Prelude `HashMap<K, V>` (DR-007): linear-probe open-addressed symbol table,
+- Prelude `Vec<T>`: the copy-out value-`T` workhorse collection
+- Prelude `HashMap<K, V>`: linear-probe open-addressed symbol table,
   with `grow`, `remove`, and `iter`
 - `Display` / `Debug` prelude traits (writer pattern) and `@derive(Debug)`
   auto-generated formatter
-- Allocator size-on-free seam (DR-004)
+- Allocator size-on-free seam
 - `*const self` borrow-only method receivers
-- `cstr_len(s)` builtin — narrow `strlen` seam (DR-001)
+- `cstr_len(s)` builtin — narrow `strlen` seam
 - Raw write-through-pointer index assignment `p[i] = v`
 - `I::Item` associated-type projection in generic signatures
 - New examples: `string.exl`, `string_builder.exl`, `vec.exl`, `hashmap.exl`,
@@ -589,9 +588,9 @@ restoring self-host-readiness.
 
 ### Changed
 - `Clone` re-signatured to `fn clone(*const self) -> Self`; `Eq` / `Hash`
-  re-signatured (DR-002 prerequisites)
+  re-signatured (move-checker prerequisites)
 - `@derive(Eq)` on `*T` is address-equality by design (documented)
-- Allocator `alloc_fn` byte-count width-pinned to `u32` (DR-001 §6(ii))
+- Allocator `alloc_fn` byte-count width-pinned to `u32`
 
 ### Fixed
 - S0: move-pass `merge_states` uses a may-consume union across branches

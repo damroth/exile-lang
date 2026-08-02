@@ -1,4 +1,4 @@
-// Iterator combinator stdlib v1, Step A + B (DR-026).
+// Iterator combinator stdlib v1: the `Map` adapter and `Iterator.map`.
 //
 // Prelude now ships `Map<I, F>` adapter + `impl<I: Iterator, F: Fn1>
 // Iterator for Map<I, F>` plus `Iterator.map` as a default method.
@@ -7,17 +7,17 @@
 //   1. Manual `Map { inner: it, f: f }` constructor.  Useful when
 //      the closure-impl is named (user-defined `struct + impl Fn1`).
 //
-//   2. Captured-closure literal feeding `Map` directly.  DR-024 A2
-//      lifts the lambda into an env-struct + auto-impl Fn1; the
+//   2. Captured-closure literal feeding `Map` directly.  A capturing
+//      lambda lifts into an env-struct + auto-impl Fn1; the
 //      resulting type satisfies the `F: Fn1` bound on Map.
 //
-//   3. Dot-chain `v.iter().map(closure)` — DR-026 Step B's default
+//   3. Dot-chain `v.iter().map(closure)` — the default `map`
 //      method on Iterator.  Builds the same Map<Self, F> behind the
 //      method call; mono inlines the chain.
 //
 // All three lower to a single fused loop through `Map::next`, no
 // temp Vec, no heap.  `F::Output` becomes the chain's Item type via
-// the DR-021 bound shortcut + DR-025 trait-decl shortcut working
+// the bound shortcut and the trait-decl shortcut working
 // together.
 
 // (1) Named user closure-impl.  Reads `delta` from the struct's

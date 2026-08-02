@@ -195,7 +195,7 @@ fn str_starts_with_const(s: str) -> bool {
 // The C declaration prefix for a type — width-variable c_* map to the target's
 // native int/short/long; fixed i32/u32 map to `long` for cross-compiler width
 // stability (C89 only guarantees int>=16, long>=32).  Own/const pointers erase
-// per DR-030 (ownership lives in the checker, not the C type).
+// entirely (ownership lives in the checker, not the C type).
 pub fn c_type_prefix(a: Allocator, ar: *Arena, t: *const Typ) -> str {
     return match *t {
         Typ::TCInt { is_signed } => { if is_signed { "int " } else { "unsigned int " } }
@@ -253,7 +253,7 @@ fn c_ptr_prefix(a: Allocator, ar: *Arena, inner: *const Typ, is_const: bool) -> 
 }
 
 // A rune lowers to a pointer whose POINTEE is volatile — `volatile <T> *`
-// (RUNE-SPEC §6).  The volatile qualifier IS the guarantee (I-R1): a store
+// The volatile qualifier IS the guarantee: a store
 // through this pointer is a volatile access the backend may not elide or
 // reorder.  Ownership/direction are erased; only volatile survives into C.
 fn c_rune_prefix(a: Allocator, ar: *Arena, elem: *const Typ) -> str {
@@ -870,7 +870,7 @@ fn emit_rune_addr(a: Allocator, ar: *Arena, out: *StringBuilder, te: *const Texp
     }
 }
 
-// A ward field's address (WARD-SPEC §6): `(volatile <elem>*)(base + offset)`, base
+// A ward field's address: `(volatile <elem>*)(base + offset)`, base
 // and offset kept separate — readable, and the `d16(An)` shape the 68k wants once
 // the base is a value.  `UL` on each keeps the constants pointer-width.
 fn emit_ward_addr(a: Allocator, ar: *Arena, out: *StringBuilder, elem: *const Typ, base: int, base_sym: str, offset: int) {
@@ -893,7 +893,7 @@ fn emit_ward_addr(a: Allocator, ar: *Arena, out: *StringBuilder, elem: *const Ty
     }
 }
 
-// A top-level rune (RUNE-SPEC §3, Increment 4 Half B): a file-scope
+// A top-level rune: a file-scope
 // `volatile T *const NAME = (volatile T*)ADDR;`.  The `const` on the pointer is
 // stronger than the local form's plain binding — a global register handle is
 // never rebound.  Typecheck restricts the base to an integer, so the value is
@@ -929,8 +929,8 @@ fn index_suffix(bty: *const Typ) -> str {
         | Typ::TPtr(_i) => "["
         | Typ::TOwnPtr(_i) => "["
         | Typ::TConstPtr(_i) => "["
-        // A register-file rune is a `volatile T *`; index it straight (RUNE-SPEC
-        // §6).  Only a register file ever reaches here — typecheck rejects
+        // A register-file rune is a `volatile T *`; index it straight.
+        // Only a register file ever reaches here — typecheck rejects
         // indexing a standalone rune.
         | Typ::TRune { elem, dir } => "["
         | _o => ".data["
@@ -1027,7 +1027,7 @@ fn enum_cname_str(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
     return mangle_typ(a, ar, ty_node(ar, Typ::TEnum(copy_strs_cg(a, path))));
 }
 
-// `malloc(sizeof(<cname>))` or the DR-046 seam alloc `((<cname> *)(ae.alloc_fn)(ae.state, ((unsigned long)sizeof(<cname>))))`.
+// `malloc(sizeof(<cname>))` or the seam alloc `((<cname> *)(ae.alloc_fn)(ae.state, ((unsigned long)sizeof(<cname>))))`.
 fn emit_alloc_rhs(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, cname: str, alloc: Option<*const Texpr>) {
     match alloc {
         Option::None => { out.push_str("malloc(sizeof("); out.push_str(cname); out.push_str("))"); }
@@ -1932,7 +1932,7 @@ pub fn gen_block(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg:
             // The seal's body already carries its token binding and the `defer`
             // that restores it, so this opens a C scope and hands the body to
             // gen_block — every exit path is served by the defer machinery, and
-            // seal contributes no exit code of its own (SEAL-SPEC §3.1).
+            // seal contributes no exit code of its own.
             | Tstmt::TSeal { body, pos } => {
                 out.push_str(indent); out.push_str("{\n");
                 gen_block(a, ar, out, cg_indent(a, ar, indent), cg, &chain, &body);
@@ -2021,7 +2021,7 @@ fn fn_concrete(tf: *const Tfunc) -> bool {
 // (Full gen_program — includes / fwd-decls / DCE / ordering — is stage g; this
 // reaches gen_function so the match emitter's mono instances are generated and
 // the c/d/e/f emission is diffable per function.)
-// ===== DR-035 dead-prelude elision =====
+// ===== Dead-prelude elision =====
 //
 // A prelude-positioned fn nobody references is not emitted.  The port
 // materializes the prelude on demand, so the only such fns are synthesized trait

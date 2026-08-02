@@ -321,8 +321,8 @@ struct StructTP {
 // Item = int }` records (Count, Item) -> int.  `ab_tparams` are the impl's
 // type parameters (for a generic `type Item = T`, projected through the
 // concrete instance's args).
-// A captureless lambda lifted to a top-level fn at elaboration time (DR-008
-// A1).  Recorded when the `Expr::Lambda` is elaborated; drained into the fn
+// A captureless lambda lifted to a top-level fn at elaboration time.
+// Recorded when the `Expr::Lambda` is elaborated; drained into the fn
 // list after the user functions, so it follows `main` like the oracle's.
 struct LiftedLambda {
     ll_mangled: str,
@@ -336,7 +336,7 @@ struct LiftedLambda {
     ll_params: Vec<FieldDef>,  // A2: the lambda's own params (call gets self + these)
     ll_ret: Option<*const TypeAnn>,
     ll_caps: Vec<str>,         // A2: captured names, in struct-field order
-    ll_brefs: Vec<str>,        // A2: subset of ll_caps captured by-ref (`[&name]`, DR-033)
+    ll_brefs: Vec<str>,        // subset of ll_caps captured by-ref (`[&name]`)
     ll_lambda: *const Expr,    // A2: the original `Lambda` node, matched at elab time
 }
 struct AssocBind {
@@ -348,7 +348,7 @@ struct AssocBind {
     ab_tparams: Vec<str>,
 }
 
-// A top-level `rune` declaration (RUNE-SPEC §3, Increment 4 Half B), gathered
+// A top-level `rune` declaration, gathered
 // raw — the elem is resolved lazily at each function's benv init (build_param_env),
 // where the full scope is available, so the collection needs no resolution.
 struct TopRune {
@@ -358,12 +358,12 @@ struct TopRune {
     tr_dir: Direction,
     tr_pos: Pos,
     // The module the rune was DECLARED in — its materialisation site
-    // (SIGIL-SPEC §4.2 correction A).  Joined path, Copy-only.
+    // materialisation gate.  Joined path, Copy-only.
     tr_modpath: str,
 }
 
 // A `ward` overlay field, registered FLAT (one row per field, keyed by the ward
-// type name) for field-access resolution (WARD-SPEC §3, Phase 2).  Every field is
+// type name) for field-access resolution.  Every field is
 // Copy (str / pointers / Direction), so the registry is copy-safe — a nested
 // owned `Vec` would be auto-dropped on copy and free the shared backing.
 struct WardFieldEntry {
@@ -375,7 +375,7 @@ struct WardFieldEntry {
     wfe_pos: Pos,
 }
 
-// One byte range of a declared resource (SIGIL-SPEC §4.1), folded to integers,
+// One byte range of a declared resource, folded to integers,
 // with the module path the `sigil` was declared in.  Flat + Copy-only (the
 // copy-drop lesson): one row per range, never a nested owned Vec.
 struct SigilRangeEntry {
@@ -385,7 +385,7 @@ struct SigilRangeEntry {
     sr_pos: Pos,
 }
 
-// A claim `own Name;` (SIGIL-SPEC §4.3): the resource and the module that owns
+// A claim `own Name;`: the resource and the module that owns
 // it.  Owner scope is that module PLUS its descendants (prefix match).
 // COPY-ONLY row: the owner module is the JOINED path ("gfx", "a::b", "" = root),
 // never a nested owned Vec — a by-value read of a row with an owned Vec frees the
@@ -396,7 +396,7 @@ struct ClaimEntry {
     cl_pos: Pos,
 }
 
-// A TOP-LEVEL ward instance (WARD-SPEC §3, Increment 4), gathered raw — resolved
+// A TOP-LEVEL ward instance, gathered raw — resolved
 // to a `TWard` benv binding at each function's benv init (like a top-level rune).
 struct TopWardInst {
     twi_name: str,
@@ -412,7 +412,7 @@ struct TyScope {
     sc_wards: *const Vec<WardFieldEntry>,
     // Top-level ward instances, prepended to every function's benv (like sc_runes).
     sc_wardinsts: *const Vec<TopWardInst>,
-    // Declared resource ranges + their claims (SIGIL-SPEC §4): the coverage map
+    // Declared resource ranges + their claims: the coverage map
     // the materialisation gate consults.
     sc_sigils: *const Vec<SigilRangeEntry>,
     sc_claims: *const Vec<ClaimEntry>,
@@ -1394,12 +1394,12 @@ fn prelude_struct_tparams(name: str, out: *Vec<str>) {
     if str::eq(name, "RangeInclusive") { out.push("T"); }
     if str::eq(name, "Vec") { out.push("T"); }
     if str::eq(name, "VecIter") { out.push("T"); }
-    // DR-026 lazy iterator adapters.
+    // Lazy iterator adapters.
     if str::eq(name, "Map") { out.push("I"); out.push("F"); }
     if str::eq(name, "Filter") { out.push("I"); out.push("P"); }
     if str::eq(name, "Take") { out.push("I"); }
     if str::eq(name, "Enumerate") { out.push("I"); }
-    // DR-007 HashMap open-addressing table.
+    // The HashMap open-addressing table.
     if str::eq(name, "HashMap") { out.push("K"); out.push("V"); }
     if str::eq(name, "Slot") { out.push("K"); out.push("V"); }
     if str::eq(name, "HashMapIter") { out.push("K"); out.push("V"); }
@@ -1651,7 +1651,7 @@ struct GlobalFn {
 
 // A free / module fn's resolved parameter types, keyed by C symbol — read at a
 // call site to coerce an `own *T` argument to a `*T` / `*const T` parameter
-// (DR-030 borrow): the owner is passed by borrow, not consumed.
+// (an own-borrow): the owner is passed by borrow, not consumed.
 struct FnSig {
     fs_mangled: str,
     fs_params: Vec<*const Typ>,
@@ -1740,7 +1740,7 @@ fn elab_var(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
         | Option::None => elab_var_global(a, ar, g, sc, name, p)
     };
 }
-// W5 (I-W1): a ward instance is an OVERLAY, not a value.  A fixed-base instance
+// W5: a ward instance is an OVERLAY, not a value.  A fixed-base instance
 // has zero runtime storage, so there is nothing to copy, point at, or pass — a
 // ward var resolves ONLY as the target of a field access (which looks it up in the
 // benv directly, never through here).  Reaching this with a ward type means the
@@ -2707,14 +2707,14 @@ fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
     return te_node(ar, TexprNode::TCall { mangled: gf.gf_emit, args: targs }, ty, p);
 }
 
-// SEAL-SPEC T2/T3 (§5.1): the seam of a guaranteed construct is reachable only
+// The seam of a guaranteed construct is reachable only
 // through that construct's lowering.  Reached by hand the token discipline is
 // defeated — a bare exit is a naked Enable(), a bare enter never restores.  This
 // sees USER syntax only: the desugar builds its calls as IR directly.
 fn is_seal_seam(mangled: str) -> bool {
     return str::eq(mangled, "sys__sys_seal_enter") || str::eq(mangled, "sys__sys_seal_exit");
 }
-// SEAL-SPEC T4: the same property reached without naming `sys` — a raw extern
+// The same property reached without naming `sys` — a raw extern
 // binds the identical C symbol.  The test is on the EMITTED symbol, not on the
 // source name: a plain `fn sys_seal_exit` mangles away and collides with nothing.
 fn seal_seam_decl_guard(a: Allocator, ar: *Arena, sc: *const TyScope, emit: str, p: Pos) {
@@ -3433,7 +3433,7 @@ fn str_fn_disp(m: str) -> str {
 }
 
 // `println(x)` / `print(x)` where `x`'s type implements `Display` (its
-// path carries an `fmt` method) lowers to the writer pattern (DR-002):
+// path carries an `fmt` method) lowers to the writer pattern:
 // a temp StringBuilder renders `x` through `fmt`, a String is built, its
 // `as_str()` printed, and the String freed.  Without this the print
 // builtin only accepts scalars — Display is the user-facing surface for
@@ -3697,7 +3697,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         return te_node(ar, TexprNode::TBuiltinCall { name: name, args: fr_args }, t_i32(ar), p);
     }
     if env_is_fnptr(env, name) { return mk_fnptr_call(a, ar, g, sc, env, name, args, p); }
-    // DR-018 call-desugar: `f(x)` on a local binding whose type implements an
+    // Call-desugar: `f(x)` on a local binding whose type implements an
     // `FnN` trait (it has a `call` method) lowers to `f.call(x)`.
     if env_has_call_method(a, sc, env, name) {
         return elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::Var(name, p)), "call", args, p);
@@ -4060,7 +4060,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     return te_node(ar, TexprNode::TCall { mangled: inst, args: cargs }, ret_or_void(ar, iret), p);
 }
 
-// DR-019 FieldAccess call-desugar: `recv.f(args)` where `f` is a field (not a
+// Field-access call-desugar: `recv.f(args)` where `f` is a field (not a
 // method) whose type implements an FnN trait lowers to `(recv.f).call(args)`.
 fn field_call_desugar(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                       expected: Option<*const Typ>, recv: *const Expr, trecv: *const Texpr, name: str, args: *const Vec<*const Expr>, p: Pos) -> Option<*const Texpr> {
@@ -4151,7 +4151,7 @@ fn prim_builtin_method(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     }
     let targ = elab_expr(a, ar, g, sc, env, none_ty(), args.as_slice()[0 as u32]);
     if is_string_ty(trecv.ty) {
-        // DR-007: `str.eq(other)` content-compares (HashMap<str, _> keys), the
+        // `str.eq(other)` content-compares (HashMap<str, _> keys), the
         // same path the `==` operator takes.
         let mut eargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
         eargs.push(trecv);
@@ -5377,7 +5377,7 @@ fn emit_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     return te_node(ar, TexprNode::TMatch { scrutinee: tscrut, ename_path: epath, arms: tarms }, mty, p);
 }
 
-// A name with a global fn of that name is a DR-009 view (the view fn shares
+// A name with a global fn of that name is a view (the view fn shares
 // the choice enum's name); used to drive the match-site scrutinee rewrite.
 fn global_is_view(g: *const Vec<GlobalFn>, vn: str) -> bool {
     return match global_lookup(g, vn) { Option::Some(gf) => true | Option::None => false };
@@ -5418,7 +5418,7 @@ fn wrap_view_call(a: Allocator, ar: *Arena, vt: str, scrutinee: *const Expr, p: 
 fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
               expected: Option<*const Typ>, scrutinee: *const Expr, arms: *const Vec<MatchArm>, p: Pos) -> *const Texpr {
     let tscrut0 = elab_expr(a, ar, g, sc, env, none_ty(), scrutinee);
-    // DR-009: arms naming `View::Case` wrap the scrutinee in `View(scrutinee)`
+    // Arms naming `View::Case` wrap the scrutinee in `View(scrutinee)`
     // (the view-fn call) unless it is already that choice enum.
     let vt = view_target(g, arms);
     let tscrut = if !str::eq(vt, "") && !ty_is_enum_named(tscrut0.ty, vt) {
@@ -5875,7 +5875,7 @@ fn subst_body(a: Allocator, ar: *Arena, from: str, to: str, body: *const Vec<Stm
 fn is_ward_ty(t: *const Typ) -> bool {
     return match *t { Typ::TWard { path, base, base_sym } => true | _o => false };
 }
-// `w.f` on a ward instance extracts the field as a `rune<T>` at base+offset (§6).
+// `w.f` on a ward instance extracts the field as a `rune<T>` at base+offset.
 fn ward_field_from_type(a: Allocator, ar: *Arena, sc: *const TyScope, wty: *const Typ, field: str, p: Pos) -> *const Texpr {
     return match *wty {
         Typ::TWard { path, base, base_sym } => ward_field_rune(a, ar, sc, path_last(&path), base, base_sym, field, p)
@@ -5895,7 +5895,7 @@ fn ward_var_ty(benv: *const Vec<FieldTy>, e: *const Expr) -> Option<*const Typ> 
     };
 }
 // A ward instance's field is resolved from the benv WITHOUT elaborating the
-// instance as a value (I-W1 — it has no value form; using one is W5).
+// instance as a value (it has no value form; using one is W5).
 fn elab_field_access(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                      env: *const Vec<FieldTy>, target: *const Expr, field: str, p: Pos) -> *const Texpr {
     return match ward_var_ty(env, target) {
@@ -6524,7 +6524,7 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     return te_node(ar, TexprNode::TStructLit { sname_path: ipath, fields: tfields, base: tbase }, sty, p);
 }
 
-// `new(alloc) ...` heap-allocates and yields `own *T` (DR-030/031).  The
+// `new(alloc) ...` heap-allocates and yields `own *T`.  The
 // allocator expression elaborates like any value (its type is Allocator).
 
 fn elab_alloc_opt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
@@ -6574,7 +6574,7 @@ fn elab_new_enum(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
 fn elab_ref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
             env: *const Vec<FieldTy>, sub: *const Expr, p: Pos) -> *const Texpr {
     let ts = elab_expr(a, ar, g, sc, env, none_ty(), sub);
-    // R5 (I-R3): a rune is foreign — never the target of `&`.  `&r` would hand out
+    // R5: a rune is foreign — never the target of `&`.  `&r` would hand out
     // a pointer INTO the rune handle, an ordinary-pointer view the model forbids.
     if is_rune_ty(ts.ty) {
         tc_fail(ar, sc, p, "a rune is not an ordinary pointer; it cannot be the target of `&` (use .read() / .write())");
@@ -6783,7 +6783,7 @@ fn rune_elem_ty(t: *const Typ) -> *const Typ {
 fn is_rune_ty(t: *const Typ) -> bool {
     return match *t { Typ::TRune { elem, dir } => true | _o => false };
 }
-// The direction sigil of a rune (RUNE-SPEC I-R2); readwrite when not a rune.
+// The direction sigil of a rune; readwrite when not a rune.
 fn rune_dir(t: *const Typ) -> Direction {
     return match *t { Typ::TRune { elem, dir } => dir | _o => Direction::DReadWrite };
 }
@@ -6793,7 +6793,7 @@ fn dir_can_read(d: Direction) -> bool {
 fn dir_can_write(d: Direction) -> bool {
     return match d { Direction::DWrite => true | Direction::DReadWrite => true | Direction::DRead => false };
 }
-// R7 (I-R1): a rune access is fixed to its declared width, so a write value must
+// R7: a rune access is fixed to its declared width, so a write value must
 // match the register scalar exactly — a too-wide literal or a wider-typed value
 // would truncate SILENTLY into a hardware register (`*r = 70000` on a `u16` rune).
 // A plain `let x: u16 = 70000` is already rejected; the rune write must be too.
@@ -6820,7 +6820,7 @@ fn check_rune_value(a: Allocator, ar: *Arena, sc: *const TyScope, arg: *const Ex
         tc_fail(ar, sc, p, rune_value_msg(a, ar, arg, vty, elem));
     }
 }
-// A rune method used as an EXPRESSION (RUNE-SPEC §6).  `.read()` is a volatile
+// A rune method used as an EXPRESSION.  `.read()` is a volatile
 // load `*p : T`, gated by direction (R2); `.write` is a statement, so seeing it
 // here is a misuse — the direction gate (R1) still runs, then a clear diagnostic.
 fn elab_rune_method_expr(a: Allocator, ar: *Arena, sc: *const TyScope, trecv: *const Texpr,
@@ -6869,7 +6869,7 @@ fn is_ward_field_access(benv: *const Vec<FieldTy>, e: *const Expr) -> bool {
         | _o => false
     };
 }
-// `rune.write(v)` (RUNE-SPEC §6) lowers to a volatile store `*rune = v`: a
+// `rune.write(v)` lowers to a volatile store `*rune = v`: a
 // `TAssignDeref` through the rune's `volatile T *` value.  The receiver is
 // elaborated exactly once (the caller already proved it is a rune var).
 fn elab_rune_write(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
@@ -6891,7 +6891,7 @@ fn elab_rune_write(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     check_rune_value(a, ar, sc, arg0, vad.ty, elem, p);
     return Tstmt::TAssignDeref { target: trecv, value: vad, pos: p };
 }
-// `rune.strobe()` (RUNE-SPEC §3) is sugar for `write(0)` on a write-capable rune:
+// `rune.strobe()` is sugar for `write(0)` on a write-capable rune:
 // the WRITE is the act — starting a copper — and the value is irrelevant.  Same
 // store as a write of 0 (a `TAssignDeref` of a zero), gated by direction (it
 // shares R1 with `.write`).  Takes no arguments.
@@ -6911,12 +6911,12 @@ fn elab_rune_strobe(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let zero = te_node(ar, TexprNode::TIntLit(0 as int), elem, p);
     return Tstmt::TAssignDeref { target: trecv, value: zero, pos: p };
 }
-// ===== Register file: `color[i].write/read/strobe` (RUNE-SPEC §6, I-R4) =====
+// ===== Register file: `color[i].write/read/strobe` =====
 //
 // A register-file rune is a `TRune` whose element is an ARRAY (`[T; N]`); the
 // receiver of the access is `Index{rune-file-var, i}`.  `.write`/`.strobe` are
 // stores (`color[i] = v/0`), `.read` a load (`color[i]`).  A static index is
-// checked against the extent (I-R4/R4); a runtime index is NOT bounds-checked
+// checked against the extent (R4); a runtime index is NOT bounds-checked
 // (the performance compass — consistent with the raw `[T; N]` index model).
 
 fn is_array_ty(t: *const Typ) -> bool {
@@ -6971,7 +6971,7 @@ fn ix_base(e: *const Expr) -> *const Expr {
 fn ix_index(e: *const Expr) -> *const Expr {
     return match *e { Expr::Index { base, index } => index | _o => e };
 }
-// I-R4/R4: a STATIC (literal) index >= the extent is a compile error; a runtime
+// R4: a STATIC (literal) index >= the extent is a compile error; a runtime
 // index is left unchecked.  (`-5` parses as `Neg(IntLit)`, not `IntLit`, so it
 // is treated as runtime here — negative-constant folding is not v1's concern.)
 fn rune_check_lit_index(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, extent: int, p: Pos) {
@@ -7056,7 +7056,7 @@ fn elab_rune_reg_method_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
 }
 
 // Statement-position method call: a rune `.write` / `.strobe` becomes a volatile
-// store (RUNE-SPEC §6/§3); everything else is an ordinary expression statement.
+// store; everything else is an ordinary expression statement.
 // Shared by both statement-body walkers so the rune interception lives in one
 // place.  The rune check is a PURE benv lookup, computed once.
 fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
@@ -7066,7 +7066,7 @@ fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     if is_rune && str::eq(name, "write") { return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_rune && str::eq(name, "strobe") { return elab_rune_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     // `w.f.write/strobe` on a ward field: the receiver `w.f` elaborates to a rune
-    // (base+offset), so the rune store path handles it unchanged (I-W3).
+    // (base+offset), so the rune store path handles it unchanged.
     let is_wardf = is_ward_field_access(env, receiver);
     if is_wardf && str::eq(name, "write") { return elab_rune_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_wardf && str::eq(name, "strobe") { return elab_rune_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
@@ -7086,19 +7086,19 @@ fn elab_block_expr_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
             out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
         }
         // A rune `.write` in statement position lowers to a volatile store, not a
-        // method call (RUNE-SPEC §6); everything else stays an expr statement.
+        // method call; everything else stays an expr statement.
         | Expr::MethodCall { receiver, name, args } => {
             out.push(elab_stmt_methodcall(a, ar, g, sc, benv, receiver, name, &args, e));
         }
         | _other => { out.push(Tstmt::TExprStmt(elab_expr(a, ar, g, sc, benv, none_ty(), e))); }
     }
 }
-// `rune name: T at ADDR dir` (RUNE-SPEC §3) elaborates to a `volatile T *`
+// `rune name: T at ADDR dir` elaborates to a `volatile T *`
 // binding.  The name is registered as a `TRune` value and lowered to a `TLet`
 // whose value is the folded base address (`TRuneAddr`).  Reusing `TLet` means
 // the hoist pass declares `volatile T *name;` and the assignment materialises
 // the address, exactly like an ordinary local — the address lives in the
-// emitted pointer value, so a rune is a first-class value (I-R3).
+// emitted pointer value, so a rune is a first-class value.
 fn elab_rune_decl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, benv: *Vec<FieldTy>,
                   name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction,
                   pos: Pos, out: *Vec<Tstmt>) {
@@ -7109,7 +7109,7 @@ fn elab_rune_decl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     benv.push(FieldTy { name: name, ty: rune_ty });
     out.push(Tstmt::TLet { name: name, value: value, decl_ty: rune_ty, pos: pos });
 }
-// The rune's value = its base address as a `volatile T *` (RUNE-SPEC §2, R3).
+// The rune's value = its base address as a `volatile T *` (R3).
 // Two compile-time-constant forms: an integer literal → `(volatile T*)NUL`, or
 // the address of a GLOBAL → `(volatile T*)&NAME`.  A global's address is
 // link-time-fixed and static-lifetime, so it never dangles — exactly like an
@@ -7124,10 +7124,9 @@ fn rune_base_value_ungated(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc
     };
 }
 // `&NAME` base: only a GLOBAL is a compile-time constant — a `&local` would be a
-// stack address (runtime, and dangling once the fn returns), which R3/I-R3
+// stack address (runtime, and dangling once the fn returns), which R3
 // forbid.  Elaborate `&NAME` (checks it exists) and cast to the rune's pointer.
-// A rune materialised at an integer base passes the sigil gate first (SIGIL-SPEC
-// §4.2): the span is the pointee's width, or N·sizeof(T) for a register file.
+// A rune materialised at an integer base passes the sigil gate first: the span is the pointee's width, or N·sizeof(T) for a register file.
 fn rune_addr_gated(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, elem_ann: *const TypeAnn,
                    rune_ty: *const Typ, pos: Pos) -> *const Texpr {
     sigil_gate(a, ar, sc, n, rune_span_of(rune_ty), pos);
@@ -7486,7 +7485,7 @@ fn is_assignable_index_base(sc: *const TyScope, t: *const Typ) -> bool {
         | Option::None => false
     };
 }
-// `base[lo..hi]` / `base[lo..=hi]` (DR-011) builds a read-only `Slice<T>` view:
+// `base[lo..hi]` / `base[lo..=hi]` builds a read-only `Slice<T>` view:
 // `{ ptr: &base[lo], len: (hi - lo [+ 1]) as u32 }`.
 fn add_one(ar: *Arena, e: *const Texpr, bty: *const Typ, p: Pos) -> *const Texpr {
     let one = te_node(ar, TexprNode::TIntLit(1 as int), bty, p);
@@ -7593,7 +7592,7 @@ fn slice_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
     };
 }
 // `Vec<T>` indexing: element type from the mono'd `ptr : own *T` field.
-// Enables `v[i]` and `with x in v[i]` (DR-012 projection over a Vec).
+// Enables `v[i]` and `with x in v[i]` (scoped projection over a Vec).
 fn vec_elem_ty(sc: *const TyScope, t: *const Typ) -> Option<*const Typ> {
     if !is_vec_instance(t) { return none_ty(); }
     return match struct_field_ty(sc, t, "ptr") {
@@ -7828,7 +7827,7 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     };
 }
 
-// ===== A2 capturing closures (DR-024 / DR-033) =====
+// ===== Capturing closures =====
 //
 // A lambda referencing an outer binding can't decay to a bare C function
 // pointer — the referenced value has to travel with it.  Mirroring the
@@ -8112,10 +8111,10 @@ fn elab_closure_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let nb: Option<*const Expr> = Option::None;
     return elab_struct_lit(a, ar, g, sc, env, &tname, &fields, nb, p);
 }
-// DR-008 A1: a captureless lambda is lifted to a fresh top-level fn
+// A captureless lambda is lifted to a fresh top-level fn
 // `__lambda_N` (drained after the user fns), and the expression becomes a
 // `TFnRef` to it — decaying to a C function pointer at the use site.
-// DR-024 A2: a capturing lambda was already synthesised by the pre-pass —
+// A capturing lambda was already synthesised by the pre-pass —
 // `find_closure_idx` routes it to the env struct-literal.
 fn elab_lambda(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>, e: *const Expr, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, p: Pos) -> *const Texpr {
     let ci = find_closure_idx(sc.sc_lifted, e);
@@ -8481,7 +8480,7 @@ fn elab_else_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     };
 }
 
-// ===== `with` scoped projection (DR-012) =====
+// ===== `with` scoped projection =====
 //
 // `with x in <lvalue> { body }` desugars to a block `{ let x__withN =
 // &<lvalue>; body }` where the user-visible `x` is renamed to the gensym
@@ -8551,7 +8550,7 @@ fn elab_stmt_pos(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
             out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
         }
         // A rune `.write` in statement position lowers to a volatile store, not a
-        // method call (RUNE-SPEC §6); everything else stays an expr statement.
+        // method call; everything else stays an expr statement.
         | Expr::MethodCall { receiver, name, args } => {
             out.push(elab_stmt_methodcall(a, ar, g, sc, env, receiver, name, &args, e));
         }
@@ -9377,7 +9376,7 @@ fn elab_stmt_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
 }
 
 // Top-level runes are visible in every function: prepend them to the benv (a
-// register map shared across functions — RUNE-SPEC §3, Increment 4 Half B).
+// register map shared across functions).
 // Prepended BEFORE params so a param of the same name shadows the global rune.
 // The elem is resolved here, where the full scope is available.
 fn prepend_top_runes(a: Allocator, ar: *Arena, sc: *const TyScope, env: *Vec<FieldTy>) {
@@ -9410,7 +9409,7 @@ fn build_rune_globals(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
         }
         let elem_ty = resolve_sig_ty(a, ar, sc, sl[i].tr_elem, sl[i].tr_pos);
         let rune_ty = ty_node(ar, Typ::TRune { elem: elem_ty, dir: sl[i].tr_dir });
-        // Gate the DECLARATION against the module that wrote it (correction A):
+        // Gate the DECLARATION against the module that wrote it:
         // a top-level rune materialises here, once, not at each function that
         // inherits it through the benv.
         sigil_gate_in(a, ar, sc, sl[i].tr_modpath, addr_int_or_zero(sl[i].tr_addr), rune_span_of(rune_ty), sl[i].tr_pos);
@@ -9422,7 +9421,7 @@ fn build_rune_globals(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
 fn rune_addr_is_int(e: *const Expr) -> bool {
     return match *e { Expr::IntLit(n, _p) => true | _o => false };
 }
-// ===== Ward overlay: types, instances, field access (WARD-SPEC, Phase 2) =====
+// ===== Ward overlay: types, instances, field access =====
 
 fn push_ward_fields(wname: str, fields: *const Vec<WardField>, out: *Vec<WardFieldEntry>) {
     let sl = fields.as_slice();
@@ -9445,7 +9444,7 @@ fn collect_ward_types(items: *const Vec<Item>, out: *Vec<WardFieldEntry>) {
     let mut i = 0 as u32;
     while i < n { collect_ward_one(&sl[i], out); i = i + 1 as u32; }
 }
-// The byte size of a ward field's element (I-W2 range formula): a scalar's width,
+// The byte size of a ward field's element: a scalar's width,
 // or `N·sizeof(T)` for a register-file field.  Fixed int widths are exact; the
 // c_* family uses its common 68k/host size (a ward field is normally a fixed
 // hardware-register width, not a c_int).
@@ -9464,7 +9463,7 @@ fn ward_field_size(elem: *const Typ) -> int {
         | _o => 4 as int
     };
 }
-// I-W2 (disjoint layout): no two fields of one ward overlap.  Ranges are
+// Disjoint layout: no two fields of one ward overlap.  Ranges are
 // `[offset, offset + size)`; the diagnostic names BOTH colliding fields.  Runs
 // before `err_latched`, so it is a clean diagnostic, never an ICE (the R3b lesson).
 fn ward_overlap_msg(a: Allocator, ar: *Arena, wname: str, an: str, ao: int, asz: int, bn: str, bo: int, bsz: int) -> str {
@@ -9509,7 +9508,7 @@ fn ward_base_int(ar: *Arena, sc: *const TyScope, addr: *const Expr, p: Pos) -> i
         | _o => 0 as int
     };
 }
-// A ward instance base inherits rune's forms (axis 1): an integer (MMIO) or
+// A ward instance base inherits rune's forms: an integer (MMIO) or
 // `&GLOBAL` (RAM).  Returns the global symbol for `&NAME`, "" for an integer.  A
 // `&local` would dangle (zero-lifetime overlay onto a stack frame) — rejected.
 fn ward_base_sym(ar: *Arena, sc: *const TyScope, benv: *const Vec<FieldTy>, addr: *const Expr, p: Pos) -> str {
@@ -9556,9 +9555,9 @@ fn ward_offset_int(ar: *Arena, sc: *const TyScope, off: *const Expr, p: Pos) -> 
         | _o => { tc_fail(ar, sc, p, "a ward field offset must be a compile-time integer"); 0 as int }
     };
 }
-// `w.f` (WARD-SPEC §6): extract field `fname` of ward type `wname` (base `wbase`)
+// `w.f`: extract field `fname` of ward type `wname` (base `wbase`)
 // as a `rune<T>` at `base + offset` — the ward composes rune, so the extracted
-// value inherits every rune rule (I-W3).
+// value inherits every rune rule.
 fn ward_field_rune(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str, wbase: int, wsym: str, fname: str, p: Pos) -> *const Texpr {
     let sl = sc.sc_wards.as_slice();
     let mut i = 0 as u32;
@@ -9568,7 +9567,7 @@ fn ward_field_rune(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str, wba
             let foff = ward_offset_int(ar, sc, sl[i].wfe_offset, p);
             let rune_ty = ty_node(ar, Typ::TRune { elem: felem, dir: sl[i].wfe_dir });
             let scalar = rune_ptr_pointee(felem);
-            // The other materialisation site (SIGIL-SPEC §4.2).  Only an integer
+            // The other materialisation site.  Only an integer
             // base has a static address; a `&GLOBAL` ward base is outside coverage.
             if str::eq(wsym, "") { sigil_gate(a, ar, sc, wbase + foff, ward_field_size(felem), p); }
             return te_node(ar, TexprNode::TWardAddr { elem: scalar, base: wbase, base_sym: wsym, offset: foff }, rune_ty, p);
@@ -9580,7 +9579,7 @@ fn ward_field_rune(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str, wba
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return defer_expr(ar, p);
 }
-// `ward name: Type at ADDR;` — bind a zero-storage instance in the benv (I-W1).
+// `ward name: Type at ADDR;` — bind a zero-storage instance in the benv.
 fn elab_ward_inst(a: Allocator, ar: *Arena, sc: *const TyScope, benv: *Vec<FieldTy>,
                   name: str, ward_ty: str, addr: *const Expr, pos: Pos) {
     if !ward_type_exists(sc, ward_ty) {
@@ -9595,7 +9594,7 @@ fn elab_ward_inst(a: Allocator, ar: *Arena, sc: *const TyScope, benv: *Vec<Field
     benv.push(FieldTy { name: name, ty: ty_node(ar, Typ::TWard { path: path, base: base, base_sym: bsym }) });
 }
 
-// ===== seal: a masked region, lowered onto `defer` (SEAL-SPEC §3.1) =====
+// ===== seal: a masked region, lowered onto `defer` =====
 //
 // The desugar is the whole implementation: the region's body BEGINS with the seam
 // token binding and the `defer` that restores it, so every exit path — fall-through,
@@ -9639,7 +9638,7 @@ fn seal_prologue(a: Allocator, ar: *Arena, tok: str, p: Pos, out: *Vec<Tstmt>) {
     out.push(Tstmt::TDefer { body: dbody, pos: p });
 }
 
-// ===== sigil: resource coverage + the materialisation gate (SIGIL-SPEC §4) =====
+// ===== sigil: resource coverage + the materialisation gate =====
 
 fn sigil_addr_int(ar: *Arena, sc: *const TyScope, e: *const Expr, p: Pos) -> int {
     return match *e {
@@ -9670,7 +9669,7 @@ fn collect_sigil_one(ar: *Arena, sc: *const TyScope, it: *const Item, out: *Vec<
         | _e => { }
     }
 }
-// S5 (I-S4): a range must describe real bytes.  `lo == hi` covers nothing and
+// S5: a range must describe real bytes.  `lo == hi` covers nothing and
 // `hi < lo` is inverted — both are typos that would silently disable coverage,
 // which is the worst failure mode for a gate.  Checked per range, so one bad
 // entry in a LIST is caught even when its siblings are fine.
@@ -9684,7 +9683,7 @@ fn check_sigil_range_sane(ar: *Arena, sc: *const TyScope, name: str, lo: int, hi
     if hi < lo { sb.push_str(" — the high bound is below the low"); }
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
 }
-// S1 (I-S1): exactly one claimant per resource.  Reported at the SECOND claim and
+// S1: exactly one claimant per resource.  Reported at the SECOND claim and
 // naming BOTH claimants, so the diagnostic is the same fact whichever module the
 // file happens to list first.
 fn check_claim_uniqueness(a: Allocator, ar: *Arena, sc: *const TyScope) {
@@ -9711,11 +9710,11 @@ fn owner_display(p: str) -> str {
     if str::eq(p, "") { return "<root>"; }
     return p;
 }
-// S3 (I-S4): two RESOURCES may not cover overlapping bytes — the mirror of ward's
+// S3: two RESOURCES may not cover overlapping bytes — the mirror of ward's
 // W1, naming both objects and both ranges.  The registry is FLAT (one row per
 // range), so this walks every PAIR of ranges: a collision between the second range
 // of one non-contiguous resource and the first of another is caught like any
-// other.  Same-resource pairs are skipped (I-S4 is about two resources).
+// other.  Same-resource pairs are skipped (the rule is about two resources).
 fn check_sigil_overlaps(a: Allocator, ar: *Arena, sc: *const TyScope) {
     let sl = sc.sc_sigils.as_slice();
     let n = sc.sc_sigils.length();
@@ -9763,7 +9762,7 @@ fn mod_path_join(a: Allocator, ar: *Arena, path: str, name: str) -> str {
     return str::from_slice(ar, sb.as_slice());
 }
 // Is the CURRENT module inside the owner's scope (the owner module or a
-// descendant)?  Root ("") owns everything below it — the §4.3 tautology.
+// descendant)?  Root ("") owns everything below it — the tautology of an empty prefix.
 fn mod_within(owner: str, cur: str) -> bool {
     if str::eq(owner, "") { return true; }
     if str::eq(cur, owner) { return true; }
@@ -9802,9 +9801,9 @@ fn claim_path_of(sc: *const TyScope, name: str) -> int {
     while i < sc.sc_claims.length() { if str::eq(sl[i].cl_name, name) { return i as int; } i = i + 1 as u32; }
     return 0 as int - 1 as int;
 }
-// S2 (I-S3): a materialised span `[a, a+span)` intersecting a covered range may
+// S2: a materialised span `[a, a+span)` intersecting a covered range may
 // only be created inside the owner.  INTERSECTION, not base membership — a wide
-// scalar or a register file can enter a range from below (correction B).
+// scalar or a register file can enter a range from below.
 fn sigil_gate(a: Allocator, ar: *Arena, sc: *const TyScope, addr: int, span: int, p: Pos) {
     sigil_gate_in(a, ar, sc, path_join_or_root(a, ar, sc.sc_modpath), addr, span, p);
 }
@@ -9851,9 +9850,9 @@ fn push_hex_upper(sb: *StringBuilder, n: int) {
     while k > 0 as u32 { k = k - 1 as u32; sb.push_byte(digits[k]); }
 }
 
-// Top-level ward instances (WARD-SPEC §3, Increment 4): gathered raw, then bound
+// Top-level ward instances: gathered raw, then bound
 // into every function's benv (like top-level runes) — zero storage, so no
-// emission; the base folds into each field access per use-site (I-W1).
+// emission; the base folds into each field access per use-site.
 fn collect_top_ward_insts(items: *const Vec<Item>, out: *Vec<TopWardInst>) {
     let n = items.length();
     let sl = items.as_slice();
@@ -11452,7 +11451,7 @@ fn prelude_struct_info(a: Allocator, ar: *Arena, out: *Vec<StructField>) {
     push_prelude_field(a, "VecIter", "pos", t_u32(ar), out);
     // Allocator seam fields — needed by the synthesised `<Struct>__drop`
     // bodies, which call `self.alloc.free_fn(self.alloc.state, ..)` directly
-    // (DR-030 drop synthesis; the only direct field-access on Allocator).
+    // (drop synthesis; the only direct field-access on Allocator).
     let cvoid_ptr = ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid)));
     push_prelude_field(a, "Allocator", "state", cvoid_ptr, out);
     let mut afp: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
@@ -11465,7 +11464,7 @@ fn prelude_struct_info(a: Allocator, ar: *Arena, out: *Vec<StructField>) {
     ffp.push(t_u32(ar));
     let none_fret: Option<*const Typ> = Option::None;
     push_prelude_field(a, "Allocator", "free_fn", ty_node(ar, Typ::TFnPtr { params: ffp, ret: none_fret }), out);
-    // DR-026 lazy iterator adapters: `inner: I` plus the per-adapter state.
+    // Lazy iterator adapters: `inner: I` plus the per-adapter state.
     push_prelude_field(a, "Map", "inner", ty_node(ar, Typ::TVar("I")), out);
     push_prelude_field(a, "Map", "f", ty_node(ar, Typ::TVar("F")), out);
     push_prelude_field(a, "Filter", "inner", ty_node(ar, Typ::TVar("I")), out);
@@ -11474,7 +11473,7 @@ fn prelude_struct_info(a: Allocator, ar: *Arena, out: *Vec<StructField>) {
     push_prelude_field(a, "Take", "remaining", t_u32(ar), out);
     push_prelude_field(a, "Enumerate", "inner", ty_node(ar, Typ::TVar("I")), out);
     push_prelude_field(a, "Enumerate", "idx", t_u32(ar), out);
-    // DR-007 HashMap / Slot<K,V> open-addressing table.
+    // HashMap / Slot<K,V> open-addressing table.
     push_prelude_field(a, "Slot", "state", t_u8(ar), out);
     push_prelude_field(a, "Slot", "hash", t_u32(ar), out);
     push_prelude_field(a, "Slot", "key", ty_node(ar, Typ::TVar("K")), out);
@@ -11896,7 +11895,7 @@ fn one_tparam(a: Allocator) -> Vec<str> {
     return t;
 }
 // A method-generic prelude method with an explicit tparam list and self
-// shape — used by the DR-026 iterator adapter default methods (`.map`,
+// shape — used by the iterator adapter default methods (`.map`,
 // `.take`, ...), which bind the receiver's tparam plus their own from the
 // call site and return an adapter instance.
 fn push_prelude_gen_method(a: Allocator, ar: *Arena, target: str, name: str, tparams: Vec<str>,
@@ -11919,7 +11918,7 @@ fn push_prelude_gen_method(a: Allocator, ar: *Arena, target: str, name: str, tpa
 // An iterator adapter default method on receiver `recv`: binds the receiver's
 // own tparams by field-recovery plus an optional `extra_tp` (the callable's
 // type) from the argument, returning `Adapter<Self, extra_tp?>`.  Models the
-// DR-026 Iterator default methods (`.map`/`.filter`/`.take`/`.enumerate`),
+// Iterator default methods (`.map`/`.filter`/`.take`/`.enumerate`),
 // available on every iterator so chains like `.filter(..).map(..)` compose.
 fn register_adapter(a: Allocator, ar: *Arena, recv: str, method: str, adapter: str,
                     extra_tp: str, arg_ann: Option<*const TypeAnn>, out: *Vec<MethodInfo>) {
@@ -12139,7 +12138,7 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     push_prelude_sg_method(a, ar, "Vec", "iter", true, true, true, Option::Some(ann_app1(a, ar, "VecIter", "T")), no_params(a), out);
     // VecIter<T>: next (*self) -> Option<T>, the iterator protocol `for` lowers to.
     push_prelude_sg_method(a, ar, "VecIter", "next", true, true, false, Option::Some(ann_app1(a, ar, "Option", "T")), no_params(a), out);
-    // DR-026 lazy adapters: `next(*self)` drives the fused `for` loop.  Map
+    // Lazy adapters: `next(*self)` drives the fused `for` loop.  Map
     // yields `F::Output`, Take/Enumerate/Filter pass `I::Item` through
     // (Enumerate as a `(u32, I::Item)` pair).
     push_prelude_sg_method(a, ar, "Map", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_proj(a, ar, "F", "Output"))), no_params(a), out);
@@ -12150,14 +12149,14 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     enum_tup.push(ann_u32(ar));
     enum_tup.push(ann_proj(a, ar, "I", "Item"));
     push_prelude_sg_method(a, ar, "Enumerate", "next", true, true, false, Option::Some(ann_opt_of(a, ar, ann_node(ar, TypeAnn::TyTuple(enum_tup)))), no_params(a), out);
-    // DR-026 Iterator adapter default methods (`.map`/`.filter`/`.take`/
+    // Iterator adapter default methods (`.map`/`.filter`/`.take`/
     // `.enumerate`) on every iterator type so dot-chains compose.
     register_adapters_on(a, ar, "VecIter", out);
     register_adapters_on(a, ar, "Map", out);
     register_adapters_on(a, ar, "Filter", out);
     register_adapters_on(a, ar, "Take", out);
     register_adapters_on(a, ar, "Enumerate", out);
-    // DR-007 HashMap<K,V>: with_capacity(static) / insert / get->Option<V> /
+    // HashMap<K,V>: with_capacity(static) / insert / get->Option<V> /
     // contains->bool / length->u32 / remove / iter->HashMapIter<K,V>; the
     // iterator yields `(K, V)` pairs.
     let hm_none: Option<*const TypeAnn> = Option::None;
@@ -12799,7 +12798,7 @@ fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const 
     let mut free: Vec<str> = Vec::with_capacity(a, 8 as u32);
     fv_expr(a, &pnames, body, &free);
     // Captures = free vars visible in the annotation-scope; by-ref ones come
-    // from the explicit `[&name]` list (DR-033).
+    // from the explicit `[&name]` list.
     let brn = byref_names(a, ecaps);
     check_byref_caps(a, ar, sc, ecaps, scn, &free, expr_pos(lambda));
     let mut cnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -12866,7 +12865,7 @@ fn prepass_expr(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<F
         | _other => {}
     }
 }
-// ===== DR-036/DR-041 mini-inferencer for an untyped `let` RHS =====
+// ===== Mini-inferencer for an untyped `let` RHS =====
 //
 // The capture pre-pass runs BEFORE typecheck, so the only bindings whose type
 // it knows are params and annotated lets.  A free variable outside that scope
@@ -13515,7 +13514,7 @@ fn collect_derives(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const V
     while i < n { collect_derives_item(a, ar, sc, &sl[i], methods, lifted, gsigs); i = i + 1 as u32; }
 }
 
-// ===== DR-030 drop synthesis ===========================================
+// ===== Drop synthesis ==================================================
 // Every struct with an `own *T` field gets a `<Struct>__drop(*self)` that
 // frees each own field through the allocator seam:
 //   self.alloc.free_fn(self.alloc.state, self.<f> as *c_void, size_of(T) as u32)
@@ -13618,7 +13617,7 @@ fn collect_drops(a: Allocator, ar: *Arena, items: *const Vec<Item>, methods: *Ve
     while i < n { collect_drops_item(a, ar, &sl[i], methods, lifted); i = i + 1 as u32; }
 }
 
-// ===== DR-009 active patterns (`view`) =================================
+// ===== Active patterns (`view`) ========================================
 // A `view Name(p: T) -> A | B(U) { body }` desugars to a choice ENUM `Name`
 // plus a FUNCTION `Name(p: T) -> Name` whose body is `body`.  A `match scr {
 // Name::A => .. }` whose scrutinee isn't already the enum is rewritten to
@@ -13874,7 +13873,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
                               is_const: false, is_top: is_top, gf_variadic: f.is_variadic });
         }
         | Item::View(vd) => {
-            // The view fn `Name(p) -> Name` (DR-009); the choice enum shares its name.
+            // The view fn `Name(p) -> Name`; the choice enum shares its name.
             let vm = mangle_path(a, ar, path, vd.vname);
             g.push(GlobalFn { name: vd.vname, mangled: vm, gf_emit: vm,
                               ret: Option::Some(ty_node(ar, Typ::TEnum(single_str(a, vd.vname)))),
@@ -13932,7 +13931,7 @@ fn collect_use(a: Allocator, ar: *Arena, path: *const Vec<str>, is_wildcard: boo
 }
 
 // `mod raw` is the user-facing FFI quarantine; `mod sys` is the compiler-shipped
-// target seam (DR-006), whose extern fns are hand-vetted and target-portable and
+// target seam, whose extern fns are hand-vetted and target-portable and
 // so do not need the gate.  The LAST path segment decides, so a `mod raw` nested
 // anywhere qualifies.
 fn in_raw_module(path: *const Vec<str>) -> bool {
@@ -13976,7 +13975,7 @@ fn collect_globals(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const V
     return g;
 }
 
-// An extern `sys` seam fn (DR-032): module-internal (reachable solely via
+// An extern `sys` seam fn: module-internal (reachable solely via
 // `sys::name` -> mangled `sys__name`), emitted by its raw C name.
 fn push_sys_fn(a: Allocator, ar: *Arena, name: str, ret: Option<*const Typ>, g: *Vec<GlobalFn>) {
     g.push(GlobalFn { name: name, mangled: str2(a, ar, "sys__", name), gf_emit: name,
@@ -14002,11 +14001,11 @@ fn register_prelude_globals(a: Allocator, ar: *Arena, g: *Vec<GlobalFn>) {
     // compile-time only, never in a user program's output.
     let culong: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TCLong { is_signed: false }));
     push_sys_fn(a, ar, "sys_fmt_f64", culong, g);
-    // SEAL-SPEC §3.2: enter RETURNS the previous state and exit RESTORES it, so a
+    // Enter RETURNS the previous state and exit RESTORES it, so a
     // blind unmask is unexpressible and nesting is safe by construction.
     push_sys_fn(a, ar, "sys_seal_enter", culong, g);
     push_sys_fn(a, ar, "sys_seal_exit", none_ty(), g);
-    // DR-006 argv seam: the command line for a self-hosted exilc.  Host backend
+    // The argv seam: the command line for a self-hosted exilc.  Host backend
     // reads /proc/self/cmdline; the generated `int main(void)` is untouched.
     let ccharp: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TCChar))));
     push_sys_fn(a, ar, "sys_argc", cint, g);
@@ -16803,7 +16802,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // @derive(Eq/Hash/Clone/Debug): synthesise the per-type methods into the
     // method table + drain queue.
     collect_derives(a, ar, &base_scope, items, &methods, &lifted_lambdas, &gsigs);
-    // DR-030 drop synthesis: a `<Struct>__drop` for every own-field struct.
+    // Drop synthesis: a `<Struct>__drop` for every own-field struct.
     collect_drops(a, ar, items, &methods, &lifted_lambdas);
     // The (trait, target) registry, built once the method table is final so it
     // sees closures and derives too, then unioned with the marker-carrying

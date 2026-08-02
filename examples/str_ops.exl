@@ -1,5 +1,5 @@
 // `mod str` — pure-exile string ops over `cstr_len` + `Slice<u8>`.
-// All bodies stay in exile per DR-001 (READ pure); only `cstr_len`
+// All bodies stay in exile (the read side is pure); only `cstr_len`
 // (lowered to libc `strlen`) crosses the FFI seam.
 //
 // Surface:

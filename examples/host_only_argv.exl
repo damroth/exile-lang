@@ -1,4 +1,4 @@
-// The command line, read through the `sys` seam (DR-006).
+// The command line, read through the `sys` seam.
 //
 // `sys::sys_argc()` is the argument count and `sys::sys_argv(i)` the i-th
 // argument as a NUL-terminated C string (`*const c_char`).  argv[0] is the

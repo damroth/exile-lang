@@ -1,5 +1,5 @@
-// `Vec<T>` — the prelude's growable workhorse collection (DR-003
-// v1 copy-out value-T).  Sits on top of the `Allocator` seam and
+// `Vec<T>` — the prelude's growable workhorse collection, v1
+// copy-out value-T.  Sits on top of the `Allocator` seam and
 // is `@move` so the move-pass forbids the silent buffer alias.
 //
 // Surface this version ships:

@@ -4,7 +4,7 @@
 // harness raises that to the WHOLE example corpus.  It reads a source
 // path on stdin (argv isn't exposed, so the Makefile pipes
 // `examples/NAME.exl` in), slurps the file through the sys-seam
-// (`sys_open`/`sys_read`, DR-032), tokenises it with the ported
+// (`sys_open`/`sys_read`), tokenises it with the ported
 // `lexer::tokenize`, and emits the token dump in the exact
 // `exilc --emit-tokens` format.  The Makefile loops every example
 // through this and diffs against the committed golden tokens, so a

@@ -1,4 +1,4 @@
-// Scoped projection (DR-012) — `with <name> in <lvalue> { body }`.
+// Scoped projection — `with <name> in <lvalue> { body }`.
 //
 // `with` binds a borrow to an lvalue for the duration of a block:
 //

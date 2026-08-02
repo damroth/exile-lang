@@ -1,4 +1,4 @@
-// Self-host Faza 0 — second foundation port.
+// Self-host port — the second of the foundation data modules.
 //
 // Ports `lib/error.ml` (3 OCaml lines) to exile.  The original:
 //

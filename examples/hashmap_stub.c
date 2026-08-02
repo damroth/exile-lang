@@ -1,6 +1,6 @@
 /* Companion stub for hashmap.exl — Allocator backed by libc
  * malloc/free.  Same shape as the other prelude-collection stubs;
- * the free thunk receives the byte-count (DR-004) but libc ignores
+ * the free thunk receives the byte-count but libc ignores
  * it. */
 
 #include <stdlib.h>

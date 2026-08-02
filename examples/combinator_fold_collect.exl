@@ -1,4 +1,4 @@
-// Iterator combinator stdlib v1, Step E (DR-026).
+// Iterator combinator stdlib v1: `fold` and `collect`.
 //
 // Two consuming terminals close out the v1 combinator surface:
 //
@@ -11,8 +11,8 @@
 //   * `collect(a)` — drains the iterator into a fresh
 //     `Vec<Self::Item>` allocated through the passed-in
 //     `Allocator`.  Initial capacity is the prelude floor (8);
-//     `push` grows on overflow.  Item type propagates via DR-027's
-//     Site-1 multi-hop assoc-projection — `Vec<int>` falls out of
+//     `push` grows on overflow.  Item type propagates via the
+//     multi-hop assoc-projection — `Vec<int>` falls out of
 //     `VecIter<int>`, `Vec<(u32, int)>` falls out of
 //     `Enumerate<VecIter<int>>`.
 //

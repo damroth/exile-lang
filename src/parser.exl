@@ -6,7 +6,7 @@
 // in `Vec`.
 //
 // ERROR MODEL — error-state, not `try`-threading (an empirically-driven
-// departure from the lexer; see SELFHOST-WORKLOG).  OCaml raises on the
+// departure from the lexer).  OCaml raises on the
 // first parse error; exile has no exceptions.  The lexer's
 // `Result`/`try` does not scale to a deep recursive descent: every
 // mandatory token (`expect`, ~100 sites) is value-less, so `try
@@ -408,7 +408,7 @@ fn parse_type(s: *Parser) -> *const TypeAnn {
             mk_own_ty(s, own_inner)
         }
         // A bare `rune<T>` has no direction, and a direction is never implicit
-        // (RUNE-SPEC axis 2 — the same decision as the declaration form).
+        // (the same decision as the declaration form).
         | Token::Rune => {
             fail(s, tp.pos, "a rune type needs its direction: write `read rune<T>`, `write rune<T>`, or `readwrite rune<T>`");
             dummy_ty(s)
@@ -883,7 +883,7 @@ fn lambda_ret(s: *Parser) -> Option<*const TypeAnn> {
 }
 
 // `[e1, e2, ...]` array literal, `[v; n]` repeat, or a `[&x, &y]` capture
-// list that a trailing `|`/`||` turns into a lambda (DR-033).
+// list that a trailing `|`/`||` turns into a lambda.
 fn prim_array(s: *Parser, p: Pos) -> *const Expr {
     if peek_is(s, Token::RBracket) {
         fail(s, p, "empty array literal `[]` is not allowed");
@@ -1716,7 +1716,7 @@ fn stmt_let_else(s: *Parser, is_mut: bool, pos: Pos) -> Stmt {
     return Stmt::LetElse { pat: pat, value: value, else_body: else_body, pos: pos };
 }
 
-// `rune name: T at ADDR dir;` — DR-030 Phase-1.5 MMIO window (RUNE-SPEC §3).
+// `rune name: T at ADDR dir;` — an MMIO window.
 // `at` and the direction (`read` / `write` / `readwrite`) are CONTEXTUAL
 // identifiers consumed by grammatical position, so they stay free as ordinary
 // names everywhere else (and `write` doubles as the `.write()` method name).
@@ -1749,8 +1749,8 @@ fn stmt_rune(s: *Parser) -> Stmt {
     return Stmt::RuneDecl { name: rp.rp_name, elem: rp.rp_elem, addr: rp.rp_addr, dir: rp.rp_dir, pos: rp.rp_pos };
 }
 
-// `ward name: Type at ADDR;` — a LOCAL ward-overlay instance (WARD-SPEC §3).
-// `seal { … }` — statement-shaped (SEAL-SPEC T1: a seal is not a value).
+// `ward name: Type at ADDR;` — a LOCAL ward-overlay instance.
+// `seal { … }` — statement-shaped: a seal is not a value.
 fn stmt_seal(s: *Parser) -> Stmt {
     let pos = peek_pos(s);
     bump(s);
@@ -1773,9 +1773,9 @@ fn stmt_ward_inst(s: *Parser) -> Stmt {
     return Stmt::WardInst { name: np.name, ward_ty: tp.name, addr: addr, pos: pos };
 }
 
-// `ward Name { f: T at OFF dir; … }` — a ward overlay TYPE (WARD-SPEC §3).  A
+// `ward Name { f: T at OFF dir; … }` — a ward overlay TYPE.  A
 // field reuses the rune-declaration grammar, but `at` binds an OFFSET from the
-// ward base, not an absolute address (§3).  Fields are `;`-terminated.
+// ward base, not an absolute address.  Fields are `;`-terminated.
 fn parse_ward_field(s: *Parser) -> WardField {
     let pos = peek_pos(s);
     let np = expect_ident(s, "ward field name");
@@ -1805,7 +1805,7 @@ fn parse_ward_decl(s: *Parser) -> Item {
 fn ward_decl_name(it: *const Item) -> str {
     return match *it { Item::WardDecl { name, fields, pos } => name | _o => "" };
 }
-// A top-level `ward name: Type at ADDR;` instance (WARD-SPEC §3, Increment 4).
+// A top-level `ward name: Type at ADDR;` instance.
 fn parse_ward_inst_item(s: *Parser) -> Item {
     let pos = peek_pos(s);
     bump(s);
@@ -1829,12 +1829,12 @@ fn is_ward_type_item(s: *const Parser) -> bool {
     return match peek3(s) { Token::LBrace => true | _o => false };
 }
 // `sigil Name { lo .. hi, … }` — a resource capability over byte ranges
-// (SIGIL-SPEC §11).  The `..` is exile's existing range syntax, so the body needs
+// The `..` is exile's existing range syntax, so the body needs
 // no new lexical machinery; a LIST is required because a resource may be
 // non-contiguous (Sprite 0 is two ranges).
 // `parse_expr` already yields `Expr::Range` for `lo .. hi` (the `for`-loop
 // syntax), so a sigil range is just that expression destructured — no new
-// grammar at all.  `..=` is rejected: sigil ranges are half-open (I-S4/§4.1).
+// grammar at all.  `..=` is rejected: sigil ranges are half-open.
 fn parse_sigil_range(s: *Parser) -> SigilRange {
     let e = parse_expr(s);
     let p = expr_pos(e);
@@ -1865,7 +1865,7 @@ fn parse_sigil_decl(s: *Parser) -> Item {
 fn sigil_decl_name(it: *const Item) -> str {
     return match *it { Item::SigilDecl { name, ranges, pos } => name | _o => "" };
 }
-// `own Name;` — the claim (SIGIL-SPEC §11).  `own` in ITEM position; the TYPE
+// `own Name;` — the claim.  `own` in ITEM position; the TYPE
 // position (`own *T`) is untouched, the two never meet.
 fn parse_claim_item(s: *Parser) -> Item {
     let pos = peek_pos(s);
@@ -1892,7 +1892,7 @@ fn parse_ward_item(s: *Parser, out: *Vec<Item>, seen: *Vec<str>) {
     }
 }
 
-// The direction sigil that suffixes a rune declaration (RUNE-SPEC axis 2): it
+// The direction sigil that suffixes a rune declaration: it
 // is always explicit, so a missing / misspelled word is a parse error naming
 // the three options rather than a silent default.
 fn parse_rune_dir(s: *Parser) -> Direction {
@@ -2280,7 +2280,7 @@ fn tparams_sep(s: *Parser) -> bool {
 
 // Like `parse_tparams` but also reads trait bounds: `<T: Area, U: A + B>`.
 // Each `+`-separated bound becomes one `TraitBound` carrying the trait
-// path and (for DR-021 Fn-sugar) its associated-type bindings.  tbounds
+// path and (for the function-type sugar) its associated-type bindings.  tbounds
 // are not part of the canonical AST dump; this fills them for the future
 // typecheck port.  Used by functions, impl blocks, and trait methods.
 fn parse_tparams_bounded(s: *Parser, tparams: *Vec<str>, tbounds: *Vec<TraitBound>) {
@@ -2313,7 +2313,7 @@ fn parse_bounds(s: *Parser, tparam: str, tbounds: *Vec<TraitBound>) {
     }
 }
 
-// A single bound: a trait path (`A`, `mod::Trait`), the DR-021 Fn-sugar
+// A single bound: a trait path (`A`, `mod::Trait`), the function-type sugar
 // `|A, B|->R` (lowers to `FnN` with `Arg…`/`Output` assoc bindings), or
 // the zero-arg `||->R` (lowers to `Fn0<Output=R>`).
 fn parse_one_bound(s: *Parser, tparam: str, tbounds: *Vec<TraitBound>) {
@@ -2818,7 +2818,7 @@ fn build_trait_method(_s: *Parser, name: str, tparams: Vec<str>, tbounds: Vec<Tr
     };
 }
 
-// ===== view (DR-009 active patterns) =====
+// ===== view (active patterns) =====
 
 fn parse_view_decl(s: *Parser, is_pub: bool) -> ViewDecl {
     expect(s, Token::View);

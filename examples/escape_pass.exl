@@ -1,4 +1,4 @@
-// DR-010 escape pass (Tier-1 floor) — soundness barrier for borrows
+// The escape pass — the soundness barrier for borrows
 // rooted in local bindings.  The compiler propagates `&local`
 // provenance through composite literals and let-bindings, then rejects
 // at four escape sites: TReturn, store through non-local pointer,
@@ -13,7 +13,7 @@
 //
 // The `&arr[0]` borrow is wrapped inside a struct field — gcc's
 // `-Wreturn-local-addr` silently passes (it sees only the bare
-// `return aggregate`, not the wrapped address).  The Tier-1 floor
+// `return aggregate`, not the wrapped address).  The pass
 // propagates Local provenance through the StructLit and trips the
 // return-site check structurally.
 //

@@ -1,11 +1,10 @@
-// Iterator combinator stdlib v1, Step C (DR-026).
+// Iterator combinator stdlib v1: `filter`.
 //
 // `Filter<I, P>` is the predicate-driven adapter — it pulls items
 // from the inner iterator and only forwards the ones for which
 // `p.call(x)` returns true.  Same `impl<I: Iterator, P: Fn1>
 // Iterator for Filter<I, P>` shape as the other adapters: bounded
-// generic impl + `type Item = I::Item` projection via DR-027's
-// Site-1 fix.
+// generic impl + `type Item = I::Item` projection.
 //
 // Body-shape note: a predicate-driven `next` is the one place in
 // the combinator family where the surface-level `if cond { ... }`
@@ -64,7 +63,7 @@ fn main() {
     for x in f1 { s1 = s1 + x; }
     println(s1);                          // 12 = 2 + 4 + 6
 
-    // (2) Dot-chain `filter(p)` with inline struct-lit (DR-034).
+    // (2) Dot-chain `filter(p)` with an inline struct literal.
     let mut s2: int = 0;
     for x in v.iter().filter(GreaterThan { threshold: 3 }) {
         s2 = s2 + x;

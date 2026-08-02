@@ -53,11 +53,11 @@ pub enum Token {
     | DotDotEq
     | Amp
     | New
-    | Own           // DR-030 Phase-1a: `own *T` owner-sigil pointer type
-    | Rune          // DR-030 Phase-1.5: `rune name: T at ADDR dir` MMIO window
-    | Ward          // DR-030 Phase-2: `ward Name { f: T at OFF dir }` typed overlay
-    | Sigil         // DR-030 Phase-2: `sigil Name { lo .. hi }` resource capability
-    | Seal          // DR-030 Phase-2: `seal { … }` masked critical region
+    | Own           // `own *T` owner-sigil pointer type
+    | Rune          // `rune name: T at ADDR dir` MMIO window
+    | Ward          // `ward Name { f: T at OFF dir }` typed overlay
+    | Sigil         // `sigil Name { lo .. hi }` resource capability
+    | Seal          // `seal { … }` masked critical region
     | Null
     | LParen
     | RParen

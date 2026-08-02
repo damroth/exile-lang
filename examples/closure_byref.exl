@@ -1,13 +1,13 @@
-// Explicit by-ref capture lists (DR-033).
+// Explicit by-ref capture lists.
 //
-// DR-024 by default captures by value: `|x| x + t` over `t: int`
+// A capturing lambda takes its captures BY VALUE: `|x| x + t` over `t: int`
 // puts a copy of `t` into the env struct.  For a small value that's
 // fine, but for a struct (or anything large) the copy hurts the
 // perf model — and worse, it obscures intent: the reader can't tell
 // from the closure literal whether the env holds a value or a
 // pointer.
 //
-// DR-033 adds an opt-in capture list `[&n1, &n2, ...]` placed
+// An opt-in capture list `[&n1, &n2, ...]` is placed
 // immediately before the lambda's `|...|` head.  Each `&name`
 // switches that one capture from by-value to by-reference: the env
 // field is `*const T` instead of `T`, the env constructor uses
@@ -21,9 +21,9 @@
 // "pointer, not copy" anywhere else in the language.
 //
 // Soundness: env-struct with a ptr-field rooted in a local picks up
-// `bowners = [name]` automatically in escape-pass DR-010 — returning
+// `bowners = [name]` automatically in the escape pass — returning
 // or storing such a closure into a non-local pointer triggers the
-// existing S5a escape-hole reject.  No new escape machinery.
+// existing escape-hole reject.  No new escape machinery.
 //
 // Three flavours below.
 

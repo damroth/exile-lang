@@ -1,4 +1,4 @@
-// Literal patterns in `match` (GATE-5a) — match directly on integer
+// Literal patterns in `match` — match directly on integer
 // values and char literals instead of if-else chains.  This is the
 // lexer-shaped workload: classify a byte in one `switch`-compiled
 // dispatch (dense `case` labels become a jump table on m68k).
