@@ -5,6 +5,79 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-08-03
+
+**Consolidation.** 1.1.0 shipped the capability model; 1.2.0 spends the cycle on
+what carries it. The prelude gains the two seam calls a program needs to resolve
+a path from its environment, the self-hosted compiler's drop pass grows an error
+channel and the rules that ride it, the fuzz era's stated limits become fixtures
+with a red proof each, and every public artifact in the tree is swept of
+pointers a reader cannot follow.
+
+### Added
+
+- `sys_getenv` and `sys_getcwd` in the `sys` seam. Together they let a program
+  resolve a path from the environment with a compiled-in fallback.
+  `sys_getenv` yields null for an unset name, which a caller must distinguish
+  from set-and-empty. Real on the host; on the Amiga side both are stubs
+  (null and an empty cwd), because there is no POSIX environment there and
+  nothing on that target resolves a cross-toolchain - the amiga driver runs on
+  the host.
+- The tutorial's `rune` chapter now shows the volatile lowering checked by
+  running it: a rune pointed at a RAM cell, written, read back and compared, at
+  `-O2`, on m68k, under an emulator. The base is RAM deliberately - a chipset
+  register cannot be read back inside an emulator, so an MMIO base would
+  demonstrate the syntax and prove nothing.
+- The tutorial states the static-auto-drop rule and quotes its diagnostic: an
+  owner moved out on one branch but still owned on the other has no single
+  answer the compiler can emit, because there are no runtime drop flags -
+  consume it on every path or on none.
+- Four gates, taking `selfhost-verify` from 24 to 28:
+  `selfhost-port-drop-errors` and `selfhost-noentry-externs` pin the port's
+  ownership diagnostics and its seam-extern emission; `docs-selfsufficient` and
+  `docs-capability-golden` hold the documentation to what the compiler does.
+- `fuzz-limits`, `fuzz-budget-witness` and `fuzz-gates` - the fuzz era's stated
+  limits as executable fixtures instead of prose, each with a proof that it
+  fails when it should.
+
+### Changed
+
+- The self-hosted compiler's drop pass reports instead of aborting, and carries
+  the rules that error channel unblocked: an owning value discarded by an
+  expression statement, an owned pointer dropped on the floor by a call, a root
+  whose payload was moved out but still owns its storage, an owner auto-dropped
+  before deferred code runs, and an owner consumed on one branch only. `defer`
+  bodies now reach both the drop pass and the move pass.
+- Seam externs are emitted for what the code names, with an entry point or
+  without one (registered divergence #13 - given no entry point the frozen
+  reference has no reachability root, falls back to declaring the whole seam
+  and emits thirteen externs for a file that references none; the port is
+  deliberately better, and mirroring would cost pay-for-use).
+- No public artifact cites an internal design designator or points a reader
+  outside the repository. Swept across every tracked file the project owns -
+  documentation, fixture headers, gate messages, runtime sources, the CI
+  workflow and the fuzz tooling - and the gate holding it names that boundary
+  rather than a list of globs.
+- CI no longer materialises the cross toolchain at a fixed prefix before the
+  Amiga parity job; the port resolves `$EXILE_TOOLCHAIN` itself.
+
+### Fixed
+
+- An assignment's target type is its expected type, so a literal too wide for
+  its slot is rejected at the assignment.
+- An `own` field's allocator requirement is checked where the field is declared.
+- A `defer` body's consume is visible to the move pass, and the defer-reads
+  descent no longer runs two constructs deeper than the rule it serves.
+- The planted-defect witness was passing on findings a clean tree already
+  produces: the plant had drifted into the code path that emits `defer` bodies,
+  which an ordinary loop never reaches, and the guard only checked that the
+  planted string still existed. The plant is now anchored to the emitter, a
+  canary asserts it reaches the emitted C before fuzzing starts, and the witness
+  is a difference test whose two numbers are computed in the run that prints
+  them.
+- The tc-errors corpus grew 270 -> 273; every added fixture reproduces a
+  machine-found defect.
+
 ## [1.1.0] - 2026-07-30
 
 **The capability model.** 1.0.0 was the compiler's milestone — exile compiling
@@ -955,4 +1028,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[1.1.0]: https://github.com/damroth/exile-lang/releases/tag/v1.1.0
+[1.2.0]: https://github.com/damroth/exile-lang/releases/tag/v1.2.0
