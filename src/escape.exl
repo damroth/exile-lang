@@ -3,7 +3,7 @@
 // A sound conservative barrier on values whose pointer / Slice payload roots in
 // a local binding: the four canonical escape sites (TReturn, store through a
 // non-local `*ptr`, container-insert, TNew/TStructLit as a return value), plus
-// Phase-C borrow invalidation (`let s = v.as_slice(); v.push(x); s[0]`).
+// borrow invalidation (`let s = v.as_slice(); v.push(x); s[0]`).
 //
 // Runs after `Move.check` and before `Drop.insert` — it reads the typed IR and
 // emits no output, so its whole observable behaviour IS its diagnostics.  This
@@ -275,7 +275,7 @@ fn mangled_has_prefix(prefix: str, mangled: str) -> bool {
 // Deliberately narrow: only methods whose body literally wraps `self.ptr` /
 // `self.buf` in a view struct (or a self-rooted iterator).  `clone` / `with_str`
 // / `with_capacity` return INDEPENDENT storage and must NOT propagate owners —
-// without the filter, Phase C false-positives `let h2 = h1.clone(); h1.name.free();`.
+// without the filter, invalidation false-positives `let h2 = h1.clone(); h1.name.free();`.
 fn returns_borrow_from_receiver(m: str) -> bool {
     if mangled_has_prefix("Vec__as_slice", m) { return true; }
     if mangled_has_prefix("Vec__iter", m) { return true; }
@@ -488,7 +488,7 @@ fn prov_of(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const 
     };
 }
 
-// ===== Owner chains (Phase C) =====
+// ===== Owner chains (invalidation) =====
 //
 // Mirrors prov_of's structural recursion; diverges on calls (the receiver-borrow
 // list), so `let s = pass_through(&v)` still records ["v"] as s's owner.
@@ -684,7 +684,7 @@ fn src_name(srcnames: *const Vec<StrPair>, n: str) -> str {
     return n;
 }
 
-// ===== Use-after-invalidation (Phase C) =====
+// ===== Use-after-invalidation =====
 
 fn fail_use_after_invalidation(a: Allocator, ar: *Arena, esc: *const Esc, pos: Pos,
                                name: str, reason: str, kill_pos: Pos) {
@@ -905,7 +905,7 @@ fn invalidate_borrows_of(live: *Vec<Binding>, owner: str, reason: str, pos: Pos)
     return;
 }
 
-// ===== Call effects (Phase C) =====
+// ===== Call effects (invalidation) =====
 //
 // Applied AFTER the use/escape checks ran on the expression, so a use of an
 // already-invalidated binding nested in the same statement still reports first.

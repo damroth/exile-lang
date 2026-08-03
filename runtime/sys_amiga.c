@@ -1,4 +1,4 @@
-/* runtime/sys_amiga.c — AmigaOS backend for the `sys::*` seam (DR-006).
+/* runtime/sys_amiga.c — AmigaOS backend for the `sys::*` seam.
  *
  * Mirror of `runtime/sys_host.c` for `exilc --target amiga`.  Wraps
  * `exec.library` AllocVec / FreeVec for memory and `dos.library`
@@ -6,7 +6,7 @@
  * whenever the program uses the sys module (which any caller of
  * `default_allocator()` does transitively).
  *
- * Per DR-001 / DR-006: layer-0 stdlib (Vec / HashMap / StringBuilder
+ * The layer-0 stdlib (Vec / HashMap / StringBuilder
  * / String) calls the seam verbatim; the compiler swaps the backend
  * by linking the matching runtime file per `--target`. */
 
@@ -45,7 +45,7 @@ long sys_read(int fd, unsigned char *buf, unsigned long n) {
     return (long)Read(fh, (APTR)buf, (LONG)n);
 }
 
-/* DR-032 sys_open / sys_close stubs.  Amiga DOS uses BPTR file
+/* sys_open / sys_close stubs.  Amiga DOS uses BPTR file
  * handles (BCPL pointers), not the small-int fds the seam exposes
  * — wiring them up cleanly needs a BPTR->fd mapping table on the
  * runtime side and a stable convention for which fd values point
@@ -65,7 +65,7 @@ int sys_close(int _fd) {
     return -1;
 }
 
-/* ---- seal seam (SEAL-SPEC §3.3) --------------------------------------------
+/* ---- seal seam -------------------------------------------------------------
    Under AmigaOS the language must NOT write SR: exec's scheduler keeps its own
    Disable nesting, and touching SR behind its back breaks it.  So the seam is
    Disable()/Enable(), which nests in exec's counter — and the token the seam
@@ -75,7 +75,7 @@ int sys_close(int _fd) {
 
    Enable() is not "unmask" — it decrements exec's counter and only re-enables
    at zero.  So an inner seal restoring the outer seal's state is exactly what
-   the pairing already does, and I-T2 holds here for exec's reason rather than
+   the pairing already does, and nesting holds here for exec's reason rather than
    for the stub's.                                                              */
 static unsigned long ex_seal_depth = 0;
 

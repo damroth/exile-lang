@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Differential fuzzer over the oracle/port pair — FUZZ-SPEC Increment 1.
+"""Differential fuzzer over the oracle/port pair.
 
 The whole value of this tool is that it authors no expectations (I-F1): a
 finding is a disagreement between two independent implementations of one
 semantics, or a crash, or an emission that will not compile. Everything below
 serves that and nothing else.
 
-Increment 1 was the SPINE at small N: one generator strategy, the three
-observables, a triage stub, and a signature-preserving shrinker. Increment 2 gave
-the comparator its filter and its buckets. Increment 3 is the GENERATOR:
-cross-file construct implantation (FUZZ-SPEC 3.1's actual sentence), statement
+It grew in stages. The SPINE at small N came first: one generator strategy, the
+three observables, a triage stub, and a signature-preserving shrinker. Then the
+comparator gained its filter and its buckets. Then the GENERATOR:
+cross-file construct implantation, statement
 ranges that a wrap cannot cut in half, and an operator mix steered by the
 measured death-per-stage distribution rather than by a constant on the command
 line (3.2 — "the distribution must MEASURE and STEER, not be discovered later as
@@ -30,13 +30,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 ORACLE = os.path.join(ROOT, "_build/default/bin/main.exe")
 PORT = os.path.join(ROOT, "_build/out/host/exilc")
 
-# FUZZ-SPEC 3.3 / Z1 — shapes where the two sides differ BY DESIGN. Recombination
+# Shapes where the two sides differ BY DESIGN. Recombination
 # manufactures these in bulk (a defer from one file, a loop from another), so
 # without an explicit filter real findings drown in deliberate divergence. The
 # filter is COUNTED, never silent (I-F4).
-# FUZZ-SPEC 3.3 / Z1 — shapes where the two sides differ BY DESIGN.
+# Shapes where the two sides differ BY DESIGN.
 #
-# Increment 1 matched these with regexes over the SOURCE, and both of its
+# The first version matched these with regexes over the SOURCE, and both of its
 # patterns were wrong in opposite directions: the capability pattern anchored at
 # line start, so `sys::sys_seal_*` calls slipped past it (false negative → noise),
 # and the parenthesis pattern matched any `|`, including enum-variant separators
@@ -134,11 +134,11 @@ def registered_divergence(ev):
     return None
 
 
-# FUZZ-SPEC 3.1 — Increment 1's single strategy: CONSTRUCT-WRAPPING. A run of
+# The first single strategy: CONSTRUCT-WRAPPING. A run of
 # statements in a recipient body is wrapped in one construct, which composes that
 # code with a construct it was never written next to. That is the class this
 # era's defects actually lived in (seal x defer, seal x match-arm x return);
-# donor-block splicing across files is Increment 3's job.
+# donor-block splicing across files came later.
 # `seal` IS in the vocabulary, on the corrected reading of 3.3: a capability
 # construct blocks F1 for that input and nothing else, so seal-wraps are hunted
 # with F2/F3/F4 — which is where this era's own defects would have surfaced.
@@ -171,7 +171,7 @@ def _code(line):
 def stmt_boundaries(src):
     """Statement RANGES inside function bodies: (start, end, depth).
 
-    Increment 1 offered every line at brace depth > 0, so a wrap could cut a
+    The first version offered every line at brace depth > 0, so a wrap could cut a
     multi-line expression in half. That was the single largest cause of death on
     the shipped stream — `expected expression`, 154 of 600 inputs at seed 1,
     ahead of every other message. A range now begins only where a statement can
@@ -322,7 +322,7 @@ IDENT = re.compile(r"\b([a-z_][A-Za-z0-9_]*)\b")
 def harvest(seeds, limit_per_file=12):
     """Whole, well-formed simple statements, for grafting.
 
-    FUZZ-SPEC 3.1 named recombination; Increment 1 shipped only construct-wraps,
+    The design named recombination; the first version shipped only construct-wraps,
     whose inputs died in the parser 40% of the time. A grafted statement is
     parsable BY CONSTRUCTION — it already parsed where it came from — so the
     distribution moves toward the stages that have not been exercised.
@@ -431,7 +431,7 @@ def self_pool(src):
 
 
 def graft(src, rng, pool):
-    """Splice one donor statement into a statement position (FUZZ-SPEC 3.1)."""
+    """Splice one donor statement into a statement position."""
     mine = self_pool(src)
     if mine and rng.random() < 0.8:
         pool = mine
@@ -479,10 +479,10 @@ def free_names(text):
 def harvest_constructs(seeds, limit_per_file=8, max_lines=16):
     """Whole CONSTRUCTS lifted from corpus programs, for CROSS-FILE implantation.
 
-    FUZZ-SPEC 3.1's sentence is specific: "it takes a construct from one corpus
+    The design's sentence is specific: "it takes a construct from one corpus
     program and implants it inside another (a `seal` block from here, a `match`
-    from there, nested)". Increment 1 wrapped a recipient's OWN statements and
-    Increment 2 grafted single statements — neither crosses a construct between
+    from there, nested)". The first version wrapped a recipient's OWN statements
+    and the second grafted single statements — neither crosses a construct between
     two programs, which is the composition class this era's defects lived in.
     """
     out = []
@@ -665,7 +665,8 @@ def generate(seeds, rng, wraps, pool=None, rate=0.25,
 def run(binary, path, cout, budget_s, rss_mb, _uncapped=False):
     """Run one compiler. Returns (status, first_stderr_line, c_text, kind).
 
-    kind is '' normally, 'ice' for FUZZ-SPEC F2, 'timeout'/'rss' for F4 — each
+    kind is '' normally, 'ice' for the crash class, 'timeout'/'rss' for the budget
+    class — each
     detected by the MECHANISM 5.1 names, not by a label.
     """
     def limit():
@@ -698,7 +699,7 @@ def run(binary, path, cout, budget_s, rss_mb, _uncapped=False):
 
     err = p.stderr or ""
     lines = [ln for ln in err.splitlines() if ln.strip()]
-    # The verdict is the first ERROR, never the first LINE. Increment 2 compared
+    # The verdict is the first ERROR, never the first LINE. An earlier version compared
     # the first non-blank line and so compared a `warning: unused parameter`
     # against the other side's silence — a finding the port's own probe canon
     # already names as a trap. Warnings are counted, never compared.
@@ -731,7 +732,7 @@ def phase_ok(flag, path, budget_s):
 def death_stage(ev, path, budget_s):
     """Which stage this input died in — asked of the compiler, not of its wording.
 
-    Increment 2 split parse from typecheck by looking for `expected` in the
+    An earlier version split parse from typecheck by looking for `expected` in the
     diagnostic, and measured against the two corpora that is not a mechanism: a
     type mismatch reads `return: expected i32, got bool` (same word, other
     stage), while `parser: this item kind not yet ported` contains neither — so
@@ -775,7 +776,7 @@ def strip_pos(line, path):
 
 
 def cc_check(c):
-    """FUZZ-SPEC F3: does this emission survive the project's own standard?"""
+    """The cc class: does this emission survive the project's own standard?"""
     r = subprocess.run(
         ["cc", "-O2", "-ansi", "-pedantic", "-Wall", "-Werror", "-I", "src",
          "-c", "-x", "c", "-", "-o", "/dev/null"],
@@ -843,7 +844,7 @@ def classify(ev, args):
 
 
 def triage(kind, sig, ev):
-    """FUZZ-SPEC §6 — three buckets, assigned by MECHANISM (Z4).
+    """Three buckets, assigned by MECHANISM.
 
     "The port differs" is an observation. Each verdict below is a narrowing
     measurement that ends in one variable: WHICH SIDE misbehaved, or WHICH
@@ -915,10 +916,10 @@ def shrink(src, sig, tmpdir, args, rounds=200):
 
 
 def selftest(args):
-    """Recogniser floors, both directions (FUZZ-SPEC 3.3).
+    """Recogniser floors, both directions.
 
     A filter's false POSITIVE eats budget in silence; its false NEGATIVE drowns
-    real findings in noise. Increment 1 shipped one of each, so the cases below
+    real findings in noise. The first version shipped one of each, so the cases below
     assert what MUST be recognised AND what must NOT be.
     """
     cases_path = os.path.join(ROOT, "tests/fuzzfilter/CASES")
@@ -969,7 +970,7 @@ def main():
                     help="fixed graft share, used only with --no-steer")
     ap.add_argument("--no-steer", action="store_true",
                     help="disable Z2 steering and use the fixed --graft-rate mix "
-                         "(reproduces the Increment 2 stream)")
+                         "(reproduces the earlier stream)")
     ap.add_argument("--budget", type=float, default=10.0, help="seconds per compile (F4)")
     ap.add_argument("--rss", type=int, default=2048, help="MB per compile (F4)")
     ap.add_argument("--cc", action="store_true", help="enable the F3 class")
@@ -1097,7 +1098,7 @@ def main():
             fh.write(f"// fuzz finding: {kind} [{bucket}] {sig}\n"
                      f"// bucket by mechanism: {why}\n"
                      f"// seed {args.seed}, from {base}, wraps {'+'.join(notes)}\n"
-                     f"// FUZZ-SPEC I-F3: the expected side is CAPTURED from whichever\n"
+                     f"// The expected side is CAPTURED from whichever\n"
                      f"// implementation triage judges correct — never authored here.\n"
                      f"{body}")
         print(f"fuzz: wrote {os.path.relpath(path, ROOT)}")

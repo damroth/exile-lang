@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plant / unplant the witness defect (FUZZ-SPEC 7a).
+"""Plant / unplant the witness defect.
 
 The plant lives OUTSIDE the capability model on purpose: constructs the frozen
 oracle cannot parse are filtered out of F1, so a plant inside them would be

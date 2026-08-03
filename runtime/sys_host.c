@@ -1,4 +1,4 @@
-/* runtime/sys_host.c — host backend for the `sys::*` seam (DR-006).
+/* runtime/sys_host.c — host backend for the `sys::*` seam.
  *
  * Implements the prelude-declared `extern fn sys_*` thunks against
  * libc.  Auto-linked by `exilc --target host` whenever the program
@@ -6,7 +6,7 @@
  * `default_allocator()`).
  *
  * Each `sys_*` here is the host fork of the layer-1 service seam
- * (per DR-001).  Other targets ship their own backend (e.g.
+ * in exile.  Other targets ship their own backend (e.g.
  * `runtime/sys_amiga.c` will wrap dos.library / exec.library).
  * Layer-0 stdlib code (Vec / HashMap / StringBuilder / String) is
  * target-agnostic and stays in exile, threading through `sys::*`
@@ -51,7 +51,7 @@ long sys_read(int fd, unsigned char *buf, unsigned long n) {
     return (long)read(fd, buf, (size_t)n);
 }
 
-/* DR-032 sys_open / sys_close.  `flags` follows the POSIX numeric
+/* sys_open / sys_close.  `flags` follows the POSIX numeric
  * convention (O_RDONLY=0, O_WRONLY=1, O_RDWR=2 + the create-mode
  * bits); the exile caller may hand-roll the constants until a
  * proper `sys::O_*` constant block lands.  Mode is 0644 for the
@@ -79,7 +79,7 @@ unsigned long sys_fmt_f64(double f, int is32, unsigned char *buf) {
     return (unsigned long)n;
 }
 
-/* DR-006 argv seam — the host backend reads the command line from
+/* The argv seam — the host backend reads the command line from
  * /proc/self/cmdline (Linux) once, on first use, and caches the parsed
  * vector.  This keeps the generated `int main(void)` untouched: argv never
  * has to be threaded through the entry point, so every existing C dump and
@@ -168,12 +168,12 @@ void sys_exit(int code) {
     exit(code);
 }
 
-/* ---- seal seam (SEAL-SPEC §3.3) --------------------------------------------
+/* ---- seal seam -------------------------------------------------------------
    The host has no interrupts to mask, so the stub exists to WITNESS the
    guarantee rather than to provide it.  It keeps a counter AND a stack of
-   handed-out tokens: balance alone proves I-T1 (every enter has an exit) but
-   cannot see MIS-NESTING, which is what I-T2 forbids — so exit asserts it was
-   handed exactly the top of the stack (correction A).                          */
+   handed-out tokens: balance alone proves exactly-once (every enter has an exit)
+   but cannot see MIS-NESTING, which nesting forbids — so exit asserts it was
+   handed exactly the top of the stack.                                        */
 #define EX_SEAL_MAX 64
 static unsigned long ex_seal_stack[EX_SEAL_MAX];
 static int ex_seal_depth = 0;

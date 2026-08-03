@@ -39,7 +39,7 @@ jobs:
     - name: Verify host stdout snapshots
       run: opam exec -- make verify-host
 
-    # ===== Self-host bring-up Faza −1 — differential-harness gate =====
+    # ===== Self-host bring-up — differential-harness gate =====
     #
     # `make selfhost-diff` checks that the OCaml exilc still emits the
     # committed corpus byte-for-byte across every example × 3 dump
@@ -51,7 +51,7 @@ jobs:
     # forgets to refresh tests/golden/ produces the exact same
     # "drift X" failure here, so a separate regen + git-diff gate
     # would be redundant.
-    - name: Verify selfhost dumps byte-stable (Faza -1 oracle)
+    - name: Verify selfhost dumps byte-stable (against the oracle)
       run: opam exec -- make selfhost-diff
 
     # ===== The self-host proof, as a gate =====
@@ -67,7 +67,7 @@ jobs:
     - name: Verify the self-host proof (fixpoint + every port gate)
       run: opam exec -- make selfhost-verify
 
-  # ===== Faza C — the seed bootstrap, on a runner with no OCaml =====
+  # ===== The seed bootstrap, on a runner with no OCaml =====
   #
   # Every other job builds exilc through opam + dune.  This one proves the claim
   # the seed exists to make: a fresh clone builds a working exilc with nothing

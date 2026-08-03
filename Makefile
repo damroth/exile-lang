@@ -1560,13 +1560,23 @@ docs-selfsufficient:
 	  echo "  each names a fixture or a table row in this repository, so they resolve here."; \
 	  grep -rInE '$(SRC_INTERNAL_RX)' tests --include=*.exl --include=*.c --include=*.h --include=CASES --include=REJECT-TABLE 2>/dev/null | head -10; \
 	  exit 1; fi; \
+	d=`grep -rInE '$(SRC_INTERNAL_RX)' tests --include=*.md 2>/dev/null | wc -l`; \
+	d=`expr $$d + \`grep -rInE '$(SRC_INTERNAL_RX)' src --include=*.md 2>/dev/null | wc -l\``; \
+	d=`expr $$d + \`grep -rInE '$(SRC_INTERNAL_RX)' runtime .github 2>/dev/null | wc -l\``; \
+	d=`expr $$d + \`grep -rInE '$(SRC_INTERNAL_RX)' tools/fuzz 2>/dev/null | wc -l\``; \
+	if [ "$$d" != "0" ]; then \
+	  echo "docs-selfsufficient: $$d reference(s) in a directory README, a seam backend, the CI workflow or the fuzz tooling -"; \
+	  echo "  the class does not stop at the file types a previous round happened to scan:"; \
+	  grep -rInE '$(SRC_INTERNAL_RX)' tests src --include=*.md 2>/dev/null | head -4; \
+	  grep -rInE '$(SRC_INTERNAL_RX)' runtime .github tools/fuzz 2>/dev/null | head -6; \
+	  exit 1; fi; \
 	k=`grep -nE '$(SRC_INTERNAL_RX)' Makefile | grep -v '_INTERNAL_RX' | wc -l`; \
 	if [ "$$k" != "0" ]; then \
 	  echo "docs-selfsufficient: $$k gate message(s) naming a record this repository does not ship -"; \
 	  echo "  and a reader meets these at the moment a gate goes red, which is the worst moment to be handed a dead pointer:"; \
 	  grep -nE '$(SRC_INTERNAL_RX)' Makefile | grep -v '_INTERNAL_RX' | head -10; \
 	  exit 1; fi; \
-	echo "docs-selfsufficient: clean (examples/ + docs/ + README + CHANGELOG + src/ + tests/ + the gate messages carry no reference that leaves the repository)"
+	echo "docs-selfsufficient: clean (examples/ docs/ README CHANGELOG src/ tests/ runtime/ .github/ tools/fuzz/ and the gate messages - every tracked file we own except the frozen reference and its suite)"
 
 # ===== register #13 - seam externs in a file with no entry point =====
 #

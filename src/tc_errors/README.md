@@ -42,7 +42,7 @@ than by reading:
   * The counter of `for i in 0..n` IS mutable; the element of `for x in <iterator>`
     is NOT.  Two desugars, two answers.
 
-Family 4 — the loan rule (DR-047/DR-052):
+Family 4 — the loan rule:
 
   loan_rvalue_let               `let q: *P = new(al) P { ... }`
   loan_rvalue_call_arg          a call argument
