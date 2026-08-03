@@ -1,0 +1,35 @@
+// A user type may take a prelude name, and it is the USER's type that the
+// program means.
+//
+// The reference decides this by removing the prelude declaration whose name a
+// top-level struct, enum or trait collides with - the prelude type stops
+// existing under that name. The port synthesises its prelude rather than
+// listing it, so the same rule lands as a guard on every registration.
+//
+// This fixture pins the QUIET face, which is the one worth a gate. The loud
+// face - the port rejecting a program the reference accepts - announces itself.
+// The quiet face was: both sides ACCEPT, the program runs and prints the right
+// answer, and the emitted C names two different types. `Range` here has the
+// same field NAMES as the prelude's, so a resolver that binds to the prelude
+// still type-checks and still computes 6; only the emission gives it away.
+// Parity on this file is therefore the assertion, not the exit status.
+//
+// `RangeInclusive` and `HashMap` are the other two names the reference accepts
+// outright, carried here so the property is pinned on more than the one name
+// that surfaced it.
+
+struct Range { lo: int, hi: int }
+struct RangeInclusive { lo: int, hi: int }
+struct HashMap { keys: int, vals: int }
+
+fn span(r: *const Range) -> int { return r.hi - r.lo; }
+
+fn main() {
+    let r = Range { lo: 3, hi: 9 };
+    let ri = RangeInclusive { lo: 10, hi: 14 };
+    let h = HashMap { keys: 2, vals: 5 };
+
+    println(span(&r));            // 6
+    println(ri.hi - ri.lo);       // 4
+    println(h.vals - h.keys);     // 3
+}

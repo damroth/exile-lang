@@ -2850,8 +2850,13 @@ fn named_prelude_fields_present(sc: *const TyScope, nm: str) -> bool {
     }
     return false;
 }
-fn register_named_prelude_field_access(a: Allocator, ar: *Arena, sc: *const TyScope, nm: str) {
+fn register_named_prelude_field_access(a: Allocator, ar: *Arena, sc: *const TyScope, skip: *const Vec<str>, nm: str) {
     if !is_named_prelude_name(nm) { return; }
+    // A user top-level type of this name removed the prelude declaration, so
+    // there is nothing to register eagerly. Without this the port kept the
+    // prelude SHAPE for a user's `struct String { a, b }` and synthesised a drop
+    // that freed a buffer the program never allocated.
+    if is_shadowed(skip, nm) { return; }
     if named_prelude_fields_present(sc, nm) { return; }
     let fs = named_prelude_fields(a, ar, nm);
     let fsl = fs.as_slice();
@@ -2870,7 +2875,15 @@ fn push_named_field(a: Allocator, sc: *const TyScope, path0: *const Vec<str>, nm
 }
 fn register_prelude_method_use(a: Allocator, ar: *Arena, sc: *const TyScope, mpath: *const Vec<str>, mret: Option<*const Typ>) {
     register_mono_struct(a, sc, mpath);
-    register_named_prelude_field_access(a, ar, sc, path_last(mpath));
+    // GAP, named rather than hidden: this LAZY path fires when a prelude method
+    // is used, and it has no access to the shadow set - that set is computed
+    // once at the top and threaded into the eager registrations, not carried in
+    // the scope. Reaching here for a shadowed name would need a prelude METHOD
+    // call on a user type of the same name, which fails earlier as an unknown
+    // method; closing it properly means putting the set in `TyScope`, which is
+    // nine construction sites and its own round.
+    let no_skip: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    register_named_prelude_field_access(a, ar, sc, &no_skip, path_last(mpath));
     if mret_is_slice(mret) { register_slice_u8(a, ar, sc); }
     // Any String use materialises the `Slice<u8>` byte view + StringBuilder.
     let last = path_last(mpath);
@@ -11430,61 +11443,95 @@ fn is_own_ptr_ty(t: *const Typ) -> bool {
 // Skeleton fields of the generic prelude structs, registered in the struct
 // index so construction infers the instance and a parameter's field / index
 // accesses resolve.  `ptr` is `*const T`, `len` a `u32`.
-fn push_prelude_field(a: Allocator, sname: str, fname: str, fty: *const Typ, out: *Vec<StructField>) {
+// ===== Prelude shadowing (mirrors `prepend_prelude` in the reference) =====
+//
+// A user top-level `struct` / `enum` / `trait` REMOVES the prelude declaration
+// of that name. The reference does it by filtering the prelude item list before
+// prepending it; the port synthesises its prelude instead of listing it, so the
+// same rule lands as a guard on every registration.
+//
+// The consequence is deliberate and is the reference's, not a choice made here:
+// shadowing `Vec` leaves the rest of the prelude referring to a `Vec<T>` that no
+// longer exists, and the program fails on THAT rather than on the shadowing. A
+// user who names a struct `Range` gets their own `Range`; a user who names one
+// `Vec` gets a broken prelude. Both are what the reference does, and the port's
+// job is to agree.
+fn shadowed_prelude_names(a: Allocator, items: *const Vec<Item>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match sl[i] {
+            Item::Struct(sd) => { out.push(sd.sname); }
+            | Item::Enum(ed) => { out.push(ed.ename); }
+            | Item::Trait(td) => { out.push(td.trname); }
+            | _o => { }
+        }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn is_shadowed(skip: *const Vec<str>, name: str) -> bool {
+    return name_in(skip, name);
+}
+
+fn push_prelude_field(a: Allocator, skip: *const Vec<str>, sname: str, fname: str, fty: *const Typ, out: *Vec<StructField>) {
+    if is_shadowed(skip, sname) { return; }
     let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     path.push(sname);
     out.push(StructField { sf_path: path, sf_name: fname, sf_ty: fty });
 }
-fn prelude_struct_info(a: Allocator, ar: *Arena, out: *Vec<StructField>) {
-    push_prelude_field(a, "Slice", "ptr", ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TVar("T")))), out);
-    push_prelude_field(a, "Slice", "len", t_u32(ar), out);
-    push_prelude_field(a, "Range", "lo", ty_node(ar, Typ::TVar("T")), out);
-    push_prelude_field(a, "Range", "hi", ty_node(ar, Typ::TVar("T")), out);
-    push_prelude_field(a, "RangeInclusive", "lo", ty_node(ar, Typ::TVar("T")), out);
-    push_prelude_field(a, "RangeInclusive", "hi", ty_node(ar, Typ::TVar("T")), out);
-    push_prelude_field(a, "Vec", "ptr", ty_node(ar, Typ::TOwnPtr(ty_node(ar, Typ::TVar("T")))), out);
-    push_prelude_field(a, "Vec", "count", t_u32(ar), out);
-    push_prelude_field(a, "Vec", "cap", t_u32(ar), out);
-    push_prelude_field(a, "Vec", "alloc", ty_node(ar, Typ::TStruct(allocator_path(a))), out);
-    push_prelude_field(a, "VecIter", "data", ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TVar("T")))), out);
-    push_prelude_field(a, "VecIter", "len", t_u32(ar), out);
-    push_prelude_field(a, "VecIter", "pos", t_u32(ar), out);
+fn prelude_struct_info(a: Allocator, ar: *Arena, skip: *const Vec<str>, out: *Vec<StructField>) {
+    push_prelude_field(a, skip, "Slice", "ptr", ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TVar("T")))), out);
+    push_prelude_field(a, skip, "Slice", "len", t_u32(ar), out);
+    push_prelude_field(a, skip, "Range", "lo", ty_node(ar, Typ::TVar("T")), out);
+    push_prelude_field(a, skip, "Range", "hi", ty_node(ar, Typ::TVar("T")), out);
+    push_prelude_field(a, skip, "RangeInclusive", "lo", ty_node(ar, Typ::TVar("T")), out);
+    push_prelude_field(a, skip, "RangeInclusive", "hi", ty_node(ar, Typ::TVar("T")), out);
+    push_prelude_field(a, skip, "Vec", "ptr", ty_node(ar, Typ::TOwnPtr(ty_node(ar, Typ::TVar("T")))), out);
+    push_prelude_field(a, skip, "Vec", "count", t_u32(ar), out);
+    push_prelude_field(a, skip, "Vec", "cap", t_u32(ar), out);
+    push_prelude_field(a, skip, "Vec", "alloc", ty_node(ar, Typ::TStruct(allocator_path(a))), out);
+    push_prelude_field(a, skip, "VecIter", "data", ty_node(ar, Typ::TConstPtr(ty_node(ar, Typ::TVar("T")))), out);
+    push_prelude_field(a, skip, "VecIter", "len", t_u32(ar), out);
+    push_prelude_field(a, skip, "VecIter", "pos", t_u32(ar), out);
     // Allocator seam fields — needed by the synthesised `<Struct>__drop`
     // bodies, which call `self.alloc.free_fn(self.alloc.state, ..)` directly
     // (drop synthesis; the only direct field-access on Allocator).
     let cvoid_ptr = ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid)));
-    push_prelude_field(a, "Allocator", "state", cvoid_ptr, out);
+    push_prelude_field(a, skip, "Allocator", "state", cvoid_ptr, out);
     let mut afp: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     afp.push(ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid))));
     afp.push(t_u32(ar));
-    push_prelude_field(a, "Allocator", "alloc_fn", ty_node(ar, Typ::TFnPtr { params: afp, ret: Option::Some(ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid)))) }), out);
+    push_prelude_field(a, skip, "Allocator", "alloc_fn", ty_node(ar, Typ::TFnPtr { params: afp, ret: Option::Some(ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid)))) }), out);
     let mut ffp: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     ffp.push(ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid))));
     ffp.push(ty_node(ar, Typ::TPtr(ty_node(ar, Typ::TCVoid))));
     ffp.push(t_u32(ar));
     let none_fret: Option<*const Typ> = Option::None;
-    push_prelude_field(a, "Allocator", "free_fn", ty_node(ar, Typ::TFnPtr { params: ffp, ret: none_fret }), out);
+    push_prelude_field(a, skip, "Allocator", "free_fn", ty_node(ar, Typ::TFnPtr { params: ffp, ret: none_fret }), out);
     // Lazy iterator adapters: `inner: I` plus the per-adapter state.
-    push_prelude_field(a, "Map", "inner", ty_node(ar, Typ::TVar("I")), out);
-    push_prelude_field(a, "Map", "f", ty_node(ar, Typ::TVar("F")), out);
-    push_prelude_field(a, "Filter", "inner", ty_node(ar, Typ::TVar("I")), out);
-    push_prelude_field(a, "Filter", "p", ty_node(ar, Typ::TVar("P")), out);
-    push_prelude_field(a, "Take", "inner", ty_node(ar, Typ::TVar("I")), out);
-    push_prelude_field(a, "Take", "remaining", t_u32(ar), out);
-    push_prelude_field(a, "Enumerate", "inner", ty_node(ar, Typ::TVar("I")), out);
-    push_prelude_field(a, "Enumerate", "idx", t_u32(ar), out);
+    push_prelude_field(a, skip, "Map", "inner", ty_node(ar, Typ::TVar("I")), out);
+    push_prelude_field(a, skip, "Map", "f", ty_node(ar, Typ::TVar("F")), out);
+    push_prelude_field(a, skip, "Filter", "inner", ty_node(ar, Typ::TVar("I")), out);
+    push_prelude_field(a, skip, "Filter", "p", ty_node(ar, Typ::TVar("P")), out);
+    push_prelude_field(a, skip, "Take", "inner", ty_node(ar, Typ::TVar("I")), out);
+    push_prelude_field(a, skip, "Take", "remaining", t_u32(ar), out);
+    push_prelude_field(a, skip, "Enumerate", "inner", ty_node(ar, Typ::TVar("I")), out);
+    push_prelude_field(a, skip, "Enumerate", "idx", t_u32(ar), out);
     // HashMap / Slot<K,V> open-addressing table.
-    push_prelude_field(a, "Slot", "state", t_u8(ar), out);
-    push_prelude_field(a, "Slot", "hash", t_u32(ar), out);
-    push_prelude_field(a, "Slot", "key", ty_node(ar, Typ::TVar("K")), out);
-    push_prelude_field(a, "Slot", "value", ty_node(ar, Typ::TVar("V")), out);
-    push_prelude_field(a, "HashMap", "slots", ty_node(ar, Typ::TOwnPtr(slot_kv_ty(a, ar))), out);
-    push_prelude_field(a, "HashMap", "count", t_u32(ar), out);
-    push_prelude_field(a, "HashMap", "cap", t_u32(ar), out);
-    push_prelude_field(a, "HashMap", "alloc", ty_node(ar, Typ::TStruct(allocator_path(a))), out);
-    push_prelude_field(a, "HashMapIter", "data", ty_node(ar, Typ::TConstPtr(slot_kv_ty(a, ar))), out);
-    push_prelude_field(a, "HashMapIter", "len", t_u32(ar), out);
-    push_prelude_field(a, "HashMapIter", "pos", t_u32(ar), out);
+    push_prelude_field(a, skip, "Slot", "state", t_u8(ar), out);
+    push_prelude_field(a, skip, "Slot", "hash", t_u32(ar), out);
+    push_prelude_field(a, skip, "Slot", "key", ty_node(ar, Typ::TVar("K")), out);
+    push_prelude_field(a, skip, "Slot", "value", ty_node(ar, Typ::TVar("V")), out);
+    push_prelude_field(a, skip, "HashMap", "slots", ty_node(ar, Typ::TOwnPtr(slot_kv_ty(a, ar))), out);
+    push_prelude_field(a, skip, "HashMap", "count", t_u32(ar), out);
+    push_prelude_field(a, skip, "HashMap", "cap", t_u32(ar), out);
+    push_prelude_field(a, skip, "HashMap", "alloc", ty_node(ar, Typ::TStruct(allocator_path(a))), out);
+    push_prelude_field(a, skip, "HashMapIter", "data", ty_node(ar, Typ::TConstPtr(slot_kv_ty(a, ar))), out);
+    push_prelude_field(a, skip, "HashMapIter", "len", t_u32(ar), out);
+    push_prelude_field(a, skip, "HashMapIter", "pos", t_u32(ar), out);
 }
 fn slot_kv_ty(a: Allocator, ar: *Arena) -> *const Typ {
     let mut sp: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -14177,11 +14224,25 @@ fn fill_one(a: Allocator, ar: *Arena, s: *StructSig, sinfo: *const Vec<StructFie
             mono_fields: *const Vec<StructField>) {
     if s.sfields_ty.length() > 0 as u32 { return; }
     let nm = path_last(&s.sname_path);
+    // The USER's declaration wins, mirroring the reference: a top-level type of
+    // this name removed the prelude one, so the flat tables already hold the
+    // fields the program means. Asking them FIRST is the whole rule - no second
+    // source of truth, and a genuine prelude struct still falls through, because
+    // prelude structs are pushed field-less.
+    //
+    // Reading the prelude shape unconditionally is what made a user's
+    // `struct String { a, b }` carry the prelude's `ptr/len/alloc` and pick up a
+    // synthesised drop, so the emitted program freed a buffer it never owned.
+    let user_fields = collect_struct_fields(a, &s.sname_path, sinfo, mono_fields);
+    if user_fields.length() > 0 as u32 {
+        s.sfields_ty = user_fields;
+        return;
+    }
     if is_named_prelude_name(nm) {
         s.sfields_ty = named_prelude_fields(a, ar, nm);
         return;
     }
-    s.sfields_ty = collect_struct_fields(a, &s.sname_path, sinfo, mono_fields);
+    s.sfields_ty = user_fields;
     return;
 }
 
@@ -16742,9 +16803,12 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // oracle builds its struct_index first and only then resolves each fn's
     // signature (inline with its body), so field-type instances must reach the
     // mono list ahead of signature-type instances or the footer reorders.
+    // A user top-level type REMOVES the prelude declaration of that name, so the
+    // set is computed once and every prelude registration below consults it.
+    let shadowed = shadowed_prelude_names(a, items);
     let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     collect_struct_info(a, ar, &base_scope, &empty_tp, items, &sinfo);
-    prelude_struct_info(a, ar, &sinfo);
+    prelude_struct_info(a, ar, &shadowed, &sinfo);
     // Enum variant/field types resolve with the struct fields, ahead of any
     // signature: the oracle builds struct_index and enum_index together, before
     // it touches a fn signature.
@@ -16800,9 +16864,9 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // elaboration order-dependent — a standalone module root could drain a
     // prelude body before anything had registered Arena's fields (four
     // documented manifestations).  Eager registration retires the class.
-    register_named_prelude_field_access(a, ar, &base_scope, "String");
-    register_named_prelude_field_access(a, ar, &base_scope, "StringBuilder");
-    register_named_prelude_field_access(a, ar, &base_scope, "Arena");
+    register_named_prelude_field_access(a, ar, &base_scope, &shadowed, "String");
+    register_named_prelude_field_access(a, ar, &base_scope, &shadowed, "StringBuilder");
+    register_named_prelude_field_access(a, ar, &base_scope, &shadowed, "Arena");
     collect_xfield_info(a, ar, &base_scope, items, &xfields);
     check_method_clashes(a, ar, &base_scope, items, &empty_tp, &sinfo);
     // Runs once the field tables exist — the edges are read from them.

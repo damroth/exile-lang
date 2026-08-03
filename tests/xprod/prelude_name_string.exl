@@ -1,0 +1,26 @@
+// The dangerous face of prelude-name shadowing, as a fixture.
+//
+// A user type may take a prelude name; the reference removes the prelude
+// declaration of that name, so the program means the USER's type. When the port
+// did not, `struct String` kept the PRELUDE's shape - and because the prelude's
+// String owns a heap buffer, the port also synthesised a drop for it. The
+// emitted program then called `free_fn` on a pointer it never allocated, from a
+// struct whose fields the user never declared.
+//
+// Both compilers ACCEPT this file. The assertion is therefore PARITY, not exit
+// status: the emitted C must name the user's two-field struct and must contain
+// no free at all. An exit-status check would have passed throughout.
+//
+// `String` is alone here on purpose. `Arena` and `StringBuilder` are registered
+// by the same eager path, but the reference REJECTS shadowing them - its own
+// prelude reads `Arena.off` - so they belong to the rejection class and are
+// pinned there, not in an accept-parity file.
+
+struct String { a: int, b: int }
+
+fn width(s: *const String) -> int { return s.b - s.a; }
+
+fn main() {
+    let s = String { a: 3, b: 9 };
+    println(width(&s));      // 6
+}
