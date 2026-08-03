@@ -1,17 +1,24 @@
-// The runnable ward-over-RAM witness.
+// The runnable ward-over-RAM witness, on BOTH targets.
 //
-// A ward instance over a real static cell (&raw::SCRATCH), MIXED-WIDTH fields with a
-// GAP between them, written and read back — proving the offsets land AND that a
-// u16 field and its neighbours do not collide (disjoint layout), by
-// execution. Pattern: field -> gap -> field -> field.
+// A ward instance over a real static cell, MIXED-WIDTH fields with a GAP
+// between them, written and read back - proving the offsets land AND that a
+// u16 field and its neighbours do not collide, by execution. Pattern:
+// field -> gap -> field -> field.
 //
-// Host-faithful widths only (u16 = 2 bytes, u8 = 1): exile's u32 maps to C
-// `unsigned long`, which is 8 bytes on a 64-bit HOST (4 on the m68k target), so a
-// u32 field would overlap its neighbours on the host test platform — a host
-// quirk, not a ward defect (the golden proves the u32 shape at an integer MMIO
-// base). The fields fit inside the c_ulong backing (>= 4 bytes) with room to
-// spare on the host.
-mod raw { extern var SCRATCH: c_ulong; }
+// THE BACKING IS SIZED EXPLICITLY, and that is the whole point of this file's
+// second life. It used to be a single `c_ulong`, which is 8 bytes on a 64-bit
+// host and 4 on the m68k target - so a layout reaching offset 6 fit on the host
+// and ran off the end of the object on the target. The era measured this file
+// on the host only, so nobody asked: cross-compiled and run under the emulator
+// it took an invalid-memory-access exception, silently, for two eras.
+//
+// `[u8; 8]` is the same eight bytes wherever it is compiled, so the layout below
+// means the same thing on both. The companion stub defines the object; the
+// emission declares it as an incomplete type and only ever takes its address,
+// which is why the stub and the emitted C have to agree on the TYPE NAME. That
+// coupling is real and `selfhost-ward` asserts it rather than trusting it.
+
+mod raw { extern var SCRATCH: [u8; 8]; }
 
 ward Regs {
     a: u16 at 0x00 readwrite;   // [0, 2)

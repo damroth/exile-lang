@@ -339,6 +339,18 @@ selfhost-amiga: $(EXILC_BIN)
 	if [ $$fail -eq 0 ]; then \
 	  rout=$$(vamos $(AMIGA_OUT)/rune_am 2>/dev/null); rexp=$$(printf '11\n22\n0\n305419896'); \
 	  if [ "$$rout" != "$$rexp" ]; then echo "selfhost-amiga: rune-over-RAM VAMOS round-trip WRONG (m68k volatile lowering):"; echo "$$rout"; fail=1; fi; \
+	  \
+	  rm -f $(C_OUT)/ward_am.c $(AMIGA_OUT)/ward_am; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/ward_am.c tests/ward/ward_roundtrip.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-amiga: PORT rejected the ward-over-RAM witness"; fail=1; }; \
+	  test -s $(C_OUT)/ward_am.c || { echo "selfhost-amiga: EMPTY ward-over-RAM emission (floor)"; fail=1; }; \
+	  $(AMIGA_GCC) -noixemul -O2 $(CC_QUIET) -I src -o $(AMIGA_OUT)/ward_am $(C_OUT)/ward_am.c tests/ward/ward_roundtrip_stub.c $(SYS_AMIGA) -lm \
+	    || { echo "selfhost-amiga: ward-over-RAM cross-compile failed"; fail=1; }; \
+	  test -x $(AMIGA_OUT)/ward_am || { echo "selfhost-amiga: ward-over-RAM produced no m68k binary (floor)"; fail=1; }; \
+	  wout=$$(vamos $(AMIGA_OUT)/ward_am 2>/dev/null); wexp=$$(printf '43981\n4660\n255'); \
+	  if [ "$$wout" != "$$wexp" ]; then \
+	    echo "selfhost-amiga: ward-over-RAM VAMOS round-trip WRONG - the field offsets do not mean on m68k what they mean on the host:"; \
+	    echo "  got: $$wout"; fail=1; fi; \
 	fi; \
 	rm -f $(C_OUT)/seal_am.c $(AMIGA_OUT)/seal_am $(AMIGA_OUT)/seal_am0 $(C_OUT)/seal_am.o \
 	      $(C_OUT)/seal_none.c $(AMIGA_OUT)/seal_none0 $(C_OUT)/seal_none.o; \
@@ -410,7 +422,7 @@ selfhost-amiga: $(EXILC_BIN)
 	  echo "selfhost-amiga: the stub was invoked with NO override set — the fallback is not the fallback"; fail=1; fi; \
 	rm -rf $$tcd; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; \$$EXILE_TOOLCHAIN honoured (a stub prefix RECORDS the call) and ignored when unset; rune-over-RAM runs 11/22/0/305419896 on m68k under vamos; seal call-path runs nested on m68k through exec Disable/Enable — the SEAM, not the masking: vamos has nothing to race, interleaving stays registered for FS-UAE; pay-for-use measured on the OBJECT, 2 vs 0; the sealed blitter sequence RUNS on m68k 3/2544/64/32832 over RAM — the chipset itself is above vamos, so this proves the SEQUENCE and the seam, not the registers)"; \
+	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; \$$EXILE_TOOLCHAIN honoured (a stub prefix RECORDS the call) and ignored when unset; rune-over-RAM runs 11/22/0/305419896 and ward-over-RAM runs 43981/4660/255 on m68k under vamos; seal call-path runs nested on m68k through exec Disable/Enable — the SEAM, not the masking: vamos has nothing to race, interleaving stays registered for FS-UAE; pay-for-use measured on the OBJECT, 2 vs 0; the sealed blitter sequence RUNS on m68k 3/2544/64/32832 over RAM — the chipset itself is above vamos, so this proves the SEQUENCE and the seam, not the registers)"; \
 	else exit 1; fi
 
 # ===== Freestanding codegen mode (--freestanding) =====
@@ -1264,6 +1276,10 @@ selfhost-ward: $(EXILC_BIN)
 	rm -f $(C_OUT)/ward_rr.c $(HOST_OUT)/ward_rr $(C_OUT)/ward_rr.out $(C_OUT)/ward_rr.expected; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_rr.c tests/ward/ward_roundtrip.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-ward: port rejected the ward-over-RAM witness"; exit 1; }; \
+	tn=`grep -o 'extern struct ex_[a-z0-9_]* SCRATCH' $(C_OUT)/ward_rr.c | sed 's/extern struct //;s/ SCRATCH//'`; \
+	if [ -z "$$tn" ]; then echo "selfhost-ward: the ward-over-RAM emission no longer declares SCRATCH as a struct - the stub cannot define what it does not name"; exit 1; fi; \
+	grep -q "struct $$tn {" tests/ward/ward_roundtrip_stub.c \
+	  || { echo "selfhost-ward: the emission declares SCRATCH as 'struct $$tn' and the stub defines a different type - they would link to different storage"; exit 1; }; \
 	grep -q '(char \*)&SCRATCH + 4UL' $(C_OUT)/ward_rr.c \
 	  || { echo "selfhost-ward: MISSING &global field address ((char*)&SCRATCH + offset)"; exit 1; }; \
 	cc -O2 -fno-strict-aliasing -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/ward_rr $(C_OUT)/ward_rr.c tests/ward/ward_roundtrip_stub.c $(SYS_HOST) \
