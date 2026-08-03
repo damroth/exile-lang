@@ -2031,7 +2031,7 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c19_callee_tparam_shadows_caller \
                   c20_own_param_in_generic_struct c21_generic_owner_nested_in_owner \
                   c22_capture_untyped_let c23_marker_bound_satisfied \
-                  arm_generic_payload
+                  arm_generic_payload prelude_name_string
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

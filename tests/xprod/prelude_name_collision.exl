@@ -1,3 +1,14 @@
+// COMMITTED BUT NOT REGISTERED, and the blocker is named rather than left to be
+// rediscovered: the port emits prelude-named structs in a FIXED RELATIVE ORDER
+// while the reference follows declaration order. Measured on the sharpest pair -
+// `HashMap` then `Range` agrees, `Range` then `HashMap` diverges by exactly the
+// position of `ex_Range` - so a file naming three of them cannot hold parity yet
+// and would fail this suite for a reason that has nothing to do with what it
+// pins. It joins XPROD_FIXTURES the day that ordering is mirrored.
+//
+// The precedent is `tests/seal/accept_limit_wrong_region.exl`: a fixture whose
+// job is to state a boundary is worth committing before the boundary moves.
+//
 // A user type may take a prelude name, and it is the USER's type that the
 // program means.
 //
