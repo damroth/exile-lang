@@ -16777,6 +16777,23 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let sinfo_scope = scope_with_sinfo(&base_scope, &sinfo);
     let mut sinfo_throwaway: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     collect_struct_info(a, ar, &sinfo_scope, &empty_tp, items, &sinfo_throwaway);
+    // The same second resolution for ENUM payloads, and for the same reason.
+    // A variant payload is a signature position like any other, so a generic
+    // application there (`Decl { rs: Vec<Range> }`) has to register its instance
+    // FIELDS, not just the instance. On the first pass the struct skeleton is
+    // still empty, so the instance lands field-less and every later use of the
+    // binding degrades: a field access reports `c_void`, a method reports the
+    // element tparam as an unknown type. Two faces, one cause.
+    //
+    // The reference has no second pass because it never has a first one without
+    // the index: it builds struct_index and enum_index together and resolves
+    // payload annotations in a context already carrying the instance state. This
+    // is the port's mirror of that ordering, matching how struct fields are
+    // already handled above; the output is discarded and only the registration
+    // survives.
+    let mut etags_throwaway: Vec<EnumVariantTag> = Vec::with_capacity(a, 8 as u32);
+    let mut efields_throwaway: Vec<EnumFieldE> = Vec::with_capacity(a, 8 as u32);
+    collect_enum_info(a, ar, &sinfo_scope, &top_modpath, items, &etags_throwaway, &efields_throwaway);
     register_iter_footprints(a, ar, &sinfo_scope, items, &assoc_binds, true);
     // The named prelude types (String / StringBuilder / Arena) have a FIXED
     // field catalogue.  Registering them lazily at first method-use made body

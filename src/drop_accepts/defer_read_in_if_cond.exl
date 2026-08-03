@@ -1,0 +1,11 @@
+// A read in an `if` CONDITION. Accepted - and this is the shape that killed the
+// second model: `TIf` contributes no expressions at all, not even its condition,
+// because it is simply absent from the reference's `stmt_exprs` list.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let p: own *int = a.alloc();
+    *p = 1;
+    defer { if *p > 0 { println(3); } }
+    println(2);
+}

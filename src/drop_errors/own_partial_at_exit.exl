@@ -1,0 +1,17 @@
+// The eighth and last drop rule. Its state has exactly one producer in the
+// reference: a `match` over a DEREF-rooted owned tree moves the children out
+// and leaves the root storage releasable. Nothing else yields PartialMoved,
+// so the shape came from reading that producer rather than from guessing.
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+    extern fn mk_node() -> own *Node;
+}
+enum Node { Leaf(own *int) | Nil }
+fn main() {
+    let a = raw::make_c_allocator();
+    let t: own *Node = raw::mk_node();
+    match *t {
+        Node::Leaf(p) => { *p = 1; println(*p); a.free(p); }
+        | Node::Nil => { println(0); }
+    }
+}

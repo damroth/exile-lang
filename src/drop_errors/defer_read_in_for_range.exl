@@ -1,0 +1,11 @@
+// A read in a `for` RANGE is rejected, even though `TFor` is absent from the
+// list: the desugar lifts the bound into a `TLet __fe = hi` BEFORE the loop, and
+// `TLet` is on it. The port performs the same lift, so this needs no exception.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let p: own *int = a.alloc();
+    *p = 1;
+    defer { for i in 0..*p { println(i); } }
+    println(2);
+}

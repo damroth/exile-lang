@@ -1,0 +1,11 @@
+// A `match` is an EXPRESSION, so its arms are part of the statement's own
+// expressions and their reads count - unlike the bodies of `if` / `while` /
+// `for`, which are statement lists the descent does not enter.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let p: own *int = a.alloc();
+    *p = 1;
+    defer { match true { true => { println(*p); } | false => { println(*p); } } }
+    println(2);
+}

@@ -1,0 +1,18 @@
+// The handled form of the same shape, and the diagnostic names it: after the
+// payload is moved out, the builtin `free(a, t)` releases the root storage.
+// The method form `a.free(t)` is rejected by BOTH - it takes an `own *T` and
+// the root is only PartialMoved.
+pub mod raw {
+    extern fn make_c_allocator() -> Allocator;
+    extern fn mk_node() -> own *Node;
+}
+enum Node { Leaf(own *int) | Nil }
+fn main() {
+    let a = raw::make_c_allocator();
+    let t: own *Node = raw::mk_node();
+    match *t {
+        Node::Leaf(p) => { *p = 1; println(*p); a.free(p); }
+        | Node::Nil => { println(0); }
+    }
+    free(a, t);
+}

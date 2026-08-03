@@ -1,0 +1,14 @@
+// Moving an `own` out of a FIELD would make a second owner of storage the
+// parent struct still drops. Both compilers reject it - this fixture exists
+// because a harness asymmetry made it look like a divergence: the drop driver
+// ran only Drop.insert while the reference's --after-drop runs Move, Escape
+// and Drop. The rule was in the port all along; the gate could not see it.
+pub mod raw { extern fn make_c_allocator() -> Allocator; extern fn mk() -> own *int; }
+struct Box { alloc: Allocator, p: own *int }
+fn main() {
+    let a = raw::make_c_allocator();
+    let b = Box { alloc: a, p: raw::mk() };
+    let q = b.p;
+    *q = 1; println(*q);
+    a.free(q);
+}

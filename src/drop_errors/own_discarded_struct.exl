@@ -1,0 +1,11 @@
+// A struct whose field tree reaches an `own *T` owns as much as a bare pointer,
+// and an expression statement drops it on the floor the same way. The
+// never-consumed check only ever sees BINDINGS, so nothing else catches this.
+pub mod raw { extern fn make_c_allocator() -> Allocator; extern fn mk() -> own *int; }
+struct Box { alloc: Allocator, p: own *int }
+fn mk_box(a: Allocator) -> Box { return Box { alloc: a, p: raw::mk() }; }
+fn main() {
+    let a = raw::make_c_allocator();
+    mk_box(a);
+    println(1);
+}

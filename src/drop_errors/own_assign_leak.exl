@@ -1,0 +1,3 @@
+// Assigning over a live owner with no known allocator drops it on the floor.
+pub mod raw { extern fn make_c_allocator() -> Allocator; extern fn mk() -> own *int; }
+fn main() { let mut p: own *int = raw::mk(); p = raw::mk(); *p = 1; println(*p); }

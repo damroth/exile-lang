@@ -19,6 +19,12 @@ src/parse_errors/*
 src/tc_errors/*
 !src/tc_errors/*.exl
 !src/tc_errors/README.md
+!src/drop_errors/
+src/drop_errors/*
+!src/drop_errors/*.exl
+!src/drop_accepts/
+src/drop_accepts/*
+!src/drop_accepts/*.exl
 
 # the compiler `make compiler` hands the user
 /exilc

@@ -1,0 +1,12 @@
+// A read under an `if` inside a defer body. The reference ACCEPTS it, and this
+// fixture exists because the first cut of the rule did not: the descent went two
+// constructs too deep and narrowed the language against the frozen reference,
+// which is the worse direction to be wrong in.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let p: own *int = a.alloc();
+    *p = 1;
+    defer { if true { println(*p); } }
+    println(2);
+}

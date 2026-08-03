@@ -1,0 +1,12 @@
+// A defer body that READS a tracked owner it does not also consume runs against
+// storage the auto-drop already released: the drop is emitted at scope exit and
+// the deferred code runs after it. A defer that CONSUMES the binding elides the
+// drop and stays legal - that is the accepting control, not this file.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let p: own *int = a.alloc();
+    *p = 1;
+    defer { println(*p); }
+    println(2);
+}

@@ -1,0 +1,10 @@
+// And with the read in BOTH branches of an `if/else` - which rules out "some
+// branch always runs" as the model. Measured, not reasoned.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let p: own *int = a.alloc();
+    *p = 1;
+    defer { if true { println(*p); } else { println(*p); } }
+    println(2);
+}

@@ -1,0 +1,87 @@
+// A match-arm binding keeps its payload's GENERIC INSTANTIATION.
+//
+// The port used to lose it: a variant payload is a signature position, and a
+// generic application there registered its instance without registering the
+// instance's FIELDS. The binding then degraded, and it degraded differently
+// depending on what you did with it next - a field access through the slice
+// reported `c_void`, a method call reported the element tparam as an unknown
+// type. Two faces, one cause, and the reference accepted all of it.
+//
+// This fixture pins the PROPERTY rather than the first face that showed: the
+// binding carries its type whole. So it exercises a struct variant and a tuple
+// variant, a field access and a method, a Vec payload read through a slice, and
+// a payload reached by nesting one variant inside another - and it RUNS, so a
+// binding that type-checks but lowers to the wrong element is caught too.
+//
+// WHAT THIS FIXTURE IS, AND IS NOT. It is an accept + parity + run control: it
+// must compile on both sides, emit the same C byte for byte, and print 5/3/-1.
+// It is NOT the red proof, and cannot be. Constructing a `Vec<Span>` needs a
+// type annotation - the language requires one, both compilers reject the
+// unannotated form identically - and that annotation registers the instance's
+// fields before the match ever asks, healing the payload binding.
+//
+// So any single file that both BUILDS and MATCHES the payload is green with the
+// defect present. That is why it survived every fixture and only showed in
+// `src/main.exl`, where construction and consumption live in different files.
+// The red proof therefore lives in `make selfhost-own-tree`, which pins that
+// file, and this fixture guards the property once it works.
+
+struct Span { lo: int, hi: int }
+
+enum Item {
+    Decl { name: str, rs: Vec<Span> }
+    | Pair(Vec<Span>)
+    | Wrapped { inner: Payload }
+    | Nothing
+}
+
+enum Payload { Some_(Vec<Span>) | None_ }
+
+fn span_of(rs: *const Vec<Span>) -> int {
+    let s = rs.as_slice();
+    let mut total = 0;
+    let mut i = 0 as u32;
+    while i < rs.length() {
+        total = total + (s[i].hi - s[i].lo);
+        i = i + 1 as u32;
+    }
+    return total;
+}
+
+fn describe(it: *const Item) -> int {
+    return match *it {
+        // Struct variant: field access through the slice, plus a method on the
+        // same binding - the two faces the defect wore.
+        Item::Decl { name, rs } => {
+            let s = rs.as_slice();
+            s[0 as u32].lo + (rs.length() as int)
+        }
+        // Tuple variant: same payload, different variant shape.
+        | Item::Pair(rs) => span_of(&rs)
+        // Nested: the payload is itself a variant carrying the instance.
+        | Item::Wrapped { inner } => {
+            match inner {
+                Payload::Some_(rs) => rs.length() as int
+                | Payload::None_ => 0
+            }
+        }
+        | Item::Nothing => -1
+    };
+}
+
+fn main() {
+    let al = raw::make_c_allocator();
+
+    let mut rs: Vec<Span> = Vec::with_capacity(al, 8 as u32);
+    rs.push(Span { lo: 3, hi: 10 });
+    rs.push(Span { lo: 20, hi: 25 });
+
+    let mut rs2: Vec<Span> = Vec::with_capacity(al, 8 as u32);
+    rs2.push(Span { lo: 1, hi: 4 });
+
+    println(describe(&Item::Decl { name: "d", rs: rs }));   // 3 + 2 = 5
+    println(describe(&Item::Pair(rs2)));                    // (4-1) = 3
+    println(describe(&Item::Nothing));                      // -1
+}
+
+pub mod raw { extern fn make_c_allocator() -> Allocator; }

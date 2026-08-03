@@ -900,7 +900,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden
+                 selfhost-seal selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1514,6 +1514,31 @@ docs-capability-golden: $(EXILC_BIN)
 	sig="$$sig seal=seam-pair-in-both"; \
 	echo "docs-capability-golden: clean -$$sig"
 
+# ===== the port compiles every file in its own tree =====
+#
+# `src/main.exl` was the one file the port could not build while the reference
+# could - the single hole in the self-host claim, and one nothing measured. It
+# is a consumer gate rather than a fixture on purpose: a reduced probe pins the
+# mechanism that was found, and this pins the thing a user would actually notice.
+#
+# Both halves are asserted, because "it compiles" is not this project's standard:
+# the port must accept the file AND emit what the reference emits, byte for byte.
+.PHONY: selfhost-own-tree
+selfhost-own-tree: $(EXILC_BIN)
+	@test -f src/main.exl || { echo "selfhost-own-tree: MISSING src/main.exl - re-aim the gate at whatever replaced it"; exit 1; }; \
+	rm -f $(C_OUT)/own_o.c $(C_OUT)/own_p.c; \
+	$(EXILE) --target c --c-out $(C_OUT)/own_o.c src/main.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-own-tree: the REFERENCE rejected src/main.exl"; exit 1; }; \
+	test -s $(C_OUT)/own_o.c || { echo "selfhost-own-tree: EMPTY reference emission (floor)"; exit 1; }; \
+	if ! $(EXILC_BIN) --target c --c-out $(C_OUT)/own_p.c src/main.exl >/dev/null 2>$(C_OUT)/own_p.err; then \
+	  echo "selfhost-own-tree: the PORT cannot compile a file in its own source tree:"; \
+	  head -3 $(C_OUT)/own_p.err; exit 1; fi; \
+	test -s $(C_OUT)/own_p.c || { echo "selfhost-own-tree: EMPTY port emission (floor)"; exit 1; }; \
+	if ! diff -q $(C_OUT)/own_o.c $(C_OUT)/own_p.c >/dev/null; then \
+	  echo "selfhost-own-tree: the port compiles src/main.exl but does not agree with the reference on it:"; \
+	  diff $(C_OUT)/own_o.c $(C_OUT)/own_p.c | head -8; exit 1; fi; \
+	echo "selfhost-own-tree: clean (port == reference on src/main.exl, `wc -l < $(C_OUT)/own_p.c` lines byte-identical)"
+
 # ===== publicly-facing text must stand on its own =====
 #
 # Design records, phase names and step labels live in a directory that is not
@@ -1989,7 +2014,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c18_relative_path_in_middle_module \
                   c19_callee_tparam_shadows_caller \
                   c20_own_param_in_generic_struct c21_generic_owner_nested_in_owner \
-                  c22_capture_untyped_let c23_marker_bound_satisfied
+                  c22_capture_untyped_let c23_marker_bound_satisfied \
+                  arm_generic_payload
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

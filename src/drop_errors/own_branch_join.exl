@@ -1,0 +1,14 @@
+// Auto-drop is static: an owner consumed on one branch and still owned on the
+// other has no single answer to emit. The port used to take `then` and compile
+// it, on the shape every allocator example opens with - which is why the
+// tutorial's own snippet had to move its `free` out of the guard.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let p: own *int = a.alloc();
+    if p != null {
+        *p = 42;
+        println(*p);
+        a.free(p);
+    }
+}

@@ -1,0 +1,6 @@
+// L1: an owner whose allocator is not known here cannot be auto-dropped, and
+// silence would be the leak. The rule needed the defer threading first - a
+// `defer free(a, p)` consumes at scope exit, and without walking those bodies
+// the check fires on valid code (examples/heap.exl, caught by selfhost-port-move).
+pub mod raw { extern fn make_c_allocator() -> Allocator; extern fn mk() -> own *int; }
+fn main() { let p: own *int = raw::mk(); *p = 1; println(*p); }

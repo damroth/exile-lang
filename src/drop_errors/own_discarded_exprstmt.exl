@@ -1,0 +1,4 @@
+// An expression statement that OWNS discards it: the never-consumed check only
+// ever sees bindings, so nothing else would catch this one.
+pub mod raw { extern fn make_c_allocator() -> Allocator; extern fn mk() -> own *int; }
+fn main() { raw::mk(); println(1); }
