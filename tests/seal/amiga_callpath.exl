@@ -1,7 +1,7 @@
-// SEAL-SPEC §7(c): the AmigaOS call path, on m68k, under vamos.  Nested, so the
-// exec Disable() counter is exercised at depth — and so I-T2 is executed rather
+// The AmigaOS call path, on m68k, under vamos.  Nested, so the
+// exec Disable() counter is exercised at depth — and so nesting is executed rather
 // than asserted.  This proves the SEAM, not the masking: vamos has nothing to
-// race (§7d owns that level).
+// race, which is a separate level.
 fn run(n: int) -> int {
     let mut acc = 0;
     seal {

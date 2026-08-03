@@ -1,6 +1,6 @@
-// ward Increment 4 — top-level ward instances (WARD-SPEC §3; mirror rune Inc4
-// Half B). A ward instance at file scope is visible in every function, zero
-// storage (I-W1): no C object, and each field access folds to (baseUL + offsetUL)
+// Top-level ward instances, mirroring the top-level rune form.
+// A ward instance at file scope is visible in every function, zero
+// storage: no C object, and each field access folds to (baseUL + offsetUL)
 // at its use-site, IDENTICALLY from every function. Two instances of one type at
 // two bases — the NDK case, the reason type-instance are separate.
 ward Custom {

@@ -1,5 +1,5 @@
 // A rune type in a signature always carries its direction — the mirror of the
-// declaration's "direction is never implicit" (RUNE-SPEC axis 2). A bare
+// declaration's "direction is never implicit". A bare
 // `rune<T>` is a compile error listing the three forms.
 fn burst(r: rune<u16>) { r.write(64); }
 

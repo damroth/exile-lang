@@ -1,6 +1,6 @@
-# Recogniser floors (FUZZ-SPEC 3.3 / Z1). Both directions on purpose: a filter's
+# Recogniser floors for the divergence filter. Both directions on purpose: a filter's
 # false POSITIVE eats budget silently, its false NEGATIVE drowns real findings in
-# noise. Increment 1's regexes had one of each, which is why these exist.
+# noise. The first regexes had one of each, which is why these exist.
 # Format: fixture | expected recogniser ("none" = must NOT be filtered)
 seam_call|kernel-era-superset
 capability_decl|kernel-era-superset

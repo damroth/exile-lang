@@ -1,4 +1,4 @@
-// R5 (RUNE-SPEC §5, I-R3): a rune is foreign — not an ordinary pointer, so it is
+// R5: a rune is foreign — not an ordinary pointer, so it is
 // never the target of `&`. Reach the register through .read()/.write(), never by
 // taking the handle's address.
 fn main() {

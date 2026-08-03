@@ -1,4 +1,4 @@
-// The DELEGATION witness (SIGIL-SPEC §4.2, §7) on P1's syntax — the story that
+// The DELEGATION witness on the signature syntax — the story that
 // makes the materialisation gate coherent rather than merely restrictive.
 //
 // The owner MATERIALISES the covered handle and hands it out; the receiver, which

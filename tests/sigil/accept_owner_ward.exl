@@ -1,4 +1,4 @@
-// The OWNER side of ward-field coverage (SIGIL-SPEC §4.2): the gate must not
+// The OWNER side of ward-field coverage: the gate must not
 // break the module that legitimately owns the resource. Same overlay, same
 // address as reject_ward_field.exl — only the claiming module differs.
 sigil Blitter { 0xDFF040 .. 0xDFF05A }

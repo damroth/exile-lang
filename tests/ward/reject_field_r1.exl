@@ -1,4 +1,4 @@
-// W4 → R1 (I-W3): a ward field IS a rune, so a write to a `read` field is the
+// W4 → R1: a ward field IS a rune, so a write to a `read` field is the
 // rune diagnostic, reached through the field.
 ward C { status: u16 at 0x02 read; }
 fn main() {

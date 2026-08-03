@@ -1,4 +1,4 @@
-// W1 (WARD-SPEC §5, I-W2): two fields of one ward may not overlap. a's u32 span
+// W1: two fields of one ward may not overlap. a's u32 span
 // [0, 4) collides with b's u16 span [2, 4). The diagnostic names BOTH fields and
 // their ranges (the ratified range formula).
 ward Bad {

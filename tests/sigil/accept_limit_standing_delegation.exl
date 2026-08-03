@@ -1,4 +1,4 @@
-// §7 LIMIT: v1 proves "only the owner can OBTAIN a handle", not "only the owner
+// LIMIT: v1 proves "only the owner can OBTAIN a handle", not "only the owner
 // can touch the register". A TOP-LEVEL rune declared INSIDE the owner is legal
 // (its materialisation site is the owner) — and top-level runes are visible in
 // every function's benv, so this is a STANDING delegation to the whole program.

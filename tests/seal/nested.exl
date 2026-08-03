@@ -1,4 +1,4 @@
-// SEAL-SPEC I-T2 at DEPTH: nesting is legal and composes by construction, so the
+// Nesting AT DEPTH: it is legal and composes by construction, so the
 // witness leaves nested regions every way there is — return and break and
 // continue all crossing an inner seal AND its outer.  The token makes the inner
 // exit restore the OUTER's state, never "enabled", so no counter is needed.

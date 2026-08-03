@@ -1,8 +1,8 @@
-// seal Increment 3 — the real consumer (SEAL-SPEC §9.3).
+// The real consumer.
 //
 // The first program in which all four constructs of the capability model carry
 // weight at once: a `sigil` owns the hardware, a `ward` lays a typed overlay over
-// it, the fields ARE runes (I-W3) and one crosses a call boundary as
+// it, the fields ARE runes and one crosses a call boundary as
 // `write rune<u16>`, and a `seal` makes the multi-register sequence indivisible.
 // The addresses are the HRM's own.
 

@@ -1,4 +1,4 @@
-// SEAL-SPEC T4: the same property reached without naming `sys` at all.
+// T4: the same property reached without naming `sys` at all.
 //
 // The extern sits inside `mod raw` on purpose. At top level it is rejected by
 // the FFI hygiene rule instead, and this fixture would then be passing on a

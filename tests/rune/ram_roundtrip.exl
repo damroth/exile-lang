@@ -1,4 +1,4 @@
-// Increment 2 — the runnable rune-over-RAM witness (RUNE-SPEC §7b).
+// The runnable rune-over-RAM witness.
 //
 // Volatile mechanics proven by EXECUTION, not just C shape: a readwrite rune
 // points at a real static cell (`&raw::SCRATCH`, storage from the C stub), and the

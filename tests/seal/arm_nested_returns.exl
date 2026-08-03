@@ -1,4 +1,4 @@
-// seal Increment 4 — the property, not the two faces that bit.
+// The property, not the two faces that bit.
 //
 // The defect was "a nested gen_block leaves the chain published, so a region's
 // exit outlives the region". The two shapes that surfaced it were a return after

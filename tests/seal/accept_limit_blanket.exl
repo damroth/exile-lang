@@ -1,4 +1,4 @@
-// SEAL-SPEC §6 limit 2, as a CONTRACT: masking is ALL interrupts, not per level.
+// Limit 2, as a CONTRACT: masking is ALL interrupts, not per level.
 //
 // There is deliberately no syntax here for "mask only level 3" — the seam takes
 // no level and the construct offers no place to put one. Correct but blunt;

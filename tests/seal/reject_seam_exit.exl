@@ -1,4 +1,4 @@
-// SEAL-SPEC T3: a restore with a token the language never handed out.
+// T3: a restore with a token the language never handed out.
 fn main() {
     sys::sys_seal_exit(7 as u32);
     println(1);

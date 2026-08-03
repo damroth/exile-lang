@@ -1,4 +1,4 @@
-// §7 LIMIT (contract, not hole): sigil gates the CHECKED path — rune and ward
+// LIMIT (contract, not hole): sigil gates the CHECKED path — rune and ward
 // materialisation. A raw `int as *T` cast plus a deref reaches the same register
 // and compiles, because that is the unchecked escape hatch the language already
 // has, and closing it here would be a different feature (and a false promise if

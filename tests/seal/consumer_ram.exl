@@ -1,4 +1,4 @@
-// seal Increment 3, witness level (b) — the SEALED SEQUENCE, executed.
+// Witness level (b) — the SEALED SEQUENCE, executed.
 //
 // The golden proves the shape of tests/seal/blitter_setup.exl; this proves it
 // RUNS: the same ordering, the same rune handed across a call boundary, the same
@@ -6,7 +6,7 @@
 // custom chips. It carries a four-register SUBSET: the backing is one c_ulong, the
 // same idiom the rune and ward over-RAM witnesses use, and exile's u32 is C
 // `unsigned long` (8 bytes on a 64-bit host, 4 on m68k), so wide fields would
-// overlap here — the host quirk WARD-SPEC §7b already records. The golden carries
+// overlap here — a host width quirk, not a ward defect. The golden carries
 // all nine registers at their real HRM addresses.
 //
 // Read-back proves the stores LANDED and where; the trace counter proves every
@@ -25,7 +25,7 @@ ward Regs {
 fn start(size: readwrite rune<u16>, v: u16) { size.write(v); }
 
 fn setup(size: u16) -> u16 {
-    ward regs: Regs at &raw::SCRATCH;   // zero storage (I-W1), so naming it twice costs nothing
+    ward regs: Regs at &raw::SCRATCH;   // zero storage, so naming it twice costs nothing
     let mut trace = 0 as u16;
     seal {
         let old = regs.dmaconr.read();

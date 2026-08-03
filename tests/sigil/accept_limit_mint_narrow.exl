@@ -1,4 +1,4 @@
-// §7 LIMIT + the IDIOM it implies. Attenuation holds on arguments and on `let`
+// LIMIT + the IDIOM it implies. Attenuation holds on arguments and on `let`
 // annotations, but NOT on `return` — and `own *T` has the same asymmetry, which
 // the frozen oracle agrees with, so it is return-path semantics rather than a rune
 // gap (decided 2026-07-27: keep the asymmetry, one coercion story for own and

@@ -1,4 +1,4 @@
-// SEAL-SPEC I-T1: the region is left EXACTLY once per entry, on every exit
+// The region is left EXACTLY once per entry, on every exit
 // path.  The shape is the one that breaks hand-written enter/exit pairs: a
 // seal inside a loop with a return, a break and a continue leaving it.
 fn seq(n: int) -> Option<int> {

@@ -1,4 +1,4 @@
-// FALSE POSITIVE that Increment 1's parenthesis regex produced: `|` here is the
+// FALSE POSITIVE that the first parenthesis regex produced: `|` here is the
 // enum-variant separator, not a bitwise operator. Filtering this spends budget
 // on nothing and hides whatever the input would really have shown.
 enum Colour { Red | Green | Blue }

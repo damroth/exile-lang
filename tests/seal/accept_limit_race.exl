@@ -1,4 +1,4 @@
-// SEAL-SPEC §6 limit 3 (I-T5), as a CONTRACT: a seal does not disprove a race.
+// Limit 3, as a CONTRACT: a seal does not disprove a race.
 //
 // Two callers reach the same register; one seals, one does not. The seal makes
 // its OWN sequence indivisible and says nothing whatever about the other party,

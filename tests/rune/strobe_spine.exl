@@ -1,4 +1,4 @@
-// Increment 3 — the strobe method = write(0) on a write-capable rune (RUNE-SPEC §3).
+// The strobe method = write(0) on a write-capable rune.
 //
 // Starting the copper is a single strobe: the WRITE is the act, the value is
 // irrelevant. The golden asserts EXACTLY ONE `= 0;` volatile store per source

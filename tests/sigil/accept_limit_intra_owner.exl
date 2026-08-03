@@ -1,4 +1,4 @@
-// §7 LIMIT: a sigil says WHO may hold the register, never WHEN. Two functions of
+// LIMIT: a sigil says WHO may hold the register, never WHEN. Two functions of
 // the same owner writing it in any order is legal — sequencing and atomicity are
 // the seal era's domain (and the blitter's BBUSY protocol is a third thing again).
 mod ndk { sigil Blitter { 0xDFF040 .. 0xDFF05A } }

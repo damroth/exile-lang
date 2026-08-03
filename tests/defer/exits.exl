@@ -1,6 +1,6 @@
 // P3 — `defer` must fire on EVERY exit from the scope that registered it,
 // including the loop jumps. Before this, `break` and `continue` silently swallowed
-// it: a registered, documented hole (WORKLOG 2026-05-28, "break/continue + defer
+// it: a registered, documented hole ("break/continue + defer
 // interaction deliberately not done") that seal turns from a wart into a hazard —
 // a `seal { }` in a loop body left by `break` would leave interrupts masked
 // forever, which is exactly the catastrophic-and-silent class seal exists against.

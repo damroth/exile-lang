@@ -1,4 +1,4 @@
-// seal Increment 4 — defer INSIDE a seal (SEAL-SPEC §9.4).
+// A defer INSIDE a seal.
 //
 // The order is the whole claim: a user `defer` declared inside the region must
 // run BEFORE `sys_seal_exit`, because its body is cleanup that may still touch

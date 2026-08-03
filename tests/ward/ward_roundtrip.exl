@@ -1,8 +1,8 @@
-// ward Increment 2 — the runnable ward-over-RAM witness (WARD-SPEC §7b).
+// The runnable ward-over-RAM witness.
 //
 // A ward instance over a real static cell (&raw::SCRATCH), MIXED-WIDTH fields with a
 // GAP between them, written and read back — proving the offsets land AND that a
-// u16 field and its neighbours do not collide (disjoint layout I-W2), by
+// u16 field and its neighbours do not collide (disjoint layout), by
 // execution. Pattern: field -> gap -> field -> field.
 //
 // Host-faithful widths only (u16 = 2 bytes, u8 = 1): exile's u32 maps to C

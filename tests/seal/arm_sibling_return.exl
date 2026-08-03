@@ -1,4 +1,4 @@
-// seal Increment 4 — the sibling arm, which never opened a region at all.
+// The sibling arm, which never opened a region at all.
 //
 // Same leak, uglier face: with the seal's chain left published, an arm that never
 // sealed anything still emitted `sys_seal_exit` — reading a token that was never

@@ -1,4 +1,4 @@
-// seal Increment 4 — the crossing shape: seal -> defer -> seal.
+// The crossing shape: seal -> defer -> seal.
 //
 // A region, inside whose cleanup there is another region. This is where crossed
 // token pairs are easiest to produce if the lowering has a seam anywhere, so the

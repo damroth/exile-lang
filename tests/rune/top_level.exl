@@ -1,8 +1,8 @@
-// Increment 4 Half B — top-level rune placement (RUNE-SPEC §3).
+// Top-level rune placement.
 //
 // A register map shared across functions: the declaration stands at file scope,
 // emitting a `volatile T *const` global that every function sees. This is the
-// consumer the §3 increment note named as top-level's reason to exist — a
+// consumer named as top-level's reason to exist — a
 // standalone control register AND a register file, each used from more than one
 // function. The copper-start pair the whole era opened to express, now at the
 // natural placement.

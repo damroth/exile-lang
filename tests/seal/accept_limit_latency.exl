@@ -1,4 +1,4 @@
-// SEAL-SPEC §6 limit 4, as a CONTRACT: seal LENGTH is neither measured nor
+// Limit 4, as a CONTRACT: seal LENGTH is neither measured nor
 // limited.
 //
 // Entering a region is cheap on the 68000; HOLDING one costs interrupt latency —

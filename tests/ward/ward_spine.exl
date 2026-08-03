@@ -1,8 +1,8 @@
-// ward Increment 1 — the type + one field spine (WARD-SPEC §9 Inc1).
+// The ward type + one field: the spine.
 //
 // A ward TYPE (layout only, no base — emits nothing), a local INSTANCE binding a
-// base (zero runtime storage, I-W1), and a field access folding to a rune at
-// (base + offset), base and offset kept SEPARATE (§6). The field IS a rune (I-W3),
+// base (zero runtime storage), and a field access folding to a rune at
+// (base + offset), base and offset kept SEPARATE. The field IS a rune,
 // so it inherits every rune rule — this spine writes and strobes through fields.
 ward Custom {
     cop1lc:  u32 at 0x080 write;

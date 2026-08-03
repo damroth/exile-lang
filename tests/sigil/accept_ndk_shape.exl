@@ -1,4 +1,4 @@
-// sigil Increment 4 — the NDK shape (SIGIL-SPEC §4.5): resources are declared by a
+// The NDK shape: resources are declared by a
 // LIBRARY module, and claimed by whoever owns the silicon. The compiler ships no
 // list of Amiga resources; exile-ndk does, written from the HRM.
 //

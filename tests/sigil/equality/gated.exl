@@ -1,8 +1,8 @@
-// §8b — the artifact-equality witness, GATED half. Compiled against
+// The artifact-equality witness, GATED half. Compiled against
 // ungated.exl, which is this file MINUS the sigil declaration and the claim.
-// The emitted C must be byte-identical: a claim is a compile-time fact (I-S5).
+// The emitted C must be byte-identical: a claim is a compile-time fact.
 //
-// The program exercises a COVERED access inside the owner (correction C): it
+// The program exercises a COVERED access inside the owner: it
 // proves zero cost on the path ownership GOVERNS, not the erasure of an unused
 // claim.
 sigil Blitter { 0xDFF040 .. 0xDFF05A }

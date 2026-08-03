@@ -1,13 +1,13 @@
-// SEAL-SPEC §6 limit 5, as a CONTRACT — and the sharpest one, because it is the
-// only §6 limit that Increment 3's real consumer actually walked into.
+// Limit 5, as a CONTRACT — and the sharpest one, because it is the
+// only limit the era's own real consumer actually walked into.
 //
 // NOTHING VERIFIES THE SEALED REGION IS THE RIGHT REGION. Here the DMACON save
 // is read OUTSIDE the region and only the restore is inside — the save torn from
 // its restore, which is precisely the bug a seal exists to prevent. It compiles
 // clean. It runs. The balance is 0 and mis-nesting is 0, so the witness is blind
-// to it as well: I-T1 and I-T2 both hold, and the program is still wrong.
+// to it as well: exactly-once and nesting both hold, and the program is still wrong.
 //
-// POST-ERA ROUND CANDIDATE. If any part of §6 earns its own round, it is this
+// POST-ERA ROUND CANDIDATE. If any of these limits earns its own round, it is this
 // one, and the shape to start from is the one below: the information a checker
 // would need is not flow analysis but a statement that these two accesses form a
 // PAIR. Pinned as ACCEPT so the blindness is a contract rather than a memory —

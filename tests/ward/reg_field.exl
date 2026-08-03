@@ -1,7 +1,7 @@
-// ward Increment 3 — a register-file field (WARD-SPEC §3; rune's register file,
-// now a ward field). color[i] indexes within the field's [offset, offset +
+// A register-file field — rune's register file, now a ward
+// field. color[i] indexes within the field's [offset, offset +
 // N·sizeof(T)) span. The golden shows the EXTREME index — color[31] at field
-// offset 0x180 (i.e. 0x180 + 62 = 0x1BE) — not just color[0]. I-R4 is inherited
+// offset 0x180 (i.e. 0x180 + 62 = 0x1BE) — not just color[0]. R4 is inherited
 // from the rune register file: a static index past 32 is rejected.
 ward Custom {
     color: [u16; 32] at 0x180 readwrite;

@@ -1,8 +1,8 @@
-// sigil Increment 1 — the spine (SIGIL-SPEC §11, §4.2).
+// The spine.
 //
 // The canonical story: a library declares the resource, one module claims it, and
 // that module materialises and uses a covered register. The sigil declaration and
-// the claim emit NOTHING (I-S5 — a claim is a compile-time fact).
+// the claim emit NOTHING — a claim is a compile-time fact.
 sigil Blitter { 0xDFF040 .. 0xDFF05A }
 sigil Sprite0 { 0xDFF120 .. 0xDFF124, 0xDFF140 .. 0xDFF148 }   // non-contiguous
 

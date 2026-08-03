@@ -1,4 +1,4 @@
-// §7 LIMIT: delegation is UNRESTRICTED once the handle exists. The owner lends to
+// LIMIT: delegation is UNRESTRICTED once the handle exists. The owner lends to
 // one module, which passes it to a third — no tracking follows it, by design
 // (shape A: zero flow analysis, "capabilities not lifetimes"). Restricting this
 // is shape B's job, and shape B is deferred with a named consumer.

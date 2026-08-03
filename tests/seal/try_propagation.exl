@@ -1,8 +1,8 @@
-// SEAL-SPEC I-T1 names `try`-propagation explicitly, with a reason: it is the
+// The exactly-once guarantee names `try`-propagation explicitly, with a reason: it is the
 // shape a DRIVER actually takes — leaving a sealed hardware sequence by
 // propagating an error. The invariant also says why it is named even though
 // `defer` already covers it: "a path that is covered by accident is a path that
-// can be lost by accident." Increment 4 proved that sentence the hard way, on a
+// can be lost by accident." A later round proved that sentence the hard way, on a
 // scope its own commit had named but not fixtured. So the path is gated.
 fn inner(n: int) -> Result<int, int> {
     if n == 0 { return Result::Err(7); }

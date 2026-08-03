@@ -1,4 +1,4 @@
-# SEAL-SPEC §5, the T-series, as data. One row per rejection the era claims.
+# The T-series of rejections, as data. One row per rejection the era claims.
 # Format:  fixture | expected message fragment | row label
 # The gate iterates this file, so adding a row means adding a line and a fixture
 # — and a row with no fixture, or a fixture with no row, is a hard failure.

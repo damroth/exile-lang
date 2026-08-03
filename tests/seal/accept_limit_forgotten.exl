@@ -1,4 +1,4 @@
-// SEAL-SPEC §6 limit 1, as a CONTRACT: a forgotten seal is not diagnosed.
+// Limit 1, as a CONTRACT: a forgotten seal is not diagnosed.
 //
 // This is the same multi-register sequence blitter_setup.exl seals, written with
 // no seal at all. v1 masks where you say; it does not know what should have been

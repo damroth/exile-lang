@@ -1,4 +1,4 @@
-// SEAL-SPEC T1: a seal is a statement, not an expression — it has no value.
+// T1: a seal is a statement, not an expression — it has no value.
 fn main() {
     let x = seal { 1 };
     println(x);

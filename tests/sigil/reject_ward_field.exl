@@ -1,4 +1,4 @@
-// S2 through a WARD FIELD (SIGIL-SPEC §4.2): the second materialisation site.
+// S2 through a WARD FIELD: the second materialisation site.
 // custom.bltsize folds to 0xDFF000 + 0x058 = 0xDFF058, inside Blitter — the gate
 // is on the ADDRESS, so re-cutting the map as an overlay changes nothing.
 sigil Blitter { 0xDFF040 .. 0xDFF05A }

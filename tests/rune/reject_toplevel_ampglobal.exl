@@ -1,4 +1,4 @@
-// R3b (RUNE-SPEC §5, found tl3): a top-level rune base must be an integer MMIO
+// R3b: a top-level rune base must be an integer MMIO
 // address. `&GLOBAL` works for a LOCAL rune (the RAM witness) but not at file
 // scope. The check must be a clean diagnostic, not the ICE it once was.
 mod raw { extern var SCRATCH: c_ulong; }

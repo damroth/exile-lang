@@ -1,10 +1,10 @@
-// Increment 4 — register file `[T; N] at BASE` (RUNE-SPEC §6, I-R4).
+// A register file: `[T; N] at BASE`.
 //
 // A homogeneous bank of registers at an absolute base: the rune is a
 // `volatile T *`, and `color[i]` is one register. `.write`/`.read`/`.strobe`
 // lower to `color[i] = v` / `color[i]` / `color[i] = 0` — direct pointer
 // indexing (`color[i]` is `*(color + i)`, so the stride is the register width).
-// A static index is checked against the extent (I-R4); a runtime index is not.
+// A static index is checked against the extent; a runtime index is not.
 fn main() {
     rune color: [u16; 32] at 0xDFF180 readwrite;
     color[0].write(4095);            // color[0] = 4095;

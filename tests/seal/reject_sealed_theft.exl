@@ -1,4 +1,4 @@
-// seal Increment 4 — the thief who seals the theft (S2 x seal composition).
+// The thief who seals the theft (S2 x seal composition).
 //
 // A non-owner materialising a covered address does not become an owner by making
 // the access indivisible. Two gates from two different eras have to hold at once,

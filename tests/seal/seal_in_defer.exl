@@ -1,4 +1,4 @@
-// seal Increment 4 — a seal inside a DEFER body: a region in cleanup code.
+// A seal inside a DEFER body: a region in cleanup code.
 //
 // This is the direction that had no C form at all before this increment: the
 // walker for scopes with no defer chain of their own (defer bodies, diverging

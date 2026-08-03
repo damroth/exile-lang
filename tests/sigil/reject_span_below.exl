@@ -1,4 +1,4 @@
-// S2 by INTERSECTION, not base membership (SIGIL-SPEC §4.2 correction B). This
+// S2 by INTERSECTION, not base membership. This
 // u32 starts at 0xDFF03E — OUTSIDE Blitter's range — but spans 4 bytes, reaching
 // 0xDFF042, inside it. A base-membership test would wave it through.
 sigil Blitter { 0xDFF040 .. 0xDFF05A }

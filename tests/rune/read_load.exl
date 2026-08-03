@@ -1,4 +1,4 @@
-// Increment 2 — read as a volatile load (RUNE-SPEC §6). `.read()` on a read /
+// Read as a volatile load. `.read()` on a read /
 // readwrite rune lowers to `(*p)`, a volatile load the backend may not elide or
 // coalesce. Here a status register feeds a control register: `*out = *status`,
 // one volatile load into one volatile store.

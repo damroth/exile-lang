@@ -1,4 +1,4 @@
-// S3 (SIGIL-SPEC §5, I-S4): two RESOURCES may not cover overlapping bytes — the
+// S3: two RESOURCES may not cover overlapping bytes — the
 // mirror of ward's W1, naming both objects and both ranges.
 //
 // Deliberately the HARD pairing: the collision is between Sprite0's SECOND range

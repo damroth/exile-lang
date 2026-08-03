@@ -1,4 +1,4 @@
-// R2 (RUNE-SPEC §5, I-R2): a write-only rune has no `.read`.
+// R2: a write-only rune has no `.read`.
 fn main() {
     rune cop: u32 at 0xDFF080 write;
     cop.write(cop.read());

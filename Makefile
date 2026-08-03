@@ -92,7 +92,7 @@ toolchain-clean:
 stub_for = $(wildcard examples/$(1)_stub.c)
 link_args = $(if $(call stub_for,$(1)),--link $(call stub_for,$(1)))
 
-# DR-006 — per-target backends for the `sys::*` seam.  Linked into
+# Per-target backends for the `sys::*` seam.  Linked into
 # every build for the matching target; the linker discards them when
 # no `sys_*` symbol is reached (cc only complains about unresolved
 # references, not unused defs).
@@ -179,7 +179,7 @@ host-%: examples/%.exl $(call stub_for,%) $(SYS_HOST) build
 host-multi_file: examples/multi_file/main.exl examples/multi_file/lib.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/multi_file.c --link $(SYS_HOST) -o $(HOST_OUT)/multi_file $<
 
-# `selfhost` is the in-progress OCaml->Exile compiler port (Faza 0).  Its
+# `selfhost` is the in-progress OCaml->Exile compiler port.  Its
 # entry point main.exl `use`s the dump/ir/ast/pos module chain and emits a
 # canonical AST dump + typed-IR dump for the bundled fixtures; verify diffs
 # that against examples/selfhost.expected (the OCaml oracle).
@@ -277,7 +277,7 @@ verify: verify-host verify-amiga
 
 # ===== selfhost-amiga — the port's --target amiga vs the oracle's =====
 #
-# Faza E: the port gained `--target amiga` (the DR-006 driver seam — m68k-
+# The port gained `--target amiga` (the driver seam — m68k-
 # amigaos-gcc, -noixemul, -lm, sys_amiga link).  The emitted C is target-
 # INDEPENDENT (codegen branches on neither target nor profile), and its byte
 # parity is already gated corpus-wide by `selfhost-verify`; this gate proves the
@@ -410,7 +410,7 @@ selfhost-amiga: $(EXILC_BIN)
 	  echo "selfhost-amiga: the stub was invoked with NO override set — the fallback is not the fallback"; fail=1; fi; \
 	rm -rf $$tcd; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; \$$EXILE_TOOLCHAIN honoured (a stub prefix RECORDS the call) and ignored when unset; rune-over-RAM runs 11/22/0/305419896 on m68k under vamos; seal call-path runs nested on m68k through exec Disable/Enable — the SEAM, not the masking: vamos has nothing to race, interleaving stays registered for FS-UAE (SEAL-SPEC 7d); pay-for-use measured on the OBJECT, 2 vs 0; the sealed blitter sequence RUNS on m68k 3/2544/64/32832 over RAM — the chipset itself is above vamos, so this proves the SEQUENCE and the seam, not the registers)"; \
+	  echo "selfhost-amiga: clean ($$n examples port==oracle on C/m68k binary/stdout/stderr + vamos==expected; \$$EXILE_TOOLCHAIN honoured (a stub prefix RECORDS the call) and ignored when unset; rune-over-RAM runs 11/22/0/305419896 on m68k under vamos; seal call-path runs nested on m68k through exec Disable/Enable — the SEAM, not the masking: vamos has nothing to race, interleaving stays registered for FS-UAE; pay-for-use measured on the OBJECT, 2 vs 0; the sealed blitter sequence RUNS on m68k 3/2544/64/32832 over RAM — the chipset itself is above vamos, so this proves the SEQUENCE and the seam, not the registers)"; \
 	else exit 1; fi
 
 # ===== Freestanding codegen mode (--freestanding) =====
@@ -460,7 +460,7 @@ rebaseline-host-%: host-%
 
 rebaseline-host: $(HOST_EXAMPLES:%=rebaseline-host-%)
 
-# ===== Self-host bring-up Faza −1 — differential-harness golden corpus =====
+# ===== Self-host bring-up — differential-harness golden corpus =====
 #
 # Three canonical dumps per example, committed under tests/golden/.
 # The OCaml exilc is the oracle; the future exile port aims to
@@ -593,8 +593,8 @@ selfhost-diff-%: examples/%.exl build
 # diffs its token dump against the committed golden.  Drift is a
 # port-vs-oracle bug.
 #
-# Two renderings are deliberately deferred (no prelude primitive yet,
-# tracked in SELFHOST-WORKLOG): the float literal VALUE (`(Float ?? w)`
+# Two renderings are deliberately deferred (no prelude primitive yet):
+# the float literal VALUE (`(Float ?? w)`
 # vs OCaml's `%h` hex form) and string-escape DECODING (raw vs decoded
 # `(String …)` content).  Both are masked before the compare, so a
 # divergence on anything else — token type, position, count, ordering,
@@ -702,7 +702,7 @@ selfhost-no-fabrication: $(SEEDC_EXILC)
 	if [ $$bad -ne 0 ]; then exit 1; fi; \
 	echo "selfhost-no-fabrication: clean (no name literal, and no '?' in $$scanned emitted files)"
 
-# ===== Faza A — typecheck diagnostics =====
+# ===== Typecheck diagnostics =====
 #
 # Same shape as selfhost-port-errors (lexer, 12) and -parse-errors (46): each
 # fixture is a program the reference implementation REJECTS, and both compilers
@@ -781,7 +781,7 @@ bootstrap-fixpoint: $(SEEDC_CG)
 # `verify-host` / `selfhost-diff` check the ORACLE; these check the PORT.
 # ===== exilc driver — the unified CLI vs the oracle =====
 #
-# Faza B stitches the six corpus drivers into one argv-driven `exilc`.  Its
+# The driver stitches the six corpus drivers into one argv-driven `exilc`.  Its
 # emit modes are the differential-gate contract, so it must reproduce the
 # ORACLE byte-for-byte on every mode.  This gate builds exilc (oracle host
 # build) and diffs its output against `dune exec exilc` — the reference — over
@@ -1035,18 +1035,18 @@ selfhost-exilc-fixpoint: $(EXILC_BIN)
 	  echo "selfhost-exilc-fixpoint: DRIFT — port codegen != oracle on src/exilc.exl"; \
 	  diff $(C_OUT)/xfx_oracle.c $(C_OUT)/xfx_port.c | head -20; exit 1; fi
 
-# ===== rune — the first kernel-era feature's golden-C witness (RUNE-SPEC §7) =====
+# ===== rune — the first kernel-era feature's golden-C witness =====
 #
-# rune is judged by RUNE-SPEC.md, not the frozen oracle (kernel-era features have
-# no reference).  Increment 1 ships the SPINE — a standalone write-rune — and its
+# rune is judged by its own gate, not the frozen oracle (kernel-era features have
+# no reference).  The SPINE is a standalone write-rune, and its
 # witness is golden C: the port compiles the fixture and this gate asserts both
-# directions of I-R1.  PRESENCE — the `volatile <T> *` binding and its UL-suffixed
+# directions of it.  PRESENCE — the `volatile <T> *` binding and its UL-suffixed
 # base address are emitted; MULTIPLICITY — the count of volatile stores EQUALS the
 # count of source `.write`s (a count, not a grep: elision drops it below, a
 # duplicated store lifts it above — two distinct betrayals).  The emitted C must
 # also be valid C89 with zero warnings.  It is NOT run: the fixture points at a
 # real custom-chip register, so a store moves no copper here — the runnable
-# rune-over-RAM witness is Increment 2.  Port-only, so it lives outside the
+# rune-over-RAM witness is ram_roundtrip.exl.  Port-only, so it lives outside the
 # oracle-comparing gates; needs only cc, so it rides in `selfhost-verify`.
 RUNE_FIXTURE := tests/rune/write_spine.exl
 selfhost-rune: $(EXILC_BIN)
@@ -1056,22 +1056,22 @@ selfhost-rune: $(EXILC_BIN)
 	if [ ! -s $(C_OUT)/rune_spine.c ]; then \
 	  echo "selfhost-rune: EMPTY emitted C (mutual-failure floor)"; exit 1; fi; \
 	grep -q 'volatile unsigned long \*cop1lc;' $(C_OUT)/rune_spine.c \
-	  || { echo "selfhost-rune: MISSING volatile rune binding (I-R1 presence)"; exit 1; }; \
+	  || { echo "selfhost-rune: MISSING volatile rune binding (presence)"; exit 1; }; \
 	grep -q '(volatile unsigned long \*)14676096UL;' $(C_OUT)/rune_spine.c \
-	  || { echo "selfhost-rune: MISSING UL-suffixed base address (I-R1 address / no-cast-warning)"; exit 1; }; \
+	  || { echo "selfhost-rune: MISSING UL-suffixed base address (no-cast-warning)"; exit 1; }; \
 	writes=`sed 's|//.*||' $(RUNE_FIXTURE) | grep -c '\.write('`; \
 	stores=`grep -c '\*cop1lc = ' $(C_OUT)/rune_spine.c`; \
 	if [ "$$stores" -eq 0 ]; then \
 	  echo "selfhost-rune: zero volatile stores (floor)"; exit 1; fi; \
 	if [ "$$writes" != "$$stores" ]; then \
-	  echo "selfhost-rune: I-R1 multiplicity — $$writes source writes but $$stores volatile stores (elision or duplication)"; exit 1; fi; \
+	  echo "selfhost-rune: multiplicity — $$writes source writes but $$stores volatile stores (elision or duplication)"; exit 1; fi; \
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_spine.c -o $(C_OUT)/rune_spine.o \
 	  || { echo "selfhost-rune: emitted C is not clean C89 (-ansi -pedantic -Wall -Werror)"; exit 1; }; \
 	rm -f $(C_OUT)/rune_read.c $(C_OUT)/rune_read.o; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/rune_read.c tests/rune/read_load.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-rune: port rejected the read fixture"; exit 1; }; \
 	grep -q '\*out = \*status;' $(C_OUT)/rune_read.c \
-	  || { echo "selfhost-rune: MISSING volatile load feeding store (I-R1 read: *out = *status)"; exit 1; }; \
+	  || { echo "selfhost-rune: MISSING volatile load feeding store (read: *out = *status)"; exit 1; }; \
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_read.c -o $(C_OUT)/rune_read.o \
 	  || { echo "selfhost-rune: read_load C is not clean C89"; exit 1; }; \
 	rm -f $(C_OUT)/r1.c $(C_OUT)/r1.err $(C_OUT)/r2.c $(C_OUT)/r2.err; \
@@ -1092,7 +1092,7 @@ selfhost-rune: $(EXILC_BIN)
 	zstores=`grep -c '\*copjmp1 = 0;' $(C_OUT)/rune_strobe.c`; \
 	if [ "$$zstores" -eq 0 ]; then echo "selfhost-rune: strobe emitted zero stores (floor)"; exit 1; fi; \
 	if [ "$$strobes" != "$$zstores" ]; then \
-	  echo "selfhost-rune: I-R1 strobe multiplicity — $$strobes strobes but $$zstores '= 0;' stores (a duplicated strobe is two copper starts)"; exit 1; fi; \
+	  echo "selfhost-rune: strobe multiplicity — $$strobes strobes but $$zstores '= 0;' stores (a duplicated strobe is two copper starts)"; exit 1; fi; \
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_strobe.c -o $(C_OUT)/rune_strobe.o \
 	  || { echo "selfhost-rune: strobe C is not clean C89"; exit 1; }; \
 	rm -f $(C_OUT)/rune_rf.c $(C_OUT)/rune_rf.o; \
@@ -1101,9 +1101,9 @@ selfhost-rune: $(EXILC_BIN)
 	grep -q 'volatile unsigned short \*color;' $(C_OUT)/rune_rf.c \
 	  || { echo "selfhost-rune: MISSING register-file volatile binding"; exit 1; }; \
 	grep -q 'color\[0\] = 4095;' $(C_OUT)/rune_rf.c \
-	  || { echo "selfhost-rune: MISSING static indexed store color[0]=4095 (RUNE-SPEC §6)"; exit 1; }; \
+	  || { echo "selfhost-rune: MISSING static indexed store color[0]=4095"; exit 1; }; \
 	grep -q 'color\[i\] = 0;' $(C_OUT)/rune_rf.c \
-	  || { echo "selfhost-rune: MISSING runtime indexed store color[i] (I-R4 unchecked index)"; exit 1; }; \
+	  || { echo "selfhost-rune: MISSING runtime indexed store color[i] (unchecked index)"; exit 1; }; \
 	grep -q '= color\[0\];' $(C_OUT)/rune_rf.c \
 	  || { echo "selfhost-rune: MISSING register-file read load color[0]"; exit 1; }; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_rf.c -o $(C_OUT)/rune_rf.o \
@@ -1183,11 +1183,11 @@ selfhost-rune: $(EXILC_BIN)
 	  echo "selfhost-rune: rune-over-RAM round-trip WRONG (volatile lowering broken at -O2):"; cat $(C_OUT)/rune_rr.out; exit 1; fi; \
 	echo "selfhost-rune: clean (golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R7 + P1 signatures (dir across the call boundary, widening, bare) + ACCEPT attenuation + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
 
-# ===== ward capability — the port's golden gate (WARD-SPEC, Phase 2) =====
+# ===== ward capability — the port's golden gate =====
 #
 # The ward era's differential gate.  Ward composes rune: a field access folds to
-# a rune at (base + offset), the base and offset kept SEPARATE (§6).  Inc1 (the
-# type+instance+field spine) asserts the fold shape, I-W1 zero-storage (the
+# a rune at (base + offset), the base and offset kept SEPARATE.  The
+# type+instance+field spine asserts the fold shape, zero-storage (the
 # instance leaks no C variable), and clean C89.  Grows with the feature — offset
 # overlap (W1), the runnable ward-over-RAM witness, and the full W table ride
 # later increments.
@@ -1197,11 +1197,11 @@ selfhost-ward: $(EXILC_BIN)
 	  || { echo "selfhost-ward: port rejected the ward spine"; exit 1; }; \
 	if [ ! -s $(C_OUT)/ward_spine.c ]; then echo "selfhost-ward: EMPTY emitted C (floor)"; exit 1; fi; \
 	grep -q '(volatile unsigned long \*)(14675968UL + 128UL)) = 74565;' $(C_OUT)/ward_spine.c \
-	  || { echo "selfhost-ward: MISSING ward field write as base+offset (§6, I-W3)"; exit 1; }; \
+	  || { echo "selfhost-ward: MISSING ward field write as base+offset"; exit 1; }; \
 	grep -q '(volatile unsigned short \*)(14675968UL + 136UL)) = 0;' $(C_OUT)/ward_spine.c \
 	  || { echo "selfhost-ward: MISSING ward field strobe as base+offset"; exit 1; }; \
 	if grep -q 'custom' $(C_OUT)/ward_spine.c; then \
-	  echo "selfhost-ward: instance 'custom' leaked into C (I-W1 zero-storage violated)"; exit 1; fi; \
+	  echo "selfhost-ward: instance 'custom' leaked into C (zero-storage violated)"; exit 1; fi; \
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/ward_spine.c -o $(C_OUT)/ward_spine.o \
 	  || { echo "selfhost-ward: emitted C is not clean C89 (-ansi -pedantic -Wall -Werror)"; exit 1; }; \
 	rm -f $(C_OUT)/ward_ov.c $(C_OUT)/ward_ov.err; \
@@ -1231,7 +1231,7 @@ selfhost-ward: $(EXILC_BIN)
 	if [ "$$tla" != "2" ]; then echo "selfhost-ward: top-level field fold not identical per use-site — expected 2 (chipa.cop1lc from 2 fns), got $$tla"; exit 1; fi; \
 	grep -q '(14548992UL + 128UL))' $(C_OUT)/ward_tl.c \
 	  || { echo "selfhost-ward: NDK second-instance fold missing (chipb at a different base)"; exit 1; }; \
-	if grep -qE 'chipa|chipb' $(C_OUT)/ward_tl.c; then echo "selfhost-ward: top-level ward instance leaked into C (I-W1 zero-storage violated)"; exit 1; fi; \
+	if grep -qE 'chipa|chipb' $(C_OUT)/ward_tl.c; then echo "selfhost-ward: top-level ward instance leaked into C (zero-storage violated)"; exit 1; fi; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/ward_tl.c -o $(C_OUT)/ward_tl.o \
 	  || { echo "selfhost-ward: top-level ward C is not clean C89 at -O2"; exit 1; }; \
 	rm -f $(C_OUT)/ward_tg.c $(C_OUT)/ward_tg.err; \
@@ -1258,7 +1258,7 @@ selfhost-ward: $(EXILC_BIN)
 	done; \
 	rm -f $(C_OUT)/ward_ai.c $(C_OUT)/ward_ai.o; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/ward_ai.c tests/ward/accept_runtime_index.exl >/dev/null 2>&1 \
-	  || { echo "selfhost-ward: ACCEPT-probe — port REJECTED a runtime register-file index (I-R4 is deliberately unchecked; the limit is a contract)"; exit 1; }; \
+	  || { echo "selfhost-ward: ACCEPT-probe — port REJECTED a runtime register-file index (deliberately unchecked; the limit is a contract)"; exit 1; }; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/ward_ai.c -o $(C_OUT)/ward_ai.o \
 	  || { echo "selfhost-ward: ACCEPT-probe C is not clean at -O2"; exit 1; }; \
 	rm -f $(C_OUT)/ward_rr.c $(HOST_OUT)/ward_rr $(C_OUT)/ward_rr.out $(C_OUT)/ward_rr.expected; \
@@ -1272,12 +1272,12 @@ selfhost-ward: $(EXILC_BIN)
 	printf '43981\n4660\n255\n' > $(C_OUT)/ward_rr.expected; \
 	if ! diff -q $(C_OUT)/ward_rr.expected $(C_OUT)/ward_rr.out >/dev/null; then \
 	  echo "selfhost-ward: ward-over-RAM WRONG (offsets/disjointness broken at -O2):"; cat $(C_OUT)/ward_rr.out; exit 1; fi; \
-	echo "selfhost-ward: clean (spine + register-file field color[31]@0x180 + top-level instances (fold ×2 + NDK 2-base + I-W1 zero-storage) + rejection table W1-W5 (W1 scalar+file, W2, W3, W4→R1/R5/R7 through a FIELD, W5) + ACCEPT runtime-index limit + ward-over-RAM 43981/4660/255 at -O2; cc -Wall -Werror)"
+	echo "selfhost-ward: clean (spine + register-file field color[31]@0x180 + top-level instances (fold ×2 + NDK 2-base + zero-storage) + rejection table W1-W5 (W1 scalar+file, W2, W3, W4→R1/R5/R7 through a FIELD, W5) + ACCEPT runtime-index limit + ward-over-RAM 43981/4660/255 at -O2; cc -Wall -Werror)"
 
 # ===== defer x loop jumps (P3) — the exit guarantee, on EVERY path =====
 #
-# `defer` used to be swallowed by `break` / `continue`: a registered hole (WORKLOG
-# 2026-05-28) that seal turns from a wart into a hazard, since a seal left by a
+# `defer` used to be swallowed by `break` / `continue`: a registered hole
+# that seal turns from a wart into a hazard, since a seal left by a
 # `break` would leave interrupts masked forever.  Port-only: the FROZEN oracle
 # still has the old behaviour, so this is a deliberate, registered divergence —
 # see SELFHOST-PLUMBING-REGISTER.md #5.  The corpus was measured neutral before
@@ -1295,15 +1295,15 @@ selfhost-defer: $(EXILC_BIN)
 	  diff tests/defer/exits.expected $(C_OUT)/defer_exits.out | head -8; exit 1; fi; \
 	echo "selfhost-defer: clean (defer fires on normal exit, continue, break, return, and through nesting — inner jumps leave outer defers alone)"
 
-# ===== differential fuzzing (FUZZ-SPEC, Increment 1) =====
+# ===== differential fuzzing =====
 #
 # A6: `make fuzz` is a SEPARATE seeded target, deterministic per seed, outside
 # `selfhost-verify` — the verification suite must stay deterministic.
 FUZZ_SEED  ?= 1
 FUZZ_N     ?= 150
-# Increment 3: the mix is STEERED by the measured death-per-stage split, so the
+# The mix is STEERED by the measured death-per-stage split, so the
 # hand-set rate is no longer the default. `FUZZ_STEER=0` reproduces the
-# Increment 2 stream shape and is what `FUZZ_RATE` is for.
+# earlier stream shape and is what `FUZZ_RATE` is for.
 FUZZ_STEER ?= 1
 FUZZ_RATE  ?= 0
 FUZZ_FLAGS := $(if $(filter 0,$(FUZZ_STEER)),--no-steer --graft-rate $(FUZZ_RATE),)
@@ -1326,7 +1326,7 @@ fuzz-gates: fuzz-filters fuzz-limits fuzz-witness fuzz-budget-witness
 fuzz: $(EXILC_BIN)
 	@python3 tools/fuzz/fuzz.py --seed $(FUZZ_SEED) -n $(FUZZ_N) $(FUZZ_FLAGS) --cc --shrink
 
-# FUZZ-SPEC 7(a) — the witness, and the reason it is shaped this way: a run that
+# The witness, and the reason it is shaped this way: a run that
 # finds nothing is indistinguishable from a run that did nothing, so the gate
 # does NOT assert "no findings". It asserts that the fuzzer REDISCOVERS a defect
 # deliberately planted in the port. A fuzzer that has never rediscovered a defect
@@ -1362,9 +1362,9 @@ fuzz-seed-hunt: $(EXILC_BIN)
 	echo "fuzz-seed-hunt: budget $(FUZZ_HUNT_SEEDS) seeds x $(FUZZ_N) inputs; hits:$$hits"; \
 	echo "  pin FUZZ_WITNESS_SEED to the first of these."
 
-# FUZZ-SPEC Z3 — the budgets, witnessed. A class that has never fired is a green
+# The budgets, witnessed. A class that has never fired is a green
 # light, and F4 had never fired: its two early-return paths still handed back
-# 4-tuples after Increment 3 added a fifth field, so the first input to trip a
+# 4-tuples after a later round added a fifth field, so the first input to trip a
 # budget would have taken the fuzzer down with it. That sat undetected precisely
 # because nothing exercised the class.
 #
@@ -1517,10 +1517,10 @@ docs-capability-golden: $(EXILC_BIN)
 # ===== publicly-facing text must stand on its own =====
 #
 # Design records, phase names and step labels live in a directory that is not
-# part of the repository, so a reader who meets `DR-042` or `Faza 1` in an
-# example has nowhere to resolve it. The rule is not "do not mention the
-# internals" - it is that a sentence must carry its own meaning, which for these
-# labels means saying the thing instead of naming its record.
+# part of the repository, so a reader who meets a design-record number or a
+# phase name in an example has nowhere to resolve it. The rule is not "do not
+# mention the internals" - it is that a sentence must carry its own meaning,
+# which for these labels means saying the thing instead of naming its record.
 #
 # Scoped to what a reader meets first: the feature catalogue, the tutorial, the
 # changelog and the README. Compiler sources are a separate class with a
@@ -1535,7 +1535,7 @@ DOCS_INTERNAL_RX := DR-0[0-9][0-9]|(FUZZ|SEAL|RUNE|WARD|SIGIL)-SPEC|WORKLOG|Faza
 # inside this repository - each names a fixture whose header states the rule, and
 # the rune/ward/sigil gate signatures cite them as a table. An identifier with a
 # definition in the repo is not a reference that leaves it.
-SRC_INTERNAL_RX := DR-0[0-9][0-9]|(FUZZ|SEAL|RUNE|WARD|SIGIL)-SPEC|WORKLOG|Faza|§[ ]*[0-9]|GATE-[0-9]|I-[RWS][0-9]|axis [0-9]|correction [A-Z]|Increment [0-9]
+SRC_INTERNAL_RX := DR-0[0-9][0-9]|(FUZZ|SEAL|RUNE|WARD|SIGIL)-SPEC|WORKLOG|Faza|§[ ]*[0-9]|GATE-[0-9]|I-[RWST][0-9]|axis [0-9]|correction [A-Z]|Increment [0-9]
 
 .PHONY: docs-selfsufficient
 docs-selfsufficient:
@@ -1553,7 +1553,20 @@ docs-selfsufficient:
 	  echo "docs-selfsufficient: $$m compiler-source comment(s) naming a record this repository does not ship:"; \
 	  grep -rInE '$(SRC_INTERNAL_RX)' src --include=*.exl 2>/dev/null | head -10; \
 	  exit 1; fi; \
-	echo "docs-selfsufficient: clean (examples/ + docs/ + README + CHANGELOG + src/*.exl carry no reference that leaves the repository)"
+	t=`grep -rInE '$(SRC_INTERNAL_RX)' tests --include=*.exl --include=*.c --include=*.h --include=CASES --include=REJECT-TABLE 2>/dev/null | wc -l`; \
+	if [ "$$t" != "0" ]; then \
+	  echo "docs-selfsufficient: $$t fixture comment(s) naming a record this repository does not ship."; \
+	  echo "  The rule IDs a fixture header states - R1-R7, W1-W5, S1-S5, T1-T4 - are not this:"; \
+	  echo "  each names a fixture or a table row in this repository, so they resolve here."; \
+	  grep -rInE '$(SRC_INTERNAL_RX)' tests --include=*.exl --include=*.c --include=*.h --include=CASES --include=REJECT-TABLE 2>/dev/null | head -10; \
+	  exit 1; fi; \
+	k=`grep -nE '$(SRC_INTERNAL_RX)' Makefile | grep -v '_INTERNAL_RX' | wc -l`; \
+	if [ "$$k" != "0" ]; then \
+	  echo "docs-selfsufficient: $$k gate message(s) naming a record this repository does not ship -"; \
+	  echo "  and a reader meets these at the moment a gate goes red, which is the worst moment to be handed a dead pointer:"; \
+	  grep -nE '$(SRC_INTERNAL_RX)' Makefile | grep -v '_INTERNAL_RX' | head -10; \
+	  exit 1; fi; \
+	echo "docs-selfsufficient: clean (examples/ + docs/ + README + CHANGELOG + src/ + tests/ + the gate messages carry no reference that leaves the repository)"
 
 # ===== register #13 - seam externs in a file with no entry point =====
 #
@@ -1638,7 +1651,7 @@ selfhost-parens: $(EXILC_BIN)
 	  diff tests/parens/mixed_bitwise.expected $(C_OUT)/parens.out | head -6; exit 1; fi; \
 	echo "selfhost-parens: clean (mixed bitwise nesting parenthesised, emission clean under -Werror, values unchanged 32832/21/3)"
 
-# ===== seal capability — the port's gate (SEAL-SPEC, Increment 1) =====
+# ===== seal capability — the port's gate =====
 #
 # Two levels, because either alone lies.  The GOLDEN level counts the seam
 # calls in the emitted C: one enter, and one exit per exit path (the defer
@@ -1682,7 +1695,7 @@ selfhost-seal: $(EXILC_BIN)
 	sig="$$sig one enter/four exits from the defer machinery;"; \
 	rm -f $(C_OUT)/seal_nest.c $(HOST_OUT)/seal_nest $(C_OUT)/seal_nest.out; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_nest.c tests/seal/nested.exl >/dev/null 2>&1 \
-	  || { echo "selfhost-seal: port REJECTED nesting — I-T2 is a guarantee, not a prohibition on depth"; exit 1; }; \
+	  || { echo "selfhost-seal: port REJECTED nesting — it is a guarantee, not a prohibition on depth"; exit 1; }; \
 	nent=`sed 's|//.*||' $(C_OUT)/seal_nest.c | grep -c 'sys_seal_enter();'`; \
 	if [ "$$nent" != "2" ]; then echo "selfhost-seal: nested region expected 2 enters, found $$nent"; exit 1; fi; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_nest $(C_OUT)/seal_nest.c $(SYS_HOST) \
@@ -1730,7 +1743,7 @@ selfhost-seal: $(EXILC_BIN)
 	grep -q '\*size = v;' $(C_OUT)/seal_bl.c \
 	  || { echo "selfhost-seal: the borrowed rune's write did not emit (BLTSIZE crosses the call boundary)"; exit 1; }; \
 	if grep -qE 'Blitter|DmaControl|Custom' $(C_OUT)/seal_bl.c; then \
-	  echo "selfhost-seal: a sigil/ward name leaked into the consumer's C (I-S5 zero-cost)"; exit 1; fi; \
+	  echo "selfhost-seal: a sigil/ward name leaked into the consumer's C (zero-cost)"; exit 1; fi; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_bl.c -o $(C_OUT)/seal_bl.o \
 	  || { echo "selfhost-seal: consumer C is not clean C89 at -O2"; exit 1; }; \
 	sig="$$sig the composed consumer emits its HRM sequence byte for byte;"; \
@@ -1748,9 +1761,9 @@ selfhost-seal: $(EXILC_BIN)
 	for lim in accept_limit_forgotten accept_limit_blanket accept_limit_race accept_limit_latency ; do \
 	  rm -f $(C_OUT)/seal_$$lim.c $(C_OUT)/seal_$$lim.o; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/seal_$$lim.c tests/seal/$$lim.exl >/dev/null 2>&1 \
-	    || { echo "selfhost-seal: §6 CONTRACT BROKEN — tests/seal/$$lim.exl was REJECTED; a limit is a boundary the language states, not one it enforces"; exit 1; }; \
+	    || { echo "selfhost-seal: LIMIT CONTRACT BROKEN — tests/seal/$$lim.exl was REJECTED; a limit is a boundary the language states, not one it enforces"; exit 1; }; \
 	  cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_$$lim.c -o $(C_OUT)/seal_$$lim.o \
-	    || { echo "selfhost-seal: §6 contract $$lim emits C that is not clean at -O2"; exit 1; }; \
+	    || { echo "selfhost-seal: limit contract $$lim emits C that is not clean at -O2"; exit 1; }; \
 	done; \
 	rm -f $(C_OUT)/seal_wr.c $(HOST_OUT)/seal_wr $(C_OUT)/seal_wr.out; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_wr.c tests/seal/accept_limit_wrong_region.exl >/dev/null 2>&1 \
@@ -1762,7 +1775,7 @@ selfhost-seal: $(EXILC_BIN)
 	if ! diff -q tests/seal/accept_limit_wrong_region.expected $(C_OUT)/seal_wr.out >/dev/null; then \
 	  echo "selfhost-seal: the blind spot changed shape — a save torn from its restore must still COMPILE and still BALANCE (that is the contract):"; \
 	  diff tests/seal/accept_limit_wrong_region.expected $(C_OUT)/seal_wr.out | head -6; exit 1; fi; \
-	sig="$$sig the five §6 limits pinned as CONTRACTS, the blind spot among them still compiling AND still balancing;"; \
+	sig="$$sig the five limits pinned as CONTRACTS, the blind spot among them still compiling AND still balancing;"; \
 	rm -f $(C_OUT)/seal_ret.c $(HOST_OUT)/seal_ret $(C_OUT)/seal_ret.out; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_ret.c tests/seal/accept_seal_returns.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-seal: a seal whose body RETURNS was rejected — the region runs inline and unconditionally, so it answers for the enclosing fn's exhaustive-return check (port-only, the oracle cannot parse seal at all)"; exit 1; }; \
@@ -1832,7 +1845,7 @@ selfhost-sigil: $(EXILC_BIN)
 	  || { echo "selfhost-sigil: port rejected the owner's own materialisation"; exit 1; }; \
 	if [ ! -s $(C_OUT)/sig_ok.c ]; then echo "selfhost-sigil: EMPTY emitted C (floor)"; exit 1; fi; \
 	if grep -qE 'Blitter|Sprite0' $(C_OUT)/sig_ok.c; then \
-	  echo "selfhost-sigil: a sigil/claim leaked into the emitted C (I-S5 zero-cost violated)"; exit 1; fi; \
+	  echo "selfhost-sigil: a sigil/claim leaked into the emitted C (zero-cost violated)"; exit 1; fi; \
 	grep -q '\*bltsize = 64;' $(C_OUT)/sig_ok.c \
 	  || { echo "selfhost-sigil: the owner's covered access did not emit (gate must not break the owner)"; exit 1; }; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/sig_ok.c -o $(C_OUT)/sig_ok.o \
@@ -1854,7 +1867,7 @@ selfhost-sigil: $(EXILC_BIN)
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/sig_$$ok.c tests/sigil/$$ok.exl >/dev/null 2>&1 \
 	    || { echo "selfhost-sigil: ACCEPT — port REJECTED tests/sigil/$$ok.exl"; exit 1; }; \
 	  if grep -qE 'Blitter|Copper|Audio0' $(C_OUT)/sig_$$ok.c; then \
-	    echo "selfhost-sigil: a sigil/claim leaked into the C of $$ok (I-S5)"; exit 1; fi; \
+	    echo "selfhost-sigil: a sigil/claim leaked into the C of $$ok"; exit 1; fi; \
 	  cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/sig_$$ok.c -o $(C_OUT)/sig_$$ok.o \
 	    || { echo "selfhost-sigil: $$ok C is not clean C89 at -O2"; exit 1; }; \
 	done; \
@@ -1901,12 +1914,12 @@ selfhost-sigil: $(EXILC_BIN)
 	  || { echo "selfhost-sigil: equality witness — the UNGATED half did not compile"; exit 1; }; \
 	if [ ! -s $(C_OUT)/sig_eq_g.c ]; then echo "selfhost-sigil: equality witness EMPTY C (floor)"; exit 1; fi; \
 	grep -q '\*bltsize = 64;' $(C_OUT)/sig_eq_g.c \
-	  || { echo "selfhost-sigil: equality witness does not exercise a COVERED access (correction C)"; exit 1; }; \
+	  || { echo "selfhost-sigil: equality witness does not exercise a COVERED access"; exit 1; }; \
 	if ! cmp -s $(C_OUT)/sig_eq_g.c $(C_OUT)/sig_eq_u.c; then \
-	  echo "selfhost-sigil: I-S5 — a claim changed the emitted C:"; diff $(C_OUT)/sig_eq_g.c $(C_OUT)/sig_eq_u.c | head -6; exit 1; fi; \
-	echo "selfhost-sigil: clean (owner materialises + uses, bare rune AND ward field; rejection table S1/S2 x5/S3/S5 x2/correction-A x2 + unknown-claim; ACCEPT x12 (4 boundary/owner probes + NDK shape, delegation+attenuation, NDK ward, descendant module + the five §7 limits) + I-S5 artifact equality (gated == ungated, byte for byte); zero emission for sigil/claim; cc -Wall -Werror)"
+	  echo "selfhost-sigil: a claim changed the emitted C:"; diff $(C_OUT)/sig_eq_g.c $(C_OUT)/sig_eq_u.c | head -6; exit 1; fi; \
+	echo "selfhost-sigil: clean (owner materialises + uses, bare rune AND ward field; rejection table S1/S2 x5/S3/S5 x2/owner-gated x2 + unknown-claim; ACCEPT x12 (4 boundary/owner probes + NDK shape, delegation+attenuation, NDK ward, descendant module + the five limits) + artifact equality (gated == ungated, byte for byte); zero emission for sigil/claim; cc -Wall -Werror)"
 
-# ===== DR-010 escape pass — the port's differential gate =====
+# ===== The escape pass — the port's differential gate =====
 #
 # The escape pass emits no code: its entire observable behaviour is its
 # diagnostics.  So the gate runs BOTH compilers over each probe and byte-compares

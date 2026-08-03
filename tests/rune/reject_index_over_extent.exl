@@ -1,4 +1,4 @@
-// R4 (RUNE-SPEC §5, I-R4): a static index past the register-file extent is a
+// R4: a static index past the register-file extent is a
 // compile error — the extent lives in the type as a checked bound.
 fn main() {
     rune color: [u16; 32] at 0xDFF180 write;
