@@ -2632,6 +2632,21 @@ function boundary without shedding what it is:
 fn burst(r: write rune<u16>) { r.write(64); }
 ```
 
+Everything above is checked by compiling it. The volatile lowering is checked
+one step further - by running it.
+[tests/rune/ram_roundtrip.exl](../tests/rune/ram_roundtrip.exl) points a rune at
+a static cell in RAM, writes, reads back and compares, at `-O2`, on the m68k,
+under an emulator.
+
+The RAM base is deliberate and worth saying out loud rather than hiding. On
+hardware it would be a chipset register - `0xDFF180` is COLOR00, the background
+colour - but a chipset register cannot be read back inside an emulator, so an
+MMIO base would demonstrate the syntax and prove nothing. Over RAM the store is
+observable, so the round-trip is a real check: the numbers that print are the
+numbers that reached memory. What the address is never changes what a rune
+guarantees - one access, at the declared width, that the compiler may not elide,
+widen or reorder - and that guarantee is exactly what the emitted C above shows.
+
 [tests/rune/](../tests/rune/)
 
 ### `ward` - a typed overlay on a register block
@@ -2765,6 +2780,14 @@ counts entries against exits and reports at process exit.
 ...
 seal-balance 0 misnest 0
 ```
+
+The blitter sequence itself runs too:
+[tests/seal/consumer_ram.exl](../tests/seal/consumer_ram.exl) is the composed
+driver with its registers moved over RAM, cross-compiled and executed on the
+m68k. The chipset is above the emulator, so what that run proves is the
+SEQUENCE and the seam - the order of the stores and the balance of the region -
+not the registers themselves. Said plainly because a witness that is taken for
+more than it shows is worse than none.
 
 What a seal lowers to depends on the target, deliberately. The construct emits
 a call into a seam two functions wide:

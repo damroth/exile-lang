@@ -1,0 +1,10 @@
+ward Custom {
+    bltcon0: u16 at 0x040 write;
+    bltsize: u16 at 0x058 write;
+}
+
+fn main() {
+    ward custom: Custom at 0xDFF000;
+    custom.bltcon0.write(0x09F0);
+    custom.bltsize.write(64);
+}

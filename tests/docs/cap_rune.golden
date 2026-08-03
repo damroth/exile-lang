@@ -1,0 +1,2 @@
+volatile unsigned long *const cop1lc = (volatile unsigned long *)14676096UL;
+volatile unsigned short *const copjmp1 = (volatile unsigned short *)14676104UL;

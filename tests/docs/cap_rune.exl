@@ -1,0 +1,7 @@
+rune cop1lc:  u32 at 0xDFF080 write;   // COP1LC - the copper list pointer
+rune copjmp1: u16 at 0xDFF088 write;   // COPJMP1 - strobe to restart it
+
+fn program_copper(list_addr: u32) { cop1lc.write(list_addr); }
+fn start_copper()                 { copjmp1.strobe(); }
+
+fn main() { program_copper(4096); start_copper(); }

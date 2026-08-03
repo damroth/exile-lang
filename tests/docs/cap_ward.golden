@@ -1,0 +1,2 @@
+*((volatile unsigned short *)(14675968UL + 64UL)) = 2544;
+*((volatile unsigned short *)(14675968UL + 88UL)) = 64;

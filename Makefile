@@ -900,7 +900,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient
+                 selfhost-seal selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1445,6 +1445,74 @@ selfhost-armreturn: $(EXILC_BIN)
 	  echo "selfhost-armreturn: an arm left by the wrong path:"; \
 	  diff tests/armreturn/arm_returns.expected $(C_OUT)/armret.out | head -6; exit 1; fi; \
 	echo "selfhost-armreturn: clean (3 arm returns lowered into the switch, -Werror clean, RUNS 1/3/10/30/40/50; the frozen reference still refuses it)"
+
+# ===== the tutorial's capability emission, pinned =====
+#
+# Section 22 shows the C that `rune`, `ward`, `sigil` and `seal` lower to. Shown
+# C rots: the compiler moves, the prose does not, and a reader who trusts a
+# fragment that no longer emits has been told something false by an artifact
+# that looks authoritative.
+#
+# So each fragment is compiled from a checked-in program, and the gate asserts
+# THREE things, of which the third is the one that pins the DOCUMENT rather than
+# the fixture: the program still compiles, its emission still equals the golden,
+# and every golden line still appears VERBATIM in the tutorial. Drop the third
+# and the golden could track the compiler while the prose quietly drifts away
+# from it.
+#
+# Compiled with the PORT. The frozen reference cannot parse the capability model
+# at all - it only reserves the words - so no oracle-driven machinery takes part
+# here, and that is why these programs live under tests/ rather than examples/,
+# which is built by the reference end to end.
+.PHONY: docs-capability-golden
+docs-capability-golden: $(EXILC_BIN)
+	@sig=""; \
+	for f in cap_rune cap_ward; do \
+	  test -f tests/docs/$$f.exl || { echo "docs-capability-golden: MISSING tests/docs/$$f.exl"; exit 1; }; \
+	  test -s tests/docs/$$f.golden || { echo "docs-capability-golden: MISSING/EMPTY tests/docs/$$f.golden"; exit 1; }; \
+	done; \
+	test -s docs/exile-by-example.md || { echo "docs-capability-golden: MISSING/EMPTY docs/exile-by-example.md"; exit 1; }; \
+	for e in tests/sigil/equality/gated.exl tests/sigil/equality/ungated.exl tests/seal/exits.exl; do \
+	  test -f $$e || { echo "docs-capability-golden: MISSING $$e"; exit 1; }; \
+	done; \
+	rm -f $(C_OUT)/doc_cap_rune.c $(C_OUT)/doc_cap_ward.c $(C_OUT)/doc_gated.c $(C_OUT)/doc_ungated.c $(C_OUT)/doc_seal.c; \
+	for f in cap_rune cap_ward; do \
+	  w=`$(EXILC_BIN) --target c --c-out $(C_OUT)/doc_$$f.c tests/docs/$$f.exl 2>&1 >/dev/null`; \
+	  test -s $(C_OUT)/doc_$$f.c || { echo "docs-capability-golden: the port emitted nothing for tests/docs/$$f.exl"; exit 1; }; \
+	  if [ -n "$$w" ]; then \
+	    echo "docs-capability-golden: tests/docs/$$f.exl is not warning-clean, and a tutorial snippet has to be:"; \
+	    echo "$$w" | head -4; exit 1; fi; \
+	done; \
+	grep -E '^volatile' $(C_OUT)/doc_cap_rune.c > $(C_OUT)/doc_cap_rune.emit; \
+	sed -e 's/^[[:space:]]*//' $(C_OUT)/doc_cap_ward.c | grep -E '^\*\(\(volatile' > $(C_OUT)/doc_cap_ward.emit; \
+	for f in cap_rune cap_ward; do \
+	  if ! diff -q tests/docs/$$f.golden $(C_OUT)/doc_$$f.emit >/dev/null; then \
+	    echo "docs-capability-golden: the emission for $$f moved away from its golden:"; \
+	    diff tests/docs/$$f.golden $(C_OUT)/doc_$$f.emit | head -8; exit 1; fi; \
+	  n=0; \
+	  while IFS= read -r line; do \
+	    grep -Fq "$$line" docs/exile-by-example.md || { \
+	      echo "docs-capability-golden: the tutorial no longer shows a line the compiler emits:"; \
+	      echo "  $$line"; exit 1; }; \
+	    n=`expr $$n + 1`; \
+	  done < tests/docs/$$f.golden; \
+	  sig="$$sig $$f=$$n-lines-pinned-in-prose"; \
+	done; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/doc_gated.c tests/sigil/equality/gated.exl >/dev/null 2>&1; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/doc_ungated.c tests/sigil/equality/ungated.exl >/dev/null 2>&1; \
+	test -s $(C_OUT)/doc_gated.c || { echo "docs-capability-golden: EMPTY gated emission (floor)"; exit 1; }; \
+	if ! cmp -s $(C_OUT)/doc_gated.c $(C_OUT)/doc_ungated.c; then \
+	  echo "docs-capability-golden: the tutorial says a claim costs nothing, and the two emissions now differ:"; \
+	  diff $(C_OUT)/doc_gated.c $(C_OUT)/doc_ungated.c | head -6; exit 1; fi; \
+	sig="$$sig sigil=gated==ungated"; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/doc_seal.c tests/seal/exits.exl >/dev/null 2>&1; \
+	test -s $(C_OUT)/doc_seal.c || { echo "docs-capability-golden: EMPTY seal emission (floor)"; exit 1; }; \
+	for line in '__seal0 = sys_seal_enter();' 'sys_seal_exit(__seal0);'; do \
+	  grep -Fq "$$line" $(C_OUT)/doc_seal.c || { echo "docs-capability-golden: the seam shape the tutorial shows is not what a seal emits: $$line"; exit 1; }; \
+	  grep -Fq "$$line" docs/exile-by-example.md || { echo "docs-capability-golden: the tutorial stopped showing the seam line: $$line"; exit 1; }; \
+	done; \
+	sig="$$sig seal=seam-pair-in-both"; \
+	echo "docs-capability-golden: clean -$$sig"
 
 # ===== publicly-facing text must stand on its own =====
 #
