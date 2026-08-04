@@ -1,0 +1,10 @@
+// A type application must supply exactly as many arguments as the declaration
+// takes. The port had no such check at all - in either direction, for structs
+// or enums - so this compiled, and so did every shape downstream of it.
+//
+// The count that is reported comes from the APPLICATION SITE, not from the
+// declaration: the sibling fixture applies two arguments to this same shape and
+// is told `got 2`.
+struct Pair { a: int, b: int }
+fn f(p: *const Pair<int>) { println(1); }
+fn main() { println(1); }

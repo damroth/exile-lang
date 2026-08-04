@@ -1,0 +1,5 @@
+// Two parameters declared, one applied - the other direction, and the reason
+// the check compares counts rather than testing for emptiness.
+struct P<T, U> { a: T, b: U }
+fn f(p: *const P<int>) { println(1); }
+fn main() { println(1); }

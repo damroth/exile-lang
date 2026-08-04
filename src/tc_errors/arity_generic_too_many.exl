@@ -1,0 +1,5 @@
+// One parameter declared, two applied - the direction a check written only for
+// non-generic types would miss.
+struct P<T> { a: T }
+fn f(p: *const P<int, int>) { println(1); }
+fn main() { println(1); }

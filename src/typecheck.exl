@@ -1266,6 +1266,51 @@ fn talias_idx(sc: *const TyScope, name: str) -> int {
     while i < n { if str::eq(sl[i].ta_name, name) { return i as int; } i = i + 1 as u32; }
     return -1 as int;
 }
+// How many parameters the DECLARATION takes, or -1 when the name is not one the
+// tables know (a prelude type resolved elsewhere, an extern, a tparam).
+fn declared_tparam_count(sc: *const TyScope, name: str, is_enum: bool) -> int {
+    if is_enum {
+        let n = sc.sc_etps.length();
+        let sl = sc.sc_etps.as_slice();
+        let mut i = 0 as u32;
+        while i < n {
+            if str::eq(sl[i].etp_name, name) { return sl[i].etp_params.length() as int; }
+            i = i + 1 as u32;
+        }
+        return 0 as int - 1 as int;
+    }
+    let n = sc.sc_stps.length();
+    let sl = sc.sc_stps.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].stp_name, name) { return sl[i].stp_params.length() as int; }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+// A type application must supply exactly as many arguments as the declaration
+// takes. The port had no such check at all, in either direction and for neither
+// structs nor enums, so `Pair<int>` on a two-field struct with no parameters
+// compiled - and so did every shape downstream of that, including a user type
+// that took a prelude name and was then applied generically by the prelude's own
+// surviving code.
+//
+// The count comes from the declaration; the count it is compared against comes
+// from the APPLICATION SITE, which is what makes the message say `got 2` for
+// `Pair<int, int>` and `got 1` for `Pair<int>` on the same declaration.
+fn check_generic_arity(a: Allocator, ar: *Arena, sc: *const TyScope,
+                       path: *const Vec<str>, last: str, is_enum: bool, nargs: u32, p: Pos) {
+    let expected = declared_tparam_count(sc, last, is_enum);
+    if expected < 0 as int { return; }
+    if expected == nargs as int { return; }
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("type '"); sb.push_str(path_display(a, ar, path));
+    sb.push_str("' expects "); sb.push_int(expected);
+    sb.push_str(" generic argument(s), got "); sb.push_int(nargs as int);
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
 fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
                     path: *const Vec<str>, args: *const Vec<*const TypeAnn>, p: Pos) -> *const Typ {
     let plen = path.length();
@@ -1332,6 +1377,7 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     }
     // Generic application → monomorphic instance, registered for the footer.
     if !struct_known(sc, last) { unknown_type(a, ar, sc, path, true, p); }
+    check_generic_arity(a, ar, sc, path, last, is_enum, nargs, p);
     let resolved = resolve_sig_args(a, ar, sc, args, p);
     // Module-relative, exactly as for the non-generic case above — the mono
     // instance inherits the DECLARATION's prefix, so `Box<i32>` written inside

@@ -1,0 +1,5 @@
+// Enums take the same rule and the same message. A check that covered only
+// structs would leave this compiling, which is what the port did.
+enum E { A | B }
+fn f(e: *const E<int>) { println(1); }
+fn main() { println(1); }

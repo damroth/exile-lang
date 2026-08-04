@@ -1,0 +1,6 @@
+// The same declaration as its sibling, two arguments instead of one - the
+// message must count what the site wrote, or a fixture pair like this one
+// cannot tell a real check from a constant.
+struct Pair { a: int, b: int }
+fn f(p: *const Pair<int, int>) { println(1); }
+fn main() { println(1); }
