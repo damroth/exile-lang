@@ -920,14 +920,28 @@ fn tc_starts_with(s: str, pre: str) -> bool {
     }
     return true;
 }
+// Every name `prelude_struct_index` seeds must appear here, and the two lists
+// drifted apart by exactly two entries - `Range` and `RangeInclusive` were
+// seeded as structs but not recognised as ones, so a user ENUM of either name
+// won a lookup the prelude's struct should have won. Two hand-written lists of
+// the same set is the shape that allowed it; the gate below pins them equal
+// rather than trusting the next reader to notice.
 fn is_builtin_struct(name: str) -> bool {
-    return str::eq(name, "String") || str::eq(name, "StringBuilder")
+    return str::eq(name, "Range") || str::eq(name, "RangeInclusive")
+        || str::eq(name, "String") || str::eq(name, "StringBuilder")
         || str::eq(name, "Allocator") || str::eq(name, "Arena")
         || str::eq(name, "Vec") || str::eq(name, "Slice") || str::eq(name, "VecIter")
         || str::eq(name, "HashMap") || str::eq(name, "HashMapIter") || str::eq(name, "Slot")
         || str::eq(name, "Map") || str::eq(name, "Filter") || str::eq(name, "Take")
         || str::eq(name, "Enumerate")
         || tc_starts_with(name, "__closure");
+}
+// Is this name a STRUCT specifically? `struct_known` answers the wider question
+// "is the name known at all" - it accepts enums too - so ordering the lookup on
+// it made every plain user enum resolve as a struct, and a `match` on one was
+// rejected for not being an enum. The order needs the narrow predicate.
+fn is_struct_name(sc: *const TyScope, last: str) -> bool {
+    return name_in(sc.sc_structs, last) || is_builtin_struct(last);
 }
 fn struct_known(sc: *const TyScope, last: str) -> bool {
     return name_in(sc.sc_structs, last) || name_in(sc.sc_enums, last)
@@ -1368,11 +1382,19 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
             return ty_node(ar, Typ::TStruct(copy_strs(a, &tsl[ti as u32].ta_path)));
         }
     }
+    // STRUCTS FIRST, then enums - the reference's order, and it is only visible
+    // when a name is both. That happens when a user declares one kind and the
+    // prelude keeps the other: a user `enum Allocator` does not remove the
+    // prelude STRUCT of that name, so `*const Allocator` is the struct. Asking
+    // enums first bound it to the user's enum instead, and BOTH compilers
+    // accepted the program - the parameter simply meant two different types and
+    // the emitted C said so.
     let is_enum = name_in(sc.sc_enums, last) || is_prelude_enum(last);
     if nargs == 0 as u32 {
         let newpath = copy_strs(a, path);
+        if is_struct_name(sc, last) { return ty_node(ar, Typ::TStruct(newpath)); }
         if is_enum { return ty_node(ar, Typ::TEnum(newpath)); }
-        if !struct_known(sc, last) { unknown_type(a, ar, sc, path, false, p); }
+        unknown_type(a, ar, sc, path, false, p);
         return ty_node(ar, Typ::TStruct(newpath));
     }
     // Generic application → monomorphic instance, registered for the footer.
@@ -11502,16 +11524,24 @@ fn is_own_ptr_ty(t: *const Typ) -> bool {
 // user who names a struct `Range` gets their own `Range`; a user who names one
 // `Vec` gets a broken prelude. Both are what the reference does, and the port's
 // job is to agree.
-fn shadowed_prelude_names(a: Allocator, items: *const Vec<Item>) -> Vec<str> {
+fn push_name_if(cond: bool, out: *Vec<str>, nm: str) {
+    if cond { out.push(nm); }
+    return;
+}
+// Collected BY KIND, because the reference matches by kind: a prelude enum is
+// dropped when a user ENUM takes its name, a prelude struct when a user STRUCT
+// does. One shared set is a shape, and the wrong one - a user `enum Allocator`
+// would remove the prelude STRUCT of that name, and the port would then accept a
+// `match` on a value the reference still types as that struct.
+fn shadowed_prelude_names(a: Allocator, items: *const Vec<Item>, want_enums: bool) -> Vec<str> {
     let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < n {
         match sl[i] {
-            Item::Struct(sd) => { out.push(sd.sname); }
-            | Item::Enum(ed) => { out.push(ed.ename); }
-            | Item::Trait(td) => { out.push(td.trname); }
+            Item::Struct(sd) => { push_name_if(!want_enums, &out, sd.sname); }
+            | Item::Enum(ed) => { push_name_if(want_enums, &out, ed.ename); }
             | _o => { }
         }
         i = i + 1 as u32;
@@ -11813,16 +11843,22 @@ fn collect_enum_info_one(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: 
 
 // Register the prelude generic enums' variants so `Option::`/`Result::`
 // constructors and patterns resolve their tags + payload tparams.
-fn prelude_enum_variants(a: Allocator, ar: *Arena, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
+// The variant tables follow the seed: a shadowed name's variants are the USER's,
+// and leaving the prelude's here made the port judge a user `enum Result { A | B }`
+// against `Ok(_)` / `Err(_)` - it reported a match on the user's own two arms as
+// non-exhaustive, naming a payload variant the program never wrote.
+fn prelude_enum_variants(a: Allocator, ar: *Arena, skip: *const Vec<str>, etags: *Vec<EnumVariantTag>, efields: *Vec<EnumFieldE>) {
     let opt_path = single_str(a, "Option");
     let res_path = single_str(a, "Result");
-    push_etag(a, &opt_path, "None", 0 as int, etags);
-    push_etag(a, &opt_path, "Some", 1 as int, etags);
-    push_efield(a, &opt_path, "Some", "_0", ty_node(ar, Typ::TVar("T")), efields);
-    push_etag(a, &res_path, "Ok", 0 as int, etags);
-    push_etag(a, &res_path, "Err", 1 as int, etags);
-    push_efield(a, &res_path, "Ok", "_0", ty_node(ar, Typ::TVar("T")), efields);
-    push_efield(a, &res_path, "Err", "_0", ty_node(ar, Typ::TVar("E")), efields);
+    let opt_shadowed = is_shadowed(skip, "Option");
+    let res_shadowed = is_shadowed(skip, "Result");
+    if !opt_shadowed { push_etag(a, &opt_path, "None", 0 as int, etags); }
+    if !opt_shadowed { push_etag(a, &opt_path, "Some", 1 as int, etags); }
+    if !opt_shadowed { push_efield(a, &opt_path, "Some", "_0", ty_node(ar, Typ::TVar("T")), efields); }
+    if !res_shadowed { push_etag(a, &res_path, "Ok", 0 as int, etags); }
+    if !res_shadowed { push_etag(a, &res_path, "Err", 1 as int, etags); }
+    if !res_shadowed { push_efield(a, &res_path, "Ok", "_0", ty_node(ar, Typ::TVar("T")), efields); }
+    if !res_shadowed { push_efield(a, &res_path, "Err", "_0", ty_node(ar, Typ::TVar("E")), efields); }
 }
 
 fn collect_enum_info(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, items: *const Vec<Item>,
@@ -13779,14 +13815,14 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     });
 }
 
-fn prelude_enum_tps(a: Allocator, out: *Vec<EnumTP>) {
+fn prelude_enum_tps(a: Allocator, skip: *const Vec<str>, out: *Vec<EnumTP>) {
     let mut t1: Vec<str> = Vec::with_capacity(a, 8 as u32);
     t1.push("T");
-    push_enum_tp(a, "Option", &t1, out);
+    if !is_shadowed(skip, "Option") { push_enum_tp(a, "Option", &t1, out); }
     let mut t2: Vec<str> = Vec::with_capacity(a, 8 as u32);
     t2.push("T");
     t2.push("E");
-    push_enum_tp(a, "Result", &t2, out);
+    if !is_shadowed(skip, "Result") { push_enum_tp(a, "Result", &t2, out); }
 }
 
 // Elaborate one generic-fn instance: re-derive the source fn from its item
@@ -14367,13 +14403,21 @@ fn collect_variants(a: Allocator, path: *const Vec<str>, etags: *const Vec<EnumV
     // variants are fixed by the prelude shape, so synthesize them in tag order
     // (the payload fields are already in mono_efields via
     // register_prelude_enum_efields).
+    //
+    // It is a FALLBACK, not an addition, and the distinction is load-bearing: a
+    // user `enum Result { A | B }` arrives here with its own two variants
+    // already collected, and synthesising by name on top of them produced the
+    // UNION - a C enum carrying A, B, Ok and Err for a program that declared two.
+    // An instance really is variant-less, so emptiness is the honest test.
     let last = path_last(path);
-    if str::eq(last, "Option") || str_starts_with(last, "Option_") {
-        if !variant_seen(&out, "None") { push_variant(a, &out, path, "None", efields, mono_efields, false); }
-        if !variant_seen(&out, "Some") { push_variant(a, &out, path, "Some", efields, mono_efields, false); }
-    } else if str::eq(last, "Result") || str_starts_with(last, "Result_") {
-        if !variant_seen(&out, "Ok") { push_variant(a, &out, path, "Ok", efields, mono_efields, false); }
-        if !variant_seen(&out, "Err") { push_variant(a, &out, path, "Err", efields, mono_efields, false); }
+    if out.length() == 0 as u32 {
+        if str::eq(last, "Option") || str_starts_with(last, "Option_") {
+            push_variant(a, &out, path, "None", efields, mono_efields, false);
+            push_variant(a, &out, path, "Some", efields, mono_efields, false);
+        } else if str::eq(last, "Result") || str_starts_with(last, "Result_") {
+            push_variant(a, &out, path, "Ok", efields, mono_efields, false);
+            push_variant(a, &out, path, "Err", efields, mono_efields, false);
+        }
     }
     return out;
 }
@@ -14687,10 +14731,16 @@ fn prelude_struct_index(a: Allocator, skip: *const Vec<str>) -> Vec<StructSig> {
     return sigs;
 }
 
-fn prelude_enum_index(a: Allocator) -> Vec<EnumSig> {
+// Seeded exactly like the struct index, and shadowed names are skipped for the
+// same reason - except that the symptom differs, which is why this was missed.
+// Prelude enums are emitted on demand, so a seeded shadowed name did not move a
+// user declaration; it REPLACED it, and the user's enum was then dropped as an
+// unused prelude one. The port silently emitted nothing for a type the program
+// had declared, which is a worse direction than the struct side's reordering.
+fn prelude_enum_index(a: Allocator, skip: *const Vec<str>) -> Vec<EnumSig> {
     let mut sigs: Vec<EnumSig> = Vec::with_capacity(a, 8 as u32);
-    push_enum_name(a, &sigs, "Option");
-    push_enum_name(a, &sigs, "Result");
+    if !is_shadowed(skip, "Option") { push_enum_name(a, &sigs, "Option"); }
+    if !is_shadowed(skip, "Result") { push_enum_name(a, &sigs, "Result"); }
     return sigs;
 }
 
@@ -16838,9 +16888,15 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     collect_gen_fns(a, ar, items, &genfns);
     let mut genjobs: Vec<GenJob> = Vec::with_capacity(a, 8 as u32);
     let mut geninsts: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    // A user top-level type REMOVES the prelude declaration of that name. The set
+    // is computed ONCE, here - ahead of every prelude registration - because each
+    // of them consults it and the first consumer is the enum tparam table just
+    // below. It is a whole-program fact; no scope varies it.
+    let shadowed = shadowed_prelude_names(a, items, false);
+    let shadowed_enums = shadowed_prelude_names(a, items, true);
     let mut etps: Vec<EnumTP> = Vec::with_capacity(a, 8 as u32);
     collect_enum_tps(a, items, &etps);
-    prelude_enum_tps(a, &etps);
+    prelude_enum_tps(a, &shadowed_enums, &etps);
     let mut stps: Vec<StructTP> = Vec::with_capacity(a, 8 as u32);
     collect_struct_tps(a, items, &stps);
     prelude_struct_tps(a, &stps);
@@ -16883,9 +16939,6 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // oracle builds its struct_index first and only then resolves each fn's
     // signature (inline with its body), so field-type instances must reach the
     // mono list ahead of signature-type instances or the footer reorders.
-    // A user top-level type REMOVES the prelude declaration of that name, so the
-    // set is computed once and every prelude registration below consults it.
-    let shadowed = shadowed_prelude_names(a, items);
     let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     collect_struct_info(a, ar, &base_scope, &empty_tp, items, &sinfo);
     prelude_struct_info(a, ar, &shadowed, &sinfo);
@@ -16952,7 +17005,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // Runs once the field tables exist — the edges are read from them.
     detect_value_cycles(a, ar, &base_scope, items, &sinfo, &efields, &mono_fields, &mono_efields);
     check_pub_uses(a, ar, &base_scope, &globals, items);
-    prelude_enum_variants(a, ar, &etags, &efields);
+    prelude_enum_variants(a, ar, &shadowed_enums, &etags, &efields);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);
     collect_trait_default_methods(a, ar, &base_scope, items, &methods);
@@ -17074,7 +17127,7 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     mention_funcs(a, &pmeth, &used_names);
 
     let mut structs = prelude_struct_index(a, &shadowed);
-    let mut enums = prelude_enum_index(a);
+    let mut enums = prelude_enum_index(a, &shadowed_enums);
     // Non-generic prelude structs (Allocator / StringBuilder / String / Arena)
     // are TOP-LEVEL declarations in the oracle, emitted ahead of user structs.
     // Push them here, by declaration rank, before the user structs.

@@ -1,0 +1,13 @@
+// A plain user enum, no prelude name anywhere near it - and that is the point.
+//
+// Ordering name resolution to ask structs before enums, which is what the
+// reference does, was first written with a predicate that answered the WIDER
+// question "is this name known at all". Enums answer yes to that, so every
+// ordinary enum began resolving as a struct and a `match` on one was refused
+// for not being an enum. The shape that caught it carries no collision at all,
+// which is why it belongs here rather than beside the shadowing fixtures. It is
+// an ACCEPT fixture: both compilers compile it and it runs, so the assertion is
+// parity of the emission, not an exit status.
+enum Zed { A | B }
+fn pick(e: *const Zed) -> int { return match *e { Zed::A => 1 | Zed::B => 2 }; }
+fn main() { println(pick(&Zed::A)); }

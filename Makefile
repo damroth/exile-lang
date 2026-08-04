@@ -912,7 +912,7 @@ selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree
+                 selfhost-seal selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1555,6 +1555,32 @@ selfhost-own-tree: $(EXILC_BIN)
 	  diff $(C_OUT)/own_o.c $(C_OUT)/own_p.c | head -8; exit 1; fi; \
 	echo "selfhost-own-tree: clean (port == reference on src/main.exl, `wc -l < $(C_OUT)/own_p.c` lines byte-identical)"
 
+# ===== the two prelude-struct lists must name the same set =====
+#
+# `prelude_struct_index` seeds the emission with the prelude's struct names;
+# `is_builtin_struct` answers "is this name a struct" during name resolution.
+# They are two hand-written lists of one set, and they drifted: `Range` and
+# `RangeInclusive` were seeded but not recognised, so a user ENUM of either name
+# won a lookup the prelude's struct should have won - and both compilers still
+# compiled the program, which is the face a user meets rather than reports.
+#
+# Pinned as SETS, not as text: order differs by design (the seed is ordered, the
+# predicate is not), so comparing the sorted names is the property and comparing
+# the lines would be the shape.
+.PHONY: selfhost-prelude-struct-lists
+selfhost-prelude-struct-lists:
+	@test -f src/typecheck.exl || { echo "selfhost-prelude-struct-lists: MISSING src/typecheck.exl"; exit 1; }; \
+	seed=`sed -n '/^fn prelude_struct_index(/,/^}/p' src/typecheck.exl | grep -o 'push_seed_struct(a, skip, &sigs, "[A-Za-z]*"' | sed 's/.*"\([A-Za-z]*\)"/\1/' | sort -u`; \
+	pred=`sed -n '/^fn is_builtin_struct(/,/^}/p' src/typecheck.exl | grep -o 'str::eq(name, "[A-Za-z]*")' | sed -e 's/^str::eq(name, "//' -e 's/")$$//' | sort -u`; \
+	if [ -z "$$seed" ]; then echo "selfhost-prelude-struct-lists: read NO names from the seed - the shape moved, re-aim the gate"; exit 1; fi; \
+	if [ -z "$$pred" ]; then echo "selfhost-prelude-struct-lists: read NO names from the predicate - the shape moved, re-aim the gate"; exit 1; fi; \
+	missing=`comm -23 <(echo "$$seed") <(echo "$$pred")`; \
+	if [ -n "$$missing" ]; then \
+	  echo "selfhost-prelude-struct-lists: seeded as structs but not recognised as ones -"; \
+	  echo "  a user enum of these names would win a lookup the prelude's struct should win:"; \
+	  echo "$$missing" | sed 's/^/    /'; exit 1; fi; \
+	echo "selfhost-prelude-struct-lists: clean (`echo "$$seed" | wc -l` seeded names, every one recognised by the resolver)"
+
 # ===== publicly-facing text must stand on its own =====
 #
 # Design records, phase names and step labels live in a directory that is not
@@ -2032,7 +2058,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c20_own_param_in_generic_struct c21_generic_owner_nested_in_owner \
                   c22_capture_untyped_let c23_marker_bound_satisfied \
                   arm_generic_payload prelude_name_string \
-                  prelude_name_collision prelude_name_seed_order
+                  prelude_name_collision prelude_name_seed_order \
+                  enum_match_no_collision
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

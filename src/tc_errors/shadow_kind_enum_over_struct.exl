@@ -1,0 +1,15 @@
+// A user declaration shadows the prelude only WITHIN ITS OWN KIND.
+//
+// `Allocator` is a prelude STRUCT. Declaring a user ENUM of that name does not
+// remove it, so the name still resolves to the struct - the reference looks
+// structs up before enums - and matching on it is refused for not being an enum.
+//
+// The port briefly did the opposite, twice over: a shadow set that ignored the
+// kind removed the prelude struct outright, and a resolution order that asked
+// enums first bound the name to the user's enum. Both accepted this program.
+// Worse, they accepted a program that never mentions `match` at all: with only
+// `fn f(x: *const Allocator)` both compilers compiled cleanly and the parameter
+// meant two different types, which is the face a user meets rather than reports.
+enum Allocator { A | B }
+fn pick(e: *const Allocator) -> int { return match *e { Allocator::A => 1 | Allocator::B => 2 }; }
+fn main() { println(pick(&Allocator::A)); }
