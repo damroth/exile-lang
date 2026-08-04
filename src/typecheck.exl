@@ -14590,20 +14590,54 @@ fn nongeneric_prelude_rank(name: str) -> int {
     if str::eq(name, "String") { return 3 as int; }
     return 0 as int - 1 as int;
 }
-fn prelude_struct_index(a: Allocator) -> Vec<StructSig> {
+// Seeded with the prelude's own struct names, in this order, and the user's
+// structs are appended after. A name the user shadowed must NOT be seeded: the
+// declaration that survives is theirs, and it belongs in the user block, in the
+// position they wrote it - seeding it hoists it into the prelude block instead,
+// ahead of declarations that really are the prelude's.
+// Structs bearing one of these four names are dropped when nothing uses them,
+// matching the reference. The test is on the NAME alone, so it catches a user
+// declaration that merely shares one - the reference does the same, and the
+// emitted C has to agree.
+//
+// "Unused" means no surviving function names the type - a signature, a hoisted
+// let or a field. Asking the mono registry instead would be wrong in exactly one
+// direction and it is the direction that matters: a USER struct of one of these
+// names never enters that registry, so every one of them would look unused.
+fn elided_when_unused_name(nm: str) -> bool {
+    return str::eq(nm, "Allocator") || str::eq(nm, "Arena")
+        || str::eq(nm, "StringBuilder") || str::eq(nm, "String");
+}
+fn dropped_when_unused(a: Allocator, nm: str, used: *const Vec<Vec<str>>) -> bool {
+    if !elided_when_unused_name(nm) { return false; }
+    let n = used.length();
+    let sl = used.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(path_last(&sl[i]), nm) { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
+
+fn push_seed_struct(a: Allocator, skip: *const Vec<str>, out: *Vec<StructSig>, nm: str) {
+    if is_shadowed(skip, nm) { return; }
+    push_struct_name(a, out, nm);
+}
+fn prelude_struct_index(a: Allocator, skip: *const Vec<str>) -> Vec<StructSig> {
     let mut sigs: Vec<StructSig> = Vec::with_capacity(a, 16 as u32);
-    push_struct_name(a, &sigs, "Enumerate");
-    push_struct_name(a, &sigs, "Filter");
-    push_struct_name(a, &sigs, "HashMap");
-    push_struct_name(a, &sigs, "HashMapIter");
-    push_struct_name(a, &sigs, "Map");
-    push_struct_name(a, &sigs, "Range");
-    push_struct_name(a, &sigs, "RangeInclusive");
-    push_struct_name(a, &sigs, "Slice");
-    push_struct_name(a, &sigs, "Slot");
-    push_struct_name(a, &sigs, "Take");
-    push_struct_name(a, &sigs, "Vec");
-    push_struct_name(a, &sigs, "VecIter");
+    push_seed_struct(a, skip, &sigs, "Enumerate");
+    push_seed_struct(a, skip, &sigs, "Filter");
+    push_seed_struct(a, skip, &sigs, "HashMap");
+    push_seed_struct(a, skip, &sigs, "HashMapIter");
+    push_seed_struct(a, skip, &sigs, "Map");
+    push_seed_struct(a, skip, &sigs, "Range");
+    push_seed_struct(a, skip, &sigs, "RangeInclusive");
+    push_seed_struct(a, skip, &sigs, "Slice");
+    push_seed_struct(a, skip, &sigs, "Slot");
+    push_seed_struct(a, skip, &sigs, "Take");
+    push_seed_struct(a, skip, &sigs, "Vec");
+    push_seed_struct(a, skip, &sigs, "VecIter");
     return sigs;
 }
 
@@ -16985,7 +17019,15 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     register_vec_slice_views(a, ar, &sinfo_scope, &mono_structs, &mono_sargs, fp_start, fp_end, &sv_fp);
     let sv_end = mono_structs.length();
 
-    let mut structs = prelude_struct_index(a);
+    // What the surviving code actually names, computed BEFORE the index is
+    // assembled - the drop test below needs it, and the later DCE pass seeds
+    // itself from the index, so it cannot answer this question.
+    let mut used_names: Vec<Vec<str>> = Vec::with_capacity(a, 32 as u32);
+    mention_funcs(a, &funcs, &used_names);
+    mention_funcs(a, &pfree, &used_names);
+    mention_funcs(a, &pmeth, &used_names);
+
+    let mut structs = prelude_struct_index(a, &shadowed);
     let mut enums = prelude_enum_index(a);
     // Non-generic prelude structs (Allocator / StringBuilder / String / Arena)
     // are TOP-LEVEL declarations in the oracle, emitted ahead of user structs.
@@ -17005,7 +17047,10 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let sn = fstructs.length();
     let ssl = fstructs.as_slice();
     let mut si = 0 as u32;
-    while si < sn { push_struct_name(a, &structs, ssl[si]); si = si + 1 as u32; }
+    while si < sn {
+        if !dropped_when_unused(a, ssl[si], &used_names) { push_struct_name(a, &structs, ssl[si]); }
+        si = si + 1 as u32;
+    }
     let en = fenums.length();
     let esl = fenums.as_slice();
     let mut ei = 0 as u32;

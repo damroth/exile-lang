@@ -1,0 +1,27 @@
+// Membership in the port's prelude seed must not decide where a USER struct is
+// emitted.
+//
+// The port seeds its struct index with the prelude's own names and appends user
+// structs after. A name the user shadowed used to stay seeded, so the user's
+// declaration inherited the SEED's position instead of the one they wrote - and
+// because that seed is written in alphabetical order, the effect was invisible
+// until a file declared two of those names out of that order.
+//
+// This file is that shape, and it is the cheapest guard for the rule: the two
+// names are declared in the reverse of the order the seed lists them, so a
+// regression puts them back and the parity check says so. `Zzz` sorts last and
+// is declared last, so it cannot distinguish anything on its own - it is here
+// to keep a non-prelude name in the picture.
+
+struct RangeInclusive { lo: int, hi: int }
+struct Range { lo: int, hi: int }
+struct Zzz { a: int, b: int }
+
+fn main() {
+    let ri = RangeInclusive { lo: 10, hi: 14 };
+    let r = Range { lo: 3, hi: 9 };
+    let z = Zzz { a: 1, b: 2 };
+    println(ri.hi - ri.lo);   // 4
+    println(r.hi - r.lo);     // 6
+    println(z.b - z.a);       // 1
+}
