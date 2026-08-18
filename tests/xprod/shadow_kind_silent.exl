@@ -1,17 +1,19 @@
-// PARKED, NOT REGISTERED - and the blocker is named so the next reader does not
-// rediscover it: at a kind collision the reference does not emit the user's
-// declaration at all (the prelude struct takes the C name), while the port emits
-// both under one name. Registering this file before that layer is mirrored would
-// fail the suite for a reason it does not pin.
+// The quiet face of a kind collision, and the reason it is worth a fixture.
 //
-// What it WILL pin is the quiet face of kind collision, and it is the face worth
-// a fixture. A user `enum Allocator` does not remove the prelude STRUCT of that
-// name - the reference drops prelude declarations only within their own kind -
-// so `*const Allocator` is the struct. Nothing here says `match`, nothing reads
-// a field, nothing fails: with the binding wrong, BOTH compilers accepted this
-// program and the parameter simply meant two different types. Only the emitted C
-// said so, which is why parity is the assertion and exit status would have been
-// silent throughout.
+// A user `enum Allocator` does not remove the prelude STRUCT of that name - the
+// reference drops prelude declarations only within their own kind - so
+// `*const Allocator` here is the struct. Nothing says `match`, nothing reads a
+// field, nothing fails: with the binding wrong, BOTH compilers accepted this
+// program and the parameter simply meant two different types. Only the emitted
+// C said so, which is why parity is the assertion and exit status would have
+// been silent throughout.
+//
+// The file was parked for one layer longer than the binding itself. Getting the
+// binding right left the struct with no declaration in the output: it is named
+// in a signature and never built, and only built types were reaching the list
+// of aggregates to emit. C accepts that file with a warning and gives the
+// parameter a type of its own, distinct from every real Allocator - the same
+// wrong meaning, one layer down. Naming the type is now enough to declare it.
 
 enum Allocator { A | B }
 

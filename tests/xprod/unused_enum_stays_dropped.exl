@@ -1,0 +1,13 @@
+// The emission control: a user enum sharing no name with anything in the
+// prelude, used by nothing.
+//
+// Whatever decides which declarations survive has to leave this file alone. The
+// rule being pinned here widens what reaches the output - a type now earns its
+// declaration by being NAMED rather than by being built - and a rule stated one
+// notch too wide would keep this enum too. The reference drops it, so the
+// emitted C is the assertion; both compilers accept the file and print the same
+// thing whether or not the declaration is there.
+
+enum Zed { A | B }
+
+fn main() { println(1); }

@@ -1,0 +1,20 @@
+// Naming a type also names what its fields are made of.
+//
+// `Arena` carries an allocator, so an emission that declares the arena and not
+// the allocator is not merely short a declaration - it is C that does not
+// compile, because a struct field needs a complete type. The rule that puts a
+// named-but-never-built type in the output therefore has to run to a fixed
+// point over field types rather than once per name, and this file is the
+// cheapest shape that tells the difference: `Arena` is named in a signature,
+// nothing here builds one, and the allocator is reached only through the
+// arena's field.
+//
+// The user enum of the same name is here for the same reason as in the
+// allocator fixture next door: it makes the binding observable. Both compilers
+// accept the file either way, so parity of the emitted C is the assertion.
+
+enum Arena { A | B }
+
+fn takes(x: *const Arena) { println(1); }
+
+fn main() { println(1); }

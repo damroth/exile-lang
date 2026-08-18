@@ -14673,11 +14673,26 @@ fn push_enum_path(a: Allocator, sigs: *Vec<EnumSig>, srcpath: *const Vec<str>, a
 // alloc_struct, arena_struct, sb_struct, string_struct).  The oracle prepends
 // the whole prelude and emits these in declaration order; the port demand-
 // registers them, so the rank restores that order.
+// The non-generic prelude structs, in the order the reference declares them -
+// which is the order they have to be emitted in, because a later one can carry
+// an earlier one as a field. Rank IS that position, and the empty string ends
+// the table, so callers can walk it without repeating its length.
+fn nongeneric_prelude_name(rk: int) -> str {
+    if rk == 0 as int { return "Allocator"; }
+    if rk == 1 as int { return "Arena"; }
+    if rk == 2 as int { return "StringBuilder"; }
+    if rk == 3 as int { return "String"; }
+    return "";
+}
+// The same table read backwards. Written as a search rather than a second list
+// of the four names: two lists would have to be kept in step, and the one that
+// fell behind would misplace a declaration rather than fail to find it.
 fn nongeneric_prelude_rank(name: str) -> int {
-    if str::eq(name, "Allocator") { return 0 as int; }
-    if str::eq(name, "Arena") { return 1 as int; }
-    if str::eq(name, "StringBuilder") { return 2 as int; }
-    if str::eq(name, "String") { return 3 as int; }
+    let mut rk = 0 as int;
+    while !str::eq(nongeneric_prelude_name(rk), "") {
+        if str::eq(name, nongeneric_prelude_name(rk)) { return rk; }
+        rk = rk + 1 as int;
+    }
     return 0 as int - 1 as int;
 }
 // Seeded with the prelude's own struct names, in this order, and the user's
@@ -14709,6 +14724,91 @@ fn dropped_when_unused(a: Allocator, nm: str, used: *const Vec<Vec<str>>) -> boo
     }
     return true;
 }
+
+// Transitive closure of the used-set over the non-generic prelude structs'
+// FIELD types. Runs to a fixed point because one of them can carry another.
+fn close_used_over_prelude_fields(a: Allocator, ar: *Arena, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut rk = 0 as int;
+        while !str::eq(nongeneric_prelude_name(rk), "") {
+            let nm = nongeneric_prelude_name(rk);
+            if name_in_paths(used, nm) && !name_in_list(shadowed, nm) {
+                let fs = named_prelude_fields(a, ar, nm);
+                let fsl = fs.as_slice();
+                let mut i = 0 as u32;
+                while i < fs.length() {
+                    if add_prelude_dep(a, shadowed, used, fsl[i].ty) { changed = true; }
+                    i = i + 1 as u32;
+                }
+            }
+            rk = rk + 1 as int;
+        }
+    }
+    return;
+}
+// One field type: if it names a non-generic prelude struct not yet in the set,
+// add it and report that the set grew.
+fn add_prelude_dep(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>, t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(pp) => add_dep_name(a, shadowed, used, path_last(&pp))
+        | Typ::TPtr(i) => add_prelude_dep(a, shadowed, used, i)
+        | Typ::TConstPtr(i) => add_prelude_dep(a, shadowed, used, i)
+        | Typ::TOwnPtr(i) => add_prelude_dep(a, shadowed, used, i)
+        | _o => false
+    };
+}
+fn add_dep_name(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>, nm: str) -> bool {
+    if nongeneric_prelude_rank(nm) < 0 as int { return false; }
+    if name_in_list(shadowed, nm) { return false; }
+    if name_in_paths(used, nm) { return false; }
+    used.push(single_str(a, nm));
+    return true;
+}
+
+// The non-generic prelude struct of this rank, pushed when the program NAMES it
+// even though nothing materialised one. `nongeneric_prelude_rank` fixes the
+// order; this asks the used-set the reference asks, and registers the fields the
+// same way the eager path does so the emitted struct is the prelude's, not an
+// empty shell.
+fn push_named_prelude_struct_if_used(a: Allocator, ar: *Arena, sc: *const TyScope, rk: int,
+                                     shadowed: *const Vec<str>, used: *const Vec<Vec<str>>,
+                                     out: *Vec<StructSig>, mono_fields: *const Vec<StructField>) {
+    let nm = nongeneric_prelude_name(rk);
+    if str::eq(nm, "") { return; }
+    // A user struct of this name REMOVED the prelude declaration; the name in
+    // the used-set is then theirs, and pushing the prelude one here would put
+    // two declarations of the same C name in the list.
+    if name_in_list(shadowed, nm) { return; }
+    if !name_in_paths(used, nm) { return; }
+    register_named_prelude_field_access(a, ar, sc, &empty_skip(a), nm);
+    let path = single_str(a, nm);
+    push_struct_path(a, out, &path, mono_fields, &empty_targs(a));
+    return;
+}
+fn name_in_list(xs: *const Vec<str>, nm: str) -> bool {
+    let n = xs.length();
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i], nm) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn name_in_paths(ps: *const Vec<Vec<str>>, nm: str) -> bool {
+    let n = ps.length();
+    let sl = ps.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(path_last(&sl[i]), nm) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn empty_skip(a: Allocator) -> Vec<str> { return Vec::with_capacity(a, 8 as u32); }
+fn empty_targs(a: Allocator) -> Vec<*const Typ> { return Vec::with_capacity(a, 8 as u32); }
 
 fn push_seed_struct(a: Allocator, skip: *const Vec<str>, out: *Vec<StructSig>, nm: str) {
     if is_shadowed(skip, nm) { return; }
@@ -17125,6 +17225,12 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     mention_funcs(a, &funcs, &used_names);
     mention_funcs(a, &pfree, &used_names);
     mention_funcs(a, &pmeth, &used_names);
+    // Naming one of these types names what its FIELDS are made of: an `Arena`
+    // carries an `Allocator`, so a program that mentions the first needs the
+    // second declared above it. The reference closes its used-set over field
+    // types for exactly this reason; without the closure the port emitted an
+    // Arena whose field type had no declaration in the file.
+    close_used_over_prelude_fields(a, ar, &shadowed, &used_names);
 
     let mut structs = prelude_struct_index(a, &shadowed);
     let mut enums = prelude_enum_index(a, &shadowed_enums);
@@ -17135,12 +17241,35 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     let msl = mono_structs.as_slice();
     let sasl = mono_sargs.as_slice();
     let mut rk = 0 as int;
-    while rk < 4 as int {
+    while !str::eq(nongeneric_prelude_name(rk), "") {
         let mut mi = 0 as u32;
+        let mut seen_rank = false;
         while mi < mn {
-            if nongeneric_prelude_rank(path_last(&msl[mi])) == rk { push_struct_path(a, &structs, &msl[mi], &mono_fields, &sasl[mi]); }
+            if nongeneric_prelude_rank(path_last(&msl[mi])) == rk {
+                push_struct_path(a, &structs, &msl[mi], &mono_fields, &sasl[mi]);
+                seen_rank = true;
+            }
             mi = mi + 1 as u32;
         }
+        // NAMED is enough - materialised is not required. The reference keeps a
+        // non-generic prelude struct because something MENTIONS the type; this
+        // list only had the ones something had materialised, and the gap shows
+        // up wherever a program names the type without building one:
+        //
+        //   enum Allocator { A | B }
+        //   fn takes(x: *const Allocator) { ... }
+        //
+        // The annotation resolves to the prelude STRUCT on both sides, and both
+        // emit `ex_takes(const struct ex_Allocator *)` - but with the struct
+        // absent from this list the name `ex_Allocator` was left for the user's
+        // enum to claim, so the identical signature described different memory.
+        // Nothing warns: each file is consistent on its own.
+        //
+        // The claim itself is not decided here. Aggregates are emitted keyed by
+        // mangled name and the FIRST to claim one wins, structs before enums, so
+        // putting the struct in the list is the whole fix - the user's enum is
+        // skipped by the same rule that already governs every other collision.
+        if !seen_rank { push_named_prelude_struct_if_used(a, ar, &sinfo_scope, rk, &shadowed, &used_names, &structs, &mono_fields); }
         rk = rk + 1 as int;
     }
     let sn = fstructs.length();

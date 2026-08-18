@@ -1,0 +1,30 @@
+// The control for the fixtures either side: a prelude type that IS built.
+//
+// Materialising one has always put its declaration in the output, so this shape
+// agreed before the named-but-never-built case was mirrored and has to keep
+// agreeing after it. It is the half of the property that was never broken, and
+// pinning only the half that was would let a fix trade one half for the other -
+// a rule written to catch the named case can lose the built one by taking over
+// its job and getting the fields, or the position, differently.
+//
+// The user enum keeps the collision in the picture, so this is the built twin of
+// the silent-kind fixture rather than a program that merely uses an allocator.
+// It is also the sharpest form of the assertion: the C companion beside this
+// file lays out the allocator by hand, so if the emitted declaration were the
+// user's two-variant enum the two layouts would disagree and the program would
+// read the wrong memory at run time rather than only looking wrong.
+
+enum Allocator { A | B }
+
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+
+fn takes(x: *const Allocator) { println(1); }
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(7);
+    v.push(35);
+    println(v.length() as int);   // 2
+    println(v[1] - v[0]);         // 28
+}
