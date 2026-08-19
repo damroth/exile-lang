@@ -15524,7 +15524,7 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("}\n");
     sb.push_str("struct Vec<T> { ptr: own *T, count: u32, cap: u32, alloc: Allocator }\n");
     sb.push_str("struct VecIter<T> { data: *const T, len: u32, pos: u32 }\n");
-    sb.push_str("impl Vec<T> {\n");
+    sb.push_str("impl<T> Vec<T> {\n");
     sb.push_str("    pub fn with_capacity(a: Allocator, hint: u32) -> Vec<T> {\n");
     sb.push_str("        let cap: u32 = if hint < 8 as u32 { 8 as u32 } else { hint };\n");
     sb.push_str("        let bytes: u32 = size_of(T) as u32 * cap;\n");
@@ -15560,10 +15560,10 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("        return VecIter { data: self.ptr as *const T, len: self.count, pos: 0 as u32 };\n");
     sb.push_str("    }\n");
     sb.push_str("}\n");
-    sb.push_str("impl Slice<T> {\n");
+    sb.push_str("impl<T> Slice<T> {\n");
     sb.push_str("    pub fn length(*const self) -> u32 { return self.len; }\n");
     sb.push_str("}\n");
-    sb.push_str("impl Iterator for VecIter<T> {\n");
+    sb.push_str("impl<T> Iterator for VecIter<T> {\n");
     sb.push_str("    pub fn next(*self) -> Option<T> {\n");
     sb.push_str("        if self.pos >= self.len { return Option::None; }\n");
     sb.push_str("        let s: Slice<T> = Slice { ptr: self.data, len: self.len };\n");
@@ -15575,7 +15575,7 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("struct Slot<K, V> { state: u8, hash: u32, key: K, value: V }\n");
     sb.push_str("struct HashMap<K, V> { slots: own *Slot<K, V>, count: u32, cap: u32, alloc: Allocator }\n");
     sb.push_str("struct HashMapIter<K, V> { data: *const Slot<K, V>, len: u32, pos: u32 }\n");
-    sb.push_str("impl HashMap<K, V> {\n");
+    sb.push_str("impl<K, V> HashMap<K, V> {\n");
     sb.push_str("    pub fn with_capacity(a: Allocator, hint: u32) -> HashMap<K, V> {\n");
     sb.push_str("        let raw: u32 = if hint < 8 as u32 { 8 as u32 } else { hint };\n");
     sb.push_str("        let mut cap: u32 = 1 as u32;\n");
@@ -15680,7 +15680,7 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("        return HashMapIter { data: self.slots as *const Slot<K, V>, len: self.cap, pos: 0 as u32 };\n");
     sb.push_str("    }\n");
     sb.push_str("}\n");
-    sb.push_str("impl Iterator for HashMapIter<K, V> {\n");
+    sb.push_str("impl<K, V> Iterator for HashMapIter<K, V> {\n");
     sb.push_str("    pub fn next(*self) -> Option<(K, V)> {\n");
     sb.push_str("        let sview: Slice<Slot<K, V>> = Slice { ptr: self.data, len: self.len };\n");
     sb.push_str("        while self.pos < self.len {\n");
