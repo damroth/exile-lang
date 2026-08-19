@@ -1,0 +1,27 @@
+// Where a `Self::Assoc` projection may NOT stand, and this file exists because
+// the port used to accept all three.
+//
+// The reference does not resolve a projection - it substitutes one into the
+// annotation and then resolves, and that substitution recurses through exactly
+// the arguments of a type application and the two borrow pointers. A tuple, an
+// array and an owner fall through untouched, so the projection survives into
+// resolution and the program is refused.
+//
+// The port resolves instead of substituting, which reaches every position, so
+// it compiled programs the reference rejects - the quiet direction. Mirroring
+// the limit is the point: this is a REJECTION fixture, and the assertion is that
+// both compilers refuse it with the same words at the same place.
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn pair(*const self, d: Self::Val) -> (Self::Val, int) { return (d, 1); }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Val = u32;
+    fn one(*const self) -> u32 { return self.n; }
+}
+
+fn main() { let o = Ones { n: 7 }; let (v, k) = o.pair(5 as u32); println(v as int + k); }

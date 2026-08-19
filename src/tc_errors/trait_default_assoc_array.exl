@@ -1,0 +1,18 @@
+// The array half of the same limit: a projection under `[T; N]` is not reached
+// by the reference's substitution either, so the program is refused. Kept beside
+// the tuple file because one shape is a lower bound - the limit is a recursion
+// SET, and a set needs more than one member measured.
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn trio(*const self, d: Self::Val) -> [Self::Val; 3] { return [d; 3]; }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Val = u32;
+    fn one(*const self) -> u32 { return self.n; }
+}
+
+fn main() { let o = Ones { n: 7 }; let t = o.trio(5 as u32); println(t[1] as int); }

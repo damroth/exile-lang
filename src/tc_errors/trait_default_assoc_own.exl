@@ -1,0 +1,18 @@
+// The owner half. `own *T` is the one pointer the reference's substitution does
+// NOT recurse through - the two borrow pointers it does. So the same projection
+// is legal one keyword away, which is exactly why this file is worth its place:
+// it pins the boundary between the pointers rather than "pointers work".
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn mine(*const self, a: Allocator) -> own *Self::Val { let p: own *Self::Val = a.alloc(); return p; }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Val = u32;
+    fn one(*const self) -> u32 { return self.n; }
+}
+
+fn main() { let o = Ones { n: 7 }; let a = default_allocator(); let p = o.mine(a); *p = 4 as u32; println(*p as int); a.free(p); }

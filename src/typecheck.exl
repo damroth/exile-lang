@@ -11706,6 +11706,82 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
+// Every annotation in the signature, params and return alike.
+fn check_method_assoc_positions(a: Allocator, ar: *Arena, sc: *const TyScope, f: *const Func) {
+    let mut i = 0 as u32;
+    while i < f.params.length() {
+        check_param_assoc_pos(a, ar, sc, &f.params, i, f.pos);
+        i = i + 1 as u32;
+    }
+    match f.ret_ty {
+        Option::Some(rt) => { check_assoc_positions(a, ar, sc, rt, f.pos); }
+        | Option::None => { }
+    }
+    return;
+}
+fn check_param_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>, i: u32, p: Pos) {
+    let ps = params.as_slice();
+    check_assoc_positions(a, ar, sc, ps[i].pty, p);
+    return;
+}
+// ===== where a `Self::Assoc` projection may stand =====
+//
+// The reference does not RESOLVE a projection - it SUBSTITUTES one into the
+// annotation before resolving, and its substitution recurses through exactly
+// three things: the arguments of a type application, and the two borrow
+// pointers. Everything else falls through untouched, so the projection survives
+// into resolution and the program is refused with `unknown type`.
+//
+// The port resolves instead of substituting, which reaches every position - so
+// without this it ACCEPTED `(Self::Val, int)`, `[Self::Val; 3]` and
+// `own *Self::Val`, all of which the reference refuses. That is the quiet
+// direction: a program that compiles here and not there.
+//
+// So the limit is mirrored as a limit. The set below is not a list of shapes
+// picked from failures; it is the reference's recursion set, and its default
+// answer - reject - is the reference's `other -> other`.
+fn check_assoc_positions(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const TypeAnn, p: Pos) {
+    walk_assoc_pos(a, ar, sc, ann, true, p);
+    return;
+}
+fn walk_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const TypeAnn, ok: bool, p: Pos) {
+    match *ann {
+        TypeAnn::TyStruct { path, args } => { assoc_struct_pos(a, ar, sc, &path, &args, ok, p); }
+        | TypeAnn::TyPtr(inner) => { walk_assoc_pos(a, ar, sc, inner, ok, p); }
+        | TypeAnn::TyConstPtr(inner) => { walk_assoc_pos(a, ar, sc, inner, ok, p); }
+        | TypeAnn::TyOwnPtr(inner) => { walk_assoc_pos(a, ar, sc, inner, false, p); }
+        | TypeAnn::TyArray { elem, size: _sz } => { walk_assoc_pos(a, ar, sc, elem, false, p); }
+        | TypeAnn::TyTuple(elems) => { walk_assoc_tuple(a, ar, sc, &elems, p); }
+        | _o => { }
+    }
+    return;
+}
+fn assoc_struct_pos(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const TypeAnn>, ok: bool, p: Pos) {
+    if is_self_proj(path) { report_bad_assoc_pos(a, ar, sc, path, ok, p); return; }
+    let mut i = 0 as u32;
+    while i < args.length() { walk_assoc_arg(a, ar, sc, args, i, ok, p); i = i + 1 as u32; }
+    return;
+}
+fn walk_assoc_arg(a: Allocator, ar: *Arena, sc: *const TyScope, args: *const Vec<*const TypeAnn>, i: u32, ok: bool, p: Pos) {
+    let sl = args.as_slice();
+    walk_assoc_pos(a, ar, sc, sl[i], ok, p);
+    return;
+}
+fn walk_assoc_tuple(a: Allocator, ar: *Arena, sc: *const TyScope, elems: *const Vec<*const TypeAnn>, p: Pos) {
+    let mut i = 0 as u32;
+    while i < elems.length() { walk_assoc_arg(a, ar, sc, elems, i, false, p); i = i + 1 as u32; }
+    return;
+}
+fn is_self_proj(path: *const Vec<str>) -> bool {
+    if path.length() != 2 as u32 { return false; }
+    return str::eq(path.get(0 as u32) orelse "", "Self");
+}
+fn report_bad_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, ok: bool, p: Pos) {
+    if ok { return; }
+    unknown_type(a, ar, sc, path, false, p);
+    return;
+}
+
 // A method's `Self` IS the type it is registered against, so its signature
 // resolves with that pinned. Without it a trait default naming `Self::Assoc`
 // only got the projection MARKER, and a marker inside a type application
@@ -11945,6 +12021,7 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     // it unresolved rather than mangle a bogus `Pair_B_A` instance.
     let self_ty: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, target))));
     let msc = scope_with_tparams_self(sc, &f.tparams, self_ty);
+    check_method_assoc_positions(a, ar, sc, f);
     let mret = if struct_gen { none_ty() } else { resolve_sig_ret(a, ar, &msc, f.ret_ty, f.pos) };
     out.push(MethodInfo {
         mi_path: copy_strs(a, target), mi_pub: f.is_pub, mi_trait: trait_name, mi_name: f.name,
