@@ -1,0 +1,25 @@
+// A trait's default method naming an associated type in its SIGNATURE.
+//
+// The declaration has no `Self` yet - only an instance pins one - so the
+// projection has to keep its marker until then. The port used to refuse this
+// program outright, and nothing caught it because a default method is only ever
+// elaborated INSTANTIATED, where `Self` is already concrete: the declaration was
+// never asked to stand on its own. The compiler's own prelude writes this shape
+// (`Iterator::collect` returns `Vec<Self::Item>`) and got away with it for the
+// same reason.
+//
+// Both compilers accept and run it, so parity of the emission is the assertion.
+trait Seq {
+    type Item;
+    fn head(*const self) -> Option<Self::Item>;
+    fn or_else(*const self, d: Self::Item) -> Self::Item { return d; }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Item = u32;
+    fn head(*const self) -> Option<u32> { return Option::Some(self.n); }
+}
+
+fn main() { let o = Ones { n: 7 }; println(o.or_else(5 as u32) as int); }

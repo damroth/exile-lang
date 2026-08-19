@@ -1,0 +1,24 @@
+// The control beside `trait_default_sig_assoc`, and the file that located the
+// defect: here the default method's SIGNATURE names no associated type, only its
+// body does - and this half always worked.
+//
+// Keeping it is what stops the fix from being described too widely. The two
+// files differ in one thing, so a regression that breaks the working half is
+// distinguishable from one that breaks the fixed half.
+trait Seq {
+    type Item;
+    fn head(*const self) -> Option<Self::Item>;
+    fn count_head(*const self) -> int {
+        let out: Option<Self::Item> = self.head();
+        return match out { Option::Some(_v) => 1 | Option::None => 0 };
+    }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Item = u32;
+    fn head(*const self) -> Option<u32> { return Option::Some(self.n); }
+}
+
+fn main() { let o = Ones { n: 7 }; println(o.count_head()); }

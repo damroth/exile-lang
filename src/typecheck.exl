@@ -1345,6 +1345,15 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         // `Self::Assoc` inside a trait default projects through the implementing
         // type the instance pinned (`Iterator::collect`'s `Vec<Self::Item>`).
         if str::eq(head, "Self") && has_self_ty(sc) { return project_assoc(a, ar, sc, voidable_ty(ar, sc.sc_self), last, p); }
+        // No self type pinned yet - a trait's own declaration, where a default
+        // method may name `Self::Assoc` in its SIGNATURE. There is no head to
+        // resolve through until an instance supplies one, so the projection
+        // keeps its marker, exactly as a projection through a type parameter
+        // does on the next line. Without this the port refused a program the
+        // reference compiles, and nothing noticed: a default method is only ever
+        // elaborated INSTANTIATED, where `Self` is already concrete, so the
+        // declaration was never asked to stand on its own.
+        if str::eq(head, "Self") { return ty_node(ar, Typ::TAssocProj { head: ty_node(ar, Typ::TVar("Self")), assoc: last }); }
         if has_tbind(sc, head) { return project_assoc(a, ar, sc, get_tbind(ar, sc, head), last, p); }
         if name_in(sc.sc_tparams, head) { return ty_node(ar, Typ::TAssocProj { head: ty_node(ar, Typ::TVar(head)), assoc: last }); }
     }

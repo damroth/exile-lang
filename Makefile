@@ -2060,6 +2060,7 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \
+                  trait_default_sig_assoc trait_default_body_assoc \
                   prelude_named_field_dep prelude_named_and_built \
                   unused_enum_stays_dropped
 
