@@ -1,0 +1,25 @@
+// The control: an associated type under a POINTER in the same position.
+//
+// Pointers already substituted, so this half was never broken - and keeping it
+// is what stops the fix from being described as "wrapping works now". It does
+// not: a projection inside a tuple, an array or an owner is refused by the
+// reference itself, and only a type application joins the pointer on the
+// accepting side.
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn at(*const self, p: *const Self::Val) -> Self::Val { return *p; }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Val = u32;
+    fn one(*const self) -> u32 { return self.n; }
+}
+
+fn main() {
+    let o = Ones { n: 7 };
+    let x: u32 = 5 as u32;
+    println(o.at(&x) as int);
+}

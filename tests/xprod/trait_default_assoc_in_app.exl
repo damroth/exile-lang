@@ -1,0 +1,29 @@
+// An associated type named inside a TYPE APPLICATION in a trait default
+// method's signature - `Option<Self::Val>` rather than a bare `Self::Val`.
+//
+// The bare form was fixed one round earlier and this one was not, which is the
+// whole reason the file exists: a fix quantified over the shape that motivated
+// it left the wrapped form behind, and the wrapped form is the one the
+// compiler's own prelude writes. The projection has no head until an instance
+// supplies one, so it is registered as a marker - and a marker sealed inside a
+// minted application never becomes anything. The call site was then handed a
+// type no `match` could read, while the reference compiled the program.
+//
+// Both compilers accept and run it, so parity of the emission is the assertion.
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn boxed(*const self, d: Self::Val) -> Option<Self::Val> { return Option::Some(d); }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Val = u32;
+    fn one(*const self) -> u32 { return self.n; }
+}
+
+fn main() {
+    let o = Ones { n: 7 };
+    match o.boxed(5 as u32) { Option::Some(v) => println(v as int) | Option::None => println(0) }
+}

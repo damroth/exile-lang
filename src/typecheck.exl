@@ -11706,6 +11706,27 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
+// A method's `Self` IS the type it is registered against, so its signature
+// resolves with that pinned. Without it a trait default naming `Self::Assoc`
+// only got the projection MARKER, and a marker inside a type application
+// (`Option<Self::Val>`) never became anything - the application was minted from
+// the marker and the call site was handed a type no `match` could read.
+fn scope_with_tparams_self(base: *const TyScope, tparams: *const Vec<str>, self_ty: Option<*const Typ>) -> TyScope {
+    return TyScope {
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
+        sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
+        sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
+        sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
+        sc_ret: base.sc_ret,
+        sc_self: self_ty,
+        sc_gsigs: base.sc_gsigs,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+    };
+}
 
 // A copy of the scope with a tparam list AND concrete bindings for them, so a
 // type mentioning those tparams (a generic-struct method's return) resolves to
@@ -11922,7 +11943,8 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     // A generic-struct method's return mentions the impl tparams (out of scope
     // here); the call site resolves it under the receiver's bindings, so leave
     // it unresolved rather than mangle a bogus `Pair_B_A` instance.
-    let msc = scope_with_tparams(sc, &f.tparams);
+    let self_ty: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, target))));
+    let msc = scope_with_tparams_self(sc, &f.tparams, self_ty);
     let mret = if struct_gen { none_ty() } else { resolve_sig_ret(a, ar, &msc, f.ret_ty, f.pos) };
     out.push(MethodInfo {
         mi_path: copy_strs(a, target), mi_pub: f.is_pub, mi_trait: trait_name, mi_name: f.name,
