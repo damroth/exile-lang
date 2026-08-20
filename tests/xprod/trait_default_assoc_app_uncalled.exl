@@ -1,0 +1,25 @@
+// The other half of the demand axis: the same declaration, never called.
+//
+// This half was ALREADY in parity, and that is exactly what it is here to hold.
+// The defect only reached a program that used the value, so a fix aimed at the
+// called half could quietly change what an unused declaration emits and nothing
+// would have noticed. The two files differ in one line of `main`.
+struct Crate<T> { v: T }
+
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn packed(*const self, d: Self::Val) -> Crate<Self::Val> { return Crate { v: d }; }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Val = u32;
+    fn one(*const self) -> u32 { return self.n; }
+}
+
+fn main() {
+    let o = Ones { n: 7 };
+    println(o.one() as int);   // 7
+}

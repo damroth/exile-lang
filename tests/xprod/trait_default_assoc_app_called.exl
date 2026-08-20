@@ -1,0 +1,32 @@
+// A trait default returning a generic struct over its associated type, and the
+// value actually USED at the call site.
+//
+// The signature is a resolution position like a struct field or a variant
+// payload, and the port resolved it against a struct table that was still empty
+// - so `Crate<u32>` was minted with no fields at all. Nothing failed there: the
+// call typed, the program looked fine, and the failure surfaced one step later
+// as `struct 'Crate_u32' has no field 'v'` on a field the user had written.
+//
+// The demand axis is the whole reason this file has a twin: with the method
+// never called the program compiled on both sides, so a fixture that only
+// declared the shape would have been green throughout and pinned nothing.
+struct Crate<T> { v: T }
+
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn packed(*const self, d: Self::Val) -> Crate<Self::Val> { return Crate { v: d }; }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Val = u32;
+    fn one(*const self) -> u32 { return self.n; }
+}
+
+fn main() {
+    let o = Ones { n: 7 };
+    let c = o.packed(5 as u32);
+    println(c.v as int + o.one() as int);   // 12
+}

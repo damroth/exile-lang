@@ -17214,6 +17214,17 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     detect_value_cycles(a, ar, &base_scope, items, &sinfo, &efields, &mono_fields, &mono_efields);
     check_pub_uses(a, ar, &base_scope, &globals, items);
     prelude_enum_variants(a, ar, &shadowed_enums, &etags, &efields);
+    // The same second resolution once more, for METHOD SIGNATURES. A signature is
+    // a resolution position like a struct field or a variant payload, so an
+    // instance minted there - a trait default returning `Crate<Self::Val>` - lands
+    // field-less on the first pass and every later use of the value degrades: the
+    // caller's `.v` reports that the instance has no such field, and a prelude
+    // `Vec` reaches for a type parameter that is not there. Third face, same
+    // cause, same remedy: run it again with the skeleton in place and keep only
+    // the registration.
+    let mut methods_throwaway: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
+    collect_method_info(a, ar, &sinfo_scope, items, &methods_throwaway);
+    collect_trait_default_methods(a, ar, &sinfo_scope, items, &methods_throwaway);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);
     collect_trait_default_methods(a, ar, &base_scope, items, &methods);
