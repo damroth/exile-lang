@@ -11668,6 +11668,26 @@ fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyS
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
+// The whole skeleton, structs AND enums. `scope_with_sinfo` carries only the
+// struct half and inherits the base scope's empty enum tables, which is exactly
+// half of a remedy: an instance minted here gets its FIELDS and its variant
+// PAYLOADS land as `c_void`.
+fn scope_with_skeleton(base: *const TyScope, sinfo: *const Vec<StructField>, etags: *const Vec<EnumVariantTag>, efields: *const Vec<EnumFieldE>) -> TyScope {
+    return TyScope {
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
+        sc_iconsts: base.sc_iconsts, sc_sinfo: sinfo, sc_etags: etags,
+        sc_efields: efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
+        sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
+        sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
+        sc_ret: base.sc_ret,
+        sc_self: base.sc_self,
+        sc_gsigs: base.sc_gsigs,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+    };
+}
 // The tparams of the scope being resolved SHADOW an inherited binding of the
 // same name.  Two generic fns independently calling their parameter `T` is the
 // common case, and without this the callee's annotation `T` resolved through
@@ -17216,15 +17236,19 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     prelude_enum_variants(a, ar, &shadowed_enums, &etags, &efields);
     // The same second resolution once more, for METHOD SIGNATURES. A signature is
     // a resolution position like a struct field or a variant payload, so an
-    // instance minted there - a trait default returning `Crate<Self::Val>` - lands
-    // field-less on the first pass and every later use of the value degrades: the
-    // caller's `.v` reports that the instance has no such field, and a prelude
-    // `Vec` reaches for a type parameter that is not there. Third face, same
-    // cause, same remedy: run it again with the skeleton in place and keep only
-    // the registration.
+    // instance minted there - a trait default returning `Crate<Self::Val>` or
+    // `Wrap<Self::Val>` - lands empty on the first pass and every later use of the
+    // value degrades: the caller's `.v` reports that the instance has no such
+    // field, a matched variant hands back `c_void`, and a prelude `Vec` reaches
+    // for a type parameter that is not there. Same cause as the struct-field and
+    // variant-payload passes above, same remedy - run it again with the skeleton
+    // in place and keep only the registration - and the skeleton has to be BOTH
+    // kinds, because half of it registers instances whose payloads are still
+    // missing.
+    let skel_scope = scope_with_skeleton(&base_scope, &sinfo, &etags, &efields);
     let mut methods_throwaway: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
-    collect_method_info(a, ar, &sinfo_scope, items, &methods_throwaway);
-    collect_trait_default_methods(a, ar, &sinfo_scope, items, &methods_throwaway);
+    collect_method_info(a, ar, &skel_scope, items, &methods_throwaway);
+    collect_trait_default_methods(a, ar, &skel_scope, items, &methods_throwaway);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);
     collect_trait_default_methods(a, ar, &base_scope, items, &methods);

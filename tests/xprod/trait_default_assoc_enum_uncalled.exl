@@ -1,0 +1,22 @@
+// The uncalled twin, for the same reason its struct sibling has one: the defect
+// only reached a program that used the value, so this half was in parity all
+// along and is here to stay that way.
+enum Wrap<T> { One(T) | Nil }
+
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn hold(*const self, d: Self::Val) -> Wrap<Self::Val> { return Wrap::One(d); }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Val = u32;
+    fn one(*const self) -> u32 { return self.n; }
+}
+
+fn main() {
+    let o = Ones { n: 7 };
+    println(o.one() as int);   // 7
+}

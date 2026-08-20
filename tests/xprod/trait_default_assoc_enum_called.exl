@@ -1,0 +1,36 @@
+// The enum half of the same signature-position defect, and the crossing that
+// found it: a USER generic enum over the associated type, matched at the call
+// site.
+//
+// The struct half was fixed one round earlier by resolving method signatures a
+// second time with the skeleton in place - but the skeleton handed to that pass
+// was half a skeleton. It carried struct fields and inherited empty enum tables,
+// so an instance minted there got its FIELDS and its variant PAYLOADS landed as
+// `c_void`. The degradation then leaked into a diagnostic about the user's own
+// arithmetic, which is the least useful place for it to appear.
+//
+// `Option<Self::Val>` was in parity throughout, so a prelude enum could not have
+// caught this: the payload shapes for Option and Result are registered from a
+// fixed table. It takes a user enum to ask the question.
+enum Wrap<T> { One(T) | Nil }
+
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn hold(*const self, d: Self::Val) -> Wrap<Self::Val> { return Wrap::One(d); }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Val = u32;
+    fn one(*const self) -> u32 { return self.n; }
+}
+
+fn main() {
+    let o = Ones { n: 7 };
+    match o.hold(5 as u32) {
+        Wrap::One(v) => println(v as int + o.one() as int)   // 12
+        | Wrap::Nil => println(0)
+    }
+}
