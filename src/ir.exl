@@ -576,7 +576,21 @@ pub fn typ_eq(x: *const Typ, y: *const Typ) -> bool {
         | Typ::TArray { elem, size } => match *y { Typ::TArray { elem: e2, size: s2 } => (size == s2) && typ_eq(elem, e2) | _e => false }
         | Typ::TFnPtr { params, ret } => match *y { Typ::TFnPtr { params: p2, ret: r2 } => tys_eq(&params, &p2) && opt_typ_eq(ret, r2) | _e => false }
         | Typ::TWard { path, base, base_sym } => match *y { Typ::TWard { path: p2, base: b2, base_sym: s2 } => (base == b2) && str::eq(base_sym, s2) && path_eq(&path, &p2) | _e => false }
-        | _e => false
+        // The null pointer is answered above, before the match; the arm restates
+        // that answer rather than leaving a hole for the catch-all to cover.
+        | Typ::TNullPtr => is_ptr_like(y)
+        // The four SKELETON forms. Every arm above compares something a
+        // MONOMORPHIC program can produce, and these four exist only before
+        // instantiation - so they had no arm at all and fell to a catch-all that
+        // answered `false`. A `TVar("T")` was not equal to itself, and the face
+        // was a diagnostic reading as a contradiction: "declared as T but
+        // initializer has type T". Nothing met it because no program had to
+        // compare two skeleton types until a trait default was inherited by a
+        // GENERIC implementor.
+        | Typ::TVar(nx) => match *y { Typ::TVar(ny) => str::eq(nx, ny) | _e => false }
+        | Typ::TStructApp { path, args } => match *y { Typ::TStructApp { path: p2, args: a2 } => path_eq(&path, &p2) && tys_eq(&args, &a2) | _e => false }
+        | Typ::TEnumApp { path, args } => match *y { Typ::TEnumApp { path: p2, args: a2 } => path_eq(&path, &p2) && tys_eq(&args, &a2) | _e => false }
+        | Typ::TAssocProj { head, assoc } => match *y { Typ::TAssocProj { head: h2, assoc: a2 } => typ_eq(head, h2) && str::eq(assoc, a2) | _e => false }
     };
 }
 
