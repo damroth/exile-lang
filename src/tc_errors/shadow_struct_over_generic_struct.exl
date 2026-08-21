@@ -1,0 +1,13 @@
+// The kind control beside `shadow_enum_over_generic_struct`: a user STRUCT of
+// the same name. It DOES remove the prelude declaration - the drop is matched by
+// kind - so the arity really is 0 and this program really is wrong.
+//
+// Keeping it is what stops the fix from being described as "the arity check now
+// prefers the prelude". It prefers whatever RESOLUTION bound, and here that is
+// the user's struct. Green on both sides before and after; a fix that turned this
+// into an acceptance would have traded one direction for the other.
+struct Vec { a: int }
+
+fn takes(v: *const Vec<int>) { println(1); }
+
+fn main() { println(1); }

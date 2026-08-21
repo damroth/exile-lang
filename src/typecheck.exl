@@ -1402,7 +1402,15 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     // enums first bound it to the user's enum instead, and BOTH compilers
     // accepted the program - the parameter simply meant two different types and
     // the emitted C said so.
-    let is_enum = name_in(sc.sc_enums, last) || is_prelude_enum(last);
+    // STRUCTS FIRST, the same order the arg-less branch below resolves by. This
+    // decides which DECLARATION the generic application belongs to, and it used
+    // to answer from the enum tables alone - so where a name is both kinds, the
+    // arity was read off the enum while resolution bound the struct. A user
+    // `enum Vec` does not remove the prelude STRUCT, and `Vec<int>` is then the
+    // struct with arity 1; the port refused it as an enum with arity 0. Two
+    // places answering one question from parallel tables, which is the same
+    // disease as the kind-blind shadow bag and the two seed lists.
+    let is_enum = !is_struct_name(sc, last) && (name_in(sc.sc_enums, last) || is_prelude_enum(last));
     if nargs == 0 as u32 {
         let newpath = copy_strs(a, path);
         if is_struct_name(sc, last) { return ty_node(ar, Typ::TStruct(newpath)); }

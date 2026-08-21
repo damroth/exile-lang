@@ -1,0 +1,25 @@
+// A user ENUM taking a generic prelude STRUCT's name, with the struct then used
+// generically.
+//
+// The kind-matched drop leaves the prelude struct in place and the type site
+// resolves structs before enums, so `Vec<int>` is the prelude's and its arity is
+// 1. The ARITY check answered from the enum tables alone, so where a name is
+// both kinds the two disagreed: resolution bound the struct, the check read the
+// enum, and the port refused `expects 0 generic argument(s), got 1` for a type
+// that takes one. Two places answering one question from parallel tables - the
+// same disease as the kind-blind shadow bag and the two seed lists.
+//
+// Both compilers refuse this file, at the CALL: `Vec::with_capacity` routes
+// through the path site, which is enum-first, and the user's enum has no such
+// variant. That agreement is the assertion - before the fix the port spoke from
+// the annotation instead, with different words at a different place.
+enum Vec { A | B }
+
+fn takes(v: *const Vec) { println(1); }
+
+fn main() {
+    let a = default_allocator();
+    let mut xs: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    xs.push(7);
+    println(xs.length() as int);
+}
