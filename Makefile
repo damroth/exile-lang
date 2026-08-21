@@ -2064,6 +2064,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   trait_default_assoc_in_app trait_default_assoc_ptr \
                   trait_default_assoc_app_called trait_default_assoc_app_uncalled \
                   trait_default_assoc_enum_called trait_default_assoc_enum_uncalled \
+                  trait_default_generic_impl trait_default_generic_impl_assoc \
+                  trait_default_concrete_impl \
                   prelude_named_field_dep prelude_named_and_built \
                   unused_enum_stays_dropped
 

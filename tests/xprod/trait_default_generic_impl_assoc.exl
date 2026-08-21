@@ -1,0 +1,33 @@
+// The same inheritance with the associated type in play, which is how the class
+// first showed itself: a default returning a container over `Self::Val`, on a
+// generic implementor where `Self::Val` IS the impl's parameter.
+//
+// Four things had to line up for this to compile, and each hid the next: the
+// default has to be registered over the impl's parameters, emitted as a skeleton
+// over the same ones, queued for the RECEIVER's instance rather than the base
+// type, and its unresolved projection has to keep its marker instead of
+// degrading to `c_void` - the last of which used to mint a `Vec_cvoid` and carry
+// it into the emitted C.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn many(*const self, a: Allocator) -> Vec<Self::Val> {
+        let mut out: Vec<Self::Val> = Vec::with_capacity(a, 8 as u32);
+        return out;
+    }
+}
+
+struct Holder<T> { v: T }
+
+impl<T> Seq for Holder<T> {
+    type Val = T;
+    fn one(*const self) -> T { return self.v; }
+}
+
+fn main() {
+    let h = Holder { v: 7 };
+    let a = raw::make_c_allocator();
+    println(h.many(a).length() as int);   // 0
+}

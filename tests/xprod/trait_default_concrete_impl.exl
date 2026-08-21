@@ -1,0 +1,27 @@
+// The control: the same trait and the same default, inherited by a CONCRETE
+// implementor. This half was in parity throughout, and keeping it is what stops
+// the fix from being described as "defaults work now" - they always did, for
+// implementors that are not generic.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn many(*const self, a: Allocator) -> Vec<Self::Val> {
+        let mut out: Vec<Self::Val> = Vec::with_capacity(a, 8 as u32);
+        return out;
+    }
+}
+
+struct Ones { n: u32 }
+
+impl Seq for Ones {
+    type Val = u32;
+    fn one(*const self) -> u32 { return self.n; }
+}
+
+fn main() {
+    let o = Ones { n: 7 };
+    let a = raw::make_c_allocator();
+    println(o.many(a).length() as int + o.one() as int);   // 7
+}

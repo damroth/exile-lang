@@ -1,0 +1,34 @@
+// A generic implementor inheriting a trait default - the shape under a register
+// entry that spent five rounds wearing other clothes.
+//
+// The default's signature here is entirely CONCRETE: no associated type, no
+// generic call, nothing to infer. That is the point. The class was found through
+// an inference message coming out of the prelude, and inference turned out to be
+// the clothes: underneath, a generic implementor did not inherit the trait's
+// default methods at all. The reference compiles this; the port answered
+// `no method 'count' on type 'Holder_i32'` for a method the trait plainly
+// provides on a receiver that plainly implements it.
+//
+// The two calls are separate statements on purpose. Written as one `a + b` the
+// file also measures the order two instances are queued in from a single
+// expression, which is a different divergence and would make this fixture red
+// for a reason it does not pin.
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn count(*const self) -> int { return 1; }
+}
+
+struct Holder<T> { v: T }
+
+impl<T> Seq for Holder<T> {
+    type Val = T;
+    fn one(*const self) -> T { return self.v; }
+}
+
+fn main() {
+    let h = Holder { v: 7 };
+    let a = h.one() as int;
+    let b = h.count();
+    println(a + b);   // 8
+}

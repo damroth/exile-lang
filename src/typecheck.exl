@@ -1270,7 +1270,11 @@ fn project_assoc(a: Allocator, ar: *Arena, sc: *const TyScope, bound_ty: *const 
         }
         i = i + 1 as u32;
     }
-    return ty_node(ar, Typ::TCVoid);
+    // No binding matched: this is a SKELETON, and the projection has no head to
+    // resolve through until an instance supplies one. Keeping the marker is what
+    // the type-parameter case one line up already does; degrading to `c_void`
+    // let a skeleton mint `Vec_cvoid` and carry it into the emitted C.
+    return ty_node(ar, Typ::TAssocProj { head: bound_ty, assoc: assoc });
 }
 // Index of the `use foo::Bar;` type alias for bare `name`, or -1.
 fn talias_idx(sc: *const TyScope, name: str) -> int {
@@ -4074,7 +4078,9 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // a no-op.  Binding it before `cret` lets the adapter return instance
     // (`Map<VecIter<T>, F>`) resolve + register.
     unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &targs, &binds, p);
-    let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    let cscope0 = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    let recv_self: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &inst_path))));
+    let cscope = scope_with_self(&cscope0, recv_self);
     // A tparam bound twice, differently, is the reference's FIRST answer here:
     // `v.push(true)` on a `Vec<int>` reads T from the receiver and again from the
     // argument, and reports the conflict rather than the slot mismatch. This path
@@ -4093,7 +4099,13 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
         register_mono_struct(a, sc, &sl[midx].mi_path);
         queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst, &inst_path);
     }
-    else { queue_method_instance(a, sc, &sl[midx].mi_modpath, iidx, midx2, &binds, inst, &sl[midx].mi_path); }
+    // The RECEIVER's instance, not the method's base path. For a trait default
+    // this list is what pins `Self` in the instance body, so handing it the base
+    // emitted the default over the skeleton self type - the program then carried
+    // both `Holder__count(const struct ex_Holder *)` and a `_i32` instance with
+    // that same wrong receiver. An impl's own methods do not read it, so the
+    // concrete path is right for both.
+    else { queue_method_instance(a, sc, &sl[midx].mi_modpath, iidx, midx2, &binds, inst, &inst_path); }
     let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
@@ -11112,31 +11124,52 @@ fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gens
 // substitutes `Self` only in the signature (params / ret); a default body
 // that annotates a local with `Self` is not yet handled (none in the
 // catalog).
+fn default_self_ty(a: Allocator, ar: *Arena, target: *const Vec<str>, itparams: *const Vec<str>) -> *const Typ {
+    if itparams.length() == 0 as u32 { return ty_node(ar, Typ::TStruct(copy_strs(a, target))); }
+    let mut args: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < itparams.length() {
+        args.push(ty_node(ar, Typ::TVar(itparams.get(i) orelse "")));
+        i = i + 1 as u32;
+    }
+    return ty_node(ar, Typ::TStructApp { path: copy_strs(a, target), args: args });
+}
 fn elaborate_default_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                          idx: *const ProgIdx, modpath: *const Vec<str>, target: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
-    let self_ty = ty_node(ar, Typ::TStruct(copy_strs(a, target)));
+                          idx: *const ProgIdx, modpath: *const Vec<str>, target: *const Vec<str>, f: *const Func, itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
+    // A trait default has no `self` ANNOTATION to resolve, so this path has to
+    // supply the type - and for a generic implementor it has to supply the same
+    // SKELETON the written-method path gets for free: an application over the
+    // impl's parameters, not the bare struct. A concrete self type here is what
+    // made codegen keep the skeleton beside its own instance, so the program
+    // carried the default twice.
+    let self_ty = default_self_ty(a, ar, target, itparams);
+    // Emitted as a skeleton over the impl's parameters, matching how it was
+    // registered. Registration and emission have to agree about what the method
+    // is generic over.
+    let no_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let xtp = skel_xtparams(f, itparams, &no_tp);
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, modpath,
-                            method_mangle(a, ar, target, f.name), f, Option::Some(self_ty), &f.tparams));
+                            method_mangle(a, ar, target, f.name), f, Option::Some(self_ty), xtp));
 }
 
 fn emit_one_default(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                    modpath: *const Vec<str>, target: *const Vec<str>, impl_methods: *const Vec<Func>, defaults: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
+                    modpath: *const Vec<str>, target: *const Vec<str>, impl_methods: *const Vec<Func>, defaults: *const Vec<str>, f: *const Func, itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
     if !name_in(defaults, f.name) { return; }
     if impl_has_method(impl_methods, f.name) { return; }
-    elaborate_default_into(a, ar, g, gensym, idx, modpath, target, f, funcs);
+    elaborate_default_into(a, ar, g, gensym, idx, modpath, target, f, itparams, funcs);
 }
 fn emit_td_defaults(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                    modpath: *const Vec<str>, target: *const Vec<str>, impl_methods: *const Vec<Func>, td: *const TraitDecl, funcs: *Vec<Tfunc>) {
+                    modpath: *const Vec<str>, target: *const Vec<str>, impl_methods: *const Vec<Func>, td: *const TraitDecl, itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
     let n = td.trmethods.length();
     let ms = td.trmethods.as_slice();
     let mut j = 0 as u32;
-    while j < n { emit_one_default(a, ar, g, gensym, idx, modpath, target, impl_methods, &td.trdefaults, &ms[j], funcs); j = j + 1 as u32; }
+    while j < n { emit_one_default(a, ar, g, gensym, idx, modpath, target, impl_methods, &td.trdefaults, &ms[j], itparams, funcs); j = j + 1 as u32; }
 }
 fn emit_impl_defaults(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                      items: *const Vec<Item>, modpath: *const Vec<str>, ti: u32, target: *const Vec<str>, impl_methods: *const Vec<Func>, funcs: *Vec<Tfunc>) {
+                      items: *const Vec<Item>, modpath: *const Vec<str>, ti: u32, target: *const Vec<str>, impl_methods: *const Vec<Func>, itparams: *const Vec<str>, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
     match sl[ti] {
-        Item::Trait(td) => { emit_td_defaults(a, ar, g, gensym, idx, modpath, target, impl_methods, &td, funcs); }
+        Item::Trait(td) => { emit_td_defaults(a, ar, g, gensym, idx, modpath, target, impl_methods, &td, itparams, funcs); }
         | _e => { }
     }
 }
@@ -11158,7 +11191,7 @@ fn elaborate_impl(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let tname = impl_trait_name(ib);
     if !str::eq(tname, "") {
         let ti = find_trait_idx(items, tname);
-        if ti >= 0 as int { emit_impl_defaults(a, ar, g, gensym, idx, items, modpath, ti as u32, &target, &ib.iitems, funcs); }
+        if ti >= 0 as int { emit_impl_defaults(a, ar, g, gensym, idx, items, modpath, ti as u32, &target, &ib.iitems, &ib.itparams, funcs); }
     }
 }
 
@@ -11810,6 +11843,31 @@ fn report_bad_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, path: *con
 fn scope_with_tparams_self(base: *const TyScope, tparams: *const Vec<str>, self_ty: Option<*const Typ>) -> TyScope {
     return TyScope {
         sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: tparams,
+        sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
+        sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
+        sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
+        sc_mono_fields: base.sc_mono_fields, sc_mono_efields: base.sc_mono_efields,
+        sc_tbinds: base.sc_tbinds, sc_genfns: base.sc_genfns,
+        sc_genjobs: base.sc_genjobs, sc_geninsts: base.sc_geninsts, sc_etps: base.sc_etps, sc_stps: base.sc_stps, sc_assoc: base.sc_assoc, sc_lifted: base.sc_lifted, sc_gensym: base.sc_gensym, sc_modpath: base.sc_modpath,
+        sc_ret: base.sc_ret,
+        sc_self: self_ty,
+        sc_gsigs: base.sc_gsigs,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+    };
+}
+
+// A copy of the scope with a tparam list AND concrete bindings for them, so a
+// type mentioning those tparams (a generic-struct method's return) resolves to
+// the monomorphic instance directly (no post-hoc substitution).
+// The same pinning one position further along. A method whose return was left
+// unresolved for the call site to finish still needs `Self` there: the receiver
+// IS the self type, and without it a `Self::Assoc` in that return falls back to
+// its marker, mints an instance over the marker, and the element degrades to
+// `c_void` in the emitted C.
+fn scope_with_self(base: *const TyScope, self_ty: Option<*const Typ>) -> TyScope {
+    return TyScope {
+        sc_runes: base.sc_runes, sc_wards: base.sc_wards, sc_wardinsts: base.sc_wardinsts, sc_sigils: base.sc_sigils, sc_claims: base.sc_claims, sc_structs: base.sc_structs, sc_dbg: base.sc_dbg, sc_consts: base.sc_consts, sc_xfields: base.sc_xfields, sc_loops: base.sc_loops, sc_enums: base.sc_enums, sc_tparams: base.sc_tparams,
         sc_iconsts: base.sc_iconsts, sc_sinfo: base.sc_sinfo, sc_etags: base.sc_etags,
         sc_efields: base.sc_efields, sc_methods: base.sc_methods, sc_impls: base.sc_impls,
         sc_mono_structs: base.sc_mono_structs, sc_mono_sargs: base.sc_mono_sargs, sc_mono_enums: base.sc_mono_enums, sc_mono_eargs: base.sc_mono_eargs,
@@ -12506,16 +12564,23 @@ fn impl_trait_name(ib: *const ImplBlock) -> str {
 
 fn register_one_default(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
                         impl_methods: *const Vec<Func>, defaults: *const Vec<str>, trait_name: str,
-                        f: *const Func, ti: u32, j: u32, out: *Vec<MethodInfo>) {
+                        f: *const Func, ti: u32, j: u32, itparams: *const Vec<str>, out: *Vec<MethodInfo>) {
     if !name_in(defaults, f.name) { return; }
     if impl_has_method(impl_methods, f.name) { return; }
-    let no_itparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    // The impl's type parameters, not an empty list. A default inherited by a
+    // GENERIC implementor is a method on a generic type exactly as a written one
+    // is: its signature mentions those parameters and the call site binds them
+    // from the receiver's instance. Handed an empty list it was registered as if
+    // the target were concrete, so it existed on no instance of that type - the
+    // trait plainly provides the method and the receiver plainly implements the
+    // trait, and the call still failed to resolve. The written-method path has
+    // always passed them through; the default path built its own empty one.
     let no_itbounds: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
     // Trait defaults locate their source in the TRAIT item, which this pass
     // only ever sees at top level — a trait declared inside a module keeps the
     // old, index-only locator and is out of scope here.
     let td_modpath: Vec<str> = empty_strs(a);
-    push_one_method(a, ar, sc, target, &no_itparams, &no_itbounds, trait_name, f, &td_modpath, ti, j, out);
+    push_one_method(a, ar, sc, target, itparams, &no_itbounds, trait_name, f, &td_modpath, ti, j, out);
 }
 fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
                         impl_methods: *const Vec<Func>, td: *const TraitDecl, ti: u32, ipos: Pos,
@@ -12533,7 +12598,7 @@ fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
             tc_fail(ar, sc, ipos, str::from_slice(ar, sb.as_slice()));
         }
         check_impl_method_sig(a, ar, sc, target, td.trname, &ms[j], itparams, impl_methods);
-        register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, td.trname, &ms[j], ti, j, out);
+        register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, td.trname, &ms[j], ti, j, itparams, out);
         j = j + 1 as u32;
     }
 }
