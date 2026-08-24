@@ -2110,6 +2110,7 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   trait_default_generic_impl trait_default_generic_impl_assoc \
                   trait_default_concrete_impl \
                   prelude_intact_on_unused_name \
+                  instance_field_pulls_allocator \
                   prelude_named_field_dep prelude_named_and_built \
                   unused_enum_stays_dropped
 

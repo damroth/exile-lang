@@ -14948,6 +14948,27 @@ fn dropped_when_unused(a: Allocator, nm: str, used: *const Vec<Vec<str>>) -> boo
     return true;
 }
 
+// A field of an instance whose own name is already in the used-set contributes
+// what it mentions; anything else contributes nothing. Runs to a fixed point,
+// because one reachable instance can name another.
+fn close_used_over_reachable_instances(a: Allocator, fields: *const Vec<StructField>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let mut i = 0 as u32;
+        while i < fields.length() {
+            if reachable_field_dep(a, fields, i, shadowed, used) { changed = true; }
+            i = i + 1 as u32;
+        }
+    }
+    return;
+}
+fn reachable_field_dep(a: Allocator, fields: *const Vec<StructField>, i: u32, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) -> bool {
+    let sl = fields.as_slice();
+    if !name_in_paths(used, path_last(&sl[i].sf_path)) { return false; }
+    return add_prelude_dep(a, shadowed, used, sl[i].sf_ty);
+}
+
 // Transitive closure of the used-set over the non-generic prelude structs'
 // FIELD types. Runs to a fixed point because one of them can carry another.
 fn close_used_over_prelude_fields(a: Allocator, ar: *Arena, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
@@ -17626,6 +17647,13 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     // types for exactly this reason; without the closure the port emitted an
     // Arena whose field type had no declaration in the file.
     close_used_over_prelude_fields(a, ar, &shadowed, &used_names);
+    // And through the fields of instances the program can REACH. A `Vec<int>`
+    // named in a signature carries an `alloc: Allocator`, so the allocator has to
+    // be declared above it or the emitted C does not compile at all - a field of
+    // incomplete type. Gated on reachability, which is the whole difference: an
+    // earlier attempt walked EVERY registered instance and reordered the emission
+    // across 29 of 37 corpus fixtures, because it kept names nothing could reach.
+    close_used_over_reachable_instances(a, &mono_fields, &shadowed, &used_names);
 
     let mut structs = prelude_struct_index(a, &shadowed);
     let mut enums = prelude_enum_index(a, &shadowed_enums);

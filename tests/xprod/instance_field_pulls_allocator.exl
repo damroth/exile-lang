@@ -1,0 +1,21 @@
+// A generic prelude struct named in a signature, never built - and its instance
+// carries an allocator.
+//
+// The emitted C declared `struct ex_Vec_i32 { ... struct ex_Allocator alloc; }`
+// with no `ex_Allocator` anywhere in the file. `exilc` exited 0 and `cc` refused
+// it: `field 'alloc' has incomplete type`. That is a worse face than a byte
+// divergence - the user gets an error from a C compiler, about code they did not
+// write, for a program this compiler said was fine.
+//
+// The used-set is closed over the fields of instances the program can REACH. The
+// reachability gate is the whole difference: closing over EVERY registered
+// instance was written and measured, and it reordered the emission across 29 of
+// the 37 fixtures in this directory, because it kept names nothing could reach.
+//
+// The user enum keeps the kind crossing in the picture, since that is the shape
+// the class was found on.
+enum Vec { A | B }
+
+fn takes(v: *const Vec<int>) { println(1); }
+
+fn main() { println(1); }
