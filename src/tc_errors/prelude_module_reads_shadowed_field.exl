@@ -1,0 +1,18 @@
+// A user struct takes a prelude name whose FIELDS a surviving prelude MODULE
+// function reads.
+//
+// The shadow filter that builds the throwaway program dropped impls only, so the
+// prelude's own `struct Arena` stayed in it beside the user's - two declarations
+// of one name, in a program built to answer a question about that name. It
+// answered nothing instead: unable to say which `Arena` it meant, it never
+// reached the field read that is the actual verdict.
+//
+// The reference drops prelude declarations matched by KIND - struct for struct,
+// enum for enum, trait for trait - and the impl only follows. Mirroring half of
+// that left `str::from_slice` reaching for `.off` on a type that has no such
+// field, and nothing said so.
+struct Arena { x: int }
+
+fn takes(a: *const Arena) -> int { return a.x; }
+
+fn main() { let ar = Arena { x: 7 }; println(takes(&ar)); }
