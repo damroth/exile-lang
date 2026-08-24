@@ -1,0 +1,11 @@
+// A prelude struct that takes NO type parameters, written with one.
+//
+// The arity check asks a table of declared parameter counts, and that table
+// carried only the GENERIC prelude structs - so for the others it answered "no
+// opinion" and the check abstained. "Takes no arguments" is an answer, and
+// leaving it unsaid let `Allocator<int>` compile here while the reference
+// refused it. No user declaration is involved: this is the prelude's own name,
+// applied wrongly, in a program with nothing else in it.
+fn takes(x: *const Allocator<int>) { println(1); }
+
+fn main() { println(1); }

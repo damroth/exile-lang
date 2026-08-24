@@ -1575,12 +1575,19 @@ selfhost-prelude-struct-lists:
 	pred=`sed -n '/^fn is_builtin_struct(/,/^}/p' src/typecheck.exl | grep -o 'str::eq(name, "[A-Za-z]*")' | sed -e 's/^str::eq(name, "//' -e 's/")$$//' | sort -u`; \
 	if [ -z "$$seed" ]; then echo "selfhost-prelude-struct-lists: read NO names from the seed - the shape moved, re-aim the gate"; exit 1; fi; \
 	if [ -z "$$pred" ]; then echo "selfhost-prelude-struct-lists: read NO names from the predicate - the shape moved, re-aim the gate"; exit 1; fi; \
+	tps=`sed -n '/^fn prelude_struct_tps(/,/^}/p' src/typecheck.exl | grep -o 'push_prelude_stp(a, "[A-Za-z]*"' | sed 's/.*"\([A-Za-z]*\)"/\1/' | sort -u`; \
+	if [ -z "$$tps" ]; then echo "selfhost-prelude-struct-lists: read NO names from the tparam table - the shape moved, re-aim the gate"; exit 1; fi; \
 	missing=`comm -23 <(echo "$$seed") <(echo "$$pred")`; \
 	if [ -n "$$missing" ]; then \
 	  echo "selfhost-prelude-struct-lists: seeded as structs but not recognised as ones -"; \
 	  echo "  a user enum of these names would win a lookup the prelude's struct should win:"; \
 	  echo "$$missing" | sed 's/^/    /'; exit 1; fi; \
-	echo "selfhost-prelude-struct-lists: clean (`echo "$$seed" | wc -l` seeded names, every one recognised by the resolver)"
+	notps=`comm -23 <(echo "$$pred") <(echo "$$tps")`; \
+	if [ -n "$$notps" ]; then \
+	  echo "selfhost-prelude-struct-lists: recognised as structs but carrying no parameter count -"; \
+	  echo "  the arity check abstains on these, so a wrong application compiles:"; \
+	  echo "$$notps" | sed 's/^/    /'; exit 1; fi; \
+	echo "selfhost-prelude-struct-lists: clean (`echo "$$seed" | wc -l` seeded, `echo "$$pred" | wc -l` recognised, `echo "$$tps" | wc -l` with a parameter count - the three lists agree)"
 
 # ===== the prelude is checked against the user's declarations =====
 #

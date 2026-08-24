@@ -1,0 +1,7 @@
+// The one-parameter half: a prelude struct that takes exactly one, written with
+// two. Kept beside the zero-parameter file because a table can be wrong in two
+// directions - absent entirely, or present with the wrong count - and one shape
+// only measures the first.
+fn takes(x: *const Range<int, bool>) { println(1); }
+
+fn main() { println(1); }

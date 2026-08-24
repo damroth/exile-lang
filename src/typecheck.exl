@@ -12893,7 +12893,18 @@ fn push_prelude_stp(a: Allocator, name: str, out: *Vec<StructTP>) {
     prelude_struct_tparams(name, &tps);
     push_struct_tp(a, name, &tps, out);
 }
+// EVERY name the resolver recognises as a prelude struct, not just the generic
+// ones. A name absent here has no declared parameter count, so the arity check
+// abstains and `Allocator<int>` compiles - which the reference refuses. The
+// zero-parameter entries are the point: "takes no arguments" is an answer, and
+// leaving it unsaid was read as "no opinion".
 fn prelude_struct_tps(a: Allocator, out: *Vec<StructTP>) {
+    push_prelude_stp(a, "Allocator", out);
+    push_prelude_stp(a, "Arena", out);
+    push_prelude_stp(a, "String", out);
+    push_prelude_stp(a, "StringBuilder", out);
+    push_prelude_stp(a, "Range", out);
+    push_prelude_stp(a, "RangeInclusive", out);
     push_prelude_stp(a, "Slice", out);
     push_prelude_stp(a, "Vec", out);
     push_prelude_stp(a, "VecIter", out);
