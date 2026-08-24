@@ -1,0 +1,14 @@
+// A user type takes a prelude name the prelude ITSELF uses, and the prelude
+// stops type-checking.
+//
+// The reference prepends its prelude to the program and checks the two together,
+// so a declaration that removes `Vec` leaves the prelude's own `Vec<T>` looking
+// at a type with no parameters. The program's verdict is that failure, reported
+// at the head of the prelude. The port synthesises its prelude on demand and
+// never asked, so it compiled a program the reference refuses - for every name
+// the prelude writes.
+//
+// The verdict follows the DECLARATION, not any use: this file uses nothing.
+struct Vec { a: int }
+
+fn main() { println(1); }

@@ -906,7 +906,8 @@ selfhost-port-module-roots: $(SEEDC_TC)
 	  echo "selfhost-port-module-roots: clean (13 module files typecheck as standalone roots)"; \
 	else exit 1; fi
 
-selfhost-verify: bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
+selfhost-verify: selfhost-prelude-probe \
+	bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
@@ -1581,6 +1582,41 @@ selfhost-prelude-struct-lists:
 	  echo "$$missing" | sed 's/^/    /'; exit 1; fi; \
 	echo "selfhost-prelude-struct-lists: clean (`echo "$$seed" | wc -l` seeded names, every one recognised by the resolver)"
 
+# ===== the prelude is checked against the user's declarations =====
+#
+# The reference prepends its prelude to the program and type-checks the two
+# together, so a user declaration taking a prelude name can break the prelude's
+# own code - and that failure is the program's verdict, reported at the head of
+# the prelude. The port synthesises its prelude on demand, so nothing asked, and
+# it compiled a whole class of programs the reference refuses.
+#
+# The `tc-errors` corpus already compares first lines and therefore already
+# compares positions. This gate exists for the half that a corpus comparison
+# cannot state out loud: the position is a CONTRACT, `<prelude>:1:1`, and it is
+# pinned here as a literal so that agreeing with the reference and agreeing with
+# the contract are two separate assertions. A day when both sides move together
+# is a day this gate is supposed to notice.
+PRELUDE_PROBE_LINE := <prelude>:1:1: error: type 'Vec' expects 0 generic argument(s), got 1
+PRELUDE_PROBE_FIXTURE := src/tc_errors/prelude_breaks_on_shadowed_arity.exl
+
+.PHONY: selfhost-prelude-probe
+selfhost-prelude-probe: $(EXILC_BIN)
+	@test -f $(PRELUDE_PROBE_FIXTURE) || { echo "selfhost-prelude-probe: MISSING $(PRELUDE_PROBE_FIXTURE)"; exit 1; }; \
+	rm -f $(C_OUT)/pp_o.err $(C_OUT)/pp_p.err $(C_OUT)/pp_o.c $(C_OUT)/pp_p.c; \
+	$(EXILE) --target c --c-out $(C_OUT)/pp_o.c $(PRELUDE_PROBE_FIXTURE) >/dev/null 2>$(C_OUT)/pp_o.err; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/pp_p.c $(PRELUDE_PROBE_FIXTURE) >/dev/null 2>$(C_OUT)/pp_p.err; \
+	oline=`grep -m1 'error:' $(C_OUT)/pp_o.err`; \
+	pline=`grep -m1 'error:' $(C_OUT)/pp_p.err`; \
+	if [ -z "$$oline" ]; then echo "selfhost-prelude-probe: the REFERENCE said nothing - the fixture stopped exercising the class"; exit 1; fi; \
+	if [ -z "$$pline" ]; then echo "selfhost-prelude-probe: the port said nothing - the probe is not running"; exit 1; fi; \
+	if [ "$$oline" != "$(PRELUDE_PROBE_LINE)" ]; then \
+	  echo "selfhost-prelude-probe: the reference no longer says the pinned line"; \
+	  echo "  pinned:    $(PRELUDE_PROBE_LINE)"; echo "  reference: $$oline"; exit 1; fi; \
+	if [ "$$pline" != "$(PRELUDE_PROBE_LINE)" ]; then \
+	  echo "selfhost-prelude-probe: the port does not say the pinned line"; \
+	  echo "  pinned: $(PRELUDE_PROBE_LINE)"; echo "  port:   $$pline"; exit 1; fi; \
+	echo "selfhost-prelude-probe: clean - both compilers say the pinned line, position included"
+
 # ===== publicly-facing text must stand on its own =====
 #
 # Design records, phase names and step labels live in a directory that is not
@@ -2066,6 +2102,7 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   trait_default_assoc_enum_called trait_default_assoc_enum_uncalled \
                   trait_default_generic_impl trait_default_generic_impl_assoc \
                   trait_default_concrete_impl \
+                  prelude_intact_on_unused_name \
                   prelude_named_field_dep prelude_named_and_built \
                   unused_enum_stays_dropped
 

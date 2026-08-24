@@ -1,0 +1,10 @@
+// The same class through a PATH expression rather than an annotation: the
+// prelude's `String::clone` calls `String::with_str`, and a user enum of that
+// name turns the call into a variant lookup that finds nothing.
+//
+// Kept beside the arity file because one shape is a lower bound - the prelude
+// breaks in as many ways as it uses a name, and a fixture set that pins one way
+// says nothing about the others.
+enum String { A | B }
+
+fn main() { println(1); }

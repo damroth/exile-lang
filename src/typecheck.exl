@@ -15765,6 +15765,7 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("    pub fn length(*const self) -> u32 { return self.len; }\n");
     sb.push_str("}\n");
     sb.push_str("impl<T> Iterator for VecIter<T> {\n");
+    sb.push_str("    type Item = T;\n");
     sb.push_str("    pub fn next(*self) -> Option<T> {\n");
     sb.push_str("        if self.pos >= self.len { return Option::None; }\n");
     sb.push_str("        let s: Slice<T> = Slice { ptr: self.data, len: self.len };\n");
@@ -15882,6 +15883,7 @@ fn prelude_source(a: Allocator, ar: *Arena) -> str {
     sb.push_str("    }\n");
     sb.push_str("}\n");
     sb.push_str("impl<K, V> Iterator for HashMapIter<K, V> {\n");
+    sb.push_str("    type Item = (K, V);\n");
     sb.push_str("    pub fn next(*self) -> Option<(K, V)> {\n");
     sb.push_str("        let sview: Slice<Slot<K, V>> = Slice { ptr: self.data, len: self.len };\n");
     sb.push_str("        while self.pos < self.len {\n");
@@ -17133,7 +17135,136 @@ fn check_const_expr(a: Allocator, ar: *Arena, sc: *const TyScope, e: *const Expr
     }
     return;
 }
+// Does this list of user type names touch a prelude one? `is_builtin_struct`
+// carries the struct side and `is_prelude_enum` the enum side, so the question
+// is asked of the same tables the registrations consult - a separate list here
+// would be one more thing to keep in step.
+fn any_prelude_name(names: *const Vec<str>) -> bool {
+    let mut i = 0 as u32;
+    while i < names.length() {
+        let nm = names.get(i) orelse "";
+        if is_builtin_struct(nm) || is_prelude_enum(nm) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// ===== the prelude probe =====
+//
+// Does the prelude still typecheck once the user's declarations are in scope?
+// The reference answers by construction: its prelude items sit in the same
+// program. The port answers by BUILDING that program and checking it on its own,
+// which keeps the answer out of the emission - elaboration registers types
+// through the scope it runs in, so a check sharing the real scope would grow the
+// output by whatever it touched (measured: 30 of 47 agreeing programs changed
+// their C when it did).
+//
+// The throwaway carries the user's type declarations and the prelude items that
+// SURVIVE the reference's kind-matched drop. It carries no user bodies, so every
+// diagnostic it produces is about prelude code.
+fn prelude_probe(a: Allocator, ar: *Arena, items: *const Vec<Item>, prelude_items: *const Vec<Item>) -> Option<*const CompileError> {
+    let mut syn: Vec<Item> = Vec::with_capacity(a, 32 as u32);
+    push_user_type_decls(items, &syn);
+    let mut ustructs: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut utraits: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_user_type_names(items, &ustructs, &utraits);
+    push_surviving_prelude(prelude_items, &ustructs, &utraits, &syn);
+    // Its OWN arena. The caller's is sized for one program, and a second full
+    // typecheck drawing on it aborts the compiler with no diagnostic at all -
+    // measured, and the least useful failure a compiler has. Separate storage is
+    // the same reason this check is separate at all.
+    let mut par = Arena::with_capacity(a, 16777216 as u32);
+    return match check_program_at(a, &par, &syn, false) {
+        Result::Err(e) => Option::Some(at_prelude_pos(a, ar, e))
+        | Result::Ok(_tp) => none_err()
+    };
+}
+fn none_err() -> Option<*const CompileError> {
+    let n: Option<*const CompileError> = Option::None;
+    return n;
+}
+// Every diagnostic from the throwaway is reported where the reference reports
+// its own: the prelude has no position a user could act on, and the reference
+// stamps its synthesised items at the head of the file.
+// The message is COPIED into the caller's arena: it was built in the probe's,
+// which the caller has no reason to keep alive.
+fn at_prelude_pos(a: Allocator, ar: *Arena, e: *const CompileError) -> *const CompileError {
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str(e.msg);
+    return mk_err(ar, Pos { line: 1 as int, col: 1 as int, file: "<prelude>" }, str::from_slice(ar, sb.as_slice()));
+}
+fn push_user_type_decls(items: *const Vec<Item>, out: *Vec<Item>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        if is_type_decl(&sl[i]) { out.push(sl[i]); }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn is_type_decl(it: *const Item) -> bool {
+    return match *it {
+        Item::Struct(_s) => true
+        | Item::Enum(_e) => true
+        | Item::Trait(_t) => true
+        | _o => false
+    };
+}
+fn collect_user_type_names(items: *const Vec<Item>, structs: *Vec<str>, traits: *Vec<str>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        collect_one_type_name(&sl[i], structs, traits);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn collect_one_type_name(it: *const Item, structs: *Vec<str>, traits: *Vec<str>) {
+    match *it {
+        Item::Struct(sd) => { structs.push(sd.sname); }
+        | Item::Trait(td) => { traits.push(td.trname); }
+        | _o => { }
+    }
+    return;
+}
+// The reference drops a prelude impl when the user shadowed its target struct or
+// its trait - the impl would no longer describe the type it was written for.
+// Enums and structs of the prelude are declared by the port rather than parsed,
+// and the registration path already skips shadowed names, so this filter has
+// only the impl case to make.
+fn push_surviving_prelude(prelude_items: *const Vec<Item>, ustructs: *const Vec<str>, utraits: *const Vec<str>, out: *Vec<Item>) {
+    let sl = prelude_items.as_slice();
+    let mut i = 0 as u32;
+    while i < prelude_items.length() {
+        if prelude_item_survives(&sl[i], ustructs, utraits) { out.push(sl[i]); }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn prelude_item_survives(it: *const Item, ustructs: *const Vec<str>, utraits: *const Vec<str>) -> bool {
+    return match *it {
+        Item::Impl(ib) => impl_survives(&ib, ustructs, utraits)
+        | _o => true
+    };
+}
+fn impl_survives(ib: *const ImplBlock, ustructs: *const Vec<str>, utraits: *const Vec<str>) -> bool {
+    if name_in_list(ustructs, path_last(&ib.itarget)) { return false; }
+    return match ib.itrait {
+        Option::Some(tp) => !name_in_list(utraits, path_last(&tp))
+        | Option::None => true
+    };
+}
+
+// The reference PREPENDS its prelude to the user's program and typechecks the
+// two together, so a user declaration taking a prelude name can break the
+// prelude's own code - and that failure is the program's verdict. The port
+// synthesises its prelude on demand, so nothing ever asked. `probe` runs that
+// question as a SEPARATE check on a throwaway program (see `prelude_probe`),
+// and is false inside that check so it cannot ask itself.
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
+        -> Result<Tprogram, *const CompileError> {
+    return check_program_at(a, ar, items, true);
+}
+fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bool)
         -> Result<Tprogram, *const CompileError> {
     let mut tc_err: Option<*const CompileError> = Option::None;
     let mut tc_srcnames: Vec<StrPair> = Vec::with_capacity(a, 16 as u32);
@@ -17195,6 +17326,12 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // below. It is a whole-program fact; no scope varies it.
     let shadowed = shadowed_prelude_names(a, items, false);
     let shadowed_enums = shadowed_prelude_names(a, items, true);
+    // Whether to ask at all; the asking happens at the END of this function.
+    // Placed early it pre-empted the program's OWN diagnostics, and the reference
+    // reports those first: `struct Vec { a: int }` with a `Vec<int>` beside it
+    // draws the user's arity error there, not the prelude's failure. A prelude
+    // failure surfaces only when nothing earlier failed.
+    let probe_now = probe && (any_prelude_name(&shadowed) || any_prelude_name(&shadowed_enums));
     let mut etps: Vec<EnumTP> = Vec::with_capacity(a, 8 as u32);
     collect_enum_tps(a, items, &etps);
     prelude_enum_tps(a, &shadowed_enums, &etps);
@@ -17621,6 +17758,11 @@ pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
     // failing sites produced are meaningless, and emitting C from them is exactly
     // the silent-miscompile this pass exists to stop.
     if err_latched(&tc_err) { return Result::Err(err_unwrap(ar, tc_err)); }
+    // Nothing of the program's own failed, so the question the reference answers
+    // by construction can be asked here: does its prelude still type-check with
+    // these declarations in scope?
+    let pverdict = if probe_now { prelude_probe(a, ar, items, &prelude_items) } else { none_err() };
+    if err_latched(&pverdict) { return Result::Err(err_unwrap(ar, pverdict)); }
     return Result::Ok(Tprogram {
         tp_funcs: funcs, tp_pfree: pfree, tp_pmeth: pmeth, tp_free_end: free_end, tp_struct_decls: sdecls, tp_struct_index: structs,
         tp_enum_index: enums, tp_global: global, tp_modules: modules,

@@ -1,0 +1,10 @@
+// The control: a user type taking a prelude name the prelude does NOT write in
+// any surviving item. Nothing breaks, and both compilers accept.
+//
+// This is the half that says the check is a CHECK and not a ban on the name.
+// `HashMap`'s own impl is dropped along with the declaration the user shadowed -
+// the drop is matched by kind and takes the impl with it - so no surviving
+// prelude item is left mentioning it.
+struct HashMap { a: int }
+
+fn main() { println(1); }
