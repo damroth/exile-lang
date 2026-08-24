@@ -4300,6 +4300,17 @@ fn self_ty_matches(a: Allocator, st: Option<*const Typ>, target: *const Vec<str>
         | Option::None => false
     };
 }
+// The ARGUMENTS speak before the callee does. Both can be wrong in one
+// expression - `b.nomethod(b.nofield)` has neither - and the reference reports
+// the argument, because it elaborates the arguments on its way to the call. The
+// port reported the missing method and the argument's own error never surfaced.
+// Elaborating them here costs nothing that reaches the output: this path is
+// already refusing the program.
+fn method_miss_after_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                          name: str, trecv: *const Texpr, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let _targs = elab_args(a, ar, g, sc, env, args);
+    return method_miss(a, ar, sc, name, trecv.ty, p);
+}
 fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                     expected: Option<*const Typ>, recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     if is_rune_reg_index(sc, env, recv) {
@@ -4317,7 +4328,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     if idx < 0 as int {
         return match field_call_desugar(a, ar, g, sc, env, expected, recv, trecv, name, args, p) {
             Option::Some(te) => te
-            | Option::None => method_miss(a, ar, sc, name, trecv.ty, p)
+            | Option::None => method_miss_after_args(a, ar, g, sc, env, name, trecv, args, p)
         };
     }
     check_method_visible(a, ar, sc, env, idx as u32, p);

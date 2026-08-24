@@ -1,0 +1,18 @@
+// Which sub-expression speaks first when both are wrong: the callee or the
+// argument.
+//
+// `b.nomethod(b.nofield)` has neither the method nor the field, so the only
+// question is which one the compiler reports. The reference elaborates the
+// arguments on its way to the call and reports the ARGUMENT; the port answered
+// about the missing method and the argument's own error never surfaced at all.
+//
+// The shape has nothing to do with the prelude, and that is why it is here
+// rather than in a shadowing fixture: it was FOUND through three prelude cells
+// where the reference named a field and the port named a method, and it reduces
+// to five lines with no prelude name in them.
+struct Box { a: int }
+
+fn main() {
+    let b = Box { a: 1 };
+    b.nomethod(b.nofield);
+}
