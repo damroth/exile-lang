@@ -2653,6 +2653,90 @@ fn parse_type_alias_decl(s: *Parser, is_pub: bool) -> TypeAliasDecl {
 
 // Copy a `TyStruct` path into `out`; the impl target / trait must be a
 // (possibly generic) named struct/trait.
+// The parameters an `impl` declares and the arguments its target is written with
+// have to be the same list, in the same order. Two branches, and the port had
+// neither: a declared list that does not match the target, and a target written
+// generically with nothing declared.
+//
+// The target's arguments were reachable all along - the pattern that flattens the
+// target to a path simply did not bind them - so this reads the material that was
+// already there.
+//
+// Without it, `impl<A, B> Pair<B, A>` and `impl<T> Plain` COMPILED, and the two
+// forms the reference names outright drew `unknown type 'T'` from the body
+// instead: a reader sent to a use of the parameter rather than to the header that
+// failed to declare it.
+fn check_impl_target_params(s: *Parser, t: *const TypeAnn, itparams: *const Vec<str>, itarget: *const Vec<str>, pos: Pos) {
+    match *t {
+        TypeAnn::TyStruct { path: _p, args } => { check_target_args(s, &args, itparams, itarget, pos); }
+        | _e => { }
+    }
+    return;
+}
+fn check_target_args(s: *Parser, args: *const Vec<*const TypeAnn>, itparams: *const Vec<str>, itarget: *const Vec<str>, pos: Pos) {
+    if itparams.length() == 0 as u32 {
+        if args.length() > 0 as u32 { fail(s, pos, undeclared_params_msg(s, itarget)); }
+        return;
+    }
+    if !target_args_match(args, itparams) { fail(s, pos, mismatched_params_msg(s, itparams, itarget)); }
+    return;
+}
+// Each argument must be the bare name of the parameter at that position.
+fn target_args_match(args: *const Vec<*const TypeAnn>, itparams: *const Vec<str>) -> bool {
+    if args.length() != itparams.length() { return false; }
+    let asl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < args.length() {
+        if !is_bare_named_ty(asl[i], itparams.get(i) orelse "") { return false; }
+        i = i + 1 as u32;
+    }
+    return true;
+}
+fn is_bare_named_ty(t: *const TypeAnn, name: str) -> bool {
+    return match *t {
+        TypeAnn::TyStruct { path, args } => args.length() == 0 as u32 && path.length() == 1 as u32 && str::eq(path.get(0 as u32) orelse "", name)
+        | _e => false
+    };
+}
+fn undeclared_params_msg(s: *Parser, itarget: *const Vec<str>) -> str {
+    let mut sb = StringBuilder::with_capacity(s.a, 96 as u32);
+    sb.push_str("generic 'impl' needs its parameters declared after 'impl', e.g. 'impl<T> ");
+    push_path_str(&sb, itarget);
+    sb.push_str("<T>'");
+    return str::from_slice(s.ar, sb.as_slice());
+}
+fn mismatched_params_msg(s: *Parser, itparams: *const Vec<str>, itarget: *const Vec<str>) -> str {
+    let mut sb = StringBuilder::with_capacity(s.a, 128 as u32);
+    sb.push_str("'impl<");
+    push_comma_list(&sb, itparams);
+    sb.push_str(">' target must be '");
+    push_path_str(&sb, itarget);
+    sb.push_str("<");
+    push_comma_list(&sb, itparams);
+    // The reference's own wording, em dash and all. Mirroring a diagnostic is
+    // quoting it; the project's hyphen rule governs text we author.
+    sb.push_str(">' — the type arguments must match the declared parameters in order");
+    return str::from_slice(s.ar, sb.as_slice());
+}
+fn push_path_str(sb: *StringBuilder, path: *const Vec<str>) {
+    let mut i = 0 as u32;
+    while i < path.length() {
+        if i > 0 as u32 { sb.push_str("::"); }
+        sb.push_str(path.get(i) orelse "");
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn push_comma_list(sb: *StringBuilder, xs: *const Vec<str>) {
+    let mut i = 0 as u32;
+    while i < xs.length() {
+        if i > 0 as u32 { sb.push_str(", "); }
+        sb.push_str(xs.get(i) orelse "");
+        i = i + 1 as u32;
+    }
+    return;
+}
+
 fn extract_struct_path(s: *Parser, t: *const TypeAnn, out: *Vec<str>, pos: Pos) {
     match *t {
         TypeAnn::TyStruct { path } => { copy_strs(&path, out); }
@@ -2693,6 +2777,7 @@ fn parse_impl_block(s: *Parser) -> ImplBlock {
     let target_ty = impl_target(s, first_ty, &itrait, pos);
     let mut itarget: Vec<str> = Vec::with_capacity(s.a, 8 as u32);
     extract_struct_path(s, target_ty, &itarget, pos);
+    check_impl_target_params(s, target_ty, &itparams, &itarget, pos);
     let is_trait_impl = opt_is_some(&itrait);
     expect(s, Token::LBrace);
     let prev_target = s.self_target;

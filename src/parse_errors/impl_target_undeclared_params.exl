@@ -1,0 +1,15 @@
+// A generic `impl` written with its parameter in the TARGET and nothing declared
+// after `impl`. The reference names the header; the port used to say
+// `unknown type 'T'` from the body - sending a reader to a USE of the parameter
+// rather than to the header that failed to declare it.
+//
+// This is the form the compiler's own prelude was written in for its whole life,
+// and it went unmeasured because instantiation binds the parameter from the call
+// site: a declaration that carried no parameter was never asked to.
+struct Box<T> { v: T }
+
+impl Box<T> {
+    pub fn get(self) -> T { return self.v; }
+}
+
+fn main() { let b = Box { v: 7 }; println(b.get()); }

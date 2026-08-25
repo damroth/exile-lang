@@ -1,0 +1,10 @@
+// Parameters declared on an `impl` whose target takes none. Also accepted by the
+// port before, and named by the reference with the same message as the
+// wrong-order form - one rule, one wording, both directions.
+struct Plain { v: int }
+
+impl<T> Plain {
+    pub fn get(self) -> int { return self.v; }
+}
+
+fn main() { let p = Plain { v: 7 }; println(p.get()); }

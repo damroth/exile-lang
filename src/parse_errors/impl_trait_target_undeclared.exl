@@ -1,0 +1,10 @@
+// The trait-impl half of the undeclared-parameter branch, kept because a rule
+// measured on inherent impls alone is measured on half its surface.
+trait Get { fn get(self) -> int; }
+struct Cell<T> { v: T }
+
+impl Get for Cell<T> {
+    fn get(self) -> int { return 1; }
+}
+
+fn main() { let c = Cell { v: 7 }; println(c.get()); }

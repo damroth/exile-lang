@@ -1,0 +1,11 @@
+// The other branch of the same rule: parameters ARE declared, but the target
+// writes them in a different order. The port ACCEPTED this - and then typed the
+// body against a swapped binding, which is the quiet direction: a program that
+// compiles and means something else.
+struct Pair<A, B> { x: A, y: B }
+
+impl<A, B> Pair<B, A> {
+    pub fn first(self) -> int { return 1; }
+}
+
+fn main() { let p = Pair { x: 1, y: 2 }; println(p.first()); }
