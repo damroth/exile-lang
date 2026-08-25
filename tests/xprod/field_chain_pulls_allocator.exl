@@ -1,0 +1,17 @@
+// A top-level struct whose field names an instance whose own field names the
+// allocator - a two-link chain, and the port used to break it at the first link.
+//
+// `Holder` is always emitted, so `Vec<int>` is reachable, so the `alloc` field
+// inside that instance is reachable too. The port walked only the four
+// non-generic prelude names, so the chain never started: the emitted C declared a
+// `Vec_i32` whose allocator field had no declaration.
+//
+// Two sets do the work, because there are two questions. One answers "does the
+// program MENTION this name" - which is what the four-name elision asks, and a
+// user `enum Vec` that mentions nothing must not make the allocator look used.
+// The other answers "can the emitted C REACH this type", which is what decides
+// whether a declaration must be in the file. One set cannot be both strict and
+// transitive, and it was doing both jobs.
+struct Holder { b: *const Vec<int> }
+
+fn main() { println(1); }

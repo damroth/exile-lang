@@ -15053,9 +15053,46 @@ fn dropped_when_unused(a: Allocator, nm: str, used: *const Vec<Vec<str>>) -> boo
     return true;
 }
 
+fn copy_paths(a: Allocator, xs: *const Vec<Vec<str>>) -> Vec<Vec<str>> {
+    let mut out: Vec<Vec<str>> = Vec::with_capacity(a, 32 as u32);
+    let sl = xs.as_slice();
+    let mut i = 0 as u32;
+    while i < xs.length() { out.push(copy_strs(a, &sl[i])); i = i + 1 as u32; }
+    return out;
+}
+fn mention_top_level_types(a: Allocator, items: *const Vec<Item>, out: *Vec<Vec<str>>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        mention_one_top_type(a, &sl[i], out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+// A top-level declaration seeds the set so its FIELDS can be walked - but never
+// under one of the four names the elision asks about. Those four are answered by
+// their own rule, and a user type that merely shares one of their names would
+// otherwise be read as "the prelude's is in use": a bare `enum Allocator { A | B }`
+// made the port emit the prelude allocator the reference elides.
+fn mention_one_top_type(a: Allocator, it: *const Item, out: *Vec<Vec<str>>) {
+    match *it {
+        Item::Struct(sd) => { push_top_name_if(a, out, sd.sname); }
+        | Item::Enum(ed) => { push_top_name_if(a, out, ed.ename); }
+        | _o => { }
+    }
+    return;
+}
+fn push_top_name_if(a: Allocator, out: *Vec<Vec<str>>, nm: str) {
+    if elided_when_unused_name(nm) { return; }
+    out.push(single_str(a, nm));
+    return;
+}
 // A field of an instance whose own name is already in the used-set contributes
 // what it mentions; anything else contributes nothing. Runs to a fixed point,
 // because one reachable instance can name another.
+// One table's worth of the walk. The caller runs it over each table in turn and
+// repeats, because a name added from one can make an owner in the other
+// reachable.
 fn close_used_over_reachable_instances(a: Allocator, fields: *const Vec<StructField>, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) {
     let mut changed = true;
     while changed {
@@ -15070,7 +15107,14 @@ fn close_used_over_reachable_instances(a: Allocator, fields: *const Vec<StructFi
 }
 fn reachable_field_dep(a: Allocator, fields: *const Vec<StructField>, i: u32, shadowed: *const Vec<str>, used: *Vec<Vec<str>>) -> bool {
     let sl = fields.as_slice();
-    if !name_in_paths(used, path_last(&sl[i].sf_path)) { return false; }
+    let owner = path_last(&sl[i].sf_path);
+    // A prelude SKELETON is not a declaration the program can reach - only its
+    // instances are. Walking `Vec`'s own fields would carry the allocator into
+    // any program that merely names `Vec`, including one that only declares an
+    // enum of that name; walking `Vec_i32`'s carries it exactly when something
+    // built or named that instance.
+    if is_builtin_struct(owner) { return false; }
+    if !name_in_paths(used, owner) { return false; }
     return add_prelude_dep(a, shadowed, used, sl[i].sf_ty);
 }
 
@@ -15108,8 +15152,14 @@ fn add_prelude_dep(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>
         | _o => false
     };
 }
+// Any struct name a reachable field mentions joins the set - not only the four
+// the elision asks about. A `Holder` whose field is a `Vec<int>` makes that
+// instance reachable, and only then can ITS field carry the allocator further.
+// Restricting the walk to the four names stopped the chain at its first link.
+//
+// The elision stays exactly as strict: it asks whether one of the four is in the
+// set, and a four-name gets in here only by being genuinely reachable.
 fn add_dep_name(a: Allocator, shadowed: *const Vec<str>, used: *Vec<Vec<str>>, nm: str) -> bool {
-    if nongeneric_prelude_rank(nm) < 0 as int { return false; }
     if name_in_list(shadowed, nm) { return false; }
     if name_in_paths(used, nm) { return false; }
     used.push(single_str(a, nm));
@@ -17767,13 +17817,37 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     // types for exactly this reason; without the closure the port emitted an
     // Arena whose field type had no declaration in the file.
     close_used_over_prelude_fields(a, ar, &shadowed, &used_names);
+    // TWO sets, because there are two questions and they are not the same one.
+    // `used_names` answers "does the program MENTION this name" - the elision of
+    // the four asks that, and a user `enum Vec` mentioning nothing must not make
+    // the prelude's allocator look used. `reach_names` answers "can the emitted C
+    // REACH this type", which is what decides whether a declaration has to be in
+    // the file at all: a top-level struct is always emitted, so whatever its
+    // fields name is reachable, and so is whatever THOSE fields name.
+    //
+    // The port had one set doing both jobs. Seeding it for reachability made the
+    // elision keep types nothing mentions; keeping it narrow for the elision left
+    // fields undeclared. One set cannot be both strict and transitive.
+    let mut reach_names: Vec<Vec<str>> = copy_paths(a, &used_names);
+    mention_top_level_types(a, items, &reach_names);
     // And through the fields of instances the program can REACH. A `Vec<int>`
     // named in a signature carries an `alloc: Allocator`, so the allocator has to
     // be declared above it or the emitted C does not compile at all - a field of
     // incomplete type. Gated on reachability, which is the whole difference: an
     // earlier attempt walked EVERY registered instance and reordered the emission
     // across 29 of 37 corpus fixtures, because it kept names nothing could reach.
-    close_used_over_reachable_instances(a, &mono_fields, &shadowed, &used_names);
+    // BOTH tables: the reference walks its top-level index and its instances
+    // together. A top-level struct's fields live in one and an instance's in the
+    // other, and a chain crosses from the first to the second on its very first
+    // link - `Holder { b: *const Vec<int> }` is a top-level struct whose field
+    // names an instance whose field names the allocator.
+    let mut xchanged = true;
+    while xchanged {
+        let before = reach_names.length();
+        close_used_over_reachable_instances(a, &sinfo, &shadowed, &reach_names);
+        close_used_over_reachable_instances(a, &mono_fields, &shadowed, &reach_names);
+        xchanged = reach_names.length() > before;
+    }
 
     let mut structs = prelude_struct_index(a, &shadowed);
     let mut enums = prelude_enum_index(a, &shadowed_enums);
@@ -17812,7 +17886,7 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
         // mangled name and the FIRST to claim one wins, structs before enums, so
         // putting the struct in the list is the whole fix - the user's enum is
         // skipped by the same rule that already governs every other collision.
-        if !seen_rank { push_named_prelude_struct_if_used(a, ar, &sinfo_scope, rk, &shadowed, &used_names, &structs, &mono_fields); }
+        if !seen_rank { push_named_prelude_struct_if_used(a, ar, &sinfo_scope, rk, &shadowed, &reach_names, &structs, &mono_fields); }
         rk = rk + 1 as int;
     }
     let sn = fstructs.length();
