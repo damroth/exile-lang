@@ -1,0 +1,4 @@
+// No parameters declared, one supplied.
+type Word = u32;
+fn takes(x: Word<int>) -> u32 { return x; }
+fn main() { println(1); }

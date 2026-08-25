@@ -474,6 +474,11 @@ struct TyScope {
     sc_xstructs: *const Vec<str>,
     sc_xaliases: *const Vec<str>,
     sc_taliases: *const Vec<TypeAlias>,
+    // Top-level `type X<T..> = Ty;` declarations, and the aliases already being
+    // expanded - the second is what stops `type A = B; type B = A;` from looping.
+    sc_tydefs: *const Vec<TypeAliasDecl>,
+    sc_tyvisited: *Vec<str>,
+    sc_tydepth: *u32,
     // True only while elaborating `fn main` — a bare `return;` there becomes
     // `return 0` (C `int main` must return a value).
     sc_is_main: bool,
@@ -552,6 +557,9 @@ struct ProgIdx {
     pi_xstructs: *const Vec<str>,
     pi_xaliases: *const Vec<str>,
     pi_taliases: *const Vec<TypeAlias>,
+    pi_tydefs: *const Vec<TypeAliasDecl>,
+    pi_tyvisited: *Vec<str>,
+    pi_tydepth: *u32,
     pi_err: *Option<*const CompileError>,
     pi_srcnames: *Vec<StrPair>,
     pi_srcbase: *u32,
@@ -947,6 +955,98 @@ fn struct_known(sc: *const TyScope, last: str) -> bool {
     return name_in(sc.sc_structs, last) || name_in(sc.sc_enums, last)
         || is_prelude_enum(last) || is_builtin_struct(last);
 }
+// ===== top-level type aliases =====
+fn name_in_tail(xs: *const Vec<str>, name: str, depth: u32) -> bool {
+    let n = xs.length();
+    if depth == 0 as u32 { return false; }
+    let mut i = n - depth;
+    while i < n {
+        if str::eq(xs.get(i) orelse "", name) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+
+fn collect_type_defs(items: *const Vec<Item>, out: *Vec<TypeAliasDecl>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        collect_one_type_def(&sl[i], out);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn collect_one_type_def(it: *const Item, out: *Vec<TypeAliasDecl>) {
+    match *it {
+        Item::TypeAlias(ta) => { out.push(ta); }
+        | _o => { }
+    }
+    return;
+}
+fn tydef_idx(sc: *const TyScope, name: str) -> int {
+    let sl = sc.sc_tydefs.as_slice();
+    let mut i = 0 as u32;
+    while i < sc.sc_tydefs.length() {
+        if str::eq(sl[i].taname, name) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+// Expand `Name<args>` through its alias: check the count, resolve the body with
+// the alias's own parameters in scope, then substitute the arguments into it.
+// The visited list is the cycle guard - `type A = B; type B = A;` would otherwise
+// resolve forever rather than say so.
+fn expand_type_alias(a: Allocator, ar: *Arena, sc: *const TyScope, ti: u32, name: str,
+                     args: *const Vec<*const TypeAnn>, p: Pos) -> *const Typ {
+    // The chain currently being expanded is the LAST `depth` entries: the list
+    // only grows (the prelude's Vec has no pop, and adding one would hand the
+    // port a method the reference does not have), so the depth counter is what
+    // separates this chain from the stale tail of the previous one.
+    if name_in_tail(sc.sc_tyvisited, name, *sc.sc_tydepth) { return alias_cycle(a, ar, sc, name, p); }
+    let sl = sc.sc_tydefs.as_slice();
+    let expected = sl[ti].tatparams.length();
+    if expected != args.length() { return alias_arity(a, ar, sc, name, expected, args.length(), p); }
+    let resolved = resolve_sig_args(a, ar, sc, args, p);
+    sc.sc_tyvisited.push(name);
+    *sc.sc_tydepth = *sc.sc_tydepth + 1 as u32;
+    let inner = scope_with_tparams(sc, &sl[ti].tatparams);
+    let body = resolve_sig_ty(a, ar, &inner, sl[ti].tatarget, p);
+    *sc.sc_tydepth = *sc.sc_tydepth - 1 as u32;
+    let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    bind_alias_params(&sl[ti].tatparams, &resolved, &binds);
+    // The REGISTERING substitution: an alias body is usually an application
+    // (`type Bag<T> = Vec<T>;`), and substituting into one has to mint the
+    // instance the arguments name. The plain substitution leaves the application
+    // abstract, and everything downstream then reads `c_void`.
+    return subst_typ_reg(a, ar, sc, &binds, body);
+}
+fn bind_alias_params(tparams: *const Vec<str>, args: *const Vec<*const Typ>, out: *Vec<TVarBind>) {
+    let asl = args.as_slice();
+    let mut i = 0 as u32;
+    while i < tparams.length() {
+        out.push(TVarBind { tvb_name: tparams.get(i) orelse "", tvb_ty: asl[i] });
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn alias_cycle(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, p: Pos) -> *const Typ {
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("type alias cycle through '"); sb.push_str(name);
+    // The reference's wording, em dash included - mirroring a diagnostic is
+    // quoting it.
+    sb.push_str("' — alias resolution would loop");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return ty_node(ar, Typ::TCVoid);
+}
+fn alias_arity(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, expected: u32, got: u32, p: Pos) -> *const Typ {
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("type alias '"); sb.push_str(name);
+    sb.push_str("' expects "); sb.push_int(expected as int);
+    sb.push_str(" generic argument(s), got "); sb.push_int(got as int);
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return ty_node(ar, Typ::TCVoid);
+}
+
 fn unknown_type(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, generic: bool, p: Pos) {
     let mut sb = StringBuilder::with_capacity(a, 48 as u32);
     sb.push_str("unknown ");
@@ -1339,6 +1439,11 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         // concrete type; otherwise it is the abstract `TVar` (skeleton).
         if has_tbind(sc, last) { return get_tbind(ar, sc, last); }
         if name_in(sc.sc_tparams, last) { return ty_node(ar, Typ::TVar(last)); }
+        // An alias wins over a struct or enum of the same name: `type X = Y;` is
+        // substitution, not a fallback, so it is asked before anything else that
+        // could answer to this name.
+        let adx = tydef_idx(sc, last);
+        if adx >= 0 as int { return expand_type_alias(a, ar, sc, adx as u32, last, args, p); }
     }
     // `Head::Assoc` where Head is a type parameter (or a bound one) is an
     // associated-type projection: in an instance the head is concrete and the
@@ -8264,7 +8369,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
     let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams, fpos);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ty, fpos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -10964,7 +11069,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: str::eq(mangled, "main") };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params, f.pos);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty, f.pos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -11696,7 +11801,7 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth,
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
@@ -11716,7 +11821,7 @@ fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyS
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth,
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
@@ -11736,7 +11841,7 @@ fn scope_with_skeleton(base: *const TyScope, sinfo: *const Vec<StructField>, eta
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth,
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
@@ -11774,7 +11879,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth,
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
@@ -11871,7 +11976,7 @@ fn scope_with_tparams_self(base: *const TyScope, tparams: *const Vec<str>, self_
         sc_ret: base.sc_ret,
         sc_self: self_ty,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth,
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
@@ -11896,7 +12001,7 @@ fn scope_with_self(base: *const TyScope, self_ty: Option<*const Typ>) -> TyScope
         sc_ret: base.sc_ret,
         sc_self: self_ty,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth,
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
@@ -11916,7 +12021,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
         sc_ret: base.sc_ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth,
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
@@ -11934,7 +12039,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_ret: ret,
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
-        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases,
+        sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth,
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
@@ -14008,7 +14113,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams, vd.vpos);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ann, vd.vpos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -17344,6 +17449,13 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     // Type-level `use foo::Bar;` aliases (collected after type names so the
     // `foo::Bar` marker is available to confirm Bar is a declared type).
     let mut taliases: Vec<TypeAlias> = Vec::with_capacity(a, 8 as u32);
+    // Top-level `type X<T..> = Ty;`. The reference checks these BEFORE structs
+    // and enums, so an alias sharing a name with a type still wins - substitution
+    // semantics, not a fallback.
+    let mut tydefs: Vec<TypeAliasDecl> = Vec::with_capacity(a, 8 as u32);
+    collect_type_defs(items, &tydefs);
+    let mut tyvisited: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut tydepth: u32 = 0 as u32;
     collect_type_aliases(a, ar, items, &snames, &enames, &fstructs, &fenums, &taliases);
     let mut xstructs: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut xaliases: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -17416,7 +17528,7 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods, sc_impls: &empty_impls,
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_err: &tc_err, sc_srcnames: &tc_srcnames, sc_srcbase: &tc_srcbase, sc_binds: &tc_binds, sc_bindbase: &tc_bindbase, sc_is_main: false };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_tydefs: &tydefs, sc_tyvisited: &tyvisited, sc_tydepth: &tydepth, sc_err: &tc_err, sc_srcnames: &tc_srcnames, sc_srcbase: &tc_srcbase, sc_binds: &tc_binds, sc_bindbase: &tc_bindbase, sc_is_main: false };
     // The coverage map must exist BEFORE any function body elaborates — a
     // materialisation gate that runs against an empty registry checks nothing.
     collect_sigils(ar, &base_scope, items, &sigils);
@@ -17532,7 +17644,7 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     let idx = ProgIdx { pi_runes: &toprunes, pi_wards: &topwards, pi_wardinsts: &topwardinsts, pi_sigils: &sigils, pi_claims: &claims, pi_snames: &snames, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods, pi_impls: &impls,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
-                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_err: &tc_err, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };
+                        pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_tydefs: &tydefs, pi_tyvisited: &tyvisited, pi_tydepth: &tydepth, pi_err: &tc_err, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };
     // Program-global `for`-loop gensym counter (`__fvK` / `__feK`), reset
     // once per program to match the oracle's `for_gensym := 0`.
     let mut gensym: u32 = 0 as u32;

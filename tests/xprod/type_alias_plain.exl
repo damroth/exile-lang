@@ -1,0 +1,4 @@
+// The control: a NON-generic alias, which the port already resolves.
+type Word = u32;
+fn takes(w: Word) -> u32 { return w; }
+fn main() { println(takes(7 as u32) as int); }

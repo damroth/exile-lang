@@ -1,0 +1,4 @@
+type A = B;
+type B = A;
+fn takes(x: A) -> int { return 1; }
+fn main() { println(1); }

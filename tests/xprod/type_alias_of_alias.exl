@@ -1,0 +1,5 @@
+// An alias whose body is another alias.
+type Id<T> = T;
+type Twice<T> = Id<T>;
+fn takes(x: Twice<int>) -> int { return x; }
+fn main() { println(takes(7)); }

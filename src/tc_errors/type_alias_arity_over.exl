@@ -1,0 +1,4 @@
+// One parameter declared, two supplied.
+type Id<T> = T;
+fn takes(x: Id<int, bool>) -> int { return x; }
+fn main() { println(1); }

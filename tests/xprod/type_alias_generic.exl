@@ -1,0 +1,4 @@
+// The simplest generic alias: one parameter, used as itself.
+type Id<T> = T;
+fn takes(x: Id<int>) -> int { return x; }
+fn main() { println(takes(7)); }
