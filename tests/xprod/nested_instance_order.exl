@@ -1,0 +1,17 @@
+// A generic prelude struct named in a signature and never built, whose own field
+// names another instance.
+//
+// The reference emits `Slot_i32_bool` before the `HashMap_i32_bool` whose
+// `slots` field points at it; the port emitted them the other way round. The
+// resolution site already had the rule - fields before self, with the comment
+// naming the measurement it was written from - so the defect was a BYPASS of it,
+// not its absence.
+//
+// The bypass: signature collection is the FIRST pass to resolve a type, and it
+// ran with no skeleton in scope. An instance minted there registers no fields,
+// so the nested instances its fields name are not minted with it, and the
+// container reaches the aggregate list first. A BUILT HashMap agreed throughout,
+// which is what located the pass.
+fn takes(h: *const HashMap<int, bool>) { println(1); }
+
+fn main() { println(1); }

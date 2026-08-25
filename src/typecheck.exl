@@ -17554,10 +17554,18 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     // Signatures before the global table: the oracle resolves a fn's PARAM
     // types before its return type (elab_one_fn), so params must reach the mono
     // list ahead of the return-type-only pass.
-    collect_fn_sigs_into(a, ar, &base_scope, items, &empty_tp, &gsigs);
+    // With the skeleton, not without it. These two passes are the FIRST to
+    // resolve a signature, so they are the first to mint an instance - and an
+    // instance minted with no skeleton in scope registers no fields, which means
+    // the nested instances its fields name are not minted with it. The container
+    // then reaches the aggregate list ahead of the type its own field points at,
+    // and the emission order says so. Same half-skeleton shape as the method
+    // collection above; this is the free-fn side of it.
+    let skel_sig_scope = scope_with_skeleton(&base_scope, &sinfo, &etags, &efields);
+    collect_fn_sigs_into(a, ar, &skel_sig_scope, items, &empty_tp, &gsigs);
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
-    let globals = collect_globals(a, ar, &base_scope, items);
+    let globals = collect_globals(a, ar, &skel_sig_scope, items);
     register_prelude_sigs(a, ar, &gsigs);
     // Every concrete `impl Iterator for X` eagerly carries its default
     // methods' Self-pinned return types in the footer.
