@@ -1,0 +1,19 @@
+// A struct FIELD naming a generic instance whose own field names a further one.
+//
+// The reference emits the container and stops: its field is printed as
+// `struct ex_Slot_i32_bool *`, and a pointer to an incomplete struct is legal
+// C89 that declares its own tag - so the nested instance never needs a
+// declaration here. The port registered it and emitted one.
+//
+// The boundary is the POSITION an instance is minted from, and it took a killed
+// hypothesis to find: it was proposed that the reference walks value fields and
+// not pointer targets, and the value-field twin diverges identically. A signature
+// registers nested instances (`fn takes(h: *const HashMap<int, bool>)` agrees,
+// with the Slot emitted by both); a struct field does not.
+//
+// The fix separates the position rather than weakening the substitution - which
+// is load-bearing, being what carries an allocator out of a `Vec<int>` field.
+// Both of those shapes are fixtures in this directory and must stay green.
+struct H2 { m: *const HashMap<int, bool> }
+
+fn main() { println(1); }

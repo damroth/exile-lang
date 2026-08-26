@@ -2114,6 +2114,7 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   type_alias_generic type_alias_of_alias type_alias_plain \
                   nested_instance_order \
                   field_chain_pulls_allocator \
+                  field_instance_names_nested \
                   prelude_named_field_dep prelude_named_and_built \
                   unused_enum_stays_dropped
 
