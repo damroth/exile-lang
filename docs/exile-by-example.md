@@ -1487,6 +1487,8 @@ fn main() { println((takes(7 as u32) as int) + pick(35)); }   // 42
 Not to be confused with an associated type inside a `trait` or `impl`,
 which uses the same keyword for a different job ([sec 15](#15-traits)).
 
+[examples/type_alias.exl](../examples/type_alias.exl)
+
 ### Option, Result, and error handling
 
 `Option<T>` and `Result<T, E>` live in the prelude — no `use`, no `enum`

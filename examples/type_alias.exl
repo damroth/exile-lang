@@ -1,0 +1,46 @@
+// Type aliases - a second name for a type that already exists. An alias is
+// TRANSPARENT: it wraps nothing, converts nothing and costs nothing. By the time
+// C is emitted the name is gone and only the type it stood for is left, so a
+// `Half` and a `u16` are the same value in the same register.
+//
+// On m68k that is the point. Width is not decoration - `u16` and `u32` are
+// different instructions and different cycle counts - so naming the widths a
+// program works in keeps the intent readable without moving a single byte.
+
+type Half = u16;                 // a 16-bit hardware word
+type Word = u32;                 // ... and a 32-bit one
+
+// An alias may take parameters, and its body may be another alias.
+type Buf<T> = [T; 4];            // four of whatever it is given
+type Line   = Buf<Word>;         // an alias whose body is another alias
+
+struct Sprite {
+    x: Half,
+    y: Half,
+    colour: Word,
+}
+
+// Aliases work anywhere a type does - parameters, returns, fields, locals.
+fn widen(h: Half) -> Word {
+    return h as Word;
+}
+
+fn total(line: *const Line) -> int {
+    let mut sum = 0;
+    for i in 0..4 { sum = sum + line[i] as int; }
+    return sum;
+}
+
+fn main() {
+    // `Half` IS `u16`, so nothing is converted crossing the name.
+    let h: Half = 320 as u16;
+    println(widen(h) as int);                  // 320
+
+    let s = Sprite { x: 160 as u16, y: 100 as u16, colour: 4095 as u32 };
+    println(s.x as int + s.y as int);          // 260
+    println(s.colour as int);                  // 4095
+
+    // `Line` unfolds to `Buf<Word>`, and that to `[u32; 4]`.
+    let line: Line = [1 as u32, 2 as u32, 4 as u32, 8 as u32];
+    println(total(&line));                     // 15
+}

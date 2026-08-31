@@ -1,0 +1,210 @@
+;; exile-tokens-dump v1 examples/type_alias.exl
+Type @examples/type_alias.exl:10:1
+(Ident Half) @examples/type_alias.exl:10:6
+Eq @examples/type_alias.exl:10:11
+(Ident u16) @examples/type_alias.exl:10:13
+Semicolon @examples/type_alias.exl:10:16
+Type @examples/type_alias.exl:11:1
+(Ident Word) @examples/type_alias.exl:11:6
+Eq @examples/type_alias.exl:11:11
+(Ident u32) @examples/type_alias.exl:11:13
+Semicolon @examples/type_alias.exl:11:16
+Type @examples/type_alias.exl:14:1
+(Ident Buf) @examples/type_alias.exl:14:6
+Lt @examples/type_alias.exl:14:9
+(Ident T) @examples/type_alias.exl:14:10
+Gt @examples/type_alias.exl:14:11
+Eq @examples/type_alias.exl:14:13
+LBracket @examples/type_alias.exl:14:15
+(Ident T) @examples/type_alias.exl:14:16
+Semicolon @examples/type_alias.exl:14:17
+(Int 4) @examples/type_alias.exl:14:19
+RBracket @examples/type_alias.exl:14:20
+Semicolon @examples/type_alias.exl:14:21
+Type @examples/type_alias.exl:15:1
+(Ident Line) @examples/type_alias.exl:15:6
+Eq @examples/type_alias.exl:15:13
+(Ident Buf) @examples/type_alias.exl:15:15
+Lt @examples/type_alias.exl:15:18
+(Ident Word) @examples/type_alias.exl:15:19
+Gt @examples/type_alias.exl:15:23
+Semicolon @examples/type_alias.exl:15:24
+Struct @examples/type_alias.exl:17:1
+(Ident Sprite) @examples/type_alias.exl:17:8
+LBrace @examples/type_alias.exl:17:15
+(Ident x) @examples/type_alias.exl:18:5
+Colon @examples/type_alias.exl:18:6
+(Ident Half) @examples/type_alias.exl:18:8
+Comma @examples/type_alias.exl:18:12
+(Ident y) @examples/type_alias.exl:19:5
+Colon @examples/type_alias.exl:19:6
+(Ident Half) @examples/type_alias.exl:19:8
+Comma @examples/type_alias.exl:19:12
+(Ident colour) @examples/type_alias.exl:20:5
+Colon @examples/type_alias.exl:20:11
+(Ident Word) @examples/type_alias.exl:20:13
+Comma @examples/type_alias.exl:20:17
+RBrace @examples/type_alias.exl:21:1
+Fn @examples/type_alias.exl:24:1
+(Ident widen) @examples/type_alias.exl:24:4
+LParen @examples/type_alias.exl:24:9
+(Ident h) @examples/type_alias.exl:24:10
+Colon @examples/type_alias.exl:24:11
+(Ident Half) @examples/type_alias.exl:24:13
+RParen @examples/type_alias.exl:24:17
+Arrow @examples/type_alias.exl:24:19
+(Ident Word) @examples/type_alias.exl:24:22
+LBrace @examples/type_alias.exl:24:27
+Return @examples/type_alias.exl:25:5
+(Ident h) @examples/type_alias.exl:25:12
+As @examples/type_alias.exl:25:14
+(Ident Word) @examples/type_alias.exl:25:17
+Semicolon @examples/type_alias.exl:25:21
+RBrace @examples/type_alias.exl:26:1
+Fn @examples/type_alias.exl:28:1
+(Ident total) @examples/type_alias.exl:28:4
+LParen @examples/type_alias.exl:28:9
+(Ident line) @examples/type_alias.exl:28:10
+Colon @examples/type_alias.exl:28:14
+Star @examples/type_alias.exl:28:16
+Const @examples/type_alias.exl:28:17
+(Ident Line) @examples/type_alias.exl:28:23
+RParen @examples/type_alias.exl:28:27
+Arrow @examples/type_alias.exl:28:29
+(Ident int) @examples/type_alias.exl:28:32
+LBrace @examples/type_alias.exl:28:36
+Let @examples/type_alias.exl:29:5
+Mut @examples/type_alias.exl:29:9
+(Ident sum) @examples/type_alias.exl:29:13
+Eq @examples/type_alias.exl:29:17
+(Int 0) @examples/type_alias.exl:29:19
+Semicolon @examples/type_alias.exl:29:20
+For @examples/type_alias.exl:30:5
+(Ident i) @examples/type_alias.exl:30:9
+In @examples/type_alias.exl:30:11
+(Int 0) @examples/type_alias.exl:30:14
+DotDot @examples/type_alias.exl:30:15
+(Int 4) @examples/type_alias.exl:30:17
+LBrace @examples/type_alias.exl:30:19
+(Ident sum) @examples/type_alias.exl:30:21
+Eq @examples/type_alias.exl:30:25
+(Ident sum) @examples/type_alias.exl:30:27
+Plus @examples/type_alias.exl:30:31
+(Ident line) @examples/type_alias.exl:30:33
+LBracket @examples/type_alias.exl:30:37
+(Ident i) @examples/type_alias.exl:30:38
+RBracket @examples/type_alias.exl:30:39
+As @examples/type_alias.exl:30:41
+(Ident int) @examples/type_alias.exl:30:44
+Semicolon @examples/type_alias.exl:30:47
+RBrace @examples/type_alias.exl:30:49
+Return @examples/type_alias.exl:31:5
+(Ident sum) @examples/type_alias.exl:31:12
+Semicolon @examples/type_alias.exl:31:15
+RBrace @examples/type_alias.exl:32:1
+Fn @examples/type_alias.exl:34:1
+(Ident main) @examples/type_alias.exl:34:4
+LParen @examples/type_alias.exl:34:8
+RParen @examples/type_alias.exl:34:9
+LBrace @examples/type_alias.exl:34:11
+Let @examples/type_alias.exl:36:5
+(Ident h) @examples/type_alias.exl:36:9
+Colon @examples/type_alias.exl:36:10
+(Ident Half) @examples/type_alias.exl:36:12
+Eq @examples/type_alias.exl:36:17
+(Int 320) @examples/type_alias.exl:36:19
+As @examples/type_alias.exl:36:23
+(Ident u16) @examples/type_alias.exl:36:26
+Semicolon @examples/type_alias.exl:36:29
+(Ident println) @examples/type_alias.exl:37:5
+LParen @examples/type_alias.exl:37:12
+(Ident widen) @examples/type_alias.exl:37:13
+LParen @examples/type_alias.exl:37:18
+(Ident h) @examples/type_alias.exl:37:19
+RParen @examples/type_alias.exl:37:20
+As @examples/type_alias.exl:37:22
+(Ident int) @examples/type_alias.exl:37:25
+RParen @examples/type_alias.exl:37:28
+Semicolon @examples/type_alias.exl:37:29
+Let @examples/type_alias.exl:39:5
+(Ident s) @examples/type_alias.exl:39:9
+Eq @examples/type_alias.exl:39:11
+(Ident Sprite) @examples/type_alias.exl:39:13
+LBrace @examples/type_alias.exl:39:20
+(Ident x) @examples/type_alias.exl:39:22
+Colon @examples/type_alias.exl:39:23
+(Int 160) @examples/type_alias.exl:39:25
+As @examples/type_alias.exl:39:29
+(Ident u16) @examples/type_alias.exl:39:32
+Comma @examples/type_alias.exl:39:35
+(Ident y) @examples/type_alias.exl:39:37
+Colon @examples/type_alias.exl:39:38
+(Int 100) @examples/type_alias.exl:39:40
+As @examples/type_alias.exl:39:44
+(Ident u16) @examples/type_alias.exl:39:47
+Comma @examples/type_alias.exl:39:50
+(Ident colour) @examples/type_alias.exl:39:52
+Colon @examples/type_alias.exl:39:58
+(Int 4095) @examples/type_alias.exl:39:60
+As @examples/type_alias.exl:39:65
+(Ident u32) @examples/type_alias.exl:39:68
+RBrace @examples/type_alias.exl:39:72
+Semicolon @examples/type_alias.exl:39:73
+(Ident println) @examples/type_alias.exl:40:5
+LParen @examples/type_alias.exl:40:12
+(Ident s) @examples/type_alias.exl:40:13
+Dot @examples/type_alias.exl:40:14
+(Ident x) @examples/type_alias.exl:40:15
+As @examples/type_alias.exl:40:17
+(Ident int) @examples/type_alias.exl:40:20
+Plus @examples/type_alias.exl:40:24
+(Ident s) @examples/type_alias.exl:40:26
+Dot @examples/type_alias.exl:40:27
+(Ident y) @examples/type_alias.exl:40:28
+As @examples/type_alias.exl:40:30
+(Ident int) @examples/type_alias.exl:40:33
+RParen @examples/type_alias.exl:40:36
+Semicolon @examples/type_alias.exl:40:37
+(Ident println) @examples/type_alias.exl:41:5
+LParen @examples/type_alias.exl:41:12
+(Ident s) @examples/type_alias.exl:41:13
+Dot @examples/type_alias.exl:41:14
+(Ident colour) @examples/type_alias.exl:41:15
+As @examples/type_alias.exl:41:22
+(Ident int) @examples/type_alias.exl:41:25
+RParen @examples/type_alias.exl:41:28
+Semicolon @examples/type_alias.exl:41:29
+Let @examples/type_alias.exl:44:5
+(Ident line) @examples/type_alias.exl:44:9
+Colon @examples/type_alias.exl:44:13
+(Ident Line) @examples/type_alias.exl:44:15
+Eq @examples/type_alias.exl:44:20
+LBracket @examples/type_alias.exl:44:22
+(Int 1) @examples/type_alias.exl:44:23
+As @examples/type_alias.exl:44:25
+(Ident u32) @examples/type_alias.exl:44:28
+Comma @examples/type_alias.exl:44:31
+(Int 2) @examples/type_alias.exl:44:33
+As @examples/type_alias.exl:44:35
+(Ident u32) @examples/type_alias.exl:44:38
+Comma @examples/type_alias.exl:44:41
+(Int 4) @examples/type_alias.exl:44:43
+As @examples/type_alias.exl:44:45
+(Ident u32) @examples/type_alias.exl:44:48
+Comma @examples/type_alias.exl:44:51
+(Int 8) @examples/type_alias.exl:44:53
+As @examples/type_alias.exl:44:55
+(Ident u32) @examples/type_alias.exl:44:58
+RBracket @examples/type_alias.exl:44:61
+Semicolon @examples/type_alias.exl:44:62
+(Ident println) @examples/type_alias.exl:45:5
+LParen @examples/type_alias.exl:45:12
+(Ident total) @examples/type_alias.exl:45:13
+LParen @examples/type_alias.exl:45:18
+Amp @examples/type_alias.exl:45:19
+(Ident line) @examples/type_alias.exl:45:20
+RParen @examples/type_alias.exl:45:24
+RParen @examples/type_alias.exl:45:25
+Semicolon @examples/type_alias.exl:45:26
+RBrace @examples/type_alias.exl:46:1
+Eof @examples/type_alias.exl:47:1

@@ -48,6 +48,7 @@ and links back here at each step.
 | `enums` | ADTs: unit, tuple and struct variants |
 | `string_concat` | `++`, a compile-time string concatenation |
 | `type_name` | `type_name(expr)` yields the type's name as a `str` |
+| `type_alias` | `type Name<T> = ...`, a second name resolved at compile time |
 
 ## Memory
 

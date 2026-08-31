@@ -1,0 +1,9 @@
+;; exile-ast-dump v1 examples/type_alias.exl
+(type-alias Half (int u16))
+(type-alias Word (int u32))
+(type-alias Buf (tparams T) (array (struct T) ?))
+(type-alias Line (struct-app Buf (struct Word)))
+(struct Sprite (fields (field x (struct Half)) (field y (struct Half)) (field colour (struct Word))))
+(fn widen (params (param h (struct Half))) (struct Word) (body (return (cast (var h) (struct Word)))))
+(fn total (params (param line (const-ptr (struct Line)))) (int i32) (body (let mut sum (int 0)) (for i (range (int 0) (int 4) exclusive) (assign sum (binop + (var sum) (cast (index (var line) (var i)) (int i32))))) (return (var sum))))
+(fn main (params ) void (body (let h (ty (struct Half)) (cast (int 320) (int u16))) (expr-stmt (call println (cast (call widen (var h)) (int i32)))) (let s (struct-lit Sprite (field x (cast (int 160) (int u16))) (field y (cast (int 100) (int u16))) (field colour (cast (int 4095) (int u32))))) (expr-stmt (call println (binop + (cast (field-access (var s) x) (int i32)) (cast (field-access (var s) y) (int i32))))) (expr-stmt (call println (cast (field-access (var s) colour) (int i32)))) (let line (ty (struct Line)) (array-lit (cast (int 1) (int u32)) (cast (int 2) (int u32)) (cast (int 4) (int u32)) (cast (int 8) (int u32)))) (expr-stmt (call println (call total (ref (var line)))))))
