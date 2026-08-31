@@ -5,6 +5,148 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-08-31
+
+**The language grows in two places, and the shadowing class closes.** `seal`
+answered *when* a sequence is indivisible and never *which registers* it is
+about; an `atomic` clause answers that, and the last of the five limits the seal
+era wrote down stops being a limit. Top-level `type` aliases resolve in the
+compiler that ships. Behind both sits the round that made the compiler's own
+prelude type-check as an ordinary program for the first time - which found that
+the prelude had been written in a form the language rejects, and a chain of
+type-checker defects behind it.
+
+### Added
+
+- An `atomic` clause inside a `ward` names the set of registers whose accesses
+  must lie in one seal region:
+
+  ```rust
+  ward Custom {
+      dmaconr: u16 at 0x002 readwrite;
+      dmacon:  u16 at 0x096 readwrite;
+
+      atomic { dmaconr, dmacon }
+  }
+  ```
+
+  Two rules follow: every access to a member must be inside a `seal`, and every
+  access to members of one group, within one function, must be inside the
+  **same** region. A save read outside the region with only the restore inside -
+  precisely the bug a seal exists to prevent - used to compile clean, run, and
+  balance. The check is lexical and per-function; a helper called from inside a
+  seal is deliberately not covered, because covering it means the flow analysis
+  this design refuses, and ordering inside a group is a stronger property that
+  would need a declaration of its own. Like every other construct in the
+  capability model the clause costs nothing at run time: a program with it and
+  the same program without it emit byte-identical C, which a gate asserts rather
+  than a comment claiming it. `atomic` is not a keyword - a ward field, a struct
+  field, a function or a local may still be named that.
+
+- Top-level `type` aliases. A `type` declaration gives an existing type a second
+  name by pure compile-time substitution - no new type, no conversion, and no
+  trace in the emitted C:
+
+  ```rust
+  type Half   = u16;           // a plain alias
+  type Word   = u32;
+  type Buf<T> = [T; 4];        // one parameter
+  type Line   = Buf<Word>;     // an alias whose body is another alias
+  ```
+
+  An alias is looked up before structs and enums, so it wins a shared name; its
+  parameter count is checked; `pub type` exports one from a module; and a cycle
+  is rejected rather than looped on, whether direct (`type A = B; type B = A;`)
+  or through a nested position (`type A = Vec<A>;`). New example
+  [`examples/type_alias.exl`](examples/type_alias.exl) and a tutorial section
+  beside it.
+
+- Type applications are checked against the declaration's arity - structs, enums
+  and aliases alike. Too many arguments, too few, or any at all on a
+  non-generic declaration is an error at the annotation instead of a silently
+  accepted program.
+
+- A user's top-level declaration shadows the prelude's of the same kind. A
+  program that declares its own `struct Vec` gets its own, keeps the position it
+  was written in, and the prelude items that name the shadowed type are dropped
+  with it. Where a collision makes the surviving prelude itself illegal, the
+  program is refused with a diagnostic about the prelude rather than compiled
+  into C whose meaning depends on which declaration claimed the name first.
+
+- The tutorial states the reserved-word set: `i64`, `u64`, `i128`, `u128`,
+  `usize` and `isize` are rejected as identifiers so that adding those widths
+  later cannot reinterpret source which used one as a name, and `shared` is held
+  the same way for the capability model.
+
+- Four gates, taking `selfhost-verify` from 28 to 32. `selfhost-atomic` pins the
+  new clause - nine rejections asserted word for word from a table the gate
+  reads rather than a string in the recipe, and five accepting programs built
+  over a RAM stub and RUN, because with no oracle for this syntax "it compiles"
+  is not evidence. `selfhost-own-tree` pins that the self-hosted compiler builds
+  `src/main.exl` and agrees with the reference on it byte for byte.
+  `selfhost-prelude-probe` and `selfhost-prelude-struct-lists` hold the
+  shadowing rules.
+
+### Changed
+
+- The prelude's generic impls declare their parameter in the impl header -
+  `impl<T> Vec<T>`, not `impl Vec<T>`. The old spelling is a form the language
+  rejects, and it survived for the whole life of the compiler because
+  instantiation binds the parameter from the call site: a declaration that
+  carried no parameter was never asked to stand on its own.
+
+- A ward fixture runs on m68k under an emulator now, not only on the host.
+  Nothing in the ward era had ever been executed on the target. Asked, it
+  faulted: the fixture's backing was a `c_ulong`, eight bytes on a 64-bit host
+  and four on m68k, so the ward wrote and read past the end of its object. The
+  backing is `[u8; 8]` - the same eight bytes on every target - and the gate now
+  extracts the mangled type name out of the emission and asserts the C stub
+  defines exactly it, so a rename fails loudly instead of linking to different
+  storage.
+
+- The documented limits of `seal` are four, not five. The fifth is replaced by
+  the clause that closed it.
+
+### Fixed
+
+- A `match` arm binding keeps its payload's generic instantiation. A field read
+  through such a binding reported `c_void` and a method call `unknown type 'T'`.
+  This was the one file the self-hosted compiler could not build, and no single
+  fixture could show it: constructing the value requires a type annotation, and
+  that annotation registers the instance's fields before the match ever asks -
+  the defect needs construction and consumption in different files.
+
+- An `impl` whose declared parameters are not its target's arguments, in order,
+  is rejected. `impl<A, B> Pair<B, A>` and `impl<T> Plain` used to compile, and
+  a swapped binding compiles and means something else; three other malformed
+  shapes sent the reader to a use of the parameter instead of to the header that
+  failed to declare it.
+
+- An associated type may be named in a trait default method's signature
+  (`-> Vec<Self::Item>`), a method's signature resolves with its target pinned
+  as `Self`, and a generic implementor inherits the trait's default methods. A
+  projection under a tuple, an array or an `own *T` is refused with a diagnostic
+  instead of aborting the compiler - an abort is the worst face a limit can wear.
+
+- Emitted C that `cc` refused, from a program the compiler had accepted. A
+  prelude type earns its declaration by being NAMED, not only by being built,
+  and the used-set closes through the fields of reachable instances. Before,
+  `struct Holder { b: *const Vec<int> }` emitted a `Vec` whose allocator field
+  had no declaration: `field 'alloc' has incomplete type`.
+
+- Signature collection resolves types with the whole skeleton in scope, so a
+  container no longer reaches the aggregate list ahead of the type its own field
+  points at; and an instance minted from a struct field names its nested types
+  without registering them.
+
+- Name resolution asks structs before enums, and a generic application binds
+  structs before enums with its arity following the binding.
+
+- A method call reports its arguments before its missing callee, so a call in
+  which neither the method nor an argument exists names the argument.
+
+- Every prelude struct declares how many type arguments it takes.
+
 ## [1.2.0] - 2026-08-03
 
 **Consolidation.** 1.1.0 shipped the capability model; 1.2.0 spends the cycle on
@@ -1028,4 +1170,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[1.2.0]: https://github.com/damroth/exile-lang/releases/tag/v1.2.0
+[1.3.0]: https://github.com/damroth/exile-lang/releases/tag/v1.3.0
