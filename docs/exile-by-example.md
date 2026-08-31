@@ -254,6 +254,13 @@ for compile-time string concat, see below).
 > FFI note: `int`/`i32`/`u32` map to C `long` (cross-stability across
 > SAS/C vs amiga-gcc vs vbcc). For libc, use `c_int` (section 16).
 
+> Reserved: there is no 64-bit or pointer-sized integer yet, but the
+> names are already taken. `i64`, `u64`, `i128`, `u128`, `usize` and
+> `isize` are rejected as identifiers ("reserved word (future integer
+> width)"), so adding those widths later cannot reinterpret source that
+> used one as a name. Index and size with `i32`/`u32`. `shared` is
+> reserved the same way for the capability model (section 22).
+
 ### Hex integer literals
 
 Integer literals also take a hex form — `0x` or `0X` prefix,
@@ -1445,6 +1452,40 @@ work. A generic struct can also be a function parameter
 instance too — the base pins the concrete instance, and the copied-over
 fields keep its monomorphized types. Methods on generic structs are
 covered in [sec 14](#14-methods).
+
+### Type aliases - `type Name<T> = ...`
+
+A `type` declaration gives an existing type a second name. It is pure
+compile-time substitution - no new type, no conversion, and no trace in
+the emitted C.
+
+```rust
+struct Item { id: int }
+
+type Word = u32;                    // plain alias
+type Id<T> = T;                     // one parameter, used as itself
+type Twice<T> = Id<T>;              // an alias whose body is another alias
+pub type Items = Vec<Item>;         // `pub` exports it from a module
+
+fn takes(w: Word) -> u32 { return w; }
+fn pick(x: Twice<int>) -> int { return x; }
+
+fn main() { println((takes(7 as u32) as int) + pick(35)); }   // 42
+```
+
+- An alias is interchangeable with its target everywhere: `Word` *is*
+  `u32`, so there is no cast, no wrapper, and no distinct type. For a
+  type the checker keeps apart from its representation, declare a
+  struct instead.
+- Parameter count is checked. Passing arguments to a plain alias, or the
+  wrong number to a generic one, is an error: `type alias 'Id' expects
+  1 generic argument(s), got 2`.
+- Cycles are rejected instead of looped on, whether direct
+  (`type A = B; type B = A;`) or through another type (`type A = Vec<A>;`):
+  `type alias cycle through 'A' — alias resolution would loop`.
+
+Not to be confused with an associated type inside a `trait` or `impl`,
+which uses the same keyword for a different job ([sec 15](#15-traits)).
 
 ### Option, Result, and error handling
 
