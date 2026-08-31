@@ -489,7 +489,7 @@ fn pointee_owns(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: A
     return pointee_owns_go(structs, enums, a, &seen, t);
 }
 
-fn fail_repeat_affine(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos) {
+fn fail_repeat_affine(ar: *Arena, mv: *const Mv, pos: Pos) {
     raise_mv(ar, mv, pos, "cannot use a @move value in `[expr; N]` — the array-repeat lowering shallow-copies the same value into every slot, aliasing the heap-owning source N times (build each element explicitly or use a non-@move element type)");
     return;
 }
@@ -709,13 +709,13 @@ fn drop_binds(a: Allocator, live: *const Vec<MoveBinding>, binds: *const Vec<Fie
 fn walk_guard(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
               mv: *const Mv, live: *const Vec<MoveBinding>, g: Option<*const Texpr>) {
     match g {
-        Option::Some(ge) => { let _x = walk_expr(structs, enums, a, ar, mv, live, ge); }
+        Option::Some(ge) => { walk_expr(structs, enums, a, ar, mv, live, ge); }
         | Option::None => { }
     }
     return;
 }
 
-fn fail_arm_unbound(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos) {
+fn fail_arm_unbound(ar: *Arena, mv: *const Mv, pos: Pos) {
     raise_mv(ar, mv, pos, "this arm moves out part of the matched payload but leaves an owned field unbound — after the arm the matched value keeps only its shell, so that field would silently leak; bind and consume every owned payload of the variant");
     return;
 }
@@ -761,7 +761,7 @@ fn arm_leak_gates(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a:
 
 fn arm_slot_gate(a: Allocator, ar: *Arena, mv: *const Mv, pos: Pos, slot: *const OwnSlot,
                  after: *const Vec<MoveBinding>) {
-    if !slot.os_bound { fail_arm_unbound(a, ar, mv, pos); return; }
+    if !slot.os_bound { fail_arm_unbound(ar, mv, pos); return; }
     match mb_state_of(after, slot.os_name) {
         MoveState::Live => { fail_arm_sibling(a, ar, mv, pos, slot.os_name); }
         | _o => { }
@@ -1053,7 +1053,7 @@ fn walk_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             // `[v; N]` lowers to a fill loop that shallow-copies the evaluated
             // value into every slot — for an affine type that aliases the same
             // heap-owning source N times.  Refuse before the copy ships.
-            if is_affine_typ(structs, value.ty) { fail_repeat_affine(a, ar, mv, value.pos); }
+            if is_affine_typ(structs, value.ty) { fail_repeat_affine(ar, mv, value.pos); }
             w
         }
         | TexprNode::TBlock { stmts, trailing } => {

@@ -805,7 +805,7 @@ fn discarded_struct(structs: *const Vec<StructSig>, ar: *Arena, gs: *GlueState, 
     raise_dp(ar, gs, e.pos, "this expression produces an owning value that is silently discarded (and leaked) — bind it with `let` so it can be dropped or consumed");
     return;
 }
-fn check_discarded_own(structs: *const Vec<StructSig>, a: Allocator, ar: *Arena, gs: *GlueState, e: *const Texpr) {
+fn check_discarded_own(structs: *const Vec<StructSig>, ar: *Arena, gs: *GlueState, e: *const Texpr) {
     match *e.ty {
         Typ::TOwnPtr(_i) => {
             raise_dp(ar, gs, e.pos, "this call returns an owned pointer that is silently discarded (and leaked) — bind it with `let`, then free, move, or return it");
@@ -840,7 +840,7 @@ fn check_assign_leak(a: Allocator, ar: *Arena, gs: *GlueState, e: *const DEntry,
 // An array of bare `own *T` has no allocator at hand to release its elements
 // with - silent-leak territory, so the reference rejects it rather than emitting
 // a drop it cannot write.
-fn check_array_of_own(a: Allocator, ar: *Arena, gs: *GlueState, ty: *const Typ, pos: Pos) {
+fn check_array_of_own(ar: *Arena, gs: *GlueState, ty: *const Typ, pos: Pos) {
     match *ty {
         Typ::TArray { elem, size } => {
             match *elem {
@@ -1435,7 +1435,7 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             // Freeze-audit B12: an expression statement whose value owns
             // discards that ownership on the floor - the never-consumed check
             // only ever sees BINDINGS, so nothing else would catch it.
-            check_discarded_own(structs, a, ar, gs, e);
+            check_discarded_own(structs, ar, gs, e);
             let st2 = apply_expr(structs, enums, a, ar, st, e);
             out.push(*s);
             st2
@@ -1483,7 +1483,7 @@ fn walk_let(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloc
         if !str::eq(es2[m].den_name, name) { st3.push(es2[m]); }
         m = m + 1 as u32;
     }
-    check_array_of_own(a, ar, gs, value.ty, pos);
+    check_array_of_own(ar, gs, value.ty, pos);
     match entry_for(structs, name, value.ty, pos) {
         Option::Some(e) => {
             let e2 = match e.den_kind {
@@ -1762,7 +1762,7 @@ fn rewrite_fn(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
     let pts = f.tf_param_tys.as_slice();
     let mut i = 0 as u32;
     while i < f.tf_func.params.length() && i < f.tf_param_tys.length() {
-        check_array_of_own(a, ar, gs, pts[i], f.tf_func.pos);
+        check_array_of_own(ar, gs, pts[i], f.tf_func.pos);
         match entry_for(structs, ps[i].pname, pts[i], f.tf_func.pos) {
             Option::Some(e) => st.push(e)
             | Option::None => {}

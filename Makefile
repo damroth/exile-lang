@@ -764,7 +764,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -913,7 +913,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1088,6 +1088,17 @@ selfhost-rune: $(EXILC_BIN)
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/rune_read.c -o $(C_OUT)/rune_read.o \
 	  || { echo "selfhost-rune: read_load C is not clean C89"; exit 1; }; \
 	rm -f $(C_OUT)/r1.c $(C_OUT)/r1.err $(C_OUT)/r2.c $(C_OUT)/r2.err; \
+	rm -f $(C_OUT)/r8.c $(C_OUT)/r8.err $(C_OUT)/r9.c $(C_OUT)/r9.err $(C_OUT)/r10.c $(C_OUT)/r10.err; \
+	for rr in r8:tests/rune/reject_read_args.exl r9:tests/rune/reject_reg_read_args.exl \
+	          r10:tests/rune/reject_ward_field_read_args.exl; do \
+	  tag=$${rr%%:*}; fx=$${rr##*:}; \
+	  test -f $$fx || { echo "selfhost-rune: MISSING $$fx"; exit 1; }; \
+	  if $(EXILC_BIN) --target c --c-out $(C_OUT)/$$tag.c $$fx >/dev/null 2>$(C_OUT)/$$tag.err; then \
+	    echo "selfhost-rune: $$tag - port ACCEPTED extra arguments to a rune .read (they are DROPPED, not ignored)"; exit 1; fi; \
+	  if [ ! -s $(C_OUT)/$$tag.err ]; then echo "selfhost-rune: $$tag empty diagnostic (floor)"; exit 1; fi; \
+	  grep -q 'a rune `.read` takes no arguments' $(C_OUT)/$$tag.err \
+	    || { echo "selfhost-rune: $$tag wrong message: `head -1 $(C_OUT)/$$tag.err`"; exit 1; }; \
+	done; \
 	if $(EXILC_BIN) --target c --c-out $(C_OUT)/r1.c tests/rune/reject_write_on_read.exl >/dev/null 2>$(C_OUT)/r1.err; then \
 	  echo "selfhost-rune: R1 — port ACCEPTED a write on a read-only rune"; exit 1; fi; \
 	if [ ! -s $(C_OUT)/r1.err ]; then echo "selfhost-rune: R1 empty diagnostic (floor)"; exit 1; fi; \
@@ -1194,7 +1205,7 @@ selfhost-rune: $(EXILC_BIN)
 	printf '11\n22\n0\n305419896\n' > $(C_OUT)/rune_rr.expected; \
 	if ! diff -q $(C_OUT)/rune_rr.expected $(C_OUT)/rune_rr.out >/dev/null; then \
 	  echo "selfhost-rune: rune-over-RAM round-trip WRONG (volatile lowering broken at -O2):"; cat $(C_OUT)/rune_rr.out; exit 1; fi; \
-	echo "selfhost-rune: clean (golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R7 + P1 signatures (dir across the call boundary, widening, bare) + ACCEPT attenuation + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
+	echo "selfhost-rune: clean (golden $$writes==$$stores + read + strobe $$strobes==$$zstores + register-file color[i] + top-level $$tlg *const globals + rejection table R1-R10 (all three read paths refuse arguments) + P1 signatures (dir across the call boundary, widening, bare) + ACCEPT attenuation + rune-over-RAM round-trip+width at -O2; cc -Wall -Werror)"
 
 # ===== ward capability — the port's golden gate =====
 #
@@ -1623,6 +1634,36 @@ selfhost-prelude-probe: $(EXILC_BIN)
 	  echo "selfhost-prelude-probe: the port does not say the pinned line"; \
 	  echo "  pinned: $(PRELUDE_PROBE_LINE)"; echo "  port:   $$pline"; exit 1; fi; \
 	echo "selfhost-prelude-probe: clean - both compilers say the pinned line, position included"
+
+# ===== the compiler's own source compiles WARNING-FREE =====
+#
+# Thirty-three warnings accumulated here unnoticed, which is what an unwatched
+# channel does. Two of them were not cosmetic: an unused `args` on both rune
+# `.read` paths was the arity check nobody had written, and the argument was
+# DROPPED rather than ignored.
+#
+# The measurement has to be taken through an OPEN channel. `bootstrap-from-seed`
+# reports zero warnings for a reason that has nothing to do with the source - it
+# redirects every compiler invocation to /dev/null - and a number read from a
+# muted pipe is not a measurement.
+.PHONY: selfhost-warning-free
+selfhost-warning-free: $(EXILC_BIN)
+	@test -f src/exilc.exl || { echo "selfhost-warning-free: MISSING src/exilc.exl"; exit 1; }; \
+	rm -f $(C_OUT)/wf.c $(C_OUT)/wf.err; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/wf.c src/exilc.exl 2>$(C_OUT)/wf.err >/dev/null \
+	  || { echo "selfhost-warning-free: the port cannot compile its own source"; head -3 $(C_OUT)/wf.err; exit 1; }; \
+	test -s $(C_OUT)/wf.c \
+	  || { echo "selfhost-warning-free: EMPTY emission - the run said nothing because it did nothing"; exit 1; }; \
+	n=`grep -c 'warning:' $(C_OUT)/wf.err`; \
+	if [ "$$n" != "0" ]; then \
+	  echo "selfhost-warning-free: $$n warning(s) compiling the compiler's own source."; \
+	  echo "  An unused parameter is worth reading before silencing - twice now one has been a missing check:"; \
+	  grep 'warning:' $(C_OUT)/wf.err | head -10; exit 1; fi; \
+	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/wf.c -o $(C_OUT)/wf.o 2>$(C_OUT)/wf.cc \
+	  || { echo "selfhost-warning-free: the compiler's OWN emission is not clean C89 at the standard every fixture is held to:"; \
+	       head -6 $(C_OUT)/wf.cc; exit 1; }; \
+	rm -f $(C_OUT)/wf.o; \
+	echo "selfhost-warning-free: clean (src/exilc.exl compiles with 0 warnings off an open stderr, and its emission is clean C89 at -Wall -Werror)"
 
 # ===== `atomic` groups: the rows, structural and regional =====
 #

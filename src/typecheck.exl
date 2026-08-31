@@ -2756,7 +2756,7 @@ fn check_gen_call_arity(a: Allocator, ar: *Arena, sc: *const TyScope, aname: str
     return;
 }
 fn check_gen_call_args(a: Allocator, ar: *Arena, sc: *const TyScope, cscope: *const TyScope,
-                       aname: str, name: str, anns: *const Vec<*const TypeAnn>, skip: u32,
+                       name: str, anns: *const Vec<*const TypeAnn>, skip: u32,
                        targs: *const Vec<*const Texpr>, raw: *const Vec<*const Expr>, p: Pos) {
     let total = anns.length();
     let np = if total > skip { total - skip } else { 0 as u32 };
@@ -2898,7 +2898,7 @@ fn register_named_prelude(a: Allocator, sc: *const TyScope, t: *const Typ) {
 }
 fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                 gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
-    seal_seam_guard(a, ar, sc, gf.mangled, p);
+    seal_seam_guard(ar, sc, gf.mangled, p);
     let targs = elab_args_coerced(a, ar, g, sc, env, gf.mangled, args);
     check_call(a, ar, sc, "function", gf.name, gf.mangled, args, &targs, gf.gf_variadic, p);
     let ty = ret_or_void(ar, gf.ret);
@@ -2916,12 +2916,12 @@ fn is_seal_seam(mangled: str) -> bool {
 // The same property reached without naming `sys` — a raw extern
 // binds the identical C symbol.  The test is on the EMITTED symbol, not on the
 // source name: a plain `fn sys_seal_exit` mangles away and collides with nothing.
-fn seal_seam_decl_guard(a: Allocator, ar: *Arena, sc: *const TyScope, emit: str, p: Pos) {
+fn seal_seam_decl_guard(ar: *Arena, sc: *const TyScope, emit: str, p: Pos) {
     if str::eq(emit, "sys_seal_enter") || str::eq(emit, "sys_seal_exit") {
         tc_fail(ar, sc, p, "the seal seam is not declarable; use `seal { ... }`");
     }
 }
-fn seal_seam_guard(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str, p: Pos) {
+fn seal_seam_guard(ar: *Arena, sc: *const TyScope, mangled: str, p: Pos) {
     if is_seal_seam(mangled) {
         tc_fail(ar, sc, p, "the seal seam is not callable directly; use `seal { ... }`");
     }
@@ -3450,7 +3450,7 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     // application (`Vec<T>`) or assoc projection (`Option<I::Item>`) lowers to
     // its concrete instance, not a `subst` that leaves the app abstract.
     let icscope = scope_with_tbinds(sc, &gsl[gfidx as u32].gn_tparams, &binds);
-    check_gen_call_args(a, ar, sc, &icscope, gsl[gfidx as u32].gn_name, gsl[gfidx as u32].gn_name,
+    check_gen_call_args(a, ar, sc, &icscope, gsl[gfidx as u32].gn_name,
                         &gsl[gfidx as u32].gn_params, 0 as u32, &targs, args, p);
     let iret = resolve_sig_ret(a, ar, &icscope, gsl[gfidx as u32].gn_ret, p);
     return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, iret), p);
@@ -4205,7 +4205,7 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // had no conflict check at all, so the order only became visible once the
     // arguments were unified against a real parameter list.
     check_bind_conflicts(a, ar, sc, &binds, p);
-    check_gen_call_args(a, ar, sc, &cscope, sl[midx].mi_mangled,
+    check_gen_call_args(a, ar, sc, &cscope,
                         method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
                         &sl[midx].mi_params, 1 as u32, &targs, args, p);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
@@ -4259,7 +4259,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     check_bound_conformance(a, ar, sc, &sl[midx].mi_tbounds, &binds, sl[midx].mi_name, p);
     let iscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
-    check_gen_call_args(a, ar, sc, &iscope, sl[midx].mi_mangled,
+    check_gen_call_args(a, ar, sc, &iscope,
                         method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
                         &sl[midx].mi_params, 1 as u32, &targs, args, p);
     let oargs = dedup_bind_tys(a, &binds);
@@ -4925,7 +4925,7 @@ fn col0_has_tag(matrix: *const Vec<Vec<*const Cpat>>, tag: int) -> bool {
     let ml = matrix.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        let row = &ml[i];
+        let row: *const Vec<*const Cpat> = &ml[i];
         if row.length() > 0 as u32 {
             if cpat_tag(row.as_slice()[0 as u32]) == tag { return true; }
         }
@@ -7092,6 +7092,7 @@ fn elab_rune_method_expr(a: Allocator, ar: *Arena, sc: *const TyScope, trecv: *c
     let elem = rune_elem_ty(trecv.ty);
     if str::eq(name, "read") {
         if !dir_can_read(d) { tc_fail(ar, sc, p, "cannot read a write-only rune"); }
+        if args.length() != 0 as u32 { tc_fail(ar, sc, p, "a rune `.read` takes no arguments"); }
         return te_node(ar, TexprNode::TDeref(trecv), elem, p);
     }
     if str::eq(name, "write") {
@@ -7309,7 +7310,10 @@ fn elab_rune_reg_read(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
 fn elab_rune_reg_method_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                              benv: *const Vec<FieldTy>, recv: *const Expr, name: str,
                              args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
-    if str::eq(name, "read") { return elab_rune_reg_read(a, ar, g, sc, benv, recv, p); }
+    if str::eq(name, "read") {
+        if args.length() != 0 as u32 { tc_fail(ar, sc, p, "a rune `.read` takes no arguments"); }
+        return elab_rune_reg_read(a, ar, g, sc, benv, recv, p);
+    }
     if str::eq(name, "write") || str::eq(name, "strobe") {
         tc_fail(ar, sc, p, "a rune `.write` / `.strobe` is a statement, not an expression");
         return elab_expr(a, ar, g, sc, benv, none_ty(), ix_base(recv));
@@ -7389,12 +7393,6 @@ fn rune_base_value_ungated(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc
 // `&NAME` base: only a GLOBAL is a compile-time constant — a `&local` would be a
 // stack address (runtime, and dangling once the fn returns), which R3
 // forbid.  Elaborate `&NAME` (checks it exists) and cast to the rune's pointer.
-// A rune materialised at an integer base passes the sigil gate first: the span is the pointee's width, or N·sizeof(T) for a register file.
-fn rune_addr_gated(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, elem_ann: *const TypeAnn,
-                   rune_ty: *const Typ, pos: Pos) -> *const Texpr {
-    sigil_gate(a, ar, sc, n, rune_span_of(rune_ty), pos);
-    return te_node(ar, TexprNode::TRuneAddr(n), rune_ty, pos);
-}
 fn addr_int_or_zero(e: *const Expr) -> int {
     return match *e { Expr::IntLit(n, _p) => n | _o => 0 as int };
 }
@@ -7671,7 +7669,7 @@ fn elab_scalar_index(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *con
 fn index_unresolved(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                     env: *const Vec<FieldTy>, tb: *const Texpr, index: *const Expr, p: Pos) -> *const Texpr {
     if ty_has_tvar(tb.ty) {
-        let _ti = elab_expr(a, ar, g, sc, env, none_ty(), index);
+        elab_expr(a, ar, g, sc, env, none_ty(), index);
         return defer_expr(ar, p);
     }
     return bad_index_base(a, ar, sc, tb.ty, p);
@@ -8961,7 +8959,7 @@ fn elab_tail(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
 }
 
 fn empty_strs(a: Allocator) -> Vec<str> {
-    let out: Vec<str> = Vec::with_capacity(a, 1 as u32);
+    let out: Vec<str> = Vec::with_capacity(a, 8 as u32);
     return out;
 }
 fn copy_strs(a: Allocator, src: *const Vec<str>) -> Vec<str> {
@@ -9660,7 +9658,7 @@ fn prepend_top_runes(a: Allocator, ar: *Arena, sc: *const TyScope, env: *Vec<Fie
 fn build_rune_globals(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, out: *Vec<RuneGlobal>) {
     let rl = sc.sc_runes;
     let sl = rl.as_slice();
-    let empty_benv: Vec<FieldTy> = Vec::with_capacity(a, 1 as u32);
+    let empty_benv: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
     let mut i = 0 as u32;
     while i < rl.length() {
         // A top-level rune is an MMIO base — an integer literal.  A `&GLOBAL` base
@@ -10162,7 +10160,7 @@ fn ward_type_exists(sc: *const TyScope, name: str) -> bool {
 }
 // A ward instance base is a compile-time integer (MMIO) in v1; `&GLOBAL` (RAM,
 // the runnable witness) and a base-as-value (Zorro) arrive in later increments.
-fn ward_base_int(ar: *Arena, sc: *const TyScope, addr: *const Expr, p: Pos) -> int {
+fn ward_base_int(addr: *const Expr) -> int {
     return match *addr {
         Expr::IntLit(n, _q) => n
         | _o => 0 as int
@@ -10247,9 +10245,9 @@ fn elab_ward_inst(a: Allocator, ar: *Arena, sc: *const TyScope, benv: *Vec<Field
         sb.push_str("unknown ward type '"); sb.push_str(ward_ty); sb.push_str("'");
         tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
     }
-    let base = ward_base_int(ar, sc, addr, pos);
+    let base = ward_base_int(addr);
     let bsym = ward_base_sym(ar, sc, benv, addr, pos);
-    let mut path: Vec<str> = Vec::with_capacity(a, 1 as u32);
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     path.push(ward_ty);
     benv.push(FieldTy { name: name, ty: ty_node(ar, Typ::TWard { path: path, base: base, base_sym: bsym }) });
 }
@@ -10268,13 +10266,13 @@ fn seal_tok_name(a: Allocator, ar: *Arena, sc: *const TyScope) -> str {
     return str::from_slice(ar, sb.as_slice());
 }
 fn seal_enter_call(a: Allocator, ar: *Arena, p: Pos) -> *const Texpr {
-    let no_args: Vec<*const Texpr> = Vec::with_capacity(a, 1 as u32);
+    let no_args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     return te_node(ar, TexprNode::TCall { mangled: "sys_seal_enter", args: no_args },
                    ty_node(ar, Typ::TCLong { is_signed: false }), p);
 }
 fn seal_exit_stmt(a: Allocator, ar: *Arena, tok: str, p: Pos) -> Tstmt {
     let culong = ty_node(ar, Typ::TCLong { is_signed: false });
-    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 2 as u32);
+    let mut args: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     args.push(te_node(ar, TexprNode::TVar(tok), culong, p));
     return Tstmt::TExprStmt(te_node(ar, TexprNode::TCall { mangled: "sys_seal_exit", args: args },
                                     ty_node(ar, Typ::TCVoid), p));
@@ -10293,7 +10291,7 @@ fn elab_seal(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
 fn seal_prologue(a: Allocator, ar: *Arena, tok: str, p: Pos, out: *Vec<Tstmt>) {
     let culong = ty_node(ar, Typ::TCLong { is_signed: false });
     out.push(Tstmt::TLet { name: tok, value: seal_enter_call(a, ar, p), decl_ty: culong, pos: p });
-    let mut dbody: Vec<Tstmt> = Vec::with_capacity(a, 2 as u32);
+    let mut dbody: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     dbody.push(seal_exit_stmt(a, ar, tok, p));
     out.push(Tstmt::TDefer { body: dbody, pos: p });
 }
@@ -10547,9 +10545,9 @@ fn check_ward_inst_bases(a: Allocator, ar: *Arena, sc: *const TyScope) {
 // Per-instance so the owned `path` Vec is a per-CALL frame (not held across the
 // loop body), and pushed straight into `env` (never returned — a returned
 // local-Vec-embedding value would be a dangling borrow).
-fn push_ward_inst_binding(a: Allocator, ar: *Arena, sc: *const TyScope, twi: *const TopWardInst, env: *Vec<FieldTy>) {
-    let base = ward_base_int(ar, sc, twi.twi_addr, twi.twi_pos);
-    let mut path: Vec<str> = Vec::with_capacity(a, 1 as u32);
+fn push_ward_inst_binding(a: Allocator, ar: *Arena, twi: *const TopWardInst, env: *Vec<FieldTy>) {
+    let base = ward_base_int(twi.twi_addr);
+    let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     path.push(twi.twi_ward_ty);
     env.push(FieldTy { name: twi.twi_name, ty: ty_node(ar, Typ::TWard { path: path, base: base, base_sym: "" }) });
 }
@@ -10557,7 +10555,7 @@ fn prepend_top_ward_insts(a: Allocator, ar: *Arena, sc: *const TyScope, env: *Ve
     let sl = sc.sc_wardinsts.as_slice();
     let mut i = 0 as u32;
     while i < sc.sc_wardinsts.length() {
-        push_ward_inst_binding(a, ar, sc, &sl[i], env);
+        push_ward_inst_binding(a, ar, &sl[i], env);
         i = i + 1 as u32;
     }
 }
@@ -13697,7 +13695,7 @@ fn check_byref_caps(a: Allocator, ar: *Arena, sc: *const TyScope, ecaps: *const 
     }
     return;
 }
-fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<FnRet>, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
+fn prepass_at_lambda(a: Allocator, ar: *Arena, sc: *const TyScope, scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>,
                      params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body: *const Expr, ecaps: *const Vec<Capture>,
                      ctr: *u32, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>, lambda: *const Expr) {
     // Free vars of the body (lambda params are bound).
@@ -13772,7 +13770,7 @@ fn prepass_expr(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<F
         | Expr::StructLit { tname, fields, base } => { prepass_fields(a, ar, sc, rets, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); }
         | Expr::New { tname, fields, base, alloc } => { prepass_fields(a, ar, sc, rets, scn, sca, &fields, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, base, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); }
         | Expr::NewEnum { tname, args, alloc } => { prepass_exprs(a, ar, sc, rets, scn, sca, &args, ctr, sinfo, methods, assoc, stps, lifted); prepass_opt(a, ar, sc, rets, scn, sca, alloc, ctr, sinfo, methods, assoc, stps, lifted); }
-        | Expr::Lambda { params, ret_ty, body, captures } => prepass_at_lambda(a, ar, sc, rets, scn, sca, &params, ret_ty, body, &captures, ctr, sinfo, methods, assoc, stps, lifted, e)
+        | Expr::Lambda { params, ret_ty, body, captures } => prepass_at_lambda(a, ar, sc, scn, sca, &params, ret_ty, body, &captures, ctr, sinfo, methods, assoc, stps, lifted, e)
         | _other => {}
     }
 }
@@ -13812,11 +13810,11 @@ fn scope_ann_of(scn: *const Vec<str>, sca: *const Vec<*const TypeAnn>, n: str) -
     return none;
 }
 fn ann_struct_path(a: Allocator, ar: *Arena, path: *const Vec<str>) -> *const TypeAnn {
-    let args: Vec<*const TypeAnn> = Vec::with_capacity(a, 1 as u32);
+    let args: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     return tyann_node(ar, TypeAnn::TyStruct { path: copy_strs(a, path), args: args });
 }
 fn ann_range(a: Allocator, ar: *Arena) -> *const TypeAnn {
-    let mut args: Vec<*const TypeAnn> = Vec::with_capacity(a, 2 as u32);
+    let mut args: Vec<*const TypeAnn> = Vec::with_capacity(a, 8 as u32);
     args.push(ann_int_default(ar));
     return tyann_node(ar, TypeAnn::TyStruct { path: single_str(a, "Range"), args: args });
 }
@@ -13948,7 +13946,7 @@ fn prepass_funcs(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<
 // Top-level fns only, keyed by bare name — the reference indexes exactly those
 // (`methods and qualified paths are skipped, their receiver types aren't known
 // pre-typecheck`).
-fn collect_fn_rets(a: Allocator, items: *const Vec<Item>, out: *Vec<FnRet>) {
+fn collect_fn_rets(items: *const Vec<Item>, out: *Vec<FnRet>) {
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < items.length() {
@@ -13976,7 +13974,7 @@ fn prepass_item(a: Allocator, ar: *Arena, sc: *const TyScope, rets: *const Vec<F
 }
 fn prepass_closures(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, sinfo: *Vec<StructField>, methods: *Vec<MethodInfo>, assoc: *Vec<AssocBind>, stps: *Vec<StructTP>, lifted: *Vec<LiftedLambda>) {
     let mut rets: Vec<FnRet> = Vec::with_capacity(a, 16 as u32);
-    collect_fn_rets(a, items, &rets);
+    collect_fn_rets(items, &rets);
     let mut ctr: u32 = 0 as u32;
     let n = items.length();
     let sl = items.as_slice();
@@ -14779,7 +14777,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             // verdict the frozen oracle also gives — and the port adds verdicts
             // where the oracle is silent, it does not change the ones it gives.
             if f.is_extern { require_raw(a, ar, &fsc, path, "fn", f.name, f.pos); }
-            seal_seam_decl_guard(a, ar, &fsc, em, f.pos);
+            seal_seam_decl_guard(ar, &fsc, em, f.pos);
             g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty, f.pos),
                               is_const: false, is_top: is_top, gf_variadic: f.is_variadic });
         }
@@ -14942,7 +14940,7 @@ fn register_prelude_globals(a: Allocator, ar: *Arena, g: *Vec<GlobalFn>) {
 // (the result is discarded — collect_globals builds the real table).
 fn resolve_ret_for_order(a: Allocator, ar: *Arena, sc: *const TyScope, f: *const Func) {
     match f.ret_ty {
-        Option::Some(rt) => { let _t = resolve_sig_ty(a, ar, sc, rt, f.pos); }
+        Option::Some(rt) => { resolve_sig_ty(a, ar, sc, rt, f.pos); }
         | Option::None => { }
     }
     return;
@@ -15495,7 +15493,7 @@ fn elided_when_unused_name(nm: str) -> bool {
     return str::eq(nm, "Allocator") || str::eq(nm, "Arena")
         || str::eq(nm, "StringBuilder") || str::eq(nm, "String");
 }
-fn dropped_when_unused(a: Allocator, nm: str, used: *const Vec<Vec<str>>) -> bool {
+fn dropped_when_unused(nm: str, used: *const Vec<Vec<str>>) -> bool {
     if !elided_when_unused_name(nm) { return false; }
     let n = used.length();
     let sl = used.as_slice();
@@ -17628,7 +17626,7 @@ fn ceval_var(a: Allocator, ar: *Arena, sc: *const TyScope, cds: *const Vec<Const
              tab: *Vec<CTabEntry>, inprog: *Vec<str>, nm: str, q: Pos) -> CEval {
     let i = ctab_find(tab, nm);
     if i >= 0 as int {
-        let e = &tab.as_slice()[i as u32];
+        let e: *const CTabEntry = &tab.as_slice()[i as u32];
         return cev(e.ct_kind, e.ct_val);
     }
     let di = const_idx(cds, nm);
@@ -18019,14 +18017,14 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     // throwaway; the real per-fn counter rides through elaborate_fn.
     let mut gensym_unused: u32 = 0 as u32;
     let mut loopdepth = 0 as u32;
-    let mut toprunes: Vec<TopRune> = Vec::with_capacity(a, 4 as u32);
+    let mut toprunes: Vec<TopRune> = Vec::with_capacity(a, 8 as u32);
     collect_top_runes(a, ar, items, "", &toprunes);
     let mut topwards: Vec<WardFieldEntry> = Vec::with_capacity(a, 8 as u32);
     collect_ward_types(items, &topwards);
-    let mut topwardinsts: Vec<TopWardInst> = Vec::with_capacity(a, 4 as u32);
+    let mut topwardinsts: Vec<TopWardInst> = Vec::with_capacity(a, 8 as u32);
     collect_top_ward_insts(items, &topwardinsts);
     let mut sigils: Vec<SigilRangeEntry> = Vec::with_capacity(a, 8 as u32);
-    let mut claims: Vec<ClaimEntry> = Vec::with_capacity(a, 4 as u32);
+    let mut claims: Vec<ClaimEntry> = Vec::with_capacity(a, 8 as u32);
     collect_claims(a, ar, items, "", &claims);
     let base_scope = TyScope { sc_runes: &toprunes, sc_wards: &topwards, sc_wardinsts: &topwardinsts, sc_sigils: &sigils, sc_claims: &claims, sc_structs: &snames, sc_dbg: &dbgnames, sc_consts: &constnames, sc_xfields: &xfields, sc_loops: &loopdepth, sc_enums: &enames, sc_tparams: &empty_tp,
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
@@ -18349,7 +18347,7 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     let ssl = fstructs.as_slice();
     let mut si = 0 as u32;
     while si < sn {
-        if !dropped_when_unused(a, ssl[si], &used_names) { push_struct_name(a, &structs, ssl[si]); }
+        if !dropped_when_unused(ssl[si], &used_names) { push_struct_name(a, &structs, ssl[si]); }
         si = si + 1 as u32;
     }
     let en = fenums.length();
@@ -18474,7 +18472,7 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     check_ward_groups(a, ar, &base_scope, items);
     check_atomic_regions(a, ar, &base_scope, items);
     check_ward_inst_bases(a, ar, &base_scope);
-    let mut tprunes: Vec<RuneGlobal> = Vec::with_capacity(a, 4 as u32);
+    let mut tprunes: Vec<RuneGlobal> = Vec::with_capacity(a, 8 as u32);
     build_rune_globals(a, ar, &globals, &base_scope, &tprunes);
     // A latched diagnostic wins over the elaborated program: the placeholders the
     // failing sites produced are meaningless, and emitting C from them is exactly

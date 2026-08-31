@@ -1,0 +1,12 @@
+// R8 - `.read` takes no arguments, and the check has to exist because the
+// argument was not merely ignored: it was DROPPED. `bump()` below was emitted
+// into the C and never called, so a side effect the user wrote disappeared.
+//
+// `.write` and `.strobe` have checked their arity since the rune era. `.read`
+// not checking is the shape that makes a partial rule worse than no rule: the
+// two neighbours diagnose, so the third reads as diagnosed too.
+rune status: u16 at 0xDFF002 read;
+
+fn bump() -> int { println(99); return 1; }
+
+fn main() { println(status.read(bump()) as int); }

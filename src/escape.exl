@@ -1293,7 +1293,7 @@ fn escape_ice() { arena_oom(); }
 // fixpoint, so only the diagnostics matter here.
 fn analyze_fn_reporting(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, tf: *const Tfunc,
                         err: *Option<*const CompileError>) {
-    let _p = analyze_fn(a, ar, sum, tf, true, err);
+    analyze_fn(a, ar, sum, tf, true, err);
     return;
 }
 

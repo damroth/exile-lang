@@ -1,0 +1,5 @@
+// R9 - the same rule on the register-file path, which elaborates through its own
+// function. One fixture per PATH, because the paths do not share the check.
+rune inr: [u16; 4] at 0xDFF010 read;
+
+fn main() { println(inr[1].read(9) as int); }

@@ -1,0 +1,12 @@
+// R10 - a ward field IS a rune, so `.read` on one routes through the rune method
+// path and inherits its arity rule. The fixture lives in the RUNE corpus with the
+// other two because one rule is answered in one place; what differs between the
+// three rows is the path, not the rule.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs { a: u16 at 0x00 readwrite; }
+
+fn main() {
+    ward r: Regs at &raw::SCRATCH;
+    println(r.a.read(1, 2) as int);
+}

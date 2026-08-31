@@ -1877,7 +1877,7 @@ fn parse_sigil_decl(s: *Parser) -> Item {
     bump(s);
     let np = expect_ident(s, "sigil name after 'sigil'");
     expect(s, Token::LBrace);
-    let mut ranges: Vec<SigilRange> = Vec::with_capacity(default_allocator(), 4 as u32);
+    let mut ranges: Vec<SigilRange> = Vec::with_capacity(default_allocator(), 8 as u32);
     while !peek_is(s, Token::RBrace) && !is_err(s) {
         ranges.push(parse_sigil_range(s));
         if peek_is(s, Token::Comma) { bump(s); }

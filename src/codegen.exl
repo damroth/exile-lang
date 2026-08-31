@@ -1718,7 +1718,7 @@ fn any_guard(arms: *const Vec<TmatchArm>) -> bool {
 
 // Flat-switch arm case labels: or-alts -> stacked case labels; a wildcard alt
 // -> default; the last arm additionally stacks `default:` (proved exhaustive).
-fn emit_case_labels(a: Allocator, ar: *Arena, out: *StringBuilder, inner: str, cname: str, arm: *const TmatchArm, is_last: bool) {
+fn emit_case_labels(a: Allocator, out: *StringBuilder, inner: str, cname: str, arm: *const TmatchArm, is_last: bool) {
     let alts = match arm.tpat { Tpattern::TPOr(xs) => xs | _o => single_pat(a, arm.tpat) };
     let asl = alts.as_slice();
     let mut has_wild = false;
@@ -1739,7 +1739,7 @@ fn emit_case_labels(a: Allocator, ar: *Arena, out: *StringBuilder, inner: str, c
     if is_last { out.push_str(inner); out.push_str("default:\n"); }
 }
 fn single_pat(a: Allocator, pat: Tpattern) -> Vec<Tpattern> {
-    let mut out: Vec<Tpattern> = Vec::with_capacity(a, 1 as u32);
+    let mut out: Vec<Tpattern> = Vec::with_capacity(a, 8 as u32);
     out.push(pat);
     return out;
 }
@@ -1786,7 +1786,7 @@ pub fn emit_match_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: st
     let mut i = 0 as u32;
     while i < n {
         out.push_str(inner);
-        emit_case_labels(a, ar, out, inner, cname, &sl[i], i == n - 1 as u32);
+        emit_case_labels(a, out, inner, cname, &sl[i], i == n - 1 as u32);
         out.push_str(case_indent); out.push_str("{\n");
         emit_switch_binds(a, ar, out, body_indent, cg, ename_path, scrutinee, &sl[i]);
         emit_arm_result(a, ar, out, body_indent, cg, assign_to, &sl[i]);
