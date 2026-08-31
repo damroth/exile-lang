@@ -1,0 +1,13 @@
+// A4 - a group names a field the ward does not declare. The clause names a
+// relationship between fields declared above it, so a name that is not one of
+// them is a typo the compiler can see without knowing anything about seals.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    a: u16 at 0x00 readwrite;
+    b: u16 at 0x04 readwrite;
+
+    atomic { a, c }
+}
+
+fn main() { ward r: Regs at &raw::SCRATCH; r.a.write(1 as u16); println(1); }

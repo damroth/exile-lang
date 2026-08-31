@@ -1,0 +1,14 @@
+// A7 - a one-member group. Recorded as a judgement rather than an oversight: the
+// invariant a group carries is "all of these in ONE region", and with one member
+// that says nothing. "This single register only inside a seal" is a real wish and
+// a different notation, not a degenerate group.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    a: u16 at 0x00 readwrite;
+    b: u16 at 0x04 readwrite;
+
+    atomic { a }
+}
+
+fn main() { ward r: Regs at &raw::SCRATCH; r.a.write(1 as u16); println(1); }

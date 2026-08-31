@@ -1,0 +1,29 @@
+// `atomic` introduces a group only where a `{` follows it. Everywhere else it is
+// an ordinary identifier, and this file spends it in every position that could
+// have been taken away: a ward FIELD, a struct field, a fn, and a local.
+//
+// The ward field is the one that actually regressed while the recognizer looked
+// at a single token - it compiled before the clause existed and stopped
+// compiling after. The face of that defect is a REJECTION, but the face of its
+// return would be a program that computes the wrong thing, so this fixture RUNS.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+struct Holder { atomic: int }
+
+fn atomic(x: int) -> int { return x + 1; }
+
+ward Regs {
+    atomic: u16 at 0x00 readwrite;
+    b:      u16 at 0x04 readwrite;
+}
+
+fn main() {
+    ward r: Regs at &raw::SCRATCH;
+    r.atomic.write(7 as u16);
+    r.b.write(35 as u16);
+
+    let atomic = 41;
+    let h = Holder { atomic: atomic };
+    println(atomic(h.atomic));                                  // 42
+    println(r.atomic.read() as int + r.b.read() as int);        // 42
+}

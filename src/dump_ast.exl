@@ -806,7 +806,7 @@ fn render_item(it: *const Item, out: *StringBuilder) {
             out.push_str(name);
             out.push_str(")");
         }
-        | Item::WardDecl { name, fields, pos } => {
+        | Item::WardDecl { name, fields, groups, pos } => {
             out.push_str("(ward ");
             out.push_str(name);
             let fs = fields.as_slice();

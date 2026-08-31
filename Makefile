@@ -764,7 +764,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -913,7 +913,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1624,6 +1624,73 @@ selfhost-prelude-probe: $(EXILC_BIN)
 	  echo "  pinned: $(PRELUDE_PROBE_LINE)"; echo "  port:   $$pline"; exit 1; fi; \
 	echo "selfhost-prelude-probe: clean - both compilers say the pinned line, position included"
 
+# ===== `atomic` groups: the rows, structural and regional =====
+#
+# The capability model is PORT-ONLY ground: the frozen reference answers
+# `'ward' is a reserved word (capability model, future syntax)` and cannot parse
+# any of these files. There is no differential to lean on, so the discipline is
+# the one that stands in its place - every rejection row asserts its own WORDING
+# and every accepting row RUNS, both read from data files so the signature comes
+# from the arms actually walked, and the clause is proved to leave nothing behind
+# by comparing a program to its twin with the clause deleted.
+.PHONY: selfhost-atomic
+selfhost-atomic: $(EXILC_BIN)
+	@for t in atomic_rows.txt atomic_runs.txt; do \
+	  test -s tests/ward/$$t || { echo "selfhost-atomic: MISSING/EMPTY tests/ward/$$t"; exit 1; }; \
+	done; \
+	for f in atomic_group_absent atomic_name_not_reserved; do \
+	  test -f tests/ward/$$f.exl || { echo "selfhost-atomic: MISSING tests/ward/$$f.exl"; exit 1; }; \
+	done; \
+	rm -f $(C_OUT)/at_*.c $(C_OUT)/at_*.err $(C_OUT)/at_*.out $(HOST_OUT)/at_*; \
+	fail=0; n=0; \
+	while IFS=: read -r name want; do \
+	  case "$$name" in ''|'#'*) continue;; esac; \
+	  test -f tests/ward/$$name.exl || { echo "selfhost-atomic: MISSING tests/ward/$$name.exl"; exit 1; }; \
+	  n=`expr $$n + 1`; \
+	  if $(EXILC_BIN) --target c --c-out $(C_OUT)/at_$$name.c tests/ward/$$name.exl >/dev/null 2>$(C_OUT)/at_$$name.err; then \
+	    echo "selfhost-atomic: ACCEPTED $$name - the row does not reject"; fail=`expr $$fail + 1`; continue; fi; \
+	  got=`grep -m1 'error:' $(C_OUT)/at_$$name.err | sed 's/.*error: //'`; \
+	  if [ -z "$$got" ]; then \
+	    echo "selfhost-atomic: SILENT $$name - refused with no diagnostic"; fail=`expr $$fail + 1`; continue; fi; \
+	  if [ "$$got" != "$$want" ]; then \
+	    echo "selfhost-atomic: WORDING $$name"; echo "  want: $$want"; echo "  got:  $$got"; fail=`expr $$fail + 1`; fi; \
+	done < tests/ward/atomic_rows.txt; \
+	test $$n -ge 9 || { echo "selfhost-atomic: only $$n rejection rows ran - the table lost members"; exit 1; }; \
+	test $$fail -eq 0 || exit 1; \
+	m=0; \
+	while IFS=: read -r name want; do \
+	  case "$$name" in ''|'#'*) continue;; esac; \
+	  test -f tests/ward/$$name.exl || { echo "selfhost-atomic: MISSING tests/ward/$$name.exl"; exit 1; }; \
+	  test -f tests/ward/$${name}_stub.c || { echo "selfhost-atomic: MISSING the RAM backing tests/ward/$${name}_stub.c - an accepting row that cannot run is not an accepting row"; exit 1; }; \
+	  m=`expr $$m + 1`; \
+	  $(EXILC_BIN) --target host --link runtime/sys_host.c --link tests/ward/$${name}_stub.c \
+	     -o $(HOST_OUT)/at_$$name tests/ward/$$name.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-atomic: the accepting row $$name does not build for the host"; exit 1; }; \
+	  $(HOST_OUT)/at_$$name > $(C_OUT)/at_$$name.out 2>&1; \
+	  test -s $(C_OUT)/at_$$name.out || { echo "selfhost-atomic: $$name printed NOTHING"; exit 1; }; \
+	  got=`head -1 $(C_OUT)/at_$$name.out`; \
+	  test "$$got" = "$$want" || { echo "selfhost-atomic: $$name RAN wrong - want $$want, got $$got"; cat $(C_OUT)/at_$$name.out; exit 1; }; \
+	  grep -q 'seal-balance 0 misnest 0' $(C_OUT)/at_$$name.out \
+	    || { echo "selfhost-atomic: $$name left its region UNBALANCED"; cat $(C_OUT)/at_$$name.out; exit 1; }; \
+	done < tests/ward/atomic_runs.txt; \
+	test $$m -ge 5 || { echo "selfhost-atomic: only $$m accepting rows ran - the table lost members"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/at_ok.c tests/ward/atomic_group_wellformed.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-atomic: the accepting row does not compile"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/at_bare.c tests/ward/atomic_group_absent.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-atomic: the clause-free twin does not compile"; exit 1; }; \
+	test -s $(C_OUT)/at_ok.c || { echo "selfhost-atomic: the accepting row emitted an EMPTY translation unit"; exit 1; }; \
+	cmp -s $(C_OUT)/at_ok.c $(C_OUT)/at_bare.c \
+	  || { echo "selfhost-atomic: the clause CHANGED the emission - it must leave nothing behind"; \
+	       diff $(C_OUT)/at_ok.c $(C_OUT)/at_bare.c | head -8; exit 1; }; \
+	$(EXILC_BIN) --target host --link runtime/sys_host.c --link tests/ward/atomic_name_not_reserved_stub.c \
+	   -o $(HOST_OUT)/at_name tests/ward/atomic_name_not_reserved.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-atomic: 'atomic' became RESERVED - a ward field, struct field, fn or local carrying that name no longer builds"; exit 1; }; \
+	$(HOST_OUT)/at_name > $(C_OUT)/at_name.out 2>&1; \
+	got=`tr '\n' ' ' < $(C_OUT)/at_name.out`; \
+	test "$$got" = "42 42 " || { echo "selfhost-atomic: the name-collision row RAN wrong (a name bound to the wrong thing):"; \
+	                             cat $(C_OUT)/at_name.out; exit 1; }; \
+	echo "selfhost-atomic: clean ($$n rejections with their wording, $$m accepting rows RUN and balanced, 'atomic' still usable as a name, and the clause emits nothing)"
+
 # ===== publicly-facing text must stand on its own =====
 #
 # Design records, phase names and step labels live in a directory that is not
@@ -1663,12 +1730,15 @@ docs-selfsufficient:
 	  echo "docs-selfsufficient: $$m compiler-source comment(s) naming a record this repository does not ship:"; \
 	  grep -rInE '$(SRC_INTERNAL_RX)' src --include=*.exl 2>/dev/null | head -10; \
 	  exit 1; fi; \
-	t=`grep -rInE '$(SRC_INTERNAL_RX)' tests --include=*.exl --include=*.c --include=*.h --include=CASES --include=REJECT-TABLE 2>/dev/null | wc -l`; \
+	tf=`find tests -path tests/golden -prune -o -type f ! -name '*.expected' ! -name '*.golden' -print 2>/dev/null`; \
+	test -n "$$tf" || { echo "docs-selfsufficient: the tests scan enumerated NOTHING - the walk is broken, not the corpus"; exit 1; }; \
+	t=`echo "$$tf" | xargs grep -InE '$(SRC_INTERNAL_RX)' 2>/dev/null | wc -l`; \
 	if [ "$$t" != "0" ]; then \
 	  echo "docs-selfsufficient: $$t fixture comment(s) naming a record this repository does not ship."; \
 	  echo "  The rule IDs a fixture header states - R1-R7, W1-W5, S1-S5, T1-T4 - are not this:"; \
 	  echo "  each names a fixture or a table row in this repository, so they resolve here."; \
-	  grep -rInE '$(SRC_INTERNAL_RX)' tests --include=*.exl --include=*.c --include=*.h --include=CASES --include=REJECT-TABLE 2>/dev/null | head -10; \
+	  echo "  The scan is every authored file under tests/, not a list of extensions:"; \
+	  echo "$$tf" | xargs grep -InE '$(SRC_INTERNAL_RX)' 2>/dev/null | head -10; \
 	  exit 1; fi; \
 	d=`grep -rInE '$(SRC_INTERNAL_RX)' tests --include=*.md 2>/dev/null | wc -l`; \
 	d=`expr $$d + \`grep -rInE '$(SRC_INTERNAL_RX)' src --include=*.md 2>/dev/null | wc -l\``; \
@@ -1784,13 +1854,13 @@ selfhost-seal: $(EXILC_BIN)
 	         reject_seam_enter reject_seam_exit reject_seam_extern reject_sealed_theft \
 	         defer_in_seal seal_in_defer cross_nest arm_return_after_seal arm_sibling_return \
 	         accept_arm_seal arm_nested_returns try_propagation accept_limit_forgotten \
-	         accept_limit_blanket accept_limit_race accept_limit_latency accept_limit_wrong_region \
+	         accept_limit_blanket accept_limit_race accept_limit_latency \
 	         accept_seal_returns ; do \
 	  test -f tests/seal/$$f.exl || { echo "selfhost-seal: MISSING tests/seal/$$f.exl"; exit 1; }; \
 	done; \
 	for e in exits nested consumer_ram try_propagation defer_in_seal seal_in_defer cross_nest \
 	         arm_return_after_seal arm_sibling_return accept_arm_seal arm_nested_returns \
-	         accept_limit_wrong_region accept_seal_returns ; do \
+	         accept_seal_returns ; do \
 	  test -s tests/seal/$$e.expected || { echo "selfhost-seal: MISSING/EMPTY tests/seal/$$e.expected"; exit 1; }; \
 	done; \
 	test -s tests/seal/blitter_setup.golden || { echo "selfhost-seal: MISSING/EMPTY tests/seal/blitter_setup.golden"; exit 1; }; \
@@ -1885,17 +1955,9 @@ selfhost-seal: $(EXILC_BIN)
 	  cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_$$lim.c -o $(C_OUT)/seal_$$lim.o \
 	    || { echo "selfhost-seal: limit contract $$lim emits C that is not clean at -O2"; exit 1; }; \
 	done; \
-	rm -f $(C_OUT)/seal_wr.c $(HOST_OUT)/seal_wr $(C_OUT)/seal_wr.out; \
-	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_wr.c tests/seal/accept_limit_wrong_region.exl >/dev/null 2>&1 \
-	  || { echo "selfhost-seal: the pinned BLIND SPOT was rejected — closing it is a post-era round, not a side effect"; exit 1; }; \
-	cc -O2 -fno-strict-aliasing -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/seal_wr \
-	   $(C_OUT)/seal_wr.c tests/seal/consumer_ram_stub.c $(SYS_HOST) \
-	  || { echo "selfhost-seal: the blind-spot fixture does not build"; exit 1; }; \
-	$(HOST_OUT)/seal_wr > $(C_OUT)/seal_wr.out 2>&1; \
-	if ! diff -q tests/seal/accept_limit_wrong_region.expected $(C_OUT)/seal_wr.out >/dev/null; then \
-	  echo "selfhost-seal: the blind spot changed shape — a save torn from its restore must still COMPILE and still BALANCE (that is the contract):"; \
-	  diff tests/seal/accept_limit_wrong_region.expected $(C_OUT)/seal_wr.out | head -6; exit 1; fi; \
-	sig="$$sig the five limits pinned as CONTRACTS, the blind spot among them still compiling AND still balancing;"; \
+	test ! -e tests/seal/accept_limit_wrong_region.exl \
+	  || { echo "selfhost-seal: the fifth limit is back in the corpus as an ACCEPT fixture - it was closed, and one place must answer whether it is open"; exit 1; }; \
+	sig="$$sig four limits pinned as CONTRACTS, the fifth CLOSED and its shape now rejected in the ward corpus;"; \
 	rm -f $(C_OUT)/seal_ret.c $(HOST_OUT)/seal_ret $(C_OUT)/seal_ret.out; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_ret.c tests/seal/accept_seal_returns.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-seal: a seal whose body RETURNS was rejected — the region runs inline and unconditionally, so it answers for the enclosing fn's exhaustive-return check (port-only, the oracle cannot parse seal at all)"; exit 1; }; \
@@ -1949,7 +2011,7 @@ selfhost-seal: $(EXILC_BIN)
 	         defer_in_seal seal_in_defer cross_nest \
 	         arm_return_after_seal arm_sibling_return accept_arm_seal arm_nested_returns \
 	         accept_limit_forgotten accept_limit_blanket accept_limit_race accept_limit_latency \
-	         accept_limit_wrong_region try_propagation ; do \
+	         try_propagation ; do \
 	  rm -f $(C_OUT)/seal_q.msg; \
 	  $(EXILC_BIN) --target c --c-out /dev/null tests/seal/$$q.exl 2>&1 | grep -v '^wrote ' > $(C_OUT)/seal_q.msg; \
 	  if [ -s $(C_OUT)/seal_q.msg ]; then \

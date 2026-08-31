@@ -1,0 +1,17 @@
+// A1 through a TOP-LEVEL instance: the overlay is declared above the functions
+// and visible in all of them, and the rule reaches it the same way. An instance
+// the whole file shares is exactly where an unsealed access is easiest to leave
+// behind.
+ward C {
+    intenar: u16 at 0x00 read;
+    intena:  u16 at 0x02 write;
+
+    atomic { intenar, intena }
+}
+
+ward custom: C at 0xDFF000;
+
+fn main() {
+    let v = custom.intenar.read();
+    println(v as int);
+}

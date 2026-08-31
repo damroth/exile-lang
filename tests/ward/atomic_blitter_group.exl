@@ -1,0 +1,39 @@
+// AC2 - the shape the notation was chosen for. Eight registers, one group, one
+// region: the attribute form would cost eight annotations and still permit the
+// split, and the listing form would cost eight names at every call site with a
+// silent failure when one is forgotten.
+//
+// What this does NOT say is that BLTSIZE goes LAST. Ordering inside a group is a
+// stronger property needing a different declaration, and conflating the two would
+// make the group mean two things.
+mod raw { extern var BLTREGS: [u8; 32]; }
+
+ward Blitter {
+    bltcon0: u16 at 0x00 readwrite;
+    bltcon1: u16 at 0x02 readwrite;
+    bltafwm: u16 at 0x04 readwrite;
+    bltalwm: u16 at 0x06 readwrite;
+    bltapt:  u32 at 0x08 readwrite;
+    bltbpt:  u32 at 0x0C readwrite;
+    bltdpt:  u32 at 0x10 readwrite;
+    bltsize: u16 at 0x14 readwrite;
+
+    atomic { bltcon0, bltcon1, bltafwm, bltalwm, bltapt, bltbpt, bltdpt, bltsize }
+}
+
+fn main() {
+    ward b: Blitter at &raw::BLTREGS;
+    let mut v = 0;
+    seal {
+        b.bltcon0.write(2560 as u16);
+        b.bltcon1.write(0 as u16);
+        b.bltafwm.write(65535 as u16);
+        b.bltalwm.write(65535 as u16);
+        b.bltapt.write(64 as u32);
+        b.bltbpt.write(128 as u32);
+        b.bltdpt.write(192 as u32);
+        b.bltsize.write(1025 as u16);
+        v = b.bltsize.read() as int;
+    }
+    println(v);   // 1025
+}

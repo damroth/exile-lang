@@ -9696,7 +9696,7 @@ fn push_ward_fields(wname: str, fields: *const Vec<WardField>, out: *Vec<WardFie
 }
 fn collect_ward_one(it: *const Item, out: *Vec<WardFieldEntry>) {
     match *it {
-        Item::WardDecl { name, fields, pos } => { push_ward_fields(name, &fields, out); }
+        Item::WardDecl { name, fields, groups, pos } => { push_ward_fields(name, &fields, out); }
         | Item::Module(md) => { collect_ward_types(&md.mitems, out); }
         | _e => { }
     }
@@ -9736,6 +9736,403 @@ fn ward_overlap_msg(a: Allocator, ar: *Arena, wname: str, an: str, ao: int, asz:
     sb.push_int(bo); sb.push_str(", "); sb.push_int(bo + bsz); sb.push_str(") overlap");
     return str::from_slice(ar, sb.as_slice());
 }
+// ===== atomic groups: the structural rows =====
+//
+// These four ask nothing about `seal` - they are about the CLAUSE being
+// well-formed, and they are checkable the moment it is parsed. The rows that
+// relate a group to a region come with the enforcement.
+fn check_ward_groups(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        check_ward_groups_one(a, ar, sc, &sl[i]);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn check_ward_groups_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item) {
+    match *it {
+        Item::WardDecl { name, fields, groups, pos: _wp } => { check_groups_of(a, ar, sc, name, &fields, &groups); }
+        | Item::Module(md) => { check_ward_groups(a, ar, sc, &md.mitems); }
+        | _e => { }
+    }
+    return;
+}
+fn check_groups_of(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str,
+                   fields: *const Vec<WardField>, groups: *const Vec<AtomicGroup>) {
+    let gsl = groups.as_slice();
+    // Every name already claimed by an earlier group of this ward, so a field in
+    // two groups is caught without a second walk.
+    let mut claimed: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut gi = 0 as u32;
+    while gi < groups.length() {
+        check_one_group(a, ar, sc, wname, fields, &gsl[gi], &claimed);
+        gi = gi + 1 as u32;
+    }
+    return;
+}
+fn check_one_group(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str,
+                   fields: *const Vec<WardField>, g: *const AtomicGroup, claimed: *Vec<str>) {
+    // A7 - a one-member group would make "all members in ONE region" say nothing,
+    // and the single-register wish is a different notation, not a degenerate group.
+    if g.ag_names.length() < 2 as u32 {
+        tc_fail(ar, sc, g.ag_pos, "an atomic group needs at least two members");
+        return;
+    }
+    let mut seen: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < g.ag_names.length() {
+        check_group_member(a, ar, sc, wname, fields, g, i, &seen, claimed);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn check_group_member(a: Allocator, ar: *Arena, sc: *const TyScope, wname: str,
+                      fields: *const Vec<WardField>, g: *const AtomicGroup, i: u32,
+                      seen: *Vec<str>, claimed: *Vec<str>) {
+    let nm = g.ag_names.get(i) orelse "";
+    if !ward_has_field(fields, nm) {
+        tc_fail(ar, sc, g.ag_pos, group_msg(a, ar, "unknown field '", nm, "' in an atomic group of ward '", wname, "'"));
+        return;
+    }
+    if name_in(seen, nm) {
+        tc_fail(ar, sc, g.ag_pos, group_msg(a, ar, "field '", nm, "' is listed twice in one atomic group of ward '", wname, "'"));
+        return;
+    }
+    if name_in(claimed, nm) {
+        tc_fail(ar, sc, g.ag_pos, group_msg(a, ar, "field '", nm, "' is in two atomic groups of ward '", wname, "' - a field belongs to at most one"));
+        return;
+    }
+    seen.push(nm);
+    claimed.push(nm);
+    return;
+}
+fn ward_has_field(fields: *const Vec<WardField>, nm: str) -> bool {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() {
+        if str::eq(sl[i].wf_name, nm) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn group_msg(a: Allocator, ar: *Arena, p1: str, x: str, p2: str, y: str, p3: str) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str(p1); sb.push_str(x); sb.push_str(p2); sb.push_str(y); sb.push_str(p3);
+    return str::from_slice(ar, sb.as_slice());
+}
+
+// ===== `atomic`: the region rules =====
+//
+// Lexical and per-function, and saying so is the design rather than a shortcut:
+// a helper called from inside a seal is NOT covered, because covering it means
+// the flow analysis this feature refuses.  A lambda body is another function by
+// the same reading and is left alone.
+//
+// The walk carries the id of the OUTERMOST enclosing seal, so a nested region
+// counts as the region it sits inside: two accesses share a region exactly when
+// some one seal contains both.  Region 0 means "no seal above this access".
+struct AtomMember { am_ward: str, am_field: str, am_gid: u32 }
+struct AtomBind { ab_name: str, ab_ward: str }
+struct AtomHit { ah_gid: u32, ah_ward: str, ah_field: str, ah_region: u32, ah_pos: Pos }
+struct AtomCtx {
+    ac_members: *const Vec<AtomMember>,
+    ac_rctr: *u32,
+    ac_hits: *Vec<AtomHit>,
+}
+
+fn check_atomic_regions(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>) {
+    let mut members: Vec<AtomMember> = Vec::with_capacity(a, 8 as u32);
+    let mut gctr = 0 as u32;
+    atom_members(a, items, &members, &gctr);
+    // No group in the program means no rule to break, and the walk is skipped
+    // whole rather than run to collect nothing.
+    if members.length() == 0 as u32 { return; }
+    let mut tops: Vec<AtomBind> = Vec::with_capacity(a, 8 as u32);
+    atom_top_binds(items, &tops);
+    atom_items(a, ar, sc, &members, &tops, items);
+    return;
+}
+
+fn atom_members(a: Allocator, items: *const Vec<Item>, out: *Vec<AtomMember>, ctr: *u32) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        atom_members_one(a, &sl[i], out, ctr);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn atom_members_one(a: Allocator, it: *const Item, out: *Vec<AtomMember>, ctr: *u32) {
+    match *it {
+        Item::WardDecl { name, fields, groups, pos } => {
+            let gsl = groups.as_slice();
+            let mut gi = 0 as u32;
+            while gi < groups.length() {
+                *ctr = *ctr + 1 as u32;
+                atom_members_group(name, &gsl[gi], *ctr, out);
+                gi = gi + 1 as u32;
+            }
+        }
+        | Item::Module(md) => { atom_members(a, &md.mitems, out, ctr); }
+        | _e => { }
+    }
+    return;
+}
+fn atom_members_group(wname: str, g: *const AtomicGroup, gid: u32, out: *Vec<AtomMember>) {
+    let mut k = 0 as u32;
+    while k < g.ag_names.length() {
+        out.push(AtomMember { am_ward: wname, am_field: g.ag_names.get(k) orelse "", am_gid: gid });
+        k = k + 1 as u32;
+    }
+    return;
+}
+fn atom_top_binds(items: *const Vec<Item>, out: *Vec<AtomBind>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        match sl[i] {
+            Item::WardInstDecl { name, ward_ty, addr, pos } => { out.push(AtomBind { ab_name: name, ab_ward: ward_ty }); }
+            | Item::Module(md) => { atom_top_binds(&md.mitems, out); }
+            | _e => { }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+
+fn atom_items(a: Allocator, ar: *Arena, sc: *const TyScope, members: *const Vec<AtomMember>,
+              tops: *const Vec<AtomBind>, items: *const Vec<Item>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        match sl[i] {
+            Item::Function(f) => { atom_func(a, ar, sc, members, tops, &f.body); }
+            | Item::Impl(ib) => { atom_funcs(a, ar, sc, members, tops, &ib.iitems); }
+            | Item::Module(md) => { atom_items(a, ar, sc, members, tops, &md.mitems); }
+            | _e => { }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn atom_funcs(a: Allocator, ar: *Arena, sc: *const TyScope, members: *const Vec<AtomMember>,
+              tops: *const Vec<AtomBind>, fs: *const Vec<Func>) {
+    let sl = fs.as_slice();
+    let mut i = 0 as u32;
+    while i < fs.length() {
+        atom_func(a, ar, sc, members, tops, &sl[i].body);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn atom_func(a: Allocator, ar: *Arena, sc: *const TyScope, members: *const Vec<AtomMember>,
+             tops: *const Vec<AtomBind>, body: *const Vec<Stmt>) {
+    let mut hits: Vec<AtomHit> = Vec::with_capacity(a, 8 as u32);
+    let mut rctr = 0 as u32;
+    let cx = AtomCtx { ac_members: members, ac_rctr: &rctr, ac_hits: &hits };
+    atom_stmts(a, &cx, tops, 0 as u32, body);
+    atom_report(a, ar, sc, &hits);
+    return;
+}
+
+fn copy_binds(a: Allocator, src: *const Vec<AtomBind>) -> Vec<AtomBind> {
+    let mut out: Vec<AtomBind> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn atom_ward_of(binds: *const Vec<AtomBind>, nm: str) -> str {
+    let sl = binds.as_slice();
+    let mut i = 0 as u32;
+    while i < binds.length() {
+        if str::eq(sl[i].ab_name, nm) { return sl[i].ab_ward; }
+        i = i + 1 as u32;
+    }
+    return "";
+}
+fn atom_gid_of(members: *const Vec<AtomMember>, wt: str, f: str) -> u32 {
+    let sl = members.as_slice();
+    let mut i = 0 as u32;
+    while i < members.length() {
+        if str::eq(sl[i].am_ward, wt) && str::eq(sl[i].am_field, f) { return sl[i].am_gid; }
+        i = i + 1 as u32;
+    }
+    return 0 as u32;
+}
+fn atom_base_name(e: *const Expr) -> str {
+    return match *e { Expr::Var(n, q) => n | _o => "" };
+}
+fn atom_site(cx: *const AtomCtx, binds: *const Vec<AtomBind>, base: *const Expr, field: str, p: Pos, region: u32) {
+    let w = atom_base_name(base);
+    if str::eq(w, "") { return; }
+    let wt = atom_ward_of(binds, w);
+    if str::eq(wt, "") { return; }
+    let gid = atom_gid_of(cx.ac_members, wt, field);
+    if gid == 0 as u32 { return; }
+    cx.ac_hits.push(AtomHit { ah_gid: gid, ah_ward: wt, ah_field: field, ah_region: region, ah_pos: p });
+    return;
+}
+
+fn atom_seal(a: Allocator, cx: *const AtomCtx, binds: *const Vec<AtomBind>, region: u32, body: *const Vec<Stmt>) {
+    let mut r = region;
+    if r == 0 as u32 { *cx.ac_rctr = *cx.ac_rctr + 1 as u32; r = *cx.ac_rctr; }
+    atom_stmts(a, cx, binds, r, body);
+    return;
+}
+fn atom_stmts(a: Allocator, cx: *const AtomCtx, binds: *const Vec<AtomBind>, region: u32, stmts: *const Vec<Stmt>) {
+    let mut b = copy_binds(a, binds);
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        match sl[i] {
+            Stmt::Let { name, value, ty_ann, is_mut } => { atom_expr(a, cx, &b, region, value); }
+            | Stmt::LetTuple { names, value, is_mut } => { atom_expr(a, cx, &b, region, value); }
+            | Stmt::LetElse { pat, value, else_body } => { atom_expr(a, cx, &b, region, value); atom_stmts(a, cx, &b, region, &else_body); }
+            | Stmt::Assign { path, value } => { atom_expr(a, cx, &b, region, value); }
+            | Stmt::AssignField { target, field, value } => {
+                atom_site(cx, &b, target, field, expr_pos(target), region);
+                atom_expr(a, cx, &b, region, target);
+                atom_expr(a, cx, &b, region, value);
+            }
+            | Stmt::AssignIndex { base, index, value } => { atom_expr(a, cx, &b, region, base); atom_expr(a, cx, &b, region, index); atom_expr(a, cx, &b, region, value); }
+            | Stmt::AssignDeref { target, value } => { atom_expr(a, cx, &b, region, target); atom_expr(a, cx, &b, region, value); }
+            | Stmt::Return(oe, q) => { atom_opt(a, cx, &b, region, oe); }
+            | Stmt::ExprStmt(e) => { atom_expr(a, cx, &b, region, e); }
+            | Stmt::Tail(e) => { atom_expr(a, cx, &b, region, e); }
+            | Stmt::While { cond, body } => { atom_expr(a, cx, &b, region, cond); atom_stmts(a, cx, &b, region, &body); }
+            | Stmt::For { iter_var, range, body } => { atom_expr(a, cx, &b, region, range); atom_stmts(a, cx, &b, region, &body); }
+            | Stmt::Defer { body } => { atom_stmts(a, cx, &b, region, &body); }
+            | Stmt::With { target, name, body } => { atom_expr(a, cx, &b, region, target); atom_stmts(a, cx, &b, region, &body); }
+            | Stmt::WardInst { name, ward_ty, addr, pos } => { atom_expr(a, cx, &b, region, addr); b.push(AtomBind { ab_name: name, ab_ward: ward_ty }); }
+            | Stmt::Seal { body, pos } => { atom_seal(a, cx, &b, region, &body); }
+            | _e => { }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn atom_exprs(a: Allocator, cx: *const AtomCtx, binds: *const Vec<AtomBind>, region: u32, es: *const Vec<*const Expr>) {
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < es.length() { atom_expr(a, cx, binds, region, sl[i]); i = i + 1 as u32; }
+    return;
+}
+fn atom_opt(a: Allocator, cx: *const AtomCtx, binds: *const Vec<AtomBind>, region: u32, oe: Option<*const Expr>) {
+    match oe { Option::Some(e) => atom_expr(a, cx, binds, region, e) | Option::None => {} }
+    return;
+}
+fn atom_fields(a: Allocator, cx: *const AtomCtx, binds: *const Vec<AtomBind>, region: u32, fields: *const Vec<Field>) {
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { atom_expr(a, cx, binds, region, sl[i].value); i = i + 1 as u32; }
+    return;
+}
+fn atom_enum_args(a: Allocator, cx: *const AtomCtx, binds: *const Vec<AtomBind>, region: u32, args: *const EnumLitArgs) {
+    match *args {
+        EnumLitArgs::EATuple(es) => atom_exprs(a, cx, binds, region, &es)
+        | EnumLitArgs::EAStruct(fields) => atom_fields(a, cx, binds, region, &fields)
+    }
+    return;
+}
+fn atom_arms(a: Allocator, cx: *const AtomCtx, binds: *const Vec<AtomBind>, region: u32, arms: *const Vec<MatchArm>) {
+    let sl = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() {
+        match sl[i].guard { Option::Some(ge) => atom_expr(a, cx, binds, region, ge) | Option::None => {} }
+        atom_expr(a, cx, binds, region, sl[i].body);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn atom_else(a: Allocator, cx: *const AtomCtx, binds: *const Vec<AtomBind>, region: u32, else_blk: Option<Vec<Stmt>>) {
+    match else_blk { Option::Some(blk) => atom_stmts(a, cx, binds, region, &blk) | Option::None => {} }
+    return;
+}
+fn atom_expr(a: Allocator, cx: *const AtomCtx, binds: *const Vec<AtomBind>, region: u32, e: *const Expr) {
+    match *e {
+        Expr::FieldAccess(s, f, q) => { atom_site(cx, binds, s, f, q, region); atom_expr(a, cx, binds, region, s); }
+        | Expr::Neg(s, q) => atom_expr(a, cx, binds, region, s)
+        | Expr::BitNot(s, q) => atom_expr(a, cx, binds, region, s)
+        | Expr::Not(s, q) => atom_expr(a, cx, binds, region, s)
+        | Expr::Try(s, q) => atom_expr(a, cx, binds, region, s)
+        | Expr::Cast(s, t, q) => atom_expr(a, cx, binds, region, s)
+        | Expr::Ref(s, q) => atom_expr(a, cx, binds, region, s)
+        | Expr::Deref(s, q) => atom_expr(a, cx, binds, region, s)
+        | Expr::BinOp(op, l, r, q) => { atom_expr(a, cx, binds, region, l); atom_expr(a, cx, binds, region, r); }
+        | Expr::Orelse(l, r, q) => { atom_expr(a, cx, binds, region, l); atom_expr(a, cx, binds, region, r); }
+        | Expr::Index { base, index } => { atom_expr(a, cx, binds, region, base); atom_expr(a, cx, binds, region, index); }
+        | Expr::Range { lo, hi, inclusive } => { atom_expr(a, cx, binds, region, lo); atom_expr(a, cx, binds, region, hi); }
+        | Expr::Call { callee, args } => atom_exprs(a, cx, binds, region, &args)
+        | Expr::MethodCall { receiver, name, args } => { atom_expr(a, cx, binds, region, receiver); atom_exprs(a, cx, binds, region, &args); }
+        | Expr::TupleLit(es, q) => atom_exprs(a, cx, binds, region, &es)
+        | Expr::ArrayLit(es, q) => atom_exprs(a, cx, binds, region, &es)
+        | Expr::ArrayRepeat { value, count } => { atom_expr(a, cx, binds, region, value); atom_expr(a, cx, binds, region, count); }
+        | Expr::StructLit { tname, fields, base } => { atom_fields(a, cx, binds, region, &fields); atom_opt(a, cx, binds, region, base); }
+        | Expr::New { tname, fields, base, alloc } => { atom_fields(a, cx, binds, region, &fields); atom_opt(a, cx, binds, region, base); atom_opt(a, cx, binds, region, alloc); }
+        | Expr::NewEnum { tname, args, alloc } => { atom_exprs(a, cx, binds, region, &args); atom_opt(a, cx, binds, region, alloc); }
+        | Expr::EnumLit { tname, variant, args } => atom_enum_args(a, cx, binds, region, &args)
+        | Expr::Match { scrutinee, arms } => { atom_expr(a, cx, binds, region, scrutinee); atom_arms(a, cx, binds, region, &arms); }
+        | Expr::Block(stmts, q) => atom_stmts(a, cx, binds, region, &stmts)
+        | Expr::If { cond, then_blk, else_blk } => { atom_expr(a, cx, binds, region, cond); atom_stmts(a, cx, binds, region, &then_blk); atom_else(a, cx, binds, region, else_blk); }
+        | _other => {}
+    }
+    return;
+}
+
+fn atom_gid_in(v: *const Vec<u32>, g: u32) -> bool {
+    let sl = v.as_slice();
+    let mut i = 0 as u32;
+    while i < v.length() { if sl[i] == g { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn atom_report(a: Allocator, ar: *Arena, sc: *const TyScope, hits: *const Vec<AtomHit>) {
+    let sl = hits.as_slice();
+    let mut done: Vec<u32> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0 as u32;
+    while i < hits.length() {
+        if !atom_gid_in(&done, sl[i].ah_gid) {
+            done.push(sl[i].ah_gid);
+            atom_report_group(a, ar, sc, hits, sl[i].ah_gid);
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn atom_report_group(a: Allocator, ar: *Arena, sc: *const TyScope, hits: *const Vec<AtomHit>, gid: u32) {
+    let sl = hits.as_slice();
+    let n = hits.length();
+    // An access with no seal above it is the site the user has to move, so the
+    // diagnostic points THERE rather than at whichever seal was nearest.
+    let mut i = 0 as u32;
+    while i < n {
+        if sl[i].ah_gid == gid && sl[i].ah_region == 0 as u32 {
+            tc_fail(ar, sc, sl[i].ah_pos, group_msg(a, ar, "field '", sl[i].ah_field, "' of ward '", sl[i].ah_ward, "' is in an atomic group and must be accessed inside a seal"));
+            return;
+        }
+        i = i + 1 as u32;
+    }
+    // Every access is sealed, but not all by ONE seal. The same member touched in
+    // two regions is this rule too, not a rule of its own: what is torn apart is
+    // the group, and a group of one member is not expressible.
+    let mut first = 0 as u32;
+    let mut j = 0 as u32;
+    while j < n {
+        if sl[j].ah_gid == gid {
+            if first == 0 as u32 { first = sl[j].ah_region; }
+            else {
+                if sl[j].ah_region != first {
+                    tc_fail(ar, sc, sl[j].ah_pos, group_msg(a, ar, "field '", sl[j].ah_field, "' of ward '", sl[j].ah_ward, "' is in an atomic group whose members are accessed in a different seal region - one group, one region"));
+                    return;
+                }
+            }
+        }
+        j = j + 1 as u32;
+    }
+    return;
+}
+
 fn check_ward_overlaps(a: Allocator, ar: *Arena, sc: *const TyScope) {
     let sl = sc.sc_wards.as_slice();
     let n = sc.sc_wards.length();
@@ -18074,6 +18471,8 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     // must reach `err_latched` — otherwise it latches uselessly and codegen aborts
     // on the placeholder (the tl3 ICE).  Placement of a diagnostic is part of it.
     check_ward_overlaps(a, ar, &base_scope);
+    check_ward_groups(a, ar, &base_scope, items);
+    check_atomic_regions(a, ar, &base_scope, items);
     check_ward_inst_bases(a, ar, &base_scope);
     let mut tprunes: Vec<RuneGlobal> = Vec::with_capacity(a, 4 as u32);
     build_rune_globals(a, ar, &globals, &base_scope, &tprunes);

@@ -1,0 +1,24 @@
+// Accepting: one member in the outer region, the other in a region nested inside
+// it. Nesting is legal for seal, and the pair is not torn - one seal contains
+// both accesses, which is exactly what the rule asks for.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    a: u16 at 0x00 readwrite;
+    b: u16 at 0x04 readwrite;
+
+    atomic { a, b }
+}
+
+fn main() {
+    ward r: Regs at &raw::SCRATCH;
+    let mut v = 0;
+    seal {
+        r.a.write(5 as u16);
+        seal {
+            r.b.write(r.a.read() + 2 as u16);
+        }
+        v = r.b.read() as int;
+    }
+    println(v);   // 7
+}

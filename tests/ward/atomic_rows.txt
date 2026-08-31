@@ -1,0 +1,16 @@
+# The rejection rows for `atomic`, as name:wording pairs. The gate asserts each
+# file refuses AND that it refuses with exactly this sentence - the wording is the
+# contract, not just the rejection.
+#
+# Structural rows: the group itself is malformed.
+atomic_unknown_field:unknown field 'c' in an atomic group of ward 'Regs'
+atomic_duplicate_member:field 'a' is listed twice in one atomic group of ward 'Regs'
+atomic_two_groups:field 'a' is in two atomic groups of ward 'Regs' - a field belongs to at most one
+atomic_one_member:an atomic group needs at least two members
+#
+# Region rows: the group is well formed and the CODE breaks it.
+atomic_outside_seal:field 'a' of ward 'Regs' is in an atomic group and must be accessed inside a seal
+atomic_save_outside_seal:field 'dmaconr' of ward 'Regs' is in an atomic group and must be accessed inside a seal
+atomic_toplevel_outside_seal:field 'intenar' of ward 'C' is in an atomic group and must be accessed inside a seal
+atomic_two_regions:field 'b' of ward 'Regs' is in an atomic group whose members are accessed in a different seal region - one group, one region
+atomic_same_member_twice:field 'a' of ward 'Regs' is in an atomic group whose members are accessed in a different seal region - one group, one region

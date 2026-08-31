@@ -1,0 +1,12 @@
+// A5 - the same field twice in one group. Harmless in effect and a mistake in
+// intent: whoever wrote it meant a second register.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    a: u16 at 0x00 readwrite;
+    b: u16 at 0x04 readwrite;
+
+    atomic { a, a }
+}
+
+fn main() { ward r: Regs at &raw::SCRATCH; r.a.write(1 as u16); println(1); }

@@ -1,0 +1,18 @@
+// A3, second face - ONE member, two regions. What gets torn apart is the group,
+// so the same field read in one region and written in another is the same defect
+// as two different fields split across two; it is not a rule of its own.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    a: u16 at 0x00 readwrite;
+    b: u16 at 0x04 readwrite;
+
+    atomic { a, b }
+}
+
+fn main() {
+    ward r: Regs at &raw::SCRATCH;
+    seal { r.a.write(1 as u16); }
+    seal { r.a.write(2 as u16); }
+    println(1);
+}

@@ -1,0 +1,22 @@
+// Accepting: only ONE member of the group is touched at all, and it is inside a
+// seal. The rule is "every access sealed, all in one region" - it is not "every
+// member must be used", and a program that touches half a pair for a good reason
+// is not the shape this feature exists to catch.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    a: u16 at 0x00 readwrite;
+    b: u16 at 0x04 readwrite;
+
+    atomic { a, b }
+}
+
+fn main() {
+    ward r: Regs at &raw::SCRATCH;
+    let mut v = 0;
+    seal {
+        r.a.write(9 as u16);
+        v = r.a.read() as int;
+    }
+    println(v);   // 9
+}

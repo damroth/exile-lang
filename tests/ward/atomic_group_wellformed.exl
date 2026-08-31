@@ -1,0 +1,30 @@
+// The accepting row: a well-formed group on a real shape - DMACONR read, DMACON
+// written, the two registers of one read-modify-write, all in ONE region.
+//
+// The RAM backing is what lets the row RUN: the overlay sits on a byte array a
+// C stub supplies, so the sequence executes on the host and under the emulator
+// instead of being asserted by shape. The value leaves the region in a LOCAL -
+// every access to a member is inside the seal, which is the rule itself.
+//
+// The clause is a compile-time fact and must leave NOTHING behind. Its twin
+// without the clause is beside it, and the two must emit byte-identical C.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Custom {
+    dmaconr: u16 at 0x00 readwrite;
+    dmacon:  u16 at 0x04 readwrite;
+
+    atomic { dmaconr, dmacon }
+}
+
+fn main() {
+    ward c: Custom at &raw::SCRATCH;
+    let mut v = 0;
+    seal {
+        c.dmaconr.write(207 as u16);
+        let old = c.dmaconr.read();
+        c.dmacon.write(32768 as u16 | (old & 64 as u16));
+        v = c.dmacon.read() as int;
+    }
+    println(v);   // 32832
+}

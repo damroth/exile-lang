@@ -1,0 +1,11 @@
+# The accepting rows, as name:first-line-printed. Each is BUILT for the host over
+# its own RAM stub and RUN: without an oracle to compare emitted C against, a row
+# that only compiles proves nothing about what the clause let through.
+#
+# Every one of them also has to leave the region balanced, which the gate asserts
+# separately from the value.
+atomic_group_wellformed:32832
+atomic_one_member_sealed:9
+atomic_nested_regions:7
+atomic_other_function:42
+atomic_blitter_group:1025

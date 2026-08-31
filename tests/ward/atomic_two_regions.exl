@@ -1,0 +1,18 @@
+// A3 - both members are sealed, and that is still wrong: two regions, half the
+// group in each. This is why the group is the unit rather than the field - the
+// per-field reading calls this program correct.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    a: u16 at 0x00 readwrite;
+    b: u16 at 0x04 readwrite;
+
+    atomic { a, b }
+}
+
+fn main() {
+    ward r: Regs at &raw::SCRATCH;
+    seal { r.a.write(1 as u16); }
+    seal { r.b.write(2 as u16); }
+    println(1);
+}

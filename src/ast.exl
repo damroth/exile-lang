@@ -114,6 +114,14 @@ pub struct WardField {
     wf_pos: Pos,
 }
 
+// One `atomic { a, b }` clause of a ward: the set of fields whose accesses must
+// lie inside a single `seal` region. A fact about the silicon, declared where the
+// addresses and widths already are.
+pub struct AtomicGroup {
+    ag_names: Vec<str>,
+    ag_pos: Pos,
+}
+
 // One half-open byte range `lo .. hi` of a `sigil` declaration.
 // A LIST is required: Sprite 0 is genuinely two disjoint ranges (HRM).
 pub struct SigilRange {
@@ -428,7 +436,7 @@ pub enum Item {
     | RuneDecl { name: str, elem: *const TypeAnn, addr: *const Expr, dir: Direction, pos: Pos }
     // A `ward Name { fields }` overlay TYPE — layout only, no base, emits nothing
     // at all.  An instance binds the base separately.
-    | WardDecl { name: str, fields: Vec<WardField>, pos: Pos }
+    | WardDecl { name: str, fields: Vec<WardField>, groups: Vec<AtomicGroup>, pos: Pos }
     // A TOP-LEVEL `ward name: Type at ADDR;` instance — visible in every function
     // in the file.  Zero storage: emits nothing; the base
     // folds into each field access.  Int MMIO base only (a top-level `&GLOBAL` is

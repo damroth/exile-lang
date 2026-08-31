@@ -1,0 +1,15 @@
+// A6 - a field in two groups of one ward. Membership decides which OTHER accesses
+// have to share a region with it, so two answers to that question is not a
+// stricter rule, it is an ambiguous one.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    a: u16 at 0x00 readwrite;
+    b: u16 at 0x04 readwrite;
+    c: u16 at 0x06 readwrite;
+
+    atomic { a, b }
+    atomic { a, c }
+}
+
+fn main() { ward r: Regs at &raw::SCRATCH; r.a.write(1 as u16); println(1); }

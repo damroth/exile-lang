@@ -1,0 +1,16 @@
+// A1 - a member touched with no seal anywhere in the function. The whole point
+// of the declaration is that this shape stops compiling.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    a: u16 at 0x00 readwrite;
+    b: u16 at 0x04 readwrite;
+
+    atomic { a, b }
+}
+
+fn main() {
+    ward r: Regs at &raw::SCRATCH;
+    r.a.write(1 as u16);
+    println(1);
+}

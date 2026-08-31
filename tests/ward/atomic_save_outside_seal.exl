@@ -1,0 +1,36 @@
+// A2 - the save read OUTSIDE the region, the restore written inside it. This is
+// the shape a seal exists to prevent, and it is the one the seal era could not
+// see: the balance is 0, the nesting is 0, the program runs and returns the right
+// answer from the wrong shape.
+//
+// HISTORY. This file is the seal era's `accept_limit_wrong_region.exl`, checked
+// in as an ACCEPT fixture so the blindness would be a contract rather than a
+// memory, with a note saying that when a future round closed it the fixture would
+// go red and force the decision to be made deliberately. That is what happened:
+// the `atomic` clause states that the two registers form a PAIR, which is the
+// information the era said a checker would need, and the file changes sides.
+//
+// The diagnostic points at the OUTSIDE access, because that is the line that has
+// to move.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    dmaconr: u16 at 0x00 readwrite;
+    dmacon:  u16 at 0x02 readwrite;
+
+    atomic { dmaconr, dmacon }
+}
+
+fn torn(bits: u16) -> u16 {
+    ward regs: Regs at &raw::SCRATCH;
+    let old = regs.dmaconr.read();      // OUTSIDE - an interrupt here changes it
+    seal {
+        let keep = old & bits;
+        regs.dmacon.write(32768 as u16 | keep);
+    }
+    return regs.dmacon.read();
+}
+
+fn main() {
+    println(torn(64 as u16) as int);
+}

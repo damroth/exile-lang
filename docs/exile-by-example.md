@@ -2869,7 +2869,7 @@ name and leaves every other bit alone. What needs the seal is the sequence.
 
 A capability that quietly protects the empty set is worse than none, so the
 limits are written down, and each is pinned by a fixture that must keep
-compiling. Five of them:
+compiling. Four of them:
 
 1. **A forgotten seal is not diagnosed.** The compiler masks where you say it
    should; it does not know what ought to have been masked. The blitter
@@ -2883,15 +2883,45 @@ compiling. Five of them:
 4. **Region length is neither measured nor limited.** Entering is cheap on the
    68000; *holding* costs interrupt latency - audio glitches, missed disk DMA.
    A seal wrapped around a loop compiles in silence.
-5. **Nothing verifies that the sealed region is the right region.** A `DMACON`
-   save read outside the region with only the restore inside - precisely the
-   bug a seal exists to prevent - compiles clean, runs, and balances. The
-   host witness is blind to it too.
 
-The fifth is the sharpest, and it is checked in as
-[tests/seal/accept_limit_wrong_region.exl](../tests/seal/accept_limit_wrong_region.exl)
-with its expected output beside it: a runnable statement of what the model does
-not catch yet.
+### `atomic` - naming the registers a region is about
+
+There was a fifth limit, and it was the sharpest: **nothing verified that the
+sealed region was the right region.** A `DMACON` save read outside the region
+with only the restore inside - precisely the bug a seal exists to prevent -
+compiled clean, ran, and balanced, because exactly-once and nesting both
+genuinely held. The host witness was blind to it too.
+
+Seal answers *when* a sequence is indivisible. It never answered *which
+registers* the sequence is about, and that is the whole of the gap. An `atomic`
+clause answers it, declared where the addresses and widths already live:
+
+```rust
+ward Custom {
+    dmaconr: u16 at 0x002 readwrite;
+    dmacon:  u16 at 0x096 readwrite;
+
+    atomic { dmaconr, dmacon }
+}
+```
+
+Two rules follow from the declaration. Every access to a member must be inside a
+`seal`; and every access to members of one group, within one function, must be
+inside the **same** region. Two seals each holding half of a pair is the shape
+that makes the first rule alone insufficient, and it is why the group rather
+than the field is the unit.
+
+The declaration is a fact about the ward, fixed where it is written - there is no
+inference and no widening at a use site. The check is lexical and per-function,
+and that boundary is deliberate rather than incidental: a helper called from
+inside a seal is not covered, because covering it means the flow analysis this
+design refuses. Ordering inside a group is not covered either. The blitter cares
+that `BLTSIZE` is written **last**, not only that it is written together, and
+that is a stronger property needing a declaration of its own; conflating the two
+would make the group mean two things.
+
+Like every other construct in this chapter, the clause costs nothing at run time:
+a program with it and the same program without it emit byte-identical C.
 
 ---
 

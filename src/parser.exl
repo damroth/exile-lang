@@ -1790,20 +1790,43 @@ fn parse_ward_field(s: *Parser) -> WardField {
     expect(s, Token::Semicolon);
     return WardField { wf_name: np.name, wf_elem: elem, wf_offset: off, wf_dir: dir, wf_pos: pos };
 }
+// `atomic { a, b }` - the members are field names of this ward, and the clause
+// carries no type, offset or direction of its own: it names a relationship
+// between fields that are already declared above it.
+fn parse_atomic_group(s: *Parser) -> AtomicGroup {
+    let pos = peek_pos(s);
+    bump(s);
+    expect(s, Token::LBrace);
+    let mut names: Vec<str> = Vec::with_capacity(default_allocator(), 8 as u32);
+    while !peek_is(s, Token::RBrace) && !is_err(s) {
+        let np = expect_ident(s, "field name in an atomic group");
+        names.push(np.name);
+        if peek_is(s, Token::Comma) { bump(s); }
+    }
+    expect(s, Token::RBrace);
+    return AtomicGroup { ag_names: names, ag_pos: pos };
+}
+// `atomic` is not a keyword: it is a ward body item only when a `{` follows it,
+// so a ward field carrying that name still parses as a field.
+fn ward_body_is_group(s: *Parser) -> bool {
+    return is_ident_named(peek(s), "atomic") && tok_tag(peek2(s)) == tok_tag(Token::LBrace);
+}
 fn parse_ward_decl(s: *Parser) -> Item {
     let pos = peek_pos(s);
     bump(s);
     let np = expect_ident(s, "ward type name after 'ward'");
     expect(s, Token::LBrace);
     let mut fields: Vec<WardField> = Vec::with_capacity(default_allocator(), 8 as u32);
+    let mut groups: Vec<AtomicGroup> = Vec::with_capacity(default_allocator(), 8 as u32);
     while !peek_is(s, Token::RBrace) && !is_err(s) {
-        fields.push(parse_ward_field(s));
+        if ward_body_is_group(s) { groups.push(parse_atomic_group(s)); }
+        else { fields.push(parse_ward_field(s)); }
     }
     expect(s, Token::RBrace);
-    return Item::WardDecl { name: np.name, fields: fields, pos: pos };
+    return Item::WardDecl { name: np.name, fields: fields, groups: groups, pos: pos };
 }
 fn ward_decl_name(it: *const Item) -> str {
-    return match *it { Item::WardDecl { name, fields, pos } => name | _o => "" };
+    return match *it { Item::WardDecl { name, fields, groups, pos } => name | _o => "" };
 }
 // A top-level `ward name: Type at ADDR;` instance.
 fn parse_ward_inst_item(s: *Parser) -> Item {

@@ -1,0 +1,31 @@
+// AC5, the boundary said out loud: the unit is the FUNCTION. Each of these two
+// functions seals its own access, and the two are not compared - saying so is
+// what stops a lexical rule from quietly becoming whole-program analysis.
+//
+// A helper called from inside a seal is not covered either. That is a deferral
+// with a name, not an oversight.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Regs {
+    a: u16 at 0x00 readwrite;
+    b: u16 at 0x04 readwrite;
+
+    atomic { a, b }
+}
+
+fn set_a() {
+    ward r: Regs at &raw::SCRATCH;
+    seal { r.a.write(20 as u16); }
+}
+
+fn read_b() -> int {
+    ward r: Regs at &raw::SCRATCH;
+    let mut v = 0;
+    seal { r.b.write(22 as u16); v = r.b.read() as int; }
+    return v;
+}
+
+fn main() {
+    set_a();
+    println(read_b() + 20);   // 42
+}
