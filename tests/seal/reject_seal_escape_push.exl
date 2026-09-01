@@ -1,0 +1,9 @@
+// E2 - the same blindness on a DIFFERENT escape family: inserting a local's
+// address into a non-local container. Two families measured, one variable apart,
+// so the finding is about the WALKER and not about one rule.
+fn fill(v: *Vec<*u16>) {
+    let mut l: [u16; 4] = [1 as u16, 2 as u16, 3 as u16, 4 as u16];
+    seal { v.push(&l[0]); }
+}
+
+fn main() { println(0); }

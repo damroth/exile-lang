@@ -1,0 +1,18 @@
+// E1 - a local's address stored through a non-local pointer, INSIDE a region.
+//
+// The escape rule for this has existed since before the seal era and refuses the
+// identical store one line up, outside the region. The walker simply had no arm
+// for a seal body, so it never descended into one and every escape diagnostic was
+// unreachable there. Found by the address round, which is the fifth time a round
+// has turned up something that was not its own.
+mod raw { extern var SCRATCH: [u8; 64]; }
+
+ward W { p: *u16 at 0x00 write; }
+
+fn arm() {
+    ward w: W at &raw::SCRATCH;
+    let l: [u16; 4] = [1 as u16, 2 as u16, 3 as u16, 4 as u16];
+    seal { w.p.write(&l[0]); }
+}
+
+fn main() { arm(); println(0); }

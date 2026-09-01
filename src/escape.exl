@@ -774,6 +774,7 @@ fn deep_stmt(a: Allocator, s: *const Tstmt, out: *Vec<*const Texpr>) {
             deep_stmts(a, &post, out);
         }
         | Tstmt::TDefer { body, pos } => { deep_stmts(a, &body, out); }
+        | Tstmt::TSeal { body, pos } => { deep_stmts(a, &body, out); }
         | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => { deep_stmts(a, &body, out); }
         | Tstmt::TForEach { it_var, it_init, body, pos } => { deep_stmts(a, &body, out); }
         | _o => { }
@@ -1104,6 +1105,17 @@ fn walk_stmt(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, s: 
         | Tstmt::TDefer { body, pos } => {
             let mut inner = clone_state(a, live);
             walk_stmts(a, ar, esc, &inner, &body);
+        }
+        // A seal region is an inline, unconditional block - the escape rules
+        // apply inside it exactly as they do outside. Without this arm the walker
+        // never descended into one, so EVERY escape diagnostic was unreachable
+        // there: a store of a local's address into a hardware register, or an
+        // insert into a non-local container, compiled clean if it was sealed and
+        // was refused one line up. Measured on two of the pass's three message
+        // families, one variable apart - the seal, and only the seal.
+        | Tstmt::TSeal { body, pos } => {
+            let mut sinner = clone_state(a, live);
+            walk_stmts(a, ar, esc, &sinner, &body);
         }
         | _o => { }
     }

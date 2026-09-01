@@ -7,3 +7,5 @@ reject_seam_enter|error: the seal seam is not callable directly|T2 sys::sys_seal
 reject_seam_exit|error: the seal seam is not callable directly|T3 sys::sys_seal_exit written by hand
 reject_seam_extern|error: the seal seam is not declarable|T4 a raw extern re-declaring a seam symbol
 reject_sealed_theft|belongs to resource 'Blitter', claimed by 'gfx'|S2 x seal a non-owner cannot seal its way in
+reject_seal_escape_store|storing through a non-local pointer a value that embeds the address of a local binding|E1 escape rules reach INSIDE a region
+reject_seal_escape_push|inserting into a non-local container an argument that embeds the address|E2 the same, on a second escape family
