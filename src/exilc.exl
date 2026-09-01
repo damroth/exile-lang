@@ -88,6 +88,8 @@ fn err_line(msg: str) {
 struct CliArgs {
     ca_emit: int,
     ca_user_only: bool,
+    // --freestanding: emit C that links -nostdlib against runtime/freestanding.c.
+    ca_freestanding: bool,
     ca_after_drop: bool,
     ca_target: int,
     ca_show_cc: bool,
@@ -107,7 +109,7 @@ fn arg_str(i: c_int) -> str {
 fn parse_cli(a: Allocator) -> CliArgs {
     let none_s: Option<str> = Option::None;
     let links0: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let mut ca = CliArgs { ca_emit: 0 as int, ca_user_only: false, ca_after_drop: false,
+    let mut ca = CliArgs { ca_emit: 0 as int, ca_user_only: false, ca_freestanding: false, ca_after_drop: false,
                            ca_target: 0 as int, ca_show_cc: false, ca_input: "", ca_output: none_s,
                            ca_c_out: none_s, ca_links: links0, ca_ok: true };
     let argc = sys::sys_argc();
@@ -142,6 +144,7 @@ fn parse_cli(a: Allocator) -> CliArgs {
         else if str::eq(arg, "--emit-tokens") { ca.ca_emit = set_emit(&ca, 1 as int); }
         else if str::eq(arg, "--emit-ast") { ca.ca_emit = set_emit(&ca, 2 as int); }
         else if str::eq(arg, "--emit-typed-ir") { ca.ca_emit = set_emit(&ca, 3 as int); }
+        else if str::eq(arg, "--freestanding") { ca.ca_freestanding = true; }
         else if str::eq(arg, "--user-only") { ca.ca_user_only = true; }
         else if str::eq(arg, "--after-drop") { ca.ca_after_drop = true; }
         else if is_input_arg(arg) {
@@ -151,7 +154,7 @@ fn parse_cli(a: Allocator) -> CliArgs {
         else { unknown_flag(arg); ca.ca_ok = false; return ca; }
         i = i + 1 as c_int;
     }
-    if str::eq(ca.ca_input, "") { err_line("usage: exilc [--target c|host|amiga] [--emit-tokens|--emit-ast|--emit-typed-ir [--user-only] [--after-drop]] [-o out] [--c-out c] [--link stub]... [--show-cc-warnings] <file.exl>"); ca.ca_ok = false; }
+    if str::eq(ca.ca_input, "") { err_line("usage: exilc [--target c|host|amiga] [--emit-tokens|--emit-ast|--emit-typed-ir [--user-only] [--after-drop]] [-o out] [--c-out c] [--link stub]... [--freestanding] [--show-cc-warnings] <file.exl>"); ca.ca_ok = false; }
     return ca;
 }
 
@@ -295,6 +298,22 @@ fn run_codegen(a: Allocator, ar: *Arena, ca: *const CliArgs) {
     }
     return;
 }
+// A print the freestanding front cannot render refuses the whole compile, and it
+// refuses BEFORE the file is written: the reference raises from inside codegen
+// and never reaches its write, so a rejected run must leave nothing behind here
+// either.
+fn emit_or_refuse(a: Allocator, ar: *Arena, ca: *const CliArgs, fserr: *const Vec<pos::Pos>, out: *const StringBuilder) {
+    if fserr.length() > 0 as u32 {
+        let p = fserr.get(0 as u32) orelse pos::Pos { line: 1 as int, col: 1 as int, file: ca.ca_input };
+        report_error(a, alloc(ar, p, "float printing is unsupported in --freestanding (libc-free float formatting is not in v1)"));
+        return;
+    }
+    let cpath = resolve_cpath(a, ar, ca);
+    write_file(cpath, out);
+    emit_output(a, ar, ca, cpath);
+    return;
+}
+
 fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *const Vec<Item>) {
     match check_program(a, ar, prog) {
         Result::Ok(tp) => {
@@ -306,10 +325,12 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
             drop_report(a, drop_insert(a, ar, &tprog));
             lint(a, ar, &tprog);
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
-            gen_program(a, ar, &tprog, &out);
-            let cpath = resolve_cpath(a, ar, ca);
-            write_file(cpath, &out);
-            emit_output(a, ar, ca, cpath);
+            let mut fserr: Vec<pos::Pos> = Vec::with_capacity(a, 8 as u32);
+            gen_program(a, ar, &tprog, ca.ca_freestanding, &fserr, &out);
+            // A print the freestanding front cannot render is refused BEFORE the
+            // file is written, so a rejected compile leaves nothing behind - the
+            // reference raises from inside codegen and never reaches its write.
+            emit_or_refuse(a, ar, ca, &fserr, &out);
         }
         | Result::Err(e) => { report_error(a, e); }
     }

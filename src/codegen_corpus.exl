@@ -92,7 +92,11 @@ fn main() {
                     let mut tprog = tp;
                     drop_report(a, drop_insert(a, &ar, &tprog));
                     let mut out = StringBuilder::with_capacity(a, 16384 as u32);
-                    gen_program(a, &ar, &tprog, &out);
+                    // The corpus runner mirrors the hosted path only: the freestanding
+                      // differential has its own gate, over the whole example corpus
+                      // and against the reference.
+                      let mut fserr: Vec<pos::Pos> = Vec::with_capacity(a, 4 as u32);
+                      gen_program(a, &ar, &tprog, false, &fserr, &out);
                     flush(&out);
                 }
                 | Result::Err(e) => { report_error(a, e); }

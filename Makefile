@@ -764,7 +764,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -913,7 +913,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1634,6 +1634,61 @@ selfhost-prelude-probe: $(EXILC_BIN)
 	  echo "selfhost-prelude-probe: the port does not say the pinned line"; \
 	  echo "  pinned: $(PRELUDE_PROBE_LINE)"; echo "  port:   $$pline"; exit 1; fi; \
 	echo "selfhost-prelude-probe: clean - both compilers say the pinned line, position included"
+
+# ===== `--freestanding` in the port: the mirror =====
+#
+# The kernel arc needs two halves that until now lived in different compilers:
+# the capability model is port-only (the reference answers `'rune' is a reserved
+# word`), and libc-free emission was reference-only (the port's driver answered
+# `unknown flag`). This gate is the proof the second half crossed over.
+#
+# The comparison is the WHOLE example corpus in freestanding mode, not the two
+# files named `freestanding_*`: a mode that changes print, strlen, memzero, the
+# include block and every @debug fragment is not measured by one program. Each
+# example either emits from both compilers byte for byte, or is refused by both
+# with the same first diagnostic line - the project's contract for a diagnostic,
+# the source-line echo being a driver presentation layer the port has never had.
+.PHONY: selfhost-freestanding
+selfhost-freestanding: $(EXILC_BIN)
+	@test -f runtime/freestanding.c || { echo "selfhost-freestanding: MISSING runtime/freestanding.c"; exit 1; }; \
+	n=`ls examples/*.exl 2>/dev/null | wc -l`; \
+	test "$$n" -ge 90 || { echo "selfhost-freestanding: the corpus walk found only $$n examples - the walk is broken, not the corpus"; exit 1; }; \
+	rm -rf $(C_OUT)/fsm; mkdir -p $(C_OUT)/fsm; \
+	agree=0; rboth=0; bad=0; \
+	for f in examples/*.exl; do \
+	  b=`basename $$f .exl`; rm -f $(C_OUT)/fsm/o.c $(C_OUT)/fsm/p.c; \
+	  oe=`$(EXILE) --target c --freestanding --c-out $(C_OUT)/fsm/o.c $$f 2>&1 >/dev/null`; orc=$$?; \
+	  pe=`$(EXILC_BIN) --target c --freestanding --c-out $(C_OUT)/fsm/p.c $$f 2>&1 >/dev/null`; prc=$$?; \
+	  if [ $$orc -ne 0 ] && [ $$prc -ne 0 ]; then \
+	    ol=`echo "$$oe" | head -1`; pl=`echo "$$pe" | head -1`; \
+	    if [ "$$ol" = "$$pl" ]; then rboth=`expr $$rboth + 1`; \
+	    else echo "selfhost-freestanding: $$b refused by both, DIFFERENT first line"; \
+	         echo "  oracle: $$ol"; echo "  port:   $$pl"; bad=`expr $$bad + 1`; fi; \
+	  elif [ $$orc -ne 0 ] || [ $$prc -ne 0 ]; then \
+	    echo "selfhost-freestanding: $$b - one compiler refused and the other did not (oracle=$$orc port=$$prc)"; \
+	    echo "  oracle: `echo "$$oe" | head -1`"; echo "  port:   `echo "$$pe" | head -1`"; bad=`expr $$bad + 1`; \
+	  elif cmp -s $(C_OUT)/fsm/o.c $(C_OUT)/fsm/p.c; then agree=`expr $$agree + 1`; \
+	  else echo "selfhost-freestanding: $$b DIVERGED in freestanding emission"; \
+	       diff $(C_OUT)/fsm/o.c $(C_OUT)/fsm/p.c | head -8; bad=`expr $$bad + 1`; fi; \
+	done; \
+	test $$bad -eq 0 || exit 1; \
+	test $$agree -ge 90 || { echo "selfhost-freestanding: only $$agree emissions compared - the walk lost members"; exit 1; }; \
+	test $$rboth -ge 1 || { echo "selfhost-freestanding: NO example was refused by both - the mode's one refusal (a float print) is not being exercised, so the limit is unmeasured"; exit 1; }; \
+	rm -f $(C_OUT)/fsm/fp.c $(C_OUT)/fsm/fp.o $(C_OUT)/fsm/fp $(C_OUT)/fsm/fp.out; \
+	$(EXILC_BIN) --target c --freestanding --c-out $(C_OUT)/fsm/fp.c examples/freestanding_print.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-freestanding: the port cannot emit the freestanding witness"; exit 1; }; \
+	test -s $(C_OUT)/fsm/fp.c || { echo "selfhost-freestanding: EMPTY emission (floor)"; exit 1; }; \
+	$(CC) $(CFLAGS) -ffreestanding -fno-stack-protector -fno-pic -I runtime -c $(C_OUT)/fsm/fp.c -o $(C_OUT)/fsm/fp.o \
+	  || { echo "selfhost-freestanding: the port's freestanding C does not compile -ffreestanding"; exit 1; }; \
+	leak=`nm -u $(C_OUT)/fsm/fp.o | awk '{print $$NF}' | grep -vE '^(__ex_|sys_)' || true`; \
+	if [ -n "$$leak" ]; then echo "selfhost-freestanding: LIBC LEAK in the PORT's output -> $$leak"; exit 1; fi; \
+	$(CC) -I runtime $(C_OUT)/fsm/fp.c runtime/freestanding.c $(SYS_HOST) -o $(C_OUT)/fsm/fp \
+	  || { echo "selfhost-freestanding: the port's freestanding C does not link"; exit 1; }; \
+	$(C_OUT)/fsm/fp > $(C_OUT)/fsm/fp.out 2>&1; \
+	diff -q examples/freestanding_print.expected $(C_OUT)/fsm/fp.out >/dev/null \
+	  || { echo "selfhost-freestanding: the port's freestanding binary RAN wrong:"; \
+	       diff examples/freestanding_print.expected $(C_OUT)/fsm/fp.out | head -6; exit 1; }; \
+	echo "selfhost-freestanding: clean ($$agree emissions byte-identical to the reference, $$rboth refused by both with the same first line, and the port's own output is nm-clean and RUNS)"
 
 # ===== the compiler's own source compiles WARNING-FREE =====
 #

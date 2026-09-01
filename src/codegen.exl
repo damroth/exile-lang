@@ -16,6 +16,7 @@
 // `--c-out`; a `codegen_corpus.exl` driver runs the pipeline and flushes C to
 // stdout, the same playbook that drove the tc and drop layers.
 
+use pos::*;
 use ast::*;
 use ir::*;
 use error::*;
@@ -972,6 +973,15 @@ fn emit_binop_operand(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const 
 // counter and the match-label counter (both reset per program by
 // gen_function).  Bundled so a single `cg` pointer rides the recursion.
 struct Cg {
+    // --freestanding: the emitted C links -nostdlib against runtime/freestanding.c,
+    // so print / strlen / memzero route to the __ex_* helpers instead of libc.
+    cg_freestanding: bool,
+    // Positions of prints the freestanding front cannot render (a float). The
+    // reference raises from codegen and writes nothing; codegen here cannot carry
+    // a diagnostic, so it RECORDS and the driver reports before any file is
+    // written - same pipeline position, same sentence, and a diagnostic instead of
+    // the abort a literal mirror would have produced.
+    cg_fserr: *Vec<Pos>,
     cg_enums: *const Vec<EnumSig>,
     cg_structs: *const Vec<StructSig>,
     cg_fill: *u32,
@@ -2004,7 +2014,7 @@ pub fn gen_function(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg
     }
     let empty: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
     let mut dchain: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
-    let cg2 = Cg { cg_enums: cg.cg_enums, cg_structs: cg.cg_structs, cg_fill: cg.cg_fill, cg_ml: cg.cg_ml, cg_defers: &dchain, cg_loopmark: cg.cg_loopmark };
+    let cg2 = Cg { cg_freestanding: cg.cg_freestanding, cg_fserr: cg.cg_fserr, cg_enums: cg.cg_enums, cg_structs: cg.cg_structs, cg_fill: cg.cg_fill, cg_ml: cg.cg_ml, cg_defers: &dchain, cg_loopmark: cg.cg_loopmark };
     gen_block(a, ar, out, "    ", &cg2, &empty, &tf.tf_body);
     if str::eq(tf.tf_func.name, "main") { out.push_str("    return 0;\n"); }
     out.push_str("}\n");
@@ -2123,12 +2133,12 @@ fn fn_dead(tp: *const Tprogram, tf: *const Tfunc, idx: int) -> bool {
     return true;
 }
 
-pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBuilder) {
+pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, fstd: bool, fserr: *Vec<Pos>, out: *StringBuilder) {
     let mut fillctr: u32 = 0 as u32;
     let mut mlctr: u32 = 0 as u32;
     let mut dchain: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
     let mut loopmark = 0 as u32;
-    let cg = Cg { cg_enums: &tp.tp_enum_index, cg_structs: &tp.tp_struct_index, cg_fill: &fillctr, cg_ml: &mlctr, cg_defers: &dchain, cg_loopmark: &loopmark };
+    let cg = Cg { cg_freestanding: fstd, cg_fserr: fserr, cg_enums: &tp.tp_enum_index, cg_structs: &tp.tp_struct_index, cg_fill: &fillctr, cg_ml: &mlctr, cg_defers: &dchain, cg_loopmark: &loopmark };
     // Prelude free-fns (str::*) emit first — the oracle prepends the prelude, so
     // they precede user free-fns in the definition section.
     // Emission order (measured against the oracle's prepended prelude):
@@ -2172,8 +2182,9 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *S
 }
 
 // Stage (g): whole-file assembler.  Reproduces the oracle gen_program's
-// section order and blank-line choreography for the host (non-freestanding)
-// target: includes -> @c_include -> #define consts -> extern const/var ->
+// section order and blank-line choreography: includes (or, under
+// --freestanding, the inline libc-free prototypes) -> @c_include -> #define
+// consts -> extern const/var ->
 // fnptr+aggregate typedefs -> non-main fwd-decls -> fn bodies.  Each optional
 // section is blank-prefixed when non-empty (oracle `emit_section`).  The
 // per-body `\n` in emit_all_functions reproduces the oracle's always-blank
@@ -2307,29 +2318,61 @@ fn rtuf_tuple(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *
     return str::from_slice(ar, sb.as_slice());
 }
 // `printf("<lit>");` with the literal C-escaped.
-fn emit_dbg_lit(out: *StringBuilder, indent: str, lit: str) {
+fn emit_dbg_lit(out: *StringBuilder, fstd: bool, indent: str, lit: str) {
     out.push_str(indent);
-    out.push_str("printf(\"");
+    if fstd { out.push_str("__ex_print_str(\""); } else { out.push_str("printf(\""); }
     escape_c_into(out, lit);
     out.push_str("\");\n");
     return;
 }
 // One printf fragment rendering `access` (a C l-value of type `ty`), no newline.
-fn emit_field_debug(a: Allocator, ar: *Arena, out: *StringBuilder, ty: *const Typ, access: str) {
+fn dbg_bool(out: *StringBuilder, fstd: bool, access: str) {
+    if fstd { out.push_str("__ex_print_str(("); } else { out.push_str("printf(\"%s\", ("); }
+    out.push_str(access);
+    out.push_str(") ? \"true\" : \"false\")");
+    return;
+}
+fn dbg_str(out: *StringBuilder, fstd: bool, access: str) {
+    if fstd { out.push_str("__ex_print_str_quoted("); } else { out.push_str("printf(\"\\\"%s\\\"\", "); }
+    out.push_str(access);
+    out.push_str(")");
+    return;
+}
+fn dbg_ptr(out: *StringBuilder, fstd: bool, access: str) {
+    if fstd { out.push_str("__ex_print_ptr((void*)("); } else { out.push_str("printf(\"%p\", (void*)("); }
+    out.push_str(access);
+    out.push_str("))");
+    return;
+}
+fn dbg_scalar(out: *StringBuilder, fstd: bool, ty: *const Typ, access: str) {
+    if fstd {
+        out.push_str(free_print_fn(ty, false));
+        out.push_str("((");
+        out.push_str(free_print_cast(ty));
+        out.push_str(")(");
+        out.push_str(access);
+        out.push_str("))");
+        return;
+    }
+    let fm = print_fmt(ty);
+    out.push_str("printf(\""); out.push_str(fm.f_spec); out.push_str("\", ");
+    if str::eq(fm.f_cast, "") { out.push_str(access); }
+    else { out.push_str("("); out.push_str(fm.f_cast); out.push_str(")("); out.push_str(access); out.push_str(")"); }
+    out.push_str(")");
+    return;
+}
+// One printf fragment rendering `access` (a C l-value of type `ty`), no newline.
+// In freestanding every fragment routes to a libc-free `__ex_*` helper and the
+// output is byte-identical.
+fn emit_field_debug(a: Allocator, ar: *Arena, out: *StringBuilder, fstd: bool, ty: *const Typ, access: str) {
     match *ty {
-        Typ::TBool => { out.push_str("printf(\"%s\", ("); out.push_str(access); out.push_str(") ? \"true\" : \"false\")"); }
-        | Typ::TString => { out.push_str("printf(\"\\\"%s\\\"\", "); out.push_str(access); out.push_str(")"); }
-        | Typ::TPtr(_i) => { out.push_str("printf(\"%p\", (void*)("); out.push_str(access); out.push_str("))"); }
-        | Typ::TOwnPtr(_i) => { out.push_str("printf(\"%p\", (void*)("); out.push_str(access); out.push_str("))"); }
+        Typ::TBool => dbg_bool(out, fstd, access)
+        | Typ::TString => dbg_str(out, fstd, access)
+        | Typ::TPtr(_i) => dbg_ptr(out, fstd, access)
+        | Typ::TOwnPtr(_i) => dbg_ptr(out, fstd, access)
         | Typ::TStruct(_p) => { out.push_str(mangle_typ(a, ar, ty)); out.push_str("__debug("); out.push_str(access); out.push_str(")"); }
         | Typ::TEnum(_p) => { out.push_str(mangle_typ(a, ar, ty)); out.push_str("__debug("); out.push_str(access); out.push_str(")"); }
-        | _o => {
-            let fm = print_fmt(ty);
-            out.push_str("printf(\""); out.push_str(fm.f_spec); out.push_str("\", ");
-            if str::eq(fm.f_cast, "") { out.push_str(access); }
-            else { out.push_str("("); out.push_str(fm.f_cast); out.push_str(")("); out.push_str(access); out.push_str(")"); }
-            out.push_str(")");
-        }
+        | _o => dbg_scalar(out, fstd, ty, access)
     }
     return;
 }
@@ -2339,27 +2382,27 @@ fn dbg_access(a: Allocator, ar: *Arena, prefix: str, field: str) -> str {
     sb.push_str(field);
     return str::from_slice(ar, sb.as_slice());
 }
-fn emit_struct_debug_def(a: Allocator, ar: *Arena, out: *StringBuilder, structs: *const Vec<StructSig>,
+fn emit_struct_debug_def(a: Allocator, ar: *Arena, out: *StringBuilder, fstd: bool, structs: *const Vec<StructSig>,
                          enums: *const Vec<EnumSig>, s: *const StructSig) {
     let cname = mangle_typ(a, ar, ty_node(ar, Typ::TStruct(copy_strs_cg(a, &s.sname_path))));
     let name = render_typ_user_facing(a, ar, structs, enums, ty_node(ar, Typ::TStruct(copy_strs_cg(a, &s.sname_path))));
     out.push_str("static void "); out.push_str(cname); out.push_str("__debug(struct "); out.push_str(cname); out.push_str(" self) {\n");
-    emit_dbg_lit(out, "    ", concat2(a, ar, name, " { "));
+    emit_dbg_lit(out, fstd, "    ", concat2(a, ar, name, " { "));
     let fs = s.sfields_ty.as_slice();
     let mut i = 0 as u32;
     while i < s.sfields_ty.length() {
-        if i > 0 as u32 { emit_dbg_lit(out, "    ", ", "); }
-        emit_dbg_lit(out, "    ", concat2(a, ar, fs[i].name, ": "));
+        if i > 0 as u32 { emit_dbg_lit(out, fstd, "    ", ", "); }
+        emit_dbg_lit(out, fstd, "    ", concat2(a, ar, fs[i].name, ": "));
         out.push_str("    ");
-        emit_field_debug(a, ar, out, fs[i].ty, dbg_access(a, ar, "self.", fs[i].name));
+        emit_field_debug(a, ar, out, fstd, fs[i].ty, dbg_access(a, ar, "self.", fs[i].name));
         out.push_str(";\n");
         i = i + 1 as u32;
     }
-    emit_dbg_lit(out, "    ", " }");
+    emit_dbg_lit(out, fstd, "    ", " }");
     out.push_str("}\n");
     return;
 }
-fn emit_enum_debug_def(a: Allocator, ar: *Arena, out: *StringBuilder, structs: *const Vec<StructSig>,
+fn emit_enum_debug_def(a: Allocator, ar: *Arena, out: *StringBuilder, fstd: bool, structs: *const Vec<StructSig>,
                        enums: *const Vec<EnumSig>, e: *const EnumSig) {
     let cname = mangle_typ(a, ar, ty_node(ar, Typ::TEnum(copy_strs_cg(a, &e.ename_path))));
     let name = render_typ_user_facing(a, ar, structs, enums, ty_node(ar, Typ::TEnum(copy_strs_cg(a, &e.ename_path))));
@@ -2369,7 +2412,7 @@ fn emit_enum_debug_def(a: Allocator, ar: *Arena, out: *StringBuilder, structs: *
     let mut i = 0 as u32;
     while i < e.evariants.length() {
         out.push_str("    case "); out.push_str(cname); out.push_str("_"); out.push_str(vs[i].vsname); out.push_str(":\n");
-        emit_variant_debug(a, ar, out, cname, name, &vs[i]);
+        emit_variant_debug(a, ar, out, fstd, cname, name, &vs[i]);
         out.push_str("        break;\n");
         i = i + 1 as u32;
     }
@@ -2377,30 +2420,30 @@ fn emit_enum_debug_def(a: Allocator, ar: *Arena, out: *StringBuilder, structs: *
     out.push_str("}\n");
     return;
 }
-fn emit_variant_debug(a: Allocator, ar: *Arena, out: *StringBuilder, _cname: str, name: str, v: *const VariantSig) {
+fn emit_variant_debug(a: Allocator, ar: *Arena, out: *StringBuilder, fstd: bool, _cname: str, name: str, v: *const VariantSig) {
     let hdr = concat2(a, ar, concat2(a, ar, name, "::"), v.vsname);
-    if v.vsfields.length() == 0 as u32 { emit_dbg_lit(out, "        ", hdr); return; }
+    if v.vsfields.length() == 0 as u32 { emit_dbg_lit(out, fstd, "        ", hdr); return; }
     let opener = if v.vsis_struct { " { " } else { "(" };
-    emit_dbg_lit(out, "        ", concat2(a, ar, hdr, opener));
+    emit_dbg_lit(out, fstd, "        ", concat2(a, ar, hdr, opener));
     let mut pfx = StringBuilder::with_capacity(a, 32 as u32);
     pfx.push_str("self.data."); pfx.push_str(v.vsname); pfx.push_str(".");
     let prefix = str::from_slice(ar, pfx.as_slice());
     let fs = v.vsfields.as_slice();
     let mut i = 0 as u32;
     while i < v.vsfields.length() {
-        if i > 0 as u32 { emit_dbg_lit(out, "        ", ", "); }
-        if v.vsis_struct { emit_dbg_lit(out, "        ", concat2(a, ar, fs[i].name, ": ")); }
+        if i > 0 as u32 { emit_dbg_lit(out, fstd, "        ", ", "); }
+        if v.vsis_struct { emit_dbg_lit(out, fstd, "        ", concat2(a, ar, fs[i].name, ": ")); }
         out.push_str("        ");
-        emit_field_debug(a, ar, out, fs[i].ty, dbg_access(a, ar, prefix, fs[i].name));
+        emit_field_debug(a, ar, out, fstd, fs[i].ty, dbg_access(a, ar, prefix, fs[i].name));
         out.push_str(";\n");
         i = i + 1 as u32;
     }
     let closer = if v.vsis_struct { " }" } else { ")" };
-    emit_dbg_lit(out, "        ", closer);
+    emit_dbg_lit(out, fstd, "        ", closer);
     return;
 }
 // The `@debug` section: fwd-decls then bodies, right after the aggregate typedefs.
-pub fn emit_debug_printers(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBuilder) {
+pub fn emit_debug_printers(a: Allocator, ar: *Arena, tp: *const Tprogram, fstd: bool, out: *StringBuilder) {
     let ssl = tp.tp_struct_index.as_slice();
     let esl = tp.tp_enum_index.as_slice();
     let mut n = 0 as u32;
@@ -2436,7 +2479,7 @@ pub fn emit_debug_printers(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *
     let mut p = 0 as u32;
     while p < tp.tp_struct_index.length() {
         if ssl[p].sis_debug && fields_concrete(&ssl[p].sfields_ty) {
-            emit_struct_debug_def(a, ar, out, &tp.tp_struct_index, &tp.tp_enum_index, &ssl[p]);
+            emit_struct_debug_def(a, ar, out, fstd, &tp.tp_struct_index, &tp.tp_enum_index, &ssl[p]);
             out.push_str("\n");
         }
         p = p + 1 as u32;
@@ -2444,7 +2487,7 @@ pub fn emit_debug_printers(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *
     let mut q = 0 as u32;
     while q < tp.tp_enum_index.length() {
         if esl[q].eis_debug && enum_concrete(&esl[q]) {
-            emit_enum_debug_def(a, ar, out, &tp.tp_struct_index, &tp.tp_enum_index, &esl[q]);
+            emit_enum_debug_def(a, ar, out, fstd, &tp.tp_struct_index, &tp.tp_enum_index, &esl[q]);
             out.push_str("\n");
         }
         q = q + 1 as u32;
@@ -2452,10 +2495,31 @@ pub fn emit_debug_printers(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *
     return;
 }
 
-pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBuilder) {
-    out.push_str("#include <stdio.h>\n");
-    if tp.tp_uses_heap { out.push_str("#include <stdlib.h>\n"); }
-    if tp.tp_uses_string_h { out.push_str("#include <string.h>\n"); }
+pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, fstd: bool, fserr: *Vec<Pos>, out: *StringBuilder) {
+    // The libc includes are gated on the mode. In freestanding the IO / strlen /
+    // memzero front is the __ex_* helpers, defined in runtime/freestanding.c over
+    // sys_write, and their prototypes go out INLINE rather than through an
+    // `#include "freestanding.h"` - so the emitted C is self-contained and needs
+    // no `-I` path on any target, only freestanding.c linked. This block must
+    // stay in step with runtime/freestanding.h.
+    if fstd {
+        out.push_str("/* --freestanding: libc-free helpers (link runtime/freestanding.c) */\n");
+        out.push_str("extern long sys_write(int fd, const unsigned char *buf, unsigned long n);\n");
+        out.push_str("unsigned long __ex_strlen(const char *s);\n");
+        out.push_str("void __ex_memzero(void *p, unsigned long n);\n");
+        out.push_str("void __ex_print_i32(long v);\n");
+        out.push_str("void __ex_println_i32(long v);\n");
+        out.push_str("void __ex_print_u32(unsigned long v);\n");
+        out.push_str("void __ex_println_u32(unsigned long v);\n");
+        out.push_str("void __ex_print_str(const char *s);\n");
+        out.push_str("void __ex_println_str(const char *s);\n");
+        out.push_str("void __ex_print_str_quoted(const char *s);\n");
+        out.push_str("void __ex_print_ptr(const void *p);\n");
+    } else {
+        out.push_str("#include <stdio.h>\n");
+        if tp.tp_uses_heap { out.push_str("#include <stdlib.h>\n"); }
+        if tp.tp_uses_string_h { out.push_str("#include <string.h>\n"); }
+    }
 
     let cin = tp.tp_c_includes.as_slice();
     let mut ci = 0 as u32;
@@ -2502,7 +2566,7 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
     }
 
     emit_type_decls(a, ar, tp, out);
-    emit_debug_printers(a, ar, tp, out);
+    emit_debug_printers(a, ar, tp, fstd, out);
 
     let pfl = tp.tp_pfree.as_slice();
     let pml = tp.tp_pmeth.as_slice();
@@ -2572,12 +2636,12 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *StringBu
         out.push_str("}\n");
     }
 
-    emit_all_functions(a, ar, tp, out);
+    emit_all_functions(a, ar, tp, fstd, fserr, out);
 }
 
 // ===== Stage (h): builtin call emitters =====
 //
-// Host (non-freestanding) lowering of the print/free/mem builtins.  print /
+// Lowering of the print/free/mem builtins.  On the hosted path, print /
 // println of a scalar/string picks a printf format + optional widening cast
 // byte-exact with the oracle's emit_print_impl; a `@debug` aggregate dispatches
 // to its synthesized `<mangle>__debug` printer.  (Display-dispatched println is
@@ -2607,15 +2671,73 @@ fn print_fmt(t: *const Typ) -> Fmt {
 fn is_aggregate_ty(t: *const Typ) -> bool {
     return match *t { Typ::TStruct(_p) => true | Typ::TEnum(_p) => true | _o => false };
 }
+// The libc-free print front (oracle `emit_print_impl`'s freestanding arm): a
+// string goes straight to the str helper, everything else widens to the one
+// signed / unsigned type its helper takes. Output matches the hosted printf path
+// byte for byte - a bool prints 0/1 exactly as the hosted `%d` does, because
+// true/false is a Display concern and not this primitive's.
+fn emit_print_free(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, newline: bool, arg: *const Texpr) {
+    match *arg.ty {
+        Typ::TString => {
+            if newline { out.push_str("__ex_println_str("); } else { out.push_str("__ex_print_str("); }
+            gen_expr(a, ar, out, cg, arg);
+            out.push_str(")");
+        }
+        | _o => {
+            let fn_name = free_print_fn(arg.ty, newline);
+            if str::eq(fn_name, "") { cg.cg_fserr.push(arg.pos); out.push_str("__ex_print_i32"); }
+            else { out.push_str(fn_name); }
+            out.push_str("((");
+            out.push_str(free_print_cast(arg.ty));
+            out.push_str(")(");
+            gen_expr(a, ar, out, cg, arg);
+            out.push_str("))");
+        }
+    }
+    return;
+}
+// The helper an unsigned value goes to, and the one everything else does. A
+// float never reaches here: the mode refuses to print one, and the refusal is a
+// diagnostic raised before codegen runs.
+fn free_print_unsigned(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(k) => !k.is_signed
+        | Typ::TCInt { is_signed } => !is_signed
+        | _o => false
+    };
+}
+fn free_print_printable(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TBool => true | Typ::TInt(_k) => true | Typ::TCInt { is_signed: _s } => true | _o => false
+    };
+}
+fn free_print_fn(t: *const Typ, newline: bool) -> str {
+    if !free_print_printable(t) { return ""; }
+    if free_print_unsigned(t) {
+        if newline { return "__ex_println_u32"; }
+        return "__ex_print_u32";
+    }
+    if newline { return "__ex_println_i32"; }
+    return "__ex_print_i32";
+}
+fn free_print_cast(t: *const Typ) -> str {
+    if free_print_unsigned(t) { return "unsigned long"; }
+    return "long";
+}
+
 fn emit_print_impl(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, newline: bool, args: *const Vec<*const Texpr>) {
     let arg = args.as_slice()[0 as u32];
     if is_aggregate_ty(arg.ty) {
         out.push_str(mangle_typ(a, ar, arg.ty)); out.push_str("__debug(");
         gen_expr(a, ar, out, cg, arg);
         out.push_str(")");
-        if newline { out.push_str("; printf(\"\\n\")"); }
+        if newline {
+            if cg.cg_freestanding { out.push_str("; __ex_print_str(\"\\n\")"); }
+            else { out.push_str("; printf(\"\\n\")"); }
+        }
         return;
     }
+    if cg.cg_freestanding { emit_print_free(a, ar, out, cg, newline, arg); return; }
     let fm = print_fmt(arg.ty);
     out.push_str("printf(\""); out.push_str(fm.f_spec);
     if newline { out.push_str("\\n"); }
@@ -2644,8 +2766,14 @@ fn emit_builtin(a: Allocator, ar: *Arena, out: *StringBuilder, cg: *const Cg, na
     if str::eq(name, "println") { emit_print_impl(a, ar, out, cg, true, args); return; }
     if str::eq(name, "free") { emit_free_builtin(a, ar, out, cg, args); return; }
     if str::eq(name, "ptr_offset") { out.push_str("("); gen_expr(a, ar, out, cg, sl[0 as u32]); out.push_str(" + "); gen_expr(a, ar, out, cg, sl[1 as u32]); out.push_str(")"); return; }
-    if str::eq(name, "cstr_len") { out.push_str("((unsigned long)strlen("); gen_expr(a, ar, out, cg, sl[0 as u32]); out.push_str("))"); return; }
-    if str::eq(name, "mem_zero") { out.push_str("memset("); gen_expr(a, ar, out, cg, sl[0 as u32]); out.push_str(", 0, "); gen_expr(a, ar, out, cg, sl[1 as u32]); out.push_str(")"); return; }
+    if str::eq(name, "cstr_len") {
+        if cg.cg_freestanding { out.push_str("((unsigned long)__ex_strlen("); } else { out.push_str("((unsigned long)strlen("); }
+        gen_expr(a, ar, out, cg, sl[0 as u32]); out.push_str("))"); return; }
+    if str::eq(name, "mem_zero") {
+        if cg.cg_freestanding {
+            out.push_str("__ex_memzero("); gen_expr(a, ar, out, cg, sl[0 as u32]); out.push_str(", ");
+            gen_expr(a, ar, out, cg, sl[1 as u32]); out.push_str(")"); return; }
+        out.push_str("memset("); gen_expr(a, ar, out, cg, sl[0 as u32]); out.push_str(", 0, "); gen_expr(a, ar, out, cg, sl[1 as u32]); out.push_str(")"); return; }
     if str::eq(name, "default_allocator") { out.push_str("exile_default_allocator()"); return; }
     if str::eq(name, "type_name") {
         // A mono instance reads back as the user wrote it (`Result<i32, str>`, not
