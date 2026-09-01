@@ -1,0 +1,6 @@
+# The NDK's rejection rows, as name:wording. Both fire on the LIBRARY's own
+# declarations - the sigil range and the atomic group - which is the point: the
+# library states the silicon's truths and the compiler enforces them at the use
+# site, in the consumer's module.
+ndk_reject_nonowner:address 0xDFF058 belongs to resource 'Blitter', claimed by 'gfx'
+ndk_reject_torn:field 'bltdpt' of ward 'Blit' is in an atomic group and must be accessed inside a seal

@@ -1,0 +1,7 @@
+*((volatile unsigned short *)(14675968UL + 64UL)) = ((unsigned short)256);
+*((volatile unsigned short *)(14675968UL + 66UL)) = ((unsigned short)0);
+*((volatile unsigned short *)(14675968UL + 68UL)) = ((unsigned short)65535);
+*((volatile unsigned short *)(14675968UL + 70UL)) = ((unsigned short)65535);
+*((volatile unsigned short *)(14675968UL + 102UL)) = ((unsigned short)0);
+*((volatile unsigned long *)(14675968UL + 84UL)) = dst;
+*((volatile unsigned short *)(14675968UL + 88UL)) = words;

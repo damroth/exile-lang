@@ -1,0 +1,17 @@
+// The sigil claim, from the consumer's side: a module that does not `own` the
+// Blitter cannot touch a register inside its range. The NDK ships the claim; the
+// compiler enforces it at the USE site, which is why a library can hand out a
+// register map without handing out permission.
+use ndk::*;
+
+mod gfx {
+    own Blitter;
+    pub fn blit() { seal { blitter.bltsize.write(64 as u16); } }
+}
+
+mod audio {
+    // no `own Blitter;` here - that is the whole fixture
+    pub fn poke() { seal { blitter.bltsize.write(64 as u16); } }
+}
+
+fn main() { gfx::blit(); audio::poke(); println(0); }

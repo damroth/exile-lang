@@ -1,0 +1,30 @@
+// The NDK at the real base: a blitter setup through the canonical instance,
+// owned by the module that claims the Blitter sigil. This one does not run - it
+// talks to a chip - so what is checked is the EMISSION: the stores, their
+// addresses, and that the whole sequence sits inside one region.
+//
+// BLTSIZE is the write that starts the hardware, so everything it will use is in
+// place before it. The atomic group is what makes that a rule rather than a
+// habit: a pointer set outside the region, or in a second one, stops compiling.
+use ndk::*;
+
+mod gfx {
+    own Blitter;
+
+    pub fn clear(dst: u32, words: u16) {
+        seal {
+            blitter.bltcon0.write(256 as u16);   // D enabled, minterm 0
+            blitter.bltcon1.write(0 as u16);
+            blitter.bltafwm.write(65535 as u16);
+            blitter.bltalwm.write(65535 as u16);
+            blitter.bltdmod.write(0 as u16);
+            blitter.bltdpt.write(dst);
+            blitter.bltsize.write(words);        // starts the blit
+        }
+    }
+}
+
+fn main() {
+    gfx::clear(1048576 as u32, 1025 as u16);
+    println(0);
+}

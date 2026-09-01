@@ -1,0 +1,38 @@
+// The NDK's first consumer, and the idiom the atomic group exists to protect:
+// DMACON is write-only with a SET/CLR bit, so the live state must be read from
+// the separate DMACONR port, masked, and written back - and the read must not be
+// torn from the write.
+//
+// This one RUNS. It declares its own instance over a byte array so the sequence
+// executes on a host and under the emulator; the NDK's canonical instance at
+// 0xDFF000 is what a real program would use, and ndk_blit.exl compiles that.
+use ndk::*;
+
+mod raw { extern var CHIPREGS: [u8; 256]; }
+
+mod dma {
+    own DmaCtl;
+
+    // Enable a DMA channel without disturbing the others: read the live mask,
+    // keep what matters, write it back with the SET bit.
+    // Returns the word it wrote. Over RAM the read port cannot reflect the
+    // write - DMACONR and DMACON are different addresses and only silicon
+    // implements SET/CLR - so the checkable observable is what the sequence
+    // COMPUTED, not what a fake chip echoed. Reading back from `dmacon` is not an
+    // option either: it is write-only, and the NDK refuses that at compile time.
+    pub fn enable(bits: u16) -> int {
+        ward c: Control at &raw::CHIPREGS;
+        let mut wrote = 0;
+        seal {
+            let live = c.dmaconr.read();
+            let word = 32768 as u16 | (live & bits);
+            c.dmacon.write(word);
+            wrote = word as int;
+        }
+        return wrote;
+    }
+}
+
+fn main() {
+    println(dma::enable(64 as u16));
+}

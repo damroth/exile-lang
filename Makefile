@@ -764,7 +764,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -913,7 +913,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1634,6 +1634,61 @@ selfhost-prelude-probe: $(EXILC_BIN)
 	  echo "selfhost-prelude-probe: the port does not say the pinned line"; \
 	  echo "  pinned: $(PRELUDE_PROBE_LINE)"; echo "  port:   $$pline"; exit 1; fi; \
 	echo "selfhost-prelude-probe: clean - both compilers say the pinned line, position included"
+
+# ===== the NDK: exile over the silicon =====
+#
+# tests/kernel/ndk/ is a LIBRARY written in exile, not a binding: sigils naming
+# who owns which byte range, wards naming the register layout, atomic groups
+# naming which registers cannot be torn apart. It binds to the chip and never to
+# an OS, so one file serves a program under AmigaOS and one on bare metal.
+#
+# Four things are asserted, and the first is the one that makes the rest worth
+# having: the library EMITS NOTHING. A program that names it and touches nothing
+# pays nothing, and a program that drives a register pays the same store it would
+# have written by hand.
+.PHONY: selfhost-ndk
+selfhost-ndk: $(EXILC_BIN)
+	@for f in tests/kernel/ndk/mod.exl tests/kernel/ndk_dma.exl tests/kernel/ndk_dma.expected \
+	          tests/kernel/ndk_dma_stub.c tests/kernel/ndk_blit.exl tests/kernel/ndk_blit.golden \
+	          tests/kernel/ndk_rows.txt; do \
+	  test -s $$f || { echo "selfhost-ndk: MISSING/EMPTY $$f"; exit 1; }; \
+	done; \
+	rm -rf $(C_OUT)/ndk; mkdir -p $(C_OUT)/ndk; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/ndk/lib.c tests/kernel/ndk/mod.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-ndk: the library does not compile on its own"; exit 1; }; \
+	test -s $(C_OUT)/ndk/lib.c || { echo "selfhost-ndk: EMPTY emission for the library (floor)"; exit 1; }; \
+	leak=`grep -oE 'Blitter|Serial|DmaCtl|IntCtl|Control|Blit|dmacon|intena|bltsize|serdat' $(C_OUT)/ndk/lib.c | sort -u | tr '\n' ' '`; \
+	test -z "$$leak" || { echo "selfhost-ndk: the library EMITTED something - [$$leak] reached the C, and a declaration must cost nothing"; exit 1; }; \
+	n=`wc -l < $(C_OUT)/ndk/lib.c`; \
+	test "$$n" -le 4 || { echo "selfhost-ndk: the library emitted $$n lines - it declares, it does not generate"; exit 1; }; \
+	$(EXILC_BIN) --target host --link $(SYS_HOST) --link tests/kernel/ndk_dma_stub.c \
+	   -o $(HOST_OUT)/ndk_dma tests/kernel/ndk_dma.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-ndk: the DMA consumer does not build"; exit 1; }; \
+	$(HOST_OUT)/ndk_dma > $(C_OUT)/ndk/dma.out 2>&1; \
+	diff -q tests/kernel/ndk_dma.expected $(C_OUT)/ndk/dma.out >/dev/null \
+	  || { echo "selfhost-ndk: the DMA read-modify-write RAN wrong:"; \
+	       diff tests/kernel/ndk_dma.expected $(C_OUT)/ndk/dma.out | head -6; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/ndk/blit.c tests/kernel/ndk_blit.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-ndk: the blitter consumer does not compile"; exit 1; }; \
+	grep -E '^[[:space:]]+\*\(\(volatile' $(C_OUT)/ndk/blit.c | sed 's/^[[:space:]]*//' > $(C_OUT)/ndk/blit.emit; \
+	test -s $(C_OUT)/ndk/blit.emit || { echo "selfhost-ndk: the blitter consumer emitted NO stores"; exit 1; }; \
+	if ! diff -q tests/kernel/ndk_blit.golden $(C_OUT)/ndk/blit.emit >/dev/null; then \
+	  echo "selfhost-ndk: the blitter SEQUENCE moved (an address, a width, or an order):"; \
+	  diff tests/kernel/ndk_blit.golden $(C_OUT)/ndk/blit.emit | head -8; exit 1; fi; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/ndk/blit.c -o $(C_OUT)/ndk/blit.o \
+	  || { echo "selfhost-ndk: the blitter C is not clean C89 at -O2"; exit 1; }; \
+	rows=0; \
+	while IFS=: read -r name want; do \
+	  case "$$name" in ''|'#'*) continue;; esac; \
+	  test -f tests/kernel/$$name.exl || { echo "selfhost-ndk: MISSING tests/kernel/$$name.exl"; exit 1; }; \
+	  rows=`expr $$rows + 1`; \
+	  if $(EXILC_BIN) --target c --c-out $(C_OUT)/ndk/$$name.c tests/kernel/$$name.exl >/dev/null 2>$(C_OUT)/ndk/$$name.err; then \
+	    echo "selfhost-ndk: ACCEPTED $$name - the library's own declaration has no teeth"; exit 1; fi; \
+	  got=`grep -m1 'error:' $(C_OUT)/ndk/$$name.err | sed 's/.*error: //'`; \
+	  test "$$got" = "$$want" || { echo "selfhost-ndk: WORDING $$name"; echo "  want: $$want"; echo "  got:  $$got"; exit 1; }; \
+	done < tests/kernel/ndk_rows.txt; \
+	test $$rows -ge 2 || { echo "selfhost-ndk: only $$rows rejection rows ran - the table lost members"; exit 1; }; \
+	echo "selfhost-ndk: clean (the library emits NOTHING; the DMA pair RUNS its read-modify-write in one region; the blitter emits its 7 pinned stores and compiles C89 at -O2; $$rows rows refuse on the library's own sigil and atomic group)"
 
 # ===== the seam on bare metal =====
 #

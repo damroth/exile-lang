@@ -1,0 +1,94 @@
+// The NDK, layer one: the Amiga custom chip as exile declarations.
+//
+// This is a LIBRARY, not a binding. It states what the silicon is - addresses,
+// widths, directions, and which registers form an indivisible set - and emits
+// nothing. Every construct here is compile-time: a `sigil` names a byte range
+// and who may touch it, a `ward` names the layout over a base, and an `atomic`
+// group names registers whose accesses must lie in one seal region. A program
+// that uses none of them pays nothing; a program that uses them pays the same
+// stores it would have written by hand.
+//
+// It binds to SILICON, never to an OS. There is no exec, no library base, no
+// OpenLibrary: an address here is a fact about the chip, so the same file serves
+// a program running under AmigaOS and one running on bare metal.
+//
+// WHERE THIS LIVES is not a design choice yet - it is a constraint. The loader
+// resolves `use ndk::*` relative to the IMPORTING file's directory and has no
+// library search path, so the library has to sit beside its consumer. When a
+// search path lands, this directory moves and nothing else changes.
+
+// ---- ownership regions ------------------------------------------------------
+// A sigil is a claim, not an address: exactly one module may `own` each, and a
+// field access from a non-owner is refused. The ranges are the HRM's, byte
+// addresses inclusive.
+//
+// MEASURED, and a library user has to know it: a sigil with NO claimant enforces
+// nothing. Shipping the declaration hands out the resource's NAME and RANGE; the
+// protection begins when some module says `own`. That is coherent - there is no
+// trespass on unowned ground - but it means this file alone protects nothing, and
+// a program that wants the guarantee has to claim what it drives.
+pub sigil Blitter { 0xDFF040 .. 0xDFF067 }
+pub sigil Serial  { 0xDFF018 .. 0xDFF019, 0xDFF030 .. 0xDFF033 }
+pub sigil DmaCtl  { 0xDFF002 .. 0xDFF003, 0xDFF096 .. 0xDFF097 }
+pub sigil IntCtl  { 0xDFF01C .. 0xDFF01F, 0xDFF09A .. 0xDFF09D }
+
+// ---- the control registers --------------------------------------------------
+// DMACON and INTENA are SET/CLR registers: bit 15 decides whether the other bits
+// are set or cleared, and the live state is readable only from the SEPARATE
+// read port. That is exactly the shape a seal exists for, and the reason each
+// pair is declared atomic: the read and the write that depends on it must not be
+// torn apart by an interrupt.
+pub ward Control {
+    dmaconr: u16 at 0x002 read;
+    intenar: u16 at 0x01C read;
+    intreqr: u16 at 0x01E read;
+    dmacon:  u16 at 0x096 write;
+    intena:  u16 at 0x09A write;
+    intreq:  u16 at 0x09C write;
+
+    atomic { dmaconr, dmacon }
+    atomic { intenar, intena }
+}
+
+// ---- the blitter ------------------------------------------------------------
+// BLTSIZE is the write that STARTS the hardware, so every pointer, modulo and
+// control word it will use must already be in place. The group says they belong
+// together; it does NOT say BLTSIZE goes last, which is a stronger property and
+// a separate declaration if a consumer ever needs it.
+pub ward Blit {
+    bltcon0: u16 at 0x040 write;
+    bltcon1: u16 at 0x042 write;
+    bltafwm: u16 at 0x044 write;
+    bltalwm: u16 at 0x046 write;
+    bltcpt:  u32 at 0x048 write;
+    bltbpt:  u32 at 0x04C write;
+    bltapt:  u32 at 0x050 write;
+    bltdpt:  u32 at 0x054 write;
+    bltsize: u16 at 0x058 write;
+    bltcmod: u16 at 0x060 write;
+    bltbmod: u16 at 0x062 write;
+    bltamod: u16 at 0x064 write;
+    bltdmod: u16 at 0x066 write;
+
+    atomic { bltcon0, bltcon1, bltafwm, bltalwm, bltcpt, bltbpt, bltapt, bltdpt,
+             bltsize, bltcmod, bltbmod, bltamod, bltdmod }
+}
+
+// ---- the serial line --------------------------------------------------------
+// The console a bare Amiga has in silicon, and the one runtime/sys_bare.c writes
+// through. SERDATR carries status (transmit-buffer-empty) as well as data.
+pub ward Ser {
+    serdatr: u16 at 0x018 read;
+    serdat:  u16 at 0x030 write;
+    serper:  u16 at 0x032 write;
+}
+
+// ---- the canonical instances ------------------------------------------------
+// The overlay at the real base, for programs that talk to the chip. They cost
+// nothing: a ward instance has zero storage and each field access folds its base
+// at the use site. A test that wants to RUN the idiom on a host declares its own
+// instance over a byte array instead - the ward TYPE is the reusable part, and
+// the base is the consumer's to choose.
+pub ward control: Control at 0xDFF000;
+pub ward blitter: Blit    at 0xDFF000;
+pub ward serial:  Ser     at 0xDFF000;

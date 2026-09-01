@@ -1,0 +1,18 @@
+// The atomic group, on the NDK's OWN declaration: a blitter pointer set outside
+// the region and the start word inside it. The hardware would read a pointer the
+// sequence never meant to leave there if an interrupt landed between them, and
+// the group is what turns that from a habit into a rule.
+use ndk::*;
+
+mod gfx {
+    own Blitter;
+
+    pub fn torn(dst: u32) {
+        blitter.bltdpt.write(dst);              // OUTSIDE the region
+        seal {
+            blitter.bltsize.write(64 as u16);
+        }
+    }
+}
+
+fn main() { gfx::torn(1048576 as u32); println(0); }
