@@ -764,7 +764,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -913,7 +913,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1634,6 +1634,71 @@ selfhost-prelude-probe: $(EXILC_BIN)
 	  echo "selfhost-prelude-probe: the port does not say the pinned line"; \
 	  echo "  pinned: $(PRELUDE_PROBE_LINE)"; echo "  port:   $$pline"; exit 1; fi; \
 	echo "selfhost-prelude-probe: clean - both compilers say the pinned line, position included"
+
+# ===== the seam on bare metal =====
+#
+# `runtime/sys_amiga.c` answers the seam over AmigaOS; `runtime/sys_bare.c`
+# answers the same five symbols over the silicon. The five were MEASURED with
+# `nm -u` on an emitted program, not assumed: sys_write, sys_alloc, sys_free,
+# sys_seal_enter, sys_seal_exit.
+#
+# The proof is a link, not a compile. tests/kernel/bare_seam.exl spends every
+# part of the contract - it prints, allocates and seals a ward through an atomic
+# group - and the gate links it `-nostdlib` against nothing but freestanding.c
+# and the bare seam. If anything still reaches for libc, the linker says so by
+# name.
+#
+# Two arms look at the ASSEMBLY, because "the seam masks interrupts" and "the
+# seam writes to the serial port" are claims about instructions, and an
+# implementation that compiled but touched neither would pass every other check.
+BARE_SEAM := runtime/sys_bare.c
+.PHONY: selfhost-bare
+selfhost-bare: $(EXILC_BIN)
+	@if [ ! -x $(AMIGA_GCC) ]; then echo "selfhost-bare: amiga-gcc missing - run 'make toolchain' first"; exit 1; fi; \
+	for f in $(BARE_SEAM) runtime/freestanding.c tests/kernel/bare_seam.exl tests/kernel/bare_seam_stub.c; do \
+	  test -s $$f || { echo "selfhost-bare: MISSING/EMPTY $$f"; exit 1; }; \
+	done; \
+	rm -rf $(C_OUT)/bare; mkdir -p $(C_OUT)/bare; \
+	$(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -Wall -Werror -c $(BARE_SEAM) -o $(C_OUT)/bare/seam.o \
+	  || { echo "selfhost-bare: the bare seam does not compile clean for m68k"; exit 1; }; \
+	def=`$(AMIGA_NM) --defined-only -g $(C_OUT)/bare/seam.o | awk '{print $$3}' | sed 's/^_//' | sort | tr '\n' ' '`; \
+	test "$$def" = "sys_alloc sys_free sys_seal_enter sys_seal_exit sys_write " \
+	  || { echo "selfhost-bare: the seam defines [$$def] - the contract is exactly the five symbols an emitted program can reference"; exit 1; }; \
+	need=`$(AMIGA_NM) -u $(C_OUT)/bare/seam.o | awk '{print $$NF}' | sort | tr '\n' ' '`; \
+	test -z "$$need" || { echo "selfhost-bare: the seam itself needs [$$need] - a backend that depends on something else is not a backend"; exit 1; }; \
+	$(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -S $(BARE_SEAM) -o $(C_OUT)/bare/seam.s; \
+	grep -q 'move\.w %sr,' $(C_OUT)/bare/seam.s \
+	  || { echo "selfhost-bare: the seal seam never READS sr - the token it returns is not a saved mask"; exit 1; }; \
+	grep -q 'or\.w #0x0700,%sr' $(C_OUT)/bare/seam.s \
+	  || { echo "selfhost-bare: the seal seam never MASKS (or.w #0x0700,sr) - the region would not be indivisible"; exit 1; }; \
+	grep -q 'move\.w .*,%sr' $(C_OUT)/bare/seam.s \
+	  || { echo "selfhost-bare: the seal seam never RESTORES sr - nesting could not hold"; exit 1; }; \
+	for reg in 14676016 14675992; do \
+	  grep -q "$$reg" $(C_OUT)/bare/seam.s \
+	    || { echo "selfhost-bare: the write half never reaches custom register $$reg - it is not talking to the silicon"; exit 1; }; \
+	done; \
+	$(EXILC_BIN) --target c --freestanding --c-out $(C_OUT)/bare/prog.c tests/kernel/bare_seam.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-bare: the port cannot emit the seam witness"; exit 1; }; \
+	test -s $(C_OUT)/bare/prog.c || { echo "selfhost-bare: EMPTY emission (floor)"; exit 1; }; \
+	for u in sys_write sys_alloc sys_free sys_seal_enter sys_seal_exit; do \
+	  grep -q "$$u" $(C_OUT)/bare/prog.c \
+	    || { echo "selfhost-bare: the witness no longer reaches $$u - it stopped spending the whole contract"; exit 1; }; \
+	done; \
+	$(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -I runtime -c $(C_OUT)/bare/prog.c -o $(C_OUT)/bare/prog.o \
+	  || { echo "selfhost-bare: the emitted C does not compile for m68k"; exit 1; }; \
+	$(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -Wall -Werror -I runtime -c runtime/freestanding.c -o $(C_OUT)/bare/fs.o \
+	  || { echo "selfhost-bare: runtime/freestanding.c does not compile clean for m68k"; exit 1; }; \
+	$(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -c tests/kernel/bare_seam_stub.c -o $(C_OUT)/bare/stub.o \
+	  || { echo "selfhost-bare: the overlay stub does not compile for m68k"; exit 1; }; \
+	$(AMIGA_GCC) -noixemul -nostdlib -ffreestanding -fno-builtin -O2 -e _main -o $(C_OUT)/bare/witness \
+	   $(C_OUT)/bare/prog.o $(C_OUT)/bare/fs.o $(C_OUT)/bare/seam.o $(C_OUT)/bare/stub.o 2>$(C_OUT)/bare/link.err \
+	  || { echo "selfhost-bare: the -nostdlib link did NOT close - something still reaches for libc:"; \
+	       grep -oE 'undefined reference to .[^\x27]*.' $(C_OUT)/bare/link.err | sort -u | head -6; exit 1; }; \
+	test -s $(C_OUT)/bare/witness || { echo "selfhost-bare: the link produced nothing"; exit 1; }; \
+	left=`$(AMIGA_NM) -u $(C_OUT)/bare/witness 2>/dev/null | awk '{print $$NF}' | sort | tr '\n' ' '`; \
+	test -z "$$left" || { echo "selfhost-bare: the linked witness still owes [$$left]"; exit 1; }; \
+	sz=`wc -c < $(C_OUT)/bare/witness`; \
+	echo "selfhost-bare: clean (the seam defines exactly the five measured symbols and needs none; sr is read, masked and restored; the write half reaches the custom chip; and a ward+seal+atomic program links -nostdlib into $$sz bytes with no libc)"
 
 # ===== `--freestanding` in the port: the mirror =====
 #

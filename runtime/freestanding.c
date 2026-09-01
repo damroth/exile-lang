@@ -40,6 +40,29 @@ void __ex_print_str_quoted(const char *s) {
     ex_putc((unsigned char)'"');
 }
 
+/* Divide by ten WITHOUT `/` or `%`.  The 68000 has no 32-bit divide, so a C
+ * `u / 10UL` becomes a call to `__udivsi3` - and on the amiga toolchain that
+ * helper ships only inside libc-shaped archives (libc.a, libnix*.a), never in
+ * libgcc.a.  Measured, not assumed: a `-nostdlib` link of a program that prints
+ * one number failed on exactly `__udivsi3` and `__umodsi3`, which made this
+ * file's own promise - link -nostdlib and `nm -u` shows only the sys seam -
+ * false on the target the promise exists for.
+ *
+ * Shift-and-subtract long division: exact at any word width (the loop is driven
+ * by sizeof), no multiply, no divide, ~one pass per bit per digit.  Printing is
+ * not a hot path and correctness here is worth more than cycles. */
+static unsigned long ex_divmod10(unsigned long n, unsigned long *rem) {
+    unsigned long q = 0UL, r = 0UL;
+    int i;
+    for (i = (int)(sizeof(unsigned long) * 8U) - 1; i >= 0; i--) {
+        r = (r << 1) | ((n >> i) & 1UL);
+        q <<= 1;
+        if (r >= 10UL) { r -= 10UL; q |= 1UL; }
+    }
+    *rem = r;
+    return q;
+}
+
 void __ex_print_u32(unsigned long u) {
     unsigned char buf[24];
     int i = (int)sizeof(buf);
@@ -47,8 +70,9 @@ void __ex_print_u32(unsigned long u) {
         buf[--i] = (unsigned char)'0';
     } else {
         while (u > 0UL) {
-            buf[--i] = (unsigned char)('0' + (int)(u % 10UL));
-            u /= 10UL;
+            unsigned long digit;
+            u = ex_divmod10(u, &digit);
+            buf[--i] = (unsigned char)('0' + (int)digit);
         }
     }
     sys_write(1, &buf[i], (unsigned long)((int)sizeof(buf) - i));

@@ -693,7 +693,13 @@ def run(binary, path, cout, budget_s, rss_mb, _uncapped=False):
     # It costs an extra run only on the rare failure path.
     if p.returncode is not None and p.returncode < 0 and not _uncapped:
         again = run(binary, path, cout, budget_s, rss_mb, _uncapped=True)
-        if again[0] == 0:
+        # The variable is the CAP, so the outcome that answers is "died on a
+        # signal or not" - not "succeeded or not". Requiring success meant an
+        # input the compiler legitimately REJECTS could never be attributed to
+        # the cap, and a seed whose inputs all get rejected made F4's rss class
+        # unreachable while the mechanism underneath worked perfectly. Measured:
+        # RLIMIT_AS at 2MB kills a compile of `fn main() { println(1); }`.
+        if again[0] is not None and again[0] >= 0:
             return (None, "", None, "rss", 0)
         return again
 

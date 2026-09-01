@@ -1,0 +1,34 @@
+// The first program that needs BOTH halves of the kernel arc at once: the
+// capability model (a ward, a seal, an atomic group) and libc-free emission.
+// Until `--freestanding` crossed into the port, no single compiler could produce
+// it - the reference cannot parse `ward`, and the port could not be asked for
+// libc-free output.
+//
+// It also spends every part of the bare seam: it prints (sys_write), allocates
+// (sys_alloc / sys_free) and seals (sys_seal_enter / sys_seal_exit). That is the
+// whole contract, so a link of this program against runtime/sys_bare.c either
+// closes or names exactly what the seam still owes.
+mod raw { extern var SCRATCH: [u8; 8]; }
+
+ward Custom {
+    dmaconr: u16 at 0x00 readwrite;
+    dmacon:  u16 at 0x04 readwrite;
+
+    atomic { dmaconr, dmacon }
+}
+
+fn main() {
+    ward c: Custom at &raw::SCRATCH;
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    let mut got = 0;
+    seal {
+        c.dmaconr.write(207 as u16);
+        let old = c.dmaconr.read();
+        c.dmacon.write(32768 as u16 | (old & 64 as u16));
+        got = c.dmacon.read() as int;
+    }
+    v.push(got);
+    println(v.length() as int);   // 1
+    println(got);                 // 32832
+}
