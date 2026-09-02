@@ -1,0 +1,48 @@
+// The first real NDK interrupt handler, in the STUB STYLE the scope verdict
+// ratified: entry and exit stay in C, and the language expresses the BODY as an
+// ordinary exile function the stub calls.
+//
+// This is the consumer that deferral named. What it teaches is written at the
+// bottom, because the point of writing it was to find out.
+use ndk::*;
+
+// The frame counter lives in RAM the ISR and the main loop both overlay. It is
+// not a global because the language has none - `static mut` is not ported - and
+// a ward is how this language names memory anyway, so the constraint and the
+// idiom happen to agree.
+mod raw { extern var CHIPREGS: [u8; 256]; extern var ISRSTATE: [u8; 8]; }
+
+ward Shared {
+    ticks: u16 at 0x00 readwrite;
+}
+
+// VERTB is bit 5 of the interrupt registers. Acknowledging is a WRITE of that bit
+// to INTREQ - the hardware clears on write, which is why INTREQ is write-only in
+// the map and INTREQR is the port you read.
+const VERTB_BIT: u16 = 32;
+
+pub fn on_vertb() {
+    ward c: Control at &raw::CHIPREGS;
+    ward s: Shared  at &raw::ISRSTATE;
+    // No `seal` here, and that is deliberate: a handler already runs with the
+    // level masked by the hardware that dispatched it. A region would be a second,
+    // redundant mask - and on the way out it would restore a state the `rte` is
+    // about to restore anyway.
+    s.ticks.write(s.ticks.read() + 1 as u16);
+    c.intreq.write(VERTB_BIT);
+}
+
+// The main loop's half of the same overlay: it reads what the handler wrote.
+pub fn ticks() -> int {
+    ward s: Shared at &raw::ISRSTATE;
+    return s.ticks.read() as int;
+}
+
+fn main() {
+    // On the host there is no vector, so the body is called directly - which is
+    // exactly what the stub does on the target, minus the `rte`.
+    on_vertb();
+    on_vertb();
+    on_vertb();
+    println(ticks() + 39);   // 42
+}

@@ -764,7 +764,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-isr selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -913,7 +913,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-isr selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1634,6 +1634,53 @@ selfhost-prelude-probe: $(EXILC_BIN)
 	  echo "selfhost-prelude-probe: the port does not say the pinned line"; \
 	  echo "  pinned: $(PRELUDE_PROBE_LINE)"; echo "  port:   $$pline"; exit 1; fi; \
 	echo "selfhost-prelude-probe: clean - both compilers say the pinned line, position included"
+
+# ===== the ISR consumer: the handler body in exile, the vector in C =====
+#
+# The scope verdict put a handler's entry and exit on the C side of the seam -
+# the exception frame, the mask, the `rte` are silicon truths - and left the BODY
+# to the language. This gate is that arrangement, proved rather than described:
+# the body RUNS on a host where there is no vector, the vector really ends in
+# `rte` on m68k, and the whole thing links with no libc.
+#
+# It is also the consumer the ISR deferral named. What the shape taught is in the
+# fixture's own comments, where the next round will read it.
+.PHONY: selfhost-isr
+selfhost-isr: $(EXILC_BIN)
+	@if [ ! -x $(AMIGA_GCC) ]; then echo "selfhost-isr: amiga-gcc missing - run 'make toolchain' first"; exit 1; fi; \
+	for f in tests/kernel/isr_vertb.exl tests/kernel/isr_vertb_stub.c tests/kernel/isr_vertb.expected; do \
+	  test -s $$f || { echo "selfhost-isr: MISSING/EMPTY $$f"; exit 1; }; \
+	done; \
+	rm -rf $(C_OUT)/isr; mkdir -p $(C_OUT)/isr; \
+	$(EXILC_BIN) --target host --link $(SYS_HOST) --link tests/kernel/isr_vertb_stub.c \
+	   -o $(HOST_OUT)/isr_vertb tests/kernel/isr_vertb.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-isr: the handler does not build for the host"; exit 1; }; \
+	$(HOST_OUT)/isr_vertb > $(C_OUT)/isr/run.out 2>&1; \
+	diff -q tests/kernel/isr_vertb.expected $(C_OUT)/isr/run.out >/dev/null \
+	  || { echo "selfhost-isr: the handler RAN wrong:"; diff tests/kernel/isr_vertb.expected $(C_OUT)/isr/run.out | head -4; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/isr/body.c tests/kernel/isr_vertb.exl >/dev/null 2>&1; \
+	grep -q '^void ex_on_vertb(void)' $(C_OUT)/isr/body.c \
+	  || { echo "selfhost-isr: the handler body lost EXTERNAL linkage - a C vector could not call it"; exit 1; }; \
+	grep -q 'CHIPREGS + 156UL)) = ex_VERTB_BIT' $(C_OUT)/isr/body.c \
+	  || { echo "selfhost-isr: the handler no longer ACKNOWLEDGES - nothing writes the VERTB bit to INTREQ (offset 156), so the level would re-fire forever"; exit 1; }; \
+	$(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -Wall -Werror -S tests/kernel/isr_vertb_stub.c -o $(C_OUT)/isr/stub.s \
+	  || { echo "selfhost-isr: the vector stub does not compile clean for m68k"; exit 1; }; \
+	grep -q '^_ex_vertb_vector:' $(C_OUT)/isr/stub.s \
+	  || { echo "selfhost-isr: the vector entry is not in the emission"; exit 1; }; \
+	grep -q '	rte' $(C_OUT)/isr/stub.s \
+	  || { echo "selfhost-isr: the vector does not end in RTE - it would return with rts and leave the exception frame on the stack"; exit 1; }; \
+	$(EXILC_BIN) --target c --freestanding --c-out $(C_OUT)/isr/bare.c tests/kernel/isr_vertb.exl >/dev/null 2>&1; \
+	for o in bare:$(C_OUT)/isr/bare.c stub:tests/kernel/isr_vertb_stub.c fs:runtime/freestanding.c seam:$(BARE_SEAM); do \
+	  n=$${o%%:*}; src=$${o##*:}; \
+	  $(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -I runtime -c $$src -o $(C_OUT)/isr/$$n.o \
+	    || { echo "selfhost-isr: $$src does not compile for m68k"; exit 1; }; \
+	done; \
+	$(AMIGA_GCC) -noixemul -nostdlib -ffreestanding -fno-builtin -O2 -e _main -o $(C_OUT)/isr/witness \
+	   $(C_OUT)/isr/bare.o $(C_OUT)/isr/fs.o $(C_OUT)/isr/seam.o $(C_OUT)/isr/stub.o 2>$(C_OUT)/isr/link.err \
+	  || { echo "selfhost-isr: the -nostdlib link did NOT close:"; \
+	       grep -oE 'undefined reference to .[^\x27]*.' $(C_OUT)/isr/link.err | sort -u | head -5; exit 1; }; \
+	sz=`wc -c < $(C_OUT)/isr/witness`; \
+	echo "selfhost-isr: clean (the body RUNS 42 with no vector, keeps external linkage and still acknowledges; the vector compiles clean and ends in RTE; and the pair links -nostdlib into $$sz bytes)"
 
 # ===== `addr`: handing the hardware an address =====
 #
