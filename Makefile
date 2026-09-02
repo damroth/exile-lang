@@ -764,7 +764,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-isr selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -913,7 +913,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-isr selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1635,6 +1635,55 @@ selfhost-prelude-probe: $(EXILC_BIN)
 	  echo "  pinned: $(PRELUDE_PROBE_LINE)"; echo "  port:   $$pline"; exit 1; fi; \
 	echo "selfhost-prelude-probe: clean - both compilers say the pinned line, position included"
 
+# ===== the copper: the first observable that is not a store =====
+#
+# Every NDK round so far proved itself with stores at addresses. The copper's list
+# is DATA the chip interprets - MOVE pairs, WAIT pairs, an end marker - so this
+# gate checks the WORDS a program built, on a host, with none of the silicon that
+# would execute them. That is a different kind of evidence and the pattern the
+# disk round will reuse.
+#
+# It also carries two witnesses the round was sent to produce, and they are
+# fixtures rather than sentences:
+#   - the forced seal around DMACON, which a handler would be made to write twice;
+#   - the PARKED CONTRACT for limit P5d, accepted today and wrong on hardware.
+.PHONY: selfhost-copper
+selfhost-copper: $(EXILC_BIN)
+	@for f in tests/kernel/copper_list.exl tests/kernel/copper_list.expected \
+	          tests/kernel/copper_list_stub.c tests/kernel/copper_p5d_parked.exl \
+	          tests/kernel/copper_p5d_parked.expected; do \
+	  test -s $$f || { echo "selfhost-copper: MISSING/EMPTY $$f"; exit 1; }; \
+	done; \
+	rm -rf $(C_OUT)/cop; mkdir -p $(C_OUT)/cop; \
+	$(EXILC_BIN) --target host --link $(SYS_HOST) --link tests/kernel/copper_list_stub.c \
+	   -o $(HOST_OUT)/cop_list tests/kernel/copper_list.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-copper: the driver does not build"; exit 1; }; \
+	$(HOST_OUT)/cop_list > $(C_OUT)/cop/list.out 2>&1; \
+	diff -q tests/kernel/copper_list.expected $(C_OUT)/cop/list.out >/dev/null \
+	  || { echo "selfhost-copper: the LIST changed - a word the chip would interpret is different:"; \
+	       diff tests/kernel/copper_list.expected $(C_OUT)/cop/list.out | head -8; exit 1; }; \
+	grep -q '^11265$$' tests/kernel/copper_list.expected \
+	  || { echo "selfhost-copper: the expected list no longer contains a WAIT word (0x2C01) - the encoding stopped being checked"; exit 1; }; \
+	grep -q '^65535$$' tests/kernel/copper_list.expected \
+	  || { echo "selfhost-copper: the expected list has no END marker (0xFFFF)"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/cop/list.c tests/kernel/copper_list.exl >/dev/null 2>&1; \
+	grep -q 'CHIPREGS + 150UL' $(C_OUT)/cop/list.c \
+	  || { echo "selfhost-copper: the driver no longer writes DMACON (offset 150) - the witness is gone, because the forced seal only exists where a GROUPED register is touched"; exit 1; }; \
+	grep -q 'sys_seal_enter' $(C_OUT)/cop/list.c \
+	  || { echo "selfhost-copper: no region in the emission at all"; exit 1; }; \
+	grep -q 'CHIPREGS + 128UL' $(C_OUT)/cop/list.c \
+	  || { echo "selfhost-copper: COP1LC (offset 128) is not written - the chip is never pointed at the list"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/cop/list.c -o $(C_OUT)/cop/list.o \
+	  || { echo "selfhost-copper: the driver's C is not clean C89 at -O2"; exit 1; }; \
+	$(EXILC_BIN) --target host --link $(SYS_HOST) --link tests/kernel/copper_list_stub.c \
+	   -o $(HOST_OUT)/cop_p5d tests/kernel/copper_p5d_parked.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-copper: the P5d PARKED CONTRACT was REJECTED - the limit closed, and closing it is a decision to make deliberately, not a side effect"; exit 1; }; \
+	$(HOST_OUT)/cop_p5d > $(C_OUT)/cop/p5d.out 2>&1; \
+	diff -q tests/kernel/copper_p5d_parked.expected $(C_OUT)/cop/p5d.out >/dev/null \
+	  || { echo "selfhost-copper: the parked contract changed shape:"; \
+	       diff tests/kernel/copper_p5d_parked.expected $(C_OUT)/cop/p5d.out | head -4; exit 1; }; \
+	echo "selfhost-copper: clean (the list is checked WORD BY WORD as data the chip interprets, the DMACON write is forced to seal - the witness a handler would pay twice for - and the P5d contract is still accepted, which is what makes it a contract)"
+
 # ===== the ISR consumer: the handler body in exile, the vector in C =====
 #
 # The scope verdict put a handler's entry and exit on the C side of the seam -
@@ -1769,8 +1818,10 @@ selfhost-ndk: $(EXILC_BIN)
 	test -s $(C_OUT)/ndk/lib.c || { echo "selfhost-ndk: EMPTY emission for the library (floor)"; exit 1; }; \
 	leak=`grep -oE 'Blitter|Serial|DmaCtl|IntCtl|Control|Blit|dmacon|intena|bltsize|serdat' $(C_OUT)/ndk/lib.c | sort -u | tr '\n' ' '`; \
 	test -z "$$leak" || { echo "selfhost-ndk: the library EMITTED something - [$$leak] reached the C, and a declaration must cost nothing"; exit 1; }; \
-	n=`wc -l < $(C_OUT)/ndk/lib.c`; \
-	test "$$n" -le 4 || { echo "selfhost-ndk: the library emitted $$n lines - it declares, it does not generate"; exit 1; }; \
+	code=`grep -vE '^[[:space:]]*$$|^#' $(C_OUT)/ndk/lib.c | head -5`; \
+	test -z "$$code" || { echo "selfhost-ndk: the library emitted CODE, not just declarations:"; echo "$$code"; exit 1; }; \
+	test `grep -c '^#define' $(C_OUT)/ndk/lib.c` -ge 1 \
+	  || { echo "selfhost-ndk: no constant reached the emission - the hardware constants stopped being shipped"; exit 1; }; \
 	$(EXILC_BIN) --target host --link $(SYS_HOST) --link tests/kernel/ndk_dma_stub.c \
 	   -o $(HOST_OUT)/ndk_dma tests/kernel/ndk_dma.exl >/dev/null 2>&1 \
 	  || { echo "selfhost-ndk: the DMA consumer does not build"; exit 1; }; \
@@ -1798,7 +1849,7 @@ selfhost-ndk: $(EXILC_BIN)
 	  test "$$got" = "$$want" || { echo "selfhost-ndk: WORDING $$name"; echo "  want: $$want"; echo "  got:  $$got"; exit 1; }; \
 	done < tests/kernel/ndk_rows.txt; \
 	test $$rows -ge 2 || { echo "selfhost-ndk: only $$rows rejection rows ran - the table lost members"; exit 1; }; \
-	echo "selfhost-ndk: clean (the library emits NOTHING; the DMA pair RUNS its read-modify-write in one region; the blitter emits its 7 pinned stores and compiles C89 at -O2; $$rows rows refuse on the library's own sigil and atomic group)"
+	echo "selfhost-ndk: clean (the library emits no CODE - only the hardware constants, as #defines; the DMA pair RUNS its read-modify-write in one region; the blitter emits its 7 pinned stores and compiles C89 at -O2; $$rows rows refuse on the library's own sigil and atomic group)"
 
 # ===== the seam on bare metal =====
 #

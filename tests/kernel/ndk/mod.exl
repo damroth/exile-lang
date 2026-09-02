@@ -84,6 +84,34 @@ pub ward Blit {
              bltsize, bltcmod, bltbmod, bltamod, bltdmod }
 }
 
+// ---- the copper -------------------------------------------------------------
+// The coprocessor that reads a LIST from memory in step with the video beam. Its
+// registers are ordinary, and the thing that is not is the list: the chip follows
+// a pointer into the program's own memory and keeps following it, frame after
+// frame, for as long as its DMA is on. Everything the address round said about
+// lifetime is concrete here.
+pub sigil CopCtl { 0xDFF02E .. 0xDFF02F, 0xDFF080 .. 0xDFF08B }
+
+pub ward Copper {
+    copcon:  u16  at 0x02E write;
+    cop1lc:  addr at 0x080 write;
+    cop2lc:  addr at 0x084 write;
+    copjmp1: u16  at 0x088 write;
+    copjmp2: u16  at 0x08A write;
+}
+
+pub ward copper: Copper at 0xDFF000;
+
+// The list's own encoding, as constants rather than magic numbers at the call
+// site. A MOVE is (register offset, value); a WAIT is (beam position | 1, mask
+// with its low bit clear); the list ENDS with a wait nobody reaches.
+pub const COP_END_HI: u16 = 65535;
+pub const COP_END_LO: u16 = 65534;
+pub const COP_WAIT_MASK: u16 = 65534;
+// DMACON bit 7 turns the copper's own DMA on; bit 15 is the SET/CLR sense.
+pub const DMAF_COPPER: u16 = 128;
+pub const DMAF_SETCLR: u16 = 32768;
+
 // ---- the serial line --------------------------------------------------------
 // The console a bare Amiga has in silicon, and the one runtime/sys_bare.c writes
 // through. SERDATR carries status (transmit-buffer-empty) as well as data.

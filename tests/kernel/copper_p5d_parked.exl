@@ -1,0 +1,37 @@
+// A PARKED CONTRACT, in the pattern the seal era used for its fifth limit - and
+// that one waited three eras and paid in full.
+//
+// This program COMPILES TODAY and is WRONG on hardware. The list is built in
+// `frame()`, its address is handed to `install()` as a PARAMETER, and `frame()`
+// then returns. Inside the language nothing is amiss: the caller's frame outlives
+// the callee, which is the whole rule the escape analysis enforces. On the chip
+// the copper keeps following that pointer, frame after frame, into a stack that
+// no longer exists.
+//
+// That is limit P5d, stated in the address spec from birth: THE LANGUAGE GUARDS
+// FRAMES; IT DOES NOT SEE AN ASYNCHRONOUS READER. This file is its measured
+// witness, and the most realistic shape of the driver is exactly the shape the
+// language cannot see - which is what makes the limit worth a round rather than a
+// footnote.
+//
+// Pinned as ACCEPT so the blindness is a contract rather than a memory. When a
+// future round closes it - a rule on the `addr` kind, or a chip-RAM-aware
+// allocator that owns the buffer - this file goes RED and forces the decision to
+// be made deliberately.
+use ndk::*;
+
+mod raw { extern var CHIPREGS: [u8; 256]; }
+
+fn install(l: *u16) {
+    ward k: Copper at &raw::CHIPREGS;
+    k.cop1lc.write(l);
+    k.copjmp1.write(0 as u16);
+}
+
+fn frame() {
+    // The list lives exactly as long as this call. The chip does not.
+    let mut l: [u16; 4] = [COP_END_HI, COP_END_LO, 0 as u16, 0 as u16];
+    install(&l[0]);
+}
+
+fn main() { frame(); println(0); }
