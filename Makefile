@@ -1649,7 +1649,7 @@ selfhost-prelude-probe: $(EXILC_BIN)
 .PHONY: selfhost-addr
 selfhost-addr: $(EXILC_BIN)
 	@test -s tests/ward/addr_rows.txt || { echo "selfhost-addr: MISSING/EMPTY tests/ward/addr_rows.txt"; exit 1; }; \
-	for f in addr_accept_run addr_free_literal addr_free_literal_u32; do \
+	for f in addr_accept_run addr_job_flow addr_free_literal addr_free_literal_u32; do \
 	  test -f tests/ward/$$f.exl || { echo "selfhost-addr: MISSING tests/ward/$$f.exl"; exit 1; }; \
 	done; \
 	test -f tests/ward/addr_accept_run_stub.c || { echo "selfhost-addr: MISSING the RAM backing"; exit 1; }; \
@@ -1675,6 +1675,15 @@ selfhost-addr: $(EXILC_BIN)
 	  || { echo "selfhost-addr: the accepting row RAN wrong:"; cat $(C_OUT)/addr/run.out; exit 1; }; \
 	grep -q 'seal-balance 0 misnest 0' $(C_OUT)/addr/run.out \
 	  || { echo "selfhost-addr: the accepting row left its region unbalanced"; exit 1; }; \
+	$(EXILC_BIN) --target host --link $(SYS_HOST) --link tests/ward/addr_accept_run_stub.c \
+	   -o $(HOST_OUT)/addr_job tests/ward/addr_job_flow.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-addr: the Job-flow row does not build - the kind is not usable in a VALUE position"; exit 1; }; \
+	$(HOST_OUT)/addr_job > $(C_OUT)/addr/job.out 2>&1; \
+	grep -q '^42$$' $(C_OUT)/addr/job.out \
+	  || { echo "selfhost-addr: the Job-flow row RAN wrong:"; cat $(C_OUT)/addr/job.out; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/addr/job.c tests/ward/addr_job_flow.exl >/dev/null 2>&1; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/addr/job.c -o $(C_OUT)/addr/job.o \
+	  || { echo "selfhost-addr: the Job-flow C is not clean - a coercion lost its cast on the way"; exit 1; }; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/addr/ptr.c tests/ward/addr_accept_run.exl >/dev/null 2>&1; \
 	grep -q '(unsigned long)' $(C_OUT)/addr/ptr.c \
 	  || { echo "selfhost-addr: a POINTER reached an addr register with no cast - the C would not compile"; exit 1; }; \
@@ -1687,7 +1696,7 @@ selfhost-addr: $(EXILC_BIN)
 	cmp -s $(C_OUT)/addr/addr_free_literal.c $(C_OUT)/addr/addr_free_literal_u32.c \
 	  || { echo "selfhost-addr: the kind COSTS something - an addr field and a u32 field emit different C for the same literal"; \
 	       diff $(C_OUT)/addr/addr_free_literal.c $(C_OUT)/addr/addr_free_literal_u32.c | head -6; exit 1; }; \
-	echo "selfhost-addr: clean ($$rows rows refuse with their wording - three on rules older than the kind; the accepting row RUNS 42 in a balanced region with its pointer cast once; and addr costs exactly what u32 costs)"
+	echo "selfhost-addr: clean ($$rows rows refuse with their wording - three on rules older than the kind; both accepting rows RUN 42 - one at the write site, one carrying the kind through a struct and across two boundaries; and addr costs exactly what u32 costs)"
 
 # ===== the NDK: exile over the silicon =====
 #

@@ -635,8 +635,23 @@ pub fn rune_extent(elem: *const Typ) -> int {
 // and an `own *T` may lend itself out as a borrow — never the reverse: ownership
 // cannot be fabricated from a loan.  Pointer-to-pointer through nested `*` keeps
 // strict identity (no deep const-ification — that would change C aliasing rules).
+pub fn is_addr_slot(t: *const Typ) -> bool {
+    return match *t { Typ::TAddr => true | _o => false };
+}
+pub fn is_any_ptr(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TPtr(_i) => true | Typ::TConstPtr(_i) => true
+        | Typ::TOwnPtr(_i) => true | Typ::TNullPtr => true | _o => false
+    };
+}
 pub fn coercible_to(from: *const Typ, to: *const Typ) -> bool {
     if typ_eq(from, to) { return true; }
+    // A POINTER may be handed to an `addr` slot: that is what the kind was
+    // ratified for, and it is the same one-way shape as `*T` into `*const T` -
+    // you may drop what the value knows about itself, never gain it. The reverse
+    // stays refused: an address has lost its pointee type, so nothing can
+    // reconstitute a `*T` from one.
+    if is_addr_slot(to) && is_any_ptr(from) { return true; }
     return match *from {
         Typ::TPtr(x) => match *to { Typ::TConstPtr(y) => typ_eq(x, y) | _o => false }
         | Typ::TOwnPtr(x) => match *to {

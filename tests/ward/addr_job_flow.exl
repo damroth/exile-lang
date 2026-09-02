@@ -1,0 +1,46 @@
+// AC3 + P6 - the shape from the vote card, and the two rows that decided it.
+//
+// The address is computed in one function, STORED IN A STRUCT, carried across a
+// boundary as a value of the kind, and only then written to the register. Variant
+// B lost on exactly this: an operator confined to the write site cannot express
+// a driver that prepares work somewhere and starts it somewhere else, which is
+// the shape every real DMA setup has.
+//
+// What travels here is an `addr`, not a pointer that happens to fit - the kind is
+// on the value, which is what "the model can see the flow" means.
+mod raw { extern var CHIP: [u8; 64]; extern var BUF: [u16; 4]; }
+
+ward W {
+    p:  addr at 0x00 write;
+    sz: u16  at 0x08 write;
+}
+
+struct Job { dst: addr, words: u16 }
+
+// P4: the address crosses a function boundary, as an `addr`.
+fn plan(n: u16) -> Job {
+    return Job { dst: &raw::BUF[0], words: n };
+}
+
+// P2, the ratified half: a literal is a legal address too, because the register
+// that points at a buffer is the one that points at a fixed chip address.
+fn plan_fixed() -> Job {
+    return Job { dst: 1048576, words: 1 };
+}
+
+// The Job crosses INTO here as a value; the overlay is this function's own, the
+// way a driver names the chip where it drives it.
+fn start(j: *const Job) {
+    ward w: W at &raw::CHIP;
+    seal {
+        w.p.write(j.dst);
+        w.sz.write(j.words);
+    }
+}
+
+fn main() {
+    let j = plan(4 as u16);
+    start(&j);
+    let f = plan_fixed();
+    println(f.words as int + 41);   // 42
+}

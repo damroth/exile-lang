@@ -2600,6 +2600,9 @@ fn cast_kind_ok(from: *const Typ, to: *const Typ) -> bool {
     if is_int_like_ty(from) && is_int_like_ty(to) { return true; }
     if is_c_ptr(from) && is_c_ptr(to) { return true; }
     if is_int_like_ty(from) && is_c_ptr(to) { return true; }
+    // The explicit form, and the only way to satisfy a RETURN contract - which is
+    // enforced by equality on purpose ("a fn declaring `*T` must return a `*T`").
+    if is_addr_slot(to) && (is_any_ptr(from) || is_int_like_ty(from)) { return true; }
     if is_int_like_ty(from) && is_float_ty(to) { return true; }
     if is_float_ty(from) && is_int_like_ty(to) { return true; }
     if is_float_ty(from) && is_float_ty(to) { return true; }
@@ -2655,6 +2658,14 @@ fn is_place_expr(te: *const Texpr) -> bool {
 // method receivers, let/assign, struct-literal fields, enum-variant args.  `own *T`
 // and `*T` are the same `T*` in C: type-level only, zero codegen change.
 fn coerce_own_to(_a: Allocator, ar: *Arena, sc: *const TyScope, targ: *const Texpr, pty: *const Typ) -> *const Texpr {
+    // A pointer reaching an `addr` slot carries the cast WITH it, wherever the slot
+    // is: a struct field, an argument, an annotated let, a register write. The
+    // first version put this in the rune-write lowering alone, which made the kind
+    // expressible only at the write site - the very limitation variant B lost on.
+    // The cast belongs where the coercion is APPLIED, so it travels with the value.
+    if is_addr_slot(pty) && is_any_ptr(targ.ty) {
+        return te_node(ar, TexprNode::TCast(targ, tyann_node(ar, TypeAnn::TyAddr)), pty, targ.pos);
+    }
     if is_own_ptr(targ.ty) {
         if !ptr_or_constptr(pty) { return targ; }
         if is_place_expr(targ) { return retype_var(ar, targ, pty); }
@@ -2784,6 +2795,13 @@ fn check_gen_call_args(a: Allocator, ar: *Arena, sc: *const TyScope, cscope: *co
     return;
 }
 fn lit_fits_slot(raw: *const Expr, exp: *const Typ) -> bool {
+    // P2, exactly as ratified: an `addr` takes a numeric LITERAL - the register
+    // that points at a program's buffer is the one that points at a fixed chip
+    // address. A non-literal integer still needs the cast, so the relaxation is
+    // the sentence the vote agreed to and not one word wider.
+    if is_addr_slot(exp) {
+        return match expr_int_lit(raw) { Option::Some(_n) => true | Option::None => false };
+    }
     if !is_int_like_ty(exp) { return false; }
     return match expr_int_lit(raw) {
         Option::Some(n) => int_fits(n, exp)
@@ -7181,23 +7199,12 @@ fn elab_rune_write(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     // an integer slot without being told to. The cast belongs here rather than in
     // codegen: the language decided the value is an address, so the lowering says
     // so once and the emission stays the store a driver would have written.
-    let vfin = addr_cast_if_needed(ar, vad, elem, p);
-    return Tstmt::TAssignDeref { target: trecv, value: vfin, pos: p };
+    return Tstmt::TAssignDeref { target: trecv, value: vad, pos: p };
 }
 // `rune.strobe()` is sugar for `write(0)` on a write-capable rune:
 // the WRITE is the act — starting a copper — and the value is irrelevant.  Same
 // store as a write of 0 (a `TAssignDeref` of a zero), gated by direction (it
 // shares R1 with `.write`).  Takes no arguments.
-// Only a pointer needs the cast: an integer already IS the slot's type in C, and
-// wrapping it would change the emission for the literal shape that costs nothing.
-fn addr_cast_if_needed(ar: *Arena, v: *const Texpr, elem: *const Typ, p: Pos) -> *const Texpr {
-    if !is_addr_ty(elem) { return v; }
-    let is_ptr = match *v.ty {
-        Typ::TPtr(_i) => true | Typ::TConstPtr(_i) => true | Typ::TOwnPtr(_i) => true | _o => false
-    };
-    if !is_ptr { return v; }
-    return te_node(ar, TexprNode::TCast(v, tyann_node(ar, TypeAnn::TyAddr)), elem, p);
-}
 
 fn elab_rune_strobe(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                     benv: *const Vec<FieldTy>, receiver: *const Expr,
