@@ -2171,6 +2171,14 @@ selfhost-seal: $(EXILC_BIN)
 	  cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_$$lim.c -o $(C_OUT)/seal_$$lim.o \
 	    || { echo "selfhost-seal: limit contract $$lim emits C that is not clean at -O2"; exit 1; }; \
 	done; \
+	rm -f $(C_OUT)/seal_inc.c $(C_OUT)/seal_inc.o; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_inc.c tests/seal/accept_seal_builtin_include.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: the sealed-builtin fixture was REJECTED"; exit 1; }; \
+	grep -q '#include <string.h>' $(C_OUT)/seal_inc.c \
+	  || { echo "selfhost-seal: a builtin used only INSIDE a region lost its libc include - the emitted C will not compile"; exit 1; }; \
+	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_inc.c -o $(C_OUT)/seal_inc.o \
+	  || { echo "selfhost-seal: the sealed-builtin C is not clean at the standard every fixture meets"; exit 1; }; \
+	sig="$$sig a builtin used only inside a region keeps its include;"; \
 	test ! -e tests/seal/accept_limit_wrong_region.exl \
 	  || { echo "selfhost-seal: the fifth limit is back in the corpus as an ACCEPT fixture - it was closed, and one place must answer whether it is open"; exit 1; }; \
 	sig="$$sig four limits pinned as CONTRACTS, the fifth CLOSED and its shape now rejected in the ward corpus;"; \

@@ -1,0 +1,12 @@
+// A builtin used ONLY inside a region still pulls its libc include. The scan that
+// decides `#include <string.h>` walked every body-bearing statement except a
+// seal, so `mem_zero` sealed emitted a bare `memset` and the C did not compile:
+// two implicit-declaration errors under the standard every fixture is held to.
+//
+// This is an ACCEPT row whose assertion is about the EMISSION, not the exit code.
+mod raw { extern var BUF: [u8; 16]; }
+
+fn main() {
+    seal { mem_zero(&raw::BUF as *c_void, 4 as u32); }
+    println(0);
+}

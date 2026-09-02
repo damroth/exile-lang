@@ -1178,6 +1178,7 @@ fn walk_non_defer(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a:
                   ret_ty: Option<*const Typ>, acc: Vec<MoveBinding>, s: *const Tstmt) -> Vec<MoveBinding> {
     return match *s {
         Tstmt::TDefer { body, pos } => copy_live(a, &acc)
+        | Tstmt::TSeal { body, pos } => walk_stmts_e(structs, enums, a, ar, mv, ret_ty, &acc, &body)
         | _o => walk_stmt_e(structs, enums, a, ar, mv, ret_ty, &acc, s)
     };
 }
@@ -1185,6 +1186,7 @@ fn walk_defer_body(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a
                    ret_ty: Option<*const Typ>, acc: Vec<MoveBinding>, s: *const Tstmt) -> Vec<MoveBinding> {
     return match *s {
         Tstmt::TDefer { body, pos } => walk_stmts_e(structs, enums, a, ar, mv, ret_ty, &acc, &body)
+        | Tstmt::TSeal { body, pos } => walk_stmts_e(structs, enums, a, ar, mv, ret_ty, &acc, &body)
         | _o => copy_live(a, &acc)
     };
 }

@@ -1,0 +1,16 @@
+// E3 - the same structural blindness in the MOVE pass. `walk_non_defer` and
+// `walk_defer_body` dispatched on every body-bearing statement except a seal, so
+// consumption inside a region was invisible and this double free compiled clean.
+//
+// The move corpus already carries a fixture whose header describes this exact
+// class for `defer`; that one was found and fixed, and the seal case was left
+// behind when seal arrived. Found by the audit the escape fix triggered.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let q: own *int = a.alloc();
+    *q = 1;
+    seal { a.free(q); a.free(q); }
+    println(0);
+}

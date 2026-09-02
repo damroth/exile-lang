@@ -16174,6 +16174,7 @@ fn builtin_scan_stmt(s: *const Tstmt, kind: int) -> bool {
         | Tstmt::TIf { cond, then_body, else_body } => builtin_expr_hit(cond, kind) || builtin_stmts_hit(&then_body, kind) || builtin_stmts_hit(&else_body, kind)
         | Tstmt::TWhile { cond, body, post } => builtin_expr_hit(cond, kind) || builtin_stmts_hit(&body, kind) || builtin_stmts_hit(&post, kind)
         | Tstmt::TDefer { body, pos } => builtin_stmts_hit(&body, kind)
+        | Tstmt::TSeal { body, pos } => builtin_stmts_hit(&body, kind)
         | _leaf => false
     };
 }
