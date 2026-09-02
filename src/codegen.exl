@@ -227,6 +227,12 @@ pub fn c_type_prefix(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TOwnPtr(inner) => c_ptr_prefix(a, ar, inner, false)
         | Typ::TConstPtr(inner) => c_ptr_prefix(a, ar, inner, true)
         | Typ::TRune { elem, dir } => c_rune_prefix(a, ar, elem)
+        // An address is 32 bits on the silicon this targets, and `unsigned long`
+        // is how every other 32-bit quantity reaches C here. The kind is distinct
+        // in the LANGUAGE - so a rule can attach to it - and identical in the
+        // emission, which is what makes it free: the store a driver would have
+        // written by hand.
+        | Typ::TAddr => "unsigned long "
         | Typ::TFnPtr { params: _p, ret: _r } => concat2(a, ar, mangle_typ(a, ar, t), " ")
         // `null` has no C spelling: it is the type of the literal, always consumed
         // under a concrete pointer.  Reaching here means typecheck let it through —

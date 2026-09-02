@@ -1,0 +1,7 @@
+// D4 - the other half of the P2 decision. An `addr` TAKES a numeric literal,
+// because the register that points at a buffer is the register that points at a
+// fixed chip address and `int -> ptr` was already legal. The reverse never opens:
+// an address does not become a number.
+mod raw { extern var C: [u8; 64]; }
+ward W { p: addr at 0x00 readwrite; }
+fn main() { ward w: W at &raw::C; let v = w.p.read(); println(v as int); }

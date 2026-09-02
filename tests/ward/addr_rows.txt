@@ -1,0 +1,9 @@
+# The addr round's rejection rows, name:wording. Three of them fire on rules that
+# existed BEFORE the kind - the width rule, the cast table, the atomic group - and
+# that is the point: the notation makes an address visible to the model without
+# widening anything the model already refused.
+addr_reject_narrow:a rune access is fixed to its declared width: expected u16, got *u16
+addr_reject_cast_out:cannot cast *u16 to u32 (supported: int↔int, int↔float, float↔float, ptr↔ptr, int→ptr)
+addr_reject_to_int:cannot cast addr to i32 (supported: int↔int, int↔float, float↔float, ptr↔ptr, int→ptr)
+addr_reject_outside_seal:field 'p' of ward 'W' is in an atomic group and must be accessed inside a seal
+addr_reject_local:storing through a non-local pointer a value that embeds the address of a local binding — the local goes out of scope at the end of its enclosing block, leaving the caller with a dangling borrow.  Wrap the storage in a caller-owned region, return a copy / `String::with_str(...)` instead of a borrow, or — for arena/region-allocated returns — mark the fn `@escapes` (forward-compat hatch)

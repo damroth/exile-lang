@@ -17,6 +17,16 @@
 // library search path, so the library has to sit beside its consumer. When a
 // search path lands, this directory moves and nothing else changes.
 
+// WHAT THIS LIBRARY DOES NOT GUARANTEE, and you have to know it before you point
+// a register at your own memory. The language guards FRAMES: it refuses a local's
+// address written into a register, because the frame dies at the end of the block.
+// It does not see an ASYNCHRONOUS READER. The blitter reads the buffer you gave it
+// long after the write that gave it, and no rule here knows when that read ends -
+// so a buffer whose life is bounded (a parameter's, an arena's, a list rebuilt
+// each frame) can be freed or reused while the chip is still reading it. Give the
+// hardware memory that outlives it, and until a notation says so, that is
+// discipline rather than a check.
+//
 // ---- ownership regions ------------------------------------------------------
 // A sigil is a claim, not an address: exactly one module may `own` each, and a
 // field access from a non-owner is refused. The ranges are the HRM's, byte

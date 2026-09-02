@@ -55,6 +55,7 @@ fn resolve_type_ann(a: Allocator, ar: *Arena, ann: *const TypeAnn) -> *const Typ
         | TypeAnn::TyCVoid => ty_node(ar, Typ::TCVoid)
         | TypeAnn::TyStr => ty_node(ar, Typ::TString)
         | TypeAnn::TyBool => ty_node(ar, Typ::TBool)
+        | TypeAnn::TyAddr => ty_node(ar, Typ::TAddr)
         | TypeAnn::TyFloat(w) => ty_node(ar, Typ::TFloat(w))
         | TypeAnn::TyPtr(t) => ty_node(ar, Typ::TPtr(resolve_type_ann(a, ar, t)))
         | TypeAnn::TyOwnPtr(t) => ty_node(ar, Typ::TOwnPtr(resolve_type_ann(a, ar, t)))
@@ -7060,7 +7061,30 @@ fn dir_can_write(d: Direction) -> bool {
 // match the register scalar exactly — a too-wide literal or a wider-typed value
 // would truncate SILENTLY into a hardware register (`*r = 70000` on a `u16` rune).
 // A plain `let x: u16 = 70000` is already rejected; the rune write must be too.
+// An `addr` register is the one place a POINTER is a legal value: that is what
+// the kind was ratified for. It also takes a plain integer - the register that
+// points at a program's buffer is the same register that points at a fixed chip
+// address, and `int -> ptr` is already in the cast table, so admitting a literal
+// here follows a precedent rather than opening a new door. What never opens is
+// the reverse: an `addr` does not become an integer (see D4).
+fn addr_value_ok(vty: *const Typ) -> bool {
+    return match *vty {
+        Typ::TPtr(_i) => true
+        | Typ::TConstPtr(_i) => true
+        | Typ::TOwnPtr(_i) => true
+        | Typ::TNullPtr => true
+        | Typ::TAddr => true
+        | Typ::TInt(_k) => true
+        | Typ::TCInt { is_signed: _s } => true
+        | Typ::TCLong { is_signed: _s } => true
+        | _o => false
+    };
+}
+fn is_addr_ty(t: *const Typ) -> bool {
+    return match *t { Typ::TAddr => true | _o => false };
+}
 fn rune_value_bad(arg: *const Expr, vty: *const Typ, elem: *const Typ) -> bool {
+    if is_addr_ty(elem) { return !addr_value_ok(vty); }
     return match *arg {
         Expr::IntLit(n, _q) => !int_fits(n, elem)
         | _o => !typ_eq(vty, elem)
@@ -7153,12 +7177,28 @@ fn elab_rune_write(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     let arg0 = args.as_slice()[0 as u32];
     let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, vexp, arg0), vexp);
     check_rune_value(a, ar, sc, arg0, vad.ty, elem, p);
-    return Tstmt::TAssignDeref { target: trecv, value: vad, pos: p };
+    // An `addr` register takes a POINTER as a value, and C will not assign one to
+    // an integer slot without being told to. The cast belongs here rather than in
+    // codegen: the language decided the value is an address, so the lowering says
+    // so once and the emission stays the store a driver would have written.
+    let vfin = addr_cast_if_needed(ar, vad, elem, p);
+    return Tstmt::TAssignDeref { target: trecv, value: vfin, pos: p };
 }
 // `rune.strobe()` is sugar for `write(0)` on a write-capable rune:
 // the WRITE is the act — starting a copper — and the value is irrelevant.  Same
 // store as a write of 0 (a `TAssignDeref` of a zero), gated by direction (it
 // shares R1 with `.write`).  Takes no arguments.
+// Only a pointer needs the cast: an integer already IS the slot's type in C, and
+// wrapping it would change the emission for the literal shape that costs nothing.
+fn addr_cast_if_needed(ar: *Arena, v: *const Texpr, elem: *const Typ, p: Pos) -> *const Texpr {
+    if !is_addr_ty(elem) { return v; }
+    let is_ptr = match *v.ty {
+        Typ::TPtr(_i) => true | Typ::TConstPtr(_i) => true | Typ::TOwnPtr(_i) => true | _o => false
+    };
+    if !is_ptr { return v; }
+    return te_node(ar, TexprNode::TCast(v, tyann_node(ar, TypeAnn::TyAddr)), elem, p);
+}
+
 fn elab_rune_strobe(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                     benv: *const Vec<FieldTy>, receiver: *const Expr,
                     args: *const Vec<*const Expr>, p: Pos) -> Tstmt {

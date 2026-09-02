@@ -1,0 +1,4 @@
+// AC4, the other half - the same program with the field declared `u32`.
+mod raw { extern var CHIP: [u8; 64]; }
+ward W { p: u32  at 0x00 write; }
+fn main() { ward w: W at &raw::CHIP; seal { w.p.write(1048576); } println(0); }

@@ -97,6 +97,7 @@ pub fn render_type_ann(ann: *const TypeAnn, out: *StringBuilder) {
             out.push_str(int_width_suffix(width));
             out.push_str(")");
         }
+        | TypeAnn::TyAddr => { out.push_str("addr"); }
         | TypeAnn::TyCInt { is_signed } => {
             out.push_str("(c_int ");
             out.push_str(signed_word(is_signed));

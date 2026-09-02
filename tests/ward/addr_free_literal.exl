@@ -1,0 +1,7 @@
+// AC4, one half - a literal written through an `addr` register. Its twin declares
+// the same field as `u32` and writes the same number; the two must emit byte-
+// identical C, which is what "the kind costs nothing" means as an assertion
+// rather than a claim.
+mod raw { extern var CHIP: [u8; 64]; }
+ward W { p: addr at 0x00 write; }
+fn main() { ward w: W at &raw::CHIP; seal { w.p.write(1048576); } println(0); }

@@ -764,7 +764,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -913,7 +913,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1634,6 +1634,60 @@ selfhost-prelude-probe: $(EXILC_BIN)
 	  echo "selfhost-prelude-probe: the port does not say the pinned line"; \
 	  echo "  pinned: $(PRELUDE_PROBE_LINE)"; echo "  port:   $$pline"; exit 1; fi; \
 	echo "selfhost-prelude-probe: clean - both compilers say the pinned line, position included"
+
+# ===== `addr`: handing the hardware an address =====
+#
+# Variant A of the ratified notation: the KIND lives on the ward field, so the
+# address travels with the value and there is a place for a rule about lifetime,
+# chip RAM or alignment to attach later. Three of the rejection rows fire on rules
+# that predate the kind - the rune width rule, the cast table and the atomic
+# group - which is the evidence that the notation widened nothing.
+#
+# The fourth is the one the prerequisite round bought: a local's address written
+# into a register is refused TODAY, so the row is a rejection rather than a pinned
+# accept that would have flipped under us.
+.PHONY: selfhost-addr
+selfhost-addr: $(EXILC_BIN)
+	@test -s tests/ward/addr_rows.txt || { echo "selfhost-addr: MISSING/EMPTY tests/ward/addr_rows.txt"; exit 1; }; \
+	for f in addr_accept_run addr_free_literal addr_free_literal_u32; do \
+	  test -f tests/ward/$$f.exl || { echo "selfhost-addr: MISSING tests/ward/$$f.exl"; exit 1; }; \
+	done; \
+	test -f tests/ward/addr_accept_run_stub.c || { echo "selfhost-addr: MISSING the RAM backing"; exit 1; }; \
+	rm -rf $(C_OUT)/addr; mkdir -p $(C_OUT)/addr; \
+	rows=0; \
+	while IFS=: read -r name want; do \
+	  case "$$name" in ''|'#'*) continue;; esac; \
+	  test -f tests/ward/$$name.exl || { echo "selfhost-addr: MISSING tests/ward/$$name.exl"; exit 1; }; \
+	  rows=`expr $$rows + 1`; \
+	  if $(EXILC_BIN) --target c --c-out $(C_OUT)/addr/$$name.c tests/ward/$$name.exl >/dev/null 2>$(C_OUT)/addr/$$name.err; then \
+	    echo "selfhost-addr: ACCEPTED $$name - the row does not reject"; exit 1; fi; \
+	  got=`grep -m1 'error:' $(C_OUT)/addr/$$name.err | sed 's/.*error: //'`; \
+	  test -n "$$got" || { echo "selfhost-addr: SILENT $$name - refused with no diagnostic"; exit 1; }; \
+	  test "$$got" = "$$want" || { echo "selfhost-addr: WORDING $$name"; echo "  want: $$want"; echo "  got:  $$got"; exit 1; }; \
+	done < tests/ward/addr_rows.txt; \
+	test $$rows -ge 5 || { echo "selfhost-addr: only $$rows rejection rows ran - the table lost members"; exit 1; }; \
+	$(EXILC_BIN) --target host --link $(SYS_HOST) --link tests/ward/addr_accept_run_stub.c \
+	   -o $(HOST_OUT)/addr_run tests/ward/addr_accept_run.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-addr: the accepting row does not build"; exit 1; }; \
+	$(HOST_OUT)/addr_run > $(C_OUT)/addr/run.out 2>&1; \
+	test -s $(C_OUT)/addr/run.out || { echo "selfhost-addr: the accepting row printed NOTHING"; exit 1; }; \
+	grep -q '^42$$' $(C_OUT)/addr/run.out \
+	  || { echo "selfhost-addr: the accepting row RAN wrong:"; cat $(C_OUT)/addr/run.out; exit 1; }; \
+	grep -q 'seal-balance 0 misnest 0' $(C_OUT)/addr/run.out \
+	  || { echo "selfhost-addr: the accepting row left its region unbalanced"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/addr/ptr.c tests/ward/addr_accept_run.exl >/dev/null 2>&1; \
+	grep -q '(unsigned long)' $(C_OUT)/addr/ptr.c \
+	  || { echo "selfhost-addr: a POINTER reached an addr register with no cast - the C would not compile"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/addr/ptr.c -o $(C_OUT)/addr/ptr.o \
+	  || { echo "selfhost-addr: the addr emission is not clean C89 at -O2"; exit 1; }; \
+	for t in addr_free_literal addr_free_literal_u32; do \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/addr/$$t.c tests/ward/$$t.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-addr: $$t does not compile"; exit 1; }; \
+	done; \
+	cmp -s $(C_OUT)/addr/addr_free_literal.c $(C_OUT)/addr/addr_free_literal_u32.c \
+	  || { echo "selfhost-addr: the kind COSTS something - an addr field and a u32 field emit different C for the same literal"; \
+	       diff $(C_OUT)/addr/addr_free_literal.c $(C_OUT)/addr/addr_free_literal_u32.c | head -6; exit 1; }; \
+	echo "selfhost-addr: clean ($$rows rows refuse with their wording - three on rules older than the kind; the accepting row RUNS 42 in a balanced region with its pointer cast once; and addr costs exactly what u32 costs)"
 
 # ===== the NDK: exile over the silicon =====
 #

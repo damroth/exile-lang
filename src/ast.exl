@@ -158,6 +158,9 @@ pub enum TypeAnn {
     | TyCVoid
     | TyStr
     | TyBool
+    // The ratified `addr` kind - see Typ::TAddr for what it is and why it is
+    // neither `u32` nor a raw pointer.
+    | TyAddr
     | TyFloat(FloatWidth)
     | TyTuple(Vec<*const TypeAnn>)
     | TyStruct { path: Vec<str>, args: Vec<*const TypeAnn> }

@@ -1,0 +1,12 @@
+// P5b - the address of a STACK LOCAL written into a hardware register. Refused
+// by the escape rule that already existed, once the prerequisite round taught the
+// walker to look inside a seal. Before that this compiled clean, which is why the
+// row is a rejection today rather than a pinned accept that would have flipped.
+mod raw { extern var C: [u8; 64]; }
+ward W { p: addr at 0x00 write; }
+fn arm() {
+    ward w: W at &raw::C;
+    let mut l: [u16; 4] = [1 as u16, 2 as u16, 3 as u16, 4 as u16];
+    seal { w.p.write(&l[0]); }
+}
+fn main() { arm(); println(0); }

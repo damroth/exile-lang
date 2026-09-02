@@ -1,0 +1,7 @@
+// D1 - an address into a narrower control register. The rune width rule already
+// owned this before `addr` existed, and the notation does not widen what a
+// register accepts: that is invariant I-D2, pinned so a future change to the kind
+// cannot quietly relax it.
+mod raw { extern var C: [u8; 64]; extern var BUF: [u16; 4]; }
+ward W { p: addr at 0x00 write; sz: u16 at 0x08 write; }
+fn main() { ward w: W at &raw::C; seal { w.sz.write(&raw::BUF[0]); } println(0); }

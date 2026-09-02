@@ -1,0 +1,5 @@
+// D2 - the cast table stays closed. `addr` exists so that an address can reach a
+// register WITHOUT becoming an integer on the way; opening ptr -> int would have
+// been the laundering the whole refusal prevents.
+mod raw { extern var BUF: [u16; 4]; }
+fn main() { let x = &raw::BUF[0] as u32; println(x as int); }

@@ -91,6 +91,13 @@ pub enum Typ {
     // `base_sym` is "" for an integer (MMIO) base, or a global symbol name for a
     // `&GLOBAL` (RAM) base — the field then folds to `(char*)&SYM + offset`.
     | TWard { path: Vec<str>, base: int, base_sym: str }
+    // A HARDWARE ADDRESS, ratified as the `addr` field kind: the value a register
+    // takes when it is pointed at memory. Distinct from `u32` and from a raw
+    // pointer on purpose - it is the place a rule about lifetime, chip RAM or
+    // alignment can attach, and none of those has a home on either of the others.
+    // Always 32 bits: that is the width of an address on the silicon this targets,
+    // and unlike a pointer it does not change with the host.
+    | TAddr
 }
 
 // ===== Signatures =====
@@ -440,6 +447,7 @@ fn typ_name_tuple(a: Allocator, ar: *Arena, ts: *const Vec<*const Typ>) -> str {
 pub fn typ_name(a: Allocator, ar: *Arena, t: *const Typ) -> str {
     return match *t {
         Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
+        | Typ::TAddr => "addr"
         | Typ::TCInt { is_signed } => { if is_signed { "c_int" } else { "c_uint" } }
         | Typ::TCShort { is_signed } => { if is_signed { "c_short" } else { "c_ushort" } }
         | Typ::TCLong { is_signed } => { if is_signed { "c_long" } else { "c_ulong" } }
@@ -554,6 +562,7 @@ pub fn typ_eq(x: *const Typ, y: *const Typ) -> bool {
     if is_nullish(y) { return is_ptr_like(x); }
     return match *x {
         Typ::TInt(kx) => match *y { Typ::TInt(ky) => (kx.is_signed == ky.is_signed) && intwidth_eq(kx.width, ky.width) | _e => false }
+        | Typ::TAddr => match *y { Typ::TAddr => true | _e => false }
         | Typ::TBool => match *y { Typ::TBool => true | _e => false }
         | Typ::TString => match *y { Typ::TString => true | _e => false }
         | Typ::TFloat(wx) => match *y { Typ::TFloat(wy) => floatwidth_eq(wx, wy) | _e => false }

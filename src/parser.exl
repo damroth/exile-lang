@@ -473,6 +473,10 @@ fn parse_type_ident(s: *Parser, name: str, _p: Pos) -> *const TypeAnn {
     if str::eq(name, "u8") { return ty_node(s, ty_int(false, IntWidth::W8)); }
     if str::eq(name, "u16") { return ty_node(s, ty_int(false, IntWidth::W16)); }
     if str::eq(name, "u32") { return ty_node(s, ty_int(false, IntWidth::W32)); }
+    // The ratified `addr` kind: a hardware address, 32 bits on the silicon this
+    // targets. Deliberately not `u32` and not a raw pointer - it is the place a
+    // rule about lifetime, chip RAM or alignment can attach later.
+    if str::eq(name, "addr") { return ty_node(s, TypeAnn::TyAddr); }
     if str::eq(name, "c_int") { return ty_node(s, TypeAnn::TyCInt { is_signed: true }); }
     if str::eq(name, "c_uint") { return ty_node(s, TypeAnn::TyCInt { is_signed: false }); }
     if str::eq(name, "c_short") { return ty_node(s, TypeAnn::TyCShort { is_signed: true }); }
