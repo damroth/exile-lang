@@ -1685,6 +1685,105 @@ selfhost-copper: $(EXILC_BIN)
 	  || { echo "selfhost-copper: the P5d refusal did not land INSIDE install() - the point of the closure is that the mark travels with the type, so the callee refuses an address the caller handed it"; exit 1; }; \
 	echo "selfhost-copper: clean (the list is checked WORD BY WORD as data the chip interprets, the DMACON write is forced to seal, and the P5d shape is now REFUSED one frame below the local that made it - the parked contract paid)"
 
+# ===== verify-emu: the chipset machine, and the first behaviour in this repo ====
+#
+# Every other gate here asserts EMISSION - the store is at this offset, the C is
+# clean, the link closes. This one asserts BEHAVIOUR: a freestanding binary is
+# executed as 68000 code against a custom-register window, and what it prints has
+# to match what the same program prints on the host, byte for byte.
+#
+# The order is deliberate and is the reason the gate is trustworthy at all. The
+# NEGATIVE CONTROLS RUN FIRST. A verification tool that is gentler than the
+# machine it stands in for is worse than none: an emulator that maps all of memory
+# lets a wild pointer read zeroes and finish green, and one that shrugs at an
+# opcode turns a miscompilation into a pass. So before any witness is believed,
+# the machine is fed one of each and must stop hard on both - and the exit codes
+# are checked, not just the text, because a message-shaped filter cannot see a
+# tool that dies for its own reasons.
+EMU_BUILD := $(OUT)/emu
+EMU_MUS   := tools/emu/musashi
+EMU_DEFS  := -DM68K_INSTRUCTION_HOOK=2 -DM68K_INSTRUCTION_CALLBACK\(pc\)=emu_instr_hook\(pc\) \
+             -DM68K_EMULATE_ADDRESS_ERROR=1 -DM68K_ILLG_HAS_CALLBACK=1
+
+.PHONY: verify-emu
+verify-emu: $(EXILC_BIN)
+	@if [ ! -x $(AMIGA_GCC) ]; then echo "verify-emu: amiga-gcc missing - run 'make toolchain' first"; exit 1; fi; \
+	for f in tools/emu/emu.c tools/emu/emuhooks.h tools/emu/VENDOR.md \
+	         tools/emu/probe_illegal.c tools/emu/probe_wild.c \
+	         $(EMU_MUS)/m68kmake.c $(EMU_MUS)/m68k_in.c $(EMU_MUS)/m68kcpu.c \
+	         $(EMU_MUS)/softfloat/softfloat.c \
+	         tests/kernel/isr_vertb.exl tests/kernel/isr_vertb_stub.c tests/kernel/isr_vertb.expected \
+	         tests/kernel/bare_seam.exl tests/kernel/bare_seam_stub.c tests/kernel/bare_seam.expected \
+	         $(BARE_SEAM) runtime/freestanding.c; do \
+	  test -s $$f || { echo "verify-emu: MISSING/EMPTY $$f"; exit 1; }; \
+	done; \
+	grep -q 'LICENSING & COPYRIGHT' $(EMU_MUS)/m68kcpu.h \
+	  || { echo "verify-emu: the vendored core has lost its licence header - upstream ships no LICENSE file, so the notice in the sources IS the licence"; exit 1; }; \
+	grep -q 'M68K_ILLG_HAS_CALLBACK      M68K_OPT_OFF' $(EMU_MUS)/m68kconf.h \
+	  || { echo "verify-emu: the vendored config has been EDITED - every option this machine needs is guarded by #ifndef and is set on the compiler line, so the core's own tree stays byte-identical to upstream and a version bump is a copy rather than a merge"; exit 1; }; \
+	rm -rf $(EMU_BUILD); mkdir -p $(EMU_BUILD); \
+	cc -O2 -o $(EMU_BUILD)/m68kmake $(EMU_MUS)/m68kmake.c 2>/dev/null \
+	  || { echo "verify-emu: the core's opcode generator does not build"; exit 1; }; \
+	cp $(EMU_MUS)/m68k_in.c $(EMU_BUILD)/ && (cd $(EMU_BUILD) && ./m68kmake . m68k_in.c >/dev/null) \
+	  || { echo "verify-emu: the opcode generator did not run"; exit 1; }; \
+	test -s $(EMU_BUILD)/m68kops.c || { echo "verify-emu: the generator produced no opcode table"; exit 1; }; \
+	for u in $(EMU_MUS)/m68kcpu.c $(EMU_BUILD)/m68kops.c; do \
+	  o=$(EMU_BUILD)/`basename $$u .c`.o; \
+	  cc -O2 -I $(EMU_MUS) -I $(EMU_BUILD) -include tools/emu/emuhooks.h $(EMU_DEFS) -c $$u -o $$o 2>$(EMU_BUILD)/cc.err \
+	    || { echo "verify-emu: the core does not build:"; head -3 $(EMU_BUILD)/cc.err; exit 1; }; \
+	  test `grep -c 'warning:' $(EMU_BUILD)/cc.err` -eq 0 \
+	    || { echo "verify-emu: the core built with warnings - a tool that verifies a compiler does not get to be noisy:"; grep -m3 'warning:' $(EMU_BUILD)/cc.err; exit 1; }; \
+	done; \
+	cc -O2 -I $(EMU_MUS) -I $(EMU_MUS)/softfloat -I $(EMU_BUILD) -c $(EMU_MUS)/softfloat/softfloat.c -o $(EMU_BUILD)/softfloat.o 2>/dev/null \
+	  || { echo "verify-emu: softfloat does not build - the core includes it unconditionally"; exit 1; }; \
+	cc -O2 -Wall -Wextra -Werror -I $(EMU_MUS) -I $(EMU_BUILD) -c tools/emu/emu.c -o $(EMU_BUILD)/emu.o 2>$(EMU_BUILD)/emu.err \
+	  || { echo "verify-emu: the machine does not build clean:"; head -5 $(EMU_BUILD)/emu.err; exit 1; }; \
+	cc -O2 -o $(EMU_BUILD)/emu $(EMU_BUILD)/emu.o $(EMU_BUILD)/m68kcpu.o $(EMU_BUILD)/m68kops.o $(EMU_BUILD)/softfloat.o -lm \
+	  || { echo "verify-emu: the machine does not link"; exit 1; }; \
+	for n in illegal wild; do \
+	  $(AMIGA_GCC) -noixemul -nostdlib -ffreestanding -fno-builtin -O2 -e _main \
+	     -o $(EMU_BUILD)/probe_$$n tools/emu/probe_$$n.c 2>/dev/null \
+	    || { echo "verify-emu: negative control probe_$$n does not build for m68k"; exit 1; }; \
+	done; \
+	$(EMU_BUILD)/emu $(EMU_BUILD)/probe_illegal >$(EMU_BUILD)/ill.out 2>$(EMU_BUILD)/ill.err; rc=$$?; \
+	test $$rc -eq 4 \
+	  || { echo "verify-emu: an ILLEGAL INSTRUCTION did not stop the machine (exit $$rc, wanted 4) - the machine took the exception and kept running, which is how a miscompiled program finishes green"; exit 1; }; \
+	grep -q 'illegal instruction 0x4afc' $(EMU_BUILD)/ill.err \
+	  || { echo "verify-emu: the machine stopped on the illegal instruction without naming it"; exit 1; }; \
+	$(EMU_BUILD)/emu $(EMU_BUILD)/probe_wild >$(EMU_BUILD)/wild.out 2>$(EMU_BUILD)/wild.err; rc=$$?; \
+	test $$rc -eq 3 \
+	  || { echo "verify-emu: a read OUTSIDE THE MAP did not fault (exit $$rc, wanted 3) - a machine that answers zero for unmapped memory lets a wild pointer read plausible data and go green"; exit 1; }; \
+	grep -q 'outside the map at 0xa00000' $(EMU_BUILD)/wild.err \
+	  || { echo "verify-emu: the machine faulted without naming the address"; exit 1; }; \
+	ran=0; \
+	for w in isr_vertb:isr_vertb_stub.c bare_seam:bare_seam_stub.c; do \
+	  n=$${w%%:*}; stub=tests/kernel/$${w##*:}; \
+	  d=$(EMU_BUILD)/$$n; mkdir -p $$d; \
+	  $(EXILC_BIN) --target c --freestanding --c-out $$d/prog.c tests/kernel/$$n.exl >/dev/null 2>&1 \
+	    || { echo "verify-emu: $$n does not compile freestanding"; exit 1; }; \
+	  for o in prog:$$d/prog.c stub:$$stub fs:runtime/freestanding.c seam:$(BARE_SEAM); do \
+	    k=$${o%%:*}; src=$${o##*:}; \
+	    $(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -I runtime -c $$src -o $$d/$$k.o 2>/dev/null \
+	      || { echo "verify-emu: $$src does not compile for m68k"; exit 1; }; \
+	  done; \
+	  $(AMIGA_GCC) -noixemul -nostdlib -ffreestanding -fno-builtin -O2 -e _main -o $$d/witness \
+	     $$d/prog.o $$d/fs.o $$d/seam.o $$d/stub.o 2>/dev/null \
+	    || { echo "verify-emu: $$n does not link -nostdlib"; exit 1; }; \
+	  test -s tests/kernel/$$n.expected \
+	    || { echo "verify-emu: tests/kernel/$$n.expected is EMPTY - an empty reference makes any run agree with it"; exit 1; }; \
+	  $(EMU_BUILD)/emu $$d/witness >$$d/run.out 2>$$d/run.err; rc=$$?; \
+	  test $$rc -eq 0 \
+	    || { echo "verify-emu: $$n did not finish on the machine (exit $$rc):"; head -3 $$d/run.err; exit 1; }; \
+	  test -s $$d/run.out \
+	    || { echo "verify-emu: $$n printed NOTHING - the serial register reached stdout for no byte, so the run proves nothing"; exit 1; }; \
+	  diff -q tests/kernel/$$n.expected $$d/run.out >/dev/null \
+	    || { echo "verify-emu: $$n RAN DIFFERENTLY on the chipset than on the host:"; \
+	         diff tests/kernel/$$n.expected $$d/run.out | head -6; exit 1; }; \
+	  ran=`expr $$ran + 1`; \
+	done; \
+	test $$ran -ge 2 || { echo "verify-emu: only $$ran witness(es) ran - one witness is the one the tool was developed against, which proves nothing about the tool"; exit 1; }; \
+	echo "verify-emu: clean (the machine stops hard on an illegal opcode and on a read outside its map, both proved by feeding it one; then $$ran freestanding witnesses EXECUTE as 68000 code against a modelled custom chip and print, byte for byte, what the host build prints)"
+
 # ===== memory a device touches: the mark, its refusals, and the load it saves ====
 #
 # The round closed two measured limits with one declaration.  What makes it a

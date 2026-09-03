@@ -123,6 +123,14 @@ jobs:
     - name: Cross-compile examples + verify under vamos
       run: opam exec -- make verify-amiga
 
+    # The chipset machine. Every other job here asserts EMISSION; this one runs
+    # freestanding binaries as 68000 code against a modelled custom chip and
+    # checks what they PRINT. Its negative controls run first, so a machine that
+    # had gone gentle - mapping all of memory, or shrugging at an opcode - fails
+    # the gate before any witness is believed.
+    - name: Execute bare-metal witnesses on the chipset machine (verify-emu)
+      run: opam exec -- make verify-emu
+
     # The port's --target amiga vs the oracle's, on the same toolchain + vamos.
     # Proves the self-hosted driver cross-compiles to a byte-identical, correctly
     # running m68k binary. Lives here (not in selfhost-verify) because it needs
