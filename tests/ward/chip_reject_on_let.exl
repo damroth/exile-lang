@@ -1,0 +1,8 @@
+// The natural mistake: reaching for the modifier where the memory would be a
+// LOCAL. The refusal existed before this row - `extern var` is a module item, so
+// nothing could parse here - but it arrived as "expected '='", which sends the
+// reader to look at the assignment instead of at the storage.
+fn main() {
+    let buf: [u8; 16] chip writes = [0 as u8; 16];
+    println(buf[0] as int);
+}

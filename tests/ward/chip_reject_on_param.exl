@@ -1,0 +1,7 @@
+// The same reason in a position that did NOT motivate it. A criterion checked
+// only against the fixture that produced it proves nothing about the criterion;
+// this row is the foreign one, and it passes because the rule is stated over the
+// PROPERTY - a type annotation with a trailing `chip` - rather than over the shape
+// that was reported.
+fn f(b: [u8; 4] chip writes) { println(b[0] as int); }
+fn main() { f([0 as u8; 4]); }

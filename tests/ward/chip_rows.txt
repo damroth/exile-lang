@@ -4,8 +4,15 @@
 # alias, and a rule that shut only one of them would be the partial-enforcement
 # trap - complete-looking and false. One is a PINNING row for a refusal the
 # notation inherited rather than added.
+#
+# The last two share a wording and not a shape: the modifier misplaced on a `let`
+# and on a PARAMETER. The first is the mistake that was reported; the second is the
+# one that was not, and it is here because a rule checked only against the fixture
+# that produced it says nothing about the rule.
 chip_reject_bare:expected 'reads' or 'writes' after 'chip', got ';'
 chip_reject_on_const:the `chip` modifier is only allowed on `extern var` - it names memory a device writes or follows, and only a variable can be that
 chip_reject_launder_cast:cannot cast *chip u8 to *u8: an ordinary pointer into memory the chip shares would read it without `volatile`, and the loads the mark exists to preserve would be folded away again
 chip_reject_launder_param:argument 1 of 'take': expected *u8, got *chip u8
 chip_reject_in_fn:expected expression
+chip_reject_on_let:memory a device touches is declared at module scope, as `extern var NAME: T chip reads` (or `chip writes`): the device keeps following it after any frame is gone, so it cannot be a local, a field or a parameter - a POINTER into such memory is spelled `*chip T`
+chip_reject_on_param:memory a device touches is declared at module scope, as `extern var NAME: T chip reads` (or `chip writes`): the device keeps following it after any frame is gone, so it cannot be a local, a field or a parameter - a POINTER into such memory is spelled `*chip T`

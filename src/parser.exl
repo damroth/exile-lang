@@ -44,6 +44,11 @@ struct Parser {
     last_pos: Pos,
     allow_struct_lit: bool,
     allow_bitor: bool,
+    // The trailing `chip reads` / `chip writes` modifier belongs to exactly one
+    // place - the tail of an `extern var` - so the flag is on only there, and
+    // every other type position can say WHY instead of stumbling on a token it
+    // did not expect.
+    allow_chip_mod: bool,
     // A `>>` (Shr) that closes a generic level leaves a virtual `>` (Gt)
     // pending for the enclosing level — the token slice is read-only, so
     // the OCaml in-place split becomes a one-token lookahead flag instead.
@@ -69,7 +74,7 @@ fn new_parser(a: Allocator, ar: *Arena, toks: Slice<TokenPos>, n: u32) -> Parser
     let no_target: Option<*const TypeAnn> = Option::None;
     return Parser {
         toks: toks, n: n, i: 0 as u32, last_pos: pos::Pos::zero(),
-        allow_struct_lit: true, allow_bitor: true,
+        allow_struct_lit: true, allow_bitor: true, allow_chip_mod: false,
         pending_gt: false, gt_pos: pos::Pos::zero(),
         self_target: no_target,
         err: no_err, a: a, ar: ar,
@@ -401,6 +406,16 @@ fn parse_chip_ty(s: *Parser) -> *const TypeAnn {
     return ty_node(s, TypeAnn::TyChip(inner));
 }
 fn parse_type(s: *Parser) -> *const TypeAnn {
+    let ty = parse_type_core(s);
+    // A trailing `chip ...` is legal in ONE place. Anywhere else it is a user
+    // reaching for shared memory where it cannot live, and "expected '='" sends
+    // them to look at the assignment instead of at the storage.
+    if !s.allow_chip_mod && is_ident_named(peek(s), "chip") {
+        fail(s, peek_pos(s), "memory a device touches is declared at module scope, as `extern var NAME: T chip reads` (or `chip writes`): the device keeps following it after any frame is gone, so it cannot be a local, a field or a parameter - a POINTER into such memory is spelled `*chip T`");
+    }
+    return ty;
+}
+fn parse_type_core(s: *Parser) -> *const TypeAnn {
     if is_err(s) { return dummy_ty(s); }
     // `chip` in TYPE position marks the pointee, the way `own` marks a pointer
     // slot: always explicit, never inferred.
@@ -3374,7 +3389,9 @@ fn parse_typed_extern_tail(s: *Parser, label: str, name: str, chip: *ChipDir) ->
         efailx(s, peek_pos(s), "'extern ", label, " ", name,
                "' must declare its type with `: T`, got ", Option::Some(peek(s)));
     }
+    s.allow_chip_mod = true;
     let ty = parse_type(s);
+    s.allow_chip_mod = false;
     if is_ident_named(peek(s), "chip") { *chip = parse_chip_dir(s, label); }
     if peek_is(s, Token::Semicolon) { bump(s); }
     else if !is_err(s) {
