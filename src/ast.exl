@@ -161,6 +161,10 @@ pub enum TypeAnn {
     // The ratified `addr` kind - see Typ::TAddr for what it is and why it is
     // neither `u32` nor a raw pointer.
     | TyAddr
+    // `*chip T` - a pointer INTO memory a device touches.  Needed because the mark
+    // rides in the type: without a spelling, a buffer could be declared but never
+    // handed to a helper that fills it.
+    | TyChip(*const TypeAnn)
     | TyFloat(FloatWidth)
     | TyTuple(Vec<*const TypeAnn>)
     | TyStruct { path: Vec<str>, args: Vec<*const TypeAnn> }
@@ -399,9 +403,22 @@ pub struct ConstDecl {
 
 // `extern var DOSBase: *Library;` — like `extern const` but assignable
 // (an l-value; no `const` in the C decl).
+// The chip's side of a shared buffer, NOT the program's.  A ward field's
+// `read`/`write` says what the PROGRAM may do; on a buffer the same words would
+// invert silently, so the direction here is spelled with the chip as its subject
+// (`chip writes`) and carried in a type of its own so the two can never be
+// passed for one another.
+pub enum ChipDir {
+    CNone
+    | CReads
+    | CWrites
+    | CReadsWrites
+}
+
 pub struct ExternVar {
     evname: str,
     evty: *const TypeAnn,
+    evchip: ChipDir,
     evpos: Pos,
 }
 

@@ -395,8 +395,16 @@ fn parse_rune_ty(s: *Parser, dir: Direction) -> *const TypeAnn {
     return ty_node(s, TypeAnn::TyRune { elem: elem, dir: dir });
 }
 
+fn parse_chip_ty(s: *Parser) -> *const TypeAnn {
+    bump(s);
+    let inner = parse_type(s);
+    return ty_node(s, TypeAnn::TyChip(inner));
+}
 fn parse_type(s: *Parser) -> *const TypeAnn {
     if is_err(s) { return dummy_ty(s); }
+    // `chip` in TYPE position marks the pointee, the way `own` marks a pointer
+    // slot: always explicit, never inferred.
+    if is_ident_named(peek(s), "chip") { return parse_chip_ty(s); }
     let tp = advance(s);
     return match tp.tok {
         Token::Own => {
@@ -3339,13 +3347,35 @@ fn parse_extern_decl_head(s: *Parser, keyword: Token, label: str, ident_label: s
 }
 
 // Shared tail for typed extern decls (const / var): `: T ;`.
-fn parse_typed_extern_tail(s: *Parser, label: str, name: str) -> *const TypeAnn {
+// The `chip ...` modifier that may suffix an `extern var`: it names what the
+// CHIP does to this memory, which is why the words are verbs with the chip as
+// their subject.  Always explicit once `chip` is written - a bare `chip` is a
+// parse error naming the options, for the same reason a bare `rune` is: the
+// round exists because the compiler could not tell which way the hazard ran.
+fn parse_chip_dir(s: *Parser, label: str) -> ChipDir {
+    bump(s);
+    if !str::eq(label, "var") {
+        fail(s, peek_pos(s), "the `chip` modifier is only allowed on `extern var` - it names memory a device writes or follows, and only a variable can be that");
+        return ChipDir::CNone;
+    }
+    let id = expect_ident(s, "'reads' or 'writes' after 'chip'");
+    if str::eq(id.name, "writes") { return ChipDir::CWrites; }
+    if str::eq(id.name, "reads") {
+        if is_ident_named(peek(s), "writes") { bump(s); return ChipDir::CReadsWrites; }
+        return ChipDir::CReads;
+    }
+    fail(s, id.pos, "expected 'reads', 'writes' or 'reads writes' after 'chip'");
+    return ChipDir::CNone;
+}
+
+fn parse_typed_extern_tail(s: *Parser, label: str, name: str, chip: *ChipDir) -> *const TypeAnn {
     if peek_is(s, Token::Colon) { bump(s); }
     else {
         efailx(s, peek_pos(s), "'extern ", label, " ", name,
                "' must declare its type with `: T`, got ", Option::Some(peek(s)));
     }
     let ty = parse_type(s);
+    if is_ident_named(peek(s), "chip") { *chip = parse_chip_dir(s, label); }
     if peek_is(s, Token::Semicolon) { bump(s); }
     else if !is_err(s) {
         efailx(s, peek_pos(s), "expected ';' after 'extern ", label, " ", name,
@@ -3367,15 +3397,17 @@ fn parse_extern_type_after_keyword(s: *Parser, seen: *const Vec<str>) -> ExternT
 // `extern const NAME: T;` — linker-resolved global value.
 fn parse_extern_const_after_keyword(s: *Parser, seen: *const Vec<str>) -> ExternConst {
     let np = parse_extern_decl_head(s, Token::Const, "const", "const name", seen);
-    let ty = parse_typed_extern_tail(s, "const", np.name);
+    let mut cd: ChipDir = ChipDir::CNone;
+    let ty = parse_typed_extern_tail(s, "const", np.name, &cd);
     return ExternConst { ecname: np.name, ecty: ty, ecpos: np.pos };
 }
 
 // `extern var NAME: T;` — like extern const but assignable.
 fn parse_extern_var_after_keyword(s: *Parser, seen: *const Vec<str>) -> ExternVar {
     let np = parse_extern_decl_head(s, Token::Var, "var", "variable name", seen);
-    let ty = parse_typed_extern_tail(s, "var", np.name);
-    return ExternVar { evname: np.name, evty: ty, evpos: np.pos };
+    let mut cd: ChipDir = ChipDir::CNone;
+    let ty = parse_typed_extern_tail(s, "var", np.name, &cd);
+    return ExternVar { evname: np.name, evty: ty, evchip: cd, evpos: np.pos };
 }
 
 fn parse_extern_item(s: *Parser, out: *Vec<Item>, seen: *Vec<str>) {

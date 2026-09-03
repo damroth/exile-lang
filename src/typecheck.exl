@@ -56,6 +56,7 @@ fn resolve_type_ann(a: Allocator, ar: *Arena, ann: *const TypeAnn) -> *const Typ
         | TypeAnn::TyStr => ty_node(ar, Typ::TString)
         | TypeAnn::TyBool => ty_node(ar, Typ::TBool)
         | TypeAnn::TyAddr => ty_node(ar, Typ::TAddr)
+        | TypeAnn::TyChip(i) => ty_node(ar, Typ::TChip { inner: resolve_type_ann(a, ar, i), dir: ChipDir::CNone })
         | TypeAnn::TyFloat(w) => ty_node(ar, Typ::TFloat(w))
         | TypeAnn::TyPtr(t) => ty_node(ar, Typ::TPtr(resolve_type_ann(a, ar, t)))
         | TypeAnn::TyOwnPtr(t) => ty_node(ar, Typ::TOwnPtr(resolve_type_ann(a, ar, t)))
@@ -681,11 +682,19 @@ fn find_field_ty(sinfo: *const Vec<StructField>, path: *const Vec<str>, field: s
 // The pointee type of a pointer (any of the three pointer flavours).
 fn deref_pointee(t: *const Typ) -> Option<*const Typ> {
     return match *t {
-        Typ::TPtr(inner) => Option::Some(inner)
-        | Typ::TConstPtr(inner) => Option::Some(inner)
-        | Typ::TOwnPtr(inner) => Option::Some(inner)
+        Typ::TPtr(inner) => Option::Some(strip_chip(inner))
+        | Typ::TConstPtr(inner) => Option::Some(strip_chip(inner))
+        | Typ::TOwnPtr(inner) => Option::Some(strip_chip(inner))
         | _e => { let n: Option<*const Typ> = Option::None; n }
     };
+}
+// A value read out of memory a device touches is an ORDINARY value: the alias is
+// carried by the pointer, not by the copy.  Stripping the mark on the way through
+// a dereference is what keeps the notation from leaking into arithmetic, casts and
+// stores, and it costs nothing the rules need - the POINTER's type is where every
+// refusal in this round asks its question.
+fn strip_chip(t: *const Typ) -> *const Typ {
+    return match *t { Typ::TChip { inner, dir } => inner | _o => t };
 }
 
 // `null` IS a pointer for the purposes of "does this value need auto-ref'ing into a
@@ -2583,9 +2592,22 @@ fn check_cast_kinds(a: Allocator, ar: *Arena, sc: *const TyScope, from: *const T
     let mut sb = StringBuilder::with_capacity(a, 112 as u32);
     sb.push_str("cannot cast "); sb.push_str(typ_name(a, ar, from));
     sb.push_str(" to "); sb.push_str(typ_name(a, ar, to));
-    sb.push_str(" (supported: int↔int, int↔float, float↔float, ptr↔ptr, int→ptr)");
+    sb.push_str(cast_refusal_tail(from, to));
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
+}
+// The stock tail lists `ptr<->ptr` as supported, which reads as a contradiction on
+// the two refusals this notation adds - both of which are about WHICH pointer, not
+// about pointers.  A message that argues against its own verdict is worse than
+// none, so those two say what they mean.
+fn cast_refusal_tail(from: *const Typ, to: *const Typ) -> str {
+    if points_at_chip(from) && !points_at_chip(to) && !is_addr_slot(to) {
+        return ": an ordinary pointer into memory the chip shares would read it without `volatile`, and the loads the mark exists to preserve would be folded away again";
+    }
+    if is_addr_slot(to) && is_any_ptr(from) {
+        return ": an `addr` takes the address of a buffer declared `chip reads` or `chip writes` - the device keeps following it after the frame that made it is gone";
+    }
+    return " (supported: int↔int, int↔float, float↔float, ptr↔ptr, int→ptr)";
 }
 // The reference's `is_ptr` — pointer-like AS C SEES IT, which includes `str`
 // (a `const char *`).  Deliberately NOT `is_ptr_ty`: that one answers the
@@ -2597,12 +2619,20 @@ fn is_c_ptr(t: *const Typ) -> bool {
     return match *t { Typ::TString => true | _o => false };
 }
 fn cast_kind_ok(from: *const Typ, to: *const Typ) -> bool {
+    // A pointer into memory the chip touches does not cast to an ordinary pointer.
+    // The alias would read without `volatile`, the C compiler would fold the loads
+    // again, and the guarantee would be true of the OBJECT and false of the
+    // PROGRAM.  Closed for the same reason `addr -> int` is closed, and closed
+    // here rather than at the write site because a cast is a door of its own.
+    if points_at_chip(from) && !is_addr_slot(to) && !points_at_chip(to) { return false; }
     if is_int_like_ty(from) && is_int_like_ty(to) { return true; }
     if is_c_ptr(from) && is_c_ptr(to) { return true; }
     if is_int_like_ty(from) && is_c_ptr(to) { return true; }
     // The explicit form, and the only way to satisfy a RETURN contract - which is
     // enforced by equality on purpose ("a fn declaring `*T` must return a `*T`").
-    if is_addr_slot(to) && (is_any_ptr(from) || is_int_like_ty(from)) { return true; }
+    // An EXPLICIT cast obeys the source rule too: `&local as addr` would otherwise
+    // be the one door left open, and a rule with one door open is not a rule.
+    if is_addr_slot(to) && (addr_value_ok(from) || is_int_like_ty(from)) { return true; }
     if is_int_like_ty(from) && is_float_ty(to) { return true; }
     if is_float_ty(from) && is_int_like_ty(to) { return true; }
     if is_float_ty(from) && is_float_ty(to) { return true; }
@@ -2663,7 +2693,11 @@ fn coerce_own_to(_a: Allocator, ar: *Arena, sc: *const TyScope, targ: *const Tex
     // first version put this in the rune-write lowering alone, which made the kind
     // expressible only at the write site - the very limitation variant B lost on.
     // The cast belongs where the coercion is APPLIED, so it travels with the value.
-    if is_addr_slot(pty) && is_any_ptr(targ.ty) {
+    // The cast is INSERTED only for a source the rule admits.  This is the third
+    // door to one question - `coercible_to` checks, `addr_value_ok` checks, and
+    // this one converts - and a converting door that did not ask would launder the
+    // pointer into an `addr` before either checker could see what it had been.
+    if is_addr_slot(pty) && is_any_ptr(targ.ty) && addr_value_ok(targ.ty) {
         return te_node(ar, TexprNode::TCast(targ, tyann_node(ar, TypeAnn::TyAddr)), pty, targ.pos);
     }
     if is_own_ptr(targ.ty) {
@@ -6323,9 +6357,10 @@ fn elab_struct_fields(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
 fn elem_of(t: *const Typ) -> Option<*const Typ> {
     let none: Option<*const Typ> = Option::None;
     return match *t {
-        Typ::TArray { elem, size } => Option::Some(elem)
-        | Typ::TPtr(i) => Option::Some(i)
-        | Typ::TOwnPtr(i) => Option::Some(i)
+        Typ::TArray { elem, size } => Option::Some(strip_chip(elem))
+        | Typ::TPtr(i) => Option::Some(strip_chip(i))
+        | Typ::TOwnPtr(i) => Option::Some(strip_chip(i))
+        | Typ::TChip { inner, dir } => elem_of(inner)
         | _o => none
     };
 }
@@ -6853,6 +6888,20 @@ fn elab_new_enum(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     return te_node(ar, TexprNode::TNewEnum { ename_path: inst, variant: last, tag: tag, args: tflds, alloc: talloc }, oty, p);
 }
 
+// The mark of the memory a PLACE lives in: a place is chip-shared when the object
+// it is carved out of is.  Already-marked types answer for themselves; an index or
+// a field asks the thing it was taken from.
+fn place_chip_dir(te: *const Texpr) -> ChipDir {
+    return match *te.ty {
+        Typ::TChip { inner, dir } => dir
+        | _o => match te.e {
+            TexprNode::TIndex { base, index } => place_chip_dir(base)
+            | TexprNode::TFieldAccess { target, field } => place_chip_dir(target)
+            | TexprNode::TDeref(inner2) => place_chip_dir(inner2)
+            | _n => ChipDir::CNone
+        }
+    };
+}
 fn elab_ref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
             env: *const Vec<FieldTy>, sub: *const Expr, p: Pos) -> *const Texpr {
     let ts = elab_expr(a, ar, g, sc, env, none_ty(), sub);
@@ -6862,7 +6911,15 @@ fn elab_ref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScop
         tc_fail(ar, sc, p, "a rune is not an ordinary pointer; it cannot be the target of `&` (use .read() / .write())");
         return ts;
     }
-    let rty = ty_node(ar, Typ::TPtr(ts.ty));
+    // `&BUF` carries the mark already, because the whole object's type has it.
+    // `&BUF[i]` does not: indexing hands back a plain element.  Putting it back
+    // here is what makes the address rule ask ONE question about a type instead of
+    // six questions about expressions.
+    let pointee = match place_chip_dir(ts) {
+        ChipDir::CNone => ts.ty
+        | _d => ty_node(ar, Typ::TChip { inner: ts.ty, dir: place_chip_dir(ts) })
+    };
+    let rty = ty_node(ar, Typ::TPtr(pointee));
     return te_node(ar, TexprNode::TRef(ts), rty, p);
 }
 
@@ -7086,12 +7143,18 @@ fn dir_can_write(d: Direction) -> bool {
 // here follows a precedent rather than opening a new door. What never opens is
 // the reverse: an `addr` does not become an integer (see D4).
 fn addr_value_ok(vty: *const Typ) -> bool {
+    // The SOURCE rule, asked here in the same words `coercible_to` asks it: a
+    // pointer reaches an `addr` register only when it points into memory the chip
+    // touches.  This predicate and `coercible_to` are two doors to one question,
+    // and a rule that guarded only one of them would refuse the direct write and
+    // wave the same address through a parameter - which is exactly what the
+    // lifetime limit looks like from the outside.  `null` carries no provenance and
+    // no frame, so it keeps the status it had.
+    if is_any_ptr(vty) {
+        return match *vty { Typ::TNullPtr => true | _o => points_at_chip(vty) };
+    }
     return match *vty {
-        Typ::TPtr(_i) => true
-        | Typ::TConstPtr(_i) => true
-        | Typ::TOwnPtr(_i) => true
-        | Typ::TNullPtr => true
-        | Typ::TAddr => true
+        Typ::TAddr => true
         | Typ::TInt(_k) => true
         | Typ::TCInt { is_signed: _s } => true
         | Typ::TCLong { is_signed: _s } => true
@@ -7108,15 +7171,27 @@ fn rune_value_bad(arg: *const Expr, vty: *const Typ, elem: *const Typ) -> bool {
         | _o => !typ_eq(vty, elem)
     };
 }
+// The tail of a rune-value refusal.  An address that points at a frame is not a
+// WIDTH problem, and saying "expected addr, got *u16" would send the reader to
+// look at the register map instead of at the buffer.
+fn rune_value_tail(a: Allocator, ar: *Arena, vty: *const Typ, elem: *const Typ) -> str {
+    if is_addr_ty(elem) && is_any_ptr(vty) {
+        return "this address does not point into memory the chip shares: an `addr` register takes the address of a buffer declared `chip reads` or `chip writes`, because the device keeps following it after the frame that made it is gone";
+    }
+    let mut sb = StringBuilder::with_capacity(a, 88 as u32);
+    sb.push_str("a rune access is fixed to its declared width: expected ");
+    sb.push_str(typ_name(a, ar, elem));
+    sb.push_str(", got ");
+    sb.push_str(typ_name(a, ar, vty));
+    return str::from_slice(ar, sb.as_slice());
+}
 fn rune_value_msg(a: Allocator, ar: *Arena, arg: *const Expr, vty: *const Typ, elem: *const Typ) -> str {
     let mut sb = StringBuilder::with_capacity(a, 88 as u32);
     match *arg {
         Expr::IntLit(n, _q) => {
             sb.push_str("literal "); sb.push_int(n); sb.push_str(" does not fit the rune's width ("); sb.push_str(typ_name(a, ar, elem)); sb.push_str(")");
         }
-        | _o => {
-            sb.push_str("a rune access is fixed to its declared width: expected "); sb.push_str(typ_name(a, ar, elem)); sb.push_str(", got "); sb.push_str(typ_name(a, ar, vty));
-        }
+        | _o => { sb.push_str(rune_value_tail(a, ar, vty, elem)); }
     }
     return str::from_slice(ar, sb.as_slice());
 }
@@ -7578,6 +7653,11 @@ fn array_elem_expected(expected: Option<*const Typ>) -> Option<*const Typ> {
 fn array_elem_ty(t: *const Typ) -> Option<*const Typ> {
     return match *t {
         Typ::TArray { elem, size } => Option::Some(elem)
+        // Memory the chip touches is still an ordinary array to the program: the
+        // mark says who ELSE reads it, not how it is indexed.  The element comes
+        // back plain, and `&BUF[i]` puts the mark back on the POINTER - the only
+        // place any rule asks for it, and the only place it costs nothing.
+        | Typ::TChip { inner, dir } => array_elem_ty(inner)
         | _e => none_ty()
     };
 }
@@ -11938,7 +12018,7 @@ fn collect_ffi_decls_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *cons
             cincludes.push(path);
         }
         | Item::ExternConst(ec) => { econsts.push(FieldTy { name: ec.ecname, ty: resolve_sig_ty(a, ar, sc, ec.ecty, ec.ecpos) }); }
-        | Item::ExternVar(ev) => { evars.push(FieldTy { name: ev.evname, ty: resolve_sig_ty(a, ar, sc, ev.evty, ev.evpos) }); }
+        | Item::ExternVar(ev) => { evars.push(FieldTy { name: ev.evname, ty: extern_var_ty(a, ar, sc, ev.evty, ev.evchip, ev.evpos) }); }
         | Item::Module(md) => { collect_ffi_decls_in(a, ar, sc, &md.mitems, true, cincludes, econsts, evars); }
         | _e => { }
     }
@@ -11947,6 +12027,18 @@ fn collect_ffi_decls(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const
                      cincludes: *Vec<str>, econsts: *Vec<FieldTy>, evars: *Vec<FieldTy>) {
     collect_ffi_decls_in(a, ar, sc, items, false, cincludes, econsts, evars);
     return;
+}
+// ONE answer to "what type does this extern var have".  Two places used to
+// resolve it independently - the FFI collection and the global table - and a mark
+// visible from one and absent from the other is this project's most-repeated
+// defect.  The wrap happens here or nowhere.
+fn extern_var_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ty: *const TypeAnn,
+                 chip: ChipDir, pos: Pos) -> *const Typ {
+    let base = resolve_sig_ty(a, ar, sc, ty, pos);
+    return match chip {
+        ChipDir::CNone => base
+        | _d => ty_node(ar, Typ::TChip { inner: base, dir: chip })
+    };
 }
 fn collect_ffi_decls_in(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, in_mod: bool,
                         cincludes: *Vec<str>, econsts: *Vec<FieldTy>, evars: *Vec<FieldTy>) {
@@ -14852,7 +14944,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
         | Item::ExternVar(ev) => {
             require_raw(a, ar, sc, path, "var", ev.evname, ev.evpos);
             g.push(GlobalFn { name: ev.evname, mangled: ev.evname, gf_emit: ev.evname,
-                              ret: Option::Some(resolve_sig_ty(a, ar, sc, ev.evty, ev.evpos)),
+                              ret: Option::Some(extern_var_ty(a, ar, sc, ev.evty, ev.evchip, ev.evpos)),
                               is_const: true, is_top: true , gf_variadic: false });
         }
         | Item::ExternStruct(es) => { require_raw(a, ar, sc, path, "struct", es.esname, es.espos); }
@@ -15950,6 +16042,10 @@ fn walk_typ_collect(t: *const Typ, acc: *FtrAcc) {
         | Typ::TPtr(pp) => walk_typ_collect(pp, acc)
         | Typ::TOwnPtr(pp) => walk_typ_collect(pp, acc)
         | Typ::TConstPtr(pp) => walk_typ_collect(pp, acc)
+        // The mark is a qualifier, not a shape: whatever aggregate lives under it
+        // still needs its C definition emitted.  Without this arm the declaration
+        // names a struct nothing defines.
+        | Typ::TChip { inner, dir } => walk_typ_collect(inner, acc)
         | _e => {}
     }
 }

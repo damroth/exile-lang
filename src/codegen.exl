@@ -233,6 +233,12 @@ pub fn c_type_prefix(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         // emission, which is what makes it free: the store a driver would have
         // written by hand.
         | Typ::TAddr => "unsigned long "
+        // Memory a device touches lowers to the SAME C type, qualified `volatile`.
+        // That one qualifier is the whole guarantee: it is what stops the C
+        // compiler from proving two reads of a DMA buffer identical and deleting
+        // the second.  The declaration carries it, so every access through the
+        // object - and every pointer into it - inherits it with no further work.
+        | Typ::TChip { inner, dir } => concat2(a, ar, "volatile ", c_type_prefix(a, ar, inner))
         | Typ::TFnPtr { params: _p, ret: _r } => concat2(a, ar, mangle_typ(a, ar, t), " ")
         // `null` has no C spelling: it is the type of the literal, always consumed
         // under a concrete pointer.  Reaching here means typecheck let it through —

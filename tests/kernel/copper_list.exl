@@ -12,7 +12,7 @@ use ndk::*;
 
 mod raw {
     extern var CHIPREGS: [u8; 256];
-    extern var COPLIST:  [u16; 16];
+    extern var COPLIST:  [u16; 16] chip reads;
 }
 
 // COLOR00 is the background colour register; a copper MOVE names a register by
@@ -24,7 +24,7 @@ const COLOR00: u16 = 384;
 // `extern var` array is not, and a pointer into one is. Measured, not assumed.
 //
 // A MOVE is two words: the register offset, then the value.
-fn put_move(l: *u16, i: u32, reg: u16, val: u16) -> u32 {
+fn put_move(l: *chip u16, i: u32, reg: u16, val: u16) -> u32 {
     l[i] = reg;
     l[i + 1 as u32] = val;
     return i + 2 as u32;
@@ -32,13 +32,13 @@ fn put_move(l: *u16, i: u32, reg: u16, val: u16) -> u32 {
 
 // A WAIT is two words: the beam position with its low bit SET, then a mask whose
 // low bit is CLEAR - that low-bit pair is how the chip tells a wait from a move.
-fn put_wait(l: *u16, i: u32, vpos: u16, hpos: u16) -> u32 {
+fn put_wait(l: *chip u16, i: u32, vpos: u16, hpos: u16) -> u32 {
     l[i] = (vpos * 256 as u16) | (hpos & 254 as u16) | 1 as u16;
     l[i + 1 as u32] = COP_WAIT_MASK;
     return i + 2 as u32;
 }
 
-fn put_end(l: *u16, i: u32) -> u32 {
+fn put_end(l: *chip u16, i: u32) -> u32 {
     l[i] = COP_END_HI;
     l[i + 1 as u32] = COP_END_LO;
     return i + 2 as u32;
@@ -46,7 +46,7 @@ fn put_end(l: *u16, i: u32) -> u32 {
 
 // Two colour bands and an end: wait for line 0x2C, go blue; wait for line 0x80,
 // go black; stop.
-pub fn build(l: *u16) -> u32 {
+pub fn build(l: *chip u16) -> u32 {
     let mut i = 0 as u32;
     i = put_wait(l, i, 44 as u16, 1 as u16);
     i = put_move(l, i, COLOR00, 15 as u16);
@@ -71,17 +71,16 @@ fn main() {
 // group with DMACONR - so this function is REQUIRED to seal, and that requirement
 // is the witness.
 //
-// Inside a VBlank handler the same write would still be required to seal, and
-// there it is redundant: the handler already runs with the level masked by the
-// hardware that dispatched it, and the region's exit restores a status register
-// the `rte` is about to restore from the exception frame anyway. A handler is
-// forced to write a second mask around a write that is already indivisible.
+// Inside a VBlank handler the same write would still be required to seal, and the
+// region there is CORRECT, not redundant: the handler runs with only its own level
+// masked, while the region raises the mask to the top - so it is what stops a
+// HIGHER level from preempting a sequence the chip must see whole. What a handler
+// pays for it is one instruction, the restore before an `rte` that would have
+// restored the status register anyway.
 //
-// That is not a defect in the region rule - the rule cannot know it is inside a
-// handler - and it is the sharpest question a future ISR notation would have to
-// answer. It is written here, in a running program, because a vote wants a
-// program and not a table.
-pub fn install(l: *u16) {
+// That is a price with a reason, and it is written here rather than in a table
+// because a running program is what makes it checkable.
+pub fn install(l: *chip u16) {
     ward c: Control at &raw::CHIPREGS;
     ward k: Copper  at &raw::CHIPREGS;
     k.cop1lc.write(l);

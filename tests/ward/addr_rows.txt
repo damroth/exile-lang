@@ -2,8 +2,15 @@
 # existed BEFORE the kind - the width rule, the cast table, the atomic group - and
 # that is the point: the notation makes an address visible to the model without
 # widening anything the model already refused.
+#
+# addr_reject_local changed its REASON, not its verdict. It used to be caught by
+# the escape analysis, which saw a local's address stored through a non-local
+# pointer and said so in the language of borrows. It is now caught by the rule
+# written for it: an address reaching a register must come from memory declared
+# shared with the chip. The old message was true and about the wrong thing; a
+# reader sent to look at borrows would not find the buffer.
 addr_reject_narrow:a rune access is fixed to its declared width: expected u16, got *u16
 addr_reject_cast_out:cannot cast *u16 to u32 (supported: int↔int, int↔float, float↔float, ptr↔ptr, int→ptr)
 addr_reject_to_int:cannot cast addr to i32 (supported: int↔int, int↔float, float↔float, ptr↔ptr, int→ptr)
 addr_reject_outside_seal:field 'p' of ward 'W' is in an atomic group and must be accessed inside a seal
-addr_reject_local:storing through a non-local pointer a value that embeds the address of a local binding — the local goes out of scope at the end of its enclosing block, leaving the caller with a dangling borrow.  Wrap the storage in a caller-owned region, return a copy / `String::with_str(...)` instead of a borrow, or — for arena/region-allocated returns — mark the fn `@escapes` (forward-compat hatch)
+addr_reject_local:this address does not point into memory the chip shares: an `addr` register takes the address of a buffer declared `chip reads` or `chip writes`, because the device keeps following it after the frame that made it is gone

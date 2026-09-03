@@ -1,0 +1,8 @@
+// S-D1 - a PINNING row. Chip-shared memory has static storage, and today that is
+// inherited rather than enforced: `extern var` is a module item, so a function body
+// cannot parse one at all. Pinned so the notation cannot later widen what it
+// inherited without someone deciding to.
+fn main() {
+    extern var BUF: [u8; 16] chip writes;
+    println(0);
+}

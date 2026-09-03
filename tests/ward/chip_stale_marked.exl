@@ -1,0 +1,25 @@
+// S-AC1 - the witness this round exists for. A buffer a device fills, read before
+// the transfer starts and again after the wait; nothing between the two reads is a
+// store the compiler can see, so nothing but the mark stops it from proving the two
+// reads identical.
+//
+// Its twin `chip_stale_plain.exl` is this same program with the mark removed, and
+// the pair is the measurement: the assertion is on the TARGET's assembly, because
+// the emitted C was never wrong - it is the C compiler that folds the loads.
+mod raw { extern var CHIPREGS: [u8; 256]; extern var BUF: [u8; 16] chip writes; }
+
+ward Dma {
+    go:   u16 at 0x000 write;
+    stat: u16 at 0x002 read;
+}
+
+fn read_block() -> int {
+    ward d: Dma at &raw::CHIPREGS;
+    let before = raw::BUF[0] as int;
+    d.go.write(1 as u16);
+    while d.stat.read() == 0 as u16 { }
+    let after = raw::BUF[0] as int;
+    return before + after;
+}
+
+fn main() { println(read_block()); }

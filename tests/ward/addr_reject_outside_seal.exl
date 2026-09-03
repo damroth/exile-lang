@@ -1,5 +1,5 @@
 // D3 - the address round must not open a hole in the region round. An `addr`
 // field in an atomic group obeys the same rule every other member does.
-mod raw { extern var C: [u8; 64]; extern var BUF: [u16; 4]; }
+mod raw { extern var C: [u8; 64]; extern var BUF: [u16; 4] chip writes; }
 ward W { p: addr at 0x00 write; q: u16 at 0x08 write; atomic { p, q } }
 fn main() { ward w: W at &raw::C; w.p.write(&raw::BUF[0]); seal { w.q.write(1 as u16); } println(0); }

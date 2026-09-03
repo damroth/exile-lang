@@ -1,0 +1,5 @@
+// S-D4 - the direction is required. The round exists because the compiler could
+// not tell which way the hazard ran; a modifier that does not say would put that
+// back.
+mod raw { extern var BUF: [u8; 16] chip; }
+fn main() { println(0); }

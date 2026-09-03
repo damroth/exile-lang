@@ -1,0 +1,3 @@
+// S-D5 - variant C is a modifier on ONE declaration, not a floating attribute.
+mod raw { extern const K: u8 chip writes; }
+fn main() { println(0); }

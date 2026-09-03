@@ -56,6 +56,14 @@ fn render_typ_canon_ret(ret: Option<*const Typ>, out: *StringBuilder) {
     }
 }
 
+fn chip_dir_word(d: ChipDir) -> str {
+    return match d {
+        ChipDir::CNone => "none"
+        | ChipDir::CReads => "reads"
+        | ChipDir::CWrites => "writes"
+        | ChipDir::CReadsWrites => "reads-writes"
+    };
+}
 fn render_typ_canonical(t: *const Typ, out: *StringBuilder) {
     match *t {
         Typ::TInt(k) => {
@@ -65,6 +73,16 @@ fn render_typ_canonical(t: *const Typ, out: *StringBuilder) {
             out.push_str(")");
         }
         | Typ::TAddr => { out.push_str("addr"); }
+        // The direction is rendered even though v1 does not act on it: it is the
+        // slot the next rules attach to, and a dump that dropped it would let the
+        // declaration and the IR disagree silently.
+        | Typ::TChip { inner, dir } => {
+            out.push_str("(chip ");
+            out.push_str(chip_dir_word(dir));
+            out.push_str(" ");
+            render_typ_canonical(inner, out);
+            out.push_str(")");
+        }
         | Typ::TCInt { is_signed } => {
             out.push_str("(c_int ");
             out.push_str(signed_word(is_signed));

@@ -1,0 +1,11 @@
+# The shared-memory round's rejection rows, name:wording.
+#
+# Two of them are the LAUNDERING pair: a cast and a parameter are two doors to one
+# alias, and a rule that shut only one of them would be the partial-enforcement
+# trap - complete-looking and false. One is a PINNING row for a refusal the
+# notation inherited rather than added.
+chip_reject_bare:expected 'reads' or 'writes' after 'chip', got ';'
+chip_reject_on_const:the `chip` modifier is only allowed on `extern var` - it names memory a device writes or follows, and only a variable can be that
+chip_reject_launder_cast:cannot cast *chip u8 to *u8: an ordinary pointer into memory the chip shares would read it without `volatile`, and the loads the mark exists to preserve would be folded away again
+chip_reject_launder_param:argument 1 of 'take': expected *u8, got *chip u8
+chip_reject_in_fn:expected expression

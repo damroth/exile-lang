@@ -24,10 +24,13 @@ const VERTB_BIT: u16 = 32;
 pub fn on_vertb() {
     ward c: Control at &raw::CHIPREGS;
     ward s: Shared  at &raw::ISRSTATE;
-    // No `seal` here, and that is deliberate: a handler already runs with the
-    // level masked by the hardware that dispatched it. A region would be a second,
-    // redundant mask - and on the way out it would restore a state the `rte` is
-    // about to restore anyway.
+    // No `seal` here, and that is deliberate - but not because a region inside a
+    // handler would be redundant. It would not: the region raises the mask to the
+    // top and so guards against a HIGHER level, which the dispatch mask does not.
+    // It is absent because neither field touched here is in an atomic group, so
+    // nothing in this body needs to be indivisible. A handler that masked its own
+    // source would touch INTENAR/INTENA, and there the seal would be required and
+    // right.
     s.ticks.write(s.ticks.read() + 1 as u16);
     c.intreq.write(VERTB_BIT);
 }

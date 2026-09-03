@@ -764,7 +764,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -913,7 +913,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1650,8 +1650,8 @@ selfhost-prelude-probe: $(EXILC_BIN)
 .PHONY: selfhost-copper
 selfhost-copper: $(EXILC_BIN)
 	@for f in tests/kernel/copper_list.exl tests/kernel/copper_list.expected \
-	          tests/kernel/copper_list_stub.c tests/kernel/copper_p5d_parked.exl \
-	          tests/kernel/copper_p5d_parked.expected; do \
+	          tests/kernel/copper_list_stub.c tests/kernel/copper_p5d_closed.exl \
+	          tests/kernel/copper_p5d_closed.expected; do \
 	  test -s $$f || { echo "selfhost-copper: MISSING/EMPTY $$f"; exit 1; }; \
 	done; \
 	rm -rf $(C_OUT)/cop; mkdir -p $(C_OUT)/cop; \
@@ -1675,14 +1675,72 @@ selfhost-copper: $(EXILC_BIN)
 	  || { echo "selfhost-copper: COP1LC (offset 128) is not written - the chip is never pointed at the list"; exit 1; }; \
 	cc -O2 -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/cop/list.c -o $(C_OUT)/cop/list.o \
 	  || { echo "selfhost-copper: the driver's C is not clean C89 at -O2"; exit 1; }; \
-	$(EXILC_BIN) --target host --link $(SYS_HOST) --link tests/kernel/copper_list_stub.c \
-	   -o $(HOST_OUT)/cop_p5d tests/kernel/copper_p5d_parked.exl >/dev/null 2>&1 \
-	  || { echo "selfhost-copper: the P5d PARKED CONTRACT was REJECTED - the limit closed, and closing it is a decision to make deliberately, not a side effect"; exit 1; }; \
-	$(HOST_OUT)/cop_p5d > $(C_OUT)/cop/p5d.out 2>&1; \
-	diff -q tests/kernel/copper_p5d_parked.expected $(C_OUT)/cop/p5d.out >/dev/null \
-	  || { echo "selfhost-copper: the parked contract changed shape:"; \
-	       diff tests/kernel/copper_p5d_parked.expected $(C_OUT)/cop/p5d.out | head -4; exit 1; }; \
-	echo "selfhost-copper: clean (the list is checked WORD BY WORD as data the chip interprets, the DMACON write is forced to seal - the witness a handler would pay twice for - and the P5d contract is still accepted, which is what makes it a contract)"
+	if $(EXILC_BIN) --target c --c-out $(C_OUT)/cop/p5d.c tests/kernel/copper_p5d_closed.exl >/dev/null 2>$(C_OUT)/cop/p5d.err; then \
+	  echo "selfhost-copper: the P5d shape was ACCEPTED - a local's address reached a hardware register again, so the lifetime contract has come back open"; exit 1; fi; \
+	p5dgot=`grep -m1 'error:' $(C_OUT)/cop/p5d.err | sed 's/.*error: //'`; \
+	test -n "$$p5dgot" || { echo "selfhost-copper: the P5d shape was refused with NO diagnostic - a silent rejection teaches the reader nothing"; exit 1; }; \
+	test "$$p5dgot" = "`cat tests/kernel/copper_p5d_closed.expected`" \
+	  || { echo "selfhost-copper: P5d WORDING"; echo "  want: `cat tests/kernel/copper_p5d_closed.expected`"; echo "  got:  $$p5dgot"; exit 1; }; \
+	grep -q ':22:' $(C_OUT)/cop/p5d.err \
+	  || { echo "selfhost-copper: the P5d refusal did not land INSIDE install() - the point of the closure is that the mark travels with the type, so the callee refuses an address the caller handed it"; exit 1; }; \
+	echo "selfhost-copper: clean (the list is checked WORD BY WORD as data the chip interprets, the DMACON write is forced to seal, and the P5d shape is now REFUSED one frame below the local that made it - the parked contract paid)"
+
+# ===== memory a device touches: the mark, its refusals, and the load it saves ====
+#
+# The round closed two measured limits with one declaration.  What makes it a
+# language increment rather than a driver is that it ends in refusals - and what
+# makes the ACCEPTING side checkable is that the hazard is visible only in the
+# TARGET's assembly: the emitted C was never wrong, it is the C compiler that
+# proves two reads of a DMA buffer identical and deletes the second.  So the
+# witness is a PAIR - the same program with and without the mark - and the
+# assertion is on m68k.
+.PHONY: selfhost-chip
+selfhost-chip: $(EXILC_BIN)
+	@if [ ! -x $(AMIGA_GCC) ]; then echo "selfhost-chip: amiga-gcc missing - run 'make toolchain' first"; exit 1; fi; \
+	test -s tests/ward/chip_rows.txt || { echo "selfhost-chip: MISSING/EMPTY tests/ward/chip_rows.txt"; exit 1; }; \
+	for f in tests/ward/chip_stale_marked.exl tests/ward/chip_stale_plain.exl; do \
+	  test -s $$f || { echo "selfhost-chip: MISSING/EMPTY $$f"; exit 1; }; \
+	done; \
+	rm -rf $(C_OUT)/chip; mkdir -p $(C_OUT)/chip; \
+	rows=0; \
+	while IFS=: read -r name want; do \
+	  case "$$name" in ''|'#'*) continue;; esac; \
+	  test -f tests/ward/$$name.exl || { echo "selfhost-chip: MISSING tests/ward/$$name.exl"; exit 1; }; \
+	  rows=`expr $$rows + 1`; \
+	  if $(EXILC_BIN) --target c --c-out $(C_OUT)/chip/$$name.c tests/ward/$$name.exl >/dev/null 2>$(C_OUT)/chip/$$name.err; then \
+	    echo "selfhost-chip: ACCEPTED $$name - the row does not reject"; exit 1; fi; \
+	  got=`grep -m1 'error:' $(C_OUT)/chip/$$name.err | sed 's/.*error: //'`; \
+	  test -n "$$got" || { echo "selfhost-chip: SILENT $$name - refused with no diagnostic"; exit 1; }; \
+	  test "$$got" = "$$want" || { echo "selfhost-chip: WORDING $$name"; echo "  want: $$want"; echo "  got:  $$got"; exit 1; }; \
+	done < tests/ward/chip_rows.txt; \
+	test $$rows -ge 5 || { echo "selfhost-chip: only $$rows rejection rows ran - the table lost members"; exit 1; }; \
+	for f in tests/ward/chip_reject_*.exl; do \
+	  n=`basename $$f .exl`; \
+	  grep -q "^$$n:" tests/ward/chip_rows.txt \
+	    || { echo "selfhost-chip: ORPHAN $$n - a rejection fixture nothing in the table walks, so nothing would notice if it stopped rejecting"; exit 1; }; \
+	done; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/chip/marked.c tests/ward/chip_stale_marked.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-chip: the marked witness does not compile"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/chip/plain.c tests/ward/chip_stale_plain.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-chip: the unmarked twin does not compile - without it there is no floor, only an assertion"; exit 1; }; \
+	grep -q 'extern volatile struct .* BUF;' $(C_OUT)/chip/marked.c \
+	  || { echo "selfhost-chip: the mark did not reach the C declaration - nothing downstream can know the memory changes underneath"; exit 1; }; \
+	if grep -q 'extern volatile struct .* BUF;' $(C_OUT)/chip/plain.c; then \
+	  echo "selfhost-chip: the UNMARKED twin is volatile too - the floor is not a floor, and the marked assertion proves nothing"; exit 1; fi; \
+	for n in marked plain; do \
+	  $(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -S $(C_OUT)/chip/$$n.c -o $(C_OUT)/chip/$$n.s \
+	    || { echo "selfhost-chip: $$n does not compile for m68k"; exit 1; }; \
+	  test -s $(C_OUT)/chip/$$n.s || { echo "selfhost-chip: $$n produced an EMPTY assembly"; exit 1; }; \
+	done; \
+	fold=`grep -c 'add\.l d\([0-9]\),d\1' $(C_OUT)/chip/plain.s`; \
+	test "$$fold" -ge 1 \
+	  || { echo "selfhost-chip: the unmarked twin does NOT fold its two reads into a doubling - the hazard this round closed is no longer reproducible, so the marked assertion below has no floor and must not be trusted"; exit 1; }; \
+	mfold=`grep -c 'add\.l d\([0-9]\),d\1' $(C_OUT)/chip/marked.s`; \
+	test "$$mfold" -eq 0 \
+	  || { echo "selfhost-chip: the MARKED witness folds its two reads into a doubling - the buffer is being read once and used twice, which is the defect itself"; exit 1; }; \
+	if cmp -s $(C_OUT)/chip/marked.s $(C_OUT)/chip/plain.s; then \
+	  echo "selfhost-chip: the two assemblies are IDENTICAL - the mark changed nothing on the target"; exit 1; fi; \
+	echo "selfhost-chip: clean ($$rows rejections with their wording and no orphans; the mark reaches the C declaration and not its twin; and on m68k the unmarked twin folds its two reads into one while the marked one does not - the second load is back)"
 
 # ===== the ISR consumer: the handler body in exile, the vector in C =====
 #

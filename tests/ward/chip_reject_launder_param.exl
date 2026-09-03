@@ -1,0 +1,5 @@
+// S-D6, second door - a parameter. A cast and a call are two ways to the same
+// alias, and closing one is the partial-enforcement trap.
+mod raw { extern var BUF: [u8; 16] chip writes; }
+fn take(p: *u8) -> int { return *p as int; }
+fn main() { println(take(&raw::BUF[0])); }

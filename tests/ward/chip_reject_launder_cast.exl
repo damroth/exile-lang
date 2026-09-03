@@ -1,0 +1,5 @@
+// S-D6, first door - a cast. An ordinary pointer into shared memory would read it
+// without `volatile`, and the loads the mark exists to preserve would be folded
+// away again: the guarantee would be true of the object and false of the program.
+mod raw { extern var BUF: [u8; 16] chip writes; }
+fn main() { let p = &raw::BUF[0] as *u8; println(*p as int); }

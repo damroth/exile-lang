@@ -8,7 +8,7 @@
 //
 // What travels here is an `addr`, not a pointer that happens to fit - the kind is
 // on the value, which is what "the model can see the flow" means.
-mod raw { extern var CHIP: [u8; 64]; extern var BUF: [u16; 4]; }
+mod raw { extern var CHIP: [u8; 64]; extern var BUF: [u16; 4] chip writes; }
 
 ward W {
     p:  addr at 0x00 write;

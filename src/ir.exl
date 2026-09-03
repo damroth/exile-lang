@@ -98,6 +98,13 @@ pub enum Typ {
     // Always 32 bits: that is the width of an address on the silicon this targets,
     // and unlike a pointer it does not change with the host.
     | TAddr
+    // MEMORY A DEVICE TOUCHES, as the ratified `chip ...` modifier marks it.  The
+    // mark rides in the TYPE for the same reason the address kind does: provenance
+    // is not recoverable from the shape of a pointer, so `&BUF[0]` and `&local[0]`
+    // are indistinguishable unless the declaration's mark travels with the value.
+    // Carrying it here is also what lets the source rule for `addr` stand in ONE
+    // place instead of at every site that accepts a coercion.
+    | TChip { inner: *const Typ, dir: ChipDir }
 }
 
 // ===== Signatures =====
@@ -444,10 +451,19 @@ fn typ_name_tuple(a: Allocator, ar: *Arena, ts: *const Vec<*const Typ>) -> str {
     sb.push_str(")");
     return str::from_slice(ar, sb.as_slice());
 }
+// `chip u8`, so a laundering attempt reads as "expected *u8, got *chip u8"
+// rather than as two spellings of the same thing.
+fn typ_name_chip(a: Allocator, ar: *Arena, inner: *const Typ) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    sb.push_str("chip ");
+    sb.push_str(typ_name(a, ar, inner));
+    return str::from_slice(ar, sb.as_slice());
+}
 pub fn typ_name(a: Allocator, ar: *Arena, t: *const Typ) -> str {
     return match *t {
         Typ::TInt(k) => int_typ_name(k.is_signed, k.width)
         | Typ::TAddr => "addr"
+        | Typ::TChip { inner, dir } => typ_name_chip(a, ar, inner)
         | Typ::TCInt { is_signed } => { if is_signed { "c_int" } else { "c_uint" } }
         | Typ::TCShort { is_signed } => { if is_signed { "c_short" } else { "c_ushort" } }
         | Typ::TCLong { is_signed } => { if is_signed { "c_long" } else { "c_ulong" } }
@@ -563,6 +579,14 @@ pub fn typ_eq(x: *const Typ, y: *const Typ) -> bool {
     return match *x {
         Typ::TInt(kx) => match *y { Typ::TInt(ky) => (kx.is_signed == ky.is_signed) && intwidth_eq(kx.width, ky.width) | _e => false }
         | Typ::TAddr => match *y { Typ::TAddr => true | _e => false }
+        | Typ::TChip { inner, dir } => match *y {
+            // The direction is carried for the record and for the rules that will
+            // attach to it, but it is NOT part of type identity: an annotation
+            // naming a chip pointer would otherwise have to repeat a direction that
+            // belongs to the buffer's declaration, not to the pointer.
+            Typ::TChip { inner: i2, dir: d2 } => typ_eq(inner, i2)
+            | _e => false
+        }
         | Typ::TBool => match *y { Typ::TBool => true | _e => false }
         | Typ::TString => match *y { Typ::TString => true | _e => false }
         | Typ::TFloat(wx) => match *y { Typ::TFloat(wy) => floatwidth_eq(wx, wy) | _e => false }
@@ -635,6 +659,18 @@ pub fn rune_extent(elem: *const Typ) -> int {
 // and an `own *T` may lend itself out as a borrow — never the reverse: ownership
 // cannot be fabricated from a loan.  Pointer-to-pointer through nested `*` keeps
 // strict identity (no deep const-ification — that would change C aliasing rules).
+pub fn is_chip(t: *const Typ) -> bool {
+    return match *t { Typ::TChip { inner, dir } => true | _o => false };
+}
+// The pointee of a pointer INTO memory a device touches.  This is the whole
+// source rule for `addr`, and it is a question about a TYPE - which is why it can
+// be asked once here instead of at every site that accepts a coercion.
+pub fn points_at_chip(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TPtr(i) => is_chip(i) | Typ::TConstPtr(i) => is_chip(i)
+        | Typ::TOwnPtr(i) => is_chip(i) | _o => false
+    };
+}
 pub fn is_addr_slot(t: *const Typ) -> bool {
     return match *t { Typ::TAddr => true | _o => false };
 }
@@ -651,7 +687,11 @@ pub fn coercible_to(from: *const Typ, to: *const Typ) -> bool {
     // you may drop what the value knows about itself, never gain it. The reverse
     // stays refused: an address has lost its pointee type, so nothing can
     // reconstitute a `*T` from one.
-    if is_addr_slot(to) && is_any_ptr(from) { return true; }
+    // The SOURCE rule: a pointer reaches an `addr` slot only when it points into
+    // memory the chip touches.  A pointer to a frame does not, which closes the
+    // lifetime limit by construction - including through a parameter, because the
+    // type travels with the value and the callee sees the same refusal.
+    if is_addr_slot(to) && is_any_ptr(from) { return points_at_chip(from); }
     return match *from {
         Typ::TPtr(x) => match *to { Typ::TConstPtr(y) => typ_eq(x, y) | _o => false }
         | Typ::TOwnPtr(x) => match *to {

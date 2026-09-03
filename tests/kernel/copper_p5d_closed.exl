@@ -1,0 +1,33 @@
+// A CONTRACT PAID.  This file was parked as an ACCEPTING row for three eras: it
+// compiled, it was wrong on hardware, and its header said what would make it go
+// red.  This is that day, so the file is now a REJECTION row and says why.
+//
+// The shape has not changed.  The list is still built in `frame()`, its address is
+// still handed to `install()` as a PARAMETER, and `frame()` still returns.  What
+// changed is that an address reaching a hardware register must now come from
+// memory declared as shared with the chip, and a frame cannot declare that - so
+// the callee sees the refusal even though the address crossed a boundary on its
+// way there, because the mark rides in the type and the type travels.
+//
+// The limit it closes was stated from birth as: THE LANGUAGE GUARDS FRAMES; IT
+// DOES NOT SEE AN ASYNCHRONOUS READER.  It is closed not by teaching the language
+// to see the reader - it still cannot - but by refusing to hand the reader
+// anything a frame owns.
+use ndk::*;
+
+mod raw { extern var CHIPREGS: [u8; 256]; }
+
+fn install(l: *u16) {
+    ward k: Copper at &raw::CHIPREGS;
+    k.cop1lc.write(l);
+    k.copjmp1.write(0 as u16);
+}
+
+fn frame() {
+    // The list lives exactly as long as this call.  The chip does not - and the
+    // compiler now says so at the write, one frame down from here.
+    let mut l: [u16; 4] = [COP_END_HI, COP_END_LO, 0 as u16, 0 as u16];
+    install(&l[0]);
+}
+
+fn main() { frame(); println(0); }

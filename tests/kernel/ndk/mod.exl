@@ -12,6 +12,13 @@
 // OpenLibrary: an address here is a fact about the chip, so the same file serves
 // a program running under AmigaOS and one running on bare metal.
 //
+// A note for anyone writing a handler against these declarations: touching a
+// grouped pair - INTENAR/INTENA, DMACONR/DMACON - requires a seal even INSIDE an
+// interrupt handler, and that requirement is correct rather than redundant. The
+// hardware masks only the level it dispatched; the region raises the mask to the
+// top, so it is what keeps a higher level from preempting a sequence the chip must
+// see whole. The price is one restore instruction before the `rte`.
+//
 // WHERE THIS LIVES is not a design choice yet - it is a constraint. The loader
 // resolves `use ndk::*` relative to the IMPORTING file's directory and has no
 // library search path, so the library has to sit beside its consumer. When a

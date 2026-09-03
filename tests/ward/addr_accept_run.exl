@@ -2,7 +2,7 @@
 // crossing a function boundary on the way. The overlay sits on RAM so the whole
 // idiom RUNS: without an oracle for this ground, a row that only compiles proves
 // nothing about what the notation let through.
-mod raw { extern var CHIP: [u8; 64]; extern var BUF: [u16; 4]; }
+mod raw { extern var CHIP: [u8; 64]; extern var BUF: [u16; 4] chip writes; }
 
 ward W {
     p:  addr at 0x00 write;
@@ -11,7 +11,7 @@ ward W {
 
 // The address is computed HERE and written THERE: the kind travels with the value,
 // which is the row that separated variant A from a use-site operator.
-fn where_to() -> *u16 { return &raw::BUF[0]; }
+fn where_to() -> *chip u16 { return &raw::BUF[0]; }
 
 fn main() {
     ward w: W at &raw::CHIP;

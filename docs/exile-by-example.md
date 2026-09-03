@@ -2848,6 +2848,15 @@ there the seam *is* `Disable()`/`Enable()`, and the token carries exec's depth
 instead. The token is opaque exactly so that two targets can save two different
 things behind one guarantee.
 
+**Inside an interrupt handler a seal is still right.** A handler runs with its own
+level masked by the hardware that dispatched it, so it is tempting to read the
+region as a second, redundant mask. It is not: the bare-metal seam raises the mask
+to the top, which is what stops a HIGHER level from preempting a sequence the chip
+must see whole. What a handler pays is one instruction - the restore, just before
+an `rte` that would have restored the status register anyway. If the region wraps
+a read-modify-write on a grouped pair such as INTENAR/INTENA, the rule requires it
+and the requirement is earning its keep.
+
 [tests/seal/](../tests/seal/)
 
 ### All four at once

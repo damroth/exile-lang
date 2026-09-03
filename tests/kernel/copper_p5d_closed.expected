@@ -1,0 +1,1 @@
+this address does not point into memory the chip shares: an `addr` register takes the address of a buffer declared `chip reads` or `chip writes`, because the device keeps following it after the frame that made it is gone
