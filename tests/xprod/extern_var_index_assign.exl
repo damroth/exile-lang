@@ -1,0 +1,17 @@
+// #32 - assigning into an element of an `extern var` array. The reference accepts
+// it: its mutability rule reads the ROOT of the l-value path and yields a name
+// only for a path rooted in a VARIABLE, so a module-qualified extern never reaches
+// the rule at all.
+//
+// The port refused it, because elaboration erases that distinction - `raw::A`
+// becomes an ordinary variable node - so the rule asked whether `A` was a mutable
+// local, found no binding, and printed advice that cannot be followed: an
+// `extern var` has no `let mut` to declare. The message being unfollowable for the
+// shape it appeared on is what said "defect" rather than "rule".
+mod raw { extern var CELLS: [u16; 4]; }
+
+fn main() {
+    raw::CELLS[0] = 7 as u16;
+    raw::CELLS[1] = 35 as u16;
+    println(raw::CELLS[0] as int + raw::CELLS[1] as int);   // 42
+}

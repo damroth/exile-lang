@@ -2563,10 +2563,16 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   field_chain_pulls_allocator \
                   field_instance_names_nested \
                   prelude_named_field_dep prelude_named_and_built \
-                  unused_enum_stays_dropped
+                  unused_enum_stays_dropped \
+                   extern_var_index_assign
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \
+	for f in tests/xprod/*.exl; do \
+	  b=`basename $$f .exl`; \
+	  echo " $(XPROD_FIXTURES) " | grep -q " $$b " \
+	    || { echo "selfhost-xprod: $$b is a fixture with NO ROW in XPROD_FIXTURES - it sits in the corpus unwalked, which is a fixture that pins nothing"; exit 1; }; \
+	done; \
 	for name in $(XPROD_FIXTURES); do \
 	  f=tests/xprod/$$name.exl; \
 	  if [ ! -f $$f ]; then \

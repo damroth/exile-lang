@@ -9599,7 +9599,7 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         }
         | Stmt::AssignIndex { base, index, value, pos } => {
             let tbi = elab_expr(a, ar, g, sc, env, none_ty(), base);
-            require_mut_root(a, ar, sc, tbi, "assign into", pos);
+            require_mut_root_ast(a, ar, sc, base, tbi, "assign into", pos);
             let tii = elab_expr(a, ar, g, sc, env, none_ty(), index);
             check_assign_index(a, ar, sc, tbi, tii, pos);
             let tvi0 = elab_expr(a, ar, g, sc, env, none_ty(), value);
@@ -17278,6 +17278,35 @@ fn ty_is_value(t: *const Typ) -> bool {
 fn require_mut_root(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Texpr, what: str, pos: Pos) {
     if !ty_is_value(t.ty) { return; }
     match assign_root(t) {
+        Option::Some(n) => { require_mut(a, ar, sc, n, what, pos); }
+        | Option::None => { }
+    }
+    return;
+}
+// The root is read from the AST, not from the elaborated node, and that is the
+// whole of the fix. The reference walks `Var / FieldAccess / Index` and yields a
+// name only for a path rooted in a VARIABLE - so `raw::A[0]`, whose root is a
+// qualified PATH, never reaches its mutability rule. Elaboration erases that
+// distinction: a module's `extern var` becomes an ordinary variable node, so the
+// port asked whether `A` was a mutable local, found no binding, and printed advice
+// - "declare it with `let mut`" - that cannot be followed for an extern.
+//
+// Absence of a binding cannot be the discriminator: an immutable `let` has no tag
+// either, and treating that as "not a local" would delete the rule for the case it
+// exists for. Measured: the corpus caught exactly that within one run.
+fn assign_root_ast(e: *const Expr) -> Option<str> {
+    let none: Option<str> = Option::None;
+    return match *e {
+        Expr::Var(n, _q) => Option::Some(n)
+        | Expr::FieldAccess(t, _f, _q) => assign_root_ast(t)
+        | Expr::Index { base, index } => assign_root_ast(base)
+        | _o => none
+    };
+}
+fn require_mut_root_ast(a: Allocator, ar: *Arena, sc: *const TyScope, raw_e: *const Expr,
+                        t: *const Texpr, what: str, pos: Pos) {
+    if !ty_is_value(t.ty) { return; }
+    match assign_root_ast(raw_e) {
         Option::Some(n) => { require_mut(a, ar, sc, n, what, pos); }
         | Option::None => { }
     }
