@@ -5,6 +5,202 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-04
+
+**The declarations reach hardware, and then the programs run.** Two constructs
+finish the driver's side of the capability model: an `addr` kind, so the address
+a program hands a device is a value the model can watch travel, and a `chip`
+modifier on `extern var`, so memory the hardware touches is declared as such and
+the loads that read it stop being folded away. Under them the compiler's own
+output stops needing libc - `--freestanding` crosses into the self-hosted
+compiler and a bare-metal seam answers it - and the release ends with a 68000
+and a modelled custom chip in CI. Every previous statement about the chip was a
+statement about emitted text; now a copper list is followed by something other
+than the processor, and an interrupt nobody calls runs a handler written in
+exile and returns through `rte`.
+
+### Added
+
+- An `addr` kind: the type of a value that is an address as far as the hardware
+  is concerned. It is a ward field's type, and it is also a type an ordinary
+  value carries, so an address can be prepared in one place and written in
+  another:
+
+  ```rust
+  ward W {
+      p:  addr at 0x00 write;
+      sz: u16  at 0x08 write;
+  }
+
+  struct Job { dst: addr, words: u16 }
+
+  fn plan(n: u16) -> Job {
+      return Job { dst: &raw::BUF[0], words: n };
+  }
+
+  fn start(j: *const Job) {
+      ward w: W at &raw::CHIP;
+      seal { w.p.write(j.dst); w.sz.write(j.words); }
+  }
+  ```
+
+  A pointer converts to an `addr` wherever a value is accepted - an argument, a
+  struct field, an annotated `let`, an explicit cast - and so does a numeric
+  literal, because the register that points at a program's buffer is the
+  register that points at a fixed chip address. The reverse never opens: `addr
+  as int` is refused, and so is `ptr as u32`. A `return` is still checked by
+  equality, so a function declaring `addr` writes the cast, exactly as the
+  language already requires between `*T` and `*const T`. Like the rest of the
+  model the kind is free, and a gate holds the comparison rather than a comment
+  claiming it: an `addr` field and a `u32` field writing the same literal emit
+  byte-identical C.
+
+- A `chip` modifier on `extern var`, naming memory a device reads or writes.
+  The verbs take the chip as their subject, so the declaration says what the
+  hardware does and not what the program may do:
+
+  ```rust
+  extern var BUF:  [u8; 16] chip writes;         // the device fills it
+  extern var LIST: [u16; 8] chip reads;          // the device follows it
+  extern var FIFO: [u8; 4]  chip reads writes;
+  ```
+
+  The mark rides in the type, so it travels with a pointer into that memory -
+  spelled `*chip T` - and a helper that fills a buffer keeps the guarantee
+  instead of losing it at the declaration. It is stripped at a dereference, and
+  casting it away is refused, in both the shapes that reach for it: an explicit
+  `*chip u8 as *u8` and a `*chip u8` passed to a `*u8` parameter. The
+  measurement behind all of this is one program: read a buffer, start a
+  transfer, poll, read again. The emitted C was always right - two reads, the
+  volatile poll in the loop - and on m68k the second read was not in the output
+  at all, because the compiler proved the two loads identical and folded the sum
+  into a doubling.
+
+  An `addr` register now accepts only an address into memory declared this way.
+  A local's address was already refused because its frame dies; a parameter's
+  was not, and the device keeps following the pointer after either is gone.
+
+- `--freestanding` in the self-hosted compiler. The mode existed only in the
+  frozen reference, and the capability model exists only in the port, so no
+  single compiler could emit a program that reaches hardware through `rune`,
+  `ward`, `sigil` and `seal` and still links without libc. The port now routes
+  the print front, `strlen`, `mem_zero` and every `@debug` fragment to their
+  libc-free counterparts and emits the helper prototypes inline, so the output
+  needs no `-I` on any target. A float print is declined rather than
+  approximated, and the refusal is reported by the driver before any file is
+  written, so a rejected compile leaves nothing on disk. Measured across the
+  whole example corpus: ninety-five emit byte-identically from both compilers,
+  and the one that is refused is refused by both with the same first line.
+
+- `runtime/sys_bare.c`, the silicon-side answer to the same five-symbol seam
+  that `runtime/sys_amiga.c` answers over AmigaOS. Output goes to the serial
+  port, allocation is a bump arena whose `free` rewinds only the most recent
+  block, and a `seal` saves the status register and raises the interrupt level
+  to seven - where the AmigaOS side must instead defer to exec's own nesting,
+  because writing SR behind a scheduler's back breaks it. One guarantee, two
+  things saved. A witness using a ward, a seal and an atomic group at once
+  links `-nostdlib` into 2516 bytes with no libc at all.
+
+- The NDK's first layer: the Amiga custom chip as exile declarations, a library
+  rather than a binding. Four sigils naming who owns which byte range, three
+  ward layouts with their canonical instances, and three atomic groups - the
+  DMACONR/DMACON pair, the INTENAR/INTENA pair, and the blitter's thirteen
+  registers. It binds to silicon and never to an OS, so one file serves a
+  program under AmigaOS and one on bare metal. Compiled alone it emits a single
+  `#include` and zero mentions of any name it declares, which a gate asserts,
+  because "a declaration costs nothing" is the claim the whole design rests on.
+
+- `make verify-emu`: a 68000 with a modelled custom chip, executing freestanding
+  binaries and checking what they print. The CPU is Musashi, vendored under MIT
+  at commit `313ebf1b` and byte-identical to upstream - every option the machine
+  needs is set on the compiler line, and a gate arm fails if configuration ever
+  moves into the vendored tree, because then a version bump stops being a copy
+  and becomes a merge. Modelled beside it: DMACON and DMACONR as the SET/CLR
+  pair they are, so clearing one bit leaves the others standing and the read
+  port answers with state rather than with the last word written; the copper as
+  a fetch-decode loop over MOVE, WAIT and the end marker; and the interrupt
+  path as INTREQ, INTENA and the master bit, reaching the processor as an
+  autovector. Three negative controls run before any witness is believed - an
+  illegal instruction must stop the machine and name the opcode, a read outside
+  the map must fault and name the address, and a handler that never
+  acknowledges its source must die on the instruction budget rather than
+  finish - and eight witnesses then run against pinned output.
+
+- `make selfhost-warning-free`: the compiler compiles its own source with
+  stderr open and the warning count asserted at zero, and that emission is then
+  held to `-ansi -pedantic -Wall -Werror`. The open channel is the point, since
+  a number read off a muted pipe is not a measurement.
+
+### Changed
+
+- A `seal` inside an interrupt handler is required and right, not redundant.
+  The hardware masks only the level it dispatched; the region raises the mask to
+  the top, so it is what keeps a higher level from preempting a sequence the
+  chip must see whole, and it costs one restore before an `rte` that would have
+  restored the status register anyway. The guide, the NDK header and the handler
+  fixture had all been saying the opposite.
+
+- An address made in a frame, handed down as a parameter and written to a
+  register is refused, one frame below the local that made it. That program was
+  pinned as an accepted blindness for three eras with a header naming what would
+  close it; the `chip` rule is what closed it.
+
+- A `chip` modifier written where the memory would be a local, a field or a
+  parameter says where such memory has to live. It was already refused - only
+  an `extern var` tail can parse it - but it surfaced as `expected '=', got
+  identifier 'chip'`, which sends the reader to the assignment instead of to the
+  storage.
+
+### Fixed
+
+- The escape analysis had never looked inside a `seal`. Its walker had an arm
+  for every other body-bearing statement, so a seal body fell into the
+  catch-all and was never descended into: the same store of a local's address
+  was refused outside a region and accepted inside one. The finding is about the
+  walker rather than about addresses, and it was demonstrated on a second,
+  unrelated diagnostic family before being fixed.
+
+- The same hole in two more passes, found by auditing every dispatcher that
+  walks `defer` for whether it also walks `seal`. A double `free` inside a seal
+  compiled clean; a sealed `mem_zero` emitted `memset` with no `<string.h>` and
+  two implicit-declaration errors under the project's own standard.
+
+- Assigning into an element of an `extern var` array. The rule that decides
+  whether a target is mutable was asking on the elaborated node, where a
+  module's extern var is an ordinary variable, so it looked the name up among
+  mutable locals and printed advice that cannot be followed: an `extern var` has
+  no `let mut` to declare. It now reads the root from the AST, where a qualified
+  path is still a qualified path.
+
+- A rune `.read()` accepted arguments and dropped them. `status.read(1, 2, 3)`
+  compiled, and `status.read(bump())` compiled with `bump` emitted into the C
+  and never called - so a side effect the user wrote disappeared. `.write` and
+  `.strobe` had checked their arity since they landed, which is what made the
+  gap read as covered. All three read paths are fixed: a plain rune, a
+  register-file element, and a ward field.
+
+- `runtime/freestanding.c` says a `-nostdlib` link of it plus a backend leaves
+  only the sys seam undefined, and that was false on the target it exists for.
+  The decimal conversion in `__ex_print_u32` used `/` and `%`; the 68000 has no
+  32-bit divide, and on this toolchain the helpers ship only inside libc-shaped
+  archives, never in `libgcc.a`. The claim therefore held on a 64-bit host and
+  failed on an Amiga. Replaced with a width-agnostic shift-and-subtract divide
+  by ten, verified over 1.5 million cases plus the 64-bit extremes before it was
+  installed, since this file is shared with the hosted path.
+
+- Thirty-three compiler warnings, to zero: seventeen unused parameters, fifteen
+  capacity hints below the minimum, and a dead gating helper that was deleted
+  rather than silenced. Two of the parameters were the `.read()` arity above.
+  Beyond the exile side, two `assignment discards 'const' qualifier` warnings on
+  the compiler's own emitted C are fixed in the source.
+
+- The fuzzer's memory-budget class could never be reached. It attributes a death
+  to the cap by re-running uncapped, and the condition underneath required that
+  re-run to succeed - so an input the compiler legitimately rejects was never
+  attributed to the cap. It now reads the variable the experiment actually names:
+  the capped run died on a signal and the uncapped one did not, whatever its
+  exit status.
+
 ## [1.3.0] - 2026-08-31
 
 **The language grows in two places, and the shadowing class closes.** `seal`
@@ -1170,4 +1366,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[1.3.0]: https://github.com/damroth/exile-lang/releases/tag/v1.3.0
+[1.4.0]: https://github.com/damroth/exile-lang/releases/tag/v1.4.0
