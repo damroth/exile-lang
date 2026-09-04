@@ -1,0 +1,65 @@
+// NEGATIVE CONTROL 3, and the fixture that proves the interrupt line is a level
+// rather than an edge.
+//
+// This is isr_run.exl with the acknowledge removed from the handler. Everything
+// else is identical: the vector is installed, the mask is dropped, the source is
+// enabled. What is missing is the write to INTREQ that tells the chip the source
+// has been serviced.
+//
+// On the chip that is a LIVELOCK. INTREQ still holds the bit, the enable and the
+// master still stand, so the line is still asserted when `rte` restores the mask,
+// and the handler re-enters before the interrupted code can take a step. The
+// machine must reproduce that, because the alternative is the softest way to
+// invent hardware: a driver that forgets its acknowledge would pass in CI and hang
+// on an Amiga.
+//
+// It therefore never finishes, and it is here to prove that the machine STOPS a
+// program that never finishes - with an instruction budget and a named reason,
+// because a run that hangs is not a result and a gate that hangs is not a gate.
+use ndk::*;
+
+mod raw {
+    extern var ISRSTATE: [u8; 8];
+    extern fn isr_install();
+}
+
+// The RAM the handler and the main loop share. It is a ward because that is how
+// this language names memory, and the fact that there are no globals to reach for
+// happens to agree.
+ward Shared {
+    ticks: u16 at 0x00 readwrite;
+}
+
+const VERTB_BIT: u16 = 32;
+const INTF_SETCLR: u16 = 32768;
+const INTF_INTEN: u16 = 16384;
+
+// Called by the vector, never from here. It acknowledges by WRITING the bit to
+// INTREQ with the SET/CLR sense clear, which is how the hardware is told the
+// source has been serviced; without it the level would re-assert forever.
+pub fn on_vertb() {
+    ward s: Shared at &raw::ISRSTATE;
+    s.ticks.write(s.ticks.read() + 1 as u16);
+}
+
+fn ticks() -> int {
+    ward s: Shared at &raw::ISRSTATE;
+    return s.ticks.read() as int;
+}
+
+fn main() {
+    // Before anything is installed: nothing has fired.
+    println(ticks());
+    raw::isr_install();
+    // Enable VBLANK and the master switch. INTENA is in an atomic group with its
+    // read port, so the compiler requires the region.
+    seal { control.intena.write(INTF_SETCLR | INTF_INTEN | VERTB_BIT); }
+    // Wait for the counter to reach three. Three rather than one, because one
+    // could be a single stray dispatch; three is a source that keeps arriving and
+    // a handler that keeps returning.
+    let mut i = 0 as u32;
+    while i < 100000 as u32 {
+        if ticks() >= 3 as int { i = 100000 as u32; } else { i = i + 1 as u32; }
+    }
+    println(ticks());
+}

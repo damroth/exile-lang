@@ -105,7 +105,7 @@ static unsigned long  frames;
 static int            cop_running;
 static unsigned int  load_base, load_end, bss_base, bss_end;
 static int           halted;
-static unsigned long insns, insn_budget = 200000000UL;
+static unsigned long insns, insn_budget = 20000000UL;
 
 static void fault(const char *what, unsigned int addr)
 {
@@ -136,9 +136,26 @@ static int on_illegal(int opcode)
 
 static void custom_write16(unsigned int off, unsigned int val);
 
+/* The interrupt line is LEVEL-triggered, and getting that wrong is the softest
+ * possible way to invent hardware. Configured for its default acknowledge scheme
+ * the core clears the level the moment the exception is taken, which models an
+ * EDGE: a handler that forgets to acknowledge its source finishes normally, the
+ * gate goes green, and the same driver livelocks on the chip - where INTREQ still
+ * holds the bit, the enable and the master still stand, and the line is therefore
+ * still asserted when `rte` restores the mask.
+ *
+ * So the machine takes over the acknowledge and does NOT clear anything. The level
+ * stays exactly what (INTREQ, INTENA, master) says it is, re-evaluated after every
+ * write to either register - which is what makes acknowledging the source the
+ * thing that lowers the line, as on the chip. */
+static int on_int_ack(int level)
+{
+    (void)level;
+    return M68K_INT_ACK_AUTOVECTOR;
+}
+
 /* A source is asserted only when it has HAPPENED, is ENABLED, and the master
- * switch is on. Re-evaluated after every write to either register, because a
- * handler acknowledging its own source has to be able to lower the line. */
+ * switch is on. */
 static void irq_refresh(void)
 {
     unsigned int pend = (unsigned int)intreq & (unsigned int)intena;
@@ -399,6 +416,7 @@ int main(int argc, char **argv)
     m68k_init();
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
     m68k_set_illg_instr_callback(on_illegal);
+    m68k_set_int_ack_callback(on_int_ack);
     m68k_pulse_reset();
     sp -= 4;
     m68k_write_memory_32(sp, (unsigned int)HALT_PC);

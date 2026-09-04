@@ -1703,7 +1703,8 @@ selfhost-copper: $(EXILC_BIN)
 EMU_BUILD := $(OUT)/emu
 EMU_MUS   := tools/emu/musashi
 EMU_DEFS  := -DM68K_INSTRUCTION_HOOK=2 -DM68K_INSTRUCTION_CALLBACK\(pc\)=emu_instr_hook\(pc\) \
-             -DM68K_EMULATE_ADDRESS_ERROR=1 -DM68K_ILLG_HAS_CALLBACK=1
+             -DM68K_EMULATE_ADDRESS_ERROR=1 -DM68K_ILLG_HAS_CALLBACK=1 \
+             -DM68K_EMULATE_INT_ACK=1
 
 .PHONY: verify-emu
 verify-emu: $(EXILC_BIN)
@@ -1722,6 +1723,7 @@ verify-emu: $(EXILC_BIN)
 	         tests/kernel/isr_off.exl tests/kernel/isr_off.expected \
 	         tests/kernel/isr_run_stub.c \
 	         tests/kernel/isr_nointena.exl tests/kernel/isr_nointena.expected \
+	         tests/kernel/isr_noack.exl \
 	         $(BARE_SEAM) runtime/freestanding.c; do \
 	  test -s $$f || { echo "verify-emu: MISSING/EMPTY $$f"; exit 1; }; \
 	done; \
@@ -1763,6 +1765,22 @@ verify-emu: $(EXILC_BIN)
 	  || { echo "verify-emu: a read OUTSIDE THE MAP did not fault (exit $$rc, wanted 3) - a machine that answers zero for unmapped memory lets a wild pointer read plausible data and go green"; exit 1; }; \
 	grep -q 'outside the map at 0xa00000' $(EMU_BUILD)/wild.err \
 	  || { echo "verify-emu: the machine faulted without naming the address"; exit 1; }; \
+	nk=$(EMU_BUILD)/noack; rm -rf $$nk; mkdir -p $$nk; \
+	$(EXILC_BIN) --target c --freestanding --c-out $$nk/prog.c tests/kernel/isr_noack.exl >/dev/null 2>&1 \
+	  || { echo "verify-emu: the no-acknowledge control does not compile"; exit 1; }; \
+	for o in prog:$$nk/prog.c stub:tests/kernel/isr_run_stub.c fs:runtime/freestanding.c seam:$(BARE_SEAM); do \
+	  k=$${o%%:*}; src=$${o##*:}; \
+	  $(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -I runtime -c $$src -o $$nk/$$k.o 2>/dev/null \
+	    || { echo "verify-emu: $$src does not compile for m68k"; exit 1; }; \
+	done; \
+	$(AMIGA_GCC) -noixemul -nostdlib -ffreestanding -fno-builtin -O2 -e _main -o $$nk/witness \
+	   $$nk/prog.o $$nk/fs.o $$nk/seam.o $$nk/stub.o 2>/dev/null \
+	  || { echo "verify-emu: the no-acknowledge control does not link"; exit 1; }; \
+	$(EMU_BUILD)/emu $$nk/witness >$$nk/run.out 2>$$nk/run.err; rc=$$?; \
+	test $$rc -eq 5 \
+	  || { echo "verify-emu: a handler that never ACKNOWLEDGES its source finished (exit $$rc, wanted 5) - the interrupt line is behaving as an EDGE, so a driver that forgets its acknowledge passes here and livelocks on the chip"; exit 1; }; \
+	grep -q 'instruction budget exhausted' $$nk/run.err \
+	  || { echo "verify-emu: the runaway program stopped without saying why"; exit 1; }; \
 	ran=0; \
 	for w in isr_vertb:isr_vertb_stub.c bare_seam:bare_seam_stub.c dmacon_setclr:- \
 	         copper_run:copper_run_stub.c copper_off:copper_run_stub.c \
@@ -1821,7 +1839,7 @@ verify-emu: $(EXILC_BIN)
 	test "`tail -1 $(EMU_BUILD)/isr_nointena/run.out`" = "0" \
 	  || { echo "verify-emu: the witness that installs its vector and drops its mask but never ENABLES the source still counted a dispatch - Paula's enable is not gating anything, and the uninstalled twin cannot see that because its mask stops the interrupt first"; exit 1; }; \
 	test $$ran -ge 8 || { echo "verify-emu: only $$ran witness(es) ran - one witness is the one the tool was developed against, which proves nothing about the tool"; exit 1; }; \
-	echo "verify-emu: clean (the machine stops hard on an illegal opcode and on a read outside its map, both proved by feeding it one; then $$ran freestanding witnesses EXECUTE as 68000 code against a modelled custom chip and print, byte for byte, what their pinned references say - including one that names 0xDFF000 itself and reads its own writes back through a SET/CLR pair, and a copper that EXECUTES a list and moves a register the processor never stores to, beside its DMA-off twin which moves nothing; and an interrupt nobody calls - vector installed, VBLANK injected, the handler counting to three and returning through RTE each time, beside two twins that count nothing - one with no vector and one with the vector but the source never enabled, because those are two gates in series and one twin cannot floor both)"
+	echo "verify-emu: clean (the machine stops hard on an illegal opcode, on a read outside its map, and on a handler that never acknowledges its source and therefore never finishes - all three proved by feeding it one; then $$ran freestanding witnesses EXECUTE as 68000 code against a modelled custom chip and print, byte for byte, what their pinned references say - including one that names 0xDFF000 itself and reads its own writes back through a SET/CLR pair, and a copper that EXECUTES a list and moves a register the processor never stores to, beside its DMA-off twin which moves nothing; and an interrupt nobody calls - vector installed, VBLANK injected, the handler counting to three and returning through RTE each time, beside two twins that count nothing - one with no vector and one with the vector but the source never enabled, because those are two gates in series and one twin cannot floor both)"
 
 # ===== memory a device touches: the mark, its refusals, and the load it saves ====
 #
