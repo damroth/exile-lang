@@ -1,0 +1,70 @@
+// THE FLOOR for copper_run.exl, and it runs every time rather than living in a
+// note. This file is that witness with ONE change: the install writes the master
+// switch without the copper's own DMA bit. Everything else is identical - the same
+// list, in the same memory, with the same pointer handed to the same register, and
+// the same strobe.
+//
+// So the pair is the measurement. If the machine ever reported a change here too,
+// the other witness would prove nothing: a register that moves whether or not the
+// device is switched on is not evidence of a device.
+use ndk::*;
+
+mod raw { extern var COPLIST: [u16; 8] chip reads; }
+
+// DMACON's offset in the custom chip - what a copper MOVE names a register by.
+const REG_DMACON: u16 = 150;
+
+fn put_wait(l: *chip u16, i: u32, vpos: u16, hpos: u16) -> u32 {
+    l[i] = (vpos * 256 as u16) | (hpos & 254 as u16) | 1 as u16;
+    l[i + 1 as u32] = COP_WAIT_MASK;
+    return i + 2 as u32;
+}
+
+fn put_move(l: *chip u16, i: u32, reg: u16, val: u16) -> u32 {
+    l[i] = reg;
+    l[i + 1 as u32] = val;
+    return i + 2 as u32;
+}
+
+fn put_end(l: *chip u16, i: u32) -> u32 {
+    l[i] = COP_END_HI;
+    l[i + 1 as u32] = COP_END_LO;
+    return i + 2 as u32;
+}
+
+fn build(l: *chip u16) {
+    let mut i = 0 as u32;
+    i = put_wait(l, i, 5 as u16, 0 as u16);
+    i = put_move(l, i, REG_DMACON, DMAF_SETCLR | DMAF_BLITTER);
+    i = put_end(l, i);
+}
+
+fn dma_state() -> u16 {
+    let mut v = 0 as u16;
+    seal { v = control.dmaconr.read(); }
+    return v;
+}
+
+// The CPU's whole part in the transfer: point the chip at the list and switch the
+// DMA on. Note what is NOT here - the blitter bit. Nothing on this side ever sets
+// it, so if it appears, it came from the other device.
+fn install() {
+    seal {
+        copper.cop1lc.write(&raw::COPLIST[0]);
+        copper.copjmp1.write(0 as u16);
+        control.dmacon.write(DMAF_SETCLR | DMAF_MASTER);
+    }
+}
+
+fn main() {
+    build(&raw::COPLIST[0]);
+    install();
+    println(dma_state() as int);
+    // From here the processor only READS. A bounded wait, because a hang is not a
+    // result: if the bit never arrives the program says what it saw.
+    let mut i = 0 as u32;
+    while i < 4000 as u32 {
+        if (dma_state() & DMAF_BLITTER) != 0 as u16 { i = 4000 as u32; } else { i = i + 1 as u32; }
+    }
+    println(dma_state() as int);
+}

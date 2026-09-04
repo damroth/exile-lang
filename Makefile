@@ -1715,6 +1715,9 @@ verify-emu: $(EXILC_BIN)
 	         tests/kernel/isr_vertb.exl tests/kernel/isr_vertb_stub.c tests/kernel/isr_vertb.expected \
 	         tests/kernel/bare_seam.exl tests/kernel/bare_seam_stub.c tests/kernel/bare_seam.expected \
 	         tests/kernel/dmacon_setclr.exl tests/kernel/dmacon_setclr.expected \
+	         tests/kernel/copper_run.exl tests/kernel/copper_run.expected \
+	         tests/kernel/copper_off.exl tests/kernel/copper_off.expected \
+	         tests/kernel/copper_run_stub.c \
 	         $(BARE_SEAM) runtime/freestanding.c; do \
 	  test -s $$f || { echo "verify-emu: MISSING/EMPTY $$f"; exit 1; }; \
 	done; \
@@ -1757,7 +1760,8 @@ verify-emu: $(EXILC_BIN)
 	grep -q 'outside the map at 0xa00000' $(EMU_BUILD)/wild.err \
 	  || { echo "verify-emu: the machine faulted without naming the address"; exit 1; }; \
 	ran=0; \
-	for w in isr_vertb:isr_vertb_stub.c bare_seam:bare_seam_stub.c dmacon_setclr:-; do \
+	for w in isr_vertb:isr_vertb_stub.c bare_seam:bare_seam_stub.c dmacon_setclr:- \
+	         copper_run:copper_run_stub.c copper_off:copper_run_stub.c; do \
 	  n=$${w%%:*}; stub=tests/kernel/$${w##*:}; \
 	  test "$${w##*:}" = "-" && stub=""; \
 	  d=$(EMU_BUILD)/$$n; mkdir -p $$d; \
@@ -1793,8 +1797,15 @@ verify-emu: $(EXILC_BIN)
 	  || { echo "verify-emu: the SET/CLR witness no longer names the real custom base (0xDFF000 = 14675968) - if it moved to a RAM overlay it stopped being the thing this increment exists to run"; exit 1; }; \
 	if grep -q '14675968UL' $(EMU_BUILD)/isr_vertb/prog.c; then \
 	  echo "verify-emu: the RAM-overlay witness names the real custom base too, so the check above distinguishes nothing - a constant present in every emission is not evidence that one of them talks to the chip"; exit 1; fi; \
-	test $$ran -ge 3 || { echo "verify-emu: only $$ran witness(es) ran - one witness is the one the tool was developed against, which proves nothing about the tool"; exit 1; }; \
-	echo "verify-emu: clean (the machine stops hard on an illegal opcode and on a read outside its map, both proved by feeding it one; then $$ran freestanding witnesses EXECUTE as 68000 code against a modelled custom chip and print, byte for byte, what their pinned references say - including one that names 0xDFF000 itself and reads its own writes back through a SET/CLR pair)"
+	crun=$(EMU_BUILD)/copper_run/run.out; coff=$(EMU_BUILD)/copper_off/run.out; \
+	if cmp -s $$crun $$coff; then \
+	  echo "verify-emu: the copper witness and its DMA-off twin printed the SAME thing - a register that moves whether or not the device is switched on is not evidence of a device"; exit 1; fi; \
+	test "`head -1 $$crun`" != "`tail -1 $$crun`" \
+	  || { echo "verify-emu: the copper witness saw no change in the register - the CPU never writes that bit, so if it did not appear the coprocessor never executed the list"; exit 1; }; \
+	test "`head -1 $$coff`" = "`tail -1 $$coff`" \
+	  || { echo "verify-emu: the DMA-off twin saw the register CHANGE - something wrote it with the copper's DMA bit clear, so the gate on the fetch is not a gate"; exit 1; }; \
+	test $$ran -ge 5 || { echo "verify-emu: only $$ran witness(es) ran - one witness is the one the tool was developed against, which proves nothing about the tool"; exit 1; }; \
+	echo "verify-emu: clean (the machine stops hard on an illegal opcode and on a read outside its map, both proved by feeding it one; then $$ran freestanding witnesses EXECUTE as 68000 code against a modelled custom chip and print, byte for byte, what their pinned references say - including one that names 0xDFF000 itself and reads its own writes back through a SET/CLR pair, and a copper that EXECUTES a list and moves a register the processor never stores to, beside its DMA-off twin which moves nothing)"
 
 # ===== memory a device touches: the mark, its refusals, and the load it saves ====
 #

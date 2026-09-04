@@ -58,8 +58,35 @@
 #define INTENA       0x09A
 #define INTREQ       0x09C
 
+/* The coprocessor. Its registers are ordinary; what is not ordinary is that it
+ * FETCHES from the program's own memory and writes chip registers with no CPU
+ * store anywhere in sight - which is the whole observation this increment exists
+ * to make.
+ *
+ * Three things here are a MODEL and not a reproduction, and saying so is cheaper
+ * than having someone discover it:
+ *   - the beam is a COUNTER. It advances one step per unsatisfied wait, so a list
+ *     finishes; it does not track cycles, lines or a raster.
+ *   - concurrency is INTERLEAVING. The copper takes one step every
+ *     COP_STEP_EVERY CPU instructions, not a DMA slot in a cycle-accurate frame.
+ *   - END is recognised explicitly. On the chip, `$FFFF,$FFFE` is a wait nobody
+ *     reaches until the frame restarts; this machine has no frame, so the list
+ *     stops there instead of blocking forever.
+ * What is NOT modelled loosely is the gate on the whole thing: the copper fetches
+ * only while its own DMA bit and the master bit are both set, because that is the
+ * switch this increment's floor turns off. */
+#define COPCON       0x02E
+#define COP1LCH      0x080
+#define COP1LCL      0x082
+#define COPJMP1      0x088
+#define DMAF_COP     0x0080
+#define DMAF_MAST    0x0200
+#define COP_STEP_EVERY 4u
+
 static unsigned char ram[RAM_SIZE];
 static unsigned short dmacon, intena, intreq;
+static unsigned int   cop1lc, cop_pc, cop_beam;
+static int            cop_running;
 static unsigned int  load_base, load_end, bss_base, bss_end;
 static int           halted;
 static unsigned long insns, insn_budget = 200000000UL;
@@ -91,6 +118,8 @@ static int on_illegal(int opcode)
 
 /* ---- the custom chip --------------------------------------------------- */
 
+static void custom_write16(unsigned int off, unsigned int val);
+
 /* Bit 15 decides the direction; the remaining bits are the mask it applies. */
 static unsigned short setclr(unsigned short cur, unsigned int val)
 {
@@ -109,11 +138,38 @@ static unsigned int custom_read16(unsigned int off)
     return 0;
 }
 
+/* One copper instruction. Reads go through the ordinary bus, so a list that walks
+ * off the map faults exactly as a CPU access would - the coprocessor does not get
+ * a gentler machine than the processor. */
+static void copper_step(void)
+{
+    unsigned int w0, w1;
+    if (!cop_running) return;
+    if ((dmacon & DMAF_COP) == 0 || (dmacon & DMAF_MAST) == 0) return;
+    w0 = m68k_read_memory_16(cop_pc);
+    w1 = m68k_read_memory_16(cop_pc + 2u);
+    if ((w0 & 1u) == 0u) {                       /* MOVE: (register offset, value) */
+        cop_pc += 4u;
+        custom_write16(w0 & 0x1feu, w1);
+        return;
+    }
+    if ((w1 & 1u) == 0u) {                       /* WAIT */
+        if (w0 == 0xffffu && w1 == 0xfffeu) { cop_running = 0; return; }
+        if (cop_beam >= (w0 >> 8)) cop_pc += 4u; else cop_beam++;
+        return;
+    }
+    cop_pc += 4u;                                /* SKIP: not exercised yet */
+}
+
 static void custom_write16(unsigned int off, unsigned int val)
 {
     if (off == SERDAT) { putchar((int)(val & 0xffu)); return; }
     if (off == SERPER) return;                /* baud divisor: accepted, unmodelled */
     if (off == DMACON) { dmacon = setclr(dmacon, val); return; }
+    if (off == COP1LCH) { cop1lc = (cop1lc & 0x0000ffffu) | ((val & 0xffffu) << 16); return; }
+    if (off == COP1LCL) { cop1lc = (cop1lc & 0xffff0000u) | (val & 0xffffu); return; }
+    if (off == COPJMP1) { cop_pc = cop1lc; cop_beam = 0u; cop_running = 1; return; }
+    if (off == COPCON) return;                /* copper danger bit: accepted, unmodelled */
     if (off == INTENA) { intena = setclr(intena, val); return; }
     if (off == INTREQ) { intreq = setclr(intreq, val); return; }
     fault("write to an unmodelled custom register", (unsigned int)CUSTOM_BASE + off);
@@ -174,6 +230,7 @@ void m68k_write_memory_32(unsigned int a, unsigned int v)
 void emu_instr_hook(unsigned int pc)
 {
     if (pc == (unsigned int)HALT_PC) { halted = 1; m68k_end_timeslice(); return; }
+    if ((insns % COP_STEP_EVERY) == 0u) copper_step();
     if (++insns > insn_budget) {
         fflush(stdout);
         fprintf(stderr, "emu: instruction budget exhausted at PC=0x%06x - the program"
