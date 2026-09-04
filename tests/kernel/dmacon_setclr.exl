@@ -1,0 +1,36 @@
+// The first consumer of the library's real-address instances. Until now every
+// kernel fixture talked to a RAM stand-in at `&raw::CHIPREGS`, because a program
+// that named 0xDFF000 would fault on the host; four ward instances sat in the
+// library with the right addresses and no user. This one names them, and the only
+// place it can run is a machine that models the chip.
+//
+// What it proves is the thing a RAM overlay cannot show: DMACON is a SET/CLR
+// register, so the value you write is not the value you get back. Bit 15 says
+// whether the rest are set or cleared, and the live state answers from a SEPARATE
+// port. Clearing one bit must leave the others standing - on a plain register it
+// would not, and that difference is the whole reason the pair exists.
+use ndk::*;
+
+// The write and the read that depends on it, in one region. That is not decoration
+// - the library declares the pair atomic, so the compiler REFUSES this function
+// without the seal.
+fn set_and_read(mask: u16) -> int {
+    let mut v = 0 as u16;
+    seal {
+        control.dmacon.write(mask);
+        v = control.dmaconr.read();
+    }
+    return v as int;
+}
+
+fn main() {
+    // Turn on the copper and the blitter: 0x80 | 0x40.
+    println(set_and_read(DMAF_SETCLR | DMAF_COPPER | DMAF_BLITTER));
+    // Clear the blitter ALONE. The copper has to survive, and on a register that
+    // merely remembered the last word written it would not.
+    println(set_and_read(DMAF_BLITTER));
+    // Add the master switch to what is already there.
+    println(set_and_read(DMAF_SETCLR | DMAF_MASTER));
+    // Clear both remaining bits.
+    println(set_and_read(DMAF_COPPER | DMAF_MASTER));
+}

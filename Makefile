@@ -1714,6 +1714,7 @@ verify-emu: $(EXILC_BIN)
 	         $(EMU_MUS)/softfloat/softfloat.c \
 	         tests/kernel/isr_vertb.exl tests/kernel/isr_vertb_stub.c tests/kernel/isr_vertb.expected \
 	         tests/kernel/bare_seam.exl tests/kernel/bare_seam_stub.c tests/kernel/bare_seam.expected \
+	         tests/kernel/dmacon_setclr.exl tests/kernel/dmacon_setclr.expected \
 	         $(BARE_SEAM) runtime/freestanding.c; do \
 	  test -s $$f || { echo "verify-emu: MISSING/EMPTY $$f"; exit 1; }; \
 	done; \
@@ -1756,18 +1757,25 @@ verify-emu: $(EXILC_BIN)
 	grep -q 'outside the map at 0xa00000' $(EMU_BUILD)/wild.err \
 	  || { echo "verify-emu: the machine faulted without naming the address"; exit 1; }; \
 	ran=0; \
-	for w in isr_vertb:isr_vertb_stub.c bare_seam:bare_seam_stub.c; do \
+	for w in isr_vertb:isr_vertb_stub.c bare_seam:bare_seam_stub.c dmacon_setclr:-; do \
 	  n=$${w%%:*}; stub=tests/kernel/$${w##*:}; \
+	  test "$${w##*:}" = "-" && stub=""; \
 	  d=$(EMU_BUILD)/$$n; mkdir -p $$d; \
 	  $(EXILC_BIN) --target c --freestanding --c-out $$d/prog.c tests/kernel/$$n.exl >/dev/null 2>&1 \
 	    || { echo "verify-emu: $$n does not compile freestanding"; exit 1; }; \
-	  for o in prog:$$d/prog.c stub:$$stub fs:runtime/freestanding.c seam:$(BARE_SEAM); do \
+	  objs="$$d/prog.o $$d/fs.o $$d/seam.o"; \
+	  for o in prog:$$d/prog.c fs:runtime/freestanding.c seam:$(BARE_SEAM); do \
 	    k=$${o%%:*}; src=$${o##*:}; \
 	    $(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -I runtime -c $$src -o $$d/$$k.o 2>/dev/null \
 	      || { echo "verify-emu: $$src does not compile for m68k"; exit 1; }; \
 	  done; \
-	  $(AMIGA_GCC) -noixemul -nostdlib -ffreestanding -fno-builtin -O2 -e _main -o $$d/witness \
-	     $$d/prog.o $$d/fs.o $$d/seam.o $$d/stub.o 2>/dev/null \
+	  if [ -n "$$stub" ]; then \
+	    test -s $$stub || { echo "verify-emu: MISSING/EMPTY $$stub"; exit 1; }; \
+	    $(AMIGA_GCC) -noixemul -ffreestanding -fno-builtin -O2 -I runtime -c $$stub -o $$d/stub.o 2>/dev/null \
+	      || { echo "verify-emu: $$stub does not compile for m68k"; exit 1; }; \
+	    objs="$$objs $$d/stub.o"; \
+	  fi; \
+	  $(AMIGA_GCC) -noixemul -nostdlib -ffreestanding -fno-builtin -O2 -e _main -o $$d/witness $$objs 2>/dev/null \
 	    || { echo "verify-emu: $$n does not link -nostdlib"; exit 1; }; \
 	  test -s tests/kernel/$$n.expected \
 	    || { echo "verify-emu: tests/kernel/$$n.expected is EMPTY - an empty reference makes any run agree with it"; exit 1; }; \
@@ -1781,8 +1789,12 @@ verify-emu: $(EXILC_BIN)
 	         diff tests/kernel/$$n.expected $$d/run.out | head -6; exit 1; }; \
 	  ran=`expr $$ran + 1`; \
 	done; \
-	test $$ran -ge 2 || { echo "verify-emu: only $$ran witness(es) ran - one witness is the one the tool was developed against, which proves nothing about the tool"; exit 1; }; \
-	echo "verify-emu: clean (the machine stops hard on an illegal opcode and on a read outside its map, both proved by feeding it one; then $$ran freestanding witnesses EXECUTE as 68000 code against a modelled custom chip and print, byte for byte, what the host build prints)"
+	grep -q '14675968UL' $(EMU_BUILD)/dmacon_setclr/prog.c \
+	  || { echo "verify-emu: the SET/CLR witness no longer names the real custom base (0xDFF000 = 14675968) - if it moved to a RAM overlay it stopped being the thing this increment exists to run"; exit 1; }; \
+	if grep -q '14675968UL' $(EMU_BUILD)/isr_vertb/prog.c; then \
+	  echo "verify-emu: the RAM-overlay witness names the real custom base too, so the check above distinguishes nothing - a constant present in every emission is not evidence that one of them talks to the chip"; exit 1; fi; \
+	test $$ran -ge 3 || { echo "verify-emu: only $$ran witness(es) ran - one witness is the one the tool was developed against, which proves nothing about the tool"; exit 1; }; \
+	echo "verify-emu: clean (the machine stops hard on an illegal opcode and on a read outside its map, both proved by feeding it one; then $$ran freestanding witnesses EXECUTE as 68000 code against a modelled custom chip and print, byte for byte, what their pinned references say - including one that names 0xDFF000 itself and reads its own writes back through a SET/CLR pair)"
 
 # ===== memory a device touches: the mark, its refusals, and the load it saves ====
 #

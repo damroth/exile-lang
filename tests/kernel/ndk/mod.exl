@@ -116,7 +116,9 @@ pub const COP_END_HI: u16 = 65535;
 pub const COP_END_LO: u16 = 65534;
 pub const COP_WAIT_MASK: u16 = 65534;
 // DMACON bit 7 turns the copper's own DMA on; bit 15 is the SET/CLR sense.
+pub const DMAF_BLITTER: u16 = 64;
 pub const DMAF_COPPER: u16 = 128;
+pub const DMAF_MASTER: u16 = 512;
 pub const DMAF_SETCLR: u16 = 32768;
 
 // ---- the serial line --------------------------------------------------------

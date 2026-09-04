@@ -42,7 +42,24 @@
 #define SERPER       0x032
 #define SERDATR_TBE  0x2000
 
+/* The SET/CLR pairs. Bit 15 of a write says whether the other bits are SET or
+ * CLEARED in the live register, and the live value is readable only from a
+ * separate port - which is why the library declares each pair atomic and why a
+ * driver that touches one has to seal.
+ *
+ * Modelling these as plain registers would be the quiet kind of wrong: a driver
+ * clearing one bit would appear to zero every other bit, and a gate watching the
+ * read port would confirm it. The whole point of the read port is that it answers
+ * with STATE, not with the last word written. */
+#define DMACONR      0x002
+#define INTENAR      0x01C
+#define INTREQR      0x01E
+#define DMACON       0x096
+#define INTENA       0x09A
+#define INTREQ       0x09C
+
 static unsigned char ram[RAM_SIZE];
+static unsigned short dmacon, intena, intreq;
 static unsigned int  load_base, load_end, bss_base, bss_end;
 static int           halted;
 static unsigned long insns, insn_budget = 200000000UL;
@@ -74,9 +91,20 @@ static int on_illegal(int opcode)
 
 /* ---- the custom chip --------------------------------------------------- */
 
+/* Bit 15 decides the direction; the remaining bits are the mask it applies. */
+static unsigned short setclr(unsigned short cur, unsigned int val)
+{
+    unsigned short bits = (unsigned short)(val & 0x7fffu);
+    if (val & 0x8000u) return (unsigned short)(cur | bits);
+    return (unsigned short)(cur & (unsigned short)~bits);
+}
+
 static unsigned int custom_read16(unsigned int off)
 {
     if (off == SERDATR) return SERDATR_TBE;   /* transmit buffer always empty */
+    if (off == DMACONR) return dmacon;
+    if (off == INTENAR) return intena;
+    if (off == INTREQR) return intreq;
     fault("read from an unmodelled custom register", (unsigned int)CUSTOM_BASE + off);
     return 0;
 }
@@ -85,6 +113,9 @@ static void custom_write16(unsigned int off, unsigned int val)
 {
     if (off == SERDAT) { putchar((int)(val & 0xffu)); return; }
     if (off == SERPER) return;                /* baud divisor: accepted, unmodelled */
+    if (off == DMACON) { dmacon = setclr(dmacon, val); return; }
+    if (off == INTENA) { intena = setclr(intena, val); return; }
+    if (off == INTREQ) { intreq = setclr(intreq, val); return; }
     fault("write to an unmodelled custom register", (unsigned int)CUSTOM_BASE + off);
 }
 
