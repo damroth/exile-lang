@@ -83,9 +83,25 @@
 #define DMAF_MAST    0x0200
 #define COP_STEP_EVERY 4u
 
+/* Paula's interrupt controller, reduced to the one source this increment needs.
+ * INTREQ holds what has happened, INTENA what is allowed through, and bit 14 of
+ * INTENA is the master switch; a source passes only when all three agree. VBLANK
+ * is bit 5 and arrives on the 68000 as level 3, which the CPU takes through the
+ * AUTOVECTOR at 0x6C - no vector fetch from the chip, which is why the stub can
+ * install itself by writing one longword.
+ *
+ * The frame is INJECTED: this machine has no raster, so VBLANK is raised every
+ * VBLANK_EVERY instructions. That is a model of WHEN, not of whether - the gating
+ * above is the real thing, and it is what the floor turns off. */
+#define VBLANK_BIT   0x0020
+#define INT_MASTER   0x4000
+#define VBLANK_LEVEL 3
+#define VBLANK_EVERY 20000u
+
 static unsigned char ram[RAM_SIZE];
 static unsigned short dmacon, intena, intreq;
 static unsigned int   cop1lc, cop_pc, cop_beam;
+static unsigned long  frames;
 static int            cop_running;
 static unsigned int  load_base, load_end, bss_base, bss_end;
 static int           halted;
@@ -119,6 +135,16 @@ static int on_illegal(int opcode)
 /* ---- the custom chip --------------------------------------------------- */
 
 static void custom_write16(unsigned int off, unsigned int val);
+
+/* A source is asserted only when it has HAPPENED, is ENABLED, and the master
+ * switch is on. Re-evaluated after every write to either register, because a
+ * handler acknowledging its own source has to be able to lower the line. */
+static void irq_refresh(void)
+{
+    unsigned int pend = (unsigned int)intreq & (unsigned int)intena;
+    if ((intena & INT_MASTER) != 0 && (pend & VBLANK_BIT) != 0) m68k_set_irq(VBLANK_LEVEL);
+    else m68k_set_irq(0);
+}
 
 /* Bit 15 decides the direction; the remaining bits are the mask it applies. */
 static unsigned short setclr(unsigned short cur, unsigned int val)
@@ -170,8 +196,8 @@ static void custom_write16(unsigned int off, unsigned int val)
     if (off == COP1LCL) { cop1lc = (cop1lc & 0xffff0000u) | (val & 0xffffu); return; }
     if (off == COPJMP1) { cop_pc = cop1lc; cop_beam = 0u; cop_running = 1; return; }
     if (off == COPCON) return;                /* copper danger bit: accepted, unmodelled */
-    if (off == INTENA) { intena = setclr(intena, val); return; }
-    if (off == INTREQ) { intreq = setclr(intreq, val); return; }
+    if (off == INTENA) { intena = setclr(intena, val); irq_refresh(); return; }
+    if (off == INTREQ) { intreq = setclr(intreq, val); irq_refresh(); return; }
     fault("write to an unmodelled custom register", (unsigned int)CUSTOM_BASE + off);
 }
 
@@ -231,6 +257,11 @@ void emu_instr_hook(unsigned int pc)
 {
     if (pc == (unsigned int)HALT_PC) { halted = 1; m68k_end_timeslice(); return; }
     if ((insns % COP_STEP_EVERY) == 0u) copper_step();
+    if ((insns % (unsigned long)VBLANK_EVERY) == 0u) {
+        frames++;
+        intreq = (unsigned short)(intreq | VBLANK_BIT);
+        irq_refresh();
+    }
     if (++insns > insn_budget) {
         fflush(stdout);
         fprintf(stderr, "emu: instruction budget exhausted at PC=0x%06x - the program"

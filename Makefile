@@ -1718,6 +1718,10 @@ verify-emu: $(EXILC_BIN)
 	         tests/kernel/copper_run.exl tests/kernel/copper_run.expected \
 	         tests/kernel/copper_off.exl tests/kernel/copper_off.expected \
 	         tests/kernel/copper_run_stub.c \
+	         tests/kernel/isr_run.exl tests/kernel/isr_run.expected \
+	         tests/kernel/isr_off.exl tests/kernel/isr_off.expected \
+	         tests/kernel/isr_run_stub.c \
+	         tests/kernel/isr_nointena.exl tests/kernel/isr_nointena.expected \
 	         $(BARE_SEAM) runtime/freestanding.c; do \
 	  test -s $$f || { echo "verify-emu: MISSING/EMPTY $$f"; exit 1; }; \
 	done; \
@@ -1761,7 +1765,8 @@ verify-emu: $(EXILC_BIN)
 	  || { echo "verify-emu: the machine faulted without naming the address"; exit 1; }; \
 	ran=0; \
 	for w in isr_vertb:isr_vertb_stub.c bare_seam:bare_seam_stub.c dmacon_setclr:- \
-	         copper_run:copper_run_stub.c copper_off:copper_run_stub.c; do \
+	         copper_run:copper_run_stub.c copper_off:copper_run_stub.c \
+	         isr_run:isr_run_stub.c isr_off:isr_run_stub.c isr_nointena:isr_run_stub.c; do \
 	  n=$${w%%:*}; stub=tests/kernel/$${w##*:}; \
 	  test "$${w##*:}" = "-" && stub=""; \
 	  d=$(EMU_BUILD)/$$n; mkdir -p $$d; \
@@ -1804,8 +1809,19 @@ verify-emu: $(EXILC_BIN)
 	  || { echo "verify-emu: the copper witness saw no change in the register - the CPU never writes that bit, so if it did not appear the coprocessor never executed the list"; exit 1; }; \
 	test "`head -1 $$coff`" = "`tail -1 $$coff`" \
 	  || { echo "verify-emu: the DMA-off twin saw the register CHANGE - something wrote it with the copper's DMA bit clear, so the gate on the fetch is not a gate"; exit 1; }; \
-	test $$ran -ge 5 || { echo "verify-emu: only $$ran witness(es) ran - one witness is the one the tool was developed against, which proves nothing about the tool"; exit 1; }; \
-	echo "verify-emu: clean (the machine stops hard on an illegal opcode and on a read outside its map, both proved by feeding it one; then $$ran freestanding witnesses EXECUTE as 68000 code against a modelled custom chip and print, byte for byte, what their pinned references say - including one that names 0xDFF000 itself and reads its own writes back through a SET/CLR pair, and a copper that EXECUTES a list and moves a register the processor never stores to, beside its DMA-off twin which moves nothing)"
+	irun=$(EMU_BUILD)/isr_run/run.out; ioff=$(EMU_BUILD)/isr_off/run.out; \
+	if cmp -s $$irun $$ioff; then \
+	  echo "verify-emu: the interrupt witness and its uninstalled twin printed the SAME thing - a counter that moves with no vector and a masked processor is not evidence of a dispatch"; exit 1; fi; \
+	test "`head -1 $$irun`" = "0" \
+	  || { echo "verify-emu: the interrupt witness had already counted something before it installed anything"; exit 1; }; \
+	test "`tail -1 $$irun`" -ge 3 \
+	  || { echo "verify-emu: the handler ran fewer than three times - one dispatch could be a stray, three is a source that keeps arriving and an RTE that keeps returning"; exit 1; }; \
+	test "`tail -1 $$ioff`" = "0" \
+	  || { echo "verify-emu: the uninstalled twin counted a dispatch - something reached the handler with no vector written and the mask still at 7"; exit 1; }; \
+	test "`tail -1 $(EMU_BUILD)/isr_nointena/run.out`" = "0" \
+	  || { echo "verify-emu: the witness that installs its vector and drops its mask but never ENABLES the source still counted a dispatch - Paula's enable is not gating anything, and the uninstalled twin cannot see that because its mask stops the interrupt first"; exit 1; }; \
+	test $$ran -ge 8 || { echo "verify-emu: only $$ran witness(es) ran - one witness is the one the tool was developed against, which proves nothing about the tool"; exit 1; }; \
+	echo "verify-emu: clean (the machine stops hard on an illegal opcode and on a read outside its map, both proved by feeding it one; then $$ran freestanding witnesses EXECUTE as 68000 code against a modelled custom chip and print, byte for byte, what their pinned references say - including one that names 0xDFF000 itself and reads its own writes back through a SET/CLR pair, and a copper that EXECUTES a list and moves a register the processor never stores to, beside its DMA-off twin which moves nothing; and an interrupt nobody calls - vector installed, VBLANK injected, the handler counting to three and returning through RTE each time, beside two twins that count nothing - one with no vector and one with the vector but the source never enabled, because those are two gates in series and one twin cannot floor both)"
 
 # ===== memory a device touches: the mark, its refusals, and the load it saves ====
 #

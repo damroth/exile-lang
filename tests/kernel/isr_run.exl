@@ -1,0 +1,54 @@
+// The `rte` that has been in the emission since the ISR round, finally executed.
+//
+// Nothing in this program calls the handler. It writes a vector, unmasks the
+// source, and then does nothing but read a counter in RAM. If that counter moves,
+// something dispatched to the handler, ran it, and returned through the exception
+// frame - and the only thing that can do that is the machine.
+use ndk::*;
+
+mod raw {
+    extern var ISRSTATE: [u8; 8];
+    extern fn isr_install();
+}
+
+// The RAM the handler and the main loop share. It is a ward because that is how
+// this language names memory, and the fact that there are no globals to reach for
+// happens to agree.
+ward Shared {
+    ticks: u16 at 0x00 readwrite;
+}
+
+const VERTB_BIT: u16 = 32;
+const INTF_SETCLR: u16 = 32768;
+const INTF_INTEN: u16 = 16384;
+
+// Called by the vector, never from here. It acknowledges by WRITING the bit to
+// INTREQ with the SET/CLR sense clear, which is how the hardware is told the
+// source has been serviced; without it the level would re-assert forever.
+pub fn on_vertb() {
+    ward s: Shared at &raw::ISRSTATE;
+    s.ticks.write(s.ticks.read() + 1 as u16);
+    control.intreq.write(VERTB_BIT);
+}
+
+fn ticks() -> int {
+    ward s: Shared at &raw::ISRSTATE;
+    return s.ticks.read() as int;
+}
+
+fn main() {
+    // Before anything is installed: nothing has fired.
+    println(ticks());
+    raw::isr_install();
+    // Enable VBLANK and the master switch. INTENA is in an atomic group with its
+    // read port, so the compiler requires the region.
+    seal { control.intena.write(INTF_SETCLR | INTF_INTEN | VERTB_BIT); }
+    // Wait for the counter to reach three. Three rather than one, because one
+    // could be a single stray dispatch; three is a source that keeps arriving and
+    // a handler that keeps returning.
+    let mut i = 0 as u32;
+    while i < 100000 as u32 {
+        if ticks() >= 3 as int { i = 100000 as u32; } else { i = i + 1 as u32; }
+    }
+    println(ticks());
+}
