@@ -3434,6 +3434,22 @@ fn copy_tbounds(a: Allocator, src: *const Vec<TraitBound>) -> Vec<TraitBound> {
 // A method's effective bounds: the impl's bounds first, then the method's own —
 // the reference's `itbounds @ m.tbounds`.  Enforcing only `m.tbounds` would
 // leave `impl<T: Bound> Foo<T>` method bounds unchecked, a fresh half-wired gap.
+// The twin of `splice_tbounds`, and the reference has had it all along: a generic
+// impl's type parameters become the method's OWN, ahead of any the method
+// declares.  The port used to pick one list or the other, which silently dropped
+// the impl's parameters from a method that declared its own - so the method could
+// not be found on a monomorphic receiver at all.
+fn splice_tparams(a: Allocator, itparams: *const Vec<str>, own_t: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let isl = itparams.as_slice();
+    let mut i = 0 as u32;
+    while i < itparams.length() { out.push(isl[i]); i = i + 1 as u32; }
+    let osl = own_t.as_slice();
+    let mut j = 0 as u32;
+    while j < own_t.length() { out.push(osl[j]); j = j + 1 as u32; }
+    return out;
+}
+
 fn splice_tbounds(a: Allocator, itbounds: *const Vec<TraitBound>, own_b: *const Vec<TraitBound>) -> Vec<TraitBound> {
     let mut out: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
     let ni = itbounds.length();
@@ -11497,10 +11513,6 @@ fn snapshot_srcnames(sc: *const TyScope, out: *Vec<StrPair>) {
     return;
 }
 
-fn pick_tparams(xtparams: *const Vec<str>, fallback: *const Vec<str>) -> *const Vec<str> {
-    if xtparams.length() > 0 as u32 { return xtparams; }
-    return fallback;
-}
 
 // True when a body ends in a `return` on every control-flow path that reaches
 // its end.  Only the LAST statement matters for fall-through: an earlier
@@ -11622,9 +11634,11 @@ fn check_returns_ty(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                 idx: *const ProgIdx, tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func, self_ty: Option<*const Typ>, xtparams: *const Vec<str>) -> Tfunc {
     let params = copy_params(a, &f.params);
-    // A generic-struct method skeleton borrows the impl's type parameters
-    // (the method itself declares none); everything else uses its own.
-    let eff_tparams = pick_tparams(xtparams, &f.tparams);
+    // The caller passes the EFFECTIVE list: a free fn its own, a method the
+    // impl's spliced with its own.  There is no picking left to do here - a
+    // second opinion about what a fn is generic over is how the two lists came
+    // to disagree in the first place.
+    let eff_tparams = xtparams;
     let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
@@ -11655,10 +11669,14 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let no_pos: Option<Pos> = Option::None;
     let no_srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
     let path: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    // `tf_func` only feeds the dump's flags + param names; rebuild it with
-    // copied params and empty generic / body fields (the elaborated body
-    // lives in `tf_body`).
-    let tparams: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    // `tf_func` feeds the dump's flags + param names AND the linter's tier slot,
+    // so the generic fields are carried rather than blanked: the reference keeps
+    // the source `func` on the tfunc, and a tier is Full for a generic and Core
+    // for a mono fn - a blank list makes every instance look mono.  The value
+    // copied is the EFFECTIVE list, because a generic-struct method declares none
+    // of its own and borrows the impl's, which is what the reference's own prelude
+    // methods rely on.  The body stays empty; the elaborated one lives in tf_body.
+    let tparams: Vec<str> = copy_strs(a, eff_tparams);
     let tbounds: Vec<TraitBound> = Vec::with_capacity(a, 8 as u32);
     let dummy_body: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
     let tf_func = Func {
@@ -11783,11 +11801,12 @@ fn method_mangle(a: Allocator, ar: *Arena, target: *const Vec<str>, name: str) -
 // Push happens behind a fn boundary so `f` is a parameter (not the address
 // of a local slice element) — same shape the free-fn path relies on to
 // satisfy the escape checker.
-// Override tparams for a method skeleton: the impl's parameters when the
-// method declares none of its own, else empty (use the method's own).
-fn skel_xtparams(f: *const Func, itparams: *const Vec<str>, empty: *const Vec<str>) -> *const Vec<str> {
-    if f.tparams.length() == 0 as u32 { return itparams; }
-    return empty;
+// What a method skeleton is generic over: the impl's parameters followed by its
+// own.  Registration uses the same splice, and the two have to agree - a method
+// registered as generic over `T, U` and emitted as generic over `U` alone is a
+// skeleton nobody can instantiate.
+fn skel_xtparams(a: Allocator, f: *const Func, itparams: *const Vec<str>) -> Vec<str> {
+    return splice_tparams(a, itparams, &f.tparams);
 }
 fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                          idx: *const ProgIdx, modpath: *const Vec<str>, target: *const Vec<str>, itparams: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
@@ -11796,10 +11815,9 @@ fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gens
     // self type); its monomorphic instances carry the real bodies.  The body
     // elaborates under the impl's module path so a bare `Pos` in `mod pos`
     // (the self type, a return type, a struct literal) resolves to `pos::Pos`.
-    let no_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let xtp = skel_xtparams(f, itparams, &no_tp);
+    let xtp = skel_xtparams(a, f, itparams);
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, modpath,
-                            method_mangle(a, ar, target, f.name), f, none_ty(), xtp));
+                            method_mangle(a, ar, target, f.name), f, none_ty(), &xtp));
 }
 
 // Synthesise a trait default method for `target`: like an impl method but
@@ -11829,10 +11847,9 @@ fn elaborate_default_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gen
     // Emitted as a skeleton over the impl's parameters, matching how it was
     // registered. Registration and emission have to agree about what the method
     // is generic over.
-    let no_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    let xtp = skel_xtparams(f, itparams, &no_tp);
+    let xtp = skel_xtparams(a, f, itparams);
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, modpath,
-                            method_mangle(a, ar, target, f.name), f, Option::Some(self_ty), xtp));
+                            method_mangle(a, ar, target, f.name), f, Option::Some(self_ty), &xtp));
 }
 
 fn emit_one_default(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
@@ -12807,13 +12824,19 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     // A method on a generic struct with no parameters of its own carries the
     // impl's type parameters, bound at the call site from the receiver
     // instance.  A method-generic method keeps its own.
-    let struct_gen = itparams.length() > 0 as u32 && f.tparams.length() == 0 as u32;
-    let tparams = if struct_gen { copy_strs(a, itparams) } else { copy_strs(a, &f.tparams) };
+    // `struct_gen` answers ONE question: is this method registered on a generic
+    // struct?  It has to, because the receiver at the call site is a monomorphic
+    // instance (`Box_i32`) while the method is registered under `Box`, and the
+    // lookup matches those two only through this flag.  It used to also require
+    // that the method declare no parameters of its own, which made a method-
+    // generic method on a generic struct unfindable.
+    let struct_gen = itparams.length() > 0 as u32;
+    let tparams = splice_tparams(a, itparams, &f.tparams);
     // A generic-struct method's return mentions the impl tparams (out of scope
     // here); the call site resolves it under the receiver's bindings, so leave
     // it unresolved rather than mangle a bogus `Pair_B_A` instance.
     let self_ty: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, target))));
-    let msc = scope_with_tparams_self(sc, &f.tparams, self_ty);
+    let msc = scope_with_tparams_self(sc, &tparams, self_ty);
     check_method_assoc_positions(a, ar, sc, f);
     let mret = if struct_gen { none_ty() } else { resolve_sig_ret(a, ar, &msc, f.ret_ty, f.pos) };
     out.push(MethodInfo {

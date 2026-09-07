@@ -1,0 +1,15 @@
+// CONTROL for c24, first half: the same method-generic method, on a NON-generic
+// impl. Nothing to splice here, so this shape worked all along - which is what
+// makes it the control that says the defect lives on the crossing and not in
+// method-generic methods as such.
+struct Plain { v: int }
+
+impl Plain {
+    pub fn pair<U>(self, u: U) -> U { return u; }
+}
+
+fn main() {
+    let p: Plain = Plain { v: 3 };
+    println(p.v);
+    println(p.pair(11 as int));
+}

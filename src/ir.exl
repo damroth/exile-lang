@@ -680,6 +680,34 @@ pub fn is_any_ptr(t: *const Typ) -> bool {
         | Typ::TOwnPtr(_i) => true | Typ::TNullPtr => true | _o => false
     };
 }
+// No TVar anywhere in the type.  The reference keeps this in `Ir` because two
+// passes need it and neither owns it: codegen filters generic decls out of the
+// emission, and the linter uses it to tell a monomorphic INSTANCE from the generic
+// skeleton it was made from.  The constructor list mirrors the reference's
+// `type_for_all` exactly, leaves included - anything not named here is a leaf
+// there too, which is a documented limit on both sides rather than an omission on
+// one.
+pub fn is_concrete(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TVar(_n) => false
+        | Typ::TPtr(i) => is_concrete(i)
+        | Typ::TOwnPtr(i) => is_concrete(i)
+        | Typ::TConstPtr(i) => is_concrete(i)
+        | Typ::TTuple(ts) => all_concrete(&ts)
+        | Typ::TArray { elem, size } => is_concrete(elem)
+        | Typ::TFnPtr { params, ret } => all_concrete(&params) && match ret { Option::Some(rt) => is_concrete(rt) | Option::None => true }
+        | Typ::TStructApp { path, args } => all_concrete(&args)
+        | Typ::TEnumApp { path, args } => all_concrete(&args)
+        | Typ::TAssocProj { head, assoc } => is_concrete(head)
+        | _other => true
+    };
+}
+pub fn all_concrete(ts: *const Vec<*const Typ>) -> bool {
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < ts.length() { if !is_concrete(sl[i]) { return false; } i = i + 1 as u32; }
+    return true;
+}
 pub fn coercible_to(from: *const Typ, to: *const Typ) -> bool {
     if typ_eq(from, to) { return true; }
     // A POINTER may be handed to an `addr` slot: that is what the kind was

@@ -295,28 +295,6 @@ pub fn c_decl(a: Allocator, ar: *Arena, t: *const Typ, name: str) -> str {
 // (any field carrying a TVar) are skipped — the monomorphiser emits concrete
 // instances.
 
-// No TVar anywhere in the type — the codegen concreteness filter.
-fn is_concrete(t: *const Typ) -> bool {
-    return match *t {
-        Typ::TVar(_n) => false
-        | Typ::TPtr(i) => is_concrete(i)
-        | Typ::TOwnPtr(i) => is_concrete(i)
-        | Typ::TConstPtr(i) => is_concrete(i)
-        | Typ::TTuple(ts) => all_concrete(&ts)
-        | Typ::TArray { elem, size } => is_concrete(elem)
-        | Typ::TFnPtr { params, ret } => all_concrete(&params) && match ret { Option::Some(rt) => is_concrete(rt) | Option::None => true }
-        | Typ::TStructApp { path, args } => all_concrete(&args)
-        | Typ::TEnumApp { path, args } => all_concrete(&args)
-        | Typ::TAssocProj { head, assoc } => is_concrete(head)
-        | _other => true
-    };
-}
-fn all_concrete(ts: *const Vec<*const Typ>) -> bool {
-    let sl = ts.as_slice();
-    let mut i = 0 as u32;
-    while i < ts.length() { if !is_concrete(sl[i]) { return false; } i = i + 1 as u32; }
-    return true;
-}
 fn fields_concrete(fs: *const Vec<FieldTy>) -> bool {
     let sl = fs.as_slice();
     let mut i = 0 as u32;

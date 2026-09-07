@@ -1,0 +1,50 @@
+// Self-host port of lib/tier.ml - the three-level scale used in two related
+// contexts.
+//
+// As a TIER it classifies one item: mono fns and structs land at Core, generic fns
+// at Full, because each instantiation copies the body into the binary. `@tier(...)`
+// overrides when the author knows the cost is acceptable.
+//
+// As a PROFILE it is the budget the whole program is compiled under, orthogonal to
+// the target. An item whose tier EXCEEDS the profile is out of budget, and the
+// linter says so.
+pub enum Tier {
+    Core
+    | Standard
+    | Full
+}
+
+pub fn tier_to_string(t: Tier) -> str {
+    return match t {
+        Tier::Core => "core"
+        | Tier::Standard => "standard"
+        | Tier::Full => "full"
+    };
+}
+
+pub fn tier_of_string(s: str) -> Option<Tier> {
+    let none: Option<Tier> = Option::None;
+    if str::eq(s, "core") { return Option::Some(Tier::Core); }
+    if str::eq(s, "standard") { return Option::Some(Tier::Standard); }
+    if str::eq(s, "full") { return Option::Some(Tier::Full); }
+    return none;
+}
+
+// Names the CLI accepts, asked as a question so a caller can reject before
+// binding - the same three names `tier_of_string` knows, kept in one place.
+pub fn tier_name_valid(s: str) -> bool {
+    return str::eq(s, "core") || str::eq(s, "standard") || str::eq(s, "full");
+}
+
+// Ordinal: Core < Standard < Full.
+pub fn tier_to_int(t: Tier) -> int {
+    return match t {
+        Tier::Core => 0 as int
+        | Tier::Standard => 1 as int
+        | Tier::Full => 2 as int
+    };
+}
+
+pub fn tier_exceeds(profile: Tier, item_tier: Tier) -> bool {
+    return tier_to_int(item_tier) > tier_to_int(profile);
+}

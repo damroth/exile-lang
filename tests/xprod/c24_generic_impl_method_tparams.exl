@@ -1,0 +1,20 @@
+// A method that declares its OWN type parameter inside a GENERIC impl. The two
+// lists have to be spliced - the impl's first, then the method's - because the
+// method is generic over both, and the receiver at the call site is a monomorphic
+// instance (`Box_i32`) while the method is registered under `Box`.
+//
+// Picking one list instead of splicing them drops the impl's parameter, and the
+// method then cannot be found on its own receiver at all. The port refused this
+// program; the reference accepts it.
+struct Box<T> { v: T }
+
+impl<T> Box<T> {
+    pub fn get(self) -> T { return self.v; }
+    pub fn pair<U>(self, u: U) -> U { return u; }
+}
+
+fn main() {
+    let b: Box<int> = Box { v: 7 };
+    println(b.get());
+    println(b.pair(9 as int));
+}

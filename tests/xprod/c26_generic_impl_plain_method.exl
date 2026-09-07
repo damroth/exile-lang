@@ -1,0 +1,14 @@
+// CONTROL for c24, second half: a GENERIC impl whose method declares no
+// parameters of its own. This is the shape the port handled by borrowing the
+// impl's list wholesale, so it too worked all along. Together with c25 it pins
+// the defect to the crossing of the two, rather than to either side.
+struct Cell<T> { v: T }
+
+impl<T> Cell<T> {
+    pub fn get(self) -> T { return self.v; }
+}
+
+fn main() {
+    let c: Cell<int> = Cell { v: 5 };
+    println(c.get());
+}

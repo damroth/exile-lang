@@ -8,13 +8,14 @@
 //   tier @ unused_let @ unused_param @ unused_fn @ must_use @ with_capacity
 // The order is mirrored slot by slot, including the must-use slot's per-function
 // reversal (see there) — a lint gate diffs the whole stderr, not its first line.
-// The tier slot is provably EMPTY here: `Tier.exceeds` is `item_tier > profile`
-// and the highest tier is Full, so nothing exceeds a Full profile — and exilc
-// has no `--profile` flag, so it always compiles at Full.  The slot is kept in
-// the concatenation (and named) so that adding `--profile` later has an obvious
-// place to fill rather than a silent gap.
+// The tier slot was empty here for as long as exilc had no `--profile` flag: with
+// the profile pinned at Full nothing can exceed it, so the slot was kept named
+// rather than filled.  The flag exists now, so the slot does too - and it is the
+// one category whose absence was invisible, because until this round no harness
+// compared warnings at all.
 
 use pos::*;
+use tier::*;
 use ast::*;
 use ir::*;
 use typecheck::*;
@@ -499,43 +500,105 @@ fn must_use_warnings(a: Allocator, ar: *Arena, tp: *const Tprogram, out: *Vec<LW
 // reference skips generic fns via `tparams <> []`, which for it covers both the
 // skeleton and its instances; the port's method Tfuncs do not carry the impl's
 // tparams, so the observable equivalent is "the signature is not yet concrete".
-fn ty_mentions_tvar(t: *const Typ) -> bool {
-    return match *t {
-        Typ::TVar(_n) => true
-        | Typ::TAssocProj { head, assoc } => ty_mentions_tvar(head)
-        | Typ::TPtr(i) => ty_mentions_tvar(i)
-        | Typ::TOwnPtr(i) => ty_mentions_tvar(i)
-        | Typ::TConstPtr(i) => ty_mentions_tvar(i)
-        | Typ::TArray { elem, size } => ty_mentions_tvar(elem)
-        | Typ::TStructApp { path, args } => tys_mention_tvar(&args)
-        | Typ::TEnumApp { path, args } => tys_mention_tvar(&args)
-        | Typ::TTuple(es) => tys_mention_tvar(&es)
-        | _o => false
+
+// What a fn is generic over now comes from the field that records it.  The
+// predicate used to read `tparams > 0 || is_skeleton(tf)`, a compensation for
+// `tf_func.tparams` being blanked on every record - and the skeleton half was a
+// hand-written type walk that, unlike the reference's, did not descend into a
+// function-pointer type.  Both the compensation and its walk are gone: a patched
+// predicate left standing beside a field that no longer lies is a dormant lie.
+fn is_generic(tf: *const Tfunc) -> bool {
+    return tf.tf_func.tparams.length() > 0 as u32;
+}
+
+// Effective tier of a fn: an explicit `@tier(...)` wins; otherwise a generic
+// defaults to Full (each instantiation copies the body) and a mono fn to Core.
+fn fn_effective_tier(f: *const Func) -> Tier {
+    return match f.tier_hint {
+        Option::Some(name) => match tier_of_string(name) {
+            // The parser validated the name; reaching here is a compiler bug, not
+            // a user error, so say so rather than defaulting silently.
+            Option::Some(t) => t
+            | Option::None => { ice("internal: invalid tier_hint"); Tier::Full }
+        }
+        | Option::None => { if f.tparams.length() > 0 as u32 { Tier::Full } else { Tier::Core } }
     };
 }
-fn tys_mention_tvar(ts: *const Vec<*const Typ>) -> bool {
-    let sl = ts.as_slice();
+
+// True when every type in the resolved signature is concrete - i.e. this is a
+// monomorphic INSTANCE the monomorphiser produced, not the generic skeleton.
+fn is_concrete_instance(tf: *const Tfunc) -> bool {
+    if !all_concrete(&tf.tf_param_tys) { return false; }
+    return match tf.tf_ret_ty {
+        Option::Some(t) => is_concrete(t)
+        | Option::None => true
+    };
+}
+
+// The position a warning is filed under: the call site when the monomorphiser
+// recorded one, else the declaration.  Returned by value rather than bound to a
+// local, because a `Pos` carries a `str` and the escape analysis is right to stop
+// a local one from being stored in a caller's container.
+fn warn_pos_of(tf: *const Tfunc) -> Pos {
+    return match tf.tf_origin_pos {
+        Option::Some(p) => p
+        | Option::None => tf.tf_func.pos
+    };
+}
+
+fn pos_eq(a: Pos, b: Pos) -> bool {
+    return a.line == b.line && a.col == b.col && str::eq(a.file, b.file);
+}
+
+fn pos_seen(seen: *const Vec<Pos>, p: Pos) -> bool {
+    let sl = seen.as_slice();
     let mut i = 0 as u32;
-    while i < ts.length() { if ty_mentions_tvar(sl[i]) { return true; } i = i + 1 as u32; }
+    while i < seen.length() { if pos_eq(sl[i], p) { return true; } i = i + 1 as u32; }
     return false;
 }
-fn is_skeleton(tf: *const Tfunc) -> bool {
-    if tys_mention_tvar(&tf.tf_param_tys) { return true; }
-    return match tf.tf_ret_ty {
-        Option::Some(rt) => ty_mentions_tvar(rt)
-        | Option::None => false
-    };
+
+// Slot 1 - one warning per unique CALL SITE, not per instance.  The reference
+// dedupes on the origin position because that points at the `.alloc()` / `id(42)`
+// the reader can actually go and look at, rather than at the declaration they may
+// not own.
+fn tier_warn_for(a: Allocator, ar: *Arena, profile: Tier, tf: *const Tfunc,
+                 seen: *Vec<Pos>, out: *Vec<LWarn>) {
+    if tf.tf_func.tparams.length() == 0 as u32 { return; }
+    if !is_concrete_instance(tf) { return; }
+    let item_tier = fn_effective_tier(&tf.tf_func);
+    if !tier_exceeds(profile, item_tier) { return; }
+    if pos_seen(seen, warn_pos_of(tf)) { return; }
+    seen.push(warn_pos_of(tf));
+    let mut sb = StringBuilder::with_capacity(a, 192 as u32);
+    sb.push_str("generic fn '"); sb.push_str(tf.tf_func.name);
+    sb.push_str("' is tier="); sb.push_str(tier_to_string(item_tier));
+    sb.push_str(" but compiled under --profile="); sb.push_str(tier_to_string(profile));
+    sb.push_str("; each instantiation adds a body copy (use --profile=");
+    sb.push_str(tier_to_string(item_tier));
+    sb.push_str(" to silence, or refactor to a mono alternative)");
+    out.push(LWarn { lw_pos: warn_pos_of(tf), lw_msg: str::from_slice(ar, sb.as_slice()) });
+    return;
 }
 
-fn is_generic(tf: *const Tfunc) -> bool {
-    return tf.tf_func.tparams.length() > 0 as u32 || is_skeleton(tf);
+// Slot 1 - one warning per unique CALL SITE, not per instance.  The reference
+// dedupes on the origin position because that points at the `.alloc()` / `id(42)`
+// a reader can go and look at, rather than at a declaration they may not own.
+fn tier_warns_for(a: Allocator, ar: *Arena, profile: Tier, tp: *const Tprogram, out: *Vec<LWarn>) {
+    let mut seen: Vec<Pos> = Vec::with_capacity(a, 16 as u32);
+    let fl = tp.tp_funcs.as_slice();
+    let mut i = 0 as u32;
+    while i < tp.tp_funcs.length() {
+        tier_warn_for(a, ar, profile, &fl[i], &seen, out);
+        i = i + 1 as u32;
+    }
+    return;
 }
 
-pub fn collect(a: Allocator, ar: *Arena, tp: *const Tprogram) -> Vec<LWarn> {
+pub fn collect(a: Allocator, ar: *Arena, profile: Tier, tp: *const Tprogram) -> Vec<LWarn> {
     let mut out: Vec<LWarn> = Vec::with_capacity(a, 16 as u32);
     let fl = tp.tp_funcs.as_slice();
-    // Slot 1 — tier warnings.  Provably empty: `exceeds` is item_tier > profile
-    // and exilc always compiles at Full, the maximum.  Kept as a named slot.
+    // Slot 1 - tier warnings.
+    tier_warns_for(a, ar, profile, tp, &out);
 
     // Slot 2 — unused lets.  Walk the source-level fn; skip the prelude and
     // generic instances (the skeleton carries the original names / positions).
@@ -607,8 +670,8 @@ fn referenced_outside(a: Allocator, tp: *const Tprogram, tf: *const Tfunc) -> bo
 //
 // `<file>:<line>:<col>: warning: <msg>` on stderr, one per line.  Warnings never
 // change the exit status.
-pub fn lint(a: Allocator, ar: *Arena, tp: *const Tprogram) {
-    let ws = collect(a, ar, tp);
+pub fn lint(a: Allocator, ar: *Arena, profile: Tier, tp: *const Tprogram) {
+    let ws = collect(a, ar, profile, tp);
     let sl = ws.as_slice();
     let mut i = 0 as u32;
     while i < ws.length() {

@@ -2761,6 +2761,9 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c19_callee_tparam_shadows_caller \
                   c20_own_param_in_generic_struct c21_generic_owner_nested_in_owner \
                   c22_capture_untyped_let c23_marker_bound_satisfied \
+                  c24_generic_impl_method_tparams \
+                  c25_mono_impl_method_tparams \
+                  c26_generic_impl_plain_method \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \

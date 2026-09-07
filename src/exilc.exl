@@ -27,6 +27,7 @@ use move::*;
 use escape::*;
 use drop::*;
 use lint::*;
+use tier::*;
 use codegen::*;
 use dump_token::*;
 use dump_ast::*;
@@ -92,12 +93,23 @@ struct CliArgs {
     ca_freestanding: bool,
     ca_after_drop: bool,
     ca_target: int,
+    // None means "the default for this target" - the reference picks full for c
+    // and host (no platform budget) and standard for amiga (a few-MB envelope).
+    ca_profile: Option<Tier>,
     ca_show_cc: bool,
     ca_input: str,
     ca_output: Option<str>,
     ca_c_out: Option<str>,
     ca_links: Vec<str>,
     ca_ok: bool,
+}
+
+// The active profile: an explicit `--profile` wins, else the target's default.
+fn profile_of(ca: *const CliArgs) -> Tier {
+    return match ca.ca_profile {
+        Option::Some(p) => p
+        | Option::None => { if ca.ca_target == 2 as int { Tier::Standard } else { Tier::Full } }
+    };
 }
 
 fn arg_str(i: c_int) -> str {
@@ -108,9 +120,10 @@ fn arg_str(i: c_int) -> str {
 // second input file is an error the same way the reference reports it.
 fn parse_cli(a: Allocator) -> CliArgs {
     let none_s: Option<str> = Option::None;
+    let none_p: Option<Tier> = Option::None;
     let links0: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut ca = CliArgs { ca_emit: 0 as int, ca_user_only: false, ca_freestanding: false, ca_after_drop: false,
-                           ca_target: 0 as int, ca_show_cc: false, ca_input: "", ca_output: none_s,
+                           ca_target: 0 as int, ca_profile: none_p, ca_show_cc: false, ca_input: "", ca_output: none_s,
                            ca_c_out: none_s, ca_links: links0, ca_ok: true };
     let argc = sys::sys_argc();
     let mut i = 1 as c_int;
@@ -124,6 +137,13 @@ fn parse_cli(a: Allocator) -> CliArgs {
             else if str::eq(t, "host") { ca.ca_target = 1 as int; }
             else if str::eq(t, "amiga") { ca.ca_target = 2 as int; }
             else { err_line("unknown target (expected: c, host, amiga)"); ca.ca_ok = false; return ca; }
+        }
+        else if str::eq(arg, "--profile") {
+            i = i + 1 as c_int;
+            if i >= argc { err_line("--profile needs an argument"); ca.ca_ok = false; return ca; }
+            let pname = arg_str(i);
+            if !tier_name_valid(pname) { err_line("unknown profile (expected: core, standard, full)"); ca.ca_ok = false; return ca; }
+            ca.ca_profile = tier_of_string(pname);
         }
         else if str::eq(arg, "-o") {
             i = i + 1 as c_int;
@@ -154,7 +174,7 @@ fn parse_cli(a: Allocator) -> CliArgs {
         else { unknown_flag(arg); ca.ca_ok = false; return ca; }
         i = i + 1 as c_int;
     }
-    if str::eq(ca.ca_input, "") { err_line("usage: exilc [--target c|host|amiga] [--emit-tokens|--emit-ast|--emit-typed-ir [--user-only] [--after-drop]] [-o out] [--c-out c] [--link stub]... [--freestanding] [--show-cc-warnings] <file.exl>"); ca.ca_ok = false; }
+    if str::eq(ca.ca_input, "") { err_line("usage: exilc [--target c|host|amiga] [--profile core|standard|full] [--emit-tokens|--emit-ast|--emit-typed-ir [--user-only] [--after-drop]] [-o out] [--c-out c] [--link stub]... [--freestanding] [--show-cc-warnings] <file.exl>"); ca.ca_ok = false; }
     return ca;
 }
 
@@ -323,7 +343,7 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
             check_move(a, ar, &tprog);
             check_escape(a, ar, &tprog);
             drop_report(a, drop_insert(a, ar, &tprog));
-            lint(a, ar, &tprog);
+            lint(a, ar, profile_of(ca), &tprog);
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             let mut fserr: Vec<pos::Pos> = Vec::with_capacity(a, 8 as u32);
             gen_program(a, ar, &tprog, ca.ca_freestanding, &fserr, &out);
@@ -342,7 +362,7 @@ fn run_codegen_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
 fn emit_output(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
     if ca.ca_target == 1 as int { build_host(a, ar, ca, cpath); return; }
     if ca.ca_target == 2 as int { build_amiga(a, ar, ca, cpath); return; }
-    report_wrote(a, cpath);
+    report_wrote(a, cpath, profile_of(ca));
     return;
 }
 
@@ -375,7 +395,7 @@ fn build_host(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
     // cc failed — report and exit non-zero, like the oracle's `exit 1`.
     // sys_exit terminates, so report_built runs only on success.
     if rc != 0 as c_int { err_line("command failed: cc"); sys::sys_exit(1 as c_int); }
-    report_built(a, out);
+    report_built(a, out, profile_of(ca));
     return;
 }
 
@@ -449,7 +469,7 @@ fn build_amiga(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
     let sl = argv.as_slice();
     let rc: c_int = sys::sys_spawn(&sl[0] as *const str, argv.length() as c_int);
     if rc != 0 as c_int { err_line("command failed: m68k-amigaos-gcc"); sys::sys_exit(1 as c_int); }
-    report_amiga(a, out);
+    report_amiga(a, out, profile_of(ca));
     return;
 }
 
@@ -473,25 +493,27 @@ fn check_escape(a: Allocator, ar: *Arena, tprog: *Tprogram) {
     return;
 }
 
-fn report_wrote(a: Allocator, cpath: str) {
+fn report_wrote(a: Allocator, cpath: str, profile: Tier) {
     let mut sb = StringBuilder::with_capacity(a, 128 as u32);
-    sb.push_str("wrote "); sb.push_str(cpath); sb.push_str(" [profile=full, target=c]\n");
+    sb.push_str("wrote "); sb.push_str(cpath);
+    sb.push_str(" [profile="); sb.push_str(tier_to_string(profile)); sb.push_str(", target=c]\n");
     flush_stdout(&sb);
     return;
 }
-fn report_built(a: Allocator, out: str) {
+fn report_built(a: Allocator, out: str, profile: Tier) {
     let mut sb = StringBuilder::with_capacity(a, 128 as u32);
-    sb.push_str("built host binary: "); sb.push_str(out); sb.push_str(" [profile=full, target=host]\n");
+    sb.push_str("built host binary: "); sb.push_str(out);
+    sb.push_str(" [profile="); sb.push_str(tier_to_string(profile)); sb.push_str(", target=host]\n");
     flush_stdout(&sb);
     return;
 }
-// The amiga default profile is `standard` (the oracle's per-target default) —
-// spelled here as a fixed string because this round adds no `--profile` parsing
-// and no lint tiers; profile affects only which lint warnings fire, never the
-// emitted C.  The message is byte-exact with the oracle's build line.
-fn report_amiga(a: Allocator, out: str) {
+// Profile affects only which lint warnings fire, never the emitted C - so this
+// line reports the ACTIVE profile rather than the target's default, which is what
+// `--profile` on an amiga build makes visible.
+fn report_amiga(a: Allocator, out: str, profile: Tier) {
     let mut sb = StringBuilder::with_capacity(a, 128 as u32);
-    sb.push_str("built amiga binary: "); sb.push_str(out); sb.push_str(" [profile=standard, target=amiga]\n");
+    sb.push_str("built amiga binary: "); sb.push_str(out);
+    sb.push_str(" [profile="); sb.push_str(tier_to_string(profile)); sb.push_str(", target=amiga]\n");
     flush_stdout(&sb);
     return;
 }
