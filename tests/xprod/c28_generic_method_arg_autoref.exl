@@ -1,0 +1,18 @@
+// The auto-ref on a generic method whose slot is `*const T`: it only becomes a
+// pointer-to-int once the receiver's `T` is bound, so the rule has to run under the
+// scope where that binding exists.
+//
+// `elab_method_call` sends a generic receiver away before it reaches the plain
+// method path, so a rule installed only there covers neither generic entry. One
+// rule, three entries.
+struct Box<T> { v: T }
+
+impl<T> Box<T> {
+    pub fn peek(*const self, o: *const T) -> int { return 1; }
+}
+
+fn main() {
+    let b: Box<int> = Box { v: 1 };
+    let x: int = 7;
+    println(b.peek(x) + 41);
+}

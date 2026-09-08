@@ -1,0 +1,15 @@
+// The twin of c28, and the reason it is a separate file: this slot is `*const u16`,
+// a type that needs no substitution at all. Before the rule reached the generic
+// paths BOTH were refused - which is what says the cause was the PATH and not the
+// missing binding of `T`.
+struct Cell<T> { v: T }
+
+impl<T> Cell<T> {
+    pub fn mono(*const self, o: *const u16) -> int { return *o as int; }
+}
+
+fn main() {
+    let c: Cell<int> = Cell { v: 1 };
+    let y: u16 = 42 as u16;
+    println(c.mono(y));
+}

@@ -2808,6 +2808,31 @@ fn check_gen_call_arity(a: Allocator, ar: *Arena, sc: *const TyScope, aname: str
     check_arity(a, ar, sc, "", aname, total, na + skip, false, p);
     return;
 }
+// The same auto-ref, on the two GENERIC method paths.  One rule, three entries:
+// `elab_method_call` bounces a generic receiver away before it reaches the plain
+// path, so a rule installed only there covers neither.
+//
+// It runs AFTER the bindings are inferred - inference reads the raw argument types
+// and would be misled by an inserted `&` - and BEFORE the check, on the slot type
+// resolved under the scope where the receiver's type parameters are bound.  That
+// scope is why the tvar guard does not fire: by here `T` is an `i32`, not a `T`.
+fn autoref_gen_args(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *const Vec<*const TypeAnn>,
+                    skip: u32, targs: *const Vec<*const Texpr>, p: Pos) -> Vec<*const Texpr> {
+    let mut out: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    let ts = targs.as_slice();
+    let asl = anns.as_slice();
+    let mut i = 0 as u32;
+    while i < targs.length() {
+        if i + skip < anns.length() {
+            out.push(autoref_into(ar, resolve_sig_ty(a, ar, cscope, asl[i + skip], p), ts[i]));
+        } else {
+            out.push(ts[i]);
+        }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
 fn check_gen_call_args(a: Allocator, ar: *Arena, sc: *const TyScope, cscope: *const TyScope,
                        name: str, anns: *const Vec<*const TypeAnn>, skip: u32,
                        targs: *const Vec<*const Texpr>, raw: *const Vec<*const Expr>, p: Pos) {
@@ -4342,9 +4367,10 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // had no conflict check at all, so the order only became visible once the
     // arguments were unified against a real parameter list.
     check_bind_conflicts(a, ar, sc, &binds, p);
+    let rargs = autoref_gen_args(a, ar, &cscope, &sl[midx].mi_params, 1 as u32, &targs, p);
     check_gen_call_args(a, ar, sc, &cscope,
                         method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
-                        &sl[midx].mi_params, 1 as u32, &targs, args, p);
+                        &sl[midx].mi_params, 1 as u32, &rargs, args, p);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
@@ -4364,7 +4390,7 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
-    push_texprs(&targs, &cargs);
+    push_texprs(&rargs, &cargs);
     return te_node(ar, TexprNode::TCall { mangled: inst, args: cargs }, ret_or_void(ar, cret), p);
 }
 
@@ -4396,9 +4422,10 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     check_bound_conformance(a, ar, sc, &sl[midx].mi_tbounds, &binds, sl[midx].mi_name, p);
     let iscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    let rargs = autoref_gen_args(a, ar, &iscope, &sl[midx].mi_params, 1 as u32, &targs, p);
     check_gen_call_args(a, ar, sc, &iscope,
                         method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
-                        &sl[midx].mi_params, 1 as u32, &targs, args, p);
+                        &sl[midx].mi_params, 1 as u32, &rargs, args, p);
     let oargs = dedup_bind_tys(a, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     // A prelude method's instance body is injected — register its type for the
@@ -4413,7 +4440,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
-    push_texprs(&targs, &cargs);
+    push_texprs(&rargs, &cargs);
     return te_node(ar, TexprNode::TCall { mangled: inst, args: cargs }, ret_or_void(ar, iret), p);
 }
 

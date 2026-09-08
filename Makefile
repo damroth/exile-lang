@@ -2828,6 +2828,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c25_mono_impl_method_tparams \
                   c26_generic_impl_plain_method \
                   c27_method_arg_autoref \
+                  c28_generic_method_arg_autoref \
+                  c29_generic_impl_mono_slot_autoref \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \
