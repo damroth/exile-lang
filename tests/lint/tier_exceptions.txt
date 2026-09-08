@@ -1,0 +1,11 @@
+# Warnings the reference emits and this port deliberately does not, one per line
+# as `<example>:<fn>`.  Each is a body copy that is not in the emitted C: a
+# synthesised `Iterator` default is instantiated, counted by the linter, and then
+# removed by codegen's DCE, which runs later.
+#
+# This file is not a mute button.  The gate that reads it also checks, for every
+# row, that the reference's OWN emission contains no instance of the named fn - so
+# the moment one of these costs a body copy after all, the row stops being true and
+# the gate says so.
+assoc_projection:with_capacity
+for_iterator:with_capacity

@@ -319,7 +319,7 @@ fn copy_strs_d(a: Allocator, src: *const Vec<str>) -> Vec<str> {
     while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
     return out;
 }
-fn glue_pos() -> Pos { return Pos { line: 0 as int, col: 0 as int, file: "<prelude>" }; }
+fn glue_pos() -> Pos { return pos::Pos::prelude(); }
 
 // A Typ -> TypeAnn for glue-fn parameters (mirrors the oracle's ann_of): only
 // the shapes glue params ever take (struct / the three pointer flavours).

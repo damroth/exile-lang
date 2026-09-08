@@ -3266,11 +3266,21 @@ fn infer_call_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *con
 }
 
 // Queue a generic-fn instance for the post-pass drain, once per mangled name.
+// The position an instance REMEMBERS being demanded from.  A call site inside the
+// prelude collapses to the prelude sentinel, because the prelude has one identity
+// and not a line number a reader could visit - the reference's prelude is built
+// with a single position for every node, and this is the one place where a parsed
+// position becomes a recorded origin.
+fn origin_of(p: Pos) -> Pos {
+    if str::eq(p.file, "<prelude>") { return pos::Pos::prelude(); }
+    return p;
+}
+
 fn queue_gen_instance(a: Allocator, sc: *const TyScope, modpath: *const Vec<str>, gi: u32, binds: *const Vec<TVarBind>, mangled: str, origin: Pos) {
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
     let no_target: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    sc.sc_genjobs.push(GenJob { gj_modpath: copy_strs(a, modpath), gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: no_target, gj_prelude: false, gj_origin: origin });
+    sc.sc_genjobs.push(GenJob { gj_modpath: copy_strs(a, modpath), gj_idx: gi, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: no_target, gj_prelude: false, gj_origin: origin_of(origin) });
 }
 
 // Queue a prelude generic method instance (Vec/VecIter/adapter): its source
@@ -3291,7 +3301,7 @@ fn queue_prelude_gen(a: Allocator, sc: *const TyScope, ty: str, nm: str, binds: 
     let mut i = 0 as u32;
     while i < self_inst.length() { tgt.push(isl[i]); i = i + 1 as u32; }
     let no_modpath: Vec<str> = empty_strs(a);
-    sc.sc_genjobs.push(GenJob { gj_modpath: no_modpath, gj_idx: 0 as u32, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: tgt, gj_prelude: true, gj_origin: origin });
+    sc.sc_genjobs.push(GenJob { gj_modpath: no_modpath, gj_idx: 0 as u32, gj_meth: 0 as int - 1 as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: tgt, gj_prelude: true, gj_origin: origin_of(origin) });
 }
 
 // Queue a generic-method instance: the impl (or trait, for a generic default)
@@ -3301,7 +3311,7 @@ fn queue_method_instance(a: Allocator, sc: *const TyScope, modpath: *const Vec<s
                          binds: *const Vec<TVarBind>, mangled: str, target: *const Vec<str>, origin: Pos) {
     if name_in(sc.sc_geninsts, mangled) { return; }
     sc.sc_geninsts.push(mangled);
-    sc.sc_genjobs.push(GenJob { gj_modpath: copy_strs(a, modpath), gj_idx: impl_idx, gj_meth: meth_idx as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: copy_strs(a, target), gj_prelude: false, gj_origin: origin });
+    sc.sc_genjobs.push(GenJob { gj_modpath: copy_strs(a, modpath), gj_idx: impl_idx, gj_meth: meth_idx as int, gj_binds: copy_tvarbinds(a, binds), gj_mangled: mangled, gj_target: copy_strs(a, target), gj_prelude: false, gj_origin: origin_of(origin) });
 }
 
 // `mod::fn(args)` — a module-qualified call resolves to the `mod__fn` C
@@ -8550,7 +8560,7 @@ fn elab_lambda(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
 // reads the original arena `FieldDef` params + body expr, builds only locals
 // that the produced `Tfunc` copies).  Mirrors `elaborate_fn` for a plain,
 // non-generic, body-bearing fn.
-fn prelude_file_pos() -> Pos { return Pos { line: 0 as int, col: 0 as int, file: "<prelude>" }; }
+fn prelude_file_pos() -> Pos { return pos::Pos::prelude(); }
 fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                     mangled: str, name: str, params_fd: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body_expr: *const Expr, funcs: *Vec<Tfunc>, is_pub: bool, fpos: Pos) {
     let lparams = lam_to_params(a, params_fd);
@@ -9324,7 +9334,11 @@ fn elab_for_iter(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     // `__it.next()`
     let recv = ast_node(ar, Expr::Var(itname, zero_pos()));
     let no_args: Vec<*const Expr> = Vec::with_capacity(a, 8 as u32);
-    let nextcall = ast_node(ar, Expr::MethodCall { receiver: recv, name: "next", args: no_args, pos: zero_pos() });
+    // The synthesized `.next()` carries the LOOP's position, not a zero one: it
+    // is the call the loop actually makes, and it is where a reader would look.
+    // With a zero position every `for` in a file collapsed to one entry in the
+    // linter's per-call-site dedupe, and the entry named no file at all.
+    let nextcall = ast_node(ar, Expr::MethodCall { receiver: recv, name: "next", args: no_args, pos: fpos });
     // `Some(__fv) => { <body, x renamed to __fv> }`
     let rbody = subst_body(a, ar, iter_var, fv, body);
     let mut some_binds: Vec<Pattern> = Vec::with_capacity(a, 8 as u32);
@@ -14902,6 +14916,27 @@ fn descend_module(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
                              impl_idx, meth_idx, tbinds, mangled, target, origin, funcs);
     return true;
 }
+// What the registry says a method on `target` is generic over.  Empty when it
+// knows no such method - the same answer the caller had before, but reached by
+// asking rather than assuming.
+fn default_itparams(a: Allocator, idx: *const ProgIdx, target: *const Vec<str>, name: str) -> Vec<str> {
+    let ms = idx.pi_methods.as_slice();
+    let mut i = 0 as u32;
+    while i < idx.pi_methods.length() {
+        // The target here is the MONOMORPHIC instance (`VecIter_i32`) while the
+        // registry keys on the generic path (`VecIter`) - the same mismatch the
+        // method lookup solves with `inst_of_base`, reused rather than restated.
+        if str::eq(ms[i].mi_name, name)
+           && path_init_eq(&ms[i].mi_path, target)
+           && inst_of_base(path_last(target), path_last(&ms[i].mi_path)) {
+            return copy_strs(a, &ms[i].mi_tparams);
+        }
+        i = i + 1 as u32;
+    }
+    let none: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    return none;
+}
+
 fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                              items: *const Vec<Item>, modpath: *const Vec<str>, impl_idx: u32, meth_idx: u32,
                              tbinds: *const Vec<TVarBind>, mangled: str, target: *const Vec<str>, origin: Option<Pos>, funcs: *Vec<Tfunc>) {
@@ -14910,10 +14945,15 @@ fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
         Item::Impl(ib) => { elaborate_impl_method_at(a, ar, g, gensym, idx, &ib.iitems, meth_idx, tbinds, modpath, mangled, &ib.itparams, none_ty(), origin, funcs); }
         | Item::Trait(td) => {
             let sty = ty_node(ar, Typ::TStruct(copy_strs(a, target)));
-            // A trait declares no type parameters of its own, so a default
-            // method instance is generic over exactly what the method declares.
-            let no_itp: Vec<str> = Vec::with_capacity(a, 8 as u32);
-            elaborate_impl_method_at(a, ar, g, gensym, idx, &td.trmethods, meth_idx, tbinds, modpath, mangled, &no_itp, Option::Some(sty), origin, funcs);
+            // A trait default materialised for an implementor is generic over what
+            // the IMPL declares, not over what the trait does - a trait declares
+            // none.  The registry already answers that question for every method it
+            // knows, so this asks it rather than growing a fourth opinion: the
+            // default path was the one caller that never went through the splice,
+            // and it stayed invisible until the residue was seven warnings.
+            let sl2 = td.trmethods.as_slice();
+            let ditp = default_itparams(a, idx, target, sl2[meth_idx].name);
+            elaborate_impl_method_at(a, ar, g, gensym, idx, &td.trmethods, meth_idx, tbinds, modpath, mangled, &ditp, Option::Some(sty), origin, funcs);
         }
         // `mod str` free function: elaborate as a plain free fn under the module
         // path so its body's sibling `str::*` calls resolve, with the mangled
@@ -17211,7 +17251,7 @@ fn sys_extern_tfunc(a: Allocator, ar: *Arena, name: str, pnames: Vec<str>, ptys:
     let f = Func { name: name, c_name: name, tparams: tp0, tbounds: tb0, params: params,
                    ret_ty: no_ann, body: bd0, is_pub: true, is_extern: true, is_variadic: false,
                    amiga_lib: no_str, tier_hint: no_str, must_use: false, escapes_hatch: false,
-                   pos: Pos { line: 0 as int, col: 0 as int, file: "<prelude>" } };
+                   pos: pos::Pos::prelude() };
     let mut path: Vec<str> = Vec::with_capacity(a, 8 as u32);
     path.push(name);
     let body0: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
@@ -18058,7 +18098,7 @@ fn none_err() -> Option<*const CompileError> {
 fn at_prelude_pos(a: Allocator, ar: *Arena, e: *const CompileError) -> *const CompileError {
     let mut sb = StringBuilder::with_capacity(a, 96 as u32);
     sb.push_str(e.msg);
-    return mk_err(ar, Pos { line: 1 as int, col: 1 as int, file: "<prelude>" }, str::from_slice(ar, sb.as_slice()));
+    return mk_err(ar, pos::Pos::prelude(), str::from_slice(ar, sb.as_slice()));
 }
 fn push_user_type_decls(items: *const Vec<Item>, out: *Vec<Item>) {
     let sl = items.as_slice();

@@ -25,6 +25,17 @@ impl Pos {
     pub fn zero() -> Pos {
         Pos { line: 1, col: 1, file: "<unknown>" }
     }
+
+    // The prelude has no user-visible source location, but it does have an
+    // IDENTITY: every diagnostic and every lint position that falls back to a
+    // prelude declaration has to name the same place.  The reference builds it
+    // once, as `zero` with the file replaced; this port had grown four literals
+    // answering that question with two different line/col pairs, which is how the
+    // same warning ended up filed at two positions depending on which one it
+    // reached.
+    pub fn prelude() -> Pos {
+        Pos { line: 1, col: 1, file: "<prelude>" }
+    }
 }
 
 impl Display for Pos {

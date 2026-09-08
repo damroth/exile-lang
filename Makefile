@@ -764,7 +764,7 @@ selfhost-port-tc-errors: host-selfhost-tc
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -913,7 +913,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
 	@echo "selfhost-verify: all port gates green"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
@@ -1684,6 +1684,63 @@ selfhost-copper: $(EXILC_BIN)
 	grep -q ':22:' $(C_OUT)/cop/p5d.err \
 	  || { echo "selfhost-copper: the P5d refusal did not land INSIDE install() - the point of the closure is that the mark travels with the type, so the callee refuses an address the caller handed it"; exit 1; }; \
 	echo "selfhost-copper: clean (the list is checked WORD BY WORD as data the chip interprets, the DMACON write is forced to seal, and the P5d shape is now REFUSED one frame below the local that made it - the parked contract paid)"
+
+# ===== selfhost-tier: the warning class the harness could never see ============
+#
+# Until this round no gate compared WARNINGS, so a whole lint category could be
+# absent from the port and every gate stay green.  It could not even fire: the
+# comparison ran without `--profile`, both sides defaulted to Full, and nothing
+# exceeds Full.  This gate runs where the class is reachable - the profile the
+# amiga target defaults to - and proves the gating itself with a control at Full,
+# where the answer must be zero.
+#
+# Parity here is a SET, not a count: every warning is compared as the whole line
+# (file, position, function, wording).  Two of the reference's warnings are
+# deliberately absent and are listed in a file that carries its own expiry check.
+.PHONY: selfhost-tier
+selfhost-tier: $(EXILC_BIN)
+	@test -s tests/lint/tier_exceptions.txt || { echo "selfhost-tier: MISSING/EMPTY tests/lint/tier_exceptions.txt"; exit 1; }; \
+	rm -rf $(C_OUT)/tier; mkdir -p $(C_OUT)/tier; \
+	: > $(C_OUT)/tier/oracle.txt; : > $(C_OUT)/tier/port.txt; \
+	for f in examples/*.exl; do \
+	  $(EXILE) --target c --profile standard --c-out /dev/null $$f 2>>$(C_OUT)/tier/oracle.txt >/dev/null || true; \
+	  $(EXILC_BIN) --target c --profile standard --c-out /dev/null $$f 2>>$(C_OUT)/tier/port.txt >/dev/null || true; \
+	done; \
+	grep 'is tier=' $(C_OUT)/tier/oracle.txt | sort > $(C_OUT)/tier/o.s || true; \
+	grep 'is tier=' $(C_OUT)/tier/port.txt   | sort > $(C_OUT)/tier/p.s || true; \
+	test -s $(C_OUT)/tier/o.s \
+	  || { echo "selfhost-tier: the REFERENCE emitted no tier warnings at all - the class is unreachable here, so nothing below proves anything"; exit 1; }; \
+	test -s $(C_OUT)/tier/p.s \
+	  || { echo "selfhost-tier: the PORT emitted no tier warnings - the class is absent, not matching"; exit 1; }; \
+	rows=0; \
+	while IFS=: read -r ex fn; do \
+	  case "$$ex" in ''|'#'*) continue;; esac; \
+	  rows=`expr $$rows + 1`; \
+	  test -f examples/$$ex.exl || { echo "selfhost-tier: exception names examples/$$ex.exl, which does not exist"; exit 1; }; \
+	  $(EXILE) --target c --profile standard --c-out $(C_OUT)/tier/$$ex.c examples/$$ex.exl >/dev/null 2>$(C_OUT)/tier/$$ex.err || true; \
+	  grep -q "generic fn '$$fn'" $(C_OUT)/tier/$$ex.err \
+	    || { echo "selfhost-tier: the reference no longer warns about '$$fn' in $$ex - the exception is stale and must be removed, not carried"; exit 1; }; \
+	  if grep -q "$${fn}_" $(C_OUT)/tier/$$ex.c; then \
+	    echo "selfhost-tier: the reference's own emission for $$ex NOW CONTAINS an instance of '$$fn' - the warning describes a real body copy after all, the exception's justification is gone, and the port has to start warning"; exit 1; fi; \
+	done < tests/lint/tier_exceptions.txt; \
+	test $$rows -ge 1 || { echo "selfhost-tier: the exception table is empty - if there is nothing to except, compare the sets directly"; exit 1; }; \
+	grep -v "generic fn 'with_capacity'" $(C_OUT)/tier/p.s > $(C_OUT)/tier/pw.s || true; \
+	grep -v "generic fn 'with_capacity'" $(C_OUT)/tier/o.s > $(C_OUT)/tier/ow.s || true; \
+	if ! diff -q $(C_OUT)/tier/ow.s $(C_OUT)/tier/pw.s >/dev/null; then \
+	  echo "selfhost-tier: the two warning SETS differ outside the registered exceptions:"; \
+	  diff $(C_OUT)/tier/ow.s $(C_OUT)/tier/pw.s | head -8; exit 1; fi; \
+	oc=`grep -c "generic fn 'with_capacity'" $(C_OUT)/tier/o.s`; \
+	pc=`grep -c "generic fn 'with_capacity'" $(C_OUT)/tier/p.s`; \
+	test `expr $$oc - $$pc` -eq $$rows \
+	  || { echo "selfhost-tier: the reference has $$oc 'with_capacity' warnings and the port $$pc - the difference is not the $$rows registered exceptions"; exit 1; }; \
+	$(EXILC_BIN) --target c --profile full --c-out /dev/null examples/vec.exl 2>$(C_OUT)/tier/full.err >/dev/null || true; \
+	test `grep -c 'is tier=' $(C_OUT)/tier/full.err` -eq 0 \
+	  || { echo "selfhost-tier: the class fires under --profile=full, where nothing can exceed the profile - it is not gated by the profile at all"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/tier/d.c examples/vec.exl 2>/dev/null | grep -q 'profile=full' \
+	  || { echo "selfhost-tier: target=c no longer defaults to profile=full"; exit 1; }; \
+	$(EXILC_BIN) --target c --profile standard --c-out $(C_OUT)/tier/d.c examples/vec.exl 2>/dev/null | grep -q 'profile=standard' \
+	  || { echo "selfhost-tier: --profile is parsed but not reported, so the line cannot be trusted to say what ran"; exit 1; }; \
+	echo "selfhost-tier: clean (`wc -l < $(C_OUT)/tier/p.s` warnings, set-equal to the reference's `wc -l < $(C_OUT)/tier/o.s` minus $$rows registered - each checked to have NO instance in the reference's own emission; zero under --profile=full, so the class is profile-gated rather than dead)"
 
 # ===== verify-emu: the chipset machine, and the first behaviour in this repo ====
 #
