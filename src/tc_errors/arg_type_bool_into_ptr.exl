@@ -1,0 +1,6 @@
+// A `bool` handed to a `*u16` parameter. The port used to auto-ref anything into
+// any pointer slot and stamp the node with the SLOT's type, so the argument check
+// that ran next compared the slot's type with itself and agreed - the error became
+// a silent `&b` and only the C compiler noticed.
+fn takes(p: *u16) -> int { return 0; }
+fn main() { let b: bool = true; println(takes(b)); }

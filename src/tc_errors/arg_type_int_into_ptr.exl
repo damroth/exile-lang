@@ -1,0 +1,3 @@
+// The same slot, a different wrong type: an integer is not an address either.
+fn takes(p: *u16) -> int { return 0; }
+fn main() { println(takes(1 as int)); }

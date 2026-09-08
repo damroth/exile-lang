@@ -2659,6 +2659,12 @@ fn ret_or_void(ar: *Arena, ret: Option<*const Typ>) -> *const Typ {
 fn is_own_ptr(t: *const Typ) -> bool {
     return match *t { Typ::TOwnPtr(_i) => true | _e => false };
 }
+fn is_const_ptr(t: *const Typ) -> bool {
+    return match *t { Typ::TConstPtr(_i) => true | _e => false };
+}
+fn const_pointee_eq(pty: *const Typ, act: *const Typ) -> bool {
+    return match *pty { Typ::TConstPtr(inner) => typ_eq(inner, act) | _e => false };
+}
 fn ptr_or_constptr(t: *const Typ) -> bool {
     return match *t { Typ::TPtr(_i) => true | Typ::TConstPtr(_i) => true | _e => false };
 }
@@ -2712,8 +2718,17 @@ fn coerce_own_to(_a: Allocator, ar: *Arena, sc: *const TyScope, targ: *const Tex
                 "this owned value is only borrowed here, so nothing would own (or ever release) the allocation — bind it first (`let x: own *T = ...;`), then lend `x`");
         return targ;
     }
-    // A value passed where a `*T` / `*const T` is expected auto-refs (`&arg`).
-    if ptr_or_constptr(pty) && !is_ptr_ty(targ.ty) {
+    // A value passed where a `*const T` is expected auto-refs (`&arg`) - but ONLY
+    // when it is a T.  The pointee has to match, and the reference checks exactly
+    // that before it builds the node.
+    //
+    // Without the pointee check this took the address of ANYTHING handed to ANY
+    // pointer slot and stamped the result with the slot's type, so a `bool` in a
+    // `*u16` parameter became a `*u16` - and the argument check that runs next
+    // then compared the slot's type with itself and agreed.  A type error turned
+    // into a silent `&b`, and the only complaint in the whole pipeline came from
+    // the C compiler: `incompatible pointer type`.
+    if is_const_ptr(pty) && !typ_eq(targ.ty, pty) && const_pointee_eq(pty, targ.ty) {
         return te_node(ar, TexprNode::TRef(targ), pty, targ.pos);
     }
     return targ;
