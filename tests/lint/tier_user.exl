@@ -1,0 +1,18 @@
+// The tier class where it MUST speak: a generic the program itself declares,
+// instantiated at two different types. One warning per INSTANCE, filed at the site
+// that first demanded it - two calls at the same type share an instance and warn
+// once, which is why this fixture uses two types rather than two calls.
+//
+// Deliberately not annotated. `@tier(standard)` would silence it, which is what the
+// examples use to say "this cost is accepted"; here the point is that the warning
+// still arrives when nobody has said that.
+fn pick<T>(a: T, b: T, first: bool) -> T {
+    if first { return a; }
+    return b;
+}
+
+fn main() {
+    println(pick(1 as int, 2 as int, true));
+    let s: str = pick("a", "b", false);
+    println(s);
+}

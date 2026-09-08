@@ -1,0 +1,20 @@
+// The tier class where the port deliberately stays SILENT: the instantiation is of
+// a generic the prelude declares, not one this program wrote.
+//
+// The reference warns. The port does not, and that is the registered divergence:
+// the reader cannot refactor `with_capacity`, cannot annotate it, and the only
+// advice the message can offer them is a compiler flag. A category whose every
+// instance is unactionable teaches the reader to skip the category - and then the
+// warnings that ARE theirs go past unread.
+//
+// Note what this fixture is NOT: the body copy here is real, and the gate checks
+// that it is real by looking for the instance in the emitted C. Silence here is a
+// judgement about who can act, never a claim that nothing was copied.
+mod raw { extern fn make_c_allocator() -> Allocator; }
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(7);
+    println(v.length() as int);
+}

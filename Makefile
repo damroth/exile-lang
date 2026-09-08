@@ -1687,31 +1687,46 @@ selfhost-copper: $(EXILC_BIN)
 
 # ===== selfhost-tier: the warning class the harness could never see ============
 #
-# Until this round no gate compared WARNINGS, so a whole lint category could be
-# absent from the port and every gate stay green.  It could not even fire: the
+# Until this class was ported, no gate compared WARNINGS at all - so a whole lint
+# category could be absent and every gate stay green.  It could not even fire: the
 # comparison ran without `--profile`, both sides defaulted to Full, and nothing
-# exceeds Full.  This gate runs where the class is reachable - the profile the
-# amiga target defaults to - and proves the gating itself with a control at Full,
-# where the answer must be zero.
+# exceeds Full.  This gate runs where the class is reachable and proves the gating
+# itself with a control at Full, where the answer must be zero.
 #
-# Parity here is a SET, not a count: every warning is compared as the whole line
-# (file, position, function, wording).  Two of the reference's warnings are
-# deliberately absent and are listed in a file that carries its own expiry check.
+# It asserts three different things, because the class does three different things:
+# it must SPEAK about a generic the program declared, and it must stay SILENT about
+# one the prelude declared.
+#
+# An arm asserting the CORPUS is clean under the amiga profile is deliberately
+# absent: half the catalogue's remaining warnings name generic impl METHODS, and
+# `@tier` cannot decorate one - the parser refuses `@` inside an impl block. Until
+# an author has a way to say "this cost is accepted" about a method, that arm would
+# be a gate born red, which is not a gate.
 .PHONY: selfhost-tier
 selfhost-tier: $(EXILC_BIN)
-	@test -s tests/lint/tier_exceptions.txt || { echo "selfhost-tier: MISSING/EMPTY tests/lint/tier_exceptions.txt"; exit 1; }; \
-	rm -rf $(C_OUT)/tier; mkdir -p $(C_OUT)/tier; \
-	: > $(C_OUT)/tier/oracle.txt; : > $(C_OUT)/tier/port.txt; \
-	for f in examples/*.exl; do \
-	  $(EXILE) --target c --profile standard --c-out /dev/null $$f 2>>$(C_OUT)/tier/oracle.txt >/dev/null || true; \
-	  $(EXILC_BIN) --target c --profile standard --c-out /dev/null $$f 2>>$(C_OUT)/tier/port.txt >/dev/null || true; \
+	@for f in tests/lint/tier_user.exl tests/lint/tier_prelude.exl tests/lint/tier_exceptions.txt; do \
+	  test -s $$f || { echo "selfhost-tier: MISSING/EMPTY $$f"; exit 1; }; \
 	done; \
-	grep 'is tier=' $(C_OUT)/tier/oracle.txt | sort > $(C_OUT)/tier/o.s || true; \
-	grep 'is tier=' $(C_OUT)/tier/port.txt   | sort > $(C_OUT)/tier/p.s || true; \
-	test -s $(C_OUT)/tier/o.s \
-	  || { echo "selfhost-tier: the REFERENCE emitted no tier warnings at all - the class is unreachable here, so nothing below proves anything"; exit 1; }; \
-	test -s $(C_OUT)/tier/p.s \
-	  || { echo "selfhost-tier: the PORT emitted no tier warnings - the class is absent, not matching"; exit 1; }; \
+	rm -rf $(C_OUT)/tier; mkdir -p $(C_OUT)/tier; \
+	$(EXILE) --target c --profile standard --c-out /dev/null tests/lint/tier_user.exl 2>$(C_OUT)/tier/u.o >/dev/null || true; \
+	$(EXILC_BIN) --target c --profile standard --c-out /dev/null tests/lint/tier_user.exl 2>$(C_OUT)/tier/u.p >/dev/null || true; \
+	grep 'is tier=' $(C_OUT)/tier/u.o | sort > $(C_OUT)/tier/u.os || true; \
+	grep 'is tier=' $(C_OUT)/tier/u.p | sort > $(C_OUT)/tier/u.ps || true; \
+	test -s $(C_OUT)/tier/u.os \
+	  || { echo "selfhost-tier: the REFERENCE says nothing about a user generic under --profile=standard - the class is unreachable here and nothing below proves anything"; exit 1; }; \
+	test -s $(C_OUT)/tier/u.ps \
+	  || { echo "selfhost-tier: the PORT says nothing about a user generic - the class is absent, not matching"; exit 1; }; \
+	diff -q $(C_OUT)/tier/u.os $(C_OUT)/tier/u.ps >/dev/null \
+	  || { echo "selfhost-tier: the two warning sets differ on a generic the program DECLARED, where the port must say exactly what the reference says:"; \
+	       diff $(C_OUT)/tier/u.os $(C_OUT)/tier/u.ps | head -6; exit 1; }; \
+	$(EXILE) --target c --profile standard --c-out $(C_OUT)/tier/pre.c tests/lint/tier_prelude.exl 2>$(C_OUT)/tier/pre.o >/dev/null || true; \
+	$(EXILC_BIN) --target c --profile standard --c-out /dev/null tests/lint/tier_prelude.exl 2>$(C_OUT)/tier/pre.p >/dev/null || true; \
+	test `grep -c 'is tier=' $(C_OUT)/tier/pre.o` -ge 1 \
+	  || { echo "selfhost-tier: the reference no longer warns about a PRELUDE generic - the divergence this gate records has nothing left to diverge from"; exit 1; }; \
+	test `grep -c 'is tier=' $(C_OUT)/tier/pre.p` -eq 0 \
+	  || { echo "selfhost-tier: the port warned about a generic the PRELUDE declares - the registered rule says it does not, because the reader cannot refactor or annotate what they did not write"; exit 1; }; \
+	grep -q 'Vec__with_capacity' $(C_OUT)/tier/pre.c \
+	  || { echo "selfhost-tier: the reference's emission for the prelude fixture has NO instance in it, so this fixture proves nothing about silence over a REAL body copy - it has drifted into the other case"; exit 1; }; \
 	rows=0; \
 	while IFS=: read -r ex fn; do \
 	  case "$$ex" in ''|'#'*) continue;; esac; \
@@ -1721,26 +1736,17 @@ selfhost-tier: $(EXILC_BIN)
 	  grep -q "generic fn '$$fn'" $(C_OUT)/tier/$$ex.err \
 	    || { echo "selfhost-tier: the reference no longer warns about '$$fn' in $$ex - the exception is stale and must be removed, not carried"; exit 1; }; \
 	  if grep -q "$${fn}_" $(C_OUT)/tier/$$ex.c; then \
-	    echo "selfhost-tier: the reference's own emission for $$ex NOW CONTAINS an instance of '$$fn' - the warning describes a real body copy after all, the exception's justification is gone, and the port has to start warning"; exit 1; fi; \
+	    echo "selfhost-tier: the reference's emission for $$ex NOW CONTAINS an instance of '$$fn' - it is a real body copy after all, so that row is no longer a record of a false positive and the register entry has expired"; exit 1; fi; \
 	done < tests/lint/tier_exceptions.txt; \
-	test $$rows -ge 1 || { echo "selfhost-tier: the exception table is empty - if there is nothing to except, compare the sets directly"; exit 1; }; \
-	grep -v "generic fn 'with_capacity'" $(C_OUT)/tier/p.s > $(C_OUT)/tier/pw.s || true; \
-	grep -v "generic fn 'with_capacity'" $(C_OUT)/tier/o.s > $(C_OUT)/tier/ow.s || true; \
-	if ! diff -q $(C_OUT)/tier/ow.s $(C_OUT)/tier/pw.s >/dev/null; then \
-	  echo "selfhost-tier: the two warning SETS differ outside the registered exceptions:"; \
-	  diff $(C_OUT)/tier/ow.s $(C_OUT)/tier/pw.s | head -8; exit 1; fi; \
-	oc=`grep -c "generic fn 'with_capacity'" $(C_OUT)/tier/o.s`; \
-	pc=`grep -c "generic fn 'with_capacity'" $(C_OUT)/tier/p.s`; \
-	test `expr $$oc - $$pc` -eq $$rows \
-	  || { echo "selfhost-tier: the reference has $$oc 'with_capacity' warnings and the port $$pc - the difference is not the $$rows registered exceptions"; exit 1; }; \
-	$(EXILC_BIN) --target c --profile full --c-out /dev/null examples/vec.exl 2>$(C_OUT)/tier/full.err >/dev/null || true; \
+	test $$rows -ge 1 || { echo "selfhost-tier: the false-positive table is empty - if there is nothing left to record, delete the entry rather than the evidence"; exit 1; }; \
+	$(EXILC_BIN) --target c --profile full --c-out /dev/null tests/lint/tier_user.exl 2>$(C_OUT)/tier/full.err >/dev/null || true; \
 	test `grep -c 'is tier=' $(C_OUT)/tier/full.err` -eq 0 \
 	  || { echo "selfhost-tier: the class fires under --profile=full, where nothing can exceed the profile - it is not gated by the profile at all"; exit 1; }; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/tier/d.c examples/vec.exl 2>/dev/null | grep -q 'profile=full' \
 	  || { echo "selfhost-tier: target=c no longer defaults to profile=full"; exit 1; }; \
 	$(EXILC_BIN) --target c --profile standard --c-out $(C_OUT)/tier/d.c examples/vec.exl 2>/dev/null | grep -q 'profile=standard' \
 	  || { echo "selfhost-tier: --profile is parsed but not reported, so the line cannot be trusted to say what ran"; exit 1; }; \
-	echo "selfhost-tier: clean (`wc -l < $(C_OUT)/tier/p.s` warnings, set-equal to the reference's `wc -l < $(C_OUT)/tier/o.s` minus $$rows registered - each checked to have NO instance in the reference's own emission; zero under --profile=full, so the class is profile-gated rather than dead)"
+	echo "selfhost-tier: clean (`wc -l < $(C_OUT)/tier/u.ps` warnings on a user generic, line-equal to the reference; silence on a prelude generic whose body copy is REAL and present in the reference's emission; $$rows false positive(s) still proved false by the reference's own emission; and zero under --profile=full, so the class is profile-gated rather than dead)"
 
 # ===== verify-emu: the chipset machine, and the first behaviour in this repo ====
 #
