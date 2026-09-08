@@ -1,0 +1,14 @@
+// The emission half of the same property. Two generic calls under one operator
+// instantiate in the order their operands are elaborated, so the pair has to be
+// elaborated in the reference's order or the two C files declare the instances
+// the other way round.
+//
+// This started life as a fixture about "a generic impl with two methods", which
+// was a special case: the operator was the common factor, not the impl.
+fn id<T>(v: T) -> T { return v; }
+
+fn main() {
+    let x: int = 1;
+    let y: u16 = 2 as u16;
+    println(id(x) + (id(y) as int));
+}

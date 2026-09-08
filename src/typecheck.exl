@@ -2536,8 +2536,18 @@ fn elab_binop(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
               op: BinOp, l: *const Expr, r: *const Expr, p: Pos) -> *const Texpr {
     let le = left_expected(op, expected);
     if is_some_ty(le) {
-        let la = elab_expr(a, ar, g, sc, env, le, l);
+        // RIGHT first.  The reference builds this pair as an OCaml tuple, and a
+        // tuple's components are evaluated right to left, so the right operand is
+        // elaborated first and reports its error first.  The reference has three
+        // such tuples; this branch mirrors two of them (arithmetic/bitwise under an
+        // int annotation, and shift, whose right operand simply gets no expected
+        // type), the last branch below mirrors the third.  The two literal branches
+        // mirror explicit `let`s and are already in the reference's order.
+        //
+        // Order is not only an emission question: `nope_a + nope_b` names `nope_b`
+        // in the reference and named `nope_a` here.
         let ra = elab_expr(a, ar, g, sc, env, right_expected(op, expected), r);
+        let la = elab_expr(a, ar, g, sc, env, le, l);
         return finish_binop(a, ar, sc, op, la, ra, r, p);
     }
     if expr_is_int_lit(r) && !expr_is_int_lit(l) {
@@ -2550,8 +2560,9 @@ fn elab_binop(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
         let lc = elab_expr(a, ar, g, sc, env, Option::Some(rc.ty), l);
         return finish_binop(a, ar, sc, op, lc, rc, r, p);
     }
-    let ld = elab_expr(a, ar, g, sc, env, none_ty(), l);
+    // The reference's default branch is a tuple too: right operand first.
     let rd = elab_expr(a, ar, g, sc, env, none_ty(), r);
+    let ld = elab_expr(a, ar, g, sc, env, none_ty(), l);
     return finish_binop(a, ar, sc, op, ld, rd, r, p);
 }
 

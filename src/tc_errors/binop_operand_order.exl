@@ -1,0 +1,8 @@
+// Both operands are undefined, so which name the diagnostic reports says which one
+// was elaborated first. The reference builds this pair as a tuple, and OCaml
+// evaluates a tuple's components right to left - so it names the RIGHT one.
+//
+// The port used to name the left. That is not a cosmetic difference: it is the
+// evaluation order of a mirrored arm, visible in the emission as instantiation
+// order and here as the first line a user reads.
+fn main() { println(nope_a + nope_b); }
