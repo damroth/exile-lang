@@ -1,0 +1,17 @@
+// The other half of the same rule, and the reason it cannot simply be deleted: a
+// value handed to a `*const T` parameter of a METHOD does auto-ref, and both
+// compilers emit `S__m(&s, &x)`. Removing the rule outright would leave a bare `x`
+// in a pointer slot and C that does not build.
+//
+// It RUNS, because a shape that only compiles proves half of what it claims.
+struct S { v: int }
+
+impl S {
+    pub fn m(*const self, p: *const u16) -> int { return *p as int; }
+}
+
+fn main() {
+    let s: S = S { v: 1 };
+    let x: u16 = 8 as u16;
+    println(s.m(x));
+}

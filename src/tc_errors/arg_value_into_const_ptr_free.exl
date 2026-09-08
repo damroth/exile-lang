@@ -1,0 +1,9 @@
+// A `u16` handed to a `*const u16` parameter of a FREE function. The reference
+// refuses it: its one auto-ref sits on the method call path, not here.
+//
+// The port used to accept this, because it kept the rule in the coercion that
+// reads the free-function signature table - the rule was pinned to a TABLE where
+// the reference pins it to a PATH, so it fired exactly where it should not and
+// stayed silent exactly where it should.
+fn takes(p: *const u16) -> int { return 0; }
+fn main() { let x: u16 = 5 as u16; println(takes(x)); }
