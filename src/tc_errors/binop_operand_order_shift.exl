@@ -1,0 +1,9 @@
+// The same operand-order property as `binop_operand_order`, but on the branch that
+// fixture cannot reach. A call argument is elaborated with no expected type, so
+// `println(a + b)` takes the default branch; a `let` with an annotation pushes the
+// expected type in and takes the other one.
+//
+// The reference keeps two separate tuples there - one for arithmetic and bitwise,
+// one for shift, which differs only in giving the right operand no expected type.
+// This fixture is the shift witness; the arithmetic one is an emission fixture.
+fn main() { let z: int = nope_a << nope_b; println(z); }

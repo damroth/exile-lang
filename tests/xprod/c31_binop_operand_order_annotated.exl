@@ -1,0 +1,14 @@
+// The emission half of the annotated branch: `let z: int = ...` pushes an expected
+// type into both operands, which is a different branch from the one c30 exercises
+// through a call argument.
+//
+// Without this file, reverting only that branch leaves c30 and both tc-error
+// fixtures green - measured, not assumed.
+fn id<T>(v: T) -> T { return v; }
+
+fn main() {
+    let x: int = 1;
+    let y: u16 = 2 as u16;
+    let z: int = id(x) + (id(y) as int);
+    println(z);
+}
