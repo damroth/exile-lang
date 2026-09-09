@@ -725,8 +725,8 @@ selfhost-no-fabrication: $(SEEDC_EXILC)
 # meaningful (green) instead of permanently red.
 .PHONY: selfhost-port-tc-errors
 
-selfhost-port-tc-errors: host-selfhost-tc
-	@fail=0; n=0; \
+selfhost-port-tc-errors: host-selfhost-tc $(EXILC_BIN)
+	@fail=0; n=0; emit=0; \
 	for f in src/tc_errors/*.exl; do \
 	  n=$$((n+1)); \
 	  oc=$$($(EXILE) --target c $$f 2>&1 >/dev/null | head -1); \
@@ -739,15 +739,25 @@ selfhost-port-tc-errors: host-selfhost-tc
 	    echo "  port:   $$pt"; \
 	    fail=1; \
 	  fi; \
+	  rm -f $(C_OUT)/tce_emit.c; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/tce_emit.c $$f >/dev/null 2>&1; \
+	  if [ -f $(C_OUT)/tce_emit.c ]; then \
+	    echo "selfhost-port-tc-errors: EMITTED $$(basename $$f) - the port wrote C for a program the reference refuses"; \
+	    echo "  the message is only half the verdict; a check the port skips reaches the reader as C their compiler rejects"; \
+	    emit=$$((emit+1)); fail=1; \
+	  fi; \
 	done; \
+	rm -f $(C_OUT)/tce_emit.c; \
 	if [ $$n -lt 30 ]; then \
 	  echo "selfhost-port-tc-errors: only $$n fixtures — the corpus is missing files."; \
 	  echo "  A gate with nothing to check reads as clean.  Floor the count."; \
 	  exit 1; \
 	fi; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-port-tc-errors: clean ($$n fixtures, port == oracle line 1)"; \
-	else exit 1; fi
+	  echo "selfhost-port-tc-errors: clean ($$n fixtures, port == oracle line 1, and the port wrote C for none of them)"; \
+	else \
+	  if [ $$emit -gt 0 ]; then echo "  $$emit fixture(s) reached an EMISSION, which is the accept-side of the same defect"; fi; \
+	  exit 1; fi
 
 # ===== The bootstrap fixpoint — the self-host proof, as a gate =====
 #

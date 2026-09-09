@@ -1,0 +1,4 @@
+// Arity is the other half of the same check, and it was silent on the same
+// paths: an extern taking nothing, called with an argument.
+mod raw { extern fn getpid() -> c_int; }
+fn main() { println(raw::getpid(1) as int); }

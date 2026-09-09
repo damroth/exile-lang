@@ -1,0 +1,5 @@
+// Arity on the method path. The reference counts the arguments the reader
+// wrote, not the parameters the method declares, so `self` is not in the number.
+struct S { v: int }
+impl S { pub fn m(*const self, p: int) -> int { return 0; } }
+fn main() { let s: S = S { v: 1 }; println(s.m(1, 2)); }

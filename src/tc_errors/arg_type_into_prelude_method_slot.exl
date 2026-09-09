@@ -1,0 +1,10 @@
+// A PRELUDE method, whose parameters live in the resolved signature table
+// rather than in annotations of its own. Both tables have to be asked from one
+// place, or this shape and the user-written one disagree about the same rule.
+mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let s: String = String::with_str(a, "x");
+    let b: bool = true;
+    println(s.eq(b));
+}

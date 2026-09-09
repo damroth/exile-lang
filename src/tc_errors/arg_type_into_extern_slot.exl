@@ -1,0 +1,7 @@
+// An `extern fn`'s parameter. This is the shape where the two tables disagreed
+// on the KEY: the global table resolved a module-nested extern by its module
+// path while the signature table filed it under its C name, so the lookup
+// missed and the check returned without a word. Nothing else in the corpus
+// distinguishes a missing check from a passing one.
+mod raw { extern fn strlen(p: *const c_char) -> c_ulong; }
+fn main() { let b: bool = true; println(raw::strlen(b) as int); }

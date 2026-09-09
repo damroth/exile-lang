@@ -1,0 +1,6 @@
+// The callee is named as the reader WROTE it. The port used to print the bare
+// `f` for a module function, sending them to look in the wrong place; the
+// global table stores the bare name, and the diagnostic was reading from there
+// instead of from the call site.
+mod m { pub fn f(p: *u16) -> int { return 0; } }
+fn main() { let b: bool = true; println(m::f(b)); }

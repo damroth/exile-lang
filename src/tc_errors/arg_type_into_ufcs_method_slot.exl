@@ -1,0 +1,6 @@
+// The same method as the dot form, called UFCS. The receiver is argument one,
+// so the bad argument is number two - which is what makes this a separate
+// fixture rather than a restatement: the index has to survive the path change.
+struct S { v: int }
+impl S { pub fn takes(*const self, p: *u16) -> int { return 0; } }
+fn main() { let s: S = S { v: 1 }; let b: bool = true; println(S::takes(&s, b)); }

@@ -1,0 +1,8 @@
+// A `bool` handed to a `*u16` parameter of a METHOD. The reference checks this
+// slot; the port used to reach no check at all on the method path, so the
+// program compiled and the emitted C failed at `cc` instead - "makes pointer
+// from integer without a cast", from the reader's own build, about a line the
+// compiler had already said was fine.
+struct S { v: int }
+impl S { pub fn takes(*const self, p: *u16) -> int { return 0; } }
+fn main() { let s: S = S { v: 1 }; let b: bool = true; println(s.takes(b)); }

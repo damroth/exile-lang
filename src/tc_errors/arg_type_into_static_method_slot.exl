@@ -1,0 +1,6 @@
+// The same slot on a STATIC method, written `S::make(..)`. Nothing is implicit
+// here, so the declared list lines up from index 0 and the reference calls the
+// shape a function.
+struct S { v: int }
+impl S { pub fn make(p: *u16) -> int { return 0; } }
+fn main() { let b: bool = true; println(S::make(b)); }

@@ -2992,11 +2992,15 @@ fn register_named_prelude(a: Allocator, sc: *const TyScope, t: *const Typ) {
     if is_named_prelude_ty(t) { register_struct_ty(a, sc, t); }
     return;
 }
+// `disp` is the callee AS WRITTEN at the call site - `raw::strlen`, not the
+// bare `strlen` the global table stores.  The reference names the path the
+// reader typed, and a diagnostic that renames their callee sends them looking
+// in the wrong module.
 fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                gf: GlobalFn, disp: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     seal_seam_guard(ar, sc, gf.mangled, p);
     let targs = elab_args_coerced(a, ar, g, sc, env, gf.mangled, args);
-    check_call(a, ar, sc, "function", gf.name, gf.mangled, args, &targs, gf.gf_variadic, p);
+    check_call(a, ar, sc, "function", disp, gf.mangled, args, &targs, gf.gf_variadic, p);
     let ty = ret_or_void(ar, gf.ret);
     register_named_prelude(a, sc, ty);
     return te_node(ar, TexprNode::TCall { mangled: gf.gf_emit, args: targs }, ty, p);
@@ -3026,9 +3030,9 @@ fn seal_seam_guard(ar: *Arena, sc: *const TyScope, mangled: str, p: Pos) {
 // A `const` is a value, not a callable — the reference reports it as an unknown
 // FUNCTION, because that is the namespace the call site looked in.
 fn call_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                 gf: GlobalFn, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                 gf: GlobalFn, disp: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     if gf.is_const { return unknown_fn(a, ar, sc, gf.name, p); }
-    return mk_user_call(a, ar, g, sc, env, gf, args, p);
+    return mk_user_call(a, ar, g, sc, env, gf, disp, args, p);
 }
 
 // An unqualified call inside a module resolves to that module's `mod__name`
@@ -3048,14 +3052,14 @@ fn unknown_fn(a: Allocator, ar: *Arena, sc: *const TyScope, display: str, p: Pos
 fn elab_top_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                      name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     return match global_lookup(g, name) {
-        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, args, p)
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p)
         | Option::None => unknown_fn(a, ar, sc, name, p)
     };
 }
 fn elab_user_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                       name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     return match module_internal_lookup(a, ar, g, sc, name) {
-        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, args, p)
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p)
         | Option::None => elab_top_or_defer(a, ar, g, sc, env, name, args, p)
     };
 }
@@ -3229,6 +3233,26 @@ fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
     let mret = sl[midx as u32].mi_ret;
     if sl[midx as u32].mi_prelude { register_prelude_method_use(a, ar, sc, &sl[midx as u32].mi_path, mret); }
     let targs = elab_args(a, ar, g, sc, env, args);
+    // Written as `S::name(..)`, so nothing is implicit: the receiver, if any, is
+    // argument one and the slots line up with the declared list from index 0.
+    // The reference calls this shape a FUNCTION, and so does the wording here.
+    let sdisp = method_disp(a, ar, &sl[midx as u32].mi_path, sl[midx as u32].mi_name);
+    let scnt = meth_param_count(sc, mm, &sl[midx as u32].mi_params);
+    if scnt >= 0 as int {
+        check_arity(a, ar, sc, "function", sdisp, scnt as u32, args.length(), false, p);
+        let rs = args.as_slice();
+        let ts = targs.as_slice();
+        let mut k = 0 as u32;
+        while k < args.length() {
+            if k < targs.length() {
+                match meth_param_ty(a, ar, sc, mm, &sl[midx as u32].mi_params, k, p) {
+                    Option::Some(pt) => { check_slot_arg(a, ar, sc, sdisp, k, pt, rs[k], ts[k].ty, p); }
+                    | Option::None => { }
+                }
+            }
+            k = k + 1 as u32;
+        }
+    }
     return te_node(ar, TexprNode::TCall { mangled: mm, args: targs }, ret_or_void(ar, mret), p);
 }
 
@@ -3375,9 +3399,10 @@ fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     // it as an ordinary global rejects every argument as "expected T".
     let gfi = gen_fn_lookup_qual(a, sc.sc_genfns, sc, init, last);
     if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, none_ty(), args, p); }
+    let qdisp = path_display(a, ar, &path_push(a, init, last));
     return match qualified_lookup(a, ar, g, sc, init, last) {
-        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, args, p)
-        | Option::None => unknown_fn(a, ar, sc, path_display(a, ar, &path_push(a, init, last)), p)
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, qdisp, args, p)
+        | Option::None => unknown_fn(a, ar, sc, qdisp, p)
     };
 }
 
@@ -4171,21 +4196,63 @@ fn adjust_recv(a: Allocator, ar: *Arena, sc: *const TyScope, trecv: *const Texpr
 // opinion is how the previous version of this rule silently stopped auto-refing
 // `String::eq`, whose annotations are empty because its resolved signature lives
 // in the other table.
+// How many parameters this method declares, self included; -1 when neither
+// table knows.  A resolved signature answers first because a prelude method
+// registered by signature has no annotations of its own.
+// A slot whose declared type still names a type parameter, or projects through
+// one, is not a type yet.  Comparing an argument against it reports a mismatch
+// the reader cannot act on - `expected Self::Item` names nothing in their
+// program - and a trait's default method is declared exactly that way, with
+// only an instance pinning `Self` later.  The auto-ref rule declines on the
+// same ground, and the check has to agree with it or the two disagree about
+// the same slot.
+fn slot_is_comparable(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TAssocProj { head, assoc } => false
+        | _o => is_concrete(t)
+    };
+}
+
+// The guard and the check in one place: two call sites holding the same `if`
+// is how they start to differ.
+fn check_slot_arg(a: Allocator, ar: *Arena, sc: *const TyScope, disp: str, i: u32,
+                  pt: *const Typ, raw: *const Expr, act: *const Typ, pos: Pos) {
+    if !slot_is_comparable(pt) { return; }
+    check_arg_ty(a, ar, sc, disp, i, pt, raw, act, pos);
+    return;
+}
+
+fn meth_param_count(sc: *const TyScope, mangled: str, mparams: *const Vec<*const TypeAnn>) -> int {
+    let si = sig_index(sc, mangled);
+    if si >= 0 as int { return sc.sc_gsigs.as_slice()[si as u32].fs_params.length() as int; }
+    if mparams.length() == 0 as u32 { return 0 as int - 1 as int; }
+    return mparams.length() as int;
+}
+
+// The type of parameter `k` (self is 0).  ONE answer for both readers: the
+// auto-ref rule and the argument check have to agree about a slot, or the
+// reference put into it is compared against a type from the other table.
+// Resolution stays lazy and per-index on purpose - `resolve_sig_ty` registers
+// mono instances as a side effect, so resolving a whole list eagerly would
+// change the ORDER instances reach the emission.
+fn meth_param_ty(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str,
+                 mparams: *const Vec<*const TypeAnn>, k: u32, pos: Pos) -> Option<*const Typ> {
+    let none: Option<*const Typ> = Option::None;
+    let si = sig_index(sc, mangled);
+    if si >= 0 as int {
+        if k >= sc.sc_gsigs.as_slice()[si as u32].fs_params.length() { return none; }
+        return Option::Some(sc.sc_gsigs.as_slice()[si as u32].fs_params.as_slice()[k]);
+    }
+    if k >= mparams.length() { return none; }
+    return Option::Some(resolve_sig_ty(a, ar, sc, mparams.as_slice()[k], pos));
+}
+
 fn meth_autoref(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str,
                 mparams: *const Vec<*const TypeAnn>, i: u32, targ: *const Texpr, pos: Pos) -> *const Texpr {
-    let gs = sc.sc_gsigs.as_slice();
-    let mut j = 0 as u32;
-    while j < sc.sc_gsigs.length() {
-        if str::eq(gs[j].fs_mangled, mangled) {
-            if i + 1 as u32 < gs[j].fs_params.length() {
-                return autoref_into(ar, gs[j].fs_params.as_slice()[i + 1 as u32], targ);
-            }
-            return targ;
-        }
-        j = j + 1 as u32;
-    }
-    if i + 1 as u32 >= mparams.length() { return targ; }
-    return autoref_into(ar, resolve_sig_ty(a, ar, sc, mparams.as_slice()[i + 1 as u32], pos), targ);
+    return match meth_param_ty(a, ar, sc, mangled, mparams, i + 1 as u32, pos) {
+        Option::Some(pt) => autoref_into(ar, pt, targ)
+        | Option::None => targ
+    };
 }
 
 fn autoref_into(ar: *Arena, pty: *const Typ, targ: *const Texpr) -> *const Texpr {
@@ -4197,7 +4264,7 @@ fn autoref_into(ar: *Arena, pty: *const Typ, targ: *const Texpr) -> *const Texpr
 }
 
 fn append_args_meth(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                    mangled: str, mparams: *const Vec<*const TypeAnn>, args: *const Vec<*const Expr>,
+                    mangled: str, disp: str, mparams: *const Vec<*const TypeAnn>, args: *const Vec<*const Expr>,
                     pos: Pos, out: *Vec<*const Texpr>) {
     let n = args.length();
     let sl = args.as_slice();
@@ -4205,7 +4272,15 @@ fn append_args_meth(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     while i < n {
         let targ = elab_expr(a, ar, g, sc, env, none_ty(), sl[i]);
         let reffed = meth_autoref(a, ar, sc, mangled, mparams, i, targ, pos);
-        out.push(coerce_at(a, ar, sc, mangled, i + 1 as u32, reffed));
+        let fin = coerce_at(a, ar, sc, mangled, i + 1 as u32, reffed);
+        // The same slot the auto-ref just read, read once more by the check.
+        // Asking a different table here is how a reference landed in a slot
+        // whose declared type nobody compared it against.
+        match meth_param_ty(a, ar, sc, mangled, mparams, i + 1 as u32, pos) {
+            Option::Some(pt) => { check_slot_arg(a, ar, sc, disp, i, pt, sl[i], fin.ty, pos); }
+            | Option::None => { }
+        }
+        out.push(fin);
         i = i + 1 as u32;
     }
 }
@@ -4630,9 +4705,14 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let scst = sl[idx as u32].mi_self_const;
     if sl[idx as u32].mi_prelude { register_prelude_method_use(a, ar, sc, &sl[idx as u32].mi_path, mret); }
     let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
+    let mdisp = method_disp(a, ar, &sl[idx as u32].mi_path, sl[idx as u32].mi_name);
+    let mcnt = meth_param_count(sc, mm, &sl[idx as u32].mi_params);
+    if mcnt > 0 as int {
+        check_arity(a, ar, sc, "method", mdisp, mcnt as u32 - 1 as u32, args.length(), false, p);
+    }
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
-    append_args_meth(a, ar, g, sc, env, mm, &sl[idx as u32].mi_params, args, p, &cargs);
+    append_args_meth(a, ar, g, sc, env, mm, mdisp, &sl[idx as u32].mi_params, args, p, &cargs);
     return te_node(ar, TexprNode::TCall { mangled: mm, args: cargs }, ret_or_void(ar, mret), p);
 }
 
@@ -15068,7 +15148,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
         Item::Function(f) => {
             // An extern fn keeps its C name when emitted, but a module-nested
             // one still resolves via its `mod__name` path key.
-            let lk = if f.is_extern && !is_top { mangle_path(a, ar, path, f.name) } else { collect_fn_mangle(a, ar, &f, path) };
+            let lk = fn_lookup_key(a, ar, &f, path);
             let em = if f.is_extern { f.c_name } else { lk };
             // Resolve the return under the fn's own type parameters so a generic
             // fn's `Option<I::Item>` stays an assoc-projection marker (the real
@@ -15173,6 +15253,18 @@ fn collect_fn_mangle(a: Allocator, ar: *Arena, f: *const Func, path: *const Vec<
     return mangle_path(a, ar, path, f.name);
 }
 
+// The key a call site resolves a fn BY.  The global table and the signature
+// table both hold one entry per fn, and `check_call` reads the second using the
+// first's key - so a disagreement does not fail loudly, it makes the argument
+// check find nothing and return.  A module-nested `extern fn` was that
+// disagreement: the global table keyed it by its module path while the
+// signature table keyed it by its C name, so every extern argument went
+// unchecked and the C compiler was the first to notice.
+fn fn_lookup_key(a: Allocator, ar: *Arena, f: *const Func, path: *const Vec<str>) -> str {
+    if f.is_extern && path.length() > 0 as u32 { return mangle_path(a, ar, path, f.name); }
+    return collect_fn_mangle(a, ar, f, path);
+}
+
 fn collect_into(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, path: *const Vec<str>, g: *Vec<GlobalFn>) {
     let n = items.length();
     let sl = items.as_slice();
@@ -15258,7 +15350,7 @@ fn collect_fn_sigs_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const 
         Item::Function(f) => {
             check_free_fn_self(a, ar, sc, &f);
             let fsc = scope_with_tparams(&msc, &f.tparams);
-            out.push(FnSig { fs_mangled: collect_fn_mangle(a, ar, &f, path), fs_params: resolve_param_tys(a, ar, &fsc, &f.params, f.pos) });
+            out.push(FnSig { fs_mangled: fn_lookup_key(a, ar, &f, path), fs_params: resolve_param_tys(a, ar, &fsc, &f.params, f.pos) });
             // The oracle resolves a fn's return type immediately after its params
             // (elab_one_fn), so instance registration interleaves per-fn rather
             // than all-params-then-all-returns.  Resolve it here for that
