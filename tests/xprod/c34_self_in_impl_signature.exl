@@ -1,0 +1,25 @@
+// An impl that WRITES `Self` in its own signature, matching the trait's
+// declaration word for word.
+//
+// The port used to refuse it, reporting that the signature did not match the
+// trait it was copied from: conformance substituted `Self` on the trait's side
+// only, so the two sides were asked different questions and the impl's marker
+// degraded to `c_void`. With that symmetric, the BODY still saw `c_void`,
+// because an impl method elaborated with no `Self` bound at all - a comment in
+// the port asserted the parser stamps it away, and the parser does no such
+// thing.
+struct S { v: int }
+
+trait Cmp { fn same(*const self, o: *const Self) -> bool; }
+
+impl Cmp for S {
+    fn same(*const self, o: *const Self) -> bool { return self.v == o.v; }
+}
+
+fn main() {
+    let a: S = S { v: 1 };
+    let b: S = S { v: 1 };
+    let c: S = S { v: 2 };
+    println(if a.same(&b) { 1 } else { 0 });
+    println(if a.same(&c) { 1 } else { 0 });
+}

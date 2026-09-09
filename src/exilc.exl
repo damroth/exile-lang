@@ -41,8 +41,60 @@ fn flush_stdout(sb: *const StringBuilder) {
     return;
 }
 
+fn err_line2(a: Allocator, ar: *Arena, head: str, tail: str) {
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str(head); sb.push_str(tail);
+    err_line(str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
+// The directory part of a path, or "" when the path names none.
+fn parent_dir(ar: *Arena, path: str) -> str {
+    let bytes = str::as_bytes(path);
+    let mut i = str::length(path);
+    while i > 0 as u32 {
+        if bytes[i - 1 as u32] == 47 as u8 { return str::from_slice(ar, bytes[0 as u32..i - 1 as u32]); }
+        i = i - 1 as u32;
+    }
+    return "";
+}
+
+// A directory the process can open is a directory that exists.  The seam has no
+// `stat`, and an O_RDONLY open of a directory is the cheapest question it can
+// answer - one syscall, on a path every build already touches.
+fn dir_exists(d: str) -> bool {
+    let fd: c_int = sys::sys_open(d as *const c_char, 0 as c_int);
+    if fd < 0 as c_int { return false; }
+    sys::sys_close(fd);
+    return true;
+}
+
+// The reference creates a missing output directory before writing and stops
+// with `failed to create directory` when it cannot.  There is no mkdir in the
+// seam, so the port asks for the directory the way the reference does - by
+// running the command - guarded by the same existence test, so an existing
+// directory costs nothing.
+fn ensure_dir(a: Allocator, ar: *Arena, path: str) {
+    let d = parent_dir(ar, path);
+    if str::length(d) == 0 as u32 { return; }
+    if str::eq(d, ".") { return; }
+    if dir_exists(d) { return; }
+    let mut argv: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    argv.push("mkdir"); argv.push("-p"); argv.push(d);
+    let sl = argv.as_slice();
+    if sys::sys_spawn(&sl[0] as *const str, argv.length() as c_int) != 0 as c_int {
+        err_line2(a, ar, "failed to create directory: ", d);
+        sys::sys_exit(1 as c_int);
+    }
+    return;
+}
+
 // `-o <path>` — O_WRONLY | O_CREAT | O_TRUNC = 1 | 64 | 512 = 577 (Linux).
-fn write_file(path: str, sb: *const StringBuilder) -> bool {
+//
+// The result is a VERDICT, not decoration: an open that fails leaves no file,
+// and a caller that drops the answer prints `wrote <path>` over an empty disk.
+fn write_file(a: Allocator, ar: *Arena, path: str, sb: *const StringBuilder) -> bool {
+    ensure_dir(a, ar, path);
     let fd: c_int = sys::sys_open(path as *const c_char, 577 as c_int);
     if fd < 0 as c_int { return false; }
     let bytes = sb.as_slice();
@@ -51,9 +103,16 @@ fn write_file(path: str, sb: *const StringBuilder) -> bool {
     return true;
 }
 
-fn write_dump(out: Option<str>, sb: *const StringBuilder) {
+fn write_file_or_die(a: Allocator, ar: *Arena, path: str, sb: *const StringBuilder) {
+    if write_file(a, ar, path, sb) { return; }
+    err_line2(a, ar, "failed to write: ", path);
+    sys::sys_exit(1 as c_int);
+    return;
+}
+
+fn write_dump(a: Allocator, ar: *Arena, out: Option<str>, sb: *const StringBuilder) {
     match out {
-        Option::Some(p) => { write_file(p, sb); }
+        Option::Some(p) => { write_file_or_die(a, ar, p, sb); }
         | Option::None => { flush_stdout(sb); }
     }
     return;
@@ -213,7 +272,7 @@ fn run_emit_tokens(a: Allocator, ar: *Arena, ca: *const CliArgs) {
         Result::Ok(toks) => {
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             dump_tokens(&toks, ca.ca_input, &out);
-            write_dump(ca.ca_output, &out);
+            write_dump(a, ar, ca.ca_output, &out);
         }
         | Result::Err(e) => { report_error(a, e); }
     }
@@ -225,7 +284,7 @@ fn run_emit_ast(a: Allocator, ar: *Arena, ca: *const CliArgs) {
         Result::Ok(prog) => {
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             dump_ast(&prog, ca.ca_input, &out);
-            write_dump(ca.ca_output, &out);
+            write_dump(a, ar, ca.ca_output, &out);
         }
         | Result::Err(e) => { report_error(a, e); }
     }
@@ -248,7 +307,7 @@ fn run_emit_ir_checked(a: Allocator, ar: *Arena, ca: *const CliArgs, prog: *cons
             if ca.ca_after_drop { check_move(a, ar, &tprog); check_escape(a, ar, &tprog); drop_report(a, drop_insert(a, ar, &tprog)); }
             let mut out = StringBuilder::with_capacity(a, 16384 as u32);
             dump_typed_ir(&tprog, ca.ca_input, ca.ca_user_only, &out);
-            write_dump(ca.ca_output, &out);
+            write_dump(a, ar, ca.ca_output, &out);
         }
         | Result::Err(e) => { report_error(a, e); }
     }
@@ -329,7 +388,7 @@ fn emit_or_refuse(a: Allocator, ar: *Arena, ca: *const CliArgs, fserr: *const Ve
         return;
     }
     let cpath = resolve_cpath(a, ar, ca);
-    write_file(cpath, out);
+    write_file_or_die(a, ar, cpath, out);
     emit_output(a, ar, ca, cpath);
     return;
 }
@@ -389,6 +448,7 @@ fn build_cc_argv(a: Allocator, ar: *Arena, ca: *const CliArgs, out: str, cpath: 
 
 fn build_host(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
     let out = resolve_out(ar, ca);
+    ensure_dir(a, ar, out);
     let argv = build_cc_argv(a, ar, ca, out, cpath);
     let sl = argv.as_slice();
     let rc: c_int = sys::sys_spawn(&sl[0] as *const str, argv.length() as c_int);
@@ -465,6 +525,7 @@ fn build_amiga_argv(a: Allocator, ar: *Arena, ca: *const CliArgs, out: str, cpat
 
 fn build_amiga(a: Allocator, ar: *Arena, ca: *const CliArgs, cpath: str) {
     let out = resolve_out(ar, ca);
+    ensure_dir(a, ar, out);
     let argv = build_amiga_argv(a, ar, ca, out, cpath);
     let sl = argv.as_slice();
     let rc: c_int = sys::sys_spawn(&sl[0] as *const str, argv.length() as c_int);

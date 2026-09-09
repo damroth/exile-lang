@@ -759,6 +759,50 @@ selfhost-port-tc-errors: host-selfhost-tc $(EXILC_BIN)
 	  if [ $$emit -gt 0 ]; then echo "  $$emit fixture(s) reached an EMISSION, which is the accept-side of the same defect"; fi; \
 	  exit 1; fi
 
+# ===== Output directories: a write that fails is not a write =====
+#
+# The reference creates a missing output directory before writing, so every
+# `--c-out` / `-o` into a path whose directory does not exist yet SUCCEEDS and
+# leaves a file.  The port used to print `wrote <path>` and exit 0 having
+# written nothing: its writer returned a result its callers dropped.
+#
+# Driver zone, so this is a BEHAVIOURAL gate: same result, same file on disk,
+# not a byte comparison of two command strings.  All three write paths are
+# walked, because they reach the writer from different callers and only one of
+# them was loud when it failed.
+.PHONY: selfhost-outdir
+
+selfhost-outdir: $(EXILC_BIN)
+	@fail=0; n=0; d=$(C_OUT)/outdir; \
+	rm -rf $$d; mkdir -p $$d; \
+	printf 'fn main() { println(1); }\n' > $$d/tiny.exl; \
+	if [ ! -s $$d/tiny.exl ]; then echo "selfhost-outdir: the fixture is empty"; exit 1; fi; \
+	for spec in "--target c --c-out:x.c" "--emit-ast -o:a.txt" "--target host --link runtime/sys_host.c -o:bin"; do \
+	  n=$$((n+1)); \
+	  flags=$${spec%%:*}; want=$${spec##*:}; \
+	  rm -rf $$d/missing; \
+	  $(EXILE) $$flags $$d/missing/$$want $$d/tiny.exl >/dev/null 2>&1; oe=$$?; \
+	  if [ $$oe -ne 0 ] || [ ! -f $$d/missing/$$want ]; then \
+	    echo "selfhost-outdir: the REFERENCE did not write $$want (rc=$$oe) - the gate is asserting the wrong thing"; \
+	    fail=1; continue; \
+	  fi; \
+	  rm -rf $$d/missing; \
+	  $(EXILC_BIN) $$flags $$d/missing/$$want $$d/tiny.exl >/dev/null 2>&1; pe=$$?; \
+	  if [ $$pe -ne $$oe ]; then \
+	    echo "selfhost-outdir: STATUS $$flags oracle=$$oe port=$$pe"; fail=1; continue; \
+	  fi; \
+	  if [ ! -f $$d/missing/$$want ]; then \
+	    echo "selfhost-outdir: the port reported success and wrote no $$want"; \
+	    echo "  a compiler that says it wrote a file the reader cannot find is worse than one that refuses"; \
+	    fail=1; \
+	  fi; \
+	done; \
+	rm -rf $$d; \
+	if [ $$n -lt 3 ]; then echo "selfhost-outdir: only $$n path(s) walked - the writer has three callers"; exit 1; fi; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-outdir: clean ($$n write paths create a missing directory and leave the file, like the reference)"; \
+	else exit 1; fi
+
 # ===== The bootstrap fixpoint — the self-host proof, as a gate =====
 #
 # The port compiles the port, and the compiler THAT produces emits byte-identical
@@ -921,6 +965,7 @@ selfhost-verify: selfhost-prelude-probe \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
+                 selfhost-outdir \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
                  selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
@@ -2842,6 +2887,9 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c29_generic_impl_mono_slot_autoref \
                   c30_binop_operand_order \
                   c31_binop_operand_order_annotated \
+                  c32_assoc_slot_autoref \
+                  c33_assoc_slot_generic_method \
+                  c34_self_in_impl_signature \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \

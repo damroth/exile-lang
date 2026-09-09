@@ -1,0 +1,16 @@
+// The same slot on a method with a type parameter of its own. This path resolved
+// the slot under the instance's bindings, where `Self` is still unbound, and the
+// port REFUSED a program the reference accepts - the direction the superset rule
+// forbids - with a message naming a type variable.
+trait Slot {
+    type Val;
+    fn at<U>(*const self, p: *const Self::Val, u: U) -> u32 { return 5 as u32; }
+}
+struct Own { n: u32 }
+impl Slot for Own { type Val = u32; }
+
+fn main() {
+    let o: Own = Own { n: 1 };
+    let x: u32 = 7 as u32;
+    println(o.at(x, 1 as int) as int);
+}

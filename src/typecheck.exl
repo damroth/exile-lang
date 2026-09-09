@@ -471,8 +471,10 @@ struct TyScope {
     // The enclosing fn's resolved return type — `try` reads it to build the
     // early-return value on the enclosing fn's own Option/Result instance.
     sc_ret: Option<*const Typ>,
-    // The `Self` type while elaborating a synthesised trait default method
-    // (impl methods are parser-stamped, so they never carry `TySelf`).
+    // The `Self` type while elaborating a method - a synthesised trait default
+    // OR an impl method that writes `Self` in its own signature.  The parser
+    // leaves a `TySelf` marker in both, and an unbound marker resolves to
+    // `c_void`, so this being empty is not a neutral default.
     sc_self: Option<*const Typ>,
     // Free / module fn parameter types, for `own *T` → `*T` arg coercion.
     sc_gsigs: *const Vec<FnSig>,
@@ -2865,7 +2867,7 @@ fn check_gen_call_args(a: Allocator, ar: *Arena, sc: *const TyScope, cscope: *co
     while i < na {
         if i < nr {
             let pt = resolve_sig_ty(a, ar, cscope, asl[i + skip], p);
-            check_arg_ty(a, ar, sc, name, i, pt, rsl[i], tsl[i].ty, p);
+            check_slot_arg(a, ar, sc, name, i, pt, rsl[i], tsl[i].ty, p);
         }
         i = i + 1 as u32;
     }
@@ -3211,7 +3213,9 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // it, T stays free and the abstract `Vec<T>` is what later surfaces as c_void.
     check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     check_bound_conformance(a, ar, sc, &sl[midx].mi_tbounds, &binds, sl[midx].mi_name, p);
-    let cscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    let cscope_t = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    let cself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[midx].mi_path))));
+    let cscope = scope_with_self(&cscope_t, cself);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
@@ -3236,6 +3240,7 @@ fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
     // Written as `S::name(..)`, so nothing is implicit: the receiver, if any, is
     // argument one and the slots line up with the declared list from index 0.
     // The reference calls this shape a FUNCTION, and so does the wording here.
+    let sself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[midx as u32].mi_path))));
     let sdisp = method_disp(a, ar, &sl[midx as u32].mi_path, sl[midx as u32].mi_name);
     let scnt = meth_param_count(sc, mm, &sl[midx as u32].mi_params);
     if scnt >= 0 as int {
@@ -3245,7 +3250,7 @@ fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
         let mut k = 0 as u32;
         while k < args.length() {
             if k < targs.length() {
-                match meth_param_ty(a, ar, sc, mm, &sl[midx as u32].mi_params, k, p) {
+                match meth_param_ty(a, ar, sc, mm, &sl[midx as u32].mi_params, sself, k, p) {
                     Option::Some(pt) => { check_slot_arg(a, ar, sc, sdisp, k, pt, rs[k], ts[k].ty, p); }
                     | Option::None => { }
                 }
@@ -4235,8 +4240,14 @@ fn meth_param_count(sc: *const TyScope, mangled: str, mparams: *const Vec<*const
 // Resolution stays lazy and per-index on purpose - `resolve_sig_ty` registers
 // mono instances as a side effect, so resolving a whole list eagerly would
 // change the ORDER instances reach the emission.
+// `self_ty` is what the annotation's `Self` means HERE.  Registration already
+// resolves the RETURN under a scope that binds it; the parameters were kept as
+// annotations and resolved later under the CALLER's scope, where `Self` is
+// bound to nothing - so `*const Self::Val` stayed a marker and every reader of
+// it (the auto-ref rule, the argument check) had to abstain.  Same signature,
+// half resolved early and half resolved late.
 fn meth_param_ty(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str,
-                 mparams: *const Vec<*const TypeAnn>, k: u32, pos: Pos) -> Option<*const Typ> {
+                 mparams: *const Vec<*const TypeAnn>, self_ty: Option<*const Typ>, k: u32, pos: Pos) -> Option<*const Typ> {
     let none: Option<*const Typ> = Option::None;
     let si = sig_index(sc, mangled);
     if si >= 0 as int {
@@ -4244,12 +4255,13 @@ fn meth_param_ty(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str,
         return Option::Some(sc.sc_gsigs.as_slice()[si as u32].fs_params.as_slice()[k]);
     }
     if k >= mparams.length() { return none; }
-    return Option::Some(resolve_sig_ty(a, ar, sc, mparams.as_slice()[k], pos));
+    let msc = scope_with_tparams_self(sc, sc.sc_tparams, self_ty);
+    return Option::Some(resolve_sig_ty(a, ar, &msc, mparams.as_slice()[k], pos));
 }
 
 fn meth_autoref(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str,
-                mparams: *const Vec<*const TypeAnn>, i: u32, targ: *const Texpr, pos: Pos) -> *const Texpr {
-    return match meth_param_ty(a, ar, sc, mangled, mparams, i + 1 as u32, pos) {
+                mparams: *const Vec<*const TypeAnn>, self_ty: Option<*const Typ>, i: u32, targ: *const Texpr, pos: Pos) -> *const Texpr {
+    return match meth_param_ty(a, ar, sc, mangled, mparams, self_ty, i + 1 as u32, pos) {
         Option::Some(pt) => autoref_into(ar, pt, targ)
         | Option::None => targ
     };
@@ -4264,19 +4276,19 @@ fn autoref_into(ar: *Arena, pty: *const Typ, targ: *const Texpr) -> *const Texpr
 }
 
 fn append_args_meth(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                    mangled: str, disp: str, mparams: *const Vec<*const TypeAnn>, args: *const Vec<*const Expr>,
-                    pos: Pos, out: *Vec<*const Texpr>) {
+                    mangled: str, disp: str, mparams: *const Vec<*const TypeAnn>, self_ty: Option<*const Typ>,
+                    args: *const Vec<*const Expr>, pos: Pos, out: *Vec<*const Texpr>) {
     let n = args.length();
     let sl = args.as_slice();
     let mut i = 0 as u32;
     while i < n {
         let targ = elab_expr(a, ar, g, sc, env, none_ty(), sl[i]);
-        let reffed = meth_autoref(a, ar, sc, mangled, mparams, i, targ, pos);
+        let reffed = meth_autoref(a, ar, sc, mangled, mparams, self_ty, i, targ, pos);
         let fin = coerce_at(a, ar, sc, mangled, i + 1 as u32, reffed);
         // The same slot the auto-ref just read, read once more by the check.
         // Asking a different table here is how a reference landed in a slot
         // whose declared type nobody compared it against.
-        match meth_param_ty(a, ar, sc, mangled, mparams, i + 1 as u32, pos) {
+        match meth_param_ty(a, ar, sc, mangled, mparams, self_ty, i + 1 as u32, pos) {
             Option::Some(pt) => { check_slot_arg(a, ar, sc, disp, i, pt, sl[i], fin.ty, pos); }
             | Option::None => { }
         }
@@ -4507,7 +4519,14 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     check_bind_conflicts(a, ar, sc, &binds, p);
     check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     check_bound_conformance(a, ar, sc, &sl[midx].mi_tbounds, &binds, sl[midx].mi_name, p);
-    let iscope = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    // `Self` in a slot names the impl target, exactly as it did when the method's
+    // RETURN was resolved at registration.  The struct-generic path binds it from
+    // the receiver instance already; these two were the ones still resolving a
+    // parameter under a scope where `Self` means nothing, so the slot stayed a
+    // marker and the message offered the reader `expected *const Self::Val`.
+    let iscope_t = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    let iself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[midx].mi_path))));
+    let iscope = scope_with_self(&iscope_t, iself);
     let rargs = autoref_gen_args(a, ar, &iscope, &sl[midx].mi_params, 1 as u32, &targs, p);
     check_gen_call_args(a, ar, sc, &iscope,
                         method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
@@ -4705,6 +4724,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let scst = sl[idx as u32].mi_self_const;
     if sl[idx as u32].mi_prelude { register_prelude_method_use(a, ar, sc, &sl[idx as u32].mi_path, mret); }
     let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
+    let mself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[idx as u32].mi_path))));
     let mdisp = method_disp(a, ar, &sl[idx as u32].mi_path, sl[idx as u32].mi_name);
     let mcnt = meth_param_count(sc, mm, &sl[idx as u32].mi_params);
     if mcnt > 0 as int {
@@ -4712,7 +4732,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     }
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
-    append_args_meth(a, ar, g, sc, env, mm, mdisp, &sl[idx as u32].mi_params, args, p, &cargs);
+    append_args_meth(a, ar, g, sc, env, mm, mdisp, &sl[idx as u32].mi_params, mself, args, p, &cargs);
     return te_node(ar, TexprNode::TCall { mangled: mm, args: cargs }, ret_or_void(ar, mret), p);
 }
 
@@ -12005,8 +12025,13 @@ fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gens
     // elaborates under the impl's module path so a bare `Pos` in `mod pos`
     // (the self type, a return type, a struct literal) resolves to `pos::Pos`.
     let xtp = skel_xtparams(a, f, itparams);
+    // An impl method may WRITE `Self` in its own signature - the parser leaves a
+    // marker for it exactly as it does inside a trait - so the body has to
+    // elaborate with `Self` bound, or the marker degrades to `c_void` and a
+    // parameter the author declared as the impl's own type becomes untouchable.
+    let mself: Option<*const Typ> = Option::Some(default_self_ty(a, ar, target, itparams));
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, modpath,
-                            method_mangle(a, ar, target, f.name), f, none_ty(), &xtp, no_origin()));
+                            method_mangle(a, ar, target, f.name), f, mself, &xtp, no_origin()));
 }
 
 // Synthesise a trait default method for `target`: like an impl method but
@@ -13548,8 +13573,14 @@ fn check_impl_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *
     let isl = im.params.as_slice();
     let mut k = 0 as u32;
     while k < tm.params.length() {
+        // BOTH sides: `Self` names the target wherever it is written, and an impl
+        // is as entitled to write it as the trait is.  Substituting on one side
+        // only made the comparison ask a different question of each: the trait's
+        // `*const Self` became `*const S` while the impl's resolved in a scope
+        // with no `Self` at all and degraded to `*const c_void`, so a signature
+        // identical to the trait's was reported as not matching it.
         let tt = resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, tsl[k].pty, target), im.pos);
-        let it = resolve_sig_ty(a, ar, sc, isl[k].pty, im.pos);
+        let it = resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, isl[k].pty, target), im.pos);
         if !typ_eq(tt, it) {
             let mut sb = StringBuilder::with_capacity(a, 112 as u32);
             sb.push_str("method '"); sb.push_str(tm.name);
@@ -13638,13 +13669,14 @@ fn ret_ann_matches(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     return match tret {
         Option::Some(ta) => match iret {
             Option::Some(ia) => typ_eq(resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, ta, target), p),
-                                       resolve_sig_ty(a, ar, sc, ia, p))
+                                       resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, ia, target), p))
             | Option::None => false
         }
         | Option::None => match iret { Option::Some(_x) => false | Option::None => true }
     };
 }
-// `Self` in a trait declaration reads as the impl's target.
+// `Self` reads as the impl's target - in the trait's declaration and in the
+// impl's own signature alike.
 fn subst_self_ann(a: Allocator, ar: *Arena, ann: *const TypeAnn, target: *const Vec<str>) -> *const TypeAnn {
     return match *ann {
         TypeAnn::TySelf => ann_struct(a, ar, path_last(target))

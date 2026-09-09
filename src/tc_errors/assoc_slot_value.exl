@@ -1,0 +1,13 @@
+// A trait default method whose parameter is `*const Self::Val`, called with a
+// value of the wrong type. The method's RETURN was resolved at registration,
+// under a scope that binds `Self`; its PARAMETERS were kept as annotations and
+// resolved later at the call site, where `Self` is bound to nothing - so the
+// slot stayed a marker, and every reader of it had to abstain rather than
+// report `expected *const Self::Val`, which names nothing in the program.
+trait Slot {
+    type Val;
+    fn at(*const self, p: *const Self::Val) -> u32 { return 5 as u32; }
+}
+struct Own { n: u32 }
+impl Slot for Own { type Val = u32; }
+fn main() { let o: Own = Own { n: 1 }; println(o.at(true) as int); }

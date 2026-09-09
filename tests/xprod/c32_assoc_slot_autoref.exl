@@ -1,0 +1,19 @@
+// The accept side of the same slot, which is what makes the pair a test rather
+// than a pair of refusals: a `u32` handed to `*const Self::Val` is what the slot
+// points at once `Self` is pinned, so it auto-refs and the program RUNS.
+//
+// Written without an explicit `&` on purpose. The corpus fixture next to this
+// one writes `&x`, which is why the divergence lived here unseen: an argument
+// already a pointer needs no projection to reach the emission unchanged.
+trait Slot {
+    type Val;
+    fn at(*const self, p: *const Self::Val) -> u32 { return 5 as u32; }
+}
+struct Own { n: u32 }
+impl Slot for Own { type Val = u32; }
+
+fn main() {
+    let o: Own = Own { n: 1 };
+    let x: u32 = 7 as u32;
+    println(o.at(x) as int);
+}

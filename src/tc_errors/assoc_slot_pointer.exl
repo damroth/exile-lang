@@ -1,0 +1,10 @@
+// The same slot handed a pointer to the wrong thing. Separate from the value
+// case because the two fail for different reasons: a value has to be auto-ref'd
+// into the slot before it can be compared, a pointer is compared as it stands.
+trait Slot {
+    type Val;
+    fn at(*const self, p: *const Self::Val) -> u32 { return 5 as u32; }
+}
+struct Own { n: u32 }
+impl Slot for Own { type Val = u32; }
+fn main() { let o: Own = Own { n: 1 }; let b: bool = true; println(o.at(&b) as int); }
