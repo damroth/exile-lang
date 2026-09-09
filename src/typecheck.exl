@@ -5,11 +5,13 @@
 // module (~12K LOC in the oracle); it is filled in feature by feature,
 // verified against `exilc --emit-typed-ir --user-only` byte-for-byte.
 //
-// SLICE 1 (this file's current reach): function signatures — params and
-// return types resolved through `resolve_type_ann` for the primitive /
-// pointer type domain — plus the fixed prelude `mono-instances` footprint.
-// Bodies are not yet elaborated (emitted empty); a function whose oracle
-// body is non-empty therefore lands in the gate's deferred bucket.
+// The typechecker. Signatures and BODIES both, for the whole language the
+// reference accepts: this file compiles itself, and `selfhost-port-ir` walks
+// every corpus function with nothing in a deferred bucket.
+//
+// The sentence that used to stand here said bodies were not elaborated yet. It
+// outlived that by a long way, and a stale marker is worse than none - it tells
+// the next reader not to look.
 
 use pos::*;
 use ast::*;
@@ -3863,8 +3865,8 @@ fn check_printable_ty(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Ty
         | Typ::TFloat(_w) => { }
         | Typ::TTuple(_ts) => { tc_fail(ar, sc, p, "cannot print a tuple; destructure with 'let (...)' first"); }
         | Typ::TNullPtr => { tc_fail(ar, sc, p, "cannot print 'null'"); }
-        | Typ::TStruct(path) => { print_struct_reject(a, ar, sc, t, &path, p); }
-        | Typ::TEnum(path) => { print_enum_reject(a, ar, sc, t, &path, p); }
+        | Typ::TStruct(path) => { print_struct_reject(a, ar, sc, &path, p); }
+        | Typ::TEnum(path) => { print_enum_reject(a, ar, sc, &path, p); }
         | Typ::TPtr(_i) => { print_reject(a, ar, sc, "cannot print a pointer value (", t, "); deref or print a field", p); }
         | Typ::TConstPtr(_i) => { print_reject(a, ar, sc, "cannot print a const-pointer value (", t, "); deref or print a field", p); }
         | Typ::TOwnPtr(_i) => { print_reject(a, ar, sc, "cannot print a pointer value (", t, "); deref or print a field", p); }
@@ -3888,7 +3890,7 @@ fn print_c_reject(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
-fn print_struct_reject(a: Allocator, ar: *Arena, sc: *const TyScope, _t: *const Typ,
+fn print_struct_reject(a: Allocator, ar: *Arena, sc: *const TyScope,
                        path: *const Vec<str>, p: Pos) {
     if is_debug_ty(sc, path) { return; }
     let mut sb = StringBuilder::with_capacity(a, 112 as u32);
@@ -3897,7 +3899,7 @@ fn print_struct_reject(a: Allocator, ar: *Arena, sc: *const TyScope, _t: *const 
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
-fn print_enum_reject(a: Allocator, ar: *Arena, sc: *const TyScope, _t: *const Typ,
+fn print_enum_reject(a: Allocator, ar: *Arena, sc: *const TyScope,
                      path: *const Vec<str>, p: Pos) {
     if is_debug_ty(sc, path) { return; }
     let mut sb = StringBuilder::with_capacity(a, 128 as u32);
@@ -3991,7 +3993,8 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
              expected: Option<*const Typ>, callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
     if callee.length() != 1 as u32 {
         // `Path::Variant(..)` — a tuple-enum constructor; `Type::method(..)`
-        // — a static / UFCS method call; else (module fn) not yet supported.
+        // — a static / UFCS method call; anything else is a module path and
+        // resolves through `elab_qualified_call`, externs included.
         let last = path_last(callee);
         let init = path_init(a, callee);
         if callee.length() == 2 as u32 && str::eq(init.get(0 as u32) orelse "", "str") {
@@ -4964,9 +4967,18 @@ fn check_or_variants(a: Allocator, ar: *Arena, sc: *const TyScope, alts: *const 
 }
 // An or-pattern is one arm with several spellings — a bind would have a value
 // on some spellings and none on others, so alternatives must bind nothing.
-fn check_or_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, _scrut_ty: *const Typ,
+fn check_or_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, scrut_ty: *const Typ,
                     alts: *const Vec<Pattern>, p: Pos) {
     check_or_variants(a, ar, sc, alts, p);
+    // The scrutinee type was being carried here and not read.  Each alternative
+    // is a pattern in its own right and answers to the same contract a lone one
+    // does - it names an enum the value actually has - so it gets the same
+    // check.  Alternatives bind nothing (the loop below enforces that), so the
+    // bindings this collects are discarded.
+    let mut sink: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
+    let asl = alts.as_slice();
+    let mut k = 0 as u32;
+    while k < alts.length() { pattern_binds(a, ar, sc, &asl[k], scrut_ty, &sink); k = k + 1 as u32; }
     let n = alts.length();
     let sl = alts.as_slice();
     let mut i = 0 as u32;
@@ -5450,8 +5462,20 @@ fn check_bool_pat(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Patt
     if is_bool_ty(scrut) || ty_has_tvar(scrut) { return; }
     match *pat {
         Pattern::PBool(_b, ppos) => { bool_pat_reject(a, ar, sc, scrut, ppos); }
+        // An or-pattern is one arm with several spellings, and every spelling has
+        // to be one the scrutinee could hold.  The literal check next door walks
+        // them; this one used to swallow them in its catch-all, so `1 | true`
+        // against an `int` went unread.
+        | Pattern::POr(alts, _q) => { bool_pat_list(a, ar, sc, &alts, scrut); }
         | _o => { }
     }
+    return;
+}
+fn bool_pat_list(a: Allocator, ar: *Arena, sc: *const TyScope, alts: *const Vec<Pattern>, scrut: *const Typ) {
+    let n = alts.length();
+    let sl = alts.as_slice();
+    let mut i = 0 as u32;
+    while i < n { check_bool_pat(a, ar, sc, &sl[i], scrut); i = i + 1 as u32; }
     return;
 }
 // A literal pattern needs an integer to compare against, and the literal has to
@@ -5570,8 +5594,10 @@ fn tpat_is_catchall(tp: *const Tpattern) -> bool {
         | _o => false
     };
 }
+// The TYPED arms carry everything this reads, guards included, so the raw ones
+// are not a parameter here.
 fn check_exhaustive(a: Allocator, ar: *Arena, sc: *const TyScope, scrut: *const Typ,
-                    _arms: *const Vec<MatchArm>, tarms: *const Vec<TmatchArm>, p: Pos) {
+                    tarms: *const Vec<TmatchArm>, p: Pos) {
     if ty_has_tvar(scrut) { return; }
     if is_bool_ty(scrut) { check_exh_bool(a, ar, sc, tarms, p); return; }
     if !is_enum_ty(scrut) {
@@ -5900,7 +5926,7 @@ fn emit_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
               arms: *const Vec<MatchArm>, p: Pos) -> *const Texpr {
     let mut tarms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
     elab_arms(a, ar, g, sc, env, expected, tscrut.ty, arms, &tarms);
-    check_exhaustive(a, ar, sc, tscrut.ty, arms, &tarms, p);
+    check_exhaustive(a, ar, sc, tscrut.ty, &tarms, p);
     check_arm_types(a, ar, sc, &tarms, p);
     let mty = match_result_ty(ar, &tarms);
     return te_node(ar, TexprNode::TMatch { scrutinee: tscrut, ename_path: epath, arms: tarms }, mty, p);

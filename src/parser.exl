@@ -2718,9 +2718,12 @@ fn parse_type_alias_decl(s: *Parser, is_pub: bool) -> TypeAliasDecl {
     return TypeAliasDecl { taname: np.name, tatparams: tparams, tatarget: target, tais_pub: is_pub, tapos: np.pos };
 }
 
-// Dispatch a single declaration item into `out`.  PORT STATUS: fn +
-// struct/enum/const/type ported; impl/trait/view/mod/use/extern + `@`
-// attributes record a clear "not yet ported" marker (next sub-stage).
+// Dispatch a single declaration item into `out`.  Every item kind the reference
+// parses is parsed here - impl, trait, view, mod, use, extern and `@`
+// attributes included; the marker below fires only for a kind that is neither.
+//
+// The status line that used to stand here listed most of the language as
+// unported, long after it stopped being true.
 
 // ===== impl =====
 

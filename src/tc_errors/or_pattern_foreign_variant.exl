@@ -1,0 +1,7 @@
+// The same hole for variants: an alternative naming a DIFFERENT enum than the
+// value has. The or-pattern checker was handed the scrutinee type and did not
+// read it - the parameter was silenced, which is what a missing check looks
+// like from the outside.
+enum E { A | B }
+enum F { C | D }
+fn main() { let e: E = E::A; match e { E::A | F::C => println(1) | _o => println(0) } }

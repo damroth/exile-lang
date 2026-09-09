@@ -1,0 +1,5 @@
+// An or-pattern is one arm with several spellings, and every spelling has to be
+// one the scrutinee could hold. The literal check walked the alternatives; the
+// boolean one swallowed them in its catch-all, so this went unread - two sibling
+// checkers, one walking an or-pattern and one not.
+fn main() { let x: int = 1; match x { 1 | true => println(1) | _o => println(0) } }

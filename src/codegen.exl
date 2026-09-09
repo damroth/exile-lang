@@ -2018,9 +2018,10 @@ fn fn_concrete(tf: *const Tfunc) -> bool {
 }
 
 // Stage-(f) driver entry: emit every concrete, non-extern function definition.
-// (Full gen_program — includes / fwd-decls / DCE / ordering — is stage g; this
-// reaches gen_function so the match emitter's mono instances are generated and
-// the c/d/e/f emission is diffable per function.)
+// (`gen_program` - includes / fwd-decls / DCE / ordering - is the whole-program
+// entry and is what the driver calls; this one stays because it reaches
+// gen_function directly, which keeps the c/d/e/f emission diffable per
+// function.)
 // ===== Dead-prelude elision =====
 //
 // A prelude-positioned fn nobody references is not emitted.  The port
@@ -2180,10 +2181,10 @@ pub fn emit_all_functions(a: Allocator, ar: *Arena, tp: *const Tprogram, fstd: b
 // per-body `\n` in emit_all_functions reproduces the oracle's always-blank
 // after the fwd-decl section plus the blank-between-bodies.
 //
-// Workstream-B (prelude method bodies not yet elaborated into tp_funcs):
-// transitive DCE of dead prelude fns, @debug printer synthesis, and the
-// default_allocator helper's body-separation interaction are all no-ops today
-// because no prelude fn reaches tp_funcs; they land with prelude elaboration.
+// @debug printer synthesis runs: a `@debug` struct or enum gets its
+// `<mangle>__debug` emitted, and `selfhost-xprod` walks the shapes.  What is
+// still tied to prelude elaboration is transitive DCE of dead prelude fns and
+// the default_allocator helper's body-separation interaction.
 
 // ===== @debug printer synthesis =====
 //
@@ -2636,7 +2637,8 @@ pub fn gen_program(a: Allocator, ar: *Arena, tp: *const Tprogram, fstd: bool, fs
 // byte-exact with the oracle's emit_print_impl; a `@debug` aggregate dispatches
 // to its synthesized `<mangle>__debug` printer.  (Display-dispatched println is
 // lowered to a writer-pattern block in typed-IR before codegen; only the
-// primitive println reaches here.)  --freestanding routing is stage-g.
+// primitive println reaches here.)  The --freestanding route is right below:
+// `emit_print_builtin` hands a freestanding build to `emit_print_free`.
 
 struct Fmt { f_spec: str, f_cast: str }
 fn int_spec_k(k: IntKind) -> Fmt {
