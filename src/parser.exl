@@ -688,7 +688,30 @@ fn parse_param(s: *Parser) -> Param {
     let name = expect_ident(s, "parameter name");
     expect(s, Token::Colon);
     let ty = parse_type(s);
-    return Param { pname: name.name, pty: ty, is_mut: is_mut, preg: reg };
+    return Param { pname: name.name, pty: subst_self_param(s, ty), is_mut: is_mut, preg: reg };
+}
+
+// The reference folds `Self` into the impl target INSIDE AN IMPL BLOCK, in
+// PARAMETER types only, and only at the root or under a chain of `*` / `*const`.
+// Everything else it leaves alone - a return type, a body annotation, `own
+// *Self`, `[Self; N]`, `fn(*const Self)` - and the surviving marker is refused
+// later by name.  The narrowness is the rule, not an oversight: widening it to
+// "`Self` means the target wherever it is written" starts ACCEPTING programs the
+// reference refuses, which is the direction the port may never move.
+fn subst_self_in(s: *Parser, ty: *const TypeAnn, target: *const TypeAnn) -> *const TypeAnn {
+    return match *ty {
+        TypeAnn::TySelf => target
+        | TypeAnn::TyPtr(inner) => ty_node(s, TypeAnn::TyPtr(subst_self_in(s, inner, target)))
+        | TypeAnn::TyConstPtr(inner) => ty_node(s, TypeAnn::TyConstPtr(subst_self_in(s, inner, target)))
+        | _o => ty
+    };
+}
+
+fn subst_self_param(s: *Parser, ty: *const TypeAnn) -> *const TypeAnn {
+    return match s.self_target {
+        Option::Some(t) => subst_self_in(s, ty, t)
+        | Option::None => ty
+    };
 }
 
 fn parse_params(s: *Parser) -> Vec<Param> {

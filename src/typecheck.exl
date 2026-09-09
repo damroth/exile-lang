@@ -1709,7 +1709,7 @@ fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const Type
             ty_node(ar, Typ::TArray { elem: resolve_sig_ty(a, ar, sc, elem, p), size: checked_array_size(a, ar, sc, size, p) })
         | TypeAnn::TyFnPtr { params, ret } =>
             ty_node(ar, Typ::TFnPtr { params: resolve_sig_args(a, ar, sc, &params, p), ret: resolve_sig_ret(a, ar, sc, ret, p) })
-        | TypeAnn::TySelf => voidable_ty(ar, sc.sc_self)
+        | TypeAnn::TySelf => self_ty_or_fail(ar, sc, p)
         | _other => resolve_type_ann(a, ar, ann)
     };
 }
@@ -4509,7 +4509,14 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     check_gen_call_arity(a, ar, sc, sl[midx].mi_mangled, &sl[midx].mi_params,
                          1 as u32, &targs, p);
     let mvis = tbinds_visible(a, sc.sc_tbinds, &sl[midx].mi_tparams);
-    let cscope = scope_with_tparams_binds(sc, &sl[midx].mi_tparams, &mvis);
+    let cscope_t = scope_with_tparams_binds(sc, &sl[midx].mi_tparams, &mvis);
+    // The annotations read here can be the TRAIT's own, and a trait declares its
+    // receiver as `*const Self` - the reference substitutes that away when it
+    // specialises the default, before any of it reaches type resolution.  The
+    // port resolves the annotation in place, so it has to say what `Self` is;
+    // this is the trait's text, never a `Self` the user wrote in an impl.
+    let cself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[midx].mi_path))));
+    let cscope = scope_with_self(&cscope_t, cself);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_method_binds(a, ar, &cscope, &sl[midx].mi_params, trecv, &targs, &binds, p);
@@ -4854,6 +4861,22 @@ fn elab_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Patter
 // Bind pattern variables into the arm's env: a top-level `PVar` binds the
 // whole scrutinee; a variant pattern binds each payload var to its field
 // type and recurses through nested variant patterns.
+// `Self` is folded into the impl target where the reference folds it - parameter
+// types, under a chain of `*` / `*const`, inside an impl block.  A marker that
+// reaches resolution SURVIVED that fold, which means the reference refuses it, by
+// this name and at the declaration's position.  A synthesised trait default is
+// the exception and the reason the scope can carry a `Self` at all: there the
+// binding IS what the fold would have produced.
+fn self_ty_or_fail(ar: *Arena, sc: *const TyScope, p: Pos) -> *const Typ {
+    return match sc.sc_self {
+        Option::Some(ty) => ty
+        | Option::None => {
+            tc_fail(ar, sc, p, "bare 'self' is only allowed as the receiver of an 'impl' method");
+            ty_node(ar, Typ::TCVoid)
+        }
+    };
+}
+
 fn voidable_ty(ar: *Arena, t: Option<*const Typ>) -> *const Typ {
     return match t {
         Option::Some(ty) => ty
@@ -12025,13 +12048,11 @@ fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gens
     // elaborates under the impl's module path so a bare `Pos` in `mod pos`
     // (the self type, a return type, a struct literal) resolves to `pos::Pos`.
     let xtp = skel_xtparams(a, f, itparams);
-    // An impl method may WRITE `Self` in its own signature - the parser leaves a
-    // marker for it exactly as it does inside a trait - so the body has to
-    // elaborate with `Self` bound, or the marker degrades to `c_void` and a
-    // parameter the author declared as the impl's own type becomes untouchable.
-    let mself: Option<*const Typ> = Option::Some(default_self_ty(a, ar, target, itparams));
+    // No `Self` binding here on purpose.  The parser already folded the marker
+    // where the reference folds it; a marker that SURVIVED is one the reference
+    // refuses, and binding it in scope would answer it instead.
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, modpath,
-                            method_mangle(a, ar, target, f.name), f, mself, &xtp, no_origin()));
+                            method_mangle(a, ar, target, f.name), f, none_ty(), &xtp, no_origin()));
 }
 
 // Synthesise a trait default method for `target`: like an impl method but
@@ -13573,14 +13594,11 @@ fn check_impl_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *
     let isl = im.params.as_slice();
     let mut k = 0 as u32;
     while k < tm.params.length() {
-        // BOTH sides: `Self` names the target wherever it is written, and an impl
-        // is as entitled to write it as the trait is.  Substituting on one side
-        // only made the comparison ask a different question of each: the trait's
-        // `*const Self` became `*const S` while the impl's resolved in a scope
-        // with no `Self` at all and degraded to `*const c_void`, so a signature
-        // identical to the trait's was reported as not matching it.
+        // Only the TRAIT's side is substituted here, because the impl's own
+        // parameters were already folded by the parser - in the positions the
+        // reference folds them, and nowhere else.
         let tt = resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, tsl[k].pty, target), im.pos);
-        let it = resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, isl[k].pty, target), im.pos);
+        let it = resolve_sig_ty(a, ar, sc, isl[k].pty, im.pos);
         if !typ_eq(tt, it) {
             let mut sb = StringBuilder::with_capacity(a, 112 as u32);
             sb.push_str("method '"); sb.push_str(tm.name);
@@ -13669,7 +13687,7 @@ fn ret_ann_matches(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     return match tret {
         Option::Some(ta) => match iret {
             Option::Some(ia) => typ_eq(resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, ta, target), p),
-                                       resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, ia, target), p))
+                                       resolve_sig_ty(a, ar, sc, ia, p))
             | Option::None => false
         }
         | Option::None => match iret { Option::Some(_x) => false | Option::None => true }

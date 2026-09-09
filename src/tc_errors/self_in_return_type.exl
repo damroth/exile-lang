@@ -1,0 +1,10 @@
+// `Self` in a RETURN type. The reference folds `Self` into the impl target in
+// parameter types only - `replace_self` is mapped over the method's params and
+// nothing else - so a return type keeps the marker and is refused by name, at
+// the `fn`.
+//
+// The port once resolved `Self` wherever it was written, which reads like a
+// kindness and is not one: it accepted five shapes the reference refuses.
+struct S { v: int }
+impl S { pub fn mk(*const self) -> Self { return S { v: 1 }; } }
+fn main() { let s: S = S { v: 1 }; println(s.mk().v); }

@@ -1,0 +1,11 @@
+// `own *Self`. The reference's fold has arms for `*` and `*const` and none for
+// `own *`, so this marker survives too - and the distinction is not incidental:
+// an owning pointer is a different type constructor, and the reference's list
+// says which ones it is willing to look through.
+//
+// The port used to refuse this with a message about the value never being
+// consumed, which is a true sentence about a program the reader cannot fix,
+// because the type it names does not exist.
+struct S { v: int }
+impl S { pub fn go(*const self, o: own *Self) -> int { return o.v; } }
+fn main() { let s: S = S { v: 1 }; let p: own *S = new S { v: 5 }; println(s.go(p)); }
