@@ -1,0 +1,23 @@
+// `o orelse v();` is a STATEMENT, so its default sits in a statement position
+// too - a call returning nothing is legal there. An `orelse` default is the
+// third position-transparent form, alongside a match arm and a block's trailing
+// expression.
+//
+// I had written that this one was unreachable, having probed `orelse` only where
+// it yields a value. The statement form is what disproved it, so it is pinned
+// here rather than argued about again.
+fn note() { println(9); }
+
+fn get(hit: bool) -> Option<int> {
+    if hit { return Option::Some(4); }
+    return Option::None;
+}
+
+fn main() {
+    let hit: Option<int> = get(true);
+    let miss: Option<int> = get(false);
+    hit orelse note();
+    miss orelse note();
+    println(hit orelse 0);
+    println(miss orelse 7);
+}

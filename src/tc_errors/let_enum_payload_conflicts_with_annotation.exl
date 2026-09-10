@@ -1,0 +1,5 @@
+// The annotation names the instance and the PAYLOAD pins the same type
+// parameter a second time. Taking the annotation and never looking at the
+// payload let this through: it compiled, it linked, and it printed a bool
+// payload as an integer.
+fn main() { let o: Option<int> = Option::Some(true); match o { Option::Some(x) => println(x) | Option::None => println(0) } }

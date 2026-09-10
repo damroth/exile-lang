@@ -1,0 +1,5 @@
+// The same rule reached by an int LITERAL rather than a value of another kind.
+// The reference refuses this too - a literal does not adopt the annotation's
+// argument here - which is why the check needs no adopt-the-slot exception;
+// measured before it was written, not assumed after.
+fn main() { let o: Option<u16> = Option::Some(1); match o { Option::Some(x) => println(x as int) | Option::None => println(0) } }

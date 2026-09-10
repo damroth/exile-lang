@@ -2892,6 +2892,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c34_self_in_impl_signature \
                   c35_self_under_pointer_chain \
                   c36_void_call_in_statement_position \
+                  c37_orelse_void_in_statement \
+                  c38_or_pattern_wildcard_covers \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \

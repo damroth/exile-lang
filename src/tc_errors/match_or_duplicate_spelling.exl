@@ -1,0 +1,6 @@
+// `true | true` is a copy, not a case: the second spelling is already covered by
+// the first. The duplicate counter compared arms with EACH OTHER, so a repeat
+// inside one or-list was invisible to it - and the round that taught the
+// coverage reader to walk an or-list moved this cell the wrong way, from
+// "refuses with the wrong words" to "accepts".
+fn main() { let b: bool = true; match b { true | true => println(1) | false => println(0) } }

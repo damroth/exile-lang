@@ -1,0 +1,15 @@
+// `true | _` covers the whole domain, because one of its spellings does. The
+// catch-all walk stopped at the or-pattern, so the arm looked like it covered
+// only `true` and a total match was called non-exhaustive.
+//
+// The accepting side of the same rule whose refusing side is
+// `match_or_duplicate_spelling` - a coverage reader that walks an or-list has to
+// get both directions right, and one fixture can only show one of them.
+fn pick(b: bool) -> int {
+    return match b { true | _ => 5 };
+}
+
+fn main() {
+    println(pick(true));
+    println(pick(false));
+}

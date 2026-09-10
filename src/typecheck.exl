@@ -5479,13 +5479,16 @@ fn elab_one_arm(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
 // them IS the position its parent was in, and stops at every other boundary: an
 // operand, an argument, an index.
 //
-// Two of them carry it here - a match arm and a block's trailing expression -
-// and that is the whole reachable set, measured rather than assumed: an `if` in
-// statement position is taken by the statement walker's own arm before the
-// expression path sees it (probed nested in a `while` and in another `if`), and
-// an `orelse` default has to be an Option, which a void call is not.  The
-// reference forwards through those two as well; here they would be branches no
-// program can reach.
+// Three of them carry it here: a match arm, a block's trailing expression, and
+// an `orelse` DEFAULT - `o orelse v();` is a statement, and the default sits in
+// whatever position the whole `orelse` was in.  I once wrote that this one was
+// unreachable, having probed `orelse` only where it yields a value; the shape
+// that disproved it was the statement form.
+//
+// The fourth the reference forwards through - an `if` branch - is genuinely
+// unreachable here: a statement-position `if` is taken by the statement walker's
+// own arm before the expression path sees it (probed nested in a `while` and in
+// another `if`).
 fn elab_arms(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, scrut_ty: *const Typ, arms: *const Vec<MatchArm>, allow_void: bool, out: *Vec<TmatchArm>) {
     let n = arms.length();
@@ -5637,8 +5640,41 @@ fn tpat_is_catchall(tp: *const Tpattern) -> bool {
     return match *tp {
         Tpattern::TPWildcard => true
         | Tpattern::TPVar(_n) => true
+        // `true | _` covers everything, because one of its spellings does.  The
+        // walk stopped at the or-pattern and the arm looked like it covered only
+        // `true`, so a total match was called non-exhaustive.
+        | Tpattern::TPOr(alts) => tpat_list_catchall(&alts)
         | _o => false
     };
+}
+fn tpat_list_catchall(alts: *const Vec<Tpattern>) -> bool {
+    let n = alts.length();
+    let sl = alts.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if tpat_is_catchall(&sl[i]) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// How many of an arm's spellings cover `want`.  Coverage answers "does this arm
+// reach the value"; this answers "how many times", which is the question a
+// duplicate INSIDE one or-list asks - `true | true` is a copy, not a case, and
+// counting between arms could never see it.
+fn tpat_count_bool(tp: *const Tpattern, want: bool) -> u32 {
+    return match *tp {
+        Tpattern::TPBool(b) => if b == want { 1 as u32 } else { 0 as u32 }
+        | Tpattern::TPOr(alts) => tpat_list_count_bool(&alts, want)
+        | _o => 0 as u32
+    };
+}
+fn tpat_list_count_bool(alts: *const Vec<Tpattern>, want: bool) -> u32 {
+    let n = alts.length();
+    let sl = alts.as_slice();
+    let mut acc = 0 as u32;
+    let mut i = 0 as u32;
+    while i < n { acc = acc + tpat_count_bool(&sl[i], want); i = i + 1 as u32; }
+    return acc;
 }
 // The TYPED arms carry everything this reads, guards included, so the raw ones
 // are not a parameter here.
@@ -5692,6 +5728,11 @@ fn check_exh_bool(_a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const V
         }
         let ct = tpat_covers_bool(&sl[i].tpat, true);
         let cf = tpat_covers_bool(&sl[i].tpat, false);
+        // WITHIN the arm first: a spelling repeated inside one or-list is
+        // already covered by the spelling before it, and no between-arm counter
+        // can see that.
+        if tpat_count_bool(&sl[i].tpat, true) > 1 as u32 { bool_dup(ar, sc, "true", sl[i].tarm_pos); return; }
+        if tpat_count_bool(&sl[i].tpat, false) > 1 as u32 { bool_dup(ar, sc, "false", sl[i].tarm_pos); return; }
         if ct && seen_t { bool_dup(ar, sc, "true", sl[i].tarm_pos); return; }
         if cf && seen_f { bool_dup(ar, sc, "false", sl[i].tarm_pos); return; }
         if arm_is_unguarded(&sl[i]) {
@@ -6164,7 +6205,8 @@ fn check_orelse_arms(a: Allocator, ar: *Arena, sc: *const TyScope, okty: *const 
     return;
 }
 fn elab_orelse(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-               expected: Option<*const Typ>, value: *const Expr, dflt: *const Expr, p: Pos) -> *const Texpr {
+               expected: Option<*const Typ>, value: *const Expr, dflt: *const Expr, p: Pos,
+               allow_void: bool) -> *const Texpr {
     let tvalue = elab_expr(a, ar, g, sc, env, none_ty(), value);
     let vpath = enum_path_or_empty(a, tvalue.ty);
     if !is_opt_or_res(tvalue.ty, &vpath) {
@@ -6181,7 +6223,7 @@ fn elab_orelse(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
     let ok_pay = voidable_ty(ar, mono_enum_field_ty(sc, &path, ok_name, "_0"));
     let ok_body = te_node(ar, TexprNode::TVar("__orelse_v"), ok_pay, p);
     let ok_arm = TmatchArm { tpat: variant_pat_bind(a, ok_name, ok_tag, "__orelse_v"), tguard: none_texpr(), tbody: ok_body, tdiverges: false, tarm_pos: p };
-    let tdefault = elab_expr(a, ar, g, sc, env, expected, dflt);
+    let tdefault = elab_expr_av(a, ar, g, sc, env, expected, dflt, allow_void);
     check_orelse_arms(a, ar, sc, ok_pay, tdefault.ty, p);
     let err_pat = if is_opt { variant_pat_unit(a, err_name, err_tag) } else { variant_pat_wild(a, err_name, err_tag) };
     let err_arm = TmatchArm { tpat: err_pat, tguard: none_texpr(), tbody: tdefault, tdiverges: false, tarm_pos: p };
@@ -7008,15 +7050,75 @@ fn register_enum_instance_efields(a: Allocator, ar: *Arena, sc: *const TyScope, 
     return;
 }
 
+// The args a registered mono enum instance was built from, or an empty list.
+fn mono_enum_args(a: Allocator, sc: *const TyScope, ipath: *const Vec<str>) -> Vec<*const Typ> {
+    let n = sc.sc_mono_enums.length();
+    let sl = sc.sc_mono_enums.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i], ipath) { return copy_typs(a, &sc.sc_mono_eargs.as_slice()[i]); }
+        i = i + 1 as u32;
+    }
+    let empty: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    return empty;
+}
+
+// An annotation names the instance; the PAYLOAD pins the same type parameter a
+// second time, and the two have to agree.  Taking the annotation and never
+// looking at the payload let `let o: Option<int> = Option::Some(true)` through -
+// it linked, and printed a bool payload as an int.
+//
+// The reference refuses the int-literal case too (`Option<u16>` with `1` is
+// `'T' inferred as both 'u16' and 'i32'`), so there is no adopt-the-slot
+// exception to carve out here; measured before the check was written.
+fn check_enum_payload_ann(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>,
+                          epath: *const Vec<str>, variant: str, tfields: *const Vec<TexprField>, p: Pos) {
+    let tps = enum_tps(a, sc, path_last(epath));
+    if tps.length() == 0 as u32 { return; }
+    let iargs = mono_enum_args(a, sc, ipath);
+    if iargs.length() == 0 as u32 { return; }
+    let binds = enum_instance_binds(a, sc.sc_etps, path_last(epath), &iargs);
+    let n = tfields.length();
+    let sl = tfields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        match enum_field_ty(sc.sc_efields, epath, variant, sl[i].name) {
+            Option::Some(fty) => { check_enum_payload_one(a, ar, sc, &binds, fty, sl[i].value.ty, p); }
+            | Option::None => { }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn check_enum_payload_one(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>,
+                          fty: *const Typ, act: *const Typ, p: Pos) {
+    let want = subst_typ(ar, binds, fty);
+    if ty_has_tvar(want) || ty_has_tvar(act) { return; }
+    if typ_eq(want, act) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("type parameter '"); sb.push_str(tvar_name_or_t(fty));
+    sb.push_str("' inferred as both '"); sb.push_str(typ_name(a, ar, want));
+    sb.push_str("' and '"); sb.push_str(typ_name(a, ar, act)); sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn tvar_name_or_t(fty: *const Typ) -> str {
+    return match *fty { Typ::TVar(n) => n | _o => "T" };
+}
+
 fn enum_instance_path(a: Allocator, ar: *Arena, sc: *const TyScope, expected: Option<*const Typ>,
                       epath: *const Vec<str>, variant: str, tfields: *const Vec<TexprField>, p: Pos) -> Vec<str> {
     return match expected {
-        Option::Some(et) => match *et {
-            Typ::TEnum(ep) => copy_strs(a, &ep)
-            | _e => infer_enum_instance(a, ar, sc, epath, variant, tfields, p)
-        }
+        Option::Some(et) => enum_inst_from_expected(a, ar, sc, et, epath, variant, tfields, p)
         | Option::None => infer_enum_instance(a, ar, sc, epath, variant, tfields, p)
     };
+}
+fn enum_inst_from_expected(a: Allocator, ar: *Arena, sc: *const TyScope, et: *const Typ,
+                           epath: *const Vec<str>, variant: str, tfields: *const Vec<TexprField>, p: Pos) -> Vec<str> {
+    let ep = enum_path_or_empty(a, et);
+    if ep.length() == 0 as u32 { return infer_enum_instance(a, ar, sc, epath, variant, tfields, p); }
+    check_enum_payload_ann(a, ar, sc, &ep, epath, variant, tfields, p);
+    return ep;
 }
 
 // A struct literal names every field, once.  `..base` supplies the rest, so the
@@ -8573,7 +8675,7 @@ fn elab_expr_av(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
         | Expr::ArrayLit(es, _q) => elab_array_lit(a, ar, g, sc, env, expected, &es, p)
         | Expr::ArrayRepeat { value, count } => elab_array_repeat(a, ar, g, sc, env, expected, value, count, p)
         | Expr::Index { base, index } => elab_index(a, ar, g, sc, env, base, index, p)
-        | Expr::Orelse(value, dflt, _q) => elab_orelse(a, ar, g, sc, env, expected, value, dflt, p)
+        | Expr::Orelse(value, dflt, _q) => elab_orelse(a, ar, g, sc, env, expected, value, dflt, p, allow_void)
         | Expr::Try(value, _q) => elab_try(a, ar, g, sc, env, value, p)
         | Expr::New { tname, fields, base, alloc } => elab_new_struct(a, ar, g, sc, env, &tname, &fields, base, alloc, p)
         | Expr::NewEnum { tname, args, alloc } => elab_new_enum(a, ar, g, sc, env, &tname, &args, alloc, p)
