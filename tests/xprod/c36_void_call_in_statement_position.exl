@@ -1,0 +1,21 @@
+// The accepting side of the void rule: a call that returns nothing is legal as a
+// STATEMENT, on the free path and on the method path alike.
+//
+// Kept because the refusal it sits opposite was wired by threading a flag from
+// three statement entry points, and a flag that is never true would refuse
+// everything just as consistently.
+struct S { n: int }
+
+impl S {
+    pub fn bump(*self) { self.n = self.n + 1; }
+}
+
+fn shout() { println(7); }
+
+fn main() {
+    let mut s: S = S { n: 1 };
+    shout();
+    s.bump();
+    s.bump();
+    println(s.n);
+}

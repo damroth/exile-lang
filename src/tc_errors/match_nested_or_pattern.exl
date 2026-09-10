@@ -1,0 +1,2 @@
+// The or-pattern half of the same payload rule, refused with its own wording.
+fn main() { let o: Option<int> = Option::Some(2); match o { Option::Some(1 | 2) => println(1) | _x => println(0) } }

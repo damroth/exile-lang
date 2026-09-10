@@ -1,0 +1,9 @@
+// `check_let_ann` sends an int literal to a FIT check, and that check returns
+// early when the annotation is not integer-like - so the type comparison never
+// ran. A branch standing in for another has to say when it does not apply and
+// hand over.
+//
+// The helper that recognises the literal folds a negation and a cast, so `-1`
+// and `1 as int` arrive by the same door: the hole was wider than the literal it
+// was named after.
+fn main() { let x: bool = 1; println(if x { 1 } else { 0 }); }

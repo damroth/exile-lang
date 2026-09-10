@@ -3564,6 +3564,8 @@ fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool, seen: *Vec<str>) {
             out.push(Item::View(vd));
             seen.push(nvi);
         }
+        // Defensive: every item kind the language has is handled above, so this
+        // arm names a token the item dispatcher should never have reached.
         | _e => { fail(s, peek_pos(s), "parser: this item kind not yet ported"); }
     }
 }

@@ -1,0 +1,4 @@
+// The same hole reached through a CAST rather than a bare literal, into a `str`
+// slot - a second kind and a second door, because one fixture per hole proves
+// only the door it walked through.
+fn main() { let x: str = 1 as int; println(x); }

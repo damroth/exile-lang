@@ -3001,8 +3001,9 @@ fn register_named_prelude(a: Allocator, sc: *const TyScope, t: *const Typ) {
 // reader typed, and a diagnostic that renames their callee sends them looking
 // in the wrong module.
 fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                gf: GlobalFn, disp: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                gf: GlobalFn, disp: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool) -> *const Texpr {
     seal_seam_guard(ar, sc, gf.mangled, p);
+    void_ret_guard(a, ar, sc, allow_void, gf.ret, disp, p);
     let targs = elab_args_coerced(a, ar, g, sc, env, gf.mangled, args);
     check_call(a, ar, sc, "function", disp, gf.mangled, args, &targs, gf.gf_variadic, p);
     let ty = ret_or_void(ar, gf.ret);
@@ -3034,9 +3035,9 @@ fn seal_seam_guard(ar: *Arena, sc: *const TyScope, mangled: str, p: Pos) {
 // A `const` is a value, not a callable — the reference reports it as an unknown
 // FUNCTION, because that is the namespace the call site looked in.
 fn call_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                 gf: GlobalFn, disp: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                 gf: GlobalFn, disp: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool) -> *const Texpr {
     if gf.is_const { return unknown_fn(a, ar, sc, gf.name, p); }
-    return mk_user_call(a, ar, g, sc, env, gf, disp, args, p);
+    return mk_user_call(a, ar, g, sc, env, gf, disp, args, p, allow_void);
 }
 
 // An unqualified call inside a module resolves to that module's `mod__name`
@@ -3054,17 +3055,17 @@ fn unknown_fn(a: Allocator, ar: *Arena, sc: *const TyScope, display: str, p: Pos
     return defer_expr(ar, p);
 }
 fn elab_top_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                     name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                     name: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool) -> *const Texpr {
     return match global_lookup(g, name) {
-        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p)
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p, allow_void)
         | Option::None => unknown_fn(a, ar, sc, name, p)
     };
 }
 fn elab_user_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                      name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                      name: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool) -> *const Texpr {
     return match module_internal_lookup(a, ar, g, sc, name) {
-        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p)
-        | Option::None => elab_top_or_defer(a, ar, g, sc, env, name, args, p)
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p, allow_void)
+        | Option::None => elab_top_or_defer(a, ar, g, sc, env, name, args, p, allow_void)
     };
 }
 
@@ -3230,7 +3231,8 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, cret), p);
 }
 fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
-                         env: *const Vec<FieldTy>, expected: Option<*const Typ>, midx: int, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                         env: *const Vec<FieldTy>, expected: Option<*const Typ>, midx: int, args: *const Vec<*const Expr>, p: Pos,
+                         allow_void: bool) -> *const Texpr {
     let sl = sc.sc_methods.as_slice();
     if sl[midx as u32].mi_tparams.length() > 0 as u32 {
         return mk_static_gen_method_call(a, ar, g, sc, env, expected, midx as u32, args, p);
@@ -3244,6 +3246,7 @@ fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
     // The reference calls this shape a FUNCTION, and so does the wording here.
     let sself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[midx as u32].mi_path))));
     let sdisp = method_disp(a, ar, &sl[midx as u32].mi_path, sl[midx as u32].mi_name);
+    void_ret_guard(a, ar, sc, allow_void, mret, sdisp, p);
     let scnt = meth_param_count(sc, mm, &sl[midx as u32].mi_params);
     if scnt >= 0 as int {
         check_arity(a, ar, sc, "function", sdisp, scnt as u32, args.length(), false, p);
@@ -3400,7 +3403,8 @@ fn qualified_lookup(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     };
 }
 fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                       init: *const Vec<str>, last: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                       init: *const Vec<str>, last: str, args: *const Vec<*const Expr>, p: Pos,
+                       allow_void: bool) -> *const Texpr {
     // A generic callee is instantiated, not called through the global table:
     // its registered signature still mentions its type parameters, so resolving
     // it as an ordinary global rejects every argument as "expected T".
@@ -3408,7 +3412,7 @@ fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, none_ty(), args, p); }
     let qdisp = path_display(a, ar, &path_push(a, init, last));
     return match qualified_lookup(a, ar, g, sc, init, last) {
-        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, qdisp, args, p)
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, qdisp, args, p, allow_void)
         | Option::None => unknown_fn(a, ar, sc, qdisp, p)
     };
 }
@@ -3990,7 +3994,8 @@ fn elab_display_println(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
 }
 
 fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-             expected: Option<*const Typ>, callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+             expected: Option<*const Typ>, callee: *const Vec<str>, args: *const Vec<*const Expr>, p: Pos,
+             allow_void: bool) -> *const Texpr {
     if callee.length() != 1 as u32 {
         // `Path::Variant(..)` — a tuple-enum constructor; `Type::method(..)`
         // — a static / UFCS method call; anything else is a module path and
@@ -4013,9 +4018,9 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         if is_known_enum(sc, &qinit) { return no_such_variant(a, ar, sc, &qinit, last, p); }
         let midx = find_method_idx(sc.sc_methods, &init, last);
         if midx >= 0 as int {
-            return mk_static_method_call(a, ar, g, sc, env, expected, midx, args, p);
+            return mk_static_method_call(a, ar, g, sc, env, expected, midx, args, p, allow_void);
         }
-        return elab_qualified_call(a, ar, g, sc, env, &init, last, args, p);
+        return elab_qualified_call(a, ar, g, sc, env, &init, last, args, p, allow_void);
     }
     let name = callee.get(0 as u32) orelse "";
     if str::eq(name, "println") || str::eq(name, "print") {
@@ -4074,11 +4079,11 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     // Call-desugar: `f(x)` on a local binding whose type implements an
     // `FnN` trait (it has a `call` method) lowers to `f.call(x)`.
     if env_has_call_method(a, sc, env, name) {
-        return elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::Var(name, p)), "call", args, p);
+        return elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::Var(name, p)), "call", args, p, allow_void);
     }
     let gfi = gen_fn_lookup(sc.sc_genfns, name, sc.sc_modpath);
     if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, expected, args, p); }
-    return elab_user_or_defer(a, ar, g, sc, env, name, args, p);
+    return elab_user_or_defer(a, ar, g, sc, env, name, args, p, allow_void);
 }
 
 // A call `f(args)` where `f` is a local binding of fn-ptr type — emitted as a
@@ -4591,7 +4596,7 @@ fn maybe_field_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
         return Option::Some(te_node(ar, TexprNode::TIndirectCall { fn_expr: tfld, args: targs }, ret_or_void(ar, fnptr_ret_ty(fty)), p));
     }
     if type_impls_fn_trait(sc, &recv_base_path(a, fty)) {
-        return Option::Some(elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::FieldAccess(recv, name, p)), "call", args, p));
+        return Option::Some(elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::FieldAccess(recv, name, p)), "call", args, p, false));
     }
     let none: Option<*const Texpr> = Option::None;
     return none;
@@ -4701,7 +4706,8 @@ fn method_miss_after_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc:
     return method_miss(a, ar, sc, name, trecv.ty, p);
 }
 fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                    expected: Option<*const Typ>, recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                    expected: Option<*const Typ>, recv: *const Expr, name: str, args: *const Vec<*const Expr>, p: Pos,
+                    allow_void: bool) -> *const Texpr {
     if is_rune_reg_index(sc, env, recv) {
         return elab_rune_reg_method_expr(a, ar, g, sc, env, recv, name, args, p);
     }
@@ -4736,6 +4742,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     let adj = adjust_recv(a, ar, sc, trecv, is_ptr_ty(trecv.ty), sptr, scst);
     let mself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[idx as u32].mi_path))));
     let mdisp = method_disp(a, ar, &sl[idx as u32].mi_path, sl[idx as u32].mi_name);
+    void_ret_guard(a, ar, sc, allow_void, mret, mdisp, p);
     let mcnt = meth_param_count(sc, mm, &sl[idx as u32].mi_params);
     if mcnt > 0 as int {
         check_arity(a, ar, sc, "method", mdisp, mcnt as u32 - 1 as u32, args.length(), false, p);
@@ -4789,7 +4796,7 @@ fn elab_tbinds(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<s
             let tsl = pats.as_slice();
             let mut it = 0 as u32;
             while it < nt {
-                out.push(TFieldPat { name: tuple_field_name(a, ar, it), pat: elab_pattern(a, ar, sc, &tsl[it]) });
+                out.push(TFieldPat { name: tuple_field_name(a, ar, it), pat: elab_pattern_nested(a, ar, sc, &tsl[it]) });
                 it = it + 1 as u32;
             }
         }
@@ -4825,7 +4832,7 @@ fn complete_struct_pat(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
     let ssl = fps.as_slice();
     let mut is = 0 as u32;
     while is < ns {
-        out.push(TFieldPat { name: ssl[is].name, pat: elab_pattern(a, ar, sc, &ssl[is].pat) });
+        out.push(TFieldPat { name: ssl[is].name, pat: elab_pattern_nested(a, ar, sc, &ssl[is].pat) });
         is = is + 1 as u32;
     }
     return;
@@ -4840,7 +4847,7 @@ fn field_pat_idx(fps: *const Vec<FieldPat>, fname: str) -> int {
 }
 fn complete_field_pat(a: Allocator, ar: *Arena, sc: *const TyScope, fps: *const Vec<FieldPat>, wi: int) -> Tpattern {
     if wi < 0 as int { return Tpattern::TPWildcard; }
-    return elab_pattern(a, ar, sc, &fps.as_slice()[wi as u32].pat);
+    return elab_pattern_nested(a, ar, sc, &fps.as_slice()[wi as u32].pat);
 }
 fn elab_variant_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>, variant: str, binds: *const PatBinds) -> Tpattern {
     // Qualify a bare enum name (`BinOp` -> `ast::BinOp` in a module or via a
@@ -4850,6 +4857,34 @@ fn elab_variant_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *co
     let tag = variant_tag(sc.sc_etags, &qpath, variant);
     return Tpattern::TPVariant { variant: variant, tag: tag, binds: elab_tbinds(a, ar, sc, &qpath, variant, binds) };
 }
+// The reference lowers a variant's PAYLOAD with `top_level:false` and
+// `allow_or:false`, and refuses a literal, a bool or an or-pattern there.  Its
+// reason is the exhaustiveness matrix: the non-enum columns are bind-only, so a
+// value test nested in a payload would make coverage over-claim.
+//
+// The port lowered a nested literal to a plain `TPLit`, which the match emitter
+// then treated as a bind - so `Option::Some(true)` MATCHED a `Some(false)` and
+// ran the wrong arm.  A missing refusal that miscompiles, not one that merely
+// accepts: the program the reference will not compile at all produced a wrong
+// answer here, silently.
+fn nested_pat_lit_reject(ar: *Arena, sc: *const TyScope, q: Pos) {
+    tc_fail(ar, sc, q, "literal patterns are only supported at the top level of a match arm (v1) — bind the payload and compare in a guard");
+    return;
+}
+fn nested_pat_or_reject(ar: *Arena, sc: *const TyScope, q: Pos) {
+    tc_fail(ar, sc, q, "or-pattern only allowed at the top of a match arm (nested `pat1 | pat2` inside a variant bind is not supported yet)");
+    return;
+}
+fn elab_pattern_nested(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern) -> Tpattern {
+    match *pat {
+        Pattern::PLit(_n, q) => { nested_pat_lit_reject(ar, sc, q); }
+        | Pattern::PBool(_b, q) => { nested_pat_lit_reject(ar, sc, q); }
+        | Pattern::POr(_alts, q) => { nested_pat_or_reject(ar, sc, q); }
+        | _o => { }
+    }
+    return elab_pattern(a, ar, sc, pat);
+}
+
 fn elab_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, pat: *const Pattern) -> Tpattern {
     return match *pat {
         Pattern::PWildcard(_q) => Tpattern::TPWildcard
@@ -5431,24 +5466,35 @@ fn guard_checked(a: Allocator, ar: *Arena, sc: *const TyScope, tg: *const Texpr,
 }
 
 fn elab_one_arm(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                expected: Option<*const Typ>, scrut_ty: *const Typ, arm: *const MatchArm, out: *Vec<TmatchArm>) {
+                expected: Option<*const Typ>, scrut_ty: *const Typ, arm: *const MatchArm, allow_void: bool, out: *Vec<TmatchArm>) {
     let tpat = elab_pattern(a, ar, sc, &arm.pat);
     let mut arm_env = copy_fieldtys(a, env);
     pattern_binds(a, ar, sc, &arm.pat, scrut_ty, &arm_env);
     let tguard = elab_guard(a, ar, g, sc, &arm_env, arm.guard);
-    let tbody = elab_expr(a, ar, g, sc, &arm_env, expected, arm.body);
+    let tbody = elab_expr_av(a, ar, g, sc, &arm_env, expected, arm.body, allow_void);
     out.push(TmatchArm { tpat: tpat, tguard: tguard, tbody: tbody, tdiverges: false, tarm_pos: arm.arm_pos });
 }
 
+// `allow_void` rides through the POSITION-TRANSPARENT forms, because each of
+// them IS the position its parent was in, and stops at every other boundary: an
+// operand, an argument, an index.
+//
+// Two of them carry it here - a match arm and a block's trailing expression -
+// and that is the whole reachable set, measured rather than assumed: an `if` in
+// statement position is taken by the statement walker's own arm before the
+// expression path sees it (probed nested in a `while` and in another `if`), and
+// an `orelse` default has to be an Option, which a void call is not.  The
+// reference forwards through those two as well; here they would be branches no
+// program can reach.
 fn elab_arms(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-             expected: Option<*const Typ>, scrut_ty: *const Typ, arms: *const Vec<MatchArm>, out: *Vec<TmatchArm>) {
+             expected: Option<*const Typ>, scrut_ty: *const Typ, arms: *const Vec<MatchArm>, allow_void: bool, out: *Vec<TmatchArm>) {
     let n = arms.length();
     let sl = arms.as_slice();
     let mut i = 0 as u32;
     while i < n {
         check_bool_pat(a, ar, sc, &sl[i].pat, scrut_ty);
         check_lit_pat(a, ar, sc, &sl[i].pat, scrut_ty);
-        elab_one_arm(a, ar, g, sc, env, expected, scrut_ty, &sl[i], out);
+        elab_one_arm(a, ar, g, sc, env, expected, scrut_ty, &sl[i], allow_void, out);
         // AFTER the arm elaborates: the or-pattern zero-bind rule and the
         // duplicate-FIELD rule own their shapes; this one takes what is left
         // (a tuple pattern binding one name twice).
@@ -5607,12 +5653,28 @@ fn check_exhaustive(a: Allocator, ar: *Arena, sc: *const TyScope, scrut: *const 
     check_exh_enum(a, ar, sc, scrut, tarms, p);
     return;
 }
-// 1 = `true`, 0 = `false`, -1 = not a bool pattern.
-fn tpat_bool(tp: *const Tpattern) -> int {
+// Does this pattern cover the value `want`?  An or-pattern is ONE arm with
+// several spellings and covers whatever any spelling covers.  Reading a single
+// bool per arm made `true | false` contribute nothing: the port called a total
+// match non-exhaustive, and a catch-all added to satisfy it made the reference
+// call that arm unreachable.  The same two spellings refused in both
+// directions, which is what a blind spot looks like from outside.
+fn tpat_covers_bool(tp: *const Tpattern, want: bool) -> bool {
     return match *tp {
-        Tpattern::TPBool(b) => if b { 1 as int } else { 0 as int }
-        | _o => 0 - 1 as int
+        Tpattern::TPBool(b) => b == want
+        | Tpattern::TPOr(alts) => tpat_list_covers_bool(&alts, want)
+        | _o => false
     };
+}
+fn tpat_list_covers_bool(alts: *const Vec<Tpattern>, want: bool) -> bool {
+    let n = alts.length();
+    let sl = alts.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if tpat_covers_bool(&sl[i], want) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
 }
 fn check_exh_bool(_a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const Vec<TmatchArm>, p: Pos) {
     let n = tarms.length();
@@ -5628,12 +5690,13 @@ fn check_exh_bool(_a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const V
             tc_fail(ar, sc, sl[i].tarm_pos, "unreachable match arm: an earlier arm already covers every value");
             return;
         }
-        let bs = tpat_bool(&sl[i].tpat);
-        if bs == 1 as int && seen_t { bool_dup(ar, sc, "true", sl[i].tarm_pos); return; }
-        if bs == 0 as int && seen_f { bool_dup(ar, sc, "false", sl[i].tarm_pos); return; }
+        let ct = tpat_covers_bool(&sl[i].tpat, true);
+        let cf = tpat_covers_bool(&sl[i].tpat, false);
+        if ct && seen_t { bool_dup(ar, sc, "true", sl[i].tarm_pos); return; }
+        if cf && seen_f { bool_dup(ar, sc, "false", sl[i].tarm_pos); return; }
         if arm_is_unguarded(&sl[i]) {
-            if bs == 1 as int { seen_t = true; }
-            if bs == 0 as int { seen_f = true; }
+            if ct { seen_t = true; }
+            if cf { seen_f = true; }
             if tpat_is_catchall(&sl[i].tpat) || (seen_t && seen_f) { covered = true; }
         }
         i = i + 1 as u32;
@@ -5923,9 +5986,9 @@ fn enum_ty_path(a: Allocator, t: *const Typ) -> Vec<str> {
 
 fn emit_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
               expected: Option<*const Typ>, tscrut: *const Texpr, epath: Vec<str>,
-              arms: *const Vec<MatchArm>, p: Pos) -> *const Texpr {
+              arms: *const Vec<MatchArm>, p: Pos, allow_void: bool) -> *const Texpr {
     let mut tarms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
-    elab_arms(a, ar, g, sc, env, expected, tscrut.ty, arms, &tarms);
+    elab_arms(a, ar, g, sc, env, expected, tscrut.ty, arms, allow_void, &tarms);
     check_exhaustive(a, ar, sc, tscrut.ty, &tarms, p);
     check_arm_types(a, ar, sc, &tarms, p);
     let mty = match_result_ty(ar, &tarms);
@@ -5971,7 +6034,8 @@ fn wrap_view_call(a: Allocator, ar: *Arena, vt: str, scrutinee: *const Expr, p: 
     return ast_node(ar, Expr::Call { callee: single_str(a, vt), args: args, pos: p });
 }
 fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-              expected: Option<*const Typ>, scrutinee: *const Expr, arms: *const Vec<MatchArm>, p: Pos) -> *const Texpr {
+              expected: Option<*const Typ>, scrutinee: *const Expr, arms: *const Vec<MatchArm>, p: Pos,
+              allow_void: bool) -> *const Texpr {
     let tscrut0 = elab_expr(a, ar, g, sc, env, none_ty(), scrutinee);
     // Arms naming `View::Case` wrap the scrutinee in `View(scrutinee)`
     // (the view-fn call) unless it is already that choice enum.
@@ -5980,7 +6044,7 @@ fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
         elab_expr(a, ar, g, sc, env, none_ty(), wrap_view_call(a, ar, vt, scrutinee, p))
     } else { tscrut0 };
     if is_enum_ty(tscrut.ty) {
-        return emit_match(a, ar, g, sc, env, expected, tscrut, enum_ty_path(a, tscrut.ty), arms, p);
+        return emit_match(a, ar, g, sc, env, expected, tscrut, enum_ty_path(a, tscrut.ty), arms, p, allow_void);
     }
     if !is_scalar_ty(tscrut.ty) {
         let mut sb = StringBuilder::with_capacity(a, 72 as u32);
@@ -5990,7 +6054,7 @@ fn elab_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
         return defer_expr(ar, p);
     }
     let epath: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    return emit_match(a, ar, g, sc, env, expected, tscrut, epath, arms, p);
+    return emit_match(a, ar, g, sc, env, expected, tscrut, epath, arms, p, allow_void);
 }
 
 // ===== `try` / `orelse` desugar =====
@@ -7215,8 +7279,9 @@ fn elab_deref(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
 // A block expression `{ stmts; trailing }`: the statements elaborate into a
 // block-local env (block lets extend the surrounding scope, no shadowing),
 // and a trailing expression — the last statement without `;` — becomes the
-// block's value.  A `for` inside a block is not yet supported here (it needs
-// the gensym counter the expr path does not carry) and defers.
+// block's value.  A `for` there is refused by the PARSER, on both sides and with
+// the same line - measured, not assumed - so this path never receives one and
+// the gensym counter it would need is not a limitation anyone can reach.
 // The type of a plain assignment's target (a local binding), so an `own *T`
 // value assigned to a `*T` / `*const T` slot coerces (the owner is moved /
 // borrowed into the slot, not kept as an owner).
@@ -7373,9 +7438,9 @@ fn assign_coerced_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
 // trailing value.
 fn elab_tail_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                   expected: Option<*const Typ>, e: *const Expr, benv: *Vec<FieldTy>,
-                  tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
+                  allow_void: bool, tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
     if is_bare_if(e) { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); return; }
-    *trailing = Option::Some(elab_expr(a, ar, g, sc, benv, expected, e));
+    *trailing = Option::Some(elab_expr_av(a, ar, g, sc, benv, expected, e, allow_void));
     return;
 }
 // An `if` with no else branch — a value can't exist on every path, so it is
@@ -7733,7 +7798,7 @@ fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     let is_reg = is_rune_reg_index(sc, env, receiver);
     if is_reg && str::eq(name, "write") { return elab_rune_reg_write(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
     if is_reg && str::eq(name, "strobe") { return elab_rune_reg_strobe(a, ar, g, sc, env, receiver, args, expr_pos(whole)); }
-    return Tstmt::TExprStmt(elab_expr(a, ar, g, sc, env, none_ty(), whole));
+    return Tstmt::TExprStmt(elab_expr_av(a, ar, g, sc, env, none_ty(), whole, true));
 }
 
 fn elab_block_expr_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
@@ -7750,7 +7815,7 @@ fn elab_block_expr_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
         | Expr::MethodCall { receiver, name, args } => {
             out.push(elab_stmt_methodcall(a, ar, g, sc, benv, receiver, name, &args, e));
         }
-        | _other => { out.push(Tstmt::TExprStmt(elab_expr(a, ar, g, sc, benv, none_ty(), e))); }
+        | _other => { out.push(Tstmt::TExprStmt(elab_expr_av(a, ar, g, sc, benv, none_ty(), e, true))); }
     }
 }
 // `rune name: T at ADDR dir` elaborates to a `volatile T *`
@@ -7811,7 +7876,7 @@ fn rune_sym_base(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
 
 fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    expected: Option<*const Typ>, s: *const Stmt, benv: *Vec<FieldTy>,
-                   tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
+                   allow_void: bool, tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
     match *s {
         Stmt::Let { name, value, ty_ann, is_mut, pos } => {
             let vl = elab_expr(a, ar, g, sc, benv, let_expected(a, ar, sc, ty_ann, pos), value);
@@ -7835,7 +7900,7 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             tstmts.push(elab_seal(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, &body, pos));
         }
         | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
-        | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, tstmts, trailing); }
+        | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, allow_void, tstmts, trailing); }
         | Stmt::Assign { path, value, pos } => {
             if path.length() == 1 as u32 { require_mut(a, ar, sc, path.as_slice()[0 as u32], "assign to", pos); }
             let av = assign_coerced_value(a, ar, g, sc, benv, &path, value, pos);
@@ -7876,7 +7941,7 @@ fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
 }
 
 fn elab_block(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-              expected: Option<*const Typ>, stmts: *const Vec<Stmt>, p: Pos) -> *const Texpr {
+              expected: Option<*const Typ>, stmts: *const Vec<Stmt>, p: Pos, allow_void: bool) -> *const Texpr {
     let mut benv = copy_fieldtys(a, env);
     let mut tstmts: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let mut trailing: Option<*const Texpr> = Option::None;
@@ -7884,7 +7949,7 @@ fn elab_block(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     let sl = stmts.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        elab_block_stmt(a, ar, g, sc, expected, &sl[i], &benv, &tstmts, &trailing);
+        elab_block_stmt(a, ar, g, sc, expected, &sl[i], &benv, allow_void, &tstmts, &trailing);
         i = i + 1 as u32;
     }
     let bty = match trailing {
@@ -8446,8 +8511,40 @@ fn bad_len_arg(a: Allocator, ar: *Arena, sc: *const TyScope, ta: *const Texpr, p
     return defer_expr(ar, p);
 }
 
+// A call whose return is void is a STATEMENT, never a value.  The reference
+// carries that as one optional argument defaulting to false and passes it true
+// in exactly one place - the statement walker - so every other position refuses
+// by default and no site has to remember to.
+//
+// The port keeps the same shape without optional arguments: `elab_expr` is the
+// value position and hands `false` down; the statement walkers call
+// `elab_expr_av` with `true`.  The flag is read by the call arms and never
+// forwarded into a subexpression, so `v() + 1` refuses even in statement
+// position, exactly as it does in the reference.
+// The DECLARED return is what says void, not the node's type: `ret_or_void`
+// gives a void call the type `i32` so the rest of the pipeline has something to
+// carry, which is why the node itself cannot be asked.
+fn void_ret_guard(a: Allocator, ar: *Arena, sc: *const TyScope, allow_void: bool,
+                  ret: Option<*const Typ>, disp: str, p: Pos) {
+    if allow_void { return; }
+    match ret {
+        Option::Some(_t) => { }
+        | Option::None => { void_ret_fail(a, ar, sc, disp, p); }
+    }
+    return;
+}
+fn void_ret_fail(a: Allocator, ar: *Arena, sc: *const TyScope, disp: str, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("'"); sb.push_str(disp); sb.push_str("' returns void, cannot use as a value");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
 fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
              expected: Option<*const Typ>, e: *const Expr) -> *const Texpr {
+    return elab_expr_av(a, ar, g, sc, env, expected, e, false);
+}
+fn elab_expr_av(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                expected: Option<*const Typ>, e: *const Expr, allow_void: bool) -> *const Texpr {
     let p = expr_pos(e);
     return match *e {
         Expr::IntLit(n, _q) => te_node(ar, TexprNode::TIntLit(n), int_lit_ty(ar, expected), p)
@@ -8461,14 +8558,14 @@ fn elab_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         | Expr::Not(sub, _q) => elab_not(a, ar, g, sc, env, sub, p)
         | Expr::BinOp(op, l, r, _q) => elab_binop(a, ar, g, sc, env, expected, op, l, r, p)
         | Expr::Cast(sub, ann, _q) => elab_cast(a, ar, g, sc, env, sub, ann, p)
-        | Expr::Call { callee, args } => elab_call(a, ar, g, sc, env, expected, &callee, &args, p)
-        | Expr::MethodCall { receiver, name, args } => elab_method_call(a, ar, g, sc, env, expected, receiver, name, &args, p)
-        | Expr::Block(stmts, _q) => elab_block(a, ar, g, sc, env, expected, &stmts, p)
+        | Expr::Call { callee, args } => elab_call(a, ar, g, sc, env, expected, &callee, &args, p, allow_void)
+        | Expr::MethodCall { receiver, name, args } => elab_method_call(a, ar, g, sc, env, expected, receiver, name, &args, p, allow_void)
+        | Expr::Block(stmts, _q) => elab_block(a, ar, g, sc, env, expected, &stmts, p, allow_void)
         | Expr::TupleLit(es, _q) => elab_tuple_lit(a, ar, g, sc, env, &es, p)
         | Expr::If { cond, then_blk, else_blk } =>
             mk_if_expr(a, ar, g, sc, env, expected, cond, &then_blk, else_blk, p)
         | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, sc, expected, &tname, variant, p)
-        | Expr::Match { scrutinee, arms } => elab_match(a, ar, g, sc, env, expected, scrutinee, &arms, p)
+        | Expr::Match { scrutinee, arms } => elab_match(a, ar, g, sc, env, expected, scrutinee, &arms, p, allow_void)
         | Expr::FieldAccess(target, field, _q) => elab_field_access(a, ar, g, sc, env, target, field, p)
         | Expr::StructLit { tname, fields, base } => elab_struct_lit(a, ar, g, sc, env, &tname, &fields, base, p)
         | Expr::Ref(sub, _q) => elab_ref(a, ar, g, sc, env, sub, p)
@@ -9009,9 +9106,23 @@ fn check_infer_null(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, vty
 fn check_let_ann(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, value: *const Expr,
                  tann: *const Typ, vty: *const Typ, pos: Pos) {
     match expr_int_lit(value) {
-        Option::Some(n) => { check_int_lit_fits(a, ar, sc, n, tann, pos); }
+        // The literal branch answers "does it FIT"; it does not answer "is the
+        // slot even that KIND", and it used to hand a `bool` / `str` / `f32`
+        // annotation straight back unchecked.  A branch that stands in for
+        // another has to say when it does not apply, and hand over.
+        //
+        // `expr_int_lit` folds a negation and a cast, so `-1` and `1 as int`
+        // arrive here too - which is why the hole was wider than the literal it
+        // was named after.
+        Option::Some(n) => { check_lit_slot(a, ar, sc, name, n, tann, vty, pos); }
         | Option::None => { check_coercible(a, ar, sc, name, tann, vty, pos); }
     }
+    return;
+}
+fn check_lit_slot(a: Allocator, ar: *Arena, sc: *const TyScope, name: str, n: int,
+                  tann: *const Typ, vty: *const Typ, pos: Pos) {
+    if is_int_like_ty(tann) { check_int_lit_fits(a, ar, sc, n, tann, pos); return; }
+    check_coercible(a, ar, sc, name, tann, vty, pos);
     return;
 }
 fn check_int_lit_fits(a: Allocator, ar: *Arena, sc: *const TyScope, n: int, tann: *const Typ, pos: Pos) {
@@ -9214,7 +9325,7 @@ fn elab_stmt_pos(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
             out.push(elab_stmt_methodcall(a, ar, g, sc, env, receiver, name, &args, e));
         }
         | _other => {
-            let ve = elab_expr(a, ar, g, sc, env, none_ty(), e);
+            let ve = elab_expr_av(a, ar, g, sc, env, none_ty(), e, true);
             out.push(Tstmt::TExprStmt(ve));
         }
     }
@@ -15283,9 +15394,10 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
     }
 }
 
-// `use mod::name;` re-exports `name` into the enclosing scope: alias the
-// last segment to the target's already-collected symbol (wildcard
-// re-exports are not yet supported).
+// `use mod::name;` re-exports `name` into the enclosing scope: alias the last
+// segment to the target's already-collected symbol.  `use` names a FILE module
+// on both sides, and both refuse the same way when the file is not there, so
+// this alias is the whole of what the form can mean here.
 fn push_use_alias(g: *Vec<GlobalFn>, target_mangled: str, alias: str) {
     match global_lookup_by_mangled(g, target_mangled) {
         Option::Some(gf) => { g.push(GlobalFn { name: alias, mangled: gf.mangled, gf_emit: gf.gf_emit, ret: gf.ret,
@@ -16311,9 +16423,10 @@ fn name4(name: str, c2: u8, c3: u8) -> bool {
 // gathering unique shapes (dedup by structural equality; array-of-array is
 // post-order so the inner shape's typedef precedes it).  Generic skeletons
 // (any TVar-carrying shape) are skipped — only their mono instances reach
-// codegen.  Port-note: this runs WITHOUT DCE (that is codegen stage g), so a
-// dead prelude method's shapes over-collect vs the oracle — a known diff until
-// DCE lands; it never drops a shape the program actually uses.
+// codegen.  This walk runs before DCE, so in principle it can gather a shape
+// that dead-code elimination later removes; no such difference is observable
+// today - the emissions are byte-identical across the differential corpus and
+// both fixpoints - and it never drops a shape the program actually uses.
 
 // Complete TVar check (the checker's `ty_has_tvar` stops at TTuple/TArray/TFnPtr).
 fn ftr_has_tvar(t: *const Typ) -> bool {

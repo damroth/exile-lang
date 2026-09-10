@@ -1,0 +1,10 @@
+// A call that returns nothing is a STATEMENT, never a value. The reference
+// carries that as one flag defaulting to refuse, passed true in exactly one
+// place - the statement walker - so every other position refuses without having
+// to remember to.
+//
+// The port had no such flag and typed a void call as `i32`, so this compiled and
+// the reader's own `cc` said "void value not ignored" about a line their
+// compiler had accepted.
+fn v() { return; }
+fn main() { let x = v(); println(1); }

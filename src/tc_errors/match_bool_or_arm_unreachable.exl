@@ -1,0 +1,7 @@
+// `true | false` covers the whole domain, so a later catch-all is unreachable.
+// The bool exhaustiveness reader took ONE bool per arm and an or-pattern gave it
+// none, so it saw no coverage at all: it called a total match non-exhaustive,
+// and a catch-all added to satisfy that made this arm unreachable. The same two
+// spellings refused in both directions - which is what a blind spot looks like
+// from outside.
+fn main() { let b: bool = true; match b { true | false => println(1) | _o => println(0) } }

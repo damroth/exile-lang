@@ -1,0 +1,8 @@
+// A literal nested in a variant payload. The reference lowers a payload with its
+// or-patterns and value tests disabled, because its exhaustiveness matrix treats
+// non-enum columns as bind-only and a value test there would over-claim.
+//
+// The port lowered it to a plain literal pattern that the match emitter then
+// treated as a bind, so `Option::Some(true)` MATCHED a `Some(false)` and ran the
+// wrong arm. A missing refusal that miscompiles, not one that merely accepts.
+fn main() { let o: Option<bool> = Option::Some(false); match o { Option::Some(true) => println(1) | _x => println(0) } }

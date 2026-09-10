@@ -1,0 +1,6 @@
+// The same rule on the method path, which names the method the way the reader
+// wrote it. Statement position stays legal on both paths - the fixtures next to
+// this one in tests/xprod prove that half.
+struct S { n: int }
+impl S { pub fn go(*const self) { return; } }
+fn main() { let s: S = S { n: 1 }; let x = s.go(); println(1); }
