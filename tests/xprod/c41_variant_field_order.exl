@@ -1,0 +1,24 @@
+// A struct-variant payload written out of declaration order. The payload reaches
+// the emission in DECLARATION order on both sides; the port used to emit it in
+// the order the author wrote, which is behaviourally the same and byte-different
+// - and this is the language zone, where byte-different is the whole question.
+//
+// A plain struct literal with the same swap already agreed, which is what made
+// the variant path worth checking on its own rather than assuming it shared one.
+//
+// Elaboration stays in WRITTEN order: resolving a field registers instances as a
+// side effect, so only the RESULT is reordered.
+enum E {
+    S { a: int, b: bool, c: int }
+    | Q
+}
+
+fn show(e: E) -> int {
+    return match e { E::S { a, b, c } => if b { a + c } else { a - c } | E::Q => 0 };
+}
+
+fn main() {
+    println(show(E::S { c: 3, a: 1, b: true }));
+    println(show(E::S { b: false, c: 4, a: 10 }));
+    println(show(E::S { a: 2, b: true, c: 5 }));
+}

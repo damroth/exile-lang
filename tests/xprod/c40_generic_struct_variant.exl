@@ -1,0 +1,25 @@
+// A struct-variant literal instantiates its enum, the same way a tuple-variant
+// one does. It did not, so the value kept its SKELETON type and every use of it
+// was refused - three positions, three different messages, one cause.
+//
+// All three are here because the defect showed itself differently in each: the
+// annotation did not match, printing saw a bare type parameter, and an argument
+// slot saw the base path where an instance was declared.
+enum G<T> {
+    S { x: T, tag: int }
+    | N
+}
+
+fn sum(g: G<int>) -> int {
+    return match g { G::S { x, tag } => x + tag | G::N => 0 };
+}
+
+fn main() {
+    let ann: G<int> = G::S { x: 5, tag: 1 };
+    println(sum(ann));
+    let inferred = G::S { x: 7, tag: 2 };
+    println(sum(inferred));
+    println(sum(G::S { x: 9, tag: 3 }));
+    let none: G<int> = G::N;
+    println(sum(none));
+}

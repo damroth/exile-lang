@@ -7271,6 +7271,46 @@ fn check_variant_tuple_args(a: Allocator, ar: *Arena, sc: *const TyScope, epath:
     }
     return;
 }
+fn unit_braces_fail(a: Allocator, ar: *Arena, sc: *const TyScope, dn: str, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+    sb.push_str("variant '"); sb.push_str(dn);
+    sb.push_str("' is a tuple variant; construct it with '(...)', not with '{ field: ... }'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+// The payload reaches the emission in DECLARATION order, whatever order it was
+// written in.  Elaboration stays in WRITTEN order on purpose - resolving a field
+// registers mono instances as a side effect, and reordering that would move them
+// in the artefact - so the reordering happens to the RESULT.
+fn order_variant_args(a: Allocator, sc: *const TyScope, epath: *const Vec<str>, variant: str,
+                      built: *const Vec<TexprField>) -> Vec<TexprField> {
+    let want = variant_field_names(a, sc, epath, variant);
+    let mut out: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
+    if want.length() != built.length() { return copy_texprfields(a, built); }
+    let wsl = want.as_slice();
+    let bsl = built.as_slice();
+    let mut i = 0 as u32;
+    while i < want.length() {
+        let mut j = 0 as u32;
+        let mut hit = false;
+        while j < built.length() {
+            if !hit && str::eq(bsl[j].name, wsl[i]) { out.push(bsl[j]); hit = true; }
+            j = j + 1 as u32;
+        }
+        // A name the declaration does not have is already reported; leaving the
+        // list as written keeps the node well-formed for the passes after this.
+        if !hit { return copy_texprfields(a, built); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn copy_texprfields(a: Allocator, src: *const Vec<TexprField>) -> Vec<TexprField> {
+    let mut out: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
 fn variant_arity_fail(a: Allocator, ar: *Arena, sc: *const TyScope, dn: str, want: u32, got: u32, p: Pos) {
     let mut sb = StringBuilder::with_capacity(a, 80 as u32);
     sb.push_str("variant '"); sb.push_str(dn); sb.push_str("' takes ");
@@ -7315,8 +7355,13 @@ fn check_variant_field_one(a: Allocator, ar: *Arena, sc: *const TyScope, dn: str
 fn check_variant_construction(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>,
                               variant: str, fields: *const Vec<Field>, p: Pos) {
     let want = variant_field_names(a, sc, epath, variant);
-    if want.length() == 0 as u32 { return; }
     let dn = variant_display(a, ar, epath, variant);
+    // A UNIT variant declares no fields, so the form test above cannot see it -
+    // and an early return on "no fields to check" is how `E::Q { }` walked past.
+    // The reference calls it a tuple variant here, because struct-ness is a
+    // property a unit variant does not have; the wording is mirrored, not
+    // improved.
+    if want.length() == 0 as u32 { unit_braces_fail(a, ar, sc, dn, p); return; }
     if variant_is_tuple(a, sc, epath, variant) {
         let mut sb = StringBuilder::with_capacity(a, 112 as u32);
         sb.push_str("variant '"); sb.push_str(dn);
@@ -7362,7 +7407,7 @@ fn is_some_expr(e: Option<*const Expr>) -> bool {
 }
 fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>,
-                   base: Option<*const Expr>, p: Pos) -> *const Texpr {
+                   base: Option<*const Expr>, expected: Option<*const Typ>, p: Pos) -> *const Texpr {
     // `Enum::Variant { .. }` — a struct-variant constructor when the index
     // knows the (enum-path, variant) split of `tname`.
     if tname.length() >= 2 as u32 {
@@ -7376,7 +7421,14 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             check_variant_construction(a, ar, sc, &init, last, fields, p);
             let sargs = enum_struct_args(a, ar, g, sc, env, &init, last, fields);
             check_variant_field_tys(a, ar, sc, &init, last, fields, &sargs, p);
-            return mk_enum_lit_node(a, ar, &init, last, tag, sargs, p);
+            let oargs = order_variant_args(a, sc, &init, last, &sargs);
+            // A struct-variant literal instantiates its enum the same way a tuple
+            // one does.  It did not, so a generic enum built this way kept its
+            // SKELETON type and the port refused every use of the value - the
+            // annotation did not match, printing it saw a type parameter, and an
+            // argument slot saw the base where an instance was declared.
+            let sinst = enum_instance_path(a, ar, sc, expected, &init, last, &oargs, p);
+            return mk_enum_lit_node(a, ar, &sinst, last, tag, oargs, p);
         }
     }
     let qtname = qualify_type_path(a, ar, sc, tname);
@@ -8779,7 +8831,7 @@ fn elab_expr_av(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const Ty
         | Expr::EnumLit { tname, variant } => elab_enumlit(a, ar, g, sc, expected, &tname, variant, p)
         | Expr::Match { scrutinee, arms } => elab_match(a, ar, g, sc, env, expected, scrutinee, &arms, p, allow_void)
         | Expr::FieldAccess(target, field, _q) => elab_field_access(a, ar, g, sc, env, target, field, p)
-        | Expr::StructLit { tname, fields, base } => elab_struct_lit(a, ar, g, sc, env, &tname, &fields, base, p)
+        | Expr::StructLit { tname, fields, base } => elab_struct_lit(a, ar, g, sc, env, &tname, &fields, base, expected, p)
         | Expr::Ref(sub, _q) => elab_ref(a, ar, g, sc, env, sub, p)
         | Expr::Deref(sub, _q) => elab_deref(a, ar, g, sc, env, sub, p)
         | Expr::ArrayLit(es, _q) => elab_array_lit(a, ar, g, sc, env, expected, &es, p)
@@ -9077,7 +9129,7 @@ fn elab_closure_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     if nc == 0 as u32 { fields.push(Field { name: "_pad", value: ast_node(ar, Expr::IntLit(0 as int, p)) }); }
     let tname = single_str(a, cn);
     let nb: Option<*const Expr> = Option::None;
-    return elab_struct_lit(a, ar, g, sc, env, &tname, &fields, nb, p);
+    return elab_struct_lit(a, ar, g, sc, env, &tname, &fields, nb, none_ty(), p);
 }
 // A captureless lambda is lifted to a fresh top-level fn
 // `__lambda_N` (drained after the user fns), and the expression becomes a

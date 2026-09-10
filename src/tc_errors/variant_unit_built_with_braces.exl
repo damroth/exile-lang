@@ -1,0 +1,10 @@
+// A UNIT variant constructed with `{ }`. The form test asks whether the variant
+// is a tuple one, and a unit variant declares no fields at all - so the check
+// returned early on "nothing to compare" and this walked past it.
+//
+// The reference calls a unit variant a TUPLE variant in this message, because
+// struct-ness is a property it does not have. The wording is mirrored, not
+// improved: a diagnostic that reads oddly and matches is worth more than one
+// that reads well and diverges.
+enum E { P(int) | Q }
+fn main() { let e: E = E::Q { }; match e { E::P(x) => println(x) | E::Q => println(0) } }
