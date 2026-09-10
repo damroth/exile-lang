@@ -1,0 +1,5 @@
+// And the mirror of it: a tuple variant constructed with `{ field: ... }`. The
+// port used to accept this because the field it was handed happens to be named
+// `_0`, which is what a tuple payload's slots are called.
+enum E { P(int) | Q }
+fn main() { let e: E = E::P { _0: 1 }; match e { E::P(x) => println(x) | E::Q => println(0) } }

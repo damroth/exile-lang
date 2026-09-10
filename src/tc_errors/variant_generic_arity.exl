@@ -1,0 +1,4 @@
+// A GENERIC variant, where the declared payload type is a type parameter. The
+// arity question has no type in it, so it is answerable here even when the
+// payload's type is not - and it was going unasked.
+fn main() { let o: Option<int> = Option::Some(1, 2); match o { Option::Some(x) => println(x) | Option::None => println(0) } }

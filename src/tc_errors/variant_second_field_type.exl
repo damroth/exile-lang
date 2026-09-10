@@ -1,0 +1,4 @@
+// The SECOND payload field. One fixture on the first field proves the loop
+// starts; this one proves it continues.
+enum F { P(int, bool) | Q }
+fn main() { let f: F = F::P(1, 1); match f { F::P(x, y) => println(x) | F::Q => println(0) } }

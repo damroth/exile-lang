@@ -1,0 +1,6 @@
+// The variant constructor is a CALL, and it was the one call path with no
+// argument check at all. The register entry that said the check "reaches every
+// call path" had counted five paths; this is the sixth, and it is the one that
+// does not look like a call.
+enum E { P(int) | Q }
+fn main() { let e: E = E::P(true); match e { E::P(x) => println(x) | E::Q => println(0) } }

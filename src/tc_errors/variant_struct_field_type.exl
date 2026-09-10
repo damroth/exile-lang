@@ -1,0 +1,5 @@
+// A struct payload's field TYPE. The reference compares these with exact
+// equality while comparing a tuple payload with coercion - an asymmetry that is
+// the reference's, mirrored rather than tidied.
+enum E { S { a: int, b: bool } | Q }
+fn main() { let e: E = E::S { a: 1, b: 1 }; match e { E::S { a, b } => println(a) | E::Q => println(0) } }

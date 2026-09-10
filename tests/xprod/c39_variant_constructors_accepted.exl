@@ -1,0 +1,36 @@
+// The accepting side of the variant-constructor rule: both payload forms, a
+// unit variant, a generic one and a widening cast, all built correctly and RUN.
+//
+// A check this broad needs its positives pinned - eleven refusals next door say
+// what it rejects, and only this says what it must not.
+//
+// Written first with `Option::Some(1 as u8)` under an `Option<int>` annotation,
+// which BOTH compilers refuse: that is the payload-versus-annotation rule doing
+// its job, and the fixture was wrong rather than the rule.
+struct S { v: int }
+
+enum E {
+    P(int, bool)
+    | R { a: int, b: S }
+    | Q
+}
+
+fn tag_of(e: E) -> int {
+    return match e {
+        E::P(n, f) => if f { n } else { 0 - n }
+        | E::R { a, b } => a + b.v
+        | E::Q => 99
+    };
+}
+
+fn main() {
+    println(tag_of(E::P(3, true)));
+    println(tag_of(E::P(3, false)));
+    println(tag_of(E::R { a: 4, b: S { v: 5 } }));
+    println(tag_of(E::Q));
+    let o: Option<int> = Option::Some(7);
+    println(o orelse 0);
+    // A widening cast into a NON-generic payload stands; the generic one under
+    // an annotation does not, and the fixture next door in src/tc_errors says so.
+    println(tag_of(E::P(1 as u8, true)));
+}

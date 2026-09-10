@@ -1,0 +1,4 @@
+// The other direction of the same count: a declared field with no argument.
+// Walking the arguments cannot see this one either.
+enum E { P(int) | Q }
+fn main() { let e: E = E::P(); match e { E::P(x) => println(x) | E::Q => println(0) } }

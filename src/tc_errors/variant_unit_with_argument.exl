@@ -1,0 +1,4 @@
+// A unit variant handed an argument. Zero declared fields is still a count, and
+// a rule that only looks when there is something to look at would miss it.
+enum E { P(int) | Q }
+fn main() { let e: E = E::Q(1); match e { E::P(x) => println(x) | E::Q => println(0) } }

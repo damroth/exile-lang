@@ -1,0 +1,5 @@
+// A payload whose declared type is a struct, so the mismatch is not between two
+// scalars and the message has to name a user type.
+struct S { v: int }
+enum G { P(S) | Q }
+fn main() { let g: G = G::P(true); match g { G::P(s) => println(s.v) | G::Q => println(0) } }

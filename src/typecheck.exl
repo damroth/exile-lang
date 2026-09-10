@@ -4012,6 +4012,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let tag = variant_tag(sc.sc_etags, &qinit, last);
         if tag >= 0 as int {
             let tflds = enum_tuple_args(a, ar, g, sc, env, &qinit, last, args);
+            check_variant_tuple_args(a, ar, sc, &qinit, last, args, &tflds, p);
             let inst = enum_instance_path(a, ar, sc, expected, &qinit, last, &tflds, p);
             return mk_enum_lit_node(a, ar, &inst, last, tag, tflds, p);
         }
@@ -7217,13 +7218,112 @@ fn lit_field_list(a: Allocator, ar: *Arena, sc: *const TyScope, disp: str, mid: 
     return;
 }
 // A struct-variant construction names every payload field, once.
+// `Enum::Variant` as the reader wrote it, for every message about it.
+fn variant_display(a: Allocator, ar: *Arena, epath: *const Vec<str>, variant: str) -> str {
+    let mut disp = StringBuilder::with_capacity(a, 32 as u32);
+    disp.push_str(path_display(a, ar, epath)); disp.push_str("::"); disp.push_str(variant);
+    return str::from_slice(ar, disp.as_slice());
+}
+// A tuple variant's payload fields are named `_0`, `_1`, ...; a struct
+// variant's carry the names the author wrote.  The registry keeps both the same
+// way, so the FIRST name is what tells the two apart.
+fn variant_is_tuple(a: Allocator, sc: *const TyScope, epath: *const Vec<str>, variant: str) -> bool {
+    let want = variant_field_names(a, sc, epath, variant);
+    if want.length() == 0 as u32 { return false; }
+    return str::eq(want.as_slice()[0 as u32], "_0");
+}
+
+// The variant constructor is a CALL, and it was the one call path with no
+// argument check at all - not the types, not even the arity.  The register entry
+// that said the check "reaches every call path" had counted five; this is the
+// sixth, and it is the one that does not look like a call.
+//
+// Both forms are validated here, mirroring the reference's two arms: a tuple
+// payload compares with `coercible_to`, a struct payload with `typ_eq`.  That
+// asymmetry is the reference's, not an oversight to tidy.
+fn check_variant_tuple_args(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>,
+                            variant: str, raws: *const Vec<*const Expr>,
+                            targs: *const Vec<TexprField>, p: Pos) {
+    let want = variant_field_names(a, sc, epath, variant);
+    let dn = variant_display(a, ar, epath, variant);
+    if want.length() > 0 as u32 && !variant_is_tuple(a, sc, epath, variant) {
+        let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+        sb.push_str("variant '"); sb.push_str(dn);
+        sb.push_str("' is a struct variant; construct it with '{ field: ... }', not with '(...)'");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    if want.length() != raws.length() {
+        variant_arity_fail(a, ar, sc, dn, want.length(), raws.length(), p);
+        return;
+    }
+    let rs = raws.as_slice();
+    let ts = targs.as_slice();
+    let mut i = 0 as u32;
+    while i < want.length() {
+        if i < targs.length() {
+            match enum_field_ty(sc.sc_efields, epath, variant, want.as_slice()[i]) {
+                Option::Some(fty) => { check_slot_arg(a, ar, sc, dn, i, fty, rs[i], ts[i].value.ty, p); }
+                | Option::None => { }
+            }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn variant_arity_fail(a: Allocator, ar: *Arena, sc: *const TyScope, dn: str, want: u32, got: u32, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("variant '"); sb.push_str(dn); sb.push_str("' takes ");
+    sb.push_int(want as int); sb.push_str(" argument(s), got ");
+    sb.push_int(got as int);
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+// The struct payload's field types, compared the way the reference compares
+// them: exact equality, with an int literal allowed to fit its slot.
+fn check_variant_field_tys(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>,
+                           variant: str, fields: *const Vec<Field>, targs: *const Vec<TexprField>, p: Pos) {
+    if variant_field_names(a, sc, epath, variant).length() == 0 as u32 { return; }
+    let dn = variant_display(a, ar, epath, variant);
+    let fsl = fields.as_slice();
+    let tsl = targs.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() {
+        if i < targs.length() {
+            match enum_field_ty(sc.sc_efields, epath, variant, fsl[i].name) {
+                Option::Some(fty) => { check_variant_field_one(a, ar, sc, dn, fsl[i].name, fty, fsl[i].value, tsl[i].value.ty, p); }
+                | Option::None => { }
+            }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn check_variant_field_one(a: Allocator, ar: *Arena, sc: *const TyScope, dn: str, fname: str,
+                           fty: *const Typ, raw: *const Expr, act: *const Typ, p: Pos) {
+    if !slot_is_comparable(fty) { return; }
+    if typ_eq(act, fty) { return; }
+    if lit_fits_slot(raw, fty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("field '"); sb.push_str(fname); sb.push_str("' of '"); sb.push_str(dn);
+    sb.push_str("': expected "); sb.push_str(typ_name(a, ar, fty));
+    sb.push_str(", got "); sb.push_str(typ_name(a, ar, act));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
 fn check_variant_construction(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *const Vec<str>,
                               variant: str, fields: *const Vec<Field>, p: Pos) {
     let want = variant_field_names(a, sc, epath, variant);
     if want.length() == 0 as u32 { return; }
-    let mut disp = StringBuilder::with_capacity(a, 32 as u32);
-    disp.push_str(path_display(a, ar, epath)); disp.push_str("::"); disp.push_str(variant);
-    let dn = str::from_slice(ar, disp.as_slice());
+    let dn = variant_display(a, ar, epath, variant);
+    if variant_is_tuple(a, sc, epath, variant) {
+        let mut sb = StringBuilder::with_capacity(a, 112 as u32);
+        sb.push_str("variant '"); sb.push_str(dn);
+        sb.push_str("' is a tuple variant; construct it with '(...)', not with '{ field: ... }'");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
     let mut given: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let fsl = fields.as_slice();
     let mut i = 0 as u32;
@@ -7237,6 +7337,14 @@ fn check_variant_construction(a: Allocator, ar: *Arena, sc: *const TyScope, epat
         let mut sb = StringBuilder::with_capacity(a, 64 as u32);
         sb.push_str("duplicate field '"); sb.push_str(dup);
         sb.push_str("' in '"); sb.push_str(dn); sb.push_str("' construction");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    let extra = names_not_in(a, &given, &want);
+    if extra.length() > 0 as u32 {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("variant '"); sb.push_str(dn);
+        sb.push_str("' has no field '"); sb.push_str(extra.as_slice()[0 as u32]); sb.push_str("'");
         tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
         return;
     }
@@ -7266,7 +7374,9 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             // struct: the rest of an enum is the other variants.
             if is_some_expr(base) { tc_fail(ar, sc, p, "'..base' functional update is not supported on enum variants"); }
             check_variant_construction(a, ar, sc, &init, last, fields, p);
-            return mk_enum_lit_node(a, ar, &init, last, tag, enum_struct_args(a, ar, g, sc, env, &init, last, fields), p);
+            let sargs = enum_struct_args(a, ar, g, sc, env, &init, last, fields);
+            check_variant_field_tys(a, ar, sc, &init, last, fields, &sargs, p);
+            return mk_enum_lit_node(a, ar, &init, last, tag, sargs, p);
         }
     }
     let qtname = qualify_type_path(a, ar, sc, tname);

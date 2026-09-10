@@ -1,0 +1,5 @@
+// A struct variant constructed with `(...)`. Found by the same sweep and not
+// named in the task: the class is the whole constructor, both forms, not the
+// tuple payload the defect was reported on.
+enum E { S { a: int } | Q }
+fn main() { let e: E = E::S(1); match e { E::S { a } => println(a) | E::Q => println(0) } }

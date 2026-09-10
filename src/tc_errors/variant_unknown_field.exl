@@ -1,0 +1,5 @@
+// A field the variant does not declare. The port already refused a DUPLICATE
+// field and a MISSING one; the third question in the same family went unasked,
+// which is how a rule looks when it was written from the shapes at hand.
+enum E { S { a: int, b: bool } | Q }
+fn main() { let e: E = E::S { a: 1, b: true, c: 3 }; match e { E::S { a, b } => println(a) | E::Q => println(0) } }

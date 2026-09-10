@@ -1,0 +1,5 @@
+// Arity was not read anywhere on this path - not by the annotation branch, not
+// by anything else. The payload loop walked the ARGUMENTS, so a surplus one
+// simply found no declared slot and was elaborated against nothing.
+enum E { P(int) | Q }
+fn main() { let e: E = E::P(1, 2); match e { E::P(x) => println(x) | E::Q => println(0) } }
