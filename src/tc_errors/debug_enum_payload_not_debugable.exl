@@ -1,0 +1,5 @@
+// The enum half of the same rule, reported per variant and per payload slot, so
+// the message can name which one.
+struct Plain { v: int }
+@debug enum E { A(Plain) | B }
+fn main() { let e: E = E::A(Plain { v: 1 }); println(e); }

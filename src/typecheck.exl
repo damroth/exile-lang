@@ -18281,6 +18281,239 @@ fn path_in(paths: *const Vec<Vec<str>>, p: *const Vec<str>) -> bool {
     }
     return false;
 }
+// ===== `@debug` field validation =====
+//
+// The reference checks AT THE DECLARATION that every field of a `@debug` struct,
+// and every payload of a `@debug` enum variant, is itself printable.  The port
+// had no such check at all, so an undebug-able field produced a printer call with
+// no printer behind it: a program the reference refuses, emitted as C that does
+// not link.
+//
+// Only CONCRETE types are validated, as in the reference: a generic skeleton has
+// free type-variable fields that are not debug-able on their own, and its
+// instances are checked one by one where the field types are real.
+//
+// The reference spells that guard as "declares no type parameters".  The port's
+// index does not carry them on a skeleton entry, so asking would have let the
+// SKELETON through and reported `G` with a payload of type `T` - a diagnostic
+// naming a type variable, about a declaration the reference never refuses.  The
+// guard here asks the property that one stands for instead: are the field types
+// real yet.
+fn dbg_sig_is_debug_struct(structs: *const Vec<StructSig>, path: *const Vec<str>) -> bool {
+    let sl = structs.as_slice();
+    let mut i = 0 as u32;
+    while i < structs.length() {
+        if path_eq(&sl[i].sname_path, path) { return sl[i].sis_debug; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn dbg_sig_is_debug_enum(enums: *const Vec<EnumSig>, path: *const Vec<str>) -> bool {
+    let sl = enums.as_slice();
+    let mut i = 0 as u32;
+    while i < enums.length() {
+        if path_eq(&sl[i].ename_path, path) { return sl[i].eis_debug; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// Printable by the synthesized printer: scalars, strings, floats and pointers
+// render themselves; an aggregate renders only if it is `@debug` too.  Tuples and
+// arrays are refused rather than crashed on - the emitter has no case for them.
+fn dbg_field_ok(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, t: *const Typ) -> bool {
+    return match *t {
+        Typ::TInt(_k) => true
+        | Typ::TCInt { is_signed } => true
+        | Typ::TCShort { is_signed } => true
+        | Typ::TCLong { is_signed } => true
+        | Typ::TCChar => true
+        | Typ::TCSChar => true
+        | Typ::TCUChar => true
+        | Typ::TBool => true
+        | Typ::TFloat(_w) => true
+        | Typ::TString => true
+        | Typ::TPtr(_i) => true
+        | Typ::TOwnPtr(_i) => true
+        | Typ::TConstPtr(_i) => true
+        | Typ::TStruct(pp) => dbg_sig_is_debug_struct(structs, &pp)
+        | Typ::TEnum(pp) => dbg_sig_is_debug_enum(enums, &pp)
+        | _o => false
+    };
+}
+// The declaration's position.  An INSTANCE has no declaration of its own, so it
+// borrows its skeleton's - the reference does the same, and it is why a refusal
+// about `G<Plain>` lands on the line that wrote `enum G<T>`.
+fn dbg_decl_pos(a: Allocator, decls: *const Vec<DeclPos>, path: *const Vec<str>) -> Pos {
+    let exact = decl_pos_of(decls, path);
+    if !pos_is_zero(exact) { return exact; }
+    let last = path_last(path);
+    let n = decls.length();
+    let sl = decls.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&path_init(a, path), &path_init(a, &sl[i].dp_path)) {
+            if inst_of_base(last, path_last(&sl[i].dp_path)) { return sl[i].dp_pos; }
+        }
+        i = i + 1 as u32;
+    }
+    return zero_pos();
+}
+fn pos_is_zero(p: Pos) -> bool { return p.line == 0 as int && p.col == 0 as int; }
+// `Pair<i32, bool>` as the reader wrote it.  The emission has its own renderer
+// for the same job; this one answers with the names a DIAGNOSTIC must use, and
+// reaches only the two shapes a `@debug` refusal can name.
+fn dbg_display(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, t: *const Typ) -> str {
+    return match *t {
+        Typ::TStruct(p2) => dbg_disp_named(a, ar, structs, enums, &p2, dbg_struct_args(a, structs, &p2), t)
+        | Typ::TEnum(p2) => dbg_disp_named(a, ar, structs, enums, &p2, dbg_enum_args(a, enums, &p2), t)
+        | _o => typ_name(a, ar, t)
+    };
+}
+fn all_concrete_fieldtys(fs: *const Vec<FieldTy>) -> bool {
+    let sl = fs.as_slice();
+    let mut i = 0 as u32;
+    while i < fs.length() { if !is_concrete(sl[i].ty) { return false; } i = i + 1 as u32; }
+    return true;
+}
+fn all_concrete_variants(vs: *const Vec<VariantSig>) -> bool {
+    let sl = vs.as_slice();
+    let mut i = 0 as u32;
+    while i < vs.length() { if !all_concrete_fieldtys(&sl[i].vsfields) { return false; } i = i + 1 as u32; }
+    return true;
+}
+fn dbg_take_args(src: *const Option<Vec<*const Typ>>, out: *Vec<*const Typ>) {
+    match *src {
+        Option::Some(av) => {
+            let sl = av.as_slice();
+            let mut i = 0 as u32;
+            while i < av.length() { out.push(sl[i]); i = i + 1 as u32; }
+        }
+        | Option::None => { }
+    }
+    return;
+}
+fn dbg_struct_args(a: Allocator, structs: *const Vec<StructSig>, path: *const Vec<str>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let sl = structs.as_slice();
+    let mut i = 0 as u32;
+    while i < structs.length() {
+        if path_eq(&sl[i].sname_path, path) && out.length() == 0 as u32 { dbg_take_args(&sl[i].sinstance_args, &out); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn dbg_enum_args(a: Allocator, enums: *const Vec<EnumSig>, path: *const Vec<str>) -> Vec<*const Typ> {
+    let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
+    let sl = enums.as_slice();
+    let mut i = 0 as u32;
+    while i < enums.length() {
+        if path_eq(&sl[i].ename_path, path) && out.length() == 0 as u32 { dbg_take_args(&sl[i].einstance_args, &out); }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn dbg_disp_named(a: Allocator, ar: *Arena, structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>,
+                  path: *const Vec<str>, args: Vec<*const Typ>, t: *const Typ) -> str {
+    if args.length() == 0 as u32 { return typ_name(a, ar, t); }
+    let mut suf = StringBuilder::with_capacity(a, 32 as u32);
+    let asl = args.as_slice();
+    let mut i = 0 as u32;
+    // The suffix is built with the same mangle the instance PATH was assembled
+    // from, prefixes included - `G_ex_Plain` strips by `_ex_Plain`, never by
+    // `_Plain`, and a strip that misses leaves the mangled name in a diagnostic.
+    while i < args.length() { suf.push_str("_"); suf.push_str(mangle_typ(a, ar, asl[i])); i = i + 1 as u32; }
+    let base = dbg_strip_suffix(a, ar, path_last(path), str::from_slice(ar, suf.as_slice()));
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    let psl = path.as_slice();
+    let mut j = 0 as u32;
+    while j + 1 as u32 < path.length() { sb.push_str(psl[j]); sb.push_str("::"); j = j + 1 as u32; }
+    sb.push_str(base); sb.push_str("<");
+    let mut k = 0 as u32;
+    while k < args.length() {
+        if k > 0 as u32 { sb.push_str(", "); }
+        sb.push_str(dbg_display(a, ar, structs, enums, asl[k]));
+        k = k + 1 as u32;
+    }
+    sb.push_str(">");
+    return str::from_slice(ar, sb.as_slice());
+}
+fn dbg_strip_suffix(a: Allocator, ar: *Arena, name: str, suffix: str) -> str {
+    let nl = str::length(name);
+    let sl2 = str::length(suffix);
+    if nl <= sl2 { return name; }
+    let nb = str::as_bytes(name);
+    let sb2 = str::as_bytes(suffix);
+    let off = nl - sl2;
+    let mut i = 0 as u32;
+    while i < sl2 { if nb[off + i] != sb2[i] { return name; } i = i + 1 as u32; }
+    let mut out = StringBuilder::with_capacity(a, 32 as u32);
+    let mut k = 0 as u32;
+    while k < off { out.push_byte(nb[k]); k = k + 1 as u32; }
+    return str::from_slice(ar, out.as_slice());
+}
+fn check_debug_able(a: Allocator, ar: *Arena, sc: *const TyScope, structs: *const Vec<StructSig>,
+                    enums: *const Vec<EnumSig>, decls: *const Vec<DeclPos>) {
+    let ssl = structs.as_slice();
+    let mut i = 0 as u32;
+    while i < structs.length() {
+        if ssl[i].sis_debug && all_concrete_fieldtys(&ssl[i].sfields_ty) {
+            let dn = dbg_display(a, ar, structs, enums, ty_node(ar, Typ::TStruct(copy_strs(a, &ssl[i].sname_path))));
+            let pos = dbg_decl_pos(a, decls, &ssl[i].sname_path);
+            let fsl = ssl[i].sfields_ty.as_slice();
+            let mut j = 0 as u32;
+            while j < ssl[i].sfields_ty.length() {
+                dbg_field_fail(a, ar, sc, structs, enums, dn, fsl[j].name, fsl[j].ty, pos);
+                j = j + 1 as u32;
+            }
+        }
+        i = i + 1 as u32;
+    }
+    let esl = enums.as_slice();
+    let mut m = 0 as u32;
+    while m < enums.length() {
+        if esl[m].eis_debug && all_concrete_variants(&esl[m].evariants) {
+            let dne = dbg_display(a, ar, structs, enums, ty_node(ar, Typ::TEnum(copy_strs(a, &esl[m].ename_path))));
+            let pose = dbg_decl_pos(a, decls, &esl[m].ename_path);
+            let vsl = esl[m].evariants.as_slice();
+            let mut v = 0 as u32;
+            while v < esl[m].evariants.length() {
+                let psl2 = vsl[v].vsfields.as_slice();
+                let mut q = 0 as u32;
+                while q < vsl[v].vsfields.length() {
+                    dbg_payload_fail(a, ar, sc, structs, enums, dne, vsl[v].vsname, psl2[q].name, psl2[q].ty, pose);
+                    q = q + 1 as u32;
+                }
+                v = v + 1 as u32;
+            }
+        }
+        m = m + 1 as u32;
+    }
+    return;
+}
+fn dbg_field_fail(a: Allocator, ar: *Arena, sc: *const TyScope, structs: *const Vec<StructSig>,
+                  enums: *const Vec<EnumSig>, dn: str, fname: str, fty: *const Typ, pos: Pos) {
+    if dbg_field_ok(structs, enums, fty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 160 as u32);
+    sb.push_str("'@debug' struct '"); sb.push_str(dn);
+    sb.push_str("': field '"); sb.push_str(fname);
+    sb.push_str("' of type "); sb.push_str(typ_name(a, ar, fty));
+    sb.push_str(" is not debug-able (mark the type `@debug`, or remove `@debug` from the struct)");
+    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn dbg_payload_fail(a: Allocator, ar: *Arena, sc: *const TyScope, structs: *const Vec<StructSig>,
+                    enums: *const Vec<EnumSig>, dn: str, vname: str, fname: str, fty: *const Typ, pos: Pos) {
+    if dbg_field_ok(structs, enums, fty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 160 as u32);
+    sb.push_str("'@debug' enum '"); sb.push_str(dn);
+    sb.push_str("': variant '"); sb.push_str(vname);
+    sb.push_str("' payload '"); sb.push_str(fname);
+    sb.push_str("' of type "); sb.push_str(typ_name(a, ar, fty));
+    sb.push_str(" is not debug-able");
+    tc_fail(ar, sc, pos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+
 fn decl_pos_of(decls: *const Vec<DeclPos>, p: *const Vec<str>) -> Pos {
     let n = decls.length();
     let sl = decls.as_slice();
@@ -19338,6 +19571,9 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     while di < structs.length() { mark_struct_debug(a, ar, &structs, di, &dbg_snames); di = di + 1 as u32; }
     let mut dj = 0 as u32;
     while dj < enums.length() { mark_enum_debug(a, ar, &enums, dj, &dbg_enames); dj = dj + 1 as u32; }
+    let mut dbg_decls: Vec<DeclPos> = Vec::with_capacity(a, 8 as u32);
+    collect_decl_pos(a, &dbg_root, items, &dbg_decls);
+    check_debug_able(a, ar, &base_scope, &structs, &enums, &dbg_decls);
 
     // Seeded with the two prelude enums: the oracle marks Option / Result on
     // their prelude decls, which the port hardcodes rather than parses.

@@ -1,0 +1,11 @@
+// A `@debug` GENERIC instantiated with an undebug-able argument. The skeleton is
+// not refused - its payload is a type variable, which is debug-able in no
+// direction - so the refusal lands on the INSTANCE and borrows the skeleton's
+// position, naming the instance the way the reader would write it.
+//
+// The reference guards this with "declares no type parameters". The port's index
+// does not carry those on a skeleton entry, so the guard here asks the property
+// that one stands for: are the field types real yet.
+struct Plain { v: int }
+@debug enum G<T> { A(T) | B }
+fn main() { let g: G<Plain> = G::A(Plain { v: 1 }); println(g); }

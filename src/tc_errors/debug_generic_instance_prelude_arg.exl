@@ -1,0 +1,5 @@
+// The same instance rule with a prelude enum as the type argument, so the
+// message has to render a nested instance - `G<Option<i32>>` - rather than a
+// single name.
+@debug enum G<T> { A(T) | B }
+fn main() { let g: G<Option<int>> = G::A(Option::Some(1)); println(g); }

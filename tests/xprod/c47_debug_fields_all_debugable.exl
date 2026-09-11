@@ -1,0 +1,26 @@
+// The accepting side of the rule: every field of a `@debug` type that IS
+// printable, including a nested `@debug` aggregate, a pointer, a string and a
+// bool. A check this broad needs its positives pinned - five refusals next door
+// say what it rejects, and only this says what it must not.
+//
+// It links and runs, which is the half that matters here: the defect this rule
+// closes produced a printer call with no printer behind it.
+@debug struct Leaf { n: int, flag: bool }
+
+@debug enum Branch {
+    One(Leaf)
+    | Two(int, str)
+    | Nil
+}
+
+@debug struct Tree { root: Branch, label: str, count: int }
+
+fn main() {
+    let l: Leaf = Leaf { n: 3, flag: true };
+    let b: Branch = Branch::One(l);
+    let t: Tree = Tree { root: b, label: "top", count: 2 };
+    println(l);
+    println(t);
+    println(Branch::Two(7, "pair"));
+    println(Branch::Nil);
+}

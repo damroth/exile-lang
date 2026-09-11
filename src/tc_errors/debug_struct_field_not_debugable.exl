@@ -1,0 +1,8 @@
+// The reference checks AT THE DECLARATION that every field of a `@debug` struct
+// is itself printable. The port had no such check at all - the message does not
+// occur in its source once - so the program compiled and emitted a call to a
+// printer that was never synthesised. The reader's build failed at the linker on
+// a symbol they never wrote.
+struct Plain { v: int }
+@debug struct O { i: Plain }
+fn main() { let o: O = O { i: Plain { v: 1 } }; println(o); }

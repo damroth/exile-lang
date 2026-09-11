@@ -1,0 +1,5 @@
+// A prelude enum as the payload. `Option` is not `@debug`, and nothing about
+// being built-in changes that - the rule is a property of the type, not of who
+// declared it.
+@debug enum E { A(Option<int>) | B }
+fn main() { let e: E = E::A(Option::Some(1)); println(e); }
