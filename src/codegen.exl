@@ -2411,6 +2411,20 @@ fn emit_enum_debug_def(a: Allocator, ar: *Arena, out: *StringBuilder, fstd: bool
     out.push_str("}\n");
     return;
 }
+// One printer per emitted TYPE, not per index entry.  A generic instance is
+// registered once per demand, so `tp_enum_index` carries `G_i32` as many times
+// as an annotation asked for it - and this loop emitted a definition for each,
+// which `cc` calls a redefinition.  The type-declaration emitter next door
+// already keeps a `done` list of C names for exactly this reason; the printers
+// now keep one too.
+fn dbg_seen(done: *Vec<str>, cname: str) -> bool {
+    let sl = done.as_slice();
+    let mut i = 0 as u32;
+    while i < done.length() { if str::eq(sl[i], cname) { return true; } i = i + 1 as u32; }
+    done.push(cname);
+    return false;
+}
+
 fn emit_variant_debug(a: Allocator, ar: *Arena, out: *StringBuilder, fstd: bool, _cname: str, name: str, v: *const VariantSig) {
     let hdr = concat2(a, ar, concat2(a, ar, name, "::"), v.vsname);
     if v.vsfields.length() == 0 as u32 { emit_dbg_lit(out, fstd, "        ", hdr); return; }
@@ -2449,12 +2463,16 @@ pub fn emit_debug_printers(a: Allocator, ar: *Arena, tp: *const Tprogram, fstd: 
         j = j + 1 as u32;
     }
     if n == 0 as u32 { return; }
+    let mut done_fwd: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut done_def: Vec<str> = Vec::with_capacity(a, 8 as u32);
     out.push_str("\n");
     let mut k = 0 as u32;
     while k < tp.tp_struct_index.length() {
         if ssl[k].sis_debug && fields_concrete(&ssl[k].sfields_ty) {
             let cn = mangle_typ(a, ar, ty_node(ar, Typ::TStruct(copy_strs_cg(a, &ssl[k].sname_path))));
-            out.push_str("static void "); out.push_str(cn); out.push_str("__debug(struct "); out.push_str(cn); out.push_str(" self);\n");
+            if !dbg_seen(&done_fwd, cn) {
+                out.push_str("static void "); out.push_str(cn); out.push_str("__debug(struct "); out.push_str(cn); out.push_str(" self);\n");
+            }
         }
         k = k + 1 as u32;
     }
@@ -2462,7 +2480,9 @@ pub fn emit_debug_printers(a: Allocator, ar: *Arena, tp: *const Tprogram, fstd: 
     while m < tp.tp_enum_index.length() {
         if esl[m].eis_debug && enum_concrete(&esl[m]) {
             let cne = mangle_typ(a, ar, ty_node(ar, Typ::TEnum(copy_strs_cg(a, &esl[m].ename_path))));
-            out.push_str("static void "); out.push_str(cne); out.push_str("__debug(struct "); out.push_str(cne); out.push_str(" self);\n");
+            if !dbg_seen(&done_fwd, cne) {
+                out.push_str("static void "); out.push_str(cne); out.push_str("__debug(struct "); out.push_str(cne); out.push_str(" self);\n");
+            }
         }
         m = m + 1 as u32;
     }
@@ -2470,16 +2490,22 @@ pub fn emit_debug_printers(a: Allocator, ar: *Arena, tp: *const Tprogram, fstd: 
     let mut p = 0 as u32;
     while p < tp.tp_struct_index.length() {
         if ssl[p].sis_debug && fields_concrete(&ssl[p].sfields_ty) {
-            emit_struct_debug_def(a, ar, out, fstd, &tp.tp_struct_index, &tp.tp_enum_index, &ssl[p]);
-            out.push_str("\n");
+            let cnp = mangle_typ(a, ar, ty_node(ar, Typ::TStruct(copy_strs_cg(a, &ssl[p].sname_path))));
+            if !dbg_seen(&done_def, cnp) {
+                emit_struct_debug_def(a, ar, out, fstd, &tp.tp_struct_index, &tp.tp_enum_index, &ssl[p]);
+                out.push_str("\n");
+            }
         }
         p = p + 1 as u32;
     }
     let mut q = 0 as u32;
     while q < tp.tp_enum_index.length() {
         if esl[q].eis_debug && enum_concrete(&esl[q]) {
-            emit_enum_debug_def(a, ar, out, fstd, &tp.tp_struct_index, &tp.tp_enum_index, &esl[q]);
-            out.push_str("\n");
+            let cnq = mangle_typ(a, ar, ty_node(ar, Typ::TEnum(copy_strs_cg(a, &esl[q].ename_path))));
+            if !dbg_seen(&done_def, cnq) {
+                emit_enum_debug_def(a, ar, out, fstd, &tp.tp_struct_index, &tp.tp_enum_index, &esl[q]);
+                out.push_str("\n");
+            }
         }
         q = q + 1 as u32;
     }

@@ -1,0 +1,24 @@
+// The same generic, declared in a module. Two spellings of one name meet here:
+// the collection records a module type qualified (`m::G`), while the index
+// stores a skeleton as one segment and its INSTANCE as two - so asking for the
+// last segment hands back `m::G` for one and a bare `G_i32` for the other.
+//
+// Matching on the joined path relates them, and relates nothing in another
+// module.
+mod shapes {
+    @debug pub enum Tag<T> {
+        One(T)
+        | None
+    }
+
+    @debug pub struct Box<T> { item: T, count: int }
+}
+
+fn main() {
+    let t: shapes::Tag<int> = shapes::Tag::One(3);
+    let n: shapes::Tag<int> = shapes::Tag::None;
+    let b: shapes::Box<int> = shapes::Box { item: 4, count: 2 };
+    println(t);
+    println(n);
+    println(b);
+}

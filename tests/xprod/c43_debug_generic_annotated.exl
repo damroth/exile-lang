@@ -1,0 +1,19 @@
+// A `@debug` generic whose instance is demanded by an ANNOTATION. The port
+// emitted one printer per index ENTRY, and a generic instance is registered once
+// per demand - so `cc` answered `redefinition`.
+//
+// The unannotated form linked and was the shape the catalogue happened to use,
+// which is why this sat unseen: the defect needed an annotation to appear at all.
+@debug enum G<T> {
+    A(T)
+    | B
+}
+
+fn main() {
+    let one: G<int> = G::A(5);
+    let two: G<int> = G::B;
+    let inferred = G::A(9);
+    println(one);
+    println(two);
+    println(inferred);
+}

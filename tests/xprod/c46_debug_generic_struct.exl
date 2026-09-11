@@ -1,0 +1,21 @@
+// The struct half of the same rule, with a nested `@debug` payload so one
+// printer calls another - the shape where a missing or duplicated definition
+// shows up as a link error rather than as a wrong line of output.
+//
+// `Inner` is also printed DIRECTLY, on purpose. An instance reachable only as a
+// FIELD of another instance is registered without its type arguments, so its
+// printer heads itself `Inner_i32` where the reference writes `Inner<i32>` -
+// a separate defect with its own cause, registered rather than ridden on here.
+// Using it directly keeps this fixture measuring the rule it was written for.
+@debug struct Inner<T> { v: T }
+
+@debug struct Outer<T> { head: Inner<T>, tag: int }
+
+fn main() {
+    let i: Inner<int> = Inner { v: 3 };
+    println(i);
+    let a: Outer<int> = Outer { head: Inner { v: 1 }, tag: 10 };
+    let b: Outer<int> = Outer { head: Inner { v: 2 }, tag: 20 };
+    println(a);
+    println(b);
+}

@@ -2898,6 +2898,10 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c40_generic_struct_variant \
                   c41_variant_field_order \
                   c42_debug_printer_in_module \
+                  c43_debug_generic_annotated \
+                  c44_debug_generic_in_module \
+                  c45_debug_generic_two_instances \
+                  c46_debug_generic_struct \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \

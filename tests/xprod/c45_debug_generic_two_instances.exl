@@ -1,0 +1,19 @@
+// Two DIFFERENT instances of one `@debug` generic, both annotated. The dedup has
+// to be per emitted type, not per generic: collapsing to one printer would be as
+// wrong as emitting three for the same instance, and only a fixture with two
+// instances can tell those two mistakes apart.
+mod pair {
+    @debug pub enum Cell<T> {
+        Full(T)
+        | Empty
+    }
+}
+
+fn main() {
+    let i: pair::Cell<int> = pair::Cell::Full(7);
+    let b: pair::Cell<bool> = pair::Cell::Full(true);
+    let e: pair::Cell<int> = pair::Cell::Empty;
+    println(i);
+    println(b);
+    println(e);
+}

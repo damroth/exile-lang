@@ -16199,15 +16199,21 @@ fn debug_name_hit(names: *const Vec<str>, last: str) -> bool {
     }
     return false;
 }
-fn mark_struct_debug(structs: *Vec<StructSig>, ci: u32, names: *const Vec<str>) {
+// Matched on the FULL path, joined, not on its last segment.  The index stores
+// a skeleton and its instance in different shapes - `m::G` as one segment, and
+// `m` + `G_i32` as two - so asking for "the last segment" hands back `m::G` for
+// one and a bare `G_i32` for the other.  Joining makes both `m::G` and
+// `m::G_i32`, which the instance rule relates and a same-named type in another
+// module does not.
+fn mark_struct_debug(a: Allocator, ar: *Arena, structs: *Vec<StructSig>, ci: u32, names: *const Vec<str>) {
     with s in structs[ci] {
-        if debug_name_hit(names, path_last(&s.sname_path)) { s.sis_debug = true; }
+        if debug_name_hit(names, path_display(a, ar, &s.sname_path)) { s.sis_debug = true; }
     }
     return;
 }
-fn mark_enum_debug(enums: *Vec<EnumSig>, ci: u32, names: *const Vec<str>) {
+fn mark_enum_debug(a: Allocator, ar: *Arena, enums: *Vec<EnumSig>, ci: u32, names: *const Vec<str>) {
     with e in enums[ci] {
-        if debug_name_hit(names, path_last(&e.ename_path)) { e.eis_debug = true; }
+        if debug_name_hit(names, path_display(a, ar, &e.ename_path)) { e.eis_debug = true; }
     }
     return;
 }
@@ -19329,9 +19335,9 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     let dbg_root: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_debug_names(a, ar, &dbg_root, items, &dbg_snames, &dbg_enames);
     let mut di = 0 as u32;
-    while di < structs.length() { mark_struct_debug(&structs, di, &dbg_snames); di = di + 1 as u32; }
+    while di < structs.length() { mark_struct_debug(a, ar, &structs, di, &dbg_snames); di = di + 1 as u32; }
     let mut dj = 0 as u32;
-    while dj < enums.length() { mark_enum_debug(&enums, dj, &dbg_enames); dj = dj + 1 as u32; }
+    while dj < enums.length() { mark_enum_debug(a, ar, &enums, dj, &dbg_enames); dj = dj + 1 as u32; }
 
     // Seeded with the two prelude enums: the oracle marks Option / Result on
     // their prelude decls, which the port hardcodes rather than parses.
