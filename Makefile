@@ -766,9 +766,14 @@ selfhost-port-tc-errors: host-selfhost-tc $(EXILC_BIN)
 # probe runner would classify the run as a crash rather than a measurement.
 #
 # A fixture here needs a register entry naming the reference's defect. The gate
-# pins both halves: the reference still fails (so the fixture keeps describing
+# pins both halves: the reference still ABORTS (so the fixture keeps describing
 # what it was written for, and goes red the day the reference is fixed), and the
 # port builds it, runs it, and prints exactly its `.expected`.
+#
+# The abort is recognised by its MARKER, not by its status. An assertion failure
+# exits 1, and so does an ordinary refusal - so a reference fixed by REFUSING
+# this input instead would have left the gate green and the register entry alive
+# past its subject, which is the one thing this directory promises not to do.
 #
 # Addresses are normalised before comparing - `0x...` becomes `0xADDR` - because
 # an address differs per run and pinning one would make the gate lie about what
@@ -782,10 +787,18 @@ selfhost-refdefect: $(EXILC_BIN)
 	  if [ ! -f $$exp ]; then echo "selfhost-refdefect: MISSING $$exp"; fail=1; continue; fi; \
 	  if [ ! -s $$exp ]; then echo "selfhost-refdefect: $$exp is empty - a gate comparing against nothing reads as clean"; fail=1; continue; fi; \
 	  rm -f $(C_OUT)/rd.c $(HOST_OUT)/rd $(C_OUT)/rd.run; \
-	  $(EXILE) --target c --c-out $(C_OUT)/rd.c $$f >/dev/null 2>&1; oe=$$?; \
+	  rm -f $(C_OUT)/rd.err; \
+	  $(EXILE) --target c --c-out $(C_OUT)/rd.c $$f >/dev/null 2>$(C_OUT)/rd.err; oe=$$?; \
 	  if [ $$oe -eq 0 ]; then \
 	    echo "selfhost-refdefect: the REFERENCE now compiles $$b"; \
 	    echo "  this directory is only for defects the reference HAS - re-measure its register entry"; \
+	    fail=1; continue; \
+	  fi; \
+	  if ! grep -q 'internal compiler error' $(C_OUT)/rd.err; then \
+	    echo "selfhost-refdefect: the reference REFUSES $$b rather than aborting on it"; \
+	    echo "  its first line: `head -1 $(C_OUT)/rd.err`"; \
+	    echo "  a non-zero status is not the assertion this gate makes - an ordinary refusal"; \
+	    echo "  exits 1 too, so re-measure the register entry instead of reading green"; \
 	    fail=1; continue; \
 	  fi; \
 	  rm -f $(C_OUT)/rd.c; \
@@ -798,10 +811,10 @@ selfhost-refdefect: $(EXILC_BIN)
 	    echo "selfhost-refdefect: OUTPUT $$b"; diff $$exp $(C_OUT)/rd.norm | head -6; fail=1; \
 	  fi; \
 	done; \
-	rm -f $(C_OUT)/rd.c $(HOST_OUT)/rd $(C_OUT)/rd.run $(C_OUT)/rd.norm; \
+	rm -f $(C_OUT)/rd.c $(C_OUT)/rd.err $(HOST_OUT)/rd $(C_OUT)/rd.run $(C_OUT)/rd.norm; \
 	if [ $$n -lt 1 ]; then echo "selfhost-refdefect: no fixtures - the gate checks nothing"; exit 1; fi; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-refdefect: clean ($$n fixture(s): the reference still refuses each, the port builds, runs and prints its expected output)"; \
+	  echo "selfhost-refdefect: clean ($$n fixture(s): the reference still ABORTS on each - marker checked, not status - and the port builds, runs and prints its expected output)"; \
 	else exit 1; fi
 
 # ===== Output directories: a write that fails is not a write =====
