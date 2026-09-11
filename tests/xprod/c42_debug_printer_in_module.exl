@@ -1,0 +1,40 @@
+// A `@debug` type declared inside a module. Both compilers accepted this and
+// only one produced C that LINKS: the port emitted the CALL to the synthesized
+// printer and never the printer, so the reader's build failed on a symbol they
+// never wrote.
+//
+// It sits in xprod rather than anywhere else because this gate LINKS and RUNS
+// what both sides emit. Comparing emissions is not enough for this class - a
+// defect where both sides emit the same broken C reports AGREE, which is how a
+// reference defect (`(*p).field` on a pointer-to-pointer) stayed invisible until
+// a gate linked it.
+//
+// The cause was two spellings of one name: the type index records a module type
+// as a single segment reading `mod::Name`, and the `@debug` collection pushed
+// the declared bare name, so the mark could never land. The `@must_use`
+// collection one screen away had already been written the other way.
+mod inner {
+    @debug pub enum Shape {
+        Dot
+        | Line(int)
+    }
+
+    @debug pub struct Point { x: int, y: int }
+}
+
+mod outer {
+    pub mod deep {
+        @debug pub enum Flag { On | Off }
+    }
+}
+
+fn main() {
+    let d: inner::Shape = inner::Shape::Dot;
+    let l: inner::Shape = inner::Shape::Line(7);
+    let p: inner::Point = inner::Point { x: 1, y: 2 };
+    let f: outer::deep::Flag = outer::deep::Flag::On;
+    println(d);
+    println(l);
+    println(p);
+    println(f);
+}

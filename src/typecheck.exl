@@ -16150,27 +16150,43 @@ fn mention_fields_round(a: Allocator, sinfo: *const Vec<StructField>, efields: *
 // `@debug` names, collected straight off the AST (the port has no struct-decl
 // table in Tprogram).  A mono instance inherits the flag from its skeleton, so
 // the lookup also matches `Pair_i32_bool` against the base name `Pair`.
-fn dbg_push_struct(ds: *Vec<str>, sd: *const StructDecl) {
-    if sd.sis_debug { ds.push(sd.sname); }
+// Qualified exactly as the type index records them - bare at top level,
+// `mod::Name` inside - which is the same rule the `@must_use` collection next
+// door already follows, and for the same two reasons.
+//
+// The first is that the index stores a module type's name as ONE segment
+// spelling `mod::Name`, so `path_last` hands back the whole thing: a bare `E`
+// collected here could never match an `m::E` recorded there, and every
+// module-nested `@debug` type silently lost its printer while the CALL to that
+// printer was still emitted.  The C did not link.
+//
+// The second is the one the sibling's comment states: marking by bare name
+// would mark the wrong one when two modules declare the same name.
+fn dbg_push_struct(a: Allocator, ar: *Arena, modpath: *const Vec<str>, ds: *Vec<str>, sd: *const StructDecl) {
+    if !sd.sis_debug { return; }
+    if modpath.length() == 0 as u32 { ds.push(sd.sname); return; }
+    ds.push(join_colons(a, ar, modpath, sd.sname));
     return;
 }
-fn dbg_push_enum(de: *Vec<str>, ed: *const EnumDecl) {
-    if ed.eis_debug { de.push(ed.ename); }
+fn dbg_push_enum(a: Allocator, ar: *Arena, modpath: *const Vec<str>, de: *Vec<str>, ed: *const EnumDecl) {
+    if !ed.eis_debug { return; }
+    if modpath.length() == 0 as u32 { de.push(ed.ename); return; }
+    de.push(join_colons(a, ar, modpath, ed.ename));
     return;
 }
-fn collect_debug_names_one(a: Allocator, ar: *Arena, it: *const Item, ds: *Vec<str>, de: *Vec<str>) {
+fn collect_debug_names_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it: *const Item, ds: *Vec<str>, de: *Vec<str>) {
     match *it {
-        Item::Struct(sd) => { dbg_push_struct(ds, &sd); }
-        | Item::Enum(ed) => { dbg_push_enum(de, &ed); }
-        | Item::Module(md) => { collect_debug_names(a, ar, &md.mitems, ds, de); }
+        Item::Struct(sd) => { dbg_push_struct(a, ar, modpath, ds, &sd); }
+        | Item::Enum(ed) => { dbg_push_enum(a, ar, modpath, de, &ed); }
+        | Item::Module(md) => { collect_debug_names(a, ar, &path_push(a, modpath, md.mname), &md.mitems, ds, de); }
         | _e => { }
     }
 }
-fn collect_debug_names(a: Allocator, ar: *Arena, items: *const Vec<Item>, ds: *Vec<str>, de: *Vec<str>) {
+fn collect_debug_names(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items: *const Vec<Item>, ds: *Vec<str>, de: *Vec<str>) {
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < items.length() {
-        collect_debug_names_one(a, ar, &sl[i], ds, de);
+        collect_debug_names_one(a, ar, modpath, &sl[i], ds, de);
         i = i + 1 as u32;
     }
 }
@@ -19310,7 +19326,8 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
 
     let mut dbg_snames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut dbg_enames: Vec<str> = Vec::with_capacity(a, 8 as u32);
-    collect_debug_names(a, ar, items, &dbg_snames, &dbg_enames);
+    let dbg_root: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect_debug_names(a, ar, &dbg_root, items, &dbg_snames, &dbg_enames);
     let mut di = 0 as u32;
     while di < structs.length() { mark_struct_debug(&structs, di, &dbg_snames); di = di + 1 as u32; }
     let mut dj = 0 as u32;
