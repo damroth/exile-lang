@@ -2361,6 +2361,16 @@ fn emit_field_debug(a: Allocator, ar: *Arena, out: *StringBuilder, fstd: bool, t
         | Typ::TString => dbg_str(out, fstd, access)
         | Typ::TPtr(_i) => dbg_ptr(out, fstd, access)
         | Typ::TOwnPtr(_i) => dbg_ptr(out, fstd, access)
+        // A `*const T` field is a pointer, and the documented rule says a pointer
+        // prints as its address.  Without this arm it fell through to the scalar
+        // default and a pointer went out through `%d`.
+        //
+        // There is no reference emission to compare against: the reference's own
+        // `@debug` validation lets `*const T` through and its printer has no arm
+        // for it, so it reaches an assertion and aborts.  That is recorded as a
+        // reference defect; the port is not free to abort, and the address is what
+        // the documentation promises.
+        | Typ::TConstPtr(_i) => dbg_ptr(out, fstd, access)
         | Typ::TStruct(_p) => { out.push_str(mangle_typ(a, ar, ty)); out.push_str("__debug("); out.push_str(access); out.push_str(")"); }
         | Typ::TEnum(_p) => { out.push_str(mangle_typ(a, ar, ty)); out.push_str("__debug("); out.push_str(access); out.push_str(")"); }
         | _o => dbg_scalar(out, fstd, ty, access)

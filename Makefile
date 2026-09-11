@@ -759,6 +759,51 @@ selfhost-port-tc-errors: host-selfhost-tc $(EXILC_BIN)
 	  if [ $$emit -gt 0 ]; then echo "  $$emit fixture(s) reached an EMISSION, which is the accept-side of the same defect"; fi; \
 	  exit 1; fi
 
+# ===== Fixtures the REFERENCE cannot compile =====
+#
+# Every other differential gate runs both compilers and compares them. These
+# cannot: the reference ABORTS on them, so there is nothing to compare and the
+# probe runner would classify the run as a crash rather than a measurement.
+#
+# A fixture here needs a register entry naming the reference's defect. The gate
+# pins both halves: the reference still fails (so the fixture keeps describing
+# what it was written for, and goes red the day the reference is fixed), and the
+# port builds it, runs it, and prints exactly its `.expected`.
+#
+# Addresses are normalised before comparing - `0x...` becomes `0xADDR` - because
+# an address differs per run and pinning one would make the gate lie about what
+# it checks.
+.PHONY: selfhost-refdefect
+
+selfhost-refdefect: $(EXILC_BIN)
+	@fail=0; n=0; \
+	for f in tests/refdefect/*.exl; do \
+	  n=$$((n+1)); b=`basename $$f .exl`; exp=tests/refdefect/$$b.expected; \
+	  if [ ! -f $$exp ]; then echo "selfhost-refdefect: MISSING $$exp"; fail=1; continue; fi; \
+	  if [ ! -s $$exp ]; then echo "selfhost-refdefect: $$exp is empty - a gate comparing against nothing reads as clean"; fail=1; continue; fi; \
+	  rm -f $(C_OUT)/rd.c $(HOST_OUT)/rd $(C_OUT)/rd.run; \
+	  $(EXILE) --target c --c-out $(C_OUT)/rd.c $$f >/dev/null 2>&1; oe=$$?; \
+	  if [ $$oe -eq 0 ]; then \
+	    echo "selfhost-refdefect: the REFERENCE now compiles $$b"; \
+	    echo "  this directory is only for defects the reference HAS - re-measure its register entry"; \
+	    fail=1; continue; \
+	  fi; \
+	  rm -f $(C_OUT)/rd.c; \
+	  $(EXILC_BIN) --target host --link $(SYS_HOST) -o $(HOST_OUT)/rd $$f >/dev/null 2>&1; \
+	  if [ ! -x $(HOST_OUT)/rd ]; then echo "selfhost-refdefect: the port did not BUILD $$b"; fail=1; continue; fi; \
+	  $(HOST_OUT)/rd > $(C_OUT)/rd.run 2>&1; \
+	  if [ ! -s $(C_OUT)/rd.run ]; then echo "selfhost-refdefect: $$b ran and printed nothing"; fail=1; continue; fi; \
+	  sed -E 's/0x[0-9a-fA-F]+/0xADDR/g' $(C_OUT)/rd.run > $(C_OUT)/rd.norm; \
+	  if ! cmp -s $(C_OUT)/rd.norm $$exp; then \
+	    echo "selfhost-refdefect: OUTPUT $$b"; diff $$exp $(C_OUT)/rd.norm | head -6; fail=1; \
+	  fi; \
+	done; \
+	rm -f $(C_OUT)/rd.c $(HOST_OUT)/rd $(C_OUT)/rd.run $(C_OUT)/rd.norm; \
+	if [ $$n -lt 1 ]; then echo "selfhost-refdefect: no fixtures - the gate checks nothing"; exit 1; fi; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-refdefect: clean ($$n fixture(s): the reference still refuses each, the port builds, runs and prints its expected output)"; \
+	else exit 1; fi
+
 # ===== Output directories: a write that fails is not a write =====
 #
 # The reference creates a missing output directory before writing, so every
@@ -966,6 +1011,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-outdir \
+                 selfhost-refdefect \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
                  selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists

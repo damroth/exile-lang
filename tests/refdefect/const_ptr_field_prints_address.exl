@@ -1,0 +1,25 @@
+// A `*const T` field of a `@debug` struct.
+//
+// The reference's own `@debug` validation lets `*const T` through as printable,
+// and its printer has no arm for it: the field reaches an assertion and the
+// compiler aborts. Its source says, at that assertion, that validation was
+// supposed to have rejected this - so the two halves disagree about one rule.
+//
+// The port prints the ADDRESS, which is what the documented rule says a pointer
+// field does ("printed as the address with `%p`"), and what a plain `*T` field
+// already did on both sides. The addresses themselves are not pinned - only the
+// SHAPE of the line is, since an address differs per run.
+@debug struct Holder { label: str, p: *const int, tag: int }
+
+@debug struct Leafy { n: int }
+
+@debug struct Nest { q: *const Leafy }
+
+fn main() {
+    let v: int = 7;
+    let h: Holder = Holder { label: "one", p: &v, tag: 3 };
+    println(h);
+    let l: Leafy = Leafy { n: 5 };
+    let n: Nest = Nest { q: &l };
+    println(n);
+}
