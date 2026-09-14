@@ -1,0 +1,11 @@
+// `@debug` marks a TYPE, not a name.  A marked `m::Foo` says nothing about the
+// bare `Foo` declared beside the module: the printer codegen emits is named for
+// the marked one, so accepting this call writes C that never links.
+mod m {
+    @debug pub struct Foo { a: int }
+}
+struct Foo { a: int }
+fn main() {
+    let f = Foo { a: 1 };
+    println(f);
+}

@@ -1,0 +1,11 @@
+// The same collision read the other way round: the marked type is at top level
+// and the printed one is nested.  Both directions have to fail, or the rule is
+// a rule about spelling rather than about identity.
+@debug struct Foo { a: int }
+mod m {
+    pub struct Foo { a: int }
+}
+fn main() {
+    let f = m::Foo { a: 1 };
+    println(f);
+}

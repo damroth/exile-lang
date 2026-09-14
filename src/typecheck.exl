@@ -3823,24 +3823,18 @@ fn str_fn_disp(m: str) -> str {
 // The marker lives on the SKELETON; a mono instance (`Pair_i32_bool`) inherits it.
 // The reference copies the flag into the instance; the port carries no flags on
 // instances, so it asks the skeleton — same question, same answer.
-fn is_debug_ty(sc: *const TyScope, path: *const Vec<str>) -> bool {
-    let last = path_last(path);
-    if name_in(sc.sc_dbg, last) { return true; }
-    let n = sc.sc_dbg.length();
-    let sl = sc.sc_dbg.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if str_starts_with(last, sl[i]) && is_inst_suffix(last, sl[i]) { return true; }
-        i = i + 1 as u32;
-    }
-    return false;
-}
-// `Pair_i32_bool` is an instance of `Pair`; `Pairs` is not.
-fn is_inst_suffix(inst: str, skel: str) -> bool {
-    let sn = str::length(skel);
-    if str::length(inst) <= sn { return false; }
-    let ib = str::as_bytes(inst);
-    return ib[sn] == 95 as u8;
+//
+// The comparison is the FULL path, never the last segment.  The reference tests
+// `s.sname_path = path`, so a `@debug` type in one scope must not answer for a
+// same-named type in another; matching on `Foo` alone let a marked `m::Foo`
+// license printing a bare `Foo` that has no printer, and the C did not link.
+// That makes the table's spelling a contract: ONE canonical entry per type -
+// bare at top level, `mod::Name` inside a module - which is what push_dbg_name
+// writes and what the marking pass has read since it started joining paths.
+// Both halves move together or neither does: a canonical-only table read by
+// last segment loses every module-nested type instead of over-matching.
+fn is_debug_ty(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> bool {
+    return debug_name_hit(sc.sc_dbg, path_display(a, ar, path));
 }
 fn print_reject(a: Allocator, ar: *Arena, sc: *const TyScope, pre: str, t: *const Typ, post: str, p: Pos) {
     let mut sb = StringBuilder::with_capacity(a, 112 as u32);
@@ -3896,7 +3890,7 @@ fn print_c_reject(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p
 }
 fn print_struct_reject(a: Allocator, ar: *Arena, sc: *const TyScope,
                        path: *const Vec<str>, p: Pos) {
-    if is_debug_ty(sc, path) { return; }
+    if is_debug_ty(a, ar, sc, path) { return; }
     let mut sb = StringBuilder::with_capacity(a, 112 as u32);
     sb.push_str("cannot print a struct value ("); sb.push_str(path_display(a, ar, path));
     sb.push_str("); print individual fields, or mark the struct with `@debug`");
@@ -3905,7 +3899,7 @@ fn print_struct_reject(a: Allocator, ar: *Arena, sc: *const TyScope,
 }
 fn print_enum_reject(a: Allocator, ar: *Arena, sc: *const TyScope,
                      path: *const Vec<str>, p: Pos) {
-    if is_debug_ty(sc, path) { return; }
+    if is_debug_ty(a, ar, sc, path) { return; }
     let mut sb = StringBuilder::with_capacity(a, 128 as u32);
     sb.push_str("cannot print an enum value ("); sb.push_str(path_display(a, ar, path));
     sb.push_str("); match on it and print per variant, or mark the enum with `@debug`");
@@ -12594,8 +12588,8 @@ fn push_dbg_if(a: Allocator, ar: *Arena, modpath: *const Vec<str>, name: str, fl
     return;
 }
 fn push_dbg_name(a: Allocator, ar: *Arena, modpath: *const Vec<str>, name: str, out: *Vec<str>) {
-    out.push(name);
-    if modpath.length() > 0 as u32 { out.push(join_colons(a, ar, modpath, name)); }
+    if modpath.length() == 0 as u32 { out.push(name); return; }
+    out.push(join_colons(a, ar, modpath, name));
     return;
 }
 fn collect_debug_types(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<str>) {
@@ -16162,16 +16156,17 @@ fn mention_fields_round(a: Allocator, sinfo: *const Vec<StructField>, efields: *
 //
 // The second is the one the sibling's comment states: marking by bare name
 // would mark the wrong one when two modules declare the same name.
+//
+// Both `@debug` collections write through `push_dbg_name`, so the spelling is
+// one rule in one place: the print allowlist compares full paths against what
+// this table holds, and a second spelling here would license a printer that
+// codegen never emits.
 fn dbg_push_struct(a: Allocator, ar: *Arena, modpath: *const Vec<str>, ds: *Vec<str>, sd: *const StructDecl) {
-    if !sd.sis_debug { return; }
-    if modpath.length() == 0 as u32 { ds.push(sd.sname); return; }
-    ds.push(join_colons(a, ar, modpath, sd.sname));
+    push_dbg_if(a, ar, modpath, sd.sname, sd.sis_debug, ds);
     return;
 }
 fn dbg_push_enum(a: Allocator, ar: *Arena, modpath: *const Vec<str>, de: *Vec<str>, ed: *const EnumDecl) {
-    if !ed.eis_debug { return; }
-    if modpath.length() == 0 as u32 { de.push(ed.ename); return; }
-    de.push(join_colons(a, ar, modpath, ed.ename));
+    push_dbg_if(a, ar, modpath, ed.ename, ed.eis_debug, de);
     return;
 }
 fn collect_debug_names_one(a: Allocator, ar: *Arena, modpath: *const Vec<str>, it: *const Item, ds: *Vec<str>, de: *Vec<str>) {
@@ -16190,11 +16185,11 @@ fn collect_debug_names(a: Allocator, ar: *Arena, modpath: *const Vec<str>, items
         i = i + 1 as u32;
     }
 }
-fn debug_name_hit(names: *const Vec<str>, last: str) -> bool {
+fn debug_name_hit(names: *const Vec<str>, joined: str) -> bool {
     let sl = names.as_slice();
     let mut i = 0 as u32;
     while i < names.length() {
-        if str::eq(sl[i], last) || inst_of_base(last, sl[i]) { return true; }
+        if str::eq(sl[i], joined) || inst_of_base(joined, sl[i]) { return true; }
         i = i + 1 as u32;
     }
     return false;

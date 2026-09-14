@@ -1,0 +1,11 @@
+// The enum half of the same rule. Structs and enums ask the allowlist through
+// separate doors, so one fixture per door: reverting either door alone has to
+// redden something.
+@debug enum E { A(int) | B }
+mod m {
+    pub enum E { A(int) | B }
+}
+fn main() {
+    let e: m::E = m::E::B;
+    println(e);
+}

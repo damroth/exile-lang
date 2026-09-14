@@ -1,0 +1,13 @@
+// Neither type is at top level, so nothing here can be confused for a
+// module-relative reference: two modules declare `Foo`, one is marked, and the
+// other stays unprintable.
+mod a {
+    @debug pub struct Foo { x: int }
+}
+mod b {
+    pub struct Foo { x: int }
+}
+fn main() {
+    let f = b::Foo { x: 1 };
+    println(f);
+}

@@ -1,0 +1,35 @@
+// The accept-side of the same rule. Three scopes declare `Foo`, and only one is
+// marked: the marked one still has to print, or the fix that stopped a marker
+// leaking across scopes has simply stopped markers working.
+//
+// The generic is here for the instance rule. A skeleton and its instance reach
+// the lookup in different shapes, so relating `Pair` to `Pair_i32` has to
+// survive the qualification that keeps `nums::Pair` apart from `text::Pair`.
+mod nums {
+    @debug pub struct Foo { a: int }
+    @debug pub enum Tag { On | Off }
+    @debug pub struct Pair<T> { first: T, second: int }
+}
+
+mod text {
+    pub struct Foo { a: int }
+    pub struct Pair<T> { first: T, second: int }
+}
+
+struct Foo { a: int }
+
+fn main() {
+    let f: nums::Foo = nums::Foo { a: 1 };
+    let t: nums::Tag = nums::Tag::On;
+    let p: nums::Pair<int> = nums::Pair { first: 7, second: 8 };
+    println(f);
+    println(t);
+    println(p);
+
+    let other: text::Foo = text::Foo { a: 2 };
+    let bare: Foo = Foo { a: 3 };
+    let unmarked: text::Pair<int> = text::Pair { first: 4, second: 5 };
+    println(other.a);
+    println(bare.a);
+    println(unmarked.first);
+}
