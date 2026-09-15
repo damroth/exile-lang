@@ -1,0 +1,28 @@
+// Two generics pointing at each other, linked by a LITERAL. Inferring the outer
+// instance walks the field, which walks back, and the walk had no visited set:
+// the port exited 139 where the reference compiles and runs.
+//
+// Both directions are here because the literal that closes the cycle can be
+// either one, and the fixture that only builds `A` says nothing about `B`.
+//
+// The last block is the control that the earlier narrowing got wrong: assigning
+// the pointer AFTER construction never reaches this inference, so it passed even
+// while the literal form crashed - and reading it as "mutual recursion is fine"
+// moved two variables at once.
+struct A<T> { v: T, b: *B<T> }
+struct B<T> { w: T, a: *A<T> }
+
+fn main() {
+    let mut bb: B<int> = B { w: 2, a: null };
+    let aa: A<int> = A { v: 1, b: &bb };
+    println(aa.v + bb.w);
+
+    let mut a2: A<int> = A { v: 3, b: null };
+    let b2: B<int> = B { w: 4, a: &a2 };
+    println(a2.v + b2.w);
+
+    let mut b3: B<int> = B { w: 6, a: null };
+    let mut a3: A<int> = A { v: 5, b: null };
+    a3.b = &b3;
+    println(a3.v + b3.w);
+}

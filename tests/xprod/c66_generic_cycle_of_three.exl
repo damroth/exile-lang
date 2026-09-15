@@ -1,0 +1,18 @@
+// A cycle of THREE, where no field names its own type - so the self-reference
+// test that closed the two-type case cannot see it at all.
+//
+// It does NOT discriminate between a visited SET and a shallower guard: a check
+// against only the previous instance passes this fixture and c65 both, measured.
+// It is here because it is red at HEAD and exercises a longer cycle, not because
+// it pins the choice of guard - saying otherwise would be a claim the floor does
+// not support.
+struct A<T> { v: T, b: *B<T> }
+struct B<T> { w: T, c: *C<T> }
+struct C<T> { u: T, a: *A<T> }
+
+fn main() {
+    let mut cc: C<int> = C { u: 3, a: null };
+    let mut bb: B<int> = B { w: 2, c: &cc };
+    let aa: A<int> = A { v: 1, b: &bb };
+    println(aa.v + bb.w + cc.u);
+}

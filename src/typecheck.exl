@@ -1198,12 +1198,12 @@ fn subst_typ_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec
 
 // Infer tparam bindings by matching a declared (skeleton) type against an
 // actual type: a `TVar` binds to the actual; pointers/arrays recurse.
-fn unify_tuples(a: Allocator, ar: *Arena, sc: *const TyScope, dts: *const Vec<*const Typ>, ats: *const Vec<*const Typ>, out: *Vec<TVarBind>) {
+fn unify_tuples(a: Allocator, ar: *Arena, sc: *const TyScope, dts: *const Vec<*const Typ>, ats: *const Vec<*const Typ>, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
     if dts.length() != ats.length() { return; }
     let dsl = dts.as_slice();
     let asl = ats.as_slice();
     let mut i = 0 as u32;
-    while i < dts.length() { unify_typ(a, ar, sc, dsl[i], asl[i], out); i = i + 1 as u32; }
+    while i < dts.length() { unify_typ_v(a, ar, sc, dsl[i], asl[i], out, seen); i = i + 1 as u32; }
     return;
 }
 // A still-generic APPLICATION on the declared side (`Box<T>` inside
@@ -1225,30 +1225,41 @@ fn decl_tparams(a: Allocator, sc: *const TyScope, name: str) -> Vec<str> {
     }
     return enum_tps(a, sc, name);
 }
-fn unify_app(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, act: *const Typ, out: *Vec<TVarBind>) {
+fn unify_app(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, act: *const Typ, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
     match *act {
-        Typ::TStruct(ipath) => { unify_app_inst(a, ar, sc, path, args, &ipath, out); }
-        | Typ::TEnum(ipath) => { unify_app_inst(a, ar, sc, path, args, &ipath, out); }
+        Typ::TStruct(ipath) => { unify_app_inst(a, ar, sc, path, args, &ipath, out, seen); }
+        | Typ::TEnum(ipath) => { unify_app_inst(a, ar, sc, path, args, &ipath, out, seen); }
         | _e => { }
     }
     return;
 }
+// Inference over a type graph needs a VISITED set, not a self-test.  `A<T>` whose
+// field points at `B<T>` whose field points back at `A<T>` walks the same
+// instances forever, and so does any longer cycle; only a direct self-reference
+// is catchable by asking "does this field name the type I am binding".  The set
+// is keyed by INSTANCE path, so `A_i32` and `A_bool` in one unification stay
+// distinct while a return to `A_i32` stops.
 fn unify_typ(a: Allocator, ar: *Arena, sc: *const TyScope, decl: *const Typ, act: *const Typ, out: *Vec<TVarBind>) {
+    let mut seen: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    unify_typ_v(a, ar, sc, decl, act, out, &seen);
+    return;
+}
+fn unify_typ_v(a: Allocator, ar: *Arena, sc: *const TyScope, decl: *const Typ, act: *const Typ, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
     match *decl {
         Typ::TVar(n) => { out.push(TVarBind { tvb_name: n, tvb_ty: act }); }
-        | Typ::TPtr(di) => { match *act { Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TOwnPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
-        | Typ::TConstPtr(di) => { match *act { Typ::TConstPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TOwnPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
+        | Typ::TPtr(di) => { match *act { Typ::TPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | Typ::TOwnPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | _e => { } } }
+        | Typ::TConstPtr(di) => { match *act { Typ::TConstPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | Typ::TPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | Typ::TOwnPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | _e => { } } }
         // Ownership is narrowed by the CALL-SITE COERCION, so inference reads
         // through it and takes T from the pointees; the argument check that runs
         // after it is what decides whether the lend is legal. CLXI confined this
         // peel to the seed because that check did not exist yet and widening it
         // turned `free(<borrow>)` from wrongly-worded into silently accepted.
-        | Typ::TOwnPtr(di) => { match *act { Typ::TOwnPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | Typ::TConstPtr(ai) => unify_typ(a, ar, sc, di, ai, out) | _e => { } } }
+        | Typ::TOwnPtr(di) => { match *act { Typ::TOwnPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | Typ::TPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | Typ::TConstPtr(ai) => unify_typ_v(a, ar, sc, di, ai, out, seen) | _e => { } } }
         // The reference unifies tuples element-wise; without this arm a generic
         // fn taking `(A, B)` cannot bind either parameter from its argument.
-        | Typ::TTuple(dts) => { match *act { Typ::TTuple(ats) => unify_tuples(a, ar, sc, &dts, &ats, out) | _e => { } } }
-        | Typ::TStructApp { path, args } => { unify_app(a, ar, sc, &path, &args, act, out); }
-        | Typ::TEnumApp { path, args } => { unify_app(a, ar, sc, &path, &args, act, out); }
+        | Typ::TTuple(dts) => { match *act { Typ::TTuple(ats) => unify_tuples(a, ar, sc, &dts, &ats, out, seen) | _e => { } } }
+        | Typ::TStructApp { path, args } => { unify_app(a, ar, sc, &path, &args, act, out, seen); }
+        | Typ::TEnumApp { path, args } => { unify_app(a, ar, sc, &path, &args, act, out, seen); }
         | _other => { }
     }
 }
@@ -4421,11 +4432,13 @@ fn infer_method_binds(a: Allocator, ar: *Arena, cscope: *const TyScope, anns: *c
 // A nested generic field (`slots: own *Slot<K,V>` vs the instance's
 // `own *Slot_i32_i32`) recovers `K`/`V` by recursing into the inner
 // instance's own tparams — `unify_typ` can't un-mangle `Slot_i32_i32`.
-fn unify_app_inst(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, ipath: *const Vec<str>, out: *Vec<TVarBind>) {
+fn unify_app_inst(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, ipath: *const Vec<str>, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
     if !path_init_eq(path, ipath) { return; }
     if !inst_of_base(path_last(ipath), path_last(path)) { return; }
+    if path_in_paths(seen, ipath) { return; }
+    seen.push(copy_strs(a, ipath));
     let mut rbinds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
-    bind_recv_tparams(a, ar, sc, path, ipath, &rbinds);
+    bind_recv_tparams_v(a, ar, sc, path, ipath, &rbinds, seen);
     let tps = decl_tparams(a, sc, path_last(path));
     if tps.length() == 0 as u32 { return; }
     let inst_args = binds_in_tparam_order(a, ar, &tps, &rbinds);
@@ -4433,24 +4446,24 @@ fn unify_app_inst(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec
     let asl = args.as_slice();
     let isl = inst_args.as_slice();
     let mut k = 0 as u32;
-    while k < na { if k < inst_args.length() { unify_nested(a, ar, sc, asl[k], isl[k], out); } k = k + 1 as u32; }
+    while k < na { if k < inst_args.length() { unify_nested(a, ar, sc, asl[k], isl[k], out, seen); } k = k + 1 as u32; }
     return;
 }
-fn unify_app_nested(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, inst: *const Typ, out: *Vec<TVarBind>) {
+fn unify_app_nested(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, inst: *const Typ, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
     match *inst {
-        Typ::TStruct(ipath) => unify_app_inst(a, ar, sc, path, args, &ipath, out)
-        | Typ::TEnum(ipath) => unify_app_inst(a, ar, sc, path, args, &ipath, out)
+        Typ::TStruct(ipath) => unify_app_inst(a, ar, sc, path, args, &ipath, out, seen)
+        | Typ::TEnum(ipath) => unify_app_inst(a, ar, sc, path, args, &ipath, out, seen)
         | _e => {}
     }
 }
-fn unify_nested(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Typ, inst: *const Typ, out: *Vec<TVarBind>) {
+fn unify_nested(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Typ, inst: *const Typ, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
     match *skel {
         Typ::TVar(n) => out.push(TVarBind { tvb_name: n, tvb_ty: inst })
-        | Typ::TOwnPtr(si) => match *inst { Typ::TOwnPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | _e => {} }
-        | Typ::TConstPtr(si) => match *inst { Typ::TConstPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | Typ::TPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | _e => {} }
-        | Typ::TPtr(si) => match *inst { Typ::TPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | _e => {} }
-        | Typ::TStructApp { path, args } => unify_app_nested(a, ar, sc, &path, &args, inst, out)
-        | Typ::TEnumApp { path, args } => unify_app_nested(a, ar, sc, &path, &args, inst, out)
+        | Typ::TOwnPtr(si) => match *inst { Typ::TOwnPtr(ii) => unify_nested(a, ar, sc, si, ii, out, seen) | _e => {} }
+        | Typ::TConstPtr(si) => match *inst { Typ::TConstPtr(ii) => unify_nested(a, ar, sc, si, ii, out, seen) | Typ::TPtr(ii) => unify_nested(a, ar, sc, si, ii, out, seen) | _e => {} }
+        | Typ::TPtr(si) => match *inst { Typ::TPtr(ii) => unify_nested(a, ar, sc, si, ii, out, seen) | _e => {} }
+        | Typ::TStructApp { path, args } => unify_app_nested(a, ar, sc, &path, &args, inst, out, seen)
+        | Typ::TEnumApp { path, args } => unify_app_nested(a, ar, sc, &path, &args, inst, out, seen)
         | _other => {}
     }
 }
@@ -4470,43 +4483,36 @@ fn find_efield_ty(efields: *const Vec<EnumFieldE>, path: *const Vec<str>, varian
     let none: Option<*const Typ> = Option::None;
     return none;
 }
-fn bind_recv_etparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>) {
+fn bind_recv_etparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
     let n = sc.sc_efields.length();
     let sl = sc.sc_efields.as_slice();
     let mut i = 0 as u32;
     while i < n {
         if path_eq(&sl[i].ef_path, base_path) {
             match find_efield_ty(sc.sc_mono_efields, inst_path, sl[i].ef_variant, sl[i].ef_name) {
-                Option::Some(it) => unify_nested(a, ar, sc, sl[i].ef_ty, it, out)
+                Option::Some(it) => unify_nested(a, ar, sc, sl[i].ef_ty, it, out, seen)
                 | Option::None => { }
             }
         }
         i = i + 1 as u32;
     }
 }
-// Does `t` name `path` anywhere inside it?  Reuses the `@debug` mention walk
-// rather than adding a second one - the two questions are the same question.
-fn ty_mentions_path(a: Allocator, t: *const Typ, path: *const Vec<str>) -> bool {
-    let mut ps: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
-    mention_ty(a, t, &ps);
-    return path_in_paths(&ps, path);
-}
 fn bind_recv_tparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>) {
-    bind_recv_etparams(a, ar, sc, base_path, inst_path, out);
+    let mut seen: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    seen.push(copy_strs(a, inst_path));
+    bind_recv_tparams_v(a, ar, sc, base_path, inst_path, out, &seen);
+    return;
+}
+fn bind_recv_tparams_v(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>, seen: *Vec<Vec<str>>) {
+    bind_recv_etparams(a, ar, sc, base_path, inst_path, out, seen);
     let skel = sc.sc_sinfo;
     let n = skel.length();
     let sl = skel.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        // A field that names the struct being bound re-enters the binding that
-        // is still in progress, and there is no depth at which that stops:
-        // `Node<T> { next: *Node<T> }` recursed until the stack ran out - the
-        // port exited 139 where the reference compiles and runs.  Skipping the
-        // field costs nothing, because a self-reference can say nothing about
-        // the parameters that the type's other fields do not already say.
-        if path_eq(&sl[i].sf_path, base_path) && !ty_mentions_path(a, sl[i].sf_ty, base_path) {
+        if path_eq(&sl[i].sf_path, base_path) {
             match find_field_ty(sc.sc_mono_fields, inst_path, sl[i].sf_name) {
-                Option::Some(it) => unify_nested(a, ar, sc, sl[i].sf_ty, it, out)
+                Option::Some(it) => unify_nested(a, ar, sc, sl[i].sf_ty, it, out, seen)
                 | Option::None => { }
             }
         }
