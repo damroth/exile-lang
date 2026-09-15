@@ -1,0 +1,15 @@
+// A generic struct with a field of its OWN type, built by a literal that takes a
+// pointer to another instance. Inferring the outer instance walked that field,
+// which re-entered the binding still in progress, and the port exited 139 - a
+// crash, not a diagnosis.
+//
+// The pointer must be in the LITERAL: assigning it after construction, or
+// passing `null`, never reaches the inference that recursed.
+struct Node<T> { val: T, next: *Node<T> }
+
+fn main() {
+    let mut b: Node<int> = Node { val: 2, next: null };
+    let a: Node<int> = Node { val: 1, next: &b };
+    println(a.val);
+    println(a.next.val);
+}

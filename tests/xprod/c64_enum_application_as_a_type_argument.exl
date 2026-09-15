@@ -1,0 +1,18 @@
+// An ENUM application as a type ARGUMENT, parameterised by an enclosing
+// generic's type parameter. Both neighbours already worked: the same shape with
+// concrete arguments, and the same shape with a STRUCT in that position. Only
+// the crossing of the two was unreachable.
+//
+// It took two arms, one calling the other: the walk that descends into a nested
+// application had a struct case and dropped an enum one through its wildcard, so
+// the arm that would have handled the enum was never reached. Testing that
+// second arm alone said "no effect" three separate times.
+enum Cell<T> { Full(T) | Empty }
+struct Box<T> { v: T }
+struct Outer<T> { b: Box<Cell<T>>, tag: int }
+
+fn main() {
+    let o: Outer<int> = Outer { b: Box { v: Cell::Full(5) }, tag: 1 };
+    println(o.tag);
+    println(match o.b.v { Cell::Full(x) => x | Cell::Empty => 0 });
+}

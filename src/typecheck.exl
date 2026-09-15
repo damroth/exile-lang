@@ -1178,8 +1178,8 @@ fn subst_enum_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *cons
     if tys_have_tvar(&rargs) { return ty_node(ar, Typ::TEnumApp { path: copy_strs(a, path), args: rargs }); }
     let ipath = instance_path(a, ar, path, &rargs);
     if !inst_has_efields(sc.sc_mono_efields, &ipath) {
-        register_mono_enum_args(a, sc, &ipath, &rargs);
         register_enum_instance_fields(a, ar, sc, path, &rargs, &ipath);
+        register_mono_enum_args(a, sc, &ipath, &rargs);
     }
     return ty_node(ar, Typ::TEnum(ipath));
 }
@@ -1634,7 +1634,11 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     }
     let ipath = instance_path(a, ar, &gpath, &resolved);
     if is_enum {
-        register_mono_enum_args(a, sc, &ipath, &resolved);
+        // Payloads BEFORE self, the same order the struct branch below uses and
+        // for the same reason: registering a payload registers the instances it
+        // names, and a container has to follow its own contents in the index the
+        // printers are emitted from.
+        //
         // Option / Result variant payloads come from the fixed prelude shape,
         // so register them directly — a type-position resolution (a fn's
         // return type) then binds `Some(v)` / `Ok(v)` even with no in-body
@@ -1644,6 +1648,7 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         } else {
             register_enum_instance_fields(a, ar, sc, &gpath, &resolved, &ipath);
         }
+        register_mono_enum_args(a, sc, &ipath, &resolved);
         return ty_node(ar, Typ::TEnum(ipath));
     }
     // A generic prelude struct (Slice, ...) substitutes its skeleton fields
@@ -4434,6 +4439,7 @@ fn unify_app_inst(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec
 fn unify_app_nested(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, inst: *const Typ, out: *Vec<TVarBind>) {
     match *inst {
         Typ::TStruct(ipath) => unify_app_inst(a, ar, sc, path, args, &ipath, out)
+        | Typ::TEnum(ipath) => unify_app_inst(a, ar, sc, path, args, &ipath, out)
         | _e => {}
     }
 }
@@ -4444,6 +4450,7 @@ fn unify_nested(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Typ, 
         | Typ::TConstPtr(si) => match *inst { Typ::TConstPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | Typ::TPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | _e => {} }
         | Typ::TPtr(si) => match *inst { Typ::TPtr(ii) => unify_nested(a, ar, sc, si, ii, out) | _e => {} }
         | Typ::TStructApp { path, args } => unify_app_nested(a, ar, sc, &path, &args, inst, out)
+        | Typ::TEnumApp { path, args } => unify_app_nested(a, ar, sc, &path, &args, inst, out)
         | _other => {}
     }
 }
@@ -4477,6 +4484,13 @@ fn bind_recv_etparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *
         i = i + 1 as u32;
     }
 }
+// Does `t` name `path` anywhere inside it?  Reuses the `@debug` mention walk
+// rather than adding a second one - the two questions are the same question.
+fn ty_mentions_path(a: Allocator, t: *const Typ, path: *const Vec<str>) -> bool {
+    let mut ps: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    mention_ty(a, t, &ps);
+    return path_in_paths(&ps, path);
+}
 fn bind_recv_tparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>) {
     bind_recv_etparams(a, ar, sc, base_path, inst_path, out);
     let skel = sc.sc_sinfo;
@@ -4484,7 +4498,13 @@ fn bind_recv_tparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *c
     let sl = skel.as_slice();
     let mut i = 0 as u32;
     while i < n {
-        if path_eq(&sl[i].sf_path, base_path) {
+        // A field that names the struct being bound re-enters the binding that
+        // is still in progress, and there is no depth at which that stops:
+        // `Node<T> { next: *Node<T> }` recursed until the stack ran out - the
+        // port exited 139 where the reference compiles and runs.  Skipping the
+        // field costs nothing, because a self-reference can say nothing about
+        // the parameters that the type's other fields do not already say.
+        if path_eq(&sl[i].sf_path, base_path) && !ty_mentions_path(a, sl[i].sf_ty, base_path) {
             match find_field_ty(sc.sc_mono_fields, inst_path, sl[i].sf_name) {
                 Option::Some(it) => unify_nested(a, ar, sc, sl[i].sf_ty, it, out)
                 | Option::None => { }

@@ -1,0 +1,16 @@
+// The enum half of the ordering rule. A `@debug` enum whose payload is another
+// `@debug` enum instance: the container has to follow its own contents in the
+// index the printers are emitted from, exactly as a struct container does.
+//
+// Its own fixture because the struct container and the enum container are
+// separate registration sites - the struct one was fixed while this one still
+// emitted the container first, and no struct fixture could have said so.
+@debug enum Inner<T> { A(T) | B }
+@debug enum Outer<T> { W(Inner<T>) | N }
+
+fn main() {
+    let o: Outer<int> = Outer::W(Inner::A(5));
+    let n: Outer<int> = Outer::N;
+    println(o);
+    println(n);
+}
