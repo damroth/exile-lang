@@ -1,0 +1,16 @@
+// Emission ORDER, not content: three levels of generic structs run identically
+// either way, and the C differs only in where the innermost printer sits.
+//
+// The order is the type index's, and the index is built by registration: an
+// instance minted through a field registered ITSELF before the fields it names,
+// so a container preceded its own contents. The topological sort that orders the
+// struct definitions hid this - only the printers, which follow the index
+// directly, showed it.
+@debug struct Deep<T> { d: T }
+@debug struct Mid<T> { m: Deep<T> }
+@debug struct Top<T> { t: Mid<T>, tag: int }
+
+fn main() {
+    let o: Top<int> = Top { t: Mid { m: Deep { d: 3 } }, tag: 1 };
+    println(o);
+}

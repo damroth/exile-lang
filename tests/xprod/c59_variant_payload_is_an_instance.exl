@@ -1,0 +1,21 @@
+// A generic enum whose variant PAYLOAD carries another generic's application.
+// The payload was substituted by a walk with no application arms at all, so it
+// kept the skeleton complete with its type variable - `Inner<T>` in a program
+// that names no `T` - and every use of the payload was refused.
+//
+// Nothing here is `@debug`: this is the type system, not the printer.
+struct Inner<T> { v: T }
+enum O<T> { W(Inner<T>) | N }
+enum Cell<T> { Full(T) | Empty }
+enum P<T> { Q(Cell<T>) | R }
+
+fn main() {
+    let o: O<int> = O::W(Inner { v: 5 });
+    println(match o { O::W(i) => i.v | O::N => 0 });
+
+    let n: O<int> = O::N;
+    println(match n { O::W(i) => i.v | O::N => 7 });
+
+    let p: P<int> = P::Q(Cell::Full(9));
+    println(match p { P::Q(c) => match c { Cell::Full(x) => x | Cell::Empty => 0 } | P::R => 0 });
+}

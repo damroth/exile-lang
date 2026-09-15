@@ -1,0 +1,13 @@
+// The same shape with printers. Its own fixture because at the defect it did not
+// even LINK - the instance the payload names was never registered, so its C type
+// had no definition and `cc` stopped at "storage size isn't known". A fixture
+// that cannot link stops the comparison, so it can share with nothing.
+@debug struct Inner<T> { v: T }
+@debug enum O<T> { W(Inner<T>) | N }
+
+fn main() {
+    let o: O<int> = O::W(Inner { v: 5 });
+    let n: O<int> = O::N;
+    println(o);
+    println(n);
+}

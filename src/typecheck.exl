@@ -1156,9 +1156,9 @@ fn subst_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec
         // back to the mangled spelling - `Inner_i32 { ` where every other route
         // to the same instance prints `Inner<i32> { `.  The instance reached
         // only through another instance's FIELD is the one route that took it.
-        register_mono_struct_args(a, sc, &ipath, &rargs);
         let binds2 = struct_instance_binds(a, sc.sc_stps, path_last(path), &rargs);
         register_instance_fields(a, ar, sc, path, &binds2, &ipath);
+        register_mono_struct_args(a, sc, &ipath, &rargs);
     }
     return ty_node(ar, Typ::TStruct(ipath));
 }
@@ -1315,10 +1315,15 @@ fn zip_binds(a: Allocator, tparams: *const Vec<str>, args: *const Vec<*const Typ
     return out;
 }
 
-fn push_mono_efield(a: Allocator, ar: *Arena, ipath: *const Vec<str>, variant: str, fname: str,
+// A variant PAYLOAD is substituted by the same walk a struct FIELD is.  It used
+// the plain `subst_typ`, which has no application arms at all, so a payload
+// carrying another generic's application kept the skeleton with its type
+// variable intact - `Inner<T>`, in a program that names no `T` - and the
+// instance it should have minted was never registered for emission.
+fn push_mono_efield(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>, variant: str, fname: str,
                     binds: *const Vec<TVarBind>, sf_ty: *const Typ, out: *Vec<EnumFieldE>) {
-    out.push(EnumFieldE { ef_path: copy_strs(a, ipath), ef_variant: variant, ef_name: fname,
-                          ef_ty: subst_typ(ar, binds, sf_ty) });
+    let fty = subst_typ_reg(a, ar, sc, binds, sf_ty);
+    out.push(EnumFieldE { ef_path: copy_strs(a, ipath), ef_variant: variant, ef_name: fname, ef_ty: fty });
 }
 
 // Register an enum instance's substituted variant fields so a match on the
@@ -1351,7 +1356,7 @@ fn register_enum_instance_fields(a: Allocator, ar: *Arena, sc: *const TyScope, s
     let mut i = 0 as u32;
     while i < n {
         if path_eq(&sl[i].ef_path, skel) {
-            push_mono_efield(a, ar, ipath, sl[i].ef_variant, sl[i].ef_name, &binds, sl[i].ef_ty, sc.sc_mono_efields);
+            push_mono_efield(a, ar, sc, ipath, sl[i].ef_variant, sl[i].ef_name, &binds, sl[i].ef_ty, sc.sc_mono_efields);
         }
         i = i + 1 as u32;
     }
