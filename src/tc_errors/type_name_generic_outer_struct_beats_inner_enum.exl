@@ -1,0 +1,13 @@
+// The generic half of the scope rule, on the rejection side: the root's generic
+// struct answers a bare `Holder<int>` written inside the module, so the module's
+// own generic enum is not what the annotation means. Both instance names have to
+// appear in the message, or the reader cannot tell which one was bound.
+struct Holder<T> { item: T }
+mod m {
+    pub enum Holder<T> { Full(T) | Empty }
+    pub fn f() {
+        let g: Holder<int> = Holder::Full(5);
+        match g { Holder::Full(v) => { println(v); } | Holder::Empty => { println(0); } }
+    }
+}
+fn main() { m::f(); }

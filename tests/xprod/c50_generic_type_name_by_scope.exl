@@ -1,0 +1,20 @@
+// The generic half of the same rule, on its own so it is the FIRST thing that
+// can fail. A fixture that also carries the non-generic shape proves nothing
+// about this branch: the non-generic line is reached first and stops the run.
+mod m {
+    pub struct Holder<T> { item: T, tag: int }
+}
+
+enum Holder<T> { Full(T) | Empty }
+
+fn main() {
+    let g: Holder<int> = Holder::Full(11);
+    match g {
+        Holder::Full(v) => { println(v); }
+        | Holder::Empty => { println(0); }
+    }
+
+    let h: m::Holder<int> = m::Holder { item: 22, tag: 3 };
+    println(h.item);
+    println(h.tag);
+}

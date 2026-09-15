@@ -2963,6 +2963,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c46_debug_generic_struct \
                   c47_debug_fields_all_debugable \
                   c48_debug_name_shared_across_scopes \
+                  c49_type_name_resolves_by_scope \
+                  c50_generic_type_name_by_scope \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \

@@ -1,0 +1,8 @@
+// A bare name never reaches a type declared inside a module: `P` is unknown at
+// the root even though `m::P` exists. Reported as an unknown TYPE at the
+// annotation, not as a mismatch further on.
+mod m { pub struct P { x: int } }
+fn main() {
+    let s: P = m::P { x: 1 };
+    println(s.x);
+}

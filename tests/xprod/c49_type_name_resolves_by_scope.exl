@@ -1,0 +1,36 @@
+// A type name resolves by SCOPE, not by spelling. Both scopes here declare `P`,
+// and they declare different KINDS: a bare `P` at the root is the root's enum,
+// and the struct inside the module is reachable only as `m::P`.
+//
+// It sits in xprod because the wrong answer is not a refusal - it is a binding.
+// Resolving the annotation to the module's struct made the program fail to
+// typecheck against its own initializer, and the two types printed under the
+// same name, so only running the program says which one was meant.
+mod m {
+    pub struct P { x: int }
+    pub struct Pair<T> { first: T, second: int }
+}
+
+enum P { A(int) | B }
+enum Pair<T> { One(T) | None }
+
+fn main() {
+    let e: P = P::A(7);
+    match e {
+        P::A(v) => { println(v); }
+        | P::B => { println(0); }
+    }
+
+    let g: Pair<int> = Pair::One(5);
+    match g {
+        Pair::One(v) => { println(v); }
+        | Pair::None => { println(0); }
+    }
+
+    let s: m::P = m::P { x: 3 };
+    println(s.x);
+
+    let q: m::Pair<int> = m::Pair { first: 4, second: 9 };
+    println(q.first);
+    println(q.second);
+}

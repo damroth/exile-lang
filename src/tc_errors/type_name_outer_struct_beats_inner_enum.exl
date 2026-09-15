@@ -1,0 +1,13 @@
+// Structs are looked up through the WHOLE scope chain before enums are looked up
+// at all, so the root's struct answers a bare `P` written inside the module and
+// the module's own enum does not. The diagnostic has to name both sides apart,
+// which it can only do by printing the path each one resolved to.
+struct P { x: int }
+mod m {
+    pub enum P { A | B }
+    pub fn f() {
+        let e: P = P::A;
+        match e { P::A => { println(1); } | P::B => { println(2); } }
+    }
+}
+fn main() { m::f(); }
