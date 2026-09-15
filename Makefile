@@ -2971,6 +2971,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c54_nested_module_parent_static_method \
                   c55_nested_module_parent_pattern \
                   c56_scope_walk_picks_the_kind \
+                  c57_field_only_instance_keeps_its_args \
+                  c58_generic_enum_as_a_struct_field \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \

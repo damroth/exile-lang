@@ -1150,11 +1150,38 @@ fn subst_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec
     if tys_have_tvar(&rargs) { return ty_node(ar, Typ::TStructApp { path: copy_strs(a, path), args: rargs }); }
     let ipath = instance_path(a, ar, path, &rargs);
     if !inst_has_fields(sc.sc_mono_fields, &ipath) {
-        register_mono_struct(a, sc, &ipath);
+        // WITH the args: they are `rargs`, two lines up.  Registering this
+        // instance arg-less left the mono table with an entry whose type
+        // arguments nobody recorded, so the `@debug` printer's own header fell
+        // back to the mangled spelling - `Inner_i32 { ` where every other route
+        // to the same instance prints `Inner<i32> { `.  The instance reached
+        // only through another instance's FIELD is the one route that took it.
+        register_mono_struct_args(a, sc, &ipath, &rargs);
         let binds2 = struct_instance_binds(a, sc.sc_stps, path_last(path), &rargs);
         register_instance_fields(a, ar, sc, path, &binds2, &ipath);
     }
     return ty_node(ar, Typ::TStruct(ipath));
+}
+// The enum twin.  Its absence was not a spelling defect: a generic ENUM used as
+// a generic struct's field was never substituted at all, so the field kept its
+// skeleton type and the port refused to build the outer instance from a literal
+// that matched it.
+fn inst_has_efields(efields: *const Vec<EnumFieldE>, ipath: *const Vec<str>) -> bool {
+    let n = efields.length();
+    let sl = efields.as_slice();
+    let mut i = 0 as u32;
+    while i < n { if path_eq(&sl[i].ef_path, ipath) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn subst_enum_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, path: *const Vec<str>, args: *const Vec<*const Typ>) -> *const Typ {
+    let rargs = subst_typs_reg(a, ar, sc, binds, args);
+    if tys_have_tvar(&rargs) { return ty_node(ar, Typ::TEnumApp { path: copy_strs(a, path), args: rargs }); }
+    let ipath = instance_path(a, ar, path, &rargs);
+    if !inst_has_efields(sc.sc_mono_efields, &ipath) {
+        register_mono_enum_args(a, sc, &ipath, &rargs);
+        register_enum_instance_fields(a, ar, sc, path, &rargs, &ipath);
+    }
+    return ty_node(ar, Typ::TEnum(ipath));
 }
 fn subst_typ_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, t: *const Typ) -> *const Typ {
     return match *t {
@@ -1164,6 +1191,7 @@ fn subst_typ_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec
         | Typ::TOwnPtr(inner) => ty_node(ar, Typ::TOwnPtr(subst_typ_reg(a, ar, sc, binds, inner)))
         | Typ::TArray { elem, size } => ty_node(ar, Typ::TArray { elem: subst_typ_reg(a, ar, sc, binds, elem), size: size })
         | Typ::TStructApp { path, args } => subst_app_reg(a, ar, sc, binds, &path, &args)
+        | Typ::TEnumApp { path, args } => subst_enum_app_reg(a, ar, sc, binds, &path, &args)
         | _other => t
     };
 }
@@ -1183,6 +1211,20 @@ fn unify_tuples(a: Allocator, ar: *Arena, sc: *const TyScope, dts: *const Vec<*c
 // recover the instance's arguments through the registry and bind pairwise.
 // The machinery already existed for method receivers; the argument side of a
 // free call never reached it, so `unwrap(Box { it: 7 })` could not bind T.
+// The declared type parameters of a skeleton, whichever KIND it is.  The unifier
+// read only the struct table, so an `Inner<T>` field whose `Inner` is an ENUM
+// bound nothing and the outer instance could not be inferred from it - a refusal
+// on a correct program, with no `@debug` anywhere in sight.
+fn decl_tparams(a: Allocator, sc: *const TyScope, name: str) -> Vec<str> {
+    let ns = sc.sc_stps.length();
+    let ssl = sc.sc_stps.as_slice();
+    let mut i = 0 as u32;
+    while i < ns {
+        if str::eq(ssl[i].stp_name, name) { return copy_strs(a, &ssl[i].stp_params); }
+        i = i + 1 as u32;
+    }
+    return enum_tps(a, sc, name);
+}
 fn unify_app(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, act: *const Typ, out: *Vec<TVarBind>) {
     match *act {
         Typ::TStruct(ipath) => { unify_app_inst(a, ar, sc, path, args, &ipath, out); }
@@ -4374,20 +4416,14 @@ fn unify_app_inst(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec
     if !inst_of_base(path_last(ipath), path_last(path)) { return; }
     let mut rbinds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     bind_recv_tparams(a, ar, sc, path, ipath, &rbinds);
-    let stps = sc.sc_stps.as_slice();
-    let ns = sc.sc_stps.length();
-    let mut si = 0 as u32;
-    while si < ns {
-        if str::eq(stps[si].stp_name, path_last(path)) {
-            let inst_args = binds_in_tparam_order(a, ar, &stps[si].stp_params, &rbinds);
-            let na = args.length();
-            let asl = args.as_slice();
-            let isl = inst_args.as_slice();
-            let mut k = 0 as u32;
-            while k < na { if k < inst_args.length() { unify_nested(a, ar, sc, asl[k], isl[k], out); } k = k + 1 as u32; }
-        }
-        si = si + 1 as u32;
-    }
+    let tps = decl_tparams(a, sc, path_last(path));
+    if tps.length() == 0 as u32 { return; }
+    let inst_args = binds_in_tparam_order(a, ar, &tps, &rbinds);
+    let na = args.length();
+    let asl = args.as_slice();
+    let isl = inst_args.as_slice();
+    let mut k = 0 as u32;
+    while k < na { if k < inst_args.length() { unify_nested(a, ar, sc, asl[k], isl[k], out); } k = k + 1 as u32; }
     return;
 }
 fn unify_app_nested(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const Typ>, inst: *const Typ, out: *Vec<TVarBind>) {
@@ -4406,7 +4442,38 @@ fn unify_nested(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Typ, 
         | _other => {}
     }
 }
+// The enum mirror of the loop below: a variant payload is where an enum's own
+// tparams are reachable, so binding them means walking `sc_efields` against the
+// instance's `sc_mono_efields` - the same shape, two tables over.
+fn find_efield_ty(efields: *const Vec<EnumFieldE>, path: *const Vec<str>, variant: str, field: str) -> Option<*const Typ> {
+    let n = efields.length();
+    let sl = efields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].ef_name, field) && str::eq(sl[i].ef_variant, variant) {
+            if path_eq(&sl[i].ef_path, path) { return Option::Some(sl[i].ef_ty); }
+        }
+        i = i + 1 as u32;
+    }
+    let none: Option<*const Typ> = Option::None;
+    return none;
+}
+fn bind_recv_etparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>) {
+    let n = sc.sc_efields.length();
+    let sl = sc.sc_efields.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if path_eq(&sl[i].ef_path, base_path) {
+            match find_efield_ty(sc.sc_mono_efields, inst_path, sl[i].ef_variant, sl[i].ef_name) {
+                Option::Some(it) => unify_nested(a, ar, sc, sl[i].ef_ty, it, out)
+                | Option::None => { }
+            }
+        }
+        i = i + 1 as u32;
+    }
+}
 fn bind_recv_tparams(a: Allocator, ar: *Arena, sc: *const TyScope, base_path: *const Vec<str>, inst_path: *const Vec<str>, out: *Vec<TVarBind>) {
+    bind_recv_etparams(a, ar, sc, base_path, inst_path, out);
     let skel = sc.sc_sinfo;
     let n = skel.length();
     let sl = skel.as_slice();

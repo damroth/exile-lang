@@ -1,0 +1,15 @@
+// A generic ENUM in a generic struct's field. Nothing here is `@debug`: the two
+// substitution walks and the unifier each carried a struct arm and let the enum
+// one fall through, so the field kept its skeleton type and the outer instance
+// could not be inferred from it - the port refused the program outright.
+//
+// Its own fixture because a refusal stops the run: carried alongside anything
+// else, it would be the only thing measured.
+enum Cell<T> { Full(T) | Empty }
+struct Box<T> { cell: Cell<T>, tag: int }
+
+fn main() {
+    let b: Box<int> = Box { cell: Cell::Full(5), tag: 1 };
+    println(b.tag);
+    println(match b.cell { Cell::Full(v) => v | Cell::Empty => 0 });
+}

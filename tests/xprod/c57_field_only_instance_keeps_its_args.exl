@@ -1,0 +1,20 @@
+// An instance reachable ONLY as another instance's field. Its type arguments are
+// computed where the field is substituted and were dropped at registration, so
+// the `@debug` printer's own header fell back to the mangled spelling - a type
+// name no reader wrote, in a program that builds and runs.
+//
+// Several shapes share this fixture because none of them REFUSES: the gate
+// compares the whole emission, so a later shape is still measured when an
+// earlier one differs.
+@debug struct One<T> { v: T }
+@debug struct Two<A, B> { a: A, b: B }
+
+@debug struct Holder<T> { one: One<T>, tag: int }
+@debug struct Pair<A, B> { two: Two<A, B>, tag: int }
+
+fn main() {
+    let h: Holder<int> = Holder { one: One { v: 5 }, tag: 1 };
+    let p: Pair<int, bool> = Pair { two: Two { a: 7, b: true }, tag: 2 };
+    println(h);
+    println(p);
+}
