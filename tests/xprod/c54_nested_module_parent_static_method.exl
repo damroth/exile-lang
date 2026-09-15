@@ -1,0 +1,16 @@
+// The static-method position: the head of `P::make(..)` is a type path and
+// qualifies like one, or the method table is searched under a path nobody
+// registered.
+mod m {
+    pub struct P { x: int }
+    impl P {
+        pub fn make(v: int) -> P { return P { x: v }; }
+    }
+    pub mod inner {
+        pub fn f() -> int {
+            let v = P::make(4);
+            return v.x;
+        }
+    }
+}
+fn main() { println(m::inner::f()); }

@@ -1,0 +1,15 @@
+// A nested module builds a struct its PARENT declares, by bare name. The name
+// resolution has to walk the parent chain, not just the module the code sits in.
+//
+// One position per fixture on purpose: a fixture carrying several of these fails
+// on the first one and says nothing about the rest.
+mod m {
+    pub struct P { x: int }
+    pub mod inner {
+        pub fn f() -> int {
+            let v = P { x: 2 };
+            return v.x;
+        }
+    }
+}
+fn main() { println(m::inner::f()); }

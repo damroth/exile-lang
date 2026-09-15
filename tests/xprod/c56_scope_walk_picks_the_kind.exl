@@ -1,0 +1,26 @@
+// WHICH registry the walk asks is not a detail. A struct literal walks structs,
+// so it reaches the root's struct past a nearer enum of the same name; a variant
+// constructor walks enums, so it reaches the root's enum past a nearer struct.
+// Asking "either kind, innermost first" gets both of these backwards, and both
+// programs below compile only when each position asks for its own kind.
+struct P { x: int }
+enum Q { A(int) | B }
+
+mod m {
+    pub enum P { A | B }
+    pub struct Q { y: int }
+
+    pub fn lit() -> int {
+        let v = P { x: 1 };
+        return v.x;
+    }
+    pub fn ctor() -> int {
+        let e = Q::A(5);
+        return match e { Q::A(v) => v | Q::B => 0 };
+    }
+}
+
+fn main() {
+    println(m::lit());
+    println(m::ctor());
+}

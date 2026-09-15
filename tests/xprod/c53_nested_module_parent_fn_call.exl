@@ -1,0 +1,11 @@
+// The call position. Functions resolve through a different table than types, so
+// the parent chain has to be walked there too - and a bare call that misses the
+// parent falls through to the ROOT, which is a different function entirely.
+mod m {
+    pub fn h() -> int { return 9; }
+    pub mod inner {
+        pub fn f() -> int { return h(); }
+    }
+}
+fn h() -> int { return 1; }
+fn main() { println(m::inner::f()); }

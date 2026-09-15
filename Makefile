@@ -2965,6 +2965,12 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c48_debug_name_shared_across_scopes \
                   c49_type_name_resolves_by_scope \
                   c50_generic_type_name_by_scope \
+                  c51_nested_module_parent_struct_literal \
+                  c52_nested_module_parent_enum_ctor \
+                  c53_nested_module_parent_fn_call \
+                  c54_nested_module_parent_static_method \
+                  c55_nested_module_parent_pattern \
+                  c56_scope_walk_picks_the_kind \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \

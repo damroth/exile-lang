@@ -3057,13 +3057,23 @@ fn call_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
 
 // An unqualified call inside a module resolves to that module's `mod__name`
 // symbol first (module-internal scope), else a top-level fn.
+// A bare call inside `mod m::inner` means `m::inner::h` if that exists, then
+// `m::h`, and only then the root's `h` - the caller's own fallback.  Asking the
+// full module path alone made a nested module unable to call its parent's
+// functions, which is the same missing parent chain the type side had.
 fn module_internal_lookup(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, name: str) -> Option<GlobalFn> {
-    if sc.sc_modpath.length() == 0 as u32 {
-        let none: Option<GlobalFn> = Option::None;
-        return none;
+    let mut found: Option<GlobalFn> = Option::None;
+    let n = sc.sc_modpath.length();
+    let mut i = 0 as u32;
+    while i < n {
+        let pre = path_prefix(a, sc.sc_modpath, n - i);
+        let m = mangle_path(a, ar, &pre, name);
+        match global_lookup_by_mangled(g, m) {
+            Option::Some(gf) => { found = Option::Some(gf); i = n; }
+            | Option::None => { i = i + 1 as u32; }
+        }
     }
-    let m = mangle_path(a, ar, sc.sc_modpath, name);
-    return global_lookup_by_mangled(g, m);
+    return found;
 }
 fn unknown_fn(a: Allocator, ar: *Arena, sc: *const TyScope, display: str, p: Pos) -> *const Texpr {
     tc_fail(ar, sc, p, msg2(a, ar, "unknown function '", display, "'"));
@@ -4017,7 +4027,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         // A bare enum name in a variant constructor (`Typ::TVar` for an
         // `ir::Typ`) qualifies the same way a type reference does, so the tag
         // + emitted enum path match the qualified etags.
-        let qinit = qualify_type_path(a, ar, sc, &init);
+        let qinit = qualify_in_scope(a, ar, sc, sc.sc_fenums, &init);
         let tag = variant_tag(sc.sc_etags, &qinit, last);
         if tag >= 0 as int {
             let tflds = enum_tuple_args(a, ar, g, sc, env, &qinit, last, args);
@@ -4026,7 +4036,11 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
             return mk_enum_lit_node(a, ar, &inst, last, tag, tflds, p);
         }
         if is_known_enum(sc, &qinit) { return no_such_variant(a, ar, sc, &qinit, last, p); }
-        let midx = find_method_idx(sc.sc_methods, &init, last);
+        // `Type::method(..)` resolves its HEAD the same way, or a nested module
+        // cannot call a static method on a type its parent declares: the methods
+        // are registered under the declaration path, and the written path is bare.
+        let minit = qualify_type_path(a, ar, sc, &init);
+        let midx = find_method_idx(sc.sc_methods, &minit, last);
         if midx >= 0 as int {
             return mk_static_method_call(a, ar, g, sc, env, expected, midx, args, p, allow_void);
         }
@@ -4863,7 +4877,7 @@ fn elab_variant_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *co
     // Qualify a bare enum name (`BinOp` -> `ast::BinOp` in a module or via a
     // `use ast::*` alias) so the tag + field completion resolve against the
     // qualified etags/efields; a generic `Option` (no marker/alias) is left as-is.
-    let qpath = qualify_type_path(a, ar, sc, tname);
+    let qpath = qualify_in_scope(a, ar, sc, sc.sc_fenums, tname);
     let tag = variant_tag(sc.sc_etags, &qpath, variant);
     return Tpattern::TPVariant { variant: variant, tag: tag, binds: elab_tbinds(a, ar, sc, &qpath, variant, binds) };
 }
@@ -5057,7 +5071,7 @@ fn check_variant_pattern(a: Allocator, ar: *Arena, sc: *const TyScope, scrut_ty:
     }
     let epath = enum_ty_path(a, scrut_ty);
     let skel = etags_path_for(a, sc, &epath);
-    let qt = qualify_type_path(a, ar, sc, tname);
+    let qt = qualify_in_scope(a, ar, sc, sc.sc_fenums, tname);
     if !is_known_enum(sc, &qt) {
         let mut sb = StringBuilder::with_capacity(a, 56 as u32);
         sb.push_str("unknown enum '"); sb.push_str(path_display(a, ar, tname));
@@ -7414,6 +7428,17 @@ fn check_variant_construction(a: Allocator, ar: *Arena, sc: *const TyScope, epat
 fn is_some_expr(e: Option<*const Expr>) -> bool {
     return match e { Option::Some(_x) => true | Option::None => false };
 }
+// Mirrors `lookup_struct ctx tname` coming back None.  Without it a name that
+// resolves to no struct at all still reached the FIELD check, so a sibling
+// module's type was reported as a struct missing a field rather than as a name
+// this scope cannot see - a true sentence about a type that does not exist here.
+fn struct_lit_unknown(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>) -> bool {
+    if scope_lookup_ty(a, ar, sc.sc_fstructs, sc.sc_modpath, tname).length() > 0 as u32 { return false; }
+    let last = path_last(tname);
+    if is_builtin_struct(last) { return false; }
+    if tname.length() == 1 as u32 && talias_idx(sc, last) >= 0 as int { return false; }
+    return true;
+}
 fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    env: *const Vec<FieldTy>, tname: *const Vec<str>, fields: *const Vec<Field>,
                    base: Option<*const Expr>, expected: Option<*const Typ>, p: Pos) -> *const Texpr {
@@ -7421,7 +7446,7 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
     // knows the (enum-path, variant) split of `tname`.
     if tname.length() >= 2 as u32 {
         let last = path_last(tname);
-        let init = qualify_type_path(a, ar, sc, &path_init(a, tname));
+        let init = qualify_in_scope(a, ar, sc, sc.sc_fenums, &path_init(a, tname));
         let tag = variant_tag(sc.sc_etags, &init, last);
         if tag >= 0 as int {
             // `..base` copies the REST of a struct's fields.  A variant is not a
@@ -7440,7 +7465,12 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
             return mk_enum_lit_node(a, ar, &sinst, last, tag, oargs, p);
         }
     }
-    let qtname = qualify_type_path(a, ar, sc, tname);
+    if struct_lit_unknown(a, ar, sc, tname) {
+        let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+        sb.push_str("unknown struct '"); sb.push_str(path_display(a, ar, tname)); sb.push_str("'");
+        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    }
+    let qtname = qualify_in_scope(a, ar, sc, sc.sc_fstructs, tname);
     check_lit_fields(a, ar, sc, &qtname, fields, is_some_expr(base), p);
     let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields, p);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
@@ -7464,7 +7494,7 @@ fn elab_alloc_opt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
 fn elab_new_struct(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                    tname: *const Vec<str>, fields: *const Vec<Field>, base: Option<*const Expr>, alloc: Option<*const Expr>, p: Pos) -> *const Texpr {
     let talloc = elab_alloc_opt(a, ar, g, sc, env, alloc);
-    let qtname = qualify_type_path(a, ar, sc, tname);
+    let qtname = qualify_in_scope(a, ar, sc, sc.sc_fstructs, tname);
     if !struct_known(sc, path_last(&qtname)) {
         let mut sb = StringBuilder::with_capacity(a, 48 as u32);
         sb.push_str("unknown struct '"); sb.push_str(path_display(a, ar, tname)); sb.push_str("'");
@@ -7482,7 +7512,7 @@ fn elab_new_struct(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
 fn elab_new_enum(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                  tname: *const Vec<str>, args: *const Vec<*const Expr>, alloc: Option<*const Expr>, p: Pos) -> *const Texpr {
     let last = path_last(tname);
-    let init = qualify_type_path(a, ar, sc, &path_init(a, tname));
+    let init = qualify_in_scope(a, ar, sc, sc.sc_fenums, &path_init(a, tname));
     let tag = variant_tag(sc.sc_etags, &init, last);
     if tag < 0 as int {
         if is_known_enum(sc, &init) { return no_such_variant(a, ar, sc, &init, last, p); }
@@ -9235,7 +9265,7 @@ fn closure_call_params(a: Allocator, ar: *Arena, cn: str, lam_params: *const Vec
 // (`mod::CONST`) resolved by mangled name.
 fn elab_enumlit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, expected: Option<*const Typ>,
                 tname: *const Vec<str>, variant: str, p: Pos) -> *const Texpr {
-    let qtname = qualify_type_path(a, ar, sc, tname);
+    let qtname = qualify_in_scope(a, ar, sc, sc.sc_fenums, tname);
     let tag = variant_tag(sc.sc_etags, &qtname, variant);
     if tag >= 0 as int {
         let empty: Vec<TexprField> = Vec::with_capacity(a, 8 as u32);
@@ -10191,7 +10221,7 @@ fn let_else_typed(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const 
     // counts are registered under the path the user wrote (`Option`) — the same
     // split `elab_variant_pattern` already lives with.
     let epath = enum_ty_path(a, tvalue.ty);
-    let qpath = qualify_type_path(a, ar, sc, &vp.vp_tname);
+    let qpath = qualify_in_scope(a, ar, sc, sc.sc_fenums, &vp.vp_tname);
     if enum_variant_count(sc, &qpath) < 2 as u32 {
         let mut sb = StringBuilder::with_capacity(a, 96 as u32);
         sb.push_str("let-else else-branch is unreachable: enum '");
@@ -12370,23 +12400,34 @@ fn join_colons(a: Allocator, ar: *Arena, modpath: *const Vec<str>, name: str) ->
 // literal's name): a bare `Pos` inside `mod pos` becomes `pos::Pos` when that
 // marker is registered, mirroring resolve_named_ty for annotations.  Already-
 // qualified paths and prelude names pass through unchanged.
-fn qualify_type_path(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> Vec<str> {
-    // Same property as the annotation side (`resolve_named_ty`): whatever its
-    // segment count, a path written inside a module means the qualified form
-    // when that form is registered.  Kept in step deliberately — with only the
-    // annotation generalised, `fn make() -> inner::R` and its body's
-    // `inner::R { .. }` resolved to two different types one module up.
-    if sc.sc_modpath.length() > 0 as u32 {
-        let q = path_concat(a, sc.sc_modpath, path);
-        let marker = mu_joined(a, ar, &q);
-        if name_in(sc.sc_structs, marker) { return q; }
-        if name_in(sc.sc_enums, marker) { return copy_strs(a, &q); }
-    }
+fn alias_or_self(a: Allocator, sc: *const TyScope, path: *const Vec<str>) -> Vec<str> {
     if path.length() == 1 as u32 {
         let ti = talias_idx(sc, path_last(path));
         if ti >= 0 as int { return copy_strs(a, &sc.sc_taliases.as_slice()[ti as u32].ta_path); }
     }
     return copy_strs(a, path);
+}
+// An expression-position type path qualifies by the SAME scope walk an
+// annotation does - the parent chain, not just the current module.  Which
+// registry it walks is the call site's choice, and that choice is not a detail:
+// the reference picks `lookup_struct` or `lookup_enum` per position, so a
+// variant constructor written inside a module reaches an ENUM one scope up even
+// when a STRUCT of that name sits nearer, and a struct literal does the reverse.
+// Walking "either kind, innermost first" gets both of those backwards.
+fn qualify_in_scope(a: Allocator, ar: *Arena, sc: *const TyScope,
+                    names: *const Vec<str>, path: *const Vec<str>) -> Vec<str> {
+    let q = scope_lookup_ty(a, ar, names, sc.sc_modpath, path);
+    if q.length() > 0 as u32 { return q; }
+    return alias_or_self(a, sc, path);
+}
+// For the one position that can be either: a `Type::name(..)` head is a static
+// method on a struct or on an enum, so it asks in the reference's order.
+fn qualify_type_path(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>) -> Vec<str> {
+    let sq = scope_lookup_ty(a, ar, sc.sc_fstructs, sc.sc_modpath, path);
+    if sq.length() > 0 as u32 { return sq; }
+    let eq = scope_lookup_ty(a, ar, sc.sc_fenums, sc.sc_modpath, path);
+    if eq.length() > 0 as u32 { return eq; }
+    return alias_or_self(a, sc, path);
 }
 fn elaborate_module_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                        path: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {

@@ -1,0 +1,12 @@
+// The constructor position: a nested module names its parent's enum variant by
+// bare name.
+mod m {
+    pub enum P { A(int) | B }
+    pub mod inner {
+        pub fn f() -> int {
+            let e = P::A(3);
+            return match e { P::A(v) => v | P::B => 0 };
+        }
+    }
+}
+fn main() { println(m::inner::f()); }

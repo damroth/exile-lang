@@ -1,0 +1,12 @@
+// The walk goes UP, never sideways: a sibling module's struct is not in scope, so
+// the name resolves to nothing and is reported as an unknown struct at the
+// literal. Letting it reach the field check instead produced a true sentence
+// about a type that does not exist here.
+mod a { pub struct P { x: int } }
+mod b {
+    pub fn f() -> int {
+        let v = P { x: 1 };
+        return v.x;
+    }
+}
+fn main() { println(b::f()); }

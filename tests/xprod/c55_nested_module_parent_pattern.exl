@@ -1,0 +1,14 @@
+// The pattern position, reached with the value already typed - so a mis-resolved
+// pattern path reports a type mismatch rather than an unknown name.
+mod m {
+    pub enum P { A { x: int } | B }
+    pub mod inner {
+        pub fn f(e: *const P) -> int {
+            return match *e { P::A { x } => x | P::B => 0 };
+        }
+    }
+}
+fn main() {
+    let e = m::P::A { x: 6 };
+    println(m::inner::f(&e));
+}
