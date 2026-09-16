@@ -1,0 +1,14 @@
+// The same cycle, first demanded from a PARAMETER's type. The signature is
+// resolved before any body, so the order this fixture pins is the one a
+// cross-module program would get.
+enum L<T> { Cons(T, *const M<T>) | Nil }
+enum M<T> { Link(*const L<T>) | Val(T) | End }
+
+fn take(m: *const M<int>) -> int {
+    return match *m { M::Val(v) => v | M::Link(_p) => 0 | M::End => 0 };
+}
+
+fn main() {
+    let m: M<int> = M::Val(5);
+    println(take(&m));
+}

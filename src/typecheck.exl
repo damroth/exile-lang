@@ -1137,16 +1137,16 @@ fn subst_typ(ar: *Arena, binds: *const Vec<TVarBind>, t: *const Typ) -> *const T
 // Like subst_typ but resolves a nested generic application (`Slot<K,V>` inside
 // `HashMap<K,V>`'s `slots` field) to its mangled instance, registering that
 // instance + fields on the way — so `Slot_i32_i32` etc. ride the footer.
-fn subst_typs_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, args: *const Vec<*const Typ>) -> Vec<*const Typ> {
+fn subst_typs_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, args: *const Vec<*const Typ>, prog: *Vec<Vec<str>>) -> Vec<*const Typ> {
     let mut out: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let n = args.length();
     let sl = args.as_slice();
     let mut i = 0 as u32;
-    while i < n { out.push(subst_typ_reg(a, ar, sc, binds, sl[i])); i = i + 1 as u32; }
+    while i < n { out.push(subst_typ_reg_p(a, ar, sc, binds, sl[i], prog)); i = i + 1 as u32; }
     return out;
 }
-fn subst_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, path: *const Vec<str>, args: *const Vec<*const Typ>) -> *const Typ {
-    let rargs = subst_typs_reg(a, ar, sc, binds, args);
+fn subst_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, path: *const Vec<str>, args: *const Vec<*const Typ>, prog: *Vec<Vec<str>>) -> *const Typ {
+    let rargs = subst_typs_reg(a, ar, sc, binds, args, prog);
     if tys_have_tvar(&rargs) { return ty_node(ar, Typ::TStructApp { path: copy_strs(a, path), args: rargs }); }
     let ipath = instance_path(a, ar, path, &rargs);
     if !inst_has_fields(sc.sc_mono_fields, &ipath) {
@@ -1157,7 +1157,7 @@ fn subst_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec
         // to the same instance prints `Inner<i32> { `.  The instance reached
         // only through another instance's FIELD is the one route that took it.
         let binds2 = struct_instance_binds(a, sc.sc_stps, path_last(path), &rargs);
-        register_instance_fields(a, ar, sc, path, &binds2, &ipath);
+        register_instance_fields_p(a, ar, sc, path, &binds2, &ipath, prog);
         register_mono_struct_args(a, sc, &ipath, &rargs);
     }
     return ty_node(ar, Typ::TStruct(ipath));
@@ -1173,25 +1173,35 @@ fn inst_has_efields(efields: *const Vec<EnumFieldE>, ipath: *const Vec<str>) -> 
     while i < n { if path_eq(&sl[i].ef_path, ipath) { return true; } i = i + 1 as u32; }
     return false;
 }
-fn subst_enum_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, path: *const Vec<str>, args: *const Vec<*const Typ>) -> *const Typ {
-    let rargs = subst_typs_reg(a, ar, sc, binds, args);
+// `prog` is the set of instances whose payloads are being walked RIGHT NOW.
+// `inst_has_efields` cannot stand in for it: an instance has no fields yet while
+// it is walking them, so a cycle re-entered the container, completed it inside
+// its own payload walk, and registered it BEFORE the target it had descended
+// into.  The reference emits a pointer payload's target first, always.
+fn subst_enum_app_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, path: *const Vec<str>, args: *const Vec<*const Typ>, prog: *Vec<Vec<str>>) -> *const Typ {
+    let rargs = subst_typs_reg(a, ar, sc, binds, args, prog);
     if tys_have_tvar(&rargs) { return ty_node(ar, Typ::TEnumApp { path: copy_strs(a, path), args: rargs }); }
     let ipath = instance_path(a, ar, path, &rargs);
-    if !inst_has_efields(sc.sc_mono_efields, &ipath) {
-        register_enum_instance_fields(a, ar, sc, path, &rargs, &ipath);
+    if !inst_has_efields(sc.sc_mono_efields, &ipath) && !path_in_paths(prog, &ipath) {
+        prog.push(copy_strs(a, &ipath));
+        register_enum_instance_fields_p(a, ar, sc, path, &rargs, &ipath, prog);
         register_mono_enum_args(a, sc, &ipath, &rargs);
     }
     return ty_node(ar, Typ::TEnum(ipath));
 }
 fn subst_typ_reg(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, t: *const Typ) -> *const Typ {
+    let mut prog: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    return subst_typ_reg_p(a, ar, sc, binds, t, &prog);
+}
+fn subst_typ_reg_p(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const Vec<TVarBind>, t: *const Typ, prog: *Vec<Vec<str>>) -> *const Typ {
     return match *t {
         Typ::TVar(n) => match bind_lookup(binds, n) { Option::Some(bt) => bt | Option::None => t }
-        | Typ::TPtr(inner) => ty_node(ar, Typ::TPtr(subst_typ_reg(a, ar, sc, binds, inner)))
-        | Typ::TConstPtr(inner) => ty_node(ar, Typ::TConstPtr(subst_typ_reg(a, ar, sc, binds, inner)))
-        | Typ::TOwnPtr(inner) => ty_node(ar, Typ::TOwnPtr(subst_typ_reg(a, ar, sc, binds, inner)))
-        | Typ::TArray { elem, size } => ty_node(ar, Typ::TArray { elem: subst_typ_reg(a, ar, sc, binds, elem), size: size })
-        | Typ::TStructApp { path, args } => subst_app_reg(a, ar, sc, binds, &path, &args)
-        | Typ::TEnumApp { path, args } => subst_enum_app_reg(a, ar, sc, binds, &path, &args)
+        | Typ::TPtr(inner) => ty_node(ar, Typ::TPtr(subst_typ_reg_p(a, ar, sc, binds, inner, prog)))
+        | Typ::TConstPtr(inner) => ty_node(ar, Typ::TConstPtr(subst_typ_reg_p(a, ar, sc, binds, inner, prog)))
+        | Typ::TOwnPtr(inner) => ty_node(ar, Typ::TOwnPtr(subst_typ_reg_p(a, ar, sc, binds, inner, prog)))
+        | Typ::TArray { elem, size } => ty_node(ar, Typ::TArray { elem: subst_typ_reg_p(a, ar, sc, binds, elem, prog), size: size })
+        | Typ::TStructApp { path, args } => subst_app_reg(a, ar, sc, binds, &path, &args, prog)
+        | Typ::TEnumApp { path, args } => subst_enum_app_reg(a, ar, sc, binds, &path, &args, prog)
         | _other => t
     };
 }
@@ -1332,8 +1342,8 @@ fn zip_binds(a: Allocator, tparams: *const Vec<str>, args: *const Vec<*const Typ
 // variable intact - `Inner<T>`, in a program that names no `T` - and the
 // instance it should have minted was never registered for emission.
 fn push_mono_efield(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>, variant: str, fname: str,
-                    binds: *const Vec<TVarBind>, sf_ty: *const Typ, out: *Vec<EnumFieldE>) {
-    let fty = subst_typ_reg(a, ar, sc, binds, sf_ty);
+                    binds: *const Vec<TVarBind>, sf_ty: *const Typ, out: *Vec<EnumFieldE>, prog: *Vec<Vec<str>>) {
+    let fty = subst_typ_reg_p(a, ar, sc, binds, sf_ty, prog);
     out.push(EnumFieldE { ef_path: copy_strs(a, ipath), ef_variant: variant, ef_name: fname, ef_ty: fty });
 }
 
@@ -1361,13 +1371,20 @@ fn register_prelude_enum_efields(a: Allocator, sc: *const TyScope, name: str,
 
 fn register_enum_instance_fields(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>,
                                  args: *const Vec<*const Typ>, ipath: *const Vec<str>) {
+    let mut prog: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    prog.push(copy_strs(a, ipath));
+    register_enum_instance_fields_p(a, ar, sc, skel, args, ipath, &prog);
+    return;
+}
+fn register_enum_instance_fields_p(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>,
+                                   args: *const Vec<*const Typ>, ipath: *const Vec<str>, prog: *Vec<Vec<str>>) {
     let binds = enum_instance_binds(a, sc.sc_etps, path_last(skel), args);
     let n = sc.sc_efields.length();
     let sl = sc.sc_efields.as_slice();
     let mut i = 0 as u32;
     while i < n {
         if path_eq(&sl[i].ef_path, skel) {
-            push_mono_efield(a, ar, sc, ipath, sl[i].ef_variant, sl[i].ef_name, &binds, sl[i].ef_ty, sc.sc_mono_efields);
+            push_mono_efield(a, ar, sc, ipath, sl[i].ef_variant, sl[i].ef_name, &binds, sl[i].ef_ty, sc.sc_mono_efields, prog);
         }
         i = i + 1 as u32;
     }
@@ -6963,14 +6980,14 @@ fn dedup_bind_tys(a: Allocator, binds: *const Vec<TVarBind>) -> Vec<*const Typ> 
 // Register the substituted fields of a struct instance so `inst.field` reads
 // resolve.  One push per field, behind a fn boundary (escape/affine clean).
 fn push_instance_field(a: Allocator, ar: *Arena, sc: *const TyScope, ipath: *const Vec<str>, fname: str,
-                       binds: *const Vec<TVarBind>, sf_ty: *const Typ) {
+                       binds: *const Vec<TVarBind>, sf_ty: *const Typ, prog: *Vec<Vec<str>>) {
     // From a signature the nested instance is registered; from a field it is
     // named and not registered. The substitution still MANGLES either way - the
     // field's printed type is `struct ex_Slot_i32_bool *` in both - so this
     // separates the POSITION an instance was minted from rather than weakening
     // the substitution, which is load-bearing: it is what carries an allocator
     // out of a `Vec<int>` field.
-    let fty = if sc.sc_field_pos { subst_typ_named(a, ar, sc, binds, sf_ty) } else { subst_typ_reg(a, ar, sc, binds, sf_ty) };
+    let fty = if sc.sc_field_pos { subst_typ_named(a, ar, sc, binds, sf_ty) } else { subst_typ_reg_p(a, ar, sc, binds, sf_ty, prog) };
     sc.sc_mono_fields.push(StructField { sf_path: copy_strs(a, ipath), sf_name: fname, sf_ty: fty });
 }
 // Like `subst_typ_reg`, but an application resolves to its mangled instance TYPE
@@ -7000,12 +7017,18 @@ fn subst_typs_named(a: Allocator, ar: *Arena, sc: *const TyScope, binds: *const 
 }
 fn register_instance_fields(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
                             binds: *const Vec<TVarBind>, ipath: *const Vec<str>) {
+    let mut prog: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    register_instance_fields_p(a, ar, sc, tname, binds, ipath, &prog);
+    return;
+}
+fn register_instance_fields_p(a: Allocator, ar: *Arena, sc: *const TyScope, tname: *const Vec<str>,
+                              binds: *const Vec<TVarBind>, ipath: *const Vec<str>, prog: *Vec<Vec<str>>) {
     let n = sc.sc_sinfo.length();
     let sl = sc.sc_sinfo.as_slice();
     let mut i = 0 as u32;
     while i < n {
         if path_eq(&sl[i].sf_path, tname) {
-            push_instance_field(a, ar, sc, ipath, sl[i].sf_name, binds, sl[i].sf_ty);
+            push_instance_field(a, ar, sc, ipath, sl[i].sf_name, binds, sl[i].sf_ty, prog);
         }
         i = i + 1 as u32;
     }
@@ -7151,14 +7174,18 @@ fn infer_enum_instance(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
                else { infer_enum_args(a, ar, sc, &tps, &binds, p) };
     if args.length() != tps.length() && tps.length() > 0 as u32 { return copy_strs(a, epath); }
     let ipath = instance_path(a, ar, epath, &args);
-    register_mono_enum_args(a, sc, &ipath, &args);
     // An instance registers where it is BORN, not where someone happens to name
     // it as a type.  `let o = Option::Some(5);` mints Option_i32 by inference and
     // may be the only mention of it in the program — without its variant payloads
     // registered here, `match o { Option::Some(v) => ... }` finds no `_0` field
     // and the payload type comes out `c_void`.  resolve_named_ty registers both
     // halves; this path used to register only the first.
+    //
+    // Payloads BEFORE self, the third site of that rule: this one kept the old
+    // order after the other two were corrected, and it is the entry point when
+    // the first demand comes from INFERENCE rather than an annotation.
     register_enum_instance_efields(a, ar, sc, epath, &args, &ipath);
+    register_mono_enum_args(a, sc, &ipath, &args);
     return ipath;
 }
 fn register_enum_instance_efields(a: Allocator, ar: *Arena, sc: *const TyScope, skel: *const Vec<str>,

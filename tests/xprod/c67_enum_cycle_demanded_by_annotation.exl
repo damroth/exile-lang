@@ -1,0 +1,17 @@
+// Two generic enums pointing at each other. The reference emits a pointer
+// payload's TARGET before the instance that was demanded; the port emitted the
+// demanded one first whenever the first demand did not come from the type that
+// names the other.
+//
+// One fixture per ENTRY POINT, because the entry point is the only variable that
+// separates them: an annotation, an inference, and an argument position reach
+// three different registration sites, and a fixture that uses one says nothing
+// about the other two. Measured: fixing the first still left the second red.
+enum L<T> { Cons(T, *const M<T>) | Nil }
+enum M<T> { Link(*const L<T>) | Val(T) | End }
+
+fn main() {
+    let m: M<int> = M::Val(5);
+    let l: L<int> = L::Cons(4, &m);
+    println(match l { L::Cons(v, _n) => v | L::Nil => 0 });
+}

@@ -1,0 +1,12 @@
+// The same cycle, first demanded WITHOUT an annotation. This one reaches the
+// instance through `infer_enum_instance`, which kept registering the container
+// before its payloads after the other two sites had been corrected - so it is
+// the fixture that proved the third site needed its own move.
+enum L<T> { Cons(T, *const M<T>) | Nil }
+enum M<T> { Link(*const L<T>) | Val(T) | End }
+
+fn main() {
+    let m = M::Val(5);
+    let l: L<int> = L::Cons(4, &m);
+    println(match l { L::Cons(v, _n) => v | L::Nil => 0 });
+}
