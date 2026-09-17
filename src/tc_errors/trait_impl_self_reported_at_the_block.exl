@@ -1,0 +1,18 @@
+// A `Self` in a trait-impl method's signature that SURVIVED the parser's fold is
+// refused - and the position is the contract, not just the words. The reference
+// resolves an impl's signatures while checking conformance, with the IMPL
+// BLOCK's position, so the refusal lands on the `impl` line and not on the `fn`.
+//
+// The block's brace sits on its own line so the two positions differ by more than
+// a column: a fixture where they share a line would pass whichever side is wrong.
+trait Maker {
+    fn make() -> Self;
+}
+struct P { x: int }
+impl Maker for P
+{
+    fn make() -> Self {
+        return P { x: 1 };
+    }
+}
+fn main() { println(1); }

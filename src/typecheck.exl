@@ -14146,7 +14146,7 @@ fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
             sb.push_str("' required by trait '"); sb.push_str(td.trname); sb.push_str("'");
             tc_fail(ar, sc, ipos, str::from_slice(ar, sb.as_slice()));
         }
-        check_impl_method_sig(a, ar, sc, target, td.trname, &ms[j], itparams, impl_methods);
+        check_impl_method_sig(a, ar, sc, target, td.trname, &ms[j], itparams, impl_methods, ipos);
         register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, td.trname, &ms[j], ti, j, itparams, out);
         j = j + 1 as u32;
     }
@@ -14154,8 +14154,15 @@ fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
 // A provided method must MATCH the trait's declaration, with `Self` read as the
 // target.  The comparison is on resolved types, so the message names what the
 // user sees (`expected i32, got bool`), and it lands at the impl's method.
+// Two positions, and the corpus is what separated them.  The RESOLUTION of an
+// annotation runs at the impl block's position - the reference resolves this
+// comparison's types with `ib.ipos`, so a `Self` that survived the parser's fold
+// is refused there, one line above the method.  This function's OWN diagnostics
+// (a mismatched parameter, a mismatched return) stay at the method, which is
+// where the reference raises them.  Moving both to the block turned two corpus
+// fixtures red and said so in one run.
 fn check_impl_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
-                         trname: str, tm: *const Func, itparams: *const Vec<str>, impl_methods: *const Vec<Func>) {
+                         trname: str, tm: *const Func, itparams: *const Vec<str>, impl_methods: *const Vec<Func>, ipos: Pos) {
     let ii = impl_method_idx(impl_methods, tm.name);
     if ii < 0 as int { return; }
     let im: *const Func = &impl_methods.as_slice()[ii as u32];
@@ -14173,8 +14180,8 @@ fn check_impl_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *
         // Only the TRAIT's side is substituted here, because the impl's own
         // parameters were already folded by the parser - in the positions the
         // reference folds them, and nowhere else.
-        let tt = resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, tsl[k].pty, target), im.pos);
-        let it = resolve_sig_ty(a, ar, sc, isl[k].pty, im.pos);
+        let tt = resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, tsl[k].pty, target), ipos);
+        let it = resolve_sig_ty(a, ar, sc, isl[k].pty, ipos);
         if !typ_eq(tt, it) {
             let mut sb = StringBuilder::with_capacity(a, 112 as u32);
             sb.push_str("method '"); sb.push_str(tm.name);
@@ -14187,7 +14194,7 @@ fn check_impl_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *
         }
         k = k + 1 as u32;
     }
-    if !ret_ann_matches(a, ar, sc, target, tm.ret_ty, im.ret_ty, im.pos) {
+    if !ret_ann_matches(a, ar, sc, target, tm.ret_ty, im.ret_ty, ipos) {
         let mut sb = StringBuilder::with_capacity(a, 72 as u32);
         sb.push_str("method '"); sb.push_str(tm.name);
         sb.push_str("' return type does not match trait '"); sb.push_str(trname); sb.push_str("'");
