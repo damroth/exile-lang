@@ -1,0 +1,24 @@
+// The accept side of both cells in this round, and the floor for the risk the
+// register named: elaborating a call's arguments before its callee is known means
+// doing it WITHOUT the parameter types, and the port uses the callee to shape that
+// elaboration. The fix only elaborates early on a MISS, so this fixture pins that
+// the known-callee path still shapes its arguments - an int literal reaching a
+// narrower slot, and a generic method whose own parameter the arguments DO pin.
+//
+// It links and runs, because a wrong shape here is a wrong VALUE, not a refusal.
+struct Bx<T> { v: T }
+
+impl<T> Bx<T> {
+    pub fn take<U>(*const self, o: *const U) -> int { return 7; }
+}
+
+fn narrow(k: u16, l: u8) -> int { return (k as int) + (l as int); }
+
+fn main() {
+    println(narrow(300, 200));
+
+    let b: Bx<int> = Bx { v: 1 };
+    let x: u16 = 5 as u16;
+    println(b.take(&x));
+    println(Bx::take(&b, &x));
+}

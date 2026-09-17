@@ -3159,11 +3159,25 @@ fn unknown_fn(a: Allocator, ar: *Arena, sc: *const TyScope, display: str, p: Pos
     tc_fail(ar, sc, p, msg2(a, ar, "unknown function '", display, "'"));
     return defer_expr(ar, p);
 }
+// The reference elaborates a call's ARGUMENTS before it resolves the callee, so
+// when both are wrong the reader is handed the argument's fault first.  The port
+// resolved the callee and, on a miss, never looked at the arguments at all - each
+// side knows both facts and reports whichever it reached first, which makes this
+// an order question rather than a wording one.
+//
+// Elaborating them only on the MISS keeps the known-callee path exactly as it was:
+// there the arguments are still shaped by the parameter list, which is what the
+// port uses the callee for and what a blanket move would have taken away.
+fn unknown_fn_after_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                         name: str, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+    let _discard = elab_args(a, ar, g, sc, env, args);
+    return unknown_fn(a, ar, sc, name, p);
+}
 fn elab_top_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                      name: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool) -> *const Texpr {
     return match global_lookup(g, name) {
         Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p, allow_void)
-        | Option::None => unknown_fn(a, ar, sc, name, p)
+        | Option::None => unknown_fn_after_args(a, ar, g, sc, env, name, args, p)
     };
 }
 fn elab_user_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
@@ -3316,9 +3330,16 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
         Option::Some(e) => bind_recv_tparams(a, ar, sc, &sl[midx].mi_path, &recv_base_path(a, e), &binds)
         | Option::None => { }
     }
-    // A static generic method has no receiver to infer from — the expected type
-    // is the ONLY source (`let v: Vec<int> = Vec::with_capacity(..)`).  Without
-    // it, T stays free and the abstract `Vec<T>` is what later surfaces as c_void.
+    // A static generic method has no IMPLICIT receiver, but the UFCS spelling of a
+    // method call writes one out as argument zero - and that argument pins the
+    // impl's parameters exactly as a receiver would.  Reading only the expected
+    // type left them free, so `Bx::take(&b, x)` reported the parameter the
+    // receiver had already settled instead of the one it could not infer.
+    let sargs = elab_args(a, ar, g, sc, env, args);
+    if sl[midx].mi_has_self && sargs.length() > 0 as u32 {
+        bind_recv_tparams(a, ar, sc, &sl[midx].mi_path, &recv_base_path(a, sargs.as_slice()[0 as u32].ty), &binds);
+    }
+    unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &sargs, &binds, 0 as u32, p);
     check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     check_bound_conformance(a, ar, sc, &sl[midx].mi_tbounds, &binds, sl[midx].mi_name, p);
     let cscope_t = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
@@ -3332,8 +3353,7 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
         let no_self: Vec<str> = Vec::with_capacity(a, 8 as u32);
         queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst, &no_self, p);
     }
-    let targs = elab_args(a, ar, g, sc, env, args);
-    return te_node(ar, TexprNode::TCall { mangled: inst, args: targs }, ret_or_void(ar, cret), p);
+    return te_node(ar, TexprNode::TCall { mangled: inst, args: sargs }, ret_or_void(ar, cret), p);
 }
 fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                          env: *const Vec<FieldTy>, expected: Option<*const Typ>, midx: int, args: *const Vec<*const Expr>, p: Pos,
@@ -3518,7 +3538,7 @@ fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     let qdisp = path_display(a, ar, &path_push(a, init, last));
     return match qualified_lookup(a, ar, g, sc, init, last) {
         Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, qdisp, args, p, allow_void)
-        | Option::None => unknown_fn(a, ar, sc, qdisp, p)
+        | Option::None => unknown_fn_after_args(a, ar, g, sc, env, qdisp, args, p)
     };
 }
 
@@ -4562,8 +4582,13 @@ fn binds_in_tparam_order(a: Allocator, ar: *Arena, tparams: *const Vec<str>, bin
 // receiver fields — e.g. an adapter `map`'s `F`) by unifying each param's
 // annotation against the elaborated argument type.  Params whose tparams are
 // already recovered resolve to a concrete type, so the unify is a no-op.
+// `skip` is how far the declared parameter list runs AHEAD of the argument list:
+// 1 for `recv.m(a)`, where `self` is implicit, and 0 for `T::m(recv, a)`, where it
+// is written out.  It was hardcoded to 1, so the UFCS spelling of the same call
+// unified nothing and named the first parameter uninferrable - the one the
+// receiver had already pinned.
 fn unify_method_args(a: Allocator, ar: *Arena, sc: *const TyScope, tparams: *const Vec<str>,
-                     anns: *const Vec<*const TypeAnn>, targs: *const Vec<*const Texpr>, binds: *Vec<TVarBind>, p: Pos) {
+                     anns: *const Vec<*const TypeAnn>, targs: *const Vec<*const Texpr>, binds: *Vec<TVarBind>, skip: u32, p: Pos) {
     // The declaration is unified with the method's tparams still ABSTRACT, which
     // is what lets a second, different binding for the same tparam surface as a
     // conflict. Resolving under the bindings already recovered from the receiver
@@ -4576,7 +4601,7 @@ fn unify_method_args(a: Allocator, ar: *Arena, sc: *const TyScope, tparams: *con
     let tsl = targs.as_slice();
     let mut i = 0 as u32;
     while i < na {
-        let pi = i + 1 as u32;
+        let pi = i + skip;
         if pi < np {
             let pt = resolve_sig_ty(a, ar, &cscope, asl[pi], p);
             unify_typ(a, ar, sc, pt, tsl[i].ty, binds);
@@ -4602,7 +4627,7 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // ordinary struct-gen methods every tparam is already recovered, so this is
     // a no-op.  Binding it before `cret` lets the adapter return instance
     // (`Map<VecIter<T>, F>`) resolve + register.
-    unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &targs, &binds, p);
+    unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &targs, &binds, 1 as u32, p);
     let cscope0 = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
     let recv_self: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &inst_path))));
     let cscope = scope_with_self(&cscope0, recv_self);
@@ -4612,6 +4637,12 @@ fn mk_struct_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // had no conflict check at all, so the order only became visible once the
     // arguments were unified against a real parameter list.
     check_bind_conflicts(a, ar, sc, &binds, p);
+    // The FOURTH path that infers type parameters, and the only one that never
+    // asked whether it had them all.  A method-only parameter the arguments
+    // cannot pin stayed free, `binds_in_tparam_order` handed the mangler a bare
+    // `TVar`, and the emitted C carried a `?` inside a symbol name - accepted
+    // here, rejected by the C compiler, which is the worst order to find out.
+    check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     let rargs = autoref_gen_args(a, ar, &cscope, &sl[midx].mi_params, 1 as u32, &targs, p);
     check_gen_call_args(a, ar, sc, &cscope,
                         method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),

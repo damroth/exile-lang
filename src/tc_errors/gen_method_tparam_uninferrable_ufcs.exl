@@ -1,0 +1,11 @@
+// The same call written as UFCS, where the receiver is argument zero rather than
+// implicit. Its own fixture because it takes a different path: that path checked
+// whether every parameter was inferred BEFORE elaborating a single argument, so
+// it named the parameter the receiver pins instead of the one it cannot infer.
+struct Bx<T> { v: T }
+impl<T> Bx<T> { pub fn take<U>(*const self, o: *const U) -> int { return 1; } }
+fn main() {
+    let b: Bx<int> = Bx { v: 1 };
+    let x: u16 = 5 as u16;
+    println(Bx::take(&b, x));
+}

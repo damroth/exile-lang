@@ -1,0 +1,9 @@
+// Both the callee and the argument are wrong. Each side knows both facts, so what
+// is pinned here is the ORDER: the reference elaborates a call's arguments before
+// resolving its callee, and reports the argument.
+//
+// The two controls live in the corpus already as separate fixtures - a known
+// callee with a bad argument, and an unknown callee with a good one - and both
+// agreed all along. Only the crossing diverged, which is what makes this an order
+// question rather than a wording one.
+fn main() { println(nope_f(nope_a)); }

@@ -1,0 +1,16 @@
+// A generic impl whose method declares a type parameter of its own. The receiver
+// pins the impl's parameter and nothing pins the method's, so the call cannot be
+// inferred - and the reference says exactly that, naming the parameter it could
+// not infer.
+//
+// The port reached the mangler with that parameter still free and wrote a symbol
+// with a `?` glued into it: accepted here, rejected by the C compiler. The
+// fabrication gate scans examples/, tests/mono, tests/lint and tests/xprod, and
+// this shape lived in none of them.
+struct Bx<T> { v: T }
+impl<T> Bx<T> { pub fn take<U>(*const self, o: *const U) -> int { return 1; } }
+fn main() {
+    let b: Bx<int> = Bx { v: 1 };
+    let x: u16 = 5 as u16;
+    println(b.take(x));
+}

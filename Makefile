@@ -2984,6 +2984,7 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c67_enum_cycle_demanded_by_annotation \
                   c68_enum_cycle_demanded_by_inference \
                   c69_enum_cycle_demanded_by_argument \
+                  c70_call_shapes_its_arguments \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \
