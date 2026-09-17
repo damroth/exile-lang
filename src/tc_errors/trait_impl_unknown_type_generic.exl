@@ -1,0 +1,10 @@
+// An unknown type in a generic impl's signature. Resolution happens at the IMPL
+// BLOCK, so the refusal lands on the `impl` line - and it only happens at all
+// once the check stops abstaining on generic impls.
+trait T { fn take(k: int) -> int; }
+struct P<A> { x: A }
+impl<A> T for P<A>
+{
+    fn take(k: Nope) -> int { return 1; }
+}
+fn main() { println(1); }

@@ -1,0 +1,9 @@
+// The same count, under `impl<A>`. Its own fixture because the gate abstained on
+// EVERY generic impl: a fixture with a concrete target cannot show that.
+trait T { fn take(k: int) -> int; }
+struct P<A> { x: A }
+impl<A> T for P<A>
+{
+    fn take() -> int { return 1; }
+}
+fn main() { println(1); }

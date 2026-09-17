@@ -1,0 +1,11 @@
+// An unknown type in the RETURN of a concrete trait impl. This one latches in the
+// method-collection pass rather than in the conformance check, so it is the shape
+// that proves the collection pass resolves at the block too - the parameter
+// position was already right while this one was not.
+trait T { fn take(k: int) -> int; }
+struct P { x: int }
+impl T for P
+{
+    fn take(k: int) -> Nope { return 1; }
+}
+fn main() { println(1); }

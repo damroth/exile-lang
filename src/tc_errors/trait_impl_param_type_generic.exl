@@ -1,0 +1,12 @@
+// A wrong PARAMETER type under `impl<A>`. The comparison resolves both sides in a
+// scope that splices the type parameters, so `A` is the same `TVar` on each -
+// without that splice neither side resolves and the check abstained.
+//
+// The message names the IMPL's parameter, not the trait's.
+trait T { fn take(k: int) -> int; }
+struct P<A> { x: A }
+impl<A> T for P<A>
+{
+    fn take(o: bool) -> int { return 1; }
+}
+fn main() { println(1); }

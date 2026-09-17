@@ -1,0 +1,10 @@
+// A wrong RETURN type under `impl<A>`: the other half of the same comparison, and
+// reached only when every parameter matches - so a parameter fixture cannot stand
+// for it.
+trait T { fn take(k: int) -> int; }
+struct P<A> { x: A }
+impl<A> T for P<A>
+{
+    fn take(k: int) -> bool { return true; }
+}
+fn main() { println(1); }

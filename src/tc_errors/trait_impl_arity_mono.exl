@@ -1,0 +1,11 @@
+// Parameter arity against the trait. A count needs no types, so this is checkable
+// whatever the shapes are - the port gated it behind an applicability test and
+// then said nothing when the lengths differed, which let the plainest mismatch
+// there is through.
+trait T { fn take(k: int) -> int; }
+struct P { x: int }
+impl T for P
+{
+    fn take() -> int { return 1; }
+}
+fn main() { println(1); }

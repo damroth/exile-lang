@@ -1,0 +1,9 @@
+// Type-parameter arity: the trait declares a generic method, the impl provides a
+// concrete one. A separate count from the value parameters, and a separate arm.
+trait T { fn take<X>(k: int) -> int; }
+struct P { x: int }
+impl T for P
+{
+    fn take(k: int) -> int { return 1; }
+}
+fn main() { println(1); }
