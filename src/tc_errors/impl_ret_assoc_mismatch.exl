@@ -1,0 +1,9 @@
+// The return half of the abstention's blind spot, for the same reason the
+// projection files come in pairs: parameters and returns are compared apart.
+struct Own { v: u32 }
+trait Slot { type Val; fn get(*const self) -> Self::Val; }
+impl Slot for Own {
+    type Val = u32;
+    fn get(*const self) -> int { return 7; }
+}
+fn main() { let o = Own { v: 7 as u32 }; println(o.get()); }

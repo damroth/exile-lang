@@ -1,0 +1,17 @@
+// `*chip` is the port's own notation, so there is no reference verdict to
+// compare this against - which is exactly why the row exists. The pointee is an
+// associated projection, a name that means nothing outside the substitution that
+// never reaches inside a `*chip`. Before the rule covered this position the
+// annotation resolved to nothing in particular, reached codegen, and the
+// compiler aborted with an internal message: the reader got no line at all.
+//
+// A row here pins the refusal itself, since a differential gate has nothing to
+// diff.
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn via(*const self, p: *chip Self::Val) -> int { return 1; }
+}
+struct Ones { n: u32 }
+impl Seq for Ones { type Val = u32; fn one(*const self) -> u32 { return self.n; } }
+fn main() { let o = Ones { n: 7 }; println(o.one() as int); }

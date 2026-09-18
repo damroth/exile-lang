@@ -13329,22 +13329,25 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
     };
 }
 // Every annotation in the signature, params and return alike.
-fn check_method_assoc_positions(a: Allocator, ar: *Arena, sc: *const TyScope, f: *const Func) {
+fn check_method_assoc_positions(a: Allocator, ar: *Arena, sc: *const TyScope, f: *const Func, ok: bool) {
+    let n = f.params.length();
+    let mut bad = false;
     let mut i = 0 as u32;
-    while i < f.params.length() {
-        check_param_assoc_pos(a, ar, sc, &f.params, i, f.pos);
+    while i < n && !bad {
+        bad = check_param_assoc_pos(a, ar, sc, &f.params, i, ok, f.pos);
         i = i + 1 as u32;
     }
-    match f.ret_ty {
-        Option::Some(rt) => { check_assoc_positions(a, ar, sc, rt, f.pos); }
-        | Option::None => { }
+    if !bad {
+        match f.ret_ty {
+            Option::Some(rt) => { bad = check_assoc_positions(a, ar, sc, rt, ok, f.pos); }
+            | Option::None => { }
+        }
     }
     return;
 }
-fn check_param_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>, i: u32, p: Pos) {
+fn check_param_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>, i: u32, ok: bool, p: Pos) -> bool {
     let ps = params.as_slice();
-    check_assoc_positions(a, ar, sc, ps[i].pty, p);
-    return;
+    return check_assoc_positions(a, ar, sc, ps[i].pty, ok, p);
 }
 // ===== where a `Self::Assoc` projection may stand =====
 //
@@ -13362,46 +13365,66 @@ fn check_param_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, params: *
 // So the limit is mirrored as a limit. The set below is not a list of shapes
 // picked from failures; it is the reference's recursion set, and its default
 // answer - reject - is the reference's `other -> other`.
-fn check_assoc_positions(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const TypeAnn, p: Pos) {
-    walk_assoc_pos(a, ar, sc, ann, true, p);
-    return;
+fn check_assoc_positions(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const TypeAnn, ok: bool, p: Pos) -> bool {
+    return walk_assoc_pos(a, ar, sc, ann, ok, p);
 }
-fn walk_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const TypeAnn, ok: bool, p: Pos) {
-    match *ann {
-        TypeAnn::TyStruct { path, args } => { assoc_struct_pos(a, ar, sc, &path, &args, ok, p); }
-        | TypeAnn::TyPtr(inner) => { walk_assoc_pos(a, ar, sc, inner, ok, p); }
-        | TypeAnn::TyConstPtr(inner) => { walk_assoc_pos(a, ar, sc, inner, ok, p); }
-        | TypeAnn::TyOwnPtr(inner) => { walk_assoc_pos(a, ar, sc, inner, false, p); }
-        | TypeAnn::TyArray { elem, size: _sz } => { walk_assoc_pos(a, ar, sc, elem, false, p); }
-        | TypeAnn::TyTuple(elems) => { walk_assoc_tuple(a, ar, sc, &elems, p); }
-        | _o => { }
+// The arms are enumerated from `TypeAnn`, not from the shapes that failed: every
+// variant that can hold another annotation is here, and the ones outside the
+// reference's recursion set pass `false` down.  Three were missing, and each
+// absence was a verdict: `fn(Self::Val) -> int` and `fn(int) -> Self::Val`
+// compiled where the reference refuses, and `*chip Self::Val` reached codegen
+// and aborted with an internal message.
+fn walk_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const TypeAnn, ok: bool, p: Pos) -> bool {
+    return match *ann {
+        TypeAnn::TyStruct { path, args } => assoc_struct_pos(a, ar, sc, &path, &args, ok, p)
+        | TypeAnn::TyPtr(inner) => walk_assoc_pos(a, ar, sc, inner, ok, p)
+        | TypeAnn::TyConstPtr(inner) => walk_assoc_pos(a, ar, sc, inner, ok, p)
+        | TypeAnn::TyOwnPtr(inner) => walk_assoc_pos(a, ar, sc, inner, false, p)
+        | TypeAnn::TyArray { elem, size: _sz } => walk_assoc_pos(a, ar, sc, elem, false, p)
+        | TypeAnn::TyTuple(elems) => walk_assoc_tuple(a, ar, sc, &elems, p)
+        | TypeAnn::TyChip(inner) => walk_assoc_pos(a, ar, sc, inner, false, p)
+        | TypeAnn::TyRune { elem, dir: _d } => walk_assoc_pos(a, ar, sc, elem, false, p)
+        | TypeAnn::TyFnPtr { params, ret } => walk_assoc_fnptr(a, ar, sc, &params, ret, p)
+        | _o => false
+    };
+}
+fn walk_assoc_fnptr(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<*const TypeAnn>,
+                    ret: Option<*const TypeAnn>, p: Pos) -> bool {
+    if walk_assoc_tuple(a, ar, sc, params, p) { return true; }
+    return match ret {
+        Option::Some(t) => walk_assoc_pos(a, ar, sc, t, false, p)
+        | Option::None => false
+    };
+}
+fn assoc_struct_pos(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const TypeAnn>, ok: bool, p: Pos) -> bool {
+    if is_self_proj(path) { return report_bad_assoc_pos(a, ar, sc, path, ok, p); }
+    let mut i = 0 as u32;
+    while i < args.length() {
+        if walk_assoc_arg(a, ar, sc, args, i, ok, p) { return true; }
+        i = i + 1 as u32;
     }
-    return;
+    return false;
 }
-fn assoc_struct_pos(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const TypeAnn>, ok: bool, p: Pos) {
-    if is_self_proj(path) { report_bad_assoc_pos(a, ar, sc, path, ok, p); return; }
-    let mut i = 0 as u32;
-    while i < args.length() { walk_assoc_arg(a, ar, sc, args, i, ok, p); i = i + 1 as u32; }
-    return;
-}
-fn walk_assoc_arg(a: Allocator, ar: *Arena, sc: *const TyScope, args: *const Vec<*const TypeAnn>, i: u32, ok: bool, p: Pos) {
+fn walk_assoc_arg(a: Allocator, ar: *Arena, sc: *const TyScope, args: *const Vec<*const TypeAnn>, i: u32, ok: bool, p: Pos) -> bool {
     let sl = args.as_slice();
-    walk_assoc_pos(a, ar, sc, sl[i], ok, p);
-    return;
+    return walk_assoc_pos(a, ar, sc, sl[i], ok, p);
 }
-fn walk_assoc_tuple(a: Allocator, ar: *Arena, sc: *const TyScope, elems: *const Vec<*const TypeAnn>, p: Pos) {
+fn walk_assoc_tuple(a: Allocator, ar: *Arena, sc: *const TyScope, elems: *const Vec<*const TypeAnn>, p: Pos) -> bool {
     let mut i = 0 as u32;
-    while i < elems.length() { walk_assoc_arg(a, ar, sc, elems, i, false, p); i = i + 1 as u32; }
-    return;
+    while i < elems.length() {
+        if walk_assoc_arg(a, ar, sc, elems, i, false, p) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
 }
 fn is_self_proj(path: *const Vec<str>) -> bool {
     if path.length() != 2 as u32 { return false; }
     return str::eq(path.get(0 as u32) orelse "", "Self");
 }
-fn report_bad_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, ok: bool, p: Pos) {
-    if ok { return; }
+fn report_bad_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, ok: bool, p: Pos) -> bool {
+    if ok { return false; }
     unknown_type(a, ar, sc, path, false, p);
-    return;
+    return true;
 }
 
 // A method's `Self` IS the type it is registered against, so its signature
@@ -13677,7 +13700,8 @@ fn method_self_const(f: *const Func) -> bool {
 }
 fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>, ipos: Pos,
                    itbounds: *const Vec<TraitBound>,
-                   trait_name: str, f: *const Func, modpath: *const Vec<str>, impl_idx: u32, meth_idx: u32, out: *Vec<MethodInfo>) {
+                   trait_name: str, f: *const Func, modpath: *const Vec<str>, impl_idx: u32, meth_idx: u32,
+                   from_trait: bool, out: *Vec<MethodInfo>) {
     // A method on a generic struct with no parameters of its own carries the
     // impl's type parameters, bound at the call site from the receiver
     // instance.  A method-generic method keeps its own.
@@ -13694,7 +13718,17 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     // it unresolved rather than mangle a bogus `Pair_B_A` instance.
     let self_ty: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, target))));
     let msc = scope_with_tparams_self(sc, &tparams, self_ty);
-    check_method_assoc_positions(a, ar, sc, f);
+    // Three places a surviving projection is refused, and the reference reports
+    // each at a different line.  A method DECLARED IN A TRAIT is substituted when
+    // its default is specialised, so only what the substitution did not reach is
+    // refused, at the method.  An INHERENT impl's method is never substituted at
+    // all - there is no trait and no assoc table - so no position is legal, and
+    // it is refused at the method too.  A TRAIT IMPL's own method is compared
+    // against the trait, and the reference resolves that comparison at the impl
+    // block: this pass leaves it alone and `check_impl_method_sig` reports it
+    // one line above the method, where the reference does.
+    if from_trait { check_method_assoc_positions(a, ar, sc, f, true); }
+    else if str::eq(trait_name, "") { check_method_assoc_positions(a, ar, sc, f, false); }
     // Same rule as the conformance check: an impl method's signature RESOLVES at
     // the impl block, so an unknown type in its return is refused there.  Proved
     // by a shape where this call is the one that latches - the earlier attempt to
@@ -13717,7 +13751,7 @@ fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
     let n = methods.length();
     let sl = methods.as_slice();
     let mut i = 0 as u32;
-    while i < n { push_one_method(a, ar, sc, target, itparams, ipos, itbounds, trait_name, &sl[i], modpath, impl_idx, i, out); i = i + 1 as u32; }
+    while i < n { push_one_method(a, ar, sc, target, itparams, ipos, itbounds, trait_name, &sl[i], modpath, impl_idx, i, false, out); i = i + 1 as u32; }
 }
 // `own_idx` is the item's index WITHIN the list it was found in, and `modpath`
 // names that list — together they locate the impl at any depth, so a generic
@@ -14179,11 +14213,11 @@ fn register_one_default(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
     // only ever sees at top level — a trait declared inside a module keeps the
     // old, index-only locator and is out of scope here.
     let td_modpath: Vec<str> = empty_strs(a);
-    push_one_method(a, ar, sc, target, itparams, ipos, &no_itbounds, trait_name, f, &td_modpath, ti, j, out);
+    push_one_method(a, ar, sc, target, itparams, ipos, &no_itbounds, trait_name, f, &td_modpath, ti, j, true, out);
 }
 fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
                         impl_methods: *const Vec<Func>, td: *const TraitDecl, ti: u32, ipos: Pos,
-                        itparams: *const Vec<str>, out: *Vec<MethodInfo>) {
+                        itparams: *const Vec<str>, iassoc: *const Vec<FieldDef>, out: *Vec<MethodInfo>) {
     let n = td.trmethods.length();
     let ms = td.trmethods.as_slice();
     let mut j = 0 as u32;
@@ -14196,7 +14230,7 @@ fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
             sb.push_str("' required by trait '"); sb.push_str(td.trname); sb.push_str("'");
             tc_fail(ar, sc, ipos, str::from_slice(ar, sb.as_slice()));
         }
-        check_impl_method_sig(a, ar, sc, target, td.trname, &ms[j], itparams, impl_methods, ipos);
+        check_impl_method_sig(a, ar, sc, target, td.trname, &ms[j], itparams, impl_methods, iassoc, ipos);
         register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, td.trname, &ms[j], ti, j, itparams, ipos, out);
         j = j + 1 as u32;
     }
@@ -14217,7 +14251,8 @@ fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
 // type, a wrong return, a wrong arity, and an unknown type, all under `impl<A>`.
 // Abstaining looks like a check until you count what it lets through.
 fn check_impl_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
-                         trname: str, tm: *const Func, itparams: *const Vec<str>, impl_methods: *const Vec<Func>, ipos: Pos) {
+                         trname: str, tm: *const Func, itparams: *const Vec<str>, impl_methods: *const Vec<Func>,
+                         iassoc: *const Vec<FieldDef>, ipos: Pos) {
     let ii = impl_method_idx(impl_methods, tm.name);
     if ii < 0 as int { return; }
     let im: *const Func = &impl_methods.as_slice()[ii as u32];
@@ -14229,10 +14264,6 @@ fn check_impl_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *
         arity_mismatch_err(a, ar, sc, trname, tm.name, im.tparams.length(), tm.tparams.length(), "type ", im.pos);
         return;
     }
-    // `Self::Assoc` still has no head to project through in this collection
-    // scope, so a signature naming one abstains - the one case the reference
-    // reaches through its assoc substitution and the port does not.
-    if anns_mention_abstract(&tm.params, tm.ret_ty) || anns_mention_abstract(&im.params, im.ret_ty) { return; }
     let mtp = splice_tparams(a, itparams, &tm.tparams);
     let csc = scope_with_tparams(sc, &mtp);
     let tsl = tm.params.as_slice();
@@ -14242,7 +14273,16 @@ fn check_impl_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *
         // Only the TRAIT's side is substituted here, because the impl's own
         // parameters were already folded by the parser - in the positions the
         // reference folds them, and nowhere else.
-        let tt = resolve_sig_ty(a, ar, &csc, subst_self_ann(a, ar, tsl[k].pty, target, itparams), ipos);
+        let tsub = subst_assoc(a, ar, tsl[k].pty, target, itparams, iassoc);
+        // Whatever the substitution did not reach names nothing.  The reference
+        // resolves these two annotations with no assoc table within reach, so a
+        // surviving `Self::Assoc` - an impl naming one in its OWN signature, or a
+        // trait naming an assoc the impl never bound - falls through to `unknown
+        // type`.  The trait's side is resolved first there, so it is asked first
+        // here.
+        if walk_assoc_pos(a, ar, sc, tsub, false, ipos) { return; }
+        if walk_assoc_pos(a, ar, sc, isl[k].pty, false, ipos) { return; }
+        let tt = resolve_sig_ty(a, ar, &csc, tsub, ipos);
         let it = resolve_sig_ty(a, ar, &csc, isl[k].pty, ipos);
         if !typ_eq(tt, it) {
             let mut sb = StringBuilder::with_capacity(a, 112 as u32);
@@ -14256,7 +14296,8 @@ fn check_impl_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *
         }
         k = k + 1 as u32;
     }
-    if !ret_ann_matches(a, ar, &csc, target, itparams, tm.ret_ty, im.ret_ty, ipos) {
+    if ret_assoc_residue(a, ar, sc, target, itparams, iassoc, tm.ret_ty, im.ret_ty, ipos) { return; }
+    if !ret_ann_matches(a, ar, &csc, target, itparams, iassoc, tm.ret_ty, im.ret_ty, ipos) {
         let mut sb = StringBuilder::with_capacity(a, 72 as u32);
         sb.push_str("method '"); sb.push_str(tm.name);
         sb.push_str("' return type does not match trait '"); sb.push_str(trname); sb.push_str("'");
@@ -14275,54 +14316,6 @@ fn arity_mismatch_err(a: Allocator, ar: *Arena, sc: *const TyScope, trname: str,
     return;
 }
 
-fn anns_mention_abstract(params: *const Vec<Param>, ret: Option<*const TypeAnn>) -> bool {
-    let n = params.length();
-    let sl = params.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if ann_mentions_abstract(sl[i].pty) { return true; }
-        i = i + 1 as u32;
-    }
-    return match ret {
-        Option::Some(t) => ann_mentions_abstract(t)
-        | Option::None => false
-    };
-}
-// `Self::Item` and friends: a qualified path headed by Self is an associated
-// projection, resolvable only under the impl's pinned Self.
-fn ann_mentions_abstract(ann: *const TypeAnn) -> bool {
-    return match *ann {
-        TypeAnn::TyStruct { path, args } => struct_ann_abstract(&path, &args)
-        | TypeAnn::TyPtr(t) => ann_mentions_abstract(t)
-        | TypeAnn::TyOwnPtr(t) => ann_mentions_abstract(t)
-        | TypeAnn::TyConstPtr(t) => ann_mentions_abstract(t)
-        | TypeAnn::TyTuple(ts) => ann_list_abstract(&ts)
-        | TypeAnn::TyArray { elem, size } => ann_mentions_abstract(elem)
-        | TypeAnn::TyFnPtr { params, ret } => fnptr_ann_abstract(&params, ret)
-        | _o => false
-    };
-}
-fn struct_ann_abstract(path: *const Vec<str>, args: *const Vec<*const TypeAnn>) -> bool {
-    if path.length() > 1 as u32 && str::eq(path.as_slice()[0 as u32], "Self") { return true; }
-    return ann_list_abstract(args);
-}
-fn ann_list_abstract(ts: *const Vec<*const TypeAnn>) -> bool {
-    let n = ts.length();
-    let sl = ts.as_slice();
-    let mut i = 0 as u32;
-    while i < n {
-        if ann_mentions_abstract(sl[i]) { return true; }
-        i = i + 1 as u32;
-    }
-    return false;
-}
-fn fnptr_ann_abstract(params: *const Vec<*const TypeAnn>, ret: Option<*const TypeAnn>) -> bool {
-    if ann_list_abstract(params) { return true; }
-    return match ret {
-        Option::Some(t) => ann_mentions_abstract(t)
-        | Option::None => false
-    };
-}
 fn impl_method_idx(methods: *const Vec<Func>, name: str) -> int {
     let n = methods.length();
     let sl = methods.as_slice();
@@ -14330,11 +14323,25 @@ fn impl_method_idx(methods: *const Vec<Func>, name: str) -> int {
     while i < n { if str::eq(sl[i].name, name) { return i as int; } i = i + 1 as u32; }
     return 0 - 1 as int;
 }
+// The return's half of the same question, in the same order: the trait's side
+// after substitution, then the impl's side as written.
+fn ret_assoc_residue(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>,
+                     iassoc: *const Vec<FieldDef>, tret: Option<*const TypeAnn>, iret: Option<*const TypeAnn>, p: Pos) -> bool {
+    let bad_trait = match tret {
+        Option::Some(t) => walk_assoc_pos(a, ar, sc, subst_assoc(a, ar, t, target, itparams, iassoc), false, p)
+        | Option::None => false
+    };
+    if bad_trait { return true; }
+    return match iret {
+        Option::Some(t) => walk_assoc_pos(a, ar, sc, t, false, p)
+        | Option::None => false
+    };
+}
 fn ret_ann_matches(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>,
-                   tret: Option<*const TypeAnn>, iret: Option<*const TypeAnn>, p: Pos) -> bool {
+                   iassoc: *const Vec<FieldDef>, tret: Option<*const TypeAnn>, iret: Option<*const TypeAnn>, p: Pos) -> bool {
     return match tret {
         Option::Some(ta) => match iret {
-            Option::Some(ia) => typ_eq(resolve_sig_ty(a, ar, sc, subst_self_ann(a, ar, ta, target, itparams), p),
+            Option::Some(ia) => typ_eq(resolve_sig_ty(a, ar, sc, subst_assoc(a, ar, ta, target, itparams, iassoc), p),
                                        resolve_sig_ty(a, ar, sc, ia, p))
             | Option::None => false
         }
@@ -14357,21 +14364,61 @@ fn target_self_ann(a: Allocator, ar: *Arena, target: *const Vec<str>, itparams: 
     while i < itparams.length() { args.push(ann_struct(a, ar, tsl[i])); i = i + 1 as u32; }
     return ann_node(ar, TypeAnn::TyStruct { path: path, args: args });
 }
-fn subst_self_ann(a: Allocator, ar: *Arena, ann: *const TypeAnn, target: *const Vec<str>, itparams: *const Vec<str>) -> *const TypeAnn {
+// The reference's `subst_assoc`, arm for arm.  `Self` becomes the target, a
+// two-segment `Self::Assoc` becomes whatever the impl bound it to, and the walk
+// descends through a generic application's ARGUMENTS as well as through the
+// pointer wrappers - so `Option<Self::Val>` is substituted and not merely
+// carried.  `own *` has no arm on purpose: the reference has none either, and an
+// `own *Self` therefore reaches the resolver with its `Self` intact.
+fn subst_assoc(a: Allocator, ar: *Arena, ann: *const TypeAnn, target: *const Vec<str>, itparams: *const Vec<str>,
+               iassoc: *const Vec<FieldDef>) -> *const TypeAnn {
     return match *ann {
         TypeAnn::TySelf => target_self_ann(a, ar, target, itparams)
-        | TypeAnn::TyPtr(t) => tyann_node(ar, TypeAnn::TyPtr(subst_self_ann(a, ar, t, target, itparams)))
-        | TypeAnn::TyOwnPtr(t) => tyann_node(ar, TypeAnn::TyOwnPtr(subst_self_ann(a, ar, t, target, itparams)))
-        | TypeAnn::TyConstPtr(t) => tyann_node(ar, TypeAnn::TyConstPtr(subst_self_ann(a, ar, t, target, itparams)))
+        | TypeAnn::TyStruct { path, args } => subst_assoc_struct(a, ar, ann, &path, &args, target, itparams, iassoc)
+        | TypeAnn::TyPtr(t) => tyann_node(ar, TypeAnn::TyPtr(subst_assoc(a, ar, t, target, itparams, iassoc)))
+        | TypeAnn::TyConstPtr(t) => tyann_node(ar, TypeAnn::TyConstPtr(subst_assoc(a, ar, t, target, itparams, iassoc)))
         | _o => ann
     };
 }
+fn subst_assoc_struct(a: Allocator, ar: *Arena, ann: *const TypeAnn, path: *const Vec<str>, args: *const Vec<*const TypeAnn>,
+                      target: *const Vec<str>, itparams: *const Vec<str>, iassoc: *const Vec<FieldDef>) -> *const TypeAnn {
+    let psl = path.as_slice();
+    let plen = path.length();
+    let nargs = args.length();
+    if nargs == 0 as u32 && plen == 1 as u32 && str::eq(psl[0 as u32], "Self") {
+        return target_self_ann(a, ar, target, itparams);
+    }
+    // An assoc name the impl did not bind is left exactly as written; the
+    // completeness check is what reports it, and rewriting it here would hide
+    // the name the reader has to see.
+    if nargs == 0 as u32 && plen == 2 as u32 && str::eq(psl[0 as u32], "Self") {
+        return match assoc_ann(iassoc, psl[1 as u32]) {
+            Option::Some(t) => t
+            | Option::None => ann
+        };
+    }
+    let asl = args.as_slice();
+    let mut out: Vec<*const TypeAnn> = Vec::with_capacity(a, nargs + 1 as u32);
+    let mut i = 0 as u32;
+    while i < nargs { out.push(subst_assoc(a, ar, asl[i], target, itparams, iassoc)); i = i + 1 as u32; }
+    return tyann_node(ar, TypeAnn::TyStruct { path: copy_strs(a, path), args: out });
+}
+fn assoc_ann(iassoc: *const Vec<FieldDef>, name: str) -> Option<*const TypeAnn> {
+    let n = iassoc.length();
+    let sl = iassoc.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].name, name) { return Option::Some(sl[i].ty); }
+        i = i + 1 as u32;
+    }
+    return Option::None;
+}
 fn register_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, ti: u32,
                           target: *const Vec<str>, impl_methods: *const Vec<Func>, ipos: Pos,
-                          itparams: *const Vec<str>, out: *Vec<MethodInfo>) {
+                          itparams: *const Vec<str>, iassoc: *const Vec<FieldDef>, out: *Vec<MethodInfo>) {
     let sl = items.as_slice();
     match sl[ti] {
-        Item::Trait(td) => { register_td_defaults(a, ar, sc, target, impl_methods, &td, ti, ipos, itparams, out); }
+        Item::Trait(td) => { register_td_defaults(a, ar, sc, target, impl_methods, &td, ti, ipos, itparams, iassoc, out); }
         | _e => { }
     }
 }
@@ -14431,9 +14478,43 @@ fn collect_one_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items
             sb.push_str("unknown trait '"); sb.push_str(tname); sb.push_str("'");
             tc_fail(ar, sc, ib.ipos, str::from_slice(ar, sb.as_slice()));
         }
+        // A prelude trait has no declaration among the items, so the conformance
+        // comparison never runs for it - and `impl Iterator for X` is most of
+        // what uses associated types at all.  The half of that comparison which
+        // reads only the IMPL's own text needs no trait: an impl bound the type
+        // and has to name it.  Without this the rule held for a trait written in
+        // the file and lapsed for every trait the prelude declares, which is the
+        // shape of enforcement that looks complete and is not.
+        check_impl_sig_assoc(a, ar, sc, &ib.iitems, ib.ipos);
         return;
     }
-    register_impl_defaults(a, ar, sc, items, ti as u32, &ib.itarget, &ib.iitems, ib.ipos, &ib.itparams, out);
+    register_impl_defaults(a, ar, sc, items, ti as u32, &ib.itarget, &ib.iitems, ib.ipos, &ib.itparams, &ib.iassoc, out);
+}
+// The impl's own signatures, and only those: no trait is consulted, so this
+// answers for a prelude trait exactly as it does for a written one.
+fn check_impl_sig_assoc(a: Allocator, ar: *Arena, sc: *const TyScope, methods: *const Vec<Func>, ipos: Pos) {
+    let n = methods.length();
+    let sl = methods.as_slice();
+    let mut bad = false;
+    let mut i = 0 as u32;
+    while i < n && !bad {
+        bad = method_sig_assoc_residue(a, ar, sc, &sl[i], ipos);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn method_sig_assoc_residue(a: Allocator, ar: *Arena, sc: *const TyScope, f: *const Func, p: Pos) -> bool {
+    let n = f.params.length();
+    let ps = f.params.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if walk_assoc_pos(a, ar, sc, ps[i].pty, false, p) { return true; }
+        i = i + 1 as u32;
+    }
+    return match f.ret_ty {
+        Option::Some(rt) => walk_assoc_pos(a, ar, sc, rt, false, p)
+        | Option::None => false
+    };
 }
 fn collect_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, it: *const Item, out: *Vec<MethodInfo>) {
     match *it {

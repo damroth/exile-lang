@@ -1,0 +1,13 @@
+// The same hole on the other side of the arrow. A function pointer's RETURN is a
+// separate annotation from its parameters, so one file cannot stand for both:
+// a walk that descends into the parameter list and stops there is green here
+// while the program still compiles.
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn via(*const self, f: fn(int) -> Self::Val) -> int { return f(1) as int; }
+}
+struct Ones { n: u32 }
+impl Seq for Ones { type Val = u32; fn one(*const self) -> u32 { return self.n; } }
+fn cvt(v: int) -> u32 { return v as u32; }
+fn main() { let o = Ones { n: 7 }; println(o.via(cvt)); }

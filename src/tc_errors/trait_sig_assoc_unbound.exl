@@ -1,0 +1,15 @@
+// The TRAIT's side of the same question. Here the impl's signature is innocent -
+// it names `*const u32` - and the trait projects an associated type the impl
+// never bound. Substitution has nothing to put in its place, so it leaves the
+// name exactly as written and the resolver refuses it.
+//
+// Worth its own file because it proves the substitution is asked BEFORE the
+// comparison and reports what it could not do, rather than quietly comparing a
+// marker against a type.
+struct Own { v: u32 }
+trait Slot { type Val; fn at(*const self, p: *const Self::Nope) -> u32; }
+impl Slot for Own {
+    type Val = u32;
+    fn at(*const self, p: *const u32) -> u32 { return 5 as u32; }
+}
+fn main() { let o = Own { v: 1 as u32 }; let x = 2 as u32; println(o.at(&x)); }

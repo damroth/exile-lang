@@ -1,0 +1,10 @@
+// The tuple half of the same position question. Kept beside the owner file
+// because one shape is a lower bound: the report site moved for a whole class of
+// annotations, not for one spelling of it.
+struct Own { v: u32 }
+trait Seq { type Val; fn pair(*const self) -> (Self::Val, int); }
+impl Seq for Own {
+    type Val = u32;
+    fn pair(*const self) -> (Self::Val, int) { return (self.v, 1); }
+}
+fn main() { let o = Own { v: 1 as u32 }; let (x, k) = o.pair(); println(x as int + k); }

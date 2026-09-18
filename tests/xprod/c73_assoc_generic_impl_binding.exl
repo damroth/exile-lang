@@ -1,0 +1,29 @@
+// A GENERIC impl binds its associated type to its own type parameter, so the
+// substituted trait signature carries `T` and not a concrete type. The
+// comparison resolves both sides under the spliced parameter list, which is what
+// makes `T` on the trait's side and `T` on the impl's side the same variable.
+//
+// Separate from the concrete file because substituting the target is where a
+// generic impl is easy to get wrong: the impl's target is `Bx<T>`, not a bare
+// `Bx`, and an implementation that built the bare name would compare `Bx`
+// against `Bx<T>` and refuse a program that is correct.
+struct Bx<T> { v: T }
+
+trait Slot {
+    type Val;
+    fn at(*const self, p: *const Self::Val) -> int;
+    fn get(*const self) -> Self::Val;
+}
+
+impl<T> Slot for Bx<T> {
+    type Val = T;
+    fn at(*const self, p: *const T) -> int { return 1; }
+    fn get(*const self) -> T { return self.v; }
+}
+
+fn main() {
+    let b: Bx<int> = Bx { v: 9 };
+    let x = 4;
+    println(b.at(&x));
+    println(b.get());
+}

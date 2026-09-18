@@ -1,0 +1,16 @@
+// The verdict the abstention was hiding. Nothing here names a projection twice:
+// the trait declares its parameter as `*const Self::Val`, the impl binds
+// `Val = u32` and then writes `*const int`. That is an ordinary signature
+// mismatch, and the reference reports it as one.
+//
+// The port could not: its comparison bailed out whenever a projection appeared
+// on either side, so every impl of a trait whose signature mentions an
+// associated type went unchecked. A check that abstains looks like a check
+// until you count what it lets through.
+struct Own { v: u32 }
+trait Slot { type Val; fn at(*const self, p: *const Self::Val) -> u32; }
+impl Slot for Own {
+    type Val = u32;
+    fn at(*const self, p: *const int) -> u32 { return 5 as u32; }
+}
+fn main() { let o = Own { v: 1 as u32 }; let x = 2; println(o.at(&x)); }

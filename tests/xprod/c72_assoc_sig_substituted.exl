@@ -1,0 +1,37 @@
+// The accepting side of the projection rule, and the floor for the CHOICE.
+//
+// Every fixture that pins this round is a rejection, and there is a fix that
+// turns all of them green while destroying the feature: refuse any signature
+// that mentions `Self::Assoc` at all. This program is what that fix would break.
+// A trait may project its associated type in a parameter, in a return, and
+// inside a type application, and an impl that names the bound type conforms.
+//
+// It links and runs, so the substitution has to produce the right type and not
+// merely some type.
+struct Own { v: u32 }
+
+trait Slot {
+    type Val;
+    fn at(*const self, p: *const Self::Val) -> u32;
+    fn get(*const self) -> Self::Val;
+    fn wrap(*const self, o: Option<Self::Val>) -> u32;
+}
+
+impl Slot for Own {
+    type Val = u32;
+    fn at(*const self, p: *const u32) -> u32 { return *p; }
+    fn get(*const self) -> u32 { return self.v; }
+    fn wrap(*const self, o: Option<u32>) -> u32 {
+        return match o { Option::Some(x) => x | Option::None => 0 as u32 };
+    }
+}
+
+fn main() {
+    let o = Own { v: 7 as u32 };
+    let x = 5 as u32;
+    println(o.at(&x) as int);
+    println(o.get() as int);
+    println(o.wrap(Option::Some(3 as u32)) as int);
+    let empty: Option<u32> = Option::None;
+    println(o.wrap(empty) as int);
+}

@@ -16,3 +16,4 @@ chip_reject_launder_param:argument 1 of 'take': expected *u8, got *chip u8
 chip_reject_in_fn:expected expression
 chip_reject_on_let:memory a device touches is declared at module scope, as `extern var NAME: T chip reads` (or `chip writes`): the device keeps following it after any frame is gone, so it cannot be a local, a field or a parameter - a POINTER into such memory is spelled `*chip T`
 chip_reject_on_param:memory a device touches is declared at module scope, as `extern var NAME: T chip reads` (or `chip writes`): the device keeps following it after any frame is gone, so it cannot be a local, a field or a parameter - a POINTER into such memory is spelled `*chip T`
+chip_reject_assoc_projection:unknown type 'Self::Val'

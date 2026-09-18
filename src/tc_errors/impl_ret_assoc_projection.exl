@@ -1,0 +1,11 @@
+// The return half of the same rule. Separate from the parameter file because
+// the two sides of a signature are compared by different code - a loop over the
+// parameters, and one comparison for the return - so a fix that reaches only one
+// of them leaves the other silent.
+struct Own { v: u32 }
+trait Slot { type Val; fn get(*const self) -> Self::Val; }
+impl Slot for Own {
+    type Val = u32;
+    fn get(*const self) -> Self::Val { return self.v; }
+}
+fn main() { let o = Own { v: 7 as u32 }; println(o.get()); }

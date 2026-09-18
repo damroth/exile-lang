@@ -1,0 +1,14 @@
+// Same words, different line - which is why this is a file and not a footnote.
+// The projection stands under `own *`, a position the port already refused, but
+// it is written in the IMPL. The reference refuses it where it compares the two
+// signatures, at the impl block; the port refused it where it registered the
+// method, one line lower.
+//
+// A fixture that only asserted the message would have been green throughout.
+struct Own { v: u32 }
+trait Seq { type Val; fn mine(*const self, a: Allocator) -> own *Self::Val; }
+impl Seq for Own {
+    type Val = u32;
+    fn mine(*const self, a: Allocator) -> own *Self::Val { let p: own *u32 = a.alloc(); return p; }
+}
+fn main() { let o = Own { v: 1 as u32 }; let a = default_allocator(); let p = o.mine(a); a.free(p); }

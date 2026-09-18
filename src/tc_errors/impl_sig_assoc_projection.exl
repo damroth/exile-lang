@@ -1,0 +1,19 @@
+// An impl may not write `Self::Assoc` in its own signature, and this file is the
+// root case: the trait declares `type Val`, the impl binds it, and then names
+// the projection again instead of the type it just bound.
+//
+// The reference substitutes associated types into the TRAIT's side of the
+// conformance comparison and resolves the IMPL's side exactly as written. There
+// is no head called `Self` for a resolver to walk to, so the projection falls
+// through to `unknown type` - at the impl block, which is where that comparison
+// resolves, one line above the method.
+//
+// The port used to abstain from the whole comparison as soon as either side
+// mentioned a projection, so it compiled this.
+struct Own { v: u32 }
+trait Slot { type Val; fn at(*const self, p: *const Self::Val) -> u32; }
+impl Slot for Own {
+    type Val = u32;
+    fn at(*const self, p: *const Self::Val) -> u32 { return 5 as u32; }
+}
+fn main() { let o = Own { v: 1 as u32 }; let x = 2 as u32; println(o.at(&x)); }

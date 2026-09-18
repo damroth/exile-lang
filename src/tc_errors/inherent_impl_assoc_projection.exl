@@ -1,0 +1,14 @@
+// The third place a projection is refused, and the one with no trait in sight.
+// An inherent impl has no associated types to bind, so `Self::Val` names nothing
+// at any position - not merely at the positions the reference's substitution
+// fails to reach. The reference reports it where it resolves the method's own
+// signature, which is at the method.
+//
+// The pair of positions is the point: the file above has the same projection in
+// a TRAIT impl and is refused one line higher, at the impl block. Two report
+// sites, two files.
+struct Own { v: u32 }
+impl Own {
+    pub fn at(*const self, p: Self::Val) -> u32 { return p; }
+}
+fn main() { let o = Own { v: 1 as u32 }; println(o.at(2 as u32)); }

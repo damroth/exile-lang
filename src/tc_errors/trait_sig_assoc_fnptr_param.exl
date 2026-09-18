@@ -1,0 +1,15 @@
+// A function pointer is not in the reference's substitution set, so a projection
+// inside one survives into resolution and the program is refused - exactly as
+// the tuple, the array and the owner are refused.
+//
+// The port's walk over "where may a projection stand" was written from the
+// shapes that had failed, and a function pointer had not. It compiled this.
+trait Seq {
+    type Val;
+    fn one(*const self) -> Self::Val;
+    fn via(*const self, f: fn(Self::Val) -> int) -> int { return f(self.one()); }
+}
+struct Ones { n: u32 }
+impl Seq for Ones { type Val = u32; fn one(*const self) -> u32 { return self.n; } }
+fn cvt(v: u32) -> int { return v as int; }
+fn main() { let o = Ones { n: 7 }; println(o.via(cvt)); }
