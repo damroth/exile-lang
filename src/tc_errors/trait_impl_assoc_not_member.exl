@@ -1,0 +1,11 @@
+// The membership half of the associated-type check: every name the trait
+// declares is bound, AND every name bound is one the trait declares. An impl can
+// satisfy the first and still invent a third.
+struct P { x: int }
+trait Sh { type Val; fn one(*const self) -> Self::Val; }
+impl Sh for P {
+    type Val = int;
+    type Extra = bool;
+    fn one(*const self) -> int { return 1; }
+}
+fn main() { let p = P { x: 1 }; println(p.one()); }

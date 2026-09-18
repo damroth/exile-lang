@@ -1,0 +1,36 @@
+// The accepting side of the traits whose description is a BUILT table rather
+// than parsed source, and whose rows are the only description of them there is:
+// Eq, its supertrait relationship with Hash, and Clone.
+//
+// A PARITY WITNESS rather than a floor: a wrong row in that table also changes
+// what the rejection fixtures say, so they go red too. What only this file shows
+// is that a correct program is still accepted - and that `Hash` finds its
+// required `impl Eq` written AFTER it, which the supertrait question has to
+// tolerate and no rejection exercises.
+//
+// `Display` is absent, and its absence is a measurement rather than an
+// oversight: naming a `StringBuilder` anywhere makes the two emissions differ by
+// two lines, so a Display impl cannot sit in a byte-parity fixture until that is
+// settled. The refusing direction for Display is pinned in the rejection corpus,
+// which compares messages and not artefacts.
+struct P { x: int }
+
+impl Hash for P {
+    fn hash(*const self) -> u32 { return self.x as u32; }
+}
+
+impl Eq for P {
+    fn eq(*const self, other: *const P) -> bool { return self.x == other.x; }
+}
+
+impl Clone for P {
+    fn clone(*const self) -> P { return P { x: self.x }; }
+}
+
+fn main() {
+    let p = P { x: 5 };
+    let q = p.clone();
+    println(p.eq(&q));
+    println(p.hash() as int);
+    println(q.x);
+}

@@ -1,0 +1,9 @@
+// `Display` has no declaration in the port's prelude source, so its description
+// lives in a built table - a different lookup from `Iterator`'s, and therefore a
+// different floor. The signature is `fn fmt(*const self, out: *StringBuilder)`
+// with no return, and an impl that returns something does not conform.
+struct P { x: int }
+impl Display for P {
+    fn fmt(*const self, sb: *StringBuilder) -> int { return 1; }
+}
+fn main() { let p = P { x: 1 }; println(p.x); }

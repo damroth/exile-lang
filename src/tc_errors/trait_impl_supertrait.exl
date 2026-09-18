@@ -1,0 +1,7 @@
+// `trait B: A` on a user trait. A generic function bounded by `B` may call `A`'s
+// methods, so a target that implements only `B` is a hole the bound cannot see.
+struct P { x: int }
+trait A { fn a(*const self) -> int; }
+trait B: A { fn b(*const self) -> int; }
+impl B for P { fn b(*const self) -> int { return 2; } }
+fn main() { let p = P { x: 1 }; println(p.b()); }

@@ -1,0 +1,13 @@
+// `impl Iterator for X` reached no conformance check at all, because the port
+// kept its prelude traits as a list of NAMES and the check needs a declaration.
+// The prelude's own source declares `trait Iterator { type Item; ... }`, so the
+// question is asked against that text and not against a second description of it.
+struct Ticks { n: int }
+impl Iterator for Ticks {
+    fn next(*self) -> Option<int> {
+        if self.n >= 2 { return Option::None; }
+        self.n = self.n + 1;
+        Option::Some(self.n)
+    }
+}
+fn main() { let mut t = Ticks { n: 0 }; match t.next() { Option::Some(v) => { println(v); } | Option::None => { println(9); } } }

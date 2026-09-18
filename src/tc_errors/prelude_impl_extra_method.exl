@@ -1,0 +1,11 @@
+// Nothing outside the trait's surface. Worth its own file because the answer
+// comes from the trait's METHOD LIST rather than from the impl's, and because
+// the reference reports it at the method while everything above it reports at
+// the block.
+struct Ticks { n: int }
+impl Iterator for Ticks {
+    type Item = int;
+    fn next(*self) -> Option<int> { return Option::None; }
+    fn helper(*const self) -> int { return 1; }
+}
+fn main() { let t = Ticks { n: 0 }; println(t.helper()); }

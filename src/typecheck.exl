@@ -14178,6 +14178,132 @@ fn item_trait_name(it: *const Item) -> str {
         | _e => ""
     };
 }
+// How many traits in the WHOLE program carry this last name.  The reference
+// resolves a written trait against every declaration it knows, so two traits of
+// the same name in different modules are ambiguous rather than a first-one-wins.
+fn trait_name_count(items: *const Vec<Item>, name: str) -> u32 {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut c = 0 as u32;
+    let mut i = 0 as u32;
+    while i < n { c = c + trait_name_count_one(&sl[i], name); i = i + 1 as u32; }
+    return c;
+}
+fn trait_name_count_one(it: *const Item, name: str) -> u32 {
+    return match *it {
+        Item::Trait(td) => bool_to_u32(str::eq(td.trname, name))
+        | Item::Module(md) => trait_name_count(&md.mitems, name)
+        | _e => 0 as u32
+    };
+}
+fn bool_to_u32(b: bool) -> u32 { if b { return 1 as u32; } return 0 as u32; }
+// Several traits of that name, and the impl wrote a qualified path that names
+// exactly one of them: the reference prefers that one over refusing.  Ambiguity
+// is about what the AUTHOR wrote, not about how many declarations exist.
+fn trait_path_is_exact(a: Allocator, items: *const Vec<Item>, ib: *const ImplBlock) -> bool {
+    let empty0: Vec<str> = empty_strs(a);
+    return match ib.itrait {
+        Option::Some(tp) => trait_exact_in(a, items, &empty0, &tp)
+        | Option::None => false
+    };
+}
+fn trait_exact_in(a: Allocator, items: *const Vec<Item>, smod: *const Vec<str>, want: *const Vec<str>) -> bool {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if trait_exact_one(a, &sl[i], smod, want) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn trait_exact_one(a: Allocator, it: *const Item, smod: *const Vec<str>, want: *const Vec<str>) -> bool {
+    return match *it {
+        Item::Trait(td) => mod_path_is(smod, td.trname, want)
+        | Item::Module(md) => trait_exact_in(a, &md.mitems, &path_push(a, smod, md.mname), want)
+        | _e => false
+    };
+}
+fn mod_path_is(smod: *const Vec<str>, name: str, want: *const Vec<str>) -> bool {
+    if want.length() != smod.length() + 1 as u32 { return false; }
+    let msl = smod.as_slice();
+    let wsl = want.as_slice();
+    let mut i = 0 as u32;
+    while i < smod.length() {
+        if !str::eq(msl[i], wsl[i]) { return false; }
+        i = i + 1 as u32;
+    }
+    return str::eq(name, wsl[smod.length()]);
+}
+// The checks for a trait the program declared, wherever it is declared.  A
+// module-nested trait keeps the port's older, index-only locator for DEFAULT
+// registration, so this runs the questions and leaves that where it was.
+fn conform_in(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>,
+              items: *const Vec<Item>, smod: *const Vec<str>, name: str,
+              ib: *const ImplBlock, modpath: *const Vec<str>, out: *Vec<MethodInfo>) -> bool {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if conform_one(a, ar, sc, root, &sl[i], smod, name, ib, modpath, out) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn conform_one(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>,
+               it: *const Item, smod: *const Vec<str>, name: str,
+               ib: *const ImplBlock, modpath: *const Vec<str>, out: *Vec<MethodInfo>) -> bool {
+    return match *it {
+        Item::Trait(td) => conform_against_td(a, ar, sc, root, &td, smod, name, ib, modpath, out)
+        | Item::Module(md) => conform_in(a, ar, sc, root, &md.mitems, &path_push(a, smod, md.mname), name, ib, modpath, out)
+        | _e => false
+    };
+}
+fn conform_against_td(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>,
+                      td: *const TraitDecl, smod: *const Vec<str>, name: str,
+                      ib: *const ImplBlock, modpath: *const Vec<str>, out: *Vec<MethodInfo>) -> bool {
+    if !str::eq(td.trname, name) { return false; }
+    let disp = trait_display_path(a, ar, smod, td.trname);
+    check_assoc_names(a, ar, sc, &td.trassoc, disp, &ib.iassoc, ib.ipos);
+    check_supertraits(a, ar, sc, root, &td.trsupers, disp, path_last(&ib.itarget), ib.ipos);
+    check_orphan(a, ar, sc, disp, smod, ib, modpath, ib.ipos);
+    register_td_defaults(a, ar, sc, &ib.itarget, &ib.iitems, td, 0 as u32, ib.ipos,
+                         &ib.itparams, &ib.iassoc, disp, false, out);
+    return true;
+}
+// D3 - an impl must live in the trait's module or the target type's module, so a
+// third party cannot bolt a foreign trait onto a foreign type from anywhere at
+// all.  The reference asks this BEFORE it resolves the comparison's types, which
+// is also why the port answered a module-nested orphan with `unknown type`.
+fn check_orphan(a: Allocator, ar: *Arena, sc: *const TyScope, trdisp: str, trait_mod: *const Vec<str>,
+                ib: *const ImplBlock, modpath: *const Vec<str>, ipos: Pos) {
+    if paths_eq(modpath, trait_mod) { return; }
+    let tpath = impl_target_abs(a, ar, sc, &ib.itarget);
+    // An unresolvable target is somebody else's verdict, not this rule's.
+    if tpath.length() == 0 as u32 { return; }
+    let tmod = path_prefix(a, &tpath, tpath.length() - 1 as u32);
+    if paths_eq(modpath, &tmod) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 160 as u32);
+    sb.push_str("orphan 'impl "); sb.push_str(trdisp);
+    sb.push_str(" for "); sb.push_str(path_display(a, ar, &tpath));
+    sb.push_str("': a trait impl must live in the trait's module or the target type's module");
+    tc_fail(ar, sc, ipos, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn impl_target_abs(a: Allocator, ar: *Arena, sc: *const TyScope, written: *const Vec<str>) -> Vec<str> {
+    let sp = scope_lookup_ty(a, ar, sc.sc_fstructs, sc.sc_modpath, written);
+    if sp.length() > 0 as u32 { return sp; }
+    return scope_lookup_ty(a, ar, sc.sc_fenums, sc.sc_modpath, written);
+}
+fn trait_display_path(a: Allocator, ar: *Arena, smod: *const Vec<str>, name: str) -> str {
+    if smod.length() == 0 as u32 { return name; }
+    let mut full: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = smod.as_slice();
+    let mut i = 0 as u32;
+    while i < smod.length() { full.push(sl[i]); i = i + 1 as u32; }
+    full.push(name);
+    return path_display(a, ar, &full);
+}
 fn find_trait_idx(items: *const Vec<Item>, name: str) -> int {
     let n = items.length();
     let sl = items.as_slice();
@@ -14215,9 +14341,14 @@ fn register_one_default(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
     let td_modpath: Vec<str> = empty_strs(a);
     push_one_method(a, ar, sc, target, itparams, ipos, &no_itbounds, trait_name, f, &td_modpath, ti, j, true, out);
 }
+// `do_register` separates the two jobs this walk does.  A prelude trait's
+// defaults are already in the method table by another route, so its impls want
+// the CHECKS and not the registration - and the checks stay interleaved exactly
+// as they were, because which of two errors latches first is observable.
 fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>,
                         impl_methods: *const Vec<Func>, td: *const TraitDecl, ti: u32, ipos: Pos,
-                        itparams: *const Vec<str>, iassoc: *const Vec<FieldDef>, out: *Vec<MethodInfo>) {
+                        itparams: *const Vec<str>, iassoc: *const Vec<FieldDef>, trdisp: str,
+                        do_register: bool, out: *Vec<MethodInfo>) {
     let n = td.trmethods.length();
     let ms = td.trmethods.as_slice();
     let mut j = 0 as u32;
@@ -14227,13 +14358,39 @@ fn register_td_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, target: *c
         if !impl_has_method(impl_methods, ms[j].name) && !name_in(&td.trdefaults, ms[j].name) {
             let mut sb = StringBuilder::with_capacity(a, 64 as u32);
             sb.push_str("missing method '"); sb.push_str(ms[j].name);
-            sb.push_str("' required by trait '"); sb.push_str(td.trname); sb.push_str("'");
+            sb.push_str("' required by trait '"); sb.push_str(trdisp); sb.push_str("'");
             tc_fail(ar, sc, ipos, str::from_slice(ar, sb.as_slice()));
         }
-        check_impl_method_sig(a, ar, sc, target, td.trname, &ms[j], itparams, impl_methods, iassoc, ipos);
-        register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, td.trname, &ms[j], ti, j, itparams, ipos, out);
+        check_impl_method_sig(a, ar, sc, target, trdisp, &ms[j], itparams, impl_methods, iassoc, ipos);
+        if do_register { register_one_default(a, ar, sc, target, impl_methods, &td.trdefaults, td.trname, &ms[j], ti, j, itparams, ipos, out); }
         j = j + 1 as u32;
     }
+    check_impl_surface(a, ar, sc, impl_methods, td, trdisp);
+}
+// Nothing outside the trait's surface.  The reference asks this LAST, after every
+// declared method has had its turn, so a missing method is reported before a
+// stray one - and the stray one is reported at the METHOD, not at the block.
+fn check_impl_surface(a: Allocator, ar: *Arena, sc: *const TyScope, impl_methods: *const Vec<Func>, td: *const TraitDecl, trdisp: str) {
+    let n = impl_methods.length();
+    let sl = impl_methods.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if !trait_declares_method(td, sl[i].name) {
+            let mut sb = StringBuilder::with_capacity(a, 72 as u32);
+            sb.push_str("method '"); sb.push_str(sl[i].name);
+            sb.push_str("' is not a member of trait '"); sb.push_str(trdisp); sb.push_str("'");
+            tc_fail(ar, sc, sl[i].pos, str::from_slice(ar, sb.as_slice()));
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn trait_declares_method(td: *const TraitDecl, name: str) -> bool {
+    let n = td.trmethods.length();
+    let sl = td.trmethods.as_slice();
+    let mut i = 0 as u32;
+    while i < n { if str::eq(sl[i].name, name) { return true; } i = i + 1 as u32; }
+    return false;
 }
 // Two positions, and the corpus is what separated them.  The RESOLUTION of an
 // annotation runs at the impl block's position - the reference resolves this
@@ -14418,13 +14575,58 @@ fn register_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *
                           itparams: *const Vec<str>, iassoc: *const Vec<FieldDef>, out: *Vec<MethodInfo>) {
     let sl = items.as_slice();
     match sl[ti] {
-        Item::Trait(td) => { register_td_defaults(a, ar, sc, target, impl_methods, &td, ti, ipos, itparams, iassoc, out); }
+        Item::Trait(td) => { register_td_defaults(a, ar, sc, target, impl_methods, &td, ti, ipos, itparams, iassoc, td.trname, true, out); }
         | _e => { }
     }
 }
 // The prelude's traits are BUILT-IN here where the reference's are prepended
 // SOURCE — same split as the print allowlist's types.  Without the catalogue,
 // `impl Display for X` (no user decl anywhere) would be an "unknown trait".
+// ===== prelude traits that nothing DECLARES =====
+//
+// The reference prepends a declaration for every prelude trait to the program's
+// item list, so `impl Eq for X` is checked by exactly the code that checks a
+// trait the program wrote. The port's prelude SOURCE declares `Iterator` and
+// nothing else, so the rest of them existed only as names in
+// `is_prelude_trait` - and an impl of one reached no conformance check at all.
+//
+// `Iterator` is deliberately NOT here. It is declared in `prelude_source`, and
+// answering the same question from two tables is how they drift: the one that is
+// read stays right and the one that is not goes quietly stale. The lookup asks
+// the prelude's own items first, and falls through to this table only for a name
+// that has no declaration to read.
+fn pt_param(name: str, ty: *const TypeAnn) -> Param {
+    let no_reg: Option<str> = Option::None;
+    return Param { pname: name, pty: ty, is_mut: false, preg: no_reg };
+}
+fn pt_sig(a: Allocator, name: str, params: Vec<Param>, ret: Option<*const TypeAnn>,
+          tparams: Vec<str>, tbounds: Vec<TraitBound>) -> Func {
+    let body: Vec<Stmt> = Vec::with_capacity(a, 8 as u32);
+    let no_str: Option<str> = Option::None;
+    return Func { name: name, c_name: name, tparams: tparams, tbounds: tbounds, params: params,
+                  ret_ty: ret, body: body, is_pub: true, is_extern: false, is_variadic: false,
+                  amiga_lib: no_str, tier_hint: no_str, must_use: false, escapes_hatch: false,
+                  pos: pos::Pos::prelude() };
+}
+fn pt_self(ar: *Arena) -> *const TypeAnn { return ann_node(ar, TypeAnn::TySelf); }
+fn pt_cptr_self(ar: *Arena) -> *const TypeAnn { return ann_node(ar, TypeAnn::TyConstPtr(pt_self(ar))); }
+fn pt_params0(a: Allocator, p0: Param) -> Vec<Param> {
+    let mut v: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    v.push(p0);
+    return v;
+}
+fn pt_params1(a: Allocator, p0: Param, p1: Param) -> Vec<Param> {
+    let mut v: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    v.push(p0); v.push(p1);
+    return v;
+}
+fn pt_no_tp(a: Allocator) -> Vec<str> { return Vec::with_capacity(a, 8 as u32); }
+fn pt_no_tb(a: Allocator) -> Vec<TraitBound> { return Vec::with_capacity(a, 8 as u32); }
+fn pt_names1(a: Allocator, n0: str) -> Vec<str> {
+    let mut v: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    v.push(n0);
+    return v;
+}
 fn is_prelude_trait(name: str) -> bool {
     return str::eq(name, "Display") || str::eq(name, "Debug")
         || str::eq(name, "Eq") || str::eq(name, "Hash") || str::eq(name, "Clone")
@@ -14432,11 +14634,78 @@ fn is_prelude_trait(name: str) -> bool {
         || str::eq(name, "Fn0") || str::eq(name, "Fn1") || str::eq(name, "Fn2")
         || str::eq(name, "Fn3") || str::eq(name, "Fn4");
 }
+fn pt_fn_trait(a: Allocator, ar: *Arena, arity: u32, assoc: *Vec<str>, methods: *Vec<Func>) {
+    let mut params: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    params.push(pt_param("self", pt_cptr_self(ar)));
+    // `Fn1` names its single argument `Arg`; every wider arity numbers them.
+    if arity == 1 as u32 {
+        assoc.push("Arg");
+        params.push(pt_param("a", ann_proj(a, ar, "Self", "Arg")));
+    } else {
+        if arity >= 1 as u32 { assoc.push("Arg1"); params.push(pt_param("a", ann_proj(a, ar, "Self", "Arg1"))); }
+        if arity >= 2 as u32 { assoc.push("Arg2"); params.push(pt_param("b", ann_proj(a, ar, "Self", "Arg2"))); }
+        if arity >= 3 as u32 { assoc.push("Arg3"); params.push(pt_param("c", ann_proj(a, ar, "Self", "Arg3"))); }
+        if arity >= 4 as u32 { assoc.push("Arg4"); params.push(pt_param("d", ann_proj(a, ar, "Self", "Arg4"))); }
+    }
+    assoc.push("Output");
+    methods.push(pt_sig(a, "call", params, Option::Some(ann_proj(a, ar, "Self", "Output")),
+                        pt_no_tp(a), pt_no_tb(a)));
+}
+fn prelude_trait_decl(a: Allocator, ar: *Arena, name: str) -> TraitDecl {
+    let mut assoc: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut supers: Vec<Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    let mut methods: Vec<Func> = Vec::with_capacity(a, 8 as u32);
+    let mut defaults: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    if str::eq(name, "Fn0") { pt_fn_trait(a, ar, 0 as u32, &assoc, &methods); }
+    else if str::eq(name, "Fn1") { pt_fn_trait(a, ar, 1 as u32, &assoc, &methods); }
+    else if str::eq(name, "Fn2") { pt_fn_trait(a, ar, 2 as u32, &assoc, &methods); }
+    else if str::eq(name, "Fn3") { pt_fn_trait(a, ar, 3 as u32, &assoc, &methods); }
+    else if str::eq(name, "Fn4") { pt_fn_trait(a, ar, 4 as u32, &assoc, &methods); }
+    else if str::eq(name, "Eq") {
+        methods.push(pt_sig(a, "eq", pt_params1(a, pt_param("self", pt_cptr_self(ar)),
+                                                pt_param("other", pt_cptr_self(ar))),
+                            Option::Some(ann_bool(ar)), pt_no_tp(a), pt_no_tb(a)));
+        methods.push(pt_sig(a, "ne", pt_params1(a, pt_param("self", pt_cptr_self(ar)),
+                                                pt_param("other", pt_cptr_self(ar))),
+                            Option::Some(ann_bool(ar)), pt_no_tp(a), pt_no_tb(a)));
+        defaults.push("ne");
+    }
+    else if str::eq(name, "Clone") {
+        methods.push(pt_sig(a, "clone", pt_params0(a, pt_param("self", pt_cptr_self(ar))),
+                            Option::Some(pt_self(ar)), pt_no_tp(a), pt_no_tb(a)));
+    }
+    else if str::eq(name, "Hash") {
+        supers.push(pt_names1(a, "Eq"));
+        methods.push(pt_sig(a, "hash", pt_params0(a, pt_param("self", pt_cptr_self(ar))),
+                            Option::Some(ann_u32(ar)), pt_no_tp(a), pt_no_tb(a)));
+    }
+    else if str::eq(name, "Display") { pt_fmt_trait(a, ar, "fmt", &methods); }
+    else if str::eq(name, "Debug") { pt_fmt_trait(a, ar, "fmt_debug", &methods); }
+    return TraitDecl { trname: name, trassoc: assoc, trsupers: supers, trmethods: methods,
+                       trdefaults: defaults, trpos: pos::Pos::prelude(), tris_pub: true };
+}
+// Display and Debug differ in ONE thing - the method's name - because exile has a
+// flat per-type method namespace and a type implementing both would collide.
+fn pt_fmt_trait(a: Allocator, ar: *Arena, mname: str, methods: *Vec<Func>) {
+    let no_ret: Option<*const TypeAnn> = Option::None;
+    let out_ty = ann_node(ar, TypeAnn::TyPtr(ann_struct(a, ar, "StringBuilder")));
+    methods.push(pt_sig(a, mname, pt_params1(a, pt_param("self", pt_cptr_self(ar)),
+                                             pt_param("out", out_ty)),
+                        no_ret, pt_no_tp(a), pt_no_tb(a)));
+}
 // Every associated type the trait declares must be pinned by the impl.
 fn check_impl_assoc(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
                     ti: u32, iassoc: *const Vec<FieldDef>, ipos: Pos) {
     match items.as_slice()[ti] {
         Item::Trait(td) => { check_assoc_names(a, ar, sc, &td.trassoc, td.trname, iassoc, ipos); }
+        | _e => { }
+    }
+    return;
+}
+fn check_impl_supers(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+                     ti: u32, target: str, ipos: Pos) {
+    match items.as_slice()[ti] {
+        Item::Trait(td) => { check_supertraits(a, ar, sc, items, &td.trsupers, td.trname, target, ipos); }
         | _e => { }
     }
     return;
@@ -14455,6 +14724,22 @@ fn check_assoc_names(a: Allocator, ar: *Arena, sc: *const TyScope, want: *const 
         }
         i = i + 1 as u32;
     }
+    // The other direction, and it is a separate walk in the reference too:
+    // completeness asks whether every declared name was bound, membership asks
+    // whether every bound name was declared.  An impl could satisfy the first
+    // and still invent a third associated type nobody asked for.
+    let bn = iassoc.length();
+    let bsl = iassoc.as_slice();
+    let mut k = 0 as u32;
+    while k < bn {
+        if !name_in(want, bsl[k].name) {
+            let mut sb = StringBuilder::with_capacity(a, 88 as u32);
+            sb.push_str("associated type '"); sb.push_str(bsl[k].name);
+            sb.push_str("' is not a member of trait '"); sb.push_str(trname); sb.push_str("'");
+            tc_fail(ar, sc, ipos, str::from_slice(ar, sb.as_slice()));
+        }
+        k = k + 1 as u32;
+    }
     return;
 }
 fn assoc_provided(iassoc: *const Vec<FieldDef>, name: str) -> bool {
@@ -14467,28 +14752,65 @@ fn assoc_provided(iassoc: *const Vec<FieldDef>, name: str) -> bool {
     }
     return false;
 }
-fn collect_one_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, ib: *const ImplBlock, out: *Vec<MethodInfo>) {
+fn collect_one_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+                             prelude: *const Vec<Item>, ib: *const ImplBlock,
+                             modpath: *const Vec<str>, out: *Vec<MethodInfo>) {
     let tname = impl_trait_name(ib);
     if str::eq(tname, "") { return; }
-    let ti = find_trait_idx(items, tname);
-    if ti >= 0 as int { check_impl_assoc(a, ar, sc, items, ti as u32, &ib.iassoc, ib.ipos); }
-    if ti < 0 as int {
-        if !is_prelude_trait(tname) {
-            let mut sb = StringBuilder::with_capacity(a, 48 as u32);
-            sb.push_str("unknown trait '"); sb.push_str(tname); sb.push_str("'");
-            tc_fail(ar, sc, ib.ipos, str::from_slice(ar, sb.as_slice()));
-        }
-        // A prelude trait has no declaration among the items, so the conformance
-        // comparison never runs for it - and `impl Iterator for X` is most of
-        // what uses associated types at all.  The half of that comparison which
-        // reads only the IMPL's own text needs no trait: an impl bound the type
-        // and has to name it.  Without this the rule held for a trait written in
-        // the file and lapsed for every trait the prelude declares, which is the
-        // shape of enforcement that looks complete and is not.
-        check_impl_sig_assoc(a, ar, sc, &ib.iitems, ib.ipos);
+    // The impl's own module is the scope its annotations resolve in.  Running the
+    // comparison from the root made every module-nested target an `unknown type`
+    // the moment the walk started descending into modules at all.
+    let msc = scope_with_modpath(sc, modpath);
+    // Two traits of that name, and the written path does not pick one: the
+    // reference refuses rather than taking the first.  The port used to say
+    // `unknown trait`, which sends the reader looking for a declaration that is
+    // there twice over.
+    if trait_name_count(items, tname) > 1 as u32 && !trait_path_is_exact(a, items, ib) {
+        let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+        sb.push_str("ambiguous trait '"); sb.push_str(tname);
+        // The reference's wording, em-dash included: a diagnostic is an interface,
+        // and this one is compared byte for byte.
+        sb.push_str("' — multiple traits with that name; qualify the path");
+        tc_fail(ar, &msc, ib.ipos, str::from_slice(ar, sb.as_slice()));
         return;
     }
-    register_impl_defaults(a, ar, sc, items, ti as u32, &ib.itarget, &ib.iitems, ib.ipos, &ib.itparams, &ib.iassoc, out);
+    let ti = find_trait_idx(items, tname);
+    if ti >= 0 as int {
+        check_impl_assoc(a, ar, &msc, items, ti as u32, &ib.iassoc, ib.ipos);
+        check_impl_supers(a, ar, &msc, items, ti as u32, path_last(&ib.itarget), ib.ipos);
+        let troot0: Vec<str> = empty_strs(a);
+        check_orphan(a, ar, &msc, tname, &troot0, ib, modpath, ib.ipos);
+    }
+    if ti < 0 as int {
+        // The order is the lookup's, not a preference: a trait the program
+        // declared - at any depth - answers first, then one the PRELUDE SOURCE
+        // declares, and only a name with no declaration anywhere reaches the
+        // built table.  Asking the table first is what made a parsed
+        // declaration invisible and its assoc list read as empty.
+        let nested: Vec<str> = empty_strs(a);
+        if conform_in(a, ar, &msc, items, items, &nested, tname, ib, modpath, out) { return; }
+        if conform_in(a, ar, &msc, items, prelude, &nested, tname, ib, modpath, out) { return; }
+        // Declared nowhere, but named by `is_prelude_trait`: the built table is
+        // the only description there is.
+        if is_prelude_trait(tname) {
+            let td = prelude_trait_decl(a, ar, tname);
+            check_assoc_names(a, ar, &msc, &td.trassoc, td.trname, &ib.iassoc, ib.ipos);
+            check_supertraits(a, ar, &msc, items, &td.trsupers, td.trname, path_last(&ib.itarget), ib.ipos);
+            let troot: Vec<str> = empty_strs(a);
+            check_orphan(a, ar, &msc, td.trname, &troot, ib, modpath, ib.ipos);
+            register_td_defaults(a, ar, &msc, &ib.itarget, &ib.iitems, &td, 0 as u32, ib.ipos,
+                                 &ib.itparams, &ib.iassoc, td.trname, false, out);
+            return;
+        }
+        let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+        sb.push_str("unknown trait '"); sb.push_str(tname); sb.push_str("'");
+        tc_fail(ar, &msc, ib.ipos, str::from_slice(ar, sb.as_slice()));
+        // No trait to compare against, so the impl's own text is all there is to
+        // read: a `Self::Assoc` in its signature names nothing either way.
+        check_impl_sig_assoc(a, ar, &msc, &ib.iitems, ib.ipos);
+        return;
+    }
+    register_impl_defaults(a, ar, &msc, items, ti as u32, &ib.itarget, &ib.iitems, ib.ipos, &ib.itparams, &ib.iassoc, out);
 }
 // The impl's own signatures, and only those: no trait is consulted, so this
 // answers for a prelude trait exactly as it does for a written one.
@@ -14516,20 +14838,94 @@ fn method_sig_assoc_residue(a: Allocator, ar: *Arena, sc: *const TyScope, f: *co
         | Option::None => false
     };
 }
-fn collect_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, it: *const Item, out: *Vec<MethodInfo>) {
+// Every `impl Trait for Target` in the program, by NAME on both sides.  A
+// supertrait's impl may be written before or after the impl that requires it, so
+// the question can only be asked against the whole program, never against what
+// has been walked so far.
+struct ImplPair { ip_trait: str, ip_target: str }
+fn collect_trait_impls(a: Allocator, items: *const Vec<Item>, out: *Vec<ImplPair>) {
+    let n = items.length();
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < n { collect_trait_impls_one(a, &sl[i], out); i = i + 1 as u32; }
+    return;
+}
+fn collect_trait_impls_one(a: Allocator, it: *const Item, out: *Vec<ImplPair>) {
     match *it {
-        Item::Impl(ib) => { collect_one_impl_defaults(a, ar, sc, items, &ib, out); }
+        Item::Impl(ib) => { push_trait_impl_pair(&ib, out); }
+        | Item::Module(md) => { collect_trait_impls(a, &md.mitems, out); }
+        | _e => { }
+    }
+    return;
+}
+fn push_trait_impl_pair(ib: *const ImplBlock, out: *Vec<ImplPair>) {
+    let tn = impl_trait_name(ib);
+    if str::eq(tn, "") { return; }
+    out.push(ImplPair { ip_trait: tn, ip_target: path_last(&ib.itarget) });
+    return;
+}
+fn impl_pair_present(pairs: *const Vec<ImplPair>, trait_name: str, target: str) -> bool {
+    let n = pairs.length();
+    let sl = pairs.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        if str::eq(sl[i].ip_trait, trait_name) && str::eq(sl[i].ip_target, target) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// `trait B: A` - implementing B obliges the target to implement A as well.  The
+// port had the supertrait list in its AST and never asked the question, so a
+// bound that a generic function relies on could be absent at the one place the
+// language promises it is not.
+fn check_supertraits(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+                     supers: *const Vec<Vec<str>>, trname: str, target: str, ipos: Pos) {
+    let n = supers.length();
+    if n == 0 as u32 { return; }
+    let mut pairs: Vec<ImplPair> = Vec::with_capacity(a, 32 as u32);
+    collect_trait_impls(a, items, &pairs);
+    let sl = supers.as_slice();
+    let mut i = 0 as u32;
+    while i < n {
+        let sname = path_last(&sl[i]);
+        if !impl_pair_present(&pairs, sname, target) {
+            let mut sb = StringBuilder::with_capacity(a, 128 as u32);
+            sb.push_str("'"); sb.push_str(trname); sb.push_str("' requires supertrait '");
+            sb.push_str(sname); sb.push_str("', but '"); sb.push_str(target);
+            sb.push_str("' does not implement it (add `impl "); sb.push_str(sname);
+            sb.push_str(" for "); sb.push_str(target); sb.push_str("`)");
+            tc_fail(ar, sc, ipos, str::from_slice(ar, sb.as_slice()));
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn collect_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>,
+                         prelude: *const Vec<Item>, it: *const Item, modpath: *const Vec<str>, out: *Vec<MethodInfo>) {
+    match *it {
+        Item::Impl(ib) => { collect_one_impl_defaults(a, ar, sc, root, prelude, &ib, modpath, out); }
+        | Item::Module(md) => { collect_impl_defaults_in(a, ar, sc, root, prelude, &md.mitems, &path_push(a, modpath, md.mname), out); }
         | _e => { }
     }
 }
 // A second method-collection pass: register synthesised trait defaults so a
 // `recv.default_method()` call resolves (top-level impls only, matching the
 // generic-method registry).
-fn collect_trait_default_methods(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, out: *Vec<MethodInfo>) {
+// The walk descends into modules.  It did not, and that was not a narrowing of
+// one check but of ALL of them: an impl written inside a module answered no
+// question at all - not a missing method, not a wrong return, not an arity.
+fn collect_trait_default_methods(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+                                 prelude: *const Vec<Item>, out: *Vec<MethodInfo>) {
+    let root: Vec<str> = empty_strs(a);
+    collect_impl_defaults_in(a, ar, sc, items, prelude, items, &root, out);
+}
+fn collect_impl_defaults_in(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>,
+                            prelude: *const Vec<Item>, items: *const Vec<Item>,
+                            modpath: *const Vec<str>, out: *Vec<MethodInfo>) {
     let n = items.length();
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < n { collect_impl_defaults(a, ar, sc, items, &sl[i], out); i = i + 1 as u32; }
+    while i < n { collect_impl_defaults(a, ar, sc, root, prelude, &sl[i], modpath, out); i = i + 1 as u32; }
 }
 
 // Register every top-level generic function (a fn with type parameters),
@@ -19619,10 +20015,10 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     let skel_scope = scope_with_skeleton(&base_scope, &sinfo, &etags, &efields);
     let mut methods_throwaway: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &skel_scope, items, &methods_throwaway);
-    collect_trait_default_methods(a, ar, &skel_scope, items, &methods_throwaway);
+    collect_trait_default_methods(a, ar, &skel_scope, items, &prelude_items, &methods_throwaway);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
     collect_method_info(a, ar, &base_scope, items, &methods);
-    collect_trait_default_methods(a, ar, &base_scope, items, &methods);
+    collect_trait_default_methods(a, ar, &base_scope, items, &prelude_items, &methods);
     register_prelude_methods(a, ar, &methods);
     // A2 capturing closures: synthesise env struct / Fn impl / assoc bindings
     // into the (still mutable) registries; lambda exprs are matched at elab.

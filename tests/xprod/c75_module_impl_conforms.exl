@@ -1,0 +1,24 @@
+// A conforming impl written inside a module, which the walk now descends into.
+//
+// This is a PARITY WITNESS, not a floor. Measured: every way of breaking the
+// module walk that was tried - not descending at all, and descending but
+// resolving in the root scope - is caught by the two module rejection fixtures
+// first. What this file adds is the accepting direction, which no rejection can
+// show: that descending into a module does not start refusing what belongs there.
+//
+// The trait, the target and the impl all live in the same module, so the orphan
+// rule is satisfied by the trait's module rather than by the target's - and the
+// signature comparison has to resolve `P` in that module to agree at all.
+mod shapes {
+    pub struct P { v: int }
+    pub trait Sized2 { type Unit; fn area(*const self) -> Self::Unit; }
+    impl Sized2 for P {
+        type Unit = int;
+        pub fn area(*const self) -> int { return self.v * self.v; }
+    }
+}
+
+fn main() {
+    let p = shapes::P { v: 7 };
+    println(p.area());
+}

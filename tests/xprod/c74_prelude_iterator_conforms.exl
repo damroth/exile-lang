@@ -1,0 +1,27 @@
+// The accepting side, and the floor for the CHOICE.
+//
+// Every fixture that pins this round is a rejection, and there is a fix that
+// turns all of them green while destroying the feature: refuse any impl of a
+// trait the program did not declare. This is what that would break - a correct
+// `impl Iterator for X`, driven through a `for` loop, which is the single most
+// common use of a prelude trait in the corpus.
+//
+// It links and runs, so the trait's declaration has to be read correctly and not
+// merely found.
+struct Ticks { n: int, stop: int }
+
+impl Iterator for Ticks {
+    type Item = int;
+    fn next(*self) -> Option<int> {
+        if self.n >= self.stop { return Option::None; }
+        self.n = self.n + 1;
+        Option::Some(self.n)
+    }
+}
+
+fn main() {
+    let mut t = Ticks { n: 0, stop: 4 };
+    let mut total = 0;
+    for v in t { total = total + v; }
+    println(total);
+}

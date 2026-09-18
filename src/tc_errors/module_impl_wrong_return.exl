@@ -1,0 +1,9 @@
+// The same module-nested impl reaching the SIGNATURE comparison, which resolves
+// its annotations - so it also pins that the comparison runs in the impl's own
+// module scope. Resolved from the root, the target is an unknown type.
+mod m {
+    pub struct P { x: int }
+    pub trait Sh { fn one(*const self) -> int; }
+    impl Sh for P { fn one(*const self) -> bool { return true; } }
+}
+fn main() { println(1); }

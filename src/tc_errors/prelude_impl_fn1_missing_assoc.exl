@@ -1,0 +1,9 @@
+// `Fn1` carries its argument and result as ASSOCIATED types, so an impl that
+// binds one and forgets the other is incomplete. Kept because the Fn traits are
+// the only rows whose assoc list is built rather than parsed.
+struct Addr { k: int }
+impl Fn1 for Addr {
+    type Arg = int;
+    fn call(*const self, a: int) -> int { return a + self.k; }
+}
+fn main() { let f = Addr { k: 1 }; println(f.call(2)); }

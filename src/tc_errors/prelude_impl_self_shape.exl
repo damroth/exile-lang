@@ -1,0 +1,10 @@
+// `Iterator::next` takes `*self`. An impl that borrows it read-only is a
+// different method, and the reference says so with both shapes named. This is
+// the parameter arm of the signature comparison, and its first parameter is the
+// receiver - which is exactly the one a `Self` substitution has to get right.
+struct Ticks { n: int }
+impl Iterator for Ticks {
+    type Item = int;
+    fn next(*const self) -> Option<int> { return Option::None; }
+}
+fn main() { let t = Ticks { n: 0 }; match t.next() { Option::Some(v) => { println(v); } | Option::None => { println(9); } } }

@@ -1,0 +1,10 @@
+// A DEFAULT method, overridden with the wrong shape. This is what settles how
+// much of the trait has to be described: if the defaults were names only, an
+// impl could redefine `fold` however it liked and nothing would compare it.
+struct Ticks { n: int }
+impl Iterator for Ticks {
+    type Item = int;
+    fn next(*self) -> Option<int> { return Option::None; }
+    fn fold(*self, init: int) -> int { return init; }
+}
+fn main() { let t = Ticks { n: 0 }; println(t.n); }

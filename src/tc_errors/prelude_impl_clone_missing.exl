@@ -1,0 +1,7 @@
+// A required method absent, asked of a trait that has no declaration to read -
+// so this is the missing-method walk over the built table rather than over the
+// prelude's source.
+struct P { x: int }
+impl Clone for P {
+}
+fn main() { let p = P { x: 1 }; println(p.x); }

@@ -1,0 +1,7 @@
+// The arity arm, which is asked before any type is resolved.
+struct Ticks { n: int }
+impl Iterator for Ticks {
+    type Item = int;
+    fn next(*self, k: int) -> Option<int> { return Option::None; }
+}
+fn main() { let mut t = Ticks { n: 0 }; match t.next(1) { Option::Some(v) => { println(v); } | Option::None => { println(9); } } }

@@ -1,0 +1,10 @@
+// D3. The impl lives in neither the trait's module nor the target's, so a third
+// party would be deciding how someone else's type implements someone else's
+// trait. The rule is asked BEFORE the comparison resolves any type, which is why
+// the port used to answer this shape with `unknown type`.
+mod tr { pub trait Sh { fn one(*const self) -> int; } }
+mod ty { pub struct P { x: int } }
+mod other {
+    impl tr::Sh for ty::P { fn one(*const self) -> int { return 1; } }
+}
+fn main() { println(1); }

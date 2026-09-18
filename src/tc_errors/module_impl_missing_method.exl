@@ -1,0 +1,10 @@
+// An impl written INSIDE a module. The conformance walk did not descend into
+// modules, so this answered no question at all - not this one and not any other.
+// The trait is named by its qualified path, which is the walk's own module
+// path rather than a string anybody wrote.
+mod m {
+    pub struct P { x: int }
+    pub trait Sh { fn one(*const self) -> int; fn two(*const self) -> int; }
+    impl Sh for P { fn one(*const self) -> int { return 1; } }
+}
+fn main() { println(1); }

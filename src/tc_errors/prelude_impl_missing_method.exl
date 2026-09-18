@@ -1,0 +1,8 @@
+// The other half of the contract at the same trait: an associated type bound and
+// the required method absent. Separate from the assoc file because the two are
+// different walks - one over what the trait declares, one over what it requires.
+struct Ticks { n: int }
+impl Iterator for Ticks {
+    type Item = int;
+}
+fn main() { let t = Ticks { n: 0 }; println(t.n); }

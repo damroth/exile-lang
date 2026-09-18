@@ -1,0 +1,7 @@
+// `Eq::eq` answers a bool. The same lookup as Display and a different trait,
+// because a table is only as right as its least-read row.
+struct P { x: int }
+impl Eq for P {
+    fn eq(*const self, o: *const P) -> int { return 1; }
+}
+fn main() { let p = P { x: 1 }; println(p.x); }

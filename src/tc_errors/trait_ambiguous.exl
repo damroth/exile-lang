@@ -1,0 +1,8 @@
+// Two traits of that name and an unqualified path: the reference refuses rather
+// than taking the first one it walks past. The port said `unknown trait`, which
+// sends the reader looking for a declaration that is there twice over.
+struct P { x: int }
+mod m1 { pub trait Sh { fn one(*const self) -> int; } }
+mod m2 { pub trait Sh { fn one(*const self) -> int; } }
+impl Sh for P { fn one(*const self) -> int { return 1; } }
+fn main() { let p = P { x: 1 }; println(p.one()); }

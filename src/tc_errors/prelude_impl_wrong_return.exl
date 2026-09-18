@@ -1,0 +1,9 @@
+// The return arm. `Option<Self::Item>` with `Item = int` is `Option<int>`, so an
+// impl returning `Option<bool>` does not conform - and the projection has to be
+// substituted through the impl's own binding before the two can be compared.
+struct Ticks { n: int }
+impl Iterator for Ticks {
+    type Item = int;
+    fn next(*self) -> Option<bool> { return Option::None; }
+}
+fn main() { let mut t = Ticks { n: 0 }; match t.next() { Option::Some(v) => { println(v); } | Option::None => { println(9); } } }

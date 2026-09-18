@@ -1,0 +1,10 @@
+// The surface check on a trait the PROGRAM declares. Its twin on `Iterator`
+// exercises the same rule through a different declaration, and this one proves
+// the rule is not prelude-specific: the port had it for neither.
+struct P { x: int }
+trait Sh { fn one(*const self) -> int; }
+impl Sh for P {
+    fn one(*const self) -> int { return 1; }
+    fn helper(*const self) -> int { return 2; }
+}
+fn main() { let p = P { x: 1 }; println(p.one()); }
