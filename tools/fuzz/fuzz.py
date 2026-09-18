@@ -63,7 +63,6 @@ def msg_only(diag):
 
 CAP_RESERVED = re.compile(r"'(seal|ward|rune|sigil|own)' is a reserved word")
 CAP_SEAM = re.compile(r"unknown function 'sys::sys_seal_(enter|exit)'")
-NOT_PORTED = re.compile(r"not yet ported")
 PARENS = re.compile(r"[()]")
 # Register #12 — the two barriers the frozen reference puts in front of a
 # `return` inside a `match` arm: its typecheck in value position, its codegen as
@@ -98,15 +97,12 @@ def registered_divergence(ev):
 
     Each test is a MECHANISM on observed behaviour:
       #9  the oracle refuses a word the port implements — its own diagnostic says so
-      #10 the port announces its own border in its own diagnostic
       #7  both compiled, and the emissions differ ONLY in parentheses
       #5  reserved for defer x loop-jump, which is a semantic difference rather
           than a lexical one and is still recognised from the source
     """
     if CAP_RESERVED.search(ev["oracle_diag"]) or CAP_SEAM.search(ev["oracle_diag"]):
         return "kernel-era-superset"          # register #9
-    if NOT_PORTED.search(ev["port_diag"]):
-        return "not-yet-ported"               # register #10
     # #12 — `return` inside a match arm: the port lowers it, the reference
     # refuses it. The discriminator is BEHAVIOURAL, not the message: a `return`
     # that really is inside a `defer` is rejected by the PORT too (it carries the
@@ -210,8 +206,8 @@ def stmt_boundaries(src):
         # matches an `enum` variant list, a `struct` field list, an `impl` body
         # and a `match` arm list — and wrapping one of those is what produced the
         # stream's loudest divergences: `expected '|' (next variant)`, `expected
-        # 'fn' or 'type' inside 'impl' block`, and every `parser: this item kind
-        # not yet ported` (which no seed produces unmutated — measured: 0 of 250).
+        # 'fn' or 'type' inside 'impl' block`, and the item-dispatch diagnostic
+        # (which no seed produces unmutated — measured: 0 of 250).
         inside_fn = "fn" in st and st[-1:] in (["fn"], ["block"])
         starts.append(bool(inside_fn and r[3] == 0 and prev_closed and text
                            and not text.startswith(
@@ -741,7 +737,7 @@ def death_stage(ev, path, budget_s):
     An earlier version split parse from typecheck by looking for `expected` in the
     diagnostic, and measured against the two corpora that is not a mechanism: a
     type mismatch reads `return: expected i32, got bool` (same word, other
-    stage), while `parser: this item kind not yet ported` contains neither — so
+    stage), while the item-dispatch diagnostic it used to print contained neither — so
     88 of 600 inputs at seed 1 were filed as typecheck deaths that never reached
     the typechecker. The phase flags answer the question the phase itself
     answers, and they add the stage 3.2 names but nothing yet counted: CODEGEN,

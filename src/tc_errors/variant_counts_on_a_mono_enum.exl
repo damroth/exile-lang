@@ -1,0 +1,9 @@
+// A PARITY WITNESS, like its neighbour: no type parameter anywhere, so inference
+// has nothing to fail at and the count is the only answer. Green before this
+// change and after it - recorded as what it is, a shape the reordering had to
+// leave alone, not a guard that would catch breaking it.
+enum E { P(int) | Q }
+fn main() {
+    let e = E::P(1, 2);
+    println(1);
+}

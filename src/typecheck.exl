@@ -4131,8 +4131,14 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let tag = variant_tag(sc.sc_etags, &qinit, last);
         if tag >= 0 as int {
             let tflds = enum_tuple_args(a, ar, g, sc, env, &qinit, last, args);
-            check_variant_tuple_args(a, ar, sc, &qinit, last, args, &tflds, p);
+            // The INSTANCE first, the count second: the reference checks arity
+            // against a variant it has already resolved, so a generic enum with
+            // nothing to infer from fails at the inference and never reaches the
+            // count.  Neither half does this alone - the order only matters once
+            // inference REFUSES on a mismatched arity instead of binding from
+            // whichever argument happens to line up.
             let inst = enum_instance_path(a, ar, sc, expected, &qinit, last, &tflds, p);
+            check_variant_tuple_args(a, ar, sc, &qinit, last, args, &tflds, p);
             return mk_enum_lit_node(a, ar, &inst, last, tag, tflds, p);
         }
         if is_known_enum(sc, &qinit) { return no_such_variant(a, ar, sc, &qinit, last, p); }
@@ -7187,13 +7193,22 @@ fn infer_enum_instance(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *con
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     let n = tfields.length();
     let sl = tfields.as_slice();
+    // Only a call whose ARITY matches the declaration may be inferred from.  With
+    // an extra argument the port still found `_0`, bound the parameter from it and
+    // reported the count - while the reference, which infers against the variant
+    // it has resolved, cannot infer at all and says so.  Both refuse; the question
+    // is which one the reader is stuck on, and `E::P(1, 2)` with no annotation
+    // cannot be built whatever its arity.
+    let declared = variant_field_names(a, sc, epath, variant);
     let mut i = 0 as u32;
-    while i < n {
-        match enum_field_ty(sc.sc_efields, epath, variant, sl[i].name) {
-            Option::Some(fty) => { unify_typ(a, ar, sc, fty, sl[i].value.ty, &binds); }
-            | Option::None => { }
+    if declared.length() == n {
+        while i < n {
+            match enum_field_ty(sc.sc_efields, epath, variant, sl[i].name) {
+                Option::Some(fty) => { unify_typ(a, ar, sc, fty, sl[i].value.ty, &binds); }
+                | Option::None => { }
+            }
+            i = i + 1 as u32;
         }
-        i = i + 1 as u32;
     }
     if binds.length() == 0 as u32 {
         let tps0 = enum_tps(a, sc, path_last(epath));

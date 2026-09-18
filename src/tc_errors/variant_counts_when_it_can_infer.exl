@@ -1,0 +1,13 @@
+// A PARITY WITNESS, not a floor: with the annotation present there is nothing to
+// infer, so the count is the reader's problem and both compilers say so - and they
+// said so before this change too.
+//
+// It is here because the change moved the order of two questions and this shape
+// answers the second one; no perturbation I tried reddens it, which is stated
+// rather than dressed up. The floor for the CHOICE is the accept-side fixture
+// c71, where refusing to infer turns a legal program away.
+enum E<T> { P(T) | Q }
+fn main() {
+    let e: E<int> = E::P(1, 2);
+    println(1);
+}

@@ -3566,9 +3566,23 @@ fn parse_decl_item(s: *Parser, out: *Vec<Item>, is_pub: bool, seen: *Vec<str>) {
             out.push(Item::View(vd));
             seen.push(nvi);
         }
-        // Defensive: every item kind the language has is handled above, so this
-        // arm names a token the item dispatcher should never have reached.
-        | _e => { fail(s, peek_pos(s), "parser: this item kind not yet ported"); }
+        // REACHED, and by ordinary input: `static X: int = 1;` lands here, as does
+        // any other word that is not an item keyword.  The arm used to answer
+        // "this item kind not yet ported", which claimed a gap between the two
+        // compilers that this input does not show - neither of them parses
+        // `static`.  The reference answers by LISTING what it does accept, so the
+        // two only agreed once the port said the same thing.
+        //
+        // The wording had a READER: the fuzzer recognised the port's announced
+        // border from this exact text (register #10), and that recognition is
+        // retired in the same change - a filter for a border that no longer
+        // exists would keep a run's totals meaning something they do not.
+        | _e => {
+            let mut sb = StringBuilder::with_capacity(s.a, 128 as u32);
+            sb.push_str("expected 'fn', 'extern fn', 'mod', 'use', 'struct', 'enum', 'type', 'impl' or '@c_include', got ");
+            pp_into(&sb, peek(s));
+            fail(s, peek_pos(s), str::from_slice(s.ar, sb.as_slice()));
+        }
     }
 }
 

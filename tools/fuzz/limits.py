@@ -37,7 +37,7 @@ def observe(path):
 def main():
     fails = []
     base = os.path.join(fuzz.ROOT, "tests/fuzzlimits")
-    need = ["capability_outside_f1.exl", "not_yet_ported.exl", "agreement_is_silence.exl"]
+    need = ["capability_outside_f1.exl", "agreement_is_silence.exl"]
     for n in need:
         if not os.path.exists(os.path.join(base, n)):
             print(f"fuzz-limits: MISSING tests/fuzzlimits/{n}", file=sys.stderr)
@@ -50,10 +50,12 @@ def main():
     if ev["port_status"] != 0 or ev["port_c"] is None:
         fails.append("capability input produced no port emission - F2/F3/F4 have nothing to hunt, and the limit would become a blanket exclusion")
 
-    # L3 - the announced boundary, recognised from the DIAGNOSTIC.
-    ev = observe(os.path.join(base, "not_yet_ported.exl"))
-    if fuzz.registered_divergence(ev) != "not-yet-ported":
-        fails.append("the port's announced boundary is not recognised - register #10 would be rediscovered every run")
+    # L3 - RETIRED 2026-09-17 with register #10.  It pinned that the port announces
+    # its own border in its own words; the port now prints the reference's list of
+    # item kinds instead, so there is no border left to recognise.  A limit whose
+    # subject is gone cannot be kept green - it would go on certifying a property
+    # of a compiler that no longer has it.  The input itself did not disappear: it
+    # is a parity fixture in the rejection corpus, where both sides are compared.
 
     # L4 / L6 - agreement is silence, whatever the agreement is worth.
     ev = observe(os.path.join(base, "agreement_is_silence.exl"))
@@ -75,10 +77,12 @@ def main():
         print(f"fuzz-limits: {f}", file=sys.stderr)
     if fails:
         return 1
-    print("fuzz-limits: clean (4 limits pinned as contracts: capability outside F1 with the "
-          "port-side classes still live, the announced not-yet-ported boundary, agreement "
+    print("fuzz-limits: clean (3 limits pinned as contracts: capability outside F1 with the "
+          "port-side classes still live, agreement "
           "producing silence, and no zero-finding run quotable without its budget; the "
-          "new-IR-node limit is NOT pinnable and says so)")
+          "new-IR-node limit is NOT pinnable and says so, and the announced-boundary "
+          "limit was RETIRED with register #10 rather than left green over a border "
+          "the port no longer has)")
     return 0
 
 

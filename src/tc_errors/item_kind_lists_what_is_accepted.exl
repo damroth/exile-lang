@@ -1,0 +1,12 @@
+// A word that is not an item keyword. NEITHER compiler parses `static`, so the
+// port's old answer - "this item kind not yet ported" - claimed a gap between them
+// that this input does not show; the reference answers by LISTING what it accepts,
+// and the two only agree once the port says the same thing.
+//
+// This fixture used to live in tests/fuzzlimits, where it pinned that the fuzzer
+// RECOGNISED the port's announced border from that exact wording. Its own comment
+// named the exit it has now taken: once the port stops announcing a border, the
+// limit is retired and the entry re-measured rather than left to outlive its
+// subject. What remains measurable is parity, which is what this corpus compares.
+static X: int = 1;
+fn main() { println(1); }

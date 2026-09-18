@@ -1,0 +1,17 @@
+// A generic enum's tuple variant, built with the wrong number of arguments and no
+// annotation to pin its type parameter. Both compilers refuse; what is pinned here
+// is WHICH question they answer first.
+//
+// The reference checks the count against a variant it has already resolved, so it
+// fails at the inference and never reaches the count. The port counted first, and
+// answered a question the reader is not stuck on: `E::P(1, 2)` with no annotation
+// cannot be built whatever its arity.
+//
+// Two halves were needed and neither works alone - inference had to REFUSE on a
+// mismatched arity instead of binding from whichever argument happened to line up,
+// and only then does the order of the two calls become observable.
+enum E<T> { P(T) | Q }
+fn main() {
+    let e = E::P(1, 2);
+    println(1);
+}
