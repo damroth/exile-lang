@@ -1,0 +1,13 @@
+// Class A, the other trigger and a different way of naming it. `String` pulls the
+// same two lines in the reference, and the type is named in a PARAMETER rather
+// than in a trait signature - so the rule is about the name reaching the typed
+// program, not about impls.
+//
+// One shape is a lower bound: two triggers measured, and the four prelude types
+// that do NOT trigger it (Arena, Allocator, Vec, HashMap) stay out of this
+// directory because they agree already.
+fn width(s: *const String) -> int { return 1; }
+
+fn main() {
+    println(width(null as *const String));
+}

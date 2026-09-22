@@ -1,0 +1,21 @@
+// Class B, and a different defect from the two-line one above: here the
+// reference's output does not merely carry something extra, it fails to LINK.
+//
+// `fmt` is never called. The reference keeps the method's body in the artefact
+// and drops the prelude method that body calls, so the emitted C contains one
+// call to `StringBuilder__push_str` and no definition of it. Compiling the file
+// alone succeeds - the failure is at link, and under `-Wall` it is an implicit
+// declaration first.
+//
+// The port's demand fixpoint sees the call inside the retained body, materialises
+// the callee, links and runs.
+struct P { x: int }
+
+impl Display for P {
+    fn fmt(*const self, out: *StringBuilder) { out.push_str("x="); }
+}
+
+fn main() {
+    let p = P { x: 5 };
+    println(p.x);
+}

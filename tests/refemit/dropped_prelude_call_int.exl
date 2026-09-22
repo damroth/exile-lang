@@ -1,0 +1,29 @@
+// Class B, and the file that says why the two classes are ordered rather than
+// parallel: this shape has BOTH faces at once.
+//
+// `fmt` is never called, and its body calls `push_int` rather than `push_str`.
+// The reference emits `#include <string.h>` for the named builder - the class-A
+// face - AND keeps the call while dropping the callee, so its own build fails on
+// an undefined `StringBuilder__push_int`. Only the second of those decides where
+// the file lives: a fixture whose reference output does not LINK belongs to
+// `dropped_`, whatever else is also true of it.
+//
+// Filed the other way it is not merely mis-sorted, it is red: the port defines
+// the whole `push_int` chain the reference dropped, so the class-A diff carries
+// sixty-one lines the reference does not have, and the one-way assertion fires.
+// That is this file's second job - it is the proof of an arm no other fixture
+// reaches, because a program that uses a string makes the divergence vanish
+// before either side can show it.
+//
+// So #71 is not about `push_str`. The property is: any prelude method called
+// from a method nobody calls.
+struct P { x: int }
+
+impl Display for P {
+    fn fmt(*const self, out: *StringBuilder) { out.push_int(self.x); }
+}
+
+fn main() {
+    let p = P { x: 5 };
+    println(p.x);
+}

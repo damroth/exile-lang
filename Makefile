@@ -780,6 +780,108 @@ selfhost-port-tc-errors: host-selfhost-tc $(EXILC_BIN)
 # it checks.
 .PHONY: selfhost-refdefect
 
+# ===== emissions the reference produces and its own artefact cannot use =====
+#
+# Neither class here fits `tests/refdefect`, whose contract is that the reference
+# ABORTS.  These two compile cleanly; what is wrong is what comes out.
+#
+#   class A (named_*)   the reference emits declarations - `#include <string.h>`
+#                       and struct declarations for a named prelude type - that
+#                       its own C never references.  The port materialises
+#                       prelude methods on demand and emits neither.
+#   class B (dropped_*) the reference keeps an uncalled method's body and drops
+#                       the prelude method that body calls, so its own C fails to
+#                       LINK.  The port's demand fixpoint sees the call.
+#
+# Both assertions are computed rather than spelled out: class A reads the DIFF and
+# requires every line unique to the reference to be a declaration, and every such
+# declaration to be mentioned exactly once in the reference's own output - the day
+# one is used, the justification is gone and this goes red.
+selfhost-refemit: $(EXILC_BIN)
+	@na=0; nb=0; fail=0; \
+	rm -rf $(C_OUT)/re; mkdir -p $(C_OUT)/re; \
+	for f in tests/refemit/*.exl; do \
+	  b=`basename $$f .exl`; exp=tests/refemit/$$b.expected; \
+	  test -s $$f || { echo "selfhost-refemit: MISSING/EMPTY $$f"; fail=1; continue; }; \
+	  test -s $$exp || { echo "selfhost-refemit: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/re/o.c $(C_OUT)/re/p.c $(C_OUT)/re/d.txt $(C_OUT)/re/lk.err \
+	        $(HOST_OUT)/re_o $(HOST_OUT)/re_p $(C_OUT)/re/run.txt; \
+	  $(EXILE) --target c --c-out $(C_OUT)/re/o.c $$f >/dev/null 2>&1; oe=$$?; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/re/p.c $$f >/dev/null 2>&1; pe=$$?; \
+	  if [ $$oe -ne 0 ] || [ $$pe -ne 0 ]; then \
+	    echo "selfhost-refemit: $$b is REFUSED (oracle=$$oe port=$$pe) - this directory is for programs both sides accept"; \
+	    fail=1; continue; \
+	  fi; \
+	  test -s $(C_OUT)/re/o.c || { echo "selfhost-refemit: EMPTY reference C for $$b"; fail=1; continue; }; \
+	  test -s $(C_OUT)/re/p.c || { echo "selfhost-refemit: EMPTY port C for $$b"; fail=1; continue; }; \
+	  case "$$b" in \
+	    named_*) \
+	      na=`expr $$na + 1`; \
+	      diff $(C_OUT)/re/o.c $(C_OUT)/re/p.c > $(C_OUT)/re/d.txt; \
+	      if [ `grep -c '^>' $(C_OUT)/re/d.txt` -ne 0 ]; then \
+	        echo "selfhost-refemit: $$b - the PORT emits lines the reference does not; the registered difference is one-way"; \
+	        grep '^>' $(C_OUT)/re/d.txt | head -4; \
+	        rm -f $(HOST_OUT)/re_x; \
+	        $(EXILE) --target host --c-out $(C_OUT)/re/x_host.c --link $(SYS_HOST) -o $(HOST_OUT)/re_x $$f >$(C_OUT)/re/x.err 2>&1; \
+	        if [ ! -x $(HOST_OUT)/re_x ] && grep -q 'undefined reference' $(C_OUT)/re/x.err; then \
+	          echo "  the reference does not LINK this one either, so those lines are a callee it dropped - the file belongs under dropped_, where the link is the assertion"; \
+	        fi; \
+	        rm -f $(HOST_OUT)/re_x; \
+	        fail=1; continue; \
+	      fi; \
+	      if [ `grep -c '^<' $(C_OUT)/re/d.txt` -eq 0 ]; then \
+	        echo "selfhost-refemit: $$b no longer diverges - the reference stopped emitting the dead declarations, so retire its register entry"; \
+	        fail=1; continue; \
+	      fi; \
+	      bad=`grep '^<' $(C_OUT)/re/d.txt | grep -vcE '^< (#include <string\.h>|struct ex_[A-Za-z0-9_]+ \{.*\};)$$'`; \
+	      if [ "$$bad" -ne 0 ]; then \
+	        echo "selfhost-refemit: $$b - the difference is no longer declarations alone, so it is no longer harmless"; \
+	        grep '^<' $(C_OUT)/re/d.txt | grep -vE '^< (#include <string\.h>|struct ex_[A-Za-z0-9_]+ \{.*\};)$$' | head -4; \
+	        fail=1; continue; \
+	      fi; \
+	      if [ `grep -cE 'strlen|memset|memcpy' $(C_OUT)/re/o.c` -ne 0 ]; then \
+	        echo "selfhost-refemit: $$b - the reference's own C now USES a string function, so the include it emits is needed after all"; \
+	        fail=1; continue; \
+	      fi; \
+	      for sname in `grep '^<' $(C_OUT)/re/d.txt | sed -nE 's/^< struct (ex_[A-Za-z0-9_]+) \{.*/\1/p'`; do \
+	        uses=`grep -c "$$sname" $(C_OUT)/re/o.c`; \
+	        if [ "$$uses" -ne 1 ]; then \
+	          echo "selfhost-refemit: $$b - the reference REFERENCES $$sname ($$uses mentions), so declaring it is not dead weight"; \
+	          fail=1; \
+	        fi; \
+	      done; \
+	      ;; \
+	    dropped_*) \
+	      nb=`expr $$nb + 1`; \
+	      $(EXILE) --target host --c-out $(C_OUT)/re/o_host.c --link $(SYS_HOST) -o $(HOST_OUT)/re_o $$f >$(C_OUT)/re/lk.err 2>&1; \
+	      if [ -x $(HOST_OUT)/re_o ]; then \
+	        echo "selfhost-refemit: $$b - the reference now BUILDS its own output, so retire its register entry"; \
+	        fail=1; continue; \
+	      fi; \
+	      if ! grep -q 'undefined reference' $(C_OUT)/re/lk.err; then \
+	        echo "selfhost-refemit: $$b - the reference's build fails for some OTHER reason than a dropped callee"; \
+	        head -2 $(C_OUT)/re/lk.err; fail=1; continue; \
+	      fi; \
+	      ;; \
+	    *) echo "selfhost-refemit: $$b has no class prefix (named_ or dropped_) - nothing would walk it"; fail=1; continue;; \
+	  esac; \
+	  $(EXILC_BIN) --target host --c-out $(C_OUT)/re/p_host.c --link $(SYS_HOST) -o $(HOST_OUT)/re_p $$f >/dev/null 2>&1; \
+	  if [ ! -x $(HOST_OUT)/re_p ]; then \
+	    echo "selfhost-refemit: the PORT did not build $$b - the divergence is only defensible while the port's output works"; \
+	    fail=1; continue; \
+	  fi; \
+	  $(HOST_OUT)/re_p > $(C_OUT)/re/run.txt 2>&1; \
+	  if ! cmp -s $(C_OUT)/re/run.txt $$exp; then \
+	    echo "selfhost-refemit: OUTPUT $$b"; diff $$exp $(C_OUT)/re/run.txt | head -6; fail=1; \
+	  fi; \
+	done; \
+	rm -rf $(C_OUT)/re; rm -f $(HOST_OUT)/re_o $(HOST_OUT)/re_p; \
+	if [ $$na -lt 2 ]; then echo "selfhost-refemit: only $$na class-A fixture(s) - one shape is a lower bound, the trigger is a SET"; exit 1; fi; \
+	if [ $$nb -lt 1 ]; then echo "selfhost-refemit: no class-B fixture - the link failure would go unwatched"; exit 1; fi; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-refemit: clean ($$na named + $$nb dropped; the reference's extra lines are declarations only, each mentioned once and none of its string functions used; its dropped-callee build still fails on an undefined reference; the port builds, runs and prints its expected output for every one)"; \
+	else exit 1; fi
+
 selfhost-refdefect: $(EXILC_BIN)
 	@fail=0; n=0; \
 	for f in tests/refdefect/*.exl; do \
@@ -876,7 +978,7 @@ selfhost-outdir: $(EXILC_BIN)
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -1024,7 +1126,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-outdir \
-                 selfhost-refdefect \
+                 selfhost-refdefect selfhost-refemit \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
                  selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists

@@ -1,0 +1,23 @@
+// Class A. The program NAMES a `StringBuilder` and never puts a string into one.
+//
+// The reference emits `#include <string.h>` and a `Slice<u8>` declaration for it,
+// because its typed program carries the prelude methods of a named type and those
+// methods call `cstr_len`. Its own artefact then uses neither: no `strlen`, no
+// `memset`, no `memcpy`, and the struct is declared once and referenced nowhere.
+// Its own comment says the include is "pulled in only when something in the
+// program needs it", and here nothing does.
+//
+// The port materialises prelude methods on demand, so it emits neither. The gate
+// beside this file asserts the difference is EXACTLY those two lines and that the
+// reference's own output still fails to use them - the day it needs them, the
+// justification is gone and the gate goes red.
+struct P { x: int }
+
+impl Display for P {
+    fn fmt(*const self, _out: *StringBuilder) { }
+}
+
+fn main() {
+    let p = P { x: 5 };
+    println(p.x);
+}
