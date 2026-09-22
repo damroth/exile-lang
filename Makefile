@@ -2833,6 +2833,29 @@ selfhost-seal: $(EXILC_BIN)
 	cc -ansi -pedantic -Wall -Werror -I src -c $(C_OUT)/seal_inc.c -o $(C_OUT)/seal_inc.o \
 	  || { echo "selfhost-seal: the sealed-builtin C is not clean at the standard every fixture meets"; exit 1; }; \
 	sig="$$sig a builtin used only inside a region keeps its include;"; \
+	rm -f $(C_OUT)/seal_poc.c $(HOST_OUT)/seal_poc $(C_OUT)/seal_poc.out; \
+	$(EXILC_BIN) --target host --c-out $(C_OUT)/seal_poc.c --link $(SYS_HOST) -o $(HOST_OUT)/seal_poc \
+	   tests/seal/accept_seal_prelude_only_call.exl >/dev/null 2>&1; \
+	test -x $(HOST_OUT)/seal_poc \
+	  || { echo "selfhost-seal: a PRELUDE method called only inside a region did not BUILD - the dead-code query cannot see into a seal, so the definition was dropped from under its own call"; exit 1; }; \
+	$(HOST_OUT)/seal_poc > $(C_OUT)/seal_poc.out 2>&1; \
+	if ! diff -q tests/seal/accept_seal_prelude_only_call.expected $(C_OUT)/seal_poc.out >/dev/null; then \
+	  echo "selfhost-seal: the sealed prelude call ran to the wrong value:"; \
+	  diff tests/seal/accept_seal_prelude_only_call.expected $(C_OUT)/seal_poc.out | head -6; exit 1; fi; \
+	sig="$$sig a prelude method called only inside a region survives dead-code removal, LINKED and RUN;"; \
+	rm -f $(C_OUT)/seal_own.c $(HOST_OUT)/seal_own $(C_OUT)/seal_own.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/seal_own.c tests/seal/accept_seal_owner_freed.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-seal: the sealed-owner fixture was REJECTED"; exit 1; }; \
+	sed -n '/^int main/,/^}/p' $(C_OUT)/seal_own.c | grep -q 'free_fn' \
+	  || { echo "selfhost-seal: an owner created INSIDE a region is never freed - the drop walker has no arm for a seal, so the binding was never registered"; exit 1; }; \
+	$(EXILC_BIN) --target host --c-out $(C_OUT)/seal_own_h.c --link $(SYS_HOST) -o $(HOST_OUT)/seal_own \
+	   tests/seal/accept_seal_owner_freed.exl >/dev/null 2>&1; \
+	test -x $(HOST_OUT)/seal_own || { echo "selfhost-seal: the sealed-owner fixture did not build"; exit 1; }; \
+	$(HOST_OUT)/seal_own > $(C_OUT)/seal_own.out 2>&1; \
+	if ! diff -q tests/seal/accept_seal_owner_freed.expected $(C_OUT)/seal_own.out >/dev/null; then \
+	  echo "selfhost-seal: the sealed-owner fixture ran to the wrong value:"; \
+	  diff tests/seal/accept_seal_owner_freed.expected $(C_OUT)/seal_own.out | head -6; exit 1; fi; \
+	sig="$$sig an owner created inside a region is freed at its end, compiled and RUN;"; \
 	test ! -e tests/seal/accept_limit_wrong_region.exl \
 	  || { echo "selfhost-seal: the fifth limit is back in the corpus as an ACCEPT fixture - it was closed, and one place must answer whether it is open"; exit 1; }; \
 	sig="$$sig four limits pinned as CONTRACTS, the fifth CLOSED and its shape now rejected in the ward corpus;"; \

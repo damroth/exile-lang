@@ -1445,6 +1445,17 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             out.push(*s);
             copy_dentries(a, st)
         }
+        // A region is a scope, so what it owns dies at its end - and the walker
+        // had no arm for one, so a `let` inside a region was never registered and
+        // its free was never emitted.  A seal always runs exactly once, so the
+        // state it produces propagates out directly; `if` merges branches because
+        // it may take either, and `while` because it may take none.
+        | Tstmt::TSeal { body, pos } => {
+            let mut sealed_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+            let st2 = walk_stmts(structs, enums, a, ar, gs, st, &body, &sealed_out);
+            out.push(Tstmt::TSeal { body: sealed_out, pos: pos });
+            st2
+        }
         | Tstmt::TAssignField { target, field, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
         | Tstmt::TAssignIndex { base, index, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
         | Tstmt::TAssignDeref { target, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)

@@ -1,0 +1,17 @@
+// An owner created INSIDE a region has to die at the region's end, like one
+// created inside any other scope. The drop pass's walker had no arm for a seal,
+// so the binding was never registered and no free was ever emitted - a leak that
+// nothing else in the corpus could see, because every other owner in it is
+// declared outside the region.
+//
+// One variable apart, `if true { ... }` around the same body emits the free. The
+// free lands INSIDE the region, before the exit, which is where this port already
+// fires a `defer` registered in one - measured, not chosen.
+fn main() {
+    seal {
+        let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+        v.push(1);
+        println(v.length() as int);
+    }
+    println(2);
+}

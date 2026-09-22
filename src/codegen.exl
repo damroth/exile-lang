@@ -2074,6 +2074,11 @@ fn stmt_calls_m_cg(s: *const Tstmt, m: str) -> bool {
         | Tstmt::TIf { cond, then_body, else_body } => expr_calls_m_cg(cond, m) || stmts_call_m_cg(&then_body, m) || stmts_call_m_cg(&else_body, m)
         | Tstmt::TWhile { cond, body, post } => expr_calls_m_cg(cond, m) || stmts_call_m_cg(&body, m) || stmts_call_m_cg(&post, m)
         | Tstmt::TDefer { body, pos } => stmts_call_m_cg(&body, m)
+        // A region is a scope like a defer is.  Without this arm the query that
+        // decides whether a PRELUDE function is dead could not see a call made
+        // only inside one, so `fn_dead` dropped the definition and left the call
+        // standing: the port emitted C that does not link.
+        | Tstmt::TSeal { body, pos } => stmts_call_m_cg(&body, m)
         | _leaf => false
     };
 }

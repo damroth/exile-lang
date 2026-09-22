@@ -1,0 +1,16 @@
+// A PRELUDE method called only inside a region, and the reason the earlier audit
+// of this class found no witness: the dead-code decision it drives only ever
+// removes prelude functions, so a probe written with a USER method can never
+// trip it. `Vec::push` is the one to use because no other prelude method calls
+// it - anything the prelude itself references is kept for that reason instead.
+//
+// The query that answers "is this function called anywhere" had no arm for a
+// region, so the call inside one was invisible: the definition was dropped and
+// the call left standing, and the port emitted C that does not link. Compiling
+// the file alone only warns; the failure is at link, so this fixture BUILDS and
+// RUNS rather than merely compiling.
+fn main() {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    seal { v.push(7); }
+    println(v.length() as int);
+}
