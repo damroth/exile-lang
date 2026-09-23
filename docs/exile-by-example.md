@@ -112,7 +112,10 @@ above each statement in the emitted C, and `--show-cc-warnings` passes
 the C compiler's warnings through. `--emit-tokens` / `--emit-ast` /
 `--emit-typed-ir` (plus `--user-only` to skip prelude items) dump
 canonical compiler stages — the differential-testing harness for the
-self-host port.
+self-host port. `--after-drop` extends `--emit-typed-ir`: it runs the
+move, escape and drop passes before dumping, so what you see is the
+drop-inserted IR - the automatic drop calls and the synthetic drop-glue
+functions - rather than the IR as the typechecker left it.
 
 `--freestanding` emits C that does not use libc at all:
 
@@ -137,7 +140,14 @@ cc -I runtime out.fs.c runtime/freestanding.c runtime/sys_host.c -o out
   and prints the same bytes: the flag changes the runtime floor, not the
   semantics. `make verify-freestanding-<name>` checks both — nm-clean and
   identical output.
-- This is the floor for bare-metal / kernel output.
+- This is the floor for bare-metal / kernel output. The `sys_*` seam has
+  two answers: `runtime/sys_host.c`, linked above so the program runs on
+  your machine, and `runtime/sys_bare.c` for the silicon - writes go to
+  the serial line, allocation is a static bump arena, and `seal` saves
+  the status register and raises the interrupt level to seven. Under
+  AmigaOS the same seam defers to exec's own nesting instead, because
+  writing SR behind a scheduler's back breaks it: one guarantee, two
+  things saved.
 
 [examples/freestanding_print.exl](../examples/freestanding_print.exl)
 
@@ -1972,6 +1982,11 @@ pub mod raw {
 }
 ```
 
+An `extern var` can carry one more modifier, `chip`, naming memory a
+device reads or writes rather than memory only the program touches. It
+belongs to the capability model, so it is described in
+[sec 22](#22-owning-the-hardware---rune-ward-sigil-seal).
+
 [examples/ffi_full.exl](../examples/ffi_full.exl) | [examples/ffi_opaque.exl](../examples/ffi_opaque.exl)
 
 ### Function pointers
@@ -2867,6 +2882,15 @@ range, a `ward` lays the NDK's layout over it, the fields are runes and one
 crosses a call boundary as `write rune<u16>`, and a `seal` makes the sequence
 indivisible.
 
+The `ndk::` names come from [tests/kernel/ndk/mod.exl](../tests/kernel/ndk/mod.exl):
+the Amiga custom chip written as exile declarations - sigils naming who owns
+which byte range, ward layouts with their canonical instances, and the atomic
+groups that belong to them. It is a library rather than a binding, and it
+binds to silicon and never to an OS, so one file serves a program under
+AmigaOS and one on bare metal. Compiled alone it emits a single `#include` and
+zero mentions of any name it declares, which a gate asserts, because "a
+declaration costs nothing" is the claim the whole design rests on.
+
 ```rust
 mod gfx {
     own Blitter;
@@ -2916,6 +2940,100 @@ its bit 15 is SET/CLR, so the live state must be read from the separate
 `DMACONR` port at `$DFF002`, never back from `DMACON`. That same SET/CLR bit is
 why *enabling* a channel needs no seal at all - one write touches the bits you
 name and leaves every other bit alone. What needs the seal is the sequence.
+
+### `chip` - memory a device reads or follows
+
+The four constructs above name registers. A device also reaches ordinary
+memory - a buffer the blitter fills, a list the copper follows - and nothing
+in such a declaration tells the compiler those loads can change underneath it.
+A `chip` modifier on an `extern var` says they can. The verbs take the chip as
+their subject, so the declaration records what the hardware does rather than
+what the program may do.
+
+```rust
+mod raw {
+    extern var BUF:  [u8; 16] chip writes;      // the device fills it
+    extern var LIST: [u16; 8] chip reads;       // the device follows it
+    extern var FIFO: [u8; 4]  chip reads writes;
+}
+```
+
+The measurement behind this is one program: read a buffer, start a transfer,
+poll, read it again. The emitted C was always right - two reads with the
+volatile poll between them - and on m68k the second read was not in the output
+at all, because the C compiler proved the two loads identical and folded the
+sum into a doubling.
+
+The mark rides in the type, so it travels with a pointer into that memory,
+spelled `*chip T`. A helper that fills a buffer keeps the guarantee instead of
+losing it at the parameter list:
+
+```rust
+fn put_move(l: *chip u16, i: u32, reg: u16, val: u16) -> u32 {
+    l[i] = reg;
+    l[i + 1 as u32] = val;
+    return i + 2 as u32;
+}
+```
+
+- The mark is stripped at a dereference, but casting it off the pointer is
+  refused, and so is handing a `*chip u8` to a `*u8` parameter. A cast and a
+  call are two doors to one alias, and a rule shutting only one of them would
+  be complete-looking and false.
+- Only an `extern var` can carry it. The device keeps following the memory
+  after any frame is gone, so it cannot be a local, a field or a parameter -
+  written in those positions, `chip` reports where such memory has to live.
+- Three directions: `chip reads`, `chip writes`, `chip reads writes`. Only
+  that order parses.
+
+### `addr` - an address the model can watch travel
+
+A register that points at a buffer holds an address, and `addr` is its type.
+It is a ward field's type, and also a type an ordinary value carries, so the
+address can be prepared in one place and written in another - which is the
+shape every real DMA setup has.
+
+```rust
+mod raw { extern var CHIP: [u8; 64]; extern var BUF: [u16; 4] chip writes; }
+
+ward W {
+    p:  addr at 0x00 write;
+    sz: u16  at 0x08 write;
+}
+
+struct Job { dst: addr, words: u16 }
+
+fn plan(n: u16) -> Job {
+    return Job { dst: &raw::BUF[0], words: n };
+}
+
+fn start(j: *const Job) {
+    ward w: W at &raw::CHIP;
+    seal {
+        w.p.write(j.dst);
+        w.sz.write(j.words);
+    }
+}
+```
+
+- A pointer converts to an `addr` wherever a value is accepted - an argument,
+  a struct field, an annotated `let`, an explicit cast. A numeric literal is
+  an address too, in an argument, a struct field or an explicit cast, because
+  the register that points at a program's buffer is the register that points
+  at a fixed chip address.
+- The reverse never opens: `addr as int` is refused, and so is `ptr as u32`.
+  A `return` is still checked by equality, so a function declaring `addr`
+  writes the cast, exactly as the language already requires between `*T` and
+  `*const T`.
+- The address has to come from memory the chip shares. A local's address was
+  already refused because its frame dies; a parameter's is refused too, one
+  frame below the local that made it, because the device keeps following the
+  pointer after either is gone.
+- Like the rest of the model the kind is free, and a gate holds that rather
+  than a comment claiming it: an `addr` field and a `u32` field writing the
+  same literal emit byte-identical C.
+
+[tests/ward/](../tests/ward/)
 
 ### What it will not do
 
