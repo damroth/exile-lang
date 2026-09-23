@@ -1,0 +1,13 @@
+// The `continue` half. Separate from the `break` file because the two are
+// separate arms of the walker, and a fix that reached only one would leave the
+// other leaking with the first file green.
+fn main() {
+    let mut i = 0;
+    while i < 3 {
+        i = i + 1;
+        let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+        v.push(i);
+        if i == 2 { continue; }
+    }
+    println(i);
+}

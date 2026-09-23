@@ -1,0 +1,15 @@
+// A binding declared outside the loop and REASSIGNED inside it. The new value
+// belongs to the binding, which outlives the jump, so the loop it was born in is
+// the declaration's, not the assignment's. Stamping the assignment's loop would
+// free the value at the `break` and read it afterwards.
+fn main() {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    let mut i = 0;
+    while i < 3 {
+        v = Vec::with_capacity(default_allocator(), 8 as u32);
+        v.push(i);
+        if i == 1 { break; }
+        i = i + 1;
+    }
+    println(v.length() as int);
+}

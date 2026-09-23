@@ -232,6 +232,9 @@ pub struct GlueState {
     // instance as TStruct; ptr: the pointee), and the kind (0=vec, 1=hm, 2=ptr).
     gs_meta: Vec<*const Typ>,
     gs_kind: Vec<u32>,
+    // The loop depth the walk is at.  Saved and restored around each loop, like
+    // codegen's defer watermark, so nested loops each see their own.
+    gs_loopdepth: *u32,
 }
 
 fn join_colons(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
@@ -749,6 +752,10 @@ pub struct DEntry {
     den_status: DStatus,
     den_kind: DKind,
     den_pos: Pos,
+    // How many loops enclose the binding's DECLARATION.  A `break` or `continue`
+    // releases exactly the owners born in the loop it leaves; an index into the
+    // state would not do, because a shadowing `let` reorders it.
+    den_loop: u32,
 }
 
 fn prov_of(value: *const Texpr) -> Option<str> {
@@ -861,7 +868,8 @@ fn entry_for(structs: *const Vec<StructSig>, name: str, ty: *const Typ, pos: Pos
         | Typ::TOwnPtr(inner) => {
             let np: Option<str> = Option::None;
             Option::Some(DEntry { den_name: name, den_status: DStatus::DLive,
-                                  den_kind: DKind::DBareOwn { bo_pointee: inner, bo_prov: np }, den_pos: pos })
+                                  den_kind: DKind::DBareOwn { bo_pointee: inner, bo_prov: np }, den_pos: pos,
+                                  den_loop: 0 as u32 })
         }
         | _other => none_e
     };
@@ -872,7 +880,7 @@ fn entry_for_struct(structs: *const Vec<StructSig>, name: str, ty: *const Typ,
     if !has_drop_deep(structs, ty) { let x: Option<DEntry> = Option::None; return x; }
     let idx = find_struct_idx(structs, path);
     return Option::Some(DEntry { den_name: name, den_status: DStatus::DLive,
-                                 den_kind: DKind::DStructDrop(idx), den_pos: pos });
+                                 den_kind: DKind::DStructDrop(idx), den_pos: pos, den_loop: 0 as u32 });
 }
 
 // ---------- drop emission ----------
@@ -1208,7 +1216,7 @@ fn mark_consumed(a: Allocator, st: *const Vec<DEntry>, names: *const Vec<str>) -
         };
         if hit && live_or_partial {
             out.push(DEntry { den_name: sl[i].den_name, den_status: DStatus::DConsumed,
-                              den_kind: sl[i].den_kind, den_pos: sl[i].den_pos });
+                              den_kind: sl[i].den_kind, den_pos: sl[i].den_pos, den_loop: sl[i].den_loop });
         } else { out.push(sl[i]); }
         i = i + 1 as u32;
     }
@@ -1226,7 +1234,7 @@ fn mark_partial(a: Allocator, st: *const Vec<DEntry>, names: *const Vec<str>) ->
         };
         if hit && is_live {
             out.push(DEntry { den_name: sl[i].den_name, den_status: DStatus::DPartial,
-                              den_kind: sl[i].den_kind, den_pos: sl[i].den_pos });
+                              den_kind: sl[i].den_kind, den_pos: sl[i].den_pos, den_loop: sl[i].den_loop });
         } else { out.push(sl[i]); }
         i = i + 1 as u32;
     }
@@ -1459,6 +1467,8 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
         | Tstmt::TAssignField { target, field, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
         | Tstmt::TAssignIndex { base, index, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
         | Tstmt::TAssignDeref { target, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
+        | Tstmt::TBreak(_p) => walk_jump(structs, enums, a, ar, gs, st, s, out)
+        | Tstmt::TContinue(_p) => walk_jump(structs, enums, a, ar, gs, st, s, out)
         | _other => { out.push(*s); copy_dentries(a, st) }
     };
 }
@@ -1497,14 +1507,13 @@ fn walk_let(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Alloc
     check_array_of_own(ar, gs, value.ty, pos);
     match entry_for(structs, name, value.ty, pos) {
         Option::Some(e) => {
-            let e2 = match e.den_kind {
+            let k2 = match e.den_kind {
                 DKind::DBareOwn { bo_pointee, bo_prov } =>
-                    DEntry { den_name: e.den_name, den_status: e.den_status,
-                             den_kind: DKind::DBareOwn { bo_pointee: bo_pointee, bo_prov: prov_of(value) },
-                             den_pos: e.den_pos }
-                | _o => e
+                    DKind::DBareOwn { bo_pointee: bo_pointee, bo_prov: prov_of(value) }
+                | k => k
             };
-            st3.push(e2);
+            st3.push(DEntry { den_name: e.den_name, den_status: e.den_status, den_kind: k2,
+                              den_pos: e.den_pos, den_loop: *gs.gs_loopdepth });
         }
         | Option::None => {}
     }
@@ -1553,7 +1562,8 @@ fn walk_assign(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Al
                             DKind::DBareOwn { bo_pointee: bo_pointee, bo_prov: prov_of(value) }
                         | k => k
                     };
-                    st3.push(DEntry { den_name: n, den_status: DStatus::DLive, den_kind: nk, den_pos: es[i].den_pos });
+                    st3.push(DEntry { den_name: n, den_status: DStatus::DLive, den_kind: nk, den_pos: es[i].den_pos,
+                                      den_loop: es[i].den_loop });
                 } else { st3.push(es[i]); }
                 i = i + 1 as u32;
             }
@@ -1707,16 +1717,41 @@ fn dstatus_eq(x: DStatus, y: DStatus) -> bool {
     };
 }
 
+// A `break` or `continue` leaves the iteration before its body's closing drops
+// run, so it releases what the iteration owns - the owners BORN in the loop it
+// leaves, and nothing older: a binding declared outside the loop is still in
+// scope after the jump and is dropped where it always was.  The reference passes
+// the jump through with no drops at all, and both compilers leaked one allocation
+// per jump; this is the port declining to copy that.  The state is returned
+// unchanged because nothing after a jump in the same block runs, and a branch
+// that ends in one is already set aside when branches merge.
+fn walk_jump(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
+             st: *const Vec<DEntry>, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    let depth = *gs.gs_loopdepth;
+    let mut born_here: Vec<DEntry> = Vec::with_capacity(a, st.length() + 1 as u32);
+    let es = st.as_slice();
+    let mut i = 0 as u32;
+    while i < st.length() {
+        if es[i].den_loop == depth { born_here.push(es[i]); }
+        i = i + 1 as u32;
+    }
+    drops_for_live(a, ar, structs, enums, gs, &born_here, out);
+    out.push(*s);
+    return copy_dentries(a, st);
+}
 fn walk_while(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
               st: *const Vec<DEntry>, cond: *const Texpr, body: *const Vec<Tstmt>,
               post: *const Vec<Tstmt>, _s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
     // Move.check guarantees loop-invariant tracked states; one symbolic pass
     // gives the exit state.  Bodies are walked into fresh buffers.
     let st0 = apply_expr(structs, enums, a, ar, st, cond);
+    let saved_depth = *gs.gs_loopdepth;
+    *gs.gs_loopdepth = saved_depth + 1 as u32;
     let mut body_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let st_body = walk_stmts(structs, enums, a, ar, gs, &st0, body, &body_out);
     let mut post_out: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     let st_post = walk_stmts(structs, enums, a, ar, gs, &st_body, post, &post_out);
+    *gs.gs_loopdepth = saved_depth;
     out.push(Tstmt::TWhile { cond: cond, body: body_out, post: post_out });
     return st_post;
 }
@@ -1800,8 +1835,10 @@ pub fn drop_insert(a: Allocator, ar: *Arena, tp: *Tprogram) -> Option<*const Com
     let gkd: Vec<u32> = Vec::with_capacity(a, 8 as u32);
     let mut err: Option<*const CompileError> = Option::None;
     let mut srcnames: Vec<StrPair> = Vec::with_capacity(a, 8 as u32);
+    let mut loopdepth = 0 as u32;
     let mut glue = GlueState { gs_err: &err, gs_srcnames: &srcnames,
-                               gs_keys: gk, gs_names: gn, gs_meta: gm, gs_kind: gkd };
+                               gs_keys: gk, gs_names: gn, gs_meta: gm, gs_kind: gkd,
+                               gs_loopdepth: &loopdepth };
     let n = tp.tp_funcs.length();
     let mut i = 0 as u32;
     while i < n {

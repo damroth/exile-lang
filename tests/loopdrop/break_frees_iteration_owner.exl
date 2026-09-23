@@ -1,0 +1,17 @@
+// An owner born inside a loop body, and a `break` that leaves the iteration
+// before the body's closing drop runs. Both compilers used to emit the free at
+// the end of the body only, so the jump skipped it: one allocation lost per
+// break. The port now releases what the iteration owns before it jumps.
+//
+// Run with EXILE_ALLOC_WITNESS set, the host seam reports how many blocks are
+// still out at exit, and the expected output says zero.
+fn main() {
+    let mut i = 0;
+    while i < 3 {
+        let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+        v.push(i);
+        if i == 1 { break; }
+        i = i + 1;
+    }
+    println(i);
+}

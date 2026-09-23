@@ -797,6 +797,48 @@ selfhost-port-tc-errors: host-selfhost-tc $(EXILC_BIN)
 # requires every line unique to the reference to be a declaration, and every such
 # declaration to be mentioned exactly once in the reference's own output - the day
 # one is used, the justification is gone and this goes red.
+# ===== owners released on a loop jump =====
+#
+# A `break` or `continue` leaves an iteration before its body's closing drops run.
+# The reference passes a jump through the drop pass with no drops at all, so both
+# compilers lost one allocation per jump for every owner born in the loop; the
+# port now releases exactly those owners before jumping.  A LANGUAGE-zone
+# divergence, gated behaviourally: the emitted C cannot be compared with the
+# reference's, so each fixture is RUN with the host seam's allocation witness on
+# and its whole stdout - values and the final balance - is compared.
+selfhost-loopdrop: $(EXILC_BIN)
+	@fail=0; n=0; sig=""; \
+	rm -rf $(C_OUT)/ld; mkdir -p $(C_OUT)/ld; \
+	test -s tests/loopdrop/witness_control.c || { echo "selfhost-loopdrop: MISSING/EMPTY tests/loopdrop/witness_control.c"; exit 1; }; \
+	cc -ansi -pedantic -Wall -Werror -o $(C_OUT)/ld/wc tests/loopdrop/witness_control.c $(SYS_HOST) \
+	  || { echo "selfhost-loopdrop: the witness control does not build"; exit 1; }; \
+	off=`$(C_OUT)/ld/wc`; \
+	test -z "$$off" || { echo "selfhost-loopdrop: the allocation witness is ON by default - every program that allocates would gain a line of stdout ($$off)"; exit 1; }; \
+	on=`EXILE_ALLOC_WITNESS=1 $(C_OUT)/ld/wc`; \
+	test "$$on" = "alloc-balance 1" || { echo "selfhost-loopdrop: the witness cannot SEE a leak (got '$$on', want 'alloc-balance 1') - every fixture below would read zero regardless"; exit 1; }; \
+	sig="the witness is off by default and sees a planted leak;"; \
+	for f in tests/loopdrop/*.exl; do \
+	  b=`basename $$f .exl`; exp=tests/loopdrop/$$b.expected; \
+	  test -s $$f || { echo "selfhost-loopdrop: MISSING/EMPTY $$f"; fail=1; continue; }; \
+	  test -s $$exp || { echo "selfhost-loopdrop: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  grep -q '^alloc-balance 0$$' $$exp || { echo "selfhost-loopdrop: $$exp does not assert a zero balance - the fixture would pin a value and not the leak"; fail=1; continue; }; \
+	  n=$$((n+1)); \
+	  rm -f $(C_OUT)/ld/$$b.c $(C_OUT)/ld/$$b $(C_OUT)/ld/$$b.out; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/ld/$$b.c $$f >/dev/null 2>&1 \
+	    || { echo "selfhost-loopdrop: $$b was REJECTED"; fail=1; continue; }; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(C_OUT)/ld/$$b $(C_OUT)/ld/$$b.c $(SYS_HOST) \
+	    || { echo "selfhost-loopdrop: $$b emits C that is not clean at -O2"; fail=1; continue; }; \
+	  EXILE_ALLOC_WITNESS=1 $(C_OUT)/ld/$$b > $(C_OUT)/ld/$$b.out 2>&1; \
+	  if ! cmp -s $(C_OUT)/ld/$$b.out $$exp; then \
+	    echo "selfhost-loopdrop: OUTPUT $$b"; diff $$exp $(C_OUT)/ld/$$b.out | head -6; fail=1; \
+	  fi; \
+	done; \
+	rm -rf $(C_OUT)/ld; \
+	test $$n -ge 7 || { echo "selfhost-loopdrop: only $$n fixtures ran - the break and continue arms, the nesting, the declared-before and reassigned owners, the depth restore and the control each need one"; exit 1; }; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-loopdrop: clean ($$sig $$n fixtures RUN with the witness on, every one ending at alloc-balance 0 - break, continue, nesting, an owner declared before the loop, one reassigned inside it, an outer jump after an inner loop, and a loop with no jump)"; \
+	else exit 1; fi
+
 selfhost-refemit: $(EXILC_BIN)
 	@na=0; nb=0; fail=0; \
 	rm -rf $(C_OUT)/re; mkdir -p $(C_OUT)/re; \
@@ -978,7 +1020,7 @@ selfhost-outdir: $(EXILC_BIN)
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -1126,7 +1168,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
                  selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
                  selfhost-outdir \
-                 selfhost-refdefect selfhost-refemit \
+                 selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
                  selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists

@@ -1,0 +1,12 @@
+// The control: an owner in a loop that is never left by a jump. It was clean
+// before the change and has to stay clean after it - the rule adds drops only on
+// a jump's path, so a loop without one must emit exactly what it did.
+fn main() {
+    let mut i = 0;
+    while i < 3 {
+        let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+        v.push(i);
+        i = i + 1;
+    }
+    println(i);
+}

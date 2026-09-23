@@ -1,0 +1,21 @@
+// The load-bearing nesting case: an inner `break` releases the INNER loop's
+// owner and leaves the outer one alone - the outer is still read after the inner
+// loop ends. Two things are checked at once: the inner owner does not leak, and
+// the outer one is not freed early, which would read freed memory and then free
+// it a second time at the end of the outer body.
+fn main() {
+    let mut i = 0;
+    while i < 2 {
+        let mut outer: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+        outer.push(i);
+        let mut j = 0;
+        while j < 3 {
+            let mut inner: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+            inner.push(j);
+            if j == 1 { break; }
+            j = j + 1;
+        }
+        println(outer.length() as int);
+        i = i + 1;
+    }
+}

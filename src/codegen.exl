@@ -1904,7 +1904,11 @@ pub fn gen_block(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg:
     let sl = stmts.as_slice();
     let mut i = 0 as u32;
     let mut returned = false;
-    while i < stmts.length() {
+    // The block ends where a statement ends it, and the loop condition says so
+    // rather than a `break`: `chain` is born in every iteration, and a jump out of
+    // one would leave the iteration before its drop - one Vec lost per block that
+    // returns or jumps.
+    while i < stmts.length() && !returned {
         let chain = flatten_defers(a, &my_defers, outer);
         set_defers(cg, &chain);
         match sl[i] {
@@ -1943,7 +1947,6 @@ pub fn gen_block(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg:
             | Tstmt::TWhile { cond, body, post } => gen_while(a, ar, out, indent, cg, outer, &my_defers, cond, &body, &post)
             | _o => emit_simple_stmt(a, ar, out, indent, cg, &sl[i])
         }
-        if returned { break; }
         i = i + 1 as u32;
     }
     if !returned {

@@ -32,14 +32,38 @@
  * the same arity across backends means exile callers never have
  * to branch on target. */
 
+/* ---- allocation witness ----------------------------------------------------
+   Like the seal witness below, it exists to OBSERVE a guarantee rather than to
+   provide one: every block the seam hands out has to come back.  Unlike that
+   one it stays off unless EXILE_ALLOC_WITNESS is set in the environment, because
+   nearly every program allocates and each would otherwise gain a line of stdout.
+   With it set, the report at exit is the number of blocks still out - a leak is
+   anything but zero.                                                           */
+static long ex_alloc_live = 0;
+static int ex_alloc_mode = -1;
+static void ex_alloc_report(void) {
+    printf("alloc-balance %ld\n", ex_alloc_live);
+}
+static int ex_alloc_on(void) {
+    if (ex_alloc_mode < 0) {
+        ex_alloc_mode = getenv("EXILE_ALLOC_WITNESS") != 0;
+        if (ex_alloc_mode) { atexit(ex_alloc_report); }
+    }
+    return ex_alloc_mode;
+}
+
 void *sys_alloc(void *_state, unsigned long n) {
+    void *p;
     (void)_state;
-    return malloc((size_t)n);
+    p = malloc((size_t)n);
+    if (p != 0 && ex_alloc_on()) { ex_alloc_live++; }
+    return p;
 }
 
 void sys_free(void *_state, void *p, unsigned long _n) {
     (void)_state;
     (void)_n;
+    if (p != 0 && ex_alloc_on()) { ex_alloc_live--; }
     free(p);
 }
 

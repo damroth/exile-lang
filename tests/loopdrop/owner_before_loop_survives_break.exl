@@ -1,0 +1,15 @@
+// An owner declared BEFORE the loop is not the iteration's to release: it is
+// still in scope after the `break`, read after the loop, and dropped where it
+// always was. This file is green before and after the change - it guards the
+// rule's narrowness, not its existence. Releasing every live owner at a jump
+// would free this one early and again at the end of `main`.
+fn main() {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    let mut i = 0;
+    while i < 3 {
+        v.push(i);
+        if i == 1 { break; }
+        i = i + 1;
+    }
+    println(v.length() as int);
+}
