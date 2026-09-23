@@ -19811,6 +19811,11 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     let mut tc_srcbase: u32 = 0 as u32;
     let mut tc_binds: Vec<StrPair> = Vec::with_capacity(a, 16 as u32);
     let mut tc_bindbase: u32 = 0 as u32;
+    // ===== phase 1: what the program declares =====
+    //
+    // Names first, bodies much later.  Everything below resolves against these
+    // tables, so a type that is not named here is not a type as far as the rest of
+    // this function is concerned.
     // Parse the source prelude once; the registry is passive until the demand
     // fixpoint (post-drain) materializes the methods a program actually uses.
     let prelude_items: Vec<Item> = parse_prelude_items(a, ar);
@@ -19864,6 +19869,10 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     // is the no-bindings scope used everywhere except inside an instance.
     let empty_tbinds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     let mut genfns: Vec<GenFn> = Vec::with_capacity(a, 8 as u32);
+    // ===== phase 2: generics, type parameters, associated types =====
+    //
+    // The skeletons.  Nothing is instantiated yet - these tables only record what
+    // CAN be instantiated, and the drain in phase 7 is what decides what is.
     collect_gen_fns(a, ar, items, &genfns);
     let mut genjobs: Vec<GenJob> = Vec::with_capacity(a, 8 as u32);
     let mut geninsts: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -19898,6 +19907,12 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     let mut gensym_unused: u32 = 0 as u32;
     let mut loopdepth = 0 as u32;
     let mut toprunes: Vec<TopRune> = Vec::with_capacity(a, 8 as u32);
+    // ===== phase 3: the capability model =====
+    //
+    // Runes, wards, sigils and claims, collected and then checked against each
+    // other.  Port-only ground: the frozen reference cannot parse any of it, so
+    // nothing here has a differential to answer to and the checks are the whole
+    // guarantee.
     collect_top_runes(a, ar, items, "", &toprunes);
     let mut topwards: Vec<WardFieldEntry> = Vec::with_capacity(a, 8 as u32);
     collect_ward_types(items, &topwards);
@@ -19926,6 +19941,11 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     // mono list ahead of signature-type instances or the footer reorders.
     let mut sinfo: Vec<StructField> = Vec::with_capacity(a, 8 as u32);
     let field_scope0 = scope_in_field_pos(&base_scope);
+    // ===== phase 4: layout and signatures =====
+    //
+    // Struct and enum shapes, then the signatures that name them.  This is the
+    // first pass that RESOLVES a type annotation, which is why the two phases
+    // above had to finish.
     collect_struct_info(a, ar, &field_scope0, &empty_tp, items, &sinfo);
     prelude_struct_info(a, ar, &shadowed, &sinfo);
     // Enum variant/field types resolve with the struct fields, ahead of any
@@ -19960,6 +19980,13 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     let fp_start = mono_structs.length();
     register_iter_footprints(a, ar, &base_scope, items, &assoc_binds, false);
     let fp_end = mono_structs.length();
+    // ===== phase 5: the same resolution again, with a skeleton =====
+    //
+    // Field types, enum payloads and method signatures are each resolved TWICE.
+    // The second run is the load-bearing one: an instance minted from a generic
+    // field lands empty on the first pass, and every later reader of that value
+    // degrades.  The outputs of these repeats are thrown away - only their
+    // registration side effects are wanted.
     // Second field-type resolution with the skeleton in place: a generic
     // struct-field type (`Vec<TypeAlias>`) registers its instance fields into
     // the shared mono-fields table, so a `.length()` receiver's element tparam
@@ -20014,6 +20041,10 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     // missing.
     let skel_scope = scope_with_skeleton(&base_scope, &sinfo, &etags, &efields);
     let mut methods_throwaway: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
+    // ===== phase 6: methods, and everything synthesised alongside them =====
+    //
+    // Written methods, trait defaults, closures, derives and drops all become
+    // entries in the same table, because a call site cannot tell them apart.
     collect_method_info(a, ar, &skel_scope, items, &methods_throwaway);
     collect_trait_default_methods(a, ar, &skel_scope, items, &prelude_items, &methods_throwaway);
     let mut methods: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
@@ -20032,6 +20063,11 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     // sees closures and derives too, then unioned with the marker-carrying
     // impl-block walk.
     let mut impls: Vec<ImplReg> = Vec::with_capacity(a, 8 as u32);
+    // ===== phase 7: impls, the drain, and what the prelude must materialise =====
+    //
+    // The demand fixpoint.  Generic bodies are instantiated until nothing new is
+    // demanded, and only then does the prelude hand over the methods the program
+    // actually reached.
     build_impl_regs(a, &methods, items, &impls);
     let idx = ProgIdx { pi_runes: &toprunes, pi_wards: &topwards, pi_wardinsts: &topwardinsts, pi_sigils: &sigils, pi_claims: &claims, pi_snames: &snames, pi_fstructs: &fstructs, pi_fenums: &fenums, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods, pi_impls: &impls,
@@ -20141,6 +20177,11 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     register_vec_slice_views(a, ar, &sinfo_scope, &mono_structs, &mono_sargs, fp_start, fp_end, &sv_fp);
     let sv_end = mono_structs.length();
 
+    // ===== phase 8: what the emitted C names, and what it can reach =====
+    //
+    // Two sets, not one, and the comments below say why: mentioning a name and
+    // being able to reach a type are different questions, and one set answering
+    // both got each answer wrong in turn.  The mono-instance DCE runs from here.
     // What the surviving code actually names, computed BEFORE the index is
     // assembled - the drop test below needs it, and the later DCE pass seeds
     // itself from the index, so it cannot answer this question.
@@ -20305,6 +20346,10 @@ fn check_program_at(a: Allocator, ar: *Arena, items: *const Vec<Item>, probe: bo
     let mut dbg_snames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut dbg_enames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let dbg_root: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    // ===== phase 9: the footer the emitter needs =====
+    //
+    // Debug names, must-use enums, FFI declarations, sys externs - the tables
+    // codegen reads that no earlier phase had a reason to build.
     collect_debug_names(a, ar, &dbg_root, items, &dbg_snames, &dbg_enames);
     let mut di = 0 as u32;
     while di < structs.length() { mark_struct_debug(a, ar, &structs, di, &dbg_snames); di = di + 1 as u32; }
