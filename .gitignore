@@ -64,8 +64,14 @@ tests/*/*.c
 # written to stop emitted C and would have silently swallowed these: the gate
 # would stay green locally and fail on a fresh clone with a missing stub.
 !tests/*/*_stub.c
+# The allocation witness's controls are hand-written as well, and they are not
+# stubs: they are the programs that prove the instrument works before any fixture
+# is trusted.  The first one went into a commit invisible - ignored, so not even
+# listed as untracked - while the gate that needs it stayed green locally.
+!tests/loopdrop/witness_*.c
 notes/
 
 # The fuzz tooling is Python, so running any of its gates leaves a bytecode
 # cache next to the sources.  It is build output that happens to live in tools/.
 __pycache__/
+dev/

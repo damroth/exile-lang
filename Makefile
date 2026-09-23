@@ -816,9 +816,14 @@ selfhost-loopdrop: $(EXILC_BIN)
 	test -z "$$off" || { echo "selfhost-loopdrop: the allocation witness is ON by default - every program that allocates would gain a line of stdout ($$off)"; exit 1; }; \
 	on=`EXILE_ALLOC_WITNESS=1 $(C_OUT)/ld/wc`; \
 	test "$$on" = "alloc-balance 1" || { echo "selfhost-loopdrop: the witness cannot SEE a leak (got '$$on', want 'alloc-balance 1') - every fixture below would read zero regardless"; exit 1; }; \
-	sig="the witness is off by default and sees a planted leak;"; \
+	test -s tests/loopdrop/witness_poison.c || { echo "selfhost-loopdrop: MISSING/EMPTY tests/loopdrop/witness_poison.c"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -o $(C_OUT)/ld/wp tests/loopdrop/witness_poison.c $(SYS_HOST) \
+	  || { echo "selfhost-loopdrop: the poison control does not build"; exit 1; }; \
+	EXILE_ALLOC_WITNESS=1 $(C_OUT)/ld/wp >/dev/null \
+	  || { echo "selfhost-loopdrop: a released block does not come back poisoned at -O2 - a use-after-free would read the old value and look correct"; exit 1; }; \
+	sig="the witness is off by default, sees a planted leak, and poisons what it releases even at -O2;"; \
 	for f in tests/loopdrop/*.exl; do \
-	  b=`basename $$f .exl`; exp=tests/loopdrop/$$b.expected; \
+	  b=`basename $$f .exl`; exp=`dirname $$f`/$$b.expected; \
 	  test -s $$f || { echo "selfhost-loopdrop: MISSING/EMPTY $$f"; fail=1; continue; }; \
 	  test -s $$exp || { echo "selfhost-loopdrop: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
 	  grep -q '^alloc-balance 0$$' $$exp || { echo "selfhost-loopdrop: $$exp does not assert a zero balance - the fixture would pin a value and not the leak"; fail=1; continue; }; \

@@ -38,7 +38,8 @@
    one it stays off unless EXILE_ALLOC_WITNESS is set in the environment, because
    nearly every program allocates and each would otherwise gain a line of stdout.
    With it set, the report at exit is the number of blocks still out - a leak is
-   anything but zero.                                                           */
+   anything but zero - and every released block is poisoned, so a read after its
+   free shows up as a wrong value rather than as nothing.                      */
 static long ex_alloc_live = 0;
 static int ex_alloc_mode = -1;
 static void ex_alloc_report(void) {
@@ -60,10 +61,21 @@ void *sys_alloc(void *_state, unsigned long n) {
     return p;
 }
 
-void sys_free(void *_state, void *p, unsigned long _n) {
+void sys_free(void *_state, void *p, unsigned long n) {
     (void)_state;
-    (void)_n;
-    if (p != 0 && ex_alloc_on()) { ex_alloc_live--; }
+    if (p != 0 && ex_alloc_on()) {
+        /* Poison the block before handing it back.  A read after the free then
+           returns a pattern on every host, instead of whatever this allocator
+           happened to leave behind - and a use-after-free becomes as visible to
+           the witness as a leak.  `n` is the true size: the seam's contract
+           requires it, because AllocMem on the target needs it too. */
+        volatile unsigned char *b = (volatile unsigned char *)p;
+        unsigned long k;
+        /* volatile, or an optimising compiler drops these as dead stores: the
+           block is released on the next line, so nothing reads them.         */
+        for (k = 0; k < n; k++) { b[k] = 0xA5; }
+        ex_alloc_live--;
+    }
     free(p);
 }
 
