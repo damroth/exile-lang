@@ -9850,13 +9850,6 @@ fn not_single_expr(a: Allocator, ar: *Arena, sc: *const TyScope, side: str, p: P
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return defer_expr(ar, p);
 }
-fn else_block_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                    expected: Option<*const Typ>, else_blk: Option<Vec<Stmt>>, p: Pos) -> *const Texpr {
-    return match else_blk {
-        Option::Some(blk) => block_value(a, ar, g, sc, env, expected, &blk, "else", p)
-        | Option::None => no_else_value(ar, sc, p)
-    };
-}
 fn no_else_value(ar: *Arena, sc: *const TyScope, p: Pos) -> *const Texpr {
     tc_fail(ar, sc, p, "`if` used as a value needs an `else` branch (a value must exist on every path)");
     return defer_expr(ar, p);
@@ -9872,14 +9865,40 @@ fn check_if_branches(a: Allocator, ar: *Arena, sc: *const TyScope, tthen: *const
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
+// The reference's order, and it is observable: every SHAPE question is asked
+// before any expression is elaborated - the else's presence, the then branch's
+// shape, the else branch's shape - and only then the condition, the then value
+// and the else value, in that order.  A program with two faults is told about the
+// first of them in that sequence, so elaborating the condition first, or a branch
+// before the other branch's shape was checked, names the wrong one.
 fn mk_if_expr(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
               expected: Option<*const Typ>, cond: *const Expr, then_blk: *const Vec<Stmt>,
               else_blk: Option<Vec<Stmt>>, p: Pos) -> *const Texpr {
+    return match else_blk {
+        Option::Some(eblk) => mk_if_expr_else(a, ar, g, sc, env, expected, cond, then_blk, &eblk, p)
+        | Option::None => no_else_value(ar, sc, p)
+    };
+}
+fn mk_if_expr_else(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
+                   expected: Option<*const Typ>, cond: *const Expr, then_blk: *const Vec<Stmt>,
+                   eblk: *const Vec<Stmt>, p: Pos) -> *const Texpr {
+    if !branch_is_value(then_blk) { return not_single_expr(a, ar, sc, "then", p); }
+    if !branch_is_value(eblk) { return not_single_expr(a, ar, sc, "else", p); }
     let tcond = elab_expr(a, ar, g, sc, env, none_ty(), cond);
     let tthen = block_value(a, ar, g, sc, env, expected, then_blk, "then", p);
-    let telse = else_block_value(a, ar, g, sc, env, expected, else_blk, p);
+    let telse = block_value(a, ar, g, sc, env, expected, eblk, "else", p);
     check_if_branches(a, ar, sc, tthen, telse, p);
     return te_node(ar, TexprNode::TIfExpr { cond: tcond, then_val: tthen, else_val: telse }, tthen.ty, p);
+}
+// The reference's `branch_value_expr`: a branch yields a value only when it is
+// exactly one trailing expression.
+fn branch_is_value(blk: *const Vec<Stmt>) -> bool {
+    if blk.length() != 1 as u32 { return false; }
+    let sl = blk.as_slice();
+    return match sl[0 as u32] {
+        Stmt::Tail(_e) => true
+        | _o => false
+    };
 }
 
 // A trailing block value in a return-typed fn is an implicit `return`.  A

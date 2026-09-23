@@ -1,0 +1,8 @@
+// A value-`if` whose condition names nothing, and which has no `else`. The
+// reference asks every shape question before it elaborates a single expression,
+// the condition included - so the missing `else` is reported and the undefined
+// name is never reached. The port elaborated the condition first.
+fn main() {
+    let x = if nope { 1 };
+    println(x);
+}

@@ -1,0 +1,9 @@
+// A value-`if` with no `else` AND a then branch that is a block. Two faults, and
+// the reference reports the missing `else`, because it asks whether there is an
+// else branch before it looks at the shape of either branch. The port used to
+// look at the then branch first and name its shape instead.
+fn main() {
+    let c = true;
+    let x = if c { let y = 1; y };
+    println(x);
+}

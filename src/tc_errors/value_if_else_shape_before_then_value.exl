@@ -1,0 +1,9 @@
+// The then value names nothing and the else branch is a block. The reference
+// checks the ELSE branch's shape before it elaborates the THEN value, so the shape
+// is what it reports. Elaborating each branch as soon as its own shape passed -
+// the port's order - reached the undefined name first.
+fn main() {
+    let c = true;
+    let x = if c { nope } else { let y = 2; y };
+    println(x);
+}

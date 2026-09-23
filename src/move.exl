@@ -716,8 +716,7 @@ fn walk_guard(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
 }
 // A guard is walked for what it REPORTS; the bindings it hands back are no use
 // here.  They are bound at function scope rather than dropped on the floor inside
-// the arm above, because an owner discarded inside a match arm is never freed -
-// one Vec lost for every guarded arm the compiler checked.
+// the arm above, because an owner discarded inside a match arm is never freed.
 fn walk_guard_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
                    mv: *const Mv, live: *const Vec<MoveBinding>, ge: *const Texpr) {
     let _seen = walk_expr(structs, enums, a, ar, mv, live, ge);
