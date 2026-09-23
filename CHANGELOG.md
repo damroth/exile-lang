@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-09-23
+
+**The compiler written in exile answers like the one it replaces.** This round is
+repair work in `src/`: the type checker closed a long run of defects around
+traits, associated types, generic instances, `@debug` and scope walking - names
+resolved by their last segment, conformance compared outside the impl's type
+parameters, a cycle of generics that crashed the walk instead of stopping it.
+The driver stopped calling a failed write a success. The language gained no
+construct; what changed is that the compiler a user builds with `make compiler`
+now agrees with the reference where it used to quietly disagree, and refuses
+where it used to emit C for a program the reference rejects.
+
+### Added
+
+- The tutorial documents what v1.4.0 added: `chip` on `extern var` and
+  `*chip T` - the mark, the two laundering doors that stay closed, the three
+  directions that parse - and `addr`, with the conversions measured per
+  position, the refusals, and the byte-identical emission. Beside them, the NDK
+  layer behind the `ndk::` names, `--after-drop`, and `runtime/sys_bare.c` next
+  to `sys_host.c`. The compiler's own walk is named too: the nine phases
+  `check_program_at` runs through.
+
+- Four gates, taking `selfhost-verify` from 41 to 45:
+
+  - `selfhost-refemit` holds two classes of reference output the reference
+    itself cannot use: declarations and includes its own C never references,
+    and a call to a callee it dropped, whose output therefore fails to link.
+    The link decides which class a fixture belongs to, and the compiler's side
+    is asserted by running it and matching its `.expected`.
+  - `selfhost-refdefect` covers inputs the reference cannot compile at all, so
+    there is nothing to compare. It pins the abort by its `internal compiler
+    error` marker rather than its exit status - a reference later fixed by
+    refusing the input would leave a status-only check green - and pins that
+    the compiler builds, runs and prints its `.expected`.
+  - `selfhost-outdir` walks all three write paths (`--c-out`, `-o` with
+    `--emit-ast`, `-o` with `--target host`) and asserts the file is on disk,
+    behaviourally rather than by comparing command strings.
+  - `selfhost-tier` pins the lint tier class: it must speak about a generic the
+    program declared and stay silent about one the prelude declared.
+
+- 101 new rejection fixtures under `src/tc_errors/`, taking the corpus
+  `selfhost-port-tc-errors` walks from 294 to 395. The gate holds both halves
+  of a refusal: the same first line as the reference, and no emitted C - a
+  check that is skipped reaches the reader as C their own compiler rejects.
+
+### Fixed
+
+- Trait impls resolve their signatures at the impl block, where the reference
+  reports them, and answer the same questions wherever their trait is declared.
+  Conformance checks arity first and compares under the impl's type parameters.
+  A generic impl's type parameters splice onto the method instead of replacing
+  it. An associated-type projection is substituted where the reference
+  substitutes it, and refused everywhere else.
+- A type name resolves by walking scopes and comparing whole paths, not by its
+  last segment, and a bare name inside a nested module reaches its parent
+  scopes in every position it can appear.
+- A generic instance carries what it is generic over and remembers where it was
+  demanded. A container is registered after its payload, a self-reference stops
+  the walk, a nested enum application is reached, and inference over a type
+  graph keeps a visited set, so a cycle of generics stops instead of crashing.
+- `@debug`: one printer per emitted type, the printer a module-nested type's
+  call already assumed, fields that have to be printable with the refusal at the
+  declaration, and an allowlist comparing whole paths - the marker names a type,
+  not a name.
+- An or-pattern alternative answers the same contract a lone pattern does, a
+  branch standing in for another says when it does not apply, and an annotation
+  reads its payload.
+- A binary operator elaborates its right operand first, as the reference's tuple
+  does, and a call looks at its arguments before it decides what to report.
+- The auto-ref rule reaches all three method call paths, and fires only when the
+  argument is what the slot points at.
+- `Self` resolves where it is written, and a failed write is not a success.
+- A variant constructor is a call whose arguments answer to the same check, a
+  struct-variant literal instantiates its enum and emits in declaration order,
+  and a variant infers before it counts.
+- A region is a scope for the dead-code query and for the drop walker.
+- A `*const` field prints its address.
+
+### Changed
+
+- The compiler no longer announces a border in its own words. Where it used to
+  say an input was not yet ported, it lists the item kinds it accepts, as the
+  reference does. The fuzz limit that pinned that border retired with it rather
+  than staying green over a property the compiler no longer has; the input is
+  now an ordinary parity fixture, compared on both sides.
+- The lint tier class reaches parity, and the compiler stays silent about
+  generics the reader did not write.
+
 ## [1.4.0] - 2026-09-04
 
 **The declarations reach hardware, and then the programs run.** Two constructs
@@ -1366,4 +1454,4 @@ file in [`examples/`](examples/) that compiles to C and builds cleanly under
 - CI workflow building the compiler, running tests, and compiling every
   example with `-ansi -pedantic -Wall`
 
-[1.4.0]: https://github.com/damroth/exile-lang/releases/tag/v1.4.0
+[1.4.1]: https://github.com/damroth/exile-lang/releases/tag/v1.4.1
