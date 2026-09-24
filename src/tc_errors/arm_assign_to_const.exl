@@ -1,0 +1,12 @@
+// Assigning to a `const` inside a match arm. The error names the constant, as it
+// does in a function body; the port used to call it an immutable variable here.
+enum Sig { Stop | Go }
+const K: int = 3;
+fn main() {
+    let s = Sig::Stop;
+    match s {
+        Sig::Stop => { K = 4; }
+        | Sig::Go => { }
+    }
+    println(K);
+}

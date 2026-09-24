@@ -7909,7 +7909,7 @@ fn assign_coerced_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
 fn elab_tail_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                   expected: Option<*const Typ>, e: *const Expr, benv: *Vec<FieldTy>,
                   allow_void: bool, tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
-    if allow_void && is_bare_if(e) { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); return; }
+    if allow_void && is_bare_if(e) { elab_stmt_pos(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, e, tstmts); return; }
     *trailing = Option::Some(elab_expr_av(a, ar, g, sc, benv, expected, e, allow_void));
     return;
 }
@@ -8270,23 +8270,6 @@ fn elab_stmt_methodcall(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     return Tstmt::TExprStmt(elab_expr_av(a, ar, g, sc, env, none_ty(), whole, true));
 }
 
-fn elab_block_expr_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
-                        benv: *Vec<FieldTy>, e: *const Expr, out: *Vec<Tstmt>) {
-    match *e {
-        Expr::If { cond, then_blk, else_blk } => {
-            let tcond = elab_expr(a, ar, g, sc, benv, none_ty(), cond);
-            let tthen = elab_stmt_body(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, &then_blk);
-            let telse = elab_else_stmt_body(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, else_blk);
-            out.push(Tstmt::TIf { cond: tcond, then_body: tthen, else_body: telse });
-        }
-        // A rune `.write` in statement position lowers to a volatile store, not a
-        // method call; everything else stays an expr statement.
-        | Expr::MethodCall { receiver, name, args } => {
-            out.push(elab_stmt_methodcall(a, ar, g, sc, benv, receiver, name, &args, e));
-        }
-        | _other => { out.push(Tstmt::TExprStmt(elab_expr_av(a, ar, g, sc, benv, none_ty(), e, true))); }
-    }
-}
 // `rune name: T at ADDR dir` elaborates to a `volatile T *`
 // binding.  The name is registered as a `TRune` value and lowered to a `TLet`
 // whose value is the folded base address (`TRuneAddr`).  Reusing `TLet` means
@@ -8343,68 +8326,14 @@ fn rune_sym_base(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     return te_node(ar, TexprNode::TCast(tref, elem_ann), rune_ty, pos);
 }
 
+// A block's statements are the function body's statements, walked by the same
+// walker and held to the same checks, as the reference does; only the trailing
+// expression belongs to the block.
 fn elab_block_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                    expected: Option<*const Typ>, s: *const Stmt, benv: *Vec<FieldTy>,
                    allow_void: bool, tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
     match *s {
-        Stmt::Let { name, value, ty_ann, is_mut, pos } => {
-            let vl = elab_expr(a, ar, g, sc, benv, let_expected(a, ar, sc, ty_ann, pos), value);
-            let ety = let_env_ty(a, ar, sc, ty_ann, vl.ty, pos);
-            check_let_ty(a, ar, sc, name, value, ty_ann, vl.ty, pos);
-            let lent = coerce_own_to(a, ar, sc, vl, ety);
-            if is_mut { note_let_mut(sc, name); }
-            benv.push(FieldTy { name: name, ty: ety });
-            // The LET's position, not the value's: the reference reports an unused
-            // variable at the binding site.  Invisible until lint rendered it —
-            // the IR dump does not print TLet's pos.
-            tstmts.push(Tstmt::TLet { name: name, value: lent, decl_ty: ety, pos: pos });
-        }
-        | Stmt::RuneDecl { name, elem, addr, dir, pos } => {
-            elab_rune_decl(a, ar, g, sc, benv, name, elem, addr, dir, pos, tstmts);
-        }
-        | Stmt::WardInst { name, ward_ty, addr, pos } => {
-            elab_ward_inst(a, ar, sc, benv, name, ward_ty, addr, pos);
-        }
-        | Stmt::Seal { body, pos } => {
-            tstmts.push(elab_seal(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, &body, pos));
-        }
-        | Stmt::ExprStmt(e) => { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); }
-        | Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, allow_void, tstmts, trailing); }
-        | Stmt::Assign { path, value, pos } => {
-            if path.length() == 1 as u32 { require_mut(a, ar, sc, path.as_slice()[0 as u32], "assign to", pos); }
-            let av = assign_coerced_value(a, ar, g, sc, benv, &path, value, pos);
-            tstmts.push(Tstmt::TAssign { path: copy_strs(a, &path), value: av, pos: pos });
-        }
-        | Stmt::AssignField { target, field, value, pos } => {
-            let taf = elab_expr(a, ar, g, sc, benv, none_ty(), target);
-            require_mut_root(a, ar, sc, taf, "mutate field of", pos);
-            let fexp = struct_field_ty(sc, taf.ty, field);
-            let vaf = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, fexp, value), fexp);
-            tstmts.push(Tstmt::TAssignField { target: taf, field: field, value: vaf, pos: pos });
-        }
-        | Stmt::AssignDeref { target, value, pos } => {
-            let tad = elab_expr(a, ar, g, sc, benv, none_ty(), target);
-            let dexp = deref_pointee(tad.ty);
-            let vad = loan_into(a, ar, sc, elab_expr(a, ar, g, sc, benv, dexp, value), dexp);
-            tstmts.push(Tstmt::TAssignDeref { target: tad, value: vad, pos: pos });
-        }
-        | Stmt::AssignIndex { base, index, value, pos } => {
-            let tbi = elab_expr(a, ar, g, sc, benv, none_ty(), base);
-            let tii = elab_expr(a, ar, g, sc, benv, none_ty(), index);
-            let tvi = elab_expr(a, ar, g, sc, benv, none_ty(), value);
-            check_assign_index(a, ar, sc, tbi, tii, pos);
-            tstmts.push(Tstmt::TAssignIndex { base: tbi, index: tii, value: tvi, pos: pos });
-        }
-        | Stmt::Break(pos) => { tstmts.push(Tstmt::TBreak(pos)); }
-        | Stmt::Continue(pos) => { tstmts.push(Tstmt::TContinue(pos)); }
-        | Stmt::LetTuple { names, value, is_mut } => {
-            let tvt = elab_expr(a, ar, g, sc, benv, none_ty(), value);
-            bind_tuple_names(&names, tvt.ty, benv);
-            tstmts.push(Tstmt::TLetTuple { names: copy_strs(a, &names), value: tvt, pos: expr_pos(value) });
-        }
-        // Control-flow statements (while / for / return / defer / with) that a
-        // block expression can also contain go through the function-body
-        // statement elaborator.
+        Stmt::Tail(e) => { elab_tail_stmt(a, ar, g, sc, expected, e, benv, allow_void, tstmts, trailing); }
         | _other => { elab_stmt(a, ar, g, sc, sc.sc_gensym, benv, sc.sc_ret, s, tstmts); }
     }
 }

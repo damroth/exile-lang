@@ -1,0 +1,12 @@
+// An element store into an array that was not declared `let mut`, inside a
+// match arm.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    let arr: [int; 2] = [1, 2];
+    match s {
+        Sig::Stop => { arr[0] = 5; }
+        | Sig::Go => { }
+    }
+    println(arr[0]);
+}

@@ -1,0 +1,11 @@
+// Destructuring an int as if it were a tuple, inside a match arm. The tuple check
+// reports it at the `let`; without it the names were bound to nothing and the
+// first use of one was reported as undefined instead.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    match s {
+        Sig::Stop => { let (a, b) = 5; println(a); }
+        | Sig::Go => { }
+    }
+}

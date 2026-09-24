@@ -1,0 +1,12 @@
+// A mutable tuple binding inside a match arm, then an assignment to one of its
+// names. Both compilers accept it and emit the same C; the port used to refuse
+// it, because the arm's statements were walked by a copy of the statement
+// walker that never recorded the tuple's names as mutable.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    match s {
+        Sig::Stop => { let mut (a, b) = (1, 2); a = a + 10; println(a + b); }
+        | Sig::Go => { }
+    }
+}

@@ -1,0 +1,14 @@
+// A `break` at the top level of a match arm, with no loop anywhere. The statements
+// of an arm block are checked exactly as the function body's are, so this is the
+// same error it would be one line up; the port used to walk arm blocks with a
+// copy of the statement walker that skipped the loop check, and emitted a C
+// `break` that silently left the `switch` instead.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    match s {
+        Sig::Stop => { break; }
+        | Sig::Go => { }
+    }
+    println(1);
+}

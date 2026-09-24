@@ -1,0 +1,12 @@
+// A store through a pointer whose value has the wrong type, inside a match arm.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    let mut v = 1;
+    let q: *int = &v;
+    match s {
+        Sig::Stop => { *q = true; }
+        | Sig::Go => { }
+    }
+    println(v);
+}

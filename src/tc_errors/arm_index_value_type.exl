@@ -1,0 +1,11 @@
+// An element store of the wrong type into an int array, inside a match arm.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    let mut arr: [int; 2] = [1, 2];
+    match s {
+        Sig::Stop => { arr[0] = true; }
+        | Sig::Go => { }
+    }
+    println(arr[0]);
+}

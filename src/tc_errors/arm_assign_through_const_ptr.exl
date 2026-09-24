@@ -1,0 +1,13 @@
+// A store through a `*const` pointer, inside a match arm. The pointee is
+// read-only wherever the store is written.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    let v = 1;
+    let p: *const int = &v;
+    match s {
+        Sig::Stop => { *p = 5; }
+        | Sig::Go => { }
+    }
+    println(v);
+}

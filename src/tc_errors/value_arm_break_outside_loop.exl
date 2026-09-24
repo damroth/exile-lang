@@ -1,0 +1,12 @@
+// A `break` with no loop, in an arm whose match is a value. An arm that leaves
+// by `break` needs no trailing value - but only if there is a loop to leave, and
+// the loop check comes first.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    let x = match s {
+        Sig::Stop => { break; }
+        | Sig::Go => { 0 }
+    };
+    println(x);
+}

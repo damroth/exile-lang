@@ -3180,7 +3180,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   field_instance_names_nested \
                   prelude_named_field_dep prelude_named_and_built \
                   unused_enum_stays_dropped \
-                   extern_var_index_assign
+                   extern_var_index_assign \
+                   arm_let_mut_tuple
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

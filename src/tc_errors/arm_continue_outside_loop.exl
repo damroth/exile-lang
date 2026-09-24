@@ -1,0 +1,10 @@
+// `continue` at the top level of a match arm, with no loop to continue.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    match s {
+        Sig::Stop => { continue; }
+        | Sig::Go => { }
+    }
+    println(1);
+}
