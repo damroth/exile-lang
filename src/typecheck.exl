@@ -8570,23 +8570,34 @@ fn indexed_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     return te_node(ar, TexprNode::TIndex { base: tb, index: ti }, elem, p);
 }
 
-// `a[i] = v` — the base may also be a `*T` pointer (pointee mutation), which a
-// read-index cannot be, so this carries its own message.
-fn check_assign_index(a: Allocator, ar: *Arena, sc: *const TyScope, tb: *const Texpr,
-                      ti: *const Texpr, p: Pos) {
-    if !is_assignable_index_base(sc, tb.ty) {
-        let mut sb = StringBuilder::with_capacity(a, 80 as u32);
-        sb.push_str("indexed assignment `a[i] = ...` requires an array or '*T' pointer, got ");
-        sb.push_str(typ_name(a, ar, tb.ty));
-        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
-        return;
+// The target of `a[i] = v`, asked before the index or the binding's mutability,
+// as the reference asks it.  An array (chip memory included) is written in
+// place and a `*T` or `own *T` through the pointer.  A `Slice` is a read-only
+// view and a `Vec` grows through its methods: reading them by index is legal,
+// storing into them this way is not, and the C had no form for it.
+fn check_index_target(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    if ty_has_tvar(t) || is_some_ty(array_elem_ty(t)) { return; }
+    match *t {
+        Typ::TPtr(_i) => { }
+        | Typ::TOwnPtr(_i) => { }
+        | Typ::TConstPtr(_i) => { assign_const_ptr(a, ar, sc, t, p); }
+        | _o => { index_target_fail(a, ar, sc, t, p); }
     }
-    if !is_int_like_ty(ti.ty) {
-        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
-        sb.push_str("array index must be an integer, got ");
-        sb.push_str(typ_name(a, ar, ti.ty));
-        tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
-    }
+    return;
+}
+fn index_target_fail(a: Allocator, ar: *Arena, sc: *const TyScope, t: *const Typ, p: Pos) {
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("indexed assignment `a[i] = ...` requires an array or '*T' pointer, got ");
+    sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn check_index_int(a: Allocator, ar: *Arena, sc: *const TyScope, ti: *const Texpr, p: Pos) {
+    if is_int_like_ty(ti.ty) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+    sb.push_str("array index must be an integer, got ");
+    sb.push_str(typ_name(a, ar, ti.ty));
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
 // The written element must fit the slot — same rules as any store.
@@ -8608,14 +8619,6 @@ fn elem_value_agree(a: Allocator, ar: *Arena, sc: *const TyScope, want: *const T
     sb.push_str(", got "); sb.push_str(typ_name(a, ar, act));
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
-}
-fn is_assignable_index_base(sc: *const TyScope, t: *const Typ) -> bool {
-    if is_ptr_ty(t) { return true; }
-    if ty_has_tvar(t) { return true; }
-    return match index_elem_ty(sc, t) {
-        Option::Some(_e) => true
-        | Option::None => false
-    };
 }
 // `base[lo..hi]` / `base[lo..=hi]` builds a read-only `Slice<T>` view:
 // `{ ptr: &base[lo], len: (hi - lo [+ 1]) as u32 }`.
@@ -10492,9 +10495,10 @@ fn elab_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         }
         | Stmt::AssignIndex { base, index, value, pos } => {
             let tbi = elab_expr(a, ar, g, sc, env, none_ty(), base);
-            require_mut_root_ast(a, ar, sc, base, tbi, "assign into", pos);
+            check_index_target(a, ar, sc, tbi.ty, pos);
             let tii = elab_expr(a, ar, g, sc, env, none_ty(), index);
-            check_assign_index(a, ar, sc, tbi, tii, pos);
+            check_index_int(a, ar, sc, tii, pos);
+            require_mut_root_ast(a, ar, sc, base, tbi, "assign into", pos);
             let tvi0 = elab_expr(a, ar, g, sc, env, none_ty(), value);
             check_elem_value(a, ar, sc, tbi.ty, value, tvi0.ty, pos);
             let tvi = loan_into(a, ar, sc, tvi0, elem_of(tbi.ty));

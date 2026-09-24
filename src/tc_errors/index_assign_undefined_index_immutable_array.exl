@@ -1,0 +1,8 @@
+// An undefined name as the index of an array that is not `mut`. The index is
+// elaborated before the mutability is asked, so the undefined name comes first -
+// at its own column, not at the store's.
+fn main() {
+    let arr: [int; 2] = [1, 2];
+    arr[nope] = 5;
+    println(arr[0]);
+}

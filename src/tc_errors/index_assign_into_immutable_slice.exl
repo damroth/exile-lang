@@ -1,0 +1,9 @@
+// The same store into a `Slice` parameter that is not `mut`. The target's kind is
+// asked before the binding's mutability, so the error names the slice, not the
+// missing `mut`.
+fn bump(v: Slice<int>) { v[0] = 5; }
+fn main() {
+    let arr: [int; 2] = [1, 2];
+    bump(arr[0..2]);
+    println(arr[0]);
+}

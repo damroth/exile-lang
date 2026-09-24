@@ -1,0 +1,7 @@
+// A store through `[i]` into an int that is not `mut`. Two faults; the target's
+// kind is asked first, so the int is reported, not its mutability.
+fn main() {
+    let x = 5;
+    x[0] = 1;
+    println(x);
+}

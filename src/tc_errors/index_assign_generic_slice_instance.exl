@@ -1,0 +1,9 @@
+// A generic function that stores through `[i]`, instantiated with a `Slice`. The
+// body is fine for an array or a pointer; for this instance the target is a
+// slice, and the store is refused there.
+fn put<T>(mut a: T) { a[0] = 5; }
+fn main() {
+    let arr: [int; 2] = [1, 2];
+    put(arr[0..2]);
+    println(arr[0]);
+}

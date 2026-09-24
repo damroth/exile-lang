@@ -1,0 +1,8 @@
+// An element store through `[i]` into a `Vec`. A vector is read by index and
+// changed through its methods; this form of store has no C behind it.
+fn main() {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    v.push(1);
+    v[0] = 5;
+    println(v.length());
+}

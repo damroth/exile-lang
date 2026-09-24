@@ -1,0 +1,8 @@
+// An element store through a `*const` pointer. The pointee is read-only, and the
+// error says so rather than calling the pointer an unsupported target.
+fn put(p: *const int) { p[0] = 5; }
+fn main() {
+    let x = 1;
+    put(&x);
+    println(x);
+}

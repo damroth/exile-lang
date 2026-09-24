@@ -1,0 +1,9 @@
+// An element store through `[i]` into a `Slice`, on a `mut` parameter. A slice is
+// a read-only view: it can be read by index, not written. The port used to accept
+// the store and emit C that no compiler builds - a slice has no `data` member.
+fn bump(mut v: Slice<int>) { v[0] = 5; }
+fn main() {
+    let arr: [int; 2] = [1, 2];
+    bump(arr[0..2]);
+    println(arr[0]);
+}
