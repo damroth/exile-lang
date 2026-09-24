@@ -1,0 +1,10 @@
+// The same void arm, with the match passed straight to a call. An argument is a
+// value position like a `let`, so the block needs a trailing value here too.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    println(match s {
+        Sig::Stop => { let y = 1; }
+        | Sig::Go => { 0 }
+    });
+}

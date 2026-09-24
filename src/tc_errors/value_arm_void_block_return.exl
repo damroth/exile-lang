@@ -1,0 +1,12 @@
+// The void arm in a `return match`: the function's result is read from the arm,
+// so the arm must produce one.
+enum Sig { Stop | Go }
+fn f(s: Sig) -> int {
+    return match s {
+        Sig::Stop => { let y = 1; }
+        | Sig::Go => { 0 }
+    };
+}
+fn main() {
+    println(f(Sig::Stop));
+}

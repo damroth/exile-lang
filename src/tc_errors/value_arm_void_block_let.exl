@@ -1,0 +1,13 @@
+// A match arm whose block ends in a statement has no value, and this match is a
+// `let` initialiser. The reference refuses the block at its opening brace. The
+// port used to accept it, typed the arm as i32, and emitted C that printed
+// whatever the uninitialised result variable held.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    let x = match s {
+        Sig::Stop => { let y = 1; }
+        | Sig::Go => { 0 }
+    };
+    println(x);
+}

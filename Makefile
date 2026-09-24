@@ -1724,7 +1724,7 @@ selfhost-armreturn: $(EXILC_BIN)
 	rm -f $(C_OUT)/armret_oracle.c; \
 	rm -f $(C_OUT)/armret.c $(HOST_OUT)/armret $(C_OUT)/armret.out; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/armret.c tests/armreturn/arm_returns.exl >/dev/null 2>&1 \
-	  || { echo "selfhost-armreturn: the port REJECTED `return` in a match arm - the seal era rests on this shape"; exit 1; }; \
+	  || { echo "selfhost-armreturn: the port REJECTED \`return\` in a match arm - the seal era rests on this shape"; exit 1; }; \
 	if [ ! -s $(C_OUT)/armret.c ]; then echo "selfhost-armreturn: EMPTY emitted C (floor)"; exit 1; fi; \
 	n=`sed 's|//.*||' $(C_OUT)/armret.c | grep -c 'return 10;\|return 20;\|return 30;'`; \
 	if [ "$$n" != "3" ]; then \

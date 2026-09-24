@@ -1,0 +1,12 @@
+// The bare `if` arm in a `return match`: the missing `else` is reported at the
+// `if`, not at the block.
+enum Sig { Stop | Go }
+fn f(s: Sig, c: bool) -> int {
+    return match s {
+        Sig::Stop => { if c { println(1); } }
+        | Sig::Go => { 0 }
+    };
+}
+fn main() {
+    println(f(Sig::Stop, true));
+}

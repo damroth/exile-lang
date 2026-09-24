@@ -7901,24 +7901,19 @@ fn assign_coerced_value(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *
     };
 }
 
-// A bare `if` inside a value block (a match-arm body holding `if c { break }`)
-// is a control-flow statement, not a value: lower it to `TIf` (branches are
-// full stmt-blocks) rather than an if-expr with `null` arms.  The enclosing
-// fn's gensym + return type ride in the scope so the branch bodies elaborate
-// like any statement block.
-// A trailing block statement: a bare `if` (no else) can't yield a value on
-// every path, so even in tail position it lowers to a control-flow statement
-// (matching the oracle), not a trailing `if-expr`; anything else is the block's
-// trailing value.
+// A trailing block statement.  Where the block's value is discarded, a bare `if`
+// (no else) is a control-flow statement and lowers to `TIf`; the reference
+// refuses it there, asking for an `else`.  Where a value is wanted it is
+// elaborated as one, and refused for the missing `else` exactly as the reference
+// does.  Anything else is the block's trailing value.
 fn elab_tail_stmt(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                   expected: Option<*const Typ>, e: *const Expr, benv: *Vec<FieldTy>,
                   allow_void: bool, tstmts: *Vec<Tstmt>, trailing: *Option<*const Texpr>) {
-    if is_bare_if(e) { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); return; }
+    if allow_void && is_bare_if(e) { elab_block_expr_stmt(a, ar, g, sc, benv, e, tstmts); return; }
     *trailing = Option::Some(elab_expr_av(a, ar, g, sc, benv, expected, e, allow_void));
     return;
 }
-// An `if` with no else branch — a value can't exist on every path, so it is
-// always a control-flow statement, never a trailing value.
+// An `if` with no else branch - a value can't exist on every path.
 fn is_bare_if(e: *const Expr) -> bool {
     return match *e {
         Expr::If { cond, then_blk, else_blk } => match else_blk { Option::None => true | Option::Some(b) => false }
@@ -8428,9 +8423,19 @@ fn elab_block(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     }
     let bty = match trailing {
         Option::Some(t) => t.ty
-        | Option::None => t_i32(ar)
+        | Option::None => void_block_ty(ar, sc, &tstmts, p, allow_void)
     };
     return te_node(ar, TexprNode::TBlock { stmts: tstmts, trailing: trailing }, bty, p);
+}
+// A block with no trailing value is void, which the reference allows only where
+// the value is discarded.  One that never finishes - it returns, breaks or
+// continues - is lowered by the port as a jump out of the arm, and its type is a
+// placeholder nobody reads; the reference refuses those as well.
+fn void_block_ty(ar: *Arena, sc: *const TyScope, tstmts: *const Vec<Tstmt>, p: Pos, allow_void: bool) -> *const Typ {
+    if !allow_void && !stmts_diverge(tstmts) {
+        tc_fail(ar, sc, p, "block expression `{ ... }` must end with a trailing value expression (no `;` after the last expression) when used in a value position");
+    }
+    return t_i32(ar);
 }
 
 // `(e0, e1, …)` — each element keeps its own type; the tuple takes a

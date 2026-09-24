@@ -1,0 +1,14 @@
+// An arm that ends in an `if` with no `else`, in value position. The `if` is the
+// arm's value, so it needs an `else`, and that is reported at the `if`. The port
+// used to read it as a statement here, which is only right where the arm's value
+// is thrown away.
+enum Sig { Stop | Go }
+fn main() {
+    let s = Sig::Stop;
+    let c = true;
+    let x = match s {
+        Sig::Stop => { if c { println(1); } }
+        | Sig::Go => { 0 }
+    };
+    println(x);
+}
