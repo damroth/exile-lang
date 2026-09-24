@@ -1703,9 +1703,11 @@ fuzz-witness: $(EXILC_BIN)
 	  exit 1; fi; \
 	echo "fuzz-witness: clean (seed $(FUZZ_WITNESS_SEED): $$base emitted-c findings without the plant, $$got with it - the difference is the plant, and the canary proved it reached the artifact)"
 
-# ===== register #12 - `return` inside a `match` arm (B2 divergence) =====
+# ===== register #12 - a jump out of a `match` arm (B2 divergence) =====
 #
-# The port lowers it; the FROZEN reference cannot, at two different barriers, and
+# `return`, and - where the match is a value - `break` and `continue` too: the arm
+# never finishes, so it owes no value, and the port lowers the jump into the
+# switch. The FROZEN reference cannot, at two different barriers, and
 # the codegen one names `defer` in a program that has none (`emit_simple_stmt`
 # was written for defer bodies and the TMatch lowering routes arms through it).
 # The seal era is built on this shape, so the port keeps it - which makes the
@@ -1715,7 +1717,9 @@ fuzz-witness: $(EXILC_BIN)
 # BOTH sides are pinned. The port must compile, emit a real `return` inside the
 # switch, survive -Werror and RUN to the expected trace; the reference must still
 # REFUSE it. If the frozen oracle ever accepted this, the register entry would be
-# stale and this gate is what would say so.
+# stale and this gate is what would say so. `arm_jumps` pins the value-position
+# jumps the same way, and names one width: a statement after the jump is accepted
+# without a diagnostic.
 selfhost-armreturn: $(EXILC_BIN)
 	@test -f tests/armreturn/arm_returns.exl || { echo "selfhost-armreturn: MISSING tests/armreturn/arm_returns.exl"; exit 1; }; \
 	test -s tests/armreturn/arm_returns.expected || { echo "selfhost-armreturn: MISSING/EMPTY expected"; exit 1; }; \
@@ -1735,7 +1739,21 @@ selfhost-armreturn: $(EXILC_BIN)
 	if ! diff -q tests/armreturn/arm_returns.expected $(C_OUT)/armret.out >/dev/null; then \
 	  echo "selfhost-armreturn: an arm left by the wrong path:"; \
 	  diff tests/armreturn/arm_returns.expected $(C_OUT)/armret.out | head -6; exit 1; fi; \
-	echo "selfhost-armreturn: clean (3 arm returns lowered into the switch, -Werror clean, RUNS 1/3/10/30/40/50; the frozen reference still refuses it)"
+	test -f tests/armreturn/arm_jumps.exl || { echo "selfhost-armreturn: MISSING tests/armreturn/arm_jumps.exl"; exit 1; }; \
+	test -s tests/armreturn/arm_jumps.expected || { echo "selfhost-armreturn: MISSING/EMPTY arm_jumps.expected"; exit 1; }; \
+	if $(EXILE) --target c --c-out $(C_OUT)/armjmp_oracle.c tests/armreturn/arm_jumps.exl >/dev/null 2>&1; then \
+	  echo "selfhost-armreturn: the FROZEN reference now ACCEPTS a jump out of a value arm - register #12 is stale, re-measure it"; exit 1; fi; \
+	rm -f $(C_OUT)/armjmp_oracle.c $(C_OUT)/armjmp.c $(HOST_OUT)/armjmp $(C_OUT)/armjmp.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/armjmp.c tests/armreturn/arm_jumps.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-armreturn: the port REJECTED a jump out of a value arm - \`break\`, \`continue\` and \`return\` leave it"; exit 1; }; \
+	if [ ! -s $(C_OUT)/armjmp.c ]; then echo "selfhost-armreturn: EMPTY emitted C for arm_jumps (floor)"; exit 1; fi; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/armjmp $(C_OUT)/armjmp.c $(SYS_HOST) \
+	  || { echo "selfhost-armreturn: the arm_jumps emission is not clean C89 at -O2"; exit 1; }; \
+	$(HOST_OUT)/armjmp > $(C_OUT)/armjmp.out 2>&1; \
+	if ! diff -q tests/armreturn/arm_jumps.expected $(C_OUT)/armjmp.out >/dev/null; then \
+	  echo "selfhost-armreturn: a jump out of a value arm went the wrong way:"; \
+	  diff tests/armreturn/arm_jumps.expected $(C_OUT)/armjmp.out | head -6; exit 1; fi; \
+	echo "selfhost-armreturn: clean (3 arm returns lowered into the switch, -Werror clean, RUNS `tr '\n' '/' < $(C_OUT)/armret.out | sed 's|/$$||'`; break, continue and a let-position return out of a value arm RUN `tr '\n' '/' < $(C_OUT)/armjmp.out | sed 's|/$$||'`; the frozen reference still refuses both)"
 
 # ===== the tutorial's capability emission, pinned =====
 #

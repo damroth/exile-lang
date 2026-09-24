@@ -103,8 +103,10 @@ def registered_divergence(ev):
     """
     if CAP_RESERVED.search(ev["oracle_diag"]) or CAP_SEAM.search(ev["oracle_diag"]):
         return "kernel-era-superset"          # register #9
-    # #12 — `return` inside a match arm: the port lowers it, the reference
-    # refuses it. The discriminator is BEHAVIOURAL, not the message: a `return`
+    # #12 — a jump out of a match arm (`return`; in value position also `break`
+    # and `continue`): the port lowers it, the reference refuses it. The label
+    # predates the widening and stays, since the filter cases name it. The
+    # discriminator is BEHAVIOURAL, not the message: a `return`
     # that really is inside a `defer` is rejected by the PORT too (it carries the
     # same check), so "the port accepted" is what separates the arm case from the
     # defer case that shares the wording.

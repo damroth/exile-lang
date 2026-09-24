@@ -1,0 +1,73 @@
+// A jump out of a match arm whose match is a VALUE: `break`, `continue`, and a
+// `return` from an arm in `let` position. The arm produces no value because it
+// never finishes - control leaves it - so the port accepts it and lowers each jump
+// into the switch. The frozen reference refuses every one of them: in value
+// position it wants each arm block to end in a value, jump or not.
+//
+// `nested` jumps through a match every arm of which jumps. `dead_after_jump`
+// names a width of the rule rather than hiding it: a statement after the jump is
+// accepted without a diagnostic, and never runs.
+enum Sig { Go | Skip | Stop }
+fn sig(i: int) -> Sig {
+    if i == 2 { return Sig::Skip; }
+    if i == 4 { return Sig::Stop; }
+    return Sig::Go;
+}
+fn walk() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < 10 {
+        i = i + 1;
+        let v = match sig(i) {
+            Sig::Go => { i * 10 }
+            | Sig::Skip => { continue; }
+            | Sig::Stop => { break; }
+        };
+        t = t + v;
+    }
+    return t;
+}
+fn early(k: int) -> int {
+    let v = match sig(k) {
+        Sig::Go => { k }
+        | Sig::Skip => { return 70; }
+        | Sig::Stop => { return 80; }
+    };
+    return v + 1;
+}
+fn nested() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < 6 {
+        i = i + 1;
+        let v = match sig(i) {
+            Sig::Go => { i }
+            | Sig::Skip => { match sig(i + 1) { Sig::Go => { continue; } | Sig::Skip => { continue; } | Sig::Stop => { break; } } }
+            | Sig::Stop => { break; }
+        };
+        t = t + v;
+    }
+    return t * 100 + i;
+}
+fn dead_after_jump() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < 3 {
+        i = i + 1;
+        let v = match sig(i) {
+            Sig::Skip => { continue; t = t + 1000; }
+            | Sig::Go => { i }
+            | Sig::Stop => { break; }
+        };
+        t = t + v;
+    }
+    return t;
+}
+fn main() {
+    println(walk());
+    println(early(1));
+    println(early(2));
+    println(early(4));
+    println(nested());
+    println(dead_after_jump());
+}
