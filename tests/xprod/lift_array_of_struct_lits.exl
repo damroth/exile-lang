@@ -1,0 +1,9 @@
+// An array literal whose elements are struct literals. Each element is built in a
+// temporary before the array is filled, as it is for any aggregate in a position
+// that takes a plain value; the port used to skip the array's elements and abort
+// in codegen on the first one.
+struct P { x: int, y: int }
+fn main() {
+    let ps = [P { x: 1, y: 2 }, P { x: 3, y: 4 }];
+    println(ps[1].x + ps[0].y);
+}

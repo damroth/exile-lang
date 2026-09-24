@@ -1,0 +1,8 @@
+// The repeat form with a struct literal: the value is built once in a temporary
+// and copied into every slot. The port used to write each slot field by field -
+// the same values, but different C from the reference.
+struct P { x: int, y: int }
+fn main() {
+    let ps = [P { x: 1, y: 2 }; 3];
+    println(ps[2].x + ps[0].y);
+}

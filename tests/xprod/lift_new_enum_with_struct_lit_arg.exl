@@ -1,0 +1,12 @@
+// A heap-allocated enum variant whose payload is a struct literal, built in a
+// temporary before the variant is filled.
+struct P { x: int, y: int }
+enum Box { Pt(P) | Nil }
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let b: own *Box = new(a) Box::Pt(P { x: 4, y: 5 });
+    let r = match *b { Box::Pt(p) => p.x + p.y | Box::Nil => 0 };
+    println(r);
+    a.free(b);
+}

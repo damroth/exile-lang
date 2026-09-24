@@ -1,0 +1,10 @@
+// A call through a function-pointer field whose argument is an `if` used as a
+// value. The argument is computed into a temporary first, as it is for a direct
+// call; the port used to leave it in place and abort in codegen.
+struct H { on: fn(int) -> int }
+fn dbl(n: int) -> int { return n * 2; }
+fn main() {
+    let h = H { on: dbl };
+    let c = true;
+    println(h.on(if c { 4 } else { 5 }));
+}

@@ -11700,17 +11700,27 @@ fn walk_subs(a: Allocator, ar: *Arena, ctr: *u32, te: *const Texpr, prelude: *Ve
             te_node(ar, TexprNode::TCall { mangled: mangled, args: walk_args(a, ar, ctr, &args, prelude) }, te.ty, p)
         | TexprNode::TBuiltinCall { name, args } =>
             te_node(ar, TexprNode::TBuiltinCall { name: name, args: walk_args(a, ar, ctr, &args, prelude) }, te.ty, p)
+        | TexprNode::TIndirectCall { fn_expr, args } =>
+            te_node(ar, TexprNode::TIndirectCall { fn_expr: walk_expr(a, ar, ctr, false, fn_expr, prelude), args: walk_args(a, ar, ctr, &args, prelude) }, te.ty, p)
         | TexprNode::TCast(s, ann) => te_node(ar, TexprNode::TCast(walk_expr(a, ar, ctr, false, s, prelude), ann), te.ty, p)
         | TexprNode::TFieldAccess { target, field } =>
             te_node(ar, TexprNode::TFieldAccess { target: walk_expr(a, ar, ctr, false, target, prelude), field: field }, te.ty, p)
         | TexprNode::TRef(s) => te_node(ar, TexprNode::TRef(ref_operand(a, ar, ctr, walk_expr(a, ar, ctr, false, s, prelude), prelude)), te.ty, p)
         | TexprNode::TDeref(s) => te_node(ar, TexprNode::TDeref(walk_expr(a, ar, ctr, false, s, prelude)), te.ty, p)
+        | TexprNode::TArrayLit(es) => te_node(ar, TexprNode::TArrayLit(walk_args(a, ar, ctr, &es, prelude)), te.ty, p)
+        | TexprNode::TArrayRepeat { value, count } =>
+            te_node(ar, TexprNode::TArrayRepeat { value: walk_expr(a, ar, ctr, false, value, prelude), count: count }, te.ty, p)
         | TexprNode::TIndex { base, index } =>
             te_node(ar, TexprNode::TIndex { base: walk_expr(a, ar, ctr, false, base, prelude), index: walk_expr(a, ar, ctr, false, index, prelude) }, te.ty, p)
+        | TexprNode::TTupleLit(es) => te_node(ar, TexprNode::TTupleLit(walk_args(a, ar, ctr, &es, prelude)), te.ty, p)
         | TexprNode::TStructLit { sname_path, fields, base } =>
             te_node(ar, TexprNode::TStructLit { sname_path: copy_strs(a, &sname_path), fields: walk_fields(a, ar, ctr, &fields, prelude), base: walk_opt(a, ar, ctr, base, prelude) }, te.ty, p)
+        | TexprNode::TNew { sname_path, fields, base, alloc } =>
+            te_node(ar, TexprNode::TNew { sname_path: copy_strs(a, &sname_path), fields: walk_fields(a, ar, ctr, &fields, prelude), base: walk_opt(a, ar, ctr, base, prelude), alloc: walk_opt(a, ar, ctr, alloc, prelude) }, te.ty, p)
         | TexprNode::TEnumLit { ename_path, variant, tag, args } =>
             te_node(ar, TexprNode::TEnumLit { ename_path: copy_strs(a, &ename_path), variant: variant, tag: tag, args: walk_fields(a, ar, ctr, &args, prelude) }, te.ty, p)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } =>
+            te_node(ar, TexprNode::TNewEnum { ename_path: copy_strs(a, &ename_path), variant: variant, tag: tag, args: walk_fields(a, ar, ctr, &args, prelude), alloc: walk_opt(a, ar, ctr, alloc, prelude) }, te.ty, p)
         | TexprNode::TMatch { scrutinee, ename_path, arms } =>
             te_node(ar, TexprNode::TMatch { scrutinee: walk_expr(a, ar, ctr, false, scrutinee, prelude), ename_path: copy_strs(a, &ename_path), arms: walk_match_arms(a, ar, ctr, &arms) }, te.ty, p)
         | TexprNode::TIfExpr { cond, then_val, else_val } => {

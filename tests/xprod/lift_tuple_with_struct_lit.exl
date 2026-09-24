@@ -1,0 +1,8 @@
+// A tuple literal holding a struct literal. The struct is built in a temporary
+// first; the port used to reach codegen with it still in place and abort.
+struct P { x: int, y: int }
+fn main() {
+    let t = (P { x: 1, y: 2 }, 3);
+    let (p, k) = t;
+    println(p.x + p.y + k);
+}

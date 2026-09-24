@@ -3181,7 +3181,10 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   prelude_named_field_dep prelude_named_and_built \
                   unused_enum_stays_dropped \
                    extern_var_index_assign \
-                   arm_let_mut_tuple
+                   arm_let_mut_tuple \
+                   lift_array_of_struct_lits lift_array_repeat_struct_lit \
+                   lift_tuple_with_struct_lit lift_new_struct_with_struct_lit_field \
+                   lift_new_enum_with_struct_lit_arg lift_fnptr_field_call_if_arg
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

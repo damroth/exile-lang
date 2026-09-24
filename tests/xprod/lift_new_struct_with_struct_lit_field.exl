@@ -1,0 +1,11 @@
+// A heap-allocated struct whose field is initialised with a struct literal. The
+// inner literal is built in a temporary before the allocation is filled.
+struct P { x: int, y: int }
+struct Q { p: P, k: int }
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn main() {
+    let a = raw::make_c_allocator();
+    let q: own *Q = new(a) Q { p: P { x: 1, y: 2 }, k: 3 };
+    println((*q).p.x + (*q).p.y + (*q).k);
+    a.free(q);
+}
