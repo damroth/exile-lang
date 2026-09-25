@@ -1291,11 +1291,16 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
                 emit_for_post(a, ar, out, cg, &post);
                 out.push_str(") {\n");
             }
+            // Everything on the chain here is outside this loop; its own jumps
+            // must not run it.
+            let saved_mark = *cg.cg_loopmark;
+            *cg.cg_loopmark = cg.cg_defers.length();
             emit_stmts(a, ar, out, cg_indent(a, ar, indent), cg, &body);
+            *cg.cg_loopmark = saved_mark;
             out.push_str(indent); out.push_str("}\n");
         }
-        | Tstmt::TBreak(p) => { out.push_str(indent); out.push_str("break;\n"); }
-        | Tstmt::TContinue(p) => { out.push_str(indent); out.push_str("continue;\n"); }
+        | Tstmt::TBreak(p) => emit_loop_jump(a, ar, out, indent, cg, "break;\n")
+        | Tstmt::TContinue(p) => emit_loop_jump(a, ar, out, indent, cg, "continue;\n")
         // A `return` inside a nested statement list (a diverging match arm's
         // block — `let-else`) flushes the defer chain active HERE; the arm has
         // no defer scope of its own.
@@ -1821,6 +1826,16 @@ fn emit_cleanups_upto(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str
     while i < k && i < defers.length() { emit_stmts(a, ar, out, indent, cg, &sl[i]); i = i + 1 as u32; }
 }
 
+// A loop jump runs the defers registered since the innermost loop began, LIFO and
+// down to the loop's watermark, before it leaves - wherever it is written: in a
+// block, or in a match arm, whose statements this walker does not see.
+fn emit_loop_jump(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, jump: str) {
+    let chain = cg.cg_defers;
+    emit_cleanups_upto(a, ar, out, indent, cg, chain, chain.length() - *cg.cg_loopmark);
+    out.push_str(indent); out.push_str(jump);
+    return;
+}
+
 // reverse(my_defers) ++ outer — the full LIFO defer chain at a point.
 fn flatten_defers(a: Allocator, my_defers: *const Vec<Vec<Tstmt>>, outer: *const Vec<Vec<Tstmt>>) -> Vec<Vec<Tstmt>> {
     let mut out: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
@@ -1924,13 +1939,11 @@ pub fn gen_block(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg:
             // their defers — LIFO, down to the loop's watermark — before jumping
             // (P3; before this, `break` silently swallowed them).
             | Tstmt::TBreak(bp) => {
-                emit_cleanups_upto(a, ar, out, indent, cg, &chain, chain.length() - *cg.cg_loopmark);
-                out.push_str(indent); out.push_str("break;\n");
+                emit_loop_jump(a, ar, out, indent, cg, "break;\n");
                 returned = true;
             }
             | Tstmt::TContinue(cp) => {
-                emit_cleanups_upto(a, ar, out, indent, cg, &chain, chain.length() - *cg.cg_loopmark);
-                out.push_str(indent); out.push_str("continue;\n");
+                emit_loop_jump(a, ar, out, indent, cg, "continue;\n");
                 returned = true;
             }
             // The seal's body already carries its token binding and the `defer`

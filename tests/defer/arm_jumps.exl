@@ -1,0 +1,117 @@
+// A `break` or `continue` written inside a match arm runs the loop body's pending
+// `defer`s exactly as one written straight in the body does: LIFO, down to the
+// loop it leaves, and nothing older. The port used to emit the arm's jump bare,
+// so the deferred work of that iteration was lost - silently, in statement
+// position as well as in value position.
+//
+// `inner_loop` is the other side of the same rule: a loop inside an arm has its
+// own watermark, so leaving IT runs none of the outer body's defers.
+// `fn_scope` shows a function-level `defer` untouched by the jump and run once,
+// at the return.
+enum Sig { Go | Skip | Stop }
+fn sig(i: int) -> Sig {
+    if i == 2 { return Sig::Skip; }
+    if i == 4 { return Sig::Stop; }
+    return Sig::Go;
+}
+fn stmt_continue() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < 4 {
+        i = i + 1;
+        defer { t = t + 100; }
+        match sig(i) { Sig::Go => { t = t + i; } | Sig::Skip => { continue; } | Sig::Stop => { } }
+    }
+    return t;
+}
+fn value_break() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < 9 {
+        i = i + 1;
+        defer { t = t + 100; }
+        let v = match sig(i) { Sig::Go => { i } | Sig::Skip => { 0 } | Sig::Stop => { break; } };
+        t = t + v;
+    }
+    return t;
+}
+fn if_in_arm() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < 4 {
+        i = i + 1;
+        defer { t = t + 100; }
+        match sig(i) { Sig::Go => { t = t + i; } | Sig::Skip => { if i == 2 { continue; } t = t + 1000; } | Sig::Stop => { } }
+    }
+    return t;
+}
+fn nested_arm() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < 4 {
+        i = i + 1;
+        defer { t = t + 100; }
+        match sig(i) {
+            Sig::Go => { t = t + i; }
+            | Sig::Skip => { match sig(i + 2) { Sig::Stop => { continue; } | Sig::Go => { } | Sig::Skip => { } } t = t + 1000; }
+            | Sig::Stop => { }
+        }
+    }
+    return t;
+}
+fn two_scopes() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < 4 {
+        i = i + 1;
+        defer { t = t + 100; }
+        if i > 0 {
+            defer { t = t + 10; }
+            match sig(i) { Sig::Go => { t = t + i; } | Sig::Skip => { continue; } | Sig::Stop => { } }
+        }
+    }
+    return t;
+}
+fn for_loop() -> int {
+    let mut t = 0;
+    for i in 0..5 {
+        defer { t = t + 100; }
+        match sig(i) { Sig::Go => { t = t + i; } | Sig::Skip => { continue; } | Sig::Stop => { break; } }
+    }
+    return t;
+}
+fn inner_loop() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < 3 {
+        i = i + 1;
+        defer { t = t + 100; }
+        match sig(i) {
+            Sig::Go => { let mut k = 0; while k < 5 { k = k + 1; if k == 2 { break; } } t = t + k; }
+            | Sig::Skip => { t = t + 10; }
+            | Sig::Stop => { }
+        }
+    }
+    return t;
+}
+fn fn_scope() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    defer { println(9999); }
+    while i < 4 {
+        i = i + 1;
+        defer { t = t + 100; }
+        match sig(i) { Sig::Go => { t = t + i; } | Sig::Skip => { continue; } | Sig::Stop => { } }
+    }
+    return t;
+}
+fn main() {
+    println(stmt_continue());
+    println(value_break());
+    println(if_in_arm());
+    println(nested_arm());
+    println(two_scopes());
+    println(for_loop());
+    println(inner_loop());
+    println(fn_scope());
+}

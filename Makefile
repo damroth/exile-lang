@@ -1573,7 +1573,8 @@ selfhost-ward: $(EXILC_BIN)
 # still has the old behaviour, so this is a deliberate, registered divergence —
 # see SELFHOST-PLUMBING-REGISTER.md #5.  The corpus was measured neutral before
 # the fix (no function anywhere pairs defer with a loop jump), which is why no
-# comparing gate moves.
+# comparing gate moves.  `arm_jumps` holds the promise for a jump written
+# inside a match arm, which a second walker emitted and first left bare.
 selfhost-defer: $(EXILC_BIN)
 	@rm -f $(C_OUT)/defer_exits.c $(HOST_OUT)/defer_exits $(C_OUT)/defer_exits.out; \
 	$(EXILC_BIN) --target c --c-out $(C_OUT)/defer_exits.c tests/defer/exits.exl >/dev/null 2>&1 \
@@ -1584,7 +1585,17 @@ selfhost-defer: $(EXILC_BIN)
 	if ! diff -q tests/defer/exits.expected $(C_OUT)/defer_exits.out >/dev/null; then \
 	  echo "selfhost-defer: WRONG defer trace (an exit path lost or gained a defer):"; \
 	  diff tests/defer/exits.expected $(C_OUT)/defer_exits.out | head -8; exit 1; fi; \
-	echo "selfhost-defer: clean (defer fires on normal exit, continue, break, return, and through nesting — inner jumps leave outer defers alone)"
+	test -s tests/defer/arm_jumps.expected || { echo "selfhost-defer: MISSING/EMPTY tests/defer/arm_jumps.expected"; exit 1; }; \
+	rm -f $(C_OUT)/defer_arms.c $(HOST_OUT)/defer_arms $(C_OUT)/defer_arms.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/defer_arms.c tests/defer/arm_jumps.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-defer: port rejected the arm-jumps fixture"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/defer_arms $(C_OUT)/defer_arms.c $(SYS_HOST) \
+	  || { echo "selfhost-defer: arm-jumps C is not clean C89 at -O2"; exit 1; }; \
+	$(HOST_OUT)/defer_arms > $(C_OUT)/defer_arms.out 2>&1; \
+	if ! diff -q tests/defer/arm_jumps.expected $(C_OUT)/defer_arms.out >/dev/null; then \
+	  echo "selfhost-defer: WRONG defer trace for a jump out of a match arm:"; \
+	  diff tests/defer/arm_jumps.expected $(C_OUT)/defer_arms.out | head -8; exit 1; fi; \
+	echo "selfhost-defer: clean (defer fires on normal exit, continue, break, return, and through nesting - inner jumps leave outer defers alone - RUNS `tr '\n' '/' < $(C_OUT)/defer_exits.out | sed 's|/$$||'`; and on a break or continue out of a match arm, in statement and value position, while an arm's own loop leaves them alone - RUNS `tr '\n' '/' < $(C_OUT)/defer_arms.out | sed 's|/$$||'`)"
 
 # ===== differential fuzzing =====
 #
