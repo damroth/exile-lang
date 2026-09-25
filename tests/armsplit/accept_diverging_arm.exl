@@ -1,0 +1,14 @@
+// An arm that leaves the function is not a path to the code after the match,
+// so it is not compared: the two arms that continue agree, and the port accepts
+// this. (The reference refuses it for the `return` inside a value arm.)
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+enum S { A | B | C }
+fn pick(i: int) -> S { if i == 2 { return S::B; } if i == 3 { return S::C; } return S::A; }
+struct Box2 { v: Vec<int>, k: int }
+fn run(i: int) -> int {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(1);
+    let n = match pick(i) { S::A => { take(v) as int } | S::B => { return 9; } | S::C => { take(v) as int } };
+    return n; }
+fn main() { println(run(1)); println(run(2)); }

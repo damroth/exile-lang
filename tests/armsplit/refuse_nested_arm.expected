@@ -1,0 +1,1 @@
+tests/armsplit/refuse_nested_arm.exl:12:39: error: 'v' is moved out in one arm of this match but stays owned in another - auto-drop is static (no runtime drop flags); consume it in every arm or in none

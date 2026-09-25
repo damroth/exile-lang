@@ -1,0 +1,12 @@
+// The split inside a `defer` body, which the drop walk registers without
+// entering.
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+enum S { A | B | C }
+fn pick(i: int) -> S { if i == 2 { return S::B; } if i == 3 { return S::C; } return S::A; }
+struct Box2 { v: Vec<int>, k: int }
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(1);
+    defer { match pick(2) { S::A => { let x = take(v); } | S::B => { } | S::C => { let y = take(v); } } }
+    println(1); }

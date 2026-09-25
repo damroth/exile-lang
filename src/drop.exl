@@ -1430,7 +1430,132 @@ fn walk_stmts(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: All
 // it to walk_stmt, returns the successor state.
 fn step(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
         st: Vec<DEntry>, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
-    return walk_stmt(structs, enums, a, ar, gs, &st, s, out);
+    let r = walk_stmt(structs, enums, a, ar, gs, &st, s, out);
+    check_stmt_arms(structs, enums, a, ar, gs, &st, s);
+    return r;
+}
+
+// A match may take any arm, and auto-drop is static: an owner from outside the
+// match that one arm consumes and another keeps has no single state after it,
+// and the arm that kept it leaks it.  `merge_branches` holds an `if` to this;
+// this holds every arm of every match to it, nested ones included, since the
+// walk above does not enter arms.  A diverging arm never reaches the code after
+// the match and is not compared.
+fn check_stmt_arms(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                   gs: *GlueState, st: *const Vec<DEntry>, s: *const Tstmt) {
+    let names = live_names_of(a, st);
+    if names.length() == 0 as u32 { return; }
+    arms_in_stmt(structs, enums, a, ar, gs, &names, s);
+    return;
+}
+fn live_names_of(a: Allocator, st: *const Vec<DEntry>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, st.length() + 1 as u32);
+    let sl = st.as_slice();
+    let mut i = 0 as u32;
+    while i < st.length() {
+        match sl[i].den_status { DStatus::DLive => { out.push(sl[i].den_name); } | _o => { } }
+        i = i + 1 as u32;
+    }
+    return out;
+}
+fn arms_in_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                gs: *GlueState, names: *const Vec<str>, s: *const Tstmt) {
+    match *s {
+        Tstmt::TLet { name, value, pos } => { arms_in_expr(structs, enums, a, ar, gs, names, value); }
+        | Tstmt::TAssign { path, value, pos } => { arms_in_expr(structs, enums, a, ar, gs, names, value); }
+        | Tstmt::TReturn { value, pos } => {
+            match value { Option::Some(v) => { arms_in_expr(structs, enums, a, ar, gs, names, v); } | Option::None => { } }
+        }
+        | Tstmt::TExprStmt(e) => { arms_in_expr(structs, enums, a, ar, gs, names, e); }
+        | Tstmt::TAssignField { target, field, value, pos } => { arms_in_expr(structs, enums, a, ar, gs, names, value); }
+        | Tstmt::TAssignIndex { base, index, value, pos } => { arms_in_expr(structs, enums, a, ar, gs, names, value); }
+        | Tstmt::TAssignDeref { target, value, pos } => { arms_in_expr(structs, enums, a, ar, gs, names, value); }
+        // The walk registers a defer without entering its body.
+        | Tstmt::TDefer { body, pos } => { arms_in_nested(structs, enums, a, ar, gs, names, &body); }
+        | _o => { }
+    }
+    return;
+}
+// Statements inside an arm: the walk above never visits them, so their own
+// control bodies are entered here.
+fn arms_in_nested(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                  gs: *GlueState, names: *const Vec<str>, stmts: *const Vec<Tstmt>) {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        arms_in_stmt(structs, enums, a, ar, gs, names, &sl[i]);
+        match sl[i] {
+            Tstmt::TIf { cond, then_body, else_body } => {
+                arms_in_nested(structs, enums, a, ar, gs, names, &then_body);
+                arms_in_nested(structs, enums, a, ar, gs, names, &else_body);
+            }
+            | Tstmt::TWhile { cond, body, post } => { arms_in_nested(structs, enums, a, ar, gs, names, &body); }
+            | Tstmt::TSeal { body, pos } => { arms_in_nested(structs, enums, a, ar, gs, names, &body); }
+            | _o => { }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn arms_in_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                gs: *GlueState, names: *const Vec<str>, e: *const Texpr) {
+    match e.e {
+        TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            match_arms_agree(structs, enums, a, ar, gs, names, &arms, e.pos);
+            let al = arms.as_slice();
+            let mut i = 0 as u32;
+            while i < arms.length() { arms_in_expr(structs, enums, a, ar, gs, names, al[i].tbody); i = i + 1 as u32; }
+        }
+        | TexprNode::TBlock { stmts, trailing } => {
+            arms_in_nested(structs, enums, a, ar, gs, names, &stmts);
+            match trailing { Option::Some(t) => { arms_in_expr(structs, enums, a, ar, gs, names, t); } | Option::None => { } }
+        }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            arms_in_expr(structs, enums, a, ar, gs, names, then_val);
+            arms_in_expr(structs, enums, a, ar, gs, names, else_val);
+        }
+        | _o => { }
+    }
+    return;
+}
+fn match_arms_agree(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                    gs: *GlueState, names: *const Vec<str>, arms: *const Vec<TmatchArm>, pos: Pos) {
+    let mut seen: Vec<ConsumeResult> = Vec::with_capacity(a, 8 as u32);
+    let al = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() {
+        if !(al[i].tdiverges || expr_diverges(al[i].tbody)) {
+            seen.push(states_by(structs, enums, a, ar, names, al[i].tbody));
+        }
+        i = i + 1 as u32;
+    }
+    if seen.length() < 2 as u32 { return; }
+    let ssl = seen.as_slice();
+    let nsl = names.as_slice();
+    let mut k = 0 as u32;
+    while k < names.length() {
+        let first = arm_status(&ssl[0 as u32], nsl[k]);
+        let mut j = 1 as u32;
+        while j < seen.length() {
+            if arm_status(&ssl[j], nsl[k]) != first { arm_split_fail(a, ar, gs, nsl[k], pos); return; }
+            j = j + 1 as u32;
+        }
+        k = k + 1 as u32;
+    }
+    return;
+}
+fn arm_status(res: *const ConsumeResult, n: str) -> u32 {
+    if name_in(&res.cr_consumed, n) { return 1 as u32; }
+    if name_in(&res.cr_partial, n) { return 2 as u32; }
+    return 0 as u32;
+}
+fn arm_split_fail(a: Allocator, ar: *Arena, gs: *GlueState, n: str, pos: Pos) {
+    let d = dp_disp(gs, n);
+    let mut sb = StringBuilder::with_capacity(a, 200 as u32);
+    sb.push_str("'"); sb.push_str(d);
+    sb.push_str("' is moved out in one arm of this match but stays owned in another - auto-drop is static (no runtime drop flags); consume it in every arm or in none");
+    raise_dp(ar, gs, pos, str::from_slice(ar, sb.as_slice()));
+    return;
 }
 
 fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,

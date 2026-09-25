@@ -1176,7 +1176,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-armtail selfhost-loopfresh selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-armtail selfhost-loopfresh selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -1882,6 +1882,52 @@ selfhost-loopfresh: $(EXILC_BIN)
 	  echo "selfhost-loopfresh: wrong trace or witness balance:"; \
 	  diff tests/loopfresh/body_binding_consumed.expected $(C_OUT)/loopfresh.out | head -6; exit 1; fi; \
 	echo "selfhost-loopfresh: clean (bindings declared in a while body, a for body, a nested block, an arm, before a continue, and freed by the body's own defer, each consumed in its iteration - RUNS `tr '\n' '/' < $(C_OUT)/loopfresh.out | sed 's|/$$||'`; the frozen reference still refuses them)"
+
+# ===== an owner moved out by some arms of a match and kept by others =====
+#
+# Auto-drop is static, so after a match an owner from outside it must be in one
+# state on every path that reaches the code after it. Both compilers hold the two
+# branches of an `if` to that; the FROZEN reference does not hold a match's arms
+# to it, accepts the split, and its program leaks the owner on the arm that kept
+# it. The port refuses the split, in every position a match can take and nested
+# inside arms. Pinned both ways: each `refuse_` fixture is still ACCEPTED by the
+# reference (the defect is still there to diverge from) and refused by the port
+# with its expected line; the reference's own program for `refuse_let` leaks one
+# block under the witness; the control that moves the owner out in every arm runs
+# with a balance of zero; an arm that leaves the function is not compared.
+selfhost-armsplit: $(EXILC_BIN)
+	@n=0; fail=0; \
+	for f in tests/armsplit/refuse_*.exl; do \
+	  n=$$((n+1)); b=`basename $$f .exl`; exp=tests/armsplit/$$b.expected; \
+	  test -s $$exp || { echo "selfhost-armsplit: MISSING/EMPTY $$exp"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/as_o.c $(C_OUT)/as_p.err; \
+	  $(EXILE) --target c --c-out $(C_OUT)/as_o.c $$f >/dev/null 2>&1 \
+	    || { echo "selfhost-armsplit: the reference now REFUSES $$b - the defect this diverges from is gone, re-measure"; fail=1; continue; }; \
+	  if $(EXILC_BIN) --target c --c-out /dev/null $$f >/dev/null 2>$(C_OUT)/as_p.err; then \
+	    echo "selfhost-armsplit: the port ACCEPTED $$b - an owner kept by one arm would leak"; fail=1; continue; fi; \
+	  if [ "`awk '/error:/{print; exit}' $(C_OUT)/as_p.err`" != "`cat $$exp`" ]; then \
+	    echo "selfhost-armsplit: $$b refused with another line:"; echo "  want: `cat $$exp`"; echo "  got:  `awk '/error:/{print; exit}' $(C_OUT)/as_p.err`"; fail=1; fi; \
+	done; \
+	rm -f $(C_OUT)/as_o.c $(C_OUT)/as_p.err; \
+	if [ $$n -lt 8 ]; then echo "selfhost-armsplit: only $$n refusal fixtures - one per position the check reads"; exit 1; fi; \
+	rm -f $(HOST_OUT)/as_ref $(C_OUT)/as_ref.out; \
+	$(EXILE) --target host --c-out $(C_OUT)/as_ref.c --link $(SYS_HOST) -o $(HOST_OUT)/as_ref tests/armsplit/refuse_let.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-armsplit: the reference no longer BUILDS refuse_let"; exit 1; }; \
+	EXILE_ALLOC_WITNESS=1 $(HOST_OUT)/as_ref > $(C_OUT)/as_ref.out 2>&1; \
+	grep -q '^alloc-balance 1$$' $(C_OUT)/as_ref.out \
+	  || { echo "selfhost-armsplit: the reference's refuse_let no longer leaks one block: `tail -1 $(C_OUT)/as_ref.out`"; exit 1; }; \
+	rm -f $(C_OUT)/as_ctl.c $(HOST_OUT)/as_ctl $(C_OUT)/as_ctl.out; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/as_ctl.c tests/armsplit/accept_every_arm.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-armsplit: the port REJECTED the every-arm control"; exit 1; }; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/as_ctl $(C_OUT)/as_ctl.c $(SYS_HOST) \
+	  || { echo "selfhost-armsplit: the control's emission is not clean C89 at -O2"; exit 1; }; \
+	EXILE_ALLOC_WITNESS=1 $(HOST_OUT)/as_ctl > $(C_OUT)/as_ctl.out 2>&1; \
+	diff -q tests/armsplit/accept_every_arm.expected $(C_OUT)/as_ctl.out >/dev/null \
+	  || { echo "selfhost-armsplit: the control ran differently:"; diff tests/armsplit/accept_every_arm.expected $(C_OUT)/as_ctl.out | head -4; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out /dev/null tests/armsplit/accept_diverging_arm.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-armsplit: the port REJECTED an arm that leaves the function - it reaches no code after the match"; exit 1; }; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	echo "selfhost-armsplit: clean ($$n splits refused by the port and accepted by the reference, whose refuse_let leaks one block; the every-arm control RUNS `tr '\n' '/' < $(C_OUT)/as_ctl.out | sed 's|/$$||'`; a diverging arm is not compared)"
 
 # ===== the tutorial's capability emission, pinned =====
 #

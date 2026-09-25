@@ -1,0 +1,11 @@
+// A match that is one branch of an `if` used as a value.
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+enum S { A | B | C }
+fn pick(i: int) -> S { if i == 2 { return S::B; } if i == 3 { return S::C; } return S::A; }
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(1);
+    let c = true;
+    let n = if c { match pick(2) { S::A => { take(v) } | S::B => { 7 as u32 } | S::C => { take(v) } } } else { take(v) };
+    println(n as int); }

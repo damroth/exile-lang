@@ -1,0 +1,16 @@
+// An owner from outside a match, moved out by two of its arms and kept by the
+// third. Auto-drop is static - no runtime flag says which arm ran - so after the
+// match the owner has no single state, and on the path through the arm that kept
+// it nothing frees it. The frozen reference accepts this and its program leaks
+// one block when that arm runs; the port refuses it, as both refuse the same
+// split across the two branches of an `if`.
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+enum S { A | B | C }
+fn pick(i: int) -> S { if i == 2 { return S::B; } if i == 3 { return S::C; } return S::A; }
+struct Box2 { v: Vec<int>, k: int }
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(1);
+    let n = match pick(2) { S::A => { take(v) } | S::B => { 7 as u32 } | S::C => { take(v) } };
+    println(n as int); }
