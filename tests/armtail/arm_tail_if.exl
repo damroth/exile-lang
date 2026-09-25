@@ -1,0 +1,57 @@
+// A match arm in STATEMENT position whose last statement is an `if` with no
+// `else`. The arm's value is thrown away, so the `if` is a statement: it may jump
+// (`continue`, `break`, `return`) or do nothing at all when its condition fails.
+// The port reads it that way. The frozen reference reads the arm's last statement
+// as the arm's value and refuses the `if` for its missing `else` - although its
+// own prelude builds `Filter::next` with exactly this shape, by hand, so that it
+// never meets the check. The reference's verdict is recorded as its defect.
+//
+// A statement AFTER the `if` makes both compilers agree, and a value-position arm
+// with this shape is refused by both: only the statement position differs.
+enum Sig { Go | Skip | Stop }
+fn sig(i: int) -> Sig {
+    if i == 2 { return Sig::Skip; }
+    if i == 4 { return Sig::Stop; }
+    return Sig::Go;
+}
+fn jumps() -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < 9 {
+        i = i + 1;
+        match sig(i) {
+            Sig::Go => { t = t + i; }
+            | Sig::Skip => { let k = i; if k == 2 { continue; } }
+            | Sig::Stop => { let k = i; if k == 4 { break; } }
+        }
+        t = t + 100;
+    }
+    return t;
+}
+fn early(k: int) -> int {
+    match sig(k) {
+        Sig::Go => { }
+        | Sig::Skip => { if k == 2 { return 70; } }
+        | Sig::Stop => { }
+    }
+    return k;
+}
+fn plain() -> int {
+    let mut t = 0;
+    let mut i = 0;
+    while i < 5 {
+        i = i + 1;
+        match sig(i) {
+            Sig::Go => { if i > 2 { t = t + i; } }
+            | Sig::Skip => { if i == 2 { t = t + 1000; } }
+            | Sig::Stop => { }
+        }
+    }
+    return t;
+}
+fn main() {
+    println(jumps());
+    println(early(1));
+    println(early(2));
+    println(plain());
+}

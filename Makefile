@@ -1176,7 +1176,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-armtail selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -1825,6 +1825,33 @@ selfhost-armreturn: $(EXILC_BIN)
 	  echo "selfhost-armreturn: a jump out of a value arm went the wrong way:"; \
 	  diff tests/armreturn/arm_jumps.expected $(C_OUT)/armjmp.out | head -6; exit 1; fi; \
 	echo "selfhost-armreturn: clean (3 arm returns lowered into the switch, -Werror clean, RUNS `tr '\n' '/' < $(C_OUT)/armret.out | sed 's|/$$||'`; break, continue and a let-position return out of a value arm RUN `tr '\n' '/' < $(C_OUT)/armjmp.out | sed 's|/$$||'`; the frozen reference still refuses both)"
+
+# ===== register #75 - a bare `if` as the last statement of a statement-position arm =====
+#
+# The arm's value is discarded, so the `if` is a statement and needs no `else`;
+# the port reads it so, and the FROZEN reference refuses it - a verdict recorded
+# as the reference's defect, since its own prelude builds the same shape by hand
+# to avoid its check. Both sides are pinned: the reference still refuses, and
+# with THIS check's words (a refusal for some other reason would leave the gate
+# measuring nothing), and the port compiles, survives -Werror and RUNS the trace.
+selfhost-armtail: $(EXILC_BIN)
+	@test -f tests/armtail/arm_tail_if.exl || { echo "selfhost-armtail: MISSING tests/armtail/arm_tail_if.exl"; exit 1; }; \
+	test -s tests/armtail/arm_tail_if.expected || { echo "selfhost-armtail: MISSING/EMPTY arm_tail_if.expected"; exit 1; }; \
+	rm -f $(C_OUT)/armtail_oracle.c $(C_OUT)/armtail_oracle.err $(C_OUT)/armtail.c $(HOST_OUT)/armtail $(C_OUT)/armtail.out; \
+	if $(EXILE) --target c --c-out $(C_OUT)/armtail_oracle.c tests/armtail/arm_tail_if.exl >/dev/null 2>$(C_OUT)/armtail_oracle.err; then \
+	  echo "selfhost-armtail: the FROZEN reference now ACCEPTS a bare \`if\` ending a statement arm - register #75 is stale"; exit 1; fi; \
+	grep -q "used as a value needs an \`else\` branch" $(C_OUT)/armtail_oracle.err \
+	  || { echo "selfhost-armtail: the reference refuses for another reason: `grep -m1 error: $(C_OUT)/armtail_oracle.err`"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/armtail.c tests/armtail/arm_tail_if.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-armtail: the port REJECTED a bare \`if\` ending a statement arm"; exit 1; }; \
+	if [ ! -s $(C_OUT)/armtail.c ]; then echo "selfhost-armtail: EMPTY emitted C (floor)"; exit 1; fi; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/armtail $(C_OUT)/armtail.c $(SYS_HOST) \
+	  || { echo "selfhost-armtail: the emission is not clean C89 at -O2"; exit 1; }; \
+	$(HOST_OUT)/armtail > $(C_OUT)/armtail.out 2>&1; \
+	if ! diff -q tests/armtail/arm_tail_if.expected $(C_OUT)/armtail.out >/dev/null; then \
+	  echo "selfhost-armtail: a bare \`if\` ending an arm went the wrong way:"; \
+	  diff tests/armtail/arm_tail_if.expected $(C_OUT)/armtail.out | head -6; exit 1; fi; \
+	echo "selfhost-armtail: clean (a bare if ending a statement arm - jumping, returning, or doing nothing - RUNS `tr '\n' '/' < $(C_OUT)/armtail.out | sed 's|/$$||'`; the frozen reference still refuses it for the missing else)"
 
 # ===== the tutorial's capability emission, pinned =====
 #

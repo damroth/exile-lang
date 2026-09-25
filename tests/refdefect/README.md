@@ -2,7 +2,7 @@
 
 Every other differential gate in this repo runs both compilers and compares them.
 These cannot: the reference aborts on them, so there is nothing to compare against
-and `dev/probe.sh` would classify the run as a crash rather than a measurement.
+and `tools/probe.sh` would classify the run as a crash rather than a measurement.
 
 A fixture belongs here only when the reference's failure is a MEASURED defect with
 a register entry naming its mechanism. The gate then pins two things:
