@@ -1176,8 +1176,68 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 probe-control
 	@echo "selfhost-verify: all port gates green"
+
+# ===== a floor binary, named by the commit it was built from =====
+#
+# A floor is proven red on a compiler from BEFORE the change. A binary kept from
+# a working tree cannot be rebuilt, or even named. This builds `exilc` from a
+# committed ref in a clean export - never from the working tree, and in its own
+# directory, so it shares no build lock with this one - and files it under the
+# ref's short hash:  make floor-binary REF=v1.4.1
+.PHONY: floor-binary probe-control
+FLOOR_DIR := _build/floor
+floor-binary:
+	@test -n "$(REF)" || { echo "floor-binary: REF=<tag-or-commit> is required"; exit 1; }; \
+	sha=`git rev-parse --verify -q --short "$(REF)^{commit}"` || { echo "floor-binary: '$(REF)' is not a commit"; exit 1; }; \
+	tmp=`mktemp -d "$${TMPDIR:-/tmp}/exile-floor.XXXXXX"`; \
+	git archive "$$sha" | tar -x -C "$$tmp" || { rm -rf "$$tmp"; echo "floor-binary: export of $$sha failed"; exit 1; }; \
+	mkdir -p $(FLOOR_DIR); rm -f $(FLOOR_DIR)/exilc-$$sha; \
+	if ! env -u MAKEFLAGS -u MFLAGS $(MAKE) -C "$$tmp" _build/out/host/exilc > $(FLOOR_DIR)/exilc-$$sha.log 2>&1; then \
+	  rm -rf "$$tmp"; echo "floor-binary: the build at $$sha failed - see $(FLOOR_DIR)/exilc-$$sha.log"; exit 1; fi; \
+	cp "$$tmp/_build/out/host/exilc" $(FLOOR_DIR)/exilc-$$sha; rm -rf "$$tmp"; \
+	test -x $(FLOOR_DIR)/exilc-$$sha || { echo "floor-binary: no binary came out of the build at $$sha"; exit 1; }; \
+	echo "floor-binary: $(FLOOR_DIR)/exilc-$$sha - built from $(REF) ($$sha) in a clean export, not from the working tree"
+
+# ===== the probe runner's own control =====
+#
+# `tools/probe.sh` classifies every differential probe the rounds are measured
+# with, so a defect in it misreports every result taken through it. This runs it
+# on one input per verdict class - each chosen so its class cannot drift while
+# the reference stays frozen: an example both compile alike, a refusal both word
+# alike, a registered shape only the port accepts, a registered emission the port
+# changes on purpose, a file on which the reference itself aborts - plus an input
+# that does not exist. Each class word is checked on its own input, and the exit
+# status is checked as what it claims to be: the number of inputs that are not
+# agreement. EMPTY (success with no file written) has no stable input and is not
+# covered.
+PROBE_CONTROL := examples/arithmetic.exl:AGREE \
+                 src/tc_errors/value_arm_void_block_let.exl:REJECT-BOTH \
+                 tests/armreturn/arm_returns.exl:REJECT-ONE \
+                 tests/defer/exits.exl:DIVERGE \
+                 tests/refdefect/const_ptr_field_prints_address.exl:CRASH
+PROBE_ABSENT  := tests/probe-control-absent.exl
+
+probe-control: $(EXILC_BIN)
+	@test -f tools/probe.sh || { echo "probe-control: MISSING tools/probe.sh"; exit 1; }; \
+	test ! -e $(PROBE_ABSENT) || { echo "probe-control: $(PROBE_ABSENT) exists - the MISSING row needs an absent path"; exit 1; }; \
+	seen=""; files=""; \
+	for row in $(PROBE_CONTROL); do \
+	  f=$${row%%:*}; want=$${row##*:}; \
+	  test -f $$f || { echo "probe-control: MISSING control input $$f"; exit 1; }; \
+	  got=`sh tools/probe.sh $$f 2>&1 | head -1 | awk '{print $$1}'`; \
+	  if [ "$$got" != "$$want" ]; then \
+	    echo "probe-control: $$f classified as '$$got', its class is $$want - the instrument or the input moved"; exit 1; fi; \
+	  seen="$$seen $$want"; files="$$files $$f"; \
+	done; \
+	got=`sh tools/probe.sh $(PROBE_ABSENT) 2>&1 | head -1 | awk '{print $$1}'`; \
+	if [ "$$got" != "MISSING" ]; then echo "probe-control: an absent input classified as '$$got', not MISSING"; exit 1; fi; \
+	sh tools/probe.sh $$files $(PROBE_ABSENT) >/dev/null 2>&1; rc=$$?; \
+	if [ "$$rc" != "4" ]; then \
+	  echo "probe-control: exit $$rc for the six inputs together; four are not agreement (REJECT-ONE, DIVERGE, CRASH, MISSING)"; exit 1; fi; \
+	echo "probe-control: clean (each class on its own input:$$seen MISSING; exit $$rc = the inputs that are not agreement)"
 
 # The subset a fresh clone can run with nothing but `cc` — no dune, no opam.
 # Same five recipes `selfhost-verify` runs; this target only names them as a
