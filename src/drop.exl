@@ -327,14 +327,16 @@ fn glue_pos() -> Pos { return pos::Pos::prelude(); }
 // A Typ -> TypeAnn for glue-fn parameters (mirrors the oracle's ann_of): only
 // the shapes glue params ever take (struct / the three pointer flavours).
 fn ann_of_ty(ar: *Arena, t: *const Typ) -> *const TypeAnn {
-    let no_args: Vec<*const TypeAnn> = Vec::with_capacity(default_allocator(), 8 as u32);
     return match *t {
-        Typ::TStruct(p) => d_ann(ar, TypeAnn::TyStruct { path: p, args: no_args })
+        Typ::TStruct(p) => d_ann(ar, TypeAnn::TyStruct { path: p, args: no_ann_args() })
         | Typ::TPtr(i) => d_ann(ar, TypeAnn::TyPtr(ann_of_ty(ar, i)))
         | Typ::TOwnPtr(i) => d_ann(ar, TypeAnn::TyOwnPtr(ann_of_ty(ar, i)))
         | Typ::TConstPtr(i) => d_ann(ar, TypeAnn::TyConstPtr(ann_of_ty(ar, i)))
         | _o => d_ann(ar, TypeAnn::TyPtr(d_ann(ar, TypeAnn::TyCVoid)))
     };
+}
+fn no_ann_args() -> Vec<*const TypeAnn> {
+    return Vec::with_capacity(default_allocator(), 8 as u32);
 }
 fn mk_glue_param(ar: *Arena, name: str, ty: *const Typ) -> Param {
     let no_reg: Option<str> = Option::None;
@@ -1304,10 +1306,10 @@ fn apply_stmt_consumes(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig
         Tstmt::TLet { name, value, decl_ty, pos } => apply_expr(structs, enums, a, ar, &st, value)
         | Tstmt::TLetTuple { names, value, pos } => apply_expr(structs, enums, a, ar, &st, value)
         | Tstmt::TAssign { path, value, pos } => apply_expr(structs, enums, a, ar, &st, value)
-        | Tstmt::TAssignField { target, field, value, pos } => apply_two(structs, enums, a, ar, st, target, value)
-        | Tstmt::TAssignDeref { target, value, pos } => apply_two(structs, enums, a, ar, st, target, value)
-        | Tstmt::TAssignIndex { base, index, value, pos } => apply_three(structs, enums, a, ar, st, base, index, value)
-        | Tstmt::TReturn { value, pos } => apply_opt(structs, enums, a, ar, st, value)
+        | Tstmt::TAssignField { target, field, value, pos } => apply_two(structs, enums, a, ar, &st, target, value)
+        | Tstmt::TAssignDeref { target, value, pos } => apply_two(structs, enums, a, ar, &st, target, value)
+        | Tstmt::TAssignIndex { base, index, value, pos } => apply_three(structs, enums, a, ar, &st, base, index, value)
+        | Tstmt::TReturn { value, pos } => apply_opt(structs, enums, a, ar, &st, value)
         | Tstmt::TExprStmt(e) => apply_expr(structs, enums, a, ar, &st, e)
         | Tstmt::TIf { cond, then_body, else_body } => {
             let s1 = apply_expr(structs, enums, a, ar, &st, cond);
@@ -1330,20 +1332,20 @@ fn apply_stmt_consumes(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig
     };
 }
 fn apply_two(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
-             st: Vec<DEntry>, x: *const Texpr, y: *const Texpr) -> Vec<DEntry> {
-    let s1 = apply_expr(structs, enums, a, ar, &st, x);
+             st: *const Vec<DEntry>, x: *const Texpr, y: *const Texpr) -> Vec<DEntry> {
+    let s1 = apply_expr(structs, enums, a, ar, st, x);
     return apply_expr(structs, enums, a, ar, &s1, y);
 }
 fn apply_three(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
-               st: Vec<DEntry>, x: *const Texpr, y: *const Texpr, z: *const Texpr) -> Vec<DEntry> {
+               st: *const Vec<DEntry>, x: *const Texpr, y: *const Texpr, z: *const Texpr) -> Vec<DEntry> {
     let s1 = apply_two(structs, enums, a, ar, st, x, y);
     return apply_expr(structs, enums, a, ar, &s1, z);
 }
 fn apply_opt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
-             st: Vec<DEntry>, v: Option<*const Texpr>) -> Vec<DEntry> {
+             st: *const Vec<DEntry>, v: Option<*const Texpr>) -> Vec<DEntry> {
     return match v {
-        Option::Some(e) => apply_expr(structs, enums, a, ar, &st, e)
-        | Option::None => copy_dentries(a, &st)
+        Option::Some(e) => apply_expr(structs, enums, a, ar, st, e)
+        | Option::None => copy_dentries(a, st)
     };
 }
 // A block's own `defer` bodies run at its exit, so their consumes land BEFORE

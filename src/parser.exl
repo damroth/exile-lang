@@ -3858,7 +3858,12 @@ pub fn parse_program(a: Allocator, ar: *Arena, toks: Slice<TokenPos>, n: u32)
         else { parse_item(&s, &items, &seen); }
     }
     return match s.err {
-        Option::Some(e) => Result::Err(e)
+        Option::Some(e) => parse_failed(items, e)
         | Option::None => Result::Ok(items)
     };
+}
+// The items gathered before the error go down with it: taken here, released at
+// this function's end, so the error path consumes them as the success path does.
+fn parse_failed(_items: Vec<Item>, e: *const CompileError) -> Result<Vec<Item>, *const CompileError> {
+    return Result::Err(e);
 }
