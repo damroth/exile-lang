@@ -1,0 +1,7 @@
+// A binding the OUTER loop body declares, consumed inside an INNER loop. Fresh
+// for each outer iteration, but not for each inner one - the inner loop's own
+// rule refuses it.
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+fn main() { let a = default_allocator(); let mut i = 0; let mut n = 0 as u32;
+    while i < 2 { i = i + 1; let v: Vec<int> = Vec::with_capacity(a, 8 as u32); let mut k = 0; while k < 2 { k = k + 1; n = n + take(v); } }
+    println(n as int); }

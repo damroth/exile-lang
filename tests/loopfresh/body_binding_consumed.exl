@@ -1,0 +1,96 @@
+// A binding the loop body declares may be consumed in that body: the `let` runs
+// again on every iteration, so each iteration consumes a value it made itself.
+// Only a binding that existed BEFORE the loop is re-consumed by the next
+// iteration. The frozen reference asks only whether the binding is consumed
+// inside a loop, so it refuses every function below; the port asks where it was
+// declared. The run is watched by the allocation witness: every vector is made,
+// moved into `take`, and freed there exactly once, and the pointer each
+// iteration of `defer_freed` allocates is freed by that iteration's `defer`.
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn while_body() -> u32 {
+    let a = default_allocator();
+    let mut i = 0;
+    let mut n = 0 as u32;
+    while i < 3 {
+        let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+        v.push(i);
+        v.push(i);
+        n = n + take(v);
+        i = i + 1;
+    }
+    return n;
+}
+fn for_body() -> u32 {
+    let a = default_allocator();
+    let mut n = 0 as u32;
+    for i in 0..4 {
+        let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+        v.push(i);
+        n = n + take(v);
+    }
+    return n;
+}
+fn nested_block() -> u32 {
+    let a = default_allocator();
+    let mut i = 0;
+    let mut n = 0 as u32;
+    while i < 4 {
+        i = i + 1;
+        if i > 1 {
+            let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+            v.push(i);
+            n = n + take(v);
+        }
+    }
+    return n;
+}
+fn in_arm() -> u32 {
+    let a = default_allocator();
+    let mut i = 0;
+    let mut n = 0 as u32;
+    while i < 3 {
+        i = i + 1;
+        match pick(i) {
+            S::A => { let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32); v.push(i); n = n + take(v); }
+            | S::B => { }
+        }
+    }
+    return n;
+}
+fn then_continue() -> u32 {
+    let a = default_allocator();
+    let mut i = 0;
+    let mut n = 0 as u32;
+    while i < 4 {
+        i = i + 1;
+        let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+        v.push(i);
+        n = n + take(v);
+        if i == 2 { continue; }
+        n = n + 10 as u32;
+    }
+    return n;
+}
+fn defer_freed() -> int {
+    let a = default_allocator();
+    let mut i = 0;
+    let mut t = 0;
+    while i < 3 {
+        i = i + 1;
+        let q: own *int = a.alloc();
+        defer a.free(q);
+        *q = i;
+        t = t + *q;
+    }
+    return t;
+}
+fn main() {
+    println(while_body() as int);
+    println(for_body() as int);
+    println(nested_block() as int);
+    println(in_arm() as int);
+    println(then_continue() as int);
+    println(defer_freed());
+}

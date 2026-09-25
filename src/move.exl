@@ -508,14 +508,18 @@ fn loop_gate_one(a: Allocator, ar: *Arena, mv: *const Mv, was_live: bool, at: Po
 }
 
 // A binding that was Live before the loop and Consumed after it would be
-// re-consumed on the next iteration.
+// re-consumed on the next iteration.  One the loop's body declares is not in the
+// map from before the loop: it is born again on every iteration, so consuming it
+// there consumes a fresh value each time.  The reference reads the missing name as
+// Live and refuses it.
 fn loop_consume_gate(a: Allocator, ar: *Arena, mv: *const Mv,
                      before: *const Vec<MoveBinding>, after: *const Vec<MoveBinding>) {
     if !mv.mv_report { return; }
     let sl = after.as_slice();
     let mut i = 0 as u32;
     while i < after.length() {
-        let was_live = match mb_state_of(before, sl[i].mb_name) { MoveState::Live => true | _o => false };
+        let was_live = mb_is_tracked(before, sl[i].mb_name)
+            && match mb_state_of(before, sl[i].mb_name) { MoveState::Live => true | _o => false };
         match sl[i].mb_state {
             MoveState::Consumed(at) => { loop_gate_one(a, ar, mv, was_live, at, sl[i].mb_name); }
             | _o2 => { }

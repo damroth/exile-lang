@@ -1,13 +1,16 @@
-// A `defer` in a loop body consumes on every iteration, so the next one would
-// re-consume an already-moved binding. The consume was invisible: move's
-// statement dispatcher had no TDefer arm, so a defer body fell into its
-// catch-all and never reached the loop gate that already existed.
+// A `defer` in a loop body that consumes a binding from BEFORE the loop: every
+// iteration registers the free again, so the second one frees a block the first
+// already freed. The consume used to be invisible - move's statement dispatcher
+// had no TDefer arm, so a defer body fell into its catch-all and never reached
+// the loop gate. A binding the body declares itself is fresh on every iteration
+// and may be consumed by such a defer; the loop rule asks where the binding was
+// declared.
 pub mod raw { extern fn make_c_allocator() -> Allocator; }
 fn main() {
     let a = raw::make_c_allocator();
     let mut i = 0;
+    let q: own *int = a.alloc();
     while i < 2 {
-        let q: own *int = a.alloc();
         defer a.free(q);
         *q = i; println(*q);
         i = i + 1;

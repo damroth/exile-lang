@@ -1176,7 +1176,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-armtail selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-armtail selfhost-loopfresh selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -1852,6 +1852,36 @@ selfhost-armtail: $(EXILC_BIN)
 	  echo "selfhost-armtail: a bare \`if\` ending an arm went the wrong way:"; \
 	  diff tests/armtail/arm_tail_if.expected $(C_OUT)/armtail.out | head -6; exit 1; fi; \
 	echo "selfhost-armtail: clean (a bare if ending a statement arm - jumping, returning, or doing nothing - RUNS `tr '\n' '/' < $(C_OUT)/armtail.out | sed 's|/$$||'`; the frozen reference still refuses it for the missing else)"
+
+# ===== a binding the loop body declares may be consumed there =====
+#
+# The move pass refuses a binding consumed inside a loop, because the next
+# iteration would consume it again. That is true of a binding that existed before
+# the loop and false of one the body declares: its `let` runs again every time.
+# The port asks where the binding was declared; the FROZEN reference asks only
+# whether a loop is around it, and refuses. Both sides are pinned: the reference
+# still refuses with this rule's words, and the port compiles, survives -Werror
+# and RUNS the trace with the allocation witness at a balance of zero - every
+# consumed value was made in its own iteration and freed exactly once. The
+# refusal the rule exists for stays pinned as a mutual one in `tests/move`.
+selfhost-loopfresh: $(EXILC_BIN)
+	@test -f tests/loopfresh/body_binding_consumed.exl || { echo "selfhost-loopfresh: MISSING tests/loopfresh/body_binding_consumed.exl"; exit 1; }; \
+	test -s tests/loopfresh/body_binding_consumed.expected || { echo "selfhost-loopfresh: MISSING/EMPTY body_binding_consumed.expected"; exit 1; }; \
+	rm -f $(C_OUT)/loopfresh_oracle.c $(C_OUT)/loopfresh_oracle.err $(C_OUT)/loopfresh.c $(HOST_OUT)/loopfresh $(C_OUT)/loopfresh.out; \
+	if $(EXILE) --target c --c-out $(C_OUT)/loopfresh_oracle.c tests/loopfresh/body_binding_consumed.exl >/dev/null 2>$(C_OUT)/loopfresh_oracle.err; then \
+	  echo "selfhost-loopfresh: the FROZEN reference now ACCEPTS a body-declared binding consumed in its loop - re-measure"; exit 1; fi; \
+	grep -q "is consumed inside a loop body" $(C_OUT)/loopfresh_oracle.err \
+	  || { echo "selfhost-loopfresh: the reference refuses for another reason: `grep -m1 error: $(C_OUT)/loopfresh_oracle.err`"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/loopfresh.c tests/loopfresh/body_binding_consumed.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-loopfresh: the port REJECTED a binding its own loop body declared"; exit 1; }; \
+	if [ ! -s $(C_OUT)/loopfresh.c ]; then echo "selfhost-loopfresh: EMPTY emitted C (floor)"; exit 1; fi; \
+	cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/loopfresh $(C_OUT)/loopfresh.c $(SYS_HOST) \
+	  || { echo "selfhost-loopfresh: the emission is not clean C89 at -O2"; exit 1; }; \
+	EXILE_ALLOC_WITNESS=1 $(HOST_OUT)/loopfresh > $(C_OUT)/loopfresh.out 2>&1; \
+	if ! diff -q tests/loopfresh/body_binding_consumed.expected $(C_OUT)/loopfresh.out >/dev/null; then \
+	  echo "selfhost-loopfresh: wrong trace or witness balance:"; \
+	  diff tests/loopfresh/body_binding_consumed.expected $(C_OUT)/loopfresh.out | head -6; exit 1; fi; \
+	echo "selfhost-loopfresh: clean (bindings declared in a while body, a for body, a nested block, an arm, before a continue, and freed by the body's own defer, each consumed in its iteration - RUNS `tr '\n' '/' < $(C_OUT)/loopfresh.out | sed 's|/$$||'`; the frozen reference still refuses them)"
 
 # ===== the tutorial's capability emission, pinned =====
 #

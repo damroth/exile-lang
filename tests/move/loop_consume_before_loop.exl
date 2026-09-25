@@ -1,0 +1,9 @@
+// A binding declared BEFORE the loop and consumed inside it: the second
+// iteration would consume a value the first one already moved. This refusal is
+// what the loop rule is for, and it stays whatever the rule learns about
+// bindings the body declares itself.
+fn take(v: Vec<int>) -> u32 { return v.length(); }
+fn main() { let a = default_allocator(); let mut i = 0; let mut n = 0 as u32;
+    let v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    while i < 2 { i = i + 1; n = n + take(v); }
+    println(n as int); }
