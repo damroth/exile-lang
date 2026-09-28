@@ -30,3 +30,15 @@ port printed the minted `s__1` for two years and every one of them stayed green.
 The IR carries `tf_srcnames` (C name -> the user's name, only the entries that
 differ) and the pass renders through `ir::src_name`; p13 is the shape that fails
 if either half goes missing.
+
+  p14 returning a local `StringBuilder`'s `as_slice()`   -> reject
+  p15 returning a local `String`'s `as_slice()`          -> reject
+  p16 pushing a local `StringBuilder`'s `as_slice()` into a non-local container -> reject
+  p17 returning `str::as_bytes` of a str that points into a local array       -> reject
+
+p14..p16 pin the prelude's non-generic methods in the summary table.  The port
+holds them apart from the user's functions (`tp_pmeth` / `tp_pfree`) and the pass
+used to summarise only the user's list, so a borrow those functions return came
+back as caller-owned and all four compiled to a dangling slice.  p14..p16 go
+through the methods, p17 through the `str` free functions - one per list.  The gate compares the
+whole line, position included.

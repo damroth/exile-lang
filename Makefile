@@ -3260,14 +3260,14 @@ selfhost-port-escape: host-selfhost-escape
 	  port=$$(echo $$f | $(HOST_OUT)/selfhost_escape 2>&1 | head -1); \
 	  orac=$$($(EXILE) --target host --c-out /tmp/escgate.c $$f 2>&1 \
 	          | grep -m1 'embeds the address\|use of borrow' || echo 'escape: ok'); \
-	  port_msg=$$(printf '%s' "$$port" | sed 's/.*: error: //'); \
-	  orac_msg=$$(printf '%s' "$$orac" | sed 's/.*: error: //'); \
-	  if [ "$$port_msg" != "$$orac_msg" ]; then \
+	  if [ -z "$$port" ]; then \
+	    fail=$$((fail+1)); echo "selfhost-port-escape: EMPTY port line for $$f"; \
+	  elif [ "$$port" != "$$orac" ]; then \
 	    fail=$$((fail+1)); echo "selfhost-port-escape: DIVERGE $$f"; \
-	    echo "  port:   $$port_msg"; echo "  oracle: $$orac_msg"; \
+	    echo "  port:   $$port"; echo "  oracle: $$orac"; \
 	  fi; \
 	done; \
-	echo "selfhost-port-escape: $$((n-fail))/$$n agree; $$fail diverge"; \
+	echo "selfhost-port-escape: $$((n-fail))/$$n agree on the whole line, position included; $$fail diverge"; \
 	[ $$fail -eq 0 ]
 
 # ===== feature cross-product =====
@@ -3355,6 +3355,7 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                   c74_prelude_iterator_conforms \
                   c75_module_impl_conforms \
                   c76_prelude_table_traits_conform \
+                  c77_slice_length_method \
                   arm_generic_payload prelude_name_string \
                   prelude_name_collision prelude_name_seed_order \
                   enum_match_no_collision shadow_kind_silent \

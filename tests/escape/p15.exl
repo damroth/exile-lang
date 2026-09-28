@@ -1,0 +1,9 @@
+fn f(a: Allocator) -> Slice<u8> {
+    let s = String::with_str(a, "hi");
+    return s.as_slice();
+}
+fn main() {
+    let a = default_allocator();
+    let sl = f(a);
+    println(sl.len as int);
+}

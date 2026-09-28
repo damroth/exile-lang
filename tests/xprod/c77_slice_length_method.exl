@@ -1,0 +1,25 @@
+// `.length()` on a Slice answers the same spelling Vec does, whatever the
+// element type and however the slice arrives: a local, inline off the Vec, by
+// value through a parameter, and over a struct element.
+struct P { x: int, y: int }
+
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+
+fn count(s: Slice<int>) -> u32 { return s.length(); }
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(3);
+    v.push(4);
+    let s = v.as_slice();
+    println(s.length() as int);
+    println(v.as_slice().length() as int);
+    println(count(v.as_slice()) as int);
+    let mut b: Vec<u8> = Vec::with_capacity(a, 8 as u32);
+    b.push(65 as u8);
+    println(b.as_slice().length() as int);
+    let mut ps: Vec<P> = Vec::with_capacity(a, 8 as u32);
+    ps.push(P { x: 1, y: 2 });
+    println(ps.as_slice().length() as int);
+}

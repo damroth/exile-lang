@@ -1,0 +1,12 @@
+fn keep(a: Allocator, out: *Vec<Slice<u8>>) {
+    let mut sb = StringBuilder::with_capacity(a, 8 as u32);
+    sb.push_str("hi");
+    out.push(sb.as_slice());
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<Slice<u8>> = Vec::with_capacity(a, 8 as u32);
+    keep(a, &out);
+    println(out.length() as int);
+}

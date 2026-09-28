@@ -1,0 +1,10 @@
+fn f(a: Allocator) -> Slice<u8> {
+    let mut sb = StringBuilder::with_capacity(a, 8 as u32);
+    sb.push_byte(65 as u8);
+    return sb.as_slice();
+}
+fn main() {
+    let a = default_allocator();
+    let s = f(a);
+    println(s.len as int);
+}

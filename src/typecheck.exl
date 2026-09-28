@@ -14051,6 +14051,7 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
     push_prelude_sg_method(a, ar, "Vec", "get", true, true, true, Option::Some(ann_app1(a, ar, "Option", "T")), params2(a, ann_app1(a, ar, "Vec", "T"), ann_u32(ar)), out);
     push_prelude_sg_method(a, ar, "Vec", "as_slice", true, true, true, Option::Some(ann_app1(a, ar, "Slice", "T")), no_params(a), out);
     push_prelude_sg_method(a, ar, "Vec", "iter", true, true, true, Option::Some(ann_app1(a, ar, "VecIter", "T")), no_params(a), out);
+    push_prelude_sg_method(a, ar, "Slice", "length", true, true, true, Option::Some(ann_u32(ar)), no_params(a), out);
     // VecIter<T>: next (*self) -> Option<T>, the iterator protocol `for` lowers to.
     push_prelude_sg_method(a, ar, "VecIter", "next", true, true, false, Option::Some(ann_app1(a, ar, "Option", "T")), no_params(a), out);
     // Lazy adapters: `next(*self)` drives the fused `for` loop.  Map

@@ -1,0 +1,9 @@
+fn f() -> Slice<u8> {
+    let buf: [u8; 4] = [104 as u8, 105 as u8, 0 as u8, 0 as u8];
+    let s = &buf[0 as u32] as *const c_char as str;
+    return str::as_bytes(s);
+}
+fn main() {
+    let b = f();
+    println(b.len as int);
+}

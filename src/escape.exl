@@ -1253,45 +1253,63 @@ fn compute_summaries(a: Allocator, ar: *Arena, tp: *const Tprogram, sum: *Vec<Su
     // The summary starts at bottom (no row = CallerOrStatic) and only grows, so
     // the fixpoint terminates; the iteration cap is the OCaml's, a backstop
     // against a non-monotone edit rather than an expected outcome.
-    let fl = tp.tp_funcs.as_slice();
-    let n = tp.tp_funcs.length();
-    let mut max_iter = 16 as u32;
+    //
+    // The prelude's non-generic methods and free functions are summarised too:
+    // the port holds them apart from tp_funcs, the reference does not, and
+    // without a row a borrow one of them returns (`StringBuilder::as_slice`)
+    // projects as caller-owned.
     let mut mp = 0 as u32;
     let mut c = 0 as u32;
-    let mut k = 0 as u32;
-    while k < n {
-        if fn_is_analyzable(&fl[k]) {
-            c = c + 1 as u32;
-            if fl[k].tf_func.params.length() > mp { mp = fl[k].tf_func.params.length(); }
-        }
-        k = k + 1 as u32;
-    }
-    max_iter = c * (mp + 1 as u32) + 16 as u32;
+    count_analyzable(&tp.tp_pmeth, &c, &mp);
+    count_analyzable(&tp.tp_pfree, &c, &mp);
+    count_analyzable(&tp.tp_funcs, &c, &mp);
+    let max_iter = c * (mp + 1 as u32) + 16 as u32;
     let mut iter = 0 as u32;
     let mut changed = true;
     while changed {
-        changed = false;
         iter = iter + 1 as u32;
         if iter > max_iter { escape_ice(); }
-        let mut i = 0 as u32;
-        while i < n {
-            if fn_is_analyzable(&fl[i]) {
-                let ret = analyze_fn(a, ar, sum, &fl[i], false, err);
-                let ri = sum_row_index(sum, fl[i].tf_mangled);
-                let mut nrow = SumEntry { sname: fl[i].tf_mangled, smask: 0 as u32, swiden: false };
-                project_to_summary(ret, &nrow);
-                with row in sum[ri] {
-                    if row.smask != nrow.smask || row.swiden != nrow.swiden {
-                        row.smask = nrow.smask;
-                        row.swiden = nrow.swiden;
-                        changed = true;
-                    }
-                }
-            }
-            i = i + 1 as u32;
-        }
+        let c1 = summarise_list(a, ar, sum, &tp.tp_pmeth, err);
+        let c2 = summarise_list(a, ar, sum, &tp.tp_pfree, err);
+        let c3 = summarise_list(a, ar, sum, &tp.tp_funcs, err);
+        changed = c1 || c2 || c3;
     }
     return;
+}
+fn count_analyzable(fs: *const Vec<Tfunc>, c: *u32, mp: *u32) {
+    let fl = fs.as_slice();
+    let mut k = 0 as u32;
+    while k < fs.length() {
+        if fn_is_analyzable(&fl[k]) {
+            *c = *c + 1 as u32;
+            if fl[k].tf_func.params.length() > *mp { *mp = fl[k].tf_func.params.length(); }
+        }
+        k = k + 1 as u32;
+    }
+    return;
+}
+fn summarise_list(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fs: *const Vec<Tfunc>,
+                  err: *Option<*const CompileError>) -> bool {
+    let mut changed = false;
+    let fl = fs.as_slice();
+    let mut i = 0 as u32;
+    while i < fs.length() {
+        if fn_is_analyzable(&fl[i]) {
+            let ret = analyze_fn(a, ar, sum, &fl[i], false, err);
+            let ri = sum_row_index(sum, fl[i].tf_mangled);
+            let mut nrow = SumEntry { sname: fl[i].tf_mangled, smask: 0 as u32, swiden: false };
+            project_to_summary(ret, &nrow);
+            with row in sum[ri] {
+                if row.smask != nrow.smask || row.swiden != nrow.swiden {
+                    row.smask = nrow.smask;
+                    row.swiden = nrow.swiden;
+                    changed = true;
+                }
+            }
+        }
+        i = i + 1 as u32;
+    }
+    return changed;
 }
 
 // The fixpoint is monotone by construction; failing to converge is an internal
