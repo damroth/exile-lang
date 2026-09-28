@@ -1,0 +1,15 @@
+// An arena str read back from a local Vec by a for-each.
+fn mk(ar: *Arena, a: Allocator) -> str { let mut sb = StringBuilder::with_capacity(a, 8 as u32); sb.push_str("hi"); return str::from_slice(ar, sb.as_slice()); }
+fn collect(ar: *Arena, out: *Vec<str>) {
+    let a = default_allocator();
+    let mut local: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    local.push(mk(ar, a));
+    for s in local.iter() { out.push(s); }
+    return; }
+fn main() {
+    let a = default_allocator();
+    let mut ar = Arena::with_capacity(a, 256 as u32);
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect(&ar, &out);
+    println(out.length() as int);
+}

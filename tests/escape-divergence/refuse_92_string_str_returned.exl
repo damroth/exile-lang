@@ -1,0 +1,9 @@
+// A str borrowed from a local String, returned.
+fn name(a: Allocator) -> str {
+    let s = String::with_str(a, "hi");
+    return s.as_str();
+}
+fn main() {
+    let a = default_allocator();
+    println(str::length(name(a)) as int);
+}

@@ -1,0 +1,16 @@
+// A struct wider than the field mask: the local sits in field 66 and the callee reads field 68; past the mask both share one slot, so the read is refused.
+struct Wide { f0: *const int, f1: *const int, f2: *const int, f3: *const int, f4: *const int, f5: *const int, f6: *const int, f7: *const int, f8: *const int, f9: *const int, f10: *const int, f11: *const int, f12: *const int, f13: *const int, f14: *const int, f15: *const int, f16: *const int, f17: *const int, f18: *const int, f19: *const int, f20: *const int, f21: *const int, f22: *const int, f23: *const int, f24: *const int, f25: *const int, f26: *const int, f27: *const int, f28: *const int, f29: *const int, f30: *const int, f31: *const int, f32: *const int, f33: *const int, f34: *const int, f35: *const int, f36: *const int, f37: *const int, f38: *const int, f39: *const int, f40: *const int, f41: *const int, f42: *const int, f43: *const int, f44: *const int, f45: *const int, f46: *const int, f47: *const int, f48: *const int, f49: *const int, f50: *const int, f51: *const int, f52: *const int, f53: *const int, f54: *const int, f55: *const int, f56: *const int, f57: *const int, f58: *const int, f59: *const int, f60: *const int, f61: *const int, f62: *const int, f63: *const int, f64: *const int, f65: *const int, f66: *const int, f67: *const int, f68: *const int, f69: *const int }
+fn pick(w: *const Wide) -> *const int { return w.f68; }
+fn run(p: *const int, out: *Vec<*const int>) {
+    let x = 5;
+    let w = Wide { f0: p, f1: p, f2: p, f3: p, f4: p, f5: p, f6: p, f7: p, f8: p, f9: p, f10: p, f11: p, f12: p, f13: p, f14: p, f15: p, f16: p, f17: p, f18: p, f19: p, f20: p, f21: p, f22: p, f23: p, f24: p, f25: p, f26: p, f27: p, f28: p, f29: p, f30: p, f31: p, f32: p, f33: p, f34: p, f35: p, f36: p, f37: p, f38: p, f39: p, f40: p, f41: p, f42: p, f43: p, f44: p, f45: p, f46: p, f47: p, f48: p, f49: p, f50: p, f51: p, f52: p, f53: p, f54: p, f55: p, f56: p, f57: p, f58: p, f59: p, f60: p, f61: p, f62: p, f63: p, f64: p, f65: p, f66: &x, f67: p, f68: p, f69: p };
+    out.push(pick(&w));
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let y = 3;
+    let mut out: Vec<*const int> = Vec::with_capacity(a, 8 as u32);
+    run(&y, &out);
+    println(*out.as_slice()[0 as u32]);
+}

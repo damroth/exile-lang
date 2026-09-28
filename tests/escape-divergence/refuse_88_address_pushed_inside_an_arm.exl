@@ -1,0 +1,15 @@
+// A local's address pushed into a local Vec inside a match arm and read back after the match.
+enum S { A | B }
+fn pick() -> S { return S::A; }
+fn keep(out: *Vec<*int>) {
+    let a = default_allocator();
+    let x = 5;
+    let mut local: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    match pick() { S::A => { local.push(&x); } | S::B => { } }
+    out.push(local[0 as u32]);
+    return; }
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int); }

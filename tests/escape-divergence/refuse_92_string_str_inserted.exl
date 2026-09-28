@@ -1,0 +1,12 @@
+// A str borrowed from a local String, pushed into a non-local Vec.
+fn keep(a: Allocator, out: *Vec<str>) {
+    let s = String::with_str(a, "hi");
+    out.push(s.as_str());
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    keep(a, &out);
+    println(out.length() as int);
+}

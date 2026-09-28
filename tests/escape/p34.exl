@@ -1,0 +1,8 @@
+// The address of an element read through a slice of a local Vec, returned.
+fn first(a: Allocator) -> *int {
+    let mut local: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    local.push(5);
+    let sl = local.as_slice();
+    return &sl[0 as u32];
+}
+fn main() { let a = default_allocator(); let p = first(a); println(*p); }

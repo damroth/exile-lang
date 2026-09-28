@@ -1,0 +1,15 @@
+// An arena str pushed straight into a non-local Vec.
+fn collect(ar: *Arena, out: *Vec<str>) {
+    let a = default_allocator();
+    let mut sb = StringBuilder::with_capacity(a, 8 as u32);
+    sb.push_str("hi");
+    out.push(str::from_slice(ar, sb.as_slice()));
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut ar = Arena::with_capacity(a, 256 as u32);
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect(&ar, &out);
+    println(out.length() as int);
+}

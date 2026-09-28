@@ -1,0 +1,8 @@
+// A local Vec holding a local's address, returned.
+fn mk() -> Vec<*int> {
+    let a = default_allocator();
+    let x = 5;
+    let mut local: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    local.push(&x);
+    return local; }
+fn main() { let v = mk(); println(v.length() as int); }

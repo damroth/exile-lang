@@ -1,0 +1,14 @@
+// A local's address pushed through a pointer to a local Vec, read back from the Vec itself.
+fn keep(out: *Vec<*int>) {
+    let a = default_allocator();
+    let x = 5;
+    let mut local: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    let p = &local;
+    p.push(&x);
+    out.push(local[0 as u32]);
+    return; }
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int); }

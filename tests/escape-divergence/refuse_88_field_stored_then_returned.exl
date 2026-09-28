@@ -1,0 +1,8 @@
+// A local's address stored into a field of a local struct, and the struct returned.
+struct Holder { p: *int }
+fn mk() -> Holder {
+    let x = 5;
+    let mut h = Holder { p: null };
+    h.p = &x;
+    return h; }
+fn main() { let h = mk(); println(1); }

@@ -11,6 +11,13 @@
 // typecheck's port assumes well-typed input.  The messages here are byte-exact
 // with the oracle's (see escape_corpus + the negative probes).
 //
+// It looks further than the reference does: it tells a parameter's address from
+// what lies under it, follows what is stored into a container and read back out,
+// keeps the first-level fields of a struct apart, and treats a `str` as a borrow.
+// So it refuses programs the reference accepts - ones that would read freed
+// storage - and accepts some the reference refuses; `selfhost-escape-divergence`
+// pins both sides of each.
+//
 // Two representation choices where the OCaml uses structures Exile lacks:
 //
 //   * `IntSet` of param indices -> a u32 BITMASK.  A fn with 32+ params cannot
@@ -43,15 +50,40 @@ const PROV_PARAM: int = 1;
 const PROV_LOCAL: int = 2;
 const PROV_UNKNOWN: int = 3;
 
+// A `Param` provenance says where under which parameters a value came from, at
+// three depths: `pa` - it points into the parameter's own storage (the pointer
+// itself, a borrow of a place rooted at it, a buffer the parameter owns); `pc1` -
+// it was stored directly under the parameter; `pc2` - it was stored two or more
+// levels under it (deeper folds into this one).  A call answers each through the
+// argument at the same depth.
+//
+// A value stored directly under a parameter may also name WHICH fields of the
+// struct there it came from: up to two slots of (parameter + 1, field mask), 0
+// for an empty slot, with a field mask two words wide.  A `pc1` bit without a slot means any field.  Only a Local
+// refuses, so the fields matter for one question at a call site - whether the
+// argument holds a local in one of them.
 pub struct Prov {
     pk: int,
-    // Param-index bitmask; meaningful only when pk == PROV_PARAM.
-    pmask: u32,
+    pa: u32,
+    pc1: u32,
+    pc2: u32,
+    s0p: u32,
+    s0m: FMask,
+    s1p: u32,
+    s1m: FMask,
 }
 
-fn prov_cs() -> Prov { return Prov { pk: PROV_CS, pmask: 0 as u32 }; }
-fn prov_local() -> Prov { return Prov { pk: PROV_LOCAL, pmask: 0 as u32 }; }
-fn prov_unknown() -> Prov { return Prov { pk: PROV_UNKNOWN, pmask: 0 as u32 }; }
+fn prov_of_kind(k: int) -> Prov {
+    return Prov { pk: k, pa: 0 as u32, pc1: 0 as u32, pc2: 0 as u32,
+                  s0p: 0 as u32, s0m: fm_none(), s1p: 0 as u32, s1m: fm_none() };
+}
+fn prov_masks(a: u32, c1: u32, c2: u32) -> Prov {
+    return Prov { pk: PROV_PARAM, pa: a, pc1: c1, pc2: c2,
+                  s0p: 0 as u32, s0m: fm_none(), s1p: 0 as u32, s1m: fm_none() };
+}
+fn prov_cs() -> Prov { return prov_of_kind(PROV_CS); }
+fn prov_local() -> Prov { return prov_of_kind(PROV_LOCAL); }
+fn prov_unknown() -> Prov { return prov_of_kind(PROV_UNKNOWN); }
 
 // Bits 0..30 name a param exactly.  Bit 31 SATURATES: "the value derives from
 // some param with index >= 31".  A call site then meets over the tail args only.
@@ -63,16 +95,77 @@ fn prov_unknown() -> Prov { return Prov { pk: PROV_UNKNOWN, pmask: 0 as u32 }; }
 // the wrong side of the lattice.  Saturating confines the imprecision to the tail
 // params, where it belongs.
 const PARAM_HIGH: u32 = 31;
-fn prov_param(i: u32) -> Prov {
-    if i >= PARAM_HIGH { return Prov { pk: PROV_PARAM, pmask: (1 as u32) << PARAM_HIGH }; }
-    return Prov { pk: PROV_PARAM, pmask: (1 as u32) << i };
+fn param_bit(i: u32) -> u32 {
+    if i >= PARAM_HIGH { return (1 as u32) << PARAM_HIGH; }
+    return (1 as u32) << i;
+}
+fn prov_param(i: u32) -> Prov { return prov_masks(param_bit(i), 0 as u32, 0 as u32); }
+fn prov_under1(i: u32) -> Prov { return prov_masks(0 as u32, param_bit(i), 0 as u32); }
+fn prov_under2(i: u32) -> Prov { return prov_masks(0 as u32, 0 as u32, param_bit(i)); }
+
+// A set of first-level fields, two words wide.  Fields 0..62 are named exactly;
+// bit 63 saturates to "some field at 63 or past it", as the parameter bits do.
+pub struct FMask {
+    lo: u32,
+    hi: u32,
+}
+const FIELD_HIGH: u32 = 63;
+const FSLOTS: u32 = 64;
+const ALL_WORD: u32 = 4294967295;
+fn fm_none() -> FMask { return FMask { lo: 0 as u32, hi: 0 as u32 }; }
+fn fm_all() -> FMask { return FMask { lo: ALL_WORD, hi: ALL_WORD }; }
+fn fm_is_all(m: FMask) -> bool { return m.lo == ALL_WORD && m.hi == ALL_WORD; }
+fn fm_or(x: FMask, y: FMask) -> FMask { return FMask { lo: x.lo | y.lo, hi: x.hi | y.hi }; }
+fn fm_eq(x: FMask, y: FMask) -> bool { return x.lo == y.lo && x.hi == y.hi; }
+// The field in slot `k` (the last slot shared from 63 on).
+fn fm_bit(k: u32) -> FMask {
+    let i = if k >= FIELD_HIGH { FIELD_HIGH } else { k };
+    if i < 32 as u32 { return FMask { lo: (1 as u32) << i, hi: 0 as u32 }; }
+    let hk = i - 32 as u32;   // bound out: register #7
+    return FMask { lo: 0 as u32, hi: (1 as u32) << hk };
+}
+fn fm_has(m: FMask, k: u32) -> bool {
+    if k < 32 as u32 { let sh = m.lo >> k; return sh & (1 as u32) == 1 as u32; }
+    let hk = k - 32 as u32;   // bound out: register #7
+    let sh2 = m.hi >> hk;
+    return sh2 & (1 as u32) == 1 as u32;
+}
+// Stored directly under parameter `i`, in the fields of `m`.
+fn prov_under1_fields(i: u32, m: FMask) -> Prov {
+    if i >= PARAM_HIGH || fm_is_all(m) { return prov_under1(i); }
+    return Prov { pk: PROV_PARAM, pa: 0 as u32, pc1: param_bit(i), pc2: 0 as u32,
+                  s0p: i + 1 as u32, s0m: m, s1p: 0 as u32, s1m: fm_none() };
+}
+// The fields of parameter `i`'s struct a `pc1` claim names: its slot's mask, or
+// any field when it has no slot; none when it makes no claim on `i`.
+fn c1_fields(p: Prov, i: u32) -> FMask {
+    let sh = p.pc1 >> i;   // bound out: register #7
+    if sh & (1 as u32) == 0 as u32 { return fm_none(); }
+    if p.s0p == i + 1 as u32 { return p.s0m; }
+    if p.s1p == i + 1 as u32 { return p.s1m; }
+    return fm_all();
 }
 
 fn meet(a: Prov, b: Prov) -> Prov {
     if a.pk == PROV_LOCAL || b.pk == PROV_LOCAL { return prov_local(); }
     if a.pk == PROV_UNKNOWN || b.pk == PROV_UNKNOWN { return prov_unknown(); }
     if a.pk == PROV_PARAM && b.pk == PROV_PARAM {
-        return Prov { pk: PROV_PARAM, pmask: a.pmask | b.pmask };
+        let mut r = prov_masks(a.pa | b.pa, a.pc1 | b.pc1, a.pc2 | b.pc2);
+        if a.s0p == 0 as u32 && b.s0p == 0 as u32 { return r; }
+        // A slot survives only where every side that claims the parameter names
+        // its fields; a third slot saturates to any field.
+        let mut c = 1 as u32;
+        while c <= PARAM_HIGH {
+            if c == a.s0p || c == a.s1p || c == b.s0p || c == b.s1p {
+                let m = fm_or(c1_fields(a, c - 1 as u32), c1_fields(b, c - 1 as u32));
+                if !fm_is_all(m) {
+                    if r.s0p == 0 as u32 { r.s0p = c; r.s0m = m; }
+                    else if r.s1p == 0 as u32 { r.s1p = c; r.s1m = m; }
+                }
+            }
+            c = c + 1 as u32;
+        }
+        return r;
     }
     if a.pk == PROV_PARAM { return a; }
     if b.pk == PROV_PARAM { return b; }
@@ -81,6 +174,14 @@ fn meet(a: Prov, b: Prov) -> Prov {
 
 // ===== Per-binding state =====
 //
+// `bprov`    — what the value IS: where its own bits point.
+// `belem`    — what the value HOLDS: everything reachable under it, one level
+//              down or more - the elements of a container it holds or borrows,
+//              what a pointer it is points at.
+// `bfid`     — for a struct value, the entry (+1) in the fn's field table that
+//              says what each first-level field is; 0 when only the whole is
+//              known.  Entries never change once made, so a cloned state shares
+//              them.
 // `bowners`  — local names this binding's pointer-content borrows from.  A
 //              `let s = v.as_slice()` records ["v"]; a later mutation of `v`
 //              invalidates `s`.
@@ -94,6 +195,8 @@ fn meet(a: Prov, b: Prov) -> Prov {
 pub struct Binding {
     bname: str,
     bprov: Prov,
+    belem: Prov,
+    bfid: u32,
     bowners: Vec<str>,
     bkilled: bool,
     bkill_reason: str,
@@ -101,12 +204,16 @@ pub struct Binding {
     bown: bool,
 }
 
-// One summary row: the param indices that may appear (transitively) in any
-// return value of `sname`.  `sknown` distinguishes "no entry" (an unanalyzable
-// callee -> CallerOrStatic) from "empty set".
+// One summary row: in terms of `sname`'s params, what its return value IS and
+// what it HOLDS.  A fn returning a struct also says, per first-level field of
+// the result, what that field is - 32 provenances in the parallel field table,
+// at the row's index times 32.  No row (an unanalyzable callee) projects as
+// CallerOrStatic.
 struct SumEntry {
     sname: str,
-    smask: u32,
+    s_is: Prov,
+    s_hd: Prov,
+    s_fields: bool,
     swiden: bool,
 }
 
@@ -114,6 +221,7 @@ struct SumEntry {
 // here as a borrow, so the walkers stay pure w.r.t. the caller's storage.
 struct Esc {
     e_sum: *Vec<SumEntry>,
+    e_fsum: *Vec<Prov>,
     // Param names of the fn under analysis, in declaration order (index = param
     // index), plus a parallel `own *T` flag.
     e_pnames: *Vec<str>,
@@ -123,12 +231,24 @@ struct Esc {
     // First error wins, exactly as the OCaml's raise-on-first does: the walk
     // order is identical, so latching the first is the same diagnostic.
     e_err: *Option<*const CompileError>,
-    // Accumulated return-prov of the fn under analysis.
+    // Accumulated return provenance of the fn under analysis: what it IS and
+    // what it HOLDS.
     e_ret: *Prov,
+    e_hret: *Prov,
+    // Per first-level field slot of a returned struct (empty when the fn returns none).
+    e_fret: *Vec<Prov>,
+    // What each first-level field of a local struct value is: 32 provenances per
+    // entry, the last shared by every field from 31 on.
+    e_ftab: *Vec<Prov>,
     // The fn's C-name -> user-name map, so a diagnostic quotes what the user
     // wrote (`v`) and not what the compiler minted (`v__1`).  The oracle keeps
     // this in a `cur_srcnames` global set per fn; the context carries it here.
     e_srcnames: *const Vec<StrPair>,
+    // The program's structs, for telling a pure value from one that can carry
+    // an address and for naming a field; beside them, each one's name after its
+    // last `::`, so a lookup compares whole paths only where the names agree.
+    e_structs: *const Vec<StructSig>,
+    e_stails: *const Vec<str>,
 }
 
 fn err_node(ar: *Arena, pos: Pos, msg: str) -> *const CompileError {
@@ -192,10 +312,11 @@ fn append_names(out: *Vec<str>, src: *const Vec<str>) {
 
 // Bind (or rebind) `n`.  A rebind drops the old row's owner chain and kill
 // stamp — the OCaml's remove_assoc does the same.
-fn bind_var(a: Allocator, live: *Vec<Binding>, n: str, p: Prov, owners: *const Vec<str>, is_own: bool) {
+fn bind_var(a: Allocator, live: *Vec<Binding>, n: str, is: Prov, hd: Prov, fid: u32,
+            owners: *const Vec<str>, is_own: bool) {
     let idx = find_binding(live, n);
     let fresh = Binding {
-        bname: n, bprov: p, bowners: copy_names(a, owners), bkilled: false,
+        bname: n, bprov: is, belem: hd, bfid: fid, bowners: copy_names(a, owners), bkilled: false,
         bkill_reason: "", bkill_pos: zero_pos_e(), bown: is_own,
     };
     if idx < 0 as int { live.push(fresh); return; }
@@ -203,6 +324,109 @@ fn bind_var(a: Allocator, live: *Vec<Binding>, n: str, p: Prov, owners: *const V
     return;
 }
 fn zero_pos_e() -> Pos { return Pos { line: 0 as int, col: 0 as int, file: "" }; }
+fn prov_same(x: Prov, y: Prov) -> bool {
+    return x.pk == y.pk && x.pa == y.pa && x.pc1 == y.pc1 && x.pc2 == y.pc2
+        && x.s0p == y.s0p && fm_eq(x.s0m, y.s0m) && x.s1p == y.s1p && fm_eq(x.s1m, y.s1m);
+}
+// A store into `n`'s own value: what `n` is and holds grows by what was stored.
+// `k` is the slot of the first-level field the store lands in (FSLOTS when it is
+// not a struct's field); `strong` says the store replaces that whole field.
+fn store_value(esc: *const Esc, live: *Vec<Binding>, n: str, is: Prov, hd: Prov, k: u32, strong: bool) {
+    let i = find_binding(live, n);
+    if i < 0 as int { return; }
+    let fid = live.as_slice()[i as u32].bfid;
+    if fid == 0 as u32 || k >= FSLOTS {
+        with b in live[i as u32] { b.bprov = meet(b.bprov, is); b.belem = meet(b.belem, hd); b.bfid = 0 as u32; }
+        return;
+    }
+    // The last slot is shared from field 63 on, so a store there never replaces it.
+    let nf = copy_entry(esc, fid);
+    let at = (nf - 1 as u32) * FSLOTS + k;
+    if strong && k < FIELD_HIGH { with c in esc.e_ftab[at] { *c = is; } }
+    else { with c in esc.e_ftab[at] { *c = meet(*c, is); } }
+    let whole = entry_whole(esc, nf);
+    with b in live[i as u32] { b.bprov = whole; b.belem = meet(b.belem, hd); b.bfid = nf; }
+    return;
+}
+// A new field-table entry, every slot CallerOrStatic; its id (index + 1).
+fn new_entry(esc: *const Esc) -> u32 {
+    let id = esc.e_ftab.length() / FSLOTS + 1 as u32;
+    let mut k = 0 as u32;
+    while k < FSLOTS { esc.e_ftab.push(prov_cs()); k = k + 1 as u32; }
+    return id;
+}
+fn copy_entry(esc: *const Esc, fid: u32) -> u32 {
+    let nf = new_entry(esc);
+    let from = (fid - 1 as u32) * FSLOTS;
+    let to = (nf - 1 as u32) * FSLOTS;
+    let mut k = 0 as u32;
+    while k < FSLOTS {
+        let p = esc.e_ftab.as_slice()[from + k];
+        with c in esc.e_ftab[to + k] { *c = p; }
+        k = k + 1 as u32;
+    }
+    return nf;
+}
+fn meet_into_slot(esc: *const Esc, fid: u32, k: u32, p: Prov) {
+    with c in esc.e_ftab[(fid - 1 as u32) * FSLOTS + k] { *c = meet(*c, p); }
+    return;
+}
+// What the whole struct an entry describes is.
+fn entry_whole(esc: *const Esc, fid: u32) -> Prov {
+    let base = (fid - 1 as u32) * FSLOTS;
+    let fl = esc.e_ftab.as_slice();
+    let mut p = prov_cs();
+    let mut k = 0 as u32;
+    while k < FSLOTS { p = meet(p, fl[base + k]); k = k + 1 as u32; }
+    return p;
+}
+fn same_entry(esc: *const Esc, x: u32, y: u32) -> bool {
+    if x == y { return true; }
+    if x == 0 as u32 || y == 0 as u32 { return false; }
+    let fl = esc.e_ftab.as_slice();
+    let bx = (x - 1 as u32) * FSLOTS;
+    let by = (y - 1 as u32) * FSLOTS;
+    let mut k = 0 as u32;
+    while k < FSLOTS { if !prov_same(fl[bx + k], fl[by + k]) { return false; } k = k + 1 as u32; }
+    return true;
+}
+// Two entries met slot by slot; 0 when either side knows only the whole.
+fn meet_entries(esc: *const Esc, x: u32, y: u32) -> u32 {
+    if x == y { return x; }
+    if x == 0 as u32 || y == 0 as u32 { return 0 as u32; }
+    let nf = copy_entry(esc, x);
+    let by = (y - 1 as u32) * FSLOTS;
+    let mut k = 0 as u32;
+    while k < FSLOTS {
+        let p = esc.e_ftab.as_slice()[by + k];
+        meet_into_slot(esc, nf, k, p);
+        k = k + 1 as u32;
+    }
+    return nf;
+}
+// A store through `n` lands under it, and in what `n` borrows: a pointer to a
+// local container is how that container gets pushed into.  An element goes into
+// the owner's buffer; any other store may overwrite the owner's own value.
+fn store_under(a: Allocator, live: *Vec<Binding>, n: str, is: Prov, hd: Prov, element: bool) {
+    let i = find_binding(live, n);
+    if i < 0 as int { return; }
+    let v = meet(is, hd);
+    let owners = copy_names(a, &live.as_slice()[i as u32].bowners);
+    with b in live[i as u32] { b.belem = meet(b.belem, v); }
+    let ol = owners.as_slice();
+    let mut k = 0 as u32;
+    while k < owners.length() {
+        let j = find_binding(live, ol[k]);
+        if j >= 0 as int {
+            with o in live[j as u32] {
+                o.belem = meet(o.belem, v);
+                if !element { o.bprov = meet(o.bprov, is); o.bfid = 0 as u32; }
+            }
+        }
+        k = k + 1 as u32;
+    }
+    return;
+}
 fn no_owners(a: Allocator) -> Vec<str> { return Vec::with_capacity(a, 8 as u32); }
 
 fn param_index(esc: *const Esc, n: str) -> int {
@@ -272,6 +496,8 @@ fn mangled_has_prefix(prefix: str, mangled: str) -> bool {
 }
 
 // Methods that return a borrow rooted in the receiver (`*self` / `*const self`).
+// The summaries compute the same fact from the methods' bodies, and
+// `check_borrow_list` holds the two to each other on the prelude.
 // Deliberately narrow: only methods whose body literally wraps `self.ptr` /
 // `self.buf` in a view struct (or a self-rooted iterator).  `clone` / `with_str`
 // / `with_capacity` return INDEPENDENT storage and must NOT propagate owners —
@@ -349,85 +575,235 @@ fn sum_find(esc: *const Esc, m: str) -> int {
 }
 
 // ===== Provenance =====
+//
+// Four questions about an expression, each answered as a provenance:
+//   is_of     what its value IS;
+//   holds_of  what its value HOLDS, one level down or more;
+//   under1    what lies directly under it - what a pointer points at, a
+//             container's elements;
+//   under2    what lies two levels or more under it.
+// A read asks the one its depth names; a call answers its callee's summary
+// through each argument at the depth each mask names.
 
-fn prov_of_var(esc: *const Esc, live: *const Vec<Binding>, n: str) -> Prov {
+fn is_of_var(esc: *const Esc, live: *const Vec<Binding>, n: str) -> Prov {
     let i = find_binding(live, n);
-    if i >= 0 as int { return live.as_slice()[i as u32].bprov; }
+    if i >= 0 as int { return whole_is(&live.as_slice()[i as u32]); }
     let pi = param_index(esc, n);
     if pi >= 0 as int { return prov_param(pi as u32); }
     return prov_cs();
 }
+// What a local's whole value is.
+fn whole_is(b: *const Binding) -> Prov { return b.bprov; }
+// What the fields `m` of a local struct value are.
+fn fields_is(esc: *const Esc, b: *const Binding, m: FMask) -> Prov {
+    if b.bfid == 0 as u32 || fm_is_all(m) { return b.bprov; }
+    let base = (b.bfid - 1 as u32) * FSLOTS;
+    let fl = esc.e_ftab.as_slice();
+    let mut p = prov_cs();
+    let mut k = 0 as u32;
+    while k < FSLOTS {
+        if fm_has(m, k) { p = meet(p, fl[base + k]); }
+        k = k + 1 as u32;
+    }
+    return p;
+}
+fn var_under(esc: *const Esc, live: *const Vec<Binding>, n: str, depth: u32) -> Prov {
+    let i = find_binding(live, n);
+    if i >= 0 as int {
+        let b: *const Binding = &live.as_slice()[i as u32];
+        let mut p = b.belem;
+        let ol = b.bowners.as_slice();
+        let mut k = 0 as u32;
+        while k < b.bowners.length() {
+            let j = find_binding(live, ol[k]);
+            if j >= 0 as int {
+                let o: *const Binding = &live.as_slice()[j as u32];
+                p = meet(p, meet(whole_is(o), o.belem));
+            }
+            k = k + 1 as u32;
+        }
+        return p;
+    }
+    let pi = param_index(esc, n);
+    if pi < 0 as int { return prov_cs(); }
+    if depth == 1 as u32 { return prov_under1(pi as u32); }
+    if depth == 2 as u32 { return prov_under2(pi as u32); }
+    return meet(prov_under1(pi as u32), prov_under2(pi as u32));
+}
 
-// Project a call's return-prov from the callee's summary and the caller's
-// argument provs: each param index in summary[callee] contributes the prov of
-// args[i] under meet; no summary entry -> CallerOrStatic.
+// Project a callee's summary row through the caller's arguments: each param
+// index in a mask contributes args[i] at that mask's depth, under meet; no row
+// -> CallerOrStatic.  `holds` picks the row's HOLDS triple over its IS triple.
 fn prov_of_call(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
-                m: str, args: *const Vec<*const Texpr>) -> Prov {
+                m: str, args: *const Vec<*const Texpr>, holds: bool) -> Prov {
     let si = sum_find(esc, m);
     if si < 0 as int { return prov_cs(); }
     let row: *const SumEntry = &esc.e_sum.as_slice()[si as u32];
-    let mut acc = prov_cs();
-    let al = args.as_slice();
-    let n = args.length();
     if row.swiden {
         // The callee's return derives from an untracked source: every argument
         // is a potential carrier.
+        let mut acc = prov_cs();
+        let al = args.as_slice();
         let mut j = 0 as u32;
-        while j < n { acc = meet(acc, prov_of(a, esc, live, al[j])); j = j + 1 as u32; }
+        while j < args.length() {
+            acc = meet(acc, meet(is_of(a, esc, live, al[j]), holds_of(a, esc, live, al[j])));
+            j = j + 1 as u32;
+        }
         return acc;
     }
+    if holds { return project(a, esc, live, row.s_hd, args); }
+    return project(a, esc, live, row.s_is, args);
+}
+// A provenance in a callee's terms, answered through the caller's arguments.
+fn project(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, p: Prov,
+           args: *const Vec<*const Texpr>) -> Prov {
+    if p.pk != PROV_PARAM { return prov_cs(); }
+    return meet(meet(project_mask(a, esc, live, p.pa, args, 0 as u32), project_c1(a, esc, live, p, args)),
+                project_mask(a, esc, live, p.pc2, args, 2 as u32));
+}
+fn project_mask(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, mask: u32,
+                args: *const Vec<*const Texpr>, depth: u32) -> Prov {
+    let mut acc = prov_cs();
+    if mask == 0 as u32 { return acc; }
+    let al = args.as_slice();
+    let n = args.length();
     let mut i = 0 as u32;
     while i < PARAM_HIGH {
         // The shift is bound out so the `&` operand is not itself a binop:
         // register #7 has the port parenthesise a mixed bitwise nesting, and the
         // frozen oracle does not, which would put src/exilc.exl's own emission
         // outside byte-identity. Neutral by construction rather than by luck.
-        let sbit = row.smask >> i;
+        let sbit = mask >> i;
         if sbit & (1 as u32) == 1 as u32 {
-            if i < n { acc = meet(acc, prov_of(a, esc, live, al[i])); }
+            if i < n { acc = meet(acc, arg_at(a, esc, live, al[i], depth)); }
         }
         i = i + 1 as u32;
     }
     // The saturating bit: the carrier is SOME param at or past PARAM_HIGH, so meet
     // over the tail — a superset of the true carrier, and no wider.
-    let hbit = row.smask >> PARAM_HIGH;   // same reason as above (register #7)
+    let hbit = mask >> PARAM_HIGH;   // same reason as above (register #7)
     if hbit & (1 as u32) == 1 as u32 {
         let mut hj = PARAM_HIGH;
-        while hj < n { acc = meet(acc, prov_of(a, esc, live, al[hj])); hj = hj + 1 as u32; }
+        while hj < n { acc = meet(acc, arg_at(a, esc, live, al[hj], depth)); hj = hj + 1 as u32; }
     }
     return acc;
 }
+// The `pc1` claims, each through the fields it names.
+fn project_c1(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, p: Prov,
+              args: *const Vec<*const Texpr>) -> Prov {
+    let mut acc = prov_cs();
+    if p.pc1 == 0 as u32 { return acc; }
+    let al = args.as_slice();
+    let n = args.length();
+    let mut i = 0 as u32;
+    while i < PARAM_HIGH {
+        let sbit = p.pc1 >> i;   // bound out: register #7
+        if sbit & (1 as u32) == 1 as u32 {
+            if i < n { acc = meet(acc, under1_fields(a, esc, live, al[i], c1_fields(p, i))); }
+        }
+        i = i + 1 as u32;
+    }
+    let hbit = p.pc1 >> PARAM_HIGH;   // bound out: register #7
+    if hbit & (1 as u32) == 1 as u32 {
+        let mut hj = PARAM_HIGH;
+        while hj < n { acc = meet(acc, under1(a, esc, live, al[hj])); hj = hj + 1 as u32; }
+    }
+    return acc;
+}
+// The fields `m` of the struct an argument points at.
+fn under1_fields(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, e: *const Texpr, m: FMask) -> Prov {
+    if fm_is_all(m) { return under1(a, esc, live, e); }
+    return match e.e {
+        TexprNode::TRef(sub) => place_fields(a, esc, live, sub, m)
+        | TexprNode::TVar(n) => passed_fields(a, esc, live, e, n, m)
+        | _o => under1(a, esc, live, e)
+    };
+}
+// A parameter passed on: the same fields of what the caller's parameter points at.
+fn passed_fields(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, e: *const Texpr, n: str, m: FMask) -> Prov {
+    if is_local_name(live, n) { return under1(a, esc, live, e); }
+    let pi = param_index(esc, n);
+    if pi < 0 as int { return under1(a, esc, live, e); }
+    return prov_under1_fields(pi as u32, m);
+}
+// The fields `m` of the struct a place holds.
+fn place_fields(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, sub: *const Texpr, m: FMask) -> Prov {
+    let i = match sub.e { TexprNode::TVar(n) => find_binding(live, n) | _o => 0 as int - 1 as int };
+    if i >= 0 as int { return fields_is(esc, &live.as_slice()[i as u32], m); }
+    return is_of(a, esc, live, sub);
+}
+// An argument at depth 0 (what it is) or 2 (what lies two levels under it);
+// depth 1 goes field by field, through `project_c1`.
+fn arg_at(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, e: *const Texpr, depth: u32) -> Prov {
+    if depth == 2 as u32 { return under2(a, esc, live, e); }
+    return is_of(a, esc, live, e);
+}
 
-fn prov_of_fields(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
-                  fields: *const Vec<TexprField>) -> Prov {
+fn is_of_fields(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                fields: *const Vec<TexprField>) -> Prov {
     let mut acc = prov_cs();
     let sl = fields.as_slice();
     let mut i = 0 as u32;
-    while i < fields.length() { acc = meet(acc, prov_of(a, esc, live, sl[i].value)); i = i + 1 as u32; }
+    while i < fields.length() { acc = meet(acc, is_of(a, esc, live, sl[i].value)); i = i + 1 as u32; }
     return acc;
 }
-fn prov_of_list(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
-                es: *const Vec<*const Texpr>) -> Prov {
+fn holds_of_fields(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                   fields: *const Vec<TexprField>) -> Prov {
+    let mut acc = prov_cs();
+    let sl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() { acc = meet(acc, holds_of(a, esc, live, sl[i].value)); i = i + 1 as u32; }
+    return acc;
+}
+fn is_of_list(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+              es: *const Vec<*const Texpr>) -> Prov {
     let mut acc = prov_cs();
     let sl = es.as_slice();
     let mut i = 0 as u32;
-    while i < es.length() { acc = meet(acc, prov_of(a, esc, live, sl[i])); i = i + 1 as u32; }
+    while i < es.length() { acc = meet(acc, is_of(a, esc, live, sl[i])); i = i + 1 as u32; }
     return acc;
 }
-fn prov_of_opt(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
-               e: Option<*const Texpr>, base: Prov) -> Prov {
+fn holds_of_list(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                 es: *const Vec<*const Texpr>) -> Prov {
+    let mut acc = prov_cs();
+    let sl = es.as_slice();
+    let mut i = 0 as u32;
+    while i < es.length() { acc = meet(acc, holds_of(a, esc, live, sl[i])); i = i + 1 as u32; }
+    return acc;
+}
+fn is_of_opt(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+             e: Option<*const Texpr>, base: Prov) -> Prov {
     return match e {
-        Option::Some(x) => meet(base, prov_of(a, esc, live, x))
+        Option::Some(x) => meet(base, is_of(a, esc, live, x))
         | Option::None => base
     };
 }
-fn prov_of_arms(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
-                arms: *const Vec<TmatchArm>) -> Prov {
-    let mut acc = prov_cs();
+fn holds_of_opt(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                e: Option<*const Texpr>, base: Prov) -> Prov {
+    return match e {
+        Option::Some(x) => meet(base, holds_of(a, esc, live, x))
+        | Option::None => base
+    };
+}
+// A Prov carries no address, only numbers, but it is computed from a state
+// built here, and the reference compiler - which builds this file - counts only
+// scalars as values that cannot carry one.
+@escapes
+fn arms_prov(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, scrutinee: *const Texpr,
+             arms: *const Vec<TmatchArm>, holds: bool) -> Prov {
+    let pis = is_of(a, esc, live, scrutinee);
+    let phd = holds_of(a, esc, live, scrutinee);
+    let mut p = prov_cs();
     let sl = arms.as_slice();
     let mut i = 0 as u32;
-    while i < arms.length() { acc = meet(acc, prov_of(a, esc, live, sl[i].tbody)); i = i + 1 as u32; }
-    return acc;
+    while i < arms.length() {
+        let mut st = clone_state(a, live);
+        bind_pattern(a, &st, &sl[i].tpat, pis, phd);
+        if holds { p = meet(p, holds_of(a, esc, &st, sl[i].tbody)); }
+        else { p = meet(p, is_of(a, esc, &st, sl[i].tbody)); }
+        i = i + 1 as u32;
+    }
+    return p;
 }
 fn prov_of_root(esc: *const Esc, live: *const Vec<Binding>, n: str) -> Prov {
     if is_local_name(live, n) { return prov_local(); }
@@ -435,56 +811,483 @@ fn prov_of_root(esc: *const Esc, live: *const Vec<Binding>, n: str) -> Prov {
     if pi >= 0 as int { return prov_param(pi as u32); }
     return prov_cs();
 }
-fn prov_of_ref(esc: *const Esc, live: *const Vec<Binding>, sub: *const Texpr) -> Prov {
+fn prov_of_ref(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, sub: *const Texpr) -> Prov {
     return match lvalue_root(sub) {
-        Option::Some(n) => prov_of_root(esc, live, n)
+        Option::Some(n) => place_prov(a, esc, live, sub, n)
         | Option::None => prov_cs()
     };
+}
+// A place lives in its root's own slot - unless its path reads through a pointer
+// or a slice on the way, and then it lives wherever that points.
+fn place_prov(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr, root: str) -> Prov {
+    return match te.e {
+        TexprNode::TFieldAccess { target, field } => {
+            if ty_is_ptr(target.ty) { is_of(a, esc, live, target) } else { place_prov(a, esc, live, target, root) }
+        }
+        | TexprNode::TIndex { base, index } => {
+            if ty_is_slice(base.ty) { is_of(a, esc, live, base) } else { place_prov(a, esc, live, base, root) }
+        }
+        | _o => prov_of_root(esc, live, root)
+    };
+}
+fn ty_is_slice(t: *const Typ) -> bool {
+    return match *t {
+        Typ::TStruct(path) => path.length() > 0 as u32 && mangled_has_prefix("Slice_", path.as_slice()[path.length() - 1 as u32])
+        | _o => false
+    };
+}
+fn ty_is_array(t: *const Typ) -> bool {
+    return match *t { Typ::TArray { elem, size } => true | _o => false };
+}
+fn ty_is_ptr(t: *const Typ) -> bool {
+    return match *t { Typ::TPtr(_i) => true | Typ::TConstPtr(_i) => true | Typ::TOwnPtr(_i) => true | _o => false };
 }
 // Pointer arithmetic derives from its base — a bump-allocated arena node is a
 // borrow INTO the arena buffer, so the param-SET summary of a bump allocator
 // carries return-derives-from-self and returning a node out of the fn that owns
 // the arena is the dangling-borrow error.
-fn prov_of_builtin(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
-                   name: str, args: *const Vec<*const Texpr>) -> Prov {
+fn builtin_prov(a: Allocator, esc: *const Esc, live: *const Vec<Binding>,
+                name: str, args: *const Vec<*const Texpr>, holds: bool) -> Prov {
     if str::eq(name, "ptr_offset") && args.length() > 0 as u32 {
-        return prov_of(a, esc, live, args.as_slice()[0 as u32]);
+        if holds { return holds_of(a, esc, live, args.as_slice()[0 as u32]); }
+        return is_of(a, esc, live, args.as_slice()[0 as u32]);
     }
     return prov_cs();
 }
 
-fn prov_of(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr) -> Prov {
+fn is_of(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr) -> Prov {
     return match te.e {
         TexprNode::TVar(n) => {
-            if var_use_is_own_borrow(esc, live, n, te.ty) { prov_local() }
-            else { prov_of_var(esc, live, n) }
+            if var_use_is_own_borrow(esc, live, n, te.ty) { prov_local() } else { is_of_var(esc, live, n) }
         }
-        | TexprNode::TRef(sub) => prov_of_ref(esc, live, sub)
+        | TexprNode::TRef(sub) => prov_of_ref(a, esc, live, sub)
         | TexprNode::TStructLit { sname_path, fields, base } =>
-            prov_of_opt(a, esc, live, base, prov_of_fields(a, esc, live, &fields))
+            is_of_opt(a, esc, live, base, is_of_fields(a, esc, live, &fields))
         | TexprNode::TNew { sname_path, fields, base, alloc } =>
-            prov_of_opt(a, esc, live, base, prov_of_fields(a, esc, live, &fields))
-        | TexprNode::TEnumLit { ename_path, variant, tag, args } => prov_of_fields(a, esc, live, &args)
-        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => prov_of_fields(a, esc, live, &args)
-        | TexprNode::TTupleLit(es) => prov_of_list(a, esc, live, &es)
-        | TexprNode::TArrayLit(es) => prov_of_list(a, esc, live, &es)
-        | TexprNode::TArrayRepeat { value, count } => prov_of(a, esc, live, value)
-        | TexprNode::TFieldAccess { target, field } => prov_of(a, esc, live, target)
-        | TexprNode::TIndex { base, index } => prov_of(a, esc, live, base)
-        | TexprNode::TDeref(sub) => prov_of(a, esc, live, sub)
-        | TexprNode::TNeg(sub) => prov_of(a, esc, live, sub)
-        | TexprNode::TBitNot(sub) => prov_of(a, esc, live, sub)
-        | TexprNode::TNot(sub) => prov_of(a, esc, live, sub)
-        | TexprNode::TCast(sub, ann) => prov_of(a, esc, live, sub)
-        | TexprNode::TBinOp(op, l, r) => meet(prov_of(a, esc, live, l), prov_of(a, esc, live, r))
+            is_of_opt(a, esc, live, base, is_of_fields(a, esc, live, &fields))
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => is_of_fields(a, esc, live, &args)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } => is_of_fields(a, esc, live, &args)
+        | TexprNode::TTupleLit(es) => is_of_list(a, esc, live, &es)
+        | TexprNode::TArrayLit(es) => is_of_list(a, esc, live, &es)
+        | TexprNode::TArrayRepeat { value, count } => is_of(a, esc, live, value)
+        | TexprNode::TFieldAccess { target, field } => is_of_field(a, esc, live, te.ty, target, field)
+        | TexprNode::TIndex { base, index } => {
+            if ty_is_array(base.ty) { is_of(a, esc, live, base) } else { under1(a, esc, live, base) }
+        }
+        | TexprNode::TDeref(sub) => under1(a, esc, live, sub)
+        | TexprNode::TNeg(sub) => is_of(a, esc, live, sub)
+        | TexprNode::TBitNot(sub) => is_of(a, esc, live, sub)
+        | TexprNode::TNot(sub) => is_of(a, esc, live, sub)
+        | TexprNode::TCast(sub, ann) => is_of(a, esc, live, sub)
+        | TexprNode::TBinOp(op, l, r) => meet(is_of(a, esc, live, l), is_of(a, esc, live, r))
         | TexprNode::TIfExpr { cond, then_val, else_val } =>
-            meet(prov_of(a, esc, live, then_val), prov_of(a, esc, live, else_val))
-        | TexprNode::TMatch { scrutinee, ename_path, arms } => prov_of_arms(a, esc, live, &arms)
+            meet(is_of(a, esc, live, then_val), is_of(a, esc, live, else_val))
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => arms_prov(a, esc, live, scrutinee, &arms, false)
         | TexprNode::TBlock { stmts, trailing } =>
-            match trailing { Option::Some(t) => prov_of(a, esc, live, t) | Option::None => prov_cs() }
-        | TexprNode::TCall { mangled, args } => prov_of_call(a, esc, live, mangled, &args)
-        | TexprNode::TBuiltinCall { name, args } => prov_of_builtin(a, esc, live, name, &args)
+            match trailing { Option::Some(t) => is_of(a, esc, live, t) | Option::None => prov_cs() }
+        | TexprNode::TCall { mangled, args } => prov_of_call(a, esc, live, mangled, &args, false)
+        | TexprNode::TBuiltinCall { name, args } => builtin_prov(a, esc, live, name, &args, false)
         | _leaf => prov_cs()
+    };
+}
+// A field read through a pointer lies under the pointer, and a field of a value
+// is part of that value - except a field that OWNS its storage (`own *T`): that
+// storage dies with whoever owns the struct, so reading it out is as toxic as
+// the owner's own address.
+fn is_of_field(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, fty: *const Typ,
+               target: *const Texpr, field: str) -> Prov {
+    if ty_is_own(fty) { return own_holder_prov(a, esc, live, target); }
+    if ty_is_ptr(target.ty) {
+        // Through a parameter: stored directly under it, in this field.
+        let pi = match target.e { TexprNode::TVar(n) => param_only(esc, live, n) | _o => 0 as int - 1 as int };
+        if pi >= 0 as int { return prov_under1_fields(pi as u32, field_bit_of(esc, target.ty, field)); }
+        return under1(a, esc, live, target);
+    }
+    // A field of a local struct value: a local if this field holds one, else
+    // what the rest of the struct is.
+    let li = match target.e { TexprNode::TVar(n) => find_binding(live, n) | _o => 0 as int - 1 as int };
+    if li >= 0 as int { return fields_is(esc, &live.as_slice()[li as u32], field_bit_of(esc, target.ty, field)); }
+    return is_of(a, esc, live, target);
+}
+// `n`'s parameter index when it names a parameter and no local, else -1.
+fn param_only(esc: *const Esc, live: *const Vec<Binding>, n: str) -> int {
+    if is_local_name(live, n) { return 0 as int - 1 as int; }
+    return param_index(esc, n);
+}
+// The fields `field` names in the struct `t` is or points at; any field when `t`
+// is no struct the program declares.
+fn field_bit_of(esc: *const Esc, t: *const Typ, field: str) -> FMask {
+    let k = field_slot_of(esc, t, field);
+    if k >= FSLOTS { return fm_all(); }
+    return fm_bit(k);
+}
+// The slot of `field` in the struct `t` is or points at (the last one shared
+// from 63 on), or FSLOTS when `t` is no struct the program declares.
+fn field_slot_of(esc: *const Esc, t: *const Typ, field: str) -> u32 {
+    let st = match *t { Typ::TPtr(i) => i | Typ::TConstPtr(i) => i | Typ::TOwnPtr(i) => i | _o => t };
+    return match *st {
+        Typ::TStruct(path) => struct_field_slot(esc, &path, field)
+        | _o => FSLOTS
+    };
+}
+fn struct_field_slot(esc: *const Esc, path: *const Vec<str>, field: str) -> u32 {
+    let si = struct_index(esc, path);
+    if si < 0 as int { return FSLOTS; }
+    let fl = esc.e_structs.as_slice()[si as u32].sfields_ty.as_slice();
+    let n = esc.e_structs.as_slice()[si as u32].sfields_ty.length();
+    let mut k = 0 as u32;
+    while k < n {
+        if str::eq(fl[k].name, field) {
+            if k >= FIELD_HIGH { return FIELD_HIGH; }
+            return k;
+        }
+        k = k + 1 as u32;
+    }
+    return FSLOTS;
+}
+// The struct a path names, or -1.
+fn struct_index(esc: *const Esc, path: *const Vec<str>) -> int {
+    if path.length() == 0 as u32 { return 0 as int - 1 as int; }
+    let last = path.as_slice()[path.length() - 1 as u32];
+    let sl = esc.e_structs.as_slice();
+    let tl = esc.e_stails.as_slice();
+    let mut i = 0 as u32;
+    while i < esc.e_structs.length() {
+        if tail_matches(last, tl[i]) && path_eq(&sl[i].sname_path, path) { return i as int; }
+        i = i + 1 as u32;
+    }
+    return 0 as int - 1 as int;
+}
+// `seg` read after its last `::` is `tail`.
+fn tail_matches(seg: str, tail: str) -> bool {
+    let sb = str::as_bytes(seg);
+    let n = str::length(seg);
+    let mut start = 0 as u32;
+    let mut k = 1 as u32;
+    while k < n {
+        if sb[k] == 58 as u8 && sb[k - 1 as u32] == 58 as u8 { start = k + 1 as u32; }
+        k = k + 1 as u32;
+    }
+    let tn = str::length(tail);
+    if n - start != tn { return false; }
+    let tb = str::as_bytes(tail);
+    let mut j = 0 as u32;
+    while j < tn { if sb[start + j] != tb[j] { return false; } j = j + 1 as u32; }
+    return true;
+}
+fn tail_name(a: Allocator, ar: *Arena, path: *const Vec<str>) -> str {
+    if path.length() == 0 as u32 { return ""; }
+    let seg = path.as_slice()[path.length() - 1 as u32];
+    let bs = str::as_bytes(seg);
+    let n = str::length(seg);
+    let mut start = 0 as u32;
+    let mut k = 1 as u32;
+    while k < n {
+        if bs[k] == 58 as u8 && bs[k - 1 as u32] == 58 as u8 { start = k + 1 as u32; }
+        k = k + 1 as u32;
+    }
+    if start == 0 as u32 { return seg; }
+    let mut sb = StringBuilder::with_capacity(a, 32 as u32);
+    let mut j = start;
+    while j < n { sb.push_byte(bs[j]); j = j + 1 as u32; }
+    return str::from_slice(ar, sb.as_slice());
+}
+fn ty_is_struct(t: *const Typ) -> bool {
+    return match *t { Typ::TStruct(_p) => true | _o => false };
+}
+fn own_holder_prov(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, t: *const Texpr) -> Prov {
+    if ty_is_ptr(t.ty) { return is_of(a, esc, live, t); }
+    return match t.e {
+        TexprNode::TFieldAccess { target, field } => own_holder_prov(a, esc, live, target)
+        | TexprNode::TIndex { base, index } => own_holder_prov(a, esc, live, base)
+        | TexprNode::TDeref(sub) => is_of(a, esc, live, sub)
+        | _o => is_of(a, esc, live, t)
+    };
+}
+
+fn holds_of(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr) -> Prov {
+    return match te.e {
+        TexprNode::TVar(n) => var_under(esc, live, n, 0 as u32)
+        | TexprNode::TRef(sub) => meet(is_of(a, esc, live, sub), holds_of(a, esc, live, sub))
+        | TexprNode::TStructLit { sname_path, fields, base } =>
+            holds_of_opt(a, esc, live, base, holds_of_fields(a, esc, live, &fields))
+        // A new node's fields lie under the pointer that names it.
+        | TexprNode::TNew { sname_path, fields, base, alloc } =>
+            meet(is_of_opt(a, esc, live, base, is_of_fields(a, esc, live, &fields)),
+                 holds_of_opt(a, esc, live, base, holds_of_fields(a, esc, live, &fields)))
+        | TexprNode::TEnumLit { ename_path, variant, tag, args } => holds_of_fields(a, esc, live, &args)
+        | TexprNode::TNewEnum { ename_path, variant, tag, args, alloc } =>
+            meet(is_of_fields(a, esc, live, &args), holds_of_fields(a, esc, live, &args))
+        | TexprNode::TTupleLit(es) => holds_of_list(a, esc, live, &es)
+        | TexprNode::TArrayLit(es) => holds_of_list(a, esc, live, &es)
+        | TexprNode::TArrayRepeat { value, count } => holds_of(a, esc, live, value)
+        | TexprNode::TFieldAccess { target, field } => {
+            if ty_is_ptr(target.ty) { under2(a, esc, live, target) } else { holds_of(a, esc, live, target) }
+        }
+        | TexprNode::TIndex { base, index } => {
+            if ty_is_array(base.ty) { holds_of(a, esc, live, base) } else { under2(a, esc, live, base) }
+        }
+        | TexprNode::TDeref(sub) => under2(a, esc, live, sub)
+        | TexprNode::TNeg(sub) => holds_of(a, esc, live, sub)
+        | TexprNode::TBitNot(sub) => holds_of(a, esc, live, sub)
+        | TexprNode::TNot(sub) => holds_of(a, esc, live, sub)
+        | TexprNode::TCast(sub, ann) => holds_of(a, esc, live, sub)
+        | TexprNode::TBinOp(op, l, r) => meet(holds_of(a, esc, live, l), holds_of(a, esc, live, r))
+        | TexprNode::TIfExpr { cond, then_val, else_val } =>
+            meet(holds_of(a, esc, live, then_val), holds_of(a, esc, live, else_val))
+        | TexprNode::TMatch { scrutinee, ename_path, arms } => arms_prov(a, esc, live, scrutinee, &arms, true)
+        | TexprNode::TBlock { stmts, trailing } =>
+            match trailing { Option::Some(t) => holds_of(a, esc, live, t) | Option::None => prov_cs() }
+        | TexprNode::TCall { mangled, args } => prov_of_call(a, esc, live, mangled, &args, true)
+        | TexprNode::TBuiltinCall { name, args } => builtin_prov(a, esc, live, name, &args, true)
+        | _leaf => prov_cs()
+    };
+}
+fn under1(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr) -> Prov {
+    return match te.e {
+        TexprNode::TVar(n) => var_under(esc, live, n, 1 as u32)
+        | TexprNode::TRef(sub) => is_of(a, esc, live, sub)
+        | TexprNode::TDeref(sub) => under2(a, esc, live, sub)
+        | TexprNode::TFieldAccess { target, field } => {
+            if ty_is_ptr(target.ty) { under2(a, esc, live, target) } else { under1(a, esc, live, target) }
+        }
+        | TexprNode::TIndex { base, index } => {
+            if ty_is_array(base.ty) { under1(a, esc, live, base) } else { under2(a, esc, live, base) }
+        }
+        | TexprNode::TCast(sub, ann) => under1(a, esc, live, sub)
+        | TexprNode::TIfExpr { cond, then_val, else_val } =>
+            meet(under1(a, esc, live, then_val), under1(a, esc, live, else_val))
+        | _o => holds_of(a, esc, live, te)
+    };
+}
+fn under2(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr) -> Prov {
+    return match te.e {
+        TexprNode::TVar(n) => var_under(esc, live, n, 2 as u32)
+        | TexprNode::TRef(sub) => holds_of(a, esc, live, sub)
+        | TexprNode::TCast(sub, ann) => under2(a, esc, live, sub)
+        | TexprNode::TIfExpr { cond, then_val, else_val } =>
+            meet(under2(a, esc, live, then_val), under2(a, esc, live, else_val))
+        | _o => holds_of(a, esc, live, te)
+    };
+}
+
+// A struct value split in two: the first-level fields that are a local go into
+// `lf`, and what the rest of it is comes back.  Anything but a struct is whole.
+// A struct value: what it is as a whole, and - into `fid` - an entry saying what
+// each first-level field is, when that is known.  Anything but a struct is whole.
+fn split_struct(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr, fid: *u32) -> Prov {
+    *fid = 0 as u32;
+    if !ty_is_struct(te.ty) { return is_of(a, esc, live, te); }
+    return match te.e {
+        TexprNode::TStructLit { sname_path, fields, base } => split_lit(a, esc, live, te.ty, &fields, base, fid)
+        | TexprNode::TVar(n) => split_var(a, esc, live, te, n, fid)
+        | TexprNode::TCall { mangled, args } => split_call(a, esc, live, mangled, &args, fid)
+        | _o => is_of(a, esc, live, te)
+    };
+}
+fn split_lit(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, ty: *const Typ,
+             fields: *const Vec<TexprField>, base: Option<*const Texpr>, fid: *u32) -> Prov {
+    let nf = new_entry(esc);
+    match base {
+        Option::Some(b) => { meet_all_slots(esc, nf, is_of(a, esc, live, b)); }
+        | Option::None => { }
+    }
+    let fl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() {
+        let p = is_of(a, esc, live, fl[i].value);
+        let k = field_slot_of(esc, ty, fl[i].name);
+        if k < FSLOTS { meet_into_slot(esc, nf, k, p); } else { meet_all_slots(esc, nf, p); }
+        i = i + 1 as u32;
+    }
+    *fid = nf;
+    return entry_whole(esc, nf);
+}
+fn meet_all_slots(esc: *const Esc, fid: u32, p: Prov) {
+    let mut k = 0 as u32;
+    while k < FSLOTS { meet_into_slot(esc, fid, k, p); k = k + 1 as u32; }
+    return;
+}
+fn split_var(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr, n: str, fid: *u32) -> Prov {
+    let i = find_binding(live, n);
+    if i < 0 as int { return is_of(a, esc, live, te); }
+    let b: *const Binding = &live.as_slice()[i as u32];
+    *fid = b.bfid;
+    return b.bprov;
+}
+fn split_call(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, m: str,
+              args: *const Vec<*const Texpr>, fid: *u32) -> Prov {
+    let si = sum_find(esc, m);
+    if si < 0 as int { return prov_cs(); }
+    let row: *const SumEntry = &esc.e_sum.as_slice()[si as u32];
+    if row.swiden || !row.s_fields { return prov_of_call(a, esc, live, m, args, false); }
+    let base = si as u32 * FSLOTS;
+    let nf = new_entry(esc);
+    let mut k = 0 as u32;
+    while k < FSLOTS {
+        let claim = esc.e_fsum.as_slice()[base + k];
+        meet_into_slot(esc, nf, k, project(a, esc, live, claim, args));
+        k = k + 1 as u32;
+    }
+    *fid = nf;
+    return entry_whole(esc, nf);
+}
+// What each first-level field of a returned struct is, met into `out` (32
+// slots, the last one shared by every field from 31 on).
+fn field_claims(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, v: *const Texpr, out: *Vec<Prov>) {
+    match v.e {
+        TexprNode::TStructLit { sname_path, fields, base } => { claims_of_lit(a, esc, live, v.ty, &fields, base, out); }
+        | TexprNode::TVar(n) => { claims_of_var(a, esc, live, v, n, out); }
+        | TexprNode::TCall { mangled, args } => { claims_of_call(a, esc, live, v, mangled, &args, out); }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            field_claims(a, esc, live, then_val, out);
+            field_claims(a, esc, live, else_val, out);
+        }
+        | TexprNode::TBlock { stmts, trailing } => { claims_of_opt(a, esc, live, v, trailing, out); }
+        | _o => { claim_all(out, is_of(a, esc, live, v)); }
+    }
+    return;
+}
+fn claim_all(out: *Vec<Prov>, p: Prov) {
+    let mut k = 0 as u32;
+    while k < out.length() { with c in out[k] { *c = meet(*c, p); } k = k + 1 as u32; }
+    return;
+}
+fn claim_at(out: *Vec<Prov>, k: u32, p: Prov) {
+    with c in out[k] { *c = meet(*c, p); }
+    return;
+}
+fn claims_of_opt(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, v: *const Texpr,
+                 trailing: Option<*const Texpr>, out: *Vec<Prov>) {
+    match trailing {
+        Option::Some(t) => { field_claims(a, esc, live, t, out); }
+        | Option::None => { claim_all(out, is_of(a, esc, live, v)); }
+    }
+    return;
+}
+fn claims_of_lit(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, ty: *const Typ,
+                 fields: *const Vec<TexprField>, base: Option<*const Texpr>, out: *Vec<Prov>) {
+    match base {
+        Option::Some(b) => { claim_all(out, is_of(a, esc, live, b)); }
+        | Option::None => { }
+    }
+    let fl = fields.as_slice();
+    let mut i = 0 as u32;
+    while i < fields.length() {
+        let p = is_of(a, esc, live, fl[i].value);
+        let k = field_slot_of(esc, ty, fl[i].name);
+        if k < FSLOTS { claim_at(out, k, p); } else { claim_all(out, p); }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn claims_of_var(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, v: *const Texpr, n: str, out: *Vec<Prov>) {
+    let i = find_binding(live, n);
+    if i < 0 as int { claim_all(out, is_of(a, esc, live, v)); return; }
+    let b: *const Binding = &live.as_slice()[i as u32];
+    let mut k = 0 as u32;
+    while k < FSLOTS { claim_at(out, k, fields_is(esc, b, fm_bit(k))); k = k + 1 as u32; }
+    return;
+}
+fn claims_of_call(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, v: *const Texpr, m: str,
+                  args: *const Vec<*const Texpr>, out: *Vec<Prov>) {
+    let si = sum_find(esc, m);
+    let fielded = si >= 0 as int && esc.e_sum.as_slice()[si as u32].s_fields && !esc.e_sum.as_slice()[si as u32].swiden;
+    if !fielded { claim_all(out, is_of(a, esc, live, v)); return; }
+    let base = si as u32 * FSLOTS;
+    let fl = esc.e_fsum.as_slice();
+    let mut k = 0 as u32;
+    while k < FSLOTS { claim_at(out, k, project(a, esc, live, fl[base + k], args)); k = k + 1 as u32; }
+    return;
+}
+
+fn pat_names(p: *const Tpattern, out: *Vec<str>) {
+    match *p {
+        Tpattern::TPVar(n) => { out.push(n); }
+        | Tpattern::TPVariant { variant, tag, binds } => {
+            let bl = binds.as_slice();
+            let mut i = 0 as u32;
+            while i < binds.length() { pat_names(&bl[i].pat, out); i = i + 1 as u32; }
+        }
+        | Tpattern::TPOr(alts) => {
+            let al = alts.as_slice();
+            let mut i = 0 as u32;
+            while i < alts.length() { pat_names(&al[i], out); i = i + 1 as u32; }
+        }
+        | _o => { }
+    }
+    return;
+}
+// What an arm's pattern takes out of the scrutinee is part of the scrutinee's
+// value, so it carries what the scrutinee is and holds.
+fn bind_pattern(a: Allocator, st: *Vec<Binding>, pat: *const Tpattern, is: Prov, hd: Prov) {
+    let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    pat_names(pat, &names);
+    let none: Vec<str> = no_owners(a);
+    let nl = names.as_slice();
+    let mut i = 0 as u32;
+    while i < names.length() {
+        bind_var(a, st, nl[i], is, hd, 0 as u32, &none, false);
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn stores_elements(m: str) -> bool {
+    return mangled_has_prefix("Vec__push", m) || mangled_has_prefix("HashMap__insert", m);
+}
+// A push into a LOCAL container: what it holds meets what went in.
+fn note_local_insert(a: Allocator, esc: *const Esc, live: *Vec<Binding>, m: str, args: *const Vec<*const Texpr>) {
+    if !stores_elements(m) || args.length() < 2 as u32 { return; }
+    let sl = args.as_slice();
+    let mut is = prov_cs();
+    let mut hd = prov_cs();
+    let mut i = 1 as u32;
+    while i < args.length() {
+        is = meet(is, is_of(a, esc, live, sl[i]));
+        hd = meet(hd, holds_of(a, esc, live, sl[i]));
+        i = i + 1 as u32;
+    }
+    let root = match receiver_root(sl[0 as u32]) { Option::Some(n) => n | Option::None => "" };
+    if str::eq(root, "") || !is_local_name(live, root) { return; }
+    store_under(a, live, root, is, hd, true);
+    return;
+}
+// A store through a place rooted in a local lands in that local: in its own
+// value when the path never leaves it, under it when the path reads through a
+// pointer, a slice or a container's buffer.
+fn note_local_store(a: Allocator, esc: *const Esc, live: *Vec<Binding>, in_value: bool,
+                    target: *const Texpr, field: str, value: *const Texpr) {
+    let root = match receiver_root(target) { Option::Some(n) => n | Option::None => "" };
+    if str::eq(root, "") || !is_local_name(live, root) { return; }
+    let is = is_of(a, esc, live, value);
+    let hd = holds_of(a, esc, live, value);
+    if !in_value { store_under(a, live, root, is, hd, false); return; }
+    // `x.f = v` replaces the field; a deeper store only adds to the field it is in.
+    let direct = match target.e { TexprNode::TVar(n) => !str::eq(field, "") | _o => false };
+    if direct { store_value(esc, live, root, is, hd, field_slot_of(esc, target.ty, field), true); return; }
+    store_value(esc, live, root, is, hd, first_field_slot(esc, target), false);
+    return;
+}
+// The slot of the first-level field of its root struct a value place lies in;
+// FSLOTS when the root is not a struct.
+fn first_field_slot(esc: *const Esc, te: *const Texpr) -> u32 {
+    return match te.e {
+        TexprNode::TFieldAccess { target, field } => field_above_root(esc, target, field)
+        | TexprNode::TIndex { base, index } => first_field_slot(esc, base)
+        | _o => FSLOTS
+    };
+}
+fn field_above_root(esc: *const Esc, target: *const Texpr, field: str) -> u32 {
+    let at_root = match target.e { TexprNode::TVar(n) => true | _o => false };
+    if at_root { return field_slot_of(esc, target.ty, field); }
+    return first_field_slot(esc, target);
+}
+fn value_path(te: *const Texpr) -> bool {
+    return match te.e {
+        TexprNode::TVar(n) => true
+        | TexprNode::TFieldAccess { target, field } => !ty_is_ptr(target.ty) && value_path(target)
+        | TexprNode::TIndex { base, index } => ty_is_array(base.ty) && value_path(base)
+        | _o => false
     };
 }
 
@@ -604,26 +1407,72 @@ fn fail_escape(ar: *Arena, esc: *const Esc, a: Allocator, pos: Pos, kind: str) {
     return;
 }
 
-fn ret_typ_is_pure_value(t: *const Typ) -> bool {
+// The values that cannot carry an address.  A `str` is not one: it points into
+// storage something owns - a `String`'s buffer, an arena, static data - and one
+// built in a local `String` or arena dies with it.
+fn ret_typ_is_pure_value(esc: *const Esc, t: *const Typ) -> bool {
     return match *t {
         Typ::TInt(_k) => true
         | Typ::TBool => true
-        | Typ::TString => true
         | Typ::TCInt { is_signed } => true
         | Typ::TCShort { is_signed } => true
         | Typ::TCLong { is_signed } => true
         | Typ::TCChar => true
         | Typ::TCSChar => true
         | Typ::TCUChar => true
+        | _o => embeds_no_address(esc, t, 0 as u32)
+    };
+}
+// A struct, tuple or array built only of scalars (transitively) cannot carry an
+// address either.  A `str` or a `Slice` field is not a scalar here.
+fn embeds_no_address(esc: *const Esc, t: *const Typ, depth: u32) -> bool {
+    if depth > 16 as u32 { return false; }
+    return match *t {
+        Typ::TInt(_k) => true
+        | Typ::TBool => true
+        | Typ::TFloat(_w) => true
+        | Typ::TCInt { is_signed } => true
+        | Typ::TCShort { is_signed } => true
+        | Typ::TCLong { is_signed } => true
+        | Typ::TCChar => true
+        | Typ::TCSChar => true
+        | Typ::TCUChar => true
+        | Typ::TTuple(ts) => all_embed_no_address(esc, &ts, depth + 1 as u32)
+        | Typ::TArray { elem, size } => embeds_no_address(esc, elem, depth + 1 as u32)
+        | Typ::TStruct(path) => struct_embeds_no_address(esc, &path, depth + 1 as u32)
         | _o => false
     };
+}
+fn all_embed_no_address(esc: *const Esc, ts: *const Vec<*const Typ>, depth: u32) -> bool {
+    let sl = ts.as_slice();
+    let mut i = 0 as u32;
+    while i < ts.length() { if !embeds_no_address(esc, sl[i], depth) { return false; } i = i + 1 as u32; }
+    return true;
+}
+fn struct_embeds_no_address(esc: *const Esc, path: *const Vec<str>, depth: u32) -> bool {
+    let si = struct_index(esc, path);
+    if si < 0 as int { return false; }
+    let fl = esc.e_structs.as_slice()[si as u32].sfields_ty.as_slice();
+    let n = esc.e_structs.as_slice()[si as u32].sfields_ty.length();
+    let mut k = 0 as u32;
+    while k < n {
+        if !embeds_no_address(esc, fl[k].ty, depth) { return false; }
+        k = k + 1 as u32;
+    }
+    return true;
+}
+
+// A value escapes a local if it IS one or HOLDS one: a container that leaves
+// carries its elements.
+fn reaches_local(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr) -> bool {
+    return is_of(a, esc, live, te).pk == PROV_LOCAL || holds_of(a, esc, live, te).pk == PROV_LOCAL;
 }
 
 fn check_return(a: Allocator, ar: *Arena, esc: *const Esc, live: *const Vec<Binding>,
                 te: *const Texpr, pos: Pos) {
     if !esc.e_report { return; }
-    if ret_typ_is_pure_value(te.ty) { return; }
-    if prov_of(a, esc, live, te).pk == PROV_LOCAL {
+    if ret_typ_is_pure_value(esc, te.ty) { return; }
+    if reaches_local(a, esc, live, te) {
         fail_escape(ar, esc, a, pos, "returning a value that");
     }
     return;
@@ -637,7 +1486,7 @@ fn check_store_through_pointer(a: Allocator, ar: *Arena, esc: *const Esc, live: 
         | Option::None => false
     };
     if dest_is_local { return; }
-    if prov_of(a, esc, live, value).pk == PROV_LOCAL {
+    if reaches_local(a, esc, live, value) {
         fail_escape(ar, esc, a, pos, "storing through a non-local pointer a value that");
     }
     return;
@@ -658,7 +1507,7 @@ fn check_container_insert(a: Allocator, ar: *Arena, esc: *const Esc, live: *cons
     if receiver_is_local(live, sl[0 as u32]) { return; }
     let mut i = 1 as u32;
     while i < args.length() {
-        if prov_of(a, esc, live, sl[i]).pk == PROV_LOCAL {
+        if reaches_local(a, esc, live, sl[i]) {
             fail_escape(ar, esc, a, pos, "inserting into a non-local container an argument that");
             return;
         }
@@ -844,13 +1693,15 @@ fn intersect_names(a: Allocator, x: *const Vec<str>, y: *const Vec<str>) -> Vec<
     while i < x.length() { if names_have(y, sl[i]) { push_uniq_name(&out, sl[i]); } i = i + 1 as u32; }
     return out;
 }
-fn merged_binding(a: Allocator, ba: *const Binding, bb: *const Binding) -> Binding {
+fn merged_binding(a: Allocator, esc: *const Esc, ba: *const Binding, bb: *const Binding) -> Binding {
     let mut kr = ba.bkill_reason;
     let mut kp = ba.bkill_pos;
     if !ba.bkilled && bb.bkilled { kr = bb.bkill_reason; kp = bb.bkill_pos; }
     return Binding {
         bname: ba.bname,
         bprov: meet(ba.bprov, bb.bprov),
+        belem: meet(ba.belem, bb.belem),
+        bfid: meet_entries(esc, ba.bfid, bb.bfid),
         bowners: intersect_names(a, &ba.bowners, &bb.bowners),
         bkilled: ba.bkilled || bb.bkilled,
         bkill_reason: kr, bkill_pos: kp,
@@ -859,17 +1710,17 @@ fn merged_binding(a: Allocator, ba: *const Binding, bb: *const Binding) -> Bindi
 }
 fn clone_binding(a: Allocator, b: *const Binding) -> Binding {
     return Binding {
-        bname: b.bname, bprov: b.bprov, bowners: copy_names(a, &b.bowners),
+        bname: b.bname, bprov: b.bprov, belem: b.belem, bfid: b.bfid, bowners: copy_names(a, &b.bowners),
         bkilled: b.bkilled, bkill_reason: b.bkill_reason, bkill_pos: b.bkill_pos, bown: b.bown,
     };
 }
-fn merge_states(a: Allocator, sa: *const Vec<Binding>, sb: *const Vec<Binding>) -> Vec<Binding> {
+fn merge_states(a: Allocator, esc: *const Esc, sa: *const Vec<Binding>, sb: *const Vec<Binding>) -> Vec<Binding> {
     let mut out: Vec<Binding> = Vec::with_capacity(a, 8 as u32);
     let al = sa.as_slice();
     let mut i = 0 as u32;
     while i < sa.length() {
         let j = find_binding(sb, al[i].bname);
-        if j >= 0 as int { out.push(merged_binding(a, &al[i], &sb.as_slice()[j as u32])); }
+        if j >= 0 as int { out.push(merged_binding(a, esc, &al[i], &sb.as_slice()[j as u32])); }
         else { out.push(clone_binding(a, &al[i])); }
         i = i + 1 as u32;
     }
@@ -979,24 +1830,27 @@ fn ty_is_own(t: *const Typ) -> bool {
 
 fn walk_let(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, name: str, value: *const Texpr) {
     check_uses(a, ar, esc, live, value);
-    let p = prov_of(a, esc, live, value);
+    let mut fid = 0 as u32;
+    let is = split_struct(a, esc, live, value, &fid);
+    let hd = holds_of(a, esc, live, value);
     let owners = owners_of(a, esc, live, value);
     let is_own = ty_is_own(value.ty);
     walk_expr_for_sites(a, ar, esc, live, value);
     apply_call_effects(a, ar, live, value);
-    bind_var(a, live, name, p, &owners, is_own);
+    bind_var(a, live, name, is, hd, fid, &owners, is_own);
     return;
 }
 fn walk_let_tuple(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
                   names: *const Vec<str>, value: *const Texpr) {
     check_uses(a, ar, esc, live, value);
-    let p = prov_of(a, esc, live, value);
+    let is = is_of(a, esc, live, value);
+    let hd = holds_of(a, esc, live, value);
     let owners = owners_of(a, esc, live, value);
     walk_expr_for_sites(a, ar, esc, live, value);
     apply_call_effects(a, ar, live, value);
     let sl = names.as_slice();
     let mut i = 0 as u32;
-    while i < names.length() { bind_var(a, live, sl[i], p, &owners, false); i = i + 1 as u32; }
+    while i < names.length() { bind_var(a, live, sl[i], is, hd, 0 as u32, &owners, false); i = i + 1 as u32; }
     return;
 }
 fn walk_assign(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
@@ -1004,18 +1858,28 @@ fn walk_assign(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
     check_uses(a, ar, esc, live, value);
     walk_expr_for_sites(a, ar, esc, live, value);
     apply_call_effects(a, ar, live, value);
-    if path.length() != 1 as u32 { return; }
-    let p = prov_of(a, esc, live, value);
+    if path.length() != 1 as u32 {
+        let root = path.as_slice()[0 as u32];
+        if is_local_name(live, root) {
+            store_value(esc, live, root, is_of(a, esc, live, value), holds_of(a, esc, live, value), FSLOTS, false);
+        }
+        return;
+    }
+    let mut fid = 0 as u32;
+    let is = split_struct(a, esc, live, value, &fid);
+    let hd = holds_of(a, esc, live, value);
     let owners = owners_of(a, esc, live, value);
-    bind_var(a, live, path.as_slice()[0 as u32], p, &owners, ty_is_own(value.ty));
+    bind_var(a, live, path.as_slice()[0 as u32], is, hd, fid, &owners, ty_is_own(value.ty));
     return;
 }
 fn walk_return(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
                v: *const Texpr, pos: Pos) {
     check_uses(a, ar, esc, live, v);
     walk_expr_for_sites(a, ar, esc, live, v);
-    if !ret_typ_is_pure_value(v.ty) {
-        *esc.e_ret = meet(*esc.e_ret, prov_of(a, esc, live, v));
+    if !ret_typ_is_pure_value(esc, v.ty) {
+        *esc.e_ret = meet(*esc.e_ret, is_of(a, esc, live, v));
+        *esc.e_hret = meet(*esc.e_hret, holds_of(a, esc, live, v));
+        if esc.e_fret.length() > 0 as u32 { field_claims(a, esc, live, v, esc.e_fret); }
         check_return(a, ar, esc, live, v, pos);
     }
     apply_call_effects(a, ar, live, v);
@@ -1028,13 +1892,118 @@ fn walk_if(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
     walk_stmts(a, ar, esc, &s_then, then_body);
     let mut s_else = clone_state(a, live);
     walk_stmts(a, ar, esc, &s_else, else_body);
-    let merged = merge_states(a, &s_then, &s_else);
+    let merged = merge_states(a, esc, &s_then, &s_else);
     *live = merged;
     return;
+}
+// What a loop body stores into a container reaches a read EARLIER in the body on
+// the next iteration, and the walk passes the body once.  So before the walk that
+// reports, the body is walked silently on copies of the state until what the
+// containers hold stops growing.
+fn settle_elems(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+                body: *const Vec<Tstmt>, post: *const Vec<Tstmt>) {
+    if !body_stores(a, body) && !body_stores(a, post) { return; }
+    let mut quiet_err: Option<*const CompileError> = Option::None;
+    let mut quiet_ret = prov_cs();
+    let mut quiet_hret = prov_cs();
+    let mut quiet_fret: Vec<Prov> = Vec::with_capacity(a, 8 as u32);
+    let quiet = Esc { e_sum: esc.e_sum, e_fsum: esc.e_fsum, e_pnames: esc.e_pnames, e_pown: esc.e_pown, e_report: false,
+                      e_err: &quiet_err, e_ret: &quiet_ret, e_hret: &quiet_hret, e_fret: &quiet_fret, e_ftab: esc.e_ftab,
+                      e_srcnames: esc.e_srcnames, e_structs: esc.e_structs, e_stails: esc.e_stails };
+    let mut moved = true;
+    let mut rounds = 0 as u32;
+    while moved && rounds < 16 as u32 {
+        let mut probe = clone_state(a, live);
+        walk_stmts(a, ar, &quiet, &probe, body);
+        walk_stmts(a, ar, &quiet, &probe, post);
+        moved = absorb_elems(esc, live, &probe);
+        rounds = rounds + 1 as u32;
+    }
+    return;
+}
+// Only a body that stores - into a container, through a place, or over a
+// binding - can change what a binding holds on a later iteration.
+fn body_stores(a: Allocator, stmts: *const Vec<Tstmt>) -> bool {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        if stmt_stores(a, &sl[i]) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn stmt_stores(a: Allocator, s: *const Tstmt) -> bool {
+    let nested = match *s {
+        Tstmt::TAssign { path, value, pos } => true
+        | Tstmt::TAssignField { target, field, value, pos } => true
+        | Tstmt::TAssignDeref { target, value, pos } => true
+        | Tstmt::TAssignIndex { base, index, value, pos } => true
+        | Tstmt::TIf { cond, then_body, else_body } => body_stores(a, &then_body) || body_stores(a, &else_body)
+        | Tstmt::TWhile { cond, body, post } => body_stores(a, &body) || body_stores(a, &post)
+        | Tstmt::TDefer { body, pos } => body_stores(a, &body)
+        | Tstmt::TSeal { body, pos } => body_stores(a, &body)
+        | Tstmt::TFor { counter, end_var, range_temp, lo, hi, inclusive, body, pos } => body_stores(a, &body)
+        | Tstmt::TForEach { it_var, it_init, body, pos } => body_stores(a, &body)
+        | _o => false
+    };
+    if nested { return true; }
+    let mut es: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    stmt_own_exprs(s, &es);
+    let el = es.as_slice();
+    let mut i = 0 as u32;
+    while i < es.length() { if expr_stores(a, el[i]) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn expr_stores(a: Allocator, te: *const Texpr) -> bool {
+    // A block is judged by its statements: its children are every expression
+    // nested in them, and walking both would revisit each nested block twice.
+    let here = match te.e {
+        TexprNode::TCall { mangled, args } => stores_elements(mangled)
+        | TexprNode::TBlock { stmts, trailing } => block_stores(a, &stmts, trailing)
+        | _o => false
+    };
+    if here { return true; }
+    let is_block = match te.e { TexprNode::TBlock { stmts, trailing } => true | _o => false };
+    if is_block { return false; }
+    let mut kids: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
+    esc_children(a, te, &kids);
+    let kl = kids.as_slice();
+    let mut i = 0 as u32;
+    while i < kids.length() { if expr_stores(a, kl[i]) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn block_stores(a: Allocator, stmts: *const Vec<Tstmt>, trailing: Option<*const Texpr>) -> bool {
+    if body_stores(a, stmts) { return true; }
+    return match trailing { Option::Some(t) => expr_stores(a, t) | Option::None => false };
+}
+// Carry what the bindings `live` shares with `from` became there - what they
+// are and what they hold - back into `live`; true if any grew.
+fn absorb_elems(esc: *const Esc, live: *Vec<Binding>, from: *const Vec<Binding>) -> bool {
+    let mut moved = false;
+    let n = live.length();
+    let mut i = 0 as u32;
+    while i < n {
+        let j = find_binding(from, live.as_slice()[i].bname);
+        if j >= 0 as int {
+            let fb: *const Binding = &from.as_slice()[j as u32];
+            let mi = meet(live.as_slice()[i].bprov, fb.bprov);
+            let mh = meet(live.as_slice()[i].belem, fb.belem);
+            let lf = live.as_slice()[i].bfid;
+            let mf = meet_entries(esc, lf, fb.bfid);
+            if !prov_same(mi, live.as_slice()[i].bprov) || !prov_same(mh, live.as_slice()[i].belem)
+                || !same_entry(esc, mf, lf) {
+                moved = true;
+                with b in live[i] { b.bprov = mi; b.belem = mh; b.bfid = mf; }
+            }
+        }
+        i = i + 1 as u32;
+    }
+    return moved;
 }
 fn walk_while(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
               cond: *const Texpr, body: *const Vec<Tstmt>, post: *const Vec<Tstmt>) {
     visit_value(a, ar, esc, live, cond);
+    settle_elems(a, ar, esc, live, body, post);
     walk_stmts(a, ar, esc, live, body);
     walk_stmts(a, ar, esc, live, post);
     return;
@@ -1049,28 +2018,37 @@ fn walk_for(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
     walk_expr_for_sites(a, ar, esc, live, hi);
     let mut inner = clone_state(a, live);
     let none: Vec<str> = no_owners(a);
-    bind_var(a, &inner, counter, prov_cs(), &none, false);
+    bind_var(a, &inner, counter, prov_cs(), prov_cs(), 0 as u32, &none, false);
+    let no_post: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    settle_elems(a, ar, esc, &inner, body, &no_post);
     walk_stmts(a, ar, esc, &inner, body);
+    absorb_elems(esc, live, &inner);
     return;
 }
 fn walk_foreach(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
                 it_var: str, it_init: *const Texpr, body: *const Vec<Tstmt>) {
     check_uses(a, ar, esc, live, it_init);
     walk_expr_for_sites(a, ar, esc, live, it_init);
-    let p = prov_of(a, esc, live, it_init);
+    // The loop variable is an ELEMENT of what is iterated: something the
+    // iterator holds, and so is whatever it holds in turn.
+    let p = holds_of(a, esc, live, it_init);
     let owners = owners_of(a, esc, live, it_init);
     let mut inner = clone_state(a, live);
-    bind_var(a, &inner, it_var, p, &owners, false);
+    bind_var(a, &inner, it_var, p, p, 0 as u32, &owners, false);
+    let no_post: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+    settle_elems(a, ar, esc, &inner, body, &no_post);
     walk_stmts(a, ar, esc, &inner, body);
+    absorb_elems(esc, live, &inner);
     return;
 }
-fn walk_store(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
-              target: *const Texpr, value: *const Texpr, pos: Pos) {
+fn walk_store(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, in_value: bool,
+              target: *const Texpr, field: str, value: *const Texpr, pos: Pos) {
     check_uses(a, ar, esc, live, target);
     check_uses(a, ar, esc, live, value);
     walk_expr_for_sites(a, ar, esc, live, target);
     walk_expr_for_sites(a, ar, esc, live, value);
     check_store_through_pointer(a, ar, esc, live, target, value, pos);
+    note_local_store(a, esc, live, in_value, target, field, value);
     apply_call_effects(a, ar, live, target);
     apply_call_effects(a, ar, live, value);
     return;
@@ -1081,12 +2059,14 @@ fn walk_stmt(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, s: 
         Tstmt::TLet { name, value, decl_ty, pos } => { walk_let(a, ar, esc, live, name, value); }
         | Tstmt::TLetTuple { names, value, pos } => { walk_let_tuple(a, ar, esc, live, &names, value); }
         | Tstmt::TAssign { path, value, pos } => { walk_assign(a, ar, esc, live, &path, value); }
-        | Tstmt::TAssignField { target, field, value, pos } => { walk_store(a, ar, esc, live, target, value, pos); }
-        | Tstmt::TAssignDeref { target, value, pos } => { walk_store(a, ar, esc, live, target, value, pos); }
+        | Tstmt::TAssignField { target, field, value, pos } => {
+            walk_store(a, ar, esc, live, !ty_is_ptr(target.ty) && value_path(target), target, field, value, pos);
+        }
+        | Tstmt::TAssignDeref { target, value, pos } => { walk_store(a, ar, esc, live, false, target, "", value, pos); }
         | Tstmt::TAssignIndex { base, index, value, pos } => {
             check_uses(a, ar, esc, live, index);
             walk_expr_for_sites(a, ar, esc, live, index);
-            walk_store(a, ar, esc, live, base, value, pos);
+            walk_store(a, ar, esc, live, ty_is_array(base.ty) && value_path(base), base, "", value, pos);
             apply_call_effects(a, ar, live, index);
         }
         | Tstmt::TReturn { value, pos } => {
@@ -1105,6 +2085,7 @@ fn walk_stmt(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, s: 
         | Tstmt::TDefer { body, pos } => {
             let mut inner = clone_state(a, live);
             walk_stmts(a, ar, esc, &inner, &body);
+            absorb_elems(esc, live, &inner);
         }
         // A seal region is an inline, unconditional block - the escape rules
         // apply inside it exactly as they do outside. Without this arm the walker
@@ -1116,6 +2097,7 @@ fn walk_stmt(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, s: 
         | Tstmt::TSeal { body, pos } => {
             let mut sinner = clone_state(a, live);
             walk_stmts(a, ar, esc, &sinner, &body);
+            absorb_elems(esc, live, &sinner);
         }
         | _o => { }
     }
@@ -1128,6 +2110,7 @@ fn walk_stmt(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, s: 
 fn maybe_check_insert(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
                       m: str, args: *const Vec<*const Texpr>, pos: Pos) {
     if is_container_insert(m) { check_container_insert(a, ar, esc, live, args, pos); }
+    note_local_insert(a, esc, live, m, args);
     return;
 }
 fn walk_expr_for_sites(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, te: *const Texpr) {
@@ -1145,16 +2128,22 @@ fn walk_expr_for_sites(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Bin
         TexprNode::TBlock { stmts, trailing } => {
             let mut inner = clone_state(a, live);
             walk_stmts(a, ar, esc, &inner, &stmts);
+            absorb_elems(esc, live, &inner);
         }
         | TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            let pis = is_of(a, esc, live, scrutinee);
+            let phd = holds_of(a, esc, live, scrutinee);
             let sl = arms.as_slice();
             let mut j = 0 as u32;
             while j < arms.length() {
+                let mut armst = clone_state(a, live);
+                bind_pattern(a, &armst, &sl[j].tpat, pis, phd);
                 match sl[j].tguard {
-                    Option::Some(g) => { walk_expr_for_sites(a, ar, esc, live, g); }
+                    Option::Some(g) => { walk_expr_for_sites(a, ar, esc, &armst, g); }
                     | Option::None => { }
                 }
-                walk_expr_for_sites(a, ar, esc, live, sl[j].tbody);
+                walk_expr_for_sites(a, ar, esc, &armst, sl[j].tbody);
+                absorb_elems(esc, live, &armst);
                 j = j + 1 as u32;
             }
         }
@@ -1178,27 +2167,45 @@ fn load_params(_a: Allocator, tf: *const Tfunc, pnames: *Vec<str>, pown: *Vec<bo
     return;
 }
 
-fn analyze_fn(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, tf: *const Tfunc,
-              report: bool, err: *Option<*const CompileError>) -> Prov {
+// Walk one fn; what its returns are and hold accumulates into `ret_is` / `ret_hd`,
+// and what each field of a returned struct is into `fret` (empty when it returns
+// no struct).
+fn analyze_fn(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov>, structs: *const Vec<StructSig>,
+              stails: *const Vec<str>, tf: *const Tfunc, report: bool, err: *Option<*const CompileError>,
+              ret_is: *Prov, ret_hd: *Prov, fret: *Vec<Prov>) {
     let mut pnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut pown: Vec<bool> = Vec::with_capacity(a, 8 as u32);
     load_params(a, tf, &pnames, &pown);
-    let mut ret = prov_cs();
-    let esc = Esc { e_sum: sum, e_pnames: &pnames, e_pown: &pown, e_report: report,
-                    e_err: err, e_ret: &ret, e_srcnames: &tf.tf_srcnames };
+    let mut ftab: Vec<Prov> = Vec::with_capacity(a, 256 as u32);
+    let esc = Esc { e_sum: sum, e_fsum: fsum, e_pnames: &pnames, e_pown: &pown, e_report: report,
+                    e_err: err, e_ret: ret_is, e_hret: ret_hd, e_fret: fret, e_ftab: &ftab, e_srcnames: &tf.tf_srcnames,
+                    e_structs: structs, e_stails: stails };
     let mut live: Vec<Binding> = Vec::with_capacity(a, 8 as u32);
     walk_stmts(a, ar, &esc, &live, &tf.tf_body);
-    return ret;
+    return;
 }
 
-// The body's accumulated return-prov, projected to a summary row.  `Unknown`
-// widens to "every param may carry the return" — the sound over-approximation.
-fn project_to_summary(p: Prov, row: *SumEntry) {
-    row.swiden = false;
-    row.smask = 0 as u32;
-    if p.pk == PROV_PARAM { row.smask = p.pmask; return; }
-    if p.pk == PROV_UNKNOWN { row.swiden = true; return; }
+// The body's accumulated return provenance, projected to a summary row.
+// `Unknown` widens to "every param may carry the return" — the sound
+// over-approximation.
+fn project_to_summary(is: Prov, hd: Prov, row: *SumEntry) {
+    row.swiden = is.pk == PROV_UNKNOWN || hd.pk == PROV_UNKNOWN;
+    row.s_is = summary_prov(is);
+    row.s_hd = summary_prov(hd);
     return;
+}
+// Only a `Param` claim survives into a summary: a Local return is refused where
+// it is, and CallerOrStatic projects to nothing.
+fn summary_prov(p: Prov) -> Prov {
+    if p.pk == PROV_PARAM { return p; }
+    return prov_cs();
+}
+fn same_row(x: *const SumEntry, y: *const SumEntry) -> bool {
+    return prov_same(x.s_is, y.s_is) && prov_same(x.s_hd, y.s_hd)
+        && x.s_fields == y.s_fields && x.swiden == y.swiden;
+}
+fn empty_row(m: str) -> SumEntry {
+    return SumEntry { sname: m, s_is: prov_cs(), s_hd: prov_cs(), s_fields: false, swiden: false };
 }
 
 fn fn_is_analyzable(tf: *const Tfunc) -> bool {
@@ -1237,22 +2244,25 @@ fn is_concrete_esc(t: *const Typ) -> bool {
 
 // ===== Whole-program summary fixpoint =====
 
-fn sum_row_index(sum: *Vec<SumEntry>, m: str) -> u32 {
+fn sum_row_index(sum: *Vec<SumEntry>, fsum: *Vec<Prov>, m: str) -> u32 {
     let sl = sum.as_slice();
     let mut i = 0 as u32;
     while i < sum.length() {
         if str::eq(sl[i].sname, m) { return i; }
         i = i + 1 as u32;
     }
-    sum.push(SumEntry { sname: m, smask: 0 as u32, swiden: false });
+    sum.push(empty_row(m));
+    let mut k = 0 as u32;
+    while k < FSLOTS { fsum.push(prov_cs()); k = k + 1 as u32; }
     return sum.length() - 1 as u32;
 }
 
-fn compute_summaries(a: Allocator, ar: *Arena, tp: *const Tprogram, sum: *Vec<SumEntry>,
-                     err: *Option<*const CompileError>) {
+fn compute_summaries(a: Allocator, ar: *Arena, tp: *const Tprogram, sum: *Vec<SumEntry>, fsum: *Vec<Prov>,
+                     stails: *const Vec<str>, err: *Option<*const CompileError>) {
     // The summary starts at bottom (no row = CallerOrStatic) and only grows, so
-    // the fixpoint terminates; the iteration cap is the OCaml's, a backstop
-    // against a non-monotone edit rather than an expected outcome.
+    // the fixpoint terminates; the iteration cap is the OCaml's with a per-param
+    // term for each of the six masks, a backstop against a non-monotone edit
+    // rather than an expected outcome.
     //
     // The prelude's non-generic methods and free functions are summarised too:
     // the port holds them apart from tp_funcs, the reference does not, and
@@ -1263,15 +2273,15 @@ fn compute_summaries(a: Allocator, ar: *Arena, tp: *const Tprogram, sum: *Vec<Su
     count_analyzable(&tp.tp_pmeth, &c, &mp);
     count_analyzable(&tp.tp_pfree, &c, &mp);
     count_analyzable(&tp.tp_funcs, &c, &mp);
-    let max_iter = c * (mp + 1 as u32) + 16 as u32;
+    let max_iter = c * (6 as u32 * mp + 1 as u32) + 16 as u32;
     let mut iter = 0 as u32;
     let mut changed = true;
     while changed {
         iter = iter + 1 as u32;
         if iter > max_iter { escape_ice(); }
-        let c1 = summarise_list(a, ar, sum, &tp.tp_pmeth, err);
-        let c2 = summarise_list(a, ar, sum, &tp.tp_pfree, err);
-        let c3 = summarise_list(a, ar, sum, &tp.tp_funcs, err);
+        let c1 = summarise_list(a, ar, sum, fsum, &tp.tp_struct_index, stails, &tp.tp_pmeth, err);
+        let c2 = summarise_list(a, ar, sum, fsum, &tp.tp_struct_index, stails, &tp.tp_pfree, err);
+        let c3 = summarise_list(a, ar, sum, fsum, &tp.tp_struct_index, stails, &tp.tp_funcs, err);
         changed = c1 || c2 || c3;
     }
     return;
@@ -1288,28 +2298,88 @@ fn count_analyzable(fs: *const Vec<Tfunc>, c: *u32, mp: *u32) {
     }
     return;
 }
-fn summarise_list(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fs: *const Vec<Tfunc>,
-                  err: *Option<*const CompileError>) -> bool {
+fn summarise_list(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov>, structs: *const Vec<StructSig>,
+                  stails: *const Vec<str>, fs: *const Vec<Tfunc>, err: *Option<*const CompileError>) -> bool {
     let mut changed = false;
     let fl = fs.as_slice();
     let mut i = 0 as u32;
     while i < fs.length() {
         if fn_is_analyzable(&fl[i]) {
-            let ret = analyze_fn(a, ar, sum, &fl[i], false, err);
-            let ri = sum_row_index(sum, fl[i].tf_mangled);
-            let mut nrow = SumEntry { sname: fl[i].tf_mangled, smask: 0 as u32, swiden: false };
-            project_to_summary(ret, &nrow);
+            let mut ret_is = prov_cs();
+            let mut ret_hd = prov_cs();
+            let mut fret: Vec<Prov> = Vec::with_capacity(a, FSLOTS);
+            let fielded = returns_struct(&fl[i]);
+            if fielded { let mut k = 0 as u32; while k < FSLOTS { fret.push(prov_cs()); k = k + 1 as u32; } }
+            analyze_fn(a, ar, sum, fsum, structs, stails, &fl[i], false, err, &ret_is, &ret_hd, &fret);
+            let ri = sum_row_index(sum, fsum, fl[i].tf_mangled);
+            let mut nrow = empty_row(fl[i].tf_mangled);
+            project_to_summary(ret_is, ret_hd, &nrow);
+            nrow.s_fields = fielded;
             with row in sum[ri] {
-                if row.smask != nrow.smask || row.swiden != nrow.swiden {
-                    row.smask = nrow.smask;
-                    row.swiden = nrow.swiden;
+                if !same_row(row, &nrow) {
+                    *row = nrow;
                     changed = true;
                 }
             }
+            if fielded && store_field_claims(fsum, ri, &fret) { changed = true; }
         }
         i = i + 1 as u32;
     }
     return changed;
+}
+fn returns_struct(tf: *const Tfunc) -> bool {
+    return match tf.tf_ret_ty { Option::Some(t) => ty_is_struct(t) | Option::None => false };
+}
+// A row's field claims take `fret`'s; true if any moved.
+fn store_field_claims(fsum: *Vec<Prov>, ri: u32, fret: *const Vec<Prov>) -> bool {
+    let mut moved = false;
+    let base = ri * FSLOTS;
+    let fr = fret.as_slice();
+    let mut k = 0 as u32;
+    while k < FSLOTS {
+        let np = summary_prov(fr[k]);
+        if !prov_same(fsum.as_slice()[base + k], np) {
+            with c in fsum[base + k] { *c = np; }
+            moved = true;
+        }
+        k = k + 1 as u32;
+    }
+    return moved;
+}
+
+// The invalidation walk learns which prelude methods lend out their receiver's
+// storage from a list (`returns_borrow_from_receiver`); the summaries learn the
+// same thing from the methods' bodies - a result that points into what `*self`
+// owns.  On every prelude method that takes its receiver by pointer the two must
+// agree, and a disagreement is the compiler's fault, never the program's.
+fn check_borrow_list(sum: *const Vec<SumEntry>, fs: *const Vec<Tfunc>) {
+    let fl = fs.as_slice();
+    let mut i = 0 as u32;
+    while i < fs.length() {
+        if str::eq(fl[i].tf_func.pos.file, "<prelude>") && self_by_pointer(&fl[i]) {
+            let listed = returns_borrow_from_receiver(fl[i].tf_mangled);
+            if listed != lends_receiver(sum, fl[i].tf_mangled) { escape_ice(); }
+        }
+        i = i + 1 as u32;
+    }
+    return;
+}
+fn self_by_pointer(tf: *const Tfunc) -> bool {
+    if tf.tf_func.params.length() == 0 as u32 || tf.tf_param_tys.length() == 0 as u32 { return false; }
+    if !str::eq(tf.tf_func.params.as_slice()[0 as u32].pname, "self") { return false; }
+    return ty_is_ptr(tf.tf_param_tys.as_slice()[0 as u32]);
+}
+fn lends_receiver(sum: *const Vec<SumEntry>, m: str) -> bool {
+    let sl = sum.as_slice();
+    let mut i = 0 as u32;
+    while i < sum.length() {
+        if str::eq(sl[i].sname, m) {
+            let pa = sl[i].s_is.pa;
+            return sl[i].s_is.pk == PROV_PARAM && pa & (1 as u32) == 1 as u32;
+        }
+        i = i + 1 as u32;
+    }
+    return false;
 }
 
 // The fixpoint is monotone by construction; failing to converge is an internal
@@ -1321,9 +2391,13 @@ fn escape_ice() { arena_oom(); }
 
 // The enforcement phase discards the return-prov: the summary is already at its
 // fixpoint, so only the diagnostics matter here.
-fn analyze_fn_reporting(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, tf: *const Tfunc,
+fn analyze_fn_reporting(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov>,
+                        structs: *const Vec<StructSig>, stails: *const Vec<str>, tf: *const Tfunc,
                         err: *Option<*const CompileError>) {
-    analyze_fn(a, ar, sum, tf, true, err);
+    let mut ret_is = prov_cs();
+    let mut ret_hd = prov_cs();
+    let mut fret: Vec<Prov> = Vec::with_capacity(a, 8 as u32);
+    analyze_fn(a, ar, sum, fsum, structs, stails, tf, true, err, &ret_is, &ret_hd, &fret);
     return;
 }
 
@@ -1332,13 +2406,20 @@ fn analyze_fn_reporting(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, tf: *cons
 pub fn check(a: Allocator, ar: *Arena, tp: *const Tprogram) -> Option<*const CompileError> {
     let mut err: Option<*const CompileError> = Option::None;
     let mut sum: Vec<SumEntry> = Vec::with_capacity(a, 64 as u32);
-    compute_summaries(a, ar, tp, &sum, &err);
+    let mut fsum: Vec<Prov> = Vec::with_capacity(a, 2048 as u32);
+    let mut stails: Vec<str> = Vec::with_capacity(a, 256 as u32);
+    let ssl = tp.tp_struct_index.as_slice();
+    let mut si = 0 as u32;
+    while si < tp.tp_struct_index.length() { stails.push(tail_name(a, ar, &ssl[si].sname_path)); si = si + 1 as u32; }
+    compute_summaries(a, ar, tp, &sum, &fsum, &stails, &err);
+    check_borrow_list(&sum, &tp.tp_pmeth);
+    check_borrow_list(&sum, &tp.tp_funcs);
     let fl = tp.tp_funcs.as_slice();
     let mut i = 0 as u32;
     while i < tp.tp_funcs.length() {
         let skip = str::eq(fl[i].tf_func.pos.file, "<prelude>")
                    || fl[i].tf_func.is_extern || fl[i].tf_func.escapes_hatch;
-        if !skip { analyze_fn_reporting(a, ar, &sum, &fl[i], &err); }
+        if !skip { analyze_fn_reporting(a, ar, &sum, &fsum, &tp.tp_struct_index, &stails, &fl[i], &err); }
         i = i + 1 as u32;
     }
     return err;

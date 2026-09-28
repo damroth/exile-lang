@@ -1,0 +1,11 @@
+// A str made in an Arena the caller owns, returned.
+fn intern(ar: *Arena, a: Allocator) -> str {
+    let mut sb = StringBuilder::with_capacity(a, 8 as u32);
+    sb.push_str("hi");
+    return str::from_slice(ar, sb.as_slice());
+}
+fn main() {
+    let a = default_allocator();
+    let mut ar = Arena::with_capacity(a, 256 as u32);
+    println(str::length(intern(&ar, a)) as int);
+}

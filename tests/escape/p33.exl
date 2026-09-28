@@ -1,0 +1,10 @@
+// A local's address pushed straight into a non-local Vec.
+fn keep(out: *Vec<*int>) {
+    let x = 5;
+    out.push(&x);
+    return; }
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int); }

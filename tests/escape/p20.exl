@@ -1,0 +1,8 @@
+// A string literal, returned through a binding.
+fn name() -> str {
+    let s = "hi";
+    return s;
+}
+fn main() {
+    println(str::length(name()) as int);
+}

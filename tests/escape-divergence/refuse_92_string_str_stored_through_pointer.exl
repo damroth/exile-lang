@@ -1,0 +1,13 @@
+// A str borrowed from a local String, stored through a non-local pointer.
+struct Holder { name: str }
+fn fill(a: Allocator, out: *Holder) {
+    let s = String::with_str(a, "hi");
+    out.name = s.as_str();
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut slot = Holder { name: "" };
+    fill(a, &slot);
+    println(str::length(slot.name) as int);
+}

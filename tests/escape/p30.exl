@@ -1,0 +1,16 @@
+// A context struct lends a local table to a callee, which returns the lent table itself.
+struct Ctx { names: *const Vec<str>, name: str }
+fn table(c: *const Ctx) -> *const Vec<str> { return c.names; }
+fn run(a: Allocator, out: *Vec<*const Vec<str>>) {
+    let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    names.push("x");
+    let c = Ctx { names: &names, name: "n" };
+    out.push(table(&c));
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*const Vec<str>> = Vec::with_capacity(a, 8 as u32);
+    run(a, &out);
+    println(out.length() as int);
+}

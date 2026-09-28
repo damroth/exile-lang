@@ -1,0 +1,13 @@
+// A local's address read back through an iterator adapter over a local Vec.
+fn keep(out: *Vec<*int>) {
+    let a = default_allocator();
+    let x = 5;
+    let mut local: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    local.push(&x);
+    for p in local.iter().take(1 as u32) { out.push(p); }
+    return; }
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int); }

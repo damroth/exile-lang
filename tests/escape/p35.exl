@@ -1,0 +1,8 @@
+// The address of a field read through a pointer to a local struct, returned.
+struct S { f: int, g: int }
+fn field_of() -> *int {
+    let s = S { f: 1, g: 2 };
+    let q = &s;
+    return &q.f;
+}
+fn main() { let p = field_of(); println(*p); }

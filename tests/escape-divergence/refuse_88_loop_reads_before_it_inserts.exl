@@ -1,0 +1,13 @@
+// A loop reads an element on one iteration that it pushed on an earlier one.
+fn keep(out: *Vec<*int>) {
+    let a = default_allocator();
+    let x = 5;
+    let mut local: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    let mut i = 0;
+    while i < 2 { if i == 1 { out.push(local[0 as u32]); } local.push(&x); i = i + 1; }
+    return; }
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int); }

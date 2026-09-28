@@ -1,0 +1,18 @@
+// A str from a parameter, carried through a slice of a local Vec and pushed into a non-local one.
+fn pass_name(name: str) -> str { return name; }
+fn collect(a: Allocator, src: *const Vec<str>, out: *Vec<str>) {
+    let mut ns: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    ns.push(src.as_slice()[0 as u32]);
+    let nsl = ns.as_slice();
+    let c = pass_name(nsl[0 as u32]);
+    out.push(c);
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut src: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    src.push("x");
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect(a, &src, &out);
+    println(out.length() as int);
+}

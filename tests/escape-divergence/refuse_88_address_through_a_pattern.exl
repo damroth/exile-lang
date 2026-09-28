@@ -1,0 +1,11 @@
+// A local's address wrapped in an Option and taken back out by a match arm's pattern.
+fn keep(out: *Vec<*int>) {
+    let x = 5;
+    let o: Option<*int> = Option::Some(&x);
+    match o { Option::Some(p) => { out.push(p); } | Option::None => { } }
+    return; }
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int); }

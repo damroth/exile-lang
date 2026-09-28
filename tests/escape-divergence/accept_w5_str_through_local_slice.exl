@@ -1,0 +1,18 @@
+// An arena str read through a slice of a local Vec: the slice is local, the str it holds is not.
+fn collect(ar: *Arena, out: *Vec<str>) {
+    let a = default_allocator();
+    let mut local: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let mut sb = StringBuilder::with_capacity(a, 8 as u32);
+    sb.push_str("hi");
+    local.push(str::from_slice(ar, sb.as_slice()));
+    let sl = local.as_slice();
+    out.push(sl[0 as u32]);
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut ar = Arena::with_capacity(a, 256 as u32);
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    collect(&ar, &out);
+    println(out.length() as int);
+}

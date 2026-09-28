@@ -1,0 +1,13 @@
+// A local's address pushed into a local Vec and read back by get.
+fn keep(out: *Vec<*int>) {
+    let a = default_allocator();
+    let x = 5;
+    let mut local: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    local.push(&x);
+    match local.get(0 as u32) { Option::Some(p) => { out.push(p); } | Option::None => { } }
+    return; }
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int); }

@@ -1,0 +1,13 @@
+// A for body pushes a local's address; the element is read back after the loop.
+fn keep(out: *Vec<*int>) {
+    let a = default_allocator();
+    let x = 5;
+    let mut local: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    for i in 0..1 { local.push(&x); }
+    out.push(local[0 as u32]);
+    return; }
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int); }

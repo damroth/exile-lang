@@ -1,0 +1,13 @@
+// A local's address inserted into a local HashMap and read back by get.
+fn keep(out: *Vec<*int>) {
+    let a = default_allocator();
+    let x = 5;
+    let mut m: HashMap<int, *int> = HashMap::with_capacity(a, 8 as u32);
+    m.insert(1, &x);
+    match m.get(1) { Option::Some(p) => { out.push(p); } | Option::None => { } }
+    return; }
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int); }

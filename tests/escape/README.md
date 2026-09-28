@@ -42,3 +42,31 @@ used to summarise only the user's list, so a borrow those functions return came
 back as caller-owned and all four compiled to a dangling slice.  p14..p16 go
 through the methods, p17 through the `str` free functions - one per list.  The gate compares the
 whole line, position included.
+
+  p18 A str borrowed from a String the caller owns, returned. -> accept
+  p19 A str made in an Arena the caller owns, returned. -> accept
+  p20 A string literal, returned through a binding. -> accept
+  p21 A str from a parameter, carried through a slice of a local Vec and pushed into a non-local one. -> accept
+  p22 The same read by index instead of through the slice. -> accept
+  p23 An arena str pushed straight into a non-local Vec. -> accept
+  p24 An arena str read back from a local Vec by index. -> accept
+  p25 An arena str read back from a local Vec by a for-each. -> accept
+  p26 An arena str read back from a local array. -> accept
+  p27 An arena str read back from a local Vec by get. -> accept
+  p28 The names a local table holds, copied out through a borrow of one row. -> accept
+  p29 A position read through a local cursor that holds the file's name. -> accept
+  p30 A context struct lends a local table to a callee, which returns the lent table itself. -> reject
+  p31 A struct wider than the field mask: the local sits in field 66 and the callee reads field 68; past the mask both share one slot, so the read is refused. -> reject
+  p32 A local's address read back through a slice of a local Vec. -> reject
+  p33 A local's address pushed straight into a non-local Vec. -> reject
+  p34 The address of an element read through a slice of a local Vec, returned. -> reject
+  p35 The address of a field read through a pointer to a local struct, returned. -> reject
+
+p18..p35 are the cases where the escape pass that looks further - past a
+parameter's address to what lies under it, into what a container holds, across
+the fields of a struct, and at a `str` as a borrow - still says what the
+reference says: the accepts pin that the extra precision refuses nothing the
+reference takes, the rejects that it lets nothing through the reference
+catches.  p31 is the struct wider than the field mask: fields past it share one
+slot, so the lent local in one of them keeps every other one from leaving.
+Where the two passes do NOT agree, the programs live in tests/escape-divergence.

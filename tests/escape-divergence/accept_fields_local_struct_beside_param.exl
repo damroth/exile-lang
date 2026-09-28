@@ -1,0 +1,21 @@
+// A local struct built from a buffer and a pointer: reading the pointer field
+// does not carry the buffer.
+struct Cur { toks: Slice<int>, pos: *const int }
+fn make(toks: Slice<int>, pos: *const int) -> Cur { return Cur { toks: toks, pos: pos }; }
+fn pos_of(toks: Slice<int>, pos: *const int) -> *const int {
+    let c = make(toks, pos);
+    return c.pos;
+}
+fn run(a: Allocator, keep: *const int, out: *Vec<*const int>) {
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(1);
+    out.push(pos_of(v.as_slice(), keep));
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let y = 9;
+    let mut out: Vec<*const int> = Vec::with_capacity(a, 8 as u32);
+    run(a, &y, &out);
+    println(*out.as_slice()[0 as u32]);
+}

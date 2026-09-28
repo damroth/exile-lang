@@ -1,0 +1,22 @@
+// The names a local table holds, copied out through a borrow of one row.
+struct Row { names: Vec<str> }
+fn copy_names(a: Allocator, src: *const Vec<str>) -> Vec<str> {
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let sl = src.as_slice();
+    let mut i = 0 as u32;
+    while i < src.length() { out.push(sl[i]); i = i + 1 as u32; }
+    return out;
+}
+fn first_names(a: Allocator, name: str) -> Vec<str> {
+    let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    names.push(name);
+    let mut rows: Vec<Row> = Vec::with_capacity(a, 8 as u32);
+    rows.push(Row { names: names });
+    let rs = rows.as_slice();
+    return copy_names(a, &rs[0 as u32].names);
+}
+fn main() {
+    let a = default_allocator();
+    let v = first_names(a, "hi");
+    println(v.length() as int);
+}

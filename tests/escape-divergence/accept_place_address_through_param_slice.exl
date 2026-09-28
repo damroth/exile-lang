@@ -1,0 +1,12 @@
+// The address of an element read through a slice of a parameter's Vec lives in the parameter's buffer, not in the slice binding.
+fn first(v: *Vec<int>) -> *int {
+    let sl = v.as_slice();
+    return &sl[0 as u32];
+}
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(7);
+    let p = first(&v);
+    println(*p);
+}

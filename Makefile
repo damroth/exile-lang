@@ -1171,7 +1171,7 @@ selfhost-verify: selfhost-prelude-probe \
 	bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
-                 selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-port-move selfhost-port-tc-errors \
+                 selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-escape-divergence selfhost-port-move selfhost-port-tc-errors \
                  selfhost-outdir \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
@@ -3309,12 +3309,61 @@ selfhost-sigil: $(EXILC_BIN)
 host-selfhost-escape: src/escape_corpus.exl src/escape.exl src/typecheck.exl src/parser.exl src/loader.exl src/lexer.exl src/token.exl src/pos.exl src/ast.exl src/ir.exl src/error.exl $(SYS_HOST) build
 	$(EXILE) --target host --c-out $(C_OUT)/selfhost_escape.c --link $(SYS_HOST) -o $(HOST_OUT)/selfhost_escape $<
 
+# The programs on which the port's escape pass and the reference's disagree, on
+# purpose.  The port's pass tells a parameter's address from what lies under it,
+# follows what is stored into a container and read back out, keeps the
+# first-level fields of a struct apart, and treats a `str` as a borrow; the
+# reference does none of that.  Both sides of every fixture are pinned:
+#   refuse_*  the port refuses with exactly the line in .expected and writes no
+#             C; the reference accepts it and writes C
+#   accept_*  the port builds it and its run prints .expected; the reference
+#             refuses it, in its escape words
+# A fixture whose reference side moves is a divergence that closed: it belongs
+# in tests/escape, where the two must agree.
+.PHONY: selfhost-escape-divergence
+ESCDIV_WORDS := embeds the address of a local binding
+selfhost-escape-divergence: $(EXILC_BIN)
+	@nr=0; na=0; fail=0; \
+	ls tests/escape-divergence/*.exl >/dev/null 2>&1 || { echo "selfhost-escape-divergence: MISSING tests/escape-divergence fixtures"; exit 1; }; \
+	for f in tests/escape-divergence/*.exl; do \
+	  b=`basename $$f .exl`; exp=tests/escape-divergence/$$b.expected; \
+	  test -s $$exp || { echo "selfhost-escape-divergence: MISSING/EMPTY $$exp - a gate comparing against nothing reads as clean"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/ed_o.c $(C_OUT)/ed_o.err $(C_OUT)/ed_p.c $(C_OUT)/ed_p.err $(C_OUT)/ed_p_host.c $(C_OUT)/ed_run.txt $(HOST_OUT)/ed_p; \
+	  $(EXILE) --target c --c-out $(C_OUT)/ed_o.c $$f >/dev/null 2>$(C_OUT)/ed_o.err; \
+	  case "$$b" in \
+	    refuse_*) \
+	      nr=$$((nr+1)); \
+	      test -s $(C_OUT)/ed_o.c || { echo "selfhost-escape-divergence: $$b - the reference refuses it now, so the divergence closed; it belongs in tests/escape"; fail=1; continue; }; \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/ed_p.c $$f >/dev/null 2>$(C_OUT)/ed_p.err; \
+	      test ! -f $(C_OUT)/ed_p.c || { echo "selfhost-escape-divergence: $$b - the port wrote C for a program it must refuse"; fail=1; continue; }; \
+	      got=`grep -m1 'error:' $(C_OUT)/ed_p.err`; want=`cat $$exp`; \
+	      if [ "$$got" != "$$want" ]; then \
+	        echo "selfhost-escape-divergence: $$b - the port's line"; echo "  want: $$want"; echo "  got:  $$got"; fail=1; fi; \
+	      ;; \
+	    accept_*) \
+	      na=$$((na+1)); \
+	      test ! -s $(C_OUT)/ed_o.c || { echo "selfhost-escape-divergence: $$b - the reference accepts it now, so the divergence closed; it belongs in tests/escape"; fail=1; continue; }; \
+	      grep -q '$(ESCDIV_WORDS)' $(C_OUT)/ed_o.err || { echo "selfhost-escape-divergence: $$b - the reference refuses it for another reason: `grep -m1 'error:' $(C_OUT)/ed_o.err`"; fail=1; continue; }; \
+	      $(EXILC_BIN) --target host --c-out $(C_OUT)/ed_p_host.c --link $(SYS_HOST) -o $(HOST_OUT)/ed_p $$f >/dev/null 2>&1; \
+	      test -x $(HOST_OUT)/ed_p || { echo "selfhost-escape-divergence: $$b - the port did not build it"; fail=1; continue; }; \
+	      $(HOST_OUT)/ed_p > $(C_OUT)/ed_run.txt 2>&1; \
+	      cmp -s $(C_OUT)/ed_run.txt $$exp || { echo "selfhost-escape-divergence: $$b - OUTPUT"; diff $$exp $(C_OUT)/ed_run.txt | head -4; fail=1; }; \
+	      ;; \
+	    *) echo "selfhost-escape-divergence: $$b has no class prefix (refuse_ or accept_) - nothing would walk it"; fail=1;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/ed_o.c $(C_OUT)/ed_p.c $(C_OUT)/ed_p_host.c $(HOST_OUT)/ed_p; \
+	if [ $$nr -lt 1 ] || [ $$na -lt 1 ]; then echo "selfhost-escape-divergence: $$nr refuse_ and $$na accept_ fixtures - each direction needs one"; exit 1; fi; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "selfhost-escape-divergence: clean ($$nr refused by the port with its line pinned while the reference writes C, $$na built and run by the port while the reference refuses in its escape words)"; \
+	else exit 1; fi
+
 selfhost-port-escape: host-selfhost-escape
 	@fail=0; n=0; \
 	for f in $(patsubst %,examples/%.exl,$(EXAMPLE_NAMES)) tests/escape/*.exl; do \
 	  n=$$((n+1)); \
 	  port=$$(echo $$f | $(HOST_OUT)/selfhost_escape 2>&1 | head -1); \
-	  orac=$$($(EXILE) --target host --c-out /tmp/escgate.c $$f 2>&1 \
+	  orac=$$($(EXILE) --target host --c-out $(C_OUT)/escgate.c -o $(HOST_OUT)/escgate_bin $$f 2>&1 \
 	          | grep -m1 'embeds the address\|use of borrow' || echo 'escape: ok'); \
 	  if [ -z "$$port" ]; then \
 	    fail=$$((fail+1)); echo "selfhost-port-escape: EMPTY port line for $$f"; \

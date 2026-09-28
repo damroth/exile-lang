@@ -1,0 +1,15 @@
+// A position read through a local cursor that holds the file's name.
+struct Where { file: str, line: int }
+struct Cursor { file: str, line: int }
+fn here(c: *const Cursor) -> Where { return Where { file: c.file, line: c.line }; }
+fn scan(a: Allocator, file: str) -> Vec<Where> {
+    let mut out: Vec<Where> = Vec::with_capacity(a, 8 as u32);
+    let c = Cursor { file: file, line: 1 };
+    out.push(here(&c));
+    return out;
+}
+fn main() {
+    let a = default_allocator();
+    let v = scan(a, "f.exl");
+    println(v.length() as int);
+}
