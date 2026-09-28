@@ -1,0 +1,14 @@
+// An int read through an element of a local Vec of pointers to a local.
+fn keep(a: Allocator, out: *Vec<int>) {
+    let x = 5;
+    let mut v: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    v.push(&x);
+    out.push(*(v[0 as u32]));
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    keep(a, &out);
+    println(out.length() as int);
+}

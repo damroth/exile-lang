@@ -1,0 +1,15 @@
+// An int field of an element read out of a local Vec whose elements hold a local address.
+struct R { p: *int, k: int }
+fn keep(a: Allocator, out: *Vec<int>) {
+    let x = 5;
+    let mut v: Vec<R> = Vec::with_capacity(a, 8 as u32);
+    v.push(R { p: &x, k: 3 });
+    out.push(v[0 as u32].k);
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    keep(a, &out);
+    println(out.length() as int);
+}

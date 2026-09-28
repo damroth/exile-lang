@@ -1,0 +1,13 @@
+// A callee stores the caller's local address through the caller's non-local pointer.
+fn set(slot: **int, p: *int) { *slot = p; return; }
+fn keep(out: **int) {
+    let x = 5;
+    set(out, &x);
+    return;
+}
+fn main() {
+    let y = 1;
+    let mut s: *int = &y;
+    keep(&s);
+    println(1);
+}

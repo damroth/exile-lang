@@ -70,3 +70,21 @@ reference takes, the rejects that it lets nothing through the reference
 catches.  p31 is the struct wider than the field mask: fields past it share one
 slot, so the lent local in one of them keeps every other one from leaving.
 Where the two passes do NOT agree, the programs live in tests/escape-divergence.
+
+  p36 A callee pushes a pointer the caller received into the caller's Vec. -> accept
+  p37 An int field of an element read out of a local Vec whose elements hold a local address. -> accept
+  p38 An int read through an element of a local Vec of pointers to a local. -> accept
+  p39 A scope lends a local table; the callee returns an element read through the scope's pointer field. -> accept
+
+  p40 A callee fills a Vec declared inside a match arm with the address of a local from outside the arm. -> accept
+
+p36 pins what a callee's stores do not refuse: a pointer the caller itself
+received, pushed through a callee into the caller's container.  p37 and p38 are
+values that cannot carry an address read out of a container that holds a
+local's: every site a value leaves by asks the same question the return does.
+p39 is an element of a table a scope lends, read through the scope's pointer
+field: what lies under that pointer is the table's elements, not the pointer.
+p40 is a callee's store into a Vec that a match arm declares: the arm's
+expressions are also visited from outside it, before its own lets are in scope,
+and a target rooted in one of the fn's own locals is not "not local" there.
+

@@ -1,0 +1,13 @@
+// A callee pushes the caller's local address into the caller's non-local Vec.
+fn put(v: *Vec<*int>, p: *int) { v.push(p); return; }
+fn keep(out: *Vec<*int>) {
+    let x = 5;
+    put(out, &x);
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int);
+}

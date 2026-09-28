@@ -1,0 +1,13 @@
+// An int read through a pointer to a local, pushed into a non-local Vec: an int carries no address.
+fn keep(out: *Vec<int>) {
+    let x = 5;
+    let q = &x;
+    out.push(*q);
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out);
+    println(out.length() as int);
+}

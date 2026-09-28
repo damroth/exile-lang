@@ -1,0 +1,21 @@
+// A callee fills a Vec declared inside a match arm with the address of a local
+// from outside the arm; the Vec never leaves the arm.
+enum S { A | B }
+fn pick() -> S { return S::A; }
+fn fill(v: *Vec<*int>, p: *int) { v.push(p); return; }
+fn run(a: Allocator) {
+    let x = 5;
+    match pick() {
+        S::A => {
+            let mut local: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+            fill(&local, &x);
+            println(local.length() as int);
+        }
+        | S::B => { }
+    }
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    run(a);
+}

@@ -1,0 +1,12 @@
+// An int read through a pointer to a local, stored through a non-local pointer.
+fn fill(out: *int) {
+    let x = 5;
+    let q = &x;
+    *out = *q;
+    return;
+}
+fn main() {
+    let mut y = 0;
+    fill(&y);
+    println(y);
+}

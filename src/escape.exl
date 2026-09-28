@@ -214,6 +214,12 @@ struct SumEntry {
     s_is: Prov,
     s_hd: Prov,
     s_fields: bool,
+    // What the fn stores under its params: whether it stores anything, and
+    // which params it stores under through a pointer rather than into a
+    // container.  The values themselves sit in the parallel effect table, 32 per
+    // row (param index, the last shared from 31 on).
+    s_eff: bool,
+    s_estore: u32,
     swiden: bool,
 }
 
@@ -222,6 +228,7 @@ struct SumEntry {
 struct Esc {
     e_sum: *Vec<SumEntry>,
     e_fsum: *Vec<Prov>,
+    e_esum: *Vec<Prov>,
     // Param names of the fn under analysis, in declaration order (index = param
     // index), plus a parallel `own *T` flag.
     e_pnames: *Vec<str>,
@@ -237,6 +244,12 @@ struct Esc {
     e_hret: *Prov,
     // Per first-level field slot of a returned struct (empty when the fn returns none).
     e_fret: *Vec<Prov>,
+    // What the fn stores under each of its params (32 slots, empty when nothing
+    // is recorded), and which of them it stores under through a pointer.
+    e_eff: *Vec<Prov>,
+    e_effk: *u32,
+    // The fn's declared locals, all of them, bound in the walk or not yet.
+    e_lets: *const Vec<FieldTy>,
     // What each first-level field of a local struct value is: 32 provenances per
     // entry, the last shared by every field from 31 on.
     e_ftab: *Vec<Prov>,
@@ -612,13 +625,18 @@ fn var_under(esc: *const Esc, live: *const Vec<Binding>, n: str, depth: u32) -> 
     if i >= 0 as int {
         let b: *const Binding = &live.as_slice()[i as u32];
         let mut p = b.belem;
+        // A borrow that points into a local (`&y`) has the owner's own value
+        // under it; one that reaches a buffer through a pointer to storage that
+        // is not local (`rl.as_slice()`, `rl` a parameter's table) has only what
+        // the owner holds - the pointer itself is not under it.
+        let into_local = b.bprov.pk == PROV_LOCAL;
         let ol = b.bowners.as_slice();
         let mut k = 0 as u32;
         while k < b.bowners.length() {
             let j = find_binding(live, ol[k]);
             if j >= 0 as int {
                 let o: *const Binding = &live.as_slice()[j as u32];
-                p = meet(p, meet(whole_is(o), o.belem));
+                if into_local { p = meet(p, meet(whole_is(o), o.belem)); } else { p = meet(p, o.belem); }
             }
             k = k + 1 as u32;
         }
@@ -1243,13 +1261,32 @@ fn note_local_insert(a: Allocator, esc: *const Esc, live: *Vec<Binding>, m: str,
     let mut hd = prov_cs();
     let mut i = 1 as u32;
     while i < args.length() {
-        is = meet(is, is_of(a, esc, live, sl[i]));
-        hd = meet(hd, holds_of(a, esc, live, sl[i]));
+        if !ret_typ_is_pure_value(esc, sl[i].ty) {
+            is = meet(is, is_of(a, esc, live, sl[i]));
+            hd = meet(hd, holds_of(a, esc, live, sl[i]));
+        }
         i = i + 1 as u32;
     }
+    record_effect(esc, live, sl[0 as u32], meet(is, hd), false);
     let root = match receiver_root(sl[0 as u32]) { Option::Some(n) => n | Option::None => "" };
     if str::eq(root, "") || !is_local_name(live, root) { return; }
     store_under(a, live, root, is, hd, true);
+    return;
+}
+// A store through a place rooted at a parameter is an effect the caller sees:
+// what went in, met into that parameter's slot.  `store` marks a store through
+// a pointer rather than an insert into a container.  Only the parameter itself
+// counts as the root - a pointer the fn derives from one (an arena node from
+// `ar.alloc_borrowed()`) is its own storage here, as it is to the checks.
+fn record_effect(esc: *const Esc, live: *const Vec<Binding>, target: *const Texpr, v: Prov, store: bool) {
+    if esc.e_eff.length() == 0 as u32 || v.pk == PROV_CS { return; }
+    let root = match receiver_root(target) { Option::Some(n) => n | Option::None => "" };
+    if str::eq(root, "") { return; }
+    let pi = param_only(esc, live, root);
+    if pi < 0 as int { return; }
+    let i = if pi as u32 >= PARAM_HIGH { PARAM_HIGH } else { pi as u32 };
+    with e in esc.e_eff[i] { *e = meet(*e, v); }
+    if store { *esc.e_effk = *esc.e_effk | param_bit(i); }
     return;
 }
 // A store through a place rooted in a local lands in that local: in its own
@@ -1257,10 +1294,11 @@ fn note_local_insert(a: Allocator, esc: *const Esc, live: *Vec<Binding>, m: str,
 // pointer, a slice or a container's buffer.
 fn note_local_store(a: Allocator, esc: *const Esc, live: *Vec<Binding>, in_value: bool,
                     target: *const Texpr, field: str, value: *const Texpr) {
-    let root = match receiver_root(target) { Option::Some(n) => n | Option::None => "" };
-    if str::eq(root, "") || !is_local_name(live, root) { return; }
     let is = is_of(a, esc, live, value);
     let hd = holds_of(a, esc, live, value);
+    if !in_value && !ret_typ_is_pure_value(esc, value.ty) { record_effect(esc, live, target, meet(is, hd), true); }
+    let root = match receiver_root(target) { Option::Some(n) => n | Option::None => "" };
+    if str::eq(root, "") || !is_local_name(live, root) { return; }
     if !in_value { store_under(a, live, root, is, hd, false); return; }
     // `x.f = v` replaces the field; a deeper store only adds to the field it is in.
     let direct = match target.e { TexprNode::TVar(n) => !str::eq(field, "") | _o => false };
@@ -1463,8 +1501,10 @@ fn struct_embeds_no_address(esc: *const Esc, path: *const Vec<str>, depth: u32) 
 }
 
 // A value escapes a local if it IS one or HOLDS one: a container that leaves
-// carries its elements.
+// carries its elements.  A value that cannot carry an address escapes nothing,
+// at every site it leaves by - read out of a container of pointers or not.
 fn reaches_local(a: Allocator, esc: *const Esc, live: *const Vec<Binding>, te: *const Texpr) -> bool {
+    if ret_typ_is_pure_value(esc, te.ty) { return false; }
     return is_of(a, esc, live, te).pk == PROV_LOCAL || holds_of(a, esc, live, te).pk == PROV_LOCAL;
 }
 
@@ -1909,6 +1949,7 @@ fn settle_elems(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
     let mut quiet_fret: Vec<Prov> = Vec::with_capacity(a, 8 as u32);
     let quiet = Esc { e_sum: esc.e_sum, e_fsum: esc.e_fsum, e_pnames: esc.e_pnames, e_pown: esc.e_pown, e_report: false,
                       e_err: &quiet_err, e_ret: &quiet_ret, e_hret: &quiet_hret, e_fret: &quiet_fret, e_ftab: esc.e_ftab,
+                      e_esum: esc.e_esum, e_eff: esc.e_eff, e_effk: esc.e_effk, e_lets: esc.e_lets,
                       e_srcnames: esc.e_srcnames, e_structs: esc.e_structs, e_stails: esc.e_stails };
     let mut moved = true;
     let mut rounds = 0 as u32;
@@ -2111,7 +2152,63 @@ fn maybe_check_insert(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Bind
                       m: str, args: *const Vec<*const Texpr>, pos: Pos) {
     if is_container_insert(m) { check_container_insert(a, ar, esc, live, args, pos); }
     note_local_insert(a, esc, live, m, args);
+    // An insert is already what it does to its receiver; its own body's stores
+    // into the buffer are that same effect, seen from inside.
+    if !is_container_insert(m) && !stores_elements(m) { apply_callee_effects(a, ar, esc, live, m, args, pos); }
     return;
+}
+// What the callee stores under each of its params happens to the argument: the
+// values, in the caller's terms, land under it - checked like a store of the
+// caller's own when the argument is not local, held under it when it is, and
+// passed on as the caller's own effect when it roots in a caller's param.
+fn apply_callee_effects(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>,
+                        m: str, args: *const Vec<*const Texpr>, pos: Pos) {
+    let si = sum_find(esc, m);
+    if si < 0 as int { return; }
+    let row: *const SumEntry = &esc.e_sum.as_slice()[si as u32];
+    if !row.s_eff { return; }
+    let kinds = row.s_estore;
+    let base = si as u32 * 32 as u32;
+    let al = args.as_slice();
+    let n = args.length();
+    let mut j = 0 as u32;
+    while j < 32 as u32 {
+        let e = esc.e_esum.as_slice()[base + j];
+        if e.pk == PROV_PARAM {
+            let v = project(a, esc, live, e, args);
+            let ks = kinds >> j;   // bound out: register #7
+            let store = ks & (1 as u32) == 1 as u32;
+            if j < PARAM_HIGH { if j < n { effect_on_arg(a, ar, esc, live, al[j], v, store, pos); } }
+            else {
+                let mut hj = PARAM_HIGH;
+                while hj < n { effect_on_arg(a, ar, esc, live, al[hj], v, store, pos); hj = hj + 1 as u32; }
+            }
+        }
+        j = j + 1 as u32;
+    }
+    return;
+}
+fn effect_on_arg(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, arg: *const Texpr,
+                 v: Prov, store: bool, pos: Pos) {
+    let local = receiver_is_local(live, arg);
+    let root = match receiver_root(arg) { Option::Some(n) => n | Option::None => "" };
+    // The expressions of a block or an arm are also visited from outside it,
+    // before its own lets are in scope: a target rooted in one of this fn's
+    // locals is not "not local" there, only not yet bound.
+    if esc.e_report && !local && v.pk == PROV_LOCAL && !fn_declares(esc, root) {
+        if store { fail_escape(ar, esc, a, pos, "storing through a non-local pointer a value that"); }
+        else { fail_escape(ar, esc, a, pos, "inserting into a non-local container an argument that"); }
+    }
+    record_effect(esc, live, arg, v, store);
+    if !local { return; }
+    if !str::eq(root, "") { store_under(a, live, root, v, v, !store); }
+    return;
+}
+fn fn_declares(esc: *const Esc, n: str) -> bool {
+    let sl = esc.e_lets.as_slice();
+    let mut i = 0 as u32;
+    while i < esc.e_lets.length() { if str::eq(sl[i].name, n) { return true; } i = i + 1 as u32; }
+    return false;
 }
 fn walk_expr_for_sites(a: Allocator, ar: *Arena, esc: *const Esc, live: *Vec<Binding>, te: *const Texpr) {
     match te.e {
@@ -2170,15 +2267,18 @@ fn load_params(_a: Allocator, tf: *const Tfunc, pnames: *Vec<str>, pown: *Vec<bo
 // Walk one fn; what its returns are and hold accumulates into `ret_is` / `ret_hd`,
 // and what each field of a returned struct is into `fret` (empty when it returns
 // no struct).
-fn analyze_fn(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov>, structs: *const Vec<StructSig>,
-              stails: *const Vec<str>, tf: *const Tfunc, report: bool, err: *Option<*const CompileError>,
-              ret_is: *Prov, ret_hd: *Prov, fret: *Vec<Prov>) {
+fn analyze_fn(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov>, esum: *Vec<Prov>,
+              structs: *const Vec<StructSig>, stails: *const Vec<str>, tf: *const Tfunc, report: bool,
+              err: *Option<*const CompileError>, ret_is: *Prov, ret_hd: *Prov, fret: *Vec<Prov>,
+              eff: *Vec<Prov>, effk: *u32) {
     let mut pnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let mut pown: Vec<bool> = Vec::with_capacity(a, 8 as u32);
     load_params(a, tf, &pnames, &pown);
     let mut ftab: Vec<Prov> = Vec::with_capacity(a, 256 as u32);
-    let esc = Esc { e_sum: sum, e_fsum: fsum, e_pnames: &pnames, e_pown: &pown, e_report: report,
-                    e_err: err, e_ret: ret_is, e_hret: ret_hd, e_fret: fret, e_ftab: &ftab, e_srcnames: &tf.tf_srcnames,
+    let esc = Esc { e_sum: sum, e_fsum: fsum, e_esum: esum, e_pnames: &pnames, e_pown: &pown, e_report: report,
+                    e_err: err, e_ret: ret_is, e_hret: ret_hd, e_fret: fret, e_eff: eff, e_effk: effk,
+                    e_lets: &tf.tf_lets,
+                    e_ftab: &ftab, e_srcnames: &tf.tf_srcnames,
                     e_structs: structs, e_stails: stails };
     let mut live: Vec<Binding> = Vec::with_capacity(a, 8 as u32);
     walk_stmts(a, ar, &esc, &live, &tf.tf_body);
@@ -2202,10 +2302,11 @@ fn summary_prov(p: Prov) -> Prov {
 }
 fn same_row(x: *const SumEntry, y: *const SumEntry) -> bool {
     return prov_same(x.s_is, y.s_is) && prov_same(x.s_hd, y.s_hd)
-        && x.s_fields == y.s_fields && x.swiden == y.swiden;
+        && x.s_fields == y.s_fields && x.s_eff == y.s_eff && x.s_estore == y.s_estore && x.swiden == y.swiden;
 }
 fn empty_row(m: str) -> SumEntry {
-    return SumEntry { sname: m, s_is: prov_cs(), s_hd: prov_cs(), s_fields: false, swiden: false };
+    return SumEntry { sname: m, s_is: prov_cs(), s_hd: prov_cs(), s_fields: false,
+                      s_eff: false, s_estore: 0 as u32, swiden: false };
 }
 
 fn fn_is_analyzable(tf: *const Tfunc) -> bool {
@@ -2244,7 +2345,7 @@ fn is_concrete_esc(t: *const Typ) -> bool {
 
 // ===== Whole-program summary fixpoint =====
 
-fn sum_row_index(sum: *Vec<SumEntry>, fsum: *Vec<Prov>, m: str) -> u32 {
+fn sum_row_index(sum: *Vec<SumEntry>, fsum: *Vec<Prov>, esum: *Vec<Prov>, m: str) -> u32 {
     let sl = sum.as_slice();
     let mut i = 0 as u32;
     while i < sum.length() {
@@ -2254,15 +2355,17 @@ fn sum_row_index(sum: *Vec<SumEntry>, fsum: *Vec<Prov>, m: str) -> u32 {
     sum.push(empty_row(m));
     let mut k = 0 as u32;
     while k < FSLOTS { fsum.push(prov_cs()); k = k + 1 as u32; }
+    let mut j = 0 as u32;
+    while j < 32 as u32 { esum.push(prov_cs()); j = j + 1 as u32; }
     return sum.length() - 1 as u32;
 }
 
 fn compute_summaries(a: Allocator, ar: *Arena, tp: *const Tprogram, sum: *Vec<SumEntry>, fsum: *Vec<Prov>,
-                     stails: *const Vec<str>, err: *Option<*const CompileError>) {
+                     esum: *Vec<Prov>, stails: *const Vec<str>, err: *Option<*const CompileError>) {
     // The summary starts at bottom (no row = CallerOrStatic) and only grows, so
     // the fixpoint terminates; the iteration cap is the OCaml's with a per-param
-    // term for each of the six masks, a backstop against a non-monotone edit
-    // rather than an expected outcome.
+    // term for each of the six masks and the effect, a backstop against a
+    // non-monotone edit rather than an expected outcome.
     //
     // The prelude's non-generic methods and free functions are summarised too:
     // the port holds them apart from tp_funcs, the reference does not, and
@@ -2273,15 +2376,15 @@ fn compute_summaries(a: Allocator, ar: *Arena, tp: *const Tprogram, sum: *Vec<Su
     count_analyzable(&tp.tp_pmeth, &c, &mp);
     count_analyzable(&tp.tp_pfree, &c, &mp);
     count_analyzable(&tp.tp_funcs, &c, &mp);
-    let max_iter = c * (6 as u32 * mp + 1 as u32) + 16 as u32;
+    let max_iter = c * (7 as u32 * mp + 1 as u32) + 16 as u32;
     let mut iter = 0 as u32;
     let mut changed = true;
     while changed {
         iter = iter + 1 as u32;
         if iter > max_iter { escape_ice(); }
-        let c1 = summarise_list(a, ar, sum, fsum, &tp.tp_struct_index, stails, &tp.tp_pmeth, err);
-        let c2 = summarise_list(a, ar, sum, fsum, &tp.tp_struct_index, stails, &tp.tp_pfree, err);
-        let c3 = summarise_list(a, ar, sum, fsum, &tp.tp_struct_index, stails, &tp.tp_funcs, err);
+        let c1 = summarise_list(a, ar, sum, fsum, esum, &tp.tp_struct_index, stails, &tp.tp_pmeth, err);
+        let c2 = summarise_list(a, ar, sum, fsum, esum, &tp.tp_struct_index, stails, &tp.tp_pfree, err);
+        let c3 = summarise_list(a, ar, sum, fsum, esum, &tp.tp_struct_index, stails, &tp.tp_funcs, err);
         changed = c1 || c2 || c3;
     }
     return;
@@ -2298,8 +2401,9 @@ fn count_analyzable(fs: *const Vec<Tfunc>, c: *u32, mp: *u32) {
     }
     return;
 }
-fn summarise_list(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov>, structs: *const Vec<StructSig>,
-                  stails: *const Vec<str>, fs: *const Vec<Tfunc>, err: *Option<*const CompileError>) -> bool {
+fn summarise_list(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov>, esum: *Vec<Prov>,
+                  structs: *const Vec<StructSig>, stails: *const Vec<str>, fs: *const Vec<Tfunc>,
+                  err: *Option<*const CompileError>) -> bool {
     let mut changed = false;
     let fl = fs.as_slice();
     let mut i = 0 as u32;
@@ -2310,11 +2414,18 @@ fn summarise_list(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov
             let mut fret: Vec<Prov> = Vec::with_capacity(a, FSLOTS);
             let fielded = returns_struct(&fl[i]);
             if fielded { let mut k = 0 as u32; while k < FSLOTS { fret.push(prov_cs()); k = k + 1 as u32; } }
-            analyze_fn(a, ar, sum, fsum, structs, stails, &fl[i], false, err, &ret_is, &ret_hd, &fret);
-            let ri = sum_row_index(sum, fsum, fl[i].tf_mangled);
+            let mut eff: Vec<Prov> = Vec::with_capacity(a, 32 as u32);
+            let mut ek = 0 as u32;
+            while ek < 32 as u32 { eff.push(prov_cs()); ek = ek + 1 as u32; }
+            let mut effk = 0 as u32;
+            analyze_fn(a, ar, sum, fsum, esum, structs, stails, &fl[i], false, err, &ret_is, &ret_hd, &fret, &eff, &effk);
+            let ri = sum_row_index(sum, fsum, esum, fl[i].tf_mangled);
             let mut nrow = empty_row(fl[i].tf_mangled);
             project_to_summary(ret_is, ret_hd, &nrow);
             nrow.s_fields = fielded;
+            let mut effects_moved = false;
+            nrow.s_eff = store_effects(esum, ri, &eff, &effects_moved);
+            nrow.s_estore = effk;
             with row in sum[ri] {
                 if !same_row(row, &nrow) {
                     *row = nrow;
@@ -2322,10 +2433,29 @@ fn summarise_list(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov
                 }
             }
             if fielded && store_field_claims(fsum, ri, &fret) { changed = true; }
+            if effects_moved { changed = true; }
         }
         i = i + 1 as u32;
     }
     return changed;
+}
+// A row's effects take `eff`'s; true if the fn stores anything under a param,
+// and `moved` set if any slot changed.
+fn store_effects(esum: *Vec<Prov>, ri: u32, eff: *const Vec<Prov>, moved: *bool) -> bool {
+    let mut any = false;
+    let base = ri * 32 as u32;
+    let el = eff.as_slice();
+    let mut k = 0 as u32;
+    while k < 32 as u32 {
+        let np = summary_prov(el[k]);
+        if np.pk == PROV_PARAM { any = true; }
+        if !prov_same(esum.as_slice()[base + k], np) {
+            with c in esum[base + k] { *c = np; }
+            *moved = true;
+        }
+        k = k + 1 as u32;
+    }
+    return any;
 }
 fn returns_struct(tf: *const Tfunc) -> bool {
     return match tf.tf_ret_ty { Option::Some(t) => ty_is_struct(t) | Option::None => false };
@@ -2352,16 +2482,25 @@ fn store_field_claims(fsum: *Vec<Prov>, ri: u32, fret: *const Vec<Prov>) -> bool
 // same thing from the methods' bodies - a result that points into what `*self`
 // owns.  On every prelude method that takes its receiver by pointer the two must
 // agree, and a disagreement is the compiler's fault, never the program's.
-fn check_borrow_list(sum: *const Vec<SumEntry>, fs: *const Vec<Tfunc>) {
+fn check_borrow_list(a: Allocator, ar: *Arena, sum: *const Vec<SumEntry>, fs: *const Vec<Tfunc>) {
     let fl = fs.as_slice();
     let mut i = 0 as u32;
     while i < fs.length() {
         if str::eq(fl[i].tf_func.pos.file, "<prelude>") && self_by_pointer(&fl[i]) {
             let listed = returns_borrow_from_receiver(fl[i].tf_mangled);
-            if listed != lends_receiver(sum, fl[i].tf_mangled) { escape_ice(); }
+            if listed != lends_receiver(sum, fl[i].tf_mangled) { borrow_list_ice(a, ar, fl[i].tf_mangled, listed); }
         }
         i = i + 1 as u32;
     }
+    return;
+}
+fn borrow_list_ice(a: Allocator, ar: *Arena, m: str, listed: bool) {
+    let mut sb = StringBuilder::with_capacity(a, 160 as u32);
+    sb.push_str("internal: the escape pass's borrow list and its summaries disagree about '");
+    sb.push_str(m);
+    if listed { sb.push_str("': the list says it lends out its receiver's storage, its body does not"); }
+    else { sb.push_str("': its body lends out its receiver's storage, the list does not say so"); }
+    ice(str::from_slice(ar, sb.as_slice()));
     return;
 }
 fn self_by_pointer(tf: *const Tfunc) -> bool {
@@ -2384,20 +2523,21 @@ fn lends_receiver(sum: *const Vec<SumEntry>, m: str) -> bool {
 
 // The fixpoint is monotone by construction; failing to converge is an internal
 // error, never a user one — abort loudly rather than silently under-analysing.
-// Reuses error.exl's arena_oom abort seam rather than a second `mod raw`.
-fn escape_ice() { arena_oom(); }
+fn escape_ice() { ice("internal: the escape summaries did not reach a fixpoint"); }
 
 // ===== Entry =====
 
 // The enforcement phase discards the return-prov: the summary is already at its
 // fixpoint, so only the diagnostics matter here.
-fn analyze_fn_reporting(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov>,
+fn analyze_fn_reporting(a: Allocator, ar: *Arena, sum: *Vec<SumEntry>, fsum: *Vec<Prov>, esum: *Vec<Prov>,
                         structs: *const Vec<StructSig>, stails: *const Vec<str>, tf: *const Tfunc,
                         err: *Option<*const CompileError>) {
     let mut ret_is = prov_cs();
     let mut ret_hd = prov_cs();
     let mut fret: Vec<Prov> = Vec::with_capacity(a, 8 as u32);
-    analyze_fn(a, ar, sum, fsum, structs, stails, tf, true, err, &ret_is, &ret_hd, &fret);
+    let mut eff: Vec<Prov> = Vec::with_capacity(a, 8 as u32);
+    let mut effk = 0 as u32;
+    analyze_fn(a, ar, sum, fsum, esum, structs, stails, tf, true, err, &ret_is, &ret_hd, &fret, &eff, &effk);
     return;
 }
 
@@ -2407,19 +2547,20 @@ pub fn check(a: Allocator, ar: *Arena, tp: *const Tprogram) -> Option<*const Com
     let mut err: Option<*const CompileError> = Option::None;
     let mut sum: Vec<SumEntry> = Vec::with_capacity(a, 64 as u32);
     let mut fsum: Vec<Prov> = Vec::with_capacity(a, 2048 as u32);
+    let mut esum: Vec<Prov> = Vec::with_capacity(a, 2048 as u32);
     let mut stails: Vec<str> = Vec::with_capacity(a, 256 as u32);
     let ssl = tp.tp_struct_index.as_slice();
     let mut si = 0 as u32;
     while si < tp.tp_struct_index.length() { stails.push(tail_name(a, ar, &ssl[si].sname_path)); si = si + 1 as u32; }
-    compute_summaries(a, ar, tp, &sum, &fsum, &stails, &err);
-    check_borrow_list(&sum, &tp.tp_pmeth);
-    check_borrow_list(&sum, &tp.tp_funcs);
+    compute_summaries(a, ar, tp, &sum, &fsum, &esum, &stails, &err);
+    check_borrow_list(a, ar, &sum, &tp.tp_pmeth);
+    check_borrow_list(a, ar, &sum, &tp.tp_funcs);
     let fl = tp.tp_funcs.as_slice();
     let mut i = 0 as u32;
     while i < tp.tp_funcs.length() {
         let skip = str::eq(fl[i].tf_func.pos.file, "<prelude>")
                    || fl[i].tf_func.is_extern || fl[i].tf_func.escapes_hatch;
-        if !skip { analyze_fn_reporting(a, ar, &sum, &fsum, &tp.tp_struct_index, &stails, &fl[i], &err); }
+        if !skip { analyze_fn_reporting(a, ar, &sum, &fsum, &esum, &tp.tp_struct_index, &stails, &fl[i], &err); }
         i = i + 1 as u32;
     }
     return err;

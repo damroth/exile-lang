@@ -1,0 +1,13 @@
+// A callee pushes a pointer the caller received into the caller's Vec.
+fn put(v: *Vec<*int>, p: *int) { v.push(p); return; }
+fn keep(out: *Vec<*int>, q: *int) {
+    put(out, q);
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let y = 2;
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(&out, &y);
+    println(out.length() as int);
+}

@@ -1,0 +1,21 @@
+// A scope lends a local table; the callee reads an element out of it through the
+// scope's pointer field and returns the element, not the pointer.
+struct Scope { names: *const Vec<str>, n: int }
+fn first(sc: *const Scope) -> str {
+    let t = sc.names;
+    let sl = t.as_slice();
+    return sl[0 as u32];
+}
+fn run(a: Allocator, out: *Vec<str>) {
+    let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    names.push("hi");
+    let sc = Scope { names: &names, n: 1 };
+    out.push(first(&sc));
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    run(a, &out);
+    println(out.length() as int);
+}

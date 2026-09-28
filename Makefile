@@ -1171,7 +1171,7 @@ selfhost-verify: selfhost-prelude-probe \
 	bootstrap-fixpoint selfhost-port-tokens selfhost-port-errors \
 	selfhost-port-module-roots selfhost-exilc-driver selfhost-exilc-fixpoint \
                  selfhost-port-ast selfhost-port-parse-errors selfhost-port-ir \
-                 selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-escape-divergence selfhost-port-move selfhost-port-tc-errors \
+                 selfhost-port-drop-ir selfhost-port-drop-errors selfhost-port-escape selfhost-escape-divergence selfhost-borrow-list-ice selfhost-port-move selfhost-port-tc-errors \
                  selfhost-outdir \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
@@ -3357,6 +3357,34 @@ selfhost-escape-divergence: $(EXILC_BIN)
 	if [ $$fail -eq 0 ]; then \
 	  echo "selfhost-escape-divergence: clean ($$nr refused by the port with its line pinned while the reference writes C, $$na built and run by the port while the reference refuses in its escape words)"; \
 	else exit 1; fi
+
+# The escape pass holds its borrow list to the summaries its fixpoint computes,
+# and a disagreement is the compiler's fault.  Nothing a user writes can reach
+# it, so this builds a compiler whose list lost one entry and asks what it says:
+# it must abort naming the method, and write no C - a mute abort reads as a
+# check that never fired.  The real compiler takes the same program.
+.PHONY: selfhost-borrow-list-ice
+BLICE_INPUT := tests/xprod/c77_slice_length_method.exl
+BLICE_ENTRY := mangled_has_prefix("Vec__as_slice", m) { return true; }
+selfhost-borrow-list-ice: $(EXILC_BIN)
+	@test -s $(BLICE_INPUT) || { echo "selfhost-borrow-list-ice: MISSING $(BLICE_INPUT)"; exit 1; }; \
+	rm -rf $(C_OUT)/bl; mkdir -p $(C_OUT)/bl/src; rm -f $(HOST_OUT)/bl_exilc; \
+	cp src/*.exl $(C_OUT)/bl/src/; \
+	grep -qF '$(BLICE_ENTRY)' $(C_OUT)/bl/src/escape.exl || { echo "selfhost-borrow-list-ice: MISSING the list entry the perturbation removes"; exit 1; }; \
+	grep -vF '$(BLICE_ENTRY)' src/escape.exl > $(C_OUT)/bl/src/escape.exl; \
+	! grep -qF '$(BLICE_ENTRY)' $(C_OUT)/bl/src/escape.exl || { echo "selfhost-borrow-list-ice: the entry is still there"; exit 1; }; \
+	$(EXILE) --target host --c-out $(C_OUT)/bl/exilc.c --link $(SYS_HOST) -o $(HOST_OUT)/bl_exilc $(C_OUT)/bl/src/exilc.exl >/dev/null 2>&1; \
+	test -x $(HOST_OUT)/bl_exilc || { echo "selfhost-borrow-list-ice: the perturbed compiler did not build"; exit 1; }; \
+	rm -f $(C_OUT)/bl/ok.c $(C_OUT)/bl/bad.c; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/bl/ok.c $(BLICE_INPUT) >/dev/null 2>&1; \
+	test -s $(C_OUT)/bl/ok.c || { echo "selfhost-borrow-list-ice: the real compiler refused $(BLICE_INPUT) - the control is gone"; exit 1; }; \
+	( ulimit -c 0; $(HOST_OUT)/bl_exilc --target c --c-out $(C_OUT)/bl/bad.c $(BLICE_INPUT) ) >/dev/null 2>$(C_OUT)/bl/err; rc=$$?; \
+	[ $$rc -ne 0 ] || { echo "selfhost-borrow-list-ice: the perturbed compiler exited 0 - the check did not fire"; exit 1; }; \
+	test ! -f $(C_OUT)/bl/bad.c || { echo "selfhost-borrow-list-ice: the perturbed compiler wrote C"; exit 1; }; \
+	grep -q "internal: the escape pass's borrow list and its summaries disagree about 'Vec__as_slice" $(C_OUT)/bl/err \
+	  || { echo "selfhost-borrow-list-ice: exit $$rc without the words - an abort that says nothing reads as a check that never fired:"; head -2 $(C_OUT)/bl/err; exit 1; }; \
+	rm -rf $(C_OUT)/bl; rm -f $(HOST_OUT)/bl_exilc; \
+	echo "selfhost-borrow-list-ice: clean (a compiler whose borrow list lost Vec::as_slice aborts with exit $$rc naming it and writes no C; the real one takes the same program)"
 
 selfhost-port-escape: host-selfhost-escape
 	@fail=0; n=0; \

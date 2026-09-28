@@ -1,0 +1,15 @@
+// A struct of ints read out of a local that also holds a local address, pushed into a non-local Vec.
+struct P { a: int, b: int }
+struct H { p: *int, v: P }
+fn keep(a: Allocator, out: *Vec<P>) {
+    let x = 5;
+    let h = H { p: &x, v: P { a: 1, b: 2 } };
+    out.push(h.v);
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<P> = Vec::with_capacity(a, 8 as u32);
+    keep(a, &out);
+    println(out.length() as int);
+}

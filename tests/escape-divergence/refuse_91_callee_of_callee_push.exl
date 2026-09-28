@@ -1,0 +1,16 @@
+// The push happens two calls down; the caller reads the local address back out of its own Vec.
+fn put(v: *Vec<*int>, p: *int) { v.push(p); return; }
+fn put2(v: *Vec<*int>, p: *int) { put(v, p); return; }
+fn keep(a: Allocator, out: *Vec<*int>) {
+    let x = 5;
+    let mut local: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    put2(&local, &x);
+    out.push(local[0 as u32]);
+    return;
+}
+fn main() {
+    let a = default_allocator();
+    let mut out: Vec<*int> = Vec::with_capacity(a, 8 as u32);
+    keep(a, &out);
+    println(out.length() as int);
+}
