@@ -1177,7 +1177,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
                  selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-armtail selfhost-loopfresh selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
-                 probe-control
+                 probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
 # ===== a floor binary, named by the commit it was built from =====
@@ -1200,6 +1200,57 @@ floor-binary:
 	cp "$$tmp/_build/out/host/exilc" $(FLOOR_DIR)/exilc-$$sha; rm -rf "$$tmp"; \
 	test -x $(FLOOR_DIR)/exilc-$$sha || { echo "floor-binary: no binary came out of the build at $$sha"; exit 1; }; \
 	echo "floor-binary: $(FLOOR_DIR)/exilc-$$sha - built from $(REF) ($$sha) in a clean export, not from the working tree"
+
+# ===== corpus sweep =====
+#
+# What a change did to every tracked `.exl` outside the compiler's own modules:
+# the same corpus through a port built from REF and through the current one,
+# and the files whose verdict or emitted C moved.  make sweep REF=HEAD
+.PHONY: sweep sweep-control
+SWEEP_DIR := _build/sweep
+sweep: $(EXILC_BIN)
+	@test -n "$(REF)" || { echo "sweep: REF=<tag-or-commit> is required"; exit 1; }; \
+	sha=`git rev-parse --verify -q --short "$(REF)^{commit}"` || { echo "sweep: '$(REF)' is not a commit"; exit 1; }; \
+	test -x $(FLOOR_DIR)/exilc-$$sha || $(MAKE) --no-print-directory floor-binary REF=$$sha || exit 1; \
+	mkdir -p $(SWEEP_DIR); rm -f $(SWEEP_DIR)/ref.txt $(SWEEP_DIR)/cur.txt; \
+	sh tools/sweep.sh $(FLOOR_DIR)/exilc-$$sha $(SWEEP_DIR)/ref.txt || exit 1; \
+	sh tools/sweep.sh $(EXILC_BIN) $(SWEEP_DIR)/cur.txt || exit 1; \
+	sh tools/sweep.sh --diff $(SWEEP_DIR)/ref.txt $(SWEEP_DIR)/cur.txt; rc=$$?; \
+	[ $$rc -le 1 ]
+
+# The instrument's own control: each verdict class on an input that has it, a
+# cap no compile fits in read as CRASH rather than as a verdict, and the diff
+# counting one changed line and none, and refusing two different corpora.
+SWEEP_CONTROL := examples/hello_world.exl:ACCEPT tests/escape/p1.exl:REFUSE
+sweep-control: $(EXILC_BIN)
+	@test -f tools/sweep.sh || { echo "sweep-control: MISSING tools/sweep.sh"; exit 1; }; \
+	mkdir -p $(SWEEP_DIR); \
+	rm -f $(SWEEP_DIR)/ctl.lst $(SWEEP_DIR)/ctl.txt $(SWEEP_DIR)/ctl_cap.txt $(SWEEP_DIR)/ctl_short.txt $(SWEEP_DIR)/ctl_moved.txt; \
+	for row in $(SWEEP_CONTROL); do \
+	  f=$${row%%:*}; test -f $$f || { echo "sweep-control: MISSING control input $$f"; exit 1; }; echo $$f; \
+	done > $(SWEEP_DIR)/ctl.lst; \
+	SWEEP_LIST=$(SWEEP_DIR)/ctl.lst sh tools/sweep.sh $(EXILC_BIN) $(SWEEP_DIR)/ctl.txt >/dev/null \
+	  || { echo "sweep-control: the sweep itself failed"; exit 1; }; \
+	seen=""; \
+	for row in $(SWEEP_CONTROL); do \
+	  f=$${row%%:*}; want=$${row##*:}; \
+	  got=`grep "^$$f|" $(SWEEP_DIR)/ctl.txt | cut -d'|' -f2`; \
+	  [ "$$got" = "$$want" ] || { echo "sweep-control: $$f classified as '$$got', its class is $$want"; exit 1; }; \
+	  seen="$$seen $$want"; \
+	done; \
+	SWEEP_LIST=$(SWEEP_DIR)/ctl.lst SWEEP_ULIMIT=3000 sh tools/sweep.sh $(EXILC_BIN) $(SWEEP_DIR)/ctl_cap.txt >/dev/null \
+	  || { echo "sweep-control: the capped sweep itself failed"; exit 1; }; \
+	ncap=`grep -c '|CRASH|' $(SWEEP_DIR)/ctl_cap.txt`; \
+	[ "$$ncap" -eq 2 ] || { echo "sweep-control: under a cap no compile fits in, $$ncap of 2 inputs read CRASH - the rest were taken for verdicts"; exit 1; }; \
+	sh tools/sweep.sh --diff $(SWEEP_DIR)/ctl.txt $(SWEEP_DIR)/ctl.txt >/dev/null \
+	  || { echo "sweep-control: a sweep compared with itself reads as changed"; exit 1; }; \
+	head -1 $(SWEEP_DIR)/ctl.txt > $(SWEEP_DIR)/ctl_short.txt; \
+	sh tools/sweep.sh --diff $(SWEEP_DIR)/ctl.txt $(SWEEP_DIR)/ctl_short.txt >/dev/null 2>&1; rc=$$?; \
+	[ $$rc -eq 2 ] || { echo "sweep-control: two sweeps over different corpora compared with exit $$rc, not refused"; exit 1; }; \
+	sed '1s/|ACCEPT|/|REFUSE|/' $(SWEEP_DIR)/ctl.txt > $(SWEEP_DIR)/ctl_moved.txt; \
+	moved=`sh tools/sweep.sh --diff $(SWEEP_DIR)/ctl.txt $(SWEEP_DIR)/ctl_moved.txt | tail -1`; \
+	[ "$$moved" = "sweep: 1 of 2 files changed" ] || { echo "sweep-control: one moved line read as '$$moved'"; exit 1; }; \
+	echo "sweep-control: clean (each class on its own input:$$seen CRASH; the diff counts one moved line and none, and refuses two different corpora)"
 
 # ===== the probe runner's own control =====
 #
