@@ -15,13 +15,15 @@
 # machine down twice. The fixpoint gates compile them, one at a time. Each compile
 # here runs under a memory cap, four at a time.
 #
-# SWEEP_LIST=<file> replaces the corpus with the paths in that file, and
-# SWEEP_ULIMIT=<kB> the cap - both exist for the instrument's control.
+# SWEEP_LIST=<file> replaces the corpus with the paths in that file,
+# SWEEP_ULIMIT=<kB> the cap, and SWEEP_ONE_FAULT=<path> makes the worker leave
+# no line for that path - all three exist for the instrument's control.
 set -u
 
 # One file, one line - what each of the four parallel workers runs.
 if [ "${1:-}" = "--one" ]; then
   bin=$2; cap=$3; f=$4
+  [ "$f" = "${SWEEP_ONE_FAULT:-}" ] && exit 0
   c=$(mktemp); rm -f "$c"; e=$(mktemp)
   ( ulimit -v "$cap"; "$bin" --target c --c-out "$c" "$f" >/dev/null 2>"$e" ); rc=$?
   if [ -s "$c" ]; then

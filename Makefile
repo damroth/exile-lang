@@ -1219,13 +1219,15 @@ sweep: $(EXILC_BIN)
 	[ $$rc -le 1 ]
 
 # The instrument's own control: each verdict class on an input that has it, a
-# cap no compile fits in read as CRASH rather than as a verdict, and the diff
-# counting one changed line and none, and refusing two different corpora.
+# cap no compile fits in read as CRASH rather than as a verdict, a worker that
+# leaves no line ending the sweep, and the diff counting one changed line and
+# none, and refusing two different corpora.
 SWEEP_CONTROL := examples/hello_world.exl:ACCEPT tests/escape/p1.exl:REFUSE
 sweep-control: $(EXILC_BIN)
 	@test -f tools/sweep.sh || { echo "sweep-control: MISSING tools/sweep.sh"; exit 1; }; \
 	mkdir -p $(SWEEP_DIR); \
-	rm -f $(SWEEP_DIR)/ctl.lst $(SWEEP_DIR)/ctl.txt $(SWEEP_DIR)/ctl_cap.txt $(SWEEP_DIR)/ctl_short.txt $(SWEEP_DIR)/ctl_moved.txt; \
+	rm -f $(SWEEP_DIR)/ctl.lst $(SWEEP_DIR)/ctl.txt $(SWEEP_DIR)/ctl_cap.txt $(SWEEP_DIR)/ctl_lost.txt \
+	      $(SWEEP_DIR)/ctl_short.txt $(SWEEP_DIR)/ctl_moved.txt; \
 	for row in $(SWEEP_CONTROL); do \
 	  f=$${row%%:*}; test -f $$f || { echo "sweep-control: MISSING control input $$f"; exit 1; }; echo $$f; \
 	done > $(SWEEP_DIR)/ctl.lst; \
@@ -1240,6 +1242,9 @@ sweep-control: $(EXILC_BIN)
 	done; \
 	SWEEP_LIST=$(SWEEP_DIR)/ctl.lst SWEEP_ULIMIT=3000 sh tools/sweep.sh $(EXILC_BIN) $(SWEEP_DIR)/ctl_cap.txt >/dev/null \
 	  || { echo "sweep-control: the capped sweep itself failed"; exit 1; }; \
+	lost=`SWEEP_LIST=$(SWEEP_DIR)/ctl.lst SWEEP_ONE_FAULT=tests/escape/p1.exl sh tools/sweep.sh $(EXILC_BIN) $(SWEEP_DIR)/ctl_lost.txt 2>&1 >/dev/null`; rc=$$?; \
+	[ $$rc -eq 2 ] && [ "$$lost" = "sweep: 1 lines for 2 files - a compile left no line" ] \
+	  || { echo "sweep-control: a worker that left no line ended the sweep with exit $$rc and '$$lost'"; exit 1; }; \
 	ncap=`grep -c '|CRASH|' $(SWEEP_DIR)/ctl_cap.txt`; \
 	[ "$$ncap" -eq 2 ] || { echo "sweep-control: under a cap no compile fits in, $$ncap of 2 inputs read CRASH - the rest were taken for verdicts"; exit 1; }; \
 	sh tools/sweep.sh --diff $(SWEEP_DIR)/ctl.txt $(SWEEP_DIR)/ctl.txt >/dev/null \
@@ -1250,7 +1255,7 @@ sweep-control: $(EXILC_BIN)
 	sed '1s/|ACCEPT|/|REFUSE|/' $(SWEEP_DIR)/ctl.txt > $(SWEEP_DIR)/ctl_moved.txt; \
 	moved=`sh tools/sweep.sh --diff $(SWEEP_DIR)/ctl.txt $(SWEEP_DIR)/ctl_moved.txt | tail -1`; \
 	[ "$$moved" = "sweep: 1 of 2 files changed" ] || { echo "sweep-control: one moved line read as '$$moved'"; exit 1; }; \
-	echo "sweep-control: clean (each class on its own input:$$seen CRASH; the diff counts one moved line and none, and refuses two different corpora)"
+	echo "sweep-control: clean (each class on its own input:$$seen CRASH; a lost line ends the sweep; the diff counts one moved line and none, and refuses two different corpora)"
 
 # ===== the probe runner's own control =====
 #
