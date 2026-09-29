@@ -1,0 +1,76 @@
+// A method's or a generic fn's signature names types as its own module sees them,
+// wherever the call is written. Called from the top level, from a sibling module
+// and through a nested one: parameters by pointer, by value, inside an
+// application and bound to a module-local trait, returns of generic methods and
+// of methods on a generic type, a static method, a trait method, and a generic
+// free fn. A top-level `P` of another shape stands beside `m::P`, so a parameter
+// read in the caller's scope would name the wrong type; `Q` has no such twin, so
+// read there it would name nothing.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+
+struct P { y: int, z: int }
+
+mod m {
+    pub struct P { x: int }
+    pub struct Q { y: int }
+    pub struct B<T> { v: T }
+    pub trait Near { fn near(*const self, o: *const P) -> bool; }
+    pub trait Tick { fn tick(*const self) -> int; }
+    impl P {
+        pub fn same(*const self, other: *const P) -> bool { return self.x == other.x; }
+        pub fn add(*const self, other: P) -> int { return self.x + other.x; }
+        pub fn plus(*const self, q: *const Q) -> int { return self.x + q.y; }
+        pub fn count(*const self, v: *const Vec<P>) -> int { return v.length() as int + self.x; }
+        pub fn sum(a: *const P, b: *const P) -> int { return a.x + b.x; }
+        pub fn pick<T>(*const self, other: *const P, t: T) -> T { return t; }
+        pub fn tag<T>(*const self, t: T) -> P { return P { x: self.x + 1 }; }
+        pub fn use_it<T: Tick>(*const self, t: *const T) -> int { return t.tick() + self.x; }
+    }
+    impl Near for P { fn near(*const self, o: *const P) -> bool { return self.x == o.x; } }
+    impl Tick for P { fn tick(*const self) -> int { return self.x; } }
+    impl<T> B<T> {
+        pub fn same(*const self, other: *const B<T>) -> bool { return self.v.eq(other.v); }
+        pub fn dup(*const self) -> B<T> { return B { v: self.v }; }
+    }
+    pub fn mk(v: int) -> P { return P { x: v }; }
+    pub fn mq(v: int) -> Q { return Q { y: v }; }
+    pub fn mb(v: int) -> B<int> { return B { v: v }; }
+    pub fn bump<T>(t: T, p: *const P) -> P { return P { x: p.x + 1 }; }
+    pub fn lift<T>(t: T, q: *const Q) -> Q { return Q { y: q.y * 2 }; }
+    pub mod n {
+        pub struct R { x: int }
+        impl R { pub fn same(*const self, other: *const R) -> bool { return self.x == other.x; } }
+        pub fn mk(v: int) -> R { return R { x: v }; }
+    }
+}
+
+mod k {
+    pub fn check(v: int) -> bool { let p = m::mk(v); let q = m::mk(v); return p.same(&q); }
+}
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let p = m::mk(1);
+    let q = m::mk(2);
+    if p.same(&q) { println(1); } else { println(0); }
+    println(p.add(m::mk(3)));
+    let r = m::mq(5);
+    println(p.plus(&r));
+    let mut v: Vec<m::P> = Vec::with_capacity(a, 8 as u32);
+    v.push(m::mk(4));
+    println(p.count(&v));
+    println(m::P::sum(&p, &q));
+    println(p.pick(&q, 7));
+    println(p.tag(true).x);
+    println(p.use_it(&q));
+    if p.near(&q) { println(1); } else { println(0); }
+    let b = m::mb(6);
+    if b.same(&b.dup()) { println(1); } else { println(0); }
+    println(m::bump(false, &q).x);
+    println(m::lift(true, &r).y);
+    let s = m::n::mk(8);
+    if s.same(&m::n::mk(8)) { println(1); } else { println(0); }
+    if k::check(9) { println(1); } else { println(0); }
+    let o = P { y: 10, z: 11 };
+    println(o.z);
+}

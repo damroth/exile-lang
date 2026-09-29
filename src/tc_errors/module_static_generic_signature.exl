@@ -1,0 +1,10 @@
+// A generic static method's signature names types as the method's module sees
+// them, even called from outside: its `*const P` parameter takes an `m::P`, and
+// its result is an `m::P` - binding that to an int is refused for that type, not
+// for a name the caller cannot see.
+mod m {
+    pub struct P { x: int }
+    impl P { pub fn of<T>(p: *const P, t: T) -> P { return P { x: p.x }; } }
+    pub fn mk(v: int) -> P { return P { x: v }; }
+}
+fn main() { let p = m::mk(1); let q: int = m::P::of(&p, true); println(q); }

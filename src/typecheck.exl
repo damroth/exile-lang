@@ -3359,10 +3359,11 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     if sl[midx].mi_has_self && sargs.length() > 0 as u32 {
         bind_recv_tparams(a, ar, sc, &sl[midx].mi_path, &recv_base_path(a, sargs.as_slice()[0 as u32].ty), &binds);
     }
-    unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, &sargs, &binds, 0 as u32, p);
+    let msc = scope_with_modpath(sc, &sl[midx].mi_modpath);
+    unify_method_args(a, ar, &msc, &sl[midx].mi_tparams, &sl[midx].mi_params, &sargs, &binds, 0 as u32, p);
     check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     check_bound_conformance(a, ar, sc, &sl[midx].mi_tbounds, &binds, sl[midx].mi_name, p);
-    let cscope_t = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    let cscope_t = scope_with_tbinds(&msc, &sl[midx].mi_tparams, &binds);
     let cself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[midx].mi_path))));
     let cscope = scope_with_self(&cscope_t, cself);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
@@ -3400,7 +3401,7 @@ fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
         let mut k = 0 as u32;
         while k < args.length() {
             if k < targs.length() {
-                match meth_param_ty(a, ar, sc, mm, &sl[midx as u32].mi_params, sself, k, p) {
+                match meth_param_ty(a, ar, sc, mm, &sl[midx as u32].mi_params, &sl[midx as u32].mi_modpath, sself, k, p) {
                     Option::Some(pt) => { check_slot_arg(a, ar, sc, sdisp, k, pt, rs[k], ts[k].ty, p); }
                     | Option::None => { }
                 }
@@ -3745,7 +3746,8 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     check_gen_call_arity(a, ar, sc, gsl[gfidx as u32].gn_name,
                          &gsl[gfidx as u32].gn_params, 0 as u32, &targs, p);
     let cvis = tbinds_visible(a, sc.sc_tbinds, &gsl[gfidx as u32].gn_tparams);
-    let cscope = scope_with_tparams_binds(sc, &gsl[gfidx as u32].gn_tparams, &cvis);
+    let gsc = scope_with_modpath(sc, &gsl[gfidx as u32].gn_modpath);
+    let cscope = scope_with_tparams_binds(&gsc, &gsl[gfidx as u32].gn_tparams, &cvis);
     let cret = resolve_sig_ret(a, ar, &cscope, gsl[gfidx as u32].gn_ret, p);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_call_binds(a, ar, &cscope, &gsl[gfidx as u32].gn_params, &targs, &binds, p);
@@ -3759,7 +3761,7 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     // Re-resolve the return with the inferred bindings IN SCOPE so a generic
     // application (`Vec<T>`) or assoc projection (`Option<I::Item>`) lowers to
     // its concrete instance, not a `subst` that leaves the app abstract.
-    let icscope = scope_with_tbinds(sc, &gsl[gfidx as u32].gn_tparams, &binds);
+    let icscope = scope_with_tbinds(&gsc, &gsl[gfidx as u32].gn_tparams, &binds);
     check_gen_call_args(a, ar, sc, &icscope, gsl[gfidx as u32].gn_name,
                         &gsl[gfidx as u32].gn_params, 0 as u32, &targs, args, p);
     let iret = resolve_sig_ret(a, ar, &icscope, gsl[gfidx as u32].gn_ret, p);
@@ -4405,7 +4407,7 @@ fn meth_param_count(sc: *const TyScope, mangled: str, mparams: *const Vec<*const
 // it (the auto-ref rule, the argument check) had to abstain.  Same signature,
 // half resolved early and half resolved late.
 fn meth_param_ty(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str,
-                 mparams: *const Vec<*const TypeAnn>, self_ty: Option<*const Typ>, k: u32, pos: Pos) -> Option<*const Typ> {
+                 mparams: *const Vec<*const TypeAnn>, mpath: *const Vec<str>, self_ty: Option<*const Typ>, k: u32, pos: Pos) -> Option<*const Typ> {
     let none: Option<*const Typ> = Option::None;
     let si = sig_index(sc, mangled);
     if si >= 0 as int {
@@ -4413,13 +4415,14 @@ fn meth_param_ty(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str,
         return Option::Some(sc.sc_gsigs.as_slice()[si as u32].fs_params.as_slice()[k]);
     }
     if k >= mparams.length() { return none; }
-    let msc = scope_with_tparams_self(sc, sc.sc_tparams, self_ty);
+    let modsc = scope_with_modpath(sc, mpath);
+    let msc = scope_with_tparams_self(&modsc, sc.sc_tparams, self_ty);
     return Option::Some(resolve_sig_ty(a, ar, &msc, mparams.as_slice()[k], pos));
 }
 
 fn meth_autoref(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str,
-                mparams: *const Vec<*const TypeAnn>, self_ty: Option<*const Typ>, i: u32, targ: *const Texpr, pos: Pos) -> *const Texpr {
-    return match meth_param_ty(a, ar, sc, mangled, mparams, self_ty, i + 1 as u32, pos) {
+                mparams: *const Vec<*const TypeAnn>, mpath: *const Vec<str>, self_ty: Option<*const Typ>, i: u32, targ: *const Texpr, pos: Pos) -> *const Texpr {
+    return match meth_param_ty(a, ar, sc, mangled, mparams, mpath, self_ty, i + 1 as u32, pos) {
         Option::Some(pt) => autoref_into(ar, pt, targ)
         | Option::None => targ
     };
@@ -4434,19 +4437,19 @@ fn autoref_into(ar: *Arena, pty: *const Typ, targ: *const Texpr) -> *const Texpr
 }
 
 fn append_args_meth(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                    mangled: str, disp: str, mparams: *const Vec<*const TypeAnn>, self_ty: Option<*const Typ>,
+                    mangled: str, disp: str, mparams: *const Vec<*const TypeAnn>, mpath: *const Vec<str>, self_ty: Option<*const Typ>,
                     args: *const Vec<*const Expr>, pos: Pos, out: *Vec<*const Texpr>) {
     let n = args.length();
     let sl = args.as_slice();
     let mut i = 0 as u32;
     while i < n {
         let targ = elab_expr(a, ar, g, sc, env, none_ty(), sl[i]);
-        let reffed = meth_autoref(a, ar, sc, mangled, mparams, self_ty, i, targ, pos);
+        let reffed = meth_autoref(a, ar, sc, mangled, mparams, mpath, self_ty, i, targ, pos);
         let fin = coerce_at(a, ar, sc, mangled, i + 1 as u32, reffed);
         // The same slot the auto-ref just read, read once more by the check.
         // Asking a different table here is how a reference landed in a slot
         // whose declared type nobody compared it against.
-        match meth_param_ty(a, ar, sc, mangled, mparams, self_ty, i + 1 as u32, pos) {
+        match meth_param_ty(a, ar, sc, mangled, mparams, mpath, self_ty, i + 1 as u32, pos) {
             Option::Some(pt) => { check_slot_arg(a, ar, sc, disp, i, pt, sl[i], fin.ty, pos); }
             | Option::None => { }
         }
@@ -4661,8 +4664,9 @@ fn struct_gen_call_typed(a: Allocator, ar: *Arena, sc: *const TyScope, midx: u32
     // ordinary struct-gen methods every tparam is already recovered, so this is
     // a no-op.  Binding it before `cret` lets the adapter return instance
     // (`Map<VecIter<T>, F>`) resolve + register.
-    unify_method_args(a, ar, sc, &sl[midx].mi_tparams, &sl[midx].mi_params, targs, binds, 1 as u32, p);
-    let cscope0 = scope_with_tbinds(sc, &sl[midx].mi_tparams, binds);
+    let msc = scope_with_modpath(sc, &sl[midx].mi_modpath);
+    unify_method_args(a, ar, &msc, &sl[midx].mi_tparams, &sl[midx].mi_params, targs, binds, 1 as u32, p);
+    let cscope0 = scope_with_tbinds(&msc, &sl[midx].mi_tparams, binds);
     let recv_self: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, inst_path))));
     let cscope = scope_with_self(&cscope0, recv_self);
     // A tparam bound twice, differently, is the reference's FIRST answer here:
@@ -4721,7 +4725,8 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     check_gen_call_arity(a, ar, sc, sl[midx].mi_mangled, &sl[midx].mi_params,
                          1 as u32, &targs, p);
     let mvis = tbinds_visible(a, sc.sc_tbinds, &sl[midx].mi_tparams);
-    let cscope_t = scope_with_tparams_binds(sc, &sl[midx].mi_tparams, &mvis);
+    let msc = scope_with_modpath(sc, &sl[midx].mi_modpath);
+    let cscope_t = scope_with_tparams_binds(&msc, &sl[midx].mi_tparams, &mvis);
     // The annotations read here can be the TRAIT's own, and a trait declares its
     // receiver as `*const Self` - the reference substitutes that away when it
     // specialises the default, before any of it reaches type resolution.  The
@@ -4743,7 +4748,7 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     // the receiver instance already; these two were the ones still resolving a
     // parameter under a scope where `Self` means nothing, so the slot stayed a
     // marker and the message offered the reader `expected *const Self::Val`.
-    let iscope_t = scope_with_tbinds(sc, &sl[midx].mi_tparams, &binds);
+    let iscope_t = scope_with_tbinds(&msc, &sl[midx].mi_tparams, &binds);
     let iself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[midx].mi_path))));
     let iscope = scope_with_self(&iscope_t, iself);
     let rargs = autoref_gen_args(a, ar, &iscope, &sl[midx].mi_params, 1 as u32, &targs, p);
@@ -4967,7 +4972,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
     }
     let mut cargs: Vec<*const Texpr> = Vec::with_capacity(a, 8 as u32);
     cargs.push(adj);
-    append_args_meth(a, ar, g, sc, env, mm, mdisp, &sl[idx as u32].mi_params, mself, args, p, &cargs);
+    append_args_meth(a, ar, g, sc, env, mm, mdisp, &sl[idx as u32].mi_params, &sl[idx as u32].mi_modpath, mself, args, p, &cargs);
     return te_node(ar, TexprNode::TCall { mangled: mm, args: cargs }, ret_or_void(ar, mret), p);
 }
 
