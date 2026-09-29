@@ -1,0 +1,1 @@
+tests/derivegen/refuse_float_instance.exl:4:8: error: @derive(Eq) on a generic struct 'Box' is not supported yet

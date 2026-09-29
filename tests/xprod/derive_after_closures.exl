@@ -1,0 +1,19 @@
+// Where derived impls land in the output: after the program's own impls and the
+// closures the program lifts, before the generic instances - the place a written
+// impl appended to the program would take.
+struct H { v: int }
+impl H { pub fn get(*const self) -> int { return self.v; } }
+
+@derive(Eq, Clone)
+struct P { x: int }
+
+fn run_unary<F: |int|->int>(f: F, x: int) -> int { f(x) }
+
+fn main() {
+    let t: int = 4;
+    let p = P { x: 1 };
+    let q = p.clone();
+    let h = H { v: 2 };
+    println(run_unary(|x: int| -> int x + t, h.get()));
+    if p.eq(&q) { println(1); } else { println(0); }
+}

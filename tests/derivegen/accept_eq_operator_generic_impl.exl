@@ -1,0 +1,16 @@
+// `==` on a type whose Eq comes from a generic impl calls that impl's `eq` for the
+// instance at hand, as `a.eq(&b)` does - the instance is made, not just named.
+struct Box<T> { v: T }
+
+impl<T> Eq for Box<T> {
+    fn eq(*const self, other: *const Box<T>) -> bool { return self.v.eq(other.v); }
+}
+
+fn main() {
+    let a = Box { v: 1 };
+    let b = Box { v: 1 };
+    let c = Box { v: 2 };
+    if a == b { println(1); } else { println(0); }
+    if a != c { println(1); } else { println(0); }
+    if a == c { println(1); } else { println(0); }
+}

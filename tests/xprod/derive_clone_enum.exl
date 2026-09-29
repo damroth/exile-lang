@@ -1,0 +1,35 @@
+// A derived Clone on an enum rebuilds the variant it finds, each payload from its
+// own `.clone()` - a unit variant, a tuple variant and a struct variant, with an
+// owned String among the payloads so the copy is a copy and not a share.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+
+@derive(Clone)
+struct Inner { a: int }
+
+@derive(Clone)
+enum Shape {
+    Dot
+    | Seg(int, str)
+    | Named { id: int, name: String, inner: Inner }
+}
+
+fn tag(s: *const Shape) -> int {
+    return match *s {
+        Shape::Dot => 0
+        | Shape::Seg(n, _t) => n
+        | Shape::Named { id, name, inner } => id + inner.a + name.length() as int
+    };
+}
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let d = Shape::Dot;
+    let s = Shape::Seg(4, "x");
+    let n = Shape::Named { id: 10, name: String::with_str(a, "abc"), inner: Inner { a: 5 } };
+    let d2 = d.clone();
+    let s2 = s.clone();
+    let n2 = n.clone();
+    println(tag(&d2));
+    println(tag(&s2));
+    println(tag(&n2));
+}

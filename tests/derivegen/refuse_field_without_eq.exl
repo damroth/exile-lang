@@ -1,0 +1,11 @@
+// The instance over a struct with no Eq has no `eq` to call for its field.
+struct Plain { v: int }
+
+@derive(Eq)
+struct Box<T> { v: T, n: int }
+
+fn main() {
+    let b = Box { v: Plain { v: 1 }, n: 4 };
+    let c = Box { v: Plain { v: 1 }, n: 4 };
+    if b == c { println(1); } else { println(0); }
+}

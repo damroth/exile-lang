@@ -1,0 +1,37 @@
+// Eq's `ne` is a trait default: an impl that writes only `eq` - by hand, generic
+// or not, at the top level or inside a module - still answers `ne`, and the
+// default stays out of the output when nothing calls it.
+struct P { x: int }
+impl Eq for P {
+    fn eq(*const self, other: *const P) -> bool { return self.x == other.x; }
+}
+
+struct B<T> { v: T }
+impl<T> Eq for B<T> {
+    fn eq(*const self, other: *const B<T>) -> bool { return self.v.eq(other.v); }
+}
+
+struct Q { y: int }
+impl Eq for Q {
+    fn eq(*const self, other: *const Q) -> bool { return self.y == other.y; }
+}
+
+mod m {
+    pub struct R { x: int }
+    impl Eq for R {
+        fn eq(*const self, other: *const R) -> bool { return self.x == other.x; }
+    }
+    pub fn differ(v: int, w: int) -> bool { let a = R { x: v }; let b = R { x: w }; return a.ne(&b); }
+}
+
+fn main() {
+    let p = P { x: 1 };
+    let p2 = P { x: 2 };
+    if p.ne(&p2) { println(1); } else { println(0); }
+    let b = B { v: 3 };
+    let b2 = B { v: 3 };
+    if b.ne(&b2) { println(1); } else { println(0); }
+    let q = Q { y: 5 };
+    if q.eq(&q) { println(1); } else { println(0); }
+    if m::differ(1, 1) { println(1); } else { println(0); }
+}

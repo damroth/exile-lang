@@ -1,0 +1,5 @@
+// A derived Hash is a real `impl Hash`, so the supertrait holds it as it holds a
+// written one: without Eq beside it the derive is refused, at the decl.
+@derive(Hash)
+struct P { x: int, y: int }
+fn main() { let p = P { x: 1, y: 2 }; println(p.hash() as int); }

@@ -1,0 +1,1 @@
+tests/derivegen/refuse_float_instance.exl:4:8: error: method call '.eq()' requires a struct or enum value (or a pointer to one), got f64

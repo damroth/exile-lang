@@ -1,0 +1,13 @@
+// A derived Debug renders a field by the type it was written with, and a float
+// is neither an integer, a bool nor a str - it goes to its own Debug impl, which
+// it does not have.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+@derive(Debug)
+struct Rec { f: f64 }
+fn main() {
+    let a = raw::make_c_allocator();
+    let mut sb = StringBuilder::with_capacity(a, 8 as u32);
+    let r = Rec { f: 1.5 };
+    r.fmt_debug(&sb);
+    println(sb.length() as int);
+}

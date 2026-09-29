@@ -1,0 +1,5 @@
+// The derives are expanded before anything else is checked, so an unsupported
+// derive is the first thing reported - ahead of a field type that does not exist.
+@derive(Display)
+struct P { x: Nope }
+fn main() { println(1); }

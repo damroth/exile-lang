@@ -1,0 +1,1 @@
+tests/derivegen/accept_struct.exl:5:8: error: @derive(Eq) on a generic struct 'Box' is not supported yet

@@ -1,0 +1,5 @@
+// A derived Hash folds each field's own `.hash()`, and a pointer has none: hashing
+// its address would give two equal values different hashes.
+@derive(Eq, Hash)
+struct Rec { p: *const int, n: int }
+fn main() { let k = 5; let r = Rec { p: &k, n: 2 }; println(r.hash() as int); }

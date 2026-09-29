@@ -1,0 +1,1 @@
+tests/derivegen/refuse_field_without_eq.exl:5:8: error: no method 'eq' on type 'Plain'

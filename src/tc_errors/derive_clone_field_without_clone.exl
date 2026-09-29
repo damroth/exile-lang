@@ -1,0 +1,7 @@
+// A derived Clone copies each field through the field's own `.clone()`; a field
+// whose type has no Clone has nothing to call, so the derive is refused rather
+// than copying the field's bits.
+struct Plain { v: int }
+@derive(Clone)
+struct Rec { p: Plain, n: int }
+fn main() { let r = Rec { p: Plain { v: 1 }, n: 2 }; let c = r.clone(); println(c.n); }

@@ -1,0 +1,1 @@
+tests/derivegen/accept_enum.exl:8:6: error: @derive(Eq) on a generic enum 'Opt' is not supported yet

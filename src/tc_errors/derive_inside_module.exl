@@ -1,0 +1,12 @@
+// Derives are expanded at the top level only: a derive on a type inside a module
+// writes no impl, so the method it would have written does not exist.
+mod m {
+    @derive(Eq)
+    pub struct P { x: int }
+    pub fn mk(v: int) -> P { return P { x: v }; }
+}
+fn main() {
+    let p = m::mk(1);
+    let q = m::mk(1);
+    if p.eq(&q) { println(1); } else { println(0); }
+}

@@ -1176,7 +1176,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-armtail selfhost-loopfresh selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -1938,6 +1938,55 @@ selfhost-loopfresh: $(EXILC_BIN)
 	  echo "selfhost-loopfresh: wrong trace or witness balance:"; \
 	  diff tests/loopfresh/body_binding_consumed.expected $(C_OUT)/loopfresh.out | head -6; exit 1; fi; \
 	echo "selfhost-loopfresh: clean (bindings declared in a while body, a for body, a nested block, an arm, before a continue, and freed by the body's own defer, each consumed in its iteration - RUNS `tr '\n' '/' < $(C_OUT)/loopfresh.out | sed 's|/$$||'`; the frozen reference still refuses them)"
+
+# ===== a derive on a generic type, and `==` through a generic Eq impl =====
+#
+# A derive is an impl the checker writes; on a generic struct or enum it is an
+# impl over the type's parameters, made for each instance the program uses. The
+# FROZEN reference refuses Eq, Hash and Clone on a generic type ("not supported
+# yet") and refuses `==` on an instance whose Eq comes from a generic impl it
+# otherwise accepts. Both sides are pinned: each fixture is still refused by the
+# reference with its recorded line (`.oracle`); each `accept_` fixture compiles
+# in the port, survives -Werror at -O2 and RUNS its `.expected` output; each
+# `refuse_` fixture - an instance whose field has no method to call - is refused
+# by the port with the line in `.expected`, and no C is written for it. Debug on
+# a generic type stays refused by both, pinned in the rejection corpus.
+selfhost-derive-generic: $(EXILC_BIN)
+	@na=0; nr=0; fail=0; \
+	for f in tests/derivegen/*.exl; do \
+	  b=`basename $$f .exl`; d=tests/derivegen; \
+	  test -s $$d/$$b.oracle || { echo "selfhost-derive-generic: MISSING/EMPTY $$d/$$b.oracle"; fail=1; continue; }; \
+	  test -s $$d/$$b.expected || { echo "selfhost-derive-generic: MISSING/EMPTY $$d/$$b.expected"; fail=1; continue; }; \
+	  rm -f $(C_OUT)/dg_o.c $(C_OUT)/dg_o.err $(C_OUT)/dg_p.c $(C_OUT)/dg_p.err $(HOST_OUT)/dg $(C_OUT)/dg.out; \
+	  if $(EXILE) --target c --c-out $(C_OUT)/dg_o.c $$f >/dev/null 2>$(C_OUT)/dg_o.err; then \
+	    echo "selfhost-derive-generic: the FROZEN reference now ACCEPTS $$b - re-measure"; fail=1; continue; fi; \
+	  if [ "`grep -m1 error: $(C_OUT)/dg_o.err`" != "`cat $$d/$$b.oracle`" ]; then \
+	    echo "selfhost-derive-generic: the reference refuses $$b for another reason: `grep -m1 error: $(C_OUT)/dg_o.err`"; fail=1; continue; fi; \
+	  case "$$b" in \
+	    accept_*) \
+	      na=`expr $$na + 1`; \
+	      $(EXILC_BIN) --target c --c-out $(C_OUT)/dg_p.c $$f >/dev/null 2>$(C_OUT)/dg_p.err \
+	        || { echo "selfhost-derive-generic: the port REFUSED $$b: `grep -m1 error: $(C_OUT)/dg_p.err`"; fail=1; continue; }; \
+	      test -s $(C_OUT)/dg_p.c || { echo "selfhost-derive-generic: EMPTY emitted C for $$b"; fail=1; continue; }; \
+	      cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/dg $(C_OUT)/dg_p.c $(SYS_HOST) \
+	        || { echo "selfhost-derive-generic: $$b is not clean C89 at -O2, or does not link"; fail=1; continue; }; \
+	      $(HOST_OUT)/dg > $(C_OUT)/dg.out 2>&1; \
+	      if ! cmp -s $$d/$$b.expected $(C_OUT)/dg.out; then \
+	        echo "selfhost-derive-generic: $$b RUNS wrong:"; diff $$d/$$b.expected $(C_OUT)/dg.out | head -6; fail=1; fi ;; \
+	    refuse_*) \
+	      nr=`expr $$nr + 1`; \
+	      if $(EXILC_BIN) --target c --c-out $(C_OUT)/dg_p.c $$f >/dev/null 2>$(C_OUT)/dg_p.err; then \
+	        echo "selfhost-derive-generic: the port ACCEPTED $$b"; fail=1; continue; fi; \
+	      if [ -f $(C_OUT)/dg_p.c ]; then echo "selfhost-derive-generic: the port wrote C for $$b, which it refuses"; fail=1; continue; fi; \
+	      if [ "`grep -m1 error: $(C_OUT)/dg_p.err`" != "`cat $$d/$$b.expected`" ]; then \
+	        echo "selfhost-derive-generic: the port refuses $$b for another reason: `grep -m1 error: $(C_OUT)/dg_p.err`"; fail=1; fi ;; \
+	    *) echo "selfhost-derive-generic: $$b is neither accept_ nor refuse_"; fail=1 ;; \
+	  esac; \
+	done; \
+	rm -f $(C_OUT)/dg_o.c $(C_OUT)/dg_o.err $(C_OUT)/dg_p.c $(C_OUT)/dg_p.err $(HOST_OUT)/dg $(C_OUT)/dg.out; \
+	if [ $$na -lt 1 ] || [ $$nr -lt 1 ]; then echo "selfhost-derive-generic: $$na accept / $$nr refuse fixtures - a side with none checks nothing"; exit 1; fi; \
+	if [ $$fail -ne 0 ]; then exit 1; fi; \
+	echo "selfhost-derive-generic: clean ($$na accepted and run, $$nr refused at the instance with their own line; the frozen reference refuses all `expr $$na + $$nr` with its recorded line)"
 
 # ===== an owner moved out by some arms of a match and kept by others =====
 #
@@ -3510,7 +3559,9 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                    arm_let_mut_tuple \
                    lift_array_of_struct_lits lift_array_repeat_struct_lit \
                    lift_tuple_with_struct_lit lift_new_struct_with_struct_lit_field \
-                   lift_new_enum_with_struct_lit_arg lift_fnptr_field_call_if_arg
+                   lift_new_enum_with_struct_lit_arg lift_fnptr_field_call_if_arg \
+                   derive_field_dispatch derive_clone_enum derive_debug_fields \
+                   eq_default_ne derive_after_closures derive_debug_empty_struct
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

@@ -1,0 +1,10 @@
+// A float has no Eq, so the instance of a derived Eq over f64 has nothing to call
+// for its field - refused when the instance is made, at the derive.
+@derive(Eq)
+struct Box<T> { v: T, n: int }
+
+fn main() {
+    let b = Box { v: 1.5, n: 4 };
+    let c = Box { v: 1.5, n: 4 };
+    if b == c { println(1); } else { println(0); }
+}

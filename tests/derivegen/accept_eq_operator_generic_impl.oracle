@@ -1,0 +1,1 @@
+tests/derivegen/accept_eq_operator_generic_impl.exl:13:10: error: type 'Box_i32' does not implement Eq, so `==` cannot compare two values of it (add `@derive(Eq)` to the decl or write `impl Eq for Box_i32` to define content equality)

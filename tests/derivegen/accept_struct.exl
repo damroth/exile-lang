@@ -1,0 +1,21 @@
+// A derive on a generic struct is an impl over the struct's parameters, made for
+// each instance the program uses: two instances here, one of them over str, whose
+// field compares and hashes by content. `==` and `!=` reach the same impl.
+@derive(Eq, Hash, Clone)
+struct Box<T> { v: T, n: int }
+
+fn main() {
+    let b = Box { v: 3, n: 4 };
+    let c = Box { v: 3, n: 4 };
+    let d = Box { v: 9, n: 4 };
+    if b == c { println(1); } else { println(0); }
+    if b != d { println(1); } else { println(0); }
+    if b.ne(&c) { println(1); } else { println(0); }
+    if b.hash() == c.hash() { println(1); } else { println(0); }
+    let e = d.clone();
+    println(e.v);
+    let s = Box { v: "hi", n: 1 };
+    let t = Box { v: "hi", n: 1 };
+    if s == t { println(1); } else { println(0); }
+    if s.hash() == t.clone().hash() { println(1); } else { println(0); }
+}

@@ -1,0 +1,39 @@
+// A derived Eq, Hash and Clone answer for each field through that field's own
+// method: a primitive through the built-in, a str through its content, a String
+// and a derived type through their impls. Clone rebuilds a String rather than
+// sharing its buffer, and Hash folds a str by content, so two equal records hash
+// equal although nothing in them is an integer.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+
+@derive(Eq, Hash, Clone)
+struct Inner { a: int }
+
+@derive(Eq, Hash, Clone)
+enum Color { Red | Green }
+
+@derive(Eq, Hash, Clone)
+struct Rec { s: str, i: int, b: bool, u: u8, t: String, inner: Inner, c: Color }
+
+@derive(Eq, Hash, Clone)
+enum Tag { Bare | Named(str, bool) | Keyed { k: String, inner: Inner } }
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let r = Rec { s: "hi", i: 1, b: true, u: 7 as u8, t: String::with_str(a, "owned"),
+                  inner: Inner { a: 2 }, c: Color::Green };
+    let q = r.clone();
+    if q.eq(&r) { println(1); } else { println(0); }
+    if q.hash() == r.hash() { println(1); } else { println(0); }
+    if q.t.as_str() == r.t.as_str() { println(1); } else { println(0); }
+    println(q.t.length() as int);
+    let d = Rec { s: "hi", i: 1, b: false, u: 7 as u8, t: String::with_str(a, "owned"),
+                  inner: Inner { a: 2 }, c: Color::Green };
+    if d.ne(&r) { println(1); } else { println(0); }
+    let n = Tag::Named("x", true);
+    let k = Tag::Keyed { k: String::with_str(a, "key"), inner: Inner { a: 3 } };
+    let k2 = k.clone();
+    if k2.eq(&k) { println(1); } else { println(0); }
+    if k2.hash() == k.hash() { println(1); } else { println(0); }
+    if n.clone().hash() == n.hash() { println(1); } else { println(0); }
+    if n.ne(&k) { println(1); } else { println(0); }
+}

@@ -1,0 +1,7 @@
+// The built-in `.eq()` on a primitive compares two values of ONE type; a u8
+// argument to an int's `.eq()` is refused, not widened.
+fn main() {
+    let x: int = 1;
+    let y: u8 = 2 as u8;
+    if x.eq(y) { println(1); } else { println(0); }
+}
