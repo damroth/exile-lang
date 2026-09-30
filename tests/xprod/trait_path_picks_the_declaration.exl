@@ -1,0 +1,19 @@
+// Two traits named `Tr`, one at the top level and one in `m`. An impl's trait is
+// found as the reference finds it: by the name among every trait the program
+// declares, and when several answer, by the written path matched exactly. `Tr`
+// written inside `m` is therefore the TOP-level trait, and `m::Tr` written at the
+// top level is the one in `m` - each type gets that trait's default.
+trait Tr { fn key(*const self) -> int; fn scaled(*const self) -> int { return self.key() * 10; } }
+mod m {
+    pub trait Tr { fn key(*const self) -> int; fn scaled(*const self) -> int { return self.key() * 2; } }
+    pub struct P { x: int }
+    impl Tr for P { fn key(*const self) -> int { return self.x; } }
+}
+struct Q { y: int }
+impl m::Tr for Q { fn key(*const self) -> int { return self.y; } }
+fn main() {
+    let p = m::P { x: 3 };
+    let q = Q { y: 3 };
+    println(p.scaled());
+    println(q.scaled());
+}

@@ -1,0 +1,10 @@
+// A default method becomes the implementor's own method, read where the IMPL is:
+// implemented at the top level, a default whose signature names a type only the
+// trait's module can see names nothing there.
+mod m {
+    pub struct P { x: int }
+    pub trait Near { fn key(*const self) -> int; fn near(*const self, o: *const P) -> bool { return self.key() == o.x; } }
+}
+struct Q { y: int }
+impl m::Near for Q { fn key(*const self) -> int { return self.y; } }
+fn main() { let q = Q { y: 1 }; println(q.key()); }

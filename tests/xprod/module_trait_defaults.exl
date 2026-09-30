@@ -1,0 +1,68 @@
+// A trait's default methods reach every implementor, wherever the trait and the
+// impl are declared: a trait inside a module or a nested one, implemented beside
+// it, at the top level, or for a type of another module; a top-level trait
+// implemented inside a module. The defaults are called inside the module and
+// outside it, by path, through a bound written as a module path, from another
+// default, on a generic impl, with a parameter of their own, through a
+// supertrait, on an enum, and one is never called at all - it is still emitted.
+mod m {
+    pub trait Tr { fn key(*const self) -> int; fn twice(*const self) -> int { return self.key() * 2; } fn four(*const self) -> int { return self.twice() * 2; } }
+    pub trait Plus { fn pkey(*const self) -> int; fn plus<T>(*const self, t: T) -> int { return self.pkey() + 1; } }
+    pub trait Near { fn at(*const self) -> int; fn near(*const self, o: *const P) -> bool { return self.at() == o.x; } }
+    pub trait Base { fn base(*const self) -> int; }
+    pub trait Top: Base { fn top(*const self) -> int { return self.base() + 1; } }
+    pub trait Idle { fn ikey(*const self) -> int; fn unused(*const self) -> int { return self.ikey() + 100; } }
+    pub struct P { x: int }
+    pub struct B<T> { v: T, n: int }
+    pub enum E { A | Z }
+    impl Tr for P { fn key(*const self) -> int { return self.x; } }
+    impl Plus for P { fn pkey(*const self) -> int { return self.x; } }
+    impl Near for P { fn at(*const self) -> int { return self.x; } }
+    impl Base for P { fn base(*const self) -> int { return self.x; } }
+    impl Top for P { }
+    impl Idle for P { fn ikey(*const self) -> int { return self.x; } }
+    impl<T> Tr for B<T> { fn key(*const self) -> int { return self.n; } }
+    impl Tr for E { fn key(*const self) -> int { return match *self { E::A => 1 | E::Z => 2 }; } }
+    pub fn inside(v: int) -> int { let p = P { x: v }; return p.twice(); }
+    pub mod n {
+        pub trait Deep { fn key(*const self) -> int; fn twice(*const self) -> int { return self.key() * 2; } }
+        pub struct R { x: int }
+        impl Deep for R { fn key(*const self) -> int { return self.x; } }
+    }
+}
+
+trait Outer { fn key(*const self) -> int; fn ten(*const self) -> int { return self.key() * 10; } }
+
+mod k {
+    pub struct S { y: int }
+    impl Outer for S { fn key(*const self) -> int { return self.y; } }
+    pub fn inside(v: int) -> int { let s = S { y: v }; return s.ten(); }
+}
+
+struct Q { y: int }
+impl m::Tr for Q { fn key(*const self) -> int { return self.y; } }
+
+fn via_bound<T: m::Tr>(t: T) -> int { return t.four(); }
+
+fn main() {
+    let p = m::P { x: 3 };
+    println(p.twice());
+    println(m::inside(4));
+    println(m::P::twice(&p));
+    println(via_bound(p));
+    println(p.plus(true));
+    if p.near(&m::P { x: 3 }) { println(1); } else { println(0); }
+    println(p.top());
+    println(p.ikey());
+    let b = m::B { v: true, n: 5 };
+    println(b.twice());
+    let e = m::E::Z;
+    println(e.twice());
+    let r = m::n::R { x: 6 };
+    println(r.twice());
+    let q = Q { y: 7 };
+    println(q.twice());
+    let s = k::S { y: 8 };
+    println(s.ten());
+    println(k::inside(9));
+}

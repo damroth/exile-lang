@@ -3563,7 +3563,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                    derive_field_dispatch derive_clone_enum derive_debug_fields \
                    eq_default_ne derive_after_closures derive_debug_empty_struct \
                    module_signatures_from_outside static_generic_methods \
-                   callee_signature_own_tparams
+                   callee_signature_own_tparams module_trait_defaults \
+                   trait_path_picks_the_declaration trait_default_signature_in_impl_module
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

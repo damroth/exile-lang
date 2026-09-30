@@ -1,0 +1,5 @@
+// A bound written as a module path names ONE trait, by its last segment.
+mod m { pub trait Tr { fn key(*const self) -> int; } }
+struct Q { y: int }
+fn go<T: m::Tr>(t: T) -> int { return 1; }
+fn main() { let q = Q { y: 1 }; println(go(q)); }

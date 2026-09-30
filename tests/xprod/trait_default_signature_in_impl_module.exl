@@ -1,0 +1,32 @@
+// A default method is read as the implementor's own, in the IMPL's module. The
+// trait is at the top level and names `P`; its impls live in `m`, which declares
+// a `P` of its own, so the defaults' parameter is `m::P` - the type the caller
+// passes. Read in the trait's module it would be the top-level `P` instead. Every
+// call path reads it: a method call, a call by path, a generic default by both,
+// and a default on a generic impl.
+struct P { x: int, z: int }
+trait Near {
+    fn key(*const self) -> int;
+    fn near(*const self, o: *const P) -> bool { return self.key() == o.x; }
+    fn near_t<T>(*const self, o: *const P, t: T) -> bool { return self.key() == o.x; }
+}
+mod m {
+    pub struct P { x: int }
+    pub struct S { y: int }
+    pub struct G<T> { v: T, y: int }
+    impl Near for S { fn key(*const self) -> int { return self.y; } }
+    impl<T> Near for G<T> { fn key(*const self) -> int { return self.y; } }
+}
+fn say(b: bool) { if b { println(1); } else { println(0); } }
+fn main() {
+    let s = m::S { y: 1 };
+    let p = m::P { x: 1 };
+    say(s.near(&p));
+    say(m::S::near(&s, &p));
+    say(s.near_t(&p, true));
+    say(m::S::near_t(&s, &p, true));
+    let g = m::G { v: false, y: 2 };
+    say(g.near(&p));
+    let t = P { x: 2, z: 3 };
+    println(t.z);
+}
