@@ -1,0 +1,5 @@
+// A generic method called by its path counts its arguments before it infers
+// anything, as a generic function does.
+struct P { x: int }
+impl P { pub fn of<T>(t: T, v: int) -> P { return P { x: v }; } }
+fn main() { let q = P::of(); println(q.x); }

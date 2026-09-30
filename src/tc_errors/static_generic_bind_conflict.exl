@@ -1,0 +1,5 @@
+// A type parameter pinned two ways by the arguments of a generic method called
+// by its path is refused, not settled by whichever argument came first.
+struct P { x: int }
+impl P { pub fn both<T>(a: T, b: T) -> int { return 1; } }
+fn main() { println(P::both(3, true)); }

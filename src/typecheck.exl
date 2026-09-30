@@ -3356,17 +3356,26 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     // type left them free, so `Bx::take(&b, x)` reported the parameter the
     // receiver had already settled instead of the one it could not infer.
     let sargs = elab_args(a, ar, g, sc, env, args);
+    // Called by its path, the method is a function to the reference: its arity
+    // is counted before anything is inferred, a type parameter bound two ways is
+    // refused, and every argument is compared with its slot.
+    check_gen_call_arity(a, ar, sc, base, &sl[midx].mi_params, 0 as u32, &sargs, p);
     if sl[midx].mi_has_self && sargs.length() > 0 as u32 {
         bind_recv_tparams(a, ar, sc, &sl[midx].mi_path, &recv_base_path(a, sargs.as_slice()[0 as u32].ty), &binds);
     }
     let msc = scope_with_modpath(sc, &sl[midx].mi_modpath);
-    unify_method_args(a, ar, &msc, &sl[midx].mi_tparams, &sl[midx].mi_params, &sargs, &binds, 0 as u32, p);
+    let no_binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    let usc = scope_with_tparams_binds(&msc, &sl[midx].mi_tparams, &no_binds);
+    unify_method_args(a, ar, &usc, &sl[midx].mi_tparams, &sl[midx].mi_params, &sargs, &binds, 0 as u32, p);
+    check_bind_conflicts(a, ar, sc, &binds, p);
     check_tparams_bound(a, ar, sc, &sl[midx].mi_tparams, &binds, p);
     check_bound_conformance(a, ar, sc, &sl[midx].mi_tbounds, &binds, sl[midx].mi_name, p);
     let cscope_t = scope_with_tbinds(&msc, &sl[midx].mi_tparams, &binds);
     let cself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[midx].mi_path))));
     let cscope = scope_with_self(&cscope_t, cself);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
+    check_gen_call_args(a, ar, sc, &cscope, method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
+                        &sl[midx].mi_params, 0 as u32, &sargs, args, p);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
     let inst = fn_instance_mangled(a, ar, base, &oargs);
     if sl[midx].mi_prelude {
@@ -3374,6 +3383,7 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
         let no_self: Vec<str> = Vec::with_capacity(a, 8 as u32);
         queue_prelude_gen(a, sc, path_last(&sl[midx].mi_path), sl[midx].mi_name, &binds, inst, &no_self, p);
     }
+    else { queue_method_instance(a, sc, &sl[midx].mi_modpath, sl[midx].mi_impl_idx, sl[midx].mi_meth_idx, &binds, inst, &sl[midx].mi_path, p); }
     return te_node(ar, TexprNode::TCall { mangled: inst, args: sargs }, ret_or_void(ar, cret), p);
 }
 fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
@@ -3745,9 +3755,12 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     let targs = elab_args(a, ar, g, sc, env, args);
     check_gen_call_arity(a, ar, sc, gsl[gfidx as u32].gn_name,
                          &gsl[gfidx as u32].gn_params, 0 as u32, &targs, p);
-    let cvis = tbinds_visible(a, sc.sc_tbinds, &gsl[gfidx as u32].gn_tparams);
+    // The callee's annotations see only what the callee declares. A caller's
+    // binding once answered for the callee's own `T` (`wrap<T>` calling `ident<T>`
+    // reported T unbound), and for a type the callee names `T`.
+    let no_binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     let gsc = scope_with_modpath(sc, &gsl[gfidx as u32].gn_modpath);
-    let cscope = scope_with_tparams_binds(&gsc, &gsl[gfidx as u32].gn_tparams, &cvis);
+    let cscope = scope_with_tparams_binds(&gsc, &gsl[gfidx as u32].gn_tparams, &no_binds);
     let cret = resolve_sig_ret(a, ar, &cscope, gsl[gfidx as u32].gn_ret, p);
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     infer_call_binds(a, ar, &cscope, &gsl[gfidx as u32].gn_params, &targs, &binds, p);
@@ -4415,8 +4428,13 @@ fn meth_param_ty(a: Allocator, ar: *Arena, sc: *const TyScope, mangled: str,
         return Option::Some(sc.sc_gsigs.as_slice()[si as u32].fs_params.as_slice()[k]);
     }
     if k >= mparams.length() { return none; }
+    // The method declares no type parameters, and the caller's are not its: a
+    // caller's `T`, bound or not, read here would stand in for a type named `T`.
+    let no_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let no_binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     let modsc = scope_with_modpath(sc, mpath);
-    let msc = scope_with_tparams_self(&modsc, sc.sc_tparams, self_ty);
+    let bare = scope_with_tparams_binds(&modsc, &no_tp, &no_binds);
+    let msc = scope_with_self(&bare, self_ty);
     return Option::Some(resolve_sig_ty(a, ar, &msc, mparams.as_slice()[k], pos));
 }
 
@@ -4665,7 +4683,9 @@ fn struct_gen_call_typed(a: Allocator, ar: *Arena, sc: *const TyScope, midx: u32
     // a no-op.  Binding it before `cret` lets the adapter return instance
     // (`Map<VecIter<T>, F>`) resolve + register.
     let msc = scope_with_modpath(sc, &sl[midx].mi_modpath);
-    unify_method_args(a, ar, &msc, &sl[midx].mi_tparams, &sl[midx].mi_params, targs, binds, 1 as u32, p);
+    let no_binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
+    let usc = scope_with_tparams_binds(&msc, &sl[midx].mi_tparams, &no_binds);
+    unify_method_args(a, ar, &usc, &sl[midx].mi_tparams, &sl[midx].mi_params, targs, binds, 1 as u32, p);
     let cscope0 = scope_with_tbinds(&msc, &sl[midx].mi_tparams, binds);
     let recv_self: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, inst_path))));
     let cscope = scope_with_self(&cscope0, recv_self);
@@ -4724,9 +4744,9 @@ fn mk_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *co
     let targs = elab_args(a, ar, g, sc, env, args);
     check_gen_call_arity(a, ar, sc, sl[midx].mi_mangled, &sl[midx].mi_params,
                          1 as u32, &targs, p);
-    let mvis = tbinds_visible(a, sc.sc_tbinds, &sl[midx].mi_tparams);
+    let no_binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
     let msc = scope_with_modpath(sc, &sl[midx].mi_modpath);
-    let cscope_t = scope_with_tparams_binds(&msc, &sl[midx].mi_tparams, &mvis);
+    let cscope_t = scope_with_tparams_binds(&msc, &sl[midx].mi_tparams, &no_binds);
     // The annotations read here can be the TRAIT's own, and a trait declares its
     // receiver as `*const Self` - the reference substitutes that away when it
     // specialises the default, before any of it reaches type resolution.  The
@@ -13303,23 +13323,6 @@ fn scope_with_skeleton(base: *const TyScope, sinfo: *const Vec<StructField>, eta
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: base.sc_field_pos,
         sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
-}
-// The tparams of the scope being resolved SHADOW an inherited binding of the
-// same name.  Two generic fns independently calling their parameter `T` is the
-// common case, and without this the callee's annotation `T` resolved through
-// the CALLER's binding: elaborating `wrap<T>` at T=i32, a call to `ident<T>`
-// saw its own parameter already "bound" to i32, so unification pushed nothing
-// and T was reported unbound.  Renaming the callee's parameter to `U` made the
-// same program compile — which is what named the defect.
-fn tbinds_visible(a: Allocator, binds: *const Vec<TVarBind>, shadowed: *const Vec<str>) -> Vec<TVarBind> {
-    let mut out: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
-    let sl = binds.as_slice();
-    let mut i = 0 as u32;
-    while i < binds.length() {
-        if !name_in(shadowed, sl[i].tvb_name) { out.push(TVarBind { tvb_name: sl[i].tvb_name, tvb_ty: sl[i].tvb_ty }); }
-        i = i + 1 as u32;
-    }
-    return out;
 }
 fn scope_with_tparams_binds(base: *const TyScope, tparams: *const Vec<str>, binds: *const Vec<TVarBind>) -> TyScope {
     let mut sc2 = scope_with_tparams(base, tparams);

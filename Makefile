@@ -3562,7 +3562,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                    lift_new_enum_with_struct_lit_arg lift_fnptr_field_call_if_arg \
                    derive_field_dispatch derive_clone_enum derive_debug_fields \
                    eq_default_ne derive_after_closures derive_debug_empty_struct \
-                   module_signatures_from_outside
+                   module_signatures_from_outside static_generic_methods \
+                   callee_signature_own_tparams
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

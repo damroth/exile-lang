@@ -1,0 +1,50 @@
+// A generic method called by its path is a generic function: each instance the
+// program uses is made and emitted. A method with its own parameters, a static
+// method of a generic impl (its parameter pinned by the expected type, by an
+// argument, and by a return position), both at once, a receiver written as the
+// first argument, one static generic calling another inside its own instance,
+// two instances of one method, a parameter returned as itself, a body that names
+// its parameter, and one on a type inside a module called from outside.
+struct P { x: int }
+struct B<T> { v: T }
+
+impl P {
+    pub fn of<T>(t: T, v: int) -> P { return P { x: v }; }
+    pub fn tag<T>(*const self, t: T) -> int { return self.x + 1; }
+    pub fn inner<T>(t: T, v: int) -> int { return v * 2; }
+    pub fn outer<T>(t: T, v: int) -> int { return P::inner(t, v) + 1; }
+    pub fn id<T>(t: T) -> T { return t; }
+    pub fn keep<T>(t: T) -> T { let c: T = t; return c; }
+}
+
+impl<T> B<T> {
+    pub fn make(v: T) -> B<T> { return B { v: v }; }
+    pub fn pair<U>(v: T, u: U) -> B<T> { return B { v: v }; }
+}
+
+mod m {
+    pub struct Q { y: int }
+    impl Q { pub fn of<T>(q: *const Q, t: T) -> Q { return Q { y: q.y + 1 }; } }
+    pub fn mk(v: int) -> Q { return Q { y: v }; }
+}
+
+fn mk() -> B<int> { return B::make(4); }
+
+fn main() {
+    let a = P::of(true, 5);
+    let b = P::of(7, 6);
+    println(a.x + b.x);
+    let e: B<int> = B::make(3);
+    println(e.v);
+    let f = B::make(false);
+    if f.v { println(1); } else { println(0); }
+    println(mk().v);
+    let g: B<int> = B::pair(8, true);
+    println(g.v);
+    println(P::tag(&a, 9));
+    println(P::outer(true, 5));
+    println(P::id(12));
+    println(P::keep(13));
+    let q = m::mk(14);
+    println(m::Q::of(&q, true).y);
+}

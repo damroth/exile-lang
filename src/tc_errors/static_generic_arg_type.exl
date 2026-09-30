@@ -1,0 +1,5 @@
+// A generic method called by its path compares every argument with its slot once
+// its type parameters are known - here the slot that is not generic.
+struct P { x: int }
+impl P { pub fn of<T>(t: T, v: int) -> P { return P { x: v }; } }
+fn main() { let q = P::of(true, "no"); println(q.x); }

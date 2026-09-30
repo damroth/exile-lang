@@ -1,0 +1,46 @@
+// A callee's signature sees the type parameters it declares and no others. Each
+// call here sits inside a generic function's instance, where the caller's own
+// parameter is bound: to the callee it must be neither the callee's parameter of
+// the same name nor a type the callee names like that. Every call path - a
+// generic fn, a generic method, a static generic method, a method of a generic
+// impl with its own parameter, a plain method and a plain static method.
+struct T { k: int }
+struct U { k: int }
+struct P { x: int }
+struct B<V> { v: V }
+
+fn inner<T>(t: T, v: int) -> int { return v * 2; }
+fn make_u<W>(w: W) -> U { return U { k: 5 }; }
+
+impl P {
+    pub fn look(*const self, t: *const T) -> int { return self.x + t.k; }
+    pub fn peek(t: *const T) -> int { return t.k; }
+    pub fn gen_ret<W>(*const self, w: W) -> U { return U { k: 6 }; }
+    pub fn of<T>(t: T, v: int) -> int { return v + 1; }
+}
+
+impl<V> B<V> {
+    pub fn plus<U>(*const self, u: U) -> int { return 3; }
+}
+
+fn mk_t() -> T { return T { k: 7 }; }
+
+fn with_t<T>(z: T) -> int {
+    let p = P { x: 1 };
+    let t = mk_t();
+    let b = B { v: 2 };
+    return inner(z, 4) + p.look(&t) + P::peek(&t) + P::of(z, 4) + b.plus(z);
+}
+
+fn with_u<U>(z: U) -> int {
+    let p = P { x: 1 };
+    let u = p.gen_ret(3);
+    let w = make_u(3);
+    let b = B { v: 2 };
+    return u.k + w.k + b.plus(z);
+}
+
+fn main() {
+    println(with_t(true));
+    println(with_u(false));
+}
