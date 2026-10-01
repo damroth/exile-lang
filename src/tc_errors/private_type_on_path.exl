@@ -1,0 +1,6 @@
+// A private type is a module on the path of its static methods.
+mod m {
+    struct P { x: int }
+    impl P { pub fn make(v: int) -> int { return v; } }
+}
+fn main() { println(m::P::make(3)); }

@@ -1,0 +1,8 @@
+// The message names the method as WRITTEN and the type it belongs to: a
+// module function calling `P::hidden` of its own module is still outside `P`.
+mod m {
+    pub struct P { x: int }
+    impl P { fn hidden(v: int) -> int { return v * 2; } }
+    pub fn go(v: int) -> int { return P::hidden(v); }
+}
+fn main() { println(m::go(3)); }

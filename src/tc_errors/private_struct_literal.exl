@@ -1,0 +1,3 @@
+// A private struct is built only from inside its module.
+mod m { struct P { x: int } }
+fn main() { let p = m::P { x: 3 }; println(p.x); }

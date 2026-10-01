@@ -246,6 +246,9 @@ struct MethodInfo {
     // generic fns — without this, bounds on a generic METHOD go unchecked while
     // free-fn bounds are checked, the half-wired shape.
     mi_tbounds: Vec<TraitBound>,
+    // Bit k set: the first k segments of `mi_path` name a private module or
+    // type.  Read at every call instead of the table - the path is fixed.
+    mi_privmask: u32,
 }
 
 // One entry of the (trait, target) registry — "type `irg_target` implements
@@ -281,6 +284,7 @@ struct GenFn {
     // reason: an index cannot name the list it indexes.
     gn_modpath: Vec<str>,
     gn_idx: u32,
+    gn_pub: bool,
     gn_tparams: Vec<str>,
     // The declared `<T: Trait>` bounds, carried to the call site because that is
     // where they are enforced.  The reference reaches them by looking the source
@@ -509,6 +513,12 @@ struct TyScope {
     // instance minted there is emitted, and so are its fields - but the nested
     // instances its fields name are not, which is where the reference stops.
     sc_field_pos: bool,
+    // The path the reference calls a function's scope: its module for a free fn,
+    // its impl's target for a method.  What is private to a module or a type is
+    // visible where this path says, and nowhere else.
+    sc_owner: *const Vec<str>,
+    // Every module and type with its `pub`, the table the path walks read.
+    sc_vis: *const Vec<VisEntry>,
     // True only while elaborating `fn main` — a bare `return;` there becomes
     // `return 0` (C `int main` must return a value).
     sc_is_main: bool,
@@ -550,7 +560,15 @@ struct TyScope {
 // pass (every fn's body scope is built from these plus its own tparams).
 // One pointer instead of seven keeps the elaborate_* signatures stable as
 // later passes add more indices.
+// A module or a type, and whether it is `pub`: the entries the privacy walks
+// read.  `ve_struct` marks a struct, the one kind a literal constructs.
+struct VisEntry {
+    ve_path: Vec<str>,
+    ve_pub: bool,
+    ve_struct: bool,
+}
 struct ProgIdx {
+    pi_vis: *const Vec<VisEntry>,
     pi_runes: *const Vec<TopRune>,
     pi_wards: *const Vec<WardFieldEntry>,
     pi_wardinsts: *const Vec<TopWardInst>,
@@ -1968,6 +1986,7 @@ struct GlobalFn {
     // An `extern fn ... , ...` (printf and friends): the arity check accepts AT
     // LEAST the declared parameters, not exactly.
     gf_variadic: bool,
+    gf_pub: bool,
 }
 
 // A free / module fn's resolved parameter types, keyed by C symbol — read at a
@@ -1987,7 +2006,7 @@ fn global_lookup(g: *const Vec<GlobalFn>, name: str) -> Option<GlobalFn> {
     while i < n {
         if sl[i].is_top && str::eq(sl[i].name, name) {
             return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, gf_emit: sl[i].gf_emit,
-                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top, gf_variadic: sl[i].gf_variadic });
+                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top, gf_variadic: sl[i].gf_variadic, gf_pub: sl[i].gf_pub });
         }
         i = i + 1 as u32;
     }
@@ -2002,7 +2021,7 @@ fn global_lookup_by_mangled(g: *const Vec<GlobalFn>, mangled: str) -> Option<Glo
     while i < n {
         if str::eq(sl[i].mangled, mangled) {
             return Option::Some(GlobalFn { name: sl[i].name, mangled: sl[i].mangled, gf_emit: sl[i].gf_emit,
-                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top, gf_variadic: sl[i].gf_variadic });
+                ret: sl[i].ret, is_const: sl[i].is_const, is_top: sl[i].is_top, gf_variadic: sl[i].gf_variadic, gf_pub: sl[i].gf_pub });
         }
         i = i + 1 as u32;
     }
@@ -3124,10 +3143,12 @@ fn register_named_prelude(a: Allocator, sc: *const TyScope, t: *const Typ) {
 // reader typed, and a diagnostic that renames their callee sends them looking
 // in the wrong module.
 fn mk_user_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                gf: GlobalFn, disp: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool) -> *const Texpr {
+                gf: GlobalFn, disp: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool,
+                rmod: *const Vec<str>, qual: bool) -> *const Texpr {
     seal_seam_guard(ar, sc, gf.mangled, p);
     void_ret_guard(a, ar, sc, allow_void, gf.ret, disp, p);
     let targs = elab_args_coerced(a, ar, g, sc, env, gf.mangled, args);
+    if qual { check_path_call_vis(a, ar, sc, rmod, gf.gf_pub, disp, p); }
     check_call(a, ar, sc, "function", disp, gf.mangled, args, &targs, gf.gf_variadic, p);
     let ty = ret_or_void(ar, gf.ret);
     register_named_prelude(a, sc, ty);
@@ -3158,9 +3179,10 @@ fn seal_seam_guard(ar: *Arena, sc: *const TyScope, mangled: str, p: Pos) {
 // A `const` is a value, not a callable — the reference reports it as an unknown
 // FUNCTION, because that is the namespace the call site looked in.
 fn call_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                 gf: GlobalFn, disp: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool) -> *const Texpr {
+                 gf: GlobalFn, disp: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool,
+                 rmod: *const Vec<str>, qual: bool) -> *const Texpr {
     if gf.is_const { return unknown_fn(a, ar, sc, gf.name, p); }
-    return mk_user_call(a, ar, g, sc, env, gf, disp, args, p, allow_void);
+    return mk_user_call(a, ar, g, sc, env, gf, disp, args, p, allow_void, rmod, qual);
 }
 
 // An unqualified call inside a module resolves to that module's `mod__name`
@@ -3204,14 +3226,14 @@ fn unknown_fn_after_args(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: 
 fn elab_top_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                      name: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool) -> *const Texpr {
     return match global_lookup(g, name) {
-        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p, allow_void)
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p, allow_void, sc.sc_modpath, false)
         | Option::None => unknown_fn_after_args(a, ar, g, sc, env, name, args, p)
     };
 }
 fn elab_user_or_defer(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
                       name: str, args: *const Vec<*const Expr>, p: Pos, allow_void: bool) -> *const Texpr {
     return match module_internal_lookup(a, ar, g, sc, name) {
-        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p, allow_void)
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, name, args, p, allow_void, sc.sc_modpath, false)
         | Option::None => elab_top_or_defer(a, ar, g, sc, env, name, args, p, allow_void)
     };
 }
@@ -3350,7 +3372,8 @@ fn register_prelude_method_use(a: Allocator, ar: *Arena, sc: *const TyScope, mpa
 // tparam is unreachable through the value arguments, so it is recovered from
 // the expected type's instance (the `let v: Vec<int>` annotation).
 fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
-                             env: *const Vec<FieldTy>, expected: Option<*const Typ>, midx: u32, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                             env: *const Vec<FieldTy>, expected: Option<*const Typ>, midx: u32, args: *const Vec<*const Expr>, p: Pos,
+                             wdisp: str) -> *const Texpr {
     let sl = sc.sc_methods.as_slice();
     let base = sl[midx].mi_mangled;
     let mut binds: Vec<TVarBind> = Vec::with_capacity(a, 8 as u32);
@@ -3385,6 +3408,7 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
     let cself: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &sl[midx].mi_path))));
     let cscope = scope_with_self(&cscope_t, cself);
     let cret = resolve_sig_ret(a, ar, &cscope, sl[midx].mi_ret_ann, p);
+    check_static_call_vis(a, ar, sc, &sl[midx], wdisp, p);
     check_gen_call_args(a, ar, sc, &cscope, method_disp(a, ar, &sl[midx].mi_path, sl[midx].mi_name),
                         &sl[midx].mi_params, 0 as u32, &sargs, args, p);
     let oargs = binds_in_tparam_order(a, ar, &sl[midx].mi_tparams, &binds);
@@ -3399,15 +3423,16 @@ fn mk_static_gen_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
 }
 fn mk_static_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope,
                          env: *const Vec<FieldTy>, expected: Option<*const Typ>, midx: int, args: *const Vec<*const Expr>, p: Pos,
-                         allow_void: bool) -> *const Texpr {
+                         allow_void: bool, wdisp: str) -> *const Texpr {
     let sl = sc.sc_methods.as_slice();
     if sl[midx as u32].mi_tparams.length() > 0 as u32 {
-        return mk_static_gen_method_call(a, ar, g, sc, env, expected, midx as u32, args, p);
+        return mk_static_gen_method_call(a, ar, g, sc, env, expected, midx as u32, args, p, wdisp);
     }
     let mm = sl[midx as u32].mi_mangled;
     let mret = sl[midx as u32].mi_ret;
     if sl[midx as u32].mi_prelude { register_prelude_method_use(a, ar, sc, &sl[midx as u32].mi_path, mret); }
     let targs = elab_args(a, ar, g, sc, env, args);
+    check_static_call_vis(a, ar, sc, &sl[midx as u32], wdisp, p);
     // Written as `S::name(..)`, so nothing is implicit: the receiver, if any, is
     // argument one and the slots line up with the declared list from index 0.
     // The reference calls this shape a FUNCTION, and so does the wording here.
@@ -3576,10 +3601,11 @@ fn elab_qualified_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     // its registered signature still mentions its type parameters, so resolving
     // it as an ordinary global rejects every argument as "expected T".
     let gfi = gen_fn_lookup_qual(a, sc.sc_genfns, sc, init, last);
-    if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, none_ty(), args, p); }
     let qdisp = path_display(a, ar, &path_push(a, init, last));
+    if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, none_ty(), args, p, qdisp, true); }
+    let rmod = call_module_of(a, ar, g, init, last, sc);
     return match qualified_lookup(a, ar, g, sc, init, last) {
-        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, qdisp, args, p, allow_void)
+        Option::Some(gf) => call_or_defer(a, ar, g, sc, env, gf, qdisp, args, p, allow_void, &rmod, true)
         | Option::None => unknown_fn_after_args(a, ar, g, sc, env, qdisp, args, p)
     };
 }
@@ -3754,7 +3780,8 @@ fn seed_from_expected(a: Allocator, ar: *Arena, sc: *const TyScope, cret: Option
 // `gen_fn(args)` → a monomorphic call `ex_fn_<args>(args)`, queuing the
 // instance for elaboration.
 fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyScope, env: *const Vec<FieldTy>,
-                 gfidx: int, expected: Option<*const Typ>, args: *const Vec<*const Expr>, p: Pos) -> *const Texpr {
+                 gfidx: int, expected: Option<*const Typ>, args: *const Vec<*const Expr>, p: Pos,
+                 disp: str, qual: bool) -> *const Texpr {
     let gsl = sc.sc_genfns.as_slice();
     let gi = gsl[gfidx as u32].gn_idx;
     let base = gsl[gfidx as u32].gn_mangled;
@@ -3781,6 +3808,7 @@ fn elab_gen_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const T
     // application (`Vec<T>`) or assoc projection (`Option<I::Item>`) lowers to
     // its concrete instance, not a `subst` that leaves the app abstract.
     let icscope = scope_with_tbinds(&gsc, &gsl[gfidx as u32].gn_tparams, &binds);
+    if qual { check_path_call_vis(a, ar, sc, &gsl[gfidx as u32].gn_modpath, gsl[gfidx as u32].gn_pub, disp, p); }
     check_gen_call_args(a, ar, sc, &icscope, gsl[gfidx as u32].gn_name,
                         &gsl[gfidx as u32].gn_params, 0 as u32, &targs, args, p);
     let iret = resolve_sig_ret(a, ar, &icscope, gsl[gfidx as u32].gn_ret, p);
@@ -4189,7 +4217,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         let minit = qualify_type_path(a, ar, sc, &init);
         let midx = find_method_idx(sc.sc_methods, &minit, last);
         if midx >= 0 as int {
-            return mk_static_method_call(a, ar, g, sc, env, expected, midx, args, p, allow_void);
+            return mk_static_method_call(a, ar, g, sc, env, expected, midx, args, p, allow_void, path_display(a, ar, callee));
         }
         return elab_qualified_call(a, ar, g, sc, env, &init, last, args, p, allow_void);
     }
@@ -4253,7 +4281,7 @@ fn elab_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
         return elab_method_call(a, ar, g, sc, env, expected, ast_node(ar, Expr::Var(name, p)), "call", args, p, allow_void);
     }
     let gfi = gen_fn_lookup(sc.sc_genfns, name, sc.sc_modpath);
-    if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, expected, args, p); }
+    if gfi >= 0 as int { return elab_gen_call(a, ar, g, sc, env, gfi, expected, args, p, "", false); }
     return elab_user_or_defer(a, ar, g, sc, env, name, args, p, allow_void);
 }
 
@@ -4916,32 +4944,19 @@ fn prim_builtin_method(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *c
     let op = if str::eq(name, "eq") { BinOp::EqEq } else { BinOp::NotEq };
     return te_node(ar, TexprNode::TBinOp(op, trecv, targ), t_bool(ar), p);
 }
-// A non-pub method is callable only where the current `self` IS its target —
-// the impl's own methods, and nowhere else.
-fn check_method_visible(a: Allocator, ar: *Arena, sc: *const TyScope, env: *const Vec<FieldTy>, idx: u32, p: Pos) {
+// A method call reaches its type through the walk a call by path takes, then
+// the method's own `pub`: a private method is callable from the functions of its
+// own type, whose scope the reference sets to the impl's target - a static one
+// included, which has no `self` to tell by.
+fn check_method_visible(a: Allocator, ar: *Arena, sc: *const TyScope, idx: u32, p: Pos) {
     let sl = sc.sc_methods.as_slice();
-    if sl[idx].mi_pub { return; }
-    if self_is_target(a, sc, env, &sl[idx].mi_path) { return; }
+    if masked_walk(a, ar, sc, &sl[idx].mi_path, sl[idx].mi_privmask, "type", p) { return; }
+    if sl[idx].mi_pub || paths_eq(sc.sc_owner, &sl[idx].mi_path) { return; }
     let mut sb = StringBuilder::with_capacity(a, 56 as u32);
     sb.push_str("method '"); sb.push_str(sl[idx].mi_name);
     sb.push_str("' is private to '"); sb.push_str(path_display(a, ar, &sl[idx].mi_path)); sb.push_str("'");
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
-}
-// "Inside the impl" reads off the `self` binding: method bodies carry it in the
-// env (sc_self is only pinned for trait defaults).
-fn self_is_target(a: Allocator, sc: *const TyScope, env: *const Vec<FieldTy>, target: *const Vec<str>) -> bool {
-    if self_ty_matches(a, sc.sc_self, target) { return true; }
-    return match env_lookup(env, "self") {
-        Option::Some(st) => str::eq(path_last(&recv_base_path(a, st)), path_last(target))
-        | Option::None => false
-    };
-}
-fn self_ty_matches(a: Allocator, st: Option<*const Typ>, target: *const Vec<str>) -> bool {
-    return match st {
-        Option::Some(t) => str::eq(path_last(&recv_base_path(a, t)), path_last(target))
-        | Option::None => false
-    };
 }
 // The ARGUMENTS speak before the callee does. Both can be wrong in one
 // expression - `b.nomethod(b.nofield)` has neither - and the reference reports
@@ -4975,7 +4990,7 @@ fn elab_method_call(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *cons
             | Option::None => method_miss_after_args(a, ar, g, sc, env, name, trecv, args, p)
         };
     }
-    check_method_visible(a, ar, sc, env, idx as u32, p);
+    check_method_visible(a, ar, sc, idx as u32, p);
     let sl = sc.sc_methods.as_slice();
     if sl[idx as u32].mi_struct_gen {
         return mk_struct_gen_method_call(a, ar, g, sc, env, idx as u32, trecv, args, p);
@@ -7715,6 +7730,7 @@ fn elab_struct_lit(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     }
     let qtname = qualify_in_scope(a, ar, sc, sc.sc_fstructs, tname);
+    check_struct_lit_vis(a, ar, sc, &qtname, tname, p);
     check_lit_fields(a, ar, sc, &qtname, fields, is_some_expr(base), p);
     let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields, p);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
@@ -7744,6 +7760,7 @@ fn elab_new_struct(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const
         sb.push_str("unknown struct '"); sb.push_str(path_display(a, ar, tname)); sb.push_str("'");
         tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     }
+    check_struct_lit_vis(a, ar, sc, &qtname, tname, p);
     let tfields = elab_struct_fields(a, ar, g, sc, env, &qtname, fields, p);
     let tbase = elab_opt_base(a, ar, g, sc, env, base);
     let ipath = struct_lit_path(a, ar, sc, &qtname, &tfields, tbase);
@@ -9376,14 +9393,15 @@ fn elab_lambda(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TyS
 // non-generic, body-bearing fn.
 fn prelude_file_pos() -> Pos { return pos::Pos::prelude(); }
 fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
-                    mangled: str, name: str, params_fd: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body_expr: *const Expr, funcs: *Vec<Tfunc>, is_pub: bool, fpos: Pos) {
+                    mangled: str, name: str, params_fd: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, body_expr: *const Expr, funcs: *Vec<Tfunc>, is_pub: bool, fpos: Pos,
+                    owner: *const Vec<str>) {
     let lparams = lam_to_params(a, params_fd);
     let params = copy_params(a, &lparams);
     let empty_tp: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_fstructs: idx.pi_fstructs, sc_fenums: idx.pi_fenums, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_field_pos: idx.pi_field_pos, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_field_pos: idx.pi_field_pos, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_owner: owner, sc_vis: idx.pi_vis, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams, fpos);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ty, fpos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -9424,7 +9442,7 @@ fn elaborate_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *
 fn drain_one_lifted(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                     mangled: str, name: str, e: *const Expr, funcs: *Vec<Tfunc>) {
     match *e {
-        Expr::Lambda { params, ret_ty, body, captures } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs, false, zero_pos())
+        Expr::Lambda { params, ret_ty, body, captures } => elaborate_lifted(a, ar, g, gensym, idx, mangled, name, &params, ret_ty, body, funcs, false, zero_pos(), idx.pi_modpath)
         | _o => { }
     }
 }
@@ -12516,7 +12534,8 @@ fn check_returns_ty(a: Allocator, ar: *Arena, sc: *const TyScope, name: str,
     return;
 }
 fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
-                idx: *const ProgIdx, tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func, self_ty: Option<*const Typ>, xtparams: *const Vec<str>, origin: Option<Pos>) -> Tfunc {
+                idx: *const ProgIdx, tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func, self_ty: Option<*const Typ>, xtparams: *const Vec<str>, origin: Option<Pos>,
+                owner: *const Vec<str>) -> Tfunc {
     let params = copy_params(a, &f.params);
     // The caller passes the EFFECTIVE list: a free fn its own, a method the
     // impl's spliced with its own.  There is no picking left to do here - a
@@ -12526,7 +12545,7 @@ fn elaborate_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
     let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_fstructs: idx.pi_fstructs, sc_fenums: idx.pi_fenums, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: eff_tparams,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_field_pos: idx.pi_field_pos, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: str::eq(mangled, "main") };
+                       sc_tbinds: tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: modpath, sc_ret: none_ty(), sc_self: self_ty , sc_gsigs: idx.pi_gsigs , sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_field_pos: idx.pi_field_pos, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_owner: owner, sc_vis: idx.pi_vis, sc_is_main: str::eq(mangled, "main") };
     let param_tys = resolve_param_tys(a, ar, &sc, &f.params, f.pos);
     let ret_ty = resolve_sig_ret(a, ar, &sc, f.ret_ty, f.pos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -12644,7 +12663,7 @@ fn elaborate_module_fn(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym
                        path: *const Vec<str>, f: *const Func, funcs: *Vec<Tfunc>) {
     // An extern fn keeps its raw C name as the emitted symbol even in a module.
     let m = if f.is_extern { f.c_name } else { mangle_path(a, ar, path, f.name) };
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, path, m, f, none_ty(), &f.tparams, no_origin()));
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, path, m, f, none_ty(), &f.tparams, no_origin(), path));
 }
 fn elaborate_module_items(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                           path: *const Vec<str>, items: *const Vec<Item>, funcs: *Vec<Tfunc>) {
@@ -12667,7 +12686,7 @@ fn elaborate_module_items(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gen
 fn elaborate_item(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
                   idx: *const ProgIdx, it: *const Item, funcs: *Vec<Tfunc>) {
     match *it {
-        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath, mangle_fn(a, ar, &f), &f, none_ty(), &f.tparams, no_origin())); }
+        Item::Function(f) => { funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, idx.pi_modpath, mangle_fn(a, ar, &f), &f, none_ty(), &f.tparams, no_origin(), idx.pi_modpath)); }
         | Item::View(vd) => { elaborate_view(a, ar, g, gensym, idx, &vd, funcs); }
         | Item::Module(md) => {
             let mut p: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -12714,7 +12733,7 @@ fn elaborate_method_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gens
     // where the reference folds it; a marker that SURVIVED is one the reference
     // refuses, and binding it in scope would answer it instead.
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, modpath,
-                            method_mangle(a, ar, target, f.name), f, none_ty(), &xtp, no_origin()));
+                            method_mangle(a, ar, target, f.name), f, none_ty(), &xtp, no_origin(), target));
 }
 
 // Synthesise a trait default method for `target`: like an impl method but
@@ -12746,7 +12765,7 @@ fn elaborate_default_into(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gen
     // is generic over.
     let xtp = skel_xtparams(a, f, itparams);
     funcs.push(elaborate_fn(a, ar, g, gensym, idx, idx.pi_tbinds, modpath,
-                            method_mangle(a, ar, target, f.name), f, Option::Some(self_ty), &xtp, no_origin()));
+                            method_mangle(a, ar, target, f.name), f, Option::Some(self_ty), &xtp, no_origin(), target));
 }
 
 fn emit_one_default(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
@@ -13316,7 +13335,7 @@ fn scope_with_modpath(base: *const TyScope, modpath: *const Vec<str>) -> TyScope
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: base.sc_field_pos,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+        sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 // A scope with the full struct-field skeleton in place, used for a second
@@ -13336,7 +13355,7 @@ fn scope_with_sinfo(base: *const TyScope, sinfo: *const Vec<StructField>) -> TyS
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: base.sc_field_pos,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+        sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 // The whole skeleton, structs AND enums. `scope_with_sinfo` carries only the
@@ -13356,7 +13375,7 @@ fn scope_with_skeleton(base: *const TyScope, sinfo: *const Vec<StructField>, eta
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: base.sc_field_pos,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+        sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 fn scope_with_tparams_binds(base: *const TyScope, tparams: *const Vec<str>, binds: *const Vec<TVarBind>) -> TyScope {
@@ -13377,7 +13396,7 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: base.sc_field_pos,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+        sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 // Every annotation in the signature, params and return alike.
@@ -13497,7 +13516,7 @@ fn scope_with_tparams_self(base: *const TyScope, tparams: *const Vec<str>, self_
         sc_self: self_ty,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: base.sc_field_pos,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+        sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 
@@ -13522,7 +13541,7 @@ fn scope_with_self(base: *const TyScope, self_ty: Option<*const Typ>) -> TyScope
         sc_self: self_ty,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: base.sc_field_pos,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+        sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 // The same scope, marked as resolving a struct DECLARATION's field annotations.
@@ -13542,7 +13561,7 @@ fn scope_in_field_pos(base: *const TyScope) -> TyScope {
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: true,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+        sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 
@@ -13562,7 +13581,7 @@ fn scope_with_tbinds(base: *const TyScope, tparams: *const Vec<str>, tbinds: *co
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: base.sc_field_pos,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+        sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 
@@ -13580,7 +13599,7 @@ fn scope_with_ret(base: *const TyScope, ret: Option<*const Typ>) -> TyScope {
         sc_self: base.sc_self,
         sc_gsigs: base.sc_gsigs,
         sc_xstructs: base.sc_xstructs, sc_xaliases: base.sc_xaliases, sc_taliases: base.sc_taliases, sc_tydefs: base.sc_tydefs, sc_tyvisited: base.sc_tyvisited, sc_tydepth: base.sc_tydepth, sc_field_pos: base.sc_field_pos,
-        sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
+        sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
 
@@ -13794,7 +13813,7 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
         mi_tparams: tparams, mi_params: copy_param_anns(a, &f.params),
         mi_ret_ann: f.ret_ty, mi_modpath: copy_strs(a, modpath), mi_sigmod: copy_strs(a, sigmod), mi_impl_idx: impl_idx, mi_meth_idx: meth_idx, mi_prelude: false,
         mi_struct_gen: struct_gen,
-        mi_tbounds: splice_tbounds(a, itbounds, &f.tbounds),
+        mi_tbounds: splice_tbounds(a, itbounds, &f.tbounds), mi_privmask: private_mask(sc.sc_vis, target),
     });
 }
 fn collect_methods_impl(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>, ipos: Pos,
@@ -13912,7 +13931,7 @@ fn push_prelude_gen_method(a: Allocator, ar: *Arena, target: str, name: str, tpa
         // Adapter methods bind the receiver's tparam by field-recovery (like a
         // struct-gen method) plus their own from the args.
         mi_struct_gen: true,
-        mi_tbounds: no_tbounds(a),
+        mi_tbounds: no_tbounds(a), mi_privmask: 0 as u32,
     });
 }
 // An iterator adapter default method on receiver `recv`: binds the receiver's
@@ -14001,7 +14020,7 @@ fn push_prelude_method(a: Allocator, ar: *Arena, target: str, name: str,
         mi_tparams: one_tparam(a), mi_params: params, mi_ret_ann: ret_ann,
         mi_modpath: empty_strs(a), mi_sigmod: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         mi_struct_gen: false,
-        mi_tbounds: no_tbounds(a),
+        mi_tbounds: no_tbounds(a), mi_privmask: 0 as u32,
     });
 }
 fn prelude_struct_ty(a: Allocator, ar: *Arena, name: str) -> *const Typ {
@@ -14025,7 +14044,7 @@ fn push_prelude_method_ng(a: Allocator, ar: *Arena, target: str, name: str, has_
         mi_tparams: empty_tp, mi_params: empty_params, mi_ret_ann: none_ann,
         mi_modpath: empty_strs(a), mi_sigmod: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         mi_struct_gen: false,
-        mi_tbounds: no_tbounds(a),
+        mi_tbounds: no_tbounds(a), mi_privmask: 0 as u32,
     });
 }
 // A struct-generic prelude method (`Vec<T>::push` / `get` / ...): its impl
@@ -14079,7 +14098,7 @@ fn push_prelude_sg_method(a: Allocator, ar: *Arena, target: str, name: str, has_
         mi_tparams: tp, mi_params: params, mi_ret_ann: ret_ann,
         mi_modpath: empty_strs(a), mi_sigmod: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         mi_struct_gen: has_self,
-        mi_tbounds: no_tbounds(a),
+        mi_tbounds: no_tbounds(a), mi_privmask: 0 as u32,
     });
 }
 // Param-type signatures for prelude methods whose explicit arguments need
@@ -14197,7 +14216,7 @@ fn register_prelude_methods(a: Allocator, ar: *Arena, out: *Vec<MethodInfo>) {
         mi_ret_ann: Option::Some(ann_node(ar, TypeAnn::TyPtr(ann_struct(a, ar, "T")))),
         mi_modpath: empty_strs(a), mi_sigmod: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: true,
         mi_struct_gen: false,
-        mi_tbounds: no_tbounds(a),
+        mi_tbounds: no_tbounds(a), mi_privmask: 0 as u32,
     });
 }
 fn arena_method_path(a: Allocator) -> Vec<str> {
@@ -15068,7 +15087,7 @@ fn copy_param_anns(a: Allocator, params: *const Vec<Param>) -> Vec<*const TypeAn
 // generic), so module awareness costs no byte at top level.
 fn push_gen_fn(a: Allocator, ar: *Arena, f: *const Func, modpath: *const Vec<str>, gidx: u32, out: *Vec<GenFn>) {
     if f.tparams.length() == 0 as u32 { return; }
-    out.push(GenFn { gn_name: f.name, gn_mangled: mangle_path(a, ar, modpath, f.name),
+    out.push(GenFn { gn_name: f.name, gn_mangled: mangle_path(a, ar, modpath, f.name), gn_pub: f.is_pub,
                      gn_modpath: copy_strs(a, modpath), gn_idx: gidx,
                      gn_tparams: copy_strs(a, &f.tparams), gn_tbounds: copy_tbounds(a, &f.tbounds),
                      gn_params: copy_param_anns(a, &f.params),
@@ -15260,7 +15279,7 @@ fn push_call_method(a: Allocator, ar: *Arena, sc: *const TyScope, cn: str, cnpat
         mi_has_self: true, mi_self_ptr: true, mi_self_const: true,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: ret_ty,
         mi_modpath: empty_strs(a), mi_sigmod: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false,
-        mi_tbounds: no_tbounds(a)
+        mi_tbounds: no_tbounds(a), mi_privmask: 0 as u32
     });
 }
 fn cvoid_ann(ar: *Arena) -> *const TypeAnn {
@@ -16253,7 +16272,7 @@ fn push_drop_method(a: Allocator, ar: *Arena, sname: str, body: *const Expr, met
         mi_ret: none_ty(), mi_has_self: true, mi_self_ptr: true, mi_self_const: false,
         mi_tparams: empty_tp, mi_params: manns, mi_ret_ann: none_ret,
         mi_modpath: empty_strs(a), mi_sigmod: empty_strs(a), mi_impl_idx: 0 as u32, mi_meth_idx: 0 as u32, mi_prelude: false, mi_struct_gen: false,
-        mi_tbounds: no_tbounds(a)
+        mi_tbounds: no_tbounds(a), mi_privmask: 0 as u32
     });
     let mut params: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
     params.push(FieldDef { name: "self", ty: tyann_node(ar, TypeAnn::TyPtr(closure_struct_ann(a, ar, sname))) });
@@ -16326,6 +16345,7 @@ fn collect_view_variants(a: Allocator, ar: *Arena, sc: *const TyScope, epath: *c
 // Elaborate the view function `<vname>(p) -> <vname>` (mirrors elaborate_lifted
 // but its body is a statement list, not a single expr).
 fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx, vd: *const ViewDecl, funcs: *Vec<Tfunc>) {
+    let owner = idx.pi_modpath;
     let name = mangle_path(a, ar, idx.pi_modpath, vd.vname);
     let mut params_fd: Vec<FieldDef> = Vec::with_capacity(a, 8 as u32);
     params_fd.push(FieldDef { name: vd.vparam.pname, ty: vd.vparam.pty });
@@ -16336,7 +16356,7 @@ fn elaborate_view(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
     let sc = TyScope { sc_runes: idx.pi_runes, sc_wards: idx.pi_wards, sc_wardinsts: idx.pi_wardinsts, sc_sigils: idx.pi_sigils, sc_claims: idx.pi_claims, sc_structs: idx.pi_snames, sc_fstructs: idx.pi_fstructs, sc_fenums: idx.pi_fenums, sc_dbg: idx.pi_dbg, sc_consts: idx.pi_consts, sc_xfields: idx.pi_xfields, sc_loops: idx.pi_loops, sc_enums: idx.pi_enames, sc_tparams: &empty_tp,
                        sc_iconsts: idx.pi_iconsts, sc_sinfo: idx.pi_sinfo, sc_etags: idx.pi_etags, sc_efields: idx.pi_efields, sc_methods: idx.pi_methods, sc_impls: idx.pi_impls,
                        sc_mono_structs: idx.pi_mono_structs, sc_mono_sargs: idx.pi_mono_sargs, sc_mono_enums: idx.pi_mono_enums, sc_mono_eargs: idx.pi_mono_eargs, sc_mono_fields: idx.pi_mono_fields, sc_mono_efields: idx.pi_mono_efields,
-                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_field_pos: idx.pi_field_pos, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_is_main: false };
+                       sc_tbinds: idx.pi_tbinds, sc_genfns: idx.pi_genfns, sc_genjobs: idx.pi_genjobs, sc_geninsts: idx.pi_geninsts, sc_etps: idx.pi_etps, sc_stps: idx.pi_stps, sc_assoc: idx.pi_assoc, sc_lifted: idx.pi_lifted, sc_gensym: gensym, sc_modpath: idx.pi_modpath, sc_ret: none_ty(), sc_self: none_ty(), sc_gsigs: idx.pi_gsigs, sc_xstructs: idx.pi_xstructs, sc_xaliases: idx.pi_xaliases, sc_taliases: idx.pi_taliases, sc_tydefs: idx.pi_tydefs, sc_tyvisited: idx.pi_tyvisited, sc_tydepth: idx.pi_tydepth, sc_field_pos: idx.pi_field_pos, sc_err: idx.pi_err, sc_srcnames: idx.pi_srcnames, sc_srcbase: idx.pi_srcbase, sc_binds: idx.pi_binds, sc_bindbase: idx.pi_bindbase, sc_owner: owner, sc_vis: idx.pi_vis, sc_is_main: false };
     let param_tys = resolve_param_tys(a, ar, &sc, &lparams, vd.vpos);
     let ret = resolve_sig_ret(a, ar, &sc, ret_ann, vd.vpos);
     let mut env: Vec<FieldTy> = Vec::with_capacity(a, 8 as u32);
@@ -16391,10 +16411,10 @@ fn push_free_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u3
                   tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func, origin: Option<Pos>,
                   funcs: *Vec<Tfunc>) {
     if modpath.length() == 0 as u32 {
-        funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, none_ty(), &f.tparams, origin));
+        funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, none_ty(), &f.tparams, origin, idx.pi_modpath));
         return;
     }
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, modpath, mangled, f, none_ty(), &f.tparams, origin));
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, modpath, mangled, f, none_ty(), &f.tparams, origin, modpath));
 }
 // Walk to the item list `modpath` names, then elaborate the free fn there.
 fn elaborate_instance_at_path(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
@@ -16440,20 +16460,20 @@ fn descend_free(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32,
 // had parameters at all.
 fn push_method_inst(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                     tbinds: *const Vec<TVarBind>, modpath: *const Vec<str>, mangled: str, f: *const Func,
-                    itparams: *const Vec<str>, self_ty: Option<*const Typ>, origin: Option<Pos>, funcs: *Vec<Tfunc>) {
+                    itparams: *const Vec<str>, self_ty: Option<*const Typ>, origin: Option<Pos>, owner: *const Vec<str>, funcs: *Vec<Tfunc>) {
     let xtp = splice_tparams(a, itparams, &f.tparams);
     if modpath.length() == 0 as u32 {
-        funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, self_ty, &xtp, origin));
+        funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, idx.pi_modpath, mangled, f, self_ty, &xtp, origin, owner));
         return;
     }
-    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, modpath, mangled, f, self_ty, &xtp, origin));
+    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, modpath, mangled, f, self_ty, &xtp, origin, owner));
 }
 fn elaborate_impl_method_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u32, idx: *const ProgIdx,
                             methods: *const Vec<Func>, meth_idx: u32, tbinds: *const Vec<TVarBind>,
                             modpath: *const Vec<str>, mangled: str, itparams: *const Vec<str>,
-                            self_ty: Option<*const Typ>, origin: Option<Pos>, funcs: *Vec<Tfunc>) {
+                            self_ty: Option<*const Typ>, origin: Option<Pos>, owner: *const Vec<str>, funcs: *Vec<Tfunc>) {
     let msl = methods.as_slice();
-    push_method_inst(a, ar, g, gensym, idx, tbinds, modpath, mangled, &msl[meth_idx], itparams, self_ty, origin, funcs);
+    push_method_inst(a, ar, g, gensym, idx, tbinds, modpath, mangled, &msl[meth_idx], itparams, self_ty, origin, owner, funcs);
 }
 
 // Elaborate one generic-method instance: re-derive the method fn from its
@@ -16526,7 +16546,7 @@ fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
                              tbinds: *const Vec<TVarBind>, mangled: str, target: *const Vec<str>, origin: Option<Pos>, funcs: *Vec<Tfunc>) {
     let sl = items.as_slice();
     match sl[impl_idx] {
-        Item::Impl(ib) => { elaborate_impl_method_at(a, ar, g, gensym, idx, &ib.iitems, meth_idx, tbinds, modpath, mangled, &ib.itparams, none_ty(), origin, funcs); }
+        Item::Impl(ib) => { elaborate_impl_method_at(a, ar, g, gensym, idx, &ib.iitems, meth_idx, tbinds, modpath, mangled, &ib.itparams, none_ty(), origin, &path_concat(a, modpath, &ib.itarget), funcs); }
         | Item::Trait(td) => {
             let sty = ty_node(ar, Typ::TStruct(copy_strs(a, target)));
             // A trait default materialised for an implementor is generic over what
@@ -16537,7 +16557,7 @@ fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
             // and it stayed invisible until the residue was seven warnings.
             let sl2 = td.trmethods.as_slice();
             let ditp = default_itparams(a, idx, target, sl2[meth_idx].name);
-            elaborate_impl_method_at(a, ar, g, gensym, idx, &td.trmethods, meth_idx, tbinds, sigmod, mangled, &ditp, Option::Some(sty), origin, funcs);
+            elaborate_impl_method_at(a, ar, g, gensym, idx, &td.trmethods, meth_idx, tbinds, sigmod, mangled, &ditp, Option::Some(sty), origin, target, funcs);
         }
         // `mod str` free function: elaborate as a plain free fn under the module
         // path so its body's sibling `str::*` calls resolve, with the mangled
@@ -16548,7 +16568,7 @@ fn elaborate_method_instance(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, 
                 Item::Function(mf) => {
                     let mut mp: Vec<str> = Vec::with_capacity(a, 8 as u32);
                     mp.push(md.mname);
-                    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, &mp, mangled, &mf, none_ty(), &mf.tparams, origin));
+                    funcs.push(elaborate_fn(a, ar, g, gensym, idx, tbinds, &mp, mangled, &mf, none_ty(), &mf.tparams, origin, &mp));
                 }
                 | _mo => { }
             }
@@ -16586,20 +16606,20 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             if f.is_extern { require_raw(a, ar, &fsc, path, "fn", f.name, f.pos); }
             seal_seam_decl_guard(ar, &fsc, em, f.pos);
             g.push(GlobalFn { name: f.name, mangled: lk, gf_emit: em, ret: resolve_sig_ret(a, ar, &fsc, f.ret_ty, f.pos),
-                              is_const: false, is_top: is_top, gf_variadic: f.is_variadic });
+                              is_const: false, is_top: is_top, gf_variadic: f.is_variadic, gf_pub: f.is_pub });
         }
         | Item::View(vd) => {
             // The view fn `Name(p) -> Name`; the choice enum shares its name.
             let vm = mangle_path(a, ar, path, vd.vname);
             g.push(GlobalFn { name: vd.vname, mangled: vm, gf_emit: vm,
                               ret: Option::Some(ty_node(ar, Typ::TEnum(single_str(a, vd.vname)))),
-                              is_const: false, is_top: is_top, gf_variadic: false });
+                              is_const: false, is_top: is_top, gf_variadic: false, gf_pub: vd.vis_pub });
         }
         | Item::Const(c) => {
             let cm = mangle_path(a, ar, path, c.kname);
             g.push(GlobalFn { name: c.kname, mangled: cm, gf_emit: cm,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, c.kty, c.kpos)),
-                              is_const: true, is_top: is_top, gf_variadic: false });
+                              is_const: true, is_top: is_top, gf_variadic: false, gf_pub: true });
         }
         | Item::ExternConst(ec) => {
             // A linker-resolved global value; its C symbol is visible
@@ -16607,13 +16627,13 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
             require_raw(a, ar, sc, path, "const", ec.ecname, ec.ecpos);
             g.push(GlobalFn { name: ec.ecname, mangled: ec.ecname, gf_emit: ec.ecname,
                               ret: Option::Some(resolve_sig_ty(a, ar, sc, ec.ecty, ec.ecpos)),
-                              is_const: true, is_top: true , gf_variadic: false });
+                              is_const: true, is_top: true , gf_variadic: false, gf_pub: true });
         }
         | Item::ExternVar(ev) => {
             require_raw(a, ar, sc, path, "var", ev.evname, ev.evpos);
             g.push(GlobalFn { name: ev.evname, mangled: ev.evname, gf_emit: ev.evname,
                               ret: Option::Some(extern_var_ty(a, ar, sc, ev.evty, ev.evchip, ev.evpos)),
-                              is_const: true, is_top: true , gf_variadic: false });
+                              is_const: true, is_top: true , gf_variadic: false, gf_pub: true });
         }
         | Item::ExternStruct(es) => { require_raw(a, ar, sc, path, "struct", es.esname, es.espos); }
         | Item::ExternType(xt) => { require_raw(a, ar, sc, path, "type", xt.xtname, xt.xtpos); }
@@ -16634,7 +16654,7 @@ fn collect_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, pa
 fn push_use_alias(g: *Vec<GlobalFn>, target_mangled: str, alias: str) {
     match global_lookup_by_mangled(g, target_mangled) {
         Option::Some(gf) => { g.push(GlobalFn { name: alias, mangled: gf.mangled, gf_emit: gf.gf_emit, ret: gf.ret,
-                                                is_const: gf.is_const, is_top: true , gf_variadic: false }); }
+                                                is_const: gf.is_const, is_top: true , gf_variadic: false, gf_pub: gf.gf_pub }); }
         | Option::None => { }
     }
 }
@@ -16708,7 +16728,7 @@ fn collect_globals(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const V
 // `sys::name` -> mangled `sys__name`), emitted by its raw C name.
 fn push_sys_fn(a: Allocator, ar: *Arena, name: str, ret: Option<*const Typ>, g: *Vec<GlobalFn>) {
     g.push(GlobalFn { name: name, mangled: str2(a, ar, "sys__", name), gf_emit: name,
-                      ret: ret, is_const: false, is_top: false , gf_variadic: false });
+                      ret: ret, is_const: false, is_top: false , gf_variadic: false, gf_pub: true });
 }
 
 // The synthesised `sys` module — extern syscalls over the host/amiga seam.
@@ -20040,11 +20060,152 @@ fn drain_lifted_at(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, gensym: *u
     }
     if lls[li].ll_kind == 3 as int {
         // Drop method: `ll_params` already carries the full `*self`.
-        elaborate_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, &lls[li].ll_params, lls[li].ll_ret, lls[li].ll_expr, funcs, true, zero_pos());
+        elaborate_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, &lls[li].ll_params, lls[li].ll_ret, lls[li].ll_expr, funcs, true, zero_pos(), &single_str(a, lls[li].ll_closure));
         return;
     }
     let cps = closure_call_params(a, ar, lls[li].ll_closure, &lls[li].ll_params);
-    elaborate_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, funcs, true, zero_pos());
+    elaborate_lifted(a, ar, g, gensym, idx, lls[li].ll_mangled, lls[li].ll_name, &cps, lls[li].ll_ret, lls[li].ll_expr, funcs, true, zero_pos(), &single_str(a, lls[li].ll_closure));
+    return;
+}
+// ===== Visibility =====
+//
+// The reference's five checks, all read against the current function's scope
+// (`sc_owner`): a private module or type on a qualified path is visible only
+// from inside its parent; a private fn or method only from its own module or
+// type; a private struct's literal only from inside its module.
+fn collect_vis(a: Allocator, modpath: *const Vec<str>, items: *const Vec<Item>, out: *Vec<VisEntry>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() { collect_vis_one(a, modpath, &sl[i], out); i = i + 1 as u32; }
+}
+fn collect_vis_one(a: Allocator, modpath: *const Vec<str>, it: *const Item, out: *Vec<VisEntry>) {
+    match *it {
+        Item::Module(md) => {
+            let mp = path_push(a, modpath, md.mname);
+            out.push(VisEntry { ve_path: copy_strs(a, &mp), ve_pub: md.mis_pub, ve_struct: false });
+            collect_vis(a, &mp, &md.mitems, out);
+        }
+        | Item::Struct(sd) => { out.push(VisEntry { ve_path: path_push(a, modpath, sd.sname), ve_pub: sd.sis_pub, ve_struct: true }); }
+        | Item::Enum(ed) => { out.push(VisEntry { ve_path: path_push(a, modpath, ed.ename), ve_pub: ed.eis_pub, ve_struct: false }); }
+        | _e => { }
+    }
+}
+// Whether the first `k` segments of `path` name a PRIVATE module or type (a
+// struct, when `want_struct`).  Unknown names are not private.
+fn private_at(vis: *const Vec<VisEntry>, path: *const Vec<str>, k: u32, want_struct: bool) -> bool {
+    let sl = vis.as_slice();
+    let mut i = 0 as u32;
+    while i < vis.length() {
+        if sl[i].ve_path.length() == k && head_eq(&sl[i].ve_path, path, k) && (!want_struct || sl[i].ve_struct) {
+            return !sl[i].ve_pub;
+        }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// The first `k` segments of `x` and `y` agree.
+fn head_eq(x: *const Vec<str>, y: *const Vec<str>, k: u32) -> bool {
+    if x.length() < k || y.length() < k { return false; }
+    let xs = x.as_slice();
+    let ys = y.as_slice();
+    let mut i = 0 as u32;
+    while i < k { if !str::eq(xs[i], ys[i]) { return false; } i = i + 1 as u32; }
+    return true;
+}
+fn scope_display(a: Allocator, ar: *Arena, sc: *const TyScope) -> str {
+    if sc.sc_owner.length() == 0 as u32 { return "<root>"; }
+    return path_display(a, ar, sc.sc_owner);
+}
+// The first `k` segments of `path` are a prefix of `full`.
+fn head_is_prefix(path: *const Vec<str>, k: u32, full: *const Vec<str>) -> bool {
+    return k <= full.length() && head_eq(path, full, k);
+}
+// The private segments of a path, as a mask: bit k for the first k segments.
+// The first segment is left out - its parent is the root, which every scope is
+// inside, so it is never refused.
+fn private_mask(vis: *const Vec<VisEntry>, path: *const Vec<str>) -> u32 {
+    let mut m = 0 as u32;
+    let mut k = 2 as u32;
+    while k <= path.length() && k < 32 as u32 {
+        let bit = 1 as u32 << k;   // bound out: register #7
+        if private_at(vis, path, k, false) { m = m | bit; }
+        k = k + 1 as u32;
+    }
+    return m;
+}
+// Every segment of a qualified path the reference walks: a private module or
+// type is reached only from inside its parent.  `kind` is the reference's word -
+// `module` on a call by path, `type` on a method call.  True when it reported.
+fn vis_walk(a: Allocator, ar: *Arena, sc: *const TyScope, rmod: *const Vec<str>, kind: str, p: Pos) -> bool {
+    let mut k = 1 as u32;
+    while k <= rmod.length() {
+        // Seen from inside its parent, anything is visible: the cheap question
+        // first, the table only when it says no.
+        if !head_is_prefix(rmod, k - 1 as u32, sc.sc_owner) && private_at(sc.sc_vis, rmod, k, false) {
+            let pre = path_prefix(a, rmod, k);
+            let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+            sb.push_str(kind); sb.push_str(" '"); sb.push_str(path_display(a, ar, &pre));
+            sb.push_str("' is private (not visible from '"); sb.push_str(scope_display(a, ar, sc)); sb.push_str("')");
+            tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+            return true;
+        }
+        k = k + 1 as u32;
+    }
+    return false;
+}
+// The same walk over a path whose private segments are known in advance.
+fn masked_walk(a: Allocator, ar: *Arena, sc: *const TyScope, rmod: *const Vec<str>, mask: u32, kind: str, p: Pos) -> bool {
+    if mask == 0 as u32 { return false; }
+    let mut k = 2 as u32;
+    while k <= rmod.length() && k < 32 as u32 {
+        let bit = 1 as u32 << k;   // bound out: register #7
+        if (mask & bit) != 0 as u32 && !head_is_prefix(rmod, k - 1 as u32, sc.sc_owner) {
+            let pre = path_prefix(a, rmod, k);
+            let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+            sb.push_str(kind); sb.push_str(" '"); sb.push_str(path_display(a, ar, &pre));
+            sb.push_str("' is private (not visible from '"); sb.push_str(scope_display(a, ar, sc)); sb.push_str("')");
+            tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+            return true;
+        }
+        k = k + 1 as u32;
+    }
+    return false;
+}
+// A fn called by its path: the walk, then the fn's own `pub`.
+fn check_path_call_vis(a: Allocator, ar: *Arena, sc: *const TyScope, rmod: *const Vec<str>, is_pub: bool, disp: str, p: Pos) {
+    if vis_walk(a, ar, sc, rmod, "module", p) { return; }
+    fn_private_check(a, ar, sc, rmod, is_pub, disp, p);
+}
+// A static method called by its path: the same, over its type's known mask.
+fn check_static_call_vis(a: Allocator, ar: *Arena, sc: *const TyScope, mi: *const MethodInfo, disp: str, p: Pos) {
+    if masked_walk(a, ar, sc, &mi.mi_path, mi.mi_privmask, "module", p) { return; }
+    fn_private_check(a, ar, sc, &mi.mi_path, mi.mi_pub, disp, p);
+}
+fn fn_private_check(a: Allocator, ar: *Arena, sc: *const TyScope, rmod: *const Vec<str>, is_pub: bool, disp: str, p: Pos) {
+    if is_pub || paths_eq(sc.sc_owner, rmod) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("function '"); sb.push_str(disp); sb.push_str("' is private to module '");
+    sb.push_str(path_display(a, ar, rmod)); sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
+    return;
+}
+// The module a qualified call resolved in, as the lookup found it: the path as
+// written first, then relative to the current module.
+fn call_module_of(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, init: *const Vec<str>, last: str, sc: *const TyScope) -> Vec<str> {
+    if is_some_gf(global_lookup_by_mangled(g, mangle_path(a, ar, init, last))) { return copy_strs(a, init); }
+    return path_concat(a, sc.sc_modpath, init);
+}
+// A private struct is built only from inside its module.
+fn check_struct_lit_vis(a: Allocator, ar: *Arena, sc: *const TyScope, qtname: *const Vec<str>, written: *const Vec<str>, p: Pos) {
+    if qtname.length() == 0 as u32 { return; }
+    if head_is_prefix(qtname, qtname.length() - 1 as u32, sc.sc_owner) { return; }
+    if !private_at(sc.sc_vis, qtname, qtname.length(), true) { return; }
+    let parent = path_prefix(a, qtname, qtname.length() - 1 as u32);
+    let mut sb = StringBuilder::with_capacity(a, 80 as u32);
+    sb.push_str("struct '"); sb.push_str(path_display(a, ar, written)); sb.push_str("' is private to module '");
+    if parent.length() == 0 as u32 { sb.push_str("<root>"); } else { sb.push_str(path_display(a, ar, &parent)); }
+    sb.push_str("'");
+    tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
 pub fn check_program(a: Allocator, ar: *Arena, items: *const Vec<Item>)
@@ -20083,6 +20244,8 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let mut fenums: Vec<str> = Vec::with_capacity(a, 8 as u32);
     let top_modpath: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_type_names(a, ar, &top_modpath, items, &snames, &enames, &fstructs, &fenums);
+    let mut visv: Vec<VisEntry> = Vec::with_capacity(a, 16 as u32);
+    collect_vis(a, &top_modpath, items, &visv);
     let mut dbgnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
     collect_debug_types(a, ar, &top_modpath, items, &dbgnames);
     let mut constnames: Vec<str> = Vec::with_capacity(a, 8 as u32);
@@ -20180,7 +20343,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
                                sc_iconsts: &iconsts, sc_sinfo: &empty_sinfo,
                                sc_etags: &empty_etags, sc_efields: &empty_efields, sc_methods: &empty_methods, sc_impls: &empty_impls,
                                sc_mono_structs: &mono_structs, sc_mono_sargs: &mono_sargs, sc_mono_enums: &mono_enums, sc_mono_eargs: &mono_eargs, sc_mono_fields: &mono_fields, sc_mono_efields: &mono_efields,
-                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_tydefs: &tydefs, sc_tyvisited: &tyvisited, sc_tydepth: &tydepth, sc_field_pos: false, sc_err: &tc_err, sc_srcnames: &tc_srcnames, sc_srcbase: &tc_srcbase, sc_binds: &tc_binds, sc_bindbase: &tc_bindbase, sc_is_main: false };
+                               sc_tbinds: &empty_tbinds, sc_genfns: &genfns, sc_genjobs: &genjobs, sc_geninsts: &geninsts, sc_etps: &etps, sc_stps: &stps, sc_assoc: &assoc_binds, sc_lifted: &lifted_lambdas, sc_gensym: &gensym_unused, sc_modpath: &empty_tp, sc_ret: none_ty() , sc_self: none_ty() , sc_gsigs: &gsigs , sc_xstructs: &xstructs, sc_xaliases: &xaliases, sc_taliases: &taliases, sc_tydefs: &tydefs, sc_tyvisited: &tyvisited, sc_tydepth: &tydepth, sc_field_pos: false, sc_err: &tc_err, sc_srcnames: &tc_srcnames, sc_srcbase: &tc_srcbase, sc_binds: &tc_binds, sc_bindbase: &tc_bindbase, sc_owner: &top_modpath, sc_vis: &visv, sc_is_main: false };
     // The coverage map must exist BEFORE any function body elaborates — a
     // materialisation gate that runs against an empty registry checks nothing.
     collect_sigils(ar, &base_scope, items, &sigils);
@@ -20324,7 +20487,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // demanded, and only then does the prelude hand over the methods the program
     // actually reached.
     build_impl_regs(a, &methods, items, &impls);
-    let idx = ProgIdx { pi_runes: &toprunes, pi_wards: &topwards, pi_wardinsts: &topwardinsts, pi_sigils: &sigils, pi_claims: &claims, pi_snames: &snames, pi_fstructs: &fstructs, pi_fenums: &fenums, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
+    let idx = ProgIdx { pi_vis: &visv, pi_runes: &toprunes, pi_wards: &topwards, pi_wardinsts: &topwardinsts, pi_sigils: &sigils, pi_claims: &claims, pi_snames: &snames, pi_fstructs: &fstructs, pi_fenums: &fenums, pi_dbg: &dbgnames, pi_consts: &constnames, pi_xfields: &xfields, pi_loops: &loopdepth, pi_enames: &enames, pi_iconsts: &iconsts,
                         pi_sinfo: &sinfo, pi_etags: &etags, pi_efields: &efields, pi_methods: &methods, pi_impls: &impls,
                         pi_mono_structs: &mono_structs, pi_mono_sargs: &mono_sargs, pi_mono_enums: &mono_enums, pi_mono_eargs: &mono_eargs, pi_mono_fields: &mono_fields, pi_mono_efields: &mono_efields,
                         pi_tbinds: &empty_tbinds, pi_genfns: &genfns, pi_genjobs: &genjobs, pi_geninsts: &geninsts, pi_etps: &etps, pi_stps: &stps, pi_assoc: &assoc_binds, pi_lifted: &lifted_lambdas, pi_modpath: &empty_tp, pi_gsigs: &gsigs , pi_xstructs: &xstructs, pi_xaliases: &xaliases, pi_taliases: &taliases, pi_tydefs: &tydefs, pi_tyvisited: &tyvisited, pi_tydepth: &tydepth, pi_field_pos: false, pi_err: &tc_err, pi_srcnames: &tc_srcnames, pi_srcbase: &tc_srcbase, pi_binds: &tc_binds, pi_bindbase: &tc_bindbase };

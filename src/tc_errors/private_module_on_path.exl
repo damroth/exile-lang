@@ -1,0 +1,4 @@
+// Each module on a path must be visible: a private module is visible only from
+// inside its parent.
+mod m { mod inner { pub fn f() -> int { return 1; } } }
+fn main() { println(m::inner::f()); }

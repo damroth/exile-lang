@@ -1,0 +1,4 @@
+// A private generic static method, called by its path from outside its type.
+struct B<T> { v: T }
+impl<T> B<T> { fn hidden(v: T) -> B<T> { return B { v: v }; } }
+fn main() { let b: B<int> = B::hidden(3); println(b.v); }

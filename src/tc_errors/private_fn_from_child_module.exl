@@ -1,0 +1,7 @@
+// A private function is visible in its own module only - not from a module
+// nested inside it either.
+mod m {
+    fn f() -> int { return 1; }
+    pub mod n { pub fn go() -> int { return m::f(); } }
+}
+fn main() { println(m::n::go()); }

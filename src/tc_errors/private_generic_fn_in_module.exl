@@ -1,0 +1,3 @@
+// A private generic function of a module is not callable from outside it.
+mod m { fn id<T>(t: T) -> T { return t; } }
+fn main() { println(m::id(3)); }

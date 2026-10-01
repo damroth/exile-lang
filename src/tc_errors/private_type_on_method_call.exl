@@ -1,0 +1,8 @@
+// A method call walks its receiver's type path too: a private type's methods
+// are out of reach from outside its module, however the value was obtained.
+mod m {
+    struct P { x: int }
+    impl P { pub fn get(*const self) -> int { return self.x; } }
+    pub fn mk(v: int) -> P { return P { x: v }; }
+}
+fn main() { let p = m::mk(3); println(p.get()); }

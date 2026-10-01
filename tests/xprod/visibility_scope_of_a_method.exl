@@ -1,0 +1,52 @@
+// What is private is visible where the reference's scope says: a method's scope
+// is its impl's target, a free fn's its module. So a private method is callable
+// from any function of its own type - an instance method, a static one with no
+// `self`, one in a second impl block, a trait impl's, a generic impl's; and a
+// private module item from inside its parent. An enum has no such check, and a
+// `mod raw` at the top level is visible without `pub`.
+mod raw { extern fn make_c_allocator() -> Allocator; }
+
+trait Tr { fn key(*const self) -> int; fn twice(*const self) -> int { return self.key() * 2; } }
+
+struct P { x: int }
+impl P {
+    fn hidden(*const self) -> int { return self.x; }
+    fn scaled(v: int) -> int { return v * 3; }
+    fn pick<T>(*const self, t: T) -> T { return t; }
+    pub fn from_static(v: int) -> int { let p = P { x: v }; return p.hidden() + p.pick(1); }
+    pub fn from_method(*const self) -> int { return P::scaled(self.x); }
+}
+impl P { pub fn from_second_block(v: int) -> int { return P::scaled(v) + 1; } }
+impl Tr for P { fn key(*const self) -> int { return self.hidden(); } }
+
+struct B<T> { v: T, n: int }
+impl<T> B<T> {
+    fn count(*const self) -> int { return self.n; }
+    pub fn make(v: T, n: int) -> int { let b = B { v: v, n: n }; return b.count(); }
+}
+
+mod m {
+    mod inner { pub fn one() -> int { return 1; } }
+    struct S { x: int }
+    impl S { pub fn make(v: int) -> int { return v; } }
+    enum E { A | B(int) }
+    fn id<T>(t: T) -> T { return t; }
+    pub fn go() -> int { return inner::one() + S::make(2) + m::id(3); }
+    pub mod n { pub fn build() -> int { let s = m::S { x: 4 }; return s.x; } }
+    pub fn val(e: E) -> int { return match e { E::A => 0 | E::B(v) => v }; }
+}
+
+fn main() {
+    let a = raw::make_c_allocator();
+    let s = String::with_str(a, "ok");
+    println(s.length() as int);
+    println(P::from_static(4));
+    let p = P { x: 5 };
+    println(p.from_method());
+    println(P::from_second_block(6));
+    println(p.twice());
+    println(B::make(true, 7));
+    println(m::go());
+    println(m::n::build());
+    println(m::val(m::E::B(8)));
+}

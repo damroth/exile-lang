@@ -1,0 +1,3 @@
+// Privacy is checked before the arguments are compared with the parameters.
+mod m { fn f(x: int) -> int { return x; } }
+fn main() { println(m::f(true)); }

@@ -1,0 +1,4 @@
+// A private static method is callable by its path only from its own type.
+struct P { x: int }
+impl P { fn hidden(v: int) -> int { return v; } }
+fn main() { println(P::hidden(3)); }

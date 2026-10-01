@@ -1,0 +1,3 @@
+// A private function of a module is not callable from outside it.
+mod m { fn f() -> int { return 1; } }
+fn main() { println(m::f()); }
