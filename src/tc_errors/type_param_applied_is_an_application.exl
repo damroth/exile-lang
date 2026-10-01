@@ -1,0 +1,4 @@
+// A type parameter is a type only when written bare: `T<int>` is a generic
+// application, and no generic type is named `T`.
+fn f<T>(x: T<int>) -> int { return 1; }
+fn main() { println(1); }

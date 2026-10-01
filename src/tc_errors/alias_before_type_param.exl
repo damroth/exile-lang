@@ -1,0 +1,5 @@
+// An alias is asked before a type parameter of the same name, so `x` is an
+// `int` and nothing in the call says what `Al` is.
+type Al = int;
+fn f<Al>(x: Al) -> int { return x + 1; }
+fn main() { println(f(2)); }

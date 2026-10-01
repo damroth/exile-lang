@@ -1,0 +1,14 @@
+// A type parameter is a type only when written bare, and a projection through
+// one is tried only after the declared types: `T<int>` below is the generic
+// struct `T`, and `M::Item` is the struct in module `M`, though `T` and `M` are
+// also the functions' type parameters.
+struct T<X> { x: X }
+fn first<T>(a: T, b: T<int>) -> int { return b.x; }
+mod M { pub struct Item { v: int } }
+struct P { x: int }
+fn item<M>(a: M, i: M::Item) -> int { return i.v; }
+fn main() {
+    println(first(1, T { x: 7 }));
+    let p = P { x: 1 };
+    println(item(p, M::Item { v: 3 }));
+}

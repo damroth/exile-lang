@@ -1,0 +1,6 @@
+// `Self::Va` and `Self::Vb` stand where no projection may: inside a function-
+// pointer type.  The return type is looked at first, so `Self::Vb` is refused.
+struct P { x: int }
+trait Tr { type Va; type Vb; fn k(*const self, f: fn(Self::Va) -> Self::Vb) -> int; }
+impl Tr for P { type Va = int; type Vb = int; fn k(*const self, f: fn(Self::Va) -> Self::Vb) -> int { return 1; } }
+fn main() { println(1); }

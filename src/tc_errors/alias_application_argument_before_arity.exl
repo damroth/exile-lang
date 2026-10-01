@@ -1,0 +1,3 @@
+// An alias resolves the arguments it is given before it counts them.
+type Bag<T> = Vec<T>;
+fn main() { let x: Bag<Other, int> = 1; println(1); }

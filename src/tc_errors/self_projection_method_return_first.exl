@@ -1,0 +1,6 @@
+// An inherent impl has no associated types, so `Self::Va` and `Self::Vb` name
+// nothing.  The method's return type is looked at before its parameters, so
+// `Self::Vb` is the one refused.
+struct P { x: int }
+impl P { fn k(*const self, f: fn(Self::Va) -> int) -> Self::Vb { return 1; } }
+fn main() { println(1); }

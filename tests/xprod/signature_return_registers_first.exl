@@ -1,0 +1,14 @@
+// A signature's return type is resolved before its parameters, so the generic
+// instances it names first are registered - and their C types emitted - return
+// first.  Each signature below names its own pair, seen nowhere earlier: a
+// function's and an extern function's.
+struct A1<T> { a: T }
+struct B1<T> { b: T }
+struct A2<T> { a: T }
+struct B2<T> { b: T }
+fn conv(x: A1<int>) -> B1<int> { return B1 { b: x.a + 1 }; }
+pub mod raw { extern fn ext_conv(x: *A2<int>) -> *B2<int>; }
+fn main() {
+    let r = conv(A1 { a: 1 });
+    println(r.b);
+}

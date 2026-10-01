@@ -1,0 +1,2 @@
+// A type application's arguments are resolved before their count is checked.
+fn main() { let x: Vec<int, Other> = 1; println(1); }

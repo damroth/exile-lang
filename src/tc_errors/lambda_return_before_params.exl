@@ -1,0 +1,2 @@
+// A lambda's signature resolves its return type before its parameters.
+fn main() { let f = |x: Aa<int>| -> Bb<int> 1; println(1); }

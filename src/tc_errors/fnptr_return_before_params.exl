@@ -1,0 +1,2 @@
+// A function-pointer type resolves its return type before its parameters.
+fn main() { let x: fn(Aa<int>) -> Bb<int> = 1; println(1); }

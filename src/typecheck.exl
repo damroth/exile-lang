@@ -1060,9 +1060,9 @@ fn expand_type_alias(a: Allocator, ar: *Arena, sc: *const TyScope, ti: u32, name
     // separates this chain from the stale tail of the previous one.
     if name_in_tail(sc.sc_tyvisited, name, *sc.sc_tydepth) { return alias_cycle(a, ar, sc, name, p); }
     let sl = sc.sc_tydefs.as_slice();
+    let resolved = resolve_sig_args(a, ar, sc, args, p);
     let expected = sl[ti].tatparams.length();
     if expected != args.length() { return alias_arity(a, ar, sc, name, expected, args.length(), p); }
-    let resolved = resolve_sig_args(a, ar, sc, args, p);
     sc.sc_tyvisited.push(name);
     *sc.sc_tydepth = *sc.sc_tydepth + 1 as u32;
     let inner = scope_with_tparams(sc, &sl[ti].tatparams);
@@ -1587,22 +1587,43 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
     let plen = path.length();
     let psl = path.as_slice();
     let last = psl[plen - 1 as u32];
+    let nargs = args.length();
     if plen == 1 as u32 {
-        // Inside a generic-fn instance, a bound tparam resolves to its
-        // concrete type; otherwise it is the abstract `TVar` (skeleton).
-        if has_tbind(sc, last) { return get_tbind(ar, sc, last); }
-        if name_in(sc.sc_tparams, last) { return ty_node(ar, Typ::TVar(last)); }
-        // An alias wins over a struct or enum of the same name: `type X = Y;` is
-        // substitution, not a fallback, so it is asked before anything else that
-        // could answer to this name.
+        // An alias wins over everything else that could answer to this name, a
+        // type parameter included: `type X = Y;` is substitution, not a
+        // fallback, so it is asked first.
         let adx = tydef_idx(sc, last);
         if adx >= 0 as int { return expand_type_alias(a, ar, sc, adx as u32, last, args, p); }
+        // A type parameter is a type only when written bare; `T<int>` is an
+        // application, asked of the declared types like any other.  Inside a
+        // generic-fn instance a bound tparam resolves to its concrete type;
+        // otherwise it is the abstract `TVar` (skeleton).
+        if nargs == 0 as u32 {
+            if has_tbind(sc, last) { return get_tbind(ar, sc, last); }
+            if name_in(sc.sc_tparams, last) { return ty_node(ar, Typ::TVar(last)); }
+        }
     }
+    if nargs == 0 as u32 {
+        // An extern struct / type resolves by its last path segment (the raw C
+        // symbol), whether named bare or module-qualified (`raw::Library`).
+        if name_in(sc.sc_xstructs, last) { return ty_node(ar, Typ::TExtStruct(last)); }
+        if name_in(sc.sc_xaliases, last) { return ty_node(ar, Typ::TExtAlias(last)); }
+    }
+    // ONE scope walk decides both the KIND and the DECLARATION path, mirroring
+    // `lookup_struct ctx path` followed by `lookup_enum ctx path`: structs are
+    // asked at EVERY level before enums are asked at any, so a struct in an
+    // enclosing scope beats an enum in the current one.  The walk also answers
+    // the module-relative case it replaces - the innermost level is simply the
+    // first one tried - and it answers it for a generic application too, which
+    // the old branch did not.
+    let spath = scope_lookup_ty(a, ar, sc.sc_fstructs, sc.sc_modpath, path);
+    let epath = scope_lookup_ty(a, ar, sc.sc_fenums, sc.sc_modpath, path);
     // `Head::Assoc` where Head is a type parameter (or a bound one) is an
-    // associated-type projection: in an instance the head is concrete and the
-    // projection resolves through the impl's `type Assoc = ..`; in a skeleton
-    // it stays a `TAssocProj` marker, projected at instance time.
-    if plen == 2 as u32 && args.length() == 0 as u32 {
+    // associated-type projection, asked only once no declared type answers to
+    // the path - the reference asks it last.  In an instance the head is
+    // concrete and the projection resolves through the impl's `type Assoc = ..`;
+    // in a skeleton it stays a `TAssocProj` marker, projected at instance time.
+    if plen == 2 as u32 && nargs == 0 as u32 && spath.length() == 0 as u32 && epath.length() == 0 as u32 {
         let head = psl[0 as u32];
         // `Self::Assoc` inside a trait default projects through the implementing
         // type the instance pinned (`Iterator::collect`'s `Vec<Self::Item>`).
@@ -1619,22 +1640,6 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         if has_tbind(sc, head) { return project_assoc(a, ar, sc, get_tbind(ar, sc, head), last, p); }
         if name_in(sc.sc_tparams, head) { return ty_node(ar, Typ::TAssocProj { head: ty_node(ar, Typ::TVar(head)), assoc: last }); }
     }
-    let nargs = args.length();
-    if nargs == 0 as u32 {
-        // An extern struct / type resolves by its last path segment (the raw C
-        // symbol), whether named bare or module-qualified (`raw::Library`).
-        if name_in(sc.sc_xstructs, last) { return ty_node(ar, Typ::TExtStruct(last)); }
-        if name_in(sc.sc_xaliases, last) { return ty_node(ar, Typ::TExtAlias(last)); }
-    }
-    // ONE scope walk decides both the KIND and the DECLARATION path, mirroring
-    // `lookup_struct ctx path` followed by `lookup_enum ctx path`: structs are
-    // asked at EVERY level before enums are asked at any, so a struct in an
-    // enclosing scope beats an enum in the current one.  The walk also answers
-    // the module-relative case it replaces - the innermost level is simply the
-    // first one tried - and it answers it for a generic application too, which
-    // the old branch did not.
-    let spath = scope_lookup_ty(a, ar, sc.sc_fstructs, sc.sc_modpath, path);
-    let epath = scope_lookup_ty(a, ar, sc.sc_fenums, sc.sc_modpath, path);
     // The STRUCT phase is the whole struct phase: the walk over declared types
     // AND the prelude structs, which have no declaration to walk to but are
     // structs all the same.  A user `enum Allocator` does not remove the prelude
@@ -1667,9 +1672,11 @@ fn resolve_named_ty(a: Allocator, ar: *Arena, sc: *const TyScope,
         return ty_node(ar, Typ::TStruct(copy_strs(a, path)));
     }
     // Generic application → monomorphic instance, registered for the footer.
+    // The arguments first, then the head, then the count: the reference's
+    // order, so an application wrong in two ways is refused for the same one.
+    let resolved = resolve_sig_args(a, ar, sc, args, p);
     if !hit_struct && !builtin_struct && !is_enum { unknown_type(a, ar, sc, path, true, p); }
     check_generic_arity(a, ar, sc, path, last, is_enum, nargs, p);
-    let resolved = resolve_sig_args(a, ar, sc, args, p);
     // Module-relative, exactly as for the non-generic case above — the mono
     // instance inherits the DECLARATION's prefix, so `Box<i32>` written inside
     // `mod inner` is `inner::Box_i32`.  The reference gets this for free by
@@ -1830,11 +1837,20 @@ fn resolve_sig_ty(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const Type
         | TypeAnn::TyTuple(elems) => ty_node(ar, Typ::TTuple(resolve_sig_args(a, ar, sc, &elems, p)))
         | TypeAnn::TyArray { elem, size } =>
             ty_node(ar, Typ::TArray { elem: resolve_sig_ty(a, ar, sc, elem, p), size: checked_array_size(a, ar, sc, size, p) })
-        | TypeAnn::TyFnPtr { params, ret } =>
-            ty_node(ar, Typ::TFnPtr { params: resolve_sig_args(a, ar, sc, &params, p), ret: resolve_sig_ret(a, ar, sc, ret, p) })
+        | TypeAnn::TyFnPtr { params, ret } => resolve_fnptr_ty(a, ar, sc, &params, ret, p)
         | TypeAnn::TySelf => self_ty_or_fail(ar, sc, p)
         | _other => resolve_type_ann(a, ar, ann)
     };
+}
+
+// The return type before the parameters: the reference builds this node as a
+// record, whose fields OCaml evaluates right to left - its first error, and the
+// instances it registers, come from the return type.
+fn resolve_fnptr_ty(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<*const TypeAnn>,
+                    ret: Option<*const TypeAnn>, p: Pos) -> *const Typ {
+    let r = resolve_sig_ret(a, ar, sc, ret, p);
+    let ps = resolve_sig_args(a, ar, sc, params, p);
+    return ty_node(ar, Typ::TFnPtr { params: ps, ret: r });
 }
 
 fn resolve_param_tys(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<Param>, p: Pos) -> Vec<*const Typ> {
@@ -9320,12 +9336,14 @@ fn lam_to_params(a: Allocator, params: *const Vec<FieldDef>) -> Vec<Param> {
 }
 // The fn-ptr type a lambda decays to.
 fn lambda_fnptr_ty(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<FieldDef>, ret_ty: Option<*const TypeAnn>, p: Pos) -> *const Typ {
+    // The return type first, as for any fn's signature.
+    let r = resolve_sig_ret(a, ar, sc, ret_ty, p);
     let mut ptys: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);
     let n = params.length();
     let sl = params.as_slice();
     let mut i = 0 as u32;
     while i < n { ptys.push(resolve_sig_ty(a, ar, sc, sl[i].ty, p)); i = i + 1 as u32; }
-    return ty_node(ar, Typ::TFnPtr { params: ptys, ret: resolve_sig_ret(a, ar, sc, ret_ty, p) });
+    return ty_node(ar, Typ::TFnPtr { params: ptys, ret: r });
 }
 // Index of the A2 closure pre-pass entry whose original `Lambda` node is
 // `e` (matched by arena-pointer identity), or -1 for a captureless lambda.
@@ -13399,20 +13417,20 @@ fn scope_with_tparams(base: *const TyScope, tparams: *const Vec<str>) -> TyScope
         sc_owner: base.sc_owner, sc_vis: base.sc_vis, sc_is_main: base.sc_is_main, sc_err: base.sc_err, sc_srcnames: base.sc_srcnames, sc_srcbase: base.sc_srcbase, sc_binds: base.sc_binds, sc_bindbase: base.sc_bindbase,
     };
 }
-// Every annotation in the signature, params and return alike.
+// Every annotation in the signature, the return before the params - the
+// reference finds a surviving projection by resolving the signature, and it
+// resolves the return first.
 fn check_method_assoc_positions(a: Allocator, ar: *Arena, sc: *const TyScope, f: *const Func, ok: bool) {
-    let n = f.params.length();
     let mut bad = false;
+    match f.ret_ty {
+        Option::Some(rt) => { bad = check_assoc_positions(a, ar, sc, rt, ok, f.pos); }
+        | Option::None => { }
+    }
+    let n = f.params.length();
     let mut i = 0 as u32;
     while i < n && !bad {
         bad = check_param_assoc_pos(a, ar, sc, &f.params, i, ok, f.pos);
         i = i + 1 as u32;
-    }
-    if !bad {
-        match f.ret_ty {
-            Option::Some(rt) => { bad = check_assoc_positions(a, ar, sc, rt, ok, f.pos); }
-            | Option::None => { }
-        }
     }
     return;
 }
@@ -13461,11 +13479,13 @@ fn walk_assoc_pos(a: Allocator, ar: *Arena, sc: *const TyScope, ann: *const Type
 }
 fn walk_assoc_fnptr(a: Allocator, ar: *Arena, sc: *const TyScope, params: *const Vec<*const TypeAnn>,
                     ret: Option<*const TypeAnn>, p: Pos) -> bool {
-    if walk_assoc_tuple(a, ar, sc, params, p) { return true; }
-    return match ret {
+    // The return type first, as the reference resolves a function pointer.
+    let in_ret = match ret {
         Option::Some(t) => walk_assoc_pos(a, ar, sc, t, false, p)
         | Option::None => false
     };
+    if in_ret { return true; }
+    return walk_assoc_tuple(a, ar, sc, params, p);
 }
 fn assoc_struct_pos(a: Allocator, ar: *Arena, sc: *const TyScope, path: *const Vec<str>, args: *const Vec<*const TypeAnn>, ok: bool, p: Pos) -> bool {
     if is_self_proj(path) { return report_bad_assoc_pos(a, ar, sc, path, ok, p); }
@@ -16791,12 +16811,13 @@ fn collect_fn_sigs_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const 
         Item::Function(f) => {
             check_free_fn_self(a, ar, sc, &f);
             let fsc = scope_with_tparams(&msc, &f.tparams);
-            out.push(FnSig { fs_mangled: fn_lookup_key(a, ar, &f, path), fs_params: resolve_param_tys(a, ar, &fsc, &f.params, f.pos) });
-            // The oracle resolves a fn's return type immediately after its params
-            // (elab_one_fn), so instance registration interleaves per-fn rather
-            // than all-params-then-all-returns.  Resolve it here for that
+            // The oracle's signature table resolves each fn in turn, its return
+            // type BEFORE its params - the table's entry is a record, whose
+            // fields OCaml evaluates right to left - so instances register, and
+            // a first error is found, return first.  Resolved here for that
             // side effect; collect_globals re-resolves it for the global table.
             resolve_ret_for_order(a, ar, &fsc, &f);
+            out.push(FnSig { fs_mangled: fn_lookup_key(a, ar, &f, path), fs_params: resolve_param_tys(a, ar, &fsc, &f.params, f.pos) });
         }
         | Item::View(vd) => {
             let mut vp: Vec<*const Typ> = Vec::with_capacity(a, 8 as u32);

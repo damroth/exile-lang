@@ -1,0 +1,3 @@
+// A type application resolves its arguments before it asks what the head is:
+// an unknown head applied to an unknown argument is refused for the argument.
+fn main() { let x: Nope<Other> = 1; println(1); }
