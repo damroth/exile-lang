@@ -3903,6 +3903,18 @@ fn register_slice_elem(a: Allocator, ar: *Arena, sc: *const TyScope, elem: *cons
 // the DCE that deletes the method).  A slice view of any OTHER Vec — e.g. a Vec
 // that is only ever a struct field — must earn its place by being mentioned,
 // exactly as the oracle's DCE requires.
+// Every instance a footprint registered, as start/end pairs: the footprints are
+// registered impl by impl, interleaved with the methods' own signatures, so no
+// single window covers them.
+fn in_fp_ranges(r: *const Vec<u32>, idx: u32) -> bool {
+    let sl = r.as_slice();
+    let mut k = 0 as u32;
+    while k + 1 as u32 < r.length() {
+        if idx >= sl[k] && idx < sl[k + 1 as u32] { return true; }
+        k = k + 2 as u32;
+    }
+    return false;
+}
 fn sv_is_ghost(sv_fp: *const Vec<bool>, sv_start: u32, sv_end: u32, idx: u32) -> bool {
     if idx < sv_start { return false; }
     if idx >= sv_end { return false; }
@@ -3912,7 +3924,7 @@ fn sv_is_ghost(sv_fp: *const Vec<bool>, sv_start: u32, sv_end: u32, idx: u32) ->
 }
 fn register_vec_slice_views(a: Allocator, ar: *Arena, sc: *const TyScope,
                             mono_structs: *const Vec<Vec<str>>, mono_sargs: *const Vec<Vec<*const Typ>>,
-                            fp_start: u32, fp_end: u32, elem_fp: *Vec<bool>) {
+                            fp_ranges: *const Vec<u32>, elem_fp: *Vec<bool>) {
     // Collect FIRST, register second: registering pushes into mono_structs, and a
     // grow reallocates the buffer the loop's slice points at (a use-after-free the
     // port's own source triggered — the corpus never grew the Vec mid-walk).
@@ -3926,7 +3938,7 @@ fn register_vec_slice_views(a: Allocator, ar: *Arena, sc: *const TyScope,
             elems.push(sal[i].as_slice()[0 as u32]);
             // Registration is 1:1 with `elems`, so sv entry k mirrors elems[k]:
             // record whether this Vec came from the iter-footprint window.
-            elem_fp.push(i >= fp_start && i < fp_end);
+            elem_fp.push(in_fp_ranges(fp_ranges, i));
         }
         i = i + 1 as u32;
     }
@@ -13820,10 +13832,10 @@ fn push_one_method(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const 
     // one line above the method, where the reference does.
     if from_trait { check_method_assoc_positions(a, ar, sc, f, true); }
     else if str::eq(trait_name, "") { check_method_assoc_positions(a, ar, sc, f, false); }
-    // Same rule as the conformance check: an impl method's signature RESOLVES at
-    // the impl block, so an unknown type in its return is refused there.  Proved
-    // by a shape where this call is the one that latches - the earlier attempt to
-    // move it was reverted for want of exactly that.
+    // The signature has been resolved twice by now, where the reference resolves
+    // it and with its positions: a trait impl's method by the conformance check,
+    // at the impl block, and every method by the signature table, at the method.
+    // This resolution only reads the type; whatever it could refuse is latched.
     let mret = if struct_gen { none_ty() } else { resolve_sig_ret(a, ar, &msc, f.ret_ty, ipos) };
     out.push(MethodInfo {
         mi_path: copy_strs(a, target), mi_pub: f.is_pub, mi_trait: trait_name, mi_name: f.name,
@@ -14823,7 +14835,7 @@ fn assoc_provided(iassoc: *const Vec<FieldDef>, name: str) -> bool {
 }
 fn collect_one_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
                              prelude: *const Vec<Item>, ib: *const ImplBlock,
-                             modpath: *const Vec<str>, out: *Vec<MethodInfo>) {
+                             modpath: *const Vec<str>, out: *Vec<MethodInfo>, reg: bool) {
     let tname = impl_trait_name(ib);
     if str::eq(tname, "") { return; }
     // The impl's own module is the scope its annotations resolve in.  Running the
@@ -14850,7 +14862,7 @@ fn collect_one_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items
     // read as empty.
     let loc = locate_trait(a, items, &impl_trait_written(a, ib));
     if loc.tl_idx >= 0 as int {
-        register_at_trait(a, ar, &msc, items, items, &loc.tl_mod, 0 as u32, loc.tl_idx as u32, ib, modpath, out);
+        register_at_trait(a, ar, &msc, items, items, &loc.tl_mod, 0 as u32, loc.tl_idx as u32, ib, modpath, out, reg);
         return;
     }
     let nested: Vec<str> = empty_strs(a);
@@ -14937,33 +14949,33 @@ fn push_strs(out: *Vec<str>, src: *const Vec<str>) {
 // and the defaults, which the impl's target gains wherever the trait lives.
 fn register_at_trait(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, items: *const Vec<Item>,
                      tmod: *const Vec<str>, depth: u32, tidx: u32, ib: *const ImplBlock, modpath: *const Vec<str>,
-                     out: *Vec<MethodInfo>) {
-    if depth == tmod.length() { register_against_trait_item(a, ar, sc, root, &items.as_slice()[tidx], tmod, tidx, ib, modpath, out); return; }
+                     out: *Vec<MethodInfo>, reg: bool) {
+    if depth == tmod.length() { register_against_trait_item(a, ar, sc, root, &items.as_slice()[tidx], tmod, tidx, ib, modpath, out, reg); return; }
     let want = tmod.as_slice()[depth];
     let sl = items.as_slice();
     let mut i = 0 as u32;
     while i < items.length() {
-        register_in_module(a, ar, sc, root, &sl[i], want, tmod, depth, tidx, ib, modpath, out);
+        register_in_module(a, ar, sc, root, &sl[i], want, tmod, depth, tidx, ib, modpath, out, reg);
         i = i + 1 as u32;
     }
 }
 fn register_in_module(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, it: *const Item, want: str,
                       tmod: *const Vec<str>, depth: u32, tidx: u32, ib: *const ImplBlock, modpath: *const Vec<str>,
-                      out: *Vec<MethodInfo>) {
+                      out: *Vec<MethodInfo>, reg: bool) {
     match *it {
-        Item::Module(md) => { register_if_named(a, ar, sc, root, md.mname, &md.mitems, want, tmod, depth, tidx, ib, modpath, out); }
+        Item::Module(md) => { register_if_named(a, ar, sc, root, md.mname, &md.mitems, want, tmod, depth, tidx, ib, modpath, out, reg); }
         | _e => { }
     }
 }
 fn register_if_named(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, mname: str, mitems: *const Vec<Item>,
                      want: str, tmod: *const Vec<str>, depth: u32, tidx: u32, ib: *const ImplBlock, modpath: *const Vec<str>,
-                     out: *Vec<MethodInfo>) {
+                     out: *Vec<MethodInfo>, reg: bool) {
     if !str::eq(mname, want) { return; }
-    register_at_trait(a, ar, sc, root, mitems, tmod, depth + 1 as u32, tidx, ib, modpath, out);
+    register_at_trait(a, ar, sc, root, mitems, tmod, depth + 1 as u32, tidx, ib, modpath, out, reg);
 }
 fn register_against_trait_item(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, it: *const Item,
                                tmod: *const Vec<str>, tidx: u32, ib: *const ImplBlock, modpath: *const Vec<str>,
-                               out: *Vec<MethodInfo>) {
+                               out: *Vec<MethodInfo>, reg: bool) {
     match *it {
         Item::Trait(td) => {
             let disp = trait_display_path(a, ar, tmod, td.trname);
@@ -14971,7 +14983,7 @@ fn register_against_trait_item(a: Allocator, ar: *Arena, sc: *const TyScope, roo
             check_supertraits(a, ar, sc, root, &td.trsupers, disp, path_last(&ib.itarget), ib.ipos);
             check_orphan(a, ar, sc, disp, tmod, ib, modpath, ib.ipos);
             register_td_defaults(a, ar, sc, &ib.itarget, &ib.iitems, &td, tidx, ib.ipos,
-                                 &ib.itparams, &ib.iassoc, disp, true, tmod, modpath, out);
+                                 &ib.itparams, &ib.iassoc, disp, reg, tmod, modpath, out);
         }
         | _e => { }
     }
@@ -15067,9 +15079,228 @@ fn check_supertraits(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const
 fn collect_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>,
                          prelude: *const Vec<Item>, it: *const Item, modpath: *const Vec<str>, out: *Vec<MethodInfo>) {
     match *it {
-        Item::Impl(ib) => { collect_one_impl_defaults(a, ar, sc, root, prelude, &ib, modpath, out); }
+        Item::Impl(ib) => { collect_one_impl_defaults(a, ar, sc, root, prelude, &ib, modpath, out, true); }
         | Item::Module(md) => { collect_impl_defaults_in(a, ar, sc, root, prelude, &md.mitems, &path_push(a, modpath, md.mname), out); }
         | _e => { }
+    }
+}
+// ===== the impl phase =====
+//
+// The reference checks and resolves every impl in one pass, before it builds
+// the signature table: the trait impls' associated types first, then impl by
+// impl its target, each written method's clash with a field and its `self`,
+// and the trait's conformance; last, a method defined in two blocks.  What
+// this pass resolves registers its instances ahead of every signature's, and
+// what it refuses is refused first.  The later passes ask the same questions
+// again for what they build; the latch keeps this pass's answer.
+struct MethodDef { md_target: str, md_name: str, md_pos: Pos }
+fn impl_phase(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+              prelude: *const Vec<Item>, sinfo: *const Vec<StructField>) {
+    let root: Vec<str> = empty_strs(a);
+    impl_assoc_in(a, ar, sc, items, &root);
+    let mut defs: Vec<MethodDef> = Vec::with_capacity(a, 8 as u32);
+    impl_phase_in(a, ar, sc, items, prelude, items, &root, sinfo, &defs);
+    report_cross_block_dup(a, ar, sc, &defs);
+}
+// The impl's target as the reference finds it: a struct, then an enum, walking
+// out from the impl's module - the prelude's own types included; empty when
+// nothing answers.
+fn impl_target_found(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *const Vec<str>, target: *const Vec<str>) -> Vec<str> {
+    let msc = scope_with_modpath(sc, modpath);
+    let p = impl_target_abs(a, ar, &msc, target);
+    if p.length() > 0 as u32 { return p; }
+    if target.length() == 1 as u32 && (is_builtin_struct(path_last(target)) || is_prelude_enum(path_last(target))) { return copy_strs(a, target); }
+    return empty_strs(a);
+}
+fn impl_assoc_in(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, modpath: *const Vec<str>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() { impl_assoc_one(a, ar, sc, &sl[i], modpath); i = i + 1 as u32; }
+}
+fn impl_assoc_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, modpath: *const Vec<str>) {
+    match *it {
+        Item::Impl(ib) => { impl_assoc_resolve(a, ar, sc, &ib, modpath); }
+        | Item::Module(md) => { impl_assoc_in(a, ar, sc, &md.mitems, &path_push(a, modpath, md.mname)); }
+        | _e => { }
+    }
+}
+// Resolved for the instances it registers.  A failure is the conformance
+// check's to report, so the latch is put back as it was.
+fn impl_assoc_resolve(a: Allocator, ar: *Arena, sc: *const TyScope, ib: *const ImplBlock, modpath: *const Vec<str>) {
+    if str::eq(impl_trait_name(ib), "") { return; }
+    if impl_target_found(a, ar, sc, modpath, &ib.itarget).length() == 0 as u32 { return; }
+    let msc = scope_with_modpath(sc, modpath);
+    let tsc = scope_with_tparams(&msc, &ib.itparams);
+    let saved = *sc.sc_err;
+    let sl = ib.iassoc.as_slice();
+    let mut i = 0 as u32;
+    while i < ib.iassoc.length() { resolve_sig_ty(a, ar, &tsc, sl[i].ty, ib.ipos); i = i + 1 as u32; }
+    *sc.sc_err = saved;
+}
+fn impl_phase_in(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, prelude: *const Vec<Item>,
+                 items: *const Vec<Item>, modpath: *const Vec<str>, sinfo: *const Vec<StructField>,
+                 defs: *Vec<MethodDef>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() { impl_phase_one(a, ar, sc, root, prelude, &sl[i], modpath, sinfo, defs); i = i + 1 as u32; }
+}
+fn impl_phase_one(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, prelude: *const Vec<Item>,
+                  it: *const Item, modpath: *const Vec<str>, sinfo: *const Vec<StructField>,
+                  defs: *Vec<MethodDef>) {
+    match *it {
+        Item::Impl(ib) => { impl_phase_block(a, ar, sc, root, prelude, &ib, modpath, sinfo, defs); }
+        | Item::Module(md) => { impl_phase_in(a, ar, sc, root, prelude, &md.mitems, &path_push(a, modpath, md.mname), sinfo, defs); }
+        | _e => { }
+    }
+}
+fn impl_phase_block(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, prelude: *const Vec<Item>,
+                    ib: *const ImplBlock, modpath: *const Vec<str>, sinfo: *const Vec<StructField>,
+                    defs: *Vec<MethodDef>) {
+    let target = impl_target_found(a, ar, sc, modpath, &ib.itarget);
+    if target.length() == 0 as u32 {
+        let mut sb = StringBuilder::with_capacity(a, 64 as u32);
+        sb.push_str("unknown type '"); sb.push_str(path_display(a, ar, &ib.itarget)); sb.push_str("' in 'impl' block");
+        tc_fail(ar, sc, ib.ipos, str::from_slice(ar, sb.as_slice()));
+        return;
+    }
+    let tdisp = path_display(a, ar, &target);
+    let msc = scope_with_modpath(sc, modpath);
+    let self_ty: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, &target))));
+    let tsc = scope_with_tparams_self(&msc, &ib.itparams, self_ty);
+    let ms = ib.iitems.as_slice();
+    let mut i = 0 as u32;
+    while i < ib.iitems.length() {
+        clash_scan_method(a, ar, sc, &target, &ms[i], sinfo);
+        check_self_param(a, ar, &tsc, &target, tdisp, &ms[i]);
+        defs.push(MethodDef { md_target: tdisp, md_name: ms[i].name, md_pos: ms[i].pos });
+        i = i + 1 as u32;
+    }
+    if str::eq(impl_trait_name(ib), "") { return; }
+    let mut throwaway: Vec<MethodInfo> = Vec::with_capacity(a, 8 as u32);
+    collect_one_impl_defaults(a, ar, sc, root, prelude, ib, modpath, &throwaway, false);
+    push_synth_defaults(a, ar, root, prelude, ib, tdisp, defs);
+}
+// A first parameter named `self` takes the impl's own type, by value or behind
+// either pointer.
+fn check_self_param(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, tdisp: str, f: *const Func) {
+    if f.params.length() == 0 as u32 { return; }
+    let ps = f.params.as_slice();
+    if !str::eq(ps[0 as u32].pname, "self") { return; }
+    let t = resolve_sig_ty(a, ar, sc, ps[0 as u32].pty, f.pos);
+    if self_ty_ok(t, target) { return; }
+    let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+    sb.push_str("first parameter 'self' must have type '"); sb.push_str(tdisp);
+    sb.push_str("', '*"); sb.push_str(tdisp); sb.push_str("', or '*const "); sb.push_str(tdisp);
+    sb.push_str("', got "); sb.push_str(typ_name(a, ar, t));
+    tc_fail(ar, sc, f.pos, str::from_slice(ar, sb.as_slice()));
+}
+fn self_ty_ok(t: *const Typ, target: *const Vec<str>) -> bool {
+    return match *t {
+        Typ::TPtr(inner) => names_target(inner, target)
+        | Typ::TConstPtr(inner) => names_target(inner, target)
+        | _o => names_target(t, target)
+    };
+}
+fn names_target(t: *const Typ, target: *const Vec<str>) -> bool {
+    return match *t {
+        Typ::TStruct(p) => paths_eq(&p, target)
+        | Typ::TStructApp { path, args: _a } => paths_eq(&path, target)
+        | Typ::TEnum(p) => paths_eq(&p, target)
+        | Typ::TEnumApp { path, args: _a } => paths_eq(&path, target)
+        | _o => false
+    };
+}
+// The trait's defaults the impl does not write count as defined in its block,
+// as the reference appends them to the impl's methods.
+fn push_synth_defaults(a: Allocator, ar: *Arena, root: *const Vec<Item>, prelude: *const Vec<Item>, ib: *const ImplBlock,
+                       tdisp: str, defs: *Vec<MethodDef>) {
+    let tname = impl_trait_name(ib);
+    let loc = locate_trait(a, root, &impl_trait_written(a, ib));
+    if loc.tl_idx >= 0 as int { synth_defaults_at(a, root, &loc.tl_mod, 0 as u32, loc.tl_idx as u32, ib, tdisp, defs); return; }
+    if synth_defaults_named(a, prelude, tname, ib, tdisp, defs) { return; }
+    if is_prelude_trait(tname) {
+        let td = prelude_trait_decl(a, ar, tname);
+        push_td_defaults(&td, ib, tdisp, defs);
+    }
+}
+fn synth_defaults_at(a: Allocator, items: *const Vec<Item>, tmod: *const Vec<str>, depth: u32, tidx: u32,
+                     ib: *const ImplBlock, tdisp: str, defs: *Vec<MethodDef>) {
+    let sl = items.as_slice();
+    if depth == tmod.length() { synth_defaults_item(&sl[tidx], ib, tdisp, defs); return; }
+    let want = tmod.as_slice()[depth];
+    let mut i = 0 as u32;
+    while i < items.length() { synth_defaults_mod(a, &sl[i], want, tmod, depth, tidx, ib, tdisp, defs); i = i + 1 as u32; }
+}
+fn synth_defaults_mod(a: Allocator, it: *const Item, want: str, tmod: *const Vec<str>, depth: u32, tidx: u32,
+                      ib: *const ImplBlock, tdisp: str, defs: *Vec<MethodDef>) {
+    match *it {
+        Item::Module(md) => { synth_defaults_if_named(a, md.mname, &md.mitems, want, tmod, depth, tidx, ib, tdisp, defs); }
+        | _e => { }
+    }
+}
+fn synth_defaults_if_named(a: Allocator, mname: str, mitems: *const Vec<Item>, want: str, tmod: *const Vec<str>, depth: u32,
+                           tidx: u32, ib: *const ImplBlock, tdisp: str, defs: *Vec<MethodDef>) {
+    if !str::eq(mname, want) { return; }
+    synth_defaults_at(a, mitems, tmod, depth + 1 as u32, tidx, ib, tdisp, defs);
+}
+fn synth_defaults_item(it: *const Item, ib: *const ImplBlock, tdisp: str, defs: *Vec<MethodDef>) {
+    match *it {
+        Item::Trait(td) => { push_td_defaults(&td, ib, tdisp, defs); }
+        | _e => { }
+    }
+}
+// A trait of that name anywhere in the prelude source.
+fn synth_defaults_named(a: Allocator, items: *const Vec<Item>, tname: str, ib: *const ImplBlock,
+                        tdisp: str, defs: *Vec<MethodDef>) -> bool {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() {
+        if synth_defaults_named_one(a, &sl[i], tname, ib, tdisp, defs) { return true; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+fn synth_defaults_named_one(a: Allocator, it: *const Item, tname: str, ib: *const ImplBlock,
+                            tdisp: str, defs: *Vec<MethodDef>) -> bool {
+    return match *it {
+        Item::Trait(td) => named_trait_defaults(&td, tname, ib, tdisp, defs)
+        | Item::Module(md) => synth_defaults_named(a, &md.mitems, tname, ib, tdisp, defs)
+        | _e => false
+    };
+}
+fn named_trait_defaults(td: *const TraitDecl, tname: str, ib: *const ImplBlock, tdisp: str, defs: *Vec<MethodDef>) -> bool {
+    if !str::eq(td.trname, tname) { return false; }
+    push_td_defaults(td, ib, tdisp, defs);
+    return true;
+}
+fn push_td_defaults(td: *const TraitDecl, ib: *const ImplBlock, tdisp: str, defs: *Vec<MethodDef>) {
+    let ms = td.trmethods.as_slice();
+    let mut j = 0 as u32;
+    while j < td.trmethods.length() {
+        if name_in(&td.trdefaults, ms[j].name) && !impl_has_method(&ib.iitems, ms[j].name) {
+            defs.push(MethodDef { md_target: tdisp, md_name: ms[j].name, md_pos: ms[j].pos });
+        }
+        j = j + 1 as u32;
+    }
+}
+// One name, two blocks, one type: refused at the second.  Two in one block
+// never get here - the parser refuses them.
+fn report_cross_block_dup(a: Allocator, ar: *Arena, sc: *const TyScope, defs: *const Vec<MethodDef>) {
+    let sl = defs.as_slice();
+    let mut j = 1 as u32;
+    while j < defs.length() {
+        let mut i = 0 as u32;
+        while i < j {
+            if str::eq(sl[i].md_target, sl[j].md_target) && str::eq(sl[i].md_name, sl[j].md_name) {
+                let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+                sb.push_str("method '"); sb.push_str(sl[j].md_name); sb.push_str("' on '"); sb.push_str(sl[j].md_target);
+                sb.push_str("' already defined in another 'impl' block");
+                tc_fail(ar, sc, sl[j].md_pos, str::from_slice(ar, sb.as_slice()));
+                return;
+            }
+            i = i + 1 as u32;
+        }
+        j = j + 1 as u32;
     }
 }
 // A second method-collection pass: register synthesised trait defaults so a
@@ -16878,6 +17109,128 @@ fn ann_list_self(ts: *const Vec<*const TypeAnn>) -> bool {
     }
     return false;
 }
+// The signature table's second half, after every free fn: impl by impl, the
+// written methods and then the trait's defaults the impl does not write, each
+// return first, at the method's own position.  Registration only - the method
+// table is built later.  The prelude Iterator's defaults are its footprint,
+// registered here at the impl's place and recorded for the DCE.
+fn register_method_sig_order(a: Allocator, ar: *Arena, sc: *const TyScope, base: *const TyScope, items: *const Vec<Item>,
+                             fp_ranges: *Vec<u32>) {
+    let root: Vec<str> = empty_strs(a);
+    let own_iter = find_trait_idx(items, "Iterator") >= 0 as int;
+    method_sig_order_in(a, ar, sc, base, items, items, &root, own_iter, fp_ranges);
+}
+fn method_sig_order_in(a: Allocator, ar: *Arena, sc: *const TyScope, base: *const TyScope, root: *const Vec<Item>,
+                       items: *const Vec<Item>, modpath: *const Vec<str>, own_iter: bool, fp_ranges: *Vec<u32>) {
+    let sl = items.as_slice();
+    let mut i = 0 as u32;
+    while i < items.length() { method_sig_order_one(a, ar, sc, base, root, &sl[i], modpath, own_iter, fp_ranges); i = i + 1 as u32; }
+}
+fn method_sig_order_one(a: Allocator, ar: *Arena, sc: *const TyScope, base: *const TyScope, root: *const Vec<Item>,
+                        it: *const Item, modpath: *const Vec<str>, own_iter: bool, fp_ranges: *Vec<u32>) {
+    match *it {
+        Item::Impl(ib) => { method_sig_order_block(a, ar, sc, root, &ib, modpath); impl_footprint(a, ar, base, &ib, own_iter, fp_ranges); }
+        | Item::Module(md) => { method_sig_order_in(a, ar, sc, base, root, &md.mitems, &path_push(a, modpath, md.mname), own_iter, fp_ranges); }
+        | _e => { }
+    }
+}
+// What register_iter_footprints does for this impl, at this impl's place.
+fn impl_footprint(a: Allocator, ar: *Arena, base: *const TyScope, ib: *const ImplBlock, own_iter: bool, fp_ranges: *Vec<u32>) {
+    if own_iter || !str::eq(impl_trait_name(ib), "Iterator") || ib.itparams.length() > 0 as u32 { return; }
+    let sl = ib.iassoc.as_slice();
+    let mut i = 0 as u32;
+    while i < ib.iassoc.length() {
+        let s0 = base.sc_mono_structs.length();
+        register_iter_footprint(a, ar, base, path_last(&ib.itarget), resolve_sig_ty(a, ar, base, sl[i].ty, ib.ipos), false);
+        fp_ranges.push(s0); fp_ranges.push(base.sc_mono_structs.length());
+        i = i + 1 as u32;
+    }
+}
+fn method_sig_order_block(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, ib: *const ImplBlock, modpath: *const Vec<str>) {
+    let target = impl_target_found(a, ar, sc, modpath, &ib.itarget);
+    if target.length() == 0 as u32 { return; }
+    let msc = scope_with_modpath(sc, modpath);
+    let ms = ib.iitems.as_slice();
+    let mut i = 0 as u32;
+    while i < ib.iitems.length() {
+        register_method_sig(a, ar, &msc, &target, &ib.itparams, &ms[i], ms[i].ret_ty, &ms[i].params, ms[i].pos);
+        i = i + 1 as u32;
+    }
+    if str::eq(impl_trait_name(ib), "") { return; }
+    let loc = locate_trait(a, root, &impl_trait_written(a, ib));
+    if loc.tl_idx < 0 as int { return; }
+    default_sigs_at(a, ar, &msc, root, &loc.tl_mod, 0 as u32, loc.tl_idx as u32, ib, &target);
+}
+fn register_method_sig(a: Allocator, ar: *Arena, sc: *const TyScope, target: *const Vec<str>, itparams: *const Vec<str>,
+                       f: *const Func, ret: Option<*const TypeAnn>, params: *const Vec<Param>, p: Pos) {
+    let tparams = splice_tparams(a, itparams, &f.tparams);
+    let self_ty: Option<*const Typ> = Option::Some(ty_node(ar, Typ::TStruct(copy_strs(a, target))));
+    let fsc = scope_with_tparams_self(sc, &tparams, self_ty);
+    match ret {
+        Option::Some(rt) => { resolve_sig_ty(a, ar, &fsc, rt, p); }
+        | Option::None => { }
+    }
+    let _ps = resolve_param_tys(a, ar, &fsc, params, p);
+}
+fn default_sigs_at(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, tmod: *const Vec<str>, depth: u32, tidx: u32,
+                   ib: *const ImplBlock, target: *const Vec<str>) {
+    let sl = items.as_slice();
+    if depth == tmod.length() { default_sigs_item(a, ar, sc, &sl[tidx], ib, target); return; }
+    let want = tmod.as_slice()[depth];
+    let mut i = 0 as u32;
+    while i < items.length() { default_sigs_mod(a, ar, sc, &sl[i], want, tmod, depth, tidx, ib, target); i = i + 1 as u32; }
+}
+fn default_sigs_mod(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, want: str, tmod: *const Vec<str>, depth: u32, tidx: u32,
+                    ib: *const ImplBlock, target: *const Vec<str>) {
+    match *it {
+        Item::Module(md) => { default_sigs_if_named(a, ar, sc, md.mname, &md.mitems, want, tmod, depth, tidx, ib, target); }
+        | _e => { }
+    }
+}
+fn default_sigs_if_named(a: Allocator, ar: *Arena, sc: *const TyScope, mname: str, mitems: *const Vec<Item>, want: str,
+                         tmod: *const Vec<str>, depth: u32, tidx: u32, ib: *const ImplBlock, target: *const Vec<str>) {
+    if !str::eq(mname, want) { return; }
+    default_sigs_at(a, ar, sc, mitems, tmod, depth + 1 as u32, tidx, ib, target);
+}
+fn default_sigs_item(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, ib: *const ImplBlock, target: *const Vec<str>) {
+    match *it {
+        Item::Trait(td) => { default_sigs_td(a, ar, sc, &td, ib, target); }
+        | _e => { }
+    }
+}
+// A default the impl does not write, with `Self` and the impl's associated
+// types put in, as the reference specialises it.
+fn default_sigs_td(a: Allocator, ar: *Arena, sc: *const TyScope, td: *const TraitDecl, ib: *const ImplBlock, target: *const Vec<str>) {
+    let ms = td.trmethods.as_slice();
+    let mut j = 0 as u32;
+    while j < td.trmethods.length() {
+        if name_in(&td.trdefaults, ms[j].name) && !impl_has_method(&ib.iitems, ms[j].name) {
+            let ret = subst_ret_ann(a, ar, ms[j].ret_ty, &ib.itarget, &ib.itparams, &ib.iassoc);
+            let params = subst_param_anns(a, ar, &ms[j].params, &ib.itarget, &ib.itparams, &ib.iassoc);
+            register_method_sig(a, ar, sc, target, &ib.itparams, &ms[j], ret, &params, ms[j].pos);
+        }
+        j = j + 1 as u32;
+    }
+}
+fn subst_ret_ann(a: Allocator, ar: *Arena, ret: Option<*const TypeAnn>, target: *const Vec<str>, itparams: *const Vec<str>,
+                 iassoc: *const Vec<FieldDef>) -> Option<*const TypeAnn> {
+    return match ret {
+        Option::Some(t) => Option::Some(subst_assoc(a, ar, t, target, itparams, iassoc))
+        | Option::None => Option::None
+    };
+}
+fn subst_param_anns(a: Allocator, ar: *Arena, params: *const Vec<Param>, target: *const Vec<str>, itparams: *const Vec<str>,
+                    iassoc: *const Vec<FieldDef>) -> Vec<Param> {
+    let mut out: Vec<Param> = Vec::with_capacity(a, 8 as u32);
+    let sl = params.as_slice();
+    let mut i = 0 as u32;
+    while i < params.length() {
+        out.push(Param { pname: sl[i].pname, pty: subst_assoc(a, ar, sl[i].pty, target, itparams, iassoc), is_mut: sl[i].is_mut, preg: sl[i].preg });
+        i = i + 1 as u32;
+    }
+    return out;
+}
+
 fn collect_fn_sigs_into(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, path: *const Vec<str>, out: *Vec<FnSig>) {
     let n = items.length();
     let sl = items.as_slice();
@@ -20404,7 +20757,11 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // and the emission order says so. Same half-skeleton shape as the method
     // collection above; this is the free-fn side of it.
     let skel_sig_scope = scope_with_skeleton(&base_scope, &sinfo, &etags, &efields);
+    // The impls before any signature, as the reference expands them.
+    impl_phase(a, ar, &skel_sig_scope, items, &prelude_items, &sinfo);
     collect_fn_sigs_into(a, ar, &skel_sig_scope, items, &empty_tp, &gsigs);
+    let mut fp_ranges: Vec<u32> = Vec::with_capacity(a, 8 as u32);
+    register_method_sig_order(a, ar, &skel_sig_scope, &base_scope, items, &fp_ranges);
     // Global fn / const table — return types resolved through the name-scope
     // so a call to a struct-returning fn types as that struct.
     let globals = collect_globals(a, ar, &skel_sig_scope, items);
@@ -20418,7 +20775,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // window it registers so the DCE below exempts exactly those instances.
     let fp_start = mono_structs.length();
     register_iter_footprints(a, ar, &base_scope, items, &assoc_binds, false);
-    let fp_end = mono_structs.length();
+    fp_ranges.push(fp_start); fp_ranges.push(mono_structs.length());
     // ===== phase 5: the same resolution again, with a skeleton =====
     //
     // Field types, enum payloads and method signatures are each resolved TWICE.
@@ -20612,7 +20969,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     // prelude methods, so no surviving fn mentions them.
     let mut sv_fp: Vec<bool> = Vec::with_capacity(a, 8 as u32);
     let sv_start = mono_structs.length();
-    register_vec_slice_views(a, ar, &sinfo_scope, &mono_structs, &mono_sargs, fp_start, fp_end, &sv_fp);
+    register_vec_slice_views(a, ar, &sinfo_scope, &mono_structs, &mono_sargs, &fp_ranges, &sv_fp);
     let sv_end = mono_structs.length();
 
     // ===== phase 8: what the emitted C names, and what it can reach =====
@@ -20747,7 +21104,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     let mut ms = 0 as u32;
     let mut su8_done = false;
     while ms < mn {
-        let is_fp0 = (ms >= fp_start && ms < fp_end) || sv_is_ghost(&sv_fp, sv_start, sv_end, ms);
+        let is_fp0 = in_fp_ranges(&fp_ranges, ms) || sv_is_ghost(&sv_fp, sv_start, sv_end, ms);
         if str::eq(path_last(&msl[ms]), "Slice_u8") && !su8_done
            && (is_fp0 || path_in_paths(&mentioned, &msl[ms])) {
             push_struct_path(a, &structs, &msl[ms], &mono_fields, &sasl[ms]);
@@ -20757,7 +21114,7 @@ fn check_program_at(a: Allocator, ar: *Arena, given: *const Vec<Item>, probe: bo
     }
     let mut mj = 0 as u32;
     while mj < mn {
-        let is_footprint = (mj >= fp_start && mj < fp_end) || sv_is_ghost(&sv_fp, sv_start, sv_end, mj);
+        let is_footprint = in_fp_ranges(&fp_ranges, mj) || sv_is_ghost(&sv_fp, sv_start, sv_end, mj);
         let skip = str::eq(path_last(&msl[mj]), "Slice_u8") && su8_done;
         if !skip && nongeneric_prelude_rank(path_last(&msl[mj])) < 0 as int && (is_footprint || path_in_paths(&mentioned, &msl[mj])) { push_struct_path(a, &structs, &msl[mj], &mono_fields, &sasl[mj]); }
         mj = mj + 1 as u32;

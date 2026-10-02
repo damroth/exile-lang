@@ -1,0 +1,8 @@
+// A trait default the impl does not write counts as defined in that impl's
+// block, so it collides with an inherent method of the same name written in
+// an earlier block - reported at the default.
+struct P { x: int }
+trait Tr { fn d(*const self) -> int { return 1; } }
+impl P { pub fn d(*const self) -> int { return 2; } }
+impl Tr for P { }
+fn main() { println(1); }

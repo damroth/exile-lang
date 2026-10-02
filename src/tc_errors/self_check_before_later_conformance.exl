@@ -1,0 +1,8 @@
+// Impls are checked one after another: the first block's `self` is refused
+// before the second block's trait is compared.
+struct P { x: int }
+struct Q { y: int }
+impl P { fn a(self: int) -> int { return 1; } }
+trait Tr { fn k(*const self, v: int) -> int; }
+impl Tr for Q { fn k(*const self, v: bool) -> int { return 1; } }
+fn main() { println(1); }

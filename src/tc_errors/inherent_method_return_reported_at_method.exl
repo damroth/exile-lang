@@ -1,0 +1,5 @@
+// An inherent method's signature is resolved at the method, so an unknown
+// return type is reported there.
+struct P { x: int }
+impl P { fn f(x: int) -> Bb<int> { return 1; } }
+fn main() { println(1); }

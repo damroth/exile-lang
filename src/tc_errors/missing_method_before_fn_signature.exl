@@ -1,0 +1,6 @@
+// A trait method the impl leaves out is found before a function's signature.
+struct P { x: int }
+trait Tr { fn k(*const self) -> int; }
+impl Tr for P { }
+fn g(x: Nope) -> int { return 1; }
+fn main() { println(1); }

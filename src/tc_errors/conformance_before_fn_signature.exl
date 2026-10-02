@@ -1,0 +1,8 @@
+// Every impl is checked before any function's signature is resolved: the
+// impl's parameter mismatch is reported, not the function's unknown type
+// written above it.
+struct P { x: int }
+fn g(x: Nope) -> int { return 1; }
+trait Tr { fn k(*const self, v: int) -> int; }
+impl Tr for P { fn k(*const self, v: bool) -> int { return 1; } }
+fn main() { println(1); }

@@ -3566,7 +3566,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                    callee_signature_own_tparams module_trait_defaults \
                    trait_path_picks_the_declaration trait_default_signature_in_impl_module \
                    visibility_scope_of_a_method signature_return_registers_first \
-                   type_param_name_shared_with_types
+                   type_param_name_shared_with_types impl_phase_before_signatures \
+                   method_signatures_impl_by_impl iterator_footprint_at_its_impl
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

@@ -1,0 +1,5 @@
+// A first parameter named `self` takes the impl's own type, by value or behind
+// a pointer.
+struct P { x: int }
+impl P { fn a(self: int) -> int { return 1; } }
+fn main() { println(1); }

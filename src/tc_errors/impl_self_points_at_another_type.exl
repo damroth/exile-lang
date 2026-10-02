@@ -1,0 +1,5 @@
+// A `self` behind a pointer still has to point at the impl's own type.
+struct P { x: int }
+struct Q { y: int }
+impl P { fn a(self: *const Q) -> int { return 1; } }
+fn main() { println(1); }

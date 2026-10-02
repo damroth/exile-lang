@@ -1,0 +1,3 @@
+// An impl's target is looked up before anything inside the block.
+impl Nope { fn a(*const self) -> int { return 1; } }
+fn main() { println(1); }

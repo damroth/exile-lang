@@ -1,0 +1,28 @@
+// An `impl Iterator` gains the trait's defaults where it stands, so the
+// instances they name come before those of a method in a later impl block.
+struct C<T> { c: T }
+struct D<T> { d: T }
+struct Q { y: int }
+struct Cnt { n: int }
+impl Iterator for Cnt {
+    type Item = int;
+    fn next(*self) -> Option<int> {
+        if self.n > 2 { return Option::None; }
+        self.n = self.n + 1;
+        return Option::Some(self.n);
+    }
+}
+impl Q { pub fn m(*const self, x: C<int>) -> D<int> { return D { d: x.c + self.y }; } }
+fn main() {
+    let mut c = Cnt { n: 0 };
+    let mut s = 0;
+    while true {
+        match c.next() {
+            Option::Some(v) => { s = s + v; }
+            | Option::None => { break; }
+        }
+    }
+    println(s);
+    let q = Q { y: 1 };
+    println(q.m(C { c: 3 }).d);
+}

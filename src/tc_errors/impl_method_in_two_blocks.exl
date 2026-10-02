@@ -1,0 +1,5 @@
+// One type, one method name, two impl blocks: refused at the second.
+struct P { x: int }
+impl P { fn a(*const self) -> int { return 1; } }
+impl P { fn a(*const self) -> int { return 2; } }
+fn main() { println(1); }
