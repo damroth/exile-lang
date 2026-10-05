@@ -1,0 +1,4 @@
+// A method is checked for a clash with a field before its `self` is.
+struct P { x: int }
+impl P { fn x(self: int) -> int { return 1; } }
+fn main() { println(1); }

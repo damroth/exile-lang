@@ -1,0 +1,7 @@
+// Every trait impl's trait is looked up before any impl is checked, so an
+// unknown trait written later is reported before an earlier impl's `self`.
+struct P { x: int }
+struct Q { y: int }
+impl P { fn a(self: int) -> int { return 1; } }
+impl Unknown for Q { }
+fn main() { println(1); }

@@ -1,0 +1,7 @@
+// Two traits of that name, and the written path names neither: the refusal
+// quotes the path as written.
+struct P { x: int }
+mod m { pub trait Tr { fn k(*const self) -> int; } }
+mod n { pub trait Tr { fn k(*const self) -> int; } }
+impl o::Tr for P { fn k(*const self) -> int { return 1; } }
+fn main() { println(1); }

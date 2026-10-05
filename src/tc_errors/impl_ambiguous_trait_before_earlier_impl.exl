@@ -1,0 +1,9 @@
+// An ambiguous trait is found by the same early lookup, before an earlier
+// impl's checks.
+struct P { x: int }
+struct Q { y: int }
+mod m { pub trait Tr { fn k(*const self) -> int; } }
+mod n { pub trait Tr { fn k(*const self) -> int; } }
+impl P { fn a(self: int) -> int { return 1; } }
+impl Tr for Q { fn k(*const self) -> int { return 1; } }
+fn main() { println(1); }

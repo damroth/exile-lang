@@ -14842,17 +14842,10 @@ fn collect_one_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items
     // comparison from the root made every module-nested target an `unknown type`
     // the moment the walk started descending into modules at all.
     let msc = scope_with_modpath(sc, modpath);
-    // Two traits of that name, and the written path does not pick one: the
-    // reference refuses rather than taking the first.  The port used to say
-    // `unknown trait`, which sends the reader looking for a declaration that is
-    // there twice over.
-    if trait_name_count(items, tname) > 1 as u32 && !trait_path_is_exact(a, items, ib) {
-        let mut sb = StringBuilder::with_capacity(a, 96 as u32);
-        sb.push_str("ambiguous trait '"); sb.push_str(tname);
-        // The reference's wording, em-dash included: a diagnostic is an interface,
-        // and this one is compared byte for byte.
-        sb.push_str("' — multiple traits with that name; qualify the path");
-        tc_fail(ar, &msc, ib.ipos, str::from_slice(ar, sb.as_slice()));
+    if !impl_trait_resolves(a, ar, &msc, items, prelude, ib) {
+        // No trait to compare against, so the impl's own text is all there is to
+        // read: a `Self::Assoc` in its signature names nothing either way.
+        check_impl_sig_assoc(a, ar, &msc, &ib.iitems, ib.ipos);
         return;
     }
     // The order is the lookup's, not a preference: a trait the program declared -
@@ -14877,15 +14870,32 @@ fn collect_one_impl_defaults(a: Allocator, ar: *Arena, sc: *const TyScope, items
         check_orphan(a, ar, &msc, td.trname, &troot, ib, modpath, ib.ipos);
         register_td_defaults(a, ar, &msc, &ib.itarget, &ib.iitems, &td, 0 as u32, ib.ipos,
                              &ib.itparams, &ib.iassoc, td.trname, false, &troot, &troot, out);
-        return;
     }
-    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
-    sb.push_str("unknown trait '"); sb.push_str(tname); sb.push_str("'");
-    tc_fail(ar, &msc, ib.ipos, str::from_slice(ar, sb.as_slice()));
-    // No trait to compare against, so the impl's own text is all there is to
-    // read: a `Self::Assoc` in its signature names nothing either way.
-    check_impl_sig_assoc(a, ar, &msc, &ib.iitems, ib.ipos);
     return;
+}
+// The trait an impl names, resolved as the reference resolves it: by its name
+// among every trait declared, and when several answer, by the written path
+// matched exactly.  Its two refusals name the path as WRITTEN.  True when a
+// trait answers - one the program declares, one the prelude source declares, or
+// one the built table describes.
+fn impl_trait_resolves(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
+                       prelude: *const Vec<Item>, ib: *const ImplBlock) -> bool {
+    let tname = impl_trait_name(ib);
+    let n = trait_name_count(items, tname);
+    if n > 1 as u32 && !trait_path_is_exact(a, items, ib) {
+        let mut sb = StringBuilder::with_capacity(a, 96 as u32);
+        sb.push_str("ambiguous trait '"); sb.push_str(path_display(a, ar, &impl_trait_written(a, ib)));
+        // The reference's wording, em-dash included: a diagnostic is an interface,
+        // and this one is compared byte for byte.
+        sb.push_str("' — multiple traits with that name; qualify the path");
+        tc_fail(ar, sc, ib.ipos, str::from_slice(ar, sb.as_slice()));
+        return false;
+    }
+    if n > 0 as u32 || trait_name_count(prelude, tname) > 0 as u32 || is_prelude_trait(tname) { return true; }
+    let mut sb = StringBuilder::with_capacity(a, 48 as u32);
+    sb.push_str("unknown trait '"); sb.push_str(path_display(a, ar, &impl_trait_written(a, ib))); sb.push_str("'");
+    tc_fail(ar, sc, ib.ipos, str::from_slice(ar, sb.as_slice()));
+    return false;
 }
 // The trait an impl names, where the reference finds it: by its name among every
 // trait the program declares, at any depth - one answers, or several do and the
@@ -15097,7 +15107,7 @@ struct MethodDef { md_target: str, md_name: str, md_pos: Pos }
 fn impl_phase(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>,
               prelude: *const Vec<Item>, sinfo: *const Vec<StructField>) {
     let root: Vec<str> = empty_strs(a);
-    impl_assoc_in(a, ar, sc, items, &root);
+    impl_assoc_in(a, ar, sc, items, prelude, items, &root);
     let mut defs: Vec<MethodDef> = Vec::with_capacity(a, 8 as u32);
     impl_phase_in(a, ar, sc, items, prelude, items, &root, sinfo, &defs);
     report_cross_block_dup(a, ar, sc, &defs);
@@ -15112,24 +15122,30 @@ fn impl_target_found(a: Allocator, ar: *Arena, sc: *const TyScope, modpath: *con
     if target.length() == 1 as u32 && (is_builtin_struct(path_last(target)) || is_prelude_enum(path_last(target))) { return copy_strs(a, target); }
     return empty_strs(a);
 }
-fn impl_assoc_in(a: Allocator, ar: *Arena, sc: *const TyScope, items: *const Vec<Item>, modpath: *const Vec<str>) {
+fn impl_assoc_in(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, prelude: *const Vec<Item>,
+                 items: *const Vec<Item>, modpath: *const Vec<str>) {
     let sl = items.as_slice();
     let mut i = 0 as u32;
-    while i < items.length() { impl_assoc_one(a, ar, sc, &sl[i], modpath); i = i + 1 as u32; }
+    while i < items.length() { impl_assoc_one(a, ar, sc, root, prelude, &sl[i], modpath); i = i + 1 as u32; }
 }
-fn impl_assoc_one(a: Allocator, ar: *Arena, sc: *const TyScope, it: *const Item, modpath: *const Vec<str>) {
+fn impl_assoc_one(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, prelude: *const Vec<Item>,
+                  it: *const Item, modpath: *const Vec<str>) {
     match *it {
-        Item::Impl(ib) => { impl_assoc_resolve(a, ar, sc, &ib, modpath); }
-        | Item::Module(md) => { impl_assoc_in(a, ar, sc, &md.mitems, &path_push(a, modpath, md.mname)); }
+        Item::Impl(ib) => { impl_assoc_resolve(a, ar, sc, root, prelude, &ib, modpath); }
+        | Item::Module(md) => { impl_assoc_in(a, ar, sc, root, prelude, &md.mitems, &path_push(a, modpath, md.mname)); }
         | _e => { }
     }
 }
-// Resolved for the instances it registers.  A failure is the conformance
-// check's to report, so the latch is put back as it was.
-fn impl_assoc_resolve(a: Allocator, ar: *Arena, sc: *const TyScope, ib: *const ImplBlock, modpath: *const Vec<str>) {
+// A trait impl whose target is found has its trait looked up here, before any
+// impl is checked - an unknown or ambiguous trait anywhere is the first thing
+// reported.  The associated types are resolved for the instances they register;
+// their failure is the conformance check's to report, so the latch is put back.
+fn impl_assoc_resolve(a: Allocator, ar: *Arena, sc: *const TyScope, root: *const Vec<Item>, prelude: *const Vec<Item>,
+                      ib: *const ImplBlock, modpath: *const Vec<str>) {
     if str::eq(impl_trait_name(ib), "") { return; }
     if impl_target_found(a, ar, sc, modpath, &ib.itarget).length() == 0 as u32 { return; }
     let msc = scope_with_modpath(sc, modpath);
+    if !impl_trait_resolves(a, ar, &msc, root, prelude, ib) { return; }
     let tsc = scope_with_tparams(&msc, &ib.itparams);
     let saved = *sc.sc_err;
     let sl = ib.iassoc.as_slice();

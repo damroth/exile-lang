@@ -1,0 +1,4 @@
+// An unknown trait is named by the path the impl wrote.
+struct P { x: int }
+impl a::b::Nope for P { }
+fn main() { println(1); }
