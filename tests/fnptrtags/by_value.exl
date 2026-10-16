@@ -1,0 +1,43 @@
+// A function-pointer type whose parameter is an aggregate passed by value - a
+// struct, an enum with and without a payload, a generic instance, a tuple, an
+// array, an Option - written as a let annotation, a struct field, a parameter, a
+// return type and a lambda. The C typedef for such a type comes before every
+// aggregate, so each aggregate a parameter names is declared ahead of it.
+struct P { x: int, y: int }
+enum E { A(int) | B }
+enum K { One | Two }
+struct W<T> { w: T }
+struct H { on: fn(P) -> int }
+fn sum(p: P) -> int { return p.x + p.y; }
+fn tag(e: E) -> int { return match e { E::A(v) => v | E::B => 0 }; }
+fn kind(k: K) -> int { return match k { K::One => 1 | K::Two => 2 }; }
+fn unwrap(v: W<int>) -> int { return v.w; }
+fn add(t: (int, int)) -> int { let (a, b) = t; return a + b; }
+fn first(a: [int; 3]) -> int { return a[0]; }
+fn get(o: Option<int>) -> int { return match o { Option::Some(v) => v | Option::None => 0 }; }
+fn apply(g: fn(P) -> int, v: int) -> int { let q = P { x: v, y: 1 }; return g(q); }
+fn pick() -> fn(E) -> int { return tag; }
+fn main() {
+    let q = P { x: 2, y: 5 };
+    let f: fn(P) -> int = sum;
+    println(f(q));
+    let h = H { on: sum };
+    let g = h.on;
+    println(g(q));
+    println(apply(sum, 4));
+    let t = pick();
+    println(t(E::A(6)));
+    let k: fn(K) -> int = kind;
+    println(k(K::Two));
+    let u: fn(W<int>) -> int = unwrap;
+    println(u(W { w: 9 }));
+    let ad: fn((int, int)) -> int = add;
+    println(ad((3, 4)));
+    let fi: fn([int; 3]) -> int = first;
+    let arr = [8, 1, 1];
+    println(fi(arr));
+    let ge: fn(Option<int>) -> int = get;
+    println(ge(Option::Some(3)));
+    let l = |p: P| -> int p.x * p.y;
+    println(l(q));
+}

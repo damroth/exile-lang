@@ -1025,7 +1025,7 @@ selfhost-outdir: $(EXILC_BIN)
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -1176,7 +1176,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-armreturn selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -3054,6 +3054,69 @@ selfhost-parens: $(EXILC_BIN)
 	  echo "selfhost-parens: parenthesising CHANGED THE VALUE — the fix must not alter semantics:"; \
 	  diff tests/parens/mixed_bitwise.expected $(C_OUT)/parens.out | head -6; exit 1; fi; \
 	echo "selfhost-parens: clean (mixed bitwise nesting parenthesised, emission clean under -Werror, values unchanged 32832/21/3)"
+
+# ===== register #81 - aggregate tags declared ahead of fn-pointer typedefs =====
+#
+# A deliberate divergence in the emitted C, gated against the program's output
+# and against the reference at once. Every fn-pointer typedef comes before every
+# aggregate, so an aggregate a typedef's PARAMETER names is scoped to that
+# parameter list unless declared first: the port declares it, the frozen
+# reference does not. Per fixture the port's C builds at -Werror and prints what
+# it should, and it is the reference's C plus `struct X;` lines and nothing else.
+# The reference's C fails: by value it does not build at all, behind a pointer it
+# builds with the warnings -Werror refuses. A return position needs no
+# declaration, and there the two emissions are byte-identical - the declarations
+# are conditional, which is what keeps every other program's C unchanged. A rune
+# parameter is the same shape in a program only the port compiles: the reference
+# is pinned as refusing it, and the port's C is held to the same standard.
+FNPTR_TAGS_DIR := tests/fnptrtags
+selfhost-fnptr-tags: $(EXILC_BIN)
+	@sig=""; \
+	for f in by_value by_pointer return_only rune_param; do \
+	  test -f $(FNPTR_TAGS_DIR)/$$f.exl || { echo "selfhost-fnptr-tags: MISSING $(FNPTR_TAGS_DIR)/$$f.exl"; exit 1; }; \
+	  test -s $(FNPTR_TAGS_DIR)/$$f.expected || { echo "selfhost-fnptr-tags: MISSING/EMPTY $(FNPTR_TAGS_DIR)/$$f.expected"; exit 1; }; \
+	  rm -f $(C_OUT)/ft_$$f.o.c $(C_OUT)/ft_$$f.p.c $(C_OUT)/ft_$$f.stripped $(HOST_OUT)/ft_$$f $(C_OUT)/ft_$$f.out; \
+	  $(EXILE) --target c --c-out $(C_OUT)/ft_$$f.o.c $(FNPTR_TAGS_DIR)/$$f.exl >/dev/null 2>&1; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/ft_$$f.p.c $(FNPTR_TAGS_DIR)/$$f.exl >/dev/null 2>&1; \
+	  test -s $(C_OUT)/ft_$$f.p.c || { echo "selfhost-fnptr-tags: the port wrote no C for $$f"; exit 1; }; \
+	  if [ "$$f" = rune_param ]; then \
+	    if [ -s $(C_OUT)/ft_$$f.o.c ]; then echo "selfhost-fnptr-tags: rune_param - the reference wrote C for a rune program; it is pinned as refusing the word"; exit 1; fi; \
+	  else \
+	    test -s $(C_OUT)/ft_$$f.o.c || { echo "selfhost-fnptr-tags: EMPTY reference C for $$f (floor)"; exit 1; }; \
+	  fi; \
+	  case $$f in \
+	    by_value) \
+	      if cc -ansi -w -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null; then \
+	        echo "selfhost-fnptr-tags: by_value - the reference's C builds: the shape this gate pins is gone, re-read register #81"; exit 1; fi; \
+	      ref="reference-does-not-build";; \
+	    by_pointer) \
+	      cc -ansi -w -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null \
+	        || { echo "selfhost-fnptr-tags: by_pointer - the reference's C does not build at all; it is pinned as building with warnings"; exit 1; }; \
+	      if cc -ansi -pedantic -Wall -Werror -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null; then \
+	        echo "selfhost-fnptr-tags: by_pointer - the reference's C is -Werror clean: the shape this gate pins is gone, re-read register #81"; exit 1; fi; \
+	      ref="reference-fails-Werror";; \
+	    rune_param) ref="reference-refuses-rune";; \
+	    *) ref="byte-identical";; \
+	  esac; \
+	  grep -v -E '^struct [A-Za-z0-9_]+;$$' $(C_OUT)/ft_$$f.p.c > $(C_OUT)/ft_$$f.stripped; \
+	  if [ "$$f" != rune_param ] && ! cmp -s $(C_OUT)/ft_$$f.stripped $(C_OUT)/ft_$$f.o.c; then \
+	    echo "selfhost-fnptr-tags: $$f - the port's C differs from the reference's by more than declared tags:"; \
+	    diff $(C_OUT)/ft_$$f.o.c $(C_OUT)/ft_$$f.stripped | head -8; exit 1; fi; \
+	  n=`grep -c -E '^struct [A-Za-z0-9_]+;$$' $(C_OUT)/ft_$$f.p.c`; \
+	  if [ "$$f" = return_only ]; then \
+	    [ "$$n" = 0 ] || { echo "selfhost-fnptr-tags: return_only - $$n tags declared where none is needed (the declarations must stay conditional)"; exit 1; }; \
+	  else \
+	    [ "$$n" -gt 0 ] || { echo "selfhost-fnptr-tags: $$f - no tag declared ahead of its typedef (register #81 regressed)"; exit 1; }; \
+	  fi; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/ft_$$f $(C_OUT)/ft_$$f.p.c $(SYS_HOST) \
+	    || { echo "selfhost-fnptr-tags: $$f - the port's C fails -Werror"; exit 1; }; \
+	  $(HOST_OUT)/ft_$$f > $(C_OUT)/ft_$$f.out 2>&1; \
+	  if ! cmp -s $(FNPTR_TAGS_DIR)/$$f.expected $(C_OUT)/ft_$$f.out; then \
+	    echo "selfhost-fnptr-tags: $$f prints something else:"; \
+	    diff $(FNPTR_TAGS_DIR)/$$f.expected $(C_OUT)/ft_$$f.out | head -6; exit 1; fi; \
+	  sig="$$sig $$f=$$n-tags/$$ref"; \
+	done; \
+	echo "selfhost-fnptr-tags: clean -$$sig; each port C builds at -Werror and prints its expected output"
 
 # ===== seal capability — the port's gate =====
 #

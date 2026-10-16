@@ -83,6 +83,20 @@ ARM_RETURN = re.compile(
 SEAM_EXTERN = re.compile(r"^\s*extern\b.*\bsys_\w+\s*\(")
 C_ENTRY = re.compile(r"^\s*int main\s*\(", re.M)
 
+# Register #81 - an aggregate a fn-pointer typedef's parameter names is declared
+# ahead of the typedef by the port and not by the reference. Recognised the way
+# #13 is: everything else identical, and the port's tag declarations a PROPER
+# SUPERSET of the reference's.
+TAG_DECL = re.compile(r"^struct \w+;$")
+
+
+def _tag_decl_lines(c):
+    return set(l for l in c.splitlines() if TAG_DECL.match(l))
+
+
+def _without_tag_decls(c):
+    return "\n".join(l for l in c.splitlines() if not TAG_DECL.match(l))
+
 
 def _seam_extern_lines(c):
     return set(l.strip() for l in c.splitlines() if SEAM_EXTERN.match(l))
@@ -98,6 +112,8 @@ def registered_divergence(ev):
     Each test is a MECHANISM on observed behaviour:
       #9  the oracle refuses a word the port implements — its own diagnostic says so
       #7  both compiled, and the emissions differ ONLY in parentheses
+      #81 both compiled, and the port's emission ONLY adds aggregate tag
+          declarations
       #5  reserved for defer x loop-jump, which is a semantic difference rather
           than a lexical one and is still recognised from the source
     """
@@ -127,6 +143,9 @@ def registered_divergence(ev):
                 and _without_seam_externs(co) == _without_seam_externs(cp)
                 and _seam_extern_lines(cp) < _seam_extern_lines(co)):
             return "R13-noentry-seam-externs"  # register #13
+        if (_without_tag_decls(co) == _without_tag_decls(cp)
+                and _tag_decl_lines(co) < _tag_decl_lines(cp)):
+            return "R81-fnptr-param-tags"     # register #81
     if re.search(r"\bdefer\b", ev["src"]) and re.search(r"\b(break|continue)\b", ev["src"]):
         return "R5-defer-loopjump"            # register #5
     return None

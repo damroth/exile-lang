@@ -1,0 +1,9 @@
+// A rune is an aggregate pointer too: a function-pointer type taking one names
+// the struct behind it, so that struct is declared ahead of the typedef as well.
+// Only this compiler has runes, so here the other one refuses the program.
+struct P { x: int, y: int }
+fn rd(r: read rune<P>) -> int { return 1; }
+fn keep(g: fn(read rune<P>) -> int) -> int { return 7; }
+fn main() {
+    println(keep(rd));
+}

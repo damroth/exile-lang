@@ -1,0 +1,13 @@
+// An aggregate in a function-pointer type's RETURN position needs nothing: the
+// typedef itself declares it. So nothing is added, and the C is the same as for
+// a compiler that never declares ahead.
+struct P { x: int, y: int }
+fn mk(v: int) -> P { return P { x: v, y: v }; }
+fn twice(v: int) -> int { return v * 2; }
+fn main() {
+    let f: fn(int) -> P = mk;
+    let q = f(3);
+    println(q.x + q.y);
+    let g: fn(int) -> int = twice;
+    println(g(5));
+}

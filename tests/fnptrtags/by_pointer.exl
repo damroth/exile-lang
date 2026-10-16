@@ -1,0 +1,26 @@
+// The same parameters behind a pointer - borrowed, mutable or owned, each to a
+// struct of its own. C accepts a pointer to a struct it has not seen, but scopes
+// that struct to the typedef's parameter list, so every call through the typedef
+// converts between two unrelated types - unless the struct is declared first.
+struct A { x: int, y: int }
+struct B { x: int }
+struct C { x: int, y: int }
+enum E { One(int) | Two }
+fn sum(p: *const A) -> int { return p.x + p.y; }
+fn bump(p: *B) -> int { p.x = p.x + 1; return p.x; }
+fn take(p: own *C) -> int { let v = p.x + p.y; free(default_allocator(), p); return v; }
+fn tag(e: *const E) -> int { return match *e { E::One(v) => v | E::Two => 0 }; }
+fn main() {
+    let a = A { x: 2, y: 5 };
+    let f: fn(*const A) -> int = sum;
+    println(f(&a));
+    let mut b = B { x: 2 };
+    let g: fn(*B) -> int = bump;
+    println(g(&b));
+    let o: fn(own *C) -> int = take;
+    let c: own *C = new(default_allocator()) C { x: 6, y: 5 };
+    println(o(c));
+    let e = E::One(4);
+    let t: fn(*const E) -> int = tag;
+    println(t(&e));
+}
