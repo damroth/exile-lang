@@ -1025,7 +1025,7 @@ selfhost-outdir: $(EXILC_BIN)
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-armdefer
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -1176,7 +1176,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-armdefer selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -3054,6 +3054,53 @@ selfhost-parens: $(EXILC_BIN)
 	  echo "selfhost-parens: parenthesising CHANGED THE VALUE — the fix must not alter semantics:"; \
 	  diff tests/parens/mixed_bitwise.expected $(C_OUT)/parens.out | head -6; exit 1; fi; \
 	echo "selfhost-parens: clean (mixed bitwise nesting parenthesised, emission clean under -Werror, values unchanged 32832/21/3)"
+
+# ===== register #83 - a `defer` in a match arm runs at the arm's end =====
+#
+# A deliberate divergence: an arm is a block and `defer` is block-scoped, so a
+# `defer` in an arm - or in an `if` or a loop inside it - runs when the arm ends
+# and on every jump out of it, LIFO with the scopes around it, after the arm's
+# value is computed. The frozen reference refuses the program in its emitter,
+# with a message about a defer body the program does not have. Both sides are
+# pinned: the port's C builds at -Werror and prints the trace each fixture
+# expects, and the reference refuses each fixture with the message that names
+# its barrier (the jump out of a value arm meets register #12's first). An arm
+# with no `defer` keeps the reference's emission byte for byte.
+ARMDEFER_DIR := tests/armdefer
+selfhost-armdefer: $(EXILC_BIN)
+	@sig=""; \
+	for f in arm_defers arm_defer_jumps arm_defer_value_jump arm_without_defer; do \
+	  test -f $(ARMDEFER_DIR)/$$f.exl || { echo "selfhost-armdefer: MISSING $(ARMDEFER_DIR)/$$f.exl"; exit 1; }; \
+	  test -s $(ARMDEFER_DIR)/$$f.expected || { echo "selfhost-armdefer: MISSING/EMPTY $(ARMDEFER_DIR)/$$f.expected"; exit 1; }; \
+	  rm -f $(C_OUT)/ad_$$f.o.c $(C_OUT)/ad_$$f.o.err $(C_OUT)/ad_$$f.p.c $(HOST_OUT)/ad_$$f $(C_OUT)/ad_$$f.out; \
+	  $(EXILE) --target c --c-out $(C_OUT)/ad_$$f.o.c $(ARMDEFER_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/ad_$$f.o.err; \
+	  case $$f in \
+	    arm_without_defer) marker="";; \
+	    arm_defer_value_jump) marker='block expression `{ ... }` must end with a trailing value expression';; \
+	    *) marker="'defer' inside a defer body is not supported";; \
+	  esac; \
+	  if [ -n "$$marker" ]; then \
+	    if [ -s $(C_OUT)/ad_$$f.o.c ]; then echo "selfhost-armdefer: $$f - the frozen reference now writes C for it: register #83 is stale, re-measure it"; exit 1; fi; \
+	    grep -q -F "$$marker" $(C_OUT)/ad_$$f.o.err \
+	      || { echo "selfhost-armdefer: $$f - the reference refuses it, but not with the pinned message:"; head -2 $(C_OUT)/ad_$$f.o.err; exit 1; }; \
+	  else \
+	    test -s $(C_OUT)/ad_$$f.o.c || { echo "selfhost-armdefer: $$f - EMPTY reference C (floor)"; exit 1; }; \
+	  fi; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/ad_$$f.p.c $(ARMDEFER_DIR)/$$f.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-armdefer: $$f - the port REJECTED it"; exit 1; }; \
+	  test -s $(C_OUT)/ad_$$f.p.c || { echo "selfhost-armdefer: $$f - EMPTY port C (floor)"; exit 1; }; \
+	  if [ -z "$$marker" ] && ! cmp -s $(C_OUT)/ad_$$f.o.c $(C_OUT)/ad_$$f.p.c; then \
+	    echo "selfhost-armdefer: $$f - an arm with no defer no longer emits the reference's C:"; \
+	    diff $(C_OUT)/ad_$$f.o.c $(C_OUT)/ad_$$f.p.c | head -8; exit 1; fi; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/ad_$$f $(C_OUT)/ad_$$f.p.c $(SYS_HOST) \
+	    || { echo "selfhost-armdefer: $$f - the port's C fails -Werror"; exit 1; }; \
+	  $(HOST_OUT)/ad_$$f > $(C_OUT)/ad_$$f.out 2>&1; \
+	  if ! cmp -s $(ARMDEFER_DIR)/$$f.expected $(C_OUT)/ad_$$f.out; then \
+	    echo "selfhost-armdefer: $$f - a defer ran at the wrong time:"; \
+	    diff $(ARMDEFER_DIR)/$$f.expected $(C_OUT)/ad_$$f.out | head -6; exit 1; fi; \
+	  if [ -n "$$marker" ]; then sig="$$sig $$f=runs/reference-refuses"; else sig="$$sig $$f=byte-identical"; fi; \
+	done; \
+	echo "selfhost-armdefer: clean -$$sig; each port C builds at -Werror and prints its expected trace"
 
 # ===== register #81 - aggregate tags declared ahead of fn-pointer typedefs =====
 #

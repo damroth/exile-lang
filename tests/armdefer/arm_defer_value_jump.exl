@@ -1,0 +1,22 @@
+// An arm that yields a value elsewhere but leaves by `return` here, with a
+// `defer` of its own: the defer runs on the way out - also when the `return` is
+// in a match that is the value of an arm with a defer. The frozen reference
+// refuses the program already for the jump out of a value arm.
+enum S { Go | Stop }
+fn value_arm(s: S) -> int {
+    let v = match s { S::Go => 3 | S::Stop => { defer { println(6); } return 0; } };
+    return v;
+}
+fn nested_ret(s: S) -> int {
+    let v = match S::Go {
+        S::Go => { defer { println(5); } match s { S::Stop => { return 7; } | S::Go => 2 } }
+        | S::Stop => 0
+    };
+    return v;
+}
+fn main() {
+    println(value_arm(S::Stop));
+    println(value_arm(S::Go));
+    println(nested_ret(S::Stop));
+    println(nested_ret(S::Go));
+}

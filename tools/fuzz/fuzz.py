@@ -72,6 +72,12 @@ ARM_RETURN = re.compile(
     r"'return' inside a defer body is not supported"
     r"|block expression `\{ \.\.\. \}` must end with a trailing value expression")
 
+# Register #83 - a `defer` in a match arm: the port runs it at the arm's end, the
+# reference refuses it in its emitter with the defer-body message. The port gives
+# the same words for a `defer` that really is in a defer body (its typecheck),
+# so - as for #12 - "the port accepted" is what tells the two apart.
+ARM_DEFER = re.compile(r"'defer' inside a defer body is not supported")
+
 # Register #13 - a translation unit with no entry point. The reference walks
 # reachability from `main`, has no root, and declares the whole seam; the port
 # declares what the emitted code references. Recognised from the EMISSIONS, and
@@ -114,6 +120,7 @@ def registered_divergence(ev):
       #7  both compiled, and the emissions differ ONLY in parentheses
       #81 both compiled, and the port's emission ONLY adds aggregate tag
           declarations
+      #83 the port compiled a `defer` in a match arm the reference refuses
       #5  reserved for defer x loop-jump, which is a semantic difference rather
           than a lexical one and is still recognised from the source
     """
@@ -128,6 +135,8 @@ def registered_divergence(ev):
     # defer case that shares the wording.
     if ev["port_status"] == 0 and ARM_RETURN.search(ev["oracle_diag"]):
         return "R12-arm-return"               # register #12
+    if ev["port_status"] == 0 and ARM_DEFER.search(ev["oracle_diag"]):
+        return "R83-arm-defer"                # register #83
     # #11 — both reject, at DIFFERENT positions: each side found a different
     # error first, because their passes run in a different order. Same position
     # with different text is a real message divergence and stays B1.

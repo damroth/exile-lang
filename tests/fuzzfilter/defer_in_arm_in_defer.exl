@@ -1,0 +1,4 @@
+// Register #83, negative: the same arm, but inside a defer body - a defer in a
+// defer body, which both compilers refuse with the same words. Nothing to filter.
+enum S { Go | Stop }
+fn main() { let mut t = 0; defer { match S::Go { S::Go => { defer { t = t + 1; } } | S::Stop => { } } } println(t); }

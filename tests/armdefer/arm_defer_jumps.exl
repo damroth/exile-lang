@@ -1,0 +1,41 @@
+// A jump out of an arm runs the arm's defers first, then those of the scopes it
+// leaves - LIFO all the way: a loop's on `break` and `continue`, the function's
+// on `return`. A sibling arm that jumps runs none of another arm's defers.
+enum S { Go | Stop }
+fn ret(s: S) -> int {
+    defer { println(9); }
+    match s { S::Go => { defer { println(8); } return 1; } | S::Stop => { } }
+    return 0;
+}
+fn sibling(s: S) -> int {
+    defer { println(9); }
+    match s { S::Go => { defer { println(8); } println(1); } | S::Stop => { return 0; } }
+    return 2;
+}
+fn returned_match(s: S) -> int {
+    return match s { S::Go => { defer { println(4); } 2 } | S::Stop => 7 };
+}
+fn main() {
+    println(ret(S::Go));
+    println(ret(S::Stop));
+    println(sibling(S::Stop));
+    println(sibling(S::Go));
+    println(returned_match(S::Go));
+    let mut t = 0;
+    let mut i = 0;
+    while i < 3 {
+        i = i + 1;
+        defer { t = t * 10 + 1; }
+        let s = if i == 2 { S::Stop } else { S::Go };
+        match s { S::Stop => { defer { t = t * 10 + 2; } break; } | S::Go => { t = t * 10 + 3; } }
+    }
+    println(t);
+    t = 0;
+    i = 0;
+    while i < 2 {
+        i = i + 1;
+        defer { t = t * 10 + 1; }
+        match S::Go { S::Go => { defer { t = t * 10 + 2; } continue; } | S::Stop => { } }
+    }
+    println(t);
+}

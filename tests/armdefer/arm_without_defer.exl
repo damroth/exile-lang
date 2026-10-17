@@ -1,0 +1,17 @@
+// An arm with no `defer` - with an `if`/`else if`/`else`, a loop and a nested
+// match inside - is emitted exactly as the frozen reference emits it: only an arm
+// that reaches a `defer` is given a scope of its own.
+enum S { Go | Stop }
+fn main() {
+    let mut t = 0;
+    let mut i = 0;
+    match S::Go {
+        S::Go => {
+            if t > 5 { t = 1; } else if t > 2 { t = 2; } else { t = 3; }
+            while i < 3 { i = i + 1; t = t * 10 + i; }
+            match S::Stop { S::Stop => { t = t + 1; } | S::Go => { } }
+        }
+        | S::Stop => { }
+    }
+    println(t);
+}

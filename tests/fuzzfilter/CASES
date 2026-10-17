@@ -15,3 +15,5 @@ noentry_seam_externs|R13-noentry-seam-externs
 noentry_plus_parens|none
 fnptr_param_tags|R81-fnptr-param-tags
 fnptr_tags_plus_parens|none
+arm_defer|R83-arm-defer
+defer_in_arm_in_defer|none

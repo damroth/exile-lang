@@ -1,0 +1,62 @@
+// A match arm is a block, and `defer` is block-scoped: a `defer` written in an
+// arm - directly, or in an `if` or a loop inside it - runs when that block ends,
+// LIFO, after the arm's value is computed. Each line below prints a trace that
+// pins one of those facts.
+enum S { Go | Stop }
+enum V { N(int) | M(int) | Z }
+struct B { v: int }
+fn main() {
+    let mut t = 0;
+    match S::Go {
+        S::Go => { defer { t = t + 100; } t = t + 1; println(t); }
+        | S::Stop => { t = t + 5; }
+    }
+    println(t);
+    t = 0;
+    let v = match S::Go { S::Go => { defer { t = t + 100; } t = t + 1; t } | S::Stop => 0 };
+    println(v);
+    println(t);
+    t = 0;
+    let b = match S::Go { S::Go => { defer { t = t + 100; } B { v: t + 1 } } | S::Stop => B { v: 0 } };
+    println(b.v);
+    println(t);
+    match S::Go {
+        S::Go => { defer { println(1); } defer { println(2); } println(3); }
+        | S::Stop => { }
+    }
+    t = 0;
+    match S::Go {
+        S::Go => { if true { defer { t = t + 100; } t = t + 1; } println(t); }
+        | S::Stop => { }
+    }
+    t = 0;
+    let mut i = 0;
+    match S::Go {
+        S::Go => { while i < 2 { i = i + 1; defer { t = t * 10 + 1; } t = t * 10 + 2; } }
+        | S::Stop => { }
+    }
+    println(t);
+    t = 0;
+    match S::Go {
+        S::Go => { for k in 0..3 { defer { t = t * 10 + 1; } t = t * 10 + 2; } }
+        | S::Stop => { }
+    }
+    println(t);
+    t = 0;
+    let w = match S::Go {
+        S::Go => { defer { t = t + 100; } match S::Stop { S::Stop => { defer { t = t + 10; } 5 } | S::Go => 6 } }
+        | S::Stop => 0
+    };
+    println(w);
+    println(t);
+    t = 0;
+    let n = 2;
+    match n { 1 => { t = 1; } | 2 => { defer { t = t + 100; } t = t + 2; } | _ => { } }
+    println(t);
+    let x = V::M(3);
+    match x {
+        V::N(k) => { println(k); }
+        | V::M(k) => { defer { println(k * 10); } println(k); }
+        | V::Z => { }
+    }
+}

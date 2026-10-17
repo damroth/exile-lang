@@ -1,0 +1,4 @@
+// Register #83, positive: a `defer` in a match arm. The port runs it at the arm's
+// end; the reference refuses the program with its defer-body message.
+enum S { Go | Stop }
+fn main() { let mut t = 0; match S::Go { S::Go => { defer { t = t + 100; } t = t + 1; } | S::Stop => { } } println(t); }
