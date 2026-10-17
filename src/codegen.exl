@@ -578,8 +578,9 @@ fn emit_fnptr_typedef(a: Allocator, ar: *Arena, out: *StringBuilder, name: str, 
 // declared once at file scope, right before the first typedef that needs it -
 // the reference does not, and its C for these programs does not build (register
 // #81, a deliberate divergence).  A return type needs nothing: its tag is
-// declared by the typedef itself, at file scope.  An extern struct's tag comes
-// from the header included at the top.
+// declared by the typedef itself, at file scope.  An extern struct is declared
+// too: an opaque one may have no header at all, and after a header that
+// defines it a second declaration changes nothing.
 fn param_struct_tag(a: Allocator, ar: *Arena, t: *const Typ) -> str {
     return match *t {
         Typ::TPtr(inner) => param_struct_tag(a, ar, inner)
@@ -590,6 +591,7 @@ fn param_struct_tag(a: Allocator, ar: *Arena, t: *const Typ) -> str {
         | Typ::TEnum(_p) => strip_trailing_space(ar, c_type_prefix(a, ar, t))
         | Typ::TTuple(_ts) => strip_trailing_space(ar, c_type_prefix(a, ar, t))
         | Typ::TArray { elem: _e, size: _s } => strip_trailing_space(ar, c_type_prefix(a, ar, t))
+        | Typ::TExtStruct(_n) => strip_trailing_space(ar, c_type_prefix(a, ar, t))
         | _o => ""
     };
 }

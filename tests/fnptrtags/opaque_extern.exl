@@ -1,0 +1,13 @@
+// An opaque extern struct behind a pointer, with no header: nothing on the C
+// side declares the struct before the function-pointer typedef that takes it, so
+// it is declared ahead like any other aggregate.
+pub mod raw {
+    extern struct Opaque;
+    extern fn opq_make() -> *Opaque;
+    extern fn opq_get(o: *Opaque) -> int;
+}
+fn through(o: *raw::Opaque) -> int { return raw::opq_get(o); }
+fn main() {
+    let g: fn(*raw::Opaque) -> int = through;
+    println(g(raw::opq_make()));
+}

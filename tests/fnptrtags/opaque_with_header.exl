@@ -1,0 +1,14 @@
+// The same opaque struct, this time defined by a header the program includes.
+// The struct is declared by the header before any typedef, and the declaration
+// added ahead of the typedef repeats it harmlessly.
+@c_include("opaque_with_header.h")
+pub mod raw {
+    extern struct Opaque;
+    extern fn opq_make() -> *Opaque;
+    extern fn opq_get(o: *Opaque) -> int;
+}
+fn through(o: *raw::Opaque) -> int { return raw::opq_get(o); }
+fn main() {
+    let g: fn(*raw::Opaque) -> int = through;
+    println(g(raw::opq_make()));
+}

@@ -3068,11 +3068,14 @@ selfhost-parens: $(EXILC_BIN)
 # declaration, and there the two emissions are byte-identical - the declarations
 # are conditional, which is what keeps every other program's C unchanged. A rune
 # parameter is the same shape in a program only the port compiles: the reference
-# is pinned as refusing it, and the port's C is held to the same standard.
+# is pinned as refusing it, and the port's C is held to the same standard. An
+# opaque extern struct is declared too: without a header the reference's C fails
+# as behind any pointer, and with a header that defines the struct the reference
+# is clean and the port's repeated declaration must change nothing.
 FNPTR_TAGS_DIR := tests/fnptrtags
 selfhost-fnptr-tags: $(EXILC_BIN)
 	@sig=""; \
-	for f in by_value by_pointer return_only rune_param; do \
+	for f in by_value by_pointer return_only rune_param opaque_extern opaque_with_header; do \
 	  test -f $(FNPTR_TAGS_DIR)/$$f.exl || { echo "selfhost-fnptr-tags: MISSING $(FNPTR_TAGS_DIR)/$$f.exl"; exit 1; }; \
 	  test -s $(FNPTR_TAGS_DIR)/$$f.expected || { echo "selfhost-fnptr-tags: MISSING/EMPTY $(FNPTR_TAGS_DIR)/$$f.expected"; exit 1; }; \
 	  rm -f $(C_OUT)/ft_$$f.o.c $(C_OUT)/ft_$$f.p.c $(C_OUT)/ft_$$f.stripped $(HOST_OUT)/ft_$$f $(C_OUT)/ft_$$f.out; \
@@ -3089,12 +3092,16 @@ selfhost-fnptr-tags: $(EXILC_BIN)
 	      if cc -ansi -w -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null; then \
 	        echo "selfhost-fnptr-tags: by_value - the reference's C builds: the shape this gate pins is gone, re-read register #81"; exit 1; fi; \
 	      ref="reference-does-not-build";; \
-	    by_pointer) \
-	      cc -ansi -w -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null \
-	        || { echo "selfhost-fnptr-tags: by_pointer - the reference's C does not build at all; it is pinned as building with warnings"; exit 1; }; \
-	      if cc -ansi -pedantic -Wall -Werror -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null; then \
-	        echo "selfhost-fnptr-tags: by_pointer - the reference's C is -Werror clean: the shape this gate pins is gone, re-read register #81"; exit 1; fi; \
+	    by_pointer|opaque_extern) \
+	      cc -ansi -w -I $(FNPTR_TAGS_DIR) -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null \
+	        || { echo "selfhost-fnptr-tags: $$f - the reference's C does not build at all; it is pinned as building with warnings"; exit 1; }; \
+	      if cc -ansi -pedantic -Wall -Werror -I $(FNPTR_TAGS_DIR) -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null; then \
+	        echo "selfhost-fnptr-tags: $$f - the reference's C is -Werror clean: the shape this gate pins is gone, re-read register #81"; exit 1; fi; \
 	      ref="reference-fails-Werror";; \
+	    opaque_with_header) \
+	      cc -ansi -pedantic -Wall -Werror -I $(FNPTR_TAGS_DIR) -c -o /dev/null $(C_OUT)/ft_$$f.o.c 2>/dev/null \
+	        || { echo "selfhost-fnptr-tags: opaque_with_header - the reference's C fails -Werror although the header declares the struct first"; exit 1; }; \
+	      ref="header-declares-it-reference-clean";; \
 	    rune_param) ref="reference-refuses-rune";; \
 	    *) ref="byte-identical";; \
 	  esac; \
@@ -3108,7 +3115,8 @@ selfhost-fnptr-tags: $(EXILC_BIN)
 	  else \
 	    [ "$$n" -gt 0 ] || { echo "selfhost-fnptr-tags: $$f - no tag declared ahead of its typedef (register #81 regressed)"; exit 1; }; \
 	  fi; \
-	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/ft_$$f $(C_OUT)/ft_$$f.p.c $(SYS_HOST) \
+	  stub=""; [ -f $(FNPTR_TAGS_DIR)/$${f}_stub.c ] && stub=$(FNPTR_TAGS_DIR)/$${f}_stub.c; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -I $(FNPTR_TAGS_DIR) -o $(HOST_OUT)/ft_$$f $(C_OUT)/ft_$$f.p.c $$stub $(SYS_HOST) \
 	    || { echo "selfhost-fnptr-tags: $$f - the port's C fails -Werror"; exit 1; }; \
 	  $(HOST_OUT)/ft_$$f > $(C_OUT)/ft_$$f.out 2>&1; \
 	  if ! cmp -s $(FNPTR_TAGS_DIR)/$$f.expected $(C_OUT)/ft_$$f.out; then \
