@@ -19,3 +19,8 @@ arm_defer|R83-arm-defer
 defer_in_arm_in_defer|none
 arm_defer_reads_owner|R83-arm-defer
 defer_reads_owner_in_if|none
+with_return|R126-with-block
+with_defer|R126-with-block
+with_defer_reads_owner|R126-with-block
+arm_return_in_with|R12-arm-return
+with_in_defer_body|none

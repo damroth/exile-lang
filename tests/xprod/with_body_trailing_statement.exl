@@ -1,0 +1,17 @@
+// with x a trailing expression x a function with a return type: an expression with
+// no `;` that ends a `with` body is a statement of the body - a match, a call
+// returning a value or none, an `if` - and never the function's return value.
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn bump(p: *int) -> int { *p = *p + 10; return 77; }
+fn touch(p: *int) { *p = *p + 20; }
+fn by_match(i: int) -> int { let mut arr = [1, 2]; with x in arr[0] { match pick(i) { S::A => { *x = 3; } | S::B => { *x = 4; } } } return arr[0]; }
+fn by_call(i: int) -> int { let mut arr = [i, 2]; with x in arr[0] { *x = *x + 1; bump(x) } return arr[0]; }
+fn by_void_call(i: int) -> int { let mut arr = [i, 2]; with x in arr[0] { *x = *x + 1; touch(x) } return arr[0]; }
+fn by_if(i: int) -> int { let mut arr = [i, 2]; with x in arr[0] { if i > 1 { *x = 50; } else { *x = 60; } } return arr[0]; }
+fn main() {
+    println(by_match(1)); println(by_match(2));
+    println(by_call(1)); println(by_call(2));
+    println(by_void_call(1)); println(by_void_call(2));
+    println(by_if(1)); println(by_if(2));
+}

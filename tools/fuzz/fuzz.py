@@ -81,6 +81,51 @@ ARM_DEFER = re.compile(r"'defer' inside a defer body is not supported")
 # refuses the same defer in an `if` block (register #130), at the same position.
 DEFER_READS = re.compile(r"defer body reads '[^']+', but '[^']+' is auto-dropped before deferred code runs")
 
+# Register #126 - a `with` body is a block the port lowers as it lowers an arm: a
+# `return` or a `defer` in one is the port's, and the reference refuses it with
+# the words it uses for an arm. What tells the two apart is the block the
+# reference's diagnostic stands in - the innermost arm or `with` body around it.
+WITH_HEAD = re.compile(r"\s*with\s+\w+\s+in\b")
+CHAR_LIT = re.compile(r"'(\\.|[^'\\])'")
+
+
+def enclosing_block(src, line, col):
+    """'with' or 'arm' for the innermost match arm or `with` body around the
+    1-based position, or None. String and character literals and comments are
+    skipped; any other block - an `if`, a loop - is transparent."""
+    lines = src.split("\n")
+    if line < 1 or line > len(lines):
+        return None
+    end = sum(len(l) + 1 for l in lines[:line - 1]) + col - 1
+    stack, seg, i = [], 0, 0
+    while i < min(end, len(src)):
+        c = src[i]
+        if c == '"':
+            i += 1
+            while i < len(src) and src[i] != '"':
+                i += 2 if src[i] == "\\" else 1
+        elif src.startswith("//", i):
+            while i < len(src) and src[i] != "\n":
+                i += 1
+        elif c == "'" and CHAR_LIT.match(src, i):
+            i = CHAR_LIT.match(src, i).end() - 1
+        elif c == "{":
+            head = src[seg:i]
+            stack.append("with" if WITH_HEAD.match(head)
+                         else "arm" if head.rstrip().endswith("=>") else None)
+            seg = i + 1
+        elif c == "}":
+            if stack:
+                stack.pop()
+            seg = i + 1
+        elif c == ";":
+            seg = i + 1
+        i += 1
+    for kind in reversed(stack):
+        if kind:
+            return kind
+    return None
+
 # Register #13 - a translation unit with no entry point. The reference walks
 # reachability from `main`, has no root, and declares the whole seam; the port
 # declares what the emitted code references. Recognised from the EMISSIONS, and
@@ -125,6 +170,8 @@ def registered_divergence(ev):
           declarations
       #83 the port compiled a `defer` in a match arm the reference refuses, or
           refused it for reading a live owner (#130)
+      #126 the same for a `return` or a `defer` whose innermost block is a
+          `with` body
       #5  reserved for defer x loop-jump, which is a semantic difference rather
           than a lexical one and is still recognised from the source
     """
@@ -137,6 +184,12 @@ def registered_divergence(ev):
     # that really is inside a `defer` is rejected by the PORT too (it carries the
     # same check), so "the port accepted" is what separates the arm case from the
     # defer case that shares the wording.
+    pos = diag_pos(ev["oracle_diag"])
+    if (pos is not None
+            and enclosing_block(ev["src"], int(pos[0]), int(pos[1])) == "with"
+            and (ARM_RETURN.search(ev["oracle_diag"]) or ARM_DEFER.search(ev["oracle_diag"]))
+            and (ev["port_status"] == 0 or DEFER_READS.search(ev["port_diag"] or ""))):
+        return "R126-with-block"              # register #126
     if ev["port_status"] == 0 and ARM_RETURN.search(ev["oracle_diag"]):
         return "R12-arm-return"               # register #12
     if ARM_DEFER.search(ev["oracle_diag"]) and (

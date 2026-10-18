@@ -1,0 +1,1 @@
+tests/blockdefer/with_defer_reads_owner.exl:9:24: error: defer body reads 'v', but 'v' is auto-dropped before deferred code runs — consume it inside the defer (free/drop) or restructure without defer

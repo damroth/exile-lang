@@ -1,0 +1,12 @@
+// A `defer` in a `with` body is held to the rule a `defer` in an `if` block is: it
+// may not read an owner that is live where it is registered. The port refuses it
+// with the words it uses for the `if` block; the reference refuses a defer in a
+// `with` body with its own message.
+fn run(i: int) -> int {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    v.push(41);
+    let mut arr = [i, 0];
+    with x in arr[0] { defer { println(v.length() as int); } *x = *x + 1; }
+    return arr[0];
+}
+fn main() { println(run(1)); }

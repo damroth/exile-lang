@@ -1,0 +1,13 @@
+// Register #126, positive: a `return` in a `with` body. The port lowers it; the
+// reference refuses it with the message it gives for an arm. The braces in the
+// string, the character and the comment are not blocks.
+fn f(arr: *[int; 2]) -> int {
+    with x in arr[0] {
+        let c = '}';
+        println("}");
+        // }
+        if *x > 5 { return *x + c; }
+    }
+    return 0;
+}
+fn main() { let mut a = [10, 20]; println(f(&a)); }

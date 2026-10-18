@@ -1,0 +1,5 @@
+// Register #12 inside a `with` body: the `return` stands in an arm, the arm in the
+// body - the innermost block decides, and it is the arm.
+enum S { A | B }
+fn f(i: int) -> int { let mut arr = [i, 0]; with x in arr[0] { match S::B { S::A => { } | S::B => { return *x; } } } return 0; }
+fn main() { println(f(4)); }

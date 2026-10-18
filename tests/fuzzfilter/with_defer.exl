@@ -1,0 +1,2 @@
+// Register #126, positive: a `defer` in a `with` body, run at the body's end.
+fn main() { let mut arr = [10, 20]; with x in arr[0] { defer { println(*x); } *x = *x + 1; } println(arr[0]); }

@@ -1,0 +1,9 @@
+// let-else x defer: the else block of `let ... else` may register a `defer` before
+// it leaves, and the defer runs on that exit, after the function's own.
+fn find(ok: bool) -> Option<int> { if ok { return Option::Some(7); } return Option::None; }
+fn run(ok: bool) -> int {
+    defer { println(1); }
+    let Option::Some(k) = find(ok) else { defer { println(2); } return 0 - 1; };
+    return k;
+}
+fn main() { println(run(true)); println(run(false)); }

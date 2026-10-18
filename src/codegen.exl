@@ -1326,11 +1326,7 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
         | Tstmt::TExprStmt(e) => {
             match e.e {
                 TexprNode::TMatch { scrutinee, ename_path, arms } => { let no_lhs: Option<str> = Option::None; emit_match_stmt(a, ar, out, indent, cg, no_lhs, scrutinee, &ename_path, &arms); }
-                | TexprNode::TBlock { stmts, trailing } => {
-                    let ssl = stmts.as_slice();
-                    let mut i = 0 as u32;
-                    while i < stmts.length() { emit_simple_stmt(a, ar, out, indent, cg, &ssl[i]); i = i + 1 as u32; }
-                }
+                | TexprNode::TBlock { stmts, trailing } => emit_block_stmt(a, ar, out, indent, cg, &stmts)
                 | _o => { out.push_str(indent); gen_expr(a, ar, out, cg, e); out.push_str(";\n"); }
             }
         }
@@ -1377,6 +1373,20 @@ pub fn emit_simple_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: s
         }
         | _other => { ice("internal: no C form for this IR statement — did a transient node survive the lift pass?"); }
     }
+}
+
+// A block in statement position - a `with` body - that reaches a `defer` is a
+// scope of its own (see `arm_reaches_defer`); one that does not is emitted flat.
+fn emit_block_stmt(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, stmts: *const Vec<Tstmt>) {
+    if stmts_reach_defer(stmts) {
+        let no_tail: Option<*const Texpr> = Option::None;
+        let no_lhs: Option<str> = Option::None;
+        emit_scoped(a, ar, out, indent, cg, stmts, no_tail, no_lhs);
+        return;
+    }
+    let ssl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { emit_simple_stmt(a, ar, out, indent, cg, &ssl[i]); i = i + 1 as u32; }
 }
 
 // Single-name assign; the L2/L3 read-by-value idiom (`head = new(a) Cons(i,
@@ -1671,13 +1681,14 @@ fn emit_arm_result(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, c
         | Option::None => emit_arm_void(a, ar, out, indent, cg, arm.tbody)
     }
 }
-// An arm is a block, and `defer` is block-scoped: a `defer` written in an arm -
-// or in an `if` or a loop inside it - runs at the arm's end and on every jump out
-// of it, LIFO with the scopes around it. The walker arms otherwise go through was
-// written for defer bodies and has no defer scope, so such an arm is emitted as a
-// block of its own over the chain active here, and its value is computed before
-// its defers run. The reference refuses the program (register #83, a deliberate
-// divergence); an arm with no `defer` keeps the walker, and its C is unchanged.
+// An arm is a block, and so is a `with` body, and `defer` is block-scoped: a
+// `defer` written in one - or in an `if` or a loop inside it - runs at the block's
+// end and on every jump out of it, LIFO with the scopes around it. The walker
+// these blocks otherwise go through was written for defer bodies and has no defer
+// scope, so such a block is emitted as a block of its own over the chain active
+// here, and an arm's value is computed before its defers run. The reference
+// refuses the program (registers #83 and #126, deliberate divergences); a block
+// with no `defer` keeps the walker, and its C is unchanged.
 fn arm_reaches_defer(tbody: *const Texpr) -> bool {
     return match tbody.e {
         TexprNode::TBlock { stmts, trailing: _t } => stmts_reach_defer(&stmts)
@@ -1705,14 +1716,16 @@ fn stmt_reaches_defer(st: *const Tstmt) -> bool {
 }
 fn emit_arm_scoped(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, assign_to: Option<str>, tbody: *const Texpr) {
     match tbody.e {
-        TexprNode::TBlock { stmts, trailing } => {
-            let none: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
-            let ambient = flatten_defers(a, &none, cg.cg_defers);
-            gen_block_tail(a, ar, out, indent, cg, &ambient, &stmts, trailing, assign_to);
-            set_defers(cg, &ambient);
-        }
+        TexprNode::TBlock { stmts, trailing } => emit_scoped(a, ar, out, indent, cg, &stmts, trailing, assign_to)
         | _o => {}
     }
+}
+fn emit_scoped(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, stmts: *const Vec<Tstmt>,
+               tail: Option<*const Texpr>, assign_to: Option<str>) {
+    let none: Vec<Vec<Tstmt>> = Vec::with_capacity(a, 8 as u32);
+    let ambient = flatten_defers(a, &none, cg.cg_defers);
+    gen_block_tail(a, ar, out, indent, cg, &ambient, stmts, tail, assign_to);
+    set_defers(cg, &ambient);
 }
 fn emit_arm_value(a: Allocator, ar: *Arena, out: *StringBuilder, indent: str, cg: *const Cg, lhs: str, tbody: *const Texpr) {
     match tbody.e {

@@ -9846,10 +9846,10 @@ fn elab_with(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
     benv.push(FieldTy { name: internal, ty: pty });
     let mut bstmts: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
     bstmts.push(Tstmt::TLet { name: internal, value: ref_e, decl_ty: pty, pos: pos });
-    let n = rbody.length();
-    let rsl = rbody.as_slice();
+    let tbody = elab_stmt_body(a, ar, g, sc, gensym, &benv, ret, &rbody);
+    let tsl = tbody.as_slice();
     let mut i = 0 as u32;
-    while i < n { elab_stmt(a, ar, g, sc, gensym, &benv, ret, &rsl[i], &bstmts); i = i + 1 as u32; }
+    while i < tbody.length() { bstmts.push(tsl[i]); i = i + 1 as u32; }
     let no_tr: Option<*const Texpr> = Option::None;
     let blk = te_node(ar, TexprNode::TBlock { stmts: bstmts, trailing: no_tr }, t_bool(ar), pos);
     out.push(Tstmt::TExprStmt(blk));
@@ -10687,8 +10687,8 @@ fn elab_body(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySco
 // trailing value is peeled off before walking, so it never reaches here).
 // Bindings die when their block ends. The property lives HERE, in the single
 // funnel every statement-list body passes through — `if` (both arms), `while`,
-// `for`, `defer`, `seal`, `let ... else` — rather than in a list of constructs
-// that would need extending for every future one.
+// `for`, `defer`, `seal`, `let ... else`, `with` — rather than in a list of
+// constructs that would need extending for every future one.
 //
 // Match arms never had the bug, and the reason pointed straight at it: `elab_arms`
 // takes the environment by `*const`, so an arm CANNOT append to its caller's, while

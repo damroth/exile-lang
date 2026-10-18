@@ -1,0 +1,3 @@
+// Register #126, negative: a `defer` in a `with` body inside a defer body, which
+// both compilers refuse with the same words. Nothing to filter.
+fn main() { let mut arr = [10, 20]; defer { with x in arr[0] { defer { println(*x); } } } println(0); }

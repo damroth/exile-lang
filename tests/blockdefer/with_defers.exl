@@ -1,0 +1,22 @@
+// A `with` body is a block, and `defer` is block-scoped: a `defer` written in one -
+// directly, or in an `if` or a loop inside it - runs when that block ends, LIFO
+// with the scopes around it, and may read the binding, which lives until the
+// block's end. Each line below prints a trace that pins one of those facts.
+enum S { Go | Stop }
+struct P { a: int, b: int }
+fn main() {
+    let mut arr = [10, 20];
+    let mut t = 0;
+    with x in arr[0] { defer { println(*x); } *x = *x + 1; println(1); }
+    with x in arr[1] { defer { println(2); } defer { println(3); } println(*x); }
+    with x in arr[0] { if *x > 5 { defer { t = t + 100; } t = t + 1; } println(t); }
+    with x in arr[0] { let mut i = 0; while i < 2 { defer { t = t + 10; } i = i + *x - 10; } println(t); }
+    with x in arr[0] { defer { println(5); } with y in arr[1] { defer { println(6); } println(*y); } println(*x); }
+    if true { defer { println(9); } with x in arr[0] { defer { println(10); } *x = *x + 1; } println(11); }
+    match S::Go { S::Go => { defer { println(12); } with x in arr[0] { defer { println(13); } *x = *x + 1; } println(14); } | S::Stop => { } }
+    match S::Go { S::Go => { with x in arr[0] { defer { println(15); } println(*x); } } | S::Stop => { } }
+    with x in arr[0] { match S::Go { S::Go => { defer { println(17); } println(18); } | S::Stop => { } } println(*x); }
+    let mut p = P { a: 1, b: 2 };
+    with q in p.b { defer { println(*q + p.a); } *q = 30; }
+    println(arr[0]);
+}

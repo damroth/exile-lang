@@ -1,0 +1,26 @@
+// A jump out of a `with` body runs the body's defers first, then those of the
+// scopes it leaves, LIFO: `return` all the way out of the function, `break` and
+// `continue` down to the loop's own. A returned value is computed before any of
+// them run.
+fn ret(i: int) -> int {
+    let mut arr = [i, 0];
+    defer { println(100); }
+    with x in arr[0] { defer { println(*x); } if *x > 5 { return *x; } *x = *x + 1; }
+    return arr[0];
+}
+fn value(i: int) -> int {
+    let mut arr = [i, 0];
+    with x in arr[0] { defer { *x = 0; println(*x); } return *x + 1; }
+    return 0;
+}
+fn jumps() -> int {
+    let mut arr = [0, 0];
+    let mut i = 0;
+    while i < 4 {
+        i = i + 1;
+        defer { println(i * 100); }
+        with x in arr[0] { defer { println(i); } if i == 2 { continue; } if i == 3 { break; } *x = *x + 1; }
+    }
+    return arr[0];
+}
+fn main() { println(ret(1)); println(ret(9)); println(value(4)); println(jumps()); }

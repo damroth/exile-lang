@@ -1025,7 +1025,7 @@ selfhost-outdir: $(EXILC_BIN)
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-armdefer selfhost-armexit
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -1176,7 +1176,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-armdefer selfhost-armexit selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -3055,65 +3055,68 @@ selfhost-parens: $(EXILC_BIN)
 	  diff tests/parens/mixed_bitwise.expected $(C_OUT)/parens.out | head -6; exit 1; fi; \
 	echo "selfhost-parens: clean (mixed bitwise nesting parenthesised, emission clean under -Werror, values unchanged 32832/21/3)"
 
-# ===== register #83 - a `defer` in a match arm runs at the arm's end =====
+# ===== registers #83, #126 - a `defer` in a block the user writes runs at the block's end =====
 #
-# A deliberate divergence: an arm is a block and `defer` is block-scoped, so a
-# `defer` in an arm - or in an `if` or a loop inside it - runs when the arm ends
-# and on every jump out of it, LIFO with the scopes around it, after the arm's
-# value is computed. The frozen reference refuses the program in its emitter,
-# with a message about a defer body the program does not have. Both sides are
-# pinned: the port's C builds at -Werror and prints the trace each fixture
-# expects, and the reference refuses each fixture with the message that names
-# its barrier (the jump out of a value arm meets register #12's first). An arm
-# with no `defer` keeps the reference's emission byte for byte. A `defer` in an
-# arm that reads a live owner is refused as the same `defer` in an `if` block is
-# (register #130): the port's first line is pinned, position included.
-ARMDEFER_DIR := tests/armdefer
-selfhost-armdefer: $(EXILC_BIN)
+# A deliberate divergence, one row per kind of block: a match arm (#83) and a
+# `with` body (#126) are blocks, and `defer` is block-scoped, so a `defer` in one
+# - or in an `if` or a loop inside it - runs when the block ends and on every
+# jump out of it, LIFO with the scopes around it, after an arm's value is
+# computed. The frozen reference refuses the program in its emitter, with a
+# message about a defer body the program does not have. Both sides are pinned:
+# the port's C builds at -Werror and prints the trace each fixture expects, and
+# the reference refuses each fixture with the message that names its barrier
+# (the jump out of a value arm meets register #12's first). A block with no
+# `defer` keeps the reference's emission byte for byte. A `defer` that reads a
+# live owner is refused as the same `defer` in an `if` block is (register #130):
+# the port's first line is pinned, position included. The next kind of block
+# gets its rows here.
+BLOCKDEFER_DIR := tests/blockdefer
+selfhost-blockdefer: $(EXILC_BIN)
 	@sig=""; \
-	for f in arm_defers arm_defer_jumps arm_defer_value_jump arm_defer_reads_owner arm_defer_reads_owner_return arm_without_defer; do \
-	  test -f $(ARMDEFER_DIR)/$$f.exl || { echo "selfhost-armdefer: MISSING $(ARMDEFER_DIR)/$$f.exl"; exit 1; }; \
-	  test -s $(ARMDEFER_DIR)/$$f.expected || { echo "selfhost-armdefer: MISSING/EMPTY $(ARMDEFER_DIR)/$$f.expected"; exit 1; }; \
-	  rm -f $(C_OUT)/ad_$$f.o.c $(C_OUT)/ad_$$f.o.err $(C_OUT)/ad_$$f.p.c $(C_OUT)/ad_$$f.p.err $(HOST_OUT)/ad_$$f $(C_OUT)/ad_$$f.out; \
-	  $(EXILE) --target c --c-out $(C_OUT)/ad_$$f.o.c $(ARMDEFER_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/ad_$$f.o.err; \
+	for f in arm_defers arm_defer_jumps arm_defer_value_jump arm_defer_reads_owner arm_defer_reads_owner_return arm_without_defer \
+	         with_defers with_defer_jumps with_defer_reads_owner with_without_defer; do \
+	  test -f $(BLOCKDEFER_DIR)/$$f.exl || { echo "selfhost-blockdefer: MISSING $(BLOCKDEFER_DIR)/$$f.exl"; exit 1; }; \
+	  test -s $(BLOCKDEFER_DIR)/$$f.expected || { echo "selfhost-blockdefer: MISSING/EMPTY $(BLOCKDEFER_DIR)/$$f.expected"; exit 1; }; \
+	  rm -f $(C_OUT)/bd_$$f.o.c $(C_OUT)/bd_$$f.o.err $(C_OUT)/bd_$$f.p.c $(C_OUT)/bd_$$f.p.err $(HOST_OUT)/bd_$$f $(C_OUT)/bd_$$f.out; \
+	  $(EXILE) --target c --c-out $(C_OUT)/bd_$$f.o.c $(BLOCKDEFER_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/bd_$$f.o.err; \
 	  case $$f in \
-	    arm_without_defer) marker="";; \
+	    *_without_defer) marker="";; \
 	    arm_defer_value_jump) marker='block expression `{ ... }` must end with a trailing value expression';; \
 	    *) marker="'defer' inside a defer body is not supported";; \
 	  esac; \
 	  if [ -n "$$marker" ]; then \
-	    if [ -s $(C_OUT)/ad_$$f.o.c ]; then echo "selfhost-armdefer: $$f - the frozen reference now writes C for it: register #83 is stale, re-measure it"; exit 1; fi; \
-	    grep -q -F "$$marker" $(C_OUT)/ad_$$f.o.err \
-	      || { echo "selfhost-armdefer: $$f - the reference refuses it, but not with the pinned message:"; head -2 $(C_OUT)/ad_$$f.o.err; exit 1; }; \
+	    if [ -s $(C_OUT)/bd_$$f.o.c ]; then echo "selfhost-blockdefer: $$f - the frozen reference now writes C for it: registers #83 and #126 are stale, re-measure them"; exit 1; fi; \
+	    grep -q -F "$$marker" $(C_OUT)/bd_$$f.o.err \
+	      || { echo "selfhost-blockdefer: $$f - the reference refuses it, but not with the pinned message:"; head -2 $(C_OUT)/bd_$$f.o.err; exit 1; }; \
 	  else \
-	    test -s $(C_OUT)/ad_$$f.o.c || { echo "selfhost-armdefer: $$f - EMPTY reference C (floor)"; exit 1; }; \
+	    test -s $(C_OUT)/bd_$$f.o.c || { echo "selfhost-blockdefer: $$f - EMPTY reference C (floor)"; exit 1; }; \
 	  fi; \
 	  case $$f in *_reads_owner*) refused=1;; *) refused=0;; esac; \
 	  if [ $$refused = 1 ]; then \
-	    if $(EXILC_BIN) --target c --c-out $(C_OUT)/ad_$$f.p.c $(ARMDEFER_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/ad_$$f.p.err; then \
-	      echo "selfhost-armdefer: $$f - the port ACCEPTED a defer in an arm that reads a live owner, which an exit after it releases first"; exit 1; fi; \
-	    test ! -s $(C_OUT)/ad_$$f.p.c || { echo "selfhost-armdefer: $$f - the port refused it but wrote C"; exit 1; }; \
-	    grep -m1 'error:' $(C_OUT)/ad_$$f.p.err > $(C_OUT)/ad_$$f.out; \
-	    if ! cmp -s $(ARMDEFER_DIR)/$$f.expected $(C_OUT)/ad_$$f.out; then \
-	      echo "selfhost-armdefer: $$f - the port refuses it, but not with the pinned line:"; \
-	      diff $(ARMDEFER_DIR)/$$f.expected $(C_OUT)/ad_$$f.out | head -4; exit 1; fi; \
+	    if $(EXILC_BIN) --target c --c-out $(C_OUT)/bd_$$f.p.c $(BLOCKDEFER_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/bd_$$f.p.err; then \
+	      echo "selfhost-blockdefer: $$f - the port ACCEPTED a defer that reads a live owner, which an exit after it releases first"; exit 1; fi; \
+	    test ! -s $(C_OUT)/bd_$$f.p.c || { echo "selfhost-blockdefer: $$f - the port refused it but wrote C"; exit 1; }; \
+	    grep -m1 'error:' $(C_OUT)/bd_$$f.p.err > $(C_OUT)/bd_$$f.out; \
+	    if ! cmp -s $(BLOCKDEFER_DIR)/$$f.expected $(C_OUT)/bd_$$f.out; then \
+	      echo "selfhost-blockdefer: $$f - the port refuses it, but not with the pinned line:"; \
+	      diff $(BLOCKDEFER_DIR)/$$f.expected $(C_OUT)/bd_$$f.out | head -4; exit 1; fi; \
 	    sig="$$sig $$f=port-refuses/reference-refuses"; continue; \
 	  fi; \
-	  $(EXILC_BIN) --target c --c-out $(C_OUT)/ad_$$f.p.c $(ARMDEFER_DIR)/$$f.exl >/dev/null 2>&1 \
-	    || { echo "selfhost-armdefer: $$f - the port REJECTED it"; exit 1; }; \
-	  test -s $(C_OUT)/ad_$$f.p.c || { echo "selfhost-armdefer: $$f - EMPTY port C (floor)"; exit 1; }; \
-	  if [ -z "$$marker" ] && ! cmp -s $(C_OUT)/ad_$$f.o.c $(C_OUT)/ad_$$f.p.c; then \
-	    echo "selfhost-armdefer: $$f - an arm with no defer no longer emits the reference's C:"; \
-	    diff $(C_OUT)/ad_$$f.o.c $(C_OUT)/ad_$$f.p.c | head -8; exit 1; fi; \
-	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/ad_$$f $(C_OUT)/ad_$$f.p.c $(SYS_HOST) \
-	    || { echo "selfhost-armdefer: $$f - the port's C fails -Werror"; exit 1; }; \
-	  $(HOST_OUT)/ad_$$f > $(C_OUT)/ad_$$f.out 2>&1; \
-	  if ! cmp -s $(ARMDEFER_DIR)/$$f.expected $(C_OUT)/ad_$$f.out; then \
-	    echo "selfhost-armdefer: $$f - a defer ran at the wrong time:"; \
-	    diff $(ARMDEFER_DIR)/$$f.expected $(C_OUT)/ad_$$f.out | head -6; exit 1; fi; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/bd_$$f.p.c $(BLOCKDEFER_DIR)/$$f.exl >/dev/null 2>&1 \
+	    || { echo "selfhost-blockdefer: $$f - the port REJECTED it"; exit 1; }; \
+	  test -s $(C_OUT)/bd_$$f.p.c || { echo "selfhost-blockdefer: $$f - EMPTY port C (floor)"; exit 1; }; \
+	  if [ -z "$$marker" ] && ! cmp -s $(C_OUT)/bd_$$f.o.c $(C_OUT)/bd_$$f.p.c; then \
+	    echo "selfhost-blockdefer: $$f - a block with no defer no longer emits the reference's C:"; \
+	    diff $(C_OUT)/bd_$$f.o.c $(C_OUT)/bd_$$f.p.c | head -8; exit 1; fi; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(HOST_OUT)/bd_$$f $(C_OUT)/bd_$$f.p.c $(SYS_HOST) \
+	    || { echo "selfhost-blockdefer: $$f - the port's C fails -Werror"; exit 1; }; \
+	  $(HOST_OUT)/bd_$$f > $(C_OUT)/bd_$$f.out 2>&1; \
+	  if ! cmp -s $(BLOCKDEFER_DIR)/$$f.expected $(C_OUT)/bd_$$f.out; then \
+	    echo "selfhost-blockdefer: $$f - a defer ran at the wrong time:"; \
+	    diff $(BLOCKDEFER_DIR)/$$f.expected $(C_OUT)/bd_$$f.out | head -6; exit 1; fi; \
 	  if [ -n "$$marker" ]; then sig="$$sig $$f=runs/reference-refuses"; else sig="$$sig $$f=byte-identical"; fi; \
 	done; \
-	echo "selfhost-armdefer: clean -$$sig; each port C builds at -Werror and prints its expected trace, the refused one gives its pinned line"
+	echo "selfhost-blockdefer: clean -$$sig; each port C builds at -Werror and prints its expected trace, each refused one gives its pinned line"
 
 # ===== register #86 - a jump out of a match arm or a `with` body releases what it leaves =====
 #
@@ -3758,7 +3761,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                    visibility_scope_of_a_method signature_return_registers_first \
                    type_param_name_shared_with_types impl_phase_before_signatures \
                    method_signatures_impl_by_impl iterator_footprint_at_its_impl \
-                   let_else_return_live_owner defer_consumes_then_return
+                   let_else_return_live_owner defer_consumes_then_return \
+                   with_body_trailing_statement let_else_defer
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

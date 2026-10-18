@@ -1,0 +1,13 @@
+// The control: `with` bodies with no `defer` - straight, with an `if`, a loop with
+// `break` and `continue`, a match - keep the reference's C byte for byte.
+enum S { Go | Stop }
+fn main() {
+    let mut arr = [10, 20];
+    let mut i = 0;
+    with x in arr[0] { *x = *x + 1; }
+    with x in arr[1] { if *x > 5 { *x = *x * 2; } else { *x = 0; } }
+    while i < 5 { i = i + 1; with x in arr[0] { if i == 2 { continue; } if i == 4 { break; } *x = *x + i; } }
+    with x in arr[0] { match S::Go { S::Go => { *x = *x + 100; } | S::Stop => { } } println(*x); }
+    println(arr[0]);
+    println(arr[1]);
+}
