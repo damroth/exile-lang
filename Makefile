@@ -839,9 +839,9 @@ selfhost-loopdrop: $(EXILC_BIN)
 	  fi; \
 	done; \
 	rm -rf $(C_OUT)/ld; \
-	test $$n -ge 7 || { echo "selfhost-loopdrop: only $$n fixtures ran - the break and continue arms, the nesting, the declared-before and reassigned owners, the depth restore and the control each need one"; exit 1; }; \
+	test $$n -ge 8 || { echo "selfhost-loopdrop: only $$n fixtures ran - the break and continue arms, the nesting, the declared-before and reassigned owners, the depth restore, the owner a defer consumes and the control each need one"; exit 1; }; \
 	if [ $$fail -eq 0 ]; then \
-	  echo "selfhost-loopdrop: clean ($$sig $$n fixtures RUN with the witness on, every one ending at alloc-balance 0 - break, continue, nesting, an owner declared before the loop, one reassigned inside it, an outer jump after an inner loop, and a loop with no jump)"; \
+	  echo "selfhost-loopdrop: clean ($$sig $$n fixtures RUN with the witness on, every one ending at alloc-balance 0 - break, continue, nesting, an owner declared before the loop, one reassigned inside it, an outer jump after an inner loop, an owner the iteration's defer consumes, and a loop with no jump)"; \
 	else exit 1; fi
 
 selfhost-refemit: $(EXILC_BIN)
@@ -3065,14 +3065,16 @@ selfhost-parens: $(EXILC_BIN)
 # pinned: the port's C builds at -Werror and prints the trace each fixture
 # expects, and the reference refuses each fixture with the message that names
 # its barrier (the jump out of a value arm meets register #12's first). An arm
-# with no `defer` keeps the reference's emission byte for byte.
+# with no `defer` keeps the reference's emission byte for byte. A `defer` in an
+# arm that reads a live owner is refused as the same `defer` in an `if` block is
+# (register #130): the port's first line is pinned, position included.
 ARMDEFER_DIR := tests/armdefer
 selfhost-armdefer: $(EXILC_BIN)
 	@sig=""; \
-	for f in arm_defers arm_defer_jumps arm_defer_value_jump arm_without_defer; do \
+	for f in arm_defers arm_defer_jumps arm_defer_value_jump arm_defer_reads_owner arm_defer_reads_owner_return arm_without_defer; do \
 	  test -f $(ARMDEFER_DIR)/$$f.exl || { echo "selfhost-armdefer: MISSING $(ARMDEFER_DIR)/$$f.exl"; exit 1; }; \
 	  test -s $(ARMDEFER_DIR)/$$f.expected || { echo "selfhost-armdefer: MISSING/EMPTY $(ARMDEFER_DIR)/$$f.expected"; exit 1; }; \
-	  rm -f $(C_OUT)/ad_$$f.o.c $(C_OUT)/ad_$$f.o.err $(C_OUT)/ad_$$f.p.c $(HOST_OUT)/ad_$$f $(C_OUT)/ad_$$f.out; \
+	  rm -f $(C_OUT)/ad_$$f.o.c $(C_OUT)/ad_$$f.o.err $(C_OUT)/ad_$$f.p.c $(C_OUT)/ad_$$f.p.err $(HOST_OUT)/ad_$$f $(C_OUT)/ad_$$f.out; \
 	  $(EXILE) --target c --c-out $(C_OUT)/ad_$$f.o.c $(ARMDEFER_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/ad_$$f.o.err; \
 	  case $$f in \
 	    arm_without_defer) marker="";; \
@@ -3085,6 +3087,17 @@ selfhost-armdefer: $(EXILC_BIN)
 	      || { echo "selfhost-armdefer: $$f - the reference refuses it, but not with the pinned message:"; head -2 $(C_OUT)/ad_$$f.o.err; exit 1; }; \
 	  else \
 	    test -s $(C_OUT)/ad_$$f.o.c || { echo "selfhost-armdefer: $$f - EMPTY reference C (floor)"; exit 1; }; \
+	  fi; \
+	  case $$f in *_reads_owner*) refused=1;; *) refused=0;; esac; \
+	  if [ $$refused = 1 ]; then \
+	    if $(EXILC_BIN) --target c --c-out $(C_OUT)/ad_$$f.p.c $(ARMDEFER_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/ad_$$f.p.err; then \
+	      echo "selfhost-armdefer: $$f - the port ACCEPTED a defer in an arm that reads a live owner, which an exit after it releases first"; exit 1; fi; \
+	    test ! -s $(C_OUT)/ad_$$f.p.c || { echo "selfhost-armdefer: $$f - the port refused it but wrote C"; exit 1; }; \
+	    grep -m1 'error:' $(C_OUT)/ad_$$f.p.err > $(C_OUT)/ad_$$f.out; \
+	    if ! cmp -s $(ARMDEFER_DIR)/$$f.expected $(C_OUT)/ad_$$f.out; then \
+	      echo "selfhost-armdefer: $$f - the port refuses it, but not with the pinned line:"; \
+	      diff $(ARMDEFER_DIR)/$$f.expected $(C_OUT)/ad_$$f.out | head -4; exit 1; fi; \
+	    sig="$$sig $$f=port-refuses/reference-refuses"; continue; \
 	  fi; \
 	  $(EXILC_BIN) --target c --c-out $(C_OUT)/ad_$$f.p.c $(ARMDEFER_DIR)/$$f.exl >/dev/null 2>&1 \
 	    || { echo "selfhost-armdefer: $$f - the port REJECTED it"; exit 1; }; \
@@ -3100,7 +3113,7 @@ selfhost-armdefer: $(EXILC_BIN)
 	    diff $(ARMDEFER_DIR)/$$f.expected $(C_OUT)/ad_$$f.out | head -6; exit 1; fi; \
 	  if [ -n "$$marker" ]; then sig="$$sig $$f=runs/reference-refuses"; else sig="$$sig $$f=byte-identical"; fi; \
 	done; \
-	echo "selfhost-armdefer: clean -$$sig; each port C builds at -Werror and prints its expected trace"
+	echo "selfhost-armdefer: clean -$$sig; each port C builds at -Werror and prints its expected trace, the refused one gives its pinned line"
 
 # ===== register #86 - a jump out of a match arm or a `with` body releases what it leaves =====
 #
@@ -3114,6 +3127,7 @@ selfhost-armdefer: $(EXILC_BIN)
 # allocation witness on, every trace ending at a zero balance, and the control
 # keeps the reference's C byte for byte. A `return` in the else block of
 # `let ... else` is the reference's own and keeps its C, leak included (#127).
+# An owner a `defer` the return runs consumes is the defer's to release (#130).
 ARMEXIT_DIR := tests/armexit
 selfhost-armexit: $(EXILC_BIN)
 	@sig=""; \
@@ -3123,7 +3137,7 @@ selfhost-armexit: $(EXILC_BIN)
 	  || { echo "selfhost-armexit: the witness control does not build"; exit 1; }; \
 	on=`EXILE_ALLOC_WITNESS=1 $(C_OUT)/ax/wc`; \
 	test "$$on" = "alloc-balance 1" || { echo "selfhost-armexit: the witness cannot SEE a leak (got '$$on') - every balance below would read zero regardless"; exit 1; }; \
-	for f in arm_return_drops arm_value_return_drops with_return_drops arm_seal_return_drops arm_value_diverges arm_without_return; do \
+	for f in arm_return_drops arm_value_return_drops with_return_drops arm_seal_return_drops arm_defer_exits arm_value_diverges arm_without_return; do \
 	  test -f $(ARMEXIT_DIR)/$$f.exl || { echo "selfhost-armexit: MISSING $(ARMEXIT_DIR)/$$f.exl"; exit 1; }; \
 	  test -s $(ARMEXIT_DIR)/$$f.expected || { echo "selfhost-armexit: MISSING/EMPTY $(ARMEXIT_DIR)/$$f.expected"; exit 1; }; \
 	  test "`tail -1 $(ARMEXIT_DIR)/$$f.expected`" = "alloc-balance 0" \
@@ -3133,6 +3147,7 @@ selfhost-armexit: $(EXILC_BIN)
 	    arm_without_return) marker="";; \
 	    arm_value_return_drops|arm_value_diverges) marker='block expression `{ ... }` must end with a trailing value expression';; \
 	    arm_seal_return_drops) marker="'seal' is a reserved word";; \
+	    arm_defer_exits) marker="'defer' inside a defer body is not supported";; \
 	    *) marker="'return' inside a defer body is not supported";; \
 	  esac; \
 	  if [ -n "$$marker" ]; then \
@@ -3743,7 +3758,7 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                    visibility_scope_of_a_method signature_return_registers_first \
                    type_param_name_shared_with_types impl_phase_before_signatures \
                    method_signatures_impl_by_impl iterator_footprint_at_its_impl \
-                   let_else_return_live_owner
+                   let_else_return_live_owner defer_consumes_then_return
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

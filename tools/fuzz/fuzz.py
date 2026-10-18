@@ -77,6 +77,9 @@ ARM_RETURN = re.compile(
 # the same words for a `defer` that really is in a defer body (its typecheck),
 # so - as for #12 - "the port accepted" is what tells the two apart.
 ARM_DEFER = re.compile(r"'defer' inside a defer body is not supported")
+# ...and where that defer reads a live owner, the port refuses it the way it
+# refuses the same defer in an `if` block (register #130), at the same position.
+DEFER_READS = re.compile(r"defer body reads '[^']+', but '[^']+' is auto-dropped before deferred code runs")
 
 # Register #13 - a translation unit with no entry point. The reference walks
 # reachability from `main`, has no root, and declares the whole seam; the port
@@ -120,7 +123,8 @@ def registered_divergence(ev):
       #7  both compiled, and the emissions differ ONLY in parentheses
       #81 both compiled, and the port's emission ONLY adds aggregate tag
           declarations
-      #83 the port compiled a `defer` in a match arm the reference refuses
+      #83 the port compiled a `defer` in a match arm the reference refuses, or
+          refused it for reading a live owner (#130)
       #5  reserved for defer x loop-jump, which is a semantic difference rather
           than a lexical one and is still recognised from the source
     """
@@ -135,8 +139,9 @@ def registered_divergence(ev):
     # defer case that shares the wording.
     if ev["port_status"] == 0 and ARM_RETURN.search(ev["oracle_diag"]):
         return "R12-arm-return"               # register #12
-    if ev["port_status"] == 0 and ARM_DEFER.search(ev["oracle_diag"]):
-        return "R83-arm-defer"                # register #83
+    if ARM_DEFER.search(ev["oracle_diag"]) and (
+            ev["port_status"] == 0 or DEFER_READS.search(ev["port_diag"] or "")):
+        return "R83-arm-defer"                # registers #83, #130
     # #11 — both reject, at DIFFERENT positions: each side found a different
     # error first, because their passes run in a different order. Same position
     # with different text is a real message divergence and stays B1.

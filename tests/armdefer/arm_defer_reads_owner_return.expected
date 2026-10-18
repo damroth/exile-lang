@@ -1,0 +1,1 @@
+tests/armdefer/arm_defer_reads_owner_return.exl:11:45: error: defer body reads 'v', but 'v' is auto-dropped before deferred code runs — consume it inside the defer (free/drop) or restructure without defer

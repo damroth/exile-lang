@@ -1,0 +1,5 @@
+// Register #130, positive: a `defer` in a match arm that reads a live owner. The
+// reference refuses the program with its defer-body message; the port refuses it
+// as it refuses the same defer in an `if` block, at the same position.
+enum S { Go | Stop }
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); match S::Go { S::Go => { defer { println(v.length() as int); } } | S::Stop => { } } }

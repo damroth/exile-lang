@@ -1,0 +1,14 @@
+// A `defer` in a match arm is held to the rule a `defer` in an `if` block is: it
+// may not read an owner that is live where it is registered, since an exit that
+// runs it - a `return` after it - releases that owner first. The port refuses it
+// with the words it uses for the `if` block; the reference refuses the defer in
+// an arm with its own message.
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn run(i: int) -> int {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    v.push(41);
+    match pick(i) { S::A => { } | S::B => { defer { println(v.length() as int); } if i > 0 { return 9; } println(0); } }
+    return 0;
+}
+fn main() { println(run(1)); println(run(2)); }

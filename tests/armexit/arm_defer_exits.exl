@@ -1,0 +1,44 @@
+// A `defer` in a match arm that consumes an owner, and a `return` that leaves the
+// arm: the return runs the defer, so the owner is the defer's to release, not the
+// return's - whether the defer is the arm's own, at any depth before the return,
+// or the function's, registered before the match - and a defer in one arm is not
+// pending in another arm's return. Each line is a value the
+// program computes; with the allocation witness on, the last line counts the
+// blocks never released.
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh(n: int) -> Vec<int> {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    let mut k = 0;
+    while k < n { v.push(k); k = k + 1; }
+    return v;
+}
+fn arm_defer(i: int) -> int {
+    let v = fresh(1);
+    match pick(i) { S::A => { let k = take(v); println(k); } | S::B => { defer { let k = take(v); println(k + 100); } return 9; } }
+    return 0;
+}
+fn arm_defer_nested_return(i: int) -> int {
+    let v = fresh(2);
+    let w = fresh(3);
+    match pick(i) { S::A => { let k = take(v); println(k); } | S::B => { defer { let k = take(v); println(k + 200); } if i > 0 { return 9; } println(0); } }
+    return w.length() as int;
+}
+fn function_defer(i: int) -> int {
+    let v = fresh(4);
+    defer { let k = take(v); println(k + 300); }
+    match pick(i) { S::A => { } | S::B => { if i > 0 { return 9; } println(0); } }
+    return 0;
+}
+fn sibling_arm(i: int) -> int {
+    let v = fresh(5);
+    match pick(i) { S::A => { defer { let k = take(v); println(k + 500); } println(1); } | S::B => { return 9; } }
+    return 0;
+}
+fn main() {
+    println(sibling_arm(1)); println(sibling_arm(2));
+    println(arm_defer(1)); println(arm_defer(2));
+    println(arm_defer_nested_return(1)); println(arm_defer_nested_return(2));
+    println(function_defer(1)); println(function_defer(2));
+}

@@ -1,0 +1,78 @@
+// defer x return x a live owner: a `defer` that consumes the owner runs at every
+// `return` after it, so the owner is the defer's to release - at a return in the
+// function, in the `if` block that registered the defer, and inside a loop - and
+// a defer in one branch is not pending in the other branch's return. The defer
+// consumes the owner in each statement form that carries an expression.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn fresh(n: int) -> Vec<int> {
+    let mut v: Vec<int> = Vec::with_capacity(raw::make_c_allocator(), 8 as u32);
+    let mut k = 0;
+    while k < n { v.push(k); k = k + 1; }
+    return v;
+}
+fn top(i: int) -> int {
+    let v = fresh(1);
+    defer { let k = take(v); println(k + 100); }
+    if i == 2 { return 9; }
+    return 0;
+}
+fn in_block(i: int) -> int {
+    let v = fresh(2);
+    if i == 2 { defer { let k = take(v); println(k + 200); } return 9; } else { let k = take(v); println(k); }
+    return 0;
+}
+fn in_loop(n: int) -> int {
+    let v = fresh(3);
+    defer { let k = take(v); println(k + 300); }
+    let mut i = 0;
+    while i < n { if i == 2 { return 9; } i = i + 1; }
+    return i;
+}
+struct Cell { n: int }
+fn eat(v: Vec<int>) { println(v.length() as int); }
+fn as_stmt(i: int) -> int {
+    let v = fresh(6);
+    defer { eat(v); }
+    if i == 2 { return 9; }
+    return 0;
+}
+fn as_field(i: int) -> int {
+    let v = fresh(7);
+    let mut c = Cell { n: 0 };
+    defer { c.n = take(v); println(c.n); }
+    if i == 2 { return 9; }
+    return 0;
+}
+fn as_index(i: int) -> int {
+    let v = fresh(8);
+    let mut arr = [0, 0];
+    defer { arr[1] = take(v); println(arr[1]); }
+    if i == 2 { return 9; }
+    return 0;
+}
+fn as_deref(i: int) -> int {
+    let v = fresh(9);
+    let mut cell = 0;
+    let p: *int = &cell;
+    defer { *p = take(v); println(cell); }
+    if i == 2 { return 9; }
+    return 0;
+}
+fn as_tuple(i: int) -> int {
+    let v = fresh(10);
+    defer { let (a, b) = (take(v), 1); println(a + b); }
+    if i == 2 { return 9; }
+    return 0;
+}
+fn sibling(c: bool) -> int {
+    let v = fresh(5);
+    if c { defer { let k = take(v); println(k + 500); } println(1); } else { return 9; }
+    return 0;
+}
+fn main() {
+    println(as_stmt(1)); println(as_stmt(2)); println(as_field(1)); println(as_field(2));
+    println(as_index(1)); println(as_index(2)); println(as_deref(1)); println(as_deref(2));
+    println(as_tuple(1)); println(as_tuple(2));
+    println(sibling(true)); println(sibling(false)); println(top(1)); println(top(2)); println(in_block(1)); println(in_block(2)); println(in_loop(1)); println(in_loop(5));
+}

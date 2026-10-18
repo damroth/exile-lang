@@ -1,0 +1,22 @@
+// An owner born inside a loop body and consumed by that body's own `defer`, and a
+// `break` or `continue` that leaves the iteration. The jump runs the defer, so the
+// owner is the defer's to release: the port used to release it at the jump as
+// well, and the defer then freed it a second time.
+//
+// Run with EXILE_ALLOC_WITNESS set, the host seam reports how many blocks are
+// still out at exit, and the expected output says zero.
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn run(n: int) -> int {
+    let mut i = 0;
+    let mut t = 0;
+    while i < n {
+        let mut w: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+        w.push(i);
+        defer { t = t + take(w); }
+        i = i + 1;
+        if i == 2 { break; }
+        if i == 1 { continue; }
+    }
+    return t + i;
+}
+fn main() { println(run(1)); println(run(5)); }

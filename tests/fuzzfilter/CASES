@@ -17,3 +17,5 @@ fnptr_param_tags|R81-fnptr-param-tags
 fnptr_tags_plus_parens|none
 arm_defer|R83-arm-defer
 defer_in_arm_in_defer|none
+arm_defer_reads_owner|R83-arm-defer
+defer_reads_owner_in_if|none
