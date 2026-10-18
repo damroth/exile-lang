@@ -1,0 +1,13 @@
+// A match used as a statement joins its arms' types, and an arm that jumps out
+// takes part with the type of a block that has no value: the arm yielding a u32
+// beside it disagrees.
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn f(i: int) -> u32 { return i as u32; }
+fn main() {
+    let mut i = 0;
+    while i < 4 {
+        i = i + 1;
+        match pick(i) { S::B => { continue; } | S::A => { f(i) } }
+    }
+}

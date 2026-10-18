@@ -1025,7 +1025,7 @@ selfhost-outdir: $(EXILC_BIN)
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-armdefer
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-armdefer selfhost-armexit
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -1176,7 +1176,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-armdefer selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-armdefer selfhost-armexit selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -3102,6 +3102,63 @@ selfhost-armdefer: $(EXILC_BIN)
 	done; \
 	echo "selfhost-armdefer: clean -$$sig; each port C builds at -Werror and prints its expected trace"
 
+# ===== register #86 - a jump out of a match arm or a `with` body releases what it leaves =====
+#
+# A `return` inside a match arm the user wrote, or inside a `with` body, leaves
+# the function from a block the drop pass's statement walk never enters. The port
+# lowers those jumps (register #12) and releases the owners live at each one
+# first, as a `return` anywhere else does. Where the match is a value, an arm
+# that jumps gives it no type: the match takes the type of the arms that finish.
+# The frozen reference refuses every fixture but the control, each with the
+# message that names its barrier; the port's C builds at -Werror and RUNS with the
+# allocation witness on, every trace ending at a zero balance, and the control
+# keeps the reference's C byte for byte. A `return` in the else block of
+# `let ... else` is the reference's own and keeps its C, leak included (#127).
+ARMEXIT_DIR := tests/armexit
+selfhost-armexit: $(EXILC_BIN)
+	@sig=""; \
+	rm -rf $(C_OUT)/ax; mkdir -p $(C_OUT)/ax; \
+	test -s tests/loopdrop/witness_control.c || { echo "selfhost-armexit: MISSING/EMPTY tests/loopdrop/witness_control.c"; exit 1; }; \
+	cc -ansi -pedantic -Wall -Werror -o $(C_OUT)/ax/wc tests/loopdrop/witness_control.c $(SYS_HOST) \
+	  || { echo "selfhost-armexit: the witness control does not build"; exit 1; }; \
+	on=`EXILE_ALLOC_WITNESS=1 $(C_OUT)/ax/wc`; \
+	test "$$on" = "alloc-balance 1" || { echo "selfhost-armexit: the witness cannot SEE a leak (got '$$on') - every balance below would read zero regardless"; exit 1; }; \
+	for f in arm_return_drops arm_value_return_drops with_return_drops arm_seal_return_drops arm_value_diverges arm_without_return; do \
+	  test -f $(ARMEXIT_DIR)/$$f.exl || { echo "selfhost-armexit: MISSING $(ARMEXIT_DIR)/$$f.exl"; exit 1; }; \
+	  test -s $(ARMEXIT_DIR)/$$f.expected || { echo "selfhost-armexit: MISSING/EMPTY $(ARMEXIT_DIR)/$$f.expected"; exit 1; }; \
+	  test "`tail -1 $(ARMEXIT_DIR)/$$f.expected`" = "alloc-balance 0" \
+	    || { echo "selfhost-armexit: $$f.expected does not end at a zero balance - it would pin the values and not the leak"; exit 1; }; \
+	  $(EXILE) --target c --c-out $(C_OUT)/ax/$$f.o.c $(ARMEXIT_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/ax/$$f.o.err; \
+	  case $$f in \
+	    arm_without_return) marker="";; \
+	    arm_value_return_drops|arm_value_diverges) marker='block expression `{ ... }` must end with a trailing value expression';; \
+	    arm_seal_return_drops) marker="'seal' is a reserved word";; \
+	    *) marker="'return' inside a defer body is not supported";; \
+	  esac; \
+	  if [ -n "$$marker" ]; then \
+	    if [ -s $(C_OUT)/ax/$$f.o.c ]; then echo "selfhost-armexit: $$f - the frozen reference now writes C for it: register #86 is stale, re-measure it"; exit 1; fi; \
+	    grep -q -F "$$marker" $(C_OUT)/ax/$$f.o.err \
+	      || { echo "selfhost-armexit: $$f - the reference refuses it, but not with the pinned message:"; head -2 $(C_OUT)/ax/$$f.o.err; exit 1; }; \
+	  else \
+	    test -s $(C_OUT)/ax/$$f.o.c || { echo "selfhost-armexit: $$f - EMPTY reference C (floor)"; exit 1; }; \
+	  fi; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/ax/$$f.p.c $(ARMEXIT_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/ax/$$f.p.err \
+	    || { echo "selfhost-armexit: $$f - the port REJECTED it:"; head -2 $(C_OUT)/ax/$$f.p.err; exit 1; }; \
+	  test -s $(C_OUT)/ax/$$f.p.c || { echo "selfhost-armexit: $$f - EMPTY port C (floor)"; exit 1; }; \
+	  if [ -z "$$marker" ] && ! cmp -s $(C_OUT)/ax/$$f.o.c $(C_OUT)/ax/$$f.p.c; then \
+	    echo "selfhost-armexit: $$f - arms and a with body that finish no longer emit the reference's C:"; \
+	    diff $(C_OUT)/ax/$$f.o.c $(C_OUT)/ax/$$f.p.c | head -8; exit 1; fi; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(C_OUT)/ax/$$f $(C_OUT)/ax/$$f.p.c $(SYS_HOST) \
+	    || { echo "selfhost-armexit: $$f - the port's C fails -Werror"; exit 1; }; \
+	  EXILE_ALLOC_WITNESS=1 $(C_OUT)/ax/$$f > $(C_OUT)/ax/$$f.out 2>&1; \
+	  if ! cmp -s $(ARMEXIT_DIR)/$$f.expected $(C_OUT)/ax/$$f.out; then \
+	    echo "selfhost-armexit: $$f - a value or the balance changed:"; \
+	    diff $(ARMEXIT_DIR)/$$f.expected $(C_OUT)/ax/$$f.out | head -6; exit 1; fi; \
+	  if [ -n "$$marker" ]; then sig="$$sig $$f=runs/reference-refuses"; else sig="$$sig $$f=byte-identical"; fi; \
+	done; \
+	rm -rf $(C_OUT)/ax; \
+	echo "selfhost-armexit: clean - the witness sees a planted leak;$$sig; each port C builds at -Werror and RUNS to its trace, every balance zero"
+
 # ===== register #81 - aggregate tags declared ahead of fn-pointer typedefs =====
 #
 # A deliberate divergence in the emitted C, gated against the program's output
@@ -3685,7 +3742,8 @@ XPROD_FIXTURES := c01_trait_in_mod c02_trait_top_impl_in_mod \
                    trait_path_picks_the_declaration trait_default_signature_in_impl_module \
                    visibility_scope_of_a_method signature_return_registers_first \
                    type_param_name_shared_with_types impl_phase_before_signatures \
-                   method_signatures_impl_by_impl iterator_footprint_at_its_impl
+                   method_signatures_impl_by_impl iterator_footprint_at_its_impl \
+                   let_else_return_live_owner
 
 selfhost-xprod: $(EXILC_BIN)
 	@fail=0; n=0; \

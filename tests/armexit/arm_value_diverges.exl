@@ -1,0 +1,60 @@
+// An arm that leaves by `return`, `break` or `continue` never finishes, so it
+// gives a match used as a value no type: the match takes the type of the arms
+// that do finish, whatever it is and wherever the jumping arm stands. Each line
+// is a value the program computes; with the allocation witness on, the last line
+// counts the blocks never released.
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+struct P { x: int }
+fn count(i: int) -> u32 { let n = match pick(i) { S::A => { 5 as u32 } | S::B => { return 9 as u32; } }; return n; }
+fn first(i: int) -> u32 { let n = match pick(i) { S::B => { return 9 as u32; } | S::A => { 5 as u32 } }; return n; }
+fn flag(i: int) -> bool { let n = match pick(i) { S::A => true | S::B => { return false; } }; return n; }
+fn point(i: int) -> int { let p = match pick(i) { S::A => P { x: 4 } | S::B => { return 0; } }; return p.x; }
+fn summed() -> u32 {
+    let mut i = 0;
+    let mut t = 0 as u32;
+    while i < 10 {
+        i = i + 1;
+        let n = match pick(i) { S::A => { i as u32 } | S::B => { if t > 0 as u32 { break; } continue; } };
+        t = t + n;
+    }
+    return t;
+}
+fn returned(i: int) -> u32 { return match pick(i) { S::B => { return 9 as u32; } | S::A => { 5 as u32 } }; }
+fn show(n: u32) { println(n); }
+fn argument(i: int) -> int { show(match pick(i) { S::B => { return 7; } | S::A => { 6 as u32 } }); return 0; }
+fn assigned(i: int) -> u32 { let mut x = 1 as u32; x = match pick(i) { S::A => { 2 as u32 } | S::B => { return 8 as u32; } }; return x; }
+fn nested(i: int, j: int) -> u32 {
+    let n = match pick(i) { S::A => { match pick(j) { S::A => { 1 as u32 } | S::B => { return 2 as u32; } } } | S::B => { 3 as u32 } };
+    return n + 10 as u32;
+}
+fn branch(c: bool, i: int) -> u32 {
+    let v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    let n = if c { match pick(i) { S::B => { return 9 as u32; } | S::A => { 5 as u32 } } } else { v.length() };
+    return n;
+}
+fn condition(i: int) -> int {
+    let v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    if match pick(i) { S::A => true | S::B => { return 9; } } { return 1; }
+    return v.length() as int;
+}
+fn looped(n: int) -> int {
+    let v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    let mut i = 0;
+    while match pick(i) { S::A => i < n | S::B => { return 9; } } { i = i + 1; }
+    return i + v.length() as int;
+}
+fn main() {
+    println(count(1)); println(count(2));
+    println(first(1)); println(first(2));
+    println(flag(1)); println(flag(2));
+    println(point(1)); println(point(2));
+    println(summed());
+    println(returned(1)); println(returned(2));
+    println(argument(1)); println(argument(2));
+    println(assigned(1)); println(assigned(2));
+    println(nested(1, 1)); println(nested(1, 2)); println(nested(2, 1));
+    println(branch(true, 1)); println(branch(true, 2)); println(branch(false, 2));
+    println(condition(1)); println(condition(2));
+    println(looped(1)); println(looped(5));
+}

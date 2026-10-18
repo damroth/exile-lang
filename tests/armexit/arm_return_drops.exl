@@ -1,0 +1,91 @@
+// A `return` inside a match arm leaves the function from inside the switch, so
+// the owners live there - the function's, a loop body's, an enclosing block's -
+// are released before it, and one the arm has already moved is not released
+// again. Each line is a value the program computes; with the allocation witness
+// on, the last line counts the blocks never released.
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn fresh(n: int) -> Vec<int> {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    let mut k = 0;
+    while k < n { v.push(k); k = k + 1; }
+    return v;
+}
+fn take(v: Vec<int>) -> int { return v.length() as int; }
+fn at(v: *const Vec<int>, i: u32) -> int { let s = v.as_slice(); return s[i]; }
+
+fn plain(i: int) -> int {
+    let v = fresh(1);
+    match pick(i) { S::A => { } | S::B => { return 9; } }
+    return v.length() as int;
+}
+fn reads_owner(i: int) -> int {
+    let v = fresh(2);
+    match pick(i) { S::A => { } | S::B => { return at(&v, 1 as u32) + 100; } }
+    return v.length() as int;
+}
+fn moved_in_arm(i: int) -> int {
+    let v = fresh(1);
+    let w = fresh(3);
+    match pick(i) { S::A => { } | S::B => { let k = take(v); return k + 20; } }
+    return v.length() as int + w.length() as int;
+}
+fn in_if(i: int, j: int) -> int {
+    let v = fresh(1);
+    match pick(i) { S::A => { } | S::B => { if j > 0 { return 9; } println(0); } }
+    return v.length() as int;
+}
+fn both_branches_move(i: int, j: int) -> int {
+    let v = fresh(2);
+    match pick(i) { S::A => { } | S::B => { if j > 0 { let n = take(v); println(n); } else { let m = take(v); println(m + 1); } return 9; } }
+    return v.length() as int;
+}
+fn in_while(i: int) -> int {
+    let v = fresh(1);
+    let mut k = 0;
+    match pick(i) { S::A => { } | S::B => { while k < 5 { k = k + 1; if k == 3 { return k; } } } }
+    return v.length() as int;
+}
+fn nested(i: int, j: int) -> int {
+    let v = fresh(1);
+    match pick(i) { S::A => { } | S::B => { match pick(j) { S::B => { return 9; } | S::A => { } } } }
+    return v.length() as int;
+}
+fn loop_local(n: int) -> int {
+    let mut i = 0;
+    while i < n {
+        let v = fresh(i);
+        match pick(i) { S::A => { } | S::B => { return 9; } }
+        i = i + 1;
+    }
+    return i;
+}
+fn block_local(i: int) -> int {
+    let v = fresh(1);
+    if i > 0 {
+        let w = fresh(2);
+        match pick(i) { S::A => { } | S::B => { return 9; } }
+        println(w.length() as int);
+    }
+    return v.length() as int;
+}
+fn owner_itself(i: int) -> Vec<int> {
+    let v = fresh(1);
+    let w = fresh(2);
+    match pick(i) { S::A => { } | S::B => { return v; } }
+    return w;
+}
+fn main() {
+    println(plain(1)); println(plain(2));
+    println(reads_owner(1)); println(reads_owner(2));
+    println(moved_in_arm(1)); println(moved_in_arm(2));
+    println(in_if(1, 1)); println(in_if(2, 1)); println(in_if(2, 0));
+    println(both_branches_move(1, 1)); println(both_branches_move(2, 1)); println(both_branches_move(2, 0));
+    println(in_while(1)); println(in_while(2));
+    println(nested(1, 2)); println(nested(2, 2)); println(nested(2, 1));
+    println(loop_local(2)); println(loop_local(5));
+    println(block_local(1)); println(block_local(2));
+    let a = owner_itself(1);
+    let b = owner_itself(2);
+    println(a.length() as int); println(b.length() as int);
+}

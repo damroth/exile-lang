@@ -1,0 +1,13 @@
+// let-else x a live owner: the else block's `return` leaves with an owner of the
+// function still live. The block is `let ... else`'s own, which both compilers
+// lower the same way - a `return` in an arm the user writes is the one that is
+// different.
+pub mod raw { extern fn make_c_allocator() -> Allocator; }
+fn find(ok: bool) -> Option<int> { if ok { return Option::Some(7); } return Option::None; }
+fn run(ok: bool, early: bool) -> int {
+    let mut v: Vec<int> = Vec::with_capacity(raw::make_c_allocator(), 8 as u32);
+    v.push(1);
+    let Option::Some(k) = find(ok) else { if early { return 0 - 1; } return 0 - 2; };
+    return k + v.length() as int;
+}
+fn main() { println(run(true, true)); println(run(false, true)); println(run(false, false)); }

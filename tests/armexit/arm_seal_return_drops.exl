@@ -1,0 +1,18 @@
+// A `return` inside a `seal` inside a match arm leaves the region and the
+// function at once: the region is closed and the function's owners are released
+// before it. Each line is a value the program computes; with the allocation
+// witness on, the last line counts the blocks never released.
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn fresh(n: int) -> Vec<int> {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    let mut k = 0;
+    while k < n { v.push(k); k = k + 1; }
+    return v;
+}
+fn run(i: int) -> int {
+    let v = fresh(1);
+    match pick(i) { S::A => { } | S::B => { seal { if i > 0 { return 9; } } } }
+    return v.length() as int;
+}
+fn main() { println(run(1)); println(run(2)); }

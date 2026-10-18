@@ -1,0 +1,51 @@
+// The same `return`, out of an arm whose match is a value: the arm owes no value
+// because it never finishes, and the owners live at the jump are released first.
+// Each line is a value the program computes; with the allocation witness on, the
+// last line counts the blocks never released.
+enum S { A | B }
+fn pick(i: int) -> S { if i == 2 { return S::B; } return S::A; }
+fn fresh(n: int) -> Vec<int> {
+    let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32);
+    let mut k = 0;
+    while k < n { v.push(k); k = k + 1; }
+    return v;
+}
+fn value(i: int) -> int {
+    let v = fresh(1);
+    let n = match pick(i) { S::A => 5 | S::B => { return 9; } };
+    return n + v.length() as int;
+}
+fn value_in_if(i: int, j: int) -> int {
+    let v = fresh(1);
+    let n = match pick(i) { S::A => 5 | S::B => { if j > 0 { return 9; } 7 } };
+    return n + v.length() as int;
+}
+struct P { x: int }
+fn field(i: int) -> int {
+    let v = fresh(1);
+    let mut p = P { x: 0 };
+    p.x = match pick(i) { S::A => 5 | S::B => { return 9; } };
+    return p.x + v.length() as int;
+}
+fn index(i: int) -> int {
+    let v = fresh(1);
+    let mut arr = [0, 0];
+    arr[match pick(i) { S::A => 1 | S::B => { return 9; } }] = 4;
+    return arr[1] + v.length() as int;
+}
+fn value_owner_itself(i: int) -> Vec<int> {
+    let v = fresh(1);
+    let mut w = fresh(2);
+    let k = match pick(i) { S::A => { 3 } | S::B => { return v; } };
+    w.push(k);
+    return w;
+}
+fn main() {
+    println(value(1)); println(value(2));
+    println(value_in_if(1, 1)); println(value_in_if(2, 1)); println(value_in_if(2, 0));
+    println(field(1)); println(field(2));
+    println(index(1)); println(index(2));
+    let a = value_owner_itself(1);
+    let b = value_owner_itself(2);
+    println(a.length() as int); println(b.length() as int);
+}

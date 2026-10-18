@@ -6272,13 +6272,22 @@ fn variant_field_names(a: Allocator, sc: *const TyScope, path: *const Vec<str>, 
     }
     return out;
 }
-fn check_arm_types(a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const Vec<TmatchArm>, p: Pos) {
+// An arm that never finishes owes the match no value. The reference marks only
+// the arms it synthesises (`try`, `let ... else`). Where the match is a value the
+// port also lowers an arm the user writes to leave by `return`, `break` or
+// `continue` (register #12), which the reference refuses before it joins; such
+// an arm's block carries a placeholder type nobody reads. As a statement, the
+// reference joins that placeholder like any void arm's, and so does the port.
+fn arm_diverges(arm: *const TmatchArm, allow_void: bool) -> bool {
+    return arm.tdiverges || (!allow_void && expr_diverges(arm.tbody));
+}
+fn check_arm_types(a: Allocator, ar: *Arena, sc: *const TyScope, tarms: *const Vec<TmatchArm>, p: Pos, allow_void: bool) {
     let n = tarms.length();
     let sl = tarms.as_slice();
     let mut wit: Option<*const Typ> = Option::None;
     let mut i = 0 as u32;
     while i < n {
-        if !sl[i].tdiverges {
+        if !arm_diverges(&sl[i], allow_void) {
             match wit {
                 Option::Some(w) => { arm_ty_agree(a, ar, sc, w, sl[i].tbody.ty, p); }
                 | Option::None => { wit = Option::Some(sl[i].tbody.ty); }
@@ -6297,10 +6306,17 @@ fn arm_ty_agree(a: Allocator, ar: *Arena, sc: *const TyScope, w: *const Typ, t: 
     tc_fail(ar, sc, p, str::from_slice(ar, sb.as_slice()));
     return;
 }
-fn match_result_ty(ar: *Arena, tarms: *const Vec<TmatchArm>) -> *const Typ {
+// The first arm that finishes gives the match its type; when none does, the
+// placeholder the reference uses.
+fn match_result_ty(ar: *Arena, tarms: *const Vec<TmatchArm>, allow_void: bool) -> *const Typ {
     if tarms.length() == 0 as u32 { return ty_node(ar, Typ::TCVoid); }
     let sl = tarms.as_slice();
-    return sl[0 as u32].tbody.ty;
+    let mut i = 0 as u32;
+    while i < tarms.length() {
+        if !arm_diverges(&sl[i], allow_void) { return sl[i].tbody.ty; }
+        i = i + 1 as u32;
+    }
+    return t_i32(ar);
 }
 
 fn is_enum_ty(t: *const Typ) -> bool {
@@ -6323,8 +6339,8 @@ fn emit_match(a: Allocator, ar: *Arena, g: *const Vec<GlobalFn>, sc: *const TySc
     let mut tarms: Vec<TmatchArm> = Vec::with_capacity(a, 8 as u32);
     elab_arms(a, ar, g, sc, env, expected, tscrut.ty, arms, allow_void, &tarms);
     check_exhaustive(a, ar, sc, tscrut.ty, &tarms, p);
-    check_arm_types(a, ar, sc, &tarms, p);
-    let mty = match_result_ty(ar, &tarms);
+    check_arm_types(a, ar, sc, &tarms, p, allow_void);
+    let mty = match_result_ty(ar, &tarms, allow_void);
     return te_node(ar, TexprNode::TMatch { scrutinee: tscrut, ename_path: epath, arms: tarms }, mty, p);
 }
 

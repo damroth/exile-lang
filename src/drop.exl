@@ -1558,8 +1558,204 @@ fn arm_split_fail(a: Allocator, ar: *Arena, gs: *GlueState, n: str, pos: Pos) {
     return;
 }
 
+// ---------- a `return` inside an expression the walk does not enter ----------
+//
+// The walk visits statements; a match arm's block and a `with` body are
+// expressions, so a `return` inside one left the function with every owner still
+// live at that point allocated. Each such return is rewritten where it stands:
+// the owners live there - those live at the statement, less what the block
+// consumed on the way - are released before it, as walk_return releases them.
+// The block's own owners are not tracked here: an arm's are register #74's, held.
+// A value anywhere else - a condition, an argument, an assigned field or element -
+// reaches this pass already lifted into a `let`.
+//
+// Only a block the reference refuses to lower is rewritten (`lowered`): an arm
+// the user wrote, or a `with` body. The arm `let ... else` synthesises for its
+// else block is one the reference lowers, without these drops, and keeps its C.
+fn rw_stmt_exprs(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+                 gs: *GlueState, lowered: bool, st: *const Vec<DEntry>, s: *const Tstmt) -> Tstmt {
+    return match *s {
+        Tstmt::TLet { name, value, decl_ty, pos } =>
+            Tstmt::TLet { name: name, value: rw_expr(structs, enums, a, ar, gs, lowered, st, value), decl_ty: decl_ty, pos: pos }
+        | Tstmt::TAssign { path, value, pos } =>
+            Tstmt::TAssign { path: path, value: rw_expr(structs, enums, a, ar, gs, lowered, st, value), pos: pos }
+        | Tstmt::TExprStmt(e) => Tstmt::TExprStmt(rw_expr(structs, enums, a, ar, gs, lowered, st, e))
+        | Tstmt::TReturn { value, pos } => Tstmt::TReturn { value: rw_opt(structs, enums, a, ar, gs, lowered, st, value), pos: pos }
+        | _o => *s
+    };
+}
+fn rw_opt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+          gs: *GlueState, lowered: bool, st: *const Vec<DEntry>, v: Option<*const Texpr>) -> Option<*const Texpr> {
+    return match v {
+        Option::Some(e) => Option::Some(rw_expr(structs, enums, a, ar, gs, lowered, st, e))
+        | Option::None => Option::None
+    };
+}
+fn rw_expr(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+           gs: *GlueState, lowered: bool, st: *const Vec<DEntry>, e: *const Texpr) -> *const Texpr {
+    if !expr_has_return(e) { return e; }
+    return match e.e {
+        TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            let st0 = apply_expr(structs, enums, a, ar, st, scrutinee);
+            let mut out: Vec<TmatchArm> = Vec::with_capacity(a, arms.length() + 1 as u32);
+            let al = arms.as_slice();
+            let mut i = 0 as u32;
+            while i < arms.length() {
+                out.push(TmatchArm { tpat: al[i].tpat, tguard: al[i].tguard,
+                                     tbody: rw_arm(structs, enums, a, ar, gs, lowered || !al[i].tdiverges, &st0, al[i].tbody),
+                                     tdiverges: al[i].tdiverges, tarm_pos: al[i].tarm_pos });
+                i = i + 1 as u32;
+            }
+            d_te(ar, TexprNode::TMatch { scrutinee: scrutinee, ename_path: ename_path, arms: out }, e.ty, e.pos)
+        }
+        | TexprNode::TBlock { stmts, trailing } => rw_arm(structs, enums, a, ar, gs, true, st, e)
+        | TexprNode::TIfExpr { cond, then_val, else_val } => {
+            let st0 = apply_expr(structs, enums, a, ar, st, cond);
+            d_te(ar, TexprNode::TIfExpr { cond: cond, then_val: rw_expr(structs, enums, a, ar, gs, lowered, &st0, then_val),
+                                          else_val: rw_expr(structs, enums, a, ar, gs, lowered, &st0, else_val) }, e.ty, e.pos)
+        }
+        | _o => e
+    };
+}
+// An arm's body, or a `with` body: a block is walked statement by statement.
+fn rw_arm(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+          gs: *GlueState, lowered: bool, st: *const Vec<DEntry>, e: *const Texpr) -> *const Texpr {
+    return match e.e {
+        TexprNode::TBlock { stmts, trailing } => {
+            let mut out: Vec<Tstmt> = Vec::with_capacity(a, stmts.length() + 4 as u32);
+            let st1 = rw_stmts(structs, enums, a, ar, gs, lowered, st, &stmts, &out);
+            d_te(ar, TexprNode::TBlock { stmts: out, trailing: rw_opt(structs, enums, a, ar, gs, lowered, &st1, trailing) }, e.ty, e.pos)
+        }
+        | _o => rw_expr(structs, enums, a, ar, gs, lowered, st, e)
+    };
+}
+fn entry_live(st: *const Vec<DEntry>, n: str) -> bool {
+    let sl = st.as_slice();
+    let mut i = 0 as u32;
+    while i < st.length() {
+        if str::eq(sl[i].den_name, n) { return match sl[i].den_status { DStatus::DLive => true | _o => false }; }
+        i = i + 1 as u32;
+    }
+    return false;
+}
+// The statements of such a block, with the state carried from one to the next;
+// returns the state at the block's end. A binding the block declares is not
+// registered, so nothing it owns is released - only what was live outside.
+fn rw_stmts(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+            gs: *GlueState, lowered: bool, st: *const Vec<DEntry>, stmts: *const Vec<Tstmt>, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    let mut cur = copy_dentries(a, st);
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() {
+        cur = rw_one(structs, enums, a, ar, gs, lowered, &cur, &sl[i], out);
+        i = i + 1 as u32;
+    }
+    return cur;
+}
+fn rw_one(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena,
+          gs: *GlueState, lowered: bool, cur: *const Vec<DEntry>, s0: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    let rs = rw_stmt_exprs(structs, enums, a, ar, gs, lowered, cur, s0);
+    return match rs {
+        Tstmt::TReturn { value, pos } => {
+            let st1 = match value {
+                Option::Some(v) => consume_rhs_var(structs, a, &apply_expr(structs, enums, a, ar, cur, v), v)
+                | Option::None => copy_dentries(a, cur)
+            };
+            let mut drop_buf: Vec<Tstmt> = Vec::with_capacity(a, 8 as u32);
+            if lowered { drops_for_live(a, ar, structs, enums, gs, &st1, &drop_buf); }
+            if drop_buf.length() > 0 as u32 && ret_needs_temp(value) {
+                emit_ret_temp(a, ar, value, pos, &drop_buf, out);
+            } else {
+                push_all(&drop_buf, out);
+                out.push(Tstmt::TReturn { value: value, pos: pos });
+            }
+            st1
+        }
+        | Tstmt::TIf { cond, then_body, else_body } => {
+            let st0 = apply_expr(structs, enums, a, ar, cur, cond);
+            let mut tb: Vec<Tstmt> = Vec::with_capacity(a, then_body.length() + 4 as u32);
+            let st_t = rw_stmts(structs, enums, a, ar, gs, lowered, &st0, &then_body, &tb);
+            let mut eb: Vec<Tstmt> = Vec::with_capacity(a, else_body.length() + 4 as u32);
+            let st_e = rw_stmts(structs, enums, a, ar, gs, lowered, &st0, &else_body, &eb);
+            out.push(Tstmt::TIf { cond: cond, then_body: tb, else_body: eb });
+            consumed_by_either(a, &st0, &st_t, &st_e)
+        }
+        | Tstmt::TWhile { cond, body, post } => {
+            let mut bb: Vec<Tstmt> = Vec::with_capacity(a, body.length() + 4 as u32);
+            let st_b = rw_stmts(structs, enums, a, ar, gs, lowered, cur, &body, &bb);
+            let mut pb: Vec<Tstmt> = Vec::with_capacity(a, post.length() + 4 as u32);
+            let st_p = rw_stmts(structs, enums, a, ar, gs, lowered, &st_b, &post, &pb);
+            out.push(Tstmt::TWhile { cond: cond, body: bb, post: pb });
+            consumed_by_either(a, cur, &st_b, &st_p)
+        }
+        | Tstmt::TSeal { body, pos } => {
+            let mut sb: Vec<Tstmt> = Vec::with_capacity(a, body.length() + 4 as u32);
+            let st_s = rw_stmts(structs, enums, a, ar, gs, lowered, cur, &body, &sb);
+            out.push(Tstmt::TSeal { body: sb, pos: pos });
+            st_s
+        }
+        | Tstmt::TLet { name, value, decl_ty, pos } => { out.push(rs); consume_rhs_var(structs, a, &apply_expr(structs, enums, a, ar, cur, value), value) }
+        | Tstmt::TAssign { path, value, pos } => { out.push(rs); consume_rhs_var(structs, a, &apply_expr(structs, enums, a, ar, cur, value), value) }
+        | Tstmt::TExprStmt(e) => { out.push(rs); apply_expr(structs, enums, a, ar, cur, e) }
+        | Tstmt::TAssignField { target, field, value, pos } => { out.push(rs); apply_expr(structs, enums, a, ar, cur, value) }
+        | Tstmt::TAssignIndex { base, index, value, pos } => { out.push(rs); apply_expr(structs, enums, a, ar, cur, value) }
+        | Tstmt::TAssignDeref { target, value, pos } => { out.push(rs); apply_expr(structs, enums, a, ar, cur, value) }
+        | _o => { out.push(rs); copy_dentries(a, cur) }
+    };
+}
+// An owner either branch may have consumed is not released by a later return:
+// a leak where the branches disagree, never a second free.
+fn consumed_by_either(a: Allocator, base: *const Vec<DEntry>, x: *const Vec<DEntry>, y: *const Vec<DEntry>) -> Vec<DEntry> {
+    let mut names: Vec<str> = Vec::with_capacity(a, 8 as u32);
+    let bl = base.as_slice();
+    let mut i = 0 as u32;
+    while i < base.length() {
+        let n = bl[i].den_name;
+        if entry_live(base, n) && (!entry_live(x, n) || !entry_live(y, n)) { names.push(n); }
+        i = i + 1 as u32;
+    }
+    return mark_consumed(a, base, &names);
+}
+fn expr_has_return(e: *const Texpr) -> bool {
+    return match e.e {
+        TexprNode::TMatch { scrutinee, ename_path, arms } => arms_have_return(&arms)
+        | TexprNode::TBlock { stmts, trailing } => stmts_have_return(&stmts) || opt_has_return(trailing)
+        | TexprNode::TIfExpr { cond, then_val, else_val } => expr_has_return(cond) || expr_has_return(then_val) || expr_has_return(else_val)
+        | _o => false
+    };
+}
+fn opt_has_return(v: Option<*const Texpr>) -> bool {
+    return match v { Option::Some(e) => expr_has_return(e) | Option::None => false };
+}
+fn arms_have_return(arms: *const Vec<TmatchArm>) -> bool {
+    let al = arms.as_slice();
+    let mut i = 0 as u32;
+    while i < arms.length() { if expr_has_return(al[i].tbody) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn stmts_have_return(stmts: *const Vec<Tstmt>) -> bool {
+    let sl = stmts.as_slice();
+    let mut i = 0 as u32;
+    while i < stmts.length() { if stmt_has_return(&sl[i]) { return true; } i = i + 1 as u32; }
+    return false;
+}
+fn stmt_has_return(s: *const Tstmt) -> bool {
+    return match *s {
+        Tstmt::TReturn { value, pos } => true
+        | Tstmt::TIf { cond, then_body, else_body } => expr_has_return(cond) || stmts_have_return(&then_body) || stmts_have_return(&else_body)
+        | Tstmt::TWhile { cond, body, post } => stmts_have_return(&body) || stmts_have_return(&post)
+        | Tstmt::TSeal { body, pos } => stmts_have_return(&body)
+        | Tstmt::TLet { name, value, decl_ty, pos } => expr_has_return(value)
+        | Tstmt::TAssign { path, value, pos } => expr_has_return(value)
+        | Tstmt::TExprStmt(e) => expr_has_return(e)
+        | _o => false
+    };
+}
+
 fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allocator, ar: *Arena, gs: *GlueState,
-             st: *const Vec<DEntry>, s: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+             st: *const Vec<DEntry>, s0: *const Tstmt, out: *Vec<Tstmt>) -> Vec<DEntry> {
+    let rs = rw_stmt_exprs(structs, enums, a, ar, gs, false, st, s0);
+    let s: *const Tstmt = &rs;
     return match *s {
         Tstmt::TLet { name, value, pos } => walk_let(structs, enums, a, ar, gs, st, name, value, pos, s, out)
         | Tstmt::TAssign { path, value, pos } => walk_assign(structs, enums, a, ar, gs, st, &path, value, pos, s, out)
@@ -1572,12 +1768,12 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
             // only ever sees BINDINGS, so nothing else would catch it.
             check_discarded_own(structs, ar, gs, e);
             let st2 = apply_expr(structs, enums, a, ar, st, e);
-            out.push(*s);
+            out.push(rs);
             st2
         }
         | Tstmt::TDefer { body, pos } => {
             check_defer_reads(structs, enums, a, ar, gs, st, &body, pos);
-            out.push(*s);
+            out.push(rs);
             copy_dentries(a, st)
         }
         // A region is a scope, so what it owns dies at its end - and the walker
@@ -1596,7 +1792,7 @@ fn walk_stmt(structs: *const Vec<StructSig>, enums: *const Vec<EnumSig>, a: Allo
         | Tstmt::TAssignDeref { target, value, pos } => walk_apply_one(structs, enums, a, ar, st, value, s, out)
         | Tstmt::TBreak(_p) => walk_jump(structs, enums, a, ar, gs, st, s, out)
         | Tstmt::TContinue(_p) => walk_jump(structs, enums, a, ar, gs, st, s, out)
-        | _other => { out.push(*s); copy_dentries(a, st) }
+        | _other => { out.push(rs); copy_dentries(a, st) }
     };
 }
 
@@ -1914,14 +2110,34 @@ fn collect_drop_temps(stmts: *const Vec<Tstmt>, lets: *Vec<FieldTy>) {
     let mut i = 0 as u32;
     while i < stmts.length() {
         match sl[i] {
-            Tstmt::TLet { name, value, decl_ty, pos } => maybe_push_drop_temp(lets, name, decl_ty)
+            Tstmt::TLet { name, value, decl_ty, pos } => { collect_drop_temps_expr(value, lets); maybe_push_drop_temp(lets, name, decl_ty); }
             | Tstmt::TIf { cond, then_body, else_body } => { collect_drop_temps(&then_body, lets); collect_drop_temps(&else_body, lets); }
             | Tstmt::TWhile { cond, body, post } => { collect_drop_temps(&body, lets); collect_drop_temps(&post, lets); }
             | Tstmt::TDefer { body, pos } => collect_drop_temps(&body, lets)
             | Tstmt::TSeal { body, pos } => collect_drop_temps(&body, lets)
+            | Tstmt::TAssign { path, value, pos } => collect_drop_temps_expr(value, lets)
+            | Tstmt::TExprStmt(e) => collect_drop_temps_expr(e, lets)
+            | Tstmt::TReturn { value, pos } => { match value { Option::Some(v) => collect_drop_temps_expr(v, lets) | Option::None => {} } }
             | _o => {}
         }
         i = i + 1 as u32;
+    }
+    return;
+}
+// The temps a return inside an arm or a `with` body gets live in that block.
+fn collect_drop_temps_expr(e: *const Texpr, lets: *Vec<FieldTy>) {
+    match e.e {
+        TexprNode::TMatch { scrutinee, ename_path, arms } => {
+            let al = arms.as_slice();
+            let mut i = 0 as u32;
+            while i < arms.length() { collect_drop_temps_expr(al[i].tbody, lets); i = i + 1 as u32; }
+        }
+        | TexprNode::TBlock { stmts, trailing } => {
+            collect_drop_temps(&stmts, lets);
+            match trailing { Option::Some(t) => collect_drop_temps_expr(t, lets) | Option::None => {} }
+        }
+        | TexprNode::TIfExpr { cond, then_val, else_val } => { collect_drop_temps_expr(then_val, lets); collect_drop_temps_expr(else_val, lets); }
+        | _o => {}
     }
     return;
 }
