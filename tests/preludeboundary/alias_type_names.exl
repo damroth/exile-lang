@@ -1,0 +1,26 @@
+// User aliases named like prelude types this program never writes. The prelude's
+// own signatures and bodies still name its types: a slice, the allocator, the
+// adapters a method call returns.
+type Allocator = int;
+type Slice = int;
+type Map = int;
+type Filter = int;
+type Take = int;
+type Enumerate = int;
+type VecIter = int;
+type HashMapIter = int;
+type StringBuilder = int;
+fn main() {
+    let a = default_allocator();
+    let z: int = 0;
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(3); v.push(4);
+    let s = v.as_slice();
+    let mut n = s[0] + s[1];
+    for x in v.iter().map(|x: int| -> int x * 10 + z).filter(|x: int| -> bool x > 30 + z) { n = n + x; }
+    for p in v.iter().take(1 as u32).enumerate() { let (i, x) = p; n = n + x + i as int; }
+    let st = String::with_str(a, "ab");
+    let st2 = st.clone();
+    println(n + st2.length() as int);
+    st.free(); st2.free();
+}

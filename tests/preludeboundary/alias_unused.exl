@@ -1,0 +1,6 @@
+// Aliases named like the prelude's type parameters next to a program that calls
+// none of its generics. The reference accepts it and instantiates its prelude's
+// generics with the alias; nothing the port emits changes.
+type I = int;
+type V = int;
+fn main() { println(7); }

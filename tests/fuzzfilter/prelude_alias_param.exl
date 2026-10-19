@@ -1,0 +1,4 @@
+// Register #136, positive: a user alias named like the prelude's `T`. The port's
+// `Vec<bool>` keeps its own parameter; the reference refuses in its prelude.
+type T = int;
+fn main() { let mut v: Vec<bool> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(true); println(v.length() as int); }

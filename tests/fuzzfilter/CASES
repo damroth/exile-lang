@@ -28,3 +28,7 @@ prelude_trait_eq|R116-prelude-boundary
 prelude_trait_clone|R116-prelude-boundary
 prelude_trait_iterator|R116-prelude-boundary
 prelude_trait_missing_method|none
+prelude_alias_param|R116-prelude-boundary
+prelude_alias_method_param|R116-prelude-boundary
+prelude_alias_user_mismatch|none
+prelude_alias_type_name|R116-prelude-boundary

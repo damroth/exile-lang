@@ -1,0 +1,6 @@
+// Register #136, negative: a user alias named like a type parameter of the user's
+// OWN generic function - the alias wins there, as the reference has it, and both
+// compilers refuse with the same line. Nothing to filter.
+type G = int;
+fn pick<G>(x: G) -> G { return x; }
+fn main() { println(pick(true)); }

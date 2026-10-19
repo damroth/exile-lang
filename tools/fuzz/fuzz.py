@@ -91,6 +91,21 @@ PRELUDE_TRAIT_DECL = re.compile(r"^\s*(?:pub\s+)?trait\s+(Clone|Debug|Display|Eq
 PRELUDE_LOST = re.compile(r"^<prelude>:\d+:\d+: error:"
                           r"|no method '\w+' on type '\w+'"
                           r"|`for \w+ in \.\.\.` needs a `\.\.`")
+# ...and register #136: a user alias the reference lets into its prelude. The
+# loss is a refusal in its prelude, or one in the user's code that names the
+# alias as the prelude's type parameter or as a type the prelude applies.
+USER_ALIAS_DECL = re.compile(r"^\s*(?:pub\s+)?type\s+([A-Z]\w*)\b", re.M)
+ALIAS_NAMED = re.compile(r"could not infer type parameter '(\w+)'|type alias '(\w+)' expects")
+
+
+def alias_reached_prelude(src, oracle_diag):
+    names = set(USER_ALIAS_DECL.findall(src))
+    if not names:
+        return False
+    if oracle_diag.startswith("<prelude>:"):
+        return True
+    m = ALIAS_NAMED.search(oracle_diag)
+    return bool(m) and (m.group(1) or m.group(2)) in names
 
 # Register #126 - a `with` body is a block the port lowers as it lowers an arm: a
 # `return` or a `defer` in one is the port's, and the reference refuses it with
@@ -184,7 +199,9 @@ def registered_divergence(ev):
       #126 the same for a `return` or a `defer` whose innermost block is a
           `with` body
       #116 a user trait named like a prelude trait: the port accepted, the
-          reference lost the prelude's trait, method or iterator
+          reference lost the prelude's trait, method or iterator; #136 the same
+          for a user alias, the reference refusing in its prelude or naming the
+          alias as one of the prelude's parameters
       #5  reserved for defer x loop-jump, which is a semantic difference rather
           than a lexical one and is still recognised from the source
     """
@@ -200,6 +217,8 @@ def registered_divergence(ev):
     if (ev["port_status"] == 0 and PRELUDE_TRAIT_DECL.search(ev["src"])
             and PRELUDE_LOST.search(ev["oracle_diag"] or "")):
         return "R116-prelude-boundary"        # register #116
+    if ev["port_status"] == 0 and alias_reached_prelude(ev["src"], ev["oracle_diag"] or ""):
+        return "R116-prelude-boundary"        # register #136
     pos = diag_pos(ev["oracle_diag"])
     if (pos is not None
             and enclosing_block(ev["src"], int(pos[0]), int(pos[1])) == "with"

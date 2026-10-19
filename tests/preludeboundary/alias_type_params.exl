@@ -1,0 +1,28 @@
+// A user's alias named like each type parameter the prelude's generics use. The
+// user's code means the alias; the prelude's `Vec<T>`, `HashMap<K, V>` and its
+// adapters keep their own parameters, at every instance - here `bool` ones.
+type E = int;
+type F = int;
+type G = int;
+type I = int;
+type K = int;
+type P = int;
+type T = int;
+type V = int;
+fn twice(x: T) -> T { return x * 2; }
+fn main() {
+    let a = default_allocator();
+    let z: int = 0;
+    let mut v: Vec<bool> = Vec::with_capacity(a, 8 as u32);
+    v.push(true); v.push(false); v.push(true);
+    let mut n: K = 0;
+    for x in v.iter().filter(|x: bool| -> bool x || z > 0) { if x { n = n + 1; } n = n + 0; }
+    for x in v.iter().map(|x: bool| -> bool x && z == 0) { if x { n = n + 10; } n = n + 0; }
+    for p in v.iter().take(2 as u32).enumerate() { let (i, x) = p; if x { n = n + i as int; } n = n + 0; }
+    n = n + v.iter().fold(z, |acc: int, _x: bool| -> int acc + 100 + z);
+    let mut m: HashMap<bool, bool> = HashMap::with_capacity(a, 8 as u32);
+    m.insert(true, false);
+    match m.get(true) { Option::Some(x) => { if !x { n = n + 1000; } n = n + 0; } | Option::None => { } }
+    println(n);
+    println(twice(21));
+}

@@ -1,0 +1,4 @@
+// Register #136, positive: a user alias named like `map`'s own parameter `F`. The
+// port infers the prelude's `F`; the reference names the alias in the user's code.
+type F = int;
+fn main() { let z: int = 0; let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); let mut t = 0; for y in v.iter().map(|x: int| -> int x + z) { t = t + y; } println(t); }

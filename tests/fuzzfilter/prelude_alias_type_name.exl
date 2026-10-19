@@ -1,0 +1,5 @@
+// Register #136, positive: a user alias named like the prelude's `Allocator`. The
+// port's prelude keeps its type; the reference refuses in its prelude, in words
+// that do not name the alias.
+type Allocator = int;
+fn main() { let mut v: Vec<int> = Vec::with_capacity(default_allocator(), 8 as u32); v.push(1); println(v.length() as int); }

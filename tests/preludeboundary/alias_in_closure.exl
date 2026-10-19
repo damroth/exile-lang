@@ -1,0 +1,15 @@
+// The other side of the boundary: a closure the user writes is the user's, so its
+// annotations read the user's aliases even where a prelude adapter projects them
+// - `map`'s item is the closure's `Output`, `fold`'s accumulator its argument.
+type Word = u32;
+fn main() {
+    let a = default_allocator();
+    let z: Word = 0 as u32;
+    let mut v: Vec<Word> = Vec::with_capacity(a, 8 as u32);
+    v.push(3 as u32); v.push(4 as u32);
+    let s = v.iter().fold(z, |acc: Word, x: Word| -> Word acc + x + z);
+    let mut t: Word = 0 as u32;
+    for y in v.iter().map(|x: Word| -> Word x * 2 as u32 + z) { t = t + y; }
+    println(s);
+    println(t);
+}

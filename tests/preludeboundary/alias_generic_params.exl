@@ -1,0 +1,30 @@
+// A generic user alias named like each type parameter the prelude's generics use.
+// The prelude's `Vec<T>`, `HashMap<K, V>` and its adapters keep their own
+// parameters, and the user writes `K<int>` for a vector of ints.
+type E<X> = Vec<X>;
+type F<X> = Vec<X>;
+type G<X> = Vec<X>;
+type I<X> = Vec<X>;
+type K<X> = Vec<X>;
+type P<X> = Vec<X>;
+type T<X> = Vec<X>;
+type V<X> = Vec<X>;
+fn twice(x: int) -> int { return x * 2; }
+fn main() {
+    let a = default_allocator();
+    let z: int = 0;
+    let mut v: Vec<bool> = Vec::with_capacity(a, 8 as u32);
+    v.push(true); v.push(false); v.push(true);
+    let mut n: int = 0;
+    for x in v.iter().filter(|x: bool| -> bool x || z > 0) { if x { n = n + 1; } n = n + 0; }
+    for x in v.iter().map(|x: bool| -> bool x && z == 0) { if x { n = n + 10; } n = n + 0; }
+    for p in v.iter().take(2 as u32).enumerate() { let (i, x) = p; if x { n = n + i as int; } n = n + 0; }
+    n = n + v.iter().fold(z, |acc: int, _x: bool| -> int acc + 100 + z);
+    let mut m: HashMap<bool, bool> = HashMap::with_capacity(a, 8 as u32);
+    m.insert(true, false);
+    match m.get(true) { Option::Some(x) => { if !x { n = n + 1000; } n = n + 0; } | Option::None => { } }
+    println(n);
+    let mut w: K<int> = Vec::with_capacity(a, 8 as u32);
+    w.push(21);
+    println(twice(w.length() as int + 20));
+}
