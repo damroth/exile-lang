@@ -1,0 +1,15 @@
+// The control: a trait whose name the prelude does not use, implemented for a
+// user type next to the same prelude calls. Both compilers emit the same C.
+trait Zork { fn zz(self) -> int; }
+struct Tag { n: int }
+impl Zork for Tag { fn zz(self) -> int { self.n } }
+fn main() {
+    let a = default_allocator();
+    let mut v: Vec<int> = Vec::with_capacity(a, 8 as u32);
+    v.push(9);
+    let st = String::with_str(a, "ab");
+    let st2 = st.clone();
+    let t = Tag { n: 3 };
+    println(t.zz() + v.length() as int + st2.length() as int);
+    st.free(); st2.free();
+}

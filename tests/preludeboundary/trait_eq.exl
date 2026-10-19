@@ -1,0 +1,9 @@
+// A user's trait named like a prelude trait is the user's: implementing it for a
+// user type leaves the prelude's own `Eq`, and every bound on it, as they were.
+trait Eq { fn same(self, other: int) -> bool; }
+struct Tag { n: int }
+impl Eq for Tag { fn same(self, other: int) -> bool { self.n == other } }
+fn main() {
+    let t = Tag { n: 7 };
+    if t.same(7) { println(1); } else { println(0); }
+}

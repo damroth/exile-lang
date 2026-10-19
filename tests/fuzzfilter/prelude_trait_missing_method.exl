@@ -1,0 +1,5 @@
+// Register #116, negative: a user trait named `Hash` and a call of `hash` on a
+// user type that implements nothing - both compilers refuse, the same words.
+trait Hash { fn digest(self) -> int; }
+struct Tag { n: int }
+fn main() { let t = Tag { n: 1 }; println(t.hash() as int); }

@@ -1,0 +1,6 @@
+// Register #116, positive: a user trait named `Eq`. The port keeps the prelude's;
+// the reference lets the user's replace it and refuses in its own prelude.
+trait Eq { fn same(self, other: int) -> bool; }
+struct Tag { n: int }
+impl Eq for Tag { fn same(self, other: int) -> bool { self.n == other } }
+fn main() { let t = Tag { n: 7 }; if t.same(7) { println(1); } else { println(0); } }

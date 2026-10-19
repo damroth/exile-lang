@@ -1025,7 +1025,7 @@ selfhost-outdir: $(EXILC_BIN)
 #
 # A non-empty diff means the port's output depends on which compiler built it —
 # i.e. the port is not a fixpoint of itself.  Hard failure.
-.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit
+.PHONY: host-selfhost-cg bootstrap-fixpoint selfhost-refemit selfhost-loopdrop selfhost-verify selfhost-seed-gates selfhost-seed-parity selfhost-rune selfhost-ward selfhost-sigil selfhost-defer selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary
 
 # The oracle-built codegen driver.  `bootstrap-fixpoint` used to be its only
 # consumer and now builds from the seed; kept as the manual entry point, and its
@@ -1176,7 +1176,7 @@ selfhost-verify: selfhost-prelude-probe \
                  selfhost-refdefect selfhost-refemit selfhost-loopdrop \
                  selfhost-port-lint selfhost-mono-modules selfhost-xprod \
                  selfhost-no-fabrication selfhost-rune selfhost-ward selfhost-sigil selfhost-defer \
-                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
+                 selfhost-seal selfhost-atomic selfhost-warning-free selfhost-freestanding selfhost-bare selfhost-ndk selfhost-addr selfhost-chip selfhost-tier selfhost-isr selfhost-copper selfhost-parens selfhost-fnptr-tags selfhost-armreturn selfhost-blockdefer selfhost-armexit selfhost-prelude-boundary selfhost-armtail selfhost-loopfresh selfhost-derive-generic selfhost-armsplit selfhost-noentry-externs docs-selfsufficient docs-capability-golden selfhost-own-tree selfhost-prelude-struct-lists \
                  probe-control sweep-control
 	@echo "selfhost-verify: all port gates green"
 
@@ -3117,6 +3117,64 @@ selfhost-blockdefer: $(EXILC_BIN)
 	  if [ -n "$$marker" ]; then sig="$$sig $$f=runs/reference-refuses"; else sig="$$sig $$f=byte-identical"; fi; \
 	done; \
 	echo "selfhost-blockdefer: clean -$$sig; each port C builds at -Werror and prints its expected trace, each refused one gives its pinned line"
+
+# ===== register #116 - a user's trait does not reach the prelude =====
+#
+# A deliberate divergence, decided: a declaration the user writes reaches only
+# what the user wrote. A user trait named like one of the prelude's - `Eq`,
+# `Clone`, `Hash`, `Iterator`, or any of the seven - is the user's; the
+# prelude's own trait, its impls for the prelude's types and the protocol `for`
+# and the combinators use stay as they were. The frozen reference lets the
+# user's trait replace the prelude's, and refuses: in its own prelude (`Eq`), or
+# in the user's code, where a String's method or a prelude iterator has gone.
+# Both sides are pinned: the port's C builds at -Werror and RUNS to the trace
+# each fixture expects, the reference refuses each with the message that names
+# what it lost, and renaming the user's seven traits changes nothing the port
+# emits. The control keeps the reference's C byte for byte.
+PRELUDEBOUNDARY_DIR := tests/preludeboundary
+selfhost-prelude-boundary: $(EXILC_BIN)
+	@sig=""; \
+	rm -rf $(C_OUT)/pb; mkdir -p $(C_OUT)/pb; \
+	for f in trait_eq trait_prelude_methods trait_iterator trait_names_untouched other_names; do \
+	  test -f $(PRELUDEBOUNDARY_DIR)/$$f.exl || { echo "selfhost-prelude-boundary: MISSING $(PRELUDEBOUNDARY_DIR)/$$f.exl"; exit 1; }; \
+	  test -s $(PRELUDEBOUNDARY_DIR)/$$f.expected || { echo "selfhost-prelude-boundary: MISSING/EMPTY $(PRELUDEBOUNDARY_DIR)/$$f.expected"; exit 1; }; \
+	  $(EXILE) --target c --c-out $(C_OUT)/pb/$$f.o.c $(PRELUDEBOUNDARY_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/pb/$$f.o.err; \
+	  case $$f in \
+	    other_names) marker="";; \
+	    trait_eq) marker="<prelude>:1:1: error: 'Hash' requires supertrait 'Eq', but 'String' does not implement it";; \
+	    trait_prelude_methods) marker="error: no method 'clone' on type 'String'";; \
+	    *) marker='error: `for v in ...` needs a `..` / `..=` range';; \
+	  esac; \
+	  if [ -n "$$marker" ]; then \
+	    if [ -s $(C_OUT)/pb/$$f.o.c ]; then echo "selfhost-prelude-boundary: $$f - the frozen reference now writes C for it: register #116 is stale, re-measure it"; exit 1; fi; \
+	    grep -q -F "$$marker" $(C_OUT)/pb/$$f.o.err \
+	      || { echo "selfhost-prelude-boundary: $$f - the reference refuses it, but not with the pinned message:"; head -2 $(C_OUT)/pb/$$f.o.err; exit 1; }; \
+	  else \
+	    test -s $(C_OUT)/pb/$$f.o.c || { echo "selfhost-prelude-boundary: $$f - EMPTY reference C (floor)"; exit 1; }; \
+	  fi; \
+	  $(EXILC_BIN) --target c --c-out $(C_OUT)/pb/$$f.p.c $(PRELUDEBOUNDARY_DIR)/$$f.exl >/dev/null 2>$(C_OUT)/pb/$$f.p.err \
+	    || { echo "selfhost-prelude-boundary: $$f - the port REJECTED it - a user's trait reached the prelude:"; head -2 $(C_OUT)/pb/$$f.p.err; exit 1; }; \
+	  test -s $(C_OUT)/pb/$$f.p.c || { echo "selfhost-prelude-boundary: $$f - EMPTY port C (floor)"; exit 1; }; \
+	  if [ -z "$$marker" ] && ! cmp -s $(C_OUT)/pb/$$f.o.c $(C_OUT)/pb/$$f.p.c; then \
+	    echo "selfhost-prelude-boundary: $$f - the control no longer emits the reference's C:"; \
+	    diff $(C_OUT)/pb/$$f.o.c $(C_OUT)/pb/$$f.p.c | head -8; exit 1; fi; \
+	  cc -O2 -ansi -pedantic -Wall -Werror -I src -o $(C_OUT)/pb/$$f $(C_OUT)/pb/$$f.p.c $(SYS_HOST) \
+	    || { echo "selfhost-prelude-boundary: $$f - the port's C fails -Werror"; exit 1; }; \
+	  EXILE_ALLOC_WITNESS=1 $(C_OUT)/pb/$$f > $(C_OUT)/pb/$$f.out 2>&1; \
+	  if ! cmp -s $(PRELUDEBOUNDARY_DIR)/$$f.expected $(C_OUT)/pb/$$f.out; then \
+	    echo "selfhost-prelude-boundary: $$f - the program ran differently:"; \
+	    diff $(PRELUDEBOUNDARY_DIR)/$$f.expected $(C_OUT)/pb/$$f.out | head -6; exit 1; fi; \
+	  if [ -n "$$marker" ]; then sig="$$sig $$f=runs/reference-refuses"; else sig="$$sig $$f=byte-identical"; fi; \
+	done; \
+	sed -E 's/\b(trait|impl) (Clone|Debug|Display|Eq|Fn|Hash|Iterator)\b/\1 \2User/' $(PRELUDEBOUNDARY_DIR)/trait_names_untouched.exl > $(C_OUT)/pb/renamed.exl; \
+	test `grep -c User $(C_OUT)/pb/renamed.exl` = 14 || { echo "selfhost-prelude-boundary: the rename did not reach all seven traits and their impls"; exit 1; }; \
+	$(EXILC_BIN) --target c --c-out $(C_OUT)/pb/renamed.c $(C_OUT)/pb/renamed.exl >/dev/null 2>&1 \
+	  || { echo "selfhost-prelude-boundary: the port REJECTED the renamed twin"; exit 1; }; \
+	cmp -s $(C_OUT)/pb/renamed.c $(C_OUT)/pb/trait_names_untouched.p.c \
+	  || { echo "selfhost-prelude-boundary: renaming the user's seven traits changed the port's C - a user's trait reached the prelude:"; \
+	       diff $(C_OUT)/pb/renamed.c $(C_OUT)/pb/trait_names_untouched.p.c | head -8; exit 1; }; \
+	rm -rf $(C_OUT)/pb; \
+	echo "selfhost-prelude-boundary: clean -$$sig; each port C builds at -Werror and runs to its trace, and renaming the seven traits leaves the port's C byte-identical"
 
 # ===== register #86 - a jump out of a match arm or a `with` body releases what it leaves =====
 #

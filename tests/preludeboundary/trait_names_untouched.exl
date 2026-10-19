@@ -1,0 +1,40 @@
+// Every trait name the prelude declares, declared again by the user and
+// implemented for a user type, next to a program that uses what the prelude's
+// traits stand behind: iteration, a fold, a map, a String's equality, hash and
+// clone. None of it reaches the prelude: renaming the seven traits changes
+// nothing the port emits for it.
+trait Clone { fn c1(self) -> int; }
+trait Debug { fn c2(self) -> int; }
+trait Display { fn c3(self) -> int; }
+trait Eq { fn c4(self) -> int; }
+trait Fn { fn c5(self) -> int; }
+trait Hash { fn c6(self) -> int; }
+trait Iterator { fn c7(self) -> int; }
+struct Tag { n: int }
+impl Clone for Tag { fn c1(self) -> int { self.n + 1 } }
+impl Debug for Tag { fn c2(self) -> int { self.n + 2 } }
+impl Display for Tag { fn c3(self) -> int { self.n + 3 } }
+impl Eq for Tag { fn c4(self) -> int { self.n + 4 } }
+impl Fn for Tag { fn c5(self) -> int { self.n + 5 } }
+impl Hash for Tag { fn c6(self) -> int { self.n + 6 } }
+impl Iterator for Tag { fn c7(self) -> int { self.n + 7 } }
+fn main() {
+    let a = default_allocator();
+    let z: int = 0;
+    let mut v: Vec<bool> = Vec::with_capacity(a, 8 as u32);
+    v.push(true); v.push(false);
+    let mut n = 0;
+    for x in v.iter() { if x { n = n + 1; } else { n = n + 2; } n = n + 0; }
+    n = n + v.iter().fold(z, |acc: int, x: bool| -> int acc + z + 1);
+    let mut m: HashMap<int, bool> = HashMap::with_capacity(a, 8 as u32);
+    m.insert(1, false);
+    match m.get(1) { Option::Some(x) => { if !x { n = n + 100; } else { n = n + 200; } n = n + 0; } | Option::None => { } }
+    let st = String::with_str(a, "ab");
+    let st2 = st.clone();
+    if st.eq(st2) { n = n + 1000; } else { n = n + 2000; }
+    if st.hash() == st2.hash() { n = n + 10000; } else { n = n + 20000; }
+    let t = Tag { n: 0 };
+    println(n);
+    println(t.c1() + t.c2() + t.c3() + t.c4() + t.c5() + t.c6() + t.c7());
+    st.free(); st2.free();
+}

@@ -1,0 +1,4 @@
+// Register #116, positive: a user trait named `Clone`. A String still clones
+// through the prelude's impl in the port; the reference has lost the method.
+trait Clone { fn twin(self) -> int; }
+fn main() { let s = String::with_str(default_allocator(), "ab"); let s2 = s.clone(); println(s2.length() as int); s.free(); s2.free(); }

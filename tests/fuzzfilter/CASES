@@ -24,3 +24,7 @@ with_defer|R126-with-block
 with_defer_reads_owner|R126-with-block
 arm_return_in_with|R12-arm-return
 with_in_defer_body|none
+prelude_trait_eq|R116-prelude-boundary
+prelude_trait_clone|R116-prelude-boundary
+prelude_trait_iterator|R116-prelude-boundary
+prelude_trait_missing_method|none

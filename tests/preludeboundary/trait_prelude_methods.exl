@@ -1,0 +1,19 @@
+// User traits named like the prelude's `Clone` and `Hash` do not take the
+// prelude's methods away from the prelude's types: a `String` still clones and
+// hashes through the prelude's impls.
+trait Clone { fn twin(self) -> int; }
+trait Hash { fn digest(self) -> int; }
+struct Tag { n: int }
+impl Clone for Tag { fn twin(self) -> int { self.n * 2 } }
+impl Hash for Tag { fn digest(self) -> int { self.n + 1 } }
+fn main() {
+    let a = default_allocator();
+    let s = String::with_str(a, "abc");
+    let s2 = s.clone();
+    if s.hash() == s2.hash() { println(1); } else { println(0); }
+    println(s2.length() as int);
+    let t = Tag { n: 5 };
+    println(t.twin());
+    println(t.digest());
+    s.free(); s2.free();
+}

@@ -81,6 +81,17 @@ ARM_DEFER = re.compile(r"'defer' inside a defer body is not supported")
 # refuses the same defer in an `if` block (register #130), at the same position.
 DEFER_READS = re.compile(r"defer body reads '[^']+', but '[^']+' is auto-dropped before deferred code runs")
 
+# Register #116 - a user's trait named like one of the prelude's is the user's in
+# the port and reaches nothing the prelude declares. The reference lets it
+# replace the prelude's and refuses: in its own prelude, or in the user's code,
+# where a prelude type's method or a prelude iterator has gone. Recognised from
+# both sides at once - the source declares such a trait, the port accepted, and
+# the reference's first error is one of those three losses.
+PRELUDE_TRAIT_DECL = re.compile(r"^\s*(?:pub\s+)?trait\s+(Clone|Debug|Display|Eq|Fn|Hash|Iterator)\b", re.M)
+PRELUDE_LOST = re.compile(r"^<prelude>:\d+:\d+: error:"
+                          r"|no method '\w+' on type '\w+'"
+                          r"|`for \w+ in \.\.\.` needs a `\.\.`")
+
 # Register #126 - a `with` body is a block the port lowers as it lowers an arm: a
 # `return` or a `defer` in one is the port's, and the reference refuses it with
 # the words it uses for an arm. What tells the two apart is the block the
@@ -172,6 +183,8 @@ def registered_divergence(ev):
           refused it for reading a live owner (#130)
       #126 the same for a `return` or a `defer` whose innermost block is a
           `with` body
+      #116 a user trait named like a prelude trait: the port accepted, the
+          reference lost the prelude's trait, method or iterator
       #5  reserved for defer x loop-jump, which is a semantic difference rather
           than a lexical one and is still recognised from the source
     """
@@ -184,6 +197,9 @@ def registered_divergence(ev):
     # that really is inside a `defer` is rejected by the PORT too (it carries the
     # same check), so "the port accepted" is what separates the arm case from the
     # defer case that shares the wording.
+    if (ev["port_status"] == 0 and PRELUDE_TRAIT_DECL.search(ev["src"])
+            and PRELUDE_LOST.search(ev["oracle_diag"] or "")):
+        return "R116-prelude-boundary"        # register #116
     pos = diag_pos(ev["oracle_diag"])
     if (pos is not None
             and enclosing_block(ev["src"], int(pos[0]), int(pos[1])) == "with"
